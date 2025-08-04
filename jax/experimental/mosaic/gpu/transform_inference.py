@@ -20,6 +20,7 @@ annotated with layouts (see `layout_inference.py` for the relevant pass).
 
 from collections.abc import Callable
 from functools import partial
+import math
 from typing import cast
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu
@@ -28,11 +29,11 @@ from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import vector
-from jax._src.util import safe_zip
 
 from . import fragmented_array as fa
 from . import inference_utils
 from . import layouts as layouts_lib
+from . import tcgen05
 from . import utils
 
 # mypy: ignore-errors
@@ -82,12 +83,28 @@ def _resolve_transforms(
   if other_transforms is None:
     return transforms
 
-  if transforms != other_transforms:
+  if len(transforms) != len(other_transforms):
     raise NotImplementedError(
         f"Conflicting transforms {transforms} != {other_transforms}."
     )
 
-  return transforms
+  new_transforms = []
+  for a, b in zip(transforms, other_transforms, strict=True):
+    if a == b:
+      new_transforms.append(a)
+    elif mgpu.TileTransformAttr.isinstance(a) and mgpu.TileTransformAttr.isinstance(b):
+      a = mgpu.TileTransformAttr(a)
+      b = mgpu.TileTransformAttr(b)
+      if len(a.tiling) != len(b.tiling):
+        raise ValueError(f"Conflicting tile transforms {a} != {b}.")
+      new_tiling = []
+      for tile_a, tile_b in zip(a.tiling, b.tiling):
+        new_tiling.append(math.gcd(tile_a, tile_b))
+      new_transforms.append(mgpu.TileTransformAttr.get(new_tiling))
+    else:
+      raise NotImplementedError(f"Unsupported transforms {a} and {b}")
+
+  return ir.ArrayAttr.get(new_transforms)
 
 
 def _transforms_from_uses(op: ir.OpView) -> ir.Attribute | None:
@@ -102,7 +119,10 @@ def _transforms_from_uses(op: ir.OpView) -> ir.Attribute | None:
     transforms = _resolve_transforms(transforms, user_transforms)
   return transforms
 
-def infer_transforms_for_wgmma_ref(ref_ty: ir.MemRefType) -> ir.ArrayAttr:
+
+def _infer_transforms_for_wgmma_ref(
+    ref_ty: ir.MemRefType, max_swizzle: mgpu.SwizzlingMode
+) -> tuple[ir.ArrayAttr, mgpu.SwizzlingMode]:
   if len(ref_ty.shape) != 2:
     raise ValueError(f"Expected a 2D memref, got {ref_ty}")
 
@@ -119,9 +139,12 @@ def infer_transforms_for_wgmma_ref(ref_ty: ir.MemRefType) -> ir.ArrayAttr:
       mgpu.SwizzlingMode.k32ByteSwizzle,
       mgpu.SwizzlingMode.kNoSwizzle,
   ]:
+    if swizzle > max_swizzle:
+      continue
     swizzle_elems = swizzle // element_bytewidth
     if minor_dim % swizzle_elems == 0:
       minor_tiling = swizzle_elems
+      inferred_swizzle = swizzle
       break
   else:
     # No valid tile transform can be inferred.
@@ -131,19 +154,30 @@ def infer_transforms_for_wgmma_ref(ref_ty: ir.MemRefType) -> ir.ArrayAttr:
     tiling = (minor_tiling, major_tiling)
   else:
     tiling = (major_tiling, minor_tiling)
-  return ir.ArrayAttr.get([
-      mgpu.TileTransformAttr.get(tiling),
-      mgpu.SwizzleTransformAttr.get(minor_tiling * element_bytewidth),
-  ])
+  return (
+      ir.ArrayAttr.get([
+          mgpu.TileTransformAttr.get(tiling),
+          mgpu.SwizzleTransformAttr.get(minor_tiling * element_bytewidth),
+      ]),
+      inferred_swizzle,
+  )
 
 
 @partial(_add_transform_inference_rule, mgpu.WGMMAOp)
 def infer_wgmma_transforms(op: mgpu.WGMMAOp) -> OptionalTransforms:
-  b_transforms = infer_transforms_for_wgmma_ref(ir.MemRefType(op.b.type))
+  b_transforms, b_swizzle = _infer_transforms_for_wgmma_ref(
+      ir.MemRefType(op.b.type), max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
+  )
   if ir.MemRefType.isinstance(op.a.type):
-    a_transforms = infer_transforms_for_wgmma_ref(
-        cast(ir.MemRefType, op.a.type)
+    a_transforms, a_swizzle = _infer_transforms_for_wgmma_ref(
+        cast(ir.MemRefType, op.a.type), max_swizzle=b_swizzle
     )
+    if a_swizzle != b_swizzle:
+      # The swizzle for a and b has to match.
+      b_transforms, b_swizzle = _infer_transforms_for_wgmma_ref(
+          ir.MemRefType(op.b.type), max_swizzle=a_swizzle
+      )
+      assert a_swizzle == b_swizzle
     return [a_transforms, b_transforms], []
   return [b_transforms], []
 
@@ -186,12 +220,13 @@ def _infer_vector_load_store_transforms(
   transforms = inference_utils.value_transforms(op.base)
 
   if layout == fa.WGMMA_LAYOUT:
-    layout_transforms = infer_transforms_for_wgmma_ref(
-        ir.MemRefType(op.base.type)
+    layout_transforms, _ = _infer_transforms_for_wgmma_ref(
+        ir.MemRefType(op.base.type), max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
     )
   elif (
       layout == fa.WGMMA_ROW_LAYOUT
       or layout == fa.WGMMA_COL_LAYOUT
+      or layout == tcgen05.TMEM_NATIVE_LAYOUT
       or isinstance(layout, fa.WGStridedFragLayout)
       or isinstance(layout, fa.WGSplatFragLayout)
   ):
@@ -242,11 +277,8 @@ def _infer_memref_view_transforms(op: memref.ViewOp) -> OptionalTransforms:
 
 
 def _get_tile_and_swizzle_transforms(
-    transforms: ir.ArrayAttr | None,
+    transforms: ir.ArrayAttr,
 ) -> tuple[ir.Attribute, ir.Attribute]:
-  if transforms is None:
-    return
-
   if len(transforms) == 2:
     tile_transform, swizzle_transform = transforms
     if not (
@@ -280,7 +312,7 @@ def _infer_memref_subview_transforms(
   #  - We only propagate transforms if they consist of a single tile transform
   #    and a single swizzle transform.
   # TODO(bchetioui): implement more complex propagation rules.
-  tile_transform, _ = _get_tile_and_swizzle_transforms(transforms)
+  tile_transform, swizzle_transform = _get_tile_and_swizzle_transforms(transforms)
 
   # Check swizzle transform propagation.
   strides, _ = ir.MemRefType.get_strides_and_offset(op.source.type)
@@ -292,17 +324,41 @@ def _infer_memref_subview_transforms(
     )
 
   # Check tile transform propagation.
-  num_tiled_axes = len(mgpu.TileTransformAttr(tile_transform).tiling)
+  old_tiling = mgpu.TileTransformAttr(tile_transform).tiling
+  num_tiled_axes = len(old_tiling)
   last_n_dims = op.source.type.shape[-num_tiled_axes:]
   last_n_sizes = list(op.static_sizes)[-num_tiled_axes:]
-  for slice_size, dim_size in safe_zip(last_n_sizes, last_n_dims):
-    if slice_size != dim_size:
-      raise NotImplementedError(
-          "Tile transforms are only propagated if the tiled axes are not "
-          "sliced."
-      )
+  last_n_offsets = list(op.static_offsets)[-num_tiled_axes:]
 
-  return [transforms], [transforms]
+  if any(ir.ShapedType.is_dynamic_size(x) for x in last_n_sizes):
+    raise NotImplementedError(
+        "Subview transforms with dynamic sizes are not supported."
+    )
+
+  dynamic_index = 0
+  for i in range(len(last_n_offsets)):
+    if ir.ShapedType.is_dynamic_size(last_n_offsets[i]):
+      if utils.is_known_divisible(
+          op.offsets[dynamic_index], last_n_sizes[i]
+      ):
+        last_n_offsets[i] = last_n_sizes[i]
+      else:
+        # This will force a tiling of 1 along this axis. This is a safe choice
+        # (since we couldn't infer a better one) but might not be optimal.
+        last_n_offsets[i] = 1
+      dynamic_index += 1
+
+  new_tiling = [
+      math.gcd(*xs)
+      for xs in zip(
+          last_n_sizes, last_n_dims, last_n_offsets, old_tiling, strict=True
+      )
+  ]
+
+  new_transforms = ir.ArrayAttr.get(
+      [mgpu.TileTransformAttr.get(new_tiling), swizzle_transform]
+  )
+  return [new_transforms], [new_transforms]
 
 
 @partial(_add_transform_inference_rule, memref.TransposeOp)
@@ -353,6 +409,28 @@ def _infer_memref_cast_transforms(
   return [transforms], [transforms]
 
 
+@partial(_add_transform_inference_rule, mgpu.WithTransformsOp)
+def _infer_mgpu_with_transforms_transforms(
+    op: mgpu.WithTransformsOp,
+) -> OptionalTransforms:
+  # Do not change the manually provided transforms.
+  return [op.transforms], [op.transforms]
+
+
+@partial(_add_transform_inference_rule, mgpu.TmemAllocOp)
+def _infer_tmem_alloc_transforms(op: mgpu.TmemAllocOp) -> OptionalTransforms:
+  del op
+  return [], []
+
+
+@partial(_add_transform_inference_rule, mgpu.CustomPrimitiveOp)
+def _infer_mgpu_custom_primitive_transforms(
+    op: mgpu.CustomPrimitiveOp,
+) -> OptionalTransforms:
+  # Do not change the manually provided transforms.
+  return list(op.in_transforms), []
+
+
 def infer_transforms(module: ir.Module):
   """Infers transforms for the given module.
 
@@ -379,17 +457,20 @@ def infer_transforms(module: ir.Module):
 
     _set_transform_attributes(op, *maybe_transforms)
 
-  # It's enough to do a single backwards propagation (starting from vector
-  # users), and then a single forward propagation (to feed into the async loads
-  # and stores).
-  for op in module.body:
-    inference_utils.traverse_op(
-        op, inference_step, inference_utils.TraversalOrder.BACKWARDS
-    )
-  for op in module.body:
-    inference_utils.traverse_op(
-        op, inference_step, inference_utils.TraversalOrder.FORWARD
-    )
+  # We alternate a few backwards propagation (starting from vector users), and
+  # forward propagation (to feed into the async loads and stores) passes in
+  # order to enable more complex inference situations.
+  #
+  # TODO(bchetioui): Replace this with a more generic inference.
+  inference_passes = [
+      inference_utils.TraversalOrder.BACKWARDS,
+      inference_utils.TraversalOrder.FORWARD,
+      inference_utils.TraversalOrder.BACKWARDS,
+      inference_utils.TraversalOrder.FORWARD,
+  ]
+  for traversal_order in inference_passes:
+    for op in module.body:
+      inference_utils.traverse_op(op, inference_step, traversal_order)
 
   # All ops that should have transforms but have no transforms inferred so far
   # are assigned an empty sets of transforms. E.g., this happens in kernels with

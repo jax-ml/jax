@@ -16,7 +16,6 @@ import base64
 import struct
 import tempfile
 import threading
-import time
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -58,7 +57,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
         " requires NumPy 2.0.0 or later"
       )
 
-  def testColocatedCpuDevices(self):
+  def test_colocated_cpu_devices(self):
     mesh = jax.sharding.Mesh(
         np.array(jax.local_devices()[:1]).reshape((1, 1)), ("x", "y")
     )
@@ -72,7 +71,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     )
     self.assertEqual(cpu_mesh1, cpu_mesh2)
 
-  def testMakeColocatedPythonProgram(self):
+  def test_make_colocated_python_program(self):
     def add_one(x):
       return x + 1
 
@@ -86,7 +85,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     )
     del program
 
-  def testSimpleFunction(self):
+  def test_simple_function(self):
     @colocated_python.colocated_python
     def add_one(x):
       return x + 1
@@ -106,7 +105,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       self.assertEqual(out, np.array(2))
       self.assertEqual(count(), 1)
 
-  def testSimpleFunctionWithTree(self):
+  def test_simple_function_with_tree(self):
     @colocated_python.colocated_python
     def add_one(x):
       return jax.tree.map(lambda x: x + 1, x)
@@ -126,7 +125,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
       self.assertEqual(count(), 1)
 
-  def testEmptyInputFailsWithoutSpecialization(self):
+  def test_empty_input_fails_without_specialization(self):
     @colocated_python.colocated_python
     def make_zero():
       return jnp.array(0)
@@ -138,7 +137,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     ):
       _ = make_zero()
 
-  def testEmptyInputWithDevicesSpecialization(self):
+  def test_empty_input_with_devices_specialization(self):
     @colocated_python.colocated_python
     def make_zero():
       return jnp.array(0)
@@ -157,7 +156,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       self.assertEqual(out, np.array(0))
       self.assertEqual(count(), 1)
 
-  def testInputPolymorphismWithoutOutSpecsFn(self):
+  def test_input_polymorphism_without_out_specs_fn(self):
     @colocated_python.colocated_python
     def add_one(x):
       return jax.tree.map(lambda x: x + 1, x)
@@ -191,7 +190,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
       self.assertEqual(count(), 2)
 
-  def testInputPolymorphismAllowedWithOutSpecsFn(self):
+  def test_input_polymorphism_allowed_with_out_specs_fn(self):
     @colocated_python.colocated_python
     def add_one(x):
       return jax.tree.map(lambda x: x + 1, x)
@@ -230,81 +229,107 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       ("on_main_thread", True),
       ("on_non_main_thread", False),
   )
-  def testSequentialExecution(self, on_main_thread: bool):
+  # Cannot run concurrently with other tests using `colocated_python._testing_global_state`.
+  @jtu.thread_unsafe_test()
+  def test_sequential_execution(self, on_main_thread: bool):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     x = np.array(1)
     x = jax.device_put(x, cpu_devices[0])
-    # Make sure that this input array is ready for use by the colocated Python
-    # function and does not disrupt elapsed time measurement.
-    jax.block_until_ready(x)
 
     @colocated_python.colocated_python
-    def sleep(x: jax.Array) -> jax.Array:
-      time.sleep(5)
+    def func0(x: jax.Array) -> jax.Array:
+      colocated_python._testing_global_state = 100
       return x
 
-    # Specify out_specs_fn so that all executions are asynchronously dispatched.
-    sleep = sleep.specialize(out_specs_fn=lambda x: x)
+    @colocated_python.colocated_python
+    def func1(x: jax.Array) -> jax.Array:
+      assert "_testing_global_state" in colocated_python.__dict__
+      assert colocated_python._testing_global_state == 100
+      colocated_python._testing_global_state += 1
+      return x
 
-    def sleep_twice_and_wait(x: jax.Array) -> None:
-      _ = sleep(x)
-      jax.block_until_ready(sleep(x))
+    @colocated_python.colocated_python
+    def func2(x: jax.Array) -> jax.Array:
+      assert "_testing_global_state" in colocated_python.__dict__
+      assert colocated_python._testing_global_state == 101
+      return x
 
-    start_time = time.time()
+    @colocated_python.colocated_python
+    def cleanup(x: jax.Array) -> jax.Array:
+      if "_testing_global_state" in colocated_python.__dict__:
+        del colocated_python._testing_global_state
+      return x
 
-    # Two executions of `sleep` within `sleep_twice_and_wait` should run
-    # sequentially.
-    if on_main_thread:
-      sleep_twice_and_wait(x)
-    else:
-      t = threading.Thread(target=sleep_twice_and_wait, args=(x,))
-      t.start()
-      t.join()
+    # Specify out_specs_fn so that their executions are asynchronously
+    # dispatched.
+    func0 = func0.specialize(out_specs_fn=lambda x: x)
+    func1 = func1.specialize(out_specs_fn=lambda x: x)
+    func2 = func2.specialize(out_specs_fn=lambda x: x)
 
-    elapsed_time = time.time() - start_time
+    def calls(x: jax.Array) -> None:
+      # No explicit blocking before making the next call.
+      func0(x)
+      func1(x)
+      jax.block_until_ready(func2(x))
 
-    # If sequential execution did not happen, elapsed time typically will be
-    # around 5 seconds.
-    self.assertGreaterEqual(elapsed_time, 10)
+    try:
+      # Executions in `calls` should run sequentially.
+      if on_main_thread:
+        calls(x)
+      else:
+        t = threading.Thread(target=calls, args=(x,))
+        t.start()
+        t.join()
+      # Executions should succeed without an error.
+    finally:
+      jax.block_until_ready(cleanup(x))
 
-  def testConcurrentExecution(self):
+  # Cannot run concurrently with other tests using `colocated_python._testing_global_state`.
+  @jtu.thread_unsafe_test()
+  def test_concurrent_execution(self):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     x = np.array(1)
     x = jax.device_put(x, cpu_devices[0])
-    # Make sure that this input array is ready for use by the colocated Python
-    # function and does not disrupt elapsed time measurement.
-    jax.block_until_ready(x)
 
     @colocated_python.colocated_python
-    def sleep(x: jax.Array) -> jax.Array:
-      time.sleep(5)
+    def init(x: jax.Array) -> jax.Array:
+      colocated_python._testing_global_state = threading.Barrier(3)
       return x
 
-    # Specify out_specs_fn so that all executions are asynchronously dispatched.
-    sleep = sleep.specialize(out_specs_fn=lambda x: x)
+    @colocated_python.colocated_python
+    def func(x: jax.Array) -> jax.Array:
+      assert "_testing_global_state" in colocated_python.__dict__
+      colocated_python._testing_global_state.wait(timeout=5)
+      return x
 
-    def sleep_and_wait(x: jax.Array) -> None:
-      jax.block_until_ready(sleep(x))
+    @colocated_python.colocated_python
+    def cleanup(x: jax.Array) -> jax.Array:
+      if "_testing_global_state" in colocated_python.__dict__:
+        del colocated_python._testing_global_state
+      return x
 
-    start_time = time.time()
+    # Specify out_specs_fn so that their executions are asynchronously
+    # dispatched.
+    func = func.specialize(out_specs_fn=lambda x: x)
 
-    # All three executions of `sleep_and_wait` should run concurrently.
-    t1 = threading.Thread(target=sleep_and_wait, args=(x,))
-    t2 = threading.Thread(target=sleep_and_wait, args=(x,))
-    t1.start()
-    t2.start()
-    sleep_and_wait(x)
-    t1.join()
-    t2.join()
+    try:
+      jax.block_until_ready(init(x))
 
-    elapsed_time = time.time() - start_time
+      # All func calls should run concurrently and enter/exit the barrier.
+      t1 = threading.Thread(target=func, args=(x,))
+      t2 = threading.Thread(target=func, args=(x,))
+      t3 = threading.Thread(target=func, args=(x,))
+      t1.start()
+      t2.start()
+      t3.start()
+      t1.join()
+      t2.join()
+      t3.join()
+      # Executions should succeed without a deadlock.
+    finally:
+      jax.block_until_ready(cleanup(x))
 
-    self.assertGreaterEqual(elapsed_time, 5)
-    # If concurrent execution did not happen, elapsed time typically will be
-    # around 15 seconds.
-    self.assertLess(elapsed_time, 10)
-
-  def testInputsWithDifferentDeviceOrders(self):
+  def test_inputs_with_different_device_orders(self):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())[:2]
     if len(cpu_devices) < 2:
       self.skipTest("Not enough CPU devices")
@@ -346,7 +371,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     out = jax.device_get(out)
     np.testing.assert_equal(out, np.array([2 + 4, 0 + 8]))
 
-  def testModuleVariableAccess(self):
+  def test_module_variable_access(self):
     try:
       # The following pattern of storing and accessing non-serialized state in
       # the Python module is discouraged for storing user-defined state.
@@ -387,7 +412,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       if "_testing_global_state" in colocated_python.__dict__:
         del colocated_python._testing_global_state
 
-  def testStringProcessing(self):
+  def test_string_processing(self):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     if len(cpu_devices) < 2:
       self.skipTest(f"Need at least two CPU devices, got: {len(cpu_devices)}")
@@ -428,7 +453,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
         ),
     )
 
-  def testBinaryDataProcessing(self):
+  def test_binary_data_processing(self):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     if len(cpu_devices) < 1:
       self.skipTest("Need at least one CPU devices")
@@ -470,7 +495,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     self.assertEqual(out_ints[0], 1002)
     self.assertEqual(out_ints[1], 1003)
 
-  def testDetectInvalidMeshDevice(self):
+  def test_detect_invalid_mesh_device(self):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     if jax.local_devices()[0].id == cpu_devices[0].id:
       self.skipTest(
@@ -491,9 +516,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       make_zero = make_zero.specialize(devices=cpu_devices)
       jax.block_until_ready(make_zero())
 
-  def testObjectLifecycle(self):
+  # Cannot run concurrently with other tests using `colocated_python._testing_global_state`.
+  @jtu.thread_unsafe_test()
+  def test_object_lifecycle(self):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     sharding = jax.sharding.SingleDeviceSharding(cpu_devices[0])
+    x = jax.device_put(np.array(0), sharding)
 
     @colocated_python.colocated_python_class
     class Object:
@@ -520,15 +548,15 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       return jax.device_put(np.array(destroyed), sharding)
 
     @colocated_python.colocated_python
-    def cleanup():
+    def cleanup(x: jax.Array) -> jax.Array:
       if "_testing_initialized" in colocated_python.__dict__:
         del colocated_python._testing_initialized
       if "_testing_destroyed" in colocated_python.__dict__:
         del colocated_python._testing_destroyed
+      return x
 
     check_initialized = check_initialized.specialize(devices=cpu_devices[:1])
     check_destroyed = check_destroyed.specialize(devices=cpu_devices[:1])
-    cleanup = cleanup.specialize(devices=cpu_devices[:1])
 
     try:
       # Object initialization is deferred until the first method call.
@@ -542,7 +570,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       self.assertEqual(jax.device_get(check_initialized()), False)
       self.assertEqual(jax.device_get(check_destroyed()), False)
     finally:
-      cleanup()
+      jax.block_until_ready(cleanup(x))
 
     try:
       # Object initialization is deferred until the first method call.
@@ -561,9 +589,9 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       self.assertEqual(jax.device_get(check_initialized()), True)
       self.assertEqual(jax.device_get(check_destroyed()), True)
     finally:
-      cleanup()
+      jax.block_until_ready(cleanup(x))
 
-  def testStatefulObject(self):
+  def test_stateful_object(self):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
 
     @colocated_python.colocated_python_class
@@ -595,7 +623,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     out = jax.device_get(value.fetch(x))
     self.assertEqual(out, np.array(7))
 
-  def testObjectWithCapturedSharding(self):
+  def test_object_with_captured_sharding(self):
     cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
     if len(cpu_devices) < 2:
       self.skipTest(f"Need at least two CPU devices, got: {len(cpu_devices)}")

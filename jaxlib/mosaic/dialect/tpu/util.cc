@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -25,6 +26,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -64,6 +66,47 @@ SmallVector<int64_t> ComputeTileStrides(absl::Span<const int64_t> shape,
     }
   }
   return tile_strides;
+}
+
+FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
+    Operation *op, ArrayRef<int64_t> source_shape,
+    ArrayRef<int64_t> target_shape) {
+  SmallVector<int> squeezed;
+  int source_index = source_shape.size() - 1;
+  int target_index = target_shape.size() - 1;
+
+  while (source_index >= 0 || target_index >= 0) {
+    int64_t target_dim = (target_index >= 0) ? target_shape[target_index] : -1;
+    if (source_index < 0) {
+      op->emitError() << llvm::formatv(
+          "Target shape is not valid. Source: {0}, Target: {1}.",
+          shapeToString(source_shape), shapeToString(target_shape));
+      return failure();
+    }
+    int64_t source_dim = source_shape[source_index];
+    if (source_dim == target_dim) {
+      source_index--;
+      target_index--;
+    } else {
+      if (source_dim != 1) {
+        op->emitError() << llvm::formatv(
+            "Target shape is not valid. Source: {0}, Target: {1}.",
+            shapeToString(source_shape), shapeToString(target_shape));
+        return failure();
+      }
+      squeezed.push_back(source_index);
+      source_index--;
+    }
+  }
+
+  if (source_index != -1 || target_index != -1) {
+    op->emitError() << "Shape mismatch after traversal. Source shape: "
+                    << shapeToString(source_shape)
+                    << ", target shape: " << shapeToString(target_shape);
+    return failure();
+  }
+  std::reverse(squeezed.begin(), squeezed.end());
+  return squeezed;
 }
 
 std::optional<std::pair<bool, bool>> isTransposedMatmul(
@@ -224,10 +267,9 @@ FailureOr<SmallVector<Layout>> getOutLayouts(
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> out_layouts,
                              getLayoutArrayFromAttr(op.getAttr("out_layout")));
   if (out_layouts.size() != op.getNumResults()) {
-    return op.emitOpError("out_layout size does not match number of results")
-           << " results: " << op.getNumResults()
-           << " vs layout size: " << out_layouts.size() << " for "
-           << op.getName();
+    return op.emitOpError("out_layout size (")
+           << out_layouts.size() << ") does not match number of results ("
+           << op.getNumResults() << ")";
   }
   for (const auto [l, res] : llvm::zip_equal(out_layouts, op.getResults())) {
     if (!layoutIsValidForValue(l, res, target_shape)) {
@@ -242,7 +284,9 @@ FailureOr<SmallVector<Layout>> getInLayouts(
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> in_layouts,
                              getLayoutArrayFromAttr(op.getAttr("in_layout")));
   if (in_layouts.size() != op.getNumOperands()) {
-    return op.emitOpError("in_layout size does not match number of operands");
+    return op.emitOpError("in_layout size (")
+           << in_layouts.size() << ") does not match number of operands ("
+           << op.getNumOperands() << ")";
   }
   for (const auto [l, operand] :
        llvm::zip_equal(in_layouts, op.getOperands())) {
@@ -300,18 +344,6 @@ std::optional<int64_t> getIntConst(Value v) {
     }
   }
   return std::nullopt;
-}
-
-bool canFoldMinorDimsToSize(ArrayRef<int64_t> shape, int64_t target_size) {
-  CHECK_GE(shape.size(), 2);
-  int64_t product = shape.back();
-  for (int i = shape.size() - 2; i >= 1; --i) {
-    product *= shape[i];
-    if (product >= target_size) {
-      break;
-    }
-  }
-  return product == target_size;
 }
 
 SmallVector<Operation *> getNontrivialTransitiveUsers(Value v) {

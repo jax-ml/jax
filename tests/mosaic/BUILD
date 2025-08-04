@@ -35,7 +35,7 @@ jax_multiplatform_test(
     enable_backends = [],
     enable_configs = ["gpu_h100"],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
-    shard_count = 16,
+    shard_count = 8,
     tags = [
         "noasan",  # Times out.
     ],
@@ -45,6 +45,21 @@ jax_multiplatform_test(
         "absl/testing",
         "numpy",
         "hypothesis",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "gpu_torch_test",
+    srcs = ["gpu_torch_test.py"],
+    enable_backends = [],
+    enable_configs = ["gpu_h100"],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    deps = [
+        "//jax:mosaic_gpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+        "torch",
     ]),
 )
 
@@ -87,6 +102,16 @@ jax_multiplatform_test(
 jax_py_test(
     name = "gpu_dialect_test",
     srcs = ["gpu_dialect_test.py"],
+    deps = [
+        "//jax",
+        "//jax:mosaic_gpu",
+        "//jax:test_util",
+    ] + py_deps("absl/testing"),
+)
+
+jax_py_test(
+    name = "gpu_equations_test",
+    srcs = ["gpu_equations_test.py"],
     deps = [
         "//jax",
         "//jax:mosaic_gpu",
@@ -157,6 +182,7 @@ jax_multiplatform_test(
     srcs = ["flash_attention_test.py"],
     enable_backends = [],
     enable_configs = ["gpu_h100"],
+    shard_count = 8,
     deps = [
         "//jax:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:flash_attention",

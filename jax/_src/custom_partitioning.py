@@ -21,7 +21,8 @@ from __future__ import annotations
 
 from functools import partial
 import inspect
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 import weakref
 
 import numpy as np
@@ -484,17 +485,17 @@ class custom_partitioning:
           args,
           require_static_args_hashable=False,
       )
-      static_args = [args[i] for i in self.static_argnums]
+      static_args = tuple(args[i] for i in self.static_argnums)
       _check_for_tracers(static_args)
     else:
-      static_args = []
+      static_args = ()
       f_, dyn_args = lu.wrap_init(self.fun, debug_info=debug), args
     args_flat, in_tree = tree_util.tree_flatten(dyn_args)
     flat_fun, out_tree = api_util.flatten_fun_nokwargs(f_, in_tree)
     in_avals = [core.get_aval(x) for x in args_flat]
     mesh = mesh_lib.thread_resources.env.physical_mesh
     with core.extend_axis_env_nd(mesh.shape.items()):
-      jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
     assert not len(consts)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
 
@@ -567,7 +568,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       return hlo_sharding
     if mesh.empty or not decode_shardings:
       assert devices is not None
-      return sharding_impls._op_sharding_to_pos_sharding(hlo_sharding, devices)
+      return sharding_impls.GSPMDSharding(devices, hlo_sharding)
     pspec = sharding_impls.parse_flatten_op_sharding(
         hlo_sharding, mesh)[0]
     pspec = sharding_impls.PartitionSpec(*pspec, *((None,) * (ndim - len(pspec))))

@@ -13,22 +13,27 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
+#include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/FormatVariadic.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/CommonFolders.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -38,6 +43,8 @@ limitations under the License.
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Region.h"
+#include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
@@ -47,6 +54,33 @@ limitations under the License.
 
 namespace mlir {
 namespace tpu {
+
+namespace {
+
+llvm::RoundingMode convertTpuRoundingModeToLLVMIR(tpu::RoundingMode mode) {
+  switch (mode) {
+    case tpu::RoundingMode::kToNearestEven:
+      return llvm::RoundingMode::NearestTiesToEven;
+    case tpu::RoundingMode::kTowardsZero:
+      return llvm::RoundingMode::TowardZero;
+  }
+}
+
+// Attempts to convert `sourceValue` to an APFloat value with
+// `targetSemantics` and `roundingMode`, without any information loss.
+static FailureOr<APFloat> convertFloatValue(
+    APFloat sourceValue, const llvm::fltSemantics &targetSemantics,
+    llvm::RoundingMode roundingMode = llvm::RoundingMode::NearestTiesToEven) {
+  bool losesInfo = false;
+  auto status = sourceValue.convert(targetSemantics, roundingMode, &losesInfo);
+  if (losesInfo || status != APFloat::opOK) {
+    return failure();
+  }
+
+  return sourceValue;
+}
+
+}  // namespace
 
 LogicalResult UnrollVectorsOp::canonicalize(UnrollVectorsOp op,
                                             PatternRewriter &rewriter) {
@@ -99,6 +133,7 @@ LogicalResult BitcastOp::verify() {
 LogicalResult MemRefSliceOp::verify() {
   auto source_type = getMemRefType(getMemRef());
   auto target_type = getType();
+  auto source_layout = source_type.getLayout();
   auto target_layout = target_type.getLayout();
   auto target_memory_space = target_type.getMemorySpace();
   auto indices = getBaseIdx();
@@ -132,12 +167,42 @@ LogicalResult MemRefSliceOp::verify() {
     return emitOpError(
         "Memory spaces must match if the target memory space is provided.");
   }
-  bool is_target_layout_identity_map =
-      isa<AffineMapAttr>(target_layout) && target_layout.isIdentity();
-  if (!is_target_layout_identity_map &&
-      target_type.getLayout() != source_type.getLayout()) {
-    return emitOpError(
-        "Layouts must match if the target layout is not an identity map.");
+  if (isa<TiledLayoutAttr>(source_layout) &&
+      !isa<TiledLayoutAttr>(target_layout)) {
+    // TODO(slebedev): Remove this special-case once we move layout propagation
+    // to the infer-memref-layout pass.
+  } else if (isa<StridedLayoutAttr>(target_layout)) {
+    SmallVector<int64_t> source_strides;
+    int64_t source_offset;
+    if (failed(
+            source_type.getStridesAndOffset(source_strides, source_offset))) {
+      return failure();
+    }
+    int64_t target_offset = source_offset;
+    if (target_offset != ShapedType::kDynamic) {
+      for (auto [base_idx, source_stride] :
+           llvm::zip(getBaseIdx(), source_strides)) {
+        if (auto idx = getConstantIntValue(base_idx)) {
+          target_offset += *idx * source_stride;
+        } else {
+          target_offset = ShapedType::kDynamic;
+          break;
+        }
+      }
+    }
+    auto expected_layout =
+        StridedLayoutAttr::get(getContext(), target_offset, source_strides);
+    if (target_layout != expected_layout) {
+      return emitOpError("Layout mismatch: got ")
+             << target_layout << ", expected " << expected_layout << ".";
+    }
+  } else {
+    bool is_target_layout_identity_map =
+        isa<AffineMapAttr>(target_layout) && target_layout.isIdentity();
+    if (!is_target_layout_identity_map && target_layout != source_layout) {
+      return emitOpError(
+          "Layouts must match if the target layout is not an identity map.");
+    }
   }
   if (getDynamicSizes().size() != target_type.getNumDynamicDims()) {
     return emitOpError(
@@ -161,53 +226,10 @@ LogicalResult MemRefSliceOp::canonicalize(MemRefSliceOp op,
       op.getResult().getType().getShape(), layout_ty.getElementType(),
       layout_ty.getLayout(), layout_ty.getMemorySpace());
   auto slice =
-      rewriter.create<MemRefSliceOp>(op.getLoc(), new_result_type, layout_ref,
-                                     op.getBaseIdx(), op.getDynamicSizes());
+      MemRefSliceOp::create(rewriter, op.getLoc(), new_result_type, layout_ref,
+                            op.getBaseIdx(), op.getDynamicSizes());
   rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), slice);
   return success();
-}
-
-// Computes the dimensions that were squeezed from the source shape to match the
-// target shape. Returns the dimensions in increasing order.
-FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
-    Operation *op, ArrayRef<int64_t> source_shape,
-    ArrayRef<int64_t> target_shape) {
-  SmallVector<int> squeezed;
-  int source_index = source_shape.size() - 1;
-  int target_index = target_shape.size() - 1;
-
-  while (source_index >= 0 || target_index >= 0) {
-    int64_t target_dim = (target_index >= 0) ? target_shape[target_index] : -1;
-    if (source_index < 0) {
-      op->emitError() << llvm::formatv(
-          "Target shape is not valid. Source: {0}, Target: {1}.",
-          shapeToString(source_shape), shapeToString(target_shape));
-      return failure();
-    }
-    int64_t source_dim = source_shape[source_index];
-    if (source_dim == target_dim) {
-      source_index--;
-      target_index--;
-    } else {
-      if (source_dim != 1) {
-        op->emitError() << llvm::formatv(
-            "Target shape is not valid. Source: {0}, Target: {1}.",
-            shapeToString(source_shape), shapeToString(target_shape));
-        return failure();
-      }
-      squeezed.push_back(source_index);
-      source_index--;
-    }
-  }
-
-  if (source_index != -1 || target_index != -1) {
-    op->emitError() << "Shape mismatch after traversal. Source shape: "
-                    << shapeToString(source_shape)
-                    << ", target shape: " << shapeToString(target_shape);
-    return failure();
-  }
-  std::reverse(squeezed.begin(), squeezed.end());
-  return squeezed;
 }
 
 LogicalResult MemRefSqueezeOp::verify() {
@@ -229,6 +251,33 @@ LogicalResult MemRefSqueezeOp::verify() {
       computeSqueezedDimsChecked(*this, source_shape, target_shape);
   if (failed(squeezed_or)) {
     return failure();
+  }
+
+  auto source_layout = source_type.getLayout();
+  auto target_layout = target_type.getLayout();
+  if (isa<TiledLayoutAttr>(source_layout) &&
+      !isa<TiledLayoutAttr>(target_layout)) {
+    // TODO(slebedev): Remove this special-case once we move layout propagation
+    // to the infer-memref-layout pass.
+  } else if (isa<StridedLayoutAttr>(target_layout)) {
+    SmallVector<int64_t> source_strides;
+    int64_t source_offset;
+    if (failed(
+            source_type.getStridesAndOffset(source_strides, source_offset))) {
+      return failure();
+    }
+    SmallVector<int64_t> target_strides;
+    for (auto [i, stride] : llvm::enumerate(source_strides)) {
+      if (!llvm::is_contained(*squeezed_or, i)) {
+        target_strides.push_back(stride);
+      }
+    }
+    auto expected_layout =
+        StridedLayoutAttr::get(getContext(), source_offset, target_strides);
+    if (target_layout != expected_layout) {
+      return emitOpError("Layout mismatch: got ")
+             << target_layout << ", expected " << expected_layout << ".";
+    }
   }
 
   auto erase_layout_op = getInput().getDefiningOp<tpu::EraseLayoutOp>();
@@ -339,7 +388,7 @@ LogicalResult MemRefSqueezeOp::canonicalize(MemRefSqueezeOp op,
                                 new_layout, layout_ty.getMemorySpace());
 
   auto new_squeeze =
-      rewriter.create<MemRefSqueezeOp>(op.getLoc(), new_ty, layout_ref);
+      MemRefSqueezeOp::create(rewriter, op.getLoc(), new_ty, layout_ref);
   rewriter.replaceOpWithNewOp<tpu::EraseLayoutOp>(op, target_type, new_squeeze);
   return success();
 }
@@ -510,7 +559,7 @@ LogicalResult MemRefReshapeOp::canonicalize(MemRefReshapeOp op,
       MemRefType::get(dst_ty.getShape(), dst_ty.getElementType(), new_layout,
                       layout_ty.getMemorySpace());
   auto reshape =
-      rewriter.create<MemRefReshapeOp>(op.getLoc(), new_result_ty, layout_ref);
+      MemRefReshapeOp::create(rewriter, op.getLoc(), new_result_ty, layout_ref);
   rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), reshape);
   return success();
 }
@@ -605,7 +654,7 @@ LogicalResult MemRefBitcastOp::canonicalize(MemRefBitcastOp op,
       MemRefType::get(dst_ty.getShape(), dst_ty.getElementType(), new_layout,
                       layout_ty.getMemorySpace());
   auto bitcast =
-      rewriter.create<MemRefBitcastOp>(op.getLoc(), new_result_ty, layout_ref);
+      MemRefBitcastOp::create(rewriter, op.getLoc(), new_result_ty, layout_ref);
   rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), bitcast);
   return success();
 }
@@ -744,6 +793,21 @@ LogicalResult RotateOp::verify() { return verifyRotateOp<RotateOp>(*this); }
 
 LogicalResult DynamicRotateOp::verify() {
   return verifyRotateOp<DynamicRotateOp>(*this);
+}
+
+LogicalResult IotaOp::verify() {
+  const int64_t rank = getType().getRank();
+  SmallVector<bool> seen(rank, false);
+  for (const int32_t dim : getDimensions()) {
+    if (dim < 0 || dim >= getType().getRank()) {
+      return emitOpError("Invalid dimension: ") << dim;
+    }
+    if (seen[dim]) {
+      return emitOpError("Dimensions must be unique");
+    }
+    seen[dim] = true;
+  }
+  return success();
 }
 
 // a + matmul(l, r, 0) == matmul(l, r, a)
@@ -954,16 +1018,6 @@ LogicalResult MatmulOp::verify() {
     // position 0. Future extensions to this will be to:
     // 1. Support multiple batch dims
     // 2. Support batch dims in any position in the output dim order
-    if (lhs_non_contracting_dims.size() != 1) {
-      emitOpError(
-          "Not implemented: lhs non contracting dims must be of size 1");
-      return failure();
-    }
-    if (rhs_non_contracting_dims.size() != 1) {
-      emitOpError(
-          "Not implemented: rhs non contracting dims must be of size 1");
-      return failure();
-    }
 
     // A bit long winded, but the invariants we enforce below are:
     // 1. The output order idx is 0 (lhs) or 1 (rhs)
@@ -1144,11 +1198,20 @@ LogicalResult EnqueueDMAOp::verify() {
   if (target_sem_type.getRank() != 0) {
     return emitOpError("DMA target semaphore must be rank 0");
   }
+  auto source_ty = getMemRefType(getSource());
+  auto target_ty = getMemRefType(getTarget());
+  if (source_ty.getElementType() != target_ty.getElementType()) {
+    return emitOpError("DMA source and target element type mismatch");
+  }
+  if (source_ty.getShape() != target_ty.getShape()) {
+    return emitOpError("DMA source and target shape mismatch.");
+  }
+
   if (getDeviceId() || getCoreId()) {
     if (!getSourceSemaphore()) {
       return emitOpError(
-          "DMA source semaphore must be specified when "
-          "device_id or core_id is specified");
+          "DMA source semaphore must be specified when device_id or core_id is "
+          "specified");
     }
   }
   bool is_remote = getDeviceId() || getCoreId();
@@ -1172,23 +1235,226 @@ LogicalResult EnqueueDMAOp::verify() {
   return success();
 }
 
-// TODO(mvoz): Remove once a month has passed. b/395630795
+LogicalResult EnqueueIndirectDMAOp::verifyGather(
+    MemRefType operand_ty, ArrayRef<int64_t> offsets_shape,
+    MemRefType result_ty) {
+  // We've already thrown an error if the target is not VMEM. so this is just a
+  // sanity check.
+  CHECK(HasMemorySpace(result_ty, MemorySpace::kVmem));
+  uint64_t offsets_rank = offsets_shape.size();
+  // Slice [o0, .., on] out of [o0, .., on, s0, .., sm].
+  ArrayRef<int64_t> result_offset_dims =
+      result_ty.getShape().take_front(offsets_rank);
+  // Slice [s0, .., sm] out of [o0, .., on, s0, .., sm].
+  ArrayRef<int64_t> result_slice_dims =
+      result_ty.getShape().drop_front(offsets_rank);
+  // Slice [s0, .., sm] out of [z0, .., zn, s0, .., sm].
+  ArrayRef<int64_t> operand_slice_dims =
+      operand_ty.getShape().drop_front(offsets_rank);
+  uint64_t slice_rank = operand_slice_dims.size();
+
+  const std::string result_shape_str =
+      absl::StrJoin(result_ty.getShape(), ", ");
+
+  // Make sure that the output shape is such that there is one output slice per
+  // offset.
+  // offsets shape : [o0, .., on]
+  // result shape  : [o'0, .., o'n, s0, .., sm]
+  // [o0, .., on] == [o'0, .., o'n]
+  if (!absl::c_equal(offsets_shape, result_offset_dims)) {
+    return emitOpError("Offsets shape (")
+           << absl::StrJoin(offsets_shape, ", ")
+           << ") must match the majormost dimensions of the target (gather "
+              "result) shape ("
+           << result_shape_str << ")";
+  }
+
+  // At each offset, we are copying an ND slice of data. Make sure that the
+  // slice shape is the same in the operand and the output for the gather, and
+  // in the updates and the operand for the scatter.
+  // Operand shape : [z0, .., zn, s0, .., sm]
+  // Result shape :  [o0, .., on, s'0, .., s'm]
+  // [s0, .., sm] == [s'0, .., s'm]
+  if (!absl::c_equal(operand_slice_dims, result_slice_dims)) {
+    const std::string plural = slice_rank == 1 ? "" : "s";
+    return emitOpError(absl::StrFormat(
+        "%d minormost dimension%s of the source (gather operand) shape (%s) "
+        "must match the minormost dimension%s of the target (gather result) "
+        "shape (%s)",
+        slice_rank, plural, absl::StrJoin(operand_ty.getShape(), ", "), plural,
+        result_shape_str));
+  }
+  return success();
+}
+
+LogicalResult EnqueueIndirectDMAOp::verifyScatter(
+    MemRefType updates_ty, ArrayRef<int64_t> offsets_shape,
+    MemRefType operand_ty) {
+  // We've already thrown an error if the source is not VMEM. so this is just a
+  // sanity check.
+  CHECK(HasMemorySpace(updates_ty, MemorySpace::kVmem));
+  uint64_t offsets_rank = offsets_shape.size();
+  // Slice [o0, .., on] out of [o0, .., on, s0, .., sm].
+  ArrayRef<int64_t> updates_offset_dims =
+      updates_ty.getShape().take_front(offsets_rank);
+  // Slice [s0, .., sm] out of [o0, .., on, s0, .., sm].
+  ArrayRef<int64_t> updates_slice_dims =
+      updates_ty.getShape().drop_front(offsets_rank);
+  // Slice [s0, .., sm] out of [z0, .., zn, s0, .., sm].
+  ArrayRef<int64_t> operand_slice_dims =
+      operand_ty.getShape().drop_front(offsets_rank);
+  uint64_t slice_rank = operand_slice_dims.size();
+
+  const std::string updates_shape_str =
+      absl::StrJoin(updates_ty.getShape(), ", ");
+
+  // Make sure that there is one slice of updates per offset
+  // offsets shape : [o0, .., on]
+  // updates shape : [o'0, .., o'n, s0, .., sm]
+  // [o0, .., on] == [o'0, .., o'n]
+  if (!absl::c_equal(offsets_shape, updates_offset_dims)) {
+    return emitOpError("Offsets shape (")
+           << absl::StrJoin(offsets_shape, ", ")
+           << ") must match the majormost dimensions of the source "
+              "(scatter updates) shape ("
+           << updates_shape_str << ")";
+  }
+
+  // At each offset, we are copying an ND slice of data. Make sure that the
+  // slice shape is the same in the operand and the output for the gather, and
+  // in the updates and the operand for the scatter.
+  // Updates shape : [o0, .., on, s0, .., sm]
+  // Operand shape : [z0, .., zn, s'0, .., s'm]
+  // [s0, .., sm] == [s'0, .., s'm]
+  if (!absl::c_equal(operand_slice_dims, updates_slice_dims)) {
+    const std::string plural = slice_rank == 1 ? "" : "s";
+    return emitOpError(absl::StrFormat(
+        "%d minormost dimension%s of the source (scatter updates) shape (%s) "
+        "must match the minormost dimension%s of the target (scatter operand) "
+        "shape (%s)",
+        slice_rank, plural, updates_shape_str, plural,
+        absl::StrJoin(operand_ty.getShape(), ", ")));
+  }
+  return success();
+}
+
+namespace {
+bool hasHbmOrVmemSharedMemorySpace(MemRefType ty) {
+  return HasMemorySpace(ty, MemorySpace::kHbm) ||
+         HasMemorySpace(ty, MemorySpace::kVmemShared);
+}
+
+FailureOr<bool> isGather(Operation& op, Value source, Value target) {
+  const MemRefType source_ty = getMemRefType(source);
+  const MemRefType target_ty = getMemRefType(target);
+  if (hasHbmOrVmemSharedMemorySpace(source_ty) &&
+      HasMemorySpace(target_ty, MemorySpace::kVmem)) {
+    return true;
+  }
+  if (HasMemorySpace(source_ty, MemorySpace::kVmem) &&
+      hasHbmOrVmemSharedMemorySpace(target_ty)) {
+    return false;
+  }
+  return op.emitOpError(
+      "The transfer must be between HBM and VMEM, or between VMEM_SHARED and "
+      "VMEM");
+}
+}  // namespace
+
+FailureOr<bool> EnqueueIndirectDMAOp::isGather() {
+  return mlir::tpu::isGather(*getOperation(), getSource(), getTarget());
+}
+
+LogicalResult EnqueueIndirectDMAOp::verify() {
+  FailureOr<CoreType> issuing_core = GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core)) {
+    return issuing_core;
+  }
+  if (issuing_core != CoreType::kScVectorSubcore) {
+    return emitOpError(
+        "Enqueue indirect DMA is supported only on the SC vector subcore");
+  }
+
+  const MemRefType source_ty = getMemRefType(getSource());
+  const MemRefType target_ty = getMemRefType(getTarget());
+
+  if (source_ty.getElementType() != target_ty.getElementType()) {
+    return emitOpError("Source and target element type mismatch");
+  }
+
+  FAILUREOR_ASSIGN_OR_RETURN(bool is_gather, isGather());
+
+  const Value offsets = getOffsets();
+  ArrayRef<int64_t> offsets_shape;
+  if (auto offsets_ty = dyn_cast<MemRefType>(offsets.getType());
+      offsets_ty != nullptr) {
+    if (!HasMemorySpace(offsets_ty, MemorySpace::kVmem)) {
+      return emitOpError("Offsets memref must be in VMEM");
+    }
+    offsets_shape = offsets_ty.getShape();
+  } else if (auto offsets_ty = dyn_cast<VectorType>(offsets.getType());
+             offsets_ty != nullptr) {
+    offsets_shape = offsets_ty.getShape();
+  } else {
+    return emitOpError("Offsets must be a memref or vector type");
+  }
+
+  if (MemRefType sem_ty = getMemRefType(getSemaphore());
+      sem_ty.getRank() != 0) {
+    return emitOpError("Semaphore must be rank 0");
+  }
+
+  if (is_gather) {
+    return verifyGather(/*operand_ty=*/source_ty,
+                        /*offsets_shape=*/offsets_shape,
+                        /*result_ty=*/target_ty);
+  }
+  return verifyScatter(/*updates_ty=*/source_ty,
+                       /*offsets_shape=*/offsets_shape,
+                       /*operand_ty=*/target_ty);
+}
+
+// TODO(b/395630795): Remove after 2025-08-10.
 LogicalResult WaitDMAOp::verify() {
   auto sem_type = getMemRefType(getSemaphore());
   if (sem_type.getRank() != 0) {
-    emitOpError("DMA wait semaphore must be rank 0");
-    return failure();
+    return emitOpError("DMA wait semaphore must be rank 0");
   }
   return success();
+}
+
+void WaitDMA2Op::build(OpBuilder &builder, OperationState &state,
+                       Value semaphore, Value src, Value dst) {
+  build(builder, state, semaphore, src, dst, /*device_id=*/nullptr,
+        /*core_id=*/nullptr);
 }
 
 LogicalResult WaitDMA2Op::verify() {
   auto sem_type = getMemRefType(getSemaphore());
   if (sem_type.getRank() != 0) {
-    emitOpError("DMA wait semaphore must be rank 0");
-    return failure();
+    return emitOpError("DMA wait semaphore must be rank 0");
   }
   return success();
+}
+
+FailureOr<bool> WaitIndirectDMAOp::isGather() {
+  return mlir::tpu::isGather(*getOperation(), getSrc(), getDst());
+}
+
+LogicalResult WaitIndirectDMAOp::verify() {
+  FailureOr<CoreType> issuing_core = GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core)) {
+    return issuing_core;
+  }
+  if (*issuing_core != CoreType::kScVectorSubcore) {
+    return emitOpError(
+        "Wait indirect DMA is supported only on the SC vector subcore");
+  }
+  MemRefType sem_type = getMemRefType(getSemaphore());
+  if (sem_type.getRank() != 0) {
+    return emitOpError("Indirect DMA wait semaphore must be rank 0");
+  }
+  return isGather();
 }
 
 LogicalResult RegionOp::verify() {
@@ -1319,14 +1585,12 @@ LogicalResult ConcatenateOp::verify() {
 }
 
 LogicalResult LogOp::verify() {
-  FailureOr<std::optional<CoreType>> logging_core_type_maybe =
-      GetCoreTypeOfParentFunc(**this);
-  if (failed(logging_core_type_maybe)) {
-    return failure();
+  FailureOr<CoreType> logging_core = GetCoreTypeOfParentFunc(**this);
+  if (failed(logging_core)) {
+    return logging_core;
   }
-  CoreType logging_core_type = logging_core_type_maybe->value_or(CoreType::kTc);
-  bool is_sc_core = logging_core_type == CoreType::kScScalarSubcore ||
-                    logging_core_type == CoreType::kScVectorSubcore;
+  bool is_sc_core = *logging_core == CoreType::kScScalarSubcore ||
+                    *logging_core == CoreType::kScVectorSubcore;
   if (is_sc_core && getFormattedAttr() != nullptr &&
       getFormattedAttr().getValue()) {
     return emitOpError("Formatted logging is not supported on SC");
@@ -1334,22 +1598,15 @@ LogicalResult LogOp::verify() {
   if (is_sc_core && getInputs().size() > 1) {
     return emitOpError("SC logging only supports 0 or 1 inputs");
   }
-  if (is_sc_core && getInputs().size() == 1) {
-    Type input_type = getInputs().front().getType();
-    if (!llvm::isa<MemRefType, IntegerType, FloatType, IndexType>(input_type)) {
-      return emitOpError("SC logging only supports memrefs or scalars");
+  if (*logging_core == CoreType::kScScalarSubcore) {
+    for (mlir::Value input : getInputs()) {
+      if (llvm::isa<VectorType>(input.getType())) {
+        return emitOpError(
+            "SC scalar subcore does not support logging vectors");
+      }
     }
   }
-  switch (logging_core_type) {
-    case CoreType::kTc:
-    case CoreType::kScScalarSubcore:
-      return success();
-    case CoreType::kScVectorSubcore:
-      return emitOpError("Log op is not supported on the SC vector subcore");
-  }
-  return emitOpError(
-      absl::StrFormat("Unexpected core type: %s",
-                      stringifyCoreType(logging_core_type_maybe->value())));
+  return success();
 }
 
 LogicalResult WeirdOp::verify() {
@@ -1394,6 +1651,16 @@ LogicalResult ReciprocalOp::verify() {
   return success();
 }
 
+LogicalResult UnpackSubelementsOp::verify() {
+  const int packing_factor = getType().getElementTypeBitWidth() /
+                             getSource().getType().getElementTypeBitWidth();
+  if (auto index = getIndex(); index < 0 || index >= packing_factor) {
+    return emitOpError("Index must be between 0 and the packing factor (")
+           << packing_factor << "), got " << index;
+  }
+  return success();
+}
+
 void PackSubelementsOp::build(OpBuilder &builder, OperationState &state,
                               const VectorType output_type,
                               const ArrayRef<Value> padded_sources,
@@ -1432,7 +1699,8 @@ LogicalResult PackSubelementsOp::verify() {
   SmallVector<bool> seen_positions(packing_factor, false);
   for (const int32_t position : getPositions()) {
     if (position < 0 || packing_factor <= position) {
-      return emitOpError("Positions must be between 0 and the packing factor");
+      return emitOpError("Positions must be between 0 and the packing factor (")
+             << packing_factor << "), got " << position;
     }
     if (seen_positions[position]) {
       return emitOpError("Positions must be unique");
@@ -1443,15 +1711,39 @@ LogicalResult PackSubelementsOp::verify() {
 }
 
 LogicalResult DynamicGatherOp::verify() {
-  if (getSource().getType() != getType()) {
-    return emitOpError("Expected source and result types must match");
+  const int64_t rank = getSource().getType().getRank();
+  SmallVector<bool> seen(rank, false);
+  for (int32_t d : getDimensions()) {
+    if (d < 0 || d >= rank) {
+      return emitOpError("Dimensions must be in [0, rank), but got ") << d;
+    }
+    if (seen[d]) {
+      return emitOpError("Dimensions must be unique");
+    }
+    seen[d] = true;
   }
-  if (getIndices().getType().getShape() != getIndices().getType().getShape()) {
-    return emitOpError("Expected indices and result shapes must match");
+  const ArrayRef<int64_t> source_shape = getSource().getType().getShape();
+  const ArrayRef<int64_t> result_shape = getType().getShape();
+  if (source_shape.size() != result_shape.size()) {
+    return emitOpError("Source and result shapes must have the same rank");
   }
-  if (!getIndices().getType().getElementType().isInteger(32)) {
-    return emitOpError("Not implemented: Only i32 indices supported");
+  for (int32_t i = 0; i < source_shape.size(); ++i) {
+    if (!seen[i] && source_shape[i] != result_shape[i]) {
+      return emitOpError(
+          "Source and result shapes must match on non-gather dimensions");
+    }
   }
+  return success();
+}
+
+/*static*/ LogicalResult DynamicGatherOp::inferReturnTypes(
+    MLIRContext *context, std::optional<Location> location, ValueRange operands,
+    DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
+    SmallVectorImpl<Type> &inferredReturnTypes) {
+  VectorType source_vty = cast<VectorType>(operands[0].getType());
+  VectorType indices_vty = cast<VectorType>(operands[1].getType());
+  inferredReturnTypes.push_back(
+      VectorType::get(indices_vty.getShape(), source_vty.getElementType()));
   return success();
 }
 
@@ -1518,6 +1810,41 @@ LogicalResult SublaneShuffleOp::verify() {
     }
   }
   return success();
+}
+
+OpFoldResult TruncFOp::fold(FoldAdaptor adaptor) {
+  auto resElemType = cast<FloatType>(getElementTypeOrSelf(getType()));
+  const llvm::fltSemantics &targetSemantics = resElemType.getFloatSemantics();
+  return constFoldCastOp<FloatAttr, FloatAttr, FloatAttr::ValueType,
+                         FloatAttr::ValueType, /*PoisonAttr=*/void>(
+      adaptor.getOperands(), getType(),
+      [this, &targetSemantics](const APFloat &a, bool &castStatus) {
+        llvm::RoundingMode llvmRoundingMode =
+            convertTpuRoundingModeToLLVMIR(getRoundingMode());
+        FailureOr<APFloat> result =
+            convertFloatValue(a, targetSemantics, llvmRoundingMode);
+        if (failed(result)) {
+          castStatus = false;
+          return a;
+        }
+        return *result;
+      });
+}
+
+OpFoldResult ExtFOp::fold(FoldAdaptor adaptor) {
+  auto resElemType = cast<FloatType>(getElementTypeOrSelf(getType()));
+  const llvm::fltSemantics &targetSemantics = resElemType.getFloatSemantics();
+  return constFoldCastOp<FloatAttr, FloatAttr, FloatAttr::ValueType,
+                         FloatAttr::ValueType, /*PoisonAttr=*/void>(
+      adaptor.getOperands(), getType(),
+      [&targetSemantics](const APFloat &a, bool &castStatus) {
+        FailureOr<APFloat> result = convertFloatValue(a, targetSemantics);
+        if (failed(result)) {
+          castStatus = false;
+          return a;
+        }
+        return *result;
+      });
 }
 
 }  // namespace tpu

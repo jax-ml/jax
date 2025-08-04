@@ -143,11 +143,7 @@ if TYPE_CHECKING:
   # - Confirm that types from *.pyi files are correctly pulled-in
   # - Confirm that non-trivial overloads are behaving as expected.
   #
-  import sys
-  if sys.version_info >= (3, 11):
-    from typing import assert_type  # pytype: disable=not-supported-yet  # py311-upgrade
-  else:
-    from typing_extensions import assert_type  # pytype: disable=not-supported-yet
+  from typing import assert_type  # pytype: disable=not-supported-yet  # py311-upgrade
 
   mat = jnp.zeros((2, 5))
   vals = jnp.arange(5)

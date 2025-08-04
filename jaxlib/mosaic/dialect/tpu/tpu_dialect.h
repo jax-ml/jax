@@ -102,8 +102,9 @@ std::unique_ptr<OperationPass<func::FuncOp>> createDebugAssertInsertionPass();
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 
 // Determine the core type of the given op based on the `tpu.core_type`
-// annotation of its parent function.
-FailureOr<std::optional<CoreType>> GetCoreTypeOfParentFunc(Operation &op);
+// annotation of its parent function. If no such annotation is found, returns
+// kTc.
+FailureOr<CoreType> GetCoreTypeOfParentFunc(Operation &op);
 
 // Changes the memory space of the value and propagates it through the program.
 LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,

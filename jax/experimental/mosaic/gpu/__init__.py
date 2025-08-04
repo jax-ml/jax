@@ -27,6 +27,7 @@ from .core import (
     TMEM as TMEM,
     Union as Union,
     as_gpu_kernel as as_gpu_kernel,
+    as_torch_gpu_kernel as as_torch_gpu_kernel,
     supports_cross_device_collectives as supports_cross_device_collectives,
 )
 
@@ -47,6 +48,10 @@ from .layout_inference import (
     infer_layout as infer_layout,
 )
 
+from .layout_inference2 import (
+    infer_layout as infer_layout2,  # noqa: F401
+)
+
 from .layouts import (
     to_layout_attr as to_layout_attr,
 )
@@ -59,6 +64,7 @@ from .fragmented_array import (
     FragmentedArray as FragmentedArray,
     FragmentedLayout as FragmentedLayout,
     TCGEN05_LAYOUT as TCGEN05_LAYOUT,
+    TCGEN05_TRANSPOSED_LAYOUT as TCGEN05_TRANSPOSED_LAYOUT,
     TCGEN05_ROW_LAYOUT as TCGEN05_ROW_LAYOUT,
     TCGEN05_COL_LAYOUT as TCGEN05_COL_LAYOUT,
     TiledLayout as TiledLayout,
@@ -66,8 +72,11 @@ from .fragmented_array import (
     WGMMA_ROW_LAYOUT as WGMMA_ROW_LAYOUT,
     WGMMA_COL_LAYOUT as WGMMA_COL_LAYOUT,
     WGMMA_TRANSPOSED_LAYOUT as WGMMA_TRANSPOSED_LAYOUT,
+    TMEM_NATIVE_LAYOUT as TMEM_NATIVE_LAYOUT,
+    tmem_native_layout as tmem_native_layout,
     WGSplatFragLayout as WGSplatFragLayout,
     WGStridedFragLayout as WGStridedFragLayout,
+    copy_tiled as copy_tiled,
     optimization_barrier as optimization_barrier,
 )
 from .utils import (
@@ -86,6 +95,7 @@ from .utils import (
     debug_print as debug_print,
     ds as ds,
     fori as fori,
+    is_known_divisible as is_known_divisible,
     memref_fold as memref_fold,
     memref_slice as memref_slice,
     memref_reshape as memref_reshape,
@@ -94,6 +104,7 @@ from .utils import (
     memref_unsqueeze as memref_unsqueeze,
     single_thread as single_thread,
     single_thread_predicate as single_thread_predicate,
+    system_memory_barrier as system_memory_barrier,
     thread_idx as thread_idx,
     tile_shape as tile_shape,
     warp_idx as warp_idx,
@@ -105,3 +116,5 @@ from .wgmma import (
     WGMMAAccumulator as WGMMAAccumulator,
     wgmma as wgmma,
 )
+
+from . import tcgen05 as tcgen05

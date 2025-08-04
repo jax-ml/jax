@@ -26,7 +26,6 @@ from jax import random
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
-from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
 if sys.platform != "win32":
   from jax.experimental.pallas.ops.gpu import attention
@@ -112,8 +111,8 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
   def matmul_kernel(x_ref, y_ref, o_ref):
     acc = jnp.zeros(o_ref.shape, dtype=jnp.float32)
     def body(i, acc_ref):
-      x_block = pl.load(x_ref, (slice(None), pl.ds(i * bk, bk)))
-      y_block = pl.load(y_ref, (pl.ds(i * bk, bk), slice(None)))
+      x_block = x_ref[:, pl.ds(i * bk, bk)]
+      y_block = y_ref[pl.ds(i * bk, bk), :]
       acc_ref[:, :] += pl.dot(x_block, y_block)
     acc = for_loop(k // bk, body, acc).astype(o_ref.dtype)
     o_ref[:, :] = acc
@@ -136,7 +135,6 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
-    _trace_kernel_to_jaxpr.cache_clear()
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)

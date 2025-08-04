@@ -27,7 +27,6 @@ from jax._src import traceback_util
 from jax._src.lib import pytree
 from jax._src.util import safe_zip, set_module
 from jax._src.util import unzip2
-from jax._src.lib import jaxlib_extension_version
 
 
 export = set_module('jax.tree_util')
@@ -459,6 +458,42 @@ def tree_reduce(function: Callable[[T, Any], T],
     return functools.reduce(function, tree_leaves(tree, is_leaf=is_leaf), initializer)
 
 
+class Unspecified:
+  pass
+
+
+def _parallel_reduce(
+    sequence: list[T],
+    operation: Callable[[T, T], T],
+    identity: T | Unspecified = Unspecified(),
+) -> T:
+  length = len(sequence)
+  if length == 0:
+    if isinstance(identity, Unspecified):
+      raise TypeError("Must specify identity for parallel reduction of empty sequence.")
+    return identity
+  elif length == 1:
+    return sequence[0]
+  else:
+    index = length // 2
+    a = _parallel_reduce(sequence[:index], operation, identity)
+    b = _parallel_reduce(sequence[index:], operation, identity)
+    return operation(a, b)
+
+
+@export
+def tree_reduce_associative(
+    operation: Callable[[T, T], T],
+    tree: Any,
+    *,
+    identity: T | Unspecified = Unspecified(),
+    is_leaf: Callable[[Any], bool] | None = None,
+) -> T:
+  """Alias of :func:`jax.tree.reduce_associative`."""
+  sequence = tree_leaves(tree, is_leaf=is_leaf)
+  return _parallel_reduce(sequence, operation, identity)
+
+
 @export
 def tree_all(tree: Any, *, is_leaf: Callable[[Any], bool] | None = None) -> bool:
   """Alias of :func:`jax.tree.all`."""
@@ -533,7 +568,7 @@ class Partial(functools.partial):
   >>> print_zero()
   0
   >>> call_func(print_zero)  # doctest:+ELLIPSIS
-  Traced<~int32[]>with<DynamicJaxprTrace...>
+  JitTracer<~int32[]>
   """
 
   def __new__(klass, func, *args, **kw):
@@ -564,7 +599,7 @@ register_pytree_node(
 @export
 def tree_broadcast(prefix_tree: Any, full_tree: Any,
                    is_leaf: Callable[[Any], bool] | None = None
-                  ) -> list[Any]:
+                  ) -> Any:
   """Alias of :func:`jax.tree.broadcast`."""
   broadcast_leaves = broadcast_prefix(prefix_tree, full_tree, is_leaf=is_leaf)
   return tree_structure(full_tree).unflatten(broadcast_leaves)
@@ -1131,8 +1166,6 @@ def tree_flatten_with_path(
     is_leaf_takes_path: bool = False,
 ) -> tuple[list[tuple[KeyPath, Any]], PyTreeDef]:
   """Alias of :func:`jax.tree.flatten_with_path`."""
-  if jaxlib_extension_version < 351:
-    return default_registry.flatten_with_path(tree, is_leaf)
   is_leaf_with_kp: Callable[[Any, Any], bool] | None = is_leaf
   if not is_leaf_takes_path and is_leaf is not None:
     is_leaf_with_kp = lambda _, x: is_leaf(x)

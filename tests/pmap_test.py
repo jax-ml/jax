@@ -1275,19 +1275,21 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   def testPmapConstant(self):
     device_count = jax.device_count()
-    f = self.pmap(lambda x: 3)
-    x = jnp.arange(device_count)
-    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
-      ans = f(x)
-    # self.assertEqual(count(), 0)  # TODO(mattjj): fix this
-    expected = np.repeat(3, device_count)
+    const = jnp.arange(16, dtype=np.int32)  # distinctive shape
+    f = self.pmap(lambda x: x + const[15])
+    x = jnp.arange(device_count, dtype=np.int32)
+    expected = x + np.int32(15)
+    ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
+    if not config.disable_jit.value:
+      self.assertCacheMisses(lambda: f(x),
+                             compilation_after_persistent_cache_miss=0)
 
     if not config.disable_jit.value:
-      f = self.pmap(lambda x: (x, 3))
-      x = np.arange(device_count)
+      f = self.pmap(lambda x: x + const[15])
+      x = np.arange(device_count, dtype=np.int32)
       with jtu.assert_num_jit_and_pmap_compilations(1):
-        _, ans = f(x)
+        ans = f(x)
       self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testPmapConstantDevices(self):
@@ -1859,7 +1861,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     def foo(x): return x
 
-    with self.assertWarnsRegex(UserWarning, "The jitted function foo includes a pmap"):
+    with self.assertWarnsRegex(UserWarning, "The function jit.foo. includes a pmap"):
       jit(self.pmap(foo))(jnp.arange(device_count))
 
   def testJitOfPmapOutputSharding(self):
@@ -2152,7 +2154,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     keys = jax.random.split(jax.random.key(0), jax.device_count())
     result1 = jax.pmap(jax.random.bits)(keys)
     with jtu.ignore_warning(
-        category=UserWarning, message="The jitted function bits includes a pmap"):
+        category=UserWarning, message="The function jit.bits. includes a pmap"):
       result2 = jax.jit(jax.pmap(jax.random.bits))(keys)
     self.assertArraysEqual(result1, result2)
 

@@ -28,7 +28,6 @@ from . import config as config
 from . import ffi as ffi
 from . import guard_lib as guard_lib
 from . import ifrt_programs as ifrt_programs
-from . import ifrt_proxy as ifrt_proxy
 from . import jax_jit as jax_jit
 from . import mlir as mlir
 from . import pmap_lib as pmap_lib
@@ -437,8 +436,6 @@ class Device:
   local_hardware_id: int | None
   def __repr__(self) -> str: ...
   def __str__(self) -> str: ...
-  def transfer_to_infeed(self, literal: _LiteralSlice): ...
-  def transfer_from_outfeed(self, shape: Shape): ...
   def memory(self, kind: str) -> Memory: ...
   def default_memory(self) -> Memory: ...
   def addressable_memories(self) -> list[Memory]: ...
@@ -582,6 +579,7 @@ def get_tfrt_cpu_client(
     num_devices: int | None = ...,
     get_local_topology_timeout_minutes: int | None = ...,
     get_global_topology_timeout_minutes: int | None = ...,
+    transfer_server_factory: TransferServerInterfaceFactory | None = ...,
 ) -> Client: ...
 def get_mock_gpu_client(
     asynchronous: bool = ...,
@@ -595,6 +593,7 @@ def get_c_api_client(
     platform_name: str,
     options: Mapping[str, str | int | list[int] | float | bool],
     distributed_client: DistributedRuntimeClient | None = ...,
+    transfer_server_factory: TransferServerInterfaceFactory | None = ...,
 ) -> Client: ...
 def get_default_c_api_topology(
     platform_name: str,
@@ -687,6 +686,10 @@ class ExecuteResults:
   ) -> list[list[ArrayImpl]]: ...
   def consume_with_handlers(self, handlers: list[Callable]) -> list[Any]: ...
   def consume_token(self) -> ShardedToken: ...
+
+def get_execution_stream_id() -> int: ...
+
+def set_execution_stream_id(new_id: int): ...
 
 class LoadedExecutable:
   client: Client
@@ -792,7 +795,8 @@ class Traceback:
       code: types.CodeType, lasti: int
   ) -> tuple[int, int, int, int]: ...
 
-def replace_thread_exc_traceback(traceback: Any): ...
+def tracebacks_enabled() -> bool: ...
+def set_tracebacks_enabled(enabled: bool) -> None: ...
 
 # === END py_traceback.cc
 
@@ -828,8 +832,7 @@ class DistributedRuntimeClient:
 def get_distributed_runtime_service(
     address: str,
     num_nodes: int,
-    heartbeat_interval: int | None = ...,
-    max_missing_heartbeats: int | None = ...,
+    heartbeat_timeout: int | None = ...,
     cluster_register_timeout: int | None = ...,
     shutdown_timeout: int | None = ...,
 ) -> DistributedRuntimeService: ...
@@ -839,8 +842,7 @@ def get_distributed_runtime_client(
     rpc_timeout: int | None = ...,
     init_timeout: int | None = ...,
     shutdown_timeout: int | None = ...,
-    heartbeat_interval: int | None = ...,
-    max_missing_heartbeats: int | None = ...,
+    heartbeat_timeout: int | None = ...,
     missed_heartbeat_callback: Any | None = ...,
     shutdown_on_destruction: bool | None = ...,
     use_compression: bool | None = ...,
@@ -996,6 +998,17 @@ def start_transfer_server(
     max_num_parallel_copies: int = 0,
     transfer_size: int = 0,
 ) -> TransferServer: ...
+
+class TransferServerInterfaceFactory: ...
+
+def make_transfer_server_interface_factory(
+    transfer_size: int = 0,
+    cross_host_transfer_timeout_seconds: int = 0,
+    distributed_client: DistributedRuntimeClient | None = None,
+    socket_address: str = "",
+    transport_addresses: list[str] = [],
+) -> TransferServerInterfaceFactory: ...
+
 def approx_top_k_reduction_output_size(
     input_size: int,
     rank: int,

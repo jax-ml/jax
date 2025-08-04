@@ -30,7 +30,7 @@ from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
                               standard_naryop, standard_unop, sub,
                               _const, _dtype,
                               _float, _nary_lower_hlo, _ones, _isnan, _reduce)
-from jax._src.lax.control_flow import while_loop
+from jax._src.lax.control_flow.loops import while_loop
 
 from jax._src import dtypes
 from jax._src.interpreters import ad

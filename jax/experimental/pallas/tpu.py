@@ -29,6 +29,8 @@ from jax._src.pallas.mosaic.helpers import sync_copy as sync_copy
 from jax._src.pallas.mosaic.helpers import core_barrier as core_barrier
 from jax._src.pallas.mosaic.helpers import run_on_first_core as run_on_first_core
 from jax._src.pallas.mosaic.interpret import InterpretParams as InterpretParams
+from jax._src.pallas.mosaic.interpret import force_tpu_interpret_mode as force_tpu_interpret_mode
+from jax._src.pallas.mosaic.interpret import reset_tpu_interpret_mode_state as reset_tpu_interpret_mode_state
 from jax._src.pallas.mosaic.lowering import LoweringException as LoweringException
 from jax._src.pallas.mosaic.pipeline import BufferedRef as BufferedRef
 from jax._src.pallas.mosaic.pipeline import BufferedRefBase as BufferedRefBase
@@ -41,13 +43,14 @@ from jax._src.pallas.mosaic.primitives import async_remote_copy as async_remote_
 from jax._src.pallas.mosaic.primitives import bitcast as bitcast
 from jax._src.pallas.mosaic.primitives import delay as delay
 from jax._src.pallas.mosaic.primitives import get_barrier_semaphore as get_barrier_semaphore
-from jax._src.pallas.mosaic.primitives import get_memory_space as get_memory_space
+from jax._src.pallas.mosaic.primitives import load as load
 from jax._src.pallas.mosaic.primitives import make_async_copy as make_async_copy
 from jax._src.pallas.mosaic.primitives import make_async_remote_copy as make_async_remote_copy
 from jax._src.pallas.mosaic.primitives import prng_random_bits as prng_random_bits
 from jax._src.pallas.mosaic.primitives import prng_seed as prng_seed
 from jax._src.pallas.mosaic.primitives import repeat as repeat
 from jax._src.pallas.mosaic.primitives import roll as roll
+from jax._src.pallas.mosaic.primitives import store as store
 from jax._src.pallas.mosaic.primitives import with_memory_space_constraint as with_memory_space_constraint
 from jax._src.pallas.mosaic.random import sample_block as sample_block
 from jax._src.pallas.mosaic.random import to_pallas_key as to_pallas_key
@@ -74,6 +77,7 @@ ANY = MemorySpace.ANY
 CMEM = MemorySpace.CMEM
 SMEM = MemorySpace.SMEM
 VMEM = MemorySpace.VMEM
+VMEM_SHARED = MemorySpace.VMEM_SHARED
 HBM = MemorySpace.HBM
 SEMAPHORE = MemorySpace.SEMAPHORE
 
@@ -82,16 +86,27 @@ if _typing.TYPE_CHECKING:
   TPUCompilerParams = CompilerParams
   TPUMemorySpace = MemorySpace
 else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  from jax._src.deprecations import (
+      deprecation_getattr as _deprecation_getattr,
+      is_accelerated as is_accelerated,
+  )
+  if is_accelerated("jax-pallas-tpu-compiler-params"):
+    _deprecated_TPUCompilerParams = None
+  else:
+    _deprecated_TPUCompilerParams = CompilerParams
+  if is_accelerated("jax-pallas-tpu-memory-space"):
+    _deprecated_TPUMemorySpace = None
+  else:
+    _deprecated_TPUMemorySpace = MemorySpace
   _deprecations = {
       # Deprecated on May 30th 2025.
       "TPUCompilerParams": (
           "TPUCompilerParams is deprecated, use CompilerParams instead.",
-          CompilerParams,
+          _deprecated_TPUCompilerParams,
       ),
       "TPUMemorySpace": (
           "TPUMemorySpace is deprecated, use MemorySpace instead.",
-          MemorySpace,
+          _deprecated_TPUMemorySpace,
       ),
   }
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

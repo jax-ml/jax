@@ -22,7 +22,6 @@ import math
 from typing import Any, Literal
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
-from jax._src import lib as jaxlib
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import builtin
@@ -232,6 +231,8 @@ OnDeviceProfiler = profiler.OnDeviceProfiler
 
 ReductionOp = Literal["add", "min", "max", "inc", "dec", "and", "or", "xor"]
 
+MOSAIC_GPU_SMEM_ALLOC_ATTR = "mosaic_gpu_smem_alloc"
+
 class Scratch:
   """Manages ops handling the GMEM scratch that contains the TMA descriptors.
 
@@ -250,13 +251,44 @@ class Scratch:
   and also how each descriptor should be initialized on the host. At the end
   of the lowering, the finalize_size() method should be called to add the
   necessary code on the host to allocate and initialize all descriptors.
+
+  Here's how the IR looks after the initial ops are created for the first time:
+
+
+  %1 = llvm.alloc_op {elem_type = !llvm.array<0 x i8>} -> !llvm.ptr
+  %2 = llvm.load_op (%1) : (!llvm.ptr) -> !llvm.array<0 x i8>
+  ...
+  %3 = gpu.launch async
+    ^bb0:
+      %4 = builtin.unrealized_conversion_cast_op(%2)
+             : (!llvm.array<256 x i8>) -> !llvm.ptr
+
+
+  And here is an example of how the IR could look like after finalize_size() is
+  called:
+
+
+  %11 = llvm.alloc_op {elem_type = !llvm.array<256 x i8>} -> !llvm.ptr
+  %22 = llvm.load_op (%11) : (!llvm.ptr) -> !llvm.array<256 x i8>
+  ...
+  # Ops inserted to initialize the tma descriptors on the host:
+  ...
+  %33 = llvm.getelementptr %11[0] : (!llvm.ptr) -> !llvm.ptr, i8
+  call @mosaic_gpu_init_tma_desc (%33, ...)
+  ...
+  %44 = llvm.getelementptr %11[128] : (!llvm.ptr) -> !llvm.ptr, i8
+  call @mosaic_gpu_init_tma_desc (%44, ...)
+  ...
+  %55 = gpu.launch async
+    ^bb0:
+      %66 = builtin.unrealized_conversion_cast_op(%22)
+             : (!llvm.array<256 x i8>) -> !llvm.ptr
+
   """
   def __init__(self, gpu_launch_op: gpu.LaunchOp):
     self.next_offset: int = 0
     self.host_init: list[Callable[[ir.Value], None]] = []
-    self._alloc_op = None
-    self._load_op = None
-    self._scratch_ptr = None
+    self._ops_created = False
 
     # Ideally, we would store the gpu.launch op directly. However, it gets
     # invalidated by passes like "canonicalize". Thus we store the module and
@@ -267,41 +299,66 @@ class Scratch:
     assert op is not None
     self._module_op = op
 
-  def _find_gpu_launch_op(self, block: ir.Block) -> ir.OpView | None:
+  def _find_first_op(
+      self, op_name: str, block: ir.Block, tag_attribute_name: str | None = None
+  ) -> ir.OpView | None:
     for op in block:
-      if op.name == "gpu.launch":
+      if op.name == op_name and (
+          tag_attribute_name is None or tag_attribute_name in op.attributes
+      ):
         return op
       for region in op.regions:
         for block in region:
-          child_op = self._find_gpu_launch_op(block)
+          child_op = self._find_first_op(op_name, block, tag_attribute_name)
           if child_op is not None:
             return child_op
     return None
 
-  def _create_ops_if_none(self):
-    if self._alloc_op is not None:
+  def _create_ops(self):
+    if self._ops_created:
       return
+    self._ops_created = True
 
-    gpu_launch_op = self._find_gpu_launch_op(self._module_op.body)
+    gpu_launch_op = self._find_first_op("gpu.launch", self._module_op.body)
     assert gpu_launch_op is not None
+
     ptr_ty = ir.Type.parse("!llvm.ptr")
+    empty_arr_ty = ir.Type.parse("!llvm.array<0 x i8>")
+    i64 = ir.IntegerType.get_signless(64)
+
     with ir.InsertionPoint(gpu_launch_op):
-      empty_arr_ty = ir.Type.parse("!llvm.array<0 x i8>")
-      i64 = ir.IntegerType.get_signless(64)
-      self._alloc_op = llvm.AllocaOp(
+      alloc_op = llvm.AllocaOp(
           ptr_ty, c(1, i64), empty_arr_ty,
           alignment=TMA_DESCRIPTOR_ALIGNMENT
       )
-      self._load_op = llvm.LoadOp(empty_arr_ty, self._alloc_op)
+      # Tag the alloc op with an attribute so that we can find it later.
+      alloc_op.attributes[MOSAIC_GPU_SMEM_ALLOC_ATTR] = ir.UnitAttr.get()
+      load_op = llvm.LoadOp(empty_arr_ty, alloc_op)
 
     with ir.InsertionPoint.at_block_begin(gpu_launch_op.body.blocks[0]):
-      self._scratch_ptr = builtin.unrealized_conversion_cast(
-          [ptr_ty], [self._load_op]
-      )
+      builtin.unrealized_conversion_cast([ptr_ty], [load_op])
+
+  def _find_alloc_load_and_device_ptr(
+      self,
+  ) -> tuple[llvm.AllocaOp, llvm.LoadOp, ir.Value]:
+    if not self._ops_created:
+      self._create_ops()
+
+    alloc_op = self._find_first_op(
+        "llvm.alloca", self._module_op.body, MOSAIC_GPU_SMEM_ALLOC_ATTR
+    )
+    assert alloc_op is not None
+    [alloc_user] = alloc_op.result.uses
+    load_op = alloc_user.owner
+    assert isinstance(load_op, llvm.LoadOp)
+    [load_op_user] = load_op.result.uses
+    device_ptr = load_op_user.owner
+    assert isinstance(device_ptr, builtin.UnrealizedConversionCastOp)
+    return alloc_op, load_op, device_ptr.result
 
   def device_ptr(self) -> ir.Value:
-    self._create_ops_if_none()
-    return self._scratch_ptr
+    _, _, device_ptr = self._find_alloc_load_and_device_ptr()
+    return device_ptr
 
   def finalize_size(self):
     """
@@ -311,18 +368,42 @@ class Scratch:
     """
     if self.next_offset == 0:
       return
-    assert self._alloc_op is not None
-    with ir.InsertionPoint(self._load_op):
+    alloc_op, load_op, _ = self._find_alloc_load_and_device_ptr()
+
+    with ir.InsertionPoint(load_op):
       gmem_scratch_bytes = self.next_offset
       scratch_arr_ty = ir.Type.parse(f"!llvm.array<{gmem_scratch_bytes} x i8>")
-      self._alloc_op.elem_type = ir.TypeAttr.get(scratch_arr_ty)
-      self._load_op.result.set_type(scratch_arr_ty)
+      alloc_op.elem_type = ir.TypeAttr.get(scratch_arr_ty)
+      load_op.result.set_type(scratch_arr_ty)
       for init_callback in self.host_init:
-        init_callback(self._alloc_op.result)
+        init_callback(alloc_op.result)
 
 
 class _DefaultPredicate:
   pass
+
+
+def _find_kernel_argument_for_gmem_ref(
+    gmem_ref: ir.Value,
+) -> builtin.UnrealizedConversionCastOp:
+  """Returns the kernel argument value for a given gmem_ref.
+
+  The kernel argument is expected to be an unrealized conversion cast. This
+  function will recursively go up block arguments in case of nested blocks.
+  """
+  if not isinstance(gmem_ref.type, ir.MemRefType):
+    raise ValueError(f"Expected {gmem_ref} to have a memref type.")
+
+  while isinstance(gmem_ref, ir.BlockArgument):
+    gmem_ref = gmem_ref.owner.owner.operands[gmem_ref.arg_number]
+
+  # TODO(apaszke): This is a very approximate check. Improve it!
+  if not isinstance(gmem_ref.owner.opview, builtin.UnrealizedConversionCastOp):
+    raise NotImplementedError(
+        f"Expected {gmem_ref.owner} to be an unrealized conversion cast"
+        " corresponding to a GMEM kernel argument."
+    )
+  return gmem_ref
 
 
 @dataclasses.dataclass()
@@ -332,7 +413,7 @@ class LaunchContext:
   cluster_size: tuple[int, int, int]
   profiler: OnDeviceProfiler | None = None
   tma_descriptors: dict[
-      tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...]],
+      tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...], Any],
       ir.Value,
   ] = dataclasses.field(default_factory=dict, init=False)
   is_device_collective: bool = False
@@ -407,6 +488,7 @@ class LaunchContext:
         "add","min","max","inc","dec","and","or","xor"
       ] | None,
   ):
+    gmem_ref = _find_kernel_argument_for_gmem_ref(gmem_ref)
     # Using ir.Values in cache keys is a little sketchy, but I think it should
     # be fine. Having it in the key will keep it alive, and if comparison and
     # hashing is by identity then it should work out.
@@ -443,7 +525,7 @@ class LaunchContext:
           else:
             try:
               # We try to reproduce the gmem_peer_id computation on the host.
-              peer_id = _recompute_peer_id(gmem_peer_id)
+              peer_id = _recompute_peer_id(gmem_peer_id, fuel=16)
             except ReplicationError as e:
               raise ValueError(
                   "Failed to recompute the async_copy peer id on the host"
@@ -465,41 +547,42 @@ class LaunchContext:
         )
         # TODO(apaszke): Better verification (e.g. slice is non-zero)
         # TODO(apaszke): We always know strides statically.
-        if jaxlib.version < (0, 5, 4):
-          dtype_or_bitwidth = c(utils.bitwidth(ref_ty.element_type), i64)
-        else:
-          if isinstance(ref_ty.element_type, ir.IntegerType):
-            if reduction_op is not None:
-              raise ValueError(
-                  f"TMA with reduction_op={reduction_op} is not supported with Integers"
-              )
-            bitwidth = utils.bitwidth_impl(ref_ty.element_type)
-            if bitwidth == 4:
-              tma_dtype = 0
-            elif bitwidth == 8:
-              tma_dtype = 1
-            elif bitwidth == 16:
-              tma_dtype = 2
-            elif bitwidth == 32:
-              tma_dtype = 3
-            elif bitwidth == 64:
-              tma_dtype = 4
-            else:
-              raise ValueError(f"Unsupported integer bitwidth: {bitwidth}")
-          elif ir.F16Type.isinstance(ref_ty.element_type):
-            tma_dtype = 5
-          elif ir.F32Type.isinstance(ref_ty.element_type):
-            tma_dtype = 6
-          elif ir.BF16Type.isinstance(ref_ty.element_type):
-            tma_dtype = 7
-          # We treat 8 bit floats as 8 bit integers
-          elif ir.Float8E5M2Type.isinstance(ref_ty.element_type):
+        if isinstance(ref_ty.element_type, ir.IntegerType):
+          if reduction_op is not None:
+            raise ValueError(
+                f"TMA with reduction_op={reduction_op} is not supported with Integers"
+            )
+          bitwidth = utils.bitwidth_impl(ref_ty.element_type)
+          if bitwidth == 4:
+            tma_dtype = 0
+          elif bitwidth == 8:
             tma_dtype = 1
-          elif ir.Float8E4M3FNType.isinstance(ref_ty.element_type):
-            tma_dtype = 1
+          elif bitwidth == 16:
+            tma_dtype = 2
+          elif bitwidth == 32:
+            tma_dtype = 3
+          elif bitwidth == 64:
+            tma_dtype = 4
           else:
-            raise ValueError(f"unsupported TMA dtype {ref_ty.element_type}")
-          dtype_or_bitwidth = c(tma_dtype, i64)
+            raise ValueError(f"Unsupported integer bitwidth: {bitwidth}")
+        elif ir.F16Type.isinstance(ref_ty.element_type):
+          tma_dtype = 5
+        elif ir.F32Type.isinstance(ref_ty.element_type):
+          tma_dtype = 6
+        elif ir.BF16Type.isinstance(ref_ty.element_type):
+          tma_dtype = 7
+        # We treat narrow floats as integers
+        elif ir.Float8E5M2Type.isinstance(ref_ty.element_type):
+          tma_dtype = 1
+        elif ir.Float8E4M3FNType.isinstance(ref_ty.element_type):
+          tma_dtype = 1
+        elif ir.Float8E8M0FNUType.isinstance(ref_ty.element_type):
+          tma_dtype = 1
+        elif ir.Float4E2M1FNType.isinstance(ref_ty.element_type):
+          tma_dtype = 0
+        else:
+          raise ValueError(f"unsupported TMA dtype {ref_ty.element_type}")
+        dtype_or_bitwidth = c(tma_dtype, i64)
         args = [
             host_ptr,
             base_ptr,
@@ -570,7 +653,6 @@ class LaunchContext:
     index = ir.IndexType.get()
     i16 = ir.IntegerType.get_signless(16)
     i32 = ir.IntegerType.get_signless(32)
-    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
     src_ref_ty = ir.MemRefType(src_ref.type)
     dst_ref_ty = ir.MemRefType(dst_ref.type)
     element_type = src_ref_ty.element_type
@@ -585,13 +667,13 @@ class LaunchContext:
     if not isinstance(gmem_transform, tuple):
       gmem_transform = (gmem_transform,)
 
-    if src_ref_ty.memory_space is None and dst_ref_ty.memory_space == smem:
+    if src_ref_ty.memory_space is None and utils.is_smem_ref(dst_ref_ty):
       gmem_ref, smem_ref = src_ref, dst_ref
       if barrier is None:
         raise ValueError("Barriers are required for GMEM -> SMEM copies")
       if arrive is None:
         arrive = True  # Arrive by default
-    elif src_ref_ty.memory_space == smem and dst_ref_ty.memory_space is None:
+    elif utils.is_smem_ref(src_ref_ty) and dst_ref_ty.memory_space is None:
       gmem_ref, smem_ref = dst_ref, src_ref
       if barrier is not None:
         raise ValueError("Barriers are unsupported for SMEM -> GMEM copies")
@@ -599,13 +681,10 @@ class LaunchContext:
         arrive = True  # Commit this copy to the async group by default
     else:
       raise ValueError("Only SMEM <-> GMEM copies supported")
-    # TODO(apaszke): This is a very approximate check. Improve it!
-    expected_name = "builtin.unrealized_conversion_cast"
-    if (
-        gmem_ref.owner is None
-        or gmem_ref.owner.opview.OPERATION_NAME != expected_name
-    ):
-      raise ValueError("GMEM reference in async_copy must be a kernel argument")
+
+    # The function below is called only to verify the GMEM ref. The output
+    # is meant to be ignored.
+    _find_kernel_argument_for_gmem_ref(gmem_ref)
     gmem_ref_ty = ir.MemRefType(gmem_ref.type)
     gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
     if gmem_strides != utils.get_contiguous_strides(gmem_ref_ty.shape):

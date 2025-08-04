@@ -18,7 +18,7 @@ import jax
 from jax import lax
 from jax import numpy as jnp
 from jax._src import test_util as jtu
-from jax._src.lax import eigh as lax_eigh
+from jax._src.tpu.linalg import eigh as lax_eigh
 
 from absl.testing import absltest
 

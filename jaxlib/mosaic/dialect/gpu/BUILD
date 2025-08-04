@@ -21,7 +21,7 @@ load(
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//jax:mosaic_gpu_users"],
+    default_visibility = ["//jax/experimental:mosaic_gpu_users"],
 )
 
 td_library(
@@ -31,6 +31,7 @@ td_library(
     deps = [
         "@llvm-project//mlir:BasicPtxBuilderIntTdFiles",
         "@llvm-project//mlir:BuiltinDialectTdFiles",
+        "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
         "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
         "@llvm-project//mlir:LLVMOpsTdFiles",
         "@llvm-project//mlir:OpBaseTdFiles",
@@ -88,6 +89,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:ControlFlowInterfaces",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",

@@ -16,6 +16,7 @@
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.ffi import (
+    build_ffi_lowering_function as build_ffi_lowering_function,
     ffi_call as ffi_call,
     ffi_lowering as ffi_lowering,
     include_dir as include_dir,

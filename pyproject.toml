@@ -14,6 +14,7 @@ module = [
     "IPython.*",
     "absl.*",
     "colorama.*",
+    "compression.*",
     "etils.*",
     "filelock.*",
     "flatbuffers.*",
@@ -23,6 +24,7 @@ module = [
     "jax.experimental.jax2tf.tests.back_compat_testdata",
     "jax.experimental.jax2tf.tests.flax_models",
     "jax_cuda12_plugin.*",
+    "jax_cuda13_plugin.*",
     "jaxlib.cpu_feature_guard",
     "jaxlib.cuda.*",
     "jaxlib.mlir.*",
@@ -98,9 +100,9 @@ exclude = [
     "build",
     "__pycache__",
 ]
-line-length = 88
+line-length = 80
 indent-width = 2
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 ignore = [

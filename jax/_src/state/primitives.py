@@ -63,6 +63,7 @@ traceback_util.register_exclusion(__file__)
 # `Ref((3,), np.dtype('float32'))` leads to a jaxpr eqn printed like
 #   a:f32[3] <- x[]
 get_p = core.Primitive("get")
+get_p.is_effectful = lambda params: True  # type: ignore
 get_p.def_impl(partial(dispatch.apply_primitive, get_p))
 batching.ragged_prop_rules[get_p] = batching.ragged_mask_transfer_identity
 
@@ -99,10 +100,10 @@ def get_ref_and_transforms(
 
 
 def ref_get(
-    ref_or_view: Any, idx: Indexer | tuple[Indexer, ...] | None = None
+    ref: Any, idx: Indexer | tuple[Indexer, ...] | None = None
 ) -> Array:
-  """Reads a value from a `Ref`, a.k.a. value <- ref[idx]."""
-  ref, transforms = get_ref_and_transforms(ref_or_view, idx, "ref_get")
+  "Reads from a ref, returning `ref[idx]` for NumPy-style indexer `idx`."
+  ref, transforms = get_ref_and_transforms(ref, idx, "ref_get")
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   return get_p.bind(ref, *flat_transforms, tree=tree)
 
@@ -124,6 +125,7 @@ def ref_get(
 # are `ShapedArray((), np.dtype('int32'))` leads to a jaxpr eqn printed like
 #   x:Ref{f32[3]}[i, j] <- a
 swap_p = core.Primitive("swap")
+swap_p.is_effectful = lambda params: True  # type: ignore
 swap_p.def_impl(partial(dispatch.apply_primitive, swap_p))
 
 
@@ -138,15 +140,15 @@ def swap_ragged_prop_rule(eqn_params, invar_raggedness, outvars):
 batching.ragged_prop_rules[swap_p] = swap_ragged_prop_rule
 
 def ref_swap(
-    ref_or_view: AbstractRef | TransformedRef,
+    ref: AbstractRef | TransformedRef,
     idx: Indexer | tuple[Indexer, ...] | None,
     value: Array,
     _function_name: str = "ref_swap",
 ) -> Array:
-  """Sets a `Ref`'s value and returns the original value."""
-  if hasattr(ref_or_view, 'dtype'):
-    value = _maybe_implicit_cast(ref_or_view.dtype, value)
-  ref, transforms = get_ref_and_transforms(ref_or_view, idx, _function_name)
+  "Sets a ref's value as `ref[idx], prev = value, ref[idx]` and returns `prev`."
+  if hasattr(ref, 'dtype'):
+    value = _maybe_implicit_cast(ref.dtype, value)
+  ref, transforms = get_ref_and_transforms(ref, idx, _function_name)
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   return swap_p.bind(ref, value, *flat_transforms, tree=tree)
 
@@ -165,12 +167,12 @@ def _maybe_implicit_cast(dtype, value):
 
 
 def ref_set(
-    ref_or_view: AbstractRef | TransformedRef,
+    ref: AbstractRef | TransformedRef,
     idx: Indexer | tuple[Indexer, ...] | None,
     value: Array,
 ) -> None:
-  """Sets a `Ref`'s value, a.k.a. ref[idx] <- value."""
-  ref_swap(ref_or_view, idx, value, _function_name="ref_set")
+  "Sets a ref's value like `ref[idx] = value` for NumPy-style indexer `idx`."
+  ref_swap(ref, idx, value, _function_name="ref_set")
 
 
 # `addupdate_p` mutates a `Ref`, adding a value to its existing value.
@@ -185,17 +187,18 @@ def ref_set(
 # _ = swap ref c *idx
 # ```
 addupdate_p = core.Primitive('addupdate')
+addupdate_p.is_effectful = lambda params: True  # type: ignore
 addupdate_p.multiple_results = True
 addupdate_p.def_impl(partial(dispatch.apply_primitive, addupdate_p))
 
 
 def ref_addupdate(
-    ref_or_view: AbstractRef,
+    ref: AbstractRef,
     idx: Indexer | tuple[Indexer, ...] | None,
     x: Array,
 ) -> None:
-  """Mutates a ref with an additive update i.e. `ref[idx] += x`."""
-  ref, transforms = get_ref_and_transforms(ref_or_view, idx, "ref_addupdate")
+  "Mutates a ref with an additive update, like `ref[idx] += x`."
+  ref, transforms = get_ref_and_transforms(ref, idx, "ref_addupdate")
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   return addupdate_p.bind(ref, x, *flat_transforms, tree=tree)
 
@@ -253,6 +256,9 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
   out_aval: core.AbstractValue
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`swap` must be called on `Ref` types: {ref_aval}.")
+  if isinstance(val_aval, AbstractRef):
+    raise ValueError("Cannot store a Ref into another Ref. "
+                     "Did you forget to load from it using `[...]`?")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
     assert isinstance(val_aval, core.ShapedArray)
     expected_out_shape = _shape_after_transforming(ref_aval.shape, transforms)
@@ -383,23 +389,30 @@ core.pp_eqn_rules[addupdate_p] = _addupdate_pp_rule
 
 def _get_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, *idx = primals
-  assert isinstance(ref_primal.aval, AbstractRef)
   ref_tangent, *_ = tangents
-  assert isinstance(ref_tangent.aval, AbstractRef)
-  return (get_p.bind(ref_primal, *idx, **params),
-          get_p.bind(ref_tangent, *idx, **params))
+  out_primal = get_p.bind(ref_primal, *idx, **params)
+  if isinstance(ref_tangent, ad_util.Zero):
+    out_tangent = ad_util.Zero(core.typeof(out_primal).to_tangent_aval())
+  else:
+    out_tangent = get_p.bind(ref_tangent, *idx, **params)
+  return out_primal, out_tangent
 ad.primitive_jvps[get_p] = _get_jvp
 
 def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, x_primal, *idx = primals
-  assert isinstance(ref_primal.aval, AbstractRef)
   ref_tangent, x_tangent, *_ = tangents
-  # if type(ref_tangent) is ad_util.Zero:
-  #   raise Exception("you're an idiot")
-  assert isinstance(ref_tangent.aval, AbstractRef)
-  x_tangent = ad_util.instantiate(x_tangent)
-  return (swap_p.bind(ref_primal, x_primal, *idx, **params),
-          swap_p.bind(ref_tangent, x_tangent, *idx, **params))
+  out_primal = swap_p.bind(ref_primal, x_primal, *idx, **params)
+  if isinstance(ref_tangent, ad_util.Zero) and isinstance(x_tangent, ad_util.Zero):
+    out_tangent = ad_util.Zero(core.typeof(out_primal).to_tangent_aval())
+  else:
+    if isinstance(ref_tangent, ad_util.Zero):
+      raise Exception("performing a set/swap operation with a differentiated "
+                      "value on a non-differentiated array reference of type "
+                      f"{core.typeof(ref_primal)}. Move the array reference "
+                      "to be an argument of the differentiated function?")
+    x_tangent = ad_util.instantiate(x_tangent)
+    out_tangent = swap_p.bind(ref_tangent, x_tangent, *idx, **params)
+  return out_primal, out_tangent
 ad.primitive_jvps[swap_p] = _swap_jvp
 
 def addupdate_jvp_rule(primals: list[Any], tangents: list[Any], **params: Any):
@@ -421,7 +434,6 @@ def _get_transpose(g, ref, *idx, **params):
 ad.primitive_transposes[get_p] = _get_transpose
 
 def _swap_transpose(g, ref, x, *idx, **params):
-  del x  # old value doesn't matter anymore
   # swap transpose is swap
   x_bar = swap_p.bind(ref, ad_util.instantiate(g), *idx, **params)
   return [None, x_bar] + [None] * len(idx)
@@ -621,9 +633,9 @@ def _swap_vmap(batched_args, batched_dims, *, tree):
 
   if not ref_is_batched:
     raise Exception("performing a set/swap operation with vmapped value on "
-                    "an unbatched mutable array reference "
-                    f"of type {core.typeof(ref)}. Move the mutable array to be "
-                    "an argument to the vmapped function?")
+                    f"an unbatched array reference of type {core.typeof(ref)}. "
+                    "Move the array reference to be an argument to the vmapped "
+                    "function?")
 
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
@@ -751,7 +763,7 @@ batching.primitive_batchers[addupdate_p] = _addupdate_vmap
 broadcast_to_p = core.Primitive('broadcast_to')
 
 def broadcast_to(a: Array, shape: tuple[int, ...]) -> Array:
-  import jax.numpy as jnp
+  import jax.numpy as jnp  # pytype: disable=import-error
   a = jnp.asarray(a)
   if a.shape == shape:
     return a
@@ -759,7 +771,7 @@ def broadcast_to(a: Array, shape: tuple[int, ...]) -> Array:
 
 @broadcast_to_p.def_impl
 def _broadcast_to_impl(a, *, shape):
-  import jax.numpy as jnp
+  import jax.numpy as jnp  # pytype: disable=import-error
   return jnp.broadcast_to(a, shape)
 
 @broadcast_to_p.def_abstract_eval
@@ -772,14 +784,25 @@ mlir.register_lowering(
 
 # === AD rules for mutable arrays ===
 
-def _mut_jvp(primals, tangents):
+def _mut_jvp(primals, tangents, *, memory_space):
   (init_val,), (init_val_dot,) = primals, tangents
-  primal_out = core.mutable_array_p.bind(init_val)
+  primal_out = core.mutable_array_p.bind(init_val, memory_space=memory_space)
   if type(init_val_dot) is ad_util.Zero:
-    tangent_out = core.mutable_array_p.bind(ad_util.zeros_like_aval(init_val_dot.aval))
+    tangent_out = core.mutable_array_p.bind(
+        ad_util.zeros_like_aval(init_val_dot.aval), memory_space=memory_space)
   else:
-    tangent_out = core.mutable_array_p.bind(init_val_dot)
+    tangent_out = core.mutable_array_p.bind(init_val_dot,
+                                            memory_space=memory_space)
   return primal_out, tangent_out
+
+def _mut_lin(nzs, x, *, memory_space):
+  nz, = nzs
+  x_ref = core.mutable_array_p.bind(x, memory_space=memory_space)
+  def mut_lin(_, x_dot):
+    return core.mutable_array_p.bind(ad_util.instantiate(x_dot),
+                                     memory_space=memory_space)
+  return x_ref, True, None, mut_lin
 
 ad.primitive_jvps[core.mutable_array_p] = _mut_jvp
 ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))
+ad.primitive_linearizations[core.mutable_array_p] = _mut_lin

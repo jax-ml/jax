@@ -19,10 +19,15 @@ from collections.abc import Callable
 from functools import partial
 from typing import NamedTuple
 
-import jax
-import jax.numpy as jnp
-from jax import lax
+import numpy as np
+
+from jax._src import api
+from jax._src import lax
+from jax._src import numpy as jnp
+from jax._src.numpy import einsum as jnp_einsum
+from jax._src.numpy import linalg as jnp_linalg
 from jax._src.scipy.optimize.line_search import line_search
+from jax._src.typing import Array
 
 
 class _BFGSResults(NamedTuple):
@@ -49,30 +54,30 @@ class _BFGSResults(NamedTuple):
     line_search_status: int describing line search end state (only means
       something if line search fails).
   """
-  converged: bool | jax.Array
-  failed: bool | jax.Array
-  k: int | jax.Array
-  nfev: int | jax.Array
-  ngev: int | jax.Array
-  nhev: int | jax.Array
-  x_k: jax.Array
-  f_k: jax.Array
-  g_k: jax.Array
-  H_k: jax.Array
-  old_old_fval: jax.Array
-  status: int | jax.Array
-  line_search_status: int | jax.Array
+  converged: bool | Array
+  failed: bool | Array
+  k: int | Array
+  nfev: int | Array
+  ngev: int | Array
+  nhev: int | Array
+  x_k: Array
+  f_k: Array
+  g_k: Array
+  H_k: Array
+  old_old_fval: Array
+  status: int | Array
+  line_search_status: int | Array
 
 
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
-_einsum = partial(jnp.einsum, precision=lax.Precision.HIGHEST)
+_einsum = partial(jnp_einsum.einsum, precision=lax.Precision.HIGHEST)
 
 
 def minimize_bfgs(
     fun: Callable,
-    x0: jax.Array,
+    x0: Array,
     maxiter: int | None = None,
-    norm=jnp.inf,
+    norm=np.inf,
     gtol: float = 1e-5,
     line_search_maxiter: int = 10,
 ) -> _BFGSResults:
@@ -96,14 +101,14 @@ def minimize_bfgs(
   """
 
   if maxiter is None:
-    maxiter = jnp.size(x0) * 200
+    maxiter = np.size(x0) * 200
 
   d = x0.shape[0]
 
   initial_H = jnp.eye(d, dtype=x0.dtype)
-  f_0, g_0 = jax.value_and_grad(fun)(x0)
+  f_0, g_0 = api.value_and_grad(fun)(x0)
   state = _BFGSResults(
-      converged=jnp.linalg.norm(g_0, ord=norm) < gtol,
+      converged=jnp_linalg.norm(g_0, ord=norm) < gtol,
       failed=False,
       k=0,
       nfev=1,
@@ -113,7 +118,7 @@ def minimize_bfgs(
       f_k=f_0,
       g_k=g_0,
       H_k=initial_H,
-      old_old_fval=f_0 + jnp.linalg.norm(g_0) / 2,
+      old_old_fval=f_0 + jnp_linalg.norm(g_0) / 2,
       status=0,
       line_search_status=0,
   )
@@ -147,12 +152,12 @@ def minimize_bfgs(
     y_k = g_kp1 - state.g_k
     rho_k = jnp.reciprocal(_dot(y_k, s_k))
 
-    sy_k = s_k[:, jnp.newaxis] * y_k[jnp.newaxis, :]
+    sy_k = s_k[:, np.newaxis] * y_k[np.newaxis, :]
     w = jnp.eye(d, dtype=rho_k.dtype) - rho_k * sy_k
     H_kp1 = (_einsum('ij,jk,lk', w, state.H_k, w)
-             + rho_k * s_k[:, jnp.newaxis] * s_k[jnp.newaxis, :])
+             + rho_k * s_k[:, np.newaxis] * s_k[np.newaxis, :])
     H_kp1 = jnp.where(jnp.isfinite(rho_k), H_kp1, state.H_k)
-    converged = jnp.linalg.norm(g_kp1, ord=norm) < gtol
+    converged = jnp_linalg.norm(g_kp1, ord=norm) < gtol
 
     state = state._replace(
         converged=converged,

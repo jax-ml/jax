@@ -405,6 +405,9 @@ class BatchTracer(Tracer):
     self.batch_dim = batch_dim
     self.source_info = source_info
 
+  def _short_repr(self):
+    return f"VmapTracer<{self.aval}>"
+
   @property
   def aval(self):
     aval = core.get_aval(self.val)
@@ -455,13 +458,36 @@ class AxisData:
   size : Any
   # Only one of spmd_axis_name and explicit_mesh_axis is set.
   spmd_name : Any
-  explicit_mesh_axis: Any
+  # short for private `_explicit_mesh_axis`. The public property is called
+  # `.explicit_mesh_axis`
+  _ema: tuple[Any, ...] | None
+
+  @property
+  def explicit_mesh_axis(self):
+    assert self._ema is None or isinstance(self._ema, tuple)
+    if self._ema is None:
+      return None
+    cur_mesh = mesh_lib.get_abstract_mesh()
+    if cur_mesh.empty:
+      return self._ema
+    ema0_type = cur_mesh._name_to_type[self._ema[0]]
+    assert all(cur_mesh._name_to_type[e] == ema0_type for e in self._ema)
+    if ema0_type != mesh_lib.AxisType.Explicit:
+      return None
+    return self._ema
+
+  def __repr__(self):
+    return (f'AxisData(name={self.name}, size={self.size},'
+            f' spmd_name={self.spmd_name},'
+            f' explicit_mesh_axis={self.explicit_mesh_axis})')
+
+  __str__ = __repr__
 
 
 def get_sharding_for_vmap(axis_data, orig_sharding, axis):
   val = axis_data.explicit_mesh_axis
   # TODO(yashkatariya): Preserve unreduced here using
-  # `orig_sharding.spec.with_partitions`
+  # `orig_sharding.spec.update`
   new_spec = P(*tuple_insert(orig_sharding.spec, axis, val))
   return NamedSharding(orig_sharding.mesh, new_spec)
 
@@ -504,7 +530,7 @@ class BatchTrace(Trace):
       with core.set_current_trace(self.parent_trace):
         val_out, dim_out = primitive_batchers[p](vals_in, dims_in, **params)
     else:
-      raise NotImplementedError("Batching rule for '{}' not implemented".format(p))
+      raise NotImplementedError(f"Batching rule for '{p}' not implemented")
     src = source_info_util.current()
     if p.multiple_results:
       with core.set_current_trace(self.parent_trace):  # val_out may be lazy map
@@ -790,7 +816,7 @@ def _batch_jaxpr2(
         if config._check_vma.value:
           aval = aval.update(vma=aval.vma | frozenset(axis_data.spmd_name))  # type: ignore
       avals_in2.append(aval)
-  jaxpr_out, _, consts, () = pe.trace_to_jaxpr_dynamic(f, avals_in2)
+  jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in2)
   return core.ClosedJaxpr(jaxpr_out, consts), out_axes()
 
 def handle_ragged(in_avals: list[core.AbstractValue], dim: RaggedAxis,
@@ -831,7 +857,7 @@ def _batch_jaxpr_axes(closed_jaxpr: core.ClosedJaxpr,
                                  axis_data.explicit_mesh_axis)
               if b is not not_mapped
               else aval for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
-  jaxpr_out, _, consts, () = pe.trace_to_jaxpr_dynamic(f, avals_in)
+  jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
   return core.ClosedJaxpr(jaxpr_out, consts), out_batched()
 
 @lu.transformation_with_aux2
@@ -1127,7 +1153,7 @@ def broadcast(x, sz, axis, mesh_axis=None):
   if x_aval.sharding.mesh.empty:
     mesh_axis = None
   new_spec = P(*tuple_insert(x_aval.sharding.spec, axis, mesh_axis))
-  sharding = x_aval.sharding.with_spec(new_spec)
+  sharding = x_aval.sharding.update(spec=new_spec)
   # TODO(dougalm, yashkatariya): Delete this context manager once we figure
   # out how to ensure jaxpr arguments always have the context mesh.
   with mesh_lib.use_abstract_mesh(sharding.mesh):

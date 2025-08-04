@@ -21,12 +21,11 @@ from typing import cast, NamedTuple
 
 import numpy as np
 
-from jax import lax
-
-from jax._src.api import jit
+from jax._src import api
 from jax._src import core
 from jax._src import dtypes
-from jax._src.lax import lax as lax_internal
+from jax._src.lax import lax
+from jax._src.lax import slicing as lax_slicing
 from jax._src.numpy.array_creation import empty, full, full_like, ones, zeros
 from jax._src.numpy.lax_numpy import (
     append, arange, concatenate, diff,
@@ -41,10 +40,8 @@ from jax._src.typing import Array, ArrayLike
 
 export = set_module('jax.numpy')
 
-_lax_const = lax_internal._const
 
-
-@partial(jit, static_argnames=('assume_unique', 'invert', 'method'))
+@partial(api.jit, static_argnames=('assume_unique', 'invert', 'method'))
 def _in1d(ar1: ArrayLike, ar2: ArrayLike, invert: bool,
           method='auto', assume_unique=False) -> Array:
   ar1, ar2 = ensure_arraylike("in1d", ar1, ar2)
@@ -87,8 +84,8 @@ def _concat_unique(arr1: Array, arr2: Array) -> tuple[Array, Array]:
   arr1, num_unique1 = _unique(arr1, axis=0, size=arr1.size, return_true_size=True)
   arr2, num_unique2 = _unique(arr2, axis=0, size=arr2.size, return_true_size=True)
   arr = zeros(arr1.size + arr2.size, dtype=dtypes.result_type(arr1, arr2))
-  arr = lax.dynamic_update_slice(arr, arr1, (0,))
-  arr = lax.dynamic_update_slice(arr, arr2, (num_unique1,))
+  arr = lax_slicing.dynamic_update_slice(arr, arr1, (0,))
+  arr = lax_slicing.dynamic_update_slice(arr, arr2, (num_unique1,))
   return arr, num_unique1 + num_unique2
 
 
@@ -253,7 +250,7 @@ def union1d(ar1: ArrayLike, ar2: ArrayLike,
   return cast(Array, out)
 
 
-@partial(jit, static_argnames=['assume_unique', 'size'])
+@partial(api.jit, static_argnames=['assume_unique', 'size'])
 def _setxor1d_size(arr1: Array, arr2: Array, fill_value: ArrayLike | None, *,
                    assume_unique: bool, size: int, ) -> Array:
   # Ensured by caller
@@ -340,7 +337,7 @@ def setxor1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False, *,
   return aux[flag[1:] & flag[:-1]]
 
 
-@partial(jit, static_argnames=['return_indices'])
+@partial(api.jit, static_argnames=['return_indices'])
 def _intersect1d_sorted_mask(arr1: Array, arr2: Array,
                              return_indices: bool) -> tuple[Array, Array, Array | None]:
   """JIT-compatible helper function for intersect1d"""
@@ -356,7 +353,7 @@ def _intersect1d_sorted_mask(arr1: Array, arr2: Array,
   return aux, mask, indices
 
 
-@partial(jit, static_argnames=['fill_value', 'assume_unique', 'size', 'return_indices'])
+@partial(api.jit, static_argnames=['fill_value', 'assume_unique', 'size', 'return_indices'])
 def _intersect1d_size(arr1: Array, arr2: Array, fill_value: ArrayLike | None, assume_unique: bool,
                       size: int, return_indices: bool) -> Array | tuple[Array, Array, Array]:
   """Jit-compatible helper function for intersect1d with size specified."""
@@ -383,8 +380,8 @@ def _intersect1d_size(arr1: Array, arr2: Array, fill_value: ArrayLike | None, as
     arr1, ind1, num_unique1 = _unique(arr1, 0, size=arr1.size, return_index=True, return_true_size=True, fill_value=0)
     arr2, ind2, num_unique2 = _unique(arr2, 0, size=arr2.size, return_index=True, return_true_size=True, fill_value=0)
     arr = zeros(arr1.size + arr2.size, dtype=dtypes.result_type(arr1, arr2))
-    arr = lax.dynamic_update_slice(arr, arr1, (0,))
-    arr = lax.dynamic_update_slice(arr, arr2, (num_unique1,))
+    arr = lax_slicing.dynamic_update_slice(arr, arr1, (0,))
+    arr = lax_slicing.dynamic_update_slice(arr, arr2, (num_unique1,))
     mask = arange(arr.size) < num_unique1 + num_unique2
     _, aux, aux_sort_indices = lax.sort([~mask, arr, arange(arr.size)], is_stable=True, num_keys=2)
 
@@ -573,14 +570,14 @@ UNIQUE_SIZE_HINT = (
   "To make jnp.unique() compatible with JIT and other transforms, you can specify "
   "a concrete value for the size argument, which will determine the output size.")
 
-@partial(jit, static_argnames=['axis', 'equal_nan'])
+@partial(api.jit, static_argnames=['axis', 'equal_nan'])
 def _unique_sorted_mask(ar: Array, axis: int, equal_nan: bool) -> tuple[Array, Array, Array]:
   aux = moveaxis(ar, axis, 0)
   if np.issubdtype(aux.dtype, np.complexfloating):
     # Work around issue in sorting of complex numbers with Nan only in the
     # imaginary component. This can be removed if sorting in this situation
     # is fixed to match numpy.
-    aux = where(isnan(aux), _lax_const(aux, np.nan), aux)
+    aux = where(isnan(aux), lax._const(aux, np.nan), aux)
   size, *out_shape = aux.shape
   if math.prod(out_shape) == 0:
     size = 1
@@ -621,7 +618,7 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
     ind = nonzero(mask, size=size)[0]
   result = aux[ind] if aux.size else aux
   if size is not None and fill_value is not None:
-    fill_value = lax_internal.asarray(fill_value).astype(result.dtype)
+    fill_value = lax.asarray(fill_value).astype(result.dtype)
     if result.shape[0]:
       valid = lax.expand_dims(arange(size) < mask.sum(), tuple(range(1, result.ndim)))
       result = where(valid, result, fill_value)

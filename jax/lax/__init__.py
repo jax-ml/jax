@@ -82,6 +82,8 @@ from jax._src.lax.lax import (
   convert_element_type_p as convert_element_type_p,
   copy_p as copy_p,
   cos as cos,
+  dce_sink_p as dce_sink_p,
+  dce_sink as dce_sink,
   cos_p as cos_p,
   cosh as cosh,
   cosh_p as cosh_p,
@@ -113,8 +115,6 @@ from jax._src.lax.lax import (
   gt_p as gt_p,
   imag as imag,
   imag_p as imag_p,
-  infeed as infeed,
-  infeed_p as infeed_p,
   integer_pow as integer_pow,
   integer_pow_p as integer_pow_p,
   iota as iota,
@@ -149,8 +149,6 @@ from jax._src.lax.lax import (
   optimization_barrier as optimization_barrier,
   optimization_barrier_p as optimization_barrier_p,
   or_p as or_p,
-  outfeed as outfeed,
-  outfeed_p as outfeed_p,
   pad as pad,
   pad_p as pad_p,
   padtype_to_pads as padtype_to_pads,
@@ -234,7 +232,7 @@ from jax._src.lax.lax import (
   transpose as transpose,
   transpose_p as transpose_p,
   xor_p as xor_p,
-  zeros_like_array as zeros_like_array,
+  zeros_like_array as _deprecated_zeros_like_array,
 )
 from jax._src.lax.special import (
   bessel_i0e as bessel_i0e,
@@ -371,6 +369,8 @@ from jax._src.lax.parallel import (
   pmin_p as pmin_p,
   ppermute as ppermute,
   ppermute_p as ppermute_p,
+  psend as psend,
+  precv as precv,
   pshuffle as pshuffle,
   psum as psum,
   psum_p as psum_p,
@@ -398,49 +398,22 @@ from jax._src.pjit import with_sharding_constraint as with_sharding_constraint
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
 
-import jax._src.lax.lax
-
 _deprecations = {
-    "infeed": (
+    # Added on July 24th 2025.
+    "zeros_like_array": (
         (
-            "jax.lax.infeed was deprecated in JAX v0.6.0 and will be removed in"
-            " JAX v0.7.0."
+            "jax.lax.zeros_like_array is deprecated. Use jax.numpy.zeros_like instead."
         ),
-        jax._src.lax.lax.infeed,
-    ),
-    "infeed_p": (
-        (
-            "jax.lax.infeed_p was deprecated in JAX v0.6.0 and will be removed"
-            " in JAX v0.7.0."
-        ),
-        jax._src.lax.lax.infeed_p,
-    ),
-    "outfeed": (
-        (
-            "jax.lax.outfeed was deprecated in JAX v0.6.0 and will be removed"
-            " in JAX v0.7.0."
-        ),
-        jax._src.lax.lax.outfeed,
-    ),
-    "outfeed_p": (
-        (
-            "jax.lax.outfeed_p was deprecated in JAX v0.6.0 and will be removed"
-            " in JAX v0.7.0."
-        ),
-        jax._src.lax.lax.outfeed_p,
+        _deprecated_zeros_like_array,
     ),
 }
 
 import typing as _typing
-
 if _typing.TYPE_CHECKING:
-  infeed = jax._src.lax.lax.infeed
-  infeed_p = jax._src.lax.lax.infeed_p
-  outfeed = jax._src.lax.lax.outfeed
-  outfeed_p = jax._src.lax.lax.outfeed_p
+  zeros_like_array = _deprecated_zeros_like_array
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
+del _deprecated_zeros_like_array
 del _typing

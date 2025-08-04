@@ -1,7 +1,15 @@
-# The XLA commit is determined by third_party/xla/workspace.bzl.
+# The XLA commit is determined by third_party/xla/revision.bzl.
 load("//third_party/xla:workspace.bzl", jax_xla_workspace = "repo")
 
 jax_xla_workspace()
+
+load("@xla//:workspace4.bzl", "xla_workspace4")
+
+xla_workspace4()
+
+load("@xla//:workspace3.bzl", "xla_workspace3")
+
+xla_workspace3()
 
 # Initialize hermetic Python
 load("@xla//third_party/py:python_init_rules.bzl", "python_init_rules")
@@ -25,7 +33,6 @@ python_init_repositories(
     ],
     local_wheel_workspaces = ["//jaxlib:jax.bzl"],
     requirements = {
-        "3.10": "//build:requirements_lock_3_10.txt",
         "3.11": "//build:requirements_lock_3_11.txt",
         "3.12": "//build:requirements_lock_3_12.txt",
         "3.13": "//build:requirements_lock_3_13.txt",
@@ -47,25 +54,6 @@ load("@pypi//:requirements.bzl", "install_deps")
 
 install_deps()
 
-# Optional, to facilitate testing against newest versions of Python
-load("@xla//third_party/py:python_repo.bzl", "custom_python_interpreter")
-
-custom_python_interpreter(
-    name = "python_dev",
-    strip_prefix = "Python-{version_variant}",
-    urls = ["https://www.python.org/ftp/python/{version}/Python-{version_variant}.tgz"],
-    version = "3.13.0",
-    version_variant = "3.13.0rc2",
-)
-
-load("@xla//:workspace4.bzl", "xla_workspace4")
-
-xla_workspace4()
-
-load("@xla//:workspace3.bzl", "xla_workspace3")
-
-xla_workspace3()
-
 load("@xla//:workspace2.bzl", "xla_workspace2")
 
 xla_workspace2()
@@ -81,6 +69,12 @@ xla_workspace0()
 load("//third_party/flatbuffers:workspace.bzl", flatbuffers = "repo")
 
 flatbuffers()
+
+load("//:test_shard_count.bzl", "test_shard_count_repository")
+
+test_shard_count_repository(
+    name = "test_shard_count",
+)
 
 load("//jaxlib:jax_python_wheel.bzl", "jax_python_wheel_repository")
 
@@ -100,7 +94,18 @@ python_wheel_version_suffix_repository(
 )
 
 load(
-    "@xla//third_party/gpus/cuda/hermetic:cuda_json_init_repository.bzl",
+    "@rules_ml_toolchain//cc_toolchain/deps:cc_toolchain_deps.bzl",
+    "cc_toolchain_deps",
+)
+
+cc_toolchain_deps()
+
+register_toolchains("@rules_ml_toolchain//cc_toolchain:lx64_lx64")
+
+register_toolchains("@rules_ml_toolchain//cc_toolchain:lx64_lx64_cuda")
+
+load(
+    "@rules_ml_toolchain//third_party/gpus/cuda/hermetic:cuda_json_init_repository.bzl",
     "cuda_json_init_repository",
 )
 
@@ -112,7 +117,7 @@ load(
     "CUDNN_REDISTRIBUTIONS",
 )
 load(
-    "@xla//third_party/gpus/cuda/hermetic:cuda_redist_init_repositories.bzl",
+    "@rules_ml_toolchain//third_party/gpus/cuda/hermetic:cuda_redist_init_repositories.bzl",
     "cuda_redist_init_repositories",
     "cudnn_redist_init_repository",
 )
@@ -126,28 +131,28 @@ cudnn_redist_init_repository(
 )
 
 load(
-    "@xla//third_party/gpus/cuda/hermetic:cuda_configure.bzl",
+    "@rules_ml_toolchain//third_party/gpus/cuda/hermetic:cuda_configure.bzl",
     "cuda_configure",
 )
 
 cuda_configure(name = "local_config_cuda")
 
 load(
-    "@xla//third_party/nccl/hermetic:nccl_redist_init_repository.bzl",
+    "@rules_ml_toolchain//third_party/nccl/hermetic:nccl_redist_init_repository.bzl",
     "nccl_redist_init_repository",
 )
 
 nccl_redist_init_repository()
 
 load(
-    "@xla//third_party/nccl/hermetic:nccl_configure.bzl",
+    "@rules_ml_toolchain//third_party/nccl/hermetic:nccl_configure.bzl",
     "nccl_configure",
 )
 
 nccl_configure(name = "local_config_nccl")
 
 load(
-    "@xla//third_party/nvshmem/hermetic:nvshmem_json_init_repository.bzl",
+    "@rules_ml_toolchain//third_party/nvshmem/hermetic:nvshmem_json_init_repository.bzl",
     "nvshmem_json_init_repository",
 )
 
@@ -158,17 +163,10 @@ load(
     "NVSHMEM_REDISTRIBUTIONS",
 )
 load(
-    "@xla//third_party/nvshmem/hermetic:nvshmem_redist_init_repository.bzl",
+    "@rules_ml_toolchain//third_party/nvshmem/hermetic:nvshmem_redist_init_repository.bzl",
     "nvshmem_redist_init_repository",
 )
 
 nvshmem_redist_init_repository(
     nvshmem_redistributions = NVSHMEM_REDISTRIBUTIONS,
 )
-
-load(
-    "@xla//third_party/nvshmem/hermetic:nvshmem_configure.bzl",
-    "nvshmem_configure",
-)
-
-nvshmem_configure(name = "local_config_nvshmem")

@@ -24,11 +24,11 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "xla/python/ifrt/memory.h"
 
-namespace xla {
+namespace jax {
 
 class PyMemorySpace {
  public:
-  PyMemorySpace(nb_class_ptr<PyClient> client, ifrt::Memory* memory_space);
+  PyMemorySpace(nb_class_ptr<PyClient> client, xla::ifrt::Memory* memory_space);
 
   // Memory spaces are compared using Python object identity, so we don't allow
   // them to be copied or moved.
@@ -38,7 +38,7 @@ class PyMemorySpace {
   PyMemorySpace& operator=(PyMemorySpace&&) = delete;
 
   const nb_class_ptr<PyClient>& client() const { return client_; }
-  ifrt::Memory* memory_space() const { return memory_; }
+  xla::ifrt::Memory* memory_space() const { return memory_; }
 
   int process_index() const;
   absl::string_view platform() const;
@@ -57,9 +57,9 @@ class PyMemorySpace {
   static PyType_Slot slots_[];
 
   nb_class_ptr<PyClient> client_;
-  ifrt::Memory* memory_;
+  xla::ifrt::Memory* memory_;
 };
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_PY_MEMORY_SPACE_H_

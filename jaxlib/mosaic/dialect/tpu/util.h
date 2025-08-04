@@ -220,6 +220,13 @@ inline SmallVector<int64_t> ComputeTileStrides(
                                   memref_ty.getShape().size());
   return ComputeTileStrides(shape, tiling);
 }
+
+// Computes the dimensions that were squeezed from the source shape to match the
+// target shape. Returns the dimensions in increasing order.
+FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
+    Operation *op, ArrayRef<int64_t> source_shape,
+    ArrayRef<int64_t> target_shape);
+
 // Assuming MKN matmul - This function must only be called after
 // canonicalization passes.
 //
@@ -284,11 +291,6 @@ inline arith::ConstantOp I32Const(int32_t value, ArrayRef<int64_t> shape,
 }
 
 std::optional<int64_t> getIntConst(Value v);
-
-// Returns true if the product of up to `shape.size() - 1` minor-most dimensions
-// in `shape` equals `target_size`. The major-most dimension is not considered.
-// Precondition: `shape` has at least 2 dimensions.
-bool canFoldMinorDimsToSize(ArrayRef<int64_t> shape, int64_t target_size);
 
 // Recursively finds all non-trivial users of a given value, including those
 // accessed via `tpu.bitcast` or unary elementwise operations. However,

@@ -21,20 +21,19 @@ from functools import partial
 import operator
 import math
 import numpy as np
-from typing import Any, List, Literal
+from typing import Any, Literal
 import warnings
 
-import jax
-import jax.numpy as jnp
-from jax import custom_jvp
-from jax import lax
+from jax._src import api
 from jax._src import config
 from jax._src import core
+from jax._src import custom_derivatives
 from jax._src import deprecations
 from jax._src import dtypes
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src import util
 from jax._src.core import AxisName
-from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.cudnn.fused_attention_stablehlo import (
     dot_product_attention as cudnn_dot_product_attention, MaskType)
 from jax._src.cudnn.scaled_matmul_stablehlo import (
@@ -43,13 +42,16 @@ from jax._src.cudnn.scaled_matmul_stablehlo import (
     BlockScaleConfig)
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import util as numpy_util
+from jax._src.numpy.reductions import Axis
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.ops.special import logsumexp as _logsumexp
 
 
 # activations
-@jax.jit
+@api.jit
 def identity(x: ArrayLike) -> Array:
   r"""Identity activation function.
 
@@ -69,8 +71,8 @@ def identity(x: ArrayLike) -> Array:
   numpy_util.check_arraylike("identity", x)
   return jnp.asarray(x)
 
-@custom_jvp
-@jax.jit
+@custom_derivatives.custom_jvp
+@api.jit
 def relu(x: ArrayLike) -> Array:
   r"""Rectified linear unit activation function.
 
@@ -106,7 +108,7 @@ def relu(x: ArrayLike) -> Array:
 # For behavior at 0, see https://dl.acm.org/doi/10.5555/3540261.3540297
 relu.defjvps(lambda g, ans, x: lax.select(x > 0, g, lax.full_like(g, 0)))
 
-@jax.jit
+@api.jit
 def squareplus(x: ArrayLike, b: ArrayLike = 4) -> Array:
   r"""Squareplus activation function.
 
@@ -128,7 +130,7 @@ def squareplus(x: ArrayLike, b: ArrayLike = 4) -> Array:
   y = x + jnp.sqrt(jnp.square(x) + b)
   return y / 2
 
-@jax.jit
+@api.jit
 def softplus(x: ArrayLike) -> Array:
   r"""Softplus activation function.
 
@@ -142,7 +144,7 @@ def softplus(x: ArrayLike) -> Array:
   """
   return jnp.logaddexp(x, 0)
 
-@jax.jit
+@api.jit
 def sparse_plus(x: ArrayLike) -> Array:
   r"""Sparse plus function.
 
@@ -168,7 +170,7 @@ def sparse_plus(x: ArrayLike) -> Array:
   x = jnp.asarray(x)
   return jnp.where(x <= -1.0, 0.0, jnp.where(x >= 1.0, x, (x + 1.0)**2/4))
 
-@jax.jit
+@api.jit
 def soft_sign(x: ArrayLike) -> Array:
   r"""Soft-sign activation function.
 
@@ -184,7 +186,7 @@ def soft_sign(x: ArrayLike) -> Array:
   x_arr = jnp.asarray(x)
   return x_arr / (jnp.abs(x_arr) + 1)
 
-@partial(jax.jit, inline=True)
+@partial(api.jit, inline=True)
 def sigmoid(x: ArrayLike) -> Array:
   r"""Sigmoid activation function.
 
@@ -205,7 +207,7 @@ def sigmoid(x: ArrayLike) -> Array:
   """
   return lax.logistic(x)
 
-@jax.jit
+@api.jit
 def sparse_sigmoid(x: ArrayLike) -> Array:
   r"""Sparse sigmoid activation function.
 
@@ -237,7 +239,7 @@ def sparse_sigmoid(x: ArrayLike) -> Array:
   """
   return 0.5 * jnp.clip(x + 1.0, 0.0, 2.0)
 
-@jax.jit
+@api.jit
 def silu(x: ArrayLike) -> Array:
   r"""SiLU (aka swish) activation function.
 
@@ -263,7 +265,7 @@ def silu(x: ArrayLike) -> Array:
 
 swish = silu
 
-@jax.jit
+@api.jit
 def mish(x: ArrayLike) -> Array:
   r"""Mish activation function.
 
@@ -286,7 +288,7 @@ def mish(x: ArrayLike) -> Array:
   x_arr = jnp.asarray(x)
   return x_arr * jnp.tanh(softplus(x_arr))
 
-@jax.jit
+@api.jit
 def log_sigmoid(x: ArrayLike) -> Array:
   r"""Log-sigmoid activation function.
 
@@ -308,7 +310,7 @@ def log_sigmoid(x: ArrayLike) -> Array:
   x_arr = jnp.asarray(x)
   return -softplus(-x_arr)
 
-@jax.jit
+@api.jit
 def elu(x: ArrayLike, alpha: ArrayLike = 1.0) -> Array:
   r"""Exponential linear unit activation function.
 
@@ -336,7 +338,7 @@ def elu(x: ArrayLike, alpha: ArrayLike = 1.0) -> Array:
                    x_arr,
                    alpha * jnp.expm1(jnp.where(x_arr > 0, 0., x_arr)))
 
-@jax.jit
+@api.jit
 def leaky_relu(x: ArrayLike, negative_slope: ArrayLike = 1e-2) -> Array:
   r"""Leaky rectified linear unit activation function.
 
@@ -364,7 +366,7 @@ def leaky_relu(x: ArrayLike, negative_slope: ArrayLike = 1e-2) -> Array:
   x_arr = jnp.asarray(x)
   return jnp.where(x_arr >= 0, x_arr, negative_slope * x_arr)
 
-@jax.jit
+@api.jit
 def hard_tanh(x: ArrayLike) -> Array:
   r"""Hard :math:`\mathrm{tanh}` activation function.
 
@@ -387,7 +389,7 @@ def hard_tanh(x: ArrayLike) -> Array:
   x_arr = jnp.asarray(x)
   return jnp.where(x_arr > 1, 1, jnp.where(x_arr < -1, -1, x_arr))
 
-@jax.jit
+@api.jit
 def celu(x: ArrayLike, alpha: ArrayLike = 1.0) -> Array:
   r"""Continuously-differentiable exponential linear unit activation.
 
@@ -412,7 +414,7 @@ def celu(x: ArrayLike, alpha: ArrayLike = 1.0) -> Array:
   """
   return jnp.maximum(x, 0.0) + alpha * jnp.expm1(jnp.minimum(x, 0.0) / alpha)
 
-@jax.jit
+@api.jit
 def selu(x: ArrayLike) -> Array:
   r"""Scaled exponential linear unit activation.
 
@@ -445,7 +447,7 @@ def selu(x: ArrayLike) -> Array:
   return scale * elu(x, alpha)
 
 # TODO(phawkins): this jit was found to change numerics in a test. Debug this.
-# @partial(jax.jit, static_argnames=("approximate",))
+# @partial(api.jit, static_argnames=("approximate",))
 def gelu(x: ArrayLike, approximate: bool = True) -> Array:
   r"""Gaussian error linear unit activation function.
 
@@ -480,7 +482,7 @@ def gelu(x: ArrayLike, approximate: bool = True) -> Array:
         0.5 * x_arr * (lax.erfc(-x_arr * sqrt_half)), dtype=x_arr.dtype
     )
 
-@partial(jax.jit, static_argnames=("axis",))
+@partial(api.jit, static_argnames=("axis",))
 def glu(x: ArrayLike, axis: int = -1) -> Array:
   r"""Gated linear unit activation function.
 
@@ -516,9 +518,9 @@ def glu(x: ArrayLike, axis: int = -1) -> Array:
 logsumexp = _logsumexp
 
 
-@partial(jax.jit, static_argnames=("axis",))
+@partial(api.jit, static_argnames=("axis",))
 def log_softmax(x: ArrayLike,
-                axis: int | tuple[int, ...] | None = -1,
+                axis: Axis = -1,
                 where: ArrayLike | None = None) -> Array:
   r"""Log-Softmax function.
 
@@ -533,7 +535,8 @@ def log_softmax(x: ArrayLike,
     x : input array
     axis: the axis or axes along which the :code:`log_softmax` should be
       computed. Either an integer or a tuple of integers.
-    where: Elements to include in the :code:`log_softmax`.
+    where: Elements to include in the :code:`log_softmax`. The output for any
+      masked-out element is minus infinity.
 
   Returns:
     An array.
@@ -547,21 +550,21 @@ def log_softmax(x: ArrayLike,
   """
   numpy_util.check_arraylike("log_softmax", x)
   x_arr = jnp.asarray(x)
-  x_max = jnp.max(x_arr, axis, where=where, initial=-jnp.inf, keepdims=True)
-  x_safe = x_arr if where is None else jnp.where(where, x_arr, -jnp.inf)
+  x_max = jnp.max(x_arr, axis, where=where, initial=-np.inf, keepdims=True)
+  x_safe = x_arr if where is None else jnp.where(where, x_arr, -np.inf)
   shifted = x_safe - lax.stop_gradient(x_max)
   shifted_logsumexp = jnp.log(
       jnp.sum(jnp.exp(shifted), axis, where=where, keepdims=True))
   result = shifted - shifted_logsumexp
   if where is not None:
-    return jnp.where(where, result, -jnp.inf)
+    return jnp.where(where, result, -np.inf)
   return result
 
 
 # TODO(phawkins): this jit was found to change numerics in a test. Debug this.
-# @partial(jax.jit, static_argnames=("axis",))
+# @partial(api.jit, static_argnames=("axis",))
 def softmax(x: ArrayLike,
-            axis: int | tuple[int, ...] | None = -1,
+            axis: Axis = -1,
             where: ArrayLike | None = None) -> Array:
   r"""Softmax function.
 
@@ -576,7 +579,8 @@ def softmax(x: ArrayLike,
     axis: the axis or axes along which the softmax should be computed. The
       softmax output summed across these dimensions should sum to :math:`1`.
       Either an integer or a tuple of integers.
-    where: Elements to include in the :code:`softmax`.
+    where: Elements to include in the :code:`softmax`. The output for any
+      masked-out element is zero.
 
   Returns:
     An array.
@@ -597,12 +601,12 @@ def softmax(x: ArrayLike,
     return _softmax_deprecated(x, axis, where)
 
 # TODO(mattjj): replace softmax with _softmax when deprecation flag is removed
-@partial(jax.custom_jvp, nondiff_argnums=(1,))
+@partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))
 def _softmax(
     x: ArrayLike,
-    axis: int | tuple[int, ...] | None = -1,
+    axis: Axis = -1,
     where: ArrayLike | None = None,
-    initial: ArrayLike | None = -jnp.inf) -> Array:
+    initial: ArrayLike | None = -np.inf) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   x_safe = x if where is None else jnp.where(where, x, initial)
   unnormalized = jnp.exp(x_safe - x_max)
@@ -619,9 +623,9 @@ def _softmax_jvp(axis, primals, tangents):
 
 def _softmax_deprecated(
     x: ArrayLike,
-    axis: int | tuple[int, ...] | None = -1,
+    axis: Axis = -1,
     where: ArrayLike | None = None,
-    initial: ArrayLike | None = -jnp.inf) -> Array:
+    initial: ArrayLike | None = -np.inf) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   x_safe = x if where is None else jnp.where(where, x, initial)
   unnormalized = jnp.exp(x_safe - lax.stop_gradient(x_max))
@@ -631,9 +635,9 @@ def _softmax_deprecated(
   return result
 
 
-@partial(jax.jit, static_argnames=("axis",))
+@partial(api.jit, static_argnames=("axis",))
 def standardize(x: ArrayLike,
-                axis: int | tuple[int, ...] | None = -1,
+                axis: Axis = -1,
                 mean: ArrayLike | None = None,
                 variance: ArrayLike | None = None,
                 epsilon: ArrayLike = 1e-5,
@@ -679,7 +683,7 @@ def standardize(x: ArrayLike,
   return jnp.subtract(x, jnp.asarray(mean)) * lax.rsqrt(jnp.asarray(variance) + epsilon)
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
-@partial(jax.jit, static_argnames=("num_classes", "dtype", "axis"))
+@partial(api.jit, static_argnames=("num_classes", "dtype", "axis"))
 def _one_hot(x: Array, num_classes: int, *,
              dtype: Any, axis: int | AxisName) -> Array:
   num_classes = core.concrete_dim_or_error(
@@ -707,7 +711,7 @@ def _one_hot(x: Array, num_classes: int, *,
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
 def one_hot(x: Any, num_classes: int, *,
-            dtype: Any = jnp.float_, axis: int | AxisName = -1) -> Array:
+            dtype: Any = dtypes.float_, axis: int | AxisName = -1) -> Array:
   """One-hot encodes the given indices.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length
@@ -735,7 +739,7 @@ def one_hot(x: Any, num_classes: int, *,
       num_classes,
       "The error arose in jax.nn.one_hot argument `num_classes`.")
   x_arr = jnp.asarray(x)
-  if not jnp.isdtype(x_arr.dtype, "integral"):
+  if not dtypes.isdtype(x_arr.dtype, "integral"):
     # Deprecated 2024-12-18
     deprecations.warn(
       'jax-nn-one-hot-float-input',
@@ -744,8 +748,8 @@ def one_hot(x: Any, num_classes: int, *,
   return _one_hot(x_arr, num_classes, dtype=dtype, axis=axis)
 
 
-@jax.custom_jvp
-@jax.jit
+@custom_derivatives.custom_jvp
+@api.jit
 def relu6(x: ArrayLike) -> Array:
   r"""Rectified Linear Unit 6 activation function.
 
@@ -777,7 +781,7 @@ def relu6(x: ArrayLike) -> Array:
 relu6.defjvps(lambda g, ans, x:
               lax.select((x > 0) & (x < 6), g, lax.full_like(g, 0)))
 
-@jax.jit
+@api.jit
 def hard_sigmoid(x: ArrayLike) -> Array:
   r"""Hard Sigmoid activation function.
 
@@ -797,7 +801,7 @@ def hard_sigmoid(x: ArrayLike) -> Array:
   """
   return relu6(x + 3.) / 6.
 
-@jax.jit
+@api.jit
 def hard_silu(x: ArrayLike) -> Array:
   r"""Hard SiLU (swish) activation function
 
@@ -825,11 +829,11 @@ def hard_silu(x: ArrayLike) -> Array:
 hard_swish = hard_silu
 
 def _get_large_negative(dtype):
-  dtype_max = jnp.finfo(dtype).max
+  dtype_max = dtypes.finfo(dtype).max
   return jnp.asarray(-0.7 * dtype_max, dtype=dtype)
 
 def _get_causal_mask(T, S):
-  mask = jnp.tril(jnp.ones((T, S), dtype=jnp.bool_))
+  mask = jnp.tril(jnp.ones((T, S), dtype=bool))
   return mask[None, None, :, :]
 
 def _get_window_mask(T: int, S: int, local_window_size: tuple[int, int]):
@@ -862,9 +866,9 @@ def _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen,
   if mask is None and not is_causal and q_seqlen is None and kv_seqlen is None:
     return logits
 
-  combined_mask = jnp.ones_like(logits, dtype=jnp.bool_)
+  combined_mask = jnp.ones_like(logits, dtype=bool)
   if mask is not None:
-    assert mask.dtype == jnp.bool_
+    assert mask.dtype == np.dtype(bool)
     combined_mask = jnp.logical_and(combined_mask, mask)
 
   T, S = logits.shape[2], logits.shape[3]
@@ -887,15 +891,15 @@ def _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen,
 
 def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
                                 scale, q_seqlen, kv_seqlen, local_window_size):
-  logits_dtype = jnp.promote_types(query.dtype, jnp.float32)
+  logits_dtype = jnp.promote_types(query.dtype, np.float32)
 
   # If the query and logits dtypes are different, then the default precision
   # can use inconsistent types in the backwards pass
   # (see https://github.com/jax-ml/jax/issues/24047).
-  if query.dtype == jnp.bfloat16:
-    precision = jax.lax.DotAlgorithmPreset.BF16_BF16_F32
-  elif query.dtype == jnp.float16:
-    precision = jax.lax.DotAlgorithmPreset.F16_F16_F32
+  if query.dtype == dtypes.bfloat16:
+    precision = lax.DotAlgorithmPreset.BF16_BF16_F32
+  elif query.dtype == np.float16:
+    precision = lax.DotAlgorithmPreset.F16_F16_F32
   # TODO(sbodenstein): Implement this fix for all dtypes.
   else:
     precision = None
@@ -904,7 +908,7 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
   # some GPUs do not support BF16_BF16_F32, and TPU does not support F16_F16_F32.
   # Use the default precision as a fallback in these cases.
   try:
-    logits = jnp.einsum(
+    logits = jnp_einsum.einsum(
         "BTNH,BSNH->BNTS",
         query,
         key,
@@ -912,7 +916,7 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
         preferred_element_type=logits_dtype,
     )
   except:  # pylint: disable=bare-except
-    logits = jnp.einsum(
+    logits = jnp_einsum.einsum(
         "BTNH,BSNH->BNTS",
         query,
         key,
@@ -929,10 +933,10 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
                                local_window_size)
 
   # Softmax and it is always carried out in fp32.
-  padded_logits = padded_logits.astype(jnp.float32)
-  probs = jax.nn.softmax(padded_logits, axis=-1).astype(key.dtype)
+  padded_logits = padded_logits.astype(np.float32)
+  probs = softmax(padded_logits, axis=-1).astype(key.dtype)
 
-  encoded = jnp.einsum('BNTS,BSNH->BTNH', probs, value)
+  encoded = jnp_einsum.einsum('BNTS,BSNH->BTNH', probs, value)
   if q_seqlen is not None and kv_seqlen is not None:
     mask = _get_padding_mask_encoded(encoded.shape[1], q_seqlen)
     encoded *= mask.astype(encoded.dtype)
@@ -966,7 +970,7 @@ def _dot_product_attention_xla(
     return t
   bias = _reshape_to_grouped(bias)
   mask = _reshape_to_grouped(mask)
-  vmapped_fn = jax.vmap(
+  vmapped_fn = api.vmap(
       _dot_product_attention_core,
       in_axes=(3, None, None, 2, 2, None, None, None, None, None),
       out_axes=3,
@@ -990,7 +994,7 @@ def bias_bwd_rule(query_head_num, res, g):
 # around a cuDNN issue where bias gradients are only supported when the batch
 # size is 1 and the number of heads matches the query.
 # TODO(kaixih@nvidia): Remove this workaround once cuDNN resolves the issue.
-@partial(jax.custom_vjp, nondiff_argnums=(1,))
+@partial(custom_derivatives.custom_vjp, nondiff_argnums=(1,))
 def check_valid_bias_batch(x, query_head_num):
   output, _ = bias_fwd_rule(x, query_head_num)
   return output
@@ -1149,11 +1153,11 @@ def dot_product_attention(
   B, S, K, H = key_arr.shape
   _check_shape_and_dtype(value_arr, [B, S, K, H], key_arr.dtype, 'value')
   _check_shape_and_dtype(query_arr, [B, -1, -1, H], key_arr.dtype, 'query')
-  _check_shape_and_dtype(mask, [-1] * 4, jnp.bool_, 'mask')
+  _check_shape_and_dtype(mask, [-1] * 4, np.dtype(bool), 'mask')
   _check_shape_and_dtype(bias, [-1] * 4, None, 'bias')
-  _check_shape_and_dtype(query_seq_lengths, [B], jnp.int32,
+  _check_shape_and_dtype(query_seq_lengths, [B], np.dtype('int32'),
                          'query_seq_lengths')
-  _check_shape_and_dtype(key_value_seq_lengths, [B], jnp.int32,
+  _check_shape_and_dtype(key_value_seq_lengths, [B], np.dtype('int32'),
                          'key_value_seq_lengths')
   if query_arr.shape[-2] % K != 0:
     raise ValueError(f"The number of query heads must be a multiple of "
@@ -1179,9 +1183,9 @@ def dot_product_attention(
       if use_padding:
         if query_seq_lengths is None:
           T = query_arr.shape[1]
-          query_seq_lengths = jnp.full((B,), T, dtype=jnp.int32)
+          query_seq_lengths = jnp.full((B,), T, dtype=np.int32)
         if key_value_seq_lengths is None:
-          key_value_seq_lengths = jnp.full((B,), S, dtype=jnp.int32)
+          key_value_seq_lengths = jnp.full((B,), S, dtype=np.int32)
 
       mask_type = MaskType.NO_MASK
       if use_padding and is_causal:
@@ -1225,7 +1229,7 @@ def scaled_matmul(
     rhs: Array,
     lhs_scales: Array,
     rhs_scales: Array,
-    preferred_element_type: DTypeLike = jnp.float32,
+    preferred_element_type: DTypeLike = np.float32,
 ) -> Array:
     r"""Scaled matrix multiplication function.
 
@@ -1339,12 +1343,12 @@ def get_scaled_dot_general_config(mode: Literal['nvfp4', 'mxfp8'],
     """
 
     if mode == 'nvfp4':
-        one = jnp.ones((1,), dtype=jnp.float32)
+        one = jnp.ones((1,), dtype=np.float32)
         return BlockScaleConfig(
             mode='nvfp4',
             block_size=16,
-            data_type=jnp.float4_e2m1fn,
-            scale_type=jnp.float8_e4m3fn,
+            data_type=dtypes.float4_e2m1fn,
+            scale_type=dtypes.float8_e4m3fn,
             global_scale=one if global_scale is None else global_scale,
             infer_only=False
         )
@@ -1352,8 +1356,8 @@ def get_scaled_dot_general_config(mode: Literal['nvfp4', 'mxfp8'],
         return BlockScaleConfig(
             mode='mxfp8',
             block_size=32,
-            data_type=jnp.float8_e4m3fn,
-            scale_type=jnp.float8_e8m0fnu,
+            data_type=dtypes.float8_e4m3fn,
+            scale_type=dtypes.float8_e8m0fnu,
             global_scale=None,
             infer_only=False
         )
@@ -1363,8 +1367,8 @@ def get_scaled_dot_general_config(mode: Literal['nvfp4', 'mxfp8'],
 def scaled_dot_general(
     lhs, rhs,
     dimension_numbers,
-    preferred_element_type=jnp.float32,
-    configs: List[BlockScaleConfig] | None = None,
+    preferred_element_type=np.float32,
+    configs: list[BlockScaleConfig] | None = None,
     implementation: Literal['cudnn'] | None = None,
   ):
   r"""Scaled dot general operation.

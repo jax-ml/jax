@@ -23,7 +23,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import math
-import re
 
 from absl import logging
 from absl.testing import absltest
@@ -37,13 +36,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import test_harnesses
 from jax import random
-
-
-def make_disjunction_regexp(*parts: str) -> re.Pattern[str]:
-  if not parts:
-    return re.compile("matches_no_test")
-  else:
-    return re.compile("(" + "|".join(parts) + ")")
 
 
 class PrimitiveTest(jtu.JaxTestCase):
@@ -84,10 +76,6 @@ class PrimitiveTest(jtu.JaxTestCase):
       self.skipTest("Eigenvalues are sorted and it is not correct to compare "
                     "decompositions for equality.")
 
-    if (jtu.device_under_test() == "gpu"
-        and "tridiagonal_solve_" in harness.fullname):
-      self.skipTest("tridiagonal_solve_ is not yet guaranteed stable.")
-
     if harness.params.get("enable_xla", False):
       self.skipTest("enable_xla=False is not relevant")
 
@@ -98,11 +86,6 @@ class PrimitiveTest(jtu.JaxTestCase):
     for l in harness.jax_unimplemented:
       if l.filter(dtype=harness.dtype):
         unimplemented_platforms = unimplemented_platforms.union(l.devices)
-    # Some primitive lowering rules need the GPU backend to be able to create
-    # CUDA lowering.
-    if ("tridiagonal_solve_" in harness.fullname
-        and all(d.platform != "gpu" for d in self.devices)):
-      unimplemented_platforms.add("gpu")
 
     if unimplemented_platforms:
       logging.info("Harness is not implemented on %s", unimplemented_platforms)

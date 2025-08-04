@@ -336,7 +336,7 @@ class FftTest(jtu.JaxTestCase):
       ValueError, lambda: func(rng([2, 3], dtype=np.float64), axes=[-3, -4]))
 
   @jtu.sample_product(
-    dtype=all_dtypes,
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
     size=[9, 10, 101, 102],
     d=[0.1, 2.],
     device=[None, -1],
@@ -344,15 +344,12 @@ class FftTest(jtu.JaxTestCase):
   def testFftfreq(self, size, d, dtype, device):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng([size], dtype),)
-    jnp_op = jnp.fft.fftfreq
-    np_op = np.fft.fftfreq
     if device is not None:
       device = jax.devices()[device]
-    jnp_fn = lambda a: jnp_op(size, d=d, device=device)
-    np_fn = lambda a: np_op(size, d=d)
+    jnp_fn = lambda a: jnp.fft.fftfreq(size, d=d, device=device, dtype=dtype)
+    np_fn = lambda a: np.fft.fftfreq(size, d=d).astype(dtype)
     # Numpy promotes to complex128 aggressively.
-    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
-                            tol=1e-4)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker)
     # Test gradient for differentiable types.
     if dtype in inexact_dtypes:

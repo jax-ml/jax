@@ -21,7 +21,6 @@ contains only tests that do not use shard_map.
 from collections.abc import Callable
 import dataclasses
 import functools
-import threading
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -38,7 +37,7 @@ jax.config.parse_flags_with_absl()
 jax.config.update('jax_threefry_partitionable', True)
 
 
-class CountStoreCallbacksContext(object):
+class CountStoreCallbacksContext:
   """Wraps the I/O callback `store` into a callback that counts the number of calls to `store`."""
 
   def __init__(self):
@@ -69,7 +68,7 @@ class ProcessedGridPoint():
   core_id: int
 
 
-class GridPointRecorderContext(object):
+class GridPointRecorderContext:
   """Records grid points in the order in which they are procsessed."""
 
   def __init__(self):
@@ -102,10 +101,40 @@ class InterpretTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+
+    if not jtu.test_device_matches(['cpu']):
+      self.skipTest('CPU-only test')
+
     self.num_devices = jax.device_count()
     if self.num_devices > 1:
       # Workaround for https://github.com/jax-ml/jax/issues/25671
       self.skipTest(f'requires 1 device, found {self.num_devices}')
+
+  def test_revisiting_is_an_error(self):
+    def kernel(x_ref, o1_ref, o2_ref):
+      pass
+
+    @jax.jit
+    def run():
+      return pl.pallas_call(
+          kernel,
+          out_shape=[
+              jax.ShapeDtypeStruct((16, 256), jnp.float32),
+              jax.ShapeDtypeStruct((16, 256), jnp.float32),
+          ],
+          grid=(4, 4),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          out_specs=[
+              pl.BlockSpec((4, 128), lambda i, j: (i, j // 2)),
+              pl.BlockSpec((4, 128), lambda i, j: (j // 2, i % 2)),
+          ],
+          interpret=pltpu.InterpretParams(),
+      )(jnp.zeros((8, 128)))
+
+    with self.assertRaisesRegex(
+        Exception, r'Revisited block .* of output 1 in iteration \(2, 0\)'):
+      run()[0].block_until_ready()
+      pltpu.reset_tpu_interpret_mode_state()
 
   def test_matmul_example(self):
     def matmul_kernel(x_ref, y_ref, z_ref):
@@ -133,6 +162,77 @@ class InterpretTest(jtu.JaxTestCase):
     y = jax.random.normal(k2, (1024, 1024))
     z = matmul(x, y)
     np.testing.assert_allclose(z, x @ y, atol=1e-4)
+
+  @parameterized.parameters('raise', 'uninitialized')
+  def test_out_of_bounds_read_index(self, out_of_bounds_reads):
+    def kernel(s_ref, x_ref, o_ref):
+      def read(ref, i):
+        return ref[i]
+      def body(carry):
+        i, accum = carry
+        accum += read(x_ref, i)
+        return (i + 1, accum)
+      start = read(x_ref, s_ref[0])
+      stop = read(x_ref, s_ref[1])
+      o_ref[0] = jax.lax.while_loop(
+        lambda c: c[0] < stop,
+        body,
+        (start, jnp.int32(0)))[1]
+
+    @jax.jit
+    def run(s, x):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+          out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+          in_specs=[
+              pl.BlockSpec(memory_space=pltpu.SMEM),
+              pl.BlockSpec(memory_space=pltpu.SMEM)
+          ],
+          interpret=pltpu.InterpretParams(
+              out_of_bounds_reads=out_of_bounds_reads),
+      )(s, x)
+
+    self.assertEqual(run(jnp.array([0, 1], jnp.int32),
+                         jnp.array([2, 5, 9, 15, 17], jnp.int32)),
+                     9 + 15 + 17)
+
+    if out_of_bounds_reads == 'uninitialized':
+      self.assertLess(run(jnp.array([0, 1], jnp.int32),
+                          jnp.array([2, 6, 9, 15, 17], jnp.int32)),
+                      0)  # sum includes one uninitialized value
+    elif out_of_bounds_reads == 'raise':
+      with self.assertRaisesRegex(Exception, 'Out-of-bounds read'):
+        run(jnp.array([0, 1], jnp.int32),
+            jnp.array([2, 6, 9, 15, 17], jnp.int32)),
+      pltpu.reset_tpu_interpret_mode_state()
+
+
+  @parameterized.parameters('raise', 'uninitialized')
+  def test_out_of_bounds_read_range(self, out_of_bounds_reads):
+    def kernel(x_ref, o_ref, sem):
+      pltpu.async_copy(x_ref.at[pl.ds(jnp.int32(4), 8), 1], o_ref, sem).wait()
+
+    @jax.jit
+    def run():
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128,), jnp.float32),
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          scratch_shapes=[pltpu.SemaphoreType.DMA],
+          interpret=pltpu.InterpretParams(
+              out_of_bounds_reads=out_of_bounds_reads),
+      )(jnp.zeros((8, 4, 128), jnp.float32))
+
+    if out_of_bounds_reads == 'raise':
+      with self.assertRaisesRegex(Exception, 'Out-of-bounds read'):
+        run().block_until_ready()
+      pltpu.reset_tpu_interpret_mode_state()
+    else:
+      out = run().block_until_ready()
+      np.testing.assert_equal(np.array(out[:4]), 0.0)
+      self.assertTrue(np.isnan(out[4:]).all())
 
   def test_scalar_prefetch_example(self):
     def dynamic_slice_kernel(indices, x_ref, o_ref):
@@ -472,10 +572,13 @@ class InterpretTest(jtu.JaxTestCase):
     with self.assertRaises(jax.errors.ConcretizationTypeError):
       kernel_call_dynamic_parallel_dimension()
 
-  @parameterized.parameters(1, 2, 4)
-  def test_core_map(self, num_cores):
+  @parameterized.product(
+      num_cores=[1, 2, 4],
+      use_context_manager=[False, True]
+  )
+  def test_core_map(self, num_cores, use_context_manager):
     mesh = pltpu.create_tensorcore_mesh('x', num_cores=num_cores)
-    interpret = pltpu.InterpretParams()
+    interpret = False if use_context_manager else pltpu.InterpretParams()
 
     @jax.jit
     def f(x):
@@ -511,12 +614,18 @@ class InterpretTest(jtu.JaxTestCase):
           )
       _, y = pl.run_state(inner)((x, y))
       return y
+
     x = jnp.arange(16 * 128, dtype=jnp.int32).reshape((16, 128))
     expected_out = (
         x.reshape((num_cores, -1, 128)) + 1
         + jnp.arange(num_cores, dtype=jnp.int32)[..., None, None]
     ).reshape(x.shape)
-    y = f(x)
+
+    if use_context_manager:
+      with pltpu.force_tpu_interpret_mode():
+        y = f(x)
+    else:
+      y = f(x)
     np.testing.assert_array_equal(y, expected_out)
 
   def test_two_cores_along_parallel_dimension_with_race(self):
@@ -525,24 +634,49 @@ class InterpretTest(jtu.JaxTestCase):
       o_ref[...] = x_ref[...] + vmem_ref[...]
 
     x = jnp.ones((8, 128), jnp.float32)
-    y = pl.pallas_call(
-        kernel,
-        grid=(2,),
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY)],
-        scratch_shapes=[
-            pltpu.VMEM(x.shape, x.dtype),
-        ],
-        interpret=pltpu.InterpretParams(
-            num_cores_per_device=2,
-            detect_races=True,
-        ),
-        compiler_params=pltpu.CompilerParams(
-            dimension_semantics=('parallel',),
-        ),
-    )(x).block_until_ready()
+    trace_count = [0]
+
+    @jax.jit
+    def f(x):
+      trace_count[0] += 1
+      return pl.pallas_call(
+          kernel,
+          grid=(2,),
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY)],
+          scratch_shapes=[
+              pltpu.VMEM(x.shape, x.dtype),
+          ],
+          compiler_params=pltpu.CompilerParams(
+              dimension_semantics=('parallel',),
+          ),
+          interpret=pltpu.InterpretParams(
+              num_cores_per_device=2,
+              detect_races=False,
+          ),
+      )(x)
+
+    y = f(x).block_until_ready()
+    self.assertFalse(mosaic_interpret.races.races_found)
+    np.testing.assert_allclose(y, 2.0 * x)
+
+    with pltpu.force_tpu_interpret_mode(pltpu.InterpretParams(
+        num_cores_per_device=1,
+        detect_races=True,
+    )):
+      y = f(x).block_until_ready()
+    self.assertFalse(mosaic_interpret.races.races_found)
+    np.testing.assert_allclose(y, 2.0 * x)
+    self.assertEqual(trace_count[0], 2)
+
+    with pltpu.force_tpu_interpret_mode(pltpu.InterpretParams(
+        num_cores_per_device=2,
+        detect_races=True,
+    )):
+      y = f(x).block_until_ready()
     self.assertTrue(mosaic_interpret.races.races_found)
     np.testing.assert_allclose(y, 2.0 * x)
+    self.assertEqual(trace_count[0], 3)
 
   def test_two_cores_along_parallel_dimension_no_race(self):
     def kernel(x_ref, o_ref, vmem_ref):
@@ -846,27 +980,6 @@ class InterpretTest(jtu.JaxTestCase):
             ],
         )
 
-  def test_thread_map(self):
-    barrier = threading.Barrier(8)
-    lock = threading.Lock()
-    concurrent_calls = [0]
-    max_concurrent_calls = [0]
-
-    def _barrier():
-      with lock:
-        concurrent_calls[0] += 1
-        max_concurrent_calls[0] = max(
-            max_concurrent_calls[0], concurrent_calls[0])
-      barrier.wait()
-      with lock:
-        concurrent_calls[0] -= 1
-
-    def f(core_index):
-      del core_index
-      jax.experimental.io_callback(_barrier, (), ordered=True)
-
-    mosaic_interpret._thread_map(f, 8)
-    self.assertEqual(max_concurrent_calls[0], 8)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

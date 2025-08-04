@@ -14,4 +14,23 @@
 
 # TODO(yashkatariya): Remove this after NamedSharding supports more complicated
 # shardings like sub-axes, strided shardings, etc.
+from jax._src.lib import xla_client
 from jax._src.sharding_impls import GSPMDSharding as GSPMDSharding
+
+
+def get_op_sharding_from_serialized_proto(
+    sharding: bytes) -> xla_client.OpSharding:
+  proto = xla_client.OpSharding()
+  proto.ParseFromString(sharding)
+  return proto
+
+
+def get_hlo_sharding_from_serialized_proto(
+    sharding: bytes) -> xla_client.HloSharding:
+  return xla_client.HloSharding.from_proto(
+      get_op_sharding_from_serialized_proto(sharding))
+
+
+def get_serialized_proto_from_hlo_sharding(
+    sharding: xla_client.HloSharding) -> bytes:
+  return sharding.to_proto().SerializeToString()

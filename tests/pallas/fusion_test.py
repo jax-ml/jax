@@ -18,6 +18,7 @@ from jax._src import test_util as jtu
 from jax.experimental.pallas import fuser
 import jax.numpy as jnp
 import numpy as np
+from jax import lax
 
 jax.config.parse_flags_with_absl()
 
@@ -221,7 +222,7 @@ class FusionTest(jtu.JaxTestCase):
     @jax.jit
     @fuser.fuse
     def g(x, a):
-      _ = f(x)
+      _ = lax.dce_sink(f(x))
       return a
 
     x = jax.random.normal(jax.random.key(0), (128, 128), dtype=jnp.float32)

@@ -77,10 +77,9 @@ class TransformInferenceTest(parameterized.TestCase):
       wgmma_op = mgpu.dialect.WGMMAOp(accumulator, lhs, rhs)
 
     with ir.InsertionPoint(self.module.body):
-      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
       elt_ty = mgpu.utils.dtype_to_ir_type(dtype)
-      lhs_ty = ir.MemRefType.get(lhs_shape, elt_ty, memory_space=smem)
-      rhs_ty = ir.MemRefType.get(rhs_shape, elt_ty, memory_space=smem)
+      lhs_ty = ir.MemRefType.get(lhs_shape, elt_ty, memory_space=mgpu.utils.smem())
+      rhs_ty = ir.MemRefType.get(rhs_shape, elt_ty, memory_space=mgpu.utils.smem())
       acc_ty = ir.VectorType.get(out_shape, elt_ty)
       func.FuncOp.from_py_func(acc_ty, lhs_ty, rhs_ty)(body)
 
@@ -115,9 +114,8 @@ class TransformInferenceTest(parameterized.TestCase):
       )
 
     with ir.InsertionPoint(self.module.body):
-      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
       gmem_ty = ir.MemRefType.get(shape, elt_ty)
-      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
       f = func.FuncOp.from_py_func(gmem_ty, smem_ty, barrier_ty)(body).func_op
 
@@ -149,9 +147,8 @@ class TransformInferenceTest(parameterized.TestCase):
       )
 
     with ir.InsertionPoint(self.module.body):
-      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
       gmem_ty = ir.MemRefType.get(shape, elt_ty)
-      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       f = func.FuncOp.from_py_func(gmem_ty, smem_ty)(body).func_op
 
     transforms = ir.ArrayAttr.get(
@@ -179,8 +176,7 @@ class TransformInferenceTest(parameterized.TestCase):
       )
 
     with ir.InsertionPoint(self.module.body):
-      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       func.FuncOp.from_py_func(smem_ty)(body)
 
     vector_load_op.attributes["out_layouts"] = ir.ArrayAttr.get(
@@ -212,8 +208,7 @@ class TransformInferenceTest(parameterized.TestCase):
       )
 
     with ir.InsertionPoint(self.module.body):
-      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       f = func.FuncOp.from_py_func(smem_ty)(body).func_op
 
     vector_load_op.attributes["out_layouts"] = ir.ArrayAttr.get(
@@ -242,8 +237,7 @@ class TransformInferenceTest(parameterized.TestCase):
       )
 
     with ir.InsertionPoint(self.module.body):
-      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       f = func.FuncOp.from_py_func(smem_ty)(body).func_op
 
     vector_load_op.attributes["out_layouts"] = ir.ArrayAttr.get(
@@ -268,8 +262,7 @@ class TransformInferenceTest(parameterized.TestCase):
       )
 
     with ir.InsertionPoint(self.module.body):
-      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       value_ty = ir.VectorType.get(shape, elt_ty)
       func.FuncOp.from_py_func(smem_ty, value_ty)(body)
 
@@ -302,8 +295,7 @@ class TransformInferenceTest(parameterized.TestCase):
       )
 
     with ir.InsertionPoint(self.module.body):
-      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       value_ty = ir.VectorType.get(shape, elt_ty)
       f = func.FuncOp.from_py_func(smem_ty, value_ty)(body).func_op
 
@@ -333,8 +325,7 @@ class TransformInferenceTest(parameterized.TestCase):
       )
 
     with ir.InsertionPoint(self.module.body):
-      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       value_ty = ir.VectorType.get(shape, elt_ty)
       f = func.FuncOp.from_py_func(smem_ty, value_ty)(body).func_op
 
@@ -351,12 +342,11 @@ class TransformInferenceTest(parameterized.TestCase):
     slice_smem_op = vector_load_op = None
     shape = (64, 64)
     elt_ty = ir.BF16Type.get()
-    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
 
     def body(offset):
       nonlocal slice_smem_op, vector_load_op
       slice_smem_op = mgpu.dialect.SliceSMEMOp(
-          ir.MemRefType.get(shape, elt_ty, memory_space=smem), offset
+          ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem()), offset
       )
       zero = arith.constant(ir.IntegerType.get_signless(32), 0)
       load_offsets = [zero] * len(shape)
@@ -387,12 +377,11 @@ class TransformInferenceTest(parameterized.TestCase):
     slice_smem_op = vector_load_op1 = vector_load_op2 = None
     shape = (64, 64)
     elt_ty = ir.BF16Type.get()
-    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
 
     def body(offset):
       nonlocal slice_smem_op, vector_load_op1, vector_load_op2
       slice_smem_op = mgpu.dialect.SliceSMEMOp(
-          ir.MemRefType.get(shape, elt_ty, memory_space=smem), offset
+          ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem()), offset
       )
       zero = arith.constant(ir.IntegerType.get_signless(32), 0)
       load_offsets = [zero] * len(shape)
@@ -426,10 +415,9 @@ class TransformInferenceTest(parameterized.TestCase):
     subview_op = user_op = None
     shape = (2, 64, 64)
     elt_ty = ir.BF16Type.get()
-    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
 
-    in_ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
-    out_ref_ty = ir.MemRefType.get(shape[2:], elt_ty, memory_space=smem)
+    in_ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+    out_ref_ty = ir.MemRefType.get(shape[2:], elt_ty, memory_space=mgpu.utils.smem())
 
     def body(in_ref):
       nonlocal subview_op, user_op
@@ -485,9 +473,8 @@ class TransformInferenceTest(parameterized.TestCase):
       )
 
     with ir.InsertionPoint(self.module.body):
-      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
       gmem_ty = ir.MemRefType.get(shape, elt_ty)
-      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
       func.FuncOp.from_py_func(gmem_ty, smem_ty, barrier_ty)(body).func_op
 
@@ -503,10 +490,9 @@ class TransformInferenceTest(parameterized.TestCase):
     subview_op = user_op = None
     shape = (2, 64, 64)
     elt_ty = ir.BF16Type.get()
-    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
 
-    in_ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
-    out_ref_ty = ir.MemRefType.get((2, 64, 32), elt_ty, memory_space=smem)
+    in_ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+    out_ref_ty = ir.MemRefType.get((2, 64, 32), elt_ty, memory_space=mgpu.utils.smem())
 
     def body(in_ref):
       nonlocal subview_op, user_op
@@ -542,6 +528,139 @@ class TransformInferenceTest(parameterized.TestCase):
 
     with self.assertRaises(NotImplementedError):
       mgpu.infer_transforms(self.module)
+
+  @parameterized.parameters([False, True])
+  def test_infer_transforms_for_sibling_subviews_and_distant_op(
+      self, even_offsets
+  ):
+    # This test uses the following op tree extracted from this ragged dot
+    # kernel:
+    # https://github.com/jax-ml/jax/blob/main/jax/experimental/pallas/ops/gpu/ragged_dot_mgpu.py
+    #
+    #   subview_op0   (slice = 64, 64)
+    #   - subview_op1 (slice = 2, 64)
+    #   - subview_op2 (slice = 4, 64, either at an even or odd offset)
+    #   - subview_op3 (slice = 8, 64)
+    #   - user_op0    (in_transforms = [tile(64, 64), swizzle(32)])
+    #
+    # First the in_transforms of user_op0 have to be propagated up to
+    # subview_op0. Then they have to be propagated down and resolved. Finally
+    # all subview ops need to have the same transforms.
+
+    subview_op0, subview_op1, subview_op2, subview_op3 = None, None, None, None
+    user_op0 = None
+
+    source_shape = (64, 64)
+    elt_ty = ir.BF16Type.get()
+    source_ref_ty = ir.MemRefType.get(source_shape, elt_ty, memory_space=mgpu.utils.smem())
+
+    slice1_shape = (2, 64)
+    slice2_shape = (4, 64)
+    slice3_shape = (8, 64)
+
+    slice0_ref_ty = ir.MemRefType.get(source_shape, elt_ty, memory_space=mgpu.utils.smem())
+    slice1_ref_ty = ir.MemRefType.get(slice1_shape, elt_ty, memory_space=mgpu.utils.smem())
+    slice2_ref_ty = ir.MemRefType.get(slice2_shape, elt_ty, memory_space=mgpu.utils.smem())
+    slice3_ref_ty = ir.MemRefType.get(slice3_shape, elt_ty, memory_space=mgpu.utils.smem())
+
+    def body(source_ref):
+      nonlocal subview_op0, subview_op1, subview_op2, subview_op3, user_op0
+
+      subview_op0 = memref.SubViewOp(
+          slice0_ref_ty,
+          source_ref,
+          [],  # dynamic offsets
+          [],  # dynamic sizes
+          [],  # dynamic strides
+          static_offsets=[0, 0],
+          static_sizes=source_shape,
+          static_strides=[1, 1],
+      )
+
+      transforms_0 = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((64, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(32),
+      ])
+      user_op0 = mgpu.dialect.WithTransformsOp(subview_op0.result, transforms_0)
+
+      subview_op1 = memref.SubViewOp(
+          slice1_ref_ty,
+          subview_op0,
+          [],  # dynamic offsets
+          [],  # dynamic sizes
+          [],  # dynamic strides
+          static_offsets=[0, 0],
+          static_sizes=slice1_shape,
+          static_strides=[1, 1],
+      )
+
+      subview_op2 = memref.SubViewOp(
+          slice2_ref_ty,
+          subview_op0,
+          [],  # dynamic offsets
+          [],  # dynamic sizes
+          [],  # dynamic strides
+          static_offsets=[16 if even_offsets else 15, 0],
+          static_sizes=slice2_shape,
+          static_strides=[1, 1],
+      )
+
+      # The following ops are just to test the dynamic offsets support.
+      c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
+      c64 = c(64)
+      c32 = c(32)
+      c16 = c(16)
+      subi = arith.subi(c64, c32)
+      maxsi = arith.maxsi(c16, subi)
+      addi = arith.addi(maxsi, subi)
+      andi = arith.andi(addi, maxsi)
+      idx = arith.index_cast(ir.IndexType.get(), andi)
+      subview_op3 = memref.SubViewOp(
+          slice3_ref_ty,
+          subview_op0,
+          [idx],  # dynamic offsets
+          [],  # dynamic sizes
+          [],  # dynamic strides
+          static_offsets=[ir.ShapedType.get_dynamic_size(), 0],
+          static_sizes=slice3_shape,
+          static_strides=[1, 1],
+      )
+
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(source_ref_ty)(body)
+
+    mgpu.infer_transforms(self.module)
+
+    want = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((2 if even_offsets else 1, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(32),
+      ])
+
+    self.assertSequenceEqual(inference_utils.in_transforms(subview_op0), [want])
+    self.assertSequenceEqual(inference_utils.out_transforms(subview_op0), [want])
+    self.assertSequenceEqual(inference_utils.in_transforms(subview_op1), [want])
+    self.assertSequenceEqual(inference_utils.out_transforms(subview_op1), [want])
+    self.assertSequenceEqual(inference_utils.in_transforms(subview_op2), [want])
+    self.assertSequenceEqual(inference_utils.out_transforms(subview_op2), [want])
+    self.assertSequenceEqual(inference_utils.in_transforms(subview_op3), [want])
+    self.assertSequenceEqual(inference_utils.out_transforms(subview_op3), [want])
+
+  def test_custom_primitive_op_retains_transforms(self):
+    with ir.InsertionPoint(self.module.body):
+      transforms = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((64, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(32),
+      ])
+      op = mgpu.dialect.custom_primitive(
+          result=[],
+          operands_=[],
+          in_layouts=[],
+          in_transforms=[transforms],
+          out_layouts=[],
+      )
+
+    mgpu.infer_transforms(self.module)
+    self.assertSequenceEqual(inference_utils.in_transforms(op), [transforms])
 
 
 if __name__ == "__main__":

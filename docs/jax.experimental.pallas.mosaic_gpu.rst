@@ -37,6 +37,17 @@ Functions
    wgmma
    wgmma_wait
 
+TMEM-related functions
+----------------------
+
+.. autosummary::
+   :toctree: _autosummary
+
+   async_load_tmem
+   async_store_tmem
+   wait_load_tmem
+   commit_tmem
+
 Aliases
 -------
 

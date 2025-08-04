@@ -204,9 +204,6 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
     super().setUp()
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('DMAs only guaranteed to work ou TPU v4+')
-    # TODO(subhankarshah): Remove after all required changes are in.
-    if not jtu.if_cloud_tpu_at_least(2025, 6, 15):
-      self.skipTest('Requires libtpu built after 2025-06-15')
 
   def test_basic_async_copy(self):
     @jax.jit
@@ -390,6 +387,150 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
     x = jax.random.normal(jax.random.key(0), (16, 8, 128), dtype=jnp.float32)
     y = f(x)
     np.testing.assert_array_equal(y, x)
+
+  @parameterized.product(joint_axis=[True, False])
+  def test_device_id_as_axis_dict(self, joint_axis):
+    if jax.device_count() < 2:
+      self.skipTest('Requires at least 2 devices for a 2d mesh.')
+    xdim, ydim = 2, jax.device_count() // 2
+    mesh = jax.make_mesh((xdim, ydim), ('x', 'y'))
+
+    xlocal, ylocal = 8, 128
+    if joint_axis:
+      axis_name = ('x', 'y')
+      pspec = P(('x', 'y'), None)
+      input_arr = jax.device_put(
+          jax.random.uniform(jax.random.key(0), (xlocal * xdim * ydim, ylocal)),
+          jax.sharding.NamedSharding(mesh, pspec),
+      )
+    else:
+      axis_name = 'x'
+      pspec = P('x', 'y')
+      input_arr = jax.device_put(
+          jax.random.uniform(jax.random.key(0), (xlocal * xdim, ylocal * ydim)),
+          jax.sharding.NamedSharding(mesh, pspec),
+      )
+
+    def copy_kernel(input_ref, output_ref, send_sem, recv_sem, local_copy_sem):
+      xid = jax.lax.axis_index(axis_name)
+      x0_local_copy = pltpu.make_async_copy(
+          src_ref=input_ref, dst_ref=output_ref, sem=local_copy_sem
+      )
+      copy_x0_to_x1 = pltpu.make_async_remote_copy(
+          src_ref=input_ref,
+          dst_ref=output_ref,
+          send_sem=send_sem,
+          recv_sem=recv_sem,
+          device_id={axis_name: 1},
+      )
+
+      @pl.when(xid == 0)
+      def _():
+        copy_x0_to_x1.start()
+        x0_local_copy.start()
+        x0_local_copy.wait()
+        copy_x0_to_x1.wait_send()
+      @pl.when(xid == 1)
+      def _():
+        copy_x0_to_x1.wait_recv()
+
+    copy = pl.pallas_call(
+        copy_kernel,
+        out_shape=jax.ShapeDtypeStruct((xlocal, ylocal), jnp.float32),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),],
+        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+        scratch_shapes=[pltpu.SemaphoreType.DMA] * 3,
+    )
+
+    # Wrap the kernel within a shard_map to call.
+    pallas_out = jax.jit(
+        jax.shard_map(
+            copy, mesh=mesh, in_specs=pspec, out_specs=pspec, check_vma=False
+        )
+    )(input_arr)
+
+    # x=1 devices are flushed with x=0 device contents
+    np.testing.assert_array_equal(input_arr[:xlocal], pallas_out[:xlocal])
+    np.testing.assert_array_equal(pallas_out[:xlocal],
+                                  pallas_out[xlocal:(2*xlocal)])
+
+  def test_axis_dict_with_core_single_device(self):
+    if jax.device_count() > 2 or (jax.devices()[0].num_cores) != 2:
+      self.skipTest('Testing single device two cores')
+    mesh = jax.make_mesh((jax.device_count(),), ('device',))
+    ddim = jax.device_count()
+    tcmesh = pltpu.create_tensorcore_mesh('core')
+    pspec = P('device', None)
+    sharding = jax.sharding.NamedSharding(mesh, pspec)
+
+    # Array is fully sharded.
+    xlocal, ylocal = 8, 256
+    input_arr = jnp.arange(xlocal * ddim * ylocal, dtype=jnp.int32).reshape(
+        (xlocal * ddim, ylocal)
+    )
+    input_arr = jax.device_put(input_arr, sharding)
+
+    def core_copy(refs):
+      in_ref, out_ref = refs
+
+      @pl.core_map(tcmesh, compiler_params=pltpu.CompilerParams(collective_id=7))
+      def _():
+        num_cores = jax.lax.axis_size('core')
+        slc_size = ylocal // num_cores
+        vmem_shape = (xlocal, slc_size)
+
+        # This runs on every core, for every vmem iterations
+        def alloc(out_vmem_ref, sem, send_sem, recv_sem):
+          core_index = jax.lax.axis_index('core')
+          slc = pl.ds(core_index * slc_size, slc_size)
+
+          # Make sure all cores have entered run_scoped.
+          sem0 = pltpu.get_barrier_semaphore()
+          for i in range(ddim):
+            for j in range(num_cores):
+              pltpu.semaphore_signal(
+                  sem0, 1, device_id={'device': i, 'core': j},
+                  device_id_type=pltpu.DeviceIdType.MESH)
+          pltpu.semaphore_wait(sem0, ddim * num_cores)
+
+          # Identity function by default
+          pltpu.async_copy(in_ref.at[:, slc], out_ref.at[:, slc], sem).wait()
+
+          copy_c0_to_c1 = pltpu.make_async_remote_copy(
+              src_ref=in_ref.at[:, slc],
+              dst_ref=out_vmem_ref,
+              send_sem=send_sem,
+              recv_sem=recv_sem,
+              device_id={'core': 1},
+              device_id_type=pltpu.DeviceIdType.MESH,
+          )
+
+          @pl.when(core_index == 0)
+          def _():
+            copy_c0_to_c1.start()
+            copy_c0_to_c1.wait_send()
+
+          @pl.when(core_index == 1)
+          def _():
+            copy_c0_to_c1.wait_recv()
+            pltpu.async_copy(out_vmem_ref, out_ref.at[:, slc], sem).wait()
+
+        pl.run_scoped(
+            alloc,
+            pltpu.VMEM(vmem_shape, out_ref.dtype),
+            *([pltpu.SemaphoreType.DMA] * 3),
+        )
+
+    @partial(jax.shard_map, mesh=mesh, in_specs=pspec, out_specs=pspec, check_vma=False)
+    def run_core_kernel(input):
+      output = jnp.zeros_like(input)
+      _, output = pl.run_state(core_copy)((input, output))
+      return output
+    pallas_out = jax.jit(run_core_kernel)(input_arr)
+
+    # The device=0 core=1 slice was flushed with device=0 core=0 contents
+    np.testing.assert_array_equal(pallas_out[:, 128:], input_arr[:, :128])
+    np.testing.assert_array_equal(pallas_out[:, :128], input_arr[:, :128])
 
 
 def make_async_remote_copy(axis_name: str, direction: str = 'right',
@@ -833,9 +974,6 @@ class PallasCallStatefulAsyncTest(parameterized.TestCase):
     super().setUp()
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('DMAs only guaranteed to work ou TPU v4+')
-    # TODO(subhankarshah): Remove after all required changes are in.
-    if not jtu.if_cloud_tpu_at_least(2025, 6, 15):
-      self.skipTest('Requires libtpu built after 2025-06-15')
 
   def test_basic_stateful_async_copy(self):
     @jax.jit

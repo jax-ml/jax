@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Generator, Iterable, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 import datetime
 import functools
@@ -36,8 +36,6 @@ import unittest
 import zlib
 
 from absl.testing import parameterized
-import jax
-from jax import lax
 from jax._src import api
 from jax._src import compilation_cache
 from jax._src import config
@@ -46,14 +44,15 @@ from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
 from jax._src import lib as _jaxlib
+from jax._src import mesh as mesh_lib
 from jax._src import monitoring
+from jax._src import sharding_impls
 from jax._src import test_warning_util
-from jax._src.typing import ArrayLike, DTypeLike
 from jax._src import xla_bridge
 from jax._src import util
-from jax._src import mesh as mesh_lib
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import mlir
+from jax._src.lax import lax
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.public_test_util import (  # noqa: F401
@@ -63,8 +62,9 @@ from jax._src.test_loader import thread_unsafe_test as thread_unsafe_test
 from jax._src.test_loader import thread_unsafe_test_class as thread_unsafe_test_class
 from jax._src.test_loader import JaxTestLoader as JaxTestLoader
 from jax._src.test_loader import TEST_NUM_THREADS as TEST_NUM_THREADS
+from jax._src.tree_util import tree_all, tree_flatten, tree_map, tree_unflatten
+from jax._src.typing import ArrayLike, DTypeLike
 from jax._src.util import unzip2
-from jax.tree_util import tree_all, tree_flatten, tree_map, tree_unflatten
 import numpy as np
 import numpy.random as npr
 
@@ -293,11 +293,12 @@ def count_events(event):
 
 count_device_put = count_events("batched_device_put")
 count_device_put_fast_path_hit = count_events("batched_copy_array")
-count_pjit_cpp_cache_miss = count_events("pjit_lower")
+count_pjit_cpp_cache_miss = count_events("jit_cpp_cache_miss")
 count_jit_tracing_cache_miss = count_events("create_pjit_jaxpr")
 count_aot_jit_cpp_cache_miss = count_events("stages_compiled_call")
 count_jit_and_pmap_lowerings = count_events("lower_jaxpr_to_module")
 count_jit_compilation_cache_miss = count_events("pxla_cached_compilation")
+count_compilation_after_persistent_cache_miss = count_events("compile_after_persistent_compilation_miss")
 count_jax_array_shard_arg_calls = count_events("_array_shard_arg")
 
 
@@ -333,7 +334,7 @@ def count_subjaxpr_to_hlo_conversion(fun_name):
 
 
 @contextmanager
-def collect_lowered_jaxprs() -> Generator[Sequence[tuple[core.ClosedJaxpr,
+def collect_lowered_jaxprs() -> Iterator[Sequence[tuple[core.ClosedJaxpr,
                                                          mlir.ir.Module]]]:
   """
   Collects all the pairs of (jaxpr, mlir_module) that are lowered.
@@ -356,12 +357,12 @@ def assert_num_jit_and_pmap_compilations(times):
 
 @contextmanager
 def count_internal_device_puts():
-  before = jax._src.lib._jax.get_internal_device_put_info()
+  before = _jaxlib._jax.get_internal_device_put_info()
   counts = {}
   try:
     yield lambda: counts
   finally:
-    after = jax._src.lib._jax.get_internal_device_put_info()
+    after = _jaxlib._jax.get_internal_device_put_info()
     for k, v in after.items():
       diff = v - before.get(k, 0)
       if diff != 0:
@@ -443,7 +444,7 @@ def stablehlo_version_at_least(required_version: str):
 def get_tpu_version() -> int:
   if device_under_test() != "tpu":
     raise ValueError("Device is not TPU")
-  kind = jax.devices()[0].device_kind
+  kind = xla_bridge.devices()[0].device_kind
   match = re.match(r"TPU[^\d]*(\d+)", kind)
   if match is None:
     raise ValueError(f"Device kind {kind} is not supported")
@@ -459,7 +460,7 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
     return False
   if version is None:
     return True
-  device_kind = jax.devices()[0].device_kind
+  device_kind = xla_bridge.devices()[0].device_kind
   expected_version = f"v{version}{variant}"
   # Special case v5e until the name is updated in device_kind
   if expected_version == "v5e":
@@ -468,10 +469,62 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
     return "v6 lite" in device_kind
   return expected_version in device_kind
 
+def pattern_search(patterns: str | Sequence[str], string: str):
+  if not isinstance(patterns, tuple):
+    patterns = (patterns,)  # type: ignore
+
+  for pattern in patterns:
+    if pattern in string:
+      return pattern
+  return None
+
+def device_kind_matches(device_patterns: str | Sequence[str]):
+  device_kind = xla_bridge.devices()[0].device_kind
+  matching_pattern = pattern_search(device_patterns, device_kind)
+  return matching_pattern is not None
+
+def skip_if_errors(
+    *,
+    error_patterns: str | Sequence[str],
+    device_patterns: str | Sequence[str],
+    reason: str | Callable[[str, str], str],
+):
+  """Skip if both error message and device kind match a corresponding pattern."""
+  def skip(test_method):
+    @functools.wraps(test_method)
+    def test_method_wrapper(self, *args, **kwargs):
+      device_kind = xla_bridge.devices()[0].device_kind
+      try:
+        return test_method(self, *args, **kwargs)
+      except Exception as e:
+        matching_error_pattern = pattern_search(error_patterns, str(e))
+        matching_device_pattern = pattern_search(device_patterns, device_kind)
+        if matching_error_pattern and matching_device_pattern:
+          if not isinstance(reason, str):
+            reason_str = reason(matching_error_pattern, matching_device_pattern)
+          else:
+            reason_str = reason
+          self.skipTest(reason_str)
+        raise
+    return test_method_wrapper
+  return skip
+
+skip_if_mosaic_gpu_exceeds_shared_memory = functools.partial(
+  skip_if_errors,
+  error_patterns="kernel exceeds available shared memory",
+  reason=lambda err, dev: f"Mosaic GPU kernel exceeds shared memory on {dev}",
+)
+
+skip_if_triton_exceeds_shared_memory = functools.partial(
+  skip_if_errors,
+  error_patterns="Shared memory size limit exceeded",
+  reason=lambda err, dev: f"Triton kernel exceeds shared memory on {dev}",
+)
+
 def is_cuda_compute_capability_at_least(capability: str) -> bool:
   if not is_device_cuda():
     return False
-  d, *_ = jax.local_devices(backend="gpu")
+  d, *_ = xla_bridge.local_devices(backend="gpu")
   target = tuple(int(x) for x in capability.split("."))
   current = tuple(int(x) for x in d.compute_capability.split("."))
   return current >= target
@@ -479,7 +532,7 @@ def is_cuda_compute_capability_at_least(capability: str) -> bool:
 def is_cuda_compute_capability_equal(capability: str) -> bool:
   if not is_device_cuda():
     return False
-  d, *_ = jax.local_devices(backend="gpu")
+  d, *_ = xla_bridge.local_devices(backend="gpu")
   target = tuple(int(x) for x in capability.split("."))
   current = tuple(int(x) for x in d.compute_capability.split("."))
   return current == target
@@ -490,11 +543,11 @@ class CudaArchSpecificTest:
 
   def skip_unless_sm90a(self):
     if not is_cuda_compute_capability_equal("9.0"):
-      self.skipTest("Only works on GPU with capability sm90a")
+      self.skipTest("Only works on GPU with capability sm90a")  # pytype: disable=attribute-error
 
   def skip_unless_sm100a(self):
     if not is_cuda_compute_capability_equal("10.0"):
-      self.skipTest("Only works on GPU with capability sm100a")
+      self.skipTest("Only works on GPU with capability sm100a")  # pytype: disable=attribute-error
 
 
 def _get_device_tags():
@@ -591,7 +644,7 @@ def pytest_mark_if_available(marker: str):
   """A decorator for test classes or methods to pytest.mark if installed."""
   def wrap(func_or_class):
     try:
-      import pytest
+      import pytest  # pytype: disable=import-error
     except ImportError:
       return func_or_class
     return getattr(pytest.mark, marker)(func_or_class)
@@ -1124,9 +1177,9 @@ class NotPresent:
 @contextmanager
 def assert_global_configs_unchanged():
   starting_cache = compilation_cache._cache
-  starting_config = jax.config.values.copy()
+  starting_config = config.config.values.copy()
   yield
-  ending_config = jax.config.values
+  ending_config = config.config.values
   ending_cache = compilation_cache._cache
 
   if starting_config != ending_config:
@@ -1172,7 +1225,7 @@ class JaxTestCase(parameterized.TestCase):
     stack = self._context_stack
     stack.enter_context(global_config_context(**self._default_global_config))
     for config_name, value in self._default_thread_local_config.items():
-      stack.enter_context(jax._src.config.config_states[config_name](value))
+      stack.enter_context(config.config_states[config_name](value))
 
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       assert TEST_NUM_THREADS.value <= 1, "Persistent compilation cache is not thread-safe."
@@ -1307,7 +1360,7 @@ class JaxTestCase(parameterized.TestCase):
 
   @contextmanager
   def assertWarnsRegex(self, warning, regex):
-    if regex is not None:
+    if regex is not None and not isinstance(regex, re.Pattern):
         regex = re.compile(regex)
 
     with test_warning_util.record_warnings() as ws:
@@ -1318,8 +1371,8 @@ class JaxTestCase(parameterized.TestCase):
       if regex is not None and not regex.search(str(w.message)):
         continue
       return
-    self.fail(f"Expected warning not found {warning}:'{regex}', got "
-              f"{ws}")
+    self.fail(f"Expected warning not found {warning}:'{regex}', "
+              f"got warnings: {[str(w.message) for w in ws]}")
 
 
   def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True, tol=None,
@@ -1379,7 +1432,32 @@ class JaxTestCase(parameterized.TestCase):
                         atol=atol or tol, rtol=rtol or tol,
                         canonicalize_dtypes=canonicalize_dtypes)
 
-_PJIT_IMPLEMENTATION = jax.jit
+  def assertCacheMisses(self,
+                        func: Callable[[], Any], *,
+                        cpp: int | None = None,
+                        aot_call: int | None = None,
+                        tracing: int | None = None,
+                        lowering: int | None = None,
+                        compilation_after_persistent_cache_miss: int | None = None):
+    with (count_pjit_cpp_cache_miss() as cpp_count,
+          count_aot_jit_cpp_cache_miss() as aot_call_count,
+          count_jit_tracing_cache_miss() as tracing_count,
+          count_jit_and_pmap_lowerings() as lowering_count,
+          count_compilation_after_persistent_cache_miss() as compilation_count):
+      func()
+    if cpp is not None:
+      self.assertEqual(cpp, cpp_count())
+    if aot_call is not None:
+      self.assertEqual(aot_call, aot_call_count())
+    if tracing is not None:
+      self.assertEqual(tracing, tracing_count())
+    if lowering is not None:
+      self.assertEqual(lowering, lowering_count())
+    if compilation_after_persistent_cache_miss is not None:
+      self.assertEqual(compilation_after_persistent_cache_miss,
+                       compilation_count())
+
+_PJIT_IMPLEMENTATION = api.jit
 _PJIT_IMPLEMENTATION._name = "jit"
 _NOOP_JIT_IMPLEMENTATION = lambda x, *args, **kwargs: x
 _NOOP_JIT_IMPLEMENTATION._name = "noop"
@@ -1409,11 +1487,11 @@ def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
   # This is similar to the `with_mesh` function above, but isn't a decorator.
   axis_names, shape = unzip2(named_shape)
   size = math.prod(shape)
-  local_devices = list(jax.local_devices())
+  local_devices = list(xla_bridge.local_devices())
   if len(local_devices) < size:
     raise unittest.SkipTest(f"Test requires {size} local devices")
   mesh_devices = np.array(local_devices[:size]).reshape(shape)  # type: ignore
-  with jax.sharding.Mesh(mesh_devices, axis_names):
+  with mesh_lib.Mesh(mesh_devices, axis_names):
     yield
 
 def with_mesh_from_kwargs(f):
@@ -1433,7 +1511,7 @@ def with_explicit_mesh(sizes, names, axis_types=None, iota_order=False):
   def decorator(fn):
     def mesh_fn(*args, **kwargs):
       mesh = create_mesh(sizes, names, iota_order, axis_types=axis_types)
-      with jax.sharding.use_mesh(mesh):
+      with sharding_impls.set_mesh(mesh):
         return fn(*args, **kwargs, mesh=mesh)
     return mesh_fn
   return decorator
@@ -1441,14 +1519,14 @@ def with_explicit_mesh(sizes, names, axis_types=None, iota_order=False):
 
 def create_mesh(mesh_shape, axis_names, iota_order=False, axis_types=None):
   size = math.prod(mesh_shape)
-  if len(jax.devices()) < size:
+  if len(xla_bridge.devices()) < size:
     raise unittest.SkipTest(f"Test requires {size} global devices.")
   if iota_order:
-    devices = sorted(jax.devices(), key=lambda d: d.id)
+    devices = sorted(xla_bridge.devices(), key=lambda d: d.id)
     mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
-    return jax.sharding.Mesh(mesh_devices, axis_names, axis_types=axis_types)
+    return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)
   else:
-    return jax.make_mesh(mesh_shape, axis_names, axis_types=axis_types)
+    return sharding_impls.make_mesh(mesh_shape, axis_names, axis_types)
 
 class _cached_property:
   null = object()
@@ -1548,8 +1626,8 @@ def strict_promotion_if_dtypes_match(dtypes):
   and enable standard dtype promotion otherwise.
   """
   if all(dtype == dtypes[0] for dtype in dtypes):
-    return jax.numpy_dtype_promotion('strict')
-  return jax.numpy_dtype_promotion('standard')
+    return config.numpy_dtype_promotion('strict')
+  return config.numpy_dtype_promotion('standard')
 
 _version_regex = re.compile(r"([0-9]+(?:\.[0-9]+)*)(?:(rc|dev).*)?")
 def parse_version(v: str) -> tuple[int, ...]:
@@ -1664,9 +1742,9 @@ def set_env(**kwargs):
     os.environ.update({k: v for k, v in original.items() if v is not None})
 
 def fwd_bwd_jaxprs(f, *example_args):
-  fwd_jaxpr, (y_shape, res_shape) = jax.make_jaxpr(
-      lambda *args: jax.vjp(f, *args), return_shape=True)(*example_args)
-  bwd_jaxpr = jax.make_jaxpr(lambda res, outs: res(outs))(res_shape, y_shape)
+  fwd_jaxpr, (y_shape, res_shape) = api.make_jaxpr(
+      lambda *args: api.vjp(f, *args), return_shape=True)(*example_args)
+  bwd_jaxpr = api.make_jaxpr(lambda res, outs: res(outs))(res_shape, y_shape)
   return fwd_jaxpr, bwd_jaxpr
 
 
@@ -1872,7 +1950,7 @@ class vectorize_with_mpmath(np.vectorize):
 
   def __call__(self, *args, **kwargs):
     mp_args = []
-    context = None
+    context: Any = None
     for a in args:
       if isinstance(a, (np.ndarray, np.floating, np.complexfloating)):
         mp_args.append(self.nptomp(a))
@@ -2247,7 +2325,7 @@ def setup_hypothesis(max_examples=30) -> None:
       the default "deterministic" profile.
   """
   try:
-    import hypothesis as hp
+    import hypothesis as hp  # pytype: disable=import-error
   except (ModuleNotFoundError, ImportError):
     return
 

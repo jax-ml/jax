@@ -17,7 +17,8 @@ import functools
 import itertools
 import math
 import sys
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 import unittest
 
 from absl.testing import absltest
@@ -559,6 +560,7 @@ class OpsTest(PallasBaseTest):
       for name, func, strategy in UNARY_FUNCTIONS
   )
   @hp.given(hps.data())
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_unary_primitives(self, name, func, shape_dtype_strategy, data):
     if name in ["abs", "log1p", "pow2", "reciprocal", "relu", "sin", "sqrt"]:
       self.skip_if_mosaic_gpu()
@@ -567,6 +569,9 @@ class OpsTest(PallasBaseTest):
       self.skipTest("This hypothesis test is slow, even more so in interpret mode.")
     # We want exact equality here to match how JAX lowers to XLA
     tol = 0.
+    if jtu.test_device_matches(["tpu"]):
+      if name == "exp2":
+        tol = 1e-6
     if jtu.test_device_matches(["gpu"]):
       if func == jnp.round or func == jnp.rint:
         self.skipTest("TODO: not implemented on GPU")
@@ -591,6 +596,7 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.product(from_dtype=_DTYPES_32BIT, to_dtype=_DTYPES)
   @hp.given(hps.data())
+  @hp.settings(suppress_health_check=[hp.HealthCheck.too_slow])  # ASAN is slow
   def test_cast_from_32bit(self, from_dtype, to_dtype, data):
     sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and use_mosaic_gpu
     if to_dtype in {"float8_e4m3b11fnuz", "float8_e5m2", "float8_e4m3fn"}:
@@ -737,7 +743,7 @@ class OpsTest(PallasBaseTest):
           2025, 5, 15
       ):
         self.skipTest("Test requires libtpu from 2025/5/15 or later")
-    if from_dtype == "int2" and to_dtype == "bool":
+    if from_dtype in ("uint2", "int2") and to_dtype == "bool":
       self.skipTest(
           "TODO(b/343490729): XLA compare(s2, s2) yields wrong results"
       )
@@ -1394,7 +1400,10 @@ class OpsTest(PallasBaseTest):
     )(x, y)
     np.testing.assert_array_equal(out, jnp.einsum('mk,mn->kn', x, y))
 
-  def test_dot_dims_batched_simple_dot_general(self):
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.bfloat16],
+  )
+  def test_dot_dims_batched_simple_dot_general(self, dtype):
     """This test is only meant to exercise a simple batch lowering of dot_general.
 
     It is not meant to be a comprehensive test of dot_general lowering, for that
@@ -1403,22 +1412,117 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("TPU only test")
 
-    x = jnp.arange(11 * 16 * 256, dtype=jnp.float32).reshape((11, 16, 256))
-    y = jnp.arange(11 * 256 * 128, dtype=jnp.float32).reshape((11, 256, 128))
+    if jtu.test_device_matches(["tpu"]):
+      if dtype == jnp.bfloat16:
+        if not jtu.if_cloud_tpu_at_least(2025, 7, 25):
+          self.skipTest("Requires libtpu built after 2025-07-25")
+        if not jtu.is_device_tpu_at_least(version=4):
+          self.skipTest("Requires TPUv4+")
+
+    k1, k2 = random.split(jax.random.key(0))
+    x = random.normal(k1, (11, 16, 256), dtype=dtype)
+    y = random.normal(k2, (11, 256, 128), dtype=dtype)
 
     def kernel(x_ref, y_ref, out_ref):
       out_ref[...] = jax.lax.dot_general(
           x_ref[...],
           y_ref[...],
           dimension_numbers=(([2], [1]), ([0], [0])),
+          preferred_element_type=jnp.float32,
       )
 
     out = self.pallas_call(
         kernel, out_shape=jax.ShapeDtypeStruct((11, 16, 128), jnp.float32)
     )(x, y)
-    np.testing.assert_array_equal(
+    np.testing.assert_allclose(
         out,
-        jax.lax.dot_general(x, y, dimension_numbers=(([2], [1]), ([0], [0]))),
+        jax.lax.dot_general(
+            x,
+            y,
+            dimension_numbers=(([2], [1]), ([0], [0])),
+            preferred_element_type=jnp.float32,
+        ),
+        rtol=5e-3 if dtype == jnp.bfloat16 else 1e-7,
+    )
+
+  @parameterized.product(
+      batch_size=(None, 1, 2),
+      # dims_numbers is without batch dims
+      shapes_and_dims_numbers=(
+          # leading lhs non contracting dims.
+          ((8, 8, 256), (256, 128), ([2], [0])),
+          ((3, 4, 128), (256, 128), ([2], [1])),
+          # trailing lhs non contracting dims.
+          ((256, 8, 128), (256, 128), ([0], [0])),
+          ((128, 8, 128), (256, 128), ([0], [1])),
+          # leading rhs non contracting dims.
+          ((8, 128), (8, 128, 128), ([1], [2])),
+          ((128, 8), (8, 128, 128), ([0], [2])),
+          # trailing rhs non contracting dims.
+          ((8, 128), (128, 8, 128), ([1], [0])),
+          ((128, 8), (128, 8, 128), ([0], [0])),
+          # leading lhs and rhs non contracting dims.
+          ((8, 8, 128), (8, 128, 128), ([2], [2])),
+          # leading lhs and trailing rhs non contracting dims.
+          ((8, 8, 128), (128, 8, 128), ([2], [0])),
+          # trailing lhs and leading rhs non contracting dims.
+          ((32, 8, 128), (8, 128, 32), ([0], [2])),
+          # trailing lhs and trailing rhs non contracting dims.
+          ((8, 8, 128), (8, 8, 128), ([0], [0])),
+      ),
+  )
+  def test_dot_general_multiple_non_contracting_dims(
+      self, batch_size, shapes_and_dims_numbers
+  ):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("TPU only test")
+
+    if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
+        2025, 7, 19
+    ):
+      self.skipTest("Requires libtpu built after 2025-07-19")
+
+    x_shape, y_shape, dims_numbers = shapes_and_dims_numbers
+    if batch_size is not None:
+      x_shape = (batch_size,) + x_shape
+      y_shape = (batch_size,) + y_shape
+
+      # Batch size is always the first dimension so we need to offset
+      # dims_numbers by 1.
+      def offset_by_one(x):
+        return [a + 1 for a in x]
+
+      dims_numbers = (
+          (offset_by_one(dims_numbers[0]), offset_by_one(dims_numbers[1])),
+          ([0], [0]),
+      )
+    else:
+      dims_numbers = (
+          (dims_numbers[0], dims_numbers[1]),
+          ([], []),
+      )
+
+    k1, k2 = random.split(jax.random.key(0))
+    x = jax.random.normal(k1, x_shape, dtype=jnp.float32)
+    y = jax.random.normal(k2, y_shape, dtype=jnp.float32)
+
+    # Just infer shape from jax.
+    expected = jax.lax.dot_general(x, y, dimension_numbers=dims_numbers)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.float32),
+    )
+    def kernel(x_ref, y_ref, out_ref):
+      out_ref[...] = jax.lax.dot_general(
+          x_ref[...],
+          y_ref[...],
+          dimension_numbers=dims_numbers,
+      )
+
+    np.testing.assert_allclose(
+        kernel(x, y),
+        expected,
     )
 
   @parameterized.parameters(
@@ -1896,6 +2000,8 @@ class OpsTest(PallasBaseTest):
       trans_x=[False, True],
       trans_y=[False, True],
   )
+  @jtu.skip_if_triton_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_dot(self, lhs_and_rhs_shape, dtype, trans_x, trans_y):
     self.skip_if_mosaic_gpu()
 
@@ -1965,58 +2071,6 @@ class OpsTest(PallasBaseTest):
         rtol=0.05,
     )
 
-  @parameterized.product(
-      size=[1, 2, 64, 129, 1021],
-      block_size=[1, 2, 32, 64, 128],
-  )
-  def test_masked_load_store(self, size, block_size):
-    self.skip_if_mosaic_gpu()
-
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not implemented")
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=(jax.ShapeDtypeStruct((size,), floatx)),
-        grid=pl.cdiv(size, block_size),
-    )
-    def kernel(x_ref, o_ref):
-      idx = pl.program_id(0) * block_size + jnp.arange(
-              block_size, dtype=jnp.int32)
-      mask = idx < x_ref.shape[0]
-      x = pl.load(x_ref, (idx,), mask=mask)
-      pl.store(o_ref, (idx,), x + 1.0, mask=mask)
-
-    key = random.key(0)
-    x = random.normal(key, (size,))
-    np.testing.assert_allclose(kernel(x), x + 1.0, atol=1e-5, rtol=1e-5)
-
-  def test_masked_oob_load_store_slice(self):
-    self.skip_if_mosaic_gpu()
-
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
-
-    n = 16
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=(jax.ShapeDtypeStruct((n,), floatx)),
-    )
-    def masked_oob_load_store_slice(x_ref, mask_ref, start_idx_ref, o_ref):
-      x = pl.load(x_ref, (pl.dslice(start_idx_ref[()], n)),
-                  mask=mask_ref[:], other=-1.)
-      o_ref[...] = x
-
-    x = random.normal(random.key(0), (n,))
-    slice_start = random.randint(random.key(2), (), 1, n)
-    indices = jnp.arange(n) + slice_start
-    mask = indices < n
-    out = masked_oob_load_store_slice(x, mask, slice_start)
-    o_new = jnp.where(mask, x[indices], jnp.full_like(x, -1.))
-    np.testing.assert_array_equal(out, o_new)
-
   def test_strided_load(self):
     self.skip_if_mosaic_gpu()
 
@@ -2044,45 +2098,12 @@ class OpsTest(PallasBaseTest):
         out_shape=(jax.ShapeDtypeStruct((m, n), floatx)),
     )
     def load(x_ref, o_ref):
-      x = pl.load(x_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None, :]))
-      pl.store(o_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None, :]), x + 1.0)
+      idx = (jnp.arange(m)[:, None], jnp.arange(n)[None, :])
+      o_ref[idx] = x_ref[idx] + 1.0
 
     key = random.key(0)
     x = random.normal(key, (m, n))
     np.testing.assert_allclose(load(x), x + 1.0, atol=1e-5, rtol=1e-5)
-
-  @parameterized.parameters(
-      ((16, 32), (16,)),
-      ((16, 32), (32,)),
-      ((16, 32), (16, 16)),
-  )
-  def test_invalid_broadcasted_load(self, x_shape, mask_shape):
-    self.skip_if_mosaic_gpu()
-
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
-
-    if self.INTERPRET:
-      self.skipTest("No broadcasting checks in pl.load in interpret mode")
-
-    @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32)
-    )
-    def kernel(x_ref, mask_ref, o_ref):
-      del o_ref  # Unused.
-      pl.load(x_ref, slice(None), mask=mask_ref[:])
-
-    x = jnp.ones(x_shape, dtype=jnp.float32)
-    mask = jnp.ones(mask_shape, dtype=jnp.bool_)
-    # assertRaises* methods do not support inspecting the __cause__, so
-    # we have to check it manually.
-    try:
-      kernel(x, mask)
-    except Exception as e:
-      self.assertIn("Cannot broadcast", str(e.__cause__))
-    else:
-      self.fail("Expected exception due to invalid broadcasting")
 
   def test_swap(self):
     self.skip_if_mosaic_gpu()
@@ -2168,150 +2189,7 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_array_equal(out[0], x_new)
     np.testing.assert_array_equal(out[1], y_new)
 
-  @parameterized.named_parameters(
-      ("add_i32", pl.atomic_add, np.array([1, 2, 3, 4], np.int32), np.sum),
-      ("max_i", pl.atomic_max, np.array([1, 2, 3, 4], np.int32), np.max),
-      ("min_i32", pl.atomic_min, np.array([1, 2, 3, 4], np.int32), np.min),
-      ("add_f16", pl.atomic_add, np.array([1, 2, 3, 4], np.float16), np.sum),
-      ("add_f32", pl.atomic_add, np.array([1, 2, 3, 4], np.float32), np.sum),
-      ("max_f32", pl.atomic_max, np.array([1, 2, 3, 4], np.float32), np.max),
-      ("min_f32", pl.atomic_min, np.array([1, 2, 3, 4], np.float32), np.min),
-  )
-  def test_scalar_atomic(self, op, value, numpy_op):
-    self.skip_if_mosaic_gpu()
-
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((), value.dtype),
-        grid=value.shape[0],
-        input_output_aliases={1: 0},
-    )
-    def atomic_kernel(x_ref, _, o_ref):
-      pid = pl.program_id(axis=0)
-      op(o_ref, (), x_ref[pid])
-
-    if op == pl.atomic_add:
-      neutral = np.array(0, dtype=value.dtype)
-    elif op == pl.atomic_max:
-      if np.issubdtype(value.dtype, np.integer):
-        neutral = np.array(np.iinfo(value.dtype).min, value.dtype)
-      else:
-        neutral = np.array(-float("inf"), value.dtype)
-    elif op == pl.atomic_min:
-      if np.issubdtype(value.dtype, np.integer):
-        neutral = np.array(np.iinfo(value.dtype).max, value.dtype)
-      else:
-        neutral = np.array(float("inf"), value.dtype)
-    elif op == pl.atomic_or:
-      neutral = np.array(False, value.dtype)
-    else:
-      raise NotImplementedError()
-    out = atomic_kernel(value, neutral)
-    np.testing.assert_allclose(out, numpy_op(value))
-
-  @parameterized.parameters((0,), (1,))
-  def test_array_atomic_add(self, axis):
-    self.skip_if_mosaic_gpu()
-
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Unimplemented primitive: broadcast_to")
-
-    m, n = 32, 8
-    if axis == 0:
-      grid = m
-    else:
-      grid = n
-    out_shape = jax.ShapeDtypeStruct((n if axis == 0 else m,), floatx)
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=out_shape,
-        grid=grid,
-        input_output_aliases={1: 0},
-    )
-    def reduce(x_ref, _, y_ref):
-      i = pl.program_id(axis=0)
-      if axis == 0:
-        idx = (i, jnp.arange(n))
-      else:
-        idx = (jnp.arange(m), i)
-      x = pl.load(x_ref, idx)
-      pl.atomic_add(y_ref, (jnp.arange(y.shape[0]),), x)
-
-    x = random.normal(random.key(0), (m, n))
-    y = jnp.zeros(out_shape.shape, out_shape.dtype)
-    y = reduce(x, y)
-    y_ref = np.sum(x, axis=axis)
-    np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2)
-
-  @parameterized.parameters(
-      (0, 0, 1),
-      (0, 1, 1),
-      (1, 0, 1),
-      (1, 1, 1),
-      (2, 1, 1),
-      (2, 1, 1),
-  )
-  def test_atomic_cas(self, init_value, cmp, new_value):
-    self.skip_if_mosaic_gpu()
-
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
-
-    if jax.config.x64_enabled and jtu.test_device_matches(["gpu"]):
-      self.skipTest("Not supported on GPU in 64-bit mode")
-
-    @functools.partial(
-        self.pallas_call, out_shape=(
-          jax.ShapeDtypeStruct((), intx),
-          jax.ShapeDtypeStruct((), intx)),
-        input_output_aliases={0: 0})
-    def swap(_, lock_ref, out_ref):
-      out_ref[()] = pl.atomic_cas(lock_ref, cmp, new_value)
-
-    lock, out = swap(init_value)
-    np.testing.assert_allclose(lock, new_value if cmp == init_value else
-                              init_value)
-    np.testing.assert_allclose(out, init_value)
-
-  @parameterized.parameters(1, 2, 3, 4, 8)
-  def test_atomic_counter(self, num_threads):
-    self.skip_if_mosaic_gpu()
-
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
-
-    if self.INTERPRET:
-      self.skipTest("While loop not supported in interpret mode.")
-
-    if jax.config.x64_enabled and jtu.test_device_matches(["gpu"]):
-      self.skipTest("Not supported on GPU in 64-bit mode")
-
-    @functools.partial(
-        self.pallas_call, out_shape=(
-          jax.ShapeDtypeStruct((), intx),
-          jax.ShapeDtypeStruct((), intx)),
-        input_output_aliases={0: 0, 1: 1},
-        grid=(num_threads,))
-    def increment(_, __, lock_ref, counter_ref):
-      def _cond(_):
-        return pl.atomic_cas(lock_ref, 0, 1) == 1
-      lax.while_loop(_cond, lambda a: a, 0)
-      counter_ref[...] += 1
-      pl.atomic_xchg(lock_ref, (), 0)
-
-    lock, count = increment(0, 0)
-    np.testing.assert_allclose(lock, 0)
-    np.testing.assert_allclose(count, num_threads)
-
-  @parameterized.parameters(False, True)
-  def test_reduce_only_dim(self, use_store):
+  def test_reduce_only_dim(self):
     self.skip_if_mosaic_gpu()
 
     # The Pallas TPU lowering currently supports only blocks of rank >= 1
@@ -2324,12 +2202,7 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(self.pallas_call, out_shape=out_shape)
     def reduce(x_ref, y_ref):
-      x = pl.load(x_ref, (jnp.arange(m),))
-      y = jnp.sum(x, axis=-1)
-      if use_store:
-        pl.store(y_ref, (), y)
-      else:
-        y_ref[...] = y
+      y_ref[...] = jnp.sum(x_ref[jnp.arange(m)], axis=-1)
 
     y = reduce(x)
     y_ref = jnp.sum(x, axis=-1)
@@ -2399,11 +2272,12 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(self.pallas_call, out_shape=out_shape, grid=grid)
     def reduce(x_ref, y_ref):
-      x = pl.load(x_ref, (jnp.arange(m, dtype=jnp.int32)[:, None],
-                          jnp.arange(n, dtype=jnp.int32)[None]))
+      x = x_ref[
+          jnp.arange(m, dtype=jnp.int32)[:, None],
+          jnp.arange(n, dtype=jnp.int32)[None],
+      ]
       y = op(x, axis=axis)
-      pl.store(y_ref,
-                tuple(jnp.arange(d, dtype=jnp.int32) for d in y.shape), y)
+      y_ref[tuple(jnp.arange(d, dtype=jnp.int32) for d in y.shape)] = y
 
     for i, key in enumerate(random.split(random.key(0), 20)):
       x = make_x(key)
@@ -2634,6 +2508,94 @@ class OpsTest(PallasBaseTest):
     expected = jnp.swapaxes(x, 0, 1)
     np.testing.assert_array_equal(out, expected)
 
+  @parameterized.product(
+      shape_and_axes=[
+          ((8, 16, 128), (0, 2, 1)),
+          ((16, 128, 128), (1, 0, 2)),
+          ((1, 2, 16, 128), (0, 1, 2, 3)),
+          ((1, 2, 16, 128), (1, 0, 3, 2)),
+      ]
+  )
+  def test_transpose(self, shape_and_axes):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("Not implemented on GPU")
+    in_shape, transpose_axes = shape_and_axes
+
+    x = jnp.arange(math.prod(in_shape), dtype=jnp.float32).reshape(in_shape)
+    expected = jnp.transpose(x, axes=transpose_axes)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.float32),
+    )
+    def kernel(x_ref, out_ref):
+      out_ref[...] = jnp.transpose(x_ref[...], axes=transpose_axes)
+
+    np.testing.assert_array_equal(
+        kernel(x),
+        expected,
+    )
+
+  @hp.given(batch_size=hps.integers(1, 16))
+  def test_8bit_gather(self, batch_size):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Not supported on this hardware")
+    if jtu.get_tpu_version() < 6:
+      self.skipTest("Requires TPUv6 or newer")
+    if not jtu.if_cloud_tpu_at_least(2025, 9, 22):
+      self.skipTest("Requires libtpu built after 2025-9-22")
+
+    dtype = jnp.int8
+    xspec = pl.BlockSpec((32, 128), lambda i: (i, 0))
+    lspec = pl.BlockSpec((32, 128), lambda i: (0, 0))
+
+    data = jax.random.randint(
+        key=jax.random.key(1234),
+        shape=(32 * batch_size, 128),
+        minval=0,
+        maxval=32,
+        dtype=jnp.int8,
+    )
+    lut = jax.random.randint(
+        key=jax.random.key(1234),
+        shape=(32, 128),
+        minval=-128,
+        maxval=127,
+        dtype=jnp.int8,
+    )
+
+    def kernel(data_ref, lut_ref, output_ref):
+      data_chunk = data_ref[...]
+      lut_chunk = lut_ref[...]
+      data_chunk = data_chunk.reshape((32, 128, 1))
+      output = lax.gather(
+          lut_chunk,
+          data_chunk,
+          dimension_numbers=lax.GatherDimensionNumbers(
+              offset_dims=(),
+              start_index_map=(0,),
+              operand_batching_dims=(1,),
+              start_indices_batching_dims=(1,),
+              collapsed_slice_dims=(0,)
+          ),
+          slice_sizes=(1, 1),
+          mode="promise_in_bounds",
+      )
+      output_ref[...] = output
+
+    deq_call = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(data.shape, dtype),
+        grid=(batch_size,),
+        out_specs=xspec,
+        in_specs=[xspec, lspec],
+    )
+    result = deq_call(data, lut)
+    expected = jnp.take_along_axis(
+        lut, data, axis=0, mode="promise_in_bounds"
+    )
+    np.testing.assert_array_equal(result, expected)
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True
@@ -2665,7 +2627,10 @@ class PallasPrimitivesTest(PallasBaseTest):
   ])
   def test_load_pretty_print(self, expr, expected):
     def body(x_ref):
-      x = pl.load(x_ref, expr())
+      with jtu.ignore_warning(
+          category=DeprecationWarning, message="pl.load is deprecated"
+      ):
+        x = pl.load(x_ref, expr())
       return [x]
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
         wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
@@ -2680,7 +2645,10 @@ class PallasPrimitivesTest(PallasBaseTest):
   ])
   def test_store_pretty_print(self, expr, expected):
     def body(x_ref):
-      pl.store(x_ref, expr(), pl.load(x_ref, expr()))
+      with jtu.ignore_warning(
+          category=DeprecationWarning, message="pl.(load|store) is deprecated"
+      ):
+        pl.store(x_ref, expr(), pl.load(x_ref, expr()))
       return []
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
         wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
@@ -2700,7 +2668,10 @@ class PallasPrimitivesTest(PallasBaseTest):
   ])
   def test_swap_pretty_print(self, expr, expected):
     def body(x_ref):
-      x = pl.swap(x_ref, expr(), pl.load(x_ref, expr()))
+      with jtu.ignore_warning(
+          category=DeprecationWarning, message="pl.(load|swap) is deprecated"
+      ):
+        x = pl.swap(x_ref, expr(), pl.load(x_ref, expr()))
       return [x]
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
         wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])

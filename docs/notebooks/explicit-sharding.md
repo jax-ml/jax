@@ -55,8 +55,7 @@ find something that doesn't work!
 import jax
 import numpy as np
 import jax.numpy as jnp
-from jax.sharding import PartitionSpec as P, AxisType, set_mesh, get_abstract_mesh
-from jax.experimental.shard import reshard, auto_axes, explicit_axes
+from jax.sharding import PartitionSpec as P, AxisType, get_abstract_mesh, reshard
 
 jax.config.update('jax_num_cpu_devices', 8)
 ```
@@ -107,10 +106,11 @@ foo(some_array)
 These types show the shape and dtype of array but they don't appear to
 show sharding. (Actually, they _did_ show sharding, but the shardings were
 trivial. See "Concrete array shardings", below.) To start seeing some
-interesting shardings we need to set up an explicit-sharding mesh. We use
-`set_mesh` to set it as the current mesh for the remainder of this notebook.
-(If you only want to set the mesh for some particular scope and return to the previous
-mesh afterwards then you can use the context manager `jax.sharding.use_mesh` instead.)
+interesting shardings we need to set up an explicit-sharding mesh.
+
+`jax.set_mesh` can be used as a global setter or a context manager. We use
+`jax.set_mesh` in this notebook as a global setter. You can use it as a scoped
+context manager via `with jax.set_mesh(mesh)`.
 
 ```{code-cell} ipython3
 ---
@@ -121,7 +121,7 @@ outputId: d888371b-080e-4bff-be5d-ea56beda3aac
 ---
 mesh = jax.make_mesh((2, 4), ("X", "Y"),
                      axis_types=(AxisType.Explicit, AxisType.Explicit))
-set_mesh(mesh)
+jax.set_mesh(mesh)
 
 print(f"Current mesh is: {get_abstract_mesh()}")
 ```
@@ -265,7 +265,7 @@ argument.
 
 +++ {"id": "ERJx4p0tXoS3"}
 
-## Working around unimplemented sharding rules using `auto_sharding`
+## Working around unimplemented sharding rules using `auto_axes`
 
 The implementation of explicit sharding is still a work-in-progress and there
 are plenty of ops that are missing sharding rules. For example, `scatter` and
@@ -292,6 +292,8 @@ colab:
 id: fpFEaMBcXsJG
 outputId: 5b84b1d1-d7b2-4e9a-ba98-3dd34a5465ef
 ---
+from jax.sharding import auto_axes, explicit_axes
+
 some_x = reshard(np.arange(16).reshape(4, 4), P("X", None))
 some_y = reshard(np.arange(16).reshape(4, 4), P(None, "X"))
 
@@ -427,7 +429,7 @@ def f(arr1):
 
   return z + 1
 
-with jax.sharding.use_mesh(auto_mesh):
+with jax.set_mesh(auto_mesh):
   some_x = jax.device_put(np.arange(16).reshape(4, 4), P("X", "Y"))
   f(some_x)
 ```

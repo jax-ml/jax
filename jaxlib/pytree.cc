@@ -54,7 +54,7 @@ limitations under the License.
 #include "xla/pjrt/exceptions.h"
 #include "xla/tsl/platform/logging.h"
 
-namespace xla {
+namespace jax {
 
 namespace nb = nanobind;
 
@@ -550,16 +550,15 @@ nanobind::tuple FlattenedIndexKey::MatchArgs(nanobind::handle unused) {
   nb::object kp_tuple = nb::steal(PyTuple_New(frozen_keypath.size()));
   for (int i = 0; i < frozen_keypath.size(); ++i) {
     PyTuple_SET_ITEM(kp_tuple.ptr(), i,
-                      nb::object(frozen_keypath[i]).release().ptr());
+                     nb::object(frozen_keypath[i]).release().ptr());
   }
   return kp_tuple;
 }
 
 template <typename T>
-void PyTreeDef::FlattenImpl(
-    nb::handle handle, T& leaves,
-    std::optional<std::vector<nb::object>>& keypath,
-    const std::optional<nb::callable>& leaf_predicate) {
+void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
+                            std::optional<std::vector<nb::object>>& keypath,
+                            const std::optional<nb::callable>& leaf_predicate) {
   Node node;
   const int start_num_nodes = traversal_.size();
   const int start_num_leaves = leaves.size();
@@ -773,9 +772,8 @@ PyTreeDef::Flatten(nb::handle x, nb_class_ptr<PyTreeRegistry> registry,
   return std::make_pair(std::move(leaves), std::move(def));
 }
 
-void PyTreeDef::FlattenWithPath(
-    nb::handle handle, nanobind::list& leaves,
-    std::optional<nb::callable> leaf_predicate) {
+void PyTreeDef::FlattenWithPath(nb::handle handle, nanobind::list& leaves,
+                                std::optional<nb::callable> leaf_predicate) {
   std::optional<std::vector<nb::object>> keypath = std::vector<nb::object>();
   FlattenImpl(handle, leaves, keypath, leaf_predicate);
 }
@@ -1427,7 +1425,7 @@ void PyTreeDef::SetNumLeavesAndNumNodes() {
   }
 }
 
-void PyTreeDef::SerializeTo(jax::PyTreeDefProto& result) const {
+void PyTreeDef::SerializeTo(PyTreeDefProto& result) const {
   absl::flat_hash_map<std::string, uint32_t> interned_strings;
   auto intern_str = [&](const std::string& key) {
     auto [it, added] =
@@ -1442,19 +1440,19 @@ void PyTreeDef::SerializeTo(jax::PyTreeDefProto& result) const {
     node_data->set_arity(node.arity);
     switch (node.kind) {
       case PyTreeKind::kLeaf:
-        node_data->set_type(jax::PyTreeNodeType::PY_TREE_KIND_LEAF);
+        node_data->set_type(PyTreeNodeType::PY_TREE_KIND_LEAF);
         break;
       case PyTreeKind::kList:
-        node_data->set_type(jax::PyTreeNodeType::PY_TREE_KIND_LIST);
+        node_data->set_type(PyTreeNodeType::PY_TREE_KIND_LIST);
         break;
       case PyTreeKind::kNone:
-        node_data->set_type(jax::PyTreeNodeType::PY_TREE_KIND_NONE);
+        node_data->set_type(PyTreeNodeType::PY_TREE_KIND_NONE);
         break;
       case PyTreeKind::kTuple:
-        node_data->set_type(jax::PyTreeNodeType::PY_TREE_KIND_TUPLE);
+        node_data->set_type(PyTreeNodeType::PY_TREE_KIND_TUPLE);
         break;
       case PyTreeKind::kDict:
-        node_data->set_type(jax::PyTreeNodeType::PY_TREE_KIND_DICT);
+        node_data->set_type(PyTreeNodeType::PY_TREE_KIND_DICT);
         for (auto& key : node.sorted_dict_keys) {
           if (!nb::isinstance<nb::str>(key)) {
             throw std::invalid_argument(
@@ -1476,7 +1474,7 @@ void PyTreeDef::SerializeTo(jax::PyTreeDefProto& result) const {
 }
 
 nb_class_ptr<PyTreeDef> PyTreeDef::DeserializeFrom(
-    nb_class_ptr<PyTreeRegistry> registry, const jax::PyTreeDefProto& input) {
+    nb_class_ptr<PyTreeRegistry> registry, const PyTreeDefProto& input) {
   std::vector<nb::object> interned_strings;
   interned_strings.reserve(input.interned_strings().size());
   for (auto& s : input.interned_strings()) {
@@ -1490,19 +1488,19 @@ nb_class_ptr<PyTreeDef> PyTreeDef::DeserializeFrom(
     node.arity = node_proto.arity();
     node.custom = nullptr;
     switch (node_proto.type()) {
-      case jax::PyTreeNodeType::PY_TREE_KIND_LEAF:
+      case PyTreeNodeType::PY_TREE_KIND_LEAF:
         node.kind = PyTreeKind::kLeaf;
         break;
-      case jax::PyTreeNodeType::PY_TREE_KIND_LIST:
+      case PyTreeNodeType::PY_TREE_KIND_LIST:
         node.kind = PyTreeKind::kList;
         break;
-      case jax::PyTreeNodeType::PY_TREE_KIND_NONE:
+      case PyTreeNodeType::PY_TREE_KIND_NONE:
         node.kind = PyTreeKind::kNone;
         break;
-      case jax::PyTreeNodeType::PY_TREE_KIND_TUPLE:
+      case PyTreeNodeType::PY_TREE_KIND_TUPLE:
         node.kind = PyTreeKind::kTuple;
         break;
-      case jax::PyTreeNodeType::PY_TREE_KIND_DICT:
+      case PyTreeNodeType::PY_TREE_KIND_DICT:
         node.kind = PyTreeKind::kDict;
         for (uint32_t str_id : node_proto.dict_keys().str_id()) {
           if (str_id >= interned_strings.size()) {
@@ -1549,60 +1547,6 @@ std::optional<std::pair<nb::object, nb::object>> PyTreeDef::GetNodeData()
     case PyTreeKind::kDataclass:
       return std::make_pair(node.custom->type, node.node_data);
   }
-}
-
-nb_class_ptr<PyTreeDef> PyTreeDef::MakeFromNodeDataAndChildren(
-    nb_class_ptr<PyTreeRegistry> registry,
-    std::optional<std::pair<nb::object, nb::object>> node_data,
-    nb::iterable children) {
-  nb_class_ptr<PyTreeDef> result =
-      make_nb_class<PyTreeDef>(std::move(registry));
-  int num_leaves = 0;
-  int arity = 0;
-  for (nb::handle pchild : children) {
-    const PyTreeDef& child = nb::cast<const PyTreeDef&>(pchild);
-    absl::c_copy(child.traversal_, std::back_inserter(result->traversal_));
-    num_leaves += child.num_leaves();
-    ++arity;
-  }
-  result->traversal_.emplace_back();
-  auto& node = result->traversal_.back();
-  node.arity = arity;
-  node.custom = nullptr;
-  node.num_leaves = num_leaves;
-  node.num_nodes = result->traversal_.size();
-  if (node_data == std::nullopt) {
-    node.kind = PyTreeKind::kLeaf;
-    ++node.num_leaves;
-    return result;
-  }
-  int is_nt = PyObject_IsSubclass(node_data->first.ptr(),
-                                  reinterpret_cast<PyObject*>(&PyTuple_Type));
-  if (is_nt == -1) {
-    throw nb::python_error();
-  }
-  if (is_nt != 0 && nb::hasattr(node_data->first, "_fields")) {
-    node.kind = PyTreeKind::kNamedTuple;
-    node.node_data = node_data->first;
-    return result;
-  }
-  auto* registration = result->registry()->Lookup(node_data->first);
-  if (registration == nullptr) {
-    throw std::logic_error(absl::StrFormat(
-        "Could not find type: %s.",
-        nb::cast<absl::string_view>(nb::repr(node_data->first))));
-  }
-  node.kind = registration->kind;
-  if (node.kind == PyTreeKind::kCustom || node.kind == PyTreeKind::kDataclass) {
-    node.custom = registration;
-    node.node_data = node_data->second;
-  } else if (node.kind == PyTreeKind::kNamedTuple) {
-    node.node_data = node_data->first;
-  } else if (node.kind == PyTreeKind::kDict) {
-    node.sorted_dict_keys =
-        nb::cast<std::vector<nb::object>>(node_data->second);
-  }
-  return result;
 }
 
 int PyTreeDef::Node::tp_traverse(visitproc visit, void* arg) const {
@@ -1721,7 +1665,7 @@ void BuildPytreeSubmodule(nb::module_& m) {
               [](const PyTreeDef& a, const PyTreeDef& b) { return a != b; });
   treedef.def("__hash__", [](const PyTreeDef& t) { return absl::HashOf(t); });
   treedef.def("serialize_using_proto", [](const PyTreeDef& a) {
-    jax::PyTreeDefProto result;
+    PyTreeDefProto result;
     a.SerializeTo(result);
     std::string serialized = result.SerializeAsString();
     return nb::bytes(serialized.data(), serialized.size());
@@ -1729,7 +1673,7 @@ void BuildPytreeSubmodule(nb::module_& m) {
   treedef.def_static(
       "deserialize_using_proto",
       [](nb_class_ptr<PyTreeRegistry> registry, nb::bytes data) {
-        jax::PyTreeDefProto input;
+        PyTreeDefProto input;
         absl::string_view serialized(data.c_str(), data.size());
         if (serialized.size() > std::numeric_limits<int>::max()) {
           throw xla::XlaRuntimeError(
@@ -1743,11 +1687,6 @@ void BuildPytreeSubmodule(nb::module_& m) {
       nb::arg("registry"), nb::arg("data"));
   treedef.def("node_data", &PyTreeDef::GetNodeData,
               "Returns None if a leaf-pytree, else (type, node_data)");
-  treedef.def_static(
-      "make_from_node_data_and_children",
-      &PyTreeDef::MakeFromNodeDataAndChildren, nb::arg("registry"),
-      nb::arg("node_data").none(), nb::arg("children"),
-      "Reconstructs a pytree from `node_data()` and `children()`.");
   treedef.def("__getstate__", &PyTreeDef::ToPickle);
   treedef.def("__setstate__", [](PyTreeDef& t, nb::object o) {
     nb::tuple pickle = nb::cast<nb::tuple>(o);
@@ -1844,4 +1783,4 @@ void BuildPytreeSubmodule(nb::module_& m) {
       });
 }
 
-}  // namespace xla
+}  // namespace jax

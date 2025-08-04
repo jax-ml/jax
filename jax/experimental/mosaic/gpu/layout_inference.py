@@ -21,11 +21,12 @@ from functools import partial
 import math
 from typing import cast
 
+from jax._src import lib as jaxlib
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import math as mlir_math
-from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import numpy as np
@@ -54,8 +55,8 @@ def _set_layout_attributes(
     in_layouts: list[ir.Attribute],
     out_layouts: list[ir.Attribute],
 ):
-    op.attributes["in_layouts"] = ir.ArrayAttr.get(in_layouts)
-    op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts)
+  op.attributes["in_layouts"] = ir.ArrayAttr.get(in_layouts)
+  op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts)
 
 
 def _choose_representative_layout(
@@ -137,7 +138,6 @@ def _choose_representative_layout(
 
 
 def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
-
   def is_array(v: ir.Value) -> bool:
     return ir.VectorType.isinstance(v.type)
 
@@ -274,16 +274,13 @@ def _infer_optimization_barrier_op_layout(
 
   for i, result in enumerate(filter(is_array, op.results)):
     possible_layouts = set()
-    for op_operand_use in cast(ir.OpResult, result).uses:
-      consumer = op_operand_use.owner
-      op_user = consumer.operands[op_operand_use.operand_number]
-      layout = inference_utils.in_layout_for_operand(consumer, op_user)
-      if layout is not None:
-        possible_layouts.add(layout)
-      if possible_layouts and layouts[i] is None:
-        # TODO(bchetioui): we could actually just pick any user layout here,
-        # and optimize later. This is fine for now.
-        layouts[i] = _choose_representative_layout(possible_layouts)
+    layout = _infer_layout_from_users(result)
+    if layout is not None:
+      possible_layouts.add(layout)
+    if possible_layouts and layouts[i] is None:
+      # TODO(bchetioui): we could actually just pick any user layout here,
+      # and optimize later. This is fine for now.
+      layouts[i] = _choose_representative_layout(possible_layouts)
 
   # TODO(bchetioui): handle annotating layout for only certain operands.
   # Otherwise, layouts may not get propagated through optimization barriers, if
@@ -294,6 +291,18 @@ def _infer_optimization_barrier_op_layout(
   return layouts, layouts
 
 
+def _infer_layout_from_users(
+    value: ir.Value,
+) -> ir.Attribute | None:
+  for use in cast(ir.OpResult, value).uses:
+    consumer = use.owner
+    operand = consumer.operands[use.operand_number]
+    layout = inference_utils.in_layout_for_operand(consumer, operand)
+    if layout is not None:
+      return layout
+  return None
+
+
 @partial(_add_layout_inference_rule, arith.ConstantOp)
 def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
   if not ir.VectorType.isinstance(constant_op.result.type):
@@ -301,7 +310,6 @@ def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
 
   shaped_ty = cast(ir.ShapedType, constant_op.result.type)
   value = constant_op.value
-  layout = None
   if (
       ir.DenseElementsAttr.isinstance(value)
       and ir.DenseElementsAttr(value).is_splat
@@ -315,15 +323,8 @@ def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
   # arbitrarily choose any one of them for the constant, since we expect
   # whichever choice we make to lead to N-1 relayouts, which all have the same
   # cost.
-  #
-  # We assign a strided layout if the constant has no user, for completeness.
-  elif constant_op.result.uses:
-    for use in cast(ir.OpResult, constant_op.result).uses:
-      consumer = use.owner
-      operand = consumer.operands[use.operand_number]
-      layout = inference_utils.in_layout_for_operand(consumer, operand)
-      if layout is not None:
-        break
+  else:
+    layout = _infer_layout_from_users(constant_op.result)
 
   # If the constant is not a splat, has no user, or a layout could not be
   # determined from looking at the users, we assign a strided layout for
@@ -333,6 +334,14 @@ def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
         fa.WGStridedFragLayout.from_shaped_type(shaped_ty)
     )
 
+  return [], [layout]
+
+
+@partial(_add_layout_inference_rule, llvm.UndefOp)
+def _infer_undef_op_layout(op: llvm.UndefOp) -> OptionalLayouts:
+  layout = _infer_layout_from_users(op.result)
+  if layout is None:
+    return None
   return [], [layout]
 
 
@@ -576,73 +585,99 @@ def _infer_layout_cast_op_layout(
   return [layout_cast_op.new_layout], [layout_cast_op.new_layout]
 
 
-# TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
-if hasattr(mgpu, "BroadcastInDimOp"):
-  @partial(_add_layout_inference_rule, mgpu.BroadcastInDimOp)
-  def _infer_broadcast_in_dim_op_layout(
-      op: mgpu.BroadcastInDimOp,
+@partial(_add_layout_inference_rule, mgpu.CustomPrimitiveOp)
+def _infer_custom_primitive_op_layout(
+    custom_primitive_op: mgpu.CustomPrimitiveOp,
+) -> OptionalLayouts:
+  in_layouts = list(custom_primitive_op.in_layouts)
+  out_layouts = list(custom_primitive_op.out_layouts)
+  return in_layouts, out_layouts
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.1.
+if jaxlib.version >= (0, 7, 1):
+  @partial(_add_layout_inference_rule, mgpu.AsyncLoadTmemOp)
+  def _infer_async_load_tmem_op_layout(
+      op: mgpu.AsyncLoadTmemOp,
   ) -> OptionalLayouts:
-    if inference_utils.has_any_layout_set(op):
-      op_in_layouts = list(inference_utils.in_layouts(op))
-      op_out_layouts = list(inference_utils.out_layouts(op))
-      return op_in_layouts, op_out_layouts
+    # TODO(b/431684684): Implement this, instead of relying on manual input.
+    out_layouts = list(inference_utils.out_layouts(op))
+    return [], out_layouts
 
-    in_ty = ir.VectorType(op.operand.type)
-    out_ty = ir.VectorType(op.result.type)
-    if len(in_ty.shape) != 1 or len(out_ty.shape) != 2:
-      raise NotImplementedError(
-          "Broadcast in dim with non-trivial broadcast dimensions is not"
-          f" supported: {op}"
-      )
 
-    # Find out the layout of the output from the consumers.
-    user_layouts = set()
-    for use in cast(ir.OpResult, op.result).uses:
-      consumer = use.owner
-      operand = consumer.operands[use.operand_number]
-      layout = inference_utils.in_layout_for_operand(consumer, operand)
-      if layout is not None:
-        user_layouts.add(layout)
-    if user_layouts:
-      out_layout = _choose_representative_layout(user_layouts)
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.1.
+if jaxlib.version >= (0, 7, 1):
+  @partial(_add_layout_inference_rule, mgpu.AsyncStoreTmemOp)
+  def _infer_async_store_tmem_op_layout(
+      op: mgpu.AsyncStoreTmemOp,
+  ) -> OptionalLayouts:
+    # TODO(b/431684684): Implement this, instead of relying on manual input.
+    in_layouts = list(inference_utils.in_layouts(op))
+    return in_layouts, []
 
-      if out_layout is None:
-        raise ValueError(f"Could not choose a best layout from {user_layouts}")
 
-      if out_layout != layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT):
-        raise NotImplementedError(f"Unsupported layout: {out_layout}")
+@partial(_add_layout_inference_rule, mgpu.BroadcastInDimOp)
+def _infer_broadcast_in_dim_op_layout(
+    op: mgpu.BroadcastInDimOp,
+) -> OptionalLayouts:
+  if inference_utils.has_any_layout_set(op):
+    op_in_layouts = list(inference_utils.in_layouts(op))
+    op_out_layouts = list(inference_utils.out_layouts(op))
+    return op_in_layouts, op_out_layouts
 
-      broadcast_dims = list(op.broadcast_dimensions)
-      if broadcast_dims == [0]:
-        in_layout = layouts_lib.to_layout_attr(fa.WGMMA_ROW_LAYOUT)
-      elif broadcast_dims == [1]:
-        in_layout = layouts_lib.to_layout_attr(fa.WGMMA_COL_LAYOUT)
-      else:
-        raise ValueError(f"Invalid broadcast dimensions: {broadcast_dims}")
+  in_ty = ir.VectorType(op.operand.type)
+  out_ty = ir.VectorType(op.result.type)
+  if len(in_ty.shape) != 1 or len(out_ty.shape) != 2:
+    raise NotImplementedError(
+        "Broadcast in dim with non-trivial broadcast dimensions is not"
+        f" supported: {op}"
+    )
 
-      return [in_layout], [out_layout]
+  # Find out the layout of the output from the consumers.
+  user_layouts = set()
+  for use in cast(ir.OpResult, op.result).uses:
+    consumer = use.owner
+    operand = consumer.operands[use.operand_number]
+    layout = inference_utils.in_layout_for_operand(consumer, operand)
+    if layout is not None:
+      user_layouts.add(layout)
+  if user_layouts:
+    out_layout = _choose_representative_layout(user_layouts)
 
-    # The consumers did not have any layouts set. Find out the layout of the
-    # input and infer the output layout from it.
-    in_layout = inference_utils.value_layout(op.operand)
-    if in_layout is None:
-      return None
+    if out_layout is None:
+      raise ValueError(f"Could not choose a best layout from {user_layouts}")
+
+    if out_layout != layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT):
+      raise NotImplementedError(f"Unsupported layout: {out_layout}")
 
     broadcast_dims = list(op.broadcast_dimensions)
-    if (
-        broadcast_dims == [0]
-        and in_layout == layouts_lib.to_layout_attr(fa.WGMMA_ROW_LAYOUT)
-    ) or (
-        broadcast_dims == [1]
-        and in_layout == layouts_lib.to_layout_attr(fa.WGMMA_COL_LAYOUT)
-    ):
-      out_layout = layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
-      return [in_layout], [out_layout]
+    if broadcast_dims == [0]:
+      in_layout = layouts_lib.to_layout_attr(fa.WGMMA_ROW_LAYOUT)
+    elif broadcast_dims == [1]:
+      in_layout = layouts_lib.to_layout_attr(fa.WGMMA_COL_LAYOUT)
     else:
-      raise NotImplementedError(
-          f"Unsupported layout: {in_layout} for broadcast dimensions"
-          f" {broadcast_dims}"
-      )
+      raise ValueError(f"Invalid broadcast dimensions: {broadcast_dims}")
+
+    return [in_layout], [out_layout]
+
+  # The consumers did not have any layouts set. Find out the layout of the
+  # input and infer the output layout from it.
+  in_layout = inference_utils.value_layout(op.operand)
+  if in_layout is None:
+    return None
+
+  broadcast_dims = list(op.broadcast_dimensions)
+  if (
+      broadcast_dims == [0]
+      and in_layout == layouts_lib.to_layout_attr(fa.WGMMA_ROW_LAYOUT)
+  ) or (
+      broadcast_dims == [1]
+      and in_layout == layouts_lib.to_layout_attr(fa.WGMMA_COL_LAYOUT)
+  ):
+    out_layout = layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
+    return [in_layout], [out_layout]
+
+  return None
 
 
 @partial(_add_layout_inference_rule, mgpu.WGMMAOp)
@@ -665,43 +700,11 @@ def _earliest_use(regions: list[ir.Region], uses: Sequence[ir.OpOperand]) -> ir.
   raise ValueError("None of uses are in the given block")
 
 
-def _insert_memref_layout_cast(layout: ir.Attribute, view_op: memref.ViewOp):
-  mem_ref_type = ir.MemRefType(view_op.result.type)
-  memref_new_type = ir.MemRefType.get(
-    mem_ref_type.shape,
-    mem_ref_type.element_type,
-    layout,
-    mem_ref_type.memory_space,
-  )
-  uses = list(view_op.result.uses)
-  with ir.InsertionPoint(_earliest_use(view_op.parent.regions, uses)):
-    cast_op = memref.cast(memref_new_type, view_op.result)
-  for use in uses:
-    use.owner.operands[use.operand_number] = cast_op
-
-
 class TraversalOrder(enum.Enum):
   """Traversal orders with respect to the data flow for IR."""
 
   FORWARD = 1
   BACKWARDS = 2
-
-
-def traverse_op(
-    op: ir.OpView,
-    callback: Callable[[ir.OpView], None],
-    traversal_order: TraversalOrder = TraversalOrder.FORWARD,
-):
-  """Traverses the operation and applies the callback in the given order."""
-  for region in op.operation.regions:
-    for block in region:
-      if traversal_order == TraversalOrder.FORWARD:
-        ops_to_traverse = block
-      else:
-        ops_to_traverse = reversed(list(block))
-      for block_op in ops_to_traverse:
-        traverse_op(block_op, callback, traversal_order)
-  callback(op)
 
 
 def infer_layout(module: ir.Module):
@@ -725,20 +728,20 @@ def infer_layout(module: ir.Module):
   #
   # We run two passes over the module, in order to make sure that layouts
   # defined in the middle of the computation are propagated wherever they need
-  # to be propagated. We start with a backwards (root-to-parameters) pass to
-  # propagate the information as far up as possible, and then a forward pass
-  # (parameters-to-root).
+  # to be propagated. We start with a forward (parameters-to-root) pass to
+  # preserve replicated layouts as far down as possible, and then do a
+  # backwards (root-to-parameters) pass.
   #
-  # Backwards pass
-  for op in module.body:
-    inference_utils.traverse_op(
-        op, inference_step, inference_utils.TraversalOrder.BACKWARDS
-    )
-
   # Forward pass
   for op in module.body:
     inference_utils.traverse_op(
         op, inference_step, inference_utils.TraversalOrder.FORWARD
+    )
+
+  # Backwards pass
+  for op in reversed(list(module.body)):
+    inference_utils.traverse_op(
+        op, inference_step, inference_utils.TraversalOrder.BACKWARDS
     )
 
   # At this point, layouts have been propagated as far as they could be
@@ -755,7 +758,7 @@ def infer_layout(module: ir.Module):
     max_vec_size_for_v = (
           np.prod(cast(ir.ShapedType, v.type).shape) // fa.WARPGROUP_SIZE
       )
-    desired_vec_size = 64 // utils.bitwidth(v.type.element_type)
+    desired_vec_size = 64 // utils.bitwidth(v.type.element_type)  # pytype: disable=attribute-error
     default_vector_size = min(
         default_vector_size, max_vec_size_for_v, desired_vec_size
     )
@@ -774,7 +777,7 @@ def infer_layout(module: ir.Module):
         update_default_vector_size_from_vector(v)
 
   for op in module.body:
-    traverse_op(op, update_default_vector_size_from_op)
+    inference_utils.traverse_op(op, update_default_vector_size_from_op)
 
   if default_vector_size == math.inf:  # Nothing to annotate.
     return
@@ -804,4 +807,4 @@ def infer_layout(module: ir.Module):
       _set_layout_attributes(op, in_layouts, out_layouts)
 
   for op in module.body:
-    traverse_op(op, set_default_layout)
+    inference_utils.traverse_op(op, set_default_layout)

@@ -61,7 +61,6 @@ from jax._src.interpreters.ad import (
   standard_jvp as standard_jvp,
   standard_jvp2 as standard_jvp2,
   traceable as traceable,
-  unpair_pval as unpair_pval,
   vjp as vjp,
   zero_jvp as zero_jvp,
   zeros_like_aval as zeros_like_aval,

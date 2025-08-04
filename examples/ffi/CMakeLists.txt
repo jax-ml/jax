@@ -3,7 +3,7 @@ project(${SKBUILD_PROJECT_NAME} LANGUAGES CXX)
 
 option(JAX_FFI_EXAMPLE_ENABLE_CUDA "Enable CUDA support" OFF)
 
-find_package(Python 3.10 REQUIRED COMPONENTS Interpreter Development.Module)
+find_package(Python 3.11 REQUIRED COMPONENTS Interpreter Development.Module)
 execute_process(
   COMMAND "${Python_EXECUTABLE}"
           "-c" "from jax import ffi; print(ffi.include_dir())"

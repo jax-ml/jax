@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from functools import partial
 import math
 from operator import index
@@ -24,22 +24,24 @@ import warnings
 
 import numpy as np
 
-import jax.numpy as jnp
-from jax import lax
-from jax.numpy.linalg import cholesky, svd, eigh
-
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import numpy as jnp
 from jax._src import prng
 from jax._src import xla_bridge
+from jax._src.mesh import get_abstract_mesh
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.api import jit, vmap
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.lax import lax as lax_internal
-from jax._src.nn.functions import softmax
+from jax._src.lax import control_flow as lax_control_flow
+from jax._src.lax import lax
+from jax._src.lax import special as lax_special
+from jax._src.numpy import einsum as jnp_einsum
+from jax._src.numpy import linalg as jnp_linalg
 from jax._src.numpy.lax_numpy import _convert_and_clip_integer
 from jax._src.numpy.util import _arraylike, check_arraylike, promote_dtypes_inexact
 from jax._src.pjit import auto_axes
@@ -63,8 +65,6 @@ UINT_DTYPES = prng.UINT_DTYPES
 
 
 ### utilities
-
-_lax_const = lax_internal._const
 
 def _isnan(x: ArrayLike) -> Array:
   return lax.ne(x, x)
@@ -107,7 +107,7 @@ def _check_prng_key(name: str, key: ArrayLike, *,
 
 def _return_prng_keys(was_wrapped, key):
   # TODO(frostig): remove once we always enable_custom_prng
-  assert jnp.issubdtype(key.dtype, dtypes.prng_key)
+  assert dtypes.issubdtype(key.dtype, dtypes.prng_key)
   if config.enable_custom_prng.value:
     return key
   else:
@@ -115,7 +115,7 @@ def _return_prng_keys(was_wrapped, key):
 
 
 def _random_bits(key: Array, bit_width: int, shape: Shape) -> Array:
-  assert jnp.issubdtype(key.dtype, dtypes.prng_key)
+  assert dtypes.issubdtype(key.dtype, dtypes.prng_key)
   return prng.random_bits(key, bit_width=bit_width, shape=shape)
 
 
@@ -162,7 +162,7 @@ class PRNGSpec:
 
 # TODO(frostig,vanderplas): remove PRNGImpl from this union when it's
 # no longer in the public API because `default_prng_impl` is gone
-PRNGSpecDesc = Union[str, PRNGSpec, PRNGImpl]
+PRNGSpecDesc = Union[str, PRNGSpec, PRNGImpl, Hashable]
 
 
 def resolve_prng_impl(impl_spec: PRNGSpecDesc | None) -> PRNGImpl:
@@ -191,7 +191,7 @@ def resolve_prng_impl(impl_spec: PRNGSpecDesc | None) -> PRNGImpl:
 def _key(ctor_name: str, seed: int | ArrayLike,
          impl_spec: PRNGSpecDesc | None) -> Array:
   impl = resolve_prng_impl(impl_spec)
-  if hasattr(seed, 'dtype') and jnp.issubdtype(seed.dtype, dtypes.prng_key):
+  if hasattr(seed, 'dtype') and dtypes.issubdtype(seed.dtype, dtypes.prng_key):
     raise TypeError(
         f"{ctor_name} accepts a scalar seed, but was given a PRNG key.")
   if np.ndim(seed):
@@ -264,7 +264,7 @@ def fold_in(key: ArrayLike, data: IntegerArray) -> Array:
   if np.ndim(data):
     raise TypeError("fold_in accepts a scalar, but was given an array of"
                     f"shape {np.shape(data)} != (). Use jax.vmap for batching.")
-  key_out = prng.random_fold_in(key, jnp.uint32(data))
+  key_out = prng.random_fold_in(key, jnp.asarray(data, dtype='uint32'))
   return _return_prng_keys(wrapped, key_out)
 
 
@@ -272,7 +272,7 @@ def _split(key: Array, num: int | tuple[int, ...] = 2) -> Array:
   # Alternative to split() to use within random samplers.
   # TODO(frostig): remove and use split(); we no longer need to wait
   # to always enable_custom_prng
-  assert jnp.issubdtype(key.dtype, dtypes.prng_key)
+  assert dtypes.issubdtype(key.dtype, dtypes.prng_key)
   if key.ndim:
     raise TypeError("split accepts a single key, but was given a key array of "
                     f"shape {key.shape} != (). Use jax.vmap for batching.")
@@ -295,7 +295,7 @@ def split(key: ArrayLike, num: int | tuple[int, ...] = 2) -> Array:
 
 
 def _key_impl(keys: Array) -> PRNGImpl:
-  assert jnp.issubdtype(keys.dtype, dtypes.prng_key)
+  assert dtypes.issubdtype(keys.dtype, dtypes.prng_key)
   keys_dtype = typing.cast(prng.KeyTy, keys.dtype)
   return keys_dtype._impl
 
@@ -309,7 +309,7 @@ def key_impl(keys: ArrayLike) -> str | PRNGSpec:
 
 
 def _key_data(keys: Array) -> Array:
-  assert jnp.issubdtype(keys.dtype, dtypes.prng_key)
+  assert dtypes.issubdtype(keys.dtype, dtypes.prng_key)
   return prng.random_unwrap(keys)
 
 def key_data(keys: ArrayLike) -> Array:
@@ -354,7 +354,8 @@ def maybe_auto_axes(f, out_sharding, **hoist_kwargs):
   if out_sharding is None:
     return f_
   else:
-    return auto_axes(f_, out_sharding=out_sharding)
+    return auto_axes(f_, out_sharding=out_sharding,
+                     axes=out_sharding.mesh.explicit_axes)
 
 
 def bits(key: ArrayLike,
@@ -376,7 +377,7 @@ def bits(key: ArrayLike,
   """
   key, _ = _check_prng_key("bits", key)
   if dtype is None:
-    dtype = dtypes.canonicalize_dtype(jnp.uint)
+    dtype = dtypes.canonicalize_dtype(np.uint)
   else:
     dtypes.check_user_dtype_supported(dtype)
   if not dtypes.issubdtype(dtype, np.unsignedinteger):
@@ -384,10 +385,19 @@ def bits(key: ArrayLike,
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding(out_sharding, "bits")
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "bits", shape)
   bit_width = dtype.itemsize * 8
   return maybe_auto_axes(_random_bits, out_sharding,
                          bit_width=bit_width, shape=shape)(key)
+
+
+def canonicalize_sharding_for_samplers(out_sharding, name, shape):
+  out_sharding = canonicalize_sharding(out_sharding, name)
+  cur_mesh = get_abstract_mesh()
+  if cur_mesh._are_all_axes_explicit and out_sharding is None and not shape:
+    # when shape is empty i.e. scalar, we can choose a replicated sharding.
+    out_sharding = NamedSharding(cur_mesh, P())
+  return out_sharding
 
 
 def uniform(key: ArrayLike,
@@ -414,19 +424,19 @@ def uniform(key: ArrayLike,
   key, _ = _check_prng_key("uniform", key)
   dtypes.check_user_dtype_supported(dtype)
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding(out_sharding, "uniform")
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "uniform", shape)
 
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   return maybe_auto_axes(_uniform, out_sharding,
-                         shape=shape,dtype=dtype)(key, minval, maxval)
+                         shape=shape, dtype=dtype)(key, minval, maxval)
 
 @partial(jit, static_argnums=(3, 4))
 def _uniform(key, minval, maxval, shape, dtype) -> Array:
   _check_shape("uniform", shape)
-  if not jnp.issubdtype(dtype, np.floating):
+  if not dtypes.issubdtype(dtype, np.floating):
     raise TypeError("uniform only accepts floating point dtypes.")
 
   minval = lax.convert_element_type(minval, dtype)
@@ -434,7 +444,7 @@ def _uniform(key, minval, maxval, shape, dtype) -> Array:
   minval = lax.broadcast_to_rank(minval, len(shape))
   maxval = lax.broadcast_to_rank(maxval, len(shape))
 
-  finfo = jnp.finfo(dtype)
+  finfo = dtypes.finfo(dtype)
   nbits, nmant = finfo.bits, finfo.nmant
 
   if nbits not in (8, 16, 32, 64):
@@ -490,34 +500,34 @@ def randint(key: ArrayLike,
   dtypes.check_user_dtype_supported(dtype)
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding(out_sharding, "randint")
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "randint", shape)
   return maybe_auto_axes(_randint, out_sharding, shape=shape, dtype=dtype)(
       key, minval, maxval)
 
 @partial(jit, static_argnums=(3, 4))
 def _randint(key, minval, maxval, shape, dtype) -> Array:
   _check_shape("randint", shape, np.shape(minval), np.shape(maxval))
-  if not jnp.issubdtype(dtype, np.integer):
+  if not dtypes.issubdtype(dtype, np.integer):
     raise TypeError(f"randint only accepts integer dtypes, got {dtype}")
 
   check_arraylike("randint", minval, maxval)
   minval = jnp.asarray(minval)
   maxval = jnp.asarray(maxval)
-  if not jnp.issubdtype(minval.dtype, np.integer):
+  if not dtypes.issubdtype(minval.dtype, np.integer):
     minval = minval.astype(int)
-  if not jnp.issubdtype(maxval.dtype, np.integer):
+  if not dtypes.issubdtype(maxval.dtype, np.integer):
     maxval = maxval.astype(int)
 
   # Flag where maxval is greater than the maximum value of dtype
   # in order to handle cases like randint(key, shape, 0, 256, 'uint8')
   maxval_out_of_range = lax.gt(
-    maxval, _convert_and_clip_integer(jnp.array(jnp.iinfo(dtype).max, dtype), maxval.dtype))
+    maxval, _convert_and_clip_integer(jnp.array(dtypes.iinfo(dtype).max, dtype), maxval.dtype))
 
   minval = _convert_and_clip_integer(minval, dtype)
   maxval = _convert_and_clip_integer(maxval, dtype)
   minval = lax.broadcast_to_rank(minval, len(shape))
   maxval = lax.broadcast_to_rank(maxval, len(shape))
-  nbits = jnp.iinfo(dtype).bits
+  nbits = dtypes.iinfo(dtype).bits
 
   if nbits not in (8, 16, 32, 64):
     raise TypeError(f"randint only accepts 8-, 16-, 32-, or 64-bit dtypes, got {dtype}")
@@ -541,14 +551,14 @@ def _randint(key, minval, maxval, shape, dtype) -> Array:
   # causing remainders below to have no effect, which is the correct semantics.
   span = lax.select(
     maxval_out_of_range & (maxval > minval),
-    lax.add(span, _lax_const(span, 1)),
+    lax.add(span, lax._const(span, 1)),
     span)
 
   # To compute a remainder operation on an integer that might have twice as many
   # bits as we can represent in the native unsigned dtype, we compute a
   # multiplier equal to 2**nbits % span. To avoid overflow, we use the identity:
   #  (a * b) % N = [(a % N) * (b % N)] % N
-  multiplier = lax.rem(_lax_const(span, 2 ** (nbits // 2)), span)
+  multiplier = lax.rem(lax._const(span, 2 ** (nbits // 2)), span)
   multiplier = lax.rem(lax.mul(multiplier, multiplier), span)
 
   random_offset = lax.add(lax.mul(lax.rem(higher_bits, span), multiplier),
@@ -613,7 +623,7 @@ def _shuffle(key, x, axis) -> Array:
   # Section 2 of http://people.csail.mit.edu/costis/6896sp11/lec5s.pdf for
   # another analysis (where the keys are generated one bit at a time).
   exponent = 3  # see tjablin@'s analysis for explanation of this parameter
-  uint32max = jnp.iinfo(np.uint32).max
+  uint32max = dtypes.iinfo(np.uint32).max
   if not core.is_constant_dim(x.size):
     raise NotImplementedError(
         "shape polymorphism for `permutation` or `shuffle`"
@@ -742,7 +752,7 @@ def normal(key: ArrayLike,
   """
   key, _ = _check_prng_key("normal", key)
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding(out_sharding, "normal")
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "normal", shape)
   dtypes.check_user_dtype_supported(dtype)
   if not dtypes.issubdtype(dtype, np.inexact):
     raise ValueError(f"dtype argument to `normal` must be a float or complex dtype, "
@@ -769,7 +779,7 @@ def _normal_real(key, shape, dtype) -> Array:
   lo = np.nextafter(np.array(-1., dtype), np.array(0., dtype), dtype=dtype)
   hi = np.array(1., dtype)
   u = uniform(key, shape, dtype, lo, hi)
-  return lax.mul(np.array(np.sqrt(2), dtype), lax.erf_inv(u))
+  return lax.mul(np.array(np.sqrt(2), dtype), lax_special.erf_inv(u))
 
 
 def multivariate_normal(key: ArrayLike,
@@ -842,16 +852,16 @@ def _multivariate_normal(key, mean, cov, shape, dtype, method) -> Array:
     _check_shape("normal", shape, mean.shape[:-1], cov.shape[:-2])
 
   if method == 'svd':
-    (u, s, _) = svd(cov)
+    (u, s, _) = jnp_linalg.svd(cov)
     factor = u * jnp.sqrt(s[..., None, :])
   elif method == 'eigh':
-    (w, v) = eigh(cov)
+    (w, v) = jnp_linalg.eigh(cov)
     factor = v * jnp.sqrt(w[..., None, :])
   else: # 'cholesky'
-    factor = cholesky(cov)
+    factor = jnp_linalg.cholesky(cov)
   normal_samples = normal(key, shape + mean.shape[-1:], dtype)
   with config.numpy_rank_promotion('allow'):
-    result = mean + jnp.einsum('...ij,...j->...i', factor, normal_samples)
+    result = mean + jnp_einsum.einsum('...ij,...j->...i', factor, normal_samples)
   return result
 
 
@@ -910,12 +920,12 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> Array:
   sqrt2 = np.array(np.sqrt(2), dtype)
   lower = lax.convert_element_type(lower, dtype)
   upper = lax.convert_element_type(upper, dtype)
-  a = lax.erf(lower / sqrt2)
-  b = lax.erf(upper / sqrt2)
-  if not jnp.issubdtype(dtype, np.floating):
+  a = lax_special.erf(lower / sqrt2)
+  b = lax_special.erf(upper / sqrt2)
+  if not dtypes.issubdtype(dtype, np.floating):
     raise TypeError("truncated_normal only accepts floating point dtypes.")
   u = uniform(key, shape, dtype, minval=a, maxval=b)
-  out = sqrt2 * lax.erf_inv(u)
+  out = sqrt2 * lax_special.erf_inv(u)
   # Clamp the value to the open interval (lower, upper) to make sure that
   # rounding (or if we chose `a` for `u`) doesn't push us outside of the range.
   return jnp.clip(
@@ -960,7 +970,7 @@ def bernoulli(key: ArrayLike,
     raise ValueError(f"got {mode=}, expected 'high' or 'low'")
   key, _ = _check_prng_key("bernoulli", key)
   dtype = dtypes.canonicalize_dtype(lax.dtype(p))
-  if not jnp.issubdtype(dtype, np.floating):
+  if not dtypes.issubdtype(dtype, np.floating):
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
   p = lax.convert_element_type(p, dtype)
@@ -1080,9 +1090,9 @@ def cauchy(key: ArrayLike,
 @partial(jit, static_argnums=(1, 2))
 def _cauchy(key, shape, dtype) -> Array:
   _check_shape("cauchy", shape)
-  u = uniform(key, shape, dtype, minval=jnp.finfo(dtype).eps, maxval=1.)
-  pi = _lax_const(u, np.pi)
-  return lax.tan(lax.mul(pi, lax.sub(u, _lax_const(u, 0.5))))
+  u = uniform(key, shape, dtype, minval=dtypes.finfo(dtype).eps, maxval=1.)
+  pi = lax._const(u, np.pi)
+  return lax.tan(lax.mul(pi, lax.sub(u, lax._const(u, 0.5))))
 
 
 def dirichlet(key: ArrayLike,
@@ -1132,6 +1142,8 @@ def dirichlet(key: ArrayLike,
 
 @partial(jit, static_argnums=(2, 3))
 def _dirichlet(key, alpha, shape, dtype) -> Array:
+  from jax._src.nn.functions import softmax  # pytype: disable=import-error
+
   if not np.ndim(alpha) >= 1:
     msg = "dirichlet requires alpha.ndim >= 1, got alpha.ndim == {}"
     raise ValueError(msg.format(np.ndim(alpha)))
@@ -1191,12 +1203,12 @@ def _gamma_one(key: Array, alpha, log_space) -> Array:
   # Ref: A simple method for generating gamma variables, George Marsaglia and Wai Wan Tsang
   # The algorithm can also be founded in:
   # https://en.wikipedia.org/wiki/Gamma_distribution#Generating_gamma-distributed_random_variables
-  zero = _lax_const(alpha, 0)
-  one = _lax_const(alpha, 1)
-  minus_one = _lax_const(alpha, -1)
-  one_over_two = _lax_const(alpha, 0.5)
-  one_over_three = _lax_const(alpha, 1. / 3.)
-  squeeze_const = _lax_const(alpha, 0.0331)
+  zero = lax._const(alpha, 0)
+  one = lax._const(alpha, 1)
+  minus_one = lax._const(alpha, -1)
+  one_over_two = lax._const(alpha, 0.5)
+  one_over_three = lax._const(alpha, 1. / 3.)
+  squeeze_const = lax._const(alpha, 0.0331)
   dtype = lax.dtype(alpha)
 
   # for alpha < 1, we boost alpha to alpha + 1 and get a sample according to
@@ -1236,7 +1248,7 @@ def _gamma_one(key: Array, alpha, log_space) -> Array:
 
     key = kXVU[0]
     key, x_key, U_key = _split(key, 3)
-    _, x, v = lax.while_loop(lambda kxv: lax.le(kxv[2], zero), _next_kxv, (x_key, zero, minus_one))
+    _, x, v = lax_control_flow.while_loop(lambda kxv: lax.le(kxv[2], zero), _next_kxv, (x_key, zero, minus_one))
     X = lax.mul(x, x)
     V = lax.mul(lax.mul(v, v), v)
     U = uniform(U_key, (), dtype=dtype)
@@ -1244,7 +1256,7 @@ def _gamma_one(key: Array, alpha, log_space) -> Array:
 
   # initial state is chosen such that _cond_fn will return True
   key, subkey = _split(key)
-  _, _, V, _ = lax.while_loop(_cond_fn, _body_fn, (key, zero, one, _lax_const(alpha, 2)))
+  _, _, V, _ = lax_control_flow.while_loop(_cond_fn, _body_fn, (key, zero, one, lax._const(alpha, 2)))
   if log_space:
     log_samples = lax.neg(exponential(subkey, (), dtype=dtype))
     log_boost = lax.select(boost_mask | (log_samples == 0), zero, lax.mul(log_samples, lax.div(one, alpha_orig)))
@@ -1263,21 +1275,21 @@ def _gamma_grad(sample, a, *, log_space):
     # This requires computing exp(log_sample), which may be zero due to float roundoff.
     # In this case, correct it to smallest representable float.
     samples = lax.exp(samples)
-    zero = lax_internal._const(sample, 0)
-    tiny = lax.full_like(samples, jnp.finfo(samples.dtype).tiny)
+    zero = lax._const(sample, 0)
+    tiny = lax.full_like(samples, dtypes.finfo(samples.dtype).tiny)
     samples = lax.select(lax.eq(samples, zero), tiny, samples)
-    gamma_grad = lambda alpha, sample: lax.random_gamma_grad(alpha, sample) / sample
+    gamma_grad = lambda alpha, sample: lax_special.random_gamma_grad(alpha, sample) / sample
   else:
-    gamma_grad = lax.random_gamma_grad
+    gamma_grad = lax_special.random_gamma_grad
   if xla_bridge.get_backend().platform == 'cpu':
-    grads = lax.map(lambda args: gamma_grad(*args), (alphas, samples))
+    grads = lax_control_flow.map(lambda args: gamma_grad(*args), (alphas, samples))
   else:
     grads = vmap(gamma_grad)(alphas, samples)
   return grads.reshape(np.shape(a))
 
 def _gamma_impl(key, a, *, log_space, use_vmap=False):
   # split key to match the shape of a
-  a_shape = jnp.shape(a)
+  a_shape = np.shape(a)
   split_count = math.prod(a_shape[key.ndim:])
   keys = key.flatten()
   keys = vmap(_split, in_axes=(0, None))(keys, split_count)
@@ -1287,7 +1299,7 @@ def _gamma_impl(key, a, *, log_space, use_vmap=False):
   if use_vmap and _key_impl(key) is prng.threefry_prng_impl:
     samples = vmap(partial(_gamma_one, log_space=log_space))(keys, alphas)
   else:
-    samples = lax.map(
+    samples = lax_control_flow.map(
         lambda args: _gamma_one(*args, log_space=log_space), (keys, alphas))
 
   return jnp.reshape(samples, a_shape)
@@ -1436,7 +1448,7 @@ def _poisson_knuth(key, lam, shape, dtype, max_iters) -> Array:
 
   k_init = lax.full_like(lam, 0, dtype, shape)
   log_rate_init = lax.full_like(lam, 0, np.float32, shape)
-  k = lax.while_loop(cond_fn, body_fn, (0, k_init, key, log_rate_init))[1]
+  k = lax_control_flow.while_loop(cond_fn, body_fn, (0, k_init, key, log_rate_init))[1]
   return (k - 1).astype(dtype)
 
 
@@ -1461,7 +1473,7 @@ def _poisson_rejection(key, lam, shape, dtype, max_iters) -> Array:
 
     k = lax.floor((2 * a / u_shifted + b) * u + lam + 0.43)
     s = lax.log(v * inv_alpha / (a / (u_shifted * u_shifted) + b))
-    t = -lam + k * log_lam - lax.lgamma(k + 1)
+    t = -lam + k * log_lam - lax_special.lgamma(k + 1)
 
     accept1 = (u_shifted >= 0.07) & (v <= v_r)
     reject = (k < 0) | ((u_shifted < 0.013) & (v > u_shifted))
@@ -1478,8 +1490,8 @@ def _poisson_rejection(key, lam, shape, dtype, max_iters) -> Array:
     return (~accepted).any() & (i < max_iters)
 
   k_init = lax.full_like(lam, -1, lam.dtype, shape)
-  accepted = lax.full_like(lam, False, jnp.bool_, shape)
-  k = lax.while_loop(cond_fn, body_fn, (0, k_init, accepted, key))[1]
+  accepted = lax.full_like(lam, False, np.dtype('bool'), shape)
+  k = lax_control_flow.while_loop(cond_fn, body_fn, (0, k_init, accepted, key))[1]
   return k.astype(dtype)
 
 
@@ -1495,7 +1507,7 @@ def _poisson(key, lam, shape, dtype) -> Array:
   # The acceptance probability for rejection sampling maxes out at 89% as
   # λ -> ∞, so pick some arbitrary large value.
   lam_rejection = lax.select(use_knuth, lax.full_like(lam, 1e5), lam)
-  max_iters = dtype.type(jnp.iinfo(dtype).max)  # insanely conservative
+  max_iters = dtype.type(dtypes.iinfo(dtype).max)  # insanely conservative
   result = lax.select(
     use_knuth,
     _poisson_knuth(key, lam_knuth, shape, dtype, max_iters),
@@ -1592,18 +1604,18 @@ def gumbel(key: ArrayLike,
 @partial(jit, static_argnums=(1, 2, 3))
 def _gumbel(key, shape, dtype, mode) -> Array:
   _check_shape("gumbel", shape)
+  info = dtypes.finfo(dtype)
   if mode == "high":
     high, low = _uniform(key, minval=0., maxval=1.,
                          shape=(2,) + shape, dtype=dtype)
     # TODO(parkers): The condition is to protect against rounding up but
     # we should be able to add safely with the right addition operation.
     x = jnp.where(high >= 0.5, high,
-        high + 2 ** -(jnp.finfo(dtype).nmant) * low + jnp.finfo(dtype).tiny)
+        high + 2 ** -(info.nmant) * low + info.tiny)
     return -jnp.log(-jnp.log1p(-x))
   else:
     return -jnp.log(-jnp.log(
-        _uniform(key, minval=jnp.finfo(dtype).tiny, maxval=1.,
-                 shape=shape, dtype=dtype)))
+        _uniform(key, minval=info.tiny, maxval=1., shape=shape, dtype=dtype)))
 
 
 def categorical(
@@ -1719,7 +1731,7 @@ def laplace(key: ArrayLike,
 def _laplace(key, shape, dtype) -> Array:
   _check_shape("laplace", shape)
   u = uniform(
-      key, shape, dtype, minval=-1. + jnp.finfo(dtype).epsneg, maxval=1.)
+      key, shape, dtype, minval=-1. + dtypes.finfo(dtype).epsneg, maxval=1.)
   return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
 
 
@@ -1755,8 +1767,8 @@ def logistic(key: ArrayLike,
 @partial(jit, static_argnums=(1, 2))
 def _logistic(key, shape, dtype):
   _check_shape("logistic", shape)
-  x = uniform(key, shape, dtype, minval=jnp.finfo(dtype).eps, maxval=1.)
-  return lax.log(lax.div(x, lax.sub(_lax_const(x, 1), x)))
+  x = uniform(key, shape, dtype, minval=dtypes.finfo(dtype).tiny, maxval=1.)
+  return lax.sub(lax.log(x), lax.log1p(lax.neg(x)))
 
 
 def pareto(key: ArrayLike,
@@ -1854,7 +1866,7 @@ def _t(key, df, shape, dtype) -> Array:
   df = lax.convert_element_type(df, dtype)
   key_n, key_g = _split(key)
   n = normal(key_n, shape, dtype)
-  two = _lax_const(n, 2)
+  two = lax._const(n, 2)
   half_df = lax.div(df, two)
   g = gamma(key_g, half_df, shape, dtype)
   return n * jnp.sqrt(half_df / g)
@@ -1905,7 +1917,7 @@ def _chisquare(key, df, shape, dtype) -> Array:
   else:
     _check_shape("chisquare", shape, np.shape(df))
   df = lax.convert_element_type(df, dtype)
-  two = _lax_const(df, 2)
+  two = lax._const(df, 2)
   half_df = lax.div(df, two)
   log_g = loggamma(key, a=half_df, shape=shape, dtype=dtype)
   chi2 = lax.mul(jnp.exp(log_g), two)
@@ -2048,7 +2060,7 @@ def maxwell(key: ArrayLike,
 def _maxwell(key, shape, dtype) -> Array:
   shape = shape + (3,)
   norm_rvs = normal(key=key, shape=shape, dtype=dtype)
-  return jnp.linalg.norm(norm_rvs, axis=-1)
+  return jnp_linalg.norm(norm_rvs, axis=-1)
 
 
 def double_sided_maxwell(key: ArrayLike,
@@ -2194,8 +2206,8 @@ def orthogonal(
   _m = core.concrete_or_error(index, _m, "The error occurred in jax.random.orthogonal()")
 
   z = normal(key, (*shape, max(n, _m), min(n, _m)), dtype)
-  q, r = jnp.linalg.qr(z)
-  d = jnp.linalg.diagonal(r)
+  q, r = jnp_linalg.qr(z)
+  d = jnp_linalg.diagonal(r)
   x = q * jnp.expand_dims(jnp.sign(d), -2)
 
   if n < _m:
@@ -2319,7 +2331,7 @@ def _rayleigh(key, scale, shape, dtype) -> Array:
   scale = scale.astype(dtype)
   scale = jnp.broadcast_to(scale, shape)
   log_u = lax.log(u)
-  n_two = _lax_const(scale, -2)
+  n_two = lax._const(scale, -2)
   sqrt_u = lax.sqrt(lax.mul(log_u, n_two))
   ray = lax.mul(scale, sqrt_u)
   return ray
@@ -2562,17 +2574,18 @@ def _stirling_approx_tail(k):
       dtype=k.dtype,
   )
   use_tail_values = k <= 9
-  k = lax.clamp(_lax_const(k, 0.0), k, _lax_const(k, 9.0))
+  k = lax.clamp(lax._const(k, 0.0), k, lax._const(k, 9.0))
   kp1sq = (k + 1) * (k + 1)
   approx = (1.0 / 12 - (1.0 / 360 - 1.0 / 1260 / kp1sq) / kp1sq) / (k + 1)
   k = jnp.floor(k)
-  return lax.select(use_tail_values, stirling_tail_vals[jnp.int32(k)], approx)
+  return lax.select(
+      use_tail_values, stirling_tail_vals[jnp.asarray(k, dtype='int32')], approx)
 
 
 @partial(jit, static_argnums=(3, 4, 5), inline=True)
 def _binomial_inversion(key, count, prob, shape, dtype, max_iters):
   if config.enable_checks.value:
-    assert jnp.issubdtype(prob.dtype, jnp.floating)
+    assert dtypes.issubdtype(prob.dtype, np.floating)
 
   log1minusprob = jnp.log1p(-prob)
 
@@ -2592,7 +2605,7 @@ def _binomial_inversion(key, count, prob, shape, dtype, max_iters):
   num_geom_init = lax.full_like(prob, 0, prob.dtype, shape)
   geom_sum_init = lax.full_like(prob, 0, prob.dtype, shape)
   carry = (0, num_geom_init, geom_sum_init, key)
-  k = lax.while_loop(cond_fn, body_fn, carry)[1]
+  k = lax_control_flow.while_loop(cond_fn, body_fn, carry)[1]
   return (k - 1).astype(dtype)
 
 
@@ -2640,8 +2653,8 @@ def _btrs(key, count, prob, shape, dtype, max_iters):
     return (~accepted).any() & (i < max_iters)
 
   k_init = lax.full_like(prob, -1, prob.dtype, shape)
-  carry = (0, k_init, jnp.full(shape, False, jnp.bool_), key)
-  return lax.while_loop(cond_fn, body_fn, carry)[1].astype(dtype)
+  carry = (0, k_init, jnp.full(shape, False, bool), key)
+  return lax_control_flow.while_loop(cond_fn, body_fn, carry)[1].astype(dtype)
 
 
 @partial(jit, static_argnums=(3, 4), inline=True)
@@ -2651,7 +2664,7 @@ def _binomial(key, count, prob, shape, dtype) -> Array:
   # and tensorflow_probability.substrates.jax.distributions.Binomial
   # For n * p < 10, we use the binomial inverse algorithm; otherwise btrs.
   if shape is None:
-    shape = jnp.broadcast_shapes(jnp.shape(count), jnp.shape(prob))
+    shape = jnp.broadcast_shapes(np.shape(count), np.shape(prob))
   else:
     _check_shape("binomial", shape, np.shape(count), np.shape(prob))
   (prob,) = promote_dtypes_inexact(prob)
@@ -2673,7 +2686,7 @@ def _binomial(key, count, prob, shape, dtype) -> Array:
   count_inv = lax.select(use_inversion, count, lax.full_like(count, 0.0))
   count_btrs = lax.select(use_inversion, lax.full_like(count, 1e4), count)
   q_btrs = lax.select(use_inversion, lax.full_like(q, 0.5), q)
-  max_iters = dtype.type(jnp.finfo(dtype).max)
+  max_iters = dtype.type(dtypes.finfo(dtype).max)
   samples = lax.select(
     use_inversion,
     _binomial_inversion(key, count_inv, q, shape, dtype, max_iters),
@@ -2684,14 +2697,14 @@ def _binomial(key, count, prob, shape, dtype) -> Array:
   invalid = (q_l_0 | q_is_nan | count_nan_or_neg)
   samples = lax.select(
     invalid,
-    jnp.full_like(samples, jnp.nan, dtype),
+    jnp.full_like(samples, np.nan, dtype),
     samples,
   )
 
   # +inf count leads to inf
   samples = lax.select(
     count_inf & (~invalid),
-    jnp.full_like(samples, jnp.inf, dtype),
+    jnp.full_like(samples, np.inf, dtype),
     samples,
   )
 
@@ -2808,11 +2821,11 @@ def multinomial(
 
   p = jnp.moveaxis(p, -1, 0)
 
-  remaining_probs = lax.cumsum(p, 0, reverse=True)
+  remaining_probs = lax_control_flow.cumsum(p, 0, reverse=True)
   ratios = p / jnp.where(remaining_probs == 0, 1, remaining_probs)
 
   keys = split(key, ratios.shape[0])
-  remainder, counts = lax.scan(f, n, (ratios, keys), unroll=unroll)
+  remainder, counts = lax_control_flow.scan(f, n, (ratios, keys), unroll=unroll)
   # final remainder should be zero
 
   return jnp.moveaxis(counts, 0, -1).astype(dtype)

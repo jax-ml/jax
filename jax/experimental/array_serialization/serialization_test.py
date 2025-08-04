@@ -38,7 +38,7 @@ from jax._src.export._export import (
     deserialization_registry as node_deserialization_registry)
 from jax._src.export._export import (
     serialization_registry as node_serialization_registry)
-from jax._src.layout import DeviceLocalLayout as DLL
+from jax._src.layout import Layout as DLL
 from jax._src.layout import Format
 from jax.experimental.array_serialization import pytree_serialization
 from jax.experimental.array_serialization import serialization
@@ -60,11 +60,11 @@ jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
 
 
-_default_sharding = None
+_DEFAULT_SHARDING = None  # to be overridden by tests with SingleDeviceSharding
 
 
 def tree_load(*args, **kw):
-  return pytree_serialization.load(*args, shardings=_default_sharding, **kw)
+  return pytree_serialization.load(*args, shardings=_DEFAULT_SHARDING, **kw)
 
 tree_save = pytree_serialization.save
 tree_load_pytreedef = pytree_serialization.load_pytreedef
@@ -121,7 +121,7 @@ class CheckpointTest(jtu.JaxTestCase):
     pspec = P('x', 'y')
     num = math.prod(inp_shape)
     sharding = NamedSharding(global_mesh, pspec)
-    src = jnp.arange(num, dtype=np.int32).reshape(inp_shape)  # 8e9
+    src = jnp.arange(num, dtype=np.int32).reshape(inp_shape)  # 8e6 elements
     inp = array.make_array_from_callback(
         inp_shape, sharding,
         lambda idx: src[idx])
@@ -147,7 +147,7 @@ class CheckpointTest(jtu.JaxTestCase):
     unused_current, peak = tm.get_traced_memory()
     # NB: some padding + tensorstore overhead. It should always be
     # less than array size (2048 * 4096 * 4 = 32M)
-    self.assertLess(peak, 10_000_000)
+    self.assertLess(peak, 13_000_000)
     deserialize_wo_limit = serialization.async_deserialize(
         sharding, tspec, inp_shape)
     tm.clear_traces()
@@ -625,8 +625,8 @@ class CheckpointTest(jtu.JaxTestCase):
 
     out_format = jax.jit(lambda x: x.T, out_shardings=Format(DLL.AUTO)).lower(
         arr).compile().output_formats
-    self.assertEqual(arr.format.device_local_layout.major_to_minor,
-                     out_format.device_local_layout.major_to_minor[::-1])
+    self.assertEqual(arr.format.layout.major_to_minor,
+                     out_format.layout.major_to_minor[::-1])
 
     ckpt_dir = pathlib.Path(self.create_tempdir('ckpt').full_path)
     ckpt_path = pathlib.Path(self.create_tempdir(f'{ckpt_dir}/first').full_path)
@@ -808,8 +808,8 @@ custom_types_threading_lock = threading.Lock()
 class UserPytreeAPITest(UserAPITestCase):
   def setUp(self):
     super().setUp()
-    global _default_sharding
-    _default_sharding = SingleDeviceSharding(jax.devices()[0])
+    global _DEFAULT_SHARDING
+    _DEFAULT_SHARDING = SingleDeviceSharding(jax.devices()[0])
     self.tempdirs = []
 
   def tearDown(self):
@@ -1075,6 +1075,17 @@ class UserPytreeAPITest(UserAPITestCase):
     with self.assertRaisesRegex(ValueError,
                                 'NOT_FOUND: Error opening "zarr3" driver:'):
       _ = tree_load(path)  # default attempts to open with zarr3 and fails
+
+  def test_save_load_future_printable(self):
+    path = self.create_tempdir()
+    data = [jnp.ones(())]
+    save_fut = pytree_serialization.nonblocking_save(data, path)
+    str(save_fut)
+    save_fut.result()
+    load_fut = pytree_serialization.nonblocking_load(
+        path, shardings=_DEFAULT_SHARDING)
+    str(load_fut)
+    load_fut.result()
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

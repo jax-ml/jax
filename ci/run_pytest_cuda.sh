@@ -47,7 +47,7 @@ export PY_COLORS=1
 export JAX_SKIP_SLOW_TESTS=true
 export NCCL_DEBUG=WARN
 export TF_CPP_MIN_LOG_LEVEL=0
-export JAX_ENABLE_64="$JAXCI_ENABLE_X64"
+export JAX_ENABLE_X64="$JAXCI_ENABLE_X64"
 
 # Set the number of processes to min(num_cpu_cores, gpu_count * $max_tests_per_gpu, total_ram_gb / 6)
 # We calculate max_tests_per_gpu as memory_per_gpu_gb / 2gb

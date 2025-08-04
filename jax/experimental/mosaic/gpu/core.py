@@ -23,12 +23,16 @@ import math
 import os
 import pathlib
 import time
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, Generic, TypeVar
+from collections.abc import Callable
 import weakref
 
 import itertools
 import jax
+from jax._src import dtypes
+from jax._src import lib
 from jax._src import sharding_impls
+from jax._src import util as jax_util
 from jax._src.interpreters import mlir
 from jax._src.lib import mosaic_gpu_dialect as dialect
 from jaxlib.mlir import ir
@@ -54,20 +58,9 @@ from . import transform_inference
 from . import utils
 
 # MLIR can't find libdevice unless we point it to the CUDA path
-# TODO(apaszke): Unify with jax._src.lib.cuda_path
-cuda_root = "/usr/local/cuda"
+cuda_root = lib.cuda_path or "/usr/local/cuda"
+os.environ["CUDA_ROOT"] = cuda_root
 PYTHON_RUNFILES = os.environ.get("PYTHON_RUNFILES")
-if os.environ.get("CUDA_ROOT") is None:
-  if PYTHON_RUNFILES:
-    cuda_nvcc_root = os.path.join(PYTHON_RUNFILES, "cuda_nvcc")
-    if os.path.exists(cuda_nvcc_root):
-      cuda_root = cuda_nvcc_root
-  os.environ["CUDA_ROOT"] = cuda_root
-else:
-  cuda_root = os.environ["CUDA_ROOT"]
-
-PTXAS_PATH = os.path.join(cuda_root, "bin/ptxas")
-NVDISASM_PATH = os.path.join(cuda_root, "bin/nvdisasm")
 
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
 FWD_COMPAT_IR_VERSION = 1
@@ -92,7 +85,7 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
 
 
 try:
-  from nvidia import nvshmem
+  from nvidia import nvshmem  # pytype: disable=import-error
 except ImportError:
   # Try to find the nvshmem library in Bazel runfiles.
   if PYTHON_RUNFILES:
@@ -101,8 +94,8 @@ except ImportError:
     )
     if os.path.exists(libdevice_path):
       os.environ["MOSAIC_GPU_NVSHMEM_BC_PATH"] = libdevice_path
-    for root, _, files in os.walk(os.path.join(os.getcwd(), "_solib_local")):
-      if "libnvshmem_host.so.3" in files:
+    for root, _, files in os.walk(os.getcwd()):
+      if "/_solib" in root and "libnvshmem_host.so.3" in files:
         os.environ["MOSAIC_GPU_NVSHMEM_SO_PATH"] = os.path.join(
             root, "libnvshmem_host.so.3"
         )
@@ -301,13 +294,15 @@ class TMEM:
 
   def __post_init__(self):
     if self.layout is not None:
-      self.layout.check_type(self.shape, utils.dtype_to_ir_type(self.dtype))
+      self.layout.check_type(
+          self.shape, utils.bitwidth(utils.dtype_to_ir_type(self.dtype))
+      )
       if self.packing is not None:
         raise ValueError("Cannot specify both layout and packing")
 
 
 def _count_buffer_bytes(shape_dtype: jax.ShapeDtypeStruct) -> int:
-  return math.prod(shape_dtype.shape) * np.dtype(shape_dtype.dtype).itemsize
+  return math.prod(shape_dtype.shape) * dtypes.bit_width(dtypes.dtype(shape_dtype.dtype)) // 8
 
 
 class LoweringSemantics(enum.Enum):
@@ -323,10 +318,12 @@ class _TMEMAlloc:
   num_cols: int
   collective: bool
 
-  def alloc(self):
-    tcgen05.tmem_alloc(
+  def alloc(self) -> int:
+    """Allocates TMEM and returns the number of columns allocated."""
+    _, cols = tcgen05.tmem_alloc(
         self.addr_ref, self.num_cols, collective=self.collective, exact=False
     )
+    return cols
 
   def dealloc(self):
     addr = memref.load(self.addr_ref, [])
@@ -359,7 +356,6 @@ def _construct_smem_reftree(
   index = ir.IndexType.get()
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
-  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
   flat_ref_tys, smem_buffer_tree = jax.tree.flatten(
       smem_buffers, is_leaf=lambda x: isinstance(x, Union)
   )
@@ -373,7 +369,7 @@ def _construct_smem_reftree(
           ir.Type.parse("!mosaic_gpu.barrier")
           if lowering_semantics == LoweringSemantics.Warpgroup
           else i64,
-          memory_space=smem,
+          memory_space=utils.smem(),
       )
       barrier_memref = _slice_smem(
             barrier_ty,
@@ -420,16 +416,18 @@ def _construct_smem_reftree(
         )
       case TMEM(shape, dtype, layout=layout, collective=collective, packing=packing):
         addr_ref = _slice_smem(
-            ir.MemRefType.get([], i32, memory_space=smem),
+            ir.MemRefType.get([], i32, memory_space=utils.smem()),
             dynamic_smem,
             c(dynamic_smem_offset, index),
             lowering_semantics,
         )
         if layout is None:
           layout = tcgen05._infer_tmem_layout(
-              shape, 1 if packing is None else packing
+              shape, collective, 1 if packing is None else packing
           )
-        num_cols = layout.cols_in_shape(shape)
+        num_cols = layout.cols_in_shape(
+            shape, utils.bitwidth(utils.dtype_to_ir_type(dtype))
+        )
         tmem_allocs.append(_TMEMAlloc(addr_ref, num_cols, collective))
         def ref(addr_ref=addr_ref, shape=shape, dtype=dtype, layout=layout):
           addr = memref.load(addr_ref, [])
@@ -440,7 +438,7 @@ def _construct_smem_reftree(
       case _:
         mlir_dtype = utils.dtype_to_ir_type(ref_ty.dtype)
         tile_smem = _slice_smem(
-            ir.MemRefType.get(ref_ty.shape, mlir_dtype, memory_space=smem),
+            ir.MemRefType.get(ref_ty.shape, mlir_dtype, memory_space=utils.smem()),
             dynamic_smem,
             c(dynamic_smem_offset, index),
             lowering_semantics,
@@ -517,9 +515,18 @@ def _launch(
     profiler_start = (smem_bytes + align - 1) & ~(align - 1)
     smem_bytes = profiler_start + profiler_spec.smem_bytes(block=block)
 
-  # TODO(cperivol): Query the shared memory size programmatically.
-  if smem_bytes > 228 * 1024:
-    raise ValueError(f"Mosaic GPU kernel exceeds available shared memory {smem_bytes=} > 228000")
+  device = jax.local_devices()[0]
+  # For ahead-of-time compilation purposes, that is when a CUDA device
+  # isn't available to query directly, we default to 227 KB, the
+  # maximum amount of shared memory per thread block available in
+  # compute capabilities 9.0 and 10.x:
+  # https://docs.nvidia.com/cuda/cuda-c-programming-guide/#features-and-technical-specifications-technical-specifications-per-compute-capability
+  # Note in either case we assume all devices have the same amount of
+  # shared memory.
+  max_smem_bytes = getattr(device, "shared_memory_per_block_optin", 227 * 1024)
+  if smem_bytes > max_smem_bytes:
+    raise ValueError("Mosaic GPU kernel exceeds available shared memory: "
+                     f"{smem_bytes=} > {max_smem_bytes=}")
   if math.prod(cluster) != 1:
     if len(cluster) != 3:
       raise ValueError("Clusters must be 3D")
@@ -538,10 +545,9 @@ def _launch(
       token.type, [token], *grid_vals, *block_vals,
       dynamicSharedMemorySize=c(smem_bytes, i32), **cluster_kwargs)
   launch_op.body.blocks.append(*([index] * (12 + 2 * len(cluster_kwargs))))  # Append an empty block
-  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
   with ir.InsertionPoint(launch_op.body.blocks[0]):
     dynamic_smem = gpu.dynamic_shared_memory(
-        ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=smem)
+        ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=utils.smem())
     )
 
     if profiler_spec:
@@ -549,7 +555,7 @@ def _launch(
           ir.MemRefType.get(
               (profiler_spec.smem_i32_elements(block=block),),
               i32,
-              memory_space=smem,
+              memory_space=utils.smem(),
           ),
           dynamic_smem,
           c(profiler_start, index),
@@ -579,9 +585,21 @@ def _launch(
         eq = arith.CmpIPredicate.eq
         is_init_warp = arith.cmpi(eq, utils.warp_idx(sync=False), c(0, i32))
         with utils.when(is_init_warp):
+          cols_used = 0
           for alloc in tmem_allocs:
-            alloc.alloc()
+            cols_used += alloc.alloc()
+          if cols_used > tcgen05.TMEM_MAX_COLS:
+            raise ValueError(
+                "Total TMEM allocation exceeds memory limit. "
+                f"Requested {cols_used} columns which exceeds limit of "
+                f"{tcgen05.TMEM_MAX_COLS}."
+            )
           if any(alloc.collective for alloc in tmem_allocs):
+            if math.prod(cluster) % 2:
+              raise ValueError(
+                  "Collective TMEM allocations are only supported for clusters"
+                  " with an even number of blocks in them."
+              )
             tcgen05.tmem_relinquish_alloc_permit(collective=True)
           if any(not alloc.collective for alloc in tmem_allocs):
             tcgen05.tmem_relinquish_alloc_permit(collective=False)
@@ -614,7 +632,7 @@ def _lower_as_gpu_kernel(
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
     lowering_semantics: LoweringSemantics,
     module_name: str,
-    kernel_name: str | None = None,
+    kernel_name: str,
     prof_spec: profiler.ProfilerSpec | None = None,
 ):
   ptr_ty = ir.Type.parse("!llvm.ptr")
@@ -642,8 +660,6 @@ def _lower_as_gpu_kernel(
   dialect.register_dialect(module.context)
   attrs = module.operation.attributes
   attrs["sym_name"] = ir.StringAttr.get(module_name)
-  if kernel_name is None:
-    kernel_name = getattr(body, "__name__", "anonymous")
 
   # These are needed as nonlocal below.
   launch_ctx = None
@@ -655,7 +671,7 @@ def _lower_as_gpu_kernel(
         ir.Attribute.parse("#llvm.linkage<external>"),
         addr_space=ir.IntegerAttr.get(i32, 4),  # GPU constant memory.
     )
-    @func.FuncOp.from_py_func(ptr_ty, ptr_ty, name=f"mosaic_gpu_{kernel_name}")
+    @func.FuncOp.from_py_func(ptr_ty, ptr_ty, name=f"{kernel_name}_mosaic_gpu")
     def main(token_ptr, buffers):
       nonlocal launch_ctx
       token = builtin.unrealized_conversion_cast([token_ty], [token_ptr])
@@ -678,6 +694,7 @@ def _lower_as_gpu_kernel(
   sym_tab.insert(global_scratch)
   module.operation.verify()
 
+  assert launch_ctx is not None
   return module, out_shape, unwrap_output_tuple, launch_ctx
 
 
@@ -716,7 +733,7 @@ def _declare_runtime_functions():
   )
 
 
-def as_gpu_kernel(
+def _kernel_to_module(
     body,
     grid: tuple[int, int, int],
     block: tuple[int, int, int],
@@ -727,7 +744,6 @@ def as_gpu_kernel(
     cluster: tuple[int, int, int] = (1, 1, 1),
     module_name: str = "unknown",
     kernel_name: str | None = None,
-    ir_version: int | None = None,
     thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
     inout_shape = (),
 ):
@@ -739,7 +755,13 @@ def as_gpu_kernel(
     inout_shape = tuple(inout_shape)
   elif not isinstance(inout_shape, tuple):
     inout_shape = (inout_shape,)
+  if kernel_name is None:
+    kernel_name = jax_util.fun_name(body, "anonymous")
 
+  inout_shape = jax.tree.map(lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype),
+                             inout_shape)
+  out_shape = jax.tree.map(lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype),
+                           out_shape)
   module, out_shape, unwrap_output_tuple, launch_ctx = (
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, inout_shape,
@@ -763,7 +785,37 @@ def as_gpu_kernel(
   launch_ctx.scratch.finalize_size()
   module.operation.verify()
 
-  if launch_ctx.is_device_collective and not supports_cross_device_collectives():
+  return (
+      module,
+      in_shape,
+      inout_shape,
+      out_shape,
+      unwrap_output_tuple,
+      launch_ctx.is_device_collective,
+  )
+
+
+def as_gpu_kernel(
+    body,
+    grid: tuple[int, int, int],
+    block: tuple[int, int, int],
+    in_shape,
+    out_shape,
+    smem_scratch_shape: ShapeTree | Union[ShapeTree],
+    prof_spec: profiler.ProfilerSpec | None = None,
+    cluster: tuple[int, int, int] = (1, 1, 1),
+    module_name: str = "unknown",
+    kernel_name: str | None = None,
+    ir_version: int | None = None,
+    thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
+    inout_shape = (),
+):
+  module, in_shape, inout_shape, out_shape, unwrap_output_tuple, is_device_collective = _kernel_to_module(
+      body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec,
+      cluster, module_name, kernel_name, thread_semantics, inout_shape
+  )
+
+  if is_device_collective and not supports_cross_device_collectives():
     raise RuntimeError("Kernel is a cross-device collective but no support is available.")
 
   expected_arg_tys, expected_arg_treedef = jax.tree.flatten((*in_shape, *inout_shape))
@@ -830,54 +882,36 @@ def as_torch_gpu_kernel(
     cluster: tuple[int, int, int] = (1, 1, 1),
     module_name: str = "unknown",
     kernel_name: str | None = None,
-    lowering_semantics: LoweringSemantics = LoweringSemantics.Lane,
+    thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
+    inout_shape = (),
 ):
   try:
-    import torch
+    import torch  # pytype: disable=import-error
   except ImportError:
     raise RuntimeError("as_torch_gpu_kernel requires PyTorch")
   torch.cuda.init()  # Make sure CUDA context is set up.
 
-  if isinstance(in_shape, list):
-    in_shape = tuple(in_shape)
-  elif not isinstance(in_shape, tuple):
-    in_shape = (in_shape,)
-
-  flat_out_types, out_treedef = jax.tree.flatten(out_shape)
-  expected_arg_treedef = jax.tree.structure(in_shape)
-
-  module, out_shape, unwrap_output_tuple, launch_ctx = (
-      _lower_as_gpu_kernel(
-          body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
-          lowering_semantics, module_name, kernel_name, prof_spec
-      )
+  module, in_shape, inout_shape, out_shape, unwrap_output_tuple, is_device_collective = _kernel_to_module(
+      body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec,
+      cluster, module_name, kernel_name, thread_semantics, inout_shape
   )
+  flat_arg_types, expected_arg_treedef = jax.tree.flatten((*in_shape, *inout_shape))
+  flat_out_types, _ = jax.tree.flatten(out_shape)
+  out_treedef = jax.tree.structure((*out_shape, *inout_shape))
 
-  if lowering_semantics == LoweringSemantics.Warpgroup and dialect is not None:
-    # We need to run a pass that removes dead-code for which layout inference
-    # does not work.
-    pm = mlir.passmanager.PassManager.parse("builtin.module(canonicalize)", module.context)
-    pm.run(module.operation)
-
-    # Run Python lowering passes. The remaining passes will be run in C++ in
-    # jax/jaxlib/mosaic/gpu/custom_call.cc
-    layout_inference.infer_layout(module)  # pytype: disable=attribute-error
-    transform_inference.infer_transforms(module)  # pytype: disable=attribute-error
-    dialect_lowering.lower_mgpu_dialect(module, launch_ctx)  # pytype: disable=attribute-error
-
-  launch_ctx.scratch.finalize_size()
-  module.operation.verify()
-
-  if launch_ctx.is_device_collective:
-    raise RuntimeError("Kernel is a cross-device collective but no support is available.")
+  if is_device_collective:
+    raise RuntimeError("Kernel is a cross-device collective but no support is available for Torch.")
 
   # Get our hands on the compilation and unload functions
   try:
-    import jax_plugins.xla_cuda12 as cuda_plugin
+    try:
+      import jax_plugins.xla_cuda13 as cuda_plugin  # pytype: disable=import-error
+    except ImportError:
+      import jax_plugins.xla_cuda12 as cuda_plugin  # pytype: disable=import-error
   except ImportError:
-    raise RuntimeError("as_torch_gpu_kernel only works with recent jaxlib builds "
-                       "that use backend plugins")
-  dll = ctypes.CDLL(cuda_plugin._get_library_path())
+    dll = ctypes.CDLL(None)
+  else:
+    dll = ctypes.CDLL(cuda_plugin._get_library_path())
   compile_func = dll.MosaicGpuCompile
   compile_func.argtypes = [ctypes.c_void_p]
   compile_func.restype = ctypes.POINTER(ctypes.c_void_p)
@@ -885,9 +919,10 @@ def as_torch_gpu_kernel(
   unload_func.argtypes = [compile_func.restype]
   unload_func.restype = None
 
+  module = _run_serde_pass(module, serialize=True, ir_version=None)
   module_asm = module.operation.get_asm(binary=True, enable_debug_info=True)
   compiled = compile_func(ctypes.c_char_p(module_asm))
-  if compiled is None:
+  if not compiled:
     raise RuntimeError("Failed to compile the module")
   ctx, launch_ptr = compiled[0], compiled[1]
   ctx_ptr_ptr = ctypes.pointer(ctypes.c_void_p(ctx))
@@ -904,6 +939,17 @@ def as_torch_gpu_kernel(
           f"Invalid argument structure: expected {expected_arg_treedef}, got"
           f" {arg_treedef}, ({args=})"
       )
+    for arg, expected_ty in zip(flat_args, flat_arg_types):
+      if arg.shape != expected_ty.shape:
+        raise ValueError(
+            f"Argument shape mismatch: expected {expected_ty.shape}, got"
+            f" {arg.shape}"
+        )
+      if arg.dtype != as_torch_dtype(expected_ty.dtype):
+        raise ValueError(
+            "Argument dtype mismatch: expected"
+            f" {as_torch_dtype(expected_ty.dtype)}, got {arg.dtype}"
+        )
 
     # Construct a device pointer list like in the XLA calling convention
     buffers = (ctypes.c_void_p * (arg_treedef.num_leaves + out_treedef.num_leaves))()
@@ -917,6 +963,8 @@ def as_torch_gpu_kernel(
       out = torch.empty(t.shape, dtype=as_torch_dtype(t.dtype), device=device)
       flat_outs.append(out)
       buffers[i] = out.data_ptr()
+    if num_inout_args := jax.tree.structure(inout_shape).num_leaves:
+      flat_outs += flat_args[-num_inout_args:]
     # Allocate another buffer for args of the host-side program. This is sadly
     # the default MLIR calling convention.
     args_ptr = (ctypes.POINTER(ctypes.c_void_p) * 3)()
@@ -925,7 +973,10 @@ def as_torch_gpu_kernel(
     args_ptr[2] = ctypes.cast(ctypes.pointer(ctypes.pointer(buffers)),
                               ctypes.POINTER(ctypes.c_void_p))
     launch(args_ptr)
-    return jax.tree.unflatten(out_treedef, flat_outs)
+    out = jax.tree.unflatten(out_treedef, flat_outs)
+    if unwrap_output_tuple:
+      return out[0]
+    return out
 
   # Unload the compiled code when the Python function is destroyed.
   def unload(_):

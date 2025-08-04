@@ -167,6 +167,32 @@ class ByvalInsertionPass
   }
 };
 
+// Insert the nvvm.minctasm attribute, which is sometimes required for ptxas
+// to recognize setmaxnreg instructions.
+class NvvmAttrInsertionPass
+    : public jaxlib::mlir::Pass<NvvmAttrInsertionPass, mlir::gpu::GPUModuleOp> {
+ public:
+  using jaxlib::mlir::Pass<NvvmAttrInsertionPass, mlir::gpu::GPUModuleOp>::Pass;
+  static constexpr llvm::StringLiteral kArgumentName = "mosaic-nvvm-attr-insertion";
+  static constexpr llvm::StringLiteral kPassName = "NvvmAttrInsertionPass";
+
+  void runOnOperation() override {
+    auto result = getOperation().walk([](mlir::LLVM::LLVMFuncOp op) {
+      // TODO(apaszke): op.isDeclaration() always returns false...
+      if (op.getFunctionBody().empty()) {  // Skip over declarations.
+        return mlir::WalkResult::advance();
+      }
+      op.getOperation()->setAttr(
+          "nvvm.minctasm", mlir::IntegerAttr::get(
+                               mlir::IntegerType::get(op.getContext(), 32), 1));
+      return mlir::WalkResult::advance();
+    });
+    if (result.wasInterrupted()) {
+      signalPassFailure();
+    }
+  }
+};
+
 }  // namespace
 
 void registerConvertGpuToLLVMPass() {
@@ -178,6 +204,12 @@ void registerConvertGpuToLLVMPass() {
 void registerByvalInsertionPass() {
   ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
     return std::make_unique<ByvalInsertionPass>();
+  });
+}
+
+void registerNvvmAttrInsertionPass() {
+  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
+    return std::make_unique<NvvmAttrInsertionPass>();
   });
 }
 

@@ -15,7 +15,12 @@
 # ruff: noqa
 
 import datetime
-from numpy import array, int32, float32, complex64
+import numpy as np
+
+array = np.array
+float32 = np.float32
+int32 = np.int32
+complex64 = np.complex64
 
 data_2024_08_19 = {}
 

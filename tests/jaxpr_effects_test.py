@@ -29,7 +29,6 @@ from jax._src import core
 from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
-from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -86,23 +85,8 @@ def trivial_effect_lowering(ctx, *, effect):
 mlir.register_lowering(effect_p, trivial_effect_lowering)
 
 def function_effect_lowering(ctx, *, effect):
-  def _f(ctx):
-    ctx.set_tokens_out(ctx.tokens_in)
-    return []
-  func = mlir._emit_lowering_rule_as_fun(_f, ctx)
-
-  output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
-  effs = list(ctx.tokens_in.effects())
-  in_tokens = [ctx.tokens_in.get(eff) for eff in effs]
-  token_types = [mlir.token_type() for _ in effs]
-  output_types = [*token_types, *output_types]
-  flat_output_types = mlir.flatten_ir_types(output_types)
-  call = mlir.func_dialect.CallOp(flat_output_types,
-                                  mlir.ir.FlatSymbolRefAttr.get(func.name.value),
-                                  mlir.flatten_ir_values(in_tokens))
-  tokens, out = util.split_list(call.results, [len(ctx.tokens_in)])
-  ctx.set_tokens_out(mlir.TokenSet(zip(effs, tokens)))
-  return out
+  ctx.set_tokens_out(ctx.tokens_in)
+  return []
 
 callback_p = core.Primitive('callback')
 callback_p.multiple_results = True
@@ -294,7 +278,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
   def tearDown(self):
     super().tearDown()
     dispatch.runtime_tokens.clear()
-    mlir.register_lowering(effect_p, self._old_lowering)
+    mlir._lowerings[effect_p] = self._old_lowering
 
   def test_can_lower_lowerable_effect(self):
     @jax.jit
@@ -355,8 +339,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       f.lower(2.)
 
   def test_nontrivial_lowering_with_ordered_effect_should_consume_token(self):
-
-    mlir.register_lowering(effect_p, function_effect_lowering)
+    mlir.register_lowering(effect_p, function_effect_lowering, inline=False)
 
     @jax.jit
     def f(x):
@@ -375,8 +358,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     self.assertIn('hlo.token', str(func.type.results[0]))
 
   def test_nontrivial_lowering_with_unordered_effect_should_consume_token(self):
-
-    mlir.register_lowering(effect_p, function_effect_lowering)
+    mlir.register_lowering(effect_p, function_effect_lowering, inline=False)
 
     @jax.jit
     def f(x):
@@ -527,7 +509,7 @@ class EffectOrderingTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=[])
+      return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=())
 
     f(2.)
     jax.effects_barrier()
@@ -552,11 +534,11 @@ class EffectOrderingTest(jtu.JaxTestCase):
       # Expensive computation
       x = x.dot(x)
       x = jnp.log(x.sum())
-      return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=[])
+      return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=())
 
     @jax.jit
     def g(x):
-      return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=[])
+      return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=())
 
     x = jax.device_put(jnp.ones((500, 500)), jax.devices()[0])
     y = jax.device_put(3., jax.devices()[1])
@@ -579,7 +561,7 @@ class EffectOrderingTest(jtu.JaxTestCase):
       # Runs in a thread.
       res = jax.jit(
           lambda x: callback_p.bind(
-              x, callback=_noop, effect=log_effect, out_avals=[])
+              x, callback=_noop, effect=log_effect, out_avals=())
       )(x)
       tokens.append(dispatch.runtime_tokens.current_tokens[log_effect])
       return res
@@ -635,7 +617,7 @@ class ParallelEffectsTest(jtu.JaxTestCase):
     @jax.pmap
     def f(x):
       callback_p.bind(
-          x, callback=log_value, effect=unordered_log_effect, out_avals=[])
+          x, callback=log_value, effect=unordered_log_effect, out_avals=())
       return x + 1
     f(jnp.arange(2)).block_until_ready()
     jax.effects_barrier()
@@ -893,7 +875,10 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
     def f(y):
       return input_effect(x, y, index=0)
     jaxpr = jax.make_jaxpr(f)(0)
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr.effects)
 
   def test_jaxpr_input_effect_is_tracked_through_partial_eval_custom(self):
     def f(_, y):
@@ -935,9 +920,15 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
     def f(_):
       input_effect(x, index=0)
     jaxpr = jax.make_jaxpr(f)(0)
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr.effects)
     jaxpr3, _ = pe.dce_jaxpr(jaxpr.jaxpr, [], instantiate=[False])
-    self.assertIn(InputEffect(0), jaxpr3.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr3.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr3.effects)
 
   def test_jaxpr_input_effect_is_tracked_through_while_loop(self):
 
@@ -951,10 +942,16 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
         lax.while_loop(lambda _: True, body, y)
       return f
     jaxpr = jax.make_jaxpr(make_fun(0))(0)
-    self.assertIn(InputEffect(1), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertIn(InputEffect(0), jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(1), jaxpr.effects)
 
     jaxpr = jax.make_jaxpr(make_fun(1))(0)
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr.effects)
 
     def f(x):
       def body(y):
@@ -962,7 +959,10 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
         return 2 * y
       lax.while_loop(lambda _: (x > 0).all(), body, y)
     jaxpr = jax.make_jaxpr(f)(0)
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr.effects)
 
   def test_jaxpr_input_effect_is_tracked_through_scan(self):
     c = np.ones(2)
@@ -974,13 +974,22 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
         lax.scan(body, z, xs)
       return f
     jaxpr = jax.make_jaxpr(make_fun(0))(jnp.arange(8), 0)
-    self.assertIn(InputEffect(1), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertIn(InputEffect(0), jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(1), jaxpr.effects)
 
     jaxpr = jax.make_jaxpr(make_fun(1))(jnp.arange(8), 0)
-    self.assertIn(InputEffect(2), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertIn(InputEffect(1), jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(2), jaxpr.effects)
 
     jaxpr = jax.make_jaxpr(make_fun(2))(jnp.arange(8), 0)
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr.effects)
 
   def test_jaxpr_input_effect_is_tracked_through_scan_with_dce(self):
     c = np.ones(2)
@@ -993,15 +1002,24 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
       return f
     jaxpr = jax.make_jaxpr(make_fun(0))(jnp.arange(8), 0)
     jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [])
-    self.assertIn(InputEffect(1), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertIn(InputEffect(0), jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(1), jaxpr.effects)
 
     jaxpr = jax.make_jaxpr(make_fun(1))(jnp.arange(8), 0)
     jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [])
-    self.assertIn(InputEffect(2), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertIn(InputEffect(1), jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(2), jaxpr.effects)
 
     jaxpr = jax.make_jaxpr(make_fun(2))(jnp.arange(8), 0)
     jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [])
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr.effects)
 
   def test_jaxpr_input_effect_is_tracked_through_cond(self):
 
@@ -1018,10 +1036,16 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
       return f
     # [c, pred, x]
     jaxpr = jax.make_jaxpr(make_fun(0))(0)
-    self.assertIn(InputEffect(1), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertIn(InputEffect(0), jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(1), jaxpr.effects)
 
     jaxpr = jax.make_jaxpr(make_fun(1))(0)
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertEmpty(jaxpr.effects)
+    else:
+      self.assertIn(InputEffect(0), jaxpr.effects)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

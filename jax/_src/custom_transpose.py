@@ -105,7 +105,7 @@ class custom_transpose:
                                        (res_arg, out_types), {})                             )
     out_flat = custom_transpose_p.bind(flat_fun, *args_flat,
                                        transpose=transpose_wrapped,
-                                       out_types=out_types_flat,
+                                       out_types=tuple(out_types_flat),
                                        lin_tree=lin_tree,
                                        res_tree=res_tree,
                                        out_tree=out_tree)

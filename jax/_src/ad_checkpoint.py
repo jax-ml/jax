@@ -40,6 +40,8 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.state import discharge
+from jax._src.state.types import AbstractRef
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import PyTreeDef, tree_flatten, tree_unflatten, tree_structure
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
@@ -422,7 +424,7 @@ def _trace_to_jaxpr(fun: Callable,
                     ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
   flat_fun, out_tree = api_util.flatten_fun(lu.wrap_init(fun, debug_info=debug), in_tree)
   try:
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
   except core.ConcretizationTypeError as e:
     msg, = e.args
     if 'for checkpoint' in msg:
@@ -448,11 +450,14 @@ def saved_residuals(f: Callable,
     return f(*args, **kwargs)
 
   debug_info = api_util.debug_info("saved_residuals", f, args, kwargs)
-  out = api.make_jaxpr(lambda *args: api.linearize(f_, *args)[1],
+  out = api.make_jaxpr(lambda *args: api.linearize(f_, *args),
                        return_shape=True)(*in_leaves)
   assert isinstance(out, tuple)
-  jaxpr_, out_shape = out
+  jaxpr_, out_shape_ = out
   jaxpr = jaxpr_.jaxpr
+  out_shape = out_shape_[1]
+  num_res = tree_structure(out_shape).num_leaves
+  jaxpr = jaxpr.replace(outvars=jaxpr.outvars[len(jaxpr.outvars) - num_res:])
   out_tree = lambda: tree_structure(out_shape)
   assert len(jaxpr.invars) == len(in_leaves)
   return _saved_residuals(jaxpr, debug_info.arg_names)
@@ -488,7 +493,7 @@ def _saved_residuals(jaxpr: core.Jaxpr,
       if v in res_vars:
         if eqn.primitive is name_p or v in named_vars and (eqn := named_vars[v]):
           results.append((v.aval, f"named '{eqn.params['name']}' from {src}"))
-        elif str(eqn.primitive) == 'pjit':
+        elif eqn.primitive.name == 'jit':
           results.append((v.aval,
                           f"output of jitted function '{eqn.params['name']}' "
                           f"from {src}"))
@@ -533,8 +538,6 @@ def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
                   for p, nz in zip(out_primals, out_nz)]
   return out_primals, out_tangents
 ad.primitive_jvps[remat_p] = remat_jvp
-
-effects.remat_allowed_effects.add_type(lax_internal.InOutFeedEffect)
 
 def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
                        jaxpr: core.Jaxpr, **params):
@@ -698,27 +701,31 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
                 pe.PartialVal.known(next(ins_iter))
                 for aval, lin in zip(jaxpr.in_avals, in_lin)]
     assert next(ins_iter, None) is None
+
+    # TODO(mattjj): revise not to require disabling checks
+    with config.mutable_array_checks(False):
+      jaxpr_rematted, lin_jaxpr, out_uk, res_avals = \
+          pe.partial_eval_jaxpr_nounits(jaxpr, in_lin, False)
     with source_info_util.extend_name_stack('rematted_computation'):
-      lin_jaxpr, _, consts = pe.trace_to_jaxpr_nounits(
-          lu.wrap_init(core.jaxpr_as_fun(jaxpr), debug_info=jaxpr.jaxpr.debug_info),
-          in_pvals, False)
+      consts = core.jaxpr_as_fun(jaxpr_rematted)(*ins_flat)
 
     # Transpose the linear jaxpr (which only has linear inputs).
     out_cts_iter = iter(out_cts_flat)
     out_cts = [ad_util.Zero(aval) if zero else next(out_cts_iter)
                for aval, zero in zip(jaxpr.out_avals, out_zeros)]
     assert next(out_cts_iter, None) is None
-    dummy_args = [ad.UndefinedPrimal(v.aval) for v in lin_jaxpr.invars]
-    in_cts = ad.backward_pass(lin_jaxpr, False, consts, dummy_args, out_cts)
+    dummy_args = [ad.UndefinedPrimal(aval) for aval in lin_jaxpr.in_avals[len(consts):]]
+    in_cts = ad.backward_pass(lin_jaxpr.jaxpr, False, lin_jaxpr.consts,
+                              [*consts, *dummy_args], out_cts)
+    in_cts = in_cts[len(consts):]
 
     # Identify symbolic zeros in the resulting cotangents, and return nonzeros.
     in_zeros = cell.in_cts_zero = [type(ct) is ad_util.Zero for ct in in_cts]
     in_cts_nz, _ = partition_list(in_zeros, in_cts)
     return in_cts_nz
 
-  transposed_wrapped = lu.wrap_init(transposed,
-                                    debug_info=jaxpr.jaxpr.debug_info)
-  transposed_jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(
+  transposed_wrapped = lu.wrap_init(transposed, debug_info=jaxpr.jaxpr.debug_info)
+  transposed_jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(
       transposed_wrapped, in_avals)
   transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)
   return transposed_jaxpr, cell.in_cts_zero  # pytype: disable=attribute-error
@@ -776,7 +783,7 @@ def _remat_translation_using_opt_barrier(*args, jaxpr: core.Jaxpr):
 
 
 def _remat_lowering(
-    ctx,
+    ctx: mlir.LoweringRuleContext,
     *args,
     jaxpr: core.Jaxpr,
     prevent_cse: bool,
@@ -794,7 +801,8 @@ def _remat_lowering(
     jaxpr_args = args
   outs, tokens_out = mlir.jaxpr_subcomp(
       ctx.module_context, jaxpr, ctx.name_stack.extend('checkpoint'),
-      ctx.tokens_in, (), *jaxpr_args, dim_var_values=ctx.dim_var_values)
+      ctx.tokens_in, (), *jaxpr_args, dim_var_values=ctx.dim_var_values,
+      const_lowering=ctx.const_lowering)
   ctx.set_tokens_out(tokens_out)
   return outs
 
@@ -880,5 +888,15 @@ def checkpoint_wrapper(
   return checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
                     static_argnums=static_argnums)
 
-# TODO(phawkins): update users to refer to the public name.
-_optimization_barrier = lax_internal.optimization_barrier
+
+@discharge.register_discharge_rule(remat_p)
+def _remat_state_discharge_rule(
+    in_avals, out_avals, *args, jaxpr, **params):
+  discharged_jaxpr, () = discharge.discharge_state(jaxpr, [])
+  out_vals_ref_vals = remat_p.bind(*args, jaxpr=discharged_jaxpr, **params)
+  out_vals, ref_vals = split_list(out_vals_ref_vals, [len(jaxpr.outvars)])
+  ref_vals_ = iter(ref_vals)
+  new_invals = [next(ref_vals_) if isinstance(a, AbstractRef) else None
+                for a in in_avals]
+  assert next(ref_vals_, None) is None
+  return new_invals, out_vals

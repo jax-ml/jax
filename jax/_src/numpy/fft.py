@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import operator
+
 import numpy as np
 
 from jax._src import dtypes
@@ -1176,6 +1177,7 @@ def fftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
       :func:`~jax.numpy.fft.rfft` and :func:`~jax.numpy.fft.irfft`.
   """
   dtype = dtype or dtypes.canonicalize_dtype(dtypes.float_)
+
   if isinstance(n, (list, tuple)):
     raise ValueError(
           "The n argument of jax.numpy.fft.fftfreq only takes an int. "
@@ -1186,9 +1188,13 @@ def fftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
           "The d argument of jax.numpy.fft.fftfreq only takes a single value. "
           "Got d = %s." % list(d))
 
+  out_dtype = dtype
+  dtype = dtypes.finfo(dtypes.to_inexact_dtype(dtype)).dtype
+
   i = jnp.arange(n, dtype=dtype, device=device)
   k = ((i + n//2) % n - n//2)
-  return k / jnp.array(d * n, dtype=dtype, device=device)
+  result = k.astype(dtype) / jnp.array(d * n, dtype=dtype, device=device)
+  return result.astype(out_dtype)
 
 
 def rfftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,

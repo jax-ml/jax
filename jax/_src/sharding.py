@@ -126,6 +126,10 @@ class Sharding:
   def _device_assignment(self) -> XLADeviceAssignment:
     raise NotImplementedError('Subclasses should implement this method.')
 
+  @property
+  def _internal_device_list(self) -> xc.DeviceList:
+    raise NotImplementedError('Subclasses should implement this method.')
+
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     raise NotImplementedError('Subclasses should implement this method.')
 

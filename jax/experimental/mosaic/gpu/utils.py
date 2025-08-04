@@ -158,7 +158,11 @@ def debug_print(fmt, *args, uniform=True, scope=None):
       if len(vec_ty.shape) > 1:
         raise NotImplementedError(vec_ty)
       vec_args = [
-          vector.extractelement(arg, position=c(i, index))
+          vector.extract(
+              arg,
+              dynamic_position=[],
+              static_position=ir.DenseI64ArrayAttr.get([i]),
+          )
           for i in range(vec_ty.shape[0])
       ]
       ty_formats, args = zip(*map(_debug_scalar_ty_format,vec_args))
@@ -341,7 +345,7 @@ def globaltimer(kind: Literal["low", "high"] | None = None):
   if kind is None:
     i64 = ir.IntegerType.get_signless(64)
     return llvm.inline_asm(
-        i64, [], "mov.u32  $0,%globaltimer;",
+        i64, [], "mov.u64  $0,%globaltimer;",
         "=l", asm_dialect=0, has_side_effects=True,
     )
   i32 = ir.IntegerType.get_signless(32)
@@ -748,6 +752,16 @@ def warp_barrier():
   nvvm.bar_warp_sync(c(0xffffffff, ir.IntegerType.get_signless(32)))
 
 
+def system_memory_barrier():
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [],
+      "fence.sys;",
+      "",
+      has_side_effects=True,
+  )
+
+
 @dataclasses.dataclass(frozen=True)
 class BarrierRef:
   base_address: ir.Value
@@ -787,6 +801,8 @@ class BarrierRef:
   def __getitem__(self, offset: ir.Value | int) -> "BarrierRef":
     i32 = ir.IntegerType.get_signless(32)
     if isinstance(offset, int):
+      if offset >= self.num_barriers:
+        raise IndexError(f"Barrier offset {offset} is out of bounds")
       offset = c(offset, i32)
     elif ir.IndexType.isinstance(offset.type):
       offset = arith.index_castui(i32, offset)
@@ -799,23 +815,23 @@ class BarrierRef:
         1,
     )
 
-  def wait_parity(self, parity, for_tensor_core=False):
+  def wait_parity(self, parity, orders_tensor_core=False):
     i32 = ir.IntegerType.get_signless(32)
     ticks = arith.constant(i32, 10000000)
     parity = arith.extui(i32, parity)
     nvvm.mbarrier_try_wait_parity_shared(self.get_ptr(), parity, ticks)
-    if for_tensor_core:
+    if orders_tensor_core:
       llvm.inline_asm(
           ir.Type.parse("!llvm.void"),
           [], "tcgen05.fence::after_thread_sync;", "",
           has_side_effects=True,
       )
 
-  def wait(self, for_tensor_core: bool = False):
+  def wait(self, orders_tensor_core: bool = False):
     parities = memref.load(self.phases, [])
     parity, new_parities = self.update_parities(parities)
     memref.store(new_parities, self.phases, [])
-    self.wait_parity(parity, for_tensor_core)
+    self.wait_parity(parity, orders_tensor_core)
 
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     i32 = ir.IntegerType.get_signless(32)
@@ -829,21 +845,31 @@ class BarrierRef:
       self,
       arrival_count: int = 1,
       can_complete: bool = True,
-      for_tensor_core: bool = False,
+      orders_tensor_core: bool = False,
+      predicate: ir.Value | None = None,
   ):
     i64 = ir.IntegerType.get_signless(64)
-    if for_tensor_core:
+    if orders_tensor_core:
       llvm.inline_asm(
           ir.Type.parse("!llvm.void"),
           [], "tcgen05.fence::before_thread_sync;", "",
           has_side_effects=True,
       )
     if can_complete:
-      if arrival_count > 1:
-        count = c(arrival_count - 1, ir.IntegerType.get_signless(32))
-        nvvm.mbarrier_arrive_nocomplete_shared(i64, self.get_ptr(), count)
-      nvvm.mbarrier_arrive_shared(i64, self.get_ptr())
+      pred_ptx = pred_constraint = ""
+      if predicate is not None:
+        pred_ptx = "@$2"
+        pred_constraint = ",b"
+      llvm.inline_asm(
+          ir.IntegerType.get_signless(64),
+          [self.get_ptr()] + ([predicate] if predicate is not None else []),
+          f"{pred_ptx} mbarrier.arrive.release.cta.shared::cta.b64 $0, [$1], {arrival_count};",
+          "=l,r" + pred_constraint,
+          has_side_effects=True,
+      )
     else:
+      if predicate is not None:
+        raise NotImplementedError("Predicate not supported for no-complete arrive")
       count = c(arrival_count, ir.IntegerType.get_signless(32))
       nvvm.mbarrier_arrive_nocomplete_shared(i64, self.get_ptr(), count)
 
@@ -904,12 +930,12 @@ class DialectBarrierRef:
   def __getitem__(self, offset: ir.Value | int) -> "DialectBarrierRef":
     return DialectBarrierRef(self.barrier_ref[offset])
 
-  def wait_parity(self, parity, for_tensor_core=False):
-    self.barrier_ref.wait_parity(parity, for_tensor_core)
+  def wait_parity(self, parity, orders_tensor_core=False):
+    self.barrier_ref.wait_parity(parity, orders_tensor_core)
 
-  def wait(self, for_tensor_core: bool = False):
+  def wait(self, orders_tensor_core: bool = False):
     assert self.barrier_ref.phases is not None
-    self.barrier_ref.wait(for_tensor_core)
+    self.barrier_ref.wait(orders_tensor_core)
 
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     return self.barrier_ref.update_parities(parities)
@@ -927,11 +953,8 @@ class DialectBarrierRef:
   def as_barrier_memref(self) -> ir.Value:
     num_barriers = self.barrier_ref.num_barriers
     shape = () if num_barriers == 1 else (num_barriers,)
-    return ptr_as_memref(
-        self.get_ptr(),
-        ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier")),
-        ptr_memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE,
-    )
+    memref_type = ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier"))
+    return builtin.unrealized_conversion_cast([memref_type], [self.get_ptr()])
 
   @classmethod
   def from_barrier_memref(cls, barrier: ir.Value):
@@ -945,16 +968,17 @@ class DialectBarrierRef:
           f"!mosaic_gpu.barrier, but got {barrier.type}"
       )
 
+    ptr_type = ir.Type.parse(f"!llvm.ptr<{WORKGROUP_NVPTX_ADDRESS_SPACE}>")
+    addr = builtin.unrealized_conversion_cast([ptr_type], [barrier])
     return cls(
         barrier_ref=BarrierRef(
-            base_address=memref_ptr(
-                barrier, memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE
-            ),
+            base_address=addr,
             offset=c(0, ir.IntegerType.get_signless(64)),
             phases=None,
             num_barriers=(1 if memref_type.rank == 0 else memref_type.shape[0]),
         )
     )
+
 
 @dataclasses.dataclass(frozen=True)
 class CollectiveBarrierRef:
@@ -1001,12 +1025,12 @@ class CollectiveBarrierRef:
   def __getitem__(self, offset):
     return CollectiveBarrierRef(self.barrier[offset], self.cluster_mask)
 
-  def arrive(self, for_tensor_core: bool = False):
+  def arrive(self, orders_tensor_core: bool = False):
     """Arrives on a barrier in all blocks that share at least one of the coordinates along the collective dimensions.
 
     Note that unlike in arrive, each warpgroup arrives once.
     """
-    if for_tensor_core:
+    if orders_tensor_core:
       llvm.inline_asm(
           ir.Type.parse("!llvm.void"),
           [], "tcgen05.fence::before_thread_sync;", "",
@@ -1392,11 +1416,34 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
     distance = c(distance, i32)
   if (result_type := x.type) != i32:
     if (x_bitwidth := bitwidth(x.type)) < 32:  # Pad to 32-bits if necessary.
+      assert 32 % x_bitwidth == 0
       x = bitcast(x, ir.IntegerType.get_signless(x_bitwidth))
       empty32 = llvm.mlir_undef(ir.VectorType.get((32 // x_bitwidth,), x.type))
-      x = vector.insertelement(x, empty32, position=c(0, index))
-    elif x_bitwidth != 32:
-      raise ValueError(f"Unsupported bitwidth {x_bitwidth}")
+      x = vector.insert(
+          x,
+          empty32,
+          dynamic_position=[],
+          static_position=ir.DenseI64ArrayAttr.get([0]),
+      )
+    elif x_bitwidth > 32:
+      assert x_bitwidth % 32 == 0
+      num_words = x_bitwidth // 32
+      xs_vec = bitcast(x, ir.VectorType.get((num_words,), i32))
+      y = llvm.mlir_undef(xs_vec.type)
+      for i in range(num_words):
+        x_elem = vector.extract(
+            xs_vec,
+            dynamic_position=[],
+            static_position=ir.DenseI64ArrayAttr.get([i]),
+        )
+        y_elem = shfl_bfly(x_elem, distance)
+        y = vector.insert(
+            y_elem,
+            y,
+            dynamic_position=[],
+            static_position=ir.DenseI64ArrayAttr.get([i]),
+        )
+      return bitcast(y, result_type)
     x = bitcast(x, i32)
   y = nvvm.shfl_sync(
       i32, c(0xFFFFFFFF, i32), x, distance, c(0x1F, i32), nvvm.ShflKind.bfly,
@@ -1404,7 +1451,11 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
   if (x_bitwidth := bitwidth(result_type)) < 32:
     bits_ty = ir.IntegerType.get_signless(x_bitwidth)
     y_vec = bitcast(y, ir.VectorType.get((32 // x_bitwidth,), bits_ty))
-    y = vector.extractelement(y_vec, position=c(0, index))
+    y = vector.extract(
+        y_vec,
+        dynamic_position=[],
+        static_position=ir.DenseI64ArrayAttr.get([0]),
+    )
   return bitcast(y, result_type)
 
 
@@ -1436,9 +1487,10 @@ def bitcast(x: ir.Value, new_type: ir.Type):
     new_type = ir.IntegerType(new_type)
     x_ty = ir.VectorType(x.type)
     assert new_type.width == bitwidth(x_ty.element_type) * math.prod(x_ty.shape)
-    i0 = arith.ConstantOp.create_index(0)
-    return vector.extractelement(
-        vector.bitcast(ir.VectorType.get((1,), new_type), x), position=i0
+    return vector.extract(
+        vector.bitcast(ir.VectorType.get((1,), new_type), x),
+        dynamic_position=[],
+        static_position=ir.DenseI64ArrayAttr.get([0]),
     )
   if ir.IntegerType.isinstance(x.type) and ir.VectorType.isinstance(new_type):
     new_type = ir.VectorType(new_type)
@@ -1494,7 +1546,76 @@ def vector_concat(vectors: Sequence[ir.Value]) -> ir.Value:
   offset = 0
   for v in vectors:
     for i in range(vty.shape[0]):
-      elem = vector.extractelement(v, position=c(i, index))
-      result = vector.insertelement(elem, result, position=c(offset + i, index))
+      elem = vector.extract(
+          v, dynamic_position=[], static_position=ir.DenseI64ArrayAttr.get([i])
+      )
+      result = vector.insert(
+          elem,
+          result,
+          dynamic_position=[],
+          static_position=ir.DenseI64ArrayAttr.get([offset + i]),
+      )
     offset += vty.shape[0]
   return result
+
+
+def is_known_divisible(value, divisor, max_depth=10) -> bool:
+  """Returns True if the value is statically known to be divisible by the divisor."""
+  if divisor == 1:
+    return True
+  if max_depth < 0 or not isinstance(value.owner, ir.Operation):
+    return False
+
+  new_depth = max_depth - 1
+  def_op = value.owner.opview
+
+  match def_op:
+    case arith.IndexCastOp():
+      return is_known_divisible(value.owner.operands[0], divisor, max_depth - 1)
+    case arith.ConstantOp():
+      return ir.IntegerAttr(def_op.value).value % divisor == 0
+    case arith.MulIOp():
+      # Only cover the case where one operand is divisible. It's still possible
+      # that the final product is divisible, but we don't check that here.
+      return (is_known_divisible(value.owner.operands[0], divisor, new_depth) or
+              is_known_divisible(value.owner.operands[1], divisor, new_depth))
+    case arith.SelectOp():
+      return (is_known_divisible(value.owner.operands[1], divisor, new_depth) and
+              is_known_divisible(value.owner.operands[2], divisor, new_depth))
+    case arith.MaxSIOp() | arith.MinSIOp() | arith.MaxUIOp() | arith.MinUIOp():
+      return (is_known_divisible(value.owner.operands[0], divisor, new_depth) and
+              is_known_divisible(value.owner.operands[1], divisor, new_depth))
+    case arith.AddIOp() | arith.SubIOp():
+      # Only cover the common case where both operads are divisible.
+      return (is_known_divisible(value.owner.operands[0], divisor, new_depth) and
+              is_known_divisible(value.owner.operands[1], divisor, new_depth))
+    case arith.AndIOp():
+      # Only cover the specific case where the divisor is a power of two.
+      return divisor.bit_count() == 1 and (
+          is_known_divisible(value.owner.operands[0], divisor, new_depth)
+          or is_known_divisible(value.owner.operands[1], divisor, new_depth)
+      )
+
+  return False
+
+
+def smem() -> ir.Attribute:
+  """Returns the attribute for the SMEM memory space."""
+  return ir.Attribute.parse("#gpu.address_space<workgroup>")
+
+
+def tmem() -> ir.Attribute:
+  """Returns the attribute for the TMEM memory space."""
+  return ir.Attribute.parse("#mosaic_gpu.tmem")
+
+
+def is_smem_ref(ref: ir.Value | ir.Type) -> bool:
+  """Returns true if the input mem ref or memref type points to SMEM.
+  If the input is not at all of a memref type, raises a ValueError.
+  """
+  if isinstance(ref, ir.Value):
+    ref = ref.type
+  if not ir.MemRefType.isinstance(ref):
+    raise ValueError(f"Expected a memref type but got {ref}")
+  ref = ir.MemRefType(ref)
+  return ref.memory_space is not None and ref.memory_space == smem()

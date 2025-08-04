@@ -227,6 +227,7 @@ class JaxJitTest(jtu.JaxTestCase):
     self.assertArraysEqual(v1, v1_expected)
     self.assertArraysEqual(v2, v2_expected)
 
+  @jtu.skip_on_flag("jax_use_simplified_jaxpr_constants", True)
   def test_check_for_large_number_of_constants(self):
     y = jnp.ones((128, 128))
     x = jnp.zeros((128,))

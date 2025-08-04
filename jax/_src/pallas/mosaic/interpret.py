@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import collections
+import contextlib
 import dataclasses
 import enum
 import functools
@@ -20,15 +21,19 @@ import gc
 import itertools
 import math
 import threading
-from typing import Any, Callable, Literal, cast
+from typing import Any, Literal, cast
+from collections.abc import Callable
 
 import jax
 from jax import lax
 from jax._src import callback
+from jax._src import config
 from jax._src import core as jax_core
+from jax._src import frozen_dict
 from jax._src.lax.control_flow import for_loop
 from jax._src import linear_util as lu
 from jax._src import source_info_util
+from jax._src.interpreters import mlir
 from jax._src.pallas.mosaic import core as mosaic_core
 from jax._src.pallas.mosaic import primitives as mosaic_primitives
 from jax._src.pallas.mosaic import verification
@@ -65,9 +70,19 @@ ScratchShapeTree = pallas_core.ScratchShapeTree
 CostEstimate = pallas_core.CostEstimate
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class InterpretParams:
-  """Parameters for Mosaic TPU interpret mode.
+  """Parameters for TPU interpret mode.
+
+  TPU interpret mode is a way run Pallas TPU kernels on CPU, while simulating
+  a TPU's shared memory (HBM, VMEM, etc.), communication (remote and local
+  DMAs), and synchronization operations (semaphores, barriers, etc.).  This mode
+  is intended for debugging and testing.
+
+  To run a kernel under TPU interpret mode, pass an instance of
+  ``InterpretParams`` as an argument for the ``interpret`` parameter of
+  :func:`jax.experimental.pallas.pallas_call` or
+  :func:`jax.experimental.pallas.core_map`.
 
   Attributes:
     dma_execution_mode:  If "eager", DMAs are executed as soon as they are
@@ -80,6 +95,15 @@ class InterpretParams:
       detected, a message will be printed and `races.races_found` will be set to
       True.
       Default: False.
+    out_of_bounds_reads: If "raise", an exception will be raised on any
+      out-of-bounds read of a buffer.  If "uninitialized_value", any parts of
+      the read that are out-of-bounds will return the value used to fill
+      uninitialized memory, which can be configured via the
+      "uninitialized_memory".  NOTE: If an exception is raised while
+      interpreting a kernel, you must call
+      :func:`reset_tpu_interpret_mode_state` before using TPU interpret mode
+      again in the same process.
+      Default: "raise".
     skip_floating_point_ops: If True, operations that produce only floating
       point values will not be interpreted; instead, their results will be
       replaced with arrays all of `jnp.inf`. Additionally any floating point
@@ -108,6 +132,7 @@ class InterpretParams:
   """
   dma_execution_mode: Literal["eager", "on_wait"] = "on_wait"
   detect_races: bool = False
+  out_of_bounds_reads: Literal["raise", "uninitialized"] = "raise"
   skip_floating_point_ops: bool = False
   uninitialized_memory: Literal["nan", "zero"] = "nan"
   random_seed: int | None = None
@@ -116,6 +141,28 @@ class InterpretParams:
   ) = None
   num_cores_per_device: int = 1
 
+@contextlib.contextmanager
+def force_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
+  """Context manager that forces TPU interpret mode under its dynamic context.
+
+  TPU interpret mode is a way run Pallas TPU kernels on CPU, while simulating
+  a TPU's shared memory (HBM, VMEM, etc.), communication (remote and local
+  DMAs), and synchronization operations (semaphores, barriers, etc.).  This mode
+  is intended for debugging and testing.  See :class:`InterpretParams` for
+  additional information.
+
+  Args:
+    params: an instance of :class:`InterpretParams`.  Any call to
+      :func:`jax.experimental.pallas.pallas_call` or
+      :func:`jax.experimental.pallas.core_map` that is traced under this context
+      manager will be run with ``interpret=params``.  When ``params`` is not
+      ``None``, this will cause those calls to run with TPU interpret mode.
+  """
+  prev = config.pallas_tpu_interpret_mode_context_manager.swap_local(params)
+  try:
+    yield
+  finally:
+    config.pallas_tpu_interpret_mode_context_manager.set_local(prev)
 
 VectorClock = np.ndarray
 
@@ -558,6 +605,10 @@ class SharedMemory:
 
   deallocated_bytes: int = 0
 
+  # (device_id, local_core_id) -> [(grid_index, [range])]
+  output_ranges: dict[tuple[int, int], list] = dataclasses.field(
+      default_factory=lambda: collections.defaultdict(list))
+
   @property
   def num_cores(self) -> int:
     return self.num_devices * self.num_cores_per_device
@@ -569,6 +620,23 @@ _shared_memory : SharedMemory | None = None
 _shared_memory_init_lock = threading.Lock()
 races : RaceDetectionState | None = None
 
+def reset_tpu_interpret_mode_state():
+  """Resets all global, shared state used by TPU interpret mode.
+
+  TPU interpret mode uses global, shared state for simulating memory buffers
+  and semaphores, for race detection, etc., when interpreting a kernel.
+  Normally, this shared state is cleaned up after a kernel is interpreted.
+
+  But if an exception is thrown while interpreting a kernel, the shared state
+  is not cleaned up, allowing the simulated TPU state to be examined for
+  debugging purposes.  In this case, the shared state must be reset before
+  any further kernels are interpreted.
+  """
+  global _shared_memory, races
+  with _shared_memory_init_lock:
+    _shared_memory = None
+    races = None
+
 def _get_shared_memory() -> SharedMemory:
   assert _shared_memory is not None
   return _shared_memory
@@ -578,11 +646,10 @@ def _clear_shared_memory():
   with _shared_memory_init_lock:
     _shared_memory = None
 
-
 def _initialize_shared_memory(
     device_id, num_devices, num_cores_per_device, *, interpret_params
 ):
-  global _shared_memory
+  global _shared_memory, races
   del device_id
   num_devices = int(num_devices)
   num_cores_per_device = int(num_cores_per_device)
@@ -598,10 +665,8 @@ def _initialize_shared_memory(
               num_devices, action=_update_clocks_for_global_barrier),
           clean_up_barrier=threading.Barrier(
               num_devices, action=_clear_shared_memory))
+      races = RaceDetectionState(num_cores=num_cores)
   assert _shared_memory.num_cores == num_cores
-
-  global races
-  races = RaceDetectionState(num_cores=num_cores)
 
 def _update_clocks(low_global_core_id, high_global_core_id):
   """Synchronizes the vector clocks for the cores with ids in the range between the two arguments."""
@@ -637,6 +702,38 @@ def _clean_up_shared_memory(device_id):
   device_id = int(device_id)
   shared_memory = _get_shared_memory()
   shared_memory.clean_up_barrier.wait()
+
+def _check_for_revisiting(device_id, local_core_id, loop_idx, output_blocks):
+  device_id = int(device_id)
+  local_core_id = int(local_core_id)
+  loop_idx = tuple(int(x) for x in loop_idx)
+  output_ranges = [_to_range(b) if b is not None else None
+                   for b in output_blocks]
+
+  shared_memory = _get_shared_memory()
+  past_output_ranges = shared_memory.output_ranges[(device_id, local_core_id)]
+  if not past_output_ranges:
+    past_output_ranges.append((loop_idx, output_ranges))
+    return
+
+  for i in range(len(output_ranges)):
+    if output_ranges[i] is None:
+      continue
+    if past_output_ranges[-1][1][i] == output_ranges[i]:
+      continue
+    # TODO(jburnim): Do something constant time instead of linear here.
+    past_idxs = [j for j, ors in enumerate(past_output_ranges)
+                 if ors[1][i] == output_ranges[i]]
+    if past_idxs:
+      first_prev_idx = past_output_ranges[past_idxs[0]][0]
+      first_prev_idx = past_output_ranges[past_idxs[-1]][0]
+      raise RuntimeError(
+        f'Revisited block {output_ranges[i]} of output {i} in iteration '
+        f'{loop_idx}. The block was previously visited in iterations '
+        f'{past_output_ranges[past_idxs[0]][0]} through '
+        f'{past_output_ranges[past_idxs[-1]][0]} .')
+
+  past_output_ranges.append((loop_idx, output_ranges))
 
 def _validate(device_id):
   device_id = int(device_id)
@@ -931,17 +1028,52 @@ def get(
     buffer = shared_memory.mem[
         (memory_space, buffer_id, device_id, local_core_id_for_buffer)
     ]
-    ret = buffer[read_range].copy()
-    if transforms:
-      # TODO(jburnim): Instead of using NDIndexer, do the computation ourselves
-      # with buffer.shape and read_range?
-      expected_shape = transforms[-1].get_indexer_shape()
-      if expected_shape != ret.shape[:len(expected_shape)]:
-        raise ValueError(
-            'Out-of-bounds read of'
-            f' ({device_id} {local_core_id} {memory_space} {buffer_id}):'
-            f' reading [{read_range}] but buffer has shape {buffer.shape} .'
-        )
+    try:
+      ret = buffer[read_range].copy()
+    except:
+      ret = None
+
+    # Compute the shape of the read value, assuming the read is fully in-bounds.
+    # TODO(jburnim): We already know this shape in the Jaxpr where we insert a
+    # callback to `get`.  Should we just pass the shape to `get`?
+    # TODO(jburnim): Move to a helper function?
+    full_read_shape = []
+    assert len(read_range) <= len(buffer.shape)
+    for dim_size, idx_or_slice in (
+        itertools.zip_longest(buffer.shape, read_range, fillvalue=None)):
+      if idx_or_slice is None:
+        full_read_shape.append(dim_size)
+      elif isinstance(idx_or_slice, int):
+        continue
+      else:
+        full_read_shape.append(
+            (idx_or_slice.stop - idx_or_slice.start) // idx_or_slice.step)
+    full_read_shape = tuple(full_read_shape)
+
+    if (ret is None) or (full_read_shape != ret.shape):
+      if shared_memory.interpret_params.out_of_bounds_reads == "raise":
+        if source_info is None:
+          ctx = contextlib.nullcontext()
+        else:
+          ctx = source_info_util.user_context(
+              traceback=source_info.traceback, name_stack=source_info.name_stack
+          )
+        with ctx:
+          raise IndexError(
+              'Out-of-bounds read of'
+              f' ({device_id} {local_core_id} {memory_space} {buffer_id}):'
+              f' reading [{read_range}] but buffer has shape {buffer.shape}.'
+          )
+      # out_of_bounds_reads == "uninitialized"
+      uninit_array = np.full(
+          full_read_shape,
+          _uninitialized_value(buffer.dtype, shared_memory.interpret_params),
+          dtype=buffer.dtype)
+      if ret is None:
+        ret = uninit_array
+      else:
+        uninit_array[tuple(slice(s) for s in ret.shape)] = ret
+        ret = uninit_array
 
   if shared_memory.interpret_params.detect_races:
     if src_device_id is None:
@@ -958,7 +1090,6 @@ def get(
     )
 
   return ret
-
 
 def store(
     device_id,
@@ -1023,7 +1154,6 @@ def store(
         write_range,
         source_info=source_info,
     )
-
 
 def swap(
     device_id,
@@ -1179,7 +1309,6 @@ def print_memory(device_id):
     shared_memory = _get_shared_memory()
     with shared_memory.lock:
       print(shared_memory.mem)
-
 
 def dma_start(
     device_id,
@@ -1510,7 +1639,7 @@ def _interpret_jaxpr(
       elif prim is for_loop.for_p:
         raise NotImplementedError('for_p')
 
-      elif prim is pjit.pjit_p:
+      elif prim is pjit.jit_p:
         def f(*args, jaxpr):
           return _interpret(jaxpr.jaxpr, *jaxpr.consts, *args)
         invals = deferred_invals()
@@ -1519,7 +1648,7 @@ def _interpret_jaxpr(
             lu.wrap_init(functools.partial(f, jaxpr=eqn.params['jaxpr']),
                         debug_info=eqn.params['jaxpr'].jaxpr.debug_info),
             in_avals)
-        out = pjit.pjit_p.bind(*invals, **(eqn.params | {'jaxpr': new_jaxpr}))
+        out = pjit.jit_p.bind(*invals, **(eqn.params | {'jaxpr': new_jaxpr}))
 
       elif prim is primitives.run_scoped_p:
         if eqn.params['collective_axes']:
@@ -1546,7 +1675,7 @@ def _interpret_jaxpr(
                 device_id,
                 local_core_id,
                 TPU_MEMORY_SPACE_IDXS[v.aval.memory_space],
-                _uninitialized_value(
+                _uninitialized_array(
                     v.aval.shape, v.aval.dtype, interpret_params),
                 ordered=True))
 
@@ -1614,14 +1743,20 @@ def _interpret_jaxpr(
             target_device_id, eqn.params['device_id_type'], axis_sizes)
         (orig_src_ref, _, orig_dst_ref, *_
         ) = jax.tree.unflatten(eqn.params['tree'], eqn.invars)
+        src_memory_space = getattr(orig_src_ref.aval, 'memory_space', None)
+        if src_memory_space is None:
+          src_memory_space = mosaic_core.MemorySpace.ANY
+        dst_memory_space = getattr(orig_dst_ref.aval, 'memory_space', None)
+        if dst_memory_space is None:
+          dst_memory_space = mosaic_core.MemorySpace.ANY
         callback.io_callback(
             functools.partial(dma_start, source_info=eqn.source_info),
             (),
             device_id,
             local_core_id,
-            TPU_MEMORY_SPACE_IDXS[getattr(orig_src_ref.aval, 'memory_space', mosaic_core.MemorySpace.ANY)],
+            TPU_MEMORY_SPACE_IDXS[src_memory_space],
             src, src_transforms,
-            TPU_MEMORY_SPACE_IDXS[getattr(orig_dst_ref.aval, 'memory_space', mosaic_core.MemorySpace.ANY)],
+            TPU_MEMORY_SPACE_IDXS[dst_memory_space],
             dst, dst_transforms,
             state_discharge.transform_array(dst_sem, dst_sem_transforms),
             state_discharge.transform_array(src_sem, src_sem_transforms),
@@ -1872,6 +2007,31 @@ def _get_randomized_grid_coordinates(
 
   return tuple(grid_point_coordinates)
 
+# TODO(sharadmv, jburnim): add support for memory space constraints
+remove_memory_space_p = jax_core.Primitive('remove_memory_space')
+
+@remove_memory_space_p.def_abstract_eval
+def _remove_memory_space_abstract_eval(x):
+  if isinstance(x, pallas_core.ShapedArrayWithMemorySpace):
+    if (
+        x.memory_space is None
+        or x.memory_space is pallas_core.MemorySpace.ANY
+        or x.memory_space is mosaic_core.MemorySpace.ANY
+        or x.memory_space is mosaic_core.MemorySpace.HBM
+    ):
+      return jax_core.ShapedArray(x.shape, x.dtype)
+    raise NotImplementedError(f'Unsupported memory space: {x.memory_space}')
+  return x
+
+@remove_memory_space_p.def_impl
+def _remove_memory_space_impl(x):
+  return x
+
+def _remove_memory_space_lowering(_, x):
+  return [x]
+mlir.register_lowering(remove_memory_space_p, _remove_memory_space_lowering)
+
+
 
 def _get_grid_point(
     loop_indices: tuple[Array, ...],
@@ -1900,18 +2060,21 @@ def _get_grid_point(
     grid_point.append(li if jnp.size(coords) == 0 else coords[li])
   return jnp.array(grid_point, dtype=np.int32)
 
-def _uninitialized_value(shape, dtype, interpret_params):
+def _uninitialized_value(dtype, interpret_params):
   if interpret_params.uninitialized_memory == 'nan':
     if jnp.issubdtype(dtype, jnp.floating):
-      return jnp.full(shape, jnp.nan, dtype)
+      return np.nan
     elif jnp.issubdtype(dtype, jnp.integer):
-      return jnp.full(shape, jnp.iinfo(dtype).max, dtype)
+      return jnp.iinfo(dtype).max
     elif jnp.issubdtype(dtype, jnp.bool):
-      return jnp.full(shape, False, dtype)
+      return True
   if interpret_params.uninitialized_memory == 'zero':
-    return jnp.full(shape, 0, dtype)
+    return 0
   raise NotImplementedError(
       interpret_params.uninitialized_memory + ' + ' + str(dtype))
+
+def _uninitialized_array(shape, dtype, interpret_params):
+  return jnp.full(shape, _uninitialized_value(dtype, interpret_params), dtype)
 
 def _pad_to_block_dimension(value, block_shape, interpret_params):
   """Pads values so the shape evenly divides into block dimensions.
@@ -1932,7 +2095,7 @@ def _pad_to_block_dimension(value, block_shape, interpret_params):
   )
   if padded_shape != value.shape:
     pad_width = tuple((0, a-b) for a, b in zip(padded_shape, value.shape))
-    pad_value = _uninitialized_value((), value.dtype, interpret_params)
+    pad_value = _uninitialized_array((), value.dtype, interpret_params)
     value = jnp.pad(value, pad_width, constant_values=pad_value)
   return value
 
@@ -1967,8 +2130,16 @@ def _thread_map_callback(jaxpr, num_threads, consts):
     for i in range(num_threads):
       threads.append(
         executor.submit(_run_jaxpr, jaxpr, consts, jnp.int32(i)))
+    exceptions = []
     for i in range(num_threads):
-      threads[i].result()
+      try:
+        threads[i].result()
+      except Exception as e:
+        exceptions.append(e)
+  if exceptions:
+    # TODO(jburnim): Use ExceptionGroup once JAX requires Python 3.11.
+    # raise ExceptionGroup('Exceptions raised during _thread_map', exceptions)
+    raise exceptions[0]
 
 def _call_threadmap_callback(jaxpr, num_threads, *consts):
   # NOTE: At runtime, _thread_map_callback will lower and compile the
@@ -1997,8 +2168,10 @@ def interpret_pallas_call(
     cost_estimate: CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
     interpret_params: InterpretParams,
+    metadata: frozen_dict.FrozenDict[str, str] | None,
 ):
   del debug, cost_estimate, out_avals
+  del metadata  # TODO(sharadmv): Add metadata to HLO.
 
   if isinstance(mesh, mosaic_core.TensorCoreMesh):
     # As a convenience for users, if we are interpreting a pl.core_map over a
@@ -2008,6 +2181,7 @@ def interpret_pallas_call(
     interpret_params = dataclasses.replace(
         interpret_params, num_cores_per_device=mesh.devices.shape[0])
 
+  args = [remove_memory_space_p.bind(a) for a in args]
   # args contains: *dynamic_grid_sizes, *index, *inputs.  (No consts?)
   dynamic_grid_args, scalars, input_args = split_list(
       args,
@@ -2082,7 +2256,7 @@ def interpret_pallas_call(
       output_buffer_shapes.append(input_args[oi_alias_map[i]].shape)
       output_vals.append(input_args[oi_alias_map[i]])
     else:
-      out_val = _uninitialized_value(bm.array_shape_dtype.shape,
+      out_val = _uninitialized_array(bm.array_shape_dtype.shape,
                                      bm.array_shape_dtype.dtype,
                                      interpret_params)
       padded_val = _pad_to_block_dimension(
@@ -2155,7 +2329,7 @@ def interpret_pallas_call(
               device_id,
               None,  # local_core_id,
               TPU_MEMORY_SPACE_IDXS[var.aval.memory_space],
-              _uninitialized_value(
+              _uninitialized_array(
                   var.aval.shape, var.aval.dtype, interpret_params
               ),
               ordered=True,
@@ -2372,7 +2546,7 @@ def interpret_pallas_call(
         )
 
         # Copy from the kernel buffers to slices of the output in HBM.
-        def _store_to_output_buffer(index, output_var):
+        def _store_to_output_buffer(index, output_var, transform):
           kernel_output_val = callback.io_callback(
               # TODO(jburnim): Pass source_info from the pallas_call, in case this
               # get is involved in a data race.
@@ -2381,21 +2555,9 @@ def interpret_pallas_call(
               device_id,
               core_index,
               TPU_MEMORY_SPACE_IDXS[output_var.aval.memory_space],
-              kernel_output_ids[j],
+              kernel_output_ids[index],
               (),
               ordered=True,
-          )
-          transform = indexing.NDIndexer(
-              indices=tuple(
-                  indexing.ds(st, sz) if not iid else st
-                  for st, sz, iid in zip(
-                      cur_start_indices[num_inputs + index],
-                      block_shapes[num_inputs + index],
-                      is_squeeze_dim[num_inputs + index],
-                  )
-              ),
-              shape=output_vals[index].shape,
-              int_indexer_shape=(index),
           )
           callback.io_callback(
               # TODO(jburnim): Pass source_info from the pallas_call, in case this
@@ -2411,11 +2573,26 @@ def interpret_pallas_call(
               ordered=True,
           )
 
+        output_slices : list[Any] = []
         for j, var in enumerate(output_vars):
           if _is_any(var.aval.memory_space):
+            output_slices.append(None)
             continue
           assert len(cur_start_indices[num_inputs + j].shape) == 1
           assert len(next_start_indices[num_inputs + j].shape) == 1
+          transform = indexing.NDIndexer(
+              indices=tuple(
+                  indexing.ds(st, sz) if not iid else st  # type: ignore[misc]
+                  for st, sz, iid in zip(
+                      cur_start_indices[num_inputs + j],
+                      block_shapes[num_inputs + j],
+                      is_squeeze_dim[num_inputs + j],
+                  )
+              ),
+              shape=output_vals[j].shape,
+              int_indexer_shape=(),
+          )
+          output_slices.append((transform,))
           jax.lax.cond(
               (iteration_idx + 1 == loop_bound)
               | jax.lax.reduce_or(
@@ -2423,9 +2600,17 @@ def interpret_pallas_call(
                   != next_start_indices[num_inputs + j],
                   axes=(0,),
               ),
-              functools.partial(_store_to_output_buffer, j, var),
+              functools.partial(_store_to_output_buffer, j, var, transform),
               lambda: None,
           )
+        callback.io_callback(
+            _check_for_revisiting,
+            (),
+            device_id,
+            core_index,
+            loop_idx,
+            output_slices,
+            ordered=True)
 
         return (
             iteration_idx + 1,

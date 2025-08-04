@@ -18,6 +18,9 @@ try:
   try:
     from jaxlib.mosaic.gpu import _mosaic_gpu_ext  # pytype: disable=import-error
   except ImportError:
-    from jax_cuda12_plugin import _mosaic_gpu_ext  # pytype: disable=import-error
+    try:
+      from jax_cuda12_plugin import _mosaic_gpu_ext  # pytype: disable=import-error
+    except ImportError:
+      from jax_cuda13_plugin import _mosaic_gpu_ext  # pytype: disable=import-error
 except ImportError as e:
   raise ModuleNotFoundError("Failed to import the Mosaic GPU bindings") from e

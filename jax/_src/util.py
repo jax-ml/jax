@@ -28,7 +28,6 @@ import weakref
 import numpy as np
 
 from jax._src import config
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import weakref_lru_cache as _weakref_lru_cache
 from jax._src.lib import utils as jaxlib_utils
 
@@ -45,7 +44,7 @@ T2 = TypeVar("T2")
 T3 = TypeVar("T3")
 
 
-if TYPE_CHECKING or jaxlib_extension_version < 354:
+if TYPE_CHECKING:
   # safe_zip cannot yet be fully annotated, so we use a strategy similar
   # to that used for builtins.zip in python/typeshed. This supports
   # return types matching input types for up to three arguments.
@@ -283,36 +282,53 @@ def split_merge(
 
   return lhs, rhs, merge
 
-def _ignore(): return None
-
 
 def cache(max_size=4096, trace_context_in_key=True):
-  def wrap(f):
-    @functools.lru_cache(max_size)
-    def cached(_, *args, **kwargs):
-      return f(*args, **kwargs)
-
-    @functools.wraps(f)
-    def wrapper(*args, **kwargs):
-      if config.check_tracer_leaks.value:
+  if trace_context_in_key:
+    def wrap(f):
+      @functools.lru_cache(max_size)
+      def cached(_, *args, **kwargs):
         return f(*args, **kwargs)
-      return cached(config.trace_context() if trace_context_in_key else _ignore(),
-                    *args, **kwargs)
 
-    wrapper.cache_clear = cached.cache_clear
-    wrapper.cache_info = cached.cache_info
-    cache_clearing_funs.add(wrapper.cache_clear)
-    return wrapper
+      @functools.wraps(f)
+      def wrapper(*args, **kwargs):
+        if config.check_tracer_leaks.value:
+          return f(*args, **kwargs)
+        return cached(config.trace_context(), *args, **kwargs)
+
+      wrapper.cache_clear = cached.cache_clear
+      wrapper.cache_info = cached.cache_info
+      register_cache(wrapper, str(f))
+      return wrapper
+  else:
+    def wrap(f):
+      wrapper = functools.lru_cache(max_size)(f)
+      register_cache(wrapper, str(f))
+      return wrapper
   return wrap
 
-cache_clearing_funs = weakref.WeakSet()  # type: ignore
+# Maps caches to the name of the callable they apply to. All caches in
+# this dictionary support `cache_clear()`.
+_caches: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
+
+def register_cache(cache: Any, for_what: str):
+  """Registers a cache with JAX's cache management.
+
+  Args:
+    cache: an object supporting `cache_clear()`, `cache_info()`, and
+    `cache_keys()`, like the result of `functools.lru_cache()`.
+    for_what: a string to identify what this cache is used for. This is
+     used for debugging.
+"""
+  _caches[cache] = for_what
 
 def clear_all_caches():
-  global cache_clearing_funs
-  for clear in cache_clearing_funs:
-    clear()
+  for cache in list(_caches.keys()):
+    cache.cache_clear()
 
 memoize = cache(max_size=None)
+
+def _ignore(): return None
 
 def weakref_lru_cache(call: Callable, maxsize=2048,
                       trace_context_in_key: bool = True):
@@ -323,18 +339,12 @@ def weakref_lru_cache(call: Callable, maxsize=2048,
   and strong refs to all subsequent operations. In all other respects it should
   behave similar to `functools.lru_cache`.
   """
-  global _weakref_lru_caches
   cached_call = _weakref_lru_cache.weakref_lru_cache(
       config.trace_context if trace_context_in_key else _ignore, call, maxsize
   )
-  _weakref_lru_caches.add(cached_call)
+  register_cache(cached_call, str(call))
   return cached_call
 
-_weakref_lru_caches = weakref.WeakSet()  # type: ignore
-
-def clear_all_weakref_lru_caches():
-  for cached_call in _weakref_lru_caches:
-    cached_call.cache_clear()
 
 class Unhashable:
   __slots__ = ["val"]
@@ -369,8 +379,8 @@ class WrapKwArgs:
   def __eq__(self, other):
     return self.val == other.val
 
-def wrap_name(name: str, transform_name: str) -> str:
-  return transform_name + '(' + name + ')'
+def wrap_name(transform_name: str, name: str) -> str:
+  return f"{transform_name}({name})"
 
 
 def fun_name(fun: Callable, default_name: str = "<unnamed function>") -> str:
@@ -399,6 +409,17 @@ def canonicalize_axis(axis: SupportsIndex, num_dims: int) -> int:
   if axis < 0:
     axis = axis + num_dims
   return axis
+
+def canonicalize_axis_tuple(axis: int | Sequence[int] | None, ndim: int, allow_duplicate: bool = False) -> tuple[int, ...]:
+  if axis is None:
+    return tuple(range(ndim))
+  if isinstance(axis, Sequence):
+    axis = tuple(canonicalize_axis(i, ndim) for i in axis)
+    if not allow_duplicate and len(set(axis)) != len(axis):
+      raise ValueError(f"repeated axis: {axis}")
+    return axis
+  else:
+    return (canonicalize_axis(axis, ndim),)
 
 def moveaxis(x: Array, src: int | Sequence[int], dst: int | Sequence[int]) -> Array:
   if src == dst:

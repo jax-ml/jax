@@ -612,6 +612,9 @@ def debug_info(
 
   See docstring for linear_util.DebugInfo.
   """
+  res = getattr(fun, "__fun_debug_info__", None)
+  if res is not None:
+    return res
   if sourceinfo is None:
     sourceinfo = fun_sourceinfo(fun)
   if signature is None:
@@ -627,25 +630,15 @@ def fun_signature(fun: Callable) -> inspect.Signature | None:
   except (ValueError, TypeError):
     return None
 
-def save_wrapped_fun_sourceinfo(wrapper: Callable,
-                                wrapped: Callable | core.DebugInfo) -> None:
-  # Prefer this to functools.wraps because it does not create a reference to
-  # the wrapped function.
-  if isinstance(wrapped, core.DebugInfo):
-    func_src_info = wrapped.func_src_info
-  elif callable(wrapped):
-    func_src_info = fun_sourceinfo(wrapped)
-  else:
-    assert False, wrapped  # Unreachable
-  setattr(wrapper, "__fun_sourceinfo__", func_src_info)
+def save_wrapped_fun_debug_info(wrapper: Callable,
+                                dbg: core.DebugInfo) -> None:
+  setattr(wrapper, "__fun_debug_info__", dbg)
 
 _fun_name_re = re.compile(r"(?:<built-in function (\S+)>)")
 
 # TODO(mattjj): make this function internal to this module
 def fun_sourceinfo(fun: Callable) -> str:
   # See DebugInfo.fun_src_info
-  res = getattr(fun, "__fun_sourceinfo__", None)
-  if res is not None: return res
   while isinstance(fun, partial):
     fun = fun.func
   fun = inspect.unwrap(fun)
@@ -717,16 +710,6 @@ def _non_static_arg_names(fn_signature: inspect.Signature | None,
                for path, l in generate_key_paths(x) if l is not static)
 
 
-def hoist_obj_attrs(f, flat_args):
-  idxs, objs, flat_args_ = [], [], []
-  for i, x in enumerate(flat_args):
-    if type(x) in _class_with_attrs:
-      objs.append(_HashableByObjectId(x))
-    else:
-      idxs.append(i)
-      flat_args_.append(x)
-  return _argnums_partial(f, tuple(idxs), tuple(objs)), flat_args_
-
 class _HashableByObjectId:
   __slots__ = ['val']
   def __init__(self, val):
@@ -735,10 +718,6 @@ class _HashableByObjectId:
     return id(self.val)
   def __eq__(self, other):
     return self.val is other.val
-
-def register_class_with_attrs(t: type) -> None:
-  _class_with_attrs.add(t)
-_class_with_attrs: set[type] = set()
 
 # TODO(mattjj): make this function faster
 def _check_no_aliased_ref_args(dbg: core.DebugInfo, avals, args):

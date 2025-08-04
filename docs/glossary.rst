@@ -77,7 +77,7 @@ Glossary of terms
     Tracer
       An object used as a standin for a JAX :term:`Array` in order to determine the
       sequence of operations performed by a Python function. Internally, JAX implements this
-      via the :class:`jax.core.Tracer` class.
+      via the `jax.core.Tracer` class.
 
     transformation
       A higher-order function: that is, a function that takes a function as input and outputs
@@ -92,7 +92,7 @@ Glossary of terms
     XLA
       Short for *Accelerated Linear Algebra*, XLA is a domain-specific compiler for linear
       algebra operations that is the primary backend for :term:`JIT`-compiled JAX code.
-      See https://www.tensorflow.org/xla/.
+      See https://www.openxla.org/xla/.
 
     weak type
       A JAX data type that has the same type promotion semantics as Python scalars;

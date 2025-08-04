@@ -144,13 +144,13 @@ std::string ArgumentSignature::DebugString() const {
   auto py_object_formatter = [](std::string* out, const nb::object& o) {
     out->append(nb::cast<absl::string_view>(nb::str(o)));
   };
-  auto treedef_formatter = [](std::string* out, const xla::PyTreeDef& d) {
+  auto treedef_formatter = [](std::string* out, const PyTreeDef& d) {
     out->append(d.ToString());
   };
   return absl::StrFormat(
       "static args (positional + keyword): [%s], "
       "static arg keyword names: [%s], "
-      "dynamic arg signatures (positional + keyword): [%s]"
+      "dynamic arg signatures (positional + keyword): [%s], "
       "dynamic arg shardings: [%s]",
       absl::StrJoin(static_args, ",", py_object_formatter),
       absl::StrJoin(static_arg_names, ",", py_object_formatter),
@@ -195,7 +195,7 @@ std::string CallSignature::DebugString() const {
     out->append(nb::cast<absl::string_view>(nb::str(o)));
   };
   auto signature_formatter = [](std::string* out,
-                                const xla::PyArgSignature& s) {
+                                const PyArgSignature& s) {
     out->append(s.DebugString());
   };
   auto layout_formatter = [](std::string* out,
@@ -233,12 +233,11 @@ std::string CallSignature::DebugString() const {
       absl::StrJoin(configs, ", ", py_object_formatter));
 }
 
-
 size_t HashShardingForJit(nb::handle sharding) {
   auto type = sharding.type();
 
   if (type.is(NamedSharding::type())) {
-    const auto* named_sharding = nb::inst_ptr<jax::NamedSharding>(sharding);
+    const auto* named_sharding = nb::inst_ptr<NamedSharding>(sharding);
     return absl::Hash<void*>()(named_sharding->mesh().ptr());
   }
 
@@ -252,16 +251,27 @@ size_t HashShardingForJit(nb::handle sharding) {
     return absl::Hash<void*>()(single_device_sharding->device().ptr());
   }
 
-  return nb::hash(sharding);
+  try {
+    return nb::hash(sharding);
+  } catch (const nb::python_error& e) {
+    // Gracefully handle non-hashable sharding. We cannot let a C++ exception
+    // escape because this hash function may have been called from a code that
+    // disables C++ exception support.
+    return 0;
+  }
 }
 
 bool EqualShardingsForJit(nb::handle a, nb::handle b) {
-  if (a.ptr() == b.ptr()) return true;
+  if (a.ptr() == b.ptr()) {
+    return true;
+  }
 
   auto a_type = a.type();
   auto b_type = b.type();
 
-  if (!a_type.is(b_type)) return false;
+  if (!a_type.is(b_type)) {
+    return false;
+  }
 
   if (a_type.is(NamedSharding::type())) {
     auto* a_named_sharding = nb::inst_ptr<const NamedSharding>(a);
@@ -277,8 +287,7 @@ bool EqualShardingsForJit(nb::handle a, nb::handle b) {
   if (a_type.is(GSPMDSharding::type())) {
     auto* a_gspmd_sharding = nb::inst_ptr<const GSPMDSharding>(a);
     auto* b_gspmd_sharding = nb::inst_ptr<const GSPMDSharding>(b);
-
-    return a_gspmd_sharding == b_gspmd_sharding;
+    return *a_gspmd_sharding == *b_gspmd_sharding;
   }
 
   if (a_type.is(SingleDeviceSharding::type())) {
@@ -286,7 +295,6 @@ bool EqualShardingsForJit(nb::handle a, nb::handle b) {
         nb::inst_ptr<const SingleDeviceSharding>(a);
     auto* b_single_device_sharding =
         nb::inst_ptr<const SingleDeviceSharding>(b);
-
     return a_single_device_sharding->device().ptr() ==
                b_single_device_sharding->device().ptr() &&
            a_single_device_sharding->memory_kind().equal(
@@ -345,8 +353,8 @@ absl::Status ParseArguments(
     absl::Span<PyObject* const> positional_args,
     absl::Span<PyObject* const> keyword_args, nb::handle kwnames,
     absl::Span<int const> static_argnums,
-    absl::Span<nb::str const> static_argnames,
-    xla::PyTreeRegistry* pytree_registry, ArgumentSignature& signature,
+    absl::Span<nb::str const> static_argnames, PyTreeRegistry* pytree_registry,
+    ArgumentSignature& signature,
     absl::InlinedVector<nanobind::object, 2>& flat_dynamic_args) {
   tsl::profiler::TraceMe traceme("ParseArguments");
 
@@ -361,7 +369,7 @@ absl::Status ParseArguments(
     // Positional arguments.
     for (int i = 0; i < positional_args.size(); ++i) {
       signature.dynamic_arg_treedefs.emplace_back(pytree_registry);
-      xla::PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
+      PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
       pytree_def.Flatten(nb::handle(positional_args[i]), flat_dynamic_args);
     }
   } else {
@@ -375,7 +383,7 @@ absl::Status ParseArguments(
                          return t >= 0 ? i == t : i == t + num_positional_args;
                        }) == static_argnums.end()) {
         signature.dynamic_arg_treedefs.emplace_back(pytree_registry);
-        xla::PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
+        PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
         pytree_def.Flatten(positional_args[i], flat_dynamic_args);
       } else {
         signature.static_args.emplace_back(
@@ -388,7 +396,7 @@ absl::Status ParseArguments(
   if (!keyword_args.empty()) {
     std::vector<std::pair<nb::handle, nb::handle>> kwargs(keyword_args.size());
     // We first intern the keys, then sort them (by name, as in the Python path)
-    // (see also xla::PyTreeDef::Flatten) and then create the signatures.
+    // (see also PyTreeDef::Flatten) and then create the signatures.
     // TODO(jblespiau): We should be able to sort the keys by interned-key
     // pointers, but this requires the Python compilation to do the same.
     for (int i = 0; i < keyword_args.size(); ++i) {
@@ -425,7 +433,7 @@ absl::Status ParseArguments(
         signature.dynamic_arg_names.push_back(
             nb::steal<nb::object>(kwargs[i].first));
         signature.dynamic_arg_treedefs.emplace_back(pytree_registry);
-        xla::PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
+        PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
         pytree_def.Flatten(nb::handle(kwargs[i].second.ptr()),
                            flat_dynamic_args);
       }
@@ -467,22 +475,22 @@ void BuildJaxjitSubmodule(nb::module_& m) {
   jitlib.def("set_thread_local_state_initialization_callback",
              [](nb::object f) { initialize_local_state = f; });
 
-  nb::class_<xla::PyArgSignature> arg_signature(jitlib, "PyArgSignature");
+  nb::class_<PyArgSignature> arg_signature(jitlib, "PyArgSignature");
   arg_signature
       .def_prop_ro(
           "dtype",
-          [](const xla::PyArgSignature& sig) {
+          [](const PyArgSignature& sig) {
             return xla::ValueOrThrow(xla::PrimitiveTypeToNbDtype(sig.dtype));
           })
       .def_prop_ro("shape",
-                   [](const xla::PyArgSignature& sig) {
+                   [](const PyArgSignature& sig) {
                      return xla::SpanToNbTuple(absl::MakeConstSpan(sig.shape));
                    })
-      .def_ro("weak_type", &xla::PyArgSignature::weak_type);
+      .def_ro("weak_type", &PyArgSignature::weak_type);
   jitlib.def("_ArgSignatureOfValue",
-             xla::ValueOrThrowWrapper(xla::PyArgSignatureOfValue));
+             xla::ValueOrThrowWrapper(PyArgSignatureOfValue));
 
-  jitlib.def("_is_float0", &xla::IsFloat0);
+  jitlib.def("_is_float0", &IsFloat0);
 
   nb::class_<ArgumentSignature> argument_signature(jitlib, "ArgumentSignature");
   argument_signature.def_ro("static_args", &ArgumentSignature::static_args)
@@ -503,7 +511,7 @@ void BuildJaxjitSubmodule(nb::module_& m) {
       [](nb::sequence positional_args, nb::sequence keyword_args,
          nb::tuple kwnames, absl::Span<int const> static_argnums,
          absl::Span<nb::str const> static_argnames,
-         xla::PyTreeRegistry* pytree_registry) {
+         PyTreeRegistry* pytree_registry) {
         ArgumentSignature signature;
         absl::InlinedVector<nanobind::object, 2> flat_dynamic_args;
         nb::object positional_args_seq = nb::steal(PySequence_Fast(

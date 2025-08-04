@@ -23,9 +23,10 @@ import unittest
 
 import jax
 from jax import lax
+from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.layout import DeviceLocalLayout as DLL, Format
+from jax._src.layout import Layout as DLL, Format
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
@@ -60,7 +61,7 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jtu.test_device_matches(["cpu"]):
+    if jtu.test_device_matches(["cpu"]) and jax._src.lib.ifrt_version < 19:
       self._default_memory_kind = "unpinned_host"
     else:
       self._default_memory_kind = "device"
@@ -557,6 +558,22 @@ class DevicePutTest(jtu.JaxTestCase):
     out_s = NamedSharding(mesh, P(None, None, "z"), memory_kind="device")
     self.assertEqual(out_hbm.sharding, out_s)
 
+  def test_diff_mem_space_error(self):
+    mesh = jtu.create_mesh((2,), ("x",))
+    np_inp = np.arange(16.0).reshape(8, 2)
+    arr_hbm = jax.device_put(
+        np_inp, NamedSharding(mesh, P("x"), memory_kind="device"))
+    arr_host = jax.device_put(
+        np_inp, NamedSharding(mesh, P("x"), memory_kind="pinned_host"))
+
+    @jax.jit
+    def f(x, y):
+      return x + y
+
+    with self.assertRaisesRegex(
+        ValueError, "memory_space of all inputs.*must be the same"):
+      f(arr_hbm, arr_host)
+
   def test_output_streaming(self):
     mesh = jtu.create_mesh((1, 1), ("x", "y"))
     np_inp = np.arange(16.0).reshape(8, 2)
@@ -581,7 +598,9 @@ class DevicePutTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       x = x * 2
+      self.assertEqual(x.aval.memory_space, core.MemorySpace.Device)
       y = jax.device_put(x, s_host)
+      self.assertEqual(y.aval.memory_space, core.MemorySpace.Host)
       return y
 
     out_host = f(inp_dev)
@@ -603,6 +622,7 @@ class DevicePutTest(jtu.JaxTestCase):
         return carry, jax.device_put(
             out_tpu, NamedSharding(mesh, P("y", "z"), memory_kind="pinned_host"))
       _, res = jax.lax.scan(body, 1, xs)
+      self.assertEqual(res.aval.memory_space, core.MemorySpace.Host)
       return res
 
     out = f(arr_hbm)
@@ -635,10 +655,18 @@ class DevicePutTest(jtu.JaxTestCase):
     out = f()
     self._check_device_put_addressable_shards(out, np_inp * 2, s_dev, 'device')
 
+  def test_device_put_invalid_mem_space(self):
+    @jax.jit
+    def f(x):
+      return jax.device_put(x, TransferToMemoryKind('device_host'))
+
+    with self.assertRaisesRegex(ValueError, 'Got invalid memory_kind'):
+      f(jnp.arange(8))
+
   @jtu.run_on_devices('tpu')
   def test_ragged_copy_on_host(self):
     mesh = jtu.create_mesh((2,), ('x'))
-    sharding = jax.sharding.NamedSharding(mesh, P(('x')))
+    sharding = jax.sharding.NamedSharding(mesh, P('x'))
     cpu_sharding = sharding.with_memory_kind('pinned_host')
 
     num_pages = 512 * 1024
@@ -648,7 +676,7 @@ class DevicePutTest(jtu.JaxTestCase):
 
     def write(x):
       return x.at[16 * 1024:].set(0)
-    x = shard_map(write, mesh=mesh, in_specs=P(('x'),), out_specs=P(('x')))(x)
+    x = shard_map(write, mesh=mesh, in_specs=P(('x'),), out_specs=P('x'))(x)
 
     chunk_size = 8
     def inner(state):
@@ -665,18 +693,16 @@ class DevicePutTest(jtu.JaxTestCase):
       return (idx * chunk_size < x.shape[0]) & jnp.any(chunk > 0)
 
     def foo(x):
-      output = jnp.zeros_like(x, device=cpu_sharding)
+      output = jax.device_put(jnp.zeros_like(x),
+                              TransferToMemoryKind('pinned_host'))
       _, _, cpu_x = jax.lax.while_loop(cond, inner, (0, x, output))
       return cpu_x
 
     fn = jax.jit(shard_map(foo, mesh=mesh, in_specs=P(('x'),),
-                           out_specs=P(('x')), check_vma=False),
+                           out_specs=P('x'), check_vma=False),
                  out_shardings=cpu_sharding)
     y = fn(x)
     jax.block_until_ready(y)
-    compiled_text = fn.lower(x).compile().as_text()
-    if compiled_text is not None:
-      self.assertIn('custom_call_target="AllocateBuffer"', compiled_text)
 
   def test_disallow_alias_copies_arrays(self):
     mesh = jtu.create_mesh((2,), ("x",))
@@ -819,18 +845,16 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     host_sharding = device_sharding.with_memory_kind("pinned_host")
 
     @compute_on("device_host")
-    @functools.partial(
-        jax.jit,
-        in_shardings=(host_sharding, device_sharding),
-        out_shardings=(host_sharding, device_sharding),
-        donate_argnums=(0, 1),
-    )
+    @jax.jit
     def host_func(x, y):
-      return (x * y), ((x**2) * (y**2))
+      y = jax.device_put(y, host_sharding)
+      out1 = x * y
+      out2 = (x ** 2) * (y ** 2)
+      return (jax.device_put(out1, host_sharding),
+              jax.device_put(out2, device_sharding))
 
     @functools.partial(
         jax.jit,
-        in_shardings=(host_sharding, device_sharding),
         out_shardings=(host_sharding, device_sharding),
         donate_argnums=(0),
     )
@@ -838,10 +862,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
       host_data, device_data = host_func(host_data, device_data)
       device_data = device_data * 2
       host_data, device_data = host_func(host_data, device_data)
-      return (host_data, device_data)
+      return host_data, device_data
 
-    input_x = jnp.ones(8)
-    input_host = jax.device_put(input_x, host_sharding)
+    input_host = jax.device_put(jnp.ones(8), host_sharding)
 
     input_device = jnp.arange(8)
     input_device = jnp.where(input_device < 4, 0, 1)
@@ -910,9 +933,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(out2.sharding.memory_kind, 'pinned_host')
 
   def test_compute_host_loop(self):
-    # TODO(apaszke): Remove after 12 weeks have passed.
-    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
-      self.skipTest("Requires libtpu built after 2024-12-19")
     @compute_on('device_host')
     @jax.jit
     def fn():
@@ -1389,8 +1409,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(cache_info2.misses, cache_info1.misses)
 
   def test_no_donation_across_memory_kinds(self):
-    if xb.using_pjrt_c_api():
-      raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
     mesh = jtu.create_mesh((2, 1), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
     s_hbm = NamedSharding(mesh, P("x"))
@@ -1572,8 +1590,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     x = jnp.reshape(x, (16, 64))
     y = jnp.arange(0, 1024, dtype=jnp.float32)
     y = jnp.reshape(y, (16, 64))
-    custom_dll = DLL(major_to_minor=(0, 1), _tiling=((8, 128),))
-    custom_dll_linear = DLL(major_to_minor=(0, 1), _tiling=((1,),))
+    custom_dll = DLL(major_to_minor=(0, 1), tiling=((8, 128),))
+    custom_dll_linear = DLL(major_to_minor=(0, 1), tiling=((1,),))
     x = jax.device_put(x, Format(custom_dll, sharding))
     y = jax.device_put(y, Format(custom_dll_linear, p_sharding))
 
@@ -1611,8 +1629,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     x = jnp.reshape(x, (32, 64))
     y = jnp.arange(0, 2048, dtype=jnp.float32)
     y = jnp.reshape(y, (32, 64))
-    custom_dll = DLL(major_to_minor=(0, 1), _tiling=((8, 128),))
-    custom_dll_linear = DLL(major_to_minor=(0, 1), _tiling=((1,),))
+    custom_dll = DLL(major_to_minor=(0, 1), tiling=((8, 128),))
+    custom_dll_linear = DLL(major_to_minor=(0, 1), tiling=((1,),))
     x = jax.device_put(x, Format(custom_dll, sharding))
     y = jax.device_put(y, Format(custom_dll_linear, p_sharding))
 
@@ -1681,6 +1699,25 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     indices = jnp.ones((16, 4, 4, 2), dtype=jnp.int32)
     scores = jnp.ones((16, 4, 4, 2))
     jax.jit(peer_forward)(x, experts, indices, scores)  # doesn't crash
+
+  def test_int4_host_compute(self):
+
+    @compute_on("device_host")
+    @jax.jit
+    def g(x):
+      return x + x
+
+    @jax.jit
+    def f(x):
+      y = g(x)
+      return 2 * y
+
+    inp = jnp.arange(4, dtype=jnp.uint4)
+    out = f(inp)
+    self.assertArraysEqual(out, 4 * inp)
+
+    lowered_text = f.lower(inp).as_text()
+    self.assertIn("_xla_compute_type", lowered_text)
 
 
 class StreamAnnotationTest(jtu.JaxTestCase):

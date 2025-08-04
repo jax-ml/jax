@@ -50,7 +50,7 @@ def fuse(f=None, *, resolve_fusion_dtypes: bool = True, debug: bool = False):
           lu.wrap_init(f, debug_info=debug_info), in_tree
       )
       flat_avals = [jax_core.get_aval(x) for x in flat_args]
-      jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
       if debug:
         print("Jaxpr before fusion:")
         print(jaxpr)
@@ -266,15 +266,22 @@ def fuse_jaxpr(
   fusion_eqn = jaxpr.eqns[fusion_eqn_index]
 
   # Now let's check if we need to do any fusion at all, e.g. do the outputs of
-  # the jaxpr have any dependence on the fusion at all? We can DCE the jaxpr
-  # with all the inputs and outputs to check if there is a dependence.
-  dced_jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars),
-                               instantiate=True)
-  if not any(eqn.primitive is fusible_p for eqn in dced_jaxpr.eqns):
-    # Short circuit if there is nothing to fuse.
-    return jax_core.eval_jaxpr(dced_jaxpr, consts, *args)
-
+  # the jaxpr have any dependence on the fusion at all?
   candidate_values = [*consts, *args]
+  independent_jaxpr, _, out_used, *_ = pe.partial_eval_jaxpr_custom(
+      jaxpr.replace(
+          eqns=(jaxpr.eqns[:fusion_eqn_index]
+                + jaxpr.eqns[fusion_eqn_index + 1 :]),
+          constvars=jaxpr.constvars + jaxpr.invars,
+          invars=fusion_eqn.outvars),
+      in_unknowns=[True] * len(fusion_eqn.outvars),
+      in_inst=[True] * len(fusion_eqn.outvars),
+      ensure_out_unknowns=False,
+      ensure_out_inst=False,
+      saveable=lambda *_, **__: False)
+  if not any(out_used):
+    # Short circuit if there is no need to run the fusible at all.
+    return jax_core.eval_jaxpr(independent_jaxpr, candidate_values)
 
   # Construct fusions for non-constant inputs to the fusible.
   in_fusions_flat = [

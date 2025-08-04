@@ -69,6 +69,7 @@ jax_multiplatform_test(
         "//jax:pallas_gpu_ops",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
+        "//jax:shard_map",
     ] + py_deps([
         "numpy",
         "absl/testing",
@@ -382,11 +383,10 @@ jax_multiplatform_test(
         "cpu",
         "gpu_h100x2",
         "tpu_v3_x4",
+        "tpu_pjrt_c_api",
         "tpu_v4_x4",
         "tpu_v5p_x4",
         "tpu_v5e_x8",
-        "gpu_p100x2_shardy",
-        "tpu_v5e_x8_shardy",
     ],
     deps = [
         "//jax:experimental",
@@ -404,8 +404,6 @@ jax_multiplatform_test(
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
     enable_configs = [
-        "gpu_p100x2_shardy",
-        "tpu_v3_x4_shardy",
         "tpu_v3_x4",
         "gpu_h100x2",
     ],
@@ -430,7 +428,6 @@ jax_multiplatform_test(
         "tpu": ["requires-mem:16g"],  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
     },
     enable_configs = [
-        "tpu_v3_x4_shardy",
         "tpu_v3_x4",
     ],
     tags = ["multiaccelerator"],
@@ -449,7 +446,6 @@ jax_multiplatform_test(
         "tpu_v3_x4",
         "tpu_v5e_x8",
         "tpu_v4_x4",
-        "tpu_v3_x4_shardy",
     ],
     deps = [
         "//jax:experimental",
@@ -474,7 +470,8 @@ jax_multiplatform_test(
         "multiaccelerator",
     ],
     deps = [
-        "//jax:experimental",
+        "//jax:experimental_profiler",
+        "//jax:experimental_serialize_executable",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -485,9 +482,6 @@ jax_multiplatform_test(
     name = "mock_gpu_test",
     srcs = ["mock_gpu_test.py"],
     enable_backends = ["gpu"],
-    enable_configs = [
-        "gpu_p100x2_shardy",
-    ],
     tags = [
         "config-cuda-only",
     ],
@@ -505,7 +499,6 @@ jax_multiplatform_test(
     enable_backends = ["gpu"],
     enable_configs = [
         "gpu_h100",
-        "gpu_h100_shardy",
     ],
     tags = [
         "config-cuda-only",
@@ -539,7 +532,9 @@ jax_multiplatform_test(
     srcs = ["aot_test.py"],
     tags = ["multiaccelerator"],
     deps = [
-        "//jax:experimental",
+        "//jax:experimental_pjit",
+        "//jax:experimental_serialize_executable",
+        "//jax:experimental_topologies",
     ] + py_deps([
         "numpy",
         "absl/testing",
@@ -560,15 +555,6 @@ jax_multiplatform_test(
         "tensorflow_core",
         "numpy",
         "absl/testing",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "infeed_test",
-    srcs = ["infeed_test.py"],
-    deps = py_deps([
-        "absl/testing",
-        "numpy",
     ]),
 )
 
@@ -615,6 +601,7 @@ jax_multiplatform_test(
     deps = [
         "//jax:jet",
         "//jax:stax",
+        "//jax/extend:core",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -661,7 +648,7 @@ jax_multiplatform_test(
         "cpu": ["notsan"],  # Test times out.
     },
     shard_count = {
-        "cpu": 40,
+        "cpu": 50,
         "gpu": 40,
         "tpu": 50,
     },
@@ -932,10 +919,6 @@ jax_multiplatform_test(
             "notsan",  # Times out.
         ],
     },
-    env = {
-        # TODO(b/424430576): something is going wrong with AVX512 code generation.
-        "XLA_FLAGS": "--xla_cpu_max_isa=AVX2",
-    },
     shard_count = {
         "cpu": 40,
         "gpu": 40,
@@ -956,7 +939,6 @@ jax_multiplatform_test(
     ],
     enable_configs = [
         "gpu_h100x2",
-        "gpu_p100x2_shardy",
         "gpu_p100x2_pjrt_c_api",
     ],
     shard_count = {
@@ -1406,9 +1388,6 @@ jax_multiplatform_test(
         "gpu": ["--jax_num_generated_cases=40"],
         "tpu": ["--jax_num_generated_cases=40"],
     },
-    disable_configs = [
-        "cpu_shardy",  # TODO(b/376475853): array values mismatch, need to fix and re-enable.
-    ],
     shard_count = {
         "cpu": 50,
         "gpu": 50,
@@ -1485,6 +1464,12 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "jax_numpy_error_test",
     srcs = ["jax_numpy_error_test.py"],
+    deps = py_deps("absl/testing"),
+)
+
+jax_multiplatform_test(
+    name = "scheduling_groups_test",
+    srcs = ["scheduling_groups_test.py"],
     deps = py_deps("absl/testing"),
 )
 
@@ -1675,8 +1660,8 @@ jax_py_test(
     srcs = ["mesh_utils_test.py"],
     deps = [
         "//jax",
-        "//jax:mesh_utils",
         "//jax:test_util",
+        "//jax/experimental:mesh_utils",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -1737,8 +1722,6 @@ jax_multiplatform_test(
         "tpu_v2",
         "tpu_v3_x4",
         "tpu_v4_x4",
-        "gpu_h100_shardy",
-        "tpu_v3_x4_shardy",
     ],
     deps = py_deps([
         "absl/testing",
@@ -1756,8 +1739,6 @@ jax_multiplatform_test(
         "tpu_v2",
         "tpu_v3_x4",
         "tpu_v4_x4",
-        "tpu_v3_x4_shardy",
-        "gpu_p100x2_shardy",
     ],
     tags = ["multiaccelerator"],
     deps = [
@@ -1771,9 +1752,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "debugger_test",
     srcs = ["debugger_test.py"],
-    disable_configs = [
-        "cpu_shardy",  # TODO(b/364547005): enable once pure callbacks are supported.
-    ],
     enable_configs = [
         "cpu",
         "gpu_h100",
@@ -1816,6 +1794,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "mutable_array_test",
     srcs = ["mutable_array_test.py"],
+    shard_count = {
+        "cpu": 10,
+    },
     deps = py_deps([
         "absl/testing",
         "numpy",
@@ -1844,9 +1825,6 @@ jax_multiplatform_test(
         "gpu",
         "tpu",
     ],
-    enable_configs = [
-        "gpu_p100x2_shardy",
-    ],
     tags = [
         "multiaccelerator",
     ],
@@ -1860,10 +1838,6 @@ jax_multiplatform_test(
     srcs = ["shard_map_test.py"],
     disable_configs = [
         "gpu_h100x2_tfrt",  # TODO(b/419192167): Doesn't work
-    ],
-    enable_configs = [
-        "gpu_p100x2_shardy",
-        "tpu_v3_x4_shardy",
     ],
     shard_count = {
         "cpu": 50,
@@ -1889,17 +1863,6 @@ jax_multiplatform_test(
     name = "clear_backends_test",
     srcs = ["clear_backends_test.py"],
     deps = py_deps("absl/testing"),
-)
-
-jax_multiplatform_test(
-    name = "attrs_test",
-    srcs = ["attrs_test.py"],
-    deps = [
-        "//jax:experimental",
-    ] + py_deps([
-        "numpy",
-        "absl/testing",
-    ]),
 )
 
 jax_multiplatform_test(
@@ -1946,8 +1909,8 @@ jax_py_test(
     srcs = ["mosaic_test.py"],
     deps = [
         "//jax",
-        "//jax:mosaic",
         "//jax:test_util",
+        "//jax/experimental:mosaic",
     ] + py_deps("absl/testing"),
 )
 
@@ -1979,9 +1942,6 @@ jax_multiplatform_test(
     name = "export_test",
     srcs = ["export_test.py"],
     enable_configs = [
-        "cpu_shardy",
-        "gpu_p100x2_shardy",
-        "tpu_v3_x4_shardy",
         "tpu_v3_x4",
     ],
     tags = [],
@@ -2025,7 +1985,6 @@ jax_multiplatform_test(
     disable_configs = [
         "gpu_a100",  # TODO(b/269593297): matmul precision issues
         "gpu_h100",  # Scarce resources.
-        "cpu_shardy",  # TODO(b/355263220): enable once export is supported.
     ],
     shard_count = {
         "cpu": 40,
@@ -2047,9 +2006,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "export_back_compat_test",
     srcs = ["export_back_compat_test.py"],
-    enable_configs = [
-        "tpu_v3_x4_shardy",
-    ],
     tags = [],
     deps = [
         "//jax:internal_export_back_compat_test_data",
@@ -2064,6 +2020,7 @@ jax_multiplatform_test(
     name = "fused_attention_stablehlo_test",
     srcs = ["fused_attention_stablehlo_test.py"],
     enable_backends = ["gpu"],
+    shard_count = 8,
     tags = ["multiaccelerator"],
     deps = py_deps([
         "absl/testing",
@@ -2108,8 +2065,8 @@ jax_py_test(
     srcs = ["source_mapper_test.py"],
     deps = [
         "//jax",
-        "//jax:source_mapper",
         "//jax:test_util",
+        "//jax/experimental:source_mapper",
     ] + py_deps("absl/testing"),
 )
 
@@ -2154,6 +2111,9 @@ jax_multiplatform_test(
     shard_count = {
         "gpu": 4,
     },
+    tags = [
+        "multiaccelerator",
+    ],
     deps = py_deps([
         "absl/testing",
         "numpy",
@@ -2169,6 +2129,18 @@ jax_py_test(
         "//jax:experimental",
         "//jax:test_util",
     ] + py_deps("absl/testing"),
+)
+
+jax_py_test(
+    name = "traceback_test",
+    srcs = ["traceback_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 exports_files(

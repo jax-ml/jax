@@ -31,11 +31,11 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/shape.h"
 
-namespace xla {
+namespace jax {
 
 class PyDevice {
  public:
-  PyDevice(nb_class_ptr<PyClient> client, ifrt::Device* device);
+  PyDevice(nb_class_ptr<PyClient> client, xla::ifrt::Device* device);
 
   // Devices are compared using Python object identity, so we don't allow them
   // to be copied or moved.
@@ -45,7 +45,7 @@ class PyDevice {
   PyDevice& operator=(PyDevice&&) = delete;
 
   const nb_class_ptr<PyClient>& client() const { return client_; }
-  ifrt::Device* device() const { return device_; }
+  xla::ifrt::Device* device() const { return device_; }
 
   int id() const;
   int process_index() const;
@@ -55,9 +55,6 @@ class PyDevice {
 
   absl::string_view Str() const;
   absl::string_view Repr() const;
-
-  absl::Status TransferToInfeed(LiteralSlice literal);
-  absl::StatusOr<nanobind::object> TransferFromOutfeed(Shape shape);
 
   absl::StatusOr<nb_class_ptr<PyMemorySpace>> Memory(
       absl::string_view kind) const;
@@ -75,9 +72,9 @@ class PyDevice {
   static PyType_Slot slots_[];
 
   nb_class_ptr<PyClient> client_;
-  ifrt::Device* device_;
+  xla::ifrt::Device* device_;
 };
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_PY_DEVICE_H_

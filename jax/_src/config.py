@@ -248,7 +248,9 @@ def trace_context():
           use_high_dynamic_range_gumbel.value,
           error_checking_behavior_nan.value,
           error_checking_behavior_divide.value,
-          error_checking_behavior_oob.value)
+          error_checking_behavior_oob.value,
+          use_simplified_jaxpr_constants.value,
+          pallas_tpu_interpret_mode_context_manager.value)
 
 config = Config()
 
@@ -863,6 +865,8 @@ abstract_mesh_context_manager = config_ext.Config(None, include_in_jit_key=True)
 device_context = config_ext.Config(None, include_in_jit_key=True)
 compute_on_context_manager = config_ext.Config(None, include_in_jit_key=True)
 xla_metadata_context_manager = config_ext.Config(None, include_in_jit_key=True)
+pallas_tpu_interpret_mode_context_manager = config_ext.Config(
+    None, include_in_jit_key=True)
 
 
 # TODO(b/214340779): remove flag when XLA:CPU is improved.
@@ -905,8 +909,8 @@ jax_export_calling_convention_version = int_state(
     # Note: bump the default calling convention version at least one month after
     # we update XlaCallModule to support the new version, so that serialized
     # modules are forward compatible with deployed versions of XlaCallModule.
-    # Version 9 of XlaCallModule is supported since October 27th, 2023.
-    default=int_env('JAX_EXPORT_CALLING_CONVENTION_VERSION', 9),
+    # Version 10 of XlaCallModule is supported since May 20th, 2025.
+    default=int_env('JAX_EXPORT_CALLING_CONVENTION_VERSION', 10),
     help=(
         'The calling convention version number to use for exporting. This must be '
         'within the range of versions supported by the tf.XlaCallModule '
@@ -1102,8 +1106,18 @@ threefry_gpu_kernel_lowering = bool_state(
 
 use_direct_linearize = bool_state(
     name='jax_use_direct_linearize',
-    default=False,
+    default=True,
     help=('Use direct linearization instead JVP followed by partial eval'),
+    include_in_jit_key=True)
+
+use_simplified_jaxpr_constants = bool_state(
+    name='jax_use_simplified_jaxpr_constants',
+    default=False,
+    help=('Enable a simplification of the handling of closed-over constants '
+          'in Jaxpr. The value `True` enables the new behavior. '
+          'This flag will exist only briefly, while we transition '
+          'users. See https://github.com/jax-ml/jax/pull/29679.'
+          'DO NOT RELY ON THIS FLAG.'),
     include_in_jit_key=True)
 
 # TODO make it so people don't use this, this is internal...
@@ -1507,7 +1521,7 @@ bcoo_cusparse_lowering = bool_state(
 # if the intended backend can handle lowering the result
 dynamic_shapes = bool_state(
     name='jax_dynamic_shapes',
-    default=bool(os.getenv('JAX_DYNAMIC_SHAPES', '')),
+    default=False,
     help=('Enables experimental features for staging out computations with '
           'dynamic shapes.'),
     include_in_jit_key=True)
@@ -1766,12 +1780,11 @@ pmap_no_rank_reduction = bool_state(
 
 use_shardy_partitioner = bool_state(
     name='jax_use_shardy_partitioner',
-    default=False,
+    default=True,
     upgrade=True,
     help=(
-        'Whether to lower to Shardy. Shardy is a new open sourced propagation '
-        'framework for MLIR. Currently Shardy is experimental in JAX. See '
-        'www.github.com/openxla/shardy'
+        'Whether to lower to Shardy. See the migration guide for more '
+        'information: https://docs.jax.dev/en/latest/shardy_jax_migration.html.'
     ),
     include_in_jit_key=True,
 )
@@ -1841,18 +1854,45 @@ cpu_collectives_implementation = optional_enum_state(
         '("gloo", "mpi")'),
 )
 
-enable_empty_arrays = bool_state(
-    name='jax_enable_empty_arrays',
-    default=False,
-    help=(
-        "Enable the creation of an Array from an empty list of single-device "
-        "arrays. This is to support MPMD/pipeline parallelism in McJAX (WIP)."
-    )
-)
-
 use_high_dynamic_range_gumbel = bool_state(
     name='jax_high_dynamic_range_gumbel',
     default=False,
     help='If True, gumble noise draws two samples to cover low probability '
          'events with more precision.',
+)
+
+jax_dump_ir_to = string_flag(
+    name='jax_dump_ir_to',
+    default=os.getenv('JAX_DUMP_IR_TO', ''),
+    help="Path to which IR(s) emitted by JAX should be dumped as text files."
+         "If omitted, JAX will not dump any IR. "
+         "Supports the special value 'sponge' to pick the path from the "
+         "environment variable TEST_UNDECLARED_OUTPUTS_DIR. See "
+         "jax_dump_ir_modes for options governing what is dumped.")
+
+jax_include_debug_info_in_dumps = bool_flag(
+    name='jax_include_debug_info_in_dumps',
+    default=bool_env('JAX_INCLUDE_DEBUG_INFO_IN_DUMPS', True),
+    help='Determine whether or not to keep debug symbols and location '
+        'information when dumping IR code. By default, debug information will '
+        'be preserved in the IR dump. To avoid exposing source code and '
+        'potentially sensitive information, set to false ')
+
+# TODO(dsuo): Turn this into a list-valued flag.
+jax_dump_ir_modes = string_flag(
+    name="jax_dump_ir_modes",
+    default=os.getenv("JAX_DUMP_IR_MODES", "stablehlo"),
+    help="Comma-delimited modes in which to dump IR. Can be 'stablehlo' (the "
+         "default), 'jaxpr', or 'eqn_count_pprof' for "
+         "jaxpr equation count pprof profile.")
+
+jax_ragged_dot_use_ragged_dot_instruction = bool_state(
+    name='jax_ragged_dot_use_ragged_dot_instruction',
+    default=False,
+    upgrade=True,
+    help=(
+        '(TPU only) If True, use chlo.ragged_dot instruction for ragged_dot()'
+        ' lowering. Otherwise, rely on the rollout logic in lowering rule for'
+        ' ragged_dot_general_p.'
+    ),
 )

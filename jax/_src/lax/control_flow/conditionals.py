@@ -78,7 +78,7 @@ def switch(index, branches: Sequence[Callable], *operands,
       return branches[index](*operands)
 
   Internally this wraps XLA's `Conditional
-  <https://www.tensorflow.org/xla/operation_semantics#conditional>`_
+  <https://www.openxla.org/xla/operation_semantics#conditional>`_
   operator. However, when transformed with :func:`~jax.vmap` to operate over a
   batch of predicates, ``cond`` is converted to :func:`~jax.lax.select`.
 
@@ -188,7 +188,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
   Wraps XLA's `Conditional
-  <https://www.tensorflow.org/xla/operation_semantics#conditional>`_
+  <https://www.openxla.org/xla/operation_semantics#conditional>`_
   operator.
 
   Provided arguments are correctly typed, ``cond()`` has equivalent
@@ -503,7 +503,10 @@ def _cond_batching_rule(axis_data, args, dims, *, branches, **params):
     # optimizations to XLA.
     # TODO(mattjj,frostig): assumes branches are side-effect-free, revise!
     index, *ops = (
-        batching.bdim_at_front(x, d, axis_data.size) for x, d in zip(args, dims))
+        batching.bdim_at_front(x, d, axis_data.size,
+                               mesh_axis=axis_data.explicit_mesh_axis)
+        for x, d in zip(args, dims)
+    )
 
     in_batched  = [True] * len(branches[0].in_avals)
     out_batched = [True] * len(branches[0].out_avals)
@@ -743,7 +746,7 @@ def _merge_branch_residuals(branch_res_avals):
 # residual outputs that it does not populate.
 def _join_cond_outputs(jaxprs: Sequence[core.ClosedJaxpr],
                        all_res_avals, res_aval_indices_per_jaxpr,
-                       num_non_res_outputs):
+                       num_non_res_outputs) -> tuple[core.ClosedJaxpr, ...]:
   def augment_jaxpr(jaxpr: core.ClosedJaxpr,
                     res_indices):
     def f_aug(*args):
@@ -761,9 +764,9 @@ def _join_cond_outputs(jaxprs: Sequence[core.ClosedJaxpr],
 # This function augments branch inputs to agree with the merged residual format:
 # each branch is made to accept all residuals, even though it will ignore those
 # that it does not read.
-def _join_cond_pe_staged_jaxpr_inputs(jaxprs: Sequence[core.ClosedJaxpr],
-                                      all_res_avals,
-                                      res_aval_indices_per_jaxpr):
+def _join_cond_pe_staged_jaxpr_inputs(
+    jaxprs: Sequence[core.ClosedJaxpr], all_res_avals,
+    res_aval_indices_per_jaxpr) -> tuple[core.ClosedJaxpr, ...]:
   all_res_vars = map(core.Var, all_res_avals)
 
   def augment_jaxpr(jaxpr: core.ClosedJaxpr, res_indices) -> core.ClosedJaxpr:
@@ -1001,7 +1004,7 @@ def _cond_lowering(ctx, index, *args, branches,
       out_vals, tokens_out = mlir.jaxpr_subcomp(
           ctx.module_context, jaxpr.jaxpr, name_stack.extend(f'branch_{i}_fun'),
           tokens_in, consts, *args,
-          dim_var_values=ctx.dim_var_values)
+          dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering)
       out_tokens = [tokens_out.get(eff) for eff in ordered_effects]
       out_vals = [*out_tokens, *out_vals]
       hlo.return_(mlir.flatten_ir_values(out_vals))

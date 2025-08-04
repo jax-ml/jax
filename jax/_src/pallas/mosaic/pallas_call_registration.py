@@ -17,14 +17,16 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import dataclasses
 import os
 import tempfile
-from typing import List, cast
+from typing import cast
 
 import jax
 from jax import dtypes
 from jax._src import config
 from jax._src import core as jax_core
+from jax._src import frozen_dict
 from jax._src import sharding_impls
 from jax._src import tpu_custom_call
 from jax._src.interpreters import mlir
@@ -83,6 +85,8 @@ def _get_memory_space_from_aval(
       return None
     case tpu_core.MemorySpace.ANY:
       return None
+    case tpu_core.MemorySpace.HBM:
+      return tpu_custom_call.MemorySpace.HBM
     case tpu_core.MemorySpace.VMEM:
       return tpu_custom_call.MemorySpace.VMEM
     case tpu_core.MemorySpace.SMEM:
@@ -115,6 +119,7 @@ def pallas_call_tpu_lowering_rule(
     compiler_params: dict[str, pallas_core.CompilerParams],
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
+    metadata: frozen_dict.FrozenDict[str, str] | None,
 ):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
   del mesh, interpret  # Unused.
@@ -230,15 +235,13 @@ def pallas_call_tpu_lowering_rule(
       )
     input_memory_spaces = _get_memory_spaces_from_avals(ctx.avals_in)
   if cost_estimate is not None:
-    mosaic_cost_estimate = tpu_custom_call.CostEstimate(
-        flops=cost_estimate.flops,
-        bytes_accessed=cost_estimate.bytes_accessed,
-        transcendentals=cost_estimate.transcendentals,
+    mosaic_cost_estimate = cast(
+        tpu_custom_call.CostEstimate, dataclasses.asdict(cost_estimate)
     )
   else:
     mosaic_cost_estimate = None
   if input_memory_spaces is None and output_memory_spaces is not None:
-    input_memory_spaces_list: List[tpu_custom_call.MemorySpace | None] = [
+    input_memory_spaces_list: list[tpu_custom_call.MemorySpace | None] = [
         None,
     ] * len(ctx.avals_in)
     for input_output_alias in input_output_aliases:
@@ -253,7 +256,6 @@ def pallas_call_tpu_lowering_rule(
       *args,
       module=mosaic_module,
       out_type=kernel_out_avals,
-      backend="tpu",
       kernel_name=mlir.sanitize_name(debug_info.func_name),
       cost_estimate=mosaic_cost_estimate,
       vmem_limit_bytes=mosaic_params.vmem_limit_bytes,
@@ -267,6 +269,7 @@ def pallas_call_tpu_lowering_rule(
       output_memory_spaces=output_memory_spaces,
       disable_bounds_checks=mosaic_params.disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
+      metadata=dict(metadata) if metadata is not None else None,
   )
   _maybe_cast_to_bool = lambda x, aval: x.astype(
       jax.numpy.bool_) if aval.dtype == jax.numpy.bool_ else x

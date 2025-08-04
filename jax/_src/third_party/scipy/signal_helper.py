@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Any
 import warnings
 
-import jax.numpy as jnp
+import numpy as np
+
+from jax._src import numpy as jnp
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
 
@@ -47,11 +49,11 @@ def _triage_segments(window: ArrayLike | str | tuple[Any, ...], nperseg: int | N
       nperseg_int = input_length
     if window == 'hann':
       # Implement the default case without scipy
-      win = jnp.array([1.0]) if nperseg_int == 1 else jnp.sin(jnp.linspace(0, jnp.pi, nperseg_int, endpoint=False)) ** 2
+      win = jnp.array([1.0]) if nperseg_int == 1 else jnp.sin(jnp.linspace(0, np.pi, nperseg_int, endpoint=False)) ** 2
     else:
       # TODO(jakevdp): implement get_window() in JAX to remove optional scipy dependency
       try:
-        from scipy.signal import get_window
+        from scipy.signal import get_window  # pytype: disable=import-error
       except ImportError as err:
         raise ImportError(f"scipy must be available to use {window=}") from err
       win = get_window(window, nperseg_int)

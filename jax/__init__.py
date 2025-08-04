@@ -124,14 +124,20 @@ from jax._src.xla_bridge import process_index as process_index
 from jax._src.xla_bridge import process_indices as process_indices
 from jax._src.callback import pure_callback as pure_callback
 from jax._src.ad_checkpoint import checkpoint_wrapper as remat  # noqa: F401
-from jax._src.api import ShapeDtypeStruct as ShapeDtypeStruct
+from jax._src.core import ShapeDtypeStruct as ShapeDtypeStruct
 from jax._src.api import value_and_grad as value_and_grad
 from jax._src.api import vjp as vjp
 from jax._src.api import vmap as vmap
 from jax._src.sharding_impls import NamedSharding as NamedSharding
 from jax._src.sharding_impls import make_mesh as make_mesh
+from jax._src.sharding_impls import set_mesh as set_mesh
+from jax._src.partition_spec import P as P
 
 from jax._src.shard_map import shard_map as shard_map
+from jax._src.shard_map import smap as smap
+
+from jax.ref import array_ref as array_ref
+from jax.ref import ArrayRef as ArrayRef
 
 # Force import, allowing jax.interpreters.* to be used after import jax.
 from jax.interpreters import ad, batching, mlir, partial_eval, pxla, xla
@@ -167,7 +173,7 @@ from jax import scipy as scipy
 from jax import sharding as sharding
 from jax import stages as stages
 from jax import tree_util as tree_util
-from jax import util as util
+from jax import util as _deprecated_util
 
 # Also circular dependency.
 from jax._src.array import Shard as Shard
@@ -176,6 +182,11 @@ import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
 _deprecations = {
+  # Deprecated for JAX v0.7.0; remove in JAX v0.8.0
+  "util": (
+    "jax.util and all its contents were deprecated in JAX v0.6.0, and removed in JAX v0.7.0",
+    _deprecated_util,
+  ),
   # Finalized 2025-03-25; remove after 2025-06-25
   "treedef_is_leaf": (
     "jax.treedef_is_leaf was removed in JAX v0.6.0: use jax.tree_util.treedef_is_leaf.",

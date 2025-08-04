@@ -179,7 +179,7 @@ class LinalgShardingTest(jtu.JaxTestCase):
     ]:
       _, actual = jvp_fun_jit(*args)
       self.assertAllClose(actual, expected, rtol={
-          np.float32: 1e-4, np.float64: 1e-11, np.complex64: 1e-4,
+          np.float32: 1e-4, np.float64: 2e-11, np.complex64: 1e-4,
           np.complex128: 1e-11})
       hlo = jvp_fun_jit.lower(primals_sharded, tangents_sharded).compile()
       self.assertNotIn("all-", hlo.as_text())

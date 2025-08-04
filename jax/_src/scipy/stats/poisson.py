@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax import lax
-import jax.numpy as jnp
+import numpy as np
+
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
+from jax._src.scipy.special import xlogy, gammaln, gammaincc
 from jax._src.typing import Array, ArrayLike
-from jax.scipy.special import xlogy, gammaln, gammaincc
 
 
 def logpmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
@@ -50,7 +52,7 @@ def logpmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   x = lax.sub(k, loc)
   log_probs = xlogy(x, mu) - gammaln(x + 1) - mu
   return jnp.where(jnp.logical_or(lax.lt(x, zero),
-                                  lax.ne(jnp.round(k), k)), -jnp.inf, log_probs)
+                                  lax.ne(jnp.round(k), k)), -np.inf, log_probs)
 
 
 def pmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:

@@ -100,7 +100,7 @@ def _identity_fn(x):
 def _handle_array_process_allgather(inp, tiled):
   if isinstance(inp, array.ArrayImpl) and not inp.is_fully_addressable:
     if isinstance(inp.sharding, sharding_impls.NamedSharding):
-      reps = inp.sharding.with_spec(P())
+      reps = inp.sharding.update(spec=P())
     else:
       reps = sharding_impls.GSPMDSharding.get_replicated(
           inp.sharding._device_assignment, memory_kind=inp.sharding.memory_kind)

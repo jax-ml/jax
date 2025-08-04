@@ -50,15 +50,22 @@ def create_descriptor(
     large_tile: tuple[int, int] | None = None,
 ):
   ref_ty = ir.MemRefType(ref.type)
-  element_bytewidth = utils.bytewidth(ref_ty.element_type)
-  swizzle_elems = swizzle // element_bytewidth
+  element_bitwidth = utils.bitwidth(ref_ty.element_type)
+  swizzle_elems = 8 * swizzle // element_bitwidth
   ref_strides, _ = ref_ty.get_strides_and_offset()
-  ref_byte_strides = [s * element_bytewidth for s in ref_strides]
+  def to_byte_stride(stride: int):
+    if element_bitwidth >= 8:
+      assert element_bitwidth % 8 == 0
+      return stride * element_bitwidth // 8
+    else:
+      packing = 8 // element_bitwidth
+      assert stride % packing == 0
+      return stride // packing
   mn_large_tile = k_large_tile = None
   if logical_k_major:
     _, mn_tiles, k_tiling, mn_tiling = ref_ty.shape
     k_tile_stride, mn_tile_stride, k_tiling_stride, mn_tiling_stride = (
-        ref_byte_strides
+        ref_strides
     )
     k_group_size, mn_group_size = group_size
     if large_tile is not None:
@@ -66,7 +73,7 @@ def create_descriptor(
   else:
     mn_tiles, _, mn_tiling, k_tiling = ref_ty.shape
     mn_tile_stride, k_tile_stride, mn_tiling_stride, k_tiling_stride = (
-        ref_byte_strides
+        ref_strides
     )
     mn_group_size, k_group_size = group_size
     if large_tile is not None:
@@ -75,7 +82,7 @@ def create_descriptor(
   IGNORED = 0
   MMA_ATOM_ROWS = 8
   MMA_BYTEWIDTH_K = 32
-  mma_width_k = MMA_BYTEWIDTH_K // element_bytewidth
+  mma_width_k = 8 * MMA_BYTEWIDTH_K // element_bitwidth
   # As far as I can tell (which does not seem to fully align with the way MMA is
   # documented in PTX docs), MMA expects the data to be tiled into matrices
   # of shape 8 x swizzle_elems, with swizzle_elems dim being the fastest
@@ -94,10 +101,7 @@ def create_descriptor(
       # We use the small path since it has fewer restrictions.
       and set(large_tile) != {MMA_ATOM_ROWS, swizzle_elems}
   ):  # Large tiles.
-    if (
-        k_tiling_stride == element_bytewidth
-        and mn_tiling_stride == k_tiling * element_bytewidth
-    ):
+    if k_tiling_stride == 1 and mn_tiling_stride == k_tiling:
       fastest_dim = Dim.K
       leading_byte_offset = IGNORED  # TC assumes K to be contiguous here.
       # MMA atoms in a group are contiguous, so we increment by the MMA atom
@@ -108,20 +112,17 @@ def create_descriptor(
       if (
           mn_tiles > 1
           and mn_group_size > mn_tiling
-          and mn_tile_stride != math.prod(large_tile) * element_bytewidth
+          and mn_tile_stride != math.prod(large_tile)
       ):
         raise ValueError(
             "MMA layout with large tiles that is K-fastest only supports"
             " multiple MN tiles when the tiled MN dimension is a contiguous"
             " stack of tiles "
-            f"({mn_tiles}, {mn_tile_stride} != {math.prod(large_tile)} * {element_bytewidth})"
+            f"({mn_tiles}, {mn_tile_stride} != {math.prod(large_tile)})"
         )
       stride_byte_offset = MMA_ATOM_ROWS * swizzle
       desc_k_stride = MMA_BYTEWIDTH_K  # K is contiguous.
-    elif (
-        k_tiling_stride == k_tiling * element_bytewidth
-        and mn_tiling_stride == element_bytewidth
-    ):
+    elif k_tiling_stride == k_tiling and mn_tiling_stride == 1:
       if k_large_tile != mn_large_tile:
         raise ValueError(
             "MMA layout with large tiles that is MN-fastest is only supported"
@@ -129,12 +130,12 @@ def create_descriptor(
         )
       fastest_dim = Dim.MN
       # Next swizzle atom with the same K coordinate is in the next MN tile.
-      leading_byte_offset = mn_tile_stride
+      leading_byte_offset = to_byte_stride(mn_tile_stride)
       # MMA atoms in a group are contiguous and a group does not exceed a tile.
       assert k_large_tile == k_group_size
       stride_byte_offset = MMA_ATOM_ROWS * swizzle
       # Each row is swizzle bytes wide, and we read mma_width_k rows at a time.
-      assert mn_large_tile == swizzle // element_bytewidth
+      assert mn_large_tile == 8 * swizzle // element_bitwidth
       desc_k_stride = mma_width_k * swizzle
     else:
       raise ValueError("MMA tiles must be contiguous")
@@ -146,21 +147,21 @@ def create_descriptor(
     if slower_tiling != MMA_ATOM_ROWS or faster_tiling != swizzle_elems:
       raise ValueError(
           f"Tiling should be ({MMA_ATOM_ROWS}, swizzle_elems) where"
-          f" swizzle_elems = swizzle // bytewidth(dtype) (= {swizzle} //"
-          f" {element_bytewidth} = {swizzle_elems}), but got ({slower_tiling},"
+          f" swizzle_elems = 8 * swizzle // bitwidth(dtype) (= 8 * {swizzle} //"
+          f" {element_bitwidth} = {swizzle_elems}), but got ({slower_tiling},"
           f" {faster_tiling})"
       )
-    if k_tiling_stride == element_bytewidth and mn_tiling_stride == swizzle:
+    if k_tiling_stride == 1 and mn_tiling_stride * element_bitwidth == 8 * swizzle:
       fastest_dim = Dim.K
       leading_byte_offset = IGNORED  # TC assumes K to be contiguous here.
-      stride_byte_offset = mn_tile_stride
+      stride_byte_offset = to_byte_stride(mn_tile_stride)
       desc_k_stride = MMA_BYTEWIDTH_K  # K is contiguous.
-    elif k_tiling_stride == swizzle and mn_tiling_stride == element_bytewidth:
+    elif k_tiling_stride * element_bitwidth == 8 * swizzle and mn_tiling_stride == 1:
       fastest_dim = Dim.MN
-      leading_byte_offset = mn_tile_stride
-      stride_byte_offset = k_tile_stride
+      leading_byte_offset = to_byte_stride(mn_tile_stride)
+      stride_byte_offset = to_byte_stride(k_tile_stride)
       k_tiles_per_mma = mma_width_k // MMA_ATOM_ROWS
-      desc_k_stride = k_tile_stride * k_tiles_per_mma
+      desc_k_stride = to_byte_stride(k_tile_stride) * k_tiles_per_mma
     else:
       raise ValueError("MMA tiles must be contiguous")
   desc_base = encode_descriptor(
@@ -172,10 +173,10 @@ def create_descriptor(
 
   mn_tiles_per_group, rem = divmod(mn_group_size, mn_tiling)
   assert not rem
-  mn_group_stride = mn_tile_stride * mn_tiles_per_group
+  mn_group_stride = to_byte_stride(mn_tile_stride) * mn_tiles_per_group
   k_tiles_per_group, rem = divmod(k_group_size, k_tiling)
   assert not rem
-  k_group_stride = k_tile_stride * k_tiles_per_group
+  k_group_stride = to_byte_stride(k_tile_stride) * k_tiles_per_group
 
   return (
       (desc_base, desc_k_stride),
@@ -192,14 +193,19 @@ def encode_addr(x: int):
 
 
 def encode_descriptor(
-    memref_arg,
+    ref_arg,
     leading_byte_offset: int,
     stride_byte_offset: int,
     swizzle: int | mgpu_dialect.SwizzlingMode | None,
     const_init: int = 0,
 ):
   i64 = ir.IntegerType.get_signless(64)
-  ptr_val = llvm.ptrtoint(i64, utils.memref_ptr(memref_arg, 3))
+  if isinstance(ref_arg.type, ir.MemRefType):
+    ptr = utils.memref_ptr(ref_arg, 3)
+  else:
+    ptr = ref_arg
+  assert ptr.type == ir.Type.parse("!llvm.ptr<3>"), ptr.type
+  ptr_val = llvm.ptrtoint(i64, ptr)
   c = lambda x: arith.constant(i64, x)
   if swizzle is None or swizzle == mgpu_dialect.SwizzlingMode.kNoSwizzle:
     swizzle_encoding = 0

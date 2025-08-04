@@ -14,6 +14,7 @@
 
 load(
     "//jaxlib:jax.bzl",
+    "if_oss",
     "jax_generate_backend_suites",
     "jax_gpu_support_deps",
     "jax_multiplatform_test",
@@ -29,6 +30,11 @@ package(
 )
 
 jax_generate_backend_suites()
+
+test_suite(
+    name = "mosaic_gpu_tests",
+    tags = ["mosaic_gpu_test"],
+)
 
 jax_multiplatform_test(
     name = "pallas_test",
@@ -118,6 +124,9 @@ jax_multiplatform_test(
         "gpu_h100_x32",
         "tpu_v6e",
     ],
+    minimal_shard_count = {
+        "tpu": 16,
+    },
     shard_count = {
         "cpu": 16,
         "gpu": 32,
@@ -165,6 +174,7 @@ jax_multiplatform_test(
     },
     shard_count = 16,
     tags = [
+        "mosaic_gpu_test",
         "noasan",  # Times out.
         "nomsan",  # Times out.
         "notsan",  # Times out.
@@ -238,6 +248,9 @@ jax_multiplatform_test(
         "gpu_h100_x32",
         "gpu_h100",
     ],
+    tags = [
+        "mosaic_gpu_test",
+    ],
     deps = [
         "//jax:pallas",
         "//jax:pallas_mosaic_gpu",  # build_cleaner: keep
@@ -274,6 +287,7 @@ jax_py_test(
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
+        "//jax:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax:pallas_tpu",  # build_cleaner: keep
         "//jax:test_util",
     ] + jax_gpu_support_deps + py_deps([
@@ -288,7 +302,6 @@ jax_multiplatform_test(
     # Cross-compilation on CPU is tested separately.
     disable_configs = [
         "cpu",
-        "cpu_shardy",
         "cpu_x32",
     ],
     enable_configs = [
@@ -298,6 +311,7 @@ jax_multiplatform_test(
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
+        "//jax:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax:pallas_tpu",  # build_cleaner: keep
     ] + py_deps([
         "absl/testing",
@@ -388,6 +402,26 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_test",
     srcs = ["tpu_pallas_test.py"],
+    enable_backends = ["tpu"],
+    enable_configs = [
+        "tpu_v5e",
+        "tpu_v5p",
+    ],
+    shard_count = 8,
+    deps = [
+        "//jax:extend",
+        "//jax:mesh_utils",
+        "//jax:pallas_tpu",
+        "//jax:pallas_tpu_ops",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_pallas_call_print_test",
+    srcs = ["tpu_pallas_call_print_test.py"],
     # The flag is necessary for ``pl.debug_print`` tests to work on TPU.
     args = ["--logtostderr"],
     enable_backends = ["tpu"],
@@ -395,6 +429,13 @@ jax_multiplatform_test(
         "tpu_v5e",
         "tpu_v5p",
     ],
+    env = if_oss(
+        {
+            "TPU_STDERR_LOG_LEVEL": "0",
+        },
+        google_value = {},
+    ),
+    shard_count = 8,
     deps = [
         "//jax:extend",
         "//jax:pallas_tpu",
@@ -418,7 +459,10 @@ jax_multiplatform_test(
         "JAX_PALLAS_USE_MOSAIC_GPU": "1",
         "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
     },
-    tags = ["multiaccelerator"],
+    tags = [
+        "mosaic_gpu_test",
+        "multiaccelerator",
+    ],
     deps = [
         "//jax:extend",
         "//jax:pallas_mosaic_gpu",
@@ -439,6 +483,7 @@ jax_multiplatform_test(
         "cpu",
         "tpu",
     ],
+    shard_count = 8,
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
@@ -474,11 +519,25 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_pipeline_test",
     srcs = ["tpu_pallas_pipeline_test.py"],
+    args = if_oss(
+        [],
+        google_value = [
+            # Timeout on deadlocks for a better error message.
+            "--xla_tpu_debug_sflag_wait_timeout_ms=500",
+            "--xla_tpu_debug_sflag_wait_shalt_on_detection",
+        ],
+    ),
     enable_backends = ["tpu"],
     enable_configs = [
         "tpu_v5e_x8",
         "tpu_v5p",
     ],
+    env = if_oss(
+        {
+            "XLA_FLAGS": "--xla_tpu_debug_sflag_wait_timeout_ms=500 --xla_tpu_debug_sflag_wait_shalt_on_detection",
+        },
+        google_value = {},
+    ),
     shard_count = 5,
     tags = [
         "noasan",  # Times out.
@@ -503,6 +562,7 @@ jax_multiplatform_test(
     enable_configs = [
         "tpu_v5e_x8",
         "tpu_v5p",
+        "tpu_v5p_x4",
     ],
     deps = [
         "//jax:pallas_tpu",
@@ -520,6 +580,7 @@ jax_multiplatform_test(
         "tpu_v5p",
     ],
     deps = [
+        "//jax:experimental",
         "//jax:pallas_tpu",
     ] + py_deps([
         "absl/testing",
@@ -570,7 +631,22 @@ jax_multiplatform_test(
     srcs = [
         "tpu_pallas_interpret_test.py",
     ],
-    disable_configs = ["cpu_shardy"],
+    enable_backends = ["cpu"],
+    deps = [
+        "//jax:experimental",
+        "//jax:pallas",
+        "//jax:pallas_tpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_pallas_interpret_thread_map_test",
+    srcs = [
+        "tpu_pallas_interpret_thread_map_test.py",
+    ],
     enable_backends = ["cpu"],
     deps = [
         "//jax:experimental",
@@ -587,7 +663,6 @@ jax_multiplatform_test(
     srcs = [
         "tpu_pallas_interpret_distributed_test.py",
     ],
-    disable_configs = ["cpu_shardy"],
     enable_backends = ["cpu"],
     deps = [
         "//jax:pallas",
@@ -811,6 +886,9 @@ jax_multiplatform_test(
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     shard_count = 8,
+    tags = [
+        "mosaic_gpu_test",
+    ],
     deps = [
         "//jax:pallas",
         "//jax:pallas_experimental_gpu_ops",
@@ -829,6 +907,7 @@ jax_multiplatform_test(
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     shard_count = 8,
     tags = [
+        "mosaic_gpu_test",
         # TODO(b/330364373): Remove when B200 is fully supported.
         "notap",
     ],
@@ -889,6 +968,7 @@ jax_multiplatform_test(
     ],
     shard_count = 12,
     tags = [
+        "mosaic_gpu_test",
         "noasan",  # Times out.
     ],
     deps = [
@@ -938,7 +1018,6 @@ jax_multiplatform_test(
     ],
     disable_configs = [
         "cpu",
-        "cpu_shardy",
     ],
     enable_backends = ["cpu"],
     tags = [
@@ -962,7 +1041,6 @@ jax_multiplatform_test(
     ],
     disable_configs = [
         "cpu",
-        "cpu_shardy",
     ],
     enable_backends = ["cpu"],
     tags = [
@@ -993,7 +1071,6 @@ jax_multiplatform_test(
         "gpu_h100",
         "cpu",
         "cpu_x32",
-        "cpu_shardy",
     ],
     enable_backends = ["tpu"],
     enable_configs = [

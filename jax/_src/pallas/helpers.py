@@ -16,6 +16,7 @@
 from collections.abc import Callable
 
 import jax
+from jax._src import core as jax_core
 from jax._src import checkify
 from jax._src import config
 from jax._src.pallas import core as pl_core
@@ -47,6 +48,12 @@ def empty_like(
     interpret: bool = False,
     backend: pl_core.Backend | None = None,
 ):
+  if hasattr(x, 'memory_space'):
+    if memory_space is not None:
+      raise ValueError(
+          'memory_space cannot be specified for a MemoryRef object.'
+      )
+    memory_space = x.memory_space
   if memory_space is None:
     memory_space = pl_core.MemorySpace.ANY
   return pallas_call.pallas_call(
@@ -59,6 +66,21 @@ def empty_like(
       interpret=interpret,
       backend=backend,
   )()
+
+
+def empty_ref_like(
+    x: object, *, backend: pl_core.Backend | None = None
+) -> jax.Array:
+  """Returns an empty array Ref with same shape/dtype/memory space as x."""
+  match x:
+    case pl_core.MemoryRef():
+      memory_space = x.memory_space
+    case jax.ShapeDtypeStruct():
+      memory_space = pl_core.MemorySpace.ANY
+    case _:
+      raise ValueError(f'alloc_ref does not support {type(x)}')
+  out = empty_like(x, backend=backend)
+  return jax_core.mutable_array(out, memory_space=memory_space)
 
 
 def when(condition):
@@ -75,11 +97,17 @@ def loop(
     lower: jax.typing.ArrayLike,
     upper: jax.typing.ArrayLike,
     *,
+    step: jax.typing.ArrayLike = 1,
     unroll: int | bool | None = None,
 ) -> Callable[[Callable[[jax.Array], None]], None]:
+  """Returns a decorator that calls the decorated function in a loop."""
   def decorator(body):
     jax.lax.fori_loop(
-        lower, upper, lambda idx, _: body(idx), init_val=None, unroll=unroll
+        0,
+        jax.lax.div(upper - lower, step),
+        lambda idx, _: body(lower + idx * step),
+        init_val=None,
+        unroll=unroll,
     )
 
   return decorator

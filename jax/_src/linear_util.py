@@ -68,7 +68,8 @@ from collections.abc import Callable, Sequence
 from functools import partial
 import re
 import time
-from typing import Any, Hashable, NamedTuple
+from typing import Any, NamedTuple
+from collections.abc import Hashable
 import warnings
 import weakref
 
@@ -76,7 +77,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import traceback_util
 from jax._src.tree_util import KeyPath, generate_key_paths, keystr
-from jax._src.util import HashableFunction, cache_clearing_funs, curry, fun_name
+from jax._src.util import HashableFunction, curry, fun_name, register_cache
 
 
 traceback_util.register_exclusion(__file__)
@@ -480,7 +481,7 @@ def cache(call: Callable, *,
 
   memoized_fun.cache_clear = fun_caches.clear  # type: ignore
   memoized_fun.evict_function = _evict_function  # type: ignore
-  cache_clearing_funs.add(memoized_fun.cache_clear)
+  register_cache(memoized_fun, str(call))
   return memoized_fun
 
 @transformation2

@@ -36,6 +36,7 @@ def TPU_Dialect : Dialect {
 
     static std::optional<CoreType> GetCoreTypeAttr(Operation *op);
   }];
+  let hasConstantMaterializer = 1;
 }
 
 class TPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
@@ -157,12 +158,13 @@ def TPU_TiledLayoutAttr
 
 def TPU_MemorySpace : I32EnumAttr<"MemorySpace", "Memory space", [
   I32EnumAttrCase<"kAny", 4294967295, "any">,
-  // TODO(apaszke): Rename to kXYZ in C++
-  I32EnumAttrCase<"vmem", 0, "vmem">,
-  I32EnumAttrCase<"smem", 1, "smem">,
+  I32EnumAttrCase<"kVmem", 0, "vmem">,
+  I32EnumAttrCase<"kSmem", 1, "smem">,
   I32EnumAttrCase<"kHbm", 2, "hbm">,
   I32EnumAttrCase<"kCmem", 3, "cmem">,
-  I32EnumAttrCase<"kSemaphoreMem", 4, "semaphore_mem">
+  I32EnumAttrCase<"kSemaphoreMem", 4, "semaphore_mem">,
+  I32EnumAttrCase<"kVmemShared", 5, "vmem_shared">,
+  I32EnumAttrCase<"kHost", 6, "host">
 ]> {
     let genSpecializedAttr = 0;
     let cppNamespace = "::mlir::tpu";
@@ -227,6 +229,11 @@ def TPU_LoadOp : TPU_Op<"load", [DefaultMemRead]> {
   let results = (outs TPU_Vreg:$result);
   let assemblyFormat = [{
     $base `[` $indices `]` `sublanes` $sublane_mask (`sublane_stride` $sublane_stride^)? attr-dict `:` type($base) `,` type($result)
+  }];
+  let description = [{
+    Similar to `vector::LoadOp` but with `sublane_mask` and `sublane_stride`.
+    When `indices` are negative, it means loading from negative offset
+    of `base` address.
   }];
 }
 
@@ -372,9 +379,27 @@ def TPU_DynamicRotateOp : TPU_Op<"dynamic_rotate", [Pure]> {
 }
 
 def TPU_IotaOp : TPU_Op<"iota", [Pure]> {
-  let arguments = (ins OptionalAttr<I32Attr>:$dimension);
-  let results = (outs AnyVectorOfNonZeroRank:$output);
+  let description = [{
+    Creates a vector that with values that start at 0 and increase along a
+    dimension resulting from collapsing the given `dimensions` together in
+    row-major order.
+
+    Example:
+    ```
+    tpu.iota {dimensions = array<i32: 2, 0>} : vector<4x3x2xi16>
+    ```
+    This produces a vector with the following values:
+    ```
+    [[[0, 4], [0, 4], [0, 4]]
+     [[1, 5], [1, 5], [1, 5]]
+     [[2, 6], [2, 6], [2, 6]]
+     [[3, 7], [3, 7], [3, 7]]]
+    ```
+  }];
+  let arguments = (ins DenseI32ArrayAttr:$dimensions);
+  let results = (outs VectorOfNonZeroRankOf<[AnyInteger, Index]>:$output);
   let assemblyFormat = [{ attr-dict `:` type($output) }];
+  let hasVerifier = 1;
 }
 
 // TODO(mvoz): deprecated - use concat. Canonicalization will do so automatically.
@@ -416,6 +441,7 @@ def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
   );
   let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{ $source `,` $index attr-dict `:` type($source) `->` type($output) }];
+  let hasVerifier = 1;
 }
 
 // Integer packs are always signed at the moment.
@@ -466,24 +492,30 @@ def TPU_GatherOp : TPU_Op<"gather", [Pure]> {
   }];
 }
 
-def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure, SameOperandsAndResultShape, AllTypesMatch<["source", "output"]>]> {
+def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>, AllShapesMatch<["indices", "output"]>, AllElementTypesMatch<["source", "output"]>]> {
   let description = [{
     Gathers elements from `source` using `indices`.
 
-    Given a shape `N0 x N1 x ...`, `output[i0, i1, ...]` is given by
-    `input[j0, j1, ...]` where `jn = indices[i0, i1, ...] mod Ni` for
-    `n = dimension` and `jn = in` otherwise.
+    The specified `dimensions` of `source` are collapsed together and indexed by
+    `indices`.
 
-    Similar to `np.take_along_axis`, except that OOB indices wrap.
+    Given a shape `N0 x N1 x ...`,  the `output[i0, i1, ...]` is given by
+    `collapsed_source[j0, j1, ..., indices[i0, i1, ...] mod M]` where
+    - `collapsed_source` is the result of collapsing `dimensions` of `source`
+      into a new trailing dimension of size `M`.
+    - `jk` is the subsequence of `in` for `n` not in `dimensions`.
+
+    When a single dimension is specified, this is similar to
+    `np.take_along_axis`.
   }];
   let arguments = (ins
     AnyVectorOfNonZeroRank:$source,
     VectorOfNonZeroRankOf<[AnyInteger]>:$indices,
-    I32Attr:$dimension
+    DenseI32ArrayAttr:$dimensions
   );
   let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{
-    $source `[` $indices `]` `in` $dimension attr-dict
+    $source `[` $indices `]` `in` $dimensions attr-dict
     `:` type($source) `,` type($indices) `->` type($output)
   }];
   let hasVerifier = 1;
@@ -516,6 +548,25 @@ def TPU_SIToFPOp : TPU_Op<"sitofp", [Pure, ElementwiseMappable]> {
   let arguments = (ins AnyType:$in, TPU_RoundingModeEnum:$rounding_mode);
   let results = (outs AnyType:$output);
   let assemblyFormat = [{ $in attr-dict `:` type($in) `->` type($output) }];
+}
+
+// Internal operation.
+def TPU_ExtFOp : TPU_Op<"extf", [Pure, ElementwiseMappable]> {
+  let arguments = (ins AnyType:$in);
+  let results = (outs AnyType:$out);
+  let assemblyFormat = [{ $in attr-dict `:` type($in) `->` type($out) }];
+  let hasFolder = 1;
+}
+
+// Internal operation.
+def TPU_TruncFOp : TPU_Op<"truncf", [Pure, ElementwiseMappable]> {
+  let arguments = (
+    ins AnyType:$in,
+    TPU_RoundingModeEnum:$rounding_mode
+  );
+  let results = (outs AnyType:$out);
+  let assemblyFormat = [{ $in attr-dict `:` type($in) `->` type($out) }];
+  let hasFolder = 1;
 }
 
 def TPU_DotDimensionNumbersAttr : TPU_Attr<"DotDimensionNumbers", "dot_dimension_numbers"> {
@@ -745,6 +796,11 @@ def TPU_EraseLayoutOp : TPU_Op<"erase_memref_layout", [Pure]> {
   }];
 }
 
+// Returns the ID of the current device.
+//
+// On the input to the compiler the return value is a logical ID in the XLA
+// device assignment. It changes to a physical ID after the
+// logical-to-physical-device-id pass.
 def TPU_DeviceIdOp : TPU_Op<"device_id", [Pure]> {
   let arguments = (ins);
   let results = (outs I32:$result);
@@ -813,22 +869,100 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
   let hasVerifier = 1;
 }
 
-def TPU_WaitDMA2Op : TPU_Op<"wait_dma2"> {
+// A base class for all ops that need to differentiate between gather and
+// scatter.
+class IndirectDMAOp {
+  code extraBaseClassDeclaration = [{
+    // Return true if this op performs a gather. Returns false if it performs a
+    // scatter.
+    FailureOr<bool> isGather();
+  }];
+}
+
+// tpu.enqueue_indirect_dma copies data between HBM and VMEM, or between
+// VMEM_SHARED and VMEM using indirect HBM offsets.
+//
+// If the source is in HBM or VMEM_SHARED and the target is in VMEM, performs a
+// gather from the source (operand) at the offsets to the target (gather
+// result).
+// If the source is in VMEM and the target is in HBM or VMEM_SHARED, performs a
+// scatter of the source (updates) to the target (operand) at the offsets.
+//
+// source          : Memref to copy from.
+// target          : Memref to copy to.
+// offsets         : Gather or scatter offsets.
+// semaphore       : Semaphore to wait on; receive semaphore for scatter, send semaphore for gather.
+// add             : If true, add source values to target values. Otherwise, overwrite.
+// offset_filter   : If set, don't write values at offsets whose value is equal to
+//                   the filter value.
+def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma">, IndirectDMAOp {
+  let arguments = (ins
+    AnyMemRef:$source,
+    AnyMemRef:$target,
+    AnyTypeOf<[MemRefOf<[I32]>, VectorOfRankAndType<[1], [I32]>]>:$offsets,
+    MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
+    Optional<I32>:$offset_filter,
+    DefaultValuedAttr<BoolAttr, "false">:$add
+  );
+  let assemblyFormat = [{
+    $source `to` $target `at` $offsets `,` `semaphore` $semaphore (`offset_filter` $offset_filter^)? attr-dict `:` type($source) `,` type($target) `,` type($offsets) `,` type($semaphore)
+    }];
+  let hasVerifier = 1;
+  let extraClassDeclaration = extraBaseClassDeclaration # [{
+    LogicalResult verifyGather(MemRefType operand_ty,
+                               ArrayRef<int64_t> offsets_shape,
+                               MemRefType result_ty);
+    LogicalResult verifyScatter(MemRefType updates_ty,
+                                ArrayRef<int64_t> offsets_shape,
+                                MemRefType operand_ty);
+  }];
+}
+
+// tpu.wait_dma2 waits for a DMA to complete.
+//
+// The number of bytes to wait for is determined based on the size of the
+// destination memref.
+def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
   let arguments = (ins
     MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
     AnyMemRef:$src,
-    AnyMemRef:$dst
+    AnyMemRef:$dst,
+    Optional<I32>:$device_id, // For remote DMAs
+    Optional<I32>:$core_id // For megacore
   );
   let hasVerifier = 1;
+  // A backward-compatible builder that sets `device_id` and `core_id` to nullptr.
+  let builders = [
+    OpBuilder<(ins "Value":$semaphore, "Value":$src, "Value":$dst)>
+  ];
 }
 
-// TODO(mvoz): Remove once a month has passed. b/395630795
+// TODO(b/395630795): Remove after 2025-08-10.
 def TPU_WaitDMAOp : TPU_Op<"wait_dma"> {
   let arguments = (ins
     MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
     AnyMemRef:$ref
   );
   let hasVerifier = 1;
+}
+
+// Like tpu.wait_dma2, but for indirect DMAs.
+//
+// The number of bytes to wait for is determined based on the size of the
+// destination memref in a gather, and the size of the source memref in a
+// scatter. The op differentiates between gather and scatter based on the memory
+// spaces of the source and destination memrefs.
+def TPU_WaitIndirectDMAOp : TPU_Op<"wait_indirect_dma">, IndirectDMAOp {
+  let arguments = (ins
+    MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
+    AnyMemRef:$src,
+    AnyMemRef:$dst
+  );
+  let assemblyFormat = [{
+    $src `to` $dst `,` `semaphore` $semaphore attr-dict `:` type($src) `,` type($dst) `,` type($semaphore)
+    }];
+  let hasVerifier = 1;
+  let extraClassDeclaration = extraBaseClassDeclaration;
 }
 
 def TPU_RegionOp : TPU_Op<"region", [RecursiveMemoryEffects, SingleBlockImplicitTerminator<"tpu::YieldOp">]> {
@@ -934,9 +1068,6 @@ def TPU_TransposeOp : TPU_Op<"transpose", [Pure]> {
                        DenseI64ArrayAttr:$permutation);
   let results = (outs AnyVectorOfAnyRank:$result);
 
-  let builders = [
-    OpBuilder<(ins "Value":$vector, "ArrayRef<int64_t>":$permutation)>
-  ];
   let assemblyFormat = [{
     $vector `,` $permutation attr-dict `:` type($vector) `->` type($result)
   }];

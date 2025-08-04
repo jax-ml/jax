@@ -515,7 +515,7 @@ class PgleTest(jtu.JaxTestCase):
         get_new_hlo.seen_files |= additions
         new_hlos = list(filter(lambda f: f.endswith("_gpu_after_optimizations.txt"), additions))
         assert len(new_hlos) == 1
-        with open(os.path.join(dump_dir, new_hlos[0]), "r") as ifile:
+        with open(os.path.join(dump_dir, new_hlos[0])) as ifile:
           return ifile.read()
 
       get_new_hlo.seen_files = set()

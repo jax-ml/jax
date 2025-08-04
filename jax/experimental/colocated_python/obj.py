@@ -18,7 +18,8 @@ from __future__ import annotations
 import inspect
 import random
 import threading
-from typing import Any, Callable, Type
+from typing import Any
+from collections.abc import Callable
 
 import jax
 from jax._src import api_util
@@ -70,7 +71,7 @@ def _update_instance_devices(
 
 
 def _make_method(
-    cls: Type[object],
+    cls: type[object],
     cls_sourceinfo: str | None,
     uid: int,
     init_args: tuple[Any, ...],
@@ -114,9 +115,9 @@ def _make_method(
 
 
 def wrap_class(
-    cls: Type[object],
+    cls: type[object],
     cls_sourceinfo: str | None,
-) -> Type[object]:
+) -> type[object]:
   class WrappedClass:
 
     @wraps(cls.__init__)

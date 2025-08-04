@@ -40,7 +40,7 @@ repos:
   hooks:
   - id: mypy
     files: (jax/|tests/typing_test\.py)
-    exclude: jax/_src/basearray.py|jax/numpy/__init__.py|jaxlib/_jax/.*  # Use pyi instead
+    exclude: jax/_src/basearray.py|jax/numpy/__init__.py|jax/nn/__init__.py|jaxlib/_jax/.*  # Use pyi instead
     additional_dependencies: [types-requests==2.31.0, numpy>=2.2.0]
     args: [--config=pyproject.toml]
 

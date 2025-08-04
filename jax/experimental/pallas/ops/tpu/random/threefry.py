@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Implementation of the Threefry PRNG as a Pallas kernel."""
-from typing import Sequence
+from collections.abc import Sequence
 import jax
 from jax._src import prng
 from jax.experimental import pallas as pl

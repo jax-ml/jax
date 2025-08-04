@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "absl/algorithm/container.h"
@@ -59,10 +60,16 @@ struct VectorizationPattern
   using OpInterfaceRewritePattern<linalg::LinalgOp>::OpInterfaceRewritePattern;
   LogicalResult matchAndRewrite(linalg::LinalgOp op,
                                 PatternRewriter &rewriter) const override {
-    return vectorize(rewriter, op,
-                     /*inputVectorSizes=*/{},
-                     /*inputScalableVecDims=*/{},
-                     /*vectorizeNDExtract=*/false);
+    FailureOr<linalg::VectorizationResult> vectorResults =
+        vectorize(rewriter, op,
+                  /*inputVectorSizes=*/{},
+                  /*inputScalableVecDims=*/{},
+                  /*vectorizeNDExtract=*/false);
+    if (failed(vectorResults)) {
+      return failure();
+    }
+    rewriter.replaceOp(op, vectorResults->replacements);
+    return success();
   }
 };
 
@@ -94,12 +101,16 @@ vector::TransferReadOp createTransferReadOp(vector::TransferReadOp op,
                                             PatternRewriter &rewriter) {
   // We know from preconditions that there are no out of bound dims.
   SmallVector<bool> in_bounds(source_ty.getRank(), true);
+  auto padding = rewriter.create<mlir::arith::ConstantOp>(
+      op->getLoc(), source_ty.getElementType(),
+      rewriter.getZeroAttr(source_ty.getElementType()));
   return rewriter.create<vector::TransferReadOp>(
       op.getLoc(),
       VectorType::get(source_ty.getShape(), source_ty.getElementType()), source,
       SmallVector<Value>(
           source_ty.getRank(),
           rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0)),
+      padding,  // Use padding with source_ty.
       AffineMapAttr::get(AffineMap::getMultiDimIdentityMap(source_ty.getRank(),
                                                            op->getContext())),
       rewriter.getBoolArrayAttr(in_bounds));

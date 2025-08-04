@@ -48,9 +48,10 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
+namespace ifrt = ::xla::ifrt;
 namespace nb = nanobind;
 
-namespace xla {
+namespace jax {
 
 char PyFfiLoadedHostCallback::ID = 0;
 char PyHostSendAndRecvLoadedHostCallback::ID = 0;
@@ -58,26 +59,26 @@ char PyHostSendAndRecvLoadedHostCallback::ID = 0;
 namespace {
 
 absl::StatusOr<std::vector<CpuCallback::Arg>> CreateCallbackArgs(
-    absl::Span<const Shape> operand_shapes) {
+    absl::Span<const xla::Shape> operand_shapes) {
   std::vector<CpuCallback::Arg> callback_args(operand_shapes.size());
   for (int i = 0; i < operand_shapes.size(); ++i) {
-    Shape shape = operand_shapes[i];
+    xla::Shape shape = operand_shapes[i];
 
     if (shape.IsArray()) {
-      Shape layout =
+      xla::Shape layout =
           (shape.has_layout() ? shape
-                              : LayoutUtil::GetWithDefaultLayout(shape));
-      callback_args[i].dims.resize(shape.dimensions_size());
+                              : xla::LayoutUtil::GetWithDefaultLayout(shape));
+      callback_args[i].dims.resize(shape.dimensions().size());
       absl::c_copy(shape.dimensions(), callback_args[i].dims.begin());
       callback_args[i].strides = ByteStridesForShape(layout);
       callback_args[i].type = shape.element_type();
-      callback_args[i].size_in_bytes = ShapeUtil::ByteSizeOf(layout);
+      callback_args[i].size_in_bytes = xla::ShapeUtil::ByteSizeOf(layout);
       TF_ASSIGN_OR_RETURN(callback_args[i].dtype,
                           PrimitiveTypeToNbDtype(shape.element_type()));
     } else if (shape.IsToken()) {
-      callback_args[i].type = TOKEN;
+      callback_args[i].type = xla::TOKEN;
     } else {
-      return InvalidArgument(
+      return xla::InvalidArgument(
           "Only array and token arguments to Python callbacks are supported, "
           "got %s",
           shape.ToString());
@@ -87,27 +88,27 @@ absl::StatusOr<std::vector<CpuCallback::Arg>> CreateCallbackArgs(
 }
 
 absl::StatusOr<std::vector<CpuCallback::Result>> CreateCallbackResults(
-    absl::Span<const Shape> result_shapes) {
+    absl::Span<const xla::Shape> result_shapes) {
   std::vector<CpuCallback::Result> callback_results(result_shapes.size());
   for (int i = 0; i < result_shapes.size(); ++i) {
     if (result_shapes[i].IsArray()) {
-      const Shape& shape =
+      const xla::Shape& shape =
           result_shapes[i].has_layout()
               ? result_shapes[i]
-              : LayoutUtil::GetWithDefaultLayout(result_shapes[i]);
-      callback_results[i].expected_dims.resize(shape.dimensions_size());
+              : xla::LayoutUtil::GetWithDefaultLayout(result_shapes[i]);
+      callback_results[i].expected_dims.resize(shape.dimensions().size());
       absl::c_copy(shape.dimensions(),
                    callback_results[i].expected_dims.begin());
       callback_results[i].expected_strides = ByteStridesForShape(shape);
       callback_results[i].type = shape.element_type();
-      callback_results[i].size_in_bytes = ShapeUtil::ByteSizeOf(shape);
-      callback_results[i].reversed_layout.resize(shape.dimensions_size());
+      callback_results[i].size_in_bytes = xla::ShapeUtil::ByteSizeOf(shape);
+      callback_results[i].reversed_layout.resize(shape.dimensions().size());
       absl::c_reverse_copy(shape.layout().minor_to_major(),
                            callback_results[i].reversed_layout.begin());
     } else if (result_shapes[i].IsToken()) {
-      callback_results[i].type = TOKEN;
+      callback_results[i].type = xla::TOKEN;
     } else {
-      return InvalidArgument(
+      return xla::InvalidArgument(
           "Only array and token return values from Python callbacks are "
           "supported, got %s",
           result_shapes[i].ToString());
@@ -129,8 +130,8 @@ PyFfiLoadedHostCallback::~PyFfiLoadedHostCallback() {
 absl::StatusOr<tsl::RCReference<PyHostSendAndRecvLoadedHostCallback>>
 PyHostSendAndRecvLoadedHostCallback::Create(
     ifrt::Client* ifrt_client, nb::callable callable,
-    absl::Span<const Shape> operand_shapes,
-    absl::Span<const Shape> result_shapes,
+    absl::Span<const xla::Shape> operand_shapes,
+    absl::Span<const xla::Shape> result_shapes,
     absl::Span<const uint16_t> send_channel_ids,
     absl::Span<const uint16_t> recv_channel_ids, nb::callable serializer) {
   TF_ASSIGN_OR_RETURN(auto callback_args, CreateCallbackArgs(operand_shapes));
@@ -142,20 +143,20 @@ PyHostSendAndRecvLoadedHostCallback::Create(
   auto cpu_callback =
       std::make_shared<CpuCallback>(callable, callback_args, callback_results);
 
-  auto host_callback = std::make_unique<HostCallback>();
+  auto host_callback = std::make_unique<xla::HostCallback>();
 
   auto assign_arg_info = [](absl::Span<const xla::Shape> shapes,
                             absl::Span<const uint16_t> channel_ids,
-                            std::vector<HostCallbackArgInfo>& arg_infos) {
+                            std::vector<xla::HostCallbackArgInfo>& arg_infos) {
     DCHECK_EQ(shapes.size(), channel_ids.size());
     arg_infos.reserve(shapes.size());
     for (int i = 0; i < shapes.size(); ++i) {
-      HostCallbackArgInfo host_callback_arg_info;
+      xla::HostCallbackArgInfo host_callback_arg_info;
       host_callback_arg_info.channel_id = channel_ids[i];
       const auto& shape = shapes[i];
-      Shape layout =
+      xla::Shape layout =
           (shape.has_layout() ? shape
-                              : LayoutUtil::GetWithDefaultLayout(shape));
+                              : xla::LayoutUtil::GetWithDefaultLayout(shape));
       host_callback_arg_info.shape = layout;
       arg_infos.push_back(std::move(host_callback_arg_info));
     }
@@ -178,8 +179,8 @@ PyHostSendAndRecvLoadedHostCallback::Create(
 PyHostSendAndRecvLoadedHostCallback::PyHostSendAndRecvLoadedHostCallback(
     ifrt::Client* ifrt_client,
     std::unique_ptr<xla::HostCallback> xla_host_callback, nb::callable callable,
-    absl::Span<const Shape> operand_shapes,
-    absl::Span<const Shape> result_shapes,
+    absl::Span<const xla::Shape> operand_shapes,
+    absl::Span<const xla::Shape> result_shapes,
     absl::Span<const uint16_t> send_channel_ids,
     absl::Span<const uint16_t> recv_channel_ids, nb::callable serializer)
     : llvm::RTTIExtends<PyHostSendAndRecvLoadedHostCallback,
@@ -202,7 +203,7 @@ PyHostSendAndRecvLoadedHostCallback::~PyHostSendAndRecvLoadedHostCallback() {
 absl::StatusOr<std::string> PyHostSendAndRecvLoadedHostCallback::Serialize()
     const {
   if (serializer_.is_none()) {
-    return InvalidArgument(
+    return xla::InvalidArgument(
         "Host callback cannot be serialized because serializer was not "
         "provided by JAX");
   }
@@ -256,4 +257,4 @@ absl::StatusOr<std::string> PyHostSendAndRecvLoadedHostCallback::Serialize()
   return xla_host_callback_proto.SerializeAsString();
 }
 
-}  // namespace xla
+}  // namespace jax

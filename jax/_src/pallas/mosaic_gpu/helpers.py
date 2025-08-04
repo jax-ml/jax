@@ -15,8 +15,9 @@
 """Helpers for Pallas Mosaic GPU kernels."""
 
 from collections.abc import Callable, Hashable, Sequence
+import functools
 import math
-from typing import TypeVar
+from typing import TypeVar, overload
 
 import jax
 from jax import lax
@@ -24,11 +25,39 @@ from jax import lax
 _T = TypeVar("_T")
 
 
+@overload
 def nd_loop(
     grid: Sequence[int],
     *,
     collective_axes: Sequence[Hashable] | Hashable,
+    init_carry: None = None
 ) -> Callable[[Callable[[Sequence[jax.Array]], None]], None]:
+  ...
+
+
+@overload
+def nd_loop(
+    grid: Sequence[int],
+    *,
+    collective_axes: Sequence[Hashable] | Hashable,
+    init_carry: _T
+) -> Callable[[Callable[[Sequence[jax.Array], _T], _T]], _T]:
+  ...
+
+
+# TODO(justinfu): Fix the type signature to include both carry and wave_step.
+@overload
+def nd_loop(
+    grid: Sequence[int],
+    *,
+    collective_axes: Sequence[Hashable] | Hashable,
+    include_wave_step: bool
+) -> Callable[[Callable[[Sequence[jax.Array], jax.Array], None]], None]:
+  ...
+
+
+def nd_loop(grid, *, collective_axes, init_carry=None,
+            include_wave_step=False):
   """A loop over a multi-dimensional grid partitioned along the given axes.
 
   For example, if ``collective_axes`` is ``"x"`` with :func:`lax.axis_size`
@@ -58,16 +87,26 @@ def nd_loop(
           2         (0, 2)
           3         (1, 0)
 
+  If ``init_carry`` is passed then ``nd_loop()`` will expect the body to
+  take and return the carry. If it's ``None`` then no carry argument is
+  expected.
+
+  If ``include_wave_step`` is True then the body will be called with an
+  additional ``wave_step`` keyword argument that specifies the current
+  iteration local to the thread.
+
   See also:
     - :func:`jax.experimental.pallas.loop`: A loop over a single dimension.
   """
+
   axis_index = lax.axis_index(collective_axes)
   axis_size = lax.axis_size(collective_axes)
   grid_size = math.prod(grid)
 
   def decorator(body):
-    def wrapper(step, _):
-      step = step * axis_size + axis_index
+    def wrapper(wave_step, carry):
+      nonlocal body
+      step = wave_step * axis_size + axis_index
       # The loop below is conceptually ``jnp.unravel_index``, but it uses
       # ``lax`` APIs instead of ``jax.numpy`` to minimize the number of
       # primitives used.
@@ -77,11 +116,15 @@ def nd_loop(
         index.append(lax.rem(step, grid_dim))
         step = lax.div(step, grid_dim)
       index.reverse()
-      return body(tuple(index))
+      if include_wave_step:
+        body = functools.partial(body, wave_step=wave_step)
+      if init_carry is None:
+        body(tuple(index))
+      else:
+        return body(tuple(index), carry=carry)
 
     upper = lax.div(grid_size, axis_size) + lax.convert_element_type(
         axis_index < grid_size % axis_size, axis_index.dtype
     )
-    return lax.fori_loop(0, upper, wrapper, None)
-
+    return lax.fori_loop(0, upper, wrapper, init_carry)
   return decorator

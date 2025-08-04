@@ -36,9 +36,10 @@ from jax._src import xla_bridge
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
-from jax._src.layout import AutoLayout, DeviceLocalLayout, Format
+from jax._src.layout import AutoLayout, Layout, Format
 from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
+from jax._src.mesh import empty_concrete_mesh
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding,
@@ -552,7 +553,7 @@ class ArrayImpl(basearray.Array):
     if self.is_deleted():
       return Format(None, self.sharding)
     try:
-      return Format(DeviceLocalLayout.from_pjrt_layout(self._pjrt_layout),
+      return Format(Layout.from_pjrt_layout(self._pjrt_layout),
                     self.sharding)
     except _jax.XlaRuntimeError as e:
       msg, *_ = e.args
@@ -560,9 +561,6 @@ class ArrayImpl(basearray.Array):
         return Format(None, self.sharding)
       else:
         raise
-
-  # TODO(frostig, yashkatariya): remove
-  layout = format
 
   @property
   def global_shards(self) -> Sequence[Shard]:
@@ -639,6 +637,7 @@ class ArrayImpl(basearray.Array):
     self._check_if_deleted()
 
     if self._npy_value is None:
+      # addressable_device_list can be empty. If it's empty, we will error below
       if (self.is_fully_replicated and
           self.sharding._internal_device_list.addressable_device_list):  # type: ignore
         npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
@@ -649,6 +648,7 @@ class ArrayImpl(basearray.Array):
 
       # TODO(yashkatariya): Merge `_process_has_full_value_in_mcjax` with
       # is_fully_addressable.
+      # is_fully_addressable return False if addressable_device_list is empty.
       if (not self.is_fully_addressable and
           not _process_has_full_value_in_mcjax(self.sharding, self.shape)):
         raise RuntimeError(
@@ -696,11 +696,6 @@ def _get_and_check_dtype(arrays: Sequence[basearray.Array | np.ndarray],
             f"of the addressable shards. Got dtype={dtype} and shard "
             f"dtype={arrays[0].dtype}`.")
   else:
-    if not config.enable_empty_arrays.value:
-      raise ValueError(
-          f"Building an Array with no addressable shards with `jax.{fname}` is "
-          "supported only if `jax.config.enable_empty_arrays` is set to True."
-      )
     if dtype is None:
       raise ValueError(
           "If the Array has no addressable shards, `dtype` must be provided "
@@ -759,10 +754,10 @@ def make_array_from_callback(
     (4, 2)
   """
   # pyformat: enable
-  dll = sharding.device_local_layout if isinstance(sharding, Format) else None
+  dll = sharding.layout if isinstance(sharding, Format) else None
   if isinstance(dll, AutoLayout):
     raise TypeError(
-        "`DeviceLocalLayout.AUTO` cannot be used in place of a device-local"
+        "`Layout.AUTO` cannot be used in place of a device-local"
         f" layout when calling `jax.make_array_from_callback`. Got {sharding}")
   sharding = sharding.sharding if isinstance(sharding, Format) else sharding
   if not isinstance(sharding, Sharding):
@@ -815,7 +810,7 @@ def make_array_from_callback(
         and sharding.is_fully_replicated
         and first_value.is_fully_replicated
         and first_value.sharding._device_assignment == tuple(devices)
-        and first_value.format.device_local_layout == dll):
+        and first_value.format.layout == dll):
       return first_value
 
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
@@ -826,7 +821,7 @@ def make_array_from_callback(
     )
 
   if dll is not None:
-    devices = [Format(dll, SingleDeviceSharding(d)) for d in devices]
+    devices = [Format(dll, SingleDeviceSharding(d)) for d in devices]  # type: ignore
     # pxla.batched_device_put doesn't support Layout... Take the slow route
     arrays = api.device_put(per_device_values, devices)
     return ArrayImpl(aval, sharding, arrays, committed=True)
@@ -1113,6 +1108,8 @@ def _array_mlir_constant_handler(val):
 
 mlir.register_constant_handler(ArrayImpl, _array_mlir_constant_handler)
 
+if config.use_simplified_jaxpr_constants.value:
+  core.literalable_types.add(ArrayImpl)
 
 # NOTE(skye): we could refactor to generate _multi_slice parameters directly
 # from the input ShardingSpec, rather than the indices. However, this would
@@ -1151,7 +1148,7 @@ def shard_device_array(x, devices, indices, sharding):
   else:
     # TODO(yashkatariya): Maybe this should be set when we call the handler in
     # InputsHandler.__call__?
-    with _internal_use_concrete_mesh(None):
+    with _internal_use_concrete_mesh(empty_concrete_mesh):
       shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   aval = core.shaped_abstractify(x)
   return pxla.batched_device_put(aval, sharding, shards, devices)
@@ -1200,7 +1197,7 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
     x._check_if_deleted()
     indices, same_indices = _sharding_indices_and_eq(x.sharding, x.shape, sharding)
     same_layout = (True if layout is None else
-                   x.format.device_local_layout == layout)
+                   x.format.layout == layout)
 
     if not x.is_fully_addressable:
       if same_indices and same_layout:
@@ -1209,13 +1206,13 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
         raise NotImplementedError(
             "Cannot reshard an input that is not fully addressable")
     else:
-      devices = sharding._addressable_device_assignment
+      devices = sharding._internal_device_list.addressable_device_list
       if same_indices and same_layout:
         # Add a placeholder result that will be filled in later.
         results.append(None)
         # Accumulate arguments to `batched_copy_array_to_devices_with_sharding`.
         batch_xs.append(x)
-        batch_devs.append(list(devices))
+        batch_devs.append(devices)
         batch_shardings.append(sharding)
         batch_indices.append(i)
         batch_cs.append(cs)

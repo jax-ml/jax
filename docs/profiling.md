@@ -1,6 +1,6 @@
 # Profiling computation
 
-<!--* freshness: { reviewed: '2024-03-18' } *-->
+<!--* freshness: { reviewed: '2025-06-12' } *-->
 
 ## Viewing program traces with Perfetto
 
@@ -66,7 +66,7 @@ file and open a visualizer. This feature is disabled by passing in
 Tensorboard to the `log_dir` to analyze the trace (see the
 "XProf (Tensorboard Profiling)" section below).
 
-(tensorboard-profiling)=
+(xprof-profiling)=
 ## XProf (TensorBoard profiling)
 
 [XProf](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras)
@@ -102,15 +102,15 @@ pip install tb-nightly xprof-nightly
 You can instrument your code to capture a profiler trace via the
 {func}`jax.profiler.start_trace` and {func}`jax.profiler.stop_trace` methods.
 Call {func}`~jax.profiler.start_trace` with the directory to write trace files
-to. This should be the same `--logdir` directory used to start TensorBoard.
-Then, you can use TensorBoard to view the traces.
+to. This should be the same `--logdir` directory used to start XProf.
+Then, you can XProf to view the traces.
 
 For example, to take a profiler trace:
 
 ```python
 import jax
 
-jax.profiler.start_trace("/tmp/tensorboard")
+jax.profiler.start_trace("/tmp/profile-data")
 
 # Run the operations to be profiled
 key = jax.random.key(0)
@@ -131,7 +131,7 @@ alternative to `start_trace` and `stop_trace`:
 ```python
 import jax
 
-with jax.profiler.trace("/tmp/tensorboard"):
+with jax.profiler.trace("/tmp/profile-data"):
   key = jax.random.key(0)
   x = jax.random.normal(key, (5000, 5000))
   y = x @ x
@@ -140,18 +140,15 @@ with jax.profiler.trace("/tmp/tensorboard"):
 
 ### Viewing the trace
 
-After capturing a trace, you can view it using either the standalone XProf
-tool or the TensorBoard UI. The profiler interface is the same in both cases.
-
-#### Using Standalone XProf
+After capturing a trace, you can view it using the XProf UI.
 
 You can launch the profiler UI directly using the standalone XProf command by
 pointing it to your log directory:
 
-```
-$ xprof --port 8791 /tmp/tensorboard
+```shell
+$ xprof --port 8791 /tmp/profile-data
 Attempting to start XProf server:
-  Log Directory: /tmp/tensorboard
+  Log Directory: /tmp/profile-data
   Port: 8791
 XProf at http://localhost:8791/ (Press CTRL+C to quit)
 ```
@@ -167,38 +164,18 @@ details. See
 [these TensorFlow docs](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras#use_the_tensorflow_profiler_to_profile_model_training_performance)=
 for more details on using the trace viewer.
 
-#### With TensorBoard
-
-To view the trace, first start TensorBoard if you haven't already:
-
-```shell
-$ tensorboard --logdir=/tmp/tensorboard
-[...]
-Serving TensorBoard on localhost; to expose to the network, use a proxy or pass --bind_all
-TensorBoard 2.20.0 at http://localhost:6006/ (Press CTRL+C to quit)
-```
-
-You should be able to load TensorBoard at http://localhost:6006/ in this
-example. Then, select "Profile" from the dropdown menu in the upper-right,
-or navigate directly to http://localhost:6006/#profile.
-
-From there, the experience is the same as the standalone tool: available
-traces appear in the "Runs" dropdown menu on the left. Select the run
-you're interested in, and then under "Tools", select trace_viewer to see the
-timeline.
-
-### Manual capture via TensorBoard
+### Manual capture via XProf
 
 The following are instructions for capturing a manually-triggered N-second trace
 from a running program.
 
-1. Start a TensorBoard server:
+1. Start an XProf server:
 
     ```shell
-    tensorboard --logdir /tmp/tensorboard/
+    xprof --logdir /tmp/profile-data/
     ```
 
-    You should be able to load TensorBoard at <http://localhost:6006/>. You can
+    You should be able to load XProf at <http://localhost:8791/>. You can
     specify a different port with the `--port` flag. See {ref}`remote_profiling`
     below if running JAX on a remote server.<br /><br />
 
@@ -210,7 +187,7 @@ from a running program.
    jax.profiler.start_server(9999)
    ```
 
-    This starts the profiler server that TensorBoard connects to. The profiler
+    This starts the profiler server that XProf connects to. The profiler
     server must be running before you move on to the next step. When you're done
     using the server, you can call `jax.profiler.stop_server()` to shut it down.
 
@@ -223,7 +200,7 @@ from a running program.
     beginning of the program and use `time.sleep()` to give you enough time to
     start the capture.<br /><br />
 
-1. Open <http://localhost:6006/#profile>, and click the "CAPTURE PROFILE" button
+1. Open <http://localhost:8791/>, and click the "CAPTURE PROFILE" button
    in the upper left. Enter "localhost:9999" as the profile service URL (this is
    the address of the profiler server you started in the previous step). Enter
    the number of milliseconds you'd like to profile for, and click "CAPTURE".<br
@@ -233,19 +210,42 @@ from a running program.
    the profiler server in a Python shell), run it while the capture is
    running.<br /><br />
 
-1. After the capture finishes, TensorBoard should automatically refresh. (Not
-   all of the TensorBoard profiling features are hooked up with JAX, so it may
+1. After the capture finishes, XProf should automatically refresh. (Not
+   all of the XProf profiling features are hooked up with JAX, so it may
    initially look like nothing was captured.) On the left under "Tools", select
    `trace_viewer`.
 
-   You should now see a timeline of the execution. You can use the WASD keys to
-   navigate the trace, and click or drag to select events to see more details at
-   the bottom. See [these TensorFlow
-   docs](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras#use_the_tensorflow_profiler_to_profile_model_training_performance)
-   for more details on using the trace viewer.
+You should now see a timeline of the execution. You can use the WASD keys to
+navigate the trace, and click or drag to select events to see more details at
+the bottom. See [these XProf docs](https://openxla.org/xprof/trace_viewer)
+for more details on using the trace viewer.
 
-   You can also use the `memory_viewer`, `op_profile`, and `graph_viewer`
-   tools.<br /><br />
+You can also use the following tools:
+
+- [Framework Op Stats](https://openxla.org/xprof/framework_op_stats)
+- [Graph Viewer](https://openxla.org/xprof/graph_viewer)
+- [HLO Op Stats](https://openxla.org/xprof/hlo_op_stats)
+- [Memory Profile](https://openxla.org/xprof/memory_profile)
+- [Memory Viewer](https://openxla.org/xprof/memory_viewer)
+- [HLO Op Profile](https://openxla.org/xprof/hlo_op_profile)
+- [Roofline Model](https://openxla.org/xprof/roofline_analysis)<br /><br />
+
+### XProf and Tensorboard
+
+XProf is the underlying tool that powers the profiling and trace capturing
+functionality in Tensorboard. As long as `xprof` is installed, a "Profile" tab
+will be present within Tensorboard. Using this is identical to launching XProf
+independently, as long as it is launched pointing to the same log directory.
+This includes profile capture, analysis, and viewing functionality. XProf
+supplants the `tensorboard_plugin_profile` functionality that was previously
+recommended.
+
+```shell
+$ tensorboard --logdir=/tmp/profile-data
+[...]
+Serving TensorBoard on localhost; to expose to the network, use a proxy or pass --bind_all
+TensorBoard 2.19.0 at http://localhost:6006/ (Press CTRL+C to quit)
+```
 
 ### Adding custom trace events
 
@@ -269,7 +269,7 @@ import jax
 options = jax.profiler.ProfileOptions()
 options.python_tracer_level = 0
 options.host_tracer_level = 0
-jax.profiler.start_trace("/tmp/tensorboard", profiler_options=options)
+jax.profiler.start_trace("/tmp/profile-data", profiler_options=options)
 
 # Run the operations to be profiled
 key = jax.random.key(0)
@@ -292,10 +292,10 @@ jax.profiler.stop_trace()
     default).
 
     `2`: Includes level 1 traces plus high-level program execution details like
-    expensive TensorFlow or XLA operations.
+    expensive XLA operations.
 
     `3`: Includes level 2 traces plus more verbose, low-level program execution
-    details such as cheap TensorFlow operations.
+    details such as cheap XLA operations.
 
 2.  `python_tracer_level`: Controls whether Python tracing is enabled.
 
@@ -303,7 +303,7 @@ jax.profiler.stop_trace()
 
     `0`: Disables Python function call tracing.
 
-    `> 0`: Enables Python tracing (this is the default).
+    `1`: Enables Python tracing (this is the default).
 
 #### Advanced configuration options
 

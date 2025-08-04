@@ -29,6 +29,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax import export
 from jax.experimental import pjit
+from jax._src.lib import ifrt_version
 from jax._src.shard_map import shard_map
 from jax.sharding import NamedSharding
 from jax.sharding import Mesh
@@ -38,12 +39,13 @@ from jax import tree_util
 from jax._src import config
 from jax._src import compute_on
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
-
+from jax._src import lib
 from jax._src.lib.mlir.dialects import hlo
 
 import numpy as np
@@ -288,6 +290,17 @@ class JaxExportTest(jtu.JaxTestCase):
 
     self.assertAllClose(f(x, y), exp_f.call(x, y))
 
+  def test_closed_over_constant(self):
+    const_size = 100
+    const = jax.random.uniform(jax.random.key(0), (const_size,),
+                               dtype=np.float32)
+
+    f = jax.jit(lambda x: x + const)
+    x = np.zeros((const_size,), dtype=np.float32)
+    exp_f = get_exported(f)(x)
+
+    self.assertAllClose(f(x), exp_f.call(x))
+
   def test_override_lowering_rules(self):
     @jax.jit
     def f(x):
@@ -416,7 +429,7 @@ class JaxExportTest(jtu.JaxTestCase):
     exp = export.export(jax.jit(f))(x1, x2)
     res = exp.call(x1, x2)
     self.assertEqual(tree_util.tree_structure(res),
-                     tree_util.tree_structure(((x1, x2, x1, x2))))
+                     tree_util.tree_structure((x1, x2, x1, x2)))
     self.assertEqual(type(res[0]), type(x1))
     self.assertEqual(type(res[1]), type(x2))
     self.assertEqual(type(res[2]), type(x1))
@@ -542,33 +555,47 @@ class JaxExportTest(jtu.JaxTestCase):
     context = {}
     def test_primitive_lowering(ctx, arg):
       context["for_export"] = ctx.module_context.lowering_parameters.for_export
+      context["hoist_constants_as_args"] = ctx.module_context.lowering_parameters.hoist_constants_as_args
       context["export_ignore_forward_compatibility"] = ctx.module_context.lowering_parameters.export_ignore_forward_compatibility
       return mlir.hlo.AddOp(arg, arg).results
 
     mlir.register_lowering(test_primitive, test_primitive_lowering)
+    test_primitive.def_impl(functools.partial(dispatch.apply_primitive,
+                                              test_primitive))
     self.addCleanup(lambda: mlir.register_lowering(test_primitive, None))
 
     f = jax.jit(test_primitive.bind)
     a = np.arange(3, dtype=np.float32)
     context.clear()
+
+    res = test_primitive.bind(a)  # eager mode
+    self.assertAllClose(res, a + a)
+    self.assertEqual(context,
+                     dict(for_export=False,
+                          hoist_constants_as_args=config.use_simplified_jaxpr_constants.value,
+                          export_ignore_forward_compatibility=False))
+
     res = f(a)  # Works with JIT
     self.assertAllClose(res, a + a)
     self.assertEqual(context,
                      dict(for_export=False,
+                          hoist_constants_as_args=config.use_simplified_jaxpr_constants.value,
                           export_ignore_forward_compatibility=False))
     context.clear()
-    f.lower(a)  # Works with most AOT
-    # The above was cached
-    self.assertEqual(context, {})
+    if config.use_simplified_jaxpr_constants.value:
+      f.lower(a)  # Works with most AOT
+      self.assertEqual(context, {})  # hit the cache
     _ = export.export(f)(a)
     self.assertEqual(context,
                      dict(for_export=True,
+                          hoist_constants_as_args=False,
                           export_ignore_forward_compatibility=False))
     context.clear()
     with config.export_ignore_forward_compatibility(True):
       _ = export.export(f)(a)
       self.assertEqual(context,
                        dict(for_export=True,
+                            hoist_constants_as_args=False,
                             export_ignore_forward_compatibility=True))
 
   def test_grad(self):
@@ -1250,7 +1277,7 @@ class JaxExportTest(jtu.JaxTestCase):
     res_exported = exp.call(b)
     self.assertAllClose(res_native, res_exported)
 
-  def test_call_with_different_no_of_devices_error_has_in_shardings(self):
+  def test_call_with_different_no_of_devices_in_shardings_success(self):
     if jax.local_device_count() < 2:
       self.skipTest("Need at least 2 devices")
 
@@ -1263,6 +1290,7 @@ class JaxExportTest(jtu.JaxTestCase):
     a = jnp.arange(jax.device_count() * 10, dtype=np.float32).reshape(
         (jax.device_count(), 10)
     )
+    res_native = f_with_sharding(a)
     exp = get_exported(f_with_sharding)(a)
     self.assertEqual(exp.nr_devices, 1)
 
@@ -1270,11 +1298,33 @@ class JaxExportTest(jtu.JaxTestCase):
     run_mesh = Mesh(run_devices, "i")
     b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
 
+    res_exported = exp.call(b)
+    self.assertAllClose(res_native, res_exported)
+
+  def test_call_with_different_no_of_devices_in_shardings_error(self):
+    if jax.local_device_count() < 3:
+      self.skipTest("Need at least 3 devices")
+
+    mesh_1 = Mesh(jax.local_devices()[:2], "i")
+    @functools.partial(pjit.pjit,
+                       in_shardings=NamedSharding(mesh_1, P("i")))
+    def f_with_sharding(x):
+      return jnp.sum(x ** 2, axis=0)
+
+    a = jnp.arange(jax.device_count() * 10, dtype=np.float32).reshape(
+        (jax.device_count(), 10)
+    )
+    exp = get_exported(f_with_sharding)(a)
+    self.assertEqual(exp.nr_devices, 2)
+
+    run_devices = jax.local_devices()
+    run_mesh = Mesh(run_devices, "i")
+    b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
+
     with self.assertRaisesRegex(
         ValueError,
-        "Function .* was exported for 1 devices and is called in a "
-        f"context with {jax.local_device_count()} devices.* function contains "
-        "non-replicated sharding annotations"):
+        "Function .* was exported for 2 devices and is called in a "
+        f"context with {jax.local_device_count()} devices"):
       exp.call(b)
 
   def test_call_with_different_no_of_devices_pmap(self):
@@ -1296,7 +1346,7 @@ class JaxExportTest(jtu.JaxTestCase):
     res_exported = jax.pmap(exp.call)(b)
     self.assertAllClose(res_native, res_exported[0])
 
-  def test_call_with_different_no_of_devices_error_has_sharding_constraint(self):
+  def test_call_with_different_no_of_devices_sharding_constraint_success(self):
     if jax.device_count() < 2:
       self.skipTest("Need at least 2 devices")
 
@@ -1309,6 +1359,7 @@ class JaxExportTest(jtu.JaxTestCase):
     a = jnp.arange(jax.device_count() * 10, dtype=np.float32).reshape(
         (jax.device_count(), 10)
     )
+    res_native = f_with_sharding(a)
     exp = get_exported(f_with_sharding)(a)
     self.assertEqual(exp.nr_devices, 1)
 
@@ -1316,11 +1367,34 @@ class JaxExportTest(jtu.JaxTestCase):
     run_mesh = Mesh(run_devices, "i")
     b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
 
+    res_exported = exp.call(b)
+    self.assertAllClose(res_native, res_exported)
+
+  def test_call_with_different_no_of_devices_sharding_constraint_error(self):
+    if jax.device_count() < 3:
+      self.skipTest("Need at least 3 devices")
+
+    # We export for 2 devices, but call with >=3 devices.
+    mesh_1 = Mesh(jax.local_devices()[:2], "i")
+    @jax.jit
+    def f_with_sharding(x):
+      x = jax.lax.with_sharding_constraint(x, NamedSharding(mesh_1, P("i")))
+      return jnp.sum(x ** 2, axis=0)
+
+    a = jnp.arange(jax.device_count() * 10, dtype=np.float32).reshape(
+        (jax.device_count(), 10)
+    )
+    exp = get_exported(f_with_sharding)(a)
+    self.assertEqual(exp.nr_devices, 2)
+
+    run_devices = jax.local_devices()
+    run_mesh = Mesh(run_devices, "i")
+    b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
+
     with self.assertRaisesRegex(
         ValueError,
-        "Function .* was exported for 1 devices and is called in a "
-        f"context with {jax.local_device_count()} devices.* function contains "
-        "non-replicated sharding annotations"):
+        "Function .* was exported for 2 devices and is called in a "
+        f"context with {jax.local_device_count()} devices"):
       exp.call(b)
 
   @jtu.parameterized_filterable(
@@ -1436,30 +1510,55 @@ class JaxExportTest(jtu.JaxTestCase):
         r"\) -> \(tensor<10x20xf32> (.*)",  # the result
         vjp_module_str).groups()
 
+    if config.use_shardy_partitioner.value:
+      attr_name = "sdy.sharding"
+    else:
+      attr_name = "mhlo.sharding"
+
     if in_shardings == "P":
-      self.assertRegex(arg0_attrs, re.escape("{devices=[1,2]<=[2]}"))
-      self.assertRegex(res_attrs, re.escape("{devices=[1,2]<=[2]}"))
-      primal_in_sharding = "{devices=[1,2]<=[2]}"
+      if config.use_shardy_partitioner.value:
+        sharding = r'#sdy.sharding<@mesh, \[{}, {"d"}\]>'
+        primal_in_sharding = '#sdy.sharding<@mesh, [{}, {"d"}]>'
+      else:
+        sharding = re.escape("{devices=[1,2]<=[2]}")
+        primal_in_sharding = "{devices=[1,2]<=[2]}"
+      self.assertRegex(arg0_attrs, sharding)
+      self.assertRegex(res_attrs, sharding)
     else:
       primal_in_sharding = "{replicated}"
       if with_mesh_context:
-        self.assertRegex(arg0_attrs, re.escape("replicated"))
-        self.assertRegex(res_attrs, re.escape("replicated"))
+        if config.use_shardy_partitioner.value:
+          sharding = r'#sdy.sharding<@mesh, \[{}, {}\]>'
+        else:
+          sharding = re.escape("replicated")
+        self.assertRegex(arg0_attrs, sharding)
+        self.assertRegex(res_attrs, sharding)
       else:
         # If there is no mesh context, we have used NamedSharding(None)
         # and then the sharding is unspecified!
-        self.assertNotIn("mhlo.sharding", arg0_attrs)
-        self.assertNotIn("mhlo.sharding", res_attrs)
+        self.assertNotIn(attr_name, arg0_attrs)
+        self.assertNotIn(attr_name, res_attrs)
 
     if out_shardings == "P":
-      self.assertRegex(arg1_attrs, re.escape("{devices=[2,1]<=[2]}"))
-      primal_out_sharding = "{devices=[2,1]<=[2]}"
-    else:
-      primal_out_sharding = "{replicated}"
-      if with_mesh_context:
-        self.assertRegex(arg1_attrs, re.escape("replicated"))
+      if config.use_shardy_partitioner.value:
+        self.assertRegex(arg1_attrs,
+                         re.escape('#sdy.sharding<@mesh, [{"d"}, {}]>'))
+        primal_out_sharding = '#sdy.sharding<@mesh, [{"d"}, {}]>'
       else:
-        self.assertNotIn("mhlo.sharding", arg1_attrs)
+        self.assertRegex(arg1_attrs, re.escape("{devices=[2,1]<=[2]}"))
+        primal_out_sharding = "{devices=[2,1]<=[2]}"
+    else:
+      if config.use_shardy_partitioner.value:
+        primal_out_sharding = '#sdy.sharding<@mesh, [{}, {}]>'
+      else:
+        primal_out_sharding = "{replicated}"
+      if with_mesh_context:
+        if config.use_shardy_partitioner.value:
+          self.assertRegex(arg1_attrs, re.escape('#sdy.sharding<@mesh, [{}, {}]>'))
+        else:
+          self.assertRegex(arg1_attrs, re.escape("replicated"))
+      else:
+        self.assertNotIn(attr_name, arg1_attrs)
 
     # Sharding custom calls for the primal input shape all match primal_in_sharding
     primal_in_sharding_calls = re.findall(
@@ -1520,7 +1619,7 @@ class JaxExportTest(jtu.JaxTestCase):
     shardings_rev = NamedSharding(mesh_rev, jax.sharding.PartitionSpec(("i",)))
     input_no_shards = jnp.ones(shape=(jax.local_device_count(),))
     input = jnp.ones(shape=(jax.local_device_count(),), device=shardings)
-    input_rev = jax.device_put(input_no_shards, device=shardings_rev)
+    input_rev = jnp.ones(shape=(jax.local_device_count(),), device=shardings_rev)
 
     exp = export.export(pjit.pjit(f, in_shardings=shardings))(input)
     exp_rev = export.export(pjit.pjit(f, in_shardings=shardings_rev))(input_no_shards)
@@ -2008,7 +2107,7 @@ class JaxExportTest(jtu.JaxTestCase):
     r = jax.jit(exp.call, out_shardings=NamedSharding(old_mesh_0, P("old_b")))(a, b)
     self.assertAllClose(a + b, r)
 
-  def test_lower_wth_different_meshes_axis_names(self):
+  def test_lower_with_different_meshes_axis_names(self):
     mesh1 = jtu.create_mesh((4, 2), ("a", "b"))
     mesh2 = jtu.create_mesh((4, 2), ("x", "y"))
     @jax.jit
@@ -2032,6 +2131,51 @@ class JaxExportTest(jtu.JaxTestCase):
         get_exported(f)(args)
     else:
        get_exported(f)(args)
+
+  @jtu.parameterized_filterable(
+    kwargs=[
+        {"use_shardy_on_save": True, "error_msg": "Please enable Shardy",
+         "poly_shape": False},
+        {"use_shardy_on_save": False, "error_msg": "", "poly_shape": False},
+        {"use_shardy_on_save": False, "error_msg": "", "poly_shape": True},
+    ])
+  def test_lower_load_with_different_partitioners(self, use_shardy_on_save,
+                                                  error_msg, poly_shape):
+    if ifrt_version < 16:
+      self.skipTest("Falling back to GSPMD when Shardy is enabled for an old "
+                    "GSPMD checkpoint is only supported in IFRT version 16+")
+    with config.use_shardy_partitioner(use_shardy_on_save):
+      mesh = jtu.create_mesh((8,), ("a",))
+      @jax.jit
+      def f(x, y):
+        z = x + y
+        return jax.lax.with_sharding_constraint(
+            z, NamedSharding(mesh, P("a")))
+
+      args = (
+          jax.ShapeDtypeStruct(
+              (32, 32), dtype=np.float32,
+              sharding=NamedSharding(mesh, P(None, "a"))),
+          jax.ShapeDtypeStruct(
+              (32, 32), dtype=np.float32,
+              sharding=NamedSharding(mesh, P("a"))))
+
+      if poly_shape:
+        args = export.symbolic_args_specs(args, shapes_specs=["32, a", "32, a"])
+
+      exp = get_exported(f)(*args)
+
+      with config.use_shardy_partitioner(not use_shardy_on_save):
+        a = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+        a = jax.device_put(a, NamedSharding(mesh, P(None, "a")))
+        b = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+        b = jax.device_put(b, NamedSharding(mesh, P("a")))
+
+        if use_shardy_on_save:
+          with self.assertRaisesRegex(ValueError, error_msg):
+            jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
+        else:
+          jax.jit(exp.call, out_shardings=NamedSharding(mesh, P("a")))(a, b)
 
 
 

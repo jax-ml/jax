@@ -22,18 +22,19 @@ import math
 import operator
 from typing import Any
 
+import numpy as np
+
 from jax._src import api
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.lax import control_flow
 from jax._src.lax import slicing
 from jax._src.lax import lax
 from jax._src.numpy import indexing
-import jax._src.numpy.lax_numpy as jnp
+from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.reductions import _moveaxis
 from jax._src.numpy.util import check_arraylike, _broadcast_to, _where
 from jax._src.numpy.vectorize import vectorize
 from jax._src.util import canonicalize_axis, set_module
-import numpy as np
 
 
 export = set_module("jax.numpy")
@@ -292,8 +293,10 @@ class ufunc:
       if where is not None:
         where = _moveaxis(where, axis, 0)
 
-    if initial is None and arr.shape[0] == 0:
-      raise ValueError("zero-size array to reduction operation {self.__name__} which has no ideneity")
+    if arr.shape[0] == 0:
+      if initial is None:
+        raise ValueError(f"zero-size array to reduction operation {self.__name__} which has no ideneity")
+      return lax.full(final_shape, initial, dtype)
 
     def body_fun(i, val):
       if where is None:
@@ -387,6 +390,8 @@ class ufunc:
       raise ValueError("accumulate does not allow multiple axes")
     axis = canonicalize_axis(axis, np.ndim(arr))
 
+    if arr.size == 0:
+      return lax.full(arr.shape, 0, dtype)
     arr = _moveaxis(arr, axis, 0)
     def scan_fun(carry, _):
       i, x = carry

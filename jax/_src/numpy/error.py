@@ -13,12 +13,19 @@
 # limitations under the License.
 
 import contextlib
-from typing import Literal, Sequence
+from typing import Literal
+from collections.abc import Sequence
 
 import numpy as np
 
 from jax._src import config
 from jax._src import dtypes
+from jax._src import error_check as error_check_lib
+from jax._src.numpy import array_constructors
+from jax._src.numpy import array_creation
+from jax._src.numpy import lax_numpy
+from jax._src.numpy import ufuncs
+from jax._src.numpy import reductions
 from jax._src.typing import Array, ArrayLike
 
 Category = Literal["nan", "divide", "oob"]
@@ -62,8 +69,6 @@ def _set_error_if_with_category(
   if _is_category_disabled(category):
     return
 
-  # TODO(mattjj): fix the circular import issue.
-  from jax._src import error_check as error_check_lib
   error_check_lib.set_error_if(pred, msg)
 
 
@@ -79,11 +84,7 @@ def _set_error_if_nan(pred: Array, /):
   if not dtypes.issubdtype(pred.dtype, np.floating):  # only check floats
     return
 
-  # TODO(mattjj): fix the circular import issue.
-  from jax._src import error_check as error_check_lib
-  import jax.numpy as jnp
-
-  error_check_lib.set_error_if(jnp.isnan(pred), "NaN encountered")
+  error_check_lib.set_error_if(ufuncs.isnan(pred), "NaN encountered")
 
 
 def _set_error_if_divide_by_zero(pred: Array, /):
@@ -98,10 +99,7 @@ def _set_error_if_divide_by_zero(pred: Array, /):
   if config.error_checking_behavior_divide.value == "ignore":
     return
 
-  # TODO(ayx): fix the circular import issue.
-  from jax._src import error_check as error_check_lib
-  import jax.numpy as jnp
-  zero = jnp.zeros_like(pred, shape=())
+  zero = array_creation.zeros_like(pred, shape=())
   error_check_lib.set_error_if(pred == zero, "Division by zero encountered")
 
 
@@ -112,15 +110,11 @@ def _check_precondition_oob_gather(
   if config.error_checking_behavior_oob.value == "ignore":
     return
 
-  # TODO(mattjj): fix the circular import issue.
-  from jax._src import error_check as error_check_lib
-  import jax.numpy as jnp
-
-  shape = jnp.array(shape, dtype=jnp.int32)
+  shape = array_constructors.array(shape, dtype='int32')
   error_check_lib.set_error_if(
-      jnp.logical_or(
-          jnp.min(gather_indices) < -shape,
-          jnp.max(gather_indices) >= shape,
+      ufuncs.logical_or(
+          reductions.min(gather_indices) < -shape,
+          reductions.max(gather_indices) >= shape,
       ),
       "Out of bounds encountered before calling `lax.gather`",
   )
@@ -136,20 +130,16 @@ def _check_precondition_oob_dynamic_slice(
   if config.error_checking_behavior_oob.value == "ignore":
     return
 
-  # TODO(mattjj): fix the circular import issue.
-  from jax._src import error_check as error_check_lib
-  import jax.numpy as jnp
+  shape = array_constructors.array(shape, dtype='int32')
+  start_indices = array_constructors.array(start_indices, dtype='int32')
+  slice_sizes = array_constructors.array(slice_sizes, dtype='int32')
+  allow_negative_indices = array_constructors.array(allow_negative_indices, dtype='bool')
 
-  shape = jnp.array(shape, dtype=jnp.int32)
-  start_indices = jnp.array(start_indices, dtype=jnp.int32)
-  slice_sizes = jnp.array(slice_sizes, dtype=jnp.int32)
-  allow_negative_indices = jnp.array(allow_negative_indices, dtype=jnp.bool_)
-
-  lower_bound = jnp.where(allow_negative_indices, -shape, 0)
+  lower_bound = lax_numpy.where(allow_negative_indices, -shape, 0)
   error_check_lib.set_error_if(
-      jnp.logical_or(
-          jnp.minimum(start_indices, start_indices + slice_sizes) < lower_bound,
-          jnp.maximum(start_indices, start_indices + slice_sizes) >= shape,
+      ufuncs.logical_or(
+          ufuncs.minimum(start_indices, start_indices + slice_sizes) < lower_bound,
+          ufuncs.maximum(start_indices, start_indices + slice_sizes) >= shape,
       ),
       "Out of bounds encountered before calling `lax.dynamic_slice`",
   )

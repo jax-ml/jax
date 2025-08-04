@@ -13,9 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <complex>
-#include <type_traits>
-
 #include "jaxlib/cpu/lapack_kernels.h"
 
 // From a Python binary, JAX obtains its LAPACK/BLAS kernels from Scipy, but
@@ -100,77 +97,7 @@ jax::TridiagonalSolver<ffi::DataType::C128>::FnType zgtsv_;
 
 namespace jax {
 
-#define JAX_KERNEL_FNTYPE_MISMATCH_MSG "FFI Kernel FnType mismatch"
-
-static_assert(
-    std::is_same_v<jax::TriMatrixEquationSolver<ffi::DataType::F32>::FnType,
-                   jax::Trsm<float>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::TriMatrixEquationSolver<ffi::DataType::F64>::FnType,
-                   jax::Trsm<double>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::TriMatrixEquationSolver<ffi::DataType::C64>::FnType,
-                   jax::Trsm<std::complex<float>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::TriMatrixEquationSolver<ffi::DataType::C128>::FnType,
-                   jax::Trsm<std::complex<double>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::TridiagonalReduction<ffi::DataType::F32>::FnType,
-                   jax::Sytrd<float>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::TridiagonalReduction<ffi::DataType::F64>::FnType,
-                   jax::Sytrd<double>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::TridiagonalReduction<ffi::DataType::C64>::FnType,
-                   jax::Sytrd<std::complex<float>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::TridiagonalReduction<ffi::DataType::C128>::FnType,
-                   jax::Sytrd<std::complex<double>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::SchurDecomposition<ffi::DataType::F32>::FnType,
-                   jax::RealGees<float>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::SchurDecomposition<ffi::DataType::F64>::FnType,
-                   jax::RealGees<double>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::SchurDecompositionComplex<ffi::DataType::C64>::FnType,
-                   jax::ComplexGees<std::complex<float>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::SchurDecompositionComplex<ffi::DataType::C128>::FnType,
-                   jax::ComplexGees<std::complex<double>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-
-#undef JAX_KERNEL_FNTYPE_MISMATCH_MSG
-
 static auto init = []() -> int {
-  AssignKernelFn<Trsm<float>>(strsm_);
-  AssignKernelFn<Trsm<double>>(dtrsm_);
-  AssignKernelFn<Trsm<std::complex<float>>>(ctrsm_);
-  AssignKernelFn<Trsm<std::complex<double>>>(ztrsm_);
-
-  AssignKernelFn<RealGees<float>>(sgees_);
-  AssignKernelFn<RealGees<double>>(dgees_);
-  AssignKernelFn<ComplexGees<std::complex<float>>>(cgees_);
-  AssignKernelFn<ComplexGees<std::complex<double>>>(zgees_);
-
-  AssignKernelFn<Sytrd<float>>(ssytrd_);
-  AssignKernelFn<Sytrd<double>>(dsytrd_);
-  AssignKernelFn<Sytrd<std::complex<float>>>(chetrd_);
-  AssignKernelFn<Sytrd<std::complex<double>>>(zhetrd_);
-
-  // FFI Kernels
-
   AssignKernelFn<TriMatrixEquationSolver<ffi::DataType::F32>>(strsm_);
   AssignKernelFn<TriMatrixEquationSolver<ffi::DataType::F64>>(dtrsm_);
   AssignKernelFn<TriMatrixEquationSolver<ffi::DataType::C64>>(ctrsm_);

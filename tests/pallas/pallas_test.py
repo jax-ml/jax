@@ -33,7 +33,6 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
-from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -148,7 +147,6 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
-    _trace_kernel_to_jaxpr.cache_clear()
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
@@ -494,7 +492,9 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(o_ref_shape, (4,))
     self.assertAllClose(pids[0:4], np.array([0] * 4, dtype=np.int32))
 
-  def test_hoisted_consts(self):
+  def test_const_args(self):
+    if config.use_simplified_jaxpr_constants.value:
+      self.skipTest("TODO: decide if we want to keep these errors")
     # See https://github.com/jax-ml/jax/issues/21557.
     # to_store will be hoisted as a constant. Choose distinct shapes from in/outs.
     to_store = np.arange(128, dtype=np.float32).reshape((1, 128))
@@ -581,38 +581,6 @@ class PallasCallTest(PallasBaseTest):
             x, y, preferred_element_type=jnp.float32).astype(dtype)
     np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
 
-  @parameterized.named_parameters(*(
-      dict(testcase_name=f"{batch_size}_{size}_{block_size}_{dtype}",
-           batch_size=batch_size, size=size, block_size=block_size, dtype=dtype)
-      for batch_size in [1, 2, 4, 23]
-      for size in [1, 2, 129, 255, 256]
-      for block_size in [1, 2, 32, 64, 128, 256]
-      for dtype in ["float32"]
-      if size < block_size
-  ))
-  def test_softmax(self, batch_size, size, block_size, dtype):
-    if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
-      self.skipTest("On TPU the test works only in interpret mode")
-    @functools.partial(self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((batch_size, size), dtype),
-        grid=batch_size)
-    def softmax(x_ref, o_ref):
-      row_idx = pl.program_id(0)
-      x_idx = jnp.arange(block_size)
-      row_idxs = (row_idx, x_idx)
-      mask = x_idx < x_ref.shape[1]
-      row = pl.load(x_ref, row_idxs, mask=mask, other=-float("inf"))
-      row_minus_max = row - jnp.max(row, axis=0)
-      numerator = jnp.exp(row_minus_max)
-      denominator = jnp.sum(numerator, axis=0)
-      softmax_output = numerator / denominator
-      pl.store(o_ref, row_idxs, softmax_output, mask=mask)
-
-    key = random.key(0)
-    x = random.normal(key, [batch_size, size], dtype=dtype)
-    np.testing.assert_allclose(softmax(x), jax.nn.softmax(x, axis=-1),
-        atol=1e-5, rtol=1e-5)
-
   def test_unused_ref(self):
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("On TPU the test works only in interpret mode")
@@ -629,32 +597,6 @@ class PallasCallTest(PallasBaseTest):
     key = random.key(0)
     x = random.normal(key, (m, n))
     np.testing.assert_allclose(dummy(x), jnp.ones_like(x), atol=1e-5, rtol=1e-5)
-
-  def test_with_input_output_aliasing(self):
-    if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
-      self.skipTest("On TPU the test works only in interpret mode")
-    def add_inplace_kernel(_, o_ref, *, block_size):
-      pid = pl.program_id(axis=0)  # we use a 1d launch grid so axis is 0
-      block_start = pid * block_size
-      offsets = block_start + jnp.arange(block_size, dtype=jnp.int32)
-      mask = offsets < o_ref.shape[0]
-      x = pl.load(o_ref, (offsets,), mask=mask)
-      output = x + 1
-      pl.store(o_ref, (offsets,), output, mask=mask)
-
-    grid = (8,)
-    size = 8
-    dtype = "float32"
-    k1 = random.key(0)
-    block_size = 1
-    x = random.normal(k1, [size], dtype=dtype)
-    kernel = functools.partial(add_inplace_kernel, block_size=block_size)
-    out = self.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        grid=grid, input_output_aliases={0: 0})(x)
-    expected = x + 1
-    np.testing.assert_allclose(out, expected)
 
   def test_using_pallas_slice(self):
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
@@ -1173,6 +1115,8 @@ class ApiErrorTest(PallasBaseTest):
       f(a)
 
   def test_pallas_call_index_map_captures_consts(self):
+    if config.use_simplified_jaxpr_constants.value:
+      self.skipTest("TODO: decide if we want to keep these errors")
     a = np.arange(256, dtype=np.int32)
     index_map_result = np.array([0], dtype=np.int32)
     f = self.pallas_call(lambda x_ref, o1_ref: None,
@@ -1271,11 +1215,24 @@ class ApiErrorTest(PallasBaseTest):
     with self.assertRaisesRegex(
         ValueError,
         r" Attempting to pass a Ref"
-        r" MemRef<None>{float32\[8,32\]}"
+        r" Ref{float32\[8,32\]}"
         r" to a primitive: dot_general - did you forget to unpack \(\[...\]\)"
         r" the ref?",
     ):
       dot_general_kernel(x, y)
+
+  def test_pallas_error_for_writing_ref_to_ref(self):
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref
+
+    x = jnp.ones((8, 128), dtype=jnp.float32)
+    with self.assertRaisesRegex(
+        ValueError, "Cannot store a Ref into another Ref",
+    ):
+      kernel(x)
 
 
 class ApiErrorInterpretTest(ApiErrorTest):

@@ -54,7 +54,7 @@ def paged_attention_kernel(
 
   def _compute(start_page_idx, end_page_idx, o, m_i, l_i):
     q_slice = pl.ds(0, block_h)
-    q = pl.load(q_ref, (q_slice, slice(None)))
+    q = q_ref[q_slice, :]
 
     # Loop over blocks of pages to process a entire page sequence partition.
     # Grid loops over q blocks over num_heads.
@@ -64,7 +64,7 @@ def paged_attention_kernel(
       block_tables_slice = pl.ds(
           start_k * pages_per_compute_block, pages_per_compute_block
       )
-      block_tables = pl.load(block_tables_ref, block_tables_slice)
+      block_tables = block_tables_ref[block_tables_slice]
       k = k_pages_ref[block_tables].reshape(block_k, head_dim)
       v = v_pages_ref[block_tables].reshape(block_k, head_dim)
       if k_scales_pages_ref is not None:

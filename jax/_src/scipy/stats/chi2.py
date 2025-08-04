@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 
-from jax import lax
-import jax.numpy as jnp
+import numpy as np
+
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
+from jax._src.scipy.special import gammainc, gammaincc
 from jax._src.typing import Array, ArrayLike
-from jax.scipy.special import gammainc, gammaincc
 
 
 def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
@@ -65,7 +67,7 @@ def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
   nrml_cnst = lax.neg(lax.add(lax.lgamma(df_on_two),lax.div(lax.mul(lax.log(two), df),two)))
 
   log_probs = lax.add(lax.sub(nrml_cnst, lax.log(scale)), kernel)
-  return jnp.where(lax.lt(x, loc), -jnp.inf, log_probs)
+  return jnp.where(lax.lt(x, loc), -np.inf, log_probs)
 
 
 def pdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
@@ -146,7 +148,7 @@ def cdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -
         lax.sub(x, loc),
         lax.mul(scale, two),
       ),
-      _lax_const(x, jnp.inf),
+      _lax_const(x, np.inf),
     ),
   )
 
@@ -226,7 +228,7 @@ def sf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) ->
         lax.sub(x, loc),
         lax.mul(scale, two),
       ),
-      _lax_const(x, jnp.inf),
+      _lax_const(x, np.inf),
     ),
   )
 

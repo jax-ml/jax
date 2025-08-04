@@ -39,6 +39,7 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"
 #include "jaxlib/python_ref_manager.h"
+#include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/types.h"
@@ -48,7 +49,7 @@ namespace jax {
 
 namespace nb = ::nanobind;
 
-PyDeviceList::PyDeviceList(xla::nb_class_ptr<xla::PyClient> py_client,
+PyDeviceList::PyDeviceList(nb_class_ptr<PyClient> py_client,
                            xla::ifrt::DeviceListRef device_list)
     : py_client_(std::move(py_client)), device_list_(std::move(device_list)) {}
 
@@ -61,12 +62,12 @@ PyDeviceList::PyDeviceList(nb::tuple py_device_assignment)
   absl::InlinedVector<xla::ifrt::Device*, 1> devices;
   devices.reserve(py_device_assignment.size());
   for (nb::handle obj : py_device_assignment) {
-    if (!nb::isinstance<xla::PyDevice>(obj.ptr())) {
-      // Non-`xla::PyDevice` is used on an alternative JAX backend with device
+    if (!nb::isinstance<PyDevice>(obj.ptr())) {
+      // Non-`PyDevice` is used on an alternative JAX backend with device
       // duck typing. Use Python device objects already set in `device_list_`.
       return;
     }
-    auto py_device = nb::cast<xla::PyDevice*>(obj);
+    auto py_device = nb::cast<PyDevice*>(obj);
     if (py_client_.get() == nullptr) {
       py_client_ = py_device->client();
     } else if (py_device->client().get() != py_client_.get()) {
@@ -75,12 +76,13 @@ PyDeviceList::PyDeviceList(nb::tuple py_device_assignment)
     }
     devices.push_back(py_device->device());
   }
-  device_list_ = py_client_->ifrt_client()->MakeDeviceList(devices);
+  device_list_ =
+      xla::ValueOrThrow(py_client_->ifrt_client()->MakeDeviceList(devices));
 }
 
 PyDeviceList::~PyDeviceList() {
   if (device_list_.index() == 1) {
-    xla::GlobalPyRefManager()->AddGarbage(
+    GlobalPyRefManager()->AddGarbage(
         std::move(std::get<1>(std::move(device_list_))));
   }
 }
@@ -113,7 +115,7 @@ int64_t PyDeviceList::Hash() {
   return *hash_;
 }
 
-/*static*/ bool PyDeviceList::Equal(xla::nb_class_ptr<PyDeviceList> self,
+/*static*/ bool PyDeviceList::Equal(nb_class_ptr<PyDeviceList> self,
                                     nb::handle other) {
   if (!nb::isinstance<PyDeviceList>(other)) {
     return false;
@@ -143,7 +145,7 @@ int64_t PyDeviceList::Hash() {
   }
 }
 
-/*static*/ bool PyDeviceList::NotEqual(xla::nb_class_ptr<PyDeviceList> self,
+/*static*/ bool PyDeviceList::NotEqual(nb_class_ptr<PyDeviceList> self,
                                        nb::handle other) {
   return !Equal(std::move(self), other);
 }
@@ -231,10 +233,10 @@ nb::iterator PyDeviceList::Iter() {
       struct Iterator {
         void operator++() { ++it; }
         bool operator==(const Iterator& other) const { return it == other.it; }
-        xla::nb_class_ptr<xla::PyDevice> operator*() const {
+        nb_class_ptr<PyDevice> operator*() const {
           return py_client->GetPyDevice(*it);
         }
-        xla::nb_class_ptr<xla::PyClient> py_client;
+        nb_class_ptr<PyClient> py_client;
         absl::Span<xla::ifrt::Device* const>::const_iterator it;
       };
       return nb::make_iterator(
@@ -286,8 +288,8 @@ bool PyDeviceList::IsFullyAddressable() {
   return *is_fully_addressable_;
 }
 
-/*static*/ xla::nb_class_ptr<PyDeviceList> PyDeviceList::AddressableDeviceList(
-    xla::nb_class_ptr<PyDeviceList> self) {
+/*static*/ nb_class_ptr<PyDeviceList> PyDeviceList::AddressableDeviceList(
+    nb_class_ptr<PyDeviceList> self) {
   nb::ft_object_guard lock(self);
   if (self->IsFullyAddressable()) {
     // Do not cache this result in `addressable_device_list_`. Otherwise, it
@@ -306,9 +308,10 @@ bool PyDeviceList::IsFullyAddressable() {
             addressable_devices.push_back(device);
           }
         }
-        self->addressable_device_list_ = xla::make_nb_class<PyDeviceList>(
-            self->py_client_, self->py_client_->ifrt_client()->MakeDeviceList(
-                                  addressable_devices));
+        self->addressable_device_list_ = make_nb_class<PyDeviceList>(
+            self->py_client_,
+            xla::ValueOrThrow(self->py_client_->ifrt_client()->MakeDeviceList(
+                addressable_devices)));
         break;
       }
       case 1: {
@@ -321,7 +324,7 @@ bool PyDeviceList::IsFullyAddressable() {
             addressable_devices.push_back(std::move(device));
           }
         }
-        self->addressable_device_list_ = xla::make_nb_class<PyDeviceList>(
+        self->addressable_device_list_ = make_nb_class<PyDeviceList>(
             xla::MutableSpanToNbTuple(absl::MakeSpan(addressable_devices)));
         break;
       }
@@ -329,7 +332,7 @@ bool PyDeviceList::IsFullyAddressable() {
         throw nb::value_error("Unrecognized DeviceList type");
     }
   }
-  return *self->addressable_device_list_;
+  return nb::cast<nb_class_ptr<PyDeviceList>>(*self->addressable_device_list_);
 }
 
 const std::set<int>& PyDeviceList::ProcessIndices() {
@@ -418,8 +421,8 @@ void PyDeviceList::PopulateMemoryKindInfoForDuckTypedDevices() {
     nb::handle device = std::get<1>(device_list_)[0];
     auto default_memory = device.attr("default_memory")();
     info.default_memory_kind = default_memory.attr("kind");
-    info.memory_kinds = nb::tuple(
-        nb::object(device.attr("addressable_memories")()));
+    info.memory_kinds =
+        nb::tuple(nb::object(device.attr("addressable_memories")()));
     memory_kind_info_ = std::move(info);
   } catch (nb::python_error& e) {
     // Cache the error.
@@ -428,7 +431,7 @@ void PyDeviceList::PopulateMemoryKindInfoForDuckTypedDevices() {
 }
 
 /*static*/ absl::StatusOr<nb::tuple> PyDeviceList::MemoryKinds(
-    xla::nb_class_ptr<PyDeviceList> self) {
+    nb_class_ptr<PyDeviceList> self) {
   nb::ft_object_guard lock(self);
   if (!self->memory_kind_info_.has_value()) {
     self->PopulateMemoryKindInfo();
@@ -440,7 +443,7 @@ void PyDeviceList::PopulateMemoryKindInfoForDuckTypedDevices() {
 }
 
 /*static*/ absl::StatusOr<nb::object> PyDeviceList::DefaultMemoryKind(
-    xla::nb_class_ptr<PyDeviceList> self) {
+    nb_class_ptr<PyDeviceList> self) {
   nb::ft_object_guard lock(self);
   if (!self->memory_kind_info_.has_value()) {
     self->PopulateMemoryKindInfo();
@@ -477,20 +480,21 @@ void PyDeviceList::PopulateMemoryKindInfoForDuckTypedDevices() {
       // `xla::ValueOrThrowWrapper` does not work with
       // `def_prop_ro()`. Manually convert an error into an exception.
       .def_prop_ro("default_memory_kind",
-                   [](xla::nb_class_ptr<PyDeviceList> l) {
+                   [](nb_class_ptr<PyDeviceList> l) {
                      auto kind = DefaultMemoryKind(l);
                      if (!kind.ok()) {
                        throw nb::value_error(kind.status().ToString().c_str());
                      }
                      return *kind;
                    })
-      .def_prop_ro("memory_kinds", [](xla::nb_class_ptr<PyDeviceList> l) {
-        auto kinds = MemoryKinds(l);
-        if (!kinds.ok()) {
-          throw nb::value_error(kinds.status().ToString().c_str());
-        }
-        return *kinds;
-      })
+      .def_prop_ro("memory_kinds",
+                   [](nb_class_ptr<PyDeviceList> l) {
+                     auto kinds = MemoryKinds(l);
+                     if (!kinds.ok()) {
+                       throw nb::value_error(kinds.status().ToString().c_str());
+                     }
+                     return *kinds;
+                   })
       .def_prop_ro("device_kind", &PyDeviceList::DeviceKind, nb::lock_self());
 }
 

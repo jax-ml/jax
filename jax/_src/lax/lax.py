@@ -28,10 +28,6 @@ import warnings
 
 import numpy as np
 
-from jax import tree_util
-from jax.sharding import Sharding
-from jax.tree_util import tree_map
-
 from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
@@ -46,26 +42,28 @@ from jax._src import pjit
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import state
+from jax._src import tree_util
 from jax._src import util
 from jax._src.abstract_arrays import array_types
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray,
                            abstract_token, canonicalize_shape)
 from jax._src.errors import UnexpectedTracerError
+from jax._src.hashable_array import HashableArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
-from jax._src.interpreters import xla
 from jax._src.interpreters.batching import RaggedAxis
 from jax._src.lax import slicing
-from jax._src import mesh as mesh_lib
+from jax._src.mesh import get_abstract_mesh, get_concrete_mesh
 from jax._src.lax.utils import (
   _input_dtype, dtype_to_string, standard_abstract_eval,
   standard_multi_result_abstract_eval, standard_primitive)
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (PmapSharding, NamedSharding,
                                      ShardingContext, SPMDAxisContext,
                                      PartitionSpec as P, canonicalize_sharding)
@@ -238,7 +236,7 @@ def broadcast_shardings(*avals):
     new_spec = P(*(None,) * (ndim - a.ndim) + a.sharding.spec)
     new_shape = (1,) * (ndim - a.ndim) + a.shape
     aval_list.append(a.update(shape=new_shape,
-                              sharding=a.sharding.with_spec(new_spec)))
+                              sharding=a.sharding.update(spec=new_spec)))
   return broadcasting_sharding_rule('broadcast_shardings', *aval_list)
 
 def _identity(x, **_): return x
@@ -268,10 +266,11 @@ def _merge_dyn_shape(
 
 def _dyn_shape_staging_rule(trace, source_info, prim, out_aval, *args,
                             **params):
-  out_tracer = pe.DynamicJaxprTracer(trace, out_aval, source_info)
-  eqn = pe.new_jaxpr_eqn([trace.getvar(x) for x in args],
-                         [trace.makevar(out_tracer)],
+  var = trace.frame.newvar(out_aval)
+  eqn = pe.new_jaxpr_eqn([x.val for x in args],
+                         [var],
                          prim, params, core.no_effects, source_info)
+  out_tracer = pe.DynamicJaxprTracer(trace, out_aval, var, source_info)
   trace.frame.add_eqn(eqn)
   return out_tracer
 
@@ -1781,7 +1780,7 @@ def _trace_composite_to_jaxpr(fun: Callable,
                               debug_info: core.DebugInfo):
   flat_fun, out_tree = api_util.flatten_fun_nokwargs(
       lu.wrap_init(fun, debug_info=debug_info), in_tree)
-  jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError(
         "Found a JAX Tracer as a constant in the decomposition for the "
@@ -1789,8 +1788,8 @@ def _trace_composite_to_jaxpr(fun: Callable,
         "closes over a value that is involved in a JAX transformation. "
         "Any values that aren't explicitly known at compile time must be "
         "explicitly passed as arguments to the composite.")
-  closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
-  return closed_jaxpr, out_tree
+  closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
+  return closed_jaxpr, consts, out_tree
 
 
 def composite(
@@ -1873,14 +1872,21 @@ def composite(
           "explicitly passed as arguments to the composite."
           "\n\nNote: If you are passing jax arrays as attributes, use numpy "
           "arrays instead.")
-    closed_jaxpr, out_tree = _trace_composite_to_jaxpr(
+    closed_jaxpr, consts, out_tree = _trace_composite_to_jaxpr(
         partial(decomposition, **kwargs), in_tree, in_avals, name, debug_info
     )
-    flat_args = core.standard_insert_pvary(*flat_args)
+    attributes = []
+    for k, v in kwargs.items():
+      leaves, treedef = tree_util.tree_flatten(v)
+      leaves = tuple(
+          HashableArray(v) if isinstance(v, np.ndarray) else v for v in leaves
+      )
+      attributes.append((k, leaves, treedef))
+    flat_consts_and_args = core.standard_insert_pvary(*consts, *flat_args)
     out_flat = composite_p.bind(
-        *flat_args,
+        *flat_consts_and_args,
         name=name,
-        attributes=tuple((k, v) for k, v in kwargs.items()),
+        attributes=tuple(attributes),
         version=version,
         jaxpr=closed_jaxpr,
     )
@@ -1893,7 +1899,7 @@ def _composite_lowering(
     ctx: mlir.LoweringRuleContext,
     *args: Any,
     name: str,
-    attributes: Sequence[tuple[str, Any]],
+    attributes: Sequence[tuple[str, tuple[Any, ...], tree_util.PyTreeDef]],
     version: int,
     jaxpr: core.ClosedJaxpr,
 ):
@@ -1912,23 +1918,31 @@ def _composite_lowering(
   Returns:
     The results of the composite.
   """
+  const_args = core.jaxpr_const_args(jaxpr.jaxpr)
+  const_arg_values = tuple(mlir.ir_constant(c, ctx.const_lowering,
+                                            canonicalize_dtype=True)
+                           for c in const_args)
+  in_avals = (*(core.shaped_abstractify(c) for c in const_args),
+              *ctx.avals_in)
   func_op, _, _ = mlir.lower_called_computation(
       name,
-      ctx.name_stack,
       jaxpr,
       ctx.module_context,
+      len(const_args),
+      in_avals,
       ctx.avals_out,
       ctx.tokens_in,
   )
-  composite_attrs = {
-      k : mlir.ir_attribute(v)
-      for k, v in attributes
-      if v is not None
-  }
+
+  composite_attrs = {}
+  for k, leaves, treedef in attributes:
+    v = treedef.unflatten(leaves)
+    if v is not None:
+      composite_attrs[k] = mlir.ir_attribute(v)
   symbol_name = func_op.name.value
   composite = hlo.CompositeOp(
       func_op.type.results,
-      mlir.flatten_ir_values(args),
+      mlir.flatten_ir_values(const_arg_values + args),
       name=ir.StringAttr.get(name),
       decomposition=ir.FlatSymbolRefAttr.get(symbol_name),
       composite_attributes=ir.DictAttr.get(composite_attrs),
@@ -1977,7 +1991,7 @@ def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
   """Concatenates a sequence of arrays along `dimension`.
 
   Wraps XLA's `Concatenate
-  <https://www.tensorflow.org/xla/operation_semantics#concatenate>`_
+  <https://www.openxla.org/xla/operation_semantics#concatenate>`_
   operator.
 
   Args:
@@ -2412,7 +2426,7 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
         preferred_element_type: DTypeLike | None = None) -> Array:
   """Vector/vector, matrix/vector, and matrix/matrix multiplication.
 
-  Wraps XLA's `Dot <https://www.tensorflow.org/xla/operation_semantics#dot>`_
+  Wraps XLA's `Dot <https://www.openxla.org/xla/operation_semantics#dot>`_
   operator.
 
   For more general contraction, see the :func:`jax.lax.dot_general` operator.
@@ -2463,7 +2477,7 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
   """General dot product/contraction operator.
 
   Wraps XLA's `DotGeneral
-  <https://www.tensorflow.org/xla/operation_semantics#dotgeneral>`_
+  <https://www.openxla.org/xla/operation_semantics#dotgeneral>`_
   operator.
 
   The semantics of ``dot_general`` are complicated, but most users should not have to
@@ -2471,7 +2485,7 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
   :func:`jax.numpy.matmul`, :func:`jax.numpy.tensordot`, :func:`jax.numpy.einsum`,
   and others which will construct appropriate calls to ``dot_general`` under the hood.
   If you really want to understand ``dot_general`` itself, we recommend reading XLA's
-  `DotGeneral  <https://www.tensorflow.org/xla/operation_semantics#dotgeneral>`_
+  `DotGeneral  <https://www.openxla.org/xla/operation_semantics#dotgeneral>`_
   operator documentation.
 
   Args:
@@ -2687,7 +2701,7 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
                      broadcast_dimensions: Sequence[int], *, out_sharding=None
                      ) -> Array:
   """Wraps XLA's `BroadcastInDim
-  <https://www.tensorflow.org/xla/operation_semantics#broadcastindim>`_
+  <https://www.openxla.org/xla/operation_semantics#broadcastindim>`_
   operator.
 
   Args:
@@ -2730,7 +2744,7 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
             dimensions: Sequence[int] | None = None,
             *, out_sharding: NamedSharding | P | None = None) -> Array:
   """Wraps XLA's `Reshape
-  <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
+  <https://www.openxla.org/xla/operation_semantics#reshape>`_
   operator.
 
   For inserting/removing dimensions of size 1, prefer using ``lax.squeeze`` /
@@ -2775,11 +2789,15 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
   else:
     dims = api_util._ensure_index_tuple(dimensions)
     same_dims = tuple(dims) == tuple(range(np.ndim(operand)))
-  if np.shape(operand) and same_shape and same_dims and isinstance(operand, Array):
+  out_sharding = canonicalize_sharding(out_sharding, 'reshape')
+  same_sharding = (out_sharding is None or
+                   core.typeof(operand).sharding == out_sharding)
+
+  if (np.shape(operand) and same_shape and same_dims and same_sharding and
+      isinstance(operand, Array)):
     return operand
   else:
     dyn_shape, static_new_sizes = _extract_tracers_dyn_shape(new_sizes)
-    out_sharding = canonicalize_sharding(out_sharding, 'reshape')
     return reshape_p.bind(
       operand, *dyn_shape, new_sizes=tuple(static_new_sizes),
       dimensions=None if dims is None or same_dims else dims,
@@ -2790,7 +2808,7 @@ def pad(operand: ArrayLike, padding_value: ArrayLike,
   """Applies low, high, and/or interior padding to an array.
 
   Wraps XLA's `Pad
-  <https://www.tensorflow.org/xla/operation_semantics#pad>`_
+  <https://www.openxla.org/xla/operation_semantics#pad>`_
   operator.
 
   Args:
@@ -2840,7 +2858,7 @@ def pad(operand: ArrayLike, padding_value: ArrayLike,
 
 def rev(operand: ArrayLike, dimensions: Sequence[int]) -> Array:
   """Wraps XLA's `Rev
-  <https://www.tensorflow.org/xla/operation_semantics#rev_reverse>`_
+  <https://www.openxla.org/xla/operation_semantics#rev_reverse>`_
   operator.
   """
   return rev_p.bind(operand, dimensions=tuple(dimensions))
@@ -2849,7 +2867,7 @@ def select(pred: ArrayLike, on_true: ArrayLike, on_false: ArrayLike) -> Array:
   """Selects between two branches based on a boolean predicate.
 
   Wraps XLA's `Select
-  <https://www.tensorflow.org/xla/operation_semantics#select>`_
+  <https://www.openxla.org/xla/operation_semantics#select>`_
   operator.
 
   In general :func:`~jax.lax.select` leads to evaluation of both branches, although
@@ -2876,7 +2894,7 @@ def select_n(which: ArrayLike, *cases: ArrayLike) -> Array:
   """Selects array values from multiple cases.
 
   Generalizes XLA's `Select
-  <https://www.tensorflow.org/xla/operation_semantics#select>`_
+  <https://www.openxla.org/xla/operation_semantics#select>`_
   operator. Unlike XLA's version, the operator is variadic and can select
   from many cases using an integer `pred`.
 
@@ -2902,7 +2920,7 @@ def select_n(which: ArrayLike, *cases: ArrayLike) -> Array:
 def transpose(operand: ArrayLike,
               permutation: Sequence[int] | np.ndarray) -> Array:
   """Wraps XLA's `Transpose
-  <https://www.tensorflow.org/xla/operation_semantics#transpose>`_
+  <https://www.openxla.org/xla/operation_semantics#transpose>`_
   operator.
   """
   permutation = tuple(operator.index(d) for d in permutation)
@@ -2929,7 +2947,7 @@ def reduce(operands: Any,
            computation: Callable[[Any, Any], Any],
            dimensions: Sequence[int]) -> Any:
   """Wraps XLA's `Reduce
-  <https://www.tensorflow.org/xla/operation_semantics#reduce>`_
+  <https://www.openxla.org/xla/operation_semantics#reduce>`_
   operator.
 
   ``init_values`` and ``computation`` together must form a `monoid
@@ -2980,7 +2998,7 @@ def _reduction_jaxpr(computation: Callable,
       comp,
       debug_info=api_util.debug_info("reduction_jaxpr", computation,
                                      (aval, aval), {}))
-  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(comp_wrapped, (aval, aval))
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(comp_wrapped, (aval, aval))
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
@@ -2996,7 +3014,7 @@ def _variadic_reduction_jaxpr(computation: Callable[[Any, Any], Any],
   flat_in_avals, in_tree = tree_util.tree_flatten((avals, avals))
   comp = lu.wrap_init(computation, debug_info=debug_info)
   flat_comp, out_tree = api_util.flatten_fun_nokwargs(comp, in_tree)
-  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_comp, tuple(flat_in_avals))
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_comp, tuple(flat_in_avals))
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
@@ -3235,7 +3253,7 @@ def sort(operand: Sequence[Array], dimension: int = -1,
 def sort(operand: Array | Sequence[Array], dimension: int = -1,
          is_stable: bool = True, num_keys: int = 1) -> Array | tuple[Array, ...]:
   """Wraps XLA's `Sort
-  <https://www.tensorflow.org/xla/operation_semantics#sort>`_ operator.
+  <https://www.openxla.org/xla/operation_semantics#sort>`_ operator.
 
   For floating point inputs, -0.0 and 0.0 are treated as equivalent, and NaN values
   are sorted to the end of the array. For complex inputs, the sort order is
@@ -3370,7 +3388,7 @@ ad_util.aval_zeros_likers[state.AbstractRef] = zeros_like_abstract_ref  # type: 
 
 def iota(dtype: DTypeLike, size: int) -> Array:
   """Wraps XLA's `Iota
-  <https://www.tensorflow.org/xla/operation_semantics#iota>`_
+  <https://www.openxla.org/xla/operation_semantics#iota>`_
   operator.
   """
   return broadcasted_iota(dtype, (size,), 0)
@@ -3479,13 +3497,13 @@ def stop_gradient(x: T) -> T:
       return ad_util.stop_gradient_p.bind(x)
     else:
       return x
-  return tree_map(stop, x)
+  return tree_util.tree_map(stop, x)
 
 def reduce_precision(operand: float | ArrayLike,
                      exponent_bits: int,
                      mantissa_bits: int) -> Array:
   """Wraps XLA's `ReducePrecision
-  <https://www.tensorflow.org/xla/operation_semantics#reduceprecision>`_
+  <https://www.openxla.org/xla/operation_semantics#reduceprecision>`_
   operator.
   """
   exponent_bits = core.concrete_or_error(
@@ -3561,7 +3579,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
         and not isinstance(x, core.Tracer)
         and hasattr(x, 'sharding')
         and x.sharding is not None
-        and x.sharding._is_concrete
+        and (x.sharding._is_concrete or not get_concrete_mesh().empty)
         and getattr(x, '_committed', True)
         and not weak_type
         and fill_shape == np.shape(x)  # type: ignore[arg-type]
@@ -3570,6 +3588,11 @@ def full_like(x: ArrayLike | DuckTypedArray,
       sharding = x.sharding  # type: ignore
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
              sharding=sharding)
+  if config._check_vma.value:
+    # TODO(yashkatariya): Maybe use `shaped_abstractify` here instead of
+    # `typeof` because `x` can be anything that implements the
+    # `DuckTypedArray` protocol.
+    val = core.pvary(val, tuple(core.typeof(x).vma))
   return val
 
 
@@ -3938,7 +3961,7 @@ def broadcasting_sharding_rule(name, *avals):
             f'Mesh for all inputs should be equal. Got one mesh: {mesh} and'
             f' another mesh: {a.sharding.mesh}')
       mesh = a.sharding.mesh
-  mesh = mesh_lib.get_abstract_mesh() if mesh is None else mesh
+  mesh = get_abstract_mesh() if mesh is None else mesh
 
   shapes = [aval.shape for aval in avals if aval.shape]
   if not shapes:
@@ -3996,15 +4019,19 @@ def _unbroadcast(aval, x):
   if not isinstance(aval, (core.DShapedArray, ShapedArray)):
     raise TypeError("transpose with implicit broadcasting of unshaped values")
   x_shape = np.shape(x)
-  if core.definitely_equal_shape(aval.shape, x_shape):
+  if (core.definitely_equal_shape(aval.shape, x_shape) and
+      aval.sharding == core.typeof(x).sharding):
     return x
   assert not aval.shape or len(x_shape) == len(aval.shape)
   if not aval.shape:
     return reduce_sum(x, list(range(len(x_shape))))
   else:
-    dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape)) if not core.definitely_equal(a, b)]
-    if config.enable_checks.value: assert all(aval.shape[i] == 1 for i in dims)
-    return reshape(reduce_sum(x, dims), aval.shape)
+    dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape))
+            if not core.definitely_equal(a, b)]
+    if config.enable_checks.value:
+      assert all(aval.shape[i] == 1 for i in dims)
+    x = reduce_sum(x, dims) if dims else x
+    return reshape(x, aval.shape, out_sharding=aval.to_cotangent_aval().sharding)
 
 def _maybe_broadcast(target_shape, x):
   x_shape = np.shape(x)
@@ -4040,15 +4067,6 @@ def broadcast_hlo(
     out.append(arg)
   return out
 
-def multi_sharding_in_dim(ctx, ops, in_avals, out_aval):
-  out = []
-  for op, in_aval in zip(ops, in_avals):
-    if in_aval.sharding == out_aval.sharding or in_aval.sharding is None:
-      out.append(op)
-    else:
-      out.append(mlir.lower_with_sharding_in_types(ctx, op, out_aval))
-  return out
-
 
 def _nary_lower_hlo(
     op: Callable, ctx, *args: ir.Value, accuracy=None, **params
@@ -4057,8 +4075,8 @@ def _nary_lower_hlo(
   """
   del params
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
-  args = mlir.multi_broadcast_in_dim(ctx, args, avals_in, aval_out.shape)
-  args = multi_sharding_in_dim(ctx, args, avals_in, aval_out)
+  args = mlir.multi_broadcast_in_dim(ctx, args, avals_in, aval_out.shape,
+                                     aval_out.sharding)
 
   out = op(*args)
   if accuracy:
@@ -4215,19 +4233,14 @@ def _sin_lowering(ctx, x, accuracy):
   return _nary_lower_hlo(hlo.sine, ctx, x, accuracy=accuracy)
 
 
-def _sin_p_lin(nzs, x, accuracy):
+def _sin_lin(nzs, x, accuracy):
   nz, = nzs
-  cos_x = cos(x) # TODO: allow this to happen in the linearized computation (need to fix backward_pass)
-  return (
-      sin_p.bind(x, accuracy=accuracy),
-      nz,
-      cos_x,
-      lambda cos_x_, t: mul(t, cos_x_),
-  )
+  return (sin_p.bind(x, accuracy=accuracy), nz, cos(x),
+          lambda cos_x, t: mul(t, cos_x))
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x, accuracy: mul(g, cos(x, accuracy=accuracy)))
-ad.primitive_linearizations[sin_p] = _sin_p_lin
+ad.primitive_linearizations[sin_p] = _sin_lin
 mlir.register_lowering(sin_p, _sin_lowering)
 core.pp_eqn_rules[sin_p] = _unary_with_accuracy_pp_rule
 batching.ragged_prop_rules[sin_p] = batching.ragged_mask_elementwise_rule
@@ -4332,7 +4345,8 @@ def _complex_transpose_rule(t, x, y):
     else:
       return [None, _unbroadcast(y.aval, imag(neg(t)))]
 
-_complex_dtype = lambda dtype, *args, **kwargs: (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
+def _complex_dtype(dtype, *args, **kwargs):
+  return (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
 complex_p = naryop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
                   'complex')
 ad.deflinear2(complex_p, _complex_transpose_rule)
@@ -4514,8 +4528,6 @@ def _integer_pow_lowering(ctx, x, *, y):
     out = hlo.divide(mlir.full_like_aval(ctx, 1, ctx.avals_in[0]), x)
   else:
     lowering = mlir.lower_fun(_integer_pow, multiple_results=False)
-    if builtins.abs(y) >= 3:
-      lowering = mlir.cache_lowering(lowering)
     out, = lowering(ctx, x, y=y)
   aval_out, = ctx.avals_out
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
@@ -4591,7 +4603,7 @@ def _add_unreduced(out_sharding, x, y):
         f' reduce {lhs_str} via `reshard` before calling `add`.')
   else:
     res_unreduced = frozenset()
-  return out_sharding.with_spec(out_sharding.spec.with_unreduced(res_unreduced))
+  return out_sharding.update(spec=out_sharding.spec.update(unreduced=res_unreduced))
 
 add_p: Primitive = naryop(_input_dtype, [_num, _num], 'add',
                           unreduced_rule=_add_unreduced)
@@ -4830,8 +4842,10 @@ def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type,
   elif core.primal_dtype_to_tangent_dtype(old_dtype) == dtypes.float0:
     return [ad_util.Zero(operand.aval.update(dtype=dtypes.float0, weak_type=False))]
   else:
-    return [convert_element_type_p.bind(
-        ct, new_dtype=old_dtype, weak_type=old_weak_type, sharding=sharding)]
+    out = convert_element_type_p.bind(
+        ct, new_dtype=old_dtype, weak_type=old_weak_type,
+        sharding=operand.aval.sharding)
+    return [out]
 
 def _convert_element_type_jvp_rule(tangent, primal_result, operand, *,
                                    new_dtype, weak_type, sharding):
@@ -4842,7 +4856,7 @@ def _convert_element_type_jvp_rule(tangent, primal_result, operand, *,
     return convert_element_type_p.bind(tangent, new_dtype=new_tangent_dtype,
                                        weak_type=weak_type, sharding=sharding)
 
-def _convert_elt_type_folding_rule(consts, eqn):
+def _convert_elt_type_folding_rule(consts, params, out_avals):
   # We constant-fold convert_element_types applied to constants if those
   # constants are Python builtin numeric types or numpy.ndarrays (so as not
   # to perform any device operations when constant-folding) and if the output
@@ -4852,29 +4866,30 @@ def _convert_elt_type_folding_rule(consts, eqn):
   # we output a Python builtin numeric type.
   # TODO(mattjj): allow constant-folding CPU-backed JAX arrays
   c, = consts
-  o, = eqn.outvars
-  new_dtype = eqn.params['new_dtype']
+  out_aval, = out_avals
+  new_dtype = params['new_dtype']
   if (type(c) in {np.ndarray, *dtypes.python_scalar_dtypes} and
-      isinstance(o.aval, core.UnshapedArray) and not np.shape(c) and
+      isinstance(out_aval, core.UnshapedArray) and not np.shape(c) and
       not dtypes.issubdtype(new_dtype, dtypes.extended)):
     out = np.array(c)
     if (dtypes.issubdtype(out.dtype, np.complexfloating) and
         not dtypes.issubdtype(new_dtype, np.complexfloating)):
       out = out.real
     out = out.astype(new_dtype)
-    if not o.aval.weak_type:
-      return [out], None
+    if not out_aval.weak_type:
+      return [out]
     out = out.item()
-    if core.get_aval(out).dtype is o.aval.dtype:
-      return [out], None
-  return [None], eqn
+    if core.get_aval(out).dtype is out_aval.dtype:
+      return [out]
+  return None
 
 def _convert_elt_type_fwd_rule(eqn):
-  v, = eqn.invars
-  if (v.aval.dtype == eqn.params['new_dtype'] and
-      v.aval.weak_type == eqn.params['weak_type'] and
-      not dtypes.issubdtype(v.aval.dtype, dtypes.extended) and
-      (eqn.params['sharding'] is None or eqn.params['sharding'] == v.aval.sharding)):
+  t, = eqn.invars
+  aval = t.aval
+  if (aval.dtype == eqn.params['new_dtype'] and
+      aval.weak_type == eqn.params['weak_type'] and
+      not dtypes.issubdtype(aval.dtype, dtypes.extended) and
+      (eqn.params['sharding'] is None or eqn.params['sharding'] == aval.sharding)):
     return [0], None
   else:
     return [None], eqn
@@ -4991,7 +5006,7 @@ def _to_edtype_abstract_eval(x, *, edtype):
           f"{x.str_short(short_dtypes=True)} to an extended dtype with element "
           f"shape {rep_aval.shape}")
     return x.update(shape=shape_prefix, dtype=edtype,
-                    sharding=x.sharding.with_spec(spec_prefix))
+                    sharding=x.sharding.update(spec=spec_prefix))
   elif isinstance(x, core.DShapedArray):
     return x.update(shape=shape_prefix, dtype=edtype)
   else:
@@ -5084,9 +5099,9 @@ def _bitcast_convert_type_sharding_rule(operand, *, new_dtype):
   if old_nbits == new_nbits:
     return operand.sharding
   elif old_nbits > new_nbits:
-    return operand.sharding.with_spec((*operand.sharding.spec, None))
+    return operand.sharding.update(spec=(*operand.sharding.spec, None))
   else:
-    return operand.sharding.with_spec(operand.sharding.spec[:-1])
+    return operand.sharding.update(spec=operand.sharding.spec[:-1])
 
 def _bitcast_convert_type_dtype_rule(operand, *, new_dtype):
   old_dtype = dtypes.canonicalize_dtype(operand.dtype)
@@ -5232,7 +5247,8 @@ def _check_specs_match(lhs_spec, rhs_spec, msg):
 def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
                                preferred_element_type: DTypeLike | None,
                                out_sharding):
-  if lhs.sharding.mesh != rhs.sharding.mesh:
+  if (not lhs.sharding.mesh.empty and not rhs.sharding.mesh.empty and
+      lhs.sharding.mesh != rhs.sharding.mesh):
     raise core.ShardingTypeError(
         'Mesh of both lhs and rhs should match. Got lhs:'
         f' {lhs.sharding.mesh} and rhs: {rhs.sharding.mesh}')
@@ -5273,12 +5289,15 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
       raise core.ShardingTypeError(
           'Contracting dimensions are sharded and it is ambiguous how the'
           ' output should be sharded. Please specify the output sharding via'
-          ' the `out_sharding` parameter of einsum. Or reshard your input via'
-          ' `jax.experimental.shard.reshard` so that the dot is conflict free.'
+          ' the `out_sharding` parameter.'
           f' Got {lhs_contracting_spec=} and {rhs_contracting_spec=}')
 
+  if lhs.sharding.mesh.empty and not rhs.sharding.mesh.empty:
+    mesh = rhs.sharding.mesh
+  else:
+    mesh = lhs.sharding.mesh
   return _dot_general_sharding_computation(
-      lhs.sharding.spec, rhs.sharding.spec, dimension_numbers, lhs.sharding.mesh)
+      lhs.sharding.spec, rhs.sharding.spec, dimension_numbers, mesh)
 
 def _dot_general_sharding_computation(lhs_spec, rhs_spec,
                                       dimension_numbers, mesh):
@@ -5360,7 +5379,7 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   out_axes = np.argsort(unsorted_axes)
   xs = x.aval.sharding
   inverse_spec = tuple(xs.spec[o] for o in unsorted_axes)
-  ds = xs.with_spec(inverse_spec)
+  ds = xs.update(spec=inverse_spec)
   dot_general_out = dot_general(g, y, dims, precision=precision,
                                 preferred_element_type=preferred_element_type,
                                 out_sharding=ds)
@@ -6315,6 +6334,9 @@ def _ragged_dot_general_lower(
 
   # TODO(pravnar): Remove this once we have sharding support.
   def use_default_lowering():
+    if config.jax_ragged_dot_use_ragged_dot_instruction.value:
+      # Default lowering is via the pattern match, hence we return False.
+      return False
     axis_context = ctx.module_context.axis_context
     return (
         isinstance(axis_context, SPMDAxisContext)
@@ -6370,7 +6392,7 @@ mlir.register_lowering(ragged_dot_general_p,
                        mlir.lower_fun(_ragged_dot_general_impl,
                                       multiple_results=False))
 
-for platform in ['tpu']:
+for platform in ['tpu', 'gpu']:
   mlir.register_lowering(
       ragged_dot_general_p,
       partial(_ragged_dot_general_lower, platform=platform),
@@ -6422,7 +6444,7 @@ def _broadcast_in_dim_sharding_rule(operand, *, shape, broadcast_dimensions,
   orig_spec = iter(operand.sharding.spec)
   new_spec = [next(orig_spec) if i in bds else None for i in range(len(shape))]
   assert next(orig_spec, None) is None
-  return operand.sharding.with_spec(new_spec)
+  return operand.sharding.update(spec=new_spec)
 
 def _broadcast_in_dim_typecheck_rule(
     _, operand, *dyn_shape, shape, broadcast_dimensions, sharding):
@@ -6443,6 +6465,8 @@ def _broadcast_in_dim_transpose_rule(ct, operand, *dyn_shape,
                                      shape, broadcast_dimensions, sharding):
   if type(ct) is ad_util.Zero:
     return [ad_util.Zero(operand.aval)]
+  if not isinstance(operand, ad.UndefinedPrimal):
+    return [None] * (1 + len(dyn_shape))  # transpose wrt literal
   unit_dims = [i for i, s in enumerate(operand.aval.shape)
                if core.definitely_equal(s, 1)]
   bdims = tuple(np.delete(broadcast_dimensions, unit_dims))
@@ -6615,9 +6639,9 @@ def _broadcast_in_dim_ragged_prop_rule(eqn_params, invar_raggedness, outvars):
   return invar_raggedness, [None] * len(outvars)
 
 
-broadcast_in_dim_p = standard_primitive(
-    _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
+broadcast_in_dim_p = core.Primitive('broadcast_in_dim')
 broadcast_in_dim_p.def_abstract_eval(_broadcast_in_dim_abstract_eval)
+broadcast_in_dim_p.def_impl(partial(dispatch.apply_primitive, broadcast_in_dim_p))
 ad.primitive_jvps[broadcast_in_dim_p] = _broadcast_in_dim_jvp_rule
 ad.primitive_transposes[broadcast_in_dim_p] = _broadcast_in_dim_transpose_rule
 batching.fancy_primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
@@ -6760,7 +6784,7 @@ def _concatenate_batch_rule(batched_args, batch_dims, *, dimension):
               for op, bdim in zip(batched_args, batch_dims) if bdim is not None)
   operands = [batching.moveaxis(op, bdim, 0) if bdim is not None
               else broadcast(
-                  op, (size,), out_sharding=core.get_aval(op).sharding.with_spec(
+                  op, (size,), out_sharding=core.get_aval(op).sharding.update(spec=
                       (spec, *core.get_aval(op).sharding.spec)))
               for op, bdim in zip(batched_args, batch_dims)]
   return concatenate(operands, dimension + 1), 0
@@ -6974,7 +6998,7 @@ def _squeeze_sharding_rule(operand, *, dimensions):
   dims_set = set(dimensions)
   new_spec = tuple(s for i, s in enumerate(operand.sharding.spec)
                    if i not in dims_set)
-  return operand.sharding.with_spec(new_spec)
+  return operand.sharding.update(spec=new_spec)
 
 def _compute_squeeze_shape(shape, dimensions):
   dims_set = set(dimensions)
@@ -7056,6 +7080,14 @@ def _reshape_shape_rule(operand, *, new_sizes, dimensions, sharding):
 def _split_on_one_axis(op_shape, new_sizes, name):
   if len(new_sizes) <= len(op_shape):
     return False, []
+  orig_op_shape, orig_new_sizes = op_shape, new_sizes
+
+  num_1s = 0
+  while op_shape[-1] == 1 and new_sizes[-1] == 1:
+    num_1s += 1
+    op_shape = op_shape[:-1]
+    new_sizes = new_sizes[:-1]
+
   i, j, count, out = 0, 0, 0, []
   while j < len(new_sizes):
     if op_shape[i] == new_sizes[j]:
@@ -7064,9 +7096,10 @@ def _split_on_one_axis(op_shape, new_sizes, name):
       count += 1
       if count > 1:
         raise core.ShardingTypeError(
-            f'{name} on more than 1 axis is not supported. Please specify'
-            ' the sharding of the output via the `sharding` argument of'
-            f' jax.lax.reshape. Got operand.shape={op_shape} and {new_sizes=}')
+            f'{name} on more than 1 axis is not supported. Please specify the'
+            ' sharding of the output via the `sharding` argument of'
+            f' jax.lax.reshape. Got operand.shape={orig_op_shape} and'
+            f' {orig_new_sizes=}')
       temp = [new_sizes[j]]
       next_j = j + 1
       while (math.prod(temp) != op_shape[i] or
@@ -7081,7 +7114,9 @@ def _split_on_one_axis(op_shape, new_sizes, name):
       out.append(temp)
     i += 1
     j += 1
-  assert len(op_shape) == len(out)
+  out.extend([1] * num_1s)
+
+  assert len(orig_op_shape) == len(out)
   return True, out
 
 
@@ -7094,7 +7129,7 @@ def _merge_on_one_axis(operand, new_sizes):
 def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
   if sharding is not None:
     return sharding
-  if operand.sharding.is_fully_replicated:
+  if all(s is None for s in operand.sharding.spec):
     return operand.sharding
   non_1s_op_shape = [s for s in operand.shape if s != 1]
   non_1s_new_shape = [s for s in new_sizes if s != 1]
@@ -7114,8 +7149,7 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
   raise core.ShardingTypeError(
       'This reshape is not supported. Please specify the sharding of'
       ' the output via the `out_sharding` argument of jax.lax.reshape. Got'
-      f' operand shape: {operand.shape}, new sizes: {new_sizes} and'
-      f' operand spec: {operand.sharding.spec}')
+      f' operand shape: {operand}, new sizes: {new_sizes}')
 
 def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
   filtered_spec = [sp for sh, sp in zip(operand.shape, operand.sharding.spec)
@@ -7128,7 +7162,7 @@ def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
     else:
       sp = next(fs)
       new_spec.append(sp)
-  return operand.sharding.with_spec(new_spec)
+  return operand.sharding.update(spec=new_spec)
 
 def _get_spec_size(sp, mesh):
   tup_sp = sp if isinstance(sp, tuple) else (sp,)
@@ -7146,13 +7180,12 @@ def _split_an_axis_sharding_rule(operand, out_split, new_sizes, dimensions):
       else:
         raise core.ShardingTypeError(
             'This reshape is not supported. Please specify the sharding of the'
-            ' output via the `sharding` argument of jax.lax.reshape. Got'
-            f' operand shape: {operand.shape}, new sizes: {new_sizes} and'
-            f' operand spec: {operand.sharding.spec}')
+            ' output via the `out_sharding` argument of jax.lax.reshape. Got'
+            f' operand shape: {operand}, new sizes: {new_sizes}')
     else:
       new_spec.append(sp)
   assert len(new_spec) == len(new_sizes), (new_spec, new_sizes)
-  return operand.sharding.with_spec(new_spec)
+  return operand.sharding.update(spec=new_spec)
 
 
 def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
@@ -7171,14 +7204,13 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
       else:
         raise core.ShardingTypeError(
             'This reshape is not supported. Please specify the sharding of the'
-            ' output via the `sharding` argument of jax.lax.reshape. Got'
-            f' operand shape: {operand.shape}, new sizes: {new_sizes} and'
-            f' operand spec: {operand.sharding.spec}')
+            ' output via the `out_sharding` argument of jax.lax.reshape. Got'
+            f' operand shape: {operand}, new sizes: {new_sizes}')
     else:
       new_spec.append(next(op_spec))
   assert next(op_spec, None) is None
   assert len(new_spec) == len(new_sizes), (new_spec, new_sizes)
-  return operand.sharding.with_spec(new_spec)
+  return operand.sharding.update(spec=new_spec)
 
 
 def _reshape_typecheck_rule(_, operand, *dyn_shape, new_sizes, dimensions,
@@ -7205,7 +7237,7 @@ def _reshape_transpose_rule(t, operand, *, new_sizes, dimensions, sharding):
   if dimensions is None:
     return [reshape(t, operand.aval.shape, out_sharding=operand.aval.sharding)]
   else:
-    t_s = operand.aval.sharding.with_spec(
+    t_s = operand.aval.sharding.update(spec=
         tuple(map(lambda s: s if s is None else str(s),
                   np.take(operand.aval.sharding.spec, dimensions))))
     return [transpose(reshape(t, np.take(operand.aval.shape, dimensions),
@@ -7306,7 +7338,7 @@ def _transpose_shape_rule(operand, *, permutation):
 def _transpose_sharding_rule(operand, *, permutation):
   o_spec = operand.sharding.spec
   new_spec = [o_spec[old_idx] for old_idx in permutation]
-  return operand.sharding.with_spec(new_spec)
+  return operand.sharding.update(spec=new_spec)
 
 def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   operand, = batched_args
@@ -7533,7 +7565,7 @@ def _reduce_shape_rule(*avals, computation, jaxpr, dimensions):
 
 def _reduce_sharding_rule(*avals, computation, jaxpr, dimensions):
   operand_avals, _ = split_list(avals, [len(avals) // 2])
-  return [op.sharding.with_spec(tuple_delete(op.sharding.spec, dimensions))
+  return [op.sharding.update(spec=tuple_delete(op.sharding.spec, dimensions))
           for op in operand_avals]
 
 def _reduce_vma_rule(*avals, computation, jaxpr, dimensions):
@@ -7632,7 +7664,8 @@ reduce_p.def_abstract_eval(
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
 
-def _reduce_lower(ctx, *values, computation, jaxpr, dimensions):
+def _reduce_lower(ctx: mlir.LoweringRuleContext, *values,
+                  computation, jaxpr: core.ClosedJaxpr, dimensions):
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in), ctx.avals_in
   operands, init_values = util.split_list(values, [len(values) // 2])
   init_value_avals = ctx.avals_in[len(values) // 2:]
@@ -7648,7 +7681,8 @@ def _reduce_lower(ctx, *values, computation, jaxpr, dimensions):
                                       name_stack, mlir.TokenSet(),
                                       jaxpr.consts,
                                       *reducer.arguments,
-                                      dim_var_values=ctx.dim_var_values)
+                                      dim_var_values=ctx.dim_var_values,
+                                      const_lowering=ctx.const_lowering)
     hlo.return_(mlir.flatten_ir_values(out_nodes))
   return [mlir.lower_with_sharding_in_types(ctx, r, aval)
           for r, aval in safe_zip(op.results, ctx.avals_out)]
@@ -7698,7 +7732,7 @@ def _reduce_op_sharding_rule(operand, *, axes):
   axes = frozenset(axes)
   new_spec = P(*tuple(s for i, s in enumerate(operand.sharding.spec)
                       if i not in axes))
-  return operand.sharding.with_spec(new_spec)
+  return operand.sharding.update(spec=new_spec)
 
 reduce_sum_p = standard_primitive(
   _reduce_op_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_sum'),
@@ -7769,7 +7803,7 @@ def _argminmax_shape_rule(operand, *, axes, index_dtype):
 
 def _argminmax_sharding_rule(operand, *, axes, index_dtype):
   axis, = axes
-  return operand.sharding.with_spec(
+  return operand.sharding.update(spec=
       util.tuple_delete(operand.sharding.spec, axis))
 
 def _argminmax_dtype_rule(operand, *, axes, index_dtype):
@@ -7830,14 +7864,23 @@ argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
 batching.defreducer(argmax_p, _get_max_identity)
 ad.defjvp_zero(argmax_p)
 
-mlir.register_lowering(argmin_p, mlir.cache_lowering(
-    mlir.lower_fun(partial(_compute_argminmax, lt, _get_min_identity),
-                   multiple_results=False)))
+mlir.register_lowering(
+    argmin_p,
+    mlir.lower_fun(
+        partial(_compute_argminmax, lt, _get_min_identity),
+        multiple_results=False,
+    ),
+    inline=False,
+)
 
-mlir.register_lowering(argmax_p, mlir.cache_lowering(
-    mlir.lower_fun(partial(_compute_argminmax, gt, _get_max_identity),
-                   multiple_results=False)))
-
+mlir.register_lowering(
+    argmax_p,
+    mlir.lower_fun(
+        partial(_compute_argminmax, gt, _get_max_identity),
+        multiple_results=False,
+    ),
+    inline=False,
+)
 
 def _reduce_logical_shape_rule(operand, *, axes):
   if operand.dtype != np.bool_ and not np.issubdtype(operand.dtype, np.integer):
@@ -7845,13 +7888,20 @@ def _reduce_logical_shape_rule(operand, *, axes):
   return tuple(np.delete(operand.shape, axes))
 
 def _reduce_logical_sharding_rule(operand, *, axes):
-  return operand.sharding.with_spec(tuple_delete(operand.sharding.spec, axes))
+  return operand.sharding.update(spec=tuple_delete(operand.sharding.spec, axes))
+
+def _reduce_or_lin(nzs, x, *, axes):
+  nz, = nzs
+  y = reduce_or_p.bind(x, axes=axes)
+  aval = core.typeof(y).to_tangent_aval()
+  return y, False, (), lambda _, t: ad_util.Zero(aval)
 
 reduce_or_p = standard_primitive(
     _reduce_logical_shape_rule, _input_dtype, 'reduce_or',
     weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_or'))
 batching.defreducer(reduce_or_p, _get_bitwise_or_identity)
+ad.primitive_linearizations[reduce_or_p] = _reduce_or_lin
 
 
 reduce_and_p = standard_primitive(
@@ -8061,7 +8111,7 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
                     mlir.flatten_ir_values(operands),
                     dimension=mlir.i64_attr(dimension),
                     is_stable=ir.BoolAttr.get(is_stable))
-  scalar_s = lambda a: a.sharding.with_spec(P())
+  scalar_s = lambda a: a.sharding.update(spec=P())
   scalar_avals = [aval.update(shape=(), sharding=scalar_s(aval))
                   for aval in ctx.avals_in]
   scalar_types = safe_map(mlir.aval_to_ir_type, scalar_avals)
@@ -8216,111 +8266,6 @@ def _after_all_lowering(ctx, *operands):
   aval_out, = ctx.avals_out
   return [hlo.after_all(operands)]
 mlir.register_lowering(after_all_p, _after_all_lowering)
-
-
-class InOutFeedEffect(effects.Effect):
-  pass
-infeed_effect = InOutFeedEffect()
-outfeed_effect = InOutFeedEffect()
-
-effects.custom_derivatives_allowed_effects.add_type(InOutFeedEffect)
-
-def infeed(token, shape=None, partitions=None):
-  """Consumes an infeed value of `shape` from the host. Experimental.
-
-  `token` is used to sequence infeed and outfeed effects.
-  `partitions` may be specified inside a `sharded_jit` function.
-  """
-  flat_shapes, treedef = tree_util.tree_flatten(shape)
-  for shape in flat_shapes:
-    if not isinstance(shape, ShapedArray):
-      raise TypeError("shape argument to infeed must be a pytree of "
-                      "ShapedArray values, got {}".format(shape))
-  if partitions is not None:
-    # Always replicate token.
-    # We specifically use type() to raise an error for PartitionSpecs.
-    if type(partitions) != tuple:  # pylint: disable=unidiomatic-typecheck
-      raise ValueError(f"'partitions' argument to infeed should be a tuple, "
-                       f"got {partitions}")
-    partitions = partitions + (None,)
-  xs_and_token = infeed_p.bind(token, shapes=tuple(flat_shapes),
-                               partitions=partitions)
-  return (treedef.unflatten(xs_and_token[:-1]), xs_and_token[-1])
-
-def _infeed_abstract_eval(token, *, shapes, partitions):
-  if token is not abstract_token:
-    raise TypeError("First argument to infeed must be a token")
-  return (*shapes, abstract_token), {infeed_effect}
-
-
-infeed_p = Primitive("infeed")
-infeed_p.multiple_results = True
-infeed_p.def_impl(partial(dispatch.apply_primitive, infeed_p))
-infeed_p.def_effectful_abstract_eval(_infeed_abstract_eval)
-mlir.lowerable_effects.add_type(InOutFeedEffect)
-
-
-def _infeed_lowering(ctx, token, *, shapes, partitions):
-  output_types = safe_map(mlir.aval_to_ir_type, ctx.avals_out[:-1])
-  flat_output_types = mlir.flatten_ir_types(output_types)
-  # TODO(phawkins): verify `shapes` have a major-to-minor layout.
-  layouts = ir.ArrayAttr.get([
-      ir.ArrayAttr.get(
-          [mlir.i64_attr(i)
-           for i in range(len(aval.shape) - 1, -1, -1)])
-      for aval in shapes
-  ])
-  infeed = hlo.InfeedOp(
-      flat_output_types + [hlo.TokenType.get()],
-      token,
-      infeed_config=ir.StringAttr.get(''),
-      layout=layouts)
-  if partitions is not None:
-    mlir.set_sharding(infeed, xla.sharding_to_proto(partitions))
-  token = infeed.results[-1]
-  outs = infeed.results[:-1]
-  return mlir.unflatten_ir_values_like_types(outs, output_types) + [
-      token,
-  ]
-
-mlir.register_lowering(infeed_p, _infeed_lowering)
-
-
-def outfeed(token, xs, partitions = None):
-  """Outfeeds value `xs` to the host. Experimental.
-
-  `token` is used to sequence infeed and outfeed effects.
-  `partitions` may be specified inside a `sharded_jit` or `pjit` function.
-  """
-  if partitions is not None:
-    # We specifically use type() to raise an error for PartitionSpecs.
-    if type(partitions) != tuple:  # pylint: disable=unidiomatic-typecheck
-      raise ValueError(f"'partitions' argument to outfeed should be a tuple, "
-                       f"got {partitions}")
-  flat_xs, _ = tree_util.tree_flatten(xs)
-  return outfeed_p.bind(token, *flat_xs, partitions=partitions)
-
-def _outfeed_abstract_eval(token, *xs, partitions):
-  if token is not abstract_token:
-    raise TypeError("First argument to outfeed must be a token")
-  return abstract_token, {outfeed_effect}
-
-outfeed_p = Primitive("outfeed")
-outfeed_p.def_impl(partial(dispatch.apply_primitive, outfeed_p))
-outfeed_p.def_effectful_abstract_eval(_outfeed_abstract_eval)
-mlir.lowerable_effects.add_type(InOutFeedEffect)
-
-
-def _outfeed_lowering(ctx, token, *xs, partitions):
-  outfeed = hlo.OutfeedOp(
-      mlir.flatten_ir_values(xs),
-      token,
-      outfeed_config=ir.StringAttr.get(''))
-  if partitions is not None:
-    mlir.set_sharding(outfeed, xla.sharding_to_proto(partitions))
-  return outfeed.results
-
-mlir.register_lowering(outfeed_p, _outfeed_lowering)
 
 
 def rng_uniform(a, b, shape):
@@ -8534,9 +8479,26 @@ mlir.register_lowering(copy_p, lambda ctx, x: [x])
 ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])
 pe.def_trivial_padding(copy_p)
 batching.defvectorized(copy_p)
-def _propagate_mem_kind_copy(in_mem_kind):
-  return in_mem_kind
-pxla.memory_kind_propagate_rule[copy_p] = _propagate_mem_kind_copy
+
+# The dce_sink_p primitive marks a value as "used" from the perspective of DCE
+# so the computation producing it won't be eliminated.
+def dce_sink(val):
+  tree_util.tree_map(dce_sink_p.bind, val)
+
+class NoDCEEffect(effects.Effect):
+  pass
+no_dce_effect = NoDCEEffect()
+effects.control_flow_allowed_effects.add_type(NoDCEEffect)
+effects.lowerable_effects.add_type(NoDCEEffect)
+
+dce_sink_p = core.Primitive('dce_sink')
+dce_sink_p.def_impl(lambda _: [])
+dce_sink_p.multiple_results = True
+dce_sink_p.def_effectful_abstract_eval(lambda _: ([], {no_dce_effect}))
+mlir.register_lowering(dce_sink_p, lambda ctx, _: [])
+ad.deflinear(dce_sink_p, lambda _: [])
+pe.def_trivial_padding(dce_sink_p)
+batching.defvectorized(dce_sink_p)
 
 def rng_bit_generator(key, shape, dtype=np.uint32,
                       algorithm=RandomAlgorithm.RNG_DEFAULT,
@@ -8548,7 +8510,7 @@ def rng_bit_generator(key, shape, dtype=np.uint32,
   default algorithm or the one specified.
 
   It provides direct access to the RngBitGenerator primitive exposed by XLA
-  (https://www.tensorflow.org/xla/operation_semantics#rngbitgenerator) for low
+  (https://www.openxla.org/xla/operation_semantics#rngbitgenerator) for low
   level API access.
 
   Most users should use `jax.random` instead for a stable and more user
@@ -8833,8 +8795,7 @@ _zeros: Callable = partial(full_like, fill_value=0)
 def _zero(x):
   x_aval = core.get_aval(x)
   out = full_like(x, shape=(), fill_value=0,
-                  sharding=x_aval.sharding.with_spec(P()))
-  out = core.pvary(out, tuple(x_aval.vma))
+                  sharding=x_aval.sharding.update(spec=P()))
   return out
 
 _ones: Callable = partial(full_like, fill_value=1)
@@ -8842,8 +8803,7 @@ _ones: Callable = partial(full_like, fill_value=1)
 def _one(x):
   x_aval = core.get_aval(x)
   out = full_like(x, shape=(), fill_value=1,
-                  sharding=x_aval.sharding.with_spec(P()))
-  out = core.pvary(out, tuple(x_aval.vma))
+                  sharding=x_aval.sharding.update(spec=P()))
   return out
 
 _twos: Callable = partial(full_like, fill_value=2)

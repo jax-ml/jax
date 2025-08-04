@@ -18,7 +18,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 import dataclasses
 import math
-from typing import Any, Callable, Protocol, Union
+from typing import Any, Protocol, Union
+from collections.abc import Callable
 
 from jax._src import core
 from jax._src import dtypes
@@ -323,10 +324,11 @@ class TransformedRef:
 
 # We need an aval for `Ref`s so we can represent `get` and `swap` in Jaxprs.
 class AbstractRef(core.AbstractValue):
-  __slots__ = ["inner_aval"]
+  __slots__ = ["inner_aval", "memory_space"]
 
-  def __init__(self, inner_aval: core.AbstractValue):
+  def __init__(self, inner_aval: core.AbstractValue, memory_space: Any = None):
     self.inner_aval = inner_aval
+    self.memory_space = memory_space
 
   @property
   def weak_type(self) -> bool:
@@ -335,12 +337,12 @@ class AbstractRef(core.AbstractValue):
     return self.inner_aval.weak_type
 
   def update_weak_type(self, weak_type):
-    return AbstractRef(self.inner_aval.update_weak_type(weak_type))
+    return self.update(inner_aval=self.inner_aval.update_weak_type(weak_type))
 
-  def update(self, inner_aval=None):
-    if inner_aval is None:
-      return AbstractRef(self.inner_aval)
-    return AbstractRef(inner_aval)
+  def update(self, inner_aval=None, memory_space=None):
+    inner_aval = self.inner_aval if inner_aval is None else inner_aval
+    memory_space = self.memory_space if memory_space is None else memory_space
+    return AbstractRef(inner_aval, memory_space)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: math.prod(self.shape))
@@ -357,7 +359,7 @@ class AbstractRef(core.AbstractValue):
       return self.inner_aval.shape  # pytype: disable=attribute-error
     except AttributeError:
       raise AttributeError(
-          f"`Ref{{{self.inner_aval.str_short()}}} has no `shape`."
+          f"{self!r} has no `shape`."
       ) from None
 
   @property
@@ -366,7 +368,7 @@ class AbstractRef(core.AbstractValue):
       return self.inner_aval.dtype  # pytype: disable=attribute-error
     except AttributeError:
       raise AttributeError(
-          f"`Ref{{{self.inner_aval.str_short()}}} has no `dtype`."
+          f"{self!r} has no `dtype`."
       ) from None
 
   @property
@@ -375,7 +377,7 @@ class AbstractRef(core.AbstractValue):
       return self.inner_aval.sharding  # pytype: disable=attribute-error
     except AttributeError:
       raise AttributeError(
-          f"`Ref{{{self.inner_aval.str_short()}}} has no `sharding`."
+          f"{self!r} has no `sharding`."
       ) from None
 
   @property
@@ -384,7 +386,7 @@ class AbstractRef(core.AbstractValue):
       return self.inner_aval.vma  # pytype: disable=attribute-error
     except AttributeError:
       raise AttributeError(
-          f"`Ref{{{self.inner_aval.str_short()}}} has no `vma`."
+          f"{self!r} has no `vma`."
       ) from None
 
   @core.aval_property
@@ -426,23 +428,28 @@ class AbstractRef(core.AbstractValue):
     return ref_set(tracer, idx, value)
 
   def __repr__(self) -> str:
+    if self.memory_space is not None:
+      return f'Ref<{self.memory_space}>{{{self.inner_aval.str_short()}}}'
     return f'Ref{{{self.inner_aval.str_short()}}}'
 
   def to_tangent_aval(self):
-    return AbstractRef(self.inner_aval.to_tangent_aval())
+    return AbstractRef(self.inner_aval.to_tangent_aval(), self.memory_space)
 
   def __eq__(self, other):
-    return (type(self) is type(other) and self.inner_aval == other.inner_aval)
+    return (type(self) is type(other) and self.inner_aval == other.inner_aval
+            and self.memory_space == other.memory_space)
 
   def __hash__(self):
-    return hash((self.__class__, self.inner_aval))
+    return hash((self.__class__, self.inner_aval, self.memory_space))
 
 def _map_ref(size, axis, ref_aval):
-  return AbstractRef(core.mapped_aval(size, axis, ref_aval.inner_aval))
+  return AbstractRef(core.mapped_aval(size, axis, ref_aval.inner_aval),
+                     ref_aval.memory_space)
 
 def _unmap_ref(size, axis, explicit_mesh_axis, ref_aval):
   return AbstractRef(core.unmapped_aval(
-      size, axis, ref_aval.inner_aval, explicit_mesh_axis))
+      size, axis, ref_aval.inner_aval, explicit_mesh_axis),
+                     ref_aval.memory_space)
 
 core.aval_mapping_handlers[AbstractRef] = (_map_ref, _unmap_ref)
 
@@ -458,19 +465,12 @@ def shaped_array_ref(
   return AbstractRef(core.ShapedArray(shape, dtype, weak_type=weak_type))
 
 def _shard_ref(mesh, auto, check_rep, names, ref_aval: AbstractRef):
-  del mesh
-  if names:
-    # Can't actually shard a ref, can only close over it.
-    raise NotImplementedError("Can't shard a Ref.")
-  return ref_aval
+  aval = core.shard_aval(mesh, auto, check_rep, names, ref_aval.inner_aval)
+  return AbstractRef(aval)
 core.shard_aval_handlers[AbstractRef] = _shard_ref
 
 def _unshard_ref(mesh, check_rep, names, ref_aval: AbstractRef):
-  del mesh
-  if names:
-    # Can't actually shard a ref, can only close over it.
-    raise NotImplementedError("Can't unshard a Ref")
-  return ref_aval
+  raise TypeError("can't unshard a ref")
 core.unshard_aval_handlers[AbstractRef] = _unshard_ref
 
 

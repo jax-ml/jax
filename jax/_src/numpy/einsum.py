@@ -13,18 +13,18 @@
 # limitations under the License.
 
 import collections
-from typing import overload, Any, Callable, Sequence
+from typing import overload, Any
+from collections.abc import Callable, Sequence
 
 import numpy as np
 import opt_einsum
 
+from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
-from jax._src.api import jit, named_call
 from jax._src.export import shape_poly
 from jax._src.lax import lax
-from jax._src.lax.lax import PrecisionLike
 from jax._src.numpy import util
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.typing import Array, ArrayLike, DTypeLike
@@ -45,7 +45,7 @@ def einsum(
     *operands: ArrayLike,
     out: None = None,
     optimize: str | bool | list[tuple[int, ...]] = "auto",
-    precision: PrecisionLike = None,
+    precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
     out_sharding=None,
@@ -58,7 +58,7 @@ def einsum(
     *operands: ArrayLike | Sequence[Any],
     out: None = None,
     optimize: str | bool | list[tuple[int, ...]] = "auto",
-    precision: PrecisionLike = None,
+    precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
     out_sharding=None,
@@ -70,7 +70,7 @@ def einsum(
     *operands,
     out: None = None,
     optimize: str | bool | list[tuple[int, ...]] = "auto",
-    precision: PrecisionLike = None,
+    precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
     out_sharding=None,
@@ -309,9 +309,9 @@ def einsum(
 
   contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)  # pytype: disable=attribute-error
 
-  jit_einsum = jit(_einsum, static_argnums=(1, 2, 3, 4, 5), inline=True)
+  jit_einsum = api.jit(_einsum, static_argnums=(1, 2, 3, 4, 5), inline=True)
   if spec is not None:
-    jit_einsum = named_call(jit_einsum, name=spec)
+    jit_einsum = api.named_call(jit_einsum, name=spec)
   operand_arrays = list(util.ensure_arraylike_tuple("einsum", operands))
   return jit_einsum(operand_arrays, contractions, precision,
                     preferred_element_type, _dot_general, out_sharding)
@@ -554,12 +554,12 @@ def _einsum(
           dot_general_out_sharding = None
         elif out_sharding is not None and names != result_names:
           if len(result_names) > len(out_sharding.spec):
-            out_sharding = out_sharding.with_spec(
+            out_sharding = out_sharding.update(spec=
                 out_sharding.spec._normalized_spec_for_aval(len(result_names)))
           spec = out_sharding.spec
           inverse_spec = tuple(spec[result_names.index(name)] for name in names)
           dot_general_out_sharding = NamedSharding(
-              out_sharding.mesh, spec.with_partitions(inverse_spec))
+              out_sharding.mesh, spec.update(partitions=inverse_spec))
         else:
           dot_general_out_sharding = out_sharding  # type: ignore
         dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))

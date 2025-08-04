@@ -16,6 +16,86 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Changes
+  * Exposed `jax.set_mesh` which acts as a global setter and a context manager.
+    Removed `jax.sharding.use_mesh` in favor of `jax.set_mesh`.
+  * JAX is now built using CUDA 12.9. All versions of CUDA 12.1 or newer remain
+    supported.
+
+* Deprecations:
+
+  * {func}`jax.lax.zeros_like_array` is deprecated. Please use
+    {func}`jax.numpy.zeros_like` instead.
+
+## JAX 0.7.0 (July 22, 2025)
+
+* New features:
+  * Added `jax.P` which is an alias for `jax.sharding.PartitionSpec`.
+  * Added {func}`jax.tree.reduce_associative`.
+
+* Breaking changes:
+  * JAX is migrating from GSPMD to Shardy by default. See the
+    [migration guide](https://docs.jax.dev/en/latest/shardy_jax_migration.html)
+    for more information.
+  * JAX autodiff is switching to using direct linearization by default (instead of
+    implementing linearization via JVP and partial eval).
+    See [migration guide](https://docs.jax.dev/en/latest/direct_linearize_migration.html)
+    for more information.
+  * `jax.stages.OutInfo` has been replaced with `jax.ShapeDtypeStruct`.
+  * {func}`jax.jit` now requires `fun` to be passed by position, and additional
+    arguments to be passed by keyword. Doing otherwise will result in an error
+    starting in v0.7.x. This raised a DeprecationWarning in v0.6.x.
+  * The minimum Python version is now 3.11. 3.11 will remain the minimum
+    supported version until July 2026.
+  * Layout API renames:
+    * `Layout`, `.layout`, `.input_layouts` and `.output_layouts` have been
+      renamed to `Format`, `.format`, `.input_formats` and `.output_formats`
+    * `DeviceLocalLayout`, `.device_local_layout` have been renamed to `Layout`
+      and `.layout`
+  * `jax.experimental.shard` module has been deleted and all the APIs have been
+    moved to the `jax.sharding` endpoint. So use `jax.sharding.reshard`,
+    `jax.sharding.auto_axes` and `jax.sharding.explicit_axes` instead of their
+    experimental endpoints.
+  * `lax.infeed` and `lax.outfeed` were removed, after being deprecated in
+    JAX 0.6. The `transfer_to_infeed` and `transfer_from_outfeed` methods were
+    also removed the `Device` objects.
+  * The `jax.extend.core.primitives.pjit_p` primitive has been renamed to
+    `jit_p`, and its `name` attribute has changed from `"pjit"` to `"jit"`.
+    This affects the string representations of jaxprs. The same primitive is no
+    longer exported from the `jax.experimental.pjit` module.
+  * The (undocumented) function `jax.extend.backend.add_clear_backends_callback`
+    has been removed. Users should use `jax.extend.backend.register_backend_cache`
+    instead.
+  * `out_sharding` arg added to `x.at[y].set` and `x.at[y].add`. Previous
+    behavior propagating operand sharding removed. Please use
+    `x.at[y].set/add(z, out_sharding=jax.typeof(x).sharding)` to retain previous
+    behavior if scatter op requires collectives.
+
+* Deprecations:
+  * {obj}`jax.dlpack.SUPPORTED_DTYPES` is deprecated; please use the new
+    {func}`jax.dlpack.is_supported_dtype` function.
+  * {func}`jax.scipy.special.sph_harm` has been deprecated following a similar
+    deprecation in SciPy; use {func}`jax.scipy.special.sph_harm_y` instead.
+  * From {mod}`jax.interpreters.xla`, the previously deprecated symbols
+    `abstractify` and `pytype_aval_mappings` have been removed.
+  * {func}`jax.interpreters.xla.canonicalize_dtype` is deprecated. For
+    canonicalizing dtypes, prefer {func}`jax.dtypes.canonicalize_dtype`.
+    For checking whether an object is a valid jax input, prefer
+    {func}`jax.core.valid_jaxtype`.
+  * From {mod}`jax.core`, the previously deprecated symbols `AxisName`,
+    `ConcretizationTypeError`, `axis_frame`, `call_p`, `closed_call_p`,
+    `get_type`, `trace_state_clean`, `typematch`, and `typecheck` have been
+    removed.
+  * From {mod}`jax.lib.xla_client`, the previously deprecated symbols
+    `DeviceAssignment`, `get_topology_for_devices`, and `mlir_api_version`
+    have been removed.
+  * `jax.extend.ffi` was removed after being deprecated in v0.5.0.
+    Use {mod}`jax.ffi` instead.
+  * {func}`jax.lib.xla_bridge.get_compile_options` is deprecated, and replaced by
+    {func}`jax.extend.backend.get_compile_options`.
+
+## JAX 0.6.2 (June 17, 2025)
+
 * New features:
   * Added {func}`jax.tree.broadcast` which implements a pytree prefix broadcasting helper.
 
@@ -1933,7 +2013,7 @@ Changes:
     Please upgrade to NumPy 1.20 or newer.
 * Changes
   * Added {mod}`jax.debug` that includes utilities for runtime value debugging such at {func}`jax.debug.print` and {func}`jax.debug.breakpoint`.
-  * Added new documentation for [runtime value debugging](debugging/index)
+  * Added new documentation for [runtime value debugging](https://github.com/jax-ml/jax/blob/7ac8181cce087d8bcd564d07e19f5067cb5d9d3b/docs/debugging/index.md)
 * Deprecations
   * {func}`jax.mask` {func}`jax.shapecheck` APIs have been removed.
     See {jax-issue}`#11557`.

@@ -17,10 +17,13 @@
 
 from __future__ import annotations
 
+import importlib
 import gc
 import os
 import pathlib
 import re
+from types import ModuleType
+import typing
 
 try:
   import jaxlib as jaxlib
@@ -83,16 +86,6 @@ version = check_jaxlib_version(
 import jaxlib.cpu_feature_guard as cpu_feature_guard
 cpu_feature_guard.check_cpu_features()
 
-import jaxlib.lapack as lapack  # noqa: F401
-import jaxlib.utils as utils  # noqa: F401
-import jaxlib._jax as _jax  # noqa: F401
-from jaxlib._jax import guard_lib as guard_lib  # noqa: F401
-from jaxlib._jax import jax_jit as jax_jit  # noqa: F401
-from jaxlib._jax import pmap_lib as pmap_lib  # noqa: F401
-from jaxlib._jax import pytree as pytree  # noqa: F401
-from jaxlib._jax import Device as Device  # noqa: F401
-from jaxlib import _profiler as _profiler  # noqa: F401
-
 import jaxlib.xla_client as xla_client  # noqa: F401
 
 # Jaxlib code is split between the Jax and the XLA repositories.
@@ -102,16 +95,31 @@ import jaxlib.xla_client as xla_client  # noqa: F401
 jaxlib_extension_version: int = getattr(xla_client, '_version', 0)
 ifrt_version: int = getattr(xla_client, '_ifrt_version', 0)
 
+import jaxlib.lapack as lapack  # noqa: F401
+import jaxlib.utils as utils  # noqa: F401
+import jaxlib._jax as _jax  # noqa: F401
+from jaxlib._jax import guard_lib as guard_lib  # noqa: F401
+from jaxlib._jax import jax_jit as jax_jit  # noqa: F401
+from jaxlib._jax import pmap_lib as pmap_lib  # noqa: F401
+from jaxlib._jax import pytree as pytree  # noqa: F401
+from jaxlib._jax import Device as Device  # noqa: F401
+from jaxlib import _profiler as _profiler  # noqa: F401
+try:
+  from jaxlib import _profile_data as _profile_data  # noqa: F401
+except (ImportError, ModuleNotFoundError):
+  _profile_data = None
+
 from jaxlib._jax import ffi as ffi  # noqa: F401
 import jaxlib.cpu_sparse as cpu_sparse  # noqa: F401
 has_cpu_sparse = True
 
 import jaxlib.weakref_lru_cache as weakref_lru_cache  # noqa: F401
+import jaxlib._pretty_printer as _pretty_printer  # noqa: F401
 
-if jaxlib_extension_version >= 350:
-  import jaxlib._pretty_printer as _pretty_printer  # noqa: F401
+if jaxlib_extension_version >= 365 or typing.TYPE_CHECKING:
+  import jaxlib._ifrt_proxy as ifrt_proxy  # noqa: F401
 else:
-  _pretty_printer = None
+  ifrt_proxy = _jax.ifrt_proxy
 
 
 # XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882
@@ -119,13 +127,16 @@ def _xla_gc_callback(*args):
   xla_client._xla.collect_garbage()
 gc.callbacks.append(_xla_gc_callback)
 
-try:
-  import jaxlib.cuda._versions as cuda_versions  # pytype: disable=import-error  # noqa: F401
-except ImportError:
+cuda_versions: ModuleType | None
+for pkg_name in ['jax_cuda13_plugin', 'jax_cuda12_plugin', 'jaxlib.cuda']:
   try:
-    import jax_cuda12_plugin._versions as cuda_versions  # pytype: disable=import-error  # noqa: F401
+    cuda_versions = importlib.import_module(
+        f'{pkg_name}._versions'
+    )
   except ImportError:
     cuda_versions = None
+  else:
+    break
 
 import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error  # noqa: F401
 import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error  # noqa: F401

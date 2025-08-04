@@ -17,7 +17,7 @@ load("//jaxlib:jax.bzl", "nanobind_extension")
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//jax:mosaic_gpu_users"],
+    default_visibility = ["//jax/experimental:mosaic_gpu_users"],
 )
 
 py_library(
@@ -147,7 +147,12 @@ cc_library(
 cc_library(
     name = "custom_call",
     srcs = ["custom_call.cc"],
+    linkopts = [
+        "-Wl,--export-dynamic-symbol='MosaicGpuCompile'",
+        "-Wl,--export-dynamic-symbol='MosaicGpuUnload'",
+    ],
     deps = [
+        ":library_paths",
         ":nvshmem",
         ":passes",
         ":target",
@@ -159,6 +164,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/numeric:bits",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -245,4 +251,9 @@ cc_binary(
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/tsl/cuda:cudart",
     ],
+)
+
+cc_library(
+    name = "library_paths",
+    hdrs = ["library_paths.h"],
 )

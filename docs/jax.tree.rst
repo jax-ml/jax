@@ -20,6 +20,7 @@ List of Functions
    map
    map_with_path
    reduce
+   reduce_associative
    structure
    transpose
    unflatten

@@ -16,7 +16,7 @@ import datetime
 import os
 import re
 import warnings
-from jax import version
+
 from jax._src import config
 from jax._src import hardware_utils
 
@@ -70,6 +70,8 @@ def cloud_tpu_init() -> None:
   set.
   """
   global running_in_cloud_tpu_vm
+
+  from jax import version  # pytype: disable=import-error
 
   # Exit early if we're not running on a Cloud TPU VM or libtpu isn't installed.
   libtpu_path = get_tpu_library_path()

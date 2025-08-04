@@ -23,7 +23,7 @@ from __future__ import annotations
 import atexit
 from collections.abc import Callable, Mapping
 import dataclasses
-from functools import lru_cache, partial
+from functools import partial
 import importlib
 import json
 import logging
@@ -31,7 +31,8 @@ import os
 import pkgutil
 import platform as py_platform
 import threading
-from typing import Any, Sequence, Union
+from typing import Any, Union
+from collections.abc import Sequence
 import warnings
 
 from jax._src import config
@@ -40,7 +41,6 @@ from jax._src import hardware_utils
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.cloud_tpu_init import get_tpu_library_path
-from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib import _profiler
@@ -114,6 +114,34 @@ _CPU_ENABLE_ASYNC_DISPATCH = config.bool_flag(
     "inline without async dispatch.",
 )
 
+CROSS_HOST_TRANSFER_SOCKET_ADDRESS = config.string_flag(
+    name="jax_cross_host_transfer_socket_address",
+    default="",
+    help="Socket address to use for cross host device transfers via DCN. "
+    "Necessary only if the PjRt plugin does not support cross host transfers.",
+)
+
+CROSS_HOST_TRANSPORT_ADDRESSES = config.string_flag(
+    name="jax_cross_host_transport_addresses",
+    default="",
+    help=(
+        "Comma-separated list of transport addresses to use for cross host "
+        "device transfers via DCN. If not set, defaults to [0.0.0.0:0] * 4."
+    ),
+)
+
+CROSS_HOST_TRANSFER_TIMEOUT_SECONDS = config.int_flag(
+    "jax_cross_host_transfer_timeout_seconds",
+    None,
+    "Timeout for cross host transfer metadata exchange through KV store. "
+    "Default is one minute.",
+)
+
+CROSS_HOST_TRANSFER_TRANSFER_SIZE = config.int_flag(
+    "jax_cross_host_transfer_transfer_size",
+    None,
+    "Chunk size for chunked transfer requests."
+)
 
 # Warn the user if they call fork(), because it's not going to go well for them.
 def _at_fork():
@@ -127,6 +155,29 @@ _at_fork_handler_installed = False
 # Backends
 
 _NameValueMapping = Mapping[str, Union[str, int, list[int], float, bool]]
+
+def _make_transfer_server_factory(
+) -> xla_client._xla.TransferServerInterfaceFactory | None:
+  """Creates a transfer server interface factory."""
+  if (not CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value or not
+      hasattr(_jax, "make_transfer_server_interface_factory")):
+    return None
+  transport_addresses = []
+  if CROSS_HOST_TRANSPORT_ADDRESSES.value:
+    transport_addresses = CROSS_HOST_TRANSPORT_ADDRESSES.value.split(",")
+  transfer_server_kwargs = {
+      "distributed_client": distributed.global_state.client,
+      "socket_address": CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value,
+      "transport_addresses": transport_addresses,
+  }
+  if CROSS_HOST_TRANSFER_TIMEOUT_SECONDS.value is not None:
+    transfer_server_kwargs["cross_host_transfer_timeout_seconds"] = (
+        CROSS_HOST_TRANSFER_TIMEOUT_SECONDS.value)
+  if CROSS_HOST_TRANSFER_TRANSFER_SIZE.value is not None:
+    transfer_server_kwargs["transfer_size"] = (
+        CROSS_HOST_TRANSFER_TRANSFER_SIZE.value)
+  return _jax.make_transfer_server_interface_factory(**transfer_server_kwargs)  # type: ignore
+
 
 def make_tpu_client(
     library_path: str | None = None, options: _NameValueMapping | None = None
@@ -142,7 +193,12 @@ def make_tpu_client(
     _jax.initialize_pjrt_plugin('tpu')
   if options is None:
     options = {}
-  return _jax.get_c_api_client('tpu', options)
+  return _jax.get_c_api_client(
+      "tpu",
+      options,
+      distributed.global_state.client,
+      _make_transfer_server_factory(),
+  )
 
 
 def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
@@ -282,34 +338,21 @@ def make_cpu_client(
 
   num_devices = num_cpu_devices.value if num_cpu_devices.value >= 0 else None
   return xla_client.make_cpu_client(
-    asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
-    distributed_client=distributed.global_state.client,
-    node_id=distributed.global_state.process_id,
-    num_nodes=distributed.global_state.num_processes,
-    collectives=collectives,
-    num_devices=num_devices,
+      asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
+      distributed_client=distributed.global_state.client,
+      node_id=distributed.global_state.process_id,
+      num_nodes=distributed.global_state.num_processes,
+      collectives=collectives,
+      num_devices=num_devices,
+      get_local_topology_timeout_minutes=cpu_get_local_topology_timeout_minutes.value,
+      get_global_topology_timeout_minutes=cpu_get_global_topology_timeout_minutes.value,
+      transfer_server_factory=_make_transfer_server_factory(),
   )
 
 
 register_backend_factory(
     "cpu", make_cpu_client, priority=0, fail_quietly=False
 )
-
-
-def _check_cuda_compute_capability(devices_to_check):
-  for idx in devices_to_check:
-    compute_cap = cuda_versions.cuda_compute_capability(idx)
-    if compute_cap < MIN_COMPUTE_CAPABILITY:
-      warnings.warn(
-        f"Device {idx} has CUDA compute capability {compute_cap/10} which is "
-        "lower than the minimum supported compute capability "
-        f"{MIN_COMPUTE_CAPABILITY/10}. See "
-        "https://docs.jax.dev/en/latest/installation.html#nvidia-gpu for "
-        "more details",
-        RuntimeWarning
-      )
-
-
 
 def get_num_nodes_from_gpu_topology(topology: str) -> int:
     try:
@@ -484,8 +527,43 @@ def _options_from_jax_configs(plugin_name):
 OptionsDict = Mapping[str, str | int | list[int] | float | bool]
 
 
-# TODO(b/261345120): decide on a public name and expose a public method which is
-# an alias of this method.
+def make_pjrt_c_api_client(
+    plugin_name: str,
+    options: OptionsDict | Callable[[], OptionsDict] | None = None,
+) -> xla_client.Client:
+  """Creates a PjRt client for the given plugin.
+
+  Args:
+    plugin_name: the name of the plugin.
+    options: Optional. It is used when creating a PJRT plugin client. Can be a
+      callable, in which case it will be invoked upon plugin initialization
+      time, and will be expected to return an option dictionary.
+  """
+  if not xla_client.pjrt_plugin_initialized(plugin_name):
+    xla_client.initialize_pjrt_plugin(plugin_name)
+  updated_options: dict[str, Any] = {}
+  if options is not None:
+    updated_options.update(options() if callable(options) else options)
+  updated_options.update(_options_from_jax_configs(plugin_name))
+  if distributed.global_state.client is None:
+    return xla_client.make_c_api_client(plugin_name, updated_options, None)
+
+  distribute_options = {
+      'node_id': distributed.global_state.process_id,
+      'num_nodes': distributed.global_state.num_processes,
+  }
+  if (slice_index := distributed.global_state.slice_index) is not None:
+    distribute_options['slice_index'] = slice_index
+  if options is not None:
+    distribute_options.update(updated_options)
+  return xla_client.make_c_api_client(
+      plugin_name,
+      distribute_options,
+      distributed.global_state.client,
+      _make_transfer_server_factory(),
+  )
+
+
 def register_plugin(
     plugin_name: str,
     *,
@@ -493,6 +571,7 @@ def register_plugin(
     library_path: str | None = None,
     options: OptionsDict | Callable[[], OptionsDict] | None = None,
     c_api: Any | None = None,
+    factory: BackendFactory | None = None,
 ) -> Any:
   """Registers a backend factory for the PJRT plugin.
 
@@ -506,28 +585,9 @@ def register_plugin(
       callable, in which case it will be invoked upon plugin initialization
       time, and will be expected to return an option dictionary.
     c_api: Optional. The plugin can provide a PJRT C API to be registered.
+    factory: Optional. A factory function that creates a PJRT client. If not
+      provided, a default factory will be used.
   """
-  def factory():
-    if not xla_client.pjrt_plugin_initialized(plugin_name):
-      xla_client.initialize_pjrt_plugin(plugin_name)
-    updated_options = {}
-    if options is not None:
-      updated_options.update(options() if callable(options) else options)
-    updated_options.update(_options_from_jax_configs(plugin_name))
-    if distributed.global_state.client is None:
-      return xla_client.make_c_api_client(plugin_name, updated_options, None)
-
-    distribute_options = {
-        'node_id': distributed.global_state.process_id,
-        'num_nodes': distributed.global_state.num_processes,
-    }
-    if (slice_index := distributed.global_state.slice_index) is not None:
-      distribute_options['slice_index'] = slice_index
-    if options is not None:
-      distribute_options.update(updated_options)
-    return xla_client.make_c_api_client(
-        plugin_name, distribute_options, distributed.global_state.client
-    )
 
   if library_path and c_api:
     logger.error(
@@ -543,6 +603,15 @@ def register_plugin(
         plugin_name,
     )
     return
+
+  if factory is not None and options is not None:
+    raise ValueError(
+        "Cannot provide both 'factory' and 'options' when registering PJRT"
+        " plugin. When providing a custom factory, the factory's must handle"
+        " its own options."
+    )
+  if factory is None:
+    factory = partial(make_pjrt_c_api_client, plugin_name, options=options)
 
   logger.debug(
       'registering PJRT plugin %s from %s', plugin_name, library_path
@@ -811,8 +880,6 @@ def _clear_backends() -> None:
     _backend_errors = {}
     _default_backend = None
 
-  get_backend.cache_clear()
-
 
 def _init_backend(platform: str) -> xla_client.Client:
   registration = _backend_factories.get(platform, None)
@@ -869,7 +936,7 @@ def _get_backend_uncached(
     return _default_backend
 
 
-@lru_cache(maxsize=None)  # don't use util.memoize because there is no X64 dependence.
+@util.cache(max_size=None, trace_context_in_key=False)  # don't use util.memoize because there is no X64 dependence.
 def get_backend(
     platform: None | str | xla_client.Client = None
 ) -> xla_client.Client:
@@ -982,7 +1049,7 @@ def backend_stablehlo_version(platform=None) -> Sequence[int] | None:
   backend = get_backend(platform)
   return getattr(backend, "stablehlo_current_version", None)
 
-@lru_cache
+@util.cache(max_size=None, trace_context_in_key=False)
 def local_devices(process_index: int | None = None,
                   backend: str | xla_client.Client | None = None,
                   host_id: int | None = None) -> list[xla_client.Device]:
@@ -1040,7 +1107,7 @@ def host_id(backend: str | xla_client.Client | None = None) -> int:
   return process_index(backend)
 
 
-@lru_cache
+@util.cache(max_size=None, trace_context_in_key=False)
 def process_count(
     backend: str | xla_client.Client | None = None
 ) -> int:
@@ -1125,5 +1192,26 @@ num_cpu_devices = config.int_state(
         "Number of CPU devices to use. If not provided, the value of "
         "the XLA flag --xla_force_host_platform_device_count is used."
         " Must be set before JAX is initialized."),
+    validator=_validate_backend_not_initialized,
+)
+
+cpu_get_local_topology_timeout_minutes = config.int_state(
+    name="jax_cpu_get_local_topology_timeout_minutes",
+    default=2,
+    help=(
+        "Timeout in minutes for getting the local topology of each CPU device"
+        " when building the global topology."
+    ),
+    validator=_validate_backend_not_initialized,
+)
+
+cpu_get_global_topology_timeout_minutes = config.int_state(
+    name="jax_cpu_get_global_topology_timeout_minutes",
+    default=5,
+    help=(
+        "Timeout in minutes for getting the global topology of CPU devices;"
+        " should be strictly greater than"
+        " `--jax_cpu_get_local_topology_timeout_minutes`."
+    ),
     validator=_validate_backend_not_initialized,
 )

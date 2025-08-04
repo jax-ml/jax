@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,9 +28,11 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/time/time.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/array.h"  // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
@@ -38,6 +41,8 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "jaxlib/to_ifrt_sharding.h"
 #include "jaxlib/traceback.h"
+#include "xla/pjrt/distributed/client.h"
+#include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
@@ -51,7 +56,9 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/pjrt_ifrt/pjrt_memory.h"
+#include "xla/python/pjrt_ifrt/transfer_server_interface.h"
 #include "xla/python/transfer/event_loop.h"
+#include "xla/python/transfer/pjrt_transfer_server.h"
 #include "xla/python/transfer/socket-server.h"
 #include "xla/python/transfer/socket_bulk_transport.h"
 #include "xla/python/transfer/streaming.h"
@@ -176,21 +183,25 @@ class PyTransferServer {
                      bool supports_pinned_allocator, bool use_raw_buffers) {
     use_raw_buffers_ = use_raw_buffers;
     std::shared_ptr<BulkTransportFactory> factory;
+    std::shared_ptr<xla::PjRtClient> pjrt_client =
+        tensorflow::down_cast<xla::ifrt::PjRtClient*>(client)
+            ->shared_ptr_pjrt_client();
     if (transport_addresses.empty()) {
       factory = BulkTransportFactory::CreateLocal();
     } else {
       auto tmp = xla::ValueOrThrow(
           AllocateAlignedMemory(xfer_size * max_num_parallel_copies));
       SlabAllocator uallocator(xla::ValueOrThrow(MapPjrtMemory(
-                                   client, tmp->data(), tmp->size(), tmp)),
+                                   pjrt_client, tmp->data(), tmp->size(), tmp)),
                                xfer_size);
       std::optional<SlabAllocator> pinned_allocator;
       if (supports_pinned_allocator) {
         auto tmp = xla::ValueOrThrow(
             AllocateNetworkPinnedMemory(xfer_size * max_num_parallel_copies));
-        pinned_allocator.emplace(xla::ValueOrThrow(MapPjrtMemory(
-                                     client, tmp->data(), tmp->size(), tmp)),
-                                 xfer_size);
+        pinned_allocator.emplace(
+            xla::ValueOrThrow(
+                MapPjrtMemory(pjrt_client, tmp->data(), tmp->size(), tmp)),
+            xfer_size);
       }
       factory = xla::ValueOrThrow(CreateSocketBulkTransportFactory(
           transport_addresses, pinned_allocator, uallocator));
@@ -198,9 +209,9 @@ class PyTransferServer {
 
     server_ = std::make_shared<SocketServer>();
 
-    TF_ASSIGN_OR_RETURN(auto mem,
-                        AllocateAndMapPjrtMemory(
-                            client, max_num_parallel_copies * xfer_size * 2));
+    TF_ASSIGN_OR_RETURN(
+        auto mem, AllocateAndMapPjrtMemory(
+                      pjrt_client, max_num_parallel_copies * xfer_size * 2));
     premapped_copier_ = std::make_shared<PremappedCopierState>(
         mem, max_num_parallel_copies, xfer_size);
     xfer_size_ = xfer_size;
@@ -241,7 +252,7 @@ absl::StatusOr<xla::ifrt::ArraySpec> ArraySpecFromShapeDtypeStruct(
   auto shape = xla::ifrt::Shape(
       xla::ifrt::Shape::Dimensions(shape_dims.begin(), shape_dims.end()));
   TF_ASSIGN_OR_RETURN(auto sharding,
-                      xla::GetIfrtHloSharding(aval.attr("sharding"), shape));
+                      jax::GetIfrtHloSharding(aval.attr("sharding"), shape));
   return xla::ifrt::ArraySpec{dtype, std::move(shape), std::move(sharding)};
 }
 
@@ -257,13 +268,11 @@ struct CopyDests {
 
 void RegisterTransferServerTypes(nanobind::module_& m) {
   nb::class_<PyTransferServerConnection>(m, "TransferConnection")
-#if JAX_IFRT_VERSION_NUMBER > 9
       .def(
           "_testonly_inject_failure",
           [](PyTransferServerConnection& self) { self.conn().InjectFailure(); })
-#endif
-      .def("_pull_flat", [](PyTransferServerConnection& self, uint64_t uuid,
-                            xla::nb_class_ptr<xla::PyClient> py_client,
+      .def("_pull_flat", [](PyTransferServerConnection& self, nb::int_ uuid,
+                            jax::nb_class_ptr<jax::PyClient> py_client,
                             std::vector<nb::object> py_avals) {
         auto* ifrt_client = llvm::dyn_cast_or_null<xla::ifrt::PjRtClient>(
             py_client->ifrt_client());
@@ -338,10 +347,17 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
           buffer_ids.push_back(static_cast<int>(buffer_ids.size()));
         }
 
-        self.Pull(uuid, buffer_ids, std::move(pull_dests));
+        uint64_t uuid_cpp;
+        try {
+          uuid_cpp = static_cast<uint64_t>(uuid);
+        } catch (std::out_of_range& e) {
+          throw nb::value_error(
+              "_pull_flat requires uuid to fit in a uint64_t");
+        }
+        self.Pull(uuid_cpp, buffer_ids, std::move(pull_dests));
 
-        std::vector<xla::PyArray> out;
-        auto traceback = xla::Traceback::Get();
+        std::vector<jax::PyArray> out;
+        auto traceback = jax::Traceback::Get();
         for (size_t i = 0; i < buffer_list.size(); ++i) {
           xla::ifrt::PjRtArray::PjRtBuffers buffers;
           buffers.reserve(buffer_list[i].size());
@@ -351,7 +367,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
           auto arr = xla::ValueOrThrow(xla::ifrt::PjRtArray::Create(
               ifrt_client, avals[i].dtype, avals[i].shape, avals[i].sharding,
               std::move(buffers), avals[i].layout));
-          out.push_back(xla::PyArray::MakeFromIfrtArrayAndSharding(
+          out.push_back(jax::PyArray::MakeFromIfrtArrayAndSharding(
               py_client, traceback, std::move(arr), shardings[i], false, true,
               /*skip_checks=*/false));
         }
@@ -362,14 +378,21 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
   nb::class_<PyTransferServer>(m, "TransferServer")
       .def("address", [](PyTransferServer& self) { return self.address(); })
       .def("_await_pull_flat",
-           [](PyTransferServer& self, uint64_t uuid,
-              std::vector<xla::PyArray> inputs) {
+           [](PyTransferServer& self, nb::int_ uuid,
+              std::vector<jax::PyArray> inputs) {
              std::vector<xla::ifrt::ArrayRef> arrs;
              arrs.reserve(inputs.size());
-             for (const xla::PyArray& input : inputs) {
+             for (const jax::PyArray& input : inputs) {
                arrs.push_back(tsl::FormRef(input.ifrt_array()));
              }
-             self.AwaitPull(uuid, arrs);
+             uint64_t uuid_cpp;
+             try {
+               uuid_cpp = static_cast<uint64_t>(uuid);
+             } catch (std::out_of_range& e) {
+               throw nb::value_error(
+                   "_await_pull_flat requires uuid to fit in a uint64_t");
+             }
+             self.AwaitPull(uuid_cpp, arrs);
            })
       .def("connect", [](PyTransferServer& self, const std::string& address) {
         return self.Connect(address);
@@ -377,7 +400,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
 
   m.def(
       "start_transfer_server",
-      [](xla::nb_class_ptr<xla::PyClient> py_client, std::string address,
+      [](jax::nb_class_ptr<jax::PyClient> py_client, std::string address,
          std::vector<std::string> transport_addresses_str,
          size_t max_num_parallel_copies, size_t transfer_size,
          bool supports_pinned_allocator,
@@ -404,6 +427,28 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
       // Technically unsafe (because a future donation won't wait for the
       // transfer to complete).
       nb::arg("use_raw_buffers") = false);
+  m.def(
+      "make_transfer_server_interface_factory",
+      [](size_t transfer_size, int cross_host_transfer_timeout_seconds,
+         std::shared_ptr<xla::DistributedRuntimeClient> distributed_client,
+         const std::string& socket_address,
+         const std::vector<std::string>& transport_addresses)
+          -> xla::ifrt::TransferServerInterfaceFactory {
+        std::shared_ptr<xla::KeyValueStoreInterface> kv_store =
+            xla::GetDistributedKeyValueStore(distributed_client,
+                                             "transfer_server:");
+        auto factory_fn = xla::ValueOrThrow(
+            xla::ifrt::PjRtTransferServer::MakePjRtTransferServerFactory(
+                transfer_size,
+                absl::Seconds(cross_host_transfer_timeout_seconds), kv_store,
+                socket_address, transport_addresses));
+        return xla::ifrt::TransferServerInterfaceFactory{std::move(factory_fn)};
+      },
+      nb::arg("transfer_size") = 256 * 1024 * 1024,
+      nb::arg("cross_host_transfer_timeout_seconds") = 60,
+      nb::arg("distributed_client").none() = nullptr,
+      nb::arg("socket_address") = SocketAddress().ToString(),
+      nb::arg("transport_addresses") = std::vector<std::string>());
 }
 
 }  // namespace aux

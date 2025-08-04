@@ -16,16 +16,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from jax import numpy as jnp
 from jax._src import array
 from jax._src import deprecations
 from jax._src import xla_bridge
 from jax._src.api import device_put
 from jax._src.lax.lax import _array_copy
 from jax._src.lib import xla_client
+from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy import scalar_types as jnp_types
 from jax._src.sharding import Sharding
-from jax._src.typing import Array
-from jax._src.typing import DLDeviceType
+from jax._src.typing import Array, DLDeviceType, DTypeLike
+
+import numpy as np
 
 
 DLPACK_VERSION = (0, 8)
@@ -37,11 +39,23 @@ MIN_DLPACK_VERSION = (0, 5)
 # For example,
 # hash(jnp.float32) != hash(jnp.dtype(jnp.float32))
 # hash(jnp.float32) == hash(jnp.dtype(jnp.float32).type)
-# TODO(phawkins): Migrate to using dtypes instead of the scalar type objects.
-SUPPORTED_DTYPES = frozenset({
-    jnp.int8, jnp.int16, jnp.int32, jnp.int64, jnp.uint8, jnp.uint16,
-    jnp.uint32, jnp.uint64, jnp.float16, jnp.bfloat16, jnp.float32,
-    jnp.float64, jnp.complex64, jnp.complex128, jnp.bool_})
+
+# TODO(vanderplas): remove this set
+SUPPORTED_DTYPES: frozenset[DTypeLike] = frozenset({
+    jnp_types.int8, jnp_types.int16, jnp_types.int32, jnp_types.int64,
+    jnp_types.uint8, jnp_types.uint16, jnp_types.uint32, jnp_types.uint64,
+    jnp_types.float16, jnp_types.bfloat16, jnp_types.float32, jnp_types.float64,
+    jnp_types.complex64, jnp_types.complex128, jnp_types.bool_})
+
+SUPPORTED_DTYPES_SET: frozenset[np.dtype] = frozenset({np.dtype(dt) for dt in SUPPORTED_DTYPES})
+
+
+def is_supported_dtype(dtype: DTypeLike) -> bool:
+  """Check if dtype is supported by jax.dlpack."""
+  if dtype is None:
+    # NumPy will silently cast this to float64, which may be surprising.
+    raise TypeError(f"Expected a string or dtype-like object; got {dtype=}")
+  return np.dtype(dtype) in SUPPORTED_DTYPES_SET
 
 
 def _to_dlpack(x: Array, stream: int | Any | None,

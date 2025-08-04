@@ -34,7 +34,6 @@ jit_no_excess_precision = functools.partial(
 )
 
 
-@jit_no_excess_precision
 def mm_ref(x, y):
   return jnp.dot(x, y, preferred_element_type=jnp.float32)
 
@@ -226,7 +225,9 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     x = jax.random.normal(k0, (512, 512), dtype)
     y = jax.random.normal(k1, (512, 512), dtype)
     np.testing.assert_allclose(
-        jax.jit(fusible_matmul)(x, y), mm_ref(x, y), atol=5e-5
+        jax.jit(fusible_matmul)(x, y),
+        jit_no_excess_precision(mm_ref)(x, y),
+        atol=5e-5,
     )
 
   @parameterized.parameters('float32', 'bfloat16')
@@ -242,8 +243,12 @@ class FusibleMatmulTest(jtu.JaxTestCase):
       x = jnp.maximum(x, 0.0)
       return x
 
+    @jit_no_excess_precision
+    def matmul_relu_ref(x, y):
+      return jax.nn.relu(mm_ref(x, y))
+
     np.testing.assert_allclose(
-        matmul_relu(x, y), jax.nn.relu(mm_ref(x, y)), atol=5e-5
+        matmul_relu(x, y), matmul_relu_ref(x, y), atol=5e-5
     )
 
   @parameterized.parameters('float32', 'bfloat16')
@@ -262,9 +267,13 @@ class FusibleMatmulTest(jtu.JaxTestCase):
       x = jnp.maximum(x, 0.0)
       return x
 
+    @jit_no_excess_precision
+    def matmul_bias_ref(x, y, b):
+      return jax.nn.relu(mm_ref(x, y).astype(dtype) + b)
+
     np.testing.assert_allclose(
         matmul_bias(x, y, b),
-        jax.nn.relu(mm_ref(x, y).astype(dtype) + b),
+        matmul_bias_ref(x, y, b),
         atol=5e-5 if dtype == 'float32' else 0.5,
     )
 
@@ -280,7 +289,13 @@ class FusibleMatmulTest(jtu.JaxTestCase):
       x = fusible_matmul(x, y[1])
       return x
 
-    np.testing.assert_allclose(matmul_slice(x, y), mm_ref(x, y[1]), atol=5e-5)
+    @jit_no_excess_precision
+    def matmul_slice_ref(x, y):
+      return mm_ref(x, y[1])
+
+    np.testing.assert_allclose(
+        matmul_slice(x, y), matmul_slice_ref(x, y), atol=5e-5
+    )
 
   @parameterized.parameters('float32', 'bfloat16')
   def test_matmul_with_dynamic_slice(self, dtype):
@@ -294,8 +309,12 @@ class FusibleMatmulTest(jtu.JaxTestCase):
       x = fusible_matmul(x, y[i])
       return x
 
+    @jit_no_excess_precision
+    def matmul_slice_ref(x, y, i):
+      return mm_ref(x, y[i])
+
     np.testing.assert_allclose(
-        matmul_slice(x, y, 1), mm_ref(x, y[1]), atol=5e-5
+        matmul_slice(x, y, 1), matmul_slice_ref(x, y, 1), atol=5e-5
     )
 
   @parameterized.parameters('float32', 'bfloat16')
@@ -311,9 +330,13 @@ class FusibleMatmulTest(jtu.JaxTestCase):
       x = fusible_matmul(x, y[j]).astype(dtype) + b[i]
       return x
 
+    @jit_no_excess_precision
+    def matmul_slice_ref(x, y, b, i, j):
+      return mm_ref(x, y[j]).astype(dtype) + b[i]
+
     np.testing.assert_allclose(
         matmul_slice(x, y, b, 1, 2),
-        mm_ref(x, y[2]).astype(dtype) + b[1],
+        matmul_slice_ref(x, y, b, 1, 2),
         atol=5e-5 if dtype == 'float32' else 0.5,
     )
 
@@ -329,8 +352,12 @@ class FusibleMatmulTest(jtu.JaxTestCase):
       x = fusible_matmul(x, y[1, 1])
       return x
 
+    @jit_no_excess_precision
+    def matmul_slice_ref(x, y):
+      return mm_ref(x, y[1, 1])
+
     np.testing.assert_allclose(
-        matmul_slice(x, y), mm_ref(x, y[1, 1]), atol=5e-5
+        matmul_slice(x, y), matmul_slice_ref(x, y), atol=5e-5
     )
 
   @parameterized.parameters('float32', 'bfloat16')
@@ -345,8 +372,12 @@ class FusibleMatmulTest(jtu.JaxTestCase):
       x = fusible_matmul(x, y[1][1])
       return x
 
+    @jit_no_excess_precision
+    def matmul_slice_ref(x, y):
+      return mm_ref(x, y[1][1])
+
     np.testing.assert_allclose(
-        matmul_slice(x, y), mm_ref(x, y[1, 1]), atol=5e-5
+        matmul_slice(x, y), matmul_slice_ref(x, y), atol=5e-5
     )
 
   @parameterized.parameters('float32', 'bfloat16')
@@ -361,10 +392,14 @@ class FusibleMatmulTest(jtu.JaxTestCase):
       x = fusible_matmul(x, y[i][j])
       return x
 
+    @jit_no_excess_precision
+    def matmul_slice_ref(x, y, i, j):
+      return mm_ref(x, y[i][j])
+
     for i in range(2):
       for j in range(3):
         np.testing.assert_allclose(
-            matmul_slice(x, y, i, j), mm_ref(x, y[i, j]), atol=5e-5
+            matmul_slice(x, y, i, j), matmul_slice_ref(x, y, i, j), atol=5e-5
         )
 
   @parameterized.parameters('float32', 'bfloat16')
@@ -379,10 +414,14 @@ class FusibleMatmulTest(jtu.JaxTestCase):
       x = fusible_matmul(x, y[2][i, j])
       return x
 
+    @jit_no_excess_precision
+    def matmul_slice_ref(x, y, i, j):
+      return mm_ref(x, y[2, i, j])
+
     for i in range(2):
       for j in range(3):
         np.testing.assert_allclose(
-            matmul_slice(x, y, i, j), mm_ref(x, y[2, i, j]), atol=5e-5
+            matmul_slice(x, y, i, j), matmul_slice_ref(x, y, i, j), atol=5e-5
         )
 
   @parameterized.parameters('float32', 'bfloat16')
@@ -431,7 +470,7 @@ class FusibleMatmulTest(jtu.JaxTestCase):
       x = fusible_matmul(x, y)
       return x
 
-    @jax.jit
+    @jit_no_excess_precision
     def matmul_concat_ref(x, ys):
       y = jnp.concatenate(ys, axis=1)
       return mm_ref(x, y)
@@ -793,6 +832,83 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     )
 
   @parameterized.parameters('float32', 'bfloat16')
+  def test_matmul_out_custom_vjp_fwd(self, dtype):
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, (256, 256), dtype)
+    y = jax.random.normal(k1, (256, 512), dtype)
+
+    @jax.custom_vjp
+    def act(x):
+      return jax.nn.relu(x) * x
+
+    def act_fwd(x):
+      del x
+      assert False, 'unreachable'
+
+    def act_bwd(res, dy):
+      del res, dy
+      assert False, 'unreachable'
+    act.defvjp(act_fwd, act_bwd)
+
+    def matmul(impl, x, y):
+      z = impl(x, y)
+      return act(z)
+    impl = fuser.fuse(
+        functools.partial(matmul, functools.partial(fusible_matmul, bn=256))
+    )
+    ref = functools.partial(matmul, mm_ref)
+    self.assertAllClose(
+        jax.jit(impl)(x, y),
+        jax.jit(ref)(x, y),
+        atol=5e-5,
+    )
+
+  @parameterized.parameters('float32', 'bfloat16')
+  def test_matmul_out_custom_vjp_bwd(self, dtype):
+    k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
+    x = jax.random.normal(k0, (256, 256), dtype)
+    y = jax.random.normal(k1, (256, 512), dtype)
+    dz = jax.random.normal(k2, (256, 512), dtype)
+
+    @jax.custom_vjp
+    def act(x):
+      return jax.nn.relu(x) * x
+
+    def act_fwd(x):
+      return jax.nn.relu(x) * x, (x,)
+
+    def act_bwd(res, dy):
+      x, = res
+      return (dy * x * 2.34,)
+    act.defvjp(act_fwd, act_bwd)
+
+    def matmul(impl, x, y, dz):
+      z = impl(x, y)
+      dz = dz.astype(z.dtype)
+      return jax.vjp(act, z)[1](dz)[0].astype(dtype)
+    impl = fuser.fuse(
+        functools.partial(matmul, functools.partial(fusible_matmul, bn=256))
+    )
+    ref = functools.partial(matmul, mm_ref)
+    out_dz = jax.jit(impl)(x, y, dz)
+    out_ref_dz = jax.jit(ref)(x, y, dz)
+    expected_dz = (
+        dz.astype(jnp.float32)
+        * 2.34
+        * jnp.dot(x, y, preferred_element_type=jnp.float32)
+    ).astype(dtype)
+    self.assertAllClose(
+        out_dz,
+        expected_dz,
+        atol=5e-5,
+    )
+    self.assertAllClose(
+        out_dz,
+        out_ref_dz,
+        atol=5e-5,
+    )
+
+  @parameterized.parameters('float32', 'bfloat16')
   def test_matmul_out_transpose_mul(self, dtype):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (256, 256), dtype)
@@ -908,9 +1024,7 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
       z = impl(x, y)
       return z
 
-    ref = functools.partial(
-        matmul, mm_ref
-    )
+    ref = functools.partial(matmul, mm_ref)
 
     out_ref = jit_no_excess_precision(ref)(x, y)
 

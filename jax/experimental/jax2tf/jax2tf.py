@@ -596,7 +596,7 @@ class GraphSerializationImpl(SerializationImpl):
     self.enable_xla = enable_xla
 
     fun_name = getattr(fun_jax, "__name__", "unknown")
-    name_stack = util.wrap_name(fun_name, "jax2tf")
+    name_stack = util.wrap_name("jax2tf", fun_name)
     self.name_stack = name_stack
     self.args_flat_tf = args_flat_tf
     self.debug = api_util.debug_info("jax2tf", fun_jax,
@@ -1314,14 +1314,16 @@ def _make_op_metadata(primitive: core.Primitive,
                       ) -> xla_data_pb2.OpMetadata:
   eqn_str = (str(source_info.name_stack) + '/'
              + core.str_eqn_compact(primitive, params))
-  frame = source_info_util.user_frame(source_info)
+  frame = source_info_util.user_frame(source_info.traceback)
   return xla_data_pb2.OpMetadata(
         op_type=primitive.name,
         op_name=eqn_str,
         source_file=mlir.get_canonical_source_file(
             frame.file_name if frame else "", mlir.TracebackCaches()),
-        source_line=frame.start_line if frame else None)
-
+        source_line=frame.start_line if frame else None,
+        source_end_line=frame.end_line if frame else None,
+        source_column=frame.start_column if frame else None,
+        source_end_column=frame.end_column if frame else None)
 
 class TensorFlowTrace(core.Trace):
   """Trace class that underlies the jax2tf transformation.
@@ -1520,12 +1522,12 @@ tf_not_yet_impl = [
     "create_token",
     "custom_transpose_call",
     "custom_vmap_call",
-    "infeed",
     "linear_call",
-    "outfeed",
     "pmax_p",
     "pmin",
     "ppermute",
+    "psend",
+    "precv",
     "psum",
     "psum2",
     "pbroadcast",
@@ -1558,6 +1560,7 @@ tf_not_yet_impl = [
     "repeat",
     "roll",
     "with_memory_space_constraint",
+    "remove_memory_space",
     # temporary pending cudnn fix, see https://github.com/jax-ml/jax/pull/23740
     "bias_fwd",
     "bias_bwd",
@@ -1575,6 +1578,7 @@ def _add(x: TfVal, y: TfVal) -> TfVal:
 tf_impl[ad_util.add_jaxvals_p] = _add
 tf_impl[dispatch.device_put_p] = lambda *xs, devices=None, srcs=None, copy_semantics=None: xs
 tf_impl[lax_internal.copy_p] = lambda x: x
+tf_impl[lax_internal.dce_sink_p] = lambda x: []
 
 def _shard_alike(*args: TfVal, **_):
   return tuple(args)
@@ -3563,20 +3567,41 @@ def _shard_value(val: TfVal,
     tad = sharding_proto.tile_assignment_devices  # type: ignore
 
   # To use xla_sharding.py, we must have a xla_data_pb2.OpSharding.
-  xla_sharding_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
+  xla_sharding_v1_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
       type=int(sharding_proto.type),
       tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
       tile_assignment_devices=tad,
       replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim,
       last_tile_dims=sharding_proto.last_tile_dims,
   )
+  # Shardy requires V2 sharding format.
+  if config.use_shardy_partitioner.value:
+    xla_sharding_v2_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
+        type=int(sharding_proto.type),
+        tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
+        tile_assignment_devices=sharding_proto.tile_assignment_devices,
+        iota_reshape_dims=sharding_proto.iota_reshape_dims,
+        iota_transpose_perm=sharding_proto.iota_transpose_perm,
+        replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim,
+        last_tile_dims=sharding_proto.last_tile_dims,
+    )
+  else:
+    xla_sharding_v2_proto = None
   if tf_context.executing_eagerly():
     raise ValueError(
         "A jit function with sharded arguments or results must be used under a `tf.function` context. "
         "See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#support-for-partitioning for a discussion")
 
-  return xla_sharding.Sharding(proto=xla_sharding_proto).apply_to_tensor(
-      val, use_sharding_op=True)
+  tf_version = tuple(int(v) for v in tf.__version__.split(".")[:2])
+  # apply_to_tensor comes from a tensorflow package, check the tensorflow
+  # version to make sure that it has the sharding_v2_proto parameter.
+  if tf_version < (2, 20):
+    return xla_sharding.Sharding(proto=xla_sharding_v1_proto).apply_to_tensor(
+        val, use_sharding_op=True
+    )
+  return xla_sharding.Sharding(proto=xla_sharding_v1_proto).apply_to_tensor(
+      val, use_sharding_op=True, sharding_v2_proto=xla_sharding_v2_proto
+  )
 
 
 def _pjit(*args: TfVal,
@@ -3601,7 +3626,7 @@ def _pjit(*args: TfVal,
                   skip_replicated_sharding=not _thread_local_state.enable_xla),
           args, in_hlo_shardings))
   results = _interpret_jaxpr(jaxpr, *sharded_args,
-                              extra_name_stack=util.wrap_name(name, "pjit"),
+                              extra_name_stack=util.wrap_name("pjit", name),
                               fresh_constant_cache=False)
   out_hlo_shardings: Sequence[xla_client.HloSharding | None] = map(
     _xla_compatible_sharding_to_hlo_sharding, out_shardings, _out_aval)
@@ -3612,7 +3637,7 @@ def _pjit(*args: TfVal,
   return tuple(sharded_results)
 
 
-tf_impl_with_avals[pjit.pjit_p] = _pjit
+tf_impl_with_avals[pjit.jit_p] = _pjit
 
 
 def _pjit_sharding_constraint(arg: TfVal, *,

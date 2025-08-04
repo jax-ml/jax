@@ -174,16 +174,12 @@ class PullBlockSpecTest(jtu.JaxTestCase):
       fn=[lax.mul, lax.add, lax.sub, lax.div, lax.max, lax.lt, lax.eq, lax.gt],
   )
   def test_binop(self, fn):
-
-    def f(x, y):
-      return fn(x, y)
-
     in_type = (
         jax.ShapeDtypeStruct((512, 512), jnp.float32),
         jax.ShapeDtypeStruct((512, 512), jnp.float32),
     )
     f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
-        f, *in_type
+        fn, *in_type
     )
     self.assertEmpty(new_values)
     self.assertEmpty(scalar_prefetch_values)
@@ -214,6 +210,39 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(
         kernel_fn((0, 0, 0), scalar_prefetch_values, new_values, x, y),
         fn(x, y),
+    )
+
+  def test_binop_bcast_mapped_dim(self):
+    in_type = (
+        jax.ShapeDtypeStruct((128, 512), jnp.float32),
+        jax.ShapeDtypeStruct((1, 512), jnp.float32),
+    )
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        lax.add, *in_type
+    )
+    self.assertEmpty(new_values)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec((None, 128), lambda i, j: (i, j))
+    kernel_fn, (value_block_specs, *in_block_specs), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid=(128, 4),
+            scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+        )(new_values, *in_type)
+    )
+    self.assertEmpty(value_block_specs)
+    self.assertLen(in_block_specs, 2)
+    x_block_spec, y_block_spec = in_block_specs
+    self.assertEqual(x_block_spec.block_shape, (None, 128))
+    self.assertEqual(x_block_spec.index_map(2, 3), (2, 3))
+    self.assertEqual(y_block_spec.block_shape, (None, 128))
+    self.assertEqual(y_block_spec.index_map(2, 3), (0, 3))
+
+    x = y = np.ones((128,), dtype=np.float32)
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0), scalar_prefetch_values, new_values, x, y), x + y
     )
 
   def test_slice(self):
@@ -771,12 +800,55 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         x_block,
     )
 
+  @parameterized.parameters(
+      # Merge two dimensions.
+      ((8, 8, 128), (1, 2, 128), (1, 1, 2, 128), (0, 2, 3, 5)),
+      ((2, 32, 128), (2, 4, 128), (2, 1, 4, 128), (2, 1, 1, 5)),
+      ((2, 4, 1024), (2, 1, 128), (2, 1, 1, 128), (2, 3, 5, 0)),
+      # Merge three dimensions.
+      ((64, 128), (4, 128), (1, 1, 4, 128), (0, 1, 0, 3)),
+      ((2, 4096), (1, 64), (1, 1, 1, 64), (2, 0, 1, 1)),
+      # Merge two pairs of dimensions.
+      ((8, 1024), (1, 256), (1, 1, 2, 128), (0, 2, 3, 0)),
+      # Merge three dims and expand in trailing dim.
+      ((64, 128, 1), (4, 128, 1), (1, 1, 4, 128), (0, 1, 0, 3)),
+  )
+  def test_reshape(
+      self, shape, block_shape, expected_x_block_shape, expected_x_index
+  ):
+    f = lambda x: x.reshape(shape)
+    in_type = jax.ShapeDtypeStruct((2, 4, 8, 128), jnp.float32)
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        f, in_type
+    )
+    self.assertEmpty(new_values)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec(block_shape, lambda *pids: pids)
+    kernel_fn, (value_block_specs, x_block_spec), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid=(2, 3, 4)[: len(shape)],
+            scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+        )(new_values, in_type)
+    )
+    pids = (2, 3, 5)[: len(shape)]
+    self.assertEmpty(value_block_specs)
+    self.assertEqual(x_block_spec.block_shape, expected_x_block_shape)
+    self.assertEqual(x_block_spec.index_map(*pids), expected_x_index)
+
+    x = jnp.arange(np.prod(block_shape), dtype=jnp.float32)
+    x = x.reshape(expected_x_block_shape)
+    y = kernel_fn((0, 1, 2), scalar_prefetch_values, (), x)
+    np.testing.assert_array_equal(y, x.reshape(block_shape))
+
   def test_basic_reshape_sublanes_to_lanes(self):
 
     def f(x):
-      return x.reshape((512, 2048))
+      return x.reshape((512, 4096))
 
-    in_type = jax.ShapeDtypeStruct((512, 16, 128), jnp.float32)
+    in_type = jax.ShapeDtypeStruct((512, 32, 128), jnp.float32)
     f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
         f, in_type
     )
@@ -793,6 +865,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         )(new_values, in_type)
     )
     self.assertEmpty(value_block_specs)
+    self.assertEqual(x_block_spec.block_shape, (256, 8, 128))
     self.assertEqual(x_block_spec.index_map(0, 1, 2), (0, 2, 0))
     self.assertEqual(x_block_spec.index_map(3, 2, 1), (3, 1, 0))
 
@@ -986,6 +1059,30 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         out_ref = gen((i, j))
         np.testing.assert_array_equal(out, out_ref)
 
+  def test_reduce_sum(self):
+
+    x = jnp.arange(1024 * 256, dtype=jnp.float32).reshape((1024, 256))
+    def f():
+      return x.sum(axis=1)
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(f)
+    self.assertLen(new_values, 1)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec((128,), lambda i: (i,))
+    kernel_fn, (value_block_specs,), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid=(8,),
+            scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+        )(new_values)
+    )
+    self.assertLen(value_block_specs, 1)
+    y = x[128:256]
+    out = kernel_fn((1,), scalar_prefetch_values, (y,))
+    np.testing.assert_array_equal(out, y.sum(axis=1))
+
 
 class PullBlockSpecHOPTest(jtu.JaxTestCase):
 
@@ -1058,6 +1155,52 @@ class PullBlockSpecHOPTest(jtu.JaxTestCase):
     relu_x = jax.nn.relu(x)
     np.testing.assert_array_equal(
         kernel_fn((0, 0, 0, 0), scalar_prefetch_values, (), x), relu_x
+    )
+
+  def test_custom_vjp(self):
+    @jax.custom_vjp
+    def act(x):
+      return jax.nn.relu(x) * x
+
+    def act_fwd(x):
+      return jax.nn.relu(x) * x, (x,)
+
+    def act_bwd(res, dy):
+      x, = res
+      return (dy * x * 2.34,)
+
+    act.defvjp(act_fwd, act_bwd)
+
+    def f(x):
+      return act(x)
+
+    in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        f, in_type
+    )
+    self.assertEmpty(new_values)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec(
+        (None, 1, 128, 128), lambda i, j, k, l, _: (i, j, k, l)
+    )
+    kernel_fn, (value_block_specs, *in_block_specs), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid=(2, 2, 4, 4),
+            scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+        )(new_values, in_type)
+    )
+    self.assertEmpty(value_block_specs)
+    x_block_spec = in_block_specs[0]
+    self.assertEqual(x_block_spec.index_map(0, 0, 1, 2, ()), (0, 0, 1, 2))
+    self.assertEqual(x_block_spec.index_map(1, 2, 3, 3, ()), (1, 2, 3, 3))
+
+    x = jax.random.normal(jax.random.key(0), (1, 128, 128), dtype=np.float32)
+    relu_x_x = jax.nn.relu(x) * x
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0, 0, 0), scalar_prefetch_values, (), x), relu_x_x
     )
 
   def test_pull_block_spec_handles_closed_over_constants(self):
@@ -1151,6 +1294,29 @@ class PushBlockSpecTest(parameterized.TestCase):
     self.assertTupleEqual(out_block_spec.index_map(0, 1, 2), (0, 2, 0))
     self.assertEqual(out_block_spec.index_map(3, 2, 1), (3, 1, 0))
 
+  def test_custom_vjp(self):
+    @jax.custom_vjp
+    def act(x):
+      return jax.nn.relu(x) * x
+
+    def act_fwd(x):
+      return jax.nn.relu(x) * x, (x,)
+
+    def act_bwd(res, dy):
+      x, = res
+      return (dy * x * 2.34,)
+
+    act.defvjp(act_fwd, act_bwd)
+
+    def f(x):
+      return act(x)
+
+    x_type = jax.ShapeDtypeStruct((1, 1, 512, 512), jnp.float32)
+    block_spec = pl.BlockSpec(
+        (None, 1, 128, 128), lambda i, j, k, l, _: (i, l, k, j)
+    )
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
+    self.assertEqual(out_block_spec.block_shape, block_spec.block_shape)
 
 
 if __name__ == '__main__':

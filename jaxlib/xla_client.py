@@ -43,7 +43,7 @@ ifrt_programs = _xla.ifrt_programs
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes. In JAX, reference this via jax._src.lib.jaxlib_extension_version.
-_version = 354
+_version = 365
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -70,6 +70,7 @@ def make_cpu_client(
     num_devices=None,
     get_local_topology_timeout_minutes=None,
     get_global_topology_timeout_minutes=None,
+    transfer_server_factory=None,
 ) -> Client:
   register_custom_call_handler('cpu', _xla.register_custom_call_target)
   register_custom_type_id_handler('cpu', _xla.register_custom_type_id)
@@ -82,6 +83,7 @@ def make_cpu_client(
       num_devices=num_devices,
       get_local_topology_timeout_minutes=get_local_topology_timeout_minutes,
       get_global_topology_timeout_minutes=get_global_topology_timeout_minutes,
+      transfer_server_factory=transfer_server_factory,
   )
 
 
@@ -134,6 +136,7 @@ def make_c_api_client(
     plugin_name: str,
     options: _NameValueMapping | None = None,
     distributed_client: _xla.DistributedRuntimeClient | None = None,
+    transfer_server_factory: _xla.TransferServerInterfaceFactory | None = None,
 ):
   """Creates a PJRT C API client for a PJRT plugin.
 
@@ -150,7 +153,12 @@ def make_c_api_client(
   """
   if options is None:
     options = {}
-  return _xla.get_c_api_client(plugin_name, options, distributed_client)
+  return _xla.get_c_api_client(
+      plugin_name,
+      options,
+      distributed_client,
+      transfer_server_factory,
+  )
 
 
 def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
@@ -190,6 +198,8 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
     options['preallocate'] = preallocate not in ('false', 'False', '0')
   if collective_memory_size:
     options['collective_memory_size'] = int(collective_memory_size) * (1 << 20)
+  abort = os.getenv('XLA_PYTHON_CLIENT_ABORT_COLLECTIVES_ON_FAILURE', '0')
+  options['abort_collectives_on_failure'] = bool(int(abort))
   return options
 
 
@@ -509,14 +519,14 @@ Frame = _xla.Frame
 
 
 @contextlib.contextmanager
-def tracebacks(enabled=True):
-  """Context manager that enables or disables traceback collection."""
-  saved = Traceback.enabled
-  Traceback.enabled = enabled
+def execution_stream_id(new_id: int):
+  """Context manager that overwrites and restores the current thread's execution_stream_id."""
+  saved = _xla.get_execution_stream_id()
+  _xla.set_execution_stream_id(new_id)
   try:
     yield
   finally:
-    Traceback.enabled = saved
+    _xla.set_execution_stream_id(saved)
 
 
 XlaRuntimeError = _xla.XlaRuntimeError

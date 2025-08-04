@@ -29,10 +29,7 @@ class CompilerParams(pallas_core.CompilerParams):
       32 threads.
     num_stages: The number of stages the compiler should use for software
       pipelining loops.
-    serialized_metadata: Additional compiler metadata. This field is unstable
-      and may be removed in the future.
   """
   BACKEND: ClassVar[pallas_core.Backend] = "triton"
   num_warps: int | None = None
   num_stages: int | None = None
-  serialized_metadata: bytes | None = None

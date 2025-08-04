@@ -33,6 +33,7 @@ from jax._src import test_util as jtu
 jax.config.parse_flags_with_absl()
 
 
+@unittest.skip("currently unmaintained")
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")
 class DynamicShapeStagingTest(jtu.JaxTestCase):
   def test_basic_staging(self):
@@ -1482,6 +1483,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     self.assertEqual(y.shape, (sz, 4))
     self.assertAllClose(y._data, x)
 
+@unittest.skip("currently unmaintained")
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow",
                  jax_traceback_filtering='off')
 class JumbleTest(jtu.JaxTestCase):

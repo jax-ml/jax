@@ -21,16 +21,22 @@ from collections.abc import Callable
 import gzip
 import itertools
 import json
+import logging
 import types
-from typing import Any, Iterator, Union
+from typing import Any, Union
+from collections.abc import Iterator
 
+from jax._src import config
 from jax._src import core
+from jax._src import path
 from jax._src import util
 from jax._src import source_info_util
 from jax._src.lib import xla_client
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
+
+logger = logging.getLogger(__name__)
 
 
 def _all_eqns(
@@ -142,8 +148,16 @@ def print_histogram(histogram: dict[Any, int]):
     print(count_fmt.format(count), name)
 
 
+DEFAULT_WORKSPACE_ROOT: str | None = None
+
+def _strip_workspace_root(filename: str, workspace_root: str) -> str:
+  i = filename.rfind(workspace_root)
+  return filename[i+len(workspace_root):] if i >= 0 else filename
+
+
 def _pprof_profile(
-    profile: dict[tuple[xla_client.Traceback | None, core.Primitive], int]
+    profile: dict[tuple[xla_client.Traceback | None, core.Primitive], int],
+    workspace_root: str | None = None,
 ) -> bytes:
   """Converts a profile into a compressed pprof protocol buffer.
 
@@ -181,14 +195,19 @@ def _pprof_profile(
                  "line": xla_client.Traceback.code_addr2line(code, lasti)}]}
       for (code, lasti), loc_id in loc.items()
   ]
-  functions = [
-      {"id": func_id,
-       "name": s[code.co_name],
-       "system_name": s[code.co_name],
-       "filename": s[code.co_filename],
-       "start_line": code.co_firstlineno}
-      for code, func_id in func.items()
-  ]
+  functions = []
+  for code, func_id in func.items():
+    filename = code.co_filename
+    name = code.co_qualname
+    if workspace_root is not None:
+      filename = _strip_workspace_root(filename, workspace_root)
+      name = f"{filename.removesuffix('.py').replace('/', '.')}.{name}"
+    functions.append(
+        {"id": func_id,
+        "name": s[name],
+        "filename": s[filename],
+        "start_line": code.co_firstlineno}
+    )
   sample_type = [{"type": s["equations"], "unit": s["count"]}]
   # This is the JSON encoding of a pprof profile protocol buffer. See:
   # https://github.com/google/pprof/blob/master/proto/profile.proto for a
@@ -203,7 +222,8 @@ def _pprof_profile(
   return gzip.compress(xla_client._xla.json_to_pprof_profile(json_profile))
 
 
-def pprof_equation_profile(jaxpr: core.Jaxpr) -> bytes:
+def pprof_equation_profile(jaxpr: core.Jaxpr, *,
+                           workspace_root: str | None = None) -> bytes:
   """Generates a pprof profile that maps jaxpr equations to Python stack traces.
 
   By visualizing the profile using pprof, one can identify Python code that is
@@ -211,6 +231,8 @@ def pprof_equation_profile(jaxpr: core.Jaxpr) -> bytes:
 
   Args:
     jaxpr: a Jaxpr.
+    workspace_root: the root of the workspace. If specified, function names
+      will be fully qualified, with respect to the workspace root.
 
   Returns:
     A gzip-compressed pprof Profile protocol buffer, suitable for passing to
@@ -220,7 +242,7 @@ def pprof_equation_profile(jaxpr: core.Jaxpr) -> bytes:
       (eqn.source_info.traceback, eqn.primitive)
       for _, eqn in all_eqns(jaxpr, revisit_inner_jaxprs=False)
   )
-  return _pprof_profile(d)
+  return _pprof_profile(d, workspace_root or DEFAULT_WORKSPACE_ROOT)
 
 def eqns_using_var_with_invar_index(jaxpr: core.Jaxpr, invar: core.Var) -> Iterator[tuple[core.JaxprEqn, int]]:
   """Find all the equations which use invar and the positional index of its binder"""
@@ -253,3 +275,37 @@ def eqns_using_var(jaxpr: core.Jaxpr, invar: core.Var) -> Iterator[core.JaxprEqn
     else:
       # if the previous condition fails, there is no deeper jaxpr to explore =(
       yield eqn
+
+def maybe_dump_jaxpr_to_file(
+    fun_name: str, jaxpr: core.Jaxpr
+) -> str | None:
+  """Maybe dumps the `jaxpr` to a file.
+
+  Dumps the jaxpr if JAX_DUMP_JAXPR_TO is defined.
+
+  Args:
+    fn: The name of the function whose jaxpr is being dumped.
+    jaxpr: The jaxpr to dump.
+
+  Returns:
+    The path to the file where the jaxpr was dumped, or None if no file was
+    dumped.
+  """
+  if not (out_dir := path.make_jax_dump_dir(config.jax_dump_ir_to.value)):
+    return None
+  modes = config.jax_dump_ir_modes.value.split(",")
+  if "jaxpr" not in modes and "eqn_count_pprof" not in modes:
+    return None
+  if "jaxpr" in modes:
+    logging.log(
+        logging.INFO, "Dumping jaxpr for %s to %s.", fun_name, out_dir
+    )
+    jaxpr_path = out_dir / f"{fun_name}.jaxpr.txt"
+    jaxpr_path.write_text(jaxpr.pretty_print())
+  if "eqn_count_pprof" in modes:
+    logging.log(
+        logging.INFO, "Dumping eqn count pprof for %s to %s.", fun_name, out_dir
+    )
+    eqn_prof_path = out_dir / f"{fun_name}.eqn_count_pprof"
+    eqn_prof_path.write_bytes(pprof_equation_profile(jaxpr))
+  return fun_name

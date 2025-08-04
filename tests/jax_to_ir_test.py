@@ -15,14 +15,20 @@
 import unittest
 
 from absl.testing import absltest
+from jax._src import test_util as jtu
 import jax.numpy as jnp
 from jax.tools import jax_to_ir
-from jax._src import test_util as jtu
+
 
 try:
   import tensorflow as tf
 except ImportError:
   tf = None  # type: ignore
+
+try:
+  from tensorflow.compiler.tf2xla.python import xla as tfxla
+except ImportError:
+  tfxla = None  # type: ignore
 
 
 def axpy(a, x, y):
@@ -81,6 +87,11 @@ class JaxToIRTest(absltest.TestCase):
       jax_to_ir.parse_shape_str('foo[]')
 
   @unittest.skipIf(tf is None, 'TensorFlow not installed.')
+  # TODO(dsuo): Remove this once we bump tensorflow version.
+  @unittest.skipIf(
+      tfxla is None or tfxla.call_module_maximum_supported_version() < 10,
+      'TensorFlow version too old.',
+  )
   def test_jax_to_tf_axpy(self):
     tf_proto, tf_text = jax_to_ir.jax_to_tf(axpy, [
         ('y', jax_to_ir.parse_shape_str('f32[128]')),

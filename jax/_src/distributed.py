@@ -51,10 +51,7 @@ class State:
                  cluster_detection_method: str | None = None,
                  initialization_timeout: int = 300,
                  coordinator_bind_address: str | None = None,
-                 service_heartbeat_interval_seconds: int = 10,
-                 service_max_missing_heartbeats: int = 10,
-                 client_heartbeat_interval_seconds: int = 10,
-                 client_max_missing_heartbeats: int = 10,
+                 heartbeat_timeout_seconds: int = 100,
                  slice_index: int | None = None):
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS'))
@@ -126,6 +123,10 @@ class State:
       )
       logger.warning(warning)
 
+
+    heartbeat_kwargs = {}
+    heartbeat_kwargs['heartbeat_timeout'] = heartbeat_timeout_seconds
+
     if process_id == 0:
       if self.service is not None:
         raise RuntimeError('distributed.initialize should only be called once.')
@@ -133,9 +134,7 @@ class State:
           'Starting JAX distributed service on %s', coordinator_bind_address
       )
       self.service = _jax.get_distributed_runtime_service(
-          coordinator_bind_address, num_processes,
-          heartbeat_interval=service_heartbeat_interval_seconds,
-          max_missing_heartbeats=service_max_missing_heartbeats)
+          coordinator_bind_address, num_processes, **heartbeat_kwargs) # type: ignore
 
     self.num_processes = num_processes
 
@@ -144,8 +143,7 @@ class State:
 
     self.client = _jax.get_distributed_runtime_client(
         coordinator_address, process_id, init_timeout=initialization_timeout,
-        heartbeat_interval=client_heartbeat_interval_seconds,
-        max_missing_heartbeats=client_max_missing_heartbeats, use_compression=True)
+        use_compression=True, **heartbeat_kwargs) # type: ignore
     logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
@@ -186,6 +184,7 @@ def initialize(coordinator_address: str | None = None,
                local_device_ids: int | Sequence[int] | None = None,
                cluster_detection_method: str | None = None,
                initialization_timeout: int = 300,
+               heartbeat_timeout_seconds: int = 100,
                coordinator_bind_address: str | None = None,
                slice_index: int | None = None):
   """Initializes the JAX distributed system.
@@ -243,6 +242,9 @@ def initialize(coordinator_address: str | None = None,
     initialization_timeout: Time period (in seconds) for which connection will
       be retried. If the initialization takes more than the timeout specified,
       the initialization will error. Defaults to 300 secs i.e. 5 mins.
+    heartbeat_timeout_seconds: The time (in seconds) after which a process is
+      considered dead if it hasn't successfully sent any heartbeats. Defaults
+      to 100 seconds.
     coordinator_bind_address: the address and port to which the coordinator service
       on process `0` should bind. If this is not specified, the default is to bind to
       all available addresses on the same port as ``coordinator_address``. On systems
@@ -276,6 +278,7 @@ def initialize(coordinator_address: str | None = None,
   global_state.initialize(coordinator_address, num_processes, process_id,
                           local_device_ids, cluster_detection_method,
                           initialization_timeout, coordinator_bind_address,
+                          heartbeat_timeout_seconds=heartbeat_timeout_seconds,
                           slice_index=slice_index)
 
 

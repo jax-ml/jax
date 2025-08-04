@@ -67,7 +67,7 @@ def conv_general_dilated(
   """General n-dimensional convolution operator, with optional dilation.
 
   Wraps XLA's `Conv
-  <https://www.tensorflow.org/xla/operation_semantics#conv_convolution>`_
+  <https://www.openxla.org/xla/operation_semantics#conv_convolution>`_
   operator.
 
   Args:

@@ -75,20 +75,12 @@ from jax._src.interpreters.partial_eval import (
   partial_eval_wrapper_nounits as partial_eval_wrapper_nounits,
   partition_pvals as partition_pvals,
   recipe_to_eqn as recipe_to_eqn,
-  trace_to_jaxpr_dynamic as _trace_to_jaxpr_dynamic,
+  trace_to_jaxpr_dynamic as trace_to_jaxpr_dynamic,
   trace_to_jaxpr_dynamic2 as trace_to_jaxpr_dynamic2,
   trace_to_jaxpr_nounits as trace_to_jaxpr_nounits,
   trace_to_subjaxpr_nounits as trace_to_subjaxpr_nounits,
   trace_to_subjaxpr_nounits_fwd as trace_to_subjaxpr_nounits_fwd,
   tracers_to_jaxpr as tracers_to_jaxpr,
 )
-
-
-# TODO(mattjj): remove temporary shim when trace_to_jaxpr_dynamic sig stabilizes
-def trace_to_jaxpr_dynamic(fun, in_avals, *, keep_inputs=None):  # noqa
-  jaxpr, out_avals, consts, () = _trace_to_jaxpr_dynamic(
-      fun, in_avals, keep_inputs=keep_inputs)
-  return jaxpr, out_avals, consts
-
 
 from jax._src.core import Jaxpr as Jaxpr

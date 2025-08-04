@@ -18,7 +18,8 @@ import io
 import itertools
 import math
 import textwrap
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 from jax import lax
 from jax._src import core as jax_core
 from jax._src import tree_util

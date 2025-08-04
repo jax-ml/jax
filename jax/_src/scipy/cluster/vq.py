@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import operator
 
-from jax import vmap
-import jax.numpy as jnp
+from jax._src import api
+from jax._src import numpy as jnp
+from jax._src.numpy import linalg as jnp_linalg
 from jax._src.numpy.util import check_arraylike, promote_dtypes_inexact
 from jax._src.typing import Array, ArrayLike
 
@@ -68,7 +69,7 @@ def vq(obs: ArrayLike, code_book: ArrayLike, check_finite: bool = True) -> tuple
       obs_arr, cb_arr = obs_arr[..., None], cb_arr[..., None]
   if obs_arr.ndim != 2:
       raise ValueError("ndim different than 1 or 2 are not supported")
-  dist = vmap(lambda ob: jnp.linalg.norm(ob[None] - cb_arr, axis=-1))(obs_arr)
+  dist = api.vmap(lambda ob: jnp_linalg.norm(ob[None] - cb_arr, axis=-1))(obs_arr)
   code = jnp.argmin(dist, axis=-1)
-  dist_min = vmap(operator.getitem)(dist, code)
+  dist_min = api.vmap(operator.getitem)(dist, code)
   return code, dist_min

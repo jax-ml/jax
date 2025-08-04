@@ -698,7 +698,27 @@ class JitTest(jtu.BufferDonationTestCase):
     f.clear_cache()
     gc.collect()
     num_live = len(client.live_executables())
-    self.assertEqual(num_live_initial, num_live)
+    # You would hope that these would be equal, but in practice we sometimes
+    # observe *fewer* live executables after this code runs in threaded tests.
+    # I suspect this is an artifact of other caches and garbage collection.
+    self.assertGreaterEqual(num_live_initial, num_live)
+
+  def test_pe_close_jaxpr_cache_leak(self):
+    @jax.jit
+    def f(x):
+      return lax.cond(x, lambda: x, lambda: ~ x)
+
+    jaxpr = f.trace(True).jaxpr
+    jax_util.clear_all_caches()
+
+    res1 = pe.close_jaxpr(jaxpr.jaxpr)
+    res2 = pe.close_jaxpr(jaxpr.jaxpr)
+    self.assertIs(res1, res2)
+    keys_1 = pe.close_jaxpr.cache_keys()
+    self.assertGreater(len(keys_1), 0)
+    del jaxpr, res1, res2, keys_1
+    keys_2 = pe.close_jaxpr.cache_keys()
+    self.assertEmpty(keys_2, 0)
 
   def test_jit_shallow_copy(self):
     def f(x):
@@ -1852,19 +1872,19 @@ class APITest(jtu.JaxTestCase):
     x2 = api.device_get(dx)
     self.assertNotIsInstance(x2, jax.Array)
     self.assertIsInstance(x2, np.ndarray)
-    assert np.all(x == x2)
+    self.assertArraysEqual(x2, x)
 
     y = [x, (2 * x, 3 * x)]
     dy = api.device_put(y)
     y2 = api.device_get(dy)
     self.assertIsInstance(y2, list)
     self.assertIsInstance(y2[0], np.ndarray)
-    assert np.all(y2[0] == x)
+    self.assertArraysEqual(y2[0], x)
     self.assertIsInstance(y2[1], tuple)
     self.assertIsInstance(y2[1][0], np.ndarray)
-    assert np.all(y2[1][0] == 2 * x)
+    self.assertArraysEqual(y2[1][0], 2 * x)
     self.assertIsInstance(y2[1][1], np.ndarray)
-    assert np.all(y2[1][1] == 3 * x)
+    self.assertArraysEqual(y2[1][1], 3 * x)
 
   def test_device_put_sharding(self):
     mesh = jax.sharding.Mesh(jax.devices(), ('x',))
@@ -2136,7 +2156,7 @@ class APITest(jtu.JaxTestCase):
     y2 = api.device_get(y)
     self.assertIsInstance(y2, list)
     self.assertIsInstance(y2[0], np.ndarray)
-    assert np.all(y2[0] == x)
+    self.assertArraysEqual(y2[0], x)
     self.assertIsInstance(y2[1], int)
     self.assertEqual(y2[1], 2)
 
@@ -2217,11 +2237,11 @@ class APITest(jtu.JaxTestCase):
     x = R(3)
 
     f = lambda x: jnp.dot(A, x)
-    assert np.allclose(jacfwd(f)(x), A)
-    assert np.allclose(jacrev(f)(x), A)
+    self.assertAllClose(jacfwd(f)(x), A)
+    self.assertAllClose(jacrev(f)(x), A)
 
     f = lambda x: jnp.tanh(jnp.dot(A, x))
-    assert np.allclose(jacfwd(f)(x), jacrev(f)(x))
+    self.assertAllClose(jacfwd(f)(x), jacrev(f)(x))
 
   @jax.default_matmul_precision("float32")
   def test_hessian(self):
@@ -2230,7 +2250,7 @@ class APITest(jtu.JaxTestCase):
     x = R(4)
 
     f = lambda x: jnp.dot(x, jnp.dot(A, x))
-    assert np.allclose(hessian(f)(x), A + A.T)
+    self.assertAllClose(hessian(f)(x), A + A.T)
 
   @jax.default_matmul_precision("float32")
   def test_hessian_holomorphic(self):
@@ -2239,7 +2259,8 @@ class APITest(jtu.JaxTestCase):
     x = R(4).astype('complex64') * (1 + 2j)
 
     f = lambda x: jnp.dot(x, jnp.dot(A.astype(x.dtype), x))
-    assert np.allclose(hessian(f, holomorphic=True)(x), A + A.T)
+    self.assertAllClose(
+        hessian(f, holomorphic=True)(x), (A + A.T).astype(x.dtype))
 
   @jax.default_matmul_precision("float32")
   def test_hessian_aux(self):
@@ -2249,17 +2270,17 @@ class APITest(jtu.JaxTestCase):
 
     f = lambda x: (jnp.dot(x, jnp.dot(A, x)), x)
     h, aux = hessian(f, has_aux=True)(x)
-    assert np.allclose(h, A + A.T)
-    assert np.allclose(aux, x)
+    self.assertAllClose(h, A + A.T)
+    self.assertAllClose(aux, x)
 
   def test_std_basis(self):
     basis = api._std_basis(jnp.zeros(3))
     assert getattr(basis, "shape", None) == (3, 3)
-    assert np.allclose(basis, np.eye(3))
+    self.assertAllClose(basis, np.eye(3))
 
     basis = api._std_basis(jnp.zeros((3, 3)))
     assert getattr(basis, "shape", None) == (9, 3, 3)
-    assert np.allclose(basis, np.eye(9).reshape(9, 3, 3))
+    self.assertAllClose(basis, np.eye(9).reshape(9, 3, 3))
 
     basis = api._std_basis([0., (jnp.zeros(3), jnp.zeros((3, 4)))])
     assert isinstance(basis, list) and len(basis) == 2
@@ -3145,6 +3166,69 @@ class APITest(jtu.JaxTestCase):
     self.assertIn("stablehlo.cosine", stablehlo)
     self.assertIn("stablehlo.sine", stablehlo)
 
+  def test_constants_not_in_lowering_jit(self):
+    if not config.use_simplified_jaxpr_constants.value:
+      self.skipTest("Works only with simplified Jaxpr consts")
+    const_size = 100
+    const = jax.random.uniform(jax.random.key(0), (const_size,),
+                               dtype=np.float32)
+
+    @jax.jit
+    def f():
+      return jax.jit(lambda: const + 1.)()
+
+    with jtu.collect_lowered_jaxprs() as collection:
+      res = f()
+      res = f()
+    self.assertAllClose(const + 1., res)
+
+    for j, j_module in collection:
+      self.assertNotRegex(str(j_module),
+       f"stablehlo.constant dense.*tensor<{const_size}x")
+
+  def test_constants_not_in_lowering_scan(self):
+    if not config.use_simplified_jaxpr_constants.value:
+      self.skipTest("Works only with simplified Jaxpr consts")
+    const_size = 100
+    const = jax.random.uniform(jax.random.key(0), (const_size,),
+                               dtype=np.float32)
+    def f():
+      def scan_body(carry, x):
+        return const, None  # Closed over and return
+      return lax.scan(jax.jit(scan_body),
+                      jnp.zeros((const_size,), dtype=np.float32),  # ignored
+                      jnp.zeros((8, const_size), dtype=np.float32))
+
+    with jtu.collect_lowered_jaxprs() as collection:
+      res, _ = f()
+      res, _ = f()
+    self.assertAllClose(const, res)
+
+    for j, j_module in collection:
+      self.assertNotRegex(str(j_module),
+          f"stablehlo.constant dense.*tensor<{const_size}x")
+
+  def test_constants_not_in_lowering_cond(self):
+    if not config.use_simplified_jaxpr_constants.value:
+      self.skipTest("Works only with simplified Jaxpr consts")
+    const_size = 100
+    const = jax.random.uniform(jax.random.key(0), (const_size,),
+                               dtype=np.float32)
+
+    def f(x):
+      return lax.cond(x >= 0., jax.jit(lambda: const),
+                      lambda: const)
+
+    with jtu.collect_lowered_jaxprs() as collection:
+      res = f(42.)
+      f(43.)
+    self.assertAllClose(const, res)
+
+    for j, j_module in collection:
+      self.assertNotRegex(str(j_module),
+          f"stablehlo.constant dense.*tensor<{const_size}x")
+
+
   def test_concurrent_device_get_and_put(self):
     def f(x):
       for _ in range(100):
@@ -3434,6 +3518,7 @@ class APITest(jtu.JaxTestCase):
         r"containing an array, got empty \*args=\(\{\},\) and \*\*kwargs=\{\}"):
       api.pmap(lambda x: x)({})
 
+  @jtu.thread_unsafe_test()  # counting compilations isn't thread-safe
   def test_pmap_global_cache(self):
     def f(x, y):
       return x, y
@@ -3511,7 +3596,7 @@ class APITest(jtu.JaxTestCase):
       logging.set_verbosity(prev_level)
     self.assertGreaterEqual(len(l.output), 3)  # 3 lines
     self.assertTrue(any('Finished tracing' in line for line in l.output))
-    self.assertTrue(any('Compiling f' in line for line in l.output))
+    self.assertTrue(any('Compiling jit(f)' in line for line in l.output))
     self.assertTrue(any('Finished XLA compilation' in line for line in l.output))
 
   def test_grad_of_jit_compilation_caching(self):
@@ -3611,7 +3696,7 @@ class APITest(jtu.JaxTestCase):
     outer_jaxpr, inner_jaxpr = jaxprs
 
     self.assertLen(outer_jaxpr.eqns, 1)
-    prim_name = 'pjit'
+    prim_name = 'jit'
     jaxpr_param = 'jaxpr'
     self.assertEqual(outer_jaxpr.eqns[0].primitive.name, f'{prim_name}')
     subjaxpr_1 = outer_jaxpr.eqns[0].params[f"{jaxpr_param}"]
@@ -3850,6 +3935,7 @@ class APITest(jtu.JaxTestCase):
       with self.assertRaisesRegex(Exception, r"Leaked"):
         f(np.ones(1))
 
+  @unittest.skip('TODO(dougalm): re-enable once we fix tests that were showing tracer leaks')
   def test_leak_checker_catches_a_grad_leak(self):
     with jax.checking_leaks():
       lst = []
@@ -4266,14 +4352,14 @@ class APITest(jtu.JaxTestCase):
       return x * 2
 
     jaxpr = api.make_jaxpr(f)(3)
-    self.assertIn('pjit', str(jaxpr))
+    self.assertIn('jit', str(jaxpr))
 
     @partial(api.jit, inline=True)
     def f(x):
       return x * 2
 
     jaxpr = api.make_jaxpr(f)(3)
-    self.assertNotIn('pjit', str(jaxpr))
+    self.assertNotIn('jit', str(jaxpr))
 
   # Repro for https://github.com/jax-ml/jax/issues/7229.
   def test_compute_with_large_transfer(self):
@@ -4335,9 +4421,6 @@ class APITest(jtu.JaxTestCase):
   def test_leaked_tracer_issue_7613(self):
     # from https://github.com/jax-ml/jax/issues/7613
     import numpy.random as npr
-
-    def sigmoid(x):
-      return 1. / (1. + jnp.exp(-x))
 
     x = jnp.ones((1, 50))
     A = jnp.array(npr.randn(50, 50), dtype=x.dtype)
@@ -4421,6 +4504,11 @@ class APITest(jtu.JaxTestCase):
         self.assertEqual(num_traces, nt)
       finally:
         config.update("jax_numpy_rank_promotion", allow_promotion)
+
+  def test_frexp_sharded(self):
+    mesh = jtu.create_mesh((1,), 'x')
+    x = jax.device_put(np.ones(8), jax.NamedSharding(mesh, jax.P('x')))
+    jax.jacrev(lambda x: jnp.frexp(x)[0])(x)  # doesn't crash
 
   def test_grad_negative_argnums(self):
     def f(x, y):
@@ -4546,11 +4634,14 @@ class APITest(jtu.JaxTestCase):
       return x
 
     state = jnp.arange(5, dtype=jnp.uint32)
-    inner_fn(state)
-    outer_fn(state)
 
+    outer_fn(state)
+    outer_fn(state)
     self.assertEqual(inner_count, 1)
     self.assertEqual(outer_count, 1)
+
+    inner_fn(state)
+    self.assertEqual(inner_count, 1)  # not retraced when top-level
 
   def test_grad_conj_symbolic_zeros(self):
     # https://github.com/jax-ml/jax/issues/15400
@@ -5081,6 +5172,84 @@ class APITest(jtu.JaxTestCase):
             )
         )
 
+  def test_make_jaxpr_deduplicates_consts(self):
+    # We don't promise this behavior in the public API, but we've had it for a
+    # long time. This test checks we don't *unintentionally* break it.
+    c = np.ones(3)
+
+    def find_constants(jaxpr: core.ClosedJaxpr):
+      for j in it.chain([jaxpr], core.subjaxprs(jaxpr)):
+        for eq in j.eqns:
+          for inv in eq.invars:
+            if isinstance(inv, core.Literal) and np.shape(inv.val):
+              yield inv.val
+
+    def uniq(lst):
+      return {id(v): v for v in lst}.values()
+
+    @jax.make_jaxpr
+    def f():
+      return c, jnp.sum(c), c, jnp.sum(c)
+
+    if config.use_simplified_jaxpr_constants.value:
+      consts = uniq(find_constants(f()))
+    else:
+      consts = f().consts
+
+    self.assertLen(consts, 1)
+
+    d = np.zeros(3)
+
+    @jax.make_jaxpr
+    def g():
+      return jax.lax.cond(True,
+                          lambda: (c, jnp.sum(c), c),
+                          lambda: (c, jnp.sum(d), d))
+    if config.use_simplified_jaxpr_constants.value:
+      consts = uniq(find_constants(g()))
+    else:
+      consts = g().consts
+    self.assertLen(consts, 2)
+
+  # TODO(mattjj,dougalm): this test was flakey on CI; figure out how to enable?
+  # @jtu.run_on_devices('cpu')
+  # def test_implicit_dce_linearize(self):
+  #   def foo(x):
+  #     const = np.zeros((300,))
+  #     x * const
+  #     r = weakref.ref(const)
+  #     del const
+  #     assert r() is None, "oops, the constant wasn't DCE'd"
+  #     return x
+  #   with config.use_direct_linearize(True):
+  #     _ = jax.grad(foo)(3.)
+
+  @jtu.run_on_devices('cpu')
+  def test_implicit_dce_linearize_jaxpr(self):
+    def foo(x):
+      const = np.zeros((300,))
+      x * const
+      r = weakref.ref(const)
+      del const
+      return x
+
+    with config.use_direct_linearize(True):
+      _, f_vjp = jax.vjp(foo, 3.)
+
+    self.assertNotIn('mul', str(f_vjp))
+
+  # TODO(mattjj,dougalm): re-enable when we set auto_dce=True by default
+  # @jtu.run_on_devices('cpu')
+  # def test_implicit_dce(self):
+  #   @api.jit
+  #   def foo(x):
+  #     const = np.zeros((300,))
+  #     r = weakref.ref(const)
+  #     jnp.sin(const) + const
+  #     del const
+  #     assert r() is None, "oops, the constant wasn't DCE'd"
+  #     return x + x
+  #   foo(1.0)
 
 class RematTest(jtu.JaxTestCase):
 
@@ -6082,18 +6251,24 @@ class RematTest(jtu.JaxTestCase):
       return z * ((x1 * x2) * y) * np.array([3.])
 
     res = saved_residuals(f, (2., 3.), y=4.)
-    self.assertLen(res, 6)
-    self.assertEqual(res[0][0].shape, (1,))
-    self.assertEqual(res[0][1], "from a constant")
-    self.assertEqual(res[1][0].shape, ())
-    self.assertEqual(res[1][1], "from the argument x[0]")
-    self.assertEqual(res[2][0].shape, ())
-    self.assertEqual(res[2][1], "from the argument x[1]")
-    self.assertEqual(res[3][0].shape, ())
-    self.assertEqual(res[3][1], "from the argument y")
-    self.assertEqual(res[4][0].shape, ())
-    self.assertStartsWith(res[4][1], "named 'z'")
-    self.assertEqual(res[5][0].shape, ())
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertLen(res, 5)
+      start_idx = 0
+    else:
+      self.assertLen(res, 6)
+      self.assertEqual(res[0][0].shape, (1,))
+      self.assertEqual(res[0][1], "from a constant")
+      start_idx = 1
+
+    self.assertEqual(res[start_idx][0].shape, ())
+    self.assertEqual(res[start_idx][1], "from the argument x[0]")
+    self.assertEqual(res[start_idx + 1][0].shape, ())
+    self.assertEqual(res[start_idx + 1][1], "from the argument x[1]")
+    self.assertEqual(res[start_idx + 2][0].shape, ())
+    self.assertEqual(res[start_idx + 2][1], "from the argument y")
+    self.assertEqual(res[start_idx + 3][0].shape, ())
+    self.assertStartsWith(res[start_idx + 3][1], "named 'z'")
+    self.assertEqual(res[start_idx + 4][0].shape, ())
 
   def test_saved_residuals_utility_jit(self):
     @jax.jit
@@ -6103,18 +6278,22 @@ class RematTest(jtu.JaxTestCase):
       return z * ((x1 * x2) * y) * np.array([3.])
 
     res = saved_residuals(f, (2., 3.), y=4.)
-    self.assertLen(res, 6)
-    self.assertEqual(res[0][0].shape, (1,))
-    self.assertEqual(res[0][1], "from a constant")
+    if config.use_simplified_jaxpr_constants.value:
+      base_res_idx = 0
+    else:
+      self.assertEqual(res[0][1], "from a constant")
+      self.assertEqual(res[0][0].shape, (1,))
+      res.pop(0)
+    self.assertLen(res, 5)
+    self.assertEqual(res[0][0].shape, ())
+    self.assertEqual(res[0][1], "from the argument x[0]")
     self.assertEqual(res[1][0].shape, ())
-    self.assertEqual(res[1][1], "from the argument x[0]")
+    self.assertEqual(res[1][1], "from the argument x[1]")
     self.assertEqual(res[2][0].shape, ())
-    self.assertEqual(res[2][1], "from the argument x[1]")
+    self.assertEqual(res[2][1], "from the argument y")
     self.assertEqual(res[3][0].shape, ())
-    self.assertEqual(res[3][1], "from the argument y")
+    self.assertStartsWith(res[3][1], "output of jitted function 'f'")
     self.assertEqual(res[4][0].shape, ())
-    self.assertStartsWith(res[4][1], "output of jitted function 'f'")
-    self.assertEqual(res[5][0].shape, ())
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -6155,7 +6334,7 @@ class RematTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:  # noqa: F841
       for _ in range(20):
         f_vjp(1.)[0].block_until_ready()
-    self.assertEqual(count(), 2)  # fwd execute_trivial, backward_pass on bwd
+    self.assertLessEqual(count(), 2)
 
   def test_vjp_caching_static_argnums(self):
     identity = jax.remat(lambda x, y: jax.jit(lambda x: 2 * x if y else x)(x),
@@ -6164,7 +6343,7 @@ class RematTest(jtu.JaxTestCase):
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       for _ in range(20):
         f_vjp(1.)[0].block_until_ready()
-    self.assertEqual(count(), 2)  # fwd execute_trivial, backward_pass on bwd
+    self.assertLessEqual(count(), 2)
 
   def test_fwd_caching(self):
     # see above test also
@@ -6760,6 +6939,44 @@ class RematTest(jtu.JaxTestCase):
     else:
       assert False
 
+  def test_name_stack_annotation(self):
+    def g(x, y):
+      with jax.named_scope("g"):
+        return x @ y
+
+    def g1(x, y):
+      with jax.named_scope("g1"):
+        t = checkpoint_name(x @ y, "save_me")
+      return t
+
+    def f2(x, ws):
+      for i, w in enumerate(ws):
+        if i % 8 == 1:
+          x = g1(x, w)
+        else:
+          x = g(x, w)
+        x = jnp.tanh(x)
+      return jnp.sum(x)
+
+    @jax.remat
+    def f(x, ws):
+      return jax.named_call(jax.jit(f2), name='run_per_expert_shard')(x, ws)
+
+    def make_weight(i):
+      if i % 2 == 0:
+        return jnp.ones([64, 128])
+      else:
+        return jnp.ones([128, 64])
+
+    x = jnp.ones([64, 64])
+    ws = [make_weight(i) for i in range(2)]
+
+    out = f(x, ws)
+    vjp = jax.make_jaxpr(jax.vjp(functools.partial(f, x), ws)[1])(out)
+
+    s = vjp.jaxpr.pretty_print(name_stack=True)
+    self.assertEqual(s.count('rematted_computation'), 1)
+
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTest(jtu.JaxTestCase):
@@ -6779,7 +6996,19 @@ class JaxprTest(jtu.JaxTestCase):
       return (x, 1., np.zeros(1, dtype=jnp.float32))
 
     dtype = "f64" if config.enable_x64.value else "f32"
-    expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}[], a) }}"
+    if config.use_simplified_jaxpr_constants.value:
+      expected = f"{{ lambda ; a:f32[]. let  in (a, 1.0:{dtype}[], [...]:f32[1]) }}"
+    else:
+      expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}[], a) }}"
+    jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
+    self.assertMultiLineStrippedEqual(expected, str(jaxpr))
+
+  @config.use_simplified_jaxpr_constants(True)
+  def test_non_scalar_const(self):
+    def fun(x):
+      return (x, np.zeros(3, dtype=jnp.float32))
+
+    expected = "{ lambda ; a:f32[]. let  in (a, [...]:f32[3]) }"
     jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 

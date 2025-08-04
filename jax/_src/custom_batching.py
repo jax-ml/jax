@@ -160,7 +160,7 @@ class custom_vmap:
         lu.wrap_init(self.fun, debug_info=debug_fun),
         in_tree)
     in_avals = [core.get_aval(x) for x in args_flat]
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     in_tree = treedef_tuple((tree_structure(consts), in_tree))
     assert self.vmap_rule is not None
@@ -295,7 +295,7 @@ def custom_vmap_jvp(primals, tangents, *,
       out_mutually_batched.store(out_batched)
       return out
 
-    api_util.save_wrapped_fun_sourceinfo(to_jvp, call.jaxpr.debug_info)
+    api_util.save_wrapped_fun_debug_info(to_jvp, call.jaxpr.debug_info)
     def to_vmap_over_extra_batched_dims(primals, tangents):
       return api.jvp(to_jvp, primals, tangents)
 

@@ -38,19 +38,9 @@ except ImportError:
   portpicker = None
 
 try:
-  from tensorflow.python.profiler import profiler_client
-  from tensorflow.python.profiler import profiler_v2 as tf_profiler
+  from xprof.convert import _pywrap_profiler_plugin
 except ImportError:
-  profiler_client = None
-  tf_profiler = None
-
-XPROF_ENABLED = False
-try:
-  import xprof
-  del xprof
-  XPROF_ENABLED = True
-except ImportError:
-  pass
+  _pywrap_profiler_plugin = None
 
 jax.config.parse_flags_with_absl()
 
@@ -113,6 +103,31 @@ class ProfilerTest(unittest.TestCase):
         self.assertIn(b"/device:TPU", proto)
       self.assertIn(b"pxla.py", proto)
 
+  def testProgrammaticProfilingWithOptions(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      try:
+        options = jax.profiler.ProfileOptions()
+        options.python_tracer_level = 0
+        jax.profiler.start_trace(tmpdir, profiler_options=options)
+        jax.pmap(lambda x: jax.lax.psum(x + 1, "i"), axis_name="i")(
+            jnp.ones(jax.local_device_count())
+        )
+      finally:
+        jax.profiler.stop_trace()
+
+      proto_path = glob.glob(
+          os.path.join(tmpdir, "**/*.xplane.pb"), recursive=True
+      )
+      self.assertEqual(len(proto_path), 1)
+      with open(proto_path[0], "rb") as f:
+        proto = f.read()
+      # Verify that the serialized proto contains host and device traces, and
+      # does not contain Python traces.
+      self.assertIn(b"/host:CPU", proto)
+      if jtu.test_device_matches(["tpu"]):
+        self.assertIn(b"/device:TPU", proto)
+      self.assertNotIn(b"pxla.py", proto)
+
   def testProgrammaticProfilingPathlib(self):
     with tempfile.TemporaryDirectory() as tmpdir_string:
       tmpdir = pathlib.Path(tmpdir_string)
@@ -131,6 +146,29 @@ class ProfilerTest(unittest.TestCase):
       self.assertIn(b"/host:CPU", proto)
       if jtu.test_device_matches(["tpu"]):
         self.assertIn(b"/device:TPU", proto)
+      self.assertIn(b"pxla.py", proto)
+
+  def testProgrammaticProfilingWithOptionsPathlib(self):
+    with tempfile.TemporaryDirectory() as tmpdir_string:
+      tmpdir = pathlib.Path(tmpdir_string)
+      try:
+        options = jax.profiler.ProfileOptions()
+        options.advanced_configuration = {"tpu_trace_mode": "TRACE_ONLY_HOST"}
+        jax.profiler.start_trace(tmpdir, profiler_options=options)
+        jax.pmap(lambda x: jax.lax.psum(x + 1, "i"), axis_name="i")(
+            jnp.ones(jax.local_device_count())
+        )
+      finally:
+        jax.profiler.stop_trace()
+
+      proto_path = tuple(tmpdir.rglob("*.xplane.pb"))
+      self.assertEqual(len(proto_path), 1)
+      proto = proto_path[0].read_bytes()
+      # Verify that the serialized proto contains host traces and does not
+      # contain TPU device traces.
+      self.assertIn(b"/host:CPU", proto)
+      if jtu.test_device_matches(["tpu"]):
+        self.assertNotIn(b"/device:TPU", proto)
       self.assertIn(b"pxla.py", proto)
 
   def testProfilerGetFDOProfile(self):
@@ -182,7 +220,7 @@ class ProfilerTest(unittest.TestCase):
   def testProgrammaticGpuCuptiTracing(self):
     @jit
     def xy_plus_z(x, y, z):
-        return jnp.float32(jax.lax.batch_matmul(jnp.bfloat16(x), y)) + z
+      return jnp.float32(jax.lax.batch_matmul(jnp.bfloat16(x), y)) + z
     k = jax.random.key(0)
     s = 1, 16, 16
     jax.devices()
@@ -252,8 +290,8 @@ class ProfilerTest(unittest.TestCase):
                      'Expected one path match: ' + path)
 
   @unittest.skip("Test causes OOMs")
-  @unittest.skipIf(not (portpicker and profiler_client and tf_profiler),
-    "Test requires tensorflow.profiler and portpicker")
+  @unittest.skipIf(not (portpicker and _pywrap_profiler_plugin),
+    "Test requires xprof and portpicker")
   def testSingleWorkerSamplingMode(self, delay_ms=None):
     def on_worker(port, worker_start):
       jax.profiler.start_server(port)
@@ -268,17 +306,24 @@ class ProfilerTest(unittest.TestCase):
 
     def on_profile(port, logdir, worker_start):
       worker_start.wait()
-      options = tf_profiler.ProfilerOptions(
-          host_tracer_level=2,
-          python_tracer_level=2,
-          device_tracer_level=1,
-          delay_ms=delay_ms,
-      )
+      options = {
+          "host_tracer_level": 2,
+          "python_tracer_level": 2,
+          "device_tracer_level": 1,
+          "delay_ms": delay_ms,
+      }
 
       # Request for 1000 milliseconds of profile.
       duration_ms = 1000
-      profiler_client.trace(f'localhost:{port}', logdir, duration_ms,
-                            '', 1000, options)
+      _pywrap_profiler_plugin.trace(
+          f'localhost:{port}',
+          logdir,
+          '',
+          True,
+          duration_ms,
+          3,
+          options
+      )
       self.profile_done = True
 
     logdir = absltest.get_default_test_tmpdir()
@@ -296,9 +341,8 @@ class ProfilerTest(unittest.TestCase):
     self._check_xspace_pb_exist(logdir)
 
   @unittest.skipIf(
-      not (portpicker and profiler_client and tf_profiler and XPROF_ENABLED),
-    "Test requires tensorflow.profiler, portpicker and "
-    "tensorboard_profile_plugin")
+      not (portpicker and _pywrap_profiler_plugin),
+    "Test requires xprof and portpicker")
   def test_remote_profiler(self):
     port = portpicker.pick_unused_port()
     jax.profiler.start_server(port)

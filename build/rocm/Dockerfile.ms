@@ -40,7 +40,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
         liblzma-dev
 
 # Install pyenv with different python versions
-ARG PYTHON_VERSION=3.10.14
+ARG PYTHON_VERSION=3.11.13
 RUN git clone https://github.com/pyenv/pyenv.git /pyenv
 ENV PYENV_ROOT /pyenv
 ENV PATH $PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH

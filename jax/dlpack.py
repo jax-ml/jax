@@ -18,19 +18,29 @@ import jax._src.deprecations
 
 from jax._src.dlpack import (
   from_dlpack as from_dlpack,
+  is_supported_dtype as is_supported_dtype,
   SUPPORTED_DTYPES as SUPPORTED_DTYPES,
 )
 
 _deprecations = {
+    # Deprecated in JAX v0.7.0
+    "SUPPORTED_DTYPES": (
+        (
+            "jax.SUPPORTED_DTYPES is deprecated in JAX v0.7.0 and will be removed"
+            " in JAX v0.8.0. Use jax.dlpack.is_supported_dtype() instead."
+        ),
+        jax._src.dlpack.SUPPORTED_DTYPES
+    ),
+    # Finalized in JAX v0.7.0; remove in JAX v0.8.0
     "to_dlpack": (
         (
-            "jax.dlpack.to_dlpack was deprecated in JAX v0.6.0 and will be"
+            "jax.dlpack.to_dlpack was deprecated in JAX v0.6.0 and"
             " removed in JAX v0.7.0. Please use the newer DLPack API based on"
             " __dlpack__ and __dlpack_device__ instead. Typically, you can pass"
             " a JAX array directly to the `from_dlpack` function of another"
             " framework without using `to_dlpack`."
         ),
-        jax._src.dlpack.to_dlpack,
+        None,
     ),
 }
 
@@ -38,7 +48,7 @@ _deprecations = {
 import typing as _typing
 
 if _typing.TYPE_CHECKING:
-  to_dlpack = jax._src.dlpack.to_dlpack
+  SUPPORTED_DTYPES = jax._src.dlpack.SUPPORTED_DTYPES
 else:
   __getattr__ = jax._src.deprecations.deprecation_getattr(
       __name__, _deprecations

@@ -17,14 +17,20 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TypeAlias
 
 import jax
 from jax._src import core as jax_core
+from jax._src import state
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.triton import dialect as tt_dialect
+from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.triton import lowering
 from jax.interpreters import mlir
 import jax.numpy as jnp
+
+
+Ref: TypeAlias = state.AbstractRef | state.TransformedRef
 
 
 def approx_tanh(x: jax.Array) -> jax.Array:
@@ -83,7 +89,7 @@ def elementwise_inline_asm(
       asm=asm,
       constraints=constraints,
       pack=pack,
-      result_shape_dtypes=result_shape_dtypes,
+      result_shape_dtypes=tuple(result_shape_dtypes),
   )
 
 
@@ -140,3 +146,58 @@ def _debug_barrier_lowering(ctx: lowering.LoweringRuleContext):
   del ctx  # Unused.
   gpu_dialect.barrier()
   return []
+
+
+def load(
+    ref: Ref,
+    *,
+    mask: jax.Array | None = None,
+    other: jax.typing.ArrayLike | None = None,
+    cache_modifier: str | None = None,
+    eviction_policy: str | None = None,
+    volatile: bool = False,
+) -> jax.Array:
+  """Loads an array from the given ref.
+
+  If neither ``mask`` nor ``other`` is specified, this function has the same
+  semantics as ``ref[idx]`` in JAX.
+
+  Args:
+    ref: The ref to load from.
+    mask: An optional boolean mask specifying which indices to load. If mask is
+      ``False`` and ``other`` is not given, no assumptions can be made about the
+      value in the resulting array.
+    other: An optional value to use for indices where mask is ``False``.
+    cache_modifier: TO BE DOCUMENTED.
+    eviction_policy: TO BE DOCUMENTED.
+    volatile: TO BE DOCUMENTED.
+  """
+  return pallas_primitives.load(
+      ref,
+      None,
+      mask=mask,
+      other=other,
+      cache_modifier=cache_modifier,
+      eviction_policy=eviction_policy,
+      volatile=volatile,
+  )
+
+
+def store(
+    ref: Ref,
+    val: jax.Array,
+    *,
+    mask: jax.Array | None = None,
+    eviction_policy: str | None = None,
+) -> None:
+  """Stores a value to the given ref.
+
+  See :func:`~jax.experimental.pallas.load` for the meaning of the arguments.
+  """
+  return pallas_primitives.store(
+      ref,
+      None,
+      val,
+      mask=mask,
+      eviction_policy=eviction_policy,
+  )

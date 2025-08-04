@@ -109,7 +109,6 @@ _float8_e5m2_dtype: np.dtype = np.dtype(float8_e5m2)
 _float8_e5m2fnuz_dtype: np.dtype = np.dtype(float8_e5m2fnuz)
 
 # fp4 support
-# TODO: remove Optional when minimum ml_dtypes version >= 0.5.0
 float4_e2m1fn: type[np.generic] = ml_dtypes.float4_e2m1fn
 
 _float4_e2m1fn_dtype: np.dtype = np.dtype(float4_e2m1fn)

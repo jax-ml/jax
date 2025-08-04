@@ -27,7 +27,7 @@ import numpy as np
 from jax._src.typing import Array
 from jax._src import core
 from jax._src import dtypes
-from jax._src.numpy.array import asarray
+from jax._src.numpy.array_constructors import asarray
 
 
 # Some objects below rewrite their __module__ attribute to this name.

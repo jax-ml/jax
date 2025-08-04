@@ -26,7 +26,7 @@ derivatives. It supports reverse-mode differentiation (a.k.a. backpropagation)
 via [`jax.grad`](#automatic-differentiation-with-grad) as well as forward-mode differentiation,
 and the two can be composed arbitrarily to any order.
 
-JAX uses [XLA](https://www.tensorflow.org/xla)
+JAX uses [XLA](https://www.openxla.org/xla)
 to compile and scale your NumPy programs on TPUs, GPUs, and other hardware accelerators.
 You can compile your own pure functions with [`jax.jit`](#compilation-with-jit).
 Compilation and automatic differentiation can be composed arbitrarily.

@@ -14,12 +14,12 @@
 
 import numpy as np
 
-from jax import lax
-import jax.numpy as jnp
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
+from jax._src.scipy import special
 from jax._src.typing import Array, ArrayLike
-from jax.scipy import special
 
 
 def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:

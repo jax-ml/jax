@@ -28,6 +28,6 @@ def make_jaxpr(f, *args, **kwargs):
   flat_fun, out_tree_thunk = api_util.flatten_fun(
       lu.wrap_init(f, debug_info=debug_info), in_tree
   )
-  jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
   out_tree = out_tree_thunk()
   return jaxpr, consts, in_tree, out_tree

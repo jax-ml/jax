@@ -359,4 +359,15 @@ def check_grads(f, args, order,
           return vjp_py(out_primal_py)
         _check_grads(f_vjp, args, order - 1, rev_msg)
 
+    if "lin" in modes:
+      lin_msg = f'LIN of {err_msg}' if err_msg else 'LIN'
+      _check_jvp(f, partial(_jvp_from_lin, f), args, err_msg=lin_msg)
+      if order > 1:
+        _check_grads(partial(_jvp_from_lin, f), (args, args), order - 1, lin_msg)
+
   _check_grads(f, args, order)
+
+def _jvp_from_lin(f, primals, tangents):
+  primal_out, f_lin = api.linearize(f, *primals)
+  tangent_out = f_lin(*tangents)
+  return primal_out, tangent_out

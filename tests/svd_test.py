@@ -20,7 +20,7 @@ import numpy as np
 import scipy.linalg as osp_linalg
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lax import svd
+from jax._src.tpu.linalg import svd
 
 from absl.testing import absltest
 

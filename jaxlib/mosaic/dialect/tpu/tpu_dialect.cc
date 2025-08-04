@@ -29,6 +29,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep.
+#include "mlir/IR/Location.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
@@ -67,6 +68,11 @@ void TPUDialect::initialize() {
       >();
 }
 
+Operation *TPUDialect::materializeConstant(OpBuilder &builder, Attribute value,
+                                           Type type, Location loc) {
+  return arith::ConstantOp::materialize(builder, value, type, loc);
+}
+
 /* static */ std::optional<CoreType> TPUDialect::GetCoreTypeAttr(
     Operation *op) {
   Attribute attr = op->getAttr(GetCoreTypeKey());
@@ -79,13 +85,13 @@ void TPUDialect::initialize() {
   return mlir::cast<CoreTypeAttr>(attr).getValue();
 }
 
-FailureOr<std::optional<CoreType>> GetCoreTypeOfParentFunc(Operation &op) {
+FailureOr<CoreType> GetCoreTypeOfParentFunc(Operation &op) {
   mlir::Operation *func_op = op.getParentOfType<mlir::func::FuncOp>();
   if (func_op == nullptr) {
     return op.emitError() << "Operation " << op.getName()
                           << " is not inside a func.func";
   }
-  return TPUDialect::GetCoreTypeAttr(func_op);
+  return TPUDialect::GetCoreTypeAttr(func_op).value_or(CoreType::kTc);
 }
 
 void VectorLayoutAttr::print(AsmPrinter &printer) const {

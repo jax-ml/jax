@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from jax._src.interpreters.xla import (
-  canonicalize_dtype as canonicalize_dtype,
+  canonicalize_dtype as _deprecated_canonicalize_dtype,
   canonicalize_dtype_handlers as canonicalize_dtype_handlers,
 )
 
@@ -25,28 +25,42 @@ from jax._src.lib import xla_client as _xc
 Backend = _xc._xla.Client
 del _xc
 
-from jax._src import core as _src_core
-
 # Deprecations
 _deprecations = {
-    # Added 2024-12-17
+    # Finalized in JAX v0.7.0
     "abstractify": (
-        "jax.interpreters.xla.abstractify is deprecated.",
-        _src_core.abstractify
+        (
+            "jax.interpreters.xla.abstractify was deprecated in JAX v0.5.0"
+            " and removed in JAX v0.7.0. jax.core.get_aval can be used as"
+            " a replacement in most cases."
+        ),
+        None,
     ),
     "pytype_aval_mappings": (
-        "jax.interpreters.xla.pytype_aval_mappings is deprecated.",
-        _src_core.pytype_aval_mappings
+        (
+            "jax.interpreters.xla.pytype_aval_mappings was deprecated in JAX"
+            " v0.5.0 and removed in JAX v0.7.0. jax.core.pytype_aval_mappings"
+            " can be used as a replacement in most cases."
+        ),
+        None,
     ),
+    # Added in JAX v0.7.0
+    "canonicalize_dtype": (
+        (
+            "jax.interpreters.xla.canonicalize_dtype was deprecated in JAX"
+            " v0.7.0 and will be removed in JAX v0.8.0. For canonicalizing"
+            " dtypes, prefer jax.dtypes.canonicalize_dtype. For checking whether"
+            " an object is a valid jax input, prefer jax.core.valid_jaxtype."
+        ),
+        _deprecated_canonicalize_dtype,
+    )
 }
 
 import typing as _typing
-from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
 if _typing.TYPE_CHECKING:
-  abstractify = _src_core.abstractify
-  pytype_aval_mappings = _src_core.pytype_aval_mappings
+  canonicalize_dtype = _deprecated_canonicalize_dtype
 else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
-del _deprecation_getattr
+  del _deprecation_getattr
 del _typing
-del _src_core

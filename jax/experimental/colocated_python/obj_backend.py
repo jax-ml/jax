@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import dataclasses
 import threading
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 
 @dataclasses.dataclass(frozen=True)

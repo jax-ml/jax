@@ -20,14 +20,13 @@ from functools import partial
 
 import numpy as np
 
-from jax import lax
+from jax._src import api
 from jax._src import core
 from jax._src import dtypes
-from jax._src.api import jit
-from jax._src.lax import lax as lax_internal
-from jax._src.lax.lax import PrecisionLike
+from jax._src.lax import lax
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.numpy.vectorize import vectorize
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.util import canonicalize_axis, set_module
@@ -35,10 +34,10 @@ from jax._src.util import canonicalize_axis, set_module
 export = set_module('jax.numpy')
 
 @export
-@partial(jit, static_argnames=('precision', 'preferred_element_type', 'out_sharding'),
+@partial(api.jit, static_argnames=('precision', 'preferred_element_type', 'out_sharding'),
          inline=True)
 def dot(a: ArrayLike, b: ArrayLike, *,
-        precision: PrecisionLike = None,
+        precision: lax.PrecisionLike = None,
         preferred_element_type: DTypeLike | None = None,
         out_sharding=None) -> Array:
   """Compute the dot product of two arrays.
@@ -122,15 +121,20 @@ def dot(a: ArrayLike, b: ArrayLike, *,
                            precision=precision,
                            preferred_element_type=preferred_element_type,
                            out_sharding=out_sharding)
-  return lax_internal._convert_element_type(result, preferred_element_type,
-                                            output_weak_type)
+  return lax._convert_element_type(result, preferred_element_type,
+                                   output_weak_type)
 
 
 @export
-@partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
+@partial(
+    api.jit,
+    static_argnames=('precision', 'preferred_element_type', 'out_sharding'),
+    inline=True,
+)
 def matmul(a: ArrayLike, b: ArrayLike, *,
-           precision: PrecisionLike = None,
+           precision: lax.PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None,
+           out_sharding: NamedSharding | P | None = None,
            ) -> Array:
   """Perform a matrix multiplication.
 
@@ -236,21 +240,24 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
       raise ValueError("Incompatible shapes for matmul arguments: {} and {}"
                        .format(np.shape(a), np.shape(b)))
 
-  if a_is_mat: idx_a_other.append(num_batch_dims)
-  if b_is_mat: idx_b_other.append(num_batch_dims + a_is_mat)
+  if a_is_mat:
+    idx_a_other.append(num_batch_dims)
+  if b_is_mat:
+    idx_b_other.append(num_batch_dims + a_is_mat)
   perm = np.argsort(np.concatenate([idx_batch, idx_a_other, idx_b_other]))
 
   a = lax.squeeze(a, tuple(a_squeeze))
   b = lax.squeeze(b, tuple(b_squeeze))
   out = lax.dot_general(
     a, b, (((np.ndim(a) - 1,), (np.ndim(b) - 1 - b_is_mat,)), (a_batch, b_batch)),
-    precision=precision, preferred_element_type=preferred_element_type)
+    precision=precision, preferred_element_type=preferred_element_type,
+    out_sharding=out_sharding)
   result = lax.transpose(out, perm)
-  return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
+  return lax._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
 @export
-@jit
+@api.jit
 def matvec(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Batched matrix-vector product.
 
@@ -291,7 +298,7 @@ def matvec(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @export
-@jit
+@api.jit
 def vecmat(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Batched conjugate vector-matrix product.
 
@@ -333,10 +340,10 @@ def vecmat(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
+@partial(api.jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def vdot(
     a: ArrayLike, b: ArrayLike, *,
-    precision: PrecisionLike = None,
+    precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
 ) -> Array:
   """Perform a conjugate multiplication of two 1D vectors.
@@ -383,7 +390,7 @@ def vdot(
 
 @export
 def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
-           precision: PrecisionLike = None,
+           precision: lax.PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None) -> Array:
   """Perform a conjugate multiplication of two batched vectors.
 
@@ -442,8 +449,9 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
 @export
 def tensordot(a: ArrayLike, b: ArrayLike,
               axes: int | Sequence[int] | Sequence[Sequence[int]] = 2,
-              *, precision: PrecisionLike = None,
-              preferred_element_type: DTypeLike | None = None) -> Array:
+              *, precision: lax.PrecisionLike = None,
+              preferred_element_type: DTypeLike | None = None,
+              out_sharding: NamedSharding | P | None = None) -> Array:
   """Compute the tensor dot product of two N-dimensional arrays.
 
   JAX implementation of :func:`numpy.linalg.tensordot`.
@@ -549,16 +557,18 @@ def tensordot(a: ArrayLike, b: ArrayLike,
     msg = ("tensordot axes argument must be an int, a pair of ints, or a pair "
            "of lists/tuples of ints.")
     raise TypeError(msg)
-  result = lax.dot_general(a, b, (contracting_dims, ((), ())),
-                           precision=precision, preferred_element_type=preferred_element_type)
-  return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
+  result = lax.dot_general(
+      a, b, (contracting_dims, ((), ())), precision=precision,
+      preferred_element_type=preferred_element_type,
+      out_sharding=out_sharding)
+  return lax._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
 
 @export
-@partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
+@partial(api.jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def inner(
-    a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None,
+    a: ArrayLike, b: ArrayLike, *, precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
 ) -> Array:
   """Compute the inner product of two arrays.
@@ -614,7 +624,7 @@ def inner(
 
 
 @export
-@partial(jit, inline=True)
+@partial(api.jit, inline=True)
 def outer(a: ArrayLike, b: ArrayLike, out: None = None) -> Array:
   """Compute the outer product of two arrays.
 

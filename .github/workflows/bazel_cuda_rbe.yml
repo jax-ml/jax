@@ -35,13 +35,13 @@ jobs:
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:
       matrix:
-        python: ["3.10", "3.13"]
+        python: ["3.11", "3.13"]
         runner: ["linux-x86-n2-16"]
         enable-x_64: [1, 0]
         exclude:
             # Exclude x64=1 on the oldest Python and x64=0 on the newest Python. As long as we have
             # coverage for one of each, we don't need to run both.
-            - python: "3.10"
+            - python: "3.11"
               enable-x_64: 1
             - python: "3.13"
               enable-x_64: 0

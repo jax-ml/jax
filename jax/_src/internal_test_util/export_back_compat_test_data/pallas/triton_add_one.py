@@ -13,7 +13,10 @@
 # limitations under the License.
 
 import datetime
-from numpy import array, float32
+import numpy as np
+
+array = np.array
+float32 = np.float32
 
 
 # Pasted from the test output (see export_back_compat_test_util.py module docstring)

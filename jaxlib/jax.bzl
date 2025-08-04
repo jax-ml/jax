@@ -23,6 +23,7 @@ load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_roc
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
 load("@rules_cc//cc:defs.bzl", _cc_proto_library = "cc_proto_library")
 load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("@test_shard_count//:test_shard_count.bzl", "USE_MINIMAL_SHARD_COUNT")
 load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
 load("@xla//xla/tsl:tsl.bzl", "transitive_hdrs", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
 load("@xla//xla/tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
@@ -47,6 +48,7 @@ mosaic_gpu_internal_users = []
 mosaic_internal_users = []
 pallas_gpu_internal_users = []
 pallas_tpu_internal_users = []
+pallas_sc_internal_users = []
 pallas_fuser_users = []
 mosaic_extension_deps = []
 serialize_executable_internal_users = []
@@ -58,7 +60,7 @@ jax_test_util_visibility = []
 loops_visibility = []
 
 PLATFORM_TAGS_DICT = {
-    ("Linux", "x86_64"): ("manylinux2014", "x86_64"),
+    ("Linux", "x86_64"): ("manylinux_2_27", "x86_64"),
     ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
     ("Linux", "ppc64le"): ("manylinux2014", "ppc64le"),
     ("Darwin", "x86_64"): ("macosx_11_0", "x86_64"),
@@ -78,6 +80,7 @@ def get_optional_dep(package, excluded_py_versions = ["3.14", "3.14-ft"]):
     return [package]
 
 _py_deps = {
+    "absl-all": ["@pypi//absl_py"],
     "absl/logging": ["@pypi//absl_py"],
     "absl/testing": ["@pypi//absl_py"],
     "absl/flags": ["@pypi//absl_py"],
@@ -186,8 +189,6 @@ def _gpu_test_deps():
             "//jaxlib/cuda:gpu_only_test_deps",
             "//jaxlib/rocm:gpu_only_test_deps",
             "//jax_plugins:gpu_plugin_only_test_deps",
-            # TODO(ybaturina): Remove this once we can add NVSHMEM libraries in the dependencies.
-            "@pypi//nvidia_nvshmem_cu12",
         ],
         "//jax:config_build_jaxlib_false": [
             "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
@@ -238,6 +239,7 @@ def jax_multiplatform_test(
         args = [],
         env = {},
         shard_count = None,
+        minimal_shard_count = None,
         deps = [],
         data = [],
         enable_backends = None,
@@ -266,10 +268,11 @@ def jax_multiplatform_test(
     env.setdefault("PYTHONWARNINGS", "error")
 
     for backend in ALL_BACKENDS:
-        if shard_count == None or type(shard_count) == type(0):
-            test_shards = shard_count
+        test_shard_count = minimal_shard_count if USE_MINIMAL_SHARD_COUNT else shard_count
+        if test_shard_count == None or type(test_shard_count) == type(0):
+            test_shards = test_shard_count
         else:
-            test_shards = shard_count.get(backend, 1)
+            test_shards = test_shard_count.get(backend, 1)
         test_args = list(args) + [
             "--jax_test_dut=" + backend,
             "--jax_platform_name=" + backend,
@@ -349,9 +352,7 @@ def _get_source_package_name(package_name, wheel_version):
 
 def _jax_wheel_impl(ctx):
     include_cuda_libs = ctx.attr.include_cuda_libs[BuildSettingInfo].value
-    include_nvshmem_libs = ctx.attr.include_nvshmem_libs[BuildSettingInfo].value
     override_include_cuda_libs = ctx.attr.override_include_cuda_libs[BuildSettingInfo].value
-    override_include_nvshmem_libs = ctx.attr.override_include_nvshmem_libs[BuildSettingInfo].value
     output_path = ctx.attr.output_path[BuildSettingInfo].value
     git_hash = ctx.attr.git_hash[BuildSettingInfo].value
     py_freethreaded = ctx.attr.py_freethreaded[BuildSettingInfo].value
@@ -362,11 +363,6 @@ def _jax_wheel_impl(ctx):
              " Please provide `--config=cuda_libraries_from_stubs` for bazel build command." +
              " If you absolutely need to build links directly against the CUDA libraries, provide" +
              " `--@local_config_cuda//cuda:override_include_cuda_libs=true`.")
-    if include_nvshmem_libs and not override_include_nvshmem_libs:
-        fail("JAX wheel shouldn't be built directly against the NVSHMEM libraries." +
-             " Please provide `--config=cuda_libraries_from_stubs` for bazel build command." +
-             " If you absolutely need to build links directly against the NVSHMEM libraries," +
-             " `provide --@local_config_nvshmem//:override_include_nvshmem_libs=true`.")
 
     env = {}
     args = ctx.actions.args()
@@ -482,8 +478,6 @@ _jax_wheel = rule(
         "enable_rocm": attr.bool(default = False),
         "include_cuda_libs": attr.label(default = Label("@local_config_cuda//cuda:include_cuda_libs")),
         "override_include_cuda_libs": attr.label(default = Label("@local_config_cuda//cuda:override_include_cuda_libs")),
-        "include_nvshmem_libs": attr.label(default = Label("@local_config_nvshmem//:include_nvshmem_libs")),
-        "override_include_nvshmem_libs": attr.label(default = Label("@local_config_nvshmem//:override_include_nvshmem_libs")),
         "py_freethreaded": attr.label(default = Label("@rules_python//python/config_settings:py_freethreaded")),
     },
     implementation = _jax_wheel_impl,

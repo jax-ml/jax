@@ -19,7 +19,7 @@ from collections.abc import Callable, Mapping, Sequence
 import enum
 from functools import partial, reduce
 import types
-from typing import Any, cast
+from typing import Any
 
 import jax
 from jax import lax
@@ -32,6 +32,7 @@ from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import tree_util
+from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -43,13 +44,11 @@ from jax._src.pallas import primitives
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
 from jax._src.util import (
-    foreach,
     safe_map,
     safe_zip,
     split_list,
     tuple_insert,
     unzip2,
-    weakref_lru_cache,
 )
 import jax.numpy as jnp
 
@@ -100,6 +99,8 @@ def _pallas_call_abstract_eval(
     # Report effects that will be introduced when running/lowering
     # mosaic_tpu_interpret.mosaic_tpu_interpret.interpret_pallas_call .
     effs = mosaic_tpu_interpret.get_interpret_effects()
+  elif getattr(params.get('compiler_params', None), 'has_side_effects', False):
+    effs = jax_core.GenericEffect(pallas_call_p)
   else:
     effs = jax_core.no_effects
 
@@ -129,6 +130,7 @@ def _pallas_call_jvp_rule(
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
     backend: Backend | None,
+    metadata: FrozenDict[str, str] | None,
 ):
   debug_info = jaxpr.debug_info
   if grid_mapping.num_dynamic_grid_bounds:
@@ -195,6 +197,7 @@ def _pallas_call_jvp_rule(
       cost_estimate=jvp_cost_estimate,
       out_avals=(*out_avals, *out_avals),
       backend=backend,
+      metadata=metadata,
   )
   out_primals, out_tangents = split_list(out_flat, [len(out_flat) // 2])
   return out_primals, out_tangents
@@ -244,7 +247,7 @@ def _batch_block_mapping(
       _, _, _, lengths_aval = ragged_axis_values
       idx_avals = [*idx_avals, lengths_aval]
     else:
-      i32_aval_memref = pallas_core.AbstractMemoryRef(
+      i32_aval_memref = state.AbstractRef(
           jax_core.ShapedArray(([axis_size]), jnp.int32),
           pallas_core.MemorySpace.INDEX,
       )
@@ -255,7 +258,7 @@ def _batch_block_mapping(
                    debug_info=block_mapping.index_map_jaxpr.jaxpr.debug_info),
       tree_util.tree_structure(idx_avals))
   with grid_mapping.trace_env():
-    block_mapping_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
+    block_mapping_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
         block_mapping_flat_fn,
         idx_avals)
   new_index_map_out_tree = out_tree_thunk()
@@ -342,6 +345,7 @@ def _batch_with_explicit_loop(
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
     backend: Backend | None,
+    metadata: FrozenDict[str, str] | None,
 ):
   """Batch the pallas_call by calling it in loop over the batch size.
 
@@ -410,6 +414,7 @@ def _batch_with_explicit_loop(
         cost_estimate=cost_estimate,
         out_avals=out_avals,
         backend=backend,
+        metadata=metadata,
     )
     for i, batch_out_array in enumerate(batch_out):
       state[i] = jax.lax.dynamic_update_index_in_dim(
@@ -440,6 +445,7 @@ def _pallas_call_batching_rule(
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
     backend: Backend | None,
+    metadata: FrozenDict[str, str] | None = None,
 ):
   if mesh is not None:
     raise NotImplementedError(
@@ -478,6 +484,7 @@ def _pallas_call_batching_rule(
         cost_estimate=cost_estimate,
         out_avals=out_avals,
         backend=backend,
+        metadata=metadata,
     )
     return [jnp.expand_dims(x, 0) for x in out], (0,) * len(out)
 
@@ -512,6 +519,7 @@ def _pallas_call_batching_rule(
         cost_estimate=cost_estimate,
         out_avals=out_avals,
         backend=backend,
+        metadata=metadata,
     )
   else:
     pass  # No dynamic grid dimensions
@@ -547,6 +555,7 @@ def _pallas_call_batching_rule(
           cost_estimate=cost_estimate,
           out_avals=out_avals,
           backend=backend,
+          metadata=metadata,
       )
 
   if not dims:
@@ -574,7 +583,7 @@ def _pallas_call_batching_rule(
       aval = jax_core.get_aval(ragged_axis_length).update(dtype=jnp.int32)
       if isinstance(aval, jax_core.DShapedArray):
         aval = jax_core.ShapedArray(aval.shape, aval.dtype, aval.weak_type)
-      lengths_aval = pallas_core.AbstractMemoryRef(
+      lengths_aval = state.AbstractRef(
           aval,
           pallas_core.MemorySpace.INDEX,
       )
@@ -909,7 +918,7 @@ def _pallas_call_batching_rule(
 
   batched_out_avals = []
   for aval in out_avals:
-    sharding = aval.sharding.with_spec(tuple_insert(aval.sharding.spec, 0, None))
+    sharding = aval.sharding.update(spec=tuple_insert(aval.sharding.spec, 0, None))
     shape = tuple_insert(aval.shape, 0, axis_size)
     batched_out_avals.append(aval.update(shape=shape, sharding=sharding))
   batched_out_avals = tuple(batched_out_avals)
@@ -927,6 +936,7 @@ def _pallas_call_batching_rule(
       cost_estimate=batched_cost_estimate,
       out_avals=batched_out_avals,
       backend=backend,
+      metadata=metadata,
   )
   return out, (0,) * len(out)
 
@@ -993,7 +1003,7 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
     i, *_ = carry
     return i < num_iterations
   def body(carry):
-    i, loop_idx = carry
+    i, loop_idx, blocks = carry
     if grid_mapping.local_grid_env is not None:
       local_grid_env = grid_mapping.local_grid_env(loop_idx, grid)
     else:
@@ -1008,12 +1018,12 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
           for bm in grid_mapping.block_mappings]
     # We perform a dynamic slice on the i/o blocks, which will be checked by
     # checkify for OOB accesses.
-    foreach(hlo_interpreter._dynamic_slice, start_indices, block_shapes,
+    blocks = map(hlo_interpreter._dynamic_slice, start_indices, block_shapes,
         [*input_args, *output_args], is_indexing_dim)
-    return (i + 1, hlo_interpreter._get_next_indices(grid, loop_idx))
+    return (i + 1, hlo_interpreter._get_next_indices(grid, loop_idx), blocks)
   def f(_):
-    lax.while_loop(
-        cond, body, (jnp.int32(0), grid_start_indices)
+    return lax.while_loop(
+        cond, body, (jnp.int32(0), grid_start_indices, [jnp.zeros(shape) for shape in block_shapes])
     )
   flat_args, jaxpr_in_tree = jax.tree_util.tree_flatten((jnp.int32(0),))
   wrapped_loop, _ = api_util.flatten_fun_nokwargs(
@@ -1023,7 +1033,7 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
       jaxpr_in_tree)
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
     avals_in = map(jax_core.get_aval, flat_args)
-    traced_loop, _, consts, () = pe.trace_to_jaxpr_dynamic(
+    traced_loop, _, consts = pe.trace_to_jaxpr_dynamic(
         wrapped_loop, list(avals_in))
     traced_loop = jax_core.ClosedJaxpr(traced_loop, consts)
   out_error, _ = checkify.checkify_jaxpr(
@@ -1124,7 +1134,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
   shaped_err_avals = map(_ensure_2d_error_shape, shaped_err_avals)
   err_vals = map(_ensure_2d_error_shape, err_vals)
 
-  error_memref_aval = [pallas_core.AbstractMemoryRef(
+  error_memref_aval = [state.AbstractRef(
       err_val, pallas_core.MemorySpace.ERROR) for err_val in shaped_err_avals]
   shaped_scalar_avals, input_aval, output_aval, scratch_aval = split_list(
       shaped_input_avals, [num_scalars, num_kernel_inputs, num_kernel_outputs])
@@ -1137,7 +1147,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
       lu.wrap_init(checked_kernel_fn, debug_info=debug_info), jaxpr_in_tree)
 
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
-    final_jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
+    final_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
         wrapped_kernel_with_err, jaxpr_flat_avals)
 
   # Prepare pallas_call inputs. We need to create new block specs
@@ -1190,7 +1200,6 @@ def pallas_call_checkify_rule(error: checkify.Error,
 checkify.error_checks[pallas_call_p] = pallas_call_checkify_rule
 
 
-@weakref_lru_cache
 def _trace_kernel_to_jaxpr(
     fun: Callable,
     debug_info: jax_core.DebugInfo,
@@ -1199,14 +1208,14 @@ def _trace_kernel_to_jaxpr(
     kernel_in_tree: tree_util.PyTreeDef,
     kernel_in_transforms: tuple[tuple[pallas_core.Transform, ...], ...],
     indexer: bool = False,
-) -> tuple[jax_core.ClosedJaxpr, tuple[jax.Array, ...]]:
+) -> tuple[jax_core.Jaxpr, tuple[jax.Array, ...]]:
   wrapped_kernel_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(fun, debug_info=debug_info), kernel_in_tree)
   wrapped_kernel_fun = primitives.wrap_with_transforms(
       wrapped_kernel_fun, kernel_in_transforms
   )
   with grid_mapping.trace_env(), config._check_vma(False):
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
                                                      kernel_avals)
     if consts:
       consts_avals = [jax_core.get_aval(c) for c in consts]
@@ -1387,7 +1396,8 @@ def _pallas_call_state_discharge_rule(
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    backend: Backend | None = None,
+    backend: Backend | None,
+    metadata: FrozenDict[str, str] | None,
 ):
   del avals_out
   assert all(isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars)
@@ -1395,7 +1405,7 @@ def _pallas_call_state_discharge_rule(
   ref_avals, rest_in_avals = split_list(avals_in, [num_refs])
   assert all(isinstance(ref_aval, state.AbstractRef) for ref_aval in ref_avals)
   ref_avals = [
-      pallas_core.AbstractMemoryRef(
+      state.AbstractRef(
           ref_aval.inner_aval, pallas_core.MemorySpace.ANY
       )
       for ref_aval in ref_avals
@@ -1406,7 +1416,7 @@ def _pallas_call_state_discharge_rule(
   ref_block_mappings = [
       block_spec.to_block_mapping(
           origin="",  # TODO(sharadmv): enable origins for refs
-          array_aval=ref_aval.inner_aval,
+          array_aval=ref_aval.inner_aval,  # type: ignore[arg-type]
           index_map_avals=grid_mapping.index_map_avals,
           index_map_tree=grid_mapping.index_map_tree,
           grid=grid_mapping.grid,
@@ -1465,7 +1475,7 @@ def _pallas_call_state_discharge_rule(
           ],
       )
   )
-  new_jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(
+  new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(_rewritten_body, debug_info=jaxpr.debug_info),
       [
           *index_map_avals,
@@ -1483,7 +1493,7 @@ def _pallas_call_state_discharge_rule(
       *ref_args,
       *rest_args,
       jaxpr=new_jaxpr,
-      input_output_aliases=new_input_output_aliases,
+      input_output_aliases=tuple(new_input_output_aliases),
       grid_mapping=new_grid_mapping,
       mesh=mesh,
       debug=debug,
@@ -1492,6 +1502,7 @@ def _pallas_call_state_discharge_rule(
       cost_estimate=cost_estimate,
       out_avals=new_out_avals,
       backend=backend,
+      metadata=metadata,
   )
   refs_out, rest = split_list(out_flat, [num_refs])
   updated_vals_in = refs_out + [None] * len(rest_in_avals)
@@ -1512,10 +1523,11 @@ def pallas_call(
     interpret: Any = False,
     name: str | None = None,
     compiler_params: (
-        Mapping[Backend, "CompilerParams"] | "CompilerParams" | None
+        Mapping[Backend, pallas_core.CompilerParams] | pallas_core.CompilerParams | None
     ) = None,
     cost_estimate: CostEstimate | None = None,
     backend: Backend | None = None,
+    metadata: dict[str, str] | None = None,
 ) -> Callable[..., Any]:
   """Invokes a Pallas kernel on some inputs.
 
@@ -1569,6 +1581,8 @@ def pallas_call(
     backend: Optional string literal one of  ``"mosaic_tpu"``, ``"triton"`` or
       ``"mosaic_gpu"`` determining the backend to be used. None means let Pallas
       decide.
+    metadata: Optional dictionary of information about the kernel that will be
+      serialized as JSON in the HLO. Can be used for debugging and analysis.
 
   Returns:
     A function that can be called on a number of positional array arguments to
@@ -1605,14 +1619,16 @@ def pallas_call(
       compiler_params=compiler_params,
       cost_estimate=cost_estimate,
       backend=backend,
+      metadata=metadata,
   )
 
 
+
 def _normalize_compiler_params(
-    compiler_params: Mapping[Backend, CompilerParams] | CompilerParams | None,
-) -> Mapping[Backend, CompilerParams]:
+    compiler_params: Mapping[Backend, pallas_core.CompilerParams] | pallas_core.CompilerParams | None,
+) -> Mapping[Backend, pallas_core.CompilerParams]:
   if compiler_params is None:
-    return {}
+    return FrozenDict({})
   if isinstance(compiler_params, CompilerParams):
     compiler_params = {compiler_params.BACKEND: compiler_params}
   assert isinstance(compiler_params, Mapping)
@@ -1628,6 +1644,8 @@ def _normalize_compiler_params(
           f"Inconsistent backend in compiler_params: {params.BACKEND} !="
           f" {backend}"
       )
+  if not isinstance(compiler_params, FrozenDict):
+    compiler_params = FrozenDict(compiler_params)
   return compiler_params
 
 
@@ -1646,7 +1664,10 @@ def _pallas_call(
     ) = None,
     cost_estimate: CostEstimate | None = None,
     backend: Backend | None = None,
+    metadata: dict[str, str] | None = None,
 ):
+  interpret = (
+      config.pallas_tpu_interpret_mode_context_manager.value or interpret)
   compiler_params = _normalize_compiler_params(compiler_params)
 
   if mesh is not None:
@@ -1657,7 +1678,7 @@ def _pallas_call(
       )
     if backend is not None:
       raise ValueError("If `mesh` is specified, then `backend` must be `None`.")
-    backend = cast(Backend, mesh.backend)
+    backend = mesh.backend
 
   grid_spec, dynamic_grid_bounds = pallas_core.unzip_dynamic_grid_bounds(grid_spec)
   # TODO(necula): this canonicalization may be convenient for some usage
@@ -1695,8 +1716,9 @@ def _pallas_call(
         x.ref if isinstance(x, state_types.TransformedRef) else x
         for x in flat_kernel_args
     )
-    flat_kernel_avals = tuple(a.update_vma(frozenset())
-                              for a in flat_kernel_avals)
+    if config._check_vma.value:
+      flat_kernel_avals = tuple(a.update_vma(frozenset())
+                                for a in flat_kernel_avals)
     # Note that only a subset of all transforms can be found here, and they are
     # never expected to contain any arrays.
     kernel_arg_transforms = tuple(
@@ -1759,6 +1781,7 @@ def _pallas_call(
         compiler_params=compiler_params,
         cost_estimate=cost_estimate,
         backend=backend,
+        metadata=FrozenDict(metadata) if metadata is not None else None,
     )
     out = tree_util.tree_unflatten(out_tree, out_flat)
     return out

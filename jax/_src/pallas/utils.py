@@ -20,6 +20,7 @@ from typing import overload
 import jax
 from jax import lax
 from jax._src import core as jax_core
+from jax._src import dtypes
 from jax._src.util import split_list
 import jax.numpy as jnp
 import numpy as np
@@ -62,10 +63,9 @@ def next_power_of_2(x: int) -> int:
     raise ValueError("`next_power_of_2` requires a non-negative integer.")
   return 1 if x == 0 else 2 ** (x - 1).bit_length()
 
+# TODO(apaszke): Inline this function into all call sites
 def dtype_bitwidth(dtype: np.dtype | jnp.dtype) -> int:
-  if jnp.issubdtype(dtype, jnp.integer):
-    return jnp.iinfo(dtype).bits
-  return np.dtype(dtype).itemsize * 8
+  return dtypes.bit_width(dtype)
 
 def pattern_match_scan_to_fori_loop(
     jaxpr: jax_core.Jaxpr, num_consts: int, num_carry: int

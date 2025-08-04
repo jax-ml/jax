@@ -38,6 +38,7 @@ py_library_providing_imports_info(
     visibility = ["//jax:internal"] + jax_visibility("lib"),
     deps = [
         "//jax:version",
+        "//jax/_src:lazy_loader",
     ] + if_building_jaxlib([
         "//jaxlib",
     ]),

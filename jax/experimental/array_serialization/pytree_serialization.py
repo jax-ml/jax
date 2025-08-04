@@ -346,7 +346,8 @@ def _save(data: PyTreeT, directory: str | PathLike[str], *,
 
   # 4. finalize the array writing ###########################
   if len(arr_leaf_ids) > 0 and _USE_OCDBT:
-    _finalize_array_store(array_store_path, distinct_locations)
+    _serialization_executor.submit(  # call from a thread to not nest asyncio
+        _finalize_array_store, array_store_path, distinct_locations).result()
   # we are done with all async ops here, we can block ####
   _sync_on_key(sync_key, "end")
 

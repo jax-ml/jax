@@ -40,12 +40,12 @@ from jax._src.interpreters.mlir import (
   dense_int_elements as dense_int_elements,
   dtype_to_ir_type as dtype_to_ir_type,
   flatten_ir_types as flatten_ir_types,
-  flatten_ir_values as flatten_lowering_ir_args,  # TODO(phawkins): remove me  # noqa: F401
   flatten_ir_values as flatten_ir_values,
   unflatten_ir_values_like_types as unflatten_ir_values_like_types,
   i32_attr as i32_attr,
   i64_attr as i64_attr,
   ir as ir,
+  ir_attribute as ir_attribute,
   ir_constant as ir_constant,
   ir_type_handlers as ir_type_handlers,
   jaxpr_subcomp as jaxpr_subcomp,
@@ -81,7 +81,10 @@ from jax._src.callback import (
 _deprecations = {
     # Added Apr 7 2025
     "custom_call": (
-        "mlir.custom_call is deprecated; use the APIs provided by jax.ffi instead.",
+        (
+            "mlir.custom_call is deprecated and will be removed in JAX v0.8.0;"
+            " use the APIs provided by jax.ffi instead."
+        ),
         _custom_call,
     )
 }

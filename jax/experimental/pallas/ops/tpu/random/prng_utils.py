@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Helper functions for PRNG kernels."""
-from typing import Sequence
+from collections.abc import Sequence
 from jax import lax
 import jax.numpy as jnp
 

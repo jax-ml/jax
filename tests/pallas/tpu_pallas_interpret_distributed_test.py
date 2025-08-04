@@ -23,10 +23,10 @@ from absl.testing import parameterized
 
 import jax
 from jax import lax
+from jax._src import shard_map
 from jax._src import test_util as jtu
 import jax._src.pallas.mosaic.interpret as mosaic_interpret
 from jax.experimental import pallas as pl
-from jax._src import shard_map
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 
@@ -44,6 +44,10 @@ P = jax.sharding.PartitionSpec
 class InterpretDistributedTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
+
+    if not jtu.test_device_matches(['cpu']):
+      self.skipTest('CPU-only test')
+
     if jax.device_count() < 4:
       self.skipTest(f'requires at least 4 devices, found {jax.device_count()}')
 

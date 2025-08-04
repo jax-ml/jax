@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Sequence, Union
+from typing import Any, Union
+from collections.abc import Sequence
 
 from jax._src import core
 from jax._src import pretty_printer as pp

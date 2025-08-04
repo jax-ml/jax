@@ -69,7 +69,7 @@ Serialization is broken down into two stages:
      call it from another JAX function. We have plans to add code to generate
      `Exported` objects from TensorFlow, and to use `Exported` objects from
      TensorFlow and PyTorch.
-   2. the actual serialization to a byte array using the flatbuffers format. 
+   2. the actual serialization to a byte array using the flatbuffers format.
      See {ref}`jax2tf` for
      an alternative serialization to TensorFlow graph that can be used
      for interoperation with TensorFlow.
@@ -501,7 +501,7 @@ As of June 2024, all function exported with version 9
 >>> from jax import export
 >>> exp: export.Exported = export.export(jnp.cos)(1.)
 >>> exp.calling_convention_version
-9
+10
 
 ```
 
@@ -513,13 +513,13 @@ or the `JAX_EXPORT_CALLING_CONVENTION_VERSION` environment variable:
 ```python
 >>> from jax import export
 >>> (export.minimum_supported_calling_convention_version, export.maximum_supported_calling_convention_version)
-(9, 9)
+(9, 10)
 
 >>> from jax._src import config
->>> with config.jax_export_calling_convention_version(9):
+>>> with config.jax_export_calling_convention_version(10):
 ...  exp = export.export(jnp.cos)(1.)
 ...  exp.calling_convention_version
-9
+10
 
 ```
 
@@ -668,6 +668,9 @@ We list here a history of the calling convention version numbers:
     available in JAX since October 20th, 2023 (JAX 0.4.20),
     and the default since February 1st, 2024 (JAX 0.4.24).
     This is the only supported version as of 27th of March, 2024.
+  * Version 10 propagate the `jax.config.use_shardy_partitioner` value to
+    XlaCallModule. Supported by XlaCallModule since May 20th, 2025, and
+    the default in JAX since July 14th, 2025 (JAX 0.7.0).
 
 ## Developer documentation
 

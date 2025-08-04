@@ -1,0 +1,86 @@
+<svg width="850" height="430" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
+    <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#374151"/>
+        </marker>
+    </defs>
+
+    <style>
+        .label { font-size: 14px; font-weight: 500; fill: #4b5563; text-anchor: middle; }
+        .matrix-name { font-size: 20px; fill: #fff; font-weight: 600; text-anchor: middle; }
+        .matrix-dim { font-size: 12px; fill: #fff; font-weight: 400; text-anchor: middle; }
+        .op-label { font-size: 15px; fill: #1f2937; text-anchor: middle;}
+    </style>
+
+    <!-- Column 1: Operand A -->
+    <g id="col-a">
+        <text x="110" y="35" class="label">Operand A</text>
+        <!-- A0 (for SM0) -->
+        <rect x="80" y="50" width="60" height="120" fill="#60a5fa" rx="4"/>
+        <text x="112" y="105" class="matrix-name">A₀</text>
+        <text x="110" y="125" class="matrix-dim">(M/2, K)</text>
+         <!-- A1 (for SM1) -->
+        <rect x="80" y="185" width="60" height="120" fill="#4ade80" rx="4"/>
+        <text x="112" y="240" class="matrix-name">A₁</text>
+        <text x="110" y="260" class="matrix-dim">(M/2, K)</text>
+    </g>
+
+    <!-- Column 3: Result D -->
+     <g id="col-d">
+        <text x="690" y="35" class="label">Accumulator D</text>
+        <!-- D0 (from SM0) -->
+        <rect x="590" y="50" width="200" height="120" fill="#60a5fa" rx="4"/>
+        <text x="690" y="105" class="matrix-name">D₀</text>
+        <text x="690" y="125" class="matrix-dim">(M/2, N)</text>
+         <!-- D1 (from SM1) -->
+        <rect x="590" y="185" width="200" height="120" fill="#4ade80" rx="4"/>
+        <text x="690" y="240" class="matrix-name">D₁</text>
+        <text x="690" y="260" class="matrix-dim">(M/2, N)</text>
+    </g>
+
+    <!-- Column 2: Operand B (Now at the bottom) -->
+     <g id="col-b">
+        <text x="365" y="420" class="label">Operand B (Shared)</text>
+        <!-- B0 -->
+        <rect x="265" y="320" width="100" height="80" fill="#60a5fa" rx="4"/>
+        <text x="315" y="355" class="matrix-name">B₀</text>
+        <text x="315" y="375" class="matrix-dim">(K, N/2)</text>
+         <!-- B1 -->
+        <rect x="365" y="320" width="100" height="80" fill="#4ade80" rx="4"/>
+        <text x="415" y="355" class="matrix-name">B₁</text>
+        <text x="415" y="375" class="matrix-dim">(K, N/2)</text>
+    </g>
+
+    <!-- Arrows connecting the components (Drawn before computation blocks) -->
+    <g id="arrows" stroke="#374151" stroke-width="1.5" marker-end="url(#arrow)" fill="none">
+        <!-- A -> Computation (Level Arrows) -->
+        <path d="M 140 110 L 190 110" />
+        <path d="M 140 245 L 190 245" />
+
+        <!-- Computation -> D (Level Arrows) -->
+        <path d="M 540 110 L 590 110" />
+        <path d="M 540 245 L 590 245" />
+
+        <!-- B is shared and goes to both SM operations (4 straight, staggered arrows) -->
+        <!-- From B0 -->
+        <path d="M 305 320 V 135" /> <!-- B0 to SM0 -->
+        <path d="M 325 320 V 270" /> <!-- B0 to SM1 -->
+        <!-- From B1 -->
+        <path d="M 405 320 V 135" /> <!-- B1 to SM0 -->
+        <path d="M 425 320 V 270" /> <!-- B1 to SM1 -->
+    </g>
+
+    <!-- Computation Blocks (Drawn last to appear on top of arrows) -->
+    <g id="computation">
+        <!-- SM0 Operation -->
+        <g id="sm0-op">
+            <rect x="190" y="85" width="350" height="50" rx="8" ry="8" fill="#e0f2fe" stroke="#bfdbfe" stroke-width="1.5"/>
+            <text x="365" y="115" class="op-label">SM₀ computes: D₀ = A₀ @ [B₀ B₁]</text>
+        </g>
+        <!-- SM1 Operation -->
+        <g id="sm1-op">
+            <rect x="190" y="220" width="350" height="50" rx="8" ry="8" fill="#dcfce7" stroke="#bbf7d0" stroke-width="1.5"/>
+            <text x="365" y="250" class="op-label">SM₁ computes: D₁ = A₁ @ [B₀ B₁]</text>
+        </g>
+    </g>
+</svg>

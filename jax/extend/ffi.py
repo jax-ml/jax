@@ -17,24 +17,29 @@ from jax._src import ffi as _ffi
 _deprecations = {
     # Added 2024-12-20
     "ffi_call": (
-        "jax.extend.ffi.ffi_call is deprecated, use jax.ffi.ffi_call instead.",
-        _ffi.ffi_call,
+        "jax.extend.ffi.ffi_call was deprecated in JAX v0.5.0 and removed in JAX v0.7.0:"
+        " use jax.ffi.ffi_call instead.",
+        None,
     ),
     "ffi_lowering": (
-        "jax.extend.ffi.ffi_lowering is deprecated, use jax.ffi.ffi_lowering instead.",
-        _ffi.ffi_lowering,
+        "jax.extend.ffi.ffi_lowering was deprecated in JAX v0.5.0 and removed in JAX v0.7.0:"
+        " use jax.ffi.ffi_lowering instead.",
+        None,
     ),
     "include_dir": (
-        "jax.extend.ffi.include_dir is deprecated, use jax.ffi.include_dir instead.",
-        _ffi.include_dir,
+        "jax.extend.ffi.include_dir was deprecated in JAX v0.5.0 and removed in JAX v0.7.0:"
+        " use jax.ffi.include_dir instead.",
+        None,
     ),
     "pycapsule": (
-        "jax.extend.ffi.pycapsule is deprecated, use jax.ffi.pycapsule instead.",
-        _ffi.pycapsule,
+        "jax.extend.ffi.pycapsule was deprecated in JAX v0.5.0 and removed in JAX v0.7.0:"
+        " use jax.ffi.pycapsule instead.",
+        None,
     ),
     "register_ffi_target": (
-        "jax.extend.ffi.register_ffi_target is deprecated, use jax.ffi.register_ffi_target instead.",
-        _ffi.register_ffi_target,
+        "jax.extend.ffi.register_ffi_target was deprecated in JAX v0.5.0 and removed in JAX v0.7.0:"
+        " use jax.ffi.register_ffi_target instead.",
+        None,
     ),
 }
 

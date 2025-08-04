@@ -2793,6 +2793,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       dtype=default_dtypes,
   )
   @jtu.ignore_warning(category=RuntimeWarning, message="overflow")
+  @jtu.ignore_warning(category=RuntimeWarning,
+                      message="invalid value encountered in isinf")
+  @unittest.skipIf(
+      platform.system() == "Windows",
+      "TODO (ybaturina): Test fails on Windows b/435663064."
+  )
   def testFrexp(self, shape, dtype, rng_factory):
     # integer types are converted to float64 in numpy's implementation
     if (dtype not in [jnp.bfloat16, np.float16, np.float32]
@@ -6260,6 +6266,33 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_op = partial(jnp.size, axis=axis)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
+
+  @jtu.sample_product(
+      tuple_size=[0, 1, 2, 3, 4]
+  )
+  def testSizeAlongAxisTuple(self, tuple_size):
+    rng = self.rng()
+
+    ndim = tuple_size + rng.randint(10)
+
+    shape = rng.randint(0, 10, ndim)
+    tuples = list(itertools.combinations(range(ndim), tuple_size))
+    axis = tuples[rng.randint(len(tuples))]
+
+    array = jnp.zeros(shape)
+    output = jnp.size(array, axis)
+    expected = math.prod(shape[i] for i in axis)
+    assert output == expected
+
+  @jtu.sample_product(
+    axis=[(0, 0), (0, -3), (1, 1), (1, -2), (2, 2), (2, -1)],
+  )
+  def testSizeAlongAxisDuplicate(self, axis):
+    shape = (2, 3, 4)
+    array = jnp.zeros(shape)
+    msg = "repeated axis"
+    with self.assertRaisesRegex(ValueError, msg):
+      jnp.size(array, axis)
 
   @jtu.sample_product(
       op=[jnp.ndim, jnp.shape, jnp.size],

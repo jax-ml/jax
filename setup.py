@@ -19,11 +19,11 @@ from setuptools import setup, find_packages
 
 project_name = 'jax'
 
-_current_jaxlib_version = '0.6.1'
+_current_jaxlib_version = '0.7.0'
 # The following should be updated after each new jaxlib release.
-_latest_jaxlib_version_on_pypi = '0.6.1'
+_latest_jaxlib_version_on_pypi = '0.7.0'
 
-_libtpu_version = '0.0.15.*'
+_libtpu_version = '0.0.19.*'
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -59,7 +59,7 @@ setup(
     author_email='jax-dev@google.com',
     packages=find_packages(exclude=["examples"]),
     package_data={'jax': ['py.typed', "*.pyi", "**/*.pyi"]},
-    python_requires='>=3.10',
+    python_requires='>=3.11',
     install_requires=[
         f'jaxlib >={_minimum_jaxlib_version}, <={_jax_version}',
         'ml_dtypes>=0.5.0',
@@ -96,11 +96,21 @@ setup(
           f"jax-cuda12-plugin[with-cuda]>={_current_jaxlib_version},<={_jax_version}",
         ],
 
+        'cuda13': [
+          f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
+          f"jax-cuda13-plugin[with-cuda]>={_current_jaxlib_version},<={_jax_version}",
+        ],
+
         # Target that does not depend on the CUDA pip wheels, for those who want
         # to use a preinstalled CUDA.
         'cuda12-local': [
           f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
           f"jax-cuda12-plugin>={_current_jaxlib_version},<={_jax_version}",
+        ],
+
+        'cuda13-local': [
+          f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
+          f"jax-cuda13-plugin>={_current_jaxlib_version},<={_jax_version}",
         ],
 
         # ROCm support for ROCm 6.0 and above.
@@ -123,7 +133,6 @@ setup(
     license='Apache-2.0',
     classifiers=[
         "Development Status :: 5 - Production/Stable",
-        "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",

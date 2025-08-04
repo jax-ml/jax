@@ -18,15 +18,18 @@ from collections.abc import Sequence
 from functools import partial
 import math
 
-from jax import lax
-import jax.numpy as jnp
-from jax._src.util import canonicalize_axis
+import numpy as np
+
+from jax._src import lax
+from jax._src import numpy as jnp
+from jax._src.numpy import fft as jnp_fft
 from jax._src.numpy.util import promote_dtypes_complex, promote_dtypes_inexact
+from jax._src.util import canonicalize_axis
 from jax._src.typing import Array
 
 def _W4(N: int, k: Array) -> Array:
   N_arr, k = promote_dtypes_complex(N, k)
-  return jnp.exp(-.5j * jnp.pi * k / N_arr)
+  return jnp.exp(-.5j * np.pi * k / N_arr)
 
 def _dct_interleave(x: Array, axis: int) -> Array:
   v0 = lax.slice_in_dim(x, None, None, 2, axis)
@@ -110,7 +113,7 @@ def dct(x: Array, type: int = 2, n: int | None = None,
 
   N = x.shape[axis]
   v = _dct_interleave(x, axis)
-  V = jnp.fft.fft(v, axis=axis)
+  V = jnp_fft.fft(v, axis=axis)
   k = lax.expand_dims(jnp.arange(N, dtype=V.real.dtype), [a for a in range(x.ndim) if a != axis])
   out = V * _W4(N, k)
   out = 2 * out.real
@@ -123,7 +126,7 @@ def _dct2(x: Array, axes: Sequence[int], norm: str | None) -> Array:
   axis1, axis2 = map(partial(canonicalize_axis, num_dims=x.ndim), axes)
   N1, N2 = x.shape[axis1], x.shape[axis2]
   v = _dct_interleave(_dct_interleave(x, axis1), axis2)
-  V = jnp.fft.fftn(v, axes=axes)
+  V = jnp_fft.fftn(v, axes=axes)
   k1 = lax.expand_dims(jnp.arange(N1, dtype=V.dtype),
                        [a for a in range(x.ndim) if a != axis1])
   k2 = lax.expand_dims(jnp.arange(N2, dtype=V.dtype),
@@ -310,7 +313,7 @@ def idct(x: Array, type: int = 2, n: int | None = None,
   x = x / (_W4(N, k))
   x = x * 2 * N
 
-  x = jnp.fft.ifft(x, axis=axis)
+  x = jnp_fft.ifft(x, axis=axis)
   # convert back to reals..
   out = _dct_deinterleave(x.real, axis)
   return out

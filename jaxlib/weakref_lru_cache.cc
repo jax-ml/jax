@@ -315,13 +315,14 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
 std::vector<nb::object> WeakrefLRUCache::GetKeys() {
   std::vector<nb::object> results;
   mu_.Lock();
-  for (const auto& wr_entry : entries_) {
-    for (const auto& rest : *wr_entry.second.cache) {
+  for (const auto& [wr_key, wr_value] : entries_) {
+    wr_value.cache->ForEach([&results, &wr_key](
+                                const Key& key,
+                                const std::shared_ptr<CacheEntry>& value) {
       nb::tuple result =
-          nb::make_tuple(*wr_entry.first.ref, rest.first.context(),
-                         rest.first.args(), rest.first.kwargs());
+          nb::make_tuple(*wr_key.ref, key.context(), key.args(), key.kwargs());
       results.push_back(std::move(result));
-    }
+    });
   }
   mu_.Unlock();
   return results;
@@ -358,14 +359,21 @@ void WeakrefLRUCache::Clear() {
   Py_VISIT(cache->fn_.ptr());
   for (const auto& [wr_key, wr_value] : cache->entries_) {
     Py_VISIT(wr_key.ref.ptr());
-    for (const auto& [key, cache_value] : *wr_value.cache) {
-      int rval = key.tp_traverse(visit, arg);
-      if (rval != 0) {
-        return rval;
-      }
-      if (cache_value.value.has_value()) {
-        cache_value.value->get()->tp_traverse(visit, arg);
-      }
+    int rval = 0;
+    wr_value.cache->ForEach(
+        [&visit, &arg, &rval](const Key& key,
+                              const std::shared_ptr<CacheEntry>& value) {
+          if (rval != 0) {
+            return;
+          }
+          rval = key.tp_traverse(visit, arg);
+          if (rval != 0) {
+            return;
+          }
+          value->tp_traverse(visit, arg);
+        });
+    if (rval != 0) {
+      return rval;
     }
   }
   return 0;

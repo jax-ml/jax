@@ -26,18 +26,20 @@ import weakref
 
 import numpy as np
 
-import jax
-import jax.numpy as jnp
-from jax import lax
+from jax._src import api
 from jax._src import callback as cb
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import effects
+from jax._src import lax
 from jax._src import mesh as mesh_lib
+from jax._src import pjit
 from jax._src import sharding_impls
+from jax._src import shard_map
 from jax._src import tree_util
 from jax._src import util
+from jax._src import xla_bridge
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -45,6 +47,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.numpy import lax_numpy as jnp
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, PartitionSpec as P, parse_flatten_op_sharding)
@@ -83,15 +86,15 @@ def debug_callback_impl(*args, callback: Callable[..., Any],
                         effect: DebugEffect, partitioned: bool):
   del effect, partitioned
   try:
-    cpu_device, *_ = jax.local_devices(backend="cpu")
+    cpu_device, *_ = xla_bridge.local_devices(backend="cpu")
   except RuntimeError as e:
     raise RuntimeError(
         "jax.debug.callback failed to find a local CPU device to place the"
         " inputs on. Make sure \"cpu\" is listed in --jax_platforms or the"
         " JAX_PLATFORMS environment variable."
     ) from e
-  args = jax.device_put(args, cpu_device)
-  with jax.default_device(cpu_device):
+  args = api.device_put(args, cpu_device)
+  with config.default_device(cpu_device):
     try:
       callback(*args)
     except BaseException:
@@ -109,8 +112,7 @@ def debug_callback_batching_rule(args, dims, **params):
   """Unrolls the debug callback across the mapped axis."""
   axis_size = next(x.shape[i] for x, i in zip(args, dims)
                    if i is not None)
-  # TODO(sharadmv): implement in terms of rolled loop unstead of
-  # unrolled.
+  # TODO(sharadmv): implement in terms of rolled loop unstead of unrolled.
   def get_arg_at_dim(i, dim, arg):
     if dim is batching.not_mapped:
       # Broadcast unmapped argument
@@ -137,13 +139,13 @@ ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
 def _debug_callback_partial_auto(axis_context, *args, **params):
   partial_auto = list(set(axis_context.mesh.axis_names) - axis_context.manual_axes)
   def f():
-    idx = jax.lax.with_sharding_constraint(
-        jax.lax.axis_index(*partial_auto),
+    idx = pjit.with_sharding_constraint(
+        lax.axis_index(*partial_auto),
         NamedSharding(axis_context.mesh, P()))
-    return jax.lax.cond(idx == 0,
-                        lambda: debug_callback_p.bind(*args, **params),
-                        lambda: [])
-  return jax.shard_map(f, in_specs=(), out_specs=[])()
+    return lax.cond(idx == 0,
+                    lambda: debug_callback_p.bind(*args, **params),
+                    lambda: [])
+  return shard_map.shard_map(f, in_specs=(), out_specs=[])()
 
 def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params):
   axis_context = ctx.module_context.axis_context
@@ -222,8 +224,10 @@ mlir.register_lowering(debug_callback_p, debug_callback_lowering,
                        platform="cpu")
 mlir.register_lowering(
     debug_callback_p, debug_callback_lowering, platform="gpu")
+# Debug callbacks use channel IDs on TPU, which require non-caching.
 mlir.register_lowering(
-    debug_callback_p, debug_callback_lowering, platform="tpu")
+    debug_callback_p, debug_callback_lowering, platform="tpu",
+    cacheable=False)
 
 def _debug_callback_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   # The default behavior for effectful primitives is to not stage them if
@@ -474,7 +478,7 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
   def _hlo_sharding_callback(hlo_sharding: xc.HloSharding):
     if mesh.empty:
       return callback(
-          sharding_impls._op_sharding_to_pos_sharding(hlo_sharding, devices))
+          sharding_impls.GSPMDSharding(devices, hlo_sharding))
     pspec = (P() if hlo_sharding.is_manual() else
              parse_flatten_op_sharding(hlo_sharding, mesh)[0])
     return callback(NamedSharding(mesh, pspec))
@@ -721,3 +725,22 @@ def visualize_array_sharding(arr, **kwargs):
   def _visualize(sharding):
     return visualize_sharding(arr.shape, sharding, **kwargs)
   inspect_array_sharding(arr, callback=_visualize)
+
+
+# TODO(mattjj): working around an apparent XLA or PjRt bug, remove eventually
+def _debug_callback_eager_rule(
+    mesh,
+    *args,
+    callback: Callable[..., Any],
+    effect: DebugEffect,
+    partitioned: bool,
+):
+  del effect
+  with core.eval_context():
+    all_blocks = zip(*map(list, args))
+  for (idx, device), blocks in zip(np.ndenumerate(mesh.devices), all_blocks):
+    callback(*blocks)
+  return []
+
+
+shard_map.eager_rules[debug_callback_p] = _debug_callback_eager_rule

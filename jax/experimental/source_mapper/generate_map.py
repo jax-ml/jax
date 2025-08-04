@@ -14,7 +14,8 @@
 """Generates source maps for JAX functions."""
 import os
 import tempfile
-from typing import Sequence, Protocol
+from typing import Protocol
+from collections.abc import Sequence
 
 from jax.experimental.source_mapper import common
 

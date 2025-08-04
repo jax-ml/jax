@@ -351,18 +351,20 @@ def sdy_sharding_rule_to_mlir(
 
     `size` may be a dimensions size, a user specified factor size, or UNKNOWN
     if a factor is first used as in a compound factor and then used for a
-    whole dimension.
+    whole dimension. If a factor is not for a leading batching dimension and
+    it corresponds to multiple sizes, the smallest size is used.
     """
     factor_index, factor_size = factors_to_indices_sizes.get(factor, [UNKNOWN, UNKNOWN])
     if factor_index != UNKNOWN:
       # Not the first time seeing the factor.
       if size != UNKNOWN and factor_size != UNKNOWN and factor_size != size:
-        factor_or_batching_dim = (
-          f"Factor {factor}" if _BATCHING_DIM_FACTOR_PREFIX not in factor
-            else f"Batching dimension {factor[1:]}")
-        raise ValueError(
-          f"{factor_or_batching_dim} corresponds to two sizes:"
-          f" {factor_size} and {size}")
+        if _BATCHING_DIM_FACTOR_PREFIX in factor:
+          raise ValueError(f"Batching dimension {factor[1:]} corresponds to "
+                           f"two sizes: {factor_size} and {size}")
+        else:
+          if size < factor_size:
+            # Use the smaller size to update the factor size.
+            factor_size = UNKNOWN
       if size != UNKNOWN and factor_size == UNKNOWN:
         factors_to_indices_sizes[factor] = [factor_index, size]
     else:

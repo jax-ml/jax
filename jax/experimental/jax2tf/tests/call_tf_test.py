@@ -22,12 +22,12 @@ from absl import logging
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
-from jax import dlpack
 from jax import dtypes
 from jax import export
 from jax import lax
 from jax import numpy as jnp
 from jax._src import config
+from jax._src import dlpack
 from jax._src import test_util as jtu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
@@ -836,8 +836,8 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
         self.assertAllClose(res, f_jax(x))
 
   @parameterized.named_parameters(
-      {"testcase_name": f"_type={type_.__name__}", "type_": type_}
-      for type_ in dlpack.SUPPORTED_DTYPES
+      {"testcase_name": f"_type={type_.name}", "type_": type_}
+      for type_ in dlpack.SUPPORTED_DTYPES_SET
   )
   def test_avoid_copy_between_gpu_and_cpu(self, type_):
     try:
@@ -848,7 +848,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
       raise unittest.SkipTest("Test requires a GPU device.")
 
     def tf_fun(x):
-      if type_ == jnp.bool_:
+      if type_ == np.dtype('bool'):
         return tf.math.logical_or(x, True)
       else:
         return x + 1

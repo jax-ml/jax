@@ -14,7 +14,8 @@
 
 """Unit test for result accuracy for unary ops."""
 
-from typing import Any, Callable, NamedTuple, Union
+from typing import Any, NamedTuple
+from collections.abc import Callable
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -33,8 +34,8 @@ config.parse_flags_with_absl()
 
 
 class TolerancePair(NamedTuple):
-  high: Union[lax.Tolerance, lax.AccuracyMode] = lax.AccuracyMode.DEFAULT
-  low: Union[lax.Tolerance, lax.AccuracyMode] = lax.AccuracyMode.DEFAULT
+  high: lax.Tolerance | lax.AccuracyMode = lax.AccuracyMode.DEFAULT
+  low: lax.Tolerance | lax.AccuracyMode = lax.AccuracyMode.DEFAULT
 
 
 def make_unary_test_cases(

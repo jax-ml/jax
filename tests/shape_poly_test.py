@@ -3464,6 +3464,26 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 arg_descriptors=[RandArg((3, 4), _f32)],
                 polymorphic_shapes=["m, n"]),
     [
+        PolyHarness("tril_indices", f"{has_k=}_{has_m=}",
+                    lambda x: jnp.tril_indices(x.shape[0],  # n
+                                               k=x.shape[0] - 1 if has_k else 0,
+                                               m=x.shape[1] if has_m else None),
+                    arg_descriptors=[RandArg((3, 4), _f32)],
+                    polymorphic_shapes=["n, m"])
+        for has_k in [True, False]
+        for has_m in [True, False]
+    ],
+    [
+      PolyHarness("triu_indices", f"{has_k=}_{has_m=}",
+                  lambda x: jnp.triu_indices(x.shape[0], # n
+                                             k=x.shape[0] - 1 if has_k else 0,
+                                             m=x.shape[1] if has_m else None),
+                  arg_descriptors=[RandArg((3, 4), _f32)],
+                  polymorphic_shapes=["n, m"])
+      for has_k in [True, False]
+      for has_m in [True, False]
+    ],
+    [
       PolyHarness("triangular_solve",
                   f"shape={jtu.format_shape_dtype_string(a_shape, dtype)}_{left_side=}_{a_poly=}_{b_poly=}",
                   lambda a, b, left_side: lax.linalg.triangular_solve(

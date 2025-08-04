@@ -76,7 +76,6 @@ from jax._src.lax.lax import (
   ge_p as ge_p,
   gt_p as gt_p,
   imag_p as imag_p,
-  infeed_p as infeed_p,
   integer_pow_p as integer_pow_p,
   iota_p as iota_p,
   is_finite_p as is_finite_p,
@@ -95,7 +94,6 @@ from jax._src.lax.lax import (
   nextafter_p as nextafter_p,
   not_p as not_p,
   or_p as or_p,
-  outfeed_p as outfeed_p,
   pad_p as pad_p,
   population_count_p as population_count_p,
   pow_p as pow_p,
@@ -223,7 +221,10 @@ from jax._src.lax.linalg import (
   schur_p as schur_p,
 )
 
-from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
+from jax._src.pjit import (
+    jit_p as jit_p,
+    sharding_constraint_p as sharding_constraint_p,
+)
 
 from jax._src.prng import (
   random_bits_p as random_bits_p,

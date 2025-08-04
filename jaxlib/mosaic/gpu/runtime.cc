@@ -200,7 +200,10 @@ void *mosaic_gpu_get_function(CUmodule module, const char *name,
   if (result != CUDA_SUCCESS) {
     const char *ptr = nullptr;
     cuGetErrorString(result, &ptr);
-    fprintf(stderr, "cuModuleGetFunction failed: %s\n", ptr);
+    fprintf(stderr,
+            "Failed to retrieve function pointer to kernel \"%s\", "
+            "cuModuleGetFunction failed: %s\n",
+            name, ptr);
     abort();
   }
   if (smem_bytes) {
@@ -209,7 +212,10 @@ void *mosaic_gpu_get_function(CUmodule module, const char *name,
     if (result != CUDA_SUCCESS) {
       const char *ptr = nullptr;
       cuGetErrorString(result, &ptr);
-      fprintf(stderr, "cuFuncSetAttribute failed: %s\n", ptr);
+      fprintf(stderr,
+              "Failed to set maximum dynamic shared memory size for kernel "
+              "\"%s\" to %d bytes, cuFuncSetAttribute failed: %s\n",
+              name, smem_bytes, ptr);
       abort();
     }
   }
@@ -219,7 +225,10 @@ void *mosaic_gpu_get_function(CUmodule module, const char *name,
     if (result != CUDA_SUCCESS) {
       const char *ptr = nullptr;
       cuGetErrorString(result, &ptr);
-      fprintf(stderr, "cuFuncSetAttribute failed: %s\n", ptr);
+      fprintf(stderr,
+              "Failed to set allowed cluster size for kernel \"%s\" to %d, "
+              "cuFuncSetAttribute failed: %s\n",
+              name, cluster_size, ptr);
       abort();
     }
   }
