@@ -2421,59 +2421,14 @@ CanonicalPrecision = Union[
     DotAlgorithmPreset,
 ]
 
-
-def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
-        preferred_element_type: DTypeLike | None = None) -> Array:
-  """Vector/vector, matrix/vector, and matrix/matrix multiplication.
-
-  Wraps XLA's `Dot <https://www.openxla.org/xla/operation_semantics#dot>`_
-  operator.
-
-  For more general contraction, see the :func:`jax.lax.dot_general` operator.
-
-  Args:
-    lhs: an array of dimension 1 or 2.
-    rhs: an array of dimension 1 or 2.
-    precision: Optional. This parameter controls the numerics of the
-      computation, and it can be one of the following:
-
-      - ``None``, which means the default precision for the current backend,
-      - a :class:`~jax.lax.Precision` enum value or a tuple of two
-        :class:`~jax.lax.Precision` enums indicating precision of ``lhs``` and
-        ``rhs``, or
-      - a :class:`~jax.lax.DotAlgorithm` or a
-        :class:`~jax.lax.DotAlgorithmPreset` indicating the algorithm that
-        must be used to accumulate the dot product.
-
-    preferred_element_type: Optional. This parameter controls the data type
-      output by the dot product. By default, the output element type of this
-      operation will match the ``lhs`` and ``rhs`` input element types under
-      the usual type promotion rules. Setting ``preferred_element_type`` to a
-      specific ``dtype`` will mean that the operation returns that element type.
-      When ``precision`` is not a :class:`~jax.lax.DotAlgorithm` or
-      :class:`~jax.lax.DotAlgorithmPreset`, ``preferred_element_type`` provides
-      a hint to the compiler to accumulate the dot product using this data type.
-
-  Returns:
-    An array containing the product.
-  """
-  if 1 <= lhs.ndim <= 2 and 1 <= rhs.ndim <= 2 and core.definitely_equal(lhs.shape[-1], rhs.shape[0]):
-    return dot_general(lhs, rhs, (((lhs.ndim - 1,), (0,)), ((), ())),
-                       precision=precision,
-                       preferred_element_type=preferred_element_type)
-  else:
-    raise TypeError("Incompatible shapes for dot: got {} and {}.".format(
-        lhs.shape, rhs.shape))
-
-
 DotDimensionNumbers = tuple[tuple[Sequence[int], Sequence[int]],
                             tuple[Sequence[int], Sequence[int]]]
 
-def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionNumbers,
-                precision: PrecisionLike = None,
-                preferred_element_type: DTypeLike | None = None,
-                *,
-                out_sharding=None) -> Array:
+def dot(lhs: ArrayLike, rhs: ArrayLike,
+        dimension_numbers: DotDimensionNumbers | None = None,
+        precision: PrecisionLike = None,
+        preferred_element_type: DTypeLike | None = None, *,
+        out_sharding=None) -> Array:
   """General dot product/contraction operator.
 
   Wraps XLA's `DotGeneral
@@ -2520,6 +2475,12 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
     non-contracting/non-batch dimensions.
   """
   out_sharding = canonicalize_sharding(out_sharding, 'dot_general')
+  if dimension_numbers is None:
+    if not (1 <= lhs.ndim <= 2 and 1 <= rhs.ndim <= 2 and
+            core.definitely_equal(lhs.shape[-1], rhs.shape[0])):
+      raise TypeError(
+          f"Incompatible shapes for dot: got {lhs.shape=} and {rhs.shape=}.")
+    dimension_numbers = (((lhs.ndim - 1,), (0,)), ((), ()))
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   cdims = (api_util._ensure_index_tuple(lhs_contract),
            api_util._ensure_index_tuple(rhs_contract))
@@ -2534,6 +2495,8 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
                             precision=canonicalize_precision(precision),
                             preferred_element_type=preferred_element_type,
                             out_sharding=out_sharding)
+
+dot_general = dot
 
 
 def ragged_dot(
