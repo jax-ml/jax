@@ -166,9 +166,10 @@ else
     $COMMON_TPU_TEST_ENV_VARS \
     --test_tag_filters=-multiaccelerator \
     --verbose_failures \
-    --test_output=errors \
+    --test_output=all \
     -- \
     //tests/pallas:ops_test_tpu \
+    //tests/pallas:export_back_compat_pallas_test_tpu \
     //tests/pallas:export_pallas_test_tpu \
     //tests/pallas:tpu_ops_test_tpu \
     //tests/pallas:tpu_pallas_random_test_tpu \
@@ -198,7 +199,7 @@ else
     $COMMON_TPU_TEST_ENV_VARS \
     --test_tag_filters=multiaccelerator \
     --verbose_failures \
-    --test_output=errors \
+    --test_output=all \
     -- \
     //tests:pjit_test_tpu \
     //tests/pallas:tpu_pallas_distributed_test_tpu

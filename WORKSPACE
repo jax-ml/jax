@@ -24,6 +24,7 @@ python_init_repositories(
     local_wheel_inclusion_list = [
         "ml_dtypes*",
         "ml-dtypes*",
+        "libtpu*",
         "numpy*",
         "scipy*",
         "jax-*",
