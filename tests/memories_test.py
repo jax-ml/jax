@@ -33,8 +33,7 @@ import jax.numpy as jnp
 from jax.ad_checkpoint import Offloadable, remat, Recompute
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
-    NamedSharding, SingleDeviceSharding, GSPMDSharding,
-    TransferToMemoryKind, PartitionSpec as P)
+    NamedSharding, SingleDeviceSharding, GSPMDSharding, PartitionSpec as P)
 from jax._src.xla_metadata import set_xla_metadata
 from jax.experimental.compute_on import compute_on
 from jax._src.shard_map import shard_map
@@ -192,9 +191,9 @@ class DevicePutTest(jtu.JaxTestCase):
   def test_error_transfer_to_memory_kind_outside_jit(self):
     with self.assertRaisesRegex(
         ValueError,
-        "TransferToMemoryKind argument to jax.device_put can only be used"
+        "`jax.memory.Space` argument to jax.device_put can only be used"
         " inside jax.jit"):
-      jax.device_put(np.arange(16), TransferToMemoryKind("device"))
+      jax.device_put(np.arange(16), jax.memory.Space.Device)
 
   @parameterized.parameters("unpinned_host", "pinned_host")
   def test_device_put_host_to_hbm(self, host_memory_kind: str):
@@ -547,7 +546,7 @@ class DevicePutTest(jtu.JaxTestCase):
     @jax.jit
     def f(xs):
       def body(carry, x):
-        x_tpu = jax.device_put(x, TransferToMemoryKind("device"))
+        x_tpu = jax.device_put(x, jax.memory.Space.Device)
         return carry, x_tpu + carry
 
       return jax.lax.scan(body, 1.0, xs)
@@ -655,14 +654,6 @@ class DevicePutTest(jtu.JaxTestCase):
     out = f()
     self._check_device_put_addressable_shards(out, np_inp * 2, s_dev, 'device')
 
-  def test_device_put_invalid_mem_space(self):
-    @jax.jit
-    def f(x):
-      return jax.device_put(x, TransferToMemoryKind('device_host'))
-
-    with self.assertRaisesRegex(ValueError, 'Got invalid memory_kind'):
-      f(jnp.arange(8))
-
   @jtu.run_on_devices('tpu')
   def test_ragged_copy_on_host(self):
     mesh = jtu.create_mesh((2,), ('x'))
@@ -682,7 +673,7 @@ class DevicePutTest(jtu.JaxTestCase):
     def inner(state):
       idx, x, output = state
       chunk = jax.lax.dynamic_slice_in_dim(x, idx * chunk_size, chunk_size)
-      chunk_host = jax.device_put(chunk, TransferToMemoryKind('pinned_host'))
+      chunk_host = jax.device_put(chunk, jax.memory.Space.Host)
       output = jax.lax.dynamic_update_slice_in_dim(
           output, chunk_host, idx * chunk_size, axis=0)
       return (idx + 1, x, output)
@@ -694,7 +685,7 @@ class DevicePutTest(jtu.JaxTestCase):
 
     def foo(x):
       output = jax.device_put(jnp.zeros_like(x),
-                              TransferToMemoryKind('pinned_host'))
+                              jax.memory.Space.Host)
       _, _, cpu_x = jax.lax.while_loop(cond, inner, (0, x, output))
       return cpu_x
 
@@ -1073,13 +1064,13 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
     def f_fwd(x):
       y = x * 2
-      z = jax.device_put(y, TransferToMemoryKind('pinned_host'))
+      z = jax.device_put(y, jax.memory.Space.Host)
       return y, (x, z)
 
     def f_bwd(res, tx):
       x, z = res
       y = x * 2
-      z2 = jax.device_put(y, TransferToMemoryKind('pinned_host'))
+      z2 = jax.device_put(y, jax.memory.Space.Host)
       return (eq(z, z2),)
 
     f.defvjp(f_fwd, f_bwd)
@@ -1849,13 +1840,11 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     fwd_jaxpr, bwd_jaxpr = jtu.fwd_bwd_jaxprs(f, inp)
 
     self.assertLen(fwd_jaxpr.out_avals, 4)  # 1 output, 3 offloaded residuals
-    fwd_mem_kind_count = str(fwd_jaxpr).count(
-        "TransferToMemoryKind(memory_kind='pinned_host')")
+    fwd_mem_kind_count = str(fwd_jaxpr).count("MemorySpace.Host")
     self.assertEqual(fwd_mem_kind_count, 3)
 
     self.assertLen(bwd_jaxpr.in_avals, 4)  # 3 offloaded residuals, 1 input
-    bwd_mem_kind_count = str(bwd_jaxpr).count(
-        "TransferToMemoryKind(memory_kind='device')")
+    bwd_mem_kind_count = str(bwd_jaxpr).count("MemorySpace.Device")
     self.assertEqual(bwd_mem_kind_count, 3)
 
     # Execution test.
@@ -1907,13 +1896,11 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     fwd_jaxpr, bwd_jaxpr = jtu.fwd_bwd_jaxprs(f, inp)
 
     self.assertLen(fwd_jaxpr.out_avals, 5)  # 2 output, 3 offloaded residuals
-    fwd_mem_kind_count = str(fwd_jaxpr).count(
-        "TransferToMemoryKind(memory_kind='pinned_host')")
+    fwd_mem_kind_count = str(fwd_jaxpr).count("MemorySpace.Host")
     self.assertEqual(fwd_mem_kind_count, 2)
 
     self.assertLen(bwd_jaxpr.in_avals, 5)  # 3 offloaded residuals, 2 input
-    bwd_mem_kind_count = str(bwd_jaxpr).count(
-        "TransferToMemoryKind(memory_kind='device')")
+    bwd_mem_kind_count = str(bwd_jaxpr).count("MemorySpace.Device")
     self.assertEqual(bwd_mem_kind_count, 2)
 
     f = jax.jit(jax.grad(f))
