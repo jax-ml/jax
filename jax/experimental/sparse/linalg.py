@@ -264,7 +264,7 @@ def _check_inputs(A, X):
 
 
 def _mm(a, b, precision=jax.lax.Precision.HIGHEST):
-  return jax.lax.dot(a, b, (precision, precision))
+  return jax.lax.dot(a, b, precision=(precision, precision))
 
 def _generate_diagnostics(prev_XPR, X, P, R, theta, converged, adj_resid):
   k = X.shape[1]

@@ -126,6 +126,7 @@ def warn(deprecation_id: str, message: str, stacklevel: int) -> None:
 register('jax-aval-named-shape')
 register('jax-dlpack-import-legacy')
 register('jax-experimental-host-callback')
+register('jax-lax-dot-positional-args')
 register('jax-nn-one-hot-float-input')
 register("jax-numpy-astype-complex-to-real")
 register('jax-numpy-clip-args')
