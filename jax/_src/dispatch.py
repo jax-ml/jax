@@ -533,10 +533,10 @@ def _device_put_sharding_impl(x, aval, device, copy):
 def _device_put_impl(
     x, *, device: Device | Sharding | Format | None,
     src: Device | Sharding | Format | None, copy: CopySemantics):
-  if (isinstance(device, TransferToMemoryKind) or
-      isinstance(src, TransferToMemoryKind)):
+  if (isinstance(device, (TransferToMemoryKind, core.MemorySpace)) or
+      isinstance(src, (TransferToMemoryKind, core.MemorySpace))):
     raise ValueError(
-        "TransferToMemoryKind argument to jax.device_put can only be used"
+        "`jax.memory.Space` argument to jax.device_put can only be used"
         " inside jax.jit. If you are using device_put outside jax.jit, then"
         " please provide a concrete Sharding with memory_kind.")
 
@@ -610,10 +610,13 @@ def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
   for x, d in zip(xs, devices):
     if (isinstance(d, (Sharding, TransferToMemoryKind)) and
         d.memory_kind is not None):
-      # TODO(yashkatariya): Maybe move this to `mem_kind_to_space`?
+      # TODO(yashkatariya): Delete this check after TransferToMemoryKind is
+      # deleted.
       if d.memory_kind not in valid_memory_kinds:
         raise ValueError(f'Got invalid memory_kind: {d.memory_kind}')
       out.append(x.update(memory_space=core.mem_kind_to_space(d.memory_kind)))
+    elif isinstance(d, core.MemorySpace):
+      out.append(x.update(memory_space=d))
     else:
       out.append(x)
   return out
@@ -660,8 +663,8 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
   if ctx.module_context.all_default_mem_kind:
     return xs
   def lower(x, device, aval, out_aval):
-    if (isinstance(device, (Sharding, TransferToMemoryKind)) and
-        device.memory_kind is not None):
+    if ((isinstance(device, (Sharding, TransferToMemoryKind)) and
+         device.memory_kind is not None) or isinstance(device, core.MemorySpace)):
       if isinstance(device, Sharding):
         if config.use_shardy_partitioner.value:
           x = mlir.wrap_with_sharding_op(
@@ -671,7 +674,9 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
           x = mlir.wrap_with_sharding_op(
               ctx, x, out_aval,
               device._to_xla_hlo_sharding(aval.ndim).to_proto())
-      x = mlir.wrap_with_memory_kind(x, device.memory_kind, out_aval)
+      mem_kind = (core.mem_space_to_kind(device)
+                  if isinstance(device, core.MemorySpace) else device.memory_kind)
+      x = mlir.wrap_with_memory_kind(x, mem_kind, out_aval)
       return x
     return x
   return list(map(lower, xs, devices, ctx.avals_in, ctx.avals_out))

@@ -1146,13 +1146,13 @@ def _partial_eval_jaxpr_custom_cached(
         foreach(partial(write, False, False), eqn.outvars)
       elif isinstance(policy, Offloadable):
         # TODO(slebedev): This is a legit error which requires a BUILD fix.
-        from jax._src.dispatch import device_put_p, TransferToMemoryKind, CopySemantics  # type: ignore
+        from jax._src.dispatch import device_put_p, CopySemantics  # type: ignore
         resvars = [Var(v.aval.update(memory_space=core.mem_kind_to_space(policy.dst)))
                    for v in eqn.outvars]
         offload_eqn = core.JaxprEqn(
             eqn.outvars, resvars, device_put_p,
             dict(
-                devices=(TransferToMemoryKind(policy.dst),) * len(eqn.outvars),
+                devices=(core.mem_kind_to_space(policy.dst),) * len(eqn.outvars),
                 srcs=(None,),
                 copy_semantics=(CopySemantics.COPY,),
             ),
@@ -1161,13 +1161,13 @@ def _partial_eval_jaxpr_custom_cached(
         known_eqns.append(offload_eqn)
         # resvars are known and available in the backward jaxpr.
         foreach(partial(write, False, True), resvars)
-        assert all(core.mem_space_to_kind(o.aval.memory_space) == policy.src  # type: ignore
+        assert all(o.aval.memory_space == core.mem_kind_to_space(policy.src)  # type: ignore
                    for o in eqn.outvars)
         residuals.update(resvars)
         reload_eqn = core.JaxprEqn(
             resvars, eqn.outvars, device_put_p,
             dict(
-              devices=(TransferToMemoryKind(policy.src),) * len(resvars),
+              devices=(core.mem_kind_to_space(policy.src),) * len(resvars),
               srcs=(None,),
               copy_semantics=(CopySemantics.COPY,)
             ),

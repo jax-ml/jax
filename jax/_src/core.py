@@ -2145,7 +2145,7 @@ class MemorySpace(enum.Enum):
   Host = enum.auto()
 
   def __repr__(self):
-    return self.name.lower()
+    return f"MemorySpace.{self.name}"
 
 
 def get_memory_space(memory_space):
@@ -2271,7 +2271,8 @@ def str_short_aval(shape, dtype, mesh, spec, vma, memory_space,
   shapestr = _get_shape_sharding_str(shape, spec)
   mesh_axes = f'({_axis_types_dict(mesh)})' if mesh_axis_types else ''
   vma_ur = _vma_ur_str(vma, spec.unreduced, spec.reduced)
-  ms_str = "" if memory_space == MemorySpace.Device else f"<{memory_space!r}>"
+  ms_str = ("" if memory_space == MemorySpace.Device else
+            f"<{memory_space.name.lower()}>")
   return f'{dt_str}{ms_str}[{shapestr}]{vma_ur}{mesh_axes}'
 
 def _create_str(x, prefix=None):

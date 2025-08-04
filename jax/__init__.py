@@ -171,6 +171,7 @@ from jax import profiler as profiler
 from jax import random as random
 from jax import scipy as scipy
 from jax import sharding as sharding
+from jax import memory as memory
 from jax import stages as stages
 from jax import tree_util as tree_util
 from jax import util as _deprecated_util

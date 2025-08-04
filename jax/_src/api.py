@@ -2508,7 +2508,8 @@ def _check_string_compatible_sharding(s):
 @util.cache(max_size=2048, trace_context_in_key=False)
 def _check_sharding(aval, s):
   if (s is not None and
-      not isinstance(s, (xc.Device, Sharding, Format, TransferToMemoryKind))):
+      not isinstance(s, (xc.Device, Sharding, Format, TransferToMemoryKind,
+                         core.MemorySpace))):
     raise ValueError(
         "`jax.device_put` only accepts `None`, `jax.sharding.Sharding`,"
         " `jax.Device`, `Format` or a pytree of these values. Received"
@@ -2537,8 +2538,8 @@ def pspec_to_sharding(val):
 
 def device_put(
     x,
-    device: None | xc.Device | Sharding | P | Format | Any | TransferToMemoryKind = None,
-    *, src: None | xc.Device | Sharding | P | Format | Any | TransferToMemoryKind = None,
+    device: None | xc.Device | Sharding | P | Format | Any = None,
+    *, src: None | xc.Device | Sharding | P | Format | Any = None,
     donate: bool | Any = False, may_alias: bool | None | Any = None):
   """Transfers ``x`` to ``device``.
 
@@ -2575,13 +2576,15 @@ def device_put(
   with config.explicit_device_put_scope():
     x_flat, treedef = tree_flatten(x)
     if (device is None or
-        isinstance(device, (xc.Device, Sharding, TransferToMemoryKind))):
+        isinstance(device, (xc.Device, Sharding, TransferToMemoryKind,
+                            core.MemorySpace))):
       device_flat = [device] * len(x_flat)
     else:
       device_flat = flatten_axes("device_put device", treedef, device)
 
     if (src is None or
-        isinstance(src, (xc.Device, Sharding, TransferToMemoryKind))):
+        isinstance(src, (xc.Device, Sharding, TransferToMemoryKind,
+                         core.MemorySpace))):
       src_flat = [_infer_src_sharding(src, xf) for xf in x_flat]
     else:
       src_flat = flatten_axes("device_put source", treedef, src)

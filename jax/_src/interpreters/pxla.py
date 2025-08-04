@@ -1980,13 +1980,15 @@ def _create_device_list(
 
 
 @weakref_lru_cache
-def jaxpr_transfer_mem_kinds(
-    jaxpr: core.Jaxpr) -> Sequence[sharding_impls.TransferToMemoryKind]:
+def jaxpr_transfer_mem_kinds(jaxpr: core.Jaxpr):
   out = []  # type: ignore
   for eqn in jaxpr.eqns:
     if eqn.primitive is dispatch.device_put_p:
-      out.extend(d for d in eqn.params['devices']
-                 if isinstance(d, sharding_impls.TransferToMemoryKind))
+      for d in eqn.params['devices']:
+        if isinstance(d, sharding_impls.TransferToMemoryKind):
+          out.append(d)
+        elif isinstance(d, core.MemorySpace):
+          out.append(d)  # type: ignore
   for subjaxpr in core.subjaxprs(jaxpr):
     out.extend(jaxpr_transfer_mem_kinds(subjaxpr))
   return out
@@ -1997,16 +1999,20 @@ def are_all_shardings_default_mem_kind(
 ):
   if device_list is None:
     return True
+
   try:
     default_mem_kind = device_list.default_memory_kind
   except:
     return True
+
   for i in shardings:
     if isinstance(i, (UnspecifiedValue, AUTO)):
       continue
-    if i.memory_kind is None:  # pytype: disable=attribute-error
+    mem_kind = (core.mem_space_to_kind(i) if isinstance(i, core.MemorySpace)
+                else i.memory_kind)
+    if mem_kind is None:
       continue
-    if i.memory_kind != default_mem_kind:
+    if mem_kind != default_mem_kind:
       return False
   return True
 
