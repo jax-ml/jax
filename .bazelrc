@@ -169,9 +169,9 @@ build:cuda --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_8
 build:cuda --@local_config_cuda//:enable_cuda
 
 # Default hermetic CUDA, CUDNN and NVSHMEM versions.
-build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.8.0"
+build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.9.1"
 build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"
-build:cuda --repo_env=HERMETIC_NVSHMEM_VERSION="3.2.5"
+build:cuda --repo_env=HERMETIC_NVSHMEM_VERSION="3.3.9"
 build:cuda --@local_config_cuda//cuda:include_cuda_libs=true
 
 # This config is used for building targets with CUDA/NVSHMEM libraries from stubs.

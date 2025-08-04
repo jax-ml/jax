@@ -25,7 +25,7 @@ on:
       cuda-version:
         description: "Which CUDA version to test?"
         type: string
-        default: "12.8"
+        default: "12.9"
       use-nvidia-pip-wheels:
         description: "Whether to download CUDA packages from PyPI?"
         type: boolean

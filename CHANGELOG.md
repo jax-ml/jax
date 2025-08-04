@@ -19,6 +19,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Changes
   * Exposed `jax.set_mesh` which acts as a global setter and a context manager.
     Removed `jax.sharding.use_mesh` in favor of `jax.set_mesh`.
+  * JAX is now built using CUDA 12.9. All versions of CUDA 12.1 or newer remain
+    supported.
 
 * Deprecations:
 

@@ -93,11 +93,11 @@ jobs:
           python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
           cuda: [
             {cuda-version: "12.1", use-nvidia-pip-wheels: false},
-            {cuda-version: "12.8", use-nvidia-pip-wheels: true}
+            {cuda-version: "12.9", use-nvidia-pip-wheels: true}
           ]
           enable-x64: [0]
           exclude:
-            # H100 runs only CUDA 12.8 and min and max Python versions.
+            # H100 runs only CUDA 12.9 and min and max Python versions.
             - runner: "linux-x86-a3-8g-h100-8gpu"
               cuda:
                 cuda-version: "12.1"
@@ -109,7 +109,7 @@ jobs:
               python: "3.13-nogil"
             - runner: "linux-x86-a3-8g-h100-8gpu"
               python: "3.14-nogil"
-            # B200 runs only CUDA 12.8 and min and max Python versions.
+            # B200 runs only CUDA 12.9 and min and max Python versions.
             - runner: "linux-x86-a4-224-b200-1gpu"
               cuda:
                 cuda-version: "12.1"
