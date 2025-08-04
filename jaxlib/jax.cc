@@ -263,7 +263,8 @@ NB_MODULE(_jax, m) {
           kv_store = GetDistributedKeyValueStore(distributed_client,
                                                  /*key_prefix=*/"cpu:");
         }
-        auto gloo_kv_store = std::make_unique<cpu::GlooKeyValueStore>(kv_store);
+        auto gloo_kv_store =
+            std::make_unique<xla::cpu::GlooKeyValueStore>(kv_store);
         auto uv_attrs = gloo::transport::uv::attr();
         if (hostname) {
           uv_attrs.hostname = *hostname;
@@ -272,8 +273,8 @@ NB_MODULE(_jax, m) {
           uv_attrs.iface = *interface;
         }
         auto uv_device = gloo::transport::uv::CreateDevice(uv_attrs);
-        return std::make_shared<cpu::GlooCollectives>(std::move(gloo_kv_store),
-                                                      std::move(uv_device));
+        return std::make_shared<xla::cpu::GlooCollectives>(
+            std::move(gloo_kv_store), std::move(uv_device));
 #else   // defined(__linux__)
         throw xla::XlaRuntimeError(
             "make_gloo_tcp_collectives only implemented for linux and macos");
