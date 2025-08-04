@@ -45,6 +45,7 @@ jobs:
             --config=ci_linux_x86_64_cuda \
             --config=ci_rbe_cache \
             --repo_env=HERMETIC_PYTHON_VERSION="3.13" \
+            --repo_env=HERMETIC_CUDNN_VERSION="9.11.0" \
             --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
             --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
             --test_output=errors \
@@ -87,6 +88,7 @@ jobs:
             --config=ci_linux_x86_64_cuda \
             --config=ci_rbe_cache \
             --repo_env=HERMETIC_PYTHON_VERSION="3.13" \
+            --repo_env=HERMETIC_CUDNN_VERSION="9.11.0" \
             --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
             --test_output=errors \
             --strategy=TestRunner=local \
