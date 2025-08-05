@@ -701,9 +701,8 @@ def device_put_from_numpy_array(state):
 @google_benchmark.option.args([10])
 @google_benchmark.option.args([100])
 @google_benchmark.option.args([1000])
+@required_devices(2)
 def device_put_from_jax_array(state):
-  if len(jax.devices()) < 2:
-    state.skip_with_error('requires 2 devices')
   x = [np.array(1, np.int32)] * state.range(0)
   x = jax.block_until_ready(jax.device_put(x, device=jax.devices()[0]))
   d = jax.devices()[1]
