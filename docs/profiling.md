@@ -69,7 +69,7 @@ Tensorboard to the `log_dir` to analyze the trace (see the
 (xprof-profiling)=
 ## XProf (TensorBoard profiling)
 
-[XProf](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras)
+[XProf](https://openxla.org/xprof)
 can be used to profile JAX programs. XProf is a great way to acquire and
 visualize performance traces and profiles of your program, including activity on
 GPU and TPU. The end result looks something like this:
