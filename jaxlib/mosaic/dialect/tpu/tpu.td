@@ -414,6 +414,46 @@ def TPU_DynamicRotateOp : TPU_Op<"dynamic_rotate", [Pure]> {
   let hasVerifier = 1;
 }
 
+def TPU_ScanCountOp : TPU_Op<"scan_count", [Pure, InferTypeOpAdaptor, SameOperandsAndResultShape]> {
+let summary = [{
+    ScanCountOp calculates the running duplicate occurrence count of the elements
+    in the input vector. Elements eligible for counting are specified by the
+    input mask vector. The output mask vector indicates one unique occurrence
+    per duplicate that was counted.
+  }];
+
+  let description = [{
+    ScanCountOp calculates the running duplicate occurrence count of the elements
+    in the input vector, %values. The output vector, %counts, contains the running
+    duplicate occurrence count for the corresponding element in
+    the input vector, where the count is performed in ascending order of element
+    indices. For example, if the elements of %values at indices 0, 5, and 7 had
+    duplicate values, then the elements of %counts at indices 0, 5, and 7 would
+    be 1, 2, and 3, respectively.
+
+    A mask vector, %in_mask, specifies which of the elements in the input vector
+    are eligible for counting. An element in %values that has its mask set to 0
+    will always have a count of 1 in %counts, regardless of the position in the
+    vector, or whether there were duplicates or not.
+  }];
+
+  let arguments = (ins
+    VectorOfNonZeroRankOf<[I1]>:$in_mask,
+    AnyVectorOfNonZeroRank:$values
+  );
+  let results = (outs
+    VectorOfNonZeroRankOf<[I1]>:$out_mask,
+    VectorOfNonZeroRankOf<[I32]>:$counts
+  );
+
+  let assemblyFormat = [{
+    `mask` `(` $in_mask `:` type($in_mask) `)`
+    `value` `(` $values `:` type($values) `)`
+    attr-dict `:` type(results)
+  }];
+
+}
+
 def TPU_IotaOp : TPU_Op<"iota", [Pure]> {
   let description = [{
     Creates a vector that with values that start at 0 and increase along a

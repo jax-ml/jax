@@ -841,6 +841,17 @@ LogicalResult DynamicRotateOp::verify() {
   return verifyRotateOp<DynamicRotateOp>(*this);
 }
 
+LogicalResult ScanCountOp::inferReturnTypes(
+    MLIRContext *context, std::optional<Location> location,
+    ScanCountOp::Adaptor adaptor,
+    ::llvm::SmallVectorImpl<Type> &inferredReturnTypes) {
+  inferredReturnTypes.push_back(adaptor.getInMask().getType());
+  inferredReturnTypes.push_back(VectorType::get(
+      cast<VectorType>(adaptor.getValues().getType()).getShape(),
+      IntegerType::get(context, 32)));
+  return success();
+}
+
 LogicalResult IotaOp::verify() {
   const int64_t rank = getType().getRank();
   SmallVector<bool> seen(rank, false);
@@ -1390,7 +1401,7 @@ bool hasHbmOrVmemSharedMemorySpace(MemRefType ty) {
          HasMemorySpace(ty, MemorySpace::kVmemShared);
 }
 
-FailureOr<bool> isGather(Operation& op, Value source, Value target) {
+FailureOr<bool> isGather(Operation &op, Value source, Value target) {
   const MemRefType source_ty = getMemRefType(source);
   const MemRefType target_ty = getMemRefType(target);
   if (hasHbmOrVmemSharedMemorySpace(source_ty) &&
