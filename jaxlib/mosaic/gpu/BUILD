@@ -13,7 +13,7 @@
 # limitations under the License.
 
 load("@rules_python//python:defs.bzl", "py_library")
-load("//jaxlib:jax.bzl", "nanobind_extension")
+load("//jaxlib:jax.bzl", "if_oss", "nanobind_extension")
 
 package(
     default_applicable_licenses = [],
@@ -147,10 +147,13 @@ cc_library(
 cc_library(
     name = "custom_call",
     srcs = ["custom_call.cc"],
-    linkopts = [
-        "-Wl,--export-dynamic-symbol='MosaicGpuCompile'",
-        "-Wl,--export-dynamic-symbol='MosaicGpuUnload'",
-    ],
+    linkopts = if_oss(
+        [],  # We use a version script to ensure symbol visibility in the OSS build.
+        [
+            "-Wl,--export-dynamic-symbol='MosaicGpuCompile'",
+            "-Wl,--export-dynamic-symbol='MosaicGpuUnload'",
+        ],
+    ),
     deps = [
         ":library_paths",
         ":nvshmem",
