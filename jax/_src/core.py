@@ -18,7 +18,6 @@ from collections.abc import (Callable, Collection, Hashable, Iterable, Iterator,
                              Sequence, MutableSet, MutableMapping)
 from contextlib import contextmanager
 from dataclasses import dataclass
-import enum
 import functools
 from functools import partial, total_ordering
 import gc
@@ -58,6 +57,7 @@ import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding
 from jax._src.sharding import Sharding
 from jax._src.layout import Format, AutoLayout
+from jax._src.memory import Space as MemorySpace
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
 from jax._src import traceback_util
@@ -2142,13 +2142,6 @@ def get_vma(vma, mesh):
           f" be of type `Manual`. Got axis: {i} of type {mesh._name_to_type[i]}")
   assert isinstance(vma, frozenset)
   return vma
-
-class MemorySpace(enum.Enum):
-  Device = enum.auto()
-  Host = enum.auto()
-
-  def __repr__(self):
-    return f"MemorySpace.{self.name}"
 
 
 def get_memory_space(memory_space):

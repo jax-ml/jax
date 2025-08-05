@@ -209,6 +209,7 @@ py_library_providing_imports_info(
         "//jax/_src:lax",
         "//jax/_src:layout",
         "//jax/_src:lazy_loader",
+        "//jax/_src:memory",
         "//jax/_src:mesh",
         "//jax/_src:mlir",
         "//jax/_src:monitoring",

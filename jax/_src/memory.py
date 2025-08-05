@@ -12,4 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.memory import Space as Space
+import enum
+
+
+class Space(enum.Enum):
+  Device = enum.auto()
+  Host = enum.auto()
+
+  def __repr__(self):
+    return f"MemorySpace.{self.name}"

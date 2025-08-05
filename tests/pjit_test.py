@@ -6893,8 +6893,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('data', None, None)))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'),
-                      axis_types=(mesh_lib.AxisType.Explicit,
-                                  mesh_lib.AxisType.Auto))
+                          axis_types=(mesh_lib.AxisType.Explicit,
+                                      mesh_lib.AxisType.Auto))
   def test_mix_to_full_user_mode(self, mesh):
     np_inp = np.arange(16.).reshape(8, 2)
     s = NamedSharding(mesh, P('x', 'y'))
