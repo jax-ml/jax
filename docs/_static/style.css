@@ -81,7 +81,7 @@ body:has(.hero) .bd-container {
 }
 
 .getting-started,
-.tutorials,
+.user-guides,
 .installation {
   background: #3C4043;
   color: white;
@@ -91,7 +91,7 @@ body:has(.hero) .bd-container {
 }
 
 .getting-started:hover,
-.tutorials:hover,
+.user-guides:hover,
 .installation:hover {
   background: #AECBFA;
   color: #202124;
@@ -99,7 +99,7 @@ body:has(.hero) .bd-container {
 }
 
 .getting-started .sd-card-body,
-.tutorials .sd-card-body,
+.user-guides .sd-card-body,
 .installation .sd-card-body {
   display: flex;
   align-items: center;
@@ -108,7 +108,7 @@ body:has(.hero) .bd-container {
 }
 
 .getting-started .sd-card-title,
-.tutorials .sd-card-title,
+.user-guides .sd-card-title,
 .installation .sd-card-title {
   display: flex;
   flex-direction: column;
@@ -117,13 +117,13 @@ body:has(.hero) .bd-container {
 }
 
 .getting-started svg,
-.tutorials svg,
+.user-guides svg,
 .installation svg {
   color: #8AB4F8;
 }
 
 .getting-started:hover svg,
-.tutorials:hover svg,
+.user-guides:hover svg,
 .installation:hover svg {
   color: #3C4043;
 }

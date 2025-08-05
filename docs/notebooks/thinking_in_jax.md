@@ -1,5 +1,6 @@
 ---
 jupytext:
+  default_lexer: ipython3
   formats: ipynb,md:myst
   text_representation:
     extension: .md
@@ -7,7 +8,7 @@ jupytext:
     format_version: 0.13
     jupytext_version: 1.16.4
 kernelspec:
-  display_name: Python 3
+  display_name: jax-docs
   language: python
   name: python3
 ---
@@ -16,7 +17,7 @@ kernelspec:
 
 # Quickstart: How to think in JAX
 
-<!--* freshness: { reviewed: '2025-08-01' } *-->
+<!--* freshness: { reviewed: '2024-04-08' } *-->
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/notebooks/thinking_in_jax.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/jax-ml/jax/blob/main/docs/notebooks/thinking_in_jax.ipynb)
 
@@ -283,7 +284,7 @@ This is because the function generates an array whose shape is not known at comp
 
 +++
 
-For more on JIT compilation in JAX, check out [Just-in-time compilation](https://docs.jax.dev/en/latest/jit-compilation.html).
+For more on JIT compilation in JAX, check out {ref}`jit-compilation`.
 
 +++ {"id": "BzBnKbXwXjLV"}
 
@@ -404,7 +405,7 @@ Understanding which values and operations will be static and which will be trace
 - JAX provides automatic differentiation via the `jax.grad` transformation.
 - The `jax.grad` and `jax.jit` transformations compose and can be mixed arbitrarily.
 
-In addition to transforming functions via JIT compilation, JAX also provides other transformations. One such transformation is [`jax.grad`](https://docs.jax.dev/en/latest/_autosummary/jax.grad.html), which performs [automatic differentiation (autodiff)](https://en.wikipedia.org/wiki/Automatic_differentiation):
+In addition to transforming functions via JIT compilation, JAX also provides other transformations. One such transformation is {func}`jax.grad`, which performs [automatic differentiation (autodiff)](https://en.wikipedia.org/wiki/Automatic_differentiation):
 
 ```{code-cell} ipython3
 from jax import grad
@@ -427,14 +428,14 @@ def first_finite_differences(f, x, eps=1E-3):
 print(first_finite_differences(sum_logistic, x_small))
 ```
 
-The [`jax.grad`](https://docs.jax.dev/en/latest/_autosummary/jax.grad.html) and [`jax.jit`](https://docs.jax.dev/en/latest/_autosummary/jax.jit.html) transformations compose and can be mixed arbitrarily.
+The {func}`~jax.grad` and {func}`~jax.jit` transformations compose and can be mixed arbitrarily.
 For instance, while the `sum_logistic` function was differentiated directly in the previous example, it could also be JIT-compiled, and these operations can be combined. We can go further:
 
 ```{code-cell} ipython3
 print(grad(jit(grad(jit(grad(sum_logistic)))))(1.0))
 ```
 
-Beyond scalar-valued functions, the [`jax.jacobian`](https://docs.jax.dev/en/latest/_autosummary/jax.jacobian.html) transformation can be
+Beyond scalar-valued functions, the {func}`jax.jacobian` transformation can be
 used to compute the full Jacobian matrix for vector-valued functions:
 
 ```{code-cell} ipython3
@@ -442,10 +443,10 @@ from jax import jacobian
 print(jacobian(jnp.exp)(x_small))
 ```
 
-For more advanced autodiff operations, you can use [`jax.vjp`](https://docs.jax.dev/en/latest/_autosummary/jax.vjp.html) for reverse-mode vector-Jacobian products,
-and [`jax.jvp`](https://docs.jax.dev/en/latest/_autosummary/jax.jvp.html) and [`jax.linearize`](https://docs.jax.dev/en/latest/_autosummary/jax.linearize.html) for forward-mode Jacobian-vector products.
+For more advanced autodiff operations, you can use {func}`jax.vjp` for reverse-mode vector-Jacobian products,
+and {func}`jax.jvp` and {func}`jax.linearize` for forward-mode Jacobian-vector products.
 The two can be composed arbitrarily with one another, and with other JAX transformations.
-For example, `jax.jvp` and `jax.vjp` are used to define the forward-mode [`jax.jacfwd`](https://docs.jax.dev/en/latest/_autosummary/jax.jacfwd.html) and reverse-mode [`jax.jacrev`](https://docs.jax.dev/en/latest/_autosummary/jax.jacrev.html) for computing Jacobians in forward- and reverse-mode, respectively.
+For example, {func}`jax.jvp` and {func}`jax.vjp` are used to define the forward-mode {func}`jax.jacfwd` and reverse-mode {func}`jax.jacrev` for computing Jacobians in forward- and reverse-mode, respectively.
 Here's one way to compose them to make a function that efficiently computes full Hessian matrices:
 
 ```{code-cell} ipython3
@@ -455,25 +456,25 @@ def hessian(fun):
 print(hessian(sum_logistic)(x_small))
 ```
 
-This kind of composition produces efficient code in practice; this is more-or-less how JAX's built-in [`jax.hessian`](https://docs.jax.dev/en/latest/_autosummary/jax.hessian.html) function is implemented.
+This kind of composition produces efficient code in practice; this is more-or-less how JAX's built-in {func}`jax.hessian` function is implemented.
 
-For more on automatic differentiation in JAX, check out [Automatic differentiation](https://docs.jax.dev/en/latest/automatic-differentiation.html).
+For more on automatic differentiation in JAX, check out {ref}`automatic-differentiation`.
 
 +++
 
-## Auto-vectorization with `jax.vmap`
+## Auto-vectorization with {func}`jax.vmap`
 
 **Key concepts:**
-- JAX provides automatic vectorization via the [`jax.vmap`](https://docs.jax.dev/en/latest/_autosummary/jax.vmap.html) transformation.
+- JAX provides automatic vectorization via the `jax.vmap` transformation.
 - `jax.vmap` can be composed with `jax.jit` to produce efficient vectorized code.
 
-Another useful transformation is [`jax.vmap`](https://docs.jax.dev/en/latest/_autosummary/jax.vmap.html), the vectorizing map.
+Another useful transformation is {func}`~jax.vmap`, the vectorizing map.
 It has the familiar semantics of mapping a function along array axes, but instead of explicitly looping
 over function calls, it transforms the function into a natively vectorized version for better performance.
-When composed with [`jax.jit`](https://docs.jax.dev/en/latest/_autosummary/jax.jit.html), it can be just as performant as manually rewriting your function
+When composed with {func}`~jax.jit`, it can be just as performant as manually rewriting your function
 to operate over an extra batch dimension.
 
-We're going to work with a simple example, and promote matrix-vector products into matrix-matrix products using [`jax.vmap`](https://docs.jax.dev/en/latest/_autosummary/jax.vmap.html).
+We're going to work with a simple example, and promote matrix-vector products into matrix-matrix products using {func}`~jax.vmap`.
 Although this is easy to do by hand in this specific case, the same technique can apply to more complicated functions.
 
 ```{code-cell} ipython3
@@ -516,7 +517,7 @@ print('Manually batched')
 ```
 
 However, as functions become more complicated, this kind of manual batching becomes more difficult and error-prone.
-The `jax.vmap` transformation is designed to automatically transform a function into a batch-aware version:
+The {func}`~jax.vmap` transformation is designed to automatically transform a function into a batch-aware version:
 
 ```{code-cell} ipython3
 from jax import vmap
@@ -531,10 +532,10 @@ print('Auto-vectorized with vmap')
 %timeit vmap_batched_apply_matrix(batched_x).block_until_ready()
 ```
 
-As you would expect, `jax.vmap` can be arbitrarily composed with `jax.jit`,
-`jax.grad`, and any other JAX transformation.
+As you would expect, {func}`~jax.vmap` can be arbitrarily composed with {func}`~jax.jit`,
+{func}`~jax.grad`, and any other JAX transformation.
 
-For more on automatic vectorization in JAX, check out [Automatic vectorization](https://docs.jax.dev/en/latest/automatic-vectorization.html).
+For more on automatic vectorization in JAX, check out {ref}`automatic-vectorization`.
 
 +++
 
@@ -584,7 +585,5 @@ Note that this code is thread safe, since the local random state eliminates poss
 For more on pseudo random numbers in JAX, see the [Pseudorandom numbers tutorial](https://docs.jax.dev/en/latest/random-numbers.html).
 
 +++
-
----
 
 This is just a taste of what JAX can do. We're really excited to see what you do with it!
