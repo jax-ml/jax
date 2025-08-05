@@ -288,7 +288,11 @@ class TestUtilTest(TestCase):
       assert registers.size == 16, registers.size
       for i, vec_reg in enumerate(registers.flat):
         for j in range(2):
-          reg = vector.extractelement(vec_reg, position=c(j, index))
+          reg = vector.extract(
+              vector=vec_reg,
+              dynamic_position=[],
+              static_position=ir.DenseI64ArrayAttr.get([j]),
+          )
           memref.store(
               reg, dst, [gpu.thread_id(gpu.Dimension.x), c(2 * i + j, index)]
           )
