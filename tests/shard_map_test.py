@@ -1305,13 +1305,8 @@ class ShardMapTest(jtu.JaxTestCase):
 
     def f(x): return x
 
-    with self.assertRaisesRegex(TypeError, "but it was `None`"):
-      shard_map(f, mesh=mesh, in_specs=None, out_specs=P())(3.)
-
-    # TODO(mattjj): enable this test once we fix the tree_map(f, None, 3.0) bug
-    # with self.assertRaises(TypeError):
-    #   shard_map(f, mesh=mesh, in_specs=(None,), out_specs=P())(3.)
-
+    shard_map(f, mesh=mesh, in_specs=None, out_specs=P())(3.)  # doesn't crash
+    shard_map(f, mesh=mesh, in_specs=(None,), out_specs=P())(3.)  # doesn't crash
     shard_map(f, mesh=mesh, in_specs=P(), out_specs=P())(3.)  # doesn't crash
 
   def test_scan_rep_rule(self):

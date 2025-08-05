@@ -71,10 +71,25 @@ traceback_util.register_exclusion(__file__)
 Specs = Any  # PyTree[PartitionSpec]
 AxisName = Hashable
 
+class InferFromArgs:
+  def __repr__(self):
+    return "jax.sharding.Infer"
 
-def shard_map(f=None, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
-              in_specs: Specs | None = None,
-              mesh: Mesh | AbstractMesh | None = None, check_vma: bool = True):
+  def __reduce__(self):
+    return (_get_default_infer, ())
+
+Infer = InferFromArgs()
+
+def _get_default_infer():
+  return Infer
+
+# See https://github.com/jax-ml/jax/pull/30753 to understand why `in_specs`
+# defaults to `Infer`.
+def shard_map(f=None, /, *, out_specs: Specs,
+              in_specs: Specs | None | InferFromArgs = Infer,
+              mesh: Mesh | AbstractMesh | None = None,
+              axis_names: Set[AxisName] = frozenset(),
+              check_vma: bool = True):
   """Map a function over shards of data using a mesh of devices.
 
   See the docs at https://docs.jax.dev/en/latest/notebooks/shard_map.html.
@@ -89,7 +104,7 @@ def shard_map(f=None, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
       communication operations in ``f``. If mesh is None, it will be inferred
       from the context which can be set via `jax.set_mesh` context
       manager.
-    in_specs: (optional, default None) a pytree with
+    in_specs: (optional, default `Infer`) a pytree with
       ``jax.sharding.PartitionSpec`` instances as leaves, with a tree structure
       that is a tree prefix of the args tuple to be mapped over. Similar to
       ``jax.sharding.NamedSharding``, each ``PartitionSpec`` represents how the
@@ -97,8 +112,10 @@ def shard_map(f=None, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
       the named axes of ``mesh``. In each ``PartitionSpec``, mentioning a
       ``mesh`` axis name at a position expresses sharding the corresponding
       argument array axis along that positional axis; not mentioning an axis
-      name expresses replication. If ``None``, all mesh axes must be of type
+      name expresses replication.
+      If ``Infer``, all mesh axes must be of type
       `Explicit`, in which case the in_specs are inferred from the argument types.
+      If ``None``, inputs will be treated as static.
     out_specs: a pytree with ``PartitionSpec`` instances as leaves, with a tree
       structure that is a tree prefix of the output of ``f``. Each
       ``PartitionSpec`` represents how the corresponding output shards should be
@@ -126,23 +143,6 @@ def shard_map(f=None, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
     return lambda g: _shard_map(g, **kwargs)
   return _shard_map(f, **kwargs)
 
-def _axes_to_pspec(axis_name, axis):
-  if axis is None:
-    return P()
-  return P(*[None] * axis + [axis_name])
-
-class InferFromArgs:
-
-  def __repr__(self):
-    return "jax.sharding.Infer"
-
-  def __reduce__(self):
-    return (_get_default_infer, ())
-
-Infer = InferFromArgs()
-
-def _get_default_infer():
-  return Infer
 
 def smap(f=None, /, *, in_axes=Infer, out_axes, axis_name: AxisName):
   """Single axis shard_map that maps a function `f` one axis at a time.
@@ -194,7 +194,7 @@ def _smap(f, *, in_axes, out_axes, axis_name: AxisName):
     raise TypeError("smap out_axes must be an int, None, or (nested) container "
                     f"with those types as leaves, but got {out_axes}.")
 
-  in_specs = (None if in_axes is Infer else
+  in_specs = (Infer if in_axes is Infer else
               tree_map(partial(_axes_to_pspec, axis_name), in_axes,
                        is_leaf=lambda x: x is None))
   out_specs = tree_map(partial(_axes_to_pspec, axis_name), out_axes,
@@ -229,10 +229,10 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
       e, *_ = prefix_errors(in_specs, args)
       raise e('shard_map in_specs') from None
 
-    if (in_specs is None and
+    if (in_specs is Infer and
         all(mesh._name_to_type[a] == AxisType.Explicit for a in axis_names)):
       arg_s = [typeof(a).sharding for a in args_flat]
-      assert all(i is None for i in in_specs_flat), in_specs_flat
+      assert all(i is Infer for i in in_specs_flat), in_specs_flat
       in_specs_flat = [_manual_spec(axis_names, s.spec) for s in arg_s]
 
     dyn_argnums, in_specs_flat = unzip2((i, s) for i, s in enumerate(in_specs_flat)
@@ -282,6 +282,12 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
   return wrapped
 
 
+def _axes_to_pspec(axis_name, axis):
+  if axis is None:
+    return P()
+  return P(*[None] * axis + [axis_name])
+
+
 def _shmap_checks(mesh, axis_names, in_specs, out_specs, _skip_mesh_check,
                   _smap):
   if mesh is None:
@@ -316,7 +322,7 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _skip_mesh_check,
         f"jax.shard_map requires axis_names={axis_names} to be a subset of "
         f"mesh.axis_names={mesh.axis_names}")
 
-  if (in_specs is None and
+  if (in_specs is Infer and
       not all(mesh._name_to_type[a] == AxisType.Explicit for a in axis_names)):
     axis_types = ', '.join(str(mesh._name_to_type[a]) for a in axis_names)
     if _smap:
@@ -328,7 +334,7 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _skip_mesh_check,
              f" {axis_names=} are of type {axis_types}")
     raise TypeError(msg)
 
-  if in_specs is not None:
+  if in_specs is not Infer and in_specs is not None:
     _check_specs(SpecErrorType.input, in_specs, axis_names)
     _check_unreduced(SpecErrorType.input, mesh, axis_names, in_specs)
   if not callable(out_specs):
