@@ -97,7 +97,7 @@ class BufferedRef:
         )
     )
 
-  def copy_in(self, slot, grid_indices, barrier_ref):
+  def copy_in(self, slot, grid_indices, barrier_ref, barrier_slot=None):
     if not _in_smem(self.spec):
       return
     assert self.smem_ref is not None
@@ -105,7 +105,7 @@ class BufferedRef:
     gpu_primitives.copy_gmem_to_smem(
         self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
         self.smem_ref.at[slot],  # pytype: disable=unsupported-operands
-        barrier_ref.at[slot],
+        barrier_ref.at[barrier_slot if barrier_slot is not None else slot],
     )
 
   def copy_out(self, slot, grid_indices, predicate=None):
@@ -604,14 +604,11 @@ def emit_pipeline_warp_specialized(
     flat_in_smem_refs, flat_out_smem_refs = util.split_list(
         smem_allocs, [len(flat_in_specs)])
 
-    flat_in_smem_barriers = []
+    if any(not has_seq_dim for has_seq_dim in in_spec_has_seq_axis):
+      raise NotImplementedError("Only inputs with a dependency on the grid are supported.")
+    in_smem_barrier = gpu_core.Barrier(num_arrivals=len(flat_in_specs), num_barriers=max_concurrent_steps)
     flat_consumed_barriers = []
-    for has_seq_dim in in_spec_has_seq_axis:
-      num_barriers = max_concurrent_steps if has_seq_dim else 1
-      flat_in_smem_barriers.append(
-          gpu_core.Barrier(
-          num_arrivals=1,
-          num_barriers=num_barriers))
+    for _ in flat_in_specs:
       if manual_consumed_barriers:
         flat_consumed_barriers.append(
             gpu_core.Barrier(
@@ -636,7 +633,7 @@ def emit_pipeline_warp_specialized(
         ),
         flat_in_smem_refs=flat_in_smem_refs,
         flat_out_smem_refs=flat_out_smem_refs,
-        flat_in_smem_barrier_refs=flat_in_smem_barriers,
+        in_smem_barrier_ref=in_smem_barrier,
         flat_consumed_barrier_refs=flat_consumed_barriers,
         collective_axes=wg_axis,
     )
@@ -647,7 +644,7 @@ def emit_pipeline_warp_specialized(
       flat_out_gmem_refs,
       flat_in_smem_refs,
       flat_out_smem_refs,
-      flat_in_smem_barrier_refs,
+      in_smem_barrier_ref,
       flat_consumed_barrier_refs,
   ):
     flat_in_brefs: Sequence[BufferedRef] = [
@@ -677,12 +674,7 @@ def emit_pipeline_warp_specialized(
         slot = lax.rem(step, max_concurrent_steps)
         consumed_slot = lax.rem(step - delay_release, max_concurrent_steps)
         # Wait for the current GMEM->SMEM copies to complete.
-        for in_barrier, has_seq_dim in zip(
-            flat_in_smem_barrier_refs, in_spec_has_seq_axis):
-          # TODO(justinfu): Use a single barrier with
-          # num_arrivals=len(in_smem_barrier_refs)
-          gpu_primitives.barrier_wait(
-              in_barrier.at[_get_slot(slot, has_seq_dim)])
+        gpu_primitives.barrier_wait(in_smem_barrier_ref.at[_get_slot(slot, True)])
 
         # Wait for the previous output SMEM->GMEM copy to complete.
         if copies_out_in_loop:
@@ -797,6 +789,7 @@ def emit_pipeline_warp_specialized(
         gpu_primitives.wait_smem_to_gmem(0)
 
     # The memory thread executes this block which issues all pipelined DMAs.
+    # TODO(apaszke,justinfu): Use a single arrive_expect_tx for all transfers.
     def memory_block():
       gpu_primitives.set_max_registers(memory_registers, action="decrease")
       indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
@@ -808,9 +801,10 @@ def emit_pipeline_warp_specialized(
 
       # Begin initial copies.
       def _init_step(step, indices):
-        for bref, barrier in zip(flat_in_brefs, flat_in_smem_barrier_refs):
+        for bref in flat_in_brefs:
           buf_slot = _get_slot(step, not bref.is_index_invariant)
-          bref.copy_in(buf_slot, indices, barrier)
+          barrier_slot = _get_slot(step, True)
+          bref.copy_in(buf_slot, indices, in_smem_barrier_ref, barrier_slot)
         return _inc_grid_by_1(indices, grid)
 
       indices = jax.lax.fori_loop(
@@ -831,12 +825,12 @@ def emit_pipeline_warp_specialized(
         else:
           consumed_barrier_it = flat_consumed_barrier_refs
 
-        for bref, barrier, consumed_barrier in zip(
-            flat_in_brefs, flat_in_smem_barrier_refs, consumed_barrier_it):
+        for bref, consumed_barrier in zip(flat_in_brefs, consumed_barrier_it):
           if manual_consumed_barriers:
             gpu_primitives.barrier_wait(consumed_barrier.at[slot])  # pytype: disable=attribute-error
-          bref.copy_in(
-              _get_slot(fetch_slot, not bref.is_index_invariant), indices, barrier)
+          buf_slot = _get_slot(fetch_slot, not bref.is_index_invariant)
+          barrier_slot = _get_slot(fetch_slot, True)
+          bref.copy_in(buf_slot, indices, in_smem_barrier_ref, barrier_slot)
         next_indices = _inc_grid_by_1(indices, grid)
         return (next_indices,)
       lax.fori_loop(0, num_steps - max_concurrent_steps,
