@@ -92,7 +92,7 @@ jax_multiplatform_test(
     deps = [
         "//jax:experimental",
         "//jax:mosaic_gpu",
-        "//jax/_src:test_multiprocess",
+        "//jax:test_multiprocess",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -105,7 +105,7 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:mosaic_gpu",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -115,7 +115,7 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:mosaic_gpu",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -125,7 +125,7 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:mosaic_gpu",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -135,7 +135,7 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:mosaic_gpu",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps([
         "absl/testing",
         "numpy",

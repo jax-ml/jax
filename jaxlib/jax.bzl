@@ -283,7 +283,7 @@ def jax_multiplatform_test(
             test_tags.append("manual")
         test_deps = _cpu_test_deps() + _get_jax_test_deps([
             "//jax",
-            "//jax/_src:test_util",
+            "//jax:test_util",
         ] + deps)
         if backend == "gpu":
             test_deps += _gpu_test_deps()
