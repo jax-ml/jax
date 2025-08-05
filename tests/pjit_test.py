@@ -3495,6 +3495,26 @@ class ArrayPjitTest(jtu.JaxTestCase):
         r"of concatenate with shape int.*\[8\].*and argument.*"):
       jnp.concatenate([arr, arr2])
 
+  def test_closed_over_constant_diff_sharding(self):
+    if not config.use_simplified_jaxpr_constants.value:
+      self.skipTest('Requires use_simplified_jaxpr_constants=True')
+    if jax.device_count() < 2:
+      self.skipTest('Requires >=2 devices')
+
+    arr = jax.device_put(np.arange(8), SingleDeviceSharding(jax.devices()[0]))
+    const = jax.device_put(np.arange(8), SingleDeviceSharding(jax.devices()[1]))
+
+    @jax.jit
+    def f(x):
+      return x + const
+
+    with self.assertRaisesRegex(
+        ValueError, "Received incompatible devices for jitted computation"):
+      f(arr)
+
+    out = f(np.arange(8))
+    self.assertEqual(out.sharding, const.sharding)
+
   def test_device_put_grad(self):
     if jax.device_count() < 8:
       self.skipTest("Requires >=8 devices.")

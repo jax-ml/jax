@@ -785,15 +785,18 @@ class Wrapped(Protocol):
 
 
 class MismatchType(enum.Enum):
-  ARG_SHARDING = 0
-  OUT_SHARDING = 1
-  SHARDING_INSIDE_COMPUTATION = 2
-  CONTEXT_DEVICES = 3
-  IN_SHARDING = 4
+  ARG_SHARDING = enum.auto()
+  CONST_SHARDING = enum.auto()
+  OUT_SHARDING = enum.auto()
+  SHARDING_INSIDE_COMPUTATION = enum.auto()
+  CONTEXT_DEVICES = enum.auto()
+  IN_SHARDING = enum.auto()
 
   def __str__(self):
     if self.name == 'IN_SHARDING':
       return 'explicit input sharding'
+    if self.name == 'CONST_SHARDING':
+      return 'closed over constant sharding'
     elif self.name == 'OUT_SHARDING':
       return 'explicit output sharding'
     elif self.name == 'CONTEXT_DEVICES':

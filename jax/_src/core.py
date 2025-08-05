@@ -581,7 +581,6 @@ def eqn_params_const_args(params) -> list[ArrayLike]:
   consts_by_id: dict[int, ArrayLike] = {}
   for j in jaxprs_in_params(params):
     consts_by_id.update({id(v): v for v in jaxpr_const_args(j)})
-
   return list(consts_by_id.values())
 
 Atom = Union[Var, Literal]

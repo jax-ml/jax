@@ -2117,8 +2117,6 @@ def hoist_constants_as_args(
     closed_jaxpr: core.ClosedJaxpr, global_in_avals, in_shardings, in_layouts,
     donated_invars, kept_var_idx: set[int], inout_aliases, mut,
     all_args_info: AllArgsInfo):
-  # Account for const args; do it early because the adjusted values
-  # are used for more than just lowering.
   const_args = core.jaxpr_const_args(closed_jaxpr.jaxpr)
   num_const_args = len(const_args)
   if num_const_args:
@@ -2139,12 +2137,11 @@ def hoist_constants_as_args(
       mut = MutationData(
           in_mut=mut.in_mut,
           out_mut=[None if i_idx is None else i_idx + num_const_args
-                    for i_idx in mut.out_mut])
+                   for i_idx in mut.out_mut])
     all_args_info = AllArgsInfo(
         const_arg_avals + all_args_info.in_avals,  # type: ignore
         all_args_info.debug_info._replace(
-          arg_names=(("",) * num_const_args +
-                      all_args_info.debug_info.arg_names)))
+            arg_names=(("",) * num_const_args + all_args_info.debug_info.arg_names)))
   return (const_args, global_in_avals, in_shardings, in_layouts, donated_invars,
           kept_var_idx, inout_aliases, mut, all_args_info)
 
@@ -2236,6 +2233,14 @@ def lower_sharding_computation(
   global_in_avals = closed_jaxpr.in_avals
   global_out_avals = closed_jaxpr.out_avals
 
+  if lowering_parameters.hoist_constants_as_args:
+    (const_args, global_in_avals, in_shardings, in_layouts, donated_invars,
+     kept_var_idx, inout_aliases, mut, all_args_info) = hoist_constants_as_args(
+         closed_jaxpr, global_in_avals, in_shardings, in_layouts,
+         donated_invars, kept_var_idx, inout_aliases, mut, all_args_info)
+  else:
+    const_args = []
+
   # If layout is propagated, then set the out_layout in the top module to AUTO
   # so that XLA can override the entry_computation_layout. The propagated
   # layout will be set via a custom call.
@@ -2254,16 +2259,21 @@ def lower_sharding_computation(
   # should be the same.
   unique_intermediate_shardings = util.stable_unique(
       dispatch.get_intermediate_shardings(jaxpr))
-  unique_in_shardings = util.stable_unique(in_shardings)
+  unique_const_shardings = util.stable_unique(in_shardings[:len(const_args)])
+  unique_in_shardings = util.stable_unique(in_shardings[len(const_args):])
   unique_out_shardings = util.stable_unique(out_shardings)
+  # TODO(necula): Replace `None` with `source_info` for unique_const_shardings
   backend, device_assignment = _get_and_check_device_assignment(
       it.chain(
           ((i, stages.MismatchType.ARG_SHARDING, None) for i in unique_in_shardings),
+          ((c, stages.MismatchType.CONST_SHARDING, None) for c in unique_const_shardings),
           ((o, stages.MismatchType.OUT_SHARDING, None) for o in unique_out_shardings),
           ((js, stages.MismatchType.SHARDING_INSIDE_COMPUTATION, source_info)
            for js, source_info in unique_intermediate_shardings)),
       devices_from_context)
   unique_intermediate_shardings = [js for js, _ in unique_intermediate_shardings]
+  unique_in_shardings = unique_in_shardings | unique_const_shardings  # type: ignore
+  del unique_const_shardings
 
   for a in global_out_avals:
     if (a is not core.abstract_token and not a.sharding.mesh.empty and
@@ -2307,7 +2317,8 @@ def lower_sharding_computation(
       devices_from_context
       or num_devices > 1
       or any(not isinstance(s, UnspecifiedValue) for s in it.chain(
-          unique_in_shardings, unique_out_shardings, unique_intermediate_shardings)))
+          unique_in_shardings, unique_out_shardings,
+          unique_intermediate_shardings)))
 
   device_list = _create_device_list(device_assignment)
 
@@ -2342,14 +2353,6 @@ def lower_sharding_computation(
               f" shape for one sharding {abstract_mesh} and"
               f" {sharding.mesh.abstract_mesh} for another")
         abstract_mesh = sharding.mesh.abstract_mesh
-
-  if lowering_parameters.hoist_constants_as_args:
-    (const_args, global_in_avals, in_shardings, in_layouts, donated_invars,
-     kept_var_idx, inout_aliases, mut, all_args_info) = hoist_constants_as_args(
-         closed_jaxpr, global_in_avals, in_shardings, in_layouts,
-         donated_invars, kept_var_idx, inout_aliases, mut, all_args_info)
-  else:
-    const_args = []
 
   semantic_in_shardings = SemanticallyEqualShardings(
       in_shardings, global_in_avals)
