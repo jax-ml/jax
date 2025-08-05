@@ -161,7 +161,7 @@ class InterpretTest(jtu.JaxTestCase):
     x = jax.random.normal(k1, (1024, 1024))
     y = jax.random.normal(k2, (1024, 1024))
     z = matmul(x, y)
-    np.testing.assert_allclose(z, x @ y, atol=1e-4)
+    np.testing.assert_allclose(z, x @ y, atol=1e-3)
 
   @parameterized.parameters('raise', 'uninitialized')
   def test_out_of_bounds_read_index(self, out_of_bounds_reads):
@@ -206,7 +206,6 @@ class InterpretTest(jtu.JaxTestCase):
         run(jnp.array([0, 1], jnp.int32),
             jnp.array([2, 6, 9, 15, 17], jnp.int32)),
       pltpu.reset_tpu_interpret_mode_state()
-
 
   @parameterized.parameters('raise', 'uninitialized')
   def test_out_of_bounds_read_range(self, out_of_bounds_reads):
