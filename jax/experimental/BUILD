@@ -224,8 +224,7 @@ pytype_strict_library(
         "//jax/_src:source_info_util",
         "//jax/_src:traceback_util",
         "//jax/_src:util",
-        "//third_party/py/numpy",
-    ],
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -317,8 +316,7 @@ pytype_strict_library(
         "//jax/_src:util",
         "//jax/_src:xla_bridge",
         "//jax/_src/lib",
-        "//third_party/py/numpy",
-    ],
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
