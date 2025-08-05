@@ -19,6 +19,7 @@ import dataclasses
 import math
 from typing import Callable
 
+import itertools
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import llvm
@@ -175,9 +176,7 @@ def mma(
   i64 = ir.IntegerType.get_signless(64)
   if isinstance(accumulate, bool):
     accumulate = arith.constant(ir.IntegerType.get_signless(1), accumulate)
-  if a_swizzle != b_swizzle:
-    raise NotImplementedError(f"{a_swizzle=} != {b_swizzle=}")
-  swizzle = a_swizzle
+  max_swizzle = max(a_swizzle, b_swizzle)
   num_cta = 2 if collective else 1
   if (is_scaled := a_scale is not None) != (b_scale is not None):
     raise ValueError("Either none or both scales should be provided")
@@ -240,7 +239,7 @@ def mma(
       n_lane_groups = 2
       # We can't split N into groups if we would partition it below the tile size.
       # TODO: We only need to check this if N is the minormost dim in B.
-      if 8 * swizzle // utils.bitwidth(element_type) > n // n_lane_groups:
+      if 8 * b_swizzle // utils.bitwidth(element_type) > n // n_lane_groups:
         raise ValueError("Swizzle is too big for MMA with M=64. Try lowering it.")
   else:
     raise ValueError(f"Only M=128 and M=64 are supported for MMA, but got M={m}")
@@ -305,7 +304,7 @@ def mma(
   # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
   # instructions must be issued in groups of the same width as the swizzle.
   m_group_elems = m  # We have already verified M is supported above.
-  k_group_elems = 8 * swizzle // utils.bitwidth(element_type)
+  k_group_elems = 8 * max_swizzle // utils.bitwidth(element_type)
   if n % 8:
     raise ValueError(f"N must be a multiple of 8, got: {n}")
   if n.bit_count() != 1:
@@ -337,12 +336,13 @@ def mma(
       raise NotImplementedError("MMA with block scaling does not support collective")
     if m != 128:
       raise NotImplementedError(f"MMA with block scaling requires M to be 128, got: {m}")
-    if k_group_elems != 128:
+    if k_group_elems != 128 or a_swizzle != b_swizzle:
       assert utils.bitwidth(element_type) <= 8
       expected_swizzle = 128 // (8 // utils.bitwidth(element_type))
       raise NotImplementedError(
           "MMA with block scaling requires swizzle to be"
-          f" {expected_swizzle} for dtype {element_type}, got: {swizzle}"
+          f" {expected_swizzle} for dtype {element_type}, got:"
+          f" {a_swizzle=} and {b_swizzle=}"
       )
     if a_scale.shape != (m, 4):
       raise ValueError(
@@ -368,26 +368,26 @@ def mma(
   # Step 3. Compute the operand descriptors.
   if not isinstance(a, TMEMRef):
     (
-        (a_desc_base, a_k_instr_stride),
+        (a_desc_base, a_k_instr_strides),
         (a_m_group_stride, a_k_group_stride),
         a_fastest,
     ) = mma_utils.create_descriptor(
         a,
-        swizzle=swizzle,
+        swizzle=a_swizzle,
         group_size=(m_group_elems, k_group_elems),
         logical_k_major=False,
     )
   else:
     a_fastest = mma_utils.Dim.K
-    a_k_instr_stride = None
+    a_k_instr_strides = None
     a_m_group_stride = a_k_group_stride = a_desc_base = None
   (
-      (b_desc_base, b_k_instr_stride),
+      (b_desc_base, b_k_instr_strides),
       (b_n_group_stride, b_k_group_stride),
       b_fastest,
   ) = mma_utils.create_descriptor(
       b,
-      swizzle=swizzle,
+      swizzle=b_swizzle,
       group_size=(k_group_elems, n_group_elems),
       logical_k_major=True,
   )
@@ -433,15 +433,15 @@ def mma(
         d_type=d.dtype,
         m=m_group_elems,
         n=n_group_elems,
+        k=k_group_elems,
         collective=collective,
         a_transpose=a_fastest != mma_utils.Dim.K,
         b_transpose=b_fastest != mma_utils.Dim.K,
-        a_k_stride=a_k_instr_stride,
-        b_k_stride=b_k_instr_stride,
+        a_k_strides=a_k_instr_strides,
+        b_k_strides=b_k_instr_strides,
         a_scale_addr=a_scale.address if is_scaled else None,
         b_scale_addr=b_scale.address if is_scaled else None,
         accumulate=acc,
-        swizzle=swizzle,
         element_type=mma_element_type,
     )
 
@@ -452,13 +452,13 @@ def _do_mma(
     b_desc: ir.Value,
     a_transpose: bool,
     b_transpose: bool,
-    a_k_stride: int | None,
-    b_k_stride: int,
+    a_k_strides: tuple[tuple[int, ...], tuple[int, ...]] | None,
+    b_k_strides: tuple[tuple[int, ...], tuple[int, ...]],
     a_scale_addr: TMEMRef | None,
     b_scale_addr: TMEMRef | None,
     m: int,
     n: int,
-    swizzle: int,
+    k: int,
     element_type: ir.Type,
     d_type: ir.Type,
     accumulate: ir.Value,
@@ -468,11 +468,11 @@ def _do_mma(
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
   elem_bitwidth = utils.bitwidth(element_type)
-  kn_tiling = 8 * swizzle // elem_bitwidth
   instr_k = 8 * 32 // elem_bitwidth
   packing = 8 * 4 // elem_bitwidth
-  if (a_k_stride is not None and a_k_stride % 16) or b_k_stride % 16:
-    raise ValueError
+  a_k_idx_tiling, a_k_strides = a_k_strides or (None, None)
+  b_k_idx_tiling, b_k_strides = b_k_strides
+  assert all(s % 16 == 0 for s in itertools.chain(a_k_strides or (), b_k_strides))
   assert (a_scale_addr is None) == (b_scale_addr is None)
   is_scaled = a_scale_addr is not None
 
@@ -509,12 +509,21 @@ def _do_mma(
     create_scaled_instr_descriptor = None
 
   num_cta = 2 if collective else 1
-  a_in_tmem = a_k_stride is None
+  a_in_tmem = a_k_strides is None
   a_ptx = "[$1]" if a_in_tmem else "$1"
   a_ptx_constraint = "r" if a_in_tmem else "l"
   assert a_desc_or_addr.type == ir.IntegerType.get_signless(32 if a_in_tmem else 64)
-  assert scale_steps is None or scale_steps == kn_tiling // instr_k
-  for k_step in range(kn_tiling // instr_k):
+  assert scale_steps is None or scale_steps == k // instr_k
+  def _get_offset(idx: int, idx_tiling: tuple[int, ...], strides: tuple[int, ...]):
+    assert len(idx_tiling) + 1 == len(strides)
+    idxs = []
+    for t in idx_tiling:
+      idxs.append(idx // t)
+      idx = idx % t
+    idxs.append(idx)
+    offset = sum(i * s for i, s in zip(idxs, strides, strict=True))
+    return arith.constant(i64, offset >> 4)
+  for k_step in range(k // instr_k):
     if is_scaled:
       scale_vec_width = 4 // scale_steps
       scale_id = k_step * scale_vec_width
@@ -525,23 +534,23 @@ def _do_mma(
       i_desc = create_instr_descriptor(
           m * num_cta, n * num_cta, d_type, element_type, a_transpose, b_transpose
       )
+    if a_in_tmem:
+      a_desc_or_addr_instr = arith.addi(
+          a_desc_or_addr, arith.constant(i32, k_step * instr_k // packing)
+      )
+    else:
+      a_desc_or_addr_instr = arith.addi(
+          a_desc_or_addr, _get_offset(k_step, a_k_idx_tiling, a_k_strides)
+      )
+    b_desc_instr = arith.addi(b_desc, _get_offset(k_step, b_k_idx_tiling, b_k_strides))
     llvm.inline_asm(
         ir.Type.parse("!llvm.void"),
-        [d_addr, a_desc_or_addr, b_desc, i_desc, accumulate, *extra_args],
+        [d_addr, a_desc_or_addr_instr, b_desc_instr, i_desc, accumulate, *extra_args],
         f"tcgen05.mma.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, $2, $3, {extra_ptx}$4;",
         f"r,{a_ptx_constraint},l,r,b" + extra_constraints,
         has_side_effects=True,
     )
     accumulate = arith.constant(i1, 1)
-    if not a_in_tmem:
-      a_desc_or_addr = arith.addi(
-          a_desc_or_addr, arith.constant(i64, a_k_stride >> 4)
-      )
-    else:
-      a_desc_or_addr = arith.addi(
-          a_desc_or_addr, arith.constant(i32, instr_k // packing)
-      )
-    b_desc = arith.addi(b_desc, arith.constant(i64, b_k_stride >> 4))
 
 
 def commit_arrive(

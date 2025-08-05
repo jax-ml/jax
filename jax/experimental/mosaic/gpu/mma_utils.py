@@ -83,6 +83,7 @@ def create_descriptor(
   MMA_ATOM_ROWS = 8
   MMA_BYTEWIDTH_K = 32
   mma_width_k = 8 * MMA_BYTEWIDTH_K // element_bitwidth
+  desc_k_tiling = ()
   # As far as I can tell (which does not seem to fully align with the way MMA is
   # documented in PTX docs), MMA expects the data to be tiled into matrices
   # of shape 8 x swizzle_elems, with swizzle_elems dim being the fastest
@@ -104,6 +105,7 @@ def create_descriptor(
     if k_tiling_stride == 1 and mn_tiling_stride == k_tiling:
       fastest_dim = Dim.K
       leading_byte_offset = IGNORED  # TC assumes K to be contiguous here.
+      assert k_tiling == k_group_size  # Else we need multi-level striding.
       # MMA atoms in a group are contiguous, so we increment by the MMA atom
       # size. However, we only have one level of striding, and so if the group
       # size exceeds a single large tile (and there is more than one tile) then
@@ -121,7 +123,7 @@ def create_descriptor(
             f"({mn_tiles}, {mn_tile_stride} != {math.prod(large_tile)})"
         )
       stride_byte_offset = MMA_ATOM_ROWS * swizzle
-      desc_k_stride = MMA_BYTEWIDTH_K  # K is contiguous.
+      desc_k_strides = (MMA_BYTEWIDTH_K,)  # K is contiguous.
     elif k_tiling_stride == k_tiling and mn_tiling_stride == 1:
       if k_large_tile != mn_large_tile:
         raise ValueError(
@@ -136,7 +138,7 @@ def create_descriptor(
       stride_byte_offset = MMA_ATOM_ROWS * swizzle
       # Each row is swizzle bytes wide, and we read mma_width_k rows at a time.
       assert mn_large_tile == 8 * swizzle // element_bitwidth
-      desc_k_stride = mma_width_k * swizzle
+      desc_k_strides = (mma_width_k * swizzle,)
     else:
       raise ValueError("MMA tiles must be contiguous")
   else:  # Small tiles.
@@ -151,17 +153,23 @@ def create_descriptor(
           f" {element_bitwidth} = {swizzle_elems}), but got ({slower_tiling},"
           f" {faster_tiling})"
       )
-    if k_tiling_stride == 1 and mn_tiling_stride * element_bitwidth == 8 * swizzle:
+    if k_tiling_stride == 1 and mn_tiling_stride * element_bitwidth == MMA_ATOM_ROWS * swizzle:
       fastest_dim = Dim.K
       leading_byte_offset = IGNORED  # TC assumes K to be contiguous here.
       stride_byte_offset = to_byte_stride(mn_tile_stride)
-      desc_k_stride = MMA_BYTEWIDTH_K  # K is contiguous.
-    elif k_tiling_stride * element_bitwidth == 8 * swizzle and mn_tiling_stride == 1:
+      if k_tiling == k_group_size:
+        desc_k_strides = (MMA_BYTEWIDTH_K,)  # K is contiguous.
+      elif k_group_size % k_tiling == 0:
+        desc_k_tiling = (k_tiling // mma_width_k,)
+        desc_k_strides = (MMA_ATOM_ROWS * swizzle, MMA_BYTEWIDTH_K)
+      else:
+        raise NotImplementedError
+    elif k_tiling_stride * element_bitwidth == MMA_ATOM_ROWS * swizzle and mn_tiling_stride == 1:
       fastest_dim = Dim.MN
       leading_byte_offset = to_byte_stride(mn_tile_stride)
       stride_byte_offset = to_byte_stride(k_tile_stride)
       k_tiles_per_mma = mma_width_k // MMA_ATOM_ROWS
-      desc_k_stride = to_byte_stride(k_tile_stride) * k_tiles_per_mma
+      desc_k_strides = (to_byte_stride(k_tile_stride) * k_tiles_per_mma,)
     else:
       raise ValueError("MMA tiles must be contiguous")
   desc_base = encode_descriptor(
@@ -179,7 +187,7 @@ def create_descriptor(
   k_group_stride = to_byte_stride(k_tile_stride) * k_tiles_per_group
 
   return (
-      (desc_base, desc_k_stride),
+      (desc_base, (desc_k_tiling, desc_k_strides)),
       (mn_group_stride, k_group_stride),
       fastest_dim,
   )

@@ -1318,6 +1318,25 @@ class TCGen05Test(TestCase):
         k_steps=2,  # Reducing to 1 can be helpful while debugging.
     )
 
+  @parameterized.product(
+      lhs_transpose=(False, True),
+      rhs_transpose=(False, True),
+      m=(64, 128,),
+      n=(128, 256, 512),
+      lhs_swizzle=(32, 64, 128,),
+      rhs_swizzle=(32, 64, 128,),
+  )
+  def test_mma_different_swizzle(self, **kwargs):
+    if kwargs["lhs_swizzle"] == kwargs["rhs_swizzle"]:
+      self.skipTest("Swizzle is equal")
+    self._basic_mma_test(
+        in_jax_dtype=jnp.float16,
+        out_jax_dtype=jnp.float32,
+        swizzle=None,
+        k_steps=2,  # Reducing to 1 can be helpful while debugging.
+        **kwargs,
+    )
+
   def _basic_mma_test(
       self,
       m,
@@ -1328,9 +1347,16 @@ class TCGen05Test(TestCase):
       rhs_transpose,
       in_jax_dtype,
       out_jax_dtype,
-      rhs_transpose_tiles,
-      lhs_transpose_tiles,
+      rhs_transpose_tiles=False,
+      lhs_transpose_tiles=False,
+      lhs_swizzle=None,
+      rhs_swizzle=None,
   ):
+    if lhs_swizzle is None:
+      lhs_swizzle = swizzle
+    if rhs_swizzle is None:
+      rhs_swizzle = swizzle
+    swizzle = max(lhs_swizzle, rhs_swizzle)
     if out_jax_dtype != jnp.float32 and (
         in_jax_dtype == jnp.float32 or in_jax_dtype == jnp.bfloat16
     ):
@@ -1339,7 +1365,8 @@ class TCGen05Test(TestCase):
     in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
     swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
     k = swizzle_elems * k_steps
-    lhs_tiling = rhs_tiling = (8, swizzle_elems)
+    lhs_tiling = (8, lhs_swizzle // bytewidth(in_mlir_dtype))
+    rhs_tiling = (8, rhs_swizzle // bytewidth(in_mlir_dtype))
 
     def kernel(ctx, lhs, rhs, out, scratch):
       lhs_smem, rhs_smem, barriers, mma_barrier, acc = scratch
@@ -1352,14 +1379,14 @@ class TCGen05Test(TestCase):
       ctx.async_copy(
           src_ref=lhs,
           dst_ref=lhs_smem,
-          swizzle=swizzle,
+          swizzle=lhs_swizzle,
           gmem_transform=lhs_transform,
           barrier=barriers[0],
       )
       ctx.async_copy(
           src_ref=rhs,
           dst_ref=rhs_smem,
-          swizzle=swizzle,
+          swizzle=rhs_swizzle,
           gmem_transform=rhs_transform,
           barrier=barriers[1],
       )
@@ -1375,7 +1402,7 @@ class TCGen05Test(TestCase):
         if rhs_transpose:
           rhs_smem = memref_transpose(rhs_smem, (1, 0, 3, 2))
         tcgen05.mma(
-            acc, lhs_smem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False,
+            acc, lhs_smem, rhs_smem, a_swizzle=lhs_swizzle, b_swizzle=rhs_swizzle, accumulate=False,
         )
         tcgen05.commit_arrive(mma_barrier)
       mma_barrier.wait(orders_tensor_core=True)
@@ -1869,6 +1896,7 @@ class TCGen05Test(TestCase):
       mgpu.as_gpu_kernel(
           kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
       )(x).block_until_ready()
+
 
 class BarrierTest(TestCase):
 

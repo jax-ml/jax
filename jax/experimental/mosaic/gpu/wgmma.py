@@ -398,6 +398,8 @@ def wgmma(
         group_size=(m_group_elems, k_group_elems),
         logical_k_major=False,
     )
+    assert not a_k_instr_stride[0]  # We'd need separate a/b swizzles.
+    a_k_instr_stride = a_k_instr_stride[1][0]
     a_instr_params = dict(a_transpose=a_fastest != mma_utils.Dim.K,
                           a_k_stride=a_k_instr_stride)
   (
@@ -411,6 +413,8 @@ def wgmma(
       group_size=(k_group_elems, n_group_elems),
       logical_k_major=True,
   )
+  assert not b_k_instr_stride[0]  # We'd need separate a/b swizzles.
+  b_k_instr_stride = b_k_instr_stride[1][0]
   del b_n_group_stride  # We only support one N group.
 
   # Step 4. Issue the instructions.
