@@ -313,6 +313,21 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "stateful_rng",
+    srcs = [
+        "stateful_rng.py",
+    ],
+    deps = [
+        "//jax/_src:core",
+        "//jax/_src:dtypes",
+        "//jax/_src:numpy",
+        "//jax/_src:random",
+        "//jax/_src:tree_util",
+        "//jax/_src:typing",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
     name = "ode",
     srcs = ["ode.py"],
     visibility = ["//visibility:public"],
