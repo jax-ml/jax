@@ -545,6 +545,8 @@ def emit_pipeline_warp_specialized(
   out_spec_has_seq_axis = [
       not _is_index_invariant(spec, grid) for spec in flat_out_specs]
   spec_has_seq_axis = [*in_spec_has_seq_axis, *out_spec_has_seq_axis]
+  if not all(in_spec_has_seq_axis):
+    raise NotImplementedError("Only inputs with a dependency on the grid are supported.")
 
   num_steps = math.prod(grid)
   has_dynamic_grid = not isinstance(num_steps, int)

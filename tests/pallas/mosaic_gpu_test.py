@@ -4421,6 +4421,61 @@ class WarpSpecializedPipelineTest(PallasTest):
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
 
+  @parameterized.parameters((False,), (True,))
+  def test_stationary_input(self, flip):
+    self.skip_if_wg_semantics()
+
+    m = n = 256
+    blk_m = blk_n = 64
+
+    def add_kernel(_, x_smem, y_smem, o_smem):
+      if flip:
+        x_smem, y_smem = y_smem, x_smem
+      o_smem[...] = x_smem[...] + y_smem[...]
+
+    def body(*gmem_refs):
+      mgpu_pipeline.emit_pipeline_warp_specialized(
+          add_kernel,
+          grid=(m // blk_m, n // blk_n),
+          memory_registers=40,
+          max_concurrent_steps=2,
+          num_compute_wgs=1,
+          wg_axis="wg",
+          in_specs=[
+              pl.BlockSpec(
+                  block_shape=(blk_m, blk_n), index_map=lambda i, j: (i, j)
+              ),
+              pl.BlockSpec(
+                  block_shape=(blk_m, blk_n), index_map=lambda i, j: (0, 0)
+              )
+          ][::(-1 if flip else 1)],
+          out_specs=[
+              pl.BlockSpec(
+                  block_shape=(blk_m, blk_n), index_map=lambda i, j: (i, j)
+              ),
+          ],
+      )(*gmem_refs)
+    kernel = self.kernel(
+        body,
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float16),
+        grid=(1,),
+        grid_names=("_",),
+        num_threads=2,
+        thread_name="wg",
+    )
+    x = jax.random.uniform(jax.random.key(1), (m, n), dtype=jnp.float16)
+    y = jax.random.uniform(jax.random.key(2), (blk_m, blk_n), dtype=jnp.float16)
+    ref = x + np.tile(y, (m // blk_m, n // blk_n))
+    if flip:
+      x, y = y, x
+    # TODO(apaszke,justinfu): Fix the bug (this test freezes) and remove this restriction.
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Only inputs with a dependency on the grid are supported.",
+    ):
+      out = kernel(x, y)
+      np.testing.assert_array_equal(out, ref)
+
 
 class WarpSpecializedPipelineWGTest(
     WarpSpecializedPipelineTest,
