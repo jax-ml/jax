@@ -41,7 +41,7 @@ limitations under the License.
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"
-#include "jaxlib/traceback.h"
+#include "jaxlib/py_user_context.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt/user_context_status_util.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
@@ -125,10 +126,9 @@ absl::Status PyShardedToken::Await() {
 PyLoadedExecutable::PyLoadedExecutable(
     nb_class_ptr<PyClient> client,
     ifrt::LoadedExecutableRef ifrt_loaded_executable,
-    std::optional<Traceback> traceback, std::optional<std::string> fingerprint)
+    std::optional<std::string> fingerprint)
     : client_(std::move(client)),
       ifrt_loaded_executable_(std::move(ifrt_loaded_executable)),
-      traceback_(std::move(traceback)),
       fingerprint_(std::move(fingerprint)),
       next_launch_id_(GetBaseLaunchId(fingerprint_, ifrt_loaded_executable_)) {
   CHECK(PyGILState_Check());
@@ -222,11 +222,12 @@ void PopulateExecuteShardedResults(const nb_class_ptr<PyClient>& client,
                                    const xla::PjRtFuture<>& result_status,
                                    int num_computations,
                                    std::vector<std::vector<PyArray>>& outputs) {
-  auto traceback = Traceback::Get();
   DCHECK_GT(num_computations, 0);
   int num_output_buffers = ifrt_arrays.size();
   outputs.resize(num_output_buffers);
   for (int buffer_id = 0; buffer_id < num_output_buffers; ++buffer_id) {
+    xla::ifrt::UserContextScope user_context_scope(
+        ifrt_arrays[buffer_id]->user_context());
     outputs[buffer_id].reserve(num_computations);
     auto exploded_arrays =
         ifrt_arrays[buffer_id]->DisassembleIntoSingleDeviceArrays(
@@ -235,8 +236,7 @@ void PopulateExecuteShardedResults(const nb_class_ptr<PyClient>& client,
     TF_CHECK_OK(exploded_arrays.status());
     for (auto& exploded_array : *exploded_arrays) {
       outputs[buffer_id].push_back(PyArray::MakeFromSingleDeviceArray(
-          client, traceback, std::move(exploded_array), false, true,
-          result_status));
+          client, std::move(exploded_array), false, true, result_status));
     }
   }
 }
@@ -366,7 +366,6 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
         out_handlers) {
   std::vector<nb::object> outputs;
   auto ifrt_arrays = Consume();
-  auto traceback = Traceback::Get();
   int num_output_buffers = ifrt_arrays.size();
   outputs.reserve(num_output_buffers);
   if (out_handlers.size() != num_output_buffers) {
@@ -377,6 +376,8 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
   }
   for (int buffer_id = 0; buffer_id < num_output_buffers; ++buffer_id) {
     auto& handler = out_handlers[buffer_id];
+    xla::ifrt::UserContextScope user_context_scope(
+        ifrt_arrays[buffer_id]->user_context());
     if (std::holds_alternative<const PyArrayResultHandler*>(handler)) {
       outputs.push_back(std::get<const PyArrayResultHandler*>(handler)->Call(
           client_, std::move(ifrt_arrays[buffer_id]),
@@ -393,7 +394,7 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
       int i = 0;
       for (auto& disassembled_array : *disassembled_arrays) {
         nb::object array = PyArray::MakeFromSingleDeviceArray(
-            client_, traceback, std::move(disassembled_array), false, true,
+            client_, std::move(disassembled_array), false, true,
             result_status_.IsValid() ? result_status_ : xla::PjRtFuture<>());
         PyList_SET_ITEM(bufs.ptr(), i, array.release().ptr());
         ++i;
@@ -413,6 +414,7 @@ absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
   if (options.execution_stream_id == 0) {
     options.execution_stream_id = tsl::Env::Default()->GetCurrentThreadId();
   }
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
   std::optional<std::vector<xla::PjRtFuture<>>> returned_futures;
   if (with_tokens) {
     returned_futures.emplace();

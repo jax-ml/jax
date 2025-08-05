@@ -18,7 +18,6 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -35,8 +34,8 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
+#include "jaxlib/py_user_context.h"
 #include "jaxlib/to_ifrt_sharding.h"
-#include "jaxlib/traceback.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/array_spec.h"
@@ -45,11 +44,11 @@ limitations under the License.
 #include "xla/python/ifrt/remap_plan.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/types.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
@@ -144,6 +143,7 @@ absl::StatusOr<nb::list> ExperimentalReshardArrays(nb::sequence py_arrays,
     return nb::list();
   }
 
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
   nb_class_ptr<PyClient> backend;
   std::vector<xla::ifrt::ArrayRef> ifrt_arrays;
   std::vector<xla::ifrt::ArraySpec> ifrt_specs;
@@ -183,11 +183,10 @@ absl::StatusOr<nb::list> ExperimentalReshardArrays(nb::sequence py_arrays,
                      absl::MakeSpan(ifrt_arrays), ifrt_specs, copy_semantics));
   }
 
-  auto traceback = Traceback::Get();
   nb::list result;
   for (int i = 0; i < num_arrays; ++i) {
     PyArray new_py_array = PyArray::MakeFromIfrtArrayAndSharding(
-        backend, traceback, std::move(outputs[i]), out_shardings[i],
+        backend, std::move(outputs[i]), out_shardings[i],
         /*weak_type=*/false,
         /*committed=*/true,
         /*skip_checks=*/true);
@@ -229,6 +228,7 @@ ExperimentalSplitByMeshAxis(
         mesh_axis_sections.size(), " vs ", num_submeshes));
   }
 
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
   // All input arrays are expected to use the same mesh.
   TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
                       GetIfrtDeviceList(py_arrays[0].sharding()));
@@ -341,13 +341,12 @@ ExperimentalSplitByMeshAxis(
 
   // Wrap IFRT arrays as JAX arrays.
   std::vector<std::vector<nb::object>> py_results;
-  auto traceback = Traceback::Get();
   int offset_in_results = 0;
   for (int array_idx = 0; array_idx < py_arrays.size(); ++array_idx) {
     auto& py_submesh_results = py_results.emplace_back();
     for (int submesh_idx = 0; submesh_idx < num_submeshes; ++submesh_idx) {
       PyArray new_py_array = PyArray::MakeFromIfrtArrayAndSharding(
-          backend, traceback,
+          backend,
           std::move(result_ifrt_arrays[offset_in_results + submesh_idx]),
           submesh_shardings[array_idx][submesh_idx],
           py_arrays[array_idx].weak_type(),
