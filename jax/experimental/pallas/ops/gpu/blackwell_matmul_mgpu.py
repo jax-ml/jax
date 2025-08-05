@@ -32,6 +32,7 @@ class TuningConfig:
   tile_k: int
   max_concurrent_steps: int
   collective: bool
+  grid_tile_n: int | None = None
   epilogue_tile_n: int = 64
 
 
@@ -101,9 +102,17 @@ def matmul_kernel(a, b, config: TuningConfig):
     else:
       grid = (m_iters, n_iters)
       collective_axes = ("sm",)
+    if config.grid_tile_n is not None:
+      grid_tiling = (m_iters, config.grid_tile_n)
+      if collective:
+        grid_tiling += (2,)
+    else:
+      grid_tiling = None
     wg_idx = lax.axis_index("wg")
 
-    @plgpu.nd_loop(grid, collective_axes=collective_axes,
+    @plgpu.nd_loop(grid,
+                   collective_axes=collective_axes,
+                   tiling=grid_tiling,
                    include_wave_step=True)
     def mn_loop(idx, wave_step):  # pylint: disable=unused-variable
       if collective:
@@ -256,11 +265,12 @@ def main(_) -> None:
         (128,),  # tile_m
         (128, 256),  # tile_n
         (64, 128),  # tile_k
-        (2, 3, 4, 6),  # max_concurrent_steps
+        (None, 4, 8, 16),  # grid_tile_n
+        (2, 4, 6),  # max_concurrent_steps
         (False, True),  # collective
     )
     best_util = -float("inf")
-    for (tile_m, tile_n, tile_k,
+    for (tile_m, tile_n, tile_k, grid_tile_n,
          max_concurrent_steps, collective) in tuning_it:
       # Only N <= 128 are supported for collective MMAs
       if collective and tile_n > 128:
@@ -271,7 +281,13 @@ def main(_) -> None:
           tile_k=tile_k,
           max_concurrent_steps=max_concurrent_steps,
           collective=collective,
+          grid_tile_n=grid_tile_n,
       )
+      if collective:
+        tile_m *= 2
+        tile_n *= 2
+      if grid_tile_n is not None and (N // tile_n) % grid_tile_n != 0:
+        continue
       try:
         out, runtime_ms = profiler.measure(
             functools.partial(matmul_kernel, config=config)
@@ -292,6 +308,7 @@ def main(_) -> None:
         best_util = achieved_tc_util
       print(
           f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=} "
+          f"{grid_tile_n=} "
           f"{collective=} : "
           f"{runtime_us:<7.1f}us"
           f" = {achieved_tc_util:4.1f}% TC utilization"
