@@ -24,6 +24,7 @@ import time
 from absl import app
 import absl.flags
 from absl.testing import absltest
+from absl.testing import parameterized
 
 from jax._src import distributed
 from jax._src import xla_bridge as xb
@@ -228,7 +229,7 @@ def _main(argv):
         assert retval == 0, f"process {i} failed, return value: {retval}"
 
 
-class MultiProcessTest(absltest.TestCase):
+class MultiProcessTest(parameterized.TestCase):
 
   def setUp(self):
     """Start tests together."""

@@ -388,7 +388,7 @@ class ModuleContext:
   squashed_dims: tuple[int, ...]
   lowering_semantics: mgpu.LoweringSemantics
   primitive_semantics: gpu_core.PrimitiveSemantics
-  mesh: mesh_lib.Mesh | None
+  mesh_info: pallas_utils.MeshInfo | None
   # See the documentation of unsafe_no_auto_barriers in CompilerParams.
   auto_barriers: bool
   warp_axis_name: str | None = None
@@ -942,7 +942,7 @@ def lower_jaxpr_to_module(
         squashed_dims=squashed_dims,
         lowering_semantics=lowering_semantics,
         primitive_semantics=gpu_core.PrimitiveSemantics.Warpgroup,
-        mesh=jax_mesh,
+        mesh_info=pallas_utils.MeshInfo.from_mesh(jax_mesh) if jax_mesh is not None else None,
         auto_barriers=not params.unsafe_no_auto_barriers,
     )
     del runtime_smem, grouped_barriers, runtime_barriers
@@ -1416,11 +1416,17 @@ def _handle_transforms(
           raise ValueError("TMEM reshape not allowed.")
         transformed_ref = mgpu.memref_reshape(transformed_ref, shape)
       case gpu_core.PeerMemRef(device_id, device_id_type):
-        if device_id_type != primitives.DeviceIdType.LOGICAL:
-          raise NotImplementedError(
-              "Only logical device IDs are supported for peer memrefs."
+        peer_device_id, other_axes = primitives.device_id_to_logical(
+            ctx.module_ctx.mesh_info,
+            device_id,
+            device_id_type,
+            lambda name: _axis_index_rule(ctx, axis_name=name),
+        )
+        if other_axes:
+          raise ValueError(
+              "Only JAX mesh axes can be used to obtain peer references, but"
+              f" got {other_axes}"
           )
-        peer_device_id = device_id
       case _:
         new_transforms.append(t)
   if peer_device_id is not None:
@@ -2318,10 +2324,17 @@ def _resolve_cluster_axis(axis_names: _AxisNames | None, axis_name: str):
 
 
 @register_lowering_rule(lax.axis_index_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(lax.axis_index_p, mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warp)
 @register_lowering_rule(lax.axis_index_p, mgpu.LoweringSemantics.Warpgroup)
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    if axis_name == ctx.module_ctx.warp_axis_name:
+      return mgpu.warp_idx(sync=True)
+    raise ValueError(
+        "Named axes can only refer to the warp axis name inside of core_map."
+    )
   gpu_axis_names = ctx.module_ctx.axis_names
-  jax_axis_names = getattr(ctx.module_ctx.mesh, "axis_names", ())
+  jax_axis_names = getattr(ctx.module_ctx.mesh_info, "axis_names", ())
   if gpu_axis_names is None and not jax_axis_names:
     raise LookupError(
         "No axis names are available. Make sure you are using `pl.core_map`"
@@ -2334,10 +2347,10 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
         f" {[*jax_axis_names]})"
     )
   if axis_name in jax_axis_names:
-    jax_mesh = ctx.module_ctx.mesh
+    jax_mesh = ctx.module_ctx.mesh_info
     assert jax_mesh is not None
     device_id = ctx.launch_ctx.device_id()
-    jax_mesh_shape = jax_mesh.axis_sizes
+    jax_mesh_shape = jax_mesh.mesh_shape
     axis_index = jax_axis_names.index(axis_name)
     i32 = ir.IntegerType.get_signless(32)
     axis_size = _ir_constant(jax_mesh_shape[axis_index], i32)
@@ -2395,16 +2408,6 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
         ir.IntegerType.get_signless(32),
         _block_id(ctx, gpu_dialect.Dimension(idx)),
     )
-
-@register_lowering_rule(lax.axis_index_p,
-  mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warp)
-def _axis_index_warp_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
-  if axis_name == ctx.module_ctx.warp_axis_name:
-    return mgpu.warp_idx(sync=True)
-  raise ValueError(
-      "Named axes can only refer to the warp axis name inside of core_map."
-  )
-
 
 @register_lowering_rule(primitives.debug_print_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(primitives.debug_print_p, mgpu.LoweringSemantics.Lane,
@@ -3276,9 +3279,15 @@ def _semaphore_signal_lowering_rule(
     raise NotImplementedError(f"Unhandled transforms for semaphore_signal: {transforms}")
   sem_ptr = mgpu.utils.memref_ptr(sem)
   if device_id is not None:
-    if device_id_type != primitives.DeviceIdType.LOGICAL:
+    device_id, other_axes = primitives.device_id_to_logical(
+        ctx.module_ctx.mesh_info,
+        device_id,
+        device_id_type,
+        lambda name: _axis_index_rule(ctx, axis_name=name),
+    )
+    if other_axes:
       raise NotImplementedError(
-          f"Unsupported device id type: {device_id_type}"
+          f"Only JAX mesh axes can be used in device_id, but found {other_axes}"
       )
     sem_ptr = ctx.launch_ctx.to_remote(
         sem_ptr, _ensure_ir_value(device_id, jnp.int32)

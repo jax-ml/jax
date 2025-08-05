@@ -15,6 +15,7 @@
 """Pallas utility functions."""
 
 from __future__ import annotations
+import dataclasses
 from typing import overload
 
 import jax
@@ -380,3 +381,20 @@ def nextafter_lowering_helper(x, y):
 
   # Cast back to the original type.
   return result.view(jnp_float)
+
+
+@dataclasses.dataclass(frozen=True)
+class MeshInfo:
+  mesh_shape: tuple[int, ...]
+  axis_names: tuple[str, ...]
+  mesh_strides: tuple[int, ...]
+
+  @staticmethod
+  def from_mesh(mesh: jax.sharding.Mesh) -> MeshInfo:
+    # We need mesh <-> logical translation tables. Since the logical IDs are
+    # just linearized versions of the mesh IDs, we create those tables.
+    mesh_strides = strides_from_shape(tuple(
+        mesh.shape[a] for a in mesh.axis_names
+    ))
+    mesh_shape = tuple(mesh.shape.values())
+    return MeshInfo(mesh_shape, mesh.axis_names, mesh_strides)

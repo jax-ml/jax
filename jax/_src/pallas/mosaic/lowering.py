@@ -106,12 +106,6 @@ map, unsafe_map = safe_map, map  # pylint: disable=redefined-builtin
 zip, unsafe_zip = safe_zip, zip  # pylint: disable=redefined-builtin
 
 
-@dataclasses.dataclass
-class MeshContext:
-  mesh_shape: tuple[int, ...]
-  axis_names: tuple[str, ...]
-  mesh_strides: tuple[int, ...]
-
 # Note - On Export Placeholders
 #
 # Since the vector dialect used by Mosaic does not support dynamic shapes,
@@ -173,7 +167,7 @@ class LoweringContext:
   user_grid_indices: Sequence[ir.Value] | None
   block_shapes: list[tuple[int | pallas_core.Squeezed, ...]]
   name_stack: source_info_util.NameStack
-  mesh_context: MeshContext | None
+  mesh_context: pallas_utils.MeshInfo | None
   kernel_type: tpu_core.KernelType
   traceback_caches: mlir.TracebackCaches
   for_verification: bool
@@ -445,7 +439,7 @@ class MosaicGridMapping:
   scalar_prefetch_block_shapes: tuple[tuple[int, ...], ...]
   operand_block_shapes: tuple[tuple[int, ...], ...]
   scratch_block_shapes: tuple[tuple[int, ...], ...]
-  mesh_info: MeshInfo | None
+  mesh_info: pallas_utils.MeshInfo | None
   get_grid_indices: Callable[..., Any]
 
   def __init__(
@@ -557,13 +551,7 @@ class MosaicGridMapping:
             "Cannot shadow axis mesh axis names with grid names. mesh axis"
             f" names: {mesh.axis_names}, grid names: {self.grid_names}"
         )
-    # We need mesh <-> logical translation tables. Since the logical IDs are
-    # just linearized versions of the mesh IDs, we create those tables.
-    mesh_strides = pallas_utils.strides_from_shape(tuple(
-        mesh.shape[a] for a in axis_names
-    ))
-    mesh_shape = tuple(mesh.shape.values())
-    self.mesh_info = MeshInfo(mesh_shape, axis_names, mesh_strides)
+    self.mesh_info = pallas_utils.MeshInfo.from_mesh(mesh)
 
   def maybe_compress_grid(self):
     # If we have many leading parallel dimensions, we should "compress" them
@@ -614,13 +602,6 @@ class MosaicGridMapping:
             map(_get_semantics, self._dimension_semantics),
         )
     )
-
-
-@dataclasses.dataclass(frozen=True)
-class MeshInfo:
-  mesh_shape: tuple[int, ...]
-  axis_names: tuple[str, ...]
-  mesh_strides: tuple[int, ...]
 
 
 def _check_block_mappings(
@@ -979,13 +960,6 @@ def lower_jaxpr_to_transform_func(
         *mosaic_grid_mapping.scalar_prefetch_block_shapes,
     ]
 
-    mesh_info = mosaic_grid_mapping.mesh_info
-    if mesh_info is not None:
-      mesh_context = MeshContext(
-          mesh_info.mesh_shape, mesh_info.axis_names, mesh_info.mesh_strides
-      )
-    else:
-      mesh_context = None
     lowering_context = LoweringContext(
         mosaic_grid_mapping.grid,
         mosaic_grid_mapping.grid_names,
@@ -993,7 +967,7 @@ def lower_jaxpr_to_transform_func(
         None,
         arg_block_shapes,
         source_info_util.NameStack(),
-        mesh_context=mesh_context,
+        mesh_context=mosaic_grid_mapping.mesh_info,
         kernel_type=kernel_type,
         traceback_caches=mlir.TracebackCaches(),
         for_verification=for_verification,
@@ -1056,13 +1030,6 @@ def lower_jaxpr_to_func(
     jaxpr_indices = mosaic_grid_mapping.get_grid_indices(
         grid_indices, maybe_include_mapped_dims=False
     )
-    mesh_info = mosaic_grid_mapping.mesh_info
-    if mesh_info is not None:
-      mesh_context = MeshContext(
-          mesh_info.mesh_shape, mesh_info.axis_names, mesh_info.mesh_strides
-      )
-    else:
-      mesh_context = None
     lowering_context = LoweringContext(
         mosaic_grid_mapping.grid,
         mosaic_grid_mapping.grid_names,
@@ -1070,7 +1037,7 @@ def lower_jaxpr_to_func(
         jaxpr_indices,
         arg_block_shapes,
         source_info_util.NameStack(),
-        mesh_context=mesh_context,
+        mesh_context=mosaic_grid_mapping.mesh_info,
         kernel_type=kernel_type,
         traceback_caches=mlir.TracebackCaches(),
         for_verification=for_verification,
@@ -3604,76 +3571,28 @@ def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr, collecti
   return region.results
 
 
-def _device_id_dict_to_mesh(ctx: LoweringRuleContext, device_id_dict):
-  mesh_context = ctx.lowering_context.mesh_context
-  assert mesh_context is not None
-  mesh_axis_sizes = dict(zip(mesh_context.axis_names, mesh_context.mesh_shape))
-  core_axis_name, grid_names = None, ctx.lowering_context.grid_names
-  if grid_names:
+def _device_id_to_logical(
+    ctx: LoweringRuleContext, device_id,
+    device_id_type: primitives.DeviceIdType):
+  logical_device_id, non_mesh_axes = primitives.device_id_to_logical(
+      ctx.lowering_context.mesh_context,
+      device_id,
+      device_id_type,
+      lambda name: _axis_index_rule(ctx, axis_name=name),
+  )
+  core_index = None
+  if grid_names := ctx.lowering_context.grid_names:
     if len(grid_names) > 1:
       raise NotImplementedError(
           "Unable to determine core axis name if grid_names is more than 1."
       )
-    mesh_axis_sizes.update(
-        dict(zip(grid_names, ctx.lowering_context.grid_sizes))
-    )
     core_axis_name = grid_names[0]
-  physical_axis_dict = {}
-  # Handle joint axes (i.e., one logical axis over >1 physical axes)
-  for axis, idx in device_id_dict.items():
-    if isinstance(axis, tuple):
-      axes_dimensions = [mesh_axis_sizes[name] for name in axis]
-      for axis_index, axis_name in enumerate(axis):
-        axis_size = ir_constant(mesh_axis_sizes[axis_name])
-        minor_divisor = ir_constant(
-            np.prod(axes_dimensions[axis_index + 1 :], dtype=np.int32)
-        )
-        device_idx = arith.remsi(arith.divsi(idx, minor_divisor), axis_size)
-        physical_axis_dict[axis_name] = device_idx
-    else:
-      physical_axis_dict[axis] = idx
-  core_index = None
-  if core_axis_name and core_axis_name in physical_axis_dict:
-    core_index = physical_axis_dict.pop(grid_names[0])
-  device_id = []
-  for axis in mesh_context.axis_names:
-    if axis in physical_axis_dict:
-      device_id.append(physical_axis_dict[axis])
-    else:
-      device_id.append(_axis_index_rule(ctx, axis_name=axis))
-  return tuple(device_id), core_index
-
-
-def _device_id_to_logical(
-    ctx: LoweringRuleContext, device_id,
-    device_id_type: primitives.DeviceIdType):
-  core_index = None
-  if isinstance(device_id, dict):
-    if device_id_type is not primitives.DeviceIdType.MESH:
-      raise ValueError(
-          "`device_id_type` must be MESH if `device_id` is a dict,"
-          f" got: {device_id_type = }."
-      )
-    device_id, core_index = _device_id_dict_to_mesh(ctx, device_id)
-  if device_id_type is primitives.DeviceIdType.MESH:
-    assert (mesh_context := ctx.lowering_context.mesh_context)
-    # Mesh means we are passed the mesh coordinates for the device
-    device_ids = tree_util.tree_leaves(device_id)
-    mesh_strides = mesh_context.mesh_strides
-
-    i32 = ir.IntegerType.get_signless(32)
-    if len(device_ids) == 0:
-      return arith.constant(i32, 0), core_index
-    return functools.reduce(
-        arith.addi,
-        (
-            arith.muli(a, arith.constant(i32, b))
-            for a, b in zip(device_ids, mesh_strides)
-        ),
-    ), core_index
-  elif device_id_type is primitives.DeviceIdType.LOGICAL:
-    return device_id, None
-  raise NotImplementedError(f"Unsupported device id type: {device_id_type}")
+    core_index = non_mesh_axes.pop(core_axis_name, None)
+  if non_mesh_axes:
+    raise ValueError(
+        f"Unrecognized axes in device_id: {non_mesh_axes}"
+    )
+  return logical_device_id, core_index
 
 
 @register_lowering_rule(
