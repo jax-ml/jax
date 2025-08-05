@@ -70,6 +70,12 @@ parser.add_argument(
 parser.add_argument(
     "--srcs", help="source files for the wheel", action="append"
 )
+parser.add_argument(
+    "--nvidia_wheel_versions_data",
+    default=None,
+    required=True,
+    help="NVIDIA wheel versions data",
+)
 args = parser.parse_args()
 
 r = runfiles.Create()
@@ -88,8 +94,14 @@ python_tag=py3
 """
     )
 
+
 def prepare_cuda_plugin_wheel(
-    wheel_sources_path: pathlib.Path, *, cpu, cuda_version, wheel_sources
+    wheel_sources_path: pathlib.Path,
+    *,
+    cpu,
+    cuda_version,
+    wheel_sources,
+    nvidia_wheel_versions_data,
 ):
   """Assembles a source tree for the wheel in `wheel_sources_path`"""
   source_file_prefix = build_utils.get_source_file_prefix(wheel_sources)
@@ -110,7 +122,9 @@ def prepare_cuda_plugin_wheel(
           f"{source_file_prefix}jax_plugins/cuda/setup.py",
       ],
   )
-  build_utils.update_setup_with_cuda_version(wheel_sources_path, cuda_version)
+  build_utils.update_setup_with_cuda_and_nvidia_wheel_versions(
+      wheel_sources_path, cuda_version, nvidia_wheel_versions_data
+  )
   write_setup_cfg(wheel_sources_path, cpu)
   copy_files(
       dst_dir=plugin_dir,
@@ -179,6 +193,7 @@ try:
         cpu=args.cpu,
         cuda_version=args.platform_version,
         wheel_sources=args.srcs,
+        nvidia_wheel_versions_data=args.nvidia_wheel_versions_data,
     )
     package_name = "jax cuda plugin"
   elif args.enable_rocm:

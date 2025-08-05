@@ -205,55 +205,55 @@ nvidia-cublas-cu12==12.9.1.4 ; sys_platform == "linux" \
     --hash=sha256:453611eb21a7c1f2c2156ed9f3a45b691deda0440ec550860290dc901af5b4c2 \
     --hash=sha256:7a950dae01add3b415a5a5cdc4ec818fb5858263e9cca59004bb99fdbbd3a5d6
     # via
-    #   -r build/requirements.in
+    #   -r build/nvidia-requirements.txt
     #   nvidia-cudnn-cu12
     #   nvidia-cusolver-cu12
 nvidia-cuda-cupti-cu12==12.9.79 ; sys_platform == "linux" \
     --hash=sha256:096bcf334f13e1984ba36685ad4c1d6347db214de03dbb6eebb237b41d9d934f \
     --hash=sha256:1848a9380067560d5bee10ed240eecc22991713e672c0515f9c3d9396adf93c8 \
     --hash=sha256:791853b030602c6a11d08b5578edfb957cadea06e9d3b26adbf8d036135a4afe
-    # via -r build/requirements.in
+    # via -r build/nvidia-requirements.txt
 nvidia-cuda-nvcc-cu12==12.9.86 ; sys_platform == "linux" \
     --hash=sha256:44e1eca4d08926193a558d2434b1bf83d57b4d5743e0c431c0c83d51da1df62b \
     --hash=sha256:5d6a0d32fdc7ea39917c20065614ae93add6f577d840233237ff08e9a38f58f0 \
     --hash=sha256:8ed7f0b17dea662755395be029376db3b94fed5cbb17c2d35cc866c5b1b84099
-    # via -r build/requirements.in
+    # via -r build/nvidia-requirements.txt
 nvidia-cuda-nvrtc-cu12==12.9.86 ; sys_platform == "linux" \
     --hash=sha256:096d4de6bda726415dfaf3198d4f5c522b8e70139c97feef5cd2ca6d4cd9cead \
     --hash=sha256:210cf05005a447e29214e9ce50851e83fc5f4358df8b453155d5e1918094dcb4 \
     --hash=sha256:72972ebdcf504d69462d3bcd67e7b81edd25d0fb85a2c46d3ea3517666636349
-    # via -r build/requirements.in
+    # via -r build/nvidia-requirements.txt
 nvidia-cuda-runtime-cu12==12.9.79 ; sys_platform == "linux" \
     --hash=sha256:25bba2dfb01d48a9b59ca474a1ac43c6ebf7011f1b0b8cc44f54eb6ac48a96c3 \
     --hash=sha256:83469a846206f2a733db0c42e223589ab62fd2fabac4432d2f8802de4bded0a4 \
     --hash=sha256:8e018af8fa02363876860388bd10ccb89eb9ab8fb0aa749aaf58430a9f7c4891
-    # via -r build/requirements.in
+    # via -r build/nvidia-requirements.txt
 nvidia-cudnn-cu12==9.11.0.98 ; sys_platform == "linux" \
     --hash=sha256:35e24acf5f73835ac3752116e455095aacd1bee7646ade3317e84815688f3cf3 \
     --hash=sha256:ea576f56225d201b8527d4aef3425c074ad5155f105643b73cbfea98f62ee870 \
     --hash=sha256:ff3db2c4c220e5962fac7256b0c6d667ea69ab974dd67e18b2fd57df891eea35
-    # via -r build/requirements.in
+    # via -r build/nvidia-requirements.txt
 nvidia-cufft-cu12==11.4.1.4 ; sys_platform == "linux" \
     --hash=sha256:1a28c9b12260a1aa7a8fd12f5ebd82d027963d635ba82ff39a1acfa7c4c0fbcf \
     --hash=sha256:8e5bfaac795e93f80611f807d42844e8e27e340e0cde270dcb6c65386d795b80 \
     --hash=sha256:c67884f2a7d276b4b80eb56a79322a95df592ae5e765cf1243693365ccab4e28
-    # via -r build/requirements.in
+    # via -r build/nvidia-requirements.txt
 nvidia-cusolver-cu12==11.7.5.82 ; sys_platform == "linux" \
     --hash=sha256:15da72d1340d29b5b3cf3fd100e3cd53421dde36002eda6ed93811af63c40d88 \
     --hash=sha256:62efa83e4ace59a4c734d052bb72158e888aa7b770e1a5f601682f16fe5b4fd2 \
     --hash=sha256:77666337237716783c6269a658dea310195cddbd80a5b2919b1ba8735cec8efd
-    # via -r build/requirements.in
+    # via -r build/nvidia-requirements.txt
 nvidia-cusparse-cu12==12.5.10.65 ; sys_platform == "linux" \
     --hash=sha256:221c73e7482dd93eda44e65ce567c031c07e2f93f6fa0ecd3ba876a195023e83 \
     --hash=sha256:73060ce019ac064a057267c585bf1fd5a353734151f87472ff02b2c5c9984e78 \
     --hash=sha256:9e487468a22a1eaf1fbd1d2035936a905feb79c4ce5c2f67626764ee4f90227c
     # via
-    #   -r build/requirements.in
+    #   -r build/nvidia-requirements.txt
     #   nvidia-cusolver-cu12
 nvidia-nccl-cu12==2.27.6 ; sys_platform == "linux" \
     --hash=sha256:75f802521688026853ede67ec0337846214905a2f1571bb6e01ca3bb97c586ce \
     --hash=sha256:8be9c0a7d7f95489f407593ad3842ba66bbb7c3370622c3592efb6dd67540968
-    # via -r build/requirements.in
+    # via -r build/nvidia-requirements.txt
 nvidia-nvjitlink-cu12==12.9.86 ; sys_platform == "linux" \
     --hash=sha256:994a05ef08ef4b0b299829cde613a424382aff7efb08a7172c1fa616cc3af2ca \
     --hash=sha256:cc6fcec260ca843c10e34c936921a1c426b351753587fdd638e8cff7b16bb9db \
@@ -266,11 +266,11 @@ nvidia-nvjitlink-cu12==12.9.86 ; sys_platform == "linux" \
 nvidia-nvshmem-cu12==3.3.9 ; sys_platform == "linux" \
     --hash=sha256:2de43cbfe559e16b8e3cb777b95f1fe2ddd5c2cfd79414b09cf9cf099feba2ba \
     --hash=sha256:95ba1e98189c056eb5372bd355ab714b3741a03e6de1e32f167f5240fd967c5f
-    # via -r build/requirements.in
-nvidia-nvshmem-cu13==0.0.0a0 \
+    # via -r build/nvidia-requirements.txt
+nvidia-nvshmem-cu13==0.0.0a0 ; sys_platform == "linux" \
     --hash=sha256:84d265d7b97dae6ee74139f8f7e37fc65a63e4ebb7287b987a4dca0c0625673d \
     --hash=sha256:b6900e44e6be1e0e7be6059c5b7a397fb3cb84914784571ab7e20a35bb2b140d
-    # via -r build/requirements.in
+    # via -r build/nvidia-requirements.txt
 opt-einsum==3.4.0 \
     --hash=sha256:69bb92469f86a1565195ece4ac0323943e83477171b91d24c35afe028a90d7cd \
     --hash=sha256:96ca72f1b886d148241348783498194c577fa30a8faac108586b14f1ba4473ac
