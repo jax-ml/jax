@@ -495,6 +495,26 @@ def _while_equation_system(
   return eqns.EquationSystem(), operand_or_results_for_variable
 
 
+@_add_equation_system_derivation_rule(scf.IndexSwitchOp)
+def _index_switch_equation_system(
+    op: scf.IndexSwitchOp
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+  operand_or_results_for_variable: OperandOrResultsForVariable = {
+      eqns.Variable(o): [o] for o in operands_and_results(op)
+  }
+  for region in op.regions:
+    [block] = region.blocks
+    yield_op = _terminator(block, scf.YieldOp)
+    for operand_or_result in operand_or_results_for_variable.keys():
+      assert operand_or_result.key.type == VariableType.RESULT
+      yield_operand = OperandOrResult(
+          yield_op, VariableType.OPERAND, operand_or_result.key.index
+      )
+      operand_or_results_for_variable[operand_or_result].append(yield_operand)
+
+  return eqns.EquationSystem(), operand_or_results_for_variable
+
+
 @_add_equation_system_derivation_rule(mgpu.LayoutCastOp)
 def _layout_cast_equation_system(
     op: mgpu.LayoutCastOp

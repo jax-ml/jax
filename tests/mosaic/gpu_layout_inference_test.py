@@ -91,10 +91,22 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     if self.INFERENCE_IMPL == InferenceImplementation.EQUATIONS:
       self.skipTest("Equations-based layout inference is not supported yet")
 
+  def skip_if_legacy(self):
+    if self.INFERENCE_IMPL == InferenceImplementation.LEGACY:
+      self.skipTest("Legacy layout inference is not supported")
+
   def checkInLayouts(self, op, in_layouts):
+    in_layouts = [
+        layouts.to_layout_attr(l) if isinstance(l, mgpu.FragmentedLayout) else l
+        for l in in_layouts
+    ]
     self.assertSequenceEqual(op.attributes["in_layouts"], in_layouts)
 
   def checkOutLayouts(self, op, out_layouts):
+    out_layouts = [
+        layouts.to_layout_attr(l) if isinstance(l, mgpu.FragmentedLayout) else l
+        for l in out_layouts
+    ]
     self.assertSequenceEqual(op.attributes["out_layouts"], out_layouts)
 
   def test_infer_strided_layout_default(self):
@@ -422,6 +434,58 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       result_layouts = [layouts.to_layout_attr(result_layout)] if result_layout else []
       self.checkInLayouts(while_op, init_layouts)
       self.checkOutLayouts(while_op, result_layouts)
+
+  @parameterized.parameters(
+      (None, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_LAYOUT),
+      (mgpu.WGMMA_LAYOUT, mgpu.WGMMA_COL_LAYOUT, None),
+  )
+  def test_infer_index_switch_op_layouts(
+      self,
+      out0_layout: mgpu.FragmentedLayout | None,
+      out3_layout: mgpu.FragmentedLayout,
+      out4_layout: mgpu.FragmentedLayout | None
+  ):
+    self.skip_if_legacy()
+    out_layouts = [out0_layout or out4_layout, out3_layout]
+    assert None not in out_layouts
+    f32 = ir.F32Type.get()
+    out_type = ir.VectorType.get((128, 128), f32)
+    with ir.InsertionPoint(self.module.body):
+      i1 = ir.IntegerType.get_signless(1)
+      [condition] = undefs(i1)
+      index_switch = scf.IndexSwitchOp(
+          [out_type, out_type, f32],
+          condition,
+          ir.DenseI64ArrayAttr.get(range(3)),
+          num_caseRegions=2,
+      )
+      with ir.InsertionPoint(index_switch.caseRegions[0].blocks.append()):
+        out0, out1, dummy0 = undefs(out_type, out_type, f32)
+        if out0_layout is not None:
+          out0 = layout_cast(out0, out0_layout)
+        yield0 = scf.YieldOp([out0, out1, dummy0])
+      with ir.InsertionPoint(index_switch.caseRegions[1].blocks.append()):
+        out2, out3, dummy1 = undefs(out_type, out_type, f32)
+        if out3_layout is not None:
+          out3 = layout_cast(out3, out3_layout)
+        yield1 = scf.YieldOp([out2, out3, dummy1])
+      with ir.InsertionPoint(index_switch.defaultRegion.blocks.append()):
+        out4, out5, dummy2 = undefs(out_type, out_type, f32)
+        if out4_layout is not None:
+          out4 = layout_cast(out4, out4_layout)
+        yield2 = scf.YieldOp([out4, out5, dummy2])
+
+    self.infer_layout(self.module)
+
+    self.assertEmpty(index_switch.attributes["in_layouts"])
+    self.assertEmpty(yield0.attributes["out_layouts"])
+    self.assertEmpty(yield1.attributes["out_layouts"])
+    self.assertEmpty(yield2.attributes["out_layouts"])
+
+    self.checkOutLayouts(index_switch, out_layouts)
+    self.checkInLayouts(yield0, out_layouts)
+    self.checkInLayouts(yield1, out_layouts)
+    self.checkInLayouts(yield2, out_layouts)
 
   def test_infer_layout_has_no_layout_for_non_vector_types(self):
     shape = (32, 4)
