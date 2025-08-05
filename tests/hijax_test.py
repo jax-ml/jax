@@ -564,28 +564,42 @@ class BoxTest(jtu.JaxTestCase):
     self.assertAllClose(a_.arr, 1, check_dtypes=False)
     self.assertAllClose(b_.arr, 2, check_dtypes=False)
 
-  # TODO(mattjj,dougalm): make this work
-  # def test_closed_over_type_changing_box(self):
+  def test_closed_over_type_changing_box(self):
 
-  #   box = Box(None)
+    box = Box(None)
+    box2 = Box(None)
 
-  #   @jax.jit
-  #   def f():
-  #     breakpoint()
-  #     x = box.get()
-  #     if x is None:
-  #       box.set(0)
-  #     else:
-  #       box.set(x + 1)
+    @jax.jit
+    def f():
+      assert tracing_ok
+      x = box.get()
+      if x is None:
+        box.set(0)
+      elif type(x) is dict:
+        box.set(dict(x, a=5))
+        box2.set(3)
+      else:
+        box.set(x + 1)
 
-  #   f()
-  #   f()
-  #   self.assertEqual(box.get(), 1)
-  #   box.set(None)
-  #   f()
-  #   f()
-  #   f()
-  #   self.assertEqual(box.get(), 2)
+    tracing_ok = True
+    f()  # tracing okay because first time
+    f()  # tracing okay because first time with box as not None
+    tracing_ok = False
+    f()
+    self.assertEqual(box.get(), 2)
+    self.assertEqual(box2.get(), None)
+    box.set(None)
+    f()
+    f()
+    f()
+    f()
+    self.assertEqual(box.get(), 3)
+    self.assertEqual(box2.get(), None)
+    box.set({'b': 3})
+    tracing_ok = True
+    f()
+    self.assertEqual(box.get(), dict(a=5, b=3))
+    self.assertEqual(box2.get(), 3)
 
 
 if __name__ == '__main__':
