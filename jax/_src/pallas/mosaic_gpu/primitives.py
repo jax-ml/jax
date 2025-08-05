@@ -2860,3 +2860,115 @@ def _async_copy_scales_to_tmem_lowering_rule(
     raise NotImplementedError(f"Unimplemented transforms for TMEM refs: {tmem_transforms}")
   tcgen05.async_copy_scales_smem_to_tmem(smem_ref, tmem_ref)
   return ()
+
+
+semaphore_signal_parallel_p = jax_core.Primitive('semaphore_signal_parallel')
+semaphore_signal_parallel_p.multiple_results = True
+
+
+@dataclasses.dataclass(frozen=True)
+class SemaphoreSignal:
+  ref: _Ref
+  _: dataclasses.KW_ONLY
+  device_id: pallas_primitives.DeviceId | None
+  inc: int | jax.Array = 1
+
+
+def semaphore_signal_parallel(*signals: SemaphoreSignal):
+  """Signals multiple semaphores without any guaranteed ordering of signal arrivals.
+
+  This primitive is largely equivalent to::
+
+    for sem in semaphores:
+      pl.semaphore_signal(sem, inc, device_id=device_id)
+
+  only unlike the loop above, it does not guarantee any ordering of signal
+  arrivals. In particular, the target device might observe a signal on
+  ``semaphores[1]`` before it observes a signal on ``semaphores[0]``.
+  This operation still guarantees that any side effects performed before the
+  signal will be fully performed and visible before any of the signals arrive.
+
+  The relaxed requirements make the whole operation significantly cheaper on
+  GPUs, as a single expensive memory fence can be used for all signals (instead
+  of an expensive fence for each signal).
+  """
+  semaphores = [s.ref for s in signals]
+  device_ids = [s.device_id for s in signals]
+  incs = [jnp.asarray(s.inc, dtype=jnp.int32) for s in signals]
+  refs, transforms = util.unzip2(
+      map(pallas_primitives._get_ref_and_transforms, semaphores)
+  )
+  args = [refs, transforms, incs, device_ids]
+  flat_args, args_tree = tree_util.tree_flatten(args)
+  semaphore_signal_parallel_p.bind(
+      *flat_args,
+      args_tree=args_tree,
+  )
+
+
+@semaphore_signal_parallel_p.def_effectful_abstract_eval
+def _semaphore_signal_parallel_abstract_eval(*avals, args_tree):
+  (
+      sem_avals,
+      sem_transforms_avals,
+      value_avals,
+      device_id_avals,
+  ) = tree_util.tree_unflatten(args_tree, avals)
+  for sem_aval, sem_transform_avals in zip(sem_avals, sem_transforms_avals, strict=True):
+    pallas_primitives.check_sem_avals(sem_aval, sem_transform_avals, "signal")
+  if any(va.dtype != jnp.dtype("int32") for va in value_avals):
+    raise ValueError("Must signal an int32 value.")
+  effs = set()
+  for device_id in device_id_avals:
+    if device_id is not None:
+      device_id_flat_avals = tree_util.tree_leaves(device_id)
+      for aval in device_id_flat_avals:
+        if aval.dtype != jnp.dtype("int32"):
+          raise ValueError("`device_id`s must be int32 values.")
+      effs.add(pallas_primitives._comms_effect)
+  return [], effs
+
+
+@lowering.register_lowering_rule(semaphore_signal_parallel_p, mgpu.LoweringSemantics.Lane)
+def _semaphore_signal_lowering_rule(
+    ctx: lowering.LoweringRuleContext, *args, args_tree,
+):
+  i32 = ir.IntegerType.get_signless(32)
+  sems, transforms, values, device_ids = tree_util.tree_unflatten(
+      args_tree, args
+  )
+  transformed_sems = []
+  for sem, sem_transforms in zip(sems, transforms, strict=True):
+    sem, sem_transforms = lowering._handle_transforms(ctx, sem, sem_transforms)
+    if sem_transforms:
+      raise NotImplementedError(f"Unhandled transforms for semaphore_signal_parallel: {sem_transforms}")
+    transformed_sems.append(sem)
+  del sems, transforms  # Use transformed_sems instead.
+  for sem, value, device_id in zip(transformed_sems, values, device_ids, strict=True):
+    sem_ptr = mgpu.utils.memref_ptr(sem)
+    if device_id is not None:
+      device_id, other_axes = pallas_primitives.device_id_to_logical(
+          ctx.module_ctx.mesh_info,
+          device_id,
+          pallas_primitives.DeviceIdType.MESH,
+          lambda name: lowering._axis_index_rule(ctx, axis_name=name),
+      )
+      if other_axes:
+        raise NotImplementedError(
+            f"Only JAX mesh axes can be used in device_id, but found {other_axes}"
+        )
+      device_id = lowering._ensure_ir_value(device_id, jnp.int32)
+      sem_ptr = ctx.launch_ctx.to_remote(sem_ptr, device_id)
+    # TODO(apaszke): Narrow the scope from .sys to .gpu when the semaphore is local.
+    # We only signal the semaphore from a single lane, which does not guarantee
+    # anything about the state of the other three warps in the warpgroup (they
+    # might still be e.g. reading memory that someone will overwrite once they
+    # receive a signal).
+    if ctx.module_ctx.auto_barriers:
+      mgpu.utils.warpgroup_barrier()
+    val = lowering._ir_constant(value, i32)
+    mgpu_utils.SemaphoreRef(sem_ptr).signal(
+        val, predicate=ctx.module_ctx.single_wg_lane_predicate, relaxed=True,
+    )
+    mgpu_utils.fence_release_sys()
+  return ()

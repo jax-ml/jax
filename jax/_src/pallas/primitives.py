@@ -1109,6 +1109,9 @@ state_discharge.register_discharge_rule(semaphore_read_p)(
 )
 
 
+DeviceId = int | jax.Array | None | tuple[int | jax.Array, ...] | dict[Any, int | jax.Array]
+
+
 semaphore_signal_p = jax_core.Primitive('semaphore_signal')
 semaphore_signal_p.multiple_results = True
 
@@ -1117,7 +1120,7 @@ def semaphore_signal(
     sem_or_view,
     inc: int | jax.Array = 1,
     *,
-    device_id: int | jax.Array | None | tuple[int | jax.Array, ...] = None,
+    device_id: DeviceId = None,
     device_id_type: DeviceIdType = DeviceIdType.MESH,
     core_index: int | jax.Array | None = None,
 ):

@@ -1082,7 +1082,12 @@ class CollectiveBarrierRef:
 class SemaphoreRef:
   ptr: ir.Value
 
-  def signal(self, value: ir.Value | int, predicate: ir.Value | None = None):
+  def signal(
+      self,
+      value: ir.Value | int,
+      predicate: ir.Value | None = None,
+      relaxed: bool = False,
+  ):
     i32 = ir.IntegerType.get_signless(32)
     if not isinstance(value, ir.Value):
       value = c(value, i32)
@@ -1090,10 +1095,11 @@ class SemaphoreRef:
       raise ValueError(f"Expected a i32 value, got {value.type}")
     if predicate is None:
       predicate = single_thread_predicate(ThreadSubset.WARPGROUP)
+    semantics = "relaxed" if relaxed else "release"
     llvm.inline_asm(
       i32,
       [self.ptr, value, predicate],
-      "@$3 atom.add.release.sys.global.u32 $0, [$1], $2;",
+      f"@$3 atom.add.{semantics}.sys.global.u32 $0, [$1], $2;",
       "=r,l,r,b",
       has_side_effects=True,
     )
@@ -1137,6 +1143,12 @@ class SemaphoreRef:
       warp_barrier()
     else:
       raise ValueError(f"Unsupported scope: {scope}")
+
+
+def fence_release_sys():
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"), [], "fence.release.sys;", "", has_side_effects=True,
+  )
 
 
 class Partition:

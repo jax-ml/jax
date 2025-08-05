@@ -2414,6 +2414,7 @@ class PallasCallWGTest(
         mgpu_primitives.wait_load_tmem_p,
         mgpu_primitives.commit_tmem_p,
         mgpu_primitives.load_p,
+        mgpu_primitives.semaphore_signal_parallel_p,
         lax.slice_p,
         lax.iota_p,
         pallas_core.core_map_p,

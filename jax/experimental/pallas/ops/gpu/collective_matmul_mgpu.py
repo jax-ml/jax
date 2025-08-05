@@ -153,10 +153,11 @@ def all_gather_lhs_matmul(
           k_loop(scratch_ref.at[scratch_slot], rhs_ref)
           # Make sure the copy is fully done.
           plgpu.wait_smem_to_gmem(0, wait_read_only=False)
-          # TODO(apaszke): Both of those semaphores perform a .sys release.
-          # This is very expensive and we should only do a single .sys fence.
-          pl.semaphore_signal(capacity_sem, device_id=recv_dev_id, device_id_type=pl.DeviceIdType.LOGICAL)
-          pl.semaphore_signal(received_sem, device_id=send_dev_id, device_id_type=pl.DeviceIdType.LOGICAL)
+          # The order of signals doesn't matter here.
+          plgpu.semaphore_signal_parallel(
+              plgpu.SemaphoreSignal(capacity_sem, device_id=recv_dev_id),
+              plgpu.SemaphoreSignal(received_sem, device_id=send_dev_id),
+          )
           # Make sure all TMAs have read SMEM before we overwrite it.
           plgpu.wait_smem_to_gmem(0, wait_read_only=True)
           out_smem[...] = acc_ref[...].astype(out_smem.dtype)
