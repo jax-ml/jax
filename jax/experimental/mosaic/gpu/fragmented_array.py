@@ -3339,19 +3339,32 @@ def copy_tiled(src: ir.Value, dst: ir.Value, swizzle: int = 16):
     if 8 * bytes_per_thread < bitwidth:
       raise NotImplementedError("Element types with bitwidth so large aren't supported")
     vector_length = bytes_per_thread * 8 // bitwidth
-    assert (lane_col_tiles * swizzle_elems) % vector_length == 0
-    threads_per_row = (lane_col_tiles * swizzle_elems) // vector_length
-    assert lane_row_tiles * 8 >= WARP_SIZE // threads_per_row
+    assert swizzle_elems % vector_length == 0
+    # How many steps of vector transfers are needed to transfer a single tile?
+    if vector_length * WARP_SIZE > 8 * swizzle_elems:
+      steps_per_tile = 1
+    else:
+      steps_per_tile = 8 * swizzle_elems // (vector_length * WARP_SIZE)
+    tile_rows_per_step = 8 // steps_per_tile
+    # There are two cases to consider here: either a single transfer fits within
+    # a single tile (lane_row_tiles == lane_col_tiles == 1), which is the case
+    # for large swizzles, or it spans multiple tiles. The layout below ensures
+    # that consecutive lanes first traverse the columns within a tile, followed
+    # by rows within a tile, columns across tiles, and then rows across tiles.
+    # This ensures we never end up with bank conflicts, and yields well
+    # coalesced GMEM accesses.
     layout = TiledLayout(
         Tiling(
             (
                 (warp_row_tiles * lane_row_tiles * 8, warp_col_tiles * lane_col_tiles * swizzle_elems),
                 (lane_row_tiles * 8, lane_col_tiles * swizzle_elems),
-                (WARP_SIZE // threads_per_row, vector_length)
+                (8, swizzle_elems),
+                (tile_rows_per_step, swizzle_elems),
+                (vector_length,)
             )
         ),
-        warp_dims=(-6, -5),
-        lane_dims=(-3, -2) if swizzle < 64 else (-2, -3),
+        warp_dims=(-9, -8),
+        lane_dims=(-7, -6, -3, -2),
         vector_dim=-1,
         _check_canonical=False,
     ).canonicalize()

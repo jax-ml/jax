@@ -4723,6 +4723,7 @@ if hp is not None:
       @hp.example(((48, 64), jnp.int32, 32, False))
       @hp.example(((48, 64), jnp.int32, 64, False))
       @hp.example(((48, 64), jnp.int32, 128, False))
+      @hp.example(((64, 4), jnp.int32, 16, False))
       def run(args):
         shape, dtype, swizzle, to_smem = args
         tiling = (8, 8 * swizzle // jnp.iinfo(dtype).bits)
