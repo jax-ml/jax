@@ -16,6 +16,7 @@ import dataclasses
 import functools
 import itertools
 import jax
+from jax import lax
 from jax._src import test_util as jtu  # noqa: F401
 from jax.experimental.mosaic.gpu import profiler
 import jax.experimental.pallas as pl
@@ -61,13 +62,13 @@ def matmul_kernel(a, b, config: TuningConfig):
   transforms = (
       plgpu.TilingTransform((8, swizzle_elems)), plgpu.SwizzleTransform(swizzle)
   )
-  if m % tile_m != 0:
+  if m % (2 * tile_m) != 0:
     raise ValueError(f"{m=} must be divisible by {tile_m=}")
   if n % tile_n != 0:
     raise ValueError(f"{n=} must be divisible by {tile_n=}")
   if k % tile_k != 0:
     raise ValueError(f"{k=} must be divisible by {tile_k=}")
-  m_iters = m // tile_m
+  m_iters = m // (2 * tile_m)
   n_iters = n // tile_n
   k_iters = k // tile_k
 
@@ -76,7 +77,8 @@ def matmul_kernel(a, b, config: TuningConfig):
     @plgpu.nd_loop((m_iters, n_iters), collective_axes="sm")
     def _mn_loop(idx):
       m_idx, n_idx = idx
-      m_slice = pl.ds(m_idx * tile_m, tile_m)
+      m_slice = pl.ds(m_idx * 2 * tile_m, 2 * tile_m)
+      wg_m_slice = pl.ds(lax.axis_index("wg") * tile_m, tile_m)
       n_slice = pl.ds(n_idx * tile_n, tile_n)
 
       def prologue_epilogue(eval_pipeline):
@@ -86,12 +88,12 @@ def matmul_kernel(a, b, config: TuningConfig):
         def _acc_scope(acc_ref):
           eval_pipeline(acc_ref)
           plgpu.wait_smem_to_gmem(0, wait_read_only=True)
-          out_smem[...] = acc_ref[...].astype(dtype)
+          out_smem[wg_m_slice] = acc_ref[...].astype(dtype)
           plgpu.commit_smem()
-          plgpu.copy_smem_to_gmem(out_smem, out_gmem.at[m_slice, n_slice])
+          plgpu.copy_smem_to_gmem(out_smem.at[wg_m_slice], out_gmem.at[m_slice, n_slice].at[wg_m_slice])
 
       def mma_body(_, a_smem, b_smem, acc_ref):
-        plgpu.wgmma(acc_ref, a_smem, b_smem)
+        plgpu.wgmma(acc_ref, a_smem.at[wg_m_slice], b_smem)
         return acc_ref
 
       plgpu.emit_pipeline_warp_specialized(
@@ -100,7 +102,7 @@ def matmul_kernel(a, b, config: TuningConfig):
           memory_registers=40,
           in_specs=[
               plgpu.BlockSpec(
-                  (tile_m, tile_k),
+                  (2 * tile_m, tile_k),
                   lambda k: (0, k),
                   transforms=transforms,
                   memory_space=plgpu.SMEM
@@ -113,11 +115,12 @@ def matmul_kernel(a, b, config: TuningConfig):
               ),
           ],
           wg_axis="wg",
-          num_compute_wgs=1,
+          num_compute_wgs=2,
           delay_release=1,
           max_concurrent_steps=max_concurrent_steps,
           compute_context=prologue_epilogue,
       )(a_gmem.at[m_slice, :], b_gmem.at[:, n_slice])
+      plgpu.wait_smem_to_gmem(0, wait_read_only=True)
 
   num_sms = jax.local_devices()[0].core_count
   f = plgpu.kernel(
@@ -125,9 +128,9 @@ def matmul_kernel(a, b, config: TuningConfig):
       out_shape=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(num_sms,),
       grid_names=("sm",),
-      num_threads=2,
+      num_threads=3,
       thread_name="wg",
-      scratch_shapes=[plgpu.SMEM((tile_m, tile_n), dtype, transforms=transforms)],
+      scratch_shapes=[plgpu.SMEM((2 * tile_m, tile_n), dtype, transforms=transforms)],
   )
   return f(a, b)
 
