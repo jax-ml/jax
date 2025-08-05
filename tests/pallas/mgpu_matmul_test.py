@@ -34,6 +34,7 @@ except ImportError:
   blackwell_matmul_mgpu = None
 else:
   from jax.experimental.pallas.ops.gpu import blackwell_matmul_mgpu
+  from jax.experimental.pallas.ops.gpu import hopper_matmul_mgpu
 
 
 config.parse_flags_with_absl()
@@ -48,9 +49,8 @@ class MatrixMultiplicationSm100ATest(jtu.JaxTestCase):
     super().setUp()
     if blackwell_matmul_mgpu is None:
       self.skipTest("Mosaic GPU not available.")
-    if (not jtu.test_device_matches(["cuda"]) or
-        not jtu.is_cuda_compute_capability_equal("10.0")):
-      self.skipTest("Only works on GPU with capability sm100a")
+    if not jtu.test_device_matches(["cuda"]):
+      self.skipTest("Test requires an NVIDIA GPU")
     context_stack = contextlib.ExitStack()
     context_stack.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
     self.addCleanup(context_stack.close)
@@ -61,13 +61,15 @@ class MatrixMultiplicationSm100ATest(jtu.JaxTestCase):
       n=(1024, 4096),
       dtype=(jnp.float16,),
   )
-  def test_matmul(
+  def test_blackwell_matmul(
       self,
       m,
       n,
       k,
       dtype,
   ):
+    if not jtu.is_cuda_compute_capability_equal("10.0"):
+      self.skipTest("Only works on GPU with capability sm100a")
     k1, k2, = jax.random.split(jax.random.key(42), 2)
     a = jax.random.normal(k1, (m, k), dtype)
     b = jax.random.normal(k2, (k, n), dtype)
@@ -83,6 +85,37 @@ class MatrixMultiplicationSm100ATest(jtu.JaxTestCase):
     )
     out_ref = a @ b
     np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
+
+  @parameterized.product(
+      m=(4096,),
+      k=(4096,),
+      n=(4096,),
+      tile_m=(64, 128,),
+      tile_n=(64, 128,),
+      tile_k=(64, 128,),
+      max_concurrent_steps=(2, 4),
+      dtype=(jnp.float16,),
+  )
+  def test_hopper_matmul(
+      self, m, n, k, dtype, tile_m, tile_n, tile_k, max_concurrent_steps,
+  ):
+    if not jtu.is_cuda_compute_capability_equal("9.0"):
+      self.skipTest("Only works on GPU with capability sm90a")
+    if tile_m == tile_n == tile_k == 128:
+      self.skipTest("Tile too big to fit into SMEM")
+    k1, k2, = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.normal(k1, (m, k), dtype)
+    b = jax.random.normal(k2, (k, n), dtype)
+
+    spec = hopper_matmul_mgpu.TuningConfig(
+        tile_m=tile_m,
+        tile_n=tile_n,
+        tile_k=tile_k,
+        max_concurrent_steps=max_concurrent_steps,
+    )
+    out = hopper_matmul_mgpu.matmul_kernel(a, b, spec)
+    out_ref = jnp.dot(a, b, precision=jax.lax.DotAlgorithmPreset.F16_F16_F32)
+    np.testing.assert_allclose(out, out_ref)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
