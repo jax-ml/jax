@@ -4296,37 +4296,15 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
         smem: list[ir.Value],
     ):
       del ctx
-      input_smem_ref, result_smem_ref, tma_barrier, tmem_ptr_ref = smem
-      dialect_barrier = tma_barrier.as_barrier_memref()
-
+      [tmem_ptr_ref] = smem
       el_ty = utils.dtype_to_ir_type(dtype)
-      mgpu_dialect.arrive_expect_tx(
-          barrier=dialect_barrier,
-          expect_tx=utils.bytewidth(el_ty) * math.prod(shape),
-      )
-
-      i32 = ir.IntegerType.get_signless(32)
-      zero_i32 = arith.constant(i32, 0)
-      # GMEM -> SMEM
-      mgpu_dialect.async_load(
-          source=input,
-          destination=input_smem_ref,
-          barrier=dialect_barrier,
-          indices=[zero_i32] * len(shape),
-          slice_lengths=shape,
-          collective=ir.ArrayAttr.get([]),
-      )
-
-      parities = memref.load(tma_barrier.barrier_ref.phases, [])
-      parity, _ = tma_barrier.update_parities(parities)
-      mgpu_dialect.wait(dialect_barrier, parity)
 
       zero_index = arith.constant(ir.IndexType.get(), 0)
       zero_vector_indices = [zero_index] * len(shape)
 
-      # SMEM -> registers
+      # GMEM -> registers
       vector_type = ir.VectorType.get(shape, el_ty)
-      r_in = vector.load(vector_type, input_smem_ref, zero_vector_indices)
+      r_in = vector.load(vector_type, input, zero_vector_indices)
 
       tmem_type = ir.MemRefType.get(
           shape, el_ty, memory_space=mgpu_utils.tmem()
@@ -4367,18 +4345,9 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
 
       mgpu_dialect.tmem_dealloc(tmem_ref)
 
-      # Registers -> SMEM
-      vector.store(load_op.result, result_smem_ref, [zero_index] * len(shape))
+      # Registers -> GMEM
+      vector.store(load_op.result, result, [zero_index] * len(shape))
       mgpu.commit_shared()
-
-      # SMEM -> GMEM
-      mgpu_dialect.async_store(
-          source=result_smem_ref,
-          destination=result,
-          indices=[zero_i32, zero_i32],
-          slice_lengths=shape,
-      )
-      nvvm.cp_async_bulk_wait_group(0)
 
     jax_shape = jax.ShapeDtypeStruct(shape, dtype)
     kernel = mgpu.as_gpu_kernel(
@@ -4389,9 +4358,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
         in_shape=jax_shape,
         out_shape=jax_shape,
         smem_scratch_shape=[
-            jax_shape,
-            jax_shape,
-            core.TMABarrier(1),
             jax.ShapeDtypeStruct((), jnp.int32),
         ],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
