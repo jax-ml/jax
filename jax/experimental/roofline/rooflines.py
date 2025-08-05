@@ -755,6 +755,9 @@ def _reduce_sum_p_roofline(
     axes: tuple[int, ...],
     **kw,
 ) -> roofline.RooflineResult:
+  if not axes:
+    # No-op reduce sum
+    return roofline.RooflineResult(unfused_flops=0, unfused_hbm_bytes=0)
   (x,) = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
   domain_size = np.prod([x.shape[i] for i in axes])
   other_axes = set(range(len(x.shape))) - set(axes)
