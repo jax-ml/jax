@@ -34,6 +34,7 @@ import numpy as np
 
 from . import profiler
 from . import utils
+from . import fragmented_array as fa
 # mypy: ignore-errors
 
 TMA_DESCRIPTOR_BYTES = 128
@@ -406,6 +407,11 @@ def _find_kernel_argument_for_gmem_ref(
   return gmem_ref
 
 
+class AsyncCopyImplementation(enum.Enum):
+  TMA = enum.auto()
+  CP_ASYNC = enum.auto()
+
+
 @dataclasses.dataclass()
 class LaunchContext:
   module: ir.Module
@@ -623,6 +629,7 @@ class LaunchContext:
       # Should select 0 or 1 threads from the WG.
       predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
       reduction_op: ReductionOp | None = None,
+      implementation: AsyncCopyImplementation = AsyncCopyImplementation.TMA,
   ):
     """Initiates an async copy between GMEM and SMEM.
 
@@ -651,6 +658,7 @@ class LaunchContext:
       by other blocks will be ignored (even if `arrive` is True).
     """
     index = ir.IndexType.get()
+    i8 = ir.IntegerType.get_signless(8)
     i16 = ir.IntegerType.get_signless(16)
     i32 = ir.IntegerType.get_signless(32)
     src_ref_ty = ir.MemRefType(src_ref.type)
@@ -662,15 +670,20 @@ class LaunchContext:
           f"Expected same element type, got {element_type} and"
           f" {dst_ref_ty.element_type}"
       )
-    if isinstance(predicate, _DefaultPredicate):
-      predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
     if not isinstance(gmem_transform, tuple):
       gmem_transform = (gmem_transform,)
 
     if src_ref_ty.memory_space is None and utils.is_smem_ref(dst_ref_ty):
       gmem_ref, smem_ref = src_ref, dst_ref
-      if barrier is None:
-        raise ValueError("Barriers are required for GMEM -> SMEM copies")
+      if implementation == AsyncCopyImplementation.TMA:
+        if barrier is None:
+          raise ValueError("Barriers are required for TMA GMEM -> SMEM copies")
+      else:
+        assert implementation == AsyncCopyImplementation.CP_ASYNC
+        if barrier is not None:
+          raise NotImplementedError(
+              "Barriers are unsupported for CP_ASYNC GMEM -> SMEM copies"
+          )
       if arrive is None:
         arrive = True  # Arrive by default
     elif utils.is_smem_ref(src_ref_ty) and dst_ref_ty.memory_space is None:
@@ -684,20 +697,23 @@ class LaunchContext:
 
     # The function below is called only to verify the GMEM ref. The output
     # is meant to be ignored.
-    _find_kernel_argument_for_gmem_ref(gmem_ref)
     gmem_ref_ty = ir.MemRefType(gmem_ref.type)
     gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
     if gmem_strides != utils.get_contiguous_strides(gmem_ref_ty.shape):
       raise NotImplementedError(
           "async_copy assumes the GMEM reference is contiguous"
       )
-    if any(s * element_bitwidth % 128 != 0 for s in gmem_strides[:-1]):
-      raise ValueError(
-          "async_copy requires all GMEM strides except the last one to be a"
-          " multiple of 16 bytes"
-      )
+    if implementation == AsyncCopyImplementation.TMA:
+      _find_kernel_argument_for_gmem_ref(gmem_ref)
+      if any(s * element_bitwidth % 128 != 0 for s in gmem_strides[:-1]):
+        raise ValueError(
+            "async_copy requires all GMEM strides except the last one to be a"
+            " multiple of 16 bytes"
+        )
 
     if reduction_op is not None:
+      if implementation != AsyncCopyImplementation.TMA:
+        raise ValueError("Only the TMA implementation supports reductions")
       if not any(
           t.isinstance(gmem_ref_ty.element_type)
           for t in (ir.F32Type, ir.BF16Type, ir.F16Type)
@@ -710,9 +726,11 @@ class LaunchContext:
             "TMA with reduction is only supported with add operation"
         )
 
-    # NOTE: TMA supports OOB indices, so we skip the check.
     base_indices, slice_shape, is_squeezed = utils.parse_indices(
-        gmem_slice, ir.MemRefType(gmem_ref.type).shape, check_oob=False
+        gmem_slice,
+        ir.MemRefType(gmem_ref.type).shape,
+        # NOTE: TMA supports OOB indices, so we skip the check.
+        check_oob=implementation != AsyncCopyImplementation.TMA,
     )
     dyn_base_indices = tuple(
         c(i, index) if not isinstance(i, ir.Value) else i for i in base_indices
@@ -721,13 +739,15 @@ class LaunchContext:
 
     collective_size = 1
     if collective is not None:
+      if implementation != AsyncCopyImplementation.TMA:
+        raise ValueError("Only the TMA implementation supports collective copies")
       if isinstance(collective, gpu.Dimension):
         collective = (collective,)
       collective_size = math.prod(self.cluster_size[d] for d in collective)
       if gmem_ref is dst_ref:
         raise ValueError("Only GMEM -> SMEM copies can be collective")
     if partitioned is not None:
-      if collective is None:
+      if collective is None:  # This implies TMA already.
         raise ValueError("Only collective loads can be partitioned")
       if collective_size > 1 and partitioned is not None:
         if math.prod(self.cluster_size) != 2:
@@ -758,7 +778,7 @@ class LaunchContext:
     # transforms. For slicing this is done using transform_index and
     # transform_shape. For squeezing we actually move all the squeezed dims to
     # the front, and then batch each transform, making it ignore the extra dims.
-    if squeezed_dims:
+    if squeezed_dims and implementation != AsyncCopyImplementation.CP_ASYNC:
       gmem_transform = (TransposeTransform((*squeezed_dims, *sliced_dims)),
                         *(t.batch(len(squeezed_dims)) for t in gmem_transform))
 
@@ -768,7 +788,7 @@ class LaunchContext:
       slice_shape = t.transform_shape(slice_shape)
 
     num_squeezed_dims = len(squeezed_dims)
-    if len(slice_shape) > 5:
+    if len(slice_shape) > 5 and implementation == AsyncCopyImplementation.TMA:
       # We can try to collapse all squeezed dims into one.
       if len(slice_shape) - num_squeezed_dims + 1 > 5:
         raise ValueError(
@@ -790,6 +810,62 @@ class LaunchContext:
           "Expected the SMEM reference to have the same shape as the"
           f" transformed slice: {tuple(smem_ref_ty.shape)} != {slice_shape}"
       )
+
+    if implementation == AsyncCopyImplementation.CP_ASYNC:
+      if not isinstance(predicate, _DefaultPredicate):
+        raise NotImplementedError(
+            "CP_ASYNC needs to be performed by the whole warpgroup and does not"
+            " support the predicate argument"
+        )
+      if smem_ref is src_ref:
+        raise ValueError("CP_ASYNC implementation only supports GMEM -> SMEM copies")
+      swizzle_elems = 8 * swizzle // element_bitwidth
+      if gmem_transform != (TileTransform((8, swizzle_elems)),):
+        raise NotImplementedError(gmem_transform)
+      layout = fa.tiled_copy_smem_gmem_layout(
+          *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth
+      )
+      gmem_strides = gmem_ref_ty.get_strides_and_offset()[0]
+      dst_tiled_strides = [
+          arith.constant(i32, s)
+          for s in layout.tiling.tile_strides(gmem_strides)[gmem_ref_ty.rank :]
+      ]
+      lane_offset = utils.dyn_dot(layout.lane_indices(), dst_tiled_strides)
+      warp_offset = utils.dyn_dot(layout.warp_indices(), dst_tiled_strides)
+      dyn_offset = arith.addi(lane_offset, warp_offset)
+      offset_scale = 1 if element_bitwidth >= 8 else 8 // element_bitwidth
+      if element_bitwidth < 8:
+        gep_type = i8
+      elif ir.FloatType.isinstance(element_type) and ir.FloatType(element_type).width == 8:
+        gep_type = i8  # LLVM has no support for f8.
+      else:
+        gep_type = element_type
+      dyn_offset = arith.divui(dyn_offset, c(offset_scale, i32))
+      if gmem_ref_ty.rank != 2:
+        raise NotImplementedError("Only 2D copies implemented")
+      transfers = fa.FragmentedArray.transfer_tiled2(
+          smem_ref, swizzle, layout, tuple(gmem_ref_ty.shape), optimized=False
+      )
+      gmem_base_ptr = utils.getelementptr(utils.memref_ptr(gmem_ref), [dyn_offset], gep_type)
+      gmem_base_ptr = llvm.addrspacecast(ir.Type.parse("!llvm.ptr<1>"), gmem_base_ptr)
+      bytes_per_transfer = layout.vector_length * element_bitwidth // 8
+      # Only 16-byte transfers can skip the L1 cache (this is what CG means).
+      cache_modifier = (
+          nvvm.LoadCacheModifierKind.CG
+          if bytes_per_transfer == 16
+          else nvvm.LoadCacheModifierKind.CA
+      )
+      for _get, _update, get_base_idx, smem_ptr in transfers:
+        constant_offset = sum(i * s for i, s in zip(get_base_idx(), gmem_strides, strict=True))
+        gmem_ptr = utils.getelementptr(gmem_base_ptr, [constant_offset // offset_scale], gep_type)
+        nvvm.cp_async_shared_global(smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier)
+      if barrier is None:
+        nvvm.cp_async_commit_group()
+      else:
+        raise NotImplementedError
+      return
+
+    assert implementation == AsyncCopyImplementation.TMA
     smem_strides, _ = smem_ref_ty.get_strides_and_offset()
     if any(
         s != cs and d != 1  # Strides don't matter for dims of size 1.
@@ -885,6 +961,8 @@ class LaunchContext:
           f" {slice_shape[-1]} elements."
       )
     smem_ptr = utils.memref_ptr(smem_ref, memory_space=3)
+    if isinstance(predicate, _DefaultPredicate):
+      predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
     if gmem_ref is src_ref:
       assert barrier is not None  # for pytype
       assert np.prod(slice_shape) * element_bitwidth * collective_size % 8 == 0
@@ -956,6 +1034,10 @@ class LaunchContext:
       self, allow_groups: int, await_read_only: bool = False
   ):
     nvvm.cp_async_bulk_wait_group(allow_groups, read=await_read_only)
+    utils.warpgroup_barrier()
+
+  def await_cp_async_copy(self, allow_groups: int):
+    nvvm.cp_async_wait_group(allow_groups)
     utils.warpgroup_barrier()
 
   def _ensure_nvshmem_decls(self):

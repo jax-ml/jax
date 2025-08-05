@@ -2019,7 +2019,7 @@ class BarrierTest(TestCase):
       self.assertEqual(min(mask), expected_mask)
 
 
-class TMATest(TestCase):
+class AsyncCopyTest(TestCase):
 
   @parameterized.product(
       swizzle=(None, 32, 64, 128),
@@ -2382,6 +2382,34 @@ class TMATest(TestCase):
         ValueError, "last dimension to be divisible by 128"
     ):
       run_kernel([23])
+
+  @parameterized.product(
+      swizzle=(16, 32, 64, 128),
+      shape=((64, 128), (128, 32)),
+      dtype=(jnp.float32, jnp.float16, jnp.float8_e5m2, jnp.int4),
+  )
+  def test_cp_async(self, swizzle, shape, dtype):
+    bw = bitwidth(dtype_to_ir_type(dtype))
+    swizzle_elems = 8 * swizzle // bw
+    tiling = (8, swizzle_elems)
+    if shape[-1] < swizzle_elems:
+      self.skipTest("Minor dimension too small")
+    minor_size = 64 if swizzle is None else swizzle_elems
+    shape = (*shape[:-1], minor_size)
+    def kernel(ctx, src, dst, tmp):
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=tmp,
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform(tiling),
+          implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
+      )
+      ctx.await_cp_async_copy(0)
+      mgpu.copy_tiled(tmp, dst, swizzle=swizzle)
+    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    smem = jax.ShapeDtypeStruct(mgpu.tile_shape(shape, tiling), dtype)
+    y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
+    np.testing.assert_array_equal(y, x)
 
 
 class FragmentedArrayTest(TestCase):
