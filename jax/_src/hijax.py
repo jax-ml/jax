@@ -267,7 +267,8 @@ class BoxSet(HiPrimitive):
     box, *vals = primals
     box_dot, *val_dots = tangents
     if type(box_dot) is ad_util.Zero:
-      raise Exception("you're an idiot")
+      raise Exception("can't differentiate Box.set operation, "
+                      "did you forget jax.lax.stop_gradient?")
     box_set_p.bind(box, *vals, treedef=treedef)
     box_set_p.bind(box_dot, *val_dots, treedef=treedef)
     return [], []

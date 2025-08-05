@@ -25,4 +25,6 @@ from jax._src.state.primitives import (
 
 def array_ref(init_val: Array) -> ArrayRef:
   """Create a mutable array reference with initial value `init_val`."""
-  return core.array_ref_p.bind(init_val, memory_space=None)
+  return core.array_ref_p.bind(init_val, memory_space=None)  # noqa
+
+del Array
