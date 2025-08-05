@@ -4300,7 +4300,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
         smem: list[ir.Value],
     ):
       del ctx
-      [tmem_ptr_ref] = smem
+      [tmem_ref] = smem
       el_ty = utils.dtype_to_ir_type(dtype)
 
       zero_index = arith.constant(ir.IndexType.get(), 0)
@@ -4309,16 +4309,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       # GMEM -> registers
       vector_type = ir.VectorType.get(shape, el_ty)
       r_in = vector.load(vector_type, input, zero_vector_indices)
-
-      tmem_type = ir.MemRefType.get(
-          shape, el_ty, memory_space=mgpu_utils.tmem()
-      )
-
-      tmem_ref = mgpu_dialect.tmem_alloc(
-          result=tmem_type,
-          smem_ptr=tmem_ptr_ref,
-          packing=packing,
-      )
 
       vector_layout = tcgen05.TMEM_NATIVE_LAYOUT
       vector_layout_attr = mgpu_layouts.to_layout_attr(vector_layout)
@@ -4347,8 +4337,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       # no need to wait in this case, see:
       # https://docs.jax.dev/en/latest/pallas/gpu/reference.html#allocating-the-accumulator-using-tmem
 
-      mgpu_dialect.tmem_dealloc(tmem_ref)
-
       # Registers -> GMEM
       vector.store(load_op.result, result, [zero_index] * len(shape))
       mgpu.commit_shared()
@@ -4361,9 +4349,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
         block=(128, 1, 1),
         in_shape=jax_shape,
         out_shape=jax_shape,
-        smem_scratch_shape=[
-            jax.ShapeDtypeStruct((), jnp.int32),
-        ],
+        smem_scratch_shape=[mgpu.TMEM(shape, dtype, packing=packing)],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 

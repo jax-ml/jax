@@ -332,6 +332,32 @@ class _TMEMAlloc:
     )
 
 
+@dataclasses.dataclass()
+class _TMEMDialectAlloc:
+  addr_ref: ir.Value
+  shape: tuple[int, int]
+  dtype: ir.Type
+  collective: bool
+  tmem_ref: ir.Value | None = dataclasses.field(init=False, default=None)
+
+  def alloc(self) -> int:
+    """Allocates TMEM and returns the number of columns allocated."""
+    result_type = ir.MemRefType.get(
+        self.shape,
+        self.dtype,
+        memory_space=utils.tmem(),
+    )
+    self.tmem_ref = dialect.tmem_alloc(
+        result_type, self.addr_ref, collective=self.collective, exact=False
+    )
+    ncols = self.shape[1]
+    return tcgen05.tmem_alloc_exact_ncols(ncols, exact=False)
+
+  def dealloc(self):
+    assert self.tmem_ref is not None
+    dialect.tmem_dealloc(self.tmem_ref)
+
+
 def _slice_smem(
     result: ir.Type,
     smem_base: ir.Value,
@@ -349,7 +375,9 @@ def _construct_smem_reftree(
     cluster_shape: tuple[int, int, int],
     dynamic_smem: ir.Value,
     smem_buffers: ShapeTree,
-    tmem_allocs: list[_TMEMAlloc],  # Mutated by this function!
+    tmem_allocs: list[
+        _TMEMAlloc | _TMEMDialectAlloc
+    ],  # Mutated by this function!
     lowering_semantics: LoweringSemantics,
     dynamic_smem_offset: int = 0,
 ) -> Callable[[], RefTree]:
@@ -425,15 +453,33 @@ def _construct_smem_reftree(
           layout = tcgen05._infer_tmem_layout(
               shape, collective, 1 if packing is None else packing
           )
-        num_cols = layout.cols_in_shape(
-            shape, utils.bitwidth(utils.dtype_to_ir_type(dtype))
-        )
-        tmem_allocs.append(_TMEMAlloc(addr_ref, num_cols, collective))
-        def ref(addr_ref=addr_ref, shape=shape, dtype=dtype, layout=layout):
-          addr = memref.load(addr_ref, [])
-          return tcgen05.TMEMRef(
-              addr, shape, utils.dtype_to_ir_type(dtype), layout
+        ir_dtype = utils.dtype_to_ir_type(dtype)
+        if lowering_semantics == LoweringSemantics.Warpgroup:
+          tmem_allocs.append(
+              _TMEMDialectAlloc(addr_ref, shape, ir_dtype, collective)
           )
+        else:
+          num_cols = layout.cols_in_shape(shape, utils.bitwidth(ir_dtype))
+          tmem_allocs.append(_TMEMAlloc(addr_ref, num_cols, collective))
+
+        def ref(
+            addr_ref=addr_ref,
+            shape=shape,
+            ir_dtype=ir_dtype,
+            layout=layout,
+            lowering_semantics=lowering_semantics,
+        ):
+          addr = memref.load(addr_ref, [])
+          if lowering_semantics == LoweringSemantics.Warpgroup:
+            ref_type = ir.MemRefType.get(
+                shape=shape,
+                element_type=ir_dtype,
+                memory_space=utils.tmem(),
+            )
+            return builtin.unrealized_conversion_cast([ref_type], [addr])
+          else:
+            return tcgen05.TMEMRef(addr, shape, ir_dtype, layout)
+
         dynamic_smem_offset += 4  # i32 takes up 4 bytes
       case _:
         mlir_dtype = utils.dtype_to_ir_type(ref_ty.dtype)
@@ -571,7 +617,7 @@ def _launch(
         module, launch_context.Scratch(launch_op), cluster, prof
     )
     with ctx.named_region("Init"):
-      tmem_allocs: list[_TMEMAlloc] = []
+      tmem_allocs: list[_TMEMAlloc | _TMEMDialectAlloc] = []
       smem_ref_tree_thunk = _construct_smem_reftree(
           cluster, dynamic_smem, smem_buffers, tmem_allocs, lowering_semantics
       )
@@ -582,9 +628,13 @@ def _launch(
         nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
         nvvm.cluster_wait(aligned=ir.UnitAttr.get())
       if tmem_allocs:
-        eq = arith.CmpIPredicate.eq
-        is_init_warp = arith.cmpi(eq, utils.warp_idx(sync=False), c(0, i32))
-        with utils.when(is_init_warp):
+        if lowering_semantics == LoweringSemantics.Warpgroup:
+          init_warp_ctx = contextlib.nullcontext()
+        else:
+          eq = arith.CmpIPredicate.eq
+          is_init_warp = arith.cmpi(eq, utils.warp_idx(sync=False), c(0, i32))
+          init_warp_ctx = utils.when(is_init_warp)
+        with init_warp_ctx:
           cols_used = 0
           for alloc in tmem_allocs:
             cols_used += alloc.alloc()
@@ -597,12 +647,18 @@ def _launch(
           if any(alloc.collective for alloc in tmem_allocs):
             if math.prod(cluster) % 2:
               raise ValueError(
-                  "Collective TMEM allocations are only supported for clusters"
-                  " with an even number of blocks in them."
+                  "Collective TMEM allocations are only supported for"
+                  " clusters with an even number of blocks in them."
               )
-            tcgen05.tmem_relinquish_alloc_permit(collective=True)
+            if lowering_semantics == LoweringSemantics.Warpgroup:
+              dialect.tmem_relinquish_alloc_permit(collective=True)
+            else:
+              tcgen05.tmem_relinquish_alloc_permit(collective=True)
           if any(not alloc.collective for alloc in tmem_allocs):
-            tcgen05.tmem_relinquish_alloc_permit(collective=False)
+            if lowering_semantics == LoweringSemantics.Warpgroup:
+              dialect.tmem_relinquish_alloc_permit(collective=False)
+            else:
+              tcgen05.tmem_relinquish_alloc_permit(collective=False)
       gpu.barrier()  # Make sure the init is visible to all threads.
       smem_ref_tree = smem_ref_tree_thunk()
 
@@ -613,7 +669,11 @@ def _launch(
       if any(alloc.collective for alloc in tmem_allocs):
         nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
         nvvm.cluster_wait(aligned=ir.UnitAttr.get())
-      with utils.when(is_init_warp):
+      if lowering_semantics == LoweringSemantics.Warpgroup:
+        init_warp_ctx = contextlib.nullcontext()
+      else:
+        init_warp_ctx = utils.when(is_init_warp)
+      with init_warp_ctx:
         for alloc in tmem_allocs:
           alloc.dealloc()
     if prof is not None:

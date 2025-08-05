@@ -1514,8 +1514,8 @@ if jaxlib.version >= (0, 7, 1):
       ctx: LoweringContext, op: mgpu.TmemRelinquishAllocPermitOp
   ) -> Sequence[ir.Value]:
     """Lowering rule for mgpu.TmemRelinquishAllocPermitOp."""
-    del ctx
-    tcgen05.tmem_relinquish_alloc_permit(op.collective)
+    with mgpu_utils.when(ctx.single_warp_per_block_predicate):
+      tcgen05.tmem_relinquish_alloc_permit(op.collective)
     return []
 
 
