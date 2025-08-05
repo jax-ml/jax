@@ -24,10 +24,6 @@ cloudpickle==3.1.1 \
     --hash=sha256:b216fa8ae4019d5482a8ac3c95d8f6346115d8835911fd4aefd1a445e4242c64 \
     --hash=sha256:c8c5a44295039331ee9dad40ba100a9c7297b6f988e50e87ccdf3765a668350e
     # via -r build/test-requirements.txt
-colorama==0.4.6 \
-    --hash=sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44 \
-    --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
-    # via -r build/requirements.in
 contourpy==1.3.2 \
     --hash=sha256:0475b1f6604896bc7c53bb070e355e9321e1bc0d381735421a2d2068ec56531f \
     --hash=sha256:106fab697af11456fcba3e352ad50effe493a90f893fca6c2ca5c033820cea92 \

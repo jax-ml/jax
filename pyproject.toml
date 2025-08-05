@@ -13,7 +13,6 @@ allow_redefinition = true
 module = [
     "IPython.*",
     "absl.*",
-    "colorama.*",
     "compression.*",
     "etils.*",
     "filelock.*",
