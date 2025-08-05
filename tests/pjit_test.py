@@ -8597,6 +8597,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, s)
     self.assertArraysEqual(out, np.arange(8, dtype=np.float32))
 
+  def test_set_mesh_error(self):
+    mesh = Mesh(jax.devices(), 'x', (AxisType.Manual,))
+    with self.assertRaisesRegex(ValueError, ".*contains manual axes"):
+      jax.set_mesh(mesh)
+
   @jtu.with_explicit_mesh((1,), 'x')
   def test_auto_axes_single_device(self, mesh):
     @partial(auto_axes, out_sharding=P('x'))

@@ -1199,6 +1199,11 @@ class set_mesh:
           f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
     if not core.trace_state_clean():
       raise ValueError('`set_mesh` can only be used outside of `jax.jit`.')
+    if mesh._any_axis_manual:
+      raise ValueError(
+          f'mesh {mesh} contains manual axes which is not allowed when using'
+          ' `jax.set_mesh`. Please use `jax.shard_map` to enter into `Manual`'
+          ' mode instead.')
 
     self.prev_abstract_mesh = config.abstract_mesh_context_manager.swap_local(
         mesh.abstract_mesh)
