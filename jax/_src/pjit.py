@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Callable, Sequence, Iterable
 import contextlib
 import dataclasses
@@ -556,10 +557,14 @@ def _infer_params_impl(
       ji.in_layouts_treedef, ji.in_layouts_leaves,
       in_avals, in_tree, flat_fun.debug_info, device_or_backend_set, have_kwargs)
 
+  qdd_token = _qdd_cache_index(flat_fun, in_type)
+
   jaxpr, consts, out_avals = _create_pjit_jaxpr(
-      flat_fun, in_type, IgnoreKey(ji.inline))
+      flat_fun, in_type, qdd_token, IgnoreKey(ji.inline))
   if config.mutable_array_checks.value:
     _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
+  _qdd_cache_update(flat_fun, in_type, qdd_token, consts,
+                    jaxpr.in_aval_qdds[:len(consts)])
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_treedef, out_shardings_leaves, ji.out_layouts_treedef,
@@ -1087,9 +1092,9 @@ def diff_tracing_cache_keys(
     different size for the explanation that is shown to the user.
   """
   (fun_transforms_k, fun_params_k, fun_in_type_k,
-   (arg_in_type_k, arg_inline_k), ctx_k) = k
+   (arg_in_type_k, _, arg_inline_k), ctx_k) = k
   (fun_transforms_ok, fun_params_ok, fun_in_type_ok,
-   (arg_in_type_ok, arg_inline_ok), ctx_ok) = oldk
+   (arg_in_type_ok, _, arg_inline_ok), ctx_ok) = oldk
 
   diffs: list[tuple[str, int]] = []  # each difference with its size
   def unavailable(key_field: str, what_k, what_ok):
@@ -1279,7 +1284,7 @@ def explain_tracing_cache_miss(
     fun: lu.WrappedFun, unseen_f: bool, cache: dict,
     key: tuple, elapsed_sec: float):
   if config.check_tracer_leaks.value: return  # TODO(mattjj): can remove this
-  if key[3][1].val: return  # No explanations for "inline" functions
+  if key[3][2].val: return  # No explanations for "inline" functions
 
   debug_info = fun.debug_info
   func_filename = debug_info.func_filename
@@ -1339,9 +1344,11 @@ def explain_tracing_cache_miss(
 def _create_pjit_jaxpr(
     fun: lu.WrappedFun,
     in_type: core.InputType | Sequence[core.AbstractValue],
+    qdd_token: int,
     ignored_inline: IgnoreKey
 ) -> tuple[core.ClosedJaxpr, list[core.Value], list[core.AbstractValue]]:
   util.test_event("create_pjit_jaxpr")
+  del qdd_token  # just part of the cache key
   del ignored_inline  # just for explain_cache_miss
   if config.no_tracing.value:
     raise RuntimeError(f"re-tracing function {fun.f} for `jit`, but "
@@ -1402,6 +1409,28 @@ def _check_and_canonicalize_out_shardings(
         debug_info.safe_result_paths(len(out_avals)),
         "jit outputs")
   return out_shardings_flat, out_layouts_flat
+
+_seen_qdds = weakref.WeakKeyDictionary()  # type: ignore
+
+def _seen_qdds_get(fun, in_type) -> list:
+  assert fun.in_type is None or fun.in_type == in_type
+  cache = _seen_qdds.setdefault(fun.f, defaultdict(list))
+  return cache[(fun.transforms, fun.params, in_type)]
+
+def _qdd_cache_index(fun, in_type) -> int:
+  cases = _seen_qdds_get(fun, in_type)
+  for i, records in enumerate(cases):
+    for obj, qdd in records:
+      if core.cur_qdd(obj) != qdd: break
+    else:
+      return i
+  return len(cases)
+
+def _qdd_cache_update(fun, in_type, i, consts, aval_qdds):
+  cases = _seen_qdds_get(fun, in_type)
+  if i == len(cases):
+    cases.append([(c, aval_qdd.qdd) for c, aval_qdd in zip(consts, aval_qdds)
+                  if aval_qdd.has_qdd])
 
 
 @dataclasses.dataclass(frozen=True)
