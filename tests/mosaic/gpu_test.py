@@ -3053,9 +3053,9 @@ class ProfilerTest(TestCase):
     x = np.arange(64 * 64, dtype=jnp.float32).reshape(64, 64)
     spec = profiler.ProfilerSpec(1024)
     # This is just a smoke test.
-    f = jax.jit(mgpu.as_gpu_kernel(
+    f = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), x, x, (), prof_spec=spec
-    ))
+    )
     jax.block_until_ready(f(x))
 
 
@@ -3434,7 +3434,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     x = self.prng.uniform(-1, 1, shape).astype(dtype)
     y = self.prng.uniform(-1, 1, shape).astype(dtype)
 
-    self.assertArraysEqual(jax.jit(kernel)(x, y), x + y)
+    self.assertArraysEqual(kernel(x, y), x + y)
 
   @staticmethod
   def kernel_with_tma_cases(dtype: jnp.dtype):
@@ -3583,7 +3583,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         for i, l in zip(test_case.slice_indices, test_case.slice_lengths)
     )
     self.assertArraysEqual(
-        jax.jit(kernel)(x),
+        kernel(x),
         (x[input_slice]).reshape(test_case.shape_sliced),
     )
 
@@ -3678,7 +3678,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     x = self.prng.uniform(-1, 1, spec.shape).astype(dtype)
     y = self.prng.uniform(-1, 1, spec.shape).astype(dtype)
 
-    self.assertArraysEqual(jax.jit(kernel)(x, y), x + y + y)
+    self.assertArraysEqual(kernel(x, y), x + y + y)
 
   @parameterized.parameters(
       ((64,), (64, 128), [0]),
@@ -3732,7 +3732,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
     x = np.full(input_shape, element_value, dtype=dtype)
     self.assertArraysEqual(
-        jax.jit(kernel)(), jax.lax.broadcast_in_dim(x, output_shape, bcast_dims)
+        kernel(), jax.lax.broadcast_in_dim(x, output_shape, bcast_dims)
     )
 
   def test_bad_layout_cast_raises_in_lowering(self):
@@ -3846,7 +3846,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     else:
       red = jax.lax.reduce_max(source, red_dims)
       red = jax.lax.max(red, acc)
-    self.assertArraysEqual(jax.jit(kernel)(), red)
+    self.assertArraysEqual(kernel(), red)
 
   @parameterized.parameters(fa.WGMMA_ROW_LAYOUT, fa.WGMMA_COL_LAYOUT)
   def test_wgmma_row_col_store(self, in_layout):
@@ -3891,7 +3891,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     )
 
     x = np.full(shape, element_value, dtype=dtype)
-    self.assertArraysEqual(jax.jit(kernel)(), x)
+    self.assertArraysEqual(kernel(), x)
 
   @parameterized.parameters(
       # Positive offsets will be passsed as static offsets.
@@ -4032,7 +4032,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
       slicing = tuple(slice(abs(o), abs(o) + s) for o, s in zip(offsets, sizes))
       self.assertArraysEqual(
-          jax.jit(create_kernel())(x),
+          create_kernel()(x),
           x[slicing].reshape(sub_shape),
       )
 
@@ -4187,11 +4187,8 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
 
     transpose = lambda x, t: x.T if t else x
     self.assertArraysAllClose(
-        jax.jit(kernel)(x, y),
-        np.matmul(
-            transpose(x, transpose_lhs),
-            transpose(y, transpose_rhs)
-        ),
+        kernel(x, y),
+        np.matmul(transpose(x, transpose_lhs), transpose(y, transpose_rhs)),
         atol=0,
         rtol=0,
     )
@@ -4355,7 +4352,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
 
     key = jax.random.key(1234)
     x = jax.random.randint(key, shape, -10, 10).astype(dtype)
-    self.assertArraysEqual(jax.jit(kernel)(x), x)
+    self.assertArraysEqual(kernel(x), x)
 
 
 class UtilsTest(TestCase):
