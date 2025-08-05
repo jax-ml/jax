@@ -81,7 +81,9 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ inputs.tpu-type }}, py ${{ inputs.python }}, libtpu=${{ inputs.libtpu-version-type }}"
+    # End Presubmit Naming Check github-tpu-presubmits
 
     env:
       LIBTPU_OLDEST_VERSION_DATE: 20250228
@@ -130,5 +132,5 @@ jobs:
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Run Bazel TPU tests with build_jaxlib=${{ format('{0}', inputs.build_jaxlib) }}
-        timeout-minutes: ${{ github.event_name == 'pull_request' && 30 || 210 }}
+        timeout-minutes: ${{ github.event_name == 'pull_request' && 20 || 210 }}
         run: ./ci/run_bazel_test_tpu.sh
