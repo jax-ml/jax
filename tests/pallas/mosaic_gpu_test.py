@@ -1918,8 +1918,13 @@ class PallasCallTest(PallasTest):
           ),
       )
 
-  @parameterized.parameters(1, 2, 3)
-  def test_nd_loop(self, sm_steps):
+  @parameterized.product(
+      sm_steps=(1, 2, 3),
+      tiling=(None, 1, 2, 4),
+  )
+  def test_nd_loop(self, sm_steps: int, tiling: int | None):
+    if tiling is not None:
+      tiling = (sm_steps, tiling, 33)
     @functools.partial(
         self.kernel,
         out_shape=jax.ShapeDtypeStruct((sm_steps, 132, 128), jnp.int32),
@@ -1927,11 +1932,21 @@ class PallasCallTest(PallasTest):
         grid_names=("sm",),
     )
     def kernel(o_ref):
-      @plgpu.nd_loop((sm_steps, 4, 33), collective_axes="sm")
+      @plgpu.nd_loop((sm_steps, 4, 33), tiling=tiling, collective_axes="sm")
       def _(idx):
         assert len(idx) == 3
         # We need to use `mode="clip"`, because the indices are not static.
-        flat_idx = jnp.ravel_multi_index(idx, (sm_steps, 4, 33), mode="clip")
+        grid = (sm_steps, 4, 33)
+        if tiling:
+          # Reconstruct the tiled grid and index.
+          tiled_grid = tuple(g // t for g, t in zip(grid, tiling))
+          grid = tiled_grid + tiling
+          tile_idx = tuple(
+              lax.div(idx, jnp.int32(t)) for idx, t in zip(idx, tiling))
+          subtile_idx = tuple(
+              lax.rem(idx, jnp.int32(t)) for idx, t in zip(idx, tiling))
+          idx = tile_idx + subtile_idx
+        flat_idx = jnp.ravel_multi_index(idx, grid, mode="clip")
         sm_step = lax.div(
             flat_idx, lax.convert_element_type(lax.axis_size("sm"), jnp.int32)
         )

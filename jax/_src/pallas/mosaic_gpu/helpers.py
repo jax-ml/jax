@@ -30,6 +30,7 @@ def nd_loop(
     grid: Sequence[int],
     *,
     collective_axes: Sequence[Hashable] | Hashable,
+    tiling: Sequence[int] | None = None,
     init_carry: None = None
 ) -> Callable[[Callable[[Sequence[jax.Array]], None]], None]:
   ...
@@ -40,6 +41,7 @@ def nd_loop(
     grid: Sequence[int],
     *,
     collective_axes: Sequence[Hashable] | Hashable,
+    tiling: Sequence[int] | None = None,
     init_carry: _T
 ) -> Callable[[Callable[[Sequence[jax.Array], _T], _T]], _T]:
   ...
@@ -51,12 +53,15 @@ def nd_loop(
     grid: Sequence[int],
     *,
     collective_axes: Sequence[Hashable] | Hashable,
+    tiling: Sequence[int] | None = None,
     include_wave_step: bool
 ) -> Callable[[Callable[[Sequence[jax.Array], jax.Array], None]], None]:
   ...
 
 
-def nd_loop(grid, *, collective_axes, init_carry=None,
+def nd_loop(grid, *, collective_axes,
+            tiling=None,
+            init_carry=None,
             include_wave_step=False):
   """A loop over a multi-dimensional grid partitioned along the given axes.
 
@@ -101,6 +106,14 @@ def nd_loop(grid, *, collective_axes, init_carry=None,
 
   axis_index = lax.axis_index(collective_axes)
   axis_size = lax.axis_size(collective_axes)
+  if tiling:
+    if len(grid) != len(tiling):
+      raise ValueError(f"{tiling=} and {grid=} must have same length.")
+    if any(dim % tile != 0 for dim, tile in zip(grid, tiling, strict=True)):
+      raise ValueError(f"Tiling {tiling} does not divide grid {grid}.")
+    tile_grid = tuple(
+        dim // tile for dim, tile in zip(grid, tiling, strict=True))
+    grid = (*tile_grid, *tiling)
   grid_size = math.prod(grid)
 
   def decorator(body):
@@ -116,6 +129,16 @@ def nd_loop(grid, *, collective_axes, init_carry=None,
         index.append(lax.rem(step, grid_dim))
         step = lax.div(step, grid_dim)
       index.reverse()
+
+      if tiling:
+        # Recompute index as if the grid was not tiled.
+        tile_indices, subtile_indices = index[:len(tiling)], index[len(tiling):]
+        untiled_index = []
+        for sub_idx, tile_idx, tile_dim in zip(
+            subtile_indices, tile_indices, tiling, strict=True):
+          untiled_index.append(sub_idx + tile_idx * tile_dim)
+        index = untiled_index
+
       if include_wave_step:
         body = functools.partial(body, wave_step=wave_step)
       if init_carry is None:
