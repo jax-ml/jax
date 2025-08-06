@@ -1068,14 +1068,25 @@ class BufferedRef(BufferedRefBase):
       ).astype(self.window_ref.dtype)
 
 
-def fetch_until_full_slots(buffered_ref, src_ref,
-                           grid,
-                           grid_offsets,
-                           predicate: jax.Array | bool = True,
-                           update_slots: bool = True):
-  """Continually fetch values until all copy_in slots are full."""
-  if not buffered_ref.use_lookahead:
-    raise ValueError("fetch_until_full_slots requires lookahead.")
+def fetch_with_lookahead(buffered_ref, src_ref,
+                         grid,
+                         grid_offsets,
+                         predicate: jax.Array | bool = True,
+                         max_num_fetches: int | None = None,
+                         update_slots: bool = True):
+  """Fetch future blocks using unbounded lookahead.
+
+  Args:
+    buffered_ref: the BufferedRef to fetch for.
+    src_ref: the source Ref.
+    grid: the grid bounds.
+    grid_offsets: the grid offsets (used for megacore).
+    predicate: a boolean predicate for whether to perform the fetch.
+    max_num_fetches: the maximum number of fetches to perform. If None,
+      this will continually fetch until all copy_in slots are full.
+    update_slots: whether to update the register slot indices.
+  """
+  assert buffered_ref.use_lookahead
   add_offset = lambda x: tuple(
       i + j for i, j in zip(x, grid_offsets, strict=True))
   index_inbound = lambda x: _tuple_lt(x, grid)
@@ -1086,12 +1097,22 @@ def fetch_until_full_slots(buffered_ref, src_ref,
     else:
       return x.astype(jnp.uint32)
 
+  fetch_limit = buffered_ref.cumulative_wait_in + buffered_ref.buffer_count
+  if max_num_fetches is not None:
+    fetch_once_limit = buffered_ref.cumulative_copy_in + max_num_fetches
+    # We would like to write jnp.minimum(fetch_limit, fetch_once_limit)
+    # but this does not compile in Mosaic.
+    fetch_limit = lax.select(fetch_limit < fetch_once_limit,
+                             fetch_limit, fetch_once_limit)
+
+
   def _loop_cond(carry):
     _, next_indices, cumulative_copy_in = carry
-    has_slots = cumulative_copy_in < (
-        buffered_ref.cumulative_wait_in + buffered_ref.buffer_count)
+    # Don't fetch more blocks than we have buffers.
+    within_limit = cumulative_copy_in < fetch_limit
+    # Don't fetch past the end of the grid.
     in_bounds = index_inbound(next_indices)
-    return predicate & has_slots & in_bounds
+    return predicate & within_limit & in_bounds
 
   def _loop_body(carry):
     current_indices, next_indices, cumulative_copy_in = carry
@@ -1331,51 +1352,59 @@ class Scheduler:
   # Below is the sequence of conditional waits and copies used for inputs,
   # outputs, and in-out accumulators.
 
-  def initialize(self, buffered_ref, src_ref, schedule=None):
+  def initialize_step(self, buffered_ref, src_ref, schedule=None, step=0):
     if schedule is None:
       schedule = _default_schedule
+    # TODO(justinfu): Should cache this, but it doesn't actually do computation
+    # in both default & fixed schedules right now so it doesn't increase
+    # the Jaxpr size.
     do_copy = schedule["prologue_copy_in"](self, buffered_ref, src_ref)
 
-    with self._named_scope("ep_initialize"):
-      @pl.when(self.first_step_ever)
-      def _init_slots():
-        buffered_ref.init_slots()
-
-      buffered_ref = buffered_ref.load_slots()
+    with self._named_scope(f"ep_initialize_{step}"):
+      if step == 0:
+        @pl.when(self.first_step_ever)
+        def _init_slots():
+          buffered_ref.init_slots()
+        buffered_ref = buffered_ref.load_slots()
 
       if not buffered_ref.is_input or not buffered_ref.is_buffered:
         return buffered_ref
 
-      if buffered_ref.use_lookahead:
-        @pl.when(self.first_step_ever & do_copy)
-        def _start():
-          buffered_ref.copy_in(src_ref,
-            self.add_offset(buffered_ref.next_fetch_indices))  # pylint: disable=cell-var-from-loop
-        buffered_ref = buffered_ref.advance_copy_in_slot(do_copy)
+      if (step + 1) >= buffered_ref.buffer_count:
+        return buffered_ref
 
-        buffered_ref, _ = fetch_until_full_slots(
-            buffered_ref,
-            src_ref,
-            self.grid,
-            self.grid_offsets,
-            self.first_step_ever & do_copy,
-        )
-      else:
-        grid_indices = self.indices
-        @pl.when(do_copy)
-        def _start():
-          buffered_ref.copy_in(src_ref, grid_indices)
-        buffered_ref = buffered_ref.advance_copy_in_slot(do_copy)
-        for i in range(buffered_ref.buffer_count - 2):
-          next_grid_indices = self.fetch_indices[i+1]
-          block_indices = buffered_ref.compute_index(*grid_indices)
-          next_block_indices = buffered_ref.compute_index(*next_grid_indices)
-          will_change = _tuples_differ(block_indices, next_block_indices)
-          @pl.when(do_copy & will_change)  # pylint: disable=cell-var-from-loop
+      if buffered_ref.use_lookahead:
+        if step == 0:
+          # We always fetch the first block.
+          @pl.when(do_copy)
           def _start():
-            buffered_ref.copy_in(src_ref, next_grid_indices)  # pylint: disable=cell-var-from-loop
-          grid_indices = next_grid_indices
-          buffered_ref = buffered_ref.advance_copy_in_slot(do_copy & will_change)
+            buffered_ref.copy_in(src_ref,
+              self.add_offset(buffered_ref.next_fetch_indices))  # pylint: disable=cell-var-from-loop
+          buffered_ref = buffered_ref.advance_copy_in_slot(do_copy)
+        else:
+          buffered_ref, _ = fetch_with_lookahead(
+              buffered_ref,
+              src_ref,
+              self.grid,
+              self.grid_offsets,
+              predicate=self.first_step_ever & do_copy,
+              max_num_fetches=1,
+          )
+      else:
+        if step == 0:
+          predicate = do_copy
+          fetch_indices = self.fetch_indices[step]
+        else:
+          fetch_indices = self.fetch_indices[step]
+          prev_grid_indices = self.fetch_indices[step - 1]
+          block_indices = buffered_ref.compute_index(*fetch_indices)
+          prev_block_indices = buffered_ref.compute_index(*prev_grid_indices)
+          block_changed = _tuples_differ(block_indices, prev_block_indices)
+          predicate = do_copy & block_changed
+        @pl.when(predicate)  # pylint: disable=cell-var-from-loop
+        def _start():
+          buffered_ref.copy_in(src_ref, fetch_indices)  # pylint: disable=cell-var-from-loop
+        buffered_ref = buffered_ref.advance_copy_in_slot(predicate)
     return buffered_ref
 
   def wait_in(self, buffered_ref, src_ref, schedule=None) -> "BufferedRef":
@@ -1412,7 +1441,7 @@ class Scheduler:
       return buffered_ref
 
     if buffered_ref.use_lookahead:
-      buffered_ref, _ = fetch_until_full_slots(
+      buffered_ref, _ = fetch_with_lookahead(
           buffered_ref, src_ref, self.grid, self.grid_offsets, predicate=True
       )
     else:
@@ -1446,7 +1475,7 @@ class Scheduler:
             src_ref, self.add_offset(buffered_ref.next_fetch_sreg))  # pylint: disable=cell-var-from-loop
       buffered_ref = buffered_ref.advance_copy_in_slot(pred)
 
-      buffered_ref, final_copy_in_slot = fetch_until_full_slots(
+      buffered_ref, final_copy_in_slot = fetch_with_lookahead(
           buffered_ref,
           src_ref,
           self.grid,
@@ -2087,8 +2116,15 @@ def emit_pipeline(
         # pipeline prologue
         initial_indices = (0,) * len(grid)
         scheduler = make_scheduler(0, initial_indices)
+        brefs = allocations
         with scheduler.grid_env():
-          brefs = map_brefs(scheduler.initialize, allocations, refs, schedule)
+          # We issue num_stages-1 prefetch copies per buffer.
+          # We iterate over steps in the outer loop because we want to
+          # queue all iteration 0 prefetches before iteration 1, and so on.
+          for step in range(scheduler.num_stages - 1):
+            brefs = map_brefs(functools.partial(
+                scheduler.initialize_step, step=step),
+                brefs, refs, schedule)
 
         # pipeline loop
         brefs, next_indices = lax.fori_loop(
