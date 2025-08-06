@@ -3546,7 +3546,9 @@ def _alloc_value(
   raise NotImplementedError(f"Cannot allocate {type(aval)}.")
 
 
-@register_lowering_rule(primitives.run_scoped_p)
+@register_lowering_rule(
+    primitives.run_scoped_p, kernel_types=[*tpu_core.KernelType]
+)
 def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr, collective_axes):
   if collective_axes:
     raise NotImplementedError("run_scoped lowering does not support collective axes")
