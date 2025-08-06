@@ -59,6 +59,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.layout import Layout, AutoLayout, Format
 from jax._src.lib import xla_client as xc
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
@@ -3105,6 +3106,7 @@ class MeshExecutableFastpathData(NamedTuple):
   out_committed: Sequence[bool]
   kept_var_bitvec: Iterable[bool]
   in_device_local_layouts: Sequence[Layout | None]
+  const_args: Sequence[ArrayLike]
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -3229,14 +3231,15 @@ class MeshExecutable(stages.Executable):
       out_flat, out_tree_dispatch = reflatten_outputs_for_dispatch(
           params.out_tree, out_flat)
       use_fastpath = (all(isinstance(x, xc.ArrayImpl) for x in out_flat)
-                      # TODO(necula): fix the AOT fast path for const_args
-                      and not params.const_args and not self._mut)
+                      and not self._mut)
+      if jaxlib_extension_version < 366:
+        use_fastpath = use_fastpath and not params.const_args
 
       if use_fastpath:
         out_avals = [o.aval for o in out_flat]
         out_committed = [o._committed for o in out_flat]
         kept_var_bitvec = [i in self._kept_var_idx
-                           for i in range(len(args_flat))]
+                           for i in range(len(params.const_args) + len(args_flat))]
         in_shardings = [
             sharding_impls.physical_sharding(a, s)
             if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
@@ -3246,7 +3249,7 @@ class MeshExecutable(stages.Executable):
         fastpath_data = MeshExecutableFastpathData(
             self.xla_executable, out_tree_dispatch, in_shardings,
             self._out_shardings, out_avals, out_committed, kept_var_bitvec,
-            self._dispatch_in_layouts)
+            self._dispatch_in_layouts, params.const_args)
       else:
         fastpath_data = None
       return outs, fastpath_data, False  # Do not remove cache entry
