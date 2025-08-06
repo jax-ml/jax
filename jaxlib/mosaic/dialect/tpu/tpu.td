@@ -940,8 +940,18 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     Optional<I32>:$device_id, // For remote DMAs
     Optional<I32>:$core_id, // For megacore
     // Smaller number means higher priority. 0 is the highest and the default.
-    DefaultValuedAttr<I32Attr, "0">:$priority
+    DefaultValuedAttr<I32Attr, "0">:$priority,
+    DefaultValuedAttr<BoolAttr, "false">:$strict_ordering
   );
+  let assemblyFormat = [{
+    `source` `(` $source `:` type($source) `)`
+    `target` `(` $target `:` type($target) `)`
+    (`source_semaphore` `(` $source_semaphore^ `:` type($source_semaphore) `)`)?
+    `target_semaphore` `(` $target_semaphore `:` type($target_semaphore) `)`
+    (`device_id` `(` $device_id^ `)`)?
+    (`core_id` `(` $core_id^ `)`)?
+    attr-dict
+  }];
   let hasVerifier = 1;
 }
 
@@ -981,8 +991,13 @@ def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma">, IndirectDMAOp {
     DefaultValuedAttr<BoolAttr, "false">:$add
   );
   let assemblyFormat = [{
-    $source `to` $target `at` $offsets `,` `semaphore` $semaphore (`offset_filter` $offset_filter^)? attr-dict `:` type($source) `,` type($target) `,` type($offsets) `,` type($semaphore)
-    }];
+    `source` `(` $source `:` type($source) `)`
+    `target` `(` $target `:` type($target) `)`
+    `offsets` `(` $offsets `:` type($offsets) `)`
+    (`offset_filter` `(` $offset_filter^ `)`)?
+    `semaphore` `(` $semaphore `:` type($semaphore) `)`
+    attr-dict
+  }];
   let hasVerifier = 1;
   let extraClassDeclaration = extraBaseClassDeclaration # [{
     LogicalResult verifyGather(MemRefType operand_ty,
@@ -1004,8 +1019,17 @@ def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
     AnyMemRef:$src,
     AnyMemRef:$dst,
     Optional<I32>:$device_id, // For remote DMAs
-    Optional<I32>:$core_id // For megacore
+    Optional<I32>:$core_id, // For megacore
+    DefaultValuedAttr<BoolAttr, "false">:$strict_ordering
   );
+  let assemblyFormat = [{
+    `semaphore` `(` $semaphore `:` type($semaphore) `)`
+    `src` `(` $src `:` type($src) `)`
+    `dst` `(` $dst `:` type($dst) `)`
+    (`device_id` `(` $device_id^ `)`)?
+    (`core_id` `(` $core_id^ `)`)?
+    attr-dict
+  }];
   let hasVerifier = 1;
   // A backward-compatible builder that sets `device_id` and `core_id` to nullptr.
   let builders = [
@@ -1035,8 +1059,11 @@ def TPU_WaitIndirectDMAOp : TPU_Op<"wait_indirect_dma">, IndirectDMAOp {
     AnyMemRef:$dst
   );
   let assemblyFormat = [{
-    $src `to` $dst `,` `semaphore` $semaphore attr-dict `:` type($src) `,` type($dst) `,` type($semaphore)
-    }];
+    `semaphore` `(` $semaphore `:` type($semaphore) `)`
+    `src` `(` $src `:` type($src) `)`
+    `dst` `(` $dst `:` type($dst) `)`
+    attr-dict
+  }];
   let hasVerifier = 1;
   let extraClassDeclaration = extraBaseClassDeclaration;
 }
