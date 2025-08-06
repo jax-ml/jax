@@ -265,3 +265,21 @@ Miscellaneous
     print_environment_info
     live_arrays
     clear_caches
+
+Checkpoint policies
+-------------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    checkpoint_policies.everything_saveable
+    checkpoint_policies.nothing_saveable
+    checkpoint_policies.dots_saveable
+    checkpoint_policies.checkpoint_dots
+    checkpoint_policies.dots_with_no_batch_dims_saveable
+    checkpoint_policies.checkpoint_dots_with_no_batch_dims
+    checkpoint_policies.save_any_names_but_these
+    checkpoint_policies.save_only_these_names
+    checkpoint_policies.offload_dot_with_no_batch_dims
+    checkpoint_policies.save_and_offload_only_these_names
+    checkpoint_policies.save_from_both_policies
