@@ -1031,10 +1031,12 @@ class LaunchContext:
           nvvm.cp_async_bulk_commit_group()
 
   def await_async_copy(
-      self, allow_groups: int, await_read_only: bool = False
+      self, allow_groups: int, await_read_only: bool = False,
+      warpgroup_barrier: bool = True
   ):
     nvvm.cp_async_bulk_wait_group(allow_groups, read=await_read_only)
-    utils.warpgroup_barrier()
+    if warpgroup_barrier:
+      utils.warpgroup_barrier()
 
   def await_cp_async_copy(self, allow_groups: int):
     nvvm.cp_async_wait_group(allow_groups)
