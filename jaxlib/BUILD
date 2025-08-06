@@ -1109,6 +1109,35 @@ cc_library(
 )
 
 cc_library(
+    name = "py_user_context",
+    srcs = ["py_user_context.cc"],
+    hdrs = ["py_user_context.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    visibility = jax_visibility("jaxlib/py_user_context"),
+    deps = [
+        ":python_ref_manager",
+        ":traceback",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@llvm-project//llvm:Support",
+        "@nanobind",
+        "@tsl//tsl/platform:fingerprint",
+        "@xla//third_party/python_runtime:headers",
+        "@xla//xla/python/ifrt:user_context",
+        "@xla//xla/service:slow_operation_alarm",
+        "@xla//xla/tsl/concurrency:ref_count",
+    ],
+)
+
+cc_library(
     name = "python_ref_manager",
     srcs = ["python_ref_manager.cc"],
     hdrs = ["python_ref_manager.h"],
