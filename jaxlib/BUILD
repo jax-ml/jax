@@ -327,6 +327,7 @@ nanobind_pywrap_extension(
         ":nb_class_ptr",
         ":pjit",
         ":pmap_lib",
+        ":pprof_profile_builder",
         ":py_client",
         ":python_ref_manager",
         ":pytree",
@@ -379,7 +380,6 @@ nanobind_pywrap_extension(
         "@xla//xla/python:logging",
         "@xla//xla/python:nb_absl_flat_hash_map",
         "@xla//xla/python:nb_absl_span",
-        "@xla//xla/python:pprof_profile_builder",
         "@xla//xla/python:refine_polymorphic_shapes",
         "@xla//xla/python:types",
         "@xla//xla/python:version",
@@ -417,6 +417,29 @@ nanobind_pywrap_extension(
         # we support MPI collectives only in OSS builds
         "//conditions:default": if_oss(["@xla//xla/backends/cpu/collectives:mpi_collectives"]),
     }),
+)
+
+cc_library(
+    name = "pprof_profile_builder",
+    srcs = ["pprof_profile_builder.cc"],
+    hdrs = ["pprof_profile_builder.h"],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@nanobind",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/profiler/protobuf:profile_proto_cc",
+        "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
+        "@xla//xla:util",
+        "@xla//xla/tsl/platform:logging",
+    ],
 )
 
 cc_library(
@@ -883,6 +906,7 @@ cc_library(
         ":cached_py_object",
         ":guard_lib",
         ":nb_class_ptr",
+        ":pprof_profile_builder",
         ":py_client_cpu",
         ":py_host_callback",
         ":python_ref_manager",
@@ -930,7 +954,6 @@ cc_library(
         "@xla//xla/python:nb_absl_span",
         "@xla//xla/python:nb_helpers",
         "@xla//xla/python:nb_numpy",
-        "@xla//xla/python:pprof_profile_builder",
         "@xla//xla/python:safe_static_init",
         "@xla//xla/python:types",
         "@xla//xla/python:version",

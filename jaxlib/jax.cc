@@ -97,6 +97,7 @@ limitations under the License.
 #include "jaxlib/partition_spec.h"
 #include "jaxlib/pjit.h"
 #include "jaxlib/pmap_lib.h"
+#include "jaxlib/pprof_profile_builder.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_compile_only_client.h"
 #include "jaxlib/py_device.h"
@@ -122,7 +123,6 @@ limitations under the License.
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
-#include "xla/python/pprof_profile_builder.h"
 #include "xla/tsl/distributed_runtime/preemption/preemption_sync_manager.h"
 #include "xla/tsl/platform/status.h"
 #include "tsl/platform/platform.h"

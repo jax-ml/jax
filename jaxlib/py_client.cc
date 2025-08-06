@@ -50,6 +50,7 @@ limitations under the License.
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/guard_lib.h"
 #include "jaxlib/nb_class_ptr.h"
+#include "jaxlib/pprof_profile_builder.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_device.h"
 #include "jaxlib/py_device_list.h"
@@ -85,7 +86,6 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
-#include "xla/python/pprof_profile_builder.h"
 #include "xla/python/types.h"
 #include "xla/service/platform_util.h"  // IWYU pragma: keep
 #include "xla/service/spmd/shardy/utils.h"  // IWYU pragma: keep
