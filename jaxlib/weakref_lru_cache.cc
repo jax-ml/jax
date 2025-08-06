@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstdint>
 #include <iterator>
 #include <memory>
-#include <optional>
 #include <string>
 #include <thread>  // NOLINT
 #include <unordered_map>
