@@ -275,6 +275,36 @@ class EquationSystemTest(parameterized.TestCase):
     with self.assertRaises(NotImplementedError):
       equations.reduce_expression(equations.Reduce(layout, axes=(0,)), {})
 
+  def test_reduce_broadcast_of_splat_layout_is_reduced_to_splat_layout(self):
+    layout = C(mgpu.WGSplatFragLayout((128,)))
+    valid_shape = (128, 8)
+    self.assertEqual(
+        equations.reduce_expression(
+            equations.BroadcastInDim(layout, axes=(0,), shape=valid_shape), {}
+        ),
+        C(mgpu.WGSplatFragLayout((128, 8))),
+    )
+
+  def test_reduce_broadcast_of_splat_layout_is_unsatisfiable_for_incompatible_shape(self):
+    layout = C(mgpu.WGSplatFragLayout((128,)))
+    invalid_shape = (129, 8)
+    self.assertIsInstance(
+        equations.reduce_expression(
+            equations.BroadcastInDim(layout, axes=(0,), shape=invalid_shape), {}
+        ),
+        equations.Unsatisfiable,
+    )
+
+  def test_reduce_broadcast_of_strided_layout_is_irreducible(self):
+    layout = C(mgpu.WGStridedFragLayout((128,), vec_size=1))
+    expr = equations.BroadcastInDim(layout, axes=(0,), shape=(128, 8))
+    self.assertEqual(equations.reduce_expression(expr, {}), expr)
+
+  def test_reduce_broadcast_of_tiled_layout_is_irreducible(self):
+    layout = C(mgpu.WGMMA_LAYOUT)
+    expr = equations.BroadcastInDim(layout, axes=(1, 2), shape=(8, 128, 8))
+    self.assertEqual(equations.reduce_expression(expr, {}), expr)
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

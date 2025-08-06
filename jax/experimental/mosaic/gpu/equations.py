@@ -63,7 +63,21 @@ class Reduce:
   axes: tuple[int, ...]
 
 
-Expression = Variable | Constant | LeastReplicated | MostReplicated | Reduce
+@dataclasses.dataclass(frozen=True)
+class BroadcastInDim:
+  expression: Expression
+  axes: tuple[int, ...]
+  shape: tuple[int, ...]
+
+
+Expression = (
+    Variable
+    | Constant
+    | LeastReplicated
+    | MostReplicated
+    | Reduce
+    | BroadcastInDim
+)
 
 
 def reduce_replicated_expression(
@@ -113,6 +127,37 @@ def reduce_replicated_expression(
   return constructor(tuple(unknowns))
 
 
+def reduce_broadcast_expression(
+    broadcast: BroadcastInDim, assignments: dict[Variable, Constant]
+) -> Expression | Unsatisfiable:
+  def _check_shape_broadcast(shape: tuple[int, ...]) -> bool:
+    for axis, s in zip(broadcast.axes, shape, strict=True):
+      if broadcast.shape[axis] != s:
+        return False
+    return True
+
+  reduced_expr = reduce_expression(broadcast.expression, assignments)
+  match reduced_expr:
+    case Unsatisfiable():
+      return Unsatisfiable()
+    case Constant(value=layout):
+      match layout:
+        case fa.WGSplatFragLayout(shape=shape):
+          if not _check_shape_broadcast(shape):
+            return Unsatisfiable()
+          return Constant(fa.WGSplatFragLayout(shape=broadcast.shape))
+        case _:
+          return BroadcastInDim(
+              expression=reduced_expr,
+              axes=broadcast.axes,
+              shape=broadcast.shape,
+          )
+    case _:
+      return BroadcastInDim(
+          expression=reduced_expr, axes=broadcast.axes, shape=broadcast.shape
+      )
+
+
 def reduce_expression(
     expr: Expression, assignments: dict[Variable, Constant]
 ) -> Expression | Unsatisfiable:
@@ -146,6 +191,8 @@ def reduce_expression(
           )
         case _:
           return Reduce(expression=reduced_expr, axes=axes)
+    case BroadcastInDim():
+      return reduce_broadcast_expression(expr, assignments)
     case _:
       assert_never(expr)
 
@@ -333,6 +380,8 @@ class EquationSystem:
           for e in expressions:
             extract_variables(e)
         case Reduce(expression=e):
+          extract_variables(e)
+        case BroadcastInDim(expression=e):
           extract_variables(e)
         case _:
           assert_never(expr)
