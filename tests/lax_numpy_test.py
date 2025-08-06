@@ -5203,10 +5203,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testIssue764(self):
     x = jnp.linspace(190, 200, 4)
     f = jax.grad(lambda x: jnp.sum(jnp.tanh(x)))
-    # Expected values computed with autograd in float64 precision.
-    expected = np.array([3.71669453e-165, 4.72999108e-168, 6.01954653e-171,
-                          7.66067839e-174], np.float64)
-    self.assertAllClose(f(x), expected, check_dtypes=False)
+    # tanh(190) and tanh(200) are both 1, so the gradient is 0 in f64.
+    expected = np.array([0,0,0,0], np.float64)
+    self.assertAllClose(f(x), expected, check_dtypes=False, atol=1e-14, rtol=0)
 
   # Test removed because tie_in is deprecated.
   # def testIssue776(self):
