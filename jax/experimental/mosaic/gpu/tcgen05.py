@@ -169,7 +169,7 @@ def mma(
     b_scale: TMEMRef | None = None,
     accumulate: ir.Value | bool = True,
     collective: bool = False,
-):
+) -> None:
   if a_swizzle == 16 or b_swizzle == 16:
     raise NotImplementedError("No swizzle is not supported")
   i32 = ir.IntegerType.get_signless(32)

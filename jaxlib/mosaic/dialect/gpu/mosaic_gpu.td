@@ -477,13 +477,13 @@ def MosaicGPU_TmemAttr : MosaicGPU_Attr<"Tmem", "tmem"> {
 def MosaicGPU_TcGen05MMASupportedABType : AnyTypeOf<[F16, F32, BF16, TF32, F8E4M3FN, F8E5M2, F6E2M3FN, F6E3M2FN, F4E2M1FN, I8],
     "A type supported by the `a` and `b` operands of the `tcgen05.mma` instruction">;
 
-def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [InferTypeOpInterface, AttrSizedOperandSegments]> {
+def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [AttrSizedOperandSegments]> {
   let summary = "Perform a matrix multiply-accumulate operation using the `tcgen05.mma` instruction.";
   let description = [{
     Schedules `tcgen05.mma` instructions that perform the following matrix
     multiply and accumulate:
 
-      accumulator = a * b + accumulator
+      accumulator += a * b
 
     This operation supports larger inputs than the PTX-level MMA instruction
     and will schedule as many PTX-level MMA instructions as needed to
@@ -496,8 +496,6 @@ def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [InferTypeOpIn
     where `s == swizzle / element_bytewidth` and `m` is specified according to
     https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-matrix-shape.
 
-    The output has an identical shape and type as the input accumulator.
-
     The `accumulator`, `a` and `b` matrices need to be provided as 2-dimensional
     memrefs. The `accumulator` is always in TMEM and `b` is always in SMEM.
     `a` can be in TMEM or SMEM. `a` and `b` must have the same element
@@ -506,7 +504,7 @@ def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [InferTypeOpIn
     `a_scale` and `b_scale` are optional scaling matrices that reside in TMEM.
     When set the operation is defined as:
 
-      accumulator = (a * a_scale) * (b * b_scale) + accumulator
+      accumulator += (a * a_scale) * (b * b_scale)
 
     `accumulate` is a boolean that indicates whether to perform the accumulate
     step.
@@ -522,25 +520,6 @@ def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [InferTypeOpIn
     Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$b_scale,
     DefaultValuedAttr<BoolAttr, "false">:$collective
   );
-  let results = (outs MemRefRankOf<[F16, F32, I32], [2]>);
-
-  let extraClassDeclaration = [{
-    static llvm::LogicalResult inferReturnTypes(
-        mlir::MLIRContext *,
-        std::optional<mlir::Location> location,
-        mlir::ValueRange operands,
-        mlir::DictionaryAttr attributes,
-        mlir::OpaqueProperties properties,
-        mlir::RegionRange regions,
-        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
-      if (operands.empty()) {
-        return ::mlir::emitOptionalError(
-          location, "expected non-empty operands");
-      }
-      inferredReturnTypes.assign({operands[0].getType()});
-      return ::mlir::success();
-    }
-  }];
 
   let hasVerifier = 1;
 }
