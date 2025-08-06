@@ -294,17 +294,17 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkOutLayouts(bcast, [layouts.to_layout_attr(out_layout)])
 
   @parameterized.parameters(
-      (1, mgpu.WGMMA_LAYOUT, None, None, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT),
-      (0, mgpu.WGMMA_LAYOUT, None, None, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_COL_LAYOUT),
-      (1, None, None, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT),
-      (0, None, None, mgpu.WGMMA_COL_LAYOUT, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_COL_LAYOUT),
-      (1, None, mgpu.WGMMA_ROW_LAYOUT, None, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT),
-      (0, None, mgpu.WGMMA_COL_LAYOUT, None, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_COL_LAYOUT),
-      (1, None, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT),
-      (0, None, mgpu.WGMMA_COL_LAYOUT, mgpu.WGMMA_COL_LAYOUT, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_COL_LAYOUT),
+      (1, mgpu.WGMMA_LAYOUT, None, None),
+      (0, mgpu.WGMMA_LAYOUT, None, None),
+      (1, None, None, mgpu.WGMMA_ROW_LAYOUT),
+      (0, None, None, mgpu.WGMMA_COL_LAYOUT),
+      (1, None, mgpu.WGMMA_ROW_LAYOUT, None),
+      (0, None, mgpu.WGMMA_COL_LAYOUT, None),
+      (1, None, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_ROW_LAYOUT),
+      (0, None, mgpu.WGMMA_COL_LAYOUT, mgpu.WGMMA_COL_LAYOUT),
   )
   def test_infer_multi_reduce_layout(
-      self, reduce_dim, in_cast, acc_cast, out_cast, in_layout, out_layout
+      self, reduce_dim, in_cast, acc_cast, out_cast
   ):
     self.skip_if_equations()
     with ir.InsertionPoint(self.module.body):
@@ -319,10 +319,12 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
         layout_cast(red.result, out_cast)
 
     self.infer_layout(self.module)
-    in_layout_attr = layouts.to_layout_attr(in_layout)
-    out_layout_attr = layouts.to_layout_attr(out_layout)
-    self.checkInLayouts(red, [in_layout_attr, out_layout_attr])
-    self.checkOutLayouts(red, [out_layout_attr])
+
+    # The tests always expect WGMMA as the source layout.
+    in_layout = mgpu.WGMMA_LAYOUT
+    out_layout = in_layout.reduce((reduce_dim,))
+    self.checkInLayouts(red, [in_layout, out_layout])
+    self.checkOutLayouts(red, [out_layout])
 
   def test_infer_layout_traverses_ops_correctly(self):
     shape = (16, 8)
