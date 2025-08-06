@@ -703,6 +703,7 @@ class JitTest(jtu.BufferDonationTestCase):
     # I suspect this is an artifact of other caches and garbage collection.
     self.assertGreaterEqual(num_live_initial, num_live)
 
+  @jtu.thread_unsafe_test()  # close_jaxpr cache is shared across threads
   def test_pe_close_jaxpr_cache_leak(self):
     @jax.jit
     def f(x):
