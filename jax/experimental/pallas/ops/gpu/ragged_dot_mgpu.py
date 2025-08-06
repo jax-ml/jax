@@ -89,16 +89,6 @@ class GroupInfo:
     )
 
 
-def _find_swizzle(dim_size_bits: int, what: str):
-  for swizzle_bytes in (128, 64, 32, 16):
-    if dim_size_bits % (swizzle_bytes * 8) == 0:
-      return swizzle_bytes
-  raise ValueError(
-      f"No valid out swizzle for {what}: its minor dimension has"
-      f" {dim_size_bits} bits, which is not a multiple of 128"
-  )
-
-
 def ragged_dot(
     lhs,  # (M, K)
     rhs,  # (G, K, N)

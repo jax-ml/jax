@@ -42,6 +42,7 @@ from jax._src.pallas.mosaic_gpu.core import WarpMesh as WarpMesh
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as ACC  # noqa: F401
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as WGMMAAccumulatorRef
 from jax._src.pallas.mosaic_gpu.helpers import nd_loop as nd_loop
+from jax._src.pallas.mosaic_gpu.helpers import find_swizzle as find_swizzle
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline_warp_specialized as emit_pipeline_warp_specialized
 from jax._src.pallas.mosaic_gpu.primitives import async_copy_scales_to_tmem as async_copy_scales_to_tmem

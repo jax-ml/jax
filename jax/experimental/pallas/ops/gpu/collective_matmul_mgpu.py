@@ -22,16 +22,6 @@ from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 
 
-def _find_swizzle(dim_size_bits: int, what: str):
-  for swizzle_bytes in (128, 64, 32, 16):
-    if dim_size_bits % (swizzle_bytes * 8) == 0:
-      return swizzle_bytes
-  raise ValueError(
-      f"No valid out swizzle for {what}: its minor dimension has"
-      f" {dim_size_bits} bits, which is not a multiple of 128"
-  )
-
-
 # TODO(apaszke): Add grid tiling
 def all_gather_lhs_matmul(
     lhs: jax.Array,
@@ -78,8 +68,8 @@ def all_gather_lhs_matmul(
     )
 
   swizzle = min(
-      _find_swizzle(block_k * jnp.finfo(element_type).bits, "lhs"),
-      _find_swizzle(block_n * jnp.finfo(element_type).bits, "rhs"),
+      plgpu.find_swizzle(block_k * jnp.finfo(element_type).bits, "lhs"),
+      plgpu.find_swizzle(block_n * jnp.finfo(element_type).bits, "rhs"),
   )
   transforms = (
       plgpu.TilingTransform((8, swizzle // jnp.dtype(element_type).itemsize)),

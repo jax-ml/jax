@@ -36,16 +36,6 @@ class TuningConfig:
   epilogue_tile_n: int = 64
 
 
-def _find_swizzle(dim_size_bits: int):
-  """Finds the largest swizzle that fits the dimension size."""
-  for swizzle_bytes in (128, 64, 32, 16):
-    if dim_size_bits % (swizzle_bytes * 8) == 0:
-      return swizzle_bytes
-  raise ValueError(
-      f"Dimension size has {dim_size_bits} bits, which is not a multiple of 128"
-  )
-
-
 def matmul_kernel(a, b, config: TuningConfig):
   dtype = a.dtype
   if a.dtype != b.dtype:
@@ -70,7 +60,7 @@ def matmul_kernel(a, b, config: TuningConfig):
   if collective:
     tile_m *= 2
     tile_n *= 2
-  swizzle = _find_swizzle(tile_k * jnp.dtype(dtype).itemsize * 8)
+  swizzle = plgpu.find_swizzle(tile_k * jnp.dtype(dtype).itemsize * 8)
   swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
   transforms = (
       plgpu.TilingTransform((8, swizzle_elems)),
