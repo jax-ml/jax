@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -38,9 +39,7 @@ limitations under the License.
 
 #include "jaxlib/mosaic/gpu/library_paths.h"
 #include "absl/base/call_once.h"
-#include "absl/base/const_init.h"
 #include "absl/base/optimization.h"
-#include "absl/base/thread_annotations.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -149,20 +148,14 @@ struct DumpOptions {
 DumpOptions GetDumpOptionsForModule(mlir::ModuleOp module) {
   // Use a static variable in order to ensure that subsequent compilations of
   // modules that share the same name will result in distinct dumps.
-  static absl::Mutex mu(absl::kConstInit);
-  static int dumped_module_count ABSL_GUARDED_BY(mu) = 0;
+  static std::atomic<int> dumped_module_count = 0;
   DumpOptions opts;
-  {
-    absl::MutexLock lock(&mu);
-    if (std::optional<llvm::StringRef> name = module.getName();
-        name.has_value()) {
-      opts.module_basename =
-          absl::StrCat(name->str(), "_", dumped_module_count);
-    } else {
-      opts.module_basename =
-          absl::StrCat("mosaic_gpu_module_", dumped_module_count);
-    }
-    ++dumped_module_count;
+  int current_count = dumped_module_count.fetch_add(1);
+  if (std::optional<llvm::StringRef> name = module.getName();
+      name.has_value()) {
+    opts.module_basename = absl::StrCat(name->str(), "_", current_count);
+  } else {
+    opts.module_basename = absl::StrCat("mosaic_gpu_module_", current_count);
   }
 
   if (char* dump_to = getenv("MOSAIC_GPU_DUMP_TO"); dump_to != nullptr) {
