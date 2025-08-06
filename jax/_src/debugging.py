@@ -83,8 +83,8 @@ map, unsafe_map = util.safe_map, map
 
 @debug_callback_p.def_impl
 def debug_callback_impl(*args, callback: Callable[..., Any],
-                        effect: DebugEffect, partitioned: bool):
-  del effect, partitioned
+                        effect: DebugEffect, partitioned: bool, is_print: bool):
+  del effect, partitioned, is_print
   try:
     cpu_device, *_ = xla_bridge.local_devices(backend="cpu")
   except RuntimeError as e:
@@ -104,8 +104,9 @@ def debug_callback_impl(*args, callback: Callable[..., Any],
 
 @debug_callback_p.def_effectful_abstract_eval
 def debug_callback_abstract_eval(*flat_avals, callback: Callable[..., Any],
-                                 effect: DebugEffect, partitioned: bool):
-  del flat_avals, callback, partitioned
+                                 effect: DebugEffect, partitioned: bool,
+                                 is_print: bool):
+  del flat_avals, callback, partitioned, is_print
   return [], {effect}
 
 def debug_callback_batching_rule(args, dims, **params):
@@ -131,8 +132,8 @@ def debug_callback_jvp_rule(primals, tangents, **params):
 ad.primitive_jvps[debug_callback_p] = debug_callback_jvp_rule
 
 def debug_callback_transpose_rule(_, *flat_args, callback: Callable[..., Any],
-                                  effect: DebugEffect, partitioned):
-  del callback, effect, partitioned
+                                  effect: DebugEffect, partitioned, is_print):
+  del callback, effect, partitioned, is_print
   return [None for _ in flat_args]
 ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
 
@@ -147,7 +148,7 @@ def _debug_callback_partial_auto(axis_context, *args, **params):
                     lambda: [])
   return shard_map.shard_map(f, in_specs=(), out_specs=[])()
 
-def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params):
+def debug_callback_lowering(ctx, *args, effect, partitioned, callback, is_print, **params):
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
     # We're a shard_map, which might be partial-manual or full-manual.
@@ -161,6 +162,7 @@ def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params)
           effect=effect,
           partitioned=partitioned,
           callback=callback,
+          is_print=is_print,
           **params,
       )
       return mlir.lower_fun(lower)(ctx, *args)
@@ -206,6 +208,7 @@ def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params)
         effect=effect,
         partitioned=partitioned,
         callback=callback,
+        is_print=is_print,
         **params,
     )
     return ()
@@ -262,11 +265,16 @@ pe.partial_eval_jaxpr_custom_rules[debug_callback_p] = (
 
 @state_discharge.register_discharge_rule(debug_callback_p)
 def _debug_callback_state_discharge_rule(
-    in_avals, out_avals, *args, effect, partitioned, callback, **params
+    in_avals, out_avals, *args, effect, partitioned, callback, is_print, **params
 ):
   del in_avals, out_avals  # Unused.
   out = debug_callback_p.bind(
-      *args, effect=effect, partitioned=partitioned, callback=callback, **params
+      *args,
+      effect=effect,
+      partitioned=partitioned,
+      callback=callback,
+      is_print=is_print,
+      **params,
   )
   return args, out
 
@@ -276,6 +284,7 @@ def debug_callback(
     *args: Any,
     ordered: bool = False,
     partitioned: bool = False,
+    is_print: bool = False,
     **kwargs: Any,
 ) -> None:
   """Calls a stageable Python callback.
@@ -342,7 +351,11 @@ def debug_callback(
 
   effect = ordered_debug_effect if ordered else debug_effect
   debug_callback_p.bind(
-      *dyn_args, callback=_flat_callback, effect=effect, partitioned=partitioned
+      *dyn_args,
+      callback=_flat_callback,
+      effect=effect,
+      partitioned=partitioned,
+      is_print=is_print,
   )
 
 
@@ -412,7 +425,8 @@ def debug_print(
   formatter.format(fmt, *args, **kwargs)
 
   debug_callback(partial(_format_print_callback, fmt, np.get_printoptions()),
-                 *args, **kwargs, ordered=ordered, partitioned=partitioned)
+                 *args, **kwargs, ordered=ordered, partitioned=partitioned,
+                 is_print=True)
 
 
 # Sharding visualization
@@ -734,8 +748,9 @@ def _debug_callback_eager_rule(
     callback: Callable[..., Any],
     effect: DebugEffect,
     partitioned: bool,
+    is_print: bool,
 ):
-  del effect
+  del effect, is_print
   with core.eval_context():
     all_blocks = zip(*map(list, args))
   for (idx, device), blocks in zip(np.ndenumerate(mesh.devices), all_blocks):
