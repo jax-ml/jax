@@ -22,5 +22,5 @@
 # Note: This is a clone of revision.bzl for testing the new automation for updating XLA in JAX.
 
 # buildifier: disable=module-docstring
-XLA_COMMIT = "34fa03f5acdd6d92ca8e3c82c8ae5d9a33e174fa"
-XLA_SHA256 = "1a27df73ca5f2073e657d369bbddddd3355f8577d13d537f2e28ef1c9bbe1c47"
+XLA_COMMIT = "f11d10606df238a4c7109fb5832693d0d265539a"
+XLA_SHA256 = "d1d492cc1af78d161e270c652d029181d6e94b5f093bb930dde3402fc747a268"
