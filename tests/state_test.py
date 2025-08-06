@@ -1410,6 +1410,22 @@ class StateControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(jax.jit(g)((1, 0, 1, 5, zs))[:3], (13, 35, 11))
     self.assertAllClose(jax.jit(g)((1, 1, 1, 2, zs))[:3], (13, 21, 11))
 
+  def test_scan_discharges_into_carry(self):
+    # we want to discharge scanned-over refs into the carry for aliasing
+    def body(_, x_ref):
+      x_ref[...] += 1
+      return (), ()
+
+    x_ref = jax.array_ref(jnp.arange(3.))
+    jaxpr = jax.make_jaxpr(lambda x_ref: jax.lax.scan(body, (), x_ref))(x_ref)
+    jaxpr, () = discharge_state(jaxpr.jaxpr, jaxpr.consts)
+    scan_eqn = jaxpr.eqns[0]
+    self.assertEqual(scan_eqn.params['num_consts'], 0)
+    self.assertEqual(scan_eqn.params['num_carry'], 2)
+    a, b = scan_eqn.params['jaxpr'].in_avals
+    self.assertEqual(a.shape, ())
+    self.assertEqual(b.shape, (3,))
+
 
 class GeneralRefTest(jtu.JaxTestCase):
 
