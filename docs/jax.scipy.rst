@@ -172,6 +172,7 @@ jax.scipy.special
    gammaln
    gammasgn
    hyp1f1
+   hyp2f1
    i0
    i0e
    i1
