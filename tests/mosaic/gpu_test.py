@@ -4363,30 +4363,18 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       vector_type = ir.VectorType.get(shape, el_ty)
       r_in = vector.load(vector_type, input, zero_vector_indices)
 
-      vector_layout = tcgen05.TMEM_NATIVE_LAYOUT
-      vector_layout_attr = mgpu_layouts.to_layout_attr(vector_layout)
-      tmem_layout = tcgen05.TMEMLayout(
-          vector_layout.tiling,
-          vector_layout.warp_dims,
-          vector_layout.lane_dims,
-          vector_layout.vector_dim,
-      )
-      tmem_layout_attr = mgpu_layouts.to_layout_attr(tmem_layout)
+      tmem_layout = mgpu_layouts.to_layout_attr(tcgen05.TMEM_NATIVE_LAYOUT)
 
       # registers -> TMEM
       store_op = mgpu_dialect.AsyncStoreTmemOp(r_in, tmem_ref)
-      store_op.attributes["in_layouts"] = ir.ArrayAttr.get([vector_layout_attr])
-      store_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get(
-          [tmem_layout_attr]
-      )
+      store_op.attributes["in_layouts"] = ir.ArrayAttr.get([tmem_layout])
+      store_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
       tcgen05.commit_tmem()
 
       # TMEM ->registers
       load_op = mgpu_dialect.AsyncLoadTmemOp(tmem_ref)
-      load_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get(
-          [tmem_layout_attr]
-      )
-      load_op.attributes["out_layouts"] = ir.ArrayAttr.get([vector_layout_attr])
+      load_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
+      load_op.attributes["out_layouts"] = ir.ArrayAttr.get([tmem_layout])
       # no need to wait in this case, see:
       # https://docs.jax.dev/en/latest/pallas/gpu/reference.html#allocating-the-accumulator-using-tmem
 
