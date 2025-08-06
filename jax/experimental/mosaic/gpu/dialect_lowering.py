@@ -420,55 +420,68 @@ def _vector_load_op_lowering_rule(
   element_type = vector_load_op.result.type.element_type
   is_signed = False if ir.IntegerType.isinstance(element_type) else None
 
+  def _fragmented_array_to_ir(fragmented_array: fa.FragmentedArray) -> ir.Value:
+    return fragmented_array_to_ir(fragmented_array, vector_load_op.result.type)
+
   if layouts.is_strided_fragmented_layout(out_layout_attr):
     strided_layout = layouts.from_strided_fragmented_layout_attr(
         out_layout_attr
     )
+    # TODO(bchetioui): Process transforms.
     fragmented_array = fa.FragmentedArray.load_strided(
         vector_load_op.base,
         is_signed=is_signed,
         vec_size=strided_layout.vec_size,
     )
-  elif layouts.is_tiled_layout(out_layout_attr):
-    layout = layouts.from_tiled_layout_attr(out_layout_attr)
-    ref_ty = ir.MemRefType(vector_load_op.base.type)
-    transforms: tuple[launch_context.MemRefTransform, ...]
-    if ref_ty.memory_space is None:  # GMEM
-      swizzle, transforms = mgpu.SwizzlingMode.kNoSwizzle, ()
-    elif ref_ty.memory_space == utils.smem():
-      transforms_attr = inference_utils.in_transforms(vector_load_op)[0]
-      swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
-          transforms_attr
-      )
-    else:
-      raise ValueError(f"Unsupported memory space: {ref_ty.memory_space}")
-    has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
-    if has_transforms:
-      transforms_attr = inference_utils.in_transforms(vector_load_op)[0]
-      swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
-          transforms_attr
-      )
-      _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
-      transformed_ref = unwrap_transformed_memref(vector_load_op.base, transforms_attr)
-      fragmented_array = fa.FragmentedArray.load_tiled(
-          transformed_ref,
-          swizzle=swizzle,
-          is_signed=is_signed,
-          layout=layout,
-      )
-    else:
-      is_tmem_native = layout == tcgen05.TMEM_NATIVE_LAYOUT
-      fragmented_array = fa.FragmentedArray.load_untiled(
-          vector_load_op.base,
-          layout=layout,
-          optimized=not is_tmem_native,
-      )
+    return [_fragmented_array_to_ir(fragmented_array)]
 
-  else:
+  if not layouts.is_tiled_layout(out_layout_attr):
     raise ValueError(
         f"{vector_load_op} has an unsupported layout: {out_layout_attr}"
     )
-  return [fragmented_array_to_ir(fragmented_array, vector_load_op.result.type)]
+
+  layout = layouts.from_tiled_layout_attr(out_layout_attr)
+  ref_ty = ir.MemRefType(vector_load_op.base.type)
+  if ref_ty.memory_space is None:  # GMEM
+    fragmented_array = fa.FragmentedArray.load_untiled(
+        vector_load_op.base,
+        layout=layout,
+        optimized=False,
+    )
+    return [_fragmented_array_to_ir(fragmented_array)]
+
+  if ref_ty.memory_space != utils.smem():
+    raise ValueError(f"Unsupported memory space: {ref_ty.memory_space}")
+
+  transforms_attr = inference_utils.in_transforms(vector_load_op)[0]
+  swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+      transforms_attr
+  )
+  has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
+  if has_transforms:
+    transforms_attr = inference_utils.in_transforms(vector_load_op)[0]
+    swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+        transforms_attr
+    )
+    _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
+    transformed_ref = unwrap_transformed_memref(
+        vector_load_op.base, transforms_attr
+    )
+    fragmented_array = fa.FragmentedArray.load_tiled(
+        transformed_ref,
+        swizzle=swizzle,
+        is_signed=is_signed,
+        layout=layout,
+    )
+  else:
+    is_tmem_native = layout == tcgen05.TMEM_NATIVE_LAYOUT
+    fragmented_array = fa.FragmentedArray.load_untiled(
+        vector_load_op.base,
+        layout=layout,
+        optimized=not is_tmem_native,
+    )
+
+  return [_fragmented_array_to_ir(fragmented_array)]
 
 
 @_register_lowering(vector.StoreOp)
@@ -495,26 +508,26 @@ def _vector_store_op_lowering_rule(
   if ctx.auto_barriers:
     mgpu_utils.warpgroup_barrier()  # Make sure the reads have completed.
 
-  unwrapped_ref = vector_store_op.base
-  swizzle = None
-  has_transforms = False
-  if inference_utils.should_have_transforms(vector_store_op):
-    # Not all vector loads have transforms. E.g. if the store is directly to
-    # gmem, it won't have any transforms.
+  ref = vector_store_op.base
+  ref_type = ir.MemRefType(ref.type)
+
+  if ref_type.memory_space is None:  # GMEM
+    fragmented_array.store_untiled(ref, optimized=False)
+  elif ref_type.memory_space == utils.smem():
     transforms_attr = inference_utils.in_transforms(vector_store_op)[0]
     swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
         transforms_attr
     )
-    has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms != ()
-    ref_ty = ir.MemRefType(vector_store_op.base.type)
-    _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
-    unwrapped_ref = unwrap_transformed_memref(vector_store_op.base, transforms_attr)
-
-  if has_transforms:
-    fragmented_array.store_tiled(unwrapped_ref, swizzle)
+    has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
+    if has_transforms:
+      _check_transforms_and_swizzle_are_supported(ref_type, transforms, swizzle)
+      unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
+      fragmented_array.store_tiled(unwrapped_ref, swizzle)
+    else:
+      is_tmem_native = fragmented_array.layout == tcgen05.TMEM_NATIVE_LAYOUT
+      fragmented_array.store_untiled(ref, optimized=not is_tmem_native)
   else:
-    is_tmem_native = fragmented_array.layout == tcgen05.TMEM_NATIVE_LAYOUT
-    fragmented_array.store_untiled(unwrapped_ref, optimized=not is_tmem_native)
+    raise ValueError(f"Unsupported memory space: {ref_type.memory_space}")
 
   if ctx.auto_barriers:
     mgpu_utils.warpgroup_barrier()  # Make sure the writes have completed.
