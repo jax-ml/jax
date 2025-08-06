@@ -295,7 +295,7 @@ class ufunc:
 
     if arr.shape[0] == 0:
       if initial is None:
-        raise ValueError(f"zero-size array to reduction operation {self.__name__} which has no ideneity")
+        raise ValueError(f"zero-size array to reduction operation {self.__name__} which has no identity")
       return lax.full(final_shape, initial, dtype)
 
     def body_fun(i, val):
