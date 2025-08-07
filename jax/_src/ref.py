@@ -12,14 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__all__ = ['AbstractRef', 'ArrayRef', 'addupdate', 'array_ref', 'freeze', 'get', 'set', 'swap']
+from jax._src import core
+from jax._src.typing import Array
 
-from jax._src.core import ArrayRef, freeze
-from jax._src.ref import array_ref
-from jax._src.state.types import AbstractRef
-from jax._src.state.primitives import (
-    ref_get as get,
-    ref_set as set,
-    ref_swap as swap,
-    ref_addupdate as addupdate,
-)
+
+def array_ref(init_val: Array) -> core.ArrayRef:
+  """Create a mutable array reference with initial value `init_val`."""
+  return core.array_ref_p.bind(init_val, memory_space=None)

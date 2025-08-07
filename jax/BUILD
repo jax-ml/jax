@@ -224,6 +224,7 @@ py_library_providing_imports_info(
         "//jax/_src:profiler",
         "//jax/_src:public_test_util",
         "//jax/_src:random",
+        "//jax/_src:ref",
         "//jax/_src:scipy",
         "//jax/_src:shard_alike",
         "//jax/_src:shard_map",
