@@ -200,7 +200,7 @@ def ref_addupdate(
   "Mutates a ref with an additive update, like `ref[idx] += x`."
   ref, transforms = get_ref_and_transforms(ref, idx, "ref_addupdate")
   flat_transforms, tree = tree_util.tree_flatten(transforms)
-  return addupdate_p.bind(ref, x, *flat_transforms, tree=tree)
+  addupdate_p.bind(ref, x, *flat_transforms, tree=tree)
 
 
 ## get/set/addupdate abstract evaluation rules
