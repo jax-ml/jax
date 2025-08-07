@@ -268,6 +268,8 @@ py_library_providing_imports_info(
         "@local_config_cuda//cuda:runtime_nvdisasm",
         "@local_config_cuda//cuda:runtime_ptxas",
         "@nvidia_nvshmem//:libnvshmem_device",
+        # OSS-only dependency.
+        "@cuda_nvcc//:nvdisasm",
     ]),
     lib_rule = pytype_strict_library,
     visibility = [
