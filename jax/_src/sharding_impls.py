@@ -1065,7 +1065,8 @@ def flatten_spec(spec):
 
 @util.cache()
 def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
-                          api_name: str, check_mesh_consistency: bool = True
+                          api_name: str, check_mesh_consistency: bool = True,
+                          none_sharding_for_auto_manual: bool = True,
                           ) -> NamedSharding | None:
   if sharding is None:
     return None
@@ -1105,17 +1106,8 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
     if isinstance(sharding.mesh, mesh_lib.Mesh):
       sharding = NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
 
-  for s in flatten_spec(sharding.spec):
-    if s is None:
-      continue
-    if sharding.mesh._name_to_type[s] in {
-        mesh_lib.AxisType.Auto, mesh_lib.AxisType.Manual}:
-      raise ValueError(
-          f'PartitionSpec passed to {api_name} cannot contain axis'
-          ' names that are of type Auto or Manual. Got PartitionSpec:'
-          f' {sharding.spec} with axis name: {s} of type:'
-          f' {sharding.mesh._name_to_type[s]}. This error occurs at source: '
-          f' {source_info_util.summarize(source_info_util.current())}')
+  if none_sharding_for_auto_manual and sharding.mesh._are_all_axes_auto_or_manual:
+    return None
   return sharding
 
 
