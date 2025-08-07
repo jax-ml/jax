@@ -272,18 +272,18 @@ class LoggingTest(jtu.JaxTestCase):
     """
 
     o = _run(program, { "JAX_LOGGING_LEVEL": "DEBUG" })
-    self.assertIn("Initializing CoordinationService", o.stderr)
+    self.assertIn("Initializing CoordinationService", o.stderr + o.stdout)
 
     o = _run(program, { "JAX_LOGGING_LEVEL": "INFO" })
-    self.assertIn("Initializing CoordinationService", o.stderr)
+    self.assertIn("Initializing CoordinationService", o.stderr + o.stdout)
 
     # verbose logging: WARNING, None
     o = _run(program, { "JAX_LOGGING_LEVEL": "WARNING" })
-    self.assertNotIn("Initializing CoordinationService", o.stderr)
+    self.assertNotIn("Initializing CoordinationService", o.stderr + o.stdout)
 
     o = _run(program)
     if int(_default_TF_CPP_MIN_LOG_LEVEL) >= 1:
-      self.assertNotIn("Initializing CoordinationService", o.stderr)
+      self.assertNotIn("Initializing CoordinationService", o.stderr + o.stdout)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
