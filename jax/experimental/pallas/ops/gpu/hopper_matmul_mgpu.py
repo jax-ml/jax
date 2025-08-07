@@ -21,6 +21,7 @@ from jax._src import test_util as jtu  # noqa: F401
 from jax.experimental.mosaic.gpu import profiler
 import jax.experimental.pallas as pl
 import jax.experimental.pallas.mosaic_gpu as plgpu
+from jax.extend import backend
 import jax.numpy as jnp
 import numpy as np
 
@@ -122,7 +123,7 @@ def matmul_kernel(a, b, config: TuningConfig):
       )(a_gmem.at[m_slice, :], b_gmem.at[:, n_slice])
       plgpu.wait_smem_to_gmem(0, wait_read_only=True)
 
-  num_sms = jax.local_devices()[0].core_count
+  num_sms = backend.get_default_device().core_count
   f = plgpu.kernel(
       kernel,
       out_shape=jax.ShapeDtypeStruct((m, n), dtype),

@@ -21,6 +21,7 @@ from jax._src import test_util as jtu  # noqa: F401
 from jax.experimental.mosaic.gpu import profiler
 import jax.experimental.pallas as pl
 import jax.experimental.pallas.mosaic_gpu as plgpu
+from jax.extend import backend
 import jax.numpy as jnp
 import numpy as np
 
@@ -195,7 +196,7 @@ def matmul_kernel(a, b, config: TuningConfig):
         plgpu.wait_load_tmem()  # Load must complete before we continue.
         plgpu.barrier_arrive(store_done_barrier.at[acc_slot])
 
-  num_sms = jax.local_devices()[0].core_count
+  num_sms = backend.get_default_device().core_count
   f = plgpu.kernel(
       kernel,
       out_shape=jax.ShapeDtypeStruct((m, n), dtype),
