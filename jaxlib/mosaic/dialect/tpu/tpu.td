@@ -942,6 +942,15 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     // Smaller number means higher priority. 0 is the highest and the default.
     DefaultValuedAttr<I32Attr, "0">:$priority
   );
+  let assemblyFormat = [{
+    `source` `(` $source `:` type($source) `)`
+    `target` `(` $target `:` type($target) `)`
+    (`source_semaphore` `(` $source_semaphore^ `:` type($source_semaphore) `)`)?
+    `target_semaphore` `(` $target_semaphore `:` type($target_semaphore) `)`
+    (`device_id` `(` $device_id^ `)`)?
+    (`core_id` `(` $core_id^ `)`)?
+    attr-dict
+  }];
   let hasVerifier = 1;
 }
 
@@ -981,8 +990,13 @@ def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma">, IndirectDMAOp {
     DefaultValuedAttr<BoolAttr, "false">:$add
   );
   let assemblyFormat = [{
-    $source `to` $target `at` $offsets `,` `semaphore` $semaphore (`offset_filter` $offset_filter^)? attr-dict `:` type($source) `,` type($target) `,` type($offsets) `,` type($semaphore)
-    }];
+    `source` `(` $source `:` type($source) `)`
+    `target` `(` $target `:` type($target) `)`
+    `offsets` `(` $offsets `:` type($offsets) `)`
+    (`offset_filter` `(` $offset_filter^ `)`)?
+    `semaphore` `(` $semaphore `:` type($semaphore) `)`
+    attr-dict
+  }];
   let hasVerifier = 1;
   let extraClassDeclaration = extraBaseClassDeclaration # [{
     LogicalResult verifyGather(MemRefType operand_ty,
