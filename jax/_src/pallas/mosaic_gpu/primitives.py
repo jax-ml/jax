@@ -2728,7 +2728,14 @@ def _async_load_tmem_lowering_rule(
   layout_hint = None
   if isinstance(ctx.out_layout_hint, mgpu.TiledLayout):
     layout_hint = ctx.out_layout_hint
-  return x_tmem.load(layout=layout_hint)
+  aval = ctx.avals_out[0]
+  if jnp.issubdtype(aval.dtype, jnp.signedinteger):
+    is_signed = True
+  elif jnp.issubdtype(aval.dtype, jnp.unsignedinteger):
+    is_signed = False
+  else:
+    is_signed = None
+  return x_tmem.load(layout=layout_hint, is_signed=is_signed)
 
 
 wait_load_tmem_p = jax_core.Primitive("wait_load_tmem")

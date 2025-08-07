@@ -3056,6 +3056,70 @@ class PallasCallSm100ATest(PallasSm100ATest):
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_array_equal(x_result, (x + 1)[:, 0:128])
 
+  @parameterized.product(
+      m=[64, 128],
+      n=[64, 128, 256],
+      swizzle=[64, 32],
+      dtype=[jnp.int8, jnp.uint8]
+  )
+  def test_integer_matmul(self, m, n, swizzle, dtype):
+    self.skip_if_wg_semantics()
+    if n * jnp.dtype(dtype).itemsize <= swizzle:
+      self.skipTest("swizzle too big")
+    k = 128
+    is_signed = jnp.issubdtype(dtype, jnp.signedinteger)
+    o_dtype = jnp.int32
+
+    def get_transforms(dtype, swizzle):
+      swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+
+      transforms = (
+          plgpu.TilingTransform((8, swizzle_elems)),
+          plgpu.SwizzleTransform(swizzle),
+      )
+      return transforms
+
+    transforms = get_transforms(dtype, swizzle)
+
+    def kernel(a_smem, b_smem, out_ref, acc_tmem, scratch_smem, barrier_ref):
+      plgpu.tcgen05_mma(
+          acc_tmem, a_smem, b_smem, barrier_ref, accumulate=False
+      )
+      plgpu.barrier_wait(barrier_ref)
+      scratch_smem[...] = plgpu.async_load_tmem(acc_tmem)
+      plgpu.commit_smem()
+
+      plgpu.copy_smem_to_gmem(scratch_smem, out_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    scratch_shapes = [
+        plgpu.TMEM((m, n), o_dtype, packed=False),
+        plgpu.SMEM((m, n), o_dtype, transforms=get_transforms(o_dtype, 128)),
+        plgpu.Barrier(orders_tensor_core=True),
+    ]
+
+    f = self.pallas_call(
+        kernel,
+        in_specs=(
+            plgpu.BlockSpec(transforms=transforms, memory_space=plgpu.SMEM),
+            plgpu.BlockSpec(transforms=transforms, memory_space=plgpu.SMEM),
+        ),
+        out_specs=plgpu.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct((m, n), o_dtype),
+        scratch_shapes=scratch_shapes,
+    )
+    # use small values to avoid overflow, [0, 8) for u8 and (-8, 8) for s8
+    random_int_input = lambda key, shape: jax.random.randint(
+        key, minval=-8 * is_signed, maxval=8, shape=shape, dtype=dtype
+    )
+
+    x = random_int_input(jax.random.key(0), shape=(m, k))
+    y = random_int_input(jax.random.key(1), shape=(k, n))
+
+    result = f(x, y)
+    expected = x.astype(o_dtype) @ y.astype(o_dtype)
+    np.testing.assert_array_equal(result, expected)
+
   @parameterized.product(m=[64, 128],
                          n=[64, 128, 256],
                          swizzle=[128, 64, 32],
