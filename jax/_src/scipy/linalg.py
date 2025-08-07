@@ -2399,7 +2399,7 @@ def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, *, method: str = "
     X = X.real
 
   return lax.cond(
-    jnp.any(jnp.abs(jnp.add.outer(jnp.linalg.eigvals(A), jnp.linalg.eigvals(B))) < tol),
-    lambda: jnp.zeros_like(X) * jnp.nan,
+    jnp.any(jnp.abs(jnp.linalg.eigvals(A)[:, None] + jnp.linalg.eigvals(B)[None, :]) < tol),
+    lambda: jnp.zeros_like(X) * float("nan"),
     lambda: X,
   )
