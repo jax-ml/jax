@@ -7432,37 +7432,24 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 1), ('x', 'y'))
   def test_wsc_error(self, mesh):
-    s = NamedSharding(mesh, P('x'))
-    with self.assertRaisesRegex(
-        ValueError,
-        "The spec of NamedSharding passed to with_sharding_constraint"):
-      jax.lax.with_sharding_constraint(np.arange(8), s)
-
-    s = NamedSharding(mesh, P(('x', 'y'), None))
-    with self.assertRaisesRegex(
-        ValueError,
-        "The spec of NamedSharding passed to with_sharding_constraint"):
-      jax.lax.with_sharding_constraint(np.arange(8).reshape(4, 2), s)
-
-    with self.assertRaisesRegex(
-        ValueError,
-        'with_sharding_constraint cannot be used when all axes of the mesh are'
-        ' of type `Explicit`'):
-      jax.lax.with_sharding_constraint(np.arange(8), NamedSharding(mesh, P()))
-
-    s = NamedSharding(Mesh(mesh.devices, mesh.axis_names,
-                           axis_types=(AxisType.Explicit, AxisType.Auto)),
-                      P('x', P.UNCONSTRAINED))
-    with self.assertRaisesRegex(
-        ValueError,
-        "The spec of NamedSharding passed to with_sharding_constraint"):
-      jax.lax.with_sharding_constraint(np.arange(8).reshape(4, 2), s)
-
     with self.assertRaisesRegex(
         ValueError,
         'PartitionSpec.*cannot contain `P.UNCONSTRAINED` when no mesh'
         ' axis_types are `Auto`'):
       NamedSharding(mesh, P(P.UNCONSTRAINED))
+
+    @jax.jit
+    def f(x):
+      return jax.lax.with_sharding_constraint(x, P('x'))
+
+    with self.assertRaisesRegex(
+        AssertionError,
+        '`with_sharding_constraint` acts as an assert when all axes of mesh are'
+        ' of type `Explicit`'):
+      f(jax.device_put(np.arange(8), P()))
+
+    jaxpr = f.trace(jax.device_put(np.arange(8), P('x'))).jaxpr
+    self.assertNotIn('sharding_constraint', str(jaxpr))
 
   def test_pspec_einsum_no_context_mesh(self):
     mesh = jtu.create_mesh((1, 1), ('x', 'y'),

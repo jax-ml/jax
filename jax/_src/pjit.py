@@ -2647,25 +2647,33 @@ core.pp_eqn_rules[jit_p] = _pjit_pp_rule
 
 # -------------------- with_sharding_constraint --------------------
 
-def check_shardings_are_auto(shardings_flat):
-  for s in shardings_flat:
-    if not isinstance(s, NamedSharding):
-      continue
-    mesh = s.mesh.abstract_mesh
-    if not all(mesh._name_to_type[i] == mesh_lib.AxisType.Auto
-               for axes in s.spec
-               if axes is not PartitionSpec.UNCONSTRAINED and axes is not None
-               for i in (axes if isinstance(axes, tuple) else (axes,))):
-      raise ValueError(
-          'The spec of NamedSharding passed to with_sharding_constraint can'
-          f' only refer to Auto axes of the mesh. Got spec={s.spec} and'
-          f' mesh={mesh}. You probably meant to use `reshard` API?')
-
-  cur_mesh = mesh_lib.get_abstract_mesh()
-  if cur_mesh._are_all_axes_explicit:
+def check_shardings_are_auto(s: Sharding) -> None:
+  if not isinstance(s, NamedSharding):
+    return
+  mesh = s.mesh.abstract_mesh
+  if not all(mesh._name_to_type[i] == mesh_lib.AxisType.Auto
+              for axes in s.spec
+              if axes is not PartitionSpec.UNCONSTRAINED and axes is not None
+              for i in (axes if isinstance(axes, tuple) else (axes,))):
     raise ValueError(
-        'with_sharding_constraint cannot be used when all axes of the mesh are'
-        ' of type `Explicit`. Please use the `reshard` API.')
+        'The spec of NamedSharding passed to with_sharding_constraint can'
+        f' only refer to Auto axes of the mesh. Got spec={s.spec} and'
+        f' mesh={mesh}. You probably meant to use `reshard` API?')
+
+def assert_shardings_equal(x_aval, user_sharding: NamedSharding):
+  x_spec = x_aval.sharding.spec
+  user_spec = user_sharding.spec._normalized_spec_for_aval(x_aval.ndim)
+  for x, s in zip(x_spec, user_spec):
+    if s is PartitionSpec.UNCONSTRAINED:
+      continue
+    else:
+      if x != s:
+        raise AssertionError(
+            '`with_sharding_constraint` acts as an assert when all axes of'
+            f' mesh are of type `Explicit`. The array sharding: {x_spec} did'
+            f' not match the sharding provided: {user_spec}. Please use'
+            ' `jax.sharding.reshard` to shard your input to the sharding you'
+            ' want.')
 
 
 def with_sharding_constraint(x, shardings):
@@ -2728,16 +2736,22 @@ def with_sharding_constraint(x, shardings):
       shardings_flat, x_avals_flat, ("",) * len(shardings_flat),
       "with_sharding_constraint arguments",
       allow_uneven_sharding=True)
-  check_shardings_are_auto(shardings_flat)
   check_aval_layout_compatibility(user_layouts_flat, x_avals_flat,
                                   ("",) * len(user_layouts_flat),
                                   "with_sharding_constraint arguments")
 
-  outs = [sharding_constraint_p.bind(xf, sharding=s, layout=l,
-                                     context_mesh=context_mesh,
-                                     unconstrained_dims=ud)
-          for xf, s, l, ud in zip(x_flat, shardings_flat, user_layouts_flat,
-                                  unconstrained_dims)]
+  outs = []
+  for xf, x_aval, s, l, ud in zip(x_flat, x_avals_flat, shardings_flat,
+                                  user_layouts_flat, unconstrained_dims):
+    if (mesh_lib.get_abstract_mesh()._are_all_axes_explicit and l is None and
+        isinstance(s, NamedSharding)):
+      assert_shardings_equal(x_aval, s)
+      outs.append(xf)
+    else:
+      check_shardings_are_auto(s)
+      outs.append(sharding_constraint_p.bind(
+          xf, sharding=s, layout=l, context_mesh=context_mesh,
+          unconstrained_dims=ud))
   return tree_unflatten(tree, outs)
 
 def _identity_fn(x): return x
