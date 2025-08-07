@@ -187,7 +187,8 @@ def TPU_ReductionKind : I32EnumAttr<"ReductionKind", "Reduction kind", [
   I32EnumAttrCase<"MAX", 1, "max">,
   I32EnumAttrCase<"MIN", 2, "min">,
   I32EnumAttrCase<"ARG_MAX", 3, "arg_max">,
-  I32EnumAttrCase<"ARG_MIN", 4, "arg_min">
+  I32EnumAttrCase<"ARG_MIN", 4, "arg_min">,
+  I32EnumAttrCase<"FIND_FIRST_SET", 5, "find_first_set">
 ]> {
     let genSpecializedAttr = 0;
     let cppNamespace = "::mlir::tpu";

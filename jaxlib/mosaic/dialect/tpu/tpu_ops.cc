@@ -1820,9 +1820,11 @@ LogicalResult AllReduceOp::verify() {
     }
     switch (kind) {
       case ReductionKind::SUM:
+      case ReductionKind::FIND_FIRST_SET:
         break;
       default:
-        return emitOpError("Mask all-reduce only supports SUM kind");
+        return emitOpError(
+            "Mask all-reduce only supports SUM and FIND_FIRST_SET kinds");
     }
     return success();
   }
@@ -1851,6 +1853,9 @@ LogicalResult AllReduceOp::verify() {
         return emitOpError(absl::StrFormat(
             "ARG_MAX and ARG_MIN must have i%d output", in_bitwidth));
       }
+      break;
+    case ReductionKind::FIND_FIRST_SET:
+      return emitOpError("Only i1 input is supported for FIND_FIRST_SET");
       break;
   }
   return success();
