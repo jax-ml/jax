@@ -510,22 +510,26 @@ class PgleTest(jtu.JaxTestCase):
 
       # This is ugly, but it does not seem possible to get the AutoPGLE-recompiled
       # executable text (.lower(x).compile().as_text() or similar).
-      def get_new_hlo():
-        additions = set(os.listdir(dump_dir)) - get_new_hlo.seen_files
-        get_new_hlo.seen_files |= additions
-        new_hlos = list(filter(lambda f: f.endswith("_gpu_after_optimizations.txt"), additions))
-        assert len(new_hlos) == 1
-        with open(os.path.join(dump_dir, new_hlos[0])) as ifile:
+      def get_new_files():
+        additions = set(os.listdir(dump_dir)) - get_new_files.seen_files
+        get_new_files.seen_files |= additions
+        new_files = list(filter(lambda f: f.endswith('debug_options'), additions))
+        assert len(new_files) == 1
+        with open(os.path.join(dump_dir, new_files[0])) as ifile:
           return ifile.read()
 
-      get_new_hlo.seen_files = set()
+      get_new_files.seen_files = set()
 
       # Run 1
       self.assertArraysEqual(f(x), expected)
-      self.assertNotIn("command_buffer", get_new_hlo()) # b/376647494 workaround
+      self.assertNotIn(
+          'xla_gpu_enable_command_buffer: 1', get_new_files()
+      )  # b/376647494 workaround
       # Run 2
       self.assertArraysEqual(f(x), expected)
-      self.assertIn("command_buffer", get_new_hlo()) # workaround disabled
+      self.assertIn(
+          'xla_gpu_enable_command_buffer', get_new_files()
+      )  # workaround disabled
 
     api.clear_caches()
     pjit._pgle_profiler_dict.clear()
