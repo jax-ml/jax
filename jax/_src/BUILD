@@ -1552,3 +1552,12 @@ pytype_strict_library(
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
+
+pytype_strict_library(
+    name = "ref",
+    srcs = ["ref.py"],
+    deps = [
+        ":core",
+        ":typing",
+    ],
+)

@@ -11,6 +11,8 @@ API
 .. autosummary::
    :toctree: _autosummary
 
+   AbstractRef
+   ArrayRef
    array_ref
    freeze
    get
