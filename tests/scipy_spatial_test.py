@@ -144,6 +144,38 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=True, tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
+  def testRotationFromQuatScalarFirstBasic(self):
+    """Test that scalar_first parameter correctly reorders quaternion components."""
+    if scipy_version < (1, 14, 0):
+      self.skipTest("Scipy 1.14.0 added the `scalar_first` arg.")
+    
+    # Identity quaternion in scalar-first format: (w=1, x=0, y=0, z=0)
+    quat_scalar_first = jnp.array([1., 0., 0., 0.])
+    # Identity quaternion in scalar-last format: (x=0, y=0, z=0, w=1)
+    quat_scalar_last = jnp.array([0., 0., 0., 1.])
+    
+    # Both should produce the same rotation
+    r1 = jsp_Rotation.from_quat(quat_scalar_first, scalar_first=True)
+    r2 = jsp_Rotation.from_quat(quat_scalar_last, scalar_first=False)
+    
+    # Check that both rotations are equivalent (identity rotation)
+    onp.testing.assert_allclose(r1.as_matrix(), r2.as_matrix(), atol=1e-6)
+    onp.testing.assert_allclose(r1.as_matrix(), jnp.eye(3), atol=1e-6)
+
+  @jtu.sample_product(
+    dtype=float_dtypes,
+    shape=[(4,), (num_samples, 4)],
+  )
+  def testRotationFromQuatScalarFirst(self, shape, dtype):
+    if scipy_version < (1, 14, 0):
+      self.skipTest("Scipy 1.14.0 added the `scalar_first` arg.")
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    jnp_fn = lambda q: jsp_Rotation.from_quat(q, scalar_first=True).as_quat()
+    np_fn = lambda q: osp_Rotation.from_quat(q, scalar_first=True).as_quat().astype(dtype)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=True, tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
   @jtu.sample_product(
     dtype=float_dtypes,
     shape=[(num_samples, 4)],
