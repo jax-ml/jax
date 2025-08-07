@@ -5991,9 +5991,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     arr2 = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
 
     def g(x, y):
-      self.assertTrue(x.aval.sharding.mesh._are_all_axes_manual)
-      self.assertTrue(y.aval.sharding.mesh._are_all_axes_manual)
-      self.assertTrue(mesh_lib.get_abstract_mesh()._are_all_axes_manual)
+      self.assertTrue(x.aval.sharding.mesh.are_all_axes_manual)
+      self.assertTrue(y.aval.sharding.mesh.are_all_axes_manual)
+      self.assertTrue(mesh_lib.get_abstract_mesh().are_all_axes_manual)
       return x * y
 
     @jax.jit
@@ -6017,9 +6017,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     arr2 = jax.device_put(np_inp.T, NamedSharding(mesh, P('y', 'x')))
 
     def g(x, y):
-      self.assertTrue(x.aval.sharding.mesh._are_all_axes_manual)
-      self.assertTrue(y.aval.sharding.mesh._are_all_axes_manual)
-      self.assertTrue(mesh_lib.get_abstract_mesh()._are_all_axes_manual)
+      self.assertTrue(x.aval.sharding.mesh.are_all_axes_manual)
+      self.assertTrue(y.aval.sharding.mesh.are_all_axes_manual)
+      self.assertTrue(mesh_lib.get_abstract_mesh().are_all_axes_manual)
       allgatherd_y = jax.lax.all_gather(y, axis_name='x', axis=1, tiled=True)
       z = x @ allgatherd_y
       return jax.lax.psum(z, axis_name='y')
@@ -6879,8 +6879,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     def f(condition, x, y):
       condition = jnp.asarray(condition)
-      self.assertTrue(x.aval.sharding.mesh._are_all_axes_auto)
-      self.assertTrue(y.aval.sharding.mesh._are_all_axes_auto)
+      self.assertTrue(x.aval.sharding.mesh.are_all_axes_auto)
+      self.assertTrue(y.aval.sharding.mesh.are_all_axes_auto)
       x1 = jnp.asarray(x)
       self.assertEqual(x1.aval.sharding, x.aval.sharding)
       y1 = jnp.asarray(y)
@@ -7606,7 +7606,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   def test_auto_axes_numpy_array(self, mesh):
     @jax.jit
     def f(x):
-      self.assertTrue(x.aval.sharding.mesh._are_all_axes_auto)
+      self.assertTrue(x.aval.sharding.mesh.are_all_axes_auto)
       return x * 2
 
     out = auto_axes(f, out_sharding=P('x'))(np.arange(8))
@@ -8827,6 +8827,33 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = jnp.einsum('ab,bc,ac->c', AB, BC, AC, out_sharding=jax.P())
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None)))
+
+  def test_auto_axes_no_op(self):
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'))
+    with jax.set_mesh(mesh):
+      @auto_axes(out_sharding=P('x'))
+      def f(x):
+        return x * 2
+      jax.jit(f)(jnp.arange(8))  # doesn't crash
+      jaxpr = jax.jit(f).trace(jnp.arange(8)).jaxpr
+      self.assertNotIn('mesh_cast', str(jaxpr))
+
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'),
+                           axis_types=(AxisType.Auto, AxisType.Explicit))
+    with jax.set_mesh(mesh):
+      @auto_axes(out_sharding=P('y'), axes='x')
+      def f(x):
+        return x * 2
+      jax.jit(f)(jnp.arange(8))  # doesn't crash
+      jaxpr = jax.jit(f).trace(jnp.arange(8)).jaxpr
+      self.assertNotIn('mesh_cast', str(jaxpr))
+
+      @auto_axes(out_sharding=P('y'))
+      def f(x):
+        return x * 2
+      jax.jit(f)(jnp.arange(8))  # doesn't crash
+      jaxpr = jax.jit(f).trace(jnp.arange(8)).jaxpr
+      self.assertEqual(str(jaxpr).count('mesh_cast'), 2)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

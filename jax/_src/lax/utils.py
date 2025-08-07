@@ -58,7 +58,7 @@ def _get_abstract_mesh_from_avals(in_avals) -> mesh_lib.AbstractMesh:
     if a.sharding.mesh.empty:
       continue
     if m is not None and m != a.sharding.mesh:
-      if m._are_all_axes_auto and a.sharding.mesh._are_all_axes_auto:
+      if m.are_all_axes_auto and a.sharding.mesh.are_all_axes_auto:
         return mesh_lib.empty_abstract_mesh
       raise ValueError(
           f'Mesh for all inputs should be equal. Got one mesh: {m} and'
