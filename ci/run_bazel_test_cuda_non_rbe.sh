@@ -90,6 +90,7 @@ set +e
 # should match the VM's CPU core count (set in `--local_test_jobs`).
 bazel test --config=$TEST_CONFIG \
       $CACHE_OPTION \
+      --config=use_tar_archive_files \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
@@ -119,6 +120,7 @@ echo "Running multi-accelerator tests (without RBE)..."
 # Runs multiaccelerator tests with all GPUs directly on the VM without RBE..
 bazel test --config=$TEST_CONFIG \
       $CACHE_OPTION \
+      --config=use_tar_archive_files \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \

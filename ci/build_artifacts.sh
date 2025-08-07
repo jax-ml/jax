@@ -90,14 +90,17 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
     fi
   fi
 
+  use_tar_archive_files=""
   # Use the "_cuda" configs when building the CUDA artifacts.
   if [[ ("$artifact" == "jax-cuda-plugin") || ("$artifact" == "jax-cuda-pjrt") ]]; then
     bazelrc_config="${bazelrc_config}_cuda"
+    use_tar_archive_files="--bazel_options=--config=use_tar_archive_files"
   fi
 
   # Build the artifact.
   python build/build.py build --wheels="$artifact" \
     --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
+    $use_tar_archive_files \
     --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
     --verbose --detailed_timestamped_log --use_new_wheel_build_rule \
     --output_path="$JAXCI_OUTPUT_DIR" \
@@ -108,6 +111,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
   if [[ "$JAXCI_ARTIFACT_TYPE" == "release" ]]; then
     python build/build.py build --wheels="$artifact" \
       --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
+      $use_tar_archive_files \
       --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
       --verbose --detailed_timestamped_log --use_new_wheel_build_rule \
       --output_path="$JAXCI_OUTPUT_DIR" \
