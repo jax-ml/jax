@@ -355,13 +355,41 @@ def TPU_ShuffledStoreOp : TPU_Op<"shuffled_store", [DefaultMemWrite]> {
   let hasCanonicalizeMethod = 1;
 }
 
+// tpu.vector_load_idx loads values from arbitrary locations in memory.
+//
+// Each element in the output vector is loaded from an index in the base memref
+// specified by the corresponding elements in the 'indices' vectors. The shape
+// of each index vector must match the shape of the output vector. The number
+// of index vectors must equal the rank of the base memref.
+//
+// For example, for a vector of length n with rank 2, the indices will look like:
+//   indices = [[idx0, idx1, ...], [idxn, idxn+1, ...]]
+// where [idx0, idxn] is the offset of the first vector element.
+//
+//  base        : Memref specifying the base address.
+//  indices     : Vectors of indices for each dimension of the base memref.
+//  mask        : Optional elementwise vector mask.
+def TPU_VectorLoadIdxOp :TPU_Op<"vector_load_idx", [DefaultMemRead, AttrSizedOperandSegments]> {
+  let arguments = (ins
+    MemRefOf<[I32, F32]>:$base,
+    Variadic<VectorOfNonZeroRankOf<[I32]>>:$indices,
+    Optional<VectorOfNonZeroRankOf<[I1]>>:$mask
+  );
+  let results = (outs VectorOfNonZeroRankOf<[I32, F32]>:$value);
+  let assemblyFormat = [{
+    $base `[` $indices `]` (`masked` $mask^)? attr-dict `:` type($base) `[` type($indices) `]` `,` type($value) `,` type($mask)
+  }];
+  let hasVerifier = 1;
+}
+
 // tpu.vector_store_idx stores values to arbitrary locations in memory.
 //
-// Each input vector element has a corresponding index variadic which can be
-// found in the corresponding position of each vector in indices. The index
-// argument is thus a variadic of vectors of the same size of the input vector
-// rank, and each vector is the same length as the input vector. For example,
-// for a vector of length n with rank 2, the indices will look like:
+// Each element in the input vector is stored to an index in the base memref
+// specified by the corresponding elements in the 'indices' vectors. The shape
+// of each index vector must match the shape of the input vector. The number
+// of index vectors must equal the rank of the base memref.
+//
+// For example, for a vector of length n with rank 2, the indices will look like:
 //   indices = [[idx0, idx1, ...], [idxn, idxn+1, ...]]
 // where [idx0, idxn] is the offset of the first vector element.
 //
@@ -371,7 +399,7 @@ def TPU_ShuffledStoreOp : TPU_Op<"shuffled_store", [DefaultMemWrite]> {
 //
 //  valueToStore: Vector to be stored.
 //  base        : Memref specifying the base address.
-//  indices     : Offset of each element relative to the base address to store to.
+//  indices     : Vectors of indices for each dimension of the base memref.
 //  mask        : Optional elementwise vector mask.
 //  add         : If true, add source values to target values. Otherwise, overwrite.
 def TPU_VectorStoreIdxOp :TPU_Op<"vector_store_idx", [DefaultMemWrite, AttrSizedOperandSegments]> {

@@ -698,71 +698,101 @@ LogicalResult StridedStoreOp::verify() {
                                          getValueToStore().getType());
 }
 
-LogicalResult VectorStoreOp::verify() {
-  if (!getStrides().empty()) {
-    return emitError("Not implemented: general vector store with strides.");
-  }
-  VectorType value_ty = getValueToStore().getType();
-  MemRefType ref_ty = getBase().getType();
-
+template <typename Op>
+LogicalResult verifyStoreOp(Op op) {
+  VectorType value_ty = op.getValueToStore().getType();
+  MemRefType ref_ty = op.getBase().getType();
   if (value_ty.getElementType() != ref_ty.getElementType()) {
-    return emitOpError(
-        "Expected base and valueToStore element type should match");
+    return op.emitOpError(
+        "Expected base and valueToStore element type to match");
   }
-  if (llvm::size(getIndices()) != ref_ty.getRank()) {
-    return emitOpError("Expected ") << ref_ty.getRank() << " indices";
-  }
-  if (getMask()) {
+  if (op.getMask()) {
     if (value_ty.getElementTypeBitWidth() != 32) {
-      return emitError(
+      return op.emitError(
           "Not implemented: masked store with non-32-bit element type");
     }
-    if (value_ty.getShape() != getMask().getType().getShape())
-      return emitOpError("Expected valueToStore shape to match mask shape");
+    if (value_ty.getShape() != op.getMask().getType().getShape())
+      return op.emitOpError("Expected mask shape to match result shape: (")
+             << value_ty.getShape() << "). Got: ("
+             << op.getMask().getType().getShape() << ").";
   }
   return success();
 }
 
-LogicalResult VectorLoadOp::verify() {
-  const MemRefType ref_ty = getBase().getType();
+LogicalResult VectorStoreOp::verify() {
   if (!getStrides().empty()) {
-    if (llvm::size(getStrides()) != ref_ty.getRank()) {
-      return emitOpError("Expected ") << ref_ty.getRank() << " strides.";
-    }
-    return emitError("Not implemented: general vector load with strides.");
+    return emitError("Not implemented: general vector store with strides.");
   }
-  const VectorType value_ty = getResult().getType();
-
-  if (value_ty.getElementType() != ref_ty.getElementType()) {
-    return emitOpError("Expected base and result element type to match.");
-  }
+  MemRefType ref_ty = getBase().getType();
   if (llvm::size(getIndices()) != ref_ty.getRank()) {
     return emitOpError("Expected ") << ref_ty.getRank() << " indices.";
   }
-  if (getMask()) {
+  return verifyStoreOp(*this);
+}
+
+template <typename Op>
+LogicalResult verifyLoadOp(Op op) {
+  MemRefType ref_ty = op.getBase().getType();
+  VectorType value_ty = op.getResult().getType();
+  if (value_ty.getElementType() != ref_ty.getElementType()) {
+    return op.emitOpError("Expected base and result element type to match.");
+  }
+  if (op.getMask()) {
     if (value_ty.getElementTypeBitWidth() != 32) {
-      return emitError(
+      return op.emitError(
           "Not implemented: masked load with non-32-bit element type");
     }
-    if (vector::isBroadcastableTo(getMask().getType(), value_ty) !=
+    if (vector::isBroadcastableTo(op.getMask().getType(), value_ty) !=
         vector::BroadcastableToResult::Success) {
-      return emitOpError(
+      return op.emitOpError(
           "Expected mask shape to be broadcastable to result shape.");
     }
   }
   return success();
 }
 
-LogicalResult VectorStoreIdxOp::verify() {
-  VectorType value_ty = getValueToStore().getType();
-  MemRefType ref_ty = getBase().getType();
+LogicalResult VectorLoadOp::verify() {
+  const MemRefType ref_ty = getBase().getType();
+  if (llvm::size(getIndices()) != ref_ty.getRank()) {
+    return emitOpError("Expected ") << ref_ty.getRank() << " indices.";
+  }
+  if (!getStrides().empty()) {
+    if (llvm::size(getStrides()) != ref_ty.getRank()) {
+      return emitOpError("Expected ") << ref_ty.getRank() << " strides.";
+    }
+    return emitError("Not implemented: general vector load with strides.");
+  }
+  return verifyLoadOp(*this);
+}
 
+LogicalResult VectorLoadIdxOp::verify() {
+  VectorType value_ty = getResult().getType();
+  MemRefType ref_ty = getBase().getType();
   if (!HasMemorySpace(ref_ty, MemorySpace::kVmem)) {
     return emitOpError("Expected base memref to be in VMEM.");
   }
+  if (llvm::size(getIndices()) != ref_ty.getRank()) {
+    return emitOpError(
+               "Expected one index vector for each dimension of the base "
+               "memref with dimension: ")
+           << ref_ty.getRank() << ". Got: " << llvm::size(getIndices()) << ".";
+  }
+  for (const auto [i, index] : llvm::enumerate(getIndices())) {
+    VectorType index_ty = llvm::cast<VectorType>(index.getType());
+    if (index_ty.getShape() != value_ty.getShape()) {
+      return emitOpError("Expected ")
+             << value_ty.getShape() << " elements in indices. Got "
+             << index_ty.getShape() << " in index #" << i << ".";
+    }
+  }
+  return verifyLoadOp(*this);
+}
 
-  if (value_ty.getElementType() != ref_ty.getElementType()) {
-    return emitOpError("Expected base and valueToStore element type to match");
+LogicalResult VectorStoreIdxOp::verify() {
+  VectorType value_ty = getValueToStore().getType();
+  MemRefType ref_ty = getBase().getType();
+  if (!HasMemorySpace(ref_ty, MemorySpace::kVmem)) {
+    return emitOpError("Expected base memref to be in VMEM.");
   }
   if (llvm::size(getIndices()) != ref_ty.getRank()) {
     return emitOpError(
@@ -785,18 +815,7 @@ LogicalResult VectorStoreIdxOp::verify() {
              << index_ty.getShape() << " in index #" << i << ".";
     }
   }
-
-  if (getMask()) {
-    if (value_ty.getElementTypeBitWidth() != 32) {
-      return emitOpError(
-          "Not implemented: masked store with non-32-bit element type");
-    }
-    if (value_ty.getShape() != getMask().getType().getShape())
-      return emitOpError("Expected mask shape to match result shape: (")
-             << value_ty.getShape() << "). Got: ("
-             << getMask().getType().getShape() << ").";
-  }
-  return success();
+  return verifyStoreOp(*this);
 }
 
 LogicalResult ReinterpretCastOp::verify() {

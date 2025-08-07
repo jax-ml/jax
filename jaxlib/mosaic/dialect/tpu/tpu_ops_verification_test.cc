@@ -31,7 +31,6 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
-#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/ValueRange.h"
@@ -315,6 +314,102 @@ TEST_F(TpuOpsVerificationTest, UnpackSubelementsInvalidIndex) {
       VerifyOp(unpack),
       StatusIs(
           _, HasSubstr("Index must be between 0 and the packing factor (2)")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorLoadIdxVerificationWorks) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0, 1, 2, 3, 4, 5, 6, 7});
+  auto vl = Create<VectorLoadIdxOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/nullptr);
+
+  ASSERT_OK(VerifyOp(vl));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorLoadIdxInvalidMemorySpace) {
+  Value memref = AllocaI32({8}, MemorySpace::kHbm);
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0, 1, 2, 3, 4, 5, 6, 7});
+  auto vl = Create<VectorLoadIdxOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/nullptr);
+
+  ASSERT_THAT(VerifyOp(vl),
+              StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorLoadIdxInvalidElementType) {
+  Value memref =
+      Create<memref::AllocaOp>(
+          GetMemRefType({8}, builder().getF32Type(), MemorySpace::kVmem))
+          .getMemref();
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0});
+  auto vl = Create<VectorLoadIdxOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(_,
+               HasSubstr("Expected base and result element type to match.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorLoadIdxInvalidIndicesDimension) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value indices = ConstantIndexVector(/*shape=*/{4, 1},
+                                      /*values=*/{0});
+  auto vl = Create<VectorLoadIdxOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices, indices},
+      /*mask=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(_, HasSubstr("Expected one index vector for each dimension of "
+                            "the base memref with dimension: 1. Got: 2.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorLoadIdxValidMask) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0});
+  Value mask = ConstantI32Vector(/*shape=*/{8},
+                                 /*values=*/{1});
+  auto vl = Create<VectorLoadIdxOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/mask);
+
+  ASSERT_OK(VerifyOp(vl));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorLoadIdxInvalidMaskShape) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0});
+  Value mask = ConstantI32Vector(/*shape=*/{4, 2},
+                                 /*values=*/{1});
+  auto vl = Create<VectorLoadIdxOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/mask);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(
+          _, HasSubstr(
+                 "Expected mask shape to be broadcastable to result shape.")));
 }
 
 TEST_F(TpuOpsVerificationTest, VectorStoreIdxVerificationWorks) {
