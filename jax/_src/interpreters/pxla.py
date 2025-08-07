@@ -2277,7 +2277,7 @@ def lower_sharding_computation(
 
   for a in global_out_avals:
     if (a is not core.abstract_token and not a.sharding.mesh.empty and
-        a.sharding.mesh._are_all_axes_explicit and
+        a.sharding.mesh.are_all_axes_explicit and
         len(device_assignment) != a.sharding.mesh.size):
       raise ValueError(
           f"Length of device assignment {len(device_assignment)} is not equal"

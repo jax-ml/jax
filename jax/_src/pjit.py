@@ -2743,7 +2743,7 @@ def with_sharding_constraint(x, shardings):
   outs = []
   for xf, x_aval, s, l, ud in zip(x_flat, x_avals_flat, shardings_flat,
                                   user_layouts_flat, unconstrained_dims):
-    if (mesh_lib.get_abstract_mesh()._are_all_axes_explicit and l is None and
+    if (mesh_lib.get_abstract_mesh().are_all_axes_explicit and l is None and
         isinstance(s, NamedSharding)):
       assert_shardings_equal(x_aval, s)
       outs.append(xf)
@@ -3083,16 +3083,17 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
           'Going from `Manual` AxisType to `Auto` or `Explicit` AxisType is not'
           ' allowed. Please file a bug at https://github.com/jax-ml/jax/issues'
           ' with your use case')
-  return mesh_to_use.update_axis_types({a: axis_type for a in axes})
+  return (mesh_to_use.update_axis_types({a: axis_type for a in axes}),
+          mesh_to_use, axes)
 
 def auto_axes(f=None, /, *, axes: str | tuple[str, ...] | None = None,
               out_sharding=None):
-  kwargs = dict(axes=axes, out_sharding=out_sharding)
+  kwargs = dict(axes_=axes, out_sharding=out_sharding)
   if f is None:
     return lambda g: _auto_axes(g, **kwargs)
   return _auto_axes(f, **kwargs)
 
-def _auto_axes(fun, *, axes, out_sharding):
+def _auto_axes(fun, *, axes_, out_sharding):
   def decorator(*args, **kwargs):
     if out_sharding is None:
       if "out_sharding" in kwargs:
@@ -3101,9 +3102,11 @@ def _auto_axes(fun, *, axes, out_sharding):
         raise TypeError("Missing required keyword argument: 'out_sharding'")
     else:
       _out_sharding = out_sharding
-    new_mesh = _get_new_mesh(
-        axes, mesh_lib.AxisType.Auto, 'auto_axes', shardings=_out_sharding,
+    new_mesh, prev_mesh, axes = _get_new_mesh(
+        axes_, mesh_lib.AxisType.Auto, 'auto_axes', shardings=_out_sharding,
         error_on_manual_to_auto_explicit=True)
+    if set(prev_mesh.auto_axes) == set(axes):
+      return args
     with mesh_lib.use_abstract_mesh(new_mesh):
       in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
           core.get_aval(a).sharding.spec, new_mesh), args)
@@ -3115,7 +3118,7 @@ def _auto_axes(fun, *, axes, out_sharding):
 
 @contextlib.contextmanager
 def use_auto_axes(*axes):
-  new_mesh = _get_new_mesh(axes, mesh_lib.AxisType.Auto, 'use_auto_axes')
+  new_mesh, _, _ = _get_new_mesh(axes, mesh_lib.AxisType.Auto, 'use_auto_axes')
   with mesh_lib.use_abstract_mesh(new_mesh):
     yield
 
@@ -3136,8 +3139,9 @@ def _explicit_axes(fun, *, axes, in_sharding):
         raise TypeError("Missing required keyword argument: 'in_sharding'")
     else:
       _in_sharding = in_sharding
-    new_mesh = _get_new_mesh(axes, mesh_lib.AxisType.Explicit, 'explicit_axes',
-                             error_on_manual_to_auto_explicit=True)
+    new_mesh, _, _ = _get_new_mesh(
+        axes, mesh_lib.AxisType.Explicit, 'explicit_axes',
+        error_on_manual_to_auto_explicit=True)
     with mesh_lib.use_abstract_mesh(new_mesh):
       args = mesh_cast(args, _in_sharding)
       out = fun(*args, **kwargs)
@@ -3149,8 +3153,8 @@ def _explicit_axes(fun, *, axes, in_sharding):
 
 @contextlib.contextmanager
 def use_explicit_axes(*axes):
-  new_mesh = _get_new_mesh(axes, mesh_lib.AxisType.Explicit,
-                           'use_explicit_axes')
+  new_mesh, _, _ = _get_new_mesh(
+      axes, mesh_lib.AxisType.Explicit, 'use_explicit_axes')
   with mesh_lib.use_abstract_mesh(new_mesh):
     yield
 
