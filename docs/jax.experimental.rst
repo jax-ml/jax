@@ -15,6 +15,7 @@ Experimental Modules
     :maxdepth: 1
 
     jax.experimental.checkify
+    jax.experimental.colocated_python
     jax.experimental.compilation_cache
     jax.experimental.custom_dce
     jax.experimental.custom_partitioning
