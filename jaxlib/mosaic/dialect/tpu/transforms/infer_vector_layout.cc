@@ -281,6 +281,10 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::ReduceIndexOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<tpu::BitcastOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -990,6 +994,28 @@ class VectorLayoutInferer {
     VectorLayout layout(bitwidth, {0, 0}, nativeTiling(bitwidth),
                         ImplicitDim::kNone);
     setLayout(op, {layout, layout}, layout);
+    return success();
+  }
+
+  LogicalResult infer(tpu::ReduceIndexOp op) {
+    auto input_ty = op.getInput().getType();
+    int8_t bitwidth = input_ty.getElementTypeBitWidth();
+
+    // TODO(yixiuliu): Support input that is not native-sized vreg.
+    TPU_CHECK_OP(bitwidth == 32, "Not implemented: Only 32-bit supported");
+    TPU_CHECK_OP(input_ty.getRank() == 2,
+                 "Not implemented: Only 2D input supported");
+    TPU_CHECK_OP(op.getAxis() == 1,
+                 "Not implemented: Only axis 1 supported");
+    TPU_CHECK_OP(input_ty.getShape()[0] == target_shape_[0] &&
+                 input_ty.getShape()[1] == target_shape_[1],
+                 "Not implemented: Only native-sized vreg input supported");
+
+    VectorLayout in_layout(bitwidth, {0, 0}, nativeTiling(bitwidth),
+                        ImplicitDim::kNone);
+    VectorLayout out_layout(bitwidth, {0, std::nullopt}, nativeTiling(bitwidth),
+                        ImplicitDim::kMinor);
+    setLayout(op, in_layout, out_layout);
     return success();
   }
 

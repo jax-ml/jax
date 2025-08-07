@@ -4594,6 +4594,11 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
                      : builder.create<arith::MinimumFOp>(loc, lhs, rhs)
                            .getResult();
           break;
+        default:
+          multi_reduction_op.emitOpError(
+              "Not implemented: unsupported reduction kind ")
+              << stringifyReductionKind(tpu_kind);
+          return Value();
       }
       return result;
     };
@@ -4642,7 +4647,8 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     if (reduces[1]) {
       if (src_layout.offsets()[1].has_value()) {
         acc_vreg = builder.create<tpu::AllReduceOp>(
-            multi_reduction_op->getLoc(), *acc_vreg, /* dim= */ 1, tpu_kind);
+            multi_reduction_op->getLoc(), acc_vreg->getType(),
+            *acc_vreg, /* dim= */ 1, tpu_kind);
       } else {
         int64_t size_dim1 = src_layout.getImplicitTiledDims(src_shape, 1)[1];
         if (is_double_replicated_double_reduced) {
@@ -4672,6 +4678,11 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
           case tpu::ReductionKind::MAX:
           case tpu::ReductionKind::MIN:
             break;
+          default:
+            multi_reduction_op.emitOpError(
+                "Not implemented: unsupported reduction kind ")
+                << stringifyReductionKind(tpu_kind);
+            return absl::UnknownError("");
         }
       }
     }
@@ -4702,7 +4713,8 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
       // At this point acc_vreg is always 32-bit.
       if (src_layout.offsets()[0].has_value()) {
         acc_vreg = builder.create<tpu::AllReduceOp>(
-            multi_reduction_op->getLoc(), *acc_vreg, 0, tpu_kind);
+            multi_reduction_op->getLoc(), acc_vreg->getType(),
+            *acc_vreg, 0, tpu_kind);
       } else if (!is_double_replicated_double_reduced) {
         int64_t size_dim0 = src_layout.getImplicitTiledDims(src_shape, 1)[0];
         switch (tpu_kind) {
@@ -4728,6 +4740,11 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
           case tpu::ReductionKind::MAX:
           case tpu::ReductionKind::MIN:
             break;
+          default:
+            multi_reduction_op.emitOpError(
+                "Not implemented: unsupported reduction kind ")
+                << stringifyReductionKind(tpu_kind);
+            return absl::UnknownError("");
         }
       }
       // We pack the final result back into the original type.
@@ -4751,6 +4768,61 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
   multi_reduction_op->replaceAllUsesWith(
       assemble(builder, res_ty, dst_layout, dst_vregs, ctx.target_shape));
   multi_reduction_op->erase();
+  return success();
+}
+
+LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
+                                    const ArrayRef<Layout> layouts_in,
+                                    const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_EQ_OP(layouts_in.size(), 1);
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
+  TPU_ASSERT_OP(layouts_in.front().has_value());
+  TPU_ASSERT_OP(llvm::none_of(layouts_in.drop_front(),
+                              [&](const Layout &l) { return l.has_value(); }));
+  const VectorLayout &in_layout = *layouts_in.front();
+  const VectorLayout &out_layout = *layouts_out.front();
+  // TODO(yixiuliu): Support input that is not native-sized vreg.
+  TPU_ASSERT_OP(in_layout ==
+                VectorLayout(32, {0, 0}, ctx.target_shape,
+                             VectorLayout::ImplicitDim::kNone));
+  TPU_ASSERT_OP(out_layout ==
+                VectorLayout(32, {0, std::nullopt}, ctx.target_shape,
+                             VectorLayout::ImplicitDim::kMinor));
+
+  tpu::ReduceIndexOp reduce_index_op = cast<tpu::ReduceIndexOp>(op);
+
+  auto in_ty = cast<VectorType>(reduce_index_op.getInput().getType());
+  auto out_ty = cast<VectorType>(reduce_index_op.getResult().getType());
+  if (!in_ty.getElementType().isF32()) {
+    return op.emitOpError("Not implemented: Only f32 input is supported");
+  }
+  if (!out_ty.getElementType().isSignlessInteger(32)) {
+    return op.emitOpError("Not implemented: Only i32 output is supported");
+  }
+  TPU_ASSERT_EQ_OP(reduce_index_op.getAxis(), in_ty.getRank() - 1);
+
+  OpBuilder builder(&op);
+  FAILUREOR_ASSIGN_OR_RETURN(
+    xla::Array<Value> tiles,
+    disassemble(builder, in_layout, reduce_index_op.getInput(),
+                ctx.target_shape));
+  TPU_ASSERT_OP((tiles.dimensions() == xla::DimensionVector{1, 1}));
+
+  VectorType index_ty = VectorType::get(
+      ctx.target_shape, builder.getIntegerType(32));
+
+  Value out_vreg;
+  out_vreg = builder.create<tpu::AllReduceOp>(
+      reduce_index_op.getLoc(), index_ty,
+      tiles({0, 0}), /* dim= */ 1, reduce_index_op.getKind());
+
+  xla::Array<Value> out_vregs = xla::Array<Value>(
+      xla::DimensionVector{1}, out_vreg);
+
+  reduce_index_op->replaceAllUsesWith(
+    assemble(builder, out_ty, out_layout, out_vregs, ctx.target_shape));
+
+  reduce_index_op->erase();
   return success();
 }
 
@@ -7938,6 +8010,7 @@ const llvm::StringMap<rule_type> &rules() {
         {tpu::IotaOp::getOperationName(), tpu_iota_rule},
         {tpu::GatherOp::getOperationName(), tpu_gather_rule},
         {tpu::DynamicGatherOp::getOperationName(), tpu_dynamic_gather_rule},
+        {tpu::ReduceIndexOp::getOperationName(), tpu_reduce_index_rule},
         {tpu::LoadOp::getOperationName(), tpu_load_rule},
         {tpu::StoreOp::getOperationName(), tpu_store_rule},
         {tpu::StridedLoadOp::getOperationName(), tpu_strided_load_rule},

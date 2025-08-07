@@ -185,7 +185,9 @@ def DefaultMemRead : MemoryEffects<[MemRead<DefaultResource>]>;
 def TPU_ReductionKind : I32EnumAttr<"ReductionKind", "Reduction kind", [
   I32EnumAttrCase<"SUM", 0, "sum">,
   I32EnumAttrCase<"MAX", 1, "max">,
-  I32EnumAttrCase<"MIN", 2, "min">
+  I32EnumAttrCase<"MIN", 2, "min">,
+  I32EnumAttrCase<"ARG_MAX", 3, "arg_max">,
+  I32EnumAttrCase<"ARG_MIN", 4, "arg_min">
 ]> {
     let genSpecializedAttr = 0;
     let cppNamespace = "::mlir::tpu";
@@ -196,12 +198,24 @@ def TPU_ReductionKindAttr
     let assemblyFormat = "`<` $value `>`";
 }
 
-def TPU_AllReduceOp : TPU_Op<"all_reduce", [Pure, SameOperandsAndResultType]> {
+def TPU_AllReduceOp : TPU_Op<"all_reduce", [Pure, SameOperandsAndResultShape]> {
   let arguments = (ins AnyVectorOfNonZeroRank:$input, I64Attr:$dim, TPU_ReductionKindAttr:$kind);
   let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{
-    $input attr-dict `:` type($input)
+    $input attr-dict `:` type($input) `->` type($output)
   }];
+  let hasVerifier = 1;
+}
+
+def TPU_ReduceIndexOp : TPU_Op<"reduce_index", [Pure]> {
+  let arguments = (ins
+    AnyVectorOfNonZeroRank:$input,
+    I32Attr:$axis,
+    TPU_ReductionKindAttr:$kind
+  );
+  let results = (outs VectorOfNonZeroRankOf<[I32]>:$output);
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+  let hasVerifier = 1;
 }
 
 def TPU_StoreOp : TPU_Op<"store", [DefaultMemWrite, AttrSizedOperandSegments]> {

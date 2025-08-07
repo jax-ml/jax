@@ -1804,6 +1804,86 @@ LogicalResult DynamicGatherOp::verify() {
   return success();
 }
 
+LogicalResult AllReduceOp::verify() {
+  auto in_ty = getInput().getType();
+  auto out_ty = getOutput().getType();
+  auto bitwidth = in_ty.getElementTypeBitWidth();
+  auto kind = getKind();
+  switch (kind) {
+    case ReductionKind::SUM:
+    case ReductionKind::MAX:
+    case ReductionKind::MIN:
+      if (in_ty != out_ty) {
+        return emitOpError(
+            "SUM, MAX, and MIN reductions must have the same "
+            "input and output type");
+      }
+      break;
+    case ReductionKind::ARG_MAX:
+    case ReductionKind::ARG_MIN:
+      if (!in_ty.getElementType().isF32()) {
+        return emitOpError("Not Implemented: Only f32 input is supported for "
+                           "ARG_MAX and ARG_MIN");
+      }
+      if (!out_ty.getElementType().isSignlessInteger(bitwidth)) {
+        return emitOpError(absl::StrFormat(
+            "ARG_MAX and ARG_MIN must have i%d output", bitwidth));
+      }
+      break;
+  }
+  return success();
+}
+
+LogicalResult ReduceIndexOp::verify() {
+  auto in_ty = getInput().getType();
+  auto out_ty = getOutput().getType();
+  auto bitwidth = in_ty.getElementTypeBitWidth();
+  auto axis = getAxis();
+  auto kind = getKind();
+  if (kind != ReductionKind::ARG_MAX && kind != ReductionKind::ARG_MIN) {
+    return emitOpError("Reduction kind must be ARG_MAX or ARG_MIN");
+  }
+  if (!in_ty.getElementType().isF32()) {
+    return emitOpError("Not Implemented: Only f32 input is supported for "
+                       "ARG_MAX and ARG_MIN");
+  }
+  if (!out_ty.getElementType().isSignlessInteger(bitwidth)) {
+    return emitOpError(absl::StrFormat(
+        "ARG_MAX and ARG_MIN must have i%d output", bitwidth));
+  }
+
+  auto in_shape = in_ty.getShape();
+  auto out_shape = out_ty.getShape();
+  if (axis < 0 || axis >= in_shape.size()) {
+    return emitOpError("Axis must be in [0, ")
+           << in_shape.size() << "), but got " << axis;
+  }
+
+  if (in_shape.size() != 2) {
+    return emitOpError("Not Implemented: Only 2D input is supported");
+  }
+  if (axis != 1) {
+    return emitOpError("Not Implemented: Only axis 1 is supported");
+  }
+  if (out_shape.size() != in_shape.size() - 1) {
+    return emitOpError("Output rank must be one less than input rank");
+  }
+  int out_dim = 0;
+  for (int i = 0; i < in_shape.size(); ++i) {
+    if (i == axis) {
+      continue;
+    }
+    if (in_shape[i] != out_shape[out_dim]) {
+      return emitOpError(
+          "Output shape must match input shape on non-reduction dimensions. ")
+          << "Output shape (" << out_shape << ") does not match input shape ("
+          << in_shape << ") at input dimension " << i;
+    }
+    out_dim++;
+  }
+  return success();
+}
+
 LogicalResult AssumeMultipleOp::verify() {
   auto operand_value = getValue();
   auto divisor = getMultiple();
