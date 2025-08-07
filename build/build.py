@@ -283,13 +283,12 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
 
   compile_group.add_argument(
       "--use_clang",
-      type=utils._parse_string_as_bool,
-      default="true",
-      const=True,
+      type=str,
+      default="",
       nargs="?",
       help="""
-        Whether to use Clang as the compiler. Not recommended to set this to
-        False as JAX uses Clang as the default compiler.
+        DEPRECATED: Whether to use Clang as the compiler. Not recommended to
+        set this flag because Clang is the default compiler.
         """,
   )
 
@@ -307,7 +306,7 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
       type=str,
       default="",
       help="""
-        Path to the GCC binary to use.
+        DEPRECATED: Path to the GCC binary to use.
         """,
   )
 
@@ -498,8 +497,14 @@ async def main():
 
   git_hash = utils.get_githash()
 
-  clang_path = ""
   if args.use_clang:
+    logging.warning("The --use_clang flag is deprecated and should not be used.")
+
+  clang_path = ""
+  clang_local = args.clang_path or not utils.is_linux_x86_64(arch, os_name)
+  if clang_local:
+    wheel_build_command_base.append("--config=clang_local")
+
     clang_path = args.clang_path or utils.get_clang_path_or_exit()
     clang_major_version = utils.get_clang_major_version(clang_path)
     clangpp_path = utils.get_clangpp_path(clang_path)
@@ -509,12 +514,11 @@ async def main():
         clang_major_version,
     )
 
-    if not utils.is_hermetic_clang_supported(arch, os_name):
-      # Use double quotes around clang path to avoid path issues on Windows.
-      wheel_build_command_base.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
-      wheel_build_command_base.append(f"--repo_env=CC=\"{clang_path}\"")
-      wheel_build_command_base.append(f"--repo_env=CXX=\"{clangpp_path}\"")
-      wheel_build_command_base.append(f"--repo_env=BAZEL_COMPILER=\"{clang_path}\"")
+    # Use double quotes around clang path to avoid path issues on Windows.
+    wheel_build_command_base.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
+    wheel_build_command_base.append(f"--repo_env=CC=\"{clang_path}\"")
+    wheel_build_command_base.append(f"--repo_env=CXX=\"{clangpp_path}\"")
+    wheel_build_command_base.append(f"--repo_env=BAZEL_COMPILER=\"{clang_path}\"")
 
     if clang_major_version >= 16:
       # Enable clang settings that are needed for the build to work with newer
@@ -522,19 +526,10 @@ async def main():
       wheel_build_command_base.append("--config=clang")
     if clang_major_version < 19:
       wheel_build_command_base.append("--define=xnn_enable_avxvnniint8=false")
-
   else:
-    gcc_path = args.gcc_path or utils.get_gcc_path_or_exit()
-    logging.debug(
-        "Using GCC as the compiler, gcc path: %s",
-        gcc_path,
-    )
-    wheel_build_command_base.append(f"--repo_env=CC=\"{gcc_path}\"")
-    wheel_build_command_base.append(f"--repo_env=BAZEL_COMPILER=\"{gcc_path}\"")
-
-    gcc_major_version = utils.get_gcc_major_version(gcc_path)
-    if gcc_major_version < 13:
-      wheel_build_command_base.append("--define=xnn_enable_avxvnniint8=false")
+    # TODO:(yuriit) Check version of Clang when it will be available outside
+    # of rules_ml_toolchain. Current hermetic Clang version is 18
+    wheel_build_command_base.append("--define=xnn_enable_avxvnniint8=false")
 
   if not args.disable_mkl_dnn:
     logging.debug("Enabling MKL DNN")
@@ -572,17 +567,14 @@ async def main():
 
   if "cuda" in args.wheels:
     wheel_build_command_base.append("--config=cuda")
-    if args.use_clang:
-      if not utils.is_hermetic_clang_supported(arch, os_name):
-        wheel_build_command_base.append(
-            f"--action_env=CLANG_CUDA_COMPILER_PATH=\"{clang_path}\""
-        )
-      if args.build_cuda_with_clang:
-        logging.debug("Building CUDA with Clang")
-        wheel_build_command_base.append("--config=build_cuda_with_clang")
-      else:
-        logging.debug("Building CUDA with NVCC")
-        wheel_build_command_base.append("--config=build_cuda_with_nvcc")
+
+    if clang_local:
+      wheel_build_command_base.append(
+          f"--action_env=CLANG_CUDA_COMPILER_PATH=\"{clang_path}\""
+      )
+    if args.build_cuda_with_clang:
+      logging.debug("Building CUDA with Clang")
+      wheel_build_command_base.append("--config=build_cuda_with_clang")
     else:
       logging.debug("Building CUDA with NVCC")
       wheel_build_command_base.append("--config=build_cuda_with_nvcc")
@@ -607,11 +599,10 @@ async def main():
       )
 
   if "rocm" in args.wheels:
-    wheel_build_command_base.append("--config=rocm_base")
-    if args.use_clang:
-      wheel_build_command_base.append("--config=rocm")
-      if not utils.is_hermetic_clang_supported(arch, os_name):
-        wheel_build_command_base.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
+    wheel_build_command_base.append("--config=rocm")
+    if clang_local:
+      wheel_build_command_base.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
+
     if args.rocm_path:
       logging.debug("ROCm toolkit path: %s", args.rocm_path)
       wheel_build_command_base.append(f"--action_env=ROCM_PATH=\"{args.rocm_path}\"")
@@ -685,9 +676,7 @@ async def main():
       wheel_build_command = copy.deepcopy(bazel_command_base)
       if "cuda" in args.wheels:
         wheel_build_command.append("--config=cuda_libraries_from_stubs")
-      # TODO(yuriit): Remove once hermetic C++ is supported on all platforms.
-      if not utils.is_hermetic_clang_supported(arch, os_name):
-        wheel_build_command.append("--config=clang_local")
+
       print("\n")
       logger.info(
         "Building %s for %s %s...",

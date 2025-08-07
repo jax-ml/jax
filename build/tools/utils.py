@@ -305,6 +305,6 @@ def copy_individual_files(src: str, dst: str, glob_pattern: str):
     shutil.copy2(f, dst_file)
     logging.info("Distribution path: %s" % dst_file)
 
-def is_hermetic_clang_supported(arch: str, os_name: str):
-  """Returns true if hermetic Clang is supported on the current platform."""
+def is_linux_x86_64(arch: str, os_name: str):
+  """Returns true if the architecture is Linux x86_64."""
   return arch == "x86_64" and os_name == "linux"
