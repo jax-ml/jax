@@ -49,8 +49,8 @@ jax_multiplatform_test(
     srcs = ["custom_api_test.py"],
     shard_count = 10,
     deps = [
+        "//jax:custom_derivatives",
         "//jax:experimental",
-        "//jax/_src:custom_derivatives",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -62,14 +62,14 @@ jax_multiplatform_test(
     srcs = ["debug_info_test.py"],
     enable_configs = ["tpu_v3_x4"],
     deps = [
+        "//jax:custom_transpose",
         "//jax:experimental",
         "//jax:pallas",
         "//jax:pallas_gpu",
         "//jax:pallas_gpu_ops",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
-        "//jax/_src:custom_transpose",
-        "//jax/_src:shard_map",
+        "//jax:shard_map",
     ] + py_deps([
         "numpy",
         "absl/testing",
@@ -87,7 +87,7 @@ jax_py_test(
     srcs = ["dynamic_api_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -105,7 +105,7 @@ jax_py_test(
     srcs = ["array_api_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -114,7 +114,7 @@ jax_py_test(
     srcs = ["array_extensibility_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -177,7 +177,7 @@ jax_py_test(
     srcs = ["config_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -208,7 +208,7 @@ jax_py_test(
     srcs = ["distributed_initialize_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps([
         "portpicker",
         "absl/testing",
@@ -234,7 +234,7 @@ jax_py_test(
     tags = ["manual"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps([
         "portpicker",
         "absl/testing",
@@ -275,7 +275,7 @@ jax_multiplatform_test(
     # TODO(dfm): Remove after removal of jex.ffi imports.
     deps = [
         "//jax:extend",
-        "//jax/_src:ffi",
+        "//jax:ffi",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -372,7 +372,7 @@ jax_py_test(
     srcs = ["xla_interpreter_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -520,7 +520,7 @@ jax_multiplatform_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
-        "//jax/_src:internal_test_util",
+        "//jax:internal_test_util",
     ] + py_deps([
         "numpy",
         "absl/testing",
@@ -572,7 +572,7 @@ jax_py_test(
     name = "jax_to_ir_test",
     srcs = ["jax_to_ir_test.py"],
     deps = [
-        "//jax/_src:test_util",
+        "//jax:test_util",
         "//jax/experimental/jax2tf",
         "//jax/tools:jax_to_ir",
     ] + py_deps([
@@ -586,8 +586,8 @@ jax_py_test(
     srcs = ["jaxpr_util_test.py"],
     deps = [
         "//jax",
+        "//jax:test_util",
         "//jax/_src:jaxpr_util",
-        "//jax/_src:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -800,7 +800,7 @@ jax_multiplatform_test(
         "tpu": 8,
     },
     deps = [
-        "//jax/_src:internal_test_util",
+        "//jax:internal_test_util",
     ] + py_deps([
         "numpy",
         "absl/testing",
@@ -820,8 +820,8 @@ jax_multiplatform_test(
         "tpu": 40,
     },
     deps = [
-        "//jax/_src:internal_test_util",
-        "//jax/_src:lax_reference",
+        "//jax:internal_test_util",
+        "//jax:lax_reference",
     ] + py_deps([
         "numpy",
         "absl/testing",
@@ -835,8 +835,8 @@ jax_multiplatform_test(
     enable_backends = ["metal"],
     tags = ["notap"],
     deps = [
-        "//jax/_src:internal_test_util",
-        "//jax/_src:lax_reference",
+        "//jax:internal_test_util",
+        "//jax:lax_reference",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -865,7 +865,7 @@ jax_multiplatform_test(
         "gpu": 40,
         "tpu": 40,
     },
-    deps = ["//jax/_src:internal_test_util"] + py_deps([
+    deps = ["//jax:internal_test_util"] + py_deps([
         "numpy",
         "absl/testing",
     ]),
@@ -879,7 +879,7 @@ jax_multiplatform_test(
         "gpu": 40,
         "tpu": 40,
     },
-    deps = ["//jax/_src:internal_test_util"] + py_deps([
+    deps = ["//jax:internal_test_util"] + py_deps([
         "numpy",
         "absl/testing",
     ]),
@@ -891,8 +891,8 @@ jax_py_test(
         "lazy_loader_test.py",
     ],
     deps = [
-        "//jax/_src:internal_test_util",
-        "//jax/_src:test_util",
+        "//jax:internal_test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -902,8 +902,8 @@ jax_py_test(
         "deprecation_test.py",
     ],
     deps = [
-        "//jax/_src:internal_test_util",
-        "//jax/_src:test_util",
+        "//jax:internal_test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -985,7 +985,7 @@ jax_py_test(
     srcs = ["monitoring_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -1073,7 +1073,7 @@ jax_multiplatform_test(
     },
     tags = ["multiaccelerator"],
     deps = [
-        "//jax/_src:internal_test_util",
+        "//jax:internal_test_util",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -1128,7 +1128,7 @@ jax_multiplatform_test(
         "tpu",
     ],
     deps = [
-        "//jax/_src:profiler",
+        "//jax:profiler",
     ] + py_deps("absl/testing"),
 )
 
@@ -1506,7 +1506,7 @@ jax_py_test(
     srcs = ["tree_util_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -1519,7 +1519,7 @@ pytype_test(
     srcs = ["typing_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
         "//jax/_src:typing",
     ] + py_deps([
         "absl/testing",
@@ -1532,7 +1532,7 @@ jax_py_test(
     srcs = ["util_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -1541,7 +1541,7 @@ jax_py_test(
     srcs = ["version_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -1549,7 +1549,7 @@ jax_py_test(
     name = "warnings_util_test",
     srcs = ["warnings_util_test.py"],
     deps = [
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -1559,8 +1559,8 @@ jax_py_test(
     data = ["testdata/example_pjrt_plugin_config.json"],
     deps = [
         "//jax",
-        "//jax/_src:compiler",
-        "//jax/_src:test_util",
+        "//jax:compiler",
+        "//jax:test_util",
     ] + py_deps([
         "absl/logging",
     ]),
@@ -1571,8 +1571,8 @@ jax_py_test(
     srcs = ["lru_cache_test.py"],
     deps = [
         "//jax",
+        "//jax:test_util",
         "//jax/_src:lru_cache",
-        "//jax/_src:test_util",
     ] + py_deps([
         "filelock",
         "absl/logging",
@@ -1583,8 +1583,8 @@ jax_multiplatform_test(
     name = "compilation_cache_test",
     srcs = ["compilation_cache_test.py"],
     deps = [
-        "//jax/_src:compilation_cache_internal",
-        "//jax/_src:compiler",
+        "//jax:compilation_cache_internal",
+        "//jax:compiler",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -1595,9 +1595,9 @@ jax_multiplatform_test(
     name = "cache_key_test",
     srcs = ["cache_key_test.py"],
     deps = [
-        "//jax/_src:cache_key",
-        "//jax/_src:compiler",
-        "//jax/_src:custom_partitioning",
+        "//jax:cache_key",
+        "//jax:compiler",
+        "//jax:custom_partitioning",
     ] + py_deps("absl/testing"),
 )
 
@@ -1660,7 +1660,7 @@ jax_py_test(
     srcs = ["mesh_utils_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
         "//jax/experimental:mesh_utils",
     ] + py_deps([
         "absl/testing",
@@ -1689,7 +1689,7 @@ jax_py_test(
     srcs = ["name_stack_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -1852,7 +1852,7 @@ jax_multiplatform_test(
     ],  # Times out under *SAN.
     deps = [
         "//jax:experimental",
-        "//jax/_src:tree_util",
+        "//jax:tree_util",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -1909,7 +1909,7 @@ jax_py_test(
     srcs = ["mosaic_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
         "//jax/experimental:mosaic",
     ] + py_deps("absl/testing"),
 )
@@ -1919,7 +1919,7 @@ jax_py_test(
     srcs = ["source_info_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -1928,7 +1928,7 @@ jax_py_test(
     srcs = ["package_structure_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -1972,7 +1972,7 @@ jax_multiplatform_test(
         "notsan",  # Times out
     ],
     deps = [
-        "//jax/_src:internal_test_harnesses",
+        "//jax:internal_test_harnesses",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -1996,7 +1996,7 @@ jax_multiplatform_test(
         "nodebug",  # Times out.
     ],
     deps = [
-        "//jax/_src:internal_test_harnesses",
+        "//jax:internal_test_harnesses",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -2008,8 +2008,8 @@ jax_multiplatform_test(
     srcs = ["export_back_compat_test.py"],
     tags = [],
     deps = [
-        "//jax/_src:internal_export_back_compat_test_data",
-        "//jax/_src:internal_export_back_compat_test_util",
+        "//jax:internal_export_back_compat_test_data",
+        "//jax:internal_export_back_compat_test_util",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -2056,7 +2056,7 @@ jax_py_test(
     srcs = ["pretty_printer_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -2065,7 +2065,7 @@ jax_py_test(
     srcs = ["source_mapper_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
         "//jax/experimental:source_mapper",
     ] + py_deps("absl/testing"),
 )
@@ -2075,8 +2075,8 @@ jax_py_test(
     srcs = ["sourcemap_test.py"],
     deps = [
         "//jax",
+        "//jax:test_util",
         "//jax/_src:sourcemap",
-        "//jax/_src:test_util",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -2126,8 +2126,8 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:experimental",
+        "//jax:test_util",
         "//jax/_src:custom_partitioning_sharding_rule",
-        "//jax/_src:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -2136,7 +2136,7 @@ jax_py_test(
     srcs = ["traceback_test.py"],
     deps = [
         "//jax",
-        "//jax/_src:test_util",
+        "//jax:test_util",
     ] + py_deps([
         "absl/testing",
         "numpy",
