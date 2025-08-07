@@ -26,6 +26,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
   * {func}`jax.lax.zeros_like_array` is deprecated. Please use
     {func}`jax.numpy.zeros_like` instead.
+  * Attempting to import {mod}`jax.experimental.host_callback` now results in
+    a `DeprecationWarning`, and will result in an `ImportError` starting in JAX
+    v0.8.0. Its APIs have raised `NotImplementedError` since JAX version 0.4.35.
 
 ## JAX 0.7.0 (July 22, 2025)
 

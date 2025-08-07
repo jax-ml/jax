@@ -200,6 +200,7 @@ pytype_strict_library(
         "//jax/_src:callback",
         "//jax/_src:config",
         "//jax/_src:core",
+        "//jax/_src:deprecations",
         "//jax/_src:dtypes",
         "//jax/_src:earray",
     ],

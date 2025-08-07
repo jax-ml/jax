@@ -22,6 +22,13 @@
 """
 
 from __future__ import annotations
+from jax._src import deprecations as _deprecations
+
+_deprecations.warn(
+  'jax-experimental-host-callback',
+  'jax.experimental.host_callback is deprecated and will be removed in JAX v0.8.0',
+  stacklevel=1,
+)
 
 def call(*_, **__):
   raise NotImplementedError(
