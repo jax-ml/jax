@@ -534,6 +534,7 @@ def _vector_store_op_lowering_rule(
 
   return []
 
+
 @_register_lowering(vector.SplatOp)
 def _vector_splat_op_lowering_rule(
     _: LoweringContext, vector_splat_op: vector.SplatOp
@@ -547,6 +548,26 @@ def _vector_splat_op_lowering_rule(
       vector_splat_op.input,
       tuple(out_vec_ty.shape),
       layouts.from_layout_attr(vector_splat_op.attributes["out_layouts"][0]),
+      is_signed=is_signed,
+  )
+  return [fragmented_array_to_ir(fragmented_array, out_vec_ty)]
+
+
+@_register_lowering(vector.BroadcastOp)
+def _vector_broadcast_op_lowering_rule(
+    _: LoweringContext, vector_broadcast_op: vector.BroadcastOp
+) -> Sequence[ir.Value]:
+
+  out_vec_ty = ir.VectorType(vector_broadcast_op.vector.type)
+  is_signed = (
+      False if ir.IntegerType.isinstance(out_vec_ty.element_type) else None
+  )
+  fragmented_array = fa.FragmentedArray.splat(
+      vector_broadcast_op.source,
+      tuple(out_vec_ty.shape),
+      layouts.from_layout_attr(
+          vector_broadcast_op.attributes["out_layouts"][0]
+      ),
       is_signed=is_signed,
   )
   return [fragmented_array_to_ir(fragmented_array, out_vec_ty)]

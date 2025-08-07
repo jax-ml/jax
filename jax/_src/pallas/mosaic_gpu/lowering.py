@@ -1818,7 +1818,7 @@ def _broadcast_in_dim_lowering_rule_wg(
     # generally problematic and so we avoid them by specializing that case
     # directly here.
     x = _ensure_ir_value(x, x_aval.dtype)
-    return vector_dialect.splat(
+    return vector_dialect.broadcast(
         ir.VectorType.get(shape, mgpu_utils.dtype_to_ir_type(x_aval.dtype)),
         x,
     )
@@ -1926,8 +1926,8 @@ def _convert_element_type_lowering_rule_wg(
     maxint = _ir_constant(maxint, cur_dtype)
     minint = _ir_constant(minint, cur_dtype)
     if x_aval.shape:
-      maxint = vector_dialect.splat(x.type, maxint)
-      minint = vector_dialect.splat(x.type, minint)
+      maxint = vector_dialect.broadcast(x.type, maxint)
+      minint = vector_dialect.broadcast(x.type, minint)
     x = arith_dialect.minimumf(x, maxint)
     x = arith_dialect.maximumf(x, minint)
   else:
@@ -2264,7 +2264,7 @@ def _reduce_lowering_rule_wg(
           ir.VectorType.get([x_aval.size], out_type), x
       )
     return vector_dialect.ReductionOp(out_type, kind, x)
-  acc = vector_dialect.splat(
+  acc = vector_dialect.broadcast(
       ir.VectorType.get(out_aval.shape, out_type),
       _ensure_ir_value(acc, out_aval.dtype),
   )
@@ -2487,7 +2487,9 @@ def _run_scoped_lowering_rule(
           input_refs.append(mgpu.WGMMAAccumulator.zero(*aval.shape, dtype))
         else:
           zero = arith_dialect.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
-          acc = vector_dialect.splat(ir.VectorType.get(aval.shape, dtype), zero)
+          acc = vector_dialect.broadcast(
+              ir.VectorType.get(aval.shape, dtype), zero
+          )
           acc = mgpu.dialect.optimization_barrier([acc])
           nvvm_dialect.wgmma_fence_aligned()
           input_refs.append(acc)
@@ -3110,7 +3112,7 @@ def _bcast_wg(
     y = _ensure_ir_value(y, y_dtype)
   if not ir.VectorType.isinstance(x.type):
     assert not x_aval.shape
-    x = vector_dialect.splat(
+    x = vector_dialect.broadcast(
         ir.VectorType.get(out_aval.shape, mgpu_utils.dtype_to_ir_type(x_dtype)),
         x,
     )
@@ -3118,7 +3120,7 @@ def _bcast_wg(
     raise NotImplementedError("Unsupported broadcast")
   if not ir.VectorType.isinstance(y.type):
     assert not y_aval.shape
-    y = vector_dialect.splat(
+    y = vector_dialect.broadcast(
         ir.VectorType.get(out_aval.shape, mgpu_utils.dtype_to_ir_type(y_dtype)),
         y,
     )

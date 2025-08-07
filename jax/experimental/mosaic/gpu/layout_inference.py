@@ -459,6 +459,18 @@ def _infer_splat_op_layout(splat_op: vector.SplatOp) -> OptionalLayouts:
   return [], [layout]
 
 
+@partial(_add_layout_inference_rule, vector.BroadcastOp)
+def _infer_broadcast_op_layout(
+    broadcast_op: vector.BroadcastOp,
+) -> OptionalLayouts:
+  layout = layouts_lib.to_splat_fragmented_layout_attr(
+      fa.WGSplatFragLayout(
+          shape=cast(ir.ShapedType, broadcast_op.result.type).shape
+      )
+  )
+  return [], [layout]
+
+
 def _update_layout_shape(
     layout: ir.Attribute, shape: Sequence[int], origin: str
 ) -> ir.Attribute:
