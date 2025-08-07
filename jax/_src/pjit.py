@@ -3106,7 +3106,7 @@ def _auto_axes(fun, *, axes_, out_sharding):
         axes_, mesh_lib.AxisType.Auto, 'auto_axes', shardings=_out_sharding,
         error_on_manual_to_auto_explicit=True)
     if set(prev_mesh.auto_axes) == set(axes):
-      return args
+      return fun(*args, **kwargs)
     with mesh_lib.use_abstract_mesh(new_mesh):
       in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
           core.get_aval(a).sharding.spec, new_mesh), args)

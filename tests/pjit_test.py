@@ -8834,7 +8834,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       @auto_axes(out_sharding=P('x'))
       def f(x):
         return x * 2
-      jax.jit(f)(jnp.arange(8))  # doesn't crash
+      out = jax.jit(f)(jnp.arange(8))  # doesn't crash
+      self.assertArraysEqual(out, np.arange(8) * 2)
       jaxpr = jax.jit(f).trace(jnp.arange(8)).jaxpr
       self.assertNotIn('mesh_cast', str(jaxpr))
 
@@ -8844,14 +8845,16 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       @auto_axes(out_sharding=P('y'), axes='x')
       def f(x):
         return x * 2
-      jax.jit(f)(jnp.arange(8))  # doesn't crash
+      out = jax.jit(f)(jnp.arange(8))  # doesn't crash
+      self.assertArraysEqual(out, np.arange(8) * 2)
       jaxpr = jax.jit(f).trace(jnp.arange(8)).jaxpr
       self.assertNotIn('mesh_cast', str(jaxpr))
 
       @auto_axes(out_sharding=P('y'))
       def f(x):
         return x * 2
-      jax.jit(f)(jnp.arange(8))  # doesn't crash
+      out = jax.jit(f)(jnp.arange(8))  # doesn't crash
+      self.assertArraysEqual(out, np.arange(8) * 2)
       jaxpr = jax.jit(f).trace(jnp.arange(8)).jaxpr
       self.assertEqual(str(jaxpr).count('mesh_cast'), 2)
 

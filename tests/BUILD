@@ -408,9 +408,9 @@ jax_multiplatform_test(
         "gpu_h100x2",
     ],
     shard_count = {
-        "cpu": 5,
-        "gpu": 5,
-        "tpu": 5,
+        "cpu": 15,
+        "gpu": 10,
+        "tpu": 15,
     },
     tags = ["multiaccelerator"],
     deps = [
