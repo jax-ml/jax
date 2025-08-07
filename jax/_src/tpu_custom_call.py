@@ -86,7 +86,7 @@ class MemorySpace(enum.Enum):
   @property
   def color(self) -> int:
     if self == MemorySpace.HBM:
-      return 0
+      return 9
     elif self == MemorySpace.VMEM:
       return 1
     elif self == MemorySpace.SEMAPHORE_MEM:
