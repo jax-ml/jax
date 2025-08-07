@@ -74,6 +74,7 @@ jobs:
           cd jax
           # TODO(yuriit): remove extra flags after b/434277165 is fixed.
           python build/build.py build --wheels=jaxlib --verbose \
+            --bazel_options=--config=use_tar_archive_files \
             --bazel_options=--color=yes \
             --bazel_options=--copt=-fsanitize=address \
             --clang_path=/usr/bin/clang-18 \
