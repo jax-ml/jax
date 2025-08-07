@@ -166,7 +166,7 @@ build:cuda --repo_env TF_NCCL_USE_STUB=1
 # "sm" means we emit only cubin, which is forward compatible within a GPU generation.
 # "compute" means we emit both cubin and PTX, which is larger but also forward compatible to future GPU generations.
 build:cuda --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,sm_90,sm_100,compute_120"
-build:cuda --@local_config_cuda//:enable_cuda
+build:cuda --@rules_ml_toolchain//common:enable_cuda
 
 # Default hermetic CUDA, CUDNN and NVSHMEM versions.
 build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.9.1"
