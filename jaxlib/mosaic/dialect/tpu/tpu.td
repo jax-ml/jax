@@ -664,7 +664,8 @@ def TPU_DotDimensionNumbersAttr : TPU_Attr<"DotDimensionNumbers", "dot_dimension
     ArrayRefParameter<"int64_t", "">:$lhs_contracting_dims,
     ArrayRefParameter<"int64_t", "">:$rhs_contracting_dims,
     ArrayRefParameter<"int64_t", "">:$lhs_non_contracting_dims,
-    ArrayRefParameter<"int64_t", "">:$rhs_non_contracting_dims,
+    // Empty when rhs is a 1-D vector.
+    OptionalArrayRefParameter<"int64_t", "">:$rhs_non_contracting_dims,
     // The contract is a flattened structure, wherein, each element is half of a
     // pair of indices. The first element is always 0 (lhs) or 1 (rhs) and the
     // second index is the index from the lhs or rhs.
@@ -673,7 +674,7 @@ def TPU_DotDimensionNumbersAttr : TPU_Attr<"DotDimensionNumbers", "dot_dimension
     OptionalArrayRefParameter<"int64_t", "">:$rhs_batch_dims
     );
     let assemblyFormat = "`<` `[` $lhs_contracting_dims `]` `,` `[` $rhs_contracting_dims `]` `,` "
-                     "`[` $lhs_non_contracting_dims `]` `,` `[` $rhs_non_contracting_dims `]` `,` "
+                     "`[` $lhs_non_contracting_dims `]` `,` `[` (`]`):($rhs_non_contracting_dims^ `]`)? `,` "
                      "`[` $output_dim_order `]` `,` "
                      "`[` (`]`):($lhs_batch_dims^ `]`)? `,` "
                      "`[` (`]`):($rhs_batch_dims^ `]`)? `>`";

@@ -346,18 +346,39 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
     }
   }
 
-  // Make sure there is only one non-contracting dim in each of lhs and rhs
-  // after collapsing.
   auto dimension_numbers = op.getDimensionNumbers();
+  // We can lower more efficiently if it's a f32 matrix-vector dot:
+  // [B, M, K] @ [B, K] or [B, M, K] @ [B, 1, K].
+  // Note that even though TPUv6+ have native bf16 ALU ops support, it doesn't
+  // seem profitable in this case because we want to accumulate and return f32
+  // in the end anyway.
+  // TODO(twsung): Perhaps allow non-32 bits accumulation.
+  bool is_rhs_vector_like =
+      (dimension_numbers->getRhsNonContractingDims().empty() ||
+       (dimension_numbers->getRhsNonContractingDims().size() == 1 &&
+        rhs.getType().getDimSize(
+            dimension_numbers->getRhsNonContractingDims()[0]) == 1)) &&
+      dimension_numbers->getRhsContractingDims() ==
+          ArrayRef<int64_t>{
+              static_cast<int64_t>(rhs.getType().getShape().size() - 1)};
+  bool is_matrix_vector_dot = dimension_numbers->getLhsContractingDims() ==
+                                  ArrayRef<int64_t>{static_cast<int64_t>(
+                                      lhs.getType().getShape().size() - 1)} &&
+                              is_rhs_vector_like && lhs_element_type.isF32() &&
+                              rhs_element_type.isF32();
+  // Make sure there is only one or zero (for rhs) non-contracting dim in each
+  // of lhs and rhs after collapsing.
   if (dimension_numbers->getLhsNonContractingDims().size() != 1) {
     return op->emitOpError(
         "Not implemented: lhs non contracting dims must be an infix/suffix of "
         "the shape.");
   }
-  if (dimension_numbers->getRhsNonContractingDims().size() != 1) {
+  if (dimension_numbers->getRhsNonContractingDims().size() != 1 &&
+      !is_matrix_vector_dot) {
     return op->emitOpError(
-        "Not implemented: rhs non contracting dims must be an infix/suffix of "
-        "the shape.");
+        "Not implemented: 1) rhs non contracting dims must be an infix/suffix "
+        "of the shape or 2) the contracting dim of lhs/rhs must be the last "
+        "dim and rhs must be vector-like [B, K] or [B, 1, K].");
   }
 
   auto extsi_sitofp = [&builder, &op](TypedValue<VectorType> element) {
@@ -432,7 +453,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
   // operation that fuses the transpose into the matmul.
   auto transpose_op =
       dyn_cast_if_present<tpu::TransposeOp>(rhs.getDefiningOp());
-  if (transpose_op && transpose_op->hasOneUse() &&
+  if (!is_matrix_vector_dot && transpose_op && transpose_op->hasOneUse() &&
       dimension_numbers->getRhsContractingDims().size() == 1 &&
       dimension_numbers->getRhsNonContractingDims().size() == 1) {
     auto rhs_non_contracting_dim =
@@ -457,13 +478,15 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
     }
   }
 
-  auto dot_dim_matmul = [&](Value lhs, auto rhs, auto acc) {
+  auto dot_dim_matmul = [&](Value lhs, Value rhs, Value acc) {
     auto precision_attr = op.getPrecisionAttr();
+    auto lhs_ty = cast<VectorType>(lhs.getType());
+    auto rhs_ty = cast<VectorType>(rhs.getType());
+    auto acc_ty = cast<VectorType>(acc.getType());
 
     // If we are transposing the lhs, we need to transpose the lhs before
     // matmul here, as we don't have lhs fusion implemented in apply.
     if (transpose_lhs) {
-      auto lhs_ty = cast<VectorType>(lhs.getType());
       auto rank = lhs_ty.getShape().size();
 
       // This transposition must run on vectors with rank >= 2
@@ -483,6 +506,29 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
           SmallVector<int64_t>(perm.begin(), perm.end());
       lhs = builder.create<tpu::TransposeOp>(lhs_ty_transposed, lhs, perm_vec);
     }
+
+    // Matrix-vector dot can be lowered to multiply > reduce over last dim.
+    if (is_matrix_vector_dot) {
+      // rhs is always broadcastable to lhs, from [K] or [1, K] to [M, K].
+      rhs = builder.create<vector::BroadcastOp>(
+          VectorType::get(lhs_ty.getShape(), rhs_ty.getElementType()), rhs);
+      auto multiply = builder.create<arith::MulFOp>(lhs, rhs);
+      acc = builder.create<vector::ShapeCastOp>(
+          VectorType::get(lhs_ty.getShape().drop_back(),
+                          acc_ty.getElementType()),
+          acc);
+      auto res = builder.create<vector::MultiDimReductionOp>(
+          vector::CombiningKind::ADD, multiply, acc,
+          /*reduction_dims=*/
+          ArrayRef<int64_t>{
+              static_cast<int64_t>(lhs_ty.getShape().size() - 1)});
+      auto res_ty = cast<VectorType>(res.getType());
+      if (res_ty.getShape() != acc_ty.getShape()) {
+        res = builder.create<vector::ShapeCastOp>(acc_ty, res);
+      }
+      return res;
+    }
+
     auto ddn = defaultDimensionNumbers(builder, /*transpose_lhs=*/false,
                                        transpose_rhs);
     // transpose flags are always false here, because ddn takes precedence

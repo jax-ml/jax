@@ -1525,6 +1525,62 @@ class OpsTest(PallasBaseTest):
         expected,
     )
 
+  @parameterized.product(
+      batch_size=(None, 1, 2),
+      lhs_non_contracting_shape=((8,), (8, 128)),
+      rhs_is_vector=(True, False),  # [K] or [1, K].
+      dtype=(jnp.float32,),
+  )
+  def test_matrix_vector_like_dot_general(
+      self,
+      batch_size,
+      lhs_non_contracting_shape,
+      rhs_is_vector,
+      dtype,
+  ):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("TPU only test")
+
+    if jtu.test_device_matches(["tpu"]):
+      if not jtu.if_cloud_tpu_at_least(2025, 8, 10):
+        self.skipTest("Requires libtpu built after 2025-07-24")
+      if not jtu.is_device_tpu_at_least(5) and rhs_is_vector:
+        self.skipTest("Requires TPUv5+ for sublane gather")
+
+    contracting_shape = 128
+    rhs_non_contracting_shape = () if rhs_is_vector else (1,)
+    batch_shape = (batch_size,) if batch_size is not None else ()
+    batch_dim = [0] if batch_size else []
+    lhs_shape = (*batch_shape, *lhs_non_contracting_shape, contracting_shape)
+    rhs_shape = (*batch_shape, *rhs_non_contracting_shape, contracting_shape)
+    k1, k2 = random.split(jax.random.key(0))
+    lhs = jax.random.normal(k1, lhs_shape, dtype=dtype)
+    rhs = jax.random.normal(k2, rhs_shape, dtype=dtype)
+    dims_numbers = (
+        ([len(lhs_shape) - 1], [len(rhs_shape) - 1]),
+        (batch_dim, batch_dim),
+    )
+    expected = jax.lax.dot_general(
+        lhs,
+        rhs,
+        dimension_numbers=dims_numbers,
+        preferred_element_type=jnp.float32,
+    )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.float32),
+    )
+    def kernel(lhs_ref, rhs_ref, out_ref):
+      out_ref[...] = jax.lax.dot_general(
+          lhs_ref[...],
+          rhs_ref[...],
+          dimension_numbers=dims_numbers,
+          preferred_element_type=jnp.float32,
+      )
+
+    np.testing.assert_allclose(kernel(lhs, rhs), expected, atol=5e-6, rtol=5e-4)
+
   @parameterized.parameters(
       ("int32", "float32"),
       ("float32", "float32"),
