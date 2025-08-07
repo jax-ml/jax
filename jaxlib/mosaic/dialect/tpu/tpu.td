@@ -198,7 +198,7 @@ def TPU_ReductionKindAttr
     let assemblyFormat = "`<` $value `>`";
 }
 
-def TPU_AllReduceOp : TPU_Op<"all_reduce", [Pure, SameOperandsAndResultShape]> {
+def TPU_AllReduceOp : TPU_Op<"all_reduce", [Pure]> {
   let arguments = (ins AnyVectorOfNonZeroRank:$input, I64Attr:$dim, TPU_ReductionKindAttr:$kind);
   let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{
