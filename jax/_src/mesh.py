@@ -144,15 +144,15 @@ class BaseMesh:
   axis_types: tuple[AxisType, ...]
 
   @functools.cached_property
-  def _are_all_axes_manual(self) -> bool:
+  def are_all_axes_manual(self) -> bool:
     return all_axis_types_match(self.axis_types, AxisType.Manual)
 
   @functools.cached_property
-  def _are_all_axes_auto(self) -> bool:
+  def are_all_axes_auto(self) -> bool:
     return all_axis_types_match(self.axis_types, AxisType.Auto)
 
   @functools.cached_property
-  def _are_all_axes_explicit(self) -> bool:
+  def are_all_axes_explicit(self) -> bool:
     return all_axis_types_match(self.axis_types, AxisType.Explicit)
 
   @functools.cached_property

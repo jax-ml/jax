@@ -734,7 +734,7 @@ def check_avals_context_mesh(avals, prim_name):
       continue
     # avals can have meshes with different axis_names so allow that in
     # full auto mode.
-    if a.sharding.mesh._are_all_axes_auto and cur_mesh._are_all_axes_auto:
+    if a.sharding.mesh.are_all_axes_auto and cur_mesh.are_all_axes_auto:
       continue
     if a.sharding.mesh != cur_mesh:
       raise ValueError(
@@ -2033,7 +2033,7 @@ def canonicalize_value(val):
   # Atleast 1 mesh axis should be Manual and all other axes should be
   # Manual or Auto to allow casting.
   if cur_mesh._any_axis_manual and cur_mesh._are_all_axes_auto_or_manual:
-    if aval.sharding.mesh._are_all_axes_auto:
+    if aval.sharding.mesh.are_all_axes_auto:
       from jax._src.pjit import mesh_cast  # pytype: disable=import-error
       return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
     elif aval.sharding.mesh._any_axis_explicit:
@@ -2077,7 +2077,7 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
 def _maybe_modify_sharding(sharding, ndim):
   if len(sharding.spec) == 0 or all(s is None for s in sharding.spec):
     out = sharding
-  elif sharding.mesh._are_all_axes_explicit:
+  elif sharding.mesh.are_all_axes_explicit:
     out = sharding
   else:
     out = sharding.update(spec=modify_spec_for_auto_manual(

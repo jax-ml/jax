@@ -2995,9 +2995,9 @@ def lower_with_sharding_in_types(ctx, op, aval, sharding_proto=None):
   if aval.sharding.mesh.empty:
     return op
   # Don't emit a wsc under full manual mode to avoid increasing HLO size.
-  if aval.sharding.mesh._are_all_axes_manual:
+  if aval.sharding.mesh.are_all_axes_manual:
     return op
-  if aval.sharding.mesh._are_all_axes_auto:
+  if aval.sharding.mesh.are_all_axes_auto:
     return op
   # TODO(yashkatariya): If all the axes in pspec are AUTO or collective,
   # `return op` early and avoid bloating HLO size.
