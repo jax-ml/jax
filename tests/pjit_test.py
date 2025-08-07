@@ -7876,6 +7876,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       ("bits", partial(jax.random.bits, shape=(8, 12)), P('x', 'y')),
       ("uniform", partial(jax.random.uniform, shape=(8, 12)), P('x', 'y')),
       ("normal", partial(jax.random.normal, shape=(8, 12)), P('x', 'y')),
+      ("gumbel", partial(jax.random.gumbel, shape=(8, 12)), P('x', 'y')),
       ("randint", partial(jax.random.randint, shape=(8, 12), minval=0, maxval=10),
        P('x', 'y')),
       ("permutation_1d", partial(jax.random.permutation, x=8), P('x')),

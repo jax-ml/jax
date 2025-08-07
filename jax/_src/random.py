@@ -1564,7 +1564,9 @@ def poisson(key: ArrayLike,
 def gumbel(key: ArrayLike,
            shape: Shape = (),
            dtype: DTypeLikeFloat = float,
-           mode: str | None = None) -> Array:
+           mode: str | None = None,
+           *,
+           out_sharding=None) -> Array:
   """Sample Gumbel random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -1599,7 +1601,9 @@ def gumbel(key: ArrayLike,
     mode = "high" if config.use_high_dynamic_range_gumbel.value else "low"
   if mode not in ("high", "low"):
     raise ValueError("Must provide valid mode for gumbel got: %s" % mode)
-  return _gumbel(key, shape, dtype, mode)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "gumbel", shape)
+  return maybe_auto_axes(_gumbel, out_sharding, shape=shape, dtype=dtype,
+                         mode=mode)(key)
 
 @partial(jit, static_argnums=(1, 2, 3))
 def _gumbel(key, shape, dtype, mode) -> Array:
