@@ -168,16 +168,7 @@ def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params)
       # If we have fully manual sharding during lowering, that means the JAX
       # program has per-device semantics, so we run the callback on each device.
       if config.use_shardy_partitioner.value:
-        ndim = 0
-        if ctx.avals_out and isinstance(ctx.avals_out[0], core.ShapedArray):
-          ndim = ctx.avals_out[0].ndim
-        sharding = sharding_impls.SdyArrayList([
-            sharding_impls.SdyArray(
-                mesh_shape=(),
-                dim_shardings=[
-                    sharding_impls.SdyDim(axes=[], is_open=False)
-                ] * ndim,
-                logical_device_ids=(0,))])
+        sharding = cb._get_sdy_array_list_for_callbacks(ctx.avals_out)
       else:
         sharding = xc.OpSharding()
         sharding.type = xc.OpSharding.Type.MANUAL

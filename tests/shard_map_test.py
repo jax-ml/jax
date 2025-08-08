@@ -42,6 +42,7 @@ from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.mesh import AxisType, get_abstract_mesh
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lib import ifrt_version
 from jax._src import linear_util as lu
 from jax._src import tree_util
 from jax.custom_derivatives import SymbolicZero
@@ -1192,6 +1193,21 @@ class ShardMapTest(jtu.JaxTestCase):
       jax.effects_barrier()
     for i in range(len(jax.devices())):
       self.assertIn(f'instance {i} has value', output())
+
+  @jtu.with_explicit_mesh((2,), ('x'))
+  def test_pure_callback_return_multiple_arrays(self, mesh):
+    if ifrt_version < 22:
+      self.skipTest('Requires ifrt_version >= 22')
+    def host_kernel(arr: np.ndarray):
+      return arr + 1, arr * 2.0
+
+    @jax.shard_map(in_specs=P('x'), out_specs=(P('x'), P('x')))
+    def per_shard(x_shard):
+      spec = jax.ShapeDtypeStruct(x_shard.shape, x_shard.dtype)
+      return jax.pure_callback(host_kernel, (spec, spec), x_shard)
+
+    x = np.arange(32, dtype=np.float32).reshape(16, 2)
+    per_shard(x)  # doesn't crash
 
   def test_psum_transpose_non_zero_cts(self):
     mesh = jtu.create_mesh((8,), 'x')
