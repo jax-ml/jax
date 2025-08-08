@@ -972,17 +972,23 @@ def _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args, is_training, lay
   out_sharding = NamedSharding(mesh, PartitionSpec(*query_spec))
   if is_training:
     # activation sharding
-    *batch_spec, q_seq_spec, num_head_spec, _ = query_spec
+    if layout == AttentionLayout.BNTH.value:
+      *batch_spec, num_head_spec, q_seq_spec, _ = query_spec
+    else:
+      *batch_spec, q_seq_spec, num_head_spec, _ = query_spec
     activation_sharding = NamedSharding(
       mesh, PartitionSpec(*batch_spec, num_head_spec, q_seq_spec, None))
     return [out_sharding, activation_sharding]
   return [out_sharding]
 
-def _fwd_shardy_rule(value_types, result_types, is_training, is_fp8):
+def _fwd_shardy_rule(value_types, result_types, layout, is_training, is_fp8):
   num_args = len(value_types)
   # We only need the query and value sharding, so use placeholders for the remaining args.
   input_sharding = [ArrayMapping(f'{BATCHING}{n}') for n in range(num_args)]
-  input_sharding[0] = ArrayMapping('batch', 'qseq', 'nhead', 'head')
+  if layout == AttentionLayout.BNTH.value:
+    input_sharding[0] = ArrayMapping('batch', 'nhead', 'qseq', 'head')
+  else:
+    input_sharding[0] = ArrayMapping('batch', 'qseq', 'nhead', 'head')
   input_sharding[2] += ('v',)
 
   # The major dimensions are sharded like the query, the minor like the value.
@@ -1012,7 +1018,7 @@ def _dot_product_attention_fwd_infer_sharding_from_operands(
 def _dot_product_attention_fwd_shardy_rule(
     scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
     is_training, mesh, value_types, result_types):
-  return _fwd_shardy_rule(value_types, result_types, is_training, is_fp8=False)
+  return _fwd_shardy_rule(value_types, result_types, layout, is_training, is_fp8=False)
 
 def _dot_product_attention_fwd_partition(
     scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
@@ -1666,7 +1672,7 @@ def _dot_product_attention_fp8_fwd_partition(
 def _dot_product_attention_fp8_fwd_shardy_rule(
     scale, use_causal_mask, layout, is_training,
     mesh, value_types, result_types):
-  return _fwd_shardy_rule(value_types, result_types, is_training, is_fp8=True)
+  return _fwd_shardy_rule(value_types, result_types, layout, is_training, is_fp8=True)
 
 def _infer_fp8_bwd_output_sharding(mesh, arg_shapes, layout):
   # Prepare variadic_args for the original function
