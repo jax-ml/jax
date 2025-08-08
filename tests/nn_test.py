@@ -720,6 +720,22 @@ class NNFunctionsTest(jtu.JaxTestCase):
     with jax.checking_leaks():
       fwd()  # doesn't crash
 
+  @parameterized.product(
+      shape=[(5,), (3, 5), (2, 3, 5)],
+      use_where=[True, False],
+      keepdims=[True, False],
+  )
+  def testLogMeanExp(self, shape, use_where, keepdims):
+    x = self.rng().rand(*shape) * 2 - 1
+    axis = self.rng().randint(0, x.ndim)
+    if use_where:
+      where = self.rng().randint(0, 2, size=shape).astype(bool)
+    else:
+      where = None
+    got = nn.logmeanexp(x, axis=axis, where=where, keepdims=keepdims)
+    expected = jnp.log(jnp.mean(jnp.exp(x), axis=axis, where=where, keepdims=keepdims))
+    self.assertAllClose(got, expected, atol=1e-3)
+
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
