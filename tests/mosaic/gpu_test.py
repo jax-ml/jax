@@ -4482,6 +4482,121 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
     x = jax.random.randint(key, shape, -10, 10).astype(dtype)
     self.assertArraysEqual(kernel(x), x)
 
+  @parameterized.product(
+      m=(64, 128),
+      n=(128, 256, 512),
+      swizzle=(32, 64, 128),
+      ab_type=(jnp.float16, jnp.bfloat16),
+      acc_type=(jnp.float16, jnp.float32),
+  )
+  def test_tcgen05_mma(self, m, n, swizzle, ab_type, acc_type):
+    if acc_type == jnp.float16 and ab_type != jnp.float16:
+      self.skipTest("Only f16 input is supported for f16 output.")
+
+    swizzle_elems = swizzle // np.dtype(ab_type).itemsize
+    groups_k = 2
+    k = swizzle_elems * groups_k
+    a_shape = (m, k)
+    b_shape = (k, n)
+    bytes_a = np.dtype(ab_type).itemsize * math.prod(a_shape)
+    bytes_b = np.dtype(ab_type).itemsize * math.prod(b_shape)
+    acc_shape = (m, n)
+
+    def matmul(ctx, a_gmem, b_gmem, result_gmem, scratch):
+      del ctx
+      a_smem, b_smem, tma_barrier, mma_barrier, acc_tmem = scratch
+
+      tma_barrier_ref = tma_barrier.as_barrier_memref()
+      mgpu_dialect.arrive_expect_tx(
+          barrier=tma_barrier_ref,
+          expect_tx=bytes_a + bytes_b,
+      )
+
+      # GMEM -> SMEM
+      zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
+      mgpu_dialect.async_load(
+          source=a_gmem,
+          destination=a_smem,
+          barrier=tma_barrier_ref,
+          indices=[zero_i32] * len(a_shape),
+          slice_lengths=a_shape,
+          collective=ir.ArrayAttr.get([]),
+      )
+      mgpu_dialect.async_load(
+          source=b_gmem,
+          destination=b_smem,
+          barrier=tma_barrier_ref,
+          indices=[zero_i32] * len(b_shape),
+          slice_lengths=b_shape,
+          collective=ir.ArrayAttr.get([]),
+      )
+      tma_barrier.wait()
+
+      # TODO(allanrenucci): Remove explicit layouts once inferred.
+      tmem_layout = layouts.to_layout_attr(
+          tcgen05.tmem_default_layout(packing=1)
+          if m == 128
+          else tcgen05._infer_tmem_layout(
+              acc_shape, collective=False, packing=1
+          )
+      )
+      load_layout = layouts.to_layout_attr(
+          tcgen05.LAYOUT if m == 128 else fa.WGMMA_LAYOUT
+      )
+
+      mma_op = mgpu_dialect.TcGen05MMAOp(
+          accumulator=acc_tmem,
+          a=a_smem,
+          b=b_smem,
+          accumulate=arith.constant(ir.IntegerType.get_signless(1), False),
+      )
+      mma_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
+      tcgen05.commit_arrive(mma_barrier.barrier_ref)
+
+      mma_barrier.wait(orders_tensor_core=True)
+
+      # TMEM -> Registers
+      load_op = mgpu_dialect.AsyncLoadTmemOp(acc_tmem)
+      load_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
+      r_out = mgpu_dialect.layout_cast(load_op.result, load_layout)
+
+      # Registers -> GMEM
+      zero_index = arith.constant(ir.IndexType.get(), 0)
+      vector.store(r_out, result_gmem, [zero_index] * len(acc_shape))
+
+    a_jax_shape = jax.ShapeDtypeStruct(a_shape, ab_type)
+    b_jax_shape = jax.ShapeDtypeStruct(b_shape, ab_type)
+    acc_jax_shape = jax.ShapeDtypeStruct(acc_shape, acc_type)
+
+    scratch_shape = [
+        jax.ShapeDtypeStruct(a_shape, ab_type),
+        jax.ShapeDtypeStruct(b_shape, ab_type),
+        core.TMABarrier(1),
+        mgpu.Barrier(1),
+        mgpu.TMEM(acc_shape, acc_type),
+    ]
+    kernel = mgpu.as_gpu_kernel(
+        matmul,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(a_jax_shape, b_jax_shape),
+        out_shape=acc_jax_shape,
+        smem_scratch_shape=scratch_shape,
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    a = self.prng.uniform(-1, 1, a_shape).astype(ab_type)
+    b = self.prng.uniform(-1, 1, b_shape).astype(ab_type)
+
+    atol = 2e-2 if acc_type == jnp.float16 else 2e-5
+    rtol = 8e-4 if acc_type == jnp.float16 else 1e-7
+    self.assertArraysAllClose(
+        kernel(a, b),
+        np.matmul(a.astype(acc_type), b.astype(acc_type)),
+        atol=atol,
+        rtol=rtol,
+    )
+
 
 class UtilsTest(TestCase):
   @parameterized.parameters(

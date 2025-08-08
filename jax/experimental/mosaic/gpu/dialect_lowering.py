@@ -14,14 +14,13 @@
 
 """Lowering rules and pass for the MLIR Mosaic GPU dialect."""
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 import functools
 import itertools
 import math
 import operator
 from typing import Any, cast
-from collections.abc import Sequence
 
 from jax._src import lib as jaxlib
 from jax._src.interpreters import mlir as mlir_interpreter
@@ -1565,19 +1564,31 @@ def _tmem_dealloc_op_lowering_rule(
 
   return []
 
-def _tmem_ref_from_ir(x: ir.Value, layout: ir.Attribute) -> tcgen05.TMEMRef:
+
+def _swizzle(attrs: Sequence[ir.Attribute]) -> mgpu.SwizzlingMode:
+  """Returns the swizzle transform from the given attributes."""
+  swizzle = None
+  for attr in attrs:
+    if mgpu.SwizzleTransformAttr.isinstance(attr):
+      if swizzle is not None:
+        raise ValueError("Multiple swizzle transforms are not supported.")
+      swizzle = mgpu.SwizzleTransformAttr(attr).swizzle
+  return swizzle if swizzle is not None else mgpu.SwizzlingMode.kNoSwizzle
+
+
+def _tmem_ref_from_ir(ref: ir.Value, layout: ir.Attribute) -> tcgen05.TMEMRef:
   """Returns a TMEMRef from an IR value."""
-  if not ir.MemRefType.isinstance(x.type):
-    raise ValueError(f"{x} is not a memref.")
-  mem_ref_ty = ir.MemRefType(x.type)
+  if not ir.MemRefType.isinstance(ref.type):
+    raise ValueError(f"{ref} is not a memref.")
+  mem_ref_ty = ir.MemRefType(ref.type)
 
   if mem_ref_ty.memory_space != mgpu_utils.tmem():
     raise ValueError(
-        f"{x} has a memory space {mem_ref_ty.memory_space} that is not TMEM."
+        f"{ref} has a memory space {mem_ref_ty.memory_space} that is not TMEM."
     )
 
   i32 = ir.IntegerType.get_signless(32)
-  _, [tmem_addr] = _undo_conversion_cast(x, [i32])
+  _, [tmem_addr] = _undo_conversion_cast(ref, [i32])
 
   shape = tuple(mem_ref_ty.shape)
   el_ty = mem_ref_ty.element_type
@@ -1587,6 +1598,40 @@ def _tmem_ref_from_ir(x: ir.Value, layout: ir.Attribute) -> tcgen05.TMEMRef:
       layout.tiling, layout.warp_dims, layout.lane_dims, layout.vector_dim
   )
   return tcgen05.TMEMRef(tmem_addr, shape, el_ty, in_tmem_layout)
+
+
+@_register_lowering(mgpu.TcGen05MMAOp)
+def _tcgen05_mma_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.TcGen05MMAOp
+) -> Sequence[ir.Value]:
+  # TODO(allanrenucci): Add support for `a` in TMEM.
+  if op.a.type.memory_space == mgpu_utils.tmem():
+    raise NotImplementedError(f"{op.a} is not in TMEM. Only SMEM is supported.")
+  # TODO(allanrenucci): Add support for collective=True.
+  if op.collective:
+    raise NotImplementedError("Collective is not supported.")
+
+  a_transforms, b_transforms = inference_utils.in_transforms(op)
+  unwrapped_a_ref = unwrap_transformed_memref(op.a, a_transforms)
+  unwrapped_b_ref = unwrap_transformed_memref(op.b, b_transforms)
+
+  acc_layout = inference_utils.in_tmem_layouts(op)[0]
+  acc_ref = _tmem_ref_from_ir(op.accumulator, acc_layout)
+
+  with mgpu_utils.when(ctx.single_thread_per_block_predicate):
+    tcgen05.mma(
+        acc_ref,
+        unwrapped_a_ref,
+        unwrapped_b_ref,
+        a_swizzle=_swizzle(a_transforms),
+        b_swizzle=_swizzle(b_transforms),
+        a_scale=op.a_scale,
+        b_scale=op.b_scale,
+        accumulate=op.accumulate,
+        collective=op.collective.value,
+    )
+
+  return []
 
 
 # TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.1.
