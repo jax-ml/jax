@@ -425,6 +425,12 @@ class AbstractRef(core.AbstractValue):
     from jax._src.state.primitives import ref_set  # pytype: disable=import-error
     return ref_set(tracer, idx, value)
 
+  @core.aval_method
+  @staticmethod
+  def addupdate(tracer, value, idx=()):
+    from jax._src.state.primitives import ref_addupdate  # pytype: disable=import-error
+    ref_addupdate(tracer, idx, value)
+
   def _getitem(self, tracer, idx) -> Array:
     from jax._src.state.primitives import ref_get  # pytype: disable=import-error
     return ref_get(tracer, idx)

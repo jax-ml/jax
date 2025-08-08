@@ -954,5 +954,7 @@ def _mut_lin(nzs, x, *, memory_space):
   return x_ref, True, None, mut_lin
 
 ad.primitive_jvps[core.mutable_array_p] = _mut_jvp
-ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))
 ad.primitive_linearizations[core.mutable_array_p] = _mut_lin
+# TODO(mattjj): lin rule for freeze and accum_grad_in_ref?
+ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))
+ad.defjvp(core.accum_grad_in_ref_p, lambda g, _: core.accum_grad_in_ref_p.bind(g))
