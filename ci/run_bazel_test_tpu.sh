@@ -179,7 +179,17 @@ else
     //tests/pallas:tpu_pallas_async_test_tpu \
     //tests/pallas:tpu_pallas_state_test_tpu \
     //tests/pallas:tpu_pallas_test_tpu \
-    //tests/pallas:tpu_pallas_call_print_test_tpu
+    //tests/pallas:tpu_pallas_call_print_test_tpu \
+    //tests/pallas:indexing_test_tpu \
+    //tests/pallas:pallas_cost_estimate_test_tpu \
+    //tests/pallas:pallas_error_handling_test_tpu \
+    //tests/pallas:pallas_jumble_test_tpu \
+    //tests/pallas:pallas_shape_poly_test_tpu \
+    //tests/pallas:tpu_all_gather_test_tpu \
+    //tests/pallas:tpu_fusible_matmul_test_tpu \
+    //tests/pallas:tpu_pallas_distributed_test_tpu \
+    //tests/pallas:tpu_pallas_memory_space_test_tpu \
+    //tests/pallas:tpu_splash_attention_kernel_sharded_test_tpu
 
   # Store the return value of the first bazel command.
   first_bazel_cmd_retval=$?

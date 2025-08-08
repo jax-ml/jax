@@ -369,6 +369,7 @@ jax_multiplatform_test(
         "tpu_v5e_x8",
     ],
     deps = [
+        "//jax:mesh_utils",
         "//jax:pallas_tpu_ops",
     ] + py_deps([
         "absl/testing",
@@ -383,6 +384,7 @@ jax_multiplatform_test(
         "tpu_gmm_test.py",
     ],
     enable_backends = ["tpu"],
+    minimal_shard_count = 5,
     shard_count = 5,
     tags = [
         "noasan",  # Times out.
@@ -508,6 +510,7 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:extend",
+        "//jax:mesh_utils",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
     ] + py_deps([
@@ -532,12 +535,7 @@ jax_multiplatform_test(
         "tpu_v5e_x8",
         "tpu_v5p",
     ],
-    env = if_oss(
-        {
-            "XLA_FLAGS": "--xla_tpu_debug_sflag_wait_timeout_ms=500 --xla_tpu_debug_sflag_wait_shalt_on_detection",
-        },
-        google_value = {},
-    ),
+    minimal_shard_count = 5,
     shard_count = 5,
     tags = [
         "noasan",  # Times out.
@@ -546,6 +544,7 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:extend",
+        "//jax:mesh_utils",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
     ] + py_deps([
@@ -680,6 +679,7 @@ jax_multiplatform_test(
         "tpu_v5p",
     ],
     enable_backends = ["tpu"],
+    minimal_shard_count = 5,
     shard_count = 5,
     tags = [
         "noasan",  # Times out.
@@ -701,6 +701,7 @@ jax_multiplatform_test(
         "tpu_v5p",
     ],
     enable_backends = ["tpu"],
+    minimal_shard_count = 8,
     shard_count = 24,
     tags = [
         "noasan",  # Times out.
@@ -721,6 +722,7 @@ jax_multiplatform_test(
         "tpu_splash_attention_kernel_test.py",
     ],
     enable_backends = ["tpu"],
+    minimal_shard_count = 8,
     shard_count = 24,
     tags = [
         "noasan",  # Times out.

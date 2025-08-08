@@ -81,6 +81,8 @@ VMEM_SHARED = MemorySpace.VMEM_SHARED
 HBM = MemorySpace.HBM
 SEMAPHORE = MemorySpace.SEMAPHORE
 
+print("!!!!!!!!!!!!!!!!!!!!")
+
 import typing as _typing  # pylint: disable=g-import-not-at-top
 if _typing.TYPE_CHECKING:
   TPUCompilerParams = CompilerParams
