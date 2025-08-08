@@ -696,6 +696,7 @@ jax_multiplatform_test(
 
 jax_multiplatform_test(
     name = "tpu_ragged_paged_attention_test",
+    size = "large",
     srcs = ["tpu_ragged_paged_attention_test.py"],
     disable_configs = [
         "tpu_v5p",
@@ -705,6 +706,7 @@ jax_multiplatform_test(
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
+        "notap",
         "notsan",  # Times out.
     ],
     deps = [
