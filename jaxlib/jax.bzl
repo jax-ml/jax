@@ -126,9 +126,10 @@ def py_deps(_package):
 
 def jax_visibility(_target):
     """Returns the additional Bazel visibilities for `target`."""
-
-    # This is only useful as part of a larger Bazel repository.
-    return []
+    return [
+        "//jax:__subpackages__",
+        "//jaxlib:__subpackages__",
+    ]
 
 jax_extra_deps = []
 jax_gpu_support_deps = []

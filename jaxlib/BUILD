@@ -315,7 +315,7 @@ nanobind_pywrap_extension(
     srcs = ["jax.cc"],
     pytype_deps = py_deps(["numpy"]),
     pytype_srcs = glob(["_jax/*.pyi"]),
-    visibility = ["//visibility:public"],
+    visibility = jax_visibility("jaxlib/_jax"),
     deps = [
         ":config",
         ":custom_call_sharding",
