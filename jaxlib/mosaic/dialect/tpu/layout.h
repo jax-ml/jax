@@ -257,7 +257,7 @@ class VectorLayout {
 
   int8_t bitwidth() const { return bitwidth_; }
   const LayoutOffsets &offsets() const { return offsets_; }
-  const LayoutOffsets getCanonicalOffsets(
+  LayoutOffsets getCanonicalOffsets(
       const ArrayRef<int64_t> shape,
       const std::array<int64_t, 2> target_shape) const {
     // For (1, n) tiling with a single row, 2nd minor replication does not
