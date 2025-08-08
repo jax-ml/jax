@@ -343,6 +343,28 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_array_equal(result, expected)
 
   @parameterized.product(
+      reduce_func = [jnp.argmax, jnp.argmin]
+  )
+  def test_reduce_index(self, reduce_func):
+    dtype = jnp.float32
+    axis = 1
+
+    in_shape = (8, 128)
+    out_shape = list(in_shape)
+    out_shape[axis] = 1
+
+    def kernel(x, out):
+      out[:] = reduce_func(x[:], axis, keepdims=True)
+
+    x = jnp.arange(np.prod(in_shape), dtype=dtype).reshape(in_shape)
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.int32),
+    )(x)
+    expected = reduce_func(x, axis, keepdims=True)
+    np.testing.assert_array_equal(result, expected)
+
+  @parameterized.product(
       msk_dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
       dtype=[jnp.float32, jnp.bfloat16],
   )
