@@ -1372,7 +1372,7 @@ Value _canonicalize_store(const CanonicalizeContext &ctx, Operation &raw_op) {
     value_to_store = store.getValueToStore();
     base = store.getBase();
     indices = store.getIndices();
-    if (!store.getStrides().empty() || store.getMask()) {
+    if (!store.getStrides().empty() || store.getMask() || store.getAdd()) {
       // We don't support these cases.
       return value_to_store;
     }

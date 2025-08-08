@@ -5353,6 +5353,9 @@ LogicalResult tpu_vector_store_rule(RewriteContext &ctx, Operation &op,
                                     const ArrayRef<Layout> layouts_in,
                                     const ArrayRef<Layout> layouts_out) {
   auto store_op = cast<tpu::VectorStoreOp>(op);
+  if (store_op.getAdd()) {
+    return op.emitOpError("Not implemented: add to vmem");
+  }
   TPU_ASSERT_EQ_OP(layouts_out.size(), 0);
   TPU_ASSERT_OP(layouts_in.front().has_value());
   auto other_layouts_in = layouts_in.drop_front();

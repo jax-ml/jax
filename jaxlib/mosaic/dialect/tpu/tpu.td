@@ -259,7 +259,8 @@ def TPU_VectorStoreOp :TPU_Op<"vector_store", [DefaultMemWrite, AttrSizedOperand
     AnyMemRef:$base,
     Variadic<Index>:$indices,
     DenseI32ArrayAttr:$strides,
-    Optional<AnyVectorOfNonZeroRank>:$mask   // Elementwise mask.
+    Optional<AnyVectorOfNonZeroRank>:$mask,   // Elementwise mask.
+    DefaultValuedAttr<BoolAttr, "false">:$add
   );
   let results = (outs);
   let assemblyFormat = [{
