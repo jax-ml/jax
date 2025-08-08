@@ -5107,6 +5107,28 @@ class SemaphoreTest(PallasTest):
         text,
     )
 
+  def test_global_semaphore(self):
+    # We signal from block 0 and wait on block 1 to test whether the semaphore
+    # is globally shared.
+    def body(out_ref, sem_ref):
+      block_id = lax.axis_index("x")
+      @pl.when(block_id == 0)
+      def _():
+        out_ref[...] = jnp.ones_like(out_ref)
+        pl.semaphore_signal(sem_ref.at[0])
+      @pl.when(block_id == 1)
+      def _():
+        pl.semaphore_wait(sem_ref.at[0])
+    kernel = plgpu.kernel(
+        body,
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR((1,), is_global=True)],
+        grid=(10,),
+        grid_names=("x",),
+    )
+    result = kernel()
+    np.testing.assert_array_equal(result, jnp.ones((128,), jnp.float32))
+
 
 class ExamplesWGTest(
     ExamplesTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
