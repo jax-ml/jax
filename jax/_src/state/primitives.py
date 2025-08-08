@@ -112,7 +112,7 @@ def ref_get(
     idx: a NumPy-style indexer
 
   Returns:
-    A :class:`jax.Array` object (note: not a :class:`jax.ref.ArrayRef`) containing
+    A :class:`jax.Array` object (note, not a :class:`jax.ref.ArrayRef`) containing
     the indexed elements of the mutable reference.
 
   Examples:
@@ -185,7 +185,7 @@ def ref_swap(
     ref: a :class:`jax.ref.ArrayRef` object. On return, the buffer will be
       mutated by this operation.
     idx: a NumPy-style indexer
-    value: a :class:`jax.Array` object (note: not a :class:`jax.ref.ArrayRef`)
+    value: a :class:`jax.Array` object (note, not a :class:`jax.ref.ArrayRef`)
       containing the values to set in the array.
 
   Returns:
@@ -253,7 +253,7 @@ def ref_set(
     ref: a :class:`jax.ref.ArrayRef` object. On return, the buffer will be
       mutated by this operation.
     idx: a NumPy-style indexer
-    value: a :class:`jax.Array` object (note: not a :class:`jax.ref.ArrayRef`)
+    value: a :class:`jax.Array` object (note, not a :class:`jax.ref.ArrayRef`)
       containing the values to set in the array.
 
   Returns:
@@ -319,7 +319,7 @@ def ref_addupdate(
     ref: a :class:`jax.ref.ArrayRef` object. On return, the buffer will be
       mutated by this operation.
     idx: a NumPy-style indexer
-    x: a :class:`jax.Array` object (note: not a :class:`jax.ref.ArrayRef`)
+    x: a :class:`jax.Array` object (note, not a :class:`jax.ref.ArrayRef`)
       containing the values to add at the specified indices.
 
   Returns:
