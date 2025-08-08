@@ -17,5 +17,17 @@ from jax._src.typing import Array
 
 
 def array_ref(init_val: Array) -> core.ArrayRef:
-  """Create a mutable array reference with initial value `init_val`."""
+  """Create a mutable array reference with initial value ``init_val``.
+
+  For more discussion, see the `ArrayRef guide`_.
+
+  Args:
+    init_val: A :class:`jax.Array` representing the initial state
+      of the buffer.
+
+  Returns:
+    A :class:`jax.ref.ArrayRef` containing a reference to a mutable buffer.
+
+  .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
+  """
   return core.array_ref_p.bind(init_val, memory_space=None)

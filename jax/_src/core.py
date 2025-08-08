@@ -2511,6 +2511,14 @@ AxisSize = Union[int, DArray, Tracer, Var, DBIdx, InDBIdx, OutDBIdx]
 
 
 class ArrayRef:
+  """Mutable array reference.
+
+  In most cases this should not be constructed directly, but rather
+  via :func:`jax.ref.array_ref`. For examples of how this can be
+  used, refer to the `ArrayRef guide`_.
+
+  .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
+  """
   _aval: ShapedArray
   _buf: Array
   def __init__(self, aval, buf):
@@ -2562,8 +2570,30 @@ def _array_ref_impl(init_val, *, memory_space: Any):
   from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
   return ArrayRef(AbstractRef(get_aval(init_val)), _array_copy(init_val))
 
-def freeze(ref):
-  """Invalidate a given reference and produce its final value."""
+def freeze(ref: ArrayRef) -> Array:
+  """Invalidate a given reference and return its final value.
+
+  For more information about mutable array references, refer to the
+  `ArrayRef guide`_.
+
+  Args:
+    ref: A :class:`jax.ref.ArrayRef` object.
+
+  Returns:
+    A :class:`jax.Array` containing the contents of ``ref``.
+
+  Examples:
+    >>> import jax
+    >>> ref = jax.array_ref(jax.numpy.arange(5))
+    >>> ref[3] = 100
+    >>> ref
+    ArrayRef([  0,   1,   2, 100,   4], dtype=int32)
+
+    >>> jax.ref.freeze(ref)
+    Array([  0,   1,   2, 100,   4], dtype=int32)
+
+  .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
+  """
   return freeze_p.bind(ref)
 freeze_p = Primitive('freeze')
 freeze_p.is_effectful = lambda params: True  # type: ignore
