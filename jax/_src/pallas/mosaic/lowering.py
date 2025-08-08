@@ -3274,7 +3274,7 @@ def _while_lowering_rule(
   return list(while_op.results)
 
 
-@register_lowering_rule(lax.cond_p)
+@register_lowering_rule(lax.cond_p, kernel_types=[*tpu_core.KernelType])
 def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
   index, *args = args
   constant_index = _fold_and_get_constant_value(index)
