@@ -2535,6 +2535,7 @@ class ArrayRef:
   def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)
   def __repr__(self) -> str: return 'ArrayRef' + repr(self._buf)[5:]
   def __len__(self) -> int: return self._aval._len(self)
+  def addupdate(self, x, idx=()): return self._aval.addupdate(self, idx, x)
   def unsafe_buffer_pointer(self): return self._buf.unsafe_buffer_pointer()
 pytype_aval_mappings[ArrayRef] = lambda x: x._aval
 
@@ -2606,6 +2607,16 @@ def freeze_abstract_eval(ref_aval):
 @freeze_p.def_impl
 def _freeze_impl(ref):
   return ref[()]
+
+def accum_grad_in_ref(x):
+  return accum_grad_in_ref_p.bind(x)
+
+accum_grad_in_ref_p = Primitive('accum_grad_in_ref')
+accum_grad_in_ref_p.is_high = lambda: True  # type: ignore
+accum_grad_in_ref_p.to_lojax = lambda x: x  # type: ignore
+accum_grad_in_ref_p.def_abstract_eval(lambda x: x)  # type: ignore
+accum_grad_in_ref_p.def_impl(lambda x: x)  # type: ignore
+
 
 class AbstractToken(AbstractValue):
   def str_short(self, short_dtypes=False, mesh_axis_types=False): return 'Tok'
