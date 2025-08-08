@@ -288,6 +288,8 @@ def f(x, y):
 f(2., 0.) # ==> Pauses during execution!
 ```
 
+Note that since `vmap` transforms `lax.cond` into `lax.select` as mentioned in the [documentation](https://docs.jax.dev/en/latest/_autosummary/jax.lax.cond.html), the provided condtitional breakpoint snippet won't work within a `vmap`.
+
 ### Sharp bits
 Because `jax.debug.breakpoint` is a just an application of `jax.debug.callback`, it has the same [sharp bits as `jax.debug.print`](#sharp-bits), with a few more caveats:
 * `jax.debug.breakpoint` materializes *even more* intermediates than `jax.debug.print` because it forces materialization of all values in the call stack
