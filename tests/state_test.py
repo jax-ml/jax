@@ -405,7 +405,6 @@ class StatePrimitivesTest(jtu.JaxTestCase):
                              core.ShapedArray((1,), jnp.int32)])
     self.assertIn("a[:,0] += b", jaxpr.pretty_print(use_color=False))
 
-
   def test_get_jvp(self):
 
     def f(r):
@@ -527,6 +526,13 @@ class StatePrimitivesTest(jtu.JaxTestCase):
                          in_axes=(ref_bdim, *idx_bdims),
                          out_axes=[out_bdim, ref_bdim])
     vmap_of_discharge_ans = f_batched(a, *idxs)
+
+    discharge_of_vmap_ans = jax.tree.map(
+        lambda x: x.astype(floatx), discharge_of_vmap_ans
+    )
+    vmap_of_discharge_ans = jax.tree.map(
+        lambda x: x.astype(floatx), vmap_of_discharge_ans
+    )
 
     self.assertAllClose(discharge_of_vmap_ans, vmap_of_discharge_ans,
                         check_dtypes=False)
