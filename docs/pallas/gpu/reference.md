@@ -1011,3 +1011,22 @@ TODO
 ## Compiler parameters
 
 TODO
+
+## Debugging
+
+Mosaic GPU exposes a number of environment variables to diagnose issues with the
+generated low-level code:
+
+* `MOSAIC_GPU_DUMP_PTXAS` allows dumping the compilation logs from `ptxas` to
+  standard output when set;
+* `MOSAIC_GPU_DUMP_PTX` allows dumping the PTX code generated during compilation
+  to standard output when set;
+* `MOSAIC_GPU_DUMP_MLIR_PASSES` allows dumping the IR after every MLIR pass
+  in the compilation pipeline to standard output;
+* `MOSAIC_GPU_DUMP_SASS` allows dumping the SASS code produced at the end of
+  compilation to standard output;
+* `MOSAIC_GPU_DUMP_SASS_CTRL` allows dumping the SASS control codes following
+  [NervanaSystems/maxas](https://github.com/NervanaSystems/maxas) to standard
+  output;
+* `MOSAIC_GPU_DUMP_TO` allows specifying a directory path (that must exist)
+  where all of the above will be dumped as files.
