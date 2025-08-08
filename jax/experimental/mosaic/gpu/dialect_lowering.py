@@ -459,10 +459,6 @@ def _vector_load_op_lowering_rule(
   )
   has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
   if has_transforms:
-    transforms_attr = inference_utils.in_transforms(vector_load_op)[0]
-    swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
-        transforms_attr
-    )
     _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
     transformed_ref = unwrap_transformed_memref(
         vector_load_op.base, transforms_attr
