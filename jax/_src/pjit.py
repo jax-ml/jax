@@ -599,9 +599,8 @@ def _infer_params_impl(
       inline=ji.inline,
       compiler_options_kvs=ji.compiler_options_kvs,
   )
-  return (PjitParams(consts, params, in_avals,
-                     in_tree, out_tree(), dbg.arg_names),
-          args_flat)
+  return (PjitParams(consts, params, in_avals, in_tree, out_tree(),
+                     jaxpr._arg_names), args_flat)
 
 
 class InferParamsCacheEntry:
@@ -668,20 +667,26 @@ def _infer_params_internal(
     entry.pjit_params = p
   return entry.pjit_params, entry.pjit_params.consts + dynargs
 
-def _infer_input_type(fun: Callable, dbg: core.DebugInfo,
+def _infer_input_type(fun: Callable, dbg: core.DebugInfo | None,
                       explicit_args) -> tuple[core.AbstractValue, ...]:
   avals = []
   try:
     for i, x in enumerate(explicit_args):
       avals.append(core.shaped_abstractify(x))
   except OverflowError:
-    arg_path = f"argument path is {dbg.arg_names[i]}"  # pytype: disable=name-error
+    if dbg and dbg.arg_names:
+      arg_path = f"argument path is {dbg.arg_names[i]}"  # pytype: disable=name-error
+    else:
+      arg_path = f"argument path is <flat index {i}>"
     raise OverflowError(
       "An overflow was encountered while parsing an argument to a jitted "
       f"computation, whose {arg_path}."
     ) from None
   except TypeError:
-    arg_description = f"path {dbg.arg_names[i]}"  # pytype: disable=name-error
+    if dbg and dbg.arg_names:
+      arg_description = f"path {dbg.arg_names[i]}"  # pytype: disable=name-error
+    else:
+      arg_description = f"path <flat index {i}>"
     raise TypeError(
       f"Error interpreting argument to {fun} as an abstract array."
       f" The problematic value is of type {type(x)} and was passed to"  # pytype: disable=name-error
@@ -1271,7 +1276,7 @@ def explain_tracing_cache_miss(
   if config.check_tracer_leaks.value: return  # TODO(mattjj): can remove this
   if key[3][2].val: return  # No explanations for "inline" functions
 
-  debug_info = fun.debug_info
+  debug_info = fun.debug_info or lu._missing_debug_info('explain_tracing_cache_miss')
   func_filename = debug_info.func_filename
   if func_filename and not source_info_util.is_user_filename(func_filename):
    return

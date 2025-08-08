@@ -1300,9 +1300,7 @@ def nonzero_outputs(f, store, *args, **kwargs):
 def map_transpose(primitive: core.Primitive, params,
                   call_jaxpr: core.Jaxpr, args, ct, _):
   all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
-  # TODO(necula): use the right debug_info for the backwards pass
-  fun = lu.hashable_partial(lu.wrap_init(
-    backward_pass, debug_info=call_jaxpr.debug_info), call_jaxpr, False)
+  fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr, False)
   fun, nz_arg_cts = nonzero_outputs(fun)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   # Preserve axis for primal arguments, skip tangents (represented as undefined primals).

@@ -433,7 +433,8 @@ def _trace_to_jaxpr(fun: Callable,
                     in_avals: Sequence[core.AbstractValue],
                     debug: core.DebugInfo
                     ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
-  flat_fun, out_tree = api_util.flatten_fun(lu.wrap_init(fun, debug_info=debug), in_tree)
+  flat_fun, out_tree = api_util.flatten_fun(lu.wrap_init(fun, debug_info=debug),
+                                            in_tree)
   try:
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
   except core.ConcretizationTypeError as e:
@@ -471,10 +472,10 @@ def saved_residuals(f: Callable,
   jaxpr = jaxpr.replace(outvars=jaxpr.outvars[len(jaxpr.outvars) - num_res:])
   out_tree = lambda: tree_structure(out_shape)
   assert len(jaxpr.invars) == len(in_leaves)
-  return _saved_residuals(jaxpr, debug_info.arg_names)
+  return _saved_residuals(jaxpr, debug_info.arg_names)  # type: ignore
 
-def _saved_residuals(jaxpr: core.Jaxpr,
-                     arg_names: Sequence[str]) -> list[tuple[core.AbstractValue, str]]:
+def _saved_residuals(jaxpr: core.Jaxpr, arg_names: Sequence[str]
+                     ) -> list[tuple[core.AbstractValue, str]]:
   res_lits = [x for x in jaxpr.outvars if     isinstance(x, core.Literal)]
   res_vars = {x for x in jaxpr.outvars if not isinstance(x, core.Literal)}
 
@@ -656,7 +657,8 @@ def _insert_reduce_precision(jaxpr: core.Jaxpr, num_res: int) -> core.Jaxpr:
           eqn.source_info, eqn.ctx)
       eqns[eqn_idx] = replace_eqn
       eqns.insert(eqn_idx+1, new_eqn)
-  new_jaxpr = jaxpr.replace(invars=invars, constvars=constvars, eqns=eqns)
+  new_jaxpr = jaxpr.replace(invars=invars, constvars=constvars, eqns=eqns,
+                            debug_info=jaxpr.debug_info)
   config.enable_checks.value and core.check_jaxpr(new_jaxpr)
   return new_jaxpr
 

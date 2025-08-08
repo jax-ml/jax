@@ -1099,7 +1099,7 @@ def _transpose_scan_jaxpr(
     a_bar = _map(ad.instantiate_zeros, a_bar)
     return [*d_pure, *new_c_bar, *a_bar]
 
-  transposed_wrapped = lu.wrap_init(transposed, debug_info=jaxpr.jaxpr.debug_info)
+  transposed_wrapped = lu.wrap_init(transposed, debug_info=None)
   trans_avals = *ires_avals, *d_mut_avals, *d_pure_avals, *c_avals, *a_mut_avals, *b_avals_nz, *eres_avals
   trans_jaxpr = _make_closed_jaxpr(transposed_wrapped, trans_avals)
   return trans_jaxpr
@@ -2282,11 +2282,10 @@ def _fori_body_fun(body_fun: Callable, body_fun_dbg: core.DebugInfo) -> Callable
   def while_body_fun(loop_carry):
     i, upper, x = loop_carry
     return lax.add(i, lax._const(i, 1)), upper, body_fun_ref()(i, x)
-  api_util.save_wrapped_fun_debug_info(
-      while_body_fun,
-      body_fun_dbg._replace(arg_names=(body_fun_dbg.arg_names[0],
-                                       "",  # upper,
-                                       * body_fun_dbg.arg_names[1:])))
+  if body_fun_dbg.arg_names:
+    arg_names = (body_fun_dbg.arg_names[0], "", *body_fun_dbg.arg_names[1:])
+    body_fun_dbg = body_fun_dbg._replace(arg_names=arg_names)
+    api_util.save_wrapped_fun_debug_info(while_body_fun, body_fun_dbg)
   return while_body_fun
 
 @weakref_lru_cache
@@ -2295,9 +2294,10 @@ def _fori_scan_body_fun(body_fun: Callable, body_fun_dbg: core.DebugInfo) -> Cal
   def scanned_fun(loop_carry, _):
     i, x = loop_carry
     return (i + 1, body_fun_ref()(i, x)), None
-  api_util.save_wrapped_fun_debug_info(
-      scanned_fun,
-      body_fun_dbg._replace(arg_names=body_fun_dbg.arg_names + ("",)))
+  if body_fun_dbg.arg_names:
+    api_util.save_wrapped_fun_debug_info(
+        scanned_fun,
+        body_fun_dbg._replace(arg_names=body_fun_dbg.arg_names + ("",)))
   return scanned_fun
 
 @api_boundary
