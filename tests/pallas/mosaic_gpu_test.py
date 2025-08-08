@@ -352,6 +352,23 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 2 * 64).reshape((128 * 2, 64)).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
+  def test_add_one_grid_pipelined_with_leading_sequential_dimension(self):
+    @functools.partial(
+        self.pallas_call,
+        in_specs=[pl.BlockSpec((128, 16), lambda i, j: (i, j))],
+        out_specs=pl.BlockSpec((128, 16), lambda i, j: (i, j)),
+        out_shape=jax.ShapeDtypeStruct([128 * 2, 64], jnp.float32),
+        compiler_params=plgpu.CompilerParams(
+            dimension_semantics=["sequential", "parallel"],
+        ),
+        grid=(2, 4),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.0
+
+    x = jnp.arange(128 * 2 * 64).reshape((128 * 2, 64)).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x + 1.0)
+
   def test_add_one_grid_pipelined_program_id(self):
 
     @functools.partial(

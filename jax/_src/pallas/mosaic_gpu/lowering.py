@@ -675,8 +675,10 @@ def _block_spec_from_block_mapping(
         which_parallel,
         indices,
         [
-            primitives.program_id(axis)
-            for axis, is_parallel in enumerate(which_parallel)
+            primitives.program_id(axis - 1)
+            for axis, is_parallel in zip(
+                itertools.accumulate(which_parallel), which_parallel
+            )
             if is_parallel
         ],
     )
