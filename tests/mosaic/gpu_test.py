@@ -4451,20 +4451,20 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       tmem_layout = mgpu_layouts.to_layout_attr(tcgen05.TMEM_NATIVE_LAYOUT)
 
       # registers -> TMEM
+      r_in = mgpu_dialect.layout_cast(r_in, tmem_layout)
       store_op = mgpu_dialect.AsyncStoreTmemOp(r_in, tmem_ref)
-      store_op.attributes["in_layouts"] = ir.ArrayAttr.get([tmem_layout])
       store_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
       tcgen05.commit_tmem()
 
       # TMEM ->registers
       load_op = mgpu_dialect.AsyncLoadTmemOp(tmem_ref)
       load_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
-      load_op.attributes["out_layouts"] = ir.ArrayAttr.get([tmem_layout])
+      r_out = mgpu_dialect.layout_cast(load_op.result, tmem_layout)
       # no need to wait in this case, see:
       # https://docs.jax.dev/en/latest/pallas/gpu/reference.html#allocating-the-accumulator-using-tmem
 
       # Registers -> GMEM
-      vector.store(load_op.result, result, [zero_index] * len(shape))
+      vector.store(r_out, result, [zero_index] * len(shape))
 
     jax_shape = jax.ShapeDtypeStruct(shape, dtype)
     kernel = mgpu.as_gpu_kernel(

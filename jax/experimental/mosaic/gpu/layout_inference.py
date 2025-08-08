@@ -204,48 +204,54 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
   return (num_vector_operands * [layout], num_vector_results * [layout])
 
 
-for op in [
-    arith.AddIOp,
-    arith.AddFOp,
-    arith.AndIOp,
-    arith.BitcastOp,
-    arith.CmpFOp,
-    arith.CmpIOp,
-    arith.ExtFOp,
-    arith.ExtSIOp,
-    arith.ExtUIOp,
-    arith.FPToSIOp,
-    arith.FPToUIOp,
-    arith.MaximumFOp,
-    arith.MaxUIOp,
-    arith.MaxSIOp,
-    arith.MinimumFOp,
-    arith.MinUIOp,
-    arith.MinSIOp,
-    arith.MulIOp,
-    arith.MulFOp,
-    arith.OrIOp,
-    arith.FloorDivSIOp,
-    arith.DivUIOp,
-    arith.DivFOp,
-    arith.RemUIOp,
-    arith.RemSIOp,
-    arith.RemFOp,
-    arith.SIToFPOp,
-    arith.UIToFPOp,
-    arith.SubIOp,
-    arith.SubFOp,
-    arith.TruncFOp,
-    arith.TruncIOp,
-    arith.XOrIOp,
-    mlir_math.ExpOp,
-    mlir_math.Exp2Op,
-    mlir_math.LogOp,
-    mlir_math.RsqrtOp,
-    mlir_math.TanhOp,
-    vector.LoadOp,
-    vector.StoreOp,
-]:
+for op in (
+    [
+        arith.AddIOp,
+        arith.AddFOp,
+        arith.AndIOp,
+        arith.BitcastOp,
+        arith.CmpFOp,
+        arith.CmpIOp,
+        arith.ExtFOp,
+        arith.ExtSIOp,
+        arith.ExtUIOp,
+        arith.FPToSIOp,
+        arith.FPToUIOp,
+        arith.MaximumFOp,
+        arith.MaxUIOp,
+        arith.MaxSIOp,
+        arith.MinimumFOp,
+        arith.MinUIOp,
+        arith.MinSIOp,
+        arith.MulIOp,
+        arith.MulFOp,
+        arith.OrIOp,
+        arith.FloorDivSIOp,
+        arith.DivUIOp,
+        arith.DivFOp,
+        arith.RemUIOp,
+        arith.RemSIOp,
+        arith.RemFOp,
+        arith.SIToFPOp,
+        arith.UIToFPOp,
+        arith.SubIOp,
+        arith.SubFOp,
+        arith.TruncFOp,
+        arith.TruncIOp,
+        arith.XOrIOp,
+        mlir_math.ExpOp,
+        mlir_math.Exp2Op,
+        mlir_math.LogOp,
+        mlir_math.RsqrtOp,
+        mlir_math.TanhOp,
+        vector.LoadOp,
+        vector.StoreOp,
+    ]
+    # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.1.
+    + [mgpu.AsyncLoadTmemOp, mgpu.AsyncStoreTmemOp]
+    if jaxlib.version >= (0, 7, 1)
+    else []
+):
   _add_layout_inference_rule(op, _infer_pointwise_op_layouts)
 
 
@@ -604,28 +610,6 @@ def _infer_custom_primitive_op_layout(
   in_layouts = list(custom_primitive_op.in_layouts)
   out_layouts = list(custom_primitive_op.out_layouts)
   return in_layouts, out_layouts
-
-
-# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.1.
-if jaxlib.version >= (0, 7, 1):
-  @partial(_add_layout_inference_rule, mgpu.AsyncLoadTmemOp)
-  def _infer_async_load_tmem_op_layout(
-      op: mgpu.AsyncLoadTmemOp,
-  ) -> OptionalLayouts:
-    # TODO(b/431684684): Implement this, instead of relying on manual input.
-    out_layouts = list(inference_utils.out_layouts(op))
-    return [], out_layouts
-
-
-# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.1.
-if jaxlib.version >= (0, 7, 1):
-  @partial(_add_layout_inference_rule, mgpu.AsyncStoreTmemOp)
-  def _infer_async_store_tmem_op_layout(
-      op: mgpu.AsyncStoreTmemOp,
-  ) -> OptionalLayouts:
-    # TODO(b/431684684): Implement this, instead of relying on manual input.
-    in_layouts = list(inference_utils.in_layouts(op))
-    return in_layouts, []
 
 
 @partial(_add_layout_inference_rule, mgpu.BroadcastInDimOp)
