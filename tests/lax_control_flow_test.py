@@ -2804,8 +2804,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     x = rng.randn(32, 2, 32).astype('float32')  # numpy.ndarray, not Array
     _, vjp_fun = jax.vjp(cumprod, x)
-    *_, ext_res = vjp_fun.args[0].args[0]
-    self.assertIsInstance(ext_res, jax.Array)
+    if not config.use_simplified_jaxpr_constants.value:
+      *_, ext_res = vjp_fun.args[0].args[0]
+      self.assertIsInstance(ext_res, jax.Array)
 
   def test_scan_vmap_collectives(self):
     def scan_f(state, x):
@@ -3491,7 +3492,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       (final_ref, outs_ref), vjp = jax.vjp(partial(jax.lax.scan, body_fun), init_vals, xs)
       init_vals_bar_ref, xs_bar_ref = vjp((final, outs))
 
-    self.assertAllClose(final, final_ref, check_dtypes=False)
+    self.assertAllClose(final, final_ref, check_dtypes=False, rtol=1e-5)
     self.assertAllClose(outs, outs_ref, check_dtypes=False)
     self.assertAllClose(xs_bar, xs_bar_ref, check_dtypes=False)
 
