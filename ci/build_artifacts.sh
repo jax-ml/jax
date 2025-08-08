@@ -38,6 +38,11 @@ allowed_artifacts=("jax" "jaxlib" "jax-cuda-plugin" "jax-cuda-pjrt")
 os=$(uname -s | awk '{print tolower($0)}')
 arch=$(uname -m)
 
+bazel_startup_options=""
+if [[ -n "${JAXCI_BAZEL_OUTPUT_BASE}" ]]; then
+  bazel_startup_options="--output_base=${JAXCI_BAZEL_OUTPUT_BASE}"
+fi
+
 # Adjust the values when running on Windows x86 to match the config in
 # .bazelrc
 if [[ $os =~ "msys_nt"  && $arch == "x86_64" ]]; then
@@ -99,6 +104,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
   python build/build.py build --wheels="$artifact" \
     --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
     --bazel_options=--config=use_tar_archive_files \
+    --bazel_startup_options="$bazel_startup_options" \
     --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
     --verbose --detailed_timestamped_log --use_new_wheel_build_rule \
     --output_path="$JAXCI_OUTPUT_DIR" \
@@ -110,6 +116,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
     python build/build.py build --wheels="$artifact" \
       --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
       --bazel_options=--config=use_tar_archive_files \
+      --bazel_startup_options="$bazel_startup_options" \
       --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
       --verbose --detailed_timestamped_log --use_new_wheel_build_rule \
       --output_path="$JAXCI_OUTPUT_DIR" \

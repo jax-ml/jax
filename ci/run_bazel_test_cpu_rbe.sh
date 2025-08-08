@@ -37,10 +37,12 @@ source "ci/utilities/setup_build_environment.sh"
 os=$(uname -s | awk '{print tolower($0)}')
 arch=$(uname -m)
 
+bazel_output_base=""
 # Adjust os and arch for Windows
 if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
   os="windows"
   arch="amd64"
+  bazel_output_base="--output_base=C:\actions-runner\_work\bazel_output_base"
 fi
 
 WHEEL_SIZE_TESTS=""
@@ -95,7 +97,7 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
       fi
 else
       echo "Running RBE CPU tests..."
-      bazel test --config=rbe_${os}_${arch} \
+      bazel $bazel_output_base test --config=rbe_${os}_${arch} \
             --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
             --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
             --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
