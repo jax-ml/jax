@@ -4465,7 +4465,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
 
       # Registers -> GMEM
       vector.store(load_op.result, result, [zero_index] * len(shape))
-      mgpu.commit_shared()
 
     jax_shape = jax.ShapeDtypeStruct(shape, dtype)
     kernel = mgpu.as_gpu_kernel(
