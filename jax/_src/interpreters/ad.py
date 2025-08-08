@@ -544,8 +544,7 @@ def backward_pass3(
         else:
           rule = get_primitive_transpose(eqn.primitive)
           primals = map(read, eqn.invars)
-          up = lambda x: (UndefinedPrimal(x.aval) if isinstance(x, ValAccum)
-                          else x.inst().ref if isinstance(x, RefAccum) else x)
+          up = lambda x: UndefinedPrimal(x.aval) if isinstance(x, GradAccum) else x
           if eqn.primitive.call_primitive or eqn.primitive.map_primitive:
             # TODO(mattjj,dougalm): remove this path by revising call/map trans
             cts_in_avals = [v.aval for v in eqn.outvars]

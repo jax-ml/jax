@@ -23,6 +23,7 @@ import jax
 from jax._src import core
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.api import vjp3, GradValue
 from jax._src.util import safe_map, safe_zip
 from jax.sharding import NamedSharding, PartitionSpec as P, AxisType
 import jax.numpy as jnp
@@ -493,6 +494,31 @@ class MutableArrayTest(jtu.JaxTestCase):
 
     grads_ref = core.mutable_array(jnp.float32(0.))
     jax.grad(primal, argnums=1)(grads_ref, jnp.float32(1.0))
+    self.assertAllClose(grads_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
+
+  def test_custom_vjp_grad_stats_plumbing_scan_vjp3(self):
+    def primal(grads_ref, x):  # note: jit-abstracted!
+      def body(x, _):
+        x = jnp.sin(x)
+        x = stash_grads(grads_ref, x)
+        x = jnp.sin(x)
+        return x, ()
+      x, () = jax.lax.scan(body, x, None, length=1)
+      return x
+
+    @jax.custom_vjp
+    def stash_grads(grads_ref, x):
+      return x
+    def stash_grads_fwd(grads_ref, x):
+      return x, grads_ref
+    def stash_grads_bwd(grads_ref, g):
+      grads_ref[...] = g
+      return None, g
+    stash_grads.defvjp(stash_grads_fwd, stash_grads_bwd)
+
+    grads_ref = core.mutable_array(jnp.float32(0.))
+    _, f_vjp = vjp3(lambda x: primal(grads_ref, x), jnp.float32(1.))
+    _ = f_vjp(GradValue())(jnp.float32(1.))
     self.assertAllClose(grads_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
 
   @parameterized.parameters([False, True], [False, True])
