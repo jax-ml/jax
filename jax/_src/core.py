@@ -2535,7 +2535,7 @@ class ArrayRef:
   def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)
   def __repr__(self) -> str: return 'ArrayRef' + repr(self._buf)[5:]
   def __len__(self) -> int: return self._aval._len(self)
-  def addupdate(self, x, idx=()): return self._aval.addupdate(self, idx, x)
+  def addupdate(self, x, idx=()): return self._aval.addupdate(self, x, idx)
   def unsafe_buffer_pointer(self): return self._buf.unsafe_buffer_pointer()
 pytype_aval_mappings[ArrayRef] = lambda x: x._aval
 
