@@ -2955,24 +2955,15 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
     }
 
     if (layout.implicit_dim() != res_layout->implicit_dim()) {
-      return op.emitOpError("Not implemented: result/input offsets mismatch.");
-    }
-
-    if (layout.implicit_dim() != res_layout->implicit_dim()) {
       return op.emitOpError(
           "Not implemented: result/input implicit dim mismatch.");
     }
 
-    if (i > 1) {
-      auto curr_offsets = layout.offsets();
-      auto last_operand_offsets = layouts_in[i - 1]->offsets();
-      if (tiling_dim.has_value()) {
-        // Zero out the offset in the tiling dimension for verification.
-        curr_offsets[tiling_dim.value()] = 0;
-        last_operand_offsets[tiling_dim.value()] = 0;
-      }
-      if (curr_offsets != last_operand_offsets) {
-        op.emitOpError("Not implemented: non-concat dim offset mismatch.");
+    for (const int i : {0, 1}) {
+      if (i != tiling_dim && layout.offsets()[i] != res_layout->offsets()[i]) {
+        return op.emitOpError(
+            "Not implemented: result/input offset mismatch on non-concat "
+            "dimension.");
       }
     }
 
