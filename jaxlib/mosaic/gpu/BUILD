@@ -155,7 +155,7 @@ cc_library(
         ],
     ),
     deps = [
-        ":library_paths",
+        ":library_paths",  # buildcleaner: keep
         ":nvshmem",
         ":passes",
         ":target",
@@ -220,6 +220,11 @@ cc_library(
         "@xla//xla/ffi:ffi_api",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/service:custom_call_target_registry",
+        "@xla//xla/stream_executor/cuda:assemble_compilation_provider",
+        "@xla//xla/stream_executor/cuda:compilation_provider",
+        "@xla//xla/stream_executor/cuda:compilation_provider_options",
+        "@xla//xla/stream_executor/cuda:cuda_compute_capability",
+        "@xla//xla/stream_executor/cuda:ptx_compiler_support",
         "@xla//xla/tsl/platform:statusor",
     ],
     alwayslink = True,

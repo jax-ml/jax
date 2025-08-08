@@ -113,6 +113,11 @@ limitations under the License.
 #include "xla/ffi/ffi_api.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
+#include "xla/stream_executor/cuda/assemble_compilation_provider.h"
+#include "xla/stream_executor/cuda/compilation_provider.h"
+#include "xla/stream_executor/cuda/compilation_provider_options.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/cuda/ptx_compiler_support.h"
 #include "xla/tsl/platform/statusor.h"
 #include "tsl/platform/path.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -120,6 +125,7 @@ limitations under the License.
 namespace {
 
 namespace ffi = xla::ffi;
+namespace se = stream_executor;
 
 using MosaicInitFunc = void(void****);
 using MosaicHostFunc = void(void**);
@@ -304,54 +310,29 @@ void EnsureLLVMNVPTXTargetIsRegistered() {
   });
 }
 
-absl::StatusOr<int> GetLatestPtxasPtxIsaVersion() {
-  std::vector<const char*> ptxas_args = {"ptxas", "--input-as-string",
-                                         ".version 99.99", nullptr};
-  auto status = RunCUDATool("ptxas", ptxas_args).status();
-  if (status.ok()) {
-    return absl::InternalError("ptxas succeeded where it was expected to fail");
-  }
-  // Output message is of the form:
-  // ptxas application ptx input, line 1; fatal   :
-  // Unsupported .version 99.99; current version is '8.8'
-  std::vector<std::string> chunks = absl::StrSplit(status.message(), '\'');
-  if (chunks.size() != 3) {
-    return absl::InternalError(absl::StrCat(
-        "Failed to locate PTX ISA version in ptxas error message: ",
-        status.message()));
-  }
-  std::vector<std::string> major_minor = absl::StrSplit(chunks[1], '.');
-  if (major_minor.size() != 2) {
-    return absl::InternalError(
-        absl::StrFormat("Expected PTX ISA version to be formatted as "
-                        "MAJOR.MINOR, instead got: %s",
-                        chunks[1]));
-  }
-  int major;
-  if (!absl::SimpleAtoi(major_minor[0], &major)) {
-    return absl::InternalError(
-        absl::StrFormat("Failed to parse PTX ISA major version, expected a "
-                        "parsable integer, instead got: %s",
-                        major_minor[0]));
-  }
-  int minor;
-  if (!absl::SimpleAtoi(major_minor[1], &minor)) {
-    return absl::InternalError(
-        absl::StrFormat("Failed to parse PTX ISA minor version, expected a "
-                        "parsable integer, instead got: %s",
-                        major_minor[1]));
-  }
-  if (minor >= 10) {
-    return absl::InternalError(
-        absl::StrFormat("PTX ISA minor version %d is not less than or equal to "
-                        "9, which is assumed for version comparison",
-                        minor));
-  }
-  return major * 10 + minor;
+absl::StatusOr<std::unique_ptr<se::cuda::CompilationProvider>>
+GetPtxCompilationProvider() {
+  // Defaults mostly mirror those used in `xla/debug_options_flags.cc`.
+  std::string default_cuda_data_dir = "./cuda_sdk_lib";
+  // TODO(bchetioui): this does not mirror the XLA default. Evaluate whether
+  // using NvJitLink would work as necessary.
+  constexpr se::cuda::CompilationProviderOptions::NvJitLinkMode nvjitlink_mode =
+      se::cuda::CompilationProviderOptions::NvJitLinkMode::kDisabled;
+  constexpr bool enable_llvm_module_compilation_parallelism = false;
+  constexpr bool enable_driver_compilation = false;
+  bool enable_libnvptxcompiler = stream_executor::IsLibNvPtxCompilerSupported();
+
+  se::cuda::CompilationProviderOptions opts(
+      nvjitlink_mode, enable_libnvptxcompiler,
+      enable_llvm_module_compilation_parallelism, enable_driver_compilation,
+      std::move(default_cuda_data_dir));
+  return se::cuda::AssembleCompilationProvider(opts);
 }
 
-absl::StatusOr<std::string> GetPtxIsaVersion() {
-  TF_ASSIGN_OR_RETURN(int ptxas_latest_version, GetLatestPtxasPtxIsaVersion());
+absl::StatusOr<std::string> GetPtxIsaVersion(
+    const se::cuda::CompilationProvider& compilation_provider) {
+  TF_ASSIGN_OR_RETURN(int ptxas_latest_version,
+                      compilation_provider.GetLatestPtxIsaVersion());
   // We'd like to target the latest PTX ISA version supported by
   // ptxas. However, it doesn't make sense to ask LLVM to target a PTX
   // ISA that it isn't aware of yet. Find the latest version supported
@@ -363,7 +344,7 @@ absl::StatusOr<std::string> GetPtxIsaVersion() {
   return absl::StrFormat("ptx%d", final_version);
 }
 
-absl::StatusOr<std::string> GetSmVersion() {
+absl::StatusOr<se::CudaComputeCapability> GetCudaComputeCapability() {
   // Assumes driver has been initialized and a context exists. XLA already has
   // some utilities to query this, but we try to stay runtime-agnostic, so we
   // build our own here.
@@ -382,7 +363,10 @@ absl::StatusOr<std::string> GetSmVersion() {
     return absl::InternalError("Failed to get minor compute capability");
   }
   EnsureLLVMNVPTXTargetIsRegistered();
-  return mosaic::gpu::GetSmVersion(major, minor);
+  // TODO(hebecker): update CudaComputeCapability to embed extensions.
+  // Currently, extensions will still be used (but are hardcoded in a util
+  // `ShouldUsePtxExtension` instead of being queried).
+  return se::CudaComputeCapability(major, minor);
 }
 
 mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
@@ -615,6 +599,7 @@ void DumpToFileOrStdout(absl::string_view content, absl::string_view name,
   out_file << content << "\n";
 }
 
+// TODO(bchetioui): port this to not call ptxas and nvdisasm as subprocesses.
 void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
                            const std::string& ptx_isa,
                            const std::string& nvshmem_path,
@@ -730,8 +715,14 @@ absl::StatusOr<std::string> get_nvshmem_llvm_lib_path() {
 absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     mlir::ModuleOp module) {
   tsl::profiler::TraceMe trace("Compile");
-  TF_ASSIGN_OR_RETURN(std::string sm, GetSmVersion());
-  TF_ASSIGN_OR_RETURN(std::string ptx_isa, GetPtxIsaVersion());
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<se::cuda::CompilationProvider> compilation_provider,
+      GetPtxCompilationProvider());
+  TF_ASSIGN_OR_RETURN(se::CudaComputeCapability cc, GetCudaComputeCapability());
+  TF_ASSIGN_OR_RETURN(std::string sm,
+                      mosaic::gpu::GetSmVersion(cc.major, cc.minor));
+  TF_ASSIGN_OR_RETURN(std::string ptx_isa,
+                      GetPtxIsaVersion(*compilation_provider));
   bool is_comm_used = is_nvshmem_used(module);
   std::string nvshmem_path = "";
   if (is_comm_used) {
