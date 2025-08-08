@@ -84,41 +84,6 @@ struct VRegDataBounds {
       MLIRContext *ctxt, std::array<int64_t, 2> target_shape) const = 0;
 };
 
-// Represents a rectangular region of data within a vector register.
-//
-// This class is very limited in its power and should only be used for 32-bit
-// values with native tiling.
-//
-// Attributes:
-//   bounds: A TargetTuple of slices encoding the bounds of the rectangular
-//     data region.
-// TODO(tlongeri): Can this be removed in favor of the more general
-//  TiledRectangularVregBounds?
-class RectangularVregBounds : public VRegDataBounds {
- public:
-  RectangularVregBounds(const std::array<int64_t, 2> starts,
-                        const std::array<int64_t, 2> ends)
-      : starts_(starts), ends_(ends) {}
-
-  // See base class.
-  bool maskVariesAlong(Direction direction,
-                       std::array<int64_t, 2> target_shape) const override;
-
-  // See base class.
-  FailureOr<TypedValue<VectorType>> getVectorMask(
-      OpBuilder &builder, Location loc, int generation,
-      std::array<int64_t, 2> target_shape) const override;
-
-  // See base class.
-  DenseBoolArrayAttr getSublaneMask(
-      MLIRContext *mlir_ctxt,
-      std::array<int64_t, 2> target_shape) const override;
-
- private:
-  std::array<int64_t, 2> starts_;
-  std::array<int64_t, 2> ends_;
-};
-
 // VectorLayout describes a mapping of an arbitrarily sized values into vregs.
 //
 // First, let us consider the simplest case, when implicit_dim is None, bitwidth
