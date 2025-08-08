@@ -324,6 +324,12 @@ class TransformedRef:
 
 # We need an aval for `Ref`s so we can represent `get` and `swap` in Jaxprs.
 class AbstractRef(core.AbstractValue):
+  """Abstract mutable array reference.
+
+  Refer to the `ArrayRef guide`_ for more information.
+
+  .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
+  """
   __slots__ = ["inner_aval", "memory_space"]
 
   def __init__(self, inner_aval: core.AbstractValue, memory_space: Any = None):
