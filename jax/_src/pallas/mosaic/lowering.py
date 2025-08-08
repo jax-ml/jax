@@ -2620,34 +2620,6 @@ def _min_lowering_rule(ctx: LoweringRuleContext, x, y):
     return arith.minimumf(x, y)
   raise NotImplementedError(aval_out.dtype)
 
-def _reduce_index_helper(
-    ctx: LoweringRuleContext, x, axes, index_dtype, reduction_kind):
-  (x_aval,) = ctx.avals_in
-  (out_aval,) = ctx.avals_out
-  out_type = aval_to_ir_type(
-      ctx.lowering_context.dynamic_shape_replacement_fn, out_aval
-  )
-  if x_aval.dtype != jnp.float32:
-    raise NotImplementedError("Only float32 is supported")
-  if len(axes) != 1 or axes[0] != 1:
-    raise NotImplementedError("Only axes=(1,) is supported")
-  if index_dtype != jnp.int32:
-    raise NotImplementedError("Only index_dtype=int32 is supported")
-  return tpu.reduce_index(out_type, x, axes[0], reduction_kind)
-
-@register_lowering_rule(lax.argmax_p, ensure_mlir_values=False)
-def _argmax_lowering_rule(ctx: LoweringRuleContext, x, axes, index_dtype):
-  return _reduce_index_helper(
-      ctx, x, axes, index_dtype,
-      ir.Attribute.parse("#tpu.reduction_kind<arg_max>")
-  )
-
-@register_lowering_rule(lax.argmin_p, ensure_mlir_values=False)
-def _argmin_lowering_rule(ctx: LoweringRuleContext, x, axes, index_dtype):
-  return _reduce_index_helper(
-      ctx, x, axes, index_dtype,
-      ir.Attribute.parse("#tpu.reduction_kind<arg_min>")
-  )
 
 @register_lowering_rule(
     lax.sub_p, kernel_types=[*tpu_core.KernelType], ensure_mlir_values=False
