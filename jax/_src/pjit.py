@@ -2899,7 +2899,8 @@ def mesh_cast(xs, out_shardings):
   out_flat = [
       mesh_cast_p.bind(
           x, dst_sharding=canonicalize_sharding(
-              s, 'mesh_cast', check_mesh_consistency=False))
+              s, 'mesh_cast', check_mesh_consistency=False,
+              none_sharding_for_auto_manual=False))
       for x, s in safe_zip(x_flat, shardings_flat)
   ]
   return tree_unflatten(treedef, out_flat)

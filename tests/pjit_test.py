@@ -5312,12 +5312,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np.sum(np_inp1 @ np_inp1.T))
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
 
-    with self.assertRaisesRegex(
-        ValueError,
-        'PartitionSpec passed to einsum cannot contain axis names that are of'
-        ' type Auto or Manual'):
-      auto_axes(f, out_sharding=P())(arr1, arr2)
-
     out = jax.grad(f, argnums=(0, 1))(arr1, arr2)
     self.assertEqual(out[0].sharding, arr1.sharding)
     self.assertEqual(out[1].sharding, arr2.sharding)
@@ -6521,7 +6515,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return out
 
     with self.assertRaisesRegex(
-        ValueError, "PartitionSpec.*cannot contain axis names.*Auto"):
+        ValueError, "context mesh.*should match the aval mesh"):
       g(arr1, arr2)
 
   @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'),
@@ -7465,23 +7459,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "Using PartitionSpec when.*not under a mesh context.*is not allowed"):
-      f(arr, arr2)
-
-  @jtu.with_explicit_mesh((2, 1), ('x', 'y'),
-                      axis_types=(AxisType.Auto,) * 2)
-  def test_error_on_canonicalize_under_auto_mode(self, mesh):
-    np_inp = np.arange(16).reshape(8, 2)
-    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
-    arr2 = jax.device_put(np_inp.T, NamedSharding(mesh, P('y', None)))
-
-    @jax.jit
-    def f(x, y):
-      return jnp.einsum('xy,yz->xz', x, y,
-                        out_sharding=NamedSharding(mesh, P('x', 'y')))
-
-    with self.assertRaisesRegex(
-        ValueError,
-        "PartitionSpec passed to einsum cannot contain axis names.*Auto.*Manual"):
       f(arr, arr2)
 
   def test_broadcasted_iota_mix_axes(self):
