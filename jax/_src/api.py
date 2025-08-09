@@ -57,7 +57,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import pjit
 from jax._src import xla_bridge as xb
-from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray
+from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray, typeof
 from jax._src.api_util import (
   flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
   flatten_axes, donation_vector,
@@ -2253,32 +2253,30 @@ def vjp3(f, *primals):
   out_primals = tree_unflatten(out_tree(), out_primals_flat)
   return out_primals, f_vjp
 
+def _is_ref(x):
+  from jax._src.state.types import AbstractRef
+  try: return isinstance(typeof(x), AbstractRef)
+  except: return False
+
 def _vjp3(spec, in_tree, out_tree, out_known, jaxpr, args_res, opaque_res,
           *maybe_ct_refs):
-  from jax._src.state.types import AbstractRef
   maybe_ct_refs_flat, in_tree_ = tree_flatten(maybe_ct_refs)
   if in_tree != in_tree_: raise Exception
   args_res_flat, in_tree_ = tree_flatten(tuple(args_res))
   if in_tree != in_tree_: raise Exception
   residuals = [args_res_flat[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
-  def undef_primal(v):
-    if isinstance(v.aval, AbstractRef): raise Exception
-    return ad.UndefinedPrimal(v.aval)
-  maybe_refs = [x if isinstance(core.typeof(x), AbstractRef) else undef_primal(v)
+  maybe_refs = [ad.RefAccum(v.aval, x) if _is_ref(x) else ad.ValAccum(v.aval)
                 for v, x in zip(jaxpr.invars, maybe_ct_refs_flat)]
   return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr),
                  residuals, maybe_refs)
 
 def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, residuals, maybe_refs, out_ct):
-  from jax._src.state.types import AbstractRef
   cts_flat, out_tree_ = tree_flatten(out_ct)
   if out_tree != out_tree_: raise Exception
   cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
-  # TODO(mattjj,dougalm): call backward_pass3
-  arg_cts = ad.backward_pass(jaxpr, True, residuals, maybe_refs, cts_flat)
-  arg_cts = map(ad.instantiate_zeros, arg_cts)
-  arg_cts = [GradRef() if isinstance(v.aval, AbstractRef) else ct
-             for ct, v in zip(arg_cts, jaxpr.invars)]
+  ad.backward_pass3(jaxpr, True, residuals, maybe_refs, cts_flat)
+  arg_cts = [x.freeze() if isinstance(x, ad.ValAccum) else GradRef()
+             for x in maybe_refs]
   return tree_unflatten(in_tree, arg_cts)
 
 @dataclasses.dataclass

@@ -1051,7 +1051,6 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
   ct_xs = merge_lists(is_mutable_, ct_immut_xs, [None] * len(mut_xs_bar))
   return [None] * num_ires + ct_consts + ct_init + ct_xs + [None] * num_eres
 
-
 # transpose_scan_jaxpr converts the jaxpr signature:
 #  Before: [(ires,  T d_mut     T d_pure), T c,  (CT a_mut, T a, eres)] -> [T c,  T b]
 #           ---------- consts -----------        --------- ext -------
@@ -1103,6 +1102,99 @@ def _transpose_scan_jaxpr(
   trans_avals = *ires_avals, *d_mut_avals, *d_pure_avals, *c_avals, *a_mut_avals, *b_avals_nz, *eres_avals
   trans_jaxpr = _make_closed_jaxpr(transposed_wrapped, trans_avals)
   return trans_jaxpr
+
+def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
+                          num_carry, jaxpr, linear, unroll, _split_transpose):
+  consts_lin, init_lin, xs_lin = split_list(linear, [num_consts, num_carry])
+  num_ires = len(consts_lin) - sum(consts_lin)
+  num_eres = len(xs_lin) - sum(xs_lin)
+
+  # Rearrange jaxpr binders to separate out refs since we in/out swap pure vals:
+  #   Before: [ires,               T d, T c,               T a, eres] -> [T c, T b]
+  #   After:  [ires, T d_mut, T d_pure, T c, T a_mut, T a_pure, eres] -> [T c, T b]
+  # where
+  #   * `ires` means intensive (not scanned over / const) residuals, all Arrays;
+  #   * `T d` means the intensive tangents, each a linear GradAccum or nonlinear
+  #     plumbing ref or linear (zero) Array;
+  #   * `T c` means the carry tangents;
+  #   * `T a` means the extensive (scanned over) input tangents;
+  #   * `eres` means the extensive residuals;
+  #   * `T b` means the extensive tangent outputs.
+  ires, consts_dot, carry_dot, xs_dot, eres = split_list(
+      args, [num_ires, num_consts - num_ires, num_carry, sum(xs_lin)])
+  is_mutable = [isinstance(x, ad.RefAccum) or not isinstance(x, ad.GradAccum)
+                and isinstance(typeof(x), AbstractRef) for x in consts_dot]
+  immut_consts_dot, mut_consts_bar = partition_list(is_mutable, consts_dot)
+  jaxpr = _rearrange_mutable_binders(jaxpr, num_ires, num_consts - num_ires)
+  is_mutable_ = [isinstance(x, ad.RefAccum) or not isinstance(x, ad.GradAccum)
+                 and isinstance(typeof(x), AbstractRef) for x in xs_dot]
+  immut_xs_dot, mut_xs_bar = partition_list(is_mutable_, xs_dot)
+  jaxpr = _rearrange_mutable_binders(jaxpr, num_consts + num_carry, sum(xs_lin))
+  del consts_dot, xs_dot, args
+
+  # prepare cotangent values to be passed in to transpose
+  ct_carry, ct_ys = split_list(cts, [num_carry])
+  ct_carry = _map(ad.instantiate_zeros, ct_carry)  # TODO(mattjj): fixpoint
+  ct_ys_nz = [x for x in ct_ys if type(x) is not ad.Zero]
+
+  # initialize values to be used to accumulate pure constant gradients
+  immut_const_avals = jaxpr.in_avals[num_ires+len(mut_consts_bar):num_consts]
+  ct_immut_consts = _map(ad_util.zeros_like_aval, immut_const_avals)
+
+  # prepare transpose inputs, unboxing RefAccums while noting which are linear
+  trans_in, trans_tree = tree_flatten([ires, mut_consts_bar, ct_immut_consts,
+                                       ct_carry, mut_xs_bar, ct_ys, eres])
+  lin_refs = tuple(isinstance(x, ad.RefAccum) for x in trans_in)
+  trans_in = [x.inst().ref if l else x for l, x in zip(lin_refs, trans_in)]
+
+  # prepare transposed jaxpr
+  trans_avals, ext_avals = split_list(_map(typeof, trans_in), [num_consts+num_carry])
+  trans_avals = trans_avals + [core.mapped_aval(length, 0, a) for a in ext_avals]
+  xs_avals = tuple(core.mapped_aval(length, 0, typeof(x)) for x in immut_xs_dot)
+  jaxpr_trans = _transpose_scan_jaxpr_fancy(
+      jaxpr, trans_tree, tuple(trans_avals), lin_refs, xs_avals)
+
+  # run it
+  linear_trans = ([False] * num_ires +
+                  [True] * (len(mut_consts_bar) + len(immut_consts_dot) +
+                            len(carry_dot) + len(mut_xs_bar) + len(ct_ys_nz)) +
+                  [False] * num_eres)
+  outs = scan_p.bind(
+      *trans_in, reverse=not reverse, length=length, jaxpr=jaxpr_trans,
+      num_consts=num_ires + len(mut_consts_bar),
+      num_carry=len(immut_consts_dot) + len(carry_dot),
+      linear=tuple(linear_trans), unroll=unroll, _split_transpose=False)
+
+  for a, x in zip([*immut_consts_dot, *carry_dot, *immut_xs_dot], outs):
+    if isinstance(a, ad.GradAccum): a.accum(x)
+
+# transpose_scan_jaxpr converts the jaxpr signature:
+#  Before: [(ires,  T d_mut     T d_pure), T c,  (CT a_mut, T a, eres)] -> [T c,  T b]
+#           ---------- consts -----------        --------- ext -------
+#
+#  After: [(ires, CT d_mut), (CT d_pure,  CT c), (CT a_mut, CT b, eres)] -> [(CT d_pure, CT c), CT a]
+#           --- consts ----  ----- carry ------  --------- ext --------
+@weakref_lru_cache
+def _transpose_scan_jaxpr_fancy(
+    jaxpr, trans_tree, trans_avals, lin_refs, immut_xs_avals
+) -> core.ClosedJaxpr:
+  def transposed(*args):
+    args = [ad.RefAccum(typeof(x).inner_aval, x) if l else x
+            for l, x in zip(lin_refs, args)]
+    ires, mut_consts_bar, ct_immut_consts, ct_carry, mut_xs_bar, ct_ys, eres = \
+        tree_unflatten(trans_tree, args)
+    immut_consts_dot = [ad.ValAccum(core.get_aval(x), x) for x in ct_immut_consts]
+    carry_dot = [ad.ValAccum(core.get_aval(x)) for x in ct_carry]
+    immut_xs_dot = [ad.ValAccum(a) for a in immut_xs_avals]
+    primals = (ires + mut_consts_bar + immut_consts_dot + carry_dot + mut_xs_bar
+               + immut_xs_dot + eres)
+    ad.backward_pass3(jaxpr.jaxpr, False, jaxpr.consts, primals, ct_carry + ct_ys)
+    return [ad.instantiate_zeros(x.freeze()) for x in primals
+            if isinstance(x, ad.ValAccum)]
+
+  dbg = jaxpr.jaxpr.debug_info._replace(arg_names=(), result_paths=())
+  transposed_wrapped = lu.wrap_init(transposed, debug_info=dbg)
+  return _make_closed_jaxpr(transposed_wrapped, trans_avals)
 
 
 def _scan_batching_rule(axis_data, args,
@@ -1446,6 +1538,7 @@ scan_p.def_impl(partial(dispatch.apply_primitive, scan_p))
 scan_p.def_effectful_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
 ad.primitive_transposes[scan_p] = _scan_transpose
+ad.fancy_transposes[scan_p] = _scan_transpose_fancy
 ad.primitive_linearizations[scan_p] = _scan_linearize
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 xla.register_initial_style_primitive(scan_p)
