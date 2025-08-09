@@ -992,9 +992,9 @@ def flatten_axis_resources(what, tree, shardings, tupled_args):
     # tuple, but while it is a non-leaf pytree, either it wasn't a tuple or it
     # wasn't the right length.
     msg = (f"{what} specification must be a tree prefix of the positional "
-           f"arguments tuple passed to the `pjit`-decorated function. In "
-           f"particular, {what} must either be a None, a PartitionSpec, or "
-           f"a tuple of length equal to the number of positional arguments.")
+           f"arguments tuple. In particular, {what} must either be a Sharding, "
+           "a PartitionSpec, or a tuple of length equal to the number of "
+           "positional arguments.")
     # If `tree` represents an args tuple, then `axis_resources` must be a tuple.
     # TODO(mattjj,apaszke): disable implicit list casts, remove 'or list' below
     if type(shardings) is not tuple:
@@ -2895,7 +2895,8 @@ batching.skippable_batchers[sharding_constraint_p] = lambda _: ()
 # TODO(yashkatariya): Make shardings optional.
 def mesh_cast(xs, out_shardings):
   x_flat, treedef = tree_flatten(xs)
-  shardings_flat = flatten_axes("mesh_cast shardings", treedef, out_shardings)
+  shardings_flat = flatten_axis_resources(
+      "mesh_cast out_shardings", treedef, out_shardings, tupled_args=True)
   out_flat = [
       mesh_cast_p.bind(
           x, dst_sharding=canonicalize_sharding(
@@ -2978,7 +2979,8 @@ batching.skippable_batchers[mesh_cast_p] = lambda _: ()
 
 def reshard(xs, out_shardings):
   x_flat, treedef = tree_flatten(xs)
-  shardings_flat = flatten_axes("reshard shardings", treedef, out_shardings)
+  shardings_flat = flatten_axis_resources(
+      "reshard out_shardings", treedef, out_shardings, tupled_args=True)
   x_avals_flat = [core.shaped_abstractify(x) for x in x_flat]
   out_flat = []
   for x, x_aval, s in safe_zip(x_flat, x_avals_flat, shardings_flat):
