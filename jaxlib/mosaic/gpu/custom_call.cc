@@ -103,6 +103,7 @@ limitations under the License.
 #include "mlir/Transforms/Passes.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
+#include "jaxlib/mosaic/gpu/assembly_to_binary.h"
 #include "jaxlib/mosaic/gpu/launch_lowering.h"
 #include "jaxlib/mosaic/gpu/nvshmem.h"
 #include "jaxlib/mosaic/gpu/passes.h"
@@ -113,11 +114,8 @@ limitations under the License.
 #include "xla/ffi/ffi_api.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
-#include "xla/stream_executor/cuda/assemble_compilation_provider.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
-#include "xla/stream_executor/cuda/compilation_provider_options.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
-#include "xla/stream_executor/cuda/ptx_compiler_support.h"
 #include "xla/tsl/platform/statusor.h"
 #include "tsl/platform/path.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -310,25 +308,6 @@ void EnsureLLVMNVPTXTargetIsRegistered() {
   });
 }
 
-absl::StatusOr<std::unique_ptr<se::cuda::CompilationProvider>>
-GetPtxCompilationProvider() {
-  // Defaults mostly mirror those used in `xla/debug_options_flags.cc`.
-  std::string default_cuda_data_dir = "./cuda_sdk_lib";
-  // TODO(bchetioui): this does not mirror the XLA default. Evaluate whether
-  // using NvJitLink would work as necessary.
-  constexpr se::cuda::CompilationProviderOptions::NvJitLinkMode nvjitlink_mode =
-      se::cuda::CompilationProviderOptions::NvJitLinkMode::kDisabled;
-  constexpr bool enable_llvm_module_compilation_parallelism = false;
-  constexpr bool enable_driver_compilation = false;
-  bool enable_libnvptxcompiler = stream_executor::IsLibNvPtxCompilerSupported();
-
-  se::cuda::CompilationProviderOptions opts(
-      nvjitlink_mode, enable_libnvptxcompiler,
-      enable_llvm_module_compilation_parallelism, enable_driver_compilation,
-      std::move(default_cuda_data_dir));
-  return se::cuda::AssembleCompilationProvider(opts);
-}
-
 absl::StatusOr<std::string> GetPtxIsaVersion(
     const se::cuda::CompilationProvider& compilation_provider) {
   TF_ASSIGN_OR_RETURN(int ptxas_latest_version,
@@ -344,34 +323,16 @@ absl::StatusOr<std::string> GetPtxIsaVersion(
   return absl::StrFormat("ptx%d", final_version);
 }
 
-absl::StatusOr<se::CudaComputeCapability> GetCudaComputeCapability() {
-  // Assumes driver has been initialized and a context exists. XLA already has
-  // some utilities to query this, but we try to stay runtime-agnostic, so we
-  // build our own here.
-  CUdevice device;
-  if (cuCtxGetDevice(&device) != CUDA_SUCCESS) {
-    return absl::InternalError("Failed to get device for current context");
-  }
-  int major = 0;
-  if (cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
-                           device) != CUDA_SUCCESS) {
-    return absl::InternalError("Failed to get major compute capability");
-  }
-  int minor = 0;
-  if (cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
-                           device) != CUDA_SUCCESS) {
-    return absl::InternalError("Failed to get minor compute capability");
-  }
-  EnsureLLVMNVPTXTargetIsRegistered();
-  // TODO(hebecker): update CudaComputeCapability to embed extensions.
-  // Currently, extensions will still be used (but are hardcoded in a util
-  // `ShouldUsePtxExtension` instead of being queried).
-  return se::CudaComputeCapability(major, minor);
-}
-
 mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::MLIRContext* ctx, mlir::gpu::CompilationTarget target,
-    const std::string& sm, const std::string& ptx_isa, const std::string& nvshmem_path) {
+    const std::string& sm, const std::string& ptx_isa,
+    const std::string& nvshmem_path) {
+  // Only support assembly and binary output for now.
+  if (target != mlir::gpu::CompilationTarget::Assembly &&
+      target != mlir::gpu::CompilationTarget::Binary) {
+    return mlir::failure();
+  }
+  bool is_target_binary = target == mlir::gpu::CompilationTarget::Binary;
   static absl::once_flag register_passes_flag;
   absl::call_once(register_passes_flag, []() {
     EnsureLLVMNVPTXTargetIsRegistered();
@@ -398,6 +359,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::registerConvertToLLVMPass();
     mlir::registerGPUPasses();
     mlir::registerGpuLaunchSinkIndexComputationsPass();
+    mosaic::gpu::registerAssemblyToBinaryPass();
     mosaic::gpu::registerGpuLaunchLoweringPass();
     mosaic::gpu::registerConvertGpuToLLVMPass();
     mosaic::gpu::registerByvalInsertionPass();
@@ -441,7 +403,9 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         mosaic-convert-gpu-to-llvm,
         ensure-debug-info-scope-on-llvm-func{emission-kind=DebugDirectivesOnly},
         gpu-module-to-binary{format=)",
-      mlir::gpu::stringifyCompilationTarget(target).str(),
+      mlir::gpu::stringifyCompilationTarget(
+          mlir::gpu::CompilationTarget::Assembly)
+          .str(),
       (!nvshmem_path.empty() ? " l=" + nvshmem_path : ""),
       "  opts=-lineinfo toolkit=", cuda_root,
       R"(},
@@ -449,8 +413,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
         cse,
         )",
-      (target != mlir::gpu::CompilationTarget::Assembly ? "gpu-launch-lowering,"
-                                                        : ""),
+      (is_target_binary ? "gpu-assembly-to-binary,gpu-launch-lowering," : ""),
       R"(
         convert-to-llvm,
         reconcile-unrealized-casts
@@ -717,8 +680,9 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
   tsl::profiler::TraceMe trace("Compile");
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<se::cuda::CompilationProvider> compilation_provider,
-      GetPtxCompilationProvider());
-  TF_ASSIGN_OR_RETURN(se::CudaComputeCapability cc, GetCudaComputeCapability());
+      mosaic::gpu::GetAssemblyToBinaryCompilationProvider());
+  TF_ASSIGN_OR_RETURN(se::CudaComputeCapability cc,
+                      mosaic::gpu::GetCudaComputeCapability());
   TF_ASSIGN_OR_RETURN(std::string sm,
                       mosaic::gpu::GetSmVersion(cc.major, cc.minor));
   TF_ASSIGN_OR_RETURN(std::string ptx_isa,
