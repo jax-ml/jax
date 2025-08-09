@@ -50,6 +50,7 @@ Other functions
 
     softmax
     log_softmax
+    logmeanexp
     logsumexp
     standardize
     one_hot

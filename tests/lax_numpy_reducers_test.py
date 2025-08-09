@@ -802,6 +802,11 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self.assertEqual(1.0, jnp.mean(x))
     self.assertEqual(1.0, jnp.mean(x, where=True))
 
+  def testMeanVeryLargeArray(self):
+    # https://github.com/jax-ml/jax/pull/30769
+    x = jax.ShapeDtypeStruct((1 << 32,), jnp.dtype('float32'))
+    jax.eval_shape(jnp.mean, x)
+
   def testStdLargeArray(self):
     # https://github.com/jax-ml/jax/issues/15068
     raise unittest.SkipTest("test is slow, but it passes!")
