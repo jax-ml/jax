@@ -141,7 +141,8 @@ or `aot_cache_miss` in `pxla.MeshExecutable.create_cpp_call`)
 will not take the const args as arguments. Instead these cache
 miss functions will have to prepend the const args.
 
-TODO: the C++ fastpath in case of const args is still WIP.
+The C++ fast path has support for const args starting with jaxlib 0.7.1.
+In prior versions, the fast path is disabled when there are const args.
 
 To implement this scheme, we keep the `const_args` in
 `stages.Lowering`, `stages.Lowered`, and `stages.CompiledCallParams`.

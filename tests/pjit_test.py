@@ -4034,16 +4034,17 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertEmpty(jaxpr.consts)
       self.assertIs(const, inner_pjit_jaxpr.consts[0])
 
-  def test_lowering_cache_hit_with_closed_over_constants(self):
+  def test_lowering_cache_hit_with_closed_over_constants_jit(self):
     np_inp = np.arange(8)
     arr = jnp.arange(8)
+    np_const = jnp.arange(9)  # distinctive shape
+    arr_const = jnp.arange(10)  # distinctive shape
     @jax.jit
     def f(x):
-      return np_inp
+      return x + np_const[:8] + arr_const[:8]
 
     # all misses
-    self.assertCacheMisses(lambda: f(np_inp),
-                           cpp=1, tracing=1, lowering=1)
+    self.assertCacheMisses(lambda: f(np_inp), cpp=1)
     # all hits
     self.assertCacheMisses(lambda: f(np_inp),
                            cpp=0, tracing=0, lowering=0)
