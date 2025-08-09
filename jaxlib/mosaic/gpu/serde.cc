@@ -17,7 +17,14 @@ limitations under the License.
 
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/LogicalResult.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Dialect.h"
+#include "mlir/IR/OpDefinition.h"
+#include "mlir/IR/Operation.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/serde.h"
 
@@ -25,16 +32,71 @@ namespace mosaic::gpu {
 
 namespace {
 
+using ::llvm::ArrayRef;
+using ::llvm::LogicalResult;
+using ::llvm::success;
+using ::mlir::Operation;
+using ::mlir::Value;
+
 constexpr llvm::StringRef kMangledDialect = "stable_mosaic_gpu.";
 constexpr llvm::StringRef kVersionAttrName = "stable_mosaic_gpu.version";
 // When this is bumped, we should file a TODO to update the forward-compatible
 // version in Mosaic GPU lowering in a month!
-constexpr int kVersion = 1;
+//
+// TODO(bchetioui): Update the forward-compatible version in Mosaic GPU
+// lowering after 2025-09-08.
+constexpr int kVersion = 2;
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
 
+LogicalResult vector_extractelement_upgrade(Operation* op, int version,
+                                            bool& erased) {
+  if (version < 2) {
+    // vector.extractelement was removed in
+    // https://github.com/llvm/llvm-project/commit/33465bb2bb75f26b7ad42ab87ccb2464c0245476.
+    // We replace it with a vector.extract.
+    mlir::OpBuilder b(op->getParentRegion());
+    b.setInsertionPointAfter(op);
+    Value vec = op->getOperand(0);
+    Value position = op->getOperand(1);
+    Value extracted_value = b.create<mlir::vector::ExtractOp>(
+        op->getLoc(), vec, ArrayRef<mlir::OpFoldResult>{position});
+
+    op->replaceAllUsesWith(llvm::SmallVector<Value>{extracted_value});
+    op->erase();
+    erased = true;
+  }
+  return success();
+}
+
+LogicalResult vector_insertelement_upgrade(Operation* op, int version,
+                                           bool& erased) {
+  if (version < 2) {
+    // vector.insertelement was removed in
+    // https://github.com/llvm/llvm-project/commit/33465bb2bb75f26b7ad42ab87ccb2464c0245476.
+    // We replace it with a vector.insert.
+    mlir::OpBuilder b(op->getParentRegion());
+    b.setInsertionPointAfter(op);
+    Value source = op->getOperand(0);
+    Value destination = op->getOperand(1);
+    Value position = op->getOperand(2);
+
+    Value inserted_value = b.create<mlir::vector::InsertOp>(
+        op->getLoc(), source, destination,
+        ArrayRef<mlir::OpFoldResult>{position});
+    op->replaceAllUsesWith(llvm::SmallVector<Value>{inserted_value});
+    op->erase();
+    erased = true;
+  }
+  return success();
+}
+
 const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
-  static auto rules = new llvm::StringMap<SerdeRuleType>{};
+  static auto rules = new llvm::StringMap<SerdeRuleType>{
+      {::llvm::StringLiteral("vector.extractelement"),
+       vector_extractelement_upgrade},
+      {::llvm::StringLiteral("vector.insertelement"),
+       vector_insertelement_upgrade}};
   return *rules;
 }
 
