@@ -784,7 +784,7 @@ def tracers_to_jaxpr(
   in_tracers: Sequence[JaxprTracer],
   out_tracers: Sequence[JaxprTracer],
   effect_handles: Sequence[Any],
-  debug_info: core.DebugInfo,
+  debug_info: core.DebugInfo | None,
   ) -> tuple[Jaxpr, tuple[Any, ...], tuple[Any, ...]]:
   """Constructs Jaxpr given tracers for inputs and outputs.
 
@@ -885,7 +885,7 @@ def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
   """Moves the constvars to the start of invars."""
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   dbg = jaxpr.debug_info._replace(
-      arg_names=("",) * len(jaxpr.constvars) + (*jaxpr.debug_info.arg_names,))
+      arg_names=("",) * len(jaxpr.constvars) + (*jaxpr._arg_names,))
   lifted_jaxpr = jaxpr.replace(
       constvars=(), invars=jaxpr.constvars + jaxpr.invars, debug_info=dbg)
   config.enable_checks.value and core.check_jaxpr(lifted_jaxpr)
@@ -898,8 +898,7 @@ def convert_invars_to_constvars(jaxpr: Jaxpr, n: int) -> Jaxpr:
     return jaxpr.replace()  # 'return jaxpr' would create cache reference cycle
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   constvars, invars = split_list(jaxpr.invars, [n])
-  dbg = jaxpr.debug_info._replace(
-      arg_names=jaxpr.debug_info.arg_names[n:])
+  dbg = jaxpr.debug_info._replace(arg_names=jaxpr._arg_names[n:])
   lifted_jaxpr = jaxpr.replace(constvars=tuple(constvars), invars=invars,
                                debug_info=dbg)
   config.enable_checks.value and core.check_jaxpr(lifted_jaxpr)
@@ -1771,12 +1770,12 @@ class JaxprStackFrame:
   tracing_eqns: list[Union[ReferenceType[TracingEqn], Callable[[], TracingEqn]]]
   invars: list[Var]
   effects: core.Effects
-  debug_info: core.DebugInfo
+  debug_info: core.DebugInfo | None;
   is_high: bool
   mutable_qdds: list[tuple[Var, core.MutableQuasiDynamicData]]
   auto_dce: bool
 
-  def __init__(self, debug_info: core.DebugInfo, auto_dce: bool):
+  def __init__(self, debug_info: core.DebugInfo | None, auto_dce: bool):
     self.gensym = core.gensym()
     self.constid_to_tracer = WeakValueDictionary()
     self.constvar_to_val = {}
@@ -1806,7 +1805,7 @@ class JaxprStackFrame:
   def to_jaxpr(
       self, trace: DynamicJaxprTrace,
       out_tracers: Sequence[Tracer],
-      debug_info: core.DebugInfo,
+      debug_info: core.DebugInfo | None,
       source_info: SourceInfo,
     ) -> tuple[Jaxpr, list[Any]]:
     eqns = self.get_eqns()
@@ -1824,7 +1823,7 @@ class JaxprStackFrame:
     return jaxpr, list(constvals)
 
   def to_jaxpr2(self, out_tracers: Sequence[core.Tracer],
-                debug_info: core.DebugInfo):
+                debug_info: core.DebugInfo | None):
     eqns = self.get_eqns()
     outvars = [t.val for t in out_tracers]
     constvars, constvals = unzip2(self.constvar_to_val.copy().items())
@@ -1938,8 +1937,8 @@ class TracingEqn:
 class DynamicJaxprTrace(core.Trace):
   __slots__ = ("frame", "tag", "parent_trace")
 
-  def __init__(self, debug_info: core.DebugInfo, parent_trace=None, lower=False,
-               auto_dce=False):
+  def __init__(self, debug_info: core.DebugInfo | None,
+               parent_trace=None, lower=False, auto_dce=False):
     super().__init__()
     self.requires_low = lower
     self.frame = JaxprStackFrame(debug_info, auto_dce)
@@ -2278,7 +2277,7 @@ class DynamicJaxprTrace(core.Trace):
         source_info=source_info)
 
   def to_jaxpr(self, out_tracers: Sequence[Tracer],
-               debug_info: core.DebugInfo, source_info: SourceInfo):
+               debug_info: core.DebugInfo | None, source_info: SourceInfo):
     return self.frame.to_jaxpr(self, out_tracers, debug_info, source_info)
 
 
@@ -2364,9 +2363,10 @@ def _check_returned_jaxtypes(dbg, out_tracers):
       f"value of type {type(x)}{extra}, which is not a valid JAX type") from None
 
 def _check_no_returned_refs(
-    dbg: core.DebugInfo,
+    dbg: core.DebugInfo | None,
     out_tracers: Sequence[DynamicJaxprTracer]
 ) -> None:
+  dbg = dbg or lu._missing_debug_info("trace_to_jaxpr_dynamic")
   if not config.mutable_array_checks.value: return
   for i, t in enumerate(out_tracers):
     a = t.aval
@@ -2545,6 +2545,8 @@ def _add_implicit_outputs(jaxpr: Jaxpr) -> tuple[Jaxpr, OutputType]:
   impl_outvars = [seen.add(d) or d for x in expl_outvars if type(x) is Var and  # type: ignore
                   (seen.add(x) or type(x.aval) is DShapedArray)  # type: ignore
                   for d in x.aval.shape if type(d) is Var and d not in seen]
+  if not impl_outvars:
+    return jaxpr, tuple((x.aval, True) for x in jaxpr.outvars)
   outvars = [*impl_outvars, *expl_outvars]
 
   # Now assemble an OutputType by mapping vars in shapes to InDBIdx/OutDBIdx.
@@ -2770,8 +2772,9 @@ def try_constant_folding(primitive, tracers, params, out_avals):
 # jaxpr when we do grad-of-pmap. The tag is set by LinearizeTrace.process_call's
 # handling of pmap. Remove when we replace the pmap implementation.
 def _linearize_of_pmap_hack(f: lu.WrappedFun, jaxpr, consts) -> tuple[Jaxpr, list]:
-  if (not f.transforms and type(f.f) is HashableFunction and
-      getattr(f.f, '_pmap_tag', None)):
+  if ((not f.transforms or len(f.transforms) == 1 and
+       '_get_result_paths_thunk' in str(f.transforms[0][0]))
+       and type(f.f) is HashableFunction and getattr(f.f, '_pmap_tag', None)):
     _, jaxpr = f.f.closure
     return convert_constvars_jaxpr(jaxpr), []
   return jaxpr, consts

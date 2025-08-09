@@ -2141,7 +2141,8 @@ def hoist_constants_as_args(
     all_args_info = AllArgsInfo(
         const_arg_avals + all_args_info.in_avals,  # type: ignore
         all_args_info.debug_info._replace(
-            arg_names=(("",) * num_const_args + all_args_info.debug_info.arg_names)))
+            arg_names=(all_args_info.debug_info.arg_names and
+                       (("",) * num_const_args + all_args_info.debug_info.arg_names))))
   return (const_args, global_in_avals, in_shardings, in_layouts, donated_invars,
           kept_var_idx, inout_aliases, mut, all_args_info)
 

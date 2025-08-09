@@ -130,15 +130,19 @@ class Jaxpr:
   def is_high(self) -> bool:
     return self._is_high
 
+  @property
+  def _arg_names(self):
+    return self._debug_info.safe_arg_names(len(self._invars))
+
+  @property
+  def _result_paths(self):
+    return self._debug_info.safe_result_paths(len(self._outvars))
+
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
                effects: Effects = no_effects,
-               # We want all calls to pass a DebugInfo object, but for backwards
-               # compatibility we have to allow calls when the debug_info
-               # is missing.
-               debug_info: DebugInfo = None,  # type: ignore[annotation-type-mismatch,assignment]
-               is_high: bool = False,
-               ):
+               debug_info: DebugInfo | None = None,
+               is_high: bool = False):
     """
     Args:
       constvars: list of variables introduced for constants. Array constants are
@@ -183,19 +187,20 @@ class Jaxpr:
     return p.text(self.pretty_print(use_color=True))
 
   def replace(self, **kwargs):
-    # TODO(mattjj,necula): enable to find places we mess up debug_info
-    # if "debug_info" not in kwargs:
-    #   if "invars" in kwargs or "outvars" in kwargs:
-    #     raise ValueError("must update debug info")
+    debug_info = self.debug_info
+    if "debug_info" not in kwargs:
+      if "invars" in kwargs:
+        debug_info = debug_info._replace(arg_names=None)
+      if "outvars" in kwargs:
+        debug_info = debug_info._replace(result_paths=None)
     jaxpr = Jaxpr(
         constvars=kwargs.pop("constvars", self.constvars),
         invars=kwargs.pop("invars", self.invars),
         outvars=kwargs.pop("outvars", self.outvars),
         eqns=kwargs.pop("eqns", self.eqns),
         effects=kwargs.pop("effects", self.effects),
-        debug_info=kwargs.pop("debug_info", self.debug_info),
-        is_high=kwargs.pop("is_high", self.is_high),
-    )
+        debug_info=kwargs.pop("debug_info", debug_info),
+        is_high=kwargs.pop("is_high", self.is_high))
     if kwargs:
       raise ValueError(f"Unknown keyword arguments: {kwargs}")
     return jaxpr
@@ -267,6 +272,14 @@ class ClosedJaxpr:
   @property
   def effects(self) -> Effects:
     return self.jaxpr.effects
+
+  @property
+  def _arg_names(self):
+    return self._jaxpr._arg_names
+
+  @property
+  def _result_paths(self):
+    return self._jaxpr._result_paths
 
   def map_jaxpr(self, f):
     return ClosedJaxpr(f(self.jaxpr), self.consts)

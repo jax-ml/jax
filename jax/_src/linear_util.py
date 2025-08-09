@@ -70,7 +70,6 @@ import re
 import time
 from typing import Any, NamedTuple
 from collections.abc import Hashable
-import warnings
 import weakref
 
 from jax._src import config
@@ -168,7 +167,7 @@ class WrappedFun:
   stores: tuple[Store | EqualStore | None, ...]
   params: tuple[tuple[str, Any], ...]
   in_type: core.InputType | None
-  debug_info: DebugInfo
+  debug_info: DebugInfo | None
 
   def __init__(self, f: Callable,
                f_transformed: Callable,
@@ -176,7 +175,7 @@ class WrappedFun:
                stores: tuple[Store | EqualStore | None, ...],
                params: tuple[tuple[str, Hashable], ...],
                in_type: core.InputType | None,
-               debug_info: DebugInfo):
+               debug_info: DebugInfo | None):
     self.f = f
     self.f_transformed = f_transformed
     self.transforms = transforms
@@ -270,45 +269,38 @@ def transformation_with_aux2(
 
 class DebugInfo(NamedTuple):
   """Debugging info about a func, its arguments, and results."""
-  traced_for: str             # e.g. 'jit', 'scan', etc
 
+  traced_for: str  # e.g. 'jit', 'scan', etc
+
+  # `func_src_info` gives basic function definition info as a string, e.g.
+  # f'{fun.__name__} at {filename}:{lineno}' or '{fun.__name__}' if we have
+  # no source location information. The first word is always the function name,
+  # which may be '<unknown>'.
   func_src_info: str
-  """e.g. f'{fun.__name__} at {filename}:{lineno}' or {fun.__name__} if we have
-  no source location information. The first word is always the function name,
-  which may be '<unknown>'.
-  """
 
-  arg_names: tuple[str, ...]
-  """The paths of the flattened non-static argnames,
-  e.g. `('x', 'dict_arg["a"]', ... )`.
-  Uses the empty string for the args that do not correspond to
-  user-named arguments, e.g., tangent args in `jax.jvp`, or for arguments that
-  we are not yet tracking properly.
-  At the moment, `arg_names` accuracy is best-effort.
-  Use `safe_arg_names` to detect and handle an unexpected
-  number of elements in `arg_names`.
-  """
+  # `arg_names` gives the  paths of the flattened non-static argnames, e.g.
+  # `('x', 'dict_arg["a"]', ... )`. Uses the empty string for the args that do
+  # not correspond to user-named arguments, e.g., tangent args in `jax.jvp`, or
+  # for arguments that we are not yet tracking properly. At the moment,
+  # `arg_names` accuracy is best-effort. Use `safe_arg_names` to detect and
+  # handle an unexpected number of elements in `arg_names`.
+  arg_names: tuple[str, ...] | None
 
+  # `result_paths` gives pytree paths corresponding to flattened results, e.g.
+  # `('result[0]', 'result[1]')` for a function that returns a tuple of arrays,
+  # or `('result',)` for a function that returns a single array. The result
+  # paths are not available while we are tracing the function; instead we keep a
+  # thunk. It is possible for the result paths to be `None` only when we first
+  # create a `DebugInfo`, before we put it in `lu.WrappedFun` and before we
+  # start tracing. Inside a `lu.WrappedFun` it can be only a thunk or a tuple of
+  # strings. Once we are done tracing, we use `self.resolve_result_paths()` to
+  # execute the thunk and replace the actual result paths. At the moment,
+  # `result_paths` accuracy is best-effort. Use `safe_result_paths` to detect
+  # and handle an unexpected number of elements in `result_paths`.
   result_paths: tuple[str, ...] | Callable[[], tuple[str, ...]] | None
-  """The paths to the flattened results, e.g., `('result[0]', result[1])` for a
-  function that returns a tuple of arrays, or `(result,)` for a function that
-  returns a single array.
-  The result paths are not available while we are tracing the function,
-  instead we keep a thunk. It is possible for the result paths to be `None`
-  only when we first create a `DebugInfo`, before we put it in `lu.WrappedFun`
-  and before we start tracing.
-  Inside a `lu.WrappedFun` it can be only a thunk or a tuple of strings.
-  Once we are done tracing, we use
-  `self.resolve_result_paths()` to execute the thunk and replace the
-  actual result paths.
-  At the moment, `result_paths` accuracy is best-effort.
-  Use `safe_result_paths` to detect and handle an unexpected
-  number of elements in `result_paths`.
-  """
 
   def resolve_result_paths(self) -> DebugInfo:
     """Return a debug info with resolved result paths."""
-    assert self.result_paths is not None
     if callable(self.result_paths):
       return self._replace(result_paths=tuple(self.result_paths()))
     return self
@@ -336,11 +328,10 @@ class DebugInfo(NamedTuple):
 
   def safe_arg_names(self, expected: int) -> tuple[str, ...]:
     """Get the arg_names with a safety check."""
-    if len(self.arg_names) == expected:
+    if self.arg_names is not None and len(self.arg_names) == expected:
       return self.arg_names
     else:
-      # TODO(necula): this should not happen
-      return ("",) * expected
+      return ("",) * expected  # TODO(necula): this should not happen
 
   def filter_arg_names(self, keep: Sequence[bool]) -> tuple[str, ...]:
     """Keep only the arg_names for which `keep` is True."""
@@ -348,36 +339,29 @@ class DebugInfo(NamedTuple):
 
   def safe_result_paths(self, expected: int) -> tuple[str, ...]:
     """Get the result paths with a safety check."""
-    assert self.result_paths is not None and not callable(self.result_paths), self
+    assert not callable(self.result_paths), self
     if self.result_paths is not None and len(self.result_paths) == expected:
       return self.result_paths
     else:
-      # TODO(necula): this should not happen
-      return ("",) * expected
+      return ("",) * expected  # TODO(necula): this should not happen
 
   def filter_result_paths(self, keep: Sequence[bool]) -> tuple[str, ...]:
     """Keep only the result_paths for which `keep` is True."""
-    assert self.result_paths is not None and not callable(self.result_paths), self
+    assert not callable(self.result_paths), self
     return tuple(v for v, b in zip(self.safe_result_paths(len(keep)), keep) if b)
 
 _re_func_src_info = re.compile(r"([^ ]+)( at (.+):(\d+))?$")
 
 def _missing_debug_info(for_what: str) -> DebugInfo:
-  warnings.warn(
-      f"{for_what} is missing a DebugInfo object. "
-      "This behavior is deprecated, use api_util.debug_info() to "
-      "construct a proper DebugInfo object and propagate it to this function. "
-      "See https://github.com/jax-ml/jax/issues/26480 for more details.",
-      DeprecationWarning, stacklevel=2)
-  return DebugInfo("missing_debug_info", "<missing_debug_info>", (), ())
+  return DebugInfo("missing_debug_info", "<missing_debug_info>", None, None)
 
 def wrap_init(f: Callable, params=None, *,
-              debug_info: DebugInfo) -> WrappedFun:
+              debug_info: DebugInfo | None = None) -> WrappedFun:
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
   params_dict = {} if params is None else params
   params = () if params is None else tuple(sorted(params.items()))
   fun = WrappedFun(f, partial(f, **params_dict), (), (), params, None, debug_info)
-  if debug_info.result_paths is None:
+  if debug_info and debug_info.result_paths is None:
     fun, result_paths_thunk = _get_result_paths_thunk(fun)
     debug_info = debug_info._replace(
         result_paths=HashableFunction(result_paths_thunk, closure=()))

@@ -720,7 +720,7 @@ class _HashableByObjectId:
     return self.val is other.val
 
 # TODO(mattjj): make this function faster
-def _check_no_aliased_ref_args(dbg: core.DebugInfo, avals, args):
+def _check_no_aliased_ref_args(dbg: core.DebugInfo | None, avals, args):
   assert config.mutable_array_checks.value
   refs: dict[int, int] = {}
   for i, (a, x) in enumerate(zip(avals, args)):
@@ -731,7 +731,7 @@ def _check_no_aliased_ref_args(dbg: core.DebugInfo, avals, args):
         f"to a function, but when tracing {dbg.func_src_info} for {dbg.traced_for} "
         f"the mutable array reference of type {a.str_short()} appeared at both "
         f"{dbg.arg_names[dup_idx]} and {dbg.arg_names[i]}."
-        if dbg else
+        if dbg and dbg.arg_names else
         f"at both flat index {dup_idx} and flat index {i}") from None
 
 def _check_no_aliased_closed_over_refs(dbg: core.DebugInfo, consts, args) -> None:
