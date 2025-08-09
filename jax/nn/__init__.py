@@ -53,3 +53,4 @@ from jax._src.nn.functions import (
   squareplus as squareplus,
   mish as mish,
 )
+from jax._src.nn.sample_image import sample_image as sample_image
