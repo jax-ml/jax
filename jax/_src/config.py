@@ -1561,7 +1561,7 @@ custom_vjp_disable_shape_check = bool_state(
 
 mutable_array_checks = bool_state(
     name='jax_mutable_array_checks',
-    default=False,
+    default=True,
     upgrade=True,
     help='Enable error checks for mutable arrays that rule out aliasing.')
 
