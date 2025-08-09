@@ -109,10 +109,28 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --verbose_failures \
     --test_output=errors \
     -- \
-    //tests:tpu_tests \
-    //tests/pallas:tpu_tests \
-    //tests/pallas:tpu_pallas_test_tpu \
-    //tests/pallas:ops_test_tpu \
+    //tests:ann_test_tpu \
+    //tests:dtypes_test_tpu \
+    //tests:multibackend_test_tpu \
+    //tests:state_test_tpu \
+    //tests:lax_scipy_sparse_test_tpu \
+    //tests:lobpcg_test_tpu \
+    //tests:export_test_tpu \
+    //tests:error_check_test_tpu \
+    //tests:scipy_optimize_test_tpu
+    # //tests:tpu_tests \
+    # //tests:roofline_test_tpu \
+    # //tests:multi_device_test_tpu \
+    # //tests:array_interoperability_test_tpu \
+    # //tests:heap_profiler_test_tpu \
+    # //tests:metadata_test_tpu \
+    # //tests/pallas:tpu_tests \
+    # //tests/pallas:tpu_pallas_test_tpu \
+    # //tests/pallas:ops_test_tpu \
+    # //tests/pallas:export_back_compat_pallas_test_tpu \
+    # //tests/pallas:fusion_test_tpu \
+    # //tests/pallas:fuser_block_spec_test_tpu \
+    # //tests/mosaic:gpu_test_tpu \
     $IGNORE_TESTS
 
   # Store the return value of the first bazel command.
@@ -138,9 +156,20 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --verbose_failures \
     --test_output=errors \
     -- \
-    //tests:tpu_tests \
-    //tests/pallas:tpu_tests \
-    //tests/pallas:tpu_pallas_test_tpu
+    //tests:pjit_test_tpu
+    # //tests:tpu_tests \
+    # //tests:roofline_test_tpu \
+    # //tests:multi_device_test_tpu \
+    # //tests:array_interoperability_test_tpu \
+    # //tests:heap_profiler_test_tpu \
+    # //tests:metadata_test_tpu \
+    # //tests/pallas:tpu_tests \
+    # //tests/pallas:tpu_pallas_test_tpu \
+    # //tests/pallas:ops_test_tpu \
+    # //tests/pallas:export_back_compat_pallas_test_tpu \
+    # //tests/pallas:fusion_test_tpu \
+    # //tests/pallas:fuser_block_spec_test_tpu \
+    # //tests/mosaic:gpu_test_tpu
 
   # Store the return value of the second bazel command.
   second_bazel_cmd_retval=$?
@@ -179,7 +208,17 @@ else
     //tests/pallas:tpu_pallas_async_test_tpu \
     //tests/pallas:tpu_pallas_state_test_tpu \
     //tests/pallas:tpu_pallas_test_tpu \
-    //tests/pallas:tpu_pallas_call_print_test_tpu
+    //tests/pallas:tpu_pallas_call_print_test_tpu \
+    //tests/pallas:indexing_test_tpu \
+    //tests/pallas:pallas_cost_estimate_test_tpu \
+    //tests/pallas:pallas_error_handling_test_tpu \
+    //tests/pallas:pallas_jumble_test_tpu \
+    //tests/pallas:pallas_shape_poly_test_tpu \
+    //tests/pallas:tpu_all_gather_test_tpu \
+    //tests/pallas:tpu_fusible_matmul_test_tpu \
+    //tests/pallas:tpu_pallas_distributed_test_tpu \
+    //tests/pallas:tpu_pallas_memory_space_test_tpu \
+    //tests/pallas:tpu_splash_attention_kernel_sharded_test_tpu
 
   # Store the return value of the first bazel command.
   first_bazel_cmd_retval=$?
