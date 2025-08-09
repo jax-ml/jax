@@ -951,6 +951,7 @@ jax_multiplatform_test(
         "notap",
     ],
     deps = [
+        "//jax:extend",
         "//jax:pallas",
         "//jax:pallas_mosaic_gpu",
     ] + py_deps([
