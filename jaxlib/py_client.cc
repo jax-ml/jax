@@ -661,7 +661,7 @@ absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
     auto* sample = builder.profile().add_sample();
     if (entry.first.traceback) {
       for (const auto& frame : entry.first.traceback->RawFrames()) {
-        sample->add_location_id(builder.LocationId(frame.first, frame.second));
+        sample->add_location_id(builder.LocationId(frame.code, frame.lasti));
       }
     }
     sample->add_value(entry.second);

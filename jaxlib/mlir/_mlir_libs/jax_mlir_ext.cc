@@ -55,6 +55,7 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "shardy/integrations/c/passes.h"
+#include "jaxlib/mlir/_mlir_libs/traceback_to_location.h"
 #include "jaxlib/mosaic/gpu/integrations/c/passes.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
@@ -210,6 +211,16 @@ NB_MODULE(_jax_mlir_ext, m) {
         nb::arg("loc").none() = nb::none(),
         "Makes an inlined call to a function containing a single block with a "
         "single return op.");
+
+  nb::class_<TracebackToLocationCache>(m, "TracebackToLocationCache")
+      .def(nb::init<nb::callable>())
+      .def(
+          "get",
+          [](TracebackToLocationCache& self, Traceback traceback,
+             MlirContext context) -> MlirLocation {
+            return wrap(self.Get(traceback, unwrap(context)));
+          },
+          nb::arg("traceback"), nb::arg("context").none() = nb::none());
 }
 
 }  // namespace jax
