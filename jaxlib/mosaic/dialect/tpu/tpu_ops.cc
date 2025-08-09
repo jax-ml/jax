@@ -1858,19 +1858,19 @@ LogicalResult AllReduceOp::verify() {
             "input and output type");
       }
       break;
-    case ReductionKind::ARG_MAX:
-    case ReductionKind::ARG_MIN:
+    case ReductionKind::TPU_ARG_MAX:
+    case ReductionKind::TPU_ARG_MIN:
       if (in_ty.getShape() != out_ty.getShape()) {
-        return emitOpError(
-            "ARG_MAX and ARG_MIN must have the same input and output shape");
+        return emitOpError("TPU_ARG_MAX and TPU_ARG_MIN "
+                           "must have the same input and output shape");
       }
       if (!in_ty.getElementType().isF32()) {
         return emitOpError("Not Implemented: Only f32 input is supported for "
-                           "ARG_MAX and ARG_MIN");
+                           "TPU_ARG_MAX and TPU_ARG_MIN");
       }
       if (!out_ty.getElementType().isSignlessInteger(in_bitwidth)) {
         return emitOpError(absl::StrFormat(
-            "ARG_MAX and ARG_MIN must have i%d output", in_bitwidth));
+            "TPU_ARG_MAX and TPU_ARG_MIN must have i%d output", in_bitwidth));
       }
       break;
     case ReductionKind::FIND_FIRST_SET:
@@ -1886,16 +1886,17 @@ LogicalResult ReduceIndexOp::verify() {
   auto bitwidth = in_ty.getElementTypeBitWidth();
   auto axis = getAxis();
   auto kind = getKind();
-  if (kind != ReductionKind::ARG_MAX && kind != ReductionKind::ARG_MIN) {
-    return emitOpError("Reduction kind must be ARG_MAX or ARG_MIN");
+  if (kind != ReductionKind::TPU_ARG_MAX &&
+      kind != ReductionKind::TPU_ARG_MIN) {
+    return emitOpError("Reduction kind must be TPU_ARG_MAX or TPU_ARG_MIN");
   }
   if (!in_ty.getElementType().isF32()) {
     return emitOpError("Not Implemented: Only f32 input is supported for "
-                       "ARG_MAX and ARG_MIN");
+                       "TPU_ARG_MAX and TPU_ARG_MIN");
   }
   if (!out_ty.getElementType().isSignlessInteger(bitwidth)) {
     return emitOpError(absl::StrFormat(
-        "ARG_MAX and ARG_MIN must have i%d output", bitwidth));
+        "TPU_ARG_MAX and TPU_ARG_MIN must have i%d output", bitwidth));
   }
 
   auto in_shape = in_ty.getShape();
