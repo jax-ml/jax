@@ -20,6 +20,7 @@ from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 from jax._src.scipy.special import xlogy
+from jax._src.nn.functions import log1mexp
 
 
 def logpdf(x: ArrayLike,
@@ -227,17 +228,6 @@ def sf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return jnp.where(ok, _sf, np.nan)
 
 
-def _log1mexp(x: ArrayLike) -> Array:
-  """Numerically stable calculation of log(1 - exp(x))."""
-  # referring tensorflow's implementation
-  # https://github.com/tensorflow/probability/blob/v0.23.0/tensorflow_probability/python/math/generic.py#L685-L709
-  return jnp.where(
-      x < -lax.log(2.0),  # switching point
-      lax.log1p(-lax.exp(x)),
-      lax.log(-lax.expm1(x)),
-  )
-
-
 def logsf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   r"""
   Gumbel Distribution (Right Skewed) log survival function.
@@ -263,7 +253,5 @@ def logsf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   ok = lax.gt(scale, _lax_const(scale, 0))
   # logsf = log(1 - exp(-exp(-z)))
   neg_z = lax.div(lax.sub(loc, x), scale)
-  t1 = lax.neg(lax.exp(neg_z))
-  # numerical stability
-  log_sf = _log1mexp(t1)
+  log_sf = log1mexp(lax.exp(neg_z))
   return jnp.where(ok, log_sf, np.nan)

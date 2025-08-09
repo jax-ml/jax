@@ -720,6 +720,26 @@ class NNFunctionsTest(jtu.JaxTestCase):
     with jax.checking_leaks():
       fwd()  # doesn't crash
 
+  def testLog1mExp(self):
+    x, expected = jnp.array([
+        [0.1, jnp.log(1 - jnp.exp(-0.1))],
+        [1.1, jnp.log(1 - jnp.exp(-1.1))],
+        [0, -jnp.inf],
+        [1, -0.45867515],
+        [1e2, 0.0],
+        [1e-5, jnp.log(1e-5)],
+        [-1, jnp.nan],
+        [-1e-2, jnp.nan],
+        [-1e2, jnp.nan],
+        [jnp.inf, 0.0],
+    ]).T
+    got = nn.log1mexp(x)
+    self.assertAllClose(got, expected)
+
+  def testLog1mExpGrad(self):
+    check_grads(nn.log1mexp, (jnp.array([1e-2, 1e-1, 1e0, 1e1, 1e2]),), order=1,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
