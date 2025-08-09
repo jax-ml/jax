@@ -9003,8 +9003,8 @@ class PJitErrorTest(jtu.JaxTestCase):
 
     error = re.escape(
         "pjit in_shardings specification must be a tree prefix of the "
-        "positional arguments tuple passed to the `pjit`-decorated function. "
-        "In particular, pjit in_shardings must either be a None, a "
+        "positional arguments tuple. "
+        "In particular, pjit in_shardings must either be a Sharding, a "
         "PartitionSpec, or a tuple of length equal to the number of positional "
         "arguments. But pjit in_shardings is the wrong length: got a "
         "tuple or list of length 3 for an args tuple of length 2.")
