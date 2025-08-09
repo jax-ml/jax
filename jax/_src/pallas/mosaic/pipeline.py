@@ -1677,7 +1677,6 @@ def make_pipeline_allocations(
     should_accumulate_out=False,
     needs_swap_ref=True,
     grid=None,
-    use_lookahead=False,
 ):
   """Create BufferedRefs for the pipeline.
 
@@ -1692,15 +1691,11 @@ def make_pipeline_allocations(
       as accumulators.
     needs_swap_ref: whether a swap slots tracker needs to be allocated.
     grid: grid to use for the pipeline.
-    use_lookahead: whether to enable lookahead for the pipeline. Requires
-      the pipeline to use SREGs for state.
 
   Returns:
     A list of BufferedRefs, one corresponding to each ref specified in the
     in_specs and out_specs.
   """
-  if use_lookahead and grid is None:
-    raise ValueError("Grid must be specified when using lookahead.")
   # TODO(levskaya): generalize argument tree handling here and in emit_pipeline.
   num_in_specs = len(in_specs)
   if not isinstance(in_specs, (list, tuple)):
@@ -1715,8 +1710,12 @@ def make_pipeline_allocations(
   out_refs = refs[num_in_specs:]
   def make_input_bref(in_spec, in_ref):
     buffer_count = 2
+    use_lookahead = False
     if in_spec.pipeline_mode is not None:
       buffer_count = in_spec.pipeline_mode.buffer_count
+      use_lookahead = in_spec.pipeline_mode.use_lookahead
+    if use_lookahead and grid is None:
+      raise ValueError("Grid must be specified when using lookahead.")
     return BufferedRef.input(in_spec, in_ref.dtype, buffer_count,
                              needs_swap_ref=needs_swap_ref,
                              grid_rank=len(grid),
@@ -1727,6 +1726,8 @@ def make_pipeline_allocations(
     buffer_count = 2
     if out_spec.pipeline_mode is not None:
       buffer_count = out_spec.pipeline_mode.buffer_count
+      if out_spec.pipeline_mode.use_lookahead:
+        raise ValueError("Output buffering does not support lookahead.")
 
     if accumulate:
       return BufferedRef.accumulator(out_spec, out_ref.dtype, buffer_count,
@@ -1876,7 +1877,6 @@ def emit_pipeline(
     dimension_semantics: tuple[GridDimensionSemantics, ...] | None = None,
     trace_scopes: bool = True,
     no_pipelining: bool = False,
-    use_lookahead: bool = False,
 ):
   """Creates a function to emit a manual pallas pipeline.
 
@@ -1905,10 +1905,6 @@ def emit_pipeline(
       the pipeline using named_scope.
     no_pipelining: If True, turns off pipelining and all copies will be made
       synchronous. This is useful for debugging multiple-buffering related bugs.
-    use_lookahead: optional bool, indicates whether to use lookahead on input
-      buffers. Enabling lookahead allows the pipeline to begin fetching the next
-      changed block as soon as a slot is available, no matter how many
-      iterations ahead that block is.
   """
   if any(not isinstance(d, (int, jax.Array)) for d in grid):
     grid_types = tuple(type(d) for d in grid)
@@ -2002,7 +1998,6 @@ def emit_pipeline(
               should_accumulate_out=should_accumulate_out,
               needs_swap_ref=needs_swap_ref,
               grid=grid,
-              use_lookahead=use_lookahead,
           ),
       )
     if isinstance(allocations, list):
@@ -2147,7 +2142,6 @@ def emit_pipeline_with_allocations(
     in_specs=None,
     out_specs=None,
     should_accumulate_out=False,
-    use_lookahead=False,
 ):
   """Creates pallas pipeline and top-level allocation preparation functions.
 
@@ -2158,10 +2152,6 @@ def emit_pipeline_with_allocations(
     out_specs: output pallas block specs
     should_accumulate_out: booleans to indicate which outputs should be treated
       as accumulators.
-    use_lookahead: optional bool, indicates whether to use lookahead on input
-      buffers. Enabling lookahead allows the pipeline to begin fetching the next
-      changed block as soon as a slot is available, no matter how many
-      iterations ahead that block is.
 
   Returns:
     (emit_pipeline, make_allocations) function pair, where:
@@ -2174,14 +2164,12 @@ def emit_pipeline_with_allocations(
                     in_specs=in_specs,
                     out_specs=out_specs,
                     should_accumulate_out=should_accumulate_out,
-                    grid=grid,
-                    use_lookahead=use_lookahead)
+                    grid=grid)
   pipeline = emit_pipeline(
       body,
       grid=grid,
       in_specs=in_specs,
       out_specs=out_specs,
-      should_accumulate_out=should_accumulate_out,
-      use_lookahead=use_lookahead)
+      should_accumulate_out=should_accumulate_out)
 
   return pipeline, make_allocations
