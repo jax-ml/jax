@@ -57,3 +57,4 @@ Other functions
     scaled_matmul
     get_scaled_dot_general_config
     scaled_dot_general
+    sample_image
