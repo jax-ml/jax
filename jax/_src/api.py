@@ -2248,7 +2248,7 @@ def vjp3(f, *primals):
           RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
           for r in residuals]
   args_res = tree_map(lambda x: x if id(x) in used else NotNeeded(), primals)
-  f_vjp = VJP(partial(_vjp3, spec, in_tree, out_tree(), out_known, jaxpr),
+  f_vjp = VJP(partial(_vjp3, spec, out_known, jaxpr), in_tree, out_tree(),
               list(args_res), opaque_residuals)
   out_primals = tree_unflatten(out_tree(), out_primals_flat)
   return out_primals, f_vjp
@@ -2258,7 +2258,7 @@ def _is_ref(x):
   try: return isinstance(typeof(x), AbstractRef)
   except: return False
 
-def _vjp3(spec, in_tree, out_tree, out_known, jaxpr, args_res, opaque_res,
+def _vjp3(spec, out_known, jaxpr, in_tree, out_tree, args_res, opaque_res,
           *maybe_ct_refs):
   maybe_ct_refs_flat, in_tree_ = tree_flatten(maybe_ct_refs)
   if in_tree != in_tree_: raise Exception
@@ -2279,31 +2279,40 @@ def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, residuals, maybe_refs, out_ct
              for x in maybe_refs]
   return tree_unflatten(in_tree, arg_cts)
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class NotNeeded:
   pass
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class GradValue:
   pass
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class GradRef:
   pass
 
 @dataclasses.dataclass
 class VJP:
   fun: Callable
+  in_tree: PyTreeDef
+  out_tree: PyTreeDef
   args_res: list[Any]
   opaque_residuals: list[Any]
 
-  def __call__(self, *maybe_ct_refs):
-    return self.fun(self.args_res, self.opaque_residuals, *maybe_ct_refs)
+  def __call__(self, out_ct):
+    dums = tree_unflatten(self.in_tree, [GradValue()] * self.in_tree.num_leaves)
+    return self.fun(self.in_tree, self.out_tree, self.args_res,
+                    self.opaque_residuals, *dums)(out_ct)
+
+  def with_refs(self, *maybe_ct_refs):
+    return self.fun(self.in_tree, self.out_tree, self.args_res,
+                    self.opaque_residuals, *maybe_ct_refs)
 
 register_pytree_node(
     VJP,
-    lambda vjp: ((vjp.args_res, vjp.opaque_residuals), vjp.fun),
-    lambda fun, args_res: VJP(fun, *args_res))
+    lambda vjp: ((vjp.args_res, vjp.opaque_residuals),
+                 (vjp.fun, vjp.in_tree, vjp.out_tree)),
+    lambda meta, args_res: VJP(*meta, *args_res))
 
 
 def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:

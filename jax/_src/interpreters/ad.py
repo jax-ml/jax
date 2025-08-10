@@ -35,7 +35,8 @@ from jax._src.ad_util import (
     replace_rule_output_symbolic_zeros, Zero, zeros_like_aval, SymbolicZero)
 from jax._src.ad_util import zeros_like_p, add_jaxvals_p  # noqa: F401
 from jax._src.api_util import flatten_fun, flatten_fun_nokwargs, debug_info
-from jax._src.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal)
+from jax._src.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
+                           typeof)
 from jax._src.dtypes import dtype, float0
 from jax._src.state.types import AbstractRef
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list, wrap_name,
@@ -484,9 +485,9 @@ def get_primitive_transpose(p):
 
 
 def backward_pass3(
-    jaxpr: core.Jaxpr, transform_stack: bool, consts: list[Array],
-    primals_in: list[Array | ArrayRef | GradAccum], cotangents_in: list[Array],
-) -> None:
+    jaxpr: core.Jaxpr, transform_stack: bool,
+    consts: Sequence[Array], primals_in: Sequence[Array | ArrayRef | GradAccum],
+    cotangents_in: Sequence[Array]) -> None:
   if all(type(ct) is Zero for ct in cotangents_in) and not jaxpr.effects:
     return
 
@@ -608,13 +609,40 @@ class ValAccum(GradAccum):
   def freeze(self):
     return self.val
 
-class NullAccum(GradAccum):
-  aval: core.AbstractValue
-  def __init__(self, aval): self.aval = aval
-  def accum(self, x): return
-  def freeze(self): assert False
+# class NullAccum(GradAccum):
+#   aval: core.AbstractValue
+#   def __init__(self, aval): self.aval = aval
+#   def accum(self, x): return
+#   def freeze(self): assert False
 
 fancy_transposes: dict[core.Primitive, Callable] = {}
+
+def project_accums(args):
+  result, specs = [], []
+  for x in args:
+    if isinstance(x, ValAccum):
+      specs.append((ValAccum, x.aval))
+    elif isinstance(x, RefAccum):
+      specs.append((RefAccum, x.aval))
+      result.append(x.inst().ref)
+    else:
+      specs.append((None, typeof(x)))
+      result.append(x)
+  return result, tuple(specs)
+
+def unproject_accums(specs, result):
+  args, result_ = [], iter(result)
+  for k, aval in specs:
+    if k is ValAccum:
+      args.append(ValAccum(aval))
+    elif k is RefAccum:
+      args.append(RefAccum(aval, next(result_)))
+    elif k is None:
+      args.append(next(result_))
+    else:
+      assert False
+  assert next(result_, None) is None
+  return args
 
 
 @lu.transformation_with_aux2
