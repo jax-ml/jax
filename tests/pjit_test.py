@@ -4053,42 +4053,35 @@ class ArrayPjitTest(jtu.JaxTestCase):
     # all misses
     self.assertCacheMisses(lambda: f(np_inp), cpp=1)
     # all hits
-    self.assertCacheMisses(lambda: f(np_inp),
-                           cpp=0, tracing=0, lowering=0)
+    self.assertCacheMisses(lambda: f(np_inp), cpp=0, tracing=0, lowering=0)
 
     # misses in the C++ cache for a different argument
-    self.assertCacheMisses(lambda: f(arr),
-                           cpp=1, tracing=0, lowering=0)
-    self.assertCacheMisses(lambda: f(arr),  # then hits
-                           cpp=0, tracing=0, lowering=0)
+    self.assertCacheMisses(lambda: f(arr), cpp=1, tracing=0, lowering=0)
+    # cpp hit
+    self.assertCacheMisses(lambda: f(arr), cpp=0, tracing=0, lowering=0)
 
     # Hits the lowering cache when using the AOT
-    self.assertCacheMisses(lambda: f.lower(arr),
-                           cpp=0, tracing=0, lowering=0)
+    self.assertCacheMisses(lambda: f.lower(arr), cpp=0, tracing=0, lowering=0)
 
   def test_lowering_cache_hit_with_closed_over_constants_sharded(self):
-    if jax.device_count() < 2:
-      self.skipTest('Requires >=2 devices')
-    mesh = jax.sharding.Mesh(jax.devices()[:2], 'x')
+    mesh = jtu.create_mesh((2,), 'x')
     s = NamedSharding(mesh, P('x'))
-    np_const = np.arange(9)  # distinctive shape
-    arr_const = jnp.arange(10)  # distinctive shape
 
-    inp = jax.device_put(np.arange(8), s)
+    inp = jax.device_put(np.arange(4), s)
+    arr_const = jax.device_put(np.arange(4), s)
+    np_const = np.arange(5)
 
     @jax.jit
     def f(x):
-      return x + np_const[:8] + arr_const[:8]
+      return x + arr_const + np_const[:4]
 
     # all misses
     self.assertCacheMisses(lambda: f(inp), cpp=1)
     # all hits
-    self.assertCacheMisses(lambda: f(inp),
-                           cpp=0, tracing=0, lowering=0)
+    self.assertCacheMisses(lambda: f(inp), cpp=0, tracing=0, lowering=0)
 
     # Hits the lowering cache when using the AOT
-    self.assertCacheMisses(lambda: f.lower(inp),
-                           cpp=0, tracing=0, lowering=0)
+    self.assertCacheMisses(lambda: f.lower(inp), cpp=0, tracing=0, lowering=0)
 
   @jtu.thread_unsafe_test()
   def test_lowering_cache_hit_with_closed_over_constants_scan(self):
