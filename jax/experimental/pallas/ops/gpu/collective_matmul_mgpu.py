@@ -62,10 +62,6 @@ def all_gather_lhs_matmul(
     raise NotImplementedError(f"m_shard={m_shard} must be a multiple of block_m={block_m}")
   if n_shard % block_n != 0:
     raise NotImplementedError(f"n_shard={n_shard} must be a multiple of block_n={block_n}")
-  if n_shard != block_n:
-    raise NotImplementedError(
-        f"n_shard={n_shard} must be equal to block_n={block_n}"
-    )
 
   swizzle = min(
       plgpu.find_swizzle(block_k * jnp.finfo(element_type).bits, "lhs"),
@@ -91,9 +87,15 @@ def all_gather_lhs_matmul(
         scratch_ref, send_dev_id, device_id_type=pl.DeviceIdType.LOGICAL
     )
 
-    def m_loop(mi, _):
-      mi = mi * lax.axis_size('sm') + sm_id
+    m_steps = m_shard // block_m
+    n_steps = n_shard // block_n
+    grid = (m_steps, n_steps)
+
+    @plgpu.nd_loop(grid, collective_axes="sm")
+    def mn_loop(mn_step):
+      mi, ni = mn_step
       m_tile_slice = pl.ds(mi * block_m, block_m)
+      n_tile_slice = pl.ds(ni * block_n, block_n)
 
       # For some reason ptxas spills if we unroll the loop over k
       copy_block = 32
@@ -140,7 +142,7 @@ def all_gather_lhs_matmul(
             # We only delay release by 1 step, so we need to wait for the
             # previous copies.
             plgpu.wait_smem_to_gmem(1, wait_read_only=True)
-          k_loop(scratch_ref.at[scratch_slot], rhs_ref)
+          k_loop(scratch_ref.at[scratch_slot], rhs_ref.at[:,n_tile_slice])
           # Make sure the copy is fully done.
           plgpu.wait_smem_to_gmem(0, wait_read_only=False)
           # The order of signals doesn't matter here.
@@ -156,15 +158,10 @@ def all_gather_lhs_matmul(
               lax.rem(device_offset + dev_id, num_devices) * m_shard, block_m
           )
           plgpu.copy_smem_to_gmem(
-              out_smem, out_ref.at[device_m_slice].at[m_tile_slice]
+              out_smem, out_ref.at[device_m_slice].at[m_tile_slice, n_tile_slice]
           )
           # Wait for the next scratch to arrive --- see the loop invariant.
           pl.semaphore_wait(received_sem)
-
-    grid_size = m_shard // block_m
-    m_steps = grid_size // num_sms + jnp.int32(sm_id < grid_size % num_sms)
-    # TODO(apaszke): Use the ND-loop helper.
-    jax.lax.fori_loop(0, m_steps, m_loop, None)
 
   result, _ = plgpu.kernel(
       kernel_body,
