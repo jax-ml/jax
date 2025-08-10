@@ -21,6 +21,7 @@ from jax._src import core
 from jax._src import test_util as jtu
 import jax._src.lib
 from jax._src.lib import xla_client as xc
+from jax._src.lib import jaxlib_extension_version
 from jax.experimental import topologies
 from jax.experimental.pjit import pjit
 from jax.experimental.serialize_executable import (
@@ -163,9 +164,11 @@ class JaxAotTest(jtu.JaxTestCase):
       self.assertLen(compiled._params.const_args, 0)
     self.assertArraysEqual(compiled(inp), const[0:8] + inp)
     # Trigger cache hit
-    # TODO(necula): fix the fastpath for AOT
-    expected_aot_call = 1 if config.use_simplified_jaxpr_constants.value else 0
-    self.assertCacheMisses(lambda: compiled(inp), cpp=0, aot_call=expected_aot_call)
+    expected_aot_calls = 0
+    if (config.use_simplified_jaxpr_constants.value and
+        jaxlib_extension_version < 366):
+      expected_aot_calls = 1
+    self.assertCacheMisses(lambda: compiled(inp), cpp=0, aot_call=expected_aot_calls)
 
   def test_with_ref_constants(self):
     x_ref = core.mutable_array(0)

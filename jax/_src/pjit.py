@@ -63,6 +63,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
+from jax._src.lib import jaxlib_extension_version
 from jax._src.mesh import AbstractMesh
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
@@ -146,13 +147,13 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
         and not p.params['jaxpr'].jaxpr.is_high):
       args_flat = map(core.full_lower, args_flat)
       core.check_eval_args(args_flat)
-      out_flat, compiled, profiler, num_const_args = _pjit_call_impl_python(
+      out_flat, compiled, profiler, const_args = _pjit_call_impl_python(
           *args_flat, **p.params)
     else:
       out_flat = jit_p.bind(*args_flat, **p.params)
       compiled = None
       profiler = None
-      num_const_args = 0
+      const_args = []
   except stages.DeviceAssignmentMismatchError as e:
     fails, = e.args
     fun_name = getattr(fun, '__qualname__', getattr(fun, '__name__', str(fun)))
@@ -180,7 +181,8 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
     api_util.maybe_recursive_nan_check(e, fun, args, kwargs)
 
   outs = tree_unflatten(p.out_tree, out_flat)
-  return outs, out_flat, p.out_tree, args_flat, p.params['jaxpr'], compiled, profiler, num_const_args
+  return (outs, out_flat, p.out_tree, args_flat,
+          p.params['jaxpr'], compiled, profiler, const_args)
 
 
 def _need_to_rebuild_with_fdo(pgle_profiler):
@@ -189,15 +191,14 @@ def _need_to_rebuild_with_fdo(pgle_profiler):
 
 def _get_fastpath_data(
     executable, out_tree, args_flat, out_flat, effects, consts_for_constvars,
-    abstracted_axes, pgle_profiler, num_const_args: int) -> pxla.MeshExecutableFastpathData | None:
-  # TODO(necula): remove num_const_args when fixing C++ path
+    abstracted_axes, pgle_profiler, const_args: Sequence[ArrayLike]
+    ) -> pxla.MeshExecutableFastpathData | None:
   out_reflattened, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
 
   use_fastpath = (
       executable is not None
       and isinstance(executable, pxla.MeshExecutable)
       and isinstance(executable.unsafe_call, pxla.ExecuteReplicated)
-      and num_const_args == 0  # TODO(necula): fix this
       # No effects in computation
       and not executable.unsafe_call.ordered_effects
       and not executable.unsafe_call.has_unordered_effects
@@ -212,12 +213,14 @@ def _get_fastpath_data(
         for arg in (*args_flat, *out_flat, *consts_for_constvars)))
       and not _need_to_rebuild_with_fdo(pgle_profiler)
       )
+  if jaxlib_extension_version < 366:
+    use_fastpath = use_fastpath and not const_args
 
   if use_fastpath:
     out_avals = [o.aval for o in out_reflattened]
     out_committed = [o._committed for o in out_reflattened]
     kept_var_bitvec = [i in executable._kept_var_idx
-                       for i in range(len(args_flat))]
+                       for i in range(len(const_args) + len(args_flat))]
     in_shardings = [
         sharding_impls.physical_sharding(a, s)
         if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
@@ -227,7 +230,7 @@ def _get_fastpath_data(
     fastpath_data = pxla.MeshExecutableFastpathData(
         executable.xla_executable, out_tree, in_shardings,
         executable._out_shardings, out_avals, out_committed, kept_var_bitvec,
-        executable._dispatch_in_layouts)
+        executable._dispatch_in_layouts, const_args)
   else:
     fastpath_data = None
   return fastpath_data
@@ -265,13 +268,13 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
                          "`jit`, but 'no_tracing' is set")
 
     (outs, out_flat, out_tree, args_flat, jaxpr,
-     executable, pgle_profiler, num_const_args) = \
-        _python_pjit_helper(fun, jit_info, *args, **kwargs)
+     executable, pgle_profiler, const_args) = _python_pjit_helper(
+         fun, jit_info, *args, **kwargs)
 
     maybe_fastpath_data = _get_fastpath_data(
         executable, out_tree, args_flat, out_flat, jaxpr.effects, jaxpr.consts,
         jit_info.abstracted_axes, pgle_profiler,
-        num_const_args)
+        const_args)
 
     return outs, maybe_fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
 
@@ -1800,7 +1803,7 @@ def _pjit_call_impl_python(
                           ("abstract args", map(core.abstractify, args)),
                           ("fingerprint", fingerprint))
   return (compiled.unsafe_call(*computation.const_args, *args),
-          compiled, pgle_profiler, len(computation.const_args))
+          compiled, pgle_profiler, computation.const_args)
 
 @weakref_lru_cache
 def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, in_layouts,
@@ -1824,7 +1827,7 @@ def _pjit_call_impl(*args, jaxpr: core.ClosedJaxpr,
     # args_ do not include the const args
     # See https://docs.jax.dev/en/latest/internals/constants.html.
     # TODO(necula): remove num_const_args when fixing the C++ path
-    out_flat, compiled, pgle_profiler, num_const_args = _pjit_call_impl_python(
+    out_flat, compiled, pgle_profiler, const_args = _pjit_call_impl_python(
         *args, jaxpr=jaxpr, in_shardings=in_shardings,
         out_shardings=out_shardings, in_layouts=in_layouts,
         out_layouts=out_layouts, donated_invars=donated_invars,
@@ -1833,7 +1836,7 @@ def _pjit_call_impl(*args, jaxpr: core.ClosedJaxpr,
     fastpath_data = _get_fastpath_data(
         compiled, tree_structure(out_flat), args, out_flat,
         jaxpr.effects, jaxpr.consts, None, pgle_profiler,
-        num_const_args)
+        const_args)
     return out_flat, fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
 
   f = _get_jaxpr_as_fun(

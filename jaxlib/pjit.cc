@@ -104,6 +104,7 @@ struct PjitCacheEntry {
   // in PjitFunction::Call before calling into compiled computation.
   std::vector<bool> kept_var_bitvec;
   std::vector<nb::object> in_device_local_layouts;
+  std::vector<nb::object> const_args;
 
   // Ensures a single thread performs the compilation for a given executable.
   //
@@ -744,10 +745,30 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     return fallback_to_cache_miss();
   }
 
+  absl::InlinedVector<PyArgSignature, 2> dynamic_arg_signatures;
+  dynamic_arg_signatures.reserve(
+      cache_entry->const_args.size() + flat_dynamic_args.size());
+  if (!cache_entry->const_args.empty()) {
+    flat_dynamic_args.reserve(cache_entry->const_args.size() +
+                              flat_dynamic_args.size());
+    flat_dynamic_args.insert(flat_dynamic_args.begin(),
+                             cache_entry->const_args.begin(),
+                             cache_entry->const_args.end());
+
+    for (nb::handle const_arg : cache_entry->const_args) {
+      TF_ASSIGN_OR_RETURN(auto const_arg_signature,
+        PyArgSignatureOfValue(const_arg, call_signature.jax_enable_x64));
+      dynamic_arg_signatures.push_back(std::move(const_arg_signature));
+    }
+  }
+  for (const auto& arg : call_signature.dynamic_arg_signatures) {
+    dynamic_arg_signatures.push_back(std::move(arg));
+  }
+
   // A vector of [num_inputs].
   auto num_args_arrays = PrepareIfrtInputs(
       *cache_entry->executable, flat_dynamic_args,
-      call_signature.dynamic_arg_signatures, call_signature.jax_enable_x64,
+      dynamic_arg_signatures, call_signature.jax_enable_x64,
       cache_entry->kept_var_bitvec, cache_entry->in_shardings,
       cache_entry->in_device_local_layouts, shard_arg_fallback_,
       keep_alive_objects);
@@ -934,6 +955,12 @@ void PjitFunction::PopulateCacheEntry(PjitCacheEntry& cache_entry,
   cache_entry.in_device_local_layouts.reserve(nb::len(in_device_local_layouts));
   for (nb::handle dll : in_device_local_layouts) {
     cache_entry.in_device_local_layouts.push_back(nb::borrow(dll));
+  }
+
+  nb::sequence const_args = fastpath_data.attr("const_args");
+  cache_entry.const_args.reserve(nb::len(const_args));
+  for (nb::handle ca : const_args) {
+    cache_entry.const_args.push_back(nb::borrow(ca));
   }
 }
 
