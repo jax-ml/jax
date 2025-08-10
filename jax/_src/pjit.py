@@ -2580,10 +2580,9 @@ def _pjit_transpose_fancy(
     compiler_options_kvs):
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
-  in_aval_qdds = [core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd  # type: ignore
-                  else a for x in in_flat]
-  trans_jaxpr, out_tree = _transpose_jaxpr_fancy(jaxpr, in_tree,
-                                                 tuple(in_aval_qdds), specs)
+  in_avals = [core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd  # type: ignore
+              else a for x in in_flat]
+  trans_jaxpr, out_tree = _transpose_jaxpr_fancy(jaxpr, in_tree, (*in_avals,), specs)
 
   trans_in_shardings = (
       [s for x, s in zip(args, in_shardings) if not isinstance(x,ad.ValAccum)] +
@@ -2614,7 +2613,8 @@ def _pjit_transpose_fancy(
       # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
       api_util._raise_no_nan_in_deoptimized(e)
 
-  return tree_unflatten(out_tree, cts_out)
+  for x, ct in zip(args, tree_unflatten(out_tree, cts_out)):
+    if isinstance(x, ad.ValAccum): x.accum(ct)
 
 @weakref_lru_cache
 def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs):

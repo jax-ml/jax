@@ -41,6 +41,7 @@ from jax.ad_checkpoint import checkpoint as new_checkpoint, checkpoint_policies
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
 from jax._src import dispatch
+from jax._src.api import vjp3
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax.control_flow import for_loop
 from jax._src.interpreters import batching
@@ -3501,6 +3502,21 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       c, () = jax.lax.scan(lambda c, _: ((0., 0.), ()), (x, 0.), (), length=5)
       return sum(c)
     jax.grad(f)(1.)  # doesn't crash
+
+  def test_cond_basic_vjp3(self):
+    def f(x):
+      return jax.lax.cond(True, jnp.sin, lambda x: x, x)
+
+    _, f_vjp = vjp3(f, 1.)
+    g, = f_vjp(1.0)
+    self.assertAllClose(g, jnp.cos(1.), check_dtypes=False)
+
+    def h(x):
+      return jax.lax.cond(True, jnp.sin, lambda x: 1., x)
+
+    _, h_vjp = vjp3(h, 1.)
+    g, = h_vjp(1.0)
+    self.assertAllClose(g, jnp.cos(1.), check_dtypes=False)
 
 
 if __name__ == '__main__':
