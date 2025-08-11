@@ -53,4 +53,5 @@ from jax._src.nn.functions import (
   swish as swish,
   squareplus as squareplus,
   mish as mish,
+  log1mexp as log1mexp,
 )
