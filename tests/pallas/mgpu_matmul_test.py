@@ -91,7 +91,7 @@ class MatrixMultiplicationSm100ATest(jtu.JaxTestCase):
       k=(4096,),
       n=(4096,),
       tile_m=(64, 128,),
-      tile_n=(64, 128,),
+      tile_n=(64, 128, 256),
       tile_k=(64, 128,),
       max_concurrent_steps=(2, 4),
       dtype=(jnp.float16,),
@@ -101,7 +101,9 @@ class MatrixMultiplicationSm100ATest(jtu.JaxTestCase):
   ):
     if not jtu.is_cuda_compute_capability_equal("9.0"):
       self.skipTest("Only works on GPU with capability sm90a")
-    if tile_m == tile_n == tile_k == 128:
+    if (
+        (2 * tile_m + tile_n) * tile_k * max_concurrent_steps + 2 * tile_m * tile_n
+    ) * 2 > 228000:
       self.skipTest("Tile too big to fit into SMEM")
     k1, k2, = jax.random.split(jax.random.key(42), 2)
     a = jax.random.normal(k1, (m, k), dtype)
