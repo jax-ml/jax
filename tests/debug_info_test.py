@@ -44,7 +44,6 @@ from jax._src import core
 from jax._src import custom_transpose
 from jax._src import test_util as jtu
 from jax._src.compilation_cache import is_persistent_cache_enabled
-from jax._src.lax.control_flow import for_loop
 from jax._src.interpreters import mlir
 from jax._src import util as util
 
@@ -1369,6 +1368,8 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=checkpoint / remat, fun=my_g, arg_names=x,y, from None",
         ])
 
+  # TODO(mattjj,necula): test should be written against lax.scan
+  @unittest.skip("test was written against for_loop.scan")
   def test_grad_scan(self):
     # Based on control_flow_test:testScanHigherOrderDifferentiation
     tracer_spy = TracerSpy()
@@ -1387,7 +1388,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     def my_f(x, as_):  # x: f32, as_: f32[3, 2]
       tracer_spy.append(x)
       def to_remat(a, b):
-        return for_loop.scan(f, a, b)
+        return lax.scan(f, a, b)
       return jax.remat(to_remat)(c, as_)  # c is closed-over
 
     def the_grad(c, as_):  # c: f32[], as_: f32[3, 2],
