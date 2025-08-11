@@ -67,6 +67,20 @@ def _axis_for_ndim(ndim: int) -> Iterator[None | int | tuple[int, ...]]:
     yield (-1, 0, 1)
 
 
+def _random_invertible(rng, shape, dtype):
+  """
+  Generate a random invertible matrix was specified shape and dtype
+  """
+  while True:
+    a = rng(shape, dtype)
+    try:
+      np.linalg.inv(a)
+    except np.linalg.LinAlgError:
+      pass
+    else:
+      return a
+
+
 def osp_linalg_toeplitz(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarray:
   """scipy.linalg.toeplitz with v1.17+ batching semantics."""
   # TODO(dfm,jakevdp): Remove dev check after upstream PR is merged:
@@ -1160,14 +1174,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
 
     def args_maker():
-      invertible = False
-      while not invertible:
-        a = rng(shape, dtype)
-        try:
-          np.linalg.inv(a)
-          invertible = True
-        except np.linalg.LinAlgError:
-          pass
+      a = _random_invertible(rng=rng, shape=shape, dtype=dtype)
       return [a]
 
     self._CheckAgainstNumpy(np.linalg.inv, jnp.linalg.inv, args_maker,
@@ -2114,6 +2121,69 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       [1, 4, 5, 6],
       [2, 1, 4, 5],
       [3, 2, 1, 4]], dtype=np.float32))
+
+  @jtu.sample_product(
+    shape=[(2, 3), (4, 6), (5, 7), (100, 300)],
+    dtype = float_types + complex_types,
+    method = ["schur", "eigen"]
+  )
+  @jtu.run_on_devices("cpu", "gpu")
+  def test_solve_sylvester(self, shape, dtype, method):
+    if jtu.test_device_matches(["gpu"]) and method == "schur":
+      self.skipTest("Schur not supported on GPU.")
+
+    tol = {np.float32: 3e-2, np.complex64: 3e-2}
+
+    def args_maker():
+      rng = jtu.rand_default(self.rng())
+      m, n = shape
+
+      A = rng(shape=(m, m), dtype=dtype)
+      B = rng(shape=(n, n), dtype=dtype)
+      X_true = rng(shape=(m, n), dtype=dtype)
+
+      C = A @ X_true + X_true @ B
+      return [A, B, C]
+
+    jnp_fun = partial(jsp.linalg.solve_sylvester, method=method)
+
+    self._CheckAgainstNumpy(osp.linalg.solve_sylvester, jnp_fun, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+
+  @jtu.sample_product(
+    n=[3, 6, 7, 100],
+    dtype = float_types + complex_types,
+    method = ["schur", "eigen"]
+  )
+  @jtu.run_on_devices("cpu", "gpu")
+  def test_ill_conditioned_sylvester(self, n, dtype, method):
+    """
+    Test no solution case to AX + XB = C using the eigen decomposition method.
+    When the sum of the eigenvalues of A and B are zero there is no solution.
+    We simulate this case below by randomly selecting the eigenvalues of A and then assign the
+    eigenvalues of B as negative eigenvalues of A. We say that A and B are ill-conditioned.
+    """
+    if jtu.test_device_matches(["gpu"]) and method == "schur":
+      self.skipTest("Schur not supported on GPU.")
+
+    rng = jtu.rand_default(self.rng())
+
+    # Define eigenvalues that sum to zero
+    eigenvalues_A = rng(shape=(n,), dtype=dtype)
+    eigenvalues_B = -eigenvalues_A
+    P = _random_invertible(rng=rng, shape=(n, n), dtype=dtype)
+
+    # Construct A and B matrices using selected eigenvalues that positionally sum to zero
+    D_A = np.diag(eigenvalues_A)
+    D_B = np.diag(eigenvalues_B)
+    P_inv = np.linalg.inv(P)
+    A = P @ D_A @ P_inv
+    B = P @ D_B @ P_inv
+
+    C = rng(shape=(n, n), dtype=dtype)
+    sylv_solution = jsp.linalg.solve_sylvester(A, B, C, method=method, tol=1e-6)
+    self.assertArraysEqual(sylv_solution, np.full((n, n), np.nan, dtype))
 
 
 class LaxLinalgTest(jtu.JaxTestCase):
