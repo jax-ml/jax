@@ -2229,8 +2229,8 @@ def _dot_general_lowering_rule(
 def _convert_helper(x: Array, *, to_dtype: jnp.dtype) -> Array:
   # Helper function for dtype conversion
   from_dtype = x.dtype
-  from_bitwidth = pallas_utils.dtype_bitwidth(from_dtype)
-  to_bitwidth = pallas_utils.dtype_bitwidth(to_dtype)
+  from_bitwidth = dtypes.bit_width(from_dtype)
+  to_bitwidth = dtypes.bit_width(to_dtype)
   if from_dtype == jnp.bool_:
     x = x.astype(jnp.int32)
     return _convert_helper(x, to_dtype=to_dtype)
@@ -2286,8 +2286,8 @@ def _convert_element_type_lowering_rule(
   integer = jnp.integer
   signed = jnp.signedinteger
   unsigned = jnp.unsignedinteger
-  old_bitwidth = pallas_utils.dtype_bitwidth(old_dtype)
-  new_bitwidth = pallas_utils.dtype_bitwidth(new_dtype)
+  old_bitwidth = dtypes.bit_width(old_dtype)
+  new_bitwidth = dtypes.bit_width(new_dtype)
   both_32bit = old_bitwidth == 32 and new_bitwidth == 32
   if _from(floating) and _to(floating):
     forward_compat = ctx.forward_compatible or is_cloud_tpu_older_than(
@@ -3511,8 +3511,8 @@ def _bitcast_convert_type_lowering_rule(
     ctx: LoweringRuleContext, x, *, new_dtype):
   (in_aval, ) = ctx.avals_in
   (out_aval,) = ctx.avals_out
-  old_bitwidth = pallas_utils.dtype_bitwidth(in_aval.dtype)
-  new_bitwidth = pallas_utils.dtype_bitwidth(new_dtype)
+  old_bitwidth = dtypes.bit_width(in_aval.dtype)
+  new_bitwidth = dtypes.bit_width(new_dtype)
   if old_bitwidth != new_bitwidth:
     raise NotImplementedError("Changing bitwidths not supported.")
   return tpu.bitcast(

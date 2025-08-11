@@ -64,9 +64,6 @@ def next_power_of_2(x: int) -> int:
     raise ValueError("`next_power_of_2` requires a non-negative integer.")
   return 1 if x == 0 else 2 ** (x - 1).bit_length()
 
-# TODO(apaszke): Inline this function into all call sites
-def dtype_bitwidth(dtype: np.dtype | jnp.dtype) -> int:
-  return dtypes.bit_width(dtype)
 
 def pattern_match_scan_to_fori_loop(
     jaxpr: jax_core.Jaxpr, num_consts: int, num_carry: int
@@ -314,7 +311,7 @@ def nextafter_lowering_helper(x, y):
       jnp.float64, jnp.uint64, np.float64, np.uint64, np.int64,
   )
 
-  bitwidth = dtype_bitwidth(x.dtype)
+  bitwidth = dtypes.bit_width(x.dtype)
 
   x_as_int = x.view(jnp_uint)
   y_as_int = y.view(jnp_uint)

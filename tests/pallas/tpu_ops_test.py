@@ -20,8 +20,8 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
+from jax._src import dtypes
 from jax._src import test_util as jtu
-from jax._src.pallas import utils as pallas_utils
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -122,8 +122,8 @@ class OpsTest(PallasBaseTest):
           y_ref[...] = pltpu.bitcast(x_ref[...], to_dtype)
 
     m, n = 1, 256
-    in_packing = 32 // pallas_utils.dtype_bitwidth(from_dtype)
-    out_packing = 32 // pallas_utils.dtype_bitwidth(to_dtype)
+    in_packing = 32 // dtypes.bit_width(from_dtype)
+    out_packing = 32 // dtypes.bit_width(to_dtype)
     in_shape = (m * in_packing, n)
     out_shape = (m * out_packing, n)
     inp = np.arange(np.prod(in_shape), dtype=from_dtype).reshape(in_shape)
@@ -170,7 +170,7 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.parameters([jnp.int32, jnp.int16, jnp.int8, jnp.int4])
   def test_row_broadcast(self, dtype):
-    bitwidth = pallas_utils.dtype_bitwidth(dtype)
+    bitwidth = dtypes.bit_width(dtype)
     if not self.INTERPRET and jtu.get_tpu_version() < 4 and bitwidth < 8:
       self.skipTest("Requires TPUv4+ for sub-byte types")
     def kernel(x_ref, y_ref):
@@ -278,7 +278,7 @@ class OpsTest(PallasBaseTest):
   @parameterized.product(dtype=[jnp.float32, jnp.bfloat16, jnp.int16, jnp.int8])
   def test_cast_vector_to_mask(self, dtype):
     shape = (128, 128)
-    bitwidth = pallas_utils.dtype_bitwidth(dtype)
+    bitwidth = dtypes.bit_width(dtype)
     if jtu.get_tpu_version() < 5 and bitwidth < 32:
       self.skipTest(
           f"Not implemented: cast vector to mask with bitwidth == {bitwidth}"
@@ -332,8 +332,8 @@ class OpsTest(PallasBaseTest):
   )
   def test_i1_relayout_with_bitwidth_change(self, msk_dtype, dtype):
     shape = (129, 129)
-    msk_bitwidth = pallas_utils.dtype_bitwidth(msk_dtype)
-    bitwidth = pallas_utils.dtype_bitwidth(dtype)
+    msk_bitwidth = dtypes.bit_width(msk_dtype)
+    bitwidth = dtypes.bit_width(dtype)
     if jtu.get_tpu_version() < 5 and msk_bitwidth < 32:
       self.skipTest(
           "Not implemented: cast vector to mask with bitwidth =="
@@ -433,7 +433,7 @@ class OpsTest(PallasBaseTest):
       dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
   )
   def test_concat_mask(self, dtype):
-    bitwidth = pallas_utils.dtype_bitwidth(dtype)
+    bitwidth = dtypes.bit_width(dtype)
     if jtu.get_tpu_version() < 5 and bitwidth < 32:
       self.skipTest(
           f"Not implemented: cast vector to mask with bitwidth == {bitwidth}"

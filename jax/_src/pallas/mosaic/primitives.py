@@ -32,7 +32,6 @@ from jax._src.interpreters import mlir
 from jax._src.pallas import core as pl_core
 from jax._src.pallas import primitives
 from jax._src.pallas import primitives as pallas_primitives
-from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
@@ -78,8 +77,8 @@ def bitcast(x, ty: DTypeLike):
   ty = dtypes.canonicalize_dtype(ty)
   if len(x.shape) < 2:
     raise ValueError("Not implemented: bitcast 1D")
-  src_bitwidth = pallas_utils.dtype_bitwidth(x.dtype)
-  dst_bitwidth = pallas_utils.dtype_bitwidth(ty)
+  src_bitwidth = dtypes.bit_width(x.dtype)
+  dst_bitwidth = dtypes.bit_width(ty)
   if x.shape[-2] * src_bitwidth % dst_bitwidth:
     raise ValueError(
         "Not implemented: the 2nd minor dim can not be perfectly packed or"
@@ -91,16 +90,16 @@ def bitcast(x, ty: DTypeLike):
 @bitcast_p.def_abstract_eval
 def _bitcast_abstract_eval(x, *, ty):
   shape = list(x.shape)
-  src_bitwidth = pallas_utils.dtype_bitwidth(x.dtype)
-  dst_bitwidth = pallas_utils.dtype_bitwidth(ty)
+  src_bitwidth = dtypes.bit_width(x.dtype)
+  dst_bitwidth = dtypes.bit_width(ty)
   shape[-2] = shape[-2] * src_bitwidth // dst_bitwidth
   return jax_core.ShapedArray(shape, ty)
 
 
 def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
   def _bitcast(x):
-    src_bitwidth = pallas_utils.dtype_bitwidth(x.dtype)
-    dst_bitwidth = pallas_utils.dtype_bitwidth(ty)
+    src_bitwidth = dtypes.bit_width(x.dtype)
+    dst_bitwidth = dtypes.bit_width(ty)
     if src_bitwidth < dst_bitwidth:
       *leading, m, n = x.shape
       packing = dst_bitwidth // src_bitwidth

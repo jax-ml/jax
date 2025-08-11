@@ -1491,7 +1491,7 @@ def _get_lowering_rule(
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
       if len(tiling) != 2:
         raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
-      expected_minor_tiling = swizzle * 8 // pallas_utils.dtype_bitwidth(dtype)
+      expected_minor_tiling = swizzle * 8 // dtypes.bit_width(dtype)
       if tiling[-1] != expected_minor_tiling:
         raise NotImplementedError(
             "Minor tiling dimension does not fit swizzle: "
@@ -1611,7 +1611,7 @@ def _swap_lowering_rule(
     ):
       if len(tiling) != 2:
         raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
-      bw = pallas_utils.dtype_bitwidth(v_aval.dtype)
+      bw = dtypes.bit_width(v_aval.dtype)
       expected_minor_tiling = swizzle * 8 // bw
       if tiling[-1] != expected_minor_tiling:
         raise NotImplementedError(
