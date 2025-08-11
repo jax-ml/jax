@@ -170,20 +170,9 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.parameters([jnp.int32, jnp.int16, jnp.int8, jnp.int4])
   def test_row_broadcast(self, dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 1, 10):
-      self.skipTest("Requires libtpu built after 2025-01-10")
     bitwidth = pallas_utils.dtype_bitwidth(dtype)
     if not self.INTERPRET and jtu.get_tpu_version() < 4 and bitwidth < 8:
       self.skipTest("Requires TPUv4+ for sub-byte types")
-    if (
-        not self.INTERPRET
-        and jtu.get_tpu_version() == 4
-        and bitwidth < 16
-        and not jtu.if_cloud_tpu_at_least(2025, 6, 2)
-    ):
-      self.skipTest(
-          "Requires libtpu built after 2025-06-02 for bitwidth < 16 on TPUv4"
-      )
     def kernel(x_ref, y_ref):
       y_ref[...] = jnp.broadcast_to(x_ref[pl.ds(3, 1)], y_ref.shape).astype(y_ref.dtype)
     m, n = 4, 1152
@@ -288,8 +277,6 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.product(dtype=[jnp.float32, jnp.bfloat16, jnp.int16, jnp.int8])
   def test_cast_vector_to_mask(self, dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 1, 22):
-      self.skipTest("Requires libtpu built after 2025-01-22")
     shape = (128, 128)
     bitwidth = pallas_utils.dtype_bitwidth(dtype)
     if jtu.get_tpu_version() < 5 and bitwidth < 32:
@@ -319,9 +306,6 @@ class OpsTest(PallasBaseTest):
   )
   def test_reduction(self, dtype, axis, reduce_func):
     if dtype == jnp.int32:
-      # TODO(apaszke): Remove after 12 weeks have passed.
-      if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
-        self.skipTest("Requires libtpu built after 2024-12-19")
       if axis == 2:
         self.skipTest("Int32 reduction on minor is not supported.")
     # TODO(b/384127570): fix bfloat16 reduction.
@@ -347,8 +331,6 @@ class OpsTest(PallasBaseTest):
       dtype=[jnp.float32, jnp.bfloat16],
   )
   def test_i1_relayout_with_bitwidth_change(self, msk_dtype, dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 1, 25):
-      self.skipTest("Requires libtpu built after 2025-01-25")
     shape = (129, 129)
     msk_bitwidth = pallas_utils.dtype_bitwidth(msk_dtype)
     bitwidth = pallas_utils.dtype_bitwidth(dtype)
@@ -382,8 +364,6 @@ class OpsTest(PallasBaseTest):
       round=(False, True),
   )
   def test_quantize(self, target, round):
-    if not jtu.if_cloud_tpu_at_least(2025, 1, 15):
-      self.skipTest("Requires libtpu built after 2025-01-15")
     if not jtu.is_device_tpu_at_least(version=6):
       self.skipTest("Requires TPUv6+")
     shape = (256, 256)
@@ -406,8 +386,6 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.product(axis=[0, 1], mode=["promise_in_bounds", None])
   def test_dynamic_gather_along_axis(self, axis, mode):
-    if not jtu.if_cloud_tpu_at_least(2025, 2, 5):
-      self.skipTest("Requires libtpu built after 2025-02-05")
     if (axis == 0 and not jtu.is_device_tpu_at_least(version=5)) or (
         axis == 1 and not jtu.is_device_tpu_at_least(version=4)
     ):
@@ -434,8 +412,6 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.product(dtype=[jnp.float32, jnp.bfloat16])
   def test_float_div(self, dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 2, 13):
-      self.skipTest("Requires libtpu built after 2025-02-13")
     if not jtu.is_device_tpu_at_least(version=4):
       self.skipTest("Requires TPUv4+")
     kwargs = {}
@@ -457,8 +433,6 @@ class OpsTest(PallasBaseTest):
       dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
   )
   def test_concat_mask(self, dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 2, 19):
-      self.skipTest("Requires libtpu built after 2025-02-19")
     bitwidth = pallas_utils.dtype_bitwidth(dtype)
     if jtu.get_tpu_version() < 5 and bitwidth < 32:
       self.skipTest(
@@ -509,8 +483,6 @@ class OpsTest(PallasBaseTest):
   # We need to manually run the test with the env variable
   # `export LIBTPU_INIT_ARGS="--xla_jf_bounds_check=true"`
   def test_disable_bounds_check(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 4, 16):
-      self.skipTest("Requires libtpu built after 2025-04-16")
     if jtu.get_tpu_version() < 4:
       self.skipTest("Requires TPUv4+")
     src_shape = (8, 128)

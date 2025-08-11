@@ -403,9 +403,6 @@ class IndexerOpsTest(PallasBaseTest):
 
   @parameterized.product(case=_INDEXING_TEST_CASES)
   def test_can_load_with_ref_at(self, case):
-    # TODO(apaszke): Remove after 12 weeks have passed.
-    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
-      self.skipTest("Requires libtpu built after 2024-12-19")
     if self.INTERPRET:
       self.skipTest("TODO: fails in interpret mode.")
     in_shape, indexers, out_shape = case

@@ -108,8 +108,6 @@ class TPUPipelineModeTest(PallasBaseTest):
       (pl.Buffered(2), pl.Buffered(1)),
       (pl.Buffered(1), pl.Buffered(1)))
   def test_two_input_vadd(self, x_pmode : pl.Buffered, y_pmode : pl.Buffered):
-    if not jtu.if_cloud_tpu_at_least(2025, 2, 11):
-      self.skipTest("Needs a newer libTPU")
     def body(x_ref, y_ref, o_ref):
       x = x_ref[:]
       y = y_ref[:]
@@ -1193,8 +1191,6 @@ class PallasCallDMATest(PallasBaseTest):
     np.testing.assert_array_equal(sem_val, 0)
 
   def test_set_dma_priority(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 4, 5):
-      self.skipTest('Needs a newer libTPU')
     if jtu.get_tpu_version() < 5:
       self.skipTest('Target does not support DMA prefetch between HBM and VMEM')
     def kernel(x1, x2, y1, y2, scratch1, scratch2, sem1, sem2):
@@ -1853,8 +1849,6 @@ class PallasCallTest(PallasBaseTest):
       )
   ])
   def test_double_replicated_reduction(self, shape, dty):
-    if not jtu.if_cloud_tpu_at_least(2025, 2, 19):
-      self.skipTest("Needs a newer libTPU")
     def body(o_ref):
       x = jnp.full(shape, 2.0, dtype=dty)
       reduction = jnp.sum(x, axis=None)
@@ -1885,8 +1879,6 @@ class PallasCallTest(PallasBaseTest):
   def test_scalar_any_input(self):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Needs a newer TPU")
-    if not jtu.if_cloud_tpu_at_least(2025, 5, 1):
-      self.skipTest("Needs a newer libTPU")
     def kernel(src, dst, sem):
       pltpu.async_copy(src, dst, sem).wait()
 
@@ -1902,8 +1894,6 @@ class PallasCallTest(PallasBaseTest):
     np.testing.assert_array_equal(run(x), x)
 
   def test_sum_in_smem(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 4, 30):
-      self.skipTest("Needs a newer libTPU")
     def kernel(x, out):
       a = jnp.array(0, dtype=jnp.int32)
       for i in range(4):
@@ -1937,8 +1927,6 @@ class PallasCallTest(PallasBaseTest):
   def test_replicated_broadcast_reduction(
       self, m, replicated, reduced_dims, dty, reduce_func
   ):
-    if not jtu.if_cloud_tpu_at_least(2025, 2, 19):
-      self.skipTest("Needs a newer libTPU")
     if dty == jnp.int32 and 1 in reduced_dims:
       # TODO(b/395579834): Remove this skip once we implement this.
       self.skipTest('int32 reduction on last dimension not supported')
@@ -2095,9 +2083,6 @@ class PallasCallTest(PallasBaseTest):
     np.testing.assert_array_equal(y, jnp.concatenate([x, x], axis=1))
 
   def test_mixed_precision_dot(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 2, 27):
-      self.skipTest("Needs a newer libTPU")
-
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('float8_e4m3b11fnuz not supported on TPU generations <= 4')
 
@@ -2128,8 +2113,6 @@ class PallasCallTest(PallasBaseTest):
 
   @parameterized.product(in_dtype=[jnp.int4, jnp.int8, jnp.int16, jnp.int32])
   def test_scalar_load_upcast(self, in_dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 4, 25):
-      self.skipTest("Needs a newer libTPU")
     if in_dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
       self.skipTest("Triggers an XLA bug")  # TODO(b/413602952)
     def kernel(x_ref, o_ref):
@@ -2145,8 +2128,6 @@ class PallasCallTest(PallasBaseTest):
 
   @parameterized.product(in_dtype=[jnp.int4, jnp.int8, jnp.int16, jnp.int32])
   def test_scalar_indirect_load(self, in_dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 4, 27):
-      self.skipTest("Needs a newer libTPU")
     def kernel(x_ref, o_ref):
       o_ref[0, 0] = x_ref[0, x_ref[0, 0].astype(jnp.int32)].astype(o_ref.dtype)
     if in_dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):

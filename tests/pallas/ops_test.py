@@ -602,33 +602,11 @@ class OpsTest(PallasBaseTest):
     if to_dtype in {"float8_e4m3b11fnuz", "float8_e5m2", "float8_e4m3fn"}:
       if not jtu.test_device_matches(["tpu"]):
         self.skipTest("Not supported on this hardware")
-      if jtu.get_tpu_version() >= 5 and not jtu.if_cloud_tpu_at_least(
-          2025, 3, 8
-      ):
-        self.skipTest("Test requires libtpu from 2025/3/8 or later")
-      if jtu.get_tpu_version() < 5 and not jtu.if_cloud_tpu_at_least(
-          2025, 5, 15
-      ):
-        self.skipTest("Test requires libtpu from 2025/5/15 or later")
-    if from_dtype in {"int2", "uint2"} or to_dtype in {"int2", "uint2"}:
-      if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
-          2025, 4, 1
-      ):
-        self.skipTest("Test requires libtpu from 2025/4/1 or later")
     if from_dtype == to_dtype:
       self.skipTest("Unnecessary test")
     if jtu.is_device_tpu(version=4):
       if to_dtype in {"int2", "uint2"}:
         self.skipTest("Not supported on this TPU generation")
-      if to_dtype in {"int16", "uint16"} and not jtu.if_cloud_tpu_at_least(2025, 1, 18):
-        self.skipTest("Test requires libtpu from 2025/1/18 or later")
-      if to_dtype in {
-          "int4",
-          "uint4",
-          "int8",
-          "uint8",
-      } and not jtu.if_cloud_tpu_at_least(2025, 5, 15):
-        self.skipTest("Test requires libtpu from 2025/5/15 or later")
     if jtu.test_device_matches(["tpu"]) and jtu.get_tpu_version() < 4:
       # Currently only casts between 32-bit types and to bf16 are supported.
       if to_dtype not in {"int32", "uint32", "float32", "bfloat16"}:
@@ -684,38 +662,16 @@ class OpsTest(PallasBaseTest):
 
     if from_dtype == to_dtype:
       self.skipTest("Unnecessary test")
-    if from_dtype in {"int2", "uint2"} or to_dtype in {"int2", "uint2"}:
-      if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
-          2025, 4, 1
-      ):
-        self.skipTest("Test requires libtpu from 2025/4/1 or later")
     if jtu.is_device_tpu(version=4):
-      allowed_v4_cats = {("int16", "int32"): (2025, 1, 18)}
+      allowed_v4_casts = {("int16", "int32")}
       if (
           from_dtype in {"int2", "uint2"} or to_dtype in {"int2", "uint2"}
-      ) and (from_dtype, to_dtype) not in allowed_v4_cats:
+      ) and (from_dtype, to_dtype) not in allowed_v4_casts:
         self.skipTest("Not supported on this TPU generation")
-      if minimum_libtpu_date := allowed_v4_cats.get((from_dtype, to_dtype), None):
-        if not jtu.if_cloud_tpu_at_least(*minimum_libtpu_date):
-          self.skipTest("Test requires a newer libtpu")
-      if to_dtype in {"int16", "uint16"} and not jtu.if_cloud_tpu_at_least(2025, 1, 18):
-        self.skipTest("Test requires libtpu from 2025/1/18 or later")
-      if (
-          to_dtype in {"int4", "uint4", "int8", "uint8"}
-          and from_dtype in {"int4", "uint4", "int8", "uint8"}
-          and not jtu.if_cloud_tpu_at_least(2025, 5, 15)
-      ):
-        self.skipTest("Test requires libtpu from 2025/5/15 or later")
     if jtu.test_device_matches(["tpu"]) and jtu.get_tpu_version() < 4:
       self.skipTest("Not supported on this TPU generation")
     if jtu.test_device_matches(["gpu"]) and (
-        to_dtype
-        in {
-            "int4",
-            "uint4",
-            "int2",
-            "uint2",
-        }
+        to_dtype in {"int4", "uint4", "int2", "uint2"}
         or from_dtype in {"int2", "uint2"}
     ):
       self.skipTest("sub-byte casts are buggy on GPU")  # b/391292861
@@ -758,14 +714,6 @@ class OpsTest(PallasBaseTest):
         self.skipTest(
             "TODO(b/401624977): Mask on int2 is not yet supported in Mosaic"
         )
-
-    from_int = np.issubdtype(np.dtype(from_dtype), np.integer)
-    to_int = np.issubdtype(np.dtype(to_dtype), np.integer)
-    if (
-        from_int and to_int and np.dtype(from_dtype).itemsize != 4
-        and not jtu.if_cloud_tpu_at_least(2025, 1, 12)
-    ):
-      self.skipTest("trunc from non-32 bit only implemented recently")
 
     # TODO(sharadmv,apaszke): add support for the following casts
     if from_dtype == "bool" and to_dtype in {
@@ -1121,11 +1069,6 @@ class OpsTest(PallasBaseTest):
           jnp.cbrt, jnp.cosh, jnp.expm1, jnp.sinh,
       ):
         self.skipTest(f"{fn.__name__} not implemented on TPU")
-      # TODO(apaszke): Remove after 12 weeks have passed.
-      if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
-        self.skipTest("Requires libtpu built at least on 2024-12-19")
-      if fn == jnp.exp2 and dtype == "bfloat16" and not jtu.if_cloud_tpu_at_least(2025, 1, 31):
-        self.skipTest("Test requires newer libtpu")
 
     if (
         jtu.test_device_matches(["gpu"])

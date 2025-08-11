@@ -1168,9 +1168,6 @@ class LaxTest(jtu.JaxTestCase):
         raise SkipTest(
             f"The dot algorithm '{algorithm}' is not supported on GPU.")
     if jtu.test_device_matches(["tpu"]):
-      # TODO(apaszke): Remove after 12 weeks have passed.
-      if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
-        self.skipTest("Requires libtpu built after 2024-12-19")
       if algorithm not in {
           lax.DotAlgorithmPreset.DEFAULT,
           lax.DotAlgorithmPreset.BF16_BF16_F32,
