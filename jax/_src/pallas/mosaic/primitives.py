@@ -31,7 +31,6 @@ from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pl_core
 from jax._src.pallas import primitives
-from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
@@ -902,7 +901,7 @@ def load(ref: Ref, *, mask: jax.Array | None = None) -> jax.Array:
   Returns:
     The loaded array.
   """
-  return pallas_primitives.load(ref, None, mask=mask)
+  return primitives.load(ref, None, mask=mask)
 
 
 def store(ref: Ref, val: jax.Array, *, mask: jax.Array | None = None) -> None:
@@ -916,4 +915,4 @@ def store(ref: Ref, val: jax.Array, *, mask: jax.Array | None = None) -> None:
     val: The value to store.
     mask: An optional boolean mask specifying which indices to store.
   """
-  return pallas_primitives.store(ref, None, val, mask=mask)
+  return primitives.store(ref, None, val, mask=mask)

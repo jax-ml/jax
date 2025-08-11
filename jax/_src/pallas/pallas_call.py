@@ -1161,7 +1161,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
           index_map_avals=grid_mapping.index_map_avals,
           index_map_tree=grid_mapping.index_map_tree,
           grid=grid_mapping.grid,
-          mapped_dims=grid_mapping.vmapped_dims,
+          vmapped_dims=grid_mapping.vmapped_dims,
           debug=True,
       ),
       error_block_specs,
@@ -1420,7 +1420,7 @@ def _pallas_call_state_discharge_rule(
           index_map_avals=grid_mapping.index_map_avals,
           index_map_tree=grid_mapping.index_map_tree,
           grid=grid_mapping.grid,
-          mapped_dims=grid_mapping.mapped_dims,
+          vmapped_dims=grid_mapping.vmapped_dims,
           debug=debug,
       )
       for ref_aval, block_spec in zip(ref_avals, ref_block_specs)

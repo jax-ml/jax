@@ -45,7 +45,6 @@ GridMapping = pallas_core.GridMapping
 NoBlockSpec = pallas_core.NoBlockSpec
 ScratchShapeTree = pallas_core.ScratchShapeTree
 no_block_spec = pallas_core.no_block_spec
-_convert_block_spec_to_block_mapping = pallas_core._convert_block_spec_to_block_mapping
 _out_shape_to_aval_mapping = pallas_core._out_shape_to_aval_mapping
 split_list = util.split_list
 

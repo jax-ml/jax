@@ -465,7 +465,7 @@ class BlockSpec:
       index_map_avals: Sequence[jax_core.AbstractValue],
       index_map_tree: tree_util.PyTreeDef,
       grid: GridMappingGrid,
-      mapped_dims: tuple[int, ...],
+      vmapped_dims: tuple[int, ...],
       debug: bool = False,
   ) -> BlockMapping:
     if self.index_map is None:
@@ -525,7 +525,7 @@ class BlockSpec:
     flat_index_map_fun, index_map_out_tree_thunk = api_util.flatten_fun(
         lu.wrap_init(index_map_func, debug_info=debug_info), index_map_tree
     )
-    with tracing_grid_env(grid, mapped_dims):
+    with tracing_grid_env(grid, vmapped_dims):
       jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(
           flat_index_map_fun, index_map_avals
       )
@@ -829,11 +829,6 @@ class GridMapping:
     return new_self
 
   @property
-  # TODO(necula): deprecate and then remove this property.
-  def mapped_dims(self) -> tuple[int, ...]:
-    return self.vmapped_dims
-
-  @property
   def num_dynamic_grid_bounds(self):
     return sum(b is dynamic_grid_dim for b in self.grid)
 
@@ -963,7 +958,7 @@ def _convert_block_spec_to_block_mapping(
     index_map_avals: Sequence[jax_core.AbstractValue],
     index_map_tree: tree_util.PyTreeDef,
     grid: GridMappingGrid,
-    mapped_dims: tuple[int, ...],
+    vmapped_dims: tuple[int, ...],
     debug: bool = False,
 ) -> BlockMapping:
   if block_spec is no_block_spec:
@@ -974,7 +969,7 @@ def _convert_block_spec_to_block_mapping(
       index_map_avals=index_map_avals,
       index_map_tree=index_map_tree,
       grid=grid,
-      mapped_dims=mapped_dims,
+      vmapped_dims=vmapped_dims,
       debug=debug,
   )
 
@@ -1118,7 +1113,7 @@ def get_grid_mapping(
           index_map_avals=index_map_avals,
           index_map_tree=index_map_tree,
           grid=grid_mapping_grid,  # type: ignore[arg-type]
-          mapped_dims=(),
+          vmapped_dims=(),
           debug=debug,
       ),
       flat_in_specs,
@@ -1141,7 +1136,7 @@ def get_grid_mapping(
           index_map_avals=index_map_avals,
           index_map_tree=index_map_tree,
           grid=grid_mapping_grid,  # type: ignore[arg-type]
-          mapped_dims=(),
+          vmapped_dims=(),
           debug=debug,
       ),
       flat_out_specs,

@@ -163,7 +163,7 @@ DynamicShapeReplacementFn = Callable[
 class LoweringContext:
   grid_sizes: tuple[int, ...]  # Includes both user and vmap axes.
   grid_names: tuple[Hashable, ...] | None
-  mapped_dims: tuple[int, ...]  # Indices of vmapped grid dimensions.
+  vmapped_dims: tuple[int, ...]  # Indices of vmapped grid dimensions.
   user_grid_indices: Sequence[ir.Value] | None
   block_shapes: list[tuple[int | pallas_core.Squeezed, ...]]
   name_stack: source_info_util.NameStack
@@ -190,7 +190,7 @@ class LoweringContext:
       return
     grid_names = self.grid_names
     valid_grid_sizes = tuple(
-        d for i, d in enumerate(self.grid_sizes) if i not in self.mapped_dims
+        d for i, d in enumerate(self.grid_sizes) if i not in self.vmapped_dims
     )
     grid_env = zip(grid_names, valid_grid_sizes)
     with jax_core.extend_axis_env_nd(grid_env):
@@ -431,7 +431,7 @@ class MosaicGridMapping:
   grid_names: tuple[Hashable, ...] | None
   jaxpr: jax_core.Jaxpr
   block_mappings: tuple[pallas_core.BlockMapping | None, ...]
-  mapped_dims: tuple[int, ...]
+  vmapped_dims: tuple[int, ...]
   scalar_prefetch_types: tuple[ir.Type, ...]
   operand_types: tuple[ir.Type, ...]
   scratch_types: tuple[ir.Type, ...]
@@ -455,10 +455,10 @@ class MosaicGridMapping:
     self.grid_names = grid_mapping.grid_names
     self.jaxpr = jaxpr
     self.block_mappings = grid_mapping.block_mappings
-    self.mapped_dims = grid_mapping.vmapped_dims
+    self.vmapped_dims = grid_mapping.vmapped_dims
     # TODO(mvoz): Generalize to not need this
     user_grid = tuple(
-        g for i, g in enumerate(self.grid) if i not in self.mapped_dims
+        g for i, g in enumerate(self.grid) if i not in self.vmapped_dims
     )
     if dimension_semantics is None:
       dimension_semantics = ("arbitrary",) * len(user_grid)
@@ -469,17 +469,17 @@ class MosaicGridMapping:
       raise ValueError(
           "Must have dimension semantics for each dimension of the grid."
       )
-    assert len(self.mapped_dims) + len(dimension_semantics) == len(
+    assert len(self.vmapped_dims) + len(dimension_semantics) == len(
         self.grid
     ), (
-        f"Misconfigured grid: {self.mapped_dims=}, {dimension_semantics=},"
+        f"Misconfigured grid: {self.vmapped_dims=}, {dimension_semantics=},"
         f" {self.grid=}"
     )
     # dimension_semantics is user provided and won't take into account vmap
     # dimensions. Here we add in parallel dimensions for the vmaps.
     semantics_iter = iter(dimension_semantics)
     self._dimension_semantics = tuple(
-        next(semantics_iter) if i not in self.mapped_dims else "parallel"
+        next(semantics_iter) if i not in self.vmapped_dims else "parallel"
         for i in range(len(self.grid))
     )
 
@@ -520,16 +520,16 @@ class MosaicGridMapping:
 
     if grid_mapping.get_grid_indices is None:
 
-      # Avoid using self.mapped_dims within the function, since doing so will
+      # Avoid using self.vmapped_dims within the function, since doing so will
       # introduce a self->_get_grid_indices->self reference cycle that means
       # MosaicGridMapping instances can only ever be deleted by GC, rather than
       # by their reference counts going to 0.
-      mapped_dims = self.mapped_dims
+      vmapped_dims = self.vmapped_dims
       def _get_grid_indices(indices, maybe_include_mapped_dims: bool):
         if maybe_include_mapped_dims:
           return indices
         return tuple(
-            idx for i, idx in enumerate(indices) if i not in mapped_dims
+            idx for i, idx in enumerate(indices) if i not in vmapped_dims
         )
 
       self.get_grid_indices = _get_grid_indices
@@ -967,7 +967,7 @@ def lower_jaxpr_to_transform_func(
     lowering_context = LoweringContext(
         mosaic_grid_mapping.grid,
         mosaic_grid_mapping.grid_names,
-        mosaic_grid_mapping.mapped_dims,
+        mosaic_grid_mapping.vmapped_dims,
         None,
         arg_block_shapes,
         source_info_util.NameStack(),
@@ -1037,7 +1037,7 @@ def lower_jaxpr_to_func(
     lowering_context = LoweringContext(
         mosaic_grid_mapping.grid,
         mosaic_grid_mapping.grid_names,
-        mosaic_grid_mapping.mapped_dims,
+        mosaic_grid_mapping.vmapped_dims,
         jaxpr_indices,
         arg_block_shapes,
         source_info_util.NameStack(),
@@ -3389,10 +3389,10 @@ def _program_id_lowering_rule(ctx: LoweringRuleContext, *, axis: int):
     primitives.num_programs_p, kernel_types=[*tpu_core.KernelType]
 )
 def _num_programs_lowering_rule(ctx: LoweringRuleContext, *, axis: int):
-  mapped_axes = set(ctx.lowering_context.mapped_dims)
+  vmapped_axes = set(ctx.lowering_context.vmapped_dims)
   seen_user_axes = 0
   for i in range(ctx.lowering_context.grid_rank):
-    seen_user_axes += int(i not in mapped_axes)
+    seen_user_axes += int(i not in vmapped_axes)
     if seen_user_axes == axis + 1:
       break
   else:
