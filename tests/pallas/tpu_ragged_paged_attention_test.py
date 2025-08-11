@@ -17,8 +17,8 @@ from absl.testing import parameterized
 import jax
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax.experimental import pallas as pl
 from jax.experimental.pallas.ops.tpu.ragged_paged_attention import (
-    cdiv,
     dynamic_validate_inputs,
     ragged_paged_attention,
     ref_ragged_paged_attention,
@@ -65,7 +65,7 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
     max_num_batched_tokens = max(cu_q_lens[-1], max_num_batched_tokens)
     max_num_seq = max(len(seq_lens), max_num_seq)
     max_kv_len = max(kv_lens)
-    pages_per_seq = cdiv(max_kv_len, page_size)
+    pages_per_seq = pl.cdiv(max_kv_len, page_size)
     num_q_heads, num_kv_heads = num_heads
 
     prng_key = jax.random.key(1234)
@@ -96,7 +96,7 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
         )
       kv = jnp.pad(
           kv,
-          ((0, cdiv(kv_len, page_size) * page_size - kv_len), (0, 0), (0, 0)),
+          ((0, pl.cdiv(kv_len, page_size) * page_size - kv_len), (0, 0), (0, 0)),
           constant_values=jnp.nan,
       ).reshape(-1, page_size, num_kv_heads * 2, head_dim)
       indices = page_cnt + jnp.arange(kv.shape[0], dtype=jnp.int32)

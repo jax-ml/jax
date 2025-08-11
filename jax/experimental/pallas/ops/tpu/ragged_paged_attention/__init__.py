@@ -15,7 +15,6 @@
 from jax.experimental.pallas.ops.tpu.ragged_paged_attention import kernel
 from jax.experimental.pallas.ops.tpu.ragged_paged_attention import tuned_block_sizes
 
-cdiv = kernel.cdiv
 dynamic_validate_inputs = kernel.dynamic_validate_inputs
 ragged_paged_attention = kernel.ragged_paged_attention
 ref_ragged_paged_attention = kernel.ref_ragged_paged_attention
