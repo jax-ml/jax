@@ -61,7 +61,7 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
 
   @parameterized.product(
       m_shard=(1024, 8192),
-      n_shard=(64, 128, 192),
+      n_shard=(256, 384, 576),
       k=(256, 8192),
       block_m=(64, 128, 192),
       block_n=(64, 128, 192),
@@ -86,8 +86,6 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
     # H100 SMEM limit is 228kB.
     if lhs_smem_size + rhs_smem_size > 228_000:
       self.skipTest("This configuration requires too much SMEM.")
-    if n_shard != block_n:
-      self.skipTest("n_shard must be equal to block_n for now.")
     if n_shard % block_n:
       self.skipTest("n_shard must be divisible by block_n for now.")
     if m_shard % block_m:
