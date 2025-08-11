@@ -884,11 +884,18 @@ FailureOr<Value> canonicalize_fptosi(const CanonicalizeContext &ctx,
   if (dst_bitwidth > 32) {
     return op.emitOpError("Target bitwidth too large");
   }
-  // We have low-level optimized code for bf16->s8 and bf16->s4 casts on v6.
-  if (ctx.hardware_generation >= 6 && is_vector &&
-      src_vty.getElementType().isBF16() &&
-      (dst_vty.getElementType().isSignlessInteger(8) ||
-       dst_vty.getElementType().isSignlessInteger(4))) {
+  // We have low-level optimized code for
+  //
+  // - bf16->s8 and bf16->s4 casts on TPUv6+.
+  // - f32->s8 and f32->s4 casts on TPU7x.
+  bool bf16_to_s8_or_s4 = is_vector && src_vty.getElementType().isBF16() &&
+                          (dst_vty.getElementType().isSignlessInteger(8) ||
+                           dst_vty.getElementType().isSignlessInteger(4));
+  bool f32_to_s8_or_s4 = is_vector && src_vty.getElementType().isF32() &&
+                         (dst_vty.getElementType().isSignlessInteger(8) ||
+                          dst_vty.getElementType().isSignlessInteger(4));
+  if ((ctx.hardware_generation >= 6 && bf16_to_s8_or_s4) ||
+      (ctx.hardware_generation >= 7 && f32_to_s8_or_s4)) {
     auto new_op = builder.create<tpu::FPToSIOp>(
         op.getType(), op.getIn(), tpu::RoundingMode::kTowardsZero);
     op.replaceAllUsesWith(new_op);
