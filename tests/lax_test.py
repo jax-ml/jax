@@ -1079,6 +1079,22 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     self._CompileAndCheck(partial(lax.dot, precision=precision), args_maker)
 
+  def testDotPositionalArgumentDeprecation(self):
+    lhs = jnp.arange(5.0)
+    rhs = jnp.arange(5.0)
+    msg = "jax.lax.dot: passing precision or preferred_element_type by position"
+
+    with self.assertWarnsRegex(DeprecationWarning, msg):
+      lax.dot(lhs, rhs, lax.Precision.DEFAULT, jnp.float32)
+
+    with self.assertWarnsRegex(DeprecationWarning, msg):
+      with self.assertRaises(TypeError):
+        lax.dot(lhs, rhs, lax.Precision.DEFAULT, precision=lax.Precision.DEFAULT)
+
+    with self.assertWarnsRegex(DeprecationWarning, msg):
+      with self.assertRaises(TypeError):
+        lax.dot(lhs, rhs, lax.Precision.DEFAULT, jnp.float32, preferred_element_type=jnp.float32)
+
   @parameterized.parameters([
       (algorithm, dtype)
       for algorithm, test_dtypes in [

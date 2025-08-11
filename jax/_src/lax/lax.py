@@ -34,6 +34,7 @@ from jax._src import api_util
 from jax._src import array
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
@@ -2422,80 +2423,51 @@ CanonicalPrecision = Union[
 ]
 
 
-def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
-        preferred_element_type: DTypeLike | None = None, *,
-        out_sharding=None) -> Array:
-  """Vector/vector, matrix/vector, and matrix/matrix multiplication.
-
-  Wraps XLA's `Dot <https://www.openxla.org/xla/operation_semantics#dot>`_
-  operator.
-
-  For more general contraction, see the :func:`jax.lax.dot_general` operator.
-
-  Args:
-    lhs: an array of dimension 1 or 2.
-    rhs: an array of dimension 1 or 2.
-    precision: Optional. This parameter controls the numerics of the
-      computation, and it can be one of the following:
-
-      - ``None``, which means the default precision for the current backend,
-      - a :class:`~jax.lax.Precision` enum value or a tuple of two
-        :class:`~jax.lax.Precision` enums indicating precision of ``lhs``` and
-        ``rhs``, or
-      - a :class:`~jax.lax.DotAlgorithm` or a
-        :class:`~jax.lax.DotAlgorithmPreset` indicating the algorithm that
-        must be used to accumulate the dot product.
-
-    preferred_element_type: Optional. This parameter controls the data type
-      output by the dot product. By default, the output element type of this
-      operation will match the ``lhs`` and ``rhs`` input element types under
-      the usual type promotion rules. Setting ``preferred_element_type`` to a
-      specific ``dtype`` will mean that the operation returns that element type.
-      When ``precision`` is not a :class:`~jax.lax.DotAlgorithm` or
-      :class:`~jax.lax.DotAlgorithmPreset`, ``preferred_element_type`` provides
-      a hint to the compiler to accumulate the dot product using this data type.
-
-  Returns:
-    An array containing the product.
-  """
-  if 1 <= lhs.ndim <= 2 and 1 <= rhs.ndim <= 2 and core.definitely_equal(lhs.shape[-1], rhs.shape[0]):
-    return dot_general(lhs, rhs, (((lhs.ndim - 1,), (0,)), ((), ())),
-                       precision=precision,
-                       preferred_element_type=preferred_element_type,
-                       out_sharding=out_sharding)
-  else:
-    raise TypeError("Incompatible shapes for dot: got {} and {}.".format(
-        lhs.shape, rhs.shape))
-
-
 DotDimensionNumbers = tuple[tuple[Sequence[int], Sequence[int]],
                             tuple[Sequence[int], Sequence[int]]]
 
-def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionNumbers,
+
+# TODO(jakevdp): consider deprecating jax.lax.dot_general.
+def dot_general(lhs: ArrayLike, rhs: ArrayLike,
+                dimension_numbers: DotDimensionNumbers,
                 precision: PrecisionLike = None,
                 preferred_element_type: DTypeLike | None = None,
                 *,
                 out_sharding=None) -> Array:
+  """Alias of :func:`jax.lax.dot`.
+
+  Prefer use of :func:`jax.lax.dot` directly, but note that it requires
+  all arguments after ``lhs`` and ``rhs`` to be specified by keyword
+  rather than position.
+  """
+  return dot(lhs, rhs, dimension_numbers=dimension_numbers, precision=precision,
+             preferred_element_type=preferred_element_type, out_sharding=out_sharding)
+
+
+def dot(lhs: ArrayLike, rhs: ArrayLike, *args,
+        dimension_numbers: DotDimensionNumbers | None = None,
+        precision: PrecisionLike = None,
+        preferred_element_type: DTypeLike | None = None,
+        out_sharding=None) -> Array:
   """General dot product/contraction operator.
 
-  Wraps XLA's `DotGeneral
-  <https://www.openxla.org/xla/operation_semantics#dotgeneral>`_
-  operator.
+  This operation lowers directly to the `stablehlo.dot_general`_ operation.
 
   The semantics of ``dot_general`` are complicated, but most users should not have to
   use it directly. Instead, you can use higher-level functions like :func:`jax.numpy.dot`,
   :func:`jax.numpy.matmul`, :func:`jax.numpy.tensordot`, :func:`jax.numpy.einsum`,
   and others which will construct appropriate calls to ``dot_general`` under the hood.
   If you really want to understand ``dot_general`` itself, we recommend reading XLA's
-  `DotGeneral  <https://www.openxla.org/xla/operation_semantics#dotgeneral>`_
-  operator documentation.
+  DotGeneral_ operator documentation.
 
   Args:
     lhs: an array
     rhs: an array
-    dimension_numbers: a tuple of tuples of sequences of ints of the form
+    dimension_numbers: an optional tuple of tuples of sequences of ints of the form
       ``((lhs_contracting_dims, rhs_contracting_dims), (lhs_batch_dims,
-      rhs_batch_dims))``
+      rhs_batch_dims))``. This may be left unspecified in the common case of
+      un-batched matrix-matrix, matrix-vector, or vector-vector dot products, as
+      determined by the shape of ``lhs`` and ``rhs``.
     precision: Optional. This parameter controls the numerics of the
       computation, and it can be one of the following:
 
@@ -2515,12 +2487,58 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
       When ``precision`` is not a :class:`~jax.lax.DotAlgorithm` or
       :class:`~jax.lax.DotAlgorithmPreset`, ``preferred_element_type`` provides
       a hint to the compiler to accumulate the dot product using this data type.
+    out_sharding: an optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     An array whose first dimensions are the (shared) batch dimensions, followed
     by the ``lhs`` non-contracting/non-batch dimensions, and finally the ``rhs``
     non-contracting/non-batch dimensions.
+
+  .. _stablehlo.dot_general: https://openxla.org/stablehlo/spec#dot_general
+  .. _DotGeneral: https://www.openxla.org/xla/operation_semantics#dotgeneral
   """
+  # TODO(jakevdp): keyword warning added for JAX v0.7.1; finalize this for v0.9.0.
+  if args:
+    deprecations.warn(
+      "jax-lax-dot-positional-args",
+      (
+        "jax.lax.dot: passing precision or preferred_element_type by position"
+        " is deprecated; pass them by keyword instead."
+      ),
+      stacklevel=2
+    )
+    # Prior to merging dot and dot_general, dot() had two additional positional args:
+    # `precision` and `preferred_element_type`.
+    if len(args) == 1:
+      if precision is not None:
+        raise TypeError("jax.lax.dot got multiple values for argument 'precision'")
+      precision, = args
+    elif len(args) == 2:
+      if precision is not None:
+        raise TypeError("jax.lax.dot got multiple values for argument 'precision'")
+      if preferred_element_type is not None:
+        raise TypeError("jax.lax.dot got multiple values for argument 'preferred_element_type'")
+      precision, preferred_element_type = args
+    else:
+      raise TypeError("Too many positional arguments passed to jax.lax.dot.")
+  del args
+
+  lhs_shape = np.shape(lhs)
+  lhs_ndim = len(lhs_shape)
+
+  rhs_shape = np.shape(rhs)
+  rhs_ndim = len(rhs_shape)
+
+  if dimension_numbers is None:
+    if 1 <= lhs_ndim <= 2 and 1 <= rhs_ndim <= 2 and core.definitely_equal(lhs_shape[-1], rhs_shape[0]):
+      dimension_numbers = (((lhs_ndim - 1,), (0,)), ((), ()))
+    else:
+      raise ValueError(
+        "jax.lax.dot: dimension_numbers must be specified when not performing simple"
+        " un-batched matrix-matrix, matrix-vector, or vector-vector products;"
+        f" got {lhs_shape=} {rhs_shape=}")
+
   out_sharding = canonicalize_sharding(out_sharding, 'dot_general')
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   cdims = (api_util._ensure_index_tuple(lhs_contract),
