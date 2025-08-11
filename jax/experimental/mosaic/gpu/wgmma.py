@@ -472,16 +472,6 @@ def wgmma_fence(array: fa.FragmentedArray) -> fa.FragmentedArray:
   return array
 
 
-def _as_fragmented_reg_ndarray(flat_regs, dtype: ir.Type, shape: tuple[int, ...]):
-  vec_regs = []
-  for first, second in zip(flat_regs[::2], flat_regs[1::2]):
-    vec = llvm.mlir_undef(ir.VectorType.get((2,), dtype))
-    vec = llvm.insertelement(vec, first, position=_lc(0))
-    vec = llvm.insertelement(vec, second, position=_lc(1))
-    vec_regs.append(vec)
-  return np.asarray(vec_regs, dtype=object).reshape(shape)
-
-
 def _as_i32_reg(v):
   i32 = ir.IntegerType.get_signless(32)
   return llvm.extractelement(
