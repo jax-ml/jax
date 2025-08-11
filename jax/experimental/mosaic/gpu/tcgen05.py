@@ -1242,14 +1242,6 @@ def _load_32xcols_native(base_addr, cols, dtype, tmem_packing):
   return vector_regs
 
 
-def _m128_layout(shape: tuple[int, ...]):
-  if len(shape) != 2:
-    raise ValueError(f"Shape {shape} is not 2D")
-  if shape[0] % 128 != 0 or shape[1] % 8 != 0:
-    raise ValueError(f"Shape {shape} is not a multiple of 64x8")
-  return LAYOUT
-
-
 def commit_tmem():
   void = ir.Type.parse("!llvm.void")
   llvm.inline_asm(

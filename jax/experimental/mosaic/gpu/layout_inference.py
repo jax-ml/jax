@@ -686,16 +686,6 @@ def _infer_wgmma_op_layout(wgmma_op: mgpu.WGMMAOp) -> OptionalLayouts:
   return [layout], [layout]
 
 
-def _earliest_use(regions: list[ir.Region], uses: Sequence[ir.OpOperand]) -> ir.OpView:
-  owners = [use.owner for use in uses]
-  for region in regions:
-    for block in region:
-      for op in block:
-        if op in owners:
-          return op
-  raise ValueError("None of uses are in the given block")
-
-
 class TraversalOrder(enum.Enum):
   """Traversal orders with respect to the data flow for IR."""
 
