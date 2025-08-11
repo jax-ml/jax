@@ -848,6 +848,10 @@ def lower_jaxpr_to_module(
           raise LoweringException(
               f"Unsupported pipeline mode: {pipeline_mode}."
           )
+        if pipeline_mode.use_lookahead:
+          raise NotImplementedError(
+              "Lookahead is not supported for XLA pipeline emitter lowering."
+          )
         buffer_count = pipeline_mode.buffer_count
         if buffer_count < 1 or buffer_count > 2:
           raise LoweringException(
