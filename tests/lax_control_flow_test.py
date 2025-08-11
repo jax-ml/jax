@@ -43,7 +43,6 @@ import jax.scipy as jsp
 from jax._src import dispatch
 from jax._src.api import vjp3
 from jax._src.lax import control_flow as lax_control_flow
-from jax._src.lax.control_flow import for_loop
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 
@@ -91,20 +90,12 @@ def scan_with_new_checkpoint2(f, *args, **kwargs):
   return new_checkpoint(partial(lax.scan, f, **kwargs),
                         policy=checkpoint_policies.everything_saveable)(*args)
 
-def scan_with_for(f, *args, **kwargs):
-  return for_loop.scan(f, *args, **kwargs)
-
-def scan_with_remat_for(f, *args, **kwargs):
-  return jax.remat(lambda *args: for_loop.scan(f, *args, **kwargs))(*args)
-
 SCAN_IMPLS_WITH_FOR = [
     (lax.scan, 'unroll1'),
     (partial(lax.scan, unroll=2), 'unroll2'),
     (partial(lax.scan, _split_transpose=True), 'split_transpose'),
     (scan_with_new_checkpoint , 'new_checkpoint'),
     (scan_with_new_checkpoint2, 'new_checkpoint2'),
-    (scan_with_for, 'for_loop'),
-    (scan_with_remat_for, 'for_loop_remat'),
 ]
 
 def while_loop_new_checkpoint(cond_fun, body_fun, init_val):
@@ -1809,9 +1800,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if scan is scan_with_new_checkpoint2:
       atol = {}
       rtol = {np.float64: 1e-12, np.float32: 1e-4}
-    elif scan is scan_with_for:
-      atol = {}
-      rtol = {np.float64: 1e-12, np.float32: 1e-4}
     else:
       atol = {np.float64: 1e-14}
       rtol = {np.float64: 1e-14, np.float32: 1e-4}
@@ -1844,9 +1832,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if scan is scan_with_new_checkpoint:
       rtol = {np.float32: 5e-5, np.float64: 1e-13}
       atol = 1e-5
-    elif scan is scan_with_for:
-      rtol = {np.float32: 2e-5, np.float64: 1e-13}
-      atol = {np.float32: 6e-2, np.float64: 1e-13}
     else:
       rtol = {np.float32: 2e-4, np.float64: 1e-13}
       atol = {np.float32: 8e-5, np.float64: 1e-13}
