@@ -111,6 +111,7 @@ limitations under the License.
 #include "jaxlib/xla_compiler.h"
 #include "xla/hlo/builder/lib/approx_topk_shape.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
+#include "xla/pjrt/distributed/preemption/preemption_sync_manager.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_api.h"
 #include "xla/pjrt/pjrt_c_api_client.h"
@@ -123,7 +124,6 @@ limitations under the License.
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
-#include "xla/tsl/distributed_runtime/preemption/preemption_sync_manager.h"
 #include "xla/tsl/platform/status.h"
 #include "tsl/platform/platform.h"
 
@@ -606,28 +606,28 @@ NB_MODULE(_jax, m) {
   aux::RegisterTransferServerTypes(m);
 #endif  // defined(__linux__)
 
-  nb::class_<tsl::PreemptionSyncManager> preemption_sync_manager(
+  nb::class_<xla::PreemptionSyncManager> preemption_sync_manager(
       m, "PreemptionSyncManager");
   preemption_sync_manager
       .def(
           "initialize",
-          [](tsl::PreemptionSyncManager& manager,
+          [](xla::PreemptionSyncManager& manager,
              xla::DistributedRuntimeClient* client) {
-            tsl::CoordinationServiceAgent* agent =
+            xla::CoordinationServiceAgent* agent =
                 xla::ValueOrThrow(client->GetCoordinationServiceAgent());
             xla::ThrowIfError(manager.Initialize(agent));
           },
           nb::arg("distributed_client"))
       .def("reached_sync_point",
-           [](tsl::PreemptionSyncManager& manager, int step_counter) {
+           [](xla::PreemptionSyncManager& manager, int step_counter) {
              return manager.ReachedSyncPoint(step_counter);
            })
-      .def("shutdown", [](tsl::PreemptionSyncManager& manager) {
+      .def("shutdown", [](xla::PreemptionSyncManager& manager) {
         nb::gil_scoped_release gil_release;
         manager.Shutdown();
       });
   m.def("create_preemption_sync_manager",
-        []() { return tsl::CreatePreemptionSyncManager(); });
+        []() { return xla::CreatePreemptionSyncManager(); });
 
   nb::class_<xla::DistributedRuntimeService> distributed_runtime_service(
       m, "DistributedRuntimeService");
