@@ -1036,8 +1036,13 @@ def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma">, IndirectDMAOp {
     DefaultValuedAttr<BoolAttr, "false">:$add
   );
   let assemblyFormat = [{
-    $source `to` $target `at` $offsets `,` `semaphore` $semaphore (`offset_filter` $offset_filter^)? attr-dict `:` type($source) `,` type($target) `,` type($offsets) `,` type($semaphore)
-    }];
+    `source` `(` $source `:` type($source) `)`
+    `target` `(` $target `:` type($target) `)`
+    `offsets` `(` $offsets `:` type($offsets) `)`
+    (`offset_filter` `(` $offset_filter^ `)`)?
+    `semaphore` `(` $semaphore `:` type($semaphore) `)`
+    attr-dict
+  }];
   let hasVerifier = 1;
   let extraClassDeclaration = extraBaseClassDeclaration # [{
     LogicalResult verifyGather(MemRefType operand_ty,
