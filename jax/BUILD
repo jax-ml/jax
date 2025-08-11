@@ -20,6 +20,7 @@ load(
     "jax_extend_internal_users",
     "jax_extra_deps",
     "jax_internal_packages",
+    "jax_visibility",
     "py_deps",
     "py_library_providing_imports_info",
     "pytype_library",
@@ -314,10 +315,11 @@ alias(
     visibility = ["//visibility:public"],
 )
 
+# TODO: b/436864688 - migrate users to //third_party/py/jax/experimental and delete this target.
 alias(
     name = "experimental_host_callback",
     actual = "//jax/experimental:host_callback",
-    visibility = ["//visibility:public"],
+    visibility = jax_visibility("host_callback"),
 )
 
 alias(

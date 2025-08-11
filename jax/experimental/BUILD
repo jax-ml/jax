@@ -187,6 +187,7 @@ pytype_strict_library(
     ] + py_deps("numpy"),
 )
 
+# TODO: b/436864688 - migrate users to //third_party/py/jax/experimental and delete this target.
 pytype_strict_library(
     name = "host_callback",
     srcs = [
@@ -194,7 +195,9 @@ pytype_strict_library(
         "host_callback.py",
         "x64_context.py",  # To support JAX_HOST_CALLBACK_LEGACY=False
     ],
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("host_callback"),
     deps = [
         "//jax/_src:api",
         "//jax/_src:callback",
