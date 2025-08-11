@@ -114,7 +114,7 @@ def _dedup_consts(jaxpr, const_ids):
       [*constvars, *jaxpr.invars],
       [*map(canonicalize.get, jaxpr.constvars), *jaxpr.invars], jaxpr.effects)
   jaxpr = jaxpr.replace(constvars=constvars, eqns=eqns, outvars=outvars,
-                        effects=effs)
+                        effects=effs, debug_info=jaxpr.debug_info)
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr
 
