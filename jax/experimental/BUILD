@@ -191,9 +191,8 @@ pytype_strict_library(
 pytype_strict_library(
     name = "host_callback",
     srcs = [
-        "__init__.py",  # To support JAX_HOST_CALLBACK_LEGACY=False
-        "host_callback.py",
-        "x64_context.py",  # To support JAX_HOST_CALLBACK_LEGACY=False
+        "__init__.py",
+        "x64_context.py",
     ],
     visibility = [
         "//jax:internal",
