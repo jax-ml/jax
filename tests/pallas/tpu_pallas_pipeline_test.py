@@ -386,7 +386,8 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
               pl.BlockSpec(
                   (128, 128),
                   index_map=x_index_map,
-                  pipeline_mode=pl.Buffered(buffer_count=in_buffer_count),
+                  pipeline_mode=pl.Buffered(buffer_count=in_buffer_count,
+                                            use_lookahead=use_lookahead),
               ),
           ],
           out_specs=pl.BlockSpec(
@@ -394,7 +395,6 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
               lambda i: (i, 0),
               pipeline_mode=pl.Buffered(buffer_count=out_buffer_count),
           ),
-          use_lookahead=use_lookahead,
       )(x_hbm_ref, o_hbm_ref)
     fn = pl.pallas_call(
         copy_kernel,
@@ -554,7 +554,8 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
               pl.BlockSpec(
                   (128, 128),
                   index_map=x_index_map,
-                  pipeline_mode=pl.Buffered(buffer_count=in_buffer_count),
+                  pipeline_mode=pl.Buffered(buffer_count=in_buffer_count,
+                                            use_lookahead=use_lookahead),
               ),
           ],
           out_specs=pl.BlockSpec(
@@ -562,7 +563,6 @@ class PallasCallMultipleBufferedPipelineTest(parameterized.TestCase):
               lambda i: (i + blk_idx_offset[0], 0),
               pipeline_mode=pl.Buffered(buffer_count=out_buffer_count),
           ),
-          use_lookahead=use_lookahead,
       )
       def prefetch(x_bref, o_bref, scheduler):
         del o_bref

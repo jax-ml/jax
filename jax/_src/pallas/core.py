@@ -133,7 +133,17 @@ class CompilerParams(Protocol):
 
 @dataclasses.dataclass(frozen=True)
 class Buffered:
+  """Specifies how a block should be buffered for a pipeline.
+
+  Attributes:
+    buffer_count: The number of buffers to use for multiple buffering.
+    use_lookahead: optional bool, indicates whether to use lookahead on the
+      buffer. Enabling lookahead allows the pipeline to begin fetching the next
+      changed block as soon as a slot is available, no matter how many
+      iterations ahead that block is.
+  """
   buffer_count: int
+  use_lookahead: bool = False
 
 split_list = util.split_list
 
