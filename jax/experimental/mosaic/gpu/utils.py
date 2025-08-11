@@ -38,7 +38,6 @@ import numpy as np
 
 from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
 
-# mypy: ignore-errors
 
 WARP_SIZE: int = 32
 WARPGROUP_SIZE: int = 128
@@ -1178,6 +1177,7 @@ class Partition:
     if num_chunks is not None:
       self.source_bounds = num_chunks
     else:
+      assert chunk_size is not None
       if len(chunk_size) != len(self.target_bounds):
         raise ValueError
       source_bounds = []
@@ -1245,6 +1245,7 @@ class Partition1D:
     if num_chunks is not None:
       self.partition = Partition(num_chunks=(num_chunks,), **common_kwargs)
     else:
+      assert chunk_size is not None
       self.partition = Partition(chunk_size=(chunk_size,), **common_kwargs)
 
   @property

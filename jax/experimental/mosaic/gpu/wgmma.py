@@ -29,7 +29,6 @@ from . import fragmented_array as fa
 from . import mma_utils
 from . import utils
 
-# mypy: ignore-errors
 
 c = utils.c
 bytewidth = utils.bytewidth
@@ -260,6 +259,7 @@ def wgmma_m64(
       a_args = [_as_i32_reg(v) for v in a_slice.registers.flat]
     else:
       if i > 0:
+        assert a_k_stride is not None
         a = _llvm_add(
             a,
             llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, a_k_stride >> 4)),
@@ -431,6 +431,7 @@ def wgmma(
             ki * k_group_elems : (ki + 1) * k_group_elems,
         ]
       else:
+        assert a_m_group_stride is not None and a_k_group_stride is not None
         a_group_offset = mi * a_m_group_stride + ki * a_k_group_stride
         a_mk = _llvm_add(
             a_desc_base, c(mma_utils.encode_addr(a_group_offset), i64),

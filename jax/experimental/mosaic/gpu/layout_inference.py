@@ -37,8 +37,6 @@ from . import layouts as layouts_lib
 from . import utils
 
 
-# mypy: ignore-errors
-
 OptionalLayouts = tuple[list[ir.Attribute], list[ir.Attribute]] | None
 LayoutInferenceRule = Callable[[ir.OpView], OptionalLayouts]
 _layout_inference_rules: dict[str, LayoutInferenceRule] = {}
@@ -76,25 +74,23 @@ def _choose_representative_layout(
   if not layouts:
     return None
 
-  strided_layouts: list[fa.WGStridedFragLayout] = [
-      layouts_lib.from_layout_attr(layout)
+  strided_layouts = [
+      cast(fa.WGStridedFragLayout, layouts_lib.from_layout_attr(layout))
       for layout in layouts
       if layouts_lib.is_strided_fragmented_layout(layout)
   ]
 
-  splat_layouts: list[fa.WGSplatFragLayout] = list(
-      map(
-          layouts_lib.from_layout_attr,
-          filter(layouts_lib.is_splat_fragmented_layout, layouts),
-      )
-  )
+  splat_layouts = [
+      cast(fa.WGSplatFragLayout, layouts_lib.from_layout_attr(layout))
+      for layout in layouts
+      if layouts_lib.is_splat_fragmented_layout(layout)
+  ]
 
-  tiled_layouts: list[fa.TiledLayout] = list(
-      map(
-          layouts_lib.from_layout_attr,
-          filter(layouts_lib.is_tiled_layout, layouts),
-      )
-  )
+  tiled_layouts = [
+      cast(fa.TiledLayout, layouts_lib.from_layout_attr(layout))
+      for layout in layouts
+      if layouts_lib.is_tiled_layout(layout)
+  ]
 
   if len(splat_layouts) + len(strided_layouts) + len(tiled_layouts) != len(
       layouts
@@ -255,13 +251,9 @@ for op in (
   _add_layout_inference_rule(op, _infer_pointwise_op_layouts)
 
 
-# TODO(bchetioui): remove once minimum jaxlib >= 0.5.3.
-OptimizationBarrierOp = getattr(mgpu, "OptimizationBarrierOp", None)
-
-
-@partial(_add_layout_inference_rule, OptimizationBarrierOp)
+@partial(_add_layout_inference_rule, mgpu.OptimizationBarrierOp)
 def _infer_optimization_barrier_op_layout(
-    op: OptimizationBarrierOp,
+    op: mgpu.OptimizationBarrierOp,
 ) -> OptionalLayouts:
   def is_array(v: ir.Value) -> bool:
     return ir.VectorType.isinstance(v.type)
@@ -484,7 +476,7 @@ def _update_layout_shape(
       layout
   ) or layouts_lib.is_strided_fragmented_layout(layout):
     return layouts_lib.to_layout_attr(
-        dataclasses.replace(layouts_lib.from_layout_attr(layout), shape=shape)
+        dataclasses.replace(layouts_lib.from_layout_attr(layout), shape=shape)  # type: ignore[arg-type]
     )
   raise NotImplementedError(f"Unsupported {origin} layout: {layout}.")
 
@@ -772,7 +764,7 @@ def infer_layout(module: ir.Module):
     if not ir.VectorType.isinstance(ty):
       return None
     layout = fa.WGStridedFragLayout(
-        shape=cast(ir.ShapedType, ty).shape, vec_size=default_vector_size
+        shape=cast(ir.ShapedType, ty).shape, vec_size=int(default_vector_size)
     )
     return layouts_lib.to_strided_fragmented_layout_attr(layout)
 

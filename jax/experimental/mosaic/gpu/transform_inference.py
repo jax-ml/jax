@@ -36,7 +36,6 @@ from . import layouts as layouts_lib
 from . import tcgen05
 from . import utils
 
-# mypy: ignore-errors
 
 OptionalTransforms = tuple[list[ir.Attribute], list[ir.Attribute]] | None
 TransformInferenceRule = Callable[[ir.OpView], OptionalTransforms]
@@ -107,7 +106,7 @@ def _resolve_transforms(
   return ir.ArrayAttr.get(new_transforms)
 
 
-def _transforms_from_uses(op: ir.OpView) -> ir.Attribute | None:
+def _transforms_from_uses(op: ir.OpView) -> ir.ArrayAttr | None:
   transforms = None
 
   for result_use in cast(ir.OpResult, op.result).uses:
@@ -385,9 +384,10 @@ def _infer_memref_transpose_transforms(
   transpose = in_strides != out_strides
 
   out_transforms = _transforms_from_uses(op)
-  in_transforms = []
+  in_transforms: list[ir.Attribute] = []
   if not transpose:
-    in_transforms = out_transforms
+    if out_transforms:
+      in_transforms.extend(*out_transforms)
   else:
     tile_transform, swizzle_transform = _get_tile_and_swizzle_transforms(
         out_transforms

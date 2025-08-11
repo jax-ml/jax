@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import dataclasses
 from typing import assert_never, Any, Callable
 
@@ -359,7 +360,7 @@ class EquationSystem:
       default_factory=dict
   )
   equations: list[Equation] = dataclasses.field(default_factory=list)
-  constraints: list[Constraint] = dataclasses.field(default_factory=list)
+  constraints: Sequence[Constraint] = dataclasses.field(default_factory=list)
 
   def unknowns(self) -> list[Variable]:
     """Returns the list of free variables in the system."""
@@ -407,7 +408,7 @@ class EquationSystem:
     return EquationSystem(
         assignments=self.assignments | other.assignments,
         equations=self.equations + other.equations,
-        constraints=self.constraints + other.constraints,
+        constraints=[*self.constraints, *other.constraints],
     )
 
 

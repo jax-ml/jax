@@ -35,7 +35,6 @@ import numpy as np
 from . import profiler
 from . import utils
 from . import fragmented_array as fa
-# mypy: ignore-errors
 
 TMA_DESCRIPTOR_BYTES = 128
 TMA_DESCRIPTOR_ALIGNMENT = 64
@@ -761,8 +760,8 @@ class LaunchContext:
               f" {slice_shape[partitioned]}"
           )
         slice_shape[partitioned] //= collective_size
-        dyn_base_indices = list(dyn_base_indices)
-        dyn_base_indices[partitioned] = arith.addi(
+        dyn_base_indices = list(dyn_base_indices)  # type: ignore[assignment]
+        dyn_base_indices[partitioned] = arith.addi(  # type: ignore[index]
             dyn_base_indices[partitioned],
             arith.muli(
                 self.cluster_idx(collective), c(slice_shape[partitioned], index)
@@ -819,11 +818,12 @@ class LaunchContext:
         )
       if smem_ref is src_ref:
         raise ValueError("CP_ASYNC implementation only supports GMEM -> SMEM copies")
+      assert swizzle is not None
       swizzle_elems = 8 * swizzle // element_bitwidth
       if gmem_transform != (TileTransform((8, swizzle_elems)),):
         raise NotImplementedError(gmem_transform)
       layout = fa.tiled_copy_smem_gmem_layout(
-          *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth
+          *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth  # type: ignore[call-arg]
       )
       gmem_strides = gmem_ref_ty.get_strides_and_offset()[0]
       dst_tiled_strides = [
@@ -892,7 +892,7 @@ class LaunchContext:
         nonlocal smem_ref
         slice_shape[dim] //= num_chunks
         block_offset = arith.muli(idx, c(slice_shape[dim], index))
-        dyn_base_indices[dim] = arith.addi(dyn_base_indices[dim], block_offset)
+        dyn_base_indices[dim] = arith.addi(dyn_base_indices[dim], block_offset)  # type: ignore[index]
         smem_ref = utils.memref_slice(
             smem_ref,
             (slice(None),) * (dim - num_squeezed_dims)
