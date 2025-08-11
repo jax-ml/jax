@@ -21,6 +21,7 @@ import operator
 import google_benchmark
 import jax
 from jax import lax
+from jax._src import api_util
 from jax._src import array
 from jax._src import core
 from jax._src import op_shardings
@@ -962,6 +963,22 @@ def jit_add_chain(state):
       return x
     f(x).block_until_ready()
 
+@google_benchmark.register
+@google_benchmark.option.args([1])
+@google_benchmark.option.args([100])
+def flatten_axes(state):
+  arr = jnp.zeros((5,))
+  n = state.range(0)
+  treedef = jax.tree.structure([
+      {'a' : arr, 'b': arr, 'c': (arr, arr) * n},
+      [arr, None, arr, (arr, (arr, None, arr) * n)],
+      ({'z': (arr, None)}, [arr, arr, arr]),
+      (arr,) * n,
+  ])
+  prefix = [0, 0, (0, 0), (0,) * n]
+
+  while state:
+    api_util.flatten_axes('benchmark', treedef, prefix)
 
 if __name__ == "__main__":
   google_benchmark.main()
