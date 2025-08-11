@@ -1584,6 +1584,28 @@ class PallasControlFlowTest(PallasBaseTest):
       jax.value_and_grad(lambda params, x: f(program, params, x).sum())(
           params, x)
 
+  @parameterized.product(start=[0, 1, 2], stop=[6, 7, 8], step=[None, 3])
+  def test_loop(self, start, stop, step):
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((128,), jnp.int32)
+    )
+    def f(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+
+      @pl.loop(
+          jnp.int32(start),
+          jnp.int32(stop),
+          **{} if step is None else dict(step=jnp.astype(step, jnp.int32)),
+      )
+      def _(i):
+        y_ref[...] += i
+
+    x = jnp.zeros((128,), jnp.int32)
+    np.testing.assert_array_equal(
+        f(x), jnp.full_like(x, sum(range(start, stop, step or 1)))
+    )
+
   def test_fori_loop_simple(self):
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("TODO: error on TPU")

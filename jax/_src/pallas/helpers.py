@@ -16,10 +16,12 @@
 from collections.abc import Callable
 
 import jax
+import jax.numpy as jnp
 from jax._src import core as jax_core
 from jax._src import checkify
 from jax._src import config
 from jax._src.pallas import core as pl_core
+from jax._src.pallas import utils as pl_utils
 from jax._src.pallas import pallas_call
 
 
@@ -101,10 +103,15 @@ def loop(
     unroll: int | bool | None = None,
 ) -> Callable[[Callable[[jax.Array], None]], None]:
   """Returns a decorator that calls the decorated function in a loop."""
+  idx_type = jnp.result_type(lower, upper, step)
+  lower = jax.lax.convert_element_type(lower, idx_type)
+  upper = jax.lax.convert_element_type(upper, idx_type)
+  step = jax.lax.convert_element_type(step, idx_type)
+
   def decorator(body):
     jax.lax.fori_loop(
         0,
-        jax.lax.div(upper - lower, step),
+        pl_utils.cdiv(upper - lower, step),
         lambda idx, _: body(lower + idx * step),
         init_val=None,
         unroll=unroll,
