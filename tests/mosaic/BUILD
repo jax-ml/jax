@@ -54,6 +54,9 @@ jax_multiplatform_test(
     enable_backends = [],
     enable_configs = ["gpu_h100"],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    tags = [
+        "noasan",  # ASAN is unsupported.
+    ],
     deps = [
         "//jax:mosaic_gpu",
     ] + py_deps([
