@@ -184,9 +184,6 @@ def get_compiler_path_or_exit(compiler_path_flag, compiler_name):
     )
     sys.exit(-1)
 
-def get_gcc_path_or_exit():
-  return get_compiler_path_or_exit("gcc_path", "gcc")
-
 def get_clang_path_or_exit():
   return get_compiler_path_or_exit("clang_path", "clang")
 
@@ -221,27 +218,12 @@ def get_clangpp_path(clang_path):
     )
   return str(clangpp_path)
 
-def get_gcc_major_version(gcc_path: str):
-  gcc_version_proc = subprocess.run(
-    [gcc_path, "-dumpversion"],
-    check=True,
-    capture_output=True,
-    text=True,
-  )
-  major_version = int(gcc_version_proc.stdout.split(".")[0])
 
-  return major_version
-
-
-def get_jax_configure_bazel_options(bazel_command: list[str], use_new_wheel_build_rule: bool):
+def get_jax_configure_bazel_options(bazel_command: list[str]):
   """Returns the bazel options to be written to .jax_configure.bazelrc."""
-  # Get the index of the "run" parameter. Build options will come after "run" so
-  # we find the index of "run" and filter everything after it. If we are using
-  # the new wheel build rule, we will find the index of "build" instead.
-  if use_new_wheel_build_rule:
-    start = bazel_command.index("build")
-  else:
-    start = bazel_command.index("run")
+  # Get the index of the "build" parameter. Build options will come after
+  # "build" so we find the index of "build" and filter everything after it.
+  start = bazel_command.index("build")
   jax_configure_bazel_options = ""
   try:
     for i in range(start + 1, len(bazel_command)):
@@ -253,19 +235,9 @@ def get_jax_configure_bazel_options(bazel_command: list[str], use_new_wheel_buil
       jax_configure_bazel_options += f"build {bazel_flag}\n"
     return jax_configure_bazel_options
   except ValueError:
-    logging.error("Unable to find index for 'run' in the Bazel command")
+    logging.error("Unable to find index for 'build' in the Bazel command")
     return ""
 
-def get_githash():
-  try:
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        encoding="utf-8",
-        capture_output=True,
-        check=True,
-    ).stdout.strip()
-  except (subprocess.CalledProcessError, OSError):
-    return ""
 
 def _parse_string_as_bool(s):
   """Parses a string as a boolean value."""
