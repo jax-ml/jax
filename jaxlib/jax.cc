@@ -174,6 +174,7 @@ bool IsSanitized() { return IsAsan() || IsMsan() || IsTsan(); }
 
 NB_MODULE(_jax, m) {
   // Initialize ABSL logging because code within XLA uses it.
+  LOG(ERROR) << "JAX C++ Init logging";
 #ifndef PLATFORM_GOOGLE
   xla::InitializeAbslLogging();
 #endif  // PLATFORM_GOOGLE

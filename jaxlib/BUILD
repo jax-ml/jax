@@ -300,11 +300,13 @@ nanobind_pywrap_extension(
     name = "utils",
     srcs = ["utils.cc"],
     deps = [
+        "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/debugging:failure_signal_handler",
+        "@com_google_absl//absl/log:globals",
         "@com_google_absl//absl/synchronization",
         "@nanobind",
         "@tsl//tsl/platform",

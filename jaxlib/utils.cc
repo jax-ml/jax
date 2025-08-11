@@ -19,11 +19,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/log_severity.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/debugging/failure_signal_handler.h"
+#include "absl/log/globals.h"
 #include "absl/synchronization/mutex.h"
 #include "nanobind/nanobind.h"
 #include "tsl/platform/platform.h"
@@ -370,6 +372,10 @@ void InstallFailureSignalHandler(bool call_previous_handler) {
 #endif  // PLATFORM_GOOGLE
 }
 
+void SetMinLogLevel(int severity) {
+  absl::SetMinLogLevel(static_cast<absl::LogSeverityAtLeast>(severity));
+}
+
 }  // namespace
 
 NB_MODULE(utils, m) {
@@ -387,6 +393,8 @@ NB_MODULE(utils, m) {
         "the name of the attribute on each object that contains the list of "
         "parent objects. end_nodes is an iterable of objects from which we "
         "should start a backwards search.");
+
+  m.def("cpp_set_min_log_level", &SetMinLogLevel, nb::arg("severity"));
 
   // Python has no reader-writer lock in its standard library, so we expose
   // bindings around absl::Mutex.
