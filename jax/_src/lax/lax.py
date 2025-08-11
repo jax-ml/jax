@@ -4951,7 +4951,6 @@ def _convert_element_type_batching_rule(
   new_params = dict(new_dtype=new_dtype, weak_type=weak_type, sharding=sharding)
   return convert_element_type_p.bind(*batched_args, **new_params), batch_dims[0]
 batching.fancy_primitive_batchers[convert_element_type_p] = _convert_element_type_batching_rule
-batching.skippable_batchers[convert_element_type_p] = lambda _: ()
 
 pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
 pe.forwarding_rules[convert_element_type_p] = _convert_elt_type_fwd_rule
@@ -5660,7 +5659,6 @@ _dot_general_batch_rule = functools.partial(
     dot_general,
 )
 batching.fancy_primitive_batchers[dot_general_p] = _dot_general_batch_rule
-batching.skippable_batchers[dot_general_p] = lambda _: ()
 pe.padding_rules[dot_general_p] = _dot_general_padding_rule
 core.pp_eqn_rules[dot_general_p] = _dot_general_pp_rule
 batching.ragged_prop_rules[dot_general_p] = _dot_general_ragged_prop_rule
@@ -6241,7 +6239,6 @@ ragged_dot_general_p = standard_primitive(
 ad.primitive_jvps[ragged_dot_general_p] = _ragged_dot_general_jvp_rule
 ad.primitive_transposes[ragged_dot_general_p] = _ragged_dot_general_transpose_rule
 batching.fancy_primitive_batchers[ragged_dot_general_p] = _ragged_dot_general_batch_rule
-batching.skippable_batchers[ragged_dot_general_p] = lambda _: ()
 
 
 def _ragged_dot_general_impl(
@@ -6675,7 +6672,6 @@ broadcast_in_dim_p.def_impl(partial(dispatch.apply_primitive, broadcast_in_dim_p
 ad.primitive_jvps[broadcast_in_dim_p] = _broadcast_in_dim_jvp_rule
 ad.primitive_transposes[broadcast_in_dim_p] = _broadcast_in_dim_transpose_rule
 batching.fancy_primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
-batching.skippable_batchers[broadcast_in_dim_p] = lambda _: ()
 pe.forwarding_rules[broadcast_in_dim_p] = _broadcast_in_dim_fwd_rule
 pe.custom_partial_eval_rules[broadcast_in_dim_p] = _broadcast_in_dim_partial_eval
 pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
@@ -7314,7 +7310,6 @@ reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                vma_rule=partial(core.standard_vma_rule, 'reshape'))
 ad.deflinear2(reshape_p, _reshape_transpose_rule)
 batching.fancy_primitive_batchers[reshape_p] = _reshape_batch_rule
-batching.skippable_batchers[reshape_p] = lambda _: ()
 mlir.register_lowering(reshape_p, _reshape_lower)
 core.custom_typechecks[reshape_p] = _reshape_typecheck_rule
 pe.custom_staging_rules[reshape_p] = _reshape_staging_rule
@@ -7581,7 +7576,6 @@ select_n_p = standard_primitive(
 ad.primitive_jvps[select_n_p] = _select_jvp
 ad.primitive_transposes[select_n_p] = _select_transpose_rule
 batching.fancy_primitive_batchers[select_n_p] = _select_batch_rule
-batching.skippable_batchers[select_n_p] = lambda _: ()
 mlir.register_lowering(select_n_p, _select_hlo_lowering)
 pe.def_trivial_padding(select_n_p)
 

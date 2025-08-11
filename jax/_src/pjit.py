@@ -2950,7 +2950,6 @@ def _sharding_constraint_batcher(
       unconstrained_dims=frozenset(unconstrained_dims))
   return y, d
 batching.fancy_primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
-batching.skippable_batchers[sharding_constraint_p] = lambda _: ()
 
 # -------------------- mesh_cast ---------------------------
 
@@ -3035,7 +3034,6 @@ def _mesh_cast_batcher(axis_data, vals_in, dims_in, dst_sharding):
   y = mesh_cast_p.bind(x, dst_sharding=vmapped_dst_sharding)
   return y, d
 batching.fancy_primitive_batchers[mesh_cast_p] = _mesh_cast_batcher
-batching.skippable_batchers[mesh_cast_p] = lambda _: ()
 
 # -------------------- reshard ------------------------------------
 
@@ -3099,7 +3097,6 @@ def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding):
   y = reshard_p.bind(x, dst_sharding=vmapped_dst_sharding)
   return y, d
 batching.fancy_primitive_batchers[reshard_p] = _reshard_batcher
-batching.skippable_batchers[reshard_p] = lambda _: ()
 
 # -------------------- auto and user mode -------------------------
 
@@ -3269,7 +3266,6 @@ def _layout_constraint_batcher(axis_data, vals_in, dims_in, layout):
   y = layout_constraint_p.bind(x, layout=vmapped_layout)
   return y, d
 batching.fancy_primitive_batchers[layout_constraint_p] = _layout_constraint_batcher
-batching.skippable_batchers[layout_constraint_p] = lambda _: ()
 
 # -------------------- helpers --------------------
 
