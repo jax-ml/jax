@@ -420,13 +420,6 @@ _registry: dict[type[Any], _RegistryEntry] = {
     type(None): _RegistryEntry(lambda z: ((), None), lambda _, xs: None),
 }
 
-def _replace_nones(sentinel, tree):
-  """Replaces ``None`` in ``tree`` with ``sentinel``."""
-  leaves, treedef = none_leaf_registry.flatten(tree)
-  leaves = map(lambda x: sentinel if x is None else x, leaves)
-  return treedef.unflatten(leaves)
-
-
 no_initializer = object()
 
 
@@ -615,9 +608,9 @@ def broadcast_prefix(prefix_tree: Any, full_tree: Any,
       prefix_tree: a pytree that is a tree prefix of full_tree.
       full_tree: a pytree with the structure to broadcast the prefix leaves into.
       is_leaf: an optionally specified function that will be called at each
-        flattening step. It should return a boolean, with true stopping the
-        traversal and the whole subtree being treated as a leaf, and false
-        indicating the flattening should traverse the current object.
+        flattening step for prefix_tree. It should return a boolean, with true
+        stopping the traversal and the whole subtree being treated as a leaf,
+        and false indicating the flattening should traverse the current object.
 
     Returns:
       A list of leaves matching the expected count for the full tree,
@@ -634,6 +627,65 @@ def broadcast_prefix(prefix_tree: Any, full_tree: Any,
       raise e('broadcast_prefix prefix_tree') from None
   return result
 
+
+# broadcast_prefix_with_treedef is not exported
+def broadcast_prefix_with_treedef(
+    prefix_tree: Any,
+    full_treedef: PyTreeDef,
+    is_leaf: Callable[[Any], bool] | None = None,
+) -> list[Any]:
+  """Broadcasts tree prefix leaves into the full set of leaves for a given full treedef.
+
+    Args:
+      prefix_tree: a pytree that is a tree prefix of full_tree.
+      full_treedef: a PyTreeDef with the structure to broadcast the prefix
+        leaves into.
+      is_leaf: an optionally specified function that will be called at each
+        flattening step for prefix_tree. It should return a boolean, with true
+        stopping the traversal and the whole subtree being treated as a leaf,
+        and false indicating the flattening should traverse the current object.
+
+    Returns:
+      A list of leaves matching the expected count for the full tree,
+      with the leaf of each prefix tree being duplicated to match the count of
+      its corresponding subtree.
+  """
+  # NOTE: At the moment, `broadcast_prefix_with_treedef` is only called from
+  # `api_util.flatten_axes`, which replaces any raised exception with its own
+  # exception and error message.  The errors raised from this function should
+  # probably be improved before this function is used in more places.
+  #
+  # TODO(jburnim): Merge `broadcast_prefix` with this function?
+  prefix_leaves, prefix_treedef = tree_flatten(prefix_tree, is_leaf)
+  ret = []
+
+  # TODO(jburnim): Should this traversal be done in C++?
+  def _broadcast(prefix_leaves, prefix_treedef, treedef):
+    if treedef_is_strict_leaf(prefix_treedef):
+      # We have encountered a leaf in the prefix, so we repeat the prefix leaf
+      # for each leaf in the corresponding part of the tree.
+      assert len(prefix_leaves) == 1
+      ret.extend(prefix_leaves * treedef.num_leaves)
+      return
+
+    if treedef_is_strict_leaf(treedef):
+      raise ValueError('`prefix_treedef` is not a prefix of `full_treedef`')
+
+    prefix_node_data = prefix_treedef.node_data()
+    node_data = treedef.node_data()
+    if prefix_node_data != node_data:
+      raise ValueError(f'expected {node_data}, got {prefix_node_data}')
+
+    prefix_i = 0
+    for prefix_child, tree_child in zip(
+        prefix_treedef.children(), treedef.children(), strict=True):
+      _broadcast(prefix_leaves[prefix_i : prefix_i + prefix_child.num_leaves],
+                prefix_child,
+                tree_child)
+      prefix_i += prefix_child.num_leaves
+
+  _broadcast(prefix_leaves, prefix_treedef, full_treedef)
+  return ret
 
 # flatten_one_level is not exported.
 def flatten_one_level(tree: Any) -> tuple[Iterable[Any], Hashable]:
