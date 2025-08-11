@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
@@ -61,27 +62,7 @@ static constexpr int kMaxFrames = 512;
 
 PyTypeObject* traceback_type_ = nullptr;
 
-// Entry in a traceback. Must be POD.
-struct TracebackEntry {
-  TracebackEntry() = default;
-  TracebackEntry(PyCodeObject* code, int lasti) : code(code), lasti(lasti) {}
-  PyCodeObject* code;
-  int lasti;
-
-  bool operator==(const TracebackEntry& other) const {
-    return code == other.code && lasti == other.lasti;
-  }
-  bool operator!=(const TracebackEntry& other) const {
-    return !operator==(other);
-  }
-};
 static_assert(std::is_trivial_v<TracebackEntry> == true);
-
-template <typename H>
-H AbslHashValue(H h, const TracebackEntry& entry) {
-  h = H::combine(std::move(h), entry.code, entry.lasti);
-  return h;
-}
 
 struct TracebackObject {
   PyObject_VAR_HEAD;
@@ -229,14 +210,9 @@ std::string Traceback::ToString() const {
   return traceback_to_string(reinterpret_cast<const TracebackObject*>(ptr()));
 }
 
-std::vector<std::pair<PyCodeObject*, int>> Traceback::RawFrames() const {
+absl::Span<const TracebackEntry> Traceback::RawFrames() const {
   const TracebackObject* tb = reinterpret_cast<const TracebackObject*>(ptr());
-  std::vector<std::pair<PyCodeObject*, int>> frames;
-  frames.reserve(Py_SIZE(tb));
-  for (Py_ssize_t i = 0; i < Py_SIZE(tb); ++i) {
-    frames.push_back(std::make_pair(tb->frames[i].code, tb->frames[i].lasti));
-  }
-  return frames;
+  return absl::MakeConstSpan(tb->frames, Py_SIZE(tb));
 }
 
 /*static*/ bool Traceback::Check(PyObject* o) { return traceback_check(o); }
@@ -351,16 +327,16 @@ void Traceback::RegisterType(nb::module_& m) {
         // We return a tuple of lists, rather than a list of tuples, because it
         // is cheaper to allocate only three Python objects for everything
         // rather than one per frame.
-        std::vector<std::pair<PyCodeObject*, int>> frames = tb.RawFrames();
+        absl::Span<const TracebackEntry> frames = tb.RawFrames();
         nb::list out_code = nb::steal<nb::list>(PyList_New(frames.size()));
         nb::list out_lasti = nb::steal<nb::list>(PyList_New(frames.size()));
         for (size_t i = 0; i < frames.size(); ++i) {
           const auto& frame = frames[i];
-          PyObject* code = reinterpret_cast<PyObject*>(frame.first);
+          PyObject* code = reinterpret_cast<PyObject*>(frame.code);
           Py_INCREF(code);
           PyList_SET_ITEM(out_code.ptr(), i, code);
           PyList_SET_ITEM(out_lasti.ptr(), i,
-                          nb::int_(frame.second).release().ptr());
+                          nb::int_(frame.lasti).release().ptr());
         }
         return nb::make_tuple(out_code, out_lasti);
       },

@@ -203,11 +203,29 @@ symlink_inputs(
 
 # JAX-specific registrations.
 
+cc_library(
+    name = "traceback_to_location",
+    srcs = ["traceback_to_location.cc"],
+    hdrs = ["traceback_to_location.h"],
+    copts = ["-fexceptions"],
+    deps = [
+        "//jaxlib:traceback",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//mlir:CAPIIR",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeaders",
+        "@nanobind",
+    ],
+)
+
 nanobind_pywrap_extension(
     name = "_jax_mlir_ext",
     srcs = ["jax_mlir_ext.cc"],
     copts = COPTS,
     deps = [
+        ":traceback_to_location",
         "//jaxlib/mosaic/gpu:mlir_capi",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",

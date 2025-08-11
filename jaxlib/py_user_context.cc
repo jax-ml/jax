@@ -93,12 +93,12 @@ uint64_t PyUserContext::Fingerprint() const {
     // the source code line number of each frame and skips most string
     // formatting.
     std::string blob;
-    for (const std::pair<PyCodeObject*, int>& frame : traceback_.RawFrames()) {
+    for (const TracebackEntry& frame : traceback_.RawFrames()) {
       absl::StrAppend(
           &blob,
-          nb::cast<std::string_view>(nb::handle(frame.first->co_filename)),
-          "\t", nb::cast<std::string_view>(nb::handle(frame.first->co_name)),
-          "\t", frame.first->co_firstlineno, "\t", frame.second, "\n");
+          nb::cast<std::string_view>(nb::handle(frame.code->co_filename)), "\t",
+          nb::cast<std::string_view>(nb::handle(frame.code->co_name)), "\t",
+          frame.code->co_firstlineno, "\t", frame.lasti, "\n");
     }
     fingerprint_ = tsl::Fingerprint64(blob);
   } catch (std::exception& e) {
