@@ -99,23 +99,15 @@ else:
       deprecation_getattr as _deprecation_getattr,
       is_accelerated as is_accelerated,
   )
-  if is_accelerated("jax-pallas-tpu-compiler-params"):
-    _deprecated_TPUCompilerParams = None
-  else:
-    _deprecated_TPUCompilerParams = CompilerParams
-  if is_accelerated("jax-pallas-tpu-memory-space"):
-    _deprecated_TPUMemorySpace = None
-  else:
-    _deprecated_TPUMemorySpace = MemorySpace
   _deprecations = {
       # Deprecated on May 30th 2025.
       "TPUCompilerParams": (
           "TPUCompilerParams is deprecated, use CompilerParams instead.",
-          _deprecated_TPUCompilerParams,
+          CompilerParams,
       ),
       "TPUMemorySpace": (
           "TPUMemorySpace is deprecated, use MemorySpace instead.",
-          _deprecated_TPUMemorySpace,
+          MemorySpace,
       ),
   }
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
