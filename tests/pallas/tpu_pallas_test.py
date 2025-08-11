@@ -33,6 +33,7 @@ from jax._src import checkify
 from jax._src import shard_map
 from jax._src import state
 from jax._src import test_util as jtu
+from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import _jax
 from jax._src.state import discharge as state_discharge
@@ -190,10 +191,12 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
       (jnp.int8, 597),
       (jnp.int8, 1025),
   )
-  @only_passes_in_interpret()
   def test_narrow_bitwidth_scalar_prefetch(self, dtype, index):
     def body(s_ref, o_ref):
       o_ref[...] = jnp.broadcast_to(s_ref[index], o_ref.shape)
+
+    if not is_cloud_tpu_older_than(2025, 8, 20):
+      return
 
     s = jnp.arange(16 * 128, dtype=dtype)
     out = self.pallas_call(
