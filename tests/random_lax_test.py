@@ -70,9 +70,8 @@ class RandomTestBase(jtu.JaxTestCase):
       samples = samples.astype('float32')
     # kstest fails for infinities starting in scipy 1.12
     # (https://github.com/scipy/scipy/issues/20386)
-    # TODO(jakevdp): remove this logic if/when fixed upstream.
     scipy_version = jtu.parse_version(scipy.__version__)
-    if scipy_version >= (1, 12) and np.issubdtype(samples.dtype, np.floating):
+    if scipy_version < (1, 14) and np.issubdtype(samples.dtype, np.floating):
       samples = np.array(samples, copy=True)
       samples[np.isposinf(samples)] = 0.01 * np.finfo(samples.dtype).max
       samples[np.isneginf(samples)] = 0.01 * np.finfo(samples.dtype).min
