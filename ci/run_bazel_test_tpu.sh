@@ -215,8 +215,13 @@ else
     --verbose_failures \
     --test_output=errors \
     -- \
+    //tests:aot_test_tpu \
+    //tests:array_test_tpu \
+    //tests:jaxpr_effects_test_tpu \
+    //tests:layout_test_tpu \
     //tests:pjit_test_tpu \
-    //tests/pallas:tpu_pallas_distributed_test_tpu
+    //tests:python_callback_test_tpu \
+    //tests:ragged_collective_test_tpu
 
   # Store the return value of the second bazel command.
   second_bazel_cmd_retval=$?
