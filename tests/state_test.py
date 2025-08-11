@@ -35,7 +35,6 @@ from jax._src import test_util as jtu
 from jax._src.state import types as state_types
 from jax._src.util import tuple_insert
 import jax.numpy as jnp
-from jax._src.lax.control_flow import for_loop
 
 import hypothesis as hp
 import hypothesis.extra.numpy as hnp
@@ -1094,39 +1093,6 @@ class StateHypothesisTest(jtu.JaxTestCase):
 
 class StateControlFlowTest(jtu.JaxTestCase):
 
-  def test_simple_cond(self):
-    def f(pred):
-      def body(x_ref):
-        def true_fun():
-          x_ref[()] = 1.
-        def false_fun():
-          pass
-        lax.cond(pred, true_fun, false_fun)
-      return for_loop.run_state(body, 0.)
-    jaxpr = jax.make_jaxpr(f)(True).jaxpr
-    self.assertEmpty(jaxpr.effects)
-    self.assertAllClose(jax.jit(f)(True), 1.)
-    self.assertAllClose(jax.jit(f)(False), 0.)
-
-  def test_simple_cond_with_return(self):
-    def f(pred):
-      def body(refs):
-        x_ref, y_ref = refs
-        def true_fun():
-          x_ref[()] = 1.
-          return 4.
-        def false_fun():
-          return 5.
-        out = lax.cond(pred, true_fun, false_fun)
-        y_ref[...] = out
-      return for_loop.run_state(body, (0., 0.))
-    jaxpr = jax.make_jaxpr(f)(True).jaxpr
-    self.assertEmpty(jaxpr.effects)
-    out = jax.jit(f)(True)
-    self.assertTupleEqual(out, (1., 4.))
-    out = jax.jit(f)(False)
-    self.assertTupleEqual(out, (0., 5.))
-
   def test_cond_discharge(self):
     def f0(pred, x_ref, y_ref):
       def true_fun():
@@ -1282,70 +1248,6 @@ class StateControlFlowTest(jtu.JaxTestCase):
     out = jax.jit(f)(False, False)
     expected = (4., 0., 0.)
     self.assertTupleEqual(out, expected)
-
-  def test_nested_cond(self):
-    def f(pred):
-      def body(x_ref):
-        def true_fun():
-          def true_fun_inner():
-            x_ref[()] = 1.
-          def false_fun_inner():
-            pass
-          return lax.cond(pred, true_fun_inner, false_fun_inner)
-        def false_fun():
-          pass
-        lax.cond(pred, true_fun, false_fun)
-      return for_loop.run_state(body, 0.)
-    jaxpr = jax.make_jaxpr(f)(True).jaxpr
-    self.assertEmpty(jaxpr.effects)
-    self.assertAllClose(jax.jit(f)(True), 1.)
-    self.assertAllClose(jax.jit(f)(False), 0.)
-
-  def test_cond_jvp_with_state(self):
-    def f(pred, init_value):
-      def body(x_ref):
-        def true_fun():
-          x_ref[()] = x_ref[()] ** 2
-        def false_fun():
-          pass
-        lax.cond(pred, true_fun, false_fun)
-      return for_loop.run_state(body, init_value)
-
-    out_primal, out_tangent = jax.jvp(partial(f, True), (3.,), (1.,))
-    self.assertAllClose(out_primal, 9.)
-    self.assertAllClose(out_tangent, 6.)
-
-    out_primal, out_tangent = jax.jvp(partial(f, False), (3.,), (1.,))
-    self.assertAllClose(out_primal, 3.)
-    self.assertAllClose(out_tangent, 1.)
-
-  def test_cond_vmap_not_implemented(self):
-    @jax.jit
-    def f(init_value):
-      def body(x_ref):
-        def true_fun():
-          x_ref[()] = x_ref[()] ** 2
-        def false_fun():
-          pass
-        lax.cond(x_ref[()] < 1, true_fun, false_fun)
-      return for_loop.run_state(body, init_value)
-
-    with self.assertRaises(NotImplementedError):
-      jax.vmap(f)(jnp.arange(2.))
-
-  def test_cond_grad_not_implemented(self):
-    @jax.jit
-    def f(init_value):
-      def body(x_ref):
-        def true_fun():
-          x_ref[()] = x_ref[()] ** 2
-        def false_fun():
-          pass
-        lax.cond(True, true_fun, false_fun)
-      return for_loop.run_state(body, init_value)
-
-    with self.assertRaises(NotImplementedError):
-      jax.grad(f)(3.)
 
   def test_while_with_state_in_body(self):
     def f(x, y, z):

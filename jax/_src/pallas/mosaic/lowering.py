@@ -48,7 +48,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
-from jax._src.lax.control_flow import BranchesPlatforms, for_loop
+from jax._src.lax.control_flow import BranchesPlatforms
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -67,7 +67,6 @@ from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import error_handling
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import random as pl_random
-from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.state.types import RefBitcaster, RefReshaper
@@ -3056,38 +3055,6 @@ def _clamp(min, operand, max):
 def _clamp_lowering_rule(ctx: LoweringRuleContext, min, operand, max):
   """Compute minimum_p(maximum_p(min, operand), max)."""
   return lower_fun(_clamp, multiple_results=False)(ctx, min, operand, max)
-
-
-@register_lowering_rule(for_loop.for_p)
-def _for_lowering_rule(
-    ctx: LoweringRuleContext,
-    *args,
-    jaxpr,
-    nsteps,
-    reverse,
-    unroll,
-    which_linear,
-):
-  should_discharge = [
-      not isinstance(aval, state.AbstractRef) for aval in ctx.avals_in
-  ]
-  jaxpr, () = state_discharge.discharge_state(
-      jaxpr, (), should_discharge=[False, *should_discharge]
-  )
-  for i in range(nsteps):
-    if reverse:
-      i = nsteps - i - 1
-    i = ir_constant(i)
-    lowering_context = ctx.lowering_context.replace(
-        block_shapes=[(), *ctx.block_shapes],
-    )
-    non_ref_args = jaxpr_subcomp(lowering_context, jaxpr, i, *args)
-    non_ref_args_iter = iter(non_ref_args)
-    args = [
-        next(non_ref_args_iter) if s else a
-        for a, s in zip(args, should_discharge)
-    ]
-  return args
 
 
 def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,

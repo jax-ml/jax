@@ -20,7 +20,6 @@ from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import math
-import operator
 from typing import Any, TypeVar
 from collections.abc import Hashable
 
@@ -30,7 +29,6 @@ from jax import tree_util
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api_util
-from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import linear_util as lu
@@ -40,7 +38,6 @@ from jax._src import state
 from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.lax.control_flow import for_loop
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import math as math_dialect
@@ -50,12 +47,9 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
-from jax._src.state import discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
 from jax._src.util import foreach
-from jax._src.util import merge_lists
-from jax._src.util import partition_list
 from jax._src.util import split_list
 import jax.numpy as jnp
 import numpy as np
@@ -2551,61 +2545,6 @@ def _is_read_only(ref_effects) -> bool:
     return False
   (eff,) = ref_effects
   return isinstance(eff, state.ReadEffect)
-
-
-@register_lowering(for_loop.for_p)
-def _for_lowering_rule(
-    ctx: LoweringRuleContext,
-    *args,
-    jaxpr,
-    which_linear,
-    nsteps,
-    reverse,
-    unroll,
-):
-  del which_linear
-  if reverse or unroll != 1:
-    raise NotImplementedError
-  _i_constant = _i64_constant if config.enable_x64.value else _i32_constant
-  lower_bound = _i_constant(0)
-  upper_bound = _i_constant(nsteps)
-  step = _i_constant(1)
-  init_args = map(_ensure_ir_value, args, ctx.avals_in)
-  # Partially discharge state from jaxpr for non-pointers
-  should_discharge = [
-      not isinstance(a, state.AbstractRef) for a in ctx.avals_in
-  ]
-  discharged_jaxpr, () = discharge.discharge_state(
-      jaxpr, (), should_discharge=[True, *should_discharge]
-  )
-  in_avals = [v.aval for v in jaxpr.invars]
-  state_effects = state.get_ref_state_effects(in_avals, jaxpr.effects)[1:]
-  # Read-only `Ref`s don't need to be passed in explicitly as loop arguments so
-  # we can filter them out.
-  read_only = map(_is_read_only, state_effects)
-  is_loop_arg = map(
-      operator.and_, map(operator.not_, read_only), should_discharge
-  )
-  ptrs, _ = partition_list(should_discharge, init_args)
-  non_loop_args, loop_args = partition_list(is_loop_arg, init_args)
-  for_op = scf_dialect.ForOp(lower_bound, upper_bound, step, loop_args)
-  with ir.InsertionPoint(for_op.body):
-    loop_index = for_op.induction_variable
-    for_body_args = [
-        for_op.body.arguments[i + 1] for i, _ in enumerate(loop_args)
-    ]
-    loop_body_args = merge_lists(is_loop_arg, non_loop_args, for_body_args)
-    out_discharged = lower_jaxpr_to_triton_ir(
-        ctx.context,
-        discharged_jaxpr,
-        [None, *ctx.block_infos],
-        loop_index,
-        *loop_body_args,
-    )
-    all_out = merge_lists(should_discharge, ptrs, out_discharged)
-    _, loop_out = partition_list(is_loop_arg, all_out)
-    scf_dialect.yield_(loop_out)
-  return merge_lists(is_loop_arg, non_loop_args, list(for_op.results_))
 
 
 def _lower_jaxpr_to_for_loop(

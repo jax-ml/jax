@@ -30,7 +30,6 @@ from jax._src import callback
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import frozen_dict
-from jax._src.lax.control_flow import for_loop
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src.interpreters import mlir
@@ -1635,9 +1634,6 @@ def _interpret_jaxpr(
             lambda args: _interpret(
                 eqn.params['body_jaxpr'].jaxpr, *body_consts, *args),
             init_vals)
-
-      elif prim is for_loop.for_p:
-        raise NotImplementedError('for_p')
 
       elif prim is pjit.jit_p:
         def f(*args, jaxpr):
