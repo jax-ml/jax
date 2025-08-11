@@ -318,7 +318,7 @@ alias(
 # TODO: b/436864688 - migrate users to //third_party/py/jax/experimental and delete this target.
 alias(
     name = "experimental_host_callback",
-    actual = "//jax/experimental:host_callback",
+    actual = "//jax/experimental",
     visibility = jax_visibility("host_callback"),
 )
 
