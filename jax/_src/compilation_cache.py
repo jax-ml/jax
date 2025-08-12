@@ -121,8 +121,6 @@ def initialize_cache(path) -> None:
   Set the path. To take effect, should be called prior to any calls to
   get_executable_and_time() and put_executable_and_time().
   """
-  warnings.warn("initialize_cache is deprecated; use set_cache_dir instead",
-                DeprecationWarning, stacklevel=2)
   config.config.update("jax_compilation_cache_dir", path)
 
 
@@ -320,8 +318,6 @@ def is_initialized() -> bool:
   initialized status is not checked. The name is retained for backwards
   compatibility.
   """
-  warnings.warn("is_initialized is deprecated; do not use",
-                DeprecationWarning, stacklevel=2)
   return _is_cache_enabled()
 
 
