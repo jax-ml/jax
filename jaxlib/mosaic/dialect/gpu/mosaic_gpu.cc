@@ -322,8 +322,7 @@ llvm::LogicalResult VerifyMMAShapeAndTypes(mlir::Operation* op,
     return op->emitOpError(llvm::formatv(params...));
   };
 
-  mlir::Type element_type = a_type.getElementType();
-  if (element_type != b_type.getElementType()) {
+  if (a_type.getElementType() != b_type.getElementType()) {
     return error("The `a` and `b` inputs must have the same element type.");
   }
 
@@ -332,20 +331,20 @@ llvm::LogicalResult VerifyMMAShapeAndTypes(mlir::Operation* op,
   auto acc_shape = acc_type.getShape();
 
   int M = acc_shape[0];
-  if (M != a_shape[0] && M != a_shape[1]) {
+  if (M != a_shape[0]) {
     return error(
-        "The accumulator's first dimension {0} must be equal to one "
-        "of the dimensions of `a` - ({1}, {2}).",
-        M, a_shape[0], a_shape[1]);
+        "The accumulator's first dimension {0} must be equal to the first "
+        "dimensions of `a`: {1}.",
+        M, a_shape[0]);
   }
-  int K = (a_shape[0] == M ? a_shape[1] : a_shape[0]);  // groups_k * k
+  int K = a_shape[1];  // groups_k * k
   if (K != b_shape[0] && K != b_shape[1]) {
     return error(
-        "`a`'s contracting dimension {0} must be equal to one "
-        "of the dimensions of `b` - ({1}, {2}).",
-        K, b_shape[0], b_shape[1]);
+        "`a`'s contracting dimension {0} must be equal to the first dimension "
+        "of `b`: {1}.",
+        K, b_shape[0]);
   }
-  int N = (b_shape[0] == K ? b_shape[1] : b_shape[0]);  // groups_n * k
+  int N = b_shape[1];  // groups_n * k
   if (N != acc_shape[1]) {
     return error(
         "`b`'s non-contracting dimension {0} must be equal to the "

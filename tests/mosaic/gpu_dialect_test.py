@@ -529,7 +529,8 @@ class DialectTest(MosaicGpuTest):
 
     with self.assertRaisesRegex(
         ir.MLIRError,
-        r"`a`'s contracting dimension 128 must be equal to one of.*`b`",
+        "`a`'s contracting dimension 128 must be equal to the first dimension"
+        " of `b`",
     ):
       self.module.operation.verify()
 
@@ -604,7 +605,8 @@ class DialectTest(MosaicGpuTest):
 
     with self.assertRaisesRegex(
         ir.MLIRError,
-        r"`a`'s contracting dimension 128 must be equal to one of.*`b`",
+        "`a`'s contracting dimension 128 must be equal to the first dimension"
+        " of `b`",
     ):
       self.module.operation.verify()
 
