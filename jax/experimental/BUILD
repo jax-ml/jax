@@ -194,6 +194,9 @@ pytype_strict_library(
         "__init__.py",
         "x64_context.py",
     ],
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("host_callback"),
     deps = [
         "//jax/_src:api",
         "//jax/_src:callback",
