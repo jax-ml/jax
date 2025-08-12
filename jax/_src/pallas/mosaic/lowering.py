@@ -77,7 +77,6 @@ from jax._src.util import foreach
 from jax._src.util import safe_map
 from jax._src.util import safe_zip
 from jax._src.util import split_list
-from jax._src.util import unzip2
 from jax.experimental.mosaic.dialects import tpu
 import jax.numpy as jnp
 import numpy as np
@@ -381,39 +380,16 @@ def _get_aval_physical_dtype_shape(aval):
 def _get_arg_type(
     dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
     aval: ShapedAbstractValue,
-    block_mapping: pallas_core.BlockMapping | None,
-):
+    shape: tuple[int, ...] | None = None,
+) -> ir.Type:
   memory_space = None
   if isinstance(aval, state.AbstractRef):
     memory_space = _memory_space_to_tpu_memory_space(aval.memory_space)
     # We assume unannotated memory refs are in VMEM
     if memory_space is None:
       memory_space = TPUMemorySpace.VMEM
-  if isinstance(aval, tpu_core.AbstractSemaphore):
-    return aval_to_ir_type(dynamic_shape_replacement_fn, aval), None
-  # TODO(necula): clean this None block_mapping
-  if block_mapping is None:
-    return (
-        aval_to_ir_type(
-            dynamic_shape_replacement_fn, aval, memory_space=memory_space
-        ),
-        aval.shape,
-    )
-  shape = pallas_core._get_block_shape(block_mapping.block_shape)
-  # Keep around squeezed as a sentinel for the lowering rules
-  block_shape = tuple(
-      pallas_core.squeezed if isinstance(b, pallas_core.Squeezed)
-      else pallas_core._get_block_dim_size(b)
-      for b in block_mapping.block_shape
-  )
-  return (
-      aval_to_ir_type(
-          dynamic_shape_replacement_fn,
-          aval,
-          shape=shape,
-          memory_space=memory_space,
-      ),
-      block_shape,
+  return aval_to_ir_type(
+      dynamic_shape_replacement_fn, aval, shape=shape, memory_space=memory_space
   )
 
 
@@ -430,14 +406,14 @@ class MosaicGridMapping:
   grid: pallas_core.GridMappingGrid | None
   grid_names: tuple[Hashable, ...] | None
   jaxpr: jax_core.Jaxpr
-  block_mappings: tuple[pallas_core.BlockMapping | None, ...]
+  block_mappings: tuple[pallas_core.BlockMapping, ...]
   vmapped_dims: tuple[int, ...]
   scalar_prefetch_types: tuple[ir.Type, ...]
   operand_types: tuple[ir.Type, ...]
   scratch_types: tuple[ir.Type, ...]
   grid_types: tuple[ir.Type, ...]
   scalar_prefetch_block_shapes: tuple[tuple[int, ...], ...]
-  operand_block_shapes: tuple[tuple[int, ...], ...]
+  operand_block_shapes: tuple[tuple[int | pallas_core.Squeezed, ...], ...]
   scratch_block_shapes: tuple[tuple[int, ...], ...]
   mesh_info: pallas_utils.MeshInfo | None
   get_grid_indices: Callable[..., Any]
@@ -449,7 +425,6 @@ class MosaicGridMapping:
       dimension_semantics: Sequence[tpu_core.DimensionSemantics] | None,
       mesh: mesh_lib.Mesh | None,
       dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
-      arg_type_fn: Callable[..., ir.Type],
   ):
     self.grid = grid_mapping.grid
     self.grid_names = grid_mapping.grid_names
@@ -490,36 +465,46 @@ class MosaicGridMapping:
     scalar_prefetch_avals = in_avals[grid_mapping.slice_index_ops]
     operand_avals = in_avals[grid_mapping.slice_block_ops]
     scratch_avals = in_avals[grid_mapping.slice_scratch_ops]
-    self.scalar_prefetch_types, _ = unzip2([
-        arg_type_fn(dynamic_shape_replacement_fn, aval, None)
+    self.scalar_prefetch_types = tuple(
+        _get_arg_type(dynamic_shape_replacement_fn, aval)
         for aval in scalar_prefetch_avals
-    ])
+    )
     self.scalar_prefetch_block_shapes = tuple(
         aval.shape for aval in scalar_prefetch_avals)
-    self.operand_types, self.operand_block_shapes = unzip2([
-        arg_type_fn(dynamic_shape_replacement_fn, aval, block_mapping)
-        for aval, block_mapping in zip(operand_avals, self.block_mappings)
-    ])
-    self.scratch_types, _ = unzip2([
-        arg_type_fn(dynamic_shape_replacement_fn, aval, None)
+    operands_types = []
+    operand_block_shapes = []
+    for aval, bm in zip(operand_avals, self.block_mappings):
+      shape = pallas_core._get_block_shape(bm.block_shape)
+      # Keep around squeezed as a sentinel for the lowering rules.
+      block_shape = tuple(
+          pallas_core.squeezed
+          if isinstance(b, pallas_core.Squeezed)
+          else pallas_core._get_block_dim_size(b)
+          for b in bm.block_shape
+      )
+      operands_types.append(
+          _get_arg_type(dynamic_shape_replacement_fn, aval, shape=shape)
+      )
+      operand_block_shapes.append(block_shape)
+    self.operand_types = tuple(operands_types)
+    self.operand_block_shapes = tuple(operand_block_shapes)
+    self.scratch_types = tuple(
+        _get_arg_type(dynamic_shape_replacement_fn, aval)
         for aval in scratch_avals
-    ])
+    )
     self.scratch_block_shapes = tuple(
         aval.shape if not isinstance(aval, tpu_core.AbstractSemaphore) else None
         for aval in scratch_avals
     )
-    self.grid_types, _ = unzip2([
-        arg_type_fn(
-            dynamic_shape_replacement_fn,
-            pallas_core.index_map_grid_aval,
-            None,
-        )
-        for _ in range(len(self.grid))
-    ])
+    self.grid_types = (
+        _get_arg_type(
+            dynamic_shape_replacement_fn, pallas_core.index_map_grid_aval
+        ),
+    ) * len(self.grid)
+
     self._prepare_mesh_info(mesh)
 
     if grid_mapping.get_grid_indices is None:
-
       # Avoid using self.vmapped_dims within the function, since doing so will
       # introduce a self->_get_grid_indices->self reference cycle that means
       # MosaicGridMapping instances can only ever be deleted by GC, rather than
@@ -580,10 +565,9 @@ class MosaicGridMapping:
       return comms_effects | axis_name_effects
     nonlocal_axis_names.update(_get_nonlocal_axis_names(self.jaxpr))
     for bm in self.block_mappings:
-      if bm is not None:
-        nonlocal_axis_names.update(
-            _get_nonlocal_axis_names(bm.index_map_jaxpr.jaxpr)
-        )
+      nonlocal_axis_names.update(
+          _get_nonlocal_axis_names(bm.index_map_jaxpr.jaxpr)
+      )
     return bool(nonlocal_axis_names)
 
   def get_extra_args(self) -> tuple[Any, ...]:
@@ -740,7 +724,6 @@ def lower_jaxpr_to_module(
       dimension_semantics,
       mesh,
       dynamic_shape_replacement_fn,
-      arg_type_fn=_get_arg_type,
   )
   mosaic_grid_mapping.maybe_compress_grid()
   m = ir.Module.create()
