@@ -1045,7 +1045,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x @ y
 
     shape = (8, 8)
-    aval = core.ShapedArray(shape, dtypes.canonicalize_dtype(jnp.int64))
+    aval = core.ShapedArray(shape, dtypes.default_int_dtype())
     x = jnp.arange(math.prod(shape)).reshape(shape)
     exe = f.lower(aval, x).compile()
     self.assertIsInstance(exe, stages.Compiled)

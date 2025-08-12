@@ -207,6 +207,25 @@ _default_types: dict[str, type[Any]] = {
 }
 
 
+# Default dtypes. These are intended to have the same semantics as, say,
+# canonicalize_dtype(np.float64), but are preparing for the reduction in the
+# number of places we perform dtype canonicalization.
+
+def default_int_dtype() -> DType:
+  return np.dtype(np.int64) if config.enable_x64.value else np.dtype(np.int32)
+
+def default_uint_dtype() -> DType:
+  return np.dtype(np.uint64) if config.enable_x64.value else np.dtype(np.uint32)
+
+def default_float_dtype() -> DType:
+  return (np.dtype(np.float64) if config.enable_x64.value
+          else np.dtype(np.float32))
+
+def default_complex_dtype() -> DType:
+  return (np.dtype(np.complex128) if config.enable_x64.value
+          else np.dtype(np.complex64))
+
+
 def jax_dtype(obj: DTypeLike | None, *, align: bool = False,
               copy: bool = False) -> DType:
   """Cast an object to a dtype, respecting JAX dtype defaults.

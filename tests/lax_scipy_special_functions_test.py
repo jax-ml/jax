@@ -25,6 +25,7 @@ import scipy.special as osp_special
 
 import jax
 import jax.numpy as jnp
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
 
@@ -303,7 +304,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(result_jit, result_nojit)
 
   def testGammaIncBoundaryValues(self):
-    dtype = jax.dtypes.canonicalize_dtype(float)
+    dtype = dtypes.default_float_dtype()
     nan = float('nan')
     inf = float('inf')
     if jtu.parse_version(scipy.__version__) >= (1, 16):
@@ -321,7 +322,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_special.gammainc, args_maker, rtol=rtol)
 
   def testGammaIncCBoundaryValues(self):
-    dtype = jax.dtypes.canonicalize_dtype(float)
+    dtype = dtypes.default_float_dtype()
     nan = float('nan')
     inf = float('inf')
     if jtu.parse_version(scipy.__version__) >= (1, 16):
@@ -339,7 +340,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_special.gammaincc, args_maker, rtol=rtol)
 
   def testBetaIncBoundaryValues(self):
-    dtype = jax.dtypes.canonicalize_dtype(float)
+    dtype = dtypes.default_float_dtype()
     fi = jax.numpy.finfo(dtype)
     nan = float('nan')
     inf = float('inf')
@@ -370,7 +371,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_special.betainc, args_maker, rtol=rtol)
 
   def testHyp2f1SpecialCases(self):
-    dtype = jax.dtypes.canonicalize_dtype(float)
+    dtype = dtypes.default_float_dtype()
 
     a_samples = np.array([0, 1, 1, 1, 1, 5, 5, 0.245, 0.45, 0.45, 2, 0.4, 0.32, 4, 4], dtype=dtype)
     b_samples = np.array([1, 0, 1, 1, 1, 1, 1, 3, 0.7, 0.7, 1, 0.7, 0.76, 2, 3], dtype=dtype)

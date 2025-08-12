@@ -420,7 +420,7 @@ def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> A
   if len({np.shape(key) for key in key_arrays}) > 1:
     raise ValueError("all keys need to be the same shape")
   if np.ndim(key_arrays[0]) == 0:
-    return lax.full((), 0, dtypes.canonicalize_dtype(dtypes.int_))
+    return lax.full((), 0, dtypes.default_int_dtype())
   axis = canonicalize_axis(axis, np.ndim(key_arrays[0]))
   use_64bit_index = key_arrays[0].shape[axis] >= (1 << 31)
   iota = lax.broadcasted_iota(np.dtype('int64') if use_64bit_index else dtypes.int_,

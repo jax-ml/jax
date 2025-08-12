@@ -364,7 +364,7 @@ class PrngTest(jtu.JaxTestCase):
     # Test to ensure consistent random values between JAX versions
     seed = 0
     self.assertEqual(random.randint(make_key(seed), (3, 3), 0, 8).dtype,
-                     dtypes.canonicalize_dtype(jnp.int_))
+                     dtypes.default_int_dtype())
     if config.enable_x64.value:
         self.assertAllClose(
             random.randint(make_key(seed), (3, 3), 0, 8, dtype='int64'),

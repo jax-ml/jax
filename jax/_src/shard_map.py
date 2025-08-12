@@ -878,7 +878,7 @@ def _shard_map_lowering_shardy(
           ir.ArrayAttr.get([ir.StringAttr.get(i) for i in manual_axes])))
 
   dim_var_types = [mlir.aval_to_ir_type(
-      core.ShapedArray((), dtypes.canonicalize_dtype(np.int64)))] * num_dim_vars
+      core.ShapedArray((), dtypes.default_int_dtype()))] * num_dim_vars
   token_types = [hlo.TokenType.get()] * num_tokens
   const_arg_types = map(mlir.aval_to_ir_type, const_avals)
   in_types = map(mlir.aval_to_ir_type, in_avals_)

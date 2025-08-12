@@ -823,10 +823,10 @@ class TestPromotionTables(jtu.JaxTestCase):
 
   def testResultTypeNone(self):
     # This matches the behavior of np.result_type(None) => np.float64
-    self.assertEqual(dtypes.result_type(None), dtypes.canonicalize_dtype(dtypes.float_))
+    self.assertEqual(dtypes.result_type(None), dtypes.default_float_dtype())
 
   def testResultTypeWeakFlag(self):
-    float_ = dtypes.canonicalize_dtype(dtypes.float_)
+    float_ = dtypes.default_float_dtype()
     x_weak = jnp.array(1.)
     x_strong = x_weak.astype(float_)
     self.assertEqual(dtypes.result_type(x_weak), float_)

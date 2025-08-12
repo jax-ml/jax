@@ -481,8 +481,8 @@ class StatePrimitivesTest(jtu.JaxTestCase):
   )
   def test_vmap(self, ref_shape, ref_bdim, idx_shape, indexed_dims,
                     idx_bdims, out_bdim, op):
-    intx = dtypes.canonicalize_dtype(jnp.int64)
-    floatx = dtypes.canonicalize_dtype(jnp.float64)
+    intx = dtypes.default_int_dtype()
+    floatx = dtypes.default_float_dtype()
     axis_size = 7
 
     def maybe_insert(shape, idx):

@@ -31,7 +31,7 @@ import numpy as np
 import jax
 from jax._src import core
 from jax._src import config
-from jax import dtypes
+from jax._src import dtypes
 from jax import lax
 from jax import random
 from jax._src import test_util as jtu
@@ -1383,7 +1383,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                       order=1, modes=['fwd', 'rev'], atol=1e-2, rtol=1e-2)
 
   def testSwitchGradWithWeakTypeMismatch(self):  # issue #4696, PR #4896
-    dtype = dtypes.canonicalize_dtype(np.float64)
+    dtype = dtypes.default_float_dtype()
     dtype = jnp.float32 if dtype == jnp.float32 else jnp.float64
 
     branches = [

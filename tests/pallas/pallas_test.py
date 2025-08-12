@@ -58,8 +58,8 @@ def smem_on_tpu():
     return None
 
 
-intx = dtypes.canonicalize_dtype(jnp.int64)
-floatx = dtypes.canonicalize_dtype(jnp.float64)
+intx = dtypes.default_int_dtype()
+floatx = dtypes.default_float_dtype()
 
 
 @functools.partial(jax.jit, static_argnames=["bm", "bn", "gm", "bk",

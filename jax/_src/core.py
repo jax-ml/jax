@@ -2876,7 +2876,7 @@ def evaluate_shape(shape: Shape, dim_vars: Sequence[str],
 
 def dim_value_dtype():
   """The dtype to be used for dimension values."""
-  return dtypes.canonicalize_dtype(np.int64)
+  return dtypes.default_int_dtype()
 
 def dim_constant(ct: int):
   dtype = dim_value_dtype()

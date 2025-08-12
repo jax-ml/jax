@@ -44,7 +44,6 @@ from jax._src.util import (safe_map, safe_zip,
                            split_list, weakref_lru_cache)
 from jax._src.lax.control_flow import loops
 from jax._src.lax.control_flow.common import _initial_style_jaxpr
-import numpy as np
 
 ## JAX utilities
 
@@ -135,7 +134,7 @@ def for_loop(nsteps: int | Sequence[int],
   nsteps, = nsteps
   flat_state, state_tree = tree_flatten(init_state)
   state_avals = map(state_utils.val_to_ref_aval, flat_state)
-  idx_aval = core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))
+  idx_aval = core.ShapedArray((), dtypes.default_int_dtype())
   jaxpr, consts, out_tree = _trace_to_jaxpr_with_refs(
       body, state_tree, [idx_aval, *state_avals], dbg)
   if out_tree != tree_structure(None):
@@ -260,7 +259,7 @@ def _for_impl(*args, jaxpr, nsteps, reverse, which_linear, unroll):
 
 def _for_impl_unrolled(body, nsteps, unroll, *args):
   remainder = nsteps % unroll
-  i = lax.full((), 0, dtypes.canonicalize_dtype(np.int64))
+  i = lax.full((), 0, dtypes.default_int_dtype())
   state = list(args)
 
   for _ in range(remainder):
@@ -360,7 +359,7 @@ def discharged_for_loop(nsteps, body, init_state, *, reverse: bool = False):
   """
   flat_state, state_tree = tree_flatten(init_state)
   state_avals = map(state_utils.val_to_ref_aval, flat_state)
-  idx_aval = core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))
+  idx_aval = core.ShapedArray((), dtypes.default_int_dtype())
   debug = api_util.debug_info("discharged_for_loop", body, (0, init_state), {})
   jaxpr, consts, out_tree = _trace_to_jaxpr_with_refs(
       body, state_tree, [idx_aval, *state_avals], debug)
@@ -369,7 +368,7 @@ def discharged_for_loop(nsteps, body, init_state, *, reverse: bool = False):
   discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)
 
   def fori_body(i, carry):
-    i = lax.convert_element_type(i, dtypes.canonicalize_dtype(np.int64))
+    i = lax.convert_element_type(i, dtypes.default_int_dtype())
     if reverse:
       i = nsteps - i - 1
     out_flat = core.eval_jaxpr(discharged_jaxpr, discharged_consts,

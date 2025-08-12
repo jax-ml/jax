@@ -377,7 +377,7 @@ def bits(key: ArrayLike,
   """
   key, _ = _check_prng_key("bits", key)
   if dtype is None:
-    dtype = dtypes.canonicalize_dtype(np.uint)
+    dtype = dtypes.default_uint_dtype()
   else:
     dtypes.check_user_dtype_supported(dtype)
   if not dtypes.issubdtype(dtype, np.unsignedinteger):

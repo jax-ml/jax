@@ -1589,7 +1589,7 @@ def lower_jaxpr_to_fun(
 
   # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)
-  dim_var_avals = [core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))] * num_dim_vars
+  dim_var_avals = [core.ShapedArray((), dtypes.default_int_dtype())] * num_dim_vars
   dim_var_types = map(aval_to_ir_type, dim_var_avals)
 
   nr_args = num_const_args + len(jaxpr.in_avals)
@@ -2235,7 +2235,7 @@ def _emit_lowering_rule_as_fun(
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)
   # TODO(necula) maybe only pass the dim_vars if they are needed?
   dim_var_types = [
-    aval_to_ir_type(core.ShapedArray((), dtypes.canonicalize_dtype(np.int64)))
+    aval_to_ir_type(core.ShapedArray((), dtypes.default_int_dtype()))
   ] * num_dim_vars
 
   const_args =  core.eqn_params_const_args(params)

@@ -3842,7 +3842,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp.array(3, [('a','<i4'),('b','<i4')])
 
   def testArrayFromInteger(self):
-    int_dtype = dtypes.canonicalize_dtype(jnp.int64)
+    int_dtype = dtypes.default_int_dtype()
     int_max = jnp.iinfo(int_dtype).max
     int_min = jnp.iinfo(int_dtype).min
 
@@ -4437,8 +4437,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testArangeTypes(self):
     # Test that arange() output type is equal to the default types.
-    int_ = dtypes.canonicalize_dtype(jnp.int_)
-    float_ = dtypes.canonicalize_dtype(jnp.float_)
+    int_ = dtypes.default_int_dtype()
+    float_ = dtypes.default_float_dtype()
 
     self.assertEqual(jnp.arange(10).dtype, int_)
     self.assertEqual(jnp.arange(10.).dtype, float_)
@@ -4935,7 +4935,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testIndicesDefaultDtype(self):
     self.assertEqual(jnp.indices((2, 3)).dtype,
-                     dtypes.canonicalize_dtype(np.int64))
+                     dtypes.default_int_dtype())
 
   @jtu.sample_product(
     shape=nonzerodim_shapes,

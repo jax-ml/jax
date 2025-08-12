@@ -1014,7 +1014,7 @@ class DistributionsTest(RandomTestBase):
   def testIssue756(self):
     key = self.make_key(0)
     w = random.normal(key, ())
-    self.assertEqual(w.dtype, dtypes.canonicalize_dtype(jnp.float_))
+    self.assertEqual(w.dtype, dtypes.default_float_dtype())
 
   def testIssue1789(self):
     def f(x):
@@ -1155,7 +1155,7 @@ class DistributionsTest(RandomTestBase):
     max = np.iinfo(dtype).max
     key = lambda: self.make_key(1701)
     shape = (10,)
-    if np.iinfo(dtype).bits < np.iinfo(dtypes.canonicalize_dtype(int)).bits:
+    if np.iinfo(dtype).bits < np.iinfo(dtypes.default_int_dtype()).bits:
       expected = random.randint(key(), shape, min, max + 1, dtype)
       self.assertArraysEqual(expected, random.randint(key(), shape, min - 12345, max + 12345, dtype))
     else:

@@ -1585,7 +1585,7 @@ def angle(z: ArrayLike, deg: bool = False) -> Array:
   dtype = _dtype(re)
   if not issubdtype(dtype, np.inexact) or (
       issubdtype(_dtype(z), np.floating) and np.ndim(z) == 0):
-    dtype = dtypes.canonicalize_dtype(dtypes.float_)
+    dtype = dtypes.default_float_dtype()
     re = lax.convert_element_type(re, dtype)
     im = lax.convert_element_type(im, dtype)
   result = lax.atan2(im, re)
@@ -5352,7 +5352,7 @@ def astype(x: ArrayLike, dtype: DTypeLike | None,
   x_arr = util.ensure_arraylike("astype", x)
 
   if dtype is None:
-    dtype = dtypes.canonicalize_dtype(dtypes.float_)
+    dtype = dtypes.default_float_dtype()
   dtypes.check_user_dtype_supported(dtype, "astype")
   if issubdtype(x_arr.dtype, np.complexfloating):
     if dtypes.isdtype(dtype, ("integral", "real floating")):
@@ -5995,7 +5995,7 @@ def _arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
       step = 1
     elif stop is not None and step is None:
       step = 1
-    return _arange_dynamic(start, stop, step, dtype or dtypes.canonicalize_dtype(np.int64))
+    return _arange_dynamic(start, stop, step, dtype or dtypes.default_int_dtype())
   if dtype is None:
     dtype = result_type(start, *(x for x in [stop, step] if x is not None))
   dtype = dtypes.jax_dtype(dtype)

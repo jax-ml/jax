@@ -17,10 +17,10 @@ import inspect
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
-from jax import dtypes
 from jax import numpy as jnp
 from jax._src import config
 from jax._src import core
+from jax._src import dtypes
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import pxla
@@ -108,8 +108,8 @@ class JaxJitTest(jtu.JaxTestCase):
 
   def test_device_put_on_python_scalars(self):
     device = jax.devices()[0]
-    int_type = dtypes.canonicalize_dtype(np.int64)
-    float_type = dtypes.canonicalize_dtype(np.float64)
+    int_type = dtypes.default_int_dtype()
+    float_type = dtypes.default_float_dtype()
     complex_type = dtypes.canonicalize_dtype(np.complex128)
 
     # int
@@ -164,8 +164,8 @@ class JaxJitTest(jtu.JaxTestCase):
       self.assertEqual(signature.shape, (3, 4))
       self.assertFalse(signature.weak_type)
 
-    int_type = dtypes.canonicalize_dtype(np.int64)
-    float_type = dtypes.canonicalize_dtype(np.float64)
+    int_type = dtypes.default_int_dtype()
+    float_type = dtypes.default_float_dtype()
     complex_type = dtypes.canonicalize_dtype(np.complex128)
 
     # 3. Python scalar types

@@ -62,8 +62,8 @@ jtu.setup_hypothesis(max_examples=50)
 
 use_mosaic_gpu = pallas_call._PALLAS_USE_MOSAIC_GPU.value
 
-intx = dtypes.canonicalize_dtype(jnp.int64)
-floatx = dtypes.canonicalize_dtype(jnp.float64)
+intx = dtypes.default_int_dtype()
+floatx = dtypes.default_float_dtype()
 
 def wrap_init(f: Callable, nr_args: int):
   # wrapper for lu.wrap_init with debugging info

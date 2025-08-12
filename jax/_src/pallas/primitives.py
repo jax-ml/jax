@@ -497,7 +497,7 @@ def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     # of bounds, it will instead move the start_index backwards so the slice
     # will fit in memory.
     ref = _pad_values_to_avoid_dynamic_slice_oob_shift(ref, slice_sizes)
-    idx_dtype = dtypes.canonicalize_dtype(jnp.int64)
+    idx_dtype = dtypes.default_int_dtype()
     out_ones = lax.dynamic_slice(
         ref,
         [jnp.astype(s, idx_dtype) for s in slice_starts],
