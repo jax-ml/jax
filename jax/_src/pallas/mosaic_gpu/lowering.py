@@ -2099,13 +2099,30 @@ for op, si_pred, ui_pred, f_pred in [
       f_pred=f_pred,
   )
 
-
 @register_lowering_rule(lax.integer_pow_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.integer_pow_p, mgpu.LoweringSemantics.Warpgroup)
 def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
-  if y != 2:
+  [x_aval] = ctx.avals_in
+  if y <= 1:
     raise NotImplementedError
-  return _square_lowering_rule(ctx, x)
+
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    mul_op = operator.mul
+  elif jnp.issubdtype(x_aval.dtype, jnp.integer):
+    mul_op = arith_dialect.muli
+  elif jnp.issubdtype(x_aval.dtype, jnp.floating):
+    mul_op = arith_dialect.mulf
+  else:
+    raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
+
+  # Y is an integer. Here we start with res = x so the range is y-1
+  res = x
+  # Repeated doubling algorithm.
+  for i in reversed(range(y.bit_length() - 1)):
+    res = mul_op(res, res)
+    if (y >> i) & 1:
+      res = mul_op(res, x)
+  return res
 
 
 @register_lowering_rule(lax.square_p, mgpu.LoweringSemantics.Lane)

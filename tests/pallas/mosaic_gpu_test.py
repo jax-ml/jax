@@ -178,9 +178,11 @@ class PallasCallTest(PallasTest):
           lax.logistic,
           lax.exp,
           lambda x: x**2,
+          lambda x: x**5,
           lax.rsqrt,
           lax.tanh,
           lax.log,
+          jax.nn.gelu,
       ],
       approx_math=[True, False],
   )
