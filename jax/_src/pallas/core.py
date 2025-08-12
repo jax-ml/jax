@@ -442,17 +442,9 @@ class BlockSpec:
   block_shape: Sequence[BlockDim | int | None] | None = None
   index_map: Callable[..., Any] | None = None
   memory_space: Any | None = dataclasses.field(kw_only=True, default=None)
-  indexing_mode: Any | None = None
   pipeline_mode: Buffered | None = None
 
   def __post_init__(self):
-    # TODO(sharadmv): Remove this check.
-    if self.indexing_mode is not None:
-      raise ValueError(
-          "indexing_mode has been removed. Please pass in `pl.Element` for each"
-          " block dimension in `block_shape` instead to enable 'Unblocked'"
-          " indexing."
-      )
     if self.index_map is not None:
       self.index_map = _IndexMapFunc(self.index_map)
 
