@@ -2047,10 +2047,14 @@ class JaxExportTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(Exception, expect_error):
       _ = get_exported(jax.jit(f_jax))(jax.ShapeDtypeStruct((3, 4), x.dtype))
 
+  # On tpu ragged_dot does not zero out the output, hence in the case `sum
+  # (group_sizes) < m`, the rows that are not routed to any experts remain
+  # uninitialized. For that reason `group_sizes` sum up to `m` for all test
+  # cases below.
   @jtu.parameterized_filterable(
     kwargs=[
-        {"m": 64, "k": 4, "n": 3, "group_sizes": [5]},
-        {"m": 64, "k": 9, "n": 8, "group_sizes": [3, 7]},
+        {"m": 64, "k": 4, "n": 3, "group_sizes": [64]},
+        {"m": 64, "k": 9, "n": 8, "group_sizes": [30, 34]},
     ])
   def test_ragged_dot(self, m, k, n, group_sizes):
     def f_jax(x, y, gs):
