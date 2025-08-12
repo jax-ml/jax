@@ -118,6 +118,8 @@ def call_shape_dtype_sharding_rule(prim, shape_rule, dtype_rule, sharding_rule,
   return out_shapes, out_dtypes, out_shardings
 
 def _default_memory_space_rule(prim, *avals, **kwargs):
+  if all(a.memory_space == core.MemorySpace.Any for a in avals):
+    return core.MemorySpace.Any
   prev_aval = None
   for a in avals:
     if not a.ndim:
