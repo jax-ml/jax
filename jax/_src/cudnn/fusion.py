@@ -51,12 +51,7 @@ def call_cudnn_fusion(f, *args, **kwargs):
   return tree_util.tree_unflatten(out_tree, out_flat)
 
 
-def _cudnn_fusion_stablehlo_lowering(
-  ctx,
-  *args,
-  name,
-  jaxpr,
-):
+def _cudnn_fusion_stablehlo_lowering(ctx, *args, name, jaxpr):
   """Make cudnn_fusion which calls the implementation function.
   Currently this leaks a CallOp since we're using the `core_call_lowering`
   function, but this should get cleaned up by DCE easily.
