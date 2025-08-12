@@ -533,17 +533,15 @@ def _device_put_sharding_impl(x, aval, device, copy):
 def _device_put_impl(
     x, *, device: Device | Sharding | Format | None,
     src: Device | Sharding | Format | None, copy: CopySemantics):
-  if isinstance(device, core.MemorySpace) or isinstance(src, core.MemorySpace):
-    raise ValueError(
-        "`jax.memory.Space` argument to jax.device_put can only be used"
-        " inside jax.jit. If you are using device_put outside jax.jit, then"
-        " please provide a concrete Sharding with memory_kind.")
-
   try:
     aval = core.abstractify(x)
   except TypeError as err:
     raise TypeError(
         f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
+
+  if isinstance(device, core.MemorySpace):
+    return apply_primitive(device_put_p, x, devices=(device,), srcs=(src,),
+                           copy_semantics=(copy,))[0]
 
   if isinstance(device, Format):
     l = device

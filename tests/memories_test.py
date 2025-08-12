@@ -188,13 +188,6 @@ class DevicePutTest(jtu.JaxTestCase):
         self.assertArraysEqual(s.data, inp)
       self.assertEqual(s.data.sharding.memory_kind, expected_mem_kind)
 
-  def test_error_transfer_to_memory_kind_outside_jit(self):
-    with self.assertRaisesRegex(
-        ValueError,
-        "`jax.memory.Space` argument to jax.device_put can only be used"
-        " inside jax.jit"):
-      jax.device_put(np.arange(16), jax.memory.Space.Device)
-
   @parameterized.parameters("unpinned_host", "pinned_host")
   def test_device_put_host_to_hbm(self, host_memory_kind: str):
     if jtu.test_device_matches(["gpu"]) and host_memory_kind == "unpinned_host":
@@ -707,6 +700,19 @@ class DevicePutTest(jtu.JaxTestCase):
       a.delete()
 
     jax.block_until_ready(inp_host_copy)
+
+  def test_device_put_memory_space(self):
+    mesh = jtu.create_mesh((2,), ("x",))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P("x")))
+
+    out = jax.device_put(arr, jax.memory.Space.Host)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P("x"), memory_kind='pinned_host'))
+
+    out = jax.device_put(arr, jax.memory.Space.Device)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P("x"), memory_kind='device'))
 
   def test_disallow_alias_copies_arrays_with_donated_input(self):
     mesh = jtu.create_mesh((2,), ("x",))
