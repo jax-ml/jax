@@ -2989,7 +2989,7 @@ def _or_lowering_rule(ctx: LoweringRuleContext, x, y):
   return arith.ori(x, y)
 
 
-@register_lowering_rule(lax.not_p)
+@register_lowering_rule(lax.not_p, kernel_types=[*tpu_core.KernelType])
 def _not_lowering_rule(ctx: LoweringRuleContext, x):
   # The primitive not_p is lowered to
   # https://github.com/openxla/stablehlo/blob/main/docs/spec.md#not
@@ -3955,7 +3955,7 @@ def _join_key_lowering_rule(ctx: LoweringRuleContext, *scalars, impl):
   return KeyScalarBundle(scalars=scalars, key_shape=tuple(impl.key_shape))
 
 
-@register_lowering_rule(checkify.check_p)
+@register_lowering_rule(checkify.check_p, kernel_types=[*tpu_core.KernelType])
 def _check_lowering_rule(
     ctx: LoweringRuleContext, *err_args, err_tree, debug
 ):
