@@ -259,14 +259,15 @@ absl::Span<const TracebackEntry> Traceback::RawFrames() const {
 #endif  // PY_VERSION_HEX < 0x030d0000
 
 #else   // PLATFORM_GOOGLE
-  PyFrameObject* next;
-  for (PyFrameObject* py_frame = PyThreadState_GetFrame(thread_state);
-       py_frame != nullptr && count < kMaxFrames; py_frame = next) {
+  PyFrameObject* py_frame = PyThreadState_GetFrame(thread_state);
+  while (py_frame != nullptr && count < kMaxFrames) {
     frames[count] = {PyFrame_GetCode(py_frame), PyFrame_GetLasti(py_frame)};
     ++count;
-    next = PyFrame_GetBack(py_frame);
-    Py_XDECREF(py_frame);
+    PyFrameObject* next = PyFrame_GetBack(py_frame);
+    Py_DECREF(py_frame);
+    py_frame = next;
   }
+  Py_XDECREF(py_frame);
 #endif  // PLATFORM_GOOGLE
 
   Traceback traceback =
