@@ -187,24 +187,6 @@ pytype_strict_library(
     ] + py_deps("numpy"),
 )
 
-# TODO: b/436864688 - migrate users to //third_party/py/jax/experimental and delete this target.
-pytype_strict_library(
-    name = "host_callback",
-    srcs = [
-        "__init__.py",
-        "x64_context.py",
-    ],
-    deps = [
-        "//jax/_src:api",
-        "//jax/_src:callback",
-        "//jax/_src:config",
-        "//jax/_src:core",
-        "//jax/_src:deprecations",
-        "//jax/_src:dtypes",
-        "//jax/_src:earray",
-    ],
-)
-
 pytype_strict_library(
     name = "key_reuse",
     srcs = glob(["key_reuse/**/*.py"]),
