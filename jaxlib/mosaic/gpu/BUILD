@@ -50,11 +50,13 @@ cc_library(
 cc_library(
     name = "passes",
     srcs = [
+        "assembly_to_binary.cc",
         "launch_lowering.cc",
         "passes.cc",
         "serde.cc",
     ],
     hdrs = [
+        "assembly_to_binary.h",
         "launch_lowering.h",
         "passes.h",
         "serde.h",
@@ -62,6 +64,8 @@ cc_library(
     deps = [
         "//jaxlib/mosaic:pass_boilerplate",
         "//jaxlib/mosaic:serde",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:FuncDialect",
@@ -74,6 +78,12 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:VectorDialect",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@xla//xla/stream_executor/cuda:assemble_compilation_provider",
+        "@xla//xla/stream_executor/cuda:compilation_provider",
+        "@xla//xla/stream_executor/cuda:compilation_provider_options",
+        "@xla//xla/stream_executor/cuda:cuda_compute_capability",
+        "@xla//xla/stream_executor/cuda:ptx_compiler_support",
     ],
 )
 
