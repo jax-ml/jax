@@ -8883,6 +8883,25 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       jaxpr = jax.jit(f).trace(jnp.arange(8)).jaxpr
       self.assertEqual(str(jaxpr).count('mesh_cast'), 2)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_nary_op_input_constraint(self, mesh):
+    arr = jax.device_put(np.arange(16).reshape(8, 2), P('x'))
+
+    @jax.jit
+    def f(x):
+      var = jnp.broadcast_to(2, x.shape)
+      out = x * var
+      return out
+
+    lowered_text = f.lower(arr).as_text()
+    matches = re.findall(r'sdy.sharding_constraint.*\[\{\"x\"\}, \{\}\]',
+                         lowered_text)
+    self.assertEqual(len(matches), 2)
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertArraysEqual(out, arr * 2)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
