@@ -908,7 +908,7 @@ mlir.register_lowering(
 def _eig_dtype_rule(
     a_dtype, *, compute_left_eigenvectors, compute_right_eigenvectors, **_
 ):
-  dtype = dtypes.to_complex_dtype(dtypes.canonicalize_dtype(a_dtype))
+  dtype = dtypes.to_complex_dtype(a_dtype)
   return (dtype,) * (1 + compute_left_eigenvectors + compute_right_eigenvectors)
 
 def _eig_shape_rule(
@@ -1062,7 +1062,6 @@ def _eigh_jacobi_shape_rule(shape, **_):
   return (n,), (n, n)
 
 def _eigh_jacobi_dtype_rule(dtype, **_):
-  dtype = dtypes.canonicalize_dtype(dtype)
   return lax._complex_basetype(dtype), dtype
 
 def _eigh_jacobi_lowering_rule(ctx, operand, lower, sort_eigenvalues):
@@ -1117,7 +1116,6 @@ def _eigh_shape_rule(shape, *, subset_by_index, **_):
   return (n, d), (d,)
 
 def _eigh_dtype_rule(dtype, **_):
-  dtype = dtypes.canonicalize_dtype(dtype)
   return dtype, lax._complex_basetype(dtype)
 
 def _eigh_cpu_gpu_lowering(
@@ -1217,7 +1215,6 @@ def _hessenberg_shape_rule(shape, **_):
 
 
 def _hessenberg_dtype_rule(dtype, **_):
-  dtype = dtypes.canonicalize_dtype(dtype)
   return dtype, dtype
 
 
@@ -1383,7 +1380,6 @@ def _lu_shape_rule(shape):
 
 
 def _lu_dtype_rule(dtype, **_):
-  dtype = dtypes.canonicalize_dtype(dtype)
   return dtype, dtypes.dtype(np.int32), dtypes.dtype(np.int32)
 
 
@@ -1660,7 +1656,6 @@ def _geqrf_shape_rule(shape):
   return shape, (core.min_dim(m, n),)
 
 def _geqrf_dtype_rule(dtype):
-  dtype = dtypes.canonicalize_dtype(dtype)
   return dtype, dtype
 
 def _geqrf_lowering_rule(ctx, operand):
@@ -1726,8 +1721,6 @@ def _geqp3_shape_rule(a_shape, jpvt_shape, **_):
   return a_shape, jpvt_shape, (core.min_dim(m, n),)
 
 def _geqp3_dtype_rule(dtype, jpvt_dtype, *_, **__):
-  dtype = dtypes.canonicalize_dtype(dtype)
-  jpvt_dtype = dtypes.canonicalize_dtype(jpvt_dtype)
   return dtype, jpvt_dtype, dtype
 
 def _geqp3_cpu_gpu_lowering(ctx, a, jpvt, *, use_magma, target_name_prefix):
@@ -1757,7 +1750,6 @@ def _qr_shape_rule(shape, *, pivoting, full_matrices, **_):
   return ((m, k), (k, n), (n,)) if pivoting else ((m, k), (k, n))
 
 def _qr_dtype_rule(dtype, *, pivoting, **_):
-  dtype = dtypes.canonicalize_dtype(dtype)
   return (dtype, dtype, dtypes.dtype(np.int32)) if pivoting else (dtype, dtype)
 
 def qr_jvp_rule(primals, tangents, *, pivoting, full_matrices, use_magma):
@@ -1835,7 +1827,6 @@ def _schur_shape_rule(shape, *, compute_schur_vectors, **_):
   return (shape, shape) if compute_schur_vectors else (shape,)
 
 def _schur_dtype_rule(dtype, *, compute_schur_vectors, **_):
-  dtype = dtypes.canonicalize_dtype(dtype)
   return (dtype, dtype) if compute_schur_vectors else (dtype,)
 
 def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
@@ -1908,7 +1899,6 @@ def _svd_shape_rule(shape, *, full_matrices, compute_uv, subset_by_index, **_):
     return (rank,),
 
 def _svd_dtype_rule(dtype, *, compute_uv, **_):
-  dtype = dtypes.canonicalize_dtype(dtype)
   real_dtype = lax._complex_basetype(dtype)
   if compute_uv:
     return real_dtype, dtype, dtype
@@ -2217,7 +2207,7 @@ def _triangular_solve_shape_rule(a_shape, b_shape, *, left_side=False, **_):
   return b_shape
 
 def _triangular_solve_dtype_rule(dtype, *_, **__):
-  return dtypes.canonicalize_dtype(dtype)
+  return dtype
 
 def _triangular_solve_jvp_rule_a(
     g_a, ans, a, b, *, left_side, lower, transpose_a, conjugate_a,
@@ -2370,7 +2360,6 @@ def _tridiagonal_shape_rule(shape, **_):
   return shape, (n,), (n - 1,), (n - 1,)
 
 def _tridiagonal_dtype_rule(dtype, **_):
-  dtype = dtypes.canonicalize_dtype(dtype)
   real_dtype = lax._complex_basetype(dtype)
   return dtype, real_dtype, real_dtype, dtype
 
