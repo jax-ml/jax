@@ -15,10 +15,13 @@ limitations under the License.
 
 #include "jaxlib/mlir/_mlir_libs/traceback_to_location.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/types/span.h"
@@ -37,16 +40,19 @@ namespace nb = ::nanobind;
 namespace jax {
 
 TracebackToLocationCache::TracebackToLocationCache(
-    nanobind::callable code_to_filename, mlir::MLIRContext* context)
-    : code_to_filename_(std::move(code_to_filename)), context_(context) {}
+    nanobind::callable code_to_filename, int frame_limit,
+    mlir::MLIRContext* context)
+    : code_to_filename_(std::move(code_to_filename)),
+      frame_limit_(frame_limit),
+      context_(context) {}
 
 nb::object TracebackToLocationCache::Get(const Traceback& traceback) {
   auto& traceback_cache_entry = traceback_to_location_cache_[traceback];
   if (!traceback_cache_entry.ptr()) {
-    std::optional<mlir::Location> loc;
     absl::Span<const TracebackEntry> frames = traceback.RawFrames();
-    for (auto it = frames.rbegin(); it != frames.rend(); ++it) {
-      const TracebackEntry& frame = *it;
+    std::vector<mlir::Location> frame_locs_vector;
+    frame_locs_vector.reserve(frames.size());
+    for (const TracebackEntry& frame : frames) {
       auto& frame_cache_entry = frame_cache_[frame];
       if (!frame_cache_entry.has_value()) {
         // Canonicalize the filename, and skip it if it's not to be shown.
@@ -80,10 +86,18 @@ nb::object TracebackToLocationCache::Get(const Traceback& traceback) {
                 mlir::StringAttr::get(context_, filename), start_line,
                 start_column, end_line, end_column));
       }
+      frame_locs_vector.push_back(*frame_cache_entry);
+    }
+    absl::Span<mlir::Location const> frame_locs_span = frame_locs_vector;
+    frame_locs_span = frame_locs_span.first(
+        std::min<size_t>(frame_locs_span.size(), frame_limit_));
+    std::optional<mlir::Location> loc;
+    for (auto it = frame_locs_span.rbegin(); it != frame_locs_span.rend();
+         ++it) {
       if (loc.has_value()) {
-        loc = mlir::CallSiteLoc::get(*frame_cache_entry, *loc);
+        loc = mlir::CallSiteLoc::get(*it, *loc);
       } else {
-        loc = *frame_cache_entry;
+        loc = *it;
       }
     }
     traceback_cache_entry = nb::cast(

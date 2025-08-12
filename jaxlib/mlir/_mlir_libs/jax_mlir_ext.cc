@@ -216,11 +216,12 @@ NB_MODULE(_jax_mlir_ext, m) {
       .def(
           "__init__",
           [](TracebackToLocationCache* self, nb::callable code_to_filename,
-             MlirContext context) {
-            new (self)
-                TracebackToLocationCache(code_to_filename, unwrap(context));
+             int frame_limit, MlirContext context) {
+            new (self) TracebackToLocationCache(code_to_filename, frame_limit,
+                                                unwrap(context));
           },
-          nb::arg("code_to_filename"), nb::arg("context").none() = nb::none())
+          nb::arg("code_to_filename"), nb::arg("frame_limit"),
+          nb::arg("context").none() = nb::none())
       .def("get", &TracebackToLocationCache::Get);
 }
 

@@ -20,8 +20,8 @@ limitations under the License.
 #include <optional>
 #include <string>
 
+#include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/hash/hash.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "nanobind/nanobind.h"
@@ -34,7 +34,7 @@ class TracebackToLocationCache {
   // code_to_filename is a user provided callable that maps a code object to
   // its canonicalized filename that should appeared in the MLIR location.
   // Returns None if the filename should be omitted in tracebacks.
-  TracebackToLocationCache(nanobind::callable code_to_filename,
+  TracebackToLocationCache(nanobind::callable code_to_filename, int frame_limit,
                            mlir::MLIRContext* context);
 
   // Returns an MLIR location for the given traceback.
@@ -42,9 +42,8 @@ class TracebackToLocationCache {
   nanobind::object Get(const Traceback& traceback);
 
  private:
-  int frame_limit_ = 0;
-
   nanobind::callable code_to_filename_;
+  int frame_limit_;
   mlir::MLIRContext* context_;
 
   // Cached results of code_to_filename_.

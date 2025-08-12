@@ -114,11 +114,18 @@ def test_traceback_to_location():
     )
 
   # CHECK: --- test_traceback_to_location
-  # CHECK: loc(callsite("test_traceback_to_location.<locals>.h"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at callsite("test_traceback_to_location.<locals>.g"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at callsite("test_traceback_to_location.<locals>.f"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at callsite("test_traceback_to_location"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at callsite("main"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at "<module>"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}})))))))
   print("--- test_traceback_to_location")
   ctx = mlir.make_ir_context()
   with ctx:
-    cache = _jax_mlir_ext.TracebackToLocationCache(_code_to_filename)
+    # CHECK: loc(callsite("test_traceback_to_location.<locals>.h"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at callsite("test_traceback_to_location.<locals>.g"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at callsite("test_traceback_to_location.<locals>.f"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at callsite("test_traceback_to_location"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at callsite("main"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at "<module>"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}})))))))
+    cache = _jax_mlir_ext.TracebackToLocationCache(
+        code_to_filename=_code_to_filename, frame_limit=1000)
+    loc = cache.get(tb)
+    print(loc)
+
+    # CHECK: loc(callsite("test_traceback_to_location.<locals>.h"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at "test_traceback_to_location.<locals>.g"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}})))
+    cache = _jax_mlir_ext.TracebackToLocationCache(
+        code_to_filename=_code_to_filename, frame_limit=2)
     loc = cache.get(tb)
     print(loc)
 
