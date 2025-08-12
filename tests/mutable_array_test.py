@@ -772,6 +772,37 @@ class MutableArrayTest(jtu.JaxTestCase):
     x_ref = core.mutable_array(0)
     jax.grad(f, 1)(x_ref, 3.14)
 
+  @jtu.run_on_devices("cpu")  # tolerances, lol
+  def test_vjp3_ref_grads_for_val_primals(self):
+    NUM_LAYERS = 3
+    NUM_MUBATCHES = 5
+    MUBATCH_SIZE = 7
+
+    def mubatch_loss(Ws, xs):
+      # Inner loop: scan over layers
+      act, _ = jax.lax.scan(lambda xs, W: (jnp.dot(xs, W), None), xs, Ws)
+      return jnp.mean(act)
+
+    def process_batch(Ws, xs_batch):
+      grad_acc = jax.array_ref(jnp.zeros_like(Ws))               # CHANGED
+
+      def process_mubatch(_, xs):
+        loss, f_vjp = vjp3(lambda Ws: mubatch_loss(Ws, xs), Ws)  # CHANGED
+        f_vjp.with_refs(grad_acc)(jnp.ones_like(loss))           # CHANGED
+        return (), loss
+
+      assert xs_batch.shape[0] == NUM_MUBATCHES * MUBATCH_SIZE
+      xs_mubatches = xs_batch.reshape(NUM_MUBATCHES, MUBATCH_SIZE, *xs_batch.shape[1:])
+
+      # Outer loop: scan over microbatches
+      (), _losses = jax.lax.scan(process_mubatch, (), xs_mubatches)
+      return jax.ref.freeze(grad_acc)
+
+    Ws = jnp.ones((NUM_LAYERS, 4, 4))
+    xs_batch = jnp.ones((NUM_MUBATCHES * MUBATCH_SIZE, 4))
+    g = process_batch(Ws, xs_batch)
+    self.assertAllClose(g, 20. * jnp.ones_like(Ws), atol=1e-3, rtol=1e-3)
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
