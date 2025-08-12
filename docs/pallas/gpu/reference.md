@@ -1030,3 +1030,7 @@ generated low-level code:
   output;
 * `MOSAIC_GPU_DUMP_TO` allows specifying a directory path (that must exist)
   where all of the above will be dumped as files.
+* `MOSAIC_GPU_LLVM_DUMP_ONLY` allows specifying a comma-separated list of
+  [LLVM debug types](https://llvm.org/docs/ProgrammersManual.html#fine-grained-debug-info-with-debug-type-and-the-debug-only-option),
+  in order to produce relevant LLVM debugging logs. This environment variable is
+  only available in debug builds (i.e. builds without `NDEBUG`).
