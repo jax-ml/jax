@@ -56,6 +56,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CodeGen.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
@@ -741,6 +742,30 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     dump_opts.mlir_passes = false;
   }
 
+  const char* debug_only = getenv("MOSAIC_GPU_LLVM_DEBUG_ONLY");
+#ifndef NDEBUG
+  bool old_debug_state = false;
+  if (debug_only) {
+    old_debug_state = llvm::DebugFlag;
+    std::vector<std::string_view> debug_only_types =
+        absl::StrSplit(debug_only, ',');
+    std::vector<const char*> debug_only_types_ptrs;
+    debug_only_types_ptrs.reserve(debug_only_types.size());
+    for (std::string_view debug_only_type : debug_only_types) {
+      debug_only_types_ptrs.push_back(debug_only_type.data());
+    }
+    llvm::setCurrentDebugTypes(debug_only_types_ptrs.data(),
+                               debug_only_types_ptrs.size());
+    llvm::DebugFlag = true;
+  }
+#else
+  if (debug_only) {
+    fprintf(
+        stderr,
+        "MOSAIC_GPU_LLVM_DEBUG_ONLY is set but LLVM was built with NDEBUG\n");
+    abort();
+  }
+#endif
   auto passes = GetPassPipeline(
       module.getContext(),
       mlir::gpu::CompilationTarget::Binary,
@@ -768,6 +793,11 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
   options.jitCodeGenOptLevel = llvm::CodeGenOptLevel::Aggressive;
   options.sharedLibPaths = runtime_libs;
   auto maybe_execution_engine = mlir::ExecutionEngine::create(module, options);
+#ifndef NDEBUG
+  if (debug_only) {
+    llvm::DebugFlag = old_debug_state;
+  }
+#endif
   if (!maybe_execution_engine) {
     return absl::InternalError("Failed to compile kernel");
   }
