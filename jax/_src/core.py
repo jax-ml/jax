@@ -2544,6 +2544,20 @@ pytype_aval_mappings[ArrayRef] = lambda x: x._aval
 dtypes.canonicalize_value_handlers[ArrayRef] = identity
 
 def array_ref(init_val, *, memory_space: Any = None):
+  """Create a mutable array reference with initial value ``init_val``.
+
+  For more discussion, see the `ArrayRef guide`_.
+
+  Args:
+    init_val: A :class:`jax.Array` representing the initial state
+      of the buffer.
+    memory_space: An optional memory space attribute for the ArrayRef.
+
+  Returns:
+    A :class:`jax.ref.ArrayRef` containing a reference to a mutable buffer.
+
+  .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
+  """
   return array_ref_p.bind(init_val, memory_space=memory_space)
 array_ref_p = Primitive('array_ref')
 array_ref_p.is_effectful = lambda params: True  # type: ignore

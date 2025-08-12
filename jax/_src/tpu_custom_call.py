@@ -518,6 +518,7 @@ def _lower_to_custom_call_config(
     disable_bounds_checks: bool = False,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     skip_device_barrier: bool = False,
+    allow_collective_id_without_custom_barrier: bool = False,
 ) -> CustomCallBackendConfig:
   device_type = _get_device_type(module)
   lowered_module_asm, (
@@ -550,6 +551,7 @@ def _lower_to_custom_call_config(
       active_core_count=active_core_count,
       input_memory_spaces=input_memory_spaces,
       skip_device_barrier=skip_device_barrier,
+      allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
   )
 
 
@@ -573,13 +575,14 @@ def _lowered_to_custom_call_config(
     active_core_count: int | None = None,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     skip_device_barrier: bool = False,
+    allow_collective_id_without_custom_barrier: bool = False,
 ):
   if has_custom_barrier:
     if collective_id is None:
       raise ValueError(
           "collective_id has to be specified when using a custom barrier"
       )
-  elif collective_id is not None:
+  elif collective_id is not None and not allow_collective_id_without_custom_barrier:
     raise ValueError(
         "collective_id has to be unspecified or None when not using a custom"
         " barrier"
@@ -631,6 +634,7 @@ def lower_module_to_custom_call(
     input_memory_spaces: tuple[MemorySpace | None, ...] | None,
     metadata: Any | None = None,
     skip_device_barrier: bool = False,
+    allow_collective_id_without_custom_barrier: bool = False,
 ) -> Sequence[ir.Value]:
   config = _lower_to_custom_call_config(
       module,
@@ -646,6 +650,7 @@ def lower_module_to_custom_call(
       disable_bounds_checks=disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
       skip_device_barrier=skip_device_barrier,
+      allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
   )
   return _tpu_custom_call_lowering(
       ctx,
@@ -722,6 +727,7 @@ def lowered_as_tpu_kernel(
     internal_scratch_in_bytes: int | None = None,
     disable_bounds_checks: bool = False,
     metadata: Any | None = None,
+    allow_collective_id_without_custom_barrier: bool = False,
 ) -> Callable[..., Any]:
   device_type = _get_device_type(lowered_module)
   lowered_module_asm = lowered_module.operation.get_asm(
@@ -742,6 +748,7 @@ def lowered_as_tpu_kernel(
       needs_hlo_passes=needs_hlo_passes,
       needs_layout_passes=needs_layout_passes,
       disable_bounds_checks=disable_bounds_checks,
+      allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
   )
   return _as_jax_callable(
       config,

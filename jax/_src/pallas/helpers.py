@@ -110,7 +110,7 @@ def loop(
 
   def decorator(body):
     jax.lax.fori_loop(
-        0,
+        jnp.array(0, dtype=idx_type),
         pl_utils.cdiv(upper - lower, step),
         lambda idx, _: body(lower + idx * step),
         init_val=None,
