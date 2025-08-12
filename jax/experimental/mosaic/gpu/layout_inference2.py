@@ -37,9 +37,6 @@ from . import layouts as layouts_lib
 from . import utils
 
 
-# mypy: ignore-errors
-
-
 class VariableType(enum.IntEnum):
   """The type of a variable.
 
@@ -355,6 +352,7 @@ for op in [
 def _vector_load_equation_system(
     op: vector.LoadOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+  equation_system: eqns.EquationSystem | eqns.Unsatisfiable
   equation_system, operand_or_results_for_variable = (
       _pointwise_op_equation_system(op)
   )
@@ -726,6 +724,7 @@ def is_terminator(op: ir.OpView) -> bool:
 
 
 def infer_layout(module: ir.Module):
+  global_equation_system: eqns.EquationSystem | eqns.Unsatisfiable
   global_equation_system = eqns.EquationSystem()
   operand_and_results_for_variable: OperandOrResultsForVariable = {}
 

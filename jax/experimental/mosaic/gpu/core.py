@@ -46,9 +46,6 @@ from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvvm
 import numpy as np
 
-
-# mypy: ignore-errors
-
 from . import dialect_lowering
 from . import launch_context
 from . import layout_inference
@@ -154,7 +151,8 @@ def _has_communication(module, **_):
 
 
 # TODO(apaszke): Implement a proper system for managing kernel lifetimes
-KNOWN_KERNELS = {}
+# Maps kernel ID to the compiled kernel ASM.
+KNOWN_KERNELS: dict[bytes, str] = {}
 
 
 def _mosaic_gpu_lowering_rule(
@@ -407,6 +405,7 @@ def _construct_smem_reftree(
         )
       dynamic_smem_offset += num_barriers * utils.MBARRIER_BYTES
       return barrier_memref
+    ref: Any
     match ref_ty:
       case Union(members):
         member_thunks = [
@@ -427,20 +426,22 @@ def _construct_smem_reftree(
           return Union([t() for t in member_thunks])
 
       case TMABarrier(num_barriers):
-        init_fn = utils.DialectBarrierRef.initialize if (
-            lowering_semantics == LoweringSemantics.Warpgroup
-        ) else utils.BarrierRef.initialize
+        init_fn: Callable[..., Any] = (
+            utils.DialectBarrierRef.initialize
+            if lowering_semantics == LoweringSemantics.Warpgroup
+            else utils.BarrierRef.initialize
+        )
         ref = init_fn(barrier_memref(num_barriers), arrival_count=1)
       case Barrier(arrival_count, num_barriers):
-        init_fn = utils.DialectBarrierRef.initialize if (
-            lowering_semantics == LoweringSemantics.Warpgroup
-        ) else utils.BarrierRef.initialize
+        init_fn = (
+            utils.DialectBarrierRef.initialize
+            if lowering_semantics == LoweringSemantics.Warpgroup
+            else utils.BarrierRef.initialize
+        )
         ref = init_fn(barrier_memref(num_barriers), arrival_count=arrival_count)
       case ClusterBarrier(collective_dims, num_barriers):
         ref = utils.CollectiveBarrierRef.initialize(
-            barrier_memref(num_barriers),
-            collective_dims,
-            cluster_shape,
+            barrier_memref(num_barriers), collective_dims, cluster_shape
         )
       case TMEM(shape, dtype, layout=layout, collective=collective, packing=packing):
         addr_ref = _slice_smem(
@@ -628,6 +629,7 @@ def _launch(
         nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
         nvvm.cluster_wait(aligned=ir.UnitAttr.get())
       if tmem_allocs:
+        init_warp_ctx: contextlib.AbstractContextManager
         if lowering_semantics == LoweringSemantics.Warpgroup:
           init_warp_ctx = contextlib.nullcontext()
         else:
@@ -946,7 +948,7 @@ def as_torch_gpu_kernel(
     inout_shape = (),
 ):
   try:
-    import torch  # pytype: disable=import-error
+    import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
   except ImportError:
     raise RuntimeError("as_torch_gpu_kernel requires PyTorch")
   torch.cuda.init()  # Make sure CUDA context is set up.
@@ -965,9 +967,9 @@ def as_torch_gpu_kernel(
   # Get our hands on the compilation and unload functions
   try:
     try:
-      import jax_plugins.xla_cuda13 as cuda_plugin  # pytype: disable=import-error
+      import jax_plugins.xla_cuda13 as cuda_plugin  # type: ignore[import-not-found]  # pytype: disable=import-error
     except ImportError:
-      import jax_plugins.xla_cuda12 as cuda_plugin  # pytype: disable=import-error
+      import jax_plugins.xla_cuda12 as cuda_plugin  # type: ignore[import-not-found]  # pytype: disable=import-error
   except ImportError:
     dll = ctypes.CDLL(None)
   else:

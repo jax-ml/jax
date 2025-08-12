@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import dataclasses
 import math
 from typing import Callable
@@ -30,9 +31,6 @@ from . import utils
 from . import fragmented_array as fa
 from . import mma_utils
 from .launch_context import LaunchContext
-
-# MyPy does a terrible job with the MLIR API.
-# mypy: ignore-errors
 
 
 TMEM_ROWS = 128
@@ -344,6 +342,7 @@ def mma(
           f" {expected_swizzle} for dtype {element_type}, got:"
           f" {a_swizzle=} and {b_swizzle=}"
       )
+    assert a_scale is not None and b_scale is not None
     if a_scale.shape != (m, 4):
       raise ValueError(
           f"A scale shape mismatch: expected ({m}, 4), got {a_scale.shape}"
@@ -439,8 +438,8 @@ def mma(
         b_transpose=b_fastest != mma_utils.Dim.K,
         a_k_strides=a_k_instr_strides,
         b_k_strides=b_k_instr_strides,
-        a_scale_addr=a_scale.address if is_scaled else None,
-        b_scale_addr=b_scale.address if is_scaled else None,
+        a_scale_addr=a_scale.address if a_scale is not None else None,
+        b_scale_addr=b_scale.address if b_scale is not None else None,
         accumulate=acc,
         element_type=mma_element_type,
     )
@@ -476,6 +475,7 @@ def _do_mma(
   assert (a_scale_addr is None) == (b_scale_addr is None)
   is_scaled = a_scale_addr is not None
 
+  extra_args: Sequence[object]
   scale_steps = None
   if is_scaled:
     if (ir.Float8E5M2Type.isinstance(element_type) or
@@ -506,7 +506,9 @@ def _do_mma(
       raise NotImplementedError(f"Unsupported input element type: {element_type}")
     extra_args = ()
     extra_constraints = extra_ptx = ""
-    create_scaled_instr_descriptor = None
+
+    def create_scaled_instr_descriptor(*args):
+      raise NotImplementedError
 
   num_cta = 2 if collective else 1
   a_in_tmem = a_k_strides is None
@@ -525,6 +527,7 @@ def _do_mma(
     return arith.constant(i64, offset >> 4)
   for k_step in range(k // instr_k):
     if is_scaled:
+      assert scale_steps is not None
       scale_vec_width = 4 // scale_steps
       scale_id = k_step * scale_vec_width
       i_desc = create_scaled_instr_descriptor(
@@ -539,6 +542,7 @@ def _do_mma(
           a_desc_or_addr, arith.constant(i32, k_step * instr_k // packing)
       )
     else:
+      assert a_k_idx_tiling is not None and a_k_strides is not None
       a_desc_or_addr_instr = arith.addi(
           a_desc_or_addr, _get_offset(k_step, a_k_idx_tiling, a_k_strides)
       )

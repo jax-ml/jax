@@ -48,7 +48,6 @@ else:
       )
 
 # ruff: noqa: F405
-# mypy: ignore-errors
 
 T = TypeVar("T")
 P = ParamSpec("P")
@@ -210,7 +209,7 @@ class ProfilerSpec:
 
   def __init__(self, entries_per_warpgroup: int):
     self.entries_per_warpgroup = entries_per_warpgroup
-    self.interned_names = {}
+    self.interned_names: dict[str, int] = {}
 
   def _num_warpgroups(
       self, grid: tuple[int, ...], block: tuple[int, ...]

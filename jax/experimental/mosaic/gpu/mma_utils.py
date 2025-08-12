@@ -23,7 +23,6 @@ from jaxlib.mlir.dialects import llvm
 
 from . import utils
 
-# mypy: ignore-errors
 
 def tiled_memref_shape(ref: ir.Value):
   """Returns the 2D untiled shape and element type of a tiled 4D memref."""
@@ -83,7 +82,8 @@ def create_descriptor(
   MMA_ATOM_ROWS = 8
   MMA_BYTEWIDTH_K = 32
   mma_width_k = 8 * MMA_BYTEWIDTH_K // element_bitwidth
-  desc_k_tiling = ()
+  desc_k_tiling: tuple[int, ...] = ()
+  desc_k_strides: tuple[int, ...]
   # As far as I can tell (which does not seem to fully align with the way MMA is
   # documented in PTX docs), MMA expects the data to be tiled into matrices
   # of shape 8 x swizzle_elems, with swizzle_elems dim being the fastest
