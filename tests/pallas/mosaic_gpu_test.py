@@ -2391,7 +2391,9 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
         },
     )
 
-  def test_copy_gmem_to_smem_from_different_warps(self):
+  @parameterized.parameters(False, True)
+  def test_copy_gmem_to_smem_from_different_warps(self,
+                                                  wait_smem_to_gmem_in_warp):
     # In this test, we issue a copy from from warp 0 and await it in warp 1.
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(plgpu.kernel,
@@ -2409,7 +2411,10 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
           def _():
             plgpu.barrier_wait(tma_barrier)
             plgpu.copy_smem_to_gmem(smem_ref, y_ref)
-        plgpu.wait_smem_to_gmem(0)
+            if wait_smem_to_gmem_in_warp:
+              plgpu.wait_smem_to_gmem(0)
+        if not wait_smem_to_gmem_in_warp:
+          plgpu.wait_smem_to_gmem(0)
       pl.run_scoped(scope,
                     smem_ref=plgpu.SMEM((32, 32), jnp.float32),
                     tma_barrier=plgpu.Barrier())

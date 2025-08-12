@@ -1031,10 +1031,16 @@ class LaunchContext:
           nvvm.cp_async_bulk_commit_group()
 
   def await_async_copy(
-      self, allow_groups: int, await_read_only: bool = False
+      self, allow_groups: int, await_read_only: bool = False,
+      scope: utils.ThreadSubset = utils.ThreadSubset.WARPGROUP,
   ):
     nvvm.cp_async_bulk_wait_group(allow_groups, read=await_read_only)
-    utils.warpgroup_barrier()
+    if scope == utils.ThreadSubset.WARPGROUP:
+      utils.warpgroup_barrier()
+    elif scope == utils.ThreadSubset.WARP:
+      utils.warp_barrier()
+    else:
+      raise ValueError(f"Unsupported scope: {scope}")
 
   def await_cp_async_copy(self, allow_groups: int):
     nvvm.cp_async_wait_group(allow_groups)

@@ -3049,7 +3049,8 @@ def _core_map_lowering_rule(
         consts=args,
     )
     if ctx.module_ctx.auto_barriers:
-      # TODO(apaszke,justinfu): Do we really need this barrier?
+      # We need to ensure that any effects produced by one warp
+      # (e.g. async copies) are observable by all other warps.
       mgpu.warpgroup_barrier()
     return []
   raise ValueError(f"Unsupported mesh: {mesh}")
