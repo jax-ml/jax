@@ -1445,6 +1445,18 @@ class CustomJVPTest(jtu.JaxTestCase):
         """).strip()
     self.assertEqual(actual, expected)
 
+  def test_custom_jvp_transpose_vjp3(self):
+    @jax.custom_jvp
+    def div(x, y):
+      return x / y
+    @div.defjvp
+    def sin_jvp(primals, tangents):
+      (x, y), (x_dot, y_dot) = primals, tangents
+      del y_dot  # ignore lol
+      return div(x, y), div(x_dot, y)
+    _, f_vjp = api.vjp3(lambda x: div(x, 2.), 1.)
+    ans, = f_vjp(1.)
+    self.assertAllClose(ans, 1./2, check_dtypes=False)
 
 
 class CustomVJPTest(jtu.JaxTestCase):
