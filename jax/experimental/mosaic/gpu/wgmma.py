@@ -85,7 +85,7 @@ class WGMMAAccumulator:
   @classmethod
   def from_registers(cls, registers):
     original_layout = registers.layout
-    if registers.layout != fa.WGMMA_LAYOUT:
+    if registers.layout != fa.WGMMA_LAYOUT and registers.layout != fa.WGMMA_LAYOUT_ACC_32BIT:
       raise ValueError("Only WGMMA layouts supported in WGMMAAccumulator")
     if utils.bitwidth(registers.mlir_dtype) == 32:
       registers = registers.to_layout(fa.WGMMA_LAYOUT_ACC_32BIT)

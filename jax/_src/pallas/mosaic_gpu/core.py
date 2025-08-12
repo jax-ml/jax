@@ -1321,6 +1321,9 @@ class Layout(SomeLayout, enum.Enum):
   TCGEN05_M64_COLLECTIVE = enum.auto()
   TCGEN05_TMEM_NATIVE = enum.auto()
 
+  # TODO(b/435159109): Remove this once LLVM regression is addressed.
+  _WGMMA_ACC_32BIT = enum.auto()  # Temporarily exposed to work around LLVM bugs
+
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
 
@@ -1336,6 +1339,9 @@ class Layout(SomeLayout, enum.Enum):
       case Layout.WGMMA:
         check_no_args()
         return mgpu.WGMMA_LAYOUT
+      case Layout._WGMMA_ACC_32BIT:
+        check_no_args()
+        return mgpu.fragmented_array.WGMMA_LAYOUT_ACC_32BIT
       case Layout.WG_SPLAT:
         return mgpu.WGSplatFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
       case Layout.WG_STRIDED:
