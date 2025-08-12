@@ -425,6 +425,7 @@ class AbstractRef(core.AbstractValue):
     from jax._src.state.primitives import ref_set  # pytype: disable=import-error
     return ref_set(tracer, idx, value)
 
+  @core.aval_method
   @staticmethod
   def addupdate(tracer, value, idx=()):
     from jax._src.state.primitives import ref_addupdate  # pytype: disable=import-error
@@ -437,6 +438,10 @@ class AbstractRef(core.AbstractValue):
   def _setitem(self, tracer, idx, value) -> None:
     from jax._src.state.primitives import ref_set  # pytype: disable=import-error
     return ref_set(tracer, idx, value)
+
+  def _addupdate(self, tracer, idx, value):
+    from jax._src.state.primitives import ref_addupdate  # pytype: disable=import-error
+    ref_addupdate(tracer, idx, value)
 
   def __repr__(self) -> str:
     if self.memory_space is not None:
