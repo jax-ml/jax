@@ -19,7 +19,6 @@ import collections
 from collections.abc import Sequence
 import dataclasses
 import enum
-import functools
 from typing import Any, ClassVar, Literal
 from collections.abc import Mapping
 
@@ -36,17 +35,8 @@ import numpy as np
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
-partial = functools.partial
-Grid = pallas_core.Grid
-TupleGrid = pallas_core.TupleGrid
-BlockSpec = pallas_core.BlockSpec
-BlockSpecTree = pallas_core.BlockSpecTree
-GridMapping = pallas_core.GridMapping
-NoBlockSpec = pallas_core.NoBlockSpec
-ScratchShapeTree = pallas_core.ScratchShapeTree
 no_block_spec = pallas_core.no_block_spec
 _out_shape_to_aval_mapping = pallas_core._out_shape_to_aval_mapping
-split_list = util.split_list
 
 
 class KernelType(enum.Enum):
@@ -205,10 +195,10 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
   def __init__(
       self,
       num_scalar_prefetch: int,
-      grid: Grid = (),
-      in_specs: BlockSpecTree = no_block_spec,
-      out_specs: BlockSpecTree = no_block_spec,
-      scratch_shapes: ScratchShapeTree = ()
+      grid: pallas_core.Grid = (),
+      in_specs: pallas_core.BlockSpecTree = no_block_spec,
+      out_specs: pallas_core.BlockSpecTree = no_block_spec,
+      scratch_shapes: pallas_core.ScratchShapeTree = ()
   ):
     super().__init__(grid, in_specs, out_specs, scratch_shapes)
     self.num_scalar_prefetch = num_scalar_prefetch

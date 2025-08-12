@@ -57,18 +57,6 @@ import numpy as np
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
-Grid = pallas_core.Grid
-TupleGrid = pallas_core.TupleGrid
-GridSpec = pallas_core.GridSpec
-BlockMapping = pallas_core.BlockMapping
-GridMapping = pallas_core.GridMapping
-BlockSpec = pallas_core.BlockSpec
-BlockSpecTree = pallas_core.BlockSpecTree
-NoBlockSpec = pallas_core.NoBlockSpec
-no_block_spec = pallas_core.no_block_spec
-ScratchShapeTree = pallas_core.ScratchShapeTree
-CostEstimate = pallas_core.CostEstimate
-
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class InterpretParams:
@@ -2162,10 +2150,10 @@ def interpret_pallas_call(
     jaxpr: jax_core.Jaxpr,
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
-    grid_mapping: GridMapping,
+    grid_mapping: pallas_core.GridMapping,
     mesh: pallas_core.Mesh | None,
     compiler_params: dict[str, Any],
-    cost_estimate: CostEstimate,
+    cost_estimate: pallas_core.CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
     interpret_params: InterpretParams,
     metadata: frozen_dict.FrozenDict[str, str] | None,
