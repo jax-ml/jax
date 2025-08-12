@@ -2339,7 +2339,8 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
     ):
       kernel()
 
-  def test_single_warp_scan(self):
+  @parameterized.parameters(True, False)
+  def test_single_warp_loop(self, force_while):
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(plgpu.kernel,
                        out_shape=jax.ShapeDtypeStruct((10, 128), jnp.int32))
@@ -2357,7 +2358,7 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
             def loop_body(i, _):
               _slice = pl.ds(i, 1)
               plgpu.copy_smem_to_gmem(smem_ref.at[_slice], y_ref.at[_slice])
-            lax.fori_loop(0, 10, loop_body, None)
+            _fori_loop(force_while, 0, 10, loop_body, None)
         plgpu.wait_smem_to_gmem(0)
       pl.run_scoped(scope, plgpu.SMEM((10, 128), jnp.int32))
     result = kernel()

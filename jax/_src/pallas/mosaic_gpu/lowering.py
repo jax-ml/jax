@@ -2816,6 +2816,7 @@ def _lower_while_via_fori(
 
 
 @register_lowering_rule(lax.while_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(lax.while_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(lax.while_p, mgpu.LoweringSemantics.Warpgroup)
 def _while_lowering_rule(
     ctx: LoweringRuleContext,
