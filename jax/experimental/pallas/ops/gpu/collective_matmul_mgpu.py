@@ -87,9 +87,9 @@ def all_gather_lhs_matmul(
         scratch_ref, send_dev_id, device_id_type=pl.DeviceIdType.LOGICAL
     )
 
-    def m_loop(mi, _):
-      # TODO(giorgioa): replace with plgpu.nd_loop((mi,), collective_axes="sm")
-      mi = mi * lax.axis_size('sm') + sm_id
+    @plgpu.nd_loop((m_shard // block_m,), collective_axes="sm")
+    def _m_loop(idx):
+      (mi,) = idx
       m_tile_slice = pl.ds(mi * block_m, block_m)
 
       # For some reason ptxas spills if we unroll the loop over k
@@ -195,10 +195,6 @@ def all_gather_lhs_matmul(
                 out_smem, out_ref.at[device_m_slice, n_tile_slice].at[m_tile_slice]
             )
 
-    grid_size = m_shard // block_m
-    m_steps = grid_size // num_sms + jnp.int32(sm_id < grid_size % num_sms)
-    # TODO(apaszke): Use the ND-loop helper.
-    jax.lax.fori_loop(0, m_steps, m_loop, None)
     # Make sure all copies are fully done.
     plgpu.wait_smem_to_gmem(0, wait_read_only=True)
 
