@@ -420,6 +420,54 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     masked_out = jax.lax.dynamic_update_slice(pallas_out, mask, (8, 128))
     np.testing.assert_array_equal(masked_in, masked_out)
 
+  def test_no_barrier_semaphore(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 8, 8):
+      self.skipTest('Needs a newer libTPU')
+    def alloc_sem(_):
+      num_devices = lax.axis_size('x')
+      barrier_sem = pltpu.get_barrier_semaphore()
+      for i in range(num_devices):
+        pltpu.semaphore_signal(barrier_sem, device_id=i)
+      pltpu.semaphore_wait(barrier_sem, num_devices)
+
+    def barrier_kernel(x_ref, sem_ref, out_ref):
+      num_devices = lax.axis_size('x')
+      for i in range(num_devices):
+        pltpu.semaphore_signal(sem_ref, device_id=i)
+      pltpu.semaphore_wait(sem_ref, num_devices)
+      out_ref[...] = x_ref[...] + 1
+
+    x = jnp.arange(8 * 128).reshape((8, 128))
+
+    def body(x):
+      sem = pl.pallas_call(
+          alloc_sem,
+          in_specs=[],
+          out_specs=pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+          out_shape=pltpu.SemaphoreType.REGULAR(()),
+          compiler_params=pltpu.CompilerParams(collective_id=0),
+      )()
+      return pl.pallas_call(
+          barrier_kernel,
+          in_specs=[
+              pl.BlockSpec(memory_space=pltpu.VMEM),
+              pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+          ],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+          out_shape=x,
+          compiler_params=pltpu.CompilerParams(skip_device_barrier=True),
+      )(x, sem)
+
+    device_mesh = mesh_utils.create_device_mesh(
+        (jax.device_count(),), jax.devices())
+    mesh = jax.sharding.Mesh(device_mesh, ['x'])
+    y = jax.jit(
+        shard_map.shard_map(
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False
+        )
+    )(x)
+    np.testing.assert_allclose(y, x + 1)
+
 
 class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
 

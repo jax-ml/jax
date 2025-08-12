@@ -106,6 +106,7 @@ class CompilerParams(pallas_core.CompilerParams):
   serialization_format: int = 1
   kernel_type: KernelType = KernelType.TC
   disable_bounds_checks: bool = False
+  skip_device_barrier: bool = False
 
   def __init__(
       self,
@@ -119,6 +120,7 @@ class CompilerParams(pallas_core.CompilerParams):
       serialization_format: int = 1,
       kernel_type: KernelType = KernelType.TC,
       disable_bounds_checks: bool = False,
+      skip_device_barrier: bool = False,
   ):
     object.__setattr__(
         self,
@@ -142,6 +144,7 @@ class CompilerParams(pallas_core.CompilerParams):
     object.__setattr__(self, "serialization_format", serialization_format)
     object.__setattr__(self, "kernel_type", kernel_type)
     object.__setattr__(self, "disable_bounds_checks", disable_bounds_checks)
+    object.__setattr__(self, "skip_device_barrier",skip_device_barrier)
 
   # Replace is a method, not a field.
   replace = dataclasses.replace

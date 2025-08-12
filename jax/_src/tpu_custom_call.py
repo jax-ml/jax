@@ -122,6 +122,7 @@ class CustomCallBackendConfig:
   disable_bounds_checks: bool
   active_core_count: int | None
   input_memory_spaces: tuple[MemorySpace | None, ...] | None
+  skip_device_barrier: bool
 
   def __post_init__(self):
     if self.allow_input_fusion is not None:
@@ -213,6 +214,9 @@ class CustomCallBackendConfig:
     if self.disable_bounds_checks:
       config.write(b', "disable_bounds_checks": ')
       config.write(str(self.disable_bounds_checks).lower().encode("ascii"))
+    if self.skip_device_barrier:
+      config.write(b', "skip_device_barrier": ')
+      config.write(str(self.skip_device_barrier).lower().encode("ascii"))
     config.write(b"}")  # End of custom_call_config.
     if self.device_type is not None:
       config.write(b', "device_type": ')
@@ -491,6 +495,7 @@ def _lower_to_custom_call_config(
     ir_version: int | None = None,
     disable_bounds_checks: bool = False,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
+    skip_device_barrier: bool = False,
 ) -> CustomCallBackendConfig:
   device_type = _get_device_type(module)
   lowered_module_asm, (
@@ -522,6 +527,7 @@ def _lower_to_custom_call_config(
       disable_bounds_checks=disable_bounds_checks,
       active_core_count=active_core_count,
       input_memory_spaces=input_memory_spaces,
+      skip_device_barrier=skip_device_barrier,
   )
 
 
@@ -544,6 +550,7 @@ def _lowered_to_custom_call_config(
     disable_bounds_checks: bool = False,
     active_core_count: int | None = None,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
+    skip_device_barrier: bool = False,
 ):
   if has_custom_barrier:
     if collective_id is None:
@@ -577,6 +584,7 @@ def _lowered_to_custom_call_config(
       disable_bounds_checks,
       active_core_count=active_core_count,
       input_memory_spaces=input_memory_spaces,
+      skip_device_barrier=skip_device_barrier,
   )
   return config
 
@@ -600,6 +608,7 @@ def lower_module_to_custom_call(
     disable_bounds_checks: bool = False,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None,
     metadata: Any | None = None,
+    skip_device_barrier: bool = False,
 ) -> Sequence[ir.Value]:
   config = _lower_to_custom_call_config(
       module,
@@ -614,6 +623,7 @@ def lower_module_to_custom_call(
       ir_version=get_ir_version(ctx),
       disable_bounds_checks=disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
+      skip_device_barrier=skip_device_barrier,
   )
   return _tpu_custom_call_lowering(
       ctx,
