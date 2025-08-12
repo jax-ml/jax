@@ -1087,5 +1087,31 @@ class UserPytreeAPITest(UserAPITestCase):
     str(load_fut)
     load_fut.result()
 
+  def test_format_alone_not_supported(self):
+    # passing a format for a dtype not matching the dtype on disk will cause an
+    # XLA error (since formats can be dtype/bit-width specific), hence allow
+    # format only if dtype is also specified
+    path = self.create_tempdir()
+    data = jnp.arange(16 * 16, dtype=jnp.bfloat16).reshape((16, 16))
+    sharding = NamedSharding(jtu.create_mesh((1, 1), ('x', 'y')), P('x', None))
+    data: jax.Array = jax.device_put(data, sharding)
+    tree_save(data, path)
+    with self.assertRaisesRegex(NotImplementedError,
+                                'Deserialization with `Format` instead of'
+                                ' `Sharding` is not currently supported.'):
+      pytree_serialization.load(path, shardings=data.format)
+
+  def test_formats_support(self):
+    path = self.create_tempdir()
+    data = jnp.arange(16 * 16, dtype=jnp.float32).reshape((16, 16))
+    data_bf16_format = jnp.arange(16 * 16, dtype=jnp.bfloat16).reshape(
+        (16, 16)).format
+    sharding = NamedSharding(jtu.create_mesh((1, 1), ('x', 'y')), P('x', None))
+    data: jax.Array = jax.device_put(data, sharding)
+    tree_save(data, path)
+    pytree_serialization.load(path, shardings=jax.ShapeDtypeStruct(
+        data.shape, jnp.bfloat16, sharding=data_bf16_format))
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

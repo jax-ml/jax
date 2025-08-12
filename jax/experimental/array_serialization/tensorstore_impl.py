@@ -494,7 +494,7 @@ def estimate_read_memory_footprint(t: ts.TensorStore,
 
 
 async def async_deserialize(
-    user_in_sharding: jax.sharding.Sharding | Format,
+    user_in_sharding: jax.sharding.Sharding | Format | jax.ShapeDtypeStruct,
     tensorstore_spec: ts.Spec | dict[str, Any],
     global_shape: Sequence[int] | None = None,
     dtype=None,
@@ -506,6 +506,9 @@ async def async_deserialize(
   """Main performant deserialization routine for arrays using tensorstore."""
   in_sharding = (user_in_sharding.sharding
                  if isinstance(user_in_sharding, Format) else user_in_sharding)
+  if isinstance(user_in_sharding, jax.ShapeDtypeStruct):
+    dtype = dtype if dtype is not None else user_in_sharding.dtype
+    in_sharding = user_in_sharding.sharding
   if not isinstance(in_sharding, jax.sharding.Sharding):
     raise ValueError(
         'sharding passed to deserialization should be specified, concrete and'
