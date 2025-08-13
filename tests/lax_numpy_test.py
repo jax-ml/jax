@@ -4802,11 +4802,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_one_hot_op = lambda x, i: jnp.take_along_axis(
         x, i, axis=axis, mode='one_hot'
     )
-
-    if hasattr(np, "take_along_axis"):
-      np_op = lambda x, i: np.take_along_axis(x, i, axis=axis)
-      self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
-      self._CheckAgainstNumpy(np_op, jnp_one_hot_op, args_maker)
+    np_op = lambda x, i: np.take_along_axis(x, i, axis=axis)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+    self._CheckAgainstNumpy(np_op, jnp_one_hot_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
     self._CompileAndCheck(jnp_one_hot_op, args_maker)
 
