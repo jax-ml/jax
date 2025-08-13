@@ -24,6 +24,7 @@ from jax._src import clusters
 from jax._src import config
 from jax._src import xla_bridge
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -133,9 +134,10 @@ class State:
       )
       logger.warning(warning)
 
-
-    heartbeat_kwargs = {}
-    heartbeat_kwargs['heartbeat_timeout'] = heartbeat_timeout_seconds
+    recoverable_kwargs = {}
+    if jaxlib_extension_version >= 368:
+      # In jaxlib version 368, the recoverable argument was added.
+      recoverable_kwargs['recoverable'] = _ENABLE_RECOVERABILITY.value
 
     if process_id == 0:
       if self.service is not None:
@@ -144,7 +146,8 @@ class State:
           'Starting JAX distributed service on %s', coordinator_bind_address
       )
       self.service = _jax.get_distributed_runtime_service(
-          coordinator_bind_address, num_processes, **heartbeat_kwargs) # type: ignore
+          coordinator_bind_address, num_processes,
+          heartbeat_timeout=heartbeat_timeout_seconds)
 
     self.num_processes = num_processes
 
@@ -153,8 +156,8 @@ class State:
 
     self.client = _jax.get_distributed_runtime_client(
         coordinator_address, process_id, init_timeout=initialization_timeout,
-        use_compression=True, recoverable=_ENABLE_RECOVERABILITY.value,
-        **heartbeat_kwargs)  # type: ignore
+        use_compression=True, heartbeat_timeout=heartbeat_timeout_seconds,
+        **recoverable_kwargs)  # type: ignore
     logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
