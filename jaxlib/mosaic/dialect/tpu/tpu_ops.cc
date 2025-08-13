@@ -1848,43 +1848,43 @@ LogicalResult AllReduceOp::verify() {
       return emitOpError("Vector mask all-reduce must have i32 output");
     }
     switch (kind) {
-      case ReductionKind::SUM:
-      case ReductionKind::FIND_FIRST_SET:
+      case ReductionKind::kSum:
+      case ReductionKind::kFindFirstSet:
         break;
       default:
         return emitOpError(
-            "Mask all-reduce only supports SUM and FIND_FIRST_SET kinds");
+            "Mask all-reduce only supports sum and find_first_set kinds");
     }
     return success();
   }
 
   switch (kind) {
-    case ReductionKind::SUM:
-    case ReductionKind::MAX:
-    case ReductionKind::MIN:
+    case ReductionKind::kSum:
+    case ReductionKind::kMax:
+    case ReductionKind::kMin:
       if (in_ty != out_ty) {
         return emitOpError(
-            "SUM, MAX, and MIN reductions must have the same "
+            "Sum, max, and min reductions must have the same "
             "input and output type");
       }
       break;
-    case ReductionKind::TPU_ARG_MAX:
-    case ReductionKind::TPU_ARG_MIN:
+    case ReductionKind::kArgMax:
+    case ReductionKind::kArgMin:
       if (in_ty.getShape() != out_ty.getShape()) {
-        return emitOpError("TPU_ARG_MAX and TPU_ARG_MIN "
+        return emitOpError("Arg_max and arg_min "
                            "must have the same input and output shape");
       }
       if (!in_ty.getElementType().isF32()) {
         return emitOpError("Not Implemented: Only f32 input is supported for "
-                           "TPU_ARG_MAX and TPU_ARG_MIN");
+                           "arg_max and arg_min");
       }
       if (!out_ty.getElementType().isSignlessInteger(in_bitwidth)) {
         return emitOpError(absl::StrFormat(
-            "TPU_ARG_MAX and TPU_ARG_MIN must have i%d output", in_bitwidth));
+            "Arg_max and arg_min must have i%d output", in_bitwidth));
       }
       break;
-    case ReductionKind::FIND_FIRST_SET:
-      return emitOpError("Only i1 input is supported for FIND_FIRST_SET");
+    case ReductionKind::kFindFirstSet:
+      return emitOpError("Only i1 input is supported for find_first_set");
       break;
   }
   return success();
@@ -1896,17 +1896,17 @@ LogicalResult ReduceIndexOp::verify() {
   auto bitwidth = in_ty.getElementTypeBitWidth();
   auto axis = getAxis();
   auto kind = getKind();
-  if (kind != ReductionKind::TPU_ARG_MAX &&
-      kind != ReductionKind::TPU_ARG_MIN) {
-    return emitOpError("Reduction kind must be TPU_ARG_MAX or TPU_ARG_MIN");
+  if (kind != ReductionKind::kArgMax &&
+      kind != ReductionKind::kArgMin) {
+    return emitOpError("Reduction kind must be arg_max or arg_min");
   }
   if (!in_ty.getElementType().isF32()) {
     return emitOpError("Not Implemented: Only f32 input is supported for "
-                       "TPU_ARG_MAX and TPU_ARG_MIN");
+                       "arg_max and arg_min");
   }
   if (!out_ty.getElementType().isSignlessInteger(bitwidth)) {
     return emitOpError(absl::StrFormat(
-        "TPU_ARG_MAX and TPU_ARG_MIN must have i%d output", bitwidth));
+        "Arg_max and arg_min must have i%d output", bitwidth));
   }
 
   auto in_shape = in_ty.getShape();

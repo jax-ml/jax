@@ -4523,15 +4523,15 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
   tpu::ReductionKind tpu_kind;
   switch (multi_reduction_op.getKind()) {
     case vector::CombiningKind::ADD:
-      tpu_kind = tpu::ReductionKind::SUM;
+      tpu_kind = tpu::ReductionKind::kSum;
       break;
     case vector::CombiningKind::MAXIMUMF:
     case vector::CombiningKind::MAXSI:
-      tpu_kind = tpu::ReductionKind::MAX;
+      tpu_kind = tpu::ReductionKind::kMax;
       break;
     case vector::CombiningKind::MINIMUMF:
     case vector::CombiningKind::MINSI:
-      tpu_kind = tpu::ReductionKind::MIN;
+      tpu_kind = tpu::ReductionKind::kMin;
       break;
     default:
       return multi_reduction_op.emitOpError(
@@ -4575,20 +4575,20 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     auto reduce_elementwise = [&](Value lhs, Value rhs) -> Value {
       Value result;
       switch (tpu_kind) {
-        case tpu::ReductionKind::SUM:
+        case tpu::ReductionKind::kSum:
           result =
                   is_int
                       ? builder.create<arith::AddIOp>(loc, lhs, rhs).getResult()
                       : builder.create<arith::AddFOp>(loc, lhs, rhs)
                             .getResult();
           break;
-        case tpu::ReductionKind::MAX:
+        case tpu::ReductionKind::kMax:
               result = is_int ? builder.create<arith::MaxSIOp>(loc, lhs, rhs)
                                     .getResult()
                      : builder.create<arith::MaximumFOp>(loc, lhs, rhs)
                            .getResult();
           break;
-        case tpu::ReductionKind::MIN:
+        case tpu::ReductionKind::kMin:
               result = is_int ? builder.create<arith::MinSIOp>(loc, lhs, rhs)
                                     .getResult()
                      : builder.create<arith::MinimumFOp>(loc, lhs, rhs)
@@ -4651,7 +4651,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
           size_dim1 *= src_layout.getImplicitTiledDims(src_shape, 1)[0];
         }
         switch (tpu_kind) {
-          case tpu::ReductionKind::SUM:
+          case tpu::ReductionKind::kSum:
             if (is_int) {
               IntegerAttr size_attr = builder.getI32IntegerAttr(size_dim1);
               TypedValue<VectorType> source_value = getFullVector(
@@ -4671,8 +4671,8 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
             }
             break;
           // We don't need to do anything for other reduction kinds.
-          case tpu::ReductionKind::MAX:
-          case tpu::ReductionKind::MIN:
+          case tpu::ReductionKind::kMax:
+          case tpu::ReductionKind::kMin:
             break;
           default:
             multi_reduction_op.emitOpError(
@@ -4714,7 +4714,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
       } else if (!is_double_replicated_double_reduced) {
         int64_t size_dim0 = src_layout.getImplicitTiledDims(src_shape, 1)[0];
         switch (tpu_kind) {
-          case tpu::ReductionKind::SUM:
+          case tpu::ReductionKind::kSum:
             if (is_int) {
               IntegerAttr size_attr = builder.getI32IntegerAttr(size_dim0);
               TypedValue<VectorType> source_value = getFullVector(
@@ -4733,8 +4733,8 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
                   builder.create<arith::MulFOp>(loc, *acc_vreg, source_value);
             }
             break;
-          case tpu::ReductionKind::MAX:
-          case tpu::ReductionKind::MIN:
+          case tpu::ReductionKind::kMax:
+          case tpu::ReductionKind::kMin:
             break;
           default:
             multi_reduction_op.emitOpError(
