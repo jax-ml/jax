@@ -4564,10 +4564,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       zero_index = arith.constant(ir.IndexType.get(), 0)
       vector.store(r_out, result_gmem, [zero_index] * len(acc_shape))
 
-    a_jax_shape = jax.ShapeDtypeStruct(a_shape, ab_type)
-    b_jax_shape = jax.ShapeDtypeStruct(b_shape, ab_type)
-    acc_jax_shape = jax.ShapeDtypeStruct(acc_shape, acc_type)
-
     scratch_shape = [
         jax.ShapeDtypeStruct(a_shape, ab_type),
         jax.ShapeDtypeStruct(b_shape, ab_type),
@@ -4579,8 +4575,11 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
         matmul,
         grid=(1, 1, 1),
         block=(128, 1, 1),
-        in_shape=(a_jax_shape, b_jax_shape),
-        out_shape=acc_jax_shape,
+        in_shape=(
+            jax.ShapeDtypeStruct(a_shape, ab_type),
+            jax.ShapeDtypeStruct(b_shape, ab_type),
+        ),
+        out_shape=jax.ShapeDtypeStruct(acc_shape, acc_type),
         smem_scratch_shape=scratch_shape,
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
