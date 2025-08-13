@@ -25,6 +25,10 @@ import numpy as np
 from jax._src import core
 from jax._src import deprecations
 from jax._src import dtypes
+from jax._src.dtypes import (
+    canonicalize_value as canonicalize_dtype,
+    canonicalize_value_handlers as canonicalize_dtype_handlers,
+    InvalidInputException)
 from jax._src.abstract_arrays import numpy_scalar_types
 from jax._src.util import safe_zip, safe_map
 
@@ -88,29 +92,6 @@ def tuple_sharding_proto(elems):
 
 # IR constants
 
-class InvalidInputException(Exception):
-  pass
-
-
-# TODO(mattjj): try to remove this canonicalize_dtype stuff
-def canonicalize_dtype(x):
-  typ = type(x)
-  handler = canonicalize_dtype_handlers.get(typ)
-  if handler: return handler(x)
-  for typ in typ.__mro__:
-    handler = canonicalize_dtype_handlers.get(typ)
-    if handler: return handler(x)
-  if hasattr(x, '__jax_array__'):
-    deprecations.warn(
-      'jax-abstract-dunder-array',
-      ('Triggering of __jax_array__() during abstractification is deprecated.'
-       ' To avoid this error, either explicitly convert your object using'
-       ' jax.numpy.array(), or register your object as a pytree.'),
-      stacklevel=6)
-    return canonicalize_dtype(x.__jax_array__())
-  raise InvalidInputException(
-      f"Argument '{x}' of type {type(x)} is not a valid JAX type.")
-
 def _canonicalize_masked_array_dtype(x):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
                    "Use arr.filled() to convert the value to a standard numpy array.")
@@ -122,7 +103,6 @@ def _canonicalize_python_scalar_dtype(typ, x):
   return np.asarray(
       x, dtypes.canonicalize_dtype(dtypes._scalar_type_to_dtype(typ, x)))
 
-canonicalize_dtype_handlers: dict[Any, Callable] = {}
 canonicalize_dtype_handlers.update(
     (t, _canonicalize_ndarray_dtype) for t in numpy_scalar_types)
 canonicalize_dtype_handlers[np.ndarray] = _canonicalize_ndarray_dtype
@@ -137,3 +117,9 @@ initial_style_primitives: set[core.Primitive] = set()
 
 def register_initial_style_primitive(prim: core.Primitive):
   initial_style_primitives.add(prim)
+
+def dont_canonicalize_dtype(val):
+  if isinstance(core.get_aval(val), core.ShapedArray):
+    val = canonicalize_dtype(prev_val := val)
+    assert val.dtype == dtypes.dtype(prev_val), (val, prev_val)
+  return prev_val

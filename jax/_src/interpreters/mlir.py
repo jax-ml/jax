@@ -265,7 +265,7 @@ def ir_constant(val: Any,
   if np.shape(val) and (c_val := const_lowering.get(id(val))) is not None:
     return c_val
   if canonicalize_dtype:
-    val = xla.canonicalize_dtype(val)
+    val = xla.dont_canonicalize_dtype(val)
   for t in type(val).__mro__:
     handler = _constant_handlers.get(t)
     if handler:

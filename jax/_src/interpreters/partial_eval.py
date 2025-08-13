@@ -172,6 +172,7 @@ class JaxprTrace(Trace['JaxprTracer']):
 
   def new_instantiated_literal(self, val) -> JaxprTracer:
     aval = get_aval(val)
+    val = dtypes.canonicalize_value(val)
     return JaxprTracer(self, PartialVal.unknown(aval), Literal(val, aval))
 
   def new_instantiated_const(self, val) -> JaxprTracer:
@@ -2016,17 +2017,20 @@ class DynamicJaxprTrace(core.Trace):
   pure = lift = new_const
 
   def _new_const(self, aval, c, source_info: SourceInfo) -> DynamicJaxprTracer:
+    id_c = id(c)
+    if not isinstance(c, core.Tracer):
+      c = dtypes.canonicalize_value(c)
     if core.is_literalable(c):
       val = Literal(c, aval)
       return DynamicJaxprTracer(self, aval, val, source_info)
     else:
       var = self.frame.newvar(aval)
       tracer = DynamicJaxprTracer(self, aval, var, source_info)
-      self.frame.constid_to_tracer[id(c)] = tracer
+      self.frame.constid_to_tracer[id_c] = tracer
       if isinstance(aval, core.AvalQDD):
         self.frame.mutable_qdds.append((var, tracer.mutable_qdd))
       self.frame.constvar_to_val[var] = c
-      finalize(tracer, self.finalize_const, var, id(c))
+      finalize(tracer, self.finalize_const, var, id_c)
       return tracer
 
   def finalize_const(self, var, constid):
