@@ -64,10 +64,19 @@ def _repeat_abstract_eval(x, *, repeats, axis):
 
 
 def _repeat_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, repeats, axis):
+  # The "repeat" primitive has similar semantics to jax.numpy.tile. That is,
+  # repeat(x, 2, 0) = jnp.concatenate([x, x], axis=0).
   def _repeat(x):
-    return jnp.repeat(x, repeats, axis)
+    repeats_per_axis = [repeats if i == axis else 1 for i in range(x.ndim)]
+    return jnp.tile(x, repeats_per_axis)
   return mlir.lower_fun(_repeat, multiple_results=False)(ctx, x)
 mlir.register_lowering(repeat_p, _repeat_lowering_rule)
+
+
+@repeat_p.def_impl
+def _repeat_impl(x, *, repeats, axis):
+  repeats_per_axis = [repeats if i == axis else 1 for i in range(x.ndim)]
+  return jnp.tile(x, repeats_per_axis)
 
 bitcast_p = jax_core.Primitive("bitcast")
 
