@@ -3255,7 +3255,7 @@ class MeshExecutable(stages.Executable):
       return None
 
     def aot_cache_miss(*args, **kwargs):
-      # args do not include the const args
+      # args do not include the const args.
       # See https://docs.jax.dev/en/latest/internals/constants.html.
       outs, out_flat, args_flat = stages.Compiled.call(params, *args, **kwargs)
       out_flat, out_tree_dispatch = reflatten_outputs_for_dispatch(
@@ -3319,7 +3319,9 @@ def check_arg_avals_for_call(ref_avals, arg_avals,
       num_mismatch_str = "The"
     raise TypeError(
         "Argument types differ from the types for which this computation was "
-        f"compiled. {num_mismatch_str} mismatches are:\n{str_errors}")
+        "compiled. Perhaps you are calling the compiled executable with a "
+        "different enable_x64 mode than when it was AOT compiled? "
+        f"{num_mismatch_str} mismatches are:\n{str_errors}")
 
 
 def _get_metadata_jit_pmap(local_devices, num_in_shardings, num_out_shardings):

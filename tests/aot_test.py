@@ -14,8 +14,9 @@
 
 import contextlib
 import unittest
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 import jax
+from jax import lax
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
@@ -169,6 +170,68 @@ class JaxAotTest(jtu.JaxTestCase):
         jaxlib_extension_version < 366):
       expected_aot_calls = 1
     self.assertCacheMisses(lambda: compiled(inp), cpp=0, aot_call=expected_aot_calls)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"{use_np=}_{lower=}_{compile=}_{exec=}",
+           use_np=use_np,
+           lower=lower, compile=compile, exec=exec)
+      for use_np in (False, True)
+      for lower in (False, True)
+      for compile in (False, True)
+      for exec in (False, True))
+  def test_with_constants_enable_x64(self, *, use_np, lower, compile, exec):
+    # Closed-over constant is 64-bit. Each of lowering, compilation, and
+    # execution can be run in 64-bit or 32-bit mode.
+    with config.enable_x64(True):
+      arange = np.arange if use_np else jnp.arange
+      const = arange(8, dtype=np.int64) + 42
+
+      @pjit
+      def f(x):
+        return lax.convert_element_type(const, np.float32) + x
+
+    inp = np.arange(8., dtype=np.float32)
+    with config.enable_x64(True) if lower else contextlib.nullcontext():
+      lowered = f.lower(inp)
+    with config.enable_x64(True) if compile else contextlib.nullcontext():
+      compiled = lowered.compile()
+
+    def run():
+      with config.enable_x64(True) if exec else contextlib.nullcontext():
+        return compiled(inp)
+
+    self.assertLen(compiled.args_info[0], 1)  # Not including const_args
+    self.assertLen(compiled.in_avals[0], 1)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertLen(compiled._params.const_args, 1)
+      self.assertLen(compiled._executable.in_avals, 2)
+      expected_dtype = np.int64
+      if not config.enable_x64.value and use_np and not lower:
+        expected_dtype = np.int32
+      self.assertEqual(compiled._executable.in_avals[0].dtype, expected_dtype)
+      self.assertIs(compiled._params.const_args[0], const)
+    else:
+      self.assertLen(compiled._params.const_args, 0)
+      self.assertLen(compiled._executable.in_avals, 1)
+
+    # In some cases we expect errors
+    if (config.use_simplified_jaxpr_constants.value and
+        not config.enable_x64.value and
+        use_np and lower != exec):
+      with self.assertRaisesRegex(
+          TypeError,
+          "Perhaps you are calling the compiled executable with a different enable_x64"):
+        run()
+      return
+
+    self.assertArraysEqual(run(),
+                           lax.convert_element_type(const, inp.dtype) + inp)
+    # Trigger cache hit
+    expected_aot_calls = 0
+    if (config.use_simplified_jaxpr_constants.value and
+        jaxlib_extension_version < 366):
+      expected_aot_calls = 1
+    self.assertCacheMisses(run, cpp=0, aot_call=expected_aot_calls)
 
   def test_with_ref_constants(self):
     x_ref = core.mutable_array(0)
