@@ -34,7 +34,6 @@ class FusedTest(jtu.JaxTestCase):
     x_host = jax.jit(lambda: jax.device_put(x, jax.memory.Space.Host))()
     y_device = jnp.arange(3.)
     low = jax.jit(f).trace(x_host, y_device).lower(lowering_platforms=('cuda',))
-    print(low.as_text())
     self.assertIn('custom_call', low.as_text())
 
   def test_vmap_basic(self):
