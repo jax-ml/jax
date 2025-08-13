@@ -669,7 +669,7 @@ void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
     // Call nvdisasm to pretty-print SASS.
     std::vector<const char*> nvdisasm_args = {
         "nvdisasm", "-ndf", "-c", elf_path.c_str()};
-    if (dump_opts.sass) {
+    if (dump_opts.sass_ctrl) {
       nvdisasm_args.push_back("-hex");
     }
     nvdisasm_args.push_back(nullptr);
