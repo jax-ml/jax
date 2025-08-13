@@ -715,11 +715,10 @@ def standardize(x: ArrayLike,
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
 @partial(api.jit, static_argnames=("num_classes", "dtype", "axis"))
 def _one_hot(x: Array, num_classes: int, *,
-             dtype: Any, axis: int | AxisName) -> Array:
+             dtype: DTypeLike, axis: int | AxisName) -> Array:
   num_classes = core.concrete_dim_or_error(
       num_classes,
       "The error arose in jax.nn.one_hot argument `num_classes`.")
-  dtype = dtypes.canonicalize_dtype(dtype)
   try:
     output_pos_axis = util.canonicalize_axis(axis, x.ndim + 1)  # type: ignore[arg-type]
   except TypeError:
@@ -741,7 +740,7 @@ def _one_hot(x: Array, num_classes: int, *,
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
 def one_hot(x: Any, num_classes: int, *,
-            dtype: Any = dtypes.float_, axis: int | AxisName = -1) -> Array:
+            dtype: Any | None = None, axis: int | AxisName = -1) -> Array:
   """One-hot encodes the given indices.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length
@@ -775,6 +774,7 @@ def one_hot(x: Any, num_classes: int, *,
       'jax-nn-one-hot-float-input',
       f"jax.nn.one_hot input should be integer-typed; got dtype={x_arr.dtype}",
       stacklevel=1)
+  dtype = dtypes.default_float_dtype() if dtype is None else dtype
   return _one_hot(x_arr, num_classes, dtype=dtype, axis=axis)
 
 

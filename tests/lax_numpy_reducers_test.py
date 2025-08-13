@@ -168,8 +168,11 @@ def _reducer_output_dtype(name: str, input_dtype: np.dtype, promote_integers: bo
       input_dtype = dtypes.to_numeric_dtype(input_dtype)
     if promote_integers:
       if dtypes.issubdtype(input_dtype, np.integer):
-        default_int = dtypes.canonicalize_dtype(
-            dtypes.uint if dtypes.issubdtype(input_dtype, np.unsignedinteger) else dtypes.int_)
+        default_int = (
+          dtypes.default_uint_dtype()
+          if dtypes.issubdtype(input_dtype, np.unsignedinteger)
+          else dtypes.default_int_dtype()
+        )
         if np.iinfo(input_dtype).bits < np.iinfo(default_int).bits:
           return default_int
   return input_dtype
