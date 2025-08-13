@@ -1423,6 +1423,7 @@ pytype_strict_library(
     visibility = ["//jax:internal"],
     deps = [
         ":api",
+        ":batching",
         ":cloud_tpu_init",
         ":config",
         ":core",

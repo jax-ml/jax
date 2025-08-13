@@ -33,6 +33,7 @@ from jax._src import dispatch
 from jax._src import sharding_impls
 from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.frozen_dict import FrozenDict
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.lib import tpu
 from jaxlib.mlir import ir
@@ -75,6 +76,21 @@ def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
 tpu_custom_call_p = core.Primitive("tpu_custom_call")
 tpu_custom_call_p.multiple_results = True
 dispatch.simple_impl(tpu_custom_call_p)
+
+
+def tpu_custom_call_batcher(axis_data, args, dims, **kwargs):
+  if axis_data.size != 1:
+    raise NotImplementedError(
+        "tpu_custom_call does not support non-trivial batching."
+    )
+  unbatched_args = tuple(
+      a if (d is batching.not_mapped or d is None) else a[d]
+      for a, d in zip(args, dims, strict=True)
+  )
+  out_unbatched = tpu_custom_call_p.bind(*unbatched_args, **kwargs)
+  out = tuple(o[None] for o in out_unbatched)
+  return out, (0,) * len(out)
+batching.fancy_primitive_batchers[tpu_custom_call_p] = tpu_custom_call_batcher
 
 
 class MemorySpace(enum.Enum):
