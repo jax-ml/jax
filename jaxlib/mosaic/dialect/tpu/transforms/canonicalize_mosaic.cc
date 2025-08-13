@@ -1548,6 +1548,59 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
   VectorType input_vty = op.getVector().getType();
   VectorType output_vty = op.getType();
   Type element_type = op.getVector().getType().getElementType();
+
+  auto create_or_decompose_transpose =
+      [&](Value input, ArrayRef<int64_t> permutation) -> Value {
+    auto create_transpose_op = [&builder](Value input, ArrayRef<int64_t> perm) {
+      auto input_vty = cast<VectorType>(input.getType());
+      SmallVector<int64_t> new_shape(input_vty.getShape().size());
+      for (int i = 0; i < input_vty.getShape().size(); ++i) {
+        new_shape[i] = input_vty.getShape()[perm[i]];
+      }
+      return builder.create<tpu::TransposeOp>(
+          VectorType::get(new_shape, input_vty.getElementType()), input, perm);
+    };
+
+    // We support transpositions of the following dims in apply:
+    //
+    // (1) 3D transpose for second-minor > major.
+    // (2) ND transpose between majors and between second-minor and minormost.
+    //
+    // Other cases can be decomposed into multiple transpositions of (1) and
+    // (2).
+    if (permutation == ArrayRef<int64_t>({1, 2, 0}) ||
+        permutation == ArrayRef<int64_t>({2, 0, 1}) ||
+        permutation == ArrayRef<int64_t>({2, 1, 0})) {
+      int64_t dim_size = permutation.size();
+      bool minormost_to_untiled = permutation[dim_size - 3] == dim_size - 1;
+      bool unchanged_second_minor = permutation[dim_size - 2] == dim_size - 2;
+      bool minormost_to_second_minor =
+          permutation[dim_size - 2] == dim_size - 1;
+      // For example, given the permutation (2, 1, 0), transpose order is:
+      // (0, 1, 2) > (0, 2, 1) > (2, 0, 1) > (2, 1, 0)
+      //           |           |           |
+      //          (2)         (1)         (2)
+      // TODO(b/419268277): The decomposition can be generalized to dim_size !=
+      // 3, but we don't support > 3D transposition between major and
+      // second-minor in apply.
+      Value res = input;
+      if (minormost_to_untiled) {
+        // Transpose minormost to second-minor to use (1).
+        res = create_transpose_op(res, ArrayRef<int64_t>({0, 2, 1}));
+      }
+      res = create_transpose_op(res, ArrayRef<int64_t>({1, 0, 2}));
+      if ((minormost_to_untiled && unchanged_second_minor) ||
+          minormost_to_second_minor) {
+        // When transposing minormost to major, we need an additional
+        // transposition between minormost and second-minor to reposition the
+        // original second-minor if it's unchanged.
+        res = create_transpose_op(res, ArrayRef<int64_t>({0, 2, 1}));
+      }
+      return res;
+    }
+    return create_transpose_op(input, permutation);
+  };
+
   // TODO(mvoz): Even gen 7 support is spotty on all test targets.
   if (element_type.getIntOrFloatBitWidth() == 8 && ctx.compatibility_mode &&
       ctx.hardware_generation > 3) {
@@ -1563,9 +1616,8 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
           op.getOperand());
     }
 
-    Value transposed_bf16 = builder.create<tpu::TransposeOp>(
-        VectorType::get(output_vty.getShape(), builder.getBF16Type()), val_bf16,
-        op.getPermutation());
+    Value transposed_bf16 =
+        create_or_decompose_transpose(val_bf16, op.getPermutation());
 
     Value new_result;
     if (isa<IntegerType>(element_type)) {
@@ -1579,7 +1631,12 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
     op.erase();
     return new_result;
   }
-  return raw_op.getResult(0);
+
+  Value res =
+      create_or_decompose_transpose(op.getVector(), op.getPermutation());
+  op.replaceAllUsesWith(res);
+  op.erase();
+  return res;
 }
 
 FailureOr<Value> canonicalize_arith_extf(const CanonicalizeContext &ctx,

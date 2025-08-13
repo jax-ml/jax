@@ -2503,6 +2503,9 @@ class OpsTest(PallasBaseTest):
       shape_and_axes=[
           ((8, 16, 128), (0, 2, 1)),
           ((16, 128, 128), (1, 0, 2)),
+          ((8, 16, 128), (1, 2, 0)),
+          ((8, 16, 128), (2, 0, 1)),
+          ((8, 16, 128), (2, 1, 0)),
           ((1, 2, 16, 128), (0, 1, 2, 3)),
           ((1, 2, 16, 128), (1, 0, 3, 2)),
       ]
@@ -2511,6 +2514,13 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("Not implemented on GPU")
     in_shape, transpose_axes = shape_and_axes
+
+    if transpose_axes in (
+        (1, 2, 0),
+        (2, 0, 1),
+        (2, 1, 0),
+    ) and not jtu.if_cloud_tpu_at_least(2025, 8, 16):
+      self.skipTest("Requires libtpu built after 2025-8-16")
 
     x = jnp.arange(math.prod(in_shape), dtype=jnp.float32).reshape(in_shape)
     expected = jnp.transpose(x, axes=transpose_axes)
