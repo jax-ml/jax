@@ -71,7 +71,6 @@ from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.state.types import RefBitcaster, RefReshaper
-from jax._src.state.utils import dtype_bitwidth
 from jax._src.typing import Array, DTypeLike
 from jax._src.util import foreach
 from jax._src.util import safe_map
@@ -662,7 +661,7 @@ def _check_block_mappings(
       if bm.array_shape_dtype.dtype == jnp.bool_:
         bitwidth = 32
       else:
-        bitwidth = lax_internal._bit_width(bm.array_shape_dtype.dtype)
+        bitwidth = dtypes.bit_width(bm.array_shape_dtype.dtype)
       packing = 32 // bitwidth
       tiling_size = 128 * packing
       evenly_divisible = (bs0 == as0 or bs0 % tiling_size == 0)
@@ -673,7 +672,7 @@ def _check_block_mappings(
             " shape is equal to the first (and only) dimension of the array"
             " shape, or 2) the first (and only) dimension of the block shape"
             f" is a multiple of the tiling size ({tiling_size} = 128 * (32 //"
-            f" {lax_internal._bit_width(bm.array_shape_dtype.dtype)})) of the"
+            f" {dtypes.bit_width(bm.array_shape_dtype.dtype)})) of the"
             " array shape. "
             + err_details()
         )
@@ -1445,8 +1444,8 @@ def _bitcast_memref(
     ref_dtype: DTypeLike,
     ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
 ) -> tuple[ir.Value, DTypeLike, tuple[int | pallas_core.Squeezed, ...]]:
-  src_bitwidth = dtype_bitwidth(ref_dtype)
-  dst_bitwidth = dtype_bitwidth(bitcaster.dtype)
+  src_bitwidth = dtypes.bit_width(ref_dtype)
+  dst_bitwidth = dtypes.bit_width(bitcaster.dtype)
   if src_bitwidth != dst_bitwidth:
     if len(ref_block_shape) < 2:
       raise NotImplementedError(
