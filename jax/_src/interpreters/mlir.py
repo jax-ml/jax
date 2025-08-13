@@ -265,7 +265,7 @@ def ir_constant(val: Any,
   if np.shape(val) and (c_val := const_lowering.get(id(val))) is not None:
     return c_val
   if canonicalize_dtype:
-    val = xla.canonicalize_dtype(val)
+    val = xla.dont_canonicalize_dtype(val)
   for t in type(val).__mro__:
     handler = _constant_handlers.get(t)
     if handler:
@@ -1897,7 +1897,7 @@ def lower_jaxpr_to_fun(
         [num_dim_vars, num_tokens, num_const_args])
     tokens_in = TokenSet(zip(effects, token_args))
     args: list[IrValues] = unflattened_args
-    unique_consts = {id(c): ir_constant(xla.canonicalize_dtype(c))
+    unique_consts = {id(c): ir_constant(xla.dont_canonicalize_dtype(c))
                      for c in jaxpr.consts}
     consts_for_constvars = [unique_consts[id(c)] for c in jaxpr.consts]
 

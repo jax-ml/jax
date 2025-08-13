@@ -715,6 +715,7 @@ pytype_strict_library(
     ],
     deps = [
         ":config",
+        ":deprecations",
         ":traceback_util",
         ":typing",
         ":util",

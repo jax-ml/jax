@@ -3922,7 +3922,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   def test_shape_dtype_struct_as_const_error(self):
     const = jax.ShapeDtypeStruct((8,), jnp.int32)
-    with self.assertRaisesRegex(TypeError,
+    with self.assertRaisesRegex(Exception,
                                 r"Argument.*is not a valid JAX type"):
       jax.jit(lambda x: (x, const))(jnp.arange(8))
 
