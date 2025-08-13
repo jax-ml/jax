@@ -741,14 +741,19 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
   if (dump_opts.ptx || dump_opts.ptxas || dump_opts.sass) {
     dump_opts.mlir_passes = false;
   }
-
+  const char* dump_llvm_debug_only = getenv("MOSAIC_GPU_DUMP_LLVM");
   const char* debug_only = getenv("MOSAIC_GPU_LLVM_DEBUG_ONLY");
 #ifndef NDEBUG
   bool old_debug_state = false;
+  std::vector<std::string_view> debug_only_types;
   if (debug_only) {
+    debug_only_types = absl::StrSplit(debug_only, ',');
+  }
+  if (dump_llvm_debug_only) {
+    debug_only_types.push_back("serialize-to-llvm");
+  }
+  if (!debug_only_types.empty()) {
     old_debug_state = llvm::DebugFlag;
-    std::vector<std::string_view> debug_only_types =
-        absl::StrSplit(debug_only, ',');
     std::vector<const char*> debug_only_types_ptrs;
     debug_only_types_ptrs.reserve(debug_only_types.size());
     for (std::string_view debug_only_type : debug_only_types) {
@@ -759,10 +764,11 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     llvm::DebugFlag = true;
   }
 #else
-  if (debug_only) {
+  if (debug_only || dump_llvm_debug_only) {
     fprintf(
         stderr,
-        "MOSAIC_GPU_LLVM_DEBUG_ONLY is set but LLVM was built with NDEBUG\n");
+        "MOSAIC_GPU_LLVM_DEBUG_ONLY or MOSAIC_GPU_DUMP_LLVM is set but LLVM "
+        "was built with NDEBUG\n");
     abort();
   }
 #endif
