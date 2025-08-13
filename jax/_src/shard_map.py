@@ -1886,6 +1886,8 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
   devices = tuple(devices) if devices is not None else devices
   axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
       f, axis_name, static_broadcasted_argnums, donate_argnums, in_axes, out_axes)
+  if isinstance(axis_name, core._TempAxisName):
+    axis_name = repr(axis_name)
 
   def infer_params(*args, **kwargs):
     p = _prepare_pmap(f, in_axes, out_axes, static_broadcasted_tuple,

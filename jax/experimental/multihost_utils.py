@@ -26,10 +26,10 @@ from jax._src import core
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import xla
 from jax._src import array
 from jax._src import sharding_impls
 from jax._src.interpreters import pxla
-from jax.interpreters import xla
 from jax._src import pjit as pjit_lib
 from jax.sharding import PartitionSpec as P
 from jax._src import distributed

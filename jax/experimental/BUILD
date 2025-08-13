@@ -298,6 +298,7 @@ pytype_strict_library(
         "//jax/_src:mlir",
         "//jax/_src:sharding_impls",
         "//jax/_src:util",
+        "//jax/_src:xla",
         "//jax/_src:xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
