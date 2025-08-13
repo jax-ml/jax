@@ -326,8 +326,7 @@ JAX_BITWISE_OP_RECORDS = [
     op_record("bitwise_xor", 2, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_fullrange, []),
 ]
-if hasattr(np, "bitwise_count"):
-  # Numpy versions after 1.26
+if jtu.numpy_version() >= (2, 0, 0):
   JAX_BITWISE_OP_RECORDS.append(
     op_record("bitwise_count", 1, int_dtypes, all_shapes, jtu.rand_fullrange, []))
 

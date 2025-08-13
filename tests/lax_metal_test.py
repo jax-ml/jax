@@ -1312,7 +1312,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp_fun = lambda x: jnp.asarray(x).mT
     else:
       jnp_fun = jnp.matrix_transpose
-    if hasattr(np, 'matrix_transpose'):
+    if jtu.numpy_version() >= (2, 0, 0):
       np_fun = np.matrix_transpose
     else:
       np_fun = lambda x: np.swapaxes(x, -1, -2)
@@ -3785,7 +3785,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testAstype(self, from_dtype, to_dtype, use_method):
     rng = self.rng()
     args_maker = lambda: [rng.randn(3, 4).astype(from_dtype)]
-    if (not use_method) and hasattr(np, "astype"):  # Added in numpy 2.0
+    if (not use_method) and jtu.numpy_version() >= (2, 0, 0):
       np_op = lambda x: np.astype(x, to_dtype)
     else:
       np_op = lambda x: np.asarray(x).astype(to_dtype)
@@ -4296,10 +4296,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return x, i
 
     jnp_op = lambda x, i: jnp.take_along_axis(x, i, axis=axis)
-
-    if hasattr(np, "take_along_axis"):
-      np_op = lambda x, i: np.take_along_axis(x, i, axis=axis)
-      self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+    np_op = lambda x, i: np.take_along_axis(x, i, axis=axis)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
   def testTakeAlongAxisWithUint8IndicesDoesNotOverflow(self):

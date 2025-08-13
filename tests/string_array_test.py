@@ -28,10 +28,10 @@ class StringArrayTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if not hasattr(np.dtypes, "StringDType"):
+    if jtu.numpy_version() < (2, 0, 0):
       self.skipTest(
           "Skipping this test because the numpy.dtype.StringDType is not"
-          " available."
+          " available in NumPy v1.X."
       )
 
   def make_test_string_array(self, device=None):
