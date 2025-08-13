@@ -189,10 +189,11 @@ static ifrt::ArrayRef GetIfRtArray(const ExecuteShardedArg& arg) {
   absl::StatusOr<ifrt::DeviceListRef> device_list =
       client->MakeDeviceList(devices);
   TF_CHECK_OK(device_list.status());
+  absl::Span<xla::ifrt::ArrayRef> arrays = absl::MakeSpan(ifrt_arrays);
   auto ifrt_array = client->AssembleArrayFromSingleDeviceArrays(
-      ifrt_arrays.front()->shape(),
+      arrays.at(0)->dtype(), std::move(ifrt_arrays.front()->shape()),
       ifrt::OpaqueSharding::Create(*std::move(device_list), ifrt::MemoryKind()),
-      absl::MakeSpan(ifrt_arrays), ifrt::ArrayCopySemantics::kReuseInput,
+      arrays, ifrt::ArrayCopySemantics::kReuseInput,
       ifrt::SingleDeviceShardSemantics::kAddressableShards);
   TF_CHECK_OK(ifrt_array.status());
   return *ifrt_array;
