@@ -443,10 +443,18 @@ class AbstractRef(core.AbstractValue):
     from jax._src.state.primitives import ref_addupdate  # pytype: disable=import-error
     ref_addupdate(tracer, idx, value)
 
-  def __repr__(self) -> str:
+  def str_short(self, short_dtypes=False, mesh_axis_types=False) -> str:
+    inner_aval_str = self.inner_aval.str_short(
+        short_dtypes=short_dtypes,
+        mesh_axis_types=mesh_axis_types,
+    )
     if self.memory_space is not None:
-      return f'Ref<{self.memory_space}>{{{self.inner_aval.str_short()}}}'
-    return f'Ref{{{self.inner_aval.str_short()}}}'
+      return f'Ref<{self.memory_space}>{{{inner_aval_str}}}'
+    return f'Ref{{{inner_aval_str}}}'
+
+  def __repr__(self) -> str:
+    return self.str_short()
+  __str__ = __repr__
 
   def to_tangent_aval(self):
     return AbstractRef(self.inner_aval.to_tangent_aval(), self.memory_space)
