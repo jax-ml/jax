@@ -1482,7 +1482,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "fused_test",
     srcs = ["fused_test.py"],
-    deps = py_deps("absl/testing"),
+    deps = [
+        "//jax/experimental:fused",
+    ] + py_deps([
+        "absl/testing",
+    ]),
 )
 
 jax_multiplatform_test(

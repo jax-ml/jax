@@ -20,6 +20,8 @@ from jax._src import test_util as jtu
 
 from jax.experimental.fused import fused
 
+jax.config.parse_flags_with_absl()
+
 @fused(out_spaces=(jax.memory.Space.Host, jax.memory.Space.Device))
 def f(x, y):
   z = x + y
@@ -29,13 +31,11 @@ def f(x, y):
 class FusedTest(jtu.JaxTestCase):
 
   def test_basic(self):
-    # TODO(mattjj): make this work without the jit
     x = jnp.arange(3.)
-    x_host = jax.jit(lambda: jax.device_put(x, jax.memory.Space.Host))()
+    x_host = jax.device_put(x, jax.memory.Space.Host)
     y_device = jnp.arange(3.)
     low = jax.jit(f).trace(x_host, y_device).lower(lowering_platforms=('cuda',))
-    print(low.as_text())
-    self.assertIn('custom_call', low.as_text())
+    self.assertIn('custom_call', low.as_text('hlo'))
 
   def test_vmap_basic(self):
     x = jnp.arange(3.)
