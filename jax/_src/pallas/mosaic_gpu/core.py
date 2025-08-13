@@ -1321,6 +1321,8 @@ class Layout(SomeLayout, enum.Enum):
   TCGEN05_M64_COLLECTIVE = enum.auto()
   TCGEN05_TMEM_NATIVE = enum.auto()
 
+  SMEM_GMEM_COPY = enum.auto()
+
   # TODO(b/435159109): Remove this once LLVM regression is addressed.
   _WGMMA_ACC_32BIT = enum.auto()  # Temporarily exposed to work around LLVM bugs
 
@@ -1358,6 +1360,15 @@ class Layout(SomeLayout, enum.Enum):
         return mgpu.TMEM_NATIVE_LAYOUT
       case Layout.TCGEN05_M64_COLLECTIVE:
         return tcgen05.fa_m64_collective_layout(*args, **kwargs)  # pytype: disable=missing-parameter
+      case Layout.SMEM_GMEM_COPY:
+        normalize_args = lambda shape, dtype, swizzle: (shape, dtype, swizzle)
+        shape, dtype, swizzle = normalize_args(*args, **kwargs)
+        bitwidth = dtypes.bit_width(dtype)
+        tiling = (8, 8 * swizzle // bitwidth)
+        row_tiles, col_tiles = mgpu.tile_shape(shape, tiling)[-4:-2]
+        return mgpu.fragmented_array.tiled_copy_smem_gmem_layout(
+            row_tiles, col_tiles, swizzle, bitwidth
+        )
 
 
 # TODO(apaszke): Adjust the users and remove these backfills.

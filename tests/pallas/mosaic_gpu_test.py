@@ -526,6 +526,28 @@ class PallasCallTest(PallasTest):
 
     np.testing.assert_array_equal(kernel(x), x[0] + x[0] + 1)
 
+  def test_sync_copy(self):
+    self.skip_if_wg_semantics()
+
+    shape = (128, 128)
+    transforms = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
+    @functools.partial(
+        self.pallas_call,
+        in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        scratch_shapes=[plgpu.SMEM(shape, jnp.float32, transforms=transforms)],
+    )
+    def kernel(x_ref, y_ref, scratch_ref):
+      layout = plgpu.Layout.SMEM_GMEM_COPY(shape, jnp.float32, swizzle=128)
+      # GMEM loads require optimized=False, because we can't prove coalescing.
+      # But with this layout they should be fast.
+      scratch_ref[...] = plgpu.load(x_ref, (), layout=layout, optimized=False)
+      y_ref[...] = plgpu.layout_cast(scratch_ref[...], layout)
+
+    x = jnp.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
+    np.testing.assert_array_equal(kernel(x), x)
+
   @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
   def test_copy_smem_to_gmem(self, indexer):
     @functools.partial(
@@ -2214,8 +2236,10 @@ class PallasCallTest(PallasTest):
     if layout == plgpu.Layout.TCGEN05_M64_COLLECTIVE:
       layout = plgpu.Layout.TCGEN05_M64_COLLECTIVE(128)
     if layout == plgpu.Layout.WG_STRIDED:
-      layout = plgpu.Layout.WG_STRIDED((128, 128), 2)
+      layout = plgpu.Layout.WG_STRIDED(shape, 2)
       transforms = ()
+    if layout == plgpu.Layout.SMEM_GMEM_COPY:
+      layout = plgpu.Layout.SMEM_GMEM_COPY(shape, jnp.float32, swizzle=128)
 
     @functools.partial(
         self.pallas_call,
