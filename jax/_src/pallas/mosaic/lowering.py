@@ -1256,11 +1256,17 @@ def _swap_lowering_rule(
 
 
 def _make_index(s):
-  if isinstance(s, (int, np.ndarray)):
-    return ir_constant(s, ir.IndexType.get())
-  if s.type == ir.IndexType.get():
-    return s
-  return arith.index_cast(ir.IndexType.get(), s)
+  match s:
+    case int():
+      return ir_constant(s, ir.IndexType.get())
+    case np.generic() | np.ndarray() if np.issubdtype(s.dtype, np.integer):
+      return ir_constant(s, ir.IndexType.get())
+    case ir.Value():
+      if s.type == ir.IndexType.get():
+        return s
+      if ir.IntegerType.isinstance(s.type):
+        return arith.index_cast(ir.IndexType.get(), s)
+  raise TypeError(f"Unsupported index {s} of type {type(s)}")
 
 
 def _maybe_cast_to_index(cast_to_index, x):

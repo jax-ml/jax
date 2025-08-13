@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from __future__ import annotations
+
+import functools
 import sys
 
 from absl.testing import absltest
@@ -22,9 +24,9 @@ from jax import random
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.state import indexing
-import numpy as np
-import jax.numpy as jnp
 from jax.experimental import pallas as pl
+import jax.numpy as jnp
+import numpy as np
 
 if sys.platform != "win32":
   from jax.experimental.pallas import tpu as pltpu
@@ -641,6 +643,27 @@ class IndexerOpsTest(PallasBaseTest):
     expected = expected.at[6].set(jnp.ones((8, 128), jnp.int32) * 6)
     expected = expected.at[7].set(jnp.ones((8, 128), jnp.int32) * 6)
     self.assertArraysEqual(res, expected)
+
+  @parameterized.parameters(
+      lambda: 0.0, lambda: pl.program_id(0).astype(jnp.float32)
+  )
+  def test_load_with_invalid_index(self, index_fn):
+    if self.INTERPRET:
+      self.skipTest("Not supported in interpret mode")
+
+    # Reproducer for https://github.com/jax-ml/jax/issues/26034.
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8,), jnp.int32),
+        grid=(1,),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[()] = x_ref[index_fn()]
+
+    x = jnp.arange(8, dtype=jnp.int32).reshape((1, 8))
+    with self.assertRaisesRegex(Exception, "Unsupported index"):
+      kernel(x)
 
 
 class IndexerOpsInterpretTest(IndexerOpsTest):
