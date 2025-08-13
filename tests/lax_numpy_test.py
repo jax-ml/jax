@@ -47,6 +47,7 @@ from jax.test_util import check_grads
 from jax._src import array
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
@@ -1560,9 +1561,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
 
   def testTrimZerosNotOneDArray(self):
-    # TODO: make this an error after the deprecation period.
-    with self.assertWarnsRegex(DeprecationWarning,
-                               r"Passing arrays with ndim != 1 to jnp.trim_zeros\(\)"):
+    if deprecations.is_accelerated('jax-numpy-trimzeros-not-1d-array'):
+      ctx = self.assertRaisesRegex(TypeError, "'filt' must be 1-D array")
+    else:
+      ctx = self.assertWarnsRegex(DeprecationWarning,
+                                  r'Passing arrays with ndim != 1 to jnp.trim_zeros\(\)')
+    with ctx:
       jnp.trim_zeros(jnp.array([[0.0, 1.0, 0.0],[2.0, 4.5, 0.0]]))
 
   @jtu.sample_product(
