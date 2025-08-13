@@ -29,6 +29,7 @@ from jax._src import pjit
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import tree_util
+from jax._src import custom_derivatives
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -780,3 +781,26 @@ def _pjit_state_discharge_rule(
   sentinel = object()
   assert next(ref_vals_iter, sentinel) is sentinel
   return new_invals, out_vals
+
+
+@register_discharge_rule(custom_derivatives.custom_vjp_call_p)
+def custom_vjp_call_discharge(in_avals, out_avals, *args, call_jaxpr,
+                              fwd_jaxpr_thunk, bwd, out_trees, symbolic_zeros,
+                              num_consts):
+  # Discharge happens after all AD is done, so we can discard the AD rules.
+  del fwd_jaxpr_thunk, bwd, out_trees, symbolic_zeros, num_consts
+  dis_jaxpr, dis_consts = discharge_state(call_jaxpr.jaxpr, call_jaxpr.consts)
+  outs = _eval_jaxpr_ad_error(dis_jaxpr, dis_consts, args)
+  out_vals, ref_vals = split_list(outs, [len(call_jaxpr.out_avals)])
+  ref_vals_ = iter(ref_vals)
+  new_invals = [next(ref_vals_) if isinstance(aval, AbstractRef) else None
+                for aval in in_avals]
+  assert next(ref_vals_, None) is None
+  return new_invals, out_vals
+
+@partial(custom_derivatives.custom_jvp, nondiff_argnums=(0,))
+def _eval_jaxpr_ad_error(dis_jaxpr, consts, args):
+  return core.eval_jaxpr(dis_jaxpr, consts, *args)
+@_eval_jaxpr_ad_error.defjvp
+def _eval_jaxpr_ad_error_jvp(*_):
+  raise Exception("should be unreachable, AD after discharge")

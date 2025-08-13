@@ -957,9 +957,10 @@ def _flatten_bwd(f: Callable,
         raise ValueError(msg)
       results.append(Zero(ct.aval))
     else:
-      if (not core.typecompat(a.to_tangent_aval(), a_ := core.get_aval(ct))
-          and not (_temporary_dtype_exception(a, a_) or
-                   _temporary_shape_exception(a, a_))):
+      if (not core.typecompat(a.to_tangent_aval(), a_ := core.get_aval(ct)) and
+          not _ref_typecompat(a.to_tangent_aval(), a_) and
+          not (_temporary_dtype_exception(a, a_) or
+               _temporary_shape_exception(a, a_))):
         msg = ("Custom VJP bwd rule must produce an output with the same "
                "shape/dtypes as the args tuple of the primal function, but at "
                f"output{keystr(kp)} the bwd rule produced an output of "
@@ -969,6 +970,10 @@ def _flatten_bwd(f: Callable,
         raise ValueError(msg)
       results.append(ct)
   return results
+
+def _ref_typecompat(a, a_):
+  return (isinstance(a, AbstractRef) and
+          core.typecompat(a.to_tangent_aval().inner_aval, a_))
 
 # TODO(mattjj): remove both these exceptions to cotangent compatibility check
 def _temporary_dtype_exception(a, a_) -> bool:

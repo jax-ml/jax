@@ -803,6 +803,69 @@ class MutableArrayTest(jtu.JaxTestCase):
     g = process_batch(Ws, xs_batch)
     self.assertAllClose(g, 20. * jnp.ones_like(Ws), atol=1e-3, rtol=1e-3)
 
+  @parameterized.parameters([False, True])
+  def test_custom_vjp_internal_ref(self, jit):
+    @jax.custom_vjp
+    def f(x):
+      x_ref = jax.array_ref(jnp.zeros_like(x))
+      x_ref[...] = x
+      return x_ref[...]
+    def f_fwd(x):
+      return x, None
+    def f_bwd(_, g):
+      return g,
+    f.defvjp(f_fwd, f_bwd)
+
+    if jit:
+      f = jax.jit(f)
+
+    x = jax.jit(f)(3.)  # no ad, doesn't crash
+    self.assertAllClose(x, 3., check_dtypes=False)
+
+    g = jax.grad(f)(3.)
+    self.assertAllClose(g, 1., check_dtypes=False)
+
+  def test_custom_vjp_ad_after_discharge_error(self):
+    @jax.custom_vjp
+    def f(x):
+      x_ref = jax.array_ref(jnp.zeros_like(x))
+      x_ref[...] = x
+      return x_ref[...]
+    def f_fwd(x):
+      return x, None
+    def f_bwd(_, g):
+      return g,
+
+    f.defvjp(f_fwd, f_bwd)
+    from jax._src import core
+    from jax._src.state.discharge import discharge_state
+    jaxpr = jax.make_jaxpr(f)(3.)
+    jaxpr_, consts_ = discharge_state(jaxpr.jaxpr, jaxpr.consts)
+    with self.assertRaises(Exception):
+      jax.grad(lambda x: core.eval_jaxpr(jaxpr_, consts_, x)[0])(3.)
+
+  @parameterized.parameters([False, True])
+  def test_custom_vjp_differentiated_ref(self, jit):
+    @jax.custom_vjp
+    def f(x_ref):
+      return x_ref[...]
+    def f_fwd(x_ref):
+      return f(x_ref), None
+    def f_bwd(_, g):
+      return g,
+    f.defvjp(f_fwd, f_bwd)
+
+    if jit:
+      f = jax.jit(f)
+
+    y = f(jax.array_ref(3.14))
+    self.assertAllClose(y, 3.14, check_dtypes=False)
+
+    # this exercises the fallback path, not a fancy transpose
+    _, f_vjp = vjp3(lambda x: f(jax.array_ref(x)), 3.14)
+    g, = f_vjp(1.)
+    self.assertAllClose(g, 1., check_dtypes=False)
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
