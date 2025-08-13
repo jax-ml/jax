@@ -682,8 +682,10 @@ jax_multiplatform_test(
     minimal_shard_count = 5,
     shard_count = 5,
     tags = [
+        "manual",  # b/438452470
         "noasan",  # Times out.
         "nomsan",  # Times out.
+        "notap",  # b/438452470
         "notsan",  # Times out.
     ],
     deps = [
