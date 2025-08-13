@@ -321,6 +321,25 @@ class VectorLayout {
         return {implicit_value, *(arr.end() - 1)};
     }
   }
+  // Returns the dimension of the implicit shape that corresponds to the given
+  // dimension of a non-implicit shape with the given `rank`.
+  static int64_t toImplicitDimension(const ImplicitDim implicit_dim,
+                                     const int64_t rank, int64_t dimension) {
+    CHECK_GE(rank, layout_rank(implicit_dim));
+    if (rank - layout_rank(implicit_dim) > dimension) {
+      return dimension;
+    }
+    switch (implicit_dim) {
+      case ImplicitDim::kNone:
+        return dimension;
+      case ImplicitDim::kMinor:
+        CHECK_EQ(dimension, rank - 1);
+        return rank - 1;
+      case ImplicitDim::kSecondMinor:
+        CHECK_EQ(dimension, rank - 1);
+        return rank;
+    }
+  }
 
   // Returns the value of the tiled (2 minormost) dimensions of the given array
   // with implicit dims inserted.

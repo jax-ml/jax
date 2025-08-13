@@ -2927,18 +2927,13 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
   SmallVector<xla::Array<Value>> operand_vregs;
   operand_vregs.reserve(op.getNumOperands());
 
-  std::optional<int64_t> tiling_dim;
   auto res_layout = layouts_out.front();
 
   TPU_ASSERT_OP(res_layout.has_value());
-  auto num_untiled_dims = res_ty.getRank() - res_layout->layout_rank();
 
-  if (res_ty.getRank() == 1 &&
-      res_layout->implicit_dim() == VectorLayout::ImplicitDim::kSecondMinor) {
-    tiling_dim = 1;
-  } else if (dimension >= num_untiled_dims) {
-    tiling_dim = dimension - num_untiled_dims;
-  }
+  const int64_t idimension = VectorLayout::toImplicitDimension(
+      res_layout->implicit_dim(), res_ty.getRank(), dimension);
+  const int64_t irank = res_ty.getRank() + res_layout->num_implicit_dims();
 
   // Op level invariants on layouts, other op level invariants are checked in
   // the verifier.
@@ -2960,7 +2955,8 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
     }
 
     for (const int i : {0, 1}) {
-      if (i != tiling_dim && layout.offsets()[i] != res_layout->offsets()[i]) {
+      if (irank - 2 + i != idimension &&
+          layout.offsets()[i] != res_layout->offsets()[i]) {
         return op.emitOpError(
             "Not implemented: result/input offset mismatch on non-concat "
             "dimension.");
@@ -2986,28 +2982,16 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
       std::bind(IdxConst, std::placeholders::_1, builder, op.getLoc());
 
   // Handle the untiled concatenation case.
-  if (!tiling_dim.has_value()) {
+  if (idimension < irank - 2) {
     out_vregs = concatenate(operand_vregs, dimension);
   } else {
-    bool is_rank1_with_no_implicit_dim = res_ty.getRank() == 1 &&
-                                    res_layout->implicit_dim() ==
-                                        VectorLayout::ImplicitDim::kNone;
-    if (res_layout->implicit_dim() == VectorLayout::ImplicitDim::kMinor ||
-        is_rank1_with_no_implicit_dim) {
-      return op.emitOpError("Not implemented: implicit dim");
-    }
-    if (res_layout->implicit_dim() == VectorLayout::ImplicitDim::kSecondMinor &&
-        res_layout->bitwidth() != 32) {
-      return op.emitOpError(
-          "Not implemented: only 32-bit bitwidth supported for SecondMinor "
-          "implicit dim");
-    }
-    if (res_layout->offsets()[tiling_dim.value()] != 0) {
+    const int64_t tiling_dim = idimension - (irank - 2);
+    if (res_layout->offsets()[tiling_dim] != 0) {
       return op.emitOpError("Not implemented: result non-zero offset.");
     }
     if (!res_layout->hasNativeTiling(ctx.target_shape) &&
-        res_ty.getRank() != 1) {
-      return op.emitOpError("Not implemented: Non native tiling in concat.");
+        !(tiling_dim == 1 && res_tiling[1] == ctx.target_shape[1])) {
+      return op.emitOpError("Not implemented: Unsupported tiling.");
     }
 
     int64_t offset_at_dim = 0;
@@ -3022,14 +3006,12 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
         VectorType vty = cast<VectorType>(operand.getType());
         ArrayRef<int64_t> shape = vty.getShape();
 
-        int64_t starting_point = offset_at_dim;
-        int64_t offset_amount =
-            starting_point % vreg_slice[tiling_dim.value()];
-        if (offset_amount >= tiling[tiling_dim.value()]) {
+        int64_t offset_amount = offset_at_dim % vreg_slice[tiling_dim];
+        if (offset_amount >= tiling[tiling_dim]) {
           return op.emitError(
               "Not implemented: Input offsets outside of the first tile");
         }
-        if (offset_amount != layout->offsets()[tiling_dim.value()]) {
+        if (offset_amount != layout->offsets()[tiling_dim]) {
           return op.emitOpError(
               "Not implemented: Relayout not called, unaligned dims "
               "concatenated without proper offsets. Ensure that "
@@ -3046,13 +3028,7 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
       const auto &layout = layouts_in[i];
       const int packing = res_layout->packing();
 
-      if (layout->tiling()[0] % packing != 0) {
-        return op.emitOpError(
-            "Illegal tiling: Non-native tiling in concat - this should "
-            "have been caught earlier!");
-      }
-
-      const int64_t operand_offset = *layout->offsets()[tiling_dim.value()];
+      const int64_t operand_offset = *layout->offsets()[tiling_dim];
       if (operand_offset != 0) {
         // We are offset, so we must blend with the previous vreg.
         // Or, to frame it in an another way, the prior vreg
@@ -3070,11 +3046,12 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
           Value mask;
           const VectorType vmask_ty = getNativeVregOrVmaskType(
               builder.getI1Type(), bitwidth, ctx.target_shape);
-          if (tiling_dim.value() == 0) {  // sublane
+          if (tiling_dim == 0) {  // sublane
             mask = createSubelementMask(builder, op.getLoc(), bitwidth,
                                         /*from=*/0, /*to=*/operand_offset,
                                         ctx.target_shape);
           } else {  // lane
+            CHECK_EQ(layout->tiling()[0] % packing, 0);
             mask = builder.create<tpu::CreateMaskOp>(
                 op.getLoc(), vmask_ty,
                 ArrayRef<Value>{boundIdxConst(0), boundIdxConst(0)},
