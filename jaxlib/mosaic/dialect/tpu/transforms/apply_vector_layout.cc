@@ -4529,14 +4529,8 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     for (const int64_t dim : dims) {
       int64_t d_size = src_vregs.dim(dim);
       const int64_t irank = src_rank + src_layout.num_implicit_dims();
-      // `idim` is the dimension of the implicit shapes that corresponds to
-      // dimension `dim` of the non-implicit shape
-      const int64_t idim =
-          src_layout.implicit_dim() ==
-                      VectorLayout::ImplicitDim::kSecondMinor &&
-                  dim == src_rank - 1
-              ? src_rank
-              : dim;
+      const int64_t idim = VectorLayout::toImplicitDimension(
+          src_layout.implicit_dim(), src_rank, dim);
       src_slice_start.insert(src_slice_start.begin() + dim, 0);
       if (!src_layout.offsets()[0].has_value() && idim == irank - 2) {
         d_size = 1;
