@@ -103,6 +103,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
     --test_env=JAX_SKIP_SLOW_TESTS=1 \
     --test_env=JAX_ENABLE_TPU_XDIST=1 \
+    --test_env=JAX_PLATFORMS=tpu,cpu \
     --repo_env=USE_MINIMAL_SHARD_COUNT=True \
     $COMMON_TPU_TEST_ENV_VARS \
     --test_tag_filters=-multiaccelerator \
@@ -133,6 +134,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --local_test_jobs=1 \
     --repo_env=USE_MINIMAL_SHARD_COUNT=True \
     --test_env=JAX_SKIP_SLOW_TESTS=1 \
+    --test_env=JAX_PLATFORMS=tpu,cpu \
     $COMMON_TPU_TEST_ENV_VARS \
     --test_tag_filters=multiaccelerator \
     --verbose_failures \
@@ -165,6 +167,7 @@ else
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
     --test_env=JAX_SKIP_SLOW_TESTS=1 \
     --test_env=JAX_ENABLE_TPU_XDIST=1 \
+    --test_env=JAX_PLATFORMS=tpu,cpu \
     --repo_env=USE_MINIMAL_SHARD_COUNT=True \
     $COMMON_TPU_TEST_ENV_VARS \
     --test_tag_filters=-multiaccelerator \
@@ -210,6 +213,7 @@ else
     --test_env=JAX_ACCELERATOR_COUNT=${NB_TPUS} \
     --repo_env=USE_MINIMAL_SHARD_COUNT=True \
     --test_env=JAX_SKIP_SLOW_TESTS=1 \
+    --test_env=JAX_PLATFORMS=tpu,cpu \
     $COMMON_TPU_TEST_ENV_VARS \
     --test_tag_filters=multiaccelerator \
     --verbose_failures \

@@ -1,6 +1,6 @@
 # CI - Wheel Tests (Continuous)
 #
-# This workflow builds JAX artifacts and runs CPU/CUDA tests.
+# This workflow builds JAX artifacts and runs CPU/TPU/CUDA tests.
 #
 # It orchestrates the following:
 # 1. build-jaxlib-artifact: Calls the `build_artifacts.yml` workflow to build jaxlib and
@@ -18,6 +18,10 @@
 # 7. run-bazel-test-cuda:   Calls the `bazel_cuda_non_rbe.yml` workflow which downloads the jaxlib
 #                           and CUDA artifacts that were built in the previous steps and runs the
 #                           CUDA tests using Bazel.
+# 8. run-pytest-tpu:        Calls the `pytest_tpu.yml` workflow which downloads the jaxlib wheel
+#                           that was built in the previous step and runs TPU tests.
+# 9. run-bazel-test-tpu:    Calls the `bazel_test_tpu.yml` workflow which
+#                           runs Bazel TPU tests with py_import.
 
 name: CI - Wheel Tests (Continuous)
 permissions:
@@ -219,19 +223,15 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          python: ["3.11",]
+          python: ["3.11"]
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
-            {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
             {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
             {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"}
           ]
           libtpu-version-type: ["nightly", "oldest_supported_libtpu"]
           exclude:
             # Run a single config for oldest_supported_libtpu
-            - libtpu-version-type: "oldest_supported_libtpu"
-              tpu-specs:
-                type: "v4-8"
             - libtpu-version-type: "oldest_supported_libtpu"
               tpu-specs:
                 type: "v6e-8"
@@ -244,3 +244,35 @@ jobs:
       run-full-tpu-test-suite: "1"
       libtpu-version-type: ${{ matrix.libtpu-version-type }}
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
+
+  run-bazel-test-tpu:
+    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
+    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
+    # still want to run the tests for other platforms.
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/bazel_test_tpu.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          python: ["3.11"]
+          tpu-specs: [
+            {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
+            {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
+          ]
+          libtpu-version-type: ["nightly", "oldest_supported_libtpu"]
+          exclude:
+            # Run a single config for oldest_supported_libtpu
+            - libtpu-version-type: "oldest_supported_libtpu"
+              tpu-specs:
+                type: "v4-8"
+    name: "Bazel tests TPU (JAX artifacts version =  ${{ format('{0}', 'head') }})"
+    with:
+      runner: ${{ matrix.tpu-specs.runner }}
+      cores: ${{ matrix.tpu-specs.cores }}
+      tpu-type: ${{ matrix.tpu-specs.type }}
+      python: ${{ matrix.python }}
+      run-full-tpu-test-suite: "1"
+      libtpu-version-type: ${{ matrix.libtpu-version-type }}
+      gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
+      build_jaxlib: "wheel"
+      clone_main_xla: 1

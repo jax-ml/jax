@@ -1066,6 +1066,9 @@ jax_multiplatform_test(
         "gpu_v100",
         "tpu_v3_x4",
     ],
+    minimal_shard_count = {
+        "tpu": 8,
+    },
     shard_count = {
         "cpu": 30,
         "gpu": 10,
@@ -1387,6 +1390,9 @@ jax_multiplatform_test(
         "cpu_x32": ["--jax_num_generated_cases=40"],
         "gpu": ["--jax_num_generated_cases=40"],
         "tpu": ["--jax_num_generated_cases=40"],
+    },
+    minimal_shard_count = {
+        "tpu": 8,
     },
     shard_count = {
         "cpu": 50,
@@ -1839,6 +1845,9 @@ jax_multiplatform_test(
     disable_configs = [
         "gpu_h100x2_tfrt",  # TODO(b/419192167): Doesn't work
     ],
+    minimal_shard_count = {
+        "tpu": 50,
+    },
     shard_count = {
         "cpu": 50,
         "gpu": 20,
@@ -1986,6 +1995,9 @@ jax_multiplatform_test(
         "gpu_a100",  # TODO(b/269593297): matmul precision issues
         "gpu_h100",  # Scarce resources.
     ],
+    minimal_shard_count = {
+        "tpu": 8,
+    },
     shard_count = {
         "cpu": 40,
         "gpu": 30,

@@ -125,7 +125,7 @@ jax_multiplatform_test(
         "tpu_v6e",
     ],
     minimal_shard_count = {
-        "tpu": 16,
+        "tpu": 8,
     },
     shard_count = {
         "cpu": 16,
