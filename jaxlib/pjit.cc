@@ -131,7 +131,9 @@ class PjitFunctionCache {
 
   // Cache entries are shared_ptr<>s because it's possible the cache entry
   // might be evicted before we finish tracing/compiling.
-  typedef xla::LRUCache<CallSignature, std::shared_ptr<PjitCacheEntry>> Cache;
+  typedef xla::LRUCache<CallSignature, std::shared_ptr<PjitCacheEntry>,
+                        CallSignature::Hash>
+      Cache;
 
   // We include as part of the cache key `global_cache_key` (and any other
   // fields that aren't subsumed by the CallSignature we compute for each call).
@@ -746,8 +748,8 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   }
 
   absl::InlinedVector<PyArgSignature, 2> dynamic_arg_signatures;
-  dynamic_arg_signatures.reserve(
-      cache_entry->const_args.size() + flat_dynamic_args.size());
+  dynamic_arg_signatures.reserve(cache_entry->const_args.size() +
+                                 flat_dynamic_args.size());
   if (!cache_entry->const_args.empty()) {
     flat_dynamic_args.reserve(cache_entry->const_args.size() +
                               flat_dynamic_args.size());
@@ -756,8 +758,9 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
                              cache_entry->const_args.end());
 
     for (nb::handle const_arg : cache_entry->const_args) {
-      TF_ASSIGN_OR_RETURN(auto const_arg_signature,
-        PyArgSignatureOfValue(const_arg, call_signature.jax_enable_x64));
+      TF_ASSIGN_OR_RETURN(
+          auto const_arg_signature,
+          PyArgSignatureOfValue(const_arg, call_signature.jax_enable_x64));
       dynamic_arg_signatures.push_back(std::move(const_arg_signature));
     }
   }
@@ -767,11 +770,10 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
 
   // A vector of [num_inputs].
   auto num_args_arrays = PrepareIfrtInputs(
-      *cache_entry->executable, flat_dynamic_args,
-      dynamic_arg_signatures, call_signature.jax_enable_x64,
-      cache_entry->kept_var_bitvec, cache_entry->in_shardings,
-      cache_entry->in_device_local_layouts, shard_arg_fallback_,
-      keep_alive_objects);
+      *cache_entry->executable, flat_dynamic_args, dynamic_arg_signatures,
+      call_signature.jax_enable_x64, cache_entry->kept_var_bitvec,
+      cache_entry->in_shardings, cache_entry->in_device_local_layouts,
+      shard_arg_fallback_, keep_alive_objects);
 
   if (!num_args_arrays.ok()) {
     VLOG(2) << "Failed to prepare IFRT inputs: " << num_args_arrays.status();
@@ -890,6 +892,7 @@ absl::Status PjitFunction::ComputeCallSignature(
   signature.thread_local_extra_jit_context = tls.extra_jit_context;
   signature.global_extra_jit_context = global_state.extra_jit_context;
   signature.configs = JitConfigs();
+  signature.cached_hash = absl::HashOf(signature);
 
   return absl::OkStatus();
 }

@@ -38,7 +38,6 @@ limitations under the License.
 #include "jaxlib/py_values.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/pytree.h"
-#include "jaxlib/sharding.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/tsl/platform/logging.h"
@@ -219,12 +218,25 @@ struct CallSignature {
 
   std::vector<nanobind::object> configs;
 
+  // Cached hash of the signature. Must be filled in using `absl::HashOf` as
+  // part of CallSignature construction. The hash computation happens in a C++
+  // exception-safe context, which simplifies using `CallSignature` as a key in
+  // a non-exception-safe container because `Hash()` would never throw when used
+  // inside the container implementation.
+  size_t cached_hash;
+
   bool operator==(const CallSignature& other) const;
   bool operator!=(const CallSignature& other) const {
     return !(*this == other);
   }
 
   std::string DebugString() const;
+
+  struct Hash {
+    size_t operator()(const CallSignature& s) const noexcept {
+      return s.cached_hash;
+    }
+  };
 };
 
 // A hash and equality for shardings that may sometimes return different hashes

@@ -373,6 +373,7 @@ class PmapFunction {
     signature.thread_local_extra_jit_context = tls.extra_jit_context;
     signature.global_extra_jit_context = global_state.extra_jit_context;
     signature.configs = JitConfigs();
+    signature.cached_hash = absl::HashOf(signature);
     return absl::Status();
   }
 
@@ -410,7 +411,8 @@ class PmapFunction {
   // We need a `shared_ptr` here to ensure value pointer stability, and to
   // ensure that the cache entry remains alive in the presence of concurrent
   // removals.
-  absl::flat_hash_map<CallSignature, std::shared_ptr<PmapCacheEntry>>
+  absl::flat_hash_map<CallSignature, std::shared_ptr<PmapCacheEntry>,
+                      CallSignature::Hash>
       executables_;
 
   // The fallback function to use with `ShardArgs`.
