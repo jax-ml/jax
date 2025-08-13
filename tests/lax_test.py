@@ -2627,21 +2627,14 @@ class LaxTest(jtu.JaxTestCase):
     dtype=[np.float32, np.int32, np.uint32],
     shape=[(20,), (5, 20), (2000,)],
     k=[1, 3, 12],
-    negative=[False, True]
   )
-  def testTopK(self, shape, dtype, k, negative):
+  def testTopK(self, shape, dtype, k):
+    rng = jtu.rand_some_equal(self.rng())
     def args_maker():
-      flat_values = np.arange(math.prod(shape), dtype=dtype)
-      values = self.rng().permutation(flat_values).reshape(shape)
-      if negative:
-        values = -values
-      return [values]
-    def reference_top_k(x):
-      bcast_idxs = np.broadcast_to(np.arange(shape[-1], dtype=np.int32), shape)
-      sorted_vals, sorted_idxs = lax_reference.sort_key_val(x, bcast_idxs)
-      return sorted_vals[..., :-k-1:-1], sorted_idxs[..., :-k-1:-1]
+      return [rng(shape, dtype)]
     op = lambda vs: lax.top_k(vs, k=k)
-    self._CheckAgainstNumpy(op, reference_top_k, args_maker)
+    ref_op = lambda vs: lax_reference.top_k(vs, k=k)
+    self._CheckAgainstNumpy(op, ref_op, args_maker)
     self._CompileAndCheck(op, args_maker)
 
   def testTopKOverflow(self):

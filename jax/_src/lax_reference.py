@@ -528,3 +528,10 @@ def _reducer_from_pyfunc(py_binop, init_val):
       result[out_idx] = py_binop(result[out_idx], operand[idx])
     return result
   return reducer
+
+def top_k(operand, k):
+  indices = operand.shape[-1] - 1 - np.argsort(operand[..., ::-1], kind="stable").astype(np.int32)[..., ::-1]
+  values = np.take_along_axis(operand, indices, axis=-1)
+  indices = indices[..., :k]
+  values = values[..., :k]
+  return values, indices

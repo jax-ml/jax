@@ -3327,6 +3327,11 @@ def top_k(operand: ArrayLike, k: int) -> tuple[Array, Array]:
     - ``values`` is an array containing the top k values along the last axis.
     - ``indices`` is an array containing the indices corresponding to values.
 
+  ``values[..., i]`` is the ``i``-th largest entry in ``operand`` along the last
+  axis, and its index is ``indices[..., i]``.
+
+  If two elements are equal, the lower-index element appears first.
+
   See also:
     - :func:`jax.lax.approx_max_k`
     - :func:`jax.lax.approx_min_k`
