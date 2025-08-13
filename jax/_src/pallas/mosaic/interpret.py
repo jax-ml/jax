@@ -1936,13 +1936,9 @@ def _get_parallel_subgrid_size(
     parallel_semantics_per_dim: tuple[bool, ...], grid: tuple[int, ...]
 ) -> int:
   """Returns the size of the subgrid along the parallel dimensions."""
-  return functools.reduce(
-      lambda x, y: x * y,
-      (
-          dim_size if parallel_dim else 1
-          for dim_size, parallel_dim in zip(grid, parallel_semantics_per_dim)
-      ),
-      1,
+  return math.prod(
+      dim_size if parallel_dim else 1
+      for dim_size, parallel_dim in zip(grid, parallel_semantics_per_dim)
   )
 
 _GridPointCoordinatesPerDim = tuple[Array, ...]
@@ -2018,7 +2014,6 @@ def _remove_memory_space_impl(x):
 def _remove_memory_space_lowering(_, x):
   return [x]
 mlir.register_lowering(remove_memory_space_p, _remove_memory_space_lowering)
-
 
 
 def _get_grid_point(

@@ -248,7 +248,7 @@ def _initialize_barrier_op_lowering_rule(
 ) -> Sequence[ir.Value]:
 
   shape = initialize_barrier_op.barriers_ref.type.shape
-  num_barriers = functools.reduce(operator.mul, shape, 1)
+  num_barriers = math.prod(shape)
 
   i32 = ir.IntegerType.get_signless(32)
   workgroup_nvptx_address_space = utils.gpu_address_space_to_nvptx(

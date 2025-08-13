@@ -2105,7 +2105,7 @@ class APITest(jtu.JaxTestCase):
   def test_vmap_inconsistent_sizes_constructs_proper_error_message_starargs(self):
     # regression test for https://github.com/jax-ml/jax/issues/26908
     def f(x, *args):
-      return x - functools.reduce(jnp.add, args)
+      return x - sum(args)
 
     with self.assertRaisesRegex(
       ValueError,

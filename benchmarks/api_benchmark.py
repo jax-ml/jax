@@ -209,7 +209,7 @@ def jit_big_matmul(state):
 @google_benchmark.option.args([2000])
 def jit_simple_many_args_dispatch(state):
   args = [jax.device_put(i) for i in range(state.range(0))]
-  f = jax.jit(lambda xs: functools.reduce(operator.add, xs))
+  f = jax.jit(sum)
   x = f(args)
   x.block_until_ready()
 
@@ -229,7 +229,7 @@ def jit_simple_many_args_dispatch(state):
 @google_benchmark.option.args([2000])
 def jit_simple_many_args(state):
   args = [jax.device_put(i) for i in range(state.range(0))]
-  f = jax.jit(lambda xs: functools.reduce(operator.add, xs))
+  f = jax.jit(sum)
   f(args).block_until_ready()
 
   while state:

@@ -90,9 +90,7 @@ class DebugCallbackTest(jtu.JaxTestCase):
 
     def mean(forest):
       norm = 1.0 / len(forest)
-      add = lambda a, b: a + b
-      m = norm * functools.reduce(add, forest)
-      return m
+      return norm * sum(forest)
 
     post_mean = mean(tuple(run(x) for x in inputs))
     jax.block_until_ready(post_mean)  # This shouldn't deadlock.

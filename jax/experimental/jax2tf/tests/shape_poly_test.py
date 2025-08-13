@@ -14,20 +14,18 @@
 
 from __future__ import annotations
 
+import collections
 from collections.abc import Callable, Sequence
 import contextlib
+from functools import partial
 import math
+import operator as op
+import re
 from typing import Any
 import unittest
 
 from absl import logging
 from absl.testing import absltest
-
-import collections
-import functools
-from functools import partial
-import operator as op
-import re
 
 import jax
 from jax.experimental import jax2tf
@@ -645,8 +643,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # Arguments are of the form [([x00, x01], [x10]), dict(a=ya, b=yb)]
     def add_all_jax(x_pair_of_list, y_dict):
       x_list_0, x_list_1 = x_pair_of_list
-      return functools.reduce(op.add,
-                              x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
+      return sum(x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
 
     input_signature = [([tf.TensorSpec([None]), tf.TensorSpec([None])],
                                        [tf.TensorSpec([None])]),
@@ -710,8 +707,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     args = (([x, x], [x]), dict(a=x, b=x))
     def add_all_jax(x_pair_of_list, y_dict):
       x_list_0, x_list_1 = x_pair_of_list
-      return functools.reduce(op.add,
-                              x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
+      return sum(x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
 
     with self.assertRaisesRegex(ValueError, "pytree structure error"):
       jax2tf.convert(add_all_jax,

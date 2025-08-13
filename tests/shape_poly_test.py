@@ -14,24 +14,22 @@
 
 from __future__ import annotations
 
-import enum
+import collections
 from collections.abc import Callable, Sequence
 import cProfile
+import enum
+from functools import partial
 import itertools
 import math
+import operator as op
 import os
 from pstats import Stats
+import re
 from typing import Any
 import unittest
 
 from absl import logging
 from absl.testing import absltest
-
-import collections
-import functools
-from functools import partial
-import operator as op
-import re
 
 import jax
 from jax import export
@@ -1531,8 +1529,7 @@ class ShapePolyTest(jtu.JaxTestCase):
     # Arguments are of the form [([x00, x01], [x10]), dict(a=ya, b=yb)]
     def add_all_jax(x_pair_of_list, y_dict):
       x_list_0, x_list_1 = x_pair_of_list
-      return functools.reduce(op.add,
-                              x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
+      return sum(x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
 
     x = np.arange(4, dtype=_f32)
     args = (([x, x], [x]), dict(a=x, b=x))
@@ -1582,8 +1579,7 @@ class ShapePolyTest(jtu.JaxTestCase):
     args = (([x, x], [x]), dict(a=x, b=x))
     def add_all_jax(x_pair_of_list, y_dict):
       x_list_0, x_list_1 = x_pair_of_list
-      return functools.reduce(op.add,
-                              x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
+      return sum(x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
 
     with self.assertRaisesRegex(ValueError, "pytree structure error"):
       check_shape_poly(self,

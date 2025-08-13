@@ -32,7 +32,7 @@ def _nonempty_prod(arrs: Sequence[Array]) -> Array:
   return functools.reduce(operator.mul, arrs)
 
 def _nonempty_sum(arrs: Sequence[Array]) -> Array:
-  return functools.reduce(operator.add, arrs)
+  return sum(arrs[1:], arrs[0])
 
 def _mirror_index_fixer(index: Array, size: int) -> Array:
     s = size - 1 # Half-wavelength of triangular wave

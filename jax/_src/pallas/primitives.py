@@ -51,7 +51,6 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 import jax.numpy as jnp
 
-partial = functools.partial
 Slice = indexing.Slice
 NDIndexer = indexing.NDIndexer
 
@@ -473,8 +472,9 @@ def _pad_values_to_avoid_dynamic_slice_oob_shift(value,
                   padding_value=padding_value)
   return value
 
-_unpad_values_to_avoid_dynamic_slice_oob_shift = partial(
-  _pad_values_to_avoid_dynamic_slice_oob_shift, unpad=True)
+_unpad_values_to_avoid_dynamic_slice_oob_shift = functools.partial(
+    _pad_values_to_avoid_dynamic_slice_oob_shift, unpad=True
+)
 
 
 @state_discharge.register_discharge_rule(load_p)
