@@ -207,7 +207,7 @@ def _normalize_index(index, axis_size):
 def take_along_axis(
     arr: ArrayLike,
     indices: ArrayLike,
-    axis: int | None,
+    axis: int | None = -1,
     mode: str | slicing.GatherScatterMode | None = None,
     fill_value: StaticScalar | None = None,
 ) -> Array:

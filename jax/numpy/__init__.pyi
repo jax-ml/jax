@@ -918,7 +918,7 @@ def take(
 def take_along_axis(
     arr: ArrayLike,
     indices: ArrayLike,
-    axis: int | None,
+    axis: int | None = ...,
     mode: str | GatherScatterMode | None = ...,
     fill_value: StaticScalar | None = None,
 ) -> Array: ...

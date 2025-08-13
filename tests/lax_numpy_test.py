@@ -4810,6 +4810,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker)
     self._CompileAndCheck(jnp_one_hot_op, args_maker)
 
+  def testTakeAlongAxisDefaultAxis(self):
+    arr = jtu.rand_default(self.rng())((10, 20), np.float32)
+    indices = jtu.rand_int(self.rng(), 0, 100)((10, 30), np.uint8)
+    q0 = jnp.take_along_axis(arr, indices, axis=-1)
+    q1 = jnp.take_along_axis(arr, indices)
+    np.testing.assert_array_equal(q0, q1)
+
   def testTakeAlongAxisWithUint8IndicesDoesNotOverflow(self):
     # https://github.com/jax-ml/jax/issues/5088
     h = jtu.rand_default(self.rng())((256, 256, 100), np.float32)
