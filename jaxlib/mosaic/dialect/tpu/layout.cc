@@ -46,43 +46,6 @@ limitations under the License.
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 
 namespace mlir::tpu {
-
-bool RectangularVregBounds::maskVariesAlong(
-    const Direction direction,
-    const std::array<int64_t, 2> target_shape) const {
-  switch (direction) {
-    case Direction::kSublanes:
-      return starts_[0] != 0 || ends_[0] != target_shape[0];
-    case Direction::kLanes:
-      return starts_[1] != 0 || ends_[1] != target_shape[1];
-    case Direction::kSubelements:
-      return false;
-  }
-}
-
-FailureOr<TypedValue<VectorType>> RectangularVregBounds::getVectorMask(
-    OpBuilder& builder, const Location loc, const int /*generation*/,
-    const std::array<int64_t, 2> target_shape) const {
-  auto boundIdxConst = std::bind(IdxConst, std::placeholders::_1, builder, loc);
-  return cast<TypedValue<VectorType>>(
-      tpu::CreateMaskOp::create(
-          builder, loc, VectorType::get(target_shape, builder.getI1Type()),
-          /*low=*/
-          ValueRange{boundIdxConst(starts_[0]), boundIdxConst(starts_[1])},
-          /*high=*/
-          ValueRange{boundIdxConst(ends_[0]), boundIdxConst(ends_[1])})
-          .getResult());
-}
-
-DenseBoolArrayAttr RectangularVregBounds::getSublaneMask(
-    MLIRContext* mlir_ctx, const std::array<int64_t, 2> target_shape) const {
-  SmallVector<bool, 8> sublane_mask(target_shape[0], false);
-  for (int64_t i = starts_[0]; i < ends_[0]; ++i) {
-    sublane_mask[i] = true;
-  }
-  return DenseBoolArrayAttr::get(mlir_ctx, sublane_mask);
-}
-
 namespace {
 
 // Represents a subset of a (packed) 1D vector register.
@@ -464,6 +427,13 @@ std::unique_ptr<VRegDataBounds> VectorLayout::tileDataBounds(
   // TODO(apaszke): allow_replicated could have been generalized to specify
   // what action should be taken when a REPLICATED offset is encountered.
   // Right now it either disallows replication, or selects the whole dimension.
+  for (const int i : {0, 1}) {
+    if (!allow_replicated[i] && !offsets_[i].has_value()) {
+      emitError(UnknownLoc::get(mlir_ctx), "Unexpected replicated offset");
+      return nullptr;
+    }
+  }
+  const std::array<int64_t, 2> vreg_slice = vregSlice(target_shape);
   const std::array<int64_t, 2> tiled_idxs = getImplicitTiledDims(idxs, 0);
   const int64_t s = tiled_idxs[0];
   const int64_t l = tiled_idxs[1];
@@ -471,81 +441,44 @@ std::unique_ptr<VRegDataBounds> VectorLayout::tileDataBounds(
       tileArrayImplicitShape(full_shape, target_shape);
   const int64_t ns = *(tiles_implicit_shape.end() - 2);
   const int64_t nl = *(tiles_implicit_shape.end() - 1);
-  const std::array<int64_t, 2> shape_tiled_dims =
+  const std::array<int64_t, 2> tiled_ishape =
       getImplicitTiledDims(full_shape, 1);
-  const int64_t is = shape_tiled_dims[0];
-  const int64_t il = shape_tiled_dims[1];
+  auto positive_mod = [](const int64_t a, const int64_t b) {
+    // Return modulo but in the range [1, b] for a, b > 0.
+    return (a - 1) % b + 1;
+  };
+  // The starts and ends of the data within the vreg slice:
+  const std::array<int64_t, 2> starts = {
+      offsets_[0] && s == 0 ? *offsets_[0] : 0,
+      offsets_[1] && l == 0 ? *offsets_[1] : 0};
+  const std::array<int64_t, 2> ends = {
+      offsets_[0] && s == ns - 1
+          ? positive_mod(*offsets_[0] + tiled_ishape[0], vreg_slice[0])
+          : vreg_slice[0],
+      offsets_[1] && l == nl - 1
+          ? positive_mod(*offsets_[1] + tiled_ishape[1], vreg_slice[1])
+          : vreg_slice[1]};
 
-  if (!hasNaturalTopology(target_shape)) {
-    if (!offsets_[0].has_value() || !offsets_[1].has_value()) {
-      emitError(UnknownLoc::get(mlir_ctx),
-                "Not implemented: non-natural topology with replication");
-      return nullptr;
-    }
-    const int64_t so = *offsets_[0];
-    const int64_t lo = *offsets_[1];
-    if (tiling_[0] == 1 && tiling_[1] % target_shape[1] == 0 &&
-        implicit_dim_ == ImplicitDim::kSecondMinor) {
-      const int64_t values_per_vreg =
-          target_shape[0] * target_shape[1] * packing();
-      const int64_t start_offset = l == 0 ? lo : 0;
-      const int64_t end_offset =
-          l == nl - 1 ? lo + il - l * values_per_vreg : values_per_vreg;
-      return std::make_unique<SingleRowVRegBounds>(*this, start_offset,
-                                                   end_offset, target_shape);
-    }
-    if (tiling_[1] != target_shape[1]) {
-      emitError(UnknownLoc::get(mlir_ctx),
-                "Not implemented: Unaligned tiling on minormost dimension");
-      return nullptr;
-    }
-    const int64_t start_sublanes = s == 0 ? so : 0;
-    const int64_t start_lanes = l == 0 ? lo : 0;
-    const int64_t end_sublanes =
-        s == ns - 1 ? (so + is - 1) % tiling_[0] + 1 : tiling_[0];
-    const int64_t end_lanes =
-        l == nl - 1 ? (lo + il - 1) % tiling_[1] + 1 : tiling_[1];
-    const int64_t tiles_per_vreg = tilesPerVreg(target_shape);
-    const int64_t minormost_tiles = llvm::divideCeil(lo + il, tiling_[1]);
-    const int64_t num_tiles =
-        l == nl - 1 && minormost_tiles % tiles_per_vreg != 0
-            ? minormost_tiles % tiles_per_vreg
-            : tiles_per_vreg;
-    return std::make_unique<TiledRectangularVregBounds>(
-        *this, num_tiles, std::array<int64_t, 2>{start_sublanes, start_lanes},
-        std::array<int64_t, 2>{end_sublanes, end_lanes}, target_shape);
+  if (tiling_[0] == 1 && tiling_[1] % target_shape[1] == 0) {
+    return std::make_unique<SingleRowVRegBounds>(*this, starts[1], ends[1],
+                                                 target_shape);
   }
-  // TODO(apaszke): Remove this path in favor of TiledVRegBounds
-  const std::array<int64_t, 2> shift = {offsets_[0].value_or(0),
-                                        offsets_[1].value_or(0)};
-  const int64_t sb = s == 0 ? shift[0] : 0;
-  const int64_t lb = l == 0 ? shift[1] : 0;
-  int64_t se = target_shape[0];
-  int64_t le = target_shape[1];
-  // First, deal with sublanes.
-  if (!offsets_[0].has_value()) {
-    if (!allow_replicated[0]) {
-      emitError(UnknownLoc::get(mlir_ctx), "Unexpected replicated offset");
-      return nullptr;
-    }
-    // Otherwise, do nothing. We take the full slice.
-  } else if (s == ns - 1) {
-    se = shift[0] + is - s * target_shape[0];
+  if (tiling_[1] != target_shape[1]) {
+    emitError(UnknownLoc::get(mlir_ctx),
+              "Not implemented: Unaligned tiling on minormost dimension");
+    return nullptr;
   }
-  // Now, we deal with lanes.
-  if (!offsets_[1].has_value()) {
-    if (!allow_replicated[1]) {
-      emitError(UnknownLoc::get(mlir_ctx), "Unexpected replicated offset");
-      return nullptr;
-    }
-    // Otherwise, do nothing. We take the full slice.
-  } else if (l == nl - 1) {
-    le = shift[1] + il - l * target_shape[1];
+  if (starts[1] >= tiling_[1]) {
+    emitError(UnknownLoc::get(mlir_ctx),
+              "Not implemented: Minor offset outside first tile");
+    return nullptr;
   }
-  CHECK_LT(sb, se);
-  CHECK_LT(lb, le);
-  return std::make_unique<RectangularVregBounds>(
-      std::array<int64_t, 2>{sb, lb}, std::array<int64_t, 2>{se, le});
+  const int64_t num_tiles = llvm::divideCeil(ends[1], tiling_[1]);
+  return std::make_unique<TiledRectangularVregBounds>(
+      *this, num_tiles,
+      std::array<int64_t, 2>{starts[0], starts[1] % tiling_[1]},
+      std::array<int64_t, 2>{ends[0], positive_mod(ends[1], tiling_[1])},
+      target_shape);
 }
 
 bool VectorLayout::generalizes(

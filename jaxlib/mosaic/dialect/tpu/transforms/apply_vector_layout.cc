@@ -4549,16 +4549,25 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
       src_slice_start.push_back(i);
       src_slice_end.push_back(i + 1);
     }
-    for (int64_t d : dims) {
-      int64_t d_size = src_vregs.dim(d);
-      src_slice_start.insert(src_slice_start.begin() + d, 0);
-      if (!src_layout.offsets()[0].has_value() && d == src_rank - 2) {
+    for (const int64_t dim : dims) {
+      int64_t d_size = src_vregs.dim(dim);
+      const int64_t irank = src_rank + src_layout.num_implicit_dims();
+      // `idim` is the dimension of the implicit shapes that corresponds to
+      // dimension `dim` of the non-implicit shape
+      const int64_t idim =
+          src_layout.implicit_dim() ==
+                      VectorLayout::ImplicitDim::kSecondMinor &&
+                  dim == src_rank - 1
+              ? src_rank
+              : dim;
+      src_slice_start.insert(src_slice_start.begin() + dim, 0);
+      if (!src_layout.offsets()[0].has_value() && idim == irank - 2) {
         d_size = 1;
       }
-      if (!src_layout.offsets()[1].has_value() && d == src_rank - 1) {
+      if (!src_layout.offsets()[1].has_value() && idim == irank - 1) {
         d_size = 1;
       }
-      src_slice_end.insert(src_slice_end.begin() + d, d_size);
+      src_slice_end.insert(src_slice_end.begin() + dim, d_size);
     }
     xla::Array<Value> reduced_vregs =
         src_vregs.Slice(src_slice_start, src_slice_end);
@@ -4599,6 +4608,10 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
           for (int i = 0; i < src_idx.size(); ++i) {
             src_idx[i] += src_slice_start[i];
           }
+          // Note that the generated data bounds will not mask along
+          // replicated dimensions.
+          // TODO(tlongeri): Also don't need to mask dimensions that are not
+          // being reduced.
           const std::unique_ptr<VRegDataBounds> data_bounds =
               src_layout.tileDataBounds(builder.getContext(), src_shape,
                                         src_idx, ctx.target_shape,
@@ -4607,22 +4620,14 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
             // Op error has already been emitted inside tileDataBounds().
             return absl::UnknownError("Unable to obtain data bounds");
           }
-          Value vreg = *src_vreg;
-          // If replicated, we don't need to mask.
-          if (src_layout.offsets()[0].has_value() ||
-              src_layout.offsets()[1].has_value()) {
-            // TODO(tlongeri): Maybe assemble/disassemble should take
-            // TypedValue<VectorType> and we could save casts here and
-            // elsewhere
-            FailureOr<Value> failure_or_vreg =
-                maskOOB(ctx, builder, cast<TypedValue<VectorType>>(*src_vreg),
-                        *data_bounds, neutral);
-            if (failed(failure_or_vreg)) {
-              op.emitOpError("Failed to mask vreg");
-              return absl::UnknownError("");
-            }
-            vreg = failure_or_vreg.value();
+          FailureOr<Value> failure_or_vreg =
+              maskOOB(ctx, builder, cast<TypedValue<VectorType>>(*src_vreg),
+                      *data_bounds, neutral);
+          if (failed(failure_or_vreg)) {
+            op.emitOpError("Failed to mask vreg");
+            return absl::UnknownError("");
           }
+          Value vreg = failure_or_vreg.value();
           if (!acc_vreg.has_value()) {
             acc_vreg = vreg;
           } else {
