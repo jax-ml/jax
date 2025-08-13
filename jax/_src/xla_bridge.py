@@ -572,6 +572,7 @@ def register_plugin(
     options: OptionsDict | Callable[[], OptionsDict] | None = None,
     c_api: Any | None = None,
     factory: BackendFactory | None = None,
+    make_topology: TopologyFactory | None = None,
 ) -> Any:
   """Registers a backend factory for the PJRT plugin.
 
@@ -623,7 +624,7 @@ def register_plugin(
     assert c_api is not None
     xla_client.load_pjrt_plugin_with_c_api(plugin_name, c_api)
 
-  make_topology = partial(xla_client.make_c_api_device_topology, c_api)
+  make_topology = make_topology or partial(xla_client.make_c_api_device_topology, c_api)
   experimental = plugin_name not in _nonexperimental_plugins
   register_backend_factory(plugin_name, factory, priority=priority,
                            fail_quietly=False, experimental=experimental,
