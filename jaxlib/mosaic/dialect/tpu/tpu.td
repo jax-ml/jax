@@ -977,6 +977,19 @@ let assemblyFormat = [{
   ];
 }
 
+// tpu.enqueue_dma enqueues a DMA operation.
+//
+// source            : Memref to copy from.
+// source_semaphore  : Semaphore to signal after the DMA completes.
+// target            : Memref to copy to.
+// target_semaphore  : Semaphore to wait on before the DMA completes.
+// device_id         : The id of the device to copy to for remote DMAs.
+// core_id           : The id of the core to copy to for remote and cross-core
+//                     DMAs.
+// priority          : The priority of the DMA.
+// strict_ordering   : True if the DMA requires strict ordering. If false, the
+//                     ordering is either strict or relaxed depending on the
+//                     source and destination.
 def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
   let arguments = (ins
     AnyMemRef:$source,
@@ -986,7 +999,8 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     Optional<I32>:$device_id, // For remote DMAs
     Optional<I32>:$core_id, // For megacore
     // Smaller number means higher priority. 0 is the highest and the default.
-    DefaultValuedAttr<I32Attr, "0">:$priority
+    DefaultValuedAttr<I32Attr, "0">:$priority,
+    DefaultValuedAttr<BoolAttr, "false">:$strict_ordering
   );
   let assemblyFormat = [{
     `source` `(` $source `:` type($source) `)`
@@ -1064,7 +1078,8 @@ def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
     AnyMemRef:$src,
     AnyMemRef:$dst,
     Optional<I32>:$device_id, // For remote DMAs
-    Optional<I32>:$core_id // For megacore
+    Optional<I32>:$core_id, // For megacore
+    DefaultValuedAttr<BoolAttr, "false">:$strict_ordering
   );
   let hasVerifier = 1;
   // A backward-compatible builder that sets `device_id` and `core_id` to nullptr.

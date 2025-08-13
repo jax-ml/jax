@@ -581,6 +581,42 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaDynamicRankMismatch) {
               StatusIs(_, HasSubstr("DMA source and target shape mismatch.")));
 }
 
+TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaStrictOrderingSupported) {
+  auto dma = Create<EnqueueDMAOp>(
+      /*source=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
+      /*source_semaphore=*/nullptr,
+      /*target=*/AllocaI32({1024, 256, 128}, MemorySpace::kVmem),
+      /*target_semaphore=*/AllocaSemaphore(),
+      /*device_id=*/nullptr,
+      /*core_id=*/nullptr,
+      /*priority=*/0,
+      /*strict_ordering=*/true);
+
+  ASSERT_OK(VerifyOp(dma));
+}
+
+TEST_F(TpuOpsVerificationTest, DmaStrictOrderingNotSupportedOnTc) {
+  auto func_op =
+      Create<func::FuncOp>("tc_kernel", builder().getFunctionType({}, {}));
+  func_op->setAttr(TPUDialect::GetCoreTypeKey(),
+                   CoreTypeAttr::get(builder().getContext(), CoreType::kTc));
+  builder().setInsertionPointToStart(func_op.addEntryBlock());
+
+  auto dma = Create<EnqueueDMAOp>(
+      /*source=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
+      /*source_semaphore=*/nullptr,
+      /*target=*/AllocaI32({1024, 256, 128}, MemorySpace::kVmem),
+      /*target_semaphore=*/AllocaSemaphore(),
+      /*device_id=*/nullptr,
+      /*core_id=*/nullptr,
+      /*priority=*/0,
+      /*strict_ordering=*/true);
+
+  ASSERT_THAT(VerifyOp(dma),
+              StatusIs(_, HasSubstr("Strict ordering is only supported on the "
+                                    "SC scalar and vector subcores")));
+}
+
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
        IndirectDmaHbmChunkGatherVerificationWorks) {
   auto dma = Create<EnqueueIndirectDMAOp>(

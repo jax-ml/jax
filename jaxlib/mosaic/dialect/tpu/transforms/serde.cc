@@ -40,7 +40,7 @@ constexpr StringRef kMangledDialect = "stable_mosaic.";
 constexpr StringRef kVersionAttrName = "stable_mosaic.version";
 // When this is bumped, we should file a TODO to update the forward-compatible
 // version in tpu_custom_call.py in a month!
-constexpr int kVersion = 7;
+constexpr int kVersion = 8;
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
 
@@ -106,11 +106,22 @@ LogicalResult enqueue_dma_upgrade(Operation* op, int version, bool&) {
 }
 
 LogicalResult enqueue_dma_downgrade(Operation* op, int version, bool&) {
-  if (version < 2) {
-    return op->emitError("Downgrade to version ") << version << " unsupported";
+  if (version < 8) {
+    auto ordering_attr = op->getAttrOfType<BoolAttr>("strict_ordering");
+    if (ordering_attr != nullptr) {
+      if (ordering_attr.getValue()) {
+        return op->emitError(
+            "Can only downgrade below version 8 when strict ordering is not "
+            "set to True");
+      }
+      op->removeAttr("strict_ordering");
+    }
   }
   if (version < 4) {
     op->removeAttr("priority");
+  }
+  if (version < 2) {
+    return op->emitError("Downgrade to version ") << version << " unsupported";
   }
   return success();
 }
@@ -165,9 +176,6 @@ LogicalResult wait_dma2_upgrade(Operation* op, int version, bool&) {
 }
 
 LogicalResult wait_dma2_downgrade(Operation* op, int version, bool&) {
-  if (version < 3) {
-    return op->emitError("Downgrade to version ") << version << " unsupported";
-  }
   if (version < 7) {
     auto operands = op->getAttrOfType<mlir::DenseI32ArrayAttr>(
       OpTrait::AttrSizedOperandSegments<
@@ -181,6 +189,9 @@ LogicalResult wait_dma2_downgrade(Operation* op, int version, bool&) {
     }
     op->removeAttr(OpTrait::AttrSizedOperandSegments<
                    EnqueueDMAOp>::getOperandSegmentSizeAttr());
+  }
+  if (version < 3) {
+    return op->emitError("Downgrade to version ") << version << " unsupported";
   }
   return success();
 }

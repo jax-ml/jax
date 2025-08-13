@@ -1308,6 +1308,16 @@ LogicalResult EnqueueDMAOp::verify() {
     return emitOpError(
         "Not implemented: non-zero priority is not supported for remote DMA");
   }
+  FailureOr<CoreType> issuing_core = GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core)) {
+    return issuing_core;
+  }
+  if (getStrictOrdering() && *issuing_core != CoreType::kScScalarSubcore &&
+      *issuing_core != CoreType::kScVectorSubcore) {
+    return emitOpError(
+        "Strict ordering is only supported on the SC scalar and vector "
+        "subcores");
+  }
   return success();
 }
 
