@@ -184,7 +184,6 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
       (jnp.int16,),
       (jnp.int8,),
   )
-  @only_passes_in_interpret()
   def test_narrow_bitwidth_scalar_prefetch(self, dtype):
     def body(s_ref, o_ref):
       o_ref[...] = jnp.broadcast_to(s_ref[0], o_ref.shape)
