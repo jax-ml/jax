@@ -1897,7 +1897,7 @@ def lower_jaxpr_to_fun(
         [num_dim_vars, num_tokens, num_const_args])
     tokens_in = TokenSet(zip(effects, token_args))
     args: list[IrValues] = unflattened_args
-    unique_consts = {id(c): ir_constant(xla.canonicalize_dtype(c))
+    unique_consts = {id(c): ir_constant(xla.dont_canonicalize_dtype(c))
                      for c in jaxpr.consts}
     consts_for_constvars = [unique_consts[id(c)] for c in jaxpr.consts]
 

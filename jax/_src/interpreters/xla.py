@@ -119,7 +119,8 @@ def register_initial_style_primitive(prim: core.Primitive):
   initial_style_primitives.add(prim)
 
 def dont_canonicalize_dtype(val):
+  prev_val = val
   if isinstance(core.get_aval(val), core.ShapedArray):
-    val = canonicalize_dtype(prev_val := val)
+    val = canonicalize_dtype(val)
     assert val.dtype == dtypes.dtype(prev_val), (val, prev_val)
   return prev_val
