@@ -26,7 +26,7 @@ import builtins
 import dataclasses
 import functools
 import types
-from typing import cast, overload, Any, Literal, Union
+from typing import cast, overload, Any, Literal, Union, Callable
 import warnings
 
 import ml_dtypes
@@ -1039,4 +1039,3 @@ canonicalize_value_handlers: dict[Any, Callable] = {}
 
 class InvalidInputException(Exception):
   pass
-

@@ -16,19 +16,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from functools import partial
-from typing import Any, Union
+from typing import Union
 
 import numpy as np
 
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src.dtypes import (
     canonicalize_value as canonicalize_dtype,
     canonicalize_value_handlers as canonicalize_dtype_handlers,
-    InvalidInputException)
+    InvalidInputException)  # noqa: F401
 from jax._src.abstract_arrays import numpy_scalar_types
 from jax._src.util import safe_zip, safe_map
 
@@ -123,4 +121,7 @@ def dont_canonicalize_dtype(val):
   if isinstance(core.get_aval(val), core.ShapedArray):
     val = canonicalize_dtype(val)
     assert val.dtype == dtypes.dtype(prev_val), (val, prev_val)
+    import numpy as np
+    if isinstance(prev_val, np.ndarray):
+      prev_val.flags.writeable = False
   return prev_val
