@@ -125,12 +125,6 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
   return result.astype(input_arr.dtype)
 
 
-"""
-    Only nearest neighbor (``order=0``), linear interpolation (``order=1``) and
-    modes ``'constant'``, ``'nearest'``, ``'wrap'`` ``'mirror'`` and ``'reflect'`` are currently supported.
-
-    """
-
 def map_coordinates(
     input: ArrayLike, coordinates: Sequence[ArrayLike], order: int,
     mode: str = 'constant', cval: ArrayLike = 0.0,
