@@ -10,8 +10,8 @@ def g(a, b):
 def f(a, b):
     with timeline.Timeline() as t:
         future1 = t.async_call(g)(a, b)
-        future2 = t.async_call(g)(b, a)
         res = t.ready(future1)
+        future2 = t.async_call(g)(b, a)
         return res + t.ready(future2)
 
 print(f.lower(1.0, 2.0).as_text())
