@@ -453,10 +453,6 @@ def rnn_abstract_eval(x_aval, h_0_aval, c_0_aval, w_aval, seq_lengths_aval,
   return output_aval, h_0_aval, c_0_aval, reserve_space_aval
 
 
-def _gpu_lowering_strip_tf32(fn, *args, cudnn_allow_tf32, **kw):
-  del cudnn_allow_tf32
-  return fn(*args, **kw)
-
 rnn_fwd_p = core.Primitive('rnn_fwd')
 rnn_fwd_p.multiple_results = True
 rnn_fwd_p.def_impl(partial(xla.apply_primitive, rnn_fwd_p))

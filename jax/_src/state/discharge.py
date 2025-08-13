@@ -673,49 +673,6 @@ def _run_state_jvp(primals: Sequence[Any], tangents: Sequence[Any], *,
   return out_primals, out_tangents
 ad.primitive_jvps[run_state_p] = _run_state_jvp
 
-_save_everything = lambda *_, **__: True
-
-def _convert_outputs_to_writes(
-    jaxpr: core.Jaxpr) -> tuple[core.Jaxpr, list[core.ShapedArray]]:
-  assert not jaxpr.constvars, "Jaxpr shouldn't have constvars."
-
-  in_avals = [v.aval for v in jaxpr.invars]
-  def eval_jaxpr(*refs):
-    # We split the refs into the original input refs and the dummy residual
-    # refs.
-    orig_refs, residual_refs = split_list(refs, [len(in_avals)])
-    residual_vals = core.eval_jaxpr(jaxpr, (), *orig_refs)
-    for res_ref, res_val in zip(residual_refs, residual_vals):
-      res_ref[...] = res_val
-    return []
-  res_ref_avals = [AbstractRef(v.aval) if not isinstance(v.aval, AbstractRef)
-                   else v.aval for v in jaxpr.outvars]
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(eval_jaxpr,
-                   debug_info=jaxpr.debug_info),
-      [*in_avals, *res_ref_avals])
-  assert not consts
-  return jaxpr, [core.ShapedArray(a.shape, a.dtype) for a in res_ref_avals]
-
-def _convert_inputs_to_reads(num_res: int, jaxpr: core.Jaxpr) -> core.Jaxpr:
-  assert not jaxpr.constvars, "Jaxpr should not have constvars"
-
-  def eval_jaxpr(*refs):
-    residual_refs, orig_refs = split_list(refs, [num_res])
-    residual_vals = [r[...] for r in residual_refs]
-    () = core.eval_jaxpr(jaxpr, (), *residual_vals, *orig_refs)
-    return []
-
-  res_val_avals, orig_ref_avals = \
-      split_list([v.aval for v in jaxpr.invars], [num_res])
-  res_ref_avals = [AbstractRef(aval) if not isinstance(aval, AbstractRef) else
-                   aval for aval in res_val_avals]
-  jaxpr, _, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(eval_jaxpr,
-                   debug_info=jaxpr.debug_info),
-      [*res_ref_avals, *orig_ref_avals])
-  return jaxpr
-
 @register_discharge_rule(run_state_p)
 def _run_state_discharge_rule(in_avals: Sequence[core.AbstractValue],
                               out_avals: Sequence[core.AbstractValue],
