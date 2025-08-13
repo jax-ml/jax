@@ -54,6 +54,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Support/TypeID.h"
+#include "jaxlib/mosaic/pass_boilerplate.h"
 
 namespace mosaic {
 namespace gpu {
@@ -249,37 +250,13 @@ mlir::LogicalResult launchPreloadedKernel(mlir::func::FuncOp func,
   return mlir::success();
 }
 
-class GpuLaunchLoweringPass : public ::mlir::OperationPass<mlir::ModuleOp> {
+class GpuLaunchLoweringPass
+    : public jaxlib::mlir::Pass<GpuLaunchLoweringPass, mlir::ModuleOp> {
  public:
-  GpuLaunchLoweringPass()
-      : ::mlir::OperationPass<mlir::ModuleOp>(
-            ::mlir::TypeID::get<GpuLaunchLoweringPass>()) {}
-  GpuLaunchLoweringPass(const GpuLaunchLoweringPass &other)
-      : ::mlir::OperationPass<mlir::ModuleOp>(other) {}
-  GpuLaunchLoweringPass &operator=(const GpuLaunchLoweringPass &) = delete;
-  GpuLaunchLoweringPass(GpuLaunchLoweringPass &&) = delete;
-  GpuLaunchLoweringPass &operator=(GpuLaunchLoweringPass &&) = delete;
-  ~GpuLaunchLoweringPass() = default;
+  using jaxlib::mlir::Pass<GpuLaunchLoweringPass, mlir::ModuleOp>::Pass;
 
-  // Pass boilerplate...
-  static constexpr ::llvm::StringLiteral getArgumentName() {
-    return ::llvm::StringLiteral("gpu-launch-lowering");
-  }
-  ::llvm::StringRef getArgument() const override { return getArgumentName(); }
-  ::llvm::StringRef getDescription() const override { return ""; }
-  static constexpr ::llvm::StringLiteral getPassName() {
-    return ::llvm::StringLiteral("GpuLaunchLoweringPass");
-  }
-  ::llvm::StringRef getName() const override { return getPassName(); }
-  static bool classof(const ::mlir::Pass *pass) {
-    return pass->getTypeID() == ::mlir::TypeID::get<GpuLaunchLoweringPass>();
-  }
-  std::unique_ptr<::mlir::Pass> clonePass() const override {
-    return std::make_unique<GpuLaunchLoweringPass>(
-        *static_cast<const GpuLaunchLoweringPass *>(this));
-  }
-  void getDependentDialects(::mlir::DialectRegistry &registry) const override {}
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(GpuLaunchLoweringPass)
+  static constexpr ::llvm::StringLiteral kArgumentName = "gpu-launch-lowering";
+  static constexpr ::llvm::StringLiteral kPassName = "GpuLaunchLoweringPass";
 
   void runOnOperation() override {
     mlir::ModuleOp module = getOperation();
