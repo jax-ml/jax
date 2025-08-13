@@ -61,6 +61,7 @@ from jax._src.state import indexing
 from jax._src.state import primitives as sp
 from jax._src.state import types as state_types
 from jax._src.state.types import RefReshaper
+from jax._src.state.types import RefTransposer
 from jax._src.util import foreach
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
@@ -1388,6 +1389,14 @@ def _handle_transforms(
 
     new_transforms = list(reversed(new_transforms_rev))
     return data
+
+  # Make transpose transforms reversible.
+  transforms = [
+      gpu_core.TransposeRef(t.permutation)
+      if isinstance(t, RefTransposer)
+      else t
+      for t in transforms
+  ]
 
   peer_device_id = None
   for t in transforms:
