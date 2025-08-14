@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+from jax._src import ad_util as _src_ad_util
+
 from jax._src.interpreters.ad import (
   JVPTrace as JVPTrace,
   JVPTracer as JVPTracer,
@@ -64,7 +66,6 @@ from jax._src.interpreters.ad import (
   vjp as vjp,
   zero_jvp as zero_jvp,
   zeros_like_aval as zeros_like_aval,
-  zeros_like_p as zeros_like_p,
 )
 
 
@@ -75,3 +76,21 @@ def backward_pass(jaxpr, reduce_axes, transform_stack,
   del reduce_axes
   return backward_pass_internal(
       jaxpr, transform_stack, consts, primals_in, cotangents_in)
+
+
+_deprecations = {
+    # Added 2024-12-11
+    "zeros_like_p": (
+        "jax.core.zeros_like_p is deprecated in JAX v0.7.1. It has been unused since v0.4.24.",
+        _src_ad_util.zeros_like_p,
+    ),
+}
+
+import typing
+if typing.TYPE_CHECKING:
+  zeros_like_p = _src_ad_util.zeros_like_p
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing

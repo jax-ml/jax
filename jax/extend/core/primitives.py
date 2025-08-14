@@ -32,7 +32,6 @@ from jax._src.dispatch import device_put_p as device_put_p
 from jax._src.interpreters.ad import (
   add_jaxvals_p as add_jaxvals_p,
   custom_lin_p as custom_lin_p,
-  zeros_like_p as zeros_like_p,
 )
 
 from jax._src.interpreters.pxla import xla_pmap_p as xla_pmap_p
