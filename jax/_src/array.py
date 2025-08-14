@@ -33,6 +33,7 @@ from jax._src import errors
 from jax._src import profiler
 from jax._src import util
 from jax._src import xla_bridge
+from jax._src.tree_util import tree_flatten, tree_unflatten, broadcast_prefix
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
@@ -49,6 +50,7 @@ from jax._src.typing import ArrayLike, DLDeviceType, DTypeLike
 from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method, cache
 import numpy as np
 
+zip, unsafe_zip = safe_zip, zip
 
 Shape = tuple[int, ...]
 Device = xc.Device
@@ -835,10 +837,9 @@ def make_array_from_callback(
 
 
 def make_array_from_process_local_data(
-    sharding: Sharding,
-    local_data: np.ndarray,
-    global_shape: Shape | None = None,
-) -> ArrayImpl:
+    sharding,  # PyTree[jax.sharding.Sharding]
+    local_data,  # PyTree[np.ndarray]
+    global_shape=None):  # PyTree[Shape]
   # pyformat: disable
   """Creates distributed tensor using the data available in process.
 
@@ -953,7 +954,18 @@ def make_array_from_process_local_data(
   # pyformat: enable
   if xla_bridge.process_count() == 1:
     return api.device_put(local_data, sharding)
+  local_data_flat, treedef = tree_flatten(local_data)
+  sharding_flat = broadcast_prefix(sharding, local_data)
+  global_shape_flat = broadcast_prefix(
+      global_shape, local_data,
+      is_leaf=lambda x: x is None or isinstance(x, tuple))
+  out = [_array_from_process_local_data(data, s, shape)
+         for data, s, shape in zip(local_data_flat, sharding_flat, global_shape_flat)]
+  return tree_unflatten(treedef, out)
 
+def _array_from_process_local_data(
+    local_data: np.ndarray, sharding: Sharding,
+    global_shape: Shape | None = None) -> ArrayImpl:
   # TODO(sandler): consider supporting partially specified global_shape or
   # making local_to_global_shape available in the api.
   local_shape = local_data.shape
