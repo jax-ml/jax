@@ -414,14 +414,9 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     # graph. We count the number of characters in the textual representation
     # of the constant.
     f_tf_graph = tf.function(tf_fun, autograph=False).get_concrete_function(*args).graph.as_graph_def()
-    if config.jax2tf_default_native_serialization.value:
-      # This way of finding constants may be brittle, if the constant representation
-      # contains >. It seems tobe hex-encoded, so this may be safe.
-      large_consts = [m for m in re.findall(r"dense<([^>]+)>", str(f_tf_graph)) if len(m) >= at_least]
-    else:
-      # We cannot find the constants just with string matching because their
-      # representation may contain escaped "
-      large_consts = [str(n) for n in f_tf_graph.node if n.op == "Const" and len(str(n)) >= at_least]
+    # This way of finding constants may be brittle, if the constant representation
+    # contains >. It seems tobe hex-encoded, so this may be safe.
+    large_consts = [m for m in re.findall(r"dense<([^>]+)>", str(f_tf_graph)) if len(m) >= at_least]
     return large_consts
 
   def CheckOpMetadata(self, jax_fun, x,

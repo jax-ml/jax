@@ -65,11 +65,9 @@ from jax import dtypes
 from jax import numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
-from jax.experimental import jax2tf
 from jax.interpreters import mlir
 
 import numpy as np
-import tensorflow as tf
 
 config.parse_flags_with_absl()
 
@@ -118,27 +116,23 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         device == "tpu"):
       raise unittest.SkipTest("b/264716764: error on tf.cast from c64 to f32")
 
-    if ("eigh" == harness.group_name and
-        device == "cpu"):
+    if "eigh" == harness.group_name and device == "cpu":
       raise unittest.SkipTest(
           "Equality comparisons on eigendecompositions are not stable.")
 
-    if (config.jax2tf_default_native_serialization.value and
-        device == "gpu" and
-        "lu" in harness.fullname):
+    if device == "gpu" and "lu" in harness.fullname:
       raise unittest.SkipTest("b/269388847: lu failures on GPU")
 
     def skipCustomCallTest(target: str):
       raise unittest.SkipTest(
           f"TODO(b/272239584): custom call target not guaranteed stable: {target}")
-    if config.jax2tf_default_native_serialization.value:
-      if device == "gpu":
-        if "custom_linear_solve_" in harness.fullname:
-          skipCustomCallTest("cusolver_geqrf, cublas_geqrf_batched")
-        if "svd_shape" in harness.fullname:
-          skipCustomCallTest("cusolver_gesvdj")
-        if "tridiagonal_solve_shape" in harness.fullname:
-          skipCustomCallTest("cusparse_gtsv2_f32, cusparse_gtsv2_f64")
+    if device == "gpu":
+      if "custom_linear_solve_" in harness.fullname:
+        skipCustomCallTest("cusolver_geqrf, cublas_geqrf_batched")
+      if "svd_shape" in harness.fullname:
+        skipCustomCallTest("cusolver_gesvdj")
+      if "tridiagonal_solve_shape" in harness.fullname:
+        skipCustomCallTest("cusparse_gtsv2_f32, cusparse_gtsv2_f64")
 
     associative_scan_reductions = harness.params.get("associative_scan_reductions", False)
     try:
@@ -146,8 +140,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         self.ConvertAndCompare(func_jax, *args, limitations=limitations)
     except Exception as e:
       # TODO(b/264596006): custom calls are not registered properly with TF in OSS
-      if (config.jax2tf_default_native_serialization.value and
-          "does not work with custom calls" in str(e)):
+      if "does not work with custom calls" in str(e):
         logging.warning("Suppressing error %s", e)
         raise unittest.SkipTest("b/264596006: custom calls in native serialization fail in TF")
       else:
@@ -325,19 +318,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         x = np.array([1, 2], dtype=x_dtype)
         y = np.array([3, 4], dtype=y_dtype)
         self.ConvertAndCompare(f_jax, x, y)
-
-  def test_integer_div(self):
-    x = jnp.array([-4, -3, -1, 0, 1, 3, 6])
-    y = np.int32(3)
-    self.ConvertAndCompare(jnp.floor_divide, x, y)
-    expected = jnp.floor_divide(x, y)
-    if not config.jax2tf_default_native_serialization.value:
-      # With native serialization TF1 seems to want to run the converted code
-      # on the CPU even when the default backend is the TPU.
-      # Try it with TF 1 as well (#5831)
-      with tf.compat.v1.Session() as sess:
-        tf1_res = sess.run(jax2tf.convert(jnp.floor_divide)(x, y))
-        self.assertAllClose(expected, tf1_res)
 
   def test_boolean_gather(self):
     values = np.array([[True, True], [False, True], [False, False]],

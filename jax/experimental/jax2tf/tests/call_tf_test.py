@@ -83,11 +83,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
       if all(tf_device.device_type != d.device_type for d in self.tf_devices):
         self.tf_devices.append(tf_device)
     self.warning_ctx = jtu.ignore_warning(
-        message=(
-            "(jax2tf.convert with native_serialization=False has been deprecated"
-            "|Calling from_dlpack with a DLPack tensor is deprecated)"
-        )
-    )
+        message="Calling from_dlpack with a DLPack tensor is deprecated")
     self.warning_ctx.__enter__()
 
   def tearDown(self):
@@ -825,7 +821,6 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     # lowering will have the proper side effects for the function_list.
     f_tf = tf.function(jax2tf.convert(
       f_jax,
-      native_serialization=True,
       native_serialization_platforms=lowering_platforms))
     for tf_device in self.tf_devices:
       with self.subTest(tf_device.device_type):
@@ -880,7 +875,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
 
 
 class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
-  "Reloading output of jax2tf into JAX with call_tf"
+  """Reloading output of jax2tf into JAX with call_tf."""
 
   def setUp(self):
     if tf is None:
@@ -890,11 +885,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     _ = tf.add(1, 1)
     super().setUp()
     self.warning_ctx = jtu.ignore_warning(
-        message=(
-            "(jax2tf.convert with native_serialization=False has been deprecated"
-            "|Calling from_dlpack with a DLPack tensor is deprecated)"
-        )
-    )
+        message="Calling from_dlpack with a DLPack tensor is deprecated")
     self.warning_ctx.__enter__()
 
   def tearDown(self):
@@ -1067,9 +1058,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     x = np.array([-1.0, 0.0, 1.0], dtype=np.float32)
     y = np.array([-0.5, 0.0, 0.5], dtype=np.float32)
 
-    converted_fun = tf.function(
-        jax2tf.convert(fun_jax, native_serialization=True)
-    )
+    converted_fun = tf.function(jax2tf.convert(fun_jax))
     expected = np.sin(x) + np.cos(y)
     res = tf.function(converted_fun, jit_compile=True, autograph=False)(x, y)
     self.assertAllClose(expected, res.numpy(), atol=1e-5, rtol=1e-5)
@@ -1186,7 +1175,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
 
 
 class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
-  "Reloading output of call_tf into TF with jax2tf."
+  """Reloading output of call_tf into TF with jax2tf."""
 
   def setUp(self):
     if tf is None:
@@ -1196,11 +1185,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     _ = tf.add(1, 1)
     super().setUp()
     self.warning_ctx = jtu.ignore_warning(
-        message=(
-            "(jax2tf.convert with native_serialization=False has been deprecated"
-            "|Calling from_dlpack with a DLPack tensor is deprecated)"
-        )
-    )
+        message="Calling from_dlpack with a DLPack tensor is deprecated")
     self.warning_ctx.__enter__()
 
   def tearDown(self):
@@ -1320,58 +1305,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
       fun_tf_rt(x)
 
   @_parameterized_jit
-  def test_shape_poly_static_output_shape(self, with_jit=True):
-    if jax.config.jax2tf_default_native_serialization:
-      raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native serialization.")
-    x = np.array([0.7, 0.8], dtype=np.float32)
-
-    def fun_tf(x):
-      return tf.math.reduce_sum(tf.math.sin(x))
-
-    fun_jax = jax2tf.call_tf(fun_tf)
-    fun_tf_rt = _maybe_tf_jit(with_jit,
-        jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))
-    self.assertAllClose(fun_tf(x), fun_tf_rt(x))
-
-  @_parameterized_jit
-  def test_shape_poly(self, with_jit=False):
-    if jax.config.jax2tf_default_native_serialization:
-      raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native serialization.")
-    x = np.array([7, 8, 9, 10], dtype=np.float32)
-    def fun_jax(x):
-      y = jax2tf.call_tf(tf.math.sin,
-                         output_shape_dtype=jax.ShapeDtypeStruct(x.shape, x.dtype))(x)
-      z = jnp.cos(y)
-      w = jax2tf.call_tf(lambda z: tf.concat([z, z], axis=0),
-                         output_shape_dtype=jax.ShapeDtypeStruct((2 * z.shape[0],), z.dtype))(z)
-      assert w.shape[0] == 2 * x.shape[0]
-      return w
-
-    fun_tf_rt = _maybe_tf_jit(with_jit,
-        jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))
-    res_tf = fun_tf_rt(x)
-    self.assertAllClose(fun_jax(x), res_tf)
-
-  @_parameterized_jit
-  def test_shape_poly_pytree_result(self, with_jit=True):
-    if jax.config.jax2tf_default_native_serialization:
-      raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native serialization.")
-    x = np.array([7, 8, 9, 10], dtype=np.float32)
-    def fun_jax(x):
-      # Returns a tuple
-      y = jax2tf.call_tf(lambda x: (x, tf.concat([x, x], axis=0)),
-          output_shape_dtype=(jax.ShapeDtypeStruct(x.shape, x.dtype),
-                              jax.ShapeDtypeStruct((2 * x.shape[0],), x.dtype)))(x)
-      assert y[0].shape[0] == x.shape[0]
-      assert y[1].shape[0] == 2 * x.shape[0]
-      return y
-
-    fun_tf_rt = _maybe_tf_jit(with_jit,
-        jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))
-    res_tf = fun_tf_rt(x)
-    self.assertAllClose(fun_jax(x), res_tf)
-
-  @_parameterized_jit
   def test_shape_poly_error_no_output_shape_dtype(self, with_jit=True):
     x = np.array([7, 8, 9, 10], dtype=np.float32)
     def fun_jax(x):
@@ -1440,31 +1373,13 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     if kind == "bad_dim" and with_jit:
       # TODO: in jit more the error pops up later, at AddV2
       expect_error = "Dimensions must be equal, but are 4 and 9 for .* AddV2"
-    if kind == "bad_dim" and jax.config.jax2tf_default_native_serialization:
+    if kind == "bad_dim":
       # TODO(b/268386622): call_tf with shape polymorphism and native serialization.
       expect_error = "Error compiling TensorFlow function"
     fun_tf_rt = _maybe_tf_jit(with_jit,
         jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))
     with self.assertRaisesRegex(expect_ex, expect_error):
       fun_tf_rt(x)
-
-  def test_inner_native_serialization(self):
-    # Two nested jax2tf, the inner one being with native serialization
-    x = np.ones((3,), dtype=np.float32)
-    def f_inner_jax(x):
-      return jnp.sin(x)
-    def f_outer_jax(x):
-      f_inner_tf = jax2tf.convert(f_inner_jax, native_serialization=True)
-      return jnp.cos(jax2tf.call_tf(f_inner_tf)(x))
-
-    f_outer_tf = tf.function(
-        jax2tf.convert(f_outer_jax, native_serialization=False),
-        autograph=False)
-    f_outer_graph = str(f_outer_tf.get_concrete_function(tf.convert_to_tensor(x)).graph.as_graph_def())
-    # Quick way to check that there is an XlaCallModule op, and a Cos op, but no Sin op
-    self.assertIn('op: "Cos"', f_outer_graph)
-    self.assertIn('op: "XlaCallModule"', f_outer_graph)
-    self.assertNotIn('op: "Sin"', f_outer_graph)
 
   @parameterized.named_parameters(
       _named_test(f2_function=f2_function, f2_saved_model=f2_saved_model,
@@ -1476,12 +1391,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
   def test_several_round_trips(self,
                                f2_function=False, f2_saved_model=False,
                                f4_function=False, f4_saved_model=False):
-    if (f2_saved_model and
-        f4_saved_model and
-        not jax.config.jax2tf_default_native_serialization):
-      # TODO: Getting error Found invalid capture Tensor("jax2tf_vjp/jax2tf_arg_0:0", shape=(), dtype=float32) when saving custom gradients
-      # when saving f4, but only with non-native serialization.
-      raise unittest.SkipTest("TODO: error invalid capture when saving custom gradients")
     x = np.array(.7, dtype=np.float32)
     # f(n)(x) = 2. * x^n
     def f(n):
@@ -1629,7 +1538,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     # There is no runtime support yet so it can not run.
     tf_f_rt = jax2tf.convert(
         jax_f,
-        native_serialization=True,
         with_gradient=False,
     )
     _, restored_model = tf_test_util.SaveAndLoadFunction(
@@ -1687,7 +1595,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     )
     tf_f_rt = jax2tf.convert(
         jax_f,
-        native_serialization=True,
         with_gradient=False,
     )
     _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt, input_args=[inputs])
@@ -1701,7 +1608,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     jax_f_2 = jax2tf.call_tf(tf.function(tf_f_2), call_tf_graph=True)
     tf_f_rt_2 = jax2tf.convert(
         jax_f_2,
-        native_serialization=True,
         with_gradient=False,
     )
     _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt_2, input_args=[])
@@ -1772,7 +1678,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
 
       f_tf = jax2tf.convert(
           f_jax,
-          native_serialization=True,
           with_gradient=False,
       )
       _, restored_model = tf_test_util.SaveAndLoadFunction(f_tf, input_args=[x])
@@ -1816,7 +1721,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
       @tf.function(jit_compile=True, autograph=False)
       @partial(jax2tf.convert,
         with_gradient=False,
-        native_serialization=True,
         polymorphic_shapes=["(b)"])
       @jax.jit
       def tf_f_2(x):
@@ -1849,7 +1753,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     data_inputs = (np.array([0.5, 0.7], dtype=np.float32),)
 
     def tf_func(the_input):
-      res = jax2tf.convert(jax_func, native_serialization=True)(the_input)
+      res = jax2tf.convert(jax_func)(the_input)
       return tf.identity(res, name="the_result")
 
     jit_tf_func = tf.function(
