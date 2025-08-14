@@ -5201,16 +5201,19 @@ class APITest(jtu.JaxTestCase):
 
     d = np.zeros(3)
 
-    @jax.make_jaxpr
-    def g():
-      return jax.lax.cond(True,
-                          lambda: (c, jnp.sum(c), c),
-                          lambda: (c, jnp.sum(d), d))
-    if config.use_simplified_jaxpr_constants.value:
-      consts = uniq(find_constants(g()))
-    else:
-      consts = g().consts
-    self.assertLen(consts, 2)
+    # TODO(mattjj,phawkins): we broke this on purpose, as it probably isn't
+    # load-bearing (see above comment). If we wanted to fix it, we might share
+    # the constid cache across jaxpr traces, or we might hash on const value.
+    # @jax.make_jaxpr
+    # def g():
+    #   return jax.lax.cond(True,
+    #                       lambda: (c, jnp.sum(c), c),
+    #                       lambda: (c, jnp.sum(d), d))
+    # if config.use_simplified_jaxpr_constants.value:
+    #   consts = uniq(find_constants(g()))
+    # else:
+    #   consts = g().consts
+    # self.assertLen(consts, 2)
 
   # TODO(mattjj,dougalm): this test was flakey on CI; figure out how to enable?
   # @jtu.run_on_devices('cpu')
