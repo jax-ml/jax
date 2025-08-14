@@ -1,0 +1,248 @@
+# CI - Optional wheel tests
+#
+# This workflow is triggered in the presubmit.
+#
+# It consists of the following jobs:
+# build-jax-artifact: Builds the jax artifact from source via build.py invocation. Uses
+#     build_artifacts.yml.
+# build-linux-x86-jaxlib-artifact: Builds the linux x86 jaxlib artifact from source via build.py
+#     invocation. Uses build_artifacts.yml.
+# build-linux-arm64-jaxlib-artifact: Builds the linux arm64 jaxlib artifact from source via build.py
+#     invocation. Uses build_artifacts.yml.
+# build-windows-jaxlib-artifact: Builds the windows jaxlib artifact from source via build.py
+#     invocation. Uses build_artifacts.yml.
+# build-linux-x86-cuda-artifacts: Builds the linux x86 jax-cuda-plugin, jax-cuda-pjrt artifacts from
+#     source via build.py invocation. Uses build_artifacts.yml.
+# build-linux-arm64-cuda-artifacts: Builds the linux arm64 jax-cuda-plugin, jax-cuda-pjrt artifacts
+#     from source via build.py invocation. Uses build_artifacts.yml.
+# run-bazel-test-cpu-py-import: Calls the `bazel_cpu.yml` workflow which runs Bazel CPU tests with
+#     py_import on RBE.
+# run-bazel-test-cpu-prebuilt-jaxlib-windows-wheel: Calls the `bazel_cpu.yml` workflow which
+#     downloads thejax and windows jaxlib artifact that were built in the previous steps and runs
+#     the CPU tests using Bazel.
+# run-bazel-test-cuda-py-import: Calls the `bazel_cuda.yml` workflow which runs Bazel CUDA 12 tests
+#     with py_import on non-RBE.
+# run-bazel-test-cuda-prebuilt-jaxlib-wheel: Calls the `bazel_cuda.yml` workflow which downloads the
+#     jax, jaxlib and CUDA artifacts that were built in the previous steps and runs the CUDA 13
+#     tests using Bazel.
+
+name: CI - Optional wheel tests
+
+on:
+  # Runs on PR if label "CI Optional Wheels Presubmit" is present.
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        required: true
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
+  pull_request:
+    branches:
+      - main
+    types: [ labeled, synchronize, opened, reopened ]
+
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # Don't cancel in-progress jobs for main/release branches.
+  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
+
+jobs:
+  build-jax-artifact:
+    uses: ./.github/workflows/build_artifacts.yml
+    if: ${{ github.event.repository.fork == false && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional Wheels Presubmit')) }}
+    name: "Build jax artifact"
+    with:
+        runner: "linux-x86-n4-16"
+        artifact: "jax"
+        upload_artifacts_to_gcs: true
+        gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+
+  build-linux-x86-jaxlib-artifact:
+    uses: ./.github/workflows/build_artifacts.yml
+    if: ${{ github.event.repository.fork == false && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional Wheels Presubmit')) }}
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+            runner: ["linux-x86-n4-16"]
+            artifact: ["jaxlib"]
+            python: ["3.14-nogil"]
+    name: "Build jaxlib ${{ format('{0}', 'artifact') }}"
+    with:
+        runner: ${{ matrix.runner }}
+        artifact: ${{ matrix.artifact }}
+        python: ${{ matrix.python }}
+        clone_main_xla: 1
+        upload_artifacts_to_gcs: true
+        gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+
+  build-linux-arm64-jaxlib-artifact:
+    uses: ./.github/workflows/build_artifacts.yml
+    if: ${{ github.event.repository.fork == false && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional Wheels Presubmit')) }}
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+            runner: ["linux-arm64-c4a-16"]
+            artifact: ["jaxlib"]
+            python: ["3.14-nogil"]
+    name: "Build jaxlib ${{ format('{0}', 'artifact') }}"
+    with:
+        runner: ${{ matrix.runner }}
+        artifact: ${{ matrix.artifact }}
+        python: ${{ matrix.python }}
+        clone_main_xla: 1
+        upload_artifacts_to_gcs: true
+        gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+
+  build-windows-jaxlib-artifact:
+    uses: ./.github/workflows/build_artifacts.yml
+    if: ${{ github.event.repository.fork == false && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional Wheels Presubmit')) }}
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+            runner: ["windows-x86-n2-16"]
+            artifact: ["jaxlib"]
+            python: ["3.14"]
+    name: "Build jaxlib ${{ format('{0}', 'artifact') }}"
+    with:
+        runner: ${{ matrix.runner }}
+        artifact: ${{ matrix.artifact }}
+        python: ${{ matrix.python }}
+        clone_main_xla: 1
+        upload_artifacts_to_gcs: true
+        gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+
+  build-linux-x86-cuda-artifacts:
+    uses: ./.github/workflows/build_artifacts.yml
+    if: ${{ github.event.repository.fork == false && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional Wheels Presubmit')) }}
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Python values need to match the matrix stategy in the CUDA tests job below
+          runner: ["linux-x86-n4-16"]
+          artifact: ["jax-cuda-plugin", "jax-cuda-pjrt"]
+          python: ["3.14-nogil"]
+          cuda-version: ["13"]
+    name: "Build CUDA ${{ format('{0}', 'wheels') }}"
+    with:
+      runner: ${{ matrix.runner }}
+      artifact: ${{ matrix.artifact }}
+      python: ${{ matrix.python }}
+      cuda-version: ${{ matrix.cuda-version }}
+      clone_main_xla: 1
+      upload_artifacts_to_gcs: true
+      gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+
+  build-linux-arm64-cuda-artifacts:
+    uses: ./.github/workflows/build_artifacts.yml
+    if: ${{ github.event.repository.fork == false && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional Wheels Presubmit')) }}
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Python values need to match the matrix stategy in the CUDA tests job below
+          runner: ["linux-arm64-c4a-16"]
+          artifact: ["jax-cuda-plugin", "jax-cuda-pjrt"]
+          python: ["3.14"]
+          cuda-version: ["12"]
+    name: "Build CUDA ${{ format('{0}', 'wheels') }}"
+    with:
+      runner: ${{ matrix.runner }}
+      artifact: ${{ matrix.artifact }}
+      python: ${{ matrix.python }}
+      cuda-version: ${{ matrix.cuda-version }}
+      clone_main_xla: 1
+      upload_artifacts_to_gcs: true
+      gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+
+  run-bazel-test-cpu-py-import:
+    uses: ./.github/workflows/bazel_cpu.yml
+    if: ${{ github.event.repository.fork == false && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional Wheels Presubmit')) }}
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          runner: ["linux-x86-n4-16", "linux-arm64-c4a-16"]
+          python: ["3.14-nogil"]
+          enable-x64: [1]
+    name: "CPU ${{ format('{0}', 'tests') }}"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      build_jaxlib: "wheel"
+      build_jax: "wheel"
+      clone_main_xla: 1
+
+  run-bazel-test-cpu-prebuilt-jaxlib-windows-wheel:
+    if: ${{ !cancelled() && github.event.repository.fork == false && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional Wheels Presubmit'))}}
+    uses: ./.github/workflows/bazel_cpu.yml
+    needs: [build-jax-artifact, build-windows-jaxlib-artifact]
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          runner: ["windows-x86-n2-16"]
+          python: ["3.14"]
+          enable-x64: [1]
+    name: "CPU ${{ format('{0}', 'tests') }}"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      build_jaxlib: "false"
+      build_jax: "false"
+      clone_main_xla: 1
+      gcs_download_uri: ${{ needs.build-jax-artifact.outputs.gcs_upload_uri }}
+
+  run-bazel-test-cuda-py-import:
+    uses: ./.github/workflows/bazel_cuda.yml
+    if: ${{ github.event.repository.fork == false && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional Wheels Presubmit')) }}
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Python values need to match the matrix stategy in the build artifacts job above
+          runner: ["linux-x86-n4-16"]
+          python: ["3.14"]
+          cuda-version: ["12"]
+          enable-x64: [1]
+    name: "GPU=${{ format('{0}', 'T4 tests') }}"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      cuda-version: ${{ matrix.cuda-version }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      build_jaxlib: "wheel"
+      build_jax: "wheel"
+      jaxlib-version: "head"
+      run_multiaccelerator_tests: "false"
+      clone_main_xla: 1
+      write_to_bazel_remote_cache: 0
+
+  run-bazel-test-cuda-prebuilt-jaxlib-wheel:
+    if: ${{ !cancelled() && github.event.repository.fork == false && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional Wheels Presubmit'))}}
+    needs: [build-jax-artifact, build-linux-x86-jaxlib-artifact, build-linux-x86-cuda-artifacts]
+    uses: ./.github/workflows/bazel_cuda.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Python values need to match the matrix stategy in the build artifacts job above
+          runner: ["linux-x86-g2-48-l4-4gpu"]
+          python: ["3.14-nogil"]
+          cuda-version: ["13"]
+          jaxlib-version: ["head"]
+          enable-x64: [1]
+    name: "GPU=${{ format('{0}', 'L4 tests') }}"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      cuda-version: ${{ matrix.cuda-version }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      jaxlib-version: ${{ matrix.jaxlib-version }}
+      gcs_download_uri: ${{ needs.build-jax-artifact.outputs.gcs_upload_uri }}
+      build_jaxlib: "false"
+      build_jax: "false"
+      write_to_bazel_remote_cache: 0
+      run_multiaccelerator_tests: "true"
+      clone_main_xla: 1
