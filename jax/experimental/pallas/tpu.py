@@ -52,6 +52,10 @@ from jax._src.pallas.mosaic.primitives import repeat as repeat
 from jax._src.pallas.mosaic.primitives import roll as roll
 from jax._src.pallas.mosaic.primitives import store as store
 from jax._src.pallas.mosaic.primitives import with_memory_space_constraint as with_memory_space_constraint
+from jax._src.pallas.mosaic.random import stateful_bernoulli as stateful_bernoulli
+from jax._src.pallas.mosaic.random import stateful_bits as stateful_bits
+from jax._src.pallas.mosaic.random import stateful_normal as stateful_normal
+from jax._src.pallas.mosaic.random import stateful_uniform as stateful_uniform
 from jax._src.pallas.mosaic.random import sample_block as sample_block
 from jax._src.pallas.mosaic.random import to_pallas_key as to_pallas_key
 
