@@ -338,7 +338,7 @@ llvm::LogicalResult VerifyMMAShapeAndTypes(mlir::Operation* op,
         M, a_shape[0]);
   }
   int K = a_shape[1];  // groups_k * k
-  if (K != b_shape[0] && K != b_shape[1]) {
+  if (K != b_shape[0]) {
     return error(
         "`a`'s contracting dimension {0} must be equal to the first dimension "
         "of `b`: {1}.",
