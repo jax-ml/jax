@@ -1910,7 +1910,16 @@ class VectorLayoutInferer {
         } else if (is_fully_replicated(some_layout)) {
           // If the input is fully replicated, don't use it to commit to any
           // layout. Replicated values are easy to relayout.
-          out_layout_candidate = layout;
+          // But we have to watch out: fully replicated values with implicit
+          // dimensions are _less replicated_ than those without implicit
+          // dimensions, because they tell us nothing about the replication of
+          // their untiled dims.
+          if (!out_layout_candidate) {
+            out_layout_candidate = layout;
+          } else if (out_layout_candidate->layout_rank() >
+                     layout.layout_rank()) {
+            out_layout_candidate = layout;
+          }
         } else if (!out_layout) {
           // TODO(apaszke): There are probably smarter ways to choose layout.
           out_layout = layout;
