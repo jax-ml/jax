@@ -33,6 +33,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     v0.8.0. Its APIs have raised `NotImplementedError` since JAX version 0.4.35.
   * In {func}`jax.lax.dot`, passing the ``precision`` and ``preferred_element_type``
     arguments by position is deprecated. Pass them by explicit keyword instead.
+  * Several dozen internal APIs have been deprecated from {mod}`jax.interpreters.batching`;
+    they are used rarely if ever outside JAX itself, and are deprecated without any public
+    replacement.
 
 
 ## JAX 0.7.0 (July 22, 2025)
