@@ -504,7 +504,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
     out_q, scale = quantize(a, config)
     # Without an adjusted global scale, the values clip at 2688/0.
     self.assertArraysEqual(dequantize_nvfp4_tensor(out_q, scale, output_type, config),
-                           [value]*16)
+                           jnp.array([value]*16, dtype=output_type))
 
   @jtu.sample_product(
       enable_grad_clip=[True, False],
