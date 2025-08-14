@@ -1080,6 +1080,14 @@ def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
     Optional<I32>:$core_id, // For megacore
     DefaultValuedAttr<BoolAttr, "false">:$strict_ordering
   );
+  let assemblyFormat = [{
+    `semaphore` `(` $semaphore `:` type($semaphore) `)`
+    `src` `(` $src `:` type($src) `)`
+    `dst` `(` $dst `:` type($dst) `)`
+    (`device_id` `(` $device_id^ `)`)?
+    (`core_id` `(` $core_id^ `)`)?
+    attr-dict
+  }];
   let hasVerifier = 1;
   // A backward-compatible builder that sets `device_id` and `core_id` to nullptr.
   let builders = [
@@ -1109,8 +1117,11 @@ def TPU_WaitIndirectDMAOp : TPU_Op<"wait_indirect_dma">, IndirectDMAOp {
     AnyMemRef:$dst
   );
   let assemblyFormat = [{
-    $src `to` $dst `,` `semaphore` $semaphore attr-dict `:` type($src) `,` type($dst) `,` type($semaphore)
-    }];
+    `semaphore` `(` $semaphore `:` type($semaphore) `)`
+    `src` `(` $src `:` type($src) `)`
+    `dst` `(` $dst `:` type($dst) `)`
+    attr-dict
+  }];
   let hasVerifier = 1;
   let extraClassDeclaration = extraBaseClassDeclaration;
 }
