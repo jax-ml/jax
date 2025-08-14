@@ -3171,6 +3171,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       gc.collect()
 
     nbufs = lambda: len(jax.live_arrays())
+    gc.collect()
     base = nbufs()
     leak()
     self.assertEqual(base, nbufs())
