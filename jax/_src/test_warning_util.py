@@ -27,106 +27,130 @@ import contextlib
 import re
 import threading
 import warnings
+import sys
+
+if sys.version_info < (3, 14) or not sys.flags.context_aware_warnings:  # pytype: disable=attribute-error
+
+  class _WarningContext(threading.local):
+    "Thread-local state that contains a list of warning handlers."
+
+    def __init__(self):
+      self.handlers = []
 
 
-class _WarningContext(threading.local):
-  "Thread-local state that contains a list of warning handlers."
-
-  def __init__(self):
-    self.handlers = []
+  _context = _WarningContext()
 
 
-_context = _WarningContext()
-
-
-# Callback that applies the handlers in reverse order. If no handler matches,
-# we raise an error.
-def _showwarning(message, category, filename, lineno, file=None, line=None):
-  for handler in reversed(_context.handlers):
-    if handler(message, category, filename, lineno, file, line):
-      return
-  raise category(message)
-
-
-@contextlib.contextmanager
-def raise_on_warnings():
-  "Context manager that raises an exception if a warning is raised."
-  if warnings.showwarning is not _showwarning:
-    with warnings.catch_warnings():
-      warnings.simplefilter("error")
-      yield
-    return
-
-  def handler(message, category, filename, lineno, file=None, line=None):
+  # Callback that applies the handlers in reverse order. If no handler matches,
+  # we raise an error.
+  def _showwarning(message, category, filename, lineno, file=None, line=None):
+    for handler in reversed(_context.handlers):
+      if handler(message, category, filename, lineno, file, line):
+        return
     raise category(message)
 
-  _context.handlers.append(handler)
-  try:
-    yield
-  finally:
-    _context.handlers.pop()
 
+  @contextlib.contextmanager
+  def raise_on_warnings():
+    "Context manager that raises an exception if a warning is raised."
+    if warnings.showwarning is not _showwarning:
+      with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        yield
+      return
 
-@contextlib.contextmanager
-def record_warnings():
-  "Context manager that yields a list of warnings that are raised."
-  if warnings.showwarning is not _showwarning:
-    with warnings.catch_warnings(record=True) as w:
-      warnings.simplefilter("always")
-      yield w
-    return
+    def handler(message, category, filename, lineno, file=None, line=None):
+      raise category(message)
 
-  log = []
-
-  def handler(message, category, filename, lineno, file=None, line=None):
-    log.append(warnings.WarningMessage(message, category, filename, lineno, file, line))
-    return True
-
-  _context.handlers.append(handler)
-  try:
-    yield log
-  finally:
-    _context.handlers.pop()
-
-
-@contextlib.contextmanager
-def ignore_warning(*, message: str | None = None, category: type = Warning):
-  "Context manager that ignores any matching warnings."
-  if warnings.showwarning is not _showwarning:
-    with warnings.catch_warnings():
-      warnings.filterwarnings(
-        "ignore", message="" if message is None else message, category=category)
+    _context.handlers.append(handler)
+    try:
       yield
-    return
+    finally:
+      _context.handlers.pop()
 
-  if message:
-    message_re = re.compile(message)
-  else:
-    message_re = None
 
-  category_cls = category
+  @contextlib.contextmanager
+  def record_warnings():
+    "Context manager that yields a list of warnings that are raised."
+    if warnings.showwarning is not _showwarning:
+      with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        yield w
+      return
 
-  def handler(message, category, filename, lineno, file=None, line=None):
-    text = str(message) if isinstance(message, Warning) else message
-    if (message_re is None or message_re.match(text)) and issubclass(
-        category, category_cls
-    ):
+    log = []
+
+    def handler(message, category, filename, lineno, file=None, line=None):
+      log.append(warnings.WarningMessage(message, category, filename, lineno, file, line))
       return True
-    return False
 
-  _context.handlers.append(handler)
-  try:
-    yield
-  finally:
-    _context.handlers.pop()
+    _context.handlers.append(handler)
+    try:
+      yield log
+    finally:
+      _context.handlers.pop()
 
 
-def install_threadsafe_warning_handlers():
-  # Hook the showwarning method. The warnings module explicitly notes that
-  # this is a function that users may replace.
-  warnings.showwarning = _showwarning
+  @contextlib.contextmanager
+  def ignore_warning(*, message: str | None = None, category: type = Warning):
+    "Context manager that ignores any matching warnings."
+    if warnings.showwarning is not _showwarning:
+      with warnings.catch_warnings():
+        warnings.filterwarnings(
+          "ignore", message="" if message is None else message, category=category)
+        yield
+      return
 
-  # Set the warnings module to always display warnings. We hook into it by
-  # overriding the "showwarning" method, so it's important that all warnings
-  # are "shown" by the usual mechanism.
-  warnings.simplefilter("always")
+    if message:
+      message_re = re.compile(message)
+    else:
+      message_re = None
+
+    category_cls = category
+
+    def handler(message, category, filename, lineno, file=None, line=None):
+      text = str(message) if isinstance(message, Warning) else message
+      if (message_re is None or message_re.match(text)) and issubclass(
+          category, category_cls
+      ):
+        return True
+      return False
+
+    _context.handlers.append(handler)
+    try:
+      yield
+    finally:
+      _context.handlers.pop()
+
+
+  def install_threadsafe_warning_handlers():
+    # Hook the showwarning method. The warnings module explicitly notes that
+    # this is a function that users may replace.
+    warnings.showwarning = _showwarning
+
+    # Set the warnings module to always display warnings. We hook into it by
+    # overriding the "showwarning" method, so it's important that all warnings
+    # are "shown" by the usual mechanism.
+    warnings.simplefilter("always")
+
+
+else:
+  @contextlib.contextmanager
+  def raise_on_warnings():
+    with warnings.catch_warnings(action="error"):
+      yield
+
+  def record_warnings():
+    return warnings.catch_warnings(record=True)
+
+  @contextlib.contextmanager
+  def ignore_warning(*, message: str | None = None, category: type = Warning):
+    with warnings.catch_warnings():
+      if message is None:
+        warnings.filterwarnings("ignore", category=category)
+      else:
+        warnings.filterwarnings("ignore", category=category, message=message)
+      yield
+
+  def install_threadsafe_warning_handlers():
+    pass
