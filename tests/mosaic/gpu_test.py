@@ -4533,16 +4533,15 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       tma_barrier.wait()
 
       # TODO(allanrenucci): Remove explicit layouts once inferred.
-      tmem_layout = layouts.to_layout_attr(
-          tcgen05.tmem_default_layout(packing=1)
-          if m == 128
-          else tcgen05._infer_tmem_layout(
-              acc_shape, collective=False, packing=1
-          )
+      tmem_layout = tcgen05._infer_tmem_layout(
+          acc_shape, collective=False, packing=1
       )
       load_layout = layouts.to_layout_attr(
-          tcgen05.LAYOUT if m == 128 else fa.WGMMA_LAYOUT
+          tcgen05._infer_tmem_load_registers_layout(
+              tmem_layout, columns=n, packing=1
+          )
       )
+      tmem_layout = layouts.to_layout_attr(tmem_layout)
 
       mma_op = mgpu_dialect.TcGen05MMAOp(
           accumulator=acc_tmem,

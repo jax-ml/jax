@@ -760,6 +760,18 @@ class TMEMLayout(fa.TiledLayout):
     )
 
 
+def _infer_tmem_load_registers_layout(
+    tmem_layout: TMEMLayout, columns: int, packing: int
+) -> fa.TiledLayout:
+  if tmem_layout == tmem_default_layout(packing=packing):
+    return LAYOUT
+  if tmem_layout == tmem_half_lane_layout(columns, packing=packing):
+    return fa.WGMMA_LAYOUT
+  if tmem_layout == tmem_m64_collective_layout(columns, packing=packing):
+    return fa_m64_collective_layout(columns)
+  raise ValueError(f"TMEM layout {tmem_layout} is not supported")
+
+
 def _infer_tmem_layout(shape: tuple[int, int], collective: bool, packing: int) -> TMEMLayout:
   if len(shape) != 2:
     raise ValueError(f"TMEM can only represent 2D shapes, got {shape}")
@@ -938,14 +950,9 @@ class TMEMRef:
       raise NotImplementedError(f"Unsupported dtype: {self.dtype}")
     packing = self.layout.vector_length
     if layout is None:
-      if self.layout == tmem_default_layout(packing=packing):
-        layout = LAYOUT
-      elif self.layout == tmem_half_lane_layout(self.shape[1], packing=packing):
-        layout = fa.WGMMA_LAYOUT
-      elif self.layout == tmem_m64_collective_layout(self.shape[1], packing=packing):
-        layout = fa_m64_collective_layout(self.shape[1])
-      else:
-        raise ValueError(f"TMEM layout {self.layout} is not supported")
+      layout = _infer_tmem_load_registers_layout(
+          self.layout, self.shape[1], packing
+      )
     regs_shape = layout.registers_shape(self.shape)
     if regs_shape[0] != 1:  # We'll need to issue multiple loads below.
       raise NotImplementedError("Loading multiple row tiles")
