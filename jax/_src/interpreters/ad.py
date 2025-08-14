@@ -33,7 +33,7 @@ from jax._src import source_info_util
 from jax._src.ad_util import (
     add_jaxvals, replace_internal_symbolic_zeros,
     replace_rule_output_symbolic_zeros, Zero, zeros_like_aval, SymbolicZero)
-from jax._src.ad_util import zeros_like_p, add_jaxvals_p  # noqa: F401
+from jax._src.ad_util import add_jaxvals_p
 from jax._src.api_util import flatten_fun, flatten_fun_nokwargs, debug_info
 from jax._src.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
                            typeof)
