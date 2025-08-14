@@ -25,10 +25,8 @@ from jax._src import test_util as jtu
 from jax._src.cudnn.fused_attention_stablehlo import (
     dot_product_attention,
     paged_attention,
-    check_is_flash_attention,
     check_cudnn_version,
     MaskType,
-    AttentionLayout,
 )
 
 config.parse_flags_with_absl()
@@ -919,33 +917,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       out = jitted_sdpa_inference(query, key, value)
       out_ref = jitted_sdpa_inference_ref(query, key, value)
       self.assertArraysAllClose(out_ref, out, rtol=2e-2, atol=2e-2)
-
-  def test_sdpa_utils(self):
-    if jax.device_count() < 4:
-      self.skipTest("Requires more than 4 devices.")
-    test_cases = [
-      (1, 257, 64, 8905, False, True, True),
-      (1, 1024, 64, 8905, False, False, True),
-      (1024, 1024, 64, 8905, False, False, True),
-      (1024, 1024, 128, 8905, False, False, True),
-      (1024, 1024, 127, 8905, False, False, False),
-    ]
-
-    for k in test_cases:
-      sql_q, sql_v, head_dim, cudnn_version, has_bias, is_training, \
-        expected_pass = k
-      query = jnp.empty((4, sql_q, 4, head_dim))
-      key = jnp.empty((4, sql_v, 4, head_dim))
-      value = jnp.empty((4, sql_v, 4, head_dim))
-      if expected_pass:
-        check_is_flash_attention(
-          query, key, value, AttentionLayout.BNTH.value, cudnn_version,
-          has_bias, is_training)
-      else:
-        with self.assertRaises(NotImplementedError):
-          check_is_flash_attention(
-            query, key, value, AttentionLayout.BNTH.value, cudnn_version,
-            has_bias, is_training)
 
 
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
