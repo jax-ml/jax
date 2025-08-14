@@ -7328,8 +7328,20 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   const std::array<int64_t, 2> dst_vreg_slice =
       VectorLayout::vregSlice(ctx.target_shape, bitwidth, dst_tiling);
 
-  // Fully replicated offsets are handled efficiently elsewhere (in relayout)
-  CHECK(src.offsets()[0].has_value() || src.offsets()[1].has_value());
+  if (!src.offsets()[0].has_value() && !src.offsets()[1].has_value()) {
+    // Fully replicated
+    const VectorLayout dst(bitwidth, {std::nullopt, std::nullopt}, dst_tiling,
+                           src.implicit_dim());
+    xla::Array<Value> dst_vregs(
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
+    dst_vregs.Each([&](absl::Span<const int64_t> dst_idx, Value *vreg) {
+      SmallVector<int64_t> src_idx(dst_idx.begin(), dst_idx.end());
+      *(src_idx.end() - 2) = 0;
+      *(src_idx.end() - 1) = 0;
+      *vreg = vregs(src_idx);
+    });
+    return std::pair(dst, vregs);
+  }
 
   auto unpacked_elem_ty = vty.getElementType().isSignlessInteger()
                               ? static_cast<Type>(builder.getI32Type())
