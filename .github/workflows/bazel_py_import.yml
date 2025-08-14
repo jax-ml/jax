@@ -1,0 +1,83 @@
+# CI - Bazel py_import tests (RBE)
+#
+# This workflow is triggered only by other workflows.
+#
+# It consists of the following jobs:
+# run-bazel-test-cpu-py-import:
+#    - Runs the Bazel CPU tests with py_import dependencies. Uses bazel_cpu_rbe_no_jaxlib_build.yml.
+# run-bazel-test-cuda-py-import:
+#    - Runs the Bazel CUDA tests with py_import dependencies. Uses bazel_cuda_non_rbe.yml.
+name: CI - Bazel py_import tests (RBE)
+
+on:
+  workflow_call:
+    inputs:
+      # runners:
+      #   description: "Which runners should the workflow run on?"
+      #   type: string
+      #   default: '["linux-x86-n2-16"]'
+      python-versions:
+        description: "Which python versions should the artifact be built for?"
+        type: string
+        default: '["3.12"]'
+      cuda-versions:
+        description: "Which cuda versions should the artifact be built for?"
+        type: string
+        default: '["12"]'
+      enable-x64:
+        description: "Should x64 mode be enabled?"
+        type: string
+        default: '["0"]'
+      jaxlib-versions:
+        description: "Which jaxlib versions to test? (head/pypi_latest)"
+        type: string
+        default: '["head"]'
+      clone_main_xla:
+        description: "Should latest XLA be used?"
+        type: string
+        default: "0"
+      run-backend_independent-test-suite:
+        description: "Should backend independent test suite be run?"
+        type: string
+        default: "1"
+
+permissions: {}
+
+jobs:
+  run-bazel-test-cpu-py-import:
+    uses: ./.github/workflows/bazel_cpu_rbe_no_jaxlib_build.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          runner: ["linux-x86-n4-16", "linux-arm64-c4a-16", "windows-x86-n2-16"]
+          python: ${{ fromJSON(inputs.python-versions) }}
+          enable-x64: ${{ fromJSON(inputs.enable-x64) }}
+    name: "Bazel CPU tests with build_jaxlib=wheel (${{ matrix.runner }}, Python ${{ matrix.python }}, x64=${{ matrix.enable-x64 }})"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      build_jaxlib: "wheel"
+      run-backend_independent-test-suite: ${{ inputs.run-backend_independent-test-suite }}
+      clone_main_xla: ${{ inputs.clone_main_xla }}
+
+  # run-bazel-test-cuda-py-import:
+  #   uses: ./.github/workflows/bazel_cuda_non_rbe.yml
+  #   strategy:
+  #       fail-fast: false # don't cancel all jobs on failure
+  #       matrix:
+  #         runner: ["linux-x86-g2-48-l4-4gpu"]
+  #         python: ${{ fromJSON(inputs.python-versions) }}
+  #         enable-x64: ${{ fromJSON(inputs.enable-x64) }}
+  #         cuda-version: ${{ fromJSON(inputs.cuda-versions) }}
+  #         jaxlib-version: ${{ fromJSON(inputs.jaxlib-versions) }}
+  #   name: "Bazel CUDA Non-RBE with build_jaxlib=wheel (${{ matrix.runner }}, CUDA=${{ matrix.cuda-version }}, jaxlib=${{ matrix.jaxlib-version }}, Python ${{ matrix.python }}, x64=${{ matrix.enable-x64 }})"
+  #   with:
+  #     runner: ${{ matrix.runner }}
+  #     python: ${{ matrix.python }}
+  #     cuda-version: ${{ matrix.cuda-version }}
+  #     enable-x64:  ${{ matrix.enable-x64 }}
+  #     build_jaxlib: "wheel"
+  #     jaxlib-version: ${{ matrix.jaxlib-version }}
+  #     run-backend_independent-test-suite: ${{ inputs.run-backend_independent-test-suite }}
+  #     clone_main_xla: ${{ inputs.clone_main_xla }}
