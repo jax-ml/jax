@@ -554,7 +554,7 @@ def export(
         of `jax.export.DisabledSafetyCheck`.
 
   Returns:
-    a function that takes args and kwargs pytrees of {class}`jax.ShapeDtypeStruct`,
+    a function that takes args and kwargs pytrees of :class:`jax.ShapeDtypeStruct`,
     or values with `.shape` and `.dtype` attributes, and returns an
     `Exported`.
 

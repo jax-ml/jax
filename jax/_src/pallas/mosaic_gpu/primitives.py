@@ -2036,11 +2036,11 @@ def inline_mgpu(*, arg_types=(), return_type=None):
 
   Args:
     arg_types: A sequence of pytrees where the leaves are
-      {class}`~jax.experimental.pallas.mosaic_gpu.RefType`\s or
-      {class}`~jax.experimental.pallas.mosaic_gpu.Layout`\s for reference or
+      :class:`~jax.experimental.pallas.mosaic_gpu.RefType`\s or
+      :class:`~jax.experimental.pallas.mosaic_gpu.Layout`\s for reference or
       array arguments respectively.
     return_type: A pytree where the leaves are
-      {class}`~jax.experimental.pallas.mosaic_gpu.ShapeDtypeStruct`\s
+      :class:`~jax.experimental.pallas.mosaic_gpu.ShapeDtypeStruct`\s
       representing the arrays returned by the decorated function.
   """
   flat_arg_types, treedef_ty = jax.tree.flatten(tuple(arg_types))

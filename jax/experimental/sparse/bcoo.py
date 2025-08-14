@@ -1837,7 +1837,7 @@ def bcoo_concatenate(operands: Sequence[BCOO], *, dimension: int) -> BCOO:
 def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int],
                  dimensions: Sequence[int] | None = None,
                  sharding=None) -> BCOO:
-  """Sparse implementation of {func}`jax.lax.reshape`.
+  """Sparse implementation of :func:`jax.lax.reshape`.
 
   Args:
     operand: BCOO array to be reshaped.
@@ -1900,7 +1900,7 @@ def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int],
 
 
 def bcoo_rev(operand, dimensions):
-  """Sparse implementation of {func}`jax.lax.rev`"""
+  """Sparse implementation of :func:`jax.lax.rev`"""
   # Check validity of dimensions via original implementation.
   _ = jax.jit(lax.rev, static_argnames=("dimensions",)).eval_shape(
           jax.ShapeDtypeStruct(operand.shape, operand.dtype),
@@ -1928,7 +1928,7 @@ def bcoo_rev(operand, dimensions):
 
 
 def bcoo_squeeze(arr: BCOO, *, dimensions: Sequence[int]) -> BCOO:
-  """Sparse implementation of {func}`jax.lax.squeeze`.
+  """Sparse implementation of :func:`jax.lax.squeeze`.
 
   Squeeze any number of size 1 dimensions from an array.
 
@@ -1957,7 +1957,7 @@ def bcoo_squeeze(arr: BCOO, *, dimensions: Sequence[int]) -> BCOO:
 
 def bcoo_slice(mat: BCOO, *, start_indices: Sequence[int], limit_indices: Sequence[int],
                strides: Sequence[int] | None = None) -> BCOO:
-  """Sparse implementation of {func}`jax.lax.slice`.
+  """Sparse implementation of :func:`jax.lax.slice`.
 
   Args:
     mat: BCOO array to be reshaped.
@@ -2033,7 +2033,7 @@ def bcoo_slice(mat: BCOO, *, start_indices: Sequence[int], limit_indices: Sequen
   return BCOO((new_data, new_indices), shape=new_shape)
 
 def bcoo_dynamic_slice(mat: BCOO, start_indices: Sequence[Any], slice_sizes: Sequence[int]) -> BCOO:
-  """Sparse implementation of {func}`jax.lax.dynamic_slice`.
+  """Sparse implementation of :func:`jax.lax.dynamic_slice`.
 
   Args:
     mat: BCOO array to slice.
