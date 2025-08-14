@@ -776,7 +776,8 @@ def debug_print(fmt: str, *args: jax.typing.ArrayLike):
         (``{...}``), since it is always printed before any of the values.
       * On GPU, when using the experimental Mosaic GPU backend, ``fmt`` must
         contain a placeholder for each value to be printed. Format specs and
-        conversions are not supported. All values must be scalars.
+        conversions are not supported. If a single value is provided, the value
+        may be an array. Otherwise, all values must be scalars.
       * On TPU, if all inputs are scalars: If ``fmt`` contains placeholders,
         all values must be 32-bit integers. If there are no placeholders, the
         values are printed after the format string.
