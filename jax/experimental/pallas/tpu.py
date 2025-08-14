@@ -62,6 +62,7 @@ from jax._src.pallas.mosaic.random import to_pallas_key as to_pallas_key
 # Those primitives got moved to Pallas core. Keeping the updated imports
 # here for backward compatibility.
 from jax._src.pallas.core import semaphore as semaphore
+from jax._src.pallas.core import MemorySpace as GeneralMemorySpace
 from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
 from jax._src.pallas.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
@@ -77,7 +78,6 @@ verification = types.SimpleNamespace(
 )
 del types, assume, pretend, skip, define_model  # Clean up.
 
-ANY = MemorySpace.ANY
 CMEM = MemorySpace.CMEM
 SMEM = MemorySpace.SMEM
 VMEM = MemorySpace.VMEM
@@ -85,6 +85,9 @@ VMEM_SHARED = MemorySpace.VMEM_SHARED
 HBM = MemorySpace.HBM
 HOST = MemorySpace.HOST
 SEMAPHORE = MemorySpace.SEMAPHORE
+# Expose ANY for backward compatibility.
+ANY = GeneralMemorySpace.ANY
+del GeneralMemorySpace
 
 import typing as _typing  # pylint: disable=g-import-not-at-top
 if _typing.TYPE_CHECKING:
