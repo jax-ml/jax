@@ -237,6 +237,34 @@ class ProfilerTest(unittest.TestCase):
       if jtu.test_device_matches(["gpu"]):
         self.assertIn(b"/device:GPU", proto_bytes)
 
+  @jtu.run_on_devices("gpu")
+  @jtu.thread_unsafe_test()
+  def testProgrammaticGpuCuptiTracingWithOptions(self):
+    @jit
+    def xy_plus_z(x, y, z):
+      return jnp.float32(jax.lax.batch_matmul(jnp.bfloat16(x), y)) + z
+
+    k = jax.random.key(0)
+    s = 1, 16, 16
+    jax.devices()
+    x = jnp.int8(jax.random.normal(k, shape=s))
+    y = jnp.bfloat16(jax.random.normal(k, shape=s))
+    z = jnp.float32(jax.random.normal(k, shape=s))
+    with tempfile.TemporaryDirectory() as tmpdir_string:
+      tmpdir = pathlib.Path(tmpdir_string)
+      options = jax.profiler.ProfileOptions()
+      options.advanced_configuration = {
+          "gpu_max_callback_api_events": 1000000,
+          "gpu_enable_nvtx_tracking": True,
+      }
+      with jax.profiler.trace(tmpdir):
+        xy_plus_z(x, y, z).block_until_ready()
+
+      proto_path = tuple(tmpdir.rglob("*.xplane.pb"))
+      proto_bytes = proto_path[0].read_bytes()
+      if jtu.test_device_matches(["gpu"]):
+        self.assertIn(b"/device:GPU", proto_bytes)
+
   def testProgrammaticProfilingContextManagerPathlib(self):
     with tempfile.TemporaryDirectory() as tmpdir_string:
       tmpdir = pathlib.Path(tmpdir_string)
