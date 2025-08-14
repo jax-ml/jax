@@ -174,7 +174,7 @@ Key components:
 - Memory usage analysis
 - Gradient computation with JIT compilation
 
-To analyze memory usage in JAX, the :func:`jax.stages.Compiled.memory_analysis` method can be used on a compiled function. This provides detailed statistics about memory consumption during computation. The key metrics include temporary memory size, argument size, output size, and alias size. To calculate the total memory usage, sum the temporary, argument, and output sizes, then subtract the alias size to avoid double-counting the same memory multiple times. This provides a summarized view of how the device memory is utilized across different aspects of the computation.
+To analyze memory usage in JAX, the {func}`jax.stages.Compiled.memory_analysis` method can be used on a compiled function. This provides detailed statistics about memory consumption during computation. The key metrics include temporary memory size, argument size, output size, and alias size. To calculate the total memory usage, sum the temporary, argument, and output sizes, then subtract the alias size to avoid double-counting the same memory multiple times. This provides a summarized view of how the device memory is utilized across different aspects of the computation.
 
 ```{code-cell} ipython3
 ---
@@ -637,4 +637,4 @@ Note: The optimizer states can be compared for numerical equivalence using `jax.
 
 ## Tools for Host Offloading
 
-:func:`jax.stages.Compiled.memory_analysis` API is utilized above to get memory usage information. For device memory analysis, refer to :doc:`device_memory_profiling`. The profiling tools described in {ref}`profiling` can help measure memory savings and performance impact from host offloading.
+{func}`jax.stages.Compiled.memory_analysis` API is utilized above to get memory usage information. For device memory analysis, refer to :doc:`device_memory_profiling`. The profiling tools described in {ref}`profiling` can help measure memory savings and performance impact from host offloading.
