@@ -967,7 +967,7 @@ def register_dataclass(
       as keywords to the class constructor to create a copy of the object.
       All defined attributes should be listed among ``meta_fields`` or ``data_fields``.
     meta_fields: metadata field names: these are attributes which will be treated as
-      {term}`static` when this pytree is passed to :func:`jax.jit`. ``meta_fields`` is
+      :term:`static` when this pytree is passed to :func:`jax.jit`. ``meta_fields`` is
       optional only if ``nodetype`` is a dataclass, in which case individual fields can
       be marked static via :func:`dataclasses.field` (see examples below).
       Metadata fields *must* be static, hashable, immutable objects, as these objects
