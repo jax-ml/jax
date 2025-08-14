@@ -910,6 +910,7 @@ cc_library(
         ":pprof_profile_builder",
         ":py_client_cpu",
         ":py_host_callback",
+        ":py_user_context",
         ":python_ref_manager",
         ":traceback",
         ":util",

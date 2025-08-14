@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
@@ -41,6 +42,7 @@ limitations under the License.
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"
+#include "jaxlib/py_user_context.h"
 #include "jaxlib/traceback.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/pjrt_future.h"
@@ -52,6 +54,7 @@ limitations under the License.
 #include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
@@ -223,8 +226,32 @@ void PopulateExecuteShardedResults(const nb_class_ptr<PyClient>& client,
   }
 }
 
+namespace {
+constexpr std::string_view kJaxSrcPath = "/jax/_src/";
+constexpr std::string_view kJaxJaxlibPath = "/jax/jaxlib/";
+}  // namespace
+
+bool IsInternalFrame(std::string_view file_name) {
+  return absl::StrContains(file_name, kJaxSrcPath) ||
+         absl::StrContains(file_name, kJaxJaxlibPath);
+}
+
+std::optional<std::string> GetCallLocation(const jax::Traceback& traceback) {
+  auto frames = traceback.Frames();
+  for (const auto& frame : frames) {
+    if (nb::isinstance<nb::str>(frame.file_name) ||
+        nb::isinstance<nb::bytes>(frame.file_name)) {
+      std::string file_name = nb::cast<std::string>(frame.file_name);
+      if (!IsInternalFrame(file_name)) {
+        return absl::StrCat(file_name, ":", frame.line_num);
+      }
+    }
+  }
+  return std::nullopt;
+}
+
 absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
-    const ifrt::ExecuteOptions& options, const nb_class_ptr<PyClient>& client,
+    ifrt::ExecuteOptions& options, const nb_class_ptr<PyClient>& client,
     ifrt::LoadedExecutable* ifrt_loaded_executable,
     absl::Span<const ExecuteShardedArg> args,
     std::optional<std::vector<xla::PjRtFuture<>>>& returned_futures) {
@@ -232,6 +259,13 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
   std::unique_ptr<ifrt::Future<>> returned_future;
   int num_computations = ifrt_loaded_executable->addressable_devices().size();
   xla::PjRtFuture<> result_status;
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
+
+  auto traceback = GetTraceback(user_context_scope.current().get());
+  if (traceback.has_value()) {
+    options.call_location = GetCallLocation(*traceback);
+  }
+
   {
     nb::gil_scoped_release gil_release;
     for (const auto& arg : args) {
