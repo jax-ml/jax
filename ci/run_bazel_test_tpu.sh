@@ -72,7 +72,7 @@ echo "Running Bazel TPU tests..."
 # commands below.
 set +e
 
-if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
+if [[ "$JAXCI_RUN_FULL_TEST_SUITE" == "1" ]]; then
   # We're deselecting all Pallas TPU tests in the oldest libtpu build. Mosaic
   # TPU does not guarantee anything about forward compatibility (unless
   # jax.export is used) and the 12 week compatibility window accumulates way
