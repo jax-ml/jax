@@ -73,16 +73,16 @@ struct CanonicalizeContext {
 };
 
 using canonicalize_rule_type = std::function<FailureOr<Value>(
-    const CanonicalizeContext &ctx, Operation &op)>;
-const llvm::StringMap<canonicalize_rule_type> &rules();
+    const CanonicalizeContext& ctx, Operation& op)>;
+const llvm::StringMap<canonicalize_rule_type>& rules();
 
 class CanonicalBuilder : public ImplicitLocOpBuilder {
  public:
-  CanonicalBuilder(const CanonicalizeContext &ctx, Location loc, Operation *op)
+  CanonicalBuilder(const CanonicalizeContext& ctx, Location loc, Operation* op)
       : ImplicitLocOpBuilder(loc, op), ctx_(ctx), op_(op) {}
 
   template <typename Op, typename... Args>
-  Value create(Location loc, Args &&...args) {
+  Value create(Location loc, Args&&... args) {
     Op new_op = OpBuilder::create<Op>(loc, std::forward<Args>(args)...);
     // We perform a one-level check to avoid infinite recursion when recreating
     // the canonicalized operation. However, if there is an op that in its
@@ -90,7 +90,7 @@ class CanonicalBuilder : public ImplicitLocOpBuilder {
     // lead to infinite loops.
     if (auto rule_it = rules().find(Op::getOperationName());
         !isa<Op>(op_) && rule_it != rules().end()) {
-      const canonicalize_rule_type &rule = rule_it->getValue();
+      const canonicalize_rule_type& rule = rule_it->getValue();
       FailureOr<Value> result = rule(ctx_, *new_op);
       // We should not be creating uncanonicalizable ops inside this pass.
       CHECK(succeeded(result));
@@ -107,26 +107,26 @@ class CanonicalBuilder : public ImplicitLocOpBuilder {
   }
 
   template <typename Op, typename... Args>
-  Value create(Args &&...args) {
+  Value create(Args&&... args) {
     return create<Op>(getLoc(), std::forward<Args>(args)...);
   }
 
  private:
-  const CanonicalizeContext &ctx_;
-  Operation *op_;
+  const CanonicalizeContext& ctx_;
+  Operation* op_;
 };
 
-bool need_elementwise_canonicalization(const CanonicalizeContext &ctx,
-                                       Operation &op);
+bool need_elementwise_canonicalization(const CanonicalizeContext& ctx,
+                                       Operation& op);
 
 // Returns the collapsed lhs, rhs, acc and the new dimension numbers if the
 // non-contracting dims can be collapsed, otherwise returns std::nullopt.
 std::optional<std::tuple<TypedValue<VectorType>, TypedValue<VectorType>,
                          TypedValue<VectorType>, tpu::DotDimensionNumbersAttr>>
 collapse_matmul_non_contracting_dims(
-    CanonicalBuilder &builder, TypedValue<VectorType> lhs,
+    CanonicalBuilder& builder, TypedValue<VectorType> lhs,
     TypedValue<VectorType> rhs, TypedValue<VectorType> acc,
-    const tpu::DotDimensionNumbersAttr &dimension_numbers) {
+    const tpu::DotDimensionNumbersAttr& dimension_numbers) {
   // Collapse
   //
   // 1. [batch_dims, non_contracting_dims, contracting_dims] into
@@ -273,8 +273,8 @@ collapse_matmul_non_contracting_dims(
   return std::make_tuple(lhs, rhs, new_acc, new_dimension_numbers);
 }
 
-FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
-                                     Operation &raw_op) {
+FailureOr<Value> canonicalize_matmul(const CanonicalizeContext& ctx,
+                                     Operation& raw_op) {
   auto op = cast<tpu::MatmulOp>(raw_op);
   CanonicalBuilder builder(ctx, op.getLoc(), op.getOperation());
 
@@ -585,8 +585,8 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
   return res;
 };
 
-FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
-                                          Operation &op) {
+FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext& ctx,
+                                          Operation& op) {
   OpBuilder builder(&op);
   auto operands = op.getOperands();
   auto res_ty = dyn_cast<VectorType>(op.getResult(0).getType());
@@ -655,7 +655,7 @@ FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
         VectorType::get(shape, should_truncate ? builder.getF32Type()
                                                : res_ty.getElementType());
     // NOTE: We don't canonicalize recursively here
-    Operation *new_op =
+    Operation* new_op =
         builder.create(op.getLoc(), op.getName().getIdentifier(), new_operands,
                        new_res_ty, op.getAttrs());
     if (should_truncate) {
@@ -671,7 +671,7 @@ FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
 }
 
 FailureOr<Value> canonicalize_multi_dim_reduction(
-    const CanonicalizeContext &ctx, Operation &operation) {
+    const CanonicalizeContext& ctx, Operation& operation) {
   CanonicalBuilder builder(ctx, operation.getLoc(), &operation);
   auto op = cast<vector::MultiDimReductionOp>(operation);
   auto source_ty = op.getSourceVectorType();
@@ -721,8 +721,8 @@ FailureOr<Value> canonicalize_multi_dim_reduction(
   return op.emitOpError("Unsupported element type for the selected reduction");
 }
 
-FailureOr<Value> canonicalize_contraction(const CanonicalizeContext &ctx,
-                                          Operation &op) {
+FailureOr<Value> canonicalize_contraction(const CanonicalizeContext& ctx,
+                                          Operation& op) {
   auto contraction_op = dyn_cast<vector::ContractionOp>(op);
   if (!contraction_op) {
     op.emitOpError("Invariant violated: Not a contraction");
@@ -746,7 +746,7 @@ FailureOr<Value> canonicalize_contraction(const CanonicalizeContext &ctx,
   CanonicalBuilder builder(ctx, contraction_op->getLoc(),
                            contraction_op.getOperation());
 
-  MLIRContext *const mlir_ctx = contraction_op->getContext();
+  MLIRContext* const mlir_ctx = contraction_op->getContext();
 
   auto getMapAttr = [&](const unsigned first, const unsigned second) {
     return AffineMapAttr::get(AffineMap::get(
@@ -793,8 +793,8 @@ FailureOr<Value> canonicalize_contraction(const CanonicalizeContext &ctx,
   return matmul;
 }
 
-FailureOr<Value> canonicalize_extract(const CanonicalizeContext &ctx,
-                                      Operation &raw_op) {
+FailureOr<Value> canonicalize_extract(const CanonicalizeContext& ctx,
+                                      Operation& raw_op) {
   auto op = dyn_cast<vector::ExtractOp>(raw_op);
   Type result_ty = op.getResult().getType();
   if (!isa<VectorType>(result_ty)) {
@@ -809,8 +809,8 @@ FailureOr<Value> canonicalize_extract(const CanonicalizeContext &ctx,
   return raw_op.getResult(0);
 }
 
-FailureOr<Value> canonicalize_broadcast(const CanonicalizeContext &ctx,
-                                        Operation &raw_op) {
+FailureOr<Value> canonicalize_broadcast(const CanonicalizeContext& ctx,
+                                        Operation& raw_op) {
   auto op = dyn_cast<vector::BroadcastOp>(raw_op);
   auto src_ty = op.getSource().getType();
   auto src_vty = dyn_cast<VectorType>(src_ty);
@@ -847,8 +847,8 @@ FailureOr<Value> canonicalize_broadcast(const CanonicalizeContext &ctx,
   return raw_op.getResult(0);
 }
 
-FailureOr<Value> canonicalize_select(const CanonicalizeContext &ctx,
-                                     Operation &raw_op) {
+FailureOr<Value> canonicalize_select(const CanonicalizeContext& ctx,
+                                     Operation& raw_op) {
   auto op = dyn_cast<arith::SelectOp>(raw_op);
   if (!isa<VectorType>(op.getType()) ||
       isa<VectorType>(op.getCondition().getType())) {
@@ -867,8 +867,8 @@ FailureOr<Value> canonicalize_select(const CanonicalizeContext &ctx,
 }
 
 // All conversions that change bitwidth must be canonicalized to tpu.fptosi.
-FailureOr<Value> canonicalize_fptosi(const CanonicalizeContext &ctx,
-                                     Operation &raw_op) {
+FailureOr<Value> canonicalize_fptosi(const CanonicalizeContext& ctx,
+                                     Operation& raw_op) {
   auto op = cast<arith::FPToSIOp>(raw_op);
   CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
   auto src_vty = dyn_cast<VectorType>(op.getIn().getType());
@@ -958,8 +958,8 @@ FailureOr<Value> canonicalize_fptosi(const CanonicalizeContext &ctx,
   return x;
 }
 
-FailureOr<Value> canonicalize_sitofp(const CanonicalizeContext &ctx,
-                                     Operation &raw_op) {
+FailureOr<Value> canonicalize_sitofp(const CanonicalizeContext& ctx,
+                                     Operation& raw_op) {
   auto op = cast<arith::SIToFPOp>(raw_op);
   CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
   auto src_vty = dyn_cast<VectorType>(op.getIn().getType());
@@ -1022,8 +1022,8 @@ FailureOr<Value> canonicalize_sitofp(const CanonicalizeContext &ctx,
   return x;
 }
 
-FailureOr<Value> canonicalize_repeat(const CanonicalizeContext &ctx,
-                                     Operation &raw_op) {
+FailureOr<Value> canonicalize_repeat(const CanonicalizeContext& ctx,
+                                     Operation& raw_op) {
   auto op = dyn_cast<tpu::RepeatOp>(raw_op);
   if (!isa<VectorType>(op.getType())) {
     return op.emitOpError("Only vector types supported");
@@ -1046,8 +1046,8 @@ FailureOr<Value> canonicalize_repeat(const CanonicalizeContext &ctx,
   return concat;
 }
 
-FailureOr<Value> canonicalize_vector_transpose(const CanonicalizeContext &ctx,
-                                               Operation &raw_op) {
+FailureOr<Value> canonicalize_vector_transpose(const CanonicalizeContext& ctx,
+                                               Operation& raw_op) {
   auto op = cast<vector::TransposeOp>(raw_op);
   CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
   auto new_op = builder.create<tpu::TransposeOp>(op.getType(), op.getVector(),
@@ -1057,32 +1057,15 @@ FailureOr<Value> canonicalize_vector_transpose(const CanonicalizeContext &ctx,
   return new_op;
 }
 
-// Finds the split point for a reshape between a multi-dimensional shape and a
-// shape where a suffix has been collapsed into a single dimension.
-//
-// This function checks if `src_shape` and `tgt_shape` follow the pattern:
-//   src_shape: (P..., S_1, S_2, ..., S_N)
-//   tgt_shape: (P..., T_collapsed)
-// where `P` is a common prefix and `product(S_1..S_N) == T_collapsed`.
-//
-// It handles a differing number of leading 1s in the prefix by stripping them
-// from both shapes before comparison.
-//
-// This utility is used for two inverse patterns:
-// 1. Collapse (e.g., `load` -> `reshape`): The function is called directly,
-//    where `src_shape` is the multi-dimensional pre-reshape vector shape.
-// 2. Expand (e.g., `reshape` -> `store`): The function is called with swapped
-//    arguments, where `src_shape` is the multi-dimensional *post-reshape*
-//    vector shape.
-//
-// Returns:
-//   - A pair containing:
-//     1. The index in `src_shape` where the collapsing suffix begins.
-//     2. The product of the collapsed dimensions excluding the innermost one
-//        (i.e., product(S_1..S_{N-1})), used as the "sublane product".
-//   - `std::nullopt` if the shapes do not match the pattern.
-std::optional<std::pair<int, int>> findSplitPoint(ArrayRef<int64_t> src_shape,
-                                                  ArrayRef<int64_t> tgt_shape) {
+// Finds the split point for a reshape that collapses a suffix of dimensions.
+// For a reshape from src_shape to tgt_shape, identifies if the pattern is
+// (P..., S_1, S_2, ...) -> (P..., T_collapsed) where P is a common prefix and
+// product(S_i) == T_collapsed. Handles leading dimensions of size 1 of
+// different number of leading 1s.
+// Returns the index in src_shape where the collapsing suffix begins
+// and the sublane product of the src shape.
+std::optional<std::pair<int, int>> findCollapseSplitPoint(
+    ArrayRef<int64_t> src_shape, ArrayRef<int64_t> tgt_shape) {
   int s = 0, t = 0;
   // drop leading 1s
   while (s < src_shape.size() && src_shape[s] == 1) {
@@ -1117,8 +1100,8 @@ std::optional<std::pair<int, int>> findSplitPoint(ArrayRef<int64_t> src_shape,
   return std::make_pair(s_prefix_end, src_prod);
 }
 
-FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
-                                      Operation &raw_op) {
+FailureOr<Value> canonicalize_reshape(const CanonicalizeContext& ctx,
+                                      Operation& raw_op) {
   // def fused_load_reshape(memref, indices):
   //   # 1. Create a memref view for packed i32 loading.
   //   # Original shape: <Prefix_mem..., S, Lane, ElemTy>
@@ -1174,7 +1157,7 @@ FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
     return raw_op.getResult(0);
   }
 
-  auto split_opt = findSplitPoint(src_ty.getShape(), tgt_ty.getShape());
+  auto split_opt = findCollapseSplitPoint(src_ty.getShape(), tgt_ty.getShape());
   if (!split_opt) {
     return raw_op.getResult(0);
   }
@@ -1328,7 +1311,7 @@ FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
   return final_vec;
 }
 
-Value _canonicalize_store(const CanonicalizeContext &ctx, Operation &raw_op) {
+Value _canonicalize_store(const CanonicalizeContext& ctx, Operation& raw_op) {
   // Fuses a vector.shape_cast (that expands dimensions) into a subsequent
   // vector.store or dense tpu.vector_store. This is the inverse of the
   // canonicalize_reshape func.
@@ -1364,7 +1347,7 @@ Value _canonicalize_store(const CanonicalizeContext &ctx, Operation &raw_op) {
   TypedValue<MemRefType> base;
   ValueRange indices;
 
-  Operation *store_op;
+  Operation* store_op;
 
   // Note(mvoz): We have code that handles both, and am not sure why
   // we don't just use the tpu::VectorStoreOp? Either way, they are
@@ -1425,8 +1408,7 @@ Value _canonicalize_store(const CanonicalizeContext &ctx, Operation &raw_op) {
     // the lane size.
     return value_to_store;
   }
-  std::optional<std::pair<int, int>> split_opt =
-      findSplitPoint(tgt_ty.getShape(), src_ty.getShape());
+  auto split_opt = findCollapseSplitPoint(src_ty.getShape(), tgt_ty.getShape());
   if (!split_opt) {
     // Not a collapse...
     return value_to_store;
@@ -1531,18 +1513,18 @@ Value _canonicalize_store(const CanonicalizeContext &ctx, Operation &raw_op) {
   return base;
 }
 
-FailureOr<Value> canonicalize_store(const CanonicalizeContext &ctx,
-                                    Operation &raw_op) {
+FailureOr<Value> canonicalize_store(const CanonicalizeContext& ctx,
+                                    Operation& raw_op) {
   return _canonicalize_store(ctx, raw_op);
 }
 
-FailureOr<Value> canonicalize_vector_store(const CanonicalizeContext &ctx,
-                                           Operation &raw_op) {
+FailureOr<Value> canonicalize_vector_store(const CanonicalizeContext& ctx,
+                                           Operation& raw_op) {
   return _canonicalize_store(ctx, raw_op);
 }
 
-FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
-                                        Operation &raw_op) {
+FailureOr<Value> canonicalize_transpose(const CanonicalizeContext& ctx,
+                                        Operation& raw_op) {
   auto op = cast<tpu::TransposeOp>(raw_op);
   CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
   VectorType input_vty = op.getVector().getType();
@@ -1639,8 +1621,8 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
   return res;
 }
 
-FailureOr<Value> canonicalize_arith_extf(const CanonicalizeContext &ctx,
-                                         Operation &raw_op) {
+FailureOr<Value> canonicalize_arith_extf(const CanonicalizeContext& ctx,
+                                         Operation& raw_op) {
   auto op = cast<arith::ExtFOp>(raw_op);
   CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
   // Canonicalize arith::ExtFOp to tpu::ExtFOp.
@@ -1650,8 +1632,8 @@ FailureOr<Value> canonicalize_arith_extf(const CanonicalizeContext &ctx,
   return new_result;
 }
 
-FailureOr<Value> canonicalize_tpu_extf(const CanonicalizeContext &ctx,
-                                       Operation &raw_op) {
+FailureOr<Value> canonicalize_tpu_extf(const CanonicalizeContext& ctx,
+                                       Operation& raw_op) {
   auto op = cast<tpu::ExtFOp>(raw_op);
   auto dst_ty = dyn_cast<VectorType>(op.getType());
   if (!dst_ty) {
@@ -1690,8 +1672,8 @@ FailureOr<Value> canonicalize_tpu_extf(const CanonicalizeContext &ctx,
   return new_result;
 }
 
-FailureOr<Value> canonicalize_arith_truncf(const CanonicalizeContext &ctx,
-                                           Operation &raw_op) {
+FailureOr<Value> canonicalize_arith_truncf(const CanonicalizeContext& ctx,
+                                           Operation& raw_op) {
   auto op = cast<arith::TruncFOp>(raw_op);
   CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
   // Canonicalize arith::TruncFOp to tpu::TruncFOp.
@@ -1702,8 +1684,8 @@ FailureOr<Value> canonicalize_arith_truncf(const CanonicalizeContext &ctx,
   return new_result;
 }
 
-FailureOr<Value> canonicalize_tpu_truncf(const CanonicalizeContext &ctx,
-                                         Operation &raw_op) {
+FailureOr<Value> canonicalize_tpu_truncf(const CanonicalizeContext& ctx,
+                                         Operation& raw_op) {
   auto op = cast<tpu::TruncFOp>(raw_op);
   auto src_ty = dyn_cast<VectorType>(op.getOperand().getType());
   if (!src_ty) {
@@ -1742,7 +1724,7 @@ FailureOr<Value> canonicalize_tpu_truncf(const CanonicalizeContext &ctx,
   return new_result;
 }
 
-const llvm::StringMap<canonicalize_rule_type> &rules() {
+const llvm::StringMap<canonicalize_rule_type>& rules() {
   static auto rules = new llvm::StringMap<canonicalize_rule_type>{
       {tpu::MatmulOp::getOperationName(), canonicalize_matmul},
       {vector::ContractionOp::getOperationName(), canonicalize_contraction},
@@ -1760,13 +1742,11 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {tpu::TruncFOp::getOperationName(), canonicalize_tpu_truncf},
       {tpu::ExtFOp::getOperationName(), canonicalize_tpu_extf},
       {tpu::TransposeOp::getOperationName(), canonicalize_transpose},
-      {tpu::RepeatOp::getOperationName(), canonicalize_repeat},
-      {vector::StoreOp::getOperationName(), canonicalize_store},
-      {tpu::VectorStoreOp::getOperationName(), canonicalize_vector_store}};
+      {tpu::RepeatOp::getOperationName(), canonicalize_repeat}};
   return *rules;
 }
 
-const llvm::StringMap<int> &bf16_ops_min_supported_versions() {
+const llvm::StringMap<int>& bf16_ops_min_supported_versions() {
   static const auto m = new llvm::StringMap<int>{
       {arith::DivFOp::getOperationName(), 4},
       {arith::SelectOp::getOperationName(), 5},
@@ -1785,8 +1765,8 @@ const llvm::StringMap<int> &bf16_ops_min_supported_versions() {
   return *m;
 }
 
-bool need_elementwise_canonicalization(const CanonicalizeContext &ctx,
-                                       Operation &op) {
+bool need_elementwise_canonicalization(const CanonicalizeContext& ctx,
+                                       Operation& op) {
   // Only rewrite when the hardware generation is below the minimum supported
   // version.
   auto it = bf16_ops_min_supported_versions().find(op.getName().getStringRef());
@@ -1820,9 +1800,9 @@ class MosaicCanonicalizer {
     return canonicalizeBlock(op.getBody().front());
   }
 
-  LogicalResult canonicalizeBlock(Block &block) {
+  LogicalResult canonicalizeBlock(Block& block) {
     // make_early_inc_range is utilized due to op mutation.
-    for (Operation &any_op : make_early_inc_range(block)) {
+    for (Operation& any_op : make_early_inc_range(block)) {
       if (canonicalizeOp(any_op).failed()) {
         return failure();
       }
@@ -1830,14 +1810,14 @@ class MosaicCanonicalizer {
     return success();
   }
 
-  LogicalResult canonicalizeOp(Operation &any_op) {
+  LogicalResult canonicalizeOp(Operation& any_op) {
     CanonicalizeContext ctx(
         {compatibility_mode_, hardware_generation_, target_shape_});
     // We must iterate over the op first, because canonicalization can cause
     // us to .erase() an op, and accessing getRegions on it after is not
     // sound. Invariant - top level ops with regions may never be invalidated.
-    for (Region &region : any_op.getRegions()) {
-      for (Block &block : region) {
+    for (Region& region : any_op.getRegions()) {
+      for (Block& block : region) {
         if (canonicalizeBlock(block).failed()) {
           return failure();
         }
@@ -1848,7 +1828,7 @@ class MosaicCanonicalizer {
     }
     if (auto rule_it = rules().find(any_op.getName().getStringRef());
         rule_it != rules().end()) {
-      const canonicalize_rule_type &rule = rule_it->getValue();
+      const canonicalize_rule_type& rule = rule_it->getValue();
       return rule(ctx, any_op);
     }
     return success();
