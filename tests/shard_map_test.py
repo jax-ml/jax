@@ -280,7 +280,6 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(c[1, :], a[0, :])
 
   @jtu.run_on_devices("gpu")
-  @config.use_shardy_partitioner(False)
   def test_psend_precv_basic_two_gpus(self):
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
@@ -327,7 +326,6 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(c.shape, a.shape)
 
   @jtu.run_on_devices("gpu")
-  @config.use_shardy_partitioner(False)
   def test_psend_precv_basic_with_no_deadlock_cycle(self):
     mesh = jtu.create_mesh((8,), 'x')
     a = jax.device_put(
@@ -389,12 +387,172 @@ class ShardMapTest(jtu.JaxTestCase):
     c = fwd(a)
     self.assertEqual(c.shape, a.shape)
 
-  @jtu.run_on_devices("gpu")
-  @config.use_shardy_partitioner(False)
-  def test_psend_precv_reverse(self):
-    mesh = jtu.create_mesh((8,), 'x')
+  @jtu.run_on_devices('gpu')
+  def test_psend_precv_basic_with_deadlock_cycle(self):
+    if ifrt_version < 23:
+      self.skipTest('Test requires StableHLO v1.12.0 or higher.')
+
+    mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
-        jnp.arange(8 * 8, dtype=jnp.float32).reshape((8, 8)),
+        jnp.arange(2 * 2, dtype=jnp.float32).reshape((2, 2)),
+        jax.sharding.NamedSharding(mesh, P('x', None)),
+    )
+
+    @jax.jit
+    @partial(
+        jax.shard_map,
+        mesh=mesh,
+        in_specs=P('x', None),
+        out_specs=P('x', None),
+    )
+    def fwd(a):
+      return_dtype_and_shape = jax.ShapeDtypeStruct(a.shape, a.dtype)
+      fwd_token = jax.lax.psend(
+          a,
+          axis_name='x',
+          perm=[(0, 1), (1, 0)],
+      )
+
+      data = jax.lax.precv(
+          fwd_token,
+          out_shape=return_dtype_and_shape,
+          axis_name='x',
+          perm=[(0, 1), (1, 0)],
+      )
+      return data
+    expected_error_message = (
+        'Expected send and recv instructions to have non-cyclical'
+        ' source-target pairs'
+    )
+    with self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError, expected_error_message
+    ):
+      fwd(a)
+
+  @jtu.run_on_devices('gpu')
+  def test_psend_precv_basic_with_dangling_recv(self):
+    if ifrt_version < 23:
+      self.skipTest('Test requires StableHLO v1.12.0 or higher.')
+
+    mesh = jtu.create_mesh((2,), 'x')
+    a = jax.device_put(
+        jnp.arange(2 * 2, dtype=jnp.float32).reshape((2, 2)),
+        jax.sharding.NamedSharding(mesh, P('x', None)),
+    )
+
+    @jax.jit
+    @partial(
+        jax.shard_map,
+        mesh=mesh,
+        in_specs=P('x', None),
+        out_specs=P('x', None),
+    )
+    def fwd(a):
+      return_dtype_and_shape = jax.ShapeDtypeStruct(a.shape, a.dtype)
+      data = jax.lax.precv(
+          jax.lax.create_token(),
+          out_shape=return_dtype_and_shape,
+          axis_name='x',
+          perm=[(0, 1), (1, 0)],
+      )
+      return data
+
+    expected_error_message = 'Program terminated with dangling send or recv'
+    with self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError, expected_error_message
+    ):
+      fwd(a)
+
+  @jtu.run_on_devices('gpu')
+  def test_psend_precv_basic_with_non_matching_source_target_pairs(self):
+    if ifrt_version < 23:
+      self.skipTest('Test requires StableHLO v1.12.0 or higher.')
+
+    mesh = jtu.create_mesh((2,), 'x')
+    a = jax.device_put(
+        jnp.arange(2 * 2, dtype=jnp.float32).reshape((2, 2)),
+        jax.sharding.NamedSharding(mesh, P('x', None)),
+    )
+
+    @jax.jit
+    @partial(
+        jax.shard_map,
+        mesh=mesh,
+        in_specs=P('x', None),
+        out_specs=P('x', None),
+    )
+    def fwd(a):
+      return_dtype_and_shape = jax.ShapeDtypeStruct(a.shape, a.dtype)
+      fwd_token = jax.lax.psend(
+          a,
+          axis_name='x',
+          perm=[(0, 1)],
+      )
+
+      data = jax.lax.precv(
+          fwd_token,
+          out_shape=return_dtype_and_shape,
+          axis_name='x',
+          perm=[(1, 0)],
+      )
+      return data
+
+    expected_error_message = (
+        'Expected send and recv instructions to have the same source-target'
+        ' pairs'
+    )
+    with self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError, expected_error_message
+    ):
+      fwd(a)
+
+  @jtu.run_on_devices('gpu')
+  def test_psend_precv_basic_with_duplicate_source_target_pairs(self):
+    if ifrt_version < 23:
+      self.skipTest('Test requires StableHLO v1.12.0 or higher.')
+
+    mesh = jtu.create_mesh((2,), 'x')
+    a = jax.device_put(
+        jnp.arange(2 * 2, dtype=jnp.float32).reshape((2, 2)),
+        jax.sharding.NamedSharding(mesh, P('x', None)),
+    )
+
+    @jax.jit
+    @partial(
+        jax.shard_map,
+        mesh=mesh,
+        in_specs=P('x', None),
+        out_specs=P('x', None),
+    )
+    def fwd(a):
+      return_dtype_and_shape = jax.ShapeDtypeStruct(a.shape, a.dtype)
+      fwd_token = jax.lax.psend(
+          a,
+          axis_name='x',
+          perm=[(0, 1), (0, 1)],
+      )
+
+      data = jax.lax.precv(
+          fwd_token,
+          out_shape=return_dtype_and_shape,
+          axis_name='x',
+          perm=[(1, 0)],
+      )
+      return data
+
+    expected_error_message = (
+        'psend sources and destinations must be unique'
+    )
+    with self.assertRaisesRegex(
+        ValueError, expected_error_message
+    ):
+      fwd(a)
+
+  @jtu.run_on_devices("gpu")
+  def test_psend_precv_reverse_two_gpus(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    a = jax.device_put(
+        jnp.arange(2 * 2, dtype=jnp.float32).reshape((2, 2)),
         jax.sharding.NamedSharding(mesh, P('x', None)))
     @jax.jit
     @partial(
@@ -406,13 +564,13 @@ class ShardMapTest(jtu.JaxTestCase):
           jax.lax.create_token(),
           out_shape=return_dtype_and_shape,
           axis_name="x",
-          perm=[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7)],
+          perm=[(0, 1)],
       )
 
       _ = jax.lax.psend(
           dummy_data,
           axis_name="x",
-          perm=[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7)],
+          perm=[(0, 1)],
       )
       return dummy_data
 
