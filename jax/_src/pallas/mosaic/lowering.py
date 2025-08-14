@@ -659,7 +659,7 @@ def _check_block_mappings(
       assert rank == 1
       # bools get a bitwidth of 32 due to how mosaic handles them
       if bm.array_shape_dtype.dtype == jnp.bool_:
-        bitwidth = 32
+        bitwidth = dtypes.bit_width(BOOL_MEMREF_TYPE)
       else:
         bitwidth = dtypes.bit_width(bm.array_shape_dtype.dtype)
       packing = 32 // bitwidth
