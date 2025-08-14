@@ -101,6 +101,7 @@ class MemorySpace(enum.Enum):
   VMEM = enum.auto()
   SEMAPHORE_MEM = enum.auto()
   SMEM = enum.auto()
+  HOST = enum.auto()
 
   @property
   def color(self) -> int:
@@ -112,6 +113,8 @@ class MemorySpace(enum.Enum):
       return 2
     elif self == MemorySpace.SMEM:
       return 4
+    elif self == MemorySpace.HOST:
+      return 5
     else:
       raise ValueError("invalid memory space: " + str(self))
 

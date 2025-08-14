@@ -1268,6 +1268,37 @@ class PallasCallDMATest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(y, x)
 
+  def test_hbm_to_host_host_output_dma(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 8, 14):
+      self.skipTest('Requires libtpu built after 2025-08-14')
+
+    def kernel(y_hbm_ref, x_host_ref):
+      def body(sem):
+        pltpu.async_copy(y_hbm_ref, x_host_ref, sem).wait()
+
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
+
+    host_sharding = jax.sharding.NamedSharding(
+        jax.sharding.Mesh(jax.devices(), 'x'),
+        jax.sharding.PartitionSpec(),
+        memory_kind='pinned_host',
+    )
+    x = jnp.arange(8 * 128.0).reshape((8, 128))
+
+    @functools.partial(jax.jit, out_shardings=host_sharding)
+    def f(x):
+      return self.pallas_call(
+          kernel,
+          in_specs=[
+              pl.BlockSpec(memory_space=pl.ANY),
+          ],
+          out_specs=pl.BlockSpec(memory_space=pl.HOST),
+          out_shape=pltpu.HOST(shape=(8, 128), dtype=jnp.float32),
+      )(x)
+
+    y = f(x)
+    np.testing.assert_array_equal(y, x)
+
   def test_cannot_dma_with_nonscalar_semaphore_ref(self):
     def kernel(x_hbm_ref, y_hbm_ref):
       def body(sem):
