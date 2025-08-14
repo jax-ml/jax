@@ -1,18 +1,20 @@
 # CI - Wheel Tests (Nightly/Release)
 #
-# This workflow is used to test the JAX wheels that was built by internal CI jobs.
+# This workflow is used to test the JAX wheels that were built by internal CI jobs.
 #
-# 1. run-pytest-cpu:  Calls the `pytest_cpu.yml` workflow which downloads the JAX wheels that was
+# 1. run-pytest-cpu:  Calls the `pytest_cpu.yml` workflow which downloads the JAX wheels that were
 #                     built by internal CI jobs and runs CPU tests.
-# 2. run-bazel-test-cpu:  Calls the `bazel_cpu_rbe_no_jaxlib_build.yml` workflow which downloads the JAX wheels that was
-#                     built by internal CI jobs and runs Bazel CPU tests.
-# 3. run-pytest-cuda: Calls the `pytest_cuda.yml` workflow which downloads the JAX wheels that was
+# 2. run-bazel-test-cpu:  Calls the `bazel_cpu_rbe_no_jaxlib_build.yml` workflow which downloads the
+#                     JAX wheels that were built by internal CI jobs and runs Bazel CPU tests.
+# 3. run-pytest-cuda: Calls the `pytest_cuda.yml` workflow which downloads the JAX wheels that were
 #                     built by internal CI jobs and runs CUDA tests.
-# 4. run-bazel-test-cuda: Calls the `bazel_cuda_non_rbe.yml` workflow which downloads the JAX wheels that was
-#                     built by internal CI jobs and runs Bazel CUDA tests.
-# 5. run-pytest-tpu: Calls the `pytest_tpu.yml` workflow which downloads the JAX wheels that was
-#                     built by internal CI jobs and runs TPU tests.
-# 6. verify-release-wheels-install: Verifies that JAX's release wheels can be installed.
+# 4. run-bazel-test-cuda: Calls the `bazel_cuda_non_rbe.yml` workflow which downloads the JAX wheels
+#                     that were built by internal CI jobs and runs Bazel CUDA tests.
+# 5. run-pytest-tpu: Calls the `pytest_tpu.yml` workflow which downloads the JAX wheels that were
+#                    built by internal CI jobs and runs TPU tests.
+# 6. run-bazel-test-tpu: Calls the `bazel_test_tpu.yml` workflow which downloads the JAX wheels that
+#                        were built by internal CI jobs and runs Bazel TPU tests.
+# 7. verify-release-wheels-install: Verifies that JAX's release wheels can be installed.
 name: CI - Wheel Tests (Nightly/Release)
 
 on:
@@ -160,7 +162,6 @@ jobs:
           python: ["3.11", "3.12", "3.13", "3.13-nogil"]
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
-            {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
             {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
             {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"}
           ]
@@ -170,16 +171,6 @@ jobs:
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
             # Exclude pypi_latest for nightly releases
             - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pypi_latest' }}
-            # Run a single Python version for v4-8
-            - tpu-specs:
-                type: "v4-8"
-              python: "3.11"
-            - tpu-specs:
-                type: "v4-8"
-              python: "3.12"
-            - tpu-specs:
-                type: "v4-8"
-              python: "3.13-nogil"
             # Run Python versions in between min and max for v6e-8
             - tpu-specs:
                 type: "v6e-8"
@@ -206,6 +197,56 @@ jobs:
       download-jax-only-from-gcs: ${{inputs.download-jax-only-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
+
+  run-bazel-test-tpu:
+    uses: ./.github/workflows/bazel_test_tpu.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          python: ["3.11", "3.12", "3.13", "3.13-nogil"]
+          tpu-specs: [
+            # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
+            {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
+            {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
+          ]
+          libtpu-version-type: ["pypi_latest", "nightly"]
+          exclude:
+            # Exclude nightly for releases
+            - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
+            # Exclude pypi_latest for nightly releases
+            - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pypi_latest' }}
+            # Run a single Python version for v4-8
+            - tpu-specs:
+                type: "v4-8"
+              python: "3.11"
+            - tpu-specs:
+                type: "v4-8"
+              python: "3.12"
+            - tpu-specs:
+                type: "v4-8"
+              python: "3.13-nogil"
+            # Run min and max Python versions for v5e-8
+            - tpu-specs:
+                type: "v5e-8"
+              python: "3.11"
+            - tpu-specs:
+                type: "v5e-8"
+              python: "3.12"
+
+    name: "Bazel tests TPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
+    with:
+      runner: ${{ matrix.tpu-specs.runner }}
+      cores: ${{ matrix.tpu-specs.cores }}
+      tpu-type: ${{ matrix.tpu-specs.type }}
+      python: ${{ matrix.python }}
+      run-full-tpu-test-suite: "1"
+      libtpu-version-type: ${{ matrix.libtpu-version-type }}
+      download-jax-only-from-gcs: ${{inputs.download-jax-only-from-gcs}}
+      gcs_download_uri: ${{inputs.gcs_download_uri}}
+      halt-for-connection: ${{inputs.halt-for-connection}}
+      build_jaxlib: "false"
+      jaxlib-version: "head"
+      clone_main_xla: 0
 
   verify-release-wheels-install:
     if: ${{ startsWith(github.ref_name, 'release/')}}
