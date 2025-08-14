@@ -1,4 +1,4 @@
-# Copyright 2024 The JAX Authors.
+# Copyright 2025 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,777 +12,887 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Layout inference pass for the MLIR Mosaic GPU dialect."""
+"""Layout and transform inference pass for the MLIR Mosaic GPU dialect."""
 
-from collections.abc import Callable, Sequence
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence, Set
 import dataclasses
 import enum
-from functools import partial
-import math
-from typing import cast
+import itertools
+from typing import assert_never, cast
 
-from jax._src import lib as jaxlib
-from jax._src.lib import mosaic_gpu_dialect as mgpu
+from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
-from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import numpy as np
 
+from . import equations as eqns
 from . import fragmented_array as fa
 from . import inference_utils
 from . import layouts as layouts_lib
 from . import utils
 
 
-OptionalLayouts = tuple[list[ir.Attribute], list[ir.Attribute]] | None
-LayoutInferenceRule = Callable[[ir.OpView], OptionalLayouts]
-_layout_inference_rules: dict[str, LayoutInferenceRule] = {}
+class VariableType(enum.IntEnum):
+  """The type of a variable.
 
-
-def _add_layout_inference_rule(op: type[ir.OpView], rule: LayoutInferenceRule):
-  if op is not None:
-    _layout_inference_rules[op.OPERATION_NAME] = rule  # pytype: disable=attribute-error
-  return rule
-
-
-def _set_layout_attributes(
-    op: ir.OpView,
-    in_layouts: list[ir.Attribute],
-    out_layouts: list[ir.Attribute],
-):
-  op.attributes["in_layouts"] = ir.ArrayAttr.get(in_layouts)
-  op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts)
-
-
-def _choose_representative_layout(
-    layouts: set[ir.Attribute],
-) -> ir.Attribute | None:
-  """Chooses an appropriate layout from a given set of possible layouts.
-
-  Given the input set of possible layouts, this function extracts a single
-  representative layout. Currently, this function only works with strided,
-  splat, and tiled layouts.
-
-  Returns:
-    A single layout that can be used to annotate the operation, or None if the
-    input set is empty.
+  Variables here are either operands or results of MLIR operations.
   """
+  OPERAND = 0
+  RESULT = 1
 
-  if not layouts:
+@dataclasses.dataclass(frozen=True)
+class OperandOrResult:
+  """A unique identifier for a variable."""
+  # A MLIR operation.
+  operation: ir.OpView
+  # Whether this represents an operand or a result.
+  type: VariableType
+  # The index of the operand/result within the op's operands/results.
+  index: int
+
+
+@dataclasses.dataclass(frozen=True)
+class Hint:
+  """Hints are used to model propagation of layouts across operations.
+
+  Since using `relayout`s is always an option in principle, propagation across
+  ops can not rely only on an equation system. Instead, we introduce hints as
+  an equation-like form of "soft constraints", i.e., it suggests that
+  `variable` should be equal to `expression`.
+  """
+  variable: eqns.Variable
+  expression: eqns.Expression
+
+
+def extract_constant_from_least_replicated_expression_for_hint(
+    expressions: tuple[eqns.Expression, ...],
+) -> eqns.Constant | None:
+  choices: list[eqns.Constant] = []
+  for e in expressions:
+    if (red := extract_constant_for_hint(e)) is not None:
+      choices.append(red)
+
+  if not choices:
     return None
 
-  strided_layouts = [
-      cast(fa.WGStridedFragLayout, layouts_lib.from_layout_attr(layout))
-      for layout in layouts
-      if layouts_lib.is_strided_fragmented_layout(layout)
-  ]
+  # We reduce the expression here in order to recover an unambiguous least
+  # replicated layout if it exists.
+  maybe_choice = eqns.reduce_expression(
+      eqns.LeastReplicated(tuple(choices)), {}
+  )
 
-  splat_layouts = [
-      cast(fa.WGSplatFragLayout, layouts_lib.from_layout_attr(layout))
-      for layout in layouts
-      if layouts_lib.is_splat_fragmented_layout(layout)
-  ]
+  if isinstance(maybe_choice, eqns.Unsatisfiable):
+    # TODO(bchetioui): consider other choices.
+    return choices[0]
 
-  tiled_layouts = [
-      cast(fa.TiledLayout, layouts_lib.from_layout_attr(layout))
-      for layout in layouts
-      if layouts_lib.is_tiled_layout(layout)
-  ]
-
-  if len(splat_layouts) + len(strided_layouts) + len(tiled_layouts) != len(
-      layouts
-  ):
-    raise ValueError(
-        f"Expected only strided, splat, and tiled layouts, got {layouts}"
-    )
-
-  if len(splat_layouts) > 1:
-    raise NotImplementedError(
-        "Finding a representative layout for several distinct splat layouts "
-        "is not supported."
-    )
-
-  if len(strided_layouts) > 1:
-    raise NotImplementedError(
-        "Finding a representative layout for several distinct strided layouts "
-        "is not supported."
-    )
-
-  if len(tiled_layouts) > 1:
-    raise NotImplementedError(
-        "Finding a representative layout for several distinct tiled layouts "
-        "is not supported."
-    )
-
-  if tiled_layouts and strided_layouts:
-    raise NotImplementedError(
-        "Mixing strided and tiled layouts is not supported."
-    )
-
-  if tiled_layouts:
-    return layouts_lib.to_layout_attr(tiled_layouts[0])
-
-  if strided_layouts:
-    [strided_layout] = strided_layouts
-    return layouts_lib.to_layout_attr(strided_layout)
-
-  [splat_layout] = splat_layouts
-  return layouts_lib.to_layout_attr(splat_layout)
+  assert isinstance(maybe_choice, eqns.Constant)
+  return maybe_choice
 
 
-def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
-  def is_array(v: ir.Value) -> bool:
-    return ir.VectorType.isinstance(v.type)
+def extract_constant_from_most_replicated_expression_for_hint(
+    expressions: tuple[eqns.Expression, ...],
+) -> eqns.Constant | None:
+  assert len(expressions) >= 1
+  choices: list[eqns.Constant] = []
+  for e in expressions:
+    if (red := extract_constant_for_hint(e)) is not None:
+      choices.append(red)
 
-  num_vector_operands = len([o for o in op.operands if is_array(o)])
-  num_vector_results = len([r for r in op.results if is_array(r)])
-
-  if inference_utils.has_in_layouts_set(op):
-    op_in_layouts = inference_utils.in_layouts(op)
-    if op_in_layouts:
-      layout = op_in_layouts[0]
-      return (num_vector_operands * [layout], num_vector_results * [layout])
-
-  if inference_utils.has_out_layouts_set(op):
-    op_out_layouts = inference_utils.out_layouts(op)
-    if op_out_layouts:
-      layout = op_out_layouts[0]
-      return (num_vector_operands * [layout], num_vector_results * [layout])
-
-  layouts = set()
-
-  # We can also try to infer layouts from the layout of producer and
-  # consumer operations.
-  #
-  # We first look at producers; this enables e.g. propagating splat layouts as
-  # far down as possible, until since we may be able to propagate splat layouts
-  # further down before requiring a relayout in that way.
-  all_inputs_have_layout = True
-  for operand in op.operands:
-    if not ir.VectorType.isinstance(operand.type):
-      continue
-    if (layout := inference_utils.value_layout(operand)) is not None:
-      layouts.add(layout)
-    else:
-      all_inputs_have_layout = False
-
-  # We only look at consumers if we haven't found a possible layout yet. This is
-  # to avoid propagating more complicated layouts up, to e.g. preserve splat
-  # layouts as far down as possible.
-  if not layouts:
-    for op_result in op.results:
-      if not ir.VectorType.isinstance(op_result.type):
-        continue
-      for op_operand_use in cast(ir.OpResult, op_result).uses:
-        consumer = op_operand_use.owner
-        op_user = consumer.operands[op_operand_use.operand_number]
-        layout = inference_utils.in_layout_for_operand(consumer, op_user)
-        if layout is not None:
-          layouts.add(layout)
-
-  # TODO(bchetioui): when propagating up, the representative layout should be
-  # chosen in the opposite way as when propagating down. E.g., when propagating
-  # down, we should pick a strided layout over a splat layout; when propagating
-  # up, we should pick a splat layout over a strided layout.
-  # This is left for a future change, and currently we only do "down
-  # propagation".
-  layout = _choose_representative_layout(layouts)
-  # It is unsafe to conclude that this op produces a splat if not all inputs
-  # have been inferred: some of them might turn out not to be splats!
-  if layouts_lib.is_splat_fragmented_layout(layout) and not all_inputs_have_layout:
-    return None
-  if layout is None:
+  if not choices:
     return None
 
-  return (num_vector_operands * [layout], num_vector_results * [layout])
+  maybe_choice = eqns.reduce_expression(
+      eqns.MostReplicated(tuple(choices)), {}
+  )
+
+  if isinstance(maybe_choice, eqns.Unsatisfiable):
+    # TODO(bchetioui): consider other choices.
+    return choices[0]
+
+  assert isinstance(maybe_choice, eqns.Constant)
+  return maybe_choice
 
 
-for op in (
-    [
-        arith.AddIOp,
-        arith.AddFOp,
-        arith.AndIOp,
-        arith.BitcastOp,
-        arith.CmpFOp,
-        arith.CmpIOp,
-        arith.ExtFOp,
-        arith.ExtSIOp,
-        arith.ExtUIOp,
-        arith.FPToSIOp,
-        arith.FPToUIOp,
-        arith.MaximumFOp,
-        arith.MaxUIOp,
-        arith.MaxSIOp,
-        arith.MinimumFOp,
-        arith.MinUIOp,
-        arith.MinSIOp,
-        arith.MulIOp,
-        arith.MulFOp,
-        arith.OrIOp,
-        arith.FloorDivSIOp,
-        arith.DivUIOp,
-        arith.DivFOp,
-        arith.RemUIOp,
-        arith.RemSIOp,
-        arith.RemFOp,
-        arith.SIToFPOp,
-        arith.UIToFPOp,
-        arith.SubIOp,
-        arith.SubFOp,
-        arith.TruncFOp,
-        arith.TruncIOp,
-        arith.XOrIOp,
-        mlir_math.ExpOp,
-        mlir_math.Exp2Op,
-        mlir_math.LogOp,
-        mlir_math.RsqrtOp,
-        mlir_math.TanhOp,
-        vector.LoadOp,
-        vector.StoreOp,
-    ]
-    # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.1.
-    + [mgpu.AsyncLoadTmemOp, mgpu.AsyncStoreTmemOp]
-    if jaxlib.version >= (0, 7, 1)
-    else []
-):
-  _add_layout_inference_rule(op, _infer_pointwise_op_layouts)
-
-
-@partial(_add_layout_inference_rule, mgpu.OptimizationBarrierOp)
-def _infer_optimization_barrier_op_layout(
-    op: mgpu.OptimizationBarrierOp,
-) -> OptionalLayouts:
-  def is_array(v: ir.Value) -> bool:
-    return ir.VectorType.isinstance(v.type)
-
-  if inference_utils.has_in_layouts_set(op):
-    op_in_layouts = list(inference_utils.in_layouts(op))
-    return op_in_layouts, op_in_layouts
-
-  if inference_utils.has_out_layouts_set(op):
-    op_out_layouts = list(inference_utils.out_layouts(op))
-    return op_out_layouts, op_out_layouts
-
-  layouts = [None] * len(op.operands)
-  for i, operand in enumerate(filter(is_array, op.operands)):
-    layouts[i] = inference_utils.value_layout(operand)
-
-  for i, result in enumerate(filter(is_array, op.results)):
-    possible_layouts = set()
-    layout = _infer_layout_from_users(result)
-    if layout is not None:
-      possible_layouts.add(layout)
-    if possible_layouts and layouts[i] is None:
-      # TODO(bchetioui): we could actually just pick any user layout here,
-      # and optimize later. This is fine for now.
-      layouts[i] = _choose_representative_layout(possible_layouts)
-
-  # TODO(bchetioui): handle annotating layout for only certain operands.
-  # Otherwise, layouts may not get propagated through optimization barriers, if
-  # a single branch does not carry any forcing layout, which is pretty bad.
-  if any(layout is None for layout in layouts):
+def extract_constant_from_broadcast_in_dim_expression_for_hint(
+    e: eqns.BroadcastInDim
+) -> eqns.Constant | None:
+  if not isinstance(e.expression, eqns.Constant):
     return None
 
-  return layouts, layouts
+  reduced_layout = e.expression.value
 
+  wgmma_tm, wgmma_tn = fa.WGMMA_LAYOUT.base_tile_shape
+  # TODO(bchetioui): enable generators to handle TCGEN05 layout from WGMMA_COL.
+  if reduced_layout == fa.WGMMA_COL_LAYOUT and e.axes == (1,) and e.shape[0] % wgmma_tm == 0:
+    return eqns.Constant(fa.WGMMA_LAYOUT)
 
-def _infer_layout_from_users(
-    value: ir.Value,
-) -> ir.Attribute | None:
-  for use in cast(ir.OpResult, value).uses:
-    consumer = use.owner
-    operand = consumer.operands[use.operand_number]
-    layout = inference_utils.in_layout_for_operand(consumer, operand)
-    if layout is not None:
-      return layout
+  if reduced_layout == fa.WGMMA_ROW_LAYOUT and e.axes == (0,) and e.shape[1] % wgmma_tn == 0:
+    return eqns.Constant(fa.WGMMA_LAYOUT)
+
+  tcgen05_tm, _ = fa.TCGEN05_LAYOUT.base_tile_shape
+  if reduced_layout == fa.TCGEN05_ROW_LAYOUT and e.axes == (0,) and e.shape[0] % tcgen05_tm == 0:
+    return eqns.Constant(fa.TCGEN05_LAYOUT)
+
   return None
 
 
-@partial(_add_layout_inference_rule, arith.ConstantOp)
-def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
-  if not ir.VectorType.isinstance(constant_op.result.type):
-    return None
+def extract_constant_for_hint(e: eqns.Expression) -> eqns.Constant | None:
+  """Attempts to extract a `ConstantExpression` from a `Hint`'s `Expression`.
 
-  shaped_ty = cast(ir.ShapedType, constant_op.result.type)
+  Returns `None` if no `ConstantExpression` could be reasonably extracted.
+  """
+  match e:
+    case eqns.Constant():
+      return e
+    case eqns.LeastReplicated():
+      return extract_constant_from_least_replicated_expression_for_hint(e.expressions)
+    case eqns.MostReplicated():
+      return extract_constant_from_most_replicated_expression_for_hint(e.expressions)
+    case eqns.BroadcastInDim():
+      return extract_constant_from_broadcast_in_dim_expression_for_hint(e)
+    case eqns.Variable():
+      return None
+    case _:
+      raise NotImplementedError(f"Unsupported expression type: {type(e)}")
+
+
+def extract_variable_assignment_from_hint(
+    hint: Hint,
+) -> tuple[eqns.Variable, eqns.Constant] | None:
+  """Attempts to extract a single variable assignment from a `Hint`."""
+  # TODO(bchetioui): make this a generator. This will allow us to maybe extract
+  # different assignments that satisfy a replication constraint in the case
+  # where replicated expressions are incompatible and several extractions are
+  # possible.
+  red = extract_constant_for_hint(hint.expression)
+  return (hint.variable, red) if red is not None else None
+
+
+def reduce_hints(
+    hints: Sequence[Hint], assignments: dict[eqns.Variable, eqns.Constant]
+) -> list[Hint]:
+  """Reduces a sequence of `Hint`s.
+
+  We reduce the `Hint`s' expressions, drop `Unsatisfiable` hints, and drop
+  `Hint`s pertaining to pre-existing assignments.
+  """
+  new_hints: list[Hint] = []
+  for h in hints:
+    if h.variable not in assignments:
+      reduced_expression = eqns.reduce_expression(h.expression, assignments)
+      if isinstance(reduced_expression, eqns.Unsatisfiable):
+        continue
+      new_hints.append(dataclasses.replace(h, expression=reduced_expression))
+
+  return new_hints
+
+
+def find_assignments_for(
+    unknowns: Set[eqns.Variable],
+    equation_system: eqns.EquationSystem,
+    hints: Sequence[Hint],
+) -> dict[eqns.Variable, eqns.Constant] | eqns.Unsatisfiable:
+  """Attempts to find assignments that satisfy `equation_system` for `unknowns`.
+
+  Args:
+    unknowns: the set of variables that are unknown.
+    equation_system: the equation system to satisfy.
+    hints: a list of hints that may be used to introduce new assignments.
+
+  Returns:
+    - Unsatisfiable() if the equation system has unsatisfiable constraints.
+    - A dictionary assigning all the unknown variables to `ConstantExpression`s
+      such that the assignment satisfies the equation system otherwise.
+  """
+  equation_system = eqns.reduce(equation_system)
+  if isinstance(equation_system, eqns.Unsatisfiable):
+    return eqns.Unsatisfiable()
+
+  remaining_unknowns = unknowns - equation_system.assignments.keys()
+  # In this case, we have determined an assignment for all the unknown
+  # variables. Return their respective assignment.
+  if not remaining_unknowns:
+    return {v: k for v, k in equation_system.assignments.items() if v in unknowns}
+
+  # Reduce the expressions in the remaining hints based on the current
+  # assignments, and eliminate hints that pertain to variables that already
+  # have an assignment.
+  hints = reduce_hints(hints, equation_system.assignments)
+
+  # If unknowns remain and we have fully reduced the system, we may still
+  # be able to make progress by extracting an assignment from a `Hint`. This
+  # new assignment could make the system unsatisfiable, so we use a recursive
+  # call to be able to backtrack if necessary.
+  #
+  # Make a copy of the hints to allow deleting unnecessary hints from the list,
+  # without modifying the list being iterated over.
+  remaining_hints: list[Hint] = [*hints]
+  for i, hint in reversed(list(enumerate(hints))):
+    if (assignment := extract_variable_assignment_from_hint(hint)) is not None:
+      variable, expr = assignment
+      new_equation_system = (
+          eqns.EquationSystem(assignments={variable: expr}) & equation_system)
+      if isinstance(new_equation_system, eqns.Unsatisfiable):
+        # This assignment is not compatible with the equation system.
+        continue
+      other_hints = remaining_hints[:i] + remaining_hints[i + 1:]
+      solution = find_assignments_for(unknowns, new_equation_system, other_hints)
+      if isinstance(solution, eqns.Unsatisfiable):
+        # This assignment is not compatible with the equation system. We remove
+        # it from the list of hints.
+        remaining_hints.pop(i)
+        continue
+      return solution
+  hints = remaining_hints
+
+  # Here, we have not managed to find an assignment for all the unknown
+  # variables, and our hints have not proven sufficient to unblock us. We now
+  # try to introduce new arbitrary (valid) assignments into the system, and
+  # hope that they turn out to be compatible with the equation system.
+  for variable in unknowns:
+    if variable in equation_system.assignments:
+      continue
+    # Try to instantiate a single variable to a strided layout and see if it
+    # reduces the system.
+    op = variable.key.operation
+    # TODO(bchetioui): should we make variables carry a shape as well, to make
+    # things easier?
+    if variable.key.type == VariableType.OPERAND:
+      ty = cast(ir.ShapedType, op.operands[variable.key.index].type)
+    else:
+      ty = cast(ir.ShapedType, op.results[variable.key.index].type)
+    max_vec_size = np.prod(ty.shape) // fa.WARPGROUP_SIZE
+    # TODO(bchetioui): can't handle too small shapes.
+    if max_vec_size == 0:
+      continue
+    desired_vec_size = 8 // utils.bytewidth(ty.element_type)
+    vec_size = min(max_vec_size, desired_vec_size)
+    layout = fa.WGStridedFragLayout(shape=tuple(ty.shape), vec_size=vec_size)
+    new_assignment = {variable: eqns.Constant(layout)}
+    new_system = equation_system & eqns.EquationSystem(assignments=new_assignment)
+    if isinstance(new_system, eqns.Unsatisfiable):
+      # This assignment is not compatible with the equation system.
+      continue
+    solution = find_assignments_for(unknowns, new_system, hints)
+    if isinstance(solution, eqns.Unsatisfiable):
+      # This assignment is not compatible with the equation system.
+      continue
+    return solution
+
+  # TODO(bchetioui): should we have a way to give a useful dump to the user
+  # here, perhaps indicating what to layout cast.
+  return eqns.Unsatisfiable()
+
+
+OperandOrResultsForVariable = dict[eqns.Variable, list[OperandOrResult]]
+
+# An equation system derivation rule is a function that takes an MLIR operation
+# and returns an equation system, a mapping from variables to operand/result
+# identifiers, and a list of hints.
+#
+# The intended meaning of the mapping is that, for each identifier in the list
+# keyed by a given variable, the MLIR operand/result corresponding to that
+# identifier has the same layout as the variable.
+#
+# An `EquationSystemDerivationRule` must return a mapping such that the
+# identifier corresponding to each operand/result must appear in the mapping,
+# and each identifier in the mapping must be keyed by exactly one variable.
+# Lastly, the mapping must only refer to variables and operands/results that
+# correspond to the given operation.
+EquationSystemDerivationRule = Callable[
+    [ir.OpView],
+    tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]
+]
+_equation_system_derivation_rules: dict[str, EquationSystemDerivationRule] = {}
+
+
+def _add_equation_system_derivation_rule(op: type[ir.OpView]):
+  def wrapper(rule: EquationSystemDerivationRule):
+    if op is not None:
+      _equation_system_derivation_rules[op.OPERATION_NAME] = rule  # pytype: disable=attribute-error
+    return rule
+  return wrapper
+
+
+def is_vector(v: ir.Value) -> bool:
+  return ir.VectorType.isinstance(v.type)
+
+
+def _pointwise_op_equation_system(
+    op: ir.OpView,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  all_operands_and_results = operands_and_results(op)
+  variable = eqns.Variable(all_operands_and_results[0])
+  return eqns.EquationSystem(), {variable: all_operands_and_results}, []
+
+
+for op in [
+    arith.AddIOp,
+    arith.AddFOp,
+    arith.AndIOp,
+    arith.BitcastOp,
+    arith.CmpFOp,
+    arith.CmpIOp,
+    arith.ExtFOp,
+    arith.ExtSIOp,
+    arith.ExtUIOp,
+    arith.FPToSIOp,
+    arith.FPToUIOp,
+    arith.MaximumFOp,
+    arith.MaxUIOp,
+    arith.MaxSIOp,
+    arith.MinimumFOp,
+    arith.MinUIOp,
+    arith.MinSIOp,
+    arith.MulIOp,
+    arith.MulFOp,
+    arith.OrIOp,
+    arith.FloorDivSIOp,
+    arith.DivUIOp,
+    arith.DivFOp,
+    arith.RemUIOp,
+    arith.RemSIOp,
+    arith.RemFOp,
+    arith.SIToFPOp,
+    arith.UIToFPOp,
+    arith.SubIOp,
+    arith.SubFOp,
+    arith.TruncFOp,
+    arith.TruncIOp,
+    arith.XOrIOp,
+    mlir_math.ExpOp,
+    mlir_math.Exp2Op,
+    mlir_math.LogOp,
+    mlir_math.RsqrtOp,
+    mlir_math.TanhOp,
+    vector.StoreOp,
+]:
+  _add_equation_system_derivation_rule(op)(_pointwise_op_equation_system)
+
+
+@_add_equation_system_derivation_rule(vector.LoadOp)
+def _vector_load_equation_system(
+    op: vector.LoadOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  equation_system: eqns.EquationSystem | eqns.Unsatisfiable
+  equation_system, operand_or_results_for_variable, hints = (
+      _pointwise_op_equation_system(op)
+  )
+  [result_variable] = operand_or_results_for_variable.keys()
+  result_is_not_splat = eqns.Distinct(
+      result_variable,
+      eqns.Constant(fa.WGSplatFragLayout(shape=tuple(op.result.type.shape))),
+  )
+  equation_system &= eqns.EquationSystem(constraints=[result_is_not_splat])
+  assert not isinstance(equation_system, eqns.Unsatisfiable)
+  return equation_system, operand_or_results_for_variable, hints
+
+
+@_add_equation_system_derivation_rule(mgpu.OptimizationBarrierOp)
+def _optimization_barrier_equation_system(
+    op: ir.OpView,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  operand_or_results_for_variable: OperandOrResultsForVariable = {}
+
+  for i, operand in enumerate(op.operands):
+    if not is_vector(operand):
+      continue
+    variable = eqns.Variable(OperandOrResult(op, VariableType.OPERAND, i))
+    operand_or_results_for_variable[variable] = [
+        OperandOrResult(op, VariableType.OPERAND, i),
+        OperandOrResult(op, VariableType.RESULT, i)
+    ]
+
+  return eqns.EquationSystem(), operand_or_results_for_variable, []
+
+
+@_add_equation_system_derivation_rule(vector.SplatOp)
+def _vector_splat_equation_system(
+    op: ir.OpView,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  result = OperandOrResult(op, VariableType.RESULT, 0)
+  variable = eqns.Variable(result)
+  layout = fa.WGSplatFragLayout(tuple(cast(ir.ShapedType, op.result.type).shape))
+  system = eqns.EquationSystem(assignments={variable: eqns.Constant(layout)})
+  return system, {variable: [result]}, []
+
+
+@_add_equation_system_derivation_rule(arith.ConstantOp)
+def _constant_equation_system(
+    constant_op: arith.ConstantOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   value = constant_op.value
+  result = OperandOrResult(constant_op, VariableType.RESULT, 0)
+  variable = eqns.Variable(result)
+  shape = tuple(constant_op.result.type.shape)
   if (
       ir.DenseElementsAttr.isinstance(value)
       and ir.DenseElementsAttr(value).is_splat
   ):
-    layout = layouts_lib.to_splat_fragmented_layout_attr(
-        fa.WGSplatFragLayout(shape=shaped_ty.shape)
-    )
-  # If the constant is not a splat, there is no obvious good choice of layout.
-  # We need to look at the consumers of the constant to find a layout that works
-  # for them. If there are several users with N different layouts, we can
-  # arbitrarily choose any one of them for the constant, since we expect
-  # whichever choice we make to lead to N-1 relayouts, which all have the same
-  # cost.
+    layout = fa.WGSplatFragLayout(shape=shape)
+    system = eqns.EquationSystem(assignments={variable: eqns.Constant(layout)})
   else:
-    layout = _infer_layout_from_users(constant_op.result)
-
-  # If the constant is not a splat, has no user, or a layout could not be
-  # determined from looking at the users, we assign a strided layout for
-  # completeness.
-  if layout is None:
-    layout = layouts_lib.to_strided_fragmented_layout_attr(
-        fa.WGStridedFragLayout.from_shaped_type(shaped_ty)
+    constant_is_not_splat = eqns.Distinct(
+        variable, eqns.Constant(fa.WGSplatFragLayout(shape=shape)),
     )
+    system = eqns.EquationSystem(constraints=[constant_is_not_splat])
 
-  return [], [layout]
-
-
-@partial(_add_layout_inference_rule, llvm.UndefOp)
-def _infer_undef_op_layout(op: llvm.UndefOp) -> OptionalLayouts:
-  layout = _infer_layout_from_users(op.result)
-  if layout is None:
-    return None
-  return [], [layout]
+  return system, {variable: [result]}, []
 
 
-def _layouts_from_values(values: Sequence[ir.Value]) -> list[ir.Attribute] | None:
-  layouts = []
-  for value in values:
-    if not ir.VectorType.isinstance(value.type):
+def _terminator(
+    block: ir.Block, expected_terminator: type[ir.OpView]
+) -> ir.OpView:
+  """Returns the terminator of the given block.
+
+  Checks that the terminator is of the expected type.
+  """
+  terminator = block.operations[len(block.operations) - 1]
+  assert isinstance(terminator, expected_terminator)
+  return terminator.opview
+
+
+@_add_equation_system_derivation_rule(scf.ForOp)
+def _for_equation_system(
+    op: scf.ForOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  [block] = op.region.blocks
+  yield_op = _terminator(block, scf.YieldOp)
+  operand_or_results_for_variable: OperandOrResultsForVariable = {}
+
+  # Account for the lower bound, upper bound, and step of the loop, which appear
+  # in the operands but not in the results.
+  num_leading_args = 3
+  for index, o in enumerate(op.operands):
+    if not is_vector(o):
       continue
-    if (layout := inference_utils.value_layout(value)) is not None:
-      if layouts_lib.is_splat_fragmented_layout(layout):
-        return None
-      layouts.append(layout)
-    else:
-      # Not all layouts could be inferred for vector ops. Return for now.
-      return None
-  return layouts
+    result_index = index - num_leading_args
+    operand = OperandOrResult(op, VariableType.OPERAND, index)
+    result = OperandOrResult(op, VariableType.RESULT, result_index)
+    yield_operand = OperandOrResult(
+        yield_op, VariableType.OPERAND, result_index
+    )
+    operand_or_results_for_variable[eqns.Variable(operand)] = [
+        operand, result, yield_operand,
+    ]
 
-@partial(_add_layout_inference_rule, scf.YieldOp)
-def _infer_yield_op_layout(op: scf.YieldOp) -> OptionalLayouts:
-  layouts = _layouts_from_values(op.results_)
-  if layouts is None:
-    return None
-  return (layouts, [])
+  return eqns.EquationSystem(), operand_or_results_for_variable, []
 
 
-@partial(_add_layout_inference_rule, scf.ConditionOp)
-def _infer_condition_op_layout(op: scf.ConditionOp) -> OptionalLayouts:
-  layouts = _layouts_from_values(op.args)
-  if layouts is None:
-    return None
-  return (layouts, [])
+@_add_equation_system_derivation_rule(scf.WhileOp)
+def _while_equation_system(
+    op: scf.WhileOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  [before_block] = op.before.blocks
+  [after_block] = op.after.blocks
+  cond_op = _terminator(before_block, scf.ConditionOp)
+  yield_op = _terminator(after_block, scf.YieldOp)
+
+  operand_or_results_for_variable: OperandOrResultsForVariable = {}
+
+  for operand_or_result in operands_and_results(op):
+    match operand_or_result.type:
+      case VariableType.OPERAND:
+        yield_operand = OperandOrResult(
+            yield_op, VariableType.OPERAND, operand_or_result.index
+        )
+        operand_or_results_for_variable[eqns.Variable(operand_or_result)] = [
+            operand_or_result,
+            yield_operand,
+        ]
+      case VariableType.RESULT:
+        # Increment by 1 to account for the conditional.
+        cond_operand = OperandOrResult(
+            cond_op, VariableType.OPERAND, operand_or_result.index + 1
+        )
+        operand_or_results_for_variable[eqns.Variable(operand_or_result)] = [
+            operand_or_result,
+            cond_operand,
+        ]
+      case _ as never:
+        assert_never(never)
+
+  return eqns.EquationSystem(), operand_or_results_for_variable, []
 
 
-def _last_op(region: ir.Region, expected_op_type: type[ir.OpView]):
-  [block] = region.blocks
-  last_op = block.operations[len(block.operations) - 1]
-  assert isinstance(last_op, expected_op_type)
-  return last_op
-
-
-def _infer_from_op(op: ir.OpView) -> list[ir.Attribute] | None:
-  if not inference_utils.has_in_layouts_set(op):
-    return None
-  in_layouts = list(inference_utils.in_layouts(op))
-  if any(
-      layouts_lib.is_splat_fragmented_layout(layout)
-      for layout in in_layouts
-  ):
-    return None
-  return in_layouts
-
-
-def _infer_from_yield_ops(op: ir.Operation) -> list[ir.Attribute] | None:
-  candidates = []
+@_add_equation_system_derivation_rule(scf.IndexSwitchOp)
+def _index_switch_equation_system(
+    op: scf.IndexSwitchOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  operand_or_results_for_variable: OperandOrResultsForVariable = {
+      eqns.Variable(o): [o] for o in operands_and_results(op)
+  }
   for region in op.regions:
-    yield_layouts = _infer_from_op(_last_op(region, scf.YieldOp))
-    if yield_layouts is not None:
-      candidates.append(yield_layouts)
-  if not candidates:
-    return None
-  return [_choose_representative_layout(set(c)) for c in zip(*candidates)]
-
-
-@partial(_add_layout_inference_rule, scf.ForOp)
-def _infer_for_op_layout(op: scf.ForOp) -> OptionalLayouts:
-  # TODO(bchetioui): we don't attempt to propagate from outside for the moment.
-  # For the existing kernels, propagating from the YieldOp should be enough.
-  if layouts := _infer_from_yield_ops(op):
-    return layouts, layouts
-  return None
-
-
-@partial(_add_layout_inference_rule, scf.WhileOp)
-def _infer_while_op_layout(op: scf.WhileOp) -> OptionalLayouts:
-  # TODO(dasenov): we don't attempt to propagate from outside for the moment.
-
-  # Note that the inputs or results do not necessarily contain vector types. If
-  # there is no vector type, the corresponding layouts (in_layouts or
-  # out_layouts) should be an empty list.
-
-  yield_op = _last_op(op.after, scf.YieldOp)
-  needs_in_layouts = inference_utils.should_have_layout(yield_op)
-  in_layouts = _infer_from_op(yield_op) if needs_in_layouts else []
-
-  condition_op = _last_op(op.before, scf.ConditionOp)
-  needs_out_layouts = inference_utils.should_have_layout(condition_op)
-  out_layouts = _infer_from_op(condition_op) if needs_out_layouts else []
-
-  if in_layouts is None or out_layouts is None:
-    return None
-  return in_layouts, out_layouts
-
-
-@partial(_add_layout_inference_rule, scf.IfOp)
-def _infer_if_op_layout(op: scf.IfOp) -> OptionalLayouts:
-  if layouts := _infer_from_yield_ops(op):
-    return [], layouts
-  return None
-
-
-@partial(_add_layout_inference_rule, scf.IndexSwitchOp)
-def _infer_index_switch_op_layout(op: scf.IndexSwitchOp) -> OptionalLayouts:
-  if layouts := _infer_from_yield_ops(op):
-    return [], layouts
-  return None
-
-
-@partial(_add_layout_inference_rule, vector.SplatOp)
-def _infer_splat_op_layout(splat_op: vector.SplatOp) -> OptionalLayouts:
-  layout = layouts_lib.to_splat_fragmented_layout_attr(
-      fa.WGSplatFragLayout(
-          shape=cast(ir.ShapedType, splat_op.result.type).shape
+    [block] = region.blocks
+    yield_op = _terminator(block, scf.YieldOp)
+    for operand_or_result in operand_or_results_for_variable.keys():
+      assert operand_or_result.key.type == VariableType.RESULT
+      yield_operand = OperandOrResult(
+          yield_op, VariableType.OPERAND, operand_or_result.key.index
       )
+      operand_or_results_for_variable[operand_or_result].append(yield_operand)
+
+  return eqns.EquationSystem(), operand_or_results_for_variable, []
+
+
+@_add_equation_system_derivation_rule(mgpu.LayoutCastOp)
+def _layout_cast_equation_system(
+    op: mgpu.LayoutCastOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  operand = OperandOrResult(op, VariableType.OPERAND, 0)
+  result = OperandOrResult(op, VariableType.RESULT, 0)
+  variable = eqns.Variable(operand)
+  out_layout = eqns.Constant(layouts_lib.from_layout_attr(op.new_layout))
+  return (
+      eqns.EquationSystem(
+          assignments={eqns.Variable(operand): out_layout},
+      ),
+      {variable: [operand, result]},
+      [],
   )
-  return [], [layout]
 
 
-@partial(_add_layout_inference_rule, vector.BroadcastOp)
-def _infer_broadcast_op_layout(
-    broadcast_op: vector.BroadcastOp,
-) -> OptionalLayouts:
-  layout = layouts_lib.to_splat_fragmented_layout_attr(
-      fa.WGSplatFragLayout(
-          shape=cast(ir.ShapedType, broadcast_op.result.type).shape
-      )
+@_add_equation_system_derivation_rule(mgpu.WGMMAOp)
+def _wgmma_equation_system(
+    op: mgpu.WGMMAOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  operands_or_results = operands_and_results(op)
+  variable = eqns.Variable(operands_or_results[0])
+  system = eqns.EquationSystem(
+      assignments={variable: eqns.Constant(fa.WGMMA_LAYOUT)}
   )
-  return [], [layout]
+  return system, {variable: operands_or_results}, []
 
 
-def _update_layout_shape(
-    layout: ir.Attribute, shape: Sequence[int], origin: str
-) -> ir.Attribute:
-  if layouts_lib.is_splat_fragmented_layout(
-      layout
-  ) or layouts_lib.is_strided_fragmented_layout(layout):
-    return layouts_lib.to_layout_attr(
-        dataclasses.replace(layouts_lib.from_layout_attr(layout), shape=shape)  # type: ignore[arg-type]
-    )
-  raise NotImplementedError(f"Unsupported {origin} layout: {layout}.")
-
-
-@partial(_add_layout_inference_rule, vector.ShapeCastOp)
-def _infer_shape_cast_op_layout(op: vector.ShapeCastOp) -> OptionalLayouts:
-  in_layout = inference_utils.value_layout(op.source)
-  if in_layout is None:
-    out_layout = inference_utils.value_layout(op.result)
-    if out_layout is None:
-      return None
-    in_layout = _update_layout_shape(
-        out_layout, ir.VectorType(op.source.type).shape, "source"
-    )
-    return [in_layout], [out_layout]
-
-  out_layout = _update_layout_shape(
-      in_layout, ir.VectorType(op.result.type).shape, "result"
+def _reduction_equation_and_hint(
+    source_variable: eqns.Variable,
+    out_variable: eqns.Variable,
+    source_shape: tuple[int, ...],
+    reduction_dims: tuple[int, ...]
+) -> tuple[eqns.Equation, Hint]:
+  reduce_expr = eqns.Reduce(source_variable, reduction_dims)
+  # There are always many options for broadcasting a layout, so we can only
+  # derive a broadcast hint in the out_variable -> source_variable direction.
+  broadcast_dims = tuple(
+      i for i in range(len(source_shape)) if i not in reduction_dims
   )
-  return [in_layout], [out_layout]
+  broadcast_expr = eqns.BroadcastInDim(out_variable, broadcast_dims, source_shape)
+  broadcast_hint = Hint(variable=source_variable, expression=broadcast_expr)
+  return eqns.Equation(lhs=out_variable, rhs=reduce_expr), broadcast_hint
 
 
-@partial(_add_layout_inference_rule, vector.ReductionOp)
-def _infer_reduction_op_layout(op: vector.ReductionOp) -> OptionalLayouts:
-  if layout := inference_utils.value_layout(op.vector):
-    return [layout], []
-  return None
-
-
-@partial(_add_layout_inference_rule, vector.MultiDimReductionOp)
-def _infer_multi_dim_reduction_op_layout(
+@_add_equation_system_derivation_rule(vector.MultiDimReductionOp)
+def _multi_dim_reduction_equation_system(
     op: vector.MultiDimReductionOp,
-) -> OptionalLayouts:
-  if inference_utils.has_any_layout_set(op):
-    # At the moment we either have all layouts or none. So if we found some
-    # layouts, set just return the same ones.
-    op_in_layouts = list(inference_utils.in_layouts(op))
-    op_out_layouts = list(inference_utils.out_layouts(op))
-    return op_in_layouts, op_out_layouts
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  source = OperandOrResult(op, VariableType.OPERAND, 0)
+  acc = OperandOrResult(op, VariableType.OPERAND, 1)
+  out = OperandOrResult(op, VariableType.RESULT, 0)
+  source_variable = eqns.Variable(source)
+  out_variable = eqns.Variable(out)
 
-  in_ty = ir.VectorType(op.source.type)
-  out_ty = ir.VectorType(op.result.type)
-  if len(in_ty.shape) != 2 or len(out_ty.shape) != 1:
-    raise NotImplementedError(
-        f"Only 2D -> 1D reductions are supported: {op}"
-    )
-
-  wgmma_layout = layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
-  wgmma_row_layout = layouts_lib.to_layout_attr(fa.WGMMA_ROW_LAYOUT)
-  wgmma_col_layout = layouts_lib.to_layout_attr(fa.WGMMA_COL_LAYOUT)
-  reduction_dims = list(op.reduction_dims)
-
-  # Find out the layout of the source.
-  in_layout = inference_utils.value_layout(op.source)
-  if in_layout is not None and in_layout == wgmma_layout:
-    if reduction_dims == [0]:
-      out_layout = wgmma_col_layout
-    elif reduction_dims == [1]:
-      out_layout = wgmma_row_layout
-    else:
-      raise NotImplementedError(
-          f"Invalid reduction dimensions: {reduction_dims}"
-      )
-    return [in_layout, out_layout], [out_layout]
-
-  # The source either has no layout or its layout is not WGMMA so we don't know
-  # yet how to handle it. Find out the layout of the result and see if that is
-  # WGMMA_ROW or WGMMA_COL which would imply the input is WGMMA. We can look at
-  # either the consumers or the acc input (they should have the same layout).
-  out_layouts = set()
-
-  # Get acc layout.
-  acc_layout = inference_utils.value_layout(op.acc)
-  if acc_layout is not None:
-    out_layouts.add(acc_layout)
-
-  # Get user layouts.
-  for use in cast(ir.OpResult, op.result).uses:
-    consumer = use.owner
-    operand = consumer.operands[use.operand_number]
-    layout = inference_utils.in_layout_for_operand(consumer, operand)
-    if layout:
-      out_layouts.add(layout)
-
-  if not out_layouts:
-    # We couldn't find any definitive layouts, so we can't infer anything.
-    return None
-
-  out_layout = _choose_representative_layout(out_layouts)
-  if out_layout is None:
-    raise NotImplementedError(
-        f"Could not choose a best layout from {out_layouts}"
-    )
-  if out_layout != wgmma_row_layout and out_layout != wgmma_col_layout:
-    # We don't have a layout we can handle in the output, so we can't infer
-    # anything.
-    return None
-
-  if (out_layout == wgmma_row_layout and reduction_dims == [1]) or (
-      out_layout == wgmma_col_layout and reduction_dims == [0]
-  ):
-    in_layout = wgmma_layout
-  else:
-    raise NotImplementedError(
-        f"Unsupported output layout: {out_layout} for reduction dimensions"
-        f" {reduction_dims}"
-    )
-
-  return [in_layout, out_layout], [out_layout]
+  reduction_equation, broadcast_hint = _reduction_equation_and_hint(
+      source_variable, out_variable, tuple(op.source.type.shape), tuple(op.reduction_dims)
+  )
+  # TODO(bchetioui): in the future, we may need to add rules that prevent
+  # strided layouts from being chosen---since trying to reduce a strided layout
+  # may cause us to raise an Exception at the moment.
+  return (
+      eqns.EquationSystem(equations=[reduction_equation]),
+      {source_variable: [source], out_variable: [acc, out]},
+      [broadcast_hint],
+  )
 
 
-@partial(_add_layout_inference_rule, mgpu.LayoutCastOp)
-def _infer_layout_cast_op_layout(
-    layout_cast_op: mgpu.LayoutCastOp,
-) -> OptionalLayouts:
-  return [layout_cast_op.new_layout], [layout_cast_op.new_layout]
-
-
-@partial(_add_layout_inference_rule, mgpu.CustomPrimitiveOp)
-def _infer_custom_primitive_op_layout(
-    custom_primitive_op: mgpu.CustomPrimitiveOp,
-) -> OptionalLayouts:
-  in_layouts = list(custom_primitive_op.in_layouts)
-  out_layouts = list(custom_primitive_op.out_layouts)
-  return in_layouts, out_layouts
-
-
-@partial(_add_layout_inference_rule, mgpu.BroadcastInDimOp)
-def _infer_broadcast_in_dim_op_layout(
+@_add_equation_system_derivation_rule(mgpu.BroadcastInDimOp)
+def _broadcast_in_dim_equation_system(
     op: mgpu.BroadcastInDimOp,
-) -> OptionalLayouts:
-  if inference_utils.has_any_layout_set(op):
-    op_in_layouts = list(inference_utils.in_layouts(op))
-    op_out_layouts = list(inference_utils.out_layouts(op))
-    return op_in_layouts, op_out_layouts
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  out_variable = eqns.Variable(OperandOrResult(op, VariableType.RESULT, 0))
+  source_variable = eqns.Variable(OperandOrResult(op, VariableType.OPERAND, 0))
+  out_shape = tuple(cast(ir.ShapedType, op.result.type).shape)
+  reduction_dims = tuple(
+      i for i in range(len(out_shape)) if i not in op.broadcast_dimensions
+  )
 
-  in_ty = ir.VectorType(op.operand.type)
-  out_ty = ir.VectorType(op.result.type)
-  if len(in_ty.shape) != 1 or len(out_ty.shape) != 2:
-    raise NotImplementedError(
-        "Broadcast in dim with non-trivial broadcast dimensions is not"
-        f" supported: {op}"
+  reduction_equation, broadcast_hint = _reduction_equation_and_hint(
+      out_variable, source_variable, out_shape, reduction_dims
+  )
+
+  return (
+      eqns.EquationSystem(equations=[reduction_equation]),
+      {source_variable: [source_variable.key], out_variable: [out_variable.key]},
+      [broadcast_hint],
+  )
+
+
+@_add_equation_system_derivation_rule(vector.ShapeCastOp)
+def _shape_cast_equation_system(
+    op: vector.ShapeCastOp
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  in_shape = tuple(cast(ir.ShapedType, op.source.type).shape)
+  out_shape = tuple(cast(ir.ShapedType, op.result.type).shape)
+
+  in_variable = eqns.Variable(OperandOrResult(op, VariableType.OPERAND, 0))
+  out_variable = eqns.Variable(OperandOrResult(op, VariableType.RESULT, 0))
+
+  in_to_out = eqns.Reshape(in_variable, out_shape)
+  out_to_in = eqns.Reshape(out_variable, in_shape)
+
+  return (
+      eqns.EquationSystem(
+          equations=[
+              eqns.Equation(lhs=out_variable, rhs=in_to_out),
+              eqns.Equation(lhs=in_variable, rhs=out_to_in),
+          ],
+      ),
+      {in_variable: [in_variable.key], out_variable: [out_variable.key]},
+      []
+  )
+
+
+def _ensure_all_layouts_are_set(op: ir.OpView):
+  if not inference_utils.should_have_layout(op):
+    return
+  _ensure_right_number_of_layouts(
+      op, inference_utils.in_layouts(op), inference_utils.out_layouts(op)
+  )
+
+
+def _ensure_right_number_of_layouts(
+    op: ir.OpView,
+    in_layouts: Sequence[fa.FragmentedLayout | ir.Attribute],
+    out_layouts: Sequence[fa.FragmentedLayout | ir.Attribute],
+):
+  """Ensures that the right number of in/out layouts are provided for an op."""
+  if len(in_layouts) != sum(map(is_vector, op.operands)):
+    raise ValueError(
+        "Expected the same number of in_layouts as vector operands."
+    )
+  if len(out_layouts) != sum(map(is_vector, op.results)):
+    raise ValueError(
+        "Expected the same number of out_layouts as vector results."
     )
 
-  # Find out the layout of the output from the consumers.
-  user_layouts = set()
-  for use in cast(ir.OpResult, op.result).uses:
-    consumer = use.owner
-    operand = consumer.operands[use.operand_number]
-    layout = inference_utils.in_layout_for_operand(consumer, operand)
-    if layout is not None:
-      user_layouts.add(layout)
-  if user_layouts:
-    out_layout = _choose_representative_layout(user_layouts)
 
-    if out_layout is None:
-      raise ValueError(f"Could not choose a best layout from {user_layouts}")
+def assign_layouts(
+    solution: dict[OperandOrResult, eqns.Constant],
+) -> None:
+  """Assigns the layouts in `solution` to the MLIR ops they belong to.
 
-    if out_layout != layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT):
-      raise NotImplementedError(f"Unsupported layout: {out_layout}")
+  This function requires that, for each MLIR op that appears in `solution`,
+  `solution` contains a layout assignment for all of its `vector` operands and
+  results.
+  """
+  solution_sorted_by_op = sorted(
+      solution.items(), key=lambda kv: id(kv[0].operation)
+  )
+  solution_per_op = itertools.groupby(
+      solution_sorted_by_op, key=lambda kv: kv[0].operation
+  )
 
-    broadcast_dims = list(op.broadcast_dimensions)
-    if broadcast_dims == [0]:
-      in_layout = layouts_lib.to_layout_attr(fa.WGMMA_ROW_LAYOUT)
-    elif broadcast_dims == [1]:
-      in_layout = layouts_lib.to_layout_attr(fa.WGMMA_COL_LAYOUT)
-    else:
-      raise ValueError(f"Invalid broadcast dimensions: {broadcast_dims}")
+  for op, assignments in solution_per_op:
+    assignments_sorted_by_type = sorted(assignments, key=lambda kv: kv[0].type)
+    assignments_by_type = {
+        ty: list(group)
+        for ty, group in itertools.groupby(
+            assignments_sorted_by_type, key=lambda kv: kv[0].type
+        )
+    }
 
-    return [in_layout], [out_layout]
+    in_assignments = assignments_by_type.get(VariableType.OPERAND, [])
+    out_assignments = assignments_by_type.get(VariableType.RESULT, [])
 
-  # The consumers did not have any layouts set. Find out the layout of the
-  # input and infer the output layout from it.
-  in_layout = inference_utils.value_layout(op.operand)
-  if in_layout is None:
-    return None
+    in_layouts = [
+        ce.value for _, ce in sorted(in_assignments, key=lambda kv: kv[0].index)
+    ]
+    out_layouts = [
+        ce.value
+        for _, ce in sorted(out_assignments, key=lambda kv: kv[0].index)
+    ]
 
-  broadcast_dims = list(op.broadcast_dimensions)
-  if (
-      broadcast_dims == [0]
-      and in_layout == layouts_lib.to_layout_attr(fa.WGMMA_ROW_LAYOUT)
-  ) or (
-      broadcast_dims == [1]
-      and in_layout == layouts_lib.to_layout_attr(fa.WGMMA_COL_LAYOUT)
-  ):
-    out_layout = layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
-    return [in_layout], [out_layout]
-
-  return None
+    _ensure_right_number_of_layouts(op, in_layouts, out_layouts)
+    in_layouts_attrs = [layouts_lib.to_layout_attr(l) for l in in_layouts]
+    out_layouts_attrs = [layouts_lib.to_layout_attr(l) for l in out_layouts]
+    op.attributes["in_layouts"] = ir.ArrayAttr.get(in_layouts_attrs)
+    op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts_attrs)
 
 
-@partial(_add_layout_inference_rule, mgpu.WGMMAOp)
-def _infer_wgmma_op_layout(wgmma_op: mgpu.WGMMAOp) -> OptionalLayouts:
-  layout = layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
+def operands_and_results(op: ir.OpView) -> list[OperandOrResult]:
+  """Returns all the operands and results for the given op."""
+  operands_or_results = [
+      OperandOrResult(op, VariableType.OPERAND, i)
+      for i, o in enumerate(op.operands)
+      if is_vector(o)
+  ]
+  operands_or_results.extend([
+      OperandOrResult(op, VariableType.RESULT, i)
+      for i, o in enumerate(op.results)
+      if is_vector(o)
+  ])
+  return operands_or_results
 
-  if ir.VectorType.isinstance(wgmma_op.a.type):
-    return [layout, layout], [layout]
 
-  return [layout], [layout]
+def producer_result(operand: OperandOrResult) -> OperandOrResult:
+  """Given an operand, returns the corresponding result in its producer.
+
+  When the producer is a block, we return the corresponding operand in the
+  operation that owns the block.
+  """
+  assert operand.type == VariableType.OPERAND
+  value = operand.operation.operands[operand.index]
+  producer = value.owner
+  if isinstance(producer, ir.Operation):
+    index = list(producer.results).index(value)
+    return OperandOrResult(producer.opview, VariableType.RESULT, index)
+
+  # Block case, useful for deriving layouts for ops
+  # depending on function parameters, or loop block arguments.
+  if isinstance(producer, ir.Block):
+    index = list(cast(ir.Block, producer).arguments).index(value)
+    if isinstance(producer.owner, scf.ForOp):
+      # In this case, the block arguments are offset compared to the loop
+      # operands. The loop operands have the lower bound, upper bound, and step
+      # as their leading arguments. The block arguments omit these parameters,
+      # but start with the iteration variable.
+      num_leading_args = 3
+      index += num_leading_args - 1
+      return OperandOrResult(producer.owner.opview, VariableType.OPERAND, index)
+    raise NotImplementedError(
+        f"Producer {producer} is not a ForOp or a FuncOp: {type(producer)}."
+    )
+
+  raise TypeError(
+      f"Producer {producer} is not an operation nor a block: {type(producer)}."
+  )
 
 
-class TraversalOrder(enum.Enum):
-  """Traversal orders with respect to the data flow for IR."""
+def consumer_operands(result: OperandOrResult) -> Sequence[OperandOrResult]:
+  """Given a result, returns the corresponding operands in its consumers."""
+  assert result.type == VariableType.RESULT
+  consumer_operands: list[OperandOrResult] = []
+  # The layout can also be chosen from the layout of the consumers of the
+  # results.
+  for use in cast(ir.OpResult, result.operation.results[result.index]).uses:
+    consumer = use.owner.opview  # pytype: disable=attribute-error
+    index = use.operand_number
+    consumer_operands.append(OperandOrResult(consumer, VariableType.OPERAND, index))
+  return consumer_operands
 
-  FORWARD = 1
-  BACKWARDS = 2
+
+def derive_hints_and_constraints(
+    operands_and_results_for_variable: OperandOrResultsForVariable
+) -> tuple[list[Hint], list[eqns.Relayout]]:
+  """Derives propagation hints from the given variable mapping."""
+  hints: list[Hint] = []
+  constraints: list[eqns.Relayout] = []
+  variable_for_operand_or_result: dict[OperandOrResult, eqns.Variable] = {}
+  for variable, operand_and_results in operands_and_results_for_variable.items():
+    for operand_or_result in operand_and_results:
+      if operand_or_result in variable_for_operand_or_result:
+        raise ValueError(
+            f"{operand_or_result} is mapped to both {variable} and "
+            f"{variable_for_operand_or_result[operand_or_result]}"
+        )
+    variable_for_operand_or_result |= {k: variable for k in operand_and_results}
+
+  visited: set[eqns.Variable] = set()
+  for variable, operand_and_results in operands_and_results_for_variable.items():
+    producers: list[eqns.Variable] = []
+    consumers: list[eqns.Variable] = []
+    for operand_or_result in operand_and_results:
+      if operand_or_result.type == VariableType.OPERAND:
+        pr = producer_result(operand_or_result)
+        producer_variable = variable_for_operand_or_result[pr]
+        producers.append(producer_variable)
+        # Only add the constraint if we haven't already created that constraint
+        # when processing this variable as one of the producer's consumers.
+        if producer_variable not in visited:
+          # The producer of a variable must be relayout-able to the variable.
+          constraints.append(eqns.Relayout(producer_variable, variable))
+      elif operand_or_result.type == VariableType.RESULT:
+        for co in consumer_operands(operand_or_result):
+          consumer_variable = variable_for_operand_or_result[co]
+          consumers.append(consumer_variable)
+          # Only add the constraint if we haven't already created that
+          # constraint when processing this variable as the consumer's producer.
+          if consumer_variable not in visited:
+            # A variable must be relayout-able to its consumers.
+            constraints.append(eqns.Relayout(variable, consumer_variable))
+    visited.add(variable)
+
+    if producers:
+      least_replicated_producer = eqns.LeastReplicated(tuple(producers))
+      hint_expr = eqns.MostReplicated((least_replicated_producer, *consumers))
+      hints.append(Hint(variable, hint_expr))
+    elif consumers:
+      hint_expr = eqns.MostReplicated(tuple(consumers))
+      hints.append(Hint(variable, hint_expr))
+
+  return hints, constraints
+
+
+def is_terminator(op: ir.OpView) -> bool:
+  return isinstance(op, (scf.YieldOp, scf.ConditionOp))
 
 
 def infer_layout(module: ir.Module):
-  def inference_step(op: ir.Operation):
-    if not inference_utils.should_have_layout(op):
+  global_equation_system: eqns.EquationSystem | eqns.Unsatisfiable
+  global_equation_system = eqns.EquationSystem()
+  operand_and_results_for_variable: OperandOrResultsForVariable = {}
+  hints: list[Hint] = []
+
+  def gather_equations(op: ir.Operation):
+    # Terminator ops are handled directly by the op whose region they belong to.
+    # This is because they need to be in sync with their parent op's inputs and
+    # outputs---and the parent op's equations therefore need to take them them
+    # into account.
+    if not inference_utils.should_have_layout(op) or is_terminator(op):
       return
-    elif inference_rule := _layout_inference_rules.get(op.OPERATION_NAME, None):  # pytype: disable=attribute-error
+    elif rule := _equation_system_derivation_rules.get(op.OPERATION_NAME, None):  # pytype: disable=attribute-error
       pass
     else:
-      raise NotImplementedError(f"Can not infer layout for {op}")
-
-    maybe_layouts = inference_rule(op)
-    if maybe_layouts is None:
-      return
-
-    _set_layout_attributes(op, *maybe_layouts)
-
-  # TODO(bchetioui): consider switching the order of the passes. This would
-  # allow propagating "simpler" layouts further down in the computation, which
-  # is more efficient when possible.
-  #
-  # We run two passes over the module, in order to make sure that layouts
-  # defined in the middle of the computation are propagated wherever they need
-  # to be propagated. We start with a forward (parameters-to-root) pass to
-  # preserve replicated layouts as far down as possible, and then do a
-  # backwards (root-to-parameters) pass.
-  #
-  # Forward pass
-  for op in module.body:
-    inference_utils.traverse_op(
-        op, inference_step, inference_utils.TraversalOrder.FORWARD
-    )
-
-  # Backwards pass
-  for op in reversed(list(module.body)):
-    inference_utils.traverse_op(
-        op, inference_step, inference_utils.TraversalOrder.BACKWARDS
-    )
-
-  # At this point, layouts have been propagated as far as they could be
-  # propagated. However, it is possible for some operations to remain
-  # unannotated---for example, if there were no annotations on any operation in
-  # the module at the start of this function. We annotate all the remaining ops
-  # that should be annotated with a strided fragmented layout, whose vector size
-  # is derived from the narrowest type and vector size used in the program. We
-  # make sure to derive a single vector size in order to avoid relayouts at
-  # lowering time.
-  default_vector_size = math.inf
-  def update_default_vector_size_from_vector(v: ir.Value):
-    nonlocal default_vector_size
-    max_vec_size_for_v = (
-          np.prod(cast(ir.ShapedType, v.type).shape) // fa.WARPGROUP_SIZE
-      )
-    desired_vec_size = 64 // utils.bitwidth(v.type.element_type)  # pytype: disable=attribute-error
-    default_vector_size = min(
-        default_vector_size, max_vec_size_for_v, desired_vec_size
-    )
-
-  def update_default_vector_size_from_op(op: ir.OpView):
-    for i, v in enumerate(
-        filter(lambda v: ir.VectorType.isinstance(v.type), op.operands)
-    ):
-      if inference_utils.attr_element("in_layouts", op, i) is None:
-        update_default_vector_size_from_vector(v)
-
-    for i, v in enumerate(
-        filter(lambda v: ir.VectorType.isinstance(v.type), op.results)
-    ):
-      if inference_utils.attr_element("out_layouts", op, i) is None:
-        update_default_vector_size_from_vector(v)
+      raise NotImplementedError(f"No layout inference rule defined for {op}")
+    equation_system, mapping, op_hints = rule(op)
+    operand_and_results_for_variable.update(mapping)
+    nonlocal global_equation_system
+    global_equation_system &= equation_system
+    hints.extend(op_hints)
 
   for op in module.body:
-    inference_utils.traverse_op(op, update_default_vector_size_from_op)
+    inference_utils.traverse_op(op, gather_equations)
 
-  if default_vector_size == math.inf:  # Nothing to annotate.
-    return
+  assert not isinstance(global_equation_system, eqns.Unsatisfiable)
+  propagation_hints, constraints = derive_hints_and_constraints(operand_and_results_for_variable)
+  hints = reduce_hints(hints + propagation_hints, global_equation_system.assignments)  # pytype: disable=attribute-error
+  global_equation_system &= eqns.EquationSystem(constraints=constraints)
+  assert not isinstance(global_equation_system, eqns.Unsatisfiable)
 
-  def to_default_layout(ty: ir.Type) -> ir.Attribute | None:
-    if not ir.VectorType.isinstance(ty):
-      return None
-    layout = fa.WGStridedFragLayout(
-        shape=cast(ir.ShapedType, ty).shape, vec_size=int(default_vector_size)
+  # Attempt to find assignments that satisfy the equation system.
+  solution = find_assignments_for(
+      operand_and_results_for_variable.keys(), global_equation_system, hints
+  )
+
+  if isinstance(solution, eqns.Unsatisfiable):
+    raise ValueError(
+        "Failed to infer a possible set of layouts. This should only happen if "
+        "user-provided layout casts are unsatisfiable."
     )
-    return layouts_lib.to_strided_fragmented_layout_attr(layout)
 
-  def set_default_layout(op: ir.OpView):
-    if inference_utils.should_have_layout(
-        op
-    ) and not inference_utils.has_any_layout_set(op):
-      in_layouts = []
-      for operand in op.operands:
-        if (layout := to_default_layout(operand.type)) is not None:
-          in_layouts.append(layout)
+  layout_for_operand_or_result = {
+      k: solution[v]
+      for v, ks in operand_and_results_for_variable.items()
+      for k in ks
+  }
 
-      out_layouts = []
-      for result in op.results:
-        if (layout := to_default_layout(result.type)) is not None:
-          out_layouts.append(layout)
+  # Assigns the layouts that we found to the ops.
+  assign_layouts(layout_for_operand_or_result)
 
-      _set_layout_attributes(op, in_layouts, out_layouts)
-
+  # Sanity check: ensure that all ops have the right number of in/out layouts.
   for op in module.body:
-    inference_utils.traverse_op(op, set_default_layout)
+    inference_utils.traverse_op(op, _ensure_all_layouts_are_set)
