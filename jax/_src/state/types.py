@@ -76,6 +76,8 @@ class AccumEffect(RefEffect):
   name: str = "Accum"
 
 effects.control_flow_allowed_effects.add_type(RefEffect)
+effects.custom_derivatives_allowed_effects.add_type(RefEffect)
+effects.custom_derivatives_allowed_effects.add_type(core.InternalMutableArrayEffect)
 effects.partial_eval_kept_effects.add_type(RefEffect)
 
 StateEffect = Union[ReadEffect, WriteEffect, AccumEffect]
