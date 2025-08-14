@@ -2226,7 +2226,10 @@ def interpret_pallas_call(
         ordered=True))
 
   # Allocate buffers in HBM for pallas_call outputs.
-  oi_alias_map = {v: k for k, v in input_output_aliases}
+  oi_alias_map = {v: k - len(scalars) for k, v in input_output_aliases}
+  if any(i < 0 for i in oi_alias_map.keys()):
+    raise ValueError('Aliasing of scalar prefetch arguments is not currently '
+                     'supported in TPU interpret mode.')
   output_buffer_ids = []
   output_buffer_shapes = []
   output_vals = []
@@ -2296,7 +2299,7 @@ def interpret_pallas_call(
     elif _is_any(var.aval.memory_space):
       # Use the already-allocated HBM input or output buffer.
       #
-      # TODO(jburnim): For kernel args in HBM, check that block shape eqals the
+      # TODO(jburnim): For kernel args in HBM, check that block shape equals the
       # shape of the corresponding pallas_call input, and that the index_map
       # is trivial.
       assert is_input ^ is_output

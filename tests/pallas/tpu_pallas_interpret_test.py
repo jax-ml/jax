@@ -272,29 +272,33 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_allclose(result, ref)
 
   def test_dynamic_grid_and_aliasing(self):
-    def kernel(s_ref, x_ref, o_ref):
-      o_ref[...] = x_ref[...] + s_ref[0].astype(x_ref.dtype)
+    def kernel(s1_ref, s2_ref, x_ref, o_ref):
+      del s2_ref
+      o_ref[...] = x_ref[...] + s1_ref[0].astype(x_ref.dtype)
 
     iters = jax.random.randint(jax.random.key(0), (), 10, 20, dtype=jnp.int32)
 
     @jax.jit
-    def f(s, x):
+    def f(s1, s2, x):
       return pl.pallas_call(
           kernel,
           out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-          grid=(iters,),
-          in_specs=[
-              pl.BlockSpec(memory_space=pltpu.SMEM),
-              pl.BlockSpec(x.shape, lambda i: (0, 0)),
-          ],
-          out_specs=pl.BlockSpec(x.shape, lambda i: (0, 0)),
-          input_output_aliases={1: 0},
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=2,
+              grid=(iters,),
+              in_specs=[
+                  pl.BlockSpec(x.shape, lambda i, *_: (0, 0)),
+              ],
+              out_specs=pl.BlockSpec(x.shape, lambda i, *_: (0, 0)),
+          ),
+          input_output_aliases={2: 0},
           interpret=pltpu.InterpretParams(),
-      )(s, x)
+      )(s1, s2, x)
 
-    s = jnp.array([1], dtype=jnp.int32)
+    s1 = jnp.array([1], dtype=jnp.int32)
+    s2 = jnp.array([2], dtype=jnp.int32)
     x = jnp.arange(32 * 128.0).reshape((32, 128))
-    y = f(s, x)
+    y = f(s1, s2, x)
     # NOTE: No matter how many times the kernel body is run, the kernel input
     # buffer will only be written once by the pallas_call machinery, just
     # before the first iteration. So the output will be x + 1 , despite the
