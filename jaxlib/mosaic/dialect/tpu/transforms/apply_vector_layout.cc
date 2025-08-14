@@ -511,21 +511,30 @@ FailureOr<xla::Array<Value>> transposeSingletonMinorDimension(
         VectorLayout(layout.bitwidth(), {layout.offsets()[0], std::nullopt},
                      layout.tiling(), VectorLayout::ImplicitDim::kNone);
   }
-  if (!layout.offsets()[0].has_value()) {
-    return vregs;
-  }
-  const int64_t old_2nd_minor_offset = *layout.offsets()[0];
   SmallVector<int64_t> new_ishape(ishape);
   CHECK_EQ(new_ishape.back(), 1);
   std::iter_swap(new_ishape.end() - 2, new_ishape.end() - 1);
-  // new_layout is only to get the new vreg array shape, the implicit dim is
+  // This layout is only to get the new vreg array shape, the implicit dim is
   // irrelevant (since we already have the implicit shape):
-  const VectorLayout new_layout(
-      layout.bitwidth(), {std::nullopt, new_minor_offset}, layout.tiling(),
-      VectorLayout::ImplicitDim::kNone);
-  xla::Array<Value> new_vregs(new_layout.tileArrayShape(
-      /*src_is_implicit=*/true, /*res_is_implicit=*/true, new_ishape,
-      ctx.target_shape));
+  const SmallVector<int64_t> new_vreg_array_shape =
+      VectorLayout(layout.bitwidth(), {std::nullopt, new_minor_offset},
+                   layout.tiling(), VectorLayout::ImplicitDim::kNone)
+          .tileArrayShape(
+              /*src_is_implicit=*/true, /*res_is_implicit=*/true, new_ishape,
+              ctx.target_shape);
+  xla::Array<Value> new_vregs(new_vreg_array_shape);
+  if (!layout.offsets()[0].has_value()) {
+    SmallVector<int64_t> old_idxs;
+    new_vregs.Each(
+        [&](const absl::Span<const int64_t> new_idxs, Value *new_vreg) {
+          old_idxs.assign(new_idxs.begin(), new_idxs.end());
+          CHECK_EQ(*(old_idxs.end() - 2), 0);
+          *(old_idxs.end() - 1) = 0;
+          *new_vreg = vregs(old_idxs);
+        });
+    return new_vregs;
+  }
+  const int64_t old_2nd_minor_offset = *layout.offsets()[0];
   VectorType iota_vreg_ty =
       getNativeVregType(builder.getI32Type(), ctx.target_shape);
   // Preallocate an indices vector to avoid repeated allocations:
