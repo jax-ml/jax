@@ -126,7 +126,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkOutLayouts(x, [layout])
 
   def test_infer_strided_layout_from_shape_cast(self):
-    self.skip_if_equations()
     shape = (16, 8)
     elt_type = ir.BF16Type.get()
     src_type = ir.VectorType.get(shape, elt_type)
@@ -269,17 +268,25 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkOutLayouts(cast, [wgmma_layout])
 
   @parameterized.parameters(
-      (0, mgpu.WGMMA_ROW_LAYOUT, None, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_LAYOUT),
-      (1, mgpu.WGMMA_COL_LAYOUT, None, mgpu.WGMMA_COL_LAYOUT, mgpu.WGMMA_LAYOUT),
-      (0, None, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_LAYOUT),
-      (1, None, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_COL_LAYOUT, mgpu.WGMMA_LAYOUT),
+      (0, mgpu.WGMMA_ROW_LAYOUT, None),
+      (1, mgpu.WGMMA_COL_LAYOUT, None),
+      (0, None, mgpu.WGMMA_LAYOUT),
+      (1, None, mgpu.WGMMA_LAYOUT),
+      (0, mgpu.TCGEN05_ROW_LAYOUT, None),
+      (0, None, mgpu.TCGEN05_LAYOUT),
+      (1, None, mgpu.TCGEN05_LAYOUT),
   )
-  def test_infer_broadcast_in_dim_layout(
-      self, broadcast_dim, in_cast, out_cast, in_layout, out_layout
-  ):
-    self.skip_if_equations()
-    in_shape = (64,)
-    out_shape = (64, 64)
+  def test_infer_broadcast_in_dim_layout(self, broadcast_dim, in_cast, out_cast):
+    in_shape = (128,)
+    out_shape = (128, 128)
+
+    # The tests always expect WGMMA or TCGEN05 as the out layout.
+    if out_cast == mgpu.TCGEN05_LAYOUT or in_cast == mgpu.TCGEN05_ROW_LAYOUT:
+      if self.INFERENCE_IMPL == InferenceImplementation.LEGACY:
+        self.skipTest("unsupported in the legacy implementation")
+      out_layout = mgpu.TCGEN05_LAYOUT
+    else:
+      out_layout = mgpu.WGMMA_LAYOUT
 
     with ir.InsertionPoint(self.module.body):
       [x] = undefs(ir.VectorType.get(in_shape, ir.F32Type.get()))
@@ -288,6 +295,8 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       bcast = mgpu.dialect.BroadcastInDimOp(out_type, x, [broadcast_dim])
       if out_cast is not None:
         layout_cast(bcast.result, out_cast)
+
+    in_layout = out_layout.reduce((1 - broadcast_dim,))
 
     self.infer_layout(self.module)
     self.checkInLayouts(bcast, [layouts.to_layout_attr(in_layout)])
@@ -302,14 +311,21 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       (0, None, mgpu.WGMMA_COL_LAYOUT, None),
       (1, None, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_ROW_LAYOUT),
       (0, None, mgpu.WGMMA_COL_LAYOUT, mgpu.WGMMA_COL_LAYOUT),
+      (1, mgpu.TCGEN05_LAYOUT, None, None),
+      (1, None, None, mgpu.TCGEN05_ROW_LAYOUT),
+      (1, None, mgpu.TCGEN05_ROW_LAYOUT, None),
+      (1, None, mgpu.TCGEN05_ROW_LAYOUT, mgpu.TCGEN05_ROW_LAYOUT)
   )
   def test_infer_multi_reduce_layout(
       self, reduce_dim, in_cast, acc_cast, out_cast
   ):
-    self.skip_if_equations()
+    targets_tcgen05 = any(layout in {mgpu.TCGEN05_LAYOUT, mgpu.TCGEN05_ROW_LAYOUT} for layout in [in_cast, acc_cast, out_cast])
+    if self.INFERENCE_IMPL == InferenceImplementation.LEGACY:
+      if targets_tcgen05:
+        self.skipTest("unsupported in the legacy implementation")
     with ir.InsertionPoint(self.module.body):
-      in_ty = ir.VectorType.get((64, 64), ir.F32Type.get())
-      acc_ty = ir.VectorType.get((64,), ir.F32Type.get())
+      in_ty = ir.VectorType.get((128, 128), ir.F32Type.get())
+      acc_ty = ir.VectorType.get((128,), ir.F32Type.get())
       x, acc = undefs(in_ty, acc_ty)
       x = layout_cast(x, in_cast) if in_cast is not None else x
       acc = layout_cast(acc, acc_cast) if acc_cast is not None else acc
@@ -319,9 +335,8 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
         layout_cast(red.result, out_cast)
 
     self.infer_layout(self.module)
-
-    # The tests always expect WGMMA as the source layout.
-    in_layout = mgpu.WGMMA_LAYOUT
+    # The tests always expect WGMMA or TCGEN05 as the source layout.
+    in_layout = mgpu.TCGEN05_LAYOUT if targets_tcgen05 else mgpu.WGMMA_LAYOUT
     out_layout = in_layout.reduce((reduce_dim,))
     self.checkInLayouts(red, [in_layout, out_layout])
     self.checkOutLayouts(red, [out_layout])
@@ -609,13 +624,13 @@ C = eqns.Constant
 
 def _undef_equation_system(
     op: llvm.UndefOp,
-) -> tuple[eqns.EquationSystem, layout_inference2.OperandOrResultsForVariable]:
+) -> tuple[eqns.EquationSystem, layout_inference2.OperandOrResultsForVariable, list[layout_inference2.Hint]]:
   # This rule is only called if the single output of the undef op is a vector,
   # so we can just return a trivial mapping.
   result = layout_inference2.OperandOrResult(
       op, layout_inference2.VariableType.RESULT, 0
   )
-  return eqns.EquationSystem(), {eqns.Variable(result): [result]}
+  return eqns.EquationSystem(), {eqns.Variable(result): [result]}, []
 
 
 class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=InferenceImplementation.EQUATIONS):
@@ -640,8 +655,8 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
       lc = layout_cast(x, layouts.to_layout_attr(layout)).owner.opview
 
-    x_system, x_mapping = _undef_equation_system(x)
-    lc_system, lc_mapping = layout_inference2._layout_cast_equation_system(lc)
+    x_system, x_mapping, _ = _undef_equation_system(x)
+    lc_system, lc_mapping, _ = layout_inference2._layout_cast_equation_system(lc)
     assignments = x_system.assignments | lc_system.assignments
     hints, [constraint] = layout_inference2.derive_hints_and_constraints(
         x_mapping | lc_mapping
