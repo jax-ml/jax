@@ -499,6 +499,7 @@ pytype_strict_library(
     visibility = ["//visibility:public"],
     deps = [
         "//jax",
+        "//jax/_src:api",
         "//jax/_src:core",
         "//jax/_src:custom_derivatives",
         "//jax/_src:lax",

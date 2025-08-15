@@ -39,7 +39,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import xla
+from jax._src.interpreters import pxla
 from jax._src.interpreters.batching import not_mapped
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_map, treedef_is_leaf, treedef_tuple,
@@ -1540,7 +1540,7 @@ linear_call_p.def_impl(_linear_call_impl)
 linear_call_p.def_abstract_eval(_linear_call_abstract_eval)
 ad.primitive_jvps[linear_call_p] = _linear_call_jvp_rule
 ad.primitive_transposes[linear_call_p] = _linear_call_transpose_rule
-xla.register_initial_style_primitive(linear_call_p)
+pxla.register_initial_style_primitive(linear_call_p)
 mlir.register_lowering(linear_call_p, mlir.lower_fun(
     _linear_call_impl, multiple_results=True))
 
@@ -1848,7 +1848,7 @@ remat_opt_p = core.Primitive("remat_opt")
 remat_opt_p.multiple_results = True
 remat_opt_p.def_impl(_remat_opt_impl)
 remat_opt_p.def_effectful_abstract_eval(_remat_opt_abstract_eval)
-xla.register_initial_style_primitive(remat_opt_p)
+pxla.register_initial_style_primitive(remat_opt_p)
 mlir.register_lowering(remat_opt_p, mlir.lower_fun(
     _remat_opt_impl, multiple_results=True))
 

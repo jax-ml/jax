@@ -49,6 +49,7 @@ from jax._src import api, api_util, dtypes, lib
 from jax._src import array
 from jax._src import config
 from jax._src import core
+from jax._src import dispatch
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -68,7 +69,6 @@ from jax.errors import (UnexpectedTracerError, TracerIntegerConversionError,
 from jax.experimental import pjit
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import xla
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 import numpy as np
@@ -3892,7 +3892,7 @@ class APITest(jtu.JaxTestCase):
   def test_grad_of_token_consuming_primitive(self):
     # https://github.com/jax-ml/jax/issues/5463
     tokentest_p = core.Primitive("tokentest")
-    tokentest_p.def_impl(partial(xla.apply_primitive, tokentest_p))
+    tokentest_p.def_impl(partial(dispatch.apply_primitive, tokentest_p))
     tokentest_p.def_abstract_eval(lambda x, y: x)
     mlir.register_lowering(tokentest_p, lambda ctx, x, y: [x])
     ad.defjvp(tokentest_p, (lambda g, x, token: x), None)

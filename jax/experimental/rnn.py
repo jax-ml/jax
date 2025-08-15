@@ -89,8 +89,8 @@ from typing import Any
 import jax
 import numpy as np
 from jax._src import core
+from jax._src import dispatch
 from jax.interpreters import mlir
-from jax.interpreters import xla
 from jax._src.custom_derivatives import custom_vjp
 from jax._src.typing import Array, Shape
 from jax._src.lax import lax
@@ -455,7 +455,7 @@ def rnn_abstract_eval(x_aval, h_0_aval, c_0_aval, w_aval, seq_lengths_aval,
 
 rnn_fwd_p = core.Primitive('rnn_fwd')
 rnn_fwd_p.multiple_results = True
-rnn_fwd_p.def_impl(partial(xla.apply_primitive, rnn_fwd_p))
+rnn_fwd_p.def_impl(partial(dispatch.apply_primitive, rnn_fwd_p))
 rnn_fwd_p.def_abstract_eval(rnn_abstract_eval)
 if gpu_rnn:
   mlir.register_lowering(rnn_fwd_p, gpu_rnn.cudnn_rnn_lowering, platform='cuda')
@@ -499,7 +499,7 @@ def rnn_bwd_abstract_eval(dy_aval, dhn_aval, dcn_aval, x_aval, h0_aval, c0_aval,
 
 rnn_bwd_p = core.Primitive('rnn_bwd')
 rnn_bwd_p.multiple_results = True
-rnn_bwd_p.def_impl(partial(xla.apply_primitive, rnn_bwd_p))
+rnn_bwd_p.def_impl(partial(dispatch.apply_primitive, rnn_bwd_p))
 rnn_bwd_p.def_abstract_eval(rnn_bwd_abstract_eval)
 if gpu_rnn:
   mlir.register_lowering(

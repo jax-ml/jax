@@ -120,7 +120,6 @@ pytype_strict_library(
         "//jax/_src:traceback_util",
         "//jax/_src:typing",
         "//jax/_src:util",
-        "//jax/_src:xla",
         "//jax/_src:xla_bridge",
         "//jax/_src/lib",
         "//jax/_src/pallas",

@@ -24,9 +24,9 @@ import jax.numpy as jnp
 
 from jax.experimental import sparse
 from jax.interpreters import mlir
-from jax.interpreters import xla
 
 from jax._src import core
+from jax._src import dispatch
 from jax._src import ffi
 from jax._src.interpreters import ad
 
@@ -589,7 +589,7 @@ def _spsolve_transpose(ct, data, indices, indptr, b, **kwds):
 
 
 spsolve_p = core.Primitive('spsolve')
-spsolve_p.def_impl(functools.partial(xla.apply_primitive, spsolve_p))
+spsolve_p.def_impl(functools.partial(dispatch.apply_primitive, spsolve_p))
 spsolve_p.def_abstract_eval(_spsolve_abstract_eval)
 ad.defjvp(spsolve_p, _spsolve_jvp_lhs, None, None, _spsolve_jvp_rhs)
 ad.primitive_transposes[spsolve_p] = _spsolve_transpose

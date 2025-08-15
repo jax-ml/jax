@@ -249,7 +249,6 @@ pytype_strict_library(
         ":tree_util",
         ":typing",
         ":util",
-        ":xla",
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
@@ -451,7 +450,6 @@ py_library_providing_imports_info(
         ":tree_util",
         ":typing",
         ":util",
-        ":xla",
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
@@ -551,7 +549,6 @@ pytype_strict_library(
         ":traceback_util",
         ":tree_util",
         ":util",
-        ":xla",
     ],
 )
 
@@ -579,6 +576,7 @@ pytype_strict_library(
     deps = [
         ":ad",
         ":ad_util",
+        ":api",
         ":api_util",
         ":batching",
         ":config",
@@ -593,7 +591,6 @@ pytype_strict_library(
         ":traceback_util",
         ":tree_util",
         ":util",
-        ":xla",
     ],
 )
 
@@ -632,6 +629,7 @@ pytype_strict_library(
     deps = [
         ":ad",
         ":ad_util",
+        ":api",
         ":api_util",
         ":core",
         ":custom_api_util",
@@ -641,7 +639,6 @@ pytype_strict_library(
         ":traceback_util",
         ":tree_util",
         ":util",
-        ":xla",
     ],
 )
 
@@ -963,7 +960,6 @@ pytype_strict_library(
         ":state_types",
         ":typing",
         ":util",
-        ":xla",
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
@@ -1450,14 +1446,6 @@ pytype_strict_library(
     ] + py_deps("numpy"),
 )
 
-pytype_strict_library(
-    name = "xla",
-    srcs = ["interpreters/xla.py"],
-    deps = [
-        ":core",
-    ],
-)
-
 # TODO(phawkins): break up this SCC.
 pytype_strict_library(
     name = "xla_bridge",
@@ -1539,7 +1527,6 @@ pytype_strict_library(
         ":tree_util",
         ":typing",
         ":util",
-        ":xla",
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),

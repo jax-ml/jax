@@ -43,7 +43,6 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-from jax._src.interpreters import xla
 from jax._src.api_util import InternalFloatingPointError
 from jax._src.layout import Layout, Format
 from jax._src.lib import xla_client as xc
@@ -304,29 +303,6 @@ def check_arg(arg: Any):
     raise TypeError(f"Argument '{arg}' of type {type(arg)} is not a valid "
                     "JAX type.")
 
-
-def jaxpr_replicas(jaxpr: core.Jaxpr) -> int:
-  """The number of replicas needed for a jaxpr.
-
-  For a eqn, multiply the `axis_size` with the `jaxpr_replicas` of the
-  subjaxprs. For a list of eqns, take the maximum number of replicas.
-  """
-  return max(unsafe_map(_eqn_replicas, jaxpr.eqns), default=1)
-
-# TODO(mattjj): this function assumes that only pmap has a parameter named
-# axis_size, and that it corresponds to cross-replica mapping
-def _eqn_replicas(eqn: core.JaxprEqn) -> int:
-  call_jaxpr = eqn.params.get("call_jaxpr")
-  if call_jaxpr:
-    return eqn.params.get('axis_size', 1) * jaxpr_replicas(call_jaxpr)
-  elif eqn.primitive in xla.initial_style_primitives:
-    return _initial_style_primitive_replicas(eqn.params)
-  else:
-    return 1
-
-def _initial_style_primitive_replicas(params: dict[str, Any]) -> int:
-  return max(core.traverse_jaxpr_params(jaxpr_replicas, params).values(),
-             default=1)
 
 def needs_check_special() -> bool:
   return config.debug_infs.value or config.debug_nans.value

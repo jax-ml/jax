@@ -33,10 +33,10 @@ from jax import numpy as jnp
 from jax import random
 from jax._src import config
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax import vmap
-from jax.interpreters import xla
 
 from jax._src import random as jax_random
 from jax._src import prng as prng_internal
@@ -245,11 +245,11 @@ class PrngTest(jtu.JaxTestCase):
 
   def testNoOpByOpUnderHash(self):
     def fail(*args, **kwargs): assert False
-    apply_primitive, xla.apply_primitive = xla.apply_primitive, fail
+    apply_primitive, dispatch.apply_primitive = dispatch.apply_primitive, fail
     try:
       _ = prng_internal.threefry_2x32(np.zeros(2, np.uint32), np.arange(10, dtype=np.uint32))
     finally:
-      xla.apply_primitive = apply_primitive
+      dispatch.apply_primitive = apply_primitive
 
   @skipIf(config.threefry_partitionable.value, 'changed random bit values')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])

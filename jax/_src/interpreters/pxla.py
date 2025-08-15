@@ -686,11 +686,42 @@ class ReplicaInfo(NamedTuple):
   num_global_replicas: int
 
 
+
+_initial_style_primitives: set[core.Primitive] = set()
+
+
+def register_initial_style_primitive(prim: core.Primitive):
+  _initial_style_primitives.add(prim)
+
+def _jaxpr_replicas(jaxpr: core.Jaxpr) -> int:
+  """The number of replicas needed for a jaxpr.
+
+  For a eqn, multiply the `axis_size` with the `jaxpr_replicas` of the
+  subjaxprs. For a list of eqns, take the maximum number of replicas.
+  """
+  return max(unsafe_map(_eqn_replicas, jaxpr.eqns), default=1)
+
+# TODO(mattjj): this function assumes that only pmap has a parameter named
+# axis_size, and that it corresponds to cross-replica mapping
+def _eqn_replicas(eqn: core.JaxprEqn) -> int:
+  call_jaxpr = eqn.params.get("call_jaxpr")
+  if call_jaxpr:
+    return eqn.params.get('axis_size', 1) * _jaxpr_replicas(call_jaxpr)
+  elif eqn.primitive in _initial_style_primitives:
+    return _initial_style_primitive_replicas(eqn.params)
+  else:
+    return 1
+
+def _initial_style_primitive_replicas(params: dict[str, Any]) -> int:
+  return max(core.traverse_jaxpr_params(_jaxpr_replicas, params).values(),
+             default=1)
+
+
 def find_replicas(
     jaxpr: core.Jaxpr, axis_size: int, global_axis_size: int
 ) -> ReplicaInfo:
   # TODO(skyewm): replace this with a chain of pmaps and/or sharded_jits
-  jaxpr_replicas = dispatch.jaxpr_replicas(jaxpr)
+  jaxpr_replicas = _jaxpr_replicas(jaxpr)
   num_local_replicas = axis_size * jaxpr_replicas
   num_global_replicas = global_axis_size * jaxpr_replicas
   return ReplicaInfo(jaxpr_replicas, num_local_replicas, num_global_replicas)
@@ -1898,7 +1929,7 @@ def _cached_lowering_to_hlo(closed_jaxpr: core.ClosedJaxpr, module_name, backend
   # handled here so as to deprecate the lower_xla_callable codepath when
   # `jax.Array` is turned on by default.
   # TODO(yashkatariya): Remove this when `jit(pmap)` is removed.
-  nreps = dispatch.jaxpr_replicas(jaxpr)
+  nreps = _jaxpr_replicas(jaxpr)
   _raise_warnings_or_errors_for_jit_of_pmap(nreps, backend, module_name, jaxpr)
 
   in_mlir_shardings: list[JSharding | AUTO | None] | None

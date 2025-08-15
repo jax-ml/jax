@@ -240,7 +240,6 @@ py_library_providing_imports_info(
         "//jax/_src:tree_util",
         "//jax/_src:typing",
         "//jax/_src:util",
-        "//jax/_src:xla",
         "//jax/_src:xla_bridge",
         "//jax/_src:xla_metadata",
         "//jax/_src:xla_metadata_lib",

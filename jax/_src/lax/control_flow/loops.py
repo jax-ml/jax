@@ -44,7 +44,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src import sharding_impls as sharding
-from jax._src.interpreters import xla
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import windowed_reductions
@@ -1541,7 +1540,7 @@ ad.primitive_transposes[scan_p] = _scan_transpose
 ad.fancy_transposes[scan_p] = _scan_transpose_fancy
 ad.primitive_linearizations[scan_p] = _scan_linearize
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
-xla.register_initial_style_primitive(scan_p)
+pxla.register_initial_style_primitive(scan_p)
 mlir.register_lowering(scan_p,
                        mlir.lower_fun(_scan_impl, multiple_results=True))
 batching.fancy_primitive_batchers[scan_p] = _scan_batching_rule
@@ -2335,7 +2334,7 @@ while_p.def_impl(partial(dispatch.apply_primitive, while_p))
 while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)
 ad.primitive_jvps[while_p] = _while_loop_jvp
 pe.custom_partial_eval_rules[while_p] = _while_partial_eval
-xla.register_initial_style_primitive(while_p)
+pxla.register_initial_style_primitive(while_p)
 ad.primitive_transposes[while_p] = _while_transpose_error
 batching.fancy_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
