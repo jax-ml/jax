@@ -3174,11 +3174,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     gc.collect()
     base = nbufs()
     leak()
-    self.assertEqual(base, nbufs())
+    # You would hope for exact equality here, but you cannot entirely trust
+    # gc.collect() to collect everything immediately under a free threaded
+    # build.
+    self.assertGreaterEqual(base, nbufs())
     leak()
-    self.assertEqual(base, nbufs())
+    self.assertGreaterEqual(base, nbufs())
     leak()
-    self.assertEqual(base, nbufs())
+    self.assertGreaterEqual(base, nbufs())
 
   def test_grad_remat_while_fixpoint(self):
     @jax.remat
