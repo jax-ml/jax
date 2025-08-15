@@ -3255,7 +3255,7 @@ class MeshExecutable(stages.Executable):
       return None
 
     def aot_cache_miss(*args, **kwargs):
-      # args do not include the const args
+      # args do not include the const args.
       # See https://docs.jax.dev/en/latest/internals/constants.html.
       outs, out_flat, args_flat = stages.Compiled.call(params, *args, **kwargs)
       out_flat, out_tree_dispatch = reflatten_outputs_for_dispatch(
@@ -3302,11 +3302,29 @@ def check_arg_avals_for_call(ref_avals, arg_avals,
   arg_names = [f"'{name}'" for name in jaxpr_debug_info.safe_arg_names(len(ref_avals))]
 
   errors = []
+  # In AOT mode, we may have lowered and compiled the executable with different
+  # enable_x64 value than we use during invocation.
+  comp_x64_exec_x32: list[bool | None] = []
   for ref_aval, arg_aval, name in safe_zip(ref_avals, arg_avals, arg_names):
     # Don't compare shardings of avals because you can lower with
     # numpy arrays + in_shardings and call compiled executable with
     # sharded arrays. We also have sharding checks downstream.
     if (ref_aval.shape, ref_aval.dtype) != (arg_aval.shape, arg_aval.dtype):
+      if (config.use_simplified_jaxpr_constants.value and
+          ref_aval.shape == arg_aval.shape):
+        if (ref_aval.dtype.itemsize == 8 and
+            dtypes._dtype_to_32bit_dtype.get(ref_aval.dtype) == arg_aval.dtype and
+            not config.enable_x64.value):
+          comp_x64_exec_x32.append(True)
+        elif (arg_aval.dtype.itemsize == 8 and
+              dtypes._dtype_to_32bit_dtype.get(arg_aval.dtype) == ref_aval.dtype and
+              config.enable_x64.value):
+          comp_x64_exec_x32.append(False)
+        else:
+          comp_x64_exec_x32.append(None)
+      else:
+        comp_x64_exec_x32.append(None)
+
       errors.append(
           f"Argument {name} compiled with {ref_aval.str_short()} and called "
           f"with {arg_aval.str_short()}")
@@ -3317,9 +3335,17 @@ def check_arg_avals_for_call(ref_avals, arg_avals,
       num_mismatch_str = f"The first {max_num_errors} of {len(errors)}"
     else:
       num_mismatch_str = "The"
+    comp_x64, *rest_comp_x64 = set(comp_x64_exec_x32)
+    if not rest_comp_x64 and comp_x64 is not None:
+      extra_msg = (
+          "Perhaps this is an invocation in "
+          f"{[64,32][comp_x64]}-bit mode of an executable "  # type: ignore
+          f"AOT-compiled in {[32,64][comp_x64]}-bit mode? ")  # type: ignore
+    else:
+      extra_msg = ""
     raise TypeError(
         "Argument types differ from the types for which this computation was "
-        f"compiled. {num_mismatch_str} mismatches are:\n{str_errors}")
+        f"compiled. {extra_msg}{num_mismatch_str} mismatches are:\n{str_errors}")
 
 
 def _get_metadata_jit_pmap(local_devices, num_in_shardings, num_out_shardings):
