@@ -25,7 +25,7 @@ import jax
 from jax import flatten_util
 from jax import tree_util
 from jax._src import test_util as jtu
-from jax._src.tree_util import flatten_one_level, prefix_errors
+from jax._src.tree_util import flatten_one_level, prefix_errors, broadcast_prefix_with_treedef
 import jax.numpy as jnp
 
 # Easier to read.
@@ -646,6 +646,11 @@ class TreeTest(jtu.JaxTestCase):
     actual = tree_util.tree_broadcast(tree, nested)
     self.assertEqual(actual, nested)
 
+    actual_flat = broadcast_prefix_with_treedef(
+        tree, tree_util.tree_structure(nested))
+    actual = tree_util.tree_structure(nested).unflatten(actual_flat)
+    self.assertEqual(actual, nested)
+
   def testBroadcastSimple(self):
     prefix = (1, 2, 3)
     full = (0, {'a': 0, 'b': 0}, (0, 0))
@@ -658,14 +663,20 @@ class TreeTest(jtu.JaxTestCase):
     full = (0, {'a': 0, 'b': 0})
     with self.assertRaisesRegex(ValueError, "pytree structure error"):
       tree_util.tree_broadcast(prefix, full)
+    with self.assertRaises(Exception):
+      broadcast_prefix_with_treedef(prefix, tree_util.tree_structure(full))
     prefix = (1, 2)
     full = (0, {'a': 0, 'b': 0}, (0, 0))
     with self.assertRaisesRegex(ValueError, "pytree structure error"):
       tree_util.tree_broadcast(prefix, full)
+    with self.assertRaises(Exception):
+      broadcast_prefix_with_treedef(prefix, tree_util.tree_structure(full))
     prefix = (1, {'a': 0})
     full = (0, {'a': 0, 'b': 0})
     with self.assertRaisesRegex(ValueError, "pytree structure error"):
       tree_util.tree_broadcast(prefix, full)
+    with self.assertRaises(Exception):
+      broadcast_prefix_with_treedef(prefix, tree_util.tree_structure(full))
 
   @parameterized.parameters([(*t, s) for t, s in zip(TREES, TREE_STRINGS)])
   def testStringRepresentation(self, tree, correct_string):
