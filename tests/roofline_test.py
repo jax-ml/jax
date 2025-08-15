@@ -847,7 +847,7 @@ class RooflineTest(jtu.JaxTestCase):
         (0, (11 - 1) * 4, 11 * 4 + 4),
         (1, (4 - 1) * 11, 11 * 4 + 11),
         ([0, 1], 11 * 4 - 1, 11 * 4 + 1),
-        ([], 0, 11 * 4 + 11 * 4),
+        ([], 0, 0),
     ]:
       _, result = roofline.roofline(lambda x: jnp.sum(x, axis=axis))(
           jnp.zeros((11, 4))
