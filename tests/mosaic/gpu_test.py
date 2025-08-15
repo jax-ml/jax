@@ -2132,6 +2132,42 @@ class AsyncCopyTest(TestCase):
     y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
     np.testing.assert_array_equal(y, x)
 
+  @parameterized.product(
+      swizzle=(16, 32, 64, 128),
+      shape=((64, None),),
+      dtype=(jnp.int32, jnp.int16),
+      idx_dtype=(jnp.int32, jnp.int8),
+  )
+  def test_tma_gather_basic(self, swizzle, shape, dtype, idx_dtype):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("TMA gather requires CUDA compute capability 10.0 or higher")
+    i1 = ir.IntegerType.get_signless(1)
+    swizzle_elems = 8 * swizzle // bitwidth(dtype_to_ir_type(dtype))
+    col_slice = swizzle_elems if swizzle != 16 else 128
+    shape = (*shape[:-1], 2 * col_slice)
+    def kernel(ctx, src, idx, dst, smem):
+      tmp, barrier = smem
+      idxs = mgpu.FragmentedArray.load_untiled(
+          idx, layout=fa.TMA_GATHER_INDICES_LAYOUT, optimized=False, is_signed=False
+      )
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=tmp,
+          swizzle=swizzle,
+          barrier=barrier,
+          gmem_slice=(idxs, mgpu.ds(col_slice, col_slice)),
+      )
+      barrier.wait_parity(c(0, i1))
+      copy(tmp, dst, swizzle=swizzle)
+    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    idx = jax.random.permutation(jax.random.key(1234), 48).astype(idx_dtype)
+    out_type = jax.ShapeDtypeStruct((len(idx), col_slice), dtype)
+    smem = (out_type, mgpu.TMABarrier())
+    y = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (x, idx), out_type, smem,
+    )(x, idx)
+    np.testing.assert_array_equal(y, x[idx, slice(col_slice, 2 * col_slice)])
+
   def test_tma_with_1d_tiling(self):
     swizzle = 128
     dtype = jnp.float16
