@@ -65,6 +65,32 @@ class PallasCallPrintTest(PallasBaseTest):
       jax.block_until_ready(compiled_kernel(x))
     self.assertIn('It works!', get_output())
 
+  def test_debug_print_in_index_map(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 8, 18):
+      self.skipTest('Needs a newer libtpu.')
+    def index_map(i):
+      pl.debug_print('It works!')
+      return (i, 0)
+
+    @functools.partial(
+        self.pallas_call,
+        grid=(1,),
+        in_specs=(pl.BlockSpec(index_map=index_map),),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    x = jnp.arange(8 * 128, dtype=jnp.float32).reshape((8, 128))
+    compiled_kernel = (
+        jax.jit(kernel)
+        .lower(x)
+        .compile({'xla_tpu_enable_log_recorder': 'true'})
+    )
+    with jtu.capture_stderr() as get_output:
+      jax.block_until_ready(compiled_kernel(x))
+    self.assertIn('It works!', get_output())
+
   def test_debug_print_with_values(self):
     @functools.partial(
         self.pallas_call,
