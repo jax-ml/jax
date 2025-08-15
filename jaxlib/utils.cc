@@ -23,8 +23,10 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/debugging/failure_signal_handler.h"
 #include "absl/synchronization/mutex.h"
 #include "nanobind/nanobind.h"
+#include "tsl/platform/platform.h"
 
 namespace nb = nanobind;
 
@@ -360,6 +362,14 @@ nb::list TopologicalSort(nb::str parents_attr,
   return sorted_nodes;
 }
 
+void InstallFailureSignalHandler(bool call_previous_handler) {
+#ifndef PLATFORM_GOOGLE
+  absl::FailureSignalHandlerOptions options;
+  options.call_previous_handler = call_previous_handler;
+  absl::InstallFailureSignalHandler(options);
+#endif  // PLATFORM_GOOGLE
+}
+
 }  // namespace
 
 NB_MODULE(utils, m) {
@@ -392,4 +402,7 @@ NB_MODULE(utils, m) {
       .def("writer_lock", &absl::Mutex::WriterLock,
            nb::call_guard<nb::gil_scoped_release>())
       .def("writer_unlock", &absl::Mutex::WriterUnlock);
+
+  m.def("install_failure_signal_handler", &InstallFailureSignalHandler,
+        nb::arg("call_previous_handler") = true);
 }

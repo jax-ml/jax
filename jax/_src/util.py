@@ -824,8 +824,7 @@ def test_event(name: str, *args) -> None:
     return
   test_event_listener(name, *args)
 
-if hasattr(jaxlib_utils, "Mutex"):
-  Mutex = jaxlib_utils.Mutex
+Mutex = jaxlib_utils.Mutex
 
 
 def pprint_bytes(num_bytes: int | float) -> str:
@@ -835,3 +834,9 @@ def pprint_bytes(num_bytes: int | float) -> str:
   exponent = min(math.floor(math.log(num_bytes, 1000)), len(prefixes) - 1)
   scaled_value = num_bytes / (1000**exponent)
   return f"{scaled_value:.2f}{prefixes[exponent]}B"
+
+if hasattr(jaxlib_utils, "install_failure_signal_handler"):
+  install_failure_signal_handler = jaxlib_utils.install_failure_signal_handler
+else:
+  def install_failure_signal_handler(call_previous_handler: bool = True):
+    pass

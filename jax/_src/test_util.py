@@ -68,6 +68,9 @@ from jax._src.util import unzip2
 import numpy as np
 import numpy.random as npr
 
+# When running tests, install the ABSL failure signal handler. This dumps a
+# C++ back trace on fatal signals, which is helpful for debugging.
+util.install_failure_signal_handler()
 
 
 # This submodule includes private test utilities that are not exported to

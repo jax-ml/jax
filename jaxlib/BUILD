@@ -304,8 +304,10 @@ nanobind_pywrap_extension(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/debugging:failure_signal_handler",
         "@com_google_absl//absl/synchronization",
         "@nanobind",
+        "@tsl//tsl/platform",
         "@xla//third_party/python_runtime:headers",
     ],
 )
