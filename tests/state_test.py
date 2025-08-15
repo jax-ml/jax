@@ -1265,6 +1265,40 @@ class StateControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(jax.jit(f)(0, 5, 2), 10)
     self.assertAllClose(jax.jit(f)(1, 2, 3), 7)
 
+  def test_while_with_state_in_cond(self):
+    def f(x, y, z):
+      @run_state
+      def body(x_ref):
+        def cond(i):
+          x_ref[...] += z
+          return i < y
+        def body(i):
+          return i + 1
+        lax.while_loop(cond, body, 0)
+      return body(x)
+    jaxpr = jax.make_jaxpr(f)(0, 5, 2).jaxpr
+    self.assertEmpty(jaxpr.effects)
+    self.assertAllClose(jax.jit(f)(0, 5, 2), 10)
+    self.assertAllClose(jax.jit(f)(1, 2, 3), 7)
+
+  def test_while_errors_if_same_ref_in_body_and_cond(self):
+    def f(x, y, z):
+      @run_state
+      def body(x_ref):
+        def cond(i):
+          x_ref[...] += z
+          return i < y
+        def body(i):
+          x_ref[...] += z
+          return i + 1
+        lax.while_loop(cond, body, 0)
+      return body(x)
+    jaxpr = jax.make_jaxpr(f)(0, 5, 2).jaxpr
+    self.assertEmpty(jaxpr.effects)
+    with self.assertRaisesRegex(NotImplementedError,
+        "Cannot write to the same ref in both cond and body."):
+      jax.jit(f)(0, 5, 2)
+
   def test_scan_with_state_in_body(self):
     def f(x, w, y, zs):
       @run_state
