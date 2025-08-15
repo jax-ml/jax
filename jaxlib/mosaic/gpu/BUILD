@@ -48,6 +48,19 @@ cc_library(
 )
 
 cc_library(
+    name = "dump",
+    srcs = ["dump.cc"],
+    hdrs = ["dump.h"],
+    deps = [
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:path",
+    ],
+)
+
+cc_library(
     name = "passes",
     srcs = [
         "launch_lowering.cc",
@@ -155,6 +168,7 @@ cc_library(
         ],
     ),
     deps = [
+        ":dump",
         ":library_paths",  # buildcleaner: keep
         ":nvshmem",
         ":passes",

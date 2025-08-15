@@ -20,7 +20,6 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -32,7 +31,7 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <string_view>
-#include <system_error>
+#include <system_error>  // NOLINT
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -104,6 +103,7 @@ limitations under the License.
 #include "mlir/Transforms/Passes.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
+#include "jaxlib/mosaic/gpu/dump.h"
 #include "jaxlib/mosaic/gpu/launch_lowering.h"
 #include "jaxlib/mosaic/gpu/nvshmem.h"
 #include "jaxlib/mosaic/gpu/passes.h"
@@ -130,75 +130,6 @@ namespace se = stream_executor;
 
 using MosaicInitFunc = void(void****);
 using MosaicHostFunc = void(void**);
-
-struct DumpOptions {
-  // Whether to dump the MLIR module before and after each pass.
-  bool mlir_passes = false;
-  // Whether to dump the PTX resulting from the compilation.
-  bool ptx = false;
-  // Whether to run ptxas in verbose mode.
-  bool ptxas = false;
-  // Whether to dump the SASS resulting from the compilation. If both `sass`
-  // and `sass_ctrl` are true, a single dump containing both will be
-  // generated.
-  bool sass = false;
-  // Whether to dump the SASS control codes following NervanaSystems/maxas. If
-  // both `sass` and `sass_ctrl` are true, a single dump containing both will be
-  // generated.
-  bool sass_ctrl = false;
-  // Where to dump the output files. If empty, dump to stdout.
-  std::string dump_path = "";
-  // The basename to use when dumping files.
-  std::string module_basename;
-};
-
-DumpOptions GetDumpOptionsForModule(mlir::ModuleOp module) {
-  // Use a static variable in order to ensure that subsequent compilations of
-  // modules that share the same name will result in distinct dumps.
-  static std::atomic<int> dumped_module_count = 0;
-  DumpOptions opts;
-  int current_count = dumped_module_count.fetch_add(1);
-  if (std::optional<llvm::StringRef> name = module.getName();
-      name.has_value()) {
-    opts.module_basename = absl::StrCat(name->str(), "_", current_count);
-  } else {
-    opts.module_basename = absl::StrCat("mosaic_gpu_module_", current_count);
-  }
-
-  if (char* dump_to = getenv("MOSAIC_GPU_DUMP_TO"); dump_to != nullptr) {
-    // "sponge" is a special value, which if set, will result in the files being
-    // dumped to a directory path specified in the `TEST_UNDECLARED_OUTPUTS_DIR`
-    // environment variable.
-    if (absl::string_view(dump_to) == "sponge") {
-      if (char* dump_dir = getenv("TEST_UNDECLARED_OUTPUTS_DIR");
-          dump_dir != nullptr) {
-        opts.dump_path = dump_dir;
-      } else {
-        LOG(WARNING) << "\"sponge\" specified as dump directory but "
-                        "TEST_UNDECLARED_OUTPUTS_DIR is not set! "
-                        "Will dump to stdout instead.";
-      }
-    } else if (absl::string_view(dump_to) == "-") {
-      // Dump to stdout.
-      opts.dump_path = "";
-    } else {
-      opts.dump_path = dump_to;
-    }
-
-    opts.mlir_passes = true;
-    opts.ptx = true;
-    opts.sass = true;
-    opts.sass_ctrl = true;
-    return opts;
-  }
-
-  opts.mlir_passes = getenv("MOSAIC_GPU_DUMP_MLIR_PASSES") != nullptr;
-  opts.ptx = getenv("MOSAIC_GPU_DUMP_PTX") != nullptr;
-  opts.ptxas = getenv("MOSAIC_GPU_DUMP_PTXAS") != nullptr;
-  opts.sass_ctrl = getenv("MOSAIC_GPU_DUMP_SASS_CTRL") != nullptr;
-  opts.sass = getenv("MOSAIC_GPU_DUMP_SASS") != nullptr || opts.sass_ctrl;
-  return opts;
-}
 
 class TemporaryDirectory {
  private:
@@ -461,7 +392,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
 
 mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
                               mlir::ModuleOp module,
-                              const DumpOptions& dump_opts) {
+                              const mosaic::gpu::DumpOptions& dump_opts) {
   mlir::PassManager pm(module.getContext());
   *static_cast<mlir::OpPassManager*>(&pm) = std::move(passes);
   std::optional<llvm::raw_fd_ostream> dump_stream;
@@ -582,29 +513,11 @@ std::string FormatSassCtrl(const std::string& sass) {
   return result;
 }
 
-void DumpToFileOrStdout(absl::string_view content, absl::string_view name,
-                        absl::string_view path) {
-  if (path.empty()) {
-    std::cout << content << std::endl;
-    return;
-  }
-  std::error_code error;
-  llvm::raw_fd_ostream out_file(tsl::io::JoinPath(path, name), error,
-                                llvm::sys::fs::OF_None);
-  if (error) {
-    LOG(ERROR) << error.message();
-    LOG(ERROR) << "Output will be written to stdout instead.";
-    std::cout << content << std::endl;
-    return;
-  }
-  out_file << content << "\n";
-}
-
 // TODO(bchetioui): port this to not call ptxas and nvdisasm as subprocesses.
 void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
                            const std::string& ptx_isa,
                            const std::string& nvshmem_path,
-                           const DumpOptions& dump_opts) {
+                           const mosaic::gpu::DumpOptions& dump_opts) {
   if (!dump_opts.ptx && !dump_opts.ptxas && !dump_opts.sass) {
     return;
   }
@@ -629,7 +542,8 @@ void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
     auto object = mlir::cast<mlir::gpu::ObjectAttr>(*objects.begin());
     std::string ptx = object.getObject().getValue().str();
     if (dump_opts.ptx) {
-      DumpToFileOrStdout(ptx, module_name + ".ptx", dump_opts.dump_path);
+      mosaic::gpu::DumpToFileOrStdout(ptx, module_name + ".ptx",
+                                      dump_opts.dump_path);
     }
     if (!dump_opts.ptxas && !dump_opts.sass) {
       continue;
@@ -661,7 +575,8 @@ void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
       std::cerr << "ptxas invocation failed: " << result.status() << std::endl;
       continue;
     } else if (dump_opts.ptxas) {
-      DumpToFileOrStdout(*result, module_name + ".ptxas", dump_opts.dump_path);
+      mosaic::gpu::DumpToFileOrStdout(*result, module_name + ".ptxas",
+                                      dump_opts.dump_path);
     }
     if (!dump_opts.sass) {
       continue;  // We're done.
@@ -681,11 +596,13 @@ void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
     }
 
     if (dump_opts.sass_ctrl) {
-      DumpToFileOrStdout(FormatSassCtrl(*result), module_name + ".sass_ctrl",
-                         dump_opts.dump_path);
+      mosaic::gpu::DumpToFileOrStdout(FormatSassCtrl(*result),
+                                      module_name + ".sass_ctrl",
+                                      dump_opts.dump_path);
     } else {
       // Dump SASS.
-      DumpToFileOrStdout(*result, module_name + ".sass", dump_opts.dump_path);
+      mosaic::gpu::DumpToFileOrStdout(*result, module_name + ".sass",
+                                      dump_opts.dump_path);
     }
   }
 }
@@ -734,7 +651,8 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
           "`pip install nvidia-nvshmem-cu12`).");
     }
   }
-  DumpOptions dump_opts = GetDumpOptionsForModule(module);
+  mosaic::gpu::DumpOptions dump_opts =
+      mosaic::gpu::GetDumpOptionsForModule(module);
   DumpCompilationOutput(module, sm, ptx_isa, nvshmem_path, dump_opts);
   // `DumpCompilationOutput` already runs through MLIR passes and may dump them.
   // If that happened, we don't want to dump them again.
