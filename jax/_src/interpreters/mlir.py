@@ -402,6 +402,14 @@ register_attribute_handler(np.generic, _dtype_attribute_handler)
 def _python_scalar_attribute_handler(dtype, val):
   return _numpy_scalar_attribute(np.array(val, dtype))
 
+
+def _dtype_attribute_handler(dtype: np.dtype | np.generic) -> ir.Attribute:
+  return ir.TypeAttr.get(dtype_to_ir_type(dtype))
+
+
+register_attribute_handler(np.dtype, _dtype_attribute_handler)
+register_attribute_handler(np.generic, _dtype_attribute_handler)
+
 for ptype, dtype in dtypes.python_scalar_dtypes.items():
   register_attribute_handler(
       ptype, partial(_python_scalar_attribute_handler, dtype))
