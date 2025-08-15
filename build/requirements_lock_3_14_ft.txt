@@ -4,21 +4,21 @@
 #
 #    bazel run //build:requirements_ft.update
 #
-absl-py==2.1.0 \
-    --hash=sha256:526a04eadab8b4ee719ce68f204172ead1027549089702d99b9059f129ff1308 \
-    --hash=sha256:7820790efbb316739cde8b4e19357243fc3608a152024288513dd968d7d959ff
+absl-py==2.3.1 \
+    --hash=sha256:a97820526f7fbfd2ec1bce83f3f25e3a14840dac0d8e02a0b71cd75db3f77fc9 \
+    --hash=sha256:eeecf07f0c2a93ace0772c92e596ace6d3d3996c042b2128459aaae2a76de11d
     # via -r build/test-requirements.txt
-attrs==24.3.0 \
-    --hash=sha256:8f5c07333d543103541ba7be0e2ce16eeee8130cb0b3f9238ab904ce1e85baff \
-    --hash=sha256:ac96cd038792094f438ad1f6ff80837353805ac950cd2aa0e0625ef19850c308
+attrs==25.3.0 \
+    --hash=sha256:427318ce031701fea540783410126f03899a97ffc6f61596ad581ac2e40e3bc3 \
+    --hash=sha256:75d7cefc7fb576747b2c81b4442d4d4a1ce0900973527c011d1030fd3bf4af1b
     # via hypothesis
 auditwheel==6.4.2 \
     --hash=sha256:4302ae79dcff242e799a37173cfeeae727d0924843eca4b3f622d3bcb28de2db \
     --hash=sha256:b7a61afc9183b6b5c661de59ca586f9c7200445a409c58cdf2049d6f71636d51
     # via -r build/test-requirements.txt
-build==1.2.2.post1 \
-    --hash=sha256:1d61c0887fa860c01971625baae8bdd338e517b836a2f70dd1f7aa3a6b2fc5b5 \
-    --hash=sha256:b36993e92ca9375a219c99e606a122ff365a760a2d4bba0caa09bd5278b608b7
+build==1.3.0 \
+    --hash=sha256:698edd0ea270bde950f53aed21f3a0135672206f3911e0176261a31e0e07b397 \
+    --hash=sha256:7145f0b5061ba90a1500d60bd1b13ca0a8a4cebdd0cc16ed8adf1c0e739f43b4
     # via -r build/requirements.in
 cloudpickle==3.1.1 \
     --hash=sha256:b216fa8ae4019d5482a8ac3c95d8f6346115d8835911fd4aefd1a445e4242c64 \
@@ -36,21 +36,21 @@ execnet==2.1.1 \
     --hash=sha256:26dee51f1b80cebd6d0ca8e74dd8745419761d3bef34163928cbebbdc4749fdc \
     --hash=sha256:5189b52c6121c24feae288166ab41b32549c7e2348652736540b9e6e7d4e72e3
     # via pytest-xdist
-filelock==3.18.0 \
-    --hash=sha256:adbc88eabb99d2fec8c9c1b229b171f18afa655400173ddc653d5d01501fb9f2 \
-    --hash=sha256:c401f4f8377c4464e6db25fff06205fd89bdd83b65eb0488ed1b160f780e21de
+filelock==3.19.1 \
+    --hash=sha256:66eda1888b0171c998b35be2bcc0f6d75c388a7ce20c3f3f37aa8e96c2dddf58 \
+    --hash=sha256:d38e30481def20772f5baf097c122c3babc4fcdb7e14e57049eb9d88c6dc017d
     # via -r build/test-requirements.txt
-flatbuffers==24.12.23 \
-    --hash=sha256:2910b0bc6ae9b6db78dd2b18d0b7a0709ba240fb5585f286a3a2b30785c22dac \
-    --hash=sha256:c418e0d48890f4142b92fd3e343e73a48f194e1f80075ddcc5793779b3585444
+flatbuffers==25.2.10 \
+    --hash=sha256:97e451377a41262f8d9bd4295cc836133415cc03d8cb966410a4af92eb00d26e \
+    --hash=sha256:ebba5f4d5ea615af3f7fd70fc310636fbb2bbd1f566ac0a23d98dd412de50051
     # via -r build/test-requirements.txt
 fsspec==2025.7.0 \
     --hash=sha256:786120687ffa54b8283d942929540d8bc5ccfa820deb555a2b5d0ed2b737bf58 \
     --hash=sha256:8b012e39f63c7d5f10474de957f3ab793b47b45ae7d39f2fb735f8bbe25c0e21
     # via etils
-hypothesis==6.123.9 \
-    --hash=sha256:0f924bd9513daa9ecddbfe8abe8b3f7598d4d09234fe1027b19b4cd717adba05 \
-    --hash=sha256:aca6a2f7aeef85e5201079ab93156fca137a8cabcf5cc39ea2a3b7147432fe89
+hypothesis==6.138.1 \
+    --hash=sha256:2408a303b229cefae06e9429a68b15cc24d6ce28018c85573105946d6f5ba9d3 \
+    --hash=sha256:bcab73c41388a2c5d52946008dd2c9f9ba17e5103f21f50a68f8048a0b79e325
     # via -r build/test-requirements.txt
 importlib-resources==6.5.2 \
     --hash=sha256:185f87adef5bcc288449d98fb4fba07cea78bc036455dd44c5fc4a2fe78fed2c \
@@ -70,12 +70,12 @@ jax-cuda13-pjrt==0.0.1rc0 \
 jax-cuda13-plugin==0.0.1rc0 \
     --hash=sha256:5fa66ef5de34cffc838199d193bffc11701807e66831f914bdc1d786ed4dc26f
     # via -r build/requirements.in
-libtpu==0.0.19 ; sys_platform == "linux" and platform_machine == "x86_64" \
-    --hash=sha256:78efd0c33d0b23b4ef37a410cb640ed05154d8cec1eedbee3fcb7d210337b5f7
+libtpu==0.0.20 ; sys_platform == "linux" and platform_machine == "x86_64" \
+    --hash=sha256:b0f5fbd0669704515cbb127f77830c5129843e93dc3da69fb124a82064fef92a
     # via -r build/requirements.in
-markdown-it-py==3.0.0 \
-    --hash=sha256:355216845c60bd96232cd8d8c40e8f9765cc86f46880e43a8fd22dc1a1a8cab1 \
-    --hash=sha256:e3f60a94fa066dc52ec76661e37c851cb232d92f9886b15cb560aaada2df8feb
+markdown-it-py==4.0.0 \
+    --hash=sha256:87327c59b172c5011896038353a81343b6754500a08cd7a4973bb48c6d578147 \
+    --hash=sha256:cb0a2b4aa34f932c007117b194e945bd74e0ec24133ceb5bac59009cda1cb9f3
     # via rich
 mdurl==0.1.2 \
     --hash=sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8 \
@@ -201,6 +201,14 @@ numpy==2.3.2 ; python_version >= "3.14" \
     #   -r build/freethreading-requirements.txt
     #   ml-dtypes
     #   scipy
+nvidia-cublas==13.0.0.19 ; sys_platform == "linux" \
+    --hash=sha256:381b1a0ca636fdcb6920a871e8fc89dbfd1f6157f421ed0a6f2673e14cffd3bd \
+    --hash=sha256:e6ecde441aaf0bb74ed538cfb3b18aa374f452aebf0162088bcb10942f7bbc33 \
+    --hash=sha256:f6723af2e8e2600a11dc384037d90d9bf93070e346c24ef2e8f9001658c99896
+    # via
+    #   -r build/nvidia-requirements.txt
+    #   nvidia-cudnn-cu13
+    #   nvidia-cusolver
 nvidia-cublas-cu12==12.9.1.4 ; sys_platform == "linux" \
     --hash=sha256:1e5fee10662e6e52bd71dec533fbbd4971bb70a5f24f3bc3793e5c2e9dc640bf \
     --hash=sha256:453611eb21a7c1f2c2156ed9f3a45b691deda0440ec550860290dc901af5b4c2 \
@@ -209,20 +217,45 @@ nvidia-cublas-cu12==12.9.1.4 ; sys_platform == "linux" \
     #   -r build/nvidia-requirements.txt
     #   nvidia-cudnn-cu12
     #   nvidia-cusolver-cu12
+nvidia-cuda-crt==13.0.48 ; sys_platform == "linux" \
+    --hash=sha256:577fa718932bbe140171132f014fd6a339a8836cd2c62e3b4d1a83ac656edef6 \
+    --hash=sha256:944b6070c50dc4fbb7c012b1a4c28b444c9c5ac071ac17d84dc9726d9cbc6bea \
+    --hash=sha256:966abe3451a067e6543077d7d2a2236f4c07cabe165d163f52609092d6eaaec0
+    # via -r build/nvidia-requirements.txt
+nvidia-cuda-cupti==13.0.48 ; sys_platform == "linux" \
+    --hash=sha256:417699e216b23d81bc0bbcb7032352f81b9c5372ef73c097a01abb83125a3d09 \
+    --hash=sha256:67c22627ef436afcf080b48e4ad17b3f83d9e7c0d990ad0c6c0627b01fb92ccc \
+    --hash=sha256:c0f0266d5674afad541888d4383bd172b7f90ff6df62df83ef9f5431a3c2c3b1
+    # via -r build/nvidia-requirements.txt
 nvidia-cuda-cupti-cu12==12.9.79 ; sys_platform == "linux" \
     --hash=sha256:096bcf334f13e1984ba36685ad4c1d6347db214de03dbb6eebb237b41d9d934f \
     --hash=sha256:1848a9380067560d5bee10ed240eecc22991713e672c0515f9c3d9396adf93c8 \
     --hash=sha256:791853b030602c6a11d08b5578edfb957cadea06e9d3b26adbf8d036135a4afe
+    # via -r build/nvidia-requirements.txt
+nvidia-cuda-nvcc==13.0.48 ; sys_platform == "linux" \
+    --hash=sha256:1e6175505a1350346b4726a9ce0d5b47f620852c3207d31e8678bf22b63da840 \
+    --hash=sha256:d529c52d30c403cbf6fb17a3009530a48d94ea3ad99c990ad0301d9c744eb866 \
+    --hash=sha256:e7b2a44f7f6be36afa41114fd88114a9d3f48b349d4a7aeb09c9a84d605eb189
     # via -r build/nvidia-requirements.txt
 nvidia-cuda-nvcc-cu12==12.9.86 ; sys_platform == "linux" \
     --hash=sha256:44e1eca4d08926193a558d2434b1bf83d57b4d5743e0c431c0c83d51da1df62b \
     --hash=sha256:5d6a0d32fdc7ea39917c20065614ae93add6f577d840233237ff08e9a38f58f0 \
     --hash=sha256:8ed7f0b17dea662755395be029376db3b94fed5cbb17c2d35cc866c5b1b84099
     # via -r build/nvidia-requirements.txt
+nvidia-cuda-nvrtc==13.0.48 ; sys_platform == "linux" \
+    --hash=sha256:6ccf1ef1b90a0763ac7536f3c17046659d89869d76b98ac358efc2e09b348365 \
+    --hash=sha256:87e13d186905a35e7c04ad553a2abded0fba22f93b43d02e5da6f6cf73fb4d0a \
+    --hash=sha256:9f10c41c3822a9d44a19e9150a05c99425514b691b342c6db6729072c5b88edd
+    # via -r build/nvidia-requirements.txt
 nvidia-cuda-nvrtc-cu12==12.9.86 ; sys_platform == "linux" \
     --hash=sha256:096d4de6bda726415dfaf3198d4f5c522b8e70139c97feef5cd2ca6d4cd9cead \
     --hash=sha256:210cf05005a447e29214e9ce50851e83fc5f4358df8b453155d5e1918094dcb4 \
     --hash=sha256:72972ebdcf504d69462d3bcd67e7b81edd25d0fb85a2c46d3ea3517666636349
+    # via -r build/nvidia-requirements.txt
+nvidia-cuda-runtime==13.0.48 ; sys_platform == "linux" \
+    --hash=sha256:03e581c7584b13e42ce175c774f46e1219e9c574f27fe88c2ccc75dd3f926ed7 \
+    --hash=sha256:5b54d12087a1abff81a4cbfa6556876e3afea1fc60da2e0816da374619810c89 \
+    --hash=sha256:b807c0bb925a307bfa667a24f24d253aef8eda3ac4be66b333f2c9d357557008
     # via -r build/nvidia-requirements.txt
 nvidia-cuda-runtime-cu12==12.9.79 ; sys_platform == "linux" \
     --hash=sha256:25bba2dfb01d48a9b59ca474a1ac43c6ebf7011f1b0b8cc44f54eb6ac48a96c3 \
@@ -234,16 +267,38 @@ nvidia-cudnn-cu12==9.11.0.98 ; sys_platform == "linux" \
     --hash=sha256:ea576f56225d201b8527d4aef3425c074ad5155f105643b73cbfea98f62ee870 \
     --hash=sha256:ff3db2c4c220e5962fac7256b0c6d667ea69ab974dd67e18b2fd57df891eea35
     # via -r build/nvidia-requirements.txt
+nvidia-cudnn-cu13==9.12.0.46 ; sys_platform == "linux" \
+    --hash=sha256:171f7a41a9ddff4a82b158b44daa003701b9681f202b0e57c2d8fd47e13b0de3 \
+    --hash=sha256:62e8441f9693547fe72108b1974fb82fde9a89d6dcb7b7d117ce8969d08e08e3 \
+    --hash=sha256:f3befad533e234069eb61ae0d12cb7aa8af0ccf36f28c1d4273cc0005d990de0
+    # via -r build/nvidia-requirements.txt
+nvidia-cufft==12.0.0.15 ; sys_platform == "linux" \
+    --hash=sha256:1885731254835797572ff075f3daf43a2a0a2801210dea26971940dae7e1a367 \
+    --hash=sha256:9f160b1f018e80bcb0d7c0fa50564b042fa26b13edc1b1ff14b6375a9edd2812 \
+    --hash=sha256:ff2083e7c4f5bc063d37ec8399277e514ca97b554e069aa6f7eb7ce6d727dc7b
+    # via -r build/nvidia-requirements.txt
 nvidia-cufft-cu12==11.4.1.4 ; sys_platform == "linux" \
     --hash=sha256:1a28c9b12260a1aa7a8fd12f5ebd82d027963d635ba82ff39a1acfa7c4c0fbcf \
     --hash=sha256:8e5bfaac795e93f80611f807d42844e8e27e340e0cde270dcb6c65386d795b80 \
     --hash=sha256:c67884f2a7d276b4b80eb56a79322a95df592ae5e765cf1243693365ccab4e28
+    # via -r build/nvidia-requirements.txt
+nvidia-cusolver==12.0.3.29 ; sys_platform == "linux" \
+    --hash=sha256:103fa9e99d63e4be4d04e4a9cb7dfaec5d86f486bb59838cb72803cabb1690a4 \
+    --hash=sha256:3bb6e65ce0beaeafdd069b320246e8f17c1cd30ddb27a0539143a3706733a4d8 \
+    --hash=sha256:6f54c2eed5edab54c224dd1852dde80ba76b2b78e6d3ce7344fef5dfc66d16ab
     # via -r build/nvidia-requirements.txt
 nvidia-cusolver-cu12==11.7.5.82 ; sys_platform == "linux" \
     --hash=sha256:15da72d1340d29b5b3cf3fd100e3cd53421dde36002eda6ed93811af63c40d88 \
     --hash=sha256:62efa83e4ace59a4c734d052bb72158e888aa7b770e1a5f601682f16fe5b4fd2 \
     --hash=sha256:77666337237716783c6269a658dea310195cddbd80a5b2919b1ba8735cec8efd
     # via -r build/nvidia-requirements.txt
+nvidia-cusparse==12.6.2.49 ; sys_platform == "linux" \
+    --hash=sha256:5d3269c19283a0057fb5ebfb003ae2a10c97a28a6958f4238354826b055827c7 \
+    --hash=sha256:b48237614131dedf9cd00d99ce950d8e1b2945ab9d29337fbdc1e014f0ee9830 \
+    --hash=sha256:efcf0b01e3a0827c144feff5391456b8a06e9ce63dcd51c0943e32e605251952
+    # via
+    #   -r build/nvidia-requirements.txt
+    #   nvidia-cusolver
 nvidia-cusparse-cu12==12.5.10.65 ; sys_platform == "linux" \
     --hash=sha256:221c73e7482dd93eda44e65ce567c031c07e2f93f6fa0ecd3ba876a195023e83 \
     --hash=sha256:73060ce019ac064a057267c585bf1fd5a353734151f87472ff02b2c5c9984e78 \
@@ -251,10 +306,23 @@ nvidia-cusparse-cu12==12.5.10.65 ; sys_platform == "linux" \
     # via
     #   -r build/nvidia-requirements.txt
     #   nvidia-cusolver-cu12
-nvidia-nccl-cu12==2.27.6 ; sys_platform == "linux" \
-    --hash=sha256:75f802521688026853ede67ec0337846214905a2f1571bb6e01ca3bb97c586ce \
-    --hash=sha256:8be9c0a7d7f95489f407593ad3842ba66bbb7c3370622c3592efb6dd67540968
+nvidia-nccl-cu12==2.27.7 ; sys_platform == "linux" \
+    --hash=sha256:4617839f3bb730c3845bf9adf92dbe0e009bc53ca5022ed941f2e23fb76e6f17 \
+    --hash=sha256:de5ba5562f08029a19cb1cd659404b18411ed0d6c90ac5f52f30bf99ad5809aa
     # via -r build/nvidia-requirements.txt
+nvidia-nccl-cu13==0.0.0a0 ; sys_platform == "linux" \
+    --hash=sha256:1684d1b6e8a0e4a2e0f366769d2b51a7caa574ded84c284492b86d8d39195641 \
+    --hash=sha256:856196de401b54a6e426c8417a7e3713b3d4a732465a0615a426be2b737c59a2
+    # via -r build/nvidia-requirements.txt
+nvidia-nvjitlink==13.0.39 ; sys_platform == "linux" \
+    --hash=sha256:478d06d3783b1c26a9bea308b972737a9fb2bb832d2254aa51fe753713b4a583 \
+    --hash=sha256:bc3179be558329ef9687884c6faa27cdc0659bdbc642432ec8cc6cc00d182627 \
+    --hash=sha256:ce0d63fa5ebedf542056e7491c49feed2297c900980aa6269b6a55f478056ad7
+    # via
+    #   -r build/nvidia-requirements.txt
+    #   nvidia-cufft
+    #   nvidia-cusolver
+    #   nvidia-cusparse
 nvidia-nvjitlink-cu12==12.9.86 ; sys_platform == "linux" \
     --hash=sha256:994a05ef08ef4b0b299829cde613a424382aff7efb08a7172c1fa616cc3af2ca \
     --hash=sha256:cc6fcec260ca843c10e34c936921a1c426b351753587fdd638e8cff7b16bb9db \
@@ -268,9 +336,14 @@ nvidia-nvshmem-cu12==3.3.9 ; sys_platform == "linux" \
     --hash=sha256:2de43cbfe559e16b8e3cb777b95f1fe2ddd5c2cfd79414b09cf9cf099feba2ba \
     --hash=sha256:95ba1e98189c056eb5372bd355ab714b3741a03e6de1e32f167f5240fd967c5f
     # via -r build/nvidia-requirements.txt
-nvidia-nvshmem-cu13==0.0.0a0 \
-    --hash=sha256:84d265d7b97dae6ee74139f8f7e37fc65a63e4ebb7287b987a4dca0c0625673d \
-    --hash=sha256:b6900e44e6be1e0e7be6059c5b7a397fb3cb84914784571ab7e20a35bb2b140d
+nvidia-nvshmem-cu13==3.3.20 ; sys_platform == "linux" \
+    --hash=sha256:d40818fd6f1267c306df06f943b66b4b95a554f1b8dc7da81e0232266f868945 \
+    --hash=sha256:e9d4bd6a01e6a2745903b5b7347fce5b0dddee0db95950fba313dd47c6990b5b
+    # via -r build/nvidia-requirements.txt
+nvidia-nvvm==13.0.48 ; sys_platform == "linux" \
+    --hash=sha256:99cfddd52d471e2d2260dd9908ca7e83c1a7cb6ef7a6a621ea7e7ae7750c31a9 \
+    --hash=sha256:a7cf76afc14682c46d43d5cdc370fc1da69cb84270e6854c6b3869584ecbd483 \
+    --hash=sha256:c3c66534efdd8de8b07e3a7119813d1b7d59a51c7a5d7dac228c06d0cab4eea0
     # via -r build/nvidia-requirements.txt
 opt-einsum==3.4.0 \
     --hash=sha256:69bb92469f86a1565195ece4ac0323943e83477171b91d24c35afe028a90d7cd \
@@ -496,7 +569,7 @@ zipp==3.23.0 \
     # via etils
 
 # The following packages are considered to be unsafe in a requirements file:
-setuptools==80.0.0 \
-    --hash=sha256:a38f898dcd6e5380f4da4381a87ec90bd0a7eec23d204a5552e80ee3cab6bd27 \
-    --hash=sha256:c40a5b3729d58dd749c0f08f1a07d134fb8a0a3d7f87dc33e7c5e1f762138650
+setuptools==80.9.0 \
+    --hash=sha256:062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922 \
+    --hash=sha256:f36b47402ecde768dbfafc46e8e4207b4360c654f1f3bb84475f0a28628fb19c
     # via -r build/requirements.in
