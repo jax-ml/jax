@@ -814,6 +814,7 @@ FailureOr<Value> canonicalize_broadcast(const CanonicalizeContext &ctx,
   auto op = dyn_cast<vector::BroadcastOp>(raw_op);
   auto src_ty = op.getSource().getType();
   auto src_vty = dyn_cast<VectorType>(src_ty);
+  auto dst_vty = op.getResultVectorType();
   if ((src_vty && src_vty.getElementType().isSignlessInteger(1)) ||
       op.getSource().getType().isSignlessInteger(1)) {
     // Canonicalize i1 broadcast.
@@ -843,6 +844,22 @@ FailureOr<Value> canonicalize_broadcast(const CanonicalizeContext &ctx,
     op.replaceAllUsesWith(cmp);
     op.erase();
     return cmp;
+  }
+  // When a broadcast increases rank, canonicalize it to a reshape followed by
+  // a rank-preserving broadcast. This lets us reuse shape_cast layout rules
+  // that allow us to remove implicit dimensions before the broadcast.
+  if (src_vty && src_vty.getRank() < dst_vty.getRank()) {
+    CanonicalBuilder b(ctx, op->getLoc(), op.getOperation());
+    SmallVector<int64_t> new_shape(dst_vty.getRank() - src_vty.getRank(), 1);
+    new_shape.insert(new_shape.end(), src_vty.getShape().begin(),
+                      src_vty.getShape().end());
+    auto reshaped = b.create<tpu::ReshapeOp>(
+        mlir::VectorType::get(new_shape, dst_vty.getElementType()),
+        op.getSource());
+    Value new_result = b.create<vector::BroadcastOp>(dst_vty, reshaped);
+    op.replaceAllUsesWith(new_result);
+    op.erase();
+    return new_result;
   }
   return raw_op.getResult(0);
 }
