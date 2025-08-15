@@ -4,11 +4,12 @@
 
 JAX offers flags and context managers that enable catching errors more easily.
   
-## `jax_debug_nans` configuration option and context manager
+### jax_debug_nans Configuration Option and Context Manager
 
-**Summary:** Enable the `jax_debug_nans` flag to automatically detect when NaNs are produced in `jax.jit`-compiled code (but not in `jax.pmap` or `jax.pjit`-compiled code).
+**Summary**: Enable the `jax_debug_nans` flag to automatically detect when NaNs are produced in jax.jit-compiled code (but not in `jax.pmap` or `jax.pjit-compiled` code). However, this flag does not detect `inf` (infinity) values.
 
-`jax_debug_nans` is a JAX flag that when enabled, automatically raises an error when a NaN is detected. It has special handling for JIT-compiled -- when a NaN output is detected from a JIT-ted function, the function is re-run eagerly (i.e. without compilation) and will throw an error at the specific primitive that produced the NaN.
+`jax_debug_nans` is a JAX flag that, when enabled, automatically raises an error when a NaN is detected. It has special handling for JIT-compiled functions—when a NaN output is detected in a JIT-compiled function, the function is re-run eagerly (i.e., without compilation) and throws an error at the specific primitive that produced the NaN.
+
 
 ### Usage
 
@@ -27,6 +28,28 @@ def f(x, y):
   return x / y
 jax.jit(f)(0., 0.)  # ==> raises FloatingPointError exception!
 ```
+#### Important Note: `jax_debug_nans` Does Not Detect `inf`
+ While `jax_debug_nans` helps catch `NaN` values, it does not detect `inf` values (e.g., from division by zero or large exponentials). To handle `inf` values, consider:
+
+  Using `jax_disable_jit` to inspect computations interactively.
+  Using `jax.checkify` to validate both `NaN` and `inf` values at runtime.
+
+  ### Example using `jax.checkify`
+ 
+```python
+import jax
+import jax.numpy as jnp
+from jax.experimental import checkify
+
+checkify_fn = checkify.checkify(lambda x: jnp.exp(x))  # Wrap function
+f_checkified = checkify_fn()
+(issues, result) = f_checkified(1000.0)
+
+print(issues)  # Warns about 'inf' values
+print(result)  # Output: inf
+
+```
+
 
 #### Strengths and limitations of `jax_debug_nans`
 ##### Strengths
@@ -36,6 +59,7 @@ jax.jit(f)(0., 0.)  # ==> raises FloatingPointError exception!
 
 ##### Limitations
 * Not compatible with `jax.pmap` or `jax.pjit`
+* Does not detect `inf` values (use `jax.checkify`instead)
 * Re-running functions eagerly can be slow
 * Errors on false positives (e.g. intentionally created NaNs)
 
