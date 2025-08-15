@@ -369,7 +369,7 @@ outputId: 48c09658-f8b6-4be3-ef0e-02e0e2566e10
 ---
 # Hybrid version: Both activation and parameter offloading
 def hybrid_layer(x, w):
-  # Move model parameters w1 and w2 to host memory via device_put
+  # Move model parameters w1 and w2 to device memory via device_put
   w1, w2 = jax.tree.map(lambda x: jax.device_put(x, s_dev), w)
   x = checkpoint_name(x, "x")  # Offload activation x to host memory
   y = x @ w1
