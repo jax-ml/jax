@@ -15,7 +15,7 @@ Tutorials
    sharded-computation
    stateful-computations
    control-flow
-   
+
 .. toctree::
    :maxdepth: 1
    :caption: Advanced tutorials
