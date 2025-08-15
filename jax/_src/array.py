@@ -988,7 +988,7 @@ def _array_from_process_local_data(
       if process_slice != data_dim:
         raise ValueError(
             "Invalid host data, each dimension should match either global or "
-            f"process shape. In dimension {i=}, the process data has {data_dim}"
+            f"process shape. In dimension {i}, the process data has {data_dim} "
             f"elements. Process addresses {process_slice} elements and "
             f"{global_shape=}."
         )
