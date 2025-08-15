@@ -159,16 +159,17 @@ def update_setup_with_cuda_and_nvidia_wheel_versions(
 ):
   nvidia_wheel_versions = {"12": {}, "13": {}}
   pattern = re.compile(r"^([a-z0-9_-]+)(\W*[0-9\.]*.*)$")
-  for line in nvidia_wheel_versions_data.splitlines():
-    match = pattern.match(line)
-    if match:
-      wheel_name = match.group(1).replace("-", "_")
-      if wheel_name.endswith("_cu12"):
-        wheel_name = wheel_name.replace("_cu12", "") + "_version"
-        nvidia_wheel_versions["12"][wheel_name] = match.group(2).strip()
-      else:
-        wheel_name = wheel_name.replace("_cu13", "") + "_version"
-        nvidia_wheel_versions["13"][wheel_name] = match.group(2).strip()
+  if nvidia_wheel_versions_data:
+    for line in nvidia_wheel_versions_data.splitlines():
+      match = pattern.match(line)
+      if match:
+        wheel_name = match.group(1).replace("-", "_")
+        if wheel_name.endswith("_cu12"):
+          wheel_name = wheel_name.replace("_cu12", "") + "_version"
+          nvidia_wheel_versions["12"][wheel_name] = match.group(2).strip()
+        else:
+          wheel_name = wheel_name.replace("_cu13", "") + "_version"
+          nvidia_wheel_versions["13"][wheel_name] = match.group(2).strip()
 
   src_file = file_dir / "setup.py"
   with open(src_file) as f:

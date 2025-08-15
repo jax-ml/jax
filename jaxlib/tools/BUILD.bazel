@@ -564,6 +564,52 @@ py_import(
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
+# Mosaic GPU
+
+py_binary(
+    name = "build_mosaic_wheel_tool",
+    srcs = ["build_mosaic_wheel.py"],
+    main = "build_mosaic_wheel.py",
+    deps = [
+        ":build_utils",
+        "@bazel_tools//tools/python/runfiles",
+        "@pypi//build",
+        "@pypi//setuptools",
+        "@pypi//wheel",
+    ],
+)
+
+wheel_sources(
+    name = "mosaic_sources",
+    static_srcs = [
+        "LICENSE.txt",
+        "//jaxlib/mosaic/gpu/wheel:mosaic_gpu.so",
+        "//jaxlib/mosaic/gpu/wheel:setup.py",
+        "//jaxlib/mosaic/gpu/wheel:__init__.py",
+        "//jaxlib:version",
+    ],
+)
+
+jax_wheel(
+    name = "mosaic_gpu_wheel_cuda12",
+    enable_cuda = True,
+    no_abi = True,
+    source_files = [":mosaic_sources"],
+    platform_version = "12",
+    wheel_binary = ":build_mosaic_wheel_tool",
+    wheel_name = "mosaic_gpu_cuda12",
+)
+
+jax_wheel(
+    name = "mosaic_gpu_wheel_cuda13",
+    enable_cuda = True,
+    no_abi = True,
+    source_files = [":mosaic_sources"],
+    platform_version = "13",
+    wheel_binary = ":build_mosaic_wheel_tool",
+    wheel_name = "mosaic_gpu_cuda13",
+)
+
 # Wheel tests.
 
 AARCH64_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "aarch64")])
@@ -605,6 +651,17 @@ verify_manylinux_compliance_test(
     x86_64_compliance_tag = X86_64_MANYLINUX_TAG,
 )
 
+verify_manylinux_compliance_test(
+    name = "mosaic_gpu_manylinux_compliance_test",
+    aarch64_compliance_tag = AARCH64_MANYLINUX_TAG,
+    ppc64le_compliance_tag = PPC64LE_MANYLINUX_TAG,
+    test_tags = [
+        "manual",
+    ],
+    wheel = ":mosaic_gpu_wheel_cuda{cuda}".format(cuda=cuda_major_version),
+    x86_64_compliance_tag = X86_64_MANYLINUX_TAG,
+)
+
 pytype_test(
     name = "jaxlib_wheel_size_test",
     srcs = [":wheel_size_test.py"],
@@ -643,6 +700,21 @@ pytype_test(
         "--max-size-mib=120",
     ],
     data = [":jax_cuda{cuda}_pjrt_wheel".format(cuda=cuda_major_version)],
+    main = "wheel_size_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+)
+
+pytype_test(
+    name = "mosaic_gpu_wheel_size_test",
+    srcs = [":wheel_size_test.py"],
+    args = [
+        "--wheel-path=$(location :mosaic_gpu_wheel_cuda{cuda})".format(cuda=cuda_major_version),
+        "--max-size-mib=40",
+    ],
+    data = [":mosaic_gpu_wheel_cuda{cuda}".format(cuda=cuda_major_version)],
     main = "wheel_size_test.py",
     tags = [
         "manual",
