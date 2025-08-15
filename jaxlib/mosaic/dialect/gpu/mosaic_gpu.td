@@ -100,7 +100,7 @@ def MosaicGPU_WaitOp : Op<MosaicGPU_Dialect, "wait", []> {
 
   let arguments = (ins
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
-    I1:$parity
+    Optional<I1>:$parity
   );
   let assemblyFormat = [{
     `barrier` `(` $barrier `:` type($barrier) `)`
