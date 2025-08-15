@@ -4595,6 +4595,131 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
         rtol=rtol,
     )
 
+  @parameterized.product(
+      m=(128, 256),
+      n=(128, 256),
+      swizzle=(32, 64, 128),
+      ab_type=(jnp.float16, jnp.bfloat16),
+      acc_type=(jnp.float16, jnp.float32),
+  )
+  def test_tcgen05_collective_mma(self, m, n, swizzle, ab_type, acc_type):
+    if acc_type == jnp.float16 and ab_type != jnp.float16:
+      self.skipTest("Only f16 input is supported for f16 output.")
+
+    swizzle_elems = swizzle // np.dtype(ab_type).itemsize
+    groups_k = 2
+    k = swizzle_elems * groups_k
+    a_shape = (m, k)
+    a_block_shape = (m // 2, k)
+    b_shape = (k, n)
+    b_block_shape = (k, n // 2)
+    bytes_a = np.dtype(ab_type).itemsize * math.prod(a_block_shape)
+    bytes_b = np.dtype(ab_type).itemsize * math.prod(b_block_shape)
+    acc_shape = (m, n)
+    acc_block_shape = (m // 2, n)
+
+    def matmul(ctx, a_gmem, b_gmem, result_gmem, scratch):
+      del ctx
+      a_smem, b_smem, tma_barrier, mma_barrier, acc_tmem = scratch
+      block_id = gpu.cluster_block_id(gpu.Dimension.x)
+      i32_type = ir.IntegerType.get_signless(32)
+      block_id_i32 = arith.index_cast(i32_type, block_id)
+
+      tma_barrier_ref = tma_barrier.as_barrier_memref()
+      mgpu_dialect.arrive_expect_tx(
+          barrier=tma_barrier_ref,
+          expect_tx=bytes_a + bytes_b,
+      )
+
+      # GMEM -> SMEM
+      zero_i32 = arith.constant(i32_type, 0)
+      m_index = arith.muli(block_id_i32, arith.constant(i32_type, m // 2))
+      n_index = arith.muli(block_id_i32, arith.constant(i32_type, n // 2))
+      mgpu_dialect.async_load(
+          source=a_gmem,
+          destination=a_smem,
+          barrier=tma_barrier_ref,
+          indices=[m_index, zero_i32],
+          slice_lengths=a_block_shape,
+          collective=ir.ArrayAttr.get([]),
+      )
+      mgpu_dialect.async_load(
+          source=b_gmem,
+          destination=b_smem,
+          barrier=tma_barrier_ref,
+          indices=[zero_i32, n_index],
+          slice_lengths=b_block_shape,
+          collective=ir.ArrayAttr.get([]),
+      )
+      tma_barrier.wait()
+
+      # TODO(allanrenucci): Remove explicit layouts once inferred.
+      tmem_layout = tcgen05._infer_tmem_layout(
+          acc_block_shape, collective=True, packing=1
+      )
+      load_layout = layouts.to_layout_attr(
+          tcgen05._infer_tmem_load_registers_layout(
+              tmem_layout, columns=n, packing=1
+          )
+      )
+      tmem_layout = layouts.to_layout_attr(tmem_layout)
+
+      mma_op = mgpu_dialect.TcGen05MMAOp(
+          accumulator=acc_tmem,
+          a=a_smem,
+          b=b_smem,
+          accumulate=arith.constant(ir.IntegerType.get_signless(1), False),
+          collective=True,
+      )
+      mma_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
+      tcgen05.commit_arrive(mma_barrier.barrier_ref)
+
+      mma_barrier.wait(orders_tensor_core=True)
+
+      # TMEM -> Registers
+      load_op = mgpu_dialect.AsyncLoadTmemOp(acc_tmem)
+      load_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
+      r_out = mgpu_dialect.layout_cast(load_op.result, load_layout)
+
+      # Registers -> GMEM
+      zero_index = arith.constant(ir.IndexType.get(), 0)
+      m_index = arith.muli(block_id, arith.constant(ir.IndexType.get(), m // 2))
+      sliced_result_gmem = memref_slice(result_gmem, ds(m_index, m // 2))
+      vector.store(r_out, sliced_result_gmem, [zero_index] * len(acc_shape))
+
+    scratch_shape = [
+        jax.ShapeDtypeStruct(a_block_shape, ab_type),
+        jax.ShapeDtypeStruct(b_block_shape, ab_type),
+        core.TMABarrier(1),
+        mgpu.Barrier(1),
+        mgpu.TMEM(acc_block_shape, acc_type, collective=True),
+    ]
+    kernel = mgpu.as_gpu_kernel(
+        matmul,
+        grid=(2, 1, 1),
+        cluster=(2, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(
+            jax.ShapeDtypeStruct(a_shape, ab_type),
+            jax.ShapeDtypeStruct(b_shape, ab_type),
+        ),
+        out_shape=jax.ShapeDtypeStruct(acc_shape, acc_type),
+        smem_scratch_shape=scratch_shape,
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    a = self.prng.uniform(-1, 1, a_shape).astype(ab_type)
+    b = self.prng.uniform(-1, 1, b_shape).astype(ab_type)
+
+    atol = 2e-2 if acc_type == jnp.float16 else 2e-5
+    rtol = 8e-4 if acc_type == jnp.float16 else 1e-7
+    self.assertArraysAllClose(
+        kernel(a, b),
+        np.matmul(a.astype(acc_type), b.astype(acc_type)),
+        atol=atol,
+        rtol=rtol,
+    )
+
 
 class UtilsTest(TestCase):
   @parameterized.parameters(

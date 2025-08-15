@@ -56,6 +56,9 @@ class LoweringContext:
   single_thread_per_block_predicate: ir.Value | None
   single_thread_per_warpgroup_predicate: ir.Value | None
   single_warp_per_block_predicate: ir.Value | None
+  # This is the first block in a CTA pair as documented in
+  # https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-cta-pair.
+  leader_block_in_cta_predicate: ir.Value | None
   auto_barriers: bool
   lowered_operations: set[ir.Operation | ir.OpView] = dataclasses.field(
       default_factory=set
@@ -1607,9 +1610,6 @@ def _tcgen05_mma_op_lowering_rule(
   # TODO(allanrenucci): Add support for `a` in TMEM.
   if op.a.type.memory_space == mgpu_utils.tmem():
     raise NotImplementedError(f"{op.a} is not in TMEM. Only SMEM is supported.")
-  # TODO(allanrenucci): Add support for collective=True.
-  if op.collective:
-    raise NotImplementedError("Collective is not supported.")
 
   a_transforms, b_transforms = inference_utils.in_transforms(op)
   unwrapped_a_ref = unwrap_transformed_memref(op.a, a_transforms)
@@ -1618,7 +1618,16 @@ def _tcgen05_mma_op_lowering_rule(
   acc_layout = inference_utils.in_tmem_layouts(op)[0]
   acc_ref = _tmem_ref_from_ir(op.accumulator, acc_layout)
 
-  with mgpu_utils.when(ctx.single_thread_per_block_predicate):
+  predicate = ctx.single_thread_per_block_predicate
+  if op.collective:
+    if ctx.leader_block_in_cta_predicate is None:
+      raise ValueError(
+          "Requested collective `tcgen05_mma` but"
+          " `ctx.leader_block_in_cta_predicate` is not set. This likely means"
+          " that the kernel has no cluster dimensions."
+      )
+    predicate = arith.andi(predicate, ctx.leader_block_in_cta_predicate)
+  with mgpu_utils.when(predicate):
     tcgen05.mma(
         acc_ref,
         unwrapped_a_ref,
@@ -2010,45 +2019,6 @@ def _traverse_op_lowering_rule(
   return RECURSED
 
 
-def _context_predicates(
-    module: ir.Module,
-) -> tuple[ir.Value, ir.Value, ir.Value]:
-  """Returns three predicates:
-    - a single thread predicate per block
-    - a single thread predicate per warpgroup.
-    - a single warp predicate per block.
-  """
-  block_predicate = warpgroup_predicate = warp_predicate = None
-  for op in module.body.operations:
-    for region in op.operation.regions:
-      for block in region.blocks:
-        for sub_op in block.operations:
-          if sub_op.operation.name == "gpu.launch":
-            with ir.InsertionPoint.at_block_begin(
-                sub_op.operation.regions[0].blocks[0]
-            ):
-              assert block_predicate is None
-              block_predicate = utils.single_thread_predicate(
-                  scope=utils.ThreadSubset.BLOCK
-              )
-              warpgroup_predicate = utils.single_thread_predicate(
-                  scope=utils.ThreadSubset.WARPGROUP
-              )
-              eq = arith.CmpIPredicate.eq
-              i32 = ir.IntegerType.get_signless(32)
-              warp_predicate = arith.cmpi(
-                  eq, utils.warp_idx(sync=False), utils.c(0, i32)
-              )
-
-  if block_predicate is None:
-    raise ValueError(
-        "No suitable function found to instantiate the single thread"
-        " predicates."
-    )
-
-  return block_predicate, warpgroup_predicate, warp_predicate
-
-
 def _should_lower(op: ir.OpView) -> bool:
   """Returns 'true' if the operation should be lowered."""
   return (
@@ -2059,22 +2029,64 @@ def _should_lower(op: ir.OpView) -> bool:
   )
 
 
+def _gpu_launch_op(module: ir.Module) -> ir.Operation:
+  for op in module.body.operations:
+    for region in op.operation.regions:
+      for block in region.blocks:
+        for sub_op in block.operations:
+          if sub_op.operation.name == "gpu.launch":
+            return sub_op.operation
+  raise ValueError("gpu.launch op not found.")
+
+
+def _minor_collective_axis(
+    ctx: launch_context.LaunchContext,
+) -> gpu.Dimension | None:
+  if ctx.cluster_size[0] > 1:
+    return gpu.Dimension.x
+  if ctx.cluster_size[1] > 1:
+    return gpu.Dimension.y
+  if ctx.cluster_size[2] > 1:
+    return gpu.Dimension.z
+  return None
+
+
 def _lowering_context(
-    module: ir.Module, launch_context: launch_context.LaunchContext | None, auto_barriers: bool,
-):
+    module: ir.Module,
+    launch_context: launch_context.LaunchContext | None,
+    auto_barriers: bool,
+) -> LoweringContext:
   """Returns a `LoweringContext` for the given `LaunchContext`."""
   # TODO(bchetioui): fix tests to not have a test-only path polluting the API.
   if launch_context is None:  # this case is used in some tests
-    block_predicate = warpgroup_predicate = warp_predicate = None
-  else:
-    block_predicate, warpgroup_predicate, warp_predicate = (
-        _context_predicates(module)
-    )
+    return LoweringContext(None, None, None, None, None, auto_barriers)
 
-  ctx = LoweringContext(
-      launch_context, block_predicate, warpgroup_predicate, warp_predicate, auto_barriers
-  )
-  return ctx
+  gpu_launch_op = _gpu_launch_op(module)
+  with ir.InsertionPoint.at_block_begin(gpu_launch_op.regions[0].blocks[0]):
+    block_predicate = utils.single_thread_predicate(
+        scope=utils.ThreadSubset.BLOCK
+    )
+    warpgroup_predicate = utils.single_thread_predicate(
+        scope=utils.ThreadSubset.WARPGROUP
+    )
+    eq = arith.CmpIPredicate.eq
+    i32 = ir.IntegerType.get_signless(32)
+    warp_predicate = arith.cmpi(eq, utils.warp_idx(sync=False), utils.c(0, i32))
+    if (axis := _minor_collective_axis(launch_context)) is not None:
+      block_id = gpu.cluster_block_id(axis)
+      leader_block_in_cta_predicate = arith.cmpi(
+          eq, block_id, utils.c(0, ir.IndexType.get())
+      )
+    else:
+      leader_block_in_cta_predicate = None
+    return LoweringContext(
+        launch_context,
+        block_predicate,
+        warpgroup_predicate,
+        warp_predicate,
+        leader_block_in_cta_predicate,
+        auto_barriers,
+    )
 
 
 def lower_mgpu_dialect(

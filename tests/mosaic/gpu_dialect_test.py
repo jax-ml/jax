@@ -625,6 +625,25 @@ class DialectTest(MosaicGpuTest):
     ):
       self.module.operation.verify()
 
+  def test_tcgen05_mma_b_n_dim_not_equal_to_half_acc_n_dim(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([128, 160], ir.F16Type.get()),
+          ir.MemRefType.get([128, 128], ir.F16Type.get()),
+          ir.MemRefType.get([128, 160], ir.F16Type.get()),
+          ir.IntegerType.get_signless(1),
+      )(
+          lambda acc, a, b, accumulate: mgpu.dialect.tcgen05_mma(
+              acc, a, b, accumulate, collective=True
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"`b`'s non-contracting dimension 160 must be half",
+    ):
+      self.module.operation.verify()
+
   def test_tcgen05_mma_acc_mem_space_is_tmem(self):
     smem = mgpu_utils.smem()
     with ir.InsertionPoint(self.module.body):

@@ -312,15 +312,14 @@ llvm::LogicalResult AsyncStoreOp::verify() {
                                  getSliceLengths(), getIndices().size());
 }
 
-namespace {
-
-llvm::LogicalResult VerifyMMAShapeAndTypes(mlir::Operation* op,
-                                           mlir::ShapedType a_type,
-                                           mlir::ShapedType b_type,
-                                           mlir::ShapedType acc_type) {
-  auto error = [op](auto... params) {
-    return op->emitOpError(llvm::formatv(params...));
+llvm::LogicalResult WGMMAOp::verify() {
+  auto error = [this](auto... params) {
+    return getOperation()->emitOpError(llvm::formatv(params...));
   };
+
+  auto a_type = mlir::cast<mlir::ShapedType>(getA().getType());
+  auto b_type = getB().getType();
+  auto acc_type = getAccumulator().getType();
 
   if (a_type.getElementType() != b_type.getElementType()) {
     return error("The `a` and `b` inputs must have the same element type.");
@@ -352,47 +351,64 @@ llvm::LogicalResult VerifyMMAShapeAndTypes(mlir::Operation* op,
         N, acc_shape[1]);
   }
 
-  return llvm::success();
-}
-
-}  // namespace
-
-llvm::LogicalResult WGMMAOp::verify() {
-  llvm::LogicalResult result = VerifyMMAShapeAndTypes(
-      getOperation(), mlir::cast<mlir::ShapedType>(getA().getType()),
-      getB().getType(), getAccumulator().getType());
-  if (result.failed()) {
-    return result;
-  }
-
-  int64_t M = getAccumulator().getType().getShape()[0];
   // This is the size of the M dimension in all wgmma instructions. It is fixed,
   // unlike the K and N dimensions.
   constexpr int kWgmmaSizeM = 64;
   if (M % kWgmmaSizeM != 0) {
-    return emitOpError(llvm::formatv(
+    return error(
         "The accumulator's first dimension must be a multiple of {0}, but got "
         "{1}.",
-        kWgmmaSizeM, M));
+        kWgmmaSizeM, M);
   }
 
   return llvm::success();
 }
 
 llvm::LogicalResult TcGen05MMAOp::verify() {
-  llvm::LogicalResult result =
-      VerifyMMAShapeAndTypes(getOperation(), getA().getType(), getB().getType(),
-                             getAccumulator().getType());
-
-  if (result.failed()) {
-    return result;
-  }
-
   auto error = [this](auto... params) {
-    return emitOpError(llvm::formatv(params...));
+    return getOperation()->emitOpError(llvm::formatv(params...));
   };
 
-  int64_t M = getAccumulator().getType().getShape()[0];
+  auto a_type = getA().getType();
+  auto b_type = getB().getType();
+  auto acc_type = getAccumulator().getType();
+
+  if (a_type.getElementType() != b_type.getElementType()) {
+    return error("The `a` and `b` inputs must have the same element type.");
+  }
+
+  auto a_shape = a_type.getShape();
+  auto b_shape = b_type.getShape();
+  auto acc_shape = acc_type.getShape();
+
+  int M = acc_shape[0];
+  if (M != a_shape[0]) {
+    return error(
+        "The accumulator's first dimension {0} must be equal to the first "
+        "dimensions of `a`: {1}.",
+        M, a_shape[0]);
+  }
+  int K = a_shape[1];  // groups_k * k
+  if (K != b_shape[0]) {
+    return error(
+        "`a`'s contracting dimension {0} must be equal to the first dimension "
+        "of `b`: {1}.",
+        K, b_shape[0]);
+  }
+  int N = b_shape[1];  // groups_n * k
+  if (N != acc_shape[1] && !getCollective()) {
+    return error(
+        "`b`'s non-contracting dimension {0} must be equal to the "
+        "accumulator's second dimension {1}.",
+        N, acc_shape[1]);
+  }
+  if (N * 2 != acc_shape[1] && getCollective()) {
+    return error(
+        "`b`'s non-contracting dimension {0} must be half the accumulator's "
+        "second dimension {1} for collective MMA.",
+        N, acc_shape[1]);
+  }
+
   // This is the size of the M dimension in all `tcgen05.mma` instructions. It
   // is fixed, unlike the K and N dimensions.
   constexpr int kTcGen05MmaMinSizeM = 32;
@@ -628,10 +644,8 @@ llvm::LogicalResult AsyncLoadTmemOp::verify() {
     return emitError() << "The `source` and `result` must have "
                           "the same element type.";
   }
-  if (getSource().getType().getShape() !=
-      getResult().getType().getShape()) {
-    return emitError()
-           << "The `source` and `result` must have the same shape.";
+  if (getSource().getType().getShape() != getResult().getType().getShape()) {
+    return emitError() << "The `source` and `result` must have the same shape.";
   }
   return VerifyTmemRefType(getContext(), getOperation(), getSource().getType());
 }
