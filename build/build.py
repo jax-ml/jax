@@ -382,24 +382,6 @@ async def main():
 
   args = parser.parse_args()
 
-  if args.use_new_wheel_build_rule:
-    logger.warning(
-        "The --use_new_wheel_build_rule flag is deprecated and no-op. It will"
-        " be removed soon. Please remove it from your build scripts."
-    )
-  if args.use_clang:
-    logger.warning(
-        "The --use_clang flag is deprecated and no-op. It will be removed soon."
-        " Please remove it from your build scripts. Clang is the only"
-        " acceptable compiler."
-    )
-  if args.gcc_path:
-    logger.warning(
-        "The --gcc_path flag is deprecated and no-op. It will be removed soon."
-        " Please remove it from your build scripts. Clang is the only"
-        " acceptable compiler."
-    )
-
   logger.info("%s", BANNER)
 
   if args.verbose:
@@ -477,6 +459,24 @@ async def main():
       raise RuntimeError(f"Command failed with return code {result.return_code}")
     else:
       sys.exit(0)
+
+  if args.use_new_wheel_build_rule:
+    logger.warning(
+        "The --use_new_wheel_build_rule flag is deprecated and no-op. It will"
+        " be removed soon. Please remove it from your build scripts."
+    )
+  if args.use_clang:
+    logger.warning(
+        "The --use_clang flag is deprecated and no-op. It will be removed soon."
+        " Please remove it from your build scripts. Clang is the only"
+        " acceptable compiler."
+    )
+  if args.gcc_path:
+    logger.warning(
+        "The --gcc_path flag is deprecated and no-op. It will be removed soon."
+        " Please remove it from your build scripts. Clang is the only"
+        " acceptable compiler."
+    )
 
   wheel_build_command_base = copy.deepcopy(bazel_command_base)
 
