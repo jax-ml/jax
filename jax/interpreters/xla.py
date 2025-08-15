@@ -14,8 +14,10 @@
 
 from jax._src.dtypes import (
   canonicalize_value as _deprecated_canonicalize_dtype,
-  canonicalize_value_handlers as canonicalize_dtype_handlers,  # noqa: F401
+  canonicalize_value_handlers as _canonicalize_value_handlers,
 )
+
+canonicalize_dtype_handlers = _canonicalize_value_handlers
 
 from jax._src.dispatch import (
   apply_primitive as apply_primitive,

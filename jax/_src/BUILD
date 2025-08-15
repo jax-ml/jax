@@ -1454,16 +1454,8 @@ pytype_strict_library(
     name = "xla",
     srcs = ["interpreters/xla.py"],
     deps = [
-        ":abstract_arrays",
-        ":config",
         ":core",
-        ":sharding_impls",
-        ":source_info_util",
-        ":typing",
-        ":util",
-        ":xla_bridge",
-        "//jax/_src/lib",
-    ] + py_deps("numpy"),
+    ],
 )
 
 # TODO(phawkins): break up this SCC.
