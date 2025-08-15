@@ -27,23 +27,44 @@ limitations under the License.
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "tsl/platform/path.h"
 
 namespace mosaic {
 namespace gpu {
 
-DumpOptions GetDumpOptionsForModule(mlir::ModuleOp module) {
+namespace {
+
+// The name of the attribute wrapping the module basename for dumping. See
+// `GetDumpOptionsForModule` for more details.
+constexpr absl::string_view kDumpBasenameAttr = "mosaic_gpu.dump_basename";
+
+}  // namespace
+
+DumpOptions GetOrSetDumpOptionsForModule(mlir::ModuleOp module) {
   // Use a static variable in order to ensure that subsequent compilations of
   // modules that share the same name will result in distinct dumps.
   static std::atomic<int> dumped_module_count = 0;
   DumpOptions opts;
-  int current_count = dumped_module_count.fetch_add(1);
-  if (std::optional<llvm::StringRef> name = module.getName();
-      name.has_value()) {
-    opts.module_basename = absl::StrCat(name->str(), "_", current_count);
+  // In order to make sure that we use a consistent module basename for the same
+  // module even if we end up calling this function multiple times, we set an
+  // attribute on the module that records its basename whenever we first
+  // generate it. Subsequent calls will just return the value from the
+  // attribute.
+  if (auto attr = module->getAttrOfType<mlir::StringAttr>(kDumpBasenameAttr)) {
+    opts.module_basename = attr.getValue().str();
   } else {
-    opts.module_basename = absl::StrCat("mosaic_gpu_module_", current_count);
+    int current_count = dumped_module_count.fetch_add(1);
+    if (std::optional<llvm::StringRef> name = module.getName();
+        name.has_value()) {
+      opts.module_basename = absl::StrCat(name->str(), "_", current_count);
+    } else {
+      opts.module_basename = absl::StrCat("mosaic_gpu_module_", current_count);
+    }
+    module->setAttr(
+        kDumpBasenameAttr,
+        mlir::StringAttr::get(module.getContext(), opts.module_basename));
   }
 
   if (char* dump_to = getenv("MOSAIC_GPU_DUMP_TO"); dump_to != nullptr) {

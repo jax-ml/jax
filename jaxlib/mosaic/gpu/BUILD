@@ -60,6 +60,16 @@ cc_library(
     ],
 )
 
+cc_test(
+    name = "dump_test",
+    srcs = ["dump_test.cc"],
+    deps = [
+        ":dump",
+        "//testing/base/public:gunit_main",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
 cc_library(
     name = "passes",
     srcs = [

@@ -49,8 +49,10 @@ struct DumpOptions {
 //
 // This function takes in a module in order to ensure that subsequent
 // compilations of modules that share the same name will result in distinct
-// dumps.
-DumpOptions GetDumpOptionsForModule(mlir::ModuleOp module);
+// dumps. The module is annotated with an attribute that records the basename
+// used for dumps, to ensure that we use a consistent module basename for the
+// same module even if we end up calling this function multiple times.
+DumpOptions GetOrSetDumpOptionsForModule(mlir::ModuleOp module);
 
 // Dumps `content` to `path`/`name` if `path` is non-empty, otherwise to
 // stdout.

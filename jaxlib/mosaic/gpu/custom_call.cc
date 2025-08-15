@@ -652,7 +652,7 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     }
   }
   mosaic::gpu::DumpOptions dump_opts =
-      mosaic::gpu::GetDumpOptionsForModule(module);
+      mosaic::gpu::GetOrSetDumpOptionsForModule(module);
   DumpCompilationOutput(module, sm, ptx_isa, nvshmem_path, dump_opts);
   // `DumpCompilationOutput` already runs through MLIR passes and may dump them.
   // If that happened, we don't want to dump them again.
