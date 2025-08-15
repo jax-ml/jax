@@ -41,6 +41,7 @@ from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
 
 WARP_SIZE: int = 32
 WARPGROUP_SIZE: int = 128
+WARPS_IN_WARPGROUP: int = WARPGROUP_SIZE // WARP_SIZE
 DYNAMIC = -9223372036854775808
 DYNAMIC32 = -2147483648
 MBARRIER_BYTES = 8
