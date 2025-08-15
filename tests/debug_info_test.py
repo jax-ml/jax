@@ -1368,8 +1368,7 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=checkpoint / remat, fun=my_g, arg_names=x,y, from None",
         ])
 
-  # TODO(mattjj,necula): test should be written against lax.scan
-  @unittest.skip("test was written against for_loop.scan")
+
   def test_grad_scan(self):
     # Based on control_flow_test:testScanHigherOrderDifferentiation
     tracer_spy = TracerSpy()
@@ -1399,12 +1398,10 @@ class DebugInfoTest(jtu.JaxTestCase):
     if config.use_direct_linearize.value:
       expected_jaxpr_debug_infos = [
           "traced_for=jit, fun=the_grad, arg_names=c,as_, result_paths=result[0],result[1]",
-          "traced_for=scan, fun=f, arg_names=,,, result_paths=,",
-          "traced_for=scan, fun=f, arg_names=c,a, result_paths=",
+          "traced_for=scan, fun=f, arg_names=,, result_paths=,",
+          "traced_for=scan, fun=f, arg_names=,,,, result_paths=,,",
           "traced_for=checkpoint / remat, fun=to_remat, arg_names=,,, result_paths=,",
-          "traced_for=scan, fun=f, arg_names=,,,,,, result_paths=,",
-          "traced_for=scan, fun=f, arg_names=,,,,,,,,,,,,,,, result_paths=,",
-          "traced_for=scan, fun=f, arg_names=,,,,,,,,,,, result_paths=",
+          "traced_for=scan, fun=f, arg_names=,,,,,,,,, result_paths=,,",
       ]
       if config.use_simplified_jaxpr_constants.value:
         expected_jaxpr_debug_infos.extend([
@@ -1419,12 +1416,10 @@ class DebugInfoTest(jtu.JaxTestCase):
     else:
       expected_jaxpr_debug_infos = [
           "traced_for=jit, fun=the_grad, arg_names=c,as_, result_paths=result[0],result[1]",
-          "traced_for=scan, fun=f, arg_names=,,, result_paths=,",
+          "traced_for=scan, fun=f, arg_names=,, result_paths=,",
           "traced_for=checkpoint / remat, fun=to_remat, arg_names=,,, result_paths=,",
-          "traced_for=scan, fun=f, arg_names=,,,,,, result_paths=,",
-          "traced_for=scan, fun=f, arg_names=c,a, result_paths=",
-          "traced_for=scan, fun=f, arg_names=,,,,,,,,,,,,,,, result_paths=,",
-          "traced_for=scan, fun=f, arg_names=,,,,,,,,,,, result_paths=",
+          "traced_for=scan, fun=f, arg_names=,,,, result_paths=,,",
+          "traced_for=scan, fun=f, arg_names=,,,,,,,,, result_paths=,,",
           "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=result[0],result[1]",
       ]
       if config.use_simplified_jaxpr_constants.value:
