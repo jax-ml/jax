@@ -443,20 +443,16 @@ std::unique_ptr<VRegDataBounds> VectorLayout::tileDataBounds(
   const int64_t nl = *(tiles_implicit_shape.end() - 1);
   const std::array<int64_t, 2> tiled_ishape =
       getImplicitTiledDims(full_shape, 1);
-  auto positive_mod = [](const int64_t a, const int64_t b) {
-    // Return modulo but in the range [1, b] for a, b > 0.
-    return (a - 1) % b + 1;
-  };
   // The starts and ends of the data within the vreg slice:
   const std::array<int64_t, 2> starts = {
       offsets_[0] && s == 0 ? *offsets_[0] : 0,
       offsets_[1] && l == 0 ? *offsets_[1] : 0};
   const std::array<int64_t, 2> ends = {
       offsets_[0] && s == ns - 1
-          ? positive_mod(*offsets_[0] + tiled_ishape[0], vreg_slice[0])
+          ? positiveMod(*offsets_[0] + tiled_ishape[0], vreg_slice[0])
           : vreg_slice[0],
       offsets_[1] && l == nl - 1
-          ? positive_mod(*offsets_[1] + tiled_ishape[1], vreg_slice[1])
+          ? positiveMod(*offsets_[1] + tiled_ishape[1], vreg_slice[1])
           : vreg_slice[1]};
 
   if (tiling_[0] == 1 && tiling_[1] % target_shape[1] == 0) {
@@ -477,7 +473,7 @@ std::unique_ptr<VRegDataBounds> VectorLayout::tileDataBounds(
   return std::make_unique<TiledRectangularVregBounds>(
       *this, num_tiles,
       std::array<int64_t, 2>{starts[0], starts[1] % tiling_[1]},
-      std::array<int64_t, 2>{ends[0], positive_mod(ends[1], tiling_[1])},
+      std::array<int64_t, 2>{ends[0], positiveMod(ends[1], tiling_[1])},
       target_shape);
 }
 
