@@ -1066,6 +1066,15 @@ random_seed_offset = int_state(
     include_in_jit_key=True,
 )
 
+# TODO(jakevdp): remove this flag.
+safer_randint = bool_state(
+    name='jax_safer_randint',
+    default=False,  # TODO(jakevdp): flip default to True.
+    help='Use a safer randint algorithm for 8-bit and 16-bit dtypes.',
+    include_in_jit_key=True,
+    upgrade=True
+)
+
 legacy_prng_key = enum_state(
     name='jax_legacy_prng_key',
     enum_values=['allow', 'warn', 'error'],
