@@ -74,6 +74,13 @@ if [[ $host_memory_limit -lt $num_processes ]]; then
   num_processes=$host_memory_limit
 fi
 
+# Reduce the amount of processess for H100s
+gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader --id=0)
+if [[ "$gpu_name" =~ H100 ]]; then
+  echo "Running on H100, reducing number of processes to 4/5 to avoid out-of-memory errors"
+  num_processes=$(echo "scale=0; $num_processes / 1.25" | bc)
+fi
+
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
 # End of test environment variable setup
