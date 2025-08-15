@@ -1665,6 +1665,20 @@ class RBGPRNGTest(CommonRandomTest):
     # TODO(mattjj): enable this test if/when RngBitGenerator supports it
     raise SkipTest('8-bit types not supported with RBG PRNG')
 
+  def test_randint_uint8_bias(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/27702
+    key = self.make_key(7534892)
+    n_samples = 100_000
+    n_bins = 100
+
+    with config.safer_randint(True):
+      data = jax.random.randint(key, (n_samples,), 0, n_bins, dtype='uint8')
+
+    # Check that counts within each bin are consistent with a uniform distribution:
+    # i.e. counts are poisson-distributed about the average count per bin.
+    counts = jnp.bincount(data, length=n_bins).astype(float)
+    self._CheckKolmogorovSmirnovCDF(counts, scipy.stats.poisson(n_samples / n_bins).cdf)
+
 
 @jtu.with_config(jax_default_prng_impl='unsafe_rbg')
 class UnsafeRBGPRNGTest(RBGPRNGTest):

@@ -495,17 +495,72 @@ def randint(key: ArrayLike,
 
   Returns:
     A random array with the specified shape and dtype.
+
+  .. note::
+
+     :func:`randint` uses a modulus-based computation that is known to produce
+     slightly biased values in some cases. The magnitude of the bias scales as
+     ``(maxval - minval) * ((2 ** nbits ) % (maxval - minval)) / 2 ** nbits``:
+     in words, the bias goes to zero when ``(maxval - minval)`` is a power of 2,
+     and otherwise the bias will be small whenever ``(maxval - minval)`` is
+     small compared to the range of the sampled type.
+
+     To reduce this bias, 8-bit and 16-bit values will always be sampled at 32-bit and
+     then cast to the requested type. If you find yourself sampling values for which
+     this bias may be problematic, a possible alternative is to sample via uniform::
+
+       def randint_via_uniform(key, shape, minval, maxval, dtype):
+         u = jax.random.uniform(key, shape, minval=minval - 0.5, maxval=maxval - 0.5)
+         return u.round().astype(dtype)
+
+     But keep in mind this method has its own biases due to floating point rounding
+     errors, and in particular there may be some integers in the range
+     ``[minval, maxval)`` that are impossible to produce with this approach.
   """
   key, _ = _check_prng_key("randint", key)
   dtypes.check_user_dtype_supported(dtype)
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "randint", shape)
+
+  if not dtypes.issubdtype(dtype, np.integer):
+    raise TypeError(f"randint only accepts integer dtypes, got {dtype}")
+
+  # TODO(jakevdp): migrate users to safer randint and remove the old version.
+  if config.safer_randint.value:
+    info = dtypes.iinfo(dtype)
+    dtype_for_sampling = dtype
+    if info.bits < 32:
+      # Sample in 32 bits to avoid biased results.
+      dtype_for_sampling = np.dtype('int32')
+      minval = jnp.asarray(minval).astype('int32').clip(int(info.min), int(info.max))
+      maxval = jnp.asarray(maxval).astype('int32').clip(int(info.min), int(info.max) + 1)
+
+    return maybe_auto_axes(_randint, out_sharding, shape=shape, dtype=dtype_for_sampling)(
+        key, minval, maxval).astype(dtype)
+
   return maybe_auto_axes(_randint, out_sharding, shape=shape, dtype=dtype)(
       key, minval, maxval)
 
 @partial(jit, static_argnums=(3, 4))
 def _randint(key, minval, maxval, shape, dtype) -> Array:
+  # We have three imperfect options for generating random integers in an arbitrary
+  # user-specified range:
+  #
+  # 1. Rejection sampling. This produces unbiased results, but involves a dynamic
+  #    number of iterations, so it's not suitable for computation on accelerators.
+  # 2. Generate floating point values between minval and maxval, and cast to int.
+  #    This introduces bias for large ranges due to floating point rounding error:
+  #    many integers within a given range would never be sampled.
+  # 3. Generate numbers in a range that is a power of 2, and use an integer modulus
+  #    to shift them into the desired range. This produces a biased distribution
+  #    when the desired range is not a power of 2, which scales as
+  #    O[bias] ~= (desired_range ** 2) / full_range.
+  #
+  # Given these three imperfect options, we opt for a modified version of (3), where we
+  # sample 2 * nbits bits per value, because it is efficient and works well in most cases
+  # of interest. To help users avoid inadvertently producing biased results, we always
+  # generate samples in at least 32 bits.
   _check_shape("randint", shape, np.shape(minval), np.shape(maxval))
   if not dtypes.issubdtype(dtype, np.integer):
     raise TypeError(f"randint only accepts integer dtypes, got {dtype}")
