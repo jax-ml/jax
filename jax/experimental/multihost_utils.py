@@ -23,10 +23,10 @@ import jax
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import core
+from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.interpreters import xla
 from jax._src import array
 from jax._src import sharding_impls
 from jax._src.interpreters import pxla
@@ -251,7 +251,7 @@ def host_local_array_to_global_array_impl(
       arr.sharding.is_equivalent_to(local_sharding, arr.ndim)):
     arrays = [x.data for x in arr.addressable_shards]
   else:
-    arr = xla.canonicalize_dtype(arr)
+    arr = dtypes.canonicalize_value(arr)
     arrays = [
         arr[index]
         for d, index in local_sharding.devices_indices_map(arr.shape).items()]
@@ -407,7 +407,7 @@ def global_array_to_host_local_array_impl(
     return array.ArrayImpl(local_aval, local_sharding, arrays, committed=True)
   else:
     # numpy array can show up here during AD.
-    arr = xla.canonicalize_dtype(arr)
+    arr = dtypes.canonicalize_value(arr)
     arrays = [
         arr[index]
         for d, index in local_sharding.devices_indices_map(arr.shape).items()]

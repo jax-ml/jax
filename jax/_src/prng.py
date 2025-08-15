@@ -38,7 +38,6 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-from jax._src.interpreters import xla
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
@@ -482,7 +481,7 @@ class KeyTy(dtypes.ExtendedDType):
 
 
 core.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
-xla.canonicalize_dtype_handlers[PRNGKeyArray] = lambda x: x
+dtypes.canonicalize_value_handlers[PRNGKeyArray] = lambda x: x
 
 
 def key_array_shard_arg_handler(xs: Sequence[PRNGKeyArray], shardings, layouts,

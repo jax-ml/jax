@@ -47,7 +47,6 @@ from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, Layout
 from jax._src.lib import _jax
 from jax._src.lib import jax_mlir_ext
@@ -265,7 +264,7 @@ def ir_constant(val: Any,
   if np.shape(val) and (c_val := const_lowering.get(id(val))) is not None:
     return c_val
   if canonicalize_dtype:
-    val = xla.canonicalize_dtype(val)
+    val = dtypes.canonicalize_value(val)
   for t in type(val).__mro__:
     handler = _constant_handlers.get(t)
     if handler:
@@ -1897,7 +1896,7 @@ def lower_jaxpr_to_fun(
         [num_dim_vars, num_tokens, num_const_args])
     tokens_in = TokenSet(zip(effects, token_args))
     args: list[IrValues] = unflattened_args
-    unique_consts = {id(c): ir_constant(xla.canonicalize_dtype(c))
+    unique_consts = {id(c): ir_constant(dtypes.canonicalize_value(c))
                      for c in jaxpr.consts}
     consts_for_constvars = [unique_consts[id(c)] for c in jaxpr.consts]
 

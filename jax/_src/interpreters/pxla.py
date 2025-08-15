@@ -56,7 +56,6 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
-from jax._src.interpreters import xla
 from jax._src.layout import Layout, AutoLayout, Format
 from jax._src.lib import xla_client as xc
 from jax._src.lib import jaxlib_extension_version
@@ -135,7 +134,7 @@ def shard_args(shardings: Sequence[JSharding], layouts, copy_semantics,
   if len(args) == 1:
     arg = args[0]
     if canonicalize:
-      arg = xla.canonicalize_dtype(arg)
+      arg = dtypes.canonicalize_value(arg)
     return shard_arg_handlers[type(arg)]([arg], shardings, layouts,
                                          xc_copy_semantics)
 
@@ -145,7 +144,7 @@ def shard_args(shardings: Sequence[JSharding], layouts, copy_semantics,
   for i, (arg, sharding, layout, cs) in enumerate(
       safe_zip(args, shardings, layouts, xc_copy_semantics)):
     if canonicalize:
-      arg = xla.canonicalize_dtype(arg)
+      arg = dtypes.canonicalize_value(arg)
     batch = batches[type(arg)]
     batch[0].append(i)
     batch[1].append(arg)

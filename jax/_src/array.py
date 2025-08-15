@@ -36,7 +36,6 @@ from jax._src import xla_bridge
 from jax._src.tree_util import tree_flatten, tree_unflatten, broadcast_prefix
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, Layout, Format
 from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
@@ -779,7 +778,7 @@ def make_array_from_callback(
           " context."
       )
     # Value can be python scalar, resolve it into something with dtype.
-    return xla.canonicalize_dtype(r)
+    return dtypes.canonicalize_value(r)
 
   if sharding.is_fully_replicated:
     devices = list(sharding._internal_device_list.addressable_device_list)  # type: ignore
@@ -1098,7 +1097,7 @@ def make_array_from_single_device_arrays(
           f" arrays as input, but got types {set(map(type, arrays))}")
     raise
 
-xla.canonicalize_dtype_handlers[ArrayImpl] = pxla.identity
+dtypes.canonicalize_value_handlers[ArrayImpl] = pxla.identity
 
 def _get_aval_array(self):
   return core.update_aval_with_sharding(self.aval, self.sharding)

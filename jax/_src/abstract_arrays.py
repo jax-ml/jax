@@ -82,3 +82,25 @@ for t in dtypes.python_scalar_dtypes:
   core.pytype_aval_mappings[t] = partial(_make_abstract_python_scalar, t)
 
 core.literalable_types.update(dtypes.python_scalar_dtypes.keys())
+
+
+def _canonicalize_ndarray_dtype(x):
+  return np.asarray(x, dtypes.canonicalize_dtype(x.dtype))
+
+def _canonicalize_masked_array_dtype(x):
+  raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
+                   "Use arr.filled() to convert the value to a standard numpy array.")
+
+def _canonicalize_python_scalar_dtype(typ, x):
+  return np.asarray(
+      x, dtypes.canonicalize_dtype(dtypes._scalar_type_to_dtype(typ, x)))
+
+dtypes.canonicalize_value_handlers.update(
+    (t, _canonicalize_ndarray_dtype) for t in numpy_scalar_types)
+
+dtypes.canonicalize_value_handlers[np.ndarray] = _canonicalize_ndarray_dtype
+dtypes.canonicalize_value_handlers[np.ma.MaskedArray] = _canonicalize_masked_array_dtype
+dtypes.canonicalize_value_handlers.update(
+    (t, partial(_canonicalize_python_scalar_dtype, t))
+    for t in dtypes.python_scalar_dtypes.keys()
+)

@@ -79,6 +79,7 @@ _TRACER_ERROR_NUM_TRACEBACK_FRAMES = config.int_flag(
     help='Set the number of stack frames in JAX tracer error messages.'
 )
 
+def identity(x): return x
 
 # -------------------- jaxprs --------------------
 
@@ -2490,6 +2491,7 @@ def _darray_aval(x):
   return DShapedArray(x._aval.shape, x._aval.dtype, x._aval.weak_type)
 
 pytype_aval_mappings[DArray] = _darray_aval
+dtypes.canonicalize_value_handlers[DArray] = identity
 
 
 @dataclass(frozen=True)
@@ -2537,7 +2539,9 @@ class ArrayRef:
   def __len__(self) -> int: return self._aval._len(self)
   def addupdate(self, x, idx=()): return self._aval._addupdate(self, idx, x)
   def unsafe_buffer_pointer(self): return self._buf.unsafe_buffer_pointer()
+
 pytype_aval_mappings[ArrayRef] = lambda x: x._aval
+dtypes.canonicalize_value_handlers[ArrayRef] = identity
 
 def array_ref(init_val, *, memory_space: Any = None):
   return array_ref_p.bind(init_val, memory_space=memory_space)
@@ -2637,6 +2641,7 @@ class Token:
   def block_until_ready(self):
     self._buf.block_until_ready()
 pytype_aval_mappings[Token] = lambda _: abstract_token
+dtypes.canonicalize_value_handlers[Token] = identity
 
 
 ### Operations on shapes and dimension sizes.
