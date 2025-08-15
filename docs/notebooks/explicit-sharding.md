@@ -47,7 +47,8 @@ error otherwise. Since the shardings are propagated at trace time they can
 also be _queried_ at trace time too. In the rest of this doc we'll describe
 how to use explicit sharding mode. Note that this is a new feature so we
 expect there to be bugs and unimplemented cases. Please let us know when you
-find something that doesn't work!
+find something that doesn't work! Also see {doc}`../the-training-cookbook`
+for a real-world machine learning training example that uses explicit sharding.
 
 ```{code-cell} ipython3
 :id: hVi6mApuVw3r

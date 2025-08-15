@@ -20,6 +20,12 @@ operations.
    distributed_data_loading
 
 .. toctree::
+   :caption: Machine learning
+   :maxdepth: 1
+
+   the-training-cookbook
+
+.. toctree::
    :caption: Automatic differentiation
    :maxdepth: 1
 

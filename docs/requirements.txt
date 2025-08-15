@@ -9,6 +9,7 @@ sphinx-remove-toctrees
 sphinx-design
 sphinxext-rediraffe
 myst-nb>=1.0.0
+sphinxcontrib-mermaid
 
 # Packages used for CI tests.
 flatbuffers

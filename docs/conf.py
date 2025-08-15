@@ -84,6 +84,8 @@ extensions = [
     'jax_list_config_options',
     'sphinx_design',
     'sphinxext.rediraffe',
+    'source_include',
+    'sphinxcontrib.mermaid'
 ]
 
 intersphinx_mapping = {
