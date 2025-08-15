@@ -558,7 +558,9 @@ class LaunchContext:
                 f"TMA with reduction_op={reduction_op} is not supported with Integers"
             )
           bitwidth = utils.bitwidth_impl(ref_ty.element_type)
-          if bitwidth == 4:
+          if bitwidth == 2:
+            tma_dtype = 8
+          elif bitwidth == 4:
             tma_dtype = 0
           elif bitwidth == 8:
             tma_dtype = 1

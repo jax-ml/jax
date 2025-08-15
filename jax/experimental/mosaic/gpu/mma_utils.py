@@ -47,6 +47,7 @@ def create_descriptor(
     logical_k_major: bool,  # False for LHS, True for RHS.
     # Soft deprecated. Use small tiling instead.
     large_tile: tuple[int, int] | None = None,
+    mma_bytewidth_k: int = 32,
 ):
   ref_ty = ir.MemRefType(ref.type)
   element_bitwidth = utils.bitwidth(ref_ty.element_type)
@@ -80,8 +81,7 @@ def create_descriptor(
 
   IGNORED = 0
   MMA_ATOM_ROWS = 8
-  MMA_BYTEWIDTH_K = 32
-  mma_width_k = 8 * MMA_BYTEWIDTH_K // element_bitwidth
+  mma_width_k = 8 * mma_bytewidth_k // element_bitwidth
   desc_k_tiling: tuple[int, ...] = ()
   desc_k_strides: tuple[int, ...]
   # As far as I can tell (which does not seem to fully align with the way MMA is
@@ -101,6 +101,7 @@ def create_descriptor(
       # There are configurations where large tiles are same size as small ones.
       # We use the small path since it has fewer restrictions.
       and set(large_tile) != {MMA_ATOM_ROWS, swizzle_elems}
+      and mma_bytewidth_k == 32
   ):  # Large tiles.
     if k_tiling_stride == 1 and mn_tiling_stride == k_tiling:
       fastest_dim = Dim.K
@@ -123,7 +124,7 @@ def create_descriptor(
             f"({mn_tiles}, {mn_tile_stride} != {math.prod(large_tile)})"
         )
       stride_byte_offset = MMA_ATOM_ROWS * swizzle
-      desc_k_strides = (MMA_BYTEWIDTH_K,)  # K is contiguous.
+      desc_k_strides = (mma_bytewidth_k,)  # K is contiguous.
     elif k_tiling_stride == k_tiling and mn_tiling_stride == 1:
       if k_large_tile != mn_large_tile:
         raise ValueError(
@@ -158,12 +159,17 @@ def create_descriptor(
       leading_byte_offset = IGNORED  # TC assumes K to be contiguous here.
       stride_byte_offset = to_byte_stride(mn_tile_stride)
       if k_tiling == k_group_size:
-        desc_k_strides = (MMA_BYTEWIDTH_K,)  # K is contiguous.
+        desc_k_strides = (mma_bytewidth_k,)  # K is contiguous.
       elif k_group_size % k_tiling == 0:
         desc_k_tiling = (k_tiling // mma_width_k,)
-        desc_k_strides = (MMA_ATOM_ROWS * swizzle, MMA_BYTEWIDTH_K)
+        desc_k_strides = (MMA_ATOM_ROWS * swizzle, mma_bytewidth_k)
       else:
-        raise NotImplementedError
+        if k_tiling < mma_width_k:
+          raise ValueError(
+              "K dimension tiling is smaller than the width of a single MMA"
+              " instruction. Increase swizzle."
+          )
+        raise NotImplementedError(f"{k_group_size=} must be larger than {k_tiling=}")
     elif k_tiling_stride * element_bitwidth == MMA_ATOM_ROWS * swizzle and mn_tiling_stride == 1:
       fastest_dim = Dim.MN
       leading_byte_offset = to_byte_stride(mn_tile_stride)

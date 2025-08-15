@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import dataclasses
 import math
-from typing import Callable
+from typing import Any, cast, Callable
 
 import itertools
 from jaxlib.mlir import ir
@@ -50,12 +50,17 @@ def create_instr_descriptor(
     input_dtype,
     transpose_a: bool = False,
     transpose_b: bool = False,
+    sparsity_selector: int | None = None,
 ):
   f16 = ir.F16Type.get()
   f32 = ir.F32Type.get()
   i32 = ir.IntegerType.get_signless(32)
 
   desc = 0
+  if sparsity_selector is not None:
+    assert 0 <= sparsity_selector < 3
+    desc |= sparsity_selector
+    desc |= 1 << 2  # Enable sparsity
   if acc_dtype == f16:
     d_type_val = 0
   elif acc_dtype == f32:
@@ -165,6 +170,7 @@ def mma(
     b_swizzle: int = 128,
     a_scale: TMEMRef | None = None,
     b_scale: TMEMRef | None = None,
+    a_sparse_metadata: TMEMRef | None = None,
     accumulate: ir.Value | bool = True,
     collective: bool = False,
 ) -> None:
@@ -174,10 +180,12 @@ def mma(
   i64 = ir.IntegerType.get_signless(64)
   if isinstance(accumulate, bool):
     accumulate = arith.constant(ir.IntegerType.get_signless(1), accumulate)
-  max_swizzle = max(a_swizzle, b_swizzle)
   num_cta = 2 if collective else 1
   if (is_scaled := a_scale is not None) != (b_scale is not None):
     raise ValueError("Either none or both scales should be provided")
+  is_sparse = a_sparse_metadata is not None
+  if is_scaled and is_sparse:
+    raise NotImplementedError("Block-scaled sparse matmuls unsupported")
 
   # Step 1. Establish the shape and element type of the operation.
   if not ir.MemRefType.isinstance(b.type):
@@ -186,8 +194,10 @@ def mma(
   if isinstance(a, TMEMRef):
     m, k2 = a.shape
     element_type2 = a.dtype
+    if is_scaled or is_sparse:
+      raise NotImplementedError("A in TMEM unsupported for block-scaled and sparse matmuls")
     if m != 128:
-      raise ValueError(f"Only M=128 is supported for MMA with A in TMEM, but got M={m}")
+      raise NotImplementedError(f"Only M=128 is supported for MMA with A in TMEM, but got M={m}")
     # Watch out: this layout must be consistent with D's layout (up to packing).
     expected_packing = 32 // utils.bitwidth(element_type)
     expected_layout = _infer_tmem_layout(
@@ -201,6 +211,8 @@ def mma(
     if not ir.MemRefType.isinstance(a.type):
       raise ValueError(f"A must be a memref, got {a.type}")
     (m, k2), element_type2 = mma_utils.tiled_memref_shape(a)
+  if is_sparse:
+    k2 *= 2
   if k != k2:
     raise ValueError(
         "MMA requires A and B to have the same contraction dimension (K),"
@@ -223,7 +235,9 @@ def mma(
     n_lane_groups = 1
   elif m == 64:
     if is_scaled:
-      raise ValueError("MMA with block scaling is not supported for M=64")
+      raise NotImplementedError("MMA with block scaling is not supported for M=64")
+    if is_sparse:
+      raise NotImplementedError("Sparse MMA not supported for M=64")
     # Watch out: this layout must be consistent with A's layout (up to packing).
     # 2CTA M=128 instruction uses a different TMEM layout than 1CTA M=64.
     expected_d_layout = _infer_tmem_layout(d.shape, collective, packing=1)
@@ -245,6 +259,8 @@ def mma(
   f16 = ir.F16Type.get()
   s32 = ir.IntegerType.get_signless(32)
   if element_type == f32 or element_type == ir.BF16Type.get():
+    if element_type == f32 and is_sparse:
+      raise NotImplementedError("Only 16-bit types supported for sparse MMA")
     if is_scaled:
       raise ValueError(
           f"MMA with element type {element_type} does not support block scaling"
@@ -268,6 +284,8 @@ def mma(
       t.isinstance(element_type)
       for t in {ir.Float8E5M2Type, ir.Float8E4M3FNType}
   ):
+    if is_sparse:
+      raise NotImplementedError("Only 16-bit types supported for sparse MMA")
     if d.dtype != f16 and d.dtype != f32:
       raise ValueError(
           f"MMA with element type {element_type} only supports accumulators of"
@@ -281,6 +299,8 @@ def mma(
   elif any(
       t.isinstance(element_type) for t in {ir.Float4E2M1FNType}
   ):
+    if is_sparse:
+      raise NotImplementedError("Only 16-bit types supported for sparse MMA")
     if not is_scaled:
       raise ValueError(
           f"MMA with element type {element_type} only supports block scaling"
@@ -291,6 +311,12 @@ def mma(
           f" accumulators, but got: {d.dtype}"
       )
   elif element_type == ir.IntegerType.get_signless(8):
+    if is_sparse:
+      raise NotImplementedError("Only 16-bit types supported for sparse MMA")
+    if is_scaled:
+      raise ValueError(
+          f"MMA with element type {element_type} does not support block scaling"
+      )
     if d.dtype != s32:
       raise ValueError(
           "MMA with element type s8 only supports s32 accumulators, but got:"
@@ -302,7 +328,11 @@ def mma(
   # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
   # instructions must be issued in groups of the same width as the swizzle.
   m_group_elems = m  # We have already verified M is supported above.
-  k_group_elems = 8 * max_swizzle // utils.bitwidth(element_type)
+  k_group_elems = 8 * max(a_swizzle * (1 + is_sparse), b_swizzle) // utils.bitwidth(element_type)
+  if is_sparse and k_group_elems < 64:
+    # This is a limitation of the implementation below. We could relax it if we
+    # ever need to support k=32.
+    k_group_elems = 64
   if n % 8:
     raise ValueError(f"N must be a multiple of 8, got: {n}")
   if n.bit_count() != 1:
@@ -332,8 +362,11 @@ def mma(
   if is_scaled:
     if collective:
       raise NotImplementedError("MMA with block scaling does not support collective")
-    if m != 128:
-      raise NotImplementedError(f"MMA with block scaling requires M to be 128, got: {m}")
+    assert m == 128  # Checked above.
+    if n % 32:
+      raise ValueError(
+          f"MMA with block scaling requires N to be divisible by 32, got: {n}"
+      )
     if k_group_elems != 128 or a_swizzle != b_swizzle:
       assert utils.bitwidth(element_type) <= 8
       expected_swizzle = 128 // (8 // utils.bitwidth(element_type))
@@ -351,10 +384,6 @@ def mma(
       raise ValueError(
           f"A scale dtype mismatch: expected f8e8m0fnu, got {a_scale.dtype}"
       )
-    if n % 32:
-      raise ValueError(
-          f"MMA with block scaling requires N to be divisible by 32, got: {n}"
-      )
     if b_scale.shape != (n, 4):
       raise ValueError(
           f"B scale shape mismatch: expected ({n}, 4), got {b_scale.shape}"
@@ -363,9 +392,27 @@ def mma(
       raise ValueError(
           f"B scale dtype mismatch: expected f8e8m0fnu, got {b_scale.dtype}"
       )
+  if is_sparse:
+    a_sparse_metadata = cast(TMEMRef, a_sparse_metadata)
+    if collective:
+      raise NotImplementedError("Collective sparse MMA unsupported")
+    if n % 32:
+      raise ValueError(f"Sparse MMA requires N to be divisible by 32, got: {n}")
+    if a_sparse_metadata.shape != (m, k // 2):
+      raise ValueError(
+          f"A sparse metadata shape mismatch: expected {(m, k // 2)}, got"
+          f" {a_sparse_metadata.shape}"
+      )
+    if a_sparse_metadata.dtype != ir.IntegerType.get_signless(2):
+      raise ValueError(
+          "A sparse metadata dtype mismatch: expected i2, got"
+          f" {a_sparse_metadata.dtype}"
+      )
 
   # Step 3. Compute the operand descriptors.
   if not isinstance(a, TMEMRef):
+    # Both dense and sparse matmul consume A with a K bytewidth of 32, only
+    # the group size is halved when it's sparse.
     (
         (a_desc_base, a_k_instr_strides),
         (a_m_group_stride, a_k_group_stride),
@@ -373,8 +420,9 @@ def mma(
     ) = mma_utils.create_descriptor(
         a,
         swizzle=a_swizzle,
-        group_size=(m_group_elems, k_group_elems),
+        group_size=(m_group_elems, k_group_elems // (1 + is_sparse)),
         logical_k_major=False,
+        mma_bytewidth_k=32,
     )
   else:
     a_fastest = mma_utils.Dim.K
@@ -389,6 +437,7 @@ def mma(
       swizzle=b_swizzle,
       group_size=(k_group_elems, n_group_elems),
       logical_k_major=True,
+      mma_bytewidth_k=64 if is_sparse else 32,
   )
 
   if is_scaled and utils.bitwidth(mma_element_type) == 4:
@@ -400,6 +449,11 @@ def mma(
       raise ValueError(
           "4-bit block scaled MMA only supports K-fastest operands, but B is N-fastest"
       )
+  if is_sparse:
+    if b_swizzle == 32 and b_fastest == mma_utils.Dim.K:
+      raise NotImplementedError(
+          "B tiling too small. Increase swizzle or transpose the input."
+      )
 
   # Step 4. Issue the instructions.
   true = arith.constant(ir.IntegerType.get_signless(1), 1)
@@ -407,24 +461,35 @@ def mma(
   n_col_groups = n_groups // n_lane_groups
   assert d.layout.base_tile_shape[0] % 4 == 0
   lanes_per_n_group = d.layout.base_tile_shape[0] // 4
+  a_sparse_addr_base = a_sparse_metadata.address if is_sparse else None  # type: ignore
   for mi, ni, ki in np.ndindex(m_groups, n_groups, k_groups):
     if isinstance(a, TMEMRef):
+      if m_groups != 1:
+        raise NotImplementedError("A address calculation for multiple M tiles")
       a_mk = a.slice(slice(None), utils.ds(ki * k_group_elems, k_group_elems)).address
     else:
       a_offset = mi * a_m_group_stride + ki * a_k_group_stride
       a_mk = arith.addi(a_desc_base, utils.c(mma_utils.encode_addr(a_offset), i64))
     b_offset = ni * b_n_group_stride + ki * b_k_group_stride
     b_nk = arith.addi(b_desc_base, utils.c(mma_utils.encode_addr(b_offset), i64))
-    if m_groups != 1:
-      raise NotImplementedError("D needs to be sliced")
-    if is_scaled and (n_groups != 1 or k_groups != 1):
-      raise NotImplementedError("Unrolling MMAs with block scaling")
+    if a_sparse_addr_base is not None:
+      if n_groups != 1 or m_groups != 1:
+        raise NotImplementedError("A sparse metadata address calculation for multiple tiles")
+      assert k_group_elems % 32 == 0
+      cols_per_k_group = k_group_elems // 32
+      a_sparse_addr = arith.addi(a_sparse_addr_base, utils.c(ki * cols_per_k_group, i32))
+    else:
+      a_sparse_addr = None
+    if is_scaled and (m_groups != 1 or n_groups != 1 or k_groups != 1):
+      raise NotImplementedError("Block-scaled metadata address calculation for multiple tiles")
     acc = accumulate if ki == 0 else true
     ni_lane_group, ni_col = ni // n_col_groups, ni % n_col_groups
     d_offset = (
         ((ni_lane_group * lanes_per_n_group) << 16)
         + ni_col * n_collective_group_elems
     )
+    if m_groups != 1:
+      raise NotImplementedError("D address calculation for multiple M tiles")
     _do_mma(
         arith.addi(d.address, arith.constant(i32, d_offset)),
         a_mk,
@@ -440,6 +505,7 @@ def mma(
         b_k_strides=b_k_instr_strides,
         a_scale_addr=a_scale.address if a_scale is not None else None,
         b_scale_addr=b_scale.address if b_scale is not None else None,
+        a_sparse_addr=a_sparse_addr,
         accumulate=acc,
         element_type=mma_element_type,
     )
@@ -453,8 +519,9 @@ def _do_mma(
     b_transpose: bool,
     a_k_strides: tuple[tuple[int, ...], tuple[int, ...]] | None,
     b_k_strides: tuple[tuple[int, ...], tuple[int, ...]],
-    a_scale_addr: TMEMRef | None,
-    b_scale_addr: TMEMRef | None,
+    a_scale_addr: ir.Value | None,
+    b_scale_addr: ir.Value | None,
+    a_sparse_addr: ir.Value | None,
     m: int,
     n: int,
     k: int,
@@ -466,14 +533,16 @@ def _do_mma(
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
-  elem_bitwidth = utils.bitwidth(element_type)
-  instr_k = 8 * 32 // elem_bitwidth
-  packing = 8 * 4 // elem_bitwidth
   a_k_idx_tiling, a_k_strides = a_k_strides or (None, None)
   b_k_idx_tiling, b_k_strides = b_k_strides
   assert all(s % 16 == 0 for s in itertools.chain(a_k_strides or (), b_k_strides))
   assert (a_scale_addr is None) == (b_scale_addr is None)
   is_scaled = a_scale_addr is not None
+  is_sparse = a_sparse_addr is not None
+  elem_bitwidth = utils.bitwidth(element_type)
+  instr_k = (1 + is_sparse) * 8 * 32 // elem_bitwidth
+  packing = 8 * 4 // elem_bitwidth
+  assert not is_sparse or elem_bitwidth == 16  # Only 16-bit supported for now.
 
   extra_args: Sequence[object]
   scale_steps = None
@@ -514,6 +583,10 @@ def _do_mma(
   a_in_tmem = a_k_strides is None
   a_ptx = "[$1]" if a_in_tmem else "$1"
   a_ptx_constraint = "r" if a_in_tmem else "l"
+  sparse_mod = ".sp" if is_sparse else ""
+  sparse_meta_ptx = "[$5], " if is_sparse else ""
+  extra_constraints += ",r" if is_sparse else ""
+  sparse_addr: tuple[Any, ...] = ()
   assert a_desc_or_addr.type == ir.IntegerType.get_signless(32 if a_in_tmem else 64)
   assert scale_steps is None or scale_steps == k // instr_k
   def _get_offset(idx: int, idx_tiling: tuple[int, ...], strides: tuple[int, ...]):
@@ -534,8 +607,23 @@ def _do_mma(
           m, n, element_type, element_type, scale_id, scale_id, a_transpose, b_transpose
       )
     else:
+      sp_selector = None
+      if is_sparse:
+        assert (k // instr_k) % 2 == 0
+        sp_selector = k_step % 2
+        selector_width = 64
+        k_steps_for_col_inc = selector_width // instr_k
+        # If the K group is large, we need to increment the sparse metadata.
+        # TODO(apaszke): At this point the purpose of this function is becoming
+        # less clear, since we end up replicating address arithmetic that's
+        # already there in the caller. We should unify them into a single loop.
+        sparse_addr = (
+            arith.addi(
+                a_sparse_addr, utils.c(k_step // k_steps_for_col_inc * 2, i32)
+            ),
+        )
       i_desc = create_instr_descriptor(
-          m * num_cta, n * num_cta, d_type, element_type, a_transpose, b_transpose
+          m * num_cta, n * num_cta, d_type, element_type, a_transpose, b_transpose, sparsity_selector=sp_selector
       )
     if a_in_tmem:
       a_desc_or_addr_instr = arith.addi(
@@ -549,8 +637,8 @@ def _do_mma(
     b_desc_instr = arith.addi(b_desc, _get_offset(k_step, b_k_idx_tiling, b_k_strides))
     llvm.inline_asm(
         ir.Type.parse("!llvm.void"),
-        [d_addr, a_desc_or_addr_instr, b_desc_instr, i_desc, accumulate, *extra_args],
-        f"tcgen05.mma.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, $2, $3, {extra_ptx}$4;",
+        [d_addr, a_desc_or_addr_instr, b_desc_instr, i_desc, accumulate, *extra_args, *sparse_addr],
+        f"tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, $2, {sparse_meta_ptx}$3, {extra_ptx}$4;",
         f"r,{a_ptx_constraint},l,r,b" + extra_constraints,
         has_side_effects=True,
     )
@@ -862,6 +950,23 @@ def scales_layout():
       warp_dims=(fa.Replicated(times=4),),
       lane_dims=(-2,),
       vector_dim=-3,
+  )
+
+
+def sparse_meta_layout():
+  """A TMEM layout for A sparsity metadata.
+
+  See https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-sparse-matrices-sparsity-selector-kind-tf32-m128-256
+  """
+  # TODO(apaszke): This does not really describe this layout and we can't do it
+  # until we add support for multiple vector dims. Still, it's ok to do for now,
+  # because we don't use TMEM layouts for any automatic transformations at the
+  # moment and only ever compare it for equality.
+  return TMEMLayout(
+      fa.Tiling(((TMEM_ROWS, 16), (TMEM_ROWS // 4, 1), (16, 1), (8, 1))),
+      warp_dims=(-8,),
+      lane_dims=(-2, -4, -6),
+      vector_dim=-7,
   )
 
 
@@ -1327,6 +1432,53 @@ def async_copy_scales_smem_to_tmem(smem_ref: ir.Value, tmem_ref: TMEMRef):
         ir.Type.parse("!llvm.void"),
         [store_ptr, desc],
         "tcgen05.cp.cta_group::1.32x128b.warpx4 [$0], $1;",
+        "r,l",
+        has_side_effects=True,
+    )
+
+
+def async_copy_sparse_metadata_smem_to_tmem(smem_ref: ir.Value, tmem_ref: TMEMRef):
+  i8 = ir.IntegerType.get_signless(8)
+  i32 = ir.IntegerType.get_signless(32)
+  smem_ty = ir.MemRefType(smem_ref.type)
+  if (dtype := smem_ty.element_type) != tmem_ref.dtype:
+    raise ValueError(f"Incompatible dtypes: SMEM has {dtype}, TMEM has {tmem_ref.dtype}")
+  if dtype != ir.IntegerType.get_signless(2):
+    raise NotImplementedError(f"Unsupported dtype: {dtype}, only i2 supported")
+  if tmem_ref.shape[0] % 128:
+    raise ValueError(f"TMEM reference must have a multiple of 128 rows, but got {tmem_ref.shape[0]}")
+  if tmem_ref.shape[1] % 64:
+    raise ValueError(f"TMEM reference must have a multiple of 64 colums, but got {tmem_ref.shape[1]}")
+  if tmem_ref.layout != sparse_meta_layout():
+    raise ValueError(f"TMEM layout {tmem_ref.layout} is not supported")
+  smem_shape = tuple(smem_ty.shape)
+  expected_smem_shape = (tmem_ref.shape[0] // 128, tmem_ref.shape[1] // 64, 128, 64)
+  if smem_shape != expected_smem_shape:
+    raise NotImplementedError(
+        f"SMEM has {smem_shape}, but expected {expected_smem_shape} for TMEM"
+        f" ref shape {tmem_ref.shape}"
+    )
+  strides, _ = smem_ty.get_strides_and_offset()
+  if strides != utils.get_contiguous_strides(smem_shape):
+    raise ValueError("Only copies from contiguous SMEM references are supported")
+  if expected_smem_shape[0] != 1:
+    raise NotImplementedError("Only M=128 supported")
+  k_tile_stride = strides[1]
+  if k_tile_stride % 16:
+    raise ValueError("K tile stride must be a multiple of 16")
+  k_tile_byte_stride = k_tile_stride // 4
+  smem_base_ptr = utils.memref_ptr(smem_ref, 3)
+  for k_tile in range(expected_smem_shape[1]):
+    load_ptr = utils.getelementptr(
+        smem_base_ptr, [k_tile * k_tile_byte_stride], i8
+    )
+    store_ptr = arith.addi(tmem_ref.address, arith.constant(i32, 4 * k_tile))
+    # The "core matrix" here is the same as in MMA: 8x(16 bytes).
+    desc = mma_utils.encode_descriptor(load_ptr, 0, 8 * 16, swizzle=None)
+    llvm.inline_asm(
+        ir.Type.parse("!llvm.void"),
+        [store_ptr, desc],
+        "tcgen05.cp.cta_group::1.128x128b [$0], $1;",
         "r,l",
         has_side_effects=True,
     )
