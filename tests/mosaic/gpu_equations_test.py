@@ -305,6 +305,48 @@ class EquationSystemTest(parameterized.TestCase):
     expr = equations.BroadcastInDim(layout, axes=(1, 2), shape=(8, 128, 8))
     self.assertEqual(equations.reduce_expression(expr, {}), expr)
 
+  def test_reduce_reshape_of_splat_layout_is_reduced_to_splat_layout(self):
+    layout = C(mgpu.WGSplatFragLayout((1024,)))
+    source_shape, target_shape = (1024,), (128, 8)
+    self.assertEqual(
+        equations.reduce_expression(
+            equations.Reshape(layout, source_shape, target_shape), {}
+        ),
+        C(mgpu.WGSplatFragLayout(target_shape)),
+    )
+
+  def test_reduce_reshape_of_strided_layout_is_reduced_to_strided_layout(self):
+    layout = C(mgpu.WGStridedFragLayout((1024,), vec_size=8))
+    source_shape, target_shape = (1024,), (128, 8)
+    self.assertEqual(
+        equations.reduce_expression(
+            equations.Reshape(layout, source_shape, target_shape), {}
+        ),
+        C(mgpu.WGStridedFragLayout(target_shape, vec_size=8)),
+    )
+
+  def test_reduce_reshape_of_tiled_layout_with_indivisible_shape_is_irreducible(self):
+    layout = C(mgpu.WGMMA_LAYOUT)
+    source_shape, target_shape = (128, 8), (129, 8)
+    eq = equations.Reshape(layout, source_shape, target_shape)
+    self.assertEqual(equations.reduce_expression(eq, {}), eq)
+
+  def test_reduce_reshape_of_tiled_layout_with_modified_minor_tiled_dimensions_is_irreducible(
+      self,
+  ):
+    layout = C(mgpu.WGMMA_LAYOUT)
+    source_shape, target_shape = (2, 128, 8), (2, 64, 16)
+    eq = equations.Reshape(layout, source_shape, target_shape)
+    self.assertEqual(equations.reduce_expression(eq, {}), eq)
+
+  def test_reduce_reshape_of_tiled_layout_with_compatible_shape_is_identity(
+      self,
+  ):
+    layout = C(mgpu.WGMMA_LAYOUT)
+    source_shape, target_shape = (2, 128, 8), (256, 8)
+    eq = equations.Reshape(layout, source_shape, target_shape)
+    self.assertEqual(equations.reduce_expression(eq, {}), layout)
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
