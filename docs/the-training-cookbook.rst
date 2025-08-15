@@ -6,7 +6,7 @@ Traditionally, machine learning codebases rely on libraries to perform much of t
 
 .. tagged-block:: the-training-cookbook.py train-loop
 
-For each line of code above, we will explain the best practices and showcase the core technologies we have assembled to empower you to write simple, yet unbelievably performant code in JAX. The code above is a segment of a self-contained, completely functional `companion script <https://github.com/jax-ml/jax/blob/main/docs/the-training-cookbook.py>`_ in which we initialize a `Vaswani et al. (2017) <https://arxiv.org/abs/170.03762>`_ Transformer decoder, define the training loss for next-token prediction, and `Adam optimizer <https://arxiv.org/abs/1412.6980>`, in pure JAX. The code therein is suited to TPUs, CPUs, and GPUs, as well as single- and multi-host systems. For that reason, we use the terms *device* or *accelerator* to refer interchangeably to the hardware JAX is primarily performing arithmetic on—whether it be a TPU, GPU, or CPU—and *host system* to refer to operations performed exclusively using the host CPU. In this guide, there are many aspects of the JAX APIs we will gloss over for the sake of expediency. These are available for you to peruse at your leisure in our API documentation. However, there is a central JAX concept that one must confront in detail for much of what follows to cohere.
+For each line of code above, we will explain the best practices and showcase the core technologies we have assembled to empower you to write simple, yet unbelievably performant code in JAX. The code above is a segment of a self-contained, completely functional `companion script <https://github.com/jax-ml/jax/blob/main/docs/the-training-cookbook.py>`_ in which we initialize a `Vaswani et al. (2017) <https://arxiv.org/abs/170.03762>`_ Transformer decoder, define the training loss for next-token prediction, and `Adam optimizer <https://arxiv.org/abs/1412.6980>`_, in pure JAX. The code therein is suited to TPUs, CPUs, and GPUs, as well as single- and multi-host systems. For that reason, we use the terms *device* or *accelerator* to refer interchangeably to the hardware JAX is primarily performing arithmetic on—whether it be a TPU, GPU, or CPU—and *host system* to refer to operations performed exclusively using the host CPU. In this guide, there are many aspects of the JAX APIs we will gloss over for the sake of expediency. These are available for you to peruse at your leisure in our API documentation. However, there is a central JAX concept that one must confront in detail for much of what follows to cohere.
 
 Device Mesh and Shardings
 -------------------------
@@ -15,11 +15,11 @@ JAX employs the `Single Program, Multiple Data (SPMD) <https://en.wikipedia.org/
 
 Device Mesh
 ~~~~~~~~~~~
-A :class:`jax.sharding.Mesh` is an arrangement of all our accelerators into a NumPy ``ndarray``, together with string labels for the axes of the device array. The reason for using an array is that this allows for a very convenient annotation for how arrays should be partitioned across devices. For this introduction, we will use the notation of an ordered dictionary [#ordered], so that ``{"x": 2, "y": 4}`` refers to a device mesh of shape ``(2, 4)`` with labeled axes ``"x"`` and ``"y"``. To shard an array ``param``, we decorate it with a :class:`jax.P`, which is a tuple of ``str | None`` elements of the same length as the dimensions of the array. The ``jax.P`` specifies which axes of our array are to be sharded over which axes of devices. A more thorough account of the notation of shardings and sharded computations is available in :ref:`sharded-computation`. Some common sharding strategies such as data parallel, fully sharded data parallel, and basic tensor parallelism will be covered in :ref:`achieving-high-performance`.
+A :class:`jax.sharding.Mesh` is an arrangement of all our accelerators into a NumPy ``ndarray``, together with string labels for the axes of the device array. The reason for using an array is that this allows for a very convenient annotation for how arrays should be partitioned across devices. For this introduction, we will use the notation of an ordered dictionary [#ordered]_, so that ``{"x": 2, "y": 4}`` refers to a device mesh of shape ``(2, 4)`` with labeled axes ``"x"`` and ``"y"``. To shard an array ``param``, we decorate it with a :class:`jax.P`, which is a tuple of ``str | None`` elements of the same length as the dimensions of the array. The ``jax.P`` specifies which axes of our array are to be sharded over which axes of devices. A more thorough account of the notation of shardings and sharded computations is available in :ref:`sharded-computation`. Some common sharding strategies such as data parallel, fully sharded data parallel, and basic tensor parallelism will be covered in :ref:`achieving-high-performance`.
 
 .. admonition:: Example
 
-    Suppose we have a device mesh of ``{"x": 2, "y": 4}`` and an array ``param`` of shape ``(32, 64, 64, 128)``. If we shard this array with `jax.P(None, "x", "y", None, None) `, we end up with shards of size ``(32, 32, 16, 128)`` distributed across the devices. The ``None`` indicates that an axis should not be sharded. JAX implicitly broadcasts trailing axes, so an identical sharding can be achieved more concisely with `jax.P(None, "x", "y")`. As a result, the shorthand for a fully replicated array (of any dimension) is `jax.P()`.
+    Suppose we have a device mesh of ``{"x": 2, "y": 4}`` and an array ``param`` of shape ``(32, 64, 64, 128)``. If we shard this array with `jax.P(None, "x", "y", None) `, we end up with shards of size ``(32, 32, 16, 128)`` distributed across the devices. The ``None`` indicates that an axis should not be sharded. JAX implicitly broadcasts trailing axes, so an identical sharding can be achieved more concisely with `jax.P(None, "x", "y")`. As a result, the shorthand for a fully replicated array (of any dimension) is `jax.P()`.
 
 .. admonition:: Example
 
@@ -27,7 +27,7 @@ A :class:`jax.sharding.Mesh` is an arrangement of all our accelerators into a Nu
 
     .. code-block:: python
 
-        param = jnp.zeros((256, 192), device=jax.P("gpu", None))
+        param = jnp.zeros((256, 192), out_sharding=jax.P("gpu", None))
 
     The whole of ``param`` will be replicated twice, but within each host, it will be spread across the eight locally attached GPUs, with each GPU storing a shard of shape ``(32, 192)`` in HBM. This is particularly useful for :ref:`fsdp-sharding`.
 
@@ -72,7 +72,7 @@ Optimizer Initialization
 .. tagged-block:: the-training-cookbook.py get-train-state
    :hl_lines: 5
 
-When it comes to setting up the optimizer state, things are a little less straightforward than when we built the model parameters. The `Adam optimizer <https://arxiv.org/abs/1412.6980>`_ requires that, for each parameter, we keep track of three optimization states: ``mu``, ``nu``, and ``count``. The simplest of these is ``count``, which stores the number of training steps we have performed. This is just a scalar used to de-bias the Adam updates. The ``mu`` and ``nu`` states will be arrays of the same shape, dtype, and sharding as the accompanying parameter ``param`` [#zeros_like]
+When it comes to setting up the optimizer state, things are a little less straightforward than when we built the model parameters. The `Adam optimizer <https://arxiv.org/abs/1412.6980>`_ requires that, for each parameter, we keep track of three optimization states: ``mu``, ``nu``, and ``count``. The simplest of these is ``count``, which stores the number of training steps we have performed. This is just a scalar used to de-bias the Adam updates. The ``mu`` and ``nu`` states will be arrays of the same shape, dtype, and sharding as the accompanying parameter ``param`` [#zeros_like]_
 
 .. tagged-block:: the-training-cookbook.py get-adam-state
 
@@ -109,7 +109,7 @@ Examining the call signature of the function ``adam_apply`` gives us a hint:
 
 .. tagged-block:: the-training-cookbook.py adam-apply
 
-Because ``train_state.params`` is the first argument, :func:`jax.tree.map` uses its tree structure to guide the mapping process.[#prefix_tree] This means that ``train_state.opt`` is traversed only as deep as the leaves of ``train_state.params``. The optimizer state for each parameter is therefore passed in as a complete subtree, which allows us to easily access all relevant states (like ``mu`` and ``nu``) for a given ``param`` inside ``adam_apply``.
+Because ``train_state.params`` is the first argument, :func:`jax.tree.map` uses its tree structure to guide the mapping process.[#prefix_tree]_ This means that ``train_state.opt`` is traversed only as deep as the leaves of ``train_state.params``. The optimizer state for each parameter is therefore passed in as a complete subtree, which allows us to easily access all relevant states (like ``mu`` and ``nu``) for a given ``param`` inside ``adam_apply``.
 
 .. tip::
 
@@ -126,11 +126,11 @@ Efficiency via Asynchronous Dispatch
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 One of the most important tasks performed by the host system is to fetch data and place it on the accelerators so that the accelerators are never waiting for data. The time when accelerators are waiting idle between train steps is referred to as the *step bubble*. We can leverage asynchronous dispatch to minimize the step bubble. Let's see how this works with our training loop, discarding, for the moment, the line concerning the ``record_writer``.
 
-.. tagged-block:: the-training-cookbook.py train-loop 6:7
+.. tagged-block:: the-training-cookbook.py train-loop 5:7
 
 When this code executes, Python will first query the range iterator, get ``step`` (with value ``0``), then call ``next(batch)``, which will take some time to retrieve the batch. Then, ``train_step`` gets called. So far, nothing out of the ordinary.
 
-What happens next is interesting. Because :func:`jax.jit`-decorated calls are non-blocking, the call to ``train_step`` returns to the Python interpreter immediately. While the computation is enqueued on the accelerator, no work is actually performed yet. The Python loop continues, advancing the step counter and calling ``next(batch)`` for the *next* iteration. Once the second call to ``train_step`` is made, its inputs are now the mutated reference to ``train_state`` from the previous JIT call and a fresh batch of data. The runtime is clever and sees that in order to execute the second call to ``train_step``, we first need to realize the ``train_state`` result of step ``0`` to perform the mutation. And so it fires off the computation for the first step, and, crucially, while this happens, ``train_step``, once again, returns immediately, and the loop skips over again. Python now runs ahead until it encounters the ``next(batch)`` function at step 3, which proceeds to execute in Python, loading data, *while* the first train step is executing (for real this time). And just like that, we can simultaneously load data and perform math on the accelerator, without any traditional multiprocessing. [#sleep]
+What happens next is interesting. Because :func:`jax.jit`-decorated calls are non-blocking, the call to ``train_step`` returns to the Python interpreter immediately. While the computation is enqueued on the accelerator, no work is actually performed yet. The Python loop continues, advancing the step counter and calling ``next(batch)`` for the *next* iteration. Once the second call to ``train_step`` is made, its inputs are now the mutated reference to ``train_state`` from the previous JIT call and a fresh batch of data. The runtime is clever and sees that in order to execute the second call to ``train_step``, we first need to realize the ``train_state`` result of step ``0`` to perform the mutation. And so it fires off the computation for the first step, and, crucially, while this happens, ``train_step``, once again, returns immediately, and the loop skips over again. Python now runs ahead until it encounters the ``next(batch)`` function at step 3, which proceeds to execute in Python, loading data, *while* the first train step is executing (for real this time). And just like that, we can simultaneously load data and perform math on the accelerator, without any traditional multiprocessing. [#sleep]_
 
 .. mermaid::
 
@@ -314,7 +314,7 @@ The drawback of data-parallel sharding is that we have to keep multiple, full, r
 
 .. note::
 
-    While FSDP entails a great deal more communication than data parallel, in practice we are able to overlap the communication with the compute, thereby hiding it and achieving the same throughput at a drastically improved HBM budget. TODO: Mention specific flags to enable this for TPUs vs GPUs. On TPUs it's the async all-gather and reduce-scatter functionality. On GPUs, you have to set threshold values as specified in the NVIDIA JAX-Toolbox repository.
+    While FSDP entails a great deal more communication than data parallel, in practice we are able to overlap the communication with the compute, thereby hiding it and achieving the same throughput at a drastically improved HBM budget.
 
 Tensor Parallel
 ~~~~~~~~~~~~~~~
