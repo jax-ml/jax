@@ -1,7 +1,7 @@
 # Configuration related to self-hosted runner.
 self-hosted-runner:
   labels:
-    - "linux-x86-n2-32" # Linux X86 runner using the 32 vcpu n2-standard-32 machine.
+    - "linux-x86-n4-32" # Linux X86 runner using the 32 vcpu n4-standard-32 machine.
     - "linux-x86-n2-64" # Linux X86 runner using the 64 vcpu n2-standard-64 machine.
     - "linux-x86-g2-16-l4-1gpu" # Linux X86 GPU runner using g2-standard-16 machine with 1 NVIDIA L4 GPU attached.
     - "linux-x86-g2-48-l4-4gpu" # Linux X86 GPU runner using g2-standard-48 machine with 4 NVIDIA L4 GPUs attached.
