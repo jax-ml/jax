@@ -23,4 +23,5 @@ pooch
 numpy
 rich[jupyter]
 cmake
+cloudpickle
 .[ci]  # Install jax from the current directory; jaxlib from pypi.

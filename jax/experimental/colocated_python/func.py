@@ -379,12 +379,12 @@ def _make_callable(info: FunctionInfo, specialization: Specialization):
         expressed as a `PyTree[ShapeDtypeStruct]` for `(args, kwargs)` of a
         function call.
       out_specs_fn: Optionally specifies a function that computes the output
-        specs from input specs. If unspecified, colocated_python will compute
+        specs from input specs. If unspecified, colocated Python will compute
         the output specs during the very first execution, and this execution
         will be synchronous.
       devices: Optionally specifies the devices to execute the function on. Must
-        be provided if in_specs has no leaves because devices cannot be inferred
-        from input specs or arguments.
+        be provided if `in_specs` has no leaves because devices cannot be
+        inferred from input specs or arguments.
 
     Returns:
       A colocated Python callable with extra specialization.
@@ -409,10 +409,13 @@ def _make_callable(info: FunctionInfo, specialization: Specialization):
 
   @api_boundary
   def __call__(*args, **kwargs):
-    """Executes the function.
+    """Executes the given Python function on the same devices as the arguments or as specialized.
 
-    If the output specs are not known, the very first execution will be
-    synchronous.
+    If the callable has not been specialized with output shapes and shardings
+    (see `specialize` above), the very first call will run synchronously to
+    discover output shapes and shardings, and will run asynchronously after. If
+    specialized with output shapes and shardings, every execution of the
+    callable will be asynchronous.
     """
     args_leaves, in_specs_treedef = tree_util.tree_flatten((args, kwargs))
 
