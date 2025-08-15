@@ -569,6 +569,23 @@ def _wgmma_equation_system(
   return system, {variable: operands_or_results}, []
 
 
+def _reduction_equation_and_hint(
+    larger: eqns.Variable,
+    smaller: eqns.Variable,
+    larger_shape: tuple[int, ...],
+    reduction_dims: tuple[int, ...]
+) -> tuple[eqns.Equation, Hint]:
+  reduce_expr = eqns.Reduce(larger, reduction_dims)
+  # There are always many options for broadcasting a layout, so we can only
+  # derive a broadcast hint in the out_variable -> source_variable direction.
+  broadcast_dims = tuple(
+      i for i in range(len(larger_shape)) if i not in reduction_dims
+  )
+  broadcast_expr = eqns.BroadcastInDim(smaller, broadcast_dims, larger_shape)
+  broadcast_hint = Hint(variable=larger, expression=broadcast_expr)
+  return eqns.Equation(lhs=smaller, rhs=reduce_expr), broadcast_hint
+
+
 @_add_equation_system_derivation_rule(vector.MultiDimReductionOp)
 def _multi_dim_reduction_equation_system(
     op: vector.MultiDimReductionOp,
@@ -578,25 +595,38 @@ def _multi_dim_reduction_equation_system(
   out = OperandOrResult(op, VariableType.RESULT, 0)
   source_variable = eqns.Variable(source)
   out_variable = eqns.Variable(out)
-  reduce_expr = eqns.Reduce(source_variable, tuple(op.reduction_dims))
 
-  # There are always many options for broadcasting a layout, so we can only
-  # derive a broadcast hint in the out_variable -> source_variable direction.
-  in_shape: tuple[int, ...] = tuple(op.source.type.shape)
-  broadcast_dims = tuple(
-      i for i in range(len(in_shape)) if i not in op.reduction_dims
+  reduction_equation, broadcast_hint = _reduction_equation_and_hint(
+      source_variable, out_variable, tuple(op.source.type.shape), tuple(op.reduction_dims)
   )
-  broadcast_expr = eqns.BroadcastInDim(out_variable, broadcast_dims, in_shape)
-  broadcast_hint = Hint(variable=source_variable, expression=broadcast_expr)
-
   # TODO(bchetioui): in the future, we may need to add rules that prevent
   # strided layouts from being chosen---since trying to reduce a strided layout
   # may cause us to raise an Exception at the moment.
   return (
-      eqns.EquationSystem(
-          equations=[eqns.Equation(lhs=out_variable, rhs=reduce_expr)],
-      ),
+      eqns.EquationSystem(equations=[reduction_equation]),
       {source_variable: [source], out_variable: [acc, out]},
+      [broadcast_hint],
+  )
+
+
+@_add_equation_system_derivation_rule(mgpu.BroadcastInDimOp)
+def _broadcast_in_dim_equation_system(
+    op: mgpu.BroadcastInDimOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  out_variable = eqns.Variable(OperandOrResult(op, VariableType.RESULT, 0))
+  source_variable = eqns.Variable(OperandOrResult(op, VariableType.OPERAND, 0))
+  out_shape = tuple(cast(ir.ShapedType, op.result.type).shape)
+  reduction_dims = tuple(
+      i for i in range(len(out_shape)) if i not in op.broadcast_dimensions
+  )
+
+  reduction_equation, broadcast_hint = _reduction_equation_and_hint(
+      out_variable, source_variable, out_shape, reduction_dims
+  )
+
+  return (
+      eqns.EquationSystem(equations=[reduction_equation]),
+      {source_variable: [source_variable.key], out_variable: [out_variable.key]},
       [broadcast_hint],
   )
 

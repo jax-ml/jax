@@ -269,17 +269,25 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkOutLayouts(cast, [wgmma_layout])
 
   @parameterized.parameters(
-      (0, mgpu.WGMMA_ROW_LAYOUT, None, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_LAYOUT),
-      (1, mgpu.WGMMA_COL_LAYOUT, None, mgpu.WGMMA_COL_LAYOUT, mgpu.WGMMA_LAYOUT),
-      (0, None, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_LAYOUT),
-      (1, None, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_COL_LAYOUT, mgpu.WGMMA_LAYOUT),
+      (0, mgpu.WGMMA_ROW_LAYOUT, None),
+      (1, mgpu.WGMMA_COL_LAYOUT, None),
+      (0, None, mgpu.WGMMA_LAYOUT),
+      (1, None, mgpu.WGMMA_LAYOUT),
+      (0, mgpu.TCGEN05_ROW_LAYOUT, None),
+      (0, None, mgpu.TCGEN05_LAYOUT),
+      (1, None, mgpu.TCGEN05_LAYOUT),
   )
-  def test_infer_broadcast_in_dim_layout(
-      self, broadcast_dim, in_cast, out_cast, in_layout, out_layout
-  ):
-    self.skip_if_equations()
-    in_shape = (64,)
-    out_shape = (64, 64)
+  def test_infer_broadcast_in_dim_layout(self, broadcast_dim, in_cast, out_cast):
+    in_shape = (128,)
+    out_shape = (128, 128)
+
+    # The tests always expect WGMMA or TCGEN05 as the out layout.
+    if out_cast == mgpu.TCGEN05_LAYOUT or in_cast == mgpu.TCGEN05_ROW_LAYOUT:
+      if self.INFERENCE_IMPL == InferenceImplementation.LEGACY:
+        self.skipTest("unsupported in the legacy implementation")
+      out_layout = mgpu.TCGEN05_LAYOUT
+    else:
+      out_layout = mgpu.WGMMA_LAYOUT
 
     with ir.InsertionPoint(self.module.body):
       [x] = undefs(ir.VectorType.get(in_shape, ir.F32Type.get()))
@@ -288,6 +296,8 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       bcast = mgpu.dialect.BroadcastInDimOp(out_type, x, [broadcast_dim])
       if out_cast is not None:
         layout_cast(bcast.result, out_cast)
+
+    in_layout = out_layout.reduce((1 - broadcast_dim,))
 
     self.infer_layout(self.module)
     self.checkInLayouts(bcast, [layouts.to_layout_attr(in_layout)])
