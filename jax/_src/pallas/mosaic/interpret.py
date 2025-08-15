@@ -695,6 +695,10 @@ def _check_for_revisiting(device_id, local_core_id, loop_idx, output_blocks):
   device_id = int(device_id)
   local_core_id = int(local_core_id)
   loop_idx = tuple(int(x) for x in loop_idx)
+  try:
+    output_blocks = jax.tree.map(int, output_blocks)
+  except:
+    raise ValueError('Advanced indexers are not supported on TPU')
   output_ranges = [_to_range(b) if b is not None else None
                    for b in output_blocks]
 
@@ -2578,7 +2582,12 @@ def interpret_pallas_call(
               shape=output_vals[j].shape,
               int_indexer_shape=(),
           )
-          output_slices.append((transform,))
+          if j in oi_alias_map:
+            # Suppress revisiting check for output buffers that are aliased to
+            # input buffers.
+            output_slices.append(None)
+          else:
+            output_slices.append((transform,))
           jax.lax.cond(
               (iteration_idx + 1 == loop_bound)
               | jax.lax.reduce_or(
