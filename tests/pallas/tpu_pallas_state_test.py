@@ -191,7 +191,7 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
     np.testing.assert_allclose(o, x @ y, atol=atol)
 
 
-class ShmallasTest(jtu.JaxTestCase):
+class CoreMapTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
@@ -219,6 +219,22 @@ class ShmallasTest(jtu.JaxTestCase):
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     y = f(x)
     np.testing.assert_array_equal(y, x)
+
+  def test_empty_core_map_raises_error(self):
+    @jax.jit
+    def f(x):
+      y = jnp.zeros_like(x)
+      def inner(refs):
+        del refs  # Unused.
+        @pl.core_map(pltpu.create_tensorcore_mesh("x"))
+        def _():
+          pass
+      _, y = pl.run_state(inner)((x, y))
+      return y
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    with self.assertRaisesRegex(Exception,
+      "Attempted to lower core_map without discharging."):
+      f(x)
 
   def test_can_query_core_index_pallas_kernel_with_core_map(self):
     mesh = pltpu.create_tensorcore_mesh("x")

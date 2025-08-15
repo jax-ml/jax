@@ -186,7 +186,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       if p.name in ("max_contiguous", "multiple_of", "run_scoped"):
         # Pallas-specific primitives are not supported.
         continue
-      if p.name == "pallas_call":
+      if p.name == "pallas_call" or p.name == "core_map":
         continue
       if p.name == "ragged_all_to_all":
         continue
