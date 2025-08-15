@@ -37,10 +37,10 @@ jobs:
   build:
     # Don't execute in fork due to runner type
     if: github.repository == 'jax-ml/jax'
-    name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ubuntu-20.04, x64=${{ matrix.enable-x64}})"
+    name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ubuntu-22.04, x64=${{ matrix.enable-x64}})"
     runs-on: linux-x86-n2-32
     container:
-      image: index.docker.io/library/ubuntu@sha256:6d8d9799fe6ab3221965efac00b4c34a2bcc102c086a58dff9e19a08b913c7ef # ratchet:ubuntu:20.04
+      image: index.docker.io/library/ubuntu@sha256:3c61d3759c2639d4b836d32a2d3c83fa0214e36f195a3421018dbaaf79cbe37f # ratchet:ubuntu:22.04
     timeout-minutes: 60
     strategy:
       matrix:
@@ -126,7 +126,7 @@ jobs:
     name: Documentation - render documentation
     runs-on: linux-x86-n2-16
     container:
-      image: index.docker.io/library/ubuntu@sha256:6d8d9799fe6ab3221965efac00b4c34a2bcc102c086a58dff9e19a08b913c7ef # ratchet:ubuntu:20.04
+      image: index.docker.io/library/ubuntu@sha256:3c61d3759c2639d4b836d32a2d3c83fa0214e36f195a3421018dbaaf79cbe37f # ratchet:ubuntu:22.04
     timeout-minutes: 10
     strategy:
       matrix:
