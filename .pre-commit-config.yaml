@@ -36,7 +36,7 @@ repos:
   - id: ruff
 
 - repo: https://github.com/pre-commit/mirrors-mypy
-  rev: '7010b10a09f65cd60a23c207349b539aa36dbec1'  # frozen: v1.16.0
+  rev: '412de98d50e846f31ea6f4b0ad036f2c24a7a024'  # frozen: v1.17.1
   hooks:
   - id: mypy
     files: (jax/|tests/typing_test\.py)
