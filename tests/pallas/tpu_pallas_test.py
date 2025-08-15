@@ -180,17 +180,22 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     np.testing.assert_allclose(out, x.reshape((8, 8, -1))[s].reshape(x.shape))
 
   @parameterized.parameters(
-      (jnp.bfloat16,),
-      (jnp.int16,),
-      (jnp.int8,),
+      (jnp.bfloat16, 0),
+      (jnp.bfloat16, 3),
+      (jnp.bfloat16, 129),
+      (jnp.int16, 2),
+      (jnp.int16, 5),
+      (jnp.int16, 257),
+      (jnp.int8, 311),
+      (jnp.int8, 597),
+      (jnp.int8, 1025),
   )
   @only_passes_in_interpret()
-  def test_narrow_bitwidth_scalar_prefetch(self, dtype):
+  def test_narrow_bitwidth_scalar_prefetch(self, dtype, index):
     def body(s_ref, o_ref):
-      o_ref[...] = jnp.broadcast_to(s_ref[0], o_ref.shape)
+      o_ref[...] = jnp.broadcast_to(s_ref[index], o_ref.shape)
 
-    s = jnp.array([5], dtype)
-
+    s = jnp.arange(16 * 128, dtype=dtype)
     out = self.pallas_call(
         body,
         out_shape=jax.ShapeDtypeStruct((16, 128), dtype),
@@ -198,7 +203,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
             num_scalar_prefetch=1,
         ),
     )(s)
-    jtu.check_close(out, jnp.broadcast_to(s, (16, 128)))
+    np.testing.assert_array_equal(out, jnp.broadcast_to(s[index], (16, 128)))
 
   def test_f32_scalar_prefetch(self):
     def body(s_ref, x_ref, o_ref):
