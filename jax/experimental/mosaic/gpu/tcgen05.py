@@ -825,7 +825,7 @@ class TMEMLayout(fa.TiledLayout):
       raise ValueError(f"TMEM can only represent 2D shapes, got {shape}")
     if any(s % t for s, t in zip(shape, self.base_tile_shape)):
       raise ValueError(
-          f"{shape} is divisible into tiles of shape {self.base_tile_shape}"
+          f"{shape} is not divisible into tiles of shape {self.base_tile_shape}"
       )
     if self.vector_length not in {1, fully_packed := 32 // bitwidth}:
       raise ValueError(

@@ -1382,8 +1382,11 @@ Layout.TCGEN05_TMEM_NATIVE_ROW = Layout.TCGEN05_TMEM_NATIVE.reduce(1)
 class TMEMLayout(enum.Enum):
   """Layout for TMEM references."""
   SCALES_LAYOUT = enum.auto()
+  SPARSE_METADATA_LAYOUT = enum.auto()
 
   def to_mgpu(self) -> tcgen05.TMEMLayout:
     match self:
       case TMEMLayout.SCALES_LAYOUT:
         return tcgen05.scales_layout()
+      case TMEMLayout.SPARSE_METADATA_LAYOUT:
+        return tcgen05.sparse_meta_layout()

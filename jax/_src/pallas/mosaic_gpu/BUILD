@@ -146,5 +146,8 @@ pytype_strict_library(
 pytype_strict_library(
     name = "helpers",
     srcs = ["helpers.py"],
-    deps = ["//jax"],
+    deps = [
+        "//jax",
+        "//jax/_src:dtypes",
+    ],
 )

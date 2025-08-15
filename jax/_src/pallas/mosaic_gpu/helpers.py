@@ -21,6 +21,7 @@ from typing import TypeVar, overload
 
 import jax
 from jax import lax
+from jax._src import dtypes
 
 _T = TypeVar("_T")
 
@@ -151,6 +152,35 @@ def nd_loop(grid, *, collective_axes,
     )
     return lax.fori_loop(0, upper, wrapper, init_carry)
   return decorator
+
+
+def format_tcgen05_sparse_metadata(meta):
+  """Formats the sparse metadata for tcgen05.mma into the expected format.
+
+  See https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-sparse-matrices-sparsity-selector-kind-f16-m128-256
+  for the documentation of the required layouts. The array can be copied into
+  SMEM, from where ``plgpu.async_copy_sparse_metadata_to_tmem`` can be used to
+  copy it over to TMEM.
+  """
+  if meta.dtype != dtypes.uint2:
+    raise ValueError(f"Expected metadata dtype to be uint2, got: {meta.dtype}")
+  if meta.ndim != 3:
+    raise ValueError(
+        "Expected metadata to be 3-dimensional (M, K // 4, 2), but it is"
+        f" {meta.ndim}D"
+    )
+  m, k, _2 = meta.shape
+  if _2 != 2:
+    raise ValueError(
+        "Expected the trailing dimension of the metadata to be 2, got:"
+        f" {meta.shape[-1]}"
+    )
+  k *= 2
+  return (
+      meta.reshape(m // 128, 8, 2, 8, k // 64, 4, 2, 8)
+      .transpose(0, 4, 1, 6, 3, 5, 2, 7)
+      .reshape(m // 128, k // 64, 128, 64)
+  )
 
 
 def find_swizzle(minor_dim_bits: int, what: str = ""):

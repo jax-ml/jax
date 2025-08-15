@@ -1245,6 +1245,7 @@ def tcgen05_mma(acc: _Ref,
                 *,
                 a_scale: _Ref | None = None,
                 b_scale: _Ref | None = None,
+                a_sparse_metadata: _Ref | None = None,
                 accumulate: bool | jax.Array = True,
                 collective_axis: str | None = None):
   """Asynchronous matrix-multiply accumulate for TensorCore gen 5 (Blackwell).
@@ -1272,6 +1273,8 @@ def tcgen05_mma(acc: _Ref,
       `tcgen05_commit_arrive`
     a_scale: An optional scale for the ``a`` operand. Must be a TMEM Ref if present.
     b_scale: An optional scale for the ``b`` operand. Must be a TMEM Ref if present.
+    a_sparse_metadata: An optional sparse metadata for the ``a`` operand.
+      Must be a TMEM Ref if present.
     accumulate: Whether to accumulate into acc or overwrite it.
     collective_axis: The name of the cluster axis along which to perform
       a collective MMA. The cluster axis should have a size of exactly 2,
@@ -1282,13 +1285,14 @@ def tcgen05_mma(acc: _Ref,
   rhs_k, rhs_n = b.shape
   if collective_axis is not None:
     acc_n /= 2
+  is_sparse = a_sparse_metadata is not None
   if acc_m != lhs_m:
     raise ValueError(
         f"Accumulator and LHS have incompatible shapes. Accumulator: {acc.shape}. LHS: {a.shape}.")
   if acc_n != rhs_n:
     raise ValueError(
         f"Accumulator and RHS have incompatible shapes. Accumulator: {acc.shape}. RHS: {b.shape}.")
-  if lhs_k != rhs_k:
+  if (lhs_k * (1 + is_sparse)) != rhs_k:
     raise ValueError(
         f"LHS and RHS have incompatible shapes. LHS: {a.shape}. RHS: {b.shape}.")
 
@@ -1333,6 +1337,15 @@ def tcgen05_mma(acc: _Ref,
   if not is_scaled:
     scales = []
 
+  if isinstance(a_sparse_metadata, pallas_core.TransformedRef):
+    a_sparse_metadata_transforms_leaves, a_sparse_metadata_transforms_tree = jax.tree.flatten(
+        a_sparse_metadata.transforms
+    )
+    sparse_metadata = [a_sparse_metadata.ref]
+  else:
+    a_sparse_metadata_transforms_leaves, a_sparse_metadata_transforms_tree = [], None
+    sparse_metadata = [a_sparse_metadata] if is_sparse else []
+
   if isinstance(barrier, pallas_core.TransformedRef):
     barrier_transforms_leaves, barrier_transforms_tree = jax.tree.flatten(
         barrier.transforms
@@ -1348,20 +1361,23 @@ def tcgen05_mma(acc: _Ref,
     barrier_ref = []
     arrive = False
 
-  tcgen05_mma_p.bind(acc, a, b, accumulate, *barrier_ref, *scales,
+  tcgen05_mma_p.bind(acc, a, b, accumulate, *barrier_ref, *scales, *sparse_metadata,
                      *acc_transforms_leaves, *a_transforms_leaves,
                      *b_transforms_leaves,
                      *barrier_transforms_leaves,
                      *a_scale_transforms_leaves, *b_scale_transforms_leaves,
+                     *a_sparse_metadata_transforms_leaves,
                      acc_transforms_tree=acc_transforms_tree,
                      a_transforms_tree=a_transforms_tree,
                      b_transforms_tree=b_transforms_tree,
                      barrier_transforms_tree=barrier_transforms_tree,
                      a_scale_transforms_tree=a_scale_transforms_tree,
                      b_scale_transforms_tree=b_scale_transforms_tree,
+                     a_sparse_metadata_transforms_tree=a_sparse_metadata_transforms_tree,
                      collective_axis=collective_axis,
                      arrive=arrive,
-                     scaled=bool(scales))
+                     scaled=bool(scales),
+                     sparse=is_sparse)
 
 
 @tcgen05_mma_p.def_abstract_eval
@@ -1372,9 +1388,11 @@ def _tcgen05_mma_abstract_eval(acc, a, b, accumulate,
                                barrier_transforms_tree,
                                a_scale_transforms_tree,
                                b_scale_transforms_tree,
+                               a_sparse_metadata_transforms_tree,
                                collective_axis,
                                arrive,
-                               scaled):
+                               scaled,
+                               sparse):
   del (accumulate, acc_transforms_tree,
        a_transforms_tree, b_transforms_tree, barrier_transforms_tree)
 
@@ -1428,9 +1446,11 @@ def _tcgen05_mma_lowering(
     barrier_transforms_tree,
     a_scale_transforms_tree,
     b_scale_transforms_tree,
+    a_sparse_metadata_transforms_tree,
     collective_axis,
     arrive,
     scaled: bool,
+    sparse: bool,
 ):
   _, a_aval, b_aval, *_ = ctx.avals_in
   lhs_swizzle: int | None = None
@@ -1445,6 +1465,10 @@ def _tcgen05_mma_lowering(
   else:
     a_scale_ref = b_scale_ref = None
     transforms_leaves = scales_and_transforms_leaves  # type: ignore[assignment]
+  if sparse:
+    a_sparse_metadata_ref, *transforms_leaves = transforms_leaves
+  else:
+    a_sparse_metadata_ref = None
 
   transforms_trees = (
       acc_transforms_tree,
@@ -1453,6 +1477,7 @@ def _tcgen05_mma_lowering(
       barrier_transforms_tree,
       a_scale_transforms_tree,
       b_scale_transforms_tree,
+      a_sparse_metadata_transforms_tree,
   )
   (
       acc_transforms_leaves,
@@ -1461,6 +1486,7 @@ def _tcgen05_mma_lowering(
       barrier_transforms_leaves,
       a_scale_transforms_leaves,
       b_scale_transforms_leaves,
+      a_sparse_metadata_transforms_leaves,
       leftovers,
   ) = util.split_list(
       transforms_leaves,
@@ -1574,6 +1600,19 @@ def _tcgen05_mma_lowering(
     )
     if b_scale_transforms:
       raise NotImplementedError(f"Unsupported transforms: {b_scale_transforms}")
+  if a_sparse_metadata_transforms_tree is not None:
+    a_sparse_metadata_transforms = a_sparse_metadata_transforms_tree.unflatten(
+        a_sparse_metadata_transforms_leaves
+    )
+    a_sparse_metadata_ref, a_sparse_metadata_transforms = (
+        lowering._handle_transforms(
+            ctx, a_sparse_metadata_ref, a_sparse_metadata_transforms
+        )
+    )
+    if a_sparse_metadata_transforms:
+      raise NotImplementedError(
+          f"Unsupported transforms: {a_sparse_metadata_transforms}"
+      )
 
   predicate = ctx.module_ctx.single_lane_predicate
   if collective_axis is not None:
@@ -1592,6 +1631,7 @@ def _tcgen05_mma_lowering(
               b_swizzle=int(rhs_swizzle),
               a_scale=a_scale_ref,
               b_scale=b_scale_ref,
+              a_sparse_metadata=a_sparse_metadata_ref,
               accumulate=accumulate,
               collective=collective,
           )
@@ -2863,19 +2903,46 @@ def async_copy_scales_to_tmem(smem_ref: _Ref, tmem_ref: _Ref):
       smem_tree=smem_transforms_treedef, tmem_tree=tmem_transforms_treedef,
   )
 
+async_copy_sparse_metadata_to_tmem_p = jax_core.Primitive("async_copy_sparse_metadata_to_tmem")
+async_copy_sparse_metadata_to_tmem_p.multiple_results = True
+
+def async_copy_sparse_metadata_to_tmem(smem_ref: _Ref, tmem_ref: _Ref):
+  """Copies the MMA sparse metadata from SMEM to TMEM.
+
+  The copy is performed asynchronously and can be awaited by calling
+  ``tcgen05_commit_arrive`` and waiting on the specified barrier. However, if
+  the copy is consumed by an MMA operation issued in the same thread, no
+  synchronization is necessary (except for eventually awaiting the MMA operation
+  itself).
+  """
+  smem_ref, smem_transforms = state_primitives.get_ref_and_transforms(
+      smem_ref, None, "async_copy_sparse_metadata_to_tmem", force_trailing_indexer=True,
+  )
+  flat_smem_transforms, smem_transforms_treedef = tree_util.tree_flatten(
+      smem_transforms
+  )
+  tmem_ref, tmem_transforms = state_primitives.get_ref_and_transforms(
+      tmem_ref, None, "async_copy_sparse_metadata_to_tmem", force_trailing_indexer=True,
+  )
+  flat_tmem_transforms, tmem_transforms_treedef = tree_util.tree_flatten(
+      tmem_transforms
+  )
+  async_copy_sparse_metadata_to_tmem_p.bind(
+      smem_ref, tmem_ref, *flat_smem_transforms, *flat_tmem_transforms,
+      smem_tree=smem_transforms_treedef, tmem_tree=tmem_transforms_treedef,
+  )
 
 @async_copy_scales_to_tmem_p.def_effectful_abstract_eval
-def _async_copy_scales_to_tmem_abstract_eval(smem_ref, tmem_ref, *avals_flat, smem_tree, tmem_tree):
+@async_copy_sparse_metadata_to_tmem_p.def_effectful_abstract_eval
+def _async_copy_to_tmem_abstract_eval(smem_ref, tmem_ref, *avals_flat, smem_tree, tmem_tree):
   if smem_ref.memory_space != gpu_core.MemorySpace.SMEM:
     raise ValueError("async_copy_scales_to_tmem source must be an SMEM ref")
   if tmem_ref.memory_space != gpu_core.MemorySpace.TMEM:
     raise ValueError("async_copy_scales_to_tmem target must be a TMEM ref")
   return (), {gpu_core._memory_effect}
 
-
-@lowering.register_lowering_rule(async_copy_scales_to_tmem_p, mgpu.LoweringSemantics.Lane)
-def _async_copy_scales_to_tmem_lowering_rule(
-    ctx: lowering.LoweringRuleContext, smem_ref, tmem_ref, *leaves, smem_tree, tmem_tree
+def _async_copy_to_tmem_lowering_rule(
+    impl, ctx: lowering.LoweringRuleContext, smem_ref, tmem_ref, *leaves, smem_tree, tmem_tree
 ):
   assert isinstance(tmem_ref, tcgen05.TMEMRef)
   smem_leaves, tmem_leaves = util.split_list(leaves, [smem_tree.num_leaves])
@@ -2887,8 +2954,25 @@ def _async_copy_scales_to_tmem_lowering_rule(
     raise NotImplementedError(f"Unimplemented transforms for SMEM refs: {smem_transforms}")
   if tmem_transforms:
     raise NotImplementedError(f"Unimplemented transforms for TMEM refs: {tmem_transforms}")
-  tcgen05.async_copy_scales_smem_to_tmem(smem_ref, tmem_ref)
+  impl(smem_ref, tmem_ref)
   return ()
+
+lowering.register_lowering_rule(
+    async_copy_scales_to_tmem_p, mgpu.LoweringSemantics.Lane
+)(
+    functools.partial(
+        _async_copy_to_tmem_lowering_rule,
+        tcgen05.async_copy_scales_smem_to_tmem,
+    )
+)
+lowering.register_lowering_rule(
+    async_copy_sparse_metadata_to_tmem_p, mgpu.LoweringSemantics.Lane
+)(
+    functools.partial(
+        _async_copy_to_tmem_lowering_rule,
+        tcgen05.async_copy_sparse_metadata_smem_to_tmem,
+    )
+)
 
 
 semaphore_signal_parallel_p = jax_core.Primitive('semaphore_signal_parallel')

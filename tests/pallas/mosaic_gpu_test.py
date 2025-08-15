@@ -2473,6 +2473,7 @@ class PallasCallWGTest(
         mgpu_primitives.print_layout_p,
         mgpu_primitives.tcgen05_commit_arrive_p,
         mgpu_primitives.async_copy_scales_to_tmem_p,
+        mgpu_primitives.async_copy_sparse_metadata_to_tmem_p,
         mgpu_primitives.async_load_tmem_p,
         mgpu_primitives.async_store_tmem_p,
         mgpu_primitives.wait_load_tmem_p,
@@ -3360,6 +3361,70 @@ class PallasCallSm100ATest(PallasSm100ATest):
         (y.astype(jnp.float32) * y_logical_scale).T,
     )
     np.testing.assert_allclose(result, expected, rtol=1e-3)
+
+  @parameterized.product(
+      m=[128],
+      n=[128, 256],
+      dtype=[jnp.float16],
+  )
+  def test_simple_sparse_matmul(self, m, n, dtype):
+    self.skip_if_wg_semantics()
+    k = 128
+    swizzle = 128 // jnp.dtype(dtype).itemsize
+    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+    transforms = (
+        plgpu.TilingTransform((8, swizzle_elems)),
+        plgpu.SwizzleTransform(swizzle),
+    )
+    out_transforms = (
+        plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128),
+    )
+
+    def kernel(a_smem, b_smem, a_sparse_smem, out_ref,
+               barrier_ref, acc_tmem, a_sparse_tmem):
+      plgpu.async_copy_sparse_metadata_to_tmem(a_sparse_smem, a_sparse_tmem)
+      # We don't have to await the copy because it's only used by the MMA.
+      plgpu.tcgen05_mma(acc_tmem,
+                        a_smem,
+                        plgpu.transpose_ref(b_smem, (1, 0)),
+                        a_sparse_metadata=a_sparse_tmem,
+                        accumulate=False)
+      plgpu.tcgen05_commit_arrive(barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      # We don't await the load because acc_tmem is never modified again.
+      out_ref[...] = plgpu.async_load_tmem(acc_tmem)
+
+    scratch_shapes = [
+        plgpu.Barrier(orders_tensor_core=True),
+        plgpu.TMEM((m, n), jnp.float32),
+        plgpu.TMEM((m, k // 2), jnp.uint2, layout=plgpu.TMEMLayout.SPARSE_METADATA_LAYOUT),
+    ]
+
+    f = self.pallas_call(
+        kernel,
+        in_specs=(
+            plgpu.BlockSpec(memory_space=plgpu.SMEM, transforms=transforms),
+            plgpu.BlockSpec(memory_space=plgpu.SMEM, transforms=transforms),
+            plgpu.BlockSpec(memory_space=plgpu.SMEM),
+        ),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+        out_specs=plgpu.BlockSpec(transforms=out_transforms),
+        scratch_shapes=scratch_shapes,
+    )
+    x = jax.random.uniform(jax.random.key(1), shape=(m, k // 2), dtype=dtype)
+    y = jax.random.uniform(jax.random.key(2), shape=(n, k), dtype=dtype)
+    index_pairs = np.asarray(np.meshgrid(range(4), range(4))).T.reshape(-1, 2)
+    valid_pairs = index_pairs[index_pairs[:, 0] < index_pairs[:, 1]]
+    assert len(valid_pairs) == 6
+    x_pairs = jax.random.randint(jax.random.key(1234), (m, k // 4), 0, 6, dtype=jnp.uint8)
+    x_sparse = valid_pairs[x_pairs]
+    assert x_sparse.shape == (m, k // 4, 2)
+    z = f(x, y, plgpu.format_tcgen05_sparse_metadata(x_sparse.astype(jnp.uint2)))
+    x_logical = np.zeros_like(x, shape=(m, k // 4, 4))
+    np.put_along_axis(x_logical, x_sparse, x.reshape(x_sparse.shape), axis=-1)
+    x_logical = x_logical.reshape(m, k)
+    ref = x_logical.astype(jnp.float32) @ y.T.astype(jnp.float32)
+    np.testing.assert_allclose(z, ref, atol=7e-5, rtol=5e-6)
 
   @parameterized.parameters(
       (128, jnp.float16)
