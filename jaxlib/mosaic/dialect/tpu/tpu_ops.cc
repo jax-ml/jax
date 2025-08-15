@@ -2041,6 +2041,35 @@ OpFoldResult ExtFOp::fold(FoldAdaptor adaptor) {
       });
 }
 
+LogicalResult ReshapeOp::verify() {
+  auto src_ty = getSource().getType();
+  auto dst_ty = getResult().getType();
+  if (src_ty.getElementType() != dst_ty.getElementType()) {
+    return emitOpError("element type must match");
+  }
+  if (src_ty.getNumElements() != dst_ty.getNumElements()) {
+    return emitOpError() << "element count must match";
+  }
+  return success();
+}
+
+OpFoldResult ReshapeOp::fold(FoldAdaptor adaptor) {
+  // No-op reshape.
+  if (getSource().getType() == getType()) {
+    return getSource();
+  }
+  // Reshape of a reshape is a reshape.
+  if (auto source_reshape = getSource().getDefiningOp<ReshapeOp>()) {
+    setOperand(source_reshape.getSource());
+    return getResult();
+  }
+  // Reshape of a constant is a constant.
+  if (auto cst = dyn_cast_if_present<DenseElementsAttr>(adaptor.getSource())) {
+    return cst.reshape(getType());
+  }
+  return nullptr;
+}
+
 }  // namespace tpu
 }  // namespace mlir
 

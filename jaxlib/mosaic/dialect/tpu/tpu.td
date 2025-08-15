@@ -522,6 +522,14 @@ def TPU_IotaOp : TPU_Op<"iota", [Pure]> {
   let hasVerifier = 1;
 }
 
+def TPU_ReshapeOp : TPU_Op<"reshape", [Pure]> {
+  let arguments = (ins AnyVectorOfNonZeroRank:$source);
+  let results = (outs AnyVectorOfNonZeroRank:$result);
+  let assemblyFormat = [{ $source attr-dict `:` type($source) `->` type($result) }];
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
 // TODO(mvoz): deprecated - use concat. Canonicalization will do so automatically.
 // b/376295711
 def TPU_RepeatOp : TPU_Op<"repeat", [Pure]> {

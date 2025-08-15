@@ -4861,9 +4861,9 @@ Value copyOneRow(OpBuilder &builder, Value src_vreg, int src_row_idx,
   return src_vreg;
 }
 
-LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
-                                     const ArrayRef<Layout> layouts_in,
-                                     const ArrayRef<Layout> layouts_out) {
+LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
+                           const ArrayRef<Layout> layouts_in,
+                           const ArrayRef<Layout> layouts_out) {
   TPU_ASSERT_EQ_OP(layouts_in.size(), 1);
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(layouts_in.front().has_value());
@@ -4876,10 +4876,9 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
       layout_out.bitwidth());  // This should be guaranteed through MLIR
                                // verifier plus our layoutIsValidForValue check
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
-  auto shape_cast_op = cast<vector::ShapeCastOp>(op);
-  const VectorType src_ty = shape_cast_op.getSourceVectorType();
+  const auto src_ty = cast<VectorType>(op.getOperand(0).getType());
   const ArrayRef<int64_t> src_shape = src_ty.getShape();
-  const VectorType dst_ty = shape_cast_op.getResultVectorType();
+  const auto dst_ty = cast<VectorType>(op.getResult(0).getType());
   const ArrayRef<int64_t> dst_shape = dst_ty.getShape();
   bool no_op = false;
   const std::array<int64_t, 2> src_tiled_dims =
@@ -4931,7 +4930,8 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
   }
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> src_vregs,
-      disassemble(builder, layout_in, shape_cast_op.getSource(),
+      disassemble(builder, layout_in,
+                  cast<TypedValue<VectorType>>(op.getOperand(0)),
                   ctx.target_shape, /*use_implicit_shape=*/true));
   auto getDstVregs = [&]() -> FailureOr<xla::Array<Value>> {
     if (no_op) {
@@ -5076,16 +5076,14 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
       });
       return dst_vregs;
     } else {
-      return shape_cast_op.emitOpError(
-                 "Not implemented: Unsupported vector.shape_cast: ")
-             << *shape_cast_op;
+      return op.emitOpError("Not implemented: Unsupported reshape");
     }
   };
   FAILUREOR_ASSIGN_OR_RETURN(const xla::Array<Value> dst_vregs, getDstVregs());
-  shape_cast_op->replaceAllUsesWith(assemble(builder, dst_ty, layout_out,
-                                             dst_vregs, ctx.target_shape,
-                                             /*use_implicit_shape=*/true));
-  shape_cast_op->erase();
+  op.replaceAllUsesWith(assemble(builder, dst_ty, layout_out, dst_vregs,
+                                 ctx.target_shape,
+                                 /*use_implicit_shape=*/true));
+  op.erase();
   return success();
 }
 
@@ -8014,6 +8012,7 @@ const llvm::StringMap<rule_type> &rules() {
         {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
         {tpu::PRNGRandomBitsOp::getOperationName(), tpu_prng_random_bits_rule},
         {tpu::RelayoutOp::getOperationName(), tpu_relayout_rule},
+        {tpu::ReshapeOp::getOperationName(), reshape_rule},
         {tpu::FPToSIOp::getOperationName(), tpu_fptosi_rule},
         {tpu::SIToFPOp::getOperationName(), tpu_sitofp_rule},
         {tpu::ExtFOp::getOperationName(), tpu_extf_rule},
@@ -8025,7 +8024,7 @@ const llvm::StringMap<rule_type> &rules() {
          vector_multi_reduction_rule},
         {vector::ExtractStridedSliceOp::getOperationName(),
          vector_extract_strided_slice_rule},
-        {vector::ShapeCastOp::getOperationName(), vector_shape_cast_rule},
+        {vector::ShapeCastOp::getOperationName(), reshape_rule},
         {vector::StoreOp::getOperationName(), vector_store_rule},
         {tpu::TransposeOp::getOperationName(), vector_transpose_rule}};
 
@@ -8084,8 +8083,8 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
   // support for offsets outside of the first tile. When support is more broad,
   // any op without support should check it within their own rule.
   if (!isa<arith::TruncIOp, arith::ExtSIOp, vector::BroadcastOp,
-           vector::ExtractStridedSliceOp, vector::ShapeCastOp, tpu::RelayoutOp,
-           tpu::TruncFOp>(op)) {
+           vector::ExtractStridedSliceOp, vector::ShapeCastOp, tpu::ReshapeOp,
+           tpu::RelayoutOp, tpu::TruncFOp>(op)) {
     for (const Layout &layout : layouts_in) {
       if (layout && layout->offsets()[1].has_value() &&
           layout->offsets()[1].value() >= layout->tiling()[1]) {

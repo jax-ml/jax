@@ -138,7 +138,7 @@ collapse_matmul_non_contracting_dims(
   // new_contracting_dims]. new_operand is nullptr if the operand does not need
   // to be collapsed.
   // TODO(b/413194126): Some shapes will trigger unsupported
-  // vector::ShapeCastOp.
+  // tpu::ReshapeOp.
   auto maybe_collapse_non_contracting_dims =
       [&](TypedValue<VectorType> operand,
           ArrayRef<int64_t> non_contracting_dims,
@@ -195,7 +195,7 @@ collapse_matmul_non_contracting_dims(
       new_shape.push_back(collapsed_dim_size);
     }
     auto new_operand =
-        cast<TypedValue<VectorType>>(builder.create<vector::ShapeCastOp>(
+        cast<TypedValue<VectorType>>(builder.create<tpu::ReshapeOp>(
             VectorType::get(new_shape, vty.getElementType()), operand));
     SmallVector<int64_t, 2> new_non_contracting_dims, new_contracting_dims;
     if (trailing_non_contracting_dims) {
@@ -267,7 +267,7 @@ collapse_matmul_non_contracting_dims(
 
   // Reshape acc too.
   auto new_acc =
-      cast<TypedValue<VectorType>>(builder.create<vector::ShapeCastOp>(
+      cast<TypedValue<VectorType>>(builder.create<tpu::ReshapeOp>(
           VectorType::get(new_acc_shape, acc.getType().getElementType()), acc));
 
   return std::make_tuple(lhs, rhs, new_acc, new_dimension_numbers);
@@ -513,7 +513,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
       rhs = builder.create<vector::BroadcastOp>(
           VectorType::get(lhs_ty.getShape(), rhs_ty.getElementType()), rhs);
       auto multiply = builder.create<arith::MulFOp>(lhs, rhs);
-      acc = builder.create<vector::ShapeCastOp>(
+      acc = builder.create<tpu::ReshapeOp>(
           VectorType::get(lhs_ty.getShape().drop_back(),
                           acc_ty.getElementType()),
           acc);
@@ -524,7 +524,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
               static_cast<int64_t>(lhs_ty.getShape().size() - 1)});
       auto res_ty = cast<VectorType>(res.getType());
       if (res_ty.getShape() != acc_ty.getShape()) {
-        res = builder.create<vector::ShapeCastOp>(acc_ty, res);
+        res = builder.create<tpu::ReshapeOp>(acc_ty, res);
       }
       return res;
     }
@@ -560,7 +560,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
       // reshape to 1x[prior_shape]
       auto reshape_shape = llvm::to_vector(res_shape);
       reshape_shape.insert(reshape_shape.begin(), 1);
-      auto shape_cast = builder.create<vector::ShapeCastOp>(
+      auto shape_cast = builder.create<tpu::ReshapeOp>(
           VectorType::get(reshape_shape, res_ty.getElementType()), matmul_res);
       outputs.push_back(shape_cast);
     }
@@ -578,7 +578,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
 
   // Reshape the result to the old one as dims might have been collapsed.
   if (res.getType() != old_acc_ty) {
-    res = builder.create<vector::ShapeCastOp>(old_acc_ty, res);
+    res = builder.create<tpu::ReshapeOp>(old_acc_ty, res);
   }
   op.replaceAllUsesWith(res);
   op.erase();
@@ -1117,6 +1117,21 @@ std::optional<std::pair<int, int>> findSplitPoint(ArrayRef<int64_t> src_shape,
   return std::make_pair(s_prefix_end, src_prod);
 }
 
+FailureOr<Value> canonicalize_shape_cast(const CanonicalizeContext& ctx,
+                                         Operation& raw_op) {
+  CanonicalBuilder builder(ctx, raw_op.getLoc(), &raw_op);
+  auto op = cast<vector::ShapeCastOp>(raw_op);
+  Value source = op.getSource();
+  // We disconnect the deleted op from the source, because the rule for
+  // tpu.reshape has checks for its input being used only once.
+  op->eraseOperand(0);
+  auto new_op =
+      builder.create<tpu::ReshapeOp>(op.getResultVectorType(), source);
+  op.replaceAllUsesWith(new_op);
+  op.erase();
+  return new_op;
+                                         }
+
 FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
                                       Operation &raw_op) {
   // def fused_load_reshape(memref, indices):
@@ -1143,7 +1158,7 @@ FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
   //
   //   # 4. Truncate/bitcast the i32 vector to the final target type.
   //   return concatenated_i32.trunc().bitcast(final_element_type)
-  auto op = cast<vector::ShapeCastOp>(raw_op);
+  auto op = cast<tpu::ReshapeOp>(raw_op);
   Value src = op.getSource();
   auto tgt_ty = op.getResult().getType();
 
@@ -1285,7 +1300,7 @@ FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
     Value slice =
         b.create<tpu::StridedLoadOp>(chunk_ty, i32_view, idxs, strides);
 
-    Value collapsed = b.create<vector::ShapeCastOp>(
+    Value collapsed = b.create<tpu::ReshapeOp>(
         VectorType::get(collapsed_shape, i32_type), slice);
 
     // Unpack elements from i32 if necessary.
@@ -1320,7 +1335,7 @@ FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
                       tgt_ty.getElementType()),
       final_vec);
   if (final_vec.getType() != tgt_ty) {
-    final_vec = b.create<vector::ShapeCastOp>(tgt_ty, final_vec);
+    final_vec = b.create<tpu::ReshapeOp>(tgt_ty, final_vec);
   }
 
   op.replaceAllUsesWith(final_vec);
@@ -1387,9 +1402,9 @@ Value _canonicalize_store(const CanonicalizeContext &ctx, Operation &raw_op) {
     return value_to_store;
   }
 
-  auto shape_cast_op =
-      dyn_cast_if_present<vector::ShapeCastOp>(value_to_store.getDefiningOp());
-  if (!shape_cast_op || !shape_cast_op.getResult().hasOneUse()) {
+  auto reshape_op =
+      dyn_cast_if_present<tpu::ReshapeOp>(value_to_store.getDefiningOp());
+  if (!reshape_op || !reshape_op.getResult().hasOneUse()) {
     // Not a shape cast... (or has more than one use)
     // Note(mvoz): We could potentially support the case of > 1 users,
     // by just not eliding the reshape at the end, and only rewriting the
@@ -1397,8 +1412,8 @@ Value _canonicalize_store(const CanonicalizeContext &ctx, Operation &raw_op) {
     return value_to_store;
   }
 
-  auto src_ty = shape_cast_op.getSource().getType();
-  auto tgt_ty = shape_cast_op.getResult().getType();
+  auto src_ty = reshape_op.getSource().getType();
+  auto tgt_ty = reshape_op.getResult().getType();
   auto memref_ty = base.getType();
   // Consider src_shape=(1, 384) -> tgt_shape=(1, 1, 3, 128)
   // Upstream padding actually makes this:
@@ -1469,7 +1484,7 @@ Value _canonicalize_store(const CanonicalizeContext &ctx, Operation &raw_op) {
   Value i32_view = b.create<tpu::MemRefBitcastOp>(
       MemRefType::get(mem_shape, i32_type), reshaped_ref);
 
-  Value src_vec = shape_cast_op.getSource();
+  Value src_vec = reshape_op.getSource();
   SmallVector<int64_t> slice_sizes(src_ty.getShape());
   slice_sizes.back() = lane_dim;
   SmallVector<int64_t> unit_strides(src_ty.getRank(), 1);
@@ -1517,7 +1532,7 @@ Value _canonicalize_store(const CanonicalizeContext &ctx, Operation &raw_op) {
     auto target_vector_type = VectorType::get(target_vector_shape, i32_type);
 
     Value chunk_to_store =
-        b.create<vector::ShapeCastOp>(target_vector_type, packed_chunk);
+        b.create<tpu::ReshapeOp>(target_vector_type, packed_chunk);
 
     store_indices[stride_dim] = IdxConst(i, b, loc);
     b.create<tpu::StridedStoreOp>(
@@ -1526,7 +1541,7 @@ Value _canonicalize_store(const CanonicalizeContext &ctx, Operation &raw_op) {
   }
 
   store_op->erase();
-  shape_cast_op->erase();
+  reshape_op->erase();
 
   return base;
 }
@@ -1750,7 +1765,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {vector::MultiDimReductionOp::getOperationName(),
        canonicalize_multi_dim_reduction},
       {vector::TransposeOp::getOperationName(), canonicalize_vector_transpose},
-      {vector::ShapeCastOp::getOperationName(), canonicalize_reshape},
+      {vector::ShapeCastOp::getOperationName(), canonicalize_shape_cast},
       {vector::BroadcastOp::getOperationName(), canonicalize_broadcast},
       {arith::SelectOp::getOperationName(), canonicalize_select},
       {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
@@ -1761,6 +1776,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {tpu::ExtFOp::getOperationName(), canonicalize_tpu_extf},
       {tpu::TransposeOp::getOperationName(), canonicalize_transpose},
       {tpu::RepeatOp::getOperationName(), canonicalize_repeat},
+      {tpu::ReshapeOp::getOperationName(), canonicalize_reshape},
       {vector::StoreOp::getOperationName(), canonicalize_store},
       {tpu::VectorStoreOp::getOperationName(), canonicalize_vector_store}};
   return *rules;

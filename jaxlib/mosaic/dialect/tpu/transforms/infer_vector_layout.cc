@@ -318,7 +318,11 @@ class VectorLayoutInferer {
           return failure();
         }
       } else if (auto op = dyn_cast<vector::ShapeCastOp>(any_op)) {
-        if (infer(op).failed()) {
+        if (inferReshape(op).failed()) {
+          return failure();
+        }
+      } else if (auto op = dyn_cast<tpu::ReshapeOp>(any_op)) {
+        if (inferReshape(op).failed()) {
           return failure();
         }
       } else if (auto op = dyn_cast<tpu::VectorStoreOp>(any_op)) {
@@ -1427,12 +1431,13 @@ class VectorLayoutInferer {
     return success();
   }
 
-  LogicalResult infer(vector::ShapeCastOp op) {
-    auto src_ty = op.getSourceVectorType();
+  LogicalResult inferReshape(Operation* op) {
+    CHECK(op->getNumOperands() == 1 && op->getNumResults() == 1);
+    auto src_ty = cast<VectorType>(op->getOperand(0).getType());
     auto src_shape = src_ty.getShape();
-    auto res_ty = op.getResultVectorType();
+    auto res_ty = cast<VectorType>(op->getResult(0).getType());
     auto res_shape = res_ty.getShape();
-    auto some_src_layout = getLayout(op.getSource());
+    auto some_src_layout = getLayout(op->getOperand(0));
     TPU_CHECK_OP(some_src_layout, "missing vector layout");
     auto layout = *some_src_layout;
     const unsigned bitwidth = src_ty.getElementTypeBitWidth();
@@ -1578,7 +1583,7 @@ class VectorLayoutInferer {
                              ImplicitDim::kNone));
       return success();
     }
-    op.emitOpError("infer-vector-layout: unsupported shape cast");
+    op->emitOpError("infer-vector-layout: unsupported shape cast");
     return failure();
   }
 
