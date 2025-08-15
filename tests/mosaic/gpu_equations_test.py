@@ -305,6 +305,52 @@ class EquationSystemTest(parameterized.TestCase):
     expr = equations.BroadcastInDim(layout, axes=(1, 2), shape=(8, 128, 8))
     self.assertEqual(equations.reduce_expression(expr, {}), expr)
 
+  def test_reduce_reshape_of_splat_layout_is_reduced_to_splat_layout(self):
+    layout = C(mgpu.WGSplatFragLayout((1024,)))
+    shape = (128, 8)
+    self.assertEqual(
+        equations.reduce_expression(equations.Reshape(layout, shape=shape), {}),
+        C(mgpu.WGSplatFragLayout(shape))
+    )
+
+  def test_reduce_reshape_of_splat_layout_is_unsatisfiable_for_incompatible_shape(self):
+    layout = C(mgpu.WGSplatFragLayout((1024,)))
+    shape = (129, 8)
+    self.assertIsInstance(
+        equations.reduce_expression(equations.Reshape(layout, shape=shape), {}),
+        equations.Unsatisfiable,
+    )
+
+  def test_reduce_reshape_of_strided_layout_is_reduced_to_strided_layout(self):
+    layout = C(mgpu.WGStridedFragLayout((1024,), vec_size=8))
+    shape = (128, 8)
+    self.assertEqual(
+        equations.reduce_expression(equations.Reshape(layout, shape=shape), {}),
+        C(mgpu.WGStridedFragLayout(shape, vec_size=8))
+    )
+
+  def test_reduce_reshape_of_strided_layout_is_unsatisfiable_for_incompatible_shape(self):
+    layout = C(mgpu.WGStridedFragLayout((1024,), vec_size=8))
+    shape = (129, 8)
+    self.assertIsInstance(
+        equations.reduce_expression(equations.Reshape(layout, shape=shape), {}),
+        equations.Unsatisfiable,
+    )
+
+  def test_reduce_reshape_of_tiled_layout_with_indivisible_shape_is_irreducible(self):
+    layout = C(mgpu.WGMMA_LAYOUT)
+    shape = (129, 8)
+    eq = equations.Reshape(layout, shape=shape)
+    self.assertEqual(equations.reduce_expression(eq, {}), eq)
+
+  def test_reduce_reshape_of_tiled_layout_with_divisible_shape_is_identity(self):
+    layout = C(mgpu.WGMMA_LAYOUT)
+    shape = (128, 8)
+    self.assertEqual(
+        equations.reduce_expression(equations.Reshape(layout, shape=shape), {}),
+        layout
+    )
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import dataclasses
+import math
 from typing import assert_never, Any, Callable
 
 from . import fragmented_array as fa
@@ -71,6 +72,12 @@ class BroadcastInDim:
   shape: tuple[int, ...]
 
 
+@dataclasses.dataclass(frozen=True)
+class Reshape:
+  expression: Expression
+  shape: tuple[int, ...]
+
+
 Expression = (
     Variable
     | Constant
@@ -78,6 +85,7 @@ Expression = (
     | MostReplicated
     | Reduce
     | BroadcastInDim
+    | Reshape
 )
 
 
@@ -159,6 +167,34 @@ def reduce_broadcast_expression(
       )
 
 
+def reduce_reshape_expression(
+    reshape: Reshape, assignments: dict[Variable, Constant]
+) -> Expression | Unsatisfiable:
+  reduced_expr = reduce_expression(reshape.expression, assignments)
+  match reduced_expr:
+    case Unsatisfiable():
+      return Unsatisfiable()
+    case Constant(value=layout):
+      match layout:
+        case fa.WGSplatFragLayout(shape=shape):
+          if math.prod(shape) != math.prod(reshape.shape):
+            return Unsatisfiable()
+          return Constant(fa.WGSplatFragLayout(shape=reshape.shape))
+        case fa.WGStridedFragLayout(shape=shape, vec_size=vec_size):
+          if math.prod(shape) != math.prod(reshape.shape):
+            return Unsatisfiable()
+          return Constant(fa.WGStridedFragLayout(shape=reshape.shape, vec_size=vec_size))
+        case fa.TiledLayout() as tiled_layout:
+          tile_shape = tiled_layout.base_tile_shape
+          if len(reshape.shape) < len(tile_shape):
+            return Unsatisfiable()
+          for ts, s in zip(tile_shape, reshape.shape[-len(tile_shape):], strict=True):
+            if s % ts != 0:
+              return Reshape(expression=reduced_expr, shape=reshape.shape)
+          return Constant(tiled_layout)
+  return Reshape(expression=reduced_expr, shape=reshape.shape)
+
+
 def reduce_expression(
     expr: Expression, assignments: dict[Variable, Constant]
 ) -> Expression | Unsatisfiable:
@@ -194,6 +230,8 @@ def reduce_expression(
           return Reduce(expression=reduced_expr, axes=axes)
     case BroadcastInDim():
       return reduce_broadcast_expression(expr, assignments)
+    case Reshape():
+      return reduce_reshape_expression(expr, assignments)
     case _:
       assert_never(expr)
 
@@ -383,6 +421,8 @@ class EquationSystem:
         case Reduce(expression=e):
           extract_variables(e)
         case BroadcastInDim(expression=e):
+          extract_variables(e)
+        case Reshape(expression=e):
           extract_variables(e)
         case _:
           assert_never(expr)
