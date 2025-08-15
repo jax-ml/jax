@@ -118,6 +118,29 @@ def extract_constant_from_most_replicated_expression_for_hint(
   return maybe_choice
 
 
+def extract_constant_from_broadcast_in_dim_expression_for_hint(
+    e: eqns.BroadcastInDim
+) -> eqns.Constant | None:
+  if not isinstance(e.expression, eqns.Constant):
+    return None
+
+  reduced_layout = e.expression.value
+
+  wgmma_tm, wgmma_tn = fa.WGMMA_LAYOUT.base_tile_shape
+  # TODO(bchetioui): enable generators to handle TCGEN05 layout from WGMMA_COL.
+  if reduced_layout == fa.WGMMA_COL_LAYOUT and e.axes == (1,) and e.shape[0] % wgmma_tm == 0:
+    return eqns.Constant(fa.WGMMA_LAYOUT)
+
+  if reduced_layout == fa.WGMMA_ROW_LAYOUT and e.axes == (0,) and e.shape[1] % wgmma_tn == 0:
+    return eqns.Constant(fa.WGMMA_LAYOUT)
+
+  tcgen05_tm, _ = fa.TCGEN05_LAYOUT.base_tile_shape
+  if reduced_layout == fa.TCGEN05_ROW_LAYOUT and e.axes == (0,) and e.shape[0] % tcgen05_tm == 0:
+    return eqns.Constant(fa.TCGEN05_LAYOUT)
+
+  return None
+
+
 def extract_constant_for_hint(e: eqns.Expression) -> eqns.Constant | None:
   """Attempts to extract a `ConstantExpression` from a `Hint`'s `Expression`.
 
@@ -130,6 +153,8 @@ def extract_constant_for_hint(e: eqns.Expression) -> eqns.Constant | None:
       return extract_constant_from_least_replicated_expression_for_hint(e.expressions)
     case eqns.MostReplicated():
       return extract_constant_from_most_replicated_expression_for_hint(e.expressions)
+    case eqns.BroadcastInDim():
+      return extract_constant_from_broadcast_in_dim_expression_for_hint(e)
     case eqns.Variable():
       return None
     case _:
@@ -150,7 +175,7 @@ def extract_variable_assignment_from_hint(
 
 def reduce_hints(
     hints: Sequence[Hint], assignments: dict[eqns.Variable, eqns.Constant]
-) -> Sequence[Hint]:
+) -> list[Hint]:
   """Reduces a sequence of `Hint`s.
 
   We reduce the `Hint`s' expressions, drop `Unsatisfiable` hints, and drop
@@ -267,8 +292,8 @@ def find_assignments_for(
 OperandOrResultsForVariable = dict[eqns.Variable, list[OperandOrResult]]
 
 # An equation system derivation rule is a function that takes an MLIR operation
-# and returns an equation system, and a mapping from variables to operand/result
-# identifiers.
+# and returns an equation system, a mapping from variables to operand/result
+# identifiers, and a list of hints.
 #
 # The intended meaning of the mapping is that, for each identifier in the list
 # keyed by a given variable, the MLIR operand/result corresponding to that
@@ -280,7 +305,9 @@ OperandOrResultsForVariable = dict[eqns.Variable, list[OperandOrResult]]
 # Lastly, the mapping must only refer to variables and operands/results that
 # correspond to the given operation.
 EquationSystemDerivationRule = Callable[
-    [ir.OpView], tuple[eqns.EquationSystem, OperandOrResultsForVariable]]
+    [ir.OpView],
+    tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]
+]
 _equation_system_derivation_rules: dict[str, EquationSystemDerivationRule] = {}
 
 
@@ -297,11 +324,11 @@ def is_vector(v: ir.Value) -> bool:
 
 
 def _pointwise_op_equation_system(
-    op: ir.OpView
-) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+    op: ir.OpView,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   all_operands_and_results = operands_and_results(op)
   variable = eqns.Variable(all_operands_and_results[0])
-  return eqns.EquationSystem(), {variable: all_operands_and_results}
+  return eqns.EquationSystem(), {variable: all_operands_and_results}, []
 
 
 for op in [
@@ -351,9 +378,9 @@ for op in [
 @_add_equation_system_derivation_rule(vector.LoadOp)
 def _vector_load_equation_system(
     op: vector.LoadOp,
-) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   equation_system: eqns.EquationSystem | eqns.Unsatisfiable
-  equation_system, operand_or_results_for_variable = (
+  equation_system, operand_or_results_for_variable, hints = (
       _pointwise_op_equation_system(op)
   )
   [result_variable] = operand_or_results_for_variable.keys()
@@ -363,13 +390,13 @@ def _vector_load_equation_system(
   )
   equation_system &= eqns.EquationSystem(constraints=[result_is_not_splat])
   assert not isinstance(equation_system, eqns.Unsatisfiable)
-  return equation_system, operand_or_results_for_variable
+  return equation_system, operand_or_results_for_variable, hints
 
 
 @_add_equation_system_derivation_rule(mgpu.OptimizationBarrierOp)
 def _optimization_barrier_equation_system(
-    op: ir.OpView
-) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+    op: ir.OpView,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   operand_or_results_for_variable: OperandOrResultsForVariable = {}
 
   for i, operand in enumerate(op.operands):
@@ -381,24 +408,24 @@ def _optimization_barrier_equation_system(
         OperandOrResult(op, VariableType.RESULT, i)
     ]
 
-  return eqns.EquationSystem(), operand_or_results_for_variable
+  return eqns.EquationSystem(), operand_or_results_for_variable, []
 
 
 @_add_equation_system_derivation_rule(vector.SplatOp)
 def _vector_splat_equation_system(
-    op: ir.OpView
-) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+    op: ir.OpView,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   result = OperandOrResult(op, VariableType.RESULT, 0)
   variable = eqns.Variable(result)
   layout = fa.WGSplatFragLayout(tuple(cast(ir.ShapedType, op.result.type).shape))
   system = eqns.EquationSystem(assignments={variable: eqns.Constant(layout)})
-  return system, {variable: [result]}
+  return system, {variable: [result]}, []
 
 
 @_add_equation_system_derivation_rule(arith.ConstantOp)
 def _constant_equation_system(
-    constant_op: arith.ConstantOp
-) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+    constant_op: arith.ConstantOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   value = constant_op.value
   result = OperandOrResult(constant_op, VariableType.RESULT, 0)
   variable = eqns.Variable(result)
@@ -415,7 +442,7 @@ def _constant_equation_system(
     )
     system = eqns.EquationSystem(constraints=[constant_is_not_splat])
 
-  return system, {variable: [result]}
+  return system, {variable: [result]}, []
 
 
 def _terminator(
@@ -432,8 +459,8 @@ def _terminator(
 
 @_add_equation_system_derivation_rule(scf.ForOp)
 def _for_equation_system(
-    op: scf.ForOp
-) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+    op: scf.ForOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   [block] = op.region.blocks
   yield_op = _terminator(block, scf.YieldOp)
   operand_or_results_for_variable: OperandOrResultsForVariable = {}
@@ -454,13 +481,13 @@ def _for_equation_system(
         operand, result, yield_operand,
     ]
 
-  return eqns.EquationSystem(), operand_or_results_for_variable
+  return eqns.EquationSystem(), operand_or_results_for_variable, []
 
 
 @_add_equation_system_derivation_rule(scf.WhileOp)
 def _while_equation_system(
     op: scf.WhileOp,
-) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   [before_block] = op.before.blocks
   [after_block] = op.after.blocks
   cond_op = _terminator(before_block, scf.ConditionOp)
@@ -490,13 +517,13 @@ def _while_equation_system(
       case _ as never:
         assert_never(never)
 
-  return eqns.EquationSystem(), operand_or_results_for_variable
+  return eqns.EquationSystem(), operand_or_results_for_variable, []
 
 
 @_add_equation_system_derivation_rule(scf.IndexSwitchOp)
 def _index_switch_equation_system(
-    op: scf.IndexSwitchOp
-) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+    op: scf.IndexSwitchOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   operand_or_results_for_variable: OperandOrResultsForVariable = {
       eqns.Variable(o): [o] for o in operands_and_results(op)
   }
@@ -510,32 +537,68 @@ def _index_switch_equation_system(
       )
       operand_or_results_for_variable[operand_or_result].append(yield_operand)
 
-  return eqns.EquationSystem(), operand_or_results_for_variable
+  return eqns.EquationSystem(), operand_or_results_for_variable, []
 
 
 @_add_equation_system_derivation_rule(mgpu.LayoutCastOp)
 def _layout_cast_equation_system(
-    op: mgpu.LayoutCastOp
-) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+    op: mgpu.LayoutCastOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   operand = OperandOrResult(op, VariableType.OPERAND, 0)
   result = OperandOrResult(op, VariableType.RESULT, 0)
   variable = eqns.Variable(operand)
   out_layout = eqns.Constant(layouts_lib.from_layout_attr(op.new_layout))
-  return eqns.EquationSystem(
-      assignments={eqns.Variable(operand): out_layout},
-  ), {variable: [operand, result]}
+  return (
+      eqns.EquationSystem(
+          assignments={eqns.Variable(operand): out_layout},
+      ),
+      {variable: [operand, result]},
+      [],
+  )
 
 
 @_add_equation_system_derivation_rule(mgpu.WGMMAOp)
 def _wgmma_equation_system(
     op: mgpu.WGMMAOp,
-) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable]:
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   operands_or_results = operands_and_results(op)
   variable = eqns.Variable(operands_or_results[0])
   system = eqns.EquationSystem(
       assignments={variable: eqns.Constant(fa.WGMMA_LAYOUT)}
   )
-  return system, {variable: operands_or_results}
+  return system, {variable: operands_or_results}, []
+
+
+@_add_equation_system_derivation_rule(vector.MultiDimReductionOp)
+def _multi_dim_reduction_equation_system(
+    op: vector.MultiDimReductionOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  source = OperandOrResult(op, VariableType.OPERAND, 0)
+  acc = OperandOrResult(op, VariableType.OPERAND, 1)
+  out = OperandOrResult(op, VariableType.RESULT, 0)
+  source_variable = eqns.Variable(source)
+  out_variable = eqns.Variable(out)
+  reduce_expr = eqns.Reduce(source_variable, tuple(op.reduction_dims))
+
+  # There are always many options for broadcasting a layout, so we can only
+  # derive a broadcast hint in the out_variable -> source_variable direction.
+  in_shape: tuple[int, ...] = tuple(op.source.type.shape)
+  broadcast_dims = tuple(
+      i for i in range(len(in_shape)) if i not in op.reduction_dims
+  )
+  broadcast_expr = eqns.BroadcastInDim(out_variable, broadcast_dims, in_shape)
+  broadcast_hint = Hint(variable=source_variable, expression=broadcast_expr)
+
+  # TODO(bchetioui): in the future, we may need to add rules that prevent
+  # strided layouts from being chosen---since trying to reduce a strided layout
+  # may cause us to raise an Exception at the moment.
+  return (
+      eqns.EquationSystem(
+          equations=[eqns.Equation(lhs=out_variable, rhs=reduce_expr)],
+      ),
+      {source_variable: [source], out_variable: [acc, out]},
+      [broadcast_hint],
+  )
 
 
 def _ensure_all_layouts_are_set(op: ir.OpView):
@@ -727,6 +790,7 @@ def infer_layout(module: ir.Module):
   global_equation_system: eqns.EquationSystem | eqns.Unsatisfiable
   global_equation_system = eqns.EquationSystem()
   operand_and_results_for_variable: OperandOrResultsForVariable = {}
+  hints: list[Hint] = []
 
   def gather_equations(op: ir.Operation):
     # Terminator ops are handled directly by the op whose region they belong to.
@@ -739,18 +803,18 @@ def infer_layout(module: ir.Module):
       pass
     else:
       raise NotImplementedError(f"No layout inference rule defined for {op}")
-
-    equation_system, mapping = rule(op)
+    equation_system, mapping, op_hints = rule(op)
     operand_and_results_for_variable.update(mapping)
     nonlocal global_equation_system
     global_equation_system &= equation_system
+    hints.extend(op_hints)
 
   for op in module.body:
     inference_utils.traverse_op(op, gather_equations)
 
   assert not isinstance(global_equation_system, eqns.Unsatisfiable)
-  hints, constraints = derive_hints_and_constraints(operand_and_results_for_variable)
-  hints = reduce_hints(hints, global_equation_system.assignments)  # pytype: disable=attribute-error
+  propagation_hints, constraints = derive_hints_and_constraints(operand_and_results_for_variable)
+  hints = reduce_hints(hints + propagation_hints, global_equation_system.assignments)  # pytype: disable=attribute-error
   global_equation_system &= eqns.EquationSystem(constraints=constraints)
   assert not isinstance(global_equation_system, eqns.Unsatisfiable)
 
