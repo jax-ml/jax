@@ -998,10 +998,11 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
           // Convert to a nb::list for nb::repr to avoid having to stringify a
           // vector. This is error path so it is fine to pay conversion cost.
           throw std::invalid_argument(
-              absl::StrFormat("Dict key mismatch; expected keys: %s; dict: %s.",
-                              nb::cast<absl::string_view>(
-                                  nb::repr(nb::cast(node.sorted_dict_keys))),
-                              nb::cast<absl::string_view>(nb::repr(object))));
+              absl::StrFormat(
+                  "Dict key mismatch; expected keys: %s; present keys: %s.",
+                  nb::cast<absl::string_view>(
+                      nb::repr(nb::cast(node.sorted_dict_keys))),
+                  nb::cast<absl::string_view>(nb::repr(nb::cast(keys)))));
         }
         for (nb::handle key : keys) {
           agenda.push_back(dict[key]);
