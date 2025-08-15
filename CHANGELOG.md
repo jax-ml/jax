@@ -16,6 +16,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New features
+  * JAX now ships Python 3.14 and 3.14t wheels.
+  * JAX now ships Python 3.13t and 3.14t wheels on Mac. Previously we only
+    offered free-threading builds on Linux.
+
 * Changes
   * Exposed `jax.set_mesh` which acts as a global setter and a context manager.
     Removed `jax.sharding.use_mesh` in favor of `jax.set_mesh`.
