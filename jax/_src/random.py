@@ -1260,11 +1260,16 @@ def _gamma_one(key: Array, alpha, log_space) -> Array:
   # https://en.wikipedia.org/wiki/Gamma_distribution#Generating_gamma-distributed_random_variables
   zero = lax._const(alpha, 0)
   one = lax._const(alpha, 1)
+  two = lax._const(alpha, 2)
   minus_one = lax._const(alpha, -1)
   one_over_two = lax._const(alpha, 0.5)
   one_over_three = lax._const(alpha, 1. / 3.)
   squeeze_const = lax._const(alpha, 0.0331)
   dtype = lax.dtype(alpha)
+
+  zero = core.pvary(zero, tuple(core.typeof(alpha).vma))
+  one = core.pvary(one, tuple(core.typeof(alpha).vma))
+  minus_one = core.pvary(minus_one, tuple(core.typeof(alpha).vma))
 
   # for alpha < 1, we boost alpha to alpha + 1 and get a sample according to
   #   Gamma(alpha) ~ Gamma(alpha+1) * Uniform()^(1 / alpha)
@@ -1298,12 +1303,14 @@ def _gamma_one(key: Array, alpha, log_space) -> Array:
       key = kxv[0]
       key, subkey = _split(key)
       x = normal(subkey, (), dtype=dtype)
+      x = core.pvary(x, tuple(core.typeof(kxv[1]).vma))
       v = lax.add(one, lax.mul(x, c))
       return key, x, v
 
     key = kXVU[0]
     key, x_key, U_key = _split(key, 3)
-    _, x, v = lax_control_flow.while_loop(lambda kxv: lax.le(kxv[2], zero), _next_kxv, (x_key, zero, minus_one))
+    _, x, v = lax_control_flow.while_loop(lambda kxv: lax.le(kxv[2], zero),
+                                          _next_kxv, (x_key, zero, minus_one))
     X = lax.mul(x, x)
     V = lax.mul(lax.mul(v, v), v)
     U = uniform(U_key, (), dtype=dtype)
@@ -1311,14 +1318,17 @@ def _gamma_one(key: Array, alpha, log_space) -> Array:
 
   # initial state is chosen such that _cond_fn will return True
   key, subkey = _split(key)
-  _, _, V, _ = lax_control_flow.while_loop(_cond_fn, _body_fn, (key, zero, one, lax._const(alpha, 2)))
+  _, _, V, _ = lax_control_flow.while_loop(
+      _cond_fn, _body_fn, (key, zero, one, two))
   if log_space:
     log_samples = lax.neg(exponential(subkey, (), dtype=dtype))
-    log_boost = lax.select(boost_mask | (log_samples == 0), zero, lax.mul(log_samples, lax.div(one, alpha_orig)))
+    log_boost = lax.select(boost_mask | (log_samples == 0), zero,
+                           lax.mul(log_samples, lax.div(one, alpha_orig)))
     return lax.add(lax.add(lax.log(d), lax.log(V)), log_boost)
   else:
     samples = 1 - uniform(subkey, (), dtype=dtype)
-    boost = lax.select(boost_mask, one, lax.pow(samples, lax.div(one, alpha_orig)))
+    boost = lax.select(boost_mask, one,
+                       lax.pow(samples, lax.div(one, alpha_orig)))
     return lax.mul(lax.mul(d, V), boost)
 
 
@@ -1333,7 +1343,8 @@ def _gamma_grad(sample, a, *, log_space):
     zero = lax._const(sample, 0)
     tiny = lax.full_like(samples, dtypes.finfo(samples.dtype).tiny)
     samples = lax.select(lax.eq(samples, zero), tiny, samples)
-    gamma_grad = lambda alpha, sample: lax_special.random_gamma_grad(alpha, sample) / sample
+    gamma_grad = lambda alpha, sample: (
+        lax_special.random_gamma_grad(alpha, sample) / sample)
   else:
     gamma_grad = lax_special.random_gamma_grad
   if xla_bridge.get_backend().platform == 'cpu':

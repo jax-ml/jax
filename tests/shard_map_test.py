@@ -4094,6 +4094,14 @@ class ShardMapTest(jtu.JaxTestCase):
 
     self.assertAllClose(y, x, check_dtypes=False)
 
+  def test_random_beta_vma(self):
+    mesh = jtu.create_mesh((2,), 'dp')
+    rng = jax.random.key(42)
+
+    f = shard_map(jax.random.beta, mesh=mesh,
+                  in_specs=(P(), P('dp'), P('dp')), out_specs=P('dp'))
+    f(rng, jnp.ones((64, 1)), jnp.ones((64, 1)))  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str
