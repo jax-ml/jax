@@ -1507,7 +1507,7 @@ def _gamma(key, a, shape, dtype, log_space=False) -> Array:
   a = lax.convert_element_type(a, dtype)
   if np.shape(a) != shape:
     a = jnp.broadcast_to(a, shape)
-  if tuple(core.typeof(a).vma) != tuple(core.typeof(key).vma):
+  if core.typeof(a).vma != core.typeof(key).vma:
     raise TypeError("gamma requires all arguments to have matching pvary "
                     f"but they differ: key: {tuple(core.typeof(key).vma)} vs"
                     f" a: {tuple(core.typeof(a).vma)}. Use "
