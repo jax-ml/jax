@@ -203,6 +203,28 @@ def measure(
       raise ValueError(f"Unrecognized profiler mode {mode}")
 
 
+@contextlib.contextmanager
+def collect_metrics(metrics: list[str]):
+  """A context manager for collecting CUPTI metrics.
+
+  Args:
+    metrics: A list of CUPTI metric names to collect.
+
+  Yields:
+    A dictionary that will be populated with metric names and their collected
+    values after the context is exited.
+  """
+  ext = mosaic_gpu_lib._mosaic_gpu_ext
+  ext.start_metrics(metrics)
+  results = {}
+  try:
+    yield results
+  finally:
+    collected_data = ext.stop_metrics()
+    results.update(collected_data)
+
+
+
 class ProfilerSpec:
   ENTER = 0
   EXIT = 1 << 31
