@@ -2357,12 +2357,9 @@ def _squeeze_lowering_rule(ctx: LoweringRuleContext, x, dimensions):
   )
 
 
-@register_lowering_rule(lax.concatenate_p)
+@register_lowering_rule(lax.concatenate_p, kernel_types=[*tpu_core.KernelType])
 def _concatenate_lowering_rule(ctx: LoweringRuleContext, *xs, dimension):
-  out_type = aval_to_ir_type(
-      ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
-  )
-  return tpu.concatenate(out_type, xs, dimension=dimension)
+  return tpu.concatenate(xs, dimension=dimension)
 
 
 @register_lowering_rule(lax.split_p)
@@ -4079,24 +4076,10 @@ def _pad_lowering_rule(ctx: LoweringRuleContext, *args, **kwargs):
       return pad
 
     if low != 0:
-      pad_low = _pad(low)
-      new_shape = out_type.shape
-      new_shape[axis] += low
-      out_type = ir.VectorType.get(
-          new_shape,
-          out_type.element_type,
-      )
-      operand = tpu.concatenate(out_type, [pad_low, operand], dimension=axis)
+      operand = tpu.concatenate([_pad(low), operand], dimension=axis)
 
     if high != 0:
-      pad_high = _pad(high)
-      new_shape = out_type.shape
-      new_shape[axis] += high
-      out_type = ir.VectorType.get(
-          new_shape,
-          out_type.element_type,
-      )
-      operand = tpu.concatenate(out_type, [operand, pad_high], dimension=axis)
+      operand = tpu.concatenate([operand, _pad(high)], dimension=axis)
 
     if interior > 0:
       raise NotImplementedError("Not implemented: interior padding")

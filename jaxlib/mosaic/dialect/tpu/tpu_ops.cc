@@ -1670,6 +1670,24 @@ LogicalResult ConcatenateOp::verify() {
   return success();
 }
 
+/*static*/ LogicalResult ConcatenateOp::inferReturnTypes(
+    MLIRContext* context, std::optional<Location> location, ValueRange operands,
+    DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
+    SmallVectorImpl<Type>& inferredReturnTypes) {
+  ConcatenateOpAdaptor adaptor(operands, attributes, properties, regions);
+  auto dimension = adaptor.getDimension();
+  auto first_type = cast<VectorType>(operands[0].getType());
+  llvm::SmallVector<int64_t> result_shape =
+      llvm::to_vector(first_type.getShape());
+  Type result_dtype = first_type.getElementType();
+  for (int i = 1; i < operands.size(); ++i) {
+    result_shape[dimension] +=
+        cast<VectorType>(operands[i].getType()).getDimSize(dimension);
+  }
+  inferredReturnTypes.push_back(VectorType::get(result_shape, result_dtype));
+  return success();
+}
+
 LogicalResult LogOp::verify() {
   FailureOr<CoreType> logging_core = GetCoreTypeOfParentFunc(**this);
   if (failed(logging_core)) {
