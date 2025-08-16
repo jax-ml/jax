@@ -32,7 +32,6 @@ from jax._src.util import safe_zip, cache, tuple_delete
 from jax._src.lib import xla_client as xc
 
 zip, unsafe_zip = safe_zip, zip
-config_ext = xc._xla.config
 
 MeshAxisName = Any
 ResourceAxisName = Hashable
@@ -573,15 +572,6 @@ class use_abstract_mesh:
 
   def __enter__(self):
     self.prev = jax_config.abstract_mesh_context_manager.swap_local(self.mesh)
-    if (self.prev is not config_ext.unset and
-        not self.prev.empty and not self.mesh.empty and
-        (self.prev.axis_names != self.mesh.axis_names or
-         self.prev.axis_sizes != self.mesh.axis_sizes)):
-      jax_config.abstract_mesh_context_manager.set_local(self.prev)
-      raise ValueError(
-          "use_abstract_mesh can only change the `axis_types`."
-          f" Got new mesh: {self.mesh} and prev mesh:"
-          f" {self.prev}")
 
   def __exit__(self, exc_type, exc_value, traceback):
     jax_config.abstract_mesh_context_manager.set_local(self.prev)
