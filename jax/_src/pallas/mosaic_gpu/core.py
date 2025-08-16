@@ -691,18 +691,7 @@ class TransposeTransform(MemoryRefTransform):
     return mgpu.dialect.TransposeTransformAttr.get(self.permutation)
 
 
-@tree_util.register_dataclass
-@dataclasses.dataclass(frozen=True)
-class TransposeRef(state_types.Transform):
-  permutation: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
-
-  def transform_shape(self, shape):
-    if shape is None:
-      return None
-    return tuple(shape[i] for i in self.permutation)
-
-  def transform_dtype(self, dtype):
-    return dtype
+class TransposeRef(state_types.RefTransposer):
 
   def untransform_transpose(
       self, perm
@@ -734,9 +723,6 @@ class TransposeRef(state_types.Transform):
 
   def undo_to_gpu_transform(self) -> mgpu.MemRefTransform:
     return mgpu.TransposeTransform(_perm_inverse(self.permutation))
-
-  def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
-    return pp.text(f"{{transpose({list(self.permutation)})}}")
 
 
 @tree_util.register_pytree_node_class

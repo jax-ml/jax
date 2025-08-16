@@ -176,7 +176,7 @@ class RefReshaper:
     del shape  # Unused
     return self.shape
 
-  def transform_dtype(self, dtype):
+  def transform_dtype(self, dtype: DTypeLike | None) -> DTypeLike | None:
     del dtype  # Unused
     return self.dtype
 
@@ -191,6 +191,45 @@ class RefReshaper:
     return pp.text(f"{{reshape({self.dtype}{list(self.shape)})}}")
 
 
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class RefTransposer:
+  permutation: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+
+  @classmethod
+  def from_ref_new_permutation(
+      cls, ref_or_view: Any, *perm: int
+  ) -> RefTransposer:
+    if len(perm) == 1 and isinstance(perm[0], tuple):
+      perm = perm[0]
+    if len(perm) != ref_or_view.ndim:
+      raise ValueError(
+          f"Permutation {perm} does not match the rank of the ref"
+          f" ({ref_or_view.ndim})"
+      )
+    return cls(perm)
+
+  def transform_shape(
+      self, shape: tuple[int | Array, ...] | None
+  ) -> tuple[int | Array, ...] | None:
+    if shape is None:
+      return None
+    return tuple(shape[i] for i in self.permutation)
+
+  def transform_dtype(self, dtype):
+    return dtype
+
+  def transform_sharding(self, sharding):
+    # If there are no explicit axes, do nothing.
+    if all(p is None for p in sharding.spec):
+      return sharding
+    raise NotImplementedError
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    del context  # Unused.
+    return pp.text(f"{{transpose({list(self.permutation)})}}")
+
+
 class Transform(Protocol):
 
   def transform_shape(
@@ -203,9 +242,7 @@ class Transform(Protocol):
     """
     return shape
 
-  def transform_dtype(
-      self, dtype: DTypeLike | None
-  ) -> DTypeLike | None:
+  def transform_dtype(self, dtype: DTypeLike | None) -> DTypeLike | None:
     """Transform the dtype.
 
     Can return None if the input dtype is not known, but must return a concrete
@@ -283,6 +320,7 @@ class TransformedRef:
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: math.prod(self.shape))
+  T = property(lambda self: self.transpose(*reversed(range(self.ndim))))
 
   @property
   def at(self) -> RefIndexer:
@@ -299,6 +337,10 @@ class TransformedRef:
         self.ref,
         (*self.transforms, RefReshaper.from_ref_new_shape(self, *shape)),
     )
+
+  def transpose(self, *permutation):
+    transposer = RefTransposer.from_ref_new_permutation(self, *permutation)
+    return TransformedRef(self.ref, (*self.transforms, transposer))
 
   def set(self, value, idx=()):
     from jax._src.state.primitives import ref_set  # pytype: disable=import-error
@@ -403,11 +445,19 @@ class AbstractRef(core.AbstractValue):
 
   @core.aval_method
   def bitcast(self, dtype):
-    return TransformedRef(self, (RefBitcaster.from_ref_new_dtype(self, dtype),))
+    return TransformedRef(self, ()).bitcast(dtype)
 
   @core.aval_method
   def reshape(self, *shape):
-    return TransformedRef(self, (RefReshaper.from_ref_new_shape(self, *shape),))
+    return TransformedRef(self, ()).reshape(*shape)
+
+  @core.aval_method
+  def transpose(self, *permutation):
+    return TransformedRef(self, ()).transpose(*permutation)
+
+  @core.aval_property
+  def T(self):
+    return TransformedRef(self, ()).T
 
   @core.aval_method
   @staticmethod
