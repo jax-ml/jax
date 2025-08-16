@@ -1887,6 +1887,7 @@ def _compute_offsets_from_indices(
     if isinstance(index, primitives.Slice):
       if index.is_dynamic_start or (index.stride != 1):
         start = index.start
+        _check_index(start)
         if not index.is_dynamic_start:
           start = _ir_constant(start, offset_eltype)
         start = _ir_cast(start, offset_eltype, signed=False)
@@ -1906,6 +1907,7 @@ def _compute_offsets_from_indices(
     else:
       # indexer is either a *scalar* or an array of size `int_indexer_shape`
       dim_offsets = index
+      _check_index(dim_offsets)
       if not isinstance(dim_offsets, ir.Value):
         dim_offsets = _ir_constant(dim_offsets, offset_eltype)
       dim_offsets = _ir_cast(dim_offsets, offset_eltype, signed=False)
@@ -1929,6 +1931,18 @@ def _compute_offsets_from_indices(
     offsets = _add(offsets, dim_offsets)
 
   return offsets
+
+
+def _check_index(idx: object | ir.Value) -> None:
+  match idx:
+    case int():
+      return
+    case np.generic() | np.ndarray() if np.issubdtype(idx.dtype, np.integer):
+      return
+    case ir.Value():
+      if idx.type == ir.IndexType.get() or ir.IntegerType.isinstance(idx.type):
+        return
+  raise TypeError(f"Unsupported index {idx} of type {type(idx)}")
 
 
 def _compute_pointers_from_indices(
