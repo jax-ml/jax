@@ -232,6 +232,7 @@ from jax._src.lax.lax import (
   transpose as transpose,
   transpose_p as transpose_p,
   xor_p as xor_p,
+  empty as empty,
   zeros_like_array as _deprecated_zeros_like_array,
 )
 from jax._src.lax.special import (
