@@ -25,6 +25,7 @@ python_init_repositories(
         "libtpu*",
         "ml_dtypes*",
         "ml-dtypes*",
+        "libtpu*",
         "numpy*",
         "scipy*",
         "jax-*",
