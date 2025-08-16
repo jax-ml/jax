@@ -205,14 +205,21 @@ class DLPackTest(jtu.JaxTestCase):
   @jtu.sample_product(
     shape=all_shapes,
     dtype=numpy_dtypes,
-    copy=[False, True],
+    copy=[False, True, None] if jaxlib_version >= (0, 7, 1) else [False, True],
   )
   def testNumpyToJax(self, shape, dtype, copy):
     rng = jtu.rand_default(self.rng())
     x_np = rng(shape, dtype)
     device = jax.devices()[0]
+    if jaxlib_version < (0, 7, 1):
+      # dlpack_managed_tensor_to_buffer of older jaxlib version always
+      # copies input buffers that are unaligned
+      buf_has_64bit_alignment = True
+    else:
+      buf_has_64bit_alignment = (x_np.__array_interface__["data"][0] & 63 == 0)
     _from_dlpack = lambda: jnp.from_dlpack(x_np, device=device, copy=copy)
-    if jax.default_backend() == 'gpu' and not copy:
+    if copy is not None and not copy and (jax.default_backend() == 'gpu'
+                                          or not buf_has_64bit_alignment):
       self.assertRaisesRegex(
         ValueError,
         r"Specified .* which requires a copy",
