@@ -464,6 +464,21 @@ class BlockSpec:
       vmapped_dims: tuple[int, ...],
       debug: bool = False,
   ) -> BlockMapping:
+    if jnp.issubdtype(array_aval.dtype, dtypes.extended):
+      physical_element_aval = array_aval.dtype._rules.physical_element_aval(
+          array_aval.dtype)
+      if self.block_shape is None:
+        physical_block_shape = physical_element_aval.shape
+      else:
+        physical_block_shape = self.block_shape + physical_element_aval.shape
+      array_aval = jax_core.ShapedArray(
+          array_aval.shape + physical_element_aval.shape,
+          dtype=physical_element_aval.dtype,
+      )
+    else:
+      physical_element_aval = None  # To make linter happy.
+      physical_block_shape = self.block_shape
+
     if self.index_map is None:
       index_map_func = default_index_map(len(array_aval.shape))
       index_map_dbg = api_util.debug_info("pallas_call index_map",
@@ -471,19 +486,23 @@ class BlockSpec:
                                           )._replace(arg_names=("",) * len(index_map_avals))
       api_util.save_wrapped_fun_debug_info(index_map_func, index_map_dbg)
     else:
-      index_map_func = self.index_map
-    if self.block_shape is None:
-      block_shape = _canonicalize_block_shape(array_aval.shape)
+      if jnp.issubdtype(array_aval.dtype, dtypes.extended):
+        zeros = (0,) * len(physical_element_aval.shape)
+        index_map_func = lambda *args: (*self.index_map(*args), *zeros)  # type: ignore
+      else:
+        index_map_func = self.index_map
+    if physical_block_shape is None:
+      physical_block_shape = _canonicalize_block_shape(array_aval.shape)
     else:
-      block_shape = _canonicalize_block_shape(self.block_shape)
-      if len(array_aval.shape) != len(block_shape):
+      physical_block_shape = _canonicalize_block_shape(physical_block_shape)
+      if len(array_aval.shape) != len(physical_block_shape):
         raise ValueError(
-            f"Block shape for {origin} (= {block_shape}) "
+            f"Block shape for {origin} (= {physical_block_shape}) "
             "must have the same number of dimensions as the "
             f"array shape {array_aval.shape}."
         )
 
-    ref_block_shape = _get_ref_block_shape(block_shape)
+    ref_block_shape = _get_ref_block_shape(physical_block_shape)
     if isinstance(array_aval, jax_core.DShapedArray):
       # Get the "max" shape for the ragged array.
       block_array_aval = array_aval.update(shape=ref_block_shape)
@@ -528,15 +547,15 @@ class BlockSpec:
     index_map_out_tree = index_map_out_tree_thunk()
     unflat_avals = tree_util.tree_unflatten(index_map_out_tree, out_avals)
 
-    if len(unflat_avals) != len(block_shape):
+    if len(unflat_avals) != len(physical_block_shape):
       raise ValueError(
           f"Index map function {debug_info.func_src_info} for "
           f"{origin} must return "
-          f"{len(block_shape)} values to match {block_shape=}. "
+          f"{len(physical_block_shape)} values to match {physical_block_shape=}. "
           f"Currently returning {len(unflat_avals)} values:"
       )
     # Verify types match
-    for i, (idx_aval, bd) in enumerate(zip(unflat_avals, block_shape)):
+    for i, (idx_aval, bd) in enumerate(zip(unflat_avals, physical_block_shape)):
       match bd:
         case BoundedSlice():
           if not isinstance(idx_aval, indexing.Slice):
@@ -572,7 +591,7 @@ class BlockSpec:
     array_aval_shape = _max_shape_from_aval(array_aval)
 
     mapping = BlockMapping(
-        block_shape=block_shape,
+        block_shape=physical_block_shape,
         transformed_block_aval=block_aval,  # There are no transforms by default
         index_map_jaxpr=jax_core.ClosedJaxpr(jaxpr, consts),
         index_map_out_tree=index_map_out_tree,
