@@ -108,16 +108,30 @@ class ArrayMapping(tuple):
 class SdyShardingRule:
   """Represents a Shardy sharding rule.
 
-  An SdyShardingRule contains the ArrayMappings for operands and results, and an
-  optional list of factor sizes. A factor is a name used in the ArrayMappings.
-  If a factor is only used in CompoundFactors, its size must be specified.
+  An SdyShardingRule contains the ArrayMappings for operands and results,
+  optional special factors and optional factor sizes. A factor is a name used in
+  the ArrayMappings. If a factor is only used in CompoundFactors, its size must
+  be specified. By default, a factor is a passthrough factor. Keyword arguments
+  can be used to specify other factor kinds including reduction_factors,
+  need_replication_factors, and permutation_factors. Keyword arguments
+  blocked_propagation_factors can also be used to tell Shardy to block
+  propagation for the specified factors.
   """
   operand_mappings: tuple[ArrayMapping, ...]
   result_mappings: tuple[ArrayMapping, ...]
   factor_sizes: dict[str, int]
+  reduction_factors: tuple[str, ...]
+  need_replication_factors: tuple[str, ...]
+  permutation_factors: tuple[str, ...]
+  blocked_propagation_factors: tuple[str, ...]
 
   def __init__(self, operand_mappings: tuple[ArrayMapping, ...],
-               result_mappings: tuple[ArrayMapping, ...], **factor_sizes):
+               result_mappings: tuple[ArrayMapping, ...],
+               *, reduction_factors: tuple[str, ...] = (),
+               need_replication_factors: tuple[str, ...] = (),
+               permutation_factors: tuple[str, ...] = (),
+               blocked_propagation_factors: tuple[str, ...] = (),
+               **factor_sizes: int):
     # Find all factors and mark whether their size can be inferred.
     factors_inferrable = dict()
     for value in operand_mappings + result_mappings:
@@ -148,12 +162,49 @@ class SdyShardingRule:
           f"Factor {factor} represents a whole dimension; do not specify its"
           " size")
 
+    special_factors = set()
+    def check_special_factors(kind, factors, are_special_factors=True):
+      if not isinstance(factors, tuple):
+        raise ValueError(f"{kind} must be a tuple of factors")
+
+      if len(factors) != len(set(factors)):
+        raise ValueError(f"{kind} contains duplicated factors")
+
+      for factor in factors:
+        if factor not in factors_inferrable:
+          raise ValueError(
+            f"Factor {factor} in {kind} is not used in the rule")
+        if are_special_factors:
+          if factor in special_factors:
+            raise ValueError(f"Factor {factor} is used in multiple special factors")
+          special_factors.add(factor)
+
+    check_special_factors("reduction_factors", reduction_factors)
+    check_special_factors("need_replication_factors", need_replication_factors)
+    check_special_factors("permutation_factors", permutation_factors)
+    check_special_factors("blocked_propagation_factors", blocked_propagation_factors, False)
+
     self.operand_mappings = operand_mappings
     self.result_mappings = result_mappings
     self.factor_sizes = factor_sizes
+    self.reduction_factors = reduction_factors
+    self.need_replication_factors = need_replication_factors
+    self.permutation_factors = permutation_factors
+    self.blocked_propagation_factors = blocked_propagation_factors
+
 
   def __str__(self):
-    return f"SdyShardingRule({self.operand_mappings}, {self.result_mappings}, {self.factor_sizes})"
+    def to_str(kind, factors):
+      if len(factors) > 0:
+        return f" {kind}={factors}"
+      return ""
+
+    special_factors = (to_str("reduction_factors", self.reduction_factors) +
+        to_str("need_replication_factors", self.need_replication_factors) +
+        to_str("permutation_factors", self.permutation_factors) +
+        to_str("blocked_propagation_factors", self.blocked_propagation_factors))
+    return (f"SdyShardingRule({self.operand_mappings}, {self.result_mappings}, "
+            f"{self.factor_sizes}{special_factors})")
 
 
 def _get_batching_dim_factor_name(batch_group: str,batch_dim_order : int):
@@ -268,15 +319,25 @@ def _parse_values(
 
   return tuple(all_values)
 
-def str_to_sdy_sharding_rule(rule: str, **factor_sizes) -> SdyShardingRule:
+def str_to_sdy_sharding_rule(rule: str, *,
+                             reduction_factors: tuple[str, ...] = (),
+                             need_replication_factors: tuple[str, ...] = (),
+                             permutation_factors: tuple[str, ...] = (),
+                             blocked_propagation_factors: tuple[str, ...] = (),
+                             **factor_sizes: int) -> SdyShardingRule:
   """Constructs a SdyShardingRule object from the Einsum notation like string.
 
   This is done by verifying that the input Einsum notation like string and
-  with optional factor sizes represents a valid sharding rule and converting
-  it to an internal representation.
+  with optional special factors and factor sizes represents a valid sharding
+  rule and converting it to an internal representation.
 
   Args:
     rule: The Einsum notation like string for an operation.
+    reduction_factors: A tuple of factors that are reduction factors.
+    need_replication_factors: A tuple of factors that are need_replication factors.
+    permutation_factors: A tuple of factors that are permutation factors.
+    blocked_propagation_factors: A tuple of factors that we want to block
+      their propagation.
     **factor_sizes: The optional factor sizes.
 
   Raises:
@@ -303,8 +364,12 @@ def str_to_sdy_sharding_rule(rule: str, **factor_sizes) -> SdyShardingRule:
 
   operand_mappings = _parse_values(operands)
   result_mappings = _parse_values(results)
-
-  return SdyShardingRule(operand_mappings, result_mappings, **factor_sizes)
+  return SdyShardingRule(operand_mappings, result_mappings,
+                         reduction_factors=reduction_factors,
+                         need_replication_factors=need_replication_factors,
+                         permutation_factors=permutation_factors,
+                         blocked_propagation_factors=blocked_propagation_factors,
+                         **factor_sizes)
 
 
 def sdy_sharding_rule_to_mlir(
@@ -392,6 +457,9 @@ def sdy_sharding_rule_to_mlir(
 
     return sdy.DimMappingAttr.get(factor_indices=all_indices)
 
+  def factors_to_indices(factors):
+    return [factors_to_indices_sizes[factor][0] for factor in factors]
+
   # Add factors and their sizes in the order they appear in the rule,
   # including the batching dimensions represented by ellipsis.
   batching_group_to_rank: dict[str, int] = {}
@@ -476,4 +544,9 @@ def sdy_sharding_rule_to_mlir(
       factor_sizes=[item[1] for item in factors_to_indices_sizes.values()],
       operand_mappings=tensor_mappings[0:len(operand_types)],
       result_mappings=tensor_mappings[len(operand_types):],
-      is_custom=True)
+      is_custom=True,
+      reduction_factors=factors_to_indices(rule.reduction_factors),
+      need_replication_factors=factors_to_indices(rule.need_replication_factors),
+      permutation_factors=factors_to_indices(rule.permutation_factors),
+      blocked_propagation_factors=factors_to_indices(rule.blocked_propagation_factors),
+      )

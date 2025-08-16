@@ -314,6 +314,17 @@ class custom_partitioning:
     separator between factors and allow multiple letters factor names. See
     `jax-shardy-guide <https://colab.sandbox.google.com/github/openxla/shardy/blob/main/docs/getting_started_jax.ipynb>`_
     for more details and examples on how to use this.
+  * ``reduction_factors``: A tuple of strings, specifying the reduction factors
+    for a string `sharding_rule`.
+  * ``need_replication_factors``: A tuple of strings, specifying the
+    need_replication factors for a string `sharding_rule`.
+  * ``permutation_factors``: A tuple of strings, specifying the permutation
+    factors for a string `sharding_rule`.
+  * ``blocked_propagation_factors``: A tuple of strings, specifying the blocked
+    propagation factors for a string `sharding_rule`.
+  * ``factor_sizes``: A dictionary of variable keyword arguments, specifying
+    the sizes of the factors that are only used in compound factors in a string
+    `sharding_rule`.
 
   When config.use_shardy_partitioner.value is True, `sharding_rule` is used;
   otherwise, `propagate_user_sharding` and `infer_sharding_from_operands` are
@@ -379,7 +390,7 @@ class custom_partitioning:
       my_fft.def_partition(
         infer_sharding_from_operands=infer_sharding_from_operands,
         partition=partition,
-        sharding_rule=SdyShardingRule(operand_mappings=((SDY_BATCHING, 'i'),), result_mappings=((SDY_BATCHING, 'i'),))))
+        sharding_rule=SdyShardingRule(operand_mappings=((BATCHING, 'i'),), result_mappings=((BATCHING, 'i'),))))
 
     Now create a 2D array sharded along the first axis, pass it through ``my_fft``
     and notice how it is still sharded as expected, and identical to the output
@@ -458,16 +469,34 @@ class custom_partitioning:
 
   def def_partition(self, partition, infer_sharding_from_operands=None,
                     propagate_user_sharding=None, decode_shardings=True,
-                    sharding_rule=None):
+                    sharding_rule=None, *, reduction_factors=(),
+                    need_replication_factors=(), permutation_factors=(),
+                    blocked_propagation_factors=(), **factor_sizes):
     self.partition = partition
     self.propagate_user_sharding = propagate_user_sharding
     self.infer_sharding_from_operands = infer_sharding_from_operands
     self.decode_shardings = decode_shardings
     if (sharding_rule is None or isinstance(sharding_rule, Callable) or
         isinstance(sharding_rule, SdyShardingRule)):
+      sharding_rule_dict = factor_sizes
+      if len(reduction_factors) > 0:
+        sharding_rule_dict["reduction_factors"] = reduction_factors
+      if len(need_replication_factors) > 0:
+        sharding_rule_dict["need_replication_factors"] = need_replication_factors
+      if len(permutation_factors) > 0:
+        sharding_rule_dict["permutation_factors"] = permutation_factors
+      if len(blocked_propagation_factors) > 0:
+        sharding_rule_dict["blocked_propagation_factors"] = blocked_propagation_factors
+      if sharding_rule_dict:
+        raise ValueError(f"Unknown keyword arguments: {sharding_rule_dict}")
       self.sharding_rule = sharding_rule
     else:
-      self.sharding_rule = str_to_sdy_sharding_rule(sharding_rule)
+      self.sharding_rule = str_to_sdy_sharding_rule(sharding_rule,
+                                                    reduction_factors=reduction_factors,
+                                                    need_replication_factors=need_replication_factors,
+                                                    permutation_factors=permutation_factors,
+                                                    blocked_propagation_factors=blocked_propagation_factors,
+                                                    **factor_sizes)
     return partition
 
   def __call__(self, *args, **kwargs):
@@ -598,8 +627,12 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
     value_types = [mlir.aval_to_ir_type(s) for s in call.in_avals]
     if callable(sharding_rule):
       sharding_rule = sharding_rule(*static_args, mesh, value_types, result_types)
+      if isinstance(sharding_rule, (list, tuple)) and len(sharding_rule) ==2:
+        sharding_rule, sharding_rule_dict = sharding_rule
+      else:
+        sharding_rule_dict = {}
       if isinstance(sharding_rule, str):
-        sharding_rule = str_to_sdy_sharding_rule(sharding_rule)
+        sharding_rule = str_to_sdy_sharding_rule(sharding_rule, **sharding_rule_dict)
       elif not isinstance(sharding_rule, SdyShardingRule):
           raise ValueError("sharding_rule callable must produce either an "
                            "SdyShardingRule object or an Einsum-like notation "
