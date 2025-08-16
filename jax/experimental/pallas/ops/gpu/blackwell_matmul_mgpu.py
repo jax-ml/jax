@@ -33,6 +33,7 @@ class TuningConfig:
   tile_k: int
   max_concurrent_steps: int
   collective: bool
+  split_k: int = 1
   grid_tile_n: int | None = None
   epilogue_tile_n: int = 64
 
@@ -75,7 +76,9 @@ def matmul_kernel(a, b, config: TuningConfig):
     raise ValueError(f"{k=} must be divisible by {tile_k=}")
   m_iters = m // tile_m
   n_iters = n // tile_n
-  k_iters = k // tile_k
+  split_k = config.split_k
+  k_per_split = k // split_k
+  k_iters = k_per_split // tile_k
   max_concurrent_steps = config.max_concurrent_steps
 
   TMA_WARP = 0
@@ -86,15 +89,15 @@ def matmul_kernel(a, b, config: TuningConfig):
   def kernel(a_gmem, b_gmem, out_gmem,
              a_smem, b_smem, acc_tmem, acc_smem,
              a_tma_barrier, b_tma_barrier, store_done_barrier, mma_done_barrier,
-             consumed_barrier):
+             consumed_barrier, semaphores):
     if collective:
-      grid = (m_iters, n_iters, 2)
+      grid = (split_k, m_iters, n_iters, 2)
       collective_axes = ("sm", "x")
     else:
-      grid = (m_iters, n_iters)
+      grid = (split_k, m_iters, n_iters)
       collective_axes = ("sm",)
     if config.grid_tile_n is not None:
-      grid_tiling = (m_iters, config.grid_tile_n)
+      grid_tiling = (1, m_iters, config.grid_tile_n)
       if collective:
         grid_tiling += (2,)
     else:
@@ -105,13 +108,14 @@ def matmul_kernel(a, b, config: TuningConfig):
                    collective_axes=collective_axes,
                    tiling=grid_tiling,
                    include_wave_step=True)
+    @jax.named_scope("mn_loop")
     def mn_loop(idx, wave_step):  # pylint: disable=unused-variable
       if collective:
-        m_index, n_index, cluster_idx = idx
+        split_k_idx, m_index, n_index, cluster_idx = idx
         block_m_index = m_index * 2 + cluster_idx
         is_lead_block = cluster_idx == 0
       else:
-        m_index, n_index = idx
+        split_k_idx, m_index, n_index = idx
         block_m_index = m_index
         is_lead_block = True
 
@@ -119,8 +123,10 @@ def matmul_kernel(a, b, config: TuningConfig):
       slice_m = pl.ds(m_index * tile_m, tile_m)
       slice_n = pl.ds(n_index * tile_n, tile_n)
       acc_slot = lax.rem(wave_step, jnp.int32(2))
+      k_offset = split_k_idx * k_per_split
 
       @pl.when(wg_idx == COMPUTE_WG)
+      @jax.named_scope("compute_wg")
       def _():
         @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
         def _per_warp():
@@ -128,7 +134,7 @@ def matmul_kernel(a, b, config: TuningConfig):
           @pl.when(warp_id == TMA_WARP)
           def _memory():
             def _loop_body(ki, _):
-              slice_k = pl.ds(ki * tile_k, tile_k)
+              slice_k = pl.ds(ki * tile_k + k_offset, tile_k)
               slot = lax.rem(ki, max_concurrent_steps)
               @pl.when(jnp.logical_or(ki >= max_concurrent_steps,
                                       wave_step > 0))
@@ -180,7 +186,17 @@ def matmul_kernel(a, b, config: TuningConfig):
             lax.fori_loop(0, k_iters, _loop_body, None)
 
       @pl.when(wg_idx == STORE_WG)
+      @jax.named_scope("store_wg")
       def _():
+        if split_k > 1:
+          # We use semaphores to synchronize across blocks.
+          # Here we wait for the previous block to finish computing before
+          # we start storing.
+          @pl.when(split_k_idx > 0)
+          @jax.named_scope("semaphore_wait")
+          def _():
+            pl.semaphore_wait(semaphores.at[block_m_index, n_index])
+
         plgpu.barrier_wait(mma_done_barrier.at[acc_slot])
         acc_tmem_slot = acc_tmem.at[:, pl.ds(acc_slot * tile_n, tile_n)]
         acc_regs_slot = plgpu.async_load_tmem(acc_tmem_slot).astype(dtype)
@@ -190,11 +206,25 @@ def matmul_kernel(a, b, config: TuningConfig):
               :, ni * epilogue_tile_n: (ni + 1) * epilogue_tile_n]
           plgpu.commit_smem()
           ep_gmem_slice = pl.ds(ni * epilogue_tile_n, epilogue_tile_n)
-          plgpu.copy_smem_to_gmem(acc_smem, step_out_gmem.at[:, ep_gmem_slice])
+          @pl.when(split_k_idx == 0)
+          def _():
+            plgpu.copy_smem_to_gmem(acc_smem,
+                                    step_out_gmem.at[:, ep_gmem_slice])
+          @pl.when(split_k_idx > 0)
+          def _():
+            plgpu.copy_smem_to_gmem(acc_smem,
+                                    step_out_gmem.at[:, ep_gmem_slice],
+                                    reduction_op='add')
           # TODO(justinfu): Double-buffer acc_smem
           plgpu.wait_smem_to_gmem(0, wait_read_only=True)
         plgpu.wait_load_tmem()  # Load must complete before we continue.
         plgpu.barrier_arrive(store_done_barrier.at[acc_slot])
+
+        if split_k > 1:
+          @pl.when(split_k_idx < (split_k - 1))
+          @jax.named_scope("semaphore_signal")
+          def _():
+            pl.semaphore_signal(semaphores.at[block_m_index, n_index])
 
   num_sms = backend.get_default_device().core_count
   f = plgpu.kernel(
@@ -237,6 +267,9 @@ def matmul_kernel(a, b, config: TuningConfig):
               num_barriers=max_concurrent_steps,
               orders_tensor_core=True,
           ),
+          # Semaphores used for synchronizing split_k reduction.
+          plgpu.SemaphoreType.REGULAR((m_iters * 2 if collective else m_iters,
+                                       n_iters), is_global=True),
       ),
   )
   return f(a, b)
@@ -244,7 +277,7 @@ def matmul_kernel(a, b, config: TuningConfig):
 
 def main(_) -> None:
   problem_it = itertools.product(
-      (1024, 4096, 8192), (1024, 4096, 8192), (1024, 8192)
+      (1024, 4096, 8192), (1024, 4096, 8192), (1024, 8192,)
   )
   for M, N, K in problem_it:
     print(f"==== {M=} {N=} {K=} ====")
@@ -256,12 +289,13 @@ def main(_) -> None:
         (128,),  # tile_m
         (128, 256),  # tile_n
         (64, 128),  # tile_k
+        (1, 2),  # split_k
         (None, 4, 8, 16),  # grid_tile_n
         (2, 4, 6),  # max_concurrent_steps
         (False, True),  # collective
     )
     best_util = -float("inf")
-    for (tile_m, tile_n, tile_k, grid_tile_n,
+    for (tile_m, tile_n, tile_k, split_k, grid_tile_n,
          max_concurrent_steps, collective) in tuning_it:
       # Only N <= 128 are supported for collective MMAs
       if collective and tile_n > 128:
@@ -272,6 +306,7 @@ def main(_) -> None:
           tile_k=tile_k,
           max_concurrent_steps=max_concurrent_steps,
           collective=collective,
+          split_k=split_k,
           grid_tile_n=grid_tile_n,
       )
       if collective:
@@ -298,7 +333,7 @@ def main(_) -> None:
       if achieved_tc_util > best_util:
         best_util = achieved_tc_util
       print(
-          f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=} "
+          f"{tile_m=} {tile_n=} {tile_k=} {split_k=} {max_concurrent_steps=} "
           f"{grid_tile_n=} "
           f"{collective=} : "
           f"{runtime_us:<7.1f}us"

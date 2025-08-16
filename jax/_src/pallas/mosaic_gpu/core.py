@@ -180,16 +180,31 @@ class MemorySpace(enum.Enum):
                         layout=mgpu_layout, collective=collective)
 
 
+class global_gpu_semaphore(pallas_core.semaphore):
+  """Scalar type for global GPU semaphores."""
+
+
+class GlobalGPUSemaphore(pallas_core.AbstractSemaphoreTy):
+  name = "global_gpu_semaphore"
+  type = global_gpu_semaphore
+
+
 class SemaphoreType(enum.Enum):
   REGULAR = "regular"
   BARRIER = "barrier"
 
-  def __call__(self, shape: tuple[int, ...]):
+  def __call__(self, shape: tuple[int, ...], is_global: bool = False):
     dtype: Any
     if self == SemaphoreType.BARRIER:
       dtype = pallas_core.BarrierSemaphore()
+      if is_global:
+        raise NotImplementedError()
     else:
-      dtype = pallas_core.Semaphore()
+      if is_global:
+        dtype = GlobalGPUSemaphore()
+      else:
+        dtype = pallas_core.Semaphore()
+
     return pallas_core.MemoryRef(shape, dtype, MemorySpace.GMEM)
 
   def get_array_aval(self) -> jax_core.ShapedArray:
