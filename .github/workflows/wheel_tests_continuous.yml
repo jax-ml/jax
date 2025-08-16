@@ -166,6 +166,7 @@ jobs:
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
       build_jaxlib: "wheel"
+      run-full-cpu-test-suite: "1"
 
   run-bazel-test-cuda:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
