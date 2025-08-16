@@ -11,4 +11,5 @@ TPU specific documentation.
    matmul
    sparse
    distributed
+   prng
 
