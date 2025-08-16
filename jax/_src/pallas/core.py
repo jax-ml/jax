@@ -241,6 +241,11 @@ class MemorySpace(enum.Enum):
   KEY = "key"  # Memory space for PRNG keys.
   HOST = "host"  # Host memory space.
 
+  def __call__(self, shape, dtype):
+    if self == MemorySpace.ANY:
+      return jax.ShapeDtypeStruct(shape, dtype)
+    raise ValueError(f"Memory space {self} is not supported.")
+
   def __str__(self) -> str:
     return self.value
 
