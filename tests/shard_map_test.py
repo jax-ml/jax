@@ -4094,6 +4094,24 @@ class ShardMapTest(jtu.JaxTestCase):
 
     self.assertAllClose(y, x, check_dtypes=False)
 
+  def test_random_beta_vma(self):
+    mesh = jtu.create_mesh((2,), 'dp')
+    rng = jax.random.key(42)
+
+    f = shard_map(lambda x, y, z: jax.random.beta(jax.lax.pvary(x, ('dp',)), y, z),
+                  mesh=mesh,
+                  in_specs=(P(), P('dp'), P('dp')), out_specs=P('dp'))
+    res = f(rng, jnp.ones((64, 1)), jnp.ones((64, 1)))
+    # explicit key resuse.
+    a, b = res.reshape(2, 32)
+    self.assertAllClose(a, b) # Key reuse.
+
+    # Also works without key-reuse:
+    rng = jax.random.key(42)
+    f = shard_map(lambda x, y, z: jax.random.beta(x[0], y, z), mesh=mesh,
+                  in_specs=(P('dp'), P('dp'), P('dp')), out_specs=P('dp'))
+    f(jax.random.split(rng, 2), jnp.ones((64, 1)), jnp.ones((64, 1)))  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str

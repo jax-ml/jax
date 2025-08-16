@@ -1097,6 +1097,15 @@ def _beta(key, a, b, shape, dtype) -> Array:
   else:
     _check_shape("beta", shape, np.shape(a), np.shape(b))
 
+  if (core.typeof(key).vma != core.typeof(a).vma or
+      core.typeof(a).vma != core.typeof(b).vma):
+    raise TypeError("jax.random.beta requires all arguments to have matching pvary "
+                    f"but they differ: key: {tuple(core.typeof(key).vma)} vs"
+                    f" a: {tuple(core.typeof(a).vma)} vs "
+                    f" b: {tuple(core.typeof(b).vma)}. Use "
+                    " jax.lax.pvary(...) to make them match. If your key is "
+                    " less varying than a, watch out for key-reuse problems.")
+
   a = lax.convert_element_type(a, dtype)
   b = lax.convert_element_type(b, dtype)
   key_a, key_b = _split(key)
@@ -1260,11 +1269,17 @@ def _gamma_one(key: Array, alpha, log_space) -> Array:
   # https://en.wikipedia.org/wiki/Gamma_distribution#Generating_gamma-distributed_random_variables
   zero = lax._const(alpha, 0)
   one = lax._const(alpha, 1)
+  two = lax._const(alpha, 2)
   minus_one = lax._const(alpha, -1)
   one_over_two = lax._const(alpha, 0.5)
   one_over_three = lax._const(alpha, 1. / 3.)
   squeeze_const = lax._const(alpha, 0.0331)
   dtype = lax.dtype(alpha)
+
+  zero = core.pvary(zero, tuple(core.typeof(alpha).vma))
+  one = core.pvary(one, tuple(core.typeof(alpha).vma))
+  minus_one = core.pvary(minus_one, tuple(core.typeof(alpha).vma))
+  two = core.pvary(two, tuple(core.typeof(alpha).vma))
 
   # for alpha < 1, we boost alpha to alpha + 1 and get a sample according to
   #   Gamma(alpha) ~ Gamma(alpha+1) * Uniform()^(1 / alpha)
@@ -1287,10 +1302,11 @@ def _gamma_one(key: Array, alpha, log_space) -> Array:
     # TODO: use lax.cond when its batching rule is supported
     # The reason is to avoid evaluating second condition which involves log+log
     # if the first condition is satisfied
-    cond = lax.bitwise_and(lax.ge(U, lax.sub(one, lax.mul(squeeze_const, lax.mul(X, X)))),
-                           lax.ge(lax.log(U), lax.add(lax.mul(X, one_over_two),
-                                                      lax.mul(d, lax.add(lax.sub(one, V),
-                                                                         lax.log(V))))))
+    cond = lax.bitwise_and(
+        lax.ge(U, lax.sub(one, lax.mul(squeeze_const, lax.mul(X, X)))),
+        lax.ge(lax.log(U), lax.add(lax.mul(X, one_over_two),
+                                   lax.mul(d, lax.add(lax.sub(one, V),
+                                                      lax.log(V))))))
     return cond
 
   def _body_fn(kXVU):
@@ -1303,7 +1319,8 @@ def _gamma_one(key: Array, alpha, log_space) -> Array:
 
     key = kXVU[0]
     key, x_key, U_key = _split(key, 3)
-    _, x, v = lax_control_flow.while_loop(lambda kxv: lax.le(kxv[2], zero), _next_kxv, (x_key, zero, minus_one))
+    _, x, v = lax_control_flow.while_loop(lambda kxv: lax.le(kxv[2], zero),
+                                          _next_kxv, (x_key, zero, minus_one))
     X = lax.mul(x, x)
     V = lax.mul(lax.mul(v, v), v)
     U = uniform(U_key, (), dtype=dtype)
@@ -1311,14 +1328,17 @@ def _gamma_one(key: Array, alpha, log_space) -> Array:
 
   # initial state is chosen such that _cond_fn will return True
   key, subkey = _split(key)
-  _, _, V, _ = lax_control_flow.while_loop(_cond_fn, _body_fn, (key, zero, one, lax._const(alpha, 2)))
+  _, _, V, _ = lax_control_flow.while_loop(
+      _cond_fn, _body_fn, (key, zero, one, two))
   if log_space:
     log_samples = lax.neg(exponential(subkey, (), dtype=dtype))
-    log_boost = lax.select(boost_mask | (log_samples == 0), zero, lax.mul(log_samples, lax.div(one, alpha_orig)))
+    log_boost = lax.select(boost_mask | (log_samples == 0), zero,
+                           lax.mul(log_samples, lax.div(one, alpha_orig)))
     return lax.add(lax.add(lax.log(d), lax.log(V)), log_boost)
   else:
     samples = 1 - uniform(subkey, (), dtype=dtype)
-    boost = lax.select(boost_mask, one, lax.pow(samples, lax.div(one, alpha_orig)))
+    boost = lax.select(boost_mask, one,
+                       lax.pow(samples, lax.div(one, alpha_orig)))
     return lax.mul(lax.mul(d, V), boost)
 
 
@@ -1333,7 +1353,8 @@ def _gamma_grad(sample, a, *, log_space):
     zero = lax._const(sample, 0)
     tiny = lax.full_like(samples, dtypes.finfo(samples.dtype).tiny)
     samples = lax.select(lax.eq(samples, zero), tiny, samples)
-    gamma_grad = lambda alpha, sample: lax_special.random_gamma_grad(alpha, sample) / sample
+    gamma_grad = lambda alpha, sample: (
+        lax_special.random_gamma_grad(alpha, sample) / sample)
   else:
     gamma_grad = lax_special.random_gamma_grad
   if xla_bridge.get_backend().platform == 'cpu':
@@ -1370,7 +1391,12 @@ def _gamma_batching_rule(batched_args, batch_dims, *, log_space):
 
 random_gamma_p = core.Primitive('random_gamma')
 random_gamma_p.def_impl(_gamma_impl)
-random_gamma_p.def_abstract_eval(lambda key, a, **_: a)
+
+def _random_gamma_abstract_eval(key, a, **_):
+  core.standard_vma_rule('random_gamma', key, a)
+  return a
+random_gamma_p.def_abstract_eval(_random_gamma_abstract_eval)
+
 ad.defjvp2(
     random_gamma_p, None,
     lambda tangent, ans, key, a, **kwds: tangent * _gamma_grad(ans, a, **kwds))
@@ -1481,6 +1507,12 @@ def _gamma(key, a, shape, dtype, log_space=False) -> Array:
   a = lax.convert_element_type(a, dtype)
   if np.shape(a) != shape:
     a = jnp.broadcast_to(a, shape)
+  if tuple(core.typeof(a).vma) != tuple(core.typeof(key).vma):
+    raise TypeError("gamma requires all arguments to have matching pvary "
+                    f"but they differ: key: {tuple(core.typeof(key).vma)} vs"
+                    f" a: {tuple(core.typeof(a).vma)}. Use "
+                    " jax.lax.pvary(...) to make them match. If your key is "
+                    " less varying than a, watch out for key-reuse problems.")
   return random_gamma_p.bind(key, a, log_space=log_space)
 
 

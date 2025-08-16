@@ -1701,7 +1701,8 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   # To do this, we compute the jaxpr in two passes: first with the raw inputs, and if
   # necessary, a second time with modified init values.
   init_vals, init_avals, body_jaxpr, in_tree, *rest = _create_jaxpr(init_val)
-  new_init_vals, changed = _promote_weak_typed_inputs(init_vals, init_avals, body_jaxpr.out_avals)
+  new_init_vals, changed = _promote_weak_typed_inputs(
+      init_vals, init_avals, body_jaxpr.out_avals)
   new_init_val, = tree_unflatten(in_tree, new_init_vals)
   if changed:
     init_vals, init_avals, body_jaxpr, in_tree, *rest = _create_jaxpr(new_init_val)
