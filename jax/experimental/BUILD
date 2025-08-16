@@ -555,6 +555,15 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "fused",
+    srcs = ["fused.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//jax/_src:api",
+    ],
+)
+
+pytype_strict_library(
     name = "source_mapper",
     srcs = glob(include = ["source_mapper/**/*.py"]),
     visibility = [
@@ -680,6 +689,7 @@ filegroup(
         "multihost_utils.py",
         "pjit.py",
         "scheduling_groups.py",
+        "fused.py",
         "shard_map.py",
     ],
     visibility = ["//jax:internal"],
