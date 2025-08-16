@@ -298,6 +298,12 @@ std::optional<int64_t> getIntConst(Value v);
 // results.
 SmallVector<Operation *> getNontrivialTransitiveUsers(Value v);
 
+// Return modulo but in the range [1, b] for a, b > 0.
+template <typename U, typename V>
+auto positiveMod(U a, V b) {
+  return (a - 1) % b + 1;
+}
+
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_
