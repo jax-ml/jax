@@ -567,8 +567,13 @@ async def main():
     logging.error("CUDA and ROCm cannot be enabled at the same time.")
     sys.exit(1)
 
+  if args.cuda_version:
+    cuda_major_version = args.cuda_version.split(".")[0]
+  else:
+    cuda_major_version = args.cuda_major_version
+
   if "cuda" in args.wheels:
-    wheel_build_command_base.append("--config=cuda")
+    wheel_build_command_base.append(f"--config=cuda_v{cuda_major_version}")
 
     if clang_local:
       wheel_build_command_base.append(
@@ -635,11 +640,6 @@ async def main():
         # which leads to a mismatch between expected and actual wheel names
         # https://peps.python.org/pep-0440/
         wheel_git_hash = option.split("=")[-1].lstrip('0')[:9]
-
-  if args.cuda_version:
-    cuda_major_version = args.cuda_version.split(".")[0]
-  else:
-    cuda_major_version = args.cuda_major_version
 
   with open(".jax_configure.bazelrc", "w") as f:
     jax_configure_options = utils.get_jax_configure_bazel_options(wheel_build_command_base.get_command_as_list())
