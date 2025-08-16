@@ -164,6 +164,34 @@ class JaxArrayTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(RuntimeError, 'Array has been deleted.'):
       _ = x + 1
 
+  @parameterized.named_parameters(
+      ('no_global_shape', np.arange(10).reshape(2, 5), None),
+      ('global_shape_prefix', {'a': np.arange(10).reshape(2, 5)}, (2, 5)),
+      ('global_shape_full', {'a': np.arange(10).reshape(2, 5)}, {'a': (2, 5)}),
+  )
+  def test_array_from_local_data_single_host(self, data, global_shape):
+    jnp_data = jax.make_array_from_process_local_data(
+        jax.devices()[0], data, global_shape
+    )
+    jax.tree.map(self.assertArraysEqual, data, jnp_data)
+
+  @parameterized.named_parameters(
+      ('global_shape_prefix', {'a': np.arange(10).reshape(2, 5)}, (2, 8)),
+      ('global_shape_full', {'a': np.arange(10).reshape(2, 5)}, {'a': (2, 6)}),
+      (
+          'global_shape_extra',
+          {'a': np.arange(10).reshape(2, 5)},
+          {'a': (2, 5), 'b': (3, 5)},
+      ),
+  )
+  def test_array_from_local_data_single_host_invalid_global_shape(
+      self, data, global_shape
+  ):
+    with self.assertRaises(ValueError):
+      jax.make_array_from_process_local_data(
+          jax.devices()[0], data, global_shape
+      )
+
   def test_multi_device_array_usage_after_delete(self):
     global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     shape = (8, 2)

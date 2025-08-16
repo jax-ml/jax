@@ -33,14 +33,14 @@ from jax._src import errors
 from jax._src import profiler
 from jax._src import util
 from jax._src import xla_bridge
-from jax._src.tree_util import tree_flatten, tree_unflatten, broadcast_prefix
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-from jax._src.layout import AutoLayout, Layout, Format
-from jax._src.lib import xla_client as xc
+from jax._src.layout import AutoLayout, Format, Layout
 from jax._src.lib import _jax
+from jax._src.lib import xla_client as xc
 from jax._src.mesh import empty_concrete_mesh
 from jax._src.sharding import Sharding
+from jax._src.tree_util import broadcast_prefix, tree_flatten, tree_unflatten
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding,
     device_replica_id_map, hashed_index, num_addressable_indices,
@@ -951,13 +951,24 @@ def make_array_from_process_local_data(
     Tensor that will have sharding=sharding and of shape global_shape.
   """
   # pyformat: enable
-  if xla_bridge.process_count() == 1:
-    return api.device_put(local_data, sharding)
+
   local_data_flat, treedef = tree_flatten(local_data)
   sharding_flat = broadcast_prefix(sharding, local_data)
   global_shape_flat = broadcast_prefix(
       global_shape, local_data,
       is_leaf=lambda x: x is None or isinstance(x, tuple))
+  if xla_bridge.process_count() == 1:
+    # Safety check if the provided data doesn't match expected global_shape
+    for s, d in zip(global_shape_flat, local_data_flat):
+      if s is not None and s != d.shape:
+        raise ValueError(
+            "When calling `make_array_from_process_local_data` on a single"
+            " process, global_shape should be None or equal to"
+            f" local_data.shape.Got global_shape={s} and"
+            f" local_data.shape={d.shape}."
+        )
+    return api.device_put(local_data, sharding)
+
   out = [_array_from_process_local_data(data, s, shape)
          for data, s, shape in zip(local_data_flat, sharding_flat, global_shape_flat)]
   return tree_unflatten(treedef, out)
