@@ -2400,6 +2400,6 @@ def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, *, method: str = "
 
   return lax.cond(
     jnp.any(jnp.abs(jnp.linalg.eigvals(A)[:, None] + jnp.linalg.eigvals(B)[None, :]) < tol),
-    lambda: jnp.zeros_like(X) * float("nan"),
+    lambda: jnp.zeros_like(X) * np.nan,
     lambda: X,
   )
