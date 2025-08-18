@@ -4733,7 +4733,11 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
           accumulate=arith.constant(ir.IntegerType.get_signless(1), False),
       )
       mma_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
-      tcgen05.commit_arrive(mma_barrier.barrier_ref)
+      # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.1.
+      if jaxlib.version >= (0, 7, 1):
+        mgpu_dialect.tcgen05_commit_arrive(mma_barrier.as_barrier_memref())
+      else:
+        tcgen05.commit_arrive(mma_barrier.barrier_ref)
 
       mma_barrier.wait(orders_tensor_core=True)
 
@@ -4854,11 +4858,17 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
           collective=True,
       )
       mma_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
-      is_first_block = arith.cmpi(
-          arith.CmpIPredicate.eq, block_id, c(0, ir.IndexType.get())
-      )
-      with when(is_first_block):
-        tcgen05.commit_arrive(mma_barrier.barrier_ref, collective=True, ctx=ctx)
+      # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.1.
+      if jaxlib.version >= (0, 7, 1):
+        mgpu_dialect.tcgen05_commit_arrive(mma_barrier.as_barrier_memref())
+      else:
+        is_first_block = arith.cmpi(
+            arith.CmpIPredicate.eq, block_id, c(0, ir.IndexType.get())
+        )
+        with when(is_first_block):
+          tcgen05.commit_arrive(
+              mma_barrier.barrier_ref, collective=True, ctx=ctx
+          )
 
       mma_barrier.wait(orders_tensor_core=True)
 

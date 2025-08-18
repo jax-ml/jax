@@ -1683,6 +1683,33 @@ if jaxlib.version >= (0, 7, 1):
 
     return []
 
+
+# TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.1.
+if jaxlib.version >= (0, 7, 1):
+  @_register_lowering(mgpu.TcGen05CommitArriveOp)
+  def _tcgen05_commit_arrive_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.TcGen05CommitArriveOp
+  ) -> Sequence[ir.Value]:
+    """Lowering rule for mgpu.TcGen05CommitArriveOp."""
+    if op.collective and ctx.leader_block_in_cta_predicate is None:
+      raise ValueError(
+          "Requested collective `tcgen05_commit_arrive` but"
+          " `ctx.leader_block_in_cta_predicate` is not set. This likely means"
+          " that the kernel has no cluster dimensions."
+      )
+
+    barrier = utils.DialectBarrierRef.from_barrier_memref(
+        op.barrier
+    ).barrier_ref
+    if op.collective:
+      with mgpu_utils.when(ctx.leader_block_in_cta_predicate):
+        tcgen05.commit_arrive(barrier, collective=True, ctx=ctx)
+    else:
+      tcgen05.commit_arrive(barrier)
+
+    return []
+
+
 def inline_block(
     block: ir.Block, args: Sequence[ir.Value], mapper: dict[ir.Value, ir.Value],
     clone_terminator: bool, terminator_type: type[ir.OpView],
