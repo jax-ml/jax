@@ -631,6 +631,49 @@ def _broadcast_in_dim_equation_system(
   )
 
 
+@_add_equation_system_derivation_rule(vector.ShapeCastOp)
+def _shape_cast_equation_system(
+    op: vector.ShapeCastOp
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  in_shape = tuple(cast(ir.ShapedType, op.source.type).shape)
+  out_shape = tuple(cast(ir.ShapedType, op.result.type).shape)
+
+  in_variable = eqns.Variable(OperandOrResult(op, VariableType.OPERAND, 0))
+  out_variable = eqns.Variable(OperandOrResult(op, VariableType.RESULT, 0))
+
+  # Here, we are in a case where we are stating
+  #
+  #   out_variable = reshape(in_variable, in_shape, out_shape).
+  #
+  # Thanks to the symmetric property of reshape, we can also issue an equation
+  # in the other direction, i.e.
+  #
+  #   in_variable = reshape(out_variable, out_shape, in_shape)
+  #
+  # in order to be able to figure out an assignment for `in_variable`. if we
+  # happen to know `out_variable`. If we only issue the first equation, then
+  # we will not be able to figure out an assignment for `in_variable` if we
+  # only know `out_variable`, even though their relationship is fully
+  # determined.
+  in_to_out = eqns.Reshape(
+      in_variable, source_shape=in_shape, target_shape=out_shape
+  )
+  out_to_in = eqns.Reshape(
+      out_variable, source_shape=out_shape, target_shape=in_shape
+  )
+
+  return (
+      eqns.EquationSystem(
+          equations=[
+              eqns.Equation(lhs=out_variable, rhs=in_to_out),
+              eqns.Equation(lhs=in_variable, rhs=out_to_in),
+          ],
+      ),
+      {in_variable: [in_variable.key], out_variable: [out_variable.key]},
+      [],
+  )
+
+
 def _ensure_all_layouts_are_set(op: ir.OpView):
   if not inference_utils.should_have_layout(op):
     return

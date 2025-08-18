@@ -125,33 +125,31 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.checkInLayouts(x, [])
     self.checkOutLayouts(x, [layout])
 
-  def test_infer_strided_layout_from_shape_cast(self):
-    self.skip_if_equations()
-    shape = (16, 8)
+  @parameterized.parameters(
+      (mgpu.WGMMA_LAYOUT, None), (None, mgpu.WGMMA_LAYOUT)
+  )
+  def test_infer_layout_bidirectionally_through_shape_cast(
+      self, in_layout, out_layout
+  ):
+    self.skip_if_legacy()
+    assert in_layout is not None or out_layout is not None
     elt_type = ir.BF16Type.get()
-    src_type = ir.VectorType.get(shape, elt_type)
-    dst_type = ir.VectorType.get([*reversed(shape)], elt_type)
+    src_type = ir.VectorType.get((2, 128, 8), elt_type)
+    dst_type = ir.VectorType.get((256, 8), elt_type)
 
     with ir.InsertionPoint(self.module.body):
       [x] = undefs(src_type)
+      if in_layout is not None:
+        x = layout_cast(x, in_layout)
       op = vector.ShapeCastOp(dst_type, x)
+      if out_layout is not None:
+        layout_cast(op.result, out_layout)
 
     self.infer_layout(self.module)
 
-    in_layout = layouts.to_layout_attr(
-        mgpu.WGStridedFragLayout.from_shaped_type(src_type)
-    )
-    out_layout = layouts.to_layout_attr(
-        mgpu.WGStridedFragLayout.from_shaped_type(dst_type)
-    )
-
-    self.checkInLayouts(op, [in_layout])
-    self.checkOutLayouts(op, [out_layout])
-
-    # Ensure that we can recover the original layout.
-    del op.attributes["in_layouts"]
-    self.infer_layout(self.module)
-    self.checkInLayouts(op, [in_layout])
+    expected_layout = in_layout or out_layout
+    self.checkInLayouts(op, [expected_layout])
+    self.checkOutLayouts(op, [expected_layout])
 
   def test_infer_splat_layout_for_splat_constants(self):
     shape = (16, 8)
