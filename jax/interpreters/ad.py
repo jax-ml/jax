@@ -56,7 +56,7 @@ def _deprecated_backward_pass(jaxpr, reduce_axes, transform_stack,
 
 
 _deprecations = {
-    # Added 2024-12-11
+    # Deprecated for JAX v0.7.1; finalize in JAX v0.9.0.
     "zeros_like_p": (
         "jax.interpreters.ad.zeros_like_p is deprecated in JAX v0.7.1. It has been unused since v0.4.24.",
         _src_ad_util.zeros_like_p,
