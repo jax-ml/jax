@@ -20,13 +20,10 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
-#include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -38,21 +35,20 @@ limitations under the License.
 
 #include "jaxlib/mosaic/gpu/library_paths.h"
 #include "absl/base/call_once.h"
+#include "absl/base/no_destructor.h"
 #include "absl/base/optimization.h"
-#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/numeric/bits.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "third_party/gpus/cuda/include/cuda.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/Debug.h"
@@ -103,6 +99,7 @@ limitations under the License.
 #include "mlir/Transforms/Passes.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
+#include "jaxlib/mosaic/gpu/assembly_to_binary.h"
 #include "jaxlib/mosaic/gpu/dump.h"
 #include "jaxlib/mosaic/gpu/launch_lowering.h"
 #include "jaxlib/mosaic/gpu/nvshmem.h"
@@ -131,106 +128,6 @@ namespace se = stream_executor;
 using MosaicInitFunc = void(void****);
 using MosaicHostFunc = void(void**);
 
-class TemporaryDirectory {
- private:
-  TemporaryDirectory(std::string path) : path(std::move(path)) {}
-  // TODO(apaszke): Unlink in destructor.
-
- public:
-  static absl::StatusOr<TemporaryDirectory> Create() {
-    std::string pattern = "/tmp/mosaic-gpu-XXXXXX";
-    if (mkdtemp(pattern.data()) == NULL) {
-      return absl::InternalError("Failed to create temporary directory");
-    }
-    return TemporaryDirectory(std::move(pattern));
-  }
-
-  std::string_view GetPath() { return path; }
-
- private:
-  std::string path;
-};
-
-absl::StatusOr<std::string> RunCUDATool(const char* tool,
-                                        const std::vector<const char*>& args,
-                                        bool stderr_to_stdout = true) {
-  CHECK(!args.empty() && args.back() == nullptr);
-  const char* cuda_path_ptr = mosaic::gpu::GetCUDARoot();
-  if (!cuda_path_ptr)
-    return absl::InternalError("Failed to get the CUDA toolkit path");
-  std::string tool_path(cuda_path_ptr);
-  tool_path += "/bin/";
-  tool_path += tool;
-  int stdout_pipe[2] = {-1, -1};
-  pid_t child_pid;
-  posix_spawn_file_actions_t file_actions;
-  if (posix_spawn_file_actions_init(&file_actions)) {
-    return absl::InternalError("Failed to initialize spawn file actions");
-  }
-  absl::Cleanup file_actions_destroyer = [&file_actions] {
-    posix_spawn_file_actions_destroy(&file_actions);
-  };
-  if (pipe(stdout_pipe) == -1) {
-    return absl::InternalError("Failed to set up pipe");
-  }
-  absl::Cleanup pipe_closer = [&stdout_pipe] {
-    if (stdout_pipe[0] != -1) close(stdout_pipe[0]);
-    if (stdout_pipe[1] != -1) close(stdout_pipe[1]);
-  };
-  // close read end in child
-  if (posix_spawn_file_actions_addclose(&file_actions, stdout_pipe[0])) {
-    return absl::InternalError("Failed to close read end of the pipe in child");
-  }
-  if (posix_spawn_file_actions_adddup2(&file_actions, stdout_pipe[1],
-                                       STDOUT_FILENO)) {
-    return absl::InternalError("Failed to redirect stdout to pipe");
-  }
-  if (stderr_to_stdout && posix_spawn_file_actions_adddup2(
-                              &file_actions, STDOUT_FILENO, STDERR_FILENO)) {
-    return absl::InternalError("Failed to redirect stderr to stdout");
-  }
-  // execv is guaranteed by POSIX to not modify the args (other than
-  // replacing the whole process image), so the const_cast is valid.
-  if (int status =
-          posix_spawn(&child_pid, tool_path.c_str(), &file_actions, nullptr,
-                      const_cast<char* const*>(args.data()), environ)) {
-    return absl::InternalError(
-        absl::StrCat("Process spawn failed: ", strerror(status)));
-  }
-  // Proactively close write end in parent. If we don't do this, read
-  // will block since the pipe will have an open write end in the
-  // parent process.
-  if (close(stdout_pipe[1]) == -1) {
-    return absl::InternalError(
-        absl::StrCat("Failed to close write end of pipe in parent process: ",
-                     strerror(errno)));
-  }
-  // Mark the write end as successfully closed, so it doesn't get
-  // closed a second time by the deferred pipe_closer.
-  stdout_pipe[1] = -1;
-  std::string stdout;
-  char buf[1024];
-  while (int bytes_read = read(stdout_pipe[0], buf, sizeof buf)) {
-    if (bytes_read == -1) {
-      return absl::InternalError(
-          absl::StrCat("Failed to read from pipe: ", strerror(errno)));
-    }
-    stdout.append(buf, bytes_read);
-  }
-  int status;
-  if (waitpid(child_pid, &status, 0) == -1) {
-    return absl::InternalError("Failed to wait for CUDA tool invocation");
-  }
-  if (status != 0) {
-    std::string error_message = "CUDA tool failed";
-    if (!stdout.empty()) {
-      error_message += ": ";
-      error_message += stdout;
-    }
-    return absl::InternalError(error_message);
-  }
-  return stdout;
-}
 
 void EnsureLLVMNVPTXTargetIsRegistered() {
   static absl::once_flag register_nvptx_target_flag;
@@ -240,25 +137,6 @@ void EnsureLLVMNVPTXTargetIsRegistered() {
     LLVMInitializeNVPTXTargetMC();
     LLVMInitializeNVPTXAsmPrinter();
   });
-}
-
-absl::StatusOr<std::unique_ptr<se::cuda::CompilationProvider>>
-GetPtxCompilationProvider() {
-  // Defaults mostly mirror those used in `xla/debug_options_flags.cc`.
-  std::string default_cuda_data_dir = "./cuda_sdk_lib";
-  // TODO(bchetioui): this does not mirror the XLA default. Evaluate whether
-  // using NvJitLink would work as necessary.
-  constexpr se::cuda::CompilationProviderOptions::NvJitLinkMode nvjitlink_mode =
-      se::cuda::CompilationProviderOptions::NvJitLinkMode::kDisabled;
-  constexpr bool enable_llvm_module_compilation_parallelism = false;
-  constexpr bool enable_driver_compilation = false;
-  bool enable_libnvptxcompiler = stream_executor::IsLibNvPtxCompilerSupported();
-
-  se::cuda::CompilationProviderOptions opts(
-      nvjitlink_mode, enable_libnvptxcompiler,
-      enable_llvm_module_compilation_parallelism, enable_driver_compilation,
-      std::move(default_cuda_data_dir));
-  return se::cuda::AssembleCompilationProvider(opts);
 }
 
 absl::StatusOr<std::string> GetPtxIsaVersion(
@@ -276,36 +154,20 @@ absl::StatusOr<std::string> GetPtxIsaVersion(
   return absl::StrFormat("ptx%d", final_version);
 }
 
-absl::StatusOr<se::CudaComputeCapability> GetCudaComputeCapability() {
-  // Assumes driver has been initialized and a context exists. XLA already has
-  // some utilities to query this, but we try to stay runtime-agnostic, so we
-  // build our own here.
-  CUdevice device;
-  if (cuCtxGetDevice(&device) != CUDA_SUCCESS) {
-    return absl::InternalError("Failed to get device for current context");
-  }
-  int major = 0;
-  if (cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
-                           device) != CUDA_SUCCESS) {
-    return absl::InternalError("Failed to get major compute capability");
-  }
-  int minor = 0;
-  if (cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
-                           device) != CUDA_SUCCESS) {
-    return absl::InternalError("Failed to get minor compute capability");
-  }
-  EnsureLLVMNVPTXTargetIsRegistered();
-  // TODO(hebecker): update CudaComputeCapability to embed extensions.
-  // Currently, extensions will still be used (but are hardcoded in a util
-  // `ShouldUsePtxExtension` instead of being queried).
-  return se::CudaComputeCapability(major, minor);
-}
-
 mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::MLIRContext* ctx, mlir::gpu::CompilationTarget target,
-    const std::string& sm, const std::string& ptx_isa, const std::string& nvshmem_path) {
+    const se::cuda::CompilationProvider* compilation_provider,
+    const se::CudaComputeCapability& cc,
+    const std::string& sm, const std::string& ptx_isa,
+    const std::string& nvshmem_path) {
+  // Only support assembly and binary output for now.
+  if (target != mlir::gpu::CompilationTarget::Assembly &&
+      target != mlir::gpu::CompilationTarget::Binary) {
+    return mlir::failure();
+  }
+  bool is_target_binary = target == mlir::gpu::CompilationTarget::Binary;
   static absl::once_flag register_passes_flag;
-  absl::call_once(register_passes_flag, []() {
+  absl::call_once(register_passes_flag, [&compilation_provider, &cc]() {
     EnsureLLVMNVPTXTargetIsRegistered();
 
     llvm::InitializeNativeTarget();
@@ -330,6 +192,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::registerConvertToLLVMPass();
     mlir::registerGPUPasses();
     mlir::registerGpuLaunchSinkIndexComputationsPass();
+    mosaic::gpu::registerAssemblyToBinaryPass(compilation_provider, cc);
     mosaic::gpu::registerGpuLaunchLoweringPass();
     mosaic::gpu::registerConvertGpuToLLVMPass();
     mosaic::gpu::registerByvalInsertionPass();
@@ -373,7 +236,9 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         mosaic-convert-gpu-to-llvm,
         ensure-debug-info-scope-on-llvm-func{emission-kind=DebugDirectivesOnly},
         gpu-module-to-binary{format=)",
-      mlir::gpu::stringifyCompilationTarget(target).str(),
+      mlir::gpu::stringifyCompilationTarget(
+          mlir::gpu::CompilationTarget::Assembly)
+          .str(),
       (!nvshmem_path.empty() ? " l=" + nvshmem_path : ""),
       "  opts=-lineinfo toolkit=", cuda_root,
       R"(},
@@ -381,8 +246,8 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
         cse,
         )",
-      (target != mlir::gpu::CompilationTarget::Assembly ? "gpu-launch-lowering,"
-                                                        : ""),
+      (is_target_binary ? "mosaic-gpu-assembly-to-binary,gpu-launch-lowering,"
+                        : ""),
       R"(
         convert-to-llvm,
         reconcile-unrealized-casts
@@ -450,163 +315,6 @@ void InitContext(mlir::MLIRContext* context) {
   context->loadAllAvailableDialects();
 }
 
-// Parse the SASS and reformat control codes following NervanaSystems/maxas.
-std::string FormatSassCtrl(const std::string& sass) {
-  std::string result;
-  result.reserve(sass.size());
-  std::vector<std::string> lines = absl::StrSplit(sass, '\n');
-  for (int i = 0; i < lines.size(); ++i) {
-    std::string_view line = lines[i];
-    if (i + 1 < lines.size()) {
-      const std::string& next_line = lines[i + 1];
-      size_t first_hex_start = line.rfind("/* 0x");
-      size_t first_instr_end = line.rfind(';');
-      size_t second_hex_start = next_line.rfind("/* 0x");
-      bool second_line_empty = true;
-      if (second_hex_start != std::string::npos) {
-        for (size_t i = 0; i < second_hex_start; ++i) {
-          second_line_empty &= next_line[i] == ' ';
-        }
-      }
-      if (first_hex_start != std::string::npos &&
-          first_instr_end != std::string::npos &&
-          second_hex_start != std::string::npos &&
-          second_line_empty) {
-        line = line.substr(0, first_instr_end);
-        std::string hex_str = next_line.substr(second_hex_start + 5, 16);
-        uint64_t ctrl;
-        if (absl::SimpleHexAtoi(hex_str, &ctrl)) {
-          uint64_t stall = (ctrl >> 41) & 0xf;
-          uint64_t yield = (ctrl >> 45) & 0x1;
-          uint64_t write_barrier = (ctrl >> 46) & 0x7;
-          uint64_t read_barrier = (ctrl >> 49) & 0x7;
-          uint64_t wait_barrier = (ctrl >> 52) & 0x3f;
-          std::string wait_barrier_str;
-          if (wait_barrier == 0) {
-            result += "   -";
-          } else if (absl::has_single_bit(wait_barrier)) {
-            absl::StrAppendFormat(&result, "   %d",
-                                  absl::countr_zero(wait_barrier));
-          } else {
-            int first_set = absl::countr_zero(wait_barrier);
-            uint64_t without_first_set = wait_barrier ^ (1 << first_set);
-            if (absl::has_single_bit(without_first_set)) {
-              absl::StrAppendFormat(&result, " %d&%d",
-                                    absl::countr_zero(without_first_set),
-                                    first_set);
-            } else {
-              absl::StrAppendFormat(&result, "0x%02x", wait_barrier);
-            }
-          }
-          absl::StrAppendFormat(
-              &result, ":%c:%c:%c:%02llu",
-              read_barrier == 7 ? '-' : ('0' + read_barrier),
-              write_barrier == 7 ? '-' : ('0' + write_barrier),
-              yield ? 'Y' : '-', stall);
-        }
-        i++;  // Skip the hex line.
-      }
-    }
-    result += line;
-    result.append("\n");
-  }
-  return result;
-}
-
-// TODO(bchetioui): port this to not call ptxas and nvdisasm as subprocesses.
-void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
-                           const std::string& ptx_isa,
-                           const std::string& nvshmem_path,
-                           const mosaic::gpu::DumpOptions& dump_opts) {
-  if (!dump_opts.ptx && !dump_opts.ptxas && !dump_opts.sass) {
-    return;
-  }
-  std::string module_name = dump_opts.module_basename;
-  module = module.clone();  // Prevent accidental modification.
-  absl::Cleanup module_destroyer = [module] { module->erase(); };
-  auto passes = GetPassPipeline(
-      module.getContext(), mlir::gpu::CompilationTarget::Assembly,
-      sm, ptx_isa, nvshmem_path);
-  if (mlir::failed(passes) ||
-      mlir::failed(RunPasses(std::move(*passes), module, dump_opts))) {
-    return;
-  }
-  for (mlir::Operation& op : module.getBody()->getOperations()) {
-    auto binary = mlir::dyn_cast<mlir::gpu::BinaryOp>(&op);
-    if (!binary) { continue; }
-    auto objects = binary.getObjects();
-    if (objects.size() != 1) {
-      std::cerr << "Multiple objects per gpu.binary unsupported" << std::endl;
-      continue;
-    }
-    auto object = mlir::cast<mlir::gpu::ObjectAttr>(*objects.begin());
-    std::string ptx = object.getObject().getValue().str();
-    if (dump_opts.ptx) {
-      mosaic::gpu::DumpToFileOrStdout(ptx, module_name + ".ptx",
-                                      dump_opts.dump_path);
-    }
-    if (!dump_opts.ptxas && !dump_opts.sass) {
-      continue;
-    }  // We're done.
-    auto tmpdir = TemporaryDirectory::Create();
-    if (!tmpdir.ok()) {
-      std::cerr << "Failed to create a temporary directory" << std::endl;
-      continue;
-    }
-    std::string ptx_path = std::string(tmpdir->GetPath()) + "/kernel.ptx";
-    std::string elf_path = std::string(tmpdir->GetPath()) + "/kernel.o";
-    // Dump PTX into a file.
-    std::ofstream ptx_out(ptx_path.c_str());
-    if (!ptx_out) {
-      std::cerr << "Failed to write PTX to a file" << std::endl;
-      continue;
-    }
-    ptx_out << ptx << std::endl;
-    // Run ptxas to generate SASS.
-    std::vector<const char*> ptxas_args = {
-        "ptxas",          "--opt-level",   "3",
-        "--gpu-name",     sm.c_str(),      "--output-file",
-        elf_path.c_str(), ptx_path.c_str()};
-    if (dump_opts.ptxas) {
-      ptxas_args.push_back("-v");
-    }
-    ptxas_args.push_back(nullptr);
-    if (auto result = RunCUDATool("ptxas", ptxas_args); !result.ok()) {
-      std::cerr << "ptxas invocation failed: " << result.status() << std::endl;
-      continue;
-    } else if (dump_opts.ptxas) {
-      mosaic::gpu::DumpToFileOrStdout(*result, module_name + ".ptxas",
-                                      dump_opts.dump_path);
-    }
-    if (!dump_opts.sass) {
-      continue;  // We're done.
-    }
-    // Call nvdisasm to pretty-print SASS.
-    std::vector<const char*> nvdisasm_args = {
-        "nvdisasm", "-ndf", "-c", elf_path.c_str()};
-    if (dump_opts.sass_ctrl) {
-      nvdisasm_args.push_back("-hex");
-    }
-    nvdisasm_args.push_back(nullptr);
-    auto result = RunCUDATool("nvdisasm", nvdisasm_args);
-    if (!result.ok()) {
-      std::cerr << "nvdisasm invocation failed: " << result.status()
-                << std::endl;
-      continue;
-    }
-
-    if (dump_opts.sass_ctrl) {
-      mosaic::gpu::DumpToFileOrStdout(FormatSassCtrl(*result),
-                                      module_name + ".sass_ctrl",
-                                      dump_opts.dump_path);
-    } else {
-      // Dump SASS.
-      mosaic::gpu::DumpToFileOrStdout(*result, module_name + ".sass",
-                                      dump_opts.dump_path);
-    }
-  }
-}
-
 bool is_nvshmem_used(mlir::ModuleOp module) {
   constexpr std::string_view prefix1 = "nvshmem_";
   constexpr std::string_view prefix2 = "nvshmemx_";
@@ -630,12 +338,65 @@ absl::StatusOr<std::string> get_nvshmem_llvm_lib_path() {
   return nvshmem_path_ptr;
 }
 
+absl::StatusOr<se::cuda::CompilationProvider*>
+GetAssemblyToBinaryCompilationProvider() {
+  auto create_provider = []() {
+    // Defaults mirror those used in `xla/debug_options_flags.cc`.
+    std::string default_cuda_data_dir = "./cuda_sdk_lib";
+    constexpr se::cuda::CompilationProviderOptions::NvJitLinkMode
+        nvjitlink_mode =
+            se::cuda::CompilationProviderOptions::NvJitLinkMode::kAuto;
+    constexpr bool enable_llvm_module_compilation_parallelism = false;
+    constexpr bool enable_driver_compilation = false;
+    bool enable_libnvptxcompiler = se::IsLibNvPtxCompilerSupported();
+
+    se::cuda::CompilationProviderOptions opts(
+        nvjitlink_mode, enable_libnvptxcompiler,
+        enable_llvm_module_compilation_parallelism, enable_driver_compilation,
+        std::move(default_cuda_data_dir));
+
+    return absl::NoDestructor(se::cuda::AssembleCompilationProvider(opts));
+  };
+  static absl::NoDestructor<
+      absl::StatusOr<std::unique_ptr<se::cuda::CompilationProvider>>>
+      compilation_provider = create_provider();
+
+  if (!compilation_provider->ok()) {
+    return compilation_provider->status();
+  }
+  return (*compilation_provider)->get();
+}
+
+absl::StatusOr<se::CudaComputeCapability> GetCudaComputeCapability() {
+  // Assumes driver has been initialized and a context exists. XLA already has
+  // some utilities to query this, but we try to stay runtime-agnostic, so we
+  // build our own here.
+  CUdevice device;
+  if (cuCtxGetDevice(&device) != CUDA_SUCCESS) {
+    return absl::InternalError("Failed to get device for current context");
+  }
+  int major = 0;
+  if (cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
+                           device) != CUDA_SUCCESS) {
+    return absl::InternalError("Failed to get major compute capability");
+  }
+  int minor = 0;
+  if (cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
+                           device) != CUDA_SUCCESS) {
+    return absl::InternalError("Failed to get minor compute capability");
+  }
+  // TODO(hebecker): update CudaComputeCapability to embed extensions.
+  // Currently, extensions will still be used (but are hardcoded in a util
+  // `ShouldUsePtxExtension` instead of being queried).
+  return se::CudaComputeCapability(major, minor);
+}
+
 absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     mlir::ModuleOp module) {
   tsl::profiler::TraceMe trace("Compile");
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<se::cuda::CompilationProvider> compilation_provider,
-      GetPtxCompilationProvider());
+  EnsureLLVMNVPTXTargetIsRegistered();
+  TF_ASSIGN_OR_RETURN(se::cuda::CompilationProvider* compilation_provider,
+                      GetAssemblyToBinaryCompilationProvider());
   TF_ASSIGN_OR_RETURN(se::CudaComputeCapability cc, GetCudaComputeCapability());
   TF_ASSIGN_OR_RETURN(std::string sm,
                       mosaic::gpu::GetSmVersion(cc.major, cc.minor));
@@ -650,14 +411,6 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
           "Failed to load the NVSHMEM library. Make sure it is installed (e.g. "
           "`pip install nvidia-nvshmem-cu12`).");
     }
-  }
-  mosaic::gpu::DumpOptions dump_opts =
-      mosaic::gpu::GetOrSetDumpOptionsForModule(module);
-  DumpCompilationOutput(module, sm, ptx_isa, nvshmem_path, dump_opts);
-  // `DumpCompilationOutput` already runs through MLIR passes and may dump them.
-  // If that happened, we don't want to dump them again.
-  if (dump_opts.ptx || dump_opts.ptxas || dump_opts.sass) {
-    dump_opts.mlir_passes = false;
   }
   const char* dump_llvm_debug_only = getenv("MOSAIC_GPU_DUMP_LLVM");
   const char* debug_only = getenv("MOSAIC_GPU_LLVM_DEBUG_ONLY");
@@ -690,17 +443,17 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     abort();
   }
 #endif
-  auto passes = GetPassPipeline(
-      module.getContext(),
-      mlir::gpu::CompilationTarget::Binary,
-      sm, ptx_isa, nvshmem_path);
+  auto passes =
+      GetPassPipeline(module.getContext(), mlir::gpu::CompilationTarget::Binary,
+                      compilation_provider, cc, sm, ptx_isa, nvshmem_path);
   if (mlir::failed(passes)) {
     return absl::InternalError("Failed to construct pass pipeline");
   }
+  mosaic::gpu::DumpOptions dump_opts =
+      mosaic::gpu::GetOrSetDumpOptionsForModule(module);
   if (mlir::failed(RunPasses(std::move(*passes), module, dump_opts))) {
     return absl::InternalError("Pass pipeline failed");
   }
-
   llvm::SmallVector<llvm::StringRef> runtime_libs;
   if (const char* runtime_lib_path = getenv("MOSAIC_GPU_RUNTIME_LIB_PATH")) {
     runtime_libs.emplace_back(runtime_lib_path);

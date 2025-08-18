@@ -19,6 +19,7 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/string_view.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 
 namespace mosaic {
@@ -58,6 +59,17 @@ DumpOptions GetOrSetDumpOptionsForModule(mlir::ModuleOp module);
 // stdout.
 void DumpToFileOrStdout(absl::string_view content, absl::string_view name,
                         absl::string_view path);
+
+// Dumps the SASS for the given binary op.
+//
+// The dump will be written to `path`/`basename`.sass if `include_sass_ctrl` is
+// false, or `path`/`basename`.sass_ctrl if it is true. In this latter case,
+// SASS control codes will be included in the dump, following
+// NervanaSystems/maxas.
+//
+// If `path` is empty, the dump will be written to stdout instead.
+void DumpSass(mlir::gpu::BinaryOp binary, absl::string_view path,
+              absl::string_view basename, bool include_sass_ctrl);
 
 }  // namespace gpu
 }  // namespace mosaic
