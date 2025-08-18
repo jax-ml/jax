@@ -30,6 +30,7 @@ from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvvm
+import numpy as np
 
 from . import profiler
 from . import utils
@@ -49,6 +50,9 @@ class MemRefTransform:
     raise NotImplementedError("Subclasses should override this method")
 
   def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    raise NotImplementedError("Subclasses should override this method")
+
+  def transform_strides(self, shape: Sequence[int]) -> tuple[int, ...]:
     raise NotImplementedError("Subclasses should override this method")
 
   def batch(self, leading_rank: int) -> 'MemRefTransform':
@@ -147,6 +151,14 @@ class TileTransform(MemRefTransform):
         *self.tiling,
     )
 
+  def transform_strides(self, strides: Sequence[int]) -> tuple[int, ...]:
+    tiling_rank = len(self.tiling)
+    return (
+        *strides[:-tiling_rank],
+        *(s * t for s, t in zip(strides[-tiling_rank:], self.tiling)),
+        *strides[-tiling_rank:],
+    )
+
   def batch(self, leading_rank: int) -> MemRefTransform:
     return self
 
@@ -168,6 +180,9 @@ class TransposeTransform(MemRefTransform):
 
   def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
     return tuple(shape[p] for p in self.permutation)
+
+  def transform_strides(self, strides: Sequence[int]) -> tuple[int, ...]:
+    return tuple(strides[p] for p in self.permutation)
 
   def batch(self, leading_rank: int) -> MemRefTransform:
     return TransposeTransform(
@@ -224,6 +239,36 @@ class CollapseLeadingIndicesTransform(MemRefTransform):
 
   def batch(self, leading_rank: int) -> MemRefTransform:
     raise NotImplementedError  # Unused
+
+@dataclasses.dataclass(frozen=True)
+class GatherGMEMTransform(MemRefTransform):
+  """Breaks up the leading dimension of a 2D GMEM ref into finer grained rows.
+
+  Each row is split into as many rows as the ratio of the original row
+  stride to the new row stride.
+
+  This is especially useful when we want to perform gather/scatter TMA, which
+  only supports a 2D global array, but we want to support finer indexing. For
+  example, if we tile the 2D array, we need to collapse all 3 major dims into
+  one. The problem is that the column tile dimension has a smaller stride
+  than the original row dim since it splits each row into multiple tiles.
+  """
+  new_row_stride: int
+
+  def apply(self, ref: ir.Value) -> ir.Value:
+    ref_ty = ir.MemRefType(ref.type)
+    assert len(ref_ty.shape) == 2
+    row_stride, col_stride = ref_ty.get_strides_and_offset()[0]
+    assert col_stride == 1
+    assert row_stride % self.new_row_stride == 0
+    row_stride_ratio = row_stride // self.new_row_stride
+    new_ref_ty = ir.MemRefType.get(
+        (ref_ty.shape[0] * row_stride_ratio, ref_ty.shape[1]),
+        ref_ty.element_type,
+        ir.StridedLayoutAttr.get(0, (self.new_row_stride, 1)),
+        ref_ty.memory_space,
+    )
+    return utils.ptr_as_memref(utils.memref_ptr(ref), new_ref_ty)
 
 
 OnDeviceProfiler = profiler.OnDeviceProfiler
@@ -731,8 +776,11 @@ class LaunchContext:
     is_gathered_dim = [isinstance(s, fa.FragmentedArray) for s in gmem_slice]
     gather_indices: fa.FragmentedArray | None = None
     if any(is_gathered_dim):
-      if any(is_gathered_dim[1:]):
-        raise NotImplementedError("Only the first dimension can be gathered/scattered")
+      if is_gathered_dim != [True, False]:
+        raise NotImplementedError(
+            "Gathers/scatters only supported along the first dimension of 2D"
+            " arrays"
+        )
       gather_indices = gmem_slice[0]
       if not isinstance(gather_indices, fa.FragmentedArray):
         raise ValueError("Gather/scatter indices must be a FragmentedArray")
@@ -743,8 +791,6 @@ class LaunchContext:
         raise ValueError("Gather/scatter indices must be integers that are at most 32-bit wide")
       if gather_indices.is_signed:
         raise ValueError("Gather/scatter indices must be unsigned")
-      if gmem_transform:
-        raise NotImplementedError("gmem_transforms not implemented for gather/scatter copy")
       gmem_slice = (slice(None), *gmem_slice[1:])
     base_indices, slice_shape, is_squeezed = utils.parse_indices(
         gmem_slice,
@@ -772,6 +818,8 @@ class LaunchContext:
       if gmem_ref is dst_ref:
         raise ValueError("Only GMEM -> SMEM copies can be collective")
     if partitioned is not None:
+      # Partitioning happens on the logical slice we extract from GMEM, so we do
+      # it before we apply transforms.
       if collective is None:  # This implies non-gather TMA already.
         raise ValueError("Only collective loads can be partitioned")
       if collective_size > 1 and partitioned is not None:
@@ -817,6 +865,7 @@ class LaunchContext:
 
     smem_ref_ty = ir.MemRefType(smem_ref.type)
     # We moved all squeezed dims to the front.
+    # FIXME(apaszke): This is incorrect for CP_ASYNC! We didn't move them to the front.
     if slice_shape[num_squeezed_dims:] != tuple(smem_ref_ty.shape):
       raise ValueError(
           "Expected the SMEM reference to have the same shape as the"
@@ -885,7 +934,10 @@ class LaunchContext:
 
     assert implementation == AsyncCopyImplementation.TMA
 
-    if len(slice_shape) > 5:
+    # TODO(apaszke): Implement dim collapsing (and use it for CP_ASYNC too).
+    # We don't need to do this for gather TMAs, because we'll unroll the
+    # transfers ourselves anyway.
+    if len(slice_shape) > 5 and gather_indices is None:
       # We can try to collapse all squeezed dims into one.
       if len(slice_shape) - num_squeezed_dims + 1 > 5:
         raise ValueError(
@@ -898,26 +950,18 @@ class LaunchContext:
       num_squeezed_dims = 1
     del squeezed_dim_strides  # We've collapsed the squeezed dims.
 
-    smem_strides, _ = smem_ref_ty.get_strides_and_offset()
-    if any(
-        s != cs and d != 1  # Strides don't matter for dims of size 1.
-        for s, cs, d in zip(
-            smem_strides,
-            utils.get_contiguous_strides(smem_ref_ty.shape),
-            smem_ref_ty.shape,
-        )
-    ):
-      raise ValueError(
-          "async_copy needs the SMEM reference to be contiguous, but got"
-          f" strides {smem_strides} for shape {smem_ref_ty.shape}"
-      )
-
     dyn_base_indices = list(dyn_base_indices)
     slice_shape = list(slice_shape)
     assert all(d == 1 for d in slice_shape[:num_squeezed_dims])
 
     # Partitioned loads have already been processed (before transforms).
+    # We process non-partitioned collective loads here, because only here are we
+    # able to know in what order the data will be written to SMEM. Transposes
+    # and tiling change that order and if we picked a partition based on the
+    # untransformed slice shape, we might have ended up with a non-contiguous
+    # SMEM window, which would no longer be realizable in a single TMA transfer.
     if collective_size > 1 and partitioned is None:
+      assert gather_indices is None  # Checked above.
       def partition_dim(dim: int, idx: ir.Value, num_chunks: int):
         # No need to partition squeezed dims. They don't even exist in smem_ref.
         assert dim >= num_squeezed_dims
@@ -961,6 +1005,19 @@ class LaunchContext:
     else:
       multicast_mask = None
 
+    smem_strides, _ = smem_ref_ty.get_strides_and_offset()
+    if any(
+        s != cs and d != 1  # Strides don't matter for dims of size 1.
+        for s, cs, d in zip(
+            smem_strides,
+            utils.get_contiguous_strides(smem_ref_ty.shape),
+            smem_ref_ty.shape,
+        )
+    ):
+      raise ValueError(
+          "async_copy needs the SMEM reference to be contiguous, but got"
+          f" strides {smem_strides} for shape {smem_ref_ty.shape}"
+      )
     if max(slice_shape) > 256:
       raise ValueError(
           "Async copies only support copying <=256 elements along each"
@@ -983,30 +1040,27 @@ class LaunchContext:
           f" {slice_shape[-1]} elements."
       )
 
-    if gather_indices is not None:
-      tma_slice_shape = (1, *slice_shape[1:])
-    else:
-      tma_slice_shape = tuple(slice_shape)
-    tma_desc = self._get_tma_desc(
-        gmem_ref, gmem_transform, gmem_peer_id,
-        tma_slice_shape, swizzle, reduction_op,
-    )
-    # We construct TMA descriptors in column-major order.
-    rev_dyn_base_indices = [
-        arith.index_cast(i32, idx) for idx in reversed(dyn_base_indices)
-    ]
     assert math.prod(slice_shape) * element_bitwidth * collective_size % 8 == 0
     transfer_bytes = c(
         math.prod(slice_shape) * element_bitwidth * collective_size // 8, i32
     )
 
     if gather_indices is not None:
+      import builtins
+      zips = functools.partial(builtins.zip, strict=True)
+      # The gather TMA instruction is limited to 2D GMEM references. That means
+      # that we can't apply the transforms to the GMEM reference and have the
+      # TMA engine deal with permuting the data, like we do for non-gather TMA.
+      # Instead, we have to break up the transfer into multiple 2D gathers
+      # ourselves, which requires us to do more complicated stride math etc.
+      #
+      # The minor transformed dim should be a contiguous transfer dim.
+      # The second minor should be a gather dim of size divisible by 4.
+      # The rest can be anything, and we will unroll the transfers over them.
       if smem_ref is src_ref:
         raise NotImplementedError("Scatter unsupported for the TMA implementation")
       assert barrier is not None  # for pytype
       barrier_ptr = barrier.get_ptr()
-      if len(slice_shape) != 2:
-        raise NotImplementedError("Only 2D gather/scatter supported")
       if num_squeezed_dims:
         raise NotImplementedError("Gather/scatter unsupported when using integer indexing")
       if reduction_op is not None:
@@ -1015,47 +1069,135 @@ class LaunchContext:
         raise ValueError("Gather/scatter TMA can't use a predicate")
       if gather_indices.layout != fa.TMA_GATHER_INDICES_LAYOUT:
         raise ValueError(f"Unsupported gather indices layout: {gather_indices.layout}")
-      # Indices are split over 4 warps, and replicated within each warp.
       ROWS_PER_INSTR = 4
-      assert fa.TMA_GATHER_INDICES_LAYOUT.vector_length == ROWS_PER_INSTR
+      # Make sure we'll always be accessing SMEM with sufficient alignment.
+      single_tma_bits = ROWS_PER_INSTR * slice_shape[-1] * element_bitwidth
+      if single_tma_bits % 1024:
+        raise ValueError(
+            "Gather/scatter TMA would require breaking it up into transfers of"
+            f" {single_tma_bits // 8} bytes, but need a multiple of 128 bytes"
+        )
+
       arrive_predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
       nvvm.mbarrier_arrive_expect_tx_shared(
           barrier_ptr, transfer_bytes, predicate=arrive_predicate,
       )
+
+      gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
+      assert len(gmem_strides) == 2
+      row_gmem_stride, _ = gmem_strides
+      slice_gather_strides: tuple[int, ...] = (1, 0)  # Each row gets a new index, column has no effect.
+      for t in gmem_transform:
+        gmem_strides = t.transform_strides(gmem_strides)
+        slice_gather_strides = t.transform_strides(slice_gather_strides)
+      is_gather_dim = [bool(s) for s in slice_gather_strides]
+
+      # Since the TMA instruction is limited to 2D gathers, we need to flatten
+      # all but the minormost index into the row index. If any of the flattened
+      # dims has a stride smaller than the row index, we modify the GMEM ref to
+      # allow for finer-grained slicing.
+      new_row_stride = math.gcd(*gmem_strides[:-1])
+      tma_desc = self._get_tma_desc(
+          gmem_ref, (GatherGMEMTransform(new_row_stride),),
+          gmem_peer_id, (1, slice_shape[-1]), swizzle, reduction_op,
+      )
+
+      # Indices are split over 4 warps, and replicated within each warp.
+      assert fa.TMA_GATHER_INDICES_LAYOUT.vector_length == ROWS_PER_INSTR
+      # Index 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 ...
+      # Warp  <--- 0 ---> <--- 1 ---> <--- 2 ---> <--- 3 ---> <--- 0 --
       warp_idx = arith.remui(
           utils.warp_idx(sync=True),
           arith.constant(i32, utils.WARPS_IN_WARPGROUP),
       )
-      # Index 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 ...
-      # Warp  <--- 0 ---> <--- 1 ---> <--- 2 ---> <--- 3 ---> <--- 0 --
-      warp_offset = arith.muli(warp_idx, arith.constant(i32, ROWS_PER_INSTR))
+      gather_linear_idx_warp = arith.muli(warp_idx, c(ROWS_PER_INSTR, i32))
+
+      # We need to unroll over all non-gather dimensions other than the last one
+      non_gather_slice_shape = tuple(
+          1 if g else d for d, g in zips(slice_shape[:-1], is_gather_dim[:-1])
+      )
+      # All non-gather base indices are converted into a row offset.
+      row_base_offset = functools.reduce(
+          arith.addi,
+          (
+              arith.muli(idx, arith.constant(index, stride // new_row_stride))
+              for g, idx, stride in zips(
+                  is_gather_dim[:-1], dyn_base_indices[:-1], gmem_strides[:-1]
+              )
+              if not g
+          ),
+          arith.constant(index, 0),
+      )
+      row_base_offset = arith.index_cast(i32, row_base_offset)
       # TMA instructions are uniform, so we can't use multiple lanes.
       predicate = utils.single_thread_predicate(utils.ThreadSubset.WARP)
-      rank = len(slice_shape)
-      idx_operands = ",".join(f"${i}" for i in range(4, 4 + (ROWS_PER_INSTR + 1)))
+      # First, iterate over gather index registers we have available.
       for i, reg in enumerate(gather_indices.registers.flat):
         if utils.bitwidth(gather_indices.mlir_dtype) != 32:
           reg = arith.extui(ir.VectorType.get((4,), i32), reg)
-        reg_offset = i * 4 * utils.WARPS_IN_WARPGROUP
-        row_offset = arith.addi(warp_offset, arith.constant(i32, reg_offset))
-        reg_smem_ref = utils.memref_slice(
-            smem_ref, utils.ds(arith.index_cast(index, row_offset), ROWS_PER_INSTR)
+        # Compute which rows within the 2D slice we'll be gathering.
+        gather_linear_idx_reg = i * ROWS_PER_INSTR * utils.WARPS_IN_WARPGROUP
+        gather_linear_idx = arith.addi(
+            gather_linear_idx_warp, arith.constant(i32, gather_linear_idx_reg)
         )
-        smem_ptr = utils.memref_ptr(reg_smem_ref, memory_space=3)
-        row_offsets = [
+        # Transform row indices to align with the transformed SMEM shape.
+        gather_slice_idx = [
+            arith.remui(arith.divui(gather_linear_idx, c(s, i32)), c(d, i32))
+            for g, d, s in zip(is_gather_dim, slice_shape, slice_gather_strides)
+            if g
+        ]
+        gather_slice_idx = [arith.index_cast(index, i) for i in gather_slice_idx]
+        gather_rows = [
             llvm.extractelement(reg, c(i, i32)) for i in range(ROWS_PER_INSTR)
         ]
-        col_offset = rev_dyn_base_indices[0]
-        llvm.inline_asm(
-            ir.Type.parse("!llvm.void"),
-            [predicate, smem_ptr, tma_desc, barrier_ptr, col_offset, *row_offsets],
-            f"@$0 cp.async.bulk.tensor.{rank}d.shared::cta.global.tile::gather4.mbarrier::complete_tx::bytes [$1], [$2, {{{idx_operands}}}], [$3];",
-            "b,r,l,r" + ",r" * (ROWS_PER_INSTR + 1),
-            has_side_effects=True,
-        )
+        # Second, step over non-gather slice indices.
+        for non_gather_idxs in np.ndindex(non_gather_slice_shape):
+          gather_slice_idx_it = iter(gather_slice_idx)
+          smem_indices = tuple(
+              next(gather_slice_idx_it) if g else i
+              for g, i in zip(is_gather_dim[:-1], non_gather_idxs)
+          )
+          # We should really take a slice along the second minor dim, but it
+          # doesn't matter. We're just going to take the base pointer anyway.
+          transfer_smem_ref = utils.memref_slice(smem_ref, smem_indices)
+          smem_ptr = utils.memref_ptr(transfer_smem_ref, memory_space=3)
+          # The slice index needs to be folded into gather row indices.
+          row_slice_offset = sum(
+              idx * (stride // new_row_stride)
+              for g, idx, stride in zips(
+                  is_gather_dim[:-1], non_gather_idxs, gmem_strides[:-1]
+              )
+              if not g
+          )
+          row_offset = arith.addi(
+              row_base_offset, arith.constant(i32, row_slice_offset)
+          )
+          row_scale = row_gmem_stride // new_row_stride
+          row_offsets = [
+              arith.addi(
+                  arith.muli(row, arith.constant(i32, row_scale)), row_offset
+              )
+              for row in gather_rows
+          ]
+          col_offset = arith.index_cast(i32, dyn_base_indices[-1])
+          llvm.inline_asm(
+              ir.Type.parse("!llvm.void"),
+              [predicate, smem_ptr, tma_desc, barrier_ptr, col_offset, *row_offsets],
+              "@$0 cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4.mbarrier::complete_tx::bytes [$1], [$2, {{$4, $5, $6, $7, $8}}], [$3];",
+              "b,r,l,r" + ",r" * (ROWS_PER_INSTR + 1),
+              has_side_effects=True,
+          )
       return
 
     assert gather_indices is None  # Only tiled TMA handled below.
+    tma_desc = self._get_tma_desc(
+        gmem_ref, gmem_transform, gmem_peer_id,
+        tuple(slice_shape), swizzle, reduction_op,
+    )
+    # We construct TMA descriptors in column-major order.
+    rev_dyn_base_indices = [
+        arith.index_cast(i32, idx) for idx in reversed(dyn_base_indices)
+    ]
     if isinstance(predicate, _DefaultPredicate):
       predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
     smem_ptr = utils.memref_ptr(smem_ref, memory_space=3)
