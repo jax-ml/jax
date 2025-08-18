@@ -774,9 +774,10 @@ def polygamma(n: ArrayLike, x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{polygamma}(n, x) = \psi^{(n)}(x) = \frac{\mathrm{d}^n}{\mathrm{d}x^n}\log \Gamma(x)
+     \mathrm{polygamma}(n, x) = \psi^{(n)}(x) = \frac{\mathrm{d}^{n+1}}{\mathrm{d}x^{n+1}} \log \Gamma(x)
 
-  where :math:`\Gamma` is the :func:`~jax.scipy.special.gamma` function.
+  where :math:`\psi` is the :func:`~jax.scipy.special.digamma` function and
+  :math:`\Gamma` is the :func:`~jax.scipy.special.gamma` function.
 
   Args:
     n: arraylike, integer-valued. The order of the derivative.
