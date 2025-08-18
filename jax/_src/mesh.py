@@ -446,6 +446,12 @@ class AbstractDevice:
   device_kind: str
   num_tpu_cores: int
 
+  def __repr__(self):
+    return (f"AbstractDevice({self._repr()})")
+
+  def _repr(self):
+    return f"device_kind={self.device_kind}, num_tpu_cores={self.num_tpu_cores}"
+
 
 class AbstractMesh(BaseMesh):
   """AbstractMesh contains only axis names and axis sizes.
@@ -497,7 +503,9 @@ class AbstractMesh(BaseMesh):
     mesh_repr = (", ".join(f"'{n}': {v}" for n, v in self.shape_tuple)
                  if self.shape_tuple else "()")
     atr = f", axis_types={self.axis_types}"
-    return f"AbstractMesh({mesh_repr}{atr})"
+    ad = ("" if self.abstract_device is None else
+          f", {self.abstract_device._repr()}")
+    return f"AbstractMesh({mesh_repr}{atr}{ad})"
 
   def update(self, axis_sizes=None, axis_names=None, axis_types=None, **kwargs):
     if axis_sizes is None:
