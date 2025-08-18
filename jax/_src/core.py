@@ -2329,8 +2329,8 @@ def _pvary_abstract_eval(*args, axes, axis_index_groups):
         f"over axis name {axes}. Please open an issue at "
         "https://github.com/jax-ml/jax/issues, and as a temporary "
         "workaround pass the check_vma=False argument to `jax.shard_map`")
-  return [a.update(sharding=a.sharding.update(mesh=mesh_lib.get_abstract_mesh()),
-                   vma=a.vma.union(frozenset(axes)))
+  sharding = NamedSharding(mesh_lib.get_abstract_mesh(), P())
+  return [a.update(sharding=sharding, vma=a.vma.union(frozenset(axes)))
           for a in args]
 pvary_p.def_abstract_eval(_pvary_abstract_eval)
 
