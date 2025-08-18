@@ -18,6 +18,7 @@ from __future__ import annotations
 import collections
 from collections.abc import Hashable, Sequence
 import contextlib
+import dataclasses
 import enum
 import functools
 import math
@@ -417,8 +418,16 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
 
   @functools.cached_property
   def abstract_mesh(self):
-    return AbstractMesh(self.axis_sizes, self.axis_names,
-                        axis_types=self.axis_types)
+    d = self.devices.flat[0]
+    if d is None:
+      abstract_device = None
+    else:
+      num_tpu_cores = getattr(d, 'num_cores', 0) if d.platform == 'tpu' else 0
+      abstract_device = AbstractDevice(
+          device_kind=d.device_kind, num_tpu_cores=num_tpu_cores)
+    return AbstractMesh(
+        self.axis_sizes, self.axis_names, axis_types=self.axis_types,
+        abstract_device=abstract_device)
 
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
@@ -430,6 +439,12 @@ class _ThreadResourcesLocalState(threading.local):
     self.env = self.stack[-1]
 
 thread_resources = _ThreadResourcesLocalState()
+
+
+@dataclasses.dataclass(frozen=True)
+class AbstractDevice:
+  device_kind: str
+  num_tpu_cores: int
 
 
 class AbstractMesh(BaseMesh):
@@ -454,13 +469,16 @@ class AbstractMesh(BaseMesh):
   """
 
   def __init__(self, axis_sizes: tuple[int, ...], axis_names: tuple[str, ...],
-               axis_types: AxisType | tuple[AxisType, ...] | None = None):
+               axis_types: AxisType | tuple[AxisType, ...] | None = None,
+               *, abstract_device=None):
     self.axis_sizes = axis_sizes
     self.axis_names = axis_names
-    self._size = math.prod(self.axis_sizes) if self.axis_sizes else 0
     self.axis_types = _normalize_axis_types(
         self.axis_names, axis_types, 'AbstractMesh')
-    self._hash = hash((self.axis_sizes, self.axis_names, self.axis_types))
+    self.abstract_device = abstract_device
+    self.size = math.prod(self.axis_sizes) if self.axis_sizes else 0
+    self._hash = hash((self.axis_sizes, self.axis_names, self.axis_types,
+                       self.abstract_device))
 
   def __hash__(self):
     return self._hash
@@ -472,7 +490,8 @@ class AbstractMesh(BaseMesh):
       return False
     return (self.axis_sizes == other.axis_sizes and
             self.axis_names == other.axis_names and
-            self.axis_types == other.axis_types)
+            self.axis_types == other.axis_types and
+            self.abstract_device == other.abstract_device)
 
   def __repr__(self):
     mesh_repr = (", ".join(f"'{n}': {v}" for n, v in self.shape_tuple)
@@ -480,18 +499,16 @@ class AbstractMesh(BaseMesh):
     atr = f", axis_types={self.axis_types}"
     return f"AbstractMesh({mesh_repr}{atr})"
 
-  def update(self, axis_sizes=None, axis_names=None, axis_types=None):
+  def update(self, axis_sizes=None, axis_names=None, axis_types=None, **kwargs):
     if axis_sizes is None:
       axis_sizes = self.axis_sizes
     if axis_names is None:
       axis_names = self.axis_names
     if axis_types is None:
       axis_types = self.axis_types
-    return AbstractMesh(axis_sizes, axis_names, axis_types)
-
-  @property
-  def size(self):
-    return self._size
+    if 'abstract_device' not in kwargs:
+      kwargs['abstract_device'] = self.abstract_device
+    return AbstractMesh(axis_sizes, axis_names, axis_types, **kwargs)
 
   @functools.cached_property
   def shape(self):

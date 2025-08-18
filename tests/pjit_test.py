@@ -3003,6 +3003,25 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(compiled._executable._kept_var_idx, {5})
     self.assertLen(compiled._executable.in_avals, 1)
 
+  def test_abstract_device(self):
+    if not jtu.is_device_tpu(3):
+      self.skipTest('only works on TPU v3')
+
+    inp = jnp.arange(8)
+    tpu_mesh = Mesh([jax.devices('tpu')[0]], 'x')
+    cpu_mesh = Mesh([jax.devices('cpu')[0]], 'x')
+
+    @jax.jit
+    def f(x):
+      return x
+
+    with jtu.count_jit_tracing_cache_miss() as tracing_count:
+      with jax.set_mesh(tpu_mesh):
+        f(inp)
+      with jax.set_mesh(cpu_mesh):
+        f(inp)
+    self.assertEqual(tracing_count(), 2)  # twice for f
+
   def test_pjit_relayout_multi_slice(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
 
