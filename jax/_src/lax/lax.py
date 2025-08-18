@@ -6661,7 +6661,7 @@ def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions,
         sharding=sharding)
     new_vma = core.standard_vma_rule('broadcast_in_dim', x)
     return core.ShapedArray(shape, x.dtype, x.weak_type, sharding=new_sharding,
-                            vma=new_vma)
+                            vma=new_vma, memory_space=x.memory_space)
   # If any BInts in shape, or Tracers in dyn_shape, produce a DShapedArray
   # (even if x is a ShapedArray)
   # TODO(mattjj): unify DShapedArray with ShapedArray, and remove this code

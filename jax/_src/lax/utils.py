@@ -117,7 +117,7 @@ def call_shape_dtype_sharding_rule(prim, shape_rule, dtype_rule, sharding_rule,
         f' sharded result: {out_aval_str}') from e
   return out_shapes, out_dtypes, out_shardings
 
-def _default_memory_space_rule(prim, *avals, **kwargs):
+def default_memory_space_rule(name, *avals, **kwargs):
   if all(a.memory_space == core.MemorySpace.Any for a in avals):
     return core.MemorySpace.Any
   prev_aval = None
@@ -126,7 +126,7 @@ def _default_memory_space_rule(prim, *avals, **kwargs):
       continue
     if prev_aval is not None and prev_aval.memory_space != a.memory_space:
       raise ValueError(
-          f'memory_space of all inputs passed to `{prim.name}` must be the'
+          f'memory_space of all inputs passed to `{name}` must be the'
           f' same. Got one operand with type: {prev_aval.str_short()} and'
           f' another operand with type: {a.str_short()}')
     prev_aval = a
@@ -135,7 +135,7 @@ def _default_memory_space_rule(prim, *avals, **kwargs):
   return prev_aval.memory_space
 
 def multi_mem_space_rule(prim, num_out, *avals, **kwargs):
-  out_mem_space = _default_memory_space_rule(prim, *avals, **kwargs)
+  out_mem_space = default_memory_space_rule(prim.name, *avals, **kwargs)
   return [out_mem_space] * num_out
 
 
@@ -159,7 +159,7 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
         prim, shape_rule, dtype_rule, sharding_rule, unreduced_rule, False,
         *avals, **kwargs)
     out_vma = vma_rule(*avals, **kwargs)
-    out_mem_space = _default_memory_space_rule(prim, *avals, **kwargs)
+    out_mem_space = default_memory_space_rule(prim.name, *avals, **kwargs)
     out_aval = core.ShapedArray(
         out_shape, out_dtype, weak_type=weak_type, sharding=out_sharding,
         vma=out_vma, memory_space=out_mem_space)
