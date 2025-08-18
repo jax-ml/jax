@@ -258,7 +258,7 @@ def TPU_VectorStoreOp :TPU_Op<"vector_store", [DefaultMemWrite, AttrSizedOperand
     AnyVectorOfNonZeroRank:$valueToStore,
     AnyMemRef:$base,
     Variadic<Index>:$indices,
-    DenseI32ArrayAttr:$strides,
+    OptionalAttr<DenseI32ArrayAttr>:$strides,
     Optional<AnyVectorOfNonZeroRank>:$mask,   // Elementwise mask.
     DefaultValuedAttr<BoolAttr, "false">:$add
   );
@@ -286,7 +286,7 @@ def TPU_VectorLoadOp :TPU_Op<"vector_load", [DefaultMemRead, AttrSizedOperandSeg
   let arguments = (ins
     AnyMemRef:$base,
     Variadic<Index>:$indices,
-    DenseI32ArrayAttr:$strides,
+    OptionalAttr<DenseI32ArrayAttr>:$strides,
     Optional<AnyVectorOfNonZeroRank>:$mask   // Elementwise mask.
   );
   let results = (outs AnyVectorOfNonZeroRank:$result);

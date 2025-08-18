@@ -703,7 +703,7 @@ LogicalResult verifyStoreOp(Op op) {
 }
 
 LogicalResult VectorStoreOp::verify() {
-  if (!getStrides().empty()) {
+  if (getStrides() && !getStrides()->empty()) {
     return emitError("Not implemented: general vector store with strides.");
   }
   MemRefType ref_ty = getBase().getType();
@@ -739,8 +739,8 @@ LogicalResult VectorLoadOp::verify() {
   if (llvm::size(getIndices()) != ref_ty.getRank()) {
     return emitOpError("Expected ") << ref_ty.getRank() << " indices.";
   }
-  if (!getStrides().empty()) {
-    if (llvm::size(getStrides()) != ref_ty.getRank()) {
+  if (getStrides() && !getStrides()->empty()) {
+    if (llvm::size(*getStrides()) != ref_ty.getRank()) {
       return emitOpError("Expected ") << ref_ty.getRank() << " strides.";
     }
     return emitError("Not implemented: general vector load with strides.");
