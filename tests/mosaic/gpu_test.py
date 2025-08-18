@@ -3996,10 +3996,8 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
   )
   def test_broadcast_in_dim(self, input_shape, output_shape, bcast_dims):
     element_value = 42.0
-    def body(ctx, result_gmem_ref, smem):
-      del ctx
-      result_smem_ref = smem[0]
-
+    def body(ctx, result_gmem_ref, scratch):
+      del ctx, scratch
       f32 = ir.F32Type.get()
       zero_index = arith.constant(ir.IndexType.get(), 0)
 
@@ -4015,19 +4013,8 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           expanded, layouts.to_layout_attr(fa.WGMMA_LAYOUT)
       )
 
-      # Registers -> SMEM
-      vector.store(cast, result_smem_ref, [zero_index] * len(output_shape))
-
-      # SMEM -> GMEM
-      zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
-      mgpu_dialect.async_store(
-          source=result_smem_ref,
-          destination=result_gmem_ref,
-          indices=[zero_i32] * len(output_shape),
-          slice_lengths=output_shape,
-      )
-      nvvm.cp_async_bulk_wait_group(0)
-      utils.warpgroup_barrier()
+      # Registers -> GMEM
+      vector.store(cast, result_gmem_ref, [zero_index] * len(output_shape))
 
     dtype = jnp.float32
     kernel = mgpu.as_gpu_kernel(
@@ -4036,7 +4023,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         block=(128, 1, 1),
         in_shape=(),
         out_shape=jax.ShapeDtypeStruct(output_shape, dtype),
-        smem_scratch_shape=[jax.ShapeDtypeStruct(output_shape, dtype)],
+        smem_scratch_shape=[],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 
@@ -4095,10 +4082,8 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     output_shape = (128,)
     red_dims = [1]
 
-    def body(ctx, result_gmem_ref, smem):
-      del ctx
-      result_smem_ref = smem[0]
-
+    def body(ctx, result_gmem_ref, scratch):
+      del ctx, scratch
       el_type = utils.dtype_to_ir_type(dtype)
       zero_index = arith.constant(ir.IndexType.get(), 0)
 
@@ -4124,19 +4109,8 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       # Computation
       reduced = vector.multi_reduction(kind, source, acc, red_dims)
 
-      # Registers -> SMEM
-      vector.store(reduced, result_smem_ref, [zero_index] * len(output_shape))
-
-      # SMEM -> GMEM
-      zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
-      mgpu_dialect.async_store(
-          source=result_smem_ref,
-          destination=result_gmem_ref,
-          indices=[zero_i32] * len(output_shape),
-          slice_lengths=output_shape,
-      )
-      nvvm.cp_async_bulk_wait_group(0)
-      utils.warpgroup_barrier()
+      # Registers -> GMEM
+      vector.store(reduced, result_gmem_ref, [zero_index] * len(output_shape))
 
     kernel = mgpu.as_gpu_kernel(
         body,
@@ -4144,7 +4118,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         block=(128, 1, 1),
         in_shape=(),
         out_shape=jax.ShapeDtypeStruct(output_shape, dtype),
-        smem_scratch_shape=[jax.ShapeDtypeStruct(output_shape, dtype)],
+        smem_scratch_shape=[],
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 
