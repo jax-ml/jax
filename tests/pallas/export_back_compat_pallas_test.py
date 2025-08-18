@@ -81,7 +81,7 @@ class CompatTest(bctu.CompatTestBase):
       o_ref[...] = x_ref[...] + 1
 
     data = self.load_testdata(mosaic_gpu_add_one.data_2025_04_22)
-    self.run_one_test(add_one, data)
+    self.run_one_test(add_one, data, expect_current_custom_calls=["mosaic_gpu_v2"])
 
   @jax.default_matmul_precision("bfloat16")
   def test_mosaic_matmul(self):

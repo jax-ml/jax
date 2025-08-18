@@ -214,34 +214,20 @@ def _mosaic_gpu_lowering_rule(
   else:
     KNOWN_KERNELS[kernel_id] = module_asm
 
-  if ctx.is_forward_compat():
-    if use_custom_barrier:
-      raise ValueError("Barrier semaphore is not supported in forward compatibility mode. "
-                       "Please, use 'export_ignore_forward_compatibility=True'.")
-    op = mlir.custom_call(
-        "mosaic_gpu",
-        result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-        operands=args,
-        operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
-        result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
-        backend_config=kernel_id + module_asm,
-        operand_output_aliases=dict(input_output_aliases),
-    )
-  else:
-    op = mlir.custom_call(
-        "mosaic_gpu_v2",
-        result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-        operands=args,
-        operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
-        result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
-        backend_config=dict(
-            kernel_hash=ir.StringAttr.get(kernel_id),
-            module=ir.StringAttr.get(module_asm),
-            use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
-        ),
-        operand_output_aliases=dict(input_output_aliases),
-        api_version=4,
-    )
+  op = mlir.custom_call(
+      "mosaic_gpu_v2",
+      result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
+      operands=args,
+      operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
+      result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
+      backend_config=dict(
+          kernel_hash=ir.StringAttr.get(kernel_id),
+          module=ir.StringAttr.get(module_asm),
+          use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
+      ),
+      operand_output_aliases=dict(input_output_aliases),
+      api_version=4,
+  )
   return op.results
 
 
