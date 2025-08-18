@@ -1810,9 +1810,9 @@ class MutationData(NamedTuple):
 def _discharge_refs(
     jaxpr: core.ClosedJaxpr
 ) -> tuple[core.ClosedJaxpr, Sequence[int | None], MutationData]:
-  from jax._src.state.discharge import discharge_state  # pytype: disable=import-error
+  from jax._src.state.discharge import discharge_state2  # pytype: disable=import-error
   jaxpr, in_mut = _move_mutable_consts(jaxpr)
-  new_jaxpr = core.ClosedJaxpr(*discharge_state(jaxpr.jaxpr, jaxpr.consts))
+  new_jaxpr = discharge_state2(jaxpr)
   count = it.count(len(jaxpr.out_avals))  # new outputs are appended to the end
   inout_map = {i: next(count) for i, a in enumerate(jaxpr.in_avals)
                if isinstance(a, AbstractRef)}
