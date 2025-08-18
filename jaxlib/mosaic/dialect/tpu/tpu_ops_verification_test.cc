@@ -329,20 +329,6 @@ TEST_F(TpuOpsVerificationTest, VectorLoadIdxVerificationWorks) {
   ASSERT_OK(VerifyOp(vl));
 }
 
-TEST_F(TpuOpsVerificationTest, VectorLoadIdxInvalidMemorySpace) {
-  Value memref = AllocaI32({8}, MemorySpace::kHbm);
-  Value indices = ConstantIndexVector(/*shape=*/{8},
-                                      /*values=*/{0, 1, 2, 3, 4, 5, 6, 7});
-  auto vl = Create<VectorLoadIdxOp>(
-      /*result=*/VectorType::get({8}, i32()),
-      /*base=*/memref,
-      /*indices=*/ValueRange{indices},
-      /*mask=*/nullptr);
-
-  ASSERT_THAT(VerifyOp(vl),
-              StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
-}
-
 TEST_F(TpuOpsVerificationTest, VectorLoadIdxInvalidElementType) {
   Value memref =
       Create<memref::AllocaOp>(
@@ -427,24 +413,6 @@ TEST_F(TpuOpsVerificationTest, VectorStoreIdxVerificationWorks) {
       /*add=*/builder().getBoolAttr(true));
 
   ASSERT_OK(VerifyOp(vl));
-}
-
-TEST_F(TpuOpsVerificationTest, VectorStoreIdxInvalidMemorySpace) {
-  Value memref = AllocaI32({8}, MemorySpace::kHbm);
-  Value vector_to_store =
-      ConstantI32Vector(/*shape=*/{8},
-                        /*values=*/{1, 1, 1, 1, 1, 1, 1, 1});
-  Value indices = ConstantIndexVector(/*shape=*/{8},
-                                      /*values=*/{0, 1, 2, 3, 4, 5, 6, 7});
-  auto vl = Create<VectorStoreIdxOp>(
-      /*vectorToStore=*/vector_to_store,
-      /*base=*/memref,
-      /*indices=*/ValueRange{indices},
-      /*mask=*/nullptr,
-      /*add=*/nullptr);
-
-  ASSERT_THAT(VerifyOp(vl),
-              StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
 }
 
 TEST_F(TpuOpsVerificationTest, VectorStoreIdxInvalidElementType) {

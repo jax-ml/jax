@@ -768,9 +768,6 @@ LogicalResult VectorLoadOp::verify() {
 LogicalResult VectorLoadIdxOp::verify() {
   VectorType value_ty = getResult().getType();
   MemRefType ref_ty = getBase().getType();
-  if (!HasMemorySpace(ref_ty, MemorySpace::kVmem)) {
-    return emitOpError("Expected base memref to be in VMEM.");
-  }
   if (llvm::size(getIndices()) != ref_ty.getRank()) {
     return emitOpError(
                "Expected one index vector for each dimension of the base "
@@ -791,9 +788,6 @@ LogicalResult VectorLoadIdxOp::verify() {
 LogicalResult VectorStoreIdxOp::verify() {
   VectorType value_ty = getValueToStore().getType();
   MemRefType ref_ty = getBase().getType();
-  if (!HasMemorySpace(ref_ty, MemorySpace::kVmem)) {
-    return emitOpError("Expected base memref to be in VMEM.");
-  }
   if (llvm::size(getIndices()) != ref_ty.getRank()) {
     return emitOpError(
                "Expected one index vector for each dimension of the base "
