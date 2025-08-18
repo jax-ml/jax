@@ -148,6 +148,36 @@ class StrToSdyShardingRuleTest(jtu.JaxTestCase):
         ValueError, "Ellipsis can only be used at the beginning of a dimension"):
       str_to_sdy_sharding_rule("i, (..., j) -> j")
 
+  def test_sharding_rule_redcution_factors_is_not_used(self):
+    with self.assertRaisesRegex(
+        ValueError, "Factor k in reduction_factors is not used"):
+      str_to_sdy_sharding_rule("i -> j", reduction_factors=("k",))
+
+  def test_sharding_rule_need_replication_factors_is_not_used(self):
+    with self.assertRaisesRegex(
+        ValueError, "Factor k in need_replication_factors is not used"):
+      str_to_sdy_sharding_rule("(i, j) -> (j, i)", need_replication_factors=("k",), i=10, j=20)
+
+  def test_sharding_rule_permutation_factors_must_be_a_tuple_of_factors(self):
+    with self.assertRaisesRegex(
+        ValueError, "permutation_factors must be a tuple of factors"):
+      str_to_sdy_sharding_rule("i j -> j", permutation_factors=3)
+
+  def test_sharding_rule_blocked_propagation_factors_must_be_a_tuple_or_factors(self):
+    with self.assertRaisesRegex(
+        ValueError, "Factor 3 in blocked_propagation_factors is not used"):
+      str_to_sdy_sharding_rule("i j -> j", blocked_propagation_factors=(3,))
+
+  def test_sharding_rule_factor_used_in_multiple_special_factors(self):
+    with self.assertRaisesRegex(
+        ValueError, "Factor i is used in multiple special factors"):
+      str_to_sdy_sharding_rule("i -> j", reduction_factors=("i",), need_replication_factors=("i",))
+
+  def test_sharding_rule_duplicated_factors_in_special_factors(self):
+    with self.assertRaisesRegex(
+        ValueError, "reduction_factors contains duplicated factors"):
+      str_to_sdy_sharding_rule("i -> j", reduction_factors=("i", "j", "i"))
+
   def test_sharding_rule_scalar_operand_scalar_result(self):
     rule = str_to_sdy_sharding_rule("->")
     self.assertEqual(str(rule), "SdyShardingRule(((),), ((),), {})")
@@ -201,6 +231,20 @@ class StrToSdyShardingRuleTest(jtu.JaxTestCase):
         str(rule),
         "SdyShardingRule((('i_', ('j', 'k')),), (('j', 'foo', ('m', 'bar_24'))"
         ",), {'k': 10, 'm': 10, 'bar_24': 20})")
+
+  def test_sharding_rule_with_special_factors(self):
+    rule = str_to_sdy_sharding_rule("i_ (j k)-> j foo (m bar_24)", k=10, m=10, bar_24=20,
+                                    need_replication_factors=("m",),
+                                    permutation_factors=("j",),
+                                    reduction_factors=("k", "bar_24"),
+                                    blocked_propagation_factors=("bar_24",))
+    self.assertEqual(
+        str(rule),
+        "SdyShardingRule((('i_', ('j', 'k')),), (('j', 'foo', ('m', 'bar_24'))"
+        ",), {'k': 10, 'm': 10, 'bar_24': 20} "
+        "reduction_factors=('k', 'bar_24') "
+        "need_replication_factors=('m',) permutation_factors=('j',) "
+        "blocked_propagation_factors=('bar_24',))")
 
 
 class SdyShardingRuleConversionTest(jtu.JaxTestCase):
@@ -456,14 +500,14 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         results=[self.get_tensor_type((16, 8))],
         operands=[opnd0, opnd1,],
         attributes=dict(call_target_name=ir.StringAttr.get("foo")))
-    rule = str_to_sdy_sharding_rule("... contracting_dim, contracting_dim k -> ... k")
+    rule = str_to_sdy_sharding_rule("... contracting_dim, contracting_dim k -> ... k",
+                                    reduction_factors=("contracting_dim",))
     mlir_rule = sdy_sharding_rule_to_mlir(rule,
         [result.operands[0].type, result.operands[1].type],
         [result.result.type,])
     self.assertEqual(
         str(mlir_rule),
-        "#sdy.op_sharding_rule<([i, j], [j, k])->([i, k]) {i=16, j=32, k=8}, custom>")
-
+        "#sdy.op_sharding_rule<([i, j], [j, k])->([i, k]) {i=16, j=32, k=8} reduction={j}, custom>")
 
   def test_conversion_multiple_batching_groups(self):
     opnd0 = self.create_tensor_value((4, 5, 16, 32))
@@ -480,6 +524,22 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
     self.assertEqual(
         str(mlir_rule),
         "#sdy.op_sharding_rule<([i, j, k, l], [m, n, o, l, k])->([i, j, l, k]) {i=4, j=5, k=16, l=32, m=6, n=7, o=8}, custom>")
+
+  def test_conversion_factor_sizes(self):
+    opnd0 = self.create_tensor_value((4, 2))
+    opnd1 = self.create_tensor_value((8,))
+    result = ir.Operation.create(
+        "stablehlo.custom_call",
+        results=[self.get_tensor_type((8,))],
+        operands=[opnd0, opnd1,],
+        attributes=dict(call_target_name=ir.StringAttr.get("foo")))
+    rule = str_to_sdy_sharding_rule("(i k) j, (i k j) -> (i k j)", i=2, k=2)
+    mlir_rule = sdy_sharding_rule_to_mlir(rule,
+        [result.operands[0].type, result.operands[1].type],
+        [result.result.type,])
+    self.assertEqual(
+        str(mlir_rule),
+        "#sdy.op_sharding_rule<([ij, k], [ijk])->([ijk]) {i=2, j=2, k=2}, custom>")
 
 
 if __name__ == "__main__":
