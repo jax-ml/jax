@@ -720,6 +720,22 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "mosaic_gpu_v2", "CUDA",
                              /*execute=*/kMosaicGpuExecute,
                          });
 
+absl::Status MosaicGpuEmpty(ffi::RemainingRets results) {
+  return absl::OkStatus();
+}
+
+XLA_FFI_DEFINE_HANDLER(
+    kMosaicGpuEmpty, MosaicGpuEmpty,
+    ffi::Ffi::Bind<ffi::ExecutionStage::kExecute>().RemainingRets());
+
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "mosaic_gpu_empty", "CUDA",
+                         {
+                             /*instantiate=*/nullptr,
+                             /*prepare=*/nullptr,
+                             /*initialize=*/nullptr,
+                             /*execute=*/kMosaicGpuEmpty,
+                         });
+
 }  // namespace
 
 extern "C" {
