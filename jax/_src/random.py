@@ -1097,14 +1097,7 @@ def _beta(key, a, b, shape, dtype) -> Array:
   else:
     _check_shape("beta", shape, np.shape(a), np.shape(b))
 
-  if (core.typeof(key).vma != core.typeof(a).vma or
-      core.typeof(a).vma != core.typeof(b).vma):
-    raise TypeError("jax.random.beta requires all arguments to have matching pvary "
-                    f"but they differ: key: {tuple(core.typeof(key).vma)} vs"
-                    f" a: {tuple(core.typeof(a).vma)} vs "
-                    f" b: {tuple(core.typeof(b).vma)}. Use "
-                    " jax.lax.pvary(...) to make them match. If your key is "
-                    " less varying than a, watch out for key-reuse problems.")
+  key, (a, b) = random_insert_pvary("jax.random.beta", key, a, b)
 
   a = lax.convert_element_type(a, dtype)
   b = lax.convert_element_type(b, dtype)
@@ -1507,12 +1500,7 @@ def _gamma(key, a, shape, dtype, log_space=False) -> Array:
   a = lax.convert_element_type(a, dtype)
   if np.shape(a) != shape:
     a = jnp.broadcast_to(a, shape)
-  if core.typeof(a).vma != core.typeof(key).vma:
-    raise TypeError("gamma requires all arguments to have matching pvary "
-                    f"but they differ: key: {tuple(core.typeof(key).vma)} vs"
-                    f" a: {tuple(core.typeof(a).vma)}. Use "
-                    " jax.lax.pvary(...) to make them match. If your key is "
-                    " less varying than a, watch out for key-reuse problems.")
+  key, (a,) = random_insert_pvary('gamma', key, a)
   return random_gamma_p.bind(key, a, log_space=log_space)
 
 
@@ -2938,3 +2926,29 @@ def clone(key):
     >>> assert data == same_data
   """
   return random_clone_p.bind(key)
+
+
+def random_insert_pvary(name, key, *args):
+  if not config._check_vma.value:
+    return key, args
+  if not args:
+    return key, args
+  key_vma = core.typeof(key).vma
+  out = []
+  for a in args:
+    arg_vma = (aval.vma if isinstance(aval := core.typeof(a), core.ShapedArray)
+               else frozenset())
+    # If key is less varying than the args, then it's an error and user should
+    # pvary at their level because it has key-reuse implications. They can
+    # shard the keys passed to shard_map correctly so as to avoid key-reuse
+    # getting correctly varying keys. But JAX shouldn't auto-pvary the key.
+    if key_vma - arg_vma:
+      a = core.pvary(a, tuple(k for k in key_vma if k not in arg_vma))
+    if key_vma != core.typeof(a).vma:
+      raise TypeError(
+          f"{name} requires all arguments to have matching type. Got key type:"
+          f" {core.typeof(key)} vs arg type: {core.typeof(a)}. Use"
+          " jax.lax.pvary(...) to make them match. If your key is less varying"
+          " than arg, watch out for key-reuse problems.")
+    out.append(a)
+  return key, out
