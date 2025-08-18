@@ -31,6 +31,7 @@ from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosa
 from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosaic_semaphore_dma
 from jax._src.internal_test_util.export_back_compat_test_data.pallas import triton_add_one
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import mosaic_gpu as plgpu
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas.ops.tpu import matmul
 import jax.numpy as jnp

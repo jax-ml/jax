@@ -44,6 +44,7 @@ from jax._src.pallas import primitives as pallas_primitives
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import types as state_types
+from jax._src.interpreters import mlir
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
@@ -246,7 +247,7 @@ def kernel(
         cmap_body.__name__ = getattr(body, "__name__", "anonymous")
       pallas_core.core_map(mesh, compiler_params=compiler_params)(cmap_body)
     _, outs = state_discharge.run_state(stateful)(
-        (operands, pallas_helpers.empty_like(out_shape, backend="mosaic_gpu"))
+        (operands, _empty_like(out_shape))
     )
     return outs[0] if unwrap_out else outs
 
@@ -278,7 +279,38 @@ def kernel(
     out_batched = tree_util.tree_map(lambda _: True, out_shape_)
     return out, out_batched
 
-  return wrapper
+  return jax.jit(wrapper)
+
+
+empty_like_p = jax_core.Primitive("empty_like")
+empty_like_p.multiple_results = True
+
+@empty_like_p.def_abstract_eval
+def _empty_like_abstract_eval(*, shape):
+  return [jax_core.ShapedArray(s.shape, s.dtype) for s in shape]
+
+def _empty_like(shape):
+  flat_out_shape, out_shape_treedef = jax.tree.flatten(
+      shape, is_leaf=lambda x: hasattr(x, "shape") and hasattr(x, "dtype")
+  )
+  flat_out_shape = tuple(
+      jax.ShapeDtypeStruct(s.shape, s.dtype) for s in flat_out_shape
+  )
+  return jax.tree.unflatten(
+      out_shape_treedef, empty_like_p.bind(shape=flat_out_shape)
+  )
+
+def _empty_like_lowering(ctx: mlir.LoweringRuleContext, *, shape):
+  if ctx.is_forward_compat() or jax._src.lib.version < (0, 7, 2):
+    return mlir.lower_fun(
+        lambda: pallas_helpers.empty_like(shape, backend="mosaic_gpu"),
+        multiple_results=True,
+    )(ctx)
+  return mlir.lower_fun(
+      lambda: [jax.lax.empty(s.shape, s.dtype) for s in shape],
+      multiple_results=True,
+  )(ctx)
+mlir.register_lowering(empty_like_p, _empty_like_lowering, "cuda")
 
 
 @dataclasses.dataclass(frozen=True)

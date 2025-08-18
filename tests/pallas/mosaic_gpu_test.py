@@ -2146,6 +2146,19 @@ class PallasCallTest(PallasTest):
     )
     np.testing.assert_array_equal(kernel(x), x)
 
+  @parameterized.parameters((False,), (True,))
+  def test_plgpu_kernel_empty_like(self, for_export):
+    def body(y_ref):
+      y_ref[...] = jnp.ones_like(y_ref)
+    f = plgpu.kernel(body, out_shape=jax.ShapeDtypeStruct((128,), jnp.float32))
+    if for_export:
+      hlo = export.export(f, platforms=["cuda"])().mlir_module()
+      expected_mgpu = 2
+    else:
+      hlo = f.lower().as_text()
+      expected_mgpu = 2 if jax._src.lib.version < (0, 7, 2) else 1
+    self.assertEqual(hlo.count("mosaic_gpu_v2"), expected_mgpu)
+
   @parameterized.product(
       layout=(
           plgpu.Layout.WGMMA,
