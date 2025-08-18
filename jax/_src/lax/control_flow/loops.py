@@ -1459,9 +1459,7 @@ def _scan_state_partial_discharge_rule(
   if jaxpr.consts: raise NotImplementedError("open an issue!")  # TODO(mattjj)
   # jaxpr: [*consts, *pure_carry, *xs] -> [*pure_carry, *pure_ys]
   # jaxpr_: [*consts, *pure_carry, *xs] -> [*pure_carry, *pure_ys, *ref_outs]
-  jaxpr_, consts_ = state_discharge.discharge_state(
-      jaxpr.jaxpr, jaxpr.consts, should_discharge=should_discharge)
-  discharged_jaxpr = core.ClosedJaxpr(jaxpr_, consts_)
+  discharged_jaxpr = state_discharge.discharge_state2(jaxpr, should_discharge)
 
   num_xs = len(args) - num_consts - num_carry
   is_ref = [isinstance(a, AbstractRef) and s for a, s in zip(jaxpr.in_avals, should_discharge)]
