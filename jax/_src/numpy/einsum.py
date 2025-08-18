@@ -572,7 +572,10 @@ def _einsum(
                                  preferred_element_type=preferred_element_type,
                                  **dot_out_sharding)
     else:
-      raise NotImplementedError  # if this is actually reachable, open an issue!
+      raise NotImplementedError(
+        "jax.numpy.einsum does not support simultaneous contraction of 3 or more"
+        " operands. Typically this means you've passed an unsupported path to"
+        " the einsum optimize parameter.")
 
     # the resulting 'operand' with axis labels 'names' should be a permutation
     # of the desired result
