@@ -4746,7 +4746,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
     acc_block_shape = (m // 2, n)
 
     def matmul(ctx, a_gmem, b_gmem, result_gmem, scratch):
-      del ctx
       a_smem, b_smem, tma_barrier, mma_barrier, acc_tmem = scratch
       block_id = gpu.cluster_block_id(gpu.Dimension.x)
       i32_type = ir.IntegerType.get_signless(32)
@@ -4799,7 +4798,11 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
           collective=True,
       )
       mma_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
-      tcgen05.commit_arrive(mma_barrier.barrier_ref)
+      is_first_block = arith.cmpi(
+          arith.CmpIPredicate.eq, block_id, c(0, ir.IndexType.get())
+      )
+      with when(is_first_block):
+        tcgen05.commit_arrive(mma_barrier.barrier_ref, collective=True, ctx=ctx)
 
       mma_barrier.wait(orders_tensor_core=True)
 
