@@ -725,7 +725,7 @@ jax_multiplatform_test(
         "tpu_splash_attention_kernel_test.py",
     ],
     enable_backends = ["tpu"],
-    minimal_shard_count = 8,
+    minimal_shard_count = 24,
     shard_count = 24,
     tags = [
         "noasan",  # Times out.
