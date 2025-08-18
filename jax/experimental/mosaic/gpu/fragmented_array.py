@@ -3236,13 +3236,9 @@ def optimization_barrier(*arrays):
     regs += array_regs
     reg_dtypes += [array_regs[0].type] * len(array_regs)
     reg_constraints += [reg_constraint] * len(array_regs)
-  ptx_lines = [
-      f"mov.b32 ${i}, ${len(reg_constraints)+i}"
-      for i in range(len(reg_constraints))
-  ]
-  ptx = ";\n\t".join(ptx_lines) + ";"
+  ptx = ""
   all_reg_constraints = ",".join(
-      [*("=" + c for c in reg_constraints), *reg_constraints]
+      [*("=" + c for c in reg_constraints), *map(str, range(len(reg_constraints)))]
   )
 
   if len(reg_dtypes) == 1:
