@@ -121,7 +121,7 @@ jobs:
         matrix:
           # Python values need to match the matrix stategy in the artifact build jobs above
           # See exlusions for what is fully tested
-          runner: ["linux-x86-g2-48-l4-4gpu", "linux-x86-a3-8g-h100-8gpu", "linux-x86-a4-224-b200-1gpu"]
+          runner: ["linux-x86-g2-48-l4-4gpu-exp", "linux-x86-a3-8g-h100-8gpu", "linux-x86-a4-224-b200-1gpu"]
           python: ["3.11",]
           cuda: [
             {version: "12.1", use-nvidia-pip-wheels: false},
@@ -178,7 +178,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           # Python values need to match the matrix stategy in the build artifacts job above
-          runner: ["linux-x86-g2-48-l4-4gpu",]
+          runner: ["linux-x86-g2-48-l4-4gpu-exp",]
           python: ["3.11",]
           jaxlib-version: ["head", "pypi_latest"]
           enable-x64: [1, 0]
@@ -202,7 +202,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           # Python values need to match the matrix stategy in the build artifacts job above
-          runner: ["linux-x86-g2-48-l4-4gpu",]
+          runner: ["linux-x86-g2-48-l4-4gpu-exp",]
           python: ["3.11"]
           enable-x64: [1]
     name: "Bazel CUDA Non-RBE with ${{ format('{0}', 'build_jaxlib=wheel') }}"

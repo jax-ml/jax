@@ -91,7 +91,7 @@ jobs:
         matrix:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
-          runner: ["linux-x86-g2-48-l4-4gpu",  "linux-x86-a3-8g-h100-8gpu", "linux-x86-a4-224-b200-1gpu"]
+          runner: ["linux-x86-g2-48-l4-4gpu-exp",  "linux-x86-a3-8g-h100-8gpu", "linux-x86-a4-224-b200-1gpu"]
           python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
           cuda: [
             {cuda-version: "12.1", use-nvidia-pip-wheels: false},
@@ -141,7 +141,7 @@ jobs:
         matrix:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
-          runner: ["linux-x86-g2-48-l4-4gpu"]
+          runner: ["linux-x86-g2-48-l4-4gpu-exp"]
           python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
           enable-x64: [0]
     name: "Bazel CUDA Non-RBE with ${{ format('{0}', 'build_jaxlib=false') }}"
