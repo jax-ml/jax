@@ -84,7 +84,8 @@ def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>
 def TPU_DimensionSemantics : I32EnumAttr<"DimensionSemantics", "Dimension semantics", [
   I32EnumAttrCase<"parallel", 0>,
   I32EnumAttrCase<"arbitrary", 1>,
-  I32EnumAttrCase<"core_parallel", 2>
+  I32EnumAttrCase<"core_parallel", 2>,
+  I32EnumAttrCase<"subcore_parallel", 3>
 ]> {
     let genSpecializedAttr = 0;
     let cppNamespace = "::mlir::tpu";
@@ -982,6 +983,20 @@ let assemblyFormat = [{
     OpBuilder<(ins "Value":$semaphore, "Value":$amount,
                "Value":$device_id, "Value":$core_id)>,
   ];
+}
+
+def TPU_BarrierOp : TPU_Op<"barrier"> {
+  let summary = [{Barrier synchronization across tiles.}];
+  let description = [{
+    Performs barrier synchronization across tiles specified at the specified
+    barrier id.
+  }];
+  let arguments = (ins Index:$barrier_id);
+  let results = (outs);
+  let assemblyFormat = [{ attr-dict }];
+    let assemblyFormat = [{
+    `barrier_id` `(` $barrier_id `)` attr-dict
+  }];
 }
 
 // tpu.enqueue_dma enqueues a DMA operation.
