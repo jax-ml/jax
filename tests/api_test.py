@@ -4419,6 +4419,11 @@ class APITest(jtu.JaxTestCase):
     expected = (6.,)
     self.assertEqual(actual, expected)
 
+  def test_lax_real_empty(self):
+    out = jax.lax.empty((2, 2), dtype=jnp.float32)
+    self.assertEqual(out.shape, (2, 2))
+    self.assertEqual(out.dtype, jnp.float32)
+
   def test_leaked_tracer_issue_7613(self):
     # from https://github.com/jax-ml/jax/issues/7613
     import numpy.random as npr
