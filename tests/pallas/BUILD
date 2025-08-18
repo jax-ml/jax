@@ -1035,6 +1035,7 @@ jax_multiplatform_test(
     env = {
         "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
         "JAX_PALLAS_USE_MOSAIC_GPU": "1",
+        "FAIL_ON_NVSHMEM_UNAVAILABLE": "",
     },
     shard_count = 4,
     tags = [

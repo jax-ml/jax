@@ -45,7 +45,10 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
         not jtu.is_cuda_compute_capability_equal("9.0")):
       self.skipTest("Only works on GPU with capability sm90a")
     if not mgpu.supports_cross_device_collectives():
-      self.skipTest("NVSHMEM library unavailable.")
+      if "FAIL_ON_NVSHMEM_UNAVAILABLE" in os.environ:
+        raise ValueError("NVSHMEM library unavailable.")
+      else:
+        self.skipTest("NVSHMEM library unavailable.")
     if jax.process_count() == 1:
       self.skipTest("Test requires multiple processes.")
     if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
