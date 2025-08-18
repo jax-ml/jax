@@ -646,7 +646,7 @@ class InterpretTest(jtu.JaxTestCase):
           kernel,
           grid=(2,),
           out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-          in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY)],
+          in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM)],
           scratch_shapes=[
               pltpu.VMEM(x.shape, x.dtype),
           ],
@@ -982,6 +982,81 @@ class InterpretTest(jtu.JaxTestCase):
                 ProcessedGridPoint((1, 3), 3),
             ],
         )
+
+  @parameterized.parameters(pltpu.MemorySpace.HBM, pltpu.MemorySpace.ANY)
+  def test_referencing_hbm_raises(self, disallowed_memory_space):
+    def jax_load_and_store(in_ref, o_ref):
+      o_ref[...] = in_ref[...]
+
+    def pallas_load_and_store(in_ref, o_ref):
+      t = pltpu.load(in_ref)
+      pltpu.store(o_ref, t)
+
+    def kernel_call(kernel, x, *, in_memory_space, out_memory_space):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          grid=(1,),
+          in_specs=[pl.BlockSpec(memory_space=in_memory_space)],
+          out_specs=pl.BlockSpec(memory_space=out_memory_space),
+          interpret=pltpu.InterpretParams(),
+      )(x)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r'get_p: Buffers with a memory space of HBM or ANY cannot be'
+        r' referenced directly. Instead, use `pltpu.sync_copy` or'
+        r' `pltpu.async_copy`.',
+    ):
+      kernel_call(
+          jax_load_and_store,
+          jnp.zeros((8, 128), jnp.float32),
+          in_memory_space=disallowed_memory_space,
+          out_memory_space=pltpu.MemorySpace.VMEM,
+      )
+      pltpu.reset_tpu_interpret_mode_state()
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r'load_p: Buffers with a memory space of HBM or ANY cannot be'
+        r' referenced directly. Instead, use `pltpu.sync_copy` or'
+        r' `pltpu.async_copy`.',
+    ):
+      kernel_call(
+          pallas_load_and_store,
+          jnp.zeros((8, 128), jnp.float32),
+          in_memory_space=disallowed_memory_space,
+          out_memory_space=pltpu.MemorySpace.VMEM,
+      )
+      pltpu.reset_tpu_interpret_mode_state()
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r'swap_p: Buffers with a memory space of HBM or ANY cannot be'
+        r' referenced directly. Instead, use `pltpu.sync_copy` or'
+        r' `pltpu.async_copy`.',
+    ):
+      kernel_call(
+          jax_load_and_store,
+          jnp.zeros((8, 128), jnp.float32),
+          in_memory_space=pltpu.MemorySpace.VMEM,
+          out_memory_space=disallowed_memory_space,
+      )
+      pltpu.reset_tpu_interpret_mode_state()
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r'swap_p: Buffers with a memory space of HBM or ANY cannot be'
+        r' referenced directly. Instead, use `pltpu.sync_copy` or'
+        r' `pltpu.async_copy`.',
+    ):
+      kernel_call(
+          pallas_load_and_store,
+          jnp.zeros((8, 128), jnp.float32),
+          in_memory_space=pltpu.MemorySpace.VMEM,
+          out_memory_space=pltpu.MemorySpace.HBM,
+      )
+      pltpu.reset_tpu_interpret_mode_state()
 
 
 if __name__ == '__main__':

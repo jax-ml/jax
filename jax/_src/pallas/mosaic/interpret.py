@@ -1477,6 +1477,20 @@ class Placeholder:
   dtype: jnp.dtype
 
 
+def _get_memory_space_and_raise_if_hbm(aval, primitive_name=None):
+  memory_space = aval.memory_space
+  if (
+      memory_space == mosaic_core.MemorySpace.HBM
+      or memory_space == mosaic_core.MemorySpace.ANY
+  ):
+    raise ValueError(
+        f'{primitive_name}: Buffers with a memory space of HBM or ANY cannot be'
+        ' referenced directly. Instead, use `pltpu.sync_copy` or'
+        ' `pltpu.async_copy`.'
+    )
+  return memory_space
+
+
 def _interpret_jaxpr(
     jaxpr,
     *args,
@@ -1537,12 +1551,15 @@ def _interpret_jaxpr(
             eqn.params['args_tree'], deferred_invals())
         if mask is not None:
           raise NotImplementedError('masked load_p')
+        memory_space = _get_memory_space_and_raise_if_hbm(
+            eqn.invars[0].aval, 'load_p'
+        )
         out = callback.io_callback(
             functools.partial(get, source_info=eqn.source_info),
             eqn.outvars[0].aval,
             device_id,
             local_core_id,
-            TPU_MEMORY_SPACE_IDXS[eqn.invars[0].aval.memory_space],
+            TPU_MEMORY_SPACE_IDXS[memory_space],
             ref,
             transforms,
             ordered=True)
@@ -1550,12 +1567,15 @@ def _interpret_jaxpr(
       elif prim is primitives.swap_p:
         (ref, transforms, val, mask) = jax.tree.unflatten(
             eqn.params['args_tree'], deferred_invals())
+        memory_space = _get_memory_space_and_raise_if_hbm(
+            eqn.invars[0].aval, 'swap_p'
+        )
         out = callback.io_callback(
             functools.partial(swap, source_info=eqn.source_info),
             eqn.outvars[0].aval,
             device_id,
             local_core_id,
-            TPU_MEMORY_SPACE_IDXS[eqn.invars[0].aval.memory_space],
+            TPU_MEMORY_SPACE_IDXS[memory_space],
             ref,
             transforms,
             val,
@@ -1694,25 +1714,31 @@ def _interpret_jaxpr(
                 ordered=True)
 
       elif prim is state_primitives.get_p:
+        memory_space = _get_memory_space_and_raise_if_hbm(
+            eqn.invars[0].aval, 'get_p'
+        )
         invals = deferred_invals()
         out = callback.io_callback(
             functools.partial(get, source_info=eqn.source_info),
             eqn.outvars[0].aval,
             device_id,
             local_core_id,
-            TPU_MEMORY_SPACE_IDXS[eqn.invars[0].aval.memory_space],
+            TPU_MEMORY_SPACE_IDXS[memory_space],
             invals[0],
             jax.tree.unflatten(eqn.params['tree'], invals[1:]),
             ordered=True)
 
       elif prim is state_primitives.swap_p:
+        memory_space = _get_memory_space_and_raise_if_hbm(
+            eqn.invars[0].aval, 'swap_p'
+        )
         invals = deferred_invals()
         out = callback.io_callback(
             functools.partial(swap, source_info=eqn.source_info),
             eqn.outvars[0].aval,
             device_id,
             local_core_id,
-            TPU_MEMORY_SPACE_IDXS[eqn.invars[0].aval.memory_space],
+            TPU_MEMORY_SPACE_IDXS[memory_space],
             invals[0],
             jax.tree.unflatten(eqn.params['tree'], invals[2:]),
             invals[1],
