@@ -335,6 +335,7 @@ class _TMEMDialectAlloc:
   addr_ref: ir.Value
   shape: tuple[int, int]
   dtype: ir.Type
+  packing: int
   collective: bool
   tmem_ref: ir.Value | None = dataclasses.field(init=False, default=None)
 
@@ -346,9 +347,13 @@ class _TMEMDialectAlloc:
         memory_space=utils.tmem(),
     )
     self.tmem_ref = dialect.tmem_alloc(
-        result_type, self.addr_ref, collective=self.collective, exact=False
+        result_type,
+        self.addr_ref,
+        collective=self.collective,
+        exact=False,
+        packing=self.packing,
     )
-    ncols = self.shape[1]
+    ncols = self.shape[1] // self.packing
     return tcgen05.tmem_alloc_exact_ncols(ncols, exact=False)
 
   def dealloc(self):
@@ -450,16 +455,15 @@ def _construct_smem_reftree(
             c(dynamic_smem_offset, index),
             lowering_semantics,
         )
-        if layout is None:
-          layout = tcgen05._infer_tmem_layout(
-              shape, collective, 1 if packing is None else packing
-          )
+        packing = 1 if packing is None else packing
         ir_dtype = utils.dtype_to_ir_type(dtype)
         if lowering_semantics == LoweringSemantics.Warpgroup:
           tmem_allocs.append(
-              _TMEMDialectAlloc(addr_ref, shape, ir_dtype, collective)
+              _TMEMDialectAlloc(addr_ref, shape, ir_dtype, packing, collective)
           )
         else:
+          if layout is None:
+            layout = tcgen05._infer_tmem_layout(shape, collective, packing)
           num_cols = layout.cols_in_shape(shape, utils.bitwidth(ir_dtype))
           tmem_allocs.append(_TMEMAlloc(addr_ref, num_cols, collective))
 
