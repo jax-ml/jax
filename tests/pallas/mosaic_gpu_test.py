@@ -881,6 +881,43 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), np.stack([x, x], axis=0))
 
+  @parameterized.parameters(
+      ((),),
+      ((plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)),),
+      (
+          (
+              plgpu.TilingTransform((8, 32)),
+              plgpu.TransposeTransform((1, 0, 2, 3)),
+              plgpu.SwizzleTransform(128),
+          ),
+      ),
+  )
+  def test_copy_gmem_to_smem_gather(self, transforms):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("Only works on a GPU with capability >= sm100")
+    self.skip_if_wg_semantics()
+    dtype = jnp.int32
+    out_shape = (64, 128)
+    shape = (128, 64 + out_shape[-1])
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
+        out_specs=plgpu.BlockSpec(memory_space=plgpu.SMEM, transforms=transforms),
+        in_specs=(
+            pl.BlockSpec(memory_space=plgpu.GMEM),
+            pl.BlockSpec(memory_space=plgpu.SMEM),
+        ),
+        scratch_shapes=[plgpu.Barrier()],
+    )
+    def kernel(x_ref_gmem, idx_ref, o_ref, barrier_ref):
+      idxs = plgpu.load(idx_ref, (), layout=plgpu.Layout.TMA_GATHER_INDICES)
+      plgpu.copy_gmem_to_smem(x_ref_gmem.at[idxs, 64:], o_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+
+    x = jnp.arange(math.prod(shape)).reshape(shape).astype(dtype)
+    idx = jax.random.permutation(jax.random.key(1234), out_shape[0]).astype(jnp.uint32)
+    np.testing.assert_array_equal(kernel(x, idx), x[idx, 64:])
+
   @parameterized.product(
       src_memory_space=[plgpu.SMEM, plgpu.GMEM],
       layout=[plgpu.Layout.WG_STRIDED((128,), vec_size=1), None,

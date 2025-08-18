@@ -291,7 +291,7 @@ def _extract_gmem_copy_params(transforms):
           "Non-indexing transforms on GMEM refs are not implemented.")
   indexer = lowering.merge_indexers(indexers)
   return dict(
-      gmem_slice=lowering._ndindexer_indices(indexer),
+      gmem_slice=lowering._ndindexer_indices(indexer, allow_arrays=True),
       gmem_peer_id=peer_id,
   )
 
@@ -490,7 +490,10 @@ def _copy_gmem_to_smem_lowering(
 
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     if bytes % WARPGROUP_SIZE:
-      raise NotImplementedError("Only aligned copies are supported")
+      raise NotImplementedError(
+          "Only copies transferring a number of bytes divisible by the"
+          " warpgroup size are supported"
+      )
     if for_warpgroup:
       # We arrive uniformly from each thread in the WG, so we need to divide the
       # number of bytes by the number of threads in the WG.
@@ -529,15 +532,21 @@ def _copy_gmem_to_smem_lowering(
         barrier.arrive(arrival_count=3, can_complete=False)
         barrier.arrive_expect_tx(bytes)
 
+    # Gathers are a warpgroup-level collective and can't take a predicate.
+    predicate_kwarg = dict(predicate=ctx.module_ctx.single_lane_predicate)
+    if gmem_slice := copy_params.get("gmem_slice", ()):
+      first_idx = gmem_slice[0]
+      if isinstance(first_idx, mgpu.FragmentedArray) and first_idx.shape:
+        predicate_kwarg = {}
     ctx.launch_ctx.async_copy(
         src_ref=src,
         dst_ref=dst,
         barrier=barrier,
         arrive=False,
-        predicate=ctx.module_ctx.single_lane_predicate,
         collective=collective,
         partitioned=partitioned_axis,
         **copy_params,
+        **predicate_kwarg,
     )
     return ()
 

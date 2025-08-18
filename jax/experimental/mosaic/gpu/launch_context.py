@@ -1078,10 +1078,11 @@ class LaunchContext:
             f" {single_tma_bits // 8} bytes, but need a multiple of 128 bytes"
         )
 
-      arrive_predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
-      nvvm.mbarrier_arrive_expect_tx_shared(
-          barrier_ptr, transfer_bytes, predicate=arrive_predicate,
-      )
+      if arrive:
+        arrive_predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
+        nvvm.mbarrier_arrive_expect_tx_shared(
+            barrier_ptr, transfer_bytes, predicate=arrive_predicate,
+        )
 
       gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
       assert len(gmem_strides) == 2
@@ -1183,7 +1184,7 @@ class LaunchContext:
           llvm.inline_asm(
               ir.Type.parse("!llvm.void"),
               [predicate, smem_ptr, tma_desc, barrier_ptr, col_offset, *row_offsets],
-              "@$0 cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4.mbarrier::complete_tx::bytes [$1], [$2, {{$4, $5, $6, $7, $8}}], [$3];",
+              "@$0 cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4.mbarrier::complete_tx::bytes [$1], [$2, {$4, $5, $6, $7, $8}], [$3];",
               "b,r,l,r" + ",r" * (ROWS_PER_INSTR + 1),
               has_side_effects=True,
           )

@@ -1443,10 +1443,16 @@ def _handle_transforms(
   return transformed_ref, new_transforms
 
 
-def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...]:
+def _ndindexer_indices(
+    indexer: indexing.NDIndexer, allow_arrays: bool = False
+) -> tuple[gpu_core.Index | mgpu.FragmentedArray, ...]:
   indices = []
   for idx in indexer.indices:
-    if not isinstance(idx, indexing.Slice):
+    if isinstance(idx, mgpu.FragmentedArray) and idx.shape:
+      if not allow_arrays:
+        raise ValueError("Arrays are not supported as indices.")
+      indices.append(idx)
+    elif not isinstance(idx, indexing.Slice):
       indices.append(_as_index(idx))
     elif not idx.is_dynamic_start and not idx.is_dynamic_size:
       indices.append(slice(idx.start, idx.start + idx.size, idx.stride))
