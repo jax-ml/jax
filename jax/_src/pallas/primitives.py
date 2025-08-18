@@ -966,14 +966,14 @@ def _run_scoped_discharge_rule(
   # discharge the requested refs we need to move them to the invar set.
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
-  discharged_body, new_consts = state_discharge.discharge_state(
-      jaxpr_noconst,
-      [],
+  discharged_body_ = state_discharge.discharge_state2(
+      pe.close_jaxpr(jaxpr_noconst),
       should_discharge=should_discharge + [False] * len(jaxpr.invars),
   )
-  if new_consts:
+  if discharged_body_.jaxpr.constvars:
     raise NotImplementedError(
         "Cannot handle new consts created by state discharge.")
+  discharged_body = discharged_body_.jaxpr
 
   # Lowering expects that the jaxpr.consts to be the eqn.invals.
   discharged_body = pe.convert_invars_to_constvars(discharged_body, num_consts)
@@ -1009,10 +1009,11 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes):
     )
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
-  discharged_body, new_consts = state_discharge.discharge_state(
-      jaxpr_noconst, [], should_discharge=True)
-  if new_consts:    raise NotImplementedError(
-        "Cannot handle new consts created by state discharge.")
+  discharged_body_ = state_discharge.discharge_state2(
+      pe.close_jaxpr(jaxpr_noconst), should_discharge=True)
+  if discharged_body_.jaxpr.constvars:
+    raise NotImplementedError("Can't handle consts created by state discharge.")
+  discharged_body = discharged_body_.jaxpr
 
   def _lower_fun(*lower_fun_args):
     # Create inputs filled with uninitialized values to the body.

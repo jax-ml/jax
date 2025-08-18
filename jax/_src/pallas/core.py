@@ -664,10 +664,7 @@ class BlockMapping:
     return ref
 
   def compute_start_indices_interpret(self, loop_idx, *args):
-    discharged_jaxpr, discharged_consts = state_discharge.discharge_state(
-        self.index_map_jaxpr.jaxpr, self.index_map_jaxpr.consts
-    )
-    jaxpr = jax_core.ClosedJaxpr(discharged_jaxpr, discharged_consts)
+    jaxpr = state_discharge.discharge_state2(self.index_map_jaxpr)
     block_indices_and_rest = jax_core.jaxpr_as_fun(jaxpr)(*loop_idx, *args)
     # Since we're passing in `Ref`s potentially, we need to split out their
     # updated values since we only care about the return values.

@@ -2591,12 +2591,14 @@ def _run_scoped_lowering_rule(
       # consts. We also don't want to wrap the values in refs.
       no_const_jaxpr = pe.convert_constvars_jaxpr(jaxpr)
       should_discharge = [False] * len(consts) + should_discharge
-      discharged_jaxpr, _ = discharge.discharge_state(no_const_jaxpr, (), should_discharge=should_discharge)
+      discharged_jaxpr = discharge.discharge_state2(
+          pe.close_jaxpr(no_const_jaxpr), should_discharge=should_discharge)
+      assert not discharged_jaxpr.consts
       new_input_vals = (*consts, *input_refs)
       outs = lower_jaxpr_to_mosaic_gpu(
           ctx.module_ctx,
           ctx.launch_ctx,
-          discharged_jaxpr,
+          discharged_jaxpr.jaxpr,
           new_input_vals,
           (),
       )
@@ -2650,12 +2652,11 @@ def _run_state_lowering_rule(
         "Expected at least one accumulator to in run_state."
     )
 
-  discharged_jaxpr, new_consts = discharge.discharge_state(
-      jaxpr, (), should_discharge=should_discharge
-  )
-  assert not new_consts
+  discharged_jaxpr = discharge.discharge_state2(
+      pe.close_jaxpr(jaxpr), should_discharge=should_discharge)
+  assert not discharged_jaxpr.consts
   outs = lower_jaxpr_to_mosaic_gpu(
-      ctx.module_ctx, ctx.launch_ctx, discharged_jaxpr, new_input_vals, ()
+      ctx.module_ctx, ctx.launch_ctx, discharged_jaxpr.jaxpr, new_input_vals, ()
   )
   # Await the accumulators and extract their final values.
   nvvm_dialect.wgmma_wait_group_sync_aligned(0)

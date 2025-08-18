@@ -1453,6 +1453,7 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
       f'called with sequence whose items have type\n{_avals_short(x_avals_mapped)}')
   return [*init_avals, *y_avals], jaxpr.effects
 
+# TODO(mattjj): add forwarding optimizations
 def _scan_state_partial_discharge_rule(
     should_discharge, in_avals, out_avals, *args, jaxpr, num_consts, num_carry,
     linear, unroll, reverse, length, _split_transpose):
@@ -2243,6 +2244,7 @@ def _while_typecheck(_, *in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
         f'Effects not supported in `while`: {disallowed_effects}')
   return body_jaxpr.out_avals, joined_effects
 
+# TODO(mattjj): put the jaxpr manipulations under a cache
 def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
                           cond_nconsts, body_nconsts):
   # TODO(sharadmv): enable supporting state effects in the cond
