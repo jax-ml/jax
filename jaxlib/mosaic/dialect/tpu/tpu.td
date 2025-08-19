@@ -591,9 +591,9 @@ def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure, SameTypeOperands]>
   let hasVerifier = 1;
 }
 
-def TPU_RelayoutOp : TPU_Op<"relayout", [SameOperandsAndResultType]> {
-  let arguments = (ins AnyType:$input);
-  let results = (outs AnyType:$output);
+def TPU_RelayoutOp : TPU_Op<"relayout", [Pure, SameOperandsAndResultType]> {
+  let arguments = (ins AnyVectorOfAnyRank:$input);
+  let results = (outs AnyVectorOfAnyRank:$output);
   let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
   let hasVerifier = 1;
 }

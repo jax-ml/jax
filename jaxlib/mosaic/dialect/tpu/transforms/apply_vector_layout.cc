@@ -7950,18 +7950,13 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
 LogicalResult tpu_relayout_rule(RewriteContext &ctx, Operation &op,
                                 const ArrayRef<Layout> layouts_in,
                                 const ArrayRef<Layout> layouts_out) {
+  CHECK_EQ(layouts_in.size(), 1);
+  CHECK_EQ(layouts_out.size(), 1);
+  CHECK(layouts_in[0].has_value());
+  CHECK(layouts_out[0].has_value());
+  const VectorLayout& src_layout = *layouts_in[0];
+  const VectorLayout& dst_layout = *layouts_out[0];
   auto tpu_relayout_op = cast<tpu::RelayoutOp>(op);
-  auto input_val = dyn_cast<TypedValue<VectorType>>(tpu_relayout_op.getInput());
-
-  auto in_layout_array_attr =
-      tpu_relayout_op->getAttrOfType<ArrayAttr>("in_layout");
-  auto src_vla = dyn_cast<tpu::VectorLayoutAttr>(in_layout_array_attr[0]);
-  VectorLayout src_layout = src_vla.getLayout().value();
-
-  auto out_layout_array_attr =
-      tpu_relayout_op->getAttrOfType<ArrayAttr>("out_layout");
-  auto dst_vla = dyn_cast<tpu::VectorLayoutAttr>(out_layout_array_attr[0]);
-  VectorLayout dst_layout = dst_vla.getLayout().value();
 
   if (src_layout == dst_layout) {
     return op.emitError(
@@ -7970,9 +7965,9 @@ LogicalResult tpu_relayout_rule(RewriteContext &ctx, Operation &op,
   }
 
   OpBuilder builder(&op);
-  FAILUREOR_ASSIGN_OR_RETURN(
-      TypedValue<VectorType> new_v,
-      relayout(ctx, builder, input_val, src_layout, dst_layout));
+  FAILUREOR_ASSIGN_OR_RETURN(TypedValue<VectorType> new_v,
+                             relayout(ctx, builder, tpu_relayout_op.getInput(),
+                                      src_layout, dst_layout));
 
   tpu_relayout_op.replaceAllUsesWith(new_v);
   tpu_relayout_op.erase();
