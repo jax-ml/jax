@@ -4117,6 +4117,23 @@ class ShardMapTest(jtu.JaxTestCase):
                   in_specs=(P('dp'), P(), P()), out_specs=P('dp'))
     f(jax.random.split(rng, 2), jnp.ones((64, 1)), jnp.ones((64, 1)))  # doesn't crash
 
+  @parameterized.named_parameters(
+      ('1', P('x'), {'x'}, P(None, 'y')),
+      ('2', P(None, 'y'), {'y'}, P('x', None))
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_partial_manual_explicit_shmap(self, out_spec, axis_name, aval_spec,
+                                         mesh):
+    @jax.shard_map(out_specs=out_spec, axis_names=axis_name)
+    def f(x):
+      self.assertEqual(jax.typeof(x).sharding.spec, aval_spec)
+      return x * 2
+
+    arr = jax.device_put(np.arange(16).reshape(8, 2), P('x', 'y'))
+    out = f(arr)
+    out2 = jax.jit(f)(arr)
+    self.assertEqual(out.sharding, out2.sharding)
+
 
 class FunSpec(NamedTuple):
   name: str

@@ -1024,7 +1024,8 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs, out_specs_thunk,
     mesh = concrete_mesh if not concrete_mesh.empty else mesh
     mesh = get_mesh_from_args(args, mesh)
   cur_mesh = get_abstract_mesh()
-  args = map(partial(_unmatch_spec, mesh, check_vma, cur_mesh), in_specs, args)
+  args = map(partial(_unmatch_spec, mesh, check_vma, cur_mesh, manual_axes),
+             in_specs, args)
   in_vma = map(_spec_to_vma, in_specs)
   outs, out_vma = _run_shmap(fun, mesh, manual_axes, args, in_vma, check_vma)
   out_avals = [core.mapped_aval(x.shape[0], 0, core.get_aval(x)) for x in outs]
@@ -1035,8 +1036,8 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs, out_specs_thunk,
   else:
     src_pspecs = tuple(P(mesh.axis_names) for _ in out_vma)
   dst_pspecs = out_specs_thunk()
-  return map(partial(_match_spec, mesh, check_vma), src_pspecs, dst_pspecs,
-             outs)
+  return map(partial(_match_spec, mesh, check_vma, manual_axes),
+             src_pspecs, dst_pspecs, outs)
 core.EvalTrace.process_shard_map = _shard_map_impl
 
 def _run_shmap(f, mesh, manual_axes, args, vmas, check_vma):
@@ -1073,13 +1074,14 @@ def _match2(mesh, prev_manual, spec, x):
   return shard_map(lambda x: x, in_specs=src, out_specs=dst)(x)
 
 
-def _unmatch_spec(mesh: Mesh, check_vma, context_mesh, in_spec, x: JaxType
-                  ) -> JaxType:
+def _unmatch_spec(mesh: Mesh, check_vma, context_mesh, manual_axes, in_spec,
+                  x: JaxType) -> JaxType:
   with (core.eval_context(), api.disable_jit(False),
         use_abstract_mesh(context_mesh)):
-    return api.jit(HashablePartial(_unmatch, mesh, check_vma, in_spec))(x)
+    return api.jit(HashablePartial(_unmatch, mesh, check_vma, in_spec,
+                                   manual_axes))(x)
 
-def _unmatch(mesh, check_vma, in_spec, x):
+def _unmatch(mesh, check_vma, in_spec, manual_axes, x):
   if check_vma:
     used_axes = _spec_to_vma(in_spec)
     dst = P(order_wrt_mesh(mesh, used_axes))
@@ -1087,7 +1089,7 @@ def _unmatch(mesh, check_vma, in_spec, x):
     dst = P(mesh.axis_names)
     check_vma = False
   return shard_map(_add_singleton, mesh=mesh, in_specs=(in_spec,),
-                   out_specs=dst, check_vma=check_vma)(x)
+                   out_specs=dst, check_vma=check_vma, axis_names=manual_axes)(x)
 
 def _check_names(specs, avals: Sequence[core.ShapedArray]) -> None:
   fail = [a if sp and len(sp) > a.ndim else no_fail
@@ -1107,15 +1109,19 @@ def _check_vmas(mesh, specs, vmas):
 class _RepError(Exception):
   pass
 
-def _match_spec(mesh: Mesh, check_vma, src_pspec: PartitionSpec,
+def _match_spec(mesh: Mesh, check_vma, manual_axes, src_pspec: PartitionSpec,
                 dst_pspec: PartitionSpec, x: JaxType) -> JaxType:
-  fn = HashablePartial(_match, mesh, check_vma, src_pspec, dst_pspec)
+  fn = HashablePartial(_match, mesh, check_vma, manual_axes, src_pspec,
+                       dst_pspec)
   with core.eval_context(), api.disable_jit(False):
-    return api.jit(fn, out_shardings=NamedSharding(mesh, dst_pspec))(x)
+    if set(mesh.axis_names) == manual_axes:
+      return api.jit(fn, out_shardings=NamedSharding(mesh, dst_pspec))(x)
+    return api.jit(fn)(x)
 
-def _match(mesh, check_vma, src_pspec, dst_pspec, x):
+def _match(mesh, check_vma, manual_axes, src_pspec, dst_pspec, x):
   return shard_map(_rem_singleton, mesh=mesh, in_specs=src_pspec,
-                   out_specs=dst_pspec, check_vma=check_vma)(x)
+                   out_specs=dst_pspec, check_vma=check_vma,
+                   axis_names=manual_axes)(x)
 
 def _rem_singleton(x): return lax.squeeze(x, [0])
 def _add_singleton(x): return lax.expand_dims(x, [0])
@@ -1149,7 +1155,8 @@ class ShardMapTrace(core.Trace):
     elif isinstance(val, Tracer):
       raise Exception(f"Shouldn't have any non-shard_map tracers: {val}")
     else:
-      val_ = _unmatch_spec(self.mesh, self.check, self.amesh, P(), val)
+      val_ = _unmatch_spec(self.mesh, self.check, self.amesh, self.manual_axes,
+                           P(), val)
       return val_, frozenset()
 
   def process_primitive(self, prim, tracers, params):
