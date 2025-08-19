@@ -15,6 +15,13 @@ limitations under the License.
 
 #include "jaxlib/mosaic/gpu/dump.h"
 
+#if defined(__APPLE__)
+// This is the fix recommended by
+// https://www.gnu.org/software/gnulib/manual/html_node/environ.html to make
+// sure accessing `environ` works on Apple platforms.
+#include <crt_externs.h>
+#define environ (*_NSGetEnviron())
+#endif
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
