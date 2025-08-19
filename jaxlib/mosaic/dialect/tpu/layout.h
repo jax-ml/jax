@@ -519,6 +519,55 @@ class VectorLayout {
   ImplicitDim implicit_dim_;
 };
 
+// Represents the data bounds within a vector register with tiled and
+// potentially packed data.
+//
+// Start and end offsets for data are specified within the vreg slice.
+//
+// Attributes:
+//   layout: The layout of the value, mainly used for its bitwidth and tiling.
+//     Note that the layout offsets SHOULD NOT be used.
+//   start_offsets: The lane and (packed) sublane offset within the vreg slice.
+//   end_offsets: The lane and (packed) sublane offset within the vreg slice.
+class TiledRectangularVregBounds : public VRegDataBounds {
+ public:
+  TiledRectangularVregBounds(const VectorLayout& layout,
+                             const std::array<int64_t, 2> start_offsets,
+                             const std::array<int64_t, 2> end_offsets,
+                             const std::array<int64_t, 2> target_shape)
+      : layout_(layout),
+        start_offsets_(start_offsets),
+        end_offsets_(end_offsets) {
+    CHECK(layout_.tiling()[1] == target_shape[1]);
+    for (auto [o, t] : llvm::zip(start_offsets_, layout_.tiling())) {
+      CHECK(0 <= o && o < t);
+    }
+    for (auto [o, t] : llvm::zip(end_offsets_, layout_.tiling())) {
+      CHECK(0 <= o && o <= t);
+    }
+  }
+
+  bool usesAllTiles(std::array<int64_t, 2> target_shape) const;
+  // See base class.
+  bool maskVariesAlong(Direction direction,
+                       std::array<int64_t, 2> target_shape) const override;
+
+  // See base class.
+  FailureOr<TypedValue<VectorType>> getVectorMask(
+      OpBuilder& builder, Location loc, int generation,
+      std::array<int64_t, 2> target_shape) const override;
+
+  // See base class
+  DenseBoolArrayAttr getSublaneMask(
+      MLIRContext* mlir_ctx,
+      std::array<int64_t, 2> target_shape) const override;
+
+ private:
+  VectorLayout layout_;
+  std::array<int64_t, 2> start_offsets_;
+  std::array<int64_t, 2> end_offsets_;
+};
+
 using Layout = std::optional<VectorLayout>;
 extern const Layout kNoLayout;
 

@@ -150,210 +150,6 @@ class SingleRowVRegBounds : public VRegDataBounds {
   int64_t stop_offset_;
 };
 
-// Represents the data bounds within a vector register with tiled and
-// potentially packed data.
-//
-// Note that the (packed) sublane offset from start_offset and (packed) sublane
-// bound from end_offsets apply to all tiles within a vreg. On the other hand,
-// the lane offset from start_offset only applies to the first tile, while
-// lane bound from end_offset only applies to the last used tile.
-//
-// Attributes:
-//   layout: The layout of the value, mainly used for its bitwidth and tiling.
-//     Note that the layout offsets SHOULD NOT be used.
-//   num_tiles: The number of tiles at the beginning of the vreg that contain
-//     actual data.
-//   start_offsets: The lane and (packed) sublane offset within the first tile.
-//   end_offsets: The lane and (packed) sublane offset within the last used
-//   tile.
-class TiledRectangularVregBounds : public VRegDataBounds {
- public:
-  TiledRectangularVregBounds(const VectorLayout& layout,
-                             const int64_t num_tiles,
-                             const std::array<int64_t, 2> start_offsets,
-                             const std::array<int64_t, 2> end_offsets,
-                             const std::array<int64_t, 2> target_shape)
-      : layout_(layout),
-        num_tiles_(num_tiles),
-        start_offsets_(start_offsets),
-        end_offsets_(end_offsets) {
-    CHECK(layout_.tiling()[1] == target_shape[1]);
-    CHECK(0 < num_tiles_ && num_tiles_ <= layout.tilesPerVreg(target_shape));
-    for (auto [o, t] : llvm::zip(start_offsets_, layout_.tiling())) {
-      CHECK(0 <= o && o < t);
-    }
-    for (auto [o, t] : llvm::zip(end_offsets_, layout_.tiling())) {
-      CHECK(0 <= o && o <= t);
-    }
-  }
-
-  bool usesAllTiles(const std::array<int64_t, 2> target_shape) const {
-    return num_tiles_ == layout_.tilesPerVreg(target_shape);
-  }
-
-  // See base class.
-  bool maskVariesAlong(
-      const Direction direction,
-      const std::array<int64_t, 2> target_shape) const override {
-    switch (direction) {
-      case Direction::kSublanes:
-        return !usesAllTiles(target_shape) || start_offsets_[0] != 0 ||
-               end_offsets_[0] != layout_.tiling()[0];
-      case Direction::kLanes:
-        return start_offsets_[1] != 0 || end_offsets_[1] != layout_.tiling()[1];
-      case Direction::kSubelements:
-        return start_offsets_[0] % layout_.packing() != 0 ||
-               end_offsets_[0] % layout_.packing() != 0;
-    }
-  }
-
-  // See base class.
-  FailureOr<TypedValue<VectorType>> getVectorMask(
-      OpBuilder& builder, const Location loc, const int generation,
-      const std::array<int64_t, 2> target_shape) const override {
-    const int8_t bitwidth = layout_.bitwidth();
-    const int packing = layout_.packing();
-    const int max_subelems = generation < 4 ? 1 : generation < 5 ? 2 : 4;
-    const IntegerType i1 = builder.getI1Type();
-    const VectorType mask_vreg_ty = [&]() {
-      if (maskVariesAlong(Direction::kSubelements, target_shape)) {
-        // When CreateSubelementMask isn't supported, we virtualize masking.
-        if (packing > max_subelems) {
-          return VectorType::get(target_shape, i1);
-        } else {
-          return VectorType::get(
-              {target_shape[0], target_shape[1], packing}, i1);
-        }
-      }
-      return VectorType::get(target_shape, i1);
-    }();
-    if (isComplete(target_shape)) {
-      return cast<TypedValue<VectorType>>(
-          arith::ConstantOp::create(
-              builder, loc, mask_vreg_ty,
-              DenseElementsAttr::get(mask_vreg_ty, builder.getBoolAttr(true)))
-              .getResult());
-    }
-    Value mask = nullptr;
-    CHECK_GE(num_tiles_, 0);
-    const int64_t start_sub = start_offsets_[0] / packing;
-    const int64_t end_sub = llvm::divideCeil(end_offsets_[0], packing);
-    CHECK_LE(0, start_sub);
-    CHECK_LT(start_sub, end_sub);
-    CHECK_LE(end_sub, target_shape[0]);
-    const int64_t sublanes_per_tile = layout_.sublanesPerTile(target_shape);
-    for (int64_t tile = 0; tile < num_tiles_; ++tile) {
-      const int64_t sublane_offset = sublanes_per_tile * tile;
-      const int64_t row_offset = sublane_offset * layout_.packing();
-      const int64_t start_lane = tile == 0 ? start_offsets_[1] : 0;
-      const int64_t end_lane =
-          tile == num_tiles_ - 1 ? end_offsets_[1] : target_shape[1];
-      CHECK_LE(0, start_lane);
-      CHECK_LT(start_lane, end_lane);
-      CHECK_LE(end_lane, target_shape[1]);
-      auto boundIdxConst =
-          std::bind(IdxConst, std::placeholders::_1, builder, loc);
-      // TODO(apaszke): For loads/stores whole sublanes are covered by the
-      // sublane mask, so we can focus only on lanes and partial sublanes.
-      Value tile_mask = CreateMaskOp::create(
-          builder, loc, mask_vreg_ty,
-          ValueRange{boundIdxConst(sublane_offset + start_sub),
-                     boundIdxConst(start_lane)},
-          ValueRange{boundIdxConst(sublane_offset + end_sub),
-                     boundIdxConst(end_lane)});
-      if (maskVariesAlong(Direction::kSubelements, target_shape)) {
-        int64_t start_row = start_offsets_[0] + row_offset;
-        int64_t end_row = end_offsets_[0] + row_offset;
-        if (packing <= max_subelems) {
-          // Only use non-trivial start/end if they don't fall on sublane
-          // boundary. Otherwise CreateMaskOp already does the right thing. This
-          // lets us use cheaper instruction sequences on TPUv4.
-          if (start_offsets_[0] % packing == 0) {
-            start_row = 0;
-          }
-          if (end_offsets_[0] % packing == 0) {
-            end_row = target_shape[0] * packing;
-          }
-          auto submask = tpu::CreateSubelementMaskOp::create(
-              builder, loc, mask_vreg_ty, start_row, end_row);
-          tile_mask = arith::AndIOp::create(builder, loc, tile_mask, submask);
-        } else {  // packing > max_subelems
-          const auto getMaskCst = [&](const uint64_t v) {
-            const auto int_mask_ty =
-                VectorType::get(target_shape, builder.getI32Type());
-            return arith::ConstantOp::create(
-                builder, loc, int_mask_ty,
-                DenseElementsAttr::get(
-                    int_mask_ty, builder.getIntegerAttr(builder.getI32Type(),
-                                                        APInt(32, v))));
-          };
-          tile_mask = arith::SelectOp::create(
-              builder, loc, tile_mask, getMaskCst(0xFFFFFFFF), getMaskCst(0));
-          if (const int64_t row_in_sublane = start_row % packing;
-              row_in_sublane != 0) {
-            auto row_mask = tpu::CreateMaskOp::create(
-                builder, loc, mask_vreg_ty,
-                ValueRange{boundIdxConst(start_row / packing),
-                           boundIdxConst(0)},
-                ValueRange{boundIdxConst(start_row / packing + 1),
-                           boundIdxConst(target_shape[1])});
-            auto row_bitmask = arith::SelectOp::create(
-                builder, loc, row_mask,
-                getMaskCst(0xFFFFFFFF << row_in_sublane * bitwidth),
-                getMaskCst(0xFFFFFFFF));
-            tile_mask =
-                arith::AndIOp::create(builder, loc, tile_mask, row_bitmask);
-          }
-          if (const int64_t row_in_sublane = end_row % packing;
-              row_in_sublane != 0) {
-            auto row_mask = tpu::CreateMaskOp::create(
-                builder, loc, mask_vreg_ty,
-                ValueRange{boundIdxConst(end_row / packing), boundIdxConst(0)},
-                ValueRange{boundIdxConst(end_row / packing + 1),
-                           boundIdxConst(target_shape[1])});
-            auto row_bitmask = arith::SelectOp::create(
-                builder, loc, row_mask,
-                getMaskCst(0xFFFFFFFFu >>
-                           (packing - row_in_sublane) * bitwidth),
-                getMaskCst(0xFFFFFFFF));
-            tile_mask =
-                arith::AndIOp::create(builder, loc, tile_mask, row_bitmask);
-          }
-        }
-      }
-      mask = mask == nullptr
-                 ? tile_mask
-                 : arith::OrIOp::create(builder, loc, tile_mask, mask);
-    }
-    CHECK(mask != nullptr);
-    return cast<TypedValue<VectorType>>(mask);
-  }
-
-  // See base class
-  DenseBoolArrayAttr getSublaneMask(
-      MLIRContext* mlir_ctx,
-      const std::array<int64_t, 2> target_shape) const override {
-    SmallVector<bool> mask(target_shape[0], false);
-    const int64_t start = start_offsets_[0] / layout_.packing();
-    const int64_t end = llvm::divideCeil(end_offsets_[0], layout_.packing());
-    const int64_t sublanes_per_tile = layout_.sublanesPerTile(target_shape);
-    const int64_t sublane_bound = num_tiles_ * sublanes_per_tile;
-    for (int64_t sub = 0; sub < sublane_bound; sub += sublanes_per_tile) {
-      for (int64_t i = sub + start; i < sub + end; ++i) {
-        CHECK(!mask[i]);
-        mask[i] = true;
-      }
-    }
-    return DenseBoolArrayAttr::get(mlir_ctx, mask);
-  }
-
- private:
-  VectorLayout layout_;
-  int64_t num_tiles_;
-  std::array<int64_t, 2> start_offsets_;
-  std::array<int64_t, 2> end_offsets_;
-};
-
 mlir::ParseResult parseOffset(StringRef* data, std::optional<int64_t>* result) {
   int64_t int_result;
   if (data->consume_front("*")) {
@@ -372,8 +168,173 @@ std::array<int64_t, 2> nativeTiling(const int8_t bitwidth,
   const int packing = 32 / bitwidth;
   return {target_shape[0] * packing, target_shape[1]};
 }
-
 }  // namespace
+
+bool TiledRectangularVregBounds::usesAllTiles(
+    const std::array<int64_t, 2> target_shape) const {
+  return start_offsets_[1] / layout_.tiling()[1] == 0 &&
+         llvm::divideCeil(end_offsets_[1], layout_.tiling()[1]) ==
+             layout_.tilesPerVreg(target_shape) - 1;
+}
+
+// See base class.
+bool TiledRectangularVregBounds::maskVariesAlong(
+    const Direction direction, const std::array<int64_t, 2> target_shape) const
+/*override*/ {
+  switch (direction) {
+    case Direction::kSublanes:
+      return !usesAllTiles(target_shape) || start_offsets_[0] != 0 ||
+             end_offsets_[0] != layout_.tiling()[0];
+    case Direction::kLanes:
+      return start_offsets_[1] % layout_.tiling()[1] != 0 ||
+             end_offsets_[1] % layout_.tiling()[1] != 0;
+    case Direction::kSubelements:
+      return start_offsets_[0] % layout_.packing() != 0 ||
+             end_offsets_[0] % layout_.packing() != 0;
+  }
+}
+
+  // See base class.
+FailureOr<TypedValue<VectorType>> TiledRectangularVregBounds::getVectorMask(
+    OpBuilder& builder, const Location loc, const int generation,
+    const std::array<int64_t, 2> target_shape) const /*override*/ {
+  const int8_t bitwidth = layout_.bitwidth();
+  const int packing = layout_.packing();
+  const int max_subelems = generation < 4 ? 1 : generation < 5 ? 2 : 4;
+  const IntegerType i1 = builder.getI1Type();
+  const VectorType mask_vreg_ty = [&]() {
+    if (maskVariesAlong(Direction::kSubelements, target_shape)) {
+      // When CreateSubelementMask isn't supported, we virtualize masking.
+      if (packing > max_subelems) {
+        return VectorType::get(target_shape, i1);
+      } else {
+        return VectorType::get({target_shape[0], target_shape[1], packing}, i1);
+      }
+    }
+    return VectorType::get(target_shape, i1);
+  }();
+  if (isComplete(target_shape)) {
+    return cast<TypedValue<VectorType>>(
+        arith::ConstantOp::create(
+            builder, loc, mask_vreg_ty,
+            DenseElementsAttr::get(mask_vreg_ty, builder.getBoolAttr(true)))
+            .getResult());
+  }
+  Value mask = nullptr;
+  const int64_t start_sub = start_offsets_[0] / packing;
+  const int64_t end_sub = llvm::divideCeil(end_offsets_[0], packing);
+  CHECK_LE(0, start_sub);
+  CHECK_LT(start_sub, end_sub);
+  CHECK_LE(end_sub, target_shape[0]);
+  const int64_t sublanes_per_tile = layout_.sublanesPerTile(target_shape);
+  const int64_t start_tile = start_offsets_[1] / layout_.tiling()[1];
+  const int64_t end_tile =
+      llvm::divideCeil(end_offsets_[1], layout_.tiling()[1]);
+  for (int64_t tile = start_tile; tile < end_tile; ++tile) {
+    const int64_t sublane_offset = sublanes_per_tile * tile;
+    const int64_t row_offset = sublane_offset * layout_.packing();
+    const int64_t start_lane = tile == 0 ? start_offsets_[1] : 0;
+    const int64_t end_lane =
+        tile == end_tile - 1 ? positiveMod(end_offsets_[1], layout_.tiling()[1])
+                             : target_shape[1];
+    CHECK_LE(0, start_lane);
+    CHECK_LT(start_lane, end_lane);
+    CHECK_LE(end_lane, target_shape[1]);
+    auto boundIdxConst =
+        std::bind(IdxConst, std::placeholders::_1, builder, loc);
+    // TODO(apaszke): For loads/stores whole sublanes are covered by the sublane
+    // mask, so we can focus only on lanes and partial sublanes.
+    Value tile_mask = CreateMaskOp::create(
+        builder, loc, mask_vreg_ty,
+        ValueRange{boundIdxConst(sublane_offset + start_sub),
+                   boundIdxConst(start_lane)},
+        ValueRange{boundIdxConst(sublane_offset + end_sub),
+                   boundIdxConst(end_lane)});
+    if (maskVariesAlong(Direction::kSubelements, target_shape)) {
+      int64_t start_row = start_offsets_[0] + row_offset;
+      int64_t end_row = end_offsets_[0] + row_offset;
+      if (packing <= max_subelems) {
+        // Only use non-trivial start/end if they don't fall on sublane
+        // boundary. Otherwise CreateMaskOp already does the right thing. This
+        // lets us use cheaper instruction sequences on TPUv4.
+        if (start_offsets_[0] % packing == 0) {
+          start_row = 0;
+        }
+        if (end_offsets_[0] % packing == 0) {
+          end_row = target_shape[0] * packing;
+        }
+        auto submask = tpu::CreateSubelementMaskOp::create(
+            builder, loc, mask_vreg_ty, start_row, end_row);
+        tile_mask = arith::AndIOp::create(builder, loc, tile_mask, submask);
+      } else {  // packing > max_subelems
+        const auto getMaskCst = [&](const uint64_t v) {
+          const auto int_mask_ty =
+              VectorType::get(target_shape, builder.getI32Type());
+          return arith::ConstantOp::create(
+              builder, loc, int_mask_ty,
+              DenseElementsAttr::get(
+                  int_mask_ty,
+                  builder.getIntegerAttr(builder.getI32Type(), APInt(32, v))));
+        };
+        tile_mask = arith::SelectOp::create(
+            builder, loc, tile_mask, getMaskCst(0xFFFFFFFF), getMaskCst(0));
+        if (const int64_t row_in_sublane = start_row % packing;
+            row_in_sublane != 0) {
+          auto row_mask = tpu::CreateMaskOp::create(
+              builder, loc, mask_vreg_ty,
+              ValueRange{boundIdxConst(start_row / packing), boundIdxConst(0)},
+              ValueRange{boundIdxConst(start_row / packing + 1),
+                         boundIdxConst(target_shape[1])});
+          auto row_bitmask = arith::SelectOp::create(
+              builder, loc, row_mask,
+              getMaskCst(0xFFFFFFFF << row_in_sublane * bitwidth),
+              getMaskCst(0xFFFFFFFF));
+          tile_mask =
+              arith::AndIOp::create(builder, loc, tile_mask, row_bitmask);
+        }
+        if (const int64_t row_in_sublane = end_row % packing;
+            row_in_sublane != 0) {
+          auto row_mask = tpu::CreateMaskOp::create(
+              builder, loc, mask_vreg_ty,
+              ValueRange{boundIdxConst(end_row / packing), boundIdxConst(0)},
+              ValueRange{boundIdxConst(end_row / packing + 1),
+                         boundIdxConst(target_shape[1])});
+          auto row_bitmask = arith::SelectOp::create(
+              builder, loc, row_mask,
+              getMaskCst(0xFFFFFFFFu >> (packing - row_in_sublane) * bitwidth),
+              getMaskCst(0xFFFFFFFF));
+          tile_mask =
+              arith::AndIOp::create(builder, loc, tile_mask, row_bitmask);
+        }
+      }
+    }
+    mask = mask == nullptr
+               ? tile_mask
+               : arith::OrIOp::create(builder, loc, tile_mask, mask);
+  }
+  CHECK(mask != nullptr);
+  return cast<TypedValue<VectorType>>(mask);
+}
+
+  // See base class
+DenseBoolArrayAttr TiledRectangularVregBounds::getSublaneMask(
+    MLIRContext* mlir_ctx, const std::array<int64_t, 2> target_shape) const
+/*override*/ {
+  SmallVector<bool> mask(target_shape[0], false);
+  const int64_t start = start_offsets_[0] / layout_.packing();
+  const int64_t end = llvm::divideCeil(end_offsets_[0], layout_.packing());
+  const int64_t sublanes_per_tile = layout_.sublanesPerTile(target_shape);
+  const int64_t start_tile = start_offsets_[1] / layout_.tiling()[1];
+  const int64_t end_tile =
+      llvm::divideCeil(end_offsets_[1], layout_.tiling()[1]);
+  for (int64_t tile = start_tile; tile < end_tile; ++tile) {
+    for (int64_t i = start; i < end; ++i) {
+      CHECK(!mask[tile * sublanes_per_tile + i]);
+      mask[tile * sublanes_per_tile + i] = true;
+    }
+  }
+  return DenseBoolArrayAttr::get(mlir_ctx, mask);
+}
 
 std::tuple<std::optional<int64_t>, std::optional<int64_t>, int64_t, int64_t,
            int8_t, VectorLayout::ImplicitDim>
@@ -443,20 +404,16 @@ std::unique_ptr<VRegDataBounds> VectorLayout::tileDataBounds(
   const int64_t nl = *(tiles_implicit_shape.end() - 1);
   const std::array<int64_t, 2> tiled_ishape =
       getImplicitTiledDims(full_shape, 1);
-  auto positive_mod = [](const int64_t a, const int64_t b) {
-    // Return modulo but in the range [1, b] for a, b > 0.
-    return (a - 1) % b + 1;
-  };
   // The starts and ends of the data within the vreg slice:
   const std::array<int64_t, 2> starts = {
       offsets_[0] && s == 0 ? *offsets_[0] : 0,
       offsets_[1] && l == 0 ? *offsets_[1] : 0};
   const std::array<int64_t, 2> ends = {
       offsets_[0] && s == ns - 1
-          ? positive_mod(*offsets_[0] + tiled_ishape[0], vreg_slice[0])
+          ? positiveMod(*offsets_[0] + tiled_ishape[0], vreg_slice[0])
           : vreg_slice[0],
       offsets_[1] && l == nl - 1
-          ? positive_mod(*offsets_[1] + tiled_ishape[1], vreg_slice[1])
+          ? positiveMod(*offsets_[1] + tiled_ishape[1], vreg_slice[1])
           : vreg_slice[1]};
 
   if (tiling_[0] == 1 && tiling_[1] % target_shape[1] == 0) {
@@ -468,17 +425,8 @@ std::unique_ptr<VRegDataBounds> VectorLayout::tileDataBounds(
               "Not implemented: Unaligned tiling on minormost dimension");
     return nullptr;
   }
-  if (starts[1] >= tiling_[1]) {
-    emitError(UnknownLoc::get(mlir_ctx),
-              "Not implemented: Minor offset outside first tile");
-    return nullptr;
-  }
-  const int64_t num_tiles = llvm::divideCeil(ends[1], tiling_[1]);
-  return std::make_unique<TiledRectangularVregBounds>(
-      *this, num_tiles,
-      std::array<int64_t, 2>{starts[0], starts[1] % tiling_[1]},
-      std::array<int64_t, 2>{ends[0], positive_mod(ends[1], tiling_[1])},
-      target_shape);
+  return std::make_unique<TiledRectangularVregBounds>(*this, starts, ends,
+                                                      target_shape);
 }
 
 bool VectorLayout::generalizes(
