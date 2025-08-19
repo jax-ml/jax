@@ -2221,7 +2221,11 @@ def unravel_index(indices: ArrayLike, shape: Shape) -> tuple[Array, ...]:
   for i, s in reversed(list(enumerate(shape))):
     indices_arr, out_indices[i] = ufuncs.divmod(indices_arr, s)
   oob_pos = indices_arr > 0
-  oob_neg = indices_arr < -1
+  if dtypes.issubdtype(indices_arr.dtype, np.unsignedinteger):
+    # Unsigned integers can't be out of bounds at the low end.
+    oob_neg = asarray(False)
+  else:
+    oob_neg = indices_arr < -1
   return tuple(where(oob_pos, s - 1, where(oob_neg, 0, i))
                for s, i in safe_zip(shape, out_indices))
 
