@@ -1894,8 +1894,8 @@ class TCGen05Test(TestCase):
       gpu.barrier()
       # Because only block 1 waits on the TMA, we need a cluster barrier so
       # that the SMEM updates are visible on block 2.
-      cluster_barrier.arrive()
-      cluster_barrier.wait()
+      cluster_barrier.arrive(orders_tensor_core=True)
+      cluster_barrier.wait(orders_tensor_core=True)
       lhs_tmem.store(
           fa.FragmentedArray.load_tiled(
               lhs_smem, swizzle, layout=tcgen05.LAYOUT
@@ -1903,8 +1903,8 @@ class TCGen05Test(TestCase):
       )
       tcgen05.commit_tmem()
       # Make sure TMEM has been loaded on both blocks.
-      cluster_barrier.arrive()
-      cluster_barrier.wait()
+      cluster_barrier.arrive(orders_tensor_core=True)
+      cluster_barrier.wait(orders_tensor_core=True)
       with when(arith.andi(is_first_block, is_leader_thread)):
         barriers[1].wait()
         tcgen05.mma(
@@ -4742,7 +4742,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
     acc_block_shape = (m // 2, n)
 
     def matmul(ctx, a_gmem, b_gmem, result_gmem, scratch):
-      a_smem, b_smem, tma_barrier, mma_barrier, acc_tmem = scratch
+      a_smem, b_smem, tma_barrier, mma_barrier, cluster_barrier, acc_tmem = scratch
       block_id = gpu.cluster_block_id(gpu.Dimension.x)
       i32_type = ir.IntegerType.get_signless(32)
       block_id_i32 = arith.index_cast(i32_type, block_id)
@@ -4769,6 +4769,9 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
           collective=ir.ArrayAttr.get([]),
       )
       tma_barrier.wait()
+      # Make sure SMEM has been loaded on both blocks.
+      cluster_barrier.arrive(orders_tensor_core=True)
+      cluster_barrier.wait(orders_tensor_core=True)
 
       # TODO(allanrenucci): Remove explicit layouts once inferred.
       tmem_layout = tcgen05._infer_tmem_layout(
@@ -4813,6 +4816,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
         jax.ShapeDtypeStruct(b_block_shape, ab_type),
         core.TMABarrier(1),
         mgpu.Barrier(1),
+        mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
         mgpu.TMEM(acc_block_shape, acc_type, collective=True),
     ]
     kernel = mgpu.as_gpu_kernel(
