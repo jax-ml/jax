@@ -2344,10 +2344,10 @@ def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, *, method: str = "
     >>> B = jax.numpy.array([[5, 6], [7, 8]])
     >>> C = jax.numpy.array([[6, 8], [10, 12]])
     >>> X = jax.scipy.linalg.solve_sylvester(A, B, C)
-    >>> with jax.numpy.printoptions(precision=0):
+    >>> with jax.numpy.printoptions(precision=0, suppress=True):
     ...   print(X)
-    [[ 1.e+00 -4.e-07]
-      [-3.e-07  1.e+00]]
+    [[1. 0.]
+     [0.  1.]]
 
   Notes:
     The Bartel-Stewart algorithm is robust because a Schur decomposition always exists even for defective matrices,
