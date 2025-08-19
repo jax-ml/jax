@@ -6431,8 +6431,7 @@ FailureOr<xla::Array<Value>> doRowShiftRelayout(
     // The end row of data in the vreg, exclusive
     const int64_t res_data_end =
         *(idxs.end() - 2) == *(res_vregs.dimensions().end() - 2) - 1
-            // -+ 1 before/after modulo so result is (1, tiling[0]) inclusive
-            ? (dst_row_offset + tiled_ishape[0] - 1) % tiling[0] + 1
+            ? positiveMod(dst_row_offset + tiled_ishape[0], tiling[0])
             : tiling[0];
     // If data begins after the split, skip the low rows
     if (res_data_start < shift_in_tile) {
@@ -6691,7 +6690,7 @@ FailureOr<xla::Array<Value>> doColumnShiftRelayout(
       // We check the final end offset against the thresholds of the first
       // columns of vreg parts.
       const uint64_t end_offset =
-          (dst_col_offset + tiled_ishape[1] - 1) % vreg_slice[1] + 1;
+          positiveMod(dst_col_offset + tiled_ishape[1], vreg_slice[1]);
       if (end_offset <= left_tile_split * tiling[1]) {
         // Note: When shifting left, LL is always all-padding.
         lower_left = nullptr;
