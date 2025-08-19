@@ -240,36 +240,6 @@ class CollapseLeadingIndicesTransform(MemRefTransform):
   def batch(self, leading_rank: int) -> MemRefTransform:
     raise NotImplementedError  # Unused
 
-@dataclasses.dataclass(frozen=True)
-class GatherGMEMTransform(MemRefTransform):
-  """Breaks up the leading dimension of a 2D GMEM ref into finer grained rows.
-
-  Each row is split into as many rows as the ratio of the original row
-  stride to the new row stride.
-
-  This is especially useful when we want to perform gather/scatter TMA, which
-  only supports a 2D global array, but we want to support finer indexing. For
-  example, if we tile the 2D array, we need to collapse all 3 major dims into
-  one. The problem is that the column tile dimension has a smaller stride
-  than the original row dim since it splits each row into multiple tiles.
-  """
-  new_row_stride: int
-
-  def apply(self, ref: ir.Value) -> ir.Value:
-    ref_ty = ir.MemRefType(ref.type)
-    assert len(ref_ty.shape) == 2
-    row_stride, col_stride = ref_ty.get_strides_and_offset()[0]
-    assert col_stride == 1
-    assert row_stride % self.new_row_stride == 0
-    row_stride_ratio = row_stride // self.new_row_stride
-    new_ref_ty = ir.MemRefType.get(
-        (ref_ty.shape[0] * row_stride_ratio, ref_ty.shape[1]),
-        ref_ty.element_type,
-        ir.StridedLayoutAttr.get(0, (self.new_row_stride, 1)),
-        ref_ty.memory_space,
-    )
-    return utils.ptr_as_memref(utils.memref_ptr(ref), new_ref_ty)
-
 
 OnDeviceProfiler = profiler.OnDeviceProfiler
 
@@ -1086,21 +1056,15 @@ class LaunchContext:
 
       gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
       assert len(gmem_strides) == 2
-      row_gmem_stride, _ = gmem_strides
+      _, gmem_cols = gmem_ref_ty.shape
       slice_gather_strides: tuple[int, ...] = (1, 0)  # Each row gets a new index, column has no effect.
       for t in gmem_transform:
         gmem_strides = t.transform_strides(gmem_strides)
         slice_gather_strides = t.transform_strides(slice_gather_strides)
       is_gather_dim = [bool(s) for s in slice_gather_strides]
 
-      # Since the TMA instruction is limited to 2D gathers, we need to flatten
-      # all but the minormost index into the row index. If any of the flattened
-      # dims has a stride smaller than the row index, we modify the GMEM ref to
-      # allow for finer-grained slicing.
-      new_row_stride = math.gcd(*gmem_strides[:-1])
       tma_desc = self._get_tma_desc(
-          gmem_ref, (GatherGMEMTransform(new_row_stride),),
-          gmem_peer_id, (1, slice_shape[-1]), swizzle, reduction_op,
+          gmem_ref, (), gmem_peer_id, (1, slice_shape[-1]), swizzle, reduction_op,
       )
 
       # Indices are split over 4 warps, and replicated within each warp.
@@ -1113,25 +1077,35 @@ class LaunchContext:
       )
       gather_linear_idx_warp = arith.muli(warp_idx, c(ROWS_PER_INSTR, i32))
 
-      # We need to unroll over all non-gather dimensions other than the last one
-      non_gather_slice_shape = tuple(
-          1 if g else d for d, g in zips(slice_shape[:-1], is_gather_dim[:-1])
+      # Since the TMA instruction is limited to 2D gathers, we flatten all
+      # non-gather dims into the column index.
+      max_non_gather_linear_index = sum(
+          (d - 1) * s
+          for g, d, s in zip(is_gather_dim[:-1], slice_shape[:-1], gmem_strides[:-1])
+          if not g
       )
-      # All non-gather base indices are converted into a row offset.
-      row_base_offset = functools.reduce(
+      # If we ever exceed this then we need to change the size of the GMEM ref,
+      # to prevent the TMA engine from clipping our indices.
+      if max_non_gather_linear_index > gmem_cols:
+        raise NotImplementedError("Non-gather dims don't fit into the columns")
+      col_base_offset = functools.reduce(
           arith.addi,
           (
-              arith.muli(idx, arith.constant(index, stride // new_row_stride))
+              arith.muli(idx, arith.constant(index, stride))
               for g, idx, stride in zips(
-                  is_gather_dim[:-1], dyn_base_indices[:-1], gmem_strides[:-1]
+                  is_gather_dim, dyn_base_indices, gmem_strides
               )
               if not g
           ),
           arith.constant(index, 0),
       )
-      row_base_offset = arith.index_cast(i32, row_base_offset)
+      col_base_offset = arith.index_cast(i32, col_base_offset)
       # TMA instructions are uniform, so we can't use multiple lanes.
       predicate = utils.single_thread_predicate(utils.ThreadSubset.WARP)
+      # We need to unroll over all non-gather dimensions other than the last one
+      non_gather_slice_shape = tuple(
+          1 if g else d for d, g in zips(slice_shape[:-1], is_gather_dim[:-1])
+      )
       # First, iterate over gather index registers we have available.
       for i, reg in enumerate(gather_indices.registers.flat):
         if utils.bitwidth(gather_indices.mlir_dtype) != 32:
@@ -1158,32 +1132,22 @@ class LaunchContext:
               next(gather_slice_idx_it) if g else i
               for g, i in zip(is_gather_dim[:-1], non_gather_idxs)
           )
-          # We should really take a slice along the second minor dim, but it
-          # doesn't matter. We're just going to take the base pointer anyway.
+          # We should really take a slice here, but it doesn't matter. We're
+          # just going to take the base pointer anyway.
           transfer_smem_ref = utils.memref_slice(smem_ref, smem_indices)
           smem_ptr = utils.memref_ptr(transfer_smem_ref, memory_space=3)
-          # The slice index needs to be folded into gather row indices.
-          row_slice_offset = sum(
-              idx * (stride // new_row_stride)
+          # The slice index needs to be folded into the gather col index.
+          col_slice_offset = sum(
+              idx * stride
               for g, idx, stride in zips(
                   is_gather_dim[:-1], non_gather_idxs, gmem_strides[:-1]
               )
               if not g
           )
-          row_offset = arith.addi(
-              row_base_offset, arith.constant(i32, row_slice_offset)
-          )
-          row_scale = row_gmem_stride // new_row_stride
-          row_offsets = [
-              arith.addi(
-                  arith.muli(row, arith.constant(i32, row_scale)), row_offset
-              )
-              for row in gather_rows
-          ]
-          col_offset = arith.index_cast(i32, dyn_base_indices[-1])
+          col_offset = arith.addi(col_base_offset, arith.constant(i32, col_slice_offset))
           llvm.inline_asm(
               ir.Type.parse("!llvm.void"),
-              [predicate, smem_ptr, tma_desc, barrier_ptr, col_offset, *row_offsets],
+              [predicate, smem_ptr, tma_desc, barrier_ptr, col_offset, *gather_rows],
               "@$0 cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4.mbarrier::complete_tx::bytes [$1], [$2, {$4, $5, $6, $7, $8}], [$3];",
               "b,r,l,r" + ",r" * (ROWS_PER_INSTR + 1),
               has_side_effects=True,
