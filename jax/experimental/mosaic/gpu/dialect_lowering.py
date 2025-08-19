@@ -1604,24 +1604,30 @@ def _tmem_ref_from_ir(ref: ir.Value, layout: ir.Attribute) -> tcgen05.TMEMRef:
 def _tcgen05_mma_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.TcGen05MMAOp
 ) -> Sequence[ir.Value]:
-  # TODO(allanrenucci): Add support for `a` in TMEM.
-  if op.a.type.memory_space == mgpu_utils.tmem():
-    raise NotImplementedError(f"{op.a} is not in TMEM. Only SMEM is supported.")
-
-  a_transforms, b_transforms = inference_utils.in_transforms(op)
-  unwrapped_a_ref = unwrap_transformed_memref(op.a, a_transforms)
-  unwrapped_b_ref = unwrap_transformed_memref(op.b, b_transforms)
-
-  acc_layout = inference_utils.in_tmem_layouts(op)[0]
+  in_tmem_layouts = inference_utils.in_tmem_layouts(op)
+  acc_layout = in_tmem_layouts[0]
   acc_ref = _tmem_ref_from_ir(op.accumulator, acc_layout)
+
+  if op.a.type.memory_space == mgpu_utils.smem():
+    a_transforms, b_transforms = inference_utils.in_transforms(op)
+    a_swizzle = _swizzle(a_transforms)
+    b_swizzle = _swizzle(b_transforms)
+    a_ref = unwrap_transformed_memref(op.a, a_transforms)
+    b_ref = unwrap_transformed_memref(op.b, b_transforms)
+  else:
+    a_ref = _tmem_ref_from_ir(op.a, in_tmem_layouts[1])
+    b_transforms = inference_utils.in_transforms(op)[0]
+    b_swizzle = _swizzle(b_transforms)
+    a_swizzle = b_swizzle
+    b_ref = unwrap_transformed_memref(op.b, b_transforms)
 
   with mgpu_utils.when(ctx.single_thread_per_block_predicate):
     tcgen05.mma(
         acc_ref,
-        unwrapped_a_ref,
-        unwrapped_b_ref,
-        a_swizzle=_swizzle(a_transforms),
-        b_swizzle=_swizzle(b_transforms),
+        a_ref,
+        b_ref,
+        a_swizzle=a_swizzle,
+        b_swizzle=b_swizzle,
         a_scale=op.a_scale,
         b_scale=op.b_scale,
         accumulate=op.accumulate,

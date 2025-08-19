@@ -168,18 +168,19 @@ def _infer_mma_transforms(
   b_transforms, b_swizzle = _infer_transforms_for_mma_ref(
       ir.MemRefType(b_type), max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
   )
-  if ir.MemRefType.isinstance(a_type):
-    a_transforms, a_swizzle = _infer_transforms_for_mma_ref(
-        cast(ir.MemRefType, a_type), max_swizzle=b_swizzle
+  if not ir.MemRefType.isinstance(a_type) or not utils.is_smem_ref(a_type):
+    return [b_transforms], []
+
+  a_transforms, a_swizzle = _infer_transforms_for_mma_ref(
+      cast(ir.MemRefType, a_type), max_swizzle=b_swizzle
+  )
+  if a_swizzle != b_swizzle:
+    # The swizzle for a and b has to match.
+    b_transforms, b_swizzle = _infer_transforms_for_mma_ref(
+        ir.MemRefType(b_type), max_swizzle=a_swizzle
     )
-    if a_swizzle != b_swizzle:
-      # The swizzle for a and b has to match.
-      b_transforms, b_swizzle = _infer_transforms_for_mma_ref(
-          ir.MemRefType(b_type), max_swizzle=a_swizzle
-      )
-      assert a_swizzle == b_swizzle
-    return [a_transforms, b_transforms], []
-  return [b_transforms], []
+    assert a_swizzle == b_swizzle
+  return [a_transforms, b_transforms], []
 
 
 @partial(_add_transform_inference_rule, mgpu.WGMMAOp)
