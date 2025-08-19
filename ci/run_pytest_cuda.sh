@@ -57,7 +57,13 @@ export memory_per_gpu_gb=$(nvidia-smi --query-gpu=memory.total --format=csv,nohe
 export memory_per_gpu_gb=$((memory_per_gpu_gb / 1024))
 # Allow 2 GB of GPU RAM per test
 export max_tests_per_gpu=$((memory_per_gpu_gb / 2))
-export num_processes=$((gpu_count * max_tests_per_gpu))
+
+# TODO(phawkins,srnitin): Currently all tests use all GPUs. If we set
+# JAX_ENABLE_CUDA_XDIST=num_devices, then we could round robin the tests across
+# the GPUs, but we also want coverage of multi-GPU tests. To be honest, it might
+# be easier just do do this from Bazel where we can tag tests as single or multi
+# GPU.
+export num_processes=$((max_tests_per_gpu))
 
 # Calculate num_cpu_cores
 export num_cpu_cores=$(nproc)
