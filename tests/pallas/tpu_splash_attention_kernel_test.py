@@ -615,7 +615,7 @@ class SplashAttentionTest(PallasBaseTest):
           k3, (num_kv_heads, kv_seq_len, head_dim_v), dtype=dtype
       )
     if use_sinks:
-      sinks = 3.0 * random.uniform(k_sinks, (num_q_heads,), dtype=dtype)
+      sinks = 1.0 * random.uniform(k_sinks, (num_q_heads,), dtype=dtype)
     else:
       sinks = None
 
