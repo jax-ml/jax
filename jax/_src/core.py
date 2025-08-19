@@ -1681,6 +1681,8 @@ def mem_space_to_kind(mem_space: MemorySpace) -> str:
   else:
     assert False, "unreachable"
 
+
+@cache(max_size=4096, trace_context_in_key=False)
 def update_aval_with_sharding(aval, sharding):
   if isinstance(sharding, NamedSharding):
     return aval.update(
