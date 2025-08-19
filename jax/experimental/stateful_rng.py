@@ -20,6 +20,7 @@ import dataclasses
 import operator
 from typing import Sequence
 
+from jax._src import api_util
 from jax._src import core
 from jax._src import dtypes
 from jax._src import numpy as jnp
@@ -61,6 +62,8 @@ class StatefulPRNG:
   counter: core.ArrayRef
 
   def __post_init__(self):
+    if self.base_key is api_util.SENTINEL:
+      return
     if not (isinstance(self.base_key, Array)
             and dtypes.issubdtype(self.base_key.dtype, dtypes.prng_key)):
       raise ValueError(f"Expected base_key to be a typed PRNG key; got {self.base_key}")
