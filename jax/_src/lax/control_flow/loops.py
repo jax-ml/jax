@@ -394,8 +394,8 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
       out_carry = None
 
     if out_carry is None:
-      differences = [f'the input tree structure is:\n{in_carry_tree}\n',
-                     f'the output tree structure is:\n{out_carry_tree}\n']
+      differences = (f'the input tree structure is:\n{in_carry_tree}\n' +
+                     f'the output tree structure is:\n{out_carry_tree}\n')
     else:
       diffs = [f'{component(path)} is a {thing1} but the corresponding component '
                f'of the carry output is a {thing2}, so {explanation}'
