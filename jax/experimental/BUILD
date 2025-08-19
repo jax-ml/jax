@@ -309,6 +309,7 @@ pytype_strict_library(
         "stateful_rng.py",
     ],
     deps = [
+        "//jax/_src:api_util",
         "//jax/_src:core",
         "//jax/_src:dtypes",
         "//jax/_src:numpy",
