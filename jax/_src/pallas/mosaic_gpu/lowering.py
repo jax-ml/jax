@@ -61,6 +61,7 @@ from jax._src.state import indexing
 from jax._src.state import primitives as sp
 from jax._src.state import types as state_types
 from jax._src.state.types import RefReshaper
+from jax._src.state.types import RefTransposer
 from jax._src.util import foreach
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
@@ -1404,12 +1405,16 @@ def _handle_transforms(
           transformed_ref = transformed_ref.slice(*indices)
         else:
           transformed_ref = mgpu.memref_slice(transformed_ref, indices)
-      case gpu_core.TransposeRef(perm) if handle_transposes:
-        perm = _bubble_up(lambda t, p: t.untransform_transpose(p),
-                                          perm)
-        if isinstance(transformed_ref, tcgen05.TMEMRef):
-          raise ValueError("TMEM transpose not allowed.")
-        transformed_ref = mgpu.memref_transpose(transformed_ref, perm)
+      case RefTransposer(perm):
+        if handle_transposes:
+          perm = _bubble_up(lambda t, p: t.untransform_transpose(p), perm)
+          if isinstance(transformed_ref, tcgen05.TMEMRef):
+            raise ValueError("TMEM transpose not allowed.")
+          transformed_ref = mgpu.memref_transpose(transformed_ref, perm)
+        else:
+          if not isinstance(t, gpu_core.TransposeRef):
+            t = gpu_core.TransposeRef(perm)
+          new_transforms.append(t)
       case RefReshaper(dtype=dtype, shape=shape) if handle_reshapes:
         shape = _bubble_up(
             lambda t, p: t.untransform_reshape(dtype, p),  # pylint: disable=cell-var-from-loop

@@ -692,17 +692,7 @@ class TransposeTransform(MemoryRefTransform):
 
 
 @tree_util.register_dataclass
-@dataclasses.dataclass(frozen=True)
-class TransposeRef(state_types.Transform):
-  permutation: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
-
-  def transform_shape(self, shape):
-    if shape is None:
-      return None
-    return tuple(shape[i] for i in self.permutation)
-
-  def transform_dtype(self, dtype):
-    return dtype
+class TransposeRef(state_types.RefTransposer):
 
   def untransform_transpose(
       self, perm
@@ -734,9 +724,6 @@ class TransposeRef(state_types.Transform):
 
   def undo_to_gpu_transform(self) -> mgpu.MemRefTransform:
     return mgpu.TransposeTransform(_perm_inverse(self.permutation))
-
-  def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
-    return pp.text(f"{{transpose({list(self.permutation)})}}")
 
 
 @tree_util.register_pytree_node_class
@@ -795,7 +782,7 @@ def transpose_ref(
     ref: pallas_core.TransformedRef | Any,
     permutation: tuple[int, ...],
 ) -> pallas_core.TransformedRef:
-  return transform_ref(ref, TransposeRef(permutation))
+  return ref.transpose(permutation)
 
 def untile_ref(ref, tiling: tuple[int, ...]) -> pallas_core.TransformedRef:
   return transform_ref(ref, UntileRef(tiling))
