@@ -4210,18 +4210,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   )
   def testUnravelIndex(self, shape, idx_shape, dtype):
     size = math.prod(shape)
-    if dtypes.issubdtype(dtype, np.unsignedinteger):
-      low = 0
-    else:
-      low = -((2 * size) // 3)
-    rng = jtu.rand_int(self.rng(), low=low, high=(2 * size) // 3)
+    unsigned = dtypes.issubdtype(dtype, np.unsignedinteger)
+    rng = jtu.rand_int(
+      self.rng(), low=0 if unsigned else  -((2 * size) // 3), high=(2 * size) // 3)
 
     def np_fun(index, shape):
       # JAX's version outputs the same dtype as the input in the typical case
       # where shape is weakly-typed.
       out_dtype = index.dtype
       # Adjust out-of-bounds behavior to match jax's documented behavior.
-      index = np.clip(index, -size, size - 1)
+      index = np.clip(index, 0 if unsigned else -size, size - 1)
       index = np.where(index < 0, index + size, index)
       return [i.astype(out_dtype) for i in np.unravel_index(index, shape)]
 
