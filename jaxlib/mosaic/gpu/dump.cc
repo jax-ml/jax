@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <spawn.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <cerrno>
