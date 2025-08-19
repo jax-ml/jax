@@ -7347,7 +7347,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
       *(src_idx.end() - 1) = 0;
       *vreg = vregs(src_idx);
     });
-    return std::pair(dst, vregs);
+    return std::pair(dst, dst_vregs);
   }
 
   auto unpacked_elem_ty = vty.getElementType().isSignlessInteger()
