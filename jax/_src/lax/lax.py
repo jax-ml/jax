@@ -45,7 +45,6 @@ from jax._src import source_info_util
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
-from jax._src.lib import version as jaxlib_version
 from jax._src.abstract_arrays import array_types
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray,
                            abstract_token, canonicalize_shape)
@@ -8933,63 +8932,14 @@ def _eq_meet(a, b):
   return eq(a, b)
 
 
-def empty(shape, dtype, *, out_sharding=None):
-  """Create an empty array of possibly uninitialized values.
-
-  This initialization is backend dependent.
-
-  Args:
-    shape: int or sequence of ints specifying the shape of the created array.
-    dtype: dtype for the created array.
-    out_sharding: (optional) :class:`~jax.sharding.PartitionSpec` or
-      :class:`~jax.NamedSharding` representing the sharding of the created
-      array (see `explicit sharding`_ for more details).
-
-  Returns:
-    Uninitialized array of the specified shape, dtype, and sharding.
-
-  Examples:
-    >>> jnp.empty(3, jnp.float32)  # doctest: +SKIP
-    Array([-5.7326739e+29 -7.7323739e+29 -3.14159256e-29], dtype=float32)
-  """
-  out_sharding = canonicalize_sharding(out_sharding, 'lax.empty')
-  return empty_p.bind(shape=shape, dtype=dtype, out_sharding=out_sharding)
-
+def empty(dtype):
+  return empty_p.bind(dtype=dtype)
 empty_p = core.Primitive('empty')
-empty_p.def_impl(partial(dispatch.apply_primitive, empty_p))
-
-def _empty_abstract_eval(*, shape, dtype, out_sharding):
-  return core.ShapedArray(shape, dtype, sharding=out_sharding)
-empty_p.def_abstract_eval(_empty_abstract_eval)
-
-def _empty_tpu_lower(ctx, *, shape, dtype, out_sharding):
-  if not core.is_constant_shape(shape):
-    return _empty_lower(ctx, shape=shape, dtype=dtype, out_sharding=out_sharding)
-  # TODO(yashkatariya): Remove this after Sept 20, 2025.
-  if ctx.is_forward_compat() or jaxlib_version < (0, 7, 1):
-    return _empty_lower(ctx, shape=shape, dtype=dtype, out_sharding=out_sharding)
+empty_p.def_abstract_eval(lambda *, dtype: core.ShapedArray((), dtype))
+def _empty_lower(ctx, *, dtype):
   dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-  aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding)
-  phys_aval = core.physical_aval(aval_out)
-  custom_call_op = hlo.CustomCallOp(
-      [mlir.ir.RankedTensorType.get(
-          list(phys_aval.shape), mlir.dtype_to_ir_type(phys_aval.dtype))],
-      [],
-      call_target_name=mlir.ir.StringAttr.get("AllocateBuffer"),
-      has_side_effect=mlir.ir.BoolAttr.get(False),
-  )
-  assert len(custom_call_op.results) == 1
-  res = custom_call_op.results[0]
-  return [mlir.lower_with_sharding_in_types(ctx, res, phys_aval)]
-mlir.register_lowering(empty_p, _empty_tpu_lower, 'tpu')
-
-def _empty_lower(ctx, *, shape, dtype, out_sharding):
-  dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-  aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding)
-  phys_aval = core.physical_aval(aval_out)
-  out = mlir.ir_constant(np.zeros((), phys_aval.dtype))
-  out = mlir.broadcast_in_dim(ctx, out, phys_aval, broadcast_dimensions=[])
-  return [mlir.lower_with_sharding_in_types(ctx, out, phys_aval)]
+  phys_aval = core.physical_aval(core.ShapedArray((), dtype))
+  return mlir.ir_constant(np.zeros(phys_aval.shape, phys_aval.dtype)),
 mlir.register_lowering(empty_p, _empty_lower)
 
 

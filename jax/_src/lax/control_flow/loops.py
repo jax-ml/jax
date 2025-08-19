@@ -534,8 +534,8 @@ def _concat(a, b): return lax.concatenate([a, b], 0)
 
 def _empty_array(prefix, length_spec, aval):
   sharding = aval.sharding.update(spec=(*length_spec, *aval.sharding.spec))
-  empty = lax.empty((*prefix, *aval.shape), aval.dtype, out_sharding=sharding)
-  return core.pvary(empty, tuple(aval.vma))
+  empty = core.pvary(lax.empty(aval.dtype), tuple(aval.vma))
+  return lax.broadcast(empty, (*prefix, *aval.shape), out_sharding=sharding)
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True

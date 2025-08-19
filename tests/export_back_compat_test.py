@@ -54,7 +54,6 @@ from jax._src.internal_test_util.export_back_compat_test_data import cuda_tridia
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_tridiagonal_solve
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Eigh
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Lu
-from jax._src.internal_test_util.export_back_compat_test_data import tpu_AllocateBuffer
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_ApproxTopK
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Qr
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Sharding
@@ -148,7 +147,6 @@ class CompatTest(bctu.CompatTestBase):
         rocm_eigh_hipsolver_syev.data_2024_08_05,
         tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17,
         tpu_Sharding.data_2023_03_16, tpu_ApproxTopK.data_2023_04_17,
-        tpu_AllocateBuffer.data_2025_08_19,
         tpu_ApproxTopK.data_2023_05_16,
         tpu_stablehlo_dynamic_reduce_window.data_unary_2023_06_17,
         tpu_stablehlo_dynamic_reduce_window.data_variadic_2023_06_17,
@@ -801,6 +799,7 @@ class CompatTest(bctu.CompatTestBase):
         else:
           self.run_one_test(func, self.load_testdata(data["gspmd"]))
 
+
   @parameterized.named_parameters(
       dict(testcase_name=f"_platform={platform}", platform=platform)
       for platform in ("tpu", "gpu"))
@@ -839,16 +838,6 @@ class CompatTest(bctu.CompatTestBase):
             expect_current_custom_calls=custom_call_targets_override)
       else:
         self.run_one_test(func, self.load_testdata(data["gspmd"]))
-
-  def test_lax_real_empty(self):
-    def func():
-      return jax.lax.empty((2, 2), dtype=jnp.float32)
-
-    data = self.load_testdata(tpu_AllocateBuffer.data_2025_08_19)
-    # TODO(yashkatariya): Remove `expect_current_custom_calls` once forward
-    # compat is removed from lax.empty TPU lowering
-    self.run_one_test(func, data, expect_current_custom_calls=[],
-                      check_results=lambda *args, **kwargs: None)
 
   def test_tpu_stablehlo_dynamic_reduce_window_unary(self):
     # stablehlo.dynamic_reduce_window is used temporarily on TPU for a
