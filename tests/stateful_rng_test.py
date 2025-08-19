@@ -155,6 +155,15 @@ class StatefulRNGTest(jtu.JaxTestCase):
       self.assertNotEqual(rng.base_key, child_rng.base_key)
       self.assertEqual(0, child_rng.counter[...])
 
+  def testVmap(self):
+    seed = 758943
+    x = np.arange(4.0)
+    def f(rng, x):
+      return x + rng.uniform()
+    expected = f(default_rng(seed), x)
+    actual = jax.vmap(f, in_axes=(None, 0))(default_rng(seed), x)
+    self.assertArraysEqual(actual, expected)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
