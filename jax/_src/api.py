@@ -2277,6 +2277,7 @@ def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, residuals, maybe_refs, out_ct
   ad.backward_pass3(jaxpr, True, residuals, maybe_refs, cts_flat)
   arg_cts = [x.freeze() if isinstance(x, ad.ValAccum) else GradRef()
              for x in maybe_refs]
+  arg_cts = map(ad.instantiate_zeros, arg_cts)
   return tree_unflatten(in_tree, arg_cts)
 
 @dataclasses.dataclass(frozen=True)

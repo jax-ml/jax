@@ -3081,6 +3081,14 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(value, 1.)
     self.assertEqual(grd, np.zeros(shape=(), dtype=float0))
 
+  def test_grad_of_bool_vjp3(self):
+    def cond(pred):
+      return lax.cond(pred, lambda _: 1., lambda _: 2., 1.)
+    value, f_vjp = api.vjp3(cond, True)
+    grd, = f_vjp(1.)
+    self.assertEqual(value, 1.)
+    self.assertEqual(grd, np.zeros(shape=(), dtype=float0))
+
   def test_grad_of_int_index(self):
     grad_x, grad_i = api.grad(lambda x, i: x[i], argnums=(0, 1),
                               allow_int=True)(np.ones(2), 1)
