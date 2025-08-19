@@ -7811,32 +7811,55 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
       xla::Array<Value> src_tiles,
       disassemble(builder, src, v, target_shape, /*use_implicit_shape=*/true));
 
+  if (const LayoutOffsets src_offsets =
+          src.getCanonicalOffsets(vty.getShape(), ctx.target_shape);
+      src.layout_rank() >= dst.layout_rank() && !src_offsets[0].has_value() &&
+      !src_offsets[1].has_value()) {
+    // For both masks and vregs, a fully replicated value is easy to relayout
+    xla::Array<Value> dst_vregs(
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
+    SmallVector<int64_t> idxs;
+    dst_vregs.Each([&](const absl::Span<const int64_t> src_idx, Value* vreg) {
+      idxs.assign(src_idx.begin(), src_idx.end());
+      dst.eraseImplicit(idxs);
+      src.insertImplicit<int64_t>(idxs, 0);
+      *(idxs.end() - 2) = 0;
+      *(idxs.end() - 1) = 0;
+      *vreg = src_tiles(idxs);
+    });
+    return assemble(builder, vty, dst, dst_vregs, target_shape,
+                    /*use_implicit_shape=*/true)
+        .getResult();
+  }
+
   if (is_mask_pack) {
     std::vector<int64_t> vmsks_shape(src_tiles.dimensions().begin(),
                                      src_tiles.dimensions().end());
     *(vmsks_shape.end() - 1) = llvm::divideCeil(vmsks_shape.back(), 2);
-    xla::Array<Value> out_vmsks(vmsks_shape, nullptr);
+    xla::Array<Value> out_vmsks(vmsks_shape);
     SmallVector<int64_t> val_idx;
-    Value default_val = getFullVector(
-        builder, v.getLoc(),
-        cast<TypedValue<VectorType>>(*src_tiles.begin()).getType(),
-        IntegerAttr::get(builder.getI1Type(), 0));
-    out_vmsks.Each([&](absl::Span<const int64_t> idx, Value *v_slot_in_array) {
+    const VectorType mask_ty = getNativeVregOrVmaskType(
+        builder.getI1Type(), bitwidth / 2, target_shape);
+    out_vmsks.Each([&](absl::Span<const int64_t> idx, Value* v_slot_in_array) {
       val_idx.assign(idx.begin(), idx.end());
-      *(val_idx.end() - 1) *= 2;
-      Value low_part =
-          *(val_idx.end() - 1) < *(src_tiles.dimensions().end() - 1)
-              ? src_tiles(val_idx)
-              : default_val;
-      *(val_idx.end() - 1) += 1;
-      Value high_part =
-          *(val_idx.end() - 1) < *(src_tiles.dimensions().end() - 1)
-              ? src_tiles(val_idx)
-              : default_val;
-      const VectorType mask_ty = getNativeVregOrVmaskType(
-          builder.getI1Type(), bitwidth / 2, target_shape);
-      *v_slot_in_array =
-          builder.create<PackMaskOp>(v.getLoc(), mask_ty, low_part, high_part);
+      if (!src.offsets()[1].has_value()) {
+        *(val_idx.end() - 1) = 0;
+        Value src_vreg = src_tiles(val_idx);
+        *v_slot_in_array =
+            builder.create<PackMaskOp>(v.getLoc(), mask_ty, src_vreg, src_vreg);
+      } else {
+        val_idx.back() *= 2;
+        CHECK_LT(val_idx.back(), src_tiles.dimensions().back());
+        Value low_part = src_tiles(val_idx);
+        val_idx.back() += 1;
+        // If we don't care about the high part, just use the low part to avoid
+        // depending on other vmask values.
+        Value high_part = val_idx.back() < src_tiles.dimensions().back()
+                              ? src_tiles(val_idx)
+                              : low_part;
+        *v_slot_in_array = builder.create<PackMaskOp>(v.getLoc(), mask_ty,
+                                                      low_part, high_part);
+      }
     });
     return assemble(builder, vty, dst, out_vmsks, target_shape,
                     /*use_implicit_shape=*/true)
@@ -7871,7 +7894,7 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
     return assemble(builder, vty, dst, tiles, target_shape, use_implicit_shape)
         .getResult();
   };
-  // Two easy cases: source is more general, or is replicated.
+
   if (src.generalizes(dst, vty.getShape(), target_shape)) {
     // A value with a replicated offset might use fewer vregs than a value with
     // a non-zero offset.
@@ -7889,25 +7912,6 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
       return assemble_with_mask_check(src_tiles,
                                       /*use_implicit_shape=*/true);
     }
-  }
-
-  if (const LayoutOffsets src_offsets =
-          src.getCanonicalOffsets(vty.getShape(), ctx.target_shape);
-      src.layout_rank() >= dst.layout_rank() && !src_offsets[0].has_value() &&
-      !src_offsets[1].has_value()) {
-    // A fully replicated value is always easy to relayout
-    xla::Array<Value> dst_tiles(
-        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
-    SmallVector<int64_t> idxs;
-    dst_tiles.Each([&](const absl::Span<const int64_t> src_idx, Value *vreg) {
-      idxs.assign(src_idx.begin(), src_idx.end());
-      dst.eraseImplicit(idxs);
-      src.insertImplicit<int64_t>(idxs, 0);
-      *(idxs.end() - 2) = 0;
-      *(idxs.end() - 1) = 0;
-      *vreg = src_tiles(idxs);
-    });
-    return assemble_with_mask_check(dst_tiles, /*use_implicit_shape=*/true);
   }
 
   // Consider (1,128),-2 -> (8,128). In this case we can change the implicit
