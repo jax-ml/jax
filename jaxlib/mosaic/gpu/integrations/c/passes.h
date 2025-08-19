@@ -22,7 +22,7 @@ limitations under the License.
 extern "C" {
 #endif
 
-MLIR_CAPI_EXPORTED void mlirMosaicGpuRegisterPasses();
+MLIR_CAPI_EXPORTED void mlirMosaicGpuRegisterSerdePass();
 
 #ifdef __cplusplus
 }

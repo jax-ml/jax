@@ -197,7 +197,7 @@ NB_MODULE(_jax_mlir_ext, m) {
     REGISTER_DIALECT(llvm);
 #undef REGISTER_DIALECT
 
-    mlirMosaicGpuRegisterPasses();
+    mlirMosaicGpuRegisterSerdePass();
     mlirRegisterTransformsPasses();
     // For Shardy
     mlirRegisterAllSdyPassesAndPipelines();

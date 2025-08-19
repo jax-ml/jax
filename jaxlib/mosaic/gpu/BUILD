@@ -80,21 +80,36 @@ cc_test(
 )
 
 cc_library(
+    name = "serde",
+    srcs = ["serde.cc"],
+    hdrs = ["serde.h"],
+    deps = [
+        "//jaxlib/mosaic:pass_boilerplate",
+        "//jaxlib/mosaic:serde",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:VectorDialect",
+    ],
+)
+
+cc_library(
     name = "passes",
     srcs = [
         "assembly_to_binary.cc",
         "launch_lowering.cc",
         "passes.cc",
-        "serde.cc",
     ],
     hdrs = [
         "assembly_to_binary.h",
         "launch_lowering.h",
         "passes.h",
-        "serde.h",
     ],
     deps = [
         ":dump",
+        ":serde",
         "//jaxlib/mosaic:pass_boilerplate",
         "//jaxlib/mosaic:serde",
         "@com_google_absl//absl/status",
@@ -125,12 +140,14 @@ CAPI_HEADERS = [
     "integrations/c/passes.h",
 ]
 
+# `mlir_capi` should be used only to wrap hardware-agnostic passes that need to be called directly
+# from Python.
 cc_library(
     name = "mlir_capi",
     srcs = CAPI_SOURCES,
     hdrs = CAPI_HEADERS,
     deps = [
-        ":passes",
+        ":serde",
         "@llvm-project//mlir:CAPIIRHeaders",
     ],
 )
@@ -199,6 +216,7 @@ cc_library(
         ":library_paths",  # buildcleaner: keep
         ":nvshmem",
         ":passes",
+        ":serde",
         ":target",
         "//jaxlib/cuda:cuda_vendor",
         "//jaxlib/mosaic/dialect/gpu:mosaic_gpu",
