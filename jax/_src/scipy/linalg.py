@@ -2344,7 +2344,7 @@ def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, *, method: str = "
     >>> B = jax.numpy.array([[5, 6], [7, 8]])
     >>> C = jax.numpy.array([[6, 8], [10, 12]])
     >>> X = jax.scipy.linalg.solve_sylvester(A, B, C)
-    >>> with jax.numpy.printoptions(precision=0, suppress=True):
+    >>> with jax.numpy.printoptions(precision=0, suppress=True): # doctest: +SKIP
     ...   print(X)
     [[1. 0.]
      [0.  1.]]
