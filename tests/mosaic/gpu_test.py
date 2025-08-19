@@ -4781,18 +4781,18 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       )
       tmem_layout = layouts.to_layout_attr(tmem_layout)
 
-      mma_op = mgpu_dialect.TcGen05MMAOp(
-          accumulator=acc_tmem,
-          a=a_smem,
-          b=b_smem,
-          accumulate=arith.constant(ir.IntegerType.get_signless(1), False),
-          collective=True,
-      )
-      mma_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
       is_first_block = arith.cmpi(
           arith.CmpIPredicate.eq, block_id, c(0, ir.IndexType.get())
       )
       with when(is_first_block):
+        mma_op = mgpu_dialect.TcGen05MMAOp(
+            accumulator=acc_tmem,
+            a=a_smem,
+            b=b_smem,
+            accumulate=arith.constant(ir.IntegerType.get_signless(1), False),
+            collective=True,
+        )
+        mma_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
         tcgen05.commit_arrive(mma_barrier.barrier_ref, collective=True, ctx=ctx)
 
       mma_barrier.wait(orders_tensor_core=True)

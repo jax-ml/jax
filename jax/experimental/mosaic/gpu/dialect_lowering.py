@@ -56,9 +56,6 @@ class LoweringContext:
   single_thread_per_block_predicate: ir.Value | None
   single_thread_per_warpgroup_predicate: ir.Value | None
   single_warp_per_block_predicate: ir.Value | None
-  # This is the first block in a CTA pair as documented in
-  # https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-cta-pair.
-  leader_block_in_cta_predicate: ir.Value | None
   auto_barriers: bool
   lowered_operations: set[ir.Operation | ir.OpView] = dataclasses.field(
       default_factory=set
@@ -1618,16 +1615,7 @@ def _tcgen05_mma_op_lowering_rule(
   acc_layout = inference_utils.in_tmem_layouts(op)[0]
   acc_ref = _tmem_ref_from_ir(op.accumulator, acc_layout)
 
-  predicate = ctx.single_thread_per_block_predicate
-  if op.collective:
-    if ctx.leader_block_in_cta_predicate is None:
-      raise ValueError(
-          "Requested collective `tcgen05_mma` but"
-          " `ctx.leader_block_in_cta_predicate` is not set. This likely means"
-          " that the kernel has no cluster dimensions."
-      )
-    predicate = arith.andi(predicate, ctx.leader_block_in_cta_predicate)
-  with mgpu_utils.when(predicate):
+  with mgpu_utils.when(ctx.single_thread_per_block_predicate):
     tcgen05.mma(
         acc_ref,
         unwrapped_a_ref,
@@ -2039,18 +2027,6 @@ def _gpu_launch_op(module: ir.Module) -> ir.Operation:
   raise ValueError("gpu.launch op not found.")
 
 
-def _minor_collective_axis(
-    ctx: launch_context.LaunchContext,
-) -> gpu.Dimension | None:
-  if ctx.cluster_size[0] > 1:
-    return gpu.Dimension.x
-  if ctx.cluster_size[1] > 1:
-    return gpu.Dimension.y
-  if ctx.cluster_size[2] > 1:
-    return gpu.Dimension.z
-  return None
-
-
 def _lowering_context(
     module: ir.Module,
     launch_context: launch_context.LaunchContext | None,
@@ -2059,7 +2035,7 @@ def _lowering_context(
   """Returns a `LoweringContext` for the given `LaunchContext`."""
   # TODO(bchetioui): fix tests to not have a test-only path polluting the API.
   if launch_context is None:  # this case is used in some tests
-    return LoweringContext(None, None, None, None, None, auto_barriers)
+    return LoweringContext(None, None, None, None, auto_barriers)
 
   gpu_launch_op = _gpu_launch_op(module)
   with ir.InsertionPoint.at_block_begin(gpu_launch_op.regions[0].blocks[0]):
@@ -2072,19 +2048,11 @@ def _lowering_context(
     eq = arith.CmpIPredicate.eq
     i32 = ir.IntegerType.get_signless(32)
     warp_predicate = arith.cmpi(eq, utils.warp_idx(sync=False), utils.c(0, i32))
-    if (axis := _minor_collective_axis(launch_context)) is not None:
-      block_id = gpu.cluster_block_id(axis)
-      leader_block_in_cta_predicate = arith.cmpi(
-          eq, block_id, utils.c(0, ir.IndexType.get())
-      )
-    else:
-      leader_block_in_cta_predicate = None
     return LoweringContext(
         launch_context,
         block_predicate,
         warpgroup_predicate,
         warp_predicate,
-        leader_block_in_cta_predicate,
         auto_barriers,
     )
 
