@@ -169,12 +169,12 @@ class ByvalInsertionPass
 
 // Insert the nvvm.minctasm attribute, which is sometimes required for ptxas
 // to recognize setmaxnreg instructions.
-class NvvmAttrInsertionPass
-    : public jaxlib::mlir::Pass<NvvmAttrInsertionPass, mlir::gpu::GPUModuleOp> {
+class LLVMAttrInsertionPass
+    : public jaxlib::mlir::Pass<LLVMAttrInsertionPass, mlir::gpu::GPUModuleOp> {
  public:
-  using jaxlib::mlir::Pass<NvvmAttrInsertionPass, mlir::gpu::GPUModuleOp>::Pass;
-  static constexpr llvm::StringLiteral kArgumentName = "mosaic-nvvm-attr-insertion";
-  static constexpr llvm::StringLiteral kPassName = "NvvmAttrInsertionPass";
+  using jaxlib::mlir::Pass<LLVMAttrInsertionPass, mlir::gpu::GPUModuleOp>::Pass;
+  static constexpr llvm::StringLiteral kArgumentName = "mosaic-llvm-attr-insertion";
+  static constexpr llvm::StringLiteral kPassName = "LLVMAttrInsertionPass";
 
   void runOnOperation() override {
     auto result = getOperation().walk([](mlir::LLVM::LLVMFuncOp op) {
@@ -185,6 +185,18 @@ class NvvmAttrInsertionPass
       op.getOperation()->setAttr(
           "nvvm.minctasm", mlir::IntegerAttr::get(
                                mlir::IntegerType::get(op.getContext(), 32), 1));
+      for (unsigned i = 0; i < op.getNumArguments(); ++i) {
+        mlir::BlockArgument arg = op.getArgument(i);
+        if (!mlir::isa<mlir::LLVM::LLVMPointerType>(arg.getType())) {
+          continue;
+        }
+        if (!op.getArgAttr(i, "llvm.align")) {
+          op.setArgAttr(i, "llvm.align",
+                        mlir::IntegerAttr::get(
+                            mlir::IntegerType::get(op.getContext(), 32),
+                            kExpectedHbmAlignment));
+        }
+      }
       return mlir::WalkResult::advance();
     });
     if (result.wasInterrupted()) {
@@ -207,9 +219,9 @@ void registerByvalInsertionPass() {
   });
 }
 
-void registerNvvmAttrInsertionPass() {
+void registerLLVMAttrInsertionPass() {
   ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
-    return std::make_unique<NvvmAttrInsertionPass>();
+    return std::make_unique<LLVMAttrInsertionPass>();
   });
 }
 

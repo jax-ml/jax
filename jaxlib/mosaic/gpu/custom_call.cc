@@ -196,7 +196,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mosaic::gpu::registerGpuLaunchLoweringPass();
     mosaic::gpu::registerConvertGpuToLLVMPass();
     mosaic::gpu::registerByvalInsertionPass();
-    mosaic::gpu::registerNvvmAttrInsertionPass();
+    mosaic::gpu::registerLLVMAttrInsertionPass();
     mlir::arith::registerArithExpandOpsPass();
     mlir::LLVM::registerDIScopeForLLVMFuncOpPass();
     return true;
@@ -231,7 +231,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         gpu.module(canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true}),
         gpu.module(cse),
         gpu.module(mosaic-byval-insertion),
-        gpu.module(mosaic-nvvm-attr-insertion),
+        gpu.module(mosaic-llvm-attr-insertion),
         gpu.module(reconcile-unrealized-casts),
         mosaic-convert-gpu-to-llvm,
         ensure-debug-info-scope-on-llvm-func{emission-kind=DebugDirectivesOnly},
@@ -687,9 +687,21 @@ absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
   buffers.reserve(inputs.size() + results.size());
   for (int i = 0; i < inputs.size(); ++i) {
     buffers.push_back(inputs.get<ffi::AnyBuffer>(i)->untyped_data());
+    if (reinterpret_cast<uintptr_t>(buffers.back()) %
+        mosaic::gpu::kExpectedHbmAlignment) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Input buffer %d is not %d-byte aligned", i,
+                          mosaic::gpu::kExpectedHbmAlignment));
+    }
   }
   for (int i = 0; i < results.size(); ++i) {
     buffers.push_back((*results.get<ffi::AnyBuffer>(i))->untyped_data());
+    if (reinterpret_cast<uintptr_t>(buffers.back()) %
+        mosaic::gpu::kExpectedHbmAlignment) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Output buffer %d is not %d-byte aligned", i,
+                          mosaic::gpu::kExpectedHbmAlignment));
+    }
   }
   void **buffers_ptr = buffers.data();
   void *args[4] = {&std::get<0>(ctx_kernel_comm), &stream, &buffers_ptr};

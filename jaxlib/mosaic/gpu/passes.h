@@ -21,7 +21,11 @@ namespace gpu {
 
 void registerByvalInsertionPass();
 void registerConvertGpuToLLVMPass();
-void registerNvvmAttrInsertionPass();
+void registerLLVMAttrInsertionPass();
+
+// This is the default of cudaMalloc and is also upheld by the XLA:GPU runtime.
+// We annotate all GMEM pointers with this alignment in LLVMAttrInsertionPass.
+inline constexpr int kExpectedHbmAlignment = 256;
 
 }  // namespace gpu
 }  // namespace mosaic
