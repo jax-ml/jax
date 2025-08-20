@@ -7796,28 +7796,30 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
     std::vector<int64_t> vmsks_shape(src_tiles.dimensions().begin(),
                                      src_tiles.dimensions().end());
     *(vmsks_shape.end() - 1) = llvm::divideCeil(vmsks_shape.back(), 2);
-    xla::Array<Value> out_vmsks(vmsks_shape, nullptr);
+    xla::Array<Value> out_vmsks(vmsks_shape);
     SmallVector<int64_t> val_idx;
-    Value default_val = getFullVector(
-        builder, v.getLoc(),
-        cast<TypedValue<VectorType>>(*src_tiles.begin()).getType(),
-        IntegerAttr::get(builder.getI1Type(), 0));
-    out_vmsks.Each([&](absl::Span<const int64_t> idx, Value *v_slot_in_array) {
+    const VectorType mask_ty = getNativeVregOrVmaskType(
+        builder.getI1Type(), bitwidth / 2, target_shape);
+    out_vmsks.Each([&](absl::Span<const int64_t> idx, Value* v_slot_in_array) {
       val_idx.assign(idx.begin(), idx.end());
-      *(val_idx.end() - 1) *= 2;
-      Value low_part =
-          *(val_idx.end() - 1) < *(src_tiles.dimensions().end() - 1)
-              ? src_tiles(val_idx)
-              : default_val;
-      *(val_idx.end() - 1) += 1;
-      Value high_part =
-          *(val_idx.end() - 1) < *(src_tiles.dimensions().end() - 1)
-              ? src_tiles(val_idx)
-              : default_val;
-      const VectorType mask_ty = getNativeVregOrVmaskType(
-          builder.getI1Type(), bitwidth / 2, target_shape);
-      *v_slot_in_array =
-          builder.create<PackMaskOp>(v.getLoc(), mask_ty, low_part, high_part);
+      if (!src.offsets()[1].has_value()) {
+        *(val_idx.end() - 1) = 0;
+        Value src_vreg = src_tiles(val_idx);
+        *v_slot_in_array =
+            builder.create<PackMaskOp>(v.getLoc(), mask_ty, src_vreg, src_vreg);
+      } else {
+        val_idx.back() *= 2;
+        CHECK_LT(val_idx.back(), src_tiles.dimensions().back());
+        Value low_part = src_tiles(val_idx);
+        val_idx.back() += 1;
+        // If we don't care about the high part, just use the low part to avoid
+        // depending on other vmask values.
+        Value high_part = val_idx.back() < src_tiles.dimensions().back()
+                              ? src_tiles(val_idx)
+                              : low_part;
+        *v_slot_in_array = builder.create<PackMaskOp>(v.getLoc(), mask_ty,
+                                                      low_part, high_part);
+      }
     });
     return assemble(builder, vty, dst, out_vmsks, target_shape,
                     /*use_implicit_shape=*/true)
