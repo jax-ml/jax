@@ -422,13 +422,16 @@ build:cross_compile_linux_aarch64 --config=cross_compile_base
 build:cross_compile_linux_aarch64 --platforms=@xla//tools/toolchains/cross_compile/config:linux_aarch64
 build:cross_compile_linux_aarch64 --cpu=aarch64
 build:cross_compile_linux_aarch64 --crosstool_top=@xla//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
+build:cross_compile_linux_aarch64 --repo_env=USE_HERMETIC_CC_TOOLCHAIN=1
 
 build:rbe_cross_compile_base --config=rbe
 build:rbe_cross_compile_base --remote_instance_name=projects/tensorflow-testing/instances/default_instance
+build:rbe_cross_compile_base --repo_env=USE_HERMETIC_CC_TOOLCHAIN=1
 
 # RBE cross-compile configs for Linux Aarch64
 build:rbe_cross_compile_linux_aarch64 --config=cross_compile_linux_aarch64
 build:rbe_cross_compile_linux_aarch64 --config=rbe_cross_compile_base
+build:rbe_cross_compile_linux_aarch64 --repo_env=USE_HERMETIC_CC_TOOLCHAIN=1
 
 # Avoids a timeout in linalg_test on ARM.
 build:rbe_cross_compile_linux_aarch64 --test_env=OMP_NUM_THREADS=8
@@ -451,6 +454,7 @@ build:cross_compile_darwin_x86_64 --extra_toolchains=@xla//tools/toolchains/cros
 # and transistions that use these flags work. The flag --platform_mappings needs
 # to be set to a file that exists relative to the package path roots.
 build:cross_compile_darwin_x86_64 --platform_mappings=platform_mappings
+build:cross_compile_darwin_x86_64 --repo_env=USE_HERMETIC_CC_TOOLCHAIN=1
 
 # RBE cross-compile configs for Darwin x86
 build:rbe_cross_compile_darwin_x86_64 --config=cross_compile_darwin_x86_64
