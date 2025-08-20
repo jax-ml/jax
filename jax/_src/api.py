@@ -2235,12 +2235,21 @@ class RSpec:
 si_vjp = saved_input_vjp
 
 
-def vjp3(f, *primals):
+def vjp3(f, *primals, has_aux=False):
   dbg = debug_info("vjp3", f, primals, {})
   fun = lu.wrap_init(f, debug_info=dbg)
   primals_flat, in_tree = tree_flatten(primals)
-  fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-  out_primals_flat, out_pvals, jaxpr, residuals = ad.linearize(fun, *primals_flat)
+  if not has_aux:
+    flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
+    out_primals_flat, out_pvals, jaxpr, residuals = ad.linearize(
+        flat_fun, *primals_flat)
+    out_tree = out_tree()
+  else:
+    flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, in_tree)
+    out_primals_flat, out_pvals, jaxpr, residuals, aux = ad.linearize(
+        flat_fun, *primals_flat, has_aux=True)
+    out_tree, aux_tree = out_aux_trees()
+    del out_aux_trees
   out_known = [pval.is_known() for pval in out_pvals]
   id_map = {id(x): i for i, x in enumerate(primals_flat)}
   used, opaque_residuals = set(), []
@@ -2248,10 +2257,13 @@ def vjp3(f, *primals):
           RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
           for r in residuals]
   args_res = tree_map(lambda x: x if id(x) in used else NotNeeded(), primals)
-  f_vjp = VJP(partial(_vjp3, spec, out_known, jaxpr), in_tree, out_tree(),
+  f_vjp = VJP(partial(_vjp3, spec, out_known, jaxpr), in_tree, out_tree,
               list(args_res), opaque_residuals)
-  out_primals = tree_unflatten(out_tree(), out_primals_flat)
-  return out_primals, f_vjp
+  out_primals = tree_unflatten(out_tree, out_primals_flat)
+  if not has_aux:
+    return out_primals, f_vjp
+  else:
+    return out_primals, f_vjp, tree_unflatten(aux_tree, aux)
 
 def _is_ref(x):
   from jax._src.state.types import AbstractRef
