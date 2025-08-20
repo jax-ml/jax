@@ -2357,7 +2357,7 @@ def _squeeze_lowering_rule(ctx: LoweringRuleContext, x, dimensions):
   )
 
 
-@register_lowering_rule(lax.concatenate_p)
+@register_lowering_rule(lax.concatenate_p, kernel_types=[*tpu_core.KernelType])
 def _concatenate_lowering_rule(ctx: LoweringRuleContext, *xs, dimension):
   if jaxlib_version >= (0, 7, 1):
     return tpu.concatenate(xs, dimension=dimension)
