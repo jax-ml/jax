@@ -164,6 +164,20 @@ class StatefulRNGTest(jtu.JaxTestCase):
     actual = jax.vmap(f, in_axes=(None, 0))(default_rng(seed), x)
     self.assertArraysEqual(actual, expected)
 
+  def testScan(self):
+    seed = 432932
+    def f1(seed):
+      rng = default_rng(seed)
+      def scan_f(_, __):
+        return None, rng.uniform()
+      return jax.lax.scan(scan_f, None, length=10)[1]
+
+    def f2(seed):
+      rng = default_rng(seed)
+      return jax.numpy.array([rng.uniform() for i in range(10)])
+
+    self.assertArraysAllClose(f1(seed), f2(seed))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
