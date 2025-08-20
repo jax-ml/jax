@@ -52,7 +52,7 @@ expected_hlos = [
     ("all-gather", "f8e4m3fn[512,512]", "replica_groups=[2,2]<=[4]", c_name),
     (c_name,),
     ("all-gather", "f8e4m3fn[256,1024]", "replica_groups=[2,2]<=[4]", c_name),
-    (c_name, "reduce-scatter", "f32[2,256,512]", "replica_groups={{0,1},{2,3}}"),
+    (c_name,),
     ("all-gather", "f8e4m3fn[2,512,1024]", "replica_groups=[2,2]<=[4]", c_name),
     ("all-gather", "f8e4m3fn[2,512,512]", "replica_groups=[2,2]<=[4]", c_name),
 ]
@@ -62,10 +62,17 @@ expected_output_spec = [
     PartitionSpec('dp', None, 'tp'),
     PartitionSpec('dp', None, 'tp'),
     PartitionSpec('dp', 'tp', None),
-    PartitionSpec(None, 'dp', 'tp'),
+    PartitionSpec(None, 'dp'),
     PartitionSpec(None, 'tp', None),
     PartitionSpec(None, None, 'tp'),
 ]
+
+# The GSPMD sharding logic inserts additional reduce-scatters which don't exist
+# in Shardy.
+if not config.use_shardy_partitioner.value:
+    expected_output_spec[5] = PartitionSpec(None, 'dp', 'tp')
+    expected_hlos[5] += ("reduce-scatter", "f32[2,256,512]", "replica_groups={{0,1},{2,3}}")
+
 sharding_configs = {
     input_sharding: (hlo, output_spec)
     for input_sharding, hlo, output_spec in zip(input_shardings,
