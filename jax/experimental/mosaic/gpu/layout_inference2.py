@@ -675,11 +675,16 @@ def _shape_cast_equation_system(
 
 
 def _ensure_all_layouts_are_set(op: ir.OpView):
-  if not inference_utils.should_have_layout(op):
-    return
-  _ensure_right_number_of_layouts(
-      op, inference_utils.in_layouts(op), inference_utils.out_layouts(op)
-  )
+  if inference_utils.should_have_layout(op):
+    _ensure_right_number_of_layouts(
+        op,
+        inference_utils.in_layouts(op)
+        if inference_utils.has_in_layouts_set(op)
+        else [],
+        inference_utils.out_layouts(op)
+        if inference_utils.has_out_layouts_set(op)
+        else [],
+    )
 
 
 def _ensure_right_number_of_layouts(
@@ -737,8 +742,10 @@ def assign_layouts(
     _ensure_right_number_of_layouts(op, in_layouts, out_layouts)
     in_layouts_attrs = [layouts_lib.to_layout_attr(l) for l in in_layouts]
     out_layouts_attrs = [layouts_lib.to_layout_attr(l) for l in out_layouts]
-    op.attributes["in_layouts"] = ir.ArrayAttr.get(in_layouts_attrs)
-    op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts_attrs)
+    if inference_utils.should_have_in_layout(op):
+      op.attributes["in_layouts"] = ir.ArrayAttr.get(in_layouts_attrs)
+    if inference_utils.should_have_out_layout(op):
+      op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts_attrs)
 
 
 def operands_and_results(op: ir.OpView) -> list[OperandOrResult]:
@@ -860,6 +867,17 @@ def is_terminator(op: ir.OpView) -> bool:
 
 
 def infer_layout(module: ir.Module):
+  """Infers layouts for the given module.
+
+  * If there are vector (respectively SMEM refs, TMEM refs) operands,
+  `in_layouts` (respectively `in_transforms`, `in_tmem_layouts`) will be set and
+  contain one element per relevant argument in the memory space.
+  * If there are vector (respectively SMEM refs, TMEM refs) outputs,
+  `out_layouts` (respectively `out_transforms`, `out_tmem_layouts`) will be set
+  and contain one element per relevant argument in the memory space.
+  * Any of these attributes is guaranteed to not be set if there is no relevant
+  input/output in the corresponding memory space.
+  """
   global_equation_system: eqns.EquationSystem | eqns.Unsatisfiable
   global_equation_system = eqns.EquationSystem()
   operand_and_results_for_variable: OperandOrResultsForVariable = {}

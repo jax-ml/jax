@@ -588,7 +588,6 @@ def _vector_reduction_op_lowering_rule(
 ) -> Sequence[ir.Value]:
   del ctx  # Unused.
   [layout] = inference_utils.in_layouts(op)
-  () = inference_utils.out_layouts(op)
   element_type = ir.VectorType(op.vector.type).element_type
   is_signed = False if ir.IntegerType.isinstance(element_type) else None
   a = _fragmented_array_from_ir(op.vector, layout, is_signed)
@@ -1888,8 +1887,16 @@ def _while_op_lowering_rule(
   condition_op = before_block.operations[len(before_block.operations) - 1]
   yield_op = after_block.operations[len(after_block.operations) - 1]
 
-  in_layouts = inference_utils.in_layouts(while_op)
-  out_layouts = inference_utils.out_layouts(while_op)
+  in_layouts = (
+      inference_utils.in_layouts(while_op)
+      if inference_utils.should_have_in_layout(while_op)
+      else []
+  )
+  out_layouts = (
+      inference_utils.out_layouts(while_op)
+      if inference_utils.should_have_out_layout(while_op)
+      else []
+  )
 
   if in_layouts:
     yield_layouts = inference_utils.in_layouts(yield_op)

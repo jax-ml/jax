@@ -53,8 +53,10 @@ def _set_layout_attributes(
     in_layouts: list[ir.Attribute],
     out_layouts: list[ir.Attribute],
 ):
-  op.attributes["in_layouts"] = ir.ArrayAttr.get(in_layouts)
-  op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts)
+  if inference_utils.should_have_in_layout(op):
+    op.attributes["in_layouts"] = ir.ArrayAttr.get(in_layouts)
+  if inference_utils.should_have_out_layout(op):
+    op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts)
 
 
 def _choose_representative_layout(

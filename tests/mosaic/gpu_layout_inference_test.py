@@ -122,7 +122,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
         mgpu.WGStridedFragLayout.from_shaped_type(ty)
     )
 
-    self.checkInLayouts(x, [])
+    self.assertNotIn("in_layouts", x.attributes)
     self.checkOutLayouts(x, [layout])
 
   @parameterized.parameters(
@@ -166,7 +166,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
 
     layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape=shape))
 
-    self.assertEmpty(splat.attributes["in_layouts"])
+    self.assertNotIn("in_layouts", splat.attributes)
     self.checkOutLayouts(splat, [layout])
 
   def test_infer_layout_from_consumer_for_non_splat_constant(self):
@@ -186,7 +186,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
 
     self.infer_layout(self.module)
 
-    self.assertEmpty(c.attributes["in_layouts"])
+    self.assertNotIn("in_layouts", c.attributes)
     self.checkOutLayouts(c, [layout])
 
   def test_infer_splat_layout_for_vector_splat(self):
@@ -202,7 +202,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
 
     self.infer_layout(self.module)
 
-    self.assertEmpty(splat.attributes["in_layouts"])
+    self.assertNotIn("in_layouts", splat.attributes)
     self.checkOutLayouts(splat, [splat_layout])
 
     self.checkInLayouts(add, [splat_layout, splat_layout])
@@ -247,7 +247,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
 
     self.infer_layout(self.module)
 
-    self.checkInLayouts(load_op, [])
+    self.assertNotIn("in_layouts", load_op.attributes)
     self.checkOutLayouts(load_op, [strided_layout_attr])
 
   def test_infer_layout_cast_layout(self):
@@ -391,7 +391,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.infer_layout(self.module)
 
     carry_layouts = [layouts.to_layout_attr(layout)] * 2
-    self.checkOutLayouts(yield_op, [])
+    self.assertNotIn("out_layouts", yield_op.attributes)
     self.checkInLayouts(for_op, carry_layouts)
     self.checkOutLayouts(for_op, carry_layouts)
 
@@ -414,7 +414,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
 
     wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
     self.checkInLayouts(yield_op, [wgmma_layout])
-    self.checkOutLayouts(yield_op, [])
+    self.assertNotIn("out_layouts", yield_op.attributes)
     self.checkInLayouts(for_op, [wgmma_layout])
     self.checkOutLayouts(for_op, [wgmma_layout])
 
@@ -445,11 +445,10 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
 
     self.infer_layout(self.module)
 
-    if init_layout is not None or result_layout is not None:
-      init_layouts = [layouts.to_layout_attr(init_layout)] if init_layout else []
-      result_layouts = [layouts.to_layout_attr(result_layout)] if result_layout else []
-      self.checkInLayouts(while_op, init_layouts)
-      self.checkOutLayouts(while_op, result_layouts)
+    if init_layout:
+      self.checkInLayouts(while_op, [layouts.to_layout_attr(init_layout)])
+    if result_layout:
+      self.checkOutLayouts(while_op, [layouts.to_layout_attr(result_layout)])
 
   @parameterized.parameters(
       (None, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_LAYOUT),
@@ -493,10 +492,10 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
 
     self.infer_layout(self.module)
 
-    self.assertEmpty(index_switch.attributes["in_layouts"])
-    self.assertEmpty(yield0.attributes["out_layouts"])
-    self.assertEmpty(yield1.attributes["out_layouts"])
-    self.assertEmpty(yield2.attributes["out_layouts"])
+    self.assertNotIn("in_layouts", index_switch.attributes)
+    self.assertNotIn("out_layouts", yield0.attributes)
+    self.assertNotIn("out_layouts", yield1.attributes)
+    self.assertNotIn("out_layouts", yield2.attributes)
 
     self.checkOutLayouts(index_switch, out_layouts)
     self.checkInLayouts(yield0, out_layouts)
@@ -515,13 +514,11 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
 
     self.infer_layout(self.module)
 
-    self.assertIn("in_layouts", vector_store.attributes)
-    self.assertIn("out_layouts", vector_store.attributes)
-
     # The vector store should have a layout for the input array, but not for the
     # memref.
+    self.assertIn("in_layouts", vector_store.attributes)
     self.assertLen(vector_store.attributes["in_layouts"], 1)
-    self.assertEmpty(vector_store.attributes["out_layouts"])
+    self.assertNotIn("out_layouts", vector_store.attributes)
 
   @parameterized.parameters(
       mgpu.WGStridedFragLayout((64, 16), vec_size=1),
