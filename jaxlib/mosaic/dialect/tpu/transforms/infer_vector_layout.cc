@@ -1420,6 +1420,8 @@ class VectorLayoutInferer {
             std::find(dims.begin(), dims.end(), src_rank - 1) != dims.end(),
             false};
         break;
+      case VectorLayout::ImplicitDim::kMinorAndSecondMinor:
+        return op.emitOpError("Not implemented: double implicit dimensions");
     }
     if ((reduces[0] || reduces[1]) &&
         !src_layout.hasNativeTiling(target_shape_)) {
@@ -1452,6 +1454,8 @@ class VectorLayoutInferer {
               new_src_offsets[1] = new_src_offsets[0];
               new_src_offsets[0] = 0;
               break;
+            case ImplicitDim::kMinorAndSecondMinor:
+              CHECK(false);  // Checked in switch statement above
           }
           out_implicit_dim = ImplicitDim::kMinor;
           src_layout = VectorLayout(src_layout.bitwidth(), new_src_offsets,
