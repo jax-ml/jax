@@ -672,7 +672,7 @@ def _batch_inner(f: Callable, axis_data, out_dim_dests, tag, in_dims, *in_vals):
         for ref, state in trace.accumulator_states.items():
           aval = ref.aval
           from jax import lax  # pytype: disable=import-error
-          reduced = lax.reduce(state[...], aval.identity, aval.f, [0])
+          reduced = lax.reduce(state[...], aval._identity(), aval._f(), [0])
           aval._accumulate(ref, reduced, Ellipsis)
   return out_vals, trace
 

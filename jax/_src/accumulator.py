@@ -24,6 +24,7 @@ from jax._src.state import discharge
 from jax._src.state import indexing
 from jax._src.state import primitives
 from jax._src.state import types
+from jax._src.lax import lax
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -41,6 +42,16 @@ def _ndindexer_to_index(ndidx):
   return tuple(index)
 
 # Accumulator ##################################################################
+
+_monoids = {
+  'add': (lax.add, lax._get_sum_identity),
+  'mul': (lax.mul, lax._get_prod_identity),
+  'bitwise_or': (lax.bitwise_or, lax._get_bitwise_or_identity),
+  'bitwise_and': (lax.bitwise_and, lax._get_bitwise_and_identity),
+  'bitwise_xor': (lax.bitwise_xor, lax._get_bitwise_or_identity),
+  'max': (lax.max, lax._get_max_identity),
+  'min': (lax.min, lax._get_min_identity),
+}
 
 class Accumulator:
   """An ArrayRef that you can only accumulate into.
@@ -72,19 +83,26 @@ accumulator_p = core.Primitive('accumulator')
 accumulator_p.is_effectful = lambda params: True  # type: ignore
 accumulator_p.ref_primitive = True
 
-def accumulator(init_val, identity, f):
-  return accumulator_p.bind(init_val, identity=identity, f=f)
+def accumulator(init_val, f):
+  """Returns an accumulator.
+
+  f must be one of "add", "mul", "bitwise_or", "bitwise_and", "bitwise_xor",
+  "max", or "min". It determines the element-wise operation used to accumulate.
+  """
+  if f not in _monoids:
+    want = ', '.join(repr(k) for k in _monoids.keys())
+    raise ValueError(f'Unrecognized accumulation function {repr(f)}; expected one of {want}')
+  return accumulator_p.bind(init_val, f=f)
 
 @accumulator_p.def_effectful_abstract_eval
-def accumulator_abstract_eval(init_aval, identity, f):
+def accumulator_abstract_eval(init_aval, f):
   effects = {core.internal_mutable_array_effect}
-  return AbstractAccumulator(init_aval, identity, f), effects
+  return AbstractAccumulator(init_aval, f), effects
 
 @accumulator_p.def_impl
-def _accumulator_impl(init_val, identity, f):
-  from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
-  aval = AbstractAccumulator(core.get_aval(init_val), identity, f)
-  return Accumulator(aval, _array_copy(init_val))
+def _accumulator_impl(init_val, f):
+  aval = AbstractAccumulator(core.get_aval(init_val), f)
+  return Accumulator(aval, lax._array_copy(init_val))
 
 batching.defvectorized(accumulator_p)
 xla.canonicalize_dtype_handlers[Accumulator] = lambda x: x
@@ -97,18 +115,17 @@ pxla.shard_arg_handlers[Accumulator] = _shard_accumulator
 
 class AbstractAccumulator(types.AbstractRef):
   """The aval of an Accumulator."""
-  __slots__ = ["inner_aval", "identity", "f", "memory_space", "foo"]
+  __slots__ = ["inner_aval", "f", "memory_space", "foo"]
 
-  def __init__(self, inner_aval: core.AbstractValue, identity, f):
+  def __init__(self, inner_aval: core.AbstractValue, f):
     self.inner_aval = inner_aval
-    self.identity = identity
     self.f = f
     self.memory_space = None
 
   def _accumulate(self, tracer, val, idx):
     ndidx = indexing.NDIndexer.from_indices_shape(idx, tracer.shape)
     flat, tree = jax.tree.flatten(ndidx)
-    return accumulate_p.bind(tracer, val, self.identity, *flat, tree=tree, f=self.f)
+    return accumulate_p.bind(tracer, val, *flat, tree=tree, f=self.f)
 
   def _getitem(self, tracer, idx) -> jax.Array:
     ndidx = indexing.NDIndexer.from_indices_shape(idx, tracer.shape)
@@ -118,6 +135,12 @@ class AbstractAccumulator(types.AbstractRef):
   @core.aval_property
   def at(self):
     return _At(self)
+
+  def _f(self):
+    return _monoids[self.f][0]
+
+  def _identity(self):
+    return _monoids[self.f][1](self.dtype)
 
   def __repr__(self) -> str:
     return f'Accumulator[{self.inner_aval.str_short()}]'
@@ -172,24 +195,23 @@ accumulate_p.multiple_results = True
 dispatch.simple_impl(accumulate_p)
 
 @accumulate_p.def_effectful_abstract_eval
-def accumulate_abstract_eval(acc, val, identity, *flat, tree, f):
+def accumulate_abstract_eval(acc, val, *flat, tree, f):
   return [], {types.AccumEffect(0), core.internal_mutable_array_effect}
 
 @discharge.register_discharge_rule(accumulate_p)
 def _accumulate_discharge_rule(in_avals: Sequence[core.AbstractValue],
                                out_avals: Sequence[core.AbstractValue],
-                               x, val, identity, *flat, tree, f):
+                               x, val, *flat, tree, f):
   aval = in_avals[0]
   assert isinstance(aval, AbstractAccumulator)
   idx = _ndindexer_to_index(jax.tree.unflatten(tree, flat))
-  result = jnp.vectorize(aval.f)(x[idx], val)
-  return (x.at[idx].set(result),) + (None,) * (2 + len(flat)), []
+  result = jnp.vectorize(aval._f())(x[idx], val)
+  return (x.at[idx].set(result),) + (None,) * (1 + len(flat)), []
 
 def _accumulate_vmap(batched_args, batched_dims, *, trace, tree, f):
   # Extract arguments.
-  ref, val, identity, *flat_idx = batched_args
-  ref_dim, val_dim, identity_dim, *flat_idx_dims = batched_dims
-  assert identity_dim is None
+  ref, val, *flat_idx = batched_args
+  ref_dim, val_dim, *flat_idx_dims = batched_dims
   idx = jax.tree.unflatten(tree, flat_idx)
   idx_dims = jax.tree.unflatten(tree, flat_idx_dims)
 
@@ -207,8 +229,8 @@ def _accumulate_vmap(batched_args, batched_dims, *, trace, tree, f):
   # accumulator and reduce the mapped accumulator at the end of vmap.
   if not ref_is_batched:
     if ref not in trace.accumulator_states:
-      init_val = jnp.full((trace.axis_data.size,) + ref.shape, identity, dtype=aval.dtype)
-      trace.accumulator_states[ref] = accumulator(init_val, identity, f=aval.f)
+      init_val = jnp.full((trace.axis_data.size,) + ref.shape, aval._identity(), dtype=aval.dtype)
+      trace.accumulator_states[ref] = accumulator(init_val, f=aval.f)
     ref = trace.accumulator_states[ref]
     ref_dim = 0
     ref_is_batched = True
@@ -239,7 +261,7 @@ def _accumulate_vmap(batched_args, batched_dims, *, trace, tree, f):
 
   # Perform the index.
   flat, tree = jax.tree.flatten(new_idx)
-  accumulate_p.bind(ref, val, identity, *flat, tree=tree, f=aval.f)
+  accumulate_p.bind(ref, val, *flat, tree=tree, f=aval.f)
 
   # TODO: mwhittaker - Allow returning mutable arrays?
   return [], []
@@ -248,11 +270,11 @@ batching.primitive_batchers[accumulate_p] = _accumulate_vmap
 
 def _map_accumulator(size, axis, aval):
   mapped = core.mapped_aval(size, axis, aval.inner_aval)
-  return AbstractAccumulator(mapped, aval.identity, aval.f)
+  return AbstractAccumulator(mapped, aval.f)
 
 def _unmap_accumulator(size, axis, explicit_mesh_axis, aval):
   unmapped = core.unmapped_aval(size, axis, aval.inner_aval, explicit_mesh_axis)
-  return AbstractAccumulator(unmapped, aval.identity, aval.f)
+  return AbstractAccumulator(unmapped, aval.f)
 
 core.aval_mapping_handlers[AbstractAccumulator] = (_map_accumulator, _unmap_accumulator)
 
