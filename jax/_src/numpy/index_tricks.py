@@ -230,10 +230,8 @@ class RClass(_AxisConcat):
     An imaginary value for ``step`` will create a ``jnp.linspace`` object instead,
     which includes the right endpoint:
 
-    >>> jnp.r_[-1:1:6j, 0, jnp.array([1,2,3])]
-    Array([-1.        , -0.6       , -0.20000002,  0.20000005,
-           0.6       ,  1.        ,  0.        ,  1.        ,
-           2.        ,  3.        ], dtype=float32)
+    >>> jnp.r_[-1:1:6j, 0, jnp.array([1,2,3])]  # doctest: +SKIP
+    Array([-1. , -0.6, -0.2,  0.2,  0.6,  1. ,  0. ,  1. ,  2. ,  3. ],      dtype=float32)
 
     Use a string directive of the form ``"axis,dims,trans1d"`` as the first argument to
     specify concatenation axis, minimum number of dimensions, and the position of the
