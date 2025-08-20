@@ -219,6 +219,36 @@ def TPU_ReduceIndexOp : TPU_Op<"reduce_index", [Pure]> {
   let hasVerifier = 1;
 }
 
+// tpu.scan performs a scan across a vector.
+//
+// If a mask is provided, all output elements before the first unmasked input
+// element is undefined. Subsequent masked elements will hold the result
+// of the last unmasked element.
+//
+// For example, a "kSum" reduction over a input vector [1, 2, 3, 4]
+// with mask [0, 1, 0, 1] will produce the output vector [X, 2, 2, 6].
+// where X is some undefined value.
+//
+//  output : Result vector. Must have the same shape as source.
+//  input  : Vector to scan.
+//  kind   : Reduction operator. Must be one of "kSum", "kMax", or "kMin".
+//           Must be "kSum" if input is an I1 vector.
+//  mask   : Elementwise vector mask. The scan operation starts from the
+//           lowest-indexed non-masked vector element (all previous elements
+//           have undefined values). Not taken for I1 input vectors.
+def TPU_ScanOp : TPU_Op<"scan"> {
+  let arguments = (ins
+    VectorOfNonZeroRankOf<[I1, I16, I32, BF16, F32]>:$input,
+    TPU_ReductionKindAttr:$kind,
+    Optional<VectorOfNonZeroRankOf<[I1]>>:$mask
+  );
+  let results = (outs VectorOfNonZeroRankOf<[I16, I32, BF16, F32]>:$output);
+  let assemblyFormat = [{
+    $kind `,` $input (`masked` $mask^)? attr-dict `:` type($input) `,` type($mask) `->` type($output)
+  }];
+  let hasVerifier = 1;
+}
+
 def TPU_StoreOp : TPU_Op<"store", [DefaultMemWrite, AttrSizedOperandSegments]> {
   let arguments = (ins
     TPU_Vreg:$valueToStore,

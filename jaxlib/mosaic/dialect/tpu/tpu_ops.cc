@@ -1189,6 +1189,67 @@ LogicalResult MaskCastOp::verify() {
   return success();
 }
 
+LogicalResult ScanOp::verify() {
+  FailureOr<CoreType> issuing_core = GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core)) {
+    return issuing_core;
+  }
+  if (issuing_core != CoreType::kScVectorSubcore) {
+    return emitOpError("Scan is supported only on the SC vector subcore");
+  }
+
+  VectorType input_ty = getInput().getType();
+  VectorType output_ty = getOutput().getType();
+
+  if (input_ty.getElementType().isInteger(1)) {
+    if (!output_ty.getElementType().isInteger(32)) {
+      return emitOpError(
+          "Output element type must be i32 vector for i1 vector inputs.");
+    }
+  } else {
+    if (input_ty.getElementType() != output_ty.getElementType()) {
+      return emitOpError("Input and output element type mismatch.");
+    }
+  }
+
+  if (input_ty.getShape() != output_ty.getShape()) {
+    return emitOpError("Input and output shape mismatch. Input shape: (")
+           << input_ty.getShape() << "). Output shape: ("
+           << output_ty.getShape() << ").";
+  }
+
+  if (input_ty.getRank() > 2) {
+    return emitOpError("Input must be a rank 1 or 2 vector.");
+  }
+
+  if (input_ty.getElementType().isInteger(1) &&
+      getKind() != ReductionKind::kSum) {
+    return emitOpError("Only sum reduction is supported for i1 vector inputs.");
+  } else if (getKind() != ReductionKind::kSum &&
+             getKind() != ReductionKind::kMax &&
+             getKind() != ReductionKind::kMin) {
+    return emitOpError("Only sum, max and min reductions are supported.");
+  }
+
+  if (getMask() == nullptr) {
+    return success();
+  } else if (input_ty.getElementType().isInteger(1)) {
+    return emitOpError("Mask is not supported for i1 vector inputs.");
+  }
+
+  VectorType mask_ty = getMask().getType();
+  if (mask_ty.getRank() != 1) {
+    return emitOpError("Mask must be a rank 1 vector.");
+  }
+  if (mask_ty.getShape()[0] != input_ty.getShape()[input_ty.getRank() - 1]) {
+    return emitOpError("Mask and input mismatch. Expected mask of length: ")
+           << input_ty.getShape()[input_ty.getRank() - 1] << ", but got "
+           << mask_ty.getShape()[0] << ".";
+  }
+
+  return success();
+}
+
 LogicalResult GetBarrierSemaphoreOp::verify() {
   auto sem_type = getMemRefType(getResult());
   if (sem_type.getRank() != 0) {
