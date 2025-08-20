@@ -816,6 +816,38 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     ):
       self.infer_layout(self.module)
 
+  def test_tmem_layout_inference_not_implemented(self):
+    f32 = ir.F32Type.get()
+    i32 = ir.IntegerType.get_signless(32)
+    ptr_type = ir.MemRefType.get((1,), i32, memory_space=mgpu.utils.smem())
+    ref_ty = ir.MemRefType.get((128, 128), f32, memory_space=mgpu.utils.tmem())
+
+    with ir.InsertionPoint(self.module.body):
+      ptr = llvm.mlir_undef(ptr_type)
+      mgpu.dialect.tmem_alloc(ref_ty, ptr, exact=False)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Expected the same number of out_tmem_layouts as TMEM ref results.",
+    ):
+      self.infer_layout(self.module)
+
+  # TODO(allanrenucci): Delete this test once layout inference is implemented.
+  def test_manual_tmem_layout_annotation(self):
+    f32 = ir.F32Type.get()
+    i32 = ir.IntegerType.get_signless(32)
+    ptr_type = ir.MemRefType.get((1,), i32, memory_space=mgpu.utils.smem())
+    ref_ty = ir.MemRefType.get((128, 128), f32, memory_space=mgpu.utils.tmem())
+
+    with ir.InsertionPoint(self.module.body):
+      ptr = llvm.mlir_undef(ptr_type)
+      op = mgpu.dialect.TmemAllocOp(ref_ty, ptr, exact=False)
+      op.attributes["out_tmem_layouts"] = ir.ArrayAttr.get(
+          [layouts.to_layout_attr(mgpu.TMEM_NATIVE_LAYOUT)]
+      )
+    # This should not raise.
+    self.infer_layout(self.module)
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

@@ -323,6 +323,10 @@ def is_vector(v: ir.Value) -> bool:
   return ir.VectorType.isinstance(v.type)
 
 
+def _is_tmem_ref(v: ir.Value) -> bool:
+  return ir.MemRefType.isinstance(v.type) and utils.is_tmem_ref(v)
+
+
 def _pointwise_op_equation_system(
     op: ir.OpView,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
@@ -674,7 +678,7 @@ def _shape_cast_equation_system(
   )
 
 
-def _ensure_all_layouts_are_set(op: ir.OpView):
+def _ensure_all_layouts_are_set(op: ir.OpView) -> None:
   if inference_utils.should_have_layout(op):
     _ensure_right_number_of_layouts(
         op,
@@ -685,13 +689,23 @@ def _ensure_all_layouts_are_set(op: ir.OpView):
         if inference_utils.has_out_layouts_set(op)
         else [],
     )
+  if inference_utils.should_have_tmem_layout(op):
+    _ensure_right_number_of_tmem_layouts(
+        op,
+        inference_utils.in_tmem_layouts(op)
+        if inference_utils.has_in_tmem_layouts_set(op)
+        else [],
+        inference_utils.out_tmem_layouts(op)
+        if inference_utils.has_out_tmem_layouts_set(op)
+        else [],
+    )
 
 
 def _ensure_right_number_of_layouts(
     op: ir.OpView,
     in_layouts: Sequence[fa.FragmentedLayout | ir.Attribute],
     out_layouts: Sequence[fa.FragmentedLayout | ir.Attribute],
-):
+) -> None:
   """Ensures that the right number of in/out layouts are provided for an op."""
   if len(in_layouts) != sum(map(is_vector, op.operands)):
     raise ValueError(
@@ -700,6 +714,22 @@ def _ensure_right_number_of_layouts(
   if len(out_layouts) != sum(map(is_vector, op.results)):
     raise ValueError(
         "Expected the same number of out_layouts as vector results."
+    )
+
+
+def _ensure_right_number_of_tmem_layouts(
+    op: ir.OpView,
+    in_layouts: Sequence[ir.Attribute],
+    out_layouts: Sequence[ir.Attribute],
+) -> None:
+  """Ensures that the right number of in/out TMEM layouts are provided for an op."""
+  if len(in_layouts) != sum(map(_is_tmem_ref, op.operands)):
+    raise ValueError(
+        "Expected the same number of in_tmem_layouts as TMEM ref operands."
+    )
+  if len(out_layouts) != sum(map(_is_tmem_ref, op.results)):
+    raise ValueError(
+        "Expected the same number of out_tmem_layouts as TMEM ref results."
     )
 
 

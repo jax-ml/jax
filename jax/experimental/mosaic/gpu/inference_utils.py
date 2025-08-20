@@ -93,6 +93,35 @@ def out_tmem_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
   return op.attributes["out_tmem_layouts"]  # type: ignore
 
 
+def should_have_in_tmem_layout(op: MlirOperation) -> bool:
+  """Returns 'true' if the operation operands should be assigned a TMEM layout."""
+  return any(
+      ir.MemRefType.isinstance(v.type) and utils.is_tmem_ref(v)
+      for v in op.operands
+  )
+
+
+def should_have_out_tmem_layout(op: MlirOperation) -> bool:
+  """Returns 'true' if the operation results should be assigned a TMEM layout."""
+  return any(
+      ir.MemRefType.isinstance(v.type) and utils.is_tmem_ref(v)
+      for v in op.results
+  )
+
+
+def should_have_tmem_layout(op: MlirOperation) -> bool:
+  """Returns 'true' if the operation should be assigned a TMEM layout."""
+  return should_have_in_tmem_layout(op) or should_have_out_tmem_layout(op)
+
+
+def has_in_tmem_layouts_set(op: MlirOperation) -> bool:
+  return "in_tmem_layouts" in op.attributes
+
+
+def has_out_tmem_layouts_set(op: MlirOperation) -> bool:
+  return "out_tmem_layouts" in op.attributes
+
+
 def should_have_in_layout(op: MlirOperation) -> bool:
   """Returns 'true' if the operation operands should be assigned a layout."""
   return any(ir.VectorType.isinstance(v.type) for v in op.operands)
