@@ -2846,14 +2846,9 @@ def _sharding_constraint_impl(x, sharding, layout, context_mesh,
       sharding = NamedSharding(x.sharding.mesh, sharding.spec)
 
   if layout is None:
-    if hasattr(x, 'sharding') and x.sharding.is_equivalent_to(sharding, x.ndim):
-      return x
     # Run a jit here to raise good errors when device assignment don't match.
     return api.jit(_identity_fn, out_shardings=sharding)(x)
   else:
-    if (hasattr(x, 'format') and x.format.layout == layout and
-        x.sharding.is_equivalent_to(sharding, x.ndim)):
-      return x
     return api.jit(_identity_fn, out_shardings=Format(layout, sharding))(x)
 
 

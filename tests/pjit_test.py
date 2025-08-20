@@ -2640,6 +2640,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
       for i, x, y in zip(range(n), xs, ys):
         self.assertAllClose(x + i, y)
 
+  def test_wsc_eager_copy(self):
+    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    x = jnp.arange(10)
+    y_wsc = jax.lax.with_sharding_constraint(x, sharding)
+    y_jit = jax.jit(lambda x: x, out_shardings=sharding)(x)
+    y_dp = jax.device_put(x, sharding)
+    self.assertTrue(y_wsc.committed)
+    self.assertTrue(y_jit.committed)
+    self.assertTrue(y_dp.committed)
+
   def test_trivial_computation(self):
     shape = (8, 2)
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
@@ -3863,13 +3873,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
     for s in out.addressable_shards:
       self.assertArraysEqual(s.data, np_inp[s.index])
-
-  def test_wsc_eager_no_resharding(self):
-    mesh = jtu.create_mesh((2,), ('x',))
-    np_inp = np.arange(8)
-    inp = jax.device_put(np_inp, NamedSharding(mesh, P('x')))
-    out = with_sharding_constraint(inp, NamedSharding(mesh, P('x')))
-    self.assertEqual(id(out), id(inp))
 
   def test_wsc_eager_different_order_devices(self):
     mesh1 = jtu.create_mesh((2,), ('x',))
