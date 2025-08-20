@@ -397,6 +397,26 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "custom_partitioning_test",
+    srcs = ["custom_partitioning_test.py"],
+    backend_tags = {
+        "tpu": ["notsan"],  # Times out under tsan.
+        "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
+    },
+    enable_configs = [
+        "tpu_v3_x4",
+        "gpu_h100x2",
+    ],
+    tags = ["multiaccelerator"],
+    deps = [
+        "//jax:experimental",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "pjit_test",
     srcs = ["pjit_test.py"],
     backend_tags = {
