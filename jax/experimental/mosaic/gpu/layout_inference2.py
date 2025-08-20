@@ -939,6 +939,11 @@ def infer_layout(module: ir.Module):
   global_equation_system &= eqns.EquationSystem(constraints=constraints)
   assert not isinstance(global_equation_system, eqns.Unsatisfiable)
 
+  # Add additional (redundant) constraints which helps the search converge
+  # faster.
+  global_equation_system = eqns.saturate_distinct_from_splat(global_equation_system)
+  assert not isinstance(global_equation_system, eqns.Unsatisfiable)
+
   # Attempt to find assignments that satisfy the equation system.
   solution = find_assignments_for(
       operand_and_results_for_variable.keys(), global_equation_system, hints

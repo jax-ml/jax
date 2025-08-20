@@ -347,6 +347,75 @@ class EquationSystemTest(parameterized.TestCase):
     eq = equations.Reshape(layout, source_shape, target_shape)
     self.assertEqual(equations.reduce_expression(eq, {}), layout)
 
+  def test_relayout_of_non_splat_to_splat_is_unsatisfiable_shortcut(
+      self,
+  ):
+    splat_layout = C(mgpu.WGSplatFragLayout((128,)))
+    v0, v1 = V(0), V(1)
+    system = equations.EquationSystem(
+        assignments={v1: splat_layout},
+        constraints=[
+            equations.Distinct(v0, splat_layout),
+            equations.Relayout(v0, v1),
+        ],
+    )
+    self.assertIsInstance(equations.reduce(system), equations.Unsatisfiable)
+
+  def test_saturate_distinct_from_splat_does_not_create_duplicate_constraints(
+      self,
+  ):
+    splat_layout = C(mgpu.WGSplatFragLayout((128,)))
+    v0, v1, v2 = V(0), V(1), V(2)
+    system = equations.EquationSystem(constraints = [
+          equations.Distinct(v0, splat_layout),
+          equations.Distinct(v1, splat_layout),
+          equations.Relayout(v0, v2),
+          equations.Relayout(v1, v2),
+      ],
+    )
+
+    self.assertEqual(
+        equations.saturate_distinct_from_splat(system),
+        equations.EquationSystem(
+            constraints=[
+                equations.Distinct(v0, splat_layout),
+                equations.Distinct(v1, splat_layout),
+                equations.Relayout(v0, v2),
+                equations.Relayout(v1, v2),
+                equations.Distinct(v2, splat_layout),
+            ],
+        ),
+    )
+
+  def test_saturate_distinct_from_splat_does_not_affect_non_splat(
+      self,
+  ):
+    splat_layout = C(mgpu.WGSplatFragLayout((128,)))
+    wgmma_layout = C(mgpu.WGMMA_LAYOUT)
+    v0, v1, v2, v3, v4 = V(0), V(1), V(2), V(3), V(4)
+    system = equations.EquationSystem(constraints = [
+          equations.Distinct(v0, splat_layout),
+          equations.Distinct(v1, wgmma_layout),
+          equations.Relayout(v0, v2),
+          equations.Relayout(v1, v3),
+          equations.Relayout(v4, v0),
+      ],
+    )
+
+    self.assertEqual(
+        equations.saturate_distinct_from_splat(system),
+        equations.EquationSystem(
+            constraints=[
+                equations.Distinct(v0, splat_layout),
+                equations.Distinct(v1, wgmma_layout),
+                equations.Relayout(v0, v2),
+                equations.Relayout(v1, v3),
+                equations.Relayout(v4, v0),
+                equations.Distinct(v2, splat_layout),
+            ],
+        ),
+    )
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

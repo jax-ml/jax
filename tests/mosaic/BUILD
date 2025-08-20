@@ -124,6 +124,7 @@ jax_py_test(
 
 jax_py_test(
     name = "gpu_layout_inference_test",
+    size = "small",
     srcs = ["gpu_layout_inference_test.py"],
     deps = [
         "//jax",

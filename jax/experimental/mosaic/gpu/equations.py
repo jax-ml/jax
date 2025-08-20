@@ -490,12 +490,85 @@ class Tautological:
   ...
 
 
+def non_splat_variables(
+    constraints: Sequence[Constraint],
+) -> dict[Variable, Constant]:
+  """Returns a map var->splat_layout for all vars distinct from a splat."""
+  result: dict[Variable, Constant] = {}
+  for constraint in constraints:
+    match constraint:
+      case Distinct(lhs=lhs, rhs=rhs):
+        if isinstance(lhs, Variable) and isinstance(rhs, Constant) and isinstance(rhs.value, fa.WGSplatFragLayout):
+          result[lhs] = rhs
+        if isinstance(rhs, Variable) and isinstance(lhs, Constant) and isinstance(lhs.value, fa.WGSplatFragLayout):
+          result[rhs] = lhs
+  return result
+
+
 # The result of reducing an equation---and by extension, a system of
 # equations. An equation can either be unsatisfiable (i.e. there exists no
 # assignment for which it holds), satisfied by an assignment, unknown (i.e.
 # still undetermined), or tautological (i.e. the equation is guaranteed to
 # hold for any assignment).
 Solution = Unsatisfiable | SatisfiedBy | Unknown | Tautological
+
+
+def _has_relayout_of_non_splat_to_splat(constraints: Sequence[Constraint]) -> bool:
+  """Returns whether the constraints imply a non-splat to splat relayout.
+
+  Such relayouts are impossible and this helps shortcut the search.
+
+  If this function returns False, this doesn't necessarily mean that there are
+  no non-splat to splat relayouts, just that this is not known yet.
+  """
+  non_splat = non_splat_variables(constraints)
+  if not non_splat:
+    return False
+
+  def is_constant_splat(e) -> bool:
+    return isinstance(e, Constant) and isinstance(e.value, fa.WGSplatFragLayout)
+
+  for constraint in constraints:
+    match constraint:
+      case Relayout(source=source, target=target):
+        if source in non_splat and is_constant_splat(target):
+          return True
+      case _:
+        pass
+  return False
+
+
+def saturate_distinct_from_splat(
+    equation_system: EquationSystem,
+) -> EquationSystem | Unsatisfiable:
+  """Adds transitive Distinct constraints for all non-splat variables.
+
+  Given `n` variables `l0`, ... `l{n-1}`, and a set of relayouts
+  `{ Relayout(l{i}, l{i+1}) : 0 <= i < n }`, if we also know that
+  `l{0}` is not splat, then we can automatically deduce that none of
+  `l0`, ..., `l{n-1}` are splat either.
+
+  This helps us quickly conclude that a system is unsatisfiable in cases where
+  a non-splat variable is transitively relaid out into a splat layout.
+  """
+  non_splat = non_splat_variables(equation_system.constraints)
+  new_constraints: list[Constraint] = []
+  new_non_splat_found = len(non_splat) > 0
+
+  while new_non_splat_found:
+    new_non_splat_found = False
+    for constraint in equation_system.constraints:
+      match constraint:
+        case Relayout(source=source, target=target):
+          if isinstance(target, Variable) and source in non_splat and target not in non_splat:
+            new_non_splat_found = True
+            assert isinstance(source, Variable)
+            splat_layout = non_splat[source]
+            non_splat[target] = splat_layout
+            new_constraints.append(Distinct(lhs=target, rhs=splat_layout))
+        case _:
+          pass
+  return equation_system & EquationSystem(constraints=new_constraints)
 
 
 def _reduce_system_once(
@@ -541,6 +614,11 @@ def _reduce_system_once(
       case _ as new_constraint:
         changed |= new_constraint != constraint
         constraints.append(new_constraint)
+
+  # Shortcut for a specific case of unsatisfiability. This shortcut
+  # drastically reduces the size of the search space.
+  if _has_relayout_of_non_splat_to_splat(equation_system.constraints):
+    return Unsatisfiable()
 
   if changed:
     return EquationSystem(

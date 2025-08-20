@@ -27,6 +27,7 @@ from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import llvm
+from jax._src.lib.mlir.dialects import math
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import jax.experimental.mosaic.gpu as mgpu
@@ -847,6 +848,43 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       )
     # This should not raise.
     self.infer_layout(self.module)
+
+  def test_layout_inference_gelu_does_not_timeout(self):
+    # This test is intended to make sure that the constraint-based layout
+    # inference does not timeout on a Gelu kernel. This was previously the case,
+    # and we want to make sure that regressions don't happen.
+    with ir.InsertionPoint(self.module.body):
+      shape = (128,)
+      f32 = ir.F32Type.get()
+      vector_ty = ir.VectorType.get(shape, f32)
+      memref_ty = ir.MemRefType.get(shape, f32)
+
+      # The code below is essentially jax.nn.gelu().
+      c_05 = arith.constant(vector_ty, ir.DenseElementsAttr.get_splat(vector_ty, ir.FloatAttr.get(f32, 0.5)))
+      c_1 = arith.constant(vector_ty, ir.DenseElementsAttr.get_splat(vector_ty,  ir.FloatAttr.get(f32, 1.0)))
+      c_079 = arith.constant(vector_ty, ir.DenseElementsAttr.get_splat(vector_ty,  ir.FloatAttr.get(f32, 0.797884583)))
+      c_044 = arith.constant(vector_ty, ir.DenseElementsAttr.get_splat(vector_ty,  ir.FloatAttr.get(f32, 0.044715)))
+
+      zero = mgpu.utils.c(0, ir.IntegerType.get_signless(32))
+      memref = llvm.UndefOp(memref_ty)
+      load = vector.LoadOp(vector_ty, memref, [zero])
+      x = load.result
+      x2 = arith.mulf(x, x)
+      x3 = arith.mulf(x2, x)
+      y = arith.mulf(x3, c_044)
+      x_y = arith.addf(x, y)
+      z = arith.mulf(x_y, c_079)
+      t = math.tanh(z)
+      u = arith.addf(t, c_1)
+      v = arith.mulf(u, c_05)
+      r = arith.mulf(x, v)
+      store = vector.StoreOp(r, memref, [zero])
+
+    mgpu.infer_layout(self.module)
+
+    strided_layout = layouts.to_layout_attr(mgpu.WGStridedFragLayout(shape, 1))
+    self.checkOutLayouts(load, [strided_layout])
+    self.checkInLayouts(store, [strided_layout])
 
 
 if __name__ == "__main__":
