@@ -2575,9 +2575,10 @@ def _for_lowering_rule(
   should_discharge = [
       not isinstance(a, state.AbstractRef) for a in ctx.avals_in
   ]
-  discharged_jaxpr, () = discharge.discharge_state(
-      jaxpr, (), should_discharge=[True, *should_discharge]
+  discharged_jaxpr = discharge.discharge_state2(
+      pe.close_jaxpr(jaxpr), should_discharge=[True, *should_discharge]
   )
+  assert not discharged_jaxpr.consts
   in_avals = [v.aval for v in jaxpr.invars]
   state_effects = state.get_ref_state_effects(in_avals, jaxpr.effects)[1:]
   # Read-only `Ref`s don't need to be passed in explicitly as loop arguments so
@@ -2597,7 +2598,7 @@ def _for_lowering_rule(
     loop_body_args = merge_lists(is_loop_arg, non_loop_args, for_body_args)
     out_discharged = lower_jaxpr_to_triton_ir(
         ctx.context,
-        discharged_jaxpr,
+        discharged_jaxpr.jaxpr,
         [None, *ctx.block_infos],
         loop_index,
         *loop_body_args,

@@ -3085,9 +3085,10 @@ def _for_lowering_rule(
   should_discharge = [
       not isinstance(aval, state.AbstractRef) for aval in ctx.avals_in
   ]
-  jaxpr, () = state_discharge.discharge_state(
-      jaxpr, (), should_discharge=[False, *should_discharge]
-  )
+  jaxpr_ = state_discharge.discharge_state2(
+      pe.close_jaxpr(jaxpr), should_discharge=[False, *should_discharge])
+  assert not jaxpr_.consts
+  jaxpr = jaxpr_.jaxpr
   for i in range(nsteps):
     if reverse:
       i = nsteps - i - 1

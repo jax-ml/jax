@@ -1289,8 +1289,9 @@ def call_transpose(primitive, params, call_jaxpr: core.Jaxpr, args, ct, _):
   else:
     consts = ()
   all_args, in_tree_def = tree_flatten((consts, args, ct))
+  dbg = call_jaxpr.debug_info._replace(arg_names=(), result_paths=())
   fun = lu.hashable_partial(lu.wrap_init(
-    backward_pass, debug_info=call_jaxpr.debug_info), call_jaxpr, False)
+    backward_pass, debug_info=dbg), call_jaxpr, False)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   update_params = call_transpose_param_updaters.get(primitive)
   if update_params:

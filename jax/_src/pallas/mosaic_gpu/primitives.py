@@ -30,6 +30,7 @@ from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import builtin as builtin_dialect
@@ -1969,10 +1970,11 @@ def _jaxpr_call_discharge(
       [treedef.num_leaves for treedef in ref_treedefs[: len(ref_treedefs) - 1]],
   )
   should_discharge = [*map(any, flat_should_discharge)]
-  discharged_jaxpr, discharged_consts = discharge.discharge_state(
-      jaxpr, (), should_discharge=should_discharge
+  discharged_jaxpr_ = discharge.discharge_state2(
+      pe.close_jaxpr(jaxpr), should_discharge=should_discharge
   )
-  assert not discharged_consts
+  assert not discharged_jaxpr_.consts
+  discharged_jaxpr = discharged_jaxpr_.jaxpr
   outs = jaxpr_call_p.bind(
       *flat_args,
       jaxpr=discharged_jaxpr,

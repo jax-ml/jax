@@ -1836,13 +1836,6 @@ def _move_mutable_consts(
                      effects, closed_jaxpr.jaxpr.debug_info)
   return core.ClosedJaxpr(jaxpr, consts), in_mut
 
-@weakref_lru_cache
-def _discharge_internal_refs(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
-  from jax._src.state.discharge import discharge_state  # pytype: disable=import-error
-  jaxpr_, consts = discharge_state(jaxpr.jaxpr, jaxpr.consts)
-  jaxpr_._debug_info = jaxpr.jaxpr._debug_info
-  return core.ClosedJaxpr(jaxpr_, consts)
-
 
 class SemanticallyEqualShardings:
 
@@ -2122,6 +2115,7 @@ def to_gspmd_sharding(s: JSharding, ndim: int) -> GSPMDSharding:
 
 def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
                           donated_invars, out_shardings, out_layouts):
+  from jax._src.state.discharge import discharge_state2  # pytype: disable=import-error
   if (any(isinstance(e, RefEffect) for e in closed_jaxpr.effects) or
       any(isinstance(a, AbstractRef) for a in closed_jaxpr.in_avals)):
     closed_jaxpr, inout_aliases, mut = _discharge_refs(closed_jaxpr)
@@ -2138,7 +2132,7 @@ def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
   else:
     inout_aliases = mut = None
     if any(isinstance(e, core.InternalMutableArrayEffect) for e in closed_jaxpr.effects):
-      closed_jaxpr = _discharge_internal_refs(closed_jaxpr)
+      closed_jaxpr = discharge_state2(closed_jaxpr)
 
   return (closed_jaxpr, inout_aliases, mut, in_shardings, in_layouts,
           donated_invars, out_shardings, out_layouts)

@@ -73,9 +73,9 @@ def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any], * ,
   in_avals = [v.aval.inner_aval
               if isinstance(v.aval, AbstractRef) and d
               else v.aval for v, d in zip(jaxpr.invars, should_discharge)]
+  dbg = jaxpr.debug_info._replace(result_paths=())
   eval_jaxpr = lu.wrap_init(partial(_eval_jaxpr_discharge_state, jaxpr,
-                                    should_discharge, consts),
-                            debug_info=jaxpr.debug_info)
+                                    should_discharge, consts), debug_info=dbg)
   new_jaxpr, _ , new_consts = pe.trace_to_jaxpr_dynamic(eval_jaxpr, in_avals)
   return new_jaxpr, new_consts
 
@@ -556,25 +556,14 @@ def _addupdate_discharge(x, val, idx, tree):
     x = x.transpose(transpose_order_inversed)
   return x
 
-
-@weakref_lru_cache
-def _cached_closed_jaxpr_discharge(closed_jaxpr: core.ClosedJaxpr):
-  jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
-  num_outs = len(jaxpr.outvars)
-  discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)
-  discharged_closed_jaxpr = core.ClosedJaxpr(discharged_jaxpr, discharged_consts)
-  fun = lu.wrap_init(core.jaxpr_as_fun(discharged_closed_jaxpr),
-                     debug_info=discharged_jaxpr.debug_info)
-  return discharged_closed_jaxpr, num_outs, fun
-
 @register_discharge_rule(core.closed_call_p)
 def _closed_call_discharge_rule(
-    in_avals: Sequence[core.AbstractValue], _,*args,
-    call_jaxpr: core.ClosedJaxpr):
-  discharged_closed_jaxpr, num_outs, fun = _cached_closed_jaxpr_discharge(call_jaxpr)
-  out_and_ref_vals = core.closed_call_p.bind(fun, *args,
-                                             call_jaxpr=discharged_closed_jaxpr)
-  out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
+    in_avals, _, *args, call_jaxpr: core.ClosedJaxpr):
+  dis_jaxpr = discharge_state2(call_jaxpr)
+  fun = lu.wrap_init(core.jaxpr_as_fun(dis_jaxpr),
+                     debug_info=dis_jaxpr.jaxpr.debug_info)
+  out_and_ref_vals = core.closed_call_p.bind(fun, *args)
+  out_vals, ref_vals = split_list(out_and_ref_vals, [len(call_jaxpr.out_avals)])
   ref_vals_iter = iter(ref_vals)
   new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
                      else None for aval in in_avals)

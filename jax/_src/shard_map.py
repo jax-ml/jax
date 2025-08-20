@@ -1864,9 +1864,9 @@ def _shard_map_discharge(
   inner_mesh = _as_manual_mesh(mesh, manual_axes)
   with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
-    discharged_jaxpr, discharged_consts = discharge.discharge_state(jaxpr, ())
-  if discharged_consts: raise NotImplementedError
-  del discharged_consts
+    discharged_jaxpr_ = discharge.discharge_state2(pe.close_jaxpr(jaxpr))
+  if discharged_jaxpr_.consts: raise NotImplementedError
+  discharged_jaxpr = discharged_jaxpr_.jaxpr
 
   ref_specs = [spec for spec, invar in zip(in_specs, jaxpr.invars)
                if isinstance(invar.aval, AbstractRef)]

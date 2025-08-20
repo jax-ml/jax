@@ -1095,6 +1095,7 @@ def _cond_lowering(ctx, index, *args, branches,
 
 mlir.register_lowering(cond_p, _cond_lowering)
 
+# TODO(mattjj): put the jaxpr manipulations under a cache
 @register_partial_discharge_rule(cond_p)
 def _cond_state_discharge_rule(should_discharge, in_avals, out_avals, index, *args,
                                branches, **params):
