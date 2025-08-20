@@ -16,6 +16,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+
+## JAX 0.7.1 (August 20, 2025)
+
 * New features
   * JAX now ships Python 3.14 and 3.14t wheels.
   * JAX now ships Python 3.13t and 3.14t wheels on Mac. Previously we only
