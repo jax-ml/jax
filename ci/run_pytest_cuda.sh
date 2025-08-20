@@ -67,9 +67,8 @@ export memory_per_gpu_mib=$(nvidia-smi --query-gpu=memory.total --format=csv,noh
 echo "Reported memory per GPU: $memory_per_gpu_mib MiB"
 
 if [[ "$gpu_name" =~ H100 ]]; then
-  echo "H100 detected. Reducing available memory by 10% to prevent OOM errors"
-  # Use 90% of the reported memory using integer arithmetic.
-  memory_per_gpu_mib=$((memory_per_gpu_mib * 90 / 100))
+  echo "H100 detected. Reducing available memory by 60% to try prevent OOM errors"
+  memory_per_gpu_mib=$((memory_per_gpu_mib * 40 / 100))
   echo "Adjusted effective memory per GPU: $memory_per_gpu_mib MiB"
 fi
 
