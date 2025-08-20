@@ -327,8 +327,8 @@ def initialize():
   if not os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK"):
     _check_cuda_versions(raise_on_first_error=True)
   else:
-    print('Skipped CUDA versions constraints check due to the '
-          'JAX_SKIP_CUDA_CONSTRAINTS_CHECK env var being set.')
+    logger.debug('Skipped CUDA versions constraints check due to the '
+                'JAX_SKIP_CUDA_CONSTRAINTS_CHECK env var being set.')
 
   options = xla_client.generate_pjrt_gpu_plugin_options()
   c_api = xb.register_plugin(
