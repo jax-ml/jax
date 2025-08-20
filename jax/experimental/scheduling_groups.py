@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import api_util
@@ -25,12 +27,15 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 def scheduling_group(name):
+  return xla_metadata(scheduling_group=name)
+
+def xla_metadata(**meta):
   def wrap1(f):
     def wrap2(*args, **kwargs):
       args_flat, in_tree = tree_flatten((args, kwargs))
       dbg = api_util.debug_info('scheduling_group', f, args, kwargs)
       f_, out_tree = api_util.flatten_fun(lu.wrap_init(f, debug_info=dbg), in_tree)
-      out_flat = scheduling_group_p.bind(f_, *args_flat, name=name)
+      out_flat = scheduling_group_p.bind(f_, *args_flat, meta=tuple(meta.items()))
       return tree_unflatten(out_tree(), out_flat)
     return wrap2
   return wrap1
@@ -41,14 +46,23 @@ scheduling_group_p.def_effectful_abstract_eval(
     lambda *_, call_jaxpr: (call_jaxpr.out_avals, call_jaxpr.effects))
 
 def _scheduling_group_lowering(
-    ctx: mlir.LoweringRuleContext, *args, name: str, call_jaxpr: core.ClosedJaxpr):
+    ctx: mlir.LoweringRuleContext, *args, meta: tuple[tuple[str, Any], ...],
+    call_jaxpr: core.ClosedJaxpr):
   out_nodes, tokens = mlir.call_lowering(
       "scheduling_group_call", call_jaxpr, None, ctx.module_context,
       ctx.avals_in, ctx.avals_out, ctx.tokens_in, *args,
       dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering,
-      attributes=dict(scheduling_group=ir.StringAttr.get(name)))
+      attributes={k: attr_get(v) for k, v in meta})
   ctx.set_tokens_out(tokens)
   return out_nodes
 mlir.register_lowering(scheduling_group_p, _scheduling_group_lowering)
+
+def attr_get(x):
+  if isinstance(x, str):
+    return ir.StringAttr.get(x)
+  elif isinstance(x, int):
+    return ir.IntAttr.get(x)
+  else:
+    raise NotImplementedError(f'mlir attr handler for {type(x)=}')
 
 ad.primitive_transposes[scheduling_group_p] = ad.primitive_transposes[core.closed_call_p]
