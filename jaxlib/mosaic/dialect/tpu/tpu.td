@@ -740,7 +740,7 @@ def TPU_MatmulOp : TPU_Op<"matmul", [Pure]> {
   let hasVerifier = 1;
 }
 
-def TPU_ConcatenateOp : TPU_Op<"concatenate", [Pure]> {
+def TPU_ConcatenateOp : TPU_Op<"concatenate", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let arguments = (ins
     Variadic<AnyVectorOfNonZeroRank>:$sources,
     I32Attr:$dimension
