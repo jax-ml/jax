@@ -18,6 +18,7 @@ common --experimental_cc_shared_library
 
 build --incompatible_enable_cc_toolchain_resolution
 build --repo_env USE_HERMETIC_CC_TOOLCHAIN=1
+build --toolchain_resolution_debug=.*
 
 # TODO: Migrate for https://github.com/bazelbuild/bazel/issues/7260
 build:clang_local --noincompatible_enable_cc_toolchain_resolution
@@ -429,6 +430,7 @@ build:rbe_cross_compile_base --remote_instance_name=projects/tensorflow-testing/
 # RBE cross-compile configs for Linux Aarch64
 build:rbe_cross_compile_linux_aarch64 --config=cross_compile_linux_aarch64
 build:rbe_cross_compile_linux_aarch64 --config=rbe_cross_compile_base
+build:rbe_cross_compile_linux_aarch64 --config=clang_local
 
 # Avoids a timeout in linalg_test on ARM.
 build:rbe_cross_compile_linux_aarch64 --test_env=OMP_NUM_THREADS=8
