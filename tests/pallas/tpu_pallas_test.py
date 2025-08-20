@@ -2151,6 +2151,36 @@ class PallasCallTest(PallasBaseTest):
     mosaic_nans = jnp.isnan(run(x, w)).sum()
     self.assertEqual(jax_nans, mosaic_nans)
 
+  @parameterized.product(
+      in_dtype=[jnp.int8, jnp.int16, jnp.int32, jnp.bfloat16, jnp.float32],
+      out_dtype=[jnp.int8, jnp.int16, jnp.int32, jnp.bfloat16, jnp.float32],
+  )
+  def test_scalar_casting(self, in_dtype, out_dtype):
+    def kernel(x_ref, o_ref):
+      o_ref[0] = x_ref[0].astype(out_dtype)
+
+    if in_dtype == jnp.bfloat16 and out_dtype == jnp.float32:
+      self.skipTest('TODO(b/412984649): bf16 -> f32 casting is not supported')
+    elif in_dtype == jnp.bfloat16 and out_dtype in [
+        jnp.int8,
+        jnp.int16,
+        jnp.int32,
+    ]:
+      self.skipTest('Any casting of bf16 -> iX requires bf16 -> f32 support')
+    elif in_dtype == jnp.int8 and out_dtype == jnp.int16:
+      self.skipTest('TODO(b/440044271): i8 -> i16 casting is not supported')
+    elif in_dtype == jnp.int16 and out_dtype == jnp.int8:
+      self.skipTest('TODO(b/440044490): i16 -> i8 casting is not supported')
+
+    x = jnp.asarray([-1], dtype=in_dtype)
+    y = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+        out_shape=jax.ShapeDtypeStruct(x.shape, out_dtype),
+    )(x)
+    self.assertEqual(y, x.astype(out_dtype))
+
   @parameterized.product(in_dtype=[jnp.int4, jnp.int8, jnp.int16, jnp.int32])
   def test_scalar_load_upcast(self, in_dtype):
     if in_dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
