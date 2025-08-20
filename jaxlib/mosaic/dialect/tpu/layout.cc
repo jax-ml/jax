@@ -484,12 +484,11 @@ bool VectorLayout::generalizes(
   if (implicit_dim_ != other.implicit_dim_) {
     // Don't fail yet!
     if (tiling_[0] == 1 && other.tiling_[0] == 1 &&
-        ((implicit_dim_ == ImplicitDim::kSecondMinor &&
-          other.implicit_dim_ == ImplicitDim::kNone) ||
-         (implicit_dim_ == ImplicitDim::kNone &&
-          other.implicit_dim_ == ImplicitDim::kSecondMinor))) {
+        (isMinorImplicit(implicit_dim_) ==
+         isMinorImplicit(other.implicit_dim_))) {
       // If the tiling is (1, n), we can always squeeze an implicit 2nd minor
-      // dimension without having to combine vregs.
+      // dimension without having to combine vregs - we only care about the
+      // minor dimension staying the same.
     } else {
       if (shape.data() == nullptr) {
         return false;
@@ -498,8 +497,17 @@ bool VectorLayout::generalizes(
       // implicit dimensions are the same in the 2 minormost dimensions for both
       // layouts, then the elements must be laid out the same way (before
       // tiling).
-      if (getImplicitTiledDims(shape, 1) !=
-          other.getImplicitTiledDims(shape, 1)) {
+      const std::array<int64_t, 2> self_tiled_idims =
+          getImplicitTiledDims(shape, 1);
+      const std::array<int64_t, 2> other_tiled_idims =
+          other.getImplicitTiledDims(shape, 1);
+      // If the tiling is (1, n), we can squeeze or insert at the 2nd minor
+      // dimension without having to combine vregs.
+      const bool is_1d_tiling = tiling_[0] == 1 && other.tiling_[0] == 1;
+      if (!is_1d_tiling && self_tiled_idims[0] != other_tiled_idims[0]) {
+        return false;
+      }
+      if (self_tiled_idims[1] != other_tiled_idims[1]) {
         return false;
       }
     }
@@ -537,6 +545,9 @@ Stream& printImplicitDim(Stream& os, VectorLayout::ImplicitDim dim) {
       break;
     case VectorLayout::ImplicitDim::kSecondMinor:
       os << "-2";
+      break;
+    case VectorLayout::ImplicitDim::kMinorAndSecondMinor:
+      os << "-2,-1";
       break;
   }
   return os;
@@ -627,7 +638,9 @@ std::optional<VectorLayout> VectorLayout::parse(StringRef* data) {
       local.consumeInteger(10, tiling[1]) || !local.consume_front(")")) {
     return std::nullopt;
   }
-  if (local.consume_front(",-1")) {
+  if (local.consume_front(",-2,-1")) {
+    implicit_dim = ImplicitDim::kMinorAndSecondMinor;
+  } else if (local.consume_front(",-1")) {
     implicit_dim = ImplicitDim::kMinor;
   } else if (local.consume_front(",-2")) {
     implicit_dim = ImplicitDim::kSecondMinor;
