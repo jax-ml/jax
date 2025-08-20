@@ -2943,6 +2943,12 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
   operand_vregs.reserve(op.getNumOperands());
 
   auto res_layout = layouts_out.front();
+  const int8_t bitwidth = res_layout->bitwidth();
+  const int packing = res_layout->packing();
+  const std::array<int64_t, 2> tiling = res_layout->tiling();
+  const std::array<int64_t, 2> vreg_slice =
+      res_layout->vregSlice(ctx.target_shape);
+
 
   TPU_ASSERT_OP(res_layout.has_value());
 
@@ -2952,7 +2958,6 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
 
   // Op level invariants on layouts, other op level invariants are checked in
   // the verifier.
-  auto res_tiling = res_layout->tiling();
   for (int i = 0; i < op.getNumOperands(); ++i) {
     auto operand = op.getOperand(i);
     if (!layouts_in[i].has_value()) {
@@ -2960,7 +2965,7 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
     }
     auto const &layout = *layouts_in[i];
 
-    if (layout.tiling() != res_tiling) {
+    if (layout.tiling() != tiling) {
       return op.emitOpError("Not implemented: result/input Tiling mismatch");
     }
 
@@ -2988,10 +2993,7 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
   CHECK_EQ(operand_vregs.size(), op.getNumOperands());
   SmallVector<int64_t> vreg_array_shape =
       res_layout->tileArrayShape(res_ty.getShape(), ctx.target_shape);
-
-  // Fill out out_vregs with nulls, to avoid a problem with where we have to
-  // blend with a vreg that has not been written to yet.
-  xla::Array<Value> out_vregs(vreg_array_shape, nullptr);
+  xla::Array<Value> out_vregs(vreg_array_shape);
 
   auto boundIdxConst =
       std::bind(IdxConst, std::placeholders::_1, builder, op.getLoc());
@@ -3005,58 +3007,29 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
       return op.emitOpError("Not implemented: result non-zero offset.");
     }
     if (!res_layout->hasNativeTiling(ctx.target_shape) &&
-        !(tiling_dim == 1 && res_tiling[1] == ctx.target_shape[1])) {
+        !(tiling_dim == 1 && tiling[1] == ctx.target_shape[1])) {
       return op.emitOpError("Not implemented: Unsupported tiling.");
     }
 
-    int64_t offset_at_dim = 0;
-    {
-      for (int i = 0; i < op.getNumOperands(); ++i) {
-        Value operand = op.getOperand(i);
-        const Layout &layout = *layouts_in[i];
-        xla::Array<Value> vreg_array = operand_vregs[i];
-        std::array<int64_t, 2> vreg_slice = layout->vregSlice(ctx.target_shape);
-        std::array<int64_t, 2> tiling = layout->tiling();
-
-        VectorType vty = cast<VectorType>(operand.getType());
-        ArrayRef<int64_t> shape = vty.getShape();
-
-        int64_t offset_amount = offset_at_dim % vreg_slice[tiling_dim];
-        if (offset_amount >= tiling[tiling_dim]) {
-          return op.emitError(
-              "Not implemented: Input offsets outside of the first tile");
-        }
-        if (offset_amount != layout->offsets()[tiling_dim]) {
-          return op.emitOpError(
-              "Not implemented: Relayout not called, unaligned dims "
-              "concatenated without proper offsets. Ensure that "
-              "infer_vector_layout pass was called.");
-        }
-        offset_at_dim += shape[dimension];
-      }
-    }
-
     // Tiled concatenation logic.
-    int64_t offset = 0;
-    for (size_t i = 0; i < operand_vregs.size(); ++i) {
-      auto &vreg = operand_vregs[i];
-      const auto &layout = layouts_in[i];
-      const int packing = res_layout->packing();
+    int64_t offset_at_dim = 0;
+    for (size_t i = 0; i < op.getNumOperands(); ++i) {
+      auto& vregs = operand_vregs[i];
 
-      const int64_t operand_offset = *layout->offsets()[tiling_dim];
-      if (operand_offset != 0) {
-        // We are offset, so we must blend with the previous vreg.
-        // Or, to frame it in an another way, the prior vreg
-        // stored its entire dim size in the offset, but only wrote the
-        // last dime partially.
-        offset -= 1;
+      const int64_t operand_offset = offset_at_dim % vreg_slice[tiling_dim];
+      if (operand_offset != layouts_in[i]->offsets()[tiling_dim]) {
+        return op.emitOpError("Not implemented: Expected input offset ")
+               << tiling_dim << " for operand " << i << " to be "
+               << operand_offset << ", but it has layout " << *layouts_in[i];
       }
-
-      const auto bitwidth = res_ty.getElementTypeBitWidth();
+      if (operand_offset >= tiling[tiling_dim]) {
+        return op.emitError(
+            "Not implemented: Input offsets outside of the first tile");
+      }
       SmallVector<int64_t> out_idx;
-      vreg.Each([&](absl::Span<const int64_t> idx, Value *v) {
+      vregs.Each([&](absl::Span<const int64_t> idx, Value* v) {
         out_idx.assign(idx.begin(), idx.end());
-        out_idx[dimension] += offset;
+        out_idx[dimension] += offset_at_dim / vreg_slice[tiling_dim];
         if (idx[dimension] == 0 && operand_offset != 0) {
           Value mask;
           const VectorType vmask_ty = getNativeVregOrVmaskType(
@@ -3066,11 +3039,11 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
                                         /*from=*/0, /*to=*/operand_offset,
                                         ctx.target_shape);
           } else {  // lane
-            CHECK_EQ(layout->tiling()[0] % packing, 0);
+            CHECK_EQ(tiling[0] % packing, 0);
             mask = builder.create<tpu::CreateMaskOp>(
                 op.getLoc(), vmask_ty,
                 ArrayRef<Value>{boundIdxConst(0), boundIdxConst(0)},
-                ArrayRef<Value>{boundIdxConst(layout->tiling()[0] / packing),
+                ArrayRef<Value>{boundIdxConst(tiling[0] / packing),
                                 boundIdxConst(operand_offset)});
           }
           // Blend the current value with the existing value in the output.
@@ -3079,7 +3052,8 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
         }
         out_vregs(out_idx) = *v;
       });
-      offset += vreg.dim(dimension);
+      auto operand_type = cast<VectorType>(op.getOperand(i).getType());
+      offset_at_dim += operand_type.getDimSize(dimension);
     }
   }
   auto assembled =
