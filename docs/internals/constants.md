@@ -153,6 +153,11 @@ itself does not contain them, and needs to take them as const args.
 Whoever is going to deserialize the cached executable will have to pass
 the const args.
 
+In AOT mode, the lowering and execution may
+use different values of the `jax_enable_x64` configuration value.
+If the constants are 64-bit `ndarray` we must use the same value
+of `jax_enable_x64` for lowering and execution.
+
 ## Previous implementation
 
 This describes the current way we handle closed-over constants, as
