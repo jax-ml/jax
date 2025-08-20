@@ -4446,6 +4446,7 @@ class WarpSpecializedPipelineTest(PallasTest):
       manual_consumed_barriers=[False, True],
       in_tree_template=[(0, 1), ((0, (1,), None))],
   )
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_elementwise_add(self, m, n, num_compute_wgs, static,
                            manual_consumed_barriers, in_tree_template):
     self.skip_if_wg_semantics()  # Crashes!
@@ -4565,6 +4566,7 @@ class WarpSpecializedPipelineTest(PallasTest):
       manual_consumed_barriers=[False, True],
       small_shape=[True, False],
   )
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_delay_release(self, num_compute_wgs, static, manual_consumed_barriers, small_shape):
     self.skip_if_wg_semantics()  # Crashes!
     if small_shape:
