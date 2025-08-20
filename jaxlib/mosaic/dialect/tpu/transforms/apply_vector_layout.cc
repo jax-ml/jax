@@ -482,10 +482,14 @@ FailureOr<Value> maskOOB(RewriteContext &ctx, ImplicitLocOpBuilder &builder,
 // Transpose the 2nd minor dimension of the implicit shape.
 //
 // Shape of (..., N, 1) becomes (..., 1, N)
+//
+// The layout for the resulting shape has offsets (*, new_minor_offset).
+// new_minor_offset must be replicated iff the original layout's second minor
+// offset is replicated.
 FailureOr<xla::Array<Value>> transposeSingletonMinorDimension(
-    RewriteContext &ctx, OpBuilder &builder, const Location loc,
+    RewriteContext& ctx, OpBuilder& builder, const Location loc,
     xla::Array<Value> vregs, const ArrayRef<int64_t> ishape,
-    VectorLayout layout, const int64_t new_minor_offset) {
+    VectorLayout layout, const LayoutOffset new_minor_offset) {
   if (layout.bitwidth() != 32 || !layout.hasNativeTiling(ctx.target_shape)) {
     // Note: For non-native tilings it is probably better to retile first, to
     //       to make the most out of each lane rotate (they are expensive).
@@ -524,6 +528,7 @@ FailureOr<xla::Array<Value>> transposeSingletonMinorDimension(
               ctx.target_shape);
   xla::Array<Value> new_vregs(new_vreg_array_shape);
   if (!layout.offsets()[0].has_value()) {
+    CHECK(!new_minor_offset.has_value());
     SmallVector<int64_t> old_idxs;
     new_vregs.Each(
         [&](const absl::Span<const int64_t> new_idxs, Value *new_vreg) {
@@ -534,6 +539,7 @@ FailureOr<xla::Array<Value>> transposeSingletonMinorDimension(
         });
     return new_vregs;
   }
+  CHECK(new_minor_offset.has_value());
   const int64_t old_2nd_minor_offset = *layout.offsets()[0];
   VectorType iota_vreg_ty =
       getNativeVregType(builder.getI32Type(), ctx.target_shape);
@@ -542,7 +548,7 @@ FailureOr<xla::Array<Value>> transposeSingletonMinorDimension(
   new_vregs.Each([&](const absl::Span<const int64_t> new_idxs,
                      Value *new_vreg) {
     const int64_t uncorrected_shape_start =
-        ctx.target_shape[1] * new_idxs.back() - new_minor_offset;
+        ctx.target_shape[1] * new_idxs.back() - *new_minor_offset;
     // The start and end of the data contained by new_vreg in the implicit shape
     const int64_t shape_start = std::max<int64_t>(uncorrected_shape_start, 0);
     const int64_t shape_end = std::min(
@@ -563,7 +569,7 @@ FailureOr<xla::Array<Value>> transposeSingletonMinorDimension(
       const int64_t old_sublane_offset =
           (shape_offset + old_2nd_minor_offset) % ctx.target_shape[0];
       const int64_t new_lane_offset =
-          (shape_offset + new_minor_offset) % ctx.target_shape[1];
+          (shape_offset + *new_minor_offset) % ctx.target_shape[1];
       // We will blend in all the relevant data contained by the old vreg
       const int64_t data_size =
           std::min(ctx.target_shape[0] - old_sublane_offset,
@@ -7670,7 +7676,8 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
   if (src.implicit_dim() == VectorLayout::ImplicitDim::kMinor &&
       dst_implicit_dim == VectorLayout::ImplicitDim::kSecondMinor &&
       src.bitwidth() == 32 && src.hasNativeTiling(ctx.target_shape)) {
-    const int64_t dst_minor_offset = dst_offset_hints[1].value_or(0);
+    const LayoutOffset dst_minor_offset =
+        src.offsets()[0] ? dst_offset_hints[1].value_or(0) : LayoutOffset();
     FAILUREOR_ASSIGN_OR_RETURN(
         xla::Array<Value> dst_vregs,
         transposeSingletonMinorDimension(ctx, builder, loc, vregs,
