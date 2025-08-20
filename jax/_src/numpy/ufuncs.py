@@ -1603,9 +1603,10 @@ def arctan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
     To reconstruct the input angle, we might be tempted to use the identity
     :math:`\tan(\theta) = y / x`, and compute :math:`\theta = \tan^{-1}(y/x)`.
-    Unfortunately, this does not recover the input angle:
+    Unfortunately, this does not recover the input angle -- and the result will
+    generally depend on the details of your system's floating point rounding error:
 
-    >>> with jnp.printoptions(precision=2, suppress=True):
+    >>> with jnp.printoptions(precision=2, suppress=True):  # doctest: +SKIP
     ...   print(jnp.arctan(y / x))
     [-0.    0.79  1.57 -0.79  0.    0.79  1.57 -0.79  0.  ]
 
