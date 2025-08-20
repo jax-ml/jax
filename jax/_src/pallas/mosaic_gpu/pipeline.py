@@ -300,8 +300,9 @@ def emit_pipeline(
     del fetch_indices
 
     # This is true if any of the outputs need to be transferred inside the loop.
-    copies_out_in_loop = not all(bref.is_index_invariant for bref in out_brefs)
-    needs_epilogue = any(bref.is_index_invariant for bref in out_brefs)
+    smem_out_brefs = [bref for bref in out_brefs if _in_smem(bref.spec)]
+    copies_out_in_loop = not all(bref.is_index_invariant for bref in smem_out_brefs)
+    needs_epilogue = any(bref.is_index_invariant for bref in smem_out_brefs)
 
     def loop_body(step, carry):
       slot = lax.rem(step, max_concurrent_steps)
@@ -409,7 +410,7 @@ def emit_pipeline(
 
       gpu_primitives.commit_smem_to_gmem_group()
 
-    if out_brefs:
+    if smem_out_brefs:
       # Finalize the pipeline.
       gpu_primitives.wait_smem_to_gmem(0)
     return final_carry if init_carry is not None else None
@@ -666,8 +667,9 @@ def emit_pipeline_warp_specialized(
           action="increase")
 
       # This is true if any of the outputs need to be transferred inside the loop.
-      copies_out_in_loop = not all(bref.is_index_invariant for bref in flat_out_brefs)
-      needs_epilogue = any(bref.is_index_invariant for bref in flat_out_brefs)
+      smem_out_brefs = [bref for bref in flat_out_brefs if _in_smem(bref.spec)]
+      copies_out_in_loop = not all(bref.is_index_invariant for bref in smem_out_brefs)
+      needs_epilogue = any(bref.is_index_invariant for bref in smem_out_brefs)
 
       def compute_loop_body(step, carry):
         indices, last_store_slices, prev_body_carry = carry
@@ -784,7 +786,7 @@ def emit_pipeline_warp_specialized(
 
         gpu_primitives.commit_smem_to_gmem_group()
 
-      if flat_out_brefs:
+      if smem_out_brefs:
         # Finalize the pipeline.
         gpu_primitives.wait_smem_to_gmem(0)
 
