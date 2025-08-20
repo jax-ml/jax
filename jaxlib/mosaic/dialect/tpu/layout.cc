@@ -153,42 +153,34 @@ class SingleRowVRegBounds : public VRegDataBounds {
 // Represents the data bounds within a vector register with tiled and
 // potentially packed data.
 //
-// Note that the (packed) sublane offset from start_offset and (packed) sublane
-// bound from end_offsets apply to all tiles within a vreg. On the other hand,
-// the lane offset from start_offset only applies to the first tile, while
-// lane bound from end_offset only applies to the last used tile.
+// Start and end offsets for data are specified within the vreg slice.
 //
 // Attributes:
 //   layout: The layout of the value, mainly used for its bitwidth and tiling.
 //     Note that the layout offsets SHOULD NOT be used.
-//   num_tiles: The number of tiles at the beginning of the vreg that contain
-//     actual data.
-//   start_offsets: The lane and (packed) sublane offset within the first tile.
-//   end_offsets: The lane and (packed) sublane offset within the last used
-//   tile.
+//   start_offsets: The lane and (packed) sublane offset within the vreg slice.
+//   end_offsets: The lane and (packed) sublane offset within the vreg slice.
 class TiledRectangularVregBounds : public VRegDataBounds {
  public:
   TiledRectangularVregBounds(const VectorLayout& layout,
-                             const int64_t num_tiles,
                              const std::array<int64_t, 2> start_offsets,
                              const std::array<int64_t, 2> end_offsets,
                              const std::array<int64_t, 2> target_shape)
       : layout_(layout),
-        num_tiles_(num_tiles),
         start_offsets_(start_offsets),
         end_offsets_(end_offsets) {
     CHECK(layout_.tiling()[1] == target_shape[1]);
-    CHECK(0 < num_tiles_ && num_tiles_ <= layout.tilesPerVreg(target_shape));
-    for (auto [o, t] : llvm::zip(start_offsets_, layout_.tiling())) {
-      CHECK(0 <= o && o < t);
-    }
-    for (auto [o, t] : llvm::zip(end_offsets_, layout_.tiling())) {
-      CHECK(0 <= o && o <= t);
+    const std::array<int64_t, 2> vreg_slice = layout_.vregSlice(target_shape);
+    for (auto [start, end, vs] :
+         llvm::zip_equal(start_offsets_, end_offsets_, vreg_slice)) {
+      CHECK(0 <= start && start < end && end <= vs);
     }
   }
 
   bool usesAllTiles(const std::array<int64_t, 2> target_shape) const {
-    return num_tiles_ == layout_.tilesPerVreg(target_shape);
+    return start_offsets_[1] / layout_.tiling()[1] == 0 &&
+           llvm::divideCeil(end_offsets_[1], layout_.tiling()[1]) ==
+               layout_.tilesPerVreg(target_shape);
   }
 
   // See base class.
@@ -200,7 +192,8 @@ class TiledRectangularVregBounds : public VRegDataBounds {
         return !usesAllTiles(target_shape) || start_offsets_[0] != 0 ||
                end_offsets_[0] != layout_.tiling()[0];
       case Direction::kLanes:
-        return start_offsets_[1] != 0 || end_offsets_[1] != layout_.tiling()[1];
+        return start_offsets_[1] % layout_.tiling()[1] != 0 ||
+               end_offsets_[1] % layout_.tiling()[1] != 0;
       case Direction::kSubelements:
         return start_offsets_[0] % layout_.packing() != 0 ||
                end_offsets_[0] % layout_.packing() != 0;
@@ -235,19 +228,23 @@ class TiledRectangularVregBounds : public VRegDataBounds {
               .getResult());
     }
     Value mask = nullptr;
-    CHECK_GE(num_tiles_, 0);
     const int64_t start_sub = start_offsets_[0] / packing;
     const int64_t end_sub = llvm::divideCeil(end_offsets_[0], packing);
     CHECK_LE(0, start_sub);
     CHECK_LT(start_sub, end_sub);
     CHECK_LE(end_sub, target_shape[0]);
     const int64_t sublanes_per_tile = layout_.sublanesPerTile(target_shape);
-    for (int64_t tile = 0; tile < num_tiles_; ++tile) {
+    const int64_t start_tile = start_offsets_[1] / layout_.tiling()[1];
+    const int64_t end_tile =
+        llvm::divideCeil(end_offsets_[1], layout_.tiling()[1]);
+    for (int64_t tile = start_tile; tile < end_tile; ++tile) {
       const int64_t sublane_offset = sublanes_per_tile * tile;
       const int64_t row_offset = sublane_offset * layout_.packing();
       const int64_t start_lane = tile == 0 ? start_offsets_[1] : 0;
       const int64_t end_lane =
-          tile == num_tiles_ - 1 ? end_offsets_[1] : target_shape[1];
+          tile == end_tile - 1
+              ? positiveMod(end_offsets_[1], layout_.tiling()[1])
+              : target_shape[1];
       CHECK_LE(0, start_lane);
       CHECK_LT(start_lane, end_lane);
       CHECK_LE(end_lane, target_shape[1]);
@@ -337,11 +334,13 @@ class TiledRectangularVregBounds : public VRegDataBounds {
     const int64_t start = start_offsets_[0] / layout_.packing();
     const int64_t end = llvm::divideCeil(end_offsets_[0], layout_.packing());
     const int64_t sublanes_per_tile = layout_.sublanesPerTile(target_shape);
-    const int64_t sublane_bound = num_tiles_ * sublanes_per_tile;
-    for (int64_t sub = 0; sub < sublane_bound; sub += sublanes_per_tile) {
-      for (int64_t i = sub + start; i < sub + end; ++i) {
-        CHECK(!mask[i]);
-        mask[i] = true;
+    const int64_t start_tile = start_offsets_[1] / layout_.tiling()[1];
+    const int64_t end_tile =
+        llvm::divideCeil(end_offsets_[1], layout_.tiling()[1]);
+    for (int64_t tile = start_tile; tile < end_tile; ++tile) {
+      for (int64_t i = start; i < end; ++i) {
+        CHECK(!mask[tile * sublanes_per_tile + i]);
+        mask[tile * sublanes_per_tile + i] = true;
       }
     }
     return DenseBoolArrayAttr::get(mlir_ctx, mask);
@@ -349,7 +348,6 @@ class TiledRectangularVregBounds : public VRegDataBounds {
 
  private:
   VectorLayout layout_;
-  int64_t num_tiles_;
   std::array<int64_t, 2> start_offsets_;
   std::array<int64_t, 2> end_offsets_;
 };
@@ -464,17 +462,8 @@ std::unique_ptr<VRegDataBounds> VectorLayout::tileDataBounds(
               "Not implemented: Unaligned tiling on minormost dimension");
     return nullptr;
   }
-  if (starts[1] >= tiling_[1]) {
-    emitError(UnknownLoc::get(mlir_ctx),
-              "Not implemented: Minor offset outside first tile");
-    return nullptr;
-  }
-  const int64_t num_tiles = llvm::divideCeil(ends[1], tiling_[1]);
-  return std::make_unique<TiledRectangularVregBounds>(
-      *this, num_tiles,
-      std::array<int64_t, 2>{starts[0], starts[1] % tiling_[1]},
-      std::array<int64_t, 2>{ends[0], positiveMod(ends[1], tiling_[1])},
-      target_shape);
+  return std::make_unique<TiledRectangularVregBounds>(*this, starts, ends,
+                                                      target_shape);
 }
 
 bool VectorLayout::generalizes(
