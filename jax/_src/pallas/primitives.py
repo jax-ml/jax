@@ -1339,13 +1339,11 @@ def device_id_to_logical(
           f" got: {device_id_type = }."
       )
     assert mesh_context is not None
-    device_id, non_mesh_axes = _device_id_dict_to_mesh(
-        mesh_context, device_id, get_axis_index)
-  assert mesh_context is not None
-  device_ids = tree_util.tree_leaves(device_id)
-  assert len(device_ids) == len(mesh_context.axis_names)
+    device_id, non_mesh_axes = _device_id_dict_to_mesh(mesh_context, device_id, get_axis_index)
   if device_id_type is DeviceIdType.MESH:
+    assert mesh_context is not None
     # Mesh means we are passed the mesh coordinates for the device
+    device_ids = tree_util.tree_leaves(device_id)
     mesh_strides = mesh_context.mesh_strides
 
     i32 = ir.IntegerType.get_signless(32)
