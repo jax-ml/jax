@@ -422,9 +422,14 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
     if d is None:
       abstract_device = None
     else:
-      num_tpu_cores = getattr(d, 'num_cores', 0) if d.platform == 'tpu' else 0
+      if d.platform == 'tpu':
+        num_cores = getattr(d, 'num_cores', None)
+      elif d.platform == 'gpu':
+        num_cores = getattr(d, 'core_count', None)
+      else:
+        num_cores = None
       abstract_device = AbstractDevice(
-          device_kind=d.device_kind, num_tpu_cores=num_tpu_cores)
+          device_kind=d.device_kind, num_cores=num_cores)
     return AbstractMesh(
         self.axis_sizes, self.axis_names, axis_types=self.axis_types,
         abstract_device=abstract_device)
@@ -444,13 +449,13 @@ thread_resources = _ThreadResourcesLocalState()
 @dataclasses.dataclass(frozen=True)
 class AbstractDevice:
   device_kind: str
-  num_tpu_cores: int
+  num_cores: int | None
 
   def __repr__(self):
     return (f"AbstractDevice({self._repr()})")
 
   def _repr(self):
-    return f"device_kind={self.device_kind}, num_tpu_cores={self.num_tpu_cores}"
+    return f"device_kind={self.device_kind}, num_cores={self.num_cores}"
 
 
 class AbstractMesh(BaseMesh):
