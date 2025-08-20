@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import dataclasses
 import math
-from typing import assert_never, Any, Callable
+from typing import assert_never, Any, Callable, final
 
 from . import fragmented_array as fa
 from . import layouts as layouts_lib
@@ -470,9 +470,10 @@ class EquationSystem:
         constraints=[*self.constraints, *other.constraints],
     )
 
-
+@final
 class Unsatisfiable:
-  ...
+  def __and__(self, other: EquationSystem | Unsatisfiable) -> Unsatisfiable:
+    return self
 
 
 @dataclasses.dataclass(frozen=True)
