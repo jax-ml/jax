@@ -112,7 +112,6 @@ class CompilerParams(pallas_core.CompilerParams):
   approx_math: bool = False
   dimension_semantics: Sequence[DimensionSemantics] | None = None
   max_concurrent_steps: int = 1
-  delay_release: int = 0
   unsafe_no_auto_barriers: bool = False
   profile_space: int = 0
   profile_dir: str = ""

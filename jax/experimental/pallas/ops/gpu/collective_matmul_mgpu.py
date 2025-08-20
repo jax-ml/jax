@@ -174,15 +174,25 @@ def all_gather_lhs_matmul(
               out_smem=out_smem,
           )
           def _(acc_ref, out_smem):
+
             @functools.partial(
                 plgpu.emit_pipeline,
                 grid=(k // block_k,),
                 in_specs=[
-                    plgpu.BlockSpec((block_m, block_k), lambda k: (0, k), transforms=transforms),
-                    plgpu.BlockSpec((block_k, block_n), lambda k: (k, 0), transforms=transforms),
+                    plgpu.BlockSpec(
+                        (block_m, block_k),
+                        lambda k: (0, k),
+                        transforms=transforms,
+                        delay_release=1,
+                    ),
+                    plgpu.BlockSpec(
+                        (block_k, block_n),
+                        lambda k: (k, 0),
+                        transforms=transforms,
+                        delay_release=1,
+                    ),
                 ],
                 max_concurrent_steps=max_concurrent_steps,
-                delay_release=1,
             )
             def k_loop(_, lhs_smem, rhs_smem):
               plgpu.wgmma(acc_ref, lhs_smem, rhs_smem)
