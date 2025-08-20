@@ -196,6 +196,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         continue
       if p.name == "custom_partitioning":
         continue
+      if p.name == "empty2":
+        continue
       if p.name in (
           "dot_product_attention_fwd",
           "dot_product_attention_bwd",
