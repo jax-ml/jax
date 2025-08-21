@@ -385,10 +385,8 @@ absl::StatusOr<se::CudaComputeCapability> GetCudaComputeCapability() {
                            device) != CUDA_SUCCESS) {
     return absl::InternalError("Failed to get minor compute capability");
   }
-  // TODO(hebecker): update CudaComputeCapability to embed extensions.
-  // Currently, extensions will still be used (but are hardcoded in a util
-  // `ShouldUsePtxExtension` instead of being queried).
-  return se::CudaComputeCapability(major, minor);
+  return se::CudaComputeCapability::FromIntWithAutoFeatureExtension(major,
+                                                                    minor);
 }
 
 absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(

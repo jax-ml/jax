@@ -50,6 +50,7 @@ limitations under the License.
 
 #ifdef JAX_GPU_CUDA
 #include "xla/stream_executor/cuda/cuda_asm_compiler.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #endif  // JAX_GPU_CUDA
 
 #ifdef JAX_GPU_HIP
@@ -125,9 +126,12 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
   // TODO(cjfj): Support `TRITON_PTXAS_PATH` environment variable?
   int cc_major = compute_capability / 10;
   int cc_minor = compute_capability % 10;
+  auto cc =
+      stream_executor::CudaComputeCapability::FromIntWithAutoFeatureExtension(
+          cc_major, cc_minor);
   JAX_ASSIGN_OR_RETURN(
       std::vector<uint8_t> module_image,
-      stream_executor::CompileGpuAsm(cc_major, cc_minor, ptx.data(),
+      stream_executor::CompileGpuAsm(cc, std::string(ptx),
                                      stream_executor::GpuAsmOpts{}));
 #endif
 

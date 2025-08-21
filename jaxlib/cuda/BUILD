@@ -473,6 +473,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/stream_executor/cuda:cuda_asm_compiler",
+        "@xla//xla/stream_executor/cuda:cuda_compute_capability",
         "@xla//xla/tsl/cuda:cudart",
     ],
 )
