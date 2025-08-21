@@ -2054,9 +2054,9 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   output_types = [mlir.token_type()] * len(effects) + output_types
   flat_output_types = mlir.flatten_ir_types(output_types)
 
-  const_args = core.jaxpr_const_args(jaxpr.jaxpr)
-  const_arg_avals = [core.shaped_abstractify(c) for c in const_args]
-  in_avals = const_arg_avals + jaxpr.in_avals
+  const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
+  const_args, const_arg_avals = util.unzip2(const_args_and_avals)
+  in_avals = (*const_arg_avals, *jaxpr.in_avals)
   ca_shardings = const_args_shardings(const_args)
   in_shardings = ca_shardings + in_shardings  # type: ignore
   ca_layouts = const_args_layouts(const_args, const_arg_avals, ca_shardings)
@@ -2070,8 +2070,9 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
 
   tokens_in = [ctx.tokens_in.get(eff) for eff in effects]
   hoisted_const_values = [
-      mlir.ir_constant(c, ctx.const_lowering, canonicalize_dtype=True)
-      for c in const_args]
+      mlir.ir_constant(c, const_lowering=ctx.const_lowering, aval=aval)
+      for c, aval in const_args_and_avals
+  ]
   args = (*ctx.dim_var_values, *tokens_in, *hoisted_const_values, *args)
   with mlir.source_info_to_location(
       ctx.module_context, None,

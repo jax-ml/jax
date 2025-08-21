@@ -558,30 +558,32 @@ def is_literalable(x: Any) -> bool:
   return False
 
 @partial(weakref_lru_cache, trace_context_in_key=False)
-def jaxpr_const_args(jaxpr: Jaxpr) -> list[ArrayLike]:
+def jaxpr_const_args(jaxpr: Jaxpr) -> list[tuple[ArrayLike, AbstractValue]]:
   # The non-scalar constants in core.Literal, in the entire Jaxpr,
   # uniquified by id. These will be hoisted as const arguments to the functions
   # in which they appear.
   # See https://docs.jax.dev/en/latest/internals/constants.html
   if not config.use_simplified_jaxpr_constants.value:
     return []
-  consts_by_id: dict[int, ArrayLike] = {}
+  consts_by_id: dict[int, tuple[ArrayLike, AbstractValue]] = {}
   for v in jaxpr.outvars:
     if type(v) is Literal and np.shape(v.val):  # type: ignore
-      consts_by_id[id(v)] = v.val  # type: ignore
+      consts_by_id[id(v)] = (v.val, v.aval)  # type: ignore
 
   for eqn in jaxpr.eqns:
     for v in eqn.invars:
       if type(v) is Literal and np.shape(v.val):  # type: ignore
-        consts_by_id[id(v)] = v.val  # type: ignore
-    consts_by_id.update({id(v): v
-                         for v in eqn_params_const_args(eqn.params)})
+        consts_by_id[id(v)] = (v.val, v.aval)  # type: ignore
+    consts_by_id.update({id(v_aval[0]): v_aval
+                         for v_aval in eqn_params_const_args(eqn.params)})
   return list(consts_by_id.values())
 
-def eqn_params_const_args(params) -> list[ArrayLike]:
-  consts_by_id: dict[int, ArrayLike] = {}
+def eqn_params_const_args(params) -> list[tuple[ArrayLike, AbstractValue]]:
+  consts_by_id: dict[int, tuple[ArrayLike, AbstractValue]] = {}
   for j in jaxprs_in_params(params):
-    consts_by_id.update({id(v): v for v in jaxpr_const_args(j)})
+    consts_by_id.update(
+        {id(v_aval[0]): v_aval for v_aval in jaxpr_const_args(j)}
+    )
   return list(consts_by_id.values())
 
 Atom = Union[Var, Literal]
@@ -2493,7 +2495,10 @@ def _darray_aval(x):
   return DShapedArray(x._aval.shape, x._aval.dtype, x._aval.weak_type)
 
 pytype_aval_mappings[DArray] = _darray_aval
-dtypes.canonicalize_value_handlers[DArray] = identity
+
+def _canonicalize_identity(x, *, canonicalize_scalar_dtypes):
+  return x
+dtypes.canonicalize_value_handlers[DArray] = _canonicalize_identity
 
 
 @dataclass(frozen=True)
@@ -2546,7 +2551,7 @@ class ArrayRef:
 
 
 pytype_aval_mappings[ArrayRef] = lambda x: x._aval
-dtypes.canonicalize_value_handlers[ArrayRef] = identity
+dtypes.canonicalize_value_handlers[ArrayRef] = _canonicalize_identity
 
 def array_ref(init_val, *, memory_space: Any = None):
   """Create a mutable array reference with initial value ``init_val``.
@@ -2660,7 +2665,7 @@ class Token:
   def block_until_ready(self):
     self._buf.block_until_ready()
 pytype_aval_mappings[Token] = lambda _: abstract_token
-dtypes.canonicalize_value_handlers[Token] = identity
+dtypes.canonicalize_value_handlers[Token] = _canonicalize_identity
 
 
 ### Operations on shapes and dimension sizes.

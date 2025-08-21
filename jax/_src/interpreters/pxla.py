@@ -222,6 +222,12 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_np_array
 
+def _shard_python_scalar(xs, shardings, layouts, copy_semantics):
+  return shard_args(shardings, layouts, copy_semantics,
+                    [np.array(x) for x in xs])
+for _t in dtypes.python_scalar_dtypes.keys():
+  shard_arg_handlers[_t] = _shard_python_scalar
+
 def _shard_darray(xs, shardings, layouts, copy_semantics):
   return shard_args(shardings, layouts, copy_semantics, [x._data for x in xs])
 shard_arg_handlers[core.DArray] = _shard_darray
@@ -686,7 +692,6 @@ class ReplicaInfo(NamedTuple):
   num_global_replicas: int
 
 
-
 _initial_style_primitives: set[core.Primitive] = set()
 
 
@@ -831,12 +836,13 @@ def lower_parallel_callable(
 
   jaxpr = closed_jaxpr.jaxpr
   arg_names = jaxpr._debug_info.safe_arg_names(len(closed_jaxpr.in_avals))
+  const_args: Sequence[ArrayLike]
   if lowering_parameters.hoist_constants_as_args:
-    const_args = core.jaxpr_const_args(jaxpr)
-    num_const_args = len(const_args)
+    const_args_and_avals = core.jaxpr_const_args(jaxpr)
+    const_args, const_arg_avals = unzip2(const_args_and_avals)
+    num_const_args = len(const_arg_avals)
     in_axes = (None,) * num_const_args + in_axes  # type: ignore
     donated_invars = (False,) * num_const_args + donated_invars  # type: ignore
-    const_arg_avals = [core.shaped_abstractify(c) for c in const_args]
     jaxpr_avals = const_arg_avals + closed_jaxpr.in_avals  # type: ignore
     shards = ShardInfo(
         tuple(const_arg_avals) + shards.sharded_avals,  # type: ignore
@@ -939,7 +945,7 @@ def lower_parallel_callable(
           num_replicas=replicas.num_global_replicas,
           lowering_parameters=lowering_parameters)
   return PmapComputation(lowering_result.module,
-                         const_args,
+                         list(const_args),
                          platforms=platforms,
                          pci=pci, replicas=replicas,
                          shards=shards, tuple_args=tuple_args,
@@ -2148,10 +2154,11 @@ def hoist_constants_as_args(
     closed_jaxpr: core.ClosedJaxpr, global_in_avals, in_shardings, in_layouts,
     donated_invars, kept_var_idx: set[int], inout_aliases, mut,
     all_args_info: AllArgsInfo):
-  const_args = core.jaxpr_const_args(closed_jaxpr.jaxpr)
+  const_args, const_arg_avals = unzip2(
+      core.jaxpr_const_args(closed_jaxpr.jaxpr)
+  )
   num_const_args = len(const_args)
   if num_const_args:
-    const_arg_avals = [core.shaped_abstractify(c) for c in const_args]
     global_in_avals = const_arg_avals + global_in_avals  # type: ignore
     ca_shardings = pjit.const_args_shardings(const_args)
     in_shardings = ca_shardings + in_shardings  # type: ignore

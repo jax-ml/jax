@@ -3614,8 +3614,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   def test_shape_dtype_struct_as_const_error(self):
     const = jax.ShapeDtypeStruct((8,), jnp.int32)
-    with self.assertRaisesRegex(TypeError,
-                                r"Argument.*is not a valid JAX type"):
+    with self.assertRaisesRegex(Exception,
+                                r"A ShapeDtypeStruct does not have a value.*"):
       jax.jit(lambda x: (x, const))(jnp.arange(8))
 
   def test_jit_out_shardings_none(self):
@@ -3717,7 +3717,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       f()  # doesn't crash
 
   def test_closed_constants_at_top_level(self):
-    const = np.arange(8)
+    const = np.arange(8, dtype=np.float32)
 
     @jax.jit
     def f(x):

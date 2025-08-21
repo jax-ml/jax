@@ -779,7 +779,7 @@ def make_array_from_callback(
           " context."
       )
     # Value can be python scalar, resolve it into something with dtype.
-    return dtypes.canonicalize_value(r)
+    return dtypes.canonicalize_value(r, canonicalize_scalar_dtypes=True)
 
   if sharding.is_fully_replicated:
     devices = list(sharding._internal_device_list.addressable_device_list)  # type: ignore
@@ -1109,14 +1109,14 @@ def make_array_from_single_device_arrays(
           f" arrays as input, but got types {set(map(type, arrays))}")
     raise
 
-dtypes.canonicalize_value_handlers[ArrayImpl] = pxla.identity
+dtypes.canonicalize_value_handlers[ArrayImpl] = lambda x, *, canonicalize_scalar_dtypes: x
 
 def _get_aval_array(self):
   return core.update_aval_with_sharding(self.aval, self.sharding)
 core.pytype_aval_mappings[ArrayImpl] = _get_aval_array
 
 
-def _array_mlir_constant_handler(val):
+def _array_mlir_constant_handler(val, aval):
   try:
     return mlir.ir_constant(val._value)
   except RuntimeError as e:

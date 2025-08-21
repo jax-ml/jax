@@ -231,7 +231,7 @@ def aval_to_ir_types(aval: core.AbstractValue) -> tuple[ir.Type, ...]:
 # Constants
 
 class ConstantHandler(Protocol):
-  def __call__(self, val: Any) -> IrValues:
+  def __call__(self, val: Any, aval: core.AbstractValue | None) -> IrValues:
     """Builds an IR representation for a constant `val`.
 
     A JAX value is represented by zero or more IR values."""
@@ -244,11 +244,12 @@ def register_constant_handler(type_: type, handler_fun: ConstantHandler):
 def get_constant_handler(type_: type) -> ConstantHandler:
   return _constant_handlers[type_]
 
-def ir_constant(val: Any,
-                const_lowering: dict[int, IrValues] = {},
-                *,
-                canonicalize_dtype: bool = False) -> IrValues:
-  """Translate a Python `val` to an IR constant, canonicalizing its dtype.
+def ir_constant(
+  val: Any, *,
+  const_lowering: dict[tuple[int, core.AbstractValue], IrValues] | None = None,
+  aval: core.AbstractValue | None = None
+) -> IrValues:
+  """Translate a Python `val` to an IR constant.
 
   See https://docs.jax.dev/en/latest/internals/constants.html.
   Args:
@@ -256,19 +257,19 @@ def ir_constant(val: Any,
     const_lowering: an optional dictionary with known lowering for some
       constants, indexed by `id`. This is used, e.g., when we pass constants
       as MLIR function arguments.
-    canonicalize_dtype: whether to canonicalize the dtype
+    aval: the abstract value of `val`, if known. Required where ambiguous, e.g.
+      for Python scalars.
 
   Returns:
     A representation of the constant as an IR value or sequence of IR values.
   """
-  if np.shape(val) and (c_val := const_lowering.get(id(val))) is not None:
-    return c_val
-  if canonicalize_dtype:
-    val = dtypes.canonicalize_value(val)
+  if const_lowering is not None:
+    if np.shape(val) and (c_val := const_lowering.get((id(val), aval))) is not None:
+      return c_val
   for t in type(val).__mro__:
     handler = _constant_handlers.get(t)
     if handler:
-      out = handler(val)
+      out = handler(val, aval)
       assert _is_ir_values(out), (type(val), out)
       return out
   if hasattr(val, '__jax_array__'):
@@ -291,7 +292,15 @@ def _masked_array_constant_handler(*args, **kwargs):
 
 register_constant_handler(np.ma.MaskedArray, _masked_array_constant_handler)
 
-def _ndarray_constant_handler(val: np.ndarray | np.generic) -> IrValues:
+def _shape_dtype_struct_constant_handler(*args, **kwargs):
+  raise TypeError("A ShapeDtypeStruct does not have a value and cannot be "
+                  "used as a constant in a JAX function.")
+
+register_constant_handler(core.ShapeDtypeStruct,
+                          _shape_dtype_struct_constant_handler)
+
+def _ndarray_constant_handler(val: np.ndarray | np.generic,
+                              aval: core.AbstractValue | None) -> IrValues:
   """Constant handler for ndarray literals, handling zero-size strides.
 
   In most cases this function calls _numpy_array_constant(val) except it has
@@ -333,13 +342,15 @@ for _scalar_type in [np.int8, np.int16, np.int32, np.int64,
                      np.bool_, np.longlong, dtypes.bfloat16]:
   register_constant_handler(_scalar_type, _ndarray_constant_handler)  # type: ignore
 
-def _python_scalar_handler(dtype, val):
-  return _numpy_array_constant(np.array(val, dtype))
+def _python_scalar_handler(val, aval: core.AbstractValue | None):
+  assert isinstance(aval, core.ShapedArray), aval
+  assert aval.shape == (), aval
+  return _numpy_array_constant(np.array(val, aval.dtype))
 
-for ptype, dtype in dtypes.python_scalar_dtypes.items():
-  register_constant_handler(ptype, partial(_python_scalar_handler, dtype))
+for ptype in dtypes.python_scalar_dtypes.keys():
+  register_constant_handler(ptype, _python_scalar_handler)
 
-def _token_constant_handler(val):
+def _token_constant_handler(val: core.Token, aval: core.AbstractValue | None):
   return hlo.create_token()
 register_constant_handler(core.Token, _token_constant_handler)
 
@@ -727,7 +738,8 @@ class LoweringCacheKey:
 class LoweringCacheValue:
   func: func_dialect.FuncOp
   output_types: Sequence[IrTypes]
-  const_args: list[ArrayLike]  # The hoisted constants expected by `func`
+  const_args: Sequence[ArrayLike]  # The hoisted constants expected by `func`
+  const_arg_avals: Sequence[core.AbstractValue]
   inline: bool  # Inline calls to this lowered function?
 
 @dataclasses.dataclass
@@ -865,7 +877,7 @@ class LoweringRuleContext:
   # This is used to implement passing along the constants that have been
   # hoisted as main function arguments down to where they are used.
   # See https://docs.jax.dev/en/latest/internals/constants.html
-  const_lowering: dict[int, IrValues]
+  const_lowering: dict[tuple[int, core.AbstractValue], IrValues]
   axis_size_env: dict[core.Var, ir.Value] | None = None  # Dynamic axis sizes
   # The values for the dimension variables in same order as
   # module_context.shape_poly_state.dim_vars
@@ -1861,13 +1873,15 @@ def lower_jaxpr_to_fun(
     flat_args = entry_block.arguments
     dim_var_values, _, const_arg_values, _ = util.split_list(
         flat_args, [num_dim_vars, num_tokens, num_const_args])
-    const_args = core.jaxpr_const_args(jaxpr.jaxpr)
+    const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
     if num_const_args == 0:
       # If we did not hoist the constants out of this function, lower them now
-      const_arg_values = [ir_constant(c, canonicalize_dtype=True)
-                          for c in  const_args]
-    const_lowering = {id(c): c_arg
-                      for c, c_arg in zip(const_args, const_arg_values)}
+      const_arg_values = [ir_constant(c, aval=aval)
+                          for c, aval in const_args_and_avals]
+    const_lowering = {
+        (id(c), aval): c_arg
+        for (c, aval), c_arg in zip(const_args_and_avals, const_arg_values)
+    }
 
     # A lowering context just for function body entry/exit code.
     entry_lowering_ctx = LoweringRuleContext(
@@ -1896,8 +1910,10 @@ def lower_jaxpr_to_fun(
         [num_dim_vars, num_tokens, num_const_args])
     tokens_in = TokenSet(zip(effects, token_args))
     args: list[IrValues] = unflattened_args
-    unique_consts = {id(c): ir_constant(dtypes.canonicalize_value(c))
-                     for c in jaxpr.consts}
+    unique_consts = {
+        id(c): ir_constant(c, aval=var.aval)
+        for c, var in zip(jaxpr.consts, jaxpr.jaxpr.constvars)
+    }
     consts_for_constvars = [unique_consts[id(c)] for c in jaxpr.consts]
 
     out_vals, tokens_out = jaxpr_subcomp(
@@ -2042,7 +2058,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
                   consts_for_constvars: Sequence[IrValues],
                   *args: IrValues,
                   dim_var_values: Sequence[ir.Value],
-                  const_lowering: dict[int, IrValues],
+                  const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
                   ) -> tuple[Sequence[IrValues], TokenSet]:
   """Lowers a jaxpr into MLIR, inlined into an existing function.
 
@@ -2062,7 +2078,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
       h = HashableLiteral(v)
       c = cached_ir_consts.get(h)
       if c is None:
-        c = ir_constant(v.val, const_lowering, canonicalize_dtype=True)
+        c = ir_constant(v.val, const_lowering=const_lowering, aval=v.aval)
         # TODO(necula): do we really need the cache, now that we hoist?
         cached_ir_consts[h] = c
       return c
@@ -2161,11 +2177,12 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     core.clean_up_dead_vars(eqn, env, last_used)
   return tuple(read(v) for v in jaxpr.outvars), tokens
 
-def _cached_lowering(ctx: ModuleContext, eqn: core.JaxprEqn,
-                     tokens_in: TokenSet,
-                     dim_var_values: tuple[ir.Value, ...],
-                     const_lowering: dict[int, IrValues],
-                     *args, **params) -> tuple[Sequence[IrValues], TokenSet]:
+def _cached_lowering(
+    ctx: ModuleContext, eqn: core.JaxprEqn,
+    tokens_in: TokenSet,
+    dim_var_values: tuple[ir.Value, ...],
+    const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
+    *args, **params) -> tuple[Sequence[IrValues], TokenSet]:
   """Lowers a jaxpr equation, using a cache.
 
   The jaxpr equation's lowering is emitted as an out-of-line MLIR function, and
@@ -2203,9 +2220,10 @@ def _cached_lowering(ctx: ModuleContext, eqn: core.JaxprEqn,
     ctx.lowering_cache[cache_key] = cache_entry
 
   tokens_in_args = tuple(tokens_in.get(eff) for eff in ordered_effects)
-  const_arg_values = tuple(ir_constant(c, const_lowering,
-                                       canonicalize_dtype=True)
-                           for c in cache_entry.const_args)
+  const_arg_values = tuple(
+      ir_constant(c, const_lowering=const_lowering, aval=aval)
+      for c, aval in zip(cache_entry.const_args, cache_entry.const_arg_avals)
+  )
   args = flatten_ir_values(
       dim_var_values + tokens_in_args + const_arg_values + args)
   if cache_entry.inline:
@@ -2239,8 +2257,7 @@ def _emit_lowering_rule_as_fun(
     aval_to_ir_type(core.ShapedArray((), dtypes.default_int_dtype()))
   ] * num_dim_vars
 
-  const_args =  core.eqn_params_const_args(params)
-  const_arg_avals = tuple(core.shaped_abstractify(c) for c in const_args)
+  const_args, const_arg_avals = util.unzip2(core.eqn_params_const_args(params))
 
   input_types = map(aval_to_ir_type, const_arg_avals + avals_in)  # type: ignore
   output_types = map(aval_to_ir_type, avals_out)
@@ -2262,8 +2279,10 @@ def _emit_lowering_rule_as_fun(
     dim_var_values, token_args, const_arg_values, unflattened_args = \
       util.split_list(unflattened_args,
                       [num_dim_vars, len(ordered_effects), len(const_args)])
-    const_lowering = {id(c): c_arg
-                      for c, c_arg in zip(const_args, const_arg_values)}
+    const_lowering = {
+        (id(c), aval): c_arg
+        for c, aval, c_arg in zip(const_args, const_arg_avals, const_arg_values)
+    }
     sub_ctx = LoweringRuleContext(
         module_context=ctx, primitive=primitive,
         name_stack=source_info_util.new_name_stack(),
@@ -2278,7 +2297,8 @@ def _emit_lowering_rule_as_fun(
       outs = [*[sub_ctx.tokens_out.get(eff) for eff in ordered_effects], *outs]
     outs = flatten_ir_values(outs)
     func_dialect.return_(outs)
-  return LoweringCacheValue(func_op, output_types, const_args, inline)
+  return LoweringCacheValue(func_op, output_types, const_args, const_arg_avals,
+                            inline)
 
 
 def _get_override_lowering_rule(
@@ -2508,8 +2528,10 @@ def lower_per_platform(ctx: LoweringRuleContext,
     ctx.set_tokens_out(tokens_out)
   return results
 
-def _ir_consts(consts) -> list[IrValues]:
-  uniq_consts = {id(c): ir_constant(c, canonicalize_dtype=True) for c in consts}
+def ir_consts(consts, avals: Sequence[core.AbstractValue]) -> list[IrValues]:
+  uniq_consts = {
+      id(c): ir_constant(c, aval=aval) for c, aval in zip(consts, avals)
+  }
   return [uniq_consts[id(c)] for c in consts]
 
 def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
@@ -2552,7 +2574,8 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
         sub_context = ctx.module_context
       out, tokens = jaxpr_subcomp(
           sub_context, jaxpr, ctx.name_stack, ctx.tokens_in,
-          _ir_consts(consts_for_constvars), *args,
+          ir_consts(consts_for_constvars, [v.aval for v in jaxpr.constvars]),
+          *args,
           dim_var_values=ctx.dim_var_values,
           const_lowering=ctx.const_lowering)
       ctx.set_tokens_out(tokens)
@@ -2648,20 +2671,21 @@ def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr | core.Jaxpr, backend,
                   ctx: ModuleContext, in_avals,
                   out_avals, tokens_in, *args,
                   dim_var_values: Sequence[ir.Value],
-                  const_lowering: dict[int, IrValues],
+                  const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
                   arg_names=None, result_names=None,
                   attributes: None | dict[str, Any] = None):
   # TODO(necula): clean up the types
   if isinstance(call_jaxpr, core.ClosedJaxpr):
-    const_args = core.jaxpr_const_args(call_jaxpr.jaxpr)
+    const_args_and_avals = core.jaxpr_const_args(call_jaxpr.jaxpr)
   else:
-    const_args = core.jaxpr_const_args(call_jaxpr)
-  const_arg_values = [ir_constant(c, const_lowering, canonicalize_dtype=True)
-                      for c in const_args]
+    const_args_and_avals = core.jaxpr_const_args(call_jaxpr)
+  const_args, const_avals = util.unzip2(const_args_and_avals)
+  const_arg_values = [ir_constant(c, const_lowering=const_lowering, aval=aval)
+                      for c, aval in const_args_and_avals]
   args = tuple(const_arg_values) + args
   if arg_names is not None:
     arg_names = [""] * len(const_args) + arg_names
-  in_avals = (*(core.shaped_abstractify(c) for c in const_args), *in_avals)
+  in_avals = (*const_avals, *in_avals)
 
   func_op, output_types, effects = lower_called_computation(
       fn_name, call_jaxpr, ctx, len(const_args), in_avals, out_avals,

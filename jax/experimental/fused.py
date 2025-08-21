@@ -17,7 +17,7 @@ from jax._src import linear_util as lu
 from jax._src import dispatch
 from jax._src.core import typeof
 from jax._src.tree_util import tree_flatten, tree_unflatten
-from jax._src.util import safe_map, safe_zip, weakref_lru_cache
+from jax._src.util import safe_map, safe_zip, weakref_lru_cache, unzip2
 from jax._src.api_util import debug_info, flatten_fun_nokwargs
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -59,11 +59,12 @@ def _fused_abstract_eval(*in_avals, out_spaces, jaxpr):
 dispatch.simple_impl(fused_p)
 
 def _fused_lowering(ctx, *args, out_spaces, jaxpr):
-  const_args = core.jaxpr_const_args(jaxpr.jaxpr)
+  const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
+  const_args, const_arg_avals = unzip2(const_args_and_avals)
   const_arg_values = [
-      mlir.ir_constant(c, ctx.const_lowering, canonicalize_dtype=True)
-      for c in const_args]
-  in_avals = [core.shaped_abstractify(c) for c in const_args] + [*ctx.avals_in]
+      mlir.ir_constant(c, const_lowering=ctx.const_lowering, aval=aval)
+      for c, aval in const_args_and_avals]
+  in_avals = [*const_arg_avals, *ctx.avals_in]
   func_op, _, _ = mlir.lower_called_computation(
       "fused", jaxpr, ctx.module_context, len(const_args), in_avals,
       ctx.avals_out, ctx.tokens_in)

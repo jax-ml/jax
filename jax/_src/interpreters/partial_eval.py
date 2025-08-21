@@ -25,6 +25,8 @@ import operator as op
 from typing import Any, NamedTuple, Union
 from weakref import finalize, ref, ReferenceType, WeakValueDictionary
 
+import numpy as np
+
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config
@@ -172,6 +174,7 @@ class JaxprTrace(Trace['JaxprTracer']):
 
   def new_instantiated_literal(self, val) -> JaxprTracer:
     aval = get_aval(val)
+    val = dtypes.canonicalize_value(val)
     return JaxprTracer(self, PartialVal.unknown(aval), Literal(val, aval))
 
   def new_instantiated_const(self, val) -> JaxprTracer:
@@ -1687,7 +1690,7 @@ class DynamicJaxprTracer(core.Tracer):
       if maybe_const is None:
         return self
       else:
-        return core.full_lower(maybe_const)
+        return core.full_lower(maybe_const.canonical)
 
   def _contents(self):
     return ()
@@ -1733,7 +1736,7 @@ class DynamicJaxprTracer(core.Tracer):
     frame = self._trace.frame
     atom = self.val
     val = frame.constvar_to_val.get(atom) if isinstance(atom, Var) else None
-    return self if val is None else get_referent(val)
+    return self if val is None else get_referent(val.canonical)
 
 core.pytype_aval_mappings[DynamicJaxprTracer] = lambda x: x.aval
 
@@ -1772,11 +1775,19 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
       jaxpr_effects.add(eff)
   return jaxpr_effects
 
+class Constants(NamedTuple):
+  # A pair of a canonicalized constant and its original form.
+  # It is important that we keep the original value alive because we use id(c)
+  # as a key in various dictionaries. If the original value were deleted we
+  # may confuse constants if the same object ID is reused.
+  canonical: Any
+  original: Any
+
 
 class JaxprStackFrame:
   gensym: Callable[[AbstractValue], Var]
   constid_to_tracer: WeakValueDictionary[ConstId, DynamicJaxprTracer]
-  constvar_to_val: dict[Var, Any]
+  constvar_to_val: dict[Var, Constants]
   tracing_eqns: list[Union[ReferenceType[TracingEqn], Callable[[], TracingEqn]]]
   invars: list[Var]
   effects: core.Effects
@@ -1821,6 +1832,7 @@ class JaxprStackFrame:
     eqns = self.get_eqns()
     outvars = [t.val for t in out_tracers]
     constvars, constvals = unzip2(self.constvar_to_val.copy().items())
+    constvals = [c.canonical for c in constvals]
     constvars, constvals = _drop_unused_vars(constvars, constvals, eqns, outvars)
     effs = make_jaxpr_effects(constvars, self.invars, outvars, eqns)
 
@@ -1837,6 +1849,7 @@ class JaxprStackFrame:
     eqns = self.get_eqns()
     outvars = [t.val for t in out_tracers]
     constvars, constvals = unzip2(self.constvar_to_val.copy().items())
+    constvals = [c.canonical for c in constvals]
     constvars, constvals = _drop_unused_vars(constvars, constvals, eqns, outvars)
     effs = make_jaxpr_effects(constvars, self.invars, outvars, eqns)
     jaxpr = Jaxpr(constvars, self.invars, outvars, eqns, effs, debug_info)
@@ -2025,17 +2038,21 @@ class DynamicJaxprTrace(core.Trace):
   pure = lift = new_const
 
   def _new_const(self, aval, c, source_info: SourceInfo) -> DynamicJaxprTracer:
+    orig_c = c
+    id_c = id(c)
+    if isinstance(c, (int, float, bool, complex, np.generic, np.ndarray)):
+      c = dtypes.canonicalize_value(c)
     if core.is_literalable(c):
       val = Literal(c, aval)
       return DynamicJaxprTracer(self, aval, val, source_info)
     else:
       var = self.frame.newvar(aval)
       tracer = DynamicJaxprTracer(self, aval, var, source_info)
-      self.frame.constid_to_tracer[id(c)] = tracer
+      self.frame.constid_to_tracer[id_c] = tracer
       if isinstance(aval, core.AvalQDD):
         self.frame.mutable_qdds.append((var, tracer.mutable_qdd))
-      self.frame.constvar_to_val[var] = c
-      finalize(tracer, self.finalize_const, var, id(c))
+      self.frame.constvar_to_val[var] = Constants(canonical=c, original=orig_c)
+      finalize(tracer, self.finalize_const, var, id_c)
       return tracer
 
   def finalize_const(self, var, constid):
@@ -2046,7 +2063,10 @@ class DynamicJaxprTrace(core.Trace):
     if isinstance(atom, Literal):
       return atom.val
     else:
-      return self.frame.constvar_to_val.get(atom)
+      const = self.frame.constvar_to_val.get(atom)
+      if const is not None:
+        const = const.canonical
+      return const
 
   def _lift_tracers_in_aval(self, aval, source_info: SourceInfo):
     if (not isinstance(aval, DShapedArray) or

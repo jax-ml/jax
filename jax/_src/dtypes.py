@@ -346,23 +346,30 @@ canonicalize_value_handlers: dict[Any, Callable] = {}
 
 
 # TODO(mattjj): try to remove this canonicalize_dtype stuff
-def canonicalize_value(x):
+def canonicalize_value(x, canonicalize_scalar_dtypes: bool = False):
   typ = type(x)
   handler = canonicalize_value_handlers.get(typ)
-  if handler: return handler(x)
+  if handler:
+    return handler(x, canonicalize_scalar_dtypes=canonicalize_scalar_dtypes)
   for typ in typ.__mro__:
     handler = canonicalize_value_handlers.get(typ)
-    if handler: return handler(x)
+    if handler:
+      return handler(x, canonicalize_scalar_dtypes=canonicalize_scalar_dtypes)
   if hasattr(x, '__jax_array__'):
     deprecations.warn(
-      'jax-abstract-dunder-array',
-      ('Triggering of __jax_array__() during abstractification is deprecated.'
-       ' To avoid this error, either explicitly convert your object using'
-       ' jax.numpy.array(), or register your object as a pytree.'),
-      stacklevel=6)
+        'jax-abstract-dunder-array',
+        (
+            'Triggering of __jax_array__() during abstractification is'
+            ' deprecated. To avoid this error, either explicitly convert your'
+            ' object using jax.numpy.array(), or register your object as a'
+            ' pytree.'
+        ),
+        stacklevel=6,
+    )
     return canonicalize_value(x.__jax_array__())
   raise InvalidInputException(
-      f"Argument '{x}' of type {type(x)} is not a valid JAX type.")
+      f"Argument '{x}' of type {type(x)} is not a valid JAX type."
+  )
 
 
 # Default dtypes corresponding to Python scalars.

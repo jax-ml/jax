@@ -843,12 +843,12 @@ def _shard_map_lowering_shardy(
   in_shardings = list(
       map(partial(_shardy_shard_map_sharding, ctx, mesh, manual_axes),
           in_specs, ctx.avals_in))
-  const_args = core.jaxpr_const_args(jaxpr)
+  const_args_and_avals = core.jaxpr_const_args(jaxpr)
+  const_args, const_avals = util.unzip2(const_args_and_avals)
   num_const_args = len(const_args)
   const_arg_values = tuple(
-      mlir.ir_constant(c, ctx.const_lowering, canonicalize_dtype=True)
-      for c in const_args)
-  const_avals = [core.shaped_abstractify(c) for c in const_args]
+      mlir.ir_constant(c, const_lowering=ctx.const_lowering, aval=aval)
+      for c, aval in const_args_and_avals)
   # TODO(necula,yashkatariya): how to construct consts shardy shardings from
   #  consts that can be ndarray or jax.Array?
   const_args_shardings = [
@@ -891,7 +891,9 @@ def _shard_map_lowering_shardy(
     dim_var_values, token_arg_values, const_arg_values, in_args = util.split_list(  # type: ignore
         block.arguments, [num_dim_vars, num_tokens, num_const_args])
     block_const_lowering = {
-        id(c): ca for c, ca in zip(const_args, const_arg_values)}
+        (id(c), aval): ca
+        for c, aval, ca in zip(const_args, const_avals, const_arg_values)
+    }
     out_nodes_, tokens_out = mlir.jaxpr_subcomp(
         sub_ctx, jaxpr, ctx.name_stack,
         mlir.TokenSet(zip(ctx.tokens_in.effects(), token_arg_values)),

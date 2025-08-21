@@ -3952,8 +3952,8 @@ def shard_foo_array_handler(xs, shardings, layouts, copy_semantics):
         aval, jax.sharding.SingleDeviceSharding(device), [x.data], [device]))
   return results
 
-def foo_array_constant_handler(x):
-  return array._array_mlir_constant_handler(x.data)
+def foo_array_constant_handler(x, aval):
+  return array._array_mlir_constant_handler(x.data, aval)
 
 def make_lowering(*, shape):
   return jnp.zeros((*shape, 2), 'uint32')
@@ -3984,7 +3984,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
   def setUp(self):
     core.pytype_aval_mappings[FooArray] = \
         lambda x: core.ShapedArray(x.shape, FooTy(), sharding=None)
-    dtypes.canonicalize_value_handlers[FooArray] = lambda x: x
+    dtypes.canonicalize_value_handlers[FooArray] = lambda x, *, canonicalize_scalar_dtypes: x
     pxla.shard_arg_handlers[FooArray] = shard_foo_array_handler
     mlir._constant_handlers[FooArray] = foo_array_constant_handler
     mlir.register_lowering(make_p, mlir.lower_fun(make_lowering, False))
