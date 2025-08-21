@@ -275,6 +275,27 @@ class CoreMapTest(jtu.JaxTestCase):
     y = f(x)
     np.testing.assert_array_equal(y, expected_out)
 
+  def test_raises_on_captured_arrays(self):
+    @jax.jit
+    def f(x):
+      y = jnp.zeros_like(x)
+
+      def inner(x_ref):
+        @pl.core_map(pltpu.create_tensorcore_mesh("x"))
+        def _():
+          @functools.partial(
+              pl.run_scoped, tmp_ref=pltpu.VMEM(x_ref.shape, x_ref.dtype)
+          )
+          def _(tmp_ref):
+            pltpu.sync_copy(x_ref, tmp_ref)
+            tmp_ref[...] += y
+
+      return pl.run_state(inner)(x)
+
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    with self.assertRaisesRegex(Exception, "core_map .* captures constants"):
+      f(x)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
