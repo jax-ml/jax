@@ -2111,30 +2111,25 @@ class JaxExportTest(jtu.JaxTestCase):
     r = jax.jit(exp.call, out_shardings=NamedSharding(old_mesh_0, P("old_b")))(a, b)
     self.assertAllClose(a + b, r)
 
-  def test_lower_with_different_meshes_axis_names(self):
-    mesh1 = jtu.create_mesh((4, 2), ("a", "b"))
-    mesh2 = jtu.create_mesh((4, 2), ("x", "y"))
+  def test_lower_and_load_with_different_meshes_axis_names(self):
+    mesh1 = jtu.create_mesh((8,), ("a",))
+    mesh2 = jtu.create_mesh((8,), ("b",))
+    mesh3 = jtu.create_mesh((8,), ("c",))
+    mesh4 = jtu.create_mesh((8,), ("d",))
+
+    a = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+    b = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+
     @jax.jit
-    def f(tree):
-      return tree['foo'] + tree['bar']
+    def f(x, y):
+      return x + y
 
-    args = {
-          'foo': jax.ShapeDtypeStruct(
-              (32, 32), dtype=np.float32,
-              sharding=NamedSharding(mesh1, P(None, "a"))),
-          'bar': jax.ShapeDtypeStruct(
-              (32, 32), dtype=np.float32,
-              sharding=NamedSharding(mesh2, P("y"))),
-      }
+    a_put = jax.device_put(a, NamedSharding(mesh1, P(None, "a")))
+    b_put = jax.device_put(b, NamedSharding(mesh2, P(None, "b")))
+    exp = get_exported(f)(a_put, b_put)
 
-    if config.use_shardy_partitioner.value:
-      with self.assertRaisesRegex(
-          ValueError,
-          r'Mesh for all inputs/outputs should be equal.*'
-          r"args\[0\]\['bar'\].*"):
-        get_exported(f)(args)
-    else:
-       get_exported(f)(args)
+    jax.jit(exp.call, in_shardings=(NamedSharding(mesh3, P("c")),
+                                    NamedSharding(mesh4, P("d"))))(a, b)
 
   @jtu.parameterized_filterable(
     kwargs=[

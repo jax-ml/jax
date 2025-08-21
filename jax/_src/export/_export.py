@@ -746,27 +746,13 @@ def _export_lowered(
   if _device_assignment_for_internal_jax2tf_use_only is not None:
     _device_assignment_for_internal_jax2tf_use_only[0] = device_assignment
 
-  cur_mesh = cur_arg = cur_k_path = None
-  # lowered.args_info is a tree of the args, but we need the out avals too to
-  # get the key paths for.
-  out_avals_tree = tree_util.tree_unflatten(lowered.out_tree, out_avals_flat)
+  cur_mesh = None
   if config.use_shardy_partitioner.value:
-    for sharding, (k_path, arg) in zip(
-        itertools.chain.from_iterable([
-            all_in_shardings, lowering.compile_args["out_shardings"]]),
-        itertools.chain.from_iterable([
-            tree_util.tree_flatten_with_path(lowered.args_info)[0],
-            tree_util.tree_flatten_with_path(out_avals_tree)[0]])):
+    for sharding in itertools.chain.from_iterable([
+        all_in_shardings, lowering.compile_args["out_shardings"]]):
       if isinstance(sharding, sharding_impls.NamedSharding):
-        if cur_mesh is None:
-          cur_mesh, cur_arg, cur_k_path = sharding.mesh, arg, k_path
-        elif cur_mesh.shape_tuple != sharding.mesh.shape_tuple:
-          raise ValueError(
-              "Mesh for all inputs/outputs should be equal. Got one mesh "
-              f"{cur_mesh} on an array {cur_arg._aval} at "  # type: ignore[union-attr]
-              f"{shape_poly.args_kwargs_path_to_str(cur_k_path)} and another mesh: "  # type: ignore[arg-type]
-              f"{sharding.mesh}' on a tensor {arg._aval} at "
-              f"{shape_poly.args_kwargs_path_to_str(k_path)}")
+        cur_mesh = sharding.mesh
+        break
     if cur_mesh and isinstance(cur_mesh, mesh_lib.Mesh):
       cur_mesh = cur_mesh.abstract_mesh
 
