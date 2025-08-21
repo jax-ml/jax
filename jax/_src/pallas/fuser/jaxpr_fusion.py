@@ -20,6 +20,7 @@ from typing import Any
 import jax
 from jax._src import api_util
 from jax._src import core as jax_core
+from jax._src import custom_derivatives
 from jax._src import linear_util as lu
 from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
@@ -251,18 +252,58 @@ def _construct_output_fusions(
   )
 
 
+# TODO(cjfj): Find more elegant way to inline jaxpr.
+def _inline_custom_vjp_jaxpr(
+    jaxpr: jax_core.Jaxpr, custom_vjp_idx: int
+) -> jax_core.Jaxpr:
+  custom_vjp = jaxpr.eqns[custom_vjp_idx]
+  call_jaxpr = custom_vjp.params["call_jaxpr"].jaxpr
+  env = dict(zip(call_jaxpr.invars, custom_vjp.invars))
+  env.update(zip(call_jaxpr.outvars, custom_vjp.outvars))
+
+  read = lambda var: var if isinstance(var, jax_core.Literal) else env[var]
+  write = lambda var: env.setdefault(var, var)
+
+  new_eqns = list(jaxpr.eqns)
+  new_eqns[custom_vjp_idx : custom_vjp_idx + 1] = [
+      eqn.replace(
+          invars=list(map(read, eqn.invars)),
+          outvars=list(map(write, eqn.outvars)),
+      )
+      for eqn in call_jaxpr.eqns
+  ]
+  return jaxpr.replace(eqns=new_eqns)
+
+
 def fuse_jaxpr(
     jaxpr: jax_core.Jaxpr, out_tree: tree_util.PyTreeDef, consts, *args
 ):
-  fusion_eqn_index = None
-
   # Collect input fusions
   for i, eqn in enumerate(jaxpr.eqns):
     if eqn.primitive is fusible_p:
       fusion_eqn_index = i
       break
-  if fusion_eqn_index is None:
-    raise ValueError("No fusible eqn found")
+  else:
+    # Look for `fusible`s within `custom_vjp` calls.
+    for i, eqn in enumerate(jaxpr.eqns):
+      if eqn.primitive is custom_derivatives.custom_vjp_call_p:
+        for inner_eqn in eqn.params["call_jaxpr"].eqns:
+          if inner_eqn.primitive is fusible_p:
+
+            @custom_derivatives.custom_gradient
+            def f(*args, i=i):
+              fwd = functools.partial(jax_core.eval_jaxpr, jaxpr, consts)
+              inlined_jaxpr = _inline_custom_vjp_jaxpr(jaxpr, i)
+              inlined_fwd = functools.partial(
+                  jax_core.eval_jaxpr, inlined_jaxpr, consts
+              )
+              # TODO(cjfj): Attempt to fuse the bwd function as well?
+              return fuse(inlined_fwd)(*args), jax.vjp(fwd, *args)[1]
+
+            return f(*args)
+
+    raise ValueError("No fusible eqn found", jaxpr)
+
   fusion_eqn = jaxpr.eqns[fusion_eqn_index]
 
   # Now let's check if we need to do any fusion at all, e.g. do the outputs of

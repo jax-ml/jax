@@ -14,11 +14,11 @@
 
 from absl.testing import absltest
 import jax
+from jax import lax
 from jax._src import test_util as jtu
 from jax.experimental.pallas import fuser
 import jax.numpy as jnp
 import numpy as np
-from jax import lax
 
 jax.config.parse_flags_with_absl()
 
@@ -229,6 +229,100 @@ class FusionTest(jtu.JaxTestCase):
     a = jax.random.normal(jax.random.key(1), (128, 128), dtype=jnp.float32)
     y_out = g(x, a)
     np.testing.assert_array_equal(y_out, a)
+
+  def test_vmap_fusible(self):
+
+    @fuser.fusible
+    def f(x_fn, y_fn):
+      x = x_fn()
+      if y_fn is None:
+        y_fn = lambda x: x
+      return y_fn(x)
+
+    @jax.jit
+    @fuser.fuse
+    def g(x, a, b):
+      return jax.vmap(f)(a * x) + b
+
+    x = jax.random.normal(jax.random.key(0), (128, 128), dtype=jnp.float32)
+    a = jax.random.normal(jax.random.key(1), (128, 128), dtype=jnp.float32)
+    b = jax.random.normal(jax.random.key(2), (128, 128), dtype=jnp.float32)
+    np.testing.assert_allclose(g(x, a, b), a * x + b, atol=1e-6)
+
+  def test_vmap_fusible_multiple_inputs(self):
+
+    @fuser.fusible
+    def f(x_fn, y_fn, z_fn):
+      x = x_fn()
+      y = y_fn()
+      if z_fn is None:
+        z_fn = lambda x: x
+      return z_fn(x * y)
+
+    @jax.jit
+    @fuser.fuse
+    def g(x, a, b, c):
+      return jax.vmap(f)(x + a, x - b) + c
+
+    x = jax.random.normal(jax.random.key(0), (128, 128), dtype=jnp.float32)
+    a = jax.random.normal(jax.random.key(1), (128, 128), dtype=jnp.float32)
+    b = jax.random.normal(jax.random.key(2), (128, 128), dtype=jnp.float32)
+    c = jax.random.normal(jax.random.key(3), (128, 128), dtype=jnp.float32)
+    np.testing.assert_allclose(g(x, a, b, c), (x + a) * (x - b) + c, atol=1e-6)
+
+  def test_vmap_fusible_multiple_outputs(self):
+
+    @fuser.fusible(output_fusion_prefix=(True, True))
+    def f(x_fn, y_fns):
+      x = x_fn()
+      if y_fns is None:
+        y_fns = (lambda x: x, lambda x: x)
+      y_fn1, y_fn2 = y_fns
+      return y_fn1(3 * x), y_fn2(x * x)
+
+    @jax.jit
+    @fuser.fuse
+    def g(x, a):
+      y, z = jax.vmap(f)(x)
+      return y, (2 * z, a * z)
+
+    x = jax.random.normal(jax.random.key(0), (128, 128), dtype=jnp.float32)
+    a = jax.random.normal(jax.random.key(1), (128, 128), dtype=jnp.float32)
+    (actual0, (actual1, actual2)) = g(x, a)
+    np.testing.assert_allclose(actual0, 3 * x, atol=1e-6)
+    np.testing.assert_allclose(actual1, 2 * x * x, atol=1e-6)
+    np.testing.assert_allclose(actual2, a * x * x, atol=1e-6)
+
+  def test_custom_vjp_fusible(self):
+
+    @jax.custom_vjp
+    @fuser.fusible
+    def f(x_fn, y_fn, z_fn):
+      x = x_fn()
+      y = y_fn()
+      if z_fn is None:
+        z_fn = lambda x: x
+      return z_fn(jnp.sin(x) * y)
+
+    def f_fwd(x, y):
+      return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+
+    def f_bwd(res, g):
+      cos_x, sin_x, y = res
+      return (cos_x * g * y, sin_x * g)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    @jax.jit
+    @fuser.fuse
+    def g(x, y, a, b):
+      return f(a * x, y) + b
+
+    x = jax.random.normal(jax.random.key(0), (128, 128), dtype=jnp.float32)
+    y = jax.random.normal(jax.random.key(1), (128, 128), dtype=jnp.float32)
+    a = jax.random.normal(jax.random.key(2), (128, 128), dtype=jnp.float32)
+    b = jax.random.normal(jax.random.key(3), (128, 128), dtype=jnp.float32)
+    np.testing.assert_allclose(g(x, y, a, b), jnp.sin(a * x) * y + b, atol=1e-6)
 
 
 if __name__ == "__main__":
