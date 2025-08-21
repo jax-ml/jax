@@ -553,9 +553,7 @@ def _layout_cast_equation_system(
   variable = eqns.Variable(operand)
   out_layout = eqns.Constant(layouts_lib.from_layout_attr(op.new_layout))
   return (
-      eqns.EquationSystem(
-          assignments={eqns.Variable(operand): out_layout},
-      ),
+      eqns.EquationSystem(assignments={variable: out_layout}),
       {variable: [operand, result]},
       [],
   )
