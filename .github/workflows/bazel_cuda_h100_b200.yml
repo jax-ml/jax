@@ -16,12 +16,19 @@ on:
         options:
         - 'yes'
         - 'no'
+#   pull_request:
+#     branches:
+#       - main
+#     types: [ labeled, synchronize, opened, reopened ]
+#   schedule:
+#     - cron: "0 */2 * * *" # Run once every 2 hours
   pull_request:
     branches:
       - main
-    types: [ labeled, synchronize, opened, reopened ]
-  schedule:
-    - cron: "0 */2 * * *" # Run once every 2 hours
+  push:
+    branches:
+      - main
+      - 'release/**'
 permissions: {}
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -57,7 +64,7 @@ jobs:
       any_changed: ${{ steps.changed-files.outputs.any_changed || 'false' }}
   run_tests: 
     needs: changed_files 
-    if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || needs.changed_files.outputs.any_changed == 'true' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
+    if: github.event.repository.fork == false
     runs-on: linux-x86-a4-224-b200-1gpu
     container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
     name: "Bazel single B200 CUDA tests"
@@ -74,14 +81,14 @@ jobs:
         run: |
             nvidia-smi
             bazel test \
-            --config=ci_linux_x86_64_cuda \
+            --config=ci_linux_x86_64_cuda13 \
             --config=ci_rbe_cache \
             --config=use_tar_archive_files \
             --repo_env=HERMETIC_PYTHON_VERSION="3.13" \
-            --repo_env=HERMETIC_CUDNN_VERSION="9.11.0" \
+            --repo_env=HERMETIC_CUDNN_VERSION="9.12.0" \
             --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
             --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
-            --test_output=errors \
+            --test_output=all \
             --test_tag_filters=-multiaccelerator \
             --test_env=JAX_ACCELERATOR_COUNT=1 \
             --test_env=JAX_TESTS_PER_ACCELERATOR=8 \
@@ -95,6 +102,7 @@ jobs:
             --flaky_test_attempts=1 \
             --test_timeout=420 \
             --color=yes \
+            --@cuda_driver//:enable_forward_compatibility=true \
             //tests:cudnn_fusion_test_gpu \
             //tests:scaled_matmul_stablehlo_test_gpu \
             //tests:fused_attention_stablehlo_test_gpu \
@@ -102,7 +110,7 @@ jobs:
             //tests/pallas:gpu_tests \
             //tests/mosaic:gpu_tests
   run_multiaccelerator_tests:
-    if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
+    if: github.event.repository.fork == false
     runs-on: linux-x86-a3-8g-h100-8gpu
     container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
     name: "Bazel multiple H100 CUDA tests"
@@ -118,11 +126,11 @@ jobs:
         run: |
             nvidia-smi
             bazel test \
-            --config=ci_linux_x86_64_cuda \
+            --config=ci_linux_x86_64_cuda13 \
             --config=ci_rbe_cache \
             --config=use_tar_archive_files \
             --repo_env=HERMETIC_PYTHON_VERSION="3.13" \
-            --repo_env=HERMETIC_CUDNN_VERSION="9.11.0" \
+            --repo_env=HERMETIC_CUDNN_VERSION="9.12.0" \
             --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
             --test_output=errors \
             --strategy=TestRunner=local \
@@ -135,6 +143,7 @@ jobs:
             --action_env=NCCL_DEBUG=WARN \
             --flaky_test_attempts=1 \
             --color=yes \
+            --@cuda_driver//:enable_forward_compatibility=true \
             //tests/mosaic:gpu_tests \
             //tests/pallas:gpu_tests \
             //tests:array_interoperability_test_gpu \
