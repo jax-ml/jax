@@ -74,9 +74,9 @@ def _fused_lowering(ctx, *args, out_spaces, jaxpr):
       result_types=func_op.type.results,
       operands=mlir.flatten_ir_values([*const_arg_values, *args]),
       called_computations=[func_op.name.value],
-      extra_attributes=dict(out_spaces=ir.ArrayAttr.get(out_spaces_),
-                            inlineable=ir.BoolAttr.get(False),
-                            MUST_FUSE=ir.BoolAttr.get(True)),
+      backend_config=dict(out_spaces=ir.ArrayAttr.get(out_spaces_),
+                          inlineable=ir.BoolAttr.get(False),
+                          MUST_FUSE=ir.BoolAttr.get(True)),
   )
   return fused.results
 mlir.register_lowering(fused_p, _fused_lowering, platform="cuda")
