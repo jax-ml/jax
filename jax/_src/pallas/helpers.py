@@ -16,13 +16,13 @@
 from collections.abc import Callable
 
 import jax
-import jax.numpy as jnp
-from jax._src import core as jax_core
 from jax._src import checkify
 from jax._src import config
+from jax._src import core as jax_core
 from jax._src.pallas import core as pl_core
-from jax._src.pallas import utils as pl_utils
 from jax._src.pallas import pallas_call
+from jax._src.pallas import utils as pl_utils
+import jax.numpy as jnp
 
 
 @jax.named_call
@@ -30,49 +30,29 @@ def empty(
     shape: tuple[int, ...],
     dtype: jax.typing.DTypeLike,
     *,
-    memory_space: object | None = None,
-    interpret: bool = False,
     backend: pl_core.Backend | None = None,
 ):
-  return empty_like(
-      jax.ShapeDtypeStruct(shape, dtype),
-      memory_space=memory_space,
-      interpret=interpret,
-      backend=backend,
-  )
+  return empty_like(jax.ShapeDtypeStruct(shape, dtype), backend=backend)
 
 
 @jax.named_call
 def empty_like(
     x: object,
     *,
-    memory_space: object | None = None,
-    interpret: bool = False,
     backend: pl_core.Backend | None = None,
 ):
-  if hasattr(x, 'memory_space'):
-    if memory_space is not None:
-      raise ValueError(
-          'memory_space cannot be specified for a MemoryRef object.'
-      )
-    memory_space = x.memory_space
-  if memory_space is None:
-    memory_space = pl_core.MemorySpace.ANY
   return pallas_call.pallas_call(
       # No-op to leave the out_ref uninitialized
       lambda *_: None,
       out_specs=jax.tree.map(
-          lambda _: pl_core.BlockSpec(memory_space=memory_space), x
+          lambda _: pl_core.BlockSpec(memory_space=pl_core.MemorySpace.ANY), x
       ),
       out_shape=x,
-      interpret=interpret,
       backend=backend,
   )()
 
 
-def empty_ref_like(
-    x: object, *, backend: pl_core.Backend | None = None
-) -> jax.Array:
+def empty_ref_like(x: object) -> jax.Array:
   """Returns an empty array Ref with same shape/dtype/memory space as x."""
   match x:
     case pl_core.MemoryRef():
@@ -80,8 +60,15 @@ def empty_ref_like(
     case jax.ShapeDtypeStruct():
       memory_space = pl_core.MemorySpace.ANY
     case _:
-      raise ValueError(f'alloc_ref does not support {type(x)}')
-  out = empty_like(x, backend=backend)
+      raise ValueError(f'empty_ref_like does not support {type(x)}')
+  out = pallas_call.pallas_call(
+      # No-op to leave the out_ref uninitialized
+      lambda *_: None,
+      out_specs=jax.tree.map(
+          lambda _: pl_core.BlockSpec(memory_space=memory_space), x
+      ),
+      out_shape=x,
+  )()
   return jax_core.mutable_array(out, memory_space=memory_space)
 
 
