@@ -246,7 +246,7 @@ def kernel(
         cmap_body.__name__ = getattr(body, "__name__", "anonymous")
       pallas_core.core_map(mesh, compiler_params=compiler_params)(cmap_body)
     _, outs = state_discharge.run_state(stateful)(
-        (operands, pallas_helpers.empty_like(out_shape, backend="mosaic_gpu"))
+        (operands, pallas_helpers.empty_like(out_shape))
     )
     return outs[0] if unwrap_out else outs
 
@@ -263,7 +263,7 @@ def kernel(
       out_refs = tree_util.tree_map(slice_ref, out_refs)
       return body(*operand_refs, *out_refs, *scratch_refs)
 
-    out_shape_ = out_shape[0] if unwrap_out else tuple(out_shape)
+    out_shape_ = out_shape[0] if unwrap_out else out_shape
     add_batch_dim = lambda x: x.update(shape=(axis_size, *x.shape))
     mesh_kwargs_ = dict(mesh_kwargs)
     out = kernel(
