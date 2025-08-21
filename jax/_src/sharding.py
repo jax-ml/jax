@@ -171,6 +171,10 @@ class Sharding:
     """
     return common_devices_indices_map(self, global_shape)
 
+  @property
+  def has_addressable_devices(self) -> bool:
+    return len(self._internal_device_list.addressable_device_list) > 0
+
   @functools.cached_property
   def _addressable_device_assignment(self) -> XLADeviceAssignment:
     if self.is_fully_addressable:

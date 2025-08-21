@@ -639,8 +639,7 @@ class ArrayImpl(basearray.Array):
 
     if self._npy_value is None:
       # addressable_device_list can be empty. If it's empty, we will error below
-      if (self.is_fully_replicated and
-          self.sharding._internal_device_list.addressable_device_list):  # type: ignore
+      if (self.is_fully_replicated and self.sharding.has_addressable_devices):
         npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
         npy_value.flags.writeable = False
         if did_copy:
