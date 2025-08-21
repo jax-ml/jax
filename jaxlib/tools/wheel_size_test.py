@@ -43,7 +43,7 @@ def verify_wheel_size(args):
         " {max_size} MiB".format(
             name=wheel_name,
             size=wheel_size_mib,
-            max_size=args.max_size_mb,
+            max_size=args.max_size_mib,
         )
     )
   else:

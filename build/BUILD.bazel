@@ -32,6 +32,7 @@ COMMON_REQUIREMENTS = [
 FREETHREADING_REQUIREMENTS = COMMON_REQUIREMENTS + [
     "freethreading-requirements.txt",
 ]
+
 NON_FREETHREADING_REQUIREMENTS = COMMON_REQUIREMENTS + [
     "nonfreethreading-requirements.txt",
 ]
@@ -44,14 +45,15 @@ COMBOS = [
 [
     compile_pip_requirements(
         name = "requirements" + suffix,
+        srcs = requirements,
         extra_args = [
             "--allow-unsafe",
             "--build-isolation",
             "--rebuild",
+            "--extra-index-url=https://pypi.nvidia.com",
         ],
-        srcs = requirements,
-        requirements_txt = REQUIREMENTS,
         generate_hashes = True,
+        requirements_txt = REQUIREMENTS,
     )
     for suffix, requirements in COMBOS
 ]
@@ -59,16 +61,17 @@ COMBOS = [
 [
     compile_pip_requirements(
         name = "requirements_nightly" + suffix,
+        srcs = requirements,
         extra_args = [
             "--allow-unsafe",
             "--build-isolation",
             "--extra-index-url=https://pypi.anaconda.org/scientific-python-nightly-wheels/simple",
+            "--extra-index-url=https://pypi.nvidia.com",
             "--pre",
             "--upgrade",
         ],
-        srcs = requirements,
-        requirements_txt = REQUIREMENTS,
         generate_hashes = False,
+        requirements_txt = REQUIREMENTS,
     )
     for suffix, requirements in COMBOS
 ]
@@ -76,20 +79,24 @@ COMBOS = [
 [
     compile_pip_requirements(
         name = "requirements_dev" + suffix,
+        srcs = requirements,
         extra_args = [
             "--allow-unsafe",
             "--build-isolation",
             "--upgrade",
             "--rebuild",
+            "--extra-index-url=https://pypi.nvidia.com",
         ],
-        srcs = requirements,
-        requirements_txt = REQUIREMENTS,
         generate_hashes = False,
+        requirements_txt = REQUIREMENTS,
     )
     for suffix, requirements in COMBOS
 ]
 
 py_library(
     name = "all_py_deps",
-    deps = all_py_deps(["zstandard", "tensorstore"]),
+    deps = all_py_deps([
+        "zstandard",
+        "tensorstore",
+    ]),
 )

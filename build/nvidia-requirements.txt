@@ -14,9 +14,7 @@ nvidia-nvjitlink-cu12>=12.1.105 ; sys_platform == "linux"
 nvidia-cuda-nvrtc-cu12>=12.1.55 ; sys_platform == "linux"
 nvidia-nvshmem-cu12>=3.2.5 ; sys_platform == "linux"
 
-# TODO(ybaturina): Add CUDA 13 NCCL wheel version with lower bounds when it is
-# available.
-nvidia-nccl-cu13 ; sys_platform == "linux"
+nvidia-nccl-cu13>=2.27.7 ; sys_platform == "linux"
 nvidia-nvshmem-cu13>=3.3.20 ; sys_platform == "linux"
 nvidia-cublas>=13.0.0.19 ; sys_platform == "linux"
 nvidia-cuda-cupti>=13.0.48 ; sys_platform == "linux"

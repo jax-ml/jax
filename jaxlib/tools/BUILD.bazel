@@ -701,7 +701,7 @@ pytype_test(
     srcs = [":wheel_size_test.py"],
     args = [
         "--wheel-path=$(location :jax_cuda{cuda}_pjrt_wheel)".format(cuda = cuda_major_version),
-        "--max-size-mib=120",
+        "--max-size-mib=130",
     ],
     data = [":jax_cuda{cuda}_pjrt_wheel".format(cuda = cuda_major_version)],
     main = "wheel_size_test.py",

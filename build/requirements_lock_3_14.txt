@@ -4,6 +4,8 @@
 #
 #    bazel run //build:requirements.update
 #
+--extra-index-url https://pypi.nvidia.com
+
 absl-py==2.3.1 \
     --hash=sha256:a97820526f7fbfd2ec1bce83f3f25e3a14840dac0d8e02a0b71cd75db3f77fc9 \
     --hash=sha256:eeecf07f0c2a93ace0772c92e596ace6d3d3996c042b2128459aaae2a76de11d
@@ -304,16 +306,6 @@ nvidia-cufft==12.0.0.15 ; sys_platform == "linux" \
     --hash=sha256:9f160b1f018e80bcb0d7c0fa50564b042fa26b13edc1b1ff14b6375a9edd2812 \
     --hash=sha256:ff2083e7c4f5bc063d37ec8399277e514ca97b554e069aa6f7eb7ce6d727dc7b
     # via -r build/nvidia-requirements.txt
-nvidia-cudnn-cu13==9.12.0.46 ; sys_platform == "linux" \
-    --hash=sha256:171f7a41a9ddff4a82b158b44daa003701b9681f202b0e57c2d8fd47e13b0de3 \
-    --hash=sha256:62e8441f9693547fe72108b1974fb82fde9a89d6dcb7b7d117ce8969d08e08e3 \
-    --hash=sha256:f3befad533e234069eb61ae0d12cb7aa8af0ccf36f28c1d4273cc0005d990de0
-    # via -r build/nvidia-requirements.txt
-nvidia-cufft==12.0.0.15 ; sys_platform == "linux" \
-    --hash=sha256:1885731254835797572ff075f3daf43a2a0a2801210dea26971940dae7e1a367 \
-    --hash=sha256:9f160b1f018e80bcb0d7c0fa50564b042fa26b13edc1b1ff14b6375a9edd2812 \
-    --hash=sha256:ff2083e7c4f5bc063d37ec8399277e514ca97b554e069aa6f7eb7ce6d727dc7b
-    # via -r build/nvidia-requirements.txt
 nvidia-cufft-cu12==11.4.1.4 ; sys_platform == "linux" \
     --hash=sha256:1a28c9b12260a1aa7a8fd12f5ebd82d027963d635ba82ff39a1acfa7c4c0fbcf \
     --hash=sha256:8e5bfaac795e93f80611f807d42844e8e27e340e0cde270dcb6c65386d795b80 \
@@ -347,13 +339,9 @@ nvidia-nccl-cu12==2.27.7 ; sys_platform == "linux" \
     --hash=sha256:4617839f3bb730c3845bf9adf92dbe0e009bc53ca5022ed941f2e23fb76e6f17 \
     --hash=sha256:de5ba5562f08029a19cb1cd659404b18411ed0d6c90ac5f52f30bf99ad5809aa
     # via -r build/nvidia-requirements.txt
-nvidia-nccl-cu13==0.0.0a0 ; sys_platform == "linux" \
-    --hash=sha256:1684d1b6e8a0e4a2e0f366769d2b51a7caa574ded84c284492b86d8d39195641 \
-    --hash=sha256:856196de401b54a6e426c8417a7e3713b3d4a732465a0615a426be2b737c59a2
-    # via -r build/nvidia-requirements.txt
-nvidia-nccl-cu13==0.0.0a0 ; sys_platform == "linux" \
-    --hash=sha256:1684d1b6e8a0e4a2e0f366769d2b51a7caa574ded84c284492b86d8d39195641 \
-    --hash=sha256:856196de401b54a6e426c8417a7e3713b3d4a732465a0615a426be2b737c59a2
+nvidia-nccl-cu13==2.27.7 ; sys_platform == "linux" \
+    --hash=sha256:5e3cc863e52bf9dd1e3ab1941bddb414098f489ae7342f6b3a274602303da123 \
+    --hash=sha256:b28a524abd8389b76a4a3f133c76a7aaa7005e47fcaa9d9603b90103927a3f93
     # via -r build/nvidia-requirements.txt
 nvidia-nvjitlink==13.0.39 ; sys_platform == "linux" \
     --hash=sha256:478d06d3783b1c26a9bea308b972737a9fb2bb832d2254aa51fe753713b4a583 \
