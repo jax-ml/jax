@@ -1036,7 +1036,7 @@ jax_multiplatform_test(
         "JAX_PALLAS_USE_MOSAIC_GPU": "1",
         "FAIL_ON_NVSHMEM_UNAVAILABLE": "",
     },
-    shard_count = 4,
+    shard_count = 8,
     tags = [
         "manual",
         "multiaccelerator",

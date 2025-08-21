@@ -63,12 +63,13 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
     context_stack.enter_context(jax.set_mesh(mesh))
 
   @parameterized.product(
-      m_shard=(1024, 8192),
+      m_shard=(1024, 4096),
       n_shard=(256, 384, 576),
-      k=(256, 8192),
+      k=(256, 4096),
       block_m=(64, 128, 192),
       block_n=(64, 128, 192),
       block_k=(64, 128),
+      sm_n_tile=(1, 2, 4),
       max_concurrent_steps=(2, 4),
       dtype=(jnp.float16, jnp.bfloat16),
   )
@@ -80,6 +81,7 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
       block_m,
       block_n,
       block_k,
+      sm_n_tile,
       max_concurrent_steps,
       dtype,
   ):
@@ -91,6 +93,10 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
       self.skipTest("This configuration requires too much SMEM.")
     if n_shard % block_n:
       self.skipTest("n_shard must be divisible by block_n for now.")
+    if (n_shard // block_n) % sm_n_tile != 0:
+      self.skipTest(
+          "(n_shard // block_n) must be divisible by sm_n_tile for now."
+      )
     if m_shard % block_m:
       self.skipTest("m_shard must be divisible by block_m for now.")
 
@@ -118,6 +124,7 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
             block_m=block_m,
             block_n=block_n,
             block_k=block_k,
+            sm_n_tile=sm_n_tile,
             max_concurrent_steps=max_concurrent_steps,
             dtype=dtype,
         )

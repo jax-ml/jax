@@ -31,6 +31,7 @@ def all_gather_lhs_matmul(
     block_m: int,
     block_n: int,
     block_k: int,
+    sm_n_tile: int,
     max_concurrent_steps: int,
     dtype: jnp.dtype = jnp.float16,
 ) -> jax.Array:
@@ -42,8 +43,6 @@ def all_gather_lhs_matmul(
     raise ValueError("max_concurrent_steps must be >= 2")
   if jnp.dtype(dtype) not in map(jnp.dtype, [jnp.float16, jnp.bfloat16]):
     raise NotImplementedError(f"Only f16 and bf16 are supported, got {dtype=}")
-
-  num_sms = jax.devices()[0].core_count  # That's 132 SMs for H100 SXM GPUs.
 
   m_shard, k = lhs.shape
   k2, n_shard = rhs.shape
@@ -63,6 +62,17 @@ def all_gather_lhs_matmul(
   if n_shard % block_n != 0:
     raise NotImplementedError(f"{n_shard=} must be a multiple of {block_n=}")
 
+  # max_num_sms is 132 for H100 SXM GPUs.
+  if (max_num_sms := jax.devices()[0].core_count) % sm_n_tile != 0:
+    raise ValueError(f"{max_num_sms=} must be divisible by {sm_n_tile=}.")
+  if n_shard % sm_n_tile != 0:
+    raise NotImplementedError(f"{n_shard=} must be divisible by {sm_n_tile=}")
+  if (n_shard_per_sm_n := n_shard // sm_n_tile) % block_n != 0:
+    raise NotImplementedError(
+        f"{n_shard_per_sm_n=} must be divisible by {block_n=}"
+    )
+  num_sms_m = max_num_sms // sm_n_tile
+
   swizzle = min(
       plgpu.find_swizzle(block_k * jnp.finfo(element_type).bits, "lhs"),
       plgpu.find_swizzle(block_n * jnp.finfo(element_type).bits, "rhs"),
@@ -73,8 +83,10 @@ def all_gather_lhs_matmul(
   )
 
   def kernel_body(lhs_ref, rhs_ref, out_ref, scratch_ref, capacity_sem, received_sem):
-    sm_id = lax.axis_index('sm')
-    scratch_ref = scratch_ref.at[sm_id]
+    sm_m = lax.axis_index('sm_m')
+    sm_n = lax.axis_index('sm_n')
+    n_start = sm_n * n_shard_per_sm_n
+    scratch_ref = scratch_ref.at[sm_m]
 
     dev_id = lax.axis_index(axis_name)
     send_dev_id = lax.rem(dev_id + axis_size - 1, axis_size)
@@ -87,7 +99,7 @@ def all_gather_lhs_matmul(
         scratch_ref, send_dev_id, device_id_type=pl.DeviceIdType.LOGICAL
     )
 
-    @plgpu.nd_loop((m_shard // block_m,), collective_axes="sm")
+    @plgpu.nd_loop((m_shard // block_m,), collective_axes="sm_m")
     def _m_loop(idx):
       (mi,) = idx
       m_tile_slice = pl.ds(mi * block_m, block_m)
@@ -104,7 +116,7 @@ def all_gather_lhs_matmul(
         device_m_slice = pl.ds(
             lax.rem(device_offset + dev_id, num_devices) * m_shard, block_m
         )
-        n_tile_slice = pl.ds(0, block_n)
+        n_tile_slice = pl.ds(n_start, block_n)
 
         # Loop invariant: scratch_ref.at[scratch_slot] is ready to be used
         # We're double buffering the scratch space. At each step, we read from
@@ -135,6 +147,7 @@ def all_gather_lhs_matmul(
           )
           def k_loop(idxs, lhs_smem, rhs_smem):
             plgpu.wgmma(acc_ref, lhs_smem, rhs_smem)
+            # TODO(giorgioa): Send only for first sm_n.
             @pl.when(device_offset < num_devices - 1)
             def _():
               (ki,) = idxs
@@ -164,9 +177,9 @@ def all_gather_lhs_matmul(
           # Wait for the next scratch to arrive --- see the loop invariant.
           pl.semaphore_wait(received_sem)
 
-        @pl.loop(1, n_shard // block_n)
+        @pl.loop(1, n_shard_per_sm_n // block_n)
         def _n_loop(ni):
-          n_tile_slice = pl.ds(ni * block_n, block_n)
+          n_tile_slice = pl.ds(n_start + ni * block_n, block_n)
 
           @functools.partial(
               pl.run_scoped,
@@ -200,12 +213,19 @@ def all_gather_lhs_matmul(
 
   result, _ = plgpu.kernel(
       kernel_body,
-      out_shape=[jax.ShapeDtypeStruct((axis_size * m_shard, n_shard), dtype),
-                  jax.ShapeDtypeStruct((num_sms, 2, block_m, k), dtype)],
-      scratch_shapes=[
-          plgpu.SemaphoreType.REGULAR, plgpu.SemaphoreType.REGULAR,
+      out_shape=[
+          # Out_ref. Stores full M computed in a collective way across devices.
+          jax.ShapeDtypeStruct((axis_size * m_shard, n_shard), dtype),
+          # Scratch_ref. Used to buffer (2 * `block_m`) rows (because of double
+          # buffering) of the lhs per sm_m. Accessible remotely by previous and
+          # next devices.
+          jax.ShapeDtypeStruct((num_sms_m, 2, block_m, k), dtype),
       ],
-      grid=(num_sms,),
-      grid_names=('sm',),
+      scratch_shapes=[
+          plgpu.SemaphoreType.REGULAR,  # Capacity semaphore
+          plgpu.SemaphoreType.REGULAR,  # Received semaphore
+      ],
+      grid=(num_sms_m, sm_n_tile),
+      grid_names=('sm_m', 'sm_n'),
   )(lhs, rhs)
   return result
