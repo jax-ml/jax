@@ -38,6 +38,10 @@ on:
         required: false
         default: 'false'
         type: string
+      run-backend_independent-test-suite:
+        description: "Should the backend independent test suite be run?"
+        type: string
+        default: "1"
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
         default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
@@ -57,6 +61,7 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
       JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
+      JAXCI_RUN_BACKEND_INDEPENDENT_TESTS: "${{ inputs.run-backend_independent-test-suite }}"
 
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
         (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||

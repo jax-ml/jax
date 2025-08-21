@@ -34,6 +34,9 @@ on:
         - "3.11"
         - "3.12"
         - "3.13"
+        - "3.14"
+        - "3.13-nogil"
+        - "3.14-nogil"
       clone_main_xla:
         description: "Should latest XLA be used?"
         type: choice
