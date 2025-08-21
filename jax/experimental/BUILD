@@ -556,6 +556,24 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "fused",
+    srcs = ["fused.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//jax/_src:ad",
+        "//jax/_src:api",
+        "//jax/_src:api_util",
+        "//jax/_src:batching",
+        "//jax/_src:core",
+        "//jax/_src:mlir",
+        "//jax/_src:partial_eval",
+        "//jax/_src:tree_util",
+        "//jax/_src:util",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
     name = "source_mapper",
     srcs = glob(include = ["source_mapper/**/*.py"]),
     visibility = [
@@ -678,6 +696,7 @@ filegroup(
         "compilation_cache/**/*.py",
     ]) + [
         "checkify.py",
+        "fused.py",
         "multihost_utils.py",
         "pjit.py",
         "scheduling_groups.py",

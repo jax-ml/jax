@@ -1500,6 +1500,16 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "fused_test",
+    srcs = ["fused_test.py"],
+    deps = [
+        "//jax/experimental:fused",
+    ] + py_deps([
+        "absl/testing",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "stax_test",
     srcs = ["stax_test.py"],
     deps = ["//jax:stax"] + py_deps([

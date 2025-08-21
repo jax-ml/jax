@@ -2272,6 +2272,8 @@ def _pjit_linearize(nzs, *primals_in, jaxpr, in_shardings, out_shardings,
   primal_out_layouts = keep_where(primal_out_layouts, keep)
   del keep
 
+  tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
+
   def tangent_fun(residuals, *tangents):
     tangents_nz = _filter_zeros(nzs, tangents)
     nz_tangents_out = jit_p.bind(
@@ -2286,7 +2288,6 @@ def _pjit_linearize(nzs, *primals_in, jaxpr, in_shardings, out_shardings,
         keep_unused=keep_unused,
         inline=inline,
         compiler_options_kvs=compiler_options_kvs)
-    tangent_avals_out = [v.aval.to_tangent_aval() for v in jaxpr.jaxpr.outvars]
     nz_tangents_out_ = iter(nz_tangents_out)
     tangents_out = [next(nz_tangents_out_) if nz else ad.Zero(aval)
                    for (aval, nz) in zip(tangent_avals_out, nzs_out)]
