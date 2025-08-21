@@ -412,6 +412,8 @@ class ArrayImpl(basearray.Array):
       line_width = np.get_printoptions()["linewidth"]
       if self.size == 0:
         s = f"[], shape={self.shape}"
+      elif not self.sharding.has_addressable_devices:
+        s = f"shape={self.shape}"
       else:
         s = np.array2string(self._value, prefix=prefix, suffix=',',
                             separator=', ', max_line_width=line_width)
@@ -421,6 +423,7 @@ class ArrayImpl(basearray.Array):
         sep = ' ' * len(prefix)
       return f"{prefix}{s},{sep}{dtype_str}"
     else:
+      # TODO(emilyaf): Add "shape=" for consistency with the above.
       return f"{prefix}{self.shape}, {dtype_str}"
 
   @property
@@ -639,7 +642,7 @@ class ArrayImpl(basearray.Array):
 
     if self._npy_value is None:
       # addressable_device_list can be empty. If it's empty, we will error below
-      if (self.is_fully_replicated and self.sharding.has_addressable_devices):
+      if self.is_fully_replicated and self.sharding.has_addressable_devices:
         npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
         npy_value.flags.writeable = False
         if did_copy:
