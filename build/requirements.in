@@ -17,7 +17,7 @@ wheel
 # JAX's own libraries. We include these in the requirements so you can
 # bazel test without building jaxlib and without manually updating the
 # the requirements files.
-jaxlib; python_version<"3.14"
+jaxlib
 
 jax-cuda12-plugin; sys_platform == "linux" and python_version<"3.14"
 jax-cuda13-plugin

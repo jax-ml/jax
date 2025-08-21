@@ -4,30 +4,26 @@
 #
 #    bazel run //build:requirements_ft.update
 #
-absl-py==2.1.0 \
-    --hash=sha256:526a04eadab8b4ee719ce68f204172ead1027549089702d99b9059f129ff1308 \
-    --hash=sha256:7820790efbb316739cde8b4e19357243fc3608a152024288513dd968d7d959ff
+absl-py==2.3.1 \
+    --hash=sha256:a97820526f7fbfd2ec1bce83f3f25e3a14840dac0d8e02a0b71cd75db3f77fc9 \
+    --hash=sha256:eeecf07f0c2a93ace0772c92e596ace6d3d3996c042b2128459aaae2a76de11d
     # via -r build/test-requirements.txt
-attrs==24.3.0 \
-    --hash=sha256:8f5c07333d543103541ba7be0e2ce16eeee8130cb0b3f9238ab904ce1e85baff \
-    --hash=sha256:ac96cd038792094f438ad1f6ff80837353805ac950cd2aa0e0625ef19850c308
+attrs==25.3.0 \
+    --hash=sha256:427318ce031701fea540783410126f03899a97ffc6f61596ad581ac2e40e3bc3 \
+    --hash=sha256:75d7cefc7fb576747b2c81b4442d4d4a1ce0900973527c011d1030fd3bf4af1b
     # via hypothesis
 auditwheel==6.4.2 \
     --hash=sha256:4302ae79dcff242e799a37173cfeeae727d0924843eca4b3f622d3bcb28de2db \
     --hash=sha256:b7a61afc9183b6b5c661de59ca586f9c7200445a409c58cdf2049d6f71636d51
     # via -r build/test-requirements.txt
-build==1.2.2.post1 \
-    --hash=sha256:1d61c0887fa860c01971625baae8bdd338e517b836a2f70dd1f7aa3a6b2fc5b5 \
-    --hash=sha256:b36993e92ca9375a219c99e606a122ff365a760a2d4bba0caa09bd5278b608b7
+build==1.3.0 \
+    --hash=sha256:698edd0ea270bde950f53aed21f3a0135672206f3911e0176261a31e0e07b397 \
+    --hash=sha256:7145f0b5061ba90a1500d60bd1b13ca0a8a4cebdd0cc16ed8adf1c0e739f43b4
     # via -r build/requirements.in
 cloudpickle==3.1.1 \
     --hash=sha256:b216fa8ae4019d5482a8ac3c95d8f6346115d8835911fd4aefd1a445e4242c64 \
     --hash=sha256:c8c5a44295039331ee9dad40ba100a9c7297b6f988e50e87ccdf3765a668350e
     # via -r build/test-requirements.txt
-colorama==0.4.6 ; sys_platform == "win32" \
-    --hash=sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44 \
-    --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
-    # via -r build/requirements.in
 etils[epath,epy]==1.13.0 \
     --hash=sha256:a5b60c71f95bcd2d43d4e9fb3dc3879120c1f60472bb5ce19f7a860b1d44f607 \
     --hash=sha256:d9cd4f40fbe77ad6613b7348a18132cc511237b6c076dbb89105c0b520a4c6bb
@@ -36,21 +32,21 @@ execnet==2.1.1 \
     --hash=sha256:26dee51f1b80cebd6d0ca8e74dd8745419761d3bef34163928cbebbdc4749fdc \
     --hash=sha256:5189b52c6121c24feae288166ab41b32549c7e2348652736540b9e6e7d4e72e3
     # via pytest-xdist
-filelock==3.18.0 \
-    --hash=sha256:adbc88eabb99d2fec8c9c1b229b171f18afa655400173ddc653d5d01501fb9f2 \
-    --hash=sha256:c401f4f8377c4464e6db25fff06205fd89bdd83b65eb0488ed1b160f780e21de
+filelock==3.19.1 \
+    --hash=sha256:66eda1888b0171c998b35be2bcc0f6d75c388a7ce20c3f3f37aa8e96c2dddf58 \
+    --hash=sha256:d38e30481def20772f5baf097c122c3babc4fcdb7e14e57049eb9d88c6dc017d
     # via -r build/test-requirements.txt
-flatbuffers==24.12.23 \
-    --hash=sha256:2910b0bc6ae9b6db78dd2b18d0b7a0709ba240fb5585f286a3a2b30785c22dac \
-    --hash=sha256:c418e0d48890f4142b92fd3e343e73a48f194e1f80075ddcc5793779b3585444
+flatbuffers==25.2.10 \
+    --hash=sha256:97e451377a41262f8d9bd4295cc836133415cc03d8cb966410a4af92eb00d26e \
+    --hash=sha256:ebba5f4d5ea615af3f7fd70fc310636fbb2bbd1f566ac0a23d98dd412de50051
     # via -r build/test-requirements.txt
 fsspec==2025.7.0 \
     --hash=sha256:786120687ffa54b8283d942929540d8bc5ccfa820deb555a2b5d0ed2b737bf58 \
     --hash=sha256:8b012e39f63c7d5f10474de957f3ab793b47b45ae7d39f2fb735f8bbe25c0e21
     # via etils
-hypothesis==6.123.9 \
-    --hash=sha256:0f924bd9513daa9ecddbfe8abe8b3f7598d4d09234fe1027b19b4cd717adba05 \
-    --hash=sha256:aca6a2f7aeef85e5201079ab93156fca137a8cabcf5cc39ea2a3b7147432fe89
+hypothesis==6.138.2 \
+    --hash=sha256:2886c5e7569437781d1dc42973021f70f7facb7e410249dcb899b0edb249e5b8 \
+    --hash=sha256:82e3b2ac709ee3edda4aba2f4b11becfe764f51d104fcdb3e9f95aff1ac81595
     # via -r build/test-requirements.txt
 importlib-resources==6.5.2 \
     --hash=sha256:185f87adef5bcc288449d98fb4fba07cea78bc036455dd44c5fc4a2fe78fed2c \
@@ -60,9 +56,9 @@ iniconfig==2.1.0 \
     --hash=sha256:3abbd2e30b36733fee78f9c7f7308f2d0050e88f0087fd25c2645f63c773e1c7 \
     --hash=sha256:9deba5723312380e77435581c6bf4935c94cbfab9b1ed33ef8d238ea168eb760
     # via pytest
-jax-cuda12-pjrt==0.7.0 ; sys_platform == "linux" \
-    --hash=sha256:742cc260d697771cb883084398748a007d233286aa3fe5fc152a74c073d59a24 \
-    --hash=sha256:dce6b1cfe7f44749425baea22a9027423bafb1a5269e13f30785cfd1b2e29862
+jax-cuda12-pjrt==0.7.1 ; sys_platform == "linux" \
+    --hash=sha256:7fc40504960de56e232f932630a2757ecf3f873665b1398317d25f6b7445d560 \
+    --hash=sha256:aae3e7f345804a5a1229ac7148cbd134450c816198bbbff85a7622182ec7f64a
     # via -r build/requirements.in
 jax-cuda13-pjrt==0.0.1rc0 \
     --hash=sha256:60835b87c9e1e5e1109ef2e9f27db6c9404af3ce3c3315316fb3b113cb13a158
@@ -70,12 +66,36 @@ jax-cuda13-pjrt==0.0.1rc0 \
 jax-cuda13-plugin==0.0.1rc0 \
     --hash=sha256:5fa66ef5de34cffc838199d193bffc11701807e66831f914bdc1d786ed4dc26f
     # via -r build/requirements.in
-libtpu==0.0.19 ; sys_platform == "linux" and platform_machine == "x86_64" \
-    --hash=sha256:78efd0c33d0b23b4ef37a410cb640ed05154d8cec1eedbee3fcb7d210337b5f7
+jaxlib==0.7.1 \
+    --hash=sha256:023df41212ae4fda869338370f9532bfcd98ccfaee909bb95ea540d6053df547 \
+    --hash=sha256:127c07c727703e5d59f84f655169bec849f4422e52f8546349cecc30a8a13e1d \
+    --hash=sha256:1ea54e6182d85b82496fbc58bbe51042bea3ee3e1e0d444b3cff446c245bebd5 \
+    --hash=sha256:2a27379e5ed29765980ef32d4d77f57dd0e1dd965803ac674554044ac23cd3ec \
+    --hash=sha256:38ac46ec17c0a86b428590d04559629357fc6dc3a3c76569f022b982c36fc1af \
+    --hash=sha256:3f32c3e4c167b7327c342e82d3df84079714ea0b43718be871d039999670b3c9 \
+    --hash=sha256:407347dd5846248ee40db33da26f2b18c7d135249ff06c0271a2e33efd8fb3fe \
+    --hash=sha256:58558fa29fd7d6342c066f837e58fcba335182837a959affc128660c089702de \
+    --hash=sha256:6057a602632bd3299d6c7ffbbb3f1ef2c7573ccbed9eb06cc92042b96e2ca5d4 \
+    --hash=sha256:66b33cc15040af5b8d16d3006811eb31372e9f4cfe09393d6cea91795366bfa4 \
+    --hash=sha256:72dd9c3e95457a5a54f00e47ec14863b5e61540b944c0df13bf10c259b4d5d73 \
+    --hash=sha256:74abd3135797f82440dd3711a35cba16c430d1bba65474b85bb70e41733a52e9 \
+    --hash=sha256:944f7555960d69f1d1c435fff0a76e4edd6a878fe47fe1781f7a0d63b61072e5 \
+    --hash=sha256:9766817cfa51743a48fac78c087605c30bf1a91caf11371ca8c41261e6f3a0c8 \
+    --hash=sha256:9fb189c3b39470c4394ffcb18b71e47cffc5bf85e8fcb1e33692686b0c3e04dd \
+    --hash=sha256:ab4510fbaeafac6c794ab335f23e71200d824c48f6a0ab20553db8deab8805c5 \
+    --hash=sha256:b350f519a86eff5a4b1ee014c7faa36585f47f3d63787d1f3e9bdffe9cc41a66 \
+    --hash=sha256:c4023863b14f280516f24ecb7539b4300a3236ea81ed69ad82595beceed1ba1f \
+    --hash=sha256:ce6a1ba6019764870c27507aca18e526998ad3ad4bea2dd61e19d0499c3b8b04 \
+    --hash=sha256:d52817a42c130d0c330f48edcb3a3e455dc984b6ce53f3182c37aa0fe960109b \
+    --hash=sha256:eaf5f68f53bf4dcb93b6512538547667625588e4f3ccaeef048788fd18d8c0d5 \
+    --hash=sha256:f0f1f52956b8c2518ab000a4d3d8c21be777e1d47f926ba03640e391061a41ee
     # via -r build/requirements.in
-markdown-it-py==3.0.0 \
-    --hash=sha256:355216845c60bd96232cd8d8c40e8f9765cc86f46880e43a8fd22dc1a1a8cab1 \
-    --hash=sha256:e3f60a94fa066dc52ec76661e37c851cb232d92f9886b15cb560aaada2df8feb
+libtpu==0.0.20 ; sys_platform == "linux" and platform_machine == "x86_64" \
+    --hash=sha256:b0f5fbd0669704515cbb127f77830c5129843e93dc3da69fb124a82064fef92a
+    # via -r build/requirements.in
+markdown-it-py==4.0.0 \
+    --hash=sha256:87327c59b172c5011896038353a81343b6754500a08cd7a4973bb48c6d578147 \
+    --hash=sha256:cb0a2b4aa34f932c007117b194e945bd74e0ec24133ceb5bac59009cda1cb9f3
     # via rich
 mdurl==0.1.2 \
     --hash=sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8 \
@@ -117,7 +137,9 @@ ml-dtypes==0.5.3 \
     --hash=sha256:d0f730a17cf4f343b2c7ad50cee3bd19e969e793d2be6ed911f43086460096e4 \
     --hash=sha256:da65e5fd3eea434ccb8984c3624bc234ddcc0d9f4c81864af611aaebcc08a50e \
     --hash=sha256:e12e29764a0e66a7a31e9b8bf1de5cc0423ea72979f45909acd4292de834ccd3
-    # via -r build/requirements.in
+    # via
+    #   -r build/requirements.in
+    #   jaxlib
 mpmath==1.3.0 \
     --hash=sha256:7a28eb2a9774d00c7bc92411c19a89209d5da7c4c9a9e227be8330a23a25b91f \
     --hash=sha256:a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c
@@ -199,6 +221,7 @@ numpy==2.3.2 ; python_version >= "3.14" \
     --hash=sha256:fed5527c4cf10f16c6d0b6bee1f89958bccb0ad2522c8cadc2efd318bcd545f5
     # via
     #   -r build/freethreading-requirements.txt
+    #   jaxlib
     #   ml-dtypes
     #   scipy
 nvidia-cublas-cu12==12.9.1.4 ; sys_platform == "linux" \
@@ -229,10 +252,10 @@ nvidia-cuda-runtime-cu12==12.9.79 ; sys_platform == "linux" \
     --hash=sha256:83469a846206f2a733db0c42e223589ab62fd2fabac4432d2f8802de4bded0a4 \
     --hash=sha256:8e018af8fa02363876860388bd10ccb89eb9ab8fb0aa749aaf58430a9f7c4891
     # via -r build/nvidia-requirements.txt
-nvidia-cudnn-cu12==9.11.0.98 ; sys_platform == "linux" \
-    --hash=sha256:35e24acf5f73835ac3752116e455095aacd1bee7646ade3317e84815688f3cf3 \
-    --hash=sha256:ea576f56225d201b8527d4aef3425c074ad5155f105643b73cbfea98f62ee870 \
-    --hash=sha256:ff3db2c4c220e5962fac7256b0c6d667ea69ab974dd67e18b2fd57df891eea35
+nvidia-cudnn-cu12==9.12.0.46 ; sys_platform == "linux" \
+    --hash=sha256:723195f8dc6280643a1438f2a22f7bf16f56b8cc4a497ff71d0872b9e9460206 \
+    --hash=sha256:73471a185656232b383693294431882edb14584ee47f41c0abd81556b92ef2ac \
+    --hash=sha256:af016cfc6c5a3e210bcd6a01aef96978a4dd834a0fdcd398898be9da652c9132
     # via -r build/nvidia-requirements.txt
 nvidia-cufft-cu12==11.4.1.4 ; sys_platform == "linux" \
     --hash=sha256:1a28c9b12260a1aa7a8fd12f5ebd82d027963d635ba82ff39a1acfa7c4c0fbcf \
@@ -251,9 +274,13 @@ nvidia-cusparse-cu12==12.5.10.65 ; sys_platform == "linux" \
     # via
     #   -r build/nvidia-requirements.txt
     #   nvidia-cusolver-cu12
-nvidia-nccl-cu12==2.27.6 ; sys_platform == "linux" \
-    --hash=sha256:75f802521688026853ede67ec0337846214905a2f1571bb6e01ca3bb97c586ce \
-    --hash=sha256:8be9c0a7d7f95489f407593ad3842ba66bbb7c3370622c3592efb6dd67540968
+nvidia-nccl-cu12==2.27.7 ; sys_platform == "linux" \
+    --hash=sha256:4617839f3bb730c3845bf9adf92dbe0e009bc53ca5022ed941f2e23fb76e6f17 \
+    --hash=sha256:de5ba5562f08029a19cb1cd659404b18411ed0d6c90ac5f52f30bf99ad5809aa
+    # via -r build/nvidia-requirements.txt
+nvidia-nccl-cu13==0.0.0a0 ; sys_platform == "linux" \
+    --hash=sha256:1684d1b6e8a0e4a2e0f366769d2b51a7caa574ded84c284492b86d8d39195641 \
+    --hash=sha256:856196de401b54a6e426c8417a7e3713b3d4a732465a0615a426be2b737c59a2
     # via -r build/nvidia-requirements.txt
 nvidia-nvjitlink-cu12==12.9.86 ; sys_platform == "linux" \
     --hash=sha256:994a05ef08ef4b0b299829cde613a424382aff7efb08a7172c1fa616cc3af2ca \
@@ -264,13 +291,13 @@ nvidia-nvjitlink-cu12==12.9.86 ; sys_platform == "linux" \
     #   nvidia-cufft-cu12
     #   nvidia-cusolver-cu12
     #   nvidia-cusparse-cu12
-nvidia-nvshmem-cu12==3.3.9 ; sys_platform == "linux" \
-    --hash=sha256:2de43cbfe559e16b8e3cb777b95f1fe2ddd5c2cfd79414b09cf9cf099feba2ba \
-    --hash=sha256:95ba1e98189c056eb5372bd355ab714b3741a03e6de1e32f167f5240fd967c5f
+nvidia-nvshmem-cu12==3.3.20 ; sys_platform == "linux" \
+    --hash=sha256:0b0b960da3842212758e4fa4696b94f129090b30e5122fea3c5345916545cff0 \
+    --hash=sha256:d00f26d3f9b2e3c3065be895e3059d6479ea5c638a3f38c9fec49b1b9dd7c1e5
     # via -r build/nvidia-requirements.txt
-nvidia-nvshmem-cu13==0.0.0a0 \
-    --hash=sha256:84d265d7b97dae6ee74139f8f7e37fc65a63e4ebb7287b987a4dca0c0625673d \
-    --hash=sha256:b6900e44e6be1e0e7be6059c5b7a397fb3cb84914784571ab7e20a35bb2b140d
+nvidia-nvshmem-cu13==3.3.20 ; sys_platform == "linux" \
+    --hash=sha256:d40818fd6f1267c306df06f943b66b4b95a554f1b8dc7da81e0232266f868945 \
+    --hash=sha256:e9d4bd6a01e6a2745903b5b7347fce5b0dddee0db95950fba313dd47c6990b5b
     # via -r build/nvidia-requirements.txt
 opt-einsum==3.4.0 \
     --hash=sha256:69bb92469f86a1565195ece4ac0323943e83477171b91d24c35afe028a90d7cd \
@@ -477,7 +504,9 @@ scipy==1.16.1 ; python_version >= "3.13" \
     --hash=sha256:f8a5d6cd147acecc2603fbd382fed6c46f474cccfcf69ea32582e033fb54dcfe \
     --hash=sha256:f965bbf3235b01c776115ab18f092a95aa74c271a52577bcb0563e85738fd618 \
     --hash=sha256:fedc2cbd1baed37474b1924c331b97bdff611d762c196fac1a9b71e67b813b1b
-    # via -r build/requirements.in
+    # via
+    #   -r build/requirements.in
+    #   jaxlib
 sortedcontainers==2.4.0 \
     --hash=sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88 \
     --hash=sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0
@@ -496,7 +525,7 @@ zipp==3.23.0 \
     # via etils
 
 # The following packages are considered to be unsafe in a requirements file:
-setuptools==80.0.0 \
-    --hash=sha256:a38f898dcd6e5380f4da4381a87ec90bd0a7eec23d204a5552e80ee3cab6bd27 \
-    --hash=sha256:c40a5b3729d58dd749c0f08f1a07d134fb8a0a3d7f87dc33e7c5e1f762138650
+setuptools==80.9.0 \
+    --hash=sha256:062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922 \
+    --hash=sha256:f36b47402ecde768dbfafc46e8e4207b4360c654f1f3bb84475f0a28628fb19c
     # via -r build/requirements.in
