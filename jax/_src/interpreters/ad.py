@@ -644,6 +644,12 @@ def unproject_accums(specs, result):
   assert next(result_, None) is None
   return args
 
+def accum_typeof(x):
+  if isinstance(x, GradAccum):
+    return x.aval
+  else:
+    return core.typeof(x)
+
 
 @lu.transformation_with_aux2
 def nonzero_tangent_outputs(f, store, *args, **kwargs):

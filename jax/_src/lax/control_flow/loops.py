@@ -1152,9 +1152,9 @@ def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
   trans_in = [x.inst().ref if l else x for l, x in zip(lin_refs, trans_in)]
 
   # prepare transposed jaxpr
-  trans_avals, ext_avals = split_list(_map(typeof, trans_in), [num_consts+num_carry])
+  trans_avals, ext_avals = split_list(_map(ad.accum_typeof, trans_in), [num_consts+num_carry])
   trans_avals = trans_avals + [core.mapped_aval(length, 0, a) for a in ext_avals]
-  xs_avals = tuple(core.mapped_aval(length, 0, typeof(x)) for x in immut_xs_dot)
+  xs_avals = tuple(core.mapped_aval(length, 0, ad.accum_typeof(x)) for x in immut_xs_dot)
   jaxpr_trans = _transpose_scan_jaxpr_fancy(
       jaxpr, trans_tree, tuple(trans_avals), lin_refs, xs_avals)
 
