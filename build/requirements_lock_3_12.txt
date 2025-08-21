@@ -353,10 +353,8 @@ kiwisolver==1.4.9 \
     --hash=sha256:fb940820c63a9590d31d88b815e7a3aa5915cad3ce735ab45f0c730b39547de1 \
     --hash=sha256:fc1795ac5cd0510207482c3d1d3ed781143383b8cfd36f5c645f3897ce066220
     # via matplotlib
-libtpu==0.0.21 ; sys_platform == "linux" and platform_machine == "x86_64" \
-    --hash=sha256:048305597c92ca31f805a62d402c101019b286250b939ef96c24e9d110cdf80a \
-    --hash=sha256:0a5aaf71f45f8d72f1298b175d076ac2ae806ce7ab4b7d81c02315bd3adc5021 \
-    --hash=sha256:3e1cb269d83a2c0a6f54a6831a6abfa43b4d13246f555ed7f9204ed62a491254
+libtpu==0.0.20 ; sys_platform == "linux" and platform_machine == "x86_64" \
+    --hash=sha256:b0f5fbd0669704515cbb127f77830c5129843e93dc3da69fb124a82064fef92a
     # via -r build/requirements.in
 markdown-it-py==4.0.0 \
     --hash=sha256:87327c59b172c5011896038353a81343b6754500a08cd7a4973bb48c6d578147 \
