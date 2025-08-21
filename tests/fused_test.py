@@ -35,7 +35,11 @@ class FusedTest(jtu.JaxTestCase):
     x_host = jax.device_put(x, jax.memory.Space.Host)
     y_device = jnp.arange(3.)
     low = jax.jit(f).trace(x_host, y_device).lower(lowering_platforms=('cuda',))
-    self.assertIn('custom_call', low.as_text('hlo'))
+    txt = low._lowering.hlo().as_hlo_module().to_string()
+    self.assertIn('custom_call', txt)
+    self.assertIn('inlineable', txt)
+    self.assertIn('MUST_FUSE', txt)
+    self.assertIn('out_spaces', txt)
 
   def test_vmap_basic(self):
     x = jnp.arange(3.)
