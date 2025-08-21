@@ -772,6 +772,21 @@ def run_state_reference(f: Callable[..., None]):
 def _pjit_state_discharge_rule(
     in_avals, out_avals, *args, jaxpr, in_shardings, out_shardings,
     in_layouts, out_layouts, **params):
+  if not (any(isinstance(e, RefEffect) for e in jaxpr.effects)
+          or any(isinstance(a, AbstractRef) for a in jaxpr.in_avals)):
+    # Only internal ref effects
+    jaxpr_ = discharge_state2(jaxpr)
+    out = pjit.jit_p.bind(
+        *args,
+        jaxpr=jaxpr_,
+        in_shardings=in_shardings,
+        out_shardings=out_shardings,
+        in_layouts=in_layouts,
+        out_layouts=out_layouts,
+        **params,
+    )
+    new_invals = [None] * len(in_avals)
+    return new_invals, out
   if not all(isinstance(s, sharding_impls.UnspecifiedValue) for s in (*in_shardings, *out_shardings)):
     raise NotImplementedError
 

@@ -241,12 +241,13 @@ class MemorySpace(enum.Enum):
   KEY = "key"  # Memory space for PRNG keys.
   HOST = "host"  # Host memory space.
 
+  def __call__(self, shape, dtype):
+    if self == MemorySpace.ANY:
+      return jax.ShapeDtypeStruct(shape, dtype)
+    return MemoryRef(shape, dtype, self)
+
   def __str__(self) -> str:
     return self.value
-
-  def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
-    # A convenience function for constructing MemoryRef types.
-    return MemoryRef(shape, dtype, self)
 
 
 @dataclasses.dataclass(frozen=True)

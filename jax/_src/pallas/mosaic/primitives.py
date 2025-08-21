@@ -916,3 +916,21 @@ def store(ref: Ref, val: jax.Array, *, mask: jax.Array | None = None) -> None:
     mask: An optional boolean mask specifying which indices to store.
   """
   return primitives.store(ref, None, val, mask=mask)
+
+
+touch_p = jax_core.Primitive("add_dependency")
+touch_p.multiple_results = True
+
+
+def touch(ref: jax.Array | state.TransformedRef) -> None:
+  """Adds a fake read-write dependency to the given ref."""
+  ref_leaves = jax.tree.leaves(ref)
+  ref_leaves = [ref.ref if isinstance(ref, state.TransformedRef) else ref
+                for ref in ref_leaves]
+  for ref in ref_leaves:
+    touch_p.bind(ref)
+
+
+@touch_p.def_effectful_abstract_eval
+def _touch_abstract_eval(ref: jax.Array):
+  return [], {state.ReadEffect(0), state.WriteEffect(0)}

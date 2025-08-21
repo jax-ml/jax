@@ -251,6 +251,18 @@ def pallas_call_tpu_lowering_rule(
           input_output_alias[1]
       ]
     input_memory_spaces = tuple(input_memory_spaces_list)
+  if input_memory_spaces is not None:
+    # Filter out the memory spaces that are not supported for input memory
+    # spaces.
+    input_memory_spaces = tuple(
+        i if i in {  # pylint: disable=g-long-ternary
+            tpu_custom_call.MemorySpace.HBM,
+            tpu_custom_call.MemorySpace.VMEM,
+            tpu_custom_call.MemorySpace.SMEM,
+        }
+        else None
+        for i in input_memory_spaces
+    )
   out_nodes = mosaic.lower_module_to_custom_call(
       kernel_ctx,
       *dynamic_grid_args,
@@ -273,6 +285,7 @@ def pallas_call_tpu_lowering_rule(
       input_memory_spaces=input_memory_spaces,
       metadata=dict(metadata) if metadata is not None else None,
       skip_device_barrier=mosaic_params.skip_device_barrier,
+      allow_collective_id_without_custom_barrier=mosaic_params.allow_collective_id_without_custom_barrier,
   )
   _maybe_cast_to_bool = lambda x, aval: x.astype(
       jax.numpy.bool_) if aval.dtype == jax.numpy.bool_ else x

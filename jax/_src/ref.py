@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
 from jax._src import core
-from jax._src.typing import Array
 
-
-def array_ref(init_val: Array) -> core.ArrayRef:
+def array_ref(init_val, *, memory_space: Any = None) -> core.ArrayRef:
   """Create a mutable array reference with initial value ``init_val``.
 
   For more discussion, see the `ArrayRef guide`_.
@@ -24,10 +23,11 @@ def array_ref(init_val: Array) -> core.ArrayRef:
   Args:
     init_val: A :class:`jax.Array` representing the initial state
       of the buffer.
+    memory_space: An optional memory space attribute for the ArrayRef.
 
   Returns:
     A :class:`jax.ref.ArrayRef` containing a reference to a mutable buffer.
 
   .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
   """
-  return core.array_ref_p.bind(init_val, memory_space=None)
+  return core.array_ref(init_val, memory_space=memory_space)

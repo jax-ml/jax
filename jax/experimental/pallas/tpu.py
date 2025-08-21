@@ -51,6 +51,7 @@ from jax._src.pallas.mosaic.primitives import prng_seed as prng_seed
 from jax._src.pallas.mosaic.primitives import repeat as repeat
 from jax._src.pallas.mosaic.primitives import roll as roll
 from jax._src.pallas.mosaic.primitives import store as store
+from jax._src.pallas.mosaic.primitives import touch as touch
 from jax._src.pallas.mosaic.primitives import with_memory_space_constraint as with_memory_space_constraint
 from jax._src.pallas.mosaic.random import stateful_bernoulli as stateful_bernoulli
 from jax._src.pallas.mosaic.random import stateful_bits as stateful_bits

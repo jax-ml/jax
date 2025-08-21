@@ -4113,3 +4113,9 @@ def _platform_index_lowering(
 def _dim_as_value_lowering(ctx: LoweringRuleContext, *, dim):
   placeholder = ctx.lowering_context.dynamic_shape_replacement_fn((dim,))[0]
   return ir_constant(placeholder, mlir_type=_dtype_to_ir_type(jnp.int32))
+
+
+@register_lowering_rule(tpu_primitives.touch_p)
+def _touch_lowering_rule(ctx: LoweringRuleContext, x: jax.Array):
+  del ctx, x
+  return []
