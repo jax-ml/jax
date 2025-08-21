@@ -45,7 +45,7 @@ from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding,
     device_replica_id_map, hashed_index, num_addressable_indices,
     local_to_global_shape, _internal_use_concrete_mesh)  # pyformat: disable
-from jax._src.typing import ArrayLike, DLDeviceType, DTypeLike
+from jax._src.typing import ArrayLike, DLDeviceType, DTypeLike, ExtendedDType
 from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method, cache
 import numpy as np
 
@@ -686,21 +686,21 @@ def _get_shape_from_index(slc: Index, shape: Shape) -> Shape:
   )
 
 def _get_and_check_dtype(arrays: Sequence[basearray.Array | np.ndarray],
-                         dtype: DTypeLike | None, fname: str):
-  if arrays:
-    if dtype is None:
+                         dtype: DTypeLike | ExtendedDType | None, fname: str):
+  if dtype is None:
+    if arrays:
       dtype = arrays[0].dtype
     else:
-      if arrays[0].dtype != dtype:
-        raise ValueError(
-            f"If `dtype` is provided to `jax.{fname}`, it must match the dtype "
-            f"of the addressable shards. Got dtype={dtype} and shard "
-            f"dtype={arrays[0].dtype}`.")
-  else:
-    if dtype is None:
       raise ValueError(
           "If the Array has no addressable shards, `dtype` must be provided "
           f"via the `dtype` argument to `jax.{fname}`.")
+  else:
+    dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)
+    if arrays and arrays[0].dtype != dtype:
+      raise ValueError(
+          f"If `dtype` is provided to `jax.{fname}`, it must match the dtype "
+          f"of the addressable shards. Got dtype={dtype} and shard "
+          f"dtype={arrays[0].dtype}`.")
   return dtype
 
 # explicitly set to be unhashable.
