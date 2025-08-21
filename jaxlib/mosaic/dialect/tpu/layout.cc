@@ -527,7 +527,37 @@ bool VectorLayout::generalizes(
 }
 
 template <typename Stream>
-static void PrintVectorLayout(Stream& os, const int32_t bitwidth,
+Stream& printImplicitDim(Stream& os, VectorLayout::ImplicitDim dim) {
+  switch (dim) {
+    case VectorLayout::ImplicitDim::kNone:
+      os << "none";
+      break;
+    case VectorLayout::ImplicitDim::kMinor:
+      os << "-1";
+      break;
+    case VectorLayout::ImplicitDim::kSecondMinor:
+      os << "-2";
+      break;
+  }
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, VectorLayout::ImplicitDim dim) {
+  return printImplicitDim(os, dim);
+}
+
+llvm::raw_ostream& operator<<(llvm::raw_ostream& os,
+                             VectorLayout::ImplicitDim dim) {
+  return printImplicitDim(os, dim);
+}
+
+mlir::Diagnostic& operator<<(mlir::Diagnostic& diag,
+                             VectorLayout::ImplicitDim dim) {
+  return printImplicitDim(diag, dim);
+}
+
+template <typename Stream>
+static void printVectorLayout(Stream& os, const int32_t bitwidth,
                               const VectorLayout::ImplicitDim implicit_dim,
                               const LayoutOffsets offsets,
                               const std::array<int64_t, 2>& tiling) {
@@ -546,23 +576,21 @@ static void PrintVectorLayout(Stream& os, const int32_t bitwidth,
     }
   }
   os << "},(" << tiling[0] << ',' << tiling[1] << ")";
-  if (implicit_dim == VectorLayout::ImplicitDim::kMinor) {
-    os << ",-1";
-  } else if (implicit_dim == VectorLayout::ImplicitDim::kSecondMinor) {
-    os << ",-2";
+  if (implicit_dim != VectorLayout::ImplicitDim::kNone) {
+    os << "," << implicit_dim;
   }
 }
 
 void VectorLayout::print(llvm::raw_ostream& os) const {
-  PrintVectorLayout(os, bitwidth_, implicit_dim_, offsets_, tiling_);
+  printVectorLayout(os, bitwidth_, implicit_dim_, offsets_, tiling_);
 }
 
 void VectorLayout::print(std::ostream& os) const {
-  PrintVectorLayout(os, bitwidth_, implicit_dim_, offsets_, tiling_);
+  printVectorLayout(os, bitwidth_, implicit_dim_, offsets_, tiling_);
 }
 
 void VectorLayout::print(mlir::Diagnostic& diag) const {
-  PrintVectorLayout(diag, bitwidth_, implicit_dim_, offsets_, tiling_);
+  printVectorLayout(diag, bitwidth_, implicit_dim_, offsets_, tiling_);
 }
 
 std::optional<VectorLayout> VectorLayout::join(const VectorLayout& l,
@@ -640,31 +668,6 @@ mlir::Diagnostic& operator<<(mlir::Diagnostic& diag, const Layout& v) {
 
 llvm::hash_code hash_value(const VectorLayout& layout) {
   return llvm::hash_value(layout.as_tuple());
-}
-
-template <typename Stream>
-Stream& printImplicitDim(Stream& os, VectorLayout::ImplicitDim dim) {
-  switch (dim) {
-    case VectorLayout::ImplicitDim::kNone:
-      os << "none";
-      break;
-    case VectorLayout::ImplicitDim::kMinor:
-      os << "-1";
-      break;
-    case VectorLayout::ImplicitDim::kSecondMinor:
-      os << "-2";
-      break;
-  }
-  return os;
-}
-
-std::ostream& operator<<(std::ostream& os, VectorLayout::ImplicitDim dim) {
-  return printImplicitDim(os, dim);
-}
-
-mlir::Diagnostic& operator<<(mlir::Diagnostic& diag,
-                             VectorLayout::ImplicitDim dim) {
-  return printImplicitDim(diag, dim);
 }
 
 std::optional<Layout> parseLayout(mlir::AsmParser& parser) {

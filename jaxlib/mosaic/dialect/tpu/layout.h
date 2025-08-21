@@ -522,13 +522,17 @@ class VectorLayout {
 using Layout = std::optional<VectorLayout>;
 extern const Layout kNoLayout;
 
-std::ostream &operator<<(std::ostream &os, const Layout &v);
-llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const Layout &v);
-llvm::hash_code hash_value(const VectorLayout &layout);
-mlir::Diagnostic &operator<<(mlir::Diagnostic &diag, const Layout &v);
 std::ostream &operator<<(std::ostream &os, VectorLayout::ImplicitDim dim);
+llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                             VectorLayout::ImplicitDim dim);
 mlir::Diagnostic &operator<<(mlir::Diagnostic &diag,
                              VectorLayout::ImplicitDim dim);
+
+std::ostream &operator<<(std::ostream &os, const Layout &v);
+llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const Layout &v);
+mlir::Diagnostic &operator<<(mlir::Diagnostic &diag, const Layout &v);
+
+llvm::hash_code hash_value(const VectorLayout &layout);
 
 std::optional<Layout> parseLayout(mlir::AsmParser &parser);
 
