@@ -5,7 +5,7 @@ inputs:
   runner:
     description: "Which runner type should the wheels be downloaded for?"
     type: string
-    default: "linux-x86-n2-16"
+    default: "linux-x86-n4-16"
   python:
     description: "Which python version should the artifact be downloaded for?"
     required: true

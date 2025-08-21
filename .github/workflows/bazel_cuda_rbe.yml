@@ -36,7 +36,7 @@ jobs:
     strategy:
       matrix:
         python: ["3.11", "3.13"]
-        runner: ["linux-x86-n2-16"]
+        runner: ["linux-x86-n4-16"]
         enable-x_64: [1, 0]
         exclude:
             # Exclude x64=1 on the oldest Python and x64=0 on the newest Python. As long as we have

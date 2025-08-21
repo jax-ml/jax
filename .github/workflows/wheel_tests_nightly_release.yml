@@ -254,7 +254,7 @@ jobs:
       run:
         # Set the shell to bash as GitHub actions runs with /bin/sh by default
         shell: bash
-    runs-on: linux-x86-n2-16
+    runs-on: linux-x86-n4-16
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:

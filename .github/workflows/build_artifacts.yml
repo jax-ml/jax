@@ -12,9 +12,9 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: choice
-        default: "linux-x86-n2-16"
+        default: "linux-x86-n4-16"
         options:
-        - "linux-x86-n2-16"
+        - "linux-x86-n4-16"
         - "linux-arm64-t2a-48"
         - "windows-x86-n2-16"
       artifact:
@@ -53,7 +53,7 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: string
-        default: "linux-x86-n2-16"
+        default: "linux-x86-n4-16"
       artifact:
         description: "Which JAX artifact to build?"
         type: string

@@ -16,5 +16,5 @@ self-hosted-runner:
     - "linux-x86-ct6e-180-4tpu" # Linux X86 TPU runner using ct6e-hightpu-4t machine with 2x2 topology.
     - "linux-x86-ct4p-240-4tpu" # Linux X86 TPU runner using ct4p-hightpu-4t machine with 2x2x1 topology.
     - "linux-x86-n2-128" # Linux X86 runner using the 128 vcpu n2-standard-128 machine.
-    - "linux-x86-n2-16" # Linux X86 runner using the 16 vcpu n2-standard-16 machine.
+    - "linux-x86-n4-16" # Linux X86 runner using the 16 vcpu n4-standard-16 machine.
     - "linux-x86_64-cirrascale-64-8gpu-amd-mi250" # AMD runner

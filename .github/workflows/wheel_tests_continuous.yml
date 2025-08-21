@@ -43,7 +43,7 @@ jobs:
     with:
         # Note that since jax is a pure python package, the runner OS and Python values do not
         # matter. In addition, cloning main XLA also has no effect.
-        runner: "linux-x86-n2-16"
+        runner: "linux-x86-n4-16"
         artifact: "jax"
         upload_artifacts_to_gcs: true
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
@@ -54,7 +54,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
             # Runner OS and Python values need to match the matrix stategy in the CPU tests job
-            runner: ["linux-x86-n2-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
+            runner: ["linux-x86-n4-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
             artifact: ["jaxlib"]
             python: ["3.11"]
     # Note: For reasons unknown, Github actions groups jobs with the same top-level name in the
@@ -75,7 +75,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           # Python values need to match the matrix stategy in the CUDA tests job below
-          runner: ["linux-x86-n2-16"]
+          runner: ["linux-x86-n4-16"]
           artifact: ["jax-cuda-plugin", "jax-cuda-pjrt"]
           python: ["3.11",]
     name: "Build ${{ format('{0}', 'CUDA') }} artifacts"
@@ -157,7 +157,7 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          runner: ["linux-x86-n2-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
+          runner: ["linux-x86-n4-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
           python: ["3.11",]
           enable-x64: [1, 0]
     name: "Bazel CPU tests with ${{ format('{0}', 'build_jaxlib=wheel') }}"
