@@ -252,6 +252,7 @@ py_library_providing_imports_info(
         "@nvidia_nvshmem//:libnvshmem_device",
         # OSS-only dependency.
         "@cuda_nvcc//:nvdisasm",
+        "@cuda_nvvm//:nvvm",
     ]),
     lib_rule = pytype_strict_library,
     visibility = [

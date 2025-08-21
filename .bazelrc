@@ -161,21 +161,22 @@ build:clang --copt=-Werror=mismatched-tags
 build:clang --copt=-Wno-error=c23-extensions
 
 # Configs for CUDA
-build:cuda --repo_env TF_NEED_CUDA=1
-build:cuda --repo_env TF_NCCL_USE_STUB=1
+build:cuda_v12 --repo_env=HERMETIC_CUDA_VERSION="12.9.1"
+build:cuda_v12 --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"
+build:cuda_v12 --repo_env=HERMETIC_NVSHMEM_VERSION="3.3.9"
 # "sm" means we emit only cubin, which is forward compatible within a GPU generation.
 # "compute" means we emit both cubin and PTX, which is larger but also forward compatible to future GPU generations.
-build:cuda --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,sm_90,sm_100,compute_120"
-build:cuda --@local_config_cuda//:enable_cuda
+build:cuda_v12 --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,sm_90,sm_100,compute_120"
 
-# Default hermetic CUDA, CUDNN and NVSHMEM versions.
-build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.9.1"
-build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"
-build:cuda --repo_env=HERMETIC_NVSHMEM_VERSION="3.3.9"
-build:cuda --@local_config_cuda//cuda:include_cuda_libs=true
+build:cuda_v13 --repo_env=HERMETIC_CUDA_VERSION="13.0.0"
+build:cuda_v13 --repo_env=HERMETIC_CUDNN_VERSION="9.12.0"
+build:cuda_v13 --repo_env=HERMETIC_NVSHMEM_VERSION="3.3.20"
+build:cuda_v13 --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_75,sm_80,sm_90,sm_100,compute_120"
 
-# This config is used for building targets with CUDA/NVSHMEM libraries from stubs.
-build:cuda_libraries_from_stubs --@local_config_cuda//cuda:include_cuda_libs=false
+build:cuda_common --repo_env TF_NEED_CUDA=1
+build:cuda_common --repo_env TF_NCCL_USE_STUB=1
+build:cuda_common --@local_config_cuda//:enable_cuda
+build:cuda_common --@local_config_cuda//cuda:include_cuda_libs=true
 
 # Force the linker to set RPATH, not RUNPATH. When resolving dynamic libraries,
 # ld.so prefers in order: RPATH, LD_LIBRARY_PATH, RUNPATH. JAX sets RPATH to
@@ -189,7 +190,19 @@ build:cuda_libraries_from_stubs --@local_config_cuda//cuda:include_cuda_libs=fal
 #   via LD_LIBRARY_PATH, if the nvidia-... pip packages are installed. This is
 #   acceptable, because the workaround is "remove the nvidia-..." pip packages.
 # The list of CUDA pip packages that JAX depends on are present in setup.py.
-build:cuda --linkopt=-Wl,--disable-new-dtags
+build:cuda_common --linkopt=-Wl,--disable-new-dtags
+
+build:cuda12 --config=cuda_common
+build:cuda12 --config=cuda_v12
+
+build:cuda13 --config=cuda_common
+build:cuda13 --config=cuda_v13
+
+# Alias for backward compatibility.
+build:cuda --config=cuda12
+
+# This config is used for building targets with CUDA/NVSHMEM libraries from stubs.
+build:cuda_libraries_from_stubs --@local_config_cuda//cuda:include_cuda_libs=false
 
 # Build CUDA and other C++ targets with Clang
 build:build_cuda_with_clang --@local_config_cuda//:cuda_compiler=clang
@@ -261,11 +274,17 @@ build:ci_linux_x86_64_clang_local --repo_env=TF_SYSROOT="/dt9"
 # Clang path needs to be set for remote toolchain to be configured correctly.
 build:ci_linux_x86_64_clang_local --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 
+build:ci_linux_x86_64_cuda_common --config=build_cuda_with_nvcc
+build:ci_linux_x86_64_cuda_common --config=ci_linux_x86_64
+
 # The toolchain in `--config=cuda` needs to be read before the toolchain in
 # `--config=ci_linux_x86_64`. Otherwise, we run into issues with manylinux
 # compliance.
-build:ci_linux_x86_64_cuda --config=cuda --config=build_cuda_with_nvcc
-build:ci_linux_x86_64_cuda --config=ci_linux_x86_64
+build:ci_linux_x86_64_cuda12 --config=cuda12 --config=ci_linux_x86_64_cuda_common
+# Alias for backward compatibility.
+build:ci_linux_x86_64_cuda --config=ci_linux_x86_64_cuda12
+
+build:ci_linux_x86_64_cuda13 --config=cuda13 --config=ci_linux_x86_64_cuda_common
 
 # Linux Aarch64 CI configs
 build:ci_linux_aarch64_base --config=clang_local
@@ -280,13 +299,21 @@ build:ci_linux_aarch64 --config=ci_linux_aarch64_base
 build:ci_linux_aarch64 --host_crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
 build:ci_linux_aarch64 --crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
 
+build:ci_linux_aarch64_cuda_common --config=ci_linux_aarch64_base
+build:ci_linux_aarch64_cuda_common --config=build_cuda_with_nvcc
+build:ci_linux_aarch64_cuda_common --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
+build:ci_linux_aarch64_cuda_common --crosstool_top="@local_config_cuda//crosstool:toolchain"
+
 # Aarch64 builds use @local_config_cuda//crosstool:toolchain and
 # CLANG_CUDA_COMPILER_PATH, which allows Clang to compile C++ targets and NVCC
 # to compile CUDA targets.
-build:ci_linux_aarch64_cuda --config=ci_linux_aarch64_base
-build:ci_linux_aarch64_cuda --config=cuda --config=build_cuda_with_nvcc
-build:ci_linux_aarch64_cuda --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
-build:ci_linux_aarch64_cuda --crosstool_top="@local_config_cuda//crosstool:toolchain"
+build:ci_linux_aarch64_cuda12 --config=ci_linux_aarch64_cuda_common
+build:ci_linux_aarch64_cuda12 --config=cuda12
+# Alias for backward compatibility.
+build:ci_linux_aarch64_cuda --config=ci_linux_aarch64_cuda12
+
+build:ci_linux_aarch64_cuda13 --config=ci_linux_aarch64_cuda_common
+build:ci_linux_aarch64_cuda13 --config=cuda13
 
 # Mac Arm64 CI configs
 build:ci_darwin_arm64 --config=clang_local
@@ -373,11 +400,18 @@ build:rbe_linux_x86_64 --config=ci_linux_x86_64
 build:use_tar_archive_files --repo_env=USE_CUDA_TAR_ARCHIVE_FILES=1
 build:use_tar_archive_files --repo_env=USE_NVSHMEM_TAR_ARCHIVE_FILES=1
 
-build:rbe_linux_x86_64_cuda --config=rbe_linux_x86_64_base
-build:rbe_linux_x86_64_cuda --config=ci_linux_x86_64_cuda
-build:rbe_linux_x86_64_cuda --repo_env=REMOTE_GPU_TESTING=1
+build:rbe_linux_x86_64_cuda_common --config=rbe_linux_x86_64_base
+build:rbe_linux_x86_64_cuda_common --repo_env=REMOTE_GPU_TESTING=1
 # Speed up CUDA repos creation by downloading ".tar" dists from the mirror.
-build:rbe_linux_x86_64_cuda --config=use_tar_archive_files
+build:rbe_linux_x86_64_cuda_common --config=use_tar_archive_files
+
+build:rbe_linux_x86_64_cuda12 --config=rbe_linux_x86_64_cuda_common
+build:rbe_linux_x86_64_cuda12 --config=ci_linux_x86_64_cuda12
+# Alias for backward compatibility.
+build:rbe_linux_x86_64_cuda --config=rbe_linux_x86_64_cuda12
+
+build:rbe_linux_x86_64_cuda13 --config=rbe_linux_x86_64_cuda_common
+build:rbe_linux_x86_64_cuda13 --config=ci_linux_x86_64_cuda13
 
 # RBE configs for Windows
 # Set the remote worker pool

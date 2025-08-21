@@ -165,17 +165,18 @@ def _cuda_path() -> str | None:
     `nvvm/libdevice/libdevice.10.bc`.
     """
     try:
-      from nvidia import cuda_nvcc  # pytype: disable=import-error
+      nvcc_module = importlib.import_module('nvidia.cu13')
     except ImportError:
-      return None
+      try:
+        nvcc_module = importlib.import_module('nvidia.cuda_nvcc')
+      except ImportError:
+        return None
 
-    if hasattr(cuda_nvcc, '__file__') and cuda_nvcc.__file__ is not None:
-      # `cuda_nvcc` is a regular package.
-      cuda_nvcc_path = pathlib.Path(cuda_nvcc.__file__).parent
-    elif hasattr(cuda_nvcc, '__path__') and cuda_nvcc.__path__ is not None:
-      # `cuda_nvcc` is a namespace package, which might have multiple paths.
-      cuda_nvcc_path = None
-      for path in cuda_nvcc.__path__:
+    cuda_nvcc_path = None
+    if hasattr(nvcc_module, '__file__') and nvcc_module.__file__ is not None:
+      cuda_nvcc_path = pathlib.Path(nvcc_module.__file__).parent
+    elif hasattr(nvcc_module, '__path__') and nvcc_module.__path__ is not None:
+      for path in nvcc_module.__path__:
         if (pathlib.Path(path) / 'bin' / 'ptxas').exists():
           cuda_nvcc_path = pathlib.Path(path)
           break

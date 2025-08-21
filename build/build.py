@@ -478,6 +478,17 @@ async def main():
         " acceptable compiler."
     )
 
+  wheels = args.wheels.split(",")
+  for wheel in wheels:
+    if wheel not in WHEEL_BUILD_TARGET_DICT.keys():
+      logging.error(
+          "Incorrect wheel name %s provided, valid choices are jaxlib,"
+          " jax-cuda-plugin or cuda-plugin, jax-cuda-pjrt or cuda-pjrt,"
+          " jax-rocm-plugin or rocm-plugin, jax-rocm-pjrt or rocm-pjrt",
+          wheel,
+      )
+      sys.exit(1)
+
   wheel_build_command_base = copy.deepcopy(bazel_command_base)
 
   wheel_cpus = {
@@ -567,8 +578,13 @@ async def main():
     logging.error("CUDA and ROCm cannot be enabled at the same time.")
     sys.exit(1)
 
+  if args.cuda_version:
+    cuda_major_version = args.cuda_version.split(".")[0]
+  else:
+    cuda_major_version = args.cuda_major_version
+
   if "cuda" in args.wheels:
-    wheel_build_command_base.append("--config=cuda")
+    wheel_build_command_base.append(f"--config=cuda{cuda_major_version}")
 
     if clang_local:
       wheel_build_command_base.append(
@@ -636,11 +652,6 @@ async def main():
         # https://peps.python.org/pep-0440/
         wheel_git_hash = option.split("=")[-1].lstrip('0')[:9]
 
-  if args.cuda_version:
-    cuda_major_version = args.cuda_version.split(".")[0]
-  else:
-    cuda_major_version = args.cuda_major_version
-
   with open(".jax_configure.bazelrc", "w") as f:
     jax_configure_options = utils.get_jax_configure_bazel_options(wheel_build_command_base.get_command_as_list())
     if not jax_configure_options:
@@ -649,27 +660,17 @@ async def main():
     f.write(jax_configure_options)
     logging.info("Bazel options written to .jax_configure.bazelrc")
 
-  wheel_build_targets = WHEEL_BUILD_TARGET_DICT
-
   if args.configure_only:
     logging.info("--configure_only is set so not running any Bazel commands.")
   else:
     # Wheel build command execution
-    for wheel in args.wheels.split(","):
+    for wheel in wheels:
       output_path = args.output_path
       logger.debug("Artifacts output directory: %s", output_path)
 
       # Allow CUDA/ROCm wheels without the "jax-" prefix.
       if ("plugin" in wheel or "pjrt" in wheel) and "jax" not in wheel:
         wheel = "jax-" + wheel
-
-      if wheel not in wheel_build_targets.keys():
-        logging.error(
-            "Incorrect wheel name provided, valid choices are jaxlib,"
-            " jax-cuda-plugin or cuda-plugin, jax-cuda-pjrt or cuda-pjrt,"
-            " jax-rocm-plugin or rocm-plugin, jax-rocm-pjrt or rocm-pjrt"
-        )
-        sys.exit(1)
 
       wheel_build_command = copy.deepcopy(bazel_command_base)
       if "cuda" in args.wheels:
@@ -685,13 +686,15 @@ async def main():
 
       # Append the build target to the Bazel command.
       if args.editable:
-        build_target = wheel_build_targets[wheel + "_editable"]
+        build_target = WHEEL_BUILD_TARGET_DICT[wheel + "_editable"]
       else:
-        build_target = wheel_build_targets[wheel]
+        build_target = WHEEL_BUILD_TARGET_DICT[wheel]
       build_target = build_target.format(cuda_major_version=cuda_major_version)
       wheel_build_command.append(build_target)
       if wheel == "jax" and not args.editable:
-        wheel_build_command.append(wheel_build_targets["jax_source_package"])
+        wheel_build_command.append(
+            WHEEL_BUILD_TARGET_DICT["jax_source_package"]
+        )
 
       # If we build jax wheel, we don't need to build jaxlib targets.
       if wheel =="jax":
@@ -707,7 +710,7 @@ async def main():
   jaxlib_and_plugins_bazel_dir = os.path.join(
       "bazel-bin", "jaxlib", "tools", "dist"
   )
-  for wheel in args.wheels.split(","):
+  for wheel in wheels:
     if wheel == "jax":
       bazel_dir = jax_bazel_dir
     else:
