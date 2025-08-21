@@ -813,16 +813,16 @@ def TPU_ReciprocalOp : TPU_Op<"reciprocal", [Pure, SameOperandsAndResultType, El
 }
 
 def TPU_RollVectorsOp : TPU_Op<"roll_vectors", [Pure]> {
-  let arguments = (ins Variadic<AnyVectorOfNonZeroRank>:$input);
-  let results = (outs AnyVectorOfNonZeroRank:$output);
+  let arguments = (ins Variadic<AnyVectorOfAnyRank>:$input);
+  let results = (outs AnyVectorOfAnyRank:$output);
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($output)
   }];
 }
 
 def TPU_UnrollVectorsOp : TPU_Op<"unroll_vectors", [Pure]> {
-  let arguments = (ins AnyVectorOfNonZeroRank:$input);
-  let results = (outs Variadic<AnyVectorOfNonZeroRank>:$output);
+  let arguments = (ins AnyVectorOfAnyRank:$input);
+  let results = (outs Variadic<AnyVectorOfAnyRank>:$output);
   let hasCanonicalizeMethod = 1;
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($output)

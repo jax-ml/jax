@@ -4425,6 +4425,9 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
           std::find(dims.begin(), dims.end(), src_rank - 1) != dims.end(),
           false};
       break;
+    case VectorLayout::ImplicitDim::kMinorAndSecondMinor:
+      return multi_reduction_op.emitOpError(
+          "Not implemented: Double implicit dimensions");
   }
 
   if ((reduces[0] || reduces[1]) &&
@@ -7496,6 +7499,10 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
   const auto &target_shape = ctx.target_shape;
   if (src.implicit_dim() == dst_implicit_dim) {
     return std::make_pair(src, std::move(vregs));
+  }
+  if (src.implicit_dim() == VectorLayout::ImplicitDim::kMinorAndSecondMinor ||
+      dst_implicit_dim == VectorLayout::ImplicitDim::kMinorAndSecondMinor) {
+    return emitError(loc, "Not implemented: Double implicit dimensions");
   }
   // It's possible that the implicit dim change is a no-op.
   VectorLayout src_candidate(src.bitwidth(), src.offsets(), src.tiling(),
