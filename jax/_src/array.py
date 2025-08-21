@@ -423,8 +423,7 @@ class ArrayImpl(basearray.Array):
         sep = ' ' * len(prefix)
       return f"{prefix}{s},{sep}{dtype_str}"
     else:
-      # TODO(emilyaf): Add "shape=" for consistency with the above.
-      return f"{prefix}{self.shape}, {dtype_str}"
+      return f"{prefix}shape={self.shape}, {dtype_str}"
 
   @property
   def is_fully_addressable(self) -> bool:
