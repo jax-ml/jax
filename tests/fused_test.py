@@ -39,27 +39,24 @@ class FusedTest(jtu.JaxTestCase):
 
   def test_vmap_basic(self):
     x = jnp.arange(3.)
-    x_host = jax.jit(lambda: jax.device_put(x, jax.memory.Space.Host))()
+    x_host = jax.device_put(x, jax.memory.Space.Host)
     y_device = jnp.arange(3.)
     f_ = jax.jit(jax.vmap(f))
-    # don't crash
-    low = f_.trace(x_host, y_device).lower(lowering_platforms=('cuda',))
+    f_.trace(x_host, y_device).lower(lowering_platforms=('cuda',)) # don't crash
 
   def test_jvp_basic(self):
     x = jnp.arange(3.)
-    x_host = jax.jit(lambda: jax.device_put(x, jax.memory.Space.Host))()
+    x_host = jax.device_put(x, jax.memory.Space.Host)
     y_device = jnp.arange(3.)
     f_ = jax.jit(lambda x, y: jax.jvp(f, (x, y), (x, y)))
-    # don't crash
-    low = f_.trace(x_host, y_device).lower(lowering_platforms=('cuda',))
+    f_.trace(x_host, y_device).lower(lowering_platforms=('cuda',)) # don't crash
 
   def test_grad_basic(self):
     x = jnp.arange(3.)
-    x_host = jax.jit(lambda: jax.device_put(x, jax.memory.Space.Host))()
+    x_host = jax.device_put(x, jax.memory.Space.Host)
     y_device = jnp.arange(3.)
     f_ = jax.jit(jax.grad(lambda x, y: f(x, y)[1].sum()))
-    # don't crash
-    low = f_.trace(x_host, y_device).lower(lowering_platforms=('cuda',))
+    f_.trace(x_host, y_device).lower(lowering_platforms=('cuda',)) # don't crash
 
 
 if __name__ == '__main__':
