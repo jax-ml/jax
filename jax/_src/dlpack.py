@@ -219,6 +219,13 @@ def _legacy_from_dlpack(dlpack, device: xla_client.Device | None = None,
   dlpack_device, = _arr.devices()
   return _place_array(_arr, device, dlpack_device, copy)
 
+def _is_tensorflow_tensor(external_array):
+  t = type(external_array)
+  return (
+      t.__qualname__ == "EagerTensor"
+      and t.__module__.endswith("tensorflow.python.framework.ops")
+  )
+
 def _from_dlpack(external_array, device: xla_client.Device | None = None,
                  copy: bool | None = None):
   dl_device_type, device_id = external_array.__dlpack_device__()
@@ -232,13 +239,17 @@ def _from_dlpack(external_array, device: xla_client.Device | None = None,
 
   backend = xla_bridge.get_backend(dl_device_platform)
   dlpack_device = backend.device_from_local_hardware_id(device_id)
-  try:
-    stream = dlpack_device.get_stream_for_external_ready_events()
-  except xla_client.XlaRuntimeError as err:
-    if "UNIMPLEMENTED" in str(err):
-      stream = None
-    else:
-      raise
+  if _is_tensorflow_tensor(external_array):
+    # TensorFlow does not support stream=.
+    stream = None
+  else:
+    try:
+      stream = dlpack_device.get_stream_for_external_ready_events()
+    except xla_client.XlaRuntimeError as err:
+      if "UNIMPLEMENTED" in str(err):
+        stream = None
+      else:
+        raise
   dlpack = external_array.__dlpack__(stream=stream)
 
   _arr = jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(

@@ -366,8 +366,7 @@ def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
       res_tf_platform = tf.DeviceSpec.from_string(res_tf.backing_device).device_type
       res_jax_platform = res_tf_platform.lower()
       if res_jax_platform in _DLPACK_PLATFORMS:
-        res_dlpack = tf.experimental.dlpack.to_dlpack(res_tf)
-        return jax.dlpack.from_dlpack(res_dlpack)
+        return jax.dlpack.from_dlpack(res_tf)
 
     # When working with a bfloat16 scalar tf.Tensor,np.asarray() can fail.
     # To handle this special case, we create a numpy copy.

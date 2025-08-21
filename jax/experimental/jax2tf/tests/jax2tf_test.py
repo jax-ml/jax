@@ -1516,8 +1516,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     res = jax2tf.convert(f_jax)(*many_args)
     self.assertAllClose(f_jax(*many_args), res)
 
-  @jtu.ignore_warning(message="Calling from_dlpack with a DLPack tensor",
-                      category=DeprecationWarning)
   def test_nested_convert(self):
     # Test call sequence: convert -> call_tf -> convert.
 

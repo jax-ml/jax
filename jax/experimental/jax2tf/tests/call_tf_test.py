@@ -82,13 +82,6 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
         continue  # A virtual device
       if all(tf_device.device_type != d.device_type for d in self.tf_devices):
         self.tf_devices.append(tf_device)
-    self.warning_ctx = jtu.ignore_warning(
-        message="Calling from_dlpack with a DLPack tensor is deprecated")
-    self.warning_ctx.__enter__()
-
-  def tearDown(self):
-    self.warning_ctx.__exit__(None, None, None)
-    super().tearDown()
 
   @_parameterized_jit
   def test_eval_scalar_arg(self, with_jit=True):
@@ -884,13 +877,6 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     # bug in TensorFlow.
     _ = tf.add(1, 1)
     super().setUp()
-    self.warning_ctx = jtu.ignore_warning(
-        message="Calling from_dlpack with a DLPack tensor is deprecated")
-    self.warning_ctx.__enter__()
-
-  def tearDown(self):
-    self.warning_ctx.__exit__(None, None, None)
-    super().tearDown()
 
   def test_simple(self):
     f_jax = jnp.sin
@@ -1184,13 +1170,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     # bug in TensorFlow.
     _ = tf.add(1, 1)
     super().setUp()
-    self.warning_ctx = jtu.ignore_warning(
-        message="Calling from_dlpack with a DLPack tensor is deprecated")
-    self.warning_ctx.__enter__()
-
-  def tearDown(self):
-    self.warning_ctx.__exit__(None, None, None)
-    super().tearDown()
 
   def test_alternate(self):
     # Alternate sin/cos with sin in TF and cos in JAX

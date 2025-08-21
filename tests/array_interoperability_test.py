@@ -89,14 +89,6 @@ class DLPackTest(jtu.JaxTestCase):
       use_stream=[False, True],
   )
   @jtu.run_on_devices("gpu")
-  @jtu.ignore_warning(
-      message="Calling from_dlpack with a DLPack tensor",
-      category=DeprecationWarning,
-  )
-  @jtu.ignore_warning(
-      message="jax.dlpack.to_dlpack was deprecated.*",
-      category=DeprecationWarning,
-  )
   def testJaxRoundTrip(self, shape, dtype, copy, use_stream):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
@@ -115,7 +107,6 @@ class DLPackTest(jtu.JaxTestCase):
 
     self.assertEqual(z.devices(), {device})
     self.assertAllClose(np.astype(x.dtype), z)
-
 
   @jtu.sample_product(
     shape=all_shapes,
@@ -139,13 +130,8 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertEqual(z.devices(), {device})
     self.assertAllClose(np.astype(x.dtype), z)
 
-  @jtu.sample_product(
-    shape=all_shapes,
-    dtype=dlpack_dtypes,
-  )
+  @jtu.sample_product(shape=all_shapes, dtype=dlpack_dtypes)
   @unittest.skipIf(not tf, "Test requires TensorFlow")
-  @jtu.ignore_warning(message="Calling from_dlpack with a DLPack tensor",
-                      category=DeprecationWarning)
   def testTensorFlowToJax(self, shape, dtype):
     if (not config.enable_x64.value and
         dtype in [jnp.int64, jnp.uint64, jnp.float64]):
@@ -161,19 +147,14 @@ class DLPackTest(jtu.JaxTestCase):
     np = rng(shape, dtype)
     with tf.device("/GPU:0" if jtu.test_device_matches(["gpu"]) else "/CPU:0"):
       x = tf.identity(tf.constant(np))
-    dlpack = tf.experimental.dlpack.to_dlpack(x)
-    y = jax.dlpack.from_dlpack(dlpack)
+    y = jax.dlpack.from_dlpack(x)
     self.assertAllClose(np, y)
 
   @jtu.sample_product(
-    shape=all_shapes,
-    dtype=dlpack_dtypes,
+      shape=all_shapes,
+      dtype=dlpack_dtypes,
   )
   @unittest.skipIf(not tf, "Test requires TensorFlow")
-  @jtu.ignore_warning(
-      message="jax.dlpack.to_dlpack was deprecated.*",
-      category=DeprecationWarning,
-  )
   def testJaxToTensorFlow(self, shape, dtype):
     if (not config.enable_x64.value and
         dtype in [jnp.int64, jnp.uint64, jnp.float64]):
@@ -193,20 +174,13 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertAllClose(np, y.numpy())
 
   @unittest.skipIf(not tf, "Test requires TensorFlow")
-  @jtu.ignore_warning(message="Calling from_dlpack with a DLPack tensor",
-                      category=DeprecationWarning)
   def testTensorFlowToJaxInt64(self):
     # See https://github.com/jax-ml/jax/issues/11895
-    x = jax.dlpack.from_dlpack(
-        tf.experimental.dlpack.to_dlpack(tf.ones((2, 3), tf.int64)))
+    x = jax.dlpack.from_dlpack(tf.ones((2, 3), tf.int64))
     dtype_expected = jnp.int64 if config.enable_x64.value else jnp.int32
     self.assertEqual(x.dtype, dtype_expected)
 
-  @jtu.sample_product(
-    shape=all_shapes,
-    dtype=numpy_dtypes,
-    copy=[False, True],
-  )
+  @jtu.sample_product(shape=all_shapes, dtype=numpy_dtypes, copy=[False, True])
   def testNumpyToJax(self, shape, dtype, copy):
     rng = jtu.rand_default(self.rng())
     x_np = rng(shape, dtype)
@@ -214,9 +188,7 @@ class DLPackTest(jtu.JaxTestCase):
     _from_dlpack = lambda: jnp.from_dlpack(x_np, device=device, copy=copy)
     if jax.default_backend() == 'gpu' and not copy:
       self.assertRaisesRegex(
-        ValueError,
-        r"Specified .* which requires a copy",
-        _from_dlpack
+          ValueError, "Specified .* which requires a copy", _from_dlpack
       )
     else:
       self.assertAllClose(x_np, _from_dlpack())
@@ -232,17 +204,19 @@ class DLPackTest(jtu.JaxTestCase):
     x_np = np.from_dlpack(x_jax)
     self.assertAllClose(x_np, x_jax)
 
-  @jtu.ignore_warning(message="Calling from_dlpack.*",
-                      category=DeprecationWarning)
   def testNondefaultLayout(self):
+    if jaxlib_version < (0, 7, 2):
+      self.skipTest("Non-default layout check was implemented in jaxlib 0.7.2")
+
     # Generate numpy array with nonstandard layout
     a = np.arange(4).reshape(2, 2)
     b = a.T
     with self.assertRaisesRegex(
         RuntimeError,
-        r"from_dlpack got array with non-default layout with minor-to-major "
-        r"dimensions \(0,1\), expected \(1,0\)"):
-      b_jax = jax.dlpack.from_dlpack(b.__dlpack__())
+        "from_dlpack got array with non-default layout with minor-to-major "
+        r"dimensions \(0,1\), expected \(1,0\)",
+    ):
+      jax.dlpack.from_dlpack(b)
 
 
 class CudaArrayInterfaceTest(jtu.JaxTestCase):
