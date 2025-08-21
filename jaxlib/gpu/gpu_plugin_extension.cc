@@ -18,12 +18,12 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/string_view.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
@@ -54,8 +54,8 @@ struct TritonCompilationResult {
 };
 
 absl::StatusOr<TritonCompilationResult> CompileTritonToASM(
-    const PJRT_Api* c_api, absl::string_view module,
-    absl::string_view arch_name, int num_warps, int num_ctas, int num_stages) {
+    const PJRT_Api* c_api, std::string_view module, std::string_view arch_name,
+    int num_warps, int num_ctas, int num_stages) {
   const PJRT_Triton_Extension* triton_ext =
       pjrt::FindExtension<PJRT_Triton_Extension>(
           c_api, PJRT_Extension_Type::PJRT_Extension_Type_Triton);
@@ -217,12 +217,12 @@ void BuildGpuPluginExtension(nanobind::module_& m) {
       .def_ro("cluster_dim_z", &TritonCompilationResult::cluster_dim_z);
 
   m.def("compile_triton_to_asm",
-        [](nb::capsule c_api, nb::bytes module, absl::string_view arch_name,
+        [](nb::capsule c_api, nb::bytes module, std::string_view arch_name,
            int num_warps, int num_ctas, int num_stages) {
           return xla::ValueOrThrow(CompileTritonToASM(
               static_cast<const PJRT_Api*>(c_api.data()),
-              absl::string_view(static_cast<const char*>(module.data()),
-                                module.size()),
+              std::string_view(static_cast<const char*>(module.data()),
+                               module.size()),
               arch_name, num_warps, num_ctas, num_stages));
         });
 

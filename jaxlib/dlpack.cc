@@ -22,6 +22,7 @@ limitations under the License.
 #include <memory>
 #include <numeric>
 #include <optional>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -29,7 +30,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "include/dlpack/dlpack.h"
 #include "llvm/Support/Casting.h"
@@ -344,11 +344,11 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
   auto* cpu_pjrt_client = cpu_client ? (*cpu_client)->pjrt_client() : nullptr;
   auto* gpu_pjrt_client = gpu_client ? (*gpu_client)->pjrt_client() : nullptr;
 
-  if (absl::string_view(tensor.name()) != kDlTensorCapsuleName) {
+  if (std::string_view(tensor.name()) != kDlTensorCapsuleName) {
     return xla::InvalidArgument(
         "DLPack tensor must be a capsule with name \"dltensor\", got \"%s\". "
         "Note that a DLPack tensor may be consumed at most once.",
-        absl::string_view(tensor.name()));
+        std::string_view(tensor.name()));
   }
   DLManagedTensor* dlmt = static_cast<DLManagedTensor*>(tensor.data());
   if (dlmt->dl_tensor.ndim < 0) {
@@ -440,11 +440,11 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
         "DLPack is only supported for devices addressable by the current "
         "process.");
   }
-  if (absl::string_view(tensor.name()) != kDlTensorCapsuleName) {
+  if (std::string_view(tensor.name()) != kDlTensorCapsuleName) {
     return xla::InvalidArgument(
         "DLPack tensor must be a capsule with name \"dltensor\", got \"%s\". "
         "Note that a DLPack tensor may be consumed at most once.",
-        absl::string_view(tensor.name()));
+        std::string_view(tensor.name()));
   }
   DLManagedTensor* dlmt = static_cast<DLManagedTensor*>(tensor.data());
   if (dlmt->dl_tensor.ndim < 0) {

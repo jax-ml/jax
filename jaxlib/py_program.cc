@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -26,7 +27,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/cord.h"
-#include "absl/strings/string_view.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
@@ -204,7 +204,7 @@ MakePluginCompileOptions() {
 }
 
 absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeHloProgram(
-    absl::string_view mlir_module) {
+    std::string_view mlir_module) {
   auto context = std::make_unique<mlir::MLIRContext>();
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                       xla::ParseMlirModuleString(mlir_module, *context));
@@ -220,7 +220,7 @@ absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeHloProgramFromString(
 absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeHloProgramFromBytes(
     nb::bytes mlir_module) {
   return MakeHloProgram(
-      absl::string_view(mlir_module.c_str(), mlir_module.size()));
+      std::string_view(mlir_module.c_str(), mlir_module.size()));
 }
 
 absl::StatusOr<std::unique_ptr<ifrt::CompileOptions>> MakeXlaCompileOptions(
@@ -243,16 +243,16 @@ absl::StatusOr<std::unique_ptr<ifrt::CompileOptions>> MakeXlaCompileOptions(
       std::move(ifrt_loaded_host_callbacks));
 }
 
-constexpr absl::string_view kColocatedPythonProgramType =
+constexpr std::string_view kColocatedPythonProgramType =
     "jax_colocated_python_v0.0.1";
 
 absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeColocatedPythonProgram(
     std::string name, nb::bytes picked_function, nb::sequence devices,
     nb::sequence input_avals, nb::sequence output_avals) {
   auto ifrt_serialized_program_text = absl::MakeCordFromExternal(
-      absl::string_view(reinterpret_cast<const char*>(picked_function.data()),
-                        picked_function.size()),
-      /*releaser=*/[picked_function](absl::string_view) mutable {
+      std::string_view(reinterpret_cast<const char*>(picked_function.data()),
+                       picked_function.size()),
+      /*releaser=*/[picked_function](std::string_view) mutable {
         GlobalPyRefManager()->AddGarbage(std::move(picked_function));
       });
   TF_ASSIGN_OR_RETURN(auto ifrt_device_list, GetDeviceList(devices));

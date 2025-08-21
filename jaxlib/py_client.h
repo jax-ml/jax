@@ -24,12 +24,12 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
@@ -98,7 +98,7 @@ class PyClient {
     return shared_ptr_pjrt_client();
   }
 
-  absl::string_view platform_name() const {
+  std::string_view platform_name() const {
     // TODO(phawkins): this is a temporary backwards compatibility shim. We
     // changed the name PJRT reports for GPU platforms to "cuda" or "rocm", but
     // we haven't yet updated JAX clients that expect "gpu". Migrate users and
@@ -110,16 +110,14 @@ class PyClient {
       return ifrt_client_->platform_name();
     }
   }
-  absl::string_view raw_platform_name() const {
+  std::string_view raw_platform_name() const {
     // TODO(parkers): Once platform_name() is the same, remove this.
     return ifrt_client_->platform_name();
   }
-  absl::string_view platform_version() const {
+  std::string_view platform_version() const {
     return ifrt_client_->platform_version();
   }
-  absl::string_view runtime_type() const {
-    return ifrt_client_->runtime_type();
-  }
+  std::string_view runtime_type() const { return ifrt_client_->runtime_type(); }
 
   // Returns implementation-specific attributes about this client, e.g. the PJRT
   // C API version if applicable.

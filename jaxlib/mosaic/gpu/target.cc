@@ -16,6 +16,7 @@ limitations under the License.
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -23,7 +24,6 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -87,7 +87,7 @@ absl::StatusOr<int> GetLatestLlvmPtxIsaVersion() {
   int llvm_latest_version = 0;
   for (const llvm::SubtargetFeatureKV& feature :
        subtarget_info->getAllProcessorFeatures()) {
-    absl::string_view version_string = feature.Key;
+    std::string_view version_string = feature.Key;
     if (absl::ConsumePrefix(&version_string, "ptx")) {
       int version;
       if (!absl::SimpleAtoi(version_string, &version)) {

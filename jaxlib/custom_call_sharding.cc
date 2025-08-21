@@ -22,13 +22,13 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
@@ -97,7 +97,7 @@ class PyCustomCallPartitionerCallbacks {
     xla::Shape result_shape = std::move(std::get<2>(args_tuple));
     std::optional<xla::HloSharding> result_sharding =
         std::move(std::get<3>(args_tuple));
-    absl::string_view backend_config = std::move(std::get<4>(args_tuple));
+    std::string_view backend_config = std::move(std::get<4>(args_tuple));
 
     {
       nb::gil_scoped_acquire gil;
@@ -122,7 +122,7 @@ class PyCustomCallPartitionerCallbacks {
           return xla::Internal(
               "Shardings returned from partitioning: expected "
               "Tuple[bytes, List[HloSharding], HloSharding] got: %s",
-              nb::cast<absl::string_view>(nb::repr(py_result)));
+              nb::cast<std::string_view>(nb::repr(py_result)));
         }
       } catch (const nb::python_error& e) {
         return xla::Internal("custom_partitioner: %s", e.what());
@@ -140,7 +140,7 @@ class PyCustomCallPartitionerCallbacks {
     std::vector<std::optional<xla::HloSharding>> arg_shardings =
         std::move(std::get<1>(args_tuple));
     xla::Shape result_shape = std::move(std::get<2>(args_tuple));
-    absl::string_view backend_config = std::move(std::get<3>(args_tuple));
+    std::string_view backend_config = std::move(std::get<3>(args_tuple));
 
     std::optional<xla::HloSharding> result;
     nb::gil_scoped_acquire gil;
@@ -165,7 +165,7 @@ class PyCustomCallPartitionerCallbacks {
     TF_ASSIGN_OR_RETURN(auto args_tuple, ReadArgs(args));
     xla::HloSharding result_sharding = std::move(std::get<0>(args_tuple));
     xla::Shape result_shape = std::move(std::get<1>(args_tuple));
-    absl::string_view backend_config = std::move(std::get<2>(args_tuple));
+    std::string_view backend_config = std::move(std::get<2>(args_tuple));
 
     nb::gil_scoped_acquire gil;
     try {
@@ -233,7 +233,7 @@ void BuildCustomCallShardingPybindAPI(nb::module_& m) {
           return;
         }
 
-        if (absl::string_view(c_api->name()) != "pjrt_c_api") {
+        if (std::string_view(c_api->name()) != "pjrt_c_api") {
           throw absl::InvalidArgumentError(
               "Argument to register_custom_call_partitioner was not a "
               "pjrt_c_api capsule.");
@@ -307,7 +307,7 @@ Args:
               target_name, std::make_unique<xla::CustomCallBatchPartitioner>());
           return;
         }
-        if (absl::string_view(c_api->name()) != "pjrt_c_api") {
+        if (std::string_view(c_api->name()) != "pjrt_c_api") {
           throw absl::InvalidArgumentError(
               "Argument to register_custom_call_partitioner was not a "
               "pjrt_c_api capsule.");

@@ -22,13 +22,13 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
@@ -142,7 +142,7 @@ class PyExecutable {
       const {
     return ifrt_executable_->GetHloModules();
   }
-  absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+  absl::StatusOr<std::vector<std::vector<std::string_view>>>
   GetOutputMemoryKinds() const {
     return ifrt_executable_->GetOutputMemoryKinds();
   }
@@ -218,7 +218,7 @@ class PyLoadedExecutable {
   absl::StatusOr<std::vector<std::shared_ptr<xla::HloModule>>> HloModules()
       const;
 
-  absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+  absl::StatusOr<std::vector<std::vector<std::string_view>>>
   GetOutputMemoryKinds() const;
 
   absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>

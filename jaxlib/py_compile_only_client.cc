@@ -16,11 +16,11 @@ limitations under the License.
 #include "jaxlib/py_compile_only_client.h"
 
 #include <memory>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "llvm/Support/Casting.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
@@ -72,7 +72,7 @@ class CompileOnlyPyClient : public PyClient {
   }
 
   absl::StatusOr<nb_class_ptr<PyExecutable>> CompileUnloaded(
-      absl::string_view mlir_module, ifrt::DeviceListRef executable_devices,
+      std::string_view mlir_module, ifrt::DeviceListRef executable_devices,
       xla::CompileOptions options) {
     ifrt::ExecutableRef ifrt_executable;
     {
@@ -119,7 +119,7 @@ void RegisterCompileOnlyClient(nb::module_& m) {
             ifrt::DeviceListRef executable_devices =
                 xla::ValueOrThrow(py_executable_devices.ifrt_device_list());
             return xla::ValueOrThrow(self.CompileUnloaded(
-                absl::string_view(mlir_module.c_str(), mlir_module.size()),
+                std::string_view(mlir_module.c_str(), mlir_module.size()),
                 std::move(executable_devices), std::move(options)));
           },
           nb::arg("computation"), nb::arg("executable_devices"),

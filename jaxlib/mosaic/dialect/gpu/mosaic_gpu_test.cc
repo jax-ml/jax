@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -25,7 +26,6 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Conversion/LLVMCommon/MemRefBuilder.h"
 #include "mlir/Conversion/LLVMCommon/StructBuilder.h"
@@ -95,7 +95,7 @@ class MosaicGpuTest : public ::testing::Test {
     mosaic_gpu::DeclareRuntimeFunctions(builder_);
   }
 
-  void ExpectLastErrorContains(absl::string_view substring) {
+  void ExpectLastErrorContains(std::string_view substring) {
     EXPECT_THAT(last_error_message_, HasSubstr(substring));
   }
 

@@ -15,11 +15,11 @@ limitations under the License.
 
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <utility>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
-#include "absl/strings/string_view.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/Transforms/Hoisting.h"
@@ -59,7 +59,7 @@ struct VectorizationPattern
     : public OpInterfaceRewritePattern<linalg::LinalgOp> {
   using OpInterfaceRewritePattern<linalg::LinalgOp>::OpInterfaceRewritePattern;
   LogicalResult matchAndRewrite(linalg::LinalgOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     FailureOr<linalg::VectorizationResult> vectorResults =
         vectorize(rewriter, op,
                   /*inputVectorSizes=*/{},
@@ -75,7 +75,7 @@ struct VectorizationPattern
 
 // Check preconditions for `vector.transfer_read` rewrite patterns.
 LogicalResult checkPreconditions(vector::TransferReadOp op,
-                                 PatternRewriter &rewriter) {
+                                 PatternRewriter& rewriter) {
   if (op.hasOutOfBoundsDim()) {
     return rewriter.notifyMatchFailure(op, "out of bounds transfer dim");
   }
@@ -98,7 +98,7 @@ LogicalResult checkPreconditions(vector::TransferReadOp op,
 vector::TransferReadOp createTransferReadOp(vector::TransferReadOp op,
                                             Value source,
                                             RankedTensorType source_ty,
-                                            PatternRewriter &rewriter) {
+                                            PatternRewriter& rewriter) {
   // We know from preconditions that there are no out of bound dims.
   SmallVector<bool> in_bounds(source_ty.getRank(), true);
   auto padding = rewriter.create<mlir::arith::ConstantOp>(
@@ -118,7 +118,7 @@ vector::TransferReadOp createTransferReadOp(vector::TransferReadOp op,
 
 template <typename DefiningOp>
 LogicalResult matchAndRewriteTransferOfExpandOrCollapseShape(
-    vector::TransferReadOp op, PatternRewriter &rewriter) {
+    vector::TransferReadOp op, PatternRewriter& rewriter) {
   if (failed(checkPreconditions(op, rewriter))) {
     return failure();
   }
@@ -148,7 +148,7 @@ struct TransferReadOfExpandShape
   using OpRewritePattern<vector::TransferReadOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(vector::TransferReadOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     return matchAndRewriteTransferOfExpandOrCollapseShape<
         tensor::ExpandShapeOp>(op, rewriter);
   }
@@ -161,7 +161,7 @@ struct TransferReadOfCollapseShape
   using OpRewritePattern<vector::TransferReadOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(vector::TransferReadOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     return matchAndRewriteTransferOfExpandOrCollapseShape<
         tensor::CollapseShapeOp>(op, rewriter);
   }
@@ -174,7 +174,7 @@ struct TransferReadOfConstant
   using OpRewritePattern<vector::TransferReadOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(vector::TransferReadOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     DenseElementsAttr constant_elements;
     Attribute constant_value;
     if (matchPattern(op.getSource(), m_Constant(&constant_elements)) &&
@@ -196,7 +196,7 @@ struct TransferReadOfSelect : public OpRewritePattern<vector::TransferReadOp> {
   using OpRewritePattern<vector::TransferReadOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(vector::TransferReadOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     if (failed(checkPreconditions(op, rewriter))) {
       return failure();
     }
@@ -237,7 +237,7 @@ struct TransferReadOfCmpI : public OpRewritePattern<vector::TransferReadOp> {
   using OpRewritePattern<vector::TransferReadOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(vector::TransferReadOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     if (failed(checkPreconditions(op, rewriter))) {
       return failure();
     }
@@ -268,7 +268,7 @@ struct TransferReadOfSplat : public OpRewritePattern<vector::TransferReadOp> {
   using OpRewritePattern<vector::TransferReadOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(vector::TransferReadOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     if (failed(checkPreconditions(op, rewriter))) {
       return failure();
     }
@@ -286,7 +286,7 @@ struct TransferReadOfSplat : public OpRewritePattern<vector::TransferReadOp> {
 };
 
 // List of operations that are covered by the supports_bf16_alu_instructions.
-const auto kSupportedBf16Ops = absl::flat_hash_set<absl::string_view>(
+const auto kSupportedBf16Ops = absl::flat_hash_set<std::string_view>(
     {arith::AddFOp::getOperationName(), arith::SubFOp::getOperationName(),
      arith::MulFOp::getOperationName(), arith::MaximumFOp::getOperationName(),
      arith::MinimumFOp::getOperationName()});
@@ -298,12 +298,12 @@ const auto kSupportedBf16Ops = absl::flat_hash_set<absl::string_view>(
 class GenericBitwidthConvert : public RewritePattern {
  public:
   explicit GenericBitwidthConvert(llvm::StringRef operation_name,
-                                  MLIRContext *ctx,
+                                  MLIRContext* ctx,
                                   bool supports_bf16_alu_instructions)
       : RewritePattern(operation_name, 0, ctx),
         supports_bf16_alu_instructions_(supports_bf16_alu_instructions) {}
-  LogicalResult matchAndRewrite(Operation *op,
-                                PatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(Operation* op,
+                                PatternRewriter& rewriter) const override {
     if (supports_bf16_alu_instructions_ &&
         kSupportedBf16Ops.contains(op->getName().getStringRef())) {
       return rewriter.notifyMatchFailure(op, "target supports bf16 operands");
@@ -348,7 +348,7 @@ class GenericBitwidthConvert : public RewritePattern {
     }
     OperationState state(loc, op->getName().getStringRef(), extended_operands,
                          new_results, op->getAttrs(), op->getSuccessors());
-    Operation *new_op = rewriter.create(state);
+    Operation* new_op = rewriter.create(state);
     rewriter.replaceOpWithNewOp<arith::TruncFOp>(op, op->getResultTypes(),
                                                  new_op->getResults());
     return success();
@@ -367,11 +367,11 @@ struct ContractionBitwidthConvert
     : public OpRewritePattern<vector::ContractionOp> {
   using OpRewritePattern<vector::ContractionOp>::OpRewritePattern;
 
-  ContractionBitwidthConvert(bool supports_bf16_matmul, MLIRContext *ctx)
+  ContractionBitwidthConvert(bool supports_bf16_matmul, MLIRContext* ctx)
       : OpRewritePattern(ctx), supports_bf16_matmul_(supports_bf16_matmul) {}
 
   LogicalResult matchAndRewrite(vector::ContractionOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     // The ContractionOp contract is that (1) lhs and rhs have same element
     // type, and (2) the accumulator and result have the same element type.
 
@@ -440,7 +440,7 @@ struct MultiDimReductionBitwidthConvert
   using OpRewritePattern<vector::MultiDimReductionOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(vector::MultiDimReductionOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     // Below we rely on the contract that the source operand, accumulator, and
     // result have the same element type.
     auto src_ty = op.getSourceVectorType();
@@ -472,14 +472,14 @@ struct MultiDimReductionBitwidthConvert
 struct LinalgVectorizationPass
     : public impl::LinalgVectorizationPassBase<LinalgVectorizationPass> {
   explicit LinalgVectorizationPass(
-      const LinalgVectorizationPassOptions &options)
+      const LinalgVectorizationPassOptions& options)
       : impl::LinalgVectorizationPassBase<LinalgVectorizationPass>(options) {}
-  void getDependentDialects(DialectRegistry &registry) const override {
+  void getDependentDialects(DialectRegistry& registry) const override {
     registry.insert<vector::VectorDialect>();
   }
   void runOnOperation() override {
     auto func = getOperation();
-    MLIRContext *ctx = func.getContext();
+    MLIRContext* ctx = func.getContext();
 
     RewritePatternSet patterns(ctx);
     patterns.add<VectorizationPattern>(ctx);
@@ -527,8 +527,8 @@ struct LinalgVectorizationPass
 
     // We do not want to apply the vector patterns above to the ops that are
     // unrelated to the original linalg op.
-    SmallVector<Operation *> linalgOps;
-    func.walk([&](Operation *op) {
+    SmallVector<Operation*> linalgOps;
+    func.walk([&](Operation* op) {
       if (dyn_cast<arith::SelectOp>(op) || dyn_cast<linalg::LinalgOp>(op) ||
           dyn_cast<vector::TransferReadOp>(op) ||
           dyn_cast<vector::TransferWriteOp>(op) ||

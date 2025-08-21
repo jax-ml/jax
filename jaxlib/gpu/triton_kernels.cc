@@ -40,7 +40,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/triton.pb.h"
@@ -162,7 +161,7 @@ absl::StatusOr<float> Benchmark(gpuStream_t stream, KernelCall& kernel_call,
   return elapsed_ms;
 }
 
-absl::StatusOr<KernelCall*> GetKernelCall(absl::string_view opaque,
+absl::StatusOr<KernelCall*> GetKernelCall(std::string_view opaque,
                                           gpuStream_t stream, void** buffers) {
   static absl::Mutex mutex;
   static auto& kernel_calls =
@@ -709,11 +708,11 @@ void TritonKernelCall(gpuStream_t stream, void** buffers, const char* opaque,
   absl::Status result = [=] {
     JAX_ASSIGN_OR_RETURN(
         KernelCall * kernel_call,
-        GetKernelCall(absl::string_view(opaque, opaque_len), stream, buffers));
+        GetKernelCall(std::string_view(opaque, opaque_len), stream, buffers));
     return kernel_call->Launch(stream, buffers);
   }();
   if (!result.ok()) {
-    absl::string_view msg = result.message();
+    std::string_view msg = result.message();
     XlaCustomCallStatusSetFailure(status, msg.data(), msg.length());
   }
 }

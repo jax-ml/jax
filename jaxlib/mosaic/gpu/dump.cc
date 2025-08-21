@@ -35,6 +35,7 @@ limitations under the License.
 #include <iostream>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <system_error>  // NOLINT
 #include <utility>
 #include <vector>
@@ -50,7 +51,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_split.h"
-#include "absl/strings/string_view.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
@@ -230,7 +230,7 @@ std::string FormatSassCtrl(const std::string& sass) {
 
 // The name of the attribute wrapping the module basename for dumping. See
 // `GetDumpOptionsForModule` for more details.
-constexpr absl::string_view kDumpBasenameAttr = "mosaic_gpu.dump_basename";
+constexpr std::string_view kDumpBasenameAttr = "mosaic_gpu.dump_basename";
 
 }  // namespace
 
@@ -263,7 +263,7 @@ DumpOptions GetOrSetDumpOptionsForModule(mlir::ModuleOp module) {
     // "sponge" is a special value, which if set, will result in the files being
     // dumped to a directory path specified in the `TEST_UNDECLARED_OUTPUTS_DIR`
     // environment variable.
-    if (absl::string_view(dump_to) == "sponge") {
+    if (std::string_view(dump_to) == "sponge") {
       if (char* dump_dir = getenv("TEST_UNDECLARED_OUTPUTS_DIR");
           dump_dir != nullptr) {
         opts.dump_path = dump_dir;
@@ -272,7 +272,7 @@ DumpOptions GetOrSetDumpOptionsForModule(mlir::ModuleOp module) {
                         "TEST_UNDECLARED_OUTPUTS_DIR is not set! "
                         "Will dump to stdout instead.";
       }
-    } else if (absl::string_view(dump_to) == "-") {
+    } else if (std::string_view(dump_to) == "-") {
       // Dump to stdout.
       opts.dump_path = "";
     } else {
@@ -295,8 +295,8 @@ DumpOptions GetOrSetDumpOptionsForModule(mlir::ModuleOp module) {
   return opts;
 }
 
-void DumpToFileOrStdout(absl::string_view content, absl::string_view name,
-                        absl::string_view path) {
+void DumpToFileOrStdout(std::string_view content, std::string_view name,
+                        std::string_view path) {
   if (path.empty()) {
     std::cout << content << std::endl;
     return;
@@ -313,8 +313,8 @@ void DumpToFileOrStdout(absl::string_view content, absl::string_view name,
   out_file << content << "\n";
 }
 
-void DumpSass(mlir::gpu::BinaryOp binary, absl::string_view path,
-              absl::string_view basename, bool include_sass_ctrl) {
+void DumpSass(mlir::gpu::BinaryOp binary, std::string_view path,
+              std::string_view basename, bool include_sass_ctrl) {
   auto objects = binary.getObjects();
   if (objects.size() != 1) {
     std::cerr << "Multiple objects per gpu.binary unsupported" << std::endl;

@@ -28,6 +28,7 @@ limitations under the License.
 #include <numeric>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>  // NOLINT
 #include <tuple>
 #include <type_traits>
@@ -46,7 +47,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
@@ -699,7 +699,7 @@ absl::Status PyArray::set_arrays(nb::object obj) {
   if (!nb::isinstance<nb::list>(obj)) {
     return xla::InvalidArgument(
         "Unsupported arg when setting Array._arrays: %s",
-        nb::cast<absl::string_view>(nb::str(obj.type())));
+        nb::cast<std::string_view>(nb::str(obj.type())));
   }
 
   nb::list list(obj);
@@ -732,7 +732,7 @@ absl::Status PyArray::set_arrays(nb::object obj) {
     } else {
       return xla::InvalidArgument(
           "Unsupported arg when setting Array._arrays: %s",
-          nb::cast<absl::string_view>(nb::str(obj.type())));
+          nb::cast<std::string_view>(nb::str(obj.type())));
     }
   }
   const ifrt::MemoryKind first_memory_kind =
@@ -851,7 +851,7 @@ absl::Status PyArray::CopySingleDeviceArrayToHostAsync() {
       arr.GetStorage().dynamic_shape, arr.ifrt_array());
 }
 
-absl::StatusOr<PyArray> PyArray::AssertUnsharded(absl::string_view api) {
+absl::StatusOr<PyArray> PyArray::AssertUnsharded(std::string_view api) {
   if (ifrt_array() == nullptr) {
     return xla::InvalidArgument("%s( called on deleted or donated buffer", api);
   }
@@ -1206,11 +1206,11 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
 
       auto transfer_guard_formatter = [&py_array, &dst_sharding] {
         return absl::StrCat(
-            "aval=", nb::cast<absl::string_view>(nb::repr(py_array.aval())),
+            "aval=", nb::cast<std::string_view>(nb::repr(py_array.aval())),
             ", sharding=",
-            nb::cast<absl::string_view>(nb::repr(py_array.sharding())),
+            nb::cast<std::string_view>(nb::repr(py_array.sharding())),
             ", dst_sharding=",
-            nb::cast<absl::string_view>(nb::repr(dst_sharding)));
+            nb::cast<std::string_view>(nb::repr(dst_sharding)));
       };
       TF_RETURN_IF_ERROR(
           ApplyTransferGuardToDeviceToDevice(transfer_guard_formatter));
@@ -1278,8 +1278,8 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
   }
   auto transfer_guard_formatter = [&aval, &sharding] {
     return absl::StrCat(
-        "aval=", nb::cast<absl::string_view>(nb::repr(aval)),
-        ", dst_sharding=", nb::cast<absl::string_view>(nb::repr(sharding)));
+        "aval=", nb::cast<std::string_view>(nb::repr(aval)),
+        ", dst_sharding=", nb::cast<std::string_view>(nb::repr(sharding)));
   };
 
   GlobalPyRefManager()->CollectGarbage();
@@ -1799,7 +1799,7 @@ absl::Status PyHostValue::ConvertStringArrayContentsToNumpyArray(
   auto iter =
       nb::steal(PyArray_IterNew(reinterpret_cast<PyObject*>(dst_py_array_obj)));
   for (auto& cord : *string_array_contents_) {
-    absl::string_view input_str_view = cord.Flatten();
+    std::string_view input_str_view = cord.Flatten();
     auto py_unicode = nb::steal(PyUnicode_FromStringAndSize(
         input_str_view.data(), input_str_view.size()));
     if (py_unicode.ptr() == nullptr) {
@@ -2030,7 +2030,7 @@ absl::Status PyArray::RegisterTypes(nb::module_& m) {
           throw nb::type_error(
               absl::StrCat(
                   "Unsupported type for elements in `arrays`: ",
-                  nb::cast<absl::string_view>(nb::str(arrays[0].type())))
+                  nb::cast<std::string_view>(nb::str(arrays[0].type())))
                   .c_str());
         }
         auto py_arrays = nb::cast<std::vector<PyArray>>(arrays);
@@ -2090,7 +2090,7 @@ absl::Status PyArray::RegisterTypes(nb::module_& m) {
       [](PyArray self) {
         if (self.ifrt_array()->client()->platform_name() == "cuda" ||
             self.ifrt_array()->client()->platform_name() == "rocm") {
-          return absl::string_view("gpu");
+          return std::string_view("gpu");
         } else {
           return self.ifrt_array()->client()->platform_name();
         }

@@ -17,13 +17,13 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/string_view.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
@@ -246,8 +246,8 @@ bool IsContiguous(mlir::MemRefType type) {
 
 namespace {
 llvm::LogicalResult VerifyCommonLoadStoreOp(
-    mlir::Location loc, mlir::MemRefType gmem_type, absl::string_view gmem_name,
-    mlir::MemRefType smem_type, absl::string_view smem_name,
+    mlir::Location loc, mlir::MemRefType gmem_type, std::string_view gmem_name,
+    mlir::MemRefType smem_type, std::string_view smem_name,
     mlir::ArrayRef<int64_t> slice_lengths, int num_indices) {
   auto error = [loc](auto... params) {
     return emitError(loc, llvm::formatv(params...));

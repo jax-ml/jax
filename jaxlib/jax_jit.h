@@ -23,6 +23,7 @@ limitations under the License.
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -31,7 +32,6 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
@@ -141,8 +141,8 @@ H AbslHashValue(H h, const ArgumentSignature& s) {
       throw std::invalid_argument(absl::StrCat(
           "Non-hashable static arguments are not supported. An error occurred "
           "while trying to hash an object of type ",
-          nanobind::cast<absl::string_view>(nanobind::str(static_arg.type())),
-          ", ", nanobind::cast<absl::string_view>(nanobind::str(static_arg)),
+          nanobind::cast<std::string_view>(nanobind::str(static_arg.type())),
+          ", ", nanobind::cast<std::string_view>(nanobind::str(static_arg)),
           ". The error was:\n", e.what(), "\n"));
     }
     h = H::combine(std::move(h), hash);
@@ -186,7 +186,7 @@ absl::Status ParseArguments(
 // (a) equality (delegated to Python) of the static arguments.
 struct CallSignature {
   // Not part of the signature, but we need it for error messages.
-  absl::string_view function_name;
+  std::string_view function_name;
 
   ArgumentSignature arg_signature;
 

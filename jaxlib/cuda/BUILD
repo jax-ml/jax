@@ -469,7 +469,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/stream_executor/cuda:cuda_asm_compiler",
@@ -513,7 +512,6 @@ nanobind_extension(
         "//jaxlib/gpu:triton_cc_proto",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:string_view",
         "@nanobind",
     ],
 )
@@ -603,7 +601,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@dlpack",
         "@nanobind",

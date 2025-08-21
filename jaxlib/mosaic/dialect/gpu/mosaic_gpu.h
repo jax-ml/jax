@@ -18,9 +18,9 @@ limitations under the License.
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 #include "absl/status/status.h"
-#include "absl/strings/string_view.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/Builders.h"
@@ -45,7 +45,7 @@ namespace mosaic_gpu {
 using Memref = ::mlir::TypedValue<::mlir::MemRefType>;
 using Pointer = ::mlir::TypedValue<::mlir::LLVM::LLVMPointerType>;
 
-constexpr absl::string_view kRuntimeTmaDescriptorInitializerName =
+constexpr std::string_view kRuntimeTmaDescriptorInitializerName =
     "mosaic_gpu_init_tma_desc";
 
 template <typename T>

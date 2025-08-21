@@ -23,6 +23,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -34,7 +35,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/nb_class_ptr.h"
@@ -411,7 +411,7 @@ PyLoadedExecutable::HloModules() const {
   return ifrt_loaded_executable_->GetHloModules();
 }
 
-absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+absl::StatusOr<std::vector<std::vector<std::string_view>>>
 PyLoadedExecutable::GetOutputMemoryKinds() const {
   nb::gil_scoped_release gil_release;
   return ifrt_loaded_executable_->GetOutputMemoryKinds();

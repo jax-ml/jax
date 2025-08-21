@@ -22,6 +22,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -30,7 +31,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/cord.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
@@ -321,7 +321,7 @@ class PyArray : public nanobind::object {
   absl::Status ReplaceWithAlias(PyArray o);
 
  private:
-  absl::StatusOr<PyArray> AssertUnsharded(absl::string_view api);
+  absl::StatusOr<PyArray> AssertUnsharded(std::string_view api);
 
   nanobind::object CheckAndRearrange(absl::Span<const PyArray> py_arrays,
                                      nanobind::object sharding,

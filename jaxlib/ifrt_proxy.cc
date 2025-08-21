@@ -17,6 +17,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -26,7 +27,6 @@
 #include "absl/log/log_entry.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/function.h"  // IWYU pragma: keep
@@ -91,7 +91,7 @@ absl::StatusOr<jax::nb_class_ptr<jax::PyClient>> GetClient(
   if (py_options.on_connection_update) {
     auto fn = std::make_shared<std::function<void(std::string)>>(
         std::move(*py_options.on_connection_update));
-    options.on_connection_update = [fn](absl::string_view log_line) -> void {
+    options.on_connection_update = [fn](std::string_view log_line) -> void {
       tsl::Env::Default()->SchedClosure([fn, str = std::string(log_line)] {
         nb::gil_scoped_acquire gil_acquire;
         (*fn)(std::string(str));

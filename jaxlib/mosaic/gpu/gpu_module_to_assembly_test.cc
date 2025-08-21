@@ -17,10 +17,10 @@ limitations under the License.
 
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/strings/string_view.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
@@ -83,7 +83,7 @@ class GpuModuleToAssemblyTest : public ::testing::Test {
     context_.loadAllAvailableDialects();
   }
 
-  void ExpectLastErrorContains(absl::string_view substring) {
+  void ExpectLastErrorContains(std::string_view substring) {
     EXPECT_THAT(last_error_message_, HasSubstr(substring));
   }
 

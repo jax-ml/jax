@@ -17,8 +17,8 @@ limitations under the License.
 #define JAXLIB_MOSAIC_GPU_DUMP_H_
 
 #include <string>
+#include <string_view>
 
-#include "absl/strings/string_view.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 
@@ -57,8 +57,8 @@ DumpOptions GetOrSetDumpOptionsForModule(mlir::ModuleOp module);
 
 // Dumps `content` to `path`/`name` if `path` is non-empty, otherwise to
 // stdout.
-void DumpToFileOrStdout(absl::string_view content, absl::string_view name,
-                        absl::string_view path);
+void DumpToFileOrStdout(std::string_view content, std::string_view name,
+                        std::string_view path);
 
 // Dumps the SASS for the given binary op.
 //
@@ -68,8 +68,8 @@ void DumpToFileOrStdout(absl::string_view content, absl::string_view name,
 // NervanaSystems/maxas.
 //
 // If `path` is empty, the dump will be written to stdout instead.
-void DumpSass(mlir::gpu::BinaryOp binary, absl::string_view path,
-              absl::string_view basename, bool include_sass_ctrl);
+void DumpSass(mlir::gpu::BinaryOp binary, std::string_view path,
+              std::string_view basename, bool include_sass_ctrl);
 
 }  // namespace gpu
 }  // namespace mosaic

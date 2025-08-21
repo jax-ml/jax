@@ -23,6 +23,7 @@ limitations under the License.
 #include <cstring>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -33,7 +34,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
@@ -202,8 +202,8 @@ std::vector<Traceback::Frame> Traceback::Frames() const {
 }
 
 std::string Traceback::Frame::ToString() const {
-  return absl::StrFormat("%s:%d (%s)", nb::cast<absl::string_view>(file_name),
-                         line_num, nb::cast<absl::string_view>(function_name));
+  return absl::StrFormat("%s:%d (%s)", nb::cast<std::string_view>(file_name),
+                         line_num, nb::cast<std::string_view>(function_name));
 }
 
 std::string Traceback::ToString() const {
@@ -286,8 +286,8 @@ void Traceback::RegisterType(nb::module_& m) {
       .def_ro("line_num", &Traceback::Frame::line_num)
       .def("__repr__", [](const Traceback::Frame& frame) {
         return absl::StrFormat(
-            "%s;%s:%d", nb::cast<absl::string_view>(frame.function_name),
-            nb::cast<absl::string_view>(frame.file_name), frame.line_num);
+            "%s;%s:%d", nb::cast<std::string_view>(frame.function_name),
+            nb::cast<std::string_view>(frame.file_name), frame.line_num);
       });
 
   std::string name =

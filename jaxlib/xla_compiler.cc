@@ -20,6 +20,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -30,7 +31,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "mlir/Support/LLVM.h"
 #include "nanobind/nanobind.h"
@@ -318,7 +318,7 @@ absl::Status PyRegisterCustomCallTarget(const std::string& fn_name,
       api_version));
 }
 
-absl::Status PyRegisterCustomTypeId(absl::string_view type_name,
+absl::Status PyRegisterCustomTypeId(std::string_view type_name,
                                     nb::object type_id) {
   nb::capsule capsule;
   if (!nb::try_cast<nb::capsule>(type_id, capsule)) {
@@ -787,7 +787,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
     ComputationWrapper(const HloComputation* comp,
                        const std::shared_ptr<HloModule> module)
         : comp_(comp), module_(module) {}
-    absl::string_view name() const { return comp_->name(); }
+    std::string_view name() const { return comp_->name(); }
     void render_html(const std::string& filename) {
       std::string html = xla::ValueOrThrow(RenderGraph(
           *comp_, /*label=*/"", comp_->parent()->config().debug_options(),
@@ -866,7 +866,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
 
         // Convert from HloCostAnalysis::Properties to a standard map.
         nb::dict ret;
-        analysis->properties().ForEach([&](absl::string_view key, float val) {
+        analysis->properties().ForEach([&](std::string_view key, float val) {
           ret[nb::str(key.data(), key.size())] = nb::cast(val);
         });
         return ret;
@@ -1045,8 +1045,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
 
         for (const auto& [name, registration] : *ffi_handlers) {
           nb::dict bundle;
-          auto export_handler = [&](absl::string_view name,
-                                    XLA_FFI_Handler* h) {
+          auto export_handler = [&](std::string_view name, XLA_FFI_Handler* h) {
             if (h != nullptr) {
               bundle[nb::str(name.data(), name.size())] =
                   nb::capsule(reinterpret_cast<void*>(h));
@@ -1068,7 +1067,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
 
   m.def(
       "register_custom_type_id",
-      [](absl::string_view type_name, nb::object type_id) {
+      [](std::string_view type_name, nb::object type_id) {
         xla::ThrowIfError(PyRegisterCustomTypeId(type_name, type_id));
       },
       nb::arg("type_name"), nb::arg("type_id"));

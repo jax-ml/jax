@@ -20,6 +20,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -31,7 +32,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
@@ -225,7 +225,7 @@ NB_MODULE(_jax, m) {
         nb::bytes serialized = nb::cast<nb::bytes>(t[0]);
         absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> layout =
             xla::PjRtLayout::Deserialize(
-                absl::string_view(serialized.c_str(), serialized.size()));
+                std::string_view(serialized.c_str(), serialized.size()));
         xla::ThrowIfError(layout.status());
         new (self) xla::PjRtLayout((*layout)->xla_layout());
       });
@@ -370,7 +370,7 @@ NB_MODULE(_jax, m) {
               pjrt::LoadPjrtPlugin(platform_name, *library_path));
           return nb::capsule(absl::bit_cast<void*>(api), "pjrt_c_api");
         }
-        if (absl::string_view(c_api->name()) != "pjrt_c_api") {
+        if (std::string_view(c_api->name()) != "pjrt_c_api") {
           throw nb::value_error(
               "c_api argument to load_pjrt_plugin is not a pjrt_c_api "
               "capsule.");
@@ -439,7 +439,7 @@ NB_MODULE(_jax, m) {
         [](nb::capsule c_api, std::string topology_name,
            const absl::flat_hash_map<std::string, xla::PjRtValueType>& options)
             -> std::shared_ptr<xla::ifrt::Topology> {
-          if (absl::string_view(c_api.name()) != "pjrt_c_api") {
+          if (std::string_view(c_api.name()) != "pjrt_c_api") {
             throw nb::value_error(
                 "Argument to get_c_api_topology was not a pjrt_c_api capsule.");
           }
@@ -720,8 +720,8 @@ NB_MODULE(_jax, m) {
       // `blocking_key_value_get_bytes()`.
       .def(
           "key_value_set",
-          [](xla::DistributedRuntimeClient& client, absl::string_view key,
-             absl::string_view value, bool allow_overwrite) {
+          [](xla::DistributedRuntimeClient& client, std::string_view key,
+             std::string_view value, bool allow_overwrite) {
             nb::gil_scoped_release gil_release;
             xla::ThrowIfError(client.KeyValueSet(key, value, allow_overwrite));
           },
@@ -731,18 +731,18 @@ NB_MODULE(_jax, m) {
       // Use `key_value_set_bytes()` and `blocking_key_value_get_bytes()`.
       .def(
           "key_value_set_bytes",
-          [](xla::DistributedRuntimeClient& client, absl::string_view key,
+          [](xla::DistributedRuntimeClient& client, std::string_view key,
              nb::bytes value, bool allow_overwrite) {
             nb::gil_scoped_release gil_release;
             xla::ThrowIfError(client.KeyValueSet(
-                key, absl::string_view(value.c_str(), value.size()),
+                key, std::string_view(value.c_str(), value.size()),
                 allow_overwrite));
           },
           nb::arg("key"), nb::arg("value"), nb::arg("allow_overwrite") = false)
       // Assumes that all values in the directory are Python strings.
       .def(
           "key_value_dir_get",
-          [](xla::DistributedRuntimeClient& client, absl::string_view key) {
+          [](xla::DistributedRuntimeClient& client, std::string_view key) {
             nb::gil_scoped_release gil_release;
             return xla::ValueOrThrow(client.KeyValueDirGet(key));
           },
@@ -752,7 +752,7 @@ NB_MODULE(_jax, m) {
       // explicitly.
       .def(
           "key_value_dir_get_bytes",
-          [](xla::DistributedRuntimeClient& client, absl::string_view key)
+          [](xla::DistributedRuntimeClient& client, std::string_view key)
               -> std::vector<std::pair<std::string, nb::bytes>> {
             std::vector<std::pair<std::string, std::string>> result;
             {
@@ -772,7 +772,7 @@ NB_MODULE(_jax, m) {
           nb::arg("key"))
       .def(
           "key_value_delete",
-          [](xla::DistributedRuntimeClient& client, absl::string_view key) {
+          [](xla::DistributedRuntimeClient& client, std::string_view key) {
             nb::gil_scoped_release gil_release;
             return xla::ThrowIfError(client.KeyValueDelete(key));
           },
@@ -893,7 +893,7 @@ NB_MODULE(_jax, m) {
            })
       .def("__getattr__",
            [](xla::ifrt::Topology& topology,
-              absl::string_view name) -> nb::object {
+              std::string_view name) -> nb::object {
              const auto& attrs = topology.Attributes().map();
              auto it = attrs.find(name);
              if (it != attrs.end()) {

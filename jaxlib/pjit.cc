@@ -26,6 +26,7 @@ limitations under the License.
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>  // NOLINT
 #include <tuple>
 #include <unordered_map>
@@ -41,7 +42,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
@@ -1184,8 +1184,8 @@ static PyGetSetDef PjitFunction_tp_getset[] = {
 PyObject* PjitFunction_tp_repr(PyObject* self) {
   try {
     const std::string& repr = absl::StrFormat(
-        "<PjitFunction of %s>", nb::cast<absl::string_view>(nb::repr(
-                                    nb::getattr(self, "__wrapped__"))));
+        "<PjitFunction of %s>",
+        nb::cast<std::string_view>(nb::repr(nb::getattr(self, "__wrapped__"))));
     return PyUnicode_FromString(repr.c_str());
   } catch (...) {
     // Ignore all errors when accessing a repr.

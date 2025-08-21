@@ -46,7 +46,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_split.h"
-#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "llvm/ADT/SmallVector.h"
@@ -131,7 +130,7 @@ using MosaicInitFunc = void(void****);
 using MosaicHostFunc = void(void**);
 
 // Mirrors `--xla_gpu_cuda_data_dir`'s default value.
-constexpr absl::string_view kDefaultCudaDataDir = "./cuda_sdk_lib";
+constexpr std::string_view kDefaultCudaDataDir = "./cuda_sdk_lib";
 
 absl::StatusOr<std::string> GetPtxIsaVersion(
     const se::cuda::CompilationProvider& compilation_provider) {
@@ -651,9 +650,8 @@ XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,
 
 absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
                               ffi::RemainingRets results,
-                              absl::string_view kernel_hash,
-                              absl::string_view module,
-                              bool use_custom_barrier,
+                              std::string_view kernel_hash,
+                              std::string_view module, bool use_custom_barrier,
                               xla::RunId run_id) {
   // Updated version using the new FFI API supporting custom barrier
   // for distributed kernels
@@ -714,8 +712,8 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
                            .Ctx<xla::ffi::PlatformStream<gpuStream_t>>()
                            .RemainingArgs()
                            .RemainingRets()
-                           .Attr<absl::string_view>("kernel_hash")
-                           .Attr<absl::string_view>("module")
+                           .Attr<std::string_view>("kernel_hash")
+                           .Attr<std::string_view>("module")
                            .Attr<bool>("use_custom_barrier")
                            .Ctx<xla::RunId>());
 

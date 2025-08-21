@@ -86,9 +86,6 @@ cc_test(
         ":passes",
         "//jaxlib/mosaic/dialect/gpu:mosaic_gpu",
         "//testing/base/public:gunit_main",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithToLLVM",
         "@llvm-project//mlir:BufferizationInterfaces",
@@ -96,7 +93,6 @@ cc_test(
         "@llvm-project//mlir:ComplexToLLVM",
         "@llvm-project//mlir:ControlFlowToLLVM",
         "@llvm-project//mlir:DataLayoutInterfaces",
-        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncToLLVM",
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:GPUToLLVMIRTranslation",
@@ -118,7 +114,6 @@ cc_test(
         "@llvm-project//mlir:UBToLLVM",
         "@llvm-project//mlir:VectorDialect",
         "@xla//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
-        "@xla//xla/tsl/platform:errors",
     ],
 )
 

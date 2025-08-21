@@ -18,7 +18,8 @@ limitations under the License.
 
 #include <Python.h>
 
-#include "absl/strings/string_view.h"
+#include <string_view>
+
 #include "nanobind/nanobind.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
@@ -41,11 +42,11 @@ class PyMemorySpace {
   xla::ifrt::Memory* memory_space() const { return memory_; }
 
   int process_index() const;
-  absl::string_view platform() const;
-  absl::string_view kind() const;
+  std::string_view platform() const;
+  std::string_view kind() const;
 
-  absl::string_view Str() const;
-  absl::string_view Repr() const;
+  std::string_view Str() const;
+  std::string_view Repr() const;
 
   nanobind::list AddressableByDevices() const;
 

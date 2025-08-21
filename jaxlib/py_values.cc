@@ -24,6 +24,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -40,7 +41,6 @@ limitations under the License.
 #include "absl/strings/cord.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/complex.h"  // IWYU pragma: keep
@@ -161,7 +161,7 @@ absl::StatusOr<std::vector<absl::Cord>> StringDTypeArrayToCords(
     }
     Py_ssize_t len;
     auto str = PyUnicode_AsUTF8AndSize(item, &len);
-    cords.push_back(absl::Cord(absl::string_view(str, len)));
+    cords.push_back(absl::Cord(std::string_view(str, len)));
     PyArray_ITER_NEXT(iter.ptr());
   }
   return cords;
@@ -301,7 +301,7 @@ absl::StatusOr<ShardFn> HandlePythonScalar(nb::handle obj, ifrt::Client* client,
         "value (%s) overflows the range of the type.",
         xla::PrimitiveType_Name(
             xla::primitive_util::NativeToPrimitiveType<T>()),
-        nb::cast<absl::string_view>(nb::repr(obj)));
+        nb::cast<std::string_view>(nb::repr(obj)));
   }
 
   std::variant<T, SquashedT> data;
@@ -346,7 +346,7 @@ absl::StatusOr<ShardFn> HandlePythonInt(nb::handle obj, ifrt::Client* client,
           "value (%s) overflows the range of the type.",
           PrimitiveType_Name(
               xla::primitive_util::NativeToPrimitiveType<int32_t>()),
-          nb::cast<absl::string_view>(nb::repr(obj)));
+          nb::cast<std::string_view>(nb::repr(obj)));
     }
     type = xla::S32;
   } else {
@@ -358,7 +358,7 @@ absl::StatusOr<ShardFn> HandlePythonInt(nb::handle obj, ifrt::Client* client,
           "value (%s) overflows the range of the type.",
           xla::PrimitiveType_Name(
               xla::primitive_util::NativeToPrimitiveType<int64_t>()),
-          nb::cast<absl::string_view>(nb::repr(obj)));
+          nb::cast<std::string_view>(nb::repr(obj)));
     }
     type = xla::S64;
   }
@@ -722,7 +722,7 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
                   "Not supported: The C++ jax jit execution path, only accepts "
                   "DeviceArray, Numpy arrays scalars of supported types "
                   "(see implementation), or Python scalars. Got type ",
-                  nb::cast<absl::string_view>(nb::str(arg.type()))));
+                  nb::cast<std::string_view>(nb::str(arg.type()))));
   }
   return res->second(arg, client, to_device, to_memory_kind, options);
 }
@@ -925,7 +925,7 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
                      "Buffer/DeviceArray, Numpy "
                      "arrays scalars of supported types "
                      "(see implementation), or Python scalars. Got type ",
-                     nb::cast<absl::string_view>(nb::str(arg.type()))));
+                     nb::cast<std::string_view>(nb::str(arg.type()))));
   }
   return res->second(arg, jax_enable_x64);
 }
