@@ -101,6 +101,7 @@ limitations under the License.
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 #include "jaxlib/mosaic/gpu/assembly_to_binary.h"
 #include "jaxlib/mosaic/gpu/dump.h"
+#include "jaxlib/mosaic/gpu/gpu_module_to_assembly.h"
 #include "jaxlib/mosaic/gpu/launch_lowering.h"
 #include "jaxlib/mosaic/gpu/nvshmem.h"
 #include "jaxlib/mosaic/gpu/passes.h"
@@ -111,6 +112,7 @@ limitations under the License.
 #include "xla/ffi/ffi_api.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
+#include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
 #include "xla/stream_executor/cuda/assemble_compilation_provider.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/compilation_provider_options.h"
@@ -128,16 +130,8 @@ namespace se = stream_executor;
 using MosaicInitFunc = void(void****);
 using MosaicHostFunc = void(void**);
 
-
-void EnsureLLVMNVPTXTargetIsRegistered() {
-  static absl::once_flag register_nvptx_target_flag;
-  absl::call_once(register_nvptx_target_flag, []() {
-    LLVMInitializeNVPTXTarget();
-    LLVMInitializeNVPTXTargetInfo();
-    LLVMInitializeNVPTXTargetMC();
-    LLVMInitializeNVPTXAsmPrinter();
-  });
-}
+// Mirrors `--xla_gpu_cuda_data_dir`'s default value.
+constexpr absl::string_view kDefaultCudaDataDir = "./cuda_sdk_lib";
 
 absl::StatusOr<std::string> GetPtxIsaVersion(
     const se::cuda::CompilationProvider& compilation_provider) {
@@ -167,8 +161,9 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
   }
   bool is_target_binary = target == mlir::gpu::CompilationTarget::Binary;
   static absl::once_flag register_passes_flag;
-  absl::call_once(register_passes_flag, [&compilation_provider, &cc]() {
-    EnsureLLVMNVPTXTargetIsRegistered();
+  absl::call_once(register_passes_flag, [&compilation_provider, &cc,
+                                         &nvshmem_path]() {
+    mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
 
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTarget();
@@ -192,6 +187,13 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::registerConvertToLLVMPass();
     mlir::registerGPUPasses();
     mlir::registerGpuLaunchSinkIndexComputationsPass();
+    std::vector<std::string> libraries_to_link{
+      ::xla::gpu::nvptx::LibDevicePath(kDefaultCudaDataDir)
+    };
+    if (!nvshmem_path.empty()) {
+      libraries_to_link.push_back(nvshmem_path);
+    }
+    mosaic::gpu::registerGpuModuleToAssemblyPass(libraries_to_link);
     mosaic::gpu::registerAssemblyToBinaryPass(compilation_provider, cc);
     mosaic::gpu::registerGpuLaunchLoweringPass();
     mosaic::gpu::registerConvertGpuToLLVMPass();
@@ -235,17 +237,13 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         gpu.module(reconcile-unrealized-casts),
         mosaic-convert-gpu-to-llvm,
         ensure-debug-info-scope-on-llvm-func{emission-kind=DebugDirectivesOnly},
-        gpu-module-to-binary{format=)",
-      mlir::gpu::stringifyCompilationTarget(
-          mlir::gpu::CompilationTarget::Assembly)
-          .str(),
-      (!nvshmem_path.empty() ? " l=" + nvshmem_path : ""),
-      "  opts=-lineinfo toolkit=", cuda_root,
-      R"(},
+        mosaic-gpu-module-to-assembly,
         convert-math-to-llvm{approximate-log1p=true},
         canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
         cse,
         )",
+      // TODO(bchetioui): pass `-lineinfo` as an opt to compilation to mirror
+      // the previous behaviour.
       (is_target_binary ? "mosaic-gpu-assembly-to-binary,gpu-launch-lowering,"
                         : ""),
       R"(
@@ -342,7 +340,6 @@ absl::StatusOr<se::cuda::CompilationProvider*>
 GetAssemblyToBinaryCompilationProvider() {
   auto create_provider = []() {
     // Defaults mirror those used in `xla/debug_options_flags.cc`.
-    std::string default_cuda_data_dir = "./cuda_sdk_lib";
     constexpr se::cuda::CompilationProviderOptions::NvJitLinkMode
         nvjitlink_mode =
             se::cuda::CompilationProviderOptions::NvJitLinkMode::kAuto;
@@ -353,7 +350,7 @@ GetAssemblyToBinaryCompilationProvider() {
     se::cuda::CompilationProviderOptions opts(
         nvjitlink_mode, enable_libnvptxcompiler,
         enable_llvm_module_compilation_parallelism, enable_driver_compilation,
-        std::move(default_cuda_data_dir));
+        std::string(kDefaultCudaDataDir));
 
     return absl::NoDestructor(se::cuda::AssembleCompilationProvider(opts));
   };
@@ -392,7 +389,7 @@ absl::StatusOr<se::CudaComputeCapability> GetCudaComputeCapability() {
 absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     mlir::ModuleOp module) {
   tsl::profiler::TraceMe trace("Compile");
-  EnsureLLVMNVPTXTargetIsRegistered();
+  mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
   TF_ASSIGN_OR_RETURN(se::cuda::CompilationProvider* compilation_provider,
                       GetAssemblyToBinaryCompilationProvider());
   TF_ASSIGN_OR_RETURN(se::CudaComputeCapability cc, GetCudaComputeCapability());
