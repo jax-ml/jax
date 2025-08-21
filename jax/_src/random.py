@@ -379,11 +379,10 @@ def bits(key: ArrayLike,
   if dtype is None:
     dtype = dtypes.default_uint_dtype()
   else:
-    dtypes.check_user_dtype_supported(dtype)
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.unsignedinteger):
     raise ValueError("dtype argument to `bits` must be an unsigned int dtype, "
                      f"got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "bits", shape)
   bit_width = dtype.itemsize * 8
@@ -422,14 +421,13 @@ def uniform(key: ArrayLike,
     A random array with the specified shape and dtype.
   """
   key, _ = _check_prng_key("uniform", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "uniform", shape)
 
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
                      f"got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   return maybe_auto_axes(_uniform, out_sharding,
                          shape=shape, dtype=dtype)(key, minval, maxval)
 
@@ -518,8 +516,7 @@ def randint(key: ArrayLike,
      ``[minval, maxval)`` that are impossible to produce with this approach.
   """
   key, _ = _check_prng_key("randint", key)
-  dtypes.check_user_dtype_supported(dtype)
-  dtype = dtypes.canonicalize_dtype(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "randint", shape)
 
@@ -808,11 +805,10 @@ def normal(key: ArrayLike,
   key, _ = _check_prng_key("normal", key)
   shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "normal", shape)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.inexact):
     raise ValueError(f"dtype argument to `normal` must be a float or complex dtype, "
                      f"got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   return maybe_auto_axes(_normal, out_sharding, shape=shape, dtype=dtype)(key)
 
 @partial(jit, static_argnums=(1, 2))
@@ -874,12 +870,13 @@ def multivariate_normal(key: ArrayLike,
     ``broadcast_shapes(mean.shape[:-1], cov.shape[:-2]) + mean.shape[-1:]``.
   """
   key, _ = _check_prng_key("multivariate_normal", key)
-  dtypes.check_user_dtype_supported(dtype)
   mean, cov = promote_dtypes_inexact(mean, cov)
   if method not in {'svd', 'eigh', 'cholesky'}:
     raise ValueError("method must be one of {'svd', 'eigh', 'cholesky'}")
   if dtype is None:
     dtype = mean.dtype
+  else:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `multivariate_normal` must be a float "
                      f"dtype, got {dtype}")
@@ -957,11 +954,10 @@ def truncated_normal(key: ArrayLike,
     shape = core.canonicalize_shape(shape)
   key, _ = _check_prng_key("truncated_normal", key)
   out_sharding = canonicalize_sharding(out_sharding, "truncated_normal")
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `truncated_normal` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   return maybe_auto_axes(_truncated_normal, out_sharding,
                          shape=shape, dtype=dtype)(key, lower, upper)
 
@@ -1081,11 +1077,10 @@ def beta(key: ArrayLike,
     ``shape`` is not None, or else by broadcasting ``a`` and ``b``.
   """
   key, _ = _check_prng_key("beta", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `beta` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _beta(key, a, b, shape, dtype)
@@ -1136,11 +1131,10 @@ def cauchy(key: ArrayLike,
     A random array with the specified shape and dtype.
   """
   key, _ = _check_prng_key("cauchy", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `cauchy` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   return _cauchy(key, shape, dtype)
 
@@ -1188,11 +1182,10 @@ def dirichlet(key: ArrayLike,
     ``alpha.shape``.
   """
   key, _ = _check_prng_key("dirichlet", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `dirichlet` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _dirichlet(key, alpha, shape, dtype)
@@ -1240,11 +1233,10 @@ def exponential(key: ArrayLike,
     A random array with the specified shape and dtype.
   """
   key, _ = _check_prng_key("exponential", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `exponential` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   return _exponential(key, shape, dtype)
 
@@ -1438,11 +1430,10 @@ def gamma(key: ArrayLike,
       accuracy for small values of ``a``.
   """
   key, _ = _check_prng_key("gamma", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `gamma` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _gamma(key, a, shape=shape, dtype=dtype)
@@ -1480,11 +1471,10 @@ def loggamma(key: ArrayLike,
     gamma : standard gamma sampler.
   """
   key, _ = _check_prng_key("loggamma", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `gamma` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _gamma(key, a, shape=shape, dtype=dtype, log_space=True)
@@ -1617,7 +1607,7 @@ def poisson(key: ArrayLike,
     ``shape is not None, or else by ``lam.shape``.
   """
   key, _ = _check_prng_key("poisson", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   # TODO(frostig): generalize underlying poisson implementation and
   # remove this check
   keys_dtype = typing.cast(prng.KeyTy, key.dtype)
@@ -1626,7 +1616,6 @@ def poisson(key: ArrayLike,
     raise NotImplementedError(
         '`poisson` is only implemented for the threefry2x32 RNG, '
         f'not {key_impl}')
-  dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   else:
@@ -1666,11 +1655,10 @@ def gumbel(key: ArrayLike,
     A random array with the specified shape and dtype.
   """
   key, _ = _check_prng_key("gumbel", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `gumbel` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   if mode is None:
     mode = "high" if config.use_high_dynamic_range_gumbel.value else "low"
@@ -1798,11 +1786,10 @@ def laplace(key: ArrayLike,
     A random array with the specified shape and dtype.
   """
   key, _ = _check_prng_key("laplace", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `laplace` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   return _laplace(key, shape, dtype)
 
@@ -1835,11 +1822,10 @@ def logistic(key: ArrayLike,
     A random array with the specified shape and dtype.
   """
   key, _ = _check_prng_key("logistic", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `logistic` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   return _logistic(key, shape, dtype)
 
@@ -1878,11 +1864,10 @@ def pareto(key: ArrayLike,
     ``shape`` is not None, or else by ``b.shape``.
   """
   key, _ = _check_prng_key("pareto", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `pareto` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _pareto(key, b, shape, dtype)
@@ -1927,11 +1912,10 @@ def t(key: ArrayLike,
     ``shape`` is not None, or else by ``df.shape``.
   """
   key, _ = _check_prng_key("t", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `t` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   return _t(key, df, shape, dtype)
 
@@ -1980,11 +1964,10 @@ def chisquare(key: ArrayLike,
     ``shape`` is not None, or else by ``df.shape``.
   """
   key, _ = _check_prng_key("chisquare", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError("dtype argument to `chisquare` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _chisquare(key, df, shape, dtype)
@@ -2038,11 +2021,10 @@ def f(key: ArrayLike,
     ``shape`` is not None, or else by ``df.shape``.
   """
   key, _ = _check_prng_key("f", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError("dtype argument to `f` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _f(key, dfnum, dfden, shape, dtype)
@@ -2090,8 +2072,7 @@ def rademacher(key: ArrayLike,
 
   """
   key, _ = _check_prng_key("rademacher", key)
-  dtypes.check_user_dtype_supported(dtype)
-  dtype = dtypes.canonicalize_dtype(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   return _rademacher(key, shape, dtype)
 
@@ -2126,11 +2107,10 @@ def maxwell(key: ArrayLike,
   # Generate samples using:
   # sqrt(X^2 + Y^2 + Z^2), X,Y,Z ~N(0,1)
   key, _ = _check_prng_key("maxwell", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `maxwell` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   return _maxwell(key, shape, dtype)
 
@@ -2169,11 +2149,10 @@ def double_sided_maxwell(key: ArrayLike,
 
   """
   key, _ = _check_prng_key("double_sided_maxwell", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `double_sided_maxwell` must be a float"
                      f" dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   return _double_sided_maxwell(key, loc, scale, shape, dtype)
 
@@ -2221,11 +2200,10 @@ def weibull_min(key: ArrayLike,
 
   """
   key, _ = _check_prng_key("weibull_min", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `weibull_min` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   return _weibull_min(key, scale, concentration, shape, dtype)
 
@@ -2279,7 +2257,7 @@ def orthogonal(
     _m = m
   shape = core.canonicalize_shape(shape)
   key, _ = _check_prng_key("orthogonal", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   _check_shape("orthogonal", shape)
   n = core.concrete_or_error(index, n, "The error occurred in jax.random.orthogonal()")
   _m = core.concrete_or_error(index, _m, "The error occurred in jax.random.orthogonal()")
@@ -2322,7 +2300,7 @@ def generalized_normal(
   """
   shape = core.canonicalize_shape(shape)
   key, _ = _check_prng_key("generalized_normal", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   _check_shape("generalized_normal", shape)
   keys = split(key)
   g = gamma(keys[0], 1/p, shape, dtype)
@@ -2353,7 +2331,7 @@ def ball(
   """
   shape = core.canonicalize_shape(shape)
   key, _ = _check_prng_key("ball", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   _check_shape("ball", shape)
   d = core.concrete_or_error(index, d, "The error occurred in jax.random.ball()")
   k1, k2 = split(key)
@@ -2391,11 +2369,10 @@ def rayleigh(key: ArrayLike,
     ``shape`` is not None, or else by ``scale.shape``.
   """
   key, _ = _check_prng_key("rayleigh", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError("dtype argument to `rayleigh` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _rayleigh(key, scale, shape, dtype)
@@ -2445,11 +2422,10 @@ def wald(key: ArrayLike,
     ``shape`` is not None, or else by ``mean.shape``.
   """
   key, _ = _check_prng_key("wald", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError("dtype argument to `wald` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _wald(key, mean, shape, dtype)
@@ -2501,11 +2477,10 @@ def geometric(key: ArrayLike,
     ``shape`` is not None, or else by ``p.shape``.
   """
   key, _ = _check_prng_key("geometric", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.integer):
     raise ValueError("dtype argument to `geometric` must be an int "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _geometric(key, p, shape, dtype)
@@ -2563,11 +2538,10 @@ def triangular(key: ArrayLike,
     ``shape`` is not None, or else by ``left.shape``, ``mode.shape`` and ``right.shape``.
   """
   key, _ = _check_prng_key("triangular", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError("dtype argument to `triangular` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _triangular(key, left, mode, right, shape, dtype)
@@ -2616,11 +2590,10 @@ def lognormal(key: ArrayLike,
     A random array with the specified dtype and with shape given by ``shape``.
   """
   key, _ = _check_prng_key("lognormal", key)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.inexact):
     raise ValueError(f"dtype argument to `lognormal` must be a float or complex dtype, "
                      f"got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _lognormal(key, sigma, shape, dtype)
@@ -2831,12 +2804,11 @@ def binomial(
   """
   key, _ = _check_prng_key("binomial", key)
   check_arraylike("binomial", n, p)
-  dtypes.check_user_dtype_supported(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(
         f"dtype argument to `binomial` must be a float dtype, got {dtype}"
       )
-  dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _binomial(key, n, p, shape, dtype)
