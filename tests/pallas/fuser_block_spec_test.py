@@ -805,6 +805,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
       ((8, 8, 128), (1, 2, 128), (1, 1, 2, 128), (0, 2, 3, 5)),
       ((2, 32, 128), (2, 4, 128), (2, 1, 4, 128), (2, 1, 1, 5)),
       ((2, 4, 1024), (2, 1, 128), (2, 1, 1, 128), (2, 3, 5, 0)),
+      ((2, 4, 1024), (2, None, 128), (2, 1, 1, 128), (2, 3, 5, 0)),
       # Merge three dimensions.
       ((64, 128), (4, 128), (1, 1, 4, 128), (0, 1, 0, 3)),
       ((2, 4096), (1, 64), (1, 1, 1, 64), (2, 0, 1, 1)),
@@ -838,6 +839,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     self.assertEqual(x_block_spec.block_shape, expected_x_block_shape)
     self.assertEqual(x_block_spec.index_map(*pids), expected_x_index)
 
+    block_shape = [bd for bd in block_shape if bd is not None]
     x = jnp.arange(np.prod(block_shape), dtype=jnp.float32)
     x = x.reshape(expected_x_block_shape)
     y = kernel_fn((0, 1, 2), scalar_prefetch_values, (), x)

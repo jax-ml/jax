@@ -1626,6 +1626,9 @@ def _reshape_pull_rule(
     new_grids = []
 
     for d, bd, merged in zip(shape_out, block_shape, merged_dims):
+      if bd is None:
+        bd = 1
+
       if not isinstance(bd, (int, pallas_core.Blocked)):
         raise NotImplementedError('reshape merge must use `Blocked` block size')
 
