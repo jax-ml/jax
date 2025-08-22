@@ -735,7 +735,8 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     in_cts_nz, _ = partition_list(in_zeros, in_cts)
     return in_cts_nz
 
-  transposed_wrapped = lu.wrap_init(transposed, debug_info=jaxpr.jaxpr.debug_info)
+  dbg = jaxpr.jaxpr.debug_info._replace(arg_names=(), result_paths=())
+  transposed_wrapped = lu.wrap_init(transposed, debug_info=dbg)
   transposed_jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(
       transposed_wrapped, in_avals)
   transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)

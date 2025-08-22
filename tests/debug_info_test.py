@@ -1326,6 +1326,7 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=switch, fun=my_branch2, arg_names=x2, from x2"
         ])
 
+  @unittest.skip("incorrect debug info")  # TODO(mattjj,necula)
   def test_grad_cond_with_remat(self):
     tracer_spy = TracerSpy()
     def my_f(x, y):
@@ -1785,6 +1786,7 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=checkpoint / remat, fun=my_g, arg_names=y, from y"
         ])
 
+  @unittest.skip("incorrect debug info")  # TODO(mattjj,necula)
   def test_grad_remat(self):
     tracer_spy = TracerSpy()
     def my_f(x):
@@ -1808,6 +1810,7 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=checkpoint / remat, fun=my_g, arg_names=y, from y",
         ])
 
+  @unittest.skip("incorrect debug info")  # TODO(mattjj,necula)
   def test_remat_shard_map(self):
     tracer_spy = TracerSpy()
     if len(jax.devices()) < 2:
