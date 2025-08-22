@@ -43,7 +43,7 @@ from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
     tree_leaves, Partial, PyTreeDef, all_leaves, keystr, broadcast_prefix,
     prefix_errors, generate_key_paths, tree_flatten_with_path,
-    equality_errors_pytreedef, register_pytree_node)
+    equality_errors_pytreedef, register_pytree_node, register_dataclass)
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -2274,7 +2274,8 @@ def _vjp3(spec, out_known, jaxpr, in_tree, out_tree, args_res, opaque_res,
           *maybe_ct_refs):
   maybe_ct_refs_flat, in_tree_ = tree_flatten(maybe_ct_refs)
   if in_tree != in_tree_: raise Exception
-  args_res_flat, in_tree_ = tree_flatten(tuple(args_res))
+  args_res_flat, in_tree_ = tree_flatten(
+      tuple(args_res), is_leaf=lambda x: isinstance(x, NotNeeded))
   if in_tree != in_tree_: raise Exception
   residuals = [args_res_flat[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
   maybe_refs = [ad.RefAccum(v.aval, x) if _is_ref(x) else ad.ValAccum(v.aval)
@@ -2292,6 +2293,7 @@ def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, residuals, maybe_refs, out_ct
   arg_cts = map(ad.instantiate_zeros, arg_cts)
   return tree_unflatten(in_tree, arg_cts)
 
+@register_dataclass
 @dataclasses.dataclass(frozen=True)
 class NotNeeded:
   pass
