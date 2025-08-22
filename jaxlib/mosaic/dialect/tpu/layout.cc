@@ -516,10 +516,42 @@ bool VectorLayout::generalizes(
     // each other), and we've checked that tilings are different above.
     const std::array<int64_t, 2> ishape_tiled_dims =
         getImplicitTiledDims(shape, 1);
-    if (!(tiling_[1] == other.tiling_[1] && tiling_[1] == target_shape[1] &&
-          offsets_[1].value_or(0) + ishape_tiled_dims[1] <= target_shape[1] &&
-          offsets_[0].value_or(0) + ishape_tiled_dims[0] <=
-              std::min(tiling_[0], other.tiling_[0]))) {
+    CHECK(ishape_tiled_dims == other.getImplicitTiledDims(shape, 1));
+    if (tiling_[1] != other.tiling_[1] || tiling_[1] != target_shape[1]) {
+      return false;
+    }
+    // Replication imposes stronger conditions when the vreg slice is bigger
+    // along the given dimension.
+    // Given a target shape of (8, 128), consider the case of a 32-bit layout.
+    // The conditions imposed are...
+    // For (2, 128) tiling with replicated minor (stronger):
+    //   - sublanes 0, 2, 4, 6 are equal
+    //   - sublanes 1, 3, 5, 7 are equal
+    // For (4, 128) tiling with replicated second minor (stronger):
+    //   - sublanes 0, 1, 2, 3 are equal
+    //   - sublanes 4, 5, 6, 7 are equal
+    // For (4, 128) tiling with replicated minor (weaker):
+    //   - sublanes 0, 4 are equal
+    //   - sublanes 1, 5 are equal
+    //   - sublanes 2, 6 are equal
+    //   - sublanes 3, 7 are equal
+    // For (2, 128) tiling with replicated second minor (weaker):
+    //   - sublanes 0, 1 are equal
+    //   - sublanes 2, 3 are equal
+    //   - sublanes 4, 5 are equal
+    //   - sublanes 6, 7 are equal
+    // Note: Of course, replicated minor also requires elements within the same
+    // sublane to be equal across lanes.
+    CHECK(tiling_[0] % other.tiling_[0] == 0 ||
+          other.tiling_[0] % tiling_[0] == 0);
+    if (!(!offsets_[0] && tiling_[0] > other.tiling_[0]) &&
+        !(other.offsets_[0] && *other.offsets_[0] + ishape_tiled_dims[0] <=
+                                   std::min(tiling_[0], other.tiling_[0]))) {
+      return false;
+    }
+    if (!(!offsets_[1] && tiling_[0] < other.tiling_[0]) &&
+        !(other.offsets_[1] &&
+          *other.offsets_[1] + ishape_tiled_dims[1] <= tiling_[1])) {
       return false;
     }
   }
