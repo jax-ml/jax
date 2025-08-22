@@ -22,7 +22,6 @@ import math
 import operator
 from typing import Any, cast
 
-from jax._src import lib as jaxlib
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
@@ -1532,16 +1531,15 @@ def _tmem_alloc_op_lowering_rule(
 
   return [cast_op.result]
 
-# TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.1.
-if jaxlib.version >= (0, 7, 1):
-  @_register_lowering(mgpu.TmemRelinquishAllocPermitOp)
-  def _tmem_relinquish_alloc_permit_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.TmemRelinquishAllocPermitOp
-  ) -> Sequence[ir.Value]:
-    """Lowering rule for mgpu.TmemRelinquishAllocPermitOp."""
-    with mgpu_utils.when(ctx.single_warp_per_block_predicate):
-      tcgen05.tmem_relinquish_alloc_permit(op.collective)
-    return []
+
+@_register_lowering(mgpu.TmemRelinquishAllocPermitOp)
+def _tmem_relinquish_alloc_permit_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.TmemRelinquishAllocPermitOp
+) -> Sequence[ir.Value]:
+  """Lowering rule for mgpu.TmemRelinquishAllocPermitOp."""
+  with mgpu_utils.when(ctx.single_warp_per_block_predicate):
+    tcgen05.tmem_relinquish_alloc_permit(op.collective)
+  return []
 
 
 @_register_lowering(mgpu.TmemDeallocOp)
@@ -1630,45 +1628,42 @@ def _tcgen05_mma_op_lowering_rule(
   return []
 
 
-# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.1.
-if jaxlib.version >= (0, 7, 1):
-  @_register_lowering(mgpu.AsyncLoadTmemOp)
-  def _async_load_tmem_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.AsyncLoadTmemOp
-  ) -> Sequence[ir.Value]:
-    """Lowering rule for mgpu.AsyncLoadTmemOp."""
-    del ctx
+@_register_lowering(mgpu.AsyncLoadTmemOp)
+def _async_load_tmem_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.AsyncLoadTmemOp
+) -> Sequence[ir.Value]:
+  """Lowering rule for mgpu.AsyncLoadTmemOp."""
+  del ctx
 
-    tmem = _tmem_ref_from_ir(op.source, inference_utils.in_tmem_layouts(op)[0])
+  tmem = _tmem_ref_from_ir(op.source, inference_utils.in_tmem_layouts(op)[0])
 
-    out_layout_attr = inference_utils.out_layouts(op)[0]
-    out_layout = layouts_lib.from_tiled_layout_attr(out_layout_attr)
-    el_type = ir.MemRefType(op.source.type).element_type
-    is_signed = False if ir.IntegerType.isinstance(el_type) else None
-    fa = tmem.load(out_layout, is_signed)
-    return [fragmented_array_to_ir(fa, op.result.type)]
+  out_layout_attr = inference_utils.out_layouts(op)[0]
+  out_layout = layouts_lib.from_tiled_layout_attr(out_layout_attr)
+  el_type = ir.MemRefType(op.source.type).element_type
+  is_signed = False if ir.IntegerType.isinstance(el_type) else None
+  fa = tmem.load(out_layout, is_signed)
+  return [fragmented_array_to_ir(fa, op.result.type)]
 
 
-# TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.1.
-if jaxlib.version >= (0, 7, 1):
-  @_register_lowering(mgpu.AsyncStoreTmemOp)
-  def _async_store_tmem_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.AsyncStoreTmemOp
-  ) -> Sequence[ir.Value]:
-    """Lowering rule for mgpu.AsyncStoreTmemOp."""
-    del ctx
+@_register_lowering(mgpu.AsyncStoreTmemOp)
+def _async_store_tmem_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.AsyncStoreTmemOp
+) -> Sequence[ir.Value]:
+  """Lowering rule for mgpu.AsyncStoreTmemOp."""
+  del ctx
 
-    tmem = _tmem_ref_from_ir(
-        op.destination, inference_utils.in_tmem_layouts(op)[0]
-    )
+  tmem = _tmem_ref_from_ir(
+      op.destination, inference_utils.in_tmem_layouts(op)[0]
+  )
 
-    in_layout_attr = inference_utils.in_layouts(op)[0]
-    el_type = ir.VectorType(op.source.type).element_type
-    is_signed = False if ir.IntegerType.isinstance(el_type) else None
-    fa = _fragmented_array_from_ir(op.source, in_layout_attr, is_signed)
-    tmem.store(fa)
+  in_layout_attr = inference_utils.in_layouts(op)[0]
+  el_type = ir.VectorType(op.source.type).element_type
+  is_signed = False if ir.IntegerType.isinstance(el_type) else None
+  fa = _fragmented_array_from_ir(op.source, in_layout_attr, is_signed)
+  tmem.store(fa)
 
-    return []
+  return []
+
 
 def inline_block(
     block: ir.Block, args: Sequence[ir.Value], mapper: dict[ir.Value, ir.Value],

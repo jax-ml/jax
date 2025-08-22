@@ -27,7 +27,6 @@ from absl.testing import absltest, parameterized
 import jax
 from jax._src import config
 from jax._src import dtypes
-from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
@@ -4502,10 +4501,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
           packing=packing,
       )
 
-      # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.1.
-      if jaxlib.version >= (0, 7, 1):
-        mgpu_dialect.tmem_relinquish_alloc_permit(collective=collective)
-
+      mgpu_dialect.tmem_relinquish_alloc_permit(collective=collective)
       mgpu_dialect.tmem_dealloc(tmem_ref)
 
     with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
@@ -4539,14 +4535,11 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
     )
     self.assertEqual(dealloc[0], '2' if collective else '1')
     self.assertEqual(dealloc[1], ld)
-
-    # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.1.
-    if jaxlib.version >= (0, 7, 1):
-      [relinquish] = re.findall(
-          r"tcgen05.relinquish_alloc_permit.cta_group::([12]).sync.aligned;",
-          ptx(),
-      )
-      self.assertEqual(relinquish[0], "2" if collective else "1")
+    [relinquish] = re.findall(
+        r"tcgen05.relinquish_alloc_permit.cta_group::([12]).sync.aligned;",
+        ptx(),
+    )
+    self.assertEqual(relinquish[0], "2" if collective else "1")
 
   @parameterized.named_parameters(
       ("unpacked", (128, 128), jnp.bfloat16, 1),
@@ -4555,10 +4548,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
   def test_tmem_load_store(
       self, shape, dtype, packing,
   ):
-    # TODO(dasenov): Remove this after the minimal jaxlib version is 0.7.1.
-    if jaxlib.version < (0, 7, 1):
-      self.skipTest("Only works with jaxlib 0.7.1 or higher.")
-
     def body(
         ctx: launch_context.LaunchContext,
         input: ir.Value,

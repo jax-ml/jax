@@ -21,7 +21,6 @@ from functools import partial
 import math
 from typing import cast
 
-from jax._src import lib as jaxlib
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -202,54 +201,50 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
   return (num_vector_operands * [layout], num_vector_results * [layout])
 
 
-for op in (
-    [
-        arith.AddIOp,
-        arith.AddFOp,
-        arith.AndIOp,
-        arith.BitcastOp,
-        arith.CmpFOp,
-        arith.CmpIOp,
-        arith.ExtFOp,
-        arith.ExtSIOp,
-        arith.ExtUIOp,
-        arith.FPToSIOp,
-        arith.FPToUIOp,
-        arith.MaximumFOp,
-        arith.MaxUIOp,
-        arith.MaxSIOp,
-        arith.MinimumFOp,
-        arith.MinUIOp,
-        arith.MinSIOp,
-        arith.MulIOp,
-        arith.MulFOp,
-        arith.OrIOp,
-        arith.FloorDivSIOp,
-        arith.DivUIOp,
-        arith.DivFOp,
-        arith.RemUIOp,
-        arith.RemSIOp,
-        arith.RemFOp,
-        arith.SIToFPOp,
-        arith.UIToFPOp,
-        arith.SubIOp,
-        arith.SubFOp,
-        arith.TruncFOp,
-        arith.TruncIOp,
-        arith.XOrIOp,
-        mlir_math.ExpOp,
-        mlir_math.Exp2Op,
-        mlir_math.LogOp,
-        mlir_math.RsqrtOp,
-        mlir_math.TanhOp,
-        vector.LoadOp,
-        vector.StoreOp,
-    ]
-    # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.1.
-    + [mgpu.AsyncLoadTmemOp, mgpu.AsyncStoreTmemOp]
-    if jaxlib.version >= (0, 7, 1)
-    else []
-):
+for op in [
+    arith.AddFOp,
+    arith.AddIOp,
+    arith.AndIOp,
+    arith.BitcastOp,
+    arith.CmpFOp,
+    arith.CmpIOp,
+    arith.DivFOp,
+    arith.DivUIOp,
+    arith.ExtFOp,
+    arith.ExtSIOp,
+    arith.ExtUIOp,
+    arith.FloorDivSIOp,
+    arith.FPToSIOp,
+    arith.FPToUIOp,
+    arith.MaximumFOp,
+    arith.MaxSIOp,
+    arith.MaxUIOp,
+    arith.MinimumFOp,
+    arith.MinSIOp,
+    arith.MinUIOp,
+    arith.MulFOp,
+    arith.MulIOp,
+    arith.OrIOp,
+    arith.RemFOp,
+    arith.RemSIOp,
+    arith.RemUIOp,
+    arith.SIToFPOp,
+    arith.SubFOp,
+    arith.SubIOp,
+    arith.TruncFOp,
+    arith.TruncIOp,
+    arith.UIToFPOp,
+    arith.XOrIOp,
+    mgpu.AsyncLoadTmemOp,
+    mgpu.AsyncStoreTmemOp,
+    mlir_math.Exp2Op,
+    mlir_math.ExpOp,
+    mlir_math.LogOp,
+    mlir_math.RsqrtOp,
+    mlir_math.TanhOp,
+    vector.LoadOp,
+    vector.StoreOp,
+]:
   _add_layout_inference_rule(op, _infer_pointwise_op_layouts)
 
 
