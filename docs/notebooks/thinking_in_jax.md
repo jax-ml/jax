@@ -282,13 +282,7 @@ jit(get_negatives)(x)
 
 This is because the function generates an array whose shape is not known at compile time: the size of the output depends on the values of the input array, and so it is not compatible with JIT.
 
-<<<<<<< HEAD
-+++
-
-For more on JIT compilation in JAX, check out {ref}`jit-compilation`.
-=======
 For more on JIT compilation in JAX, check out [Just-in-time compilation](https://docs.jax.dev/en/latest/jit-compilation.html).
->>>>>>> 5862be011 (New tutorial on Tracing)
 
 +++
 
