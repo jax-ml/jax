@@ -722,6 +722,34 @@ def _tmem_alloc_equation_system(
   return eqns.EquationSystem(), {variable: [result]}, []
 
 
+@_add_equation_system_derivation_rule(mgpu.TcGen05MMAOp)
+def _tcgen05_mma_equation_system(
+    op: mgpu.TcGen05MMAOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  assignments: dict[eqns.Variable, eqns.Constant] = {}
+  operands_for_variable: OperandOrResultsForVariable = {}
+
+  acc = OperandOrResult(op, VariableType.OPERAND, 0)
+  acc_variable = eqns.Variable(acc)
+  acc_layout = tcgen05._infer_tmem_layout(
+      tuple(op.accumulator.type.shape), op.collective, packing=1
+  )
+  assignments[acc_variable] = eqns.TMEMLayout(acc_layout)
+  operands_for_variable[acc_variable] = [acc]
+
+  if utils.is_tmem_ref(op.a):
+    a = OperandOrResult(op, VariableType.OPERAND, 1)
+    a_variable = eqns.Variable(a)
+    packing = 32 // utils.bitwidth(op.a.type.element_type)
+    a_layout = tcgen05._infer_tmem_layout(
+        tuple(op.a.type.shape), op.collective, packing
+    )
+    assignments[a_variable] = eqns.TMEMLayout(a_layout)
+    operands_for_variable[a_variable] = [a]
+
+  return eqns.EquationSystem(assignments), operands_for_variable, []
+
+
 def _ensure_all_layouts_are_set(op: ir.OpView) -> None:
   if inference_utils.should_have_layout(op):
     _ensure_right_number_of_layouts(
