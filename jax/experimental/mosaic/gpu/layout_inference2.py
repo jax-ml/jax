@@ -312,10 +312,32 @@ def find_assignments_for(
   return eqns.Unsatisfiable()
 
 
+@dataclasses.dataclass()
 class DerivationContext:
   """Holds context information used for deriving an equation system."""
+  # A map of `OperandOrResult` to the variable that it is associated with.
+  variable_for_operand_or_result: dict[OperandOrResult, eqns.Variable] = (
+      dataclasses.field(default_factory=dict, init=False)
+  )
+  # A map of `eqns.Variable` to all the `OperandOrResult`s that it is associated
+  # with.
+  operand_and_results_for_variable: OperandOrResultsForVariable = (
+      dataclasses.field(default_factory=dict, init=False)
+  )
 
-  pass
+  def update(self, mapping: OperandOrResultsForVariable) -> None:
+    for variable, operand_and_results in mapping.items():
+      if variable in self.operand_and_results_for_variable:
+        self.operand_and_results_for_variable[variable].extend(operand_and_results)
+      else:
+        self.operand_and_results_for_variable[variable] = operand_and_results
+      for operand_or_result in operand_and_results:
+        assert operand_or_result not in self.variable_for_operand_or_result
+        self.variable_for_operand_or_result[operand_or_result] = variable
+
+  def producer_ref(self, operand: OperandOrResult) -> eqns.Variable:
+    """Returns the producer reference variable for the given operand."""
+    return self.variable_for_operand_or_result[producer_result(operand)]
 
 
 OperandOrResultsForVariable = dict[eqns.Variable, list[OperandOrResult]]
@@ -775,6 +797,16 @@ def _tmem_alloc_equation_system(
   return eqns.EquationSystem(), {variable: [result]}, []
 
 
+@_add_equation_system_derivation_rule(mgpu.TmemDeallocOp)
+def _tmem_dealloc_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.TmemDeallocOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  operand = OperandOrResult(op, VariableType.OPERAND, 0)
+  variable = ctx.producer_ref(operand)
+  return eqns.EquationSystem(), {variable: [operand]}, []
+
+
 def _ensure_all_layouts_are_set(op: ir.OpView) -> None:
   if inference_utils.should_have_layout(op):
     _ensure_right_number_of_layouts(
@@ -1021,7 +1053,6 @@ def infer_layout(module: ir.Module):
   """
   global_equation_system: eqns.EquationSystem | eqns.Unsatisfiable
   global_equation_system = eqns.EquationSystem()
-  operand_and_results_for_variable: OperandOrResultsForVariable = {}
   hints: list[Hint] = []
   ctx = DerivationContext()
 
@@ -1042,7 +1073,7 @@ def infer_layout(module: ir.Module):
     if rule is None:
       raise NotImplementedError(f"No layout inference rule defined for {op}")
     equation_system, mapping, op_hints = rule(ctx, op)
-    operand_and_results_for_variable.update(mapping)
+    ctx.update(mapping)
     nonlocal global_equation_system
     global_equation_system &= equation_system
     hints.extend(op_hints)
@@ -1051,7 +1082,7 @@ def infer_layout(module: ir.Module):
     inference_utils.traverse_op(op, gather_equations)
 
   assert not isinstance(global_equation_system, eqns.Unsatisfiable)
-  propagation_hints, constraints = derive_hints_and_constraints(operand_and_results_for_variable)
+  propagation_hints, constraints = derive_hints_and_constraints(ctx.operand_and_results_for_variable)
   hints = reduce_hints(hints + propagation_hints, global_equation_system.assignments)  # pytype: disable=attribute-error
   global_equation_system &= eqns.EquationSystem(constraints=constraints)
   assert not isinstance(global_equation_system, eqns.Unsatisfiable)
@@ -1063,7 +1094,7 @@ def infer_layout(module: ir.Module):
 
   # Attempt to find assignments that satisfy the equation system.
   solution = find_assignments_for(
-      operand_and_results_for_variable.keys(), global_equation_system, hints
+      ctx.operand_and_results_for_variable.keys(), global_equation_system, hints
   )
 
   if isinstance(solution, eqns.Unsatisfiable):
@@ -1074,7 +1105,7 @@ def infer_layout(module: ir.Module):
 
   layout_for_operand_or_result = {
       k: solution[v]
-      for v, ks in operand_and_results_for_variable.items()
+      for v, ks in ctx.operand_and_results_for_variable.items()
       for k in ks
   }
 
