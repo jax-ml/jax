@@ -16,13 +16,15 @@
 
 from __future__ import annotations
 
+import abc
 from collections.abc import Sequence
 import dataclasses
 import math
-from typing import assert_never, Any, Callable, final
+from typing import Any, Callable, assert_never, final
 
 from . import fragmented_array as fa
 from . import layouts as layouts_lib
+from . import tcgen05
 
 
 VariableKey = Any
@@ -37,10 +39,22 @@ class Variable:
   key: VariableKey
 
 
+class Constant(abc.ABC):
+  """A constant is a known layout."""
+
+
 @dataclasses.dataclass(frozen=True)
-class Constant:
-  """Wraps a known layout."""
+class RegisterLayout(Constant):
+  """Wraps a known register layout."""
+
   value: fa.FragmentedLayout
+
+
+@dataclasses.dataclass(frozen=True)
+class TMEMLayout(Constant):
+  """Wraps a known TMEM layout."""
+
+  value: tcgen05.TMEMLayout
 
 
 @dataclasses.dataclass(frozen=True)
@@ -112,8 +126,17 @@ def reduce_replicated_expression(
   if len(new_expressions) == 1:
     return new_expressions[0]
 
-  consts = [e for e in new_expressions if isinstance(e, Constant)]
-  unknowns = [e for e in new_expressions if not isinstance(e, Constant)]
+  consts = []
+  unknowns = []
+  for e in new_expressions:
+    if not isinstance(e, Constant):
+      unknowns.append(e)
+      continue
+    if not isinstance(e, RegisterLayout):
+      raise ValueError(
+          f"Reduction of non-register layout constant is not supported: {e}"
+      )
+    consts.append(e)
 
   if consts:
     const_red, *consts = consts
@@ -124,7 +147,7 @@ def reduce_replicated_expression(
         # The layouts are not compatible up to replication, this expression
         # cannot be simplified.
         return Unsatisfiable()
-      red = Constant(red_value)
+      red = RegisterLayout(red_value)
   else:
     red = None
 
@@ -150,12 +173,12 @@ def reduce_broadcast_expression(
   match reduced_expr:
     case Unsatisfiable():
       return Unsatisfiable()
-    case Constant(value=layout):
+    case RegisterLayout(value=layout):
       match layout:
         case fa.WGSplatFragLayout(shape=shape):
           if not _check_shape_broadcast(shape):
             return Unsatisfiable()
-          return Constant(fa.WGSplatFragLayout(shape=broadcast.shape))
+          return RegisterLayout(fa.WGSplatFragLayout(shape=broadcast.shape))
         case _:
           return BroadcastInDim(
               expression=reduced_expr,
@@ -175,14 +198,20 @@ def reduce_reshape_expression(
   match reduced_expr:
     case Unsatisfiable():
       return Unsatisfiable()
-    case Constant(value=layout):
+    case RegisterLayout(value=layout):
       match layout:
         case fa.WGSplatFragLayout(shape=shape):
           assert math.prod(shape) == math.prod(reshape.target_shape)
-          return Constant(fa.WGSplatFragLayout(shape=reshape.target_shape))
+          return RegisterLayout(
+              fa.WGSplatFragLayout(shape=reshape.target_shape)
+          )
         case fa.WGStridedFragLayout(shape=shape, vec_size=vec_size):
           assert math.prod(shape) == math.prod(reshape.target_shape)
-          return Constant(fa.WGStridedFragLayout(shape=reshape.target_shape, vec_size=vec_size))
+          return RegisterLayout(
+              fa.WGStridedFragLayout(
+                  shape=reshape.target_shape, vec_size=vec_size
+              )
+          )
         case fa.TiledLayout() as tiled_layout:
           tile_shape = tiled_layout.base_tile_shape
           if len(reshape.target_shape) < len(tile_shape):
@@ -210,8 +239,9 @@ def reduce_reshape_expression(
           # majormost tiled dimensions may have changed. We also know that the
           # majormost tiled dimension is still tilable in the new shape.
           # Therefore, we can return the tiled layout as is.
-          return Constant(tiled_layout)
-  return dataclasses.replace(reshape, expression=reduced_expr)
+          return RegisterLayout(tiled_layout)
+    case _:
+      return dataclasses.replace(reshape, expression=reduced_expr)
 
 
 def reduce_expression(
@@ -236,8 +266,8 @@ def reduce_expression(
       match reduced_expr:
         case Unsatisfiable():
           return Unsatisfiable()
-        case Constant(value=layout) if isinstance(layout, fa.TiledLayout):
-          return Constant(layout.reduce(axes))
+        case RegisterLayout(value=layout) if isinstance(layout, fa.TiledLayout):
+          return RegisterLayout(layout.reduce(axes))
         case Constant():
           # Explicitly raise an error here as opposed to simply failing to
           # simplify, so that we get a clear signal if we ever need to implement
@@ -294,7 +324,9 @@ class Relayout:
     if source == target:
       return True
 
-    if not isinstance(source, Constant) or not isinstance(target, Constant):
+    if not isinstance(source, RegisterLayout) or not isinstance(
+        target, RegisterLayout
+    ):
       return None
 
     source_layout, target_layout = source.value, target.value
@@ -498,9 +530,17 @@ def non_splat_variables(
   for constraint in constraints:
     match constraint:
       case Distinct(lhs=lhs, rhs=rhs):
-        if isinstance(lhs, Variable) and isinstance(rhs, Constant) and isinstance(rhs.value, fa.WGSplatFragLayout):
+        if (
+            isinstance(lhs, Variable)
+            and isinstance(rhs, RegisterLayout)
+            and isinstance(rhs.value, fa.WGSplatFragLayout)
+        ):
           result[lhs] = rhs
-        if isinstance(rhs, Variable) and isinstance(lhs, Constant) and isinstance(lhs.value, fa.WGSplatFragLayout):
+        if (
+            isinstance(rhs, Variable)
+            and isinstance(lhs, RegisterLayout)
+            and isinstance(lhs.value, fa.WGSplatFragLayout)
+        ):
           result[rhs] = lhs
   return result
 
@@ -526,7 +566,9 @@ def _has_relayout_of_non_splat_to_splat(constraints: Sequence[Constraint]) -> bo
     return False
 
   def is_constant_splat(e) -> bool:
-    return isinstance(e, Constant) and isinstance(e.value, fa.WGSplatFragLayout)
+    return isinstance(e, RegisterLayout) and isinstance(
+        e.value, fa.WGSplatFragLayout
+    )
 
   for constraint in constraints:
     match constraint:

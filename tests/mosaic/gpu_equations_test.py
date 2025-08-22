@@ -22,7 +22,7 @@ from jax.experimental.mosaic.gpu import equations
 
 config.parse_flags_with_absl()
 
-C = equations.Constant
+RL = equations.RegisterLayout
 Eq = equations.Equation
 V = equations.Variable
 
@@ -31,7 +31,7 @@ class EquationSystemTest(parameterized.TestCase):
 
   def test_equation_system_is_unsatisfiable_if_assignments_are_incompatible(self):
     v0 = V(0)
-    layout0, layout1 = [C(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2)]
+    layout0, layout1 = [RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2)]
     system = equations.EquationSystem(
         equations=[Eq(v0, layout0), Eq(v0, layout1)],
     )
@@ -41,7 +41,7 @@ class EquationSystemTest(parameterized.TestCase):
       self,
   ):
     v0 = V(0)
-    layout0, layout1 = [C(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2)]
+    layout0, layout1 = [RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2)]
     system = equations.EquationSystem(
         assignments={v0: layout0},
         constraints=[equations.Relayout(v0, layout1)],
@@ -51,14 +51,14 @@ class EquationSystemTest(parameterized.TestCase):
   @parameterized.parameters(*equations._SUPPORTED_TILED_RELAYOUTS)
   def test_reduce_equation_system_removes_satisfed_relayouts(self, src, tgt):
     system = equations.EquationSystem(
-        constraints=[equations.Relayout(C(src), C(tgt))],
+        constraints=[equations.Relayout(RL(src), RL(tgt))],
     )
     self.assertEqual(equations.reduce(system), equations.EquationSystem())
 
   def test_relayout_constraint_does_not_hold_for_incompatible_layouts(self):
     self.assertFalse(
         equations.Relayout(
-            C(mgpu.WGMMA_ROW_LAYOUT), C(mgpu.WGMMA_COL_LAYOUT)
+            RL(mgpu.WGMMA_ROW_LAYOUT), RL(mgpu.WGMMA_COL_LAYOUT)
         ).holds()
     )
 
@@ -67,10 +67,10 @@ class EquationSystemTest(parameterized.TestCase):
 
   def test_distinct_constraint_holds_for_unequal_constants(self):
     layout0, layout1 = mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT
-    self.assertTrue(equations.Distinct(C(layout0), C(layout1)).holds())
+    self.assertTrue(equations.Distinct(RL(layout0), RL(layout1)).holds())
 
   def test_distinct_constraint_is_unknown_for_unreduced_unequal_expressions(self):
-    self.assertIsNone(equations.Distinct(C(1), V(0)).holds())
+    self.assertIsNone(equations.Distinct(RL(1), V(0)).holds())
 
   def test_reduce_equation_system_removes_tautological_equations_and_constraints(
       self,
@@ -79,9 +79,11 @@ class EquationSystemTest(parameterized.TestCase):
     layout0, layout1 = mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT
     system = equations.EquationSystem(
         equations=[Eq(v0, v1), Eq(v0, v0)],
-        constraints=[equations.Relayout(v0, v0),
-                     equations.Distinct(C(layout0), C(layout1)),
-                     equations.Distinct(v0, v1)],
+        constraints=[
+            equations.Relayout(v0, v0),
+            equations.Distinct(RL(layout0), RL(layout1)),
+            equations.Distinct(v0, v1),
+        ],
     )
     self.assertLen(equations.reduce(system).equations, 1)
     self.assertLen(equations.reduce(system).constraints, 1)
@@ -95,7 +97,7 @@ class EquationSystemTest(parameterized.TestCase):
 
   def test_reduce_equation_system_assigns_variables_with_known_equations(self):
     v0, v1 = V(0), V(1)
-    layout = C(mgpu.WGSplatFragLayout((1, 1)))
+    layout = RL(mgpu.WGSplatFragLayout((1, 1)))
 
     with self.subTest("left-to-right-assignment"):
       system = equations.EquationSystem(
@@ -117,7 +119,7 @@ class EquationSystemTest(parameterized.TestCase):
 
   def test_equation_system_unknowns_are_all_the_variables_without_assignment(self):
     v0, v1, v2, v3 = V(0), V(1), V(2), V(3)
-    layout = C(mgpu.WGSplatFragLayout((1, 1)))
+    layout = RL(mgpu.WGSplatFragLayout((1, 1)))
     least_replicated = equations.LeastReplicated((v2, v3))
     most_replicated = equations.MostReplicated((least_replicated,))
     system = equations.EquationSystem(assignments={v0: layout},
@@ -126,14 +128,16 @@ class EquationSystemTest(parameterized.TestCase):
 
   def test_intersection_of_conflicting_systems_is_unsatisfiable(self):
     v0 = V(0)
-    layout0, layout1 = [C(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2)]
+    layout0, layout1 = [RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2)]
     system0 = equations.EquationSystem(assignments={v0: layout0})
     system1 = equations.EquationSystem(assignments={v0: layout1})
     self.assertIsInstance(system0 & system1, equations.Unsatisfiable)
 
   def test_intersection_of_compatible_systems_is_union_of_fields(self):
     v0, v1, v2 = V(0), V(1), V(2)
-    layout0, layout1, layout2 = [C(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2, 3)]
+    layout0, layout1, layout2 = [
+        RL(mgpu.WGSplatFragLayout((1, i))) for i in (1, 2, 3)
+    ]
     system0 = equations.EquationSystem(equations=[Eq(v0, layout0)])
     system1 = equations.EquationSystem(
         assignments={v2: layout2},
@@ -154,8 +158,8 @@ class EquationSystemTest(parameterized.TestCase):
   def test_reduce_extracts_most_replicated_expression_correctly(self):
     v0 = V(0)
     shape = (1, 128)
-    layout0 = C(mgpu.WGSplatFragLayout(shape))
-    layout1 = C(mgpu.WGStridedFragLayout(shape, vec_size=1))
+    layout0 = RL(mgpu.WGSplatFragLayout(shape))
+    layout1 = RL(mgpu.WGStridedFragLayout(shape, vec_size=1))
     with self.subTest("most-replicated-expression-exists"):
       system = equations.EquationSystem(
           equations=[Eq(v0, equations.MostReplicated((layout0, layout1)))],
@@ -183,8 +187,8 @@ class EquationSystemTest(parameterized.TestCase):
   def test_reduce_extracts_least_replicated_expression_correctly(self):
     v0 = V(0)
     shape = (1, 128)
-    layout0 = C(mgpu.WGSplatFragLayout(shape))
-    layout1 = C(mgpu.WGStridedFragLayout(shape, vec_size=1))
+    layout0 = RL(mgpu.WGSplatFragLayout(shape))
+    layout1 = RL(mgpu.WGStridedFragLayout(shape, vec_size=1))
     with self.subTest("least-replicated-expression-exists"):
       system = equations.EquationSystem(
           equations=[Eq(v0, equations.LeastReplicated([layout0, layout1]))],
@@ -210,8 +214,8 @@ class EquationSystemTest(parameterized.TestCase):
       self.assertEqual(equations.reduce(system), system)
 
   def test_reduce_most_replicated_expression_reduces_compatible_layouts(self):
-    splat_layout = C(mgpu.WGSplatFragLayout((128, 64)))
-    tiled_layout = C(mgpu.WGMMA_LAYOUT)
+    splat_layout = RL(mgpu.WGSplatFragLayout((128, 64)))
+    tiled_layout = RL(mgpu.WGMMA_LAYOUT)
     self.assertEqual(
         equations.reduce_expression(
             equations.MostReplicated((splat_layout, tiled_layout)),
@@ -223,8 +227,8 @@ class EquationSystemTest(parameterized.TestCase):
   def test_reduce_most_replicated_expression_is_unsatisfiable_for_incompatible_layouts(
       self,
   ):
-    splat_layout = C(mgpu.WGSplatFragLayout((1, 2)))
-    tiled_layout = C(mgpu.WGMMA_LAYOUT)
+    splat_layout = RL(mgpu.WGSplatFragLayout((1, 2)))
+    tiled_layout = RL(mgpu.WGMMA_LAYOUT)
     self.assertIsInstance(
         equations.reduce_expression(
             equations.MostReplicated((splat_layout, tiled_layout)),
@@ -234,8 +238,8 @@ class EquationSystemTest(parameterized.TestCase):
     )
 
   def test_reduce_least_replicated_expression_reduces_compatible_layouts(self):
-    splat_layout = C(mgpu.WGSplatFragLayout((128, 64)))
-    tiled_layout = C(mgpu.WGMMA_LAYOUT)
+    splat_layout = RL(mgpu.WGSplatFragLayout((128, 64)))
+    tiled_layout = RL(mgpu.WGMMA_LAYOUT)
     self.assertEqual(
         equations.reduce_expression(
             equations.LeastReplicated((splat_layout, tiled_layout)),
@@ -247,8 +251,8 @@ class EquationSystemTest(parameterized.TestCase):
   def test_reduce_least_replicated_expression_is_unsatisfiable_for_incompatible_layouts(
       self,
   ):
-    splat_layout = C(mgpu.WGSplatFragLayout((1, 2)))
-    tiled_layout = C(mgpu.WGMMA_LAYOUT)
+    splat_layout = RL(mgpu.WGSplatFragLayout((1, 2)))
+    tiled_layout = RL(mgpu.WGMMA_LAYOUT)
     self.assertIsInstance(
         equations.reduce_expression(
             equations.LeastReplicated((splat_layout, tiled_layout)),
@@ -262,31 +266,31 @@ class EquationSystemTest(parameterized.TestCase):
       ("reduce_to_col_layout", (0,), mgpu.WGMMA_COL_LAYOUT),
   )
   def test_reduce_reduce_expression_reduces_layout(self, axes, expected_layout):
-    tiled_layout = C(mgpu.WGMMA_LAYOUT)
+    tiled_layout = RL(mgpu.WGMMA_LAYOUT)
     self.assertEqual(
         equations.reduce_expression(
             equations.Reduce(tiled_layout, axes=axes), {}
         ),
-        C(expected_layout),
+        RL(expected_layout),
     )
 
   def test_reduce_reduce_expression_with_unsupported_layout_raises_error(self):
-    layout = C(mgpu.WGStridedFragLayout((128, 8), vec_size=8))
+    layout = RL(mgpu.WGStridedFragLayout((128, 8), vec_size=8))
     with self.assertRaises(NotImplementedError):
       equations.reduce_expression(equations.Reduce(layout, axes=(0,)), {})
 
   def test_reduce_broadcast_of_splat_layout_is_reduced_to_splat_layout(self):
-    layout = C(mgpu.WGSplatFragLayout((128,)))
+    layout = RL(mgpu.WGSplatFragLayout((128,)))
     valid_shape = (128, 8)
     self.assertEqual(
         equations.reduce_expression(
             equations.BroadcastInDim(layout, axes=(0,), shape=valid_shape), {}
         ),
-        C(mgpu.WGSplatFragLayout((128, 8))),
+        RL(mgpu.WGSplatFragLayout((128, 8))),
     )
 
   def test_reduce_broadcast_of_splat_layout_is_unsatisfiable_for_incompatible_shape(self):
-    layout = C(mgpu.WGSplatFragLayout((128,)))
+    layout = RL(mgpu.WGSplatFragLayout((128,)))
     invalid_shape = (129, 8)
     self.assertIsInstance(
         equations.reduce_expression(
@@ -296,37 +300,37 @@ class EquationSystemTest(parameterized.TestCase):
     )
 
   def test_reduce_broadcast_of_strided_layout_is_irreducible(self):
-    layout = C(mgpu.WGStridedFragLayout((128,), vec_size=1))
+    layout = RL(mgpu.WGStridedFragLayout((128,), vec_size=1))
     expr = equations.BroadcastInDim(layout, axes=(0,), shape=(128, 8))
     self.assertEqual(equations.reduce_expression(expr, {}), expr)
 
   def test_reduce_broadcast_of_tiled_layout_is_irreducible(self):
-    layout = C(mgpu.WGMMA_LAYOUT)
+    layout = RL(mgpu.WGMMA_LAYOUT)
     expr = equations.BroadcastInDim(layout, axes=(1, 2), shape=(8, 128, 8))
     self.assertEqual(equations.reduce_expression(expr, {}), expr)
 
   def test_reduce_reshape_of_splat_layout_is_reduced_to_splat_layout(self):
-    layout = C(mgpu.WGSplatFragLayout((1024,)))
+    layout = RL(mgpu.WGSplatFragLayout((1024,)))
     source_shape, target_shape = (1024,), (128, 8)
     self.assertEqual(
         equations.reduce_expression(
             equations.Reshape(layout, source_shape, target_shape), {}
         ),
-        C(mgpu.WGSplatFragLayout(target_shape)),
+        RL(mgpu.WGSplatFragLayout(target_shape)),
     )
 
   def test_reduce_reshape_of_strided_layout_is_reduced_to_strided_layout(self):
-    layout = C(mgpu.WGStridedFragLayout((1024,), vec_size=8))
+    layout = RL(mgpu.WGStridedFragLayout((1024,), vec_size=8))
     source_shape, target_shape = (1024,), (128, 8)
     self.assertEqual(
         equations.reduce_expression(
             equations.Reshape(layout, source_shape, target_shape), {}
         ),
-        C(mgpu.WGStridedFragLayout(target_shape, vec_size=8)),
+        RL(mgpu.WGStridedFragLayout(target_shape, vec_size=8)),
     )
 
   def test_reduce_reshape_of_tiled_layout_with_indivisible_shape_is_irreducible(self):
-    layout = C(mgpu.WGMMA_LAYOUT)
+    layout = RL(mgpu.WGMMA_LAYOUT)
     source_shape, target_shape = (128, 8), (129, 8)
     eq = equations.Reshape(layout, source_shape, target_shape)
     self.assertEqual(equations.reduce_expression(eq, {}), eq)
@@ -334,7 +338,7 @@ class EquationSystemTest(parameterized.TestCase):
   def test_reduce_reshape_of_tiled_layout_with_modified_minor_tiled_dimensions_is_irreducible(
       self,
   ):
-    layout = C(mgpu.WGMMA_LAYOUT)
+    layout = RL(mgpu.WGMMA_LAYOUT)
     source_shape, target_shape = (2, 128, 8), (2, 64, 16)
     eq = equations.Reshape(layout, source_shape, target_shape)
     self.assertEqual(equations.reduce_expression(eq, {}), eq)
@@ -342,7 +346,7 @@ class EquationSystemTest(parameterized.TestCase):
   def test_reduce_reshape_of_tiled_layout_with_compatible_shape_is_identity(
       self,
   ):
-    layout = C(mgpu.WGMMA_LAYOUT)
+    layout = RL(mgpu.WGMMA_LAYOUT)
     source_shape, target_shape = (2, 128, 8), (256, 8)
     eq = equations.Reshape(layout, source_shape, target_shape)
     self.assertEqual(equations.reduce_expression(eq, {}), layout)
@@ -350,7 +354,7 @@ class EquationSystemTest(parameterized.TestCase):
   def test_relayout_of_non_splat_to_splat_is_unsatisfiable_shortcut(
       self,
   ):
-    splat_layout = C(mgpu.WGSplatFragLayout((128,)))
+    splat_layout = RL(mgpu.WGSplatFragLayout((128,)))
     v0, v1 = V(0), V(1)
     system = equations.EquationSystem(
         assignments={v1: splat_layout},
@@ -364,7 +368,7 @@ class EquationSystemTest(parameterized.TestCase):
   def test_saturate_distinct_from_splat_does_not_create_duplicate_constraints(
       self,
   ):
-    splat_layout = C(mgpu.WGSplatFragLayout((128,)))
+    splat_layout = RL(mgpu.WGSplatFragLayout((128,)))
     v0, v1, v2 = V(0), V(1), V(2)
     system = equations.EquationSystem(constraints = [
           equations.Distinct(v0, splat_layout),
@@ -390,8 +394,8 @@ class EquationSystemTest(parameterized.TestCase):
   def test_saturate_distinct_from_splat_does_not_affect_non_splat(
       self,
   ):
-    splat_layout = C(mgpu.WGSplatFragLayout((128,)))
-    wgmma_layout = C(mgpu.WGMMA_LAYOUT)
+    splat_layout = RL(mgpu.WGSplatFragLayout((128,)))
+    wgmma_layout = RL(mgpu.WGMMA_LAYOUT)
     v0, v1, v2, v3, v4 = V(0), V(1), V(2), V(3), V(4)
     system = equations.EquationSystem(constraints = [
           equations.Distinct(v0, splat_layout),

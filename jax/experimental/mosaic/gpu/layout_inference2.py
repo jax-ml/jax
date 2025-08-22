@@ -119,9 +119,9 @@ def extract_constant_from_most_replicated_expression_for_hint(
 
 
 def extract_constant_from_broadcast_in_dim_expression_for_hint(
-    e: eqns.BroadcastInDim
-) -> eqns.Constant | None:
-  if not isinstance(e.expression, eqns.Constant):
+    e: eqns.BroadcastInDim,
+) -> eqns.RegisterLayout | None:
+  if not isinstance(e.expression, eqns.RegisterLayout):
     return None
 
   reduced_layout = e.expression.value
@@ -129,14 +129,14 @@ def extract_constant_from_broadcast_in_dim_expression_for_hint(
   wgmma_tm, wgmma_tn = fa.WGMMA_LAYOUT.base_tile_shape
   # TODO(bchetioui): enable generators to handle TCGEN05 layout from WGMMA_COL.
   if reduced_layout == fa.WGMMA_COL_LAYOUT and e.axes == (1,) and e.shape[0] % wgmma_tm == 0:
-    return eqns.Constant(fa.WGMMA_LAYOUT)
+    return eqns.RegisterLayout(fa.WGMMA_LAYOUT)
 
   if reduced_layout == fa.WGMMA_ROW_LAYOUT and e.axes == (0,) and e.shape[1] % wgmma_tn == 0:
-    return eqns.Constant(fa.WGMMA_LAYOUT)
+    return eqns.RegisterLayout(fa.WGMMA_LAYOUT)
 
   tcgen05_tm, _ = fa.TCGEN05_LAYOUT.base_tile_shape
   if reduced_layout == fa.TCGEN05_ROW_LAYOUT and e.axes == (0,) and e.shape[0] % tcgen05_tm == 0:
-    return eqns.Constant(fa.TCGEN05_LAYOUT)
+    return eqns.RegisterLayout(fa.TCGEN05_LAYOUT)
 
   return None
 
@@ -273,7 +273,9 @@ def find_assignments_for(
     desired_vec_size = 8 // utils.bytewidth(ty.element_type)
     vec_size = min(max_vec_size, desired_vec_size)
     layout = fa.WGStridedFragLayout(shape=tuple(ty.shape), vec_size=vec_size)
-    new_assignment = {variable: eqns.Constant(layout)}
+    new_assignment: dict[eqns.Variable, eqns.Constant] = {
+        variable: eqns.RegisterLayout(layout)
+    }
     new_system = equation_system & eqns.EquationSystem(assignments=new_assignment)
     if isinstance(new_system, eqns.Unsatisfiable):
       # This assignment is not compatible with the equation system.
@@ -390,7 +392,9 @@ def _vector_load_equation_system(
   [result_variable] = operand_or_results_for_variable.keys()
   result_is_not_splat = eqns.Distinct(
       result_variable,
-      eqns.Constant(fa.WGSplatFragLayout(shape=tuple(op.result.type.shape))),
+      eqns.RegisterLayout(
+          fa.WGSplatFragLayout(shape=tuple(op.result.type.shape))
+      ),
   )
   equation_system &= eqns.EquationSystem(constraints=[result_is_not_splat])
   assert not isinstance(equation_system, eqns.Unsatisfiable)
@@ -422,7 +426,9 @@ def _vector_splat_equation_system(
   result = OperandOrResult(op, VariableType.RESULT, 0)
   variable = eqns.Variable(result)
   layout = fa.WGSplatFragLayout(tuple(cast(ir.ShapedType, op.result.type).shape))
-  system = eqns.EquationSystem(assignments={variable: eqns.Constant(layout)})
+  system = eqns.EquationSystem(
+      assignments={variable: eqns.RegisterLayout(layout)}
+  )
   return system, {variable: [result]}, []
 
 
@@ -439,10 +445,13 @@ def _constant_equation_system(
       and ir.DenseElementsAttr(value).is_splat
   ):
     layout = fa.WGSplatFragLayout(shape=shape)
-    system = eqns.EquationSystem(assignments={variable: eqns.Constant(layout)})
+    system = eqns.EquationSystem(
+        assignments={variable: eqns.RegisterLayout(layout)}
+    )
   else:
     constant_is_not_splat = eqns.Distinct(
-        variable, eqns.Constant(fa.WGSplatFragLayout(shape=shape)),
+        variable,
+        eqns.RegisterLayout(fa.WGSplatFragLayout(shape=shape)),
     )
     system = eqns.EquationSystem(constraints=[constant_is_not_splat])
 
@@ -551,7 +560,7 @@ def _layout_cast_equation_system(
   operand = OperandOrResult(op, VariableType.OPERAND, 0)
   result = OperandOrResult(op, VariableType.RESULT, 0)
   variable = eqns.Variable(operand)
-  out_layout = eqns.Constant(layouts_lib.from_layout_attr(op.new_layout))
+  out_layout = eqns.RegisterLayout(layouts_lib.from_layout_attr(op.new_layout))
   return (
       eqns.EquationSystem(assignments={variable: out_layout}),
       {variable: [operand, result]},
@@ -566,7 +575,7 @@ def _wgmma_equation_system(
   operands_or_results = operands_and_results(op)
   variable = eqns.Variable(operands_or_results[0])
   system = eqns.EquationSystem(
-      assignments={variable: eqns.Constant(fa.WGMMA_LAYOUT)}
+      assignments={variable: eqns.RegisterLayout(fa.WGMMA_LAYOUT)}
   )
   return system, {variable: operands_or_results}, []
 
@@ -759,12 +768,14 @@ def assign_layouts(
     in_assignments = assignments_by_type.get(VariableType.OPERAND, [])
     out_assignments = assignments_by_type.get(VariableType.RESULT, [])
 
+    index = lambda kv: kv[0].index
+    in_cs = [ce for _, ce in sorted(in_assignments, key=index)]
+    out_cs = [ce for _, ce in sorted(out_assignments, key=index)]
     in_layouts = [
-        ce.value for _, ce in sorted(in_assignments, key=lambda kv: kv[0].index)
+        ce.value for ce in in_cs if isinstance(ce, eqns.RegisterLayout)
     ]
     out_layouts = [
-        ce.value
-        for _, ce in sorted(out_assignments, key=lambda kv: kv[0].index)
+        ce.value for ce in out_cs if isinstance(ce, eqns.RegisterLayout)
     ]
 
     _ensure_right_number_of_layouts(op, in_layouts, out_layouts)
