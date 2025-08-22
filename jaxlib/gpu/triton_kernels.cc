@@ -125,9 +125,14 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
   // TODO(cjfj): Support `TRITON_PTXAS_PATH` environment variable?
   int cc_major = compute_capability / 10;
   int cc_minor = compute_capability % 10;
-  auto cc =
-      stream_executor::CudaComputeCapability::FromIntWithAutoFeatureExtension(
-          cc_major, cc_minor);
+
+  bool has_accelerated_features = cc_major >= 9;
+  using FeatureExtension =
+      stream_executor::CudaComputeCapability::FeatureExtension;
+  const stream_executor::CudaComputeCapability cc(
+      cc_major, cc_minor,
+      has_accelerated_features ? FeatureExtension::kAcceleratedFeatures
+                               : FeatureExtension::kNone);
   JAX_ASSIGN_OR_RETURN(
       std::vector<uint8_t> module_image,
       stream_executor::CompileGpuAsm(cc, std::string(ptx),
