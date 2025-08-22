@@ -1793,9 +1793,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {tpu::ExtFOp::getOperationName(), canonicalize_tpu_extf},
       {tpu::TransposeOp::getOperationName(), canonicalize_transpose},
       {tpu::RepeatOp::getOperationName(), canonicalize_repeat},
-      {tpu::ReshapeOp::getOperationName(), canonicalize_reshape},
-      {vector::StoreOp::getOperationName(), canonicalize_store},
-      {tpu::VectorStoreOp::getOperationName(), canonicalize_vector_store}};
+      {tpu::ReshapeOp::getOperationName(), canonicalize_reshape}};
   return *rules;
 }
 
