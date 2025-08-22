@@ -80,7 +80,7 @@ def unpack_dtype_abstract_eval(x):
 
 
 def unpack(x):
-  return unpack_dtype_p.bind(x)
+  return tuple(unpack_dtype_p.bind(x))
 
 
 class FusibleElementDType(dtypes.extended):
@@ -123,6 +123,14 @@ class FusionDType(dtypes.ExtendedDType, metaclass=abc.ABCMeta):
 
   @abc.abstractmethod
   def pull_block_spec_one_step(self, aval_out, *args, **kwargs):
+    raise NotImplementedError()
+
+  @abc.abstractmethod
+  def unpack_push_block_spec(self, aval_in, *args, **kwargs):
+    raise NotImplementedError()
+
+  @abc.abstractmethod
+  def unpack_pull_block_spec(self, aval_in, *args, **kwargs):
     raise NotImplementedError()
 
 
@@ -489,7 +497,7 @@ _physicalize_rules[state_primitives.get_p] = _get_rule
 
 @block_spec.register_eval_rule(pack_dtype_p)
 def _pack_dtype_eval_rule(eval_ctx: block_spec.KernelEvalContext, *args, dtype):
-  return dtype.eval_rule(eval_ctx, *args)
+  return dtype.pack_eval_rule(eval_ctx, *args)
 
 
 @block_spec.register_pull_block_spec_rule(pack_dtype_p)
@@ -501,6 +509,36 @@ def _pack_dtype_pull_rule(
 ):
   aval_out = ctx.avals_out[0]
   return dtype.pull_block_spec_one_step(aval_out, block_spec)  # pytype: disable=attribute-error
+
+
+@block_spec.register_push_block_spec_rule(unpack_dtype_p)
+def _unpack_dtype_push_rule(
+    ctx: block_spec.PushRuleContext,
+    block_spec: pallas_core.BlockSpec,
+):
+  aval_in = ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  assert isinstance(aval_in.dtype, FusionDType), aval_in.dtype
+  return aval_in.dtype.unpack_push_block_spec(aval_in, block_spec)  # pytype: disable=attribute-error
+
+
+@block_spec.register_pull_block_spec_rule(unpack_dtype_p)
+def _unpack_dtype_pull_rule(
+    ctx: block_spec.PushRuleContext,
+    block_specs: pallas_core.BlockSpec,
+):
+  aval_in = ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  assert isinstance(aval_in.dtype, FusionDType), aval_in.dtype
+  return aval_in.dtype.unpack_pull_block_spec(aval_in, *block_specs)
+
+
+@block_spec.register_eval_rule(unpack_dtype_p)
+def _unpack_dtype_eval_rule(eval_ctx: block_spec.KernelEvalContext, *args):
+  aval_in = eval_ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  assert isinstance(aval_in.dtype, FusionDType), aval_in.dtype
+  return aval_in.dtype.unpack_eval_rule(eval_ctx, *args)
 
 
 def _fusible_physicalize_rule(
