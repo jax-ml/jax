@@ -1303,6 +1303,8 @@ class Layout(SomeLayout, enum.Enum):
   WG_SPLAT = enum.auto()
   WG_STRIDED = enum.auto()
 
+  TILED = enum.auto()
+
   TCGEN05 = enum.auto()
   TCGEN05_TRANSPOSED = enum.auto()
   TCGEN05_M64_COLLECTIVE = enum.auto()
@@ -1336,6 +1338,8 @@ class Layout(SomeLayout, enum.Enum):
         return mgpu.WGSplatFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
       case Layout.WG_STRIDED:
         return mgpu.WGStridedFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
+      case Layout.TILED:
+        return mgpu.TiledLayout(*args, **kwargs)
       case Layout.TCGEN05:
         check_no_args()
         return mgpu.TCGEN05_LAYOUT

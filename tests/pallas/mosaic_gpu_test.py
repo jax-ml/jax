@@ -2152,6 +2152,12 @@ class PallasCallTest(PallasTest):
           plgpu.Layout.TCGEN05,
           plgpu.Layout.TCGEN05_TMEM_NATIVE,
           plgpu.Layout.TCGEN05_M64_COLLECTIVE(128),
+          plgpu.Layout.TILED(  # WGMMA, but defined as a custom tiling.
+              plgpu.Tiling(((64, 8), (16, 8), (8, 8), (2,))),
+              warp_dims=(-7,),
+              lane_dims=(-3, -2),
+              vector_dim=-1,
+          ),
       ),
       op=(jnp.sum, jnp.max),
   )
@@ -2265,6 +2271,7 @@ class PallasCallTest(PallasTest):
         plgpu.Layout.WG_SPLAT,
         plgpu.Layout.WGMMA_TRANSPOSED,
         plgpu.Layout.TCGEN05_TRANSPOSED,
+        plgpu.Layout.TILED
     }:
       self.skipTest("Not the right layout for this test")
 

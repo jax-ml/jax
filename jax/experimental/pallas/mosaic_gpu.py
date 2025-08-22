@@ -73,6 +73,7 @@ from jax._src.pallas.mosaic_gpu.primitives import tcgen05_mma as tcgen05_mma
 from jax._src.pallas.mosaic_gpu.primitives import tcgen05_commit_arrive as tcgen05_commit_arrive
 from jax._src.pallas.mosaic_gpu.primitives import commit_tmem as commit_tmem
 from jax.experimental.mosaic.gpu.core import LoweringSemantics as LoweringSemantics
+from jax.experimental.mosaic.gpu.fragmented_array import Tiling as Tiling
 
 
 #: Alias of :data:`jax.experimental.pallas.mosaic_gpu.MemorySpace.GMEM`.
