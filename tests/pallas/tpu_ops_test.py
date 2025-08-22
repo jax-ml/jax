@@ -330,12 +330,14 @@ class OpsTest(PallasBaseTest):
       reduce_func = [jnp.argmax, jnp.argmin]
   )
   def test_reduce_index(self, reduce_func):
-    if not jtu.if_cloud_tpu_at_least(2025, 8, 18):
-      self.skipTest("Requires libtpu built after 2025-08-18")
+    if not jtu.if_cloud_tpu_at_least(2025, 8, 25):
+      self.skipTest("Requires libtpu built after 2025-08-25")
     dtype = jnp.float32
     axis = 1
+    if (axis == 1 and not jtu.is_device_tpu_at_least(version=4)):
+      self.skipTest("Requires TPUv4+ for axis=1")
 
-    in_shape = (8, 128)
+    in_shape = (32, 256)
     out_shape = list(in_shape)
     out_shape[axis] = 1
 

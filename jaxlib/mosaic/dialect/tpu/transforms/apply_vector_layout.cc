@@ -4724,9 +4724,10 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_OP(layouts_in.front().has_value());
   TPU_ASSERT_OP(llvm::none_of(layouts_in.drop_front(),
                               [&](const Layout &l) { return l.has_value(); }));
+  const Location loc = op.getLoc();
   const VectorLayout &in_layout = *layouts_in.front();
   const VectorLayout &out_layout = *layouts_out.front();
-  // TODO(yixiuliu): Support input that is not native-sized vreg.
+  // TODO(yixiuliu): Support any input shapes
   TPU_ASSERT_OP(in_layout ==
                 VectorLayout(32, {0, 0}, ctx.target_shape,
                              VectorLayout::ImplicitDim::kNone));
@@ -4738,31 +4739,111 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
 
   auto in_ty = cast<VectorType>(reduce_index_op.getInput().getType());
   auto out_ty = cast<VectorType>(reduce_index_op.getResult().getType());
-  if (!in_ty.getElementType().isF32()) {
+  auto in_element_type = in_ty.getElementType();
+  if (!in_element_type.isF32()) {
     return op.emitOpError("Not implemented: Only f32 input is supported");
   }
   if (!out_ty.getElementType().isSignlessInteger(32)) {
     return op.emitOpError("Not implemented: Only i32 output is supported");
   }
-  TPU_ASSERT_EQ_OP(reduce_index_op.getAxis(), in_ty.getRank() - 1);
+  const int64_t rank = in_ty.getRank();
+  const int64_t axis = reduce_index_op.getAxis();
+  TPU_ASSERT_EQ_OP(axis, rank - 1);
+  TPU_ASSERT_OP(
+    in_ty.getShape()[rank - 2] % ctx.target_shape[0] == 0 &&
+    in_ty.getShape()[rank - 1] % ctx.target_shape[1] == 0);
+  tpu::ReductionKind kind = reduce_index_op.getKind();
 
   OpBuilder builder(&op);
   FAILUREOR_ASSIGN_OR_RETURN(
     xla::Array<Value> tiles,
     disassemble(builder, in_layout, reduce_index_op.getInput(),
                 ctx.target_shape));
-  TPU_ASSERT_OP((tiles.dimensions() == xla::DimensionVector{1, 1}));
+  TPU_ASSERT_OP(tiles.dimensions().size() >= 2);
 
   VectorType index_ty = VectorType::get(
       ctx.target_shape, builder.getIntegerType(32));
 
-  Value out_vreg;
-  out_vreg = builder.create<tpu::AllReduceOp>(
-      reduce_index_op.getLoc(), index_ty,
-      tiles({0, 0}), /* dim= */ 1, reduce_index_op.getKind());
+  xla::Array<Value> out_vregs(
+      out_layout.tileArrayShape(out_ty.getShape(), ctx.target_shape));
 
-  xla::Array<Value> out_vregs = xla::Array<Value>(
-      xla::DimensionVector{1}, out_vreg);
+  SmallVector<int64_t> slice_start;
+  slice_start.reserve(rank);
+  SmallVector<int64_t> slice_end;
+  slice_end.reserve(rank);
+
+  out_vregs.Each(
+    [&](const absl::Span<const int64_t> idx, Value *const out_vreg) {
+      slice_start.clear();
+      slice_end.clear();
+      for (int64_t i : idx) {
+        slice_start.push_back(i);
+        slice_end.push_back(i + 1);
+      }
+      slice_start.insert(slice_start.begin() + axis, 0);
+      slice_end.insert(slice_end.begin() + axis, tiles.dim(axis));
+      xla::Array<Value> slice_vregs = tiles.Slice(slice_start, slice_end);
+
+      arith::CmpFPredicate predicate;
+      switch (kind) {
+        case tpu::ReductionKind::kArgMax:
+          predicate = arith::CmpFPredicate::OGE;
+          break;
+        case tpu::ReductionKind::kArgMin:
+          predicate = arith::CmpFPredicate::OLE;
+          break;
+        default:
+          reduce_index_op.emitOpError(
+              "Unsupported reduction kind ") << stringifyReductionKind(kind);
+      }
+      auto reduce_elementwise = [&](
+          Value lhs, Value rhs, Value lhs_idx, Value rhs_idx) ->
+          std::pair<Value, Value> {
+        Value keep_lhs = builder.create<arith::CmpFOp>(
+            loc, predicate, lhs, rhs).getResult();
+        Value result_val = builder.create<arith::SelectOp>(
+            loc, keep_lhs, lhs, rhs);
+        Value result_idx = builder.create<arith::SelectOp>(
+            loc, keep_lhs, lhs_idx, rhs_idx);
+        return {result_val, result_idx};
+      };
+      Value acc_vreg = nullptr;
+      Value acc_vreg_idx = nullptr;
+      const int64_t reduction_step = ctx.target_shape[1];
+      slice_vregs.Each(
+        [&](const absl::Span<const int64_t> red_idx, Value *const src_vreg) {
+        // Calculate the index of acc_vreg on reduction dimension in full input.
+        Value base_idx = builder.create<arith::ConstantOp>(
+            loc, index_ty,
+            DenseIntElementsAttr::get(
+                index_ty,
+                static_cast<int32_t>(red_idx[axis] * reduction_step)));
+        Value iota = builder.create<tpu::IotaOp>(
+            loc, index_ty,
+            /*dimensions=*/ArrayRef<int32_t>{1});
+        Value src_vreg_idx = builder.create<arith::AddIOp>(loc, base_idx, iota);
+
+        if (acc_vreg == nullptr || acc_vreg_idx == nullptr) {
+          acc_vreg = *src_vreg;
+          acc_vreg_idx = src_vreg_idx;
+        } else {
+          std::tie(acc_vreg, acc_vreg_idx) = reduce_elementwise(
+              acc_vreg, *src_vreg, acc_vreg_idx, src_vreg_idx);
+        }
+      });
+      acc_vreg = builder.create<tpu::AllReduceOp>(
+          reduce_index_op.getLoc(), index_ty, acc_vreg, /*dim=*/1, kind);
+      if (slice_vregs.dim(axis) > 1) {
+        // Convert back to original index in acc_vreg_idx
+        *out_vreg = builder.create<tpu::DynamicGatherOp>(
+            loc, index_ty,
+            /*source=*/acc_vreg_idx,
+            /*indices=*/acc_vreg,
+            /*dimensions=*/ArrayRef<int32_t>{1});
+      } else {
+        *out_vreg = acc_vreg;
+      }
+  });
 
   reduce_index_op->replaceAllUsesWith(
     assemble(builder, out_ty, out_layout, out_vregs, ctx.target_shape));

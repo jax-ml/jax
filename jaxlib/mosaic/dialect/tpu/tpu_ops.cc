@@ -1983,11 +1983,12 @@ LogicalResult ReduceIndexOp::verify() {
            << in_shape.size() << "), but got " << axis;
   }
 
-  if (in_shape.size() != 2) {
-    return emitOpError("Not Implemented: Only 2D input is supported");
+  if (in_shape.size() < 2) {
+    return emitOpError("Not Implemented: Only input rank > 1 is supported.");
   }
-  if (axis != 1) {
-    return emitOpError("Not Implemented: Only axis 1 is supported");
+  if (axis != in_shape.size() - 1) {
+    return emitOpError("Not Implemented: Only reduction on the last dimension "
+                       "is supported.");
   }
   if (out_shape.size() != in_shape.size() - 1) {
     return emitOpError("Output rank must be one less than input rank");

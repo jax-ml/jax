@@ -1004,16 +1004,20 @@ class VectorLayoutInferer {
   LogicalResult infer(tpu::ReduceIndexOp op) {
     auto input_ty = op.getInput().getType();
     int8_t bitwidth = input_ty.getElementTypeBitWidth();
+    int64_t input_rank = input_ty.getRank();
 
-    // TODO(yixiuliu): Support input that is not native-sized vreg.
-    TPU_CHECK_OP(bitwidth == 32, "Not implemented: Only 32-bit supported");
-    TPU_CHECK_OP(input_ty.getRank() == 2,
-                 "Not implemented: Only 2D input supported");
-    TPU_CHECK_OP(op.getAxis() == 1,
-                 "Not implemented: Only axis 1 supported");
-    TPU_CHECK_OP(input_ty.getShape()[0] == target_shape_[0] &&
-                 input_ty.getShape()[1] == target_shape_[1],
-                 "Not implemented: Only native-sized vreg input supported");
+    // TODO(yixiuliu): Support any input shapes.
+    TPU_CHECK_OP(input_ty.getElementType().isF32(),
+                 "Not implemented: Only f32 is supported.")
+    TPU_CHECK_OP(input_rank > 1,
+                 "Not implemented: Only input rank > 1 is supported.");
+    TPU_CHECK_OP(op.getAxis() == input_rank - 1,
+                 "Not implemented: Only reduction on last dimension supported");
+    TPU_CHECK_OP(
+        input_ty.getShape()[input_rank - 2] % target_shape_[0] == 0 &&
+        input_ty.getShape()[input_rank - 1] % target_shape_[1] == 0,
+        "Not implemented: The input size is not a multiple of native vreg size "
+        "on trailing dimensions.");
 
     VectorLayout in_layout(bitwidth, {0, 0}, nativeTiling(bitwidth),
                         ImplicitDim::kNone);
