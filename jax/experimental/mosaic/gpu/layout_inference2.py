@@ -713,6 +713,15 @@ if jaxlib.version >= (0, 7, 2):
     )
 
 
+@_add_equation_system_derivation_rule(mgpu.TmemAllocOp)
+def _tmem_alloc_equation_system(
+    op: mgpu.TmemAllocOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  result = OperandOrResult(op, VariableType.RESULT, 0)
+  variable = eqns.Variable(result)
+  return eqns.EquationSystem(), {variable: [result]}, []
+
+
 def _ensure_all_layouts_are_set(op: ir.OpView) -> None:
   if inference_utils.should_have_layout(op):
     _ensure_right_number_of_layouts(

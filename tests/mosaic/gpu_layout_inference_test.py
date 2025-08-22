@@ -850,6 +850,22 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     self.checkInTmemLayouts(op, [layout])
     self.checkOutTmemLayouts(op, [layout])
 
+  def test_infer_tmem_alloc_layout_correctly(self):
+    f32 = ir.F32Type.get()
+    i32 = ir.IntegerType.get_signless(32)
+    ptr_type = ir.MemRefType.get((1,), i32, memory_space=mgpu.utils.smem())
+    ref_ty = ir.MemRefType.get((128, 128), f32, memory_space=mgpu.utils.tmem())
+    layout = layouts.to_layout_attr(mgpu.TMEM_NATIVE_LAYOUT)
+
+    with ir.InsertionPoint(self.module.body):
+      ptr = llvm.mlir_undef(ptr_type)
+      op = mgpu.dialect.TmemAllocOp(ref_ty, ptr, exact=False)
+      mgpu.dialect.tmem_layout_cast(op.result, layout)
+
+    self.infer_layout(self.module)
+    self.assertNotIn("in_tmem_layouts", op.attributes)
+    self.checkOutTmemLayouts(op, [layout])
+
   def test_layout_inference_gelu_does_not_timeout(self):
     # This test is intended to make sure that the constraint-based layout
     # inference does not timeout on a Gelu kernel. This was previously the case,
