@@ -366,6 +366,39 @@ def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
   }];
 }
 
+def MosaicGPU_TmemLayoutCastOp : Op<MosaicGPU_Dialect, "tmem_layout_cast",
+    [InferTypeOpInterface]> {
+  let summary = "Casts a TMEM ref to a new TMEM layout.";
+  let arguments = (ins
+    MemRefRankOf<[AnyType], [2]>:$ref,
+
+    // Attributes
+    MosaicGPU_TiledLayout:$new_layout
+  );
+
+  let results = (outs MemRefRankOf<[AnyType], [2]>);
+
+  let extraClassDeclaration = [{
+    static llvm::LogicalResult inferReturnTypes(
+        mlir::MLIRContext *,
+        std::optional<mlir::Location> location,
+        mlir::ValueRange operands,
+        mlir::DictionaryAttr attributes,
+        mlir::OpaqueProperties properties,
+        mlir::RegionRange regions,
+        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
+      if (operands.empty()) {
+        return ::mlir::emitOptionalError(
+          location, "expected non-empty operands");
+      }
+      inferredReturnTypes.assign({operands[0].getType()});
+      return ::mlir::success();
+    }
+  }];
+
+  let hasVerifier = 1;
+}
+
 
 def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", []> {
   let summary = "Broadcasts a vector to a new shape.";

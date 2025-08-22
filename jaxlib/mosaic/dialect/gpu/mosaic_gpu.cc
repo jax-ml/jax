@@ -665,6 +665,10 @@ llvm::LogicalResult AsyncStoreTmemOp::verify() {
                            getDestination().getType());
 }
 
+llvm::LogicalResult TmemLayoutCastOp::verify() {
+  return VerifyTmemRefType(getContext(), getOperation(), getRef().getType());
+}
+
 void MosaicGPUDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST

@@ -32,9 +32,10 @@ from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax.experimental.mosaic import gpu as mgpu
-from jax.experimental.mosaic.gpu import layouts
-from jax.experimental.mosaic.gpu import utils as mgpu_utils
 from jax.experimental.mosaic.gpu import dialect_lowering as lowering
+from jax.experimental.mosaic.gpu import layouts
+from jax.experimental.mosaic.gpu import tcgen05
+from jax.experimental.mosaic.gpu import utils as mgpu_utils
 
 _cext = mgpu.dialect._cext if mgpu.dialect is not None else None
 
@@ -1158,6 +1159,26 @@ ir.MLIRError,
       )
 
     self.assertTrue(self.module.operation.verify())
+
+  def test_tmem_layout_cast_invalid_tmem_ref(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get(
+              [128, 128],
+              ir.BF16Type.get(),
+              memory_space=mgpu_utils.smem(),
+          ),
+          name="tmem_layout_cast_op",
+      )(
+          lambda tmem_ref: mgpu.dialect.tmem_layout_cast(
+              tmem_ref, layouts.to_layout_attr(tcgen05.TMEM_NATIVE_LAYOUT)
+          )
+      )
+      with self.assertRaisesRegex(
+          ir.MLIRError,
+          "The tmem memref must have a mosaic_gpu.tmem memory space",
+      ):
+        self.module.operation.verify()
 
 
 class DialectLoweringTest(MosaicGpuTest):
