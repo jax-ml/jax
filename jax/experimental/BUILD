@@ -246,9 +246,7 @@ py_library_providing_imports_info(
     name = "mosaic_gpu",
     srcs = glob(["mosaic/gpu/*.py"]),
     data = if_cuda_is_configured([
-        "@cuda_nvcc//:nvvm",
         "@local_config_cuda//cuda:runtime_nvdisasm",
-        "@local_config_cuda//cuda:runtime_ptxas",
         "@nvidia_nvshmem//:libnvshmem_device",
         # OSS-only dependency.
         "@cuda_nvcc//:nvdisasm",
