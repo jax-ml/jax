@@ -2012,10 +2012,6 @@ def _while_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   body_jaxpr = eqn.params['body_jaxpr']
   body_nconsts = eqn.params['body_nconsts']
 
-  if not any(unks_in):
-    num_outs = len(eqn.params['body_jaxpr'].out_avals)
-    return eqn, None, [False] * num_outs, [False] * num_outs, []
-
   cond_consts_uk, body_consts_uk, carry_init_uk = \
       split_list(unks_in, [cond_nconsts, body_nconsts])
 
