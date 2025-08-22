@@ -453,11 +453,11 @@ class ShardMapTest(jtu.JaxTestCase):
           jax.lax.create_token(),
           out_shape=return_dtype_and_shape,
           axis_name='x',
-          perm=[(0, 1), (1, 0)],
+          perm=[(0, 1)],
       )
       return data
 
-    expected_error_message = 'Program terminated with dangling send or recv'
+    expected_error_message = 'Expected send to match recv'
     with self.assertRaisesRegex(
         jax.errors.JaxRuntimeError, expected_error_message
     ):
@@ -498,8 +498,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return data
 
     expected_error_message = (
-        'Expected send and recv instructions to have the same source-target'
-        ' pairs'
+        'Deadlock detected. Last checked instructions: %psend'
     )
     with self.assertRaisesRegex(
         jax.errors.JaxRuntimeError, expected_error_message
