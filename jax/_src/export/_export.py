@@ -1103,6 +1103,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "tf.call_tf_function",  # From jax2tf.call_tf(func, call_tf_graph=True)
     "tpu_custom_call",  # Pallas/TPU kernels
     "mosaic_gpu_v2",  # Pallas Mosaic GPU kernels
+    "mosaic_gpu_empty",  # Pallas Mosaic GPU empty op (for allocation)
     # TODO(burmako): maintain backwards compatibility for these, until they
     # are upstreamed to StableHLO.
     # See https://github.com/openxla/stablehlo/issues/8.
