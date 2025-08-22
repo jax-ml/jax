@@ -22,6 +22,7 @@ from typing import ClassVar
 from absl.testing import parameterized
 import jax
 from jax._src import config
+from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
@@ -34,6 +35,7 @@ import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import equations as eqns
 from jax.experimental.mosaic.gpu import layout_inference2
 from jax.experimental.mosaic.gpu import layouts
+from jax.experimental.mosaic.gpu import tcgen05
 
 config.parse_flags_with_absl()
 
@@ -109,6 +111,20 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
         for l in out_layouts
     ]
     self.assertSequenceEqual(op.attributes["out_layouts"], out_layouts)
+
+  def checkInTmemLayouts(self, op, in_layouts):
+    in_layouts = [
+        layouts.to_layout_attr(l) if isinstance(l, tcgen05.TMEMLayout) else l
+        for l in in_layouts
+    ]
+    self.assertSequenceEqual(op.attributes["in_tmem_layouts"], in_layouts)
+
+  def checkOutTmemLayouts(self, op, out_layouts):
+    out_layouts = [
+        layouts.to_layout_attr(l) if isinstance(l, tcgen05.TMEMLayout) else l
+        for l in out_layouts
+    ]
+    self.assertSequenceEqual(op.attributes["out_tmem_layouts"], out_layouts)
 
   def test_infer_strided_layout_default(self):
     with ir.InsertionPoint(self.module.body):
@@ -622,8 +638,8 @@ RL = eqns.RegisterLayout
 def _undef_equation_system(
     op: llvm.UndefOp,
 ) -> tuple[eqns.EquationSystem, layout_inference2.OperandOrResultsForVariable, list[layout_inference2.Hint]]:
-  # This rule is only called if the single output of the undef op is a vector,
-  # so we can just return a trivial mapping.
+  # This rule is only called if the single output of the undef op is a vector or
+  # TMEM reference, so we can just return a trivial mapping.
   result = layout_inference2.OperandOrResult(
       op, layout_inference2.VariableType.RESULT, 0
   )
@@ -817,37 +833,22 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     ):
       self.infer_layout(self.module)
 
-  def test_tmem_layout_inference_not_implemented(self):
+  def test_infer_tmem_layout_cast_correctly(self):
+    # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.2.
+    if jaxlib.version < (0, 7, 2):
+      self.skipTest("Only works with jaxlib 0.7.2 or higher.")
+
     f32 = ir.F32Type.get()
-    i32 = ir.IntegerType.get_signless(32)
-    ptr_type = ir.MemRefType.get((1,), i32, memory_space=mgpu.utils.smem())
     ref_ty = ir.MemRefType.get((128, 128), f32, memory_space=mgpu.utils.tmem())
+    layout = layouts.to_layout_attr(mgpu.TMEM_NATIVE_LAYOUT)
 
     with ir.InsertionPoint(self.module.body):
-      ptr = llvm.mlir_undef(ptr_type)
-      mgpu.dialect.tmem_alloc(ref_ty, ptr, exact=False)
+      ref = llvm.mlir_undef(ref_ty)
+      op = mgpu.dialect.TmemLayoutCastOp(ref, layout)
 
-    with self.assertRaisesRegex(
-        ValueError,
-        "Expected the same number of out_tmem_layouts as TMEM ref results.",
-    ):
-      self.infer_layout(self.module)
-
-  # TODO(allanrenucci): Delete this test once layout inference is implemented.
-  def test_manual_tmem_layout_annotation(self):
-    f32 = ir.F32Type.get()
-    i32 = ir.IntegerType.get_signless(32)
-    ptr_type = ir.MemRefType.get((1,), i32, memory_space=mgpu.utils.smem())
-    ref_ty = ir.MemRefType.get((128, 128), f32, memory_space=mgpu.utils.tmem())
-
-    with ir.InsertionPoint(self.module.body):
-      ptr = llvm.mlir_undef(ptr_type)
-      op = mgpu.dialect.TmemAllocOp(ref_ty, ptr, exact=False)
-      op.attributes["out_tmem_layouts"] = ir.ArrayAttr.get(
-          [layouts.to_layout_attr(mgpu.TMEM_NATIVE_LAYOUT)]
-      )
-    # This should not raise.
     self.infer_layout(self.module)
+    self.checkInTmemLayouts(op, [layout])
+    self.checkOutTmemLayouts(op, [layout])
 
   def test_layout_inference_gelu_does_not_timeout(self):
     # This test is intended to make sure that the constraint-based layout

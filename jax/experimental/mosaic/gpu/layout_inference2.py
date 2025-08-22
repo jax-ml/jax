@@ -22,6 +22,7 @@ import enum
 import itertools
 from typing import assert_never, cast
 
+from jax._src import lib as jaxlib
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -34,6 +35,7 @@ from . import equations as eqns
 from . import fragmented_array as fa
 from . import inference_utils
 from . import layouts as layouts_lib
+from . import tcgen05
 from . import utils
 
 
@@ -685,6 +687,32 @@ def _shape_cast_equation_system(
   )
 
 
+def _tmem_layout_from_layout_attr(
+    layout_attr: mgpu.TiledLayout,
+) -> tcgen05.TMEMLayout:
+  layout = layouts_lib.from_layout_attr(layout_attr)
+  assert isinstance(layout, fa.TiledLayout)
+  return tcgen05.TMEMLayout(
+      layout.tiling, layout.warp_dims, layout.lane_dims, layout.vector_dim
+  )
+
+
+if jaxlib.version >= (0, 7, 2):
+  @_add_equation_system_derivation_rule(mgpu.TmemLayoutCastOp)
+  def _tmem_layout_cast_equation_system(
+      op: mgpu.TmemLayoutCastOp,
+  ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+    operand = OperandOrResult(op, VariableType.OPERAND, 0)
+    result = OperandOrResult(op, VariableType.RESULT, 0)
+    variable = eqns.Variable(operand)
+    out_layout = eqns.TMEMLayout(_tmem_layout_from_layout_attr(op.new_layout))
+    return (
+        eqns.EquationSystem(assignments={variable: out_layout}),
+        {variable: [operand, result]},
+        [],
+    )
+
+
 def _ensure_all_layouts_are_set(op: ir.OpView) -> None:
   if inference_utils.should_have_layout(op):
     _ensure_right_number_of_layouts(
@@ -777,14 +805,26 @@ def assign_layouts(
     out_layouts = [
         ce.value for ce in out_cs if isinstance(ce, eqns.RegisterLayout)
     ]
-
+    in_tmem_layouts = [
+        ce.value for ce in in_cs if isinstance(ce, eqns.TMEMLayout)
+    ]
+    out_tmem_layouts = [
+        ce.value for ce in out_cs if isinstance(ce, eqns.TMEMLayout)
+    ]
     _ensure_right_number_of_layouts(op, in_layouts, out_layouts)
-    in_layouts_attrs = [layouts_lib.to_layout_attr(l) for l in in_layouts]
-    out_layouts_attrs = [layouts_lib.to_layout_attr(l) for l in out_layouts]
+    _ensure_right_number_of_tmem_layouts(op, in_tmem_layouts, out_tmem_layouts)
     if inference_utils.should_have_in_layout(op):
-      op.attributes["in_layouts"] = ir.ArrayAttr.get(in_layouts_attrs)
+      attrs = [layouts_lib.to_layout_attr(l) for l in in_layouts]
+      op.attributes["in_layouts"] = ir.ArrayAttr.get(attrs)
     if inference_utils.should_have_out_layout(op):
-      op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts_attrs)
+      attrs = [layouts_lib.to_layout_attr(l) for l in out_layouts]
+      op.attributes["out_layouts"] = ir.ArrayAttr.get(attrs)
+    if inference_utils.should_have_in_tmem_layout(op):
+      attrs = [layouts_lib.to_layout_attr(l) for l in in_tmem_layouts]
+      op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get(attrs)
+    if inference_utils.should_have_out_tmem_layout(op):
+      attrs = [layouts_lib.to_layout_attr(l) for l in out_tmem_layouts]
+      op.attributes["out_tmem_layouts"] = ir.ArrayAttr.get(attrs)
 
 
 def operands_and_results(op: ir.OpView) -> list[OperandOrResult]:
@@ -927,11 +967,16 @@ def infer_layout(module: ir.Module):
     # This is because they need to be in sync with their parent op's inputs and
     # outputs---and the parent op's equations therefore need to take them them
     # into account.
-    if not inference_utils.should_have_layout(op) or is_terminator(op):
+    if is_terminator(op):
       return
-    elif rule := _equation_system_derivation_rules.get(op.OPERATION_NAME, None):  # pytype: disable=attribute-error
-      pass
-    else:
+    should_have_layout = (
+        inference_utils.should_have_layout(op)
+        or inference_utils.should_have_tmem_layout(op)
+    )
+    if not should_have_layout:
+      return
+    rule = _equation_system_derivation_rules.get(op.OPERATION_NAME, None)  # pytype: disable=attribute-error
+    if rule is None:
       raise NotImplementedError(f"No layout inference rule defined for {op}")
     equation_system, mapping, op_hints = rule(op)
     operand_and_results_for_variable.update(mapping)
