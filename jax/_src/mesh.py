@@ -396,6 +396,8 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
     return set(self.devices.flat)
 
   def __str__(self):
+    if self.empty:
+      return "Mesh()"
     mesh_str = ", ".join(f"'{k}': {v}" for k, v in self.shape.items())
     atr = f", axis_types={self.axis_types}"
     return f"Mesh({mesh_str}{atr})"
