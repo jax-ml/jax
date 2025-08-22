@@ -1,6 +1,5 @@
 ---
 jupytext:
-  default_lexer: ipython3
   formats: ipynb,md:myst
   text_representation:
     extension: .md
