@@ -2253,38 +2253,70 @@ def _while_typecheck(_, *in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
         f'Effects not supported in `while`: {disallowed_effects}')
   return body_jaxpr.out_avals, joined_effects
 
-def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
-                          cond_nconsts, body_nconsts):
-  # TODO(sharadmv): enable supporting state effects in the cond
-  if any(isinstance(eff, state.RefEffect) for eff in cond_jaxpr.effects):
-    raise NotImplementedError
+def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
+    cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts):
+  del out_avals
   cond_consts_discharge, body_consts_discharge, carry_discharge = split_list(
       should_discharge, [cond_nconsts, body_nconsts])
-
-  if any(cond_consts_discharge):
-    raise NotImplementedError
   cond_consts, body_consts, carry = split_list(args, [cond_nconsts, body_nconsts])
   cond_consts_avals, body_consts_avals, carry_avals = split_list(in_avals,
                                                                  [cond_nconsts,
                                                                   body_nconsts])
-  # There shouldn't be any `Ref`s in the `cond` (because of our check above).
-  assert not any(isinstance(aval, state.AbstractRef) for aval in cond_consts_avals)
-  is_ref = [
+
+  # Check if the same Ref is written to in both cond and body.
+  cond_write_ids = {id(cond_consts_avals[effect.input_index])
+    for effect in cond_jaxpr.effects if isinstance(effect, state.WriteEffect)}
+  cond_has_writes = len(cond_write_ids) > 0
+  body_write_ids = {id(body_consts_avals[effect.input_index])
+    for effect in body_jaxpr.effects if isinstance(effect, state.WriteEffect)}
+  write_to_both_ids = cond_write_ids & body_write_ids
+  if write_to_both_ids:
+    raise NotImplementedError(
+        "Cannot write to the same ref in both cond and body of while loop.")
+
+  cond_is_ref = [
+      isinstance(aval, state.AbstractRef) and should
+      for aval, should in zip(cond_consts_avals, cond_consts_discharge)
+  ]
+  remaining_cond_consts, cond_refs = partition_list(cond_is_ref, cond_consts)
+  remaining_cond_const_avals, cond_ref_avals = partition_list(cond_is_ref,
+                                                         cond_consts_avals)
+  num_cond_refs = sum(cond_is_ref)
+  num_remaining_cond_consts = cond_nconsts - num_cond_refs
+  body_is_ref = [
       isinstance(aval, state.AbstractRef) and should
       for aval, should in zip(body_consts_avals, body_consts_discharge)
   ]
-  remaining_body_consts, refs = partition_list(is_ref, body_consts)
-  remaining_body_const_avals, ref_avals = partition_list(is_ref,
+  remaining_body_consts, body_refs = partition_list(body_is_ref, body_consts)
+  remaining_body_const_avals, body_ref_avals = partition_list(body_is_ref,
                                                          body_consts_avals)
-  num_refs = sum(is_ref)
-  num_remaining_consts = body_nconsts - num_refs
+  num_body_refs = sum(body_is_ref)
+  num_remaining_body_consts = body_nconsts - num_body_refs
+  num_out_body_consts = num_remaining_body_consts
+  if cond_has_writes:
+    # If the cond has writes, we need to add the cond consts into the body
+    # consts since we need to evaluate the cond condition in the body.
+    remaining_body_consts = [*remaining_cond_consts, *remaining_body_consts]
+    remaining_body_const_avals = [*remaining_cond_const_avals,
+                                  *remaining_body_const_avals]
+    num_remaining_body_consts += num_remaining_cond_consts
+
   num_carry = len(in_avals) - body_nconsts - cond_nconsts
   body_jaxpr, body_jaxpr_consts = body_jaxpr.jaxpr, body_jaxpr.consts
-  cond_jaxpr, cond_jaxpr_consts = cond_jaxpr.jaxpr, cond_jaxpr.consts
   if body_jaxpr_consts:
     raise NotImplementedError("Body jaxpr has consts. If you see this error, "
                               "please open an issue at "
                               "https://github.com/jax-ml/jax/issues")
+  cond_jaxpr, cond_jaxpr_consts = cond_jaxpr.jaxpr, cond_jaxpr.consts
+  if cond_jaxpr_consts:
+    raise NotImplementedError("Cond jaxpr has consts. If you see this error, "
+                              "please open an issue at "
+                              "https://github.com/jax-ml/jax/issues")
+  (discharged_cond_jaxpr, discharged_cond_consts
+   ) = state_discharge.discharge_state(
+      cond_jaxpr, (),
+      should_discharge=[*cond_consts_discharge, *carry_discharge])
+  if discharged_cond_consts: raise NotImplementedError
   # body_jaxpr has the signature (*body_consts, *carry) -> carry.
   # Some of these body_consts are actually `Ref`s so when we discharge
   # them, they also turn into outputs, effectively turning those consts into
@@ -2296,16 +2328,38 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args, 
   if discharged_consts: raise NotImplementedError
 
   def new_body(*consts_refs_carry):
-    consts, refs, carry = split_list(
-        consts_refs_carry, [num_remaining_consts, num_refs])
-    consts_and_refs = merge_lists(is_ref, consts, refs)
-    carry_refs = core.eval_jaxpr(discharged_body_jaxpr, (), *consts_and_refs,
+    consts, body_refs, cond_refs, carry = split_list(
+        consts_refs_carry,
+        [num_remaining_body_consts, num_body_refs, num_cond_refs])
+    if cond_has_writes:
+      # We run the cond jaxpr in the body so that Refs that are updated
+      # in the cond jaxpr are persisted via the carry.
+      cond_consts, body_consts = split_list(consts, [num_remaining_cond_consts])
+      cond_consts_and_refs = merge_lists(cond_is_ref, cond_consts, cond_refs)
+      cond_carry_refs = core.eval_jaxpr(discharged_cond_jaxpr, (),
+                                  *cond_consts_and_refs,
+                                  *carry)
+      # Note: in order to handle the same Ref being updated in both the cond
+      # and body, we would need to interleave the updated cond_carry_refs into
+      # body_refs here.
+      # Currently we disallow this so we don't need to handle it.
+      _, cond_refs_out = split_list(cond_carry_refs, [1])
+      assert len(cond_refs_out) == len(cond_refs)
+    else:
+      body_consts = consts
+      cond_refs_out = cond_refs
+
+    body_consts_and_refs = merge_lists(body_is_ref, body_consts, body_refs)
+    body_carry_refs = core.eval_jaxpr(discharged_body_jaxpr, (),
+                                 *body_consts_and_refs,
                                  *carry)
-    carry, refs_out = split_list(carry_refs, [num_carry])
-    return [*refs_out, *carry]
+    carry, body_refs_out = split_list(body_carry_refs, [num_carry])
+    return [*body_refs_out, *cond_refs_out, *carry]
   new_body_jaxpr, _, new_body_consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(new_body, debug_info=discharged_body_jaxpr.debug_info),
-      [*remaining_body_const_avals, *[a.inner_aval for a in ref_avals],
+      [*remaining_body_const_avals,
+       *[a.inner_aval for a in body_ref_avals],
+       *[a.inner_aval for a in cond_ref_avals],
       *carry_avals])
   if new_body_consts: raise NotImplementedError
 
@@ -2313,25 +2367,41 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args, 
   # deal with them (i.e. ignore them) in the `cond`, so we need to rewrite the
   # cond_jaxpr as well.
   def new_cond(*consts_refs_carry):
-    consts, refs, carry = split_list(
-        consts_refs_carry, [cond_nconsts, num_refs])
-    del refs  # We don't use them here!
-    return core.eval_jaxpr(cond_jaxpr, cond_jaxpr_consts, *consts, *carry)
+    consts, body_refs, cond_refs, carry = split_list(
+        consts_refs_carry, [num_remaining_cond_consts, num_body_refs, num_cond_refs])
+    # We don't use them here!
+    del body_refs
+    cond_consts_and_refs = merge_lists(cond_is_ref, consts, cond_refs)
+    results = core.eval_jaxpr(
+        discharged_cond_jaxpr, (), *cond_consts_and_refs, *carry)
+    predicate, refs_out = split_list(results, [1])
+    assert len(refs_out) == len(cond_refs)
+    return predicate
+
   new_cond_jaxpr, _, new_cond_consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(new_cond, debug_info=cond_jaxpr.debug_info),
-      [*cond_consts_avals, *[a.inner_aval for a in ref_avals], *carry_avals])
+      [*remaining_cond_const_avals,
+       *[a.inner_aval for a in body_ref_avals],
+       *[a.inner_aval for a in cond_ref_avals],
+       *carry_avals])
   if new_cond_consts: raise NotImplementedError
 
-  out = while_p.bind(*cond_consts, *remaining_body_consts, *refs, *carry,
+  out = while_p.bind(*remaining_cond_consts, *remaining_body_consts,
+                     *body_refs, *cond_refs, *carry,
                      body_jaxpr=ClosedJaxpr(new_body_jaxpr, ()),
                      cond_jaxpr=ClosedJaxpr(new_cond_jaxpr, ()),
-                     body_nconsts=num_remaining_consts,
-                     cond_nconsts=cond_nconsts)
-  refs_out, carry_out = split_list(out, [num_refs])
-  updated_body_consts = merge_lists(is_ref, [None] * num_remaining_consts,
-                                    refs_out)
+                     body_nconsts=num_remaining_body_consts,
+                     cond_nconsts=num_remaining_cond_consts)
+  body_refs_out, cond_refs_out, carry_out = split_list(
+      out, [num_body_refs, num_cond_refs])
+  updated_cond_consts = merge_lists(cond_is_ref,
+                                    [None] * num_remaining_cond_consts,
+                                    cond_refs_out)
+  updated_body_consts = merge_lists(body_is_ref,
+                                    [None] * num_out_body_consts,
+                                    body_refs_out)
   invals_out = [
-      *[None] * cond_nconsts,
+      *updated_cond_consts,
       *updated_body_consts,
       *[None] * num_carry]
   return invals_out, carry_out
