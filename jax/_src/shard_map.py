@@ -220,6 +220,7 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
     fun = lu.wrap_init(
         f, debug_info=api_util.debug_info("shard_map", f, args, {}))
     args_flat, in_tree = tree_flatten(args)
+    fun, out_specs_thunk = _broadcast_out_specs(fun, out_specs, axis_names)
     fun, out_tree = api_util.flatten_fun_nokwargs(fun, in_tree)
 
     try:
@@ -240,21 +241,6 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
     fun, args_flat = api_util.argnums_partial(fun, dyn_argnums, args_flat, False)
     _check_specs_vs_args(f, mesh, in_tree, in_specs, dyn_argnums, in_specs_flat,
                          args_flat)
-
-    @memoize
-    def out_specs_thunk():
-      if callable(out_specs):
-        out_specs_ = out_specs()
-        _check_specs(SpecErrorType.out, out_specs_, axis_names)
-      else:
-        out_specs_ = out_specs
-      dummy = tree_unflatten(out_tree(), [object()] * out_tree().num_leaves)
-      try:
-        out_specs_flat = broadcast_prefix(out_specs_, dummy)
-      except ValueError:
-        e, *_ = prefix_errors(out_specs_, dummy)
-        raise e('shard_map out_specs') from None
-      return tuple(out_specs_flat)
 
     if check_vma:
       fun = _implicit_pvary_on_output(fun, out_specs_thunk)
@@ -280,6 +266,26 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
         raise ValueError(msg) from None
     return tree_unflatten(out_tree(), out_flat)
   return wrapped
+
+
+@lu.transformation_with_aux2
+def _broadcast_out_specs(_fun, _store, out_specs, axis_names, *args, **kwargs):
+  ans = _fun(*args, **kwargs)
+
+  if callable(out_specs):
+    out_specs_ = out_specs()
+    _check_specs(SpecErrorType.out, out_specs_, axis_names)
+  else:
+    out_specs_ = out_specs
+
+  try:
+    out_specs_flat = broadcast_prefix(out_specs_, ans)
+  except ValueError:
+    e, *_ = prefix_errors(out_specs_, ans)
+    raise e('shard_map out_specs') from None
+
+  _store.store(tuple(out_specs_flat))
+  return ans
 
 
 def _axes_to_pspec(axis_name, axis):
