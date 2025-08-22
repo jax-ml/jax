@@ -3047,7 +3047,7 @@ def _semaphore_signal_parallel_abstract_eval(*avals, args_tree):
       for aval in device_id_flat_avals:
         if aval.dtype != jnp.dtype("int32"):
           raise ValueError("`device_id`s must be int32 values.")
-      effs.add(pallas_primitives._comms_effect)
+      effs.add(pallas_core.comms_effect)
   return [], effs
 
 
