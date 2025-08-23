@@ -18,6 +18,8 @@
 from jax._src.lax.lax import (
   DotDimensionNumbers as DotDimensionNumbers,
   RaggedDotDimensionNumbers as RaggedDotDimensionNumbers,
+  AccuracyMode as AccuracyMode,
+  Tolerance as Tolerance,
   Precision as Precision,
   PrecisionLike as PrecisionLike,
   DotAlgorithm as DotAlgorithm,

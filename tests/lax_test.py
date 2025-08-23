@@ -135,6 +135,25 @@ class LaxTest(jtu.JaxTestCase):
       tol = jtu.join_tolerance(tol, 2e-15)
     self._CheckAgainstNumpy(numpy_op, op, args_maker, tol=tol)
 
+  @parameterized.parameters(["logistic", "tanh"])
+  def testEvenFunctionGrads(self, op_name):
+    op = getattr(lax, op_name)
+    x = jnp.arange(0.0, 80.0, 1.0, dtype=jnp.float32)
+    high_acc_op = lambda x: op(x, accuracy=lax.AccuracyMode.HIGHEST)
+    grads = jax.vmap(jax.grad(high_acc_op))(x)
+    neg_grads = jax.vmap(jax.grad(high_acc_op))(-x)
+    self.assertAllClose(
+        grads, neg_grads, atol=jtu.default_tolerance()[np.dtype(np.float32)], rtol=0.0
+    )
+
+  def testExpm1Grad(self):
+    x = jnp.arange(-80.0, 80.0, 1.0, dtype=jnp.float32)
+    expected = jax.vmap(jax.grad(lambda x: lax.exp(x, accuracy=lax.AccuracyMode.HIGHEST)))(x)
+    actual = jax.vmap(jax.grad(lambda x: lax.expm1(x, accuracy=lax.AccuracyMode.HIGHEST)))(x)
+    self.assertAllClose(
+        actual, expected, atol=jtu.default_tolerance()[np.dtype(np.float32)], rtol=0.0
+    )
+
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
 
   @jtu.sample_product(
@@ -1990,7 +2009,6 @@ class LaxTest(jtu.JaxTestCase):
 
     self._CompileAndCheck(lax_fun, args_maker)
     self._CheckAgainstNumpy(reference_fun, lax_fun, args_maker)
-
 
   @jtu.sample_product(
     op=["add", "mul"],

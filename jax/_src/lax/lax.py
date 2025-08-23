@@ -4202,7 +4202,14 @@ mlir.register_lowering(log_p, partial(_nary_lower_hlo, hlo.log))
 core.pp_eqn_rules[log_p] = _unary_with_accuracy_pp_rule
 
 expm1_p = standard_unop(_float | _complex, 'expm1')
-ad.defjvp2(expm1_p, lambda g, ans, x, **kwargs: mul(g, add(ans, _one(ans))))
+ad.defjvp2(
+    expm1_p,
+    lambda g, ans, x, accuracy: (
+        mul(g, exp(x, accuracy=accuracy))
+        if accuracy is AccuracyMode.HIGHEST
+        else mul(g, add(ans, _one(ans)))
+    ),
+)
 mlir.register_lowering(expm1_p,
                        partial(_nary_lower_hlo, hlo.exponential_minus_one))
 core.pp_eqn_rules[expm1_p] = _unary_with_accuracy_pp_rule
@@ -4215,7 +4222,14 @@ core.pp_eqn_rules[log1p_p] = _unary_with_accuracy_pp_rule
 tanh_p = standard_unop(_float | _complex, 'tanh')
 ad.defjvp2(
     tanh_p,
-    lambda g, ans, x, **kwargs: mul(add(g, mul(g, ans)), sub(_one(x), ans)),
+    lambda g, ans, x, accuracy: mul(g,
+        mul(_const(x, 4),
+            mul(logistic(mul(_const(x, 2), x), accuracy=accuracy),
+                logistic(mul(_const(x, -2), x), accuracy=accuracy)),
+        ),
+    )
+    if accuracy is AccuracyMode.HIGHEST
+    else mul(add(g, mul(g, ans)), sub(_one(x), ans)),
 )
 mlir.register_lowering(tanh_p, partial(_nary_lower_hlo, hlo.tanh))
 core.pp_eqn_rules[tanh_p] = _unary_with_accuracy_pp_rule
@@ -4223,12 +4237,15 @@ core.pp_eqn_rules[tanh_p] = _unary_with_accuracy_pp_rule
 logistic_p = standard_unop(_float | _complex, 'logistic')
 ad.defjvp2(
     logistic_p,
-    lambda g, ans, x, **kwargs: mul(g, mul(ans, sub(_one(ans), ans))),
+    lambda g, ans, x, accuracy: mul(g, mul(ans, logistic(neg(x))))
+    if accuracy is AccuracyMode.HIGHEST
+    else mul(g, mul(ans, sub(_one(ans), ans))),
 )
 # TODO(phawkins): switch to LogisticOp lowering; debug numerical problems.
 # mlir.register_lowering(logistic_p, partial(_nary_lower_hlo, hlo.logistic))
 
 def logistic_impl(x, accuracy):
+  del accuracy
   one = _const(x, 1)
   return div(one, add(one, exp(neg(x))))
 
