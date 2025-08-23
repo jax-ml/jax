@@ -1834,7 +1834,7 @@ def _masked_swap_lowering_rule(
       raise NotImplementedError("masked swap with strided store")
     tpu.strided_store(val, ref, starts, strides)
   else:
-    tpu.vector_store(val, ref, starts, [], mask=mask)
+    tpu.vector_store(val, ref, starts, mask=mask)
   return result
 
 
