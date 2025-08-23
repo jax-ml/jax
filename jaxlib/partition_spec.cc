@@ -68,6 +68,17 @@ nb::object CanonicalizePartition(nb::object unconstrained_singleton,
   }
   bool is_tuple = nb::isinstance<nb::tuple>(partition);
   if (is_tuple || nb::isinstance<nb::list>(partition)) {
+    for (nb::handle p : partition) {
+      if (nb::isinstance<nb::tuple>(p) || nb::isinstance<nb::list>(p)) {
+        throw nb::value_error(
+            absl::StrFormat(
+                "A tuple inside PartitionSpec cannot contain a "
+                "nested tuple. Got partition: %s and the nested tuple: %s",
+                nb::cast<std::string>(nb::str(partition)),
+                nb::cast<std::string>(nb::str(p)))
+                .c_str());
+      }
+    }
     if (nb::len(partition) == 1) {
       return partition[0];
     }
