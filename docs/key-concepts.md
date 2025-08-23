@@ -76,70 +76,7 @@ by the function before those operations are actually executed: transformations l
 {func}`~jax.jit`, {func}`~jax.vmap`, and {func}`~jax.grad` can then map this sequence
 of input operations to a transformed sequence of operations.
 
-### Static vs traced operations
-
-Just as values can be either static or traced, operations can be static or traced.
-Static operations are evaluated at compile-time in Python; traced operations are
-compiled & evaluated at run-time in XLA.
-
-This distinction between static and traced values makes it important to think about
-how to keep a static value static. Consider this function:
-
-```{code-cell}
-:tags: [raises-exception]
-
-import jax.numpy as jnp
-from jax import jit
-
-@jit
-def f(x):
-  return x.reshape(jnp.array(x.shape).prod())
-
-x = jnp.ones((2, 3))
-f(x)
-```
-
-This fails with an error specifying that a tracer was found instead of a 1D sequence
-of concrete values of integer type. Let's add some print statements to the function
-to understand why this is happening:
-
-```{code-cell}
-@jit
-def f(x):
-  print(f"x = {x}")
-  print(f"x.shape = {x.shape}")
-  print(f"jnp.array(x.shape).prod() = {jnp.array(x.shape).prod()}")
-  # comment this out to avoid the error:
-  # return x.reshape(jnp.array(x.shape).prod())
-
-f(x)
-```
-
-Notice that although `x` is traced, `x.shape` is a static value. However, when we
-use `jnp.array` and `jnp.prod` on this static value, it becomes a traced value, at
-which point it cannot be used in a function like `reshape()` that requires a static
-input (recall: array shapes must be static).
-
-A useful pattern is to use `numpy` for operations that should be static (i.e. done
-at compile-time), and use `jax.numpy` for operations that should be traced (i.e.
-compiled and executed at run-time). For this function, it might look like this:
-
-```{code-cell}
-from jax import jit
-import jax.numpy as jnp
-import numpy as np
-
-@jit
-def f(x):
-  return x.reshape((np.prod(x.shape),))
-
-f(x)
-```
-
-For this reason, a standard convention in JAX programs is to `import numpy as np`
-and `import jax.numpy as jnp` so that both interfaces are available for finer
-control over whether operations are performed in a static manner (with `numpy`,
-once at compile-time) or a traced manner (with `jax.numpy`, optimized at run-time).
+For more details, see [Tracing](tracing-tutorial).
 
 (key-concepts-jaxprs)=
 ## Jaxprs

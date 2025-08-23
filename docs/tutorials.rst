@@ -10,6 +10,7 @@ Tutorials
    automatic-vectorization
    automatic-differentiation
    debugging
+   tracing
    random-numbers
    working-with-pytrees
    sharded-computation
