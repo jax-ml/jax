@@ -47,7 +47,7 @@ from jax._src.interpreters import pxla
 from jax._src.lax import lax
 from jax._src.traceback_util import api_boundary
 from jax._src.typing import ArrayLike
-from jax._src.util import safe_map, split_list, partition_list, unzip2
+from jax._src.util import safe_map, safe_zip, split_list, partition_list, unzip2
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 import numpy as np
@@ -57,6 +57,7 @@ from jax._src.lax.control_flow.common import (
     _make_closed_jaxpr, _prune_zeros)
 
 map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
 
 
 # For backward compatibility with a previous switch/cond calling convention,
@@ -915,7 +916,8 @@ def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
   in_avals = tuple(core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd  # type: ignore
                    else a for x in in_flat)
   trans_branches, out_trees = unzip2(
-      _transpose_jaxpr_fancy(j, in_tree, in_avals, specs) for j in branches)
+      _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, (False,) * len(args))
+      for j in branches)
   out_nzs = [[not isinstance(x, ad.Zero) for x in tree_unflatten(t, j.out_avals)]
              for t, j in zip(out_trees, trans_branches)]
   out_nz = tuple(map(partial(functools.reduce, operator.or_), zip(*out_nzs)))
@@ -927,9 +929,8 @@ def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
     if isinstance(x, ad.ValAccum): x.accum(ct)
 
 @util.weakref_lru_cache
-def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out=None):
+def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out):
   cell = lambda: None
-  inst_out = inst_out or [False] * len(in_avals)
   maybe_inst = lambda x, inst: ad.instantiate_zeros(x) if inst else x
   def transposed(*in_flat):
     primals_ctrefs, cts_in = tree_unflatten(in_tree, in_flat)

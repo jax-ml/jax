@@ -1592,6 +1592,12 @@ mutable_array_checks = bool_state(
     upgrade=True,
     help='Enable error checks for mutable arrays that rule out aliasing.')
 
+vjp3 = bool_state(
+    name='jax_vjp3',
+    default=False,
+    upgrade=True,
+    help='Use new backward-pass code in jax.vjp')
+
 xla_runtime_errors = bool_state(
     name='jax_experimental_unsafe_xla_runtime_errors',
     default=False,

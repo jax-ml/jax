@@ -6070,7 +6070,10 @@ class RematTest(jtu.JaxTestCase):
       return lax.scan(body, x, None, length=2)[0]
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
-    jaxpr_text = str(f_vjp.args[0].func.args[1])
+    if config.vjp3.value:
+      jaxpr_text = str(f_vjp.fun.args[2])
+    else:
+      jaxpr_text = str(f_vjp.args[0].func.args[1])
 
     # Two sine calls in the backward pass because while we don't save sines
     # within the (rematted) body function, we can save the scan carry, which
@@ -6436,7 +6439,10 @@ class RematTest(jtu.JaxTestCase):
       return lax.scan(body, x, None, length=2)[0]
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
-    jaxpr = f_vjp.args[0].func.args[1]
+    if config.vjp3.value:
+      jaxpr = f_vjp.fun.args[2]
+    else:
+      jaxpr = f_vjp.args[0].func.args[1]
     jaxpr_text = str(jaxpr)
 
     self.assertEqual(jaxpr_text.count(' sin '), 3)
@@ -6635,7 +6641,10 @@ class RematTest(jtu.JaxTestCase):
       return lax.cond(x.sum() > 0, f, lambda x: x, x)
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
-    jaxpr_text = str(f_vjp.args[0].func.args[1])
+    if config.vjp3.value:
+      jaxpr_text = str(f_vjp.fun.args[2])
+    else:
+      jaxpr_text = str(f_vjp.args[0].func.args[1])
 
     self.assertEqual(jaxpr_text.count(' sin '), 2)
     self.assertEqual(jaxpr_text.count(' cos '), 3)
@@ -6665,7 +6674,10 @@ class RematTest(jtu.JaxTestCase):
       return lax.cond(x.sum() > 0, f, lambda x: x, x)
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
-    jaxpr = f_vjp.args[0].func.args[1]
+    if config.vjp3.value:
+      jaxpr = f_vjp.fun.args[2]
+    else:
+      jaxpr = f_vjp.args[0].func.args[1]
     jaxpr_text = str(jaxpr)
 
     self.assertEqual(jaxpr_text.count(' sin '), 2)

@@ -2084,6 +2084,7 @@ def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
         has_aux: Literal[True],
         reduce_axes: Sequence[AxisName] = ()) -> tuple[T, Callable, U]:
   ...
+
 @api_boundary
 def vjp(
     fun: Callable, *primals, has_aux: bool = False, reduce_axes=()
@@ -2131,9 +2132,12 @@ def vjp(
     raise NotImplementedError("reduce_axes argument to vjp is deprecated")
   del reduce_axes
   check_callable(fun)
-  wrapped_fun = lu.wrap_init(
-      fun, debug_info=debug_info("vjp", fun, primals, {}))
-  return _vjp(wrapped_fun, *primals, has_aux=has_aux)
+  if config.vjp3.value:
+    return vjp3(fun, *primals, has_aux=has_aux)
+  else:
+    wrapped_fun = lu.wrap_init(
+        fun, debug_info=debug_info("vjp", fun, primals, {}))
+    return _vjp(wrapped_fun, *primals, has_aux=has_aux)
 
 def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
   """Variant of vjp() that takes an lu.WrappedFun."""
@@ -2236,7 +2240,7 @@ si_vjp = saved_input_vjp
 
 
 def vjp3(f, *primals, has_aux=False):
-  dbg = debug_info("vjp3", f, primals, {})
+  dbg = debug_info("vjp", f, primals, {})
   fun = lu.wrap_init(f, debug_info=dbg)
   primals_flat, in_tree = tree_flatten(primals)
   if not has_aux:
@@ -2322,6 +2326,10 @@ class VJP:
   def with_refs(self, *maybe_ct_refs):
     return self.fun(self.in_tree, self.out_tree, self.args_res,
                     self.opaque_residuals, *maybe_ct_refs)
+
+  # Only safe to put these in cache keys if residuals aren't mutated. Beware!
+  __hash__ = object.__hash__
+  __eq__ = object.__eq__
 
 register_pytree_node(
     VJP,
