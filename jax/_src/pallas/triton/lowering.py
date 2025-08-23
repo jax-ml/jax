@@ -17,12 +17,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from collections.abc import Hashable
 import dataclasses
 import functools
 import math
 import operator
 from typing import Any, TypeVar
-from collections.abc import Hashable
 
 import jax
 from jax import lax
@@ -33,6 +33,7 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
+from jax._src import debugging
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import source_info_util
@@ -1326,16 +1327,29 @@ for prim, fn in _JAX_TO_TRITON_SIGNED_BINARY.items():
   triton_lowering_rules[prim] = signed_rule
 
 
-@register_lowering(primitives.debug_print_p)
+@register_lowering(debugging.debug_print_p)
 def debug_print_lowering_rule(
     ctx: LoweringRuleContext,
     *args: ir.Value,
     fmt: str,
-    has_placeholders: bool,
+    ordered,
+    partitioned,
+    in_tree,
+    static_args,
+    np_printoptions,
+    has_placeholders,
 ):
+  del partitioned, np_printoptions
+  if ordered:
+    raise NotImplementedError("Ordered debug_print is not supported on Pallas.")
   if has_placeholders:
     raise ValueError(
         "pl.debug_print() does not support placeholders when lowering to Triton"
+    )
+  args, kwargs = debugging.merge_callback_args(in_tree, args, static_args)
+  if kwargs:
+    raise ValueError(
+        "Only positional arguments are supported by debug_print on Pallas."
     )
 
   tt_dialect.print_(

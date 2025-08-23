@@ -31,6 +31,7 @@ from jax import api_util
 from jax import lax
 from jax._src import checkify
 from jax._src import core as jax_core
+from jax._src import debugging
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
@@ -2439,16 +2440,32 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
         _block_id(ctx, gpu_dialect.Dimension(idx)),
     )
 
-@register_lowering_rule(primitives.debug_print_p, mgpu.LoweringSemantics.Lane)
-@register_lowering_rule(primitives.debug_print_p, mgpu.LoweringSemantics.Lane,
-                        gpu_core.PrimitiveSemantics.Warp)
+
+@register_lowering_rule(debugging.debug_print_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(
+    debugging.debug_print_p,
+    mgpu.LoweringSemantics.Lane,
+    gpu_core.PrimitiveSemantics.Warp,
+)
 def _debug_print_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
     fmt,
-    has_placeholders: bool,
+    ordered,
+    partitioned,
+    in_tree,
+    static_args,
+    np_printoptions,
+    has_placeholders,
 ):
-  del has_placeholders  # Unused.
+  del partitioned, np_printoptions, has_placeholders
+  if ordered:
+    raise NotImplementedError("Ordered debug_print is not supported on Pallas.")
+  args, kwargs = debugging.merge_callback_args(in_tree, args, static_args)
+  if kwargs:
+    raise ValueError(
+        "Only positional arguments are supported by debug_print on Pallas."
+    )
   primitives.check_debug_print_format(fmt, *args)
   scope = mgpu.ThreadSubset.WARPGROUP
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
@@ -2473,15 +2490,25 @@ def _debug_print_lowering_rule(
 
   return ()
 
-@register_lowering_rule(primitives.debug_print_p, mgpu.LoweringSemantics.Warpgroup)
+
+@register_lowering_rule(
+    debugging.debug_print_p, mgpu.LoweringSemantics.Warpgroup
+)
 def _debug_print_lowering_rule_wg(
     ctx: LoweringRuleContext,
     *args,
     fmt,
-    has_placeholders: bool,
+    ordered,
+    partitioned,
+    in_tree,
+    static_args,
+    np_printoptions,
+    has_placeholders,
 ):
-  del ctx, has_placeholders  # Unused.
-  if args:
+  del ctx, partitioned, in_tree, np_printoptions, has_placeholders  # Unused.
+  if ordered:
+    raise NotImplementedError("Ordered debug_print is not supported on Pallas.")
+  if args or static_args:
     raise NotImplementedError("debug_print only supports string messages in warpgroup semantics")
   mgpu.debug_print(fmt)
   return ()

@@ -29,8 +29,8 @@ from jax import lax
 from jax import tree_util
 from jax._src import ad_util
 from jax._src import api_util
-from jax._src import callback
 from jax._src import core as jax_core
+from jax._src import debugging
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
@@ -40,6 +40,8 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import arith
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import utils as pallas_utils
 from jax._src.state import discharge as state_discharge
@@ -47,8 +49,6 @@ from jax._src.state import indexing
 from jax._src.state import primitives as sp
 from jax._src.state import types as state_types
 from jax.interpreters import mlir
-from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import arith
 import jax.numpy as jnp
 
 Slice = indexing.Slice
@@ -748,23 +748,6 @@ def _reciprocal_lowering_rule(
 mlir.register_lowering(reciprocal_p, _reciprocal_lowering_rule)
 
 
-class PrintEffect(effects.Effect):
-  __str__ = lambda self: "Print"
-
-
-debug_print_effect = PrintEffect()
-
-# TODO(slebedev): Consider making the effect ordered.
-effects.lowerable_effects.add_type(PrintEffect)
-effects.control_flow_allowed_effects.add_type(PrintEffect)
-effects.remat_allowed_effects.add_type(PrintEffect)
-effects.custom_derivatives_allowed_effects.add_type(PrintEffect)
-
-
-debug_print_p = jax_core.Primitive("debug_print")
-debug_print_p.multiple_results = True
-
-
 def debug_print(fmt: str, *args: jax.typing.ArrayLike):
   """Prints values from inside a Pallas kernel.
 
@@ -785,12 +768,8 @@ def debug_print(fmt: str, *args: jax.typing.ArrayLike):
         the format string. The format string must end with a single placeholder
         ``{}``.
     *args: The values to print.
-  """  # fmt: skip
-  has_placeholders = False
-  if fmt:
-    _, field_name, *_ = next(iter(string.Formatter().parse(fmt)))
-    has_placeholders = field_name is not None
-  return debug_print_p.bind(*args, fmt=fmt, has_placeholders=has_placeholders)
+  """
+  return debugging.debug_print(fmt, *args, skip_format_check=True)
 
 
 def check_debug_print_format(
@@ -814,59 +793,6 @@ def check_debug_print_format(
         f"The format string expects {n_placeholders} "
         f"argument{'' if n_placeholders == 1 else 's'}, but got {len(args)}"
     )
-
-
-@debug_print_p.def_impl
-def debug_print_impl(*args: Any, fmt: str, has_placeholders: bool):
-  if has_placeholders:
-    print(fmt.format(*args))
-  else:
-    print(fmt, *args)
-  return ()
-
-
-@debug_print_p.def_effectful_abstract_eval
-def debug_print_abstract_eval(*avals: Any, fmt: str, has_placeholders: bool):
-  del avals, fmt, has_placeholders  # Unused.
-  return [], {debug_print_effect}
-
-
-def debug_print_batching_rule(args, dims, **params):
-  """Unrolls the print primitive across the mapped axis."""
-  axis_size = next(x.shape[i] for x, i in zip(args, dims) if i is not None)
-
-  # TODO(sharadmv): implement in terms of rolled loop unstead of unrolled.
-  def get_arg_at_dim(i, dim, arg):
-    if dim is batching.not_mapped:
-      # Broadcast unmapped argument
-      return arg
-    return lax.index_in_dim(arg, i, axis=dim, keepdims=False)
-
-  outs = []
-  for i in range(axis_size):
-    args_idx = map(functools.partial(get_arg_at_dim, i), dims, args)
-    outs.append(debug_print_p.bind(*args_idx, **params))
-  outs = [jnp.stack(xs) for xs in zip(*outs)]
-  return outs, (0,) * len(outs)
-
-
-batching.primitive_batchers[debug_print_p] = functools.partial(
-    debug_print_batching_rule, debug_print_p
-)
-
-
-@functools.partial(mlir.register_lowering, debug_print_p)
-def debug_print_lowering_rule(ctx, *args, **params):
-  result, _, _ = callback.emit_python_callback(
-      ctx,
-      functools.partial(debug_print_p.impl, **params),
-      None,
-      list(args),
-      ctx.avals_in,
-      ctx.avals_out,
-      has_side_effect=True,
-  )
-  return result
 
 
 # All of those shenanigans are because we can't make TransformedRef a PyTree,

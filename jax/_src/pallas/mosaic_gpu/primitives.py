@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence, Callable
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import itertools
@@ -25,6 +25,7 @@ from typing import Any, Literal
 
 import jax
 from jax._src import core as jax_core
+from jax._src import debugging
 from jax._src import dtypes
 from jax._src import pretty_printer as pp
 from jax._src import state
@@ -45,9 +46,9 @@ from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.mosaic.gpu import inference_utils as mgpu_inference_utils
-from jax.experimental.mosaic.gpu import utils as mgpu_utils
 from jax.experimental.mosaic.gpu import layouts as mgpu_layouts
 from jax.experimental.mosaic.gpu import tcgen05
+from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import jax.numpy as jnp
 import numpy as np
 
@@ -99,7 +100,7 @@ print_layout_p.multiple_results = True
 @print_layout_p.def_effectful_abstract_eval
 def _print_layout_abstract_eval(aval_in, fmt):
   del aval_in, fmt  # Unused.
-  return (), {pallas_primitives.debug_print_effect}
+  return (), {debugging.debug_effect}
 
 
 @lowering.register_lowering_rule(print_layout_p, mgpu.LoweringSemantics.Lane)

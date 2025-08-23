@@ -3386,7 +3386,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return jax.lax.scan(f, x, length=2)[0]
     jaxpr = jax.make_jaxpr(jax.value_and_grad(g))(1.0)
     eqn_jaxpr = jaxpr.eqns[0].params["jaxpr"]
-    self.assertIn("debug_callback", [e.primitive.name for e in eqn_jaxpr.eqns])
+    self.assertIn("debug_print", [e.primitive.name for e in eqn_jaxpr.eqns])
 
   def test_scan_input_to_output_forwarding(self):
     def f(c, x):

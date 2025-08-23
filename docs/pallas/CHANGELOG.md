@@ -19,6 +19,8 @@ Remember to align the itemized text with the first line of an item within a list
     argument now allows user to pass in a dictionary that only specifies the
     device index along the communication axis, instead of the full coordinates.
     It also supports TPU core id index.
+  * `jax.debug.print` now works in Pallas kernels and is the recommended way to
+    print.
 
 * Deprecations
 

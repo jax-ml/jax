@@ -3808,10 +3808,27 @@ def _delay_rule(ctx: LoweringRuleContext, nanos: int):
   return []
 
 
-@register_lowering_rule(primitives.debug_print_p)
+@register_lowering_rule(debugging.debug_print_p)
 def _debug_print_rule(
-    ctx: LoweringRuleContext, *args, fmt: str, has_placeholders: bool
+    ctx: LoweringRuleContext,
+    *dyn_args,
+    fmt: str,
+    ordered,
+    partitioned,
+    in_tree,
+    static_args,
+    np_printoptions,
+    has_placeholders,
 ):
+  del partitioned, np_printoptions
+  if ordered:
+    raise NotImplementedError("Ordered debug_print is not supported on Pallas.")
+  args, kwargs = debugging.merge_callback_args(in_tree, dyn_args, static_args)
+  if kwargs:
+    raise ValueError(
+        "Only positional arguments are supported by debug_print on Pallas."
+    )
+
   is_scalar_inputs = [not aval.shape for aval in ctx.avals_in]
   is_all_scalars = all(is_scalar_inputs)
   is_single_vector = len(is_scalar_inputs) == 1 and not is_scalar_inputs[0]
