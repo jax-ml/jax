@@ -66,7 +66,7 @@ xla_metadata_value_p.def_impl(partial(dispatch.apply_primitive, xla_metadata_val
 xla_metadata_value_p.def_abstract_eval(lambda aval, *, xla_metadata_kvs: aval)
 batching.defvectorized(xla_metadata_value_p)
 # TODO(nbasile): Implement tagging gradient ops with metadata.
-ad.deflinear2(xla_metadata_value_p, lambda ct, _: (ct,))
+ad.deflinear2(xla_metadata_value_p, lambda ct, _, **kwargs: (ct,))
 
 def _xla_metadata_value_lowering_rule(
     ctx: mlir.LoweringRuleContext, val: ir.Value, *, xla_metadata_kvs):
@@ -83,12 +83,32 @@ mlir.register_lowering(
 
 
 def _target_op_to_attach_metadata(value_mlir: ir.Value) -> ir.Operation | None:
+  """Finds the definitive operation for metadata attachment, looking past identity ops.
+
+  In frameworks like JAX, automatic differentiation can introduce patterns like
+  `multiply(x, 1.0)` for the gradient of certain functions (e.g., `sin`). Since
+  compilers like XLA will optimize this identity multiplication away, this
+  function attempts to "look through" it to attach metadata to the operation
+  that produced `x`, which is the true source of the value.
+  """
   op = value_mlir.owner
   if op is None or isinstance(op, ir.Block):
     return None
-  # TODO(nbasile): Add logic for handling multiply-by-constant-1.0 ops, which
-  # are often added by jax gradients.
-  # [Couple this change with tagging gradient ops.]
+
+  def _is_constant_one(operand: ir.Value) -> bool:
+    op = operand.owner
+    if not op or getattr(op, "name", "") != "stablehlo.constant":
+      return False
+    try:
+      values = list(op.attributes["value"])
+      return len(values) == 1 and values[0] == 1
+    except (KeyError, TypeError):
+      return False
+
+  if op.name == "stablehlo.multiply":
+    non_identity_operands = [o for o in op.operands if not _is_constant_one(o)]
+    if len(non_identity_operands) == 1:
+      return _target_op_to_attach_metadata(non_identity_operands[0])
   return op
 
 

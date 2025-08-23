@@ -361,6 +361,36 @@ class XlaMetadataTest(jtu.JaxTestCase):
     self._assert_metadata_appears_once_per_op(
         text, [expected_tagged_op], metadata)
 
+  @parameterized.parameters(
+      ("x*x", lambda x: x * x, "add"),
+      ("sin(x)", jnp.sin, "cos"),
+      ("tanh(x)", jnp.tanh, "add"),
+      ("1/x", lambda x: 1 / x, "negate"),
+      ("sinc(x)", jnp.sinc, "call"),
+  )
+  def test_value_grad_tagging(self, name, fn, expected_tagged_op):
+    metadata = {"test_value_grad_tagging": name}
+
+    @jax.custom_vjp
+    def wrapped_fn(x):
+      return fn(x)
+
+    def fwd(*args):
+      primal_out, vjp_fn = jax.vjp(fn, *args)
+      return primal_out, vjp_fn
+
+    def bwd(vjp_fn, cts_in):
+      cts_out = vjp_fn(cts_in)
+      cts_out = set_xla_metadata(cts_out, **metadata)
+      return cts_out
+
+    wrapped_fn.defvjp(fwd, bwd)
+
+    x_scalar = jnp.array(0.7)
+    text = jax.jit(jax.grad(wrapped_fn)).lower(x_scalar).as_text()
+    self._assert_metadata_appears_once_per_op(
+        text, [expected_tagged_op], metadata)
+
   def test_vmap_multi_input_output_value_tagging(self):
     metadata = {"test_vmap_multi_input_output_value_tagging": "value"}
 
