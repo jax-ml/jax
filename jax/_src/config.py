@@ -241,6 +241,7 @@ def trace_context():
           debug_key_reuse.value,
           jax_xla_profile_version.value,
           _check_vma.value,
+          mutable_array_checks.value,  # pallas may need to disable locally
           # Technically this affects jaxpr->stablehlo lowering, not tracing.
           hlo_source_file_canonicalization_regex.value,
           pgle_profiling_runs.value,
@@ -1588,7 +1589,7 @@ custom_vjp_disable_shape_check = bool_state(
 
 mutable_array_checks = bool_state(
     name='jax_mutable_array_checks',
-    default=False,
+    default=True,
     upgrade=True,
     help='Enable error checks for mutable arrays that rule out aliasing.')
 

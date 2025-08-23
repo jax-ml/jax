@@ -1208,8 +1208,9 @@ def _trace_kernel_to_jaxpr(
       wrapped_kernel_fun, kernel_in_transforms
   )
   with grid_mapping.trace_env(), config._check_vma(False):
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
-                                                     kernel_avals)
+    with config.mutable_array_checks(False):
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+          wrapped_kernel_fun, kernel_avals)
     if consts:
       consts_avals = [jax_core.get_aval(c) for c in consts]
       if any(not isinstance(aval, state.AbstractRef) for aval in consts_avals):

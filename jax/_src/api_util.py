@@ -720,10 +720,10 @@ class _HashableByObjectId:
     return self.val is other.val
 
 # TODO(mattjj): make this function faster
-def _check_no_aliased_ref_args(dbg: core.DebugInfo, avals, args):
+def _check_no_aliased_ref_args(dbg: core.DebugInfo, maybe_avals, args):
   assert config.mutable_array_checks.value
   refs: dict[int, int] = {}
-  for i, (a, x) in enumerate(zip(avals, args)):
+  for i, (a, x) in enumerate(zip(maybe_avals, args)):
     if (isinstance(a, AbstractRef) and
         (dup_idx := refs.setdefault(id(core.get_referent(x)), i)) != i):
       raise ValueError(
