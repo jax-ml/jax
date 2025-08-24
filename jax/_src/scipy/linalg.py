@@ -420,22 +420,20 @@ def eigh(a: ArrayLike, b: ArrayLike | None = None, lower: bool = True,
 
   JAX implementation of :func:`scipy.linalg.eigh`.
 
+  Only the standard eigenvalue problem is supported: ``a @ v = lambda * v``.
+    The parameter `b` must be None; the generalized problem (``a @ v = lambda * b @ v``)
+    is not implemented.
+
   Args:
     a: Hermitian input array of shape ``(..., N, N)``
-    b: optional Hermitian input of shape ``(..., N, N)``. If specified, compute
-      the generalized eigenvalue problem.
+    b: Must be None. The generalized eigenvalue problem is not supported.
     lower: if True (default) access only the lower portion of the input matrix.
       Otherwise access only the upper portion.
     eigvals_only: If True, compute only the eigenvalues. If False (default) compute
       both eigenvalues and eigenvectors.
-    type: if ``b`` is specified, ``type`` gives the type of generalized eigenvalue
-      problem to be computed. Denoting ``(λ, v)`` as an eigenvalue, eigenvector pair:
+    type: Not used. Only type=1 is supported.
 
-      - ``type = 1`` solves ``a @ v = λ * b @ v`` (default)
-      - ``type = 2`` solves ``a @ b @ v = λ * v``
-      - ``type = 3`` solves ``b @ a @ v = λ * v``
-
-    eigvals: a ``(low, high)`` tuple specifying which eigenvalues to compute.
+    eigvals: Not used. Only eigvals=None is supported.
     overwrite_a: unused by JAX.
     overwrite_b: unused by JAX.
     turbo: unused by JAX.
@@ -447,6 +445,9 @@ def eigh(a: ArrayLike, b: ArrayLike | None = None, lower: bool = True,
 
     - ``eigvals``: array of shape ``(..., N)`` containing the eigenvalues.
     - ``eigvecs``: array of shape ``(..., N, N)`` containing the eigenvectors.
+
+  Raise:
+    NotImplementedError: If `b` is not None.
 
   See also:
     - :func:`jax.numpy.linalg.eigh`: NumPy-style eigh API.
