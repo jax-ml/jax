@@ -694,6 +694,14 @@ NB_MODULE(_jax, m) {
           },
           nb::arg("key"))
       .def(
+          "key_value_increment",
+          [](xla::DistributedRuntimeClient& client, std::string key,
+             int64_t increment) {
+            nb::gil_scoped_release gil_release;
+            return xla::ValueOrThrow(client.KeyValueIncrement(key, increment));
+          },
+          nb::arg("key"), nb::arg("increment"))
+      .def(
           "wait_at_barrier",
           [](xla::DistributedRuntimeClient& client, std::string barrier_id,
              int64_t timeout_in_ms,
