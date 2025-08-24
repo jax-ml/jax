@@ -448,6 +448,7 @@ class BlockSpec:
   index_map: Callable[..., Any] | None = None
   memory_space: Any | None = dataclasses.field(kw_only=True, default=None)
   pipeline_mode: Buffered | None = None
+  delay_release: int = 0
 
   def __post_init__(self):
     if self.index_map is not None:
