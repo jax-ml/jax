@@ -103,6 +103,18 @@ partial = functools.partial
 map, unsafe_map = safe_map, map  # pylint: disable=redefined-builtin
 zip, unsafe_zip = safe_zip, zip  # pylint: disable=redefined-builtin
 
+# Extended types that should not be converted to physical types in lowering.
+PHYSICAL_EXTENDED_DTYPES = {pallas_core.semaphore_dtype}
+
+
+def should_physicalize_dtype(dtype) -> bool:
+  """Returns whether a dtype should be lowered to a physical type."""
+  is_extended = jnp.issubdtype(dtype, dtypes.extended)
+  if is_extended:
+    return not any(jnp.issubdtype(dtype, t) for t in PHYSICAL_EXTENDED_DTYPES)
+  else:
+    return False
+
 
 # Note - On Export Placeholders
 #
@@ -284,7 +296,21 @@ def aval_to_ir_type(
     shape=None,
     memory_space: AnyMemorySpace | None = None,
     is_kernel_boundary: bool = False,
+    allow_extended_types: bool = True,
 ):
+  if allow_extended_types and should_physicalize_dtype(aval.dtype):
+    if isinstance(aval, state.AbstractRef):
+      inner_aval = jax_core.physical_aval(aval.inner_aval)  # pytype: disable=wrong-arg-types
+      physical_aval = aval.update(inner_aval=inner_aval)
+    else:
+      physical_aval = jax_core.physical_aval(aval)  # pytype: disable=wrong-arg-types
+    if shape is not None:
+      shape = jax_core.physical_shape(shape, aval.dtype)
+    return aval_to_ir_type(dynamic_shape_replacement_fn,
+                           aval=physical_aval,
+                           shape=shape, memory_space=memory_space,
+                           is_kernel_boundary=is_kernel_boundary,
+                           allow_extended_types=False)
   if isinstance(aval, tpu_core.AbstractSemaphore):
     if aval.sem_type is tpu_core.SemaphoreType.DMA:
       sem_type = ir.Type.parse("!tpu.dma_semaphore")
@@ -296,20 +322,6 @@ def aval_to_ir_type(
       raise ValueError(f"Cannot allocate {aval.sem_type}.")
     memspace = _memory_space_to_mosaic_attribute(TPUMemorySpace.SEMAPHORE)
     return ir.MemRefType.get((), sem_type, memory_space=memspace)
-  if dtypes.issubdtype(aval.dtype, dtypes.prng_key):
-    assert isinstance(aval.dtype, prng.KeyTy)
-    shape = aval.dtype._impl.key_shape
-    if pl_random.is_pallas_impl(aval.dtype._impl):
-      if memory_space is None:
-        memory_space = TPUMemorySpace.SMEM
-      if memory_space != TPUMemorySpace.SMEM:
-        raise ValueError(
-            f"PRNG keys must be stored in SMEM. Got {memory_space}"
-        )
-    memspace = _memory_space_to_mosaic_attribute(memory_space)
-    return ir.MemRefType.get(
-        shape, _dtype_to_ir_type(jnp.uint32), memory_space=memspace
-    )
   if isinstance(aval, state.AbstractRef):
     if shape is None:
       shape = aval.shape
@@ -372,8 +384,11 @@ def register_lowering_rule(
 
 
 def _get_aval_physical_dtype_shape(aval):
-  physical_aval = jax_core.physical_aval(aval)
-  return physical_aval.shape[len(aval.shape) :]  # pytype: disable=attribute-error
+  if should_physicalize_dtype(aval.dtype):  # pytype: disable=attribute-error
+    physical_aval = jax_core.physical_aval(aval)
+    return physical_aval.shape[len(aval.shape) :]  # pytype: disable=attribute-error
+  else:
+    return ()
 
 
 def _get_arg_type(
@@ -481,6 +496,9 @@ class MosaicGridMapping:
           else pallas_core._get_block_dim_size(b)
           for b in bm.block_shape
       )
+      if should_physicalize_dtype(aval.dtype):
+        physical_element_aval = jax_core.physical_element_aval(aval.dtype)  # pytype: disable=wrong-arg-types
+        block_shape += tuple(d for d in physical_element_aval.shape)
       operands_types.append(
           _get_arg_type(dynamic_shape_replacement_fn, aval, shape=shape)
       )
@@ -594,7 +612,20 @@ def _check_block_mappings(
 ) -> None:
   del lowering_context  # originally needed for forward compat
   for bm in block_mappings:
-    rank = len(bm.block_shape)
+    dtype = bm.array_shape_dtype.dtype
+    array_shape = bm.array_shape_dtype.shape
+    if should_physicalize_dtype(dtype):
+      physical_element_aval = jax_core.physical_element_aval(dtype)
+      physical_dtype = physical_element_aval.dtype
+      physical_array_shape = jax_core.physical_shape(bm.array_shape_dtype.shape, dtype)
+      physical_block_shape = bm.block_shape + tuple(
+          pallas_core.Blocked(i) for i in physical_element_aval.shape)
+    else:
+      physical_dtype = dtype
+      physical_array_shape = array_shape
+      physical_block_shape = bm.block_shape
+
+    rank = len(physical_block_shape)
     # TODO(necula): add tests for SMEM blocks with trivial windowing
     # We support scalars too
     memory_space = _memory_space_to_tpu_memory_space(bm.block_aval.memory_space)
@@ -606,7 +637,7 @@ def _check_block_mappings(
     def err_details():
       return (f"Block spec for {bm.origin} in pallas_call {debug_info.func_src_info} "
               "has block shape "
-              f"{bm.block_shape}, array shape {bm.array_shape_dtype.shape}, "
+              f"{physical_block_shape}, array shape {physical_array_shape}, "
               # TODO(necula): add index_map source location info
               f"and index_map {bm.index_map_jaxpr.jaxpr}, in "
               f"memory space {bm.block_aval.memory_space}."
@@ -626,10 +657,10 @@ def _check_block_mappings(
           "only blocks having the same block shape as the array shape "
           "and a trivial index_map (returning all 0s)." + err_details())
 
-    unmapped_bs = pallas_core._get_block_shape(bm.block_shape)
-    bs0, as0 = unmapped_bs[-1], bm.array_shape_dtype.shape[-1]
+    unmapped_bs = pallas_core._get_block_shape(physical_block_shape)
+    bs0, as0 = unmapped_bs[-1], physical_array_shape[-1]
     if rank >= 2:
-      bs1, as1 = unmapped_bs[-2], bm.array_shape_dtype.shape[-2]
+      bs1, as1 = unmapped_bs[-2], physical_array_shape[-2]
     else:
       bs1, as1 = 1, 1
 
@@ -659,9 +690,9 @@ def _check_block_mappings(
       assert rank == 1
       # bools get a bitwidth of 32 due to how mosaic handles them
       if bm.array_shape_dtype.dtype == jnp.bool_:
-        bitwidth = 32
+        bitwidth = dtypes.bit_width(BOOL_MEMREF_TYPE)
       else:
-        bitwidth = dtypes.bit_width(bm.array_shape_dtype.dtype)
+        bitwidth = dtypes.bit_width(physical_dtype)
       packing = 32 // bitwidth
       tiling_size = 128 * packing
       evenly_divisible = (bs0 == as0 or bs0 % tiling_size == 0)
@@ -672,7 +703,7 @@ def _check_block_mappings(
             " shape is equal to the first (and only) dimension of the array"
             " shape, or 2) the first (and only) dimension of the block shape"
             f" is a multiple of the tiling size ({tiling_size} = 128 * (32 //"
-            f" {dtypes.bit_width(bm.array_shape_dtype.dtype)})) of the"
+            f" {dtypes.bit_width(physical_dtype)})) of the"
             " array shape. "
             + err_details()
         )
@@ -1573,11 +1604,32 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
   if isinstance(aval_out.dtype, prng.KeyTy) and pl_random.is_pallas_impl(
       aval_out.dtype._impl
   ):
+    # TODO(justinfu): Merge this with standard extended dtype handling.
     if not is_smem_load:
       raise ValueError("PRNG keys must be loaded from SMEM. Did you set "
                        "the memory space to MemorySpace.SMEM in the "
                        "BlockSpec for the PRNG key input?")
     return _prng_key_load_lowering_rule(ctx, *args_flat, args_tree=args_tree)
+  if should_physicalize_dtype(aval_out.dtype):
+    physical_element_aval = jax_core.physical_element_aval(aval_out.dtype)  # pytype: disable=wrong-arg-types
+    idx = cast(NDIndexer, idx)
+    if idx.int_indexer_shape:
+      raise NotImplementedError()
+    elt_slices = [
+        indexing.Slice(0, size) for size in physical_element_aval.shape]
+    idx = NDIndexer(
+        indices=idx.indices + tuple(elt_slices),
+        shape=idx.shape + physical_element_aval.shape,
+        int_indexer_shape=(),
+    )
+    physical_out_dtype = physical_element_aval.dtype
+    physical_out_shape = jax_core.physical_shape(
+        aval_out.shape, aval_out.dtype
+    )
+  else:
+    physical_out_dtype = aval_out.dtype
+    physical_out_shape = aval_out.shape
+
   if not is_smem_load and not ref_block_shape:
     raise NotImplementedError(
         "Indexing into a ()-shaped Ref not yet supported on TPU.")
@@ -1603,7 +1655,7 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
     raise ValueError(
         "Loads are only allowed on VMEM and SMEM references." + extra
     )
-  load_aval = jax_core.ShapedArray(sizes, dtype=aval_out.dtype)
+  load_aval = jax_core.ShapedArray(sizes, dtype=physical_out_dtype)
   if need_stride:
     load_val = tpu.strided_load(
         aval_to_ir_type(
@@ -1626,9 +1678,9 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
         starts,
     )
   if load_aval != aval_out:
-    if aval_out.shape:
-      vec_type = ir.VectorType.get(aval_out.shape,
-                                  _dtype_to_ir_type(aval_out.dtype,
+    if physical_out_shape:
+      vec_type = ir.VectorType.get(physical_out_shape,
+                                  _dtype_to_ir_type(physical_out_dtype,
                                                     is_kernel_boundary=True))
       load_val = vector.shape_cast(vec_type, load_val)
     else:

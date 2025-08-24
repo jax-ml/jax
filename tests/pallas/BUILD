@@ -564,6 +564,9 @@ jax_multiplatform_test(
         "tpu_v5p",
         "tpu_v5p_x4",
     ],
+    env = {
+        "JAX_TRACEBACK_FILTERING": "off",
+    },
     deps = [
         "//jax:pallas_tpu",
     ] + py_deps([
