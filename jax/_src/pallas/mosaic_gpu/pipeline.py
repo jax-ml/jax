@@ -668,6 +668,21 @@ def emit_pipeline_warp_specialized(
 
       # This is true if any of the outputs need to be transferred inside the loop.
       smem_out_brefs = [bref for bref in flat_out_brefs if _in_smem(bref.spec)]
+      # The implementation below has races when we have multiple compute WGs.
+      # The problem is that we expect the compute WGs to deal with issuing the
+      # SMEM->GMEM copies, but (1) we never predicate them, so we repeat the
+      # same copy multiple times, and (2) we don't synchronize the compute WGs
+      # in any way. In the unlikely event that one of the compute WGs runs 2
+      # steps ahead, it might start overwriting the output buffer before the
+      # other WG has issued its copy.
+      #
+      # The best fix here would be to move the SMEM->GMEM copies into the memory
+      # WG and use proper barriers (with arrival_count=2) to ensure all WGs have
+      # produced their outputs before it is sent out to GMEM.
+      if smem_out_brefs and num_compute_wgs > 1:
+        raise NotImplementedError(
+            "SMEM outputs are not supported with multiple compute warpgroups"
+        )
       copies_out_in_loop = not all(bref.is_index_invariant for bref in smem_out_brefs)
       needs_epilogue = any(bref.is_index_invariant for bref in smem_out_brefs)
 
