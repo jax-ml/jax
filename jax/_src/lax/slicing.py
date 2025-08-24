@@ -2909,7 +2909,6 @@ scatter_add_p = standard_primitive(
 ad.primitive_jvps[scatter_add_p] = partial(_scatter_addsub_jvp, scatter_add_p)
 ad.primitive_transposes[scatter_add_p] = partial(_scatter_addsub_transpose_rule, scatter_add_p)
 batching.fancy_primitive_batchers[scatter_add_p] = partial(_scatter_batching_rule, scatter_add_p)
-batching.skippable_batchers[scatter_add_p] = lambda _: ()
 
 scatter_sub_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-sub',
@@ -2920,7 +2919,6 @@ ad.primitive_jvps[scatter_sub_p] = partial(_scatter_addsub_jvp, scatter_sub_p)
 ad.primitive_transposes[scatter_sub_p] = partial(_scatter_addsub_transpose_rule, scatter_sub_p)
 batching.fancy_primitive_batchers[scatter_sub_p] = partial(
     _scatter_batching_rule, scatter_sub_p)
-batching.skippable_batchers[scatter_sub_p] = lambda _: ()
 
 scatter_mul_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
@@ -2944,7 +2942,6 @@ ad.defjvp(scatter_mul_p,
 ad.primitive_transposes[scatter_mul_p] = _scatter_mul_transpose_rule
 batching.fancy_primitive_batchers[scatter_mul_p] = (
   partial(_scatter_batching_rule, scatter_mul_p))
-batching.skippable_batchers[scatter_mul_p] = lambda _: ()
 
 def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
                           update_consts, dimension_numbers,
@@ -3059,7 +3056,6 @@ scatter_min_p = standard_primitive(
     vma_rule=partial(core.standard_vma_rule, 'scatter_min'))
 batching.fancy_primitive_batchers[scatter_min_p] = (
   partial(_scatter_batching_rule, scatter_min_p))
-batching.skippable_batchers[scatter_min_p] = lambda _: ()
 ad.primitive_jvps[scatter_min_p] = partial(_scatter_extremal_jvp, scatter_min_p)
 
 scatter_max_p = standard_primitive(
@@ -3068,7 +3064,6 @@ scatter_max_p = standard_primitive(
     vma_rule=partial(core.standard_vma_rule, 'scatter_max'))
 batching.fancy_primitive_batchers[scatter_max_p] = (
   partial(_scatter_batching_rule, scatter_max_p))
-batching.skippable_batchers[scatter_max_p] = lambda _: ()
 ad.primitive_jvps[scatter_max_p] = partial(_scatter_extremal_jvp, scatter_max_p)
 
 def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
@@ -3230,7 +3225,6 @@ ad.primitive_jvps[scatter_p] = _scatter_jvp
 ad.primitive_transposes[scatter_p] = _scatter_transpose_rule
 batching.fancy_primitive_batchers[scatter_p] = (
   partial(_scatter_batching_rule, scatter_p))
-batching.skippable_batchers[scatter_p] = lambda _: ()
 
 
 def _scatter_lower_opaque(ctx, operand, indices, updates, *,
