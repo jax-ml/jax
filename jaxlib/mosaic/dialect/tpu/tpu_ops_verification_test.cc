@@ -167,7 +167,7 @@ class TpuOpsVectorSubcoreVerificationTest : public TpuOpsVerificationTest {
 
 TEST_F(TpuOpsVerificationTest, VectorLoadVerificationWorks) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8});
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
   auto vl = Create<VectorLoadOp>(
       /*result=*/VectorType::get({8}, i32()),
       /*base=*/memref,
@@ -181,7 +181,7 @@ TEST_F(TpuOpsVerificationTest, VectorLoadVerificationWorks) {
 TEST_F(TpuOpsVerificationTest,
        VectorLoadRankOfStridesDoesNotMatchBaseMemrefRank) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8});
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
   auto vl = Create<VectorLoadOp>(
       /*result=*/VectorType::get({8}, i32()),
       /*base=*/memref,
@@ -193,7 +193,7 @@ TEST_F(TpuOpsVerificationTest,
 
 TEST_F(TpuOpsVerificationTest, VectorLoadStridesFeatureNotImplemented) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8});
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
   auto vl = Create<VectorLoadOp>(
       /*result=*/VectorType::get({8}, i32()),
       /*base=*/memref,
@@ -208,7 +208,7 @@ TEST_F(TpuOpsVerificationTest, VectorLoadStridesFeatureNotImplemented) {
 
 TEST_F(TpuOpsVerificationTest, VectorLoadBaseAndResultTypesDoNotMatch) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8});
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
   auto vl = Create<VectorLoadOp>(
       /*result=*/VectorType::get({8}, builder().getF32Type()),
       /*base=*/memref,
@@ -225,7 +225,7 @@ TEST_F(TpuOpsVerificationTest, VectorLoadBaseAndResultTypesDoNotMatch) {
 TEST_F(TpuOpsVerificationTest,
        VectorLoadRankOfIndicesDoesNotMatchBaseMemrefRank) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8});
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
   auto vl = Create<VectorLoadOp>(
       /*result=*/VectorType::get({8}, i32()),
       /*base=*/memref,
@@ -238,7 +238,7 @@ TEST_F(TpuOpsVerificationTest,
 
 TEST_F(TpuOpsVerificationTest, VectorLoadValidMaskSucceeds) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8, 128});
+  Value memref = AllocaI32({8, 128}, MemorySpace::kVmem);
   Value mask = ConstantI32Vector(/*shape=*/{8, 1},
                                  /*values=*/{1, 1, 1, 1, 1, 1, 1, 1});
   auto vl = Create<VectorLoadOp>(
@@ -254,7 +254,7 @@ TEST_F(TpuOpsVerificationTest, VectorLoadValidMaskSucceeds) {
 TEST_F(TpuOpsVerificationTest, VectorLoadMaskInvalidResultBitWidth) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
   auto memref = Create<memref::AllocaOp>(
-      MemRefType::get({8, 128}, builder().getI64Type()));
+      GetMemRefType({8, 128}, builder().getI64Type(), MemorySpace::kVmem));
   Value mask = ConstantI32Vector(/*shape=*/{8, 1},
                                  /*values=*/{1, 1, 1, 1, 1, 1, 1, 1});
   auto vl = Create<VectorLoadOp>(
@@ -274,7 +274,7 @@ TEST_F(TpuOpsVerificationTest, VectorLoadMaskInvalidResultBitWidth) {
 TEST_F(TpuOpsVerificationTest,
        VectorLoadMaskNotBroadcastableToResultShapeInvalidMinor) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8, 128});
+  Value memref = AllocaI32({8, 128}, MemorySpace::kVmem);
   Value mask = ConstantI32Vector(/*shape=*/{8, 2},
                                  /*values=*/{1});
   auto vl = Create<VectorLoadOp>(
@@ -294,7 +294,7 @@ TEST_F(TpuOpsVerificationTest,
 TEST_F(TpuOpsVerificationTest,
        VectorLoadMaskNotBroadcastableToResultShapeInvalidMajor) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8, 128});
+  Value memref = AllocaI32({8, 128}, MemorySpace::kVmem);
   Value mask = ConstantI32Vector(/*shape=*/{5, 1},
                                  /*values=*/{1});
   auto vl = Create<VectorLoadOp>(
@@ -309,6 +309,35 @@ TEST_F(TpuOpsVerificationTest,
       StatusIs(
           _, HasSubstr(
                  "Expected mask shape to be broadcastable to result shape.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorLoadInvalidMemorySpace) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8}, MemorySpace::kHbm);
+  auto vl = Create<VectorLoadOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*strides=*/builder().getDenseI32ArrayAttr({}),
+      /*mask=*/nullptr);
+
+  ASSERT_THAT(VerifyOp(vl),
+              StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreInvalidMemorySpace) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8}, MemorySpace::kHbm);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  auto vs = Create<VectorStoreOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*strides=*/builder().getDenseI32ArrayAttr({}),
+      /*mask=*/nullptr);
+
+  ASSERT_THAT(VerifyOp(vs),
+              StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
 }
 
 TEST_F(TpuOpsVerificationTest, UnpackSubelementsValidIndex) {
