@@ -3532,7 +3532,7 @@ class APITest(jtu.JaxTestCase):
     def f(x, y):
       return x, y
 
-    x = np.ones((1, 1, 1))
+    x = np.ones((1, 1, 1), dtype=np.float32)
 
     # All defaults
     with jtu.assert_num_jit_and_pmap_compilations(1):
@@ -4665,14 +4665,20 @@ class APITest(jtu.JaxTestCase):
 
   @jtu.thread_unsafe_test()
   def test_cache_clear_pmap(self):
+    jax.clear_caches()
     @jax.pmap
     def f(i):
       return i * 2
 
     f(np.arange(1, dtype='float32')).block_until_ready()
-    self.assertEqual(f._cache_size, 1)
-    jax.clear_caches()
-    self.assertEqual(f._cache_size, 0)
+    if config.pmap_shmap_merge.value:
+      self.assertEqual(pjit_lib._cpp_pjit_cache_explicit_attributes.size(), 1)
+      jax.clear_caches()
+      self.assertEqual(pjit_lib._cpp_pjit_cache_explicit_attributes.size(), 0)
+    else:
+      self.assertEqual(f._cache_size, 1)
+      jax.clear_caches()
+      self.assertEqual(f._cache_size, 0)
 
   def test_invalid_value_device_put(self):
     with self.assertRaisesRegex(ValueError, r".*Received invalid value.*"):
