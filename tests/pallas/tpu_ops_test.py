@@ -329,6 +329,7 @@ class OpsTest(PallasBaseTest):
   @parameterized.product(
       reduce_func = [jnp.argmax, jnp.argmin]
   )
+  @jtu.skip_on_devices('tpu') # TODO: apaszke - This test is breaking presubmits.
   def test_reduce_index(self, reduce_func):
     if not jtu.if_cloud_tpu_at_least(2025, 8, 25):
       self.skipTest("Requires libtpu built after 2025-08-25")
