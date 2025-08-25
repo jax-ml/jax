@@ -27,6 +27,7 @@ limitations under the License.
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/TargetSelect.h"
@@ -181,8 +182,8 @@ class GpuModuleToAssemblyPass
  public:
   using jaxlib::mlir::Pass<GpuModuleToAssemblyPass, mlir::ModuleOp>::Pass;
 
-  GpuModuleToAssemblyPass(std::vector<std::string> libraries_to_link)
-      : libraries_to_link_(std::move(libraries_to_link)) {}
+  GpuModuleToAssemblyPass() = default;
+  GpuModuleToAssemblyPass(const GpuModuleToAssemblyPass&) {};
 
   static constexpr llvm::StringLiteral kArgumentName =
       "mosaic-gpu-module-to-assembly";
@@ -201,15 +202,17 @@ class GpuModuleToAssemblyPass
   }
 
  private:
-  std::vector<std::string> libraries_to_link_;
+  ListOption<std::string> libraries_to_link_{
+      *this, "libraries-to-link",
+      llvm::cl::desc("A comma-separated list of bitcode files to link into the "
+                     "resulting assembly.")};
 };
 
 }  // namespace
 
-void registerGpuModuleToAssemblyPass(
-    std::vector<std::string> libraries_to_link) {
-  ::mlir::registerPass([libraries_to_link]() -> std::unique_ptr<::mlir::Pass> {
-    return std::make_unique<GpuModuleToAssemblyPass>(libraries_to_link);
+void registerGpuModuleToAssemblyPass() {
+  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
+    return std::make_unique<GpuModuleToAssemblyPass>();
   });
 }
 
