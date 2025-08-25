@@ -100,8 +100,10 @@ def _bitcast_uint8_to_uint4(operand):
   result[..., 1::2] = ((operand & 0b11110000) >> 4).astype('uint4')
   return result
 
-def np_view(arr, dtype):
+def np_view(arr: np.ndarray, dtype) -> np.ndarray:
   # Implementation of np.ndarray.view() that works for int4/uint4
+  if dtype is None:
+    return arr
   dtype = np.dtype(dtype)
   nbits_in = dtypes.bit_width(arr.dtype)
   nbits_out = dtypes.bit_width(dtype)

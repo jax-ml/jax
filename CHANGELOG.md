@@ -16,6 +16,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Bug fixes
+  * `arr.view(dtype=None)` now returns the array unchanged, matching NumPy's
+    semantics. Previously it returned the array with a float dtype.
 
 ## JAX 0.7.1 (August 20, 2025)
 
