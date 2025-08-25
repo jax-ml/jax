@@ -888,9 +888,9 @@ ir.MLIRError,
       shape = (128,)
       elt_ty = ir.F32Type.get()
       ty = ir.VectorType.get(shape, elt_ty)
-      out_layouts = ir.ArrayAttr.get([
-          layouts.to_layout_attr(mgpu.WGStridedFragLayout.from_shaped_type(ty))
-      ])
+      strided_layout = mgpu.WGStridedFragLayout.from_shaped_type(ty)
+      assert strided_layout is not None
+      out_layouts = ir.ArrayAttr.get([layouts.to_layout_attr(strided_layout)])
 
       op = mgpu.dialect.CustomPrimitiveOp(
           result=[ty],
@@ -1271,8 +1271,10 @@ class DialectLoweringTest(MosaicGpuTest):
       zero_index = arith.constant(ir.IndexType.get(), 0)
       ty = ir.VectorType.get(shape, elt_ty)
       load = vector.load(ty, ref, [zero_index, zero_index])
+      strided_layout = mgpu.WGStridedFragLayout.from_shaped_type(ty)
+      assert strided_layout is not None
       load.owner.attributes["out_layouts"] = ir.ArrayAttr.get([
-          layouts.to_layout_attr(mgpu.WGStridedFragLayout.from_shaped_type(ty))
+          layouts.to_layout_attr(strided_layout)
       ])
 
     mgpu.lower_mgpu_dialect(self.module, None)

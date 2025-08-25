@@ -29,7 +29,6 @@ from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
-import numpy as np
 
 from . import equations as eqns
 from . import fragmented_array as fa
@@ -194,6 +193,23 @@ def reduce_hints(
   return new_hints
 
 
+def _strided_layout_for_variable(
+    variable: eqns.Variable,
+) -> fa.WGStridedFragLayout | None:
+  """Returns a strided layout for the given variable.
+
+  If the given variable cannot have a strided layout, returns `None`.
+  """
+  op = variable.key.operation
+  # TODO(bchetioui): should we make variables carry a shape as well, to make
+  # things easier?
+  if variable.key.type == VariableType.OPERAND:
+    ty = cast(ir.ShapedType, op.operands[variable.key.index].type)
+  else:
+    ty = cast(ir.ShapedType, op.results[variable.key.index].type)
+  return fa.WGStridedFragLayout.from_shaped_type(ty)
+
+
 def find_assignments_for(
     unknowns: Set[eqns.Variable],
     equation_system: eqns.EquationSystem,
@@ -261,20 +277,9 @@ def find_assignments_for(
       continue
     # Try to instantiate a single variable to a strided layout and see if it
     # reduces the system.
-    op = variable.key.operation
-    # TODO(bchetioui): should we make variables carry a shape as well, to make
-    # things easier?
-    if variable.key.type == VariableType.OPERAND:
-      ty = cast(ir.ShapedType, op.operands[variable.key.index].type)
-    else:
-      ty = cast(ir.ShapedType, op.results[variable.key.index].type)
-    max_vec_size = np.prod(ty.shape) // fa.WARPGROUP_SIZE
-    # TODO(bchetioui): can't handle too small shapes.
-    if max_vec_size == 0:
+    layout = _strided_layout_for_variable(variable)
+    if layout is None:
       continue
-    desired_vec_size = 8 // utils.bytewidth(ty.element_type)
-    vec_size = min(max_vec_size, desired_vec_size)
-    layout = fa.WGStridedFragLayout(shape=tuple(ty.shape), vec_size=vec_size)
     new_assignment: dict[eqns.Variable, eqns.Constant] = {
         variable: eqns.RegisterLayout(layout)
     }

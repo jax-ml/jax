@@ -134,9 +134,9 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     # strided fragmented layout.
     self.infer_layout(self.module)
 
-    layout = layouts.to_layout_attr(
-        mgpu.WGStridedFragLayout.from_shaped_type(ty)
-    )
+    strided_layout = mgpu.WGStridedFragLayout.from_shaped_type(ty)
+    assert strided_layout is not None
+    layout = layouts.to_layout_attr(strided_layout)
 
     self.assertNotIn("in_layouts", x.attributes)
     self.checkOutLayouts(x, [layout])

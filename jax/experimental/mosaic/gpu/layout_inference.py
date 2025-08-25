@@ -323,11 +323,12 @@ def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
 
   # If the constant is not a splat, has no user, or a layout could not be
   # determined from looking at the users, we assign a strided layout for
-  # completeness.
+  # completeness. Only assign a strided layout if the shape supports it.
   if layout is None:
-    layout = layouts_lib.to_strided_fragmented_layout_attr(
-        fa.WGStridedFragLayout.from_shaped_type(shaped_ty)
-    )
+    strided_layout = fa.WGStridedFragLayout.from_shaped_type(shaped_ty)
+    if strided_layout is None:
+      return None
+    layout = layouts_lib.to_strided_fragmented_layout_attr(strided_layout)
 
   return [], [layout]
 

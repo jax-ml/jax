@@ -651,7 +651,11 @@ class WGStridedFragLayout:
       raise ValueError((self, WARPGROUP_SIZE))
 
   @classmethod
-  def from_shaped_type(cls, shaped_ty: ir.Type):
+  def from_shaped_type(cls, shaped_ty: ir.Type) -> WGStridedFragLayout | None:
+    """Returns a WGStridedFragLayout for the given shaped type.
+
+    Return None if the shaped type cannot have a strided layout.
+    """
     if not ir.ShapedType.isinstance(shaped_ty):
       raise TypeError(shaped_ty)
 
@@ -659,10 +663,7 @@ class WGStridedFragLayout:
     bw = mgpu.bytewidth(shaped_ty.element_type)
     assert 8 % bw == 0 and 8 // bw != 0, bw
     if math.prod(shaped_ty.shape) % WARPGROUP_SIZE != 0:
-      raise ValueError(
-          f"{shaped_ty} must have a number of elements that is a multiple of"
-          f" {WARPGROUP_SIZE} (got {math.prod(shaped_ty.shape)})"
-      )
+      return None
     max_vec_size = np.prod(shaped_ty.shape) // WARPGROUP_SIZE
     return cls(
         shape=tuple(shaped_ty.shape), vec_size=min(8 // bw, max_vec_size)
@@ -956,6 +957,11 @@ class FragmentedArray:
     shape = tuple(ref_ty.shape)
     if vec_size is None:
       layout = WGStridedFragLayout.from_shaped_type(ref_ty)
+      if layout is None:
+        raise ValueError(
+            f"{ref_ty} must have a number of elements that is a multiple of"
+            f" {WARPGROUP_SIZE} (got {math.prod(shape)})"
+        )
     else:
       layout = WGStridedFragLayout(shape=shape, vec_size=vec_size)
     vec_ty = ir.VectorType.get((layout.vec_size,), ref_ty.element_type)
