@@ -75,6 +75,7 @@ class AssemblyToBinaryPass
 
     se::cuda::CompilationOptions compilation_options;
     compilation_options.dump_compilation_log = dump_opts.ptxas;
+    compilation_options.generate_line_info = true;
 
     module.walk([&](mlir::gpu::BinaryOp binary) {
       if (binary.getObjects().size() != 1) {
