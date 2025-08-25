@@ -312,6 +312,12 @@ def find_assignments_for(
   return eqns.Unsatisfiable()
 
 
+class DerivationContext:
+  """Holds context information used for deriving an equation system."""
+
+  pass
+
+
 OperandOrResultsForVariable = dict[eqns.Variable, list[OperandOrResult]]
 
 # An equation system derivation rule is a function that takes an MLIR operation
@@ -328,8 +334,8 @@ OperandOrResultsForVariable = dict[eqns.Variable, list[OperandOrResult]]
 # Lastly, the mapping must only refer to variables and operands/results that
 # correspond to the given operation.
 EquationSystemDerivationRule = Callable[
-    [ir.OpView],
-    tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]
+    [DerivationContext, ir.OpView],
+    tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]],
 ]
 _equation_system_derivation_rules: dict[str, EquationSystemDerivationRule] = {}
 
@@ -351,8 +357,10 @@ def _is_tmem_ref(v: ir.Value) -> bool:
 
 
 def _pointwise_op_equation_system(
+    ctx: DerivationContext,
     op: ir.OpView,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
   all_operands_and_results = operands_and_results(op)
   variable = eqns.Variable(all_operands_and_results[0])
   return eqns.EquationSystem(), {variable: all_operands_and_results}, []
@@ -404,11 +412,12 @@ for op in [
 
 @_add_equation_system_derivation_rule(vector.LoadOp)
 def _vector_load_equation_system(
+    ctx: DerivationContext,
     op: vector.LoadOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   equation_system: eqns.EquationSystem | eqns.Unsatisfiable
   equation_system, operand_or_results_for_variable, hints = (
-      _pointwise_op_equation_system(op)
+      _pointwise_op_equation_system(ctx, op)
   )
   [result_variable] = operand_or_results_for_variable.keys()
   result_is_not_splat = eqns.Distinct(
@@ -424,8 +433,10 @@ def _vector_load_equation_system(
 
 @_add_equation_system_derivation_rule(mgpu.OptimizationBarrierOp)
 def _optimization_barrier_equation_system(
+    ctx: DerivationContext,
     op: ir.OpView,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
   operand_or_results_for_variable: OperandOrResultsForVariable = {}
 
   for i, operand in enumerate(op.operands):
@@ -442,8 +453,10 @@ def _optimization_barrier_equation_system(
 
 @_add_equation_system_derivation_rule(vector.SplatOp)
 def _vector_splat_equation_system(
+    ctx: DerivationContext,
     op: ir.OpView,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
   result = OperandOrResult(op, VariableType.RESULT, 0)
   variable = eqns.Variable(result)
   layout = fa.WGSplatFragLayout(tuple(cast(ir.ShapedType, op.result.type).shape))
@@ -455,8 +468,10 @@ def _vector_splat_equation_system(
 
 @_add_equation_system_derivation_rule(arith.ConstantOp)
 def _constant_equation_system(
+    ctx: DerivationContext,
     constant_op: arith.ConstantOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
   value = constant_op.value
   result = OperandOrResult(constant_op, VariableType.RESULT, 0)
   variable = eqns.Variable(result)
@@ -493,8 +508,10 @@ def _terminator(
 
 @_add_equation_system_derivation_rule(scf.ForOp)
 def _for_equation_system(
+    ctx: DerivationContext,
     op: scf.ForOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
   [block] = op.region.blocks
   yield_op = _terminator(block, scf.YieldOp)
   operand_or_results_for_variable: OperandOrResultsForVariable = {}
@@ -520,8 +537,10 @@ def _for_equation_system(
 
 @_add_equation_system_derivation_rule(scf.WhileOp)
 def _while_equation_system(
+    ctx: DerivationContext,
     op: scf.WhileOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
   [before_block] = op.before.blocks
   [after_block] = op.after.blocks
   cond_op = _terminator(before_block, scf.ConditionOp)
@@ -556,8 +575,10 @@ def _while_equation_system(
 
 @_add_equation_system_derivation_rule(scf.IndexSwitchOp)
 def _index_switch_equation_system(
+    ctx: DerivationContext,
     op: scf.IndexSwitchOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
   operand_or_results_for_variable: OperandOrResultsForVariable = {
       eqns.Variable(o): [o] for o in operands_and_results(op)
   }
@@ -576,8 +597,10 @@ def _index_switch_equation_system(
 
 @_add_equation_system_derivation_rule(mgpu.LayoutCastOp)
 def _layout_cast_equation_system(
+    ctx: DerivationContext,
     op: mgpu.LayoutCastOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
   operand = OperandOrResult(op, VariableType.OPERAND, 0)
   result = OperandOrResult(op, VariableType.RESULT, 0)
   variable = eqns.Variable(operand)
@@ -591,8 +614,10 @@ def _layout_cast_equation_system(
 
 @_add_equation_system_derivation_rule(mgpu.WGMMAOp)
 def _wgmma_equation_system(
+    ctx: DerivationContext,
     op: mgpu.WGMMAOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
   operands_or_results = operands_and_results(op)
   variable = eqns.Variable(operands_or_results[0])
   system = eqns.EquationSystem(
@@ -620,8 +645,10 @@ def _reduction_equation_and_hint(
 
 @_add_equation_system_derivation_rule(vector.MultiDimReductionOp)
 def _multi_dim_reduction_equation_system(
+    ctx: DerivationContext,
     op: vector.MultiDimReductionOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
   source = OperandOrResult(op, VariableType.OPERAND, 0)
   acc = OperandOrResult(op, VariableType.OPERAND, 1)
   out = OperandOrResult(op, VariableType.RESULT, 0)
@@ -643,8 +670,10 @@ def _multi_dim_reduction_equation_system(
 
 @_add_equation_system_derivation_rule(mgpu.BroadcastInDimOp)
 def _broadcast_in_dim_equation_system(
+    ctx: DerivationContext,
     op: mgpu.BroadcastInDimOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
   out_variable = eqns.Variable(OperandOrResult(op, VariableType.RESULT, 0))
   source_variable = eqns.Variable(OperandOrResult(op, VariableType.OPERAND, 0))
   out_shape = tuple(cast(ir.ShapedType, op.result.type).shape)
@@ -665,8 +694,9 @@ def _broadcast_in_dim_equation_system(
 
 @_add_equation_system_derivation_rule(vector.ShapeCastOp)
 def _shape_cast_equation_system(
-    op: vector.ShapeCastOp
+    ctx: DerivationContext, op: vector.ShapeCastOp
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
   in_shape = tuple(cast(ir.ShapedType, op.source.type).shape)
   out_shape = tuple(cast(ir.ShapedType, op.result.type).shape)
 
@@ -719,8 +749,10 @@ def _tmem_layout_from_layout_attr(
 if jaxlib.version >= (0, 7, 2):
   @_add_equation_system_derivation_rule(mgpu.TmemLayoutCastOp)
   def _tmem_layout_cast_equation_system(
+      ctx: DerivationContext,
       op: mgpu.TmemLayoutCastOp,
   ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+    del ctx
     operand = OperandOrResult(op, VariableType.OPERAND, 0)
     result = OperandOrResult(op, VariableType.RESULT, 0)
     variable = eqns.Variable(operand)
@@ -734,8 +766,10 @@ if jaxlib.version >= (0, 7, 2):
 
 @_add_equation_system_derivation_rule(mgpu.TmemAllocOp)
 def _tmem_alloc_equation_system(
+    ctx: DerivationContext,
     op: mgpu.TmemAllocOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
   result = OperandOrResult(op, VariableType.RESULT, 0)
   variable = eqns.Variable(result)
   return eqns.EquationSystem(), {variable: [result]}, []
@@ -989,6 +1023,7 @@ def infer_layout(module: ir.Module):
   global_equation_system = eqns.EquationSystem()
   operand_and_results_for_variable: OperandOrResultsForVariable = {}
   hints: list[Hint] = []
+  ctx = DerivationContext()
 
   def gather_equations(op: ir.Operation):
     # Terminator ops are handled directly by the op whose region they belong to.
@@ -1006,7 +1041,7 @@ def infer_layout(module: ir.Module):
     rule = _equation_system_derivation_rules.get(op.OPERATION_NAME, None)  # pytype: disable=attribute-error
     if rule is None:
       raise NotImplementedError(f"No layout inference rule defined for {op}")
-    equation_system, mapping, op_hints = rule(op)
+    equation_system, mapping, op_hints = rule(ctx, op)
     operand_and_results_for_variable.update(mapping)
     nonlocal global_equation_system
     global_equation_system &= equation_system

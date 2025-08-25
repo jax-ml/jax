@@ -635,8 +635,14 @@ RL = eqns.RegisterLayout
 
 
 def _undef_equation_system(
+    ctx: layout_inference2.DerivationContext,
     op: llvm.UndefOp,
-) -> tuple[eqns.EquationSystem, layout_inference2.OperandOrResultsForVariable, list[layout_inference2.Hint]]:
+) -> tuple[
+    eqns.EquationSystem,
+    layout_inference2.OperandOrResultsForVariable,
+    list[layout_inference2.Hint],
+]:
+  del ctx
   # This rule is only called if the single output of the undef op is a vector or
   # TMEM reference, so we can just return a trivial mapping.
   result = layout_inference2.OperandOrResult(
@@ -667,8 +673,11 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
       lc = layout_cast(x, layouts.to_layout_attr(layout)).owner.opview
 
-    x_system, x_mapping, _ = _undef_equation_system(x)
-    lc_system, lc_mapping, _ = layout_inference2._layout_cast_equation_system(lc)
+    ctx = layout_inference2.DerivationContext()
+    x_system, x_mapping, _ = _undef_equation_system(ctx, x)
+    lc_system, lc_mapping, _ = layout_inference2._layout_cast_equation_system(
+        ctx, lc
+    )
     assignments = x_system.assignments | lc_system.assignments
     hints, [constraint] = layout_inference2.derive_hints_and_constraints(
         x_mapping | lc_mapping
