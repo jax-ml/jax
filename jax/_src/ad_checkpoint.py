@@ -44,7 +44,8 @@ from jax._src.state import discharge
 from jax._src.state.types import AbstractRef
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
-    PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix)
+    PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
+    tree_map)
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
 
@@ -860,7 +861,7 @@ mlir.register_lowering(remat_p, _remat_lowering)
 
 
 def checkpoint_name(x, name):
-  return name_p.bind(x, name=name)
+  return tree_map(partial(name_p.bind, name=name), x)
 
 name_p.def_impl(lambda x, *, name: x)
 name_p.def_abstract_eval(lambda x, *, name: x)
