@@ -40,16 +40,11 @@ else:
       is_accelerated as is_accelerated,
   )
 
-  if is_accelerated("jax-pallas-triton-compiler-params"):
-    _deprecated_TritonCompilerParams = None
-  else:
-    _deprecated_TritonCompilerParams = CompilerParams
-
   _deprecations = {
       # Deprecated on May 27th 2025.
       "TritonCompilerParams": (
           "TritonCompilerParams is deprecated, use CompilerParams instead.",
-          _deprecated_TritonCompilerParams,
+          CompilerParams,
       ),
   }
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
