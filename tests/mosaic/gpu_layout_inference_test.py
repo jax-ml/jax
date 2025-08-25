@@ -22,7 +22,6 @@ from typing import ClassVar
 from absl.testing import parameterized
 import jax
 from jax._src import config
-from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
@@ -834,10 +833,6 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       self.infer_layout(self.module)
 
   def test_infer_tmem_layout_cast_correctly(self):
-    # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.2.
-    if jaxlib.version < (0, 7, 2):
-      self.skipTest("Only works with jaxlib 0.7.2 or higher.")
-
     f32 = ir.F32Type.get()
     ref_ty = ir.MemRefType.get((128, 128), f32, memory_space=mgpu.utils.tmem())
     layout = layouts.to_layout_attr(mgpu.TMEM_NATIVE_LAYOUT)
