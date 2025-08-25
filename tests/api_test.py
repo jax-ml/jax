@@ -5255,7 +5255,7 @@ class APITest(jtu.JaxTestCase):
 
     self.assertNotIn('mul', str(f_vjp))
 
-  # TODO(mattjj,dougalm): re-enable when we set auto_dce=True by default
+  # TODO(mattjj,dougalm): re-enable if we set auto_dce=True by default
   # @jtu.run_on_devices('cpu')
   # def test_implicit_dce(self):
   #   @api.jit
@@ -7005,6 +7005,59 @@ class RematTest(jtu.JaxTestCase):
 
     s = vjp.jaxpr.pretty_print(name_stack=True)
     self.assertEqual(s.count('rematted_computation'), 1)
+
+  def test_remat_partial_cse_prevention(self):
+    @partial(jax.remat, prevent_cse=(False, True))
+    def layer(W, x):
+      return x @ W
+
+    def net(Ws, x):
+      for W in Ws:
+        x = layer(W, x)
+      return x
+
+    def loss(Ws, x):
+      return jnp.sum(net(Ws, x)**2)
+
+    Ws = [jnp.ones((3, 3)) for _ in range(2)]
+    x = jnp.ones(3)
+    txt = jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()
+    self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+ :')
+
+  def test_remat_partial_cse_prevention_all_false(self):
+    @partial(jax.remat, prevent_cse=(False, False))
+    def layer(W, x):
+      return x @ W
+
+    def net(Ws, x):
+      for W in Ws:
+        x = layer(W, x)
+      return x
+
+    def loss(Ws, x):
+      return jnp.sum(net(Ws, x)**2)
+
+    Ws = [jnp.ones((3, 3)) for _ in range(2)]
+    x = jnp.ones(3)
+    txt = jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()  # don't crash
+
+  def test_remat_partial_cse_prevention_pytree(self):
+    @partial(jax.remat, prevent_cse=({'W': False, 'x': True},))
+    def layer(dct):
+      return dct['x'] @ dct['W']
+
+    def net(Ws, x):
+      for W in Ws:
+        x = layer(dict(W=W, x=x))
+      return x
+
+    def loss(Ws, x):
+      return jnp.sum(net(Ws, x)**2)
+
+    Ws = [jnp.ones((3, 3)) for _ in range(2)]
+    x = jnp.ones(3)
+    txt = jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()
+    self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+ :')
 
 
 @jtu.with_config(jax_pprint_use_color=False)
