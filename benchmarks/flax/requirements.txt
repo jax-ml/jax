@@ -1,0 +1,7 @@
+absl-py
+flax
+google-benchmark
+jax
+ml_collections
+numpy
+optax
