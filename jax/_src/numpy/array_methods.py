@@ -524,11 +524,10 @@ def _view(self: Array, dtype: DTypeLike | None = None, type: None = None) -> Arr
   if type is not None:
     raise NotImplementedError("`type` argument of array.view() is not supported.")
 
-  dtypes.check_user_dtype_supported(dtype, "view")
   if dtype is None:
     return self
 
-  dtype = dtypes.canonicalize_dtype(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "view")
 
   nbits_in = dtypes.bit_width(self.dtype)
   nbits_out = dtypes.bit_width(dtype)

@@ -66,17 +66,19 @@ def _upcast_f16(dtype: DTypeLike) -> DType:
     return np.dtype('float32')
   return np.dtype(dtype)
 
-def _promote_integer_dtype(dtype: DTypeLike) -> DTypeLike:
+def _promote_integer_dtype(dtype: DType) -> DType:
   # Note: NumPy always promotes to 64-bit; jax instead promotes to the
   # default dtype as defined by dtypes.int_ or dtypes.uint.
   if dtypes.issubdtype(dtype, np.bool_):
-    return dtypes.int_
+    return dtypes.default_int_dtype()
   elif dtypes.issubdtype(dtype, np.unsignedinteger):
-    if np.iinfo(dtype).bits < np.iinfo(dtypes.uint).bits:
-      return dtypes.uint
+    default_uint_dtype = dtypes.default_uint_dtype()
+    if np.iinfo(dtype).bits < np.iinfo(default_uint_dtype).bits:
+      return default_uint_dtype
   elif dtypes.issubdtype(dtype, np.integer):
-    if np.iinfo(dtype).bits < np.iinfo(dtypes.int_).bits:
-      return dtypes.int_
+    default_int_dtype = dtypes.default_int_dtype()
+    if np.iinfo(dtype).bits < np.iinfo(default_int_dtype).bits:
+      return default_int_dtype
   return dtype
 
 def check_where(name: str, where: ArrayLike | None) -> Array | None:
@@ -113,7 +115,6 @@ def _reduction(a: ArrayLike, name: str, op: ReductionOp, init_val: ArrayLike,
     raise NotImplementedError(f"The 'out' argument to jnp.{name} is not supported.")
   a = ensure_arraylike(name, a)
   where_ = check_where(name, where_)
-  dtypes.check_user_dtype_supported(dtype, name)
   axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
 
   if initial is None and not has_identity and where_ is not None:
@@ -128,12 +129,14 @@ def _reduction(a: ArrayLike, name: str, op: ReductionOp, init_val: ArrayLike,
     if not _all(shape[d] >= 1 for d in pos_dims):
       raise ValueError(f"zero-size array to reduction operation {name} which has no identity")
 
-  result_dtype = dtype or dtypes.dtype(a)
-
-  if dtype is None and promote_integers:
-    result_dtype = _promote_integer_dtype(result_dtype)
-
-  result_dtype = dtypes.canonicalize_dtype(result_dtype)
+  result_dtype: DType
+  if dtype is None:
+    result_dtype = dtypes.dtype(a)
+    if promote_integers:
+      result_dtype = _promote_integer_dtype(result_dtype)
+    result_dtype = dtypes.canonicalize_dtype(result_dtype)
+  else:
+    result_dtype = dtypes.check_and_canonicalize_user_dtype(dtype, name)
 
   if upcast_f16_for_computation and dtypes.issubdtype(result_dtype, np.inexact):
     computation_dtype = _upcast_f16(result_dtype)
@@ -739,7 +742,10 @@ def _logsumexp(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   """Compute log(sum(exp(a))) while avoiding precision loss."""
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.logaddexp.reduce is not supported.")
-  dtypes.check_user_dtype_supported(dtype, "jnp.logaddexp.reduce")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "jnp.logaddexp.reduce")
+  # TODO(phawkins): dtype isn't used here. That seems like a bug!
+  del dtype
   a = ensure_arraylike("logsumexp", a)
   where = check_where("logsumexp", where)
   a_arr, = promote_dtypes_inexact(a)
@@ -759,7 +765,9 @@ def _logsumexp2(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   """Compute log2(sum(2 ** a)) via logsumexp."""
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.logaddexp2.reduce is not supported.")
-  dtypes.check_user_dtype_supported(dtype, "jnp.logaddexp2.reduce")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(
+        dtype, "jnp.logaddexp2.reduce")
   a = ensure_arraylike("logsumexp2", a)
   where = check_where("logsumexp2", where)
   ln2 = float(np.log(2))
@@ -894,8 +902,7 @@ def _mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   if dtype is None:
     result_dtype = dtypes.to_inexact_dtype(dtypes.dtype(a, canonicalize=True))
   else:
-    dtypes.check_user_dtype_supported(dtype, "mean")
-    result_dtype = dtypes.canonicalize_dtype(dtype)
+    result_dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "mean")
 
   if upcast_f16_for_computation and dtypes.issubdtype(result_dtype, np.inexact):
     computation_dtype = _upcast_f16(result_dtype)
@@ -1125,7 +1132,8 @@ def _var(a: Array, axis: Axis = None, dtype: DTypeLike | None = None,
          out: None = None, correction: int | float = 0, keepdims: bool = False, *,
          where: ArrayLike | None = None) -> Array:
   where = check_where("var", where)
-  dtypes.check_user_dtype_supported(dtype, "var")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "var")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.var is not supported.")
 
@@ -1262,12 +1270,14 @@ def _std(a: Array, axis: Axis = None, dtype: DTypeLike | None = None,
          out: None = None, correction: int | float = 0, keepdims: bool = False, *,
          where: ArrayLike | None = None) -> Array:
   where = check_where("std", where)
-  dtypes.check_user_dtype_supported(dtype, "std")
-  if dtype is not None and not dtypes.issubdtype(dtype, np.inexact):
-    raise ValueError(f"dtype argument to jnp.std must be inexact; got {dtype}")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "std")
+    if not dtypes.issubdtype(dtype, np.inexact):
+      raise ValueError(f"dtype argument to jnp.std must be inexact; got {dtype}")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.std is not supported.")
-  return lax.sqrt(var(a, axis=axis, dtype=dtype, correction=correction, keepdims=keepdims, where=where))
+  return lax.sqrt(var(a, axis=axis, dtype=dtype, correction=correction,
+                      keepdims=keepdims, where=where))
 
 
 @export
@@ -1552,7 +1562,8 @@ def nanmax(a: ArrayLike, axis: Axis = None, out: None = None,
 
 @export
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
-def nansum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
+def nansum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+           out: None = None,
            keepdims: bool = False, initial: ArrayLike | None = None,
            where: ArrayLike | None = None) -> Array:
   r"""Return the sum of the array elements along a given axis, ignoring NaNs.
@@ -1628,7 +1639,8 @@ def nansum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
     >>> jnp.nansum(x, axis=0, keepdims=True, where=where)
     Array([[0., 0., 0., 0.]], dtype=float32)
   """
-  dtypes.check_user_dtype_supported(dtype, "nanprod")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "nanprod")
   return _nan_reduction(a, 'nansum', sum, 0, nan_if_all_nan=False,
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims,
                         initial=initial, where=where)
@@ -1712,7 +1724,8 @@ def nanprod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out
     >>> jnp.nanprod(x, axis=0, keepdims=True, where=where)
     Array([[1., 1., 1., 1.]], dtype=float32)
   """
-  dtypes.check_user_dtype_supported(dtype, "nanprod")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "nanprod")
   return _nan_reduction(a, 'nanprod', prod, 1, nan_if_all_nan=False,
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims,
                         initial=initial, where=where)
@@ -1803,8 +1816,7 @@ def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out
   if dtype is None:
     dtype = dtypes.to_inexact_dtype(dtypes.dtype(a, canonicalize=True))
   else:
-    dtypes.check_user_dtype_supported(dtype, "mean")
-    dtype = dtypes.canonicalize_dtype(dtype)
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "mean")
   nan_mask = lax.bitwise_not(lax._isnan(a))
   normalizer = sum(nan_mask, axis=axis, dtype=dtype, keepdims=keepdims, where=where)
   td = lax.div(nansum(a, axis, dtype=dtype, keepdims=keepdims, where=where), normalizer)
@@ -1890,7 +1902,8 @@ def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
   """
   a = ensure_arraylike("nanvar", a)
   where = check_where("nanvar", where)
-  dtypes.check_user_dtype_supported(dtype, "nanvar")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "nanvar")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanvar is not supported.")
 
@@ -1986,10 +1999,12 @@ def nanstd(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
   """
   a = ensure_arraylike("nanstd", a)
   where = check_where("nanstd", where)
-  dtypes.check_user_dtype_supported(dtype, "nanstd")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "nanstd")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanstd is not supported.")
-  return lax.sqrt(nanvar(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims, where=where))
+  return lax.sqrt(nanvar(a, axis=axis, dtype=dtype, ddof=ddof,
+                         keepdims=keepdims, where=where))
 
 
 class CumulativeReduction(Protocol):
@@ -2006,7 +2021,6 @@ def _cumulative_reduction(
   a = ensure_arraylike(name, a)
   if out is not None:
     raise NotImplementedError(f"The 'out' argument to jnp.{name} is not supported")
-  dtypes.check_user_dtype_supported(dtype, name)
 
   if axis is None or _isscalar(a):
     a = lax.reshape(a, (np.size(a),))
@@ -2021,10 +2035,17 @@ def _cumulative_reduction(
     a = _where(lax._isnan(a), lax._const(a, fill_value), a)
 
   a_type: DType = dtypes.dtype(a)
-  result_type: DTypeLike = dtypes.dtype(dtype or a)
-  if dtype is None and promote_integers or dtypes.issubdtype(result_type, np.bool_):
-    result_type = _promote_integer_dtype(result_type)
-  result_type = dtypes.canonicalize_dtype(result_type)
+  result_type: DType
+  if dtype is None:
+    result_type = a_type
+    if promote_integers or dtypes.issubdtype(result_type, np.bool_):
+      result_type = _promote_integer_dtype(result_type)
+    result_type = dtypes.canonicalize_dtype(result_type)
+  else:
+    result_type = dtypes.check_and_canonicalize_user_dtype(dtype, name)
+    if dtypes.issubdtype(result_type, np.bool_):
+      result_type = _promote_integer_dtype(result_type)
+      result_type = dtypes.canonicalize_dtype(result_type)
 
   if a_type != np.bool_ and dtype == np.bool_:
     a = lax.asarray(a).astype(np.bool_)
@@ -2268,7 +2289,8 @@ def cumulative_sum(
         "arrays.")
 
   axis = canonicalize_axis(axis, x.ndim)
-  dtypes.check_user_dtype_supported(dtype)
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   out = _cumsum_with_promotion(x, axis=axis, dtype=dtype)
   if include_initial:
     zeros_shape = list(x.shape)
@@ -2329,7 +2351,8 @@ def cumulative_prod(
         "arrays.")
 
   axis = canonicalize_axis(axis, x.ndim)
-  dtypes.check_user_dtype_supported(dtype)
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   out = _cumulative_reduction("cumulative_prod", control_flow.cumprod, x, axis, dtype)
   if include_initial:
     zeros_shape = list(x.shape)

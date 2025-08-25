@@ -152,7 +152,8 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     raise NotImplementedError("Only implemented for order='K'")
 
   # check if the given dtype is compatible with JAX
-  dtypes.check_user_dtype_supported(dtype, "array")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "array")
 
   # Here we make a judgment call: we only return a weakly-typed array when the
   # input object itself is weakly typed. That ensures asarray(x) is a no-op
@@ -377,7 +378,6 @@ def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
     raise ValueError(f"jnp.asarray: cannot convert object of type {type(a)} to JAX Array "
                      f"on platform={_get_platform(device)} with "
                      "copy=False. Consider using copy=None or copy=True instead.")
-  dtypes.check_user_dtype_supported(dtype, "asarray")
   if dtype is not None:
-    dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)  # type: ignore[assignment]
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "asarray")
   return array(a, dtype=dtype, copy=bool(copy), order=order, device=device)

@@ -22,7 +22,6 @@
 from __future__ import annotations
 
 import abc
-import builtins
 import dataclasses
 import functools
 import types
@@ -212,19 +211,37 @@ _default_types: dict[str, type[Any]] = {
 # canonicalize_dtype(np.float64), but are preparing for the reduction in the
 # number of places we perform dtype canonicalization.
 
+
 def default_int_dtype() -> DType:
-  return np.dtype(np.int64) if config.enable_x64.value else np.dtype(np.int32)
+  return (
+      np.dtype(np.int64)
+      if config.enable_x64.value and config.default_dtype_bits.value == '64'
+      else np.dtype(np.int32)
+  )
+
 
 def default_uint_dtype() -> DType:
-  return np.dtype(np.uint64) if config.enable_x64.value else np.dtype(np.uint32)
+  return (
+      np.dtype(np.uint64)
+      if config.enable_x64.value and config.default_dtype_bits.value == '64'
+      else np.dtype(np.uint32)
+  )
+
 
 def default_float_dtype() -> DType:
-  return (np.dtype(np.float64) if config.enable_x64.value
-          else np.dtype(np.float32))
+  return (
+      np.dtype(np.float64)
+      if config.enable_x64.value and config.default_dtype_bits.value == '64'
+      else np.dtype(np.float32)
+  )
+
 
 def default_complex_dtype() -> DType:
-  return (np.dtype(np.complex128) if config.enable_x64.value
-          else np.dtype(np.complex64))
+  return (
+      np.dtype(np.complex128)
+      if config.enable_x64.value and config.default_dtype_bits.value == '64'
+      else np.dtype(np.complex64)
+  )
 
 
 def jax_dtype(obj: DTypeLike | None, *, align: bool = False,
@@ -234,18 +251,18 @@ def jax_dtype(obj: DTypeLike | None, *, align: bool = False,
   Arguments mirror those of :func:`numpy.dtype`.
   """
   if obj is None:
-    obj = float_
+    obj = default_float_dtype()
   elif issubdtype(obj, extended):
     return obj  # type: ignore[return-value]
-  elif isinstance(obj, type):
-    obj = _DEFAULT_TYPEMAP.get(obj, obj)
+  elif isinstance(obj, type) and (f := _DEFAULT_TYPEMAP.get(obj)) is not None:
+    obj = f()
   return np.dtype(obj, align=align, copy=copy)
 
-_DEFAULT_TYPEMAP: dict[type, DTypeLike] = {
-  bool: bool,
-  int: int_,
-  float: float_,
-  complex: complex_,
+_DEFAULT_TYPEMAP: dict[type, Callable[[], np.dtype]] = {
+  bool: lambda: np.dtype(bool),
+  int: default_int_dtype,
+  float: default_float_dtype,
+  complex: default_complex_dtype,
 }
 
 def bit_width(dtype: DTypeLike) -> int:
@@ -937,18 +954,24 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tupl
   # TODO(jakevdp): fix return type annotation and remove this ignore.
   return (dtype, weak_type) if return_weak_type_flag else dtype  # type: ignore[return-value]
 
-def check_user_dtype_supported(dtype, fun_name=None):
+def check_and_canonicalize_user_dtype(dtype, fun_name=None) -> DType:
+  """Checks validity of a user-provided dtype, and returns its canonical form.
+
+  For Python scalar types this function returns the corresponding default dtype.
+  """
+  if dtype is None:
+    raise ValueError("dtype must be specified.")
   if isinstance(dtype, Array):
     # Deprecation warning added 2024 June 13.
     warnings.warn("Passing an array as a dtype argument is deprecated; "
                   "instead of dtype=arr use dtype=arr.dtype.",
                   category=DeprecationWarning, stacklevel=3)
-    return  # no further check needed, as array dtypes have already been validated.
+    return dtype.dtype # no further check needed, as array dtypes have already been validated.
   if issubdtype(dtype, extended):
-    return
+    return dtype
   # Avoid using `dtype in [...]` because of numpy dtype equality overloading.
-  if isinstance(dtype, type) and dtype in {bool, int, float, builtins.complex}:
-    return
+  if isinstance(dtype, type) and (f := _DEFAULT_TYPEMAP.get(dtype)) is not None:
+    return f()
   np_dtype = np.dtype(dtype)
   is_custom_dtype = np_dtype.type in [
       *_custom_float_scalar_types,
@@ -974,8 +997,10 @@ def check_user_dtype_supported(dtype, fun_name=None):
            "environment variable. "
            "See https://github.com/jax-ml/jax#current-gotchas for more.")
     fun_name = f"requested in {fun_name}" if fun_name else ""
-    truncated_dtype = canonicalize_dtype(np_dtype).name
-    warnings.warn(msg.format(dtype, fun_name, truncated_dtype), stacklevel=3)
+    truncated_dtype = canonicalize_dtype(np_dtype)
+    warnings.warn(msg.format(dtype, fun_name, truncated_dtype.name), stacklevel=3)
+    return truncated_dtype
+  return np_dtype
 
 def safe_to_cast(input_dtype_or_value: Any,
                  output_dtype_or_value: Any) -> bool:

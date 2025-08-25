@@ -87,11 +87,12 @@ def zeros(shape: Any, dtype: DTypeLike | None = None, *,
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   if (m := _check_forgot_shape_tuple("zeros", shape, dtype)): raise TypeError(m)
-  dtypes.check_user_dtype_supported(dtype, "zeros")
+  dtype = dtypes.check_and_canonicalize_user_dtype(
+      float if dtype is None else dtype, "zeros")
   shape = canonicalize_shape(shape)
   sharding = util.choose_device_or_out_sharding(
       device, out_sharding, 'jnp.zeros')
-  return lax.full(shape, 0, dtypes.jax_dtype(dtype), sharding=sharding)
+  return lax.full(shape, 0, dtype, sharding=sharding)
 
 
 @export
@@ -136,10 +137,11 @@ def ones(shape: Any, dtype: DTypeLike | None = None, *,
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   if (m := _check_forgot_shape_tuple("ones", shape, dtype)): raise TypeError(m)
   shape = canonicalize_shape(shape)
-  dtypes.check_user_dtype_supported(dtype, "ones")
+  dtype = dtypes.check_and_canonicalize_user_dtype(
+      float if dtype is None else dtype, "ones")
   sharding = util.choose_device_or_out_sharding(
       device, out_sharding, 'jnp.ones')
-  return lax.full(shape, 1, dtypes.jax_dtype(dtype), sharding=sharding)
+  return lax.full(shape, 1, dtype, sharding=sharding)
 
 
 @export
@@ -183,7 +185,8 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
   .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
   """
   if (m := _check_forgot_shape_tuple("empty", shape, dtype)): raise TypeError(m)
-  dtypes.check_user_dtype_supported(dtype, "empty")
+  dtype = dtypes.check_and_canonicalize_user_dtype(
+      float if dtype is None else dtype, "empty")
   return zeros(shape, dtype, device=device, out_sharding=out_sharding)
 
 
@@ -233,7 +236,8 @@ def full(shape: Any, fill_value: ArrayLike,
     Array([[0, 1, 2],
            [0, 1, 2]], dtype=int32)
   """
-  dtypes.check_user_dtype_supported(dtype, "full")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full")
   util.check_arraylike("full", fill_value)
 
   if np.ndim(fill_value) == 0:
@@ -284,7 +288,8 @@ def zeros_like(a: ArrayLike | DuckTypedArray,
     if hasattr(a, '__jax_array__'):
       a = a.__jax_array__()
     util.check_arraylike("zeros_like", a)
-  dtypes.check_user_dtype_supported(dtype, "zeros_like")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "zeros_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
   return lax.full_like(a, 0, dtype, shape,
@@ -330,7 +335,8 @@ def ones_like(a: ArrayLike | DuckTypedArray,
     if hasattr(a, '__jax_array__'):
       a = a.__jax_array__()
     util.check_arraylike("ones_like", a)
-  dtypes.check_user_dtype_supported(dtype, "ones_like")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "ones_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
   return lax.full_like(a, 1, dtype, shape,
@@ -378,7 +384,8 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
     if hasattr(prototype, '__jax_array__'):
       prototype = prototype.__jax_array__()
     util.check_arraylike("ones_like", prototype)
-  dtypes.check_user_dtype_supported(dtype, "ones_like")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "ones_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
   return lax.full_like(prototype, 0, dtype, shape,
@@ -432,7 +439,8 @@ def full_like(a: ArrayLike | DuckTypedArray,
     util.check_arraylike("full_like", a, fill_value)
     if hasattr(a, '__jax_array__'):
       a = a.__jax_array__()
-  dtypes.check_user_dtype_supported(dtype, "full_like")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
   if np.ndim(fill_value) == 0:
@@ -543,14 +551,14 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
               axis: int = 0,
               *, device: xc.Device | Sharding | None = None) -> Array | tuple[Array, Array]:
   """Implementation of linspace differentiable in start and stop args."""
-  dtypes.check_user_dtype_supported(dtype, "linspace")
   if num < 0:
     raise ValueError(f"Number of samples, {num}, must be non-negative.")
   start, stop = util.ensure_arraylike("linspace", start, stop)
 
   if dtype is None:
     dtype = dtypes.to_inexact_dtype(dtypes.result_type(start, stop))
-  dtype = dtypes.jax_dtype(dtype)
+  else:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "linspace")
   computation_dtype = dtypes.to_inexact_dtype(dtype)
   start = start.astype(computation_dtype)
   stop = stop.astype(computation_dtype)
@@ -667,10 +675,10 @@ def _logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
               endpoint: bool = True, base: ArrayLike = 10.0,
               dtype: DTypeLike | None = None, axis: int = 0) -> Array:
   """Implementation of logspace differentiable in start and stop args."""
-  dtypes.check_user_dtype_supported(dtype, "logspace")
   if dtype is None:
     dtype = dtypes.to_inexact_dtype(dtypes.result_type(start, stop))
-  dtype = dtypes.jax_dtype(dtype)
+  else:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "logspace")
   computation_dtype = dtypes.to_inexact_dtype(dtype)
   start, stop = util.ensure_arraylike("logspace", start, stop)
   start = start.astype(computation_dtype)
@@ -737,10 +745,10 @@ def geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool =
 def _geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool = True,
                dtype: DTypeLike | None = None, axis: int = 0) -> Array:
   """Implementation of geomspace differentiable in start and stop args."""
-  dtypes.check_user_dtype_supported(dtype, "geomspace")
   if dtype is None:
     dtype = dtypes.to_inexact_dtype(dtypes.result_type(start, stop))
-  dtype = dtypes.jax_dtype(dtype)
+  else:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "geomspace")
   computation_dtype = dtypes.to_inexact_dtype(dtype)
   start, stop = util.ensure_arraylike("geomspace", start, stop)
   start = start.astype(computation_dtype)
