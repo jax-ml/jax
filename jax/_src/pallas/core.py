@@ -1269,16 +1269,35 @@ def core_map(
   """
   def wrapped(f):
     flat_args, in_tree = tree_util.tree_flatten(((), {}))
+    debug_info = api_util.debug_info("pallas_core_map", f, (), {})
     flat_fun, out_tree_thunk = api_util.flatten_fun(
-        lu.wrap_init(f,
-                     debug_info=api_util.debug_info("pallas_core_map", f,
-                                                    (), {})),
-        in_tree)
+        lu.wrap_init(f, debug_info=debug_info), in_tree
+    )
     with (
         tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
         jax_core.extend_axis_env_nd(mesh.shape.items()),
     ):
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_args)
+
+    if consts:
+      consts_avals = [
+          aval
+          for c in consts
+          if not isinstance(aval := jax_core.get_aval(c), state.AbstractRef)
+      ]
+      if consts_avals:
+        raise ValueError(
+            f"The kernel function in core_map {debug_info.func_src_info}"
+            f" captures constants {consts_avals}. You should pass them as"
+            " inputs."
+        )
+    out_tree = out_tree_thunk()
+    if out_tree != tree_util.tree_structure(None):
+      raise ValueError(
+          f"The kernel function in core_map {debug_info.func_src_info} should"
+          f" return None. It returns a PyTree: {out_tree}."
+      )
+
     out = core_map_p.bind(
         *consts,
         jaxpr=jaxpr,
@@ -1294,9 +1313,7 @@ def core_map(
         if metadata is not None
         else None,
     )
-    if out:
-      raise ValueError("core_map-ped functions must not return any outputs.")
-    return tree_util.tree_unflatten(out_tree_thunk(), out)
+    return tree_util.tree_unflatten(out_tree, out)
 
   return wrapped
 
