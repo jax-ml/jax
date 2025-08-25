@@ -34,6 +34,7 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import frozen_dict
 from jax._src import linear_util as lu
+from jax._src import effects
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
@@ -1300,6 +1301,16 @@ def core_map(
 
   return wrapped
 
+# TODO(sharadmv,ivyzheng): remove this once we use axis dicts primarily
+class CommsEffect(effects.Effect):
+  pass
+
+comms_effect = CommsEffect()
+effects.lowerable_effects.add_type(CommsEffect)
+effects.control_flow_allowed_effects.add_type(CommsEffect)
+effects.remat_allowed_effects.add_type(CommsEffect)
+effects.custom_derivatives_allowed_effects.add_type(CommsEffect)
+
 
 @core_map_p.def_effectful_abstract_eval
 def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
@@ -1316,7 +1327,7 @@ def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
     except ImportError:
       pass
   for eff in jaxpr.effects:
-    if mesh.discharges_effect(eff):
+    if mesh.discharges_effect(eff) or isinstance(eff, CommsEffect):
       continue
     if not isinstance(eff, jax_core.NamedAxisEffect):
       effs.add(eff)

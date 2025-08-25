@@ -559,7 +559,7 @@ class MosaicGridMapping:
       comms_effects = {
           "comms"
           for e in jaxpr.effects
-          if isinstance(e, primitives.CommsEffect)
+          if isinstance(e, pallas_core.CommsEffect)
       }
       return comms_effects | axis_name_effects
     nonlocal_axis_names.update(_get_nonlocal_axis_names(self.jaxpr))
