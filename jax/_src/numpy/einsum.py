@@ -423,11 +423,13 @@ def _einsum(
     raise NotImplementedError(
         "`out_sharding` argument of `einsum` only supports NamedSharding"
         " instances. Please file a bug if this is not enough for your use case.")
-  dtypes.check_user_dtype_supported(preferred_element_type, "einsum")
   if preferred_element_type is None:
     preferred_element_type, output_weak_type = dtypes.result_type(
         *operands, return_weak_type_flag=True)
   else:
+    preferred_element_type = dtypes.check_and_canonicalize_user_dtype(
+        preferred_element_type, 'einsum'
+    )
     output_weak_type = False
 
   def sum(x, axes):

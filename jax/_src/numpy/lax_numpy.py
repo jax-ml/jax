@@ -5357,7 +5357,8 @@ def astype(x: ArrayLike, dtype: DTypeLike | None,
 
   if dtype is None:
     dtype = dtypes.default_float_dtype()
-  dtypes.check_user_dtype_supported(dtype, "astype")
+  else:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "astype")
   if issubdtype(x_arr.dtype, np.complexfloating):
     if dtypes.isdtype(dtype, ("integral", "real floating")):
       deprecations.warn(
@@ -5836,7 +5837,8 @@ def eye(N: DimSize, M: DimSize | None = None,
 def _eye(N: DimSize, M: DimSize | None = None,
         k: int | ArrayLike = 0,
         dtype: DTypeLike | None = None) -> Array:
-  dtypes.check_user_dtype_supported(dtype, "eye")
+  dtype = dtypes.check_and_canonicalize_user_dtype(
+      float if dtype is None else dtype, "eye")
   if isinstance(k, int):
     k = lax._clip_int_to_valid_range(k, np.int32,
                                               "`argument `k` of jax.numpy.eye")
@@ -5882,7 +5884,8 @@ def identity(n: DimSize, dtype: DTypeLike | None = None) -> Array:
     Array([[1, 0],
            [0, 1]], dtype=int32)
   """
-  dtypes.check_user_dtype_supported(dtype, "identity")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "identity")
   return eye(n, dtype=dtype)
 
 
@@ -5977,7 +5980,8 @@ def arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
 def _arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
             step: ArrayLike | None = None, dtype: DTypeLike | None = None,
             out_sharding: NamedSharding | None = None) -> Array:
-  dtypes.check_user_dtype_supported(dtype, "arange")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "arange")
   if not config.dynamic_shapes.value:
     util.check_arraylike("arange", start)
     if stop is None and step is None:
@@ -6269,8 +6273,8 @@ def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
     (Array([[0],
            [1]], dtype=int32), Array([[0, 1, 2]], dtype=int32))
   """
-  dtypes.check_user_dtype_supported(dtype, "indices")
-  dtype = dtype or dtypes.canonicalize_dtype(dtypes.int_)
+  dtype = dtypes.check_and_canonicalize_user_dtype(
+      int if dtype is None else dtype, "indices")
   dimensions = tuple(
       core.concrete_or_error(operator.index, d, "dimensions argument of jnp.indices")
       for d in dimensions)
@@ -6583,9 +6587,12 @@ def tri(N: int, M: int | None = None, k: int = 0, dtype: DTypeLike | None = None
            [1., 0., 0., 0.],
            [1., 1., 0., 0.]], dtype=float32)
   """
-  dtypes.check_user_dtype_supported(dtype, "tri")
+  if dtype is None:
+    # TODO(phawkins): this is a strange default.
+    dtype = np.dtype(np.float32)
+  else:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "tri")
   M = M if M is not None else N
-  dtype = dtype or np.dtype('float32')
   return lax._tri(dtype, (N, M), k)
 
 
@@ -6774,7 +6781,8 @@ def trace(a: ArrayLike, offset: int | ArrayLike = 0, axis1: int = 0, axis2: int 
   if _canonicalize_axis(axis1, np.ndim(a)) == _canonicalize_axis(axis2, np.ndim(a)):
     raise ValueError(f"axis1 and axis2 can not be same. axis1={axis1} and axis2={axis2}")
 
-  dtypes.check_user_dtype_supported(dtype, "trace")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "trace")
 
   a_shape = np.shape(a)
   a = moveaxis(a, (axis1, axis2), (-2, -1))
