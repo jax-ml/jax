@@ -9055,6 +9055,7 @@ class UtilTest(jtu.JaxTestCase):
         ),
     )
 
+  @jtu.thread_unsafe_test()
   def test_device_indices_cache(self):
     op1 = xc.OpSharding()
     op1.type = xc.OpSharding.Type.OTHER

@@ -243,6 +243,7 @@ class PrngTest(jtu.JaxTestCase):
         jnp.ones((10, 0,), jnp.uint32))
     np.testing.assert_equal(result, np.zeros((10, 0,), dtype=np.uint32))
 
+  @jtu.thread_unsafe_test()
   def testNoOpByOpUnderHash(self):
     def fail(*args, **kwargs): assert False
     apply_primitive, dispatch.apply_primitive = dispatch.apply_primitive, fail
