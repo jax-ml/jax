@@ -88,6 +88,7 @@ pytype_strict_library(
         "//jaxlib/mosaic/python:gpu_dialect",
         "//jaxlib/mosaic/python:tpu_dialect",
         "//jaxlib/triton",
+        "@xla//xla/python:_gpu_ondevice_tracing",
         "@xla//xla/python:_profile_data",
         "@xla//xla/python:_profiler",
     ],
