@@ -106,18 +106,19 @@ def matmul_kernel(a, b, config: TuningConfig):
                   (2 * tile_m, tile_k),
                   lambda k: (0, k),
                   transforms=transforms,
-                  memory_space=plgpu.SMEM
+                  memory_space=plgpu.SMEM,
+                  delay_release=1,
               ),
               plgpu.BlockSpec(
                   (tile_k, tile_n),
                   lambda k: (k, 0),
                   transforms=transforms,
-                  memory_space=plgpu.SMEM
+                  memory_space=plgpu.SMEM,
+                  delay_release=1,
               ),
           ],
           wg_axis="wg",
           num_compute_wgs=2,
-          delay_release=1,
           max_concurrent_steps=max_concurrent_steps,
           compute_context=prologue_epilogue,
       )(a_gmem.at[m_slice, :], b_gmem.at[:, n_slice])

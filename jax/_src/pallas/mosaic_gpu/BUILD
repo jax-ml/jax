@@ -142,6 +142,7 @@ pytype_strict_library(
         "//jax/_src/pallas",
         "//jax/experimental:mosaic_gpu",
         "//jax/experimental:pallas",
+        "//third_party/py/numpy",
     ],
 )
 
