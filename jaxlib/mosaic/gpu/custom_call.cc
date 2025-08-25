@@ -46,6 +46,7 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/synchronization/mutex.h"
 #include "third_party/gpus/cuda/include/cuda.h"
@@ -161,7 +162,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
   bool is_target_binary = target == mlir::gpu::CompilationTarget::Binary;
   static absl::once_flag register_passes_flag;
   absl::call_once(
-      register_passes_flag, [&compilation_provider, &cc, &nvshmem_path]() {
+      register_passes_flag, [&compilation_provider, &cc]() {
         mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
 
         llvm::InitializeNativeTarget();
@@ -186,12 +187,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         mlir::registerConvertToLLVMPass();
         mlir::registerGPUPasses();
         mlir::registerGpuLaunchSinkIndexComputationsPass();
-        std::vector<std::string> libraries_to_link{
-            ::xla::gpu::nvptx::LibDevicePath(kDefaultCudaDataDir)};
-        if (!nvshmem_path.empty()) {
-          libraries_to_link.push_back(nvshmem_path);
-        }
-        mosaic::gpu::registerGpuModuleToAssemblyPass(libraries_to_link);
+        mosaic::gpu::registerGpuModuleToAssemblyPass();
         mosaic::gpu::registerAssemblyToBinaryPass(compilation_provider, cc);
         mosaic::gpu::registerGpuLaunchLoweringPass();
         mosaic::gpu::registerConvertGpuToLLVMPass();
@@ -204,6 +200,11 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
   const char* cuda_root = mosaic::gpu::GetCUDARoot();
   if (!cuda_root) {
     return mlir::failure();
+  }
+  std::vector<std::string> libraries_to_link{
+      ::xla::gpu::nvptx::LibDevicePath(kDefaultCudaDataDir)};
+  if (!nvshmem_path.empty()) {
+    libraries_to_link.push_back(nvshmem_path);
   }
   return mlir::parsePassPipeline(absl::StrCat(
       R"(
@@ -235,7 +236,9 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         gpu.module(reconcile-unrealized-casts),
         mosaic-convert-gpu-to-llvm,
         ensure-debug-info-scope-on-llvm-func{emission-kind=DebugDirectivesOnly},
-        mosaic-gpu-module-to-assembly,
+        mosaic-gpu-module-to-assembly{libraries-to-link=)",
+      absl::StrJoin(libraries_to_link, ","),
+      R"(},
         convert-math-to-llvm{approximate-log1p=true},
         canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
         cse,

@@ -18,9 +18,11 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/strings/str_cat.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
@@ -51,6 +53,8 @@ limitations under the License.
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/WalkResult.h"
 #include "mlir/Target/LLVM/NVVM/Target.h"
@@ -81,6 +85,8 @@ class GpuModuleToAssemblyTest : public ::testing::Test {
     builder_.setInsertionPointToEnd(module_->getBody());
     context_.appendDialectRegistry(registry);
     context_.loadAllAvailableDialects();
+
+    mosaic::gpu::registerGpuModuleToAssemblyPass();
   }
 
   void ExpectLastErrorContains(std::string_view substring) {
@@ -201,18 +207,27 @@ TEST_F(GpuModuleToAssemblyTest,
   mlir::OwningOpRef<mlir::ModuleOp> module2 = module_->clone();
 
   // Without linking to the libraries, we should not be able to resolve the
-  // function, and are left with an `extern .func` declaration.
-  EXPECT_TRUE(mlir::succeeded(mosaic::gpu::internal::LowerGpuModuleToAssembly(
-      gpu_module, /*libraries_to_link=*/{})));
+  // function, and are left with an `extern .func` declaration. Here, we call
+  // the pass itself in order to make sure that the pass options are propagated
+  // as expected.
+  mlir::PassManager pm(module_->getContext());
+  auto pass_without_libdevice =
+      mlir::parsePassPipeline("builtin.module(mosaic-gpu-module-to-assembly)");
+  ASSERT_TRUE(mlir::succeeded(pass_without_libdevice));
+  *static_cast<mlir::OpPassManager*>(&pm) = std::move(*pass_without_libdevice);
+  EXPECT_TRUE(mlir::succeeded(pm.run(*module_)));
   EXPECT_THAT(mosaic_gpu::MlirToString(*module_), HasSubstr("extern .func"));
 
   // When linking the libraries, the `extern .func` declaration should
   // disappear.
   std::string libdevice_path =
       ::xla::gpu::nvptx::LibDevicePath("./cuda_sdk_lib");
-  EXPECT_TRUE(mlir::succeeded(mosaic::gpu::internal::LowerGpuModuleToAssembly(
-      GetOpsOfType<mlir::gpu::GPUModuleOp>(*module2).front(),
-      /*libraries_to_link=*/{libdevice_path})));
+  auto pass_with_libdevice = mlir::parsePassPipeline(absl::StrCat(
+      "builtin.module(mosaic-gpu-module-to-assembly{libraries-to-link=",
+      libdevice_path, "})"));
+  ASSERT_TRUE(mlir::succeeded(pass_with_libdevice));
+  *static_cast<mlir::OpPassManager*>(&pm) = std::move(*pass_with_libdevice);
+  EXPECT_TRUE(mlir::succeeded(pm.run(*module2)));
   EXPECT_THAT(mosaic_gpu::MlirToString(*module2),
               Not(HasSubstr("extern .func")));
 }

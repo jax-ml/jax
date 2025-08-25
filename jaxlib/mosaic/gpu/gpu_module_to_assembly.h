@@ -26,10 +26,8 @@ namespace mosaic {
 namespace gpu {
 
 // Registers a pass that converts `gpu.module` ops into `gpu.binary` ops
-// wrapping a PTX assembly. Takes in a list of paths to libraries to link into
-// the binary.
-void registerGpuModuleToAssemblyPass(
-    std::vector<std::string> libraries_to_link);
+// wrapping a PTX assembly.
+void registerGpuModuleToAssemblyPass();
 
 // Initializes the NVPTX target on first call.
 void EnsureLLVMNVPTXTargetIsRegistered();
