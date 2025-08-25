@@ -46,6 +46,7 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/synchronization/mutex.h"
 #include "third_party/gpus/cuda/include/cuda.h"
@@ -149,19 +150,13 @@ absl::StatusOr<std::string> GetPtxIsaVersion(
 }
 
 mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
-    mlir::MLIRContext* ctx, mlir::gpu::CompilationTarget target,
+    mlir::MLIRContext* ctx,
     const se::cuda::CompilationProvider* compilation_provider,
     const se::CudaComputeCapability& cc, const std::string& sm,
     const std::string& ptx_isa, const std::string& nvshmem_path) {
-  // Only support assembly and binary output for now.
-  if (target != mlir::gpu::CompilationTarget::Assembly &&
-      target != mlir::gpu::CompilationTarget::Binary) {
-    return mlir::failure();
-  }
-  bool is_target_binary = target == mlir::gpu::CompilationTarget::Binary;
   static absl::once_flag register_passes_flag;
   absl::call_once(
-      register_passes_flag, [&compilation_provider, &cc, &nvshmem_path]() {
+      register_passes_flag, [&compilation_provider, &cc]() {
         mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
 
         llvm::InitializeNativeTarget();
@@ -186,12 +181,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         mlir::registerConvertToLLVMPass();
         mlir::registerGPUPasses();
         mlir::registerGpuLaunchSinkIndexComputationsPass();
-        std::vector<std::string> libraries_to_link{
-            ::xla::gpu::nvptx::LibDevicePath(kDefaultCudaDataDir)};
-        if (!nvshmem_path.empty()) {
-          libraries_to_link.push_back(nvshmem_path);
-        }
-        mosaic::gpu::registerGpuModuleToAssemblyPass(libraries_to_link);
+        mosaic::gpu::registerGpuModuleToAssemblyPass();
         mosaic::gpu::registerAssemblyToBinaryPass(compilation_provider, cc);
         mosaic::gpu::registerGpuLaunchLoweringPass();
         mosaic::gpu::registerConvertGpuToLLVMPass();
@@ -205,6 +195,13 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
   if (!cuda_root) {
     return mlir::failure();
   }
+  std::vector<std::string> libraries_to_link{
+      ::xla::gpu::nvptx::LibDevicePath(kDefaultCudaDataDir)};
+  if (!nvshmem_path.empty()) {
+    libraries_to_link.push_back(nvshmem_path);
+  }
+  // TODO(bchetioui): pass `-lineinfo` as an opt to
+  // `mosaic-gpu-assembly-to-binary` to mirror the previous behaviour.
   return mlir::parsePassPipeline(absl::StrCat(
       R"(
       builtin.module(
@@ -235,16 +232,14 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         gpu.module(reconcile-unrealized-casts),
         mosaic-convert-gpu-to-llvm,
         ensure-debug-info-scope-on-llvm-func{emission-kind=DebugDirectivesOnly},
-        mosaic-gpu-module-to-assembly,
+        mosaic-gpu-module-to-assembly{libraries-to-link=)",
+      absl::StrJoin(libraries_to_link, ","),
+      R"(},
         convert-math-to-llvm{approximate-log1p=true},
         canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
         cse,
-        )",
-      // TODO(bchetioui): pass `-lineinfo` as an opt to compilation to mirror
-      // the previous behaviour.
-      (is_target_binary ? "mosaic-gpu-assembly-to-binary,gpu-launch-lowering,"
-                        : ""),
-      R"(
+        mosaic-gpu-assembly-to-binary,
+        gpu-launch-lowering,
         convert-to-llvm,
         reconcile-unrealized-casts
       )
@@ -445,9 +440,8 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     abort();
   }
 #endif
-  auto passes =
-      GetPassPipeline(module.getContext(), mlir::gpu::CompilationTarget::Binary,
-                      compilation_provider, cc, sm, ptx_isa, nvshmem_path);
+  auto passes = GetPassPipeline(module.getContext(), compilation_provider, cc,
+                                sm, ptx_isa, nvshmem_path);
   if (mlir::failed(passes)) {
     return absl::InternalError("Failed to construct pass pipeline");
   }
