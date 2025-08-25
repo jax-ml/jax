@@ -1,9 +1,9 @@
-# JAX debugging flags  
+# JAX debugging flags
 
 <!--* freshness: { reviewed: '2024-04-11' } *-->
 
 JAX offers flags and context managers that enable catching errors more easily.
-  
+
 ## `jax_debug_nans` configuration option and context manager
 
 **Summary:** Enable the `jax_debug_nans` flag to automatically detect when NaNs are produced in `jax.jit`-compiled code (but not in `jax.pmap` or `jax.pjit`-compiled code).
