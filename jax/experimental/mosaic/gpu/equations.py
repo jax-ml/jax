@@ -38,6 +38,9 @@ class Variable:
   """
   key: VariableKey
 
+  def __str__(self):
+    return f"V({self.key})"
+
 
 class Constant(abc.ABC):
   """A constant is a known layout."""
@@ -48,6 +51,9 @@ class RegisterLayout(Constant):
   """Wraps a known register layout."""
 
   value: fa.FragmentedLayout
+
+  def __str__(self):
+    return f"C({self.value})"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -77,6 +83,9 @@ class MostReplicated:
 class Reduce:
   expression: Expression
   axes: tuple[int, ...]
+
+  def __str__(self):
+    return f"Reduce([{self.axes}], {self.expression})"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -342,6 +351,9 @@ class Relayout:
       case _:
         return False
 
+  def __str__(self):
+    return f"Relayout({self.source}  ⟶ {self.target})"
+
 
 @dataclasses.dataclass(frozen=True)
 class Distinct:
@@ -359,6 +371,9 @@ class Distinct:
     if isinstance(self.lhs, Constant) and isinstance(self.rhs, Constant):
       return True
     return None
+
+  def __str__(self):
+    return f"{self.lhs} ≠ {self.rhs}"
 
 
 Constraint = Relayout | Distinct
@@ -501,6 +516,19 @@ class EquationSystem:
         equations=self.equations + other.equations,
         constraints=[*self.constraints, *other.constraints],
     )
+
+  def __str__(self):
+    r = "EquationSystem\n"
+    r += "  assignments:\n"
+    for assignment, constant in self.assignments.items():
+      r += f"    {assignment} ⟵ {constant}\n"
+    r += "  equations:\n"
+    for equation in self.equations:
+      r += f"    {equation}\n"
+    r += "  constraints:\n"
+    for constraint in self.constraints:
+      r += f"    {constraint}\n"
+    return r
 
 @final
 class Unsatisfiable:

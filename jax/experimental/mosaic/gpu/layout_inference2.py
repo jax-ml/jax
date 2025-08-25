@@ -20,6 +20,7 @@ from collections.abc import Callable, Sequence, Set
 import dataclasses
 import enum
 import itertools
+import re
 from typing import assert_never, cast
 
 from jax._src import lib as jaxlib
@@ -46,6 +47,8 @@ class VariableType(enum.IntEnum):
   OPERAND = 0
   RESULT = 1
 
+_op_name_regex = re.compile(r"^(%\d+ = )?\S+")
+
 @dataclasses.dataclass(frozen=True)
 class OperandOrResult:
   """A unique identifier for a variable."""
@@ -55,6 +58,14 @@ class OperandOrResult:
   type: VariableType
   # The index of the operand/result within the op's operands/results.
   index: int
+
+  def __str__(self):
+    match = _op_name_regex.match(str(self.operation))
+    assert match is not None
+    if self.type == VariableType.OPERAND:
+      return f"{match.group(0)}:o-{self.index}"
+    else:
+      return f"{match.group(0)}:r-{self.index}"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -68,6 +79,9 @@ class Hint:
   """
   variable: eqns.Variable
   expression: eqns.Expression
+
+  def __str__(self):
+    return f"{self.variable} ?= {self.expression}"
 
 
 def extract_constant_from_least_replicated_expression_for_hint(
