@@ -2132,15 +2132,14 @@ def vjp(
     raise NotImplementedError("reduce_axes argument to vjp is deprecated")
   del reduce_axes
   check_callable(fun)
-  if config.vjp3.value:
-    return vjp3(fun, *primals, has_aux=has_aux)
-  else:
-    wrapped_fun = lu.wrap_init(
-        fun, debug_info=debug_info("vjp", fun, primals, {}))
-    return _vjp(wrapped_fun, *primals, has_aux=has_aux)
+  wrapped_fun = lu.wrap_init(
+      fun, debug_info=debug_info("vjp", fun, primals, {}))
+  return _vjp(wrapped_fun, *primals, has_aux=has_aux)
 
 def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
   """Variant of vjp() that takes an lu.WrappedFun."""
+  if config.vjp3.value:
+    return _vjp3(fun, *primals, has_aux=has_aux)
   primals_flat, in_tree = tree_flatten(primals)
   for arg in primals_flat: dispatch.check_arg(arg)
   if not has_aux:
@@ -2242,7 +2241,11 @@ si_vjp = saved_input_vjp
 def vjp3(f, *primals, has_aux=False):
   dbg = debug_info("vjp", f, primals, {})
   fun = lu.wrap_init(f, debug_info=dbg)
+  return _vjp3(fun, *primals, has_aux=has_aux)
+
+def _vjp3(fun, *primals, has_aux=False):
   primals_flat, in_tree = tree_flatten(primals)
+  for arg in primals_flat: dispatch.check_arg(arg)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
     out_primals_flat, out_pvals, jaxpr, residuals = ad.linearize(
@@ -2261,8 +2264,9 @@ def vjp3(f, *primals, has_aux=False):
           RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
           for r in residuals]
   args_res = tree_map(lambda x: x if id(x) in used else NotNeeded(), primals)
-  f_vjp = VJP(partial(_vjp3, spec, out_known, jaxpr), in_tree, out_tree,
-              list(args_res), opaque_residuals)
+  out_primal_avals = [typeof(x) for x in out_primals_flat]
+  f_vjp = VJP(partial(_vjp3_callable, spec, out_known, jaxpr, out_primal_avals),
+              in_tree, out_tree, list(args_res), opaque_residuals)
   out_primals = tree_unflatten(out_tree, out_primals_flat)
   if not has_aux:
     return out_primals, f_vjp
@@ -2274,8 +2278,8 @@ def _is_ref(x):
   try: return isinstance(typeof(x), AbstractRef)
   except: return False
 
-def _vjp3(spec, out_known, jaxpr, in_tree, out_tree, args_res, opaque_res,
-          *maybe_ct_refs):
+def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
+                   args_res, opaque_res, *maybe_ct_refs):
   maybe_ct_refs_flat, in_tree_ = tree_flatten(maybe_ct_refs)
   if in_tree != in_tree_: raise Exception
   args_res_flat, in_tree_ = tree_flatten(
@@ -2284,18 +2288,68 @@ def _vjp3(spec, out_known, jaxpr, in_tree, out_tree, args_res, opaque_res,
   residuals = [args_res_flat[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
   maybe_refs = [ad.RefAccum(v.aval, x) if _is_ref(x) else ad.ValAccum(v.aval)
                 for v, x in zip(jaxpr.invars, maybe_ct_refs_flat)]
-  return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr),
-                 residuals, maybe_refs)
+  return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr,
+                         out_primal_avals), residuals, maybe_refs)
 
-def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, residuals, maybe_refs, out_ct):
+def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, out_primal_avals, residuals,
+              maybe_refs, out_ct):
   cts_flat, out_tree_ = tree_flatten(out_ct)
-  if out_tree != out_tree_: raise Exception
+  if out_tree != out_tree_: _vjp_ct_tree_error(jaxpr, out_tree, out_tree_)
+  _vjp_check_ct_avals(cts_flat, out_primal_avals)
   cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
   ad.backward_pass3(jaxpr, True, residuals, maybe_refs, cts_flat)
   arg_cts = [x.freeze() if isinstance(x, ad.ValAccum) else GradRef()
              for x in maybe_refs]
   arg_cts = map(ad.instantiate_zeros, arg_cts)
   return tree_unflatten(in_tree, arg_cts)
+
+_vjp_too_many_args = """
+The function returned by `jax.vjp` applied to {} was called with {} arguments,
+but functions returned by `jax.vjp` must be called with a single argument
+corresponding to the single value returned by the function being differentiated
+(even if that returned value is a tuple or other container).
+
+For example, if we have:
+
+  def f(x):
+    return (x, x)
+  _, f_vjp = jax.vjp(f, 1.0)
+
+the function `f` returns a single tuple as output, and so we call `f_vjp` with a
+single tuple as its argument:
+
+  x_bar, = f_vjp((2.0, 2.0))
+
+If we instead call `f_vjp(2.0, 2.0)`, with the values 'splatted out' as
+arguments rather than in a tuple, this error can arise.
+""".format
+
+def _vjp_ct_tree_error(jaxpr, out_tree, ct_tree):
+  msg = f"""unexpected tree structure.
+
+The argument to a VJP function returned by `jax.vjp` must match the pytree
+structure of the differentiated function {jaxpr.debug_info.func_src_info}.
+
+But the tree structures differ:
+"""
+  msg += '\n'.join(f"  * out{keystr(path)} was a {thing1} in the original "
+                   f" output, but a {thing2} here, so {explanation}."
+                   for path, thing1, thing2, explanation
+                   in equality_errors_pytreedef(out_tree, ct_tree))
+  raise ValueError(msg)
+
+def _vjp_check_ct_avals(cts, primal_avals):
+  # TODO(mattjj): improve this error  by flattening with keys in the first place
+  for ct, aval in zip(cts, primal_avals):
+    ct_aval = typeof(ct)
+    ct_aval_expected = aval.to_tangent_aval()
+    if (not core.typecompat(ct_aval, ct_aval_expected) and
+        not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
+      raise ValueError(
+          "unexpected JAX type (e.g. shape/dtype) for argument to VJP function: "
+          f"got {ct_aval.str_short()}, but expected {ct_aval_expected.str_short()} "
+          "because the corresponding output of the differentiated function had JAX type "
+          f"{aval.str_short()}")
 
 @register_dataclass
 @dataclasses.dataclass(frozen=True)
@@ -2317,8 +2371,12 @@ class VJP:
   out_tree: PyTreeDef
   args_res: list[Any]
   opaque_residuals: list[Any]
+  jaxpr = property(lambda self: self.fun.args[2])  # type: ignore
 
-  def __call__(self, out_ct):
+  def __call__(self, out_ct, *extra_args):
+    if extra_args:
+      name, *_ = self.jaxpr.debug_info.func_src_info.split(' ')
+      raise TypeError(_vjp_too_many_args(name, len(extra_args)))
     dums = tree_unflatten(self.in_tree, [GradValue()] * self.in_tree.num_leaves)
     return self.fun(self.in_tree, self.out_tree, self.args_res,
                     self.opaque_residuals, *dums)(out_ct)

@@ -6071,7 +6071,7 @@ class RematTest(jtu.JaxTestCase):
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
     if config.vjp3.value:
-      jaxpr_text = str(f_vjp.fun.args[2])
+      jaxpr_text = str(f_vjp.jaxpr)
     else:
       jaxpr_text = str(f_vjp.args[0].func.args[1])
 
@@ -6440,7 +6440,7 @@ class RematTest(jtu.JaxTestCase):
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
     if config.vjp3.value:
-      jaxpr = f_vjp.fun.args[2]
+      jaxpr = f_vjp.jaxpr
     else:
       jaxpr = f_vjp.args[0].func.args[1]
     jaxpr_text = str(jaxpr)
@@ -6642,7 +6642,7 @@ class RematTest(jtu.JaxTestCase):
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
     if config.vjp3.value:
-      jaxpr_text = str(f_vjp.fun.args[2])
+      jaxpr_text = str(f_vjp.jaxpr)
     else:
       jaxpr_text = str(f_vjp.args[0].func.args[1])
 
@@ -6675,7 +6675,7 @@ class RematTest(jtu.JaxTestCase):
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
     if config.vjp3.value:
-      jaxpr = f_vjp.fun.args[2]
+      jaxpr = f_vjp.jaxpr
     else:
       jaxpr = f_vjp.args[0].func.args[1]
     jaxpr_text = str(jaxpr)
