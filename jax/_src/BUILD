@@ -477,6 +477,9 @@ pytype_strict_library(
 pytype_strict_library(
     name = "logging_config",
     srcs = ["logging_config.py"],
+    deps = [
+        "//jax/_src/lib",
+    ],
 )
 
 pytype_strict_library(
