@@ -20,6 +20,7 @@ from functools import partial
 import importlib.util
 import logging
 import string
+import sys
 from typing import Any, Union
 import weakref
 
@@ -494,10 +495,10 @@ def _format_print_callback(
 ):
   if has_placeholders:
     with np.printoptions(**np_printoptions):
-      print(fmt.format(*args, **kwargs))
+      sys.stdout.write(fmt.format(*args, **kwargs) + "\n")
   else:
     assert not kwargs, "Format without placeholders should not have kwargs."
-    print(fmt, *args)
+    sys.stdout.write(" ".join((fmt, *(str(a) for a in args))) + "\n")
 
 
 def debug_print(
