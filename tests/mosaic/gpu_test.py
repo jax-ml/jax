@@ -3636,24 +3636,23 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       raise self.skipTest("Test requires Mosaic GPU dialect")
     super().setUp()
 
-  @parameterized.parameters(
-      fa.WGMMA_LAYOUT,
-      tcgen05.TMEM_NATIVE_LAYOUT,
-      fa.WGStridedFragLayout((128, 128), 1),
+  @parameterized.product(
+      layout=(fa.WGMMA_LAYOUT, tcgen05.TMEM_NATIVE_LAYOUT, fa.WGStridedFragLayout((128, 128), 1)),
+      dtype=(jnp.bfloat16, jnp.int8),
   )
-  def test_smem_registers_load_store(self, layout):
-    def body(ctx, input: ir.Value, result: ir.Value, smem: list[ir.Value]):
+  def test_smem_registers_load_store(self, layout, dtype):
+    def body(ctx, param: ir.Value, result: ir.Value, smem: list[ir.Value]):
       del ctx
       [tmp_smem] = smem
-      shape = ir.MemRefType(input.type).shape
-      elt_type = ir.MemRefType(input.type).element_type
+      shape = ir.MemRefType(param.type).shape
+      elt_type = ir.MemRefType(param.type).element_type
 
       zero_index = arith.constant(ir.IndexType.get(), 0)
       zero_vector_indices = [zero_index] * len(shape)
 
       # GMEM -> Registers
       vector_type = ir.VectorType.get(shape, elt_type)
-      reg = vector.load(vector_type, input, zero_vector_indices)
+      reg = vector.load(vector_type, param, zero_vector_indices)
       reg = mgpu_dialect.layout_cast(reg, mgpu_layouts.to_layout_attr(layout))
 
       # Registers -> SMEM
@@ -3666,7 +3665,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       # Registers -> GMEM
       vector.store(reg, result, zero_vector_indices)
 
-    dtype = jnp.bfloat16
     shape = (128, 128)
     jax_shape = jax.ShapeDtypeStruct(shape, dtype)
     kernel = mgpu.as_gpu_kernel(
@@ -3679,32 +3677,30 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 
-    input = self.prng.uniform(-1, 1, shape).astype(dtype)
-    self.assertArraysEqual(kernel(input), input)
+    param = self.prng.uniform(-1, 1, shape).astype(dtype)
+    self.assertArraysEqual(kernel(param), param)
 
-  @parameterized.parameters(
-      fa.WGMMA_LAYOUT,
-      tcgen05.TMEM_NATIVE_LAYOUT,
-      fa.WGStridedFragLayout((128, 128), 1),
+  @parameterized.product(
+      layout=(fa.WGMMA_LAYOUT, tcgen05.TMEM_NATIVE_LAYOUT, fa.WGStridedFragLayout((128, 128), 1)),
+      dtype=(jnp.bfloat16, jnp.int8),
   )
-  def test_gmem_registers_load_store(self, layout):
-    def body(ctx, input: ir.Value, result: ir.Value, smem):
+  def test_gmem_registers_load_store(self, layout, dtype):
+    def body(ctx, param: ir.Value, result: ir.Value, smem):
       del ctx, smem
-      shape = ir.MemRefType(input.type).shape
-      elt_type = ir.MemRefType(input.type).element_type
+      shape = ir.MemRefType(param.type).shape
+      elt_type = ir.MemRefType(param.type).element_type
 
       zero_index = arith.constant(ir.IndexType.get(), 0)
       zero_vector_indices = [zero_index] * len(shape)
 
       # GMEM -> Registers
       vector_type = ir.VectorType.get(shape, elt_type)
-      reg = vector.load(vector_type, input, zero_vector_indices)
+      reg = vector.load(vector_type, param, zero_vector_indices)
       reg = mgpu_dialect.layout_cast(reg, mgpu_layouts.to_layout_attr(layout))
 
       # Registers -> GMEM
       vector.store(reg, result, zero_vector_indices)
 
-    dtype = jnp.bfloat16
     shape = (128, 128)
     jax_shape = jax.ShapeDtypeStruct(shape, dtype)
     kernel = mgpu.as_gpu_kernel(
@@ -3717,8 +3713,8 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 
-    input = self.prng.uniform(-1, 1, shape).astype(dtype)
-    self.assertArraysEqual(kernel(input), input)
+    param = self.prng.uniform(-1, 1, shape).astype(dtype)
+    self.assertArraysEqual(kernel(param), param)
 
   def test_pointwise_kernel(self):
     def add(ctx, a, b, result, smem):

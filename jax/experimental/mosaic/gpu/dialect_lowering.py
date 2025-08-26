@@ -445,6 +445,7 @@ def _vector_load_op_lowering_rule(
         vector_load_op.base,
         layout=layout,
         optimized=False,
+        is_signed=is_signed,
     )
     return [_fragmented_array_to_ir(fragmented_array)]
 
@@ -473,6 +474,7 @@ def _vector_load_op_lowering_rule(
         vector_load_op.base,
         layout=layout,
         optimized=not is_tmem_native,
+        is_signed=is_signed,
     )
 
   return [_fragmented_array_to_ir(fragmented_array)]
