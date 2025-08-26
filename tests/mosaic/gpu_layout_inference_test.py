@@ -884,6 +884,26 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     self.checkInTmemLayouts(op, [layout])
     self.assertNotIn("out_tmem_layouts", op.attributes)
 
+  @parameterized.parameters(False, True)
+  def test_infer_tcgen05_mma_layouts_correctly(self, a_in_tmem):
+    f16, f32, i1 = ir.F16Type.get(), ir.F32Type.get(), ir.IntegerType.get_signless(1)
+    shape = (128, 128)
+    acc_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
+    a_mem_space = mgpu.utils.tmem() if a_in_tmem else mgpu.utils.smem()
+    a_type = ir.MemRefType.get(shape, f16, memory_space=a_mem_space)
+    b_type = ir.MemRefType.get(shape, f16, memory_space=mgpu.utils.smem())
+
+    with ir.InsertionPoint(self.module.body):
+      [acc, a, b, accumulate] = undefs(acc_type, a_type, b_type, i1)
+      op = mgpu.dialect.TcGen05MMAOp(acc, a, b, accumulate)
+
+    self.infer_layout(self.module)
+    self.assertNotIn("out_tmem_layouts", op.attributes)
+    acc_layout = tcgen05._infer_tmem_layout(shape, collective=False, packing=1)
+    a_layout = tcgen05._infer_tmem_layout(shape, collective=False, packing=2)
+    expected_layouts = [acc_layout, a_layout] if a_in_tmem else [acc_layout]
+    self.checkInTmemLayouts(op, expected_layouts)
+
   def test_layout_inference_gelu_does_not_timeout(self):
     # This test is intended to make sure that the constraint-based layout
     # inference does not timeout on a Gelu kernel. This was previously the case,
