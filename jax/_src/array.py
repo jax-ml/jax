@@ -33,6 +33,7 @@ from jax._src import errors
 from jax._src import profiler
 from jax._src import util
 from jax._src import xla_bridge
+from jax._src.op_shardings import are_hlo_shardings_equal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.layout import AutoLayout, Format, Layout
@@ -1203,10 +1204,18 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
 
 
 @cache(max_size=4096, trace_context_in_key=False)
-def _sharding_indices_and_eq(src_sharding, shape, dst_sharding):
+def _fallback_check_via_indices(src_sharding, dst_sharding, shape):
   src_indices = src_sharding.addressable_devices_indices_map(shape).values()
   dst_indices = dst_sharding.addressable_devices_indices_map(shape).values()
-  return dst_indices, tuple(src_indices) == tuple(dst_indices)
+  return tuple(src_indices) == tuple(dst_indices)
+
+@cache(max_size=4096, trace_context_in_key=False)
+def _sharding_indices_and_eq(src_sharding, dst_sharding, ndim):
+  hlos_eq = are_hlo_shardings_equal(src_sharding._to_xla_hlo_sharding(ndim),
+                                    dst_sharding._to_xla_hlo_sharding(ndim))
+  len_eq = (len(src_sharding._internal_device_list.addressable_device_list) ==
+            len(dst_sharding._internal_device_list.addressable_device_list))
+  return hlos_eq and len_eq
 
 
 def _array_shard_arg(xs, shardings, layouts, copy_semantics):
@@ -1218,19 +1227,21 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
   for i, (x, sharding, layout, cs) in enumerate(
       safe_zip(xs, shardings, layouts, copy_semantics)):
     x._check_if_deleted()
-    indices, same_indices = _sharding_indices_and_eq(x.sharding, x.shape, sharding)
-    same_layout = (True if layout is None else
-                   x.format.layout == layout)
+    try:
+      same_sharding = _sharding_indices_and_eq(x.sharding, sharding, len(x.shape))
+    except NotImplementedError:
+      same_sharding = _fallback_check_via_indices(x.sharding, sharding, x.shape)
+    same_layout = True if layout is None else x.format.layout == layout
 
     if not x.is_fully_addressable:
-      if same_indices and same_layout:
+      if same_sharding and same_layout:
         results.append(x)
       else:
         raise NotImplementedError(
             "Cannot reshard an input that is not fully addressable")
     else:
       devices = sharding._internal_device_list.addressable_device_list
-      if same_indices and same_layout:
+      if same_sharding and same_layout:
         # Add a placeholder result that will be filled in later.
         results.append(None)
         # Accumulate arguments to `batched_copy_array_to_devices_with_sharding`.
@@ -1242,11 +1253,13 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
       # Resharding starts here:
       elif not same_layout:
         results.append(api.device_put(x, Format(layout, sharding)))
-      elif dispatch.is_single_device_sharding(x.sharding):
-        results.append(shard_device_array(x, devices, indices, sharding))
       else:
-        results.append(
-            shard_sharded_device_array_slow_path(x, devices, indices, sharding))
+        indices = sharding.addressable_devices_indices_map(x.shape).values()
+        if dispatch.is_single_device_sharding(x.sharding):
+          results.append(shard_device_array(x, devices, indices, sharding))
+        else:
+          results.append(
+              shard_sharded_device_array_slow_path(x, devices, indices, sharding))
 
   util.test_event("batched_copy_array")
   copy_outs = xc.batched_copy_array_to_devices_with_sharding(

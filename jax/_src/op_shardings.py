@@ -46,9 +46,7 @@ def get_num_ways_dim_sharded(
 
 
 def is_hlo_sharding_replicated(hc: xc.HloSharding) -> bool:
-  if hc.num_devices() == 1:
-    return True
-  return hc.is_replicated()
+  return True if hc.num_devices() == 1 else hc.is_replicated()
 
 
 def are_hlo_shardings_equal(hc1: xc.HloSharding, hc2: xc.HloSharding) -> bool:

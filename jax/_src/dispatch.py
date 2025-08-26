@@ -508,12 +508,13 @@ def _device_put_sharding_impl(x, aval, device, copy):
 
 def _device_put_impl(
     x, *, device: Device | Sharding | Format | None,
-    src: Device | Sharding | Format | None, copy: CopySemantics):
-  try:
-    aval = core.abstractify(x)
-  except TypeError as err:
-    raise TypeError(
-        f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
+    src: Device | Sharding | Format | None, copy: CopySemantics, aval):
+  if aval is None:
+    try:
+      aval = core.abstractify(x)
+    except TypeError as err:
+      raise TypeError(
+          f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
 
   if isinstance(device, core.MemorySpace):
     return apply_primitive(device_put_p, x, devices=(device,), srcs=(src,),
@@ -546,11 +547,12 @@ def _batched_device_put_impl(
     *xs,
     devices: Sequence[Device | Sharding | Format | None],
     srcs: Sequence[Device | Sharding | Format | None],
-    copy_semantics: Sequence[CopySemantics]):
+    copy_semantics: Sequence[CopySemantics], x_avals):
   ys = []
   dsa_indices, dsa_xs, dsa_shardings, dsa_copy_semantics = [], [], [], []
-  for i, (x, device, src, cp) in enumerate(zip(xs, devices, srcs, copy_semantics)):
-    y = _device_put_impl(x, device=device, src=src, copy=cp)
+  for i, (x, device, src, cp, aval) in enumerate(
+      zip(xs, devices, srcs, copy_semantics, x_avals)):
+    y = _device_put_impl(x, device=device, src=src, copy=cp, aval=aval)
     if isinstance(y, _DeferredShardArg):
       dsa_indices.append(i)
       dsa_xs.append(y.x)
@@ -568,13 +570,21 @@ def _batched_device_put_impl(
     for i, shard_arg_result in zip(dsa_indices, shard_arg_results):
       assert isinstance(ys[i], _DeferredShardArg)
       ys[i] = ys[i].result_handler(shard_arg_result)
-
   return ys
+
+def batched_device_put_impl(
+    *xs,
+    devices: Sequence[Device | Sharding | Format | None],
+    srcs: Sequence[Device | Sharding | Format | None],
+    copy_semantics: Sequence[CopySemantics]):
+  return _batched_device_put_impl(
+      *xs, devices=devices, srcs=srcs, copy_semantics=copy_semantics,
+      x_avals=[None] * len(devices))
 
 
 device_put_p = core.Primitive('device_put')
 device_put_p.multiple_results = True
-device_put_p.def_impl(_batched_device_put_impl)
+device_put_p.def_impl(batched_device_put_impl)
 
 
 def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):

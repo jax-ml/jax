@@ -2565,8 +2565,7 @@ def _check_string_compatible_sharding(s):
       "String arrays can only be sharded to CPU devices. Received"
       f" unsupported device or sharding: {s}")
 
-# TODO(yashkatariya): Generalize check_compatible_aval (maybe renamed) and use
-# that to check if shardings are compatible with the input.
+
 @util.cache(max_size=2048, trace_context_in_key=False)
 def _check_sharding(aval, s):
   if (s is not None and
@@ -2575,7 +2574,6 @@ def _check_sharding(aval, s):
         "`jax.device_put` only accepts `None`, `jax.sharding.Sharding`,"
         " `jax.Device`, `Format`, `jax.memory.Space` or a pytree of these"
         f" values. Received invalid value: {s}")
-
   if isinstance(aval, core.ShapedArray) and dtypes.is_string_dtype(aval.dtype):
     _check_string_compatible_sharding(s)
 
@@ -2676,11 +2674,17 @@ def device_put(
         assert not m and not d
         copy_semantics.append(dispatch.CopySemantics.COPY)
 
-    for xf, d in zip(x_flat, device_flat):
-      _check_sharding(shaped_abstractify(xf), d)
-    out_flat = dispatch.device_put_p.bind(
-        *x_flat, devices=tuple(device_flat), srcs=tuple(src_flat),
-        copy_semantics=tuple(copy_semantics))
+    x_avals = tuple(shaped_abstractify(i) for i in x_flat)
+    for aval, d in zip(x_avals, device_flat):
+      _check_sharding(aval, d)
+    if core.trace_state_clean():
+      out_flat = dispatch._batched_device_put_impl(
+          *x_flat, devices=device_flat, srcs=src_flat,  # type: ignore
+          copy_semantics=copy_semantics, x_avals=x_avals)
+    else:
+      out_flat = dispatch.device_put_p.bind(
+          *x_flat, devices=tuple(device_flat), srcs=tuple(src_flat),
+          copy_semantics=tuple(copy_semantics))
     return tree_unflatten(treedef, out_flat)
 
 
