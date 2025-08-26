@@ -263,7 +263,11 @@ def create_tensorcore_mesh(
     raise ValueError('cannot specify both devices and num_cores')
   if num_cores is None:
     if devices is None:
-      devices = jax.devices()
+      abstract_device = jax.sharding.get_abstract_mesh().abstract_device
+      if abstract_device is None:
+        devices = [jax.devices()[0]]
+      else:
+        devices = [abstract_device]
     num_cores = devices[0].num_cores
   return TensorCoreMesh(
       np.array([TensorCore(i) for i in range(num_cores)]),
