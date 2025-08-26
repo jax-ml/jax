@@ -185,8 +185,6 @@ def _validate_shape_and_dtype_for_per_device_arrays(
 
 
 class ArrayImpl(basearray.Array):
-  # TODO(yashkatariya): Add __slots__ here.
-
   aval: core.ShapedArray
   _sharding: Sharding
   _arrays: list[ArrayImpl]

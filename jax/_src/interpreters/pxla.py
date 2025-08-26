@@ -108,19 +108,16 @@ ShardingSpec = sharding_specs.ShardingSpec
 ### util
 
 
-def to_xc_copy_semantics(copy_semantics):
-  out = []
-  for cs in copy_semantics:
-    if cs is None or cs == dispatch.CopySemantics.ALIAS:
-      out.append(xc.ArrayCopySemantics.REUSE_INPUT)
-    elif cs == dispatch.CopySemantics.COPY:
-      out.append(xc.ArrayCopySemantics.ALWAYS_COPY)
-    elif cs == dispatch.CopySemantics.DONATE:
-      out.append(xc.ArrayCopySemantics.DONATE_INPUT)
-    else:
-      assert isinstance(cs, xc.ArrayCopySemantics)
-      out.append(cs)
-  return out
+def to_xc_copy_semantics(cs):
+  if cs is None or cs == dispatch.CopySemantics.ALIAS:
+    return xc.ArrayCopySemantics.REUSE_INPUT
+  elif cs == dispatch.CopySemantics.COPY:
+    return xc.ArrayCopySemantics.ALWAYS_COPY
+  elif cs == dispatch.CopySemantics.DONATE:
+    return xc.ArrayCopySemantics.DONATE_INPUT
+  else:
+    assert isinstance(cs, xc.ArrayCopySemantics)
+    return cs
 
 
 def identity(x): return x
@@ -128,21 +125,20 @@ def identity(x): return x
 @profiler.annotate_function
 def shard_args(shardings: Sequence[JSharding], layouts, copy_semantics,
                args, canonicalize=True) -> Sequence[xc.ArrayImpl]:
-  xc_copy_semantics = to_xc_copy_semantics(copy_semantics)
-  del copy_semantics
   # Fast path for one argument.
   if len(args) == 1:
     arg = args[0]
     if canonicalize:
       arg = dtypes.canonicalize_value(arg)
-    return shard_arg_handlers[type(arg)]([arg], shardings, layouts,
-                                         xc_copy_semantics)
+    return shard_arg_handlers[type(arg)](
+        [arg], shardings, layouts, [to_xc_copy_semantics(copy_semantics[0])])
 
   # type(arg) -> (list[indices], list[args], list[shardings], list[layouts],
   #               list[copy_semantics])
   batches = collections.defaultdict(lambda: ([], [], [], [], []))  # type: ignore
   for i, (arg, sharding, layout, cs) in enumerate(
-      safe_zip(args, shardings, layouts, xc_copy_semantics)):
+      safe_zip(args, shardings, layouts, copy_semantics)):
+    xcs = to_xc_copy_semantics(cs)
     if canonicalize:
       arg = dtypes.canonicalize_value(arg)
     batch = batches[type(arg)]
@@ -150,15 +146,15 @@ def shard_args(shardings: Sequence[JSharding], layouts, copy_semantics,
     batch[1].append(arg)
     batch[2].append(sharding)
     batch[3].append(layout)
-    batch[4].append(cs)
+    batch[4].append(xcs)
 
   # Call `shard_arg_handlers` per batch and build a flat list of arrays returned
   # from each call in the same order as `args`. Since `batches` is grouped by
   # types, we cannot simply flatten the results and we have to use the original
   # indices to put each array back to its original position.
   results: list[typing.Array | None] = [None] * len(args)
-  for t, (indices, a, s, l, cs) in batches.items():
-    outs = shard_arg_handlers[t](a, s, l, cs)
+  for t, (indices, a, s, l, xcs) in batches.items():
+    outs = shard_arg_handlers[t](a, s, l, xcs)
     for i, out in safe_zip(indices, outs):
       results[i] = out
   assert all(result is not None for result in results)

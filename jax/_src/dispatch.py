@@ -356,15 +356,13 @@ def _different_device_order_reshard(x, target_sharding, copy: CopySemantics):
 
 def _reorder_shards(x, new_s, copy_semantics: CopySemantics):
   """Reorders array shards to match the order indicated by the new sharding."""
-  xc_copy_semantics = pxla.to_xc_copy_semantics([copy_semantics])[0]
+  xc_copy_semantics = pxla.to_xc_copy_semantics(copy_semantics)
   return xc.reorder_shards(x, new_s, xc_copy_semantics)  # type: ignore
 
 
-@util.cache()
+@util.cache(max_size=2048, trace_context_in_key=False)
 def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
   """Returns True if src->dst is a supported cross-host transfer."""
-  if xla_bridge.process_count() == 1:
-    return False
   if (src_sharding._internal_device_list.device_kind !=
       dst_sharding._internal_device_list.device_kind):
     return False
@@ -414,39 +412,47 @@ class _DeferredShardArg:
 def _device_put_sharding_impl(x, aval, device, copy):
   from jax.experimental import multihost_utils  # pytype: disable=import-error
 
+  if isinstance(x, array.ArrayImpl):
+    x_is_jax_array = True
+    x_is_fully_addressable, x_sharding = x.is_fully_addressable, x.sharding
+  else:
+    x_is_jax_array = False
+    x_is_fully_addressable, x_sharding = None, None
+
   if isinstance(device, Sharding):
     s = device
+    s_is_fully_addressable = s.is_fully_addressable
     if (getattr(x, 'sharding', None) == s and getattr(x, '_committed', False)
         and copy == CopySemantics.ALIAS):
       return x
 
-    if (not s.is_fully_addressable and
-        isinstance(x, array.ArrayImpl) and not x.is_fully_addressable and
-        s.device_set == x.sharding.device_set):
+    if (not s_is_fully_addressable and
+        x_is_jax_array and not x_is_fully_addressable and
+        s.device_set == x_sharding.device_set):
       assert isinstance(s, Sharding)
       return _different_device_order_reshard(x, s, copy)
 
-    if (s.is_fully_addressable and isinstance(x, array.ArrayImpl) and
-        x.is_fully_addressable and s.num_devices > 1 and
-        s._internal_device_list != x.sharding._internal_device_list and  # pytype: disable=attribute-error
-        s.device_set == x.sharding.device_set):
+    if (s_is_fully_addressable and x_is_jax_array and
+        x_is_fully_addressable and s.num_devices > 1 and
+        s._internal_device_list != x_sharding._internal_device_list and  # pytype: disable=attribute-error
+        s.device_set == x_sharding.device_set):
       assert isinstance(s, Sharding)
       return _different_device_order_reshard(x, s, copy)
 
-    if (isinstance(x, array.ArrayImpl) and x._committed
-        and _is_supported_cross_host_transfer(x.ndim, x.sharding, s)):
+    if (x_is_jax_array and x._committed and xla_bridge.process_count() > 1
+        and _is_supported_cross_host_transfer(x.ndim, x_sharding, s)):
       return xc.batched_copy_array_to_devices_with_sharding(
           [x], [s._internal_device_list], [s],  # pytype: disable=attribute-error
-          pxla.to_xc_copy_semantics([copy]))[0]
+          [pxla.to_xc_copy_semantics(copy)])[0]
 
-    if not s.is_fully_addressable:
+    if not s_is_fully_addressable:
       # If both the source and target shardings are not fully addressable and
       # one of the above conditions has not been met, then assume that the user
       # is attempting a different device order reshard.
-      if (isinstance(x, array.ArrayImpl) and not x.is_fully_addressable
-          and s.device_set != x.sharding.device_set):
-        inp_ids = [d.id for d in x.sharding._device_assignment]
-        inp_plat = x.sharding._device_assignment[0].platform.upper()
+      if (x_is_jax_array and not x_is_fully_addressable
+          and s.device_set != x_sharding.device_set):
+        inp_ids = [d.id for d in x_sharding._device_assignment]
+        inp_plat = x_sharding._device_assignment[0].platform.upper()
         target_ids = [d.id for d in s._device_assignment]
         target_plat = s._device_assignment[0].platform.upper()
         raise ValueError(
@@ -458,7 +464,7 @@ def _device_put_sharding_impl(x, aval, device, copy):
             "different device sets, when input/output shardings have the same "
             "indices and layouts, in the TFRT TPU runtime only.")
 
-      if ((isinstance(x, array.ArrayImpl) and not x._committed) or
+      if ((x_is_jax_array and not x._committed) or
           type(x) in array_types or type(x) in dtypes.python_scalar_types):
         # If all hosts participate in the sharding, assert that the input is the
         # same on all hosts. If some hosts have no addressable devices in the
@@ -483,8 +489,8 @@ def _device_put_sharding_impl(x, aval, device, copy):
     return _DeferredShardArg(x, s, aval, True, copy)
 
   # Only `Device` exists below. `Sharding` instance is handled above.
-  if isinstance(x, array.ArrayImpl):
-    if not x.is_fully_addressable:
+  if x_is_jax_array:
+    if not x_is_fully_addressable:
       raise ValueError(
           "device_put's first argument must be a fully addressable array, but "
           f"got value with devices {x.devices()}")
@@ -492,9 +498,9 @@ def _device_put_sharding_impl(x, aval, device, copy):
       if copy == CopySemantics.ALIAS:
         return x
       else:
-        return _DeferredShardArg(x, x.sharding, aval, x.committed, copy)
-    elif is_single_device_sharding(x.sharding):
-      device = x.sharding._device_assignment[0] if device is None else device
+        return _DeferredShardArg(x, x_sharding, aval, x.committed, copy)
+    elif is_single_device_sharding(x_sharding):
+      device = x_sharding._device_assignment[0] if device is None else device
       if copy == CopySemantics.COPY:
         return xc.batched_device_put(aval, SingleDeviceSharding(device), [x],
                                      [device], True, True)
