@@ -4084,7 +4084,7 @@ class PipelineTest(PallasTest):
           (),
           (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)),
       ),
-      repeats=(1, 3),
+      repeats=(1, 10),
   )
   def test_emit(self, transforms, repeats):
     if transforms:
@@ -4392,7 +4392,7 @@ class PipelineSm90AWGTest(
 
 class WarpSpecializedPipelineTest(PallasTest):
 
-  @parameterized.product(m=[512], n=[512], repeats=[1, 3],
+  @parameterized.product(m=[512], n=[512], repeats=[1, 10],
                          manual_consumed_barriers=[False, True])
   def test_pipelined_copy(self, m, n, repeats, manual_consumed_barriers):
     self.skip_if_wg_semantics()  # Times out!
@@ -4402,9 +4402,8 @@ class WarpSpecializedPipelineTest(PallasTest):
 
     def copy_kernel(_, x_smem, o_smem, o_last_block_smem, *consumed_barriers):
       wg_idx = lax.axis_index("wg")
-      m_slice = pl.ds(wg_idx * blk_m, blk_m)
-      o_smem[m_slice] = x_smem[m_slice]
-      o_last_block_smem[m_slice] = x_smem[m_slice]
+      o_smem[...] = x_smem[...]
+      o_last_block_smem[...] = x_smem[...]
       if manual_consumed_barriers:
         [x_barrier] = consumed_barriers
         plgpu.barrier_arrive(x_barrier)
@@ -4418,7 +4417,7 @@ class WarpSpecializedPipelineTest(PallasTest):
           grid=(m // (2 * blk_m), n // blk_n),
           memory_registers=40,
           max_concurrent_steps=2,
-          num_compute_wgs=2,
+          num_compute_wgs=1,
           wg_axis="wg",
           manual_consumed_barriers=manual_consumed_barriers,
           in_specs=[spec],
@@ -4441,7 +4440,7 @@ class WarpSpecializedPipelineTest(PallasTest):
         compiler_params=plgpu.CompilerParams(approx_math=True),
         grid=(1,),
         grid_names=("_",),
-        num_threads=3,
+        num_threads=2,
         thread_name="wg",
     )
     out, out_last_block = kernel(x)
@@ -4449,7 +4448,10 @@ class WarpSpecializedPipelineTest(PallasTest):
     np.testing.assert_array_equal(out_last_block, x[-(2 * blk_m):, -blk_n:])
 
   @parameterized.product(
-      m=[256, 64], n=[256, 64], num_compute_wgs=[1, 2], static=[False, True],
+      m=[256, 64],
+      n=[256, 64],
+      num_compute_wgs=[1],  # TODO(apaszke): Use 2WGs once we add support for outputs.
+      static=[False, True],
       manual_consumed_barriers=[False, True],
       in_tree_template=[(0, 1), ((0, (1,), None))],
   )
@@ -4568,7 +4570,7 @@ class WarpSpecializedPipelineTest(PallasTest):
     np.testing.assert_allclose(kernel(x), ref, atol=1e-4)
 
   @parameterized.product(
-      num_compute_wgs=[1, 2],
+      num_compute_wgs=[1],  # TODO(apaszke): Use 2WGs once we add support for outputs.
       static=[False, True],
       manual_consumed_barriers=[False, True],
       small_shape=[True, False],
@@ -4715,6 +4717,63 @@ class WarpSpecializedPipelineTest(PallasTest):
     ):
       out = kernel(x, y)
       np.testing.assert_array_equal(out, ref)
+
+  def test_no_output(self):
+    m = n = 256
+    blk_m = blk_n = 64
+
+    def body(x_ref, o_ref, o_scratch, barrier):
+      @pl.when(lax.axis_index("wg") == 0)
+      def _():
+        o_scratch[...] = jnp.zeros_like(o_scratch)
+
+      # Wait for scratch to be initialized
+      plgpu.barrier_arrive(barrier)
+      plgpu.barrier_wait(barrier)
+
+      # Make sure we can run the pipeline many times. This also introduces
+      # extra jitter into warp scheduling and has uncovered bugs in the past.
+      @pl.loop(0, 10)
+      def _pipeline_loop(_):
+        def add(_, x_smem):
+          slc = pl.ds(lax.axis_index("wg") * (blk_m // 2), blk_m // 2)
+          o_scratch[slc] += x_smem[slc]
+        mgpu_pipeline.emit_pipeline_warp_specialized(
+            add,
+            grid=(m // blk_m, n // blk_n),
+            memory_registers=40,
+            max_concurrent_steps=2,
+            num_compute_wgs=2,
+            wg_axis="wg",
+            in_specs=[
+                pl.BlockSpec(
+                    block_shape=(blk_m, blk_n), index_map=lambda i, j: (i, j)
+                ),
+            ]
+        )(x_ref)
+
+      # Wait for both compute WGs to finish initializing the output
+      plgpu.barrier_arrive(barrier)
+      plgpu.barrier_wait(barrier)
+
+      @pl.when(lax.axis_index("wg") == 0)
+      def _():
+        plgpu.copy_smem_to_gmem(o_scratch, o_ref)
+        plgpu.wait_smem_to_gmem(0, wait_read_only=True)
+
+    kernel = self.kernel(
+        body,
+        out_shape=jax.ShapeDtypeStruct((blk_m, blk_n), jnp.float32),
+        num_threads=3,
+        thread_name="wg",
+        scratch_shapes=[
+            plgpu.SMEM((blk_m, blk_n), jnp.float32),
+            plgpu.Barrier(num_arrivals=3),
+        ],
+    )
+    x = jax.random.uniform(jax.random.key(1234), (m, n), dtype=jnp.float32)
+    ref = 10 * x.reshape(m // blk_m, blk_m, n // blk_n, blk_n).sum((0, 2))
+    np.testing.assert_allclose(kernel(x), ref, rtol=5e-6)
 
 
 class WarpSpecializedPipelineWGTest(
