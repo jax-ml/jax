@@ -21,8 +21,8 @@ from jax._src.util import safe_zip, use_cpp_class, cache
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.op_shardings import (
-    are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated,
-    op_sharding_to_indices)
+    are_hlo_shardings_equal, get_num_ways_dim_sharded,
+    is_hlo_sharding_replicated, op_sharding_to_indices)
 
 Shape = tuple[int, ...]
 Device = xc.Device
@@ -52,7 +52,7 @@ def common_devices_indices_map(
 @cache(max_size=4096, trace_context_in_key=False)
 def _common_shard_shape(self, global_shape: Shape) -> Shape:
   hlo_sharding = self._to_xla_hlo_sharding(len(global_shape))
-  if is_op_sharding_replicated(hlo_sharding):
+  if is_hlo_sharding_replicated(hlo_sharding):
     return global_shape
   partitions, _ = get_num_ways_dim_sharded(hlo_sharding)
   assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))
@@ -196,7 +196,7 @@ class Sharding:
     the same devices.
     """
     try:
-      return (are_op_shardings_equal(self._to_xla_hlo_sharding(ndim),
+      return (are_hlo_shardings_equal(self._to_xla_hlo_sharding(ndim),
                                      other._to_xla_hlo_sharding(ndim))
               and self._internal_device_list == other._internal_device_list and  # type: ignore
               self.memory_kind == other.memory_kind)

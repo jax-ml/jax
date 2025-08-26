@@ -45,16 +45,16 @@ def get_num_ways_dim_sharded(
   return list(partitions), num_replicas
 
 
-def is_op_sharding_replicated(hc: xc.HloSharding) -> bool:
+def is_hlo_sharding_replicated(hc: xc.HloSharding) -> bool:
   if hc.num_devices() == 1:
     return True
   return hc.is_replicated()
 
 
-def are_op_shardings_equal(hc1: xc.HloSharding, hc2: xc.HloSharding) -> bool:
+def are_hlo_shardings_equal(hc1: xc.HloSharding, hc2: xc.HloSharding) -> bool:
   if hc1 is hc2:
     return True
-  if is_op_sharding_replicated(hc1) and is_op_sharding_replicated(hc2):
+  if is_hlo_sharding_replicated(hc1) and is_hlo_sharding_replicated(hc2):
     return True
   return hc1 == hc2
 
@@ -70,7 +70,7 @@ def op_sharding_to_numpy_indices(
   # num_devices is required as an argument when hlo_sharding is
   # REPLICATED. `jax.device_count()` cannot be used because you can create
   # an opsharding with less number of devices than `jax.device_count()`.
-  if is_op_sharding_replicated(hlo_sharding):
+  if is_hlo_sharding_replicated(hlo_sharding):
     indices.fill((slice(None),) * len(shape))
     return indices
 

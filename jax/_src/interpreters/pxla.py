@@ -1872,7 +1872,7 @@ class SemanticallyEqualShardings:
     if not isinstance(other, SemanticallyEqualShardings):
       return False
     return all(
-        (op_shardings.are_op_shardings_equal(s._hlo_sharding, o._hlo_sharding)
+        (op_shardings.are_hlo_shardings_equal(s._hlo_sharding, o._hlo_sharding)
          and s.memory_kind == o.memory_kind)
         if (isinstance(s, GSPMDSharding) and isinstance(o, GSPMDSharding))
         else s == o
@@ -2881,7 +2881,7 @@ def _maybe_get_and_check_in_shardings(
       # MANUAL HloSharding comes from other partitioning frameworks.
       if (not dtypes.issubdtype(aval.dtype, dtypes.extended) and
           not xla_hlo_s.is_manual() and
-          (not op_shardings.are_op_shardings_equal(xla_hlo_s, orig_hlo_s))):
+          (not op_shardings.are_hlo_shardings_equal(xla_hlo_s, orig_hlo_s))):
         raise AssertionError(
             f"Unexpected XLA sharding override: (XLA) {xla_s} != {orig} "
             "(User sharding)")
@@ -2925,7 +2925,7 @@ def _maybe_get_and_check_out_shardings(
       # MANUAL HloSharding comes from other partitioning frameworks.
       if (not dtypes.issubdtype(aval.dtype, dtypes.extended) and
           not xla_hlo_s.is_manual() and
-          (not op_shardings.are_op_shardings_equal(xla_hlo_s, orig_hlo_s) or
+          (not op_shardings.are_hlo_shardings_equal(xla_hlo_s, orig_hlo_s) or
            xla_s.memory_kind != orig.memory_kind)):  # pytype: disable=attribute-error
         raise AssertionError(
             f"Unexpected XLA sharding override: (XLA) {xla_s} != {orig} "

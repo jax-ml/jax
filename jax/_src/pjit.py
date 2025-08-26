@@ -1711,7 +1711,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
               f'arg shape: {core.shaped_abstractify(arg).str_short()}')
         if (committed and
             not isinstance(arg_s, PmapSharding) and
-            not op_shardings.are_op_shardings_equal(
+            not op_shardings.are_hlo_shardings_equal(
                 pjit_in_s._to_xla_hlo_sharding(arg.ndim),  # type: ignore[union-attr]
                 arg_s._to_xla_hlo_sharding(arg.ndim))):
           raise ValueError('Sharding passed to pjit does not match the sharding '
@@ -2161,7 +2161,7 @@ def _pjit_batcher_for_sharding(
     return s
   hlo_s = s._to_xla_hlo_sharding(ndim)
   if spmd_axis_name is None:
-    if sharding_impls.is_op_sharding_replicated(hlo_s):
+    if sharding_impls.is_hlo_sharding_replicated(hlo_s):
       return s
     if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
       return NamedSharding(

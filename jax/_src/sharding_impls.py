@@ -41,7 +41,8 @@ from jax._src.named_sharding import (  # noqa: F401
     array_mapping_to_axis_resources, named_sharding_to_xla_hlo_sharding,
     modify_sdy_sharding_wrt_axis_types)
 from jax._src.op_shardings import (
-    are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
+    are_hlo_shardings_equal, get_num_ways_dim_sharded,
+    is_hlo_sharding_replicated)
 from jax._src.partition_spec import PartitionSpec
 from jax._src.util import safe_zip, use_cpp_class, use_cpp_method
 import numpy as np
@@ -385,7 +386,7 @@ class GSPMDSharding(jsharding.Sharding):
       return False
     if self is other:
       return True
-    return (are_op_shardings_equal(self._hlo_sharding, other._hlo_sharding)
+    return (are_hlo_shardings_equal(self._hlo_sharding, other._hlo_sharding)
             and self.memory_kind == other.memory_kind
             and self._internal_device_list == other._internal_device_list)
 
@@ -452,7 +453,7 @@ class GSPMDSharding(jsharding.Sharding):
 
   @functools.cached_property
   def is_fully_replicated(self) -> bool:
-    return is_op_sharding_replicated(self._hlo_sharding)
+    return is_hlo_sharding_replicated(self._hlo_sharding)
 
   @functools.cached_property
   def is_fully_addressable(self) -> bool:
