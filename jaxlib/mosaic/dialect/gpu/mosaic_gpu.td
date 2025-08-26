@@ -430,6 +430,13 @@ def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", []> {
   let results = (outs AnyMemRef);
 }
 
+def MosaicGPU_WGMMASupportedABType : AnyTypeOf<[F16, BF16, TF32, F32, F8E4M3FN, F8E5M2, I8],
+    "A type supported by the `a` and `b` operands of the `wgmma.mma_async` instruction">;
+
+def MosaicGPU_WGMMASupportedAccumulatorType : AnyTypeOf<[F16, F32, I32],
+    "A type supported by the accumulator `wgmma.mma_async` instruction">;
+
+
 def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   let summary = "Multiply two matrices asynchronously using warpgroup level matrix multiply operations.";
   let description = [{
@@ -466,13 +473,13 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   }];
 
   let arguments = (ins
-    VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedType]>:$accumulator,
+    VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedAccumulatorType]>:$accumulator,
     AnyTypeOf<[
-      MemRefRankOf<[MosaicGPU_WGMMASupportedType], [2]>,
-      VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedType]>]>:$a,
-    MemRefRankOf<[MosaicGPU_WGMMASupportedType], [2]>:$b
+      MemRefRankOf<[MosaicGPU_WGMMASupportedABType], [2]>,
+      VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedABType]>]>:$a,
+    MemRefRankOf<[MosaicGPU_WGMMASupportedABType], [2]>:$b
   );
-  let results = (outs VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedType]>);
+  let results = (outs VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedAccumulatorType]>);
 
   let assemblyFormat = [{
     `accumulator` `(` $accumulator `:` type($accumulator) `)`

@@ -477,7 +477,7 @@ class DialectTest(MosaicGpuTest):
   def test_wgmma_types_match(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
-          ir.VectorType.get([128, 160], ir.BF16Type.get()),
+          ir.VectorType.get([128, 160], ir.F32Type.get()),
           ir.MemRefType.get([128, 128], ir.F16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
@@ -492,7 +492,7 @@ class DialectTest(MosaicGpuTest):
   def test_wgmma_acc_m_dim_not_multiple_of_64(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
-          ir.VectorType.get([127, 160], ir.BF16Type.get()),
+          ir.VectorType.get([127, 160], ir.F32Type.get()),
           ir.MemRefType.get([127, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
@@ -507,7 +507,7 @@ class DialectTest(MosaicGpuTest):
   def test_wgmma_acc_m_not_equal_to_a_m_dim(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
-          ir.VectorType.get([256, 160], ir.BF16Type.get()),
+          ir.VectorType.get([256, 160], ir.F32Type.get()),
           ir.MemRefType.get([512, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
@@ -522,7 +522,7 @@ class DialectTest(MosaicGpuTest):
   def test_wgmma_a_k_dim_not_equal_to_b_k_dim(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
-          ir.VectorType.get([128, 160], ir.BF16Type.get()),
+          ir.VectorType.get([128, 160], ir.F32Type.get()),
           ir.MemRefType.get([128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([160, 160], ir.BF16Type.get()),
           name="wgmma",
@@ -538,7 +538,7 @@ class DialectTest(MosaicGpuTest):
   def test_wgmma_b_n_dim_not_equal_to_acc_n_dim(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
-          ir.VectorType.get([128, 160], ir.BF16Type.get()),
+          ir.VectorType.get([128, 160], ir.F32Type.get()),
           ir.MemRefType.get([128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 192], ir.BF16Type.get()),
           name="wgmma",
