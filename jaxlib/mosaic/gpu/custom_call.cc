@@ -150,16 +150,10 @@ absl::StatusOr<std::string> GetPtxIsaVersion(
 }
 
 mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
-    mlir::MLIRContext* ctx, mlir::gpu::CompilationTarget target,
+    mlir::MLIRContext* ctx,
     const se::cuda::CompilationProvider* compilation_provider,
     const se::CudaComputeCapability& cc, const std::string& sm,
     const std::string& ptx_isa, const std::string& nvshmem_path) {
-  // Only support assembly and binary output for now.
-  if (target != mlir::gpu::CompilationTarget::Assembly &&
-      target != mlir::gpu::CompilationTarget::Binary) {
-    return mlir::failure();
-  }
-  bool is_target_binary = target == mlir::gpu::CompilationTarget::Binary;
   static absl::once_flag register_passes_flag;
   absl::call_once(
       register_passes_flag, [&compilation_provider, &cc]() {
@@ -206,6 +200,8 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
   if (!nvshmem_path.empty()) {
     libraries_to_link.push_back(nvshmem_path);
   }
+  // TODO(bchetioui): pass `-lineinfo` as an opt to
+  // `mosaic-gpu-assembly-to-binary` to mirror the previous behaviour.
   return mlir::parsePassPipeline(absl::StrCat(
       R"(
       builtin.module(
@@ -242,12 +238,8 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         convert-math-to-llvm{approximate-log1p=true},
         canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
         cse,
-        )",
-      // TODO(bchetioui): pass `-lineinfo` as an opt to compilation to mirror
-      // the previous behaviour.
-      (is_target_binary ? "mosaic-gpu-assembly-to-binary,gpu-launch-lowering,"
-                        : ""),
-      R"(
+        mosaic-gpu-assembly-to-binary,
+        gpu-launch-lowering,
         convert-to-llvm,
         reconcile-unrealized-casts
       )
@@ -448,9 +440,8 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     abort();
   }
 #endif
-  auto passes =
-      GetPassPipeline(module.getContext(), mlir::gpu::CompilationTarget::Binary,
-                      compilation_provider, cc, sm, ptx_isa, nvshmem_path);
+  auto passes = GetPassPipeline(module.getContext(), compilation_provider, cc,
+                                sm, ptx_isa, nvshmem_path);
   if (mlir::failed(passes)) {
     return absl::InternalError("Failed to construct pass pipeline");
   }
