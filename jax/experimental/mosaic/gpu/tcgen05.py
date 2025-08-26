@@ -977,6 +977,10 @@ class TMEMRef:
   dtype: ir.Type
   layout: TMEMLayout
 
+  @property
+  def packing(self):
+    return self.layout.vector_length
+
   @classmethod
   def from_alloc(
       cls,
@@ -1053,7 +1057,7 @@ class TMEMRef:
   def load(self, layout: fa.TiledLayout | None = None, is_signed: bool | None = None):
     if utils.bitwidth(self.dtype) not in {16, 32}:
       raise NotImplementedError(f"Unsupported dtype: {self.dtype}")
-    packing = self.layout.vector_length
+    packing = self.packing
     if layout is None:
       layout = _infer_tmem_load_registers_layout(
           self.layout, self.shape[1], packing
@@ -1107,7 +1111,7 @@ class TMEMRef:
           f"Stored array has dtype {value.mlir_dtype}, but TMEM has dtype"
           f" {self.dtype}"
       )
-    packing = self.layout.vector_length
+    packing = self.packing
     if value.layout == LAYOUT and self.layout == tmem_default_layout(packing=packing):
       _store_32xcols(
           self.address, value.registers.T.reshape((4, -1)), packing
@@ -1141,15 +1145,15 @@ class TMEMRef:
       )
       dtype_bitwidth = utils.bitwidth(self.dtype)
       full_packing = 32 // dtype_bitwidth
-      if self.layout.vector_length == 1:
+      if self.packing == 1:
         if dtype_bitwidth < 32:
           val = arith.trunci(ir.IntegerType.get_signless(dtype_bitwidth), val)
         val = utils.bitcast(val, self.dtype)
-      elif self.layout.vector_length == full_packing:
+      elif self.packing == full_packing:
         val = utils.bitcast(val, ir.VectorType.get((full_packing,), self.dtype))
       else:
         raise NotImplementedError(
-            f"Unsupported packing: {self.layout.vector_length}"
+            f"Unsupported packing: {self.packing}"
         )
       # TODO(apaszke): Make this print logical, not physical location.
       utils.debug_print(f"[{{}}, {c}]: {{}}", lane, val, uniform=False)
