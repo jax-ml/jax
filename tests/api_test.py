@@ -6216,6 +6216,16 @@ class RematTest(jtu.JaxTestCase):
     res = saved_residuals(f, 3.)
     self.assertStartsWith(res[1][1], "named 'foo'")
 
+  def test_name_pytree(self):
+    @partial(jax.remat, policy=lambda p, *_, **__: 'mul' in str(p))
+    def f(x):
+      x = checkpoint_name({'a': x * x}, 'foo')['a']
+      x = x * x
+      return x
+
+    res = saved_residuals(f, 3.)
+    self.assertStartsWith(res[1][1], "named 'foo'")
+
   def test_name_denylist(self):
     def f(x):
       y = checkpoint_name(jnp.multiply(2., 2.), 'y')
