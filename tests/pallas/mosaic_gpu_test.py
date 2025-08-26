@@ -2711,6 +2711,58 @@ class PallasCallSm90ATest(PallasSm90ATest):
         res, a @ (b.T if rhs_transpose else b), rtol=1e-3
     )
 
+  @parameterized.parameters(jnp.int8, jnp.uint8)
+  def test_wgmma_integer(self, dtype):
+    self.skip_if_wg_semantics()
+    m, k, n = 64, 128, 64
+    swizzle = 64
+    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+
+    is_signed = jnp.issubdtype(dtype, jnp.signedinteger)
+    acc_type = jnp.int32
+
+    def kernel(a_ref, b_ref, o_ref):
+
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref, a_ref, plgpu.transpose_ref(b_ref, (1, 0)))
+        return acc_ref[...]
+
+      o_ref[...] = pl.run_scoped(scope, plgpu.ACC((m, n), acc_type))
+
+    # use small values to avoid overflow, [0, 8) for u8 and (-8, 8) for s8
+    random_int_input = lambda key, shape: jax.random.randint(
+        key, minval=-8 * is_signed, maxval=8, shape=shape, dtype=dtype
+    )
+
+    a = random_int_input(jax.random.key(0), shape=(m, k))
+    b = random_int_input(jax.random.key(1), shape=(n, k))
+
+    rhs_transforms = (plgpu.TilingTransform((8, swizzle_elems)),)
+    res = self.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.BlockSpec(
+                (m, k),
+                lambda i, j: (i, j),
+                transforms=(
+                    plgpu.TilingTransform((8, swizzle_elems)),
+                    plgpu.SwizzleTransform(swizzle),
+                ),
+            ),
+            plgpu.BlockSpec(
+                (n, k),
+                lambda *i: i,
+                transforms=(*rhs_transforms, plgpu.SwizzleTransform(swizzle)),
+            ),
+        ],
+        out_specs=plgpu.BlockSpec((m, n), lambda *i: i),
+        out_shape=jax.ShapeDtypeStruct((m, n), acc_type),
+        grid=(1, 1),
+    )(a, b)
+    np.testing.assert_array_equal(
+        res, a.astype(acc_type) @ b.T.astype(acc_type)
+    )
+
   def test_wgmma_sliced_acc_flip(self):
     self.skip_if_wg_semantics()
     dtype = jnp.float16
