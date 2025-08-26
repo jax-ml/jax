@@ -514,7 +514,8 @@ async def main():
     wheel_build_command_base.append("--config=nonccl")
 
   clang_path = ""
-  clang_local = args.clang_path or not utils.is_linux_x86_64(arch, os_name)
+  clang_local = args.clang_path or (not utils.is_linux_x86_64(arch, os_name)
+                                    and not utils.is_linux_aarch64(arch, os_name))
   if clang_local:
     wheel_build_command_base.append("--config=clang_local")
 
