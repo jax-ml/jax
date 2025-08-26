@@ -7361,12 +7361,6 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   if (src.tiling() == dst_tiling) {
     return std::pair(src, std::move(vregs));
   }
-  // TODO(tlongeri): Using canonical vs non-canonical offsets can change the
-  // value of try_replicate rows, and it breaks some tests. It doesn't make
-  // sense that we have different behavior for equivalent layouts, though. We
-  // need better logic for picking the relayout strategy.
-  const bool try_replicate_rows =
-      src.offsets()[0].has_value() && !dst_offsets_hint[0].has_value();
   // Canonicalize offsets
   src = VectorLayout(src.bitwidth(),
                      src.getCanonicalOffsets(vty.getShape(), ctx.target_shape),
@@ -7421,7 +7415,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
       // slightly cheaper for some dst vregs you rotate by 0.
       // TODO(tlongeri): Using store + multiple replicated loads is good on
       // older gens. I wonder if we can integrate this logic to scratch retiling
-      (try_replicate_rows || ctx.hardware_generation >= 5)) {
+      (!dst_offsets_hint[0].has_value() || ctx.hardware_generation >= 5)) {
     const LayoutOffset dst_minor_offset =
         src.offsets()[1].has_value() ? *src.offsets()[1] % dst_vreg_slice[1]
                                      : LayoutOffset();
