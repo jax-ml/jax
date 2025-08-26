@@ -639,6 +639,25 @@ def _wgmma_equation_system(
   return system, {variable: operands_or_results}, []
 
 
+@_add_equation_system_derivation_rule(vector.BroadcastOp)
+def _vector_broadcast_equation_system(
+    ctx: DerivationContext,
+    op: vector.BroadcastOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
+  # This is not expected to be necessary at the moment. We should be using
+  # mgpu.BroadcastInDimOp instead when dealing with broadcasting vectors.
+  if ir.ShapedType.isinstance(op.source.type):
+    raise NotImplementedError("Only vector broadcasts from scalars are supported.")
+  out_variable = eqns.Variable(OperandOrResult(op, VariableType.RESULT, 0))
+  layout = eqns.RegisterLayout(fa.WGSplatFragLayout(tuple(op.result.type.shape)))
+  return (
+      eqns.EquationSystem(assignments={out_variable: layout}),
+      {out_variable: [out_variable.key]},
+      []
+  )
+
+
 def _reduction_equation_and_hint(
     larger: eqns.Variable,
     smaller: eqns.Variable,

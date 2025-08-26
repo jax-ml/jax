@@ -810,6 +810,18 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     self.checkInLayouts(wgmma_op, in_layouts)
     self.checkOutLayouts(wgmma_op, out_layouts)
 
+  def test_vector_broadcast_from_scalar_infers_splat_layout(self):
+    shape = (128,)
+    f32 = ir.F32Type.get()
+    layout = mgpu.WGSplatFragLayout(shape)
+    with ir.InsertionPoint(self.module.body):
+      source, = undefs(f32)
+      bcast = vector.BroadcastOp(ir.VectorType.get(shape, f32), source)
+
+    self.infer_layout(self.module)
+    self.assertNotIn("in_layouts", bcast.attributes)
+    self.checkOutLayouts(bcast, [layout])
+
   def test_layout_cast_of_vector_load_to_splat_raises(self):
     shape = (32, 4)
     splat_layout = mgpu.WGSplatFragLayout(shape=shape)
