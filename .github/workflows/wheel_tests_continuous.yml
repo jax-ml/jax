@@ -229,12 +229,7 @@ jobs:
             {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
             {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"}
           ]
-          libtpu-version-type: ["nightly", "oldest_supported_libtpu"]
-          exclude:
-            # Run a single config for oldest_supported_libtpu
-            - libtpu-version-type: "oldest_supported_libtpu"
-              tpu-specs:
-                type: "v6e-8"
+          libtpu-version-type: ["nightly"]
     name: "Pytest TPU (JAX artifacts version =  ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
@@ -259,12 +254,7 @@ jobs:
             {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
             {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
           ]
-          libtpu-version-type: ["nightly", "oldest_supported_libtpu"]
-          exclude:
-            # Run a single config for oldest_supported_libtpu
-            - libtpu-version-type: "oldest_supported_libtpu"
-              tpu-specs:
-                type: "v4-8"
+          libtpu-version-type: ["nightly"]
     name: "Bazel tests TPU (JAX artifacts version =  ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
