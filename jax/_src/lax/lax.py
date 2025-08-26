@@ -8979,7 +8979,7 @@ def _empty_abstract_eval(*, shape, dtype, out_sharding):
   return core.ShapedArray(shape, dtype, sharding=out_sharding)
 empty_p.def_abstract_eval(_empty_abstract_eval)
 
-def _empty_tpu_lower(ctx, *, shape, dtype, out_sharding):
+def _empty_custom_call_lower(ctx, *, shape, dtype, out_sharding):
   if not core.is_constant_shape(shape):
     return _empty_lower(ctx, shape=shape, dtype=dtype, out_sharding=out_sharding)
   dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
@@ -8995,7 +8995,8 @@ def _empty_tpu_lower(ctx, *, shape, dtype, out_sharding):
   assert len(custom_call_op.results) == 1
   res = custom_call_op.results[0]
   return [mlir.lower_with_sharding_in_types(ctx, res, phys_aval)]
-mlir.register_lowering(empty_p, _empty_tpu_lower, 'tpu')
+mlir.register_lowering(empty_p, _empty_custom_call_lower, 'tpu')
+mlir.register_lowering(empty_p, _empty_custom_call_lower, 'gpu')
 
 def _empty_lower(ctx, *, shape, dtype, out_sharding):
   dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
