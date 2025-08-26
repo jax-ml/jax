@@ -201,7 +201,6 @@ def _get_fastpath_data(
       # No effects in computation
       and not executable.unsafe_call.ordered_effects
       and not executable.unsafe_call.has_unordered_effects
-      and not executable.unsafe_call.has_host_callbacks
       and all(isinstance(x, xc.ArrayImpl) for x in out_reflattened)
       and abstracted_axes is None
       # no ref state effects
