@@ -200,7 +200,7 @@ class DtypesTest(jtu.JaxTestCase):
         # np.dtype(int) is int32 on Windows and int64 on Linux/Mac.
         py_result_dtype = (np.dtype(np.int64) if py_result is int
                            else np.dtype(py_result))
-        lattice_dtype, lattice_weak_type = dtypes._lattice_result_type(t1, t2)
+        lattice_dtype, lattice_weak_type = dtypes.lattice_result_type(t1, t2)
         self.assertTrue(lattice_weak_type)
         self.assertEqual(lattice_dtype, py_result_dtype)
 
@@ -280,7 +280,7 @@ class DtypesTest(jtu.JaxTestCase):
         # np.dtype(int) is int32 on Windows and int64 on Linux/Mac.
         py_result_dtype = (np.dtype(np.int64) if py_result is int
                            else np.dtype(py_result))
-        lattice_dtype, lattice_weak_type = dtypes._lattice_result_type(t1, t2)
+        lattice_dtype, lattice_weak_type = dtypes.lattice_result_type(t1, t2)
         self.assertTrue(lattice_weak_type)
         self.assertEqual(lattice_dtype, py_result_dtype)
 

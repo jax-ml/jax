@@ -225,12 +225,12 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     # Use lattice_result_type rather than result_type to avoid canonicalization.
     # Otherwise, weakly-typed inputs would have their dtypes canonicalized.
     try:
-      dtype = dtypes._lattice_result_type(*leaves)[0] if leaves else dtypes.float_
+      dtype = dtypes.lattice_result_type(*leaves)[0] if leaves else dtypes.float_
     except TypeError:
       # This happens if, e.g. one of the entries is a memoryview object.
       # This is rare, so we only handle it if the normal path fails.
       leaves = [_convert_to_array_if_dtype_fails(leaf) for leaf in leaves]
-      dtype = dtypes._lattice_result_type(*leaves)[0]
+      dtype = dtypes.lattice_result_type(*leaves)[0]
 
   if not weak_type:
     dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)  # type: ignore[assignment]

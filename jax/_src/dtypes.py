@@ -897,7 +897,7 @@ def dtype(x: Any, *, canonicalize: bool = False) -> DType:
   # TODO(jakevdp): fix return type annotation and remove this ignore.
   return canonicalize_dtype(dt, allow_extended_dtype=True) if canonicalize else dt  # type: ignore[return-value]
 
-def _lattice_result_type(*args: Any) -> tuple[DType, bool]:
+def lattice_result_type(*args: Any) -> tuple[DType, bool]:
   dtypes, weak_types = zip(*(_dtype_and_weaktype(arg) for arg in args))
   if len(dtypes) == 1:
     out_dtype = dtypes[0]
@@ -945,7 +945,7 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tupl
   if len(args) == 0:
     raise ValueError("at least one array or dtype is required")
   dtype: DType | ExtendedDType
-  dtype, weak_type = _lattice_result_type(*(float_ if arg is None else arg for arg in args))
+  dtype, weak_type = lattice_result_type(*(float_ if arg is None else arg for arg in args))
   if weak_type:
     dtype = canonicalize_dtype(
       _default_types['f' if dtype in _custom_float_dtypes else dtype.kind])
