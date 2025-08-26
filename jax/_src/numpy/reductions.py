@@ -131,7 +131,7 @@ def _reduction(a: ArrayLike, name: str, op: ReductionOp, init_val: ArrayLike,
 
   result_dtype: DType
   if dtype is None:
-    result_dtype = dtypes.dtype(a)
+    result_dtype = a.dtype
     if promote_integers:
       result_dtype = _promote_integer_dtype(result_dtype)
     result_dtype = dtypes.canonicalize_dtype(result_dtype)
@@ -183,10 +183,10 @@ def _reduction_dims(a: ArrayLike, axis: Axis):
   else:
     return canon_axis, canon_axis
 
-def _reduction_init_val(a: ArrayLike, init_val: Any) -> np.ndarray:
+def _reduction_init_val(a: Array, init_val: Any) -> np.ndarray:
   # This function uses np.* functions because lax pattern matches against the
   # specific concrete values of the reduction inputs.
-  a_dtype = dtypes.canonicalize_dtype(dtypes.dtype(a))
+  a_dtype = a.dtype
   if a_dtype == 'bool':
     return np.array(init_val > 0, dtype=a_dtype)
   if (np.isinf(init_val) and dtypes.issubdtype(a_dtype, np.floating)
@@ -900,7 +900,7 @@ def _mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
     raise NotImplementedError("The 'out' argument to jnp.mean is not supported.")
 
   if dtype is None:
-    result_dtype = dtypes.to_inexact_dtype(dtypes.dtype(a, canonicalize=True))
+    result_dtype = dtypes.to_inexact_dtype(a.dtype)
   else:
     result_dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "mean")
 
@@ -1137,7 +1137,7 @@ def _var(a: Array, axis: Axis = None, dtype: DTypeLike | None = None,
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.var is not supported.")
 
-  computation_dtype, dtype = _var_promote_types(dtypes.dtype(a), dtype)
+  computation_dtype, dtype = _var_promote_types(a.dtype, dtype)
   a = lax.asarray(a).astype(computation_dtype)
   a_mean = mean(a, axis, dtype=computation_dtype, keepdims=True, where=where)
   centered = lax.sub(a, a_mean)
@@ -1382,7 +1382,7 @@ def _nan_reduction(a: ArrayLike, name: str, jnp_reduction: Callable[..., Array],
                    **kwargs) -> Array:
   a = ensure_arraylike(name, a)
   where = check_where(name, where)
-  if not dtypes.issubdtype(dtypes.dtype(a), np.inexact):
+  if not dtypes.issubdtype(a.dtype, np.inexact):
     return jnp_reduction(a, axis=axis, keepdims=keepdims, where=where, **kwargs)
 
   out = jnp_reduction(_where(lax._isnan(a), _reduction_init_val(a, init_val), a),
@@ -1811,10 +1811,10 @@ def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out
   where = check_where("nanmean", where)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanmean is not supported.")
-  if dtypes.issubdtype(dtypes.dtype(a), np.bool_) or dtypes.issubdtype(dtypes.dtype(a), np.integer):
+  if dtypes.issubdtype(a.dtype, np.bool_) or dtypes.issubdtype(a.dtype, np.integer):
     return mean(a, axis, dtype, out, keepdims, where=where)
   if dtype is None:
-    dtype = dtypes.to_inexact_dtype(dtypes.dtype(a, canonicalize=True))
+    dtype = dtypes.to_inexact_dtype(a.dtype)
   else:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "mean")
   nan_mask = lax.bitwise_not(lax._isnan(a))
@@ -1907,7 +1907,7 @@ def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanvar is not supported.")
 
-  computation_dtype, dtype = _var_promote_types(dtypes.dtype(a), dtype)
+  computation_dtype, dtype = _var_promote_types(a.dtype, dtype)
   a = lax.asarray(a).astype(computation_dtype)
   a_mean = nanmean(a, axis, dtype=computation_dtype, keepdims=True, where=where)
 
@@ -2034,7 +2034,7 @@ def _cumulative_reduction(
   if fill_nan:
     a = _where(lax._isnan(a), lax._const(a, fill_value), a)
 
-  a_type: DType = dtypes.dtype(a)
+  a_type: DType = a.dtype
   result_type: DType
   if dtype is None:
     result_type = a_type

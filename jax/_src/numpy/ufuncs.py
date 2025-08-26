@@ -120,7 +120,7 @@ def fabs(x: ArrayLike, /) -> Array:
     Array([1., 0.], dtype=float32)
   """
   x = ensure_arraylike('fabs', x)
-  if dtypes.issubdtype(dtypes.dtype(x), np.complexfloating):
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
     raise TypeError("ufunc 'fabs' does not support complex dtypes")
   return lax.abs(*promote_args_inexact('fabs', x))
 
@@ -366,7 +366,7 @@ def floor(x: ArrayLike, /) -> Array:
            [-5.,  2.,  1.]], dtype=float32)
   """
   x = ensure_arraylike('floor', x)
-  if dtypes.isdtype(dtypes.dtype(x), ('integral', 'bool')):
+  if dtypes.isdtype(x.dtype, ('integral', 'bool')):
     return x
   return lax.floor(*promote_args_inexact('floor', x))
 
@@ -405,7 +405,7 @@ def ceil(x: ArrayLike, /) -> Array:
            [ 5.,  4., -1.]], dtype=float32)
   """
   x = ensure_arraylike('ceil', x)
-  if dtypes.isdtype(dtypes.dtype(x), ('integral', 'bool')):
+  if dtypes.isdtype(x.dtype, ('integral', 'bool')):
     return lax.asarray(x)
   return lax.ceil(*promote_args_inexact('ceil', x))
 
@@ -2342,7 +2342,7 @@ def absolute(x: ArrayLike, /) -> Array:
     Array([17.,  5.,  5.], dtype=float32)
   """
   x = ensure_arraylike('absolute', x)
-  dt = dtypes.dtype(x)
+  dt = x.dtype
   return lax.asarray(x) if dt == np.bool_ or dtypes.issubdtype(dt, np.unsignedinteger) else lax.abs(x)
 
 
@@ -2385,7 +2385,7 @@ def rint(x: ArrayLike, /) -> Array:
     Array([-2.+4.j,  4.-0.j], dtype=complex64)
   """
   x = ensure_arraylike('rint', x)
-  dtype = dtypes.dtype(x)
+  dtype = x.dtype
   if dtype == bool or dtypes.issubdtype(dtype, np.integer):
     return lax.convert_element_type(x, dtypes.float_)
   if dtypes.issubdtype(dtype, np.complexfloating):
@@ -2428,7 +2428,7 @@ def copysign(x1: ArrayLike, x2: ArrayLike, /) -> Array:
            [ 2.,  3.]], dtype=float32)
   """
   x1, x2 = promote_args_inexact("copysign", x1, x2)
-  if dtypes.issubdtype(dtypes.dtype(x1), np.complexfloating):
+  if dtypes.issubdtype(x1.dtype, np.complexfloating):
     raise TypeError("copysign does not support complex-valued inputs")
   return _where(signbit(x2).astype(bool), -lax.abs(x1), lax.abs(x1))
 
@@ -2523,7 +2523,7 @@ def floor_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """
   x1, x2 = promote_args_numeric("floor_divide", x1, x2)
   jnp_error._set_error_if_divide_by_zero(x2)
-  dtype = dtypes.dtype(x1)
+  dtype = x1.dtype
   if dtypes.issubdtype(dtype, np.unsignedinteger):
     return lax.div(x1, x2)
   elif dtypes.issubdtype(dtype, np.integer):
@@ -2574,7 +2574,7 @@ def divmod(x1: ArrayLike, x2: ArrayLike, /) -> tuple[Array, Array]:
      Array([0.30000007, 1.        , 2.9       ], dtype=float32))
   """
   x1, x2 = promote_args_numeric("divmod", x1, x2)
-  if dtypes.issubdtype(dtypes.dtype(x1), np.integer):
+  if dtypes.issubdtype(x1.dtype, np.integer):
     return floor_divide(x1, x2), remainder(x1, x2)
   else:
     jnp_error._set_error_if_divide_by_zero(x2)
@@ -2697,13 +2697,13 @@ def _power(x1: ArrayLike, x2: ArrayLike) -> Array:
 
   # Case 2: bool/integer result
   x1_, x2_ = promote_args_numeric("power", x1, x2)
-  if (dtypes.issubdtype(dtypes.dtype(x1_), np.integer) or
-      dtypes.issubdtype(dtypes.dtype(x1_), np.bool_)):
-    assert np.iinfo(dtypes.dtype(x1_)).bits <= 64  # _pow_int_int assumes <=64bit
+  if (dtypes.issubdtype(x1_.dtype, np.integer) or
+      dtypes.issubdtype(x1_.dtype, np.bool_)):
+    assert np.iinfo(x1_.dtype).bits <= 64  # _pow_int_int assumes <=64bit
     return _pow_int_int(x1_, x2_)
 
   # Case 3: float/complex base with integer power (special autodiff behavior)
-  d1, d2 = dtypes.dtype(x1), dtypes.dtype(x2)
+  d1, d2 = x1.dtype, x2.dtype
   if dtypes.issubdtype(d1, np.inexact) and dtypes.issubdtype(d2, np.integer):
     return lax.pow(x1, x2)
 
@@ -2928,7 +2928,7 @@ def signbit(x: ArrayLike, /) -> Array:
     Array([False,  True, False,  True], dtype=bool)
     """
   x, = promote_args("signbit", x)
-  dtype = dtypes.dtype(x)
+  dtype = x.dtype
   if dtypes.issubdtype(dtype, np.integer):
     return lax.lt(x, _constant_like(x, 0))
   elif dtypes.issubdtype(dtype, np.bool_):
@@ -2994,13 +2994,13 @@ def ldexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     Array([ 2.,  3.,  5., 11.], dtype=float32)
   """
   x1, x2 = ensure_arraylike("ldexp", x1, x2)
-  x1_dtype = dtypes.dtype(x1)
-  x2_dtype = dtypes.dtype(x2)
+  x1_dtype = x1.dtype
+  x2_dtype = x2.dtype
   if (dtypes.issubdtype(x1_dtype, np.complexfloating)
       or dtypes.issubdtype(x2_dtype, np.inexact)):
     raise ValueError(f"ldexp not supported for input types {(x1_dtype, x2_dtype)}")
   x1, = promote_args_inexact("ldexp", x1)
-  x2 = lax.convert_element_type(x2, dtypes.dtype(x1))
+  x2 = lax.convert_element_type(x2, x1.dtype)
 
   # Split off the exponent to avoid overflow for small x1 and large x2.
   m, e = frexp(x1)
@@ -3481,7 +3481,7 @@ def isfinite(x: ArrayLike, /) -> Array:
     Array(True, dtype=bool, weak_type=True)
   """
   x = ensure_arraylike("isfinite", x)
-  dtype = dtypes.dtype(x)
+  dtype = x.dtype
   if dtypes.issubdtype(dtype, np.floating):
     return lax.is_finite(x)
   elif dtypes.issubdtype(dtype, np.complexfloating):
@@ -3522,7 +3522,7 @@ def isinf(x: ArrayLike, /) -> Array:
     Array([False,  True, False,  True, False], dtype=bool)
   """
   x = ensure_arraylike("isinf", x)
-  dtype = dtypes.dtype(x)
+  dtype = x.dtype
   if dtypes.issubdtype(dtype, np.floating):
     return lax.eq(lax.abs(x), _constant_like(x, np.inf))
   elif dtypes.issubdtype(dtype, np.complexfloating):
@@ -3537,7 +3537,7 @@ def isinf(x: ArrayLike, /) -> Array:
 def _isposneginf(infinity: float, x: Array, out) -> Array:
   if out is not None:
     raise NotImplementedError("The 'out' argument to isneginf/isposinf is not supported.")
-  dtype = dtypes.dtype(x)
+  dtype = x.dtype
   if dtypes.issubdtype(dtype, np.floating):
     return lax.eq(x, _constant_like(x, infinity))
   elif dtypes.issubdtype(dtype, np.complexfloating):

@@ -2383,14 +2383,14 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
                    debug_info=debug_info("linear_transpose", fun, primals, {})),
       in_tree)
   in_avals = map(shaped_abstractify, primals_flat)
-  in_dtypes = map(dtypes.dtype, in_avals)
+  in_dtypes = map(lambda a: a.dtype, in_avals)
 
   in_pvals = map(pe.PartialVal.unknown, in_avals)
   jaxpr, out_pvals, const = pe.trace_to_jaxpr_nounits(flat_fun, in_pvals,
                                                       instantiate=True)
   jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars), True)
   out_avals, _ = unzip2(out_pvals)
-  out_dtypes = map(dtypes.dtype, out_avals)
+  out_dtypes = map(lambda a: a.dtype, out_avals)
   if not (all(dtypes.issubdtype(d, np.inexact) for d in in_dtypes + out_dtypes)
           or all(dtypes.issubdtype(d, np.integer)
                  for d in in_dtypes + out_dtypes)):

@@ -385,7 +385,7 @@ def vdot(
     Array(0.+14.j, dtype=complex64)
   """
   a, b = util.ensure_arraylike("vdot", a, b)
-  if dtypes.issubdtype(dtypes.dtype(a, canonicalize=True), np.complexfloating):
+  if dtypes.issubdtype(a.dtype, np.complexfloating):
     a = ufuncs.conj(a)
   return dot(a.ravel(), b.ravel(), precision=precision,
              preferred_element_type=preferred_element_type)

@@ -219,7 +219,7 @@ def _item(self: Array, *args: int) -> bool | int | float | complex:
 
 def _itemsize_property(self: Array) -> int:
   """Length of one array element in bytes."""
-  return dtypes.dtype(self, canonicalize=True).itemsize
+  return self.dtype.itemsize
 
 def _matrix_transpose_property(self: Array):
   """Compute the (batched) matrix transpose.
@@ -261,7 +261,7 @@ def _min(self: Array, axis: reductions.Axis = None, out: None = None,
 
 def _nbytes_property(self: Array) -> int:
   """Total bytes consumed by the elements of the array."""
-  return np.size(self) * dtypes.dtype(self, canonicalize=True).itemsize
+  return np.size(self) * self.dtype.itemsize
 
 def _nonzero(self: Array, *, fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None,
              size: int | None = None) -> tuple[Array, ...]:

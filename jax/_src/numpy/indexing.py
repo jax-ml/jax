@@ -283,7 +283,7 @@ def take_along_axis(
            [2]], dtype=int32)
   """
   a, indices = util.ensure_arraylike("take_along_axis", arr, indices)
-  index_dtype = dtypes.dtype(indices)
+  index_dtype = indices.dtype
   idx_shape = np.shape(indices)
   if not dtypes.issubdtype(index_dtype, np.integer):
     raise TypeError("take_along_axis indices must be of integer type, got "
