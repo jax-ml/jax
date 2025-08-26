@@ -200,8 +200,6 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
   if (!nvshmem_path.empty()) {
     libraries_to_link.push_back(nvshmem_path);
   }
-  // TODO(bchetioui): pass `-lineinfo` as an opt to
-  // `mosaic-gpu-assembly-to-binary` to mirror the previous behaviour.
   return mlir::parsePassPipeline(absl::StrCat(
       R"(
       builtin.module(
