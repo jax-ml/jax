@@ -1338,6 +1338,7 @@ jax_multiplatform_test(
     name = "scipy_stats_test",
     srcs = ["scipy_stats_test.py"],
     backend_tags = {
+        "cpu": ["nomsan"],  # Times out
         "tpu": ["nomsan"],  # Times out
     },
     shard_count = {
