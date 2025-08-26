@@ -420,7 +420,7 @@ def scalar_type_of(x: Any) -> type:
     raise TypeError(f"Invalid scalar value {x}")
 
 
-def _scalar_type_to_dtype(typ: type, value: Any = None) -> DType:
+def scalar_type_to_dtype(typ: type, value: Any = None) -> DType:
   """Return the numpy dtype for the given scalar type.
 
   Raises
@@ -429,17 +429,17 @@ def _scalar_type_to_dtype(typ: type, value: Any = None) -> DType:
 
   Examples
   --------
-  >>> _scalar_type_to_dtype(int)
+  >>> scalar_type_to_dtype(int)
   dtype('int32')
-  >>> _scalar_type_to_dtype(float)
+  >>> scalar_type_to_dtype(float)
   dtype('float32')
-  >>> _scalar_type_to_dtype(complex)
+  >>> scalar_type_to_dtype(complex)
   dtype('complex64')
-  >>> _scalar_type_to_dtype(int)
+  >>> scalar_type_to_dtype(int)
   dtype('int32')
-  >>> _scalar_type_to_dtype(int, 0)
+  >>> scalar_type_to_dtype(int, 0)
   dtype('int32')
-  >>> _scalar_type_to_dtype(int, 1 << 63)  # doctest: +IGNORE_EXCEPTION_DETAIL
+  >>> scalar_type_to_dtype(int, 1 << 63)  # doctest: +IGNORE_EXCEPTION_DETAIL
   Traceback (most recent call last):
   OverflowError: Python int 9223372036854775808 too large to convert to int32
   """
@@ -458,7 +458,7 @@ def coerce_to_array(x: Any, dtype: DTypeLike | None = None) -> np.ndarray:
   rules.
   """
   if dtype is None and type(x) in python_scalar_types:
-    dtype = _scalar_type_to_dtype(type(x), x)
+    dtype = scalar_type_to_dtype(type(x), x)
   return np.asarray(x, dtype)
 
 iinfo = ml_dtypes.iinfo

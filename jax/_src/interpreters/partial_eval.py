@@ -2659,7 +2659,7 @@ def pad_jaxpr(jaxpr: Jaxpr, consts: Sequence[Const]
   def substitute(aval: AbstractValue) -> AbstractValue:
     if (isinstance(aval, core.UnshapedArray) and type(aval.dtype) is core.bint
         and not aval.shape):
-      return ShapedArray((), dtypes._scalar_type_to_dtype(int))
+      return ShapedArray((), dtypes.scalar_type_to_dtype(int))
     elif isinstance(aval, DShapedArray):
       shape = [bounds.get(d, idxs.get(d, d)) for d in aval.shape]  # type: ignore
       typ = ShapedArray if all(type(d) is int for d in shape) else DShapedArray
