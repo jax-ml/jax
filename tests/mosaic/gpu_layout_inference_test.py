@@ -700,7 +700,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
         # the traversal order in the future.
         [H(v0, RL(mgpu.WGMMA_ROW_LAYOUT)), H(v0, RL(mgpu.WGMMA_COL_LAYOUT))],
     )
-    self.assertEqual(assignments, {v0: RL(mgpu.WGMMA_COL_LAYOUT)})
+    self.assertEqual(assignments, {v0: RL(mgpu.WGMMA_ROW_LAYOUT)})
 
   def test_cannot_find_assignments_for_unsatisfiable_equation_system(self):
     with ir.InsertionPoint(self.module.body):

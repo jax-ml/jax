@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence, Set
+from collections.abc import Callable, Generator, Sequence, Set
 import dataclasses
 import enum
 import itertools
@@ -224,6 +224,31 @@ def _strided_layout_for_variable(
   return fa.WGStridedFragLayout.from_shaped_type(ty)
 
 
+def conjure_assignment(
+    unknowns: Set[eqns.Variable],
+    equation_system: eqns.EquationSystem,
+    hints: Sequence[Hint],
+) -> Generator[tuple[eqns.Variable, eqns.Constant], None, None]:
+  """Attempts to conjure an assignment for an unknown variable."""
+  for hint in hints:
+    if (assignment := extract_variable_assignment_from_hint(hint)) is not None:
+      yield assignment
+
+  # Here, we have not managed to find an assignment for all the unknown
+  # variables, and our hints have not proven sufficient to unblock us. We now
+  # try to introduce new arbitrary (valid) assignments into the system, and
+  # hope that they turn out to be compatible with the equation system.
+  for variable in unknowns:
+    if variable in equation_system.assignments:
+      continue
+    # Try to instantiate a single variable to a strided layout and see if it
+    # reduces the system.
+    layout = _strided_layout_for_variable(variable)
+    if layout is None:
+      continue
+    yield variable, eqns.RegisterLayout(layout)
+
+
 def find_assignments_for(
     unknowns: Set[eqns.Variable],
     equation_system: eqns.EquationSystem,
@@ -260,48 +285,14 @@ def find_assignments_for(
   # be able to make progress by extracting an assignment from a `Hint`. This
   # new assignment could make the system unsatisfiable, so we use a recursive
   # call to be able to backtrack if necessary.
-  #
-  # Make a copy of the hints to allow deleting unnecessary hints from the list,
-  # without modifying the list being iterated over.
-  remaining_hints: list[Hint] = [*hints]
-  for i, hint in reversed(list(enumerate(hints))):
-    if (assignment := extract_variable_assignment_from_hint(hint)) is not None:
-      variable, expr = assignment
-      new_equation_system = (
-          eqns.EquationSystem(assignments={variable: expr}) & equation_system)
-      if isinstance(new_equation_system, eqns.Unsatisfiable):
-        # This assignment is not compatible with the equation system.
-        continue
-      other_hints = remaining_hints[:i] + remaining_hints[i + 1:]
-      solution = find_assignments_for(unknowns, new_equation_system, other_hints)
-      if isinstance(solution, eqns.Unsatisfiable):
-        # This assignment is not compatible with the equation system. We remove
-        # it from the list of hints.
-        remaining_hints.pop(i)
-        continue
-      return solution
-  hints = remaining_hints
-
-  # Here, we have not managed to find an assignment for all the unknown
-  # variables, and our hints have not proven sufficient to unblock us. We now
-  # try to introduce new arbitrary (valid) assignments into the system, and
-  # hope that they turn out to be compatible with the equation system.
-  for variable in unknowns:
-    if variable in equation_system.assignments:
-      continue
-    # Try to instantiate a single variable to a strided layout and see if it
-    # reduces the system.
-    layout = _strided_layout_for_variable(variable)
-    if layout is None:
-      continue
-    new_assignment: dict[eqns.Variable, eqns.Constant] = {
-        variable: eqns.RegisterLayout(layout)
-    }
-    new_system = equation_system & eqns.EquationSystem(assignments=new_assignment)
-    if isinstance(new_system, eqns.Unsatisfiable):
+  for assignment in conjure_assignment(remaining_unknowns, equation_system, hints):
+    variable, expr = assignment
+    new_equation_system = (
+        eqns.EquationSystem(assignments={variable: expr}) & equation_system)
+    if isinstance(new_equation_system, eqns.Unsatisfiable):
       # This assignment is not compatible with the equation system.
       continue
-    solution = find_assignments_for(unknowns, new_system, hints)
+    solution = find_assignments_for(unknowns, new_equation_system, hints)
     if isinstance(solution, eqns.Unsatisfiable):
       # This assignment is not compatible with the equation system.
       continue
