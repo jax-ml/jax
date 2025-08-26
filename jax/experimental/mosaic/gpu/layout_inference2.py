@@ -658,6 +658,16 @@ def _vector_broadcast_equation_system(
   )
 
 
+@_add_equation_system_derivation_rule(vector.ReductionOp)
+def _vector_reduction_equation_system(
+    ctx: DerivationContext,
+    op: vector.ReductionOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
+  in_variable = eqns.Variable(OperandOrResult(op, VariableType.OPERAND, 0))
+  return eqns.EquationSystem(), {in_variable: [in_variable.key]}, []
+
+
 def _reduction_equation_and_hint(
     larger: eqns.Variable,
     smaller: eqns.Variable,
