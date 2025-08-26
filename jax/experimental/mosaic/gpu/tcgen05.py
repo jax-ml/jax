@@ -977,6 +977,16 @@ class TMEMRef:
   dtype: ir.Type
   layout: TMEMLayout
 
+  @property
+  def packing(self) -> int:
+    return self.layout.vector_length
+
+  def __post_init__(self):
+    packed_bitwidth = utils.bitwidth(self.dtype) * self.packing
+    if not packed_bitwidth <= 32:
+      raise ValueError("Expected packed packed bitwidth to be <= 32, but got: "
+                       f"{packed_bitwidth=}")
+
   @classmethod
   def from_alloc(
       cls,
@@ -1020,11 +1030,7 @@ class TMEMRef:
       raise ValueError("TMEM can only be sliced, not indexed")
     if base_idx == [0] * len(base_idx) and slice_shape == list(self.shape):
       return self  # Trival slice
-    if self.layout == tmem_default_layout(packing=1):
-      packing = 1
-    elif self.layout == tmem_default_layout(packing=2):
-      packing = 2
-    else:
+    if self.layout != tmem_default_layout(packing=self.packing):
       raise NotImplementedError(
           "Slicing only implemented for refs with standard layout, got:"
           f" {self.layout}"
@@ -1041,8 +1047,8 @@ class TMEMRef:
       col_idx = arith.constant(i32, col_idx)
     if col_idx.type == ir.IndexType.get():
       col_idx = arith.index_cast(i32, col_idx)
-    if packing != 1:
-      col_idx = arith.divui(col_idx, arith.constant(i32, packing))
+    if self.packing != 1:
+      col_idx = arith.divui(col_idx, arith.constant(i32, self.packing))
     return TMEMRef(
         address=arith.addi(self.address, col_idx),
         shape=tuple(slice_shape),
@@ -1053,7 +1059,7 @@ class TMEMRef:
   def load(self, layout: fa.TiledLayout | None = None, is_signed: bool | None = None):
     if utils.bitwidth(self.dtype) not in {16, 32}:
       raise NotImplementedError(f"Unsupported dtype: {self.dtype}")
-    packing = self.layout.vector_length
+    packing = self.packing
     if layout is None:
       layout = _infer_tmem_load_registers_layout(
           self.layout, self.shape[1], packing
@@ -1107,7 +1113,7 @@ class TMEMRef:
           f"Stored array has dtype {value.mlir_dtype}, but TMEM has dtype"
           f" {self.dtype}"
       )
-    packing = self.layout.vector_length
+    packing = self.packing
     if value.layout == LAYOUT and self.layout == tmem_default_layout(packing=packing):
       _store_32xcols(
           self.address, value.registers.T.reshape((4, -1)), packing
@@ -1141,16 +1147,14 @@ class TMEMRef:
       )
       dtype_bitwidth = utils.bitwidth(self.dtype)
       full_packing = 32 // dtype_bitwidth
-      if self.layout.vector_length == 1:
+      if self.packing == 1:
         if dtype_bitwidth < 32:
           val = arith.trunci(ir.IntegerType.get_signless(dtype_bitwidth), val)
         val = utils.bitcast(val, self.dtype)
-      elif self.layout.vector_length == full_packing:
+      elif self.packing == full_packing:
         val = utils.bitcast(val, ir.VectorType.get((full_packing,), self.dtype))
       else:
-        raise NotImplementedError(
-            f"Unsupported packing: {self.layout.vector_length}"
-        )
+        raise NotImplementedError(f"Unsupported packing: {self.packing}")
       # TODO(apaszke): Make this print logical, not physical location.
       utils.debug_print(f"[{{}}, {c}]: {{}}", lane, val, uniform=False)
 
