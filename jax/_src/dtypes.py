@@ -389,8 +389,11 @@ def canonicalize_value(x, canonicalize_scalar_dtypes: bool = False):
   )
 
 
+# The list of all known Python scalar types.
+python_scalar_types: set[type] = {bool, int, float, complex}
+
 # Default dtypes corresponding to Python scalars.
-python_scalar_dtypes : dict[type, DType] = {
+python_scalar_types_to_dtypes: dict[type, DType] = {
   bool: np.dtype('bool'),
   int: np.dtype('int64'),
   float: np.dtype('float64'),
@@ -440,7 +443,7 @@ def _scalar_type_to_dtype(typ: type, value: Any = None) -> DType:
   Traceback (most recent call last):
   OverflowError: Python int 9223372036854775808 too large to convert to int32
   """
-  dtype = canonicalize_dtype(python_scalar_dtypes[typ])
+  dtype = canonicalize_dtype(python_scalar_types_to_dtypes[typ])
   if typ is int and value is not None:
     iinfo = np.iinfo(dtype)
     if value < iinfo.min or value > iinfo.max:
@@ -454,7 +457,7 @@ def coerce_to_array(x: Any, dtype: DTypeLike | None = None) -> np.ndarray:
   Handles Python scalar type promotion according to JAX's rules, not NumPy's
   rules.
   """
-  if dtype is None and type(x) in python_scalar_dtypes:
+  if dtype is None and type(x) in python_scalar_types:
     dtype = _scalar_type_to_dtype(type(x), x)
   return np.asarray(x, dtype)
 
@@ -866,7 +869,7 @@ def is_python_scalar(x: Any) -> bool:
   try:
     return x.aval.weak_type and np.ndim(x) == 0
   except AttributeError:
-    return type(x) in python_scalar_dtypes
+    return type(x) in python_scalar_types
 
 def check_valid_dtype(dtype: DType) -> None:
   if dtype not in _jax_dtype_set:
@@ -878,10 +881,10 @@ def dtype(x: Any, *, canonicalize: bool = False) -> DType:
   if x is None:
     raise ValueError(f"Invalid argument to dtype: {x}.")
   is_type = isinstance(x, type)
-  if is_type and x in python_scalar_dtypes:
-    dt = python_scalar_dtypes[x]
-  elif type(x) in python_scalar_dtypes:
-    dt = python_scalar_dtypes[type(x)]
+  if is_type and (dt := python_scalar_types_to_dtypes.get(x)) is not None:
+    pass
+  elif (dt := python_scalar_types_to_dtypes.get(type(x))) is not None:
+    pass
   elif is_type and _issubclass(x, np.generic):
     return np.dtype(x)
   elif issubdtype(getattr(x, 'dtype', None), extended):

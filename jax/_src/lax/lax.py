@@ -3898,7 +3898,7 @@ def _add_arrays(x, y):
   return add(x, y)
 
 for t in itertools.chain(
-    dtypes.python_scalar_dtypes.keys(), array_types, [array.ArrayImpl]):
+    dtypes.python_scalar_types, array_types, [array.ArrayImpl]):
   ad_util.raw_jaxval_adders[t] = _add_arrays
 
 
@@ -4911,7 +4911,7 @@ def _convert_elt_type_folding_rule(consts, params, out_avals):
   c, = consts
   out_aval, = out_avals
   new_dtype = params['new_dtype']
-  if (type(c) in {np.ndarray, *dtypes.python_scalar_dtypes} and
+  if (type(c) in {np.ndarray, *dtypes.python_scalar_types} and
       isinstance(out_aval, core.UnshapedArray) and not np.shape(c) and
       not dtypes.issubdtype(new_dtype, dtypes.extended)):
     out = np.array(c)

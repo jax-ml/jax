@@ -5072,14 +5072,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
   @jtu.sample_product(
-    dtype=[int, float, bool, complex],
+    scalar_type=[int, float, bool, complex],
     op=["atleast_1d", "atleast_2d", "atleast_3d"],
   )
-  def testAtLeastNdLiterals(self, dtype, op):
+  def testAtLeastNdLiterals(self, scalar_type, op):
     # Fixes: https://github.com/jax-ml/jax/issues/634
-    np_fun = lambda arg: getattr(np, op)(arg).astype(dtypes.python_scalar_dtypes[dtype])
+    np_fun = lambda arg: getattr(np, op)(arg).astype(
+        dtypes.python_scalar_types_to_dtypes[scalar_type]
+    )
     jnp_fun = lambda arg: getattr(jnp, op)(arg)
-    args_maker = lambda: [dtype(2)]
+    args_maker = lambda: [scalar_type(2)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 

@@ -225,7 +225,7 @@ for _t in array_types:
 def _shard_python_scalar(xs, shardings, layouts, copy_semantics):
   return shard_args(shardings, layouts, copy_semantics,
                     [np.array(x) for x in xs])
-for _t in dtypes.python_scalar_dtypes.keys():
+for _t in dtypes.python_scalar_types:
   shard_arg_handlers[_t] = _shard_python_scalar
 
 def _shard_darray(xs, shardings, layouts, copy_semantics):

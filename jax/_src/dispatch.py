@@ -459,7 +459,7 @@ def _device_put_sharding_impl(x, aval, device, copy):
             "indices and layouts, in the TFRT TPU runtime only.")
 
       if ((isinstance(x, array.ArrayImpl) and not x._committed) or
-          type(x) in array_types or type(x) in dtypes.python_scalar_dtypes):
+          type(x) in array_types or type(x) in dtypes.python_scalar_types):
         # If all hosts participate in the sharding, assert that the input is the
         # same on all hosts. If some hosts have no addressable devices in the
         # sharding, bypass the check, since we can't easily distinguish between

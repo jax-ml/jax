@@ -127,7 +127,9 @@ class DtypesTest(jtu.JaxTestCase):
     {"testcase_name": f"_type={type_.__name__}", "type_": type_}
     for type_ in python_scalar_types)
   def testDefaultTypes(self, type_):
-    expected_dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[type_])
+    expected_dtype = dtypes.canonicalize_dtype(
+        dtypes.python_scalar_types_to_dtypes[type_]
+    )
     for f in [jnp.array, jax.jit(jnp.array), jax.jit(lambda x: x)]:
       y = f(type_(0))
       self.assertTrue(isinstance(y, jax.Array), msg=(f, y))
@@ -375,11 +377,15 @@ class DtypesTest(jtu.JaxTestCase):
 
   @parameterized.parameters(python_scalar_types)
   def testDtypeFromScalarType(self, typ):
-    self.assertEqual(dtypes.dtype(typ), dtypes.python_scalar_dtypes[typ])
+    self.assertEqual(
+        dtypes.dtype(typ), dtypes.python_scalar_types_to_dtypes[typ]
+    )
 
   @parameterized.parameters(python_scalar_types)
   def testDtypeFromScalarValue(self, typ):
-    self.assertEqual(dtypes.dtype(typ(0)), dtypes.python_scalar_dtypes[typ])
+    self.assertEqual(
+        dtypes.dtype(typ(0)), dtypes.python_scalar_types_to_dtypes[typ]
+    )
 
   @parameterized.parameters(all_dtypes)
   def testDtypeFromValue(self, dtype):

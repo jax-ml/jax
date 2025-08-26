@@ -347,7 +347,7 @@ def _python_scalar_handler(val, aval: core.AbstractValue | None):
   assert aval.shape == (), aval
   return _numpy_array_constant(np.array(val, aval.dtype))
 
-for ptype in dtypes.python_scalar_dtypes.keys():
+for ptype in dtypes.python_scalar_types:
   register_constant_handler(ptype, _python_scalar_handler)
 
 def _token_constant_handler(val: core.Token, aval: core.AbstractValue | None):
@@ -413,7 +413,7 @@ register_attribute_handler(np.generic, _dtype_attribute_handler)
 def _python_scalar_attribute_handler(dtype, val):
   return _numpy_scalar_attribute(np.array(val, dtype))
 
-for ptype, dtype in dtypes.python_scalar_dtypes.items():
+for ptype, dtype in dtypes.python_scalar_types_to_dtypes.items():
   register_attribute_handler(
       ptype, partial(_python_scalar_attribute_handler, dtype))
 
