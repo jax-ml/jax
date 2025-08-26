@@ -3548,7 +3548,7 @@ def _shard_value(val: TfVal,
 
   sharding_proto = sd.to_proto()
   if (skip_replicated_sharding and
-      op_shardings.is_op_sharding_replicated(sharding_proto)):
+      op_shardings.is_op_sharding_replicated(sd)):
     return val
 
   # Tensorflow heavily relies on tile_assignment_devices proto fields specific

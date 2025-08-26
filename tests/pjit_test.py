@@ -8928,13 +8928,13 @@ class UtilTest(jtu.JaxTestCase):
     op3.tile_assignment_dimensions = [4, 2]
     op3.tile_assignment_devices = [0, 1, 2, 3, 4, 5, 6, 7]
 
-    self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
-    self.assertFalse(op_shardings.are_op_shardings_equal(op1, op3))
-    self.assertFalse(op_shardings.are_op_shardings_equal(op2, op3))
-
     hs1 = xc.HloSharding.from_proto(op1)
     hs2 = xc.HloSharding.from_proto(op2)
     hs3 = xc.HloSharding.from_proto(op3)
+
+    self.assertTrue(op_shardings.are_op_shardings_equal(hs1, hs2))
+    self.assertFalse(op_shardings.are_op_shardings_equal(hs1, hs3))
+    self.assertFalse(op_shardings.are_op_shardings_equal(hs2, hs3))
 
     self.assertEqual(hs1, xc.HloSharding.iota_tile((2, 2)))
     self.assertEqual(hs2, xc.HloSharding.iota_tile((2, 2)))
@@ -8962,10 +8962,11 @@ class UtilTest(jtu.JaxTestCase):
     op2.tile_assignment_devices = [0, 2, 1, 3]
     op2.last_tile_dims = [xc.OpSharding.Type.REPLICATED]
 
-    self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
-
     hs1 = xc.HloSharding.from_proto(op1)
     hs2 = xc.HloSharding.from_proto(op2)
+
+    self.assertTrue(op_shardings.are_op_shardings_equal(hs1, hs2))
+
     self.assertEqual(
         hs1,
         xc.HloSharding.iota_tile(
@@ -9011,10 +9012,9 @@ class UtilTest(jtu.JaxTestCase):
     op2.type = xc.OpSharding.Type.TUPLE
     op2.tuple_shardings = [top2, top1]
 
-    self.assertFalse(op_shardings.are_op_shardings_equal(op1, op2))
-
     hs1 = xc.HloSharding.from_proto(op1)
     hs2 = xc.HloSharding.from_proto(op2)
+    self.assertFalse(op_shardings.are_op_shardings_equal(hs1, hs2))
     self.assertNotEqual(hash(hs1), hash(hs2))
 
   def test_hlo_sharding_iota_tile_error(self):
@@ -9107,13 +9107,18 @@ class UtilTest(jtu.JaxTestCase):
     op4.tile_assignment_dimensions = [1]
     op4.tile_assignment_devices = [0]
 
-    self.assertTrue(op_shardings.is_op_sharding_replicated(op1))
-    self.assertTrue(op_shardings.is_op_sharding_replicated(op2))
-    self.assertTrue(op_shardings.is_op_sharding_replicated(op3))
-    self.assertTrue(op_shardings.is_op_sharding_replicated(op4))
-    self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
-    self.assertTrue(op_shardings.are_op_shardings_equal(op2, op3))
-    self.assertTrue(op_shardings.are_op_shardings_equal(op3, op4))
+    hs1 = xc.HloSharding.from_proto(op1)
+    hs2 = xc.HloSharding.from_proto(op2)
+    hs3 = xc.HloSharding.from_proto(op3)
+    hs4 = xc.HloSharding.from_proto(op4)
+
+    self.assertTrue(op_shardings.is_op_sharding_replicated(hs1))
+    self.assertTrue(op_shardings.is_op_sharding_replicated(hs2))
+    self.assertTrue(op_shardings.is_op_sharding_replicated(hs3))
+    self.assertTrue(op_shardings.is_op_sharding_replicated(hs4))
+    self.assertTrue(op_shardings.are_op_shardings_equal(hs1, hs2))
+    self.assertTrue(op_shardings.are_op_shardings_equal(hs2, hs3))
+    self.assertTrue(op_shardings.are_op_shardings_equal(hs3, hs4))
 
   def test_op_sharding_manual_replicated(self):
     op1 = xc.OpSharding()
@@ -9131,12 +9136,15 @@ class UtilTest(jtu.JaxTestCase):
     op3 = xc.OpSharding()
     op3.type = xc.OpSharding.Type.REPLICATED
 
-    self.assertTrue(op_shardings.is_op_sharding_replicated(op1))
-    self.assertTrue(op_shardings.is_op_sharding_replicated(op2))
-    self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
-    self.assertTrue(op_shardings.are_op_shardings_equal(op1, op3))
-
     hs1 = xc.HloSharding.from_proto(op1)
+    hs2 = xc.HloSharding.from_proto(op2)
+    hs3 = xc.HloSharding.from_proto(op3)
+
+    self.assertTrue(op_shardings.is_op_sharding_replicated(hs1))
+    self.assertTrue(op_shardings.is_op_sharding_replicated(hs2))
+    self.assertTrue(op_shardings.are_op_shardings_equal(hs1, hs2))
+    self.assertTrue(op_shardings.are_op_shardings_equal(hs1, hs3))
+
     self.assertEqual(
         hs1,
         xc.HloSharding.iota_tile(
@@ -9150,7 +9158,6 @@ class UtilTest(jtu.JaxTestCase):
     self.assertTrue(hs1.is_replicated())
     self.assertFalse(hs1.replicate_on_last_tile_dim())
 
-    hs2 = xc.HloSharding.from_proto(op2)
     self.assertEqual(
         xc.HloSharding.from_proto(op2),
         xc.HloSharding.iota_tile(
