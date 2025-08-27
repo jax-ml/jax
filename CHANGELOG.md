@@ -16,6 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Changes
+  * The minimum supported NumPy version is now 2.0. Since SciPy 1.13 is required
+    for NumPy 2.0 support, the minimum supported SciPy version is now 1.13.
+
 * Bug fixes
   * `arr.view(dtype=None)` now returns the array unchanged, matching NumPy's
     semantics. Previously it returned the array with a float dtype.

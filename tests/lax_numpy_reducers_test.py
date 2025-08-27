@@ -32,7 +32,6 @@ from jax._src import test_util as jtu
 
 config.parse_flags_with_absl()
 
-numpy_version = jtu.numpy_version()
 
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
 nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
@@ -581,8 +580,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       # setup ddof and correction kwargs excluding case when correction is not specified
       ddof_correction_kwargs = {"ddof": ddof}
       if correction is not None:
-        key = "correction" if numpy_version >= (2, 0) else "ddof"
-        ddof_correction_kwargs[key] = correction
+        ddof_correction_kwargs["correction"] = correction
       # Numpy fails with bfloat16 inputs
       out = np_fn(x.astype(np.float32 if dtype == dtypes.bfloat16 else dtype),
                    dtype=np.float32 if out_dtype == dtypes.bfloat16 else out_dtype,

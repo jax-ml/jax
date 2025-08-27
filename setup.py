@@ -63,9 +63,9 @@ setup(
     install_requires=[
         f'jaxlib >={_minimum_jaxlib_version}, <={_jax_version}',
         'ml_dtypes>=0.5.0',
-        'numpy>=1.26',
+        'numpy>=2.0',
         'opt_einsum',
-        'scipy>=1.12',
+        'scipy>=1.13',
     ],
     extras_require={
         # Minimum jaxlib version; used in testing.
