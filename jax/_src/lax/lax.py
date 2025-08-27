@@ -59,7 +59,7 @@ from jax._src.interpreters.batching import RaggedAxis
 from jax._src.lax import slicing
 from jax._src.mesh import get_abstract_mesh, get_concrete_mesh
 from jax._src.lax.utils import (
-  _input_dtype, dtype_to_string, standard_abstract_eval,
+  input_dtype, dtype_to_string, standard_abstract_eval,
   standard_multi_result_abstract_eval, standard_primitive)
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -1755,7 +1755,8 @@ def bitcast_convert_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:
 
   .. _stablehlo.bitcast_convert: https://openxla.org/stablehlo/spec#bitcast_convert
   """
-  new_dtype = dtypes.canonicalize_dtype(new_dtype)
+  new_dtype = dtypes.check_and_canonicalize_user_dtype(
+      new_dtype, 'bitcast_convert_type')
   return bitcast_convert_type_p.bind(operand, new_dtype=new_dtype)
 
 def clamp(min: ArrayLike, x: ArrayLike, max: ArrayLike) -> Array:
@@ -2546,7 +2547,7 @@ def dot(lhs: ArrayLike, rhs: ArrayLike, *args,
            api_util._ensure_index_tuple(rhs_batch))
   preferred_element_type = (
       None if preferred_element_type is None else
-      dtypes.canonicalize_dtype(np.dtype(preferred_element_type)))
+      dtypes.check_and_canonicalize_user_dtype(preferred_element_type, 'dot'))
   lhs, rhs = core.standard_insert_pvary(lhs, rhs)
   return dot_general_p.bind(lhs, rhs,
                             dimension_numbers=(cdims, bdims),
@@ -2952,14 +2953,14 @@ def transpose(operand: ArrayLike,
 def argmin(operand: ArrayLike, axis: int,
            index_dtype: DTypeLike) -> Array:
   """Computes the index of the minimum element along ``axis``."""
-  return argmin_p.bind(operand, axes=(axis,),
-                       index_dtype=dtypes.canonicalize_dtype(index_dtype))
+  index_dtype = dtypes.check_and_canonicalize_user_dtype(index_dtype, 'argmin')
+  return argmin_p.bind(operand, axes=(axis,), index_dtype=index_dtype)
 
 def argmax(operand: ArrayLike, axis: int,
            index_dtype: DTypeLike) -> Array:
   """Computes the index of the maximum element along ``axis``."""
-  return argmax_p.bind(operand, axes=(axis,),
-                       index_dtype=dtypes.canonicalize_dtype(index_dtype))
+  index_dtype = dtypes.check_and_canonicalize_user_dtype(index_dtype, 'argmax')
+  return argmax_p.bind(operand, axes=(axis,), index_dtype=index_dtype)
 
 def reduce(operands: Any,
            init_values: Any,
@@ -3372,10 +3373,14 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
   if np.shape(fill_value):
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(np.shape(fill_value)))
-  if dtypes.issubdtype(dtype, dtypes.extended):
-    return dtype._rules.full(shape, fill_value, dtype)  # type: ignore[union-attr]
-  weak_type = dtype is None and dtypes.is_weakly_typed(fill_value)
-  dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
+  if dtype is None:
+    weak_type = dtypes.is_weakly_typed(fill_value)
+    dtype = _dtype(fill_value)
+  else:
+    if dtypes.issubdtype(dtype, dtypes.extended):
+      return dtype._rules.full(shape, fill_value, dtype)  # type: ignore[union-attr]
+    weak_type = False
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full")
   fill_value = _convert_element_type(fill_value, dtype, weak_type)
   if (sharding is not None and not isinstance(sharding, PmapSharding) and
       isinstance(fill_value, array.ArrayImpl) and sharding._is_concrete):
@@ -3420,7 +3425,7 @@ def iota(dtype: DTypeLike, size: int) -> Array:
 def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int,
                      *, out_sharding=None) -> Array:
   """Convenience wrapper around ``iota``."""
-  dtype = dtypes.canonicalize_dtype(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "broadcasted_iota")
   shape = canonicalize_shape(shape)
   dynamic_shape = [d for d in shape if isinstance(d, core.Tracer)]
   static_shape = [None if isinstance(d, core.Tracer) else d for d in shape]
@@ -3434,7 +3439,7 @@ def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize = 0) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
   offset = _clip_int_to_valid_range(offset, np.int32,
                                     "argument `offset` of jax.numpy.eye")
-  dtype = dtypes.canonicalize_dtype(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "eye")
   bool_eye = eq(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
                 broadcasted_iota(np.int32, shape, 1))
   return convert_element_type_p.bind(bool_eye, new_dtype=dtype, weak_type=False,
@@ -3443,7 +3448,7 @@ def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize = 0) -> Array:
 def _delta(dtype: DTypeLike, shape: Shape, axes: Sequence[int]) -> Array:
   """This utility function exists for creating Kronecker delta arrays."""
   axes = map(int, axes)
-  dtype = dtypes.canonicalize_dtype(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "delta")
   base_shape = tuple(np.take(shape, axes))
   iotas = [broadcasted_iota(np.uint32, base_shape, i)
            for i in range(len(base_shape))]
@@ -3457,7 +3462,7 @@ def _tri(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
   offset = _clip_int_to_valid_range(offset, np.int32,
                                     "argument `offset` of jax.numpy.tri")
-  dtype = dtypes.canonicalize_dtype(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "tri")
   bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0),
                     asarray(core.dimension_as_value(offset)).astype(np.int32)),
                 broadcasted_iota(np.int32, shape, 1))
@@ -3904,7 +3909,7 @@ for t in itertools.chain(
 
 
 _fixed_dtype = \
-    lambda dtype: lambda *args, **kwargs: dtypes.canonicalize_dtype(dtype)
+    lambda dtype: lambda *args, **kwargs: np.dtype(dtype)
 _complex_basetype = lambda dtype, **kwargs: np.abs(np.zeros((), dtype)).dtype
 
 _strip_weak_type = lambda *args, **_: False
@@ -4034,7 +4039,7 @@ def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
   batching.defbroadcasting(prim)
   pe.def_trivial_padding(prim)
   return prim
-standard_naryop = partial(naryop, _input_dtype)
+standard_naryop = partial(naryop, input_dtype)
 
 
 # Like autograd.numpy.numpy_vjps.unbroadcast, this utility handles transposition
@@ -4646,7 +4651,7 @@ def _add_unreduced(out_sharding, x, y):
     res_unreduced = frozenset()
   return out_sharding.update(spec=out_sharding.spec.update(unreduced=res_unreduced))
 
-add_p: Primitive = naryop(_input_dtype, [_num, _num], 'add',
+add_p: Primitive = naryop(input_dtype, [_num, _num], 'add',
                           unreduced_rule=_add_unreduced)
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
@@ -5110,8 +5115,7 @@ mlir.register_lowering(from_edtype_p, lambda _, x, **__: [x])
 
 
 def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
-  old_dtype = dtypes.canonicalize_dtype(operand.dtype)
-  new_dtype = dtypes.canonicalize_dtype(new_dtype)
+  old_dtype = operand.dtype
 
   old_nbits = dtypes.bit_width(old_dtype)
   new_nbits = dtypes.bit_width(new_dtype)
@@ -5131,8 +5135,7 @@ def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
     return operand.shape[:-1]
 
 def _bitcast_convert_type_sharding_rule(operand, *, new_dtype):
-  old_dtype = dtypes.canonicalize_dtype(operand.dtype)
-  new_dtype = dtypes.canonicalize_dtype(new_dtype)
+  old_dtype = operand.dtype
 
   old_nbits = dtypes.bit_width(old_dtype)
   new_nbits = dtypes.bit_width(new_dtype)
@@ -5145,8 +5148,7 @@ def _bitcast_convert_type_sharding_rule(operand, *, new_dtype):
     return operand.sharding.update(spec=operand.sharding.spec[:-1])
 
 def _bitcast_convert_type_dtype_rule(operand, *, new_dtype):
-  old_dtype = dtypes.canonicalize_dtype(operand.dtype)
-  new_dtype = dtypes.canonicalize_dtype(new_dtype)
+  old_dtype = operand.dtype
   if (dtypes.issubdtype(old_dtype, np.bool_) or
       dtypes.issubdtype(old_dtype, np.complexfloating) or
       dtypes.issubdtype(new_dtype, np.bool_) or
@@ -6720,7 +6722,7 @@ def _clamp_shape_rule(min, operand, max):
 def _clamp_sharding_rule(min, operand, max):
   return operand.sharding
 
-_clamp_dtype_rule = partial(naryop_dtype_rule, _input_dtype, [_any, _any, _any],
+_clamp_dtype_rule = partial(naryop_dtype_rule, input_dtype, [_any, _any, _any],
                             'clamp')
 
 def _clamp_batch_rule(batched_args, batch_dims, **params):
@@ -6943,7 +6945,7 @@ def _pad_dtype_rule(operand, padding_value, *, padding_config):
     msg = "pad operand and padding_value must be same dtype: got {} and {}."
     raise TypeError(msg.format(operand.dtype, padding_value.dtype))
 
-  return _input_dtype(operand, padding_value)
+  return input_dtype(operand, padding_value)
 
 def _pad_shape_rule(operand, padding_value, *, padding_config):
   if np.ndim(padding_value) != 0:
@@ -7363,7 +7365,7 @@ def _rev_batch_rule(batched_args, batch_dims, *, dimensions):
   new_dimensions = [i + 1 if i >= bdim else i for i in dimensions]
   return rev(operand, new_dimensions), bdim
 
-rev_p = standard_primitive(_rev_shape_rule, _input_dtype, 'rev',
+rev_p = standard_primitive(_rev_shape_rule, input_dtype, 'rev',
                            sharding_rule=_rev_sharding_rule,
                            vma_rule=partial(core.standard_vma_rule, 'rev'))
 ad.deflinear2(rev_p, lambda t, _, dimensions: [rev(t, dimensions)])
@@ -7412,7 +7414,7 @@ def _transpose_lower(ctx, x, *, permutation):
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 transpose_p = standard_primitive(
-    _transpose_shape_rule, _input_dtype, 'transpose',
+    _transpose_shape_rule, input_dtype, 'transpose',
     sharding_rule=_transpose_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'transpose'))
 ad.deflinear2(transpose_p,
@@ -7626,8 +7628,8 @@ def _reduce_vma_rule(*avals, computation, jaxpr, dimensions):
 
 def _reduce_dtype_rule(*avals, computation, jaxpr, dimensions):
   operand_avals, init_val_avals = split_list(avals, [len(avals) // 2])
-  operand_dtypes = [dtypes.canonicalize_dtype(op.dtype) for op in operand_avals]
-  init_val_dtypes = [dtypes.canonicalize_dtype(init.dtype) for init in init_val_avals]
+  operand_dtypes = [op.dtype for op in operand_avals]
+  init_val_dtypes = [init.dtype for init in init_val_avals]
   if operand_dtypes != init_val_dtypes:
     raise TypeError(
         "reduce operand dtypes should match corresponding initial value dtypes, "
@@ -7745,7 +7747,7 @@ def _reduce_number_dtype_rule(name, operand, *args, **kw):
   if not dtypes.issubdtype(operand.dtype, np.number):
     raise TypeError("{} does not accept dtype {}. Accepted dtypes are subtypes "
                     "of number.".format(name, dtype_to_string(operand.dtype)))
-  return dtypes.canonicalize_dtype(operand.dtype)
+  return operand.dtype
 
 def _reduce_sum_transpose_rule(cotangent, operand, *, axes):
   assert ad.is_undefined_primal(operand)
@@ -7823,7 +7825,7 @@ def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
 
 
 reduce_max_p = standard_primitive(
-    _reduce_op_shape_rule, _input_dtype, 'reduce_max',
+    _reduce_op_shape_rule, input_dtype, 'reduce_max',
     sharding_rule=_reduce_op_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_max'))
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
@@ -7834,7 +7836,7 @@ batching.ragged_prop_rules[reduce_max_p] = batching.ragged_mask_elementwise_rule
 
 
 reduce_min_p = standard_primitive(
-    _reduce_op_shape_rule, _input_dtype, 'reduce_min',
+    _reduce_op_shape_rule, input_dtype, 'reduce_min',
     sharding_rule=_reduce_op_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_min'))
 ad.defjvp2(reduce_min_p, _reduce_chooser_jvp_rule)
@@ -7948,7 +7950,7 @@ def _reduce_or_lin(nzs, x, *, axes):
   return y, False, (), lambda _, t: ad_util.Zero(aval)
 
 reduce_or_p = standard_primitive(
-    _reduce_logical_shape_rule, _input_dtype, 'reduce_or',
+    _reduce_logical_shape_rule, input_dtype, 'reduce_or',
     weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_or'))
 batching.defreducer(reduce_or_p, _get_bitwise_or_identity)
@@ -7956,7 +7958,7 @@ ad.primitive_linearizations[reduce_or_p] = _reduce_or_lin
 
 
 reduce_and_p = standard_primitive(
-    _reduce_logical_shape_rule, _input_dtype, 'reduce_and',
+    _reduce_logical_shape_rule, input_dtype, 'reduce_and',
     weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_and'))
 batching.defreducer(reduce_and_p, _get_bitwise_and_identity)
@@ -7964,7 +7966,7 @@ batching.ragged_prop_rules[reduce_and_p] = batching.ragged_mask_elementwise_rule
 
 
 reduce_xor_p = standard_primitive(
-    _reduce_logical_shape_rule, _input_dtype, 'reduce_xor',
+    _reduce_logical_shape_rule, input_dtype, 'reduce_xor',
     weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_xor'))
 batching.defreducer(reduce_xor_p, _get_bitwise_or_identity)
@@ -8111,7 +8113,8 @@ def _operands_to_keys(*operands, num_keys=1):
 def _sort_jvp(primals, tangents, *, dimension, is_stable, num_keys):
   shape = primals[0].shape
   sorted_primals_and_idx = sort_p.bind(
-      *primals, broadcasted_iota(np.uint64, shape, dimension),
+      *primals,
+      broadcasted_iota(dtypes.canonicalize_dtype(np.uint64), shape, dimension),
       dimension=dimension, is_stable=is_stable, num_keys=num_keys)
   batch_dims = tuple(np.delete(np.arange(len(shape), dtype=np.int64),
                                dimension))
@@ -8568,7 +8571,7 @@ def rng_bit_generator(key, shape, dtype=np.uint32,
   friendly API.
   """
   shape = core.canonicalize_shape(shape)
-  dtype = dtypes.canonicalize_dtype(dtype)
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype, 'rng_bit_generator')
   out_sharding = canonicalize_sharding(out_sharding, 'rng_bit_generator')
   if np.dtype(dtype) not in {np.dtype('uint8'), np.dtype('uint16'),
                              np.dtype('uint32'), np.dtype('uint64')}:
@@ -8798,8 +8801,8 @@ def check_same_dtypes(name: str, *avals: core.UnshapedArray) -> None:
   if len(avals) < 2:
     return
 
-  dtype = dtypes.canonicalize_dtype(avals[0].dtype)
-  if any(dtypes.canonicalize_dtype(aval.dtype) != dtype for aval in avals[1:]):
+  dtype = avals[0].dtype
+  if any(aval.dtype != dtype for aval in avals[1:]):
     msg = "lax.{} requires arguments to have the same dtypes, got {}."
     if name in _JNP_FUNCTION_EQUIVALENTS:
       equiv = _JNP_FUNCTION_EQUIVALENTS[name]

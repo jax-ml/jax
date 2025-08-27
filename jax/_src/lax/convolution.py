@@ -158,8 +158,11 @@ def conv_general_dilated(
         f"sequence of (low, high) pairs, got {padding}") from e
 
   preferred_element_type = (
-      None if preferred_element_type is None else
-      dtypes.canonicalize_dtype(np.dtype(preferred_element_type)))
+      None if preferred_element_type is None
+      else dtypes.check_and_canonicalize_user_dtype(
+          preferred_element_type, "conv_general_dilated"
+      )
+  )
   lhs, rhs = core.standard_insert_pvary(lhs, rhs)
   return conv_general_dilated_p.bind(
       lhs, rhs, window_strides=tuple(window_strides), padding=tuple(padding),
@@ -440,7 +443,7 @@ def _conv_general_dilated_sharding_rule(
 def _conv_general_dilated_dtype_rule(
     lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, preferred_element_type, **unused_kwargs):
-  result_dtype = lax.naryop_dtype_rule(lax._input_dtype, [lax._any, lax._any],
+  result_dtype = lax.naryop_dtype_rule(lax.input_dtype, [lax._any, lax._any],
                                        'conv_general_dilated', lhs, rhs)
   if preferred_element_type is None:
     return result_dtype

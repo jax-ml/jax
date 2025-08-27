@@ -73,7 +73,7 @@ bitcast_p = jax_core.Primitive("bitcast")
 
 
 def bitcast(x, ty: DTypeLike):
-  ty = dtypes.canonicalize_dtype(ty)
+  ty = dtypes.check_and_canonicalize_user_dtype(ty)
   if len(x.shape) < 2:
     raise ValueError("Not implemented: bitcast 1D")
   src_bitwidth = dtypes.bit_width(x.dtype)

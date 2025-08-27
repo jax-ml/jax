@@ -40,7 +40,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax.utils import (
     _argnum_weak_type,
-    _input_dtype,
+    input_dtype,
     standard_primitive,
 )
 from jax._src.lib.mlir import ir
@@ -1451,7 +1451,7 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
   out = slice(operand, new_start_indices, new_limit_indices, new_strides)
   return out, bdim
 
-slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice',
+slice_p = standard_primitive(_slice_shape_rule, input_dtype, 'slice',
                              sharding_rule=_slice_sharding_rule,
                              vma_rule=partial(core.standard_vma_rule, 'slice'))
 ad.deflinear2(slice_p, _slice_transpose_rule)
@@ -3135,7 +3135,7 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
   if core.is_constant_dim(num_ids):
     id_dtype = np.uint32 if (num_ids + 1) < np.iinfo(np.uint32).max else np.uint64
   else:
-    id_dtype = np.uint64
+    id_dtype = dtypes.canonicalize_dtype(np.uint64)
   update_ids = lax.add(lax.reshape(lax.iota(id_dtype, num_ids), ids_shape),
                        lax._ones(updates, dtype=id_dtype))
 

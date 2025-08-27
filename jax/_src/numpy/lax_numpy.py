@@ -163,47 +163,6 @@ promote_types = dtypes.promote_types
 ComplexWarning = np.exceptions.ComplexWarning
 
 
-def _convert_and_clip_integer(val: ArrayLike, dtype: DType) -> Array:
-  """
-  Convert integer-typed val to specified integer dtype, clipping to dtype
-  range rather than wrapping.
-
-  Args:
-    val: value to be converted
-    dtype: dtype of output
-
-  Returns:
-    equivalent of val in new dtype
-
-  Examples
-  --------
-  Normal integer type conversion will wrap:
-
-  >>> val = jnp.uint32(0xFFFFFFFF)
-  >>> val.astype('int32')
-  Array(-1, dtype=int32)
-
-  This function clips to the values representable in the new type:
-
-  >>> _convert_and_clip_integer(val, 'int32')
-  Array(2147483647, dtype=int32)
-  """
-  val = val if isinstance(val, Array) else asarray(val)
-  dtype = dtypes.canonicalize_dtype(dtype)
-  if not (issubdtype(dtype, np.integer) and issubdtype(val.dtype, np.integer)):
-    raise TypeError("_convert_and_clip_integer only accepts integer dtypes.")
-
-  val_dtype = dtypes.canonicalize_dtype(val.dtype)
-  if val_dtype != val.dtype:
-    # TODO(jakevdp): this is a weird corner case; need to figure out how to handle it.
-    # This happens in X32 mode and can either come from a jax value created in another
-    # context, or a Python integer converted to int64.
-    pass
-  min_val = lax._const(val, max(iinfo(dtype).min, iinfo(val_dtype).min))
-  max_val = lax._const(val, min(iinfo(dtype).max, iinfo(val_dtype).max))
-  return clip(val, min_val, max_val).astype(dtype)
-
-
 @export
 def load(file: IO[bytes] | str | os.PathLike[Any], *args: Any, **kwargs: Any) -> Array:
   """Load JAX arrays from npy files.
@@ -2155,8 +2114,7 @@ def ravel_multi_index(multi_index: Sequence[ArrayLike], dims: Sequence[int],
   else:
     raise ValueError(f"invalid order={order!r}. Expected 'C' or 'F'")
 
-  result = array(0, dtype=(multi_index_arr[0].dtype if multi_index_arr
-                           else dtypes.canonicalize_dtype(dtypes.int_)))
+  result = array(0, dtype=multi_index_arr[0].dtype if multi_index_arr else int)
   for i, s in zip(multi_index_arr, strides):
     result = result + i * int(s)
   return result
@@ -3597,7 +3555,7 @@ def nan_to_num(x: ArrayLike, copy: bool = True, nan: ArrayLike = 0.0,
     return lax.complex(
       nan_to_num(lax.real(x), nan=nan, posinf=posinf, neginf=neginf),
       nan_to_num(lax.imag(x), nan=nan, posinf=posinf, neginf=neginf))
-  info = finfo(dtypes.canonicalize_dtype(dtype))
+  info = finfo(dtype)
   posinf = info.max if posinf is None else posinf
   neginf = info.min if neginf is None else neginf
   out = where(ufuncs.isnan(x), asarray(nan, dtype=dtype), x)
@@ -7208,7 +7166,8 @@ def diag_indices(n: int, ndim: int = 2) -> tuple[Array, ...]:
   if ndim < 0:
     raise ValueError("ndim argument to diag_indices must be nonnegative, got {}"
                      .format(ndim))
-  return (lax.iota(dtypes.int_, n),) * ndim
+  # TODO(phawkins): Use an int64 index if n >= 2**31.
+  return (lax.iota(int, n),) * ndim
 
 
 @export
@@ -8250,7 +8209,8 @@ def _argmax(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
     dims = [axis]
   if a.shape[axis] == 0:
     raise ValueError("attempt to get argmax of an empty sequence")
-  result = lax.argmax(a, _canonicalize_axis(axis, a.ndim), dtypes.canonicalize_dtype(dtypes.int_))
+  # TODO(phawkins): use an int64 index if the dimension is large enough.
+  result = lax.argmax(a, _canonicalize_axis(axis, a.ndim), int)
   return expand_dims(result, dims) if keepdims else result
 
 
@@ -8306,7 +8266,8 @@ def _argmin(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
     dims = [axis]
   if a.shape[axis] == 0:
     raise ValueError("attempt to get argmin of an empty sequence")
-  result = lax.argmin(a, _canonicalize_axis(axis, a.ndim), dtypes.canonicalize_dtype(dtypes.int_))
+  # TODO(phawkins): use an int64 index if the dimension is large enough.
+  result = lax.argmin(a, _canonicalize_axis(axis, a.ndim), int)
   return expand_dims(result, dims) if keepdims else result
 
 

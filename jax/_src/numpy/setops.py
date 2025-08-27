@@ -344,7 +344,12 @@ def _intersect1d_sorted_mask(arr1: Array, arr2: Array,
   assert arr1.ndim == arr2.ndim == 1
   arr = concatenate((arr1, arr2))
   if return_indices:
-    iota = lax.broadcasted_iota(np.int64, np.shape(arr), dimension=0)
+    use_64bit_index = (
+        not core.is_constant_dim(arr.shape[0])
+        or arr.shape[0] >= np.iinfo(np.int32).max
+    )
+    idx_dtype = np.int64 if use_64bit_index else np.int32
+    iota = lax.broadcasted_iota(idx_dtype, np.shape(arr), dimension=0)
     aux, indices = lax.sort_key_val(arr, iota)
   else:
     aux = sort(arr)
@@ -635,7 +640,7 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
   if return_inverse:
     if aux.size:
       imask = cumsum(mask) - 1
-      inv_idx = zeros(mask.shape, dtype=dtypes.canonicalize_dtype(dtypes.int_))
+      inv_idx = zeros(mask.shape, dtype=int)
       inv_idx = inv_idx.at[perm].set(imask)
     else:
       inv_idx = zeros(ar.shape[axis], dtype=int)
@@ -649,7 +654,7 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
         idx = idx.at[1:].set(where(idx[1:], idx[1:], mask.size))
       ret += (diff(idx),)
     elif ar.shape[axis]:
-      ret += (full((1,), ar.shape[axis], dtype=dtypes.canonicalize_dtype(dtypes.int_)),)
+      ret += (full((1,), ar.shape[axis], dtype=int),)
     else:
       ret += (empty(0, dtype=int),)
   if return_true_size:

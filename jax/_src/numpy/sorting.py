@@ -154,8 +154,11 @@ def argsort(
     arr = arr.ravel()
     axis = 0
   dimension = canonicalize_axis(axis, arr.ndim)
-  use_64bit_index = not core.is_constant_dim(arr.shape[dimension]) or arr.shape[dimension] >= (1 << 31)
-  iota = lax.broadcasted_iota(np.dtype('int64') if use_64bit_index else dtypes.int_, arr.shape, dimension)
+  use_64bit_index = core.is_constant_dim(arr.shape[dimension]) and arr.shape[dimension] >= (1 << 31)
+  # TODO(phawkins): we should probably use int64 indices for unknown dimensions,
+  # but that requires that we first support using int64 in a non-x64
+  # computation.
+  iota = lax.broadcasted_iota(np.dtype('int64') if use_64bit_index else int, arr.shape, dimension)
   # For stable descending sort, we reverse the array and indices to ensure that
   # duplicates remain in their original order when the final indices are reversed.
   # For non-stable descending sort, we can avoid these extra operations.
@@ -423,6 +426,6 @@ def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> A
     return lax.full((), 0, dtypes.default_int_dtype())
   axis = canonicalize_axis(axis, np.ndim(key_arrays[0]))
   use_64bit_index = key_arrays[0].shape[axis] >= (1 << 31)
-  iota = lax.broadcasted_iota(np.dtype('int64') if use_64bit_index else dtypes.int_,
+  iota = lax.broadcasted_iota(np.dtype('int64') if use_64bit_index else int,
                               np.shape(key_arrays[0]), axis)
   return lax.sort((*key_arrays[::-1], iota), dimension=axis, num_keys=len(key_arrays))[-1]

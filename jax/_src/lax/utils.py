@@ -20,7 +20,6 @@ from functools import partial
 
 from jax._src import core
 from jax._src import dispatch
-from jax._src import dtypes
 from jax._src import mesh as mesh_lib
 from jax._src import state
 from jax._src.named_sharding import DuplicateSpecError, NamedSharding
@@ -31,8 +30,8 @@ zip, unsafe_zip = safe_zip, zip
 
 import numpy as np
 
-def _input_dtype(x, *_, **__):
-  return dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True)
+def input_dtype(x, *_, **__):
+  return x.dtype
 
 def _argnum_weak_type(*argnums):
   return lambda *args, **_: all(args[i].weak_type for i in argnums)

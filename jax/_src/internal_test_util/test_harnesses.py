@@ -2846,6 +2846,12 @@ def _make_dot_general_harness(name,
   if preferred_element_type is not None:
     suffix += f"_preferred={jtu.dtype_str(preferred_element_type)}"
 
+  if (
+      preferred_element_type in (np.float64, np.int64, np.complex128)
+      and not config.enable_x64.value
+  ):
+    return
+
   define(
       lax.dot_general_p,
       f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, lhs_dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, rhs_dtype)}_dimensionnumbers={dimension_numbers}{suffix}_enable_xla={enable_xla}"
@@ -3033,6 +3039,12 @@ def _make_conv_harness(name,
                        preferred_element_type=None,
                        works_without_xla=False):
   enable_xla_cases = [True, False] if works_without_xla else [True]
+
+  if (
+      preferred_element_type in (np.float64, np.int64, np.complex128)
+      and not config.enable_x64.value
+  ):
+    return
 
   for enable_xla in enable_xla_cases:
     define(
@@ -3373,7 +3385,7 @@ if config.enable_x64.value:
 for algorithm in [lax.RandomAlgorithm.RNG_THREE_FRY,
                   lax.RandomAlgorithm.RNG_PHILOX,
                   lax.RandomAlgorithm.RNG_DEFAULT]:
-  for dtype in [np.uint32, np.uint64]:
+  for dtype in jtu.dtypes.unsigned:
     for shape in [(), (5, 7), (100, 100)]:
       for key_shape, key_dtype in key_types:
         define(

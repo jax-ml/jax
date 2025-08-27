@@ -781,7 +781,7 @@ def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
         batching.expand_dims_batcher, prim)
   return prim
 
-standard_linalg_primitive = partial(linalg_primitive, lax._input_dtype)
+standard_linalg_primitive = partial(linalg_primitive, lax.input_dtype)
 
 
 # Primitive implementations

@@ -86,16 +86,11 @@ class ArrayNamespaceInfo:
   def default_dtypes(self, *, device: xc.Device | Sharding | None = None):
     # Array API supported dtypes are device-independent in JAX
     del device
-    default_dtypes = {
-      "real floating": "f",
-      "complex floating": "c",
-      "integral": "i",
-      "indexing": "i",
-    }
     return {
-      dtype_name: _dtypes.canonicalize_dtype(
-        _dtypes._default_types.get(kind)
-      ) for dtype_name, kind in default_dtypes.items()
+      "real floating": _dtypes.default_float_dtype(),
+      "complex floating": _dtypes.default_complex_dtype(),
+      "integral": _dtypes.default_int_dtype(),
+      "indexing": _dtypes.default_int_dtype(),
     }
 
   def dtypes(

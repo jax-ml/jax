@@ -1350,8 +1350,8 @@ def scaled_matmul(
             f"{a_scales.shape}, b_scales: {b_scales.shape}"
         )
 
-    preferred_element_type = dtypes.canonicalize_dtype(
-        np.dtype(preferred_element_type)
+    preferred_element_type = dtypes.check_and_canonicalize_user_dtype(
+        preferred_element_type, "scaled_matmul"
     )
     out = cudnn_scaled_matmul(
         a,

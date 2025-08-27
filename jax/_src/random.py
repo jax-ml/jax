@@ -42,11 +42,10 @@ from jax._src.lax import lax
 from jax._src.lax import special as lax_special
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import linalg as jnp_linalg
-from jax._src.numpy.lax_numpy import _convert_and_clip_integer
 from jax._src.numpy.util import _arraylike, check_arraylike, promote_dtypes_inexact
 from jax._src.pjit import auto_axes
 from jax._src.sharding_impls import canonicalize_sharding
-from jax._src.typing import Array, ArrayLike, DTypeLike
+from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.util import canonicalize_axis
 
 
@@ -471,6 +470,42 @@ def _uniform(key, minval, maxval, shape, dtype) -> Array:
   return lax.max(
       minval,
       lax.reshape(floats * (maxval - minval) + minval, shape))
+
+
+def _convert_and_clip_integer(val: Array, dtype: DType) -> Array:
+  """
+  Convert integer-typed val to specified integer dtype, clipping to dtype
+  range rather than wrapping.
+
+  Args:
+    val: value to be converted
+    dtype: dtype of output
+
+  Returns:
+    equivalent of val in new dtype
+
+  Examples
+  --------
+  Normal integer type conversion will wrap:
+
+  >>> val = jnp.uint32(0xFFFFFFFF)
+  >>> val.astype('int32')
+  Array(-1, dtype=int32)
+
+  This function clips to the values representable in the new type:
+
+  >>> _convert_and_clip_integer(val, 'int32')
+  Array(2147483647, dtype=int32)
+  """
+  assert isinstance(val, Array)
+  if not (dtypes.issubdtype(dtype, np.integer) and dtypes.issubdtype(val.dtype, np.integer)):
+    raise TypeError("_convert_and_clip_integer only accepts integer dtypes.")
+
+  min_val = lax._const(val, max(dtypes.iinfo(dtype).min,
+                                dtypes.iinfo(val.dtype).min))
+  max_val = lax._const(val, min(dtypes.iinfo(dtype).max,
+                                 dtypes.iinfo(val.dtype).max))
+  return jnp.clip(val, min_val, max_val).astype(dtype)
 
 
 def randint(key: ArrayLike,
@@ -990,7 +1025,7 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> Array:
 
 
 def bernoulli(key: ArrayLike,
-              p: RealArray = np.float32(0.5),
+              p: RealArray = 0.5,
               shape: Shape | None = None,
               mode: str = 'low') -> Array:
   r"""Sample Bernoulli random values with given shape and mean.
@@ -1024,7 +1059,7 @@ def bernoulli(key: ArrayLike,
   if mode not in ['high', 'low']:
     raise ValueError(f"got {mode=}, expected 'high' or 'low'")
   key, _ = _check_prng_key("bernoulli", key)
-  dtype = dtypes.canonicalize_dtype(lax.dtype(p))
+  dtype = lax.dtype(p)
   if not dtypes.issubdtype(dtype, np.floating):
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))

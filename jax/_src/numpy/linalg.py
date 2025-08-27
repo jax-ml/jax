@@ -294,7 +294,12 @@ def svd(
     s = lax.abs(v)
     if compute_uv:
       sign = lax.sign(v)
-      idxs = lax.broadcasted_iota(np.int64, s.shape, dimension=s.ndim - 1)
+      idx_dtype = (
+          np.int64
+          if int(s.shape[s.ndim - 1]) > np.iinfo(np.int32).max
+          else np.int32
+      )
+      idxs = lax.broadcasted_iota(idx_dtype, s.shape, dimension=s.ndim - 1)
       s, idxs, sign = lax.sort((s, idxs, sign), dimension=-1, num_keys=1)
       s = lax.rev(s, dimensions=[s.ndim - 1])
       idxs = lax.rev(idxs, dimensions=[s.ndim - 1])

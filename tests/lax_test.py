@@ -1258,7 +1258,8 @@ class LaxTest(jtu.JaxTestCase):
                               preferred_element_type):
     if (not config.enable_x64.value and
        (dtype == np.float64 or preferred_element_type == np.float64
-        or dtype == np.int64 or preferred_element_type == np.int64)):
+        or dtype == np.int64 or preferred_element_type == np.int64
+        or dtype == np.complex128 or preferred_element_type == np.complex128)):
       raise SkipTest("64-bit mode disabled")
     if (jtu.test_device_matches(["tpu"]) and
        (dtype == np.complex128 or preferred_element_type == np.complex128)):
@@ -2555,8 +2556,8 @@ class LaxTest(jtu.JaxTestCase):
     # - NaNs are sorted to the end, regardless of representation
     # - sign bit of 0.0 is ignored
     x = jnp.array([-np.inf, 0.0, -0.0, np.inf, np.nan, -np.nan], dtype=dtype)
-    index = lax.iota(dtypes.int_, x.size)
-    argsort = lambda x: lax.sort_key_val(x, lax.iota(dtypes.int_, x.size), is_stable=True)[1]
+    index = lax.iota(int, x.size)
+    argsort = lambda x: lax.sort_key_val(x, lax.iota(int, x.size), is_stable=True)[1]
     self.assertArraysEqual(argsort(x), index)
     self.assertArraysEqual(jax.jit(argsort)(x), index)
 
