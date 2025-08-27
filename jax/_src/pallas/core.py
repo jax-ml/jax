@@ -1517,3 +1517,18 @@ def lower_as_mlir(
 _out_shape_to_aval_mapping: dict[
     type[Any], Callable[[Any], jax_core.AbstractValue]
 ] = {}
+
+
+def _core_map_partial_eval_custom(saveable, unks_in, inst_in, eqn):
+  assert all(inst_in)
+  if all(unks_in):
+    return None, eqn, [], [], []  # purely unknown
+  elif not any(unks_in):
+    return eqn, eqn, [], [], []  # full remat
+  else:
+    # Some values, e.g. empty refs or refs initialized to constant zero, can be
+    # 'known', but really they belong in the staged/tangent computation. We
+    # encounter them here as known inputs mixed in with unknown/tangent inputs,
+    # which tells us that this core_map is really a purely tangent computation.
+    return None, eqn, [], [], []
+pe.partial_eval_jaxpr_custom_rules[core_map_p] = _core_map_partial_eval_custom

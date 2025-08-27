@@ -2582,6 +2582,7 @@ class InternalMutableArrayEffect(effects.Effect):
   pass
 array_ref_effect = internal_mutable_array_effect = InternalMutableArrayEffect()
 effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
+effects.remat_allowed_effects.add_type(InternalMutableArrayEffect)
 
 @array_ref_p.def_effectful_abstract_eval
 def array_ref_abstract_eval(init_aval, *, memory_space: Any):

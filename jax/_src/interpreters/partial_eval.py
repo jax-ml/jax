@@ -1193,7 +1193,6 @@ def _partial_eval_jaxpr_custom_cached(
   out_unknowns = map(op.or_, out_unknowns, ensure_out_unknowns)
   out_inst     = map(op.or_, out_inst,     ensure_out_inst)
 
-
   ins_known, _ = partition_list(in_unknowns, jaxpr.invars)
   outs_known, _ = partition_list(out_unknowns, jaxpr.outvars)
   ref_res_is_input = [r in ins_known for r in residual_refs]
