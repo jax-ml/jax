@@ -1042,8 +1042,18 @@ def producer_result(operand: OperandOrResult) -> OperandOrResult:
       num_leading_args = 3
       index += num_leading_args - 1
       return OperandOrResult(producer.owner.opview, VariableType.OPERAND, index)
+    if isinstance(producer.owner, scf.WhileOp):
+      [before_block] = producer.owner.before.blocks
+      [after_block] = producer.owner.after.blocks
+      if producer == before_block:
+        # In this case, the block arguments correspond to the while operands.
+        return OperandOrResult(producer.owner.opview, VariableType.OPERAND, index)
+      else:
+        assert producer == after_block
+        # In this case, the block arguments correspond to the while results.
+        return OperandOrResult(producer.owner.opview, VariableType.RESULT, index)
     raise NotImplementedError(
-        f"Producer {producer} is not a ForOp or a FuncOp: {type(producer)}."
+        f"Producer {producer} is not a ForOp, a WhileOp: {type(producer)}."
     )
 
   raise TypeError(

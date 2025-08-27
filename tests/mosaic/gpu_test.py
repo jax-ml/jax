@@ -3991,6 +3991,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
   )
   def test_broadcast_in_dim(self, input_shape, output_shape, bcast_dims):
     element_value = 42.0
+    layout = fa.WGMMA_ROW_LAYOUT if bcast_dims[0] == 0 else fa.WGMMA_COL_LAYOUT
     def body(ctx, result_gmem_ref, scratch):
       del ctx, scratch
       f32 = ir.F32Type.get()
@@ -4003,13 +4004,11 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
       # Computation
       out_type = ir.VectorType.get(output_shape, f32)
-      expanded = mgpu_dialect.broadcast_in_dim(out_type, x, bcast_dims)
-      cast = mgpu_dialect.layout_cast(
-          expanded, layouts.to_layout_attr(fa.WGMMA_LAYOUT)
-      )
+      cast = mgpu_dialect.layout_cast(x, layouts.to_layout_attr(layout))
+      expanded = mgpu_dialect.broadcast_in_dim(out_type, cast, bcast_dims)
 
       # Registers -> GMEM
-      vector.store(cast, result_gmem_ref, [zero_index] * len(output_shape))
+      vector.store(expanded, result_gmem_ref, [zero_index] * len(output_shape))
 
     dtype = jnp.float32
     kernel = mgpu.as_gpu_kernel(
@@ -4027,7 +4026,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         kernel(), jax.lax.broadcast_in_dim(x, output_shape, bcast_dims)
     )
 
-  def test_bad_layout_cast_raises_in_lowering(self):
+  def test_bad_layout_cast_raises_in_inference(self):
     shape = (128, 128)
     def body(ctx, out, _):
       del ctx, out
@@ -4040,8 +4039,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
     dtype = jnp.float32
     with self.assertRaisesRegex(
-        NotImplementedError,
-        "Cannot convert from TiledLayout.* to TiledLayout",
+        ValueError, "user-provided layout casts are unsatisfiable"
     ):
       mgpu.as_gpu_kernel(
           body,

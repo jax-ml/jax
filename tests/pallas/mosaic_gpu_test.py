@@ -1536,8 +1536,7 @@ class PallasCallTest(PallasTest):
 
     if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
       with self.assertRaisesRegex(
-          NotImplementedError,
-          "Cannot convert from WGStridedFragLayout.* to TiledLayout",
+          ValueError, "Failed to infer a possible set of layouts",
       ):
         kernel()
     else:

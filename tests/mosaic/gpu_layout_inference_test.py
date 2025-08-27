@@ -16,9 +16,6 @@
 
 # pylint: disable=g-complex-comprehension
 
-import enum
-from typing import ClassVar
-
 from absl.testing import parameterized
 import jax
 from jax._src import config
@@ -32,7 +29,7 @@ from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import equations as eqns
-from jax.experimental.mosaic.gpu import layout_inference2
+from jax.experimental.mosaic.gpu import layout_inference2 as layout_inference
 from jax.experimental.mosaic.gpu import layouts
 from jax.experimental.mosaic.gpu import tcgen05
 
@@ -54,25 +51,48 @@ def layout_cast(x: ir.Value, layout: mgpu.FragmentedLayout | ir.Attribute) -> ir
   return mgpu.dialect.layout_cast(x, layout)
 
 
-class InferenceImplementation(enum.Enum):
-  LEGACY = 1
-  EQUATIONS = 2
-
-
 def undefs(*tys: ir.Type) -> list[ir.Value]:
   """Returns a list of `llvm.mlir_undef` values of the given types."""
   return [llvm.mlir_undef(ty) for ty in tys]
 
 
-class LayoutInferenceTestMetaclass(parameterized.TestGeneratorMetaclass):
-  def __new__(mcs, *args, inference_impl=InferenceImplementation.LEGACY):
-    cls = super().__new__(mcs, *args)
-    cls.INFERENCE_IMPL = inference_impl
-    return cls
+V = eqns.Variable
+H = layout_inference.Hint
+E = eqns.Equation
+RL = eqns.RegisterLayout
 
 
-class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestMetaclass):
-  INFERENCE_IMPL: ClassVar[InferenceImplementation]
+def _undef_equation_system(
+    ctx: layout_inference.DerivationContext,
+    op: llvm.UndefOp,
+) -> tuple[
+    eqns.EquationSystem,
+    layout_inference.OperandOrResultsForVariable,
+    list[layout_inference.Hint],
+]:
+  del ctx
+  # This rule is only called if the single output of the undef op is a vector or
+  # TMEM reference, so we can just return a trivial mapping.
+  result = layout_inference.OperandOrResult(
+      op, layout_inference.VariableType.RESULT, 0
+  )
+  return eqns.EquationSystem(), {eqns.Variable(result): [result]}, []
+
+
+class LayoutInferenceTest(parameterized.TestCase):
+  @classmethod
+  def setUpClass(cls):
+    super().setUpClass()
+    layout_inference._add_equation_system_derivation_rule(llvm.UndefOp)(
+        _undef_equation_system
+    )
+
+  @classmethod
+  def tearDownClass(cls):
+    super().tearDownClass()
+    del layout_inference._equation_system_derivation_rules[
+        llvm.UndefOp.OPERATION_NAME
+    ]
 
   def setUp(self):
     if jax.version._version != jax.lib.__version__:
@@ -81,21 +101,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     self.enter_context(_make_ir_context())
     self.enter_context(ir.Location.unknown())
     self.module = ir.Module.create()
-
-  def infer_layout(self, module):
-    if self.INFERENCE_IMPL == InferenceImplementation.LEGACY:
-      mgpu.infer_layout(module)
-    else:
-      mgpu.infer_layout2(module)
-
-  def skip_if_equations(self):
-    # TODO(bchetioui): delete once equations work everywhere.
-    if self.INFERENCE_IMPL == InferenceImplementation.EQUATIONS:
-      self.skipTest("Equations-based layout inference is not supported yet")
-
-  def skip_if_legacy(self):
-    if self.INFERENCE_IMPL == InferenceImplementation.LEGACY:
-      self.skipTest("Legacy layout inference is not supported")
 
   def checkInLayouts(self, op, in_layouts):
     in_layouts = [
@@ -132,7 +137,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
 
     # Not setting any layouts on the module should default in ops having a
     # strided fragmented layout.
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     strided_layout = mgpu.WGStridedFragLayout.from_shaped_type(ty)
     assert strided_layout is not None
@@ -147,7 +152,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
   def test_infer_layout_bidirectionally_through_shape_cast(
       self, in_layout, out_layout
   ):
-    self.skip_if_legacy()
     assert in_layout is not None or out_layout is not None
     elt_type = ir.BF16Type.get()
     src_type = ir.VectorType.get((2, 128, 8), elt_type)
@@ -161,7 +165,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       if out_layout is not None:
         layout_cast(op.result, out_layout)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     expected_layout = in_layout or out_layout
     self.checkInLayouts(op, [expected_layout])
@@ -178,7 +182,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
 
     # Not setting any layouts on the module should default in all ops having a
     # splat fragmented layout.
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape=shape))
 
@@ -200,7 +204,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       c = arith.ConstantOp(ty, ir.DenseElementsAttr.get(attr_list, ty))
       layout_cast(c, layout)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     self.assertNotIn("in_layouts", c.attributes)
     self.checkOutLayouts(c, [layout])
@@ -216,7 +220,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       splat = vector.SplatOp(rhs.type, lhs)
       add = arith.AddFOp(splat.result, rhs)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     self.assertNotIn("in_layouts", splat.attributes)
     self.checkOutLayouts(splat, [splat_layout])
@@ -237,7 +241,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       rhs = layout_cast(rhs, layout)
       add = arith.AddFOp(lhs, rhs)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     layout_attr = layouts.to_layout_attr(layout)
     self.checkInLayouts(add, [layout_attr, layout_attr])
@@ -261,7 +265,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       lhs = layout_cast(vec, splat_layout_attr)
       arith.AddFOp(lhs, load_op.result)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     self.assertNotIn("in_layouts", load_op.attributes)
     self.checkOutLayouts(load_op, [strided_layout_attr])
@@ -277,7 +281,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       add = arith.AddFOp(x, x)
       cast = mgpu.dialect.LayoutCastOp(add.result, wgmma_layout)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
     self.checkOutLayouts(add, [splat_layout])
     self.checkInLayouts(cast, [wgmma_layout])
     self.checkOutLayouts(cast, [wgmma_layout])
@@ -295,14 +299,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
     in_shape = (128,)
     out_shape = (128, 128)
 
-    # The tests always expect WGMMA or TCGEN05 as the out layout.
-    if out_cast == mgpu.TCGEN05_LAYOUT or in_cast == mgpu.TCGEN05_ROW_LAYOUT:
-      if self.INFERENCE_IMPL == InferenceImplementation.LEGACY:
-        self.skipTest("unsupported in the legacy implementation")
-      out_layout = mgpu.TCGEN05_LAYOUT
-    else:
-      out_layout = mgpu.WGMMA_LAYOUT
-
     with ir.InsertionPoint(self.module.body):
       [x] = undefs(ir.VectorType.get(in_shape, ir.F32Type.get()))
       x = layout_cast(x, in_cast) if in_cast is not None else x
@@ -311,9 +307,15 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       if out_cast is not None:
         layout_cast(bcast.result, out_cast)
 
+    # The tests always expect WGMMA or TCGEN05 as the out layout.
+    if out_cast == mgpu.TCGEN05_LAYOUT or in_cast == mgpu.TCGEN05_ROW_LAYOUT:
+      out_layout = mgpu.TCGEN05_LAYOUT
+    else:
+      out_layout = mgpu.WGMMA_LAYOUT
+
     in_layout = out_layout.reduce((1 - broadcast_dim,))
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
     self.checkInLayouts(bcast, [layouts.to_layout_attr(in_layout)])
     self.checkOutLayouts(bcast, [layouts.to_layout_attr(out_layout)])
 
@@ -334,10 +336,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
   def test_infer_multi_reduce_layout(
       self, reduce_dim, in_cast, acc_cast, out_cast
   ):
-    targets_tcgen05 = any(layout in {mgpu.TCGEN05_LAYOUT, mgpu.TCGEN05_ROW_LAYOUT} for layout in [in_cast, acc_cast, out_cast])
-    if self.INFERENCE_IMPL == InferenceImplementation.LEGACY:
-      if targets_tcgen05:
-        self.skipTest("unsupported in the legacy implementation")
     with ir.InsertionPoint(self.module.body):
       in_ty = ir.VectorType.get((128, 128), ir.F32Type.get())
       acc_ty = ir.VectorType.get((128,), ir.F32Type.get())
@@ -349,7 +347,8 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       if out_cast is not None:
         layout_cast(red.result, out_cast)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
+    targets_tcgen05 = any(layout in {mgpu.TCGEN05_LAYOUT, mgpu.TCGEN05_ROW_LAYOUT} for layout in [in_cast, acc_cast, out_cast])
     # The tests always expect WGMMA or TCGEN05 as the source layout.
     in_layout = mgpu.TCGEN05_LAYOUT if targets_tcgen05 else mgpu.WGMMA_LAYOUT
     out_layout = in_layout.reduce((reduce_dim,))
@@ -370,7 +369,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
         add = arith.AddFOp(a, b)
         scf.yield_([])
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
     self.assertIn("in_layouts", add.attributes)
     self.assertIn("out_layouts", add.attributes)
 
@@ -386,12 +385,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
   def test_infer_layout_from_yield_op_in_layouts_for_for_op(
       self, shape, layout
   ):
-    if self.INFERENCE_IMPL == InferenceImplementation.LEGACY:
-      self.skipTest(
-          "The legacy implementation does not return the same results, and "
-          "will be removed soon. The new implementation returns better results."
-      )
-
     with ir.InsertionPoint(self.module.body):
       ab_type = ir.VectorType.get(shape, ir.BF16Type.get())
       i32 = ir.IntegerType.get_signless(32)
@@ -404,7 +397,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
         add = layout_cast(arith.addf(loop_a, loop_b), layout)
         yield_op = scf.YieldOp([add, add])
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     carry_layouts = [layouts.to_layout_attr(layout)] * 2
     self.assertNotIn("out_layouts", yield_op.attributes)
@@ -426,7 +419,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
         new_loop_c = mgpu.dialect.wgmma(loop_c, loop_a, loop_b)
         yield_op = scf.YieldOp([loop_a, loop_b, new_loop_c])
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
     self.checkInLayouts(yield_op, [wgmma_layout])
@@ -459,7 +452,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       with ir.InsertionPoint(after_block):
         scf.yield_([init])
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     if init_layout:
       self.checkInLayouts(while_op, [layouts.to_layout_attr(init_layout)])
@@ -476,7 +469,6 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       out3_layout: mgpu.FragmentedLayout,
       out4_layout: mgpu.FragmentedLayout | None
   ):
-    self.skip_if_legacy()
     out_layouts = [out0_layout or out4_layout, out3_layout]
     assert None not in out_layouts
     f32 = ir.F32Type.get()
@@ -506,7 +498,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
           out4 = layout_cast(out4, out4_layout)
         yield2 = scf.YieldOp([out4, out5, dummy2])
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     self.assertNotIn("in_layouts", index_switch.attributes)
     self.assertNotIn("out_layouts", yield0.attributes)
@@ -528,7 +520,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       zero_index = arith.constant(ir.IndexType.get(), 0)
       vector_store = vector.store(array, ref, [zero_index, zero_index])
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     # The vector store should have a layout for the input array, but not for the
     # memref.
@@ -552,7 +544,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       rhs = layout_cast(rhs, splat_layout)
       add = arith.AddFOp(lhs, rhs)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     self.checkInLayouts(add, [non_splat_layout, non_splat_layout])
     self.checkOutLayouts(add, [non_splat_layout])
@@ -573,7 +565,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       cast = layout_cast(add0, strided_layout)
       add1 = arith.AddFOp(cast, cast)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     self.checkInLayouts(add0, [splat_layout, splat_layout])
     self.checkOutLayouts(add0, [splat_layout])
@@ -590,7 +582,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       lhs, rhs = optimization_barrier.results
       layout_cast(arith.addf(lhs, rhs), wgmma_layout)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     self.checkInLayouts(optimization_barrier, [wgmma_layout, wgmma_layout])
     self.checkOutLayouts(optimization_barrier, [wgmma_layout, wgmma_layout])
@@ -606,7 +598,7 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
       add = arith.addf(lhs, rhs)
       optimization_barrier = mgpu.dialect.OptimizationBarrierOp([add])
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     self.checkInLayouts(optimization_barrier, [splat_layout])
     self.checkOutLayouts(optimization_barrier, [splat_layout])
@@ -623,49 +615,9 @@ class LayoutInferenceTest(parameterized.TestCase, metaclass=LayoutInferenceTestM
           out_layouts=[wgmma_row_layout],
       )
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
     self.checkInLayouts(op, [wgmma_layout])
     self.checkOutLayouts(op, [wgmma_row_layout])
-
-
-V = eqns.Variable
-H = layout_inference2.Hint
-E = eqns.Equation
-RL = eqns.RegisterLayout
-
-
-def _undef_equation_system(
-    ctx: layout_inference2.DerivationContext,
-    op: llvm.UndefOp,
-) -> tuple[
-    eqns.EquationSystem,
-    layout_inference2.OperandOrResultsForVariable,
-    list[layout_inference2.Hint],
-]:
-  del ctx
-  # This rule is only called if the single output of the undef op is a vector or
-  # TMEM reference, so we can just return a trivial mapping.
-  result = layout_inference2.OperandOrResult(
-      op, layout_inference2.VariableType.RESULT, 0
-  )
-  return eqns.EquationSystem(), {eqns.Variable(result): [result]}, []
-
-
-class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=InferenceImplementation.EQUATIONS):
-
-  @classmethod
-  def setUpClass(cls):
-    super().setUpClass()
-    mgpu.layout_inference2._add_equation_system_derivation_rule(llvm.UndefOp)(
-        _undef_equation_system
-    )
-
-  @classmethod
-  def tearDownClass(cls):
-    super().tearDownClass()
-    del mgpu.layout_inference2._equation_system_derivation_rules[
-        llvm.UndefOp.OPERATION_NAME
-    ]
 
   def test_hint_and_constraint_extraction_works_correctly(self):
     layout = mgpu.WGMMA_ROW_LAYOUT
@@ -673,16 +625,16 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
       lc = layout_cast(x, layouts.to_layout_attr(layout)).owner.opview
 
-    ctx = layout_inference2.DerivationContext()
+    ctx = layout_inference.DerivationContext()
     x_system, x_mapping, _ = _undef_equation_system(ctx, x)
-    lc_system, lc_mapping, _ = layout_inference2._layout_cast_equation_system(
+    lc_system, lc_mapping, _ = layout_inference._layout_cast_equation_system(
         ctx, lc
     )
     assignments = x_system.assignments | lc_system.assignments
-    hints, [constraint] = layout_inference2.derive_hints_and_constraints(
+    hints, [constraint] = layout_inference.derive_hints_and_constraints(
         x_mapping | lc_mapping
     )
-    [hint_cst] = layout_inference2.reduce_hints(hints, assignments)
+    [hint_cst] = layout_inference.reduce_hints(hints, assignments)
 
     [x_variable] = x_mapping.keys()
     [lc_variable] = lc_mapping.keys()
@@ -692,7 +644,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
 
   def test_unambiguous_hints_are_used_to_assign_variables_correctly(self):
     v0 = V(0)
-    assignments = layout_inference2.find_assignments_for(
+    assignments = layout_inference.find_assignments_for(
         {v0},
         eqns.EquationSystem(),
         # Voluntarily use conflicting hints to check that we use one of them
@@ -706,9 +658,9 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     with ir.InsertionPoint(self.module.body):
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
 
-    [key] = layout_inference2.operands_and_results(x)
+    [key] = layout_inference.operands_and_results(x)
     variable = eqns.Variable(key)
-    assignments = layout_inference2.find_assignments_for(
+    assignments = layout_inference.find_assignments_for(
         {variable},
         eqns.EquationSystem(
             equations=[
@@ -724,11 +676,11 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     with ir.InsertionPoint(self.module.body):
       ty = ir.VectorType.get((32, 4), ir.BF16Type.get())
       op0, op1 = [llvm.mlir_undef(ty).owner.opview for _ in range(2)]
-    [kv0] = layout_inference2.operands_and_results(op0)
-    [kv1] = layout_inference2.operands_and_results(op1)
+    [kv0] = layout_inference.operands_and_results(op0)
+    [kv1] = layout_inference.operands_and_results(op1)
     v0, v1 = eqns.Variable(kv0), eqns.Variable(kv1)
     splat_layout = RL(mgpu.WGSplatFragLayout((3, 128)))
-    assignments = layout_inference2.find_assignments_for(
+    assignments = layout_inference.find_assignments_for(
         {v0},
         eqns.EquationSystem(
             equations=[
@@ -749,7 +701,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
   def test_hint_can_be_chosen_when_constant_exists_in_least_replicated_expression(self):
     v0, v1 = V(0), V(1)
     layout = RL(mgpu.WGMMA_LAYOUT)
-    assignment = layout_inference2.extract_variable_assignment_from_hint(
+    assignment = layout_inference.extract_variable_assignment_from_hint(
         H(v0, eqns.LeastReplicated([layout, v1])),
     )
     self.assertEqual(assignment, (v0, layout))
@@ -757,7 +709,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
   def test_hint_cannot_be_chosen_when_constant_exists_in_most_replicated_expression(self):
     v0, v1 = V(0), V(1)
     layout = RL(mgpu.WGSplatFragLayout((1, 128)))
-    assignment = layout_inference2.extract_variable_assignment_from_hint(
+    assignment = layout_inference.extract_variable_assignment_from_hint(
         H(v0, eqns.MostReplicated([layout, v1])),
     )
     self.assertEqual(assignment, (v0, layout))
@@ -772,7 +724,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     self.assertIsInstance(
         eqns.reduce_expression(hint_expr, {v1: layout1}), eqns.Unsatisfiable
     )
-    _, expr = layout_inference2.extract_variable_assignment_from_hint(
+    _, expr = layout_inference.extract_variable_assignment_from_hint(
         H(v0, hint_expr))
     self.assertIsNotNone(expr)
 
@@ -782,7 +734,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     v0, v1 = V(0), V(1)
     layout0 = RL(mgpu.WGSplatFragLayout((1, 128)))
     layout1 = RL(mgpu.WGSplatFragLayout((1, 129)))
-    assignment = layout_inference2.extract_variable_assignment_from_hint(
+    assignment = layout_inference.extract_variable_assignment_from_hint(
         H(v0, eqns.LeastReplicated([v1, layout0, layout1])),
     )
     self.assertIsNotNone(assignment)
@@ -799,7 +751,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       acc, lhs, rhs = undefs(vec_ty, lhs_ty, ref_ty)
       wgmma_op = mgpu.dialect.WGMMAOp(acc, lhs, rhs)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
     in_layouts = [wgmma_layout]
@@ -818,7 +770,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       source, = undefs(f32)
       bcast = vector.BroadcastOp(ir.VectorType.get(shape, f32), source)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
     self.assertNotIn("in_layouts", bcast.attributes)
     self.checkOutLayouts(bcast, [layout])
 
@@ -831,7 +783,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       source = layout_cast(source, layout)
       reduction = vector.ReductionOp(f32, vector.CombiningKind.ADD, source)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
     self.checkInLayouts(reduction, [layout])
     self.assertNotIn("out_layouts", reduction.attributes)
 
@@ -849,7 +801,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
           out_layouts=[layouts.to_layout_attr(l) for l in out_layouts],
       )
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
     self.checkInLayouts(op, in_layouts)
     self.checkOutLayouts(op, out_layouts)
 
@@ -867,7 +819,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     with self.assertRaisesRegex(
         ValueError, "user-provided layout casts are unsatisfiable"
     ):
-      self.infer_layout(self.module)
+      mgpu.infer_layout(self.module)
 
   def test_layout_cast_of_non_splat_constant_to_splat_raises(self):
     shape = (128,)
@@ -882,7 +834,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     with self.assertRaisesRegex(
         ValueError, "user-provided layout casts are unsatisfiable"
     ):
-      self.infer_layout(self.module)
+      mgpu.infer_layout(self.module)
 
   def test_infer_tmem_layout_cast_correctly(self):
     f32 = ir.F32Type.get()
@@ -893,7 +845,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       ref = llvm.mlir_undef(ref_ty)
       op = mgpu.dialect.TmemLayoutCastOp(ref, layout)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
     self.checkInTmemLayouts(op, [layout])
     self.checkOutTmemLayouts(op, [layout])
 
@@ -909,7 +861,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       op = mgpu.dialect.TmemAllocOp(ref_ty, ptr, exact=False)
       mgpu.dialect.tmem_layout_cast(op.result, layout)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
     self.assertNotIn("in_tmem_layouts", op.attributes)
     self.checkOutTmemLayouts(op, [layout])
 
@@ -923,7 +875,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       ref = mgpu.dialect.tmem_layout_cast(ref, layout)
       op = mgpu.dialect.TmemDeallocOp(ref)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
     self.checkInTmemLayouts(op, [layout])
     self.assertNotIn("out_tmem_layouts", op.attributes)
 
@@ -940,7 +892,7 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
       [acc, a, b, accumulate] = undefs(acc_type, a_type, b_type, i1)
       op = mgpu.dialect.TcGen05MMAOp(acc, a, b, accumulate)
 
-    self.infer_layout(self.module)
+    mgpu.infer_layout(self.module)
     self.assertNotIn("out_tmem_layouts", op.attributes)
     acc_layout = tcgen05._infer_tmem_layout(shape, collective=False, packing=1)
     a_layout = tcgen05._infer_tmem_layout(shape, collective=False, packing=2)
