@@ -18,6 +18,10 @@ inputs:
     description: "Which jaxlib version to download? (head/pypi_latest)"
     type: string
     default: "head"
+  download-jax-from-gcs:
+    description: "Whether to download the jax wheel from GCS"
+    default: '1'
+    type: string
   download-jax-only-from-gcs:
     description: "Whether to download only the jax wheel from GCS (e.g for testing a jax only release)"
     default: '0'
@@ -62,7 +66,11 @@ runs:
       continue-on-error: true
       run: |
         mkdir -p $(pwd)/dist
-        gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+        if [[ "${{ inputs.download-jax-from-gcs }}" == "1" ]]; then
+          gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+        else
+          echo "JAX wheel won't be downloaded, only jaxlib pre-built wheel is tested."
+        fi
 
         # Do not download the jaxlib and CUDA plugin artifacts if we are testing a jax only
         # release.

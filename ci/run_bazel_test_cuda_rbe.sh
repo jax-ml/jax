@@ -49,6 +49,7 @@ bazel test --config=rbe_linux_x86_64_cuda \
       --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
       --color=yes \
       --@local_config_cuda//cuda:override_include_cuda_libs=true \
+      --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
       //tests:gpu_tests //tests:backend_independent_tests \
       //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests \
       //jaxlib/tools:jax_cuda_plugin_wheel_size_test \
