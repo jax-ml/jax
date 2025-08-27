@@ -53,6 +53,7 @@ else:
   ])
   del _lazy
 
+from jaxlib.mlir.dialects import mpmd
 from jaxlib.mlir.dialects import sdy
 
 # Alias that is set up to abstract away the transition from MHLO to StableHLO.
