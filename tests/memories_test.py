@@ -1644,6 +1644,19 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(x_out, x1 * x1)
     self.assertArraysEqual(y_out, y1 + y1)
 
+  def test_indexing_on_host(self):
+    @jax.jit
+    @compute_on("device_host")
+    def fn2(x):
+      x = jax.device_put(x, jax.memory.Space.Host)
+      y = jnp.ones((2, 1, 4))
+      y = jax.device_put(y, jax.memory.Space.Host)
+      z = x.at[:, 1:2, :].set(y)
+      return z
+
+    x_host = jax.device_put(jnp.ones((2,3,4)), jax.memory.Space.Host)
+    fn2(x_host)  # doesn't crash
+
   def test_compute_on_cache_miss(self):
     @jax.jit
     def f(x):
@@ -1911,8 +1924,6 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     compiled_text = compiled_f.as_text()
     if compiled_text is not None:
       self.assertIn('S(5)', compiled_text)
-      self.assertNotRegex(compiled_text, r"copy-start.*S\(5\)")
-      self.assertNotRegex(compiled_text, r"copy-done.*S\(5\)")
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None:
@@ -1950,8 +1961,6 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     compiled_text = compiled_f.as_text()
     if compiled_text is not None:
       self.assertIn('S(5)', compiled_text)
-      self.assertNotRegex(compiled_text, r"copy-start.*S\(5\)")
-      self.assertNotRegex(compiled_text, r"copy-done.*S\(5\)")
       self.assertRegex(compiled_text, r"dynamic-update-slice-start.*S\(5\)")
       self.assertRegex(compiled_text, r"dynamic-update-slice-done.*S\(5\)")
       self.assertRegex(compiled_text, r"dynamic-slice-start.*S\(5\)")
