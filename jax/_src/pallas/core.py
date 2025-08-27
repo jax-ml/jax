@@ -1484,7 +1484,7 @@ def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
     except ImportError:
       pass
   for eff in jaxpr.effects:
-    if mesh.discharges_effect(eff):
+    if mesh.discharges_effect(eff) or isinstance(eff, CommsEffect):
       continue
     if not isinstance(eff, jax_core.NamedAxisEffect):
       effs.add(eff)
