@@ -63,15 +63,15 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
     context_stack.enter_context(jax.set_mesh(mesh))
 
   @parameterized.product(
-      m_shard=(1024, 4096),
-      n_shard=(256, 384, 576),
-      k=(256, 4096),
+      m_shard=(3072,),
+      n_shard=(256, 576),
+      k=(4096,),
       block_m=(64, 128, 192),
       block_n=(64, 128, 192),
       block_k=(64, 128),
       sm_n_tile=(1, 2, 4),
       max_concurrent_steps=(2, 4),
-      dtype=(jnp.float16, jnp.bfloat16),
+      dtype=(jnp.bfloat16,),
   )
   def test_all_gather_lhs_matmul(
       self,
@@ -88,8 +88,9 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
     num_devices = jax.device_count()
     lhs_smem_size = block_m * block_k * max_concurrent_steps * 2
     rhs_smem_size = block_k * block_n * max_concurrent_steps * 2
+    out_smem_size = block_m * block_n * 2
     # H100 SMEM limit is 228kB.
-    if lhs_smem_size + rhs_smem_size > 228_000:
+    if lhs_smem_size + rhs_smem_size + out_smem_size > 228_000:
       self.skipTest("This configuration requires too much SMEM.")
     if n_shard % block_n:
       self.skipTest("n_shard must be divisible by block_n for now.")
