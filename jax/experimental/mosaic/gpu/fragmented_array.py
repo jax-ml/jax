@@ -660,7 +660,9 @@ class WGStridedFragLayout:
       raise TypeError(shaped_ty)
 
     shaped_ty = ir.ShapedType(shaped_ty)
-    bw = mgpu.bytewidth(shaped_ty.element_type)
+    if (bitwidth := mgpu.bitwidth(shaped_ty.element_type)) % 8:
+      return None
+    bw = bitwidth // 8
     assert 8 % bw == 0 and 8 // bw != 0, bw
     if math.prod(shaped_ty.shape) % WARPGROUP_SIZE != 0:
       return None
