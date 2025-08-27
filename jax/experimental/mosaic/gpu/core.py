@@ -48,7 +48,7 @@ import numpy as np
 
 from . import dialect_lowering
 from . import launch_context
-from . import layout_inference2 as layout_inference
+from . import layout_inference
 from . import profiler
 from . import tcgen05
 from . import transform_inference

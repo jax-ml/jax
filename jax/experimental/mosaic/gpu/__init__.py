@@ -45,7 +45,7 @@ from .dialect_lowering import (
     lower_mgpu_dialect as lower_mgpu_dialect,
 )
 
-from .layout_inference2 import (
+from .layout_inference import (
     infer_layout as infer_layout,
 )
 
