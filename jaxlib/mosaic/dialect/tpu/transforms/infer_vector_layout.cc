@@ -692,9 +692,14 @@ class VectorLayoutInferer {
         // output layout falls back to a normalized layout which has offsets 0
         // and the native tiling.
         if (!compatible_layout.has_value()) {
-          compatible_layout = VectorLayout(in_layout->bitwidth(), {0, 0},
-                                           nativeTiling(in_layout->bitwidth()),
-                                           ImplicitDim::kNone);
+          if (vty.getRank() == 0) {
+            return op.emitOpError("Not implemented: 0D vector");
+          }
+          compatible_layout =
+              VectorLayout(in_layout->bitwidth(), {0, 0},
+                           nativeTiling(in_layout->bitwidth()),
+                           vty.getRank() == 1 ? ImplicitDim::kSecondMinor
+                                              : ImplicitDim::kNone);
         }
         if (!require_reinfer &&
             (compatible_layout.value() != in_layout.value() ||

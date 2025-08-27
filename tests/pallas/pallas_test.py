@@ -1897,6 +1897,34 @@ class PallasControlFlowTest(PallasBaseTest):
     # 3 -> 6 -> 12 -> 24
     np.testing.assert_array_equal(reduced, 1024 * 24)
 
+  def test_vector_1d_slice_carry_while_loop(self):
+    """Tests lowering of a while_loop which carries a sliced vector quantity."""
+    if jtu.test_device_matches(["gpu"]) and not self.INTERPRET:
+      self.skipTest("TODO: slice not implemented on GPU")
+
+    def kernel(x_ref, r_ref):
+
+      def cond(v):
+        return v[0] < 16
+
+      def body(v):
+        return jnp.concatenate([v, v])[1:101] * 2
+
+      r_ref[:] = jax.lax.while_loop(cond, body, x_ref[:])
+
+    x = jnp.full((100,), 3, dtype=jnp.int32)
+    fn = pl.pallas_call(
+        kernel,
+        grid=(1,),
+        in_specs=[pl.BlockSpec((100,), lambda i: (0,))],
+        out_specs=pl.BlockSpec((100,), lambda i: (0,)),
+        out_shape=jax.ShapeDtypeStruct((100,), jnp.int32),
+    )
+    r = fn(x)
+    reduced = jnp.sum(r)
+    # 3 -> 6 -> 12 -> 24
+    np.testing.assert_array_equal(reduced, 100 * 24)
+
   @parameterized.named_parameters(
       ('1x128', (1, 128)),
       ('2x128', (2, 128)),
