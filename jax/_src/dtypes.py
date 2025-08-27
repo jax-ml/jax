@@ -44,8 +44,8 @@ try:
 except:
   pass
 else:
-  if _ml_dtypes_version < (0, 2, 0):
-    raise ValueError("JAX requires ml_dtypes version 0.2.0 or newer; "
+  if _ml_dtypes_version < (0, 5):
+    raise ValueError("JAX requires ml_dtypes version 0.5 or newer; "
                      f"installed version is {ml_dtypes.__version__}.")
 
 export = set_module('jax.dtypes')
