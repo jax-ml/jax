@@ -30,6 +30,7 @@ from absl.testing import parameterized
 import jax
 from jax import export
 from jax import lax
+from jax._src import core as jax_core
 from jax._src import checkify
 from jax._src import test_util as jtu
 from jax._src.pallas import core as pallas_core
@@ -2323,6 +2324,17 @@ class PallasCallTest(PallasTest):
       f_ref = jax.vmap(f_ref, in_axes)
 
     np.testing.assert_array_equal(f(x, y), f_ref(x, y))
+
+  def test_discharge_comms_effect(self):
+    def body(out, sem):
+      pl.semaphore_signal(sem, device_id=jnp.asarray(2, jnp.int32))
+
+    f = plgpu.kernel(
+        body,
+        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+    )
+    jax_core.check_jaxpr(jax.make_jaxpr(f)().jaxpr)
 
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
