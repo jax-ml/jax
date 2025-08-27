@@ -1114,6 +1114,18 @@ class PureCallbackTest(jtu.JaxTestCase):
       result += fun(jnp.ones((500, 500), jnp.complex64))[1]
     jax.block_until_ready(result)  # doesn't deadlock
 
+  def test_pure_callback_fastpath(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/31319
+    @jax.jit
+    def f(x):
+      return jax.pure_callback(lambda x: x, x, x)
+
+    x = jax.numpy.arange(5.0)
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      f(x)
+      f(x)
+    self.assertEqual(count(), 1)
+
 
 class IOCallbackTest(jtu.JaxTestCase):
 
