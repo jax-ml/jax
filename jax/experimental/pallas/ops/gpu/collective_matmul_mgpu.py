@@ -82,7 +82,7 @@ def all_gather_lhs_matmul(
       plgpu.SwizzleTransform(swizzle),
   )
 
-  def kernel_body(lhs_ref, rhs_ref, out_ref, scratch_ref, capacity_sem, received_sem):
+  def kernel_body(lhs_ref, rhs_ref, out_ref, scratch_ref, received_sem):
     sm_m = lax.axis_index('sm_m')
     sm_n = lax.axis_index('sm_n')
     n_start = sm_n * n_shard_per_sm_n
@@ -90,11 +90,6 @@ def all_gather_lhs_matmul(
 
     dev_id = lax.axis_index(axis_name)
     send_dev_id = lax.rem(dev_id + axis_size - 1, axis_size)
-    recv_dev_id = lax.rem(dev_id + 1, axis_size)
-    # NOTE: Technically we should signal the recv_dev_id (and our signal would
-    # be received from send_dev_id), but if everyone signals in a ring after a
-    # barrier then it's equivalent to a local signal.
-    pl.semaphore_signal(capacity_sem)
     send_scratch_ref = plgpu.remote_ref(
         scratch_ref, send_dev_id, device_id_type=pl.DeviceIdType.LOGICAL
     )
@@ -118,13 +113,8 @@ def all_gather_lhs_matmul(
         )
         n_tile_slice = pl.ds(n_start, block_n)
 
-        # Loop invariant: scratch_ref.at[scratch_slot] is ready to be used
-        # We're double buffering the scratch space. At each step, we read from
-        # scratch_ref.at[scratch_slot] and write to scratch_ref.at[next_scratch_slot]
-        # located on the send_dev_id. We swap the slots after completing a step,
-        # which lets us overlap the copy with compute.
-        scratch_slot = lax.rem(device_offset, 2)
-        next_scratch_slot = 1 - scratch_slot
+        scratch_slot = device_offset
+        next_scratch_slot = scratch_slot + 1
 
         out_smem = plgpu.SMEM((block_m, block_n), dtype, transforms=transforms)
 
@@ -134,7 +124,6 @@ def all_gather_lhs_matmul(
             out_smem=out_smem,
         )
         def _(acc_ref, out_smem):
-          pl.semaphore_wait(capacity_sem)
           @functools.partial(
               plgpu.emit_pipeline,
               grid=(k // block_k,),
@@ -148,7 +137,7 @@ def all_gather_lhs_matmul(
           def k_loop(idxs, lhs_smem, rhs_smem):
             plgpu.wgmma(acc_ref, lhs_smem, rhs_smem)
             # TODO(giorgioa): Send only for first sm_n.
-            @pl.when(device_offset < num_devices - 1)
+            @pl.when(next_scratch_slot <= num_devices - 1)
             def _():
               (ki,) = idxs
               k_slice = pl.ds(ki * block_k, block_k)
@@ -161,11 +150,7 @@ def all_gather_lhs_matmul(
           k_loop(scratch_ref.at[scratch_slot], rhs_ref.at[..., n_tile_slice])
           # Make sure the copy is fully done.
           plgpu.wait_smem_to_gmem(0, wait_read_only=False)
-          # The order of signals doesn't matter here.
-          plgpu.semaphore_signal_parallel(
-              plgpu.SemaphoreSignal(capacity_sem, device_id=recv_dev_id),
-              plgpu.SemaphoreSignal(received_sem, device_id=send_dev_id),
-          )
+          pl.semaphore_signal(received_sem, device_id=send_dev_id)
           # Make sure all TMAs have read SMEM before we overwrite it.
           plgpu.wait_smem_to_gmem(0, wait_read_only=True)
           out_smem[...] = acc_ref[...].astype(out_smem.dtype)
@@ -214,15 +199,12 @@ def all_gather_lhs_matmul(
   result, _ = plgpu.kernel(
       kernel_body,
       out_shape=[
-          # Out_ref. Stores full M computed in a collective way across devices.
+          # The output, with its M dimension all-gathered.
           jax.ShapeDtypeStruct((axis_size * m_shard, n_shard), dtype),
-          # Scratch_ref. Used to buffer (2 * `block_m`) rows (because of double
-          # buffering) of the lhs per sm_m. Accessible remotely by previous and
-          # next devices.
-          jax.ShapeDtypeStruct((num_sms_m, 2, block_m, k), dtype),
+          # The scratch buffer used for the all-gather.
+          jax.ShapeDtypeStruct((num_sms_m, num_devices, block_m, k), dtype),
       ],
       scratch_shapes=[
-          plgpu.SemaphoreType.REGULAR,  # Capacity semaphore
           plgpu.SemaphoreType.REGULAR,  # Received semaphore
       ],
       grid=(num_sms_m, sm_n_tile),
