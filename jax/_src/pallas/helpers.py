@@ -16,21 +16,40 @@
 from collections.abc import Callable
 
 import jax
-from jax import lax
 from jax._src import checkify
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src.pallas import core as pl_core
+from jax._src.pallas import pallas_call
 from jax._src.pallas import utils as pl_utils
 import jax.numpy as jnp
 
 
-empty = jax.named_call(lax.empty)
+@jax.named_call
+def empty(
+    shape: tuple[int, ...],
+    dtype: jax.typing.DTypeLike,
+    *,
+    backend: pl_core.Backend | None = None,
+):
+  return empty_like(jax.ShapeDtypeStruct(shape, dtype), backend=backend)
 
 
 @jax.named_call
-def empty_like(x: object):
-  return jax.tree.map(lambda leaf: empty(leaf.shape, leaf.dtype), x)
+def empty_like(
+    x: object,
+    *,
+    backend: pl_core.Backend | None = None,
+):
+  return pallas_call.pallas_call(
+      # No-op to leave the out_ref uninitialized
+      lambda *_: None,
+      out_specs=jax.tree.map(
+          lambda _: pl_core.BlockSpec(memory_space=pl_core.MemorySpace.ANY), x
+      ),
+      out_shape=x,
+      backend=backend,
+  )()
 
 
 def empty_ref_like(x: object) -> jax.Array:
@@ -42,7 +61,15 @@ def empty_ref_like(x: object) -> jax.Array:
       memory_space = pl_core.MemorySpace.ANY
     case _:
       raise ValueError(f'empty_ref_like does not support {type(x)}')
-  return jax_core.mutable_array(empty_like(x), memory_space=memory_space)
+  out = pallas_call.pallas_call(
+      # No-op to leave the out_ref uninitialized
+      lambda *_: None,
+      out_specs=jax.tree.map(
+          lambda _: pl_core.BlockSpec(memory_space=memory_space), x
+      ),
+      out_shape=x,
+  )()
+  return jax_core.mutable_array(out, memory_space=memory_space)
 
 
 def when(condition):
