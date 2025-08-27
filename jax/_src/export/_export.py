@@ -1088,6 +1088,8 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     *_CPU_FFI_KERNELS,
     *_GPU_FFI_KERNELS,
     "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
+    # Empty custom call to allocate buffers on TPU/GPU.
+    "AllocateBuffer",
     "annotate_device_placement",
     "cu_threefry2x32_ffi",
     # Triton IR does not guarantee stability.
