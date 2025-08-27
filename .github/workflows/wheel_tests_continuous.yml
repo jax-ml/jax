@@ -78,11 +78,13 @@ jobs:
           runner: ["linux-x86-n4-16"]
           artifact: ["jax-cuda-plugin", "jax-cuda-pjrt"]
           python: ["3.11",]
+          cuda-version: ["12", "13"]
     name: "Build ${{ format('{0}', 'CUDA') }} artifacts"
     with:
       runner: ${{ matrix.runner }}
       artifact: ${{ matrix.artifact }}
       python: ${{ matrix.python }}
+      cuda-version: ${{ matrix.cuda-version }}
       clone_main_xla: 1
       upload_artifacts_to_gcs: true
       gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
@@ -126,6 +128,7 @@ jobs:
           cuda: [
             {version: "12.1", use-nvidia-pip-wheels: false},
             {version: "12.9", use-nvidia-pip-wheels: true},
+            {version: "13", use-nvidia-pip-wheels: true},
             ]
           enable-x64: [1, 0]
           exclude:
@@ -180,12 +183,14 @@ jobs:
           # Python values need to match the matrix stategy in the build artifacts job above
           runner: ["linux-x86-g2-48-l4-4gpu",]
           python: ["3.11",]
+          cuda-version: ["12", "13"]
           jaxlib-version: ["head", "pypi_latest"]
           enable-x64: [1, 0]
     name: "Bazel CUDA Non-RBE with build_jaxlib=false, (jax version = ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
+      cuda-version: ${{ matrix.cuda-version }}
       enable-x64:  ${{ matrix.enable-x64 }}
       jaxlib-version: ${{ matrix.jaxlib-version }}
       # GCS upload URI is the same for both artifact build jobs
@@ -204,11 +209,13 @@ jobs:
           # Python values need to match the matrix stategy in the build artifacts job above
           runner: ["linux-x86-g2-48-l4-4gpu",]
           python: ["3.11"]
+          cuda-version: ["12", "13"]
           enable-x64: [1]
     name: "Bazel CUDA Non-RBE with ${{ format('{0}', 'build_jaxlib=wheel') }}"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
+      cuda-version: ${{ matrix.cuda-version }}
       enable-x64:  ${{ matrix.enable-x64 }}
       build_jaxlib: "wheel"
       jaxlib-version: "head"

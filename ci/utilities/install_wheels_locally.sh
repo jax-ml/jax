@@ -31,6 +31,12 @@ for i in "${!WHEELS[@]}"; do
   fi
 done
 
+# Some Nvidia CUDA 13 wheels are not available in the PyPI index. So we need to
+# add the Nvidia PyPI index as an extra index.
+if [[ "${WHEELS[@]}" == *jax*cuda13*.whl* ]]; then
+  WHEELS+=("--extra-index-url" "https://pypi.nvidia.com")
+fi
+
 if [[ -n "${WHEELS[@]}" ]]; then
   echo "Installing the following wheels:"
   echo "${WHEELS[@]}"

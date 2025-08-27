@@ -70,15 +70,28 @@ else
   FREETHREADED_FLAG_VALUE="no"
 fi
 
+# Get the CUDA major version only
+cuda_major_version="${JAXCI_CUDA_VERSION%%.*}"
+
 if [[ "$JAXCI_BUILD_JAXLIB" == "wheel" ]]; then
-    TEST_CONFIG="rbe_linux_x86_64_cuda"
+    TEST_CONFIG="rbe_linux_x86_64_cuda$cuda_major_version"
     TEST_STRATEGY="--strategy=TestRunner=local"
     CACHE_OPTION=""
 else
-    TEST_CONFIG="ci_linux_x86_64_cuda"
+    TEST_CONFIG="ci_linux_x86_64_cuda$cuda_major_version"
     CACHE_OPTION="--config=ci_rbe_cache"
     TEST_STRATEGY=""
 fi
+
+# Enable forward compatibility for NVIDIA drivers older than 580.
+driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n 1)
+driver_major_version=${driver_version%%.*}
+if [[ "$driver_major_version" -lt "580" ]]; then
+  echo "NVIDIA driver version ($driver_version) is older than 580."
+  echo "Enabling forward compatibility."
+  TEST_CONFIG="$TEST_CONFIG --@cuda_driver//:enable_forward_compatibility=true"
+fi
+
 
 # Don't abort the script if one command fails to ensure we run both test
 # commands below.
