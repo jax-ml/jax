@@ -66,7 +66,7 @@ xla_metadata_value_p.def_impl(partial(dispatch.apply_primitive, xla_metadata_val
 xla_metadata_value_p.def_abstract_eval(lambda aval, *, xla_metadata_kvs: aval)
 batching.defvectorized(xla_metadata_value_p)
 # TODO(nbasile): Implement tagging gradient ops with metadata.
-ad.deflinear2(xla_metadata_value_p, lambda ct, _: (ct,))
+ad.deflinear2(xla_metadata_value_p, lambda ct, _, **kwargs: (ct,))
 
 def _xla_metadata_value_lowering_rule(
     ctx: mlir.LoweringRuleContext, val: ir.Value, *, xla_metadata_kvs):
@@ -86,9 +86,6 @@ def _target_op_to_attach_metadata(value_mlir: ir.Value) -> ir.Operation | None:
   op = value_mlir.owner
   if op is None or isinstance(op, ir.Block):
     return None
-  # TODO(nbasile): Add logic for handling multiply-by-constant-1.0 ops, which
-  # are often added by jax gradients.
-  # [Couple this change with tagging gradient ops.]
   return op
 
 
