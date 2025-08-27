@@ -2508,6 +2508,11 @@ class OpsTest(PallasBaseTest):
           ((8, 16, 128), (2, 1, 0)),
           ((1, 2, 16, 128), (0, 1, 2, 3)),
           ((1, 2, 16, 128), (1, 0, 3, 2)),
+          ((8, 16, 8, 128), (0, 2, 1, 3)),
+          ((2, 8, 8, 3), (0, 2, 1, 3)),
+          ((2, 8, 16, 8, 128), (0, 1, 3, 2, 4)),
+          ((1, 2, 8, 8, 1), (0, 1, 3, 2, 4)),
+          ((3, 2, 8, 8, 8), (1, 0, 3, 2, 4)),
       ]
   )
   def test_transpose(self, shape_and_axes):
@@ -2521,6 +2526,14 @@ class OpsTest(PallasBaseTest):
         (2, 1, 0),
     ) and not jtu.if_cloud_tpu_at_least(2025, 8, 16):
       self.skipTest("Requires libtpu built after 2025-8-16")
+
+    rank = len(in_shape)
+    if (
+        rank > 3
+        and transpose_axes[-3:] == (rank - 2, rank - 3, rank - 1)
+        and not jtu.if_cloud_tpu_at_least(2025, 8, 29)
+    ):
+      self.skipTest("Requires libtpu built after 2025-8-29")
 
     x = jnp.arange(math.prod(in_shape), dtype=jnp.float32).reshape(in_shape)
     expected = jnp.transpose(x, axes=transpose_axes)

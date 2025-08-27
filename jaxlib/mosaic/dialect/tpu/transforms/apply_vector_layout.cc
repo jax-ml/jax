@@ -5428,8 +5428,8 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
   const auto tile_perm = permutation.take_back(2);
 
   // Major minor pemute
-  if (tile_perm != ArrayRef<int64_t>{rank - 2, rank - 1} &&
-      tile_perm != ArrayRef<int64_t>{rank - 1, rank - 2}) {
+  if (permutation.take_back(3) ==
+      ArrayRef<int64_t>({rank - 2, rank - 3, rank - 1})) {
     // This is a 3 stage algorithm that uses combinations and shuffles
     // to do a transposition of an 8x8 block of sublanes.
     // In the following algorithm description, A, B, ..., H represent 8
@@ -5529,14 +5529,13 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
     // (e.g. L=s2_vregs[1], R=s2_vregs[5]).
     //
     // This results in the correctly transposed 8x8 block.
-
-    constexpr int64_t kMajorDimOriginalIdx = 0;
-    constexpr int64_t kSecondMinorDimOriginalIdx = 1;
-    constexpr int64_t kMinorMostDimOriginalIdx = 2;
+    const int64_t major_dim_original_idx = permutation.size() - 3;
+    const int64_t second_minor_dim_original_idx = permutation.size() - 2;
+    const int64_t minor_most_dim_original_idx = permutation.size() - 1;
 
     auto vec_shape = src_ty.getShape();
-    auto major_dim_size = vec_shape[kMajorDimOriginalIdx];
-    auto second_minor_dim_size = vec_shape[kSecondMinorDimOriginalIdx];
+    auto major_dim_size = vec_shape[major_dim_original_idx];
+    auto second_minor_dim_size = vec_shape[second_minor_dim_original_idx];
 
     if (layout_in.offsets() != LayoutOffsets{0, 0}) {
       return transpose_op.emitOpError("Not implemented: Layout with offset.");
@@ -5575,6 +5574,15 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
           "Not implemented: Major-second-minor transpose expects 8 sublanes.");
     }
 
+    {
+      // Transpose 4th+ minors if applicable.
+      SmallVector<int64_t> p(permutation);
+      p[rank - 3] = rank - 3;
+      p[rank - 2] = rank - 2;
+      p[rank - 1] = rank - 1;
+      src_vregs.TransposeDimensions(p);
+    }
+
     auto vreg_dimensions = src_vregs.dimensions();
     // Note(mvoz): Slice is a weird word here, This is used for constructing
     // the output vregs - the reason we divide here is because we multiply it
@@ -5586,11 +5594,11 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
     // minor_most_dim_slice_idx} becomes {second_minor_dim_slice_idx *
     // sublane_count, major_dim_slice_idx, minor_most_dim_slice_idx}
     auto num_slices_in_major_dim =
-        vreg_dimensions[kMajorDimOriginalIdx] / sublane_count;
+        vreg_dimensions[major_dim_original_idx] / sublane_count;
     auto num_slices_in_second_minor_dim =
-        vreg_dimensions[kSecondMinorDimOriginalIdx];
+        vreg_dimensions[second_minor_dim_original_idx];
     auto num_slices_in_minor_most_dim =
-        vreg_dimensions[kMinorMostDimOriginalIdx];
+        vreg_dimensions[minor_most_dim_original_idx];
 
     auto shuffle = [&](Value lhs_vreg, Value rhs_vreg, ArrayRef<int> pattern) {
       auto lhs_vreg_type = lhs_vreg.getType();
@@ -5634,100 +5642,127 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
         8,  9,  12, 13,
         10, 11, 14, 15};  // Selects from CH_XY to make A2B2C2D2A3B3C3D3
 
-    for (int major_dim_slice_idx = 0;
-         major_dim_slice_idx < num_slices_in_major_dim; ++major_dim_slice_idx) {
-      for (int second_minor_dim_slice_idx = 0;
-           second_minor_dim_slice_idx < num_slices_in_second_minor_dim;
-           ++second_minor_dim_slice_idx) {
-        for (int minor_most_dim_slice_idx = 0;
-             minor_most_dim_slice_idx < num_slices_in_minor_most_dim;
-             ++minor_most_dim_slice_idx) {
-          // STAGE 1!
-          std::array<Value, 8>
-              stage1_output_vregs;  // Stores s1_vregs from comments
-          constexpr int num_pairs_stage1 =
-              4;  // Processes 4 pairs of vregs (A,B), (C,D), (E,F), (G,H)
+    auto reshape_to_4d = [&](xla::Array<Value>& arr) {
+      auto dims = arr.dimensions();
+      // Keep the last 3 dims, and flatten the rest to the first dim or expand
+      // it.
+      auto last_3_dims = dims.last(3);
+      const int64_t num_elements_in_last_3_dims =
+          std::accumulate(last_3_dims.begin(), last_3_dims.end(),
+                          static_cast<int64_t>(1), std::multiplies<int64_t>());
+      llvm::SmallVector<int64_t, 4> new_dims = {
+          arr.num_elements() / num_elements_in_last_3_dims,
+      };
+      new_dims.append(last_3_dims.begin(), last_3_dims.end());
+      arr.Reshape(new_dims);
+    };
 
-          for (int i = 0; i < num_pairs_stage1; ++i) {
-            Value first_vreg = src_vregs(
-                {(2 * i) + (sublane_count * major_dim_slice_idx),
-                 second_minor_dim_slice_idx, minor_most_dim_slice_idx});
-            Value second_vreg = src_vregs(
-                {(2 * i) + (sublane_count * major_dim_slice_idx) + 1,
-                 second_minor_dim_slice_idx, minor_most_dim_slice_idx});
+    llvm::SmallVector<int64_t, 4> original_dst_vregs_dims(
+        dst_vregs.dimensions().begin(), dst_vregs.dimensions().end());
 
-            auto combined_low_val = combine_low(first_vreg, second_vreg);
-            auto combined_high_val = combine_high(first_vreg, second_vreg);
+    reshape_to_4d(src_vregs);
+    reshape_to_4d(dst_vregs);
 
-            stage1_output_vregs[2 * i] =
-                shuffle(combined_low_val, combined_high_val,
-                        permute_pattern_stage1_low_arr);
-            stage1_output_vregs[2 * i + 1] =
-                shuffle(combined_low_val, combined_high_val,
-                        permute_pattern_stage1_high_arr);
-          }
+    // Iterate over the first dim. The algorithm operates on the last 3 dims.
+    for (int outer_idx = 0; outer_idx < src_vregs.dim(0); ++outer_idx) {
+      for (int major_dim_slice_idx = 0;
+           major_dim_slice_idx < num_slices_in_major_dim;
+           ++major_dim_slice_idx) {
+        for (int second_minor_dim_slice_idx = 0;
+             second_minor_dim_slice_idx < num_slices_in_second_minor_dim;
+             ++second_minor_dim_slice_idx) {
+          for (int minor_most_dim_slice_idx = 0;
+               minor_most_dim_slice_idx < num_slices_in_minor_most_dim;
+               ++minor_most_dim_slice_idx) {
+            // STAGE 1!
+            std::array<Value, 8>
+                stage1_output_vregs;  // Stores s1_vregs from comments
+            constexpr int num_pairs_stage1 =
+                4;  // Processes 4 pairs of vregs (A,B), (C,D), (E,F), (G,H)
 
-          // STAGE 2!
-          std::array<Value, 8>
-              stage2_output_vregs;  // Stores s2_vregs from comments
-          constexpr int num_pairs_stage2 =
-              4;  // Processes 4 pairs of vregs from stage1_output_vregs
+            for (int i = 0; i < num_pairs_stage1; ++i) {
+              Value first_vreg = src_vregs(
+                  {outer_idx, (2 * i) + (sublane_count * major_dim_slice_idx),
+                   second_minor_dim_slice_idx, minor_most_dim_slice_idx});
+              Value second_vreg = src_vregs(
+                  {outer_idx,
+                   (2 * i) + (sublane_count * major_dim_slice_idx) + 1,
+                   second_minor_dim_slice_idx, minor_most_dim_slice_idx});
 
-          for (int i = 0; i < num_pairs_stage2; ++i) {
-            // Determine the indices for the input pair from
-            // stage1_output_vregs. The 4 pairs processed in this stage are:
-            // i=0: (s1_vregs[0], s1_vregs[2])
-            // i=1: (s1_vregs[1], s1_vregs[3])
-            // i=2: (s1_vregs[4], s1_vregs[6])
-            // i=3: (s1_vregs[5], s1_vregs[7])
-            int s1_lhs_idx = (i / 2) * 4 + (i % 2);
-            int s1_rhs_idx = s1_lhs_idx + 2;
+              auto combined_low_val = combine_low(first_vreg, second_vreg);
+              auto combined_high_val = combine_high(first_vreg, second_vreg);
 
-            Value s1_lhs_vreg = stage1_output_vregs[s1_lhs_idx];
-            Value s1_rhs_vreg = stage1_output_vregs[s1_rhs_idx];
+              stage1_output_vregs[2 * i] =
+                  shuffle(combined_low_val, combined_high_val,
+                          permute_pattern_stage1_low_arr);
+              stage1_output_vregs[2 * i + 1] =
+                  shuffle(combined_low_val, combined_high_val,
+                          permute_pattern_stage1_high_arr);
+            }
 
-            auto combined_low_val = combine_low(s1_lhs_vreg, s1_rhs_vreg);
-            auto combined_high_val = combine_high(s1_lhs_vreg, s1_rhs_vreg);
+            // STAGE 2!
+            std::array<Value, 8>
+                stage2_output_vregs;  // Stores s2_vregs from comments
+            constexpr int num_pairs_stage2 =
+                4;  // Processes 4 pairs of vregs from stage1_output_vregs
 
-            // Determine the output indices for stage2_output_vregs.
-            // Each pair from Stage 1 produces a pair of vregs for Stage 2.
-            // Results are stored pair-wise:
-            // i=0 -> s2_vregs[0], s2_vregs[1]
-            // i=1 -> s2_vregs[2], s2_vregs[3]
-            // i=2 -> s2_vregs[4], s2_vregs[5]
-            // i=3 -> s2_vregs[6], s2_vregs[7]
-            int s2_out_idx_base = 2 * i;
+            for (int i = 0; i < num_pairs_stage2; ++i) {
+              // Determine the indices for the input pair from
+              // stage1_output_vregs. The 4 pairs processed in this stage are:
+              // i=0: (s1_vregs[0], s1_vregs[2])
+              // i=1: (s1_vregs[1], s1_vregs[3])
+              // i=2: (s1_vregs[4], s1_vregs[6])
+              // i=3: (s1_vregs[5], s1_vregs[7])
+              int s1_lhs_idx = (i / 2) * 4 + (i % 2);
+              int s1_rhs_idx = s1_lhs_idx + 2;
 
-            stage2_output_vregs[s2_out_idx_base] =
-                shuffle(combined_low_val, combined_high_val,
-                        permute_pattern_stage2_low_arr);
-            stage2_output_vregs[s2_out_idx_base + 1] =
-                shuffle(combined_low_val, combined_high_val,
-                        permute_pattern_stage2_high_arr);
-          }
+              Value s1_lhs_vreg = stage1_output_vregs[s1_lhs_idx];
+              Value s1_rhs_vreg = stage1_output_vregs[s1_rhs_idx];
 
-          // STAGE 3! Combine results from stage 2.
-          std::array<int64_t, 3> output_idx_parts{
-              second_minor_dim_slice_idx * sublane_count, major_dim_slice_idx,
-              minor_most_dim_slice_idx};
+              auto combined_low_val = combine_low(s1_lhs_vreg, s1_rhs_vreg);
+              auto combined_high_val = combine_high(s1_lhs_vreg, s1_rhs_vreg);
 
-          constexpr int num_final_combines =
-              4;  // Corresponds to s2_vregs[0]..s2_vregs[3] pairing with
-                  // s2_vregs[4]..s2_vregs[7]
-          for (int i = 0; i < num_final_combines; ++i) {
-            Value lhs = stage2_output_vregs[i];      // e.g., s2_ABCD_0
-            Value rhs = stage2_output_vregs[i + 4];  // e.g., s2_EFGH_0
-            auto final_combined_low = combine_low(lhs, rhs);
-            auto final_combined_high = combine_high(lhs, rhs);
+              // Determine the output indices for stage2_output_vregs.
+              // Each pair from Stage 1 produces a pair of vregs for Stage 2.
+              // Results are stored pair-wise:
+              // i=0 -> s2_vregs[0], s2_vregs[1]
+              // i=1 -> s2_vregs[2], s2_vregs[3]
+              // i=2 -> s2_vregs[4], s2_vregs[5]
+              // i=3 -> s2_vregs[6], s2_vregs[7]
+              int s2_out_idx_base = 2 * i;
 
-            dst_vregs(output_idx_parts) = final_combined_low;
-            output_idx_parts[0] += 1;
-            dst_vregs(output_idx_parts) = final_combined_high;
-            output_idx_parts[0] += 1;
+              stage2_output_vregs[s2_out_idx_base] =
+                  shuffle(combined_low_val, combined_high_val,
+                          permute_pattern_stage2_low_arr);
+              stage2_output_vregs[s2_out_idx_base + 1] =
+                  shuffle(combined_low_val, combined_high_val,
+                          permute_pattern_stage2_high_arr);
+            }
+
+            // STAGE 3! Combine results from stage 2.
+            std::array<int64_t, 4> output_idx_parts{
+                outer_idx, second_minor_dim_slice_idx * sublane_count,
+                major_dim_slice_idx, minor_most_dim_slice_idx};
+
+            constexpr int num_final_combines =
+                4;  // Corresponds to s2_vregs[0]..s2_vregs[3] pairing with
+                    // s2_vregs[4]..s2_vregs[7]
+            for (int i = 0; i < num_final_combines; ++i) {
+              Value lhs = stage2_output_vregs[i];      // e.g., s2_ABCD_0
+              Value rhs = stage2_output_vregs[i + 4];  // e.g., s2_EFGH_0
+              auto final_combined_low = combine_low(lhs, rhs);
+              auto final_combined_high = combine_high(lhs, rhs);
+
+              dst_vregs(output_idx_parts) = final_combined_low;
+              output_idx_parts[1] += 1;
+              dst_vregs(output_idx_parts) = final_combined_high;
+              output_idx_parts[1] += 1;
+            }
           }
         }
       }
     }
+    dst_vregs.Reshape(original_dst_vregs_dims);
     auto assembled =
         assemble(builder, dst_ty, layout_out, dst_vregs, ctx.target_shape);
     transpose_op.getOperation()->replaceAllUsesWith(assembled);

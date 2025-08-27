@@ -1720,8 +1720,9 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(permutation.size() == src_ty.getRank(),
                  "Transpose permutation has incorrect rank");
     bool untiled_tiled_swap = false;
-    // TODO(mvoz): Expand to more general cases. b/419268277
-    if (permutation.size() == 3 && permutation[0] == 1 && permutation[1] == 0) {
+    const int64_t rank = src_ty.getRank();
+    if (permutation.take_back(3) ==
+        ArrayRef<int64_t>({rank - 2, rank - 3, rank - 1})) {
       untiled_tiled_swap = true;
     } else {
       for (auto dim : permutation.drop_back(2)) {

@@ -2484,6 +2484,7 @@ def _transpose_lowering_rule(ctx: LoweringRuleContext, x, *, permutation):
       permutation[-2:] != (dim_size - 1, dim_size - 2)
       and permutation[-2:] != (dim_size - 2, dim_size - 1)
       and len(permutation) != 3
+      and permutation[-3:] != (dim_size - 2, dim_size - 3, dim_size - 1)
   ):
     raise NotImplementedError(
         f"Unsupported transpose permutation: {permutation}"
