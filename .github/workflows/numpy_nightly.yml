@@ -33,7 +33,7 @@ jobs:
     strategy:
       matrix:
             python: ["3.13",]
-    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    container: "us-docker.pkg.dev/ml-oss-artifacts-transient/ml-public-testing-container/ml-build:799221878"
     name: "CI - jaxlib head with NumPy nightly"
 
     env:

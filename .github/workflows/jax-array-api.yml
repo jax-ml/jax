@@ -15,7 +15,7 @@ permissions: {}
 jobs:
   build:
     runs-on: linux-x86-n4-16
-    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
+    container: us-docker.pkg.dev/ml-oss-artifacts-transient/ml-public-testing-container/ml-build:799221878
     strategy:
       matrix:
         python-version: [3.11]
