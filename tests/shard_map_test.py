@@ -431,7 +431,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices('gpu')
   def test_psend_precv_basic_with_dangling_recv(self):
-    if ifrt_version < 23:
+    if ifrt_version < 24:
       self.skipTest('Test requires StableHLO v1.12.0 or higher.')
 
     mesh = jtu.create_mesh((2,), 'x')
@@ -465,7 +465,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices('gpu')
   def test_psend_precv_basic_with_non_matching_source_target_pairs(self):
-    if ifrt_version < 23:
+    if ifrt_version < 24:
       self.skipTest('Test requires StableHLO v1.12.0 or higher.')
 
     mesh = jtu.create_mesh((2,), 'x')
