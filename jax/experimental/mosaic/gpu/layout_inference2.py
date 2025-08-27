@@ -778,6 +778,38 @@ def _shape_cast_equation_system(
   )
 
 
+@_add_equation_system_derivation_rule(mgpu.CustomPrimitiveOp)
+def _custom_primitive_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.CustomPrimitiveOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
+  assignments: dict[eqns.Variable, eqns.Constant] = {}
+  in_layouts = iter(op.in_layouts)
+  variables: list[eqns.Variable] = []
+  for i, operand in enumerate(op.operands):
+    if ir.VectorType.isinstance(operand.type):
+      v = eqns.Variable(OperandOrResult(op, VariableType.OPERAND, i))
+      variables.append(v)
+      assignments[v] = eqns.RegisterLayout(
+          layouts_lib.from_layout_attr(next(in_layouts))
+      )
+
+  out_layouts = iter(op.out_layouts)
+  for i, result in enumerate(op.results):
+    if ir.VectorType.isinstance(result.type):
+      v = eqns.Variable(OperandOrResult(op, VariableType.RESULT, i))
+      variables.append(v)
+      assignments[v] = eqns.RegisterLayout(
+          layouts_lib.from_layout_attr(next(out_layouts))
+      )
+  return (
+      eqns.EquationSystem(assignments=assignments),
+      {v: [v.key] for v in variables},
+      [],
+  )
+
+
 def _tmem_layout_from_layout_attr(
     layout_attr: mgpu.TiledLayout,
 ) -> tcgen05.TMEMLayout:

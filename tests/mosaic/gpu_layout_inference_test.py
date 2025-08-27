@@ -835,6 +835,24 @@ class LayoutInferenceTestEquations(LayoutInferenceTest, inference_impl=Inference
     self.checkInLayouts(reduction, [layout])
     self.assertNotIn("out_layouts", reduction.attributes)
 
+  def test_infer_layout_of_custom_primitive_op_uses_argument_layouts(self):
+    in_layouts = [mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT]
+    out_layouts = [mgpu.WGMMA_COL_LAYOUT]
+    with ir.InsertionPoint(self.module.body):
+      f32 = ir.F32Type.get()
+      vec_ty = ir.VectorType.get((128, 128), f32)
+      op = mgpu.dialect.CustomPrimitiveOp(
+          result=[vec_ty],
+          operands_=undefs(f32, vec_ty, vec_ty, f32),
+          in_layouts=[layouts.to_layout_attr(l) for l in in_layouts],
+          in_transforms=[],
+          out_layouts=[layouts.to_layout_attr(l) for l in out_layouts],
+      )
+
+    self.infer_layout(self.module)
+    self.checkInLayouts(op, in_layouts)
+    self.checkOutLayouts(op, out_layouts)
+
   def test_layout_cast_of_vector_load_to_splat_raises(self):
     shape = (32, 4)
     splat_layout = mgpu.WGSplatFragLayout(shape=shape)
