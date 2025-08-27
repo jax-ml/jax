@@ -201,11 +201,19 @@ device_kind_handler_dict: dict[
 }
 
 
+def _reverse_combinations(iter, mesh_shape: Sequence[int]):
+  """Reverses the indices in the given iterator."""
+  for elem in iter:
+    indices, _ = zip(*elem)
+    yield tuple((len(mesh_shape) - i - 1, mesh_shape[-i - 1]) for i in indices)
+
+
 def _create_device_mesh_for_nd_torus(
     physical_mesh: np.ndarray,
     mesh_shape: Sequence[int],
     *,
     allow_split_physical_axes: bool = False,
+    device_kind: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
   """Assigns logical parallelism axes to physical axes of an N-D torus network.
 
@@ -266,6 +274,12 @@ def _create_device_mesh_for_nd_torus(
       indices_and_axes = itertools.combinations(
           enumerate(assignable_physical_mesh), num_axes
       )
+      if device_kind == _TPU_7X:
+        # For TPU7x, the innermost physical axis (cores on chip) has higher
+        # bandwidth. So, prioritize it if assignable.
+        indices_and_axes = _reverse_combinations(
+            indices_and_axes, assignable_physical_mesh
+        )
       for elem in indices_and_axes:
         c_indices, c_axes = zip(*elem)
         # TODO(zhangqiaorjc): Due to limitations in XLA, 2D collectives only
@@ -798,6 +812,7 @@ def create_device_mesh(
         physical_mesh,
         new_mesh_shape,
         allow_split_physical_axes=allow_split_physical_axes,
+        device_kind=last_device.device_kind,
     )
     return device_mesh
   else:
