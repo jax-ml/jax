@@ -18,6 +18,7 @@ operations.
    notebooks/host-offloading
    multi_process
    distributed_data_loading
+   notebooks/colocated-python
 
 .. toctree::
    :caption: Machine learning
