@@ -277,13 +277,6 @@ def reduce_expression(
           return Unsatisfiable()
         case RegisterLayout(value=layout) if isinstance(layout, fa.TiledLayout):
           return RegisterLayout(layout.reduce(axes))
-        case Constant():
-          # Explicitly raise an error here as opposed to simply failing to
-          # simplify, so that we get a clear signal if we ever need to implement
-          # this.
-          raise NotImplementedError(
-              "Reduction of non-tiled layouts is not implemented yet."
-          )
         case _:
           return Reduce(expression=reduced_expr, axes=axes)
     case BroadcastInDim():

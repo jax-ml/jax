@@ -274,10 +274,10 @@ class EquationSystemTest(parameterized.TestCase):
         RL(expected_layout),
     )
 
-  def test_reduce_reduce_expression_with_unsupported_layout_raises_error(self):
+  def test_reduce_reduce_expression_with_unsupported_layout_is_irreducible(self):
     layout = RL(mgpu.WGStridedFragLayout((128, 8), vec_size=8))
-    with self.assertRaises(NotImplementedError):
-      equations.reduce_expression(equations.Reduce(layout, axes=(0,)), {})
+    expr = equations.Reduce(layout, axes=(0,))
+    self.assertEqual(equations.reduce_expression(expr, {}), expr)
 
   def test_reduce_broadcast_of_splat_layout_is_reduced_to_splat_layout(self):
     layout = RL(mgpu.WGSplatFragLayout((128,)))
