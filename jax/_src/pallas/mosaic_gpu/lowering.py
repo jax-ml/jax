@@ -83,6 +83,7 @@ partial = functools.partial
 SMEM = gpu_core.SMEM
 WARPGROUP_SIZE = 128
 RefOrTmemType = TypeVar("RefOrTmemType", ir.Value, tcgen05.TMEMRef)
+CollectiveAxesType = Sequence[Hashable]
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -110,7 +111,10 @@ class Resources:
   barrier_counts: collections.Counter[AnyBarrier] = dataclasses.field(
       default_factory=collections.Counter
   )
-  gmem_semaphores: int = 0
+  # Maps from collective axes to number of semaphores.
+  scoped_gmem_semaphores: dict[CollectiveAxesType, int] = dataclasses.field(
+      default_factory=dict
+  )
 
   def __post_init__(self):
     object.__setattr__(
@@ -140,16 +144,24 @@ class Resources:
     #
     # At the moment, if we have run_scoped(b1) followed by run_scoped(b2)
     # we will allocate two barriers, even though one would be enough.
+    sems = self.scoped_gmem_semaphores
+    other_sems = other.scoped_gmem_semaphores
+    scoped_gmem_semaphores = {key: sems.get(key, 0) + other_sems.get(key, 0)
+                              for key in sems.keys() | other_sems.keys()}
     return Resources(
         smem_scratch_bytes=self.smem_scratch_bytes + other.smem_scratch_bytes,
         tmem_scratch_cols=self.tmem_scratch_cols + other.tmem_scratch_cols,
         tmem_collective_scratch_cols=self.tmem_collective_scratch_cols
         + other.tmem_collective_scratch_cols,
         barrier_counts=self.barrier_counts + other.barrier_counts,
-        gmem_semaphores=self.gmem_semaphores + other.gmem_semaphores,
+        scoped_gmem_semaphores=scoped_gmem_semaphores,
     )
 
   def __or__(self, other: Resources) -> Resources:
+    sems = self.scoped_gmem_semaphores
+    other_sems = other.scoped_gmem_semaphores
+    scoped_gmem_semaphores = {key: max(sems.get(key, 0), other_sems.get(key, 0))
+                              for key in sems.keys() | other_sems.keys()}
     return Resources(
         smem_scratch_bytes=max(
             self.smem_scratch_bytes, other.smem_scratch_bytes
@@ -160,7 +172,7 @@ class Resources:
             other.tmem_collective_scratch_cols,
         ),
         barrier_counts=self.barrier_counts | other.barrier_counts,
-        gmem_semaphores=max(self.gmem_semaphores, other.gmem_semaphores),
+        scoped_gmem_semaphores=scoped_gmem_semaphores,
     )
 
 
@@ -273,8 +285,6 @@ def _run_scoped_resource_estimator(
     jaxpr: jax_core.Jaxpr,
     collective_axes,
 ) -> Resources:
-  del collective_axes  # Unused.
-
   # NOTE: This rule assumes that the allocation happens collectively, although
   # it can't be checked here due to limited context. We check this in the actual
   # lowering rule.
@@ -327,7 +337,7 @@ def _run_scoped_resource_estimator(
       # Don't need to allocate anything.
       pass
     elif aval.memory_space == gpu_core.GMEM and jnp.issubdtype(aval.dtype, pallas_core.semaphore):
-      rs += Resources(gmem_semaphores=aval.size)
+      rs += Resources(scoped_gmem_semaphores={collective_axes: aval.size})
     else:
       raise NotImplementedError(
           f"Unsupported memory space: {aval.memory_space}")
@@ -382,8 +392,8 @@ class ModuleContext:
   tmem_collective_requested_cols: int
   tmem_collective_used_cols: int
   tmem_collective_base_ptr: ir.Value
-  gmem_used_semaphores: int
-  gmem_semaphore_base_ptr: ir.Value | None
+  scoped_gmem_used_semaphores: dict[CollectiveAxesType, int]
+  scoped_gmem_semaphore_base_ptr: dict[CollectiveAxesType, ir.Value]
   runtime_barriers: MutableMapping[AnyBarrier, MutableSequence[AnyBarrierRef]]
   name_stack: source_info_util.NameStack
   traceback_caches: mlir.TracebackCaches
@@ -428,17 +438,22 @@ class ModuleContext:
     available.append(barrier)
 
   @contextlib.contextmanager
-  def reserve_semaphores(self, shape: tuple[int, ...]) -> Iterator[ir.Value]:
+  def reserve_semaphores(self,
+                         shape: tuple[int, ...],
+                         collective_axes: CollectiveAxesType
+                         ) -> Iterator[ir.Value]:
     allocated_sems = math.prod(shape)
     ref = mgpu.memref_slice(
-        self.gmem_semaphore_base_ptr,
-        mgpu.ds(self.gmem_used_semaphores, allocated_sems),
+        self.scoped_gmem_semaphore_base_ptr[collective_axes],
+        mgpu.ds(self.scoped_gmem_used_semaphores[collective_axes],
+                allocated_sems),
     )
     ref = mgpu.memref_reshape(ref, shape)
-    self.gmem_used_semaphores += allocated_sems
+
+    self.scoped_gmem_used_semaphores[collective_axes] += allocated_sems
     yield ref
     # TODO: In debug mode verify the values of all semaphores are again 0
-    self.gmem_used_semaphores -= allocated_sems
+    self.scoped_gmem_used_semaphores[collective_axes] -= allocated_sems
 
   @contextlib.contextmanager
   def alloc_tmem(
@@ -881,22 +896,40 @@ def lower_jaxpr_to_module(
         runtime_tmem,
         runtime_tmem_collective,
     ) = buffers
-    gmem_semaphores = None
-    if rs.gmem_semaphores:
-      # Extract the semaphores local to the current block.
+    num_input_buffers = (len(in_shapes) +
+                         len(rs.scoped_gmem_semaphores))
+    input_buffers_gmem = buffers_gmem[:num_input_buffers]
+    output_buffers_gmem = buffers_gmem[num_input_buffers:]
+
+    scoped_gmem_semaphores = {}
+    for collective_axes in sorted(
+        rs.scoped_gmem_semaphores.keys(), reverse=True):
+      num_sems = rs.scoped_gmem_semaphores[collective_axes]
+      # Extract the semaphores local to the current scope.
       index = ir.IndexType.get()
-      block_idx = arith_dialect.index_castui(index, mgpu_utils.block_idx())
-      gmem_semaphores = mgpu.memref_slice(
-          buffers_gmem[-1],
+      # TODO(justinfu): Compute scope_idx for general collective_axes.
+      # scope_idx computes axis_index(all_axes - collective_axes)
+      if _is_block_local_scope(collective_axes, axis_names):
+        scope_idx = arith_dialect.index_castui(index, mgpu_utils.block_idx())
+      elif _is_global_scope(collective_axes, axis_names):
+        scope_idx = _as_index(0)
+      else:
+        raise NotImplementedError(
+            f"Unimplemented scope for semaphores: {collective_axes=}")
+      scoped_gmem_semaphores[collective_axes] = mgpu.memref_slice(
+          output_buffers_gmem[-1],
           mgpu.ds(
               arith_dialect.muli(
-                  block_idx, arith_dialect.constant(index, rs.gmem_semaphores)
+                  scope_idx, arith_dialect.constant(index, num_sems)
               ),
-              rs.gmem_semaphores,
+              num_sems,
           ),
       )
-      # The semaphore buffer is an aliased input/output, so we need to skip it twice.
-      buffers_gmem = buffers_gmem[:len(in_shapes)] + buffers_gmem[-len(out_shapes) - 1:-1]
+      # The semaphore buffer is an aliased input/output, so we need to skip it
+      # in both the inputs and outputs.
+      input_buffers_gmem = input_buffers_gmem[:-1]
+      output_buffers_gmem = output_buffers_gmem[:-1]
+    buffers_gmem = [*input_buffers_gmem, *output_buffers_gmem]
 
     grouped_barriers = collections.defaultdict(list)
     for barrier, barrier_ref in zip(rs.barriers, runtime_barriers):
@@ -938,8 +971,8 @@ def lower_jaxpr_to_module(
         tmem_collective_base_ptr=runtime_tmem_collective.address
         if runtime_tmem_collective
         else None,
-        gmem_used_semaphores=0,
-        gmem_semaphore_base_ptr=gmem_semaphores,
+        scoped_gmem_used_semaphores={k: 0 for k in scoped_gmem_semaphores},
+        scoped_gmem_semaphore_base_ptr=scoped_gmem_semaphores,
         runtime_barriers=grouped_barriers,
         name_stack=source_info_util.NameStack(),
         traceback_caches=mlir.TracebackCaches(),
@@ -985,13 +1018,26 @@ def lower_jaxpr_to_module(
     prof_spec = mgpu_profiler.ProfilerSpec(params.profile_space * 2 * 4)
     prof_ctx = ProfilerContext(params.profile_dir, prof_spec)
   cuda_grid = tuple(map(operator.mul, parallel_grid, cluster))
-  semaphores_shape = ()
-  if rs.gmem_semaphores:
-    semaphores_shape = (
+
+  scoped_semaphores_shape = []
+  for collective_axes in sorted(rs.scoped_gmem_semaphores.keys()):
+    num_sems = rs.scoped_gmem_semaphores[collective_axes]
+    # TODO(justinfu): Compute axis_size for general collective_axes.
+    # axis_size computes axis_size(all_axes - collective_axes)
+    if _is_block_local_scope(collective_axes, axis_names):
+      axis_size = math.prod(cuda_grid)
+    elif _is_global_scope(collective_axes, axis_names):
+      axis_size = 1
+    else:
+      raise NotImplementedError(
+          f"Unimplemented scope for semaphores: {collective_axes=}")
+    scoped_semaphores_shape.append(
         jax.ShapeDtypeStruct(
-            shape=(math.prod(cuda_grid) * rs.gmem_semaphores,), dtype=np.int32
+            shape=(axis_size * num_sems,), dtype=np.int32
         ),
     )
+  scoped_semaphores_shape = tuple(scoped_semaphores_shape)
+
   # NOTE: new_out_shapes has out_shapes, then semaphores_shape and
   # optionally the profiler buffer.
   module, new_out_shapes, _, launch_ctx = (
@@ -1000,8 +1046,8 @@ def lower_jaxpr_to_module(
           grid=cuda_grid,
           cluster=cluster,
           block=block,
-          in_shapes=(*in_shapes, *semaphores_shape),
-          out_shape=(*out_shapes, *semaphores_shape),
+          in_shapes=(*in_shapes, *scoped_semaphores_shape),
+          out_shape=(*out_shapes, *scoped_semaphores_shape),
           inout_shape=(),
           smem_scratch_shape=scratch_buffers,
           lowering_semantics=lowering_semantics,
@@ -1028,7 +1074,8 @@ def lower_jaxpr_to_module(
   launch_ctx.scratch.finalize_size()
 
   return LoweringResult(
-      module, cuda_grid, block, new_out_shapes, prof_ctx, semaphores_shape
+      module, cuda_grid, block, new_out_shapes, prof_ctx,
+      scoped_semaphores_shape
   )
 
 
@@ -2354,6 +2401,21 @@ def _resolve_cluster_axis(axis_names: _AxisNames | None, axis_name: str):
   return gpu_dialect.Dimension(axis_names.cluster.index(axis_name))
 
 
+def _is_block_local_scope(collective_axes: CollectiveAxesType,
+                          axis_names: _AxisNames):
+  """Returns whether the collective axes represents a block scope."""
+  if axis_names.wg is None:
+    return not collective_axes
+  else:
+    return collective_axes == (axis_names.wg,)
+
+
+def _is_global_scope(collective_axes: CollectiveAxesType,
+                     axis_names: _AxisNames):
+  """Returns whether the collective axes represents a GPU global scope."""
+  return set(collective_axes) == set(axis_names)
+
+
 @register_lowering_rule(lax.axis_index_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.axis_index_p, mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warp)
 @register_lowering_rule(lax.axis_index_p, mgpu.LoweringSemantics.Warpgroup)
@@ -2622,7 +2684,8 @@ def _run_scoped_lowering_rule(
         should_discharge.append(False)
       elif aval.memory_space == gpu_core.GMEM and jnp.issubdtype(aval.dtype, pallas_core.semaphore):
         input_ref = alloc_stack.enter_context(
-            ctx.module_ctx.reserve_semaphores(aval.shape)
+            ctx.module_ctx.reserve_semaphores(aval.shape,
+                                              collective_axes=collective_axes)
         )
         input_refs.append(input_ref)
         should_discharge.append(False)

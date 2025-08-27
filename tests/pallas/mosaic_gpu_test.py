@@ -5372,6 +5372,61 @@ class SemaphoreTest(PallasTest):
         text,
     )
 
+  def test_global_semaphore(self):
+    # We signal from block 0 and wait on block 1 to test whether the semaphore
+    # is globally shared.
+    def body(out_ref):
+      @functools.partial(pl.run_scoped,
+                         sem_ref=plgpu.SemaphoreType.REGULAR,
+                         collective_axes="x")
+      def _scoped(sem_ref):
+        block_id = lax.axis_index("x")
+        @pl.when(block_id == 0)
+        def _():
+          pl.semaphore_signal(sem_ref)
+        @pl.when(block_id == 1)
+        def _():
+          pl.semaphore_wait(sem_ref)
+          out_ref[...] = jnp.ones_like(out_ref)
+    kernel = plgpu.kernel(
+        body,
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+        grid=(10,),
+        grid_names=("x",),
+    )
+    result = kernel()
+    np.testing.assert_array_equal(result, jnp.ones((128,), jnp.float32))
+
+  def test_multiple_semaphore_scopes(self):
+    def body(out_ref):
+      # Allocate a global-scoped semaphore.
+      @functools.partial(pl.run_scoped,
+                         global_sem=plgpu.SemaphoreType.REGULAR,
+                         collective_axes="x")
+      def _scope1(global_sem):
+        # Allocate a block-scoped semaphore.
+        @functools.partial(pl.run_scoped,
+                          block_sem=plgpu.SemaphoreType.REGULAR)
+        def _scope2(block_sem):
+          block_id = lax.axis_index("x")
+          pl.semaphore_signal(block_sem)
+          @pl.when(block_id == 0)
+          def _():
+            pl.semaphore_signal(global_sem)
+          @pl.when(block_id == 1)
+          def _():
+            pl.semaphore_wait(global_sem)
+            out_ref[...] = jnp.ones_like(out_ref)
+          pl.semaphore_wait(block_sem)
+    kernel = plgpu.kernel(
+        body,
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+        grid=(10,),
+        grid_names=("x",),
+    )
+    result = kernel()
+    np.testing.assert_array_equal(result, jnp.ones((128,), jnp.float32))
+
 
 class ExamplesWGTest(
     ExamplesTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
