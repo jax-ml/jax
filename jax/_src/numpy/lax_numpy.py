@@ -151,8 +151,7 @@ def iscomplexobj(x: Any) -> bool:
   return issubdtype(typ, np.complexfloating)
 
 
-def _dtype(x: Any) -> DType:
-  return dtypes.dtype(x, canonicalize=True)
+_dtype = dtypes.dtype
 
 # Dtype-related functions
 iinfo = dtypes.iinfo

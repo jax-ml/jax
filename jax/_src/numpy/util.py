@@ -40,7 +40,8 @@ map, unsafe_map = safe_map, map
 
 export = set_module('jax.numpy')
 
-_dtype = partial(dtypes.dtype, canonicalize=True)
+_dtype = dtypes.dtype
+
 
 def promote_shapes(fun_name: str, *args: ArrayLike) -> list[Array]:
   """Apply NumPy-style broadcasting, making args shape-compatible for lax.py."""

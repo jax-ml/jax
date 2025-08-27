@@ -85,7 +85,7 @@ from jax._src.interpreters import pxla
 
 traceback_util.register_exclusion(__file__)
 
-_dtype = partial(dtypes.dtype, canonicalize=True)
+_dtype = dtypes.dtype
 
 AxisName = Hashable
 

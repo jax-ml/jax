@@ -1662,9 +1662,7 @@ def _convert_element_type(
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()
 
-  # Don't canonicalize old_dtype because x64 context might cause
-  # un-canonicalized operands to be passed in.
-  old_dtype = dtypes.dtype(operand, canonicalize=False)
+  old_dtype = dtypes.dtype(operand)
 
   if (isinstance(new_dtype, dtypes.ExtendedDType) or
       isinstance(old_dtype, dtypes.ExtendedDType)):
@@ -1695,7 +1693,7 @@ def _convert_element_type(
     new_dtype = old_dtype
   else:
     new_dtype = np.dtype(new_dtype)
-  new_dtype = dtypes.dtype(new_dtype, canonicalize=True)
+  new_dtype = dtypes.dtype(new_dtype)
 
   if sharding is not None and not isinstance(sharding, Sharding):
     raise ValueError(f'{sharding=} must be an instance of jax.sharding.Sharding')
@@ -8862,8 +8860,8 @@ def _one(x):
 _twos: Callable = partial(full_like, fill_value=2)
 _two: Callable = partial(full_like, shape=(), fill_value=2)
 
-dtype: Callable = partial(dtypes.dtype, canonicalize=True)
-_dtype: Callable = partial(dtypes.dtype, canonicalize=True)
+dtype: Callable = dtypes.dtype
+_dtype: Callable = dtypes.dtype
 
 def _isnan(x: ArrayLike) -> Array:
   return ne(x, x)

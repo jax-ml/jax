@@ -204,7 +204,8 @@ class DtypesTest(jtu.JaxTestCase):
                            else np.dtype(py_result))
         lattice_dtype, lattice_weak_type = dtypes.lattice_result_type(t1, t2)
         self.assertTrue(lattice_weak_type)
-        self.assertEqual(lattice_dtype, py_result_dtype)
+        self.assertEqual(lattice_dtype,
+                         dtypes.canonicalize_dtype(py_result_dtype))
 
     # Check that weak promotion only works if strong value is not cast:
     for t1 in bool_dtypes:
@@ -284,7 +285,8 @@ class DtypesTest(jtu.JaxTestCase):
                            else np.dtype(py_result))
         lattice_dtype, lattice_weak_type = dtypes.lattice_result_type(t1, t2)
         self.assertTrue(lattice_weak_type)
-        self.assertEqual(lattice_dtype, py_result_dtype)
+        self.assertEqual(lattice_dtype,
+                         dtypes.canonicalize_dtype(py_result_dtype))
 
   @parameterized.parameters([jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64])
   def testScalarInstantiation(self, scalar_type):
@@ -375,29 +377,40 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(jnp.int32(101),
                      jax.jit(lambda x: jnp.int32(x))(jnp.float32(101.4)))
 
-  @parameterized.parameters(python_scalar_types)
-  def testDtypeFromScalarType(self, typ):
-    self.assertEqual(
-        dtypes.dtype(typ), dtypes.python_scalar_types_to_dtypes[typ]
-    )
+  def testDtypeFromScalarType(self):
+    self.assertEqual(dtypes.dtype(bool), np.dtype(np.bool_))
+    if config.enable_x64.value:
+      self.assertEqual(dtypes.dtype(int), np.dtype(np.int64))
+      self.assertEqual(dtypes.dtype(float), np.dtype(np.float64))
+      self.assertEqual(dtypes.dtype(complex), np.dtype(np.complex128))
+    else:
+      self.assertEqual(dtypes.dtype(int), np.dtype(np.int32))
+      self.assertEqual(dtypes.dtype(float), np.dtype(np.float32))
+      self.assertEqual(dtypes.dtype(complex), np.dtype(np.complex64))
 
-  @parameterized.parameters(python_scalar_types)
-  def testDtypeFromScalarValue(self, typ):
-    self.assertEqual(
-        dtypes.dtype(typ(0)), dtypes.python_scalar_types_to_dtypes[typ]
-    )
+  def testDtypeFromScalarValue(self):
+    self.assertEqual(dtypes.dtype(bool(0)), np.dtype(np.bool_))
+    if config.enable_x64.value:
+      self.assertEqual(dtypes.dtype(int(0)), np.dtype(np.int64))
+      self.assertEqual(dtypes.dtype(float(0)), np.dtype(np.float64))
+      self.assertEqual(dtypes.dtype(complex(0)), np.dtype(np.complex128))
+    else:
+      self.assertEqual(dtypes.dtype(int(0)), np.dtype(np.int32))
+      self.assertEqual(dtypes.dtype(float(0)), np.dtype(np.float32))
+      self.assertEqual(dtypes.dtype(complex(0)), np.dtype(np.complex64))
 
   @parameterized.parameters(all_dtypes)
   def testDtypeFromValue(self, dtype):
-    self.assertEqual(dtypes.dtype(dtype.type(0)), dtype)
+    self.assertEqual(dtypes.dtype(dtype.type(0)),
+                     dtypes.canonicalize_dtype(dtype))
 
   @parameterized.parameters(all_dtypes)
   def testDtypeFromDtype(self, dtype):
-    self.assertEqual(dtypes.dtype(dtype), dtype)
+    self.assertEqual(dtypes.dtype(dtype), dtypes.canonicalize_dtype(dtype))
 
   @parameterized.parameters(all_dtypes)
   def testDtypeFromString(self, dtype):
-    self.assertEqual(dtypes.dtype(str(dtype)), dtype)
+    self.assertEqual(dtypes.dtype(str(dtype)), dtypes.canonicalize_dtype(dtype))
 
   def testDtypeFromNone(self):
     with self.assertRaisesRegex(ValueError, "Invalid argument to dtype"):
@@ -786,12 +799,16 @@ class TestPromotionTables(jtu.JaxTestCase):
       {"testcase_name": f"_{jaxtype=}", "jaxtype": jaxtype}
       for jaxtype in dtypes._jax_types + dtypes._weak_types)
   def testJaxTypeFromType(self, jaxtype):
+    if isinstance(jaxtype, np.dtype):
+      jaxtype = dtypes.canonicalize_dtype(jaxtype)
     self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(jaxtype)), jaxtype)
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{jaxtype=}", "jaxtype": jaxtype}
       for jaxtype in dtypes._jax_types + dtypes._weak_types)
   def testJaxTypeFromVal(self, jaxtype):
+    if isinstance(jaxtype, np.dtype):
+      jaxtype = dtypes.canonicalize_dtype(jaxtype)
     try:
       val = jaxtype(0)
     except TypeError:

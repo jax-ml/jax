@@ -876,18 +876,37 @@ def check_valid_dtype(dtype: DType) -> None:
     raise TypeError(f"Dtype {dtype} is not a valid JAX array "
                     "type. Only arrays of numeric types are supported by JAX.")
 
-def dtype(x: Any, *, canonicalize: bool = False) -> DType:
-  """Return the dtype object for a value or type, optionally canonicalized based on X64 mode."""
+def dtype(x: Any) -> DType:
+  """Return the dtype object for a value or type.
+
+  Python scalars, Python scalar types, NumPy scalar type, NumPy dtypes, and
+  non-JAX arrays will have their dtypes canonicalized."""
+  # TODO(phawkins): in the future, we would like to:
+  # - return the default dtype for Python scalar types and values
+  # - canonicalize NumPy array and scalar types
+  # - return NumPy dtypes as-is, uncanonicalized.
   if x is None:
     raise ValueError(f"Invalid argument to dtype: {x}.")
-  is_type = isinstance(x, type)
-  if is_type and (dt := python_scalar_types_to_dtypes.get(x)) is not None:
-    pass
+  if isinstance(x, type):
+    # Python scalar types, e.g., int, float
+    if (dt := python_scalar_types_to_dtypes.get(x)) is not None:
+      return canonicalize_dtype(dt)
+
+    # Numpy scalar types, e.g., np.int32, np.float32
+    if _issubclass(x, np.generic):
+      return canonicalize_dtype(np.dtype(x))
+
+  # Python scalar values, e.g., int(3), float(3.14)
   elif (dt := python_scalar_types_to_dtypes.get(type(x))) is not None:
-    pass
-  elif is_type and _issubclass(x, np.generic):
-    return np.dtype(x)
-  elif issubdtype(getattr(x, 'dtype', None), extended):
+    return canonicalize_dtype(dt)
+
+  # jax Arrays. We intentionally do not canonicalize jax Arrays: once we've
+  # formed an x64 value in a jax Array, that is something we respect
+  # irrespective of the x64 mode.
+  elif isinstance(x, Array):
+    return x.dtype
+
+  if issubdtype(getattr(x, 'dtype', None), extended):
     dt = x.dtype
   else:
     try:
@@ -898,7 +917,7 @@ def dtype(x: Any, *, canonicalize: bool = False) -> DType:
     raise TypeError(f"Value '{x}' with dtype {dt} is not a valid JAX array "
                     "type. Only arrays of numeric types are supported by JAX.")
   # TODO(jakevdp): fix return type annotation and remove this ignore.
-  return canonicalize_dtype(dt, allow_extended_dtype=True) if canonicalize else dt  # type: ignore[return-value]
+  return canonicalize_dtype(dt, allow_extended_dtype=True)  # type: ignore[return-value]
 
 def lattice_result_type(*args: Any) -> tuple[DType, bool]:
   dtypes, weak_types = zip(*(_dtype_and_weaktype(arg) for arg in args))
@@ -1034,8 +1053,8 @@ def safe_to_cast(input_dtype_or_value: Any,
     >>> safe_to_cast('complex64', 'float64')
     False
   """
-  input_dtype = dtype(input_dtype_or_value, canonicalize=True)
-  output_dtype = dtype(output_dtype_or_value, canonicalize=True)
+  input_dtype = dtype(input_dtype_or_value)
+  output_dtype = dtype(output_dtype_or_value)
   if input_dtype == output_dtype:
     return True
   # We deliberately use output_dtype rather than output_dtype_or_value here:

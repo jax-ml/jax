@@ -53,7 +53,7 @@ from jax._src.util import safe_map, safe_zip
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
-_dtype = partial(dtypes.dtype, canonicalize=True)
+_dtype = dtypes.dtype
 
 
 def slice(operand: ArrayLike, start_indices: Sequence[int],

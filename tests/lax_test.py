@@ -3553,8 +3553,7 @@ class LaxTest(jtu.JaxTestCase):
       val = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
 
     const = lax_internal._const(val, 0)
-    self.assertEqual(dtypes.dtype(val, canonicalize=True),
-                     dtypes.dtype(const, canonicalize=True))
+    self.assertEqual(dtypes.dtype(val), dtypes.dtype(const))
 
   def testIgammaSpecial(self):
     self.assertEqual(lax.igamma(1., np.inf), 1.)
