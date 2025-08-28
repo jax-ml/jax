@@ -273,8 +273,15 @@ class DtypesTest(jtu.JaxTestCase):
     for groups in [bool_dtypes + np_signed_dtypes + np_unsigned_dtypes,
                    np_float_dtypes + complex_dtypes]:
       for t1, t2 in itertools.combinations(groups, 2):
-        self.assertEqual(np.promote_types(t1, t2),
-                         dtypes.promote_types(t1, t2))
+        expected = np.promote_types(t1, t2)
+        if (
+            not config.enable_x64.value
+            and np.issubdtype(t1, np.signedinteger)
+            and t1 != np.int64
+            and t2 == np.uint32
+        ):
+          expected = np.dtype(np.int32)
+        self.assertEqual(expected, dtypes.promote_types(t1, t2))
 
     # Promotion between weak types matches numpy promotion
     for t1 in [int, float, complex]:

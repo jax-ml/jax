@@ -672,17 +672,21 @@ def _dtype_and_weaktype(value: Any) -> tuple[DType, bool]:
   """Return a (dtype, weak_type) tuple for the given input."""
   return dtype(value), any(value is typ for typ in _weak_types) or is_weakly_typed(value)
 
-def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> dict[JAXType, list[JAXType]]:
+def _type_promotion_lattice(strict: bool, x64: bool) -> dict[JAXType, list[JAXType]]:
   """
   Return the type promotion lattice in the form of a DAG.
-  This DAG maps each type to its immediately higher type on the lattice.
+  This DAG maps each type to its immediately higher types on the lattice.
+
+  Args:
+    strict: use strict promotion lattice?
+    x64: allow promotions that form x64 types from non-x64 inputs?
   """
   b1, = _bool_types
   uint2, uint4, u1, u2, u4, u8, int2, int4, i1, i2, i4, i8 = _int_types
   *f1_types, bf, f2, f4, f8 = _float_types
   c4, c8 = _complex_types
   i_, f_, c_ = _weak_types
-  if jax_numpy_dtype_promotion == 'standard':
+  if not strict:
     out: dict[JAXType, list[JAXType]]
     out = {
       b1: [i_],
@@ -693,20 +697,23 @@ def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> dict[JAXType, lis
       **{t: [] for t in f1_types}, bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
       c_: [c4], c4: [c8], c8: [],
     }
+    # If x64 mode is not enabled, then we want to avoid any promotions that form
+    # 64-bit types from non-64-bit inputs. There's only one of these in the
+    # entire promotion lattice, namely u4xi4->i8, which we can avoid by
+    # replacing it with u4xi4->i4.
+    if not x64:
+      out[u4] = [i4, u8]
     return out
-  elif jax_numpy_dtype_promotion == 'strict':
+  else:
     return {
       i_: [f_] + _int_types,
       f_: [c_] + _float_types,
       c_: _complex_types,
       **{t: [] for t in _jax_types}
     }
-  else:
-    raise ValueError(
-      f"Unexpected value of jax_numpy_dtype_promotion={jax_numpy_dtype_promotion!r}")
 
-def _make_lattice_upper_bounds(jax_numpy_dtype_promotion: str) -> dict[JAXType, set[JAXType]]:
-  lattice = _type_promotion_lattice(jax_numpy_dtype_promotion)
+def _make_lattice_upper_bounds(strict: bool, x64: bool) -> dict[JAXType, set[JAXType]]:
+  lattice = _type_promotion_lattice(strict, x64)
   upper_bounds = {node: {node} for node in lattice}
   for n in lattice:
     while True:
@@ -718,16 +725,17 @@ def _make_lattice_upper_bounds(jax_numpy_dtype_promotion: str) -> dict[JAXType, 
       upper_bounds[n] |= new_upper_bounds
   return upper_bounds
 
-_lattice_upper_bounds: dict[str, dict[JAXType, set[JAXType]]] = {
-  'standard': _make_lattice_upper_bounds('standard'),
-  'strict': _make_lattice_upper_bounds('strict'),
-}
+_standard_x64_lattice_ubs = _make_lattice_upper_bounds(strict=False, x64=True)
+_standard_x32_lattice_ubs = _make_lattice_upper_bounds(strict=False, x64=False)
+_strict_lattice_ubs = _make_lattice_upper_bounds(strict=True, x64=True)
 
 class TypePromotionError(ValueError):
   pass
 
-@functools.lru_cache(512)  # don't use util.memoize because there is no X64 dependence.
-def _least_upper_bound(jax_numpy_dtype_promotion: str, *nodes: JAXType) -> JAXType:
+# We don't use util.memoize because there is no implicit X64 dependence.
+@functools.lru_cache(512)
+def _least_upper_bound(jax_numpy_dtype_promotion: str, x64: bool,
+                       *nodes: JAXType) -> JAXType:
   """Compute the least upper bound of a set of nodes.
 
   Args:
@@ -754,7 +762,16 @@ def _least_upper_bound(jax_numpy_dtype_promotion: str, *nodes: JAXType) -> JAXTy
   #   ∀ c ∈ N: CUB(N) ⊆ UB(c)
   # So if N ∩ CUB(N) is nonempty, if follows that LUB(N) = N ∩ CUB(N).
   N = set(nodes)
-  UB = _lattice_upper_bounds[jax_numpy_dtype_promotion]
+  if jax_numpy_dtype_promotion == 'strict':
+    UB = _strict_lattice_ubs
+  elif jax_numpy_dtype_promotion == 'standard':
+    if x64:
+      UB = _standard_x64_lattice_ubs
+    else:
+      UB = _standard_x32_lattice_ubs
+  else:
+    raise ValueError(
+      f"Unexpected value of jax_numpy_dtype_promotion={jax_numpy_dtype_promotion!r}")
   try:
     bounds = [UB[n] for n in N]
   except KeyError:
@@ -848,7 +865,8 @@ def promote_types(a: DTypeLike, b: DTypeLike) -> DType:
   # object identity, not object equality, due to the behavior of np.dtype.__eq__
   a_tp = cast(JAXType, a if any(a is t for t in _weak_types) else np.dtype(a))
   b_tp = cast(JAXType, b if any(b is t for t in _weak_types) else np.dtype(b))
-  return np.dtype(_least_upper_bound(config.numpy_dtype_promotion.value, a_tp, b_tp))
+  return np.dtype(_least_upper_bound(
+      config.numpy_dtype_promotion.value, config.enable_x64.value, a_tp, b_tp))
 
 
 def register_weak_scalar_type(typ: type):
@@ -933,13 +951,15 @@ def lattice_result_type(*args: Any) -> tuple[DType, bool]:
     # counterparts and apply the weak type at the end. This avoids returning the
     # incorrect result with non-canonical weak types (e.g. weak int16).
     # TODO(jakevdp): explore removing this special case.
-    result_type = _least_upper_bound(config.numpy_dtype_promotion.value,
-                                     *{_jax_type(dtype, False) for dtype in dtypes})
+    result_type = _least_upper_bound(
+        config.numpy_dtype_promotion.value, config.enable_x64.value,
+        *{_jax_type(dtype, False) for dtype in dtypes})
     out_dtype = dtype(result_type)
     out_weak_type = True
   else:
-    result_type = _least_upper_bound(config.numpy_dtype_promotion.value,
-                                     *{_jax_type(d, w) for d, w in zip(dtypes, weak_types)})
+    result_type = _least_upper_bound(
+        config.numpy_dtype_promotion.value, config.enable_x64.value,
+        *{_jax_type(d, w) for d, w in zip(dtypes, weak_types)})
     out_dtype = dtype(result_type)
     out_weak_type = any(result_type is t for t in _weak_types)
   return out_dtype, (out_dtype != bool_) and out_weak_type
@@ -971,8 +991,6 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tupl
   if weak_type:
     dtype = canonicalize_dtype(
       _default_types['f' if dtype in _custom_float_dtypes else dtype.kind])
-  else:
-    dtype = canonicalize_dtype(dtype, allow_extended_dtype=True)
   # TODO(jakevdp): fix return type annotation and remove this ignore.
   return (dtype, weak_type) if return_weak_type_flag else dtype  # type: ignore[return-value]
 
