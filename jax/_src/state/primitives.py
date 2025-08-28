@@ -599,7 +599,7 @@ ad.primitive_transposes[addupdate_p] = addupdate_transpose
 
 def _get_transpose_fancy(g, ref_, *idx, **params):
   if idx and type(g) is not ad_util.Zero:
-    addupdate_p.bind(ref_.ref, g, *idx, **params)
+    addupdate_p.bind(ref_.inst().ref, g, *idx, **params)
   else:
     ref_.accum(g)
 ad.fancy_transposes[get_p] = _get_transpose_fancy
