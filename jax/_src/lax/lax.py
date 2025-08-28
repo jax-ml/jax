@@ -3387,7 +3387,8 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     broadcast_shape = sharding.shard_shape(shape)
     shard = broadcast(fill_value, broadcast_shape)
     shard = shard.addressable_data(0)
-    return array.make_array_from_callback(shape, sharding, lambda _: shard)
+    return array.make_array_from_callback(
+        shape, sharding, lambda _: shard, dtype=dtype)
 
   if sharding is not None and not sharding._is_concrete:
     return broadcast(fill_value, shape, out_sharding=sharding)
