@@ -23,6 +23,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Bug fixes
   * `arr.view(dtype=None)` now returns the array unchanged, matching NumPy's
     semantics. Previously it returned the array with a float dtype.
+  * `jax.random.randint` now produces a less-biased distribution for 8-bit and
+    16-bit integer types ({jax-issue}`#27742`). To restore the previous biased
+    behavior, you may temporarily set the `jax_safer_randint` configuration to
+    `False`, but note this is a temporary config that will be removed in a
+    future release.
 
 ## JAX 0.7.1 (August 20, 2025)
 
