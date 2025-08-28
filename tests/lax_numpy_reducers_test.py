@@ -808,6 +808,12 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     x = jax.ShapeDtypeStruct((1 << 32,), jnp.dtype('float32'))
     jax.eval_shape(jnp.mean, x)
 
+  def testMeanVeryLargeArrayOverflow(self):
+    # https://github.com/jax-ml/jax/pull/30769
+    x = jax.ShapeDtypeStruct((1 << 33,), jnp.dtype('float32'))
+    with self.assertRaisesRegex(DeprecationWarning, "Overflow"):
+      jax.eval_shape(partial(jnp.mean, dtype='int16'), x)
+
   def testStdLargeArray(self):
     # https://github.com/jax-ml/jax/issues/15068
     raise unittest.SkipTest("test is slow, but it passes!")

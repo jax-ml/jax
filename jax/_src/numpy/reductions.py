@@ -20,6 +20,7 @@ from functools import partial
 import math
 import operator
 from typing import overload, Any, Literal, Protocol, Union
+import warnings
 
 import numpy as np
 
@@ -883,7 +884,15 @@ def _count(
       count = core.dimension_as_value(np.size(a))
     else:
       count = core.dimension_as_value(_axis_size(a, axis))
-    count = lax.convert_element_type(count, dtype)
+    try:
+      count = np.asarray(count, dtype)
+    except OverflowError:
+      warnings.warn(
+        f"Overflow occurred in _count function for {count=} and {dtype=}. "
+        "Future versions will raise an error.",
+        DeprecationWarning,
+      )
+      count = lax.convert_element_type(count, dtype)
   else:
     count = sum(_broadcast_to(where, np.shape(a)), axis, dtype=dtype, keepdims=keepdims)
   return count
