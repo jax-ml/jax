@@ -159,8 +159,6 @@ def all_gather_lhs_matmul(
               out_smem,
               out_ref.at[device_m_slice, n_tile_slice].at[m_tile_slice],
           )
-          # Wait for the next scratch to arrive --- see the loop invariant.
-          pl.semaphore_wait(received_sem)
 
         @pl.loop(1, n_shard_per_sm_n // block_n)
         def _n_loop(ni):
@@ -192,6 +190,9 @@ def all_gather_lhs_matmul(
             plgpu.copy_smem_to_gmem(
                 out_smem, out_ref.at[device_m_slice, n_tile_slice].at[m_tile_slice]
             )
+
+        # Wait for the next scratch to arrive --- see the device loop invariant.
+        pl.semaphore_wait(received_sem)
 
     # Make sure all copies are fully done.
     plgpu.wait_smem_to_gmem(0, wait_read_only=True)
