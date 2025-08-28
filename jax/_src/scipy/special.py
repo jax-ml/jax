@@ -688,7 +688,7 @@ def rel_entr(
 
 # coefs of (2k)! / B_{2k} where B are bernoulli numbers
 # those numbers are obtained using https://www.wolframalpha.com
-_BERNOULLI_COEFS = [
+_BERNOULLI_COEFS = np.array([
     12,
     -720,
     30240,
@@ -705,7 +705,7 @@ _BERNOULLI_COEFS = [
     -37893265687455865519472640000000 / 3392780147,
     759790291646040068357842010112000000 / 1723168255201,
     -134196726836183700385281186201600000000 / 7709321041217,
-]
+])
 
 
 @custom_derivatives.custom_jvp
@@ -1878,15 +1878,15 @@ def sph_harm(m: Array,
 
 def _expint1(x: Array) -> Array:
   # 0 < x <= 2
-  A = [
+  A = np.array([
     -5.350447357812542947283e0,
     2.185049168816613393830e2,
     -4.176572384826693777058e3,
     5.541176756393557601232e4,
     -3.313381331178144034309e5,
     1.592627163384945414220e6,
-  ]
-  B = [
+  ], dtype=x.dtype)
+  B = np.array([
     1.0,
     -5.250547959112862969197e1,
     1.259616186786790571525e3,
@@ -1894,27 +1894,23 @@ def _expint1(x: Array) -> Array:
     1.493062117002725991967e5,
     -7.294949239640527645655e5,
     1.592627163384945429726e6,
-  ]
-  A_arr = jnp.array(A, dtype=x.dtype)
-  B_arr = jnp.array(B, dtype=x.dtype)
-  f = jnp.polyval(A_arr, x) / jnp.polyval(B_arr, x)
+  ], dtype=x.dtype)
+  f = jnp.polyval(A, x) / jnp.polyval(B, x)
   return x * f + np.euler_gamma + jnp.log(x)
 
 
-def _eval_expint_k(A: list[float], B: list[float], x: Array) -> Array:
+def _eval_expint_k(A: ArrayLike, B: ArrayLike, x: Array) -> Array:
   # helper function for all subsequent intervals
-  A_arr = jnp.array(A, dtype=x.dtype)
-  B_arr = jnp.array(B, dtype=x.dtype)
   one = _lax_const(x, 1.0)
   w = one / x
-  f = jnp.polyval(A_arr, w) / jnp.polyval(B_arr, w)
+  f = jnp.polyval(A, w) / jnp.polyval(B, w)
   f = w * f + one
   return jnp.exp(x) * w * f
 
 
 def _expint2(x: Array) -> Array:
   # 2 <= x < 4
-  A = [
+  A = np.array([
     1.981808503259689673238e-2,
     -1.271645625984917501326e0,
     -2.088160335681228318920e0,
@@ -1923,8 +1919,8 @@ def _expint2(x: Array) -> Array:
     4.665623805935891391017e-2,
     -1.545042679673485262580e-3,
     7.059980605299617478514e-5,
-  ]
-  B = [
+  ], dtype=x.dtype)
+  B = np.array([
     1.0,
     1.476498670914921440652e0,
     5.629177174822436244827e-1,
@@ -1933,13 +1929,13 @@ def _expint2(x: Array) -> Array:
     4.450150439728752875043e-3,
     1.727439612206521482874e-4,
     3.953167195549672482304e-5,
-  ]
+  ], dtype=x.dtype)
   return _eval_expint_k(A, B, x)
 
 
 def _expint3(x: Array) -> Array:
   # 4 <= x <= 8
-  A = [
+  A = np.array([
     -1.373215375871208729803e0,
     -7.084559133740838761406e-1,
     1.580806855547941010501e0,
@@ -1948,8 +1944,8 @@ def _expint3(x: Array) -> Array:
     -1.038086040188744005513e-3,
     4.371064420753005429514e-5,
     2.141783679522602903795e-6,
-  ]
-  B = [
+  ], dtype=x.dtype)
+  B = np.array([
     1.0,
     8.585231423622028380768e-1,
     4.483285822873995129957e-1,
@@ -1959,13 +1955,13 @@ def _expint3(x: Array) -> Array:
     4.590952299511353531215e-4,
     -4.729848351866523044863e-6,
     2.665195537390710170105e-6,
-  ]
+  ], dtype=x.dtype)
   return _eval_expint_k(A, B, x)
 
 
 def _expint4(x: Array) -> Array:
   # 8 <= x <= 16
-  A = [
+  A = np.array([
     -2.106934601691916512584e0,
     1.732733869664688041885e0,
     -2.423619178935841904839e-1,
@@ -1976,8 +1972,8 @@ def _expint4(x: Array) -> Array:
     -3.655412321999253963714e-7,
     1.464941733975961318456e-8,
     6.176407863710360207074e-10,
-  ]
-  B = [
+  ], dtype=x.dtype)
+  B = np.array([
     1.0,
     -2.298062239901678075778e-1,
     1.105077041474037862347e-1,
@@ -1988,13 +1984,13 @@ def _expint4(x: Array) -> Array:
     -4.459311796356686423199e-7,
     1.394634930353847498145e-8,
     6.150865933977338354138e-10,
-  ]
+  ], dtype=x.dtype)
   return _eval_expint_k(A, B, x)
 
 
 def _expint5(x):
   # 16 <= x <= 32
-  A = [
+  A = np.array([
     -2.458119367674020323359e-1,
     -1.483382253322077687183e-1,
     7.248291795735551591813e-2,
@@ -2003,8 +1999,8 @@ def _expint5(x):
     -7.942465637159712264564e-5,
     2.644179518984235952241e-6,
     -4.239473659313765177195e-8,
-  ]
-  B = [
+  ], dtype=x.dtype)
+  B = np.array([
     1.0,
     -1.044225908443871106315e-1,
     -2.676453128101402655055e-1,
@@ -2014,34 +2010,34 @@ def _expint5(x):
     -8.462452563778485013756e-5,
     2.728938403476726394024e-6,
     -4.239462431819542051337e-8,
-  ]
+  ], dtype=x.dtype)
   return _eval_expint_k(A, B, x)
 
 
 def _expint6(x):
   # 32 <= x <= 64
-  A = [
+  A = np.array([
     1.212561118105456670844e-1,
     -5.823133179043894485122e-1,
     2.348887314557016779211e-1,
     -3.040034318113248237280e-2,
     1.510082146865190661777e-3,
     -2.523137095499571377122e-5,
-  ]
-  B = [
+  ], dtype=x.dtype)
+  B = np.array([
     1.0,
     -1.002252150365854016662e0,
     2.928709694872224144953e-1,
     -3.337004338674007801307e-2,
     1.560544881127388842819e-3,
     -2.523137093603234562648e-5,
-  ]
+  ], dtype=x.dtype)
   return _eval_expint_k(A, B, x)
 
 
 def _expint7(x):
   # x > 64
-  A = [
+  A = np.array([
     -7.657847078286127362028e-1,
     6.886192415566705051750e-1,
     -2.132598113545206124553e-1,
@@ -2051,8 +2047,8 @@ def _expint7(x):
     -6.103711682274170530369e-6,
     1.218032765428652199087e-7,
     -1.086076102793290233007e-9,
-  ]
-  B = [
+  ], dtype=x.dtype)
+  B = np.array([
     1.0,
     -1.888802868662308731041e0,
     1.066691687211408896850e0,
@@ -2063,7 +2059,7 @@ def _expint7(x):
     -6.345146083130515357861e-6,
     1.239754287483206878024e-7,
     -1.086076102793126632978e-9,
-  ]
+  ], dtype=x.dtype)
   return _eval_expint_k(A, B, x)
 
 
