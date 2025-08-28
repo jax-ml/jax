@@ -444,31 +444,20 @@ def _construct_smem_reftree(
         packing = 1 if packing is None else packing
         ir_dtype = utils.dtype_to_ir_type(dtype)
         if lowering_semantics == LoweringSemantics.Warpgroup:
-          tmem_allocs.append(
-              _TMEMDialectAlloc(addr_ref, shape, ir_dtype, packing, collective)
+          alloc = _TMEMDialectAlloc(
+              addr_ref, shape, ir_dtype, packing, collective
           )
+          tmem_allocs.append(alloc)
+          def ref(alloc=alloc):
+            assert alloc.tmem_ref is not None
+            return alloc.tmem_ref
         else:
           if layout is None:
             layout = tcgen05._infer_tmem_layout(shape, collective, packing)
           num_cols = layout.cols_in_shape(shape, utils.bitwidth(ir_dtype))
           tmem_allocs.append(_TMEMAlloc(addr_ref, num_cols, collective))
-
-        def ref(
-            addr_ref=addr_ref,
-            shape=shape,
-            ir_dtype=ir_dtype,
-            layout=layout,
-            lowering_semantics=lowering_semantics,
-        ):
-          addr = memref.load(addr_ref, [])
-          if lowering_semantics == LoweringSemantics.Warpgroup:
-            ref_type = ir.MemRefType.get(
-                shape=shape,
-                element_type=ir_dtype,
-                memory_space=utils.tmem(),
-            )
-            return builtin.unrealized_conversion_cast([ref_type], [addr])
-          else:
+          def ref(addr_ref=addr_ref, shape=shape, ir_dtype=ir_dtype, layout=layout):
+            addr = memref.load(addr_ref, [])
             return tcgen05.TMEMRef(addr, shape, ir_dtype, layout)
 
         dynamic_smem_offset += 4  # i32 takes up 4 bytes
