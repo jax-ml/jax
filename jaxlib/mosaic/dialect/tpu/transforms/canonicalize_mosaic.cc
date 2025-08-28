@@ -387,7 +387,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
                           std::optional<FloatType> maybe_dest = std::nullopt) {
     FloatType dest = maybe_dest.value_or(builder.getF32Type());
     const VectorType ty = element.getType();
-    uint source_width = ty.getElementType().getIntOrFloatBitWidth();
+    unsigned int source_width = ty.getElementType().getIntOrFloatBitWidth();
     auto shape = ty.getShape();
     CHECK(ty.getElementType().isInteger());
     CHECK(source_width <= dest.getWidth())
