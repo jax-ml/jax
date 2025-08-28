@@ -210,8 +210,6 @@ use:
 For example, these are errors:
 
 ```{code-cell}
-# temporarily, error checking must be enabled
-jax.config.update('jax_mutable_array_checks', True)
 x_ref = jax.array_ref(0.)
 
 # can't return refs
