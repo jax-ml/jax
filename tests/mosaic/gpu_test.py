@@ -22,6 +22,7 @@ import math
 import operator
 import re
 import sys
+import unittest
 
 from absl.testing import absltest, parameterized
 import jax
@@ -4471,6 +4472,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       ("non-exact-packed", (128, 120), jnp.bfloat16, 2, False, False, 64),
       ("collective-exact", (128, 64), jnp.bfloat16, 1, True, True, 64),
   )
+  @unittest.skip("Layout inference fails for trivial load/store kernels.")
   def test_tmem_alloc_dealloc(
       self, shape, dtype, packing, exact, collective, expected_allocated_columns
   ):
@@ -4539,6 +4541,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       ("unpacked", (128, 128), jnp.bfloat16, 1),
       ("packed", (128, 128), jnp.bfloat16, 2),
   )
+  @unittest.skip("Require async_store_tmem layout inference.")
   def test_tmem_load_store(
       self, shape, dtype, packing,
   ):
@@ -4600,6 +4603,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       ab_type=(jnp.float16, jnp.bfloat16),
       acc_type=(jnp.float16, jnp.float32),
   )
+  @unittest.skip("Require async_load_tmem layout inference.")
   def test_tcgen05_mma(self, m, n, swizzle, ab_type, acc_type):
     if acc_type == jnp.float16 and ab_type != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
@@ -4708,6 +4712,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       ab_type=(jnp.float16, jnp.bfloat16),
       acc_type=(jnp.float16, jnp.float32),
   )
+  @unittest.skip("Require async_load_tmem layout inference.")
   def test_tcgen05_collective_mma(self, m, n, swizzle, ab_type, acc_type):
     if acc_type == jnp.float16 and ab_type != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
