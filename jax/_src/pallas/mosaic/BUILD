@@ -79,6 +79,7 @@ py_library(
     deps = [
         ":core",
         ":lowering",
+        ":sc_lowering",
         ":verification",
         "//jax",
         "//jax/_src:config",
@@ -125,6 +126,70 @@ pytype_strict_library(
         "//jax/_src/pallas",
         "//jax/experimental:mosaic",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "sc_lowering",
+    srcs = [
+        "sc_lowering.py",
+    ],
+    visibility = ["//jax/experimental:pallas_sc_users"],
+    deps = [
+        ":core",
+        ":lowering",
+        ":primitives",
+        ":sc_core",
+        "//jax",
+        "//jax/_src:api_util",
+        "//jax/_src:core",
+        "//jax/_src:debugging",
+        "//jax/_src:lax",
+        "//jax/_src:mesh",
+        "//jax/_src:mlir",
+        "//jax/_src:partial_eval",
+        "//jax/_src:source_info_util",
+        "//jax/_src:util",
+        "//jax/_src/lib",
+        "//jax/_src/pallas",
+        "//jax/experimental:mosaic",
+    ],
+)
+
+pytype_strict_library(
+    name = "sc_core",
+    srcs = [
+        "sc_core.py",
+    ],
+    visibility = ["//jax/experimental:pallas_sc_users"],
+    deps = [
+        ":core",
+        "//jax/_src:core",
+        "//jax/_src:lax",
+        "//jax/_src:tree_util",
+        "//jax/_src/pallas",
+        "//jax/extend:backend",
+    ],
+)
+
+pytype_strict_library(
+    name = "sc_primitives",
+    srcs = [
+        "sc_primitives.py",
+    ],
+    deps = [
+        ":core",
+        ":lowering",
+        ":sc_lowering",
+        "//jax",
+        "//jax/_src:core",
+        "//jax/_src:dtypes",
+        "//jax/_src:effects",
+        "//jax/_src:lax",
+        "//jax/_src:partial_eval",
+        "//jax/_src/lib",
+        "//jax/_src/pallas",
+        "//jax/experimental:mosaic",
+    ],
 )
 
 py_library(

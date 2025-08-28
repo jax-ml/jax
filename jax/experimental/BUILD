@@ -340,6 +340,8 @@ pytype_strict_library(
         "//jax/_src:source_info_util",
         "//jax/_src:state_types",
         "//jax/_src/pallas",
+        "//jax/_src/pallas/mosaic:sc_core",
+        "//jax/_src/pallas/mosaic:sc_primitives",
     ] + py_deps("numpy"),
 )
 
@@ -436,6 +438,19 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic:primitives",
         "//jax/_src/pallas/mosaic:random",
         "//jax/_src/pallas/mosaic:verification",
+    ],
+)
+
+pytype_strict_library(
+    name = "pallas_tpu_sc",
+    srcs = ["pallas/tpu_sc.py"],
+    visibility = [
+        ":pallas_sc_users",
+    ],
+    deps = [
+        ":pallas",  # build_cleaner: keep
+        "//jax/_src/pallas/mosaic:sc_core",
+        "//jax/_src/pallas/mosaic:sc_primitives",
     ],
 )
 

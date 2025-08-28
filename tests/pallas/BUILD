@@ -1136,3 +1136,62 @@ jax_multiplatform_test(
         "numpy",
     ]),
 )
+
+jax_multiplatform_test(
+    name = "tpu_sparsecore_pallas_test",
+    srcs = ["tpu_sparsecore_pallas_test.py"],
+    enable_backends = [],
+    enable_configs = [
+        "tpu_v5p",
+        "tpu_v6e",
+        # TODO(slebedev): Run on ISS or GRM.
+    ],
+    shard_count = 4,
+    deps = [
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_sc",
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_pallas_sparsecore_debug_check_test",
+    srcs = ["tpu_pallas_sparsecore_debug_check_test.py"],
+    enable_backends = [],
+    enable_configs = [
+        "tpu_v5p",
+        "tpu_v6e",
+        # TODO(slebedev): Run on GRM.
+    ],
+    shard_count = 2,
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_tpu",
+        "//jax/experimental:pallas_tpu_sc",
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_sparsecore_pallas_distributed_test",
+    srcs = ["tpu_sparsecore_pallas_distributed_test.py"],
+    enable_backends = [],
+    enable_configs = [
+        "tpu_v5p_x4",
+        "tpu_v6e_x8",
+        # TODO(slebedev): Run on ISS or GRM.
+    ],
+    deps = [
+        "//jax:mesh_utils",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_sc",
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+    ]),
+)
