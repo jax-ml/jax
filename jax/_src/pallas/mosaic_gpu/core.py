@@ -112,7 +112,6 @@ class CompilerParams(pallas_core.CompilerParams):
   approx_math: bool = False
   dimension_semantics: Sequence[DimensionSemantics] | None = None
   max_concurrent_steps: int = 1
-  delay_release: int = 0
   unsafe_no_auto_barriers: bool = False
   profile_space: int = 0
   profile_dir: str = ""
@@ -923,7 +922,16 @@ class UnswizzleRef(state_types.Transform):
 
 @dataclasses.dataclass
 class BlockSpec(pallas_core.BlockSpec):
+  """A GPU-specific `BlockSpec`.
+
+  Attributes:
+    transforms: A sequence of transforms that will be applied to the
+      reference.
+    delay_release: used during pipelining to delay the release of
+      resources of a slot after it is used in the computation.
+  """
   transforms: Sequence[MemoryRefTransform] = ()
+  delay_release: int = 0
 
   def to_block_mapping(
       self,

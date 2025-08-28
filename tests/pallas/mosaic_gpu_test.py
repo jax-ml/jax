@@ -2602,24 +2602,28 @@ class PallasCallSm90ATest(PallasSm90ATest):
     b = jax.random.uniform(key2, shape=b_shape, dtype=dtype)
 
     if lhs_transpose:
-      lhs_spec = pl.BlockSpec(
+      lhs_spec = plgpu.BlockSpec(
           (tile_k, tile_m),
           lambda m, n, k: (k, m),
+          delay_release=1,
       )
     else:
-      lhs_spec = pl.BlockSpec(
+      lhs_spec = plgpu.BlockSpec(
           (tile_m, tile_k),
           lambda m, n, k: (m, k),
+          delay_release=1,
       )
     if rhs_transpose:
-      rhs_spec = pl.BlockSpec(
+      rhs_spec = plgpu.BlockSpec(
           (tile_n, tile_k),
           lambda m, n, k: (n, k),
+          delay_release=1,
       )
     else:
-      rhs_spec = pl.BlockSpec(
+      rhs_spec = plgpu.BlockSpec(
           (tile_k, tile_n),
           lambda m, n, k: (k, n),
+          delay_release=1,
       )
     out_spec = pl.BlockSpec(
         (tile_m, tile_n),
@@ -2634,6 +2638,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
               plgpu.TilingTransform((8, elems_128b)),
               plgpu.SwizzleTransform(128),
           ),
+          delay_release=1,
       )
       rhs_spec = plgpu.BlockSpec(
           rhs_spec.block_shape,
@@ -2642,6 +2647,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
               plgpu.TilingTransform((8, elems_128b)),
               plgpu.SwizzleTransform(128),
           ),
+          delay_release=1,
       )
       out_spec = plgpu.BlockSpec(
           out_spec.block_shape,
@@ -2662,7 +2668,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
         compiler_params=plgpu.CompilerParams(
             dimension_semantics=["parallel", "parallel", "sequential"],
             max_concurrent_steps=2,
-            delay_release=1,
         ),
     )(a, b)
     np.testing.assert_allclose(
@@ -4260,12 +4265,12 @@ class PipelineTest(PallasTest):
         acc_ref[...] = jnp.zeros_like(acc_ref)
         def body(_, x_smem):
           acc_ref[...] += x_smem[...]  # Can't += in a lambda...
+        in_specs = [plgpu.BlockSpec((1, n), lambda i: (i, 0), delay_release=1)]
         plgpu.emit_pipeline(
             body,
-            in_specs=[plgpu.BlockSpec((1, n), lambda i: (i, 0))],
+            in_specs=in_specs,
             grid=(m,),
             max_concurrent_steps=2,
-            delay_release=1,
         )(x_gmem)
         return acc_ref[...]
 
@@ -4410,19 +4415,21 @@ class PipelineSm90ATest(PallasSm90ATest):
 
       pid_m = pl.program_id(0)
       pid_n = pl.program_id(1)
+      in_specs = [
+          plgpu.BlockSpec(
+              (tile_m, tile_k), lambda k: (pid_m, k), transforms=transforms,
+              delay_release=1,
+          ),
+          plgpu.BlockSpec(
+              (tile_k, tile_n), lambda k: (k, pid_n), transforms=transforms,
+              delay_release=1,
+          ),
+      ]
       plgpu.emit_pipeline(
           kernel_body,
-          in_specs=[
-              plgpu.BlockSpec(
-                  (tile_m, tile_k), lambda k: (pid_m, k), transforms=transforms
-              ),
-              plgpu.BlockSpec(
-                  (tile_k, tile_n), lambda k: (k, pid_n), transforms=transforms
-              ),
-          ],
+          in_specs=in_specs,
           grid=(grid_k,),
           max_concurrent_steps=2,
-          delay_release=1,
       )(a_gmem, b_gmem)
 
       o_smem[...] = acc[...].astype(dtype)
@@ -4646,7 +4653,12 @@ class WarpSpecializedPipelineTest(PallasTest):
     else:
       m = n = 256
     blk_m, blk_n = 32, 64
-    spec = pl.BlockSpec(
+    spec = plgpu.BlockSpec(
+        block_shape=(num_compute_wgs * blk_m, blk_n),
+        index_map=lambda i, j: (i, j),
+        delay_release=1,
+    )
+    out_spec = pl.BlockSpec(
         block_shape=(num_compute_wgs * blk_m, blk_n),
         index_map=lambda i, j: (i, j),
     )
@@ -4669,13 +4681,12 @@ class WarpSpecializedPipelineTest(PallasTest):
           tiled_add_kernel,
           grid=grid,
           max_concurrent_steps=4,
-          delay_release=1,
           manual_consumed_barriers=manual_consumed_barriers,
           num_compute_wgs=num_compute_wgs,
           memory_registers=40,
           wg_axis="wg",
           in_specs=[spec, spec],
-          out_specs=[spec],
+          out_specs=[out_spec],
       )(*gmem_refs)
 
     kernel = self.kernel(
@@ -4701,14 +4712,17 @@ class WarpSpecializedPipelineTest(PallasTest):
       o_smem[...] = x_smem[...] + 1.0
 
     def kernel(x_gmem, o_gmem):
+      in_specs = [
+          plgpu.BlockSpec((64, 64), lambda i: (0, i), delay_release=delay_release)
+      ]
+      out_specs = [plgpu.BlockSpec((64, 64), lambda i: (0, i))]
       for _ in range(3):
         plgpu.emit_pipeline_warp_specialized(
             kernel_body,
-            in_specs=[plgpu.BlockSpec((64, 64), lambda i: (0, i))],
-            out_specs=[plgpu.BlockSpec((64, 64), lambda i: (0, i))],
+            in_specs=in_specs,
+            out_specs=out_specs,
             grid=(num_steps,),
             max_concurrent_steps=2,
-            delay_release=delay_release,
             num_compute_wgs=1,
             memory_registers=40,
             wg_axis="wg",

@@ -191,7 +191,6 @@ def emit_pipeline(
     in_specs: Sequence[pallas_core.BlockSpec] = (),
     out_specs: Sequence[pallas_core.BlockSpec] = (),
     max_concurrent_steps: int = 1,
-    delay_release: int = 0,
     init_carry: T | None = None,
 ):
   r"""Creates a function to emit a manual pipeline within a Pallas kernel.
@@ -212,10 +211,6 @@ def emit_pipeline(
     out_specs: A sequence of :class:`~jax.experimental.pallas.BlockSpec`\s
       for outputs.
     max_concurrent_steps: Maximum concurrently active pipeline stages.
-    delay_release: Number of steps to delay before reusing input
-      references. Must be ``< max_concurrent_steps``. Useful for hiding WGMMA
-      latency (typically set to 1). Note that the output references will be
-      reused immediately!
     init_carry: Optional initial carry. If provided, ``body`` handles
       carry-over state between iterations, and the pipeline returns the
       final carry.
@@ -225,6 +220,21 @@ def emit_pipeline(
     pipeline and returns the final carry value (if ``init_carry`` was used),
     otherwise it returns None.
   """
+  # TODO(justinfu): Factor out common code between warp-specialized and
+  # normal pipelines.
+  delay_release = None
+  for in_spec in in_specs:
+    if not isinstance(in_spec, gpu_core.BlockSpec):
+      delay_release = 0
+      continue
+    delay_release = in_spec.delay_release
+    if in_spec.delay_release != delay_release:
+      raise NotImplementedError(
+          "All inputs must have the same delay_release, but"
+          f" {in_spec.delay_release=} != {delay_release=}"
+      )
+
+  delay_release = delay_release or 0
   if max_concurrent_steps <= delay_release:
     raise ValueError(
         "max_concurrent_steps must be greater than delay_release, but"
@@ -456,7 +466,6 @@ def emit_pipeline_warp_specialized(
     max_concurrent_steps: int = 2,
     wg_axis: str,
     num_compute_wgs: int,
-    delay_release: int = 0,
     manual_consumed_barriers: bool = False,
     compute_context: ComputeContext | None = None,
     memory_thread_idx: int | None = None,
@@ -489,10 +498,6 @@ def emit_pipeline_warp_specialized(
     out_specs: The block specs for the outputs.
     max_concurrent_steps: The maximum number of sequential stages that are
       active concurrently. Defaults to 2.
-    delay_release: Number of steps to delay before reusing input
-      references. Must be ``< max_concurrent_steps``. Useful for hiding WGMMA
-      latency (typically set to 1). Note that the output references will be
-      reused immediately!
     wg_axis: The axis name for the warp group axis.
     num_compute_wgs: The number of compute warpgroups
     manual_consumed_barriers: If True, consumed barriers will be
@@ -510,14 +515,9 @@ def emit_pipeline_warp_specialized(
     memory_thread_idx: The index of the memory thread. If not specified,
       defaults to the last thread.
   """
+
   # TODO(justinfu): Factor out common code between warp-specialized and
   # normal pipelines.
-  if max_concurrent_steps <= delay_release:
-    raise ValueError(
-        "max_concurrent_steps must be greater than delay_release, but"
-        f" {max_concurrent_steps=}, {delay_release=}"
-    )
-
   if not isinstance(in_specs, (list, tuple)):
     in_specs = (in_specs,)
   if not isinstance(out_specs, (list, tuple)):
@@ -529,6 +529,24 @@ def emit_pipeline_warp_specialized(
 
   flat_in_specs, in_specs_treedef = jax.tree.flatten(in_specs)
   flat_out_specs, out_specs_treedef = jax.tree.flatten(out_specs)
+  delay_release = None
+  for in_spec in in_specs:
+    if not isinstance(in_spec, gpu_core.BlockSpec):
+      delay_release = 0
+      continue
+    delay_release = in_spec.delay_release
+    if in_spec.delay_release != delay_release:
+      raise NotImplementedError(
+          "All inputs must have the same delay_release, but"
+          f" {in_spec.delay_release=} != {delay_release=}"
+      )
+
+  delay_release = delay_release or 0
+  if max_concurrent_steps <= delay_release:
+    raise ValueError(
+        "max_concurrent_steps must be greater than delay_release, but"
+        f" {max_concurrent_steps=}, {delay_release=}"
+    )
 
   if memory_thread_idx is None:
     memory_thread_idx = num_compute_wgs
