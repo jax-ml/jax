@@ -1414,25 +1414,52 @@ class VectorLayoutInferer {
                                 nativeTiling(src_layout.bitwidth()),
                                 src_layout.implicit_dim());
     }
+    ImplicitDim out_implicit_dim = src_layout.implicit_dim();
+    if ((reduces[0] && reduces[1]) ||
+        (src_layout.implicit_dim() != ImplicitDim::kNone &&
+         (reduces[0] || reduces[1]))) {
+      if (dst_ty.getRank() > 0 && *(dst_ty.getShape().end() - 1) == 1) {
+        out_implicit_dim = VectorLayout::ImplicitDim::kSecondMinor;
+      } else {
+        // TODO(tlongeri): Remove this once we have proper support for double
+        // implicit dims.
+        if (src_ty.getRank() > 1 &&
+            src_layout.implicit_dim() != ImplicitDim::kNone) {
+          LayoutOffsets new_src_offsets = src_layout.offsets();
+          switch (src_layout.implicit_dim()) {
+            case ImplicitDim::kNone:
+              CHECK(false);  // We excluded this case above.
+            case ImplicitDim::kSecondMinor:
+              CHECK((reduces == std::array<bool, 2>{false, true}));
+              new_src_offsets[0] = new_src_offsets[0].value_or(0);
+              break;
+            case ImplicitDim::kMinor:
+              CHECK((reduces == std::array<bool, 2>{true, false}));
+              reduces = {false, true};
+              new_src_offsets[1] = new_src_offsets[0];
+              new_src_offsets[0] = 0;
+              break;
+          }
+          out_implicit_dim = ImplicitDim::kMinor;
+          src_layout = VectorLayout(src_layout.bitwidth(), new_src_offsets,
+                                    src_layout.tiling(), ImplicitDim::kNone);
+        } else {
+          op.emitOpError(
+              "Not implemented: reductions over both trailing dimensions are "
+              "only supported when the resulting value has a trailing axis of "
+              "size 1");
+        }
+      }
+    } else if (reduces[0]) {
+      out_implicit_dim = VectorLayout::ImplicitDim::kSecondMinor;
+    } else if (reduces[1]) {
+      out_implicit_dim = VectorLayout::ImplicitDim::kMinor;
+    }
     LayoutOffsets out_offsets = src_layout.offsets();
     for (int i = 0; i < out_offsets.size(); ++i) {
       if (reduces[i]) {
         out_offsets[i] = std::nullopt;
       }
-    }
-    ImplicitDim out_implicit_dim = src_layout.implicit_dim();
-    if ((reduces[0] && reduces[1]) ||
-        (src_layout.implicit_dim() != ImplicitDim::kNone &&
-         (reduces[0] || reduces[1]))) {
-      TPU_CHECK_OP(
-          dst_ty.getRank() > 0 && *(dst_ty.getShape().end() - 1) == 1,
-          "Not implemented: reductions over both trailing dimensions are only "
-          "supported when the resulting value has a trailing axis of size 1");
-      out_implicit_dim = VectorLayout::ImplicitDim::kSecondMinor;
-    } else if (reduces[0]) {
-      out_implicit_dim = VectorLayout::ImplicitDim::kSecondMinor;
-    } else if (reduces[1]) {
-      out_implicit_dim = VectorLayout::ImplicitDim::kMinor;
     }
     setLayout(op, {src_layout, acc_layout},
               VectorLayout(src_layout.bitwidth(), out_offsets,
