@@ -781,7 +781,7 @@ jax_multiplatform_test(
     srcs = [
         "gpu_attention_test.py",
     ],
-    enable_backends = ["cpu"],
+    enable_backends = [],
     enable_configs = [
         "gpu_a100_x32",
         "gpu_h100_x32",
