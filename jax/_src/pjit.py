@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Sequence, Iterable
-import contextlib
 import dataclasses
 from functools import partial
 import inspect
@@ -3054,13 +3053,6 @@ def reshard(xs, out_shardings):
 reshard_p = core.Primitive('reshard')
 
 def _reshard_abstract_eval(aval, dst_sharding):
-  src_sharding = aval.sharding
-  if (not src_sharding.mesh.empty and
-      src_sharding.mesh.abstract_mesh != dst_sharding.mesh.abstract_mesh):
-    raise ValueError(
-        f'Mesh of the input {src_sharding.mesh.abstract_mesh} does not'
-        ' equal the mesh of the target sharding'
-        f' {dst_sharding.mesh.abstract_mesh} for shape {aval.str_short()}')
   return aval.update(sharding=dst_sharding)
 reshard_p.def_abstract_eval(_reshard_abstract_eval)
 
@@ -3099,8 +3091,7 @@ batching.skippable_batchers[reshard_p] = lambda _: ()
 # -------------------- auto and user mode -------------------------
 
 def _get_new_mesh(axes: str | tuple[str, ...] | None,
-                  axis_type: mesh_lib.AxisType, name: str, shardings=None,
-                  error_on_manual_to_auto_explicit=False):
+                  axis_type: mesh_lib.AxisType, name: str, shardings=None):
   cur_mesh = mesh_lib.get_abstract_mesh()
   flat_shardings, _ = tree_flatten(shardings)
   sharding_mesh = mesh_lib.empty_abstract_mesh
@@ -3135,8 +3126,7 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
   if not isinstance(axes, tuple):
     axes = (axes,)
   for a in axes:
-    if (error_on_manual_to_auto_explicit and
-        mesh_to_use._name_to_type[a] == mesh_lib.AxisType.Manual and
+    if (mesh_to_use._name_to_type[a] == mesh_lib.AxisType.Manual and
         axis_type in {mesh_lib.AxisType.Auto, mesh_lib.AxisType.Explicit}):
       raise NotImplementedError(
           'Going from `Manual` AxisType to `Auto` or `Explicit` AxisType is not'
@@ -3162,8 +3152,7 @@ def _auto_axes(fun, *, axes_, out_sharding):
     else:
       _out_sharding = out_sharding
     new_mesh, prev_mesh, axes = _get_new_mesh(
-        axes_, mesh_lib.AxisType.Auto, 'auto_axes', shardings=_out_sharding,
-        error_on_manual_to_auto_explicit=True)
+        axes_, mesh_lib.AxisType.Auto, 'auto_axes', shardings=_out_sharding)
     if set(prev_mesh.auto_axes) == set(axes):
       return fun(*args, **kwargs)
     with mesh_lib.use_abstract_mesh(new_mesh):
@@ -3173,13 +3162,6 @@ def _auto_axes(fun, *, axes_, out_sharding):
       out = fun(*args, **kwargs)
     return mesh_cast(out, _out_sharding)
   return decorator
-
-
-@contextlib.contextmanager
-def use_auto_axes(*axes):
-  new_mesh, _, _ = _get_new_mesh(axes, mesh_lib.AxisType.Auto, 'use_auto_axes')
-  with mesh_lib.use_abstract_mesh(new_mesh):
-    yield
 
 
 def explicit_axes(f=None, /, *, axes: str | tuple[str, ...] | None = None,
@@ -3198,9 +3180,8 @@ def _explicit_axes(fun, *, axes, in_sharding):
         raise TypeError("Missing required keyword argument: 'in_sharding'")
     else:
       _in_sharding = in_sharding
-    new_mesh, _, _ = _get_new_mesh(
-        axes, mesh_lib.AxisType.Explicit, 'explicit_axes',
-        error_on_manual_to_auto_explicit=True)
+    new_mesh, _, _ = _get_new_mesh(axes, mesh_lib.AxisType.Explicit,
+                                   'explicit_axes')
     with mesh_lib.use_abstract_mesh(new_mesh):
       args = mesh_cast(args, _in_sharding)
       out = fun(*args, **kwargs)
@@ -3208,14 +3189,6 @@ def _explicit_axes(fun, *, axes, in_sharding):
         core.get_aval(o).sharding.spec, mesh_lib.get_abstract_mesh()), out)
     return mesh_cast(out, out_specs)
   return decorator
-
-
-@contextlib.contextmanager
-def use_explicit_axes(*axes):
-  new_mesh, _, _ = _get_new_mesh(
-      axes, mesh_lib.AxisType.Explicit, 'use_explicit_axes')
-  with mesh_lib.use_abstract_mesh(new_mesh):
-    yield
 
 # -------------------- with_layout_constraint --------------------
 

@@ -53,8 +53,8 @@ from jax._src import sharding_impls
 from jax._src.sharding_impls import (
     AUTO, UNSPECIFIED, NamedSharding, GSPMDSharding,
     SingleDeviceSharding, parse_flatten_op_sharding)
-from jax._src.pjit import (pjit, mesh_cast, use_auto_axes, use_explicit_axes,
-                           _pjit_lower)
+from jax._src.mesh import use_abstract_mesh, AbstractDevice
+from jax._src.pjit import pjit, mesh_cast, _pjit_lower
 from jax._src.layout import Format, Layout as DLL
 from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
@@ -6042,6 +6042,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_full_user_to_full_auto(self, mesh):
+    am = mesh.abstract_mesh
     np_inp = np.arange(16.).reshape(8, 2)
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
@@ -6049,7 +6050,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       y = x * 2
-      with use_auto_axes('x', 'y'):
+      with use_abstract_mesh(
+          am.update_axis_types({'x': AxisType.Auto, 'y': AxisType.Auto})):
         y = mesh_cast(y, P(None, None))
         self.assertEqual(y.aval.sharding.spec, P(None, None))
         z = jnp.sin(y)
@@ -6070,6 +6072,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'),
                       axis_types=(mesh_lib.AxisType.Auto,) * 2)
   def test_full_auto_to_full_user(self, mesh):
+    am = mesh.abstract_mesh
     np_inp = np.arange(16.).reshape(8, 2)
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
@@ -6077,7 +6080,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       y = x * 2
-      with use_explicit_axes('x', 'y'):
+      with use_abstract_mesh(
+          am.update_axis_types({'x': AxisType.Explicit,
+                                'y': AxisType.Explicit})):
         y = mesh_cast(y, P(None, 'y'))
         self.assertEqual(y.aval.sharding.spec, P(None, 'y'))
         z = jnp.sin(y)
@@ -6101,7 +6106,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       y = x * 2
-      with use_auto_axes('x'):
+      with use_abstract_mesh(
+          mesh.abstract_mesh.update_axis_types({'x': AxisType.Auto})):
         y = mesh_cast(y, P(None, 'y'))
         self.assertEqual(y.aval.sharding.spec, P(None, 'y'))
         z = jnp.sin(y)
@@ -6128,7 +6134,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     @jax.jit
     def f(x, y):
       x = x * 2
-      with use_auto_axes('x'):
+      with use_abstract_mesh(
+          mesh.abstract_mesh.update_axis_types({'x': AxisType.Auto})):
         z = x @ y
       return z
 
@@ -6173,7 +6180,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      with use_auto_axes('x'):
+      with use_abstract_mesh(
+          mesh.abstract_mesh.update_axis_types({'x': AxisType.Auto})):
         x = mesh_cast(x, P(None, None))
         return x
 
@@ -6181,6 +6189,29 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(arr)
     self.assertArraysEqual(out, np_inp)
     self.assertTupleEqual(out.sharding.mesh.axis_types, (AxisType.Auto,))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_use_abstract_mesh_override(self, mesh):
+    with self.assertRaisesRegex(
+        ValueError, "use_abstract_mesh cannot change the size.*"):
+      new_am = jax.sharding.AbstractMesh((4,), ('x',))
+      with use_abstract_mesh(new_am):
+        _ = jnp.arange(8)
+
+    new_am = jax.sharding.AbstractMesh((2,), ('y',))
+    with use_abstract_mesh(new_am):
+      out = jnp.arange(8)
+      self.assertEqual(
+          out.sharding,
+          NamedSharding(mesh.update(axis_names=('y',), axis_types=(AxisType.Auto,)),
+                        P()))
+
+    new_am = jax.sharding.AbstractMesh((2,), ('x',), (AxisType.Explicit,))
+    with use_abstract_mesh(new_am):
+      out = jnp.arange(8)
+      self.assertEqual(out.sharding, NamedSharding(
+          mesh.update(axis_types=(AxisType.Explicit,)), P(None)))
+      self.assertArraysEqual(out, np.arange(8))
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_device_put_set_mesh(self, mesh):
@@ -6233,7 +6264,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @jax.jit
     def g(x, y):
-      with use_auto_axes('x'):
+      with use_abstract_mesh(
+          mesh.abstract_mesh.update_axis_types({'x': AxisType.Auto})):
         out = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', None))
       return out
 
@@ -6795,7 +6827,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(outs[1].sharding.spec, P('x', 'y'))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_reshard_error(self, mesh):
+  def test_reshard_api(self, mesh):
     np_inp = np.arange(16.).reshape(8, 2)
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
@@ -6840,12 +6872,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @jax.jit
     def h(x):
-      with use_auto_axes('x'):
+      with use_abstract_mesh(
+          mesh.abstract_mesh.update_axis_types({'x': AxisType.Auto})):
         return reshard(x, P('y', None))
-
-    with self.assertRaisesRegex(
-        ValueError, 'Mesh of the input.*does not equal.*target sharding'):
-      h(arr)
+    h(arr)  # doesn't crash
 
   def test_auto_axes_top_level(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'),
@@ -8594,6 +8624,84 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
     self.assertArraysEqual(out, arr * 2)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_abstract_mesh_changing_names_sizes(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 2)
+    abstract_mesh = mesh.abstract_mesh
+
+    @jax.jit
+    def f(x):
+      x = jnp.sin(x)
+      with jax.sharding.use_abstract_mesh(
+          abstract_mesh.update(axis_sizes=(4, 1), axis_names=('a', 'b'))):
+        x = reshard(x, P(('a', 'b'), None))
+        out = x * 2
+        self.assertEqual(out.aval.sharding.spec, P(('a', 'b'), None))
+        return out
+
+    arr = jax.device_put(np_inp, P('x', 'y'))
+    out = f(arr)
+    self.assertEqual(out.sharding.spec, P(('a', 'b'), None))
+    self.assertArraysEqual(out, jnp.sin(np_inp) * 2)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_abstract_mesh_changing_names_sizes_grad(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 2)
+    abstract_mesh = mesh.abstract_mesh
+
+    @jax.jit
+    def f(x):
+      x = jnp.sin(x)
+      with jax.sharding.use_abstract_mesh(
+          abstract_mesh.update(axis_sizes=(4, 1), axis_names=('a', 'b'))):
+        x = reshard(x, P(('a', 'b'), None))
+        out = x * 2
+        self.assertEqual(out.aval.sharding.spec, P(('a', 'b'), None))
+      return reshard(out, P('y', None))
+
+    arr = jax.device_put(np_inp, P('x', 'y'))
+    out = f(arr)
+    self.assertEqual(out.sharding.spec, P('y', None))
+
+    out = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(out.sharding, arr.sharding)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+  def test_abstract_mesh_changing_names_sizes_auto_mode(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 2)
+    abstract_mesh = mesh.abstract_mesh
+
+    @jax.jit
+    def f(x):
+      x = jnp.sin(x)
+      new_am = abstract_mesh.update(axis_sizes=(4, 1), axis_names=('a', 'b'))
+      with jax.sharding.use_abstract_mesh(new_am):
+        x = with_sharding_constraint(x, P(('a', 'b'), None))
+        out = x * 2
+        self.assertEqual(out.aval.sharding.mesh, new_am)
+        return out
+
+    arr = jax.device_put(np_inp, P('x', 'y'))
+    out = f(arr)
+    self.assertEqual(out.sharding.spec, P('a'))
+
+  @jtu.run_on_devices('cpu')
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_changing_abstract_device(self, mesh):
+    inp = jnp.arange(8)
+    abstract_mesh = mesh.abstract_mesh
+
+    @jax.jit
+    def f(x):
+      return x
+
+    with jtu.count_jit_tracing_cache_miss() as tracing_count:
+      f(inp)
+      with jax.sharding.use_abstract_mesh(abstract_mesh.update(
+          abstract_device=AbstractDevice('tpu', None))):  # induces a cache miss
+        f(inp)
+    self.assertEqual(tracing_count(), 2)  # twice for f
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
@@ -8791,7 +8899,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     xshape = (2, 5, 6)
     x = jnp.arange(math.prod(xshape)).reshape(xshape)
     with self.assertRaisesRegex(
-        ValueError, "Received incompatible devices for jitted computation.*"):
+        ValueError, ".*cannot change the size of the mesh.*"):
       f(x)
 
   @parameterized.named_parameters(

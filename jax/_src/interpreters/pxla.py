@@ -2220,8 +2220,9 @@ def _get_context_mesh(context_mesh: Mesh) -> Mesh:
     return context_mesh
   if cur_mesh == context_mesh.abstract_mesh:
     return context_mesh
-  return Mesh(context_mesh.devices, context_mesh.axis_names,
-              axis_types=cur_mesh.axis_types)
+  assert context_mesh.size == cur_mesh.size
+  return Mesh(context_mesh.devices.reshape(cur_mesh.axis_sizes),
+              cur_mesh.axis_names, cur_mesh.axis_types)
 
 
 @profiler.annotate_function

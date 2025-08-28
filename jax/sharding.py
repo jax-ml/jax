@@ -30,6 +30,7 @@ from jax._src.mesh import (
     AbstractMesh as AbstractMesh,
     AxisType as AxisType,
     get_abstract_mesh as get_abstract_mesh,
+    use_abstract_mesh as use_abstract_mesh,
 )
 
 from jax._src.pjit import (
