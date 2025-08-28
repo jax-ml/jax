@@ -826,10 +826,9 @@ if jaxlib.version >= (0, 7, 2):
       ctx: DerivationContext,
       op: mgpu.TmemLayoutCastOp,
   ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
-    del ctx
     operand = OperandOrResult(op, VariableType.OPERAND, 0)
+    variable = ctx.producer_ref(operand)
     result = OperandOrResult(op, VariableType.RESULT, 0)
-    variable = eqns.Variable(operand)
     out_layout = eqns.TMEMLayout(_tmem_layout_from_layout_attr(op.new_layout))
     return (
         eqns.EquationSystem(assignments={variable: out_layout}),
@@ -1172,7 +1171,12 @@ def infer_layout(module: ir.Module):
   for op in module.body:
     inference_utils.traverse_op(op, gather_equations)
 
-  assert not isinstance(global_equation_system, eqns.Unsatisfiable)
+  if isinstance(global_equation_system, eqns.Unsatisfiable):
+    raise ValueError(
+        "Failed to infer a possible set of layouts. This should only happen if "
+        "user-provided layout casts are unsatisfiable."
+    )
+
   propagation_hints, constraints = derive_hints_and_constraints(ctx.operand_and_results_for_variable)
   hints = reduce_hints(hints + propagation_hints, global_equation_system.assignments)  # pytype: disable=attribute-error
   global_equation_system &= eqns.EquationSystem(constraints=constraints)

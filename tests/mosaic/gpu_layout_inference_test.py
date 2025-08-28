@@ -849,6 +849,22 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInTmemLayouts(op, [layout])
     self.checkOutTmemLayouts(op, [layout])
 
+  def test_cant_relayout_tmem(self):
+    f32 = ir.F32Type.get()
+    ref_ty = ir.MemRefType.get((128, 128), f32, memory_space=mgpu.utils.tmem())
+
+    with ir.InsertionPoint(self.module.body):
+      ref = llvm.mlir_undef(ref_ty)
+      layout = tcgen05.tmem_default_layout(packing=1)
+      ref = mgpu.dialect.tmem_layout_cast(ref, layouts.to_layout_attr(layout))
+      layout = tcgen05.tmem_half_lane_layout(columns=128, packing=1)
+      mgpu.dialect.tmem_layout_cast(ref, layouts.to_layout_attr(layout))
+
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts."
+    ):
+      mgpu.infer_layout(self.module)
+
   def test_infer_tmem_alloc_layout_correctly(self):
     f32 = ir.F32Type.get()
     i32 = ir.IntegerType.get_signless(32)
