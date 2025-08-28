@@ -1862,7 +1862,7 @@ def composite(
   @functools.wraps(decomposition)
   def _decorator(*args, **kwargs):
     debug_info = api_util.debug_info("composite", decomposition,
-                                     args, kwargs)
+                                     args, {})
     flat_args, in_tree = tree_util.tree_flatten(args)
     in_avals = tuple(core.get_aval(x) for x in flat_args)
     if any(isinstance(v, core.Tracer) for v in kwargs.values()):

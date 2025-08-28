@@ -598,14 +598,14 @@ def debug_info(
     *,
     static_argnums: Sequence[int] = (),
     static_argnames: Sequence[str] = (),
-    result_paths_thunk: Callable[[], tuple[str, ...]] | None = None,
+    result_paths_thunk: Callable[[], tuple[str, ...]] | core.InitialResultPaths = core.initial_result_paths,
     # TODO(necula): check if we really need this, e.g., to speed up tracing?
     sourceinfo: str | None = None,
     signature: inspect.Signature | None = None,
 ) -> core.DebugInfo:
-  """Constructd core.DebugInfo for a function given example args and kwargs.
+  """Construct core.DebugInfo for a function given example args and kwargs.
 
-  `args` and `kwargs` are example positional and keyword arguments, users with
+  `args` and `kwargs` are example positional and keyword arguments, used with
   `inspect.Signature` to get the names of arguments. The arguments that are
   considered static for tracing purposes should be included, and designated
   using `static_argnums` and `static_argnames`.
@@ -730,7 +730,8 @@ def _check_no_aliased_ref_args(dbg: core.DebugInfo, maybe_avals, args):
         "only one reference to a mutable array may be passed as an argument "
         f"to a function, but when tracing {dbg.func_src_info} for {dbg.traced_for} "
         f"the mutable array reference of type {a.str_short()} appeared at both "
-        f"{dbg.arg_names[dup_idx]} and {dbg.arg_names[i]}."
+        f"{dbg.arg_names[dup_idx] if dbg.arg_names is not None else 'unknown'} "
+        f"and {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'}."
         if dbg else
         f"at both flat index {dup_idx} and flat index {i}") from None
 

@@ -757,7 +757,8 @@ def jaxpr_to_checkify_jaxpr(
   checkify_jaxpr_partial = functools.partial(checkify_jaxpr_flat, jaxpr.jaxpr,
                                              jaxpr.consts, enabled_errors,
                                              err_tree)
-  fun = lu.wrap_init(checkify_jaxpr_partial, debug_info=jaxpr.jaxpr.debug_info)
+  fun = lu.wrap_init(checkify_jaxpr_partial,
+                     debug_info=jaxpr.jaxpr.debug_info.with_unknown_names())
   fun, metadata = _flatten_and_get_error_metadata_thunk(fun)
 
   new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, flat_err_and_in_vals)
@@ -844,7 +845,9 @@ def checkify_while_body_jaxpr(
     # This checks if the next cond application will error
     lax.dce_sink(cond_f(*c_consts, *out))
     return out
-  new_body_f_ = lu.wrap_init(new_body_f, debug_info=body_jaxpr.jaxpr.debug_info)
+  new_body_f_ = lu.wrap_init(
+      new_body_f,
+      debug_info=body_jaxpr.jaxpr.debug_info.with_unknown_names())
   c_consts_avals = cond_jaxpr.in_avals[:c_consts_num]
   jaxpr, _, () = pe.trace_to_jaxpr_dynamic(
       new_body_f_, [*c_consts_avals, *body_jaxpr.in_avals])
@@ -1234,7 +1237,7 @@ def checkify(f: Callable[..., Out],
     # stage:
     debug = api_util.debug_info("checkify", f, args, kwargs)
     fun_, out_tree = api_util.flatten_fun(
-        lu.wrap_init(closed_f, debug_info=debug), in_tree)
+        lu.wrap_init(closed_f, debug_info=debug.with_unknown_names()), in_tree)
     jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(fun_, ())
     jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr_))
     # checkify:

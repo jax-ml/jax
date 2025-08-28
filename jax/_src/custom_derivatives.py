@@ -1474,7 +1474,8 @@ def linear_call(fun: Callable,
 
   @pe._memoize
   def transpose_thunk():
-    t_jaxpr, t_consts = _initial_style_jaxpr(t, (*res_avals, *out_avals))
+    t_jaxpr, t_consts = _initial_style_jaxpr(t.with_unknown_names(),
+                                             (*res_avals, *out_avals))
     if t_out_tree() != lin_tree:
       raise TypeError(
           'transpose output pytree structure must match that of linear inputs, '
@@ -1646,7 +1647,6 @@ def optimize_remat_of_custom_vjp_fwd(
   def wrapped_fwd(*args, **kwargs) -> tuple[ReturnValue, Any]:
     # TODO(dfm): This initial logic is duplicated from custom_vjp.__call__
     # above and it would be good to consolidate it.
-    fwd_name = debug_fwd.func_name if debug_fwd else str(fwd)
     # Note: we use `fun` instead of `fwd` here for consistency with
     # custom_vjp.__call__ above.
     args = resolve_kwargs(fun, args, kwargs)
@@ -1670,7 +1670,8 @@ def optimize_remat_of_custom_vjp_fwd(
     flat_fwd = _fix_fwd_args(flat_fwd)
 
     in_avals = [core.get_aval(x) for x in args_flat]
-    fwd_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fwd, in_avals)
+    fwd_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fwd.with_unknown_names(),
+                                                     in_avals)
     fwd_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(fwd_jaxpr))
     prim_tree, res_tree, fwds = out_trees()
     num_res_out = res_tree.num_leaves - sum(f is not None for f in fwds)

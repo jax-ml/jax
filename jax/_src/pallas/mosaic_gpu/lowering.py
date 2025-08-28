@@ -814,7 +814,7 @@ def lower_pipelined_jaxpr_to_module(
 
   with grid_mapping.trace_env():
     new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(pipeline_fn, debug_info=jaxpr.debug_info),
+        lu.wrap_init(pipeline_fn, debug_info=jaxpr.debug_info.with_unknown_names()),
         [
             gpu_core.GMEM(
                 bm.array_shape_dtype.shape, bm.array_shape_dtype.dtype

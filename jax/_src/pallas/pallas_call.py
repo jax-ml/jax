@@ -248,7 +248,7 @@ def _batch_block_mapping(
 
   block_mapping_flat_fn, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(_block_map_function,
-                   debug_info=block_mapping.index_map_jaxpr.jaxpr.debug_info),
+                   debug_info=block_mapping.index_map_jaxpr.jaxpr.debug_info.with_unknown_names()),
       tree_util.tree_structure(idx_avals))
   with grid_mapping.trace_env():
     block_mapping_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(

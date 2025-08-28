@@ -1401,8 +1401,9 @@ def _batch_out_specs(spmd_name, explicit_mesh_axis, dims, out_specs):
 
 # Autodiff
 
-def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_specs,
+def _shard_map_jvp(trace, shard_map_p, f: lu.WrappedFun, tracers, mesh, in_specs,
                    out_specs_thunk, check_vma, manual_axes):
+  f = f.with_unknown_names()
   primals, tangents = unzip2(map(trace.to_primal_tangent_pair, tracers))
   which_nz = [     type(t) is not ad.Zero           for t in tangents]
   tangents = [t if type(t) is not ad.Zero else None for t in tangents]
@@ -1502,6 +1503,7 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
                          manual_axes):
   primals, tangents = unzip2(map(trace.to_primal_tangent_pair, tracers))
   nzs_in = tuple(type(t) is not ad.Zero for t in tangents)
+  f = f.with_unknown_names()
   f_primal, linearize_outs_thunk = ad.linearize_subtrace(f, trace.tag, nzs_in, f.debug_info)
   f_primal = _promote_scalar_residuals_lin(f_primal, linearize_outs_thunk)
   all_names = _all_newly_manual_mesh_names(mesh, manual_axes)

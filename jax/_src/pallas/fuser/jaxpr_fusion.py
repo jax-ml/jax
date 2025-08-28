@@ -79,6 +79,7 @@ def _construct_fusion_jaxpr(
       outvars=flat_outvars,
       constvars=jaxpr.constvars + jaxpr.invars,
       invars=flat_invars,
+      debug_info=jaxpr.debug_info.with_unknown_names()
   )
   new_jaxpr, used_consts, used_invars = pe.dce_jaxpr_consts(
       new_jaxpr_no_dce,
@@ -273,7 +274,8 @@ def fuse_jaxpr(
           eqns=(jaxpr.eqns[:fusion_eqn_index]
                 + jaxpr.eqns[fusion_eqn_index + 1 :]),
           constvars=jaxpr.constvars + jaxpr.invars,
-          invars=fusion_eqn.outvars),
+          invars=fusion_eqn.outvars,
+          debug_info=jaxpr.debug_info.with_unknown_names()),
       in_unknowns=[True] * len(fusion_eqn.outvars),
       in_inst=[True] * len(fusion_eqn.outvars),
       ensure_out_unknowns=False,
