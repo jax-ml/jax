@@ -92,8 +92,7 @@ del GeneralMemorySpace
 
 import typing as _typing  # pylint: disable=g-import-not-at-top
 if _typing.TYPE_CHECKING:
-  TPUCompilerParams = CompilerParams
-  TPUMemorySpace = MemorySpace
+  pass
 else:
   from jax._src.deprecations import (
       deprecation_getattr as _deprecation_getattr,
