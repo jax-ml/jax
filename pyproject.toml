@@ -47,7 +47,6 @@ module = [
     "pygments.*",
     "pytest.*",
     "rich.*",
-    "scipy.*",
     "setuptools.*",
     "xprof.convert.*",
     "tensorflow.*",
