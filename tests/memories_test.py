@@ -760,8 +760,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(cpu_array.sharding, cpu_sharding)
 
   def test_compute_no_inputs_host_replicated(self):
-    if xb.backend_xla_version() is not None and xb.backend_xla_version() < 3:
-      self.skipTest("This test requires an xla_version >= 3.")
     mesh = jtu.create_mesh((4,), ('data'))
 
     tpu_sharding = NamedSharding(mesh, P('data'))
