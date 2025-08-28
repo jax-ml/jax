@@ -28,6 +28,7 @@ from absl.testing import absltest, parameterized
 import jax
 from jax._src import config
 from jax._src import dtypes
+from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
@@ -4472,10 +4473,13 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       ("non-exact-packed", (128, 120), jnp.bfloat16, 2, False, False, 64),
       ("collective-exact", (128, 64), jnp.bfloat16, 1, True, True, 64),
   )
-  @unittest.skip("Layout inference fails for trivial load/store kernels.")
   def test_tmem_alloc_dealloc(
       self, shape, dtype, packing, exact, collective, expected_allocated_columns
   ):
+    # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.2.
+    if jaxlib.version < (0, 7, 2):
+      self.skipTest("Require JAX version 0.7.2 or higher.")
+
     tmem_type = ir.MemRefType.get(
         shape,
         utils.dtype_to_ir_type(dtype),
@@ -4496,6 +4500,11 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
           exact=exact,
           packing=packing,
       )
+
+      # Layout cast is required to guide layout inference.
+      # TODO(allanrenucci): Should we infer default TMEM layout?
+      layout = mgpu_layouts.to_layout_attr(tcgen05.tmem_default_layout(packing))
+      tmem_ref = mgpu_dialect.tmem_layout_cast(tmem_ref, layout)
 
       mgpu_dialect.tmem_relinquish_alloc_permit(collective=collective)
       mgpu_dialect.tmem_dealloc(tmem_ref)
