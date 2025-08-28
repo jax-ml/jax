@@ -3337,11 +3337,6 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   return jaxpr_subcomp(lowering_context, jaxpr.jaxpr, *args)
 
 
-@register_lowering_rule(pjit.mesh_cast_p)
-def _mesh_cast_lowering_rule(ctx: LoweringRuleContext, x, dst_sharding):
-  return x
-
-
 @register_lowering_rule(custom_derivatives.custom_jvp_call_p)
 def _custom_jvp_call_lowering_rule(
     ctx: LoweringRuleContext,

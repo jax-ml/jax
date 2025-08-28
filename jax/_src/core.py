@@ -2039,8 +2039,8 @@ def canonicalize_value(val):
   # Manual or Auto to allow casting.
   if cur_mesh._any_axis_manual and cur_mesh._are_all_axes_auto_or_manual:
     if aval.sharding.mesh.are_all_axes_auto:
-      from jax._src.pjit import mesh_cast  # pytype: disable=import-error
-      return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
+      from jax._src.pjit import reshard  # pytype: disable=import-error
+      return reshard(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
     elif aval.sharding.mesh._any_axis_explicit:
       raise NotImplementedError(
           "Closing over inputs to shard_map where the input is sharded on"
