@@ -4128,6 +4128,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     b, = e.outvars
     self.assertEqual(b.aval, core.ShapedArray((3, 4), FooTy()))
 
+  @unittest.skip('removed split_transpose')
   def test_scan_jaxpr_split_transpose(self):
     def stage(x, w):
       x = x @ w

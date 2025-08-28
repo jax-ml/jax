@@ -2778,10 +2778,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     # TODO(mattjj): should we re-enable this check? The constants are now
     # inlined in the Jaxprs, not easy to find them.
-    # Need to spelunk into vjp_fun. This is fragile, and if it causes problems
-    # just skip this test and make an issue for mattjj.
+    # ==> Yes, we don't want to change autodiff const behavior. We must make
+    # these tessts pass under use_simplified_jaxpr_constants.
     if not config.use_simplified_jaxpr_constants.value:
-      *_, ext_res = vjp_fun.args[0].args[0]
+      if config.vjp3.value:
+        ext_res, = vjp_fun.args_res
+      else:
+        *_, ext_res = vjp_fun.args[0].args[0]
       self.assertIs(ext_res, x)
 
     if remat is not None:
@@ -2791,7 +2794,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     x = rng.randn(32, 2, 32).astype('float32')  # numpy.ndarray, not Array
     _, vjp_fun = jax.vjp(cumprod, x)
     if not config.use_simplified_jaxpr_constants.value:
-      *_, ext_res = vjp_fun.args[0].args[0]
+      if config.vjp3.value:
+        ext_res, *_ = vjp_fun.opaque_residuals
+      else:
+        *_, ext_res = vjp_fun.args[0].args[0]
       self.assertIsInstance(ext_res, jax.Array)
 
   def test_scan_vmap_collectives(self):

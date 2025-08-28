@@ -596,6 +596,30 @@ def addupdate_transpose(cts_in, ref, x, *idx, **params):
   return [None, g] + [None] * len(idx)
 ad.primitive_transposes[addupdate_p] = addupdate_transpose
 
+
+def _get_transpose_fancy(g, ref_, *idx, **params):
+  if idx and type(g) is not ad_util.Zero:
+    addupdate_p.bind(ref_.ref, g, *idx, **params)
+  else:
+    ref_.accum(g)
+ad.fancy_transposes[get_p] = _get_transpose_fancy
+
+def _swap_transpose_fancy(g, ref_, x, *idx, **params):
+  if ref_.ref is None and type(g) is ad_util.Zero:
+    return
+  elif ref_.ref is None:
+    swap_p.bind(ref_.inst().ref, ad_util.instantiate(g), *idx, **params)
+  else:
+    x_bar = swap_p.bind(ref_.inst().ref, ad_util.instantiate(g), *idx, **params)
+    x.accum(x_bar)
+ad.fancy_transposes[swap_p] = _swap_transpose_fancy
+
+def addupdate_transpose_fancy(cts_in, ref_, x, *idx, **params):
+  if ref_.ref is not None:
+    x_bar = get_p.bind(ref_.ref, *idx, **params)
+    x.accum(x_bar)
+ad.fancy_transposes[addupdate_p] = addupdate_transpose_fancy
+
 ## get/swap/addupdate partial_eval_custom rules
 
 def _array_ref_partial_eval_custom(saveable, unks_in, inst_in, eqn):
