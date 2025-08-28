@@ -174,8 +174,7 @@ def do_matmul(a_gmem,
                 b_gmem.at[slice_k, slice_n],
                 b_smem.at[slot],
                 b_tma_barrier.at[slot],
-                # TODO: partitioned_axis doesn't account for squeezed dims so we have 2 instead of 1 here.
-                partitioned_axis=2 if collective else None,
+                partitioned_axis=1 if collective else None,
                 collective_axes=collective_axis,
             )
           lax.fori_loop(0, k_iters, _loop_body, None)

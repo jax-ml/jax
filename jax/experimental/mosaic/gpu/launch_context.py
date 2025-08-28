@@ -788,6 +788,9 @@ class LaunchContext:
       if gmem_ref is dst_ref:
         raise ValueError("Only GMEM -> SMEM copies can be collective")
     if partitioned is not None:
+      # Increment partitioned by the number of preceding squeezed dimensions.
+      partitioned = np.where(
+          np.cumsum(~np.array(is_squeezed)) == partitioned+1)[0][0]
       # Partitioning happens on the logical slice we extract from GMEM, so we do
       # it before we apply transforms.
       if collective is None:  # This implies non-gather TMA already.

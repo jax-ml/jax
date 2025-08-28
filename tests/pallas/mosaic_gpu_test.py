@@ -3947,18 +3947,25 @@ class PallasCallSm100ATest(PallasSm100ATest):
     expected = x @ y
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
-  @parameterized.parameters((True,), (False,))
-  def test_copy_gmem_to_smem_partitioned(self, warp_level):
+  @parameterized.product(
+      warp_level=(True, False),
+      squeezed_index=(True, False),
+  )
+  def test_copy_gmem_to_smem_partitioned(self, warp_level, squeezed_index):
     self.skip_if_wg_semantics()
     block_size = (128, 128)
     partitioned_block_size = (block_size[0] // 2, block_size[1])
     a = jax.random.uniform(
         jax.random.key(0), shape=block_size, dtype=jnp.float32)
+    if squeezed_index:
+      a = a.reshape(1, *block_size)
     b = jax.random.uniform(
         jax.random.key(1), shape=block_size, dtype=jnp.float32)
     def kernel(a_gmem, b_gmem, out_gmem,
               a_smem, b_smem, out_smem,
               a_tma_barrier, b_tma_barrier, cluster_barrier):
+      if squeezed_index:
+        a_gmem = a_gmem.at[0]
       cluster_idx = lax.axis_index("x")
       out_slice = pl.ds(cluster_idx * partitioned_block_size[0],
                         partitioned_block_size[0])
@@ -4024,6 +4031,8 @@ class PallasCallSm100ATest(PallasSm100ATest):
         ),
     )
     result = f(a, b)
+    if squeezed_index:
+      a = a[0]
     np.testing.assert_array_equal(result, a + b)
 
   def test_arrive_wait_on_tc_barrier(self):
