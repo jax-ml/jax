@@ -365,7 +365,7 @@ def _flatten_jvp(f, store, primal_name, jvp_name, in_tree, maybe_out_type, *args
   tangent_avals_out = [core.get_aval(t).strip_weak_type()
                        if type(t) is not SymbolicZero else t.aval.strip_weak_type()
                        for t in tangents_out]
-  if expected_tangent_avals_out != tangent_avals_out:
+  if not all(map(core.typematch, expected_tangent_avals_out, tangent_avals_out)):
     if len(expected_tangent_avals_out) == 1:
       (av_p,), (av_et,), (av_t,) = primal_avals_out, expected_tangent_avals_out, tangent_avals_out
       msg = ("Custom JVP rule must produce primal and tangent outputs with "
