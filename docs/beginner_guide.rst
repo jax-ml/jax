@@ -14,14 +14,14 @@ If you're starting to explore JAX, you might also find the following resources h
 - :doc:`notebooks/Common_Gotchas_in_JAX` lists some of JAX's sharp corners.
 - :doc:`faq` answers some frequent JAX questions.
 
-Tutorials
----------
-If you're ready to explore JAX more deeply, the JAX tutorials go into much more detail:
+JAX 101
+-------
+If you're ready to explore JAX more deeply, the JAX 101 tutorials go into much more detail:
 
 .. toctree::
    :maxdepth: 2
 
-   tutorials
+   jax-101
 
 If you prefer a video introduction here is one from JAX contributor Jake VanderPlas:
 
