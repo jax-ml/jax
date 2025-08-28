@@ -1012,6 +1012,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "partial_eval",
     srcs = ["interpreters/partial_eval.py"],
+    visibility = ["//jax:internal"] + jax_visibility("partial_eval"),
     deps = [
         ":ad_util",
         ":api_util",
