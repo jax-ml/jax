@@ -1841,6 +1841,17 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "stateful_rng_test",
+    srcs = ["stateful_rng_test.py"],
+    deps = [
+        "//jax/experimental:stateful_rng",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "for_loop_test",
     srcs = ["for_loop_test.py"],
     shard_count = {
