@@ -84,6 +84,7 @@ _py_deps = {
     "absl-all": ["@pypi//absl_py"],
     "absl/logging": ["@pypi//absl_py"],
     "absl/testing": ["@pypi//absl_py"],
+    "absl/testing:flagsaver": ["@pypi//absl_py"],
     "absl/flags": ["@pypi//absl_py"],
     "cloudpickle": get_optional_dep("@pypi//cloudpickle"),
     "epath": get_optional_dep("@pypi//etils"),  # etils.epath

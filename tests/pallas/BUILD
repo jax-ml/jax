@@ -143,6 +143,7 @@ jax_multiplatform_test(
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
     ] + py_deps([
+        "absl/testing:flagsaver",
         "absl/testing",
         "hypothesis",
         "numpy",
@@ -185,6 +186,7 @@ jax_multiplatform_test(
         "//jax:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax:pallas_tpu",
     ] + py_deps([
+        "absl/testing:flagsaver",
         "absl/testing",
         "hypothesis",
         "numpy",

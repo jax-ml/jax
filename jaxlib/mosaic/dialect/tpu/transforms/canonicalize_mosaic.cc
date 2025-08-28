@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/check.h"
+#include "absl/strings/str_cat.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Sequence.h"
@@ -381,22 +382,22 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
         "dim and rhs must be vector-like [B, K] or [B, 1, K].");
   }
 
-  auto extsi_sitofp = [&builder, &op](TypedValue<VectorType> element) {
+  auto extsi_sitofp = [&builder, &op](
+                          TypedValue<VectorType> element,
+                          std::optional<FloatType> maybe_dest = std::nullopt) {
+    FloatType dest = maybe_dest.value_or(builder.getF32Type());
     const VectorType ty = element.getType();
+    uint source_width = ty.getElementType().getIntOrFloatBitWidth();
     auto shape = ty.getShape();
     CHECK(ty.getElementType().isInteger());
-    TypedValue<VectorType> ext_ele;
-    if (ty.getElementType().getIntOrFloatBitWidth() == 32) {
-      ext_ele = element;
-    } else {
-      ext_ele = cast<TypedValue<VectorType>>(builder.create<arith::ExtSIOp>(
-          VectorType::get(shape, builder.getI32Type()), element));
-    }
+    CHECK(source_width <= dest.getWidth())
+        << "Unexpected narrowing int " << source_width << " -> float "
+        << dest.getWidth() << " conversion";
     // TODO(mvoz): Go to bf16 when hardware supported, requires adding support
     // for 16 bitwidth in extsiop in infer/apply.
     auto ele_as_fp = builder.create<arith::SIToFPOp>(
-        op.getLoc(), VectorType::get(shape, builder.getF32Type()), ext_ele);
-    return ele_as_fp;
+        op.getLoc(), VectorType::get(shape, dest), element);
+    return cast<TypedValue<VectorType>>(ele_as_fp);
   };
 
   if (lhs_element_type != rhs_element_type) {
@@ -420,11 +421,67 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
       auto float_lhs = extsi_sitofp(lhs);
       op->setOperand(0, float_lhs);
       lhs = cast<TypedValue<VectorType>>(float_lhs);
+      lhs_element_type = builder.getF32Type();
     }
     if (rhs_element_type.isInteger()) {
       auto float_rhs = extsi_sitofp(rhs);
       op->setOperand(1, float_rhs);
       rhs = cast<TypedValue<VectorType>>(float_rhs);
+      rhs_element_type = builder.getF32Type();
+    }
+  }
+  if (ctx.hardware_generation == 7) {
+    auto require_compatibility_mode = [&]() -> LogicalResult {
+      if (!ctx.compatibility_mode) {
+        return op->emitOpError(
+            "Automatic int->float conversion for matmuls requires "
+            "compatibility mode.");
+      }
+      return success();
+    };
+    auto get_dest_type = [&](::mlir::Type element_type,
+                             bool allow_i32 = false) -> FailureOr<FloatType> {
+      switch (element_type.getIntOrFloatBitWidth()) {
+        case 4:
+          return static_cast<FloatType>(
+              Float8E4M3FNType::get(builder.getContext()));
+        case 8:
+          return builder.getBF16Type();
+        case 32:
+          if (allow_i32) {
+            return builder.getF32Type();
+          }
+          return op->emitOpError(
+              "i32 is not supported as a matmul input, only as an accumulator");
+        default:
+          return op->emitOpError(
+              absl::StrCat("Integer inputs with bitwidth ",
+                           element_type.getIntOrFloatBitWidth(),
+                           " are not supported as matmul/accumulator inputs."));
+      }
+    };
+    if (lhs_element_type.isInteger()) {
+      RETURN_IF_FAILED(require_compatibility_mode());
+      FAILUREOR_ASSIGN_OR_RETURN(FloatType dest_type,
+                                 get_dest_type(lhs_element_type));
+      lhs = extsi_sitofp(lhs, dest_type);
+      op->setOperand(0, lhs);
+    }
+    if (rhs_element_type.isInteger()) {
+      RETURN_IF_FAILED(require_compatibility_mode());
+      FAILUREOR_ASSIGN_OR_RETURN(FloatType dest_type,
+                                 get_dest_type(rhs_element_type));
+      rhs = extsi_sitofp(rhs, dest_type);
+      op->setOperand(1, rhs);
+    }
+    if (acc_element_type.isInteger()) {
+      RETURN_IF_FAILED(require_compatibility_mode());
+      FAILUREOR_ASSIGN_OR_RETURN(
+          FloatType dest_type,
+          get_dest_type(acc_element_type, /* allow_i32=*/true));
+      acc = extsi_sitofp(acc, dest_type);
+      op->setOperand(2, acc);
+      acc_element_type = acc.getType().getElementType();
     }
   }
   // TODO(mvoz): Add more invariants.
@@ -574,6 +631,14 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
     }
   } else {
     res = dot_dim_matmul(lhs, rhs, acc);
+  }
+
+  // If the matmul was converted from int -> float, convert back to s32.
+  if (acc_element_type.isFloat() && old_acc_ty.getElementType().isInteger()) {
+    res = builder.create<arith::FPToSIOp>(
+        op.getLoc(),
+        VectorType::get(acc.getType().getShape(), old_acc_ty.getElementType()),
+        res);
   }
 
   // Reshape the result to the old one as dims might have been collapsed.

@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from collections.abc import Sequence
 import functools
 import itertools
 import math
 import sys
 from typing import Any
-from collections.abc import Callable
 import unittest
 
 from absl.testing import absltest
+from absl.testing import flagsaver
 from absl.testing import parameterized
 import jax
 from jax import api_util
@@ -2061,6 +2062,90 @@ class OpsTest(PallasBaseTest):
         atol=0.05,
         rtol=0.05,
     )
+
+  @parameterized.product(
+      dtype=[jnp.int8, jnp.int4],
+      trans_x=[False, True],
+      trans_y=[False, True],
+  )
+  def test_itof_dot_canonicalization(self, dtype, trans_x, trans_y):
+    self.skip_if_mosaic_gpu()
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Not supported on this hardware")
+    if jtu.get_tpu_version() != 7:
+      self.skipTest("The canonicalization pass being tested is on v7 only.")
+    if self.INTERPRET and dtype == jnp.int4:
+      self.skipTest("Interpret mode does not support int4")
+    lhs_shape = rhs_shape = out_shape = (256, 256)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.int32),
+    )
+    def dot(x_ref, y_ref, o_ref):
+      x = x_ref[:, :]
+      y = y_ref[:, :]
+      o_ref[:, :] = pl.dot(x, y, trans_x, trans_y).astype(o_ref.dtype)
+
+    # random.randint does not support int4, so create as int8.
+    x = random.randint(
+        key=random.key(0),
+        shape=lhs_shape,
+        minval=jnp.iinfo(dtype).min,
+        maxval=jnp.iinfo(dtype).max,
+        dtype=jnp.int8,
+    )
+    y = random.randint(
+        key=random.key(1),
+        shape=rhs_shape,
+        minval=jnp.iinfo(dtype).min,
+        maxval=jnp.iinfo(dtype).max,
+        dtype=jnp.int8,
+    )
+    if dtype == jnp.int4:
+      out = dot(x.astype(jnp.int4), y.astype(jnp.int4))
+    else:
+      out = dot(x, y)
+    # TODO: b/438321086 - investigate and fix jnp.dot with int4.
+    # For now, use int8 instead.
+    expected = jnp.dot(
+        x.T if trans_x else x,
+        y.T if trans_y else y,
+        preferred_element_type=jnp.int32,
+    ).astype(jnp.int32)
+    np.testing.assert_allclose(
+        out.astype(jnp.int32),
+        expected.astype(jnp.int32),
+        # s4->f8 introduces more error than s8->bf16.
+        atol=3 if dtype == jnp.int4 else 0,
+        rtol=0.05 if dtype == jnp.int4 else 0,
+    )
+
+  @parameterized.parameters(jnp.int8, jnp.int4)
+  # Test that when compatibility mode is disabled,
+  # the dot is not converted to floating point matmul and fails.
+  def test_itof_dot_canonicalization_fails_without_compat_mode(self, dtype):
+    self.skip_if_mosaic_gpu()
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Not supported on this hardware")
+    if jtu.get_tpu_version() != 7 or self.INTERPRET:
+      self.skipTest("The canonicalization pass being tested is on v7 only.")
+    lhs_shape = rhs_shape = out_shape = (256, 256)
+    with flagsaver.flagsaver(xla_mosaic_compat_mode=False):
+
+      @functools.partial(
+          self.pallas_call,
+          out_shape=jax.ShapeDtypeStruct(out_shape, jnp.int32),
+      )
+      def dot(x_ref, y_ref, o_ref):
+        x = x_ref[:, :]
+        y = y_ref[:, :]
+        o_ref[:, :] = pl.dot(x, y, False, False).astype(o_ref.dtype)
+
+      x = jnp.full(lhs_shape, 1, dtype=dtype)
+      y = jnp.full(rhs_shape, 1, dtype=dtype)
+      with self.assertRaises(Exception):
+        dot(x, y)
 
   def test_strided_load(self):
     self.skip_if_mosaic_gpu()
