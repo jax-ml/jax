@@ -4967,7 +4967,7 @@ convert_element_type_p.def_abstract_eval(
             _convert_element_type_weak_type_rule,
             _convert_element_type_sharding_rule,
             partial(core.standard_vma_rule, convert_element_type_p.name),
-            None, None))
+            None))
 ad.defjvp2(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 
@@ -6680,7 +6680,7 @@ def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions,
         sharding=sharding)
     new_vma = core.standard_vma_rule('broadcast_in_dim', x)
     return core.ShapedArray(shape, x.dtype, x.weak_type, sharding=new_sharding,
-                            vma=new_vma, memory_space=x.memory_space)
+                            vma=new_vma)
   # If any BInts in shape, or Tracers in dyn_shape, produce a DShapedArray
   # (even if x is a ShapedArray)
   # TODO(mattjj): unify DShapedArray with ShapedArray, and remove this code

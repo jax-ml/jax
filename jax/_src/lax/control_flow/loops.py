@@ -540,10 +540,6 @@ def _empty_array(prefix, length_spec, aval):
   # empty = lax.empty((*prefix, *aval.shape), aval.dtype, out_sharding=sharding)
   # return core.pvary(empty, tuple(aval.vma))
   empty = core.pvary(lax.empty2(aval.dtype), tuple(aval.vma))
-  # TODO(yashkatariya): Make this more general by passing aval.memory_space to
-  # lax.broadcast and then remove this hack?
-  if aval.memory_space != core.typeof(empty).memory_space:
-    empty = api.device_put(empty, aval.memory_space)
   return lax.broadcast(empty, (*prefix, *aval.shape), out_sharding=sharding)
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
