@@ -239,7 +239,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     result_jax = func_jax(*args)  # JAX
     result_tf = None
 
-    func_tf = jax2tf.convert(func_jax, enable_xla=enable_xla)
+    func_tf = jax2tf.convert(func_jax)
 
     unexpected_successes: list[str] = []
     # Run the "compiled" mode first, it is most important

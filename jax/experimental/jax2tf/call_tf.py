@@ -303,10 +303,7 @@ def check_tf_result(idx: int, r_tf: TfVal, r_aval: core.ShapedArray | None) -> T
   # that tf.ensure_shape did this, but it can only take shapes that contain None
   # not computed shapes. However, in eager mode we should be able to resolve
   # the declared shapes to constants and we get better checking.
-  if tf.executing_eagerly():
-    r_aval_shape_tf = jax2tf_internal._eval_shape(r_aval.shape)
-  else:
-    r_aval_shape_tf = jax2tf_internal._aval_to_tf_shape(r_aval)
+  r_aval_shape_tf = jax2tf_internal._aval_to_tf_shape(r_aval)
   # We do as much checking as we can here, instead of relying on tf.ensure_shape
   # because the latter gives different errors in eager vs. compiled mode.
   # TODO(b/279454591): This strange error is from TF. Eager function suppose

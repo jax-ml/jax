@@ -37,7 +37,6 @@ from jax import numpy as jnp
 from jax import tree_util
 from jax import sharding
 from jax import export
-from jax.experimental.jax2tf import impl_no_xla
 
 from jax._src import ad_checkpoint
 from jax._src import ad_util
@@ -114,14 +113,6 @@ def _sanitize_scope_name(name):
   return scope_name
 
 
-# TODO(b/353437394): Deprecate support for `enable_xla=False`.
-# Line below is different externally and internally.
-allow_enable_xla_false = lambda: True
-
-# TODO(b/353437398): Deprecate support for `native_serialization=False`.
-# Line below is different externally and internally.
-allow_native_serialization_false = lambda: True
-
 # A value suitable in a TF tracing context: tf.Tensor, tf.Variable,
 # or Python scalar or numpy.ndarray. (A tf.EagerTensor is a tf.Tensor.)
 TfVal = Any
@@ -158,11 +149,6 @@ tf_impl: dict[core.Primitive, Callable[..., Any]] = {}
 # core.ShapedArray, or a tuple thereof when primitive.multiple_results).
 tf_impl_with_avals: dict[core.Primitive, Callable[..., Any]] = {}
 
-# XLA is not linked in all environments when converting a primitive. If this is
-# the case, we first search for implementation rules for primitives in the
-# following map. These implementations are workarounds, making use of TF ops
-# that do work when XLA is not linked in.
-tf_impl_no_xla = impl_no_xla.tf_impl_no_xla
 
 # In order to ensure that JAX picks up the proper user-frame for source
 # locations we will register the TensorFlow source path as an internal
@@ -182,12 +168,6 @@ _has_registered_tf_source_path = False
 
 class _ThreadLocalState(threading.local):
   def __init__(self):
-    # XLA is not linked in all environments; when converting a primitive, if this
-    # variable is disabled, we try harder to use only standard TF ops if they are
-    # applicable to the concrete use case; if the resulting conversion path ends up
-    # requiring a TFXLA operation, an exception is thrown instead.
-    self.enable_xla = True
-
     # Keep track if we are inside a call_tf. In that context we disable the
     # safety check that we are not inside JAX transformations.
     self.inside_call_tf = False
@@ -244,8 +224,8 @@ def convert(fun_jax: Callable,
             polymorphic_shapes: str | None = None,
             polymorphic_constraints: Sequence[str] = (),
             with_gradient: bool = True,
-            enable_xla: bool = True,
-            native_serialization: bool | _DefaultNativeSerialization = DEFAULT_NATIVE_SERIALIZATION,
+            enable_xla: bool = DEFAULT_NATIVE_SERIALIZATION,  # type: ignore
+            native_serialization: bool | _DefaultNativeSerialization = DEFAULT_NATIVE_SERIALIZATION,  # type: ignore
             native_serialization_platforms: Sequence[str] | None = None,
             native_serialization_disabled_checks: Sequence[DisabledSafetyCheck] = (),
             ) -> Callable:
@@ -304,30 +284,12 @@ def convert(fun_jax: Callable,
       function, by converting the ``jax.vjp(fun)``. This means that reverse-mode
       TensorFlow AD is supported for the output TensorFlow function, and the
       value of the gradient will be JAX-accurate.
-    enable_xla: if set (default), use the simplest conversion
-      and use XLA TF ops when necessary. These ops are known to create issues
-      for the TFLite and TFjs converters. For those cases, unset this parameter
-      so the lowering tries harder to use non-XLA TF ops to lower the
-      function and aborts if this is not possible. Cannot be set to `False`
-      when using `native_serialization`.
-      Starting with JAX 0.4.31 support for `enable_xla=False` is deprecated.
-    native_serialization: serialize the JAX function natively to
-      StableHLO with compatibility guarantees. This makes it easier to have
-      confidence that the code executed when calling this function from
-      TensorFlow is exactly the same as JAX would run natively.
-      The DEFAULT_NATIVE_SERIALIZATION value defers to `False` if `enable_xla`
-      is set to `False` or to the configuration flag
-      `--jax2tf_default_native_serialization` otherwise.
-      Native serialization cannot be used with `enable_xla=False`.
-      Starting with JAX 0.4.31 support for non-native serialization is deprecated.
-    native_serialization_platforms: In conjunction with
-      `native_serialization`, specify the platform(s)
+    native_serialization_platforms: Specifies the platform(s)
       for which to lower the code. Must be a tuple of
       strings, including a subset of: 'cpu', 'cuda', 'rocm', 'tpu'.
       The default (`None``), specifies the JAX default
       backend on the machine where the lowering is done.
-    native_serialization_disabled_checks: In conjunction with
-      `native_serialization`, disable the specified safety checks.
+    native_serialization_disabled_checks: Disables the specified safety checks.
       See docstring of `DisabledSafetyCheck`.
 
   Returns:
@@ -335,51 +297,20 @@ def convert(fun_jax: Callable,
     tuple/lists/dicts thereof), and returns TfVals as outputs, and uses
     only TensorFlow ops and thus can be called from a TensorFlow program.
   """
-  if native_serialization is DEFAULT_NATIVE_SERIALIZATION:
-    if not enable_xla:
-      native_serialization = False
-    else:
-      native_serialization = config.jax2tf_default_native_serialization.value
-
-  if not enable_xla:
-    if allow_enable_xla_false():
-      warnings.warn(
-          "jax2tf.convert with enable_xla=False has been deprecated "
-          "since July 2024.",
-          DeprecationWarning,
-          stacklevel=2)
-      if native_serialization:
-        raise ValueError(
-            "native_serialization is not supported with enable_xla=False")
-    else:
-      raise ValueError(
-          "jax2tf.convert with enable_xla=False has been deprecated "
-          "since July 2024 and it is not supported anymore.")
-
-  elif not native_serialization:
-    if allow_native_serialization_false():
-      warnings.warn(
-          "jax2tf.convert with native_serialization=False has been deprecated "
-          "since July 2024.",
-          DeprecationWarning,
-          stacklevel=2)
-    else:
-      raise ValueError(
-          "jax2tf.convert with native_serialization=False has been deprecated "
-          "since July 2024 and it is not supported anymore.")
-
-  if not native_serialization and polymorphic_constraints:
-    raise ValueError(
-        "polymorphic_constraints are supported only with native serialization"
-    )
+  if native_serialization is not DEFAULT_NATIVE_SERIALIZATION:
+    warnings.warn(
+        "The `native_serialization` parameter is deprecated and "
+        "will be removed in a future version of JAX.",
+        DeprecationWarning, stacklevel=2)
+  del native_serialization
+  if enable_xla is not DEFAULT_NATIVE_SERIALIZATION:
+    warnings.warn(
+        "The `enable_xla` parameter is deprecated and "
+        "will be removed in a future version of JAX.",
+        DeprecationWarning, stacklevel=2)
+  del enable_xla
 
   if native_serialization_platforms:
-    if not native_serialization:
-      warnings.warn(
-          "using native_serialization_platforms without native_serialization. "
-          "The parameter will have no effect, since the same code is serialized "
-          "for all platforms without native_serialization.")
-
     if (not isinstance(native_serialization_platforms, (list, tuple)) or
         not all(p in ["cpu", "cuda", "rocm", "tpu"]
                 for p in native_serialization_platforms)):
@@ -433,19 +364,11 @@ def convert(fun_jax: Callable,
     args_flat_tf = tuple(
         map(preprocess_arg_tf, range(len(args_flat_tf)), args_flat_tf))
 
-    impl: SerializationImpl
-    if native_serialization:
-      impl = NativeSerializationImpl(
-          fun_jax,
-          args_specs=args_specs, kwargs_specs=kwargs_specs,
-          native_serialization_platforms=native_serialization_platforms,
-          native_serialization_disabled_checks=native_serialization_disabled_checks)
-    else:
-      impl = GraphSerializationImpl(
-          fun_jax,
-          args_specs=args_specs, kwargs_specs=kwargs_specs,
-          args_flat_tf=args_flat_tf,
-          enable_xla=enable_xla)
+    impl = NativeSerializationImpl(
+        fun_jax,
+        args_specs=args_specs, kwargs_specs=kwargs_specs,
+        native_serialization_platforms=native_serialization_platforms,
+        native_serialization_disabled_checks=native_serialization_disabled_checks)
     try:
       impl.before_conversion()
 
@@ -528,8 +451,7 @@ class NativeSerializationImpl(SerializationImpl):
                args_specs, kwargs_specs,
                native_serialization_platforms: Sequence[str] | None,
                native_serialization_disabled_checks: Sequence[DisabledSafetyCheck]):
-    self.convert_kwargs = dict(native_serialization=True,
-                               native_serialization_platforms=native_serialization_platforms,
+    self.convert_kwargs = dict(native_serialization_platforms=native_serialization_platforms,
                                native_serialization_disabled_checks=native_serialization_disabled_checks)
     if hasattr(fun_jax, "trace"):
       # If we have a pjit or pmap already we do not wrap with another, and we
@@ -583,84 +505,6 @@ class NativeSerializationImpl(SerializationImpl):
                                 out_shardings_hlo=self.exported.out_shardings_hlo,
                                 device_assignment=self.device_assignment,
                                 apply_jit=True)
-
-class GraphSerializationImpl(SerializationImpl):
-  def __init__(self, fun_jax, *,
-               args_specs, kwargs_specs,
-               args_flat_tf: Sequence[TfVal],
-               enable_xla: bool):
-    self.convert_kwargs = dict(native_serialization=False)
-    self.fun_jax = fun_jax
-    self.args_specs = args_specs
-    self.kwargs_specs = kwargs_specs
-    self.enable_xla = enable_xla
-
-    fun_name = getattr(fun_jax, "__name__", "unknown")
-    name_stack = util.wrap_name("jax2tf", fun_name)
-    self.name_stack = name_stack
-    self.args_flat_tf = args_flat_tf
-    self.debug = api_util.debug_info("jax2tf", fun_jax,
-                                      args_specs, kwargs_specs)
-
-  def before_conversion(self):
-    prev_enable_xla = _thread_local_state.enable_xla
-    prev_include_xla_op_metadata = _thread_local_state.include_xla_op_metadata
-    prev_tf_outer_name_scope = _thread_local_state.tf_outer_name_scope
-    def _restore_context():
-      _thread_local_state.enable_xla = prev_enable_xla
-      _thread_local_state.include_xla_op_metadata = prev_include_xla_op_metadata
-      _thread_local_state.tf_outer_name_scope = prev_tf_outer_name_scope
-      _thread_local_state.shape_env = ()
-    self._restore_context = _restore_context
-    _thread_local_state.enable_xla = self.enable_xla
-    # TODO(b/189306134): implement support for XLA metadata
-    _thread_local_state.include_xla_op_metadata = False
-    _thread_local_state.tf_outer_name_scope = tf.get_current_name_scope()
-    assert not _thread_local_state.shape_env, f"Unexpected shape environment {_thread_local_state.shape_env}"
-    args_specs_flat, self.in_tree = tree_util.tree_flatten(
-        (self.args_specs, self.kwargs_specs))
-    self.args_avals_flat = tuple(
-        map(core.get_aval, args_specs_flat))
-    dim_vars = shape_poly.all_dim_vars(self.args_avals_flat)
-    dim_values, _ = _interpret_fun_jax(
-        partial(shape_poly.compute_dim_vars_from_arg_shapes,
-                self.args_avals_flat, args_kwargs_tree=self.in_tree),
-        self.args_flat_tf, self.args_avals_flat, self.name_stack,
-        debug_info=api_util.debug_info("jax2tf dim_vars",
-                                       shape_poly.compute_dim_vars_from_arg_shapes,
-                                       self.args_specs, self.kwargs_specs))
-
-    _thread_local_state.shape_env = zip(dim_vars, dim_values)
-
-  def after_conversion(self):
-    self._restore_context()
-
-  def run_fun_tf(self,
-      args_flat_tf: Sequence[TfVal]
-      ) -> tuple[Sequence[TfVal], Sequence[core.ShapedArray], tree_util.PyTreeDef]:
-    fun_flat_jax, out_tree_thunk = flatten_fun_jax(self.fun_jax, self.in_tree)
-    # out_tree_thunk will be ready after we _interpret_fun_jax below
-    outs_tf, self.outs_avals = _interpret_fun_jax(
-        fun_flat_jax,
-        args_flat_tf, self.args_avals_flat,
-        self.name_stack,
-        fresh_constant_cache=True,
-        debug_info=self.debug)
-    return outs_tf, self.outs_avals, out_tree_thunk()
-
-  def get_vjp_fun(self) -> tuple[Callable,
-                                 Sequence[core.AbstractValue]]:
-    # We reuse the code for native serialization to get the VJP functions,
-    # except we use unspecified shardings, and we do not apply a jit on the
-    # VJP. This matches the older behavior of jax2tf for graph serialization.
-    return _export._get_vjp_fun(self.fun_jax,
-                                in_tree=self.in_tree,
-                                in_avals=self.args_avals_flat,
-                                in_shardings_hlo=(None,) * len(self.args_avals_flat),
-                                out_avals=self.outs_avals,
-                                out_shardings_hlo=(None,) * len(self.outs_avals),
-                                device_assignment=None,  # Not used when apply_jit = False
-                                apply_jit=False)
 
 
 def dtype_of_val(val: TfVal) -> DType:
@@ -859,6 +703,7 @@ def _interpret_fun_jax(
     fresh_constant_cache: bool = False,
     debug_info: core.DebugInfo,
 ) -> tuple[tuple[TfVal, ...], tuple[core.ShapedArray, ...]]:
+  assert False
   subtrace_fun = _interpret_subtrace(
       lu.wrap_init(fun_jax, debug_info=debug_info), args_avals)
   with _extended_name_stack(extra_name_stack):
@@ -991,6 +836,7 @@ def _call_wrapped_with_new_constant_cache(fun: lu.WrappedFun,
                                           in_vals: Sequence[TfVal],
                                           fresh_constant_cache: bool = False
                                           ) -> Sequence[tuple[TfVal, core.ShapedArray]]:
+  assert False
   try:
     prev_constant_cache = _thread_local_state.constant_cache
     # Start a new cache, so that we don't share constants across tf.function
@@ -1034,7 +880,7 @@ def _convert_jax_impl(impl_jax: Callable, *,
   def wrapped_tf(*args_tf: TfVal, _in_avals: Sequence[core.ShapedArray],
                  _out_aval: core.ShapedArray,
                  **kwargs) -> Sequence[TfVal]:
-
+    assert False
     if with_physical_avals:
       _in_avals = map(_jax_physical_aval, _in_avals)
       _out_aval = _jax_physical_aval(_out_aval)
@@ -1057,6 +903,7 @@ def _convert_jax_impl(impl_jax: Callable, *,
 @lu.transformation2
 def _interpret_subtrace(f, in_avals: Sequence[core.ShapedArray],
                         *in_vals: TfVal):
+  assert False
   trace = TensorFlowTrace()
   in_tracers = tuple(
       TensorFlowTracer(trace, val, aval)
@@ -1079,6 +926,7 @@ def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args_tf: TfVal,
   in which case it should use a fresh constant cache.
   The output is a sequence of TfVal, suitable for use with TF.
   """
+  assert False
   outs_tf, _ = _interpret_fun_jax(core.jaxpr_as_fun(jaxpr),
                                   args_tf, jaxpr.in_avals, extra_name_stack,
                                   fresh_constant_cache=fresh_constant_cache,
@@ -1203,6 +1051,7 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
 def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfVal]:
   # Returns a tuple of shape_poly.dim_as_value_dtype
   # Used only for non-native lowering
+  assert False
   assert all(map(lambda x: x is not None, shape)), (
       f"Argument shape should be a valid JAX shape but got {shape}")
   if dtype is not None:
@@ -1269,6 +1118,7 @@ class TensorFlowTracer(core.Tracer):
 
   def __init__(self, trace: TensorFlowTrace, val: TfVal,
                aval: core.AbstractValue):
+    assert False
     self._trace = trace
     self._aval = aval
     phys_aval = _jax_physical_aval(self._aval)  # type: ignore[arg-type]
@@ -1348,9 +1198,13 @@ class TensorFlowTrace(core.Trace):
 
   __slots__ = ()
 
+  def __init__(self):
+    assert False
+
   def to_tf_tracer(self, val: TfVal) -> TensorFlowTracer:
     """Lifts a non-Tracer into the TensorFlowTracer.
     """
+    assert False
     if isinstance(val, TensorFlowTracer):
       return val
     if hasattr(val, "__jax_array__"):
@@ -1466,11 +1320,7 @@ class TensorFlowTrace(core.Trace):
   def get_primitive_impl(self, p: core.Primitive) -> tuple[Callable, bool]:
     # Returns the primitive implementation and whether the implementation
     # takes abstract values (see definition of tf_impl_with_avals)
-    if not _thread_local_state.enable_xla:
-      try:
-        return tf_impl_no_xla[p], True  # Always require avals.
-      except KeyError:
-        pass
+    assert False
     try:
       return tf_impl[p], False
     except KeyError:
@@ -3622,8 +3472,7 @@ def _pjit(*args: TfVal,
   in_hlo_shardings: Sequence[xla_client.HloSharding | None] = map(
     _xla_compatible_sharding_to_hlo_sharding, in_shardings, _in_avals)
   sharded_args: Sequence[TfVal] = tuple(
-      map(partial(_shard_value,
-                  skip_replicated_sharding=not _thread_local_state.enable_xla),
+      map(partial(_shard_value, skip_replicated_sharding=False),
           args, in_hlo_shardings))
   results = _interpret_jaxpr(jaxpr, *sharded_args,
                               extra_name_stack=util.wrap_name("pjit", name),
@@ -3631,8 +3480,7 @@ def _pjit(*args: TfVal,
   out_hlo_shardings: Sequence[xla_client.HloSharding | None] = map(
     _xla_compatible_sharding_to_hlo_sharding, out_shardings, _out_aval)
   sharded_results: Sequence[TfVal] = tuple(
-      map(partial(_shard_value,
-                  skip_replicated_sharding=not _thread_local_state.enable_xla),
+      map(partial(_shard_value, skip_replicated_sharding=False),
           results, out_hlo_shardings))
   return tuple(sharded_results)
 
