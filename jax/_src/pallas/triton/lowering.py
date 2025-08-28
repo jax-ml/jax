@@ -2526,6 +2526,11 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   )
 
 
+@register_lowering(pjit.reshard_p)
+def _reshard_lowering_rule(ctx, x, dst_sharding):
+  return x
+
+
 @register_lowering(jax_core.closed_call_p)
 @register_lowering(custom_derivatives.custom_jvp_call_p)
 def _closed_call_lowering_rule(
