@@ -172,7 +172,7 @@ else
     $COMMON_TPU_TEST_ENV_VARS \
     --test_tag_filters=-multiaccelerator \
     --verbose_failures \
-    --test_output=errors \
+    --test_output=all \
     -- \
     //tests/pallas:ops_test_tpu \
     //tests/pallas:export_back_compat_pallas_test_tpu \
@@ -217,7 +217,7 @@ else
     $COMMON_TPU_TEST_ENV_VARS \
     --test_tag_filters=multiaccelerator \
     --verbose_failures \
-    --test_output=errors \
+    --test_output=all \
     -- \
     //tests:aot_test_tpu \
     //tests:array_test_tpu \
