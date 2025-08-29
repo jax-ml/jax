@@ -57,6 +57,8 @@ else
   FREETHREADED_FLAG_VALUE="no"
 fi
 
+bazel clean --expunge
+
 # When running on Mac or Linux Aarch64, we only build the test targets and
 # not run them. These platforms do not have native RBE support so we
 # RBE cross-compile them on remote Linux x86 machines. As the tests still
