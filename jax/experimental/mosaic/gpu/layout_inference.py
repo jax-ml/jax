@@ -218,9 +218,13 @@ def _strided_layout_for_variable(
   # TODO(bchetioui): should we make variables carry a shape as well, to make
   # things easier?
   if variable.key.type == VariableType.OPERAND:
-    ty = cast(ir.ShapedType, op.operands[variable.key.index].type)
+    ty = op.operands[variable.key.index].type
   else:
-    ty = cast(ir.ShapedType, op.results[variable.key.index].type)
+    ty = op.results[variable.key.index].type
+
+  if not ir.VectorType.isinstance(ty):
+    return None
+
   return fa.WGStridedFragLayout.from_shaped_type(ty)
 
 
