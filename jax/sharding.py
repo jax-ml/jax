@@ -27,6 +27,7 @@ from jax._src.partition_spec import (
 )
 from jax._src.mesh import (
     Mesh as Mesh,
+    AbstractDevice as AbstractDevice,
     AbstractMesh as AbstractMesh,
     AxisType as AxisType,
     get_abstract_mesh as get_abstract_mesh,
