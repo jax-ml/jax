@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import itertools
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -20,6 +22,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas.fuser import block_spec as block_spec_lib
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
 
@@ -1084,6 +1087,43 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     y = x[128:256]
     out = kernel_fn((1,), scalar_prefetch_values, (y,))
     np.testing.assert_array_equal(out, y.sum(axis=1))
+
+  @parameterized.parameters(0, 1)
+  def test_repeat(self, axis):
+    x = jax.random.normal(jax.random.key(0), (64, 64), dtype=np.float32)
+
+    def f():
+      return pltpu.repeat(x, 8, axis)
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(f)
+    self.assertLen(new_values, 1)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec((128, 128), lambda i, j, k: (i, j))
+    kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        grid=(1, 1, 1),
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values)
+    self.assertLen(value_block_specs, 1)
+    x_block_spec = value_block_specs[0]
+    expected_block_shape = (64, 128) if axis == 0 else (128, 64)
+    self.assertEqual(x_block_spec.block_shape, expected_block_shape)
+    for i, j in itertools.product(range(2), range(2)):
+      expected_block_indices = (0, j) if axis == 0 else (i, 0)
+      self.assertEqual(
+          x_block_spec.index_map(i, j, 2, *scalar_prefetch_values),
+          expected_block_indices,
+      )
+    x = jax.random.normal(
+        jax.random.key(0), expected_block_shape, dtype=np.float32
+    )
+    repeats_per_axis = (2, 1) if axis == 0 else (1, 2)
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0, 0), scalar_prefetch_values, (x,)),
+        jnp.tile(x, repeats_per_axis),
+    )
 
 
 class PullBlockSpecHOPTest(jtu.JaxTestCase):
