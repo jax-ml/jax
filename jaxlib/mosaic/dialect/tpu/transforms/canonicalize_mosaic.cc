@@ -399,7 +399,62 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
         op.getLoc(), VectorType::get(shape, dest), element);
     return cast<TypedValue<VectorType>>(ele_as_fp);
   };
-
+  if (ctx.hardware_generation == 7) {
+    auto require_compatibility_mode = [&]() -> LogicalResult {
+      if (!ctx.compatibility_mode) {
+        return op->emitOpError(
+            "Automatic int->float conversion for matmuls requires "
+            "compatibility mode.");
+      }
+      return success();
+    };
+    auto get_dest_type =
+        [&](::mlir::Type element_type) -> FailureOr<FloatType> {
+      switch (element_type.getIntOrFloatBitWidth()) {
+        case 4:
+          return static_cast<FloatType>(
+              Float8E4M3FNType::get(builder.getContext()));
+        case 8:
+          return builder.getBF16Type();
+        case 32:
+          return builder.getF32Type();
+        default:
+          return op->emitOpError(
+              absl::StrCat("Integer inputs with bitwidth ",
+                           element_type.getIntOrFloatBitWidth(),
+                           " are not supported as matmul/accumulator inputs."));
+      }
+    };
+    // i32 is not normally supported for matmul inputs, only for accumulation.
+    // But don't throw an error because it may be handled by the mixed element
+    // type canonicalization pass below.
+    if (lhs_element_type.isInteger() &&
+        lhs_element_type.getIntOrFloatBitWidth() != 32) {
+      RETURN_IF_FAILED(require_compatibility_mode());
+      FAILUREOR_ASSIGN_OR_RETURN(FloatType dest_type,
+                                 get_dest_type(lhs_element_type));
+      lhs = extsi_sitofp(lhs, dest_type);
+      op->setOperand(0, lhs);
+      lhs_element_type = dest_type;
+    }
+    if (rhs_element_type.isInteger() &&
+        rhs_element_type.getIntOrFloatBitWidth() != 32) {
+      RETURN_IF_FAILED(require_compatibility_mode());
+      FAILUREOR_ASSIGN_OR_RETURN(FloatType dest_type,
+                                 get_dest_type(rhs_element_type));
+      rhs = extsi_sitofp(rhs, dest_type);
+      op->setOperand(1, rhs);
+      rhs_element_type = dest_type;
+    }
+    if (acc_element_type.isInteger()) {
+      RETURN_IF_FAILED(require_compatibility_mode());
+      FAILUREOR_ASSIGN_OR_RETURN(FloatType dest_type,
+                                 get_dest_type(acc_element_type));
+      acc = extsi_sitofp(acc, dest_type);
+      op->setOperand(2, acc);
+      acc_element_type = acc.getType().getElementType();
+    }
+  }
   if (lhs_element_type != rhs_element_type) {
     if (!ctx.compatibility_mode) {
       return op->emitOpError(
@@ -428,60 +483,6 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
       op->setOperand(1, float_rhs);
       rhs = cast<TypedValue<VectorType>>(float_rhs);
       rhs_element_type = builder.getF32Type();
-    }
-  }
-  if (ctx.hardware_generation == 7) {
-    auto require_compatibility_mode = [&]() -> LogicalResult {
-      if (!ctx.compatibility_mode) {
-        return op->emitOpError(
-            "Automatic int->float conversion for matmuls requires "
-            "compatibility mode.");
-      }
-      return success();
-    };
-    auto get_dest_type = [&](::mlir::Type element_type,
-                             bool allow_i32 = false) -> FailureOr<FloatType> {
-      switch (element_type.getIntOrFloatBitWidth()) {
-        case 4:
-          return static_cast<FloatType>(
-              Float8E4M3FNType::get(builder.getContext()));
-        case 8:
-          return builder.getBF16Type();
-        case 32:
-          if (allow_i32) {
-            return builder.getF32Type();
-          }
-          return op->emitOpError(
-              "i32 is not supported as a matmul input, only as an accumulator");
-        default:
-          return op->emitOpError(
-              absl::StrCat("Integer inputs with bitwidth ",
-                           element_type.getIntOrFloatBitWidth(),
-                           " are not supported as matmul/accumulator inputs."));
-      }
-    };
-    if (lhs_element_type.isInteger()) {
-      RETURN_IF_FAILED(require_compatibility_mode());
-      FAILUREOR_ASSIGN_OR_RETURN(FloatType dest_type,
-                                 get_dest_type(lhs_element_type));
-      lhs = extsi_sitofp(lhs, dest_type);
-      op->setOperand(0, lhs);
-    }
-    if (rhs_element_type.isInteger()) {
-      RETURN_IF_FAILED(require_compatibility_mode());
-      FAILUREOR_ASSIGN_OR_RETURN(FloatType dest_type,
-                                 get_dest_type(rhs_element_type));
-      rhs = extsi_sitofp(rhs, dest_type);
-      op->setOperand(1, rhs);
-    }
-    if (acc_element_type.isInteger()) {
-      RETURN_IF_FAILED(require_compatibility_mode());
-      FAILUREOR_ASSIGN_OR_RETURN(
-          FloatType dest_type,
-          get_dest_type(acc_element_type, /* allow_i32=*/true));
-      acc = extsi_sitofp(acc, dest_type);
-      op->setOperand(2, acc);
-      acc_element_type = acc.getType().getElementType();
     }
   }
   // TODO(mvoz): Add more invariants.
