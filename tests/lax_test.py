@@ -166,7 +166,12 @@ class LaxTest(jtu.JaxTestCase):
   def testConvertElementType(self, from_dtype, to_dtype, weak_type):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng((2, 3), from_dtype)]
-    op = lambda x: lax_internal._convert_element_type(x, to_dtype, weak_type)
+    to_dtype_canonicalized = (
+        dtypes.canonicalize_dtype(to_dtype) if to_dtype is not None else None
+    )
+    op = lambda x: lax_internal._convert_element_type(
+        x, to_dtype_canonicalized, weak_type
+    )
     self._CompileAndCheck(op, args_maker)
 
     x = rng((1,), from_dtype)
@@ -243,7 +248,7 @@ class LaxTest(jtu.JaxTestCase):
   )
   def testBitcastConvertWeakType(self, from_dtype, to_dtype, weak_type):
     rng = jtu.rand_default(self.rng())
-    x_in = lax_internal._convert_element_type(rng((2, 3), from_dtype),
+    x_in = lax_internal._convert_element_type(rng((2, 3), np.dtype(from_dtype)),
                                               weak_type=weak_type)
     op = lambda x: lax.bitcast_convert_type(x, to_dtype)
     self.assertEqual(dtypes.is_weakly_typed(x_in), weak_type)
@@ -2020,9 +2025,10 @@ class LaxTest(jtu.JaxTestCase):
   )
   def testReduceWeakType(self, op_namespace, op, arr_weak_type, init_weak_type):
     op = getattr(op_namespace, op)
-    arr = lax_internal._convert_element_type(np.arange(10), int,
+    arr = lax_internal._convert_element_type(np.arange(10), dtypes.dtype(int),
                                              weak_type=arr_weak_type)
-    init = lax_internal._convert_element_type(1, int, weak_type=init_weak_type)
+    init = lax_internal._convert_element_type(1, dtypes.dtype(int),
+                                              weak_type=init_weak_type)
     fun = lambda arr, init: lax.reduce(arr, init, op, (0,))
     out = fun(arr, init)
     self.assertEqual(dtypes.is_weakly_typed(out), arr_weak_type and init_weak_type)
@@ -3552,7 +3558,8 @@ class LaxTest(jtu.JaxTestCase):
     if dtype in set(lax_test_util.python_scalar_types):
       val = dtype(0)
     else:
-      val = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
+      val = lax_internal._convert_element_type(0, np.dtype(dtype),
+                                               weak_type=weak_type)
 
     const = lax_internal._const(val, 0)
     self.assertEqual(dtypes.dtype(val), dtypes.dtype(const))

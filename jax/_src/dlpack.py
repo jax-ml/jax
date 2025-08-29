@@ -18,6 +18,7 @@ from typing import Any
 
 from jax._src import array
 from jax._src import deprecations
+from jax._src import dtypes
 from jax._src import xla_bridge
 from jax._src.api import device_put
 from jax._src.lax.lax import _array_copy
@@ -252,9 +253,12 @@ def _from_dlpack(external_array, device: xla_client.Device | None = None,
         raise
   dlpack = external_array.__dlpack__(stream=stream)
 
-  _arr = jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
-      dlpack, dlpack_device, stream))
-  return _place_array(_arr, device, dlpack_device, copy)
+  arr = xla_client._xla.dlpack_managed_tensor_to_buffer(
+      dlpack, dlpack_device, stream)
+  # TODO(phawkins): when we are ready to support x64 arrays in
+  # non-x64 mode, change the semantics to not canonicalize here.
+  arr = jnp.asarray(arr, dtype=dtypes.canonicalize_dtype(arr.dtype))
+  return _place_array(arr, device, dlpack_device, copy)
 
 def from_dlpack(external_array,
                 device: xla_client.Device | Sharding | None = None,

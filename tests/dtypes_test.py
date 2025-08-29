@@ -1047,6 +1047,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     if dtype in intn_dtypes:
       self.skipTest("XLA support for int2 and int4 is incomplete.")
     # Regression test for https://github.com/jax-ml/jax/issues/6051
+    dtype = dtypes.canonicalize_dtype(dtype)
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     with jax.numpy_dtype_promotion(promotion):
       y = (x + x)

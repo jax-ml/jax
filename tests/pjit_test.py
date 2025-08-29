@@ -4354,7 +4354,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     inp = np.arange(16).reshape(8, 2)
 
     out = lax_internal._convert_element_type(
-        inp, new_dtype=np.float32, weak_type=False, sharding=s)
+        inp, new_dtype=np.dtype(np.float32), weak_type=False, sharding=s)
     self.assertArraysEqual(out, inp.astype('float32'))
     self.assertEqual(out.dtype, np.float32)
     self.assertEqual(out.sharding, s)
@@ -7747,7 +7747,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     @jax.vmap
     def f(x):
       y = lax_internal._convert_element_type(
-          x, jnp.bfloat16, sharding=NamedSharding(am, P('y')))
+          x, np.dtype(jnp.bfloat16), sharding=NamedSharding(am, P('y')))
       self.assertEqual(y.aval.sharding.spec, P('y'))
       return y
 
