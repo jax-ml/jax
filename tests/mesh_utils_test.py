@@ -650,6 +650,31 @@ class MeshUtilsTest(test_util.JaxTestCase):
           mesh_shape, devices=devices, contiguous_submeshes=True
       )
 
+  @parameterized.named_parameters(
+      #        <-logical-> <-physical->
+      ('1x1x2', [1, 1, 2], [1, 1, 1], [[[0, 1]]]),
+      ('2x1x4', [2, 1, 4], [2, 2, 1], [[[0, 1, 2, 3]], [[7, 6, 5, 4]]]),
+      ('4x1x2', [4, 1, 2], [2, 2, 1], [[[0, 1]], [[2, 3]],
+                                       [[7, 6]], [[5, 4]]]),
+      ('4x4x2', [4, 2, 2], [2, 2, 2], [[[0, 1], [8, 9]], [[2, 3], [10, 11]],
+                                       [[4, 5], [12, 13]], [[6, 7], [14, 15]]]),
+  )
+  def test_v7x_create_device_mesh(
+      self, logical_mesh_shape, physical_mesh_shape, expected_device_id_mesh
+  ):
+    global_devices = mock_tpu_devices(
+        physical_mesh_shape[0],
+        physical_mesh_shape[1],
+        physical_mesh_shape[2],
+        mesh_utils._TPU_7X,
+        one_device_per_chip=False,
+    )
+    mesh = mesh_utils.create_device_mesh(
+        logical_mesh_shape, devices=global_devices, contiguous_submeshes=False
+    )
+    device_id_mesh = np.vectorize(lambda d: d.id)(mesh)
+    self.assertAllClose(np.array(expected_device_id_mesh), device_id_mesh)
+
 
 def int64_array(x) -> np.ndarray:
   return np.array(x, dtype=np.int64)
