@@ -298,6 +298,22 @@ nanobind_pywrap_extension(
     ],
 )
 
+nanobind_pywrap_extension(
+    name = "_sdyMpmd",
+    srcs = [
+        "@shardy//shardy/integrations/python/ir/mpmd:mpmd_module.cc",
+    ],
+    copts = COPTS,
+    deps = [
+        "@llvm-project//mlir:CAPIIR",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeaders",
+        "@local_config_python//:headers",
+        "@nanobind",
+        "@shardy//shardy/integrations/c/mpmd:mpmd_capi",
+    ],
+)
+
 ##---------------------------------------------------------------------------##
 # Stablehlo Extensions
 ##---------------------------------------------------------------------------##
