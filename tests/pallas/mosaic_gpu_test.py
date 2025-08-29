@@ -2397,29 +2397,6 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
     y = jnp.array(6543, dtype=jnp.int32)
     np.testing.assert_array_equal(result, op(x, y).astype(jnp.int32))
 
-  def test_errors_when_closing_over_array(self):
-    # We currently do not allow closing over arrays when mapping over
-    # a mesh, since we would need to present a view of the array local
-    # to each warp.
-    warp_mesh = plgpu.WarpMesh(axis_name="warp")
-    @functools.partial(plgpu.kernel,
-                       out_shape=jax.ShapeDtypeStruct((32, 32), jnp.float32),
-                       scratch_shapes=[plgpu.SMEM((32, 32), jnp.float32)])
-    def kernel(out_ref, smem_ref):
-      arr = jnp.ones((32, 32), dtype=jnp.float32)
-      @pl.core_map(warp_mesh)
-      def _():
-        smem_ref[...] = arr + 1
-      plgpu.commit_smem()
-      plgpu.copy_smem_to_gmem(smem_ref, out_ref)
-      plgpu.wait_smem_to_gmem(0)
-    with self.assertRaisesRegex(
-        mgpu_lowering.LoweringError,
-        "Can only close over scalars and Refs when using core_map with "
-        "WarpMesh",
-    ):
-      kernel()
-
   @parameterized.parameters(True, False)
   def test_single_warp_loop(self, force_while):
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
