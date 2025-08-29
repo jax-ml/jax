@@ -46,12 +46,14 @@ limitations under the License.
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/sharding.h"
+#include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
@@ -394,6 +396,16 @@ absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
   options.execution_stream_id = GetExecutionStreamId();
   if (options.execution_stream_id == 0) {
     options.execution_stream_id = tsl::Env::Default()->GetCurrentThreadId();
+  }
+  auto traceback = Traceback::Get();
+  if (traceback.has_value()) {
+    if (std::string call_location = GetCallLocation(*traceback);
+        !call_location.empty()) {
+      options.custom_options = xla::ifrt::AttributeMap(
+          {{std::string(
+                xla::ifrt::PjRtCompatibleLoadedExecutable::kCallLocation),
+            xla::ifrt::AttributeMap::StringValue(call_location)}});
+    }
   }
   std::optional<std::vector<xla::PjRtFuture<>>> returned_futures;
   if (with_tokens) {

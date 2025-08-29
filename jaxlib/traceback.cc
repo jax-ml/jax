@@ -21,6 +21,7 @@ limitations under the License.
 #include <atomic>
 #include <cstddef>
 #include <cstring>
+#include <exception>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -31,9 +32,11 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
@@ -42,6 +45,7 @@ limitations under the License.
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "xla/pjrt/exceptions.h"
 #include "xla/python/nb_helpers.h"
+#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/platform.h"
 
 #ifdef PLATFORM_GOOGLE
@@ -275,6 +279,63 @@ absl::Span<const TracebackEntry> Traceback::RawFrames() const {
   TracebackObject* tb = reinterpret_cast<TracebackObject*>(traceback.ptr());
   std::memcpy(tb->frames, frames.data(), sizeof(TracebackEntry) * count);
   return traceback;
+}
+
+const std::vector<std::string>& GetExcludePaths() {
+  // Lazily initialize and cache the exclude paths list.
+  static const auto exclude_paths = []() {
+    CHECK(PyGILState_Check());
+    std::vector<std::string> paths;
+    try {
+      nb::module_ tb_util = nb::module_::import_("jax._src.traceback_util");
+      nb::list py_exclude_paths = tb_util.attr("_exclude_paths");
+      for (const auto& item : py_exclude_paths) {
+        paths.push_back(nb::cast<std::string>(item));
+      }
+    } catch (const std::exception& e) {
+      LOG(WARNING)
+          << "GetExcludePaths: Exception while fetching _exclude_paths: "
+          << e.what();
+      // Add default fallback paths if Python call fails
+      paths.push_back("/jax/_src/");
+      paths.push_back("/jax/jaxlib/");
+    }
+    return paths;
+  }();
+  return exclude_paths;
+}
+
+bool PathStartsWith(absl::string_view path, absl::string_view prefix) {
+  // This is a simplified check. The Python version `_path_starts_with` in
+  // traceback_util.py is more robust, handling relative paths and
+  // potential symlinks via os.path.abspath and os.path.samefile.
+  // Replicating that fully here is complex. A direct prefix check
+  // is a good first step for performance.
+  return absl::StartsWith(path, prefix);
+}
+
+bool IsJaxInternalFrame(absl::string_view file_name) {
+  const std::vector<std::string>& exclude_paths = GetExcludePaths();
+  for (const auto& prefix : exclude_paths) {
+    if (PathStartsWith(file_name, prefix)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::string GetCallLocation(const jax::Traceback& traceback) {
+  auto frames = traceback.Frames();
+  for (const auto& frame : frames) {
+    if (nb::isinstance<nb::str>(frame.file_name) ||
+        nb::isinstance<nb::bytes>(frame.file_name)) {
+      std::string file_name = nb::cast<std::string>(frame.file_name);
+      if (!IsJaxInternalFrame(file_name)) {
+        return absl::StrCat(file_name, ":", frame.line_num);
+      }
+    }
+  }
+  return "";
 }
 
 void Traceback::RegisterType(nb::module_& m) {
