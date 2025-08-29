@@ -336,7 +336,6 @@ class _TMEMDialectAlloc:
         result_type,
         self.addr_ref,
         collective=self.collective,
-        exact=False,
         packing=self.packing,
     )
     ncols = self.shape[1] // self.packing

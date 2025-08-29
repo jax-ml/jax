@@ -673,11 +673,9 @@ def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
         unpacked_columns = allocated_columns * packing
 
     The number of allocated columns in TMEM can be any power of two in the
-    range [32, 512]. If `exact` is `true`, then the calculated
-    number of allocated columns must match that restriction. If `exact` is
-    `false` and the calculated number of allocated columns is less than 32 or
-    not a power of two, then it will be rounded up to the nearest power of two
-    larger or equal to 32.
+    range [32, 512]. If the calculated number of allocated columns is less than
+    32 or not a power of two, then it will be rounded up to the nearest power of
+    two larger or equal to 32.
 
     If `collective` is `true` 2 CTAs will perform the allocation collectively,
     otherwise, only one CTA will perform the allocation.
@@ -688,7 +686,6 @@ def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
 
     // Attributes
     DefaultValuedAttr<BoolAttr, "false">:$collective,
-    DefaultValuedAttr<BoolAttr, "true">:$exact,
     DefaultValuedAttr<ConfinedAttr<I32Attr, [IntPositive]>, "1">:$packing
   );
 
