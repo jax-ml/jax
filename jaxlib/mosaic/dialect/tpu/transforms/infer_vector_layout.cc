@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
+#include "llvm/ADT/bit.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -1601,17 +1602,49 @@ class VectorLayoutInferer {
       return success();
     }
 
+    auto aligned_small_second_minor_tiling = [&](ArrayRef<int64_t> shape) {
+      return shape.size() >= 2 && shape.back() % native_tiling[1] == 0 &&
+             shape[shape.size() - 2] < native_tiling[0] &&
+             llvm::has_single_bit(
+                 static_cast<uint64_t>(shape[shape.size() - 2])) &&
+             shape.back() * shape[shape.size() - 2] ==
+                 native_tiling[0] * native_tiling[1];
+    };
+
+    // Use the small tiling if the last two dims exactly fit a vreg. It makes
+    // reshape a sublane shuffle within a vreg.
+    //
+    // For example,
+    // - (4, 256) with (4, 128) tiling to (1, 1024) with (1, 128) tiling is
+    //  to shuffle sublane from [0, 1, 2, 3, 4, 5, 6, 7] to
+    //  [0, 4, 1, 5, 2, 6, 3, 7]
+    // - (4, 256) with (4, 128) tiling to (2, 512) with (2, 128) tiling is
+    //  to shuffle sublane from [0, 1, 2, 3, 4, 5, 6, 7] to
+    //  [0, 2, 4, 6, 1, 3, 5, 7]
+    // TODO(b/440370770): Add support for other bitwidths.
+    if (bitwidth == kNativeBitwidth &&
+        aligned_small_second_minor_tiling(src_shape) &&
+        aligned_small_second_minor_tiling(res_shape)) {
+      setLayout(
+          op,
+          VectorLayout(layout.bitwidth(), {0, 0},
+                       {src_shape[src_shape.size() - 2], target_shape_[1]},
+                       ImplicitDim::kNone),
+          VectorLayout(layout.bitwidth(), {0, 0},
+                       {res_shape[res_shape.size() - 2], target_shape_[1]},
+                       ImplicitDim::kNone));
+      return success();
+    }
+
     // Shape casts for {32/16/8}-bit vector types with rank >= 2.
     if (bitwidth >= 8 && bitwidth <= kNativeBitwidth && res_shape.size() >= 2 &&
         src_shape.size() >= 2 && src_shape.back() % native_tiling[1] == 0 &&
         res_shape.back() % native_tiling[1] == 0) {
-      // TODO(jsreeram): Add support for picking space-efficient tilings for
+      // TODO(b/440370770): Add support for picking space-efficient tilings for
       // small 2nd minor dim shapes.
       // Example 1: (4, 2, 1024) -> (4, 2048) If we infer src and tgt layout to
-      // be (1, 128), it is no-op because essentially we just shufflle the VREGs
+      // be (1, 128), it is no-op because essentially we just shuffle the VREGs
       // in VREG array.
-      // Example 2: (4, 256) -> (1, 1024) is actually sublane
-      // shuffle inside each vreg from [0, 1, 2, 3, 4,..7] to [0, 4, 1, 5, ...]
       setLayout(op,
                 VectorLayout(layout.bitwidth(), {0, 0}, native_tiling,
                              ImplicitDim::kNone),
