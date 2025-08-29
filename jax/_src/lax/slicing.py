@@ -38,6 +38,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
+from jax._src.lax import utils as lax_utils
 from jax._src.lax.utils import (
     _argnum_weak_type,
     input_dtype,
@@ -2107,16 +2108,19 @@ def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
                  output_shape):
   """Lowers a FILL_OR_DROP gather as a PROMISE_IN_BOUNDS gather with masking."""
   dnums = dimension_numbers
-  intarray = partial(np.array, dtype=np.int64)
-  operand_dims = lax.shape_as_value(operand.shape)
-  indices = lax.convert_element_type(indices, np.int64)
+  index_dtype = lax_utils.int_dtype_for_shape(operand.shape, signed=True)
+  intarray = partial(np.array, dtype=index_dtype)
+  operand_dims = lax.shape_as_value(operand.shape).astype(index_dtype)
+  indices = lax.convert_element_type(indices, index_dtype)
   num_batch_dims = len(indices.shape) - 1
 
-  upper_bound = (
-      operand_dims[intarray(dnums.start_index_map)] -
-      lax.shape_as_value(slice_sizes)[intarray(dnums.start_index_map)])
+  upper_bound = operand_dims[
+      intarray(dnums.start_index_map)
+  ] - lax.shape_as_value(slice_sizes)[intarray(dnums.start_index_map)].astype(
+      index_dtype
+  )
   mask = lax.bitwise_and(
-      lax.ge(indices, np.int64(0)),
+      lax.ge(indices, index_dtype.type(0)),
       lax.le(indices, lax.expand_dims(upper_bound, tuple(range(num_batch_dims)))))
   mask = lax.reduce_and(mask, [num_batch_dims])
 
@@ -2727,18 +2731,20 @@ def _clamp_scatter_indices(operand, indices, updates, *, dnums):
 
   upper_bounds: core.Shape = tuple(operand.shape[i] - slice_sizes[i]
                                    for i in dnums.scatter_dims_to_operand_dims)
+
   # Stack upper_bounds into a Array[n]
   upper_bound = lax.shape_as_value(upper_bounds)
   # This fix fails lax_test_no_jax_array
-  upper_bound = lax.min(upper_bound,
-                        lax.convert_element_type(np.uint64(np.iinfo(indices.dtype).max),
-                                                  np.int64))
-
+  upper_bound = lax.min(
+      upper_bound,
+      upper_bound.dtype.type(
+          min(np.iinfo(upper_bound.dtype).max, np.iinfo(indices.dtype).max)
+      ),
+  )
+  upper_bound = lax.convert_element_type(upper_bound, indices.dtype)
   upper_bound = lax.broadcast_in_dim(upper_bound, indices.shape,
                                      (len(indices.shape) - 1,))
-  return lax.clamp(np.int64(0), lax.convert_element_type(indices, np.int64),
-                   upper_bound)
-
+  return lax.clamp(indices.dtype.type(0), indices, upper_bound)
 
 def _scatter_addsub_jvp(
     prim, primals, tangents, *, update_jaxpr, update_consts, dimension_numbers,
@@ -3132,10 +3138,7 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
   for update_dim in dnums.update_window_dims:
     ids_shape[update_dim] = 1
   num_ids = math.prod(ids_shape)
-  if core.is_constant_dim(num_ids):
-    id_dtype = np.uint32 if (num_ids + 1) < np.iinfo(np.uint32).max else np.uint64
-  else:
-    id_dtype = dtypes.canonicalize_dtype(np.uint64)
+  id_dtype = lax_utils.int_dtype_for_dim(num_ids, signed=False)
   update_ids = lax.add(lax.reshape(lax.iota(id_dtype, num_ids), ids_shape),
                        lax._ones(updates, dtype=id_dtype))
 

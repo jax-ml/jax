@@ -18,9 +18,9 @@ from collections.abc import Sequence
 import numpy as np
 
 from jax._src import api
-from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax
+from jax._src.lax import utils as lax_utils
 from jax._src.numpy import util
 from jax._src.util import canonicalize_axis, set_module
 from jax._src.typing import Array, ArrayLike
@@ -154,11 +154,12 @@ def argsort(
     arr = arr.ravel()
     axis = 0
   dimension = canonicalize_axis(axis, arr.ndim)
-  use_64bit_index = core.is_constant_dim(arr.shape[dimension]) and arr.shape[dimension] >= (1 << 31)
-  # TODO(phawkins): we should probably use int64 indices for unknown dimensions,
-  # but that requires that we first support using int64 in a non-x64
-  # computation.
-  iota = lax.broadcasted_iota(np.dtype('int64') if use_64bit_index else int, arr.shape, dimension)
+  idx_dtype = lax_utils.int_dtype_for_dim(arr.shape[dimension], signed=True)
+  # We'd give the correct output values with int32, but use the default dtype to
+  # match NumPy type semantics if x64 mode is enabled for now.
+  if idx_dtype == np.dtype(np.int32):
+    idx_dtype = dtypes.default_int_dtype()
+  iota = lax.broadcasted_iota(idx_dtype, arr.shape, dimension)
   # For stable descending sort, we reverse the array and indices to ensure that
   # duplicates remain in their original order when the final indices are reversed.
   # For non-stable descending sort, we can avoid these extra operations.
@@ -425,7 +426,11 @@ def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> A
   if np.ndim(key_arrays[0]) == 0:
     return lax.full((), 0, dtypes.default_int_dtype())
   axis = canonicalize_axis(axis, np.ndim(key_arrays[0]))
-  use_64bit_index = key_arrays[0].shape[axis] >= (1 << 31)
-  iota = lax.broadcasted_iota(np.dtype('int64') if use_64bit_index else int,
-                              np.shape(key_arrays[0]), axis)
+  idx_dtype = lax_utils.int_dtype_for_dim(key_arrays[0].shape[axis],
+                                          signed=True)
+  # We'd give the correct output values with int32, but use the default dtype to
+  # match NumPy type semantics if x64 mode is enabled for now.
+  if idx_dtype == np.dtype(np.int32):
+    idx_dtype = dtypes.default_int_dtype()
+  iota = lax.broadcasted_iota(idx_dtype, np.shape(key_arrays[0]), axis)
   return lax.sort((*key_arrays[::-1], iota), dimension=axis, num_keys=len(key_arrays))[-1]

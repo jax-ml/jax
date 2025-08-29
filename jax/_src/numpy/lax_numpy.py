@@ -48,6 +48,7 @@ from jax._src.lax import convolution as lax_conv
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.lax import special as lax_special
+from jax._src.lax import utils as lax_utils
 from jax._src.lib import xla_client as xc
 from jax._src.numpy.array_constructors import array, asarray
 from jax._src.numpy import array_creation
@@ -7166,8 +7167,12 @@ def diag_indices(n: int, ndim: int = 2) -> tuple[Array, ...]:
   if ndim < 0:
     raise ValueError("ndim argument to diag_indices must be nonnegative, got {}"
                      .format(ndim))
-  # TODO(phawkins): Use an int64 index if n >= 2**31.
-  return (lax.iota(int, n),) * ndim
+  index_dtype = lax_utils.int_dtype_for_dim(n, signed=True)
+  # We'd give the correct output values with int32, but use the default dtype to
+  # match NumPy type semantics if x64 mode is enabled for now.
+  if index_dtype == np.dtype(np.int32):
+    index_dtype = dtypes.default_int_dtype()
+  return (lax.iota(index_dtype, n),) * ndim
 
 
 @export
@@ -9258,7 +9263,8 @@ def _searchsorted_via_scan(unrolled: bool, sorted_arr: Array, query: Array, side
 
 
 def _searchsorted_via_sort(sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
-  working_dtype = np.dtype('int32') if sorted_arr.size + query.size < np.iinfo(np.int32).max else np.dtype('int64')
+  working_dtype = lax_utils.int_dtype_for_dim(sorted_arr.size + query.size,
+                                              signed=False)
   def _rank(x):
     idx = lax.iota(working_dtype, x.shape[0])
     return array_creation.zeros_like(idx).at[argsort(x)].set(idx)
@@ -9354,7 +9360,7 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   a, v = util.promote_dtypes(a, v)
   if sorter is not None:
     a = a[sorter]
-  dtype = np.dtype('int32') if a.shape[0] <= np.iinfo(np.int32).max else np.dtype('int64')
+  dtype = lax_utils.int_dtype_for_dim(a.shape[0], signed=True)
   if a.shape[0] == 0:
     return array_creation.zeros_like(v, dtype=dtype)
   impl = {

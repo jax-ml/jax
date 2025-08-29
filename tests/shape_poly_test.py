@@ -40,11 +40,13 @@ from jax import ops
 from jax import random
 from jax._src import config
 from jax._src import core
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.export import shape_poly
 from jax._src.export import shape_poly_decision
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
+from jax._src.lax import utils as lax_utils
 from jax._src.state import discharge
 from jax._src.state import primitives as ref_primitives
 
@@ -671,7 +673,6 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertGreaterEqual(-8, -poly)
     self.assertGreater(-7, -poly)
 
-
   def test_int_results(self):
     # Whenever the result is an integer, it should be represented as a
     # Python integer, not a symbolic dimension.
@@ -715,7 +716,6 @@ class DimExprTest(jtu.JaxTestCase):
                              dividend, divisor)
       self.sampled_assertion(remainder, lambda *args: divmod(*args)[1],
                              dividend, divisor)
-
 
   def test_unit_combine_term_with_constraints(self):
     a, b, c, d, e = shape_poly.symbolic_shape("a, b, c, d, e",
@@ -784,7 +784,6 @@ class DimExprTest(jtu.JaxTestCase):
          (Comparator.GEQ, 3*d + c - 10, 2, -3)},
         set(decision.combine_term_with_existing(_m(d), 2, scope=scope,
                                                 only_smaller_than_t=True)))
-
 
   def test_dilate_dim(self):
     """0 if d == 0 else 1 + dilation * (d - 1))"""
@@ -1000,7 +999,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(_bounds(b), (2, np.inf))
     # TODO: the following ought to work, but the way we wrote the equality
     # constraint, `min(b, 2)` gets rewritten to `2`.
-    #self.assertEqual(core.min_dim(a, b), b - core.min_dim(b, 2))
+    # self.assertEqual(core.min_dim(a, b), b - core.min_dim(b, 2))
 
   def test_constraints_eq_4(self):
     # Equalities of a variable with an expression
@@ -1251,6 +1250,25 @@ class DimExprTest(jtu.JaxTestCase):
         with self.assertRaisesRegex(ValueError,
                                     "Invalid mixing of symbolic scopes"):
           o(a, a1)
+
+  def test_int_dtype_for_shape(self):
+    shape = shape_poly.symbolic_shape("2, a")
+    self.assertEqual(
+        dtypes.default_int_dtype(),
+        lax_utils.int_dtype_for_shape(shape, signed=True),
+    )
+    self.assertEqual(
+        dtypes.default_uint_dtype(),
+        lax_utils.int_dtype_for_shape(shape, signed=False),
+    )
+    self.assertEqual(
+        dtypes.default_int_dtype(),
+        lax_utils.int_dtype_for_dim(shape[1], signed=True),
+    )
+    self.assertEqual(
+        dtypes.default_uint_dtype(),
+        lax_utils.int_dtype_for_dim(shape[1], signed=False),
+    )
 
 
 class PolyHarness(Harness):

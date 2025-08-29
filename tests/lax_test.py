@@ -47,6 +47,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
+from jax._src.lax import utils as lax_utils
 from jax._src.util import safe_zip
 from jax._src.tree_util import tree_map
 
@@ -3652,13 +3653,13 @@ class LaxTest(jtu.JaxTestCase):
 
   def test_shape_as_value_handles_static_shapes(self):
     result = lax.shape_as_value(())
-    self.assertArraysEqual(result, lax.full((0,), np.array(0, np.int64)))
+    self.assertArraysEqual(result, lax.full((0,), np.array(0, np.int32)))
 
     result = lax.shape_as_value((2,))
-    self.assertArraysEqual(result, np.asarray((2,), np.int64))
+    self.assertArraysEqual(result, np.asarray((2,), np.int32))
 
     result = lax.shape_as_value((2, 3))
-    self.assertArraysEqual(result, np.asarray((2, 3), np.int64))
+    self.assertArraysEqual(result, np.asarray((2, 3), np.int32))
 
   def test_shape_as_value_handles_polymorphic_shapes(self):
     @jax.jit
@@ -5229,6 +5230,61 @@ class RaggedTest(jtu.JaxTestCase):
       self.assertArraysAllClose(
           batch_res[i, 0:upper_bound, :], ref_res, rtol=tol, atol=tol
       )
+
+class LaxUtilsTest(jtu.JaxTestCase):
+
+  def test_int_dtype_for_dim(self):
+    self.assertEqual(lax_utils.int_dtype_for_dim(10, signed=True), np.int32)
+    self.assertEqual(lax_utils.int_dtype_for_dim(10, signed=False), np.uint32)
+    self.assertEqual(
+        lax_utils.int_dtype_for_dim(np.iinfo(np.int32).max, signed=True),
+        np.int32,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_dim(np.iinfo(np.int32).max + 1, signed=True),
+        np.int64,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_dim(np.iinfo(np.uint32).max, signed=False),
+        np.uint32,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_dim(np.iinfo(np.uint32).max + 1, signed=False),
+        np.uint64,
+    )
+
+  def test_int_dtype_for_shape(self):
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape([10, 20], signed=True), np.int32
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape([10, 20], signed=False), np.uint32
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape(
+            [10, np.iinfo(np.int32).max], signed=True
+        ),
+        np.int32,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape(
+            [np.iinfo(np.int32).max + 1, 20], signed=True
+        ),
+        np.int64,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape(
+            [10, np.iinfo(np.uint32).max], signed=False
+        ),
+        np.uint32,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape(
+            [np.iinfo(np.uint32).max + 1, 20], signed=False
+        ),
+        np.uint64,
+    )
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

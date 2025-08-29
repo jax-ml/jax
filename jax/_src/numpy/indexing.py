@@ -32,6 +32,7 @@ from jax._src import dtypes
 from jax._src import errors
 from jax._src.lax import lax
 from jax._src.lax import slicing
+from jax._src.lax import utils as lax_utils
 from jax._src.numpy import einsum
 from jax._src.numpy import error as jnp_error
 from jax._src.numpy import lax_numpy
@@ -305,8 +306,7 @@ def take_along_axis(
     lst[axis_int] = val
     return tuple(lst)
 
-  use_64bit_index = any(not core.is_constant_dim(d) or d >= (1 << 31) for d in a.shape)
-  index_dtype = np.dtype('int64' if use_64bit_index else 'int32')
+  index_dtype = lax_utils.int_dtype_for_dim(a.shape, signed=True)
   indices = lax.convert_element_type(indices, index_dtype)
 
   axis_size = a.shape[axis_int]
@@ -850,10 +850,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
   collapsed_slice_dims: list[int] = []
   start_index_map: list[int] = []
 
-  use_64bit_index = (
-    any(not core.is_constant_dim(d) or d >= (1 << 31) for d in x_shape) and
-    config.enable_x64.value)
-  index_dtype = np.dtype('int64') if use_64bit_index else np.dtype('int32')
+  index_dtype = lax_utils.int_dtype_for_shape(x_shape, signed=True)
 
   # Gather indices.
   # Pairs of (array, start_dim) values. These will be broadcast into

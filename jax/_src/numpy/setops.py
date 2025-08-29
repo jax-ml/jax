@@ -26,6 +26,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
+from jax._src.lax import utils as lax_utils
 from jax._src.numpy.array_creation import empty, full, full_like, ones, zeros
 from jax._src.numpy.lax_numpy import (
     append, arange, concatenate, diff,
@@ -344,11 +345,7 @@ def _intersect1d_sorted_mask(arr1: Array, arr2: Array,
   assert arr1.ndim == arr2.ndim == 1
   arr = concatenate((arr1, arr2))
   if return_indices:
-    use_64bit_index = (
-        not core.is_constant_dim(arr.shape[0])
-        or arr.shape[0] >= np.iinfo(np.int32).max
-    )
-    idx_dtype = np.int64 if use_64bit_index else np.int32
+    idx_dtype = lax_utils.int_dtype_for_dim(arr.shape[0], signed=True)
     iota = lax.broadcasted_iota(idx_dtype, np.shape(arr), dimension=0)
     aux, indices = lax.sort_key_val(arr, iota)
   else:

@@ -18,17 +18,20 @@
 
 from functools import partial
 
+import numpy as np
+
 from jax._src import core
 from jax._src import dispatch
+from jax._src import dtypes
 from jax._src import mesh as mesh_lib
 from jax._src import state
 from jax._src.named_sharding import DuplicateSpecError, NamedSharding
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.util import safe_zip
+from jax._src.typing import DimSize, DType, Shape
 
 zip, unsafe_zip = safe_zip, zip
 
-import numpy as np
 
 def input_dtype(x, *_, **__):
   return x.dtype
@@ -223,3 +226,36 @@ def dtype_to_string(dtype):
   except AttributeError:
     pass
   return str(dtype)
+
+_int32_max = np.iinfo(np.int32).max
+_uint32_max = np.iinfo(np.uint32).max
+
+def int_dtype_for_dim(d: DimSize, *, signed: bool) -> DType:
+  """Returns a integer dtype large enough to contain indices in dimension d."""
+  if signed:
+    if not core.is_constant_dim(d):
+      return dtypes.default_int_dtype()
+    return np.dtype(np.int64) if d > _int32_max else np.dtype(np.int32)
+  else:
+    if not core.is_constant_dim(d):
+      return dtypes.default_uint_dtype()
+    return np.dtype(np.uint64) if d > _uint32_max else np.dtype(np.uint32)
+
+def int_dtype_for_shape(shape: Shape, *, signed: bool) -> DType:
+  """Returns a integer dtype large enough to contain indices in `shape`."""
+  if signed:
+    for d in shape:
+      if core.is_constant_dim(d):
+        if d > _int32_max:
+          return np.dtype(np.int64)
+      else:
+        return dtypes.default_int_dtype()
+    return np.dtype(np.int32)
+  else:
+    for d in shape:
+      if core.is_constant_dim(d):
+        if d > _uint32_max:
+          return np.dtype(np.uint64)
+      else:
+        return dtypes.default_uint_dtype()
+    return np.dtype(np.uint32)

@@ -57,6 +57,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.interpreters.batching import RaggedAxis
 from jax._src.lax import slicing
+from jax._src.lax import utils as lax_utils
 from jax._src.mesh import get_abstract_mesh, get_concrete_mesh
 from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_abstract_eval,
@@ -7100,12 +7101,13 @@ mlir.register_lowering(squeeze_p, _squeeze_lower)
 
 def shape_as_value(shape: core.Shape):
   """Converts a shape that may contain Poly values into a JAX value."""
+  dtype = lax_utils.int_dtype_for_shape(shape, signed=True)
   if len(shape) == 0:
-    return full((0,), np.array(0, np.int64))
+    return full((0,), np.array(0, dtype=dtype))
   if core.is_constant_shape(shape):
-    return np.asarray(shape, dtype=np.int64)
+    return np.asarray(shape, dtype=dtype)
   dims = [
-      expand_dims(convert_element_type(core.dimension_as_value(d), np.int64),
+      expand_dims(convert_element_type(core.dimension_as_value(d), dtype),
                   (0,))
       for d in shape
   ]
@@ -8113,9 +8115,10 @@ def _operands_to_keys(*operands, num_keys=1):
 
 def _sort_jvp(primals, tangents, *, dimension, is_stable, num_keys):
   shape = primals[0].shape
+  index_dtype = lax_utils.int_dtype_for_shape(shape, signed=False)
   sorted_primals_and_idx = sort_p.bind(
       *primals,
-      broadcasted_iota(dtypes.canonicalize_dtype(np.uint64), shape, dimension),
+      broadcasted_iota(index_dtype, shape, dimension),
       dimension=dimension, is_stable=is_stable, num_keys=num_keys)
   batch_dims = tuple(np.delete(np.arange(len(shape), dtype=np.int64),
                                dimension))
