@@ -4466,15 +4466,13 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       self.skipTest("Only works on GPU with capability sm_100a or sm_101a")
 
   @parameterized.named_parameters(
-      ("exact", (128, 64), jnp.bfloat16, 1, True, False, 64),
-      ("non-exact", (128, 77), jnp.bfloat16, 1, False, False, 128),
-      ("exact-packed", (128, 128), jnp.bfloat16, 2, True, False, 64),
-      ("non-exact-packed", (128, 120), jnp.bfloat16, 2, False, False, 64),
-      ("collective-exact", (128, 64), jnp.bfloat16, 1, True, True, 64),
+      ("unpacked", (128, 77), jnp.bfloat16, 1, False, 128),
+      ("packed", (128, 128), jnp.bfloat16, 2, False, 64),
+      ("collective", (128, 64), jnp.bfloat16, 1, True, 64),
   )
   @unittest.skip("Layout inference fails for trivial load/store kernels.")
   def test_tmem_alloc_dealloc(
-      self, shape, dtype, packing, exact, collective, expected_allocated_columns
+      self, shape, dtype, packing, collective, expected_allocated_columns
   ):
     tmem_type = ir.MemRefType.get(
         shape,
@@ -4493,7 +4491,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
           result=tmem_type,
           smem_ptr=tmem,
           collective=collective,
-          exact=exact,
+          exact=False,
           packing=packing,
       )
 
