@@ -386,7 +386,7 @@ class CustomPartitionerTest(jtu.JaxTestCase):
       leading_axes = ""
       for i in range(rank - 2):
         leading_axes += f" b{i}"
-      return f"{leading_axes} i j, {leading_axes} j k -> {leading_axes} i k"
+      return f"{leading_axes} i j, {leading_axes} j k -> {leading_axes} i k" , dict(reduction_factors=("j",))
 
     @partial(custom_partitioning, static_argnums=(2,3))
     def f(x, y, static_arg0=1, static_arg1=2):
@@ -444,6 +444,37 @@ class CustomPartitionerTest(jtu.JaxTestCase):
         NotImplementedError, 'provide sharding_rule to migrate to Shardy'):
       jax.jit(f)(x)
 
+  def test_custom_partitioner_reshape(self):
+    self.skip_if_custom_partitioning_not_supported()
+
+    def partition(mesh, arg_shapes, result_shape):
+      arg_shardings = jax.tree.map(lambda s: s.sharding, arg_shapes)
+      result_sharding = result_shape.sharding
+
+      def lower_fn(x, y):
+        return x.reshape((4,)) + y
+      return mesh, lower_fn, (result_sharding), arg_shardings
+
+    @partial(custom_partitioning)
+    def f(x, y):
+      x = x.reshape((8,))
+      return x + y
+
+    f.def_partition(
+      infer_sharding_from_operands=None,
+      propagate_user_sharding=None,
+      partition=partition,
+      sharding_rule='(i k) j, (i k j) -> (i k j)', i=2, k=2, need_replication_factors=('k',))
+
+    mesh = jtu.create_mesh((2, 4), ('x', 'y'))
+    x = jax.device_put(np.arange(8).reshape(4, 2),
+                       NamedSharding(mesh, P('x', None)))
+    y = jax.device_put(np.arange(8),
+                       NamedSharding(mesh, P('x')))
+    jitted_result = jax.jit(f)(x, y)
+    unjitted_result = f(x, y)
+    self.assertArraysEqual(jitted_result, unjitted_result)
+    self.assertEqual(jitted_result.sharding, NamedSharding(mesh, P('x')))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
