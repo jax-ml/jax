@@ -1967,9 +1967,13 @@ class PallasCallTest(PallasBaseTest):
   def test_replicated_broadcast_reduction(
       self, m, replicated, reduced_dims, dty, reduce_func
   ):
-    if dty == jnp.int32 and 1 in reduced_dims:
-      # TODO(b/395579834): Remove this skip once we implement this.
-      self.skipTest('int32 reduction on last dimension not supported')
+    # TODO(b/395579834): Remove this skip later.
+    if (
+        dty == jnp.int32
+        and 1 in reduced_dims
+        and is_cloud_tpu_older_than(2025, 9, 1)
+    ):
+      self.skipTest('Requires libtpu built after 2025-09-01')
     if not jtu.is_device_tpu_at_least(4) and len(replicated) == 2:
       self.skipTest(
           'Brodcast in both sublanes and lanes not supported on this hardware'

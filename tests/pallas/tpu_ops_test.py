@@ -305,12 +305,13 @@ class OpsTest(PallasBaseTest):
       reduce_func = [jnp.sum, jnp.max, jnp.min]
   )
   def test_reduction(self, dtype, axis, reduce_func):
-    if dtype == jnp.int32:
-      if axis == 2:
-        self.skipTest("Int32 reduction on minor is not supported.")
-    # TODO(b/384127570): fix bfloat16 reduction.
-    if dtype == jnp.bfloat16 and reduce_func != jnp.sum:
-      self.skipTest("b/384127570")
+    # TODO(b/395579834): Remove this skip later.
+    if (
+        dtype == jnp.int32
+        and axis == 2
+        and not jtu.if_cloud_tpu_at_least(2025, 9, 1)
+    ):
+      self.skipTest("Requires libtpu built after 2025-09-01")
     in_shape = (2, 16, 128)
     out_shape = list(in_shape)
     out_shape[axis] = 1

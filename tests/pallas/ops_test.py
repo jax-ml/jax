@@ -526,6 +526,43 @@ class OpsTest(PallasBaseTest):
 
     np.testing.assert_allclose(result[0, 0], reduction_op(x), atol=1e-5)
 
+  @parameterized.named_parameters(
+      ("sum", jnp.sum, (32, 256)),
+      ("max", jnp.max, (32, 256)),
+      ("min", jnp.min, (32, 256)),
+      ("sum_irregular", jnp.sum, (31, 300)),
+      ("max_irregular", jnp.max, (31, 300)),
+      ("min_irregular", jnp.min, (31, 300)),
+  )
+  def test_reduce_int32(self, reduction_op, input_shape):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("TODO: error on GPU")
+    # TODO(b/395579834): Remove this skip later.
+    if not jtu.if_cloud_tpu_at_least(2025, 9, 1):
+      self.skipTest("Requires libtpu built after 2025-09-01")
+
+    def kernel(x_ref, o_ref):
+      o_ref[0, 0] = reduction_op(x_ref[...])
+
+    x = jax.random.randint(
+        jax.random.key(0),
+        shape=input_shape,
+        minval=-100,
+        maxval=100,
+        dtype=jnp.int32,
+    )
+    result = self.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec(input_shape, lambda *_: (0, 0)),
+        ],
+        out_specs=pl.BlockSpec((1, 1), memory_space=smem_on_tpu()),
+        out_shape=jax.ShapeDtypeStruct([1, 1], intx),
+        grid=(1,),
+    )(x)
+
+    np.testing.assert_allclose(result[0, 0], reduction_op(x), atol=1e-5)
+
   # TODO(sharadmv): test rank < 2, size < 2
   @hp.given(select_n_strategy(max_cases=2, min_rank=2, max_rank=4,
                               min_size_exp=1))
