@@ -577,7 +577,7 @@ ffi::Error SyevdDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
   FFI_RETURN_IF_ERROR(CheckShape(w->dimensions(), {batch, cols}, "w", "syevd"));
   FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "syevd"));
   if (algorithm == SyevdAlgorithm::kJacobi ||
-      (algorithm == SyevdAlgorithm::kDefault && cols <= 32)) {
+      (algorithm == SyevdAlgorithm::kDefault)) {
     SOLVER_DISPATCH_IMPL(SyevdjImpl, batch, cols, stream, scratch, lower, a,
                          out, w, info);
   } else {
