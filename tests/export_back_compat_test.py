@@ -31,6 +31,7 @@ from jax._src.export import _export
 
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
+from jax._src.internal_test_util.export_back_compat_test_data import allocate_buffer
 from jax._src.internal_test_util.export_back_compat_test_data import annotate_data_placement
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_cholesky_lapack_potrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eig_lapack_geev
@@ -156,6 +157,7 @@ class CompatTest(bctu.CompatTestBase):
         stablehlo_dynamic_approx_top_k.data_2024_05_30,
         annotate_data_placement.data_2025_04_07_tpu,
         annotate_data_placement.data_2025_04_07_cuda,
+        allocate_buffer.data_2025_08_27,
     ]
     # Some of the above are nested structures.
     covering_testdatas = itertools.chain(
@@ -982,6 +984,12 @@ class CompatTest(bctu.CompatTestBase):
             "shape_assertion",
         ],
     )
+
+  def test_allocate_buffer(self):
+    def func():
+      return lax.empty((128, 128), np.float32) * math.nan
+    data = self.load_testdata(allocate_buffer.data_2025_08_27)
+    self.run_one_test(func, data)
 
 
 @jtu.with_config(jax_use_shardy_partitioner=True)
