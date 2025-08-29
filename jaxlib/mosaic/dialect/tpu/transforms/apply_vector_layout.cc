@@ -4724,37 +4724,47 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_OP(layouts_in.front().has_value());
   TPU_ASSERT_OP(llvm::none_of(layouts_in.drop_front(),
                               [&](const Layout &l) { return l.has_value(); }));
-  const Location loc = op.getLoc();
   const VectorLayout &in_layout = *layouts_in.front();
   const VectorLayout &out_layout = *layouts_out.front();
-  // TODO(yixiuliu): Support any input shapes
   TPU_ASSERT_OP(in_layout ==
                 VectorLayout(32, {0, 0}, ctx.target_shape,
                              VectorLayout::ImplicitDim::kNone));
-  TPU_ASSERT_OP(out_layout ==
-                VectorLayout(32, {0, std::nullopt}, ctx.target_shape,
-                             VectorLayout::ImplicitDim::kMinor));
 
   tpu::ReduceIndexOp reduce_index_op = cast<tpu::ReduceIndexOp>(op);
 
   auto in_ty = cast<VectorType>(reduce_index_op.getInput().getType());
   auto out_ty = cast<VectorType>(reduce_index_op.getResult().getType());
   auto in_element_type = in_ty.getElementType();
+  const int64_t rank = in_ty.getRank();
+  const int64_t axis = reduce_index_op.getAxis();
+  if (axis == rank - 1) {
+    TPU_ASSERT_OP(out_layout ==
+                  VectorLayout(32, {0, std::nullopt}, ctx.target_shape,
+                               VectorLayout::ImplicitDim::kMinor));
+  } else if (axis == rank - 2) {
+    TPU_ASSERT_OP(out_layout ==
+                  VectorLayout(32, {std::nullopt, 0}, ctx.target_shape,
+                               VectorLayout::ImplicitDim::kSecondMinor));
+  } else {
+    TPU_ASSERT_OP(out_layout ==
+                  VectorLayout(32, {0, 0}, ctx.target_shape,
+                               VectorLayout::ImplicitDim::kNone));
+  }
+
   if (!in_element_type.isF32()) {
     return op.emitOpError("Not implemented: Only f32 input is supported");
   }
   if (!out_ty.getElementType().isSignlessInteger(32)) {
     return op.emitOpError("Not implemented: Only i32 output is supported");
   }
-  const int64_t rank = in_ty.getRank();
-  const int64_t axis = reduce_index_op.getAxis();
-  TPU_ASSERT_EQ_OP(axis, rank - 1);
+  TPU_ASSERT_OP(axis >= 0 && axis < rank);
+  // TODO(yixiuliu): Support any input shapes
   TPU_ASSERT_OP(
     in_ty.getShape()[rank - 2] % ctx.target_shape[0] == 0 &&
     in_ty.getShape()[rank - 1] % ctx.target_shape[1] == 0);
   tpu::ReductionKind kind = reduce_index_op.getKind();
 
-  OpBuilder builder(&op);
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
   FAILUREOR_ASSIGN_OR_RETURN(
     xla::Array<Value> tiles,
     disassemble(builder, in_layout, reduce_index_op.getInput(),
@@ -4800,28 +4810,35 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
           Value lhs, Value rhs, Value lhs_idx, Value rhs_idx) ->
           std::pair<Value, Value> {
         Value keep_lhs = builder.create<arith::CmpFOp>(
-            loc, predicate, lhs, rhs).getResult();
+            predicate, lhs, rhs).getResult();
         Value result_val = builder.create<arith::SelectOp>(
-            loc, keep_lhs, lhs, rhs);
+            keep_lhs, lhs, rhs);
         Value result_idx = builder.create<arith::SelectOp>(
-            loc, keep_lhs, lhs_idx, rhs_idx);
+            keep_lhs, lhs_idx, rhs_idx);
         return {result_val, result_idx};
       };
       Value acc_vreg = nullptr;
       Value acc_vreg_idx = nullptr;
-      const int64_t reduction_step = ctx.target_shape[1];
+      const std::optional<int32_t> in_tile_reduction_dim =
+          (axis == rank - 2 || axis == rank - 1)
+              ? std::make_optional(axis - (rank - 2))
+              : std::nullopt;
+      const int64_t reduction_step =
+          in_tile_reduction_dim ? ctx.target_shape[*in_tile_reduction_dim] : 1;
       slice_vregs.Each(
         [&](const absl::Span<const int64_t> red_idx, Value *const src_vreg) {
         // Calculate the index of acc_vreg on reduction dimension in full input.
-        Value base_idx = builder.create<arith::ConstantOp>(
-            loc, index_ty,
+        Value src_vreg_idx = builder.create<arith::ConstantOp>(
+            index_ty,
             DenseIntElementsAttr::get(
                 index_ty,
                 static_cast<int32_t>(red_idx[axis] * reduction_step)));
-        Value iota = builder.create<tpu::IotaOp>(
-            loc, index_ty,
-            /*dimensions=*/ArrayRef<int32_t>{1});
-        Value src_vreg_idx = builder.create<arith::AddIOp>(loc, base_idx, iota);
+        if (in_tile_reduction_dim) {
+          Value iota = builder.create<tpu::IotaOp>(
+              index_ty,
+              /*dimensions=*/ArrayRef<int32_t>{*in_tile_reduction_dim});
+          src_vreg_idx = builder.create<arith::AddIOp>(src_vreg_idx, iota);
+        }
 
         if (acc_vreg == nullptr || acc_vreg_idx == nullptr) {
           acc_vreg = *src_vreg;
@@ -4831,17 +4848,38 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
               acc_vreg, *src_vreg, acc_vreg_idx, src_vreg_idx);
         }
       });
-      acc_vreg = builder.create<tpu::AllReduceOp>(
-          reduce_index_op.getLoc(), index_ty, acc_vreg, /*dim=*/1, kind);
-      if (slice_vregs.dim(axis) > 1) {
-        // Convert back to original index in acc_vreg_idx
-        *out_vreg = builder.create<tpu::DynamicGatherOp>(
-            loc, index_ty,
-            /*source=*/acc_vreg_idx,
-            /*indices=*/acc_vreg,
-            /*dimensions=*/ArrayRef<int32_t>{1});
+      if (in_tile_reduction_dim) {
+        if (*in_tile_reduction_dim == 0) {  // sublane reduction
+          Value val = acc_vreg;
+          Value idx = acc_vreg_idx;
+          for (int i = ctx.target_shape[0] / 2; i > 0; i /= 2) {
+            Value rotated_val = builder.create<tpu::RotateOp>(
+                val, /*amount=*/i, /*dimension=*/0, /*stride=*/nullptr,
+                /*stride_dimension=*/nullptr);
+            Value rotated_idx = builder.create<tpu::RotateOp>(
+                idx, /*amount=*/i, /*dimension=*/0, /*stride=*/nullptr,
+                /*stride_dimension=*/nullptr);
+            std::tie(val, idx) =
+                reduce_elementwise(val, rotated_val, idx, rotated_idx);
+          }
+          *out_vreg = idx;
+        } else {  // lane reduction
+          CHECK_EQ(*in_tile_reduction_dim, 1);
+          acc_vreg = builder.create<tpu::AllReduceOp>(
+              index_ty, acc_vreg, /*dim=*/1, kind);
+          if (slice_vregs.dim(axis) > 1) {
+            // Convert back to original index in acc_vreg_idx
+            *out_vreg = builder.create<tpu::DynamicGatherOp>(
+                index_ty,
+                /*source=*/acc_vreg_idx,
+                /*indices=*/acc_vreg,
+                /*dimensions=*/ArrayRef<int32_t>{1});
+          } else {
+            *out_vreg = acc_vreg;
+          }
+        }
       } else {
-        *out_vreg = acc_vreg;
+        *out_vreg = acc_vreg_idx;
       }
   });
 
