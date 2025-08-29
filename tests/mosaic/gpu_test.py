@@ -22,12 +22,12 @@ import math
 import operator
 import re
 import sys
-import unittest
 
 from absl.testing import absltest, parameterized
 import jax
 from jax._src import config
 from jax._src import dtypes
+from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
@@ -4472,10 +4472,13 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       ("non-exact-packed", (128, 120), jnp.bfloat16, 2, False, False, 64),
       ("collective-exact", (128, 64), jnp.bfloat16, 1, True, True, 64),
   )
-  @unittest.skip("Layout inference fails for trivial load/store kernels.")
   def test_tmem_alloc_dealloc(
       self, shape, dtype, packing, exact, collective, expected_allocated_columns
   ):
+    # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.2.
+    if jaxlib.version < (0, 7, 2):
+      self.skipTest("Require JAX version 0.7.2 or higher.")
+
     tmem_type = ir.MemRefType.get(
         shape,
         utils.dtype_to_ir_type(dtype),
@@ -4496,6 +4499,11 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
           exact=exact,
           packing=packing,
       )
+
+      # Layout cast is required to guide layout inference.
+      # TODO(allanrenucci): Should we infer default TMEM layout?
+      layout = mgpu_layouts.to_layout_attr(tcgen05.tmem_default_layout(packing))
+      tmem_ref = mgpu_dialect.tmem_layout_cast(tmem_ref, layout)
 
       mgpu_dialect.tmem_relinquish_alloc_permit(collective=collective)
       mgpu_dialect.tmem_dealloc(tmem_ref)
@@ -4541,10 +4549,13 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       ("unpacked", (128, 128), jnp.bfloat16, 1),
       ("packed", (128, 128), jnp.bfloat16, 2),
   )
-  @unittest.skip("Require async_store_tmem layout inference.")
   def test_tmem_load_store(
       self, shape, dtype, packing,
   ):
+    # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.2.
+    if jaxlib.version < (0, 7, 2):
+      self.skipTest("Require JAX version 0.7.2 or higher.")
+
     def body(
         ctx: launch_context.LaunchContext,
         input: ir.Value,
@@ -4566,14 +4577,13 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
 
       # registers -> TMEM
       r_in = mgpu_dialect.layout_cast(r_in, tmem_layout)
-      store_op = mgpu_dialect.AsyncStoreTmemOp(r_in, tmem_ref)
-      store_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
+      tmem_ref = mgpu_dialect.tmem_layout_cast(tmem_ref, tmem_layout)
+      mgpu_dialect.async_store_tmem(r_in, tmem_ref)
       tcgen05.commit_tmem()
 
       # TMEM ->registers
-      load_op = mgpu_dialect.AsyncLoadTmemOp(tmem_ref)
-      load_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
-      r_out = mgpu_dialect.layout_cast(load_op.result, tmem_layout)
+      r_out = mgpu_dialect.async_load_tmem(tmem_ref)
+      r_out = mgpu_dialect.layout_cast(r_out, tmem_layout)
       # no need to wait in this case, see:
       # https://docs.jax.dev/en/latest/pallas/gpu/reference.html#allocating-the-accumulator-using-tmem
 
@@ -4603,8 +4613,10 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       ab_type=(jnp.float16, jnp.bfloat16),
       acc_type=(jnp.float16, jnp.float32),
   )
-  @unittest.skip("Require async_load_tmem layout inference.")
   def test_tcgen05_mma(self, m, n, swizzle, ab_type, acc_type):
+    # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.2.
+    if jaxlib.version < (0, 7, 2):
+      self.skipTest("Require JAX version 0.7.2 or higher.")
     if acc_type == jnp.float16 and ab_type != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
 
@@ -4646,28 +4658,26 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       tmem_layout = tcgen05._infer_tmem_layout(
           acc_shape, collective=False, packing=1
       )
-      load_layout = layouts.to_layout_attr(
-          tcgen05._infer_tmem_load_registers_layout(
-              tmem_layout, columns=n, packing=1
-          )
+      load_layout = tcgen05._infer_tmem_load_registers_layout(
+          tmem_layout, columns=n, packing=1
       )
+      load_layout = layouts.to_layout_attr(load_layout)
       tmem_layout = layouts.to_layout_attr(tmem_layout)
 
-      mma_op = mgpu_dialect.TcGen05MMAOp(
+      acc_tmem = mgpu_dialect.tmem_layout_cast(acc_tmem, tmem_layout)
+      mgpu_dialect.tcgen05_mma(
           accumulator=acc_tmem,
           a=a_smem,
           b=b_smem,
           accumulate=arith.constant(ir.IntegerType.get_signless(1), False),
       )
-      mma_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
       tcgen05.commit_arrive(mma_barrier.barrier_ref)
 
       mma_barrier.wait(orders_tensor_core=True)
 
       # TMEM -> Registers
-      load_op = mgpu_dialect.AsyncLoadTmemOp(acc_tmem)
-      load_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
-      r_out = mgpu_dialect.layout_cast(load_op.result, load_layout)
+      r_out = mgpu_dialect.async_load_tmem(acc_tmem)
+      r_out = mgpu_dialect.layout_cast(r_out, load_layout)
 
       # Registers -> GMEM
       zero_index = arith.constant(ir.IndexType.get(), 0)
@@ -4712,8 +4722,10 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       ab_type=(jnp.float16, jnp.bfloat16),
       acc_type=(jnp.float16, jnp.float32),
   )
-  @unittest.skip("Require async_load_tmem layout inference.")
   def test_tcgen05_collective_mma(self, m, n, swizzle, ab_type, acc_type):
+    # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.2.
+    if jaxlib.version < (0, 7, 2):
+      self.skipTest("Require JAX version 0.7.2 or higher.")
     if acc_type == jnp.float16 and ab_type != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
 
@@ -4765,33 +4777,32 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       tmem_layout = tcgen05._infer_tmem_layout(
           acc_block_shape, collective=True, packing=1
       )
-      load_layout = layouts.to_layout_attr(
-          tcgen05._infer_tmem_load_registers_layout(
-              tmem_layout, columns=n, packing=1
-          )
+      load_layout = tcgen05._infer_tmem_load_registers_layout(
+          tmem_layout, columns=n, packing=1
       )
       tmem_layout = layouts.to_layout_attr(tmem_layout)
+      load_layout = layouts.to_layout_attr(load_layout)
+
+      acc_tmem = mgpu_dialect.tmem_layout_cast(acc_tmem, tmem_layout)
 
       is_first_block = arith.cmpi(
           arith.CmpIPredicate.eq, block_id, c(0, ir.IndexType.get())
       )
       with when(is_first_block):
-        mma_op = mgpu_dialect.TcGen05MMAOp(
+        mgpu_dialect.tcgen05_mma(
             accumulator=acc_tmem,
             a=a_smem,
             b=b_smem,
             accumulate=arith.constant(ir.IntegerType.get_signless(1), False),
             collective=True,
         )
-        mma_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
         tcgen05.commit_arrive(mma_barrier.barrier_ref, collective=True, ctx=ctx)
 
       mma_barrier.wait(orders_tensor_core=True)
 
       # TMEM -> Registers
-      load_op = mgpu_dialect.AsyncLoadTmemOp(acc_tmem)
-      load_op.attributes["in_tmem_layouts"] = ir.ArrayAttr.get([tmem_layout])
-      r_out = mgpu_dialect.layout_cast(load_op.result, load_layout)
+      r_out = mgpu_dialect.async_load_tmem(acc_tmem)
+      r_out = mgpu_dialect.layout_cast(r_out, load_layout)
 
       # Registers -> GMEM
       zero_index = arith.constant(ir.IndexType.get(), 0)
