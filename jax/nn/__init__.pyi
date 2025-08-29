@@ -58,6 +58,12 @@ def log_softmax(
     axis: Axis = ...,
     where: ArrayLike | None = ...,
   ) -> Array: ...
+def logmeanexp(
+    x: ArrayLike,
+    axis: Axis = None,
+    where: ArrayLike | None = None,
+    keepdims: bool = False,
+) -> Array: ...
 @overload
 def logsumexp(
     a: ArrayLike,

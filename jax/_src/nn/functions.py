@@ -522,7 +522,7 @@ logsumexp = _logsumexp
 @partial(api.jit, static_argnames=("axis", "keepdims"))
 def logmeanexp(
     x: ArrayLike,
-    axis: int | tuple[int, ...] | None = None,
+    axis: Axis = None,
     where: ArrayLike | None = None,
     keepdims: bool = False,
 ) -> Array:
