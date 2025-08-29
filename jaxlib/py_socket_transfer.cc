@@ -467,6 +467,42 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
       .def("connect", [](PyTransferServer& self, const std::string& address) {
         return self.Connect(address);
       });
+  m.def("_make_error_array", [](jax::nb_class_ptr<jax::PyClient> py_client,
+                                nb::object py_aval, std::string message) {
+    auto* ifrt_client =
+        llvm::dyn_cast_or_null<xla::ifrt::PjRtClient>(py_client->ifrt_client());
+    if (ifrt_client == nullptr) {
+      xla::ThrowIfError(absl::InvalidArgumentError(
+          "_pull_flat only supported on pjrt-ifrt clients."));
+    }
+    auto aval = xla::ValueOrThrow(ArraySpecFromShapeDtypeStruct(py_aval));
+    auto traceback = jax::Traceback::Get();
+    xla::ifrt::PjRtArray::PjRtBuffers buffers;
+    auto prim_type = xla::ValueOrThrow(xla::ifrt::ToPrimitiveType(aval.dtype));
+    auto shards = xla::ValueOrThrow(aval.sharding->Disassemble(
+        aval.shape, xla::ifrt::SingleDeviceShardSemantics::kAddressableShards));
+    buffers.reserve(shards.size());
+    for (auto& shard : shards) {
+      auto* mem_space =
+          xla::ValueOrThrow(MemorySpaceFromSharding(*shard.second));
+      xla::PjRtClient::ShapeSpec shape_spec = {
+          prim_type, xla::DimensionVector(shard.first.dims().begin(),
+                                          shard.first.dims().end())};
+      auto atm = xla::ValueOrThrow(
+          py_client->pjrt_client()->CreateBuffersForAsyncHostToDevice(
+              {shape_spec}, std::nullopt, mem_space));
+
+      atm->SetBufferError(0, absl::InternalError(message));
+      buffers.push_back(atm->RetrieveBuffer(0));
+    }
+    auto arr = xla::ValueOrThrow(xla::ifrt::PjRtArray::Create(
+        ifrt_client, aval.dtype, aval.shape, aval.sharding, std::move(buffers),
+        aval.layout));
+    return jax::PyArray::MakeFromIfrtArrayAndSharding(
+        py_client, traceback, std::move(arr), py_aval.attr("sharding"), false,
+        true,
+        /*skip_checks=*/false);
+  });
 
   m.def(
       "start_transfer_server",
