@@ -1520,7 +1520,7 @@ def _tmem_alloc_op_lowering_rule(
   ncols = output_shape[1] // op.packing.value
 
   with mgpu_utils.when(ctx.single_warp_per_block_predicate):
-    tcgen05.tmem_alloc(op.smem_ptr, ncols, op.collective, op.exact)
+    tcgen05.tmem_alloc(op.smem_ptr, ncols, op.collective, exact=False)
   gpu.barrier()
   tmem_addr = memref.load(op.smem_ptr, [])
 
@@ -1528,7 +1528,6 @@ def _tmem_alloc_op_lowering_rule(
       [op.result.type], [tmem_addr]
   )
   cast_op.attributes["collective"] = op.collective
-  cast_op.attributes["exact"] = op.exact
   cast_op.attributes["packing"] = op.packing
 
   return [cast_op.result]
@@ -1552,14 +1551,13 @@ def _tmem_dealloc_op_lowering_rule(
   i32 = ir.IntegerType.get_signless(32)
   conversion_cast, [tmem_addr] = _undo_conversion_cast(op.tmem_ref, [i32])
   collective = ir.BoolAttr(conversion_cast.attributes["collective"]).value
-  exact = ir.BoolAttr(conversion_cast.attributes["exact"]).value
   packing = ir.IntegerAttr(conversion_cast.attributes["packing"]).value
 
   output_shape = ir.MemRefType(op.tmem_ref.type).shape
   ncols = output_shape[1] // packing
 
   with mgpu_utils.when(ctx.single_warp_per_block_predicate):
-    tcgen05.tmem_dealloc(tmem_addr, ncols, collective, exact)
+    tcgen05.tmem_dealloc(tmem_addr, ncols, collective, exact=False)
 
   return []
 
