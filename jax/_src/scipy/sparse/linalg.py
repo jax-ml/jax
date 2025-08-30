@@ -297,7 +297,6 @@ def _safe_normalize(x, thresh=None):
   """
   norm = _norm(x)
   dtype, weak_type = dtypes.lattice_result_type(*tree_leaves(x))
-  dtype = dtypes.canonicalize_dtype(dtype)
   if thresh is None:
     thresh = dtypes.finfo(norm.dtype).eps
   thresh = thresh.astype(dtype).real
@@ -399,7 +398,6 @@ def _kth_arnoldi_iteration(k, A, M, V, H):
   vector is taken to be the zero vector.
   """
   dtype, _ = dtypes.lattice_result_type(*tree_leaves(V))
-  dtype = dtypes.canonicalize_dtype(dtype)
   eps = dtypes.finfo(dtype).eps
 
   v = tree_map(lambda x: x[..., k], V)  # Gets V[:, k]
@@ -531,7 +529,6 @@ def _gmres_batched(A, b, x0, unit_residual, residual_norm, ptol, restart, M):
       unit_residual,
   )
   dtype, weak_type = dtypes.lattice_result_type(*tree_leaves(b))
-  dtype = dtypes.canonicalize_dtype(dtype)
   H = lax_internal._convert_element_type(
       jnp.eye(restart, restart + 1, dtype=dtype), weak_type=weak_type)
 
