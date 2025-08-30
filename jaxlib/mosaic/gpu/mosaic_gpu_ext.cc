@@ -262,6 +262,16 @@ NB_MODULE(_mosaic_gpu_ext, m) {
         return profiler_state.timings;
       },
       nb::arg("finalize") = true);
+  m.def("_get_gpu_sm_count", []() {
+    int dev = 0;
+    gpuDeviceProp deviceProp;
+    gpuError_t err = gpuGetDeviceProperties(&deviceProp, dev);
+    if (err != gpuSuccess) {
+      throw std::runtime_error("Failed to get GPU properties!");
+    }
+    int sm_count = deviceProp.multiProcessorCount;
+    return sm_count;
+  });
 }
 
 }  // namespace
