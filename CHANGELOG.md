@@ -29,6 +29,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `False`, but note this is a temporary config that will be removed in a
     future release.
 
+* Deprecations:
+  * The parameters `enable_xla` and `native_serialization` for `jax2tf.convert`
+    are deprecated and will be removed in a future versionof JAX. These were
+    used for jax2tf with non-native serialization, which has been now removed.
+
 ## JAX 0.7.1 (August 20, 2025)
 
 * New features
