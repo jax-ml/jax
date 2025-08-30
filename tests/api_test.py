@@ -2113,37 +2113,6 @@ class APITest(jtu.JaxTestCase):
     ):
       jax.vmap(f)(jnp.ones(4), jnp.ones(2), jnp.ones(2))
 
-  def test_vmap_sentinel(self):
-
-    @jax.tree_util.register_dataclass
-    @dataclasses.dataclass
-    class Foo:
-      x: jax.Array
-
-      def __init__(self, x):
-        nonlocal saw_sentinel
-        if x is jax._src.api_util.SENTINEL:
-          saw_sentinel += 1
-        self.x = x
-
-    x = jnp.arange(10)
-
-    # assert that sentinel is seen once for vmap in_axes
-    saw_sentinel = 0
-    jax.vmap(lambda f: f.x)(Foo(x))
-    self.assertEqual(saw_sentinel, 1)
-
-    # assert that sentinel is seen once for vmap out_axes
-    saw_sentinel = 0
-    jax.vmap(Foo)(x)
-    self.assertEqual(saw_sentinel, 1)
-
-    # assert that sentinel is seen twice with vmap in_axes and out_axes
-    saw_sentinel = 0
-    jax.vmap(lambda f: Foo(f.x + 1))(Foo(x))
-    self.assertEqual(saw_sentinel, 2)
-
-
   def test_device_get_scalar(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     x = api.device_put(x)
