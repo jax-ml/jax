@@ -1447,31 +1447,41 @@ class TCGen05Test(TestCase):
       out_jax_dtype=(jnp.float16, jnp.float32,),
       m=(128,),  # TODO(apaszke): 64, 192, 256
       n=(64, 128, 256),  # TODO(apaszke): 192, other non-power-of-2
+      rhs_swizzle=(32, 64, 128),
+      k_step_size=(16, 32, 64),
+      k_steps=(2,),  # Reducing to 1 can be helpful while debugging.
   )
-  def test_mma_lhs_tmem(self, m, n, in_jax_dtype, out_jax_dtype):
-    swizzle = 128
-    k_steps = 2  # Reducing to 1 can be helpful while debugging.
+  def test_mma_lhs_tmem(self, m, n, k_step_size, k_steps, rhs_swizzle, in_jax_dtype, out_jax_dtype):
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
 
     in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
-    swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
-    k = swizzle_elems * k_steps
-    lhs_tiling = rhs_tiling = (8, swizzle_elems)
+    k = k_step_size * k_steps
+    k_elems = k // bytewidth(in_mlir_dtype)
+    lhs_tiling = (8, k_elems)
+    if k_elems >= 64:
+      lhs_swizzle = 128
+    elif k_elems >= 32:
+      lhs_swizzle = 64
+    elif k_elems >= 16:
+      lhs_swizzle = 32
+    else:
+      raise ValueError(f"Unsupported k: {k}")
+    rhs_tiling = (8, rhs_swizzle // bytewidth(in_mlir_dtype))
 
     def kernel(ctx, lhs, rhs, out, scratch):
       lhs_smem, rhs_smem, barriers, mma_barrier, acc, lhs_tmem = scratch
       ctx.async_copy(
           src_ref=lhs,
           dst_ref=lhs_smem,
-          swizzle=swizzle,
+          swizzle=lhs_swizzle,
           gmem_transform=mgpu.TileTransform(lhs_tiling),
           barrier=barriers[0],
       )
       ctx.async_copy(
           src_ref=rhs,
           dst_ref=rhs_smem,
-          swizzle=swizzle,
+          swizzle=rhs_swizzle,
           gmem_transform=mgpu.TileTransform(rhs_tiling),
           barrier=barriers[1],
       )
@@ -1479,13 +1489,13 @@ class TCGen05Test(TestCase):
       barriers[1].wait()
       lhs_tmem.store(
           fa.FragmentedArray.load_tiled(
-              lhs_smem, swizzle, layout=tcgen05.LAYOUT
+              lhs_smem, lhs_swizzle, layout=tcgen05.LAYOUT
           )
       )
       tcgen05.commit_tmem()
       with mgpu.single_thread():
         tcgen05.mma(
-            acc, lhs_tmem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False,
+            acc, lhs_tmem, rhs_smem, a_swizzle=rhs_swizzle, b_swizzle=rhs_swizzle, accumulate=False,
         )
         tcgen05.commit_arrive(mma_barrier)
       mma_barrier.wait(orders_tensor_core=True)
