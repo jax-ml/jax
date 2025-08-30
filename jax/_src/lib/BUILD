@@ -39,6 +39,7 @@ py_library_providing_imports_info(
     deps = [
         "//jax:version",
         "//jax/_src:lazy_loader",
+        "@xla//xla/python:_gpu_ondevice_tracing",
     ] + if_building_jaxlib([
         "//jaxlib",
     ]),
