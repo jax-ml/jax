@@ -123,11 +123,11 @@ def _fft_lowering(ctx, x, *, fft_type, fft_lengths):
 
 def _fft_lowering_cpu(ctx, x, *, fft_type, fft_lengths):
   x_aval, = ctx.avals_in
-  if jaxlib_version < (0, 4, 13):
-    if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
-      raise NotImplementedError("Shape polymorphism for custom call is not implemented (fft); b/261671778; try updating your jaxlib.")
-    return [ducc_fft.ducc_fft_hlo(x, x_aval.dtype, fft_type=fft_type,  # type: ignore
-                                  fft_lengths=fft_lengths)]
+
+  # Always use the dynamic_ducc_fft_hlo path for consistency and to avoid
+  # the LegacyDuccFft runtime error that can occur in scan contexts.
+  # The old ducc_fft_hlo path can cause issues with small arrays in scan operations.
+  # See: https://github.com/jax-ml/jax/issues/31374
 
   in_shape = x_aval.shape
   dtype = x_aval.dtype
@@ -157,6 +157,14 @@ def _fft_lowering_cpu(ctx, x, *, fft_type, fft_lengths):
     zero = mlir.ir_constant(np.array(0, dtype=out_dtype))
     return [
         mlir.broadcast_in_dim(ctx, zero, out_aval, broadcast_dimensions=[])]
+
+  # For very old jaxlib versions, we need to check for shape polymorphism support
+  if jaxlib_version < (0, 4, 13):
+    if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
+      raise NotImplementedError("Shape polymorphism for custom call is not implemented (fft); b/261671778; try updating your jaxlib.")
+    # Use the old path only for very old jaxlib versions
+    return [ducc_fft.ducc_fft_hlo(x, x_aval.dtype, fft_type=fft_type,  # type: ignore
+                                  fft_lengths=fft_lengths)]
 
   strides_in = []
   stride = 1
