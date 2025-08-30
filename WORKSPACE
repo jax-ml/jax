@@ -77,13 +77,6 @@ test_shard_count_repository(
     name = "test_shard_count",
 )
 
-load("//:nvidia_wheel_versions.bzl", "nvidia_wheel_versions_repository")
-
-nvidia_wheel_versions_repository(
-    name = "nvidia_wheel_versions",
-    versions_source = "//build:nvidia-requirements.txt",
-)
-
 load("//jaxlib:jax_python_wheel.bzl", "jax_python_wheel_repository")
 
 jax_python_wheel_repository(
@@ -94,7 +87,13 @@ jax_python_wheel_repository(
 
 load(
     "@xla//third_party/py:python_wheel.bzl",
+    "nvidia_wheel_versions_repository",
     "python_wheel_version_suffix_repository",
+)
+
+nvidia_wheel_versions_repository(
+    name = "nvidia_wheel_versions",
+    versions_source = "//build:nvidia-requirements.txt",
 )
 
 python_wheel_version_suffix_repository(
