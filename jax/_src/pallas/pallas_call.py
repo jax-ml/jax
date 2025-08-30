@@ -1556,7 +1556,7 @@ def pallas_call(
       etc.
     input_output_aliases: a dictionary mapping the index of some inputs to
       the index of the output that aliases them. These indices are in the
-      flattened inputs and outputs.
+      flattened inputs and outputs (ignoring None values).
     debug: if True, Pallas prints various intermediate forms of the kernel
       as it is being processed.
     interpret: runs the ``pallas_call`` as a ``jax.jit`` of a scan over the
