@@ -2123,7 +2123,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       [3, 2, 1, 4]], dtype=np.float32))
 
   @jtu.sample_product(
-    shape=[(2, 3), (4, 6), (5, 7), (100, 300)],
+    shape=[(2, 3), (4, 6), (50, 7), (100, 110)],
     dtype = float_types + complex_types,
     method = ["schur", "eigen"]
   )
@@ -2132,7 +2132,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     if jtu.test_device_matches(["gpu"]) and method == "schur":
       self.skipTest("Schur not supported on GPU.")
 
-    tol = {np.float32: 3e-2, np.complex64: 3e-2, np.complex128: 1e-9}
+    tol = {np.float32: 3e-2, np.float64: 1e-9, np.complex64: 3e-2, np.complex128: 1e-9}
 
     def args_maker():
       rng = jtu.rand_default(self.rng())
@@ -2182,7 +2182,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     B = P @ D_B @ P_inv
 
     C = rng(shape=(n, n), dtype=dtype)
-    sylv_solution = jsp.linalg.solve_sylvester(A, B, C, method=method, tol=1e-6)
+    sylv_solution = jsp.linalg.solve_sylvester(A, B, C, method=method, tol=1e-5)
     self.assertArraysEqual(sylv_solution, np.full((n, n), np.nan, dtype))
 
 

@@ -2344,8 +2344,7 @@ def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, *, method: str = "
     >>> B = jax.numpy.array([[5, 6], [7, 8]])
     >>> C = jax.numpy.array([[6, 8], [10, 12]])
     >>> X = jax.scipy.linalg.solve_sylvester(A, B, C)
-    >>> with jax.numpy.printoptions(precision=0, suppress=True): # doctest: +SKIP
-    ...   print(X)
+    >>> print(X) # doctest: +SKIP
     [[1. 0.]
      [0.  1.]]
 
@@ -2359,6 +2358,8 @@ def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, *, method: str = "
     The eigen decomposition method is the fastest method to solve a sylvester equation. However, this speed brings with it a couple of drawbacks.
     First, A and B must be diagonalizable otherwise the eigenvectors will be linearly dependent and ill-conditioned leading to accuracy issues.
     Second, when the eigenvectors are not orthogonal roundoff errors are amplified.
+
+    Additionally, for complex types as the size of the matrix increases the accuracy of the results degrades. Float64 types are most robust to degradation.
 
     The tol argument allows you to specify how ill-conditioned a matrix can be and still estimate a solution.
     For matrices that are ill-conditioned we recommend using float64 instead of the default float32 dtype. The solver
