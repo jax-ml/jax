@@ -21,6 +21,7 @@ build --repo_env USE_HERMETIC_CC_TOOLCHAIN=1
 
 # TODO: Migrate for https://github.com/bazelbuild/bazel/issues/7260
 build:clang_local --noincompatible_enable_cc_toolchain_resolution
+build:clang_local --@rules_ml_toolchain//common:enable_hermetic_cc=False
 build:clang_local --repo_env USE_HERMETIC_CC_TOOLCHAIN=0
 
 # Do not use C-Ares when building gRPC.
@@ -287,26 +288,19 @@ build:ci_linux_x86_64_cuda --config=ci_linux_x86_64_cuda12
 build:ci_linux_x86_64_cuda13 --config=cuda13 --config=ci_linux_x86_64_cuda_common
 
 # Linux Aarch64 CI configs
-build:ci_linux_aarch64_base --config=clang_local
 build:ci_linux_aarch64_base --config=clang --verbose_failures=true
-build:ci_linux_aarch64_base --action_env=TF_SYSROOT="/dt10"
 build:ci_linux_aarch64_base --color=yes
 
 # This appears to help avoid a timeout in CI for linalg_test.
 build:ci_linux_aarch64_base --test_env=OMP_NUM_THREADS=8
 
 build:ci_linux_aarch64 --config=ci_linux_aarch64_base
-build:ci_linux_aarch64 --host_crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
-build:ci_linux_aarch64 --crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
 
 build:ci_linux_aarch64_cuda_common --config=ci_linux_aarch64_base
 build:ci_linux_aarch64_cuda_common --config=build_cuda_with_nvcc
-build:ci_linux_aarch64_cuda_common --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
-build:ci_linux_aarch64_cuda_common --crosstool_top="@local_config_cuda//crosstool:toolchain"
 
-# Aarch64 builds use @local_config_cuda//crosstool:toolchain and
-# CLANG_CUDA_COMPILER_PATH, which allows Clang to compile C++ targets and NVCC
-# to compile CUDA targets.
+# Aarch64 builds use CLANG_CUDA_COMPILER_PATH, which allows Clang to compile C++
+# targets and NVCC to compile CUDA targets.
 build:ci_linux_aarch64_cuda12 --config=ci_linux_aarch64_cuda_common
 build:ci_linux_aarch64_cuda12 --config=cuda12
 # Alias for backward compatibility.
@@ -314,6 +308,23 @@ build:ci_linux_aarch64_cuda --config=ci_linux_aarch64_cuda12
 
 build:ci_linux_aarch64_cuda13 --config=ci_linux_aarch64_cuda_common
 build:ci_linux_aarch64_cuda13 --config=cuda13
+
+# Deprecated CI config with non-hermetic toolchains.
+build:ci_linux_aarch64_clang_local --config=clang_local
+build:ci_linux_aarch64_clang_local --config=ci_linux_aarch64_base
+build:ci_linux_aarch64_clang_local --host_crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
+build:ci_linux_aarch64_clang_local --crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
+
+build:ci_linux_aarch64_cuda_common_clang_local --config=clang_local
+build:ci_linux_aarch64_cuda_common_clang_local --config=ci_linux_aarch64_cuda_common
+build:ci_linux_aarch64_cuda_common_clang_local --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
+build:ci_linux_aarch64_cuda_common_clang_local --crosstool_top="@local_config_cuda//crosstool:toolchain"
+
+build:ci_linux_aarch64_cuda12_clang_local --config=ci_linux_aarch64_cuda_common_clang_local
+build:ci_linux_aarch64_cuda12_clang_local --config=cuda12
+
+build:ci_linux_aarch64_cuda13_clang_local --config=ci_linux_aarch64_cuda_common_clang_local
+build:ci_linux_aarch64_cuda13_clang_local --config=cuda13
 
 # Mac Arm64 CI configs
 build:ci_darwin_arm64 --config=clang_local
