@@ -166,6 +166,7 @@ def mma(
     a: ir.Value | TMEMRef,
     b: ir.Value,
     *,
+    # TODO(bchetioui): allow removing `a_swizzle` for lhs in TMEM.
     a_swizzle: int = 128,
     b_swizzle: int = 128,
     a_scale: TMEMRef | None = None,
@@ -328,7 +329,11 @@ def mma(
   # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
   # instructions must be issued in groups of the same width as the swizzle.
   m_group_elems = m  # We have already verified M is supported above.
-  k_group_elems = 8 * max(a_swizzle * (1 + is_sparse), b_swizzle) // utils.bitwidth(element_type)
+  if isinstance(a, TMEMRef):
+    # Sparse and scaled MMAs are not supported here---this is enforced above.
+    k_group_elems = min(k, 8 * b_swizzle // utils.bitwidth(element_type))
+  else:
+    k_group_elems = 8 * max(a_swizzle * (1 + is_sparse), b_swizzle) // utils.bitwidth(element_type)
   if is_sparse and k_group_elems < 64:
     # This is a limitation of the implementation below. We could relax it if we
     # ever need to support k=32.
