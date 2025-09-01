@@ -916,6 +916,48 @@ def _tcgen05_mma_equation_system(
   return eqns.EquationSystem(assignments), operands_for_variable, []
 
 
+@_add_equation_system_derivation_rule(mgpu.AsyncLoadTmemOp)
+def _async_load_tmem_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.AsyncLoadTmemOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  source = OperandOrResult(op, VariableType.OPERAND, 0)
+  source_variable = ctx.producer_ref(source)
+  destination = OperandOrResult(op, VariableType.RESULT, 0)
+  destination_variable = eqns.Variable(destination)
+  constraint = eqns.IsTransferable(
+      source_variable,
+      destination_variable,
+      tuple(op.source.type.shape),
+  )
+  return (
+      eqns.EquationSystem(constraints=[constraint]),
+      {source_variable: [source], destination_variable: [destination]},
+      [],
+  )
+
+
+@_add_equation_system_derivation_rule(mgpu.AsyncStoreTmemOp)
+def _async_store_tmem_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.AsyncStoreTmemOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  source = OperandOrResult(op, VariableType.OPERAND, 0)
+  source_variable = eqns.Variable(source)
+  destination = OperandOrResult(op, VariableType.OPERAND, 1)
+  destination_variable = ctx.producer_ref(destination)
+  constraint = eqns.IsTransferable(
+      source_variable,
+      destination_variable,
+      tuple(op.source.type.shape),
+  )
+  return (
+      eqns.EquationSystem(constraints=[constraint]),
+      {source_variable: [source], destination_variable: [destination]},
+      [],
+  )
+
+
 def _ensure_all_layouts_are_set(op: ir.OpView) -> None:
   if inference_utils.should_have_layout(op):
     _ensure_right_number_of_layouts(

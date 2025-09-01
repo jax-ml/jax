@@ -29,6 +29,7 @@ from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import equations as eqns
+from jax.experimental.mosaic.gpu import fragmented_array as fa
 from jax.experimental.mosaic.gpu import layout_inference
 from jax.experimental.mosaic.gpu import layouts
 from jax.experimental.mosaic.gpu import tcgen05
@@ -931,6 +932,71 @@ class LayoutInferenceTest(parameterized.TestCase):
     a_layout = tcgen05._infer_tmem_layout(shape, collective=False, packing=2)
     expected_layouts = [acc_layout, a_layout] if a_in_tmem else [acc_layout]
     self.checkInTmemLayouts(op, expected_layouts)
+
+  def test_async_load_tmem_accepts_compatible_in_out_layouts(self):
+    f32 = ir.F32Type.get()
+    i32 = ir.IntegerType.get_signless(32)
+    shape = (128, 128)
+    ptr_type = ir.MemRefType.get((1,), i32, memory_space=mgpu.utils.smem())
+    ref_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
+    in_layout = tcgen05.tmem_default_layout(packing=1)
+    in_layout = layouts.to_layout_attr(in_layout)
+    out_layout = layouts.to_layout_attr(fa.TCGEN05_LAYOUT)
+
+    with ir.InsertionPoint(self.module.body):
+      ptr = llvm.mlir_undef(ptr_type)
+      ref = mgpu.dialect.tmem_alloc(ref_type, ptr, exact=False)
+      ref = mgpu.dialect.tmem_layout_cast(ref, in_layout)
+      op = mgpu.dialect.AsyncLoadTmemOp(ref)
+      mgpu.dialect.layout_cast(op.result, out_layout)
+
+    mgpu.infer_layout(self.module)
+    self.checkInTmemLayouts(op, [in_layout])
+    self.checkOutLayouts(op, [out_layout])
+
+  def test_async_load_tmem_rejects_incompatible_in_out_layouts(self):
+    f32 = ir.F32Type.get()
+    i32 = ir.IntegerType.get_signless(32)
+    shape = (128, 128)
+    ptr_type = ir.MemRefType.get((1,), i32, memory_space=mgpu.utils.smem())
+    ref_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
+    in_layout = tcgen05.tmem_half_lane_layout(columns=shape[1], packing=1)
+    in_layout = layouts.to_layout_attr(in_layout)
+    out_layout = layouts.to_layout_attr(fa.TCGEN05_LAYOUT)
+
+    with ir.InsertionPoint(self.module.body):
+      ptr = llvm.mlir_undef(ptr_type)
+      ref = mgpu.dialect.tmem_alloc(ref_type, ptr, exact=False)
+      ref = mgpu.dialect.tmem_layout_cast(ref, in_layout)
+      op = mgpu.dialect.AsyncLoadTmemOp(ref)
+      mgpu.dialect.layout_cast(op.result, out_layout)
+
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts."
+    ):
+      mgpu.infer_layout(self.module)
+
+  def test_async_store_tmem_accepts_compatible_src_dest_layouts(self):
+    f32 = ir.F32Type.get()
+    i32 = ir.IntegerType.get_signless(32)
+    shape = (128, 128)
+    ptr_type = ir.MemRefType.get((1,), i32, memory_space=mgpu.utils.smem())
+    dest_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
+    src_type = ir.VectorType.get(shape, f32)
+    src_layout = layouts.to_layout_attr(fa.TCGEN05_LAYOUT)
+    dest_layout = tcgen05.tmem_default_layout(packing=1)
+    dest_layout = layouts.to_layout_attr(dest_layout)
+
+    with ir.InsertionPoint(self.module.body):
+      [ptr, src] = undefs(ptr_type, src_type)
+      src = mgpu.dialect.layout_cast(src, src_layout)
+      dest = mgpu.dialect.tmem_alloc(dest_type, ptr, exact=False)
+      dest = mgpu.dialect.tmem_layout_cast(dest, dest_layout)
+      op = mgpu.dialect.AsyncStoreTmemOp(src, dest)
+
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(op, [src_layout])
+    self.checkInTmemLayouts(op, [dest_layout])
 
   def test_layout_inference_gelu_does_not_timeout(self):
     # This test is intended to make sure that the constraint-based layout

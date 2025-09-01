@@ -349,6 +349,53 @@ class Relayout:
 
 
 @dataclasses.dataclass(frozen=True)
+class IsTransferable:
+  """States that `source` layout must be transferable across memory spaces to `target` layout."""
+
+  source: Expression
+  target: Expression
+  # TODO(allanrenucci): Can this be derived from the layouts?
+  shape: tuple[int, int]
+
+  def _is_valid_tmem_transfer(
+      self, tmem_layout: tcgen05.TMEMLayout, reg_layout: fa.FragmentedLayout
+  ) -> bool:
+    columns = self.shape[1]
+    packing = tmem_layout.vector_length
+    if reg_layout in (fa.TCGEN05_LAYOUT, fa.TMEM_NATIVE_LAYOUT):
+      return tmem_layout == tcgen05.tmem_default_layout(packing)
+    if reg_layout == fa.WGMMA_LAYOUT:
+      return tmem_layout == tcgen05.tmem_half_lane_layout(columns, packing)
+    if reg_layout == tcgen05.fa_m64_collective_layout(columns):
+      return tmem_layout == tcgen05.tmem_m64_collective_layout(columns, packing)
+    return False
+
+  def holds(self) -> bool | None:
+    """Returns whether the constraint holds.
+
+    Returns `None` if the constraint can't be checked.
+    """
+    source = self.source
+    target = self.target
+
+    if isinstance(source, TMEMLayout) and isinstance(target, RegisterLayout):
+      return self._is_valid_tmem_transfer(source.value, target.value)
+    if isinstance(target, TMEMLayout) and isinstance(source, RegisterLayout):
+      return self._is_valid_tmem_transfer(target.value, source.value)
+    if isinstance(source, TMEMLayout) and isinstance(target, TMEMLayout):
+      return source == target
+    if isinstance(target, Constant) and isinstance(source, Constant):
+      source_type = type(source).__name__
+      target_type = type(target).__name__
+      raise NotImplementedError(f"Unsupported transfer: {source_type} -> {target_type}")
+
+    return None
+
+  def __str__(self):
+    return f"IsTransferable({self.source}  ⟶ {self.target})"
+
+
+@dataclasses.dataclass(frozen=True)
 class Distinct:
   """States that `lhs != rhs`."""
   lhs: Expression
@@ -369,7 +416,7 @@ class Distinct:
     return f"{self.lhs} ≠ {self.rhs}"
 
 
-Constraint = Relayout | Distinct
+Constraint = Relayout | Distinct | IsTransferable
 
 
 def reduce_constraint(
@@ -381,6 +428,8 @@ def reduce_constraint(
       ...
     case Distinct(lhs=lhs, rhs=rhs):
       ...
+    case IsTransferable(source=lhs, target=rhs, shape=_):
+      ...
     case _ as never:
       assert_never(never)
 
@@ -390,7 +439,12 @@ def reduce_constraint(
   if isinstance(lhs_red, Unsatisfiable) or isinstance(rhs_red, Unsatisfiable):
     return Unsatisfiable()
 
-  new_constraint = type(constraint)(lhs_red, rhs_red)
+  new_constraint: Constraint
+  if isinstance(constraint, IsTransferable):
+    new_constraint = IsTransferable(lhs_red, rhs_red, constraint.shape)
+  else:
+    new_constraint = type(constraint)(lhs_red, rhs_red)
+
   constraint_holds = new_constraint.holds()
   if constraint_holds is None:
     return new_constraint
@@ -496,6 +550,9 @@ class EquationSystem:
         case Distinct(lhs=lhs, rhs=rhs):
           extract_variables(lhs)
           extract_variables(rhs)
+        case IsTransferable(source=source, target=target, shape=_):
+          extract_variables(source)
+          extract_variables(target)
         case _ as never:
           assert_never(never)
     return free_variables
