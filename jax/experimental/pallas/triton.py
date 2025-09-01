@@ -33,7 +33,7 @@ from jax._src.pallas.triton.primitives import store as store
 import typing as _typing  # pylint: disable=g-import-not-at-top
 
 if _typing.TYPE_CHECKING:
-  TritonCompilerParams = CompilerParams
+  pass
 else:
   from jax._src.deprecations import (
       deprecation_getattr as _deprecation_getattr,
