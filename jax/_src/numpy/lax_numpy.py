@@ -7633,7 +7633,7 @@ def delete(
     obj = sort(obj)
     obj -= arange(len(obj), dtype=obj.dtype)  # type: ignore
     i = arange(a.shape[axis] - obj.size, dtype=obj.dtype)
-    i += (i[None, :] >= obj[:, None]).sum(0)
+    i += (i[None, :] >= obj[:, None]).sum(0, dtype=i.dtype)
     return a[(slice(None),) * axis + (i,)]
 
   # Case 3b: non-unique indices: must be static.

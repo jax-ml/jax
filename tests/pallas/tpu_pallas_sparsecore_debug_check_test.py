@@ -44,7 +44,9 @@ class DebugCheckTest(jtu.JaxTestCase):
   def setUpClass(cls):
     super().setUpClass()
 
-    total_shards = int(os.environ.get("TEST_TOTAL_SHARDS", 1))
+    total_shards = int(os.environ.get("TEST_TOTAL_SHARDS", -1))
+    if total_shards == -1:
+      raise unittest.SkipTest("Tests can only be run with Bazel.")
 
     loader = unittest.TestLoader()
     test_cases = loader.loadTestsFromModule(
