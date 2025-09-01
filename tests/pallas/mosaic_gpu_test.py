@@ -3282,6 +3282,58 @@ class PallasCallSm100ATest(PallasSm100ATest):
     expected = x.astype(o_dtype) @ y.astype(o_dtype)
     np.testing.assert_array_equal(result, expected)
 
+  @parameterized.product(
+      k=[64, 128],
+      use_tmem=[True, False],
+  )
+  def test_reduce_sum_tcgen05_to_wgmma(self, k: int, use_tmem: bool):
+    self.skip_if_wg_semantics()
+    swizzle_elems = 128 // jnp.dtype(jnp.float32).itemsize
+    transforms = (
+        plgpu.TilingTransform((8, swizzle_elems)), plgpu.SwizzleTransform(128),
+    )
+    @functools.partial(
+        self.kernel,
+        out_shape=jnp.zeros((64, k), jnp.float32),
+        scratch_shapes=[
+            plgpu.TMEM((128, k), jnp.float32,),
+            plgpu.SMEM((128, k), jnp.float32, transforms=transforms),
+            plgpu.SMEM((64, k), jnp.float32, transforms=transforms),
+            plgpu.Barrier(),
+        ],
+        num_threads=1,
+        thread_name="x",
+    )
+    def kernel(x_ref, y_ref, tmem_ref, smem_ref, smem_ref_out, barrier_ref):
+      plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      x_val = plgpu.load(smem_ref, (), layout=plgpu.Layout.TCGEN05)
+      if use_tmem:
+        plgpu.async_store_tmem(tmem_ref, x_val)
+        plgpu.commit_tmem()
+      if use_tmem:
+        x_val = plgpu.async_load_tmem(tmem_ref, layout=plgpu.Layout.TCGEN05)
+        x_val = plgpu.reduce_sum_tcgen05_to_wgmma(x_val)
+        plgpu.wait_load_tmem()
+      else:
+        x_val = plgpu.reduce_sum_tcgen05_to_wgmma(x_val)
+        x_val = plgpu.layout_cast(x_val, new_layout=plgpu.Layout.WGMMA)
+      smem_ref_out[...] = x_val
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(smem_ref_out, y_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    x1 = jax.random.uniform(
+        jax.random.key(0), shape=(64, k), dtype=jnp.float32)
+    x2 = jax.random.uniform(
+        jax.random.key(1), shape=(64, k), dtype=jnp.float32)
+    expected = x1 + x2
+
+    to_4_16 = lambda x: x.reshape(4, 1, 16, x.shape[-1])
+    x_input = jnp.concatenate([to_4_16(x1), to_4_16(x2)], axis=1).reshape(128, k)
+    x_result = jax.block_until_ready(kernel(x_input))
+    np.testing.assert_array_equal(x_result, expected)
+
   @parameterized.product(m=[64, 128],
                          n=[64, 128, 256],
                          swizzle=[128, 64, 32],

@@ -72,6 +72,7 @@ from jax._src.pallas.mosaic_gpu.primitives import wgmma_wait as wgmma_wait
 from jax._src.pallas.mosaic_gpu.primitives import tcgen05_mma as tcgen05_mma
 from jax._src.pallas.mosaic_gpu.primitives import tcgen05_commit_arrive as tcgen05_commit_arrive
 from jax._src.pallas.mosaic_gpu.primitives import commit_tmem as commit_tmem
+from jax._src.pallas.mosaic_gpu.primitives import reduce_sum_tcgen05_to_wgmma as reduce_sum_tcgen05_to_wgmma
 from jax.experimental.mosaic.gpu.core import LoweringSemantics as LoweringSemantics
 from jax.experimental.mosaic.gpu.fragmented_array import Tiling as Tiling
 

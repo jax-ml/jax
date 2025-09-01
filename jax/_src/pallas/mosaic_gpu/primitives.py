@@ -3095,3 +3095,21 @@ def _semaphore_signal_lowering_rule(
     )
     mgpu_utils.fence_release_sys()
   return ()
+
+
+reduce_sum_tcgen05_to_wgmma_p = jax_core.Primitive("reduce_sum_tcgen05_to_wgmma")
+
+@lowering.register_lowering_rule(reduce_sum_tcgen05_to_wgmma_p, mgpu.LoweringSemantics.Lane)
+def _reduce_sum_tcgen05_to_wgmma_lowering(
+    ctx: lowering.LoweringRuleContext, x: mgpu.FragmentedArray
+):
+  del ctx  # Unused.
+  return x.reduce_sum_tcgen05_to_wgmma()
+
+
+@reduce_sum_tcgen05_to_wgmma_p.def_abstract_eval
+def _reduce_sum_tcgen05_to_wgmma_abstract_eval(x):
+  return jax_core.ShapedArray((64, x.shape[1]), x.dtype)
+
+def reduce_sum_tcgen05_to_wgmma(x: Any):
+  return reduce_sum_tcgen05_to_wgmma_p.bind(x)

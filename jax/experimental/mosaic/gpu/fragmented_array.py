@@ -2929,6 +2929,59 @@ class FragmentedArray:
         return tiling.untile_indices(indices.tolist()[0])
       yield get_register, update_registers, get_base_index, reg_ptr
 
+  def reduce_sum_tcgen05_to_wgmma(self):
+    """Reduces TCGEN05 layout to a 64-row WGMMA layout via summation for interleaved inputs.
+
+    This function performs in-register reduction of a (128, N)
+    matrix to a (64, N) matrix by summing pairs of rows. It is designed as a
+    specialized layout converter and requires the input data to be specifically
+    arranged to work correctly.
+
+    The input must been preprocessed by interleaving two 64-row matrices (A and
+    B).
+    The required input layout is as follows:
+        - input[0:16, :]   must contain A[0:16, :]
+        - input[16:32, :]  must contain B[0:16, :]
+        - ... and so on
+
+    Args:
+      value: A FragmentedArray with TCGEN05_LAYOUT and a logical shape of (128,
+        N), loaded from correctly interleaved data.
+
+    Returns:
+      A new FragmentedArray with WGMMA_LAYOUT and a logical shape of
+      (64, N), containing the summed results.
+    """
+    if self.layout != TCGEN05_LAYOUT:
+      raise ValueError("Input array must have TCGEN05")
+
+    reduction_axis = 4
+    if self.registers.shape[reduction_axis] != 4:
+      raise ValueError(
+          f"Register shape {self.registers.shape} is not compatible for this"
+          f" reduction along axis {reduction_axis}."
+      )
+
+    dtype = self.mlir_dtype
+    if ir.FloatType.isinstance(dtype):
+      add_op = addf
+    elif ir.IntegerType.isinstance(dtype):
+      add_op = arith.addi
+    else:
+      raise TypeError(f"Unsupported data type: {dtype}")
+
+    regs_a, regs_b = np.split(self.registers, 2, axis=reduction_axis)
+    summed_registers = np.empty_like(regs_a)
+    for idx, reg_a in np.ndenumerate(regs_a):
+      reg_b = regs_b[idx]
+      summed_registers[idx] = add_op(reg_a, reg_b)
+
+    return FragmentedArray(
+        _registers=summed_registers,
+        _layout=WGMMA_LAYOUT,
+        _is_signed=self.is_signed,
+    )
+
   def tree_flatten(self):
     aux = self.layout, self.registers.shape, self.is_signed
     return list(self.registers.flat), aux
