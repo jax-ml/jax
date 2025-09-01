@@ -7631,7 +7631,7 @@ def delete(
     obj = asarray(obj).ravel()
     obj = clip(where(obj < 0, obj + a.shape[axis], obj), 0, a.shape[axis])
     obj = sort(obj)
-    obj -= arange(len(obj))  # type: ignore[arg-type,operator]
+    obj -= arange(len(obj), dtype=obj.dtype)  # type: ignore
     i = arange(a.shape[axis] - obj.size)
     i += (i[None, :] >= obj[:, None]).sum(0)
     return a[(slice(None),) * axis + (i,)]

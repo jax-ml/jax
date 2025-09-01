@@ -506,9 +506,9 @@ class StatePrimitivesTest(jtu.JaxTestCase):
       return op(x_ref, indexer)
 
     rng = self.rng()
-    a = rng.randn(*bat_ref_aval.shape)
+    a = rng.randn(*bat_ref_aval.shape).astype(floatx)
     his = [d for d, b in zip(ref_aval.shape, indexed_dims) if b]
-    idxs = [rng.randint(low=0, high=hi, size=i.shape)
+    idxs = [rng.randint(low=0, high=hi, size=i.shape, dtype=intx)
             for i, hi in zip(bat_idx_avals, his)]
 
     # discharge-of-vmap

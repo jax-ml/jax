@@ -1655,7 +1655,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testIntegerPowerOverflow(self, x, y):
     # Regression test for https://github.com/jax-ml/jax/issues/5987
     args_maker = lambda: [x, y]
-    self._CheckAgainstNumpy(np.power, jnp.power, args_maker)
+    check_dtypes = platform.system() != 'Windows'
+    self._CheckAgainstNumpy(
+        np.power, jnp.power, args_maker, check_dtypes=check_dtypes
+    )
     self._CompileAndCheck(jnp.power, args_maker)
 
   @jtu.sample_product(
@@ -3852,7 +3855,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     # out of bounds leads to an OverflowError
     val = jnp.iinfo(jnp.int64).min - 1
-    with self.assertRaisesRegex(OverflowError, "Python int too large.*"):
+    if platform.system() == 'Windows':
+      expected_regex = 'int too big to convert'
+    else:
+      expected_regex = 'Python int too large.*'
+    with self.assertRaisesRegex(OverflowError, expected_regex):
       jnp.array([0, val])
 
   def testArrayNone(self):
