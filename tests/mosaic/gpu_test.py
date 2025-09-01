@@ -4494,7 +4494,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
           result=tmem_type,
           smem_ptr=tmem,
           collective=collective,
-          exact=False,
           packing=packing,
       )
 

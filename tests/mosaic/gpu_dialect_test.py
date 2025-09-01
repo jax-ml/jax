@@ -928,7 +928,6 @@ ir.MLIRError,
               ),
               smem_ptr=smem_ptr,
               collective=False,
-              exact=True,
               packing=1,
           )
       )
@@ -956,7 +955,6 @@ ir.MLIRError,
               ),
               smem_ptr=smem_ptr,
               collective=False,
-              exact=True,
               packing=1,
           )
       )
@@ -964,36 +962,6 @@ ir.MLIRError,
     with self.assertRaisesRegex(
         ir.MLIRError,
         "The tmem memref must have a mosaic_gpu.tmem memory space",
-    ):
-      self.module.operation.verify()
-
-  def test_tmem_alloc_op_exact_column_count_must_be_power_of_two(self):
-    with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
-          ir.MemRefType.get(
-              [],
-              ir.IntegerType.get_signless(32),
-              memory_space=mgpu_utils.smem(),
-          ),
-          name="alloc_op",
-      )(
-          lambda smem_ptr: mgpu.dialect.tmem_alloc(
-              result=ir.MemRefType.get(
-                  [128, 50],
-                  ir.BF16Type.get(),
-                  memory_space=ir.Attribute.parse("#mosaic_gpu.tmem"),
-              ),
-              smem_ptr=smem_ptr,
-              collective=False,
-              exact=True,
-              packing=1,
-          )
-      )
-
-    with self.assertRaisesRegex(
-        ir.MLIRError,
-        "When `exact` is true the number of allocated columns must be a power"
-        " of two in the range \\[32, 512\\], but got : 50",
     ):
       self.module.operation.verify()
 
@@ -1015,7 +983,6 @@ ir.MLIRError,
               ),
               smem_ptr=smem_ptr,
               collective=False,
-              exact=False,
               packing=1,
           )
       )
@@ -1045,7 +1012,6 @@ ir.MLIRError,
               ),
               smem_ptr=smem_ptr,
               collective=False,
-              exact=False,
               packing=4,
           )
       )
@@ -1074,7 +1040,6 @@ ir.MLIRError,
               ),
               smem_ptr=smem_ptr,
               collective=False,
-              exact=False,
               packing=1,
           )
       )
@@ -1099,7 +1064,6 @@ ir.MLIRError,
               ),
               smem_ptr=smem_ptr,
               collective=False,
-              exact=False,
               packing=1,
           )
       )
@@ -1124,7 +1088,6 @@ ir.MLIRError,
               ),
               smem_ptr=smem_ptr,
               collective=False,
-              exact=False,
               packing=2,
           )
       )
@@ -1153,7 +1116,6 @@ ir.MLIRError,
               ),
               smem_ptr=smem_ptr,
               collective=False,
-              exact=False,
               packing=2,
           )
       )

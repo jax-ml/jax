@@ -845,7 +845,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     with ir.InsertionPoint(self.module.body):
       ptr = llvm.mlir_undef(ptr_type)
-      ref = mgpu.dialect.tmem_alloc(result=ref_ty, smem_ptr=ptr, exact=False)
+      ref = mgpu.dialect.tmem_alloc(result=ref_ty, smem_ptr=ptr)
       mgpu.dialect.tmem_dealloc(ref)
 
     # TODO(allanrenucci): Should we infer a default layout instead?
@@ -892,7 +892,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     with ir.InsertionPoint(self.module.body):
       ptr = llvm.mlir_undef(ptr_type)
-      op = mgpu.dialect.TmemAllocOp(ref_ty, ptr, exact=False)
+      op = mgpu.dialect.TmemAllocOp(ref_ty, ptr)
       mgpu.dialect.tmem_layout_cast(op.result, layout)
 
     mgpu.infer_layout(self.module)
@@ -945,7 +945,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     with ir.InsertionPoint(self.module.body):
       ptr = llvm.mlir_undef(ptr_type)
-      ref = mgpu.dialect.tmem_alloc(ref_type, ptr, exact=False)
+      ref = mgpu.dialect.tmem_alloc(ref_type, ptr)
       ref = mgpu.dialect.tmem_layout_cast(ref, in_layout)
       op = mgpu.dialect.AsyncLoadTmemOp(ref)
       mgpu.dialect.layout_cast(op.result, out_layout)
@@ -966,7 +966,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     with ir.InsertionPoint(self.module.body):
       ptr = llvm.mlir_undef(ptr_type)
-      ref = mgpu.dialect.tmem_alloc(ref_type, ptr, exact=False)
+      ref = mgpu.dialect.tmem_alloc(ref_type, ptr)
       ref = mgpu.dialect.tmem_layout_cast(ref, in_layout)
       op = mgpu.dialect.AsyncLoadTmemOp(ref)
       mgpu.dialect.layout_cast(op.result, out_layout)
@@ -990,7 +990,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       [ptr, src] = undefs(ptr_type, src_type)
       src = mgpu.dialect.layout_cast(src, src_layout)
-      dest = mgpu.dialect.tmem_alloc(dest_type, ptr, exact=False)
+      dest = mgpu.dialect.tmem_alloc(dest_type, ptr)
       dest = mgpu.dialect.tmem_layout_cast(dest, dest_layout)
       op = mgpu.dialect.AsyncStoreTmemOp(src, dest)
 

@@ -566,8 +566,7 @@ int kTmemCellBitwidth = 32;
 
 llvm::LogicalResult VerifyTmemRefType(
     mlir::MLIRContext* context, mlir::Operation* op,
-    mlir::MemRefType tmem_ref_type, bool exact = false,
-    std::optional<int> packing = std::nullopt) {
+    mlir::MemRefType tmem_ref_type, std::optional<int> packing = std::nullopt) {
   mlir::Attribute tmem = TmemAttr::get(context);
   if (tmem_ref_type.getMemorySpace() != tmem) {
     return op->emitError() << "The tmem memref must have a "
@@ -607,12 +606,6 @@ llvm::LogicalResult VerifyTmemRefType(
          rounded_column_count < kTmemMaxColumns) {
     rounded_column_count *= 2;
   }
-  if (exact && num_allocated_columns != rounded_column_count) {
-    return op->emitError()
-           << "When `exact` is true the number of allocated columns must "
-              "be a power of two in the range [32, 512], but got : "
-           << num_allocated_columns;
-  }
 
   return llvm::success();
 }
@@ -630,7 +623,7 @@ llvm::LogicalResult TmemAllocOp::verify() {
   }
 
   return VerifyTmemRefType(getContext(), getOperation(), getResult().getType(),
-                           getExact(), getPacking());
+                           getPacking());
 }
 
 llvm::LogicalResult TmemDeallocOp::verify() {
