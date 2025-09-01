@@ -53,6 +53,7 @@ from jax._src import util
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import mlir
 from jax._src.lax import lax
+from jax._src.lib import cuda_versions
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.public_test_util import (  # noqa: F401
@@ -539,6 +540,14 @@ def is_cuda_compute_capability_equal(capability: str) -> bool:
   target = tuple(int(x) for x in capability.split("."))
   current = tuple(int(x) for x in d.compute_capability.split("."))
   return current == target
+
+def is_cuda_version_at_least(major: int, minor: int):
+  assert 0 <= major
+  assert 0 <= minor < 100
+  return (
+      cuda_versions is not None
+      and cuda_versions.cuda_runtime_get_version() >= major * 1000 + minor * 10
+  )
 
 
 class CudaArchSpecificTest:

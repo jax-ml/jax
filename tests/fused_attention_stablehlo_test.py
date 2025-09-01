@@ -276,6 +276,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       self.skipTest("Requires >= cuDNN 8.9.4")
     if not jtu.is_cuda_compute_capability_at_least("8.0"):
       self.skipTest("Requires at least Ampere arch")
+    if jtu.is_cuda_version_at_least(13, 0):
+      self.skipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
   @jtu.sample_product(
       batch_size=[4],
@@ -935,6 +937,8 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
       self.skipTest("Requires at least Hopper arch")
     if jtu.is_cuda_compute_capability_equal("12.0"):
       self.skipTest("cuDNN does not support FP8 with compute capability 12.0")
+    if jtu.is_cuda_version_at_least(13, 0):
+      self.skipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
   @jtu.sample_product(
       batch_size=[2, 4],
