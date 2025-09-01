@@ -1142,68 +1142,36 @@ class TCGen05Test(TestCase):
           (tcgen05.fa_m64_collective_layout, tcgen05.tmem_m64_collective_layout, 64),
       ],
   )
-  def test_load_store_tmem_swizzle(self, jax_dtype_packing, reg_tmem_layout_m):
+  def test_load_store_tmem(self, jax_dtype_packing, reg_tmem_layout_m):
     jax_dtype, packing = jax_dtype_packing
     reg_layout_f, tmem_layout_f, m = reg_tmem_layout_m
-    swizzle = 128
-    in_mlir_dtype = utils.dtype_to_ir_type(jax_dtype)
-    swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
-    tiling = (8, swizzle_elems)
     n = 256
     reg_layout = reg_layout_f(n)
 
-    def kernel(ctx, input, output, scratch):
-      smem, barrier, tmem = scratch
-      ctx.async_copy(
-          src_ref=input,
-          dst_ref=smem,
-          swizzle=swizzle,
-          gmem_transform=mgpu.TileTransform(tiling),
-          barrier=barrier,
-      )
-      barrier.wait()
-      tmem.store(fa.FragmentedArray.load_tiled(smem, swizzle, layout=reg_layout))
+    def kernel(ctx, input, output, tmem):
+      del ctx
+      tmem.store(fa.FragmentedArray.load_untiled(input, layout=reg_layout, optimized=False))
       tcgen05.commit_tmem()
-      tmem.load(reg_layout).store_tiled(smem, swizzle)
-      mgpu.commit_shared()
-      ctx.async_copy(
-          src_ref=smem, dst_ref=output, swizzle=swizzle, gmem_transform=mgpu.TileTransform(tiling),
-      )
-      ctx.await_async_copy(0)
+      tmem.load(reg_layout).store_untiled(output, optimized=False)
 
     x = self.prng.uniform(-1, 1, (m, n)).astype(jax_dtype)
-    scratch_shape = [
-        jax.ShapeDtypeStruct(tile_shape(x.shape, tiling), jax_dtype),
-        mgpu.TMABarrier(),
-        mgpu.TMEM(x.shape, jax_dtype, layout=tmem_layout_f(n, packing)),
-    ]
     y = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
+        kernel, (1, 1, 1), (128, 1, 1), x, x, mgpu.TMEM(x.shape, jax_dtype, layout=tmem_layout_f(n, packing)),
     )(x)
     np.testing.assert_array_equal(x, y)
 
   @parameterized.parameters([(jnp.float32, 1), (jnp.float16, 1), (jnp.float16, 2)])
   def test_load_store_tmem_native(self, jax_dtype, packing):
 
-    def kernel(ctx, input, output, scratch):
-      smem, barrier, tmem = scratch
-      ctx.async_copy(src_ref=input, dst_ref=smem, barrier=barrier)
-      barrier.wait()
-      tmem.store(fa.FragmentedArray.load_untiled(smem, layout=tcgen05.TMEM_NATIVE_LAYOUT, optimized=False))
+    def kernel(ctx, input, output, tmem):
+      del ctx
+      tmem.store(fa.FragmentedArray.load_untiled(input, layout=tcgen05.TMEM_NATIVE_LAYOUT, optimized=False))
       tcgen05.commit_tmem()
-      tmem.load(tcgen05.TMEM_NATIVE_LAYOUT).store_untiled(smem, optimized=False)
-      mgpu.commit_shared()
-      ctx.async_copy(src_ref=smem, dst_ref=output)
-      ctx.await_async_copy(0)
+      tmem.load(tcgen05.TMEM_NATIVE_LAYOUT).store_untiled(output, optimized=False)
 
     x = self.prng.uniform(-1, 1, (128, 128)).astype(jax_dtype)
-    scratch_shape = [
-        jax.ShapeDtypeStruct(x.shape, jax_dtype),
-        mgpu.TMABarrier(),
-        mgpu.TMEM(x.shape, jax_dtype, packing=packing),
-    ]
     y = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
+        kernel, (1, 1, 1), (128, 1, 1), x, x, mgpu.TMEM(x.shape, jax_dtype, packing=packing)
     )(x)
     np.testing.assert_array_equal(x, y)
 
@@ -1214,34 +1182,16 @@ class TCGen05Test(TestCase):
   ])
   @jtu.thread_unsafe_test()
   def test_tmem_debug_print(self, jax_dtype, packing, expected):
-    swizzle = 128
-    in_mlir_dtype = utils.dtype_to_ir_type(jax_dtype)
-    swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
-    tiling = (8, swizzle_elems)
-
-    def kernel(ctx, input, output, scratch):
-      smem, barrier, tmem = scratch
-      ctx.async_copy(
-          src_ref=input,
-          dst_ref=smem,
-          swizzle=swizzle,
-          gmem_transform=mgpu.TileTransform(tiling),
-          barrier=barrier,
-      )
-      barrier.wait()
-      tmem.store(fa.FragmentedArray.load_tiled(smem, swizzle, layout=tcgen05.LAYOUT))
+    def kernel(ctx, input, output, tmem):
+      del ctx, output
+      tmem.store(fa.FragmentedArray.load_untiled(input, layout=tcgen05.LAYOUT, optimized=False))
       tcgen05.commit_tmem()
       tmem.slice(slice(None), slice(0, 8))._debug_print()
 
     x = jnp.arange(128 * 128, dtype=jax_dtype).reshape(128, 128)
-    scratch_shape = [
-        jax.ShapeDtypeStruct(tile_shape(x.shape, tiling), jax_dtype),
-        mgpu.TMABarrier(),
-        mgpu.TMEM(x.shape, jax_dtype, packing=packing),
-    ]
     with self.capture_stdout() as stdout:
       mgpu.as_gpu_kernel(
-          kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
+          kernel, (1, 1, 1), (128, 1, 1), x, x, mgpu.TMEM(x.shape, jax_dtype, packing=packing),
       )(x).block_until_ready()
     self.assertIn("[1, 2]: " + expected, stdout())
 
@@ -1457,29 +1407,21 @@ class TCGen05Test(TestCase):
     in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
     swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
     k = swizzle_elems * k_steps
-    lhs_tiling = rhs_tiling = (8, swizzle_elems)
+    rhs_tiling = (8, swizzle_elems)
 
     def kernel(ctx, lhs, rhs, out, scratch):
-      lhs_smem, rhs_smem, barriers, mma_barrier, acc, lhs_tmem = scratch
-      ctx.async_copy(
-          src_ref=lhs,
-          dst_ref=lhs_smem,
-          swizzle=swizzle,
-          gmem_transform=mgpu.TileTransform(lhs_tiling),
-          barrier=barriers[0],
-      )
+      rhs_smem, barrier, mma_barrier, acc, lhs_tmem = scratch
       ctx.async_copy(
           src_ref=rhs,
           dst_ref=rhs_smem,
           swizzle=swizzle,
           gmem_transform=mgpu.TileTransform(rhs_tiling),
-          barrier=barriers[1],
+          barrier=barrier,
       )
-      barriers[0].wait()
-      barriers[1].wait()
+      barrier.wait()
       lhs_tmem.store(
-          fa.FragmentedArray.load_tiled(
-              lhs_smem, swizzle, layout=tcgen05.LAYOUT
+          fa.FragmentedArray.load_untiled(
+              lhs, layout=tcgen05.LAYOUT, optimized=False
           )
       )
       tcgen05.commit_tmem()
@@ -1497,9 +1439,8 @@ class TCGen05Test(TestCase):
     y = self.prng.uniform(-1, 1, y_shape).astype(in_jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
     scratch_shape = [
-        jax.ShapeDtypeStruct(tile_shape(x_shape, lhs_tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
-        mgpu.TMABarrier(2),
+        mgpu.TMABarrier(),
         mgpu.Barrier(1),
         mgpu.TMEM((128, n), out_jax_dtype),
         mgpu.TMEM((128, k), in_jax_dtype, packing=2),
@@ -3644,7 +3585,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
   def test_smem_registers_load_store(self, layout, dtype):
     def body(ctx, param: ir.Value, result: ir.Value, smem: list[ir.Value]):
       del ctx
-      [tmp_smem] = smem
       shape = ir.MemRefType(param.type).shape
       elt_type = ir.MemRefType(param.type).element_type
 
@@ -3657,10 +3597,10 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       reg = mgpu_dialect.layout_cast(reg, mgpu_layouts.to_layout_attr(layout))
 
       # Registers -> SMEM
-      vector.store(reg, tmp_smem, zero_vector_indices)
+      vector.store(reg, smem, zero_vector_indices)
 
       # SMEM -> Registers
-      reg = vector.load(vector_type, tmp_smem, zero_vector_indices)
+      reg = vector.load(vector_type, smem, zero_vector_indices)
       reg = mgpu_dialect.layout_cast(reg, mgpu_layouts.to_layout_attr(layout))
 
       # Registers -> GMEM
@@ -3674,7 +3614,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         block=(128, 1, 1),
         in_shape=jax_shape,
         out_shape=jax_shape,
-        smem_scratch_shape=[jax_shape],
+        smem_scratch_shape=jax_shape,
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 
@@ -4488,11 +4428,9 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
     ):
       # We need to have a result `x` otherwise the kernel will not be generated.
       del ctx, x
-      [tmem] = smem
-
       tmem_ref = mgpu_dialect.tmem_alloc(
           result=tmem_type,
-          smem_ptr=tmem,
+          smem_ptr=smem,
           collective=collective,
           packing=packing,
       )
@@ -4513,7 +4451,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
           block=(128, 1, 1),
           in_shape=(),
           out_shape=(jax.ShapeDtypeStruct((), jnp.int32),),
-          smem_scratch_shape=[jax.ShapeDtypeStruct((), jnp.int32)],
+          smem_scratch_shape=jax.ShapeDtypeStruct((), jnp.int32),
           thread_semantics=mgpu.LoweringSemantics.Warpgroup,
       )()
 
