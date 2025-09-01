@@ -76,6 +76,8 @@ class JaxAotTest(jtu.JaxTestCase):
 
     if jtu.TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       raise unittest.SkipTest('Compilation caching not yet supported.')
+    if jtu.is_device_cuda():
+      raise unittest.SkipTest('Broken on GPU: b/442353988')
 
     @jax.jit
     def fn(x):
