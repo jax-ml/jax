@@ -1187,9 +1187,10 @@ jax_multiplatform_test(
     enable_configs = [
         "tpu_v5p",
         "tpu_v6e",
+        "cpu",  # Just to make sure we at least check the shard_count in presubmit.
         # TODO(slebedev): Run on GRM.
     ],
-    shard_count = 2,
+    shard_count = 3,
     deps = [
         "//jax:pallas",
         "//jax:pallas_tpu",
