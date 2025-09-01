@@ -3855,10 +3855,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     # out of bounds leads to an OverflowError
     val = jnp.iinfo(jnp.int64).min - 1
-    if platform.system() == 'Windows':
-      expected_regex = 'int too big to convert'
-    else:
-      expected_regex = 'Python int too large.*'
+    expected_regex = '(Python int too large.*)|(int too big to convert)'
     with self.assertRaisesRegex(OverflowError, expected_regex):
       jnp.array([0, val])
 
