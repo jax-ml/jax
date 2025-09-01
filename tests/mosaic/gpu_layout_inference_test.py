@@ -836,6 +836,23 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
+  def test_cant_infer_tmem_layout_when_no_hint_is_provided(self):
+    f32 = ir.F32Type.get()
+    i32 = ir.IntegerType.get_signless(32)
+    ptr_type = ir.MemRefType.get((1,), i32, memory_space=mgpu.utils.smem())
+    ref_ty = ir.MemRefType.get((128, 128), f32, memory_space=mgpu.utils.tmem())
+
+    with ir.InsertionPoint(self.module.body):
+      ptr = llvm.mlir_undef(ptr_type)
+      ref = mgpu.dialect.tmem_alloc(result=ref_ty, smem_ptr=ptr, exact=False)
+      mgpu.dialect.tmem_dealloc(ref)
+
+    # TODO(allanrenucci): Should we infer a default layout instead?
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts"
+    ):
+      mgpu.infer_layout(self.module)
+
   def test_infer_tmem_layout_cast_correctly(self):
     f32 = ir.F32Type.get()
     ref_ty = ir.MemRefType.get((128, 128), f32, memory_space=mgpu.utils.tmem())

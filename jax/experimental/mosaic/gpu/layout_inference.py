@@ -47,6 +47,14 @@ class VariableType(enum.IntEnum):
   OPERAND = 0
   RESULT = 1
 
+
+class MemorySpace(enum.Enum):
+  """The memory space of a variable."""
+  REG = enum.auto()
+  SMEM = enum.auto()
+  TMEM = enum.auto()
+
+
 _op_name_regex = re.compile(r"^(%\d+ = )?\S+")
 
 @dataclasses.dataclass(frozen=True)
@@ -56,8 +64,29 @@ class OperandOrResult:
   operation: ir.OpView
   # Whether this represents an operand or a result.
   type: VariableType
-  # The index of the operand/result within the op's operands/results.
+  # The index of the operand/result within the op's operands/results.
   index: int
+
+  @property
+  def value(self) -> ir.Value:
+    """Returns the IR value corresponding to this operand or result."""
+    if self.type == VariableType.OPERAND:
+      return self.operation.operands[self.index]
+    else:
+      return self.operation.results[self.index]
+
+  @property
+  def memory_space(self) -> MemorySpace:
+    """Returns the memory space associated with this operand or result."""
+    type = self.value.type
+    if ir.VectorType.isinstance(type):
+      return MemorySpace.REG
+    assert ir.MemRefType.isinstance(type)
+    if utils.is_tmem_ref(type):
+      return MemorySpace.TMEM
+    elif utils.is_smem_ref(type):
+      return MemorySpace.SMEM
+    raise ValueError(f"Unsupported memory space for: {type}")
 
   def __str__(self):
     match = _op_name_regex.match(str(self.operation))
@@ -214,14 +243,11 @@ def _strided_layout_for_variable(
 
   If the given variable cannot have a strided layout, returns `None`.
   """
-  op = variable.key.operation
   # TODO(bchetioui): should we make variables carry a shape as well, to make
   # things easier?
-  if variable.key.type == VariableType.OPERAND:
-    ty = cast(ir.ShapedType, op.operands[variable.key.index].type)
-  else:
-    ty = cast(ir.ShapedType, op.results[variable.key.index].type)
-  return fa.WGStridedFragLayout.from_shaped_type(ty)
+  type = variable.key.value.type
+  assert ir.VectorType.isinstance(type)
+  return fa.WGStridedFragLayout.from_shaped_type(type)
 
 
 def conjure_assignment(
@@ -243,7 +269,10 @@ def conjure_assignment(
       continue
     # Try to instantiate a single variable to a strided layout and see if it
     # reduces the system.
-    layout = _strided_layout_for_variable(variable)
+    if variable.key.memory_space == MemorySpace.REG:
+      layout = _strided_layout_for_variable(variable)
+    else:
+      layout = None
     if layout is None:
       continue
     yield variable, eqns.RegisterLayout(layout)
