@@ -327,13 +327,10 @@ class OpsTest(PallasBaseTest):
     expected = reduce_func(x, axis, keepdims=True)
     np.testing.assert_array_equal(result, expected)
 
-  @parameterized.product(
-      reduce_func = [jnp.argmax, jnp.argmin]
-  )
-  @jtu.skip_on_devices('tpu') # TODO: apaszke - This test is breaking presubmits.
+  @parameterized.product(reduce_func = [jnp.argmax, jnp.argmin])
   def test_reduce_index(self, reduce_func):
-    if not jtu.if_cloud_tpu_at_least(2025, 8, 25):
-      self.skipTest("Requires libtpu built after 2025-08-25")
+    if not jtu.if_cloud_tpu_at_least(2025, 8, 29):
+      self.skipTest("Requires libtpu built after 2025-08-29")
     dtype = jnp.float32
     axis = 1
     if (axis == 1 and not jtu.is_device_tpu_at_least(version=4)):
