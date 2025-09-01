@@ -3151,6 +3151,59 @@ class FragmentedArrayTest(TestCase):
     iota = np.arange(m * n, dtype=jnp.uint8).reshape(m, n)
     np.testing.assert_array_equal(result, (iota > 10).astype(jnp.uint8))
 
+  @parameterized.product(dtype=(jnp.bfloat16, jnp.float16))
+  def test_mma(self, dtype):
+    m, n, k = 128, 128, 128
+    def kernel(ctx: mgpu.LaunchContext, acc, a, b, out, scratch):
+      (acc_smem, a_smem, b_smem), barrier = scratch
+
+      def load(x, x_smem, layout, swizzle=32):
+        ctx.async_copy(
+            src_ref=x,
+            dst_ref=x_smem,
+            gmem_transform=mgpu.TileTransform(tuple(x_smem.type.shape[2:])),
+            swizzle=swizzle,
+            barrier=barrier,
+        )
+        barrier.wait()
+        return fa.FragmentedArray.load_tiled(x_smem, swizzle=swizzle, layout=layout)
+
+      b_fa = load(b, b_smem, mgpu.MMALayouts.rhs)
+      a_fa = load(a, a_smem, mgpu.MMALayouts.lhs)
+      acc_fa = load(acc, acc_smem, mgpu.MMALayouts.acc)
+      result_fa: mgpu.FragmentedArray = mgpu.mma(acc_fa, a_fa, b_fa)
+      result_fa.store_tiled(acc_smem, swizzle=32)
+      mgpu.commit_shared()
+      ctx.async_copy(
+          src_ref=acc_smem,
+          dst_ref=out,
+          gmem_transform=mgpu.TileTransform(tuple(acc_smem.type.shape[2:])),
+          swizzle=32,
+      )
+      ctx.await_async_copy(0)
+
+    a = self.prng.uniform(-1, 1, (m, k)).astype(dtype)
+    b = self.prng.uniform(-1, 1, (n, k)).astype(dtype)
+    acc = self.prng.uniform(-1, 1, (m, n)).astype(jnp.float32)
+
+    expected = acc + a.astype(jnp.float32) @ b.astype(jnp.float32).T
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        (acc, a, b),
+        out_shape=expected,
+        smem_scratch_shape=(
+            mgpu.Union([
+                jax.ShapeDtypeStruct(mgpu.tile_shape((m, n), (8, 8)), dtype=jnp.float32),
+                jax.ShapeDtypeStruct(mgpu.tile_shape((m, k), (8, 16)), dtype=dtype),
+                jax.ShapeDtypeStruct(mgpu.tile_shape((n, k), (8, 16)), dtype=dtype),
+            ]),
+            mgpu.Barrier(1)
+        ),
+    )(acc, a, b)
+    np.testing.assert_allclose(result, expected, atol=1e-5)
+
   @parameterized.parameters(
       (jnp.uint8, jnp.uint16, 255),
       (jnp.uint8, jnp.int16, 255),

@@ -110,6 +110,10 @@ from .utils import (
     warpgroup_idx as warpgroup_idx,
     when as when,
 )
+from .mma import (
+    MMALayouts as MMALayouts,
+    mma as mma,
+)
 from .wgmma import (
     WGMMAAccumulator as WGMMAAccumulator,
     wgmma as wgmma,
