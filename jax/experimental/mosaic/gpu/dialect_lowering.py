@@ -22,6 +22,7 @@ import math
 import operator
 from typing import Any, cast
 
+from jax._src import lib as jaxlib
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
@@ -899,6 +900,21 @@ def _mgpu_async_store_op_lowering_rule(
       arrive=store_op.commit_group,
   )
   return []
+
+
+if jaxlib.version >= (0, 7, 2):
+  @_register_lowering(mgpu.TmemLayoutCastOp)
+  def _tmem_layout_cast_lowering_rule(
+      ctx: LoweringContext,
+      op: mgpu.TmemLayoutCastOp,
+  ) -> Sequence[ir.Value]:
+    del ctx
+    # We can't relayout TMEM.
+    # TODO(allanrenucci): Check the actual layout that we assigned when lowering `op.ref`.
+    in_layouts = inference_utils.in_tmem_layouts(op)
+    assert in_layouts == inference_utils.out_tmem_layouts(op)
+    assert len(in_layouts) == 1 and in_layouts[0] == op.new_layout
+    return [op.ref]
 
 
 def _conversion_op_lowering_rule(
