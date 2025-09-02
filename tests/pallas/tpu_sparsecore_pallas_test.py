@@ -92,7 +92,9 @@ class DebugPrintTest(PallasSCTest):
 
     @plsc.scalar_subcore_kernel(
         out_shape=int32s,
-        mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=self.num_cores),
+        mesh=plsc.ScalarSubcoreMesh(
+            axis_name="core", num_cores=sc_core._num_available_cores()
+        ),
     )
     def kernel(int32s_hbm_ref, int16s_hbm_ref, int8s_hbm_ref, o_hbm_ref):
       @functools.partial(
