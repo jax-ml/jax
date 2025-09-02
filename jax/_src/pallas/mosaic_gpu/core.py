@@ -1014,6 +1014,9 @@ class Barrier:
   num_barriers: int = 1
   orders_tensor_core: bool = False
 
+  def get_array_aval(self) -> jax_core.ShapedArray:
+    raise ValueError("Barriers are not arrays.")
+
   def get_ref_aval(self) -> state.AbstractRef:
     aval = jax_core.ShapedArray(
         [self.num_barriers],
