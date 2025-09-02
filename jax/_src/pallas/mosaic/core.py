@@ -23,6 +23,7 @@ from typing import Any, ClassVar, Literal
 from collections.abc import Mapping
 
 import jax
+import jax.extend as jex
 from jax._src import core as jax_core
 from jax._src import state
 from jax._src import util
@@ -341,3 +342,9 @@ def _convert_semaphore_type_to_aval(
 pallas_core._out_shape_to_aval_mapping[SemaphoreType] = (
     _convert_semaphore_type_to_aval
 )
+
+
+def get_device_kind() -> str:
+  if abstract_device := jax.sharding.get_abstract_mesh().abstract_device:
+    return abstract_device.device_kind
+  return jex.backend.get_default_device().device_kind
