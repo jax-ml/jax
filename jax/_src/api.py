@@ -3172,6 +3172,9 @@ def copy_to_host_async(x):
 
 @contextmanager
 def default_device(val):
+  if not core.trace_state_clean():
+    raise ValueError(
+        "`jax.default_device` can only be used outside of `jax.jit`.")
   with (use_abstract_mesh(empty_abstract_mesh),
         internal_use_concrete_mesh(empty_concrete_mesh),
         config.default_device(val)):
