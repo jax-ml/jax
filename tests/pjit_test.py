@@ -4865,6 +4865,24 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out = jnp.zeros_like(val)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
+  def test_set_mesh_default_device_interaction(self):
+    if jax.device_count() < 2:
+      self.skipTest('Requires >=2 devices')
+
+    mesh = jtu.create_mesh((1,), 'x')
+
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    with jax.set_mesh(mesh):
+      out = f(np.arange(4))
+      with jax.default_device(jax.devices()[1]):
+        out2 = f(np.arange(4))
+
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+    self.assertEqual(out2.sharding, SingleDeviceSharding(jax.devices()[1]))
+
 
 class ShardingInTypesTest(jtu.JaxTestCase):
 
