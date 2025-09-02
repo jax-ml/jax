@@ -909,11 +909,10 @@ if jaxlib.version >= (0, 7, 2):
       op: mgpu.TmemLayoutCastOp,
   ) -> Sequence[ir.Value]:
     del ctx
+    in_layout = inference_utils.in_tmem_layouts(op)[0]
+    tmem_ref = _tmem_ref_from_ir(op.ref, in_layout)
     # We can't relayout TMEM.
-    # TODO(allanrenucci): Check the actual layout that we assigned when lowering `op.ref`.
-    in_layouts = inference_utils.in_tmem_layouts(op)
-    assert in_layouts == inference_utils.out_tmem_layouts(op)
-    assert len(in_layouts) == 1 and in_layouts[0] == op.new_layout
+    assert layouts.to_layout_attr(tmem_ref.layout) == op.new_layout
     return [op.ref]
 
 
@@ -1545,6 +1544,7 @@ def _tmem_alloc_op_lowering_rule(
   )
   cast_op.attributes["collective"] = op.collective
   cast_op.attributes["packing"] = op.packing
+  cast_op.attributes["layout"] = inference_utils.out_tmem_layouts(op)[0]
 
   return [cast_op.result]
 
@@ -1589,8 +1589,22 @@ def _swizzle(attrs: Sequence[ir.Attribute]) -> mgpu.SwizzlingMode:
   return swizzle if swizzle is not None else mgpu.SwizzlingMode.kNoSwizzle
 
 
-def _tmem_ref_from_ir(ref: ir.Value, layout: ir.Attribute) -> tcgen05.TMEMRef:
-  """Returns a TMEMRef from an IR value."""
+def _tmem_ref_to_ir(ref: tcgen05.TMEMRef) -> ir.Value:
+  """Returns an IR value from a TMEMRef."""
+  type = ir.MemRefType.get(ref.shape, ref.dtype, memory_space=mgpu_utils.tmem())
+  cast = builtin.UnrealizedConversionCastOp([type], [ref.address])
+  layout = layouts_lib.to_layout_attr(ref.layout)
+  cast.attributes["layout"] = layout
+  return cast.result
+
+
+def _tmem_ref_from_ir(
+    ref: ir.Value, expected_layout: ir.Attribute
+) -> tcgen05.TMEMRef:
+  """Returns a TMEMRef from an IR value.
+
+  Throws an error if the annotated layout does not match the expected layout.
+  """
   if not ir.MemRefType.isinstance(ref.type):
     raise ValueError(f"{ref} is not a memref.")
   mem_ref_ty = ir.MemRefType(ref.type)
@@ -1601,16 +1615,22 @@ def _tmem_ref_from_ir(ref: ir.Value, layout: ir.Attribute) -> tcgen05.TMEMRef:
     )
 
   i32 = ir.IntegerType.get_signless(32)
-  _, [tmem_addr] = _undo_conversion_cast(ref, [i32])
+  cast, [tmem_addr] = _undo_conversion_cast(ref, [i32])
 
   shape = tuple(mem_ref_ty.shape)
   el_ty = mem_ref_ty.element_type
-  layout = layouts_lib.from_layout_attr(layout)
+  layout_attr = cast.attributes["layout"]
+  if layout_attr != expected_layout:
+    raise ValueError(
+        f"{ref} has a layout {layout_attr} that does not match the expected"
+        f" layout {expected_layout}."
+    )
+  layout = layouts_lib.from_layout_attr(layout_attr)
   assert isinstance(layout, fa.TiledLayout)
-  in_tmem_layout = tcgen05.TMEMLayout(
+  tmem_layout = tcgen05.TMEMLayout(
       layout.tiling, layout.warp_dims, layout.lane_dims, layout.vector_dim
   )
-  return tcgen05.TMEMRef(tmem_addr, shape, el_ty, in_tmem_layout)
+  return tcgen05.TMEMRef(tmem_addr, shape, el_ty, tmem_layout)
 
 
 @_register_lowering(mgpu.TcGen05MMAOp)
@@ -1625,8 +1645,8 @@ def _tcgen05_mma_op_lowering_rule(
   unwrapped_a_ref = unwrap_transformed_memref(op.a, a_transforms)
   unwrapped_b_ref = unwrap_transformed_memref(op.b, b_transforms)
 
-  acc_layout = inference_utils.in_tmem_layouts(op)[0]
-  acc_ref = _tmem_ref_from_ir(op.accumulator, acc_layout)
+  acc_layout_attr = inference_utils.in_tmem_layouts(op)[0]
+  acc_ref = _tmem_ref_from_ir(op.accumulator, acc_layout_attr)
 
   with mgpu_utils.when(ctx.single_thread_per_block_predicate):
     tcgen05.mma(
@@ -1650,14 +1670,13 @@ def _async_load_tmem_op_lowering_rule(
 ) -> Sequence[ir.Value]:
   """Lowering rule for mgpu.AsyncLoadTmemOp."""
   del ctx
-
-  tmem = _tmem_ref_from_ir(op.source, inference_utils.in_tmem_layouts(op)[0])
-
+  in_layout_attr = inference_utils.in_tmem_layouts(op)[0]
+  tmem_ref = _tmem_ref_from_ir(op.source, in_layout_attr)
   out_layout_attr = inference_utils.out_layouts(op)[0]
   out_layout = layouts_lib.from_tiled_layout_attr(out_layout_attr)
   el_type = ir.MemRefType(op.source.type).element_type
   is_signed = False if ir.IntegerType.isinstance(el_type) else None
-  fa = tmem.load(out_layout, is_signed)
+  fa = tmem_ref.load(out_layout, is_signed)
   return [fragmented_array_to_ir(fa, op.result.type)]
 
 
@@ -1667,16 +1686,13 @@ def _async_store_tmem_op_lowering_rule(
 ) -> Sequence[ir.Value]:
   """Lowering rule for mgpu.AsyncStoreTmemOp."""
   del ctx
-
-  tmem = _tmem_ref_from_ir(
-      op.destination, inference_utils.in_tmem_layouts(op)[0]
-  )
-
+  in_layout_attr = inference_utils.in_tmem_layouts(op)[0]
+  tmem_ref = _tmem_ref_from_ir(op.destination, in_layout_attr)
   in_layout_attr = inference_utils.in_layouts(op)[0]
   el_type = ir.VectorType(op.source.type).element_type
   is_signed = False if ir.IntegerType.isinstance(el_type) else None
   fa = _fragmented_array_from_ir(op.source, in_layout_attr, is_signed)
-  tmem.store(fa)
+  tmem_ref.store(fa)
 
   return []
 
