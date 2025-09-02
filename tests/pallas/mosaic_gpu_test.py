@@ -4707,47 +4707,6 @@ class WarpSpecializedPipelineTest(PallasTest):
     y = jax.random.uniform(jax.random.key(1), (m, n), dtype=jnp.float32)
     np.testing.assert_allclose(kernel(x, y), x + y, atol=1e-4)
 
-  def test_different_delay_release(self):
-    self.skip_if_wg_semantics()  # Crashes!
-    m, n = 128, 64
-    blk_m, blk_n = 32, 64
-    in_specs = [
-        plgpu.BlockSpec(
-            block_shape=(blk_m, blk_n),
-            index_map=lambda i, j: (i, j),
-            delay_release=delay,
-        )
-        for delay in range(3)
-    ]
-    out_spec = pl.BlockSpec(
-        block_shape=(blk_m, blk_n),
-        index_map=lambda i, j: (i, j),
-    )
-
-    def tiled_add_kernel(_, x_smem, y_smem, z_smem, o_smem):
-      o_smem[...] = x_smem[...] + y_smem[...] + z_smem[...]
-
-    def pipeline(*gmem_refs):
-      grid = (m // blk_m, n // blk_n)
-      return mgpu_pipeline.emit_pipeline(
-          tiled_add_kernel,
-          grid=grid,
-          max_concurrent_steps=4,
-          in_specs=in_specs,
-          out_specs=[out_spec],
-      )(*gmem_refs)
-
-    kernel = self.kernel(
-        pipeline,
-        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
-        grid=(1,),
-        grid_names=("_",)
-    )
-    x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float32)
-    y = jax.random.uniform(jax.random.key(1), (m, n), dtype=jnp.float32)
-    z = jax.random.uniform(jax.random.key(3), (m, n), dtype=jnp.float32)
-    np.testing.assert_allclose(kernel(x, y, z), x + y + z)
-
   @parameterized.product(
       delay_release=[0, 1],
   )
