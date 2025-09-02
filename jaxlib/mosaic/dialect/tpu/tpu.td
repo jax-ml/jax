@@ -1199,8 +1199,16 @@ def TPU_DelayOp : TPU_Op<"delay"> {
 
 // Expands the granularity of mask to subelements.
 def TPU_MaskCastOp : TPU_Op<"mask_cast", [Pure]> {
-  let arguments = (ins AnyVectorOfNonZeroRank:$input);
-  let results = (outs AnyVectorOfNonZeroRank:$result);
+  let description = [{
+    Cast a mask register into a different packing.
+
+    If casting to a type with smaller packing, then values being packed together
+    must be identical. For example, for 8x128x4xi1 -> 8x128x2xi1,
+    input[i, j, 0] == input[i, j, 1] and input[i, j, 2] == input[i, j, 3] must
+    hold for all i, j. Otherwise, the result is undefined.
+  }];
+  let arguments = (ins VectorOfNonZeroRankOf<[I1]>:$input);
+  let results = (outs VectorOfNonZeroRankOf<[I1]>:$result);
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($result)
   }];
