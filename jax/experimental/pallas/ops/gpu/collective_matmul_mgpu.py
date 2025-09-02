@@ -72,6 +72,10 @@ def all_gather_lhs_matmul(
         f"{n_shard_per_sm_n=} must be divisible by {block_n=}"
     )
   num_sms_m = max_num_sms // sm_n_tile
+  if num_sms_m < (m_shard // block_m) and sm_n_tile > 1:
+    # We never synchronize the N SMs across the different steps of the M
+    # loop, so they can start overwriting each other's data.
+    raise NotImplementedError("The kernel has races when M is large and sm_n_tile > 1")
 
   swizzle = min(
       plgpu.find_swizzle(block_k * jnp.finfo(element_type).bits, "lhs"),
@@ -99,21 +103,11 @@ def all_gather_lhs_matmul(
       (mi,) = idx
       m_tile_slice = pl.ds(mi * block_m, block_m)
 
-      # For some reason ptxas spills if we unroll the loop over k
-      copy_block = 32
-      @pl.loop(0, k, step=copy_block)
-      def _k_copy_loop(ki):
-        k_slice = pl.ds(ki, copy_block)
-        scratch_ref[0, :, k_slice] = lhs_ref[m_tile_slice, k_slice]
-
-      @pl.loop(0, num_devices)
-      def _device_loop(device_offset):
+      def device_step(lhs_source_ref, next_scratch_slot, device_offset):
+        # Loop invariant: lhs_source_ref is ready to be used
         device_m_slice = pl.ds(
             lax.rem(device_offset + dev_id, num_devices) * m_shard, block_m
         )
-
-        scratch_slot = device_offset
-        next_scratch_slot = scratch_slot + 1
 
         def compute(n_tile_slice, send: bool):
           @functools.partial(
@@ -143,7 +137,7 @@ def all_gather_lhs_matmul(
               plgpu.wgmma(acc_ref, lhs_smem, rhs_smem)
               if send:
                 # TODO(giorgioa): Send only for first sm_n.
-                @pl.when(next_scratch_slot <= num_devices - 1)
+                @pl.when(next_scratch_slot < num_devices - 1)
                 def _():
                   (ki,) = idxs
                   k_slice = pl.ds(ki * block_k, block_k)
@@ -153,7 +147,7 @@ def all_gather_lhs_matmul(
                   # We only delay release by 1 step, so we need to wait for the
                   # previous copies.
                   plgpu.wait_smem_to_gmem(1, wait_read_only=True)
-            k_loop(scratch_ref.at[scratch_slot], rhs_ref.at[..., n_tile_slice])
+            k_loop(lhs_source_ref, rhs_ref.at[..., n_tile_slice])
             if send:
               # Make sure the copy is done and signal the receiving device.
               plgpu.wait_smem_to_gmem(0, wait_read_only=False)
@@ -176,6 +170,11 @@ def all_gather_lhs_matmul(
         # Wait for the next scratch to arrive --- see the device loop invariant.
         pl.semaphore_wait(received_sem)
 
+      device_step(lhs_ref.at[m_tile_slice], 0, 0)
+      @pl.loop(1, num_devices)
+      def _device_loop(device_offset):
+        device_step(scratch_ref.at[device_offset - 1], device_offset, device_offset)
+
     # Make sure all copies are fully done.
     plgpu.wait_smem_to_gmem(0, wait_read_only=True)
 
@@ -185,7 +184,7 @@ def all_gather_lhs_matmul(
           # The output, with its M dimension all-gathered.
           jax.ShapeDtypeStruct((axis_size * m_shard, n_shard), dtype),
           # The scratch buffer used for the all-gather.
-          jax.ShapeDtypeStruct((num_sms_m, num_devices, block_m, k), dtype),
+          jax.ShapeDtypeStruct((num_sms_m, num_devices - 1, block_m, k), dtype),
       ],
       scratch_shapes=[
           plgpu.SMEM((block_m, block_n), dtype, transforms=transforms),
