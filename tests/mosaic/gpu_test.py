@@ -4561,6 +4561,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       vector_type = ir.VectorType.get(shape, el_ty)
       r_in = vector.load(vector_type, input, zero_vector_indices)
 
+      # TODO(allanrenucci): Should this be inferred?
       tmem_layout = mgpu_layouts.to_layout_attr(tcgen05.TMEM_NATIVE_LAYOUT)
 
       # registers -> TMEM
@@ -4642,17 +4643,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       )
       tma_barrier.wait()
 
-      # TODO(allanrenucci): Remove explicit layouts once inferred.
-      tmem_layout = tcgen05._infer_tmem_layout(
-          acc_shape, collective=False, packing=1
-      )
-      load_layout = tcgen05._infer_tmem_load_registers_layout(
-          tmem_layout, columns=n, packing=1
-      )
-      load_layout = layouts.to_layout_attr(load_layout)
-      tmem_layout = layouts.to_layout_attr(tmem_layout)
-
-      acc_tmem = mgpu_dialect.tmem_layout_cast(acc_tmem, tmem_layout)
       mgpu_dialect.tcgen05_mma(
           accumulator=acc_tmem,
           a=a_smem,
@@ -4665,7 +4655,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
 
       # TMEM -> Registers
       r_out = mgpu_dialect.async_load_tmem(acc_tmem)
-      r_out = mgpu_dialect.layout_cast(r_out, load_layout)
 
       # Registers -> GMEM
       zero_index = arith.constant(ir.IndexType.get(), 0)
@@ -4761,18 +4750,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       cluster_barrier.arrive(orders_tensor_core=True)
       cluster_barrier.wait(orders_tensor_core=True)
 
-      # TODO(allanrenucci): Remove explicit layouts once inferred.
-      tmem_layout = tcgen05._infer_tmem_layout(
-          acc_block_shape, collective=True, packing=1
-      )
-      load_layout = tcgen05._infer_tmem_load_registers_layout(
-          tmem_layout, columns=n, packing=1
-      )
-      tmem_layout = layouts.to_layout_attr(tmem_layout)
-      load_layout = layouts.to_layout_attr(load_layout)
-
-      acc_tmem = mgpu_dialect.tmem_layout_cast(acc_tmem, tmem_layout)
-
       is_first_block = arith.cmpi(
           arith.CmpIPredicate.eq, block_id, c(0, ir.IndexType.get())
       )
@@ -4790,7 +4767,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
 
       # TMEM -> Registers
       r_out = mgpu_dialect.async_load_tmem(acc_tmem)
-      r_out = mgpu_dialect.layout_cast(r_out, load_layout)
 
       # Registers -> GMEM
       zero_index = arith.constant(ir.IndexType.get(), 0)

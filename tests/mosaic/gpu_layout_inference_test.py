@@ -933,6 +933,46 @@ class LayoutInferenceTest(parameterized.TestCase):
     expected_layouts = [acc_layout, a_layout] if a_in_tmem else [acc_layout]
     self.checkInTmemLayouts(op, expected_layouts)
 
+  def test_infer_async_load_chooses_in_tmem_layouts_compatible_with_register_layout(self):
+    f32 = ir.F32Type.get()
+    i32 = ir.IntegerType.get_signless(32)
+    shape = (128, 128)
+    ptr_type = ir.MemRefType.get((1,), i32, memory_space=mgpu.utils.smem())
+    ref_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
+    out_layout = layouts.to_layout_attr(fa.TCGEN05_LAYOUT)
+
+    with ir.InsertionPoint(self.module.body):
+      ptr = llvm.mlir_undef(ptr_type)
+      ref = mgpu.dialect.tmem_alloc(ref_type, ptr)
+      op = mgpu.dialect.AsyncLoadTmemOp(ref)
+      mgpu.dialect.layout_cast(op.result, out_layout)
+
+    mgpu.infer_layout(self.module)
+    in_layout = tcgen05.tmem_default_layout(packing=1)
+    in_layout = layouts.to_layout_attr(in_layout)
+    self.checkInTmemLayouts(op, [in_layout])
+    self.checkOutLayouts(op, [out_layout])
+
+  def test_infer_async_load_chooses_out_layouts_compatible_with_tmem_layout(self):
+    f32 = ir.F32Type.get()
+    i32 = ir.IntegerType.get_signless(32)
+    shape = (128, 128)
+    ptr_type = ir.MemRefType.get((1,), i32, memory_space=mgpu.utils.smem())
+    ref_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
+    in_layout = tcgen05.tmem_default_layout(packing=1)
+    in_layout = layouts.to_layout_attr(in_layout)
+
+    with ir.InsertionPoint(self.module.body):
+      ptr = llvm.mlir_undef(ptr_type)
+      ref = mgpu.dialect.tmem_alloc(ref_type, ptr)
+      ref = mgpu.dialect.tmem_layout_cast(ref, in_layout)
+      op = mgpu.dialect.AsyncLoadTmemOp(ref)
+
+    mgpu.infer_layout(self.module)
+    self.checkInTmemLayouts(op, [in_layout])
+    out_layout = layouts.to_layout_attr(fa.TCGEN05_LAYOUT)
+    self.checkOutLayouts(op, [out_layout])
+
   def test_async_load_tmem_accepts_compatible_in_out_layouts(self):
     f32 = ir.F32Type.get()
     i32 = ir.IntegerType.get_signless(32)

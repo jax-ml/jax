@@ -250,12 +250,51 @@ def _strided_layout_for_variable(
   return fa.WGStridedFragLayout.from_shaped_type(type)
 
 
+def _extract_variable_assignments_from_constraint(
+    constraint: eqns.Constraint,
+) -> Generator[tuple[eqns.Variable, eqns.Constant], None, None]:
+  """Attempts to extract variable assignments from a `Constraint`."""
+  if not isinstance(constraint, eqns.IsTransferable):
+    return
+
+  # This code assumes that the `IsTransferable` constraint is bidirectional.
+  # This is currently true for TMEM <-> REG transfers.
+  src, tgt = constraint.source, constraint.target
+  match src, tgt:
+    case eqns.Variable(), eqns.Constant():
+      variable, constant = src, tgt
+    case eqns.Constant(), eqns.Variable():
+      variable, constant = tgt, src
+    case _:
+      return
+
+  if isinstance(constant, eqns.RegisterLayout):
+    for packing in (1, 2, 4, 8):
+      for tmem_layout, reg_layout in constraint.supported_tmem_transfers(
+          packing
+      ):
+        if constant.value == reg_layout:
+          yield variable, eqns.TMEMLayout(tmem_layout)
+
+  elif isinstance(constant, eqns.TMEMLayout):
+    packing = constant.value.vector_length
+    for tmem_layout, reg_layout in constraint.supported_tmem_transfers(packing):
+      if constant.value == tmem_layout:
+        yield variable, eqns.RegisterLayout(reg_layout)
+
+
 def conjure_assignment(
     unknowns: Set[eqns.Variable],
     equation_system: eqns.EquationSystem,
     hints: Sequence[Hint],
 ) -> Generator[tuple[eqns.Variable, eqns.Constant], None, None]:
   """Attempts to conjure an assignment for an unknown variable."""
+  for constraint in equation_system.constraints:
+    # TODO(allanrenucci): We should be able to short-circuit the search here if
+    # the constraint is not satisfiable.
+    for assg in _extract_variable_assignments_from_constraint(constraint):
+      yield assg
+
   for hint in hints:
     if (assignment := extract_variable_assignment_from_hint(hint)) is not None:
       yield assignment
