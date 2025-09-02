@@ -1198,6 +1198,7 @@ jax_multiplatform_test(
     ] + py_deps([
         "numpy",
         "absl/testing",
+        "absl/flags",
     ]),
 )
 

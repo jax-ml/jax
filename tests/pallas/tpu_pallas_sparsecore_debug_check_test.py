@@ -28,6 +28,7 @@ import sys
 import unittest
 
 from absl.testing import absltest
+from absl import flags
 import jax
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
@@ -118,6 +119,12 @@ class DebugCheckTest(jtu.JaxTestCase):
     )
 
   def test_trigger_bounds_checker(self):
+    if "xla_sc_assert_level" in flags.FLAGS:
+      # The test crashes the process anyway, so no need to be clean.
+      flags.FLAGS.xla_sc_assert_level = "bounds"
+    else:
+      self.skipTest("TODO: Find another way to enable bounds checking.")
+
     x = jnp.arange(8, dtype=jnp.int32)
     # Index 8 is out-of-bounds.
     indices = jnp.array([0, 1, 2, 3, 4, 5, 6, 8], dtype=jnp.int32)
