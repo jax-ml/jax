@@ -521,11 +521,6 @@ class TransformInferenceTest(parameterized.TestCase):
     else:
       user_op.attributes["in_transforms"] = ir.ArrayAttr.get([transforms])
 
-    if annotate_input:
-      f.attributes["in_transforms"] = ir.ArrayAttr.get([transforms])
-    else:
-      user_op.attributes["in_transforms"] = ir.ArrayAttr.get([transforms])
-
     with self.assertRaises(NotImplementedError):
       mgpu.infer_transforms(self.module)
 
