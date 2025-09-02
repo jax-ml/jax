@@ -657,6 +657,62 @@ class TransformInferenceTest(parameterized.TestCase):
     mgpu.infer_transforms(self.module)
     self.assertSequenceEqual(inference_utils.in_transforms(op), [transforms])
 
+  @parameterized.parameters([False, True])
+  def test_infer_transforms_for_subview_handles_dynamic_offsets(
+      self, annotate_input
+  ):
+    subview_op = user_op = None
+    shape = (32, 32, 32)
+    elt_ty = ir.BF16Type.get()
+
+    in_ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+    out_ref_ty = ir.MemRefType.get((16, 16, 32), elt_ty, memory_space=mgpu.utils.smem())
+
+    def body(in_ref):
+      nonlocal subview_op, user_op
+      c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
+      subview_op = memref.SubViewOp(
+          out_ref_ty,
+          in_ref,
+          [c(16), c(4)],
+          [],
+          [],
+          static_offsets=[
+              ir.ShapedType.get_dynamic_size(),
+              ir.ShapedType.get_dynamic_size(),
+              0,
+          ],
+          static_sizes=[16, 16, 32],
+          static_strides=[1, 1, 1],
+      )
+      user_op = memref.CastOp(out_ref_ty, subview_op.result)
+
+    with ir.InsertionPoint(self.module.body):
+      f = func.FuncOp.from_py_func(in_ref_ty)(body).func_op
+
+    transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((16, 16)),
+        mgpu.dialect.SwizzleTransformAttr.get(32),
+    ])
+
+    if annotate_input:
+      f.attributes["in_transforms"] = ir.ArrayAttr.get([transforms])
+    else:
+      user_op.attributes["in_transforms"] = ir.ArrayAttr.get([transforms])
+
+    mgpu.infer_transforms(self.module)
+
+    expected_transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((1, 16)),
+        mgpu.dialect.SwizzleTransformAttr.get(32),
+    ])
+
+    self.assertSequenceEqual(
+        inference_utils.in_transforms(subview_op), [expected_transforms]
+    )
+    self.assertSequenceEqual(
+        inference_utils.out_transforms(subview_op), [expected_transforms]
+    )
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

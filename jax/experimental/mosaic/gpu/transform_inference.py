@@ -334,6 +334,8 @@ def _infer_memref_subview_transforms(
         "unchanged."
     )
 
+  is_dynamic = lambda x: ir.ShapedType.is_dynamic_size(x)
+
   # Check tile transform propagation.
   old_tiling = mgpu.TileTransformAttr(tile_transform).tiling
   num_tiled_axes = len(old_tiling)
@@ -341,14 +343,17 @@ def _infer_memref_subview_transforms(
   last_n_sizes = list(op.static_sizes)[-num_tiled_axes:]
   last_n_offsets = list(op.static_offsets)[-num_tiled_axes:]
 
-  if any(ir.ShapedType.is_dynamic_size(x) for x in last_n_sizes):
+  if any(is_dynamic(x) for x in last_n_sizes):
     raise NotImplementedError(
         "Subview transforms with dynamic sizes are not supported."
     )
 
-  dynamic_index = 0
+  num_non_tiled_axes = len(op.source.type.shape) - num_tiled_axes
+  non_tiled_offsets = list(op.static_offsets)[:num_non_tiled_axes]
+  dynamic_index = sum(1 for x in non_tiled_offsets if is_dynamic(x))
+
   for i in range(len(last_n_offsets)):
-    if ir.ShapedType.is_dynamic_size(last_n_offsets[i]):
+    if is_dynamic(last_n_offsets[i]):
       if utils.is_known_divisible(
           op.offsets[dynamic_index], last_n_sizes[i]
       ):
