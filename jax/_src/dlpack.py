@@ -21,6 +21,7 @@ from jax._src import deprecations
 from jax._src import xla_bridge
 from jax._src.api import device_put
 from jax._src.lax.lax import _array_copy
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import scalar_types as jnp_types
@@ -170,7 +171,7 @@ def to_dlpack(x: Array, stream: int | Any | None = None,
       f"version ({max_version}) was requested."
     )
 
-def _place_array(_arr, device, dlpack_device, copy):
+def _check_device(device, dlpack_device, copy):
   if device and dlpack_device != device:
     if copy is not None and not copy:
       raise ValueError(
@@ -178,8 +179,10 @@ def _place_array(_arr, device, dlpack_device, copy):
         f"is {repr(dlpack_device)}, however copy=False. Set copy=True or "
         "copy=None to perform the requested operation."
       )
-    else:
-      return device_put(_arr, device)
+
+def _place_array(_arr, device, dlpack_device, copy):
+  if device and dlpack_device != device:
+    return device_put(_arr, device)
   if copy:
     return jnp.array(_arr, copy=True)
   return _arr
@@ -217,6 +220,7 @@ def _legacy_from_dlpack(dlpack, device: xla_client.Device | None = None,
   _arr = jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
       dlpack, cpu_backend, gpu_backend))
   dlpack_device, = _arr.devices()
+  _check_device(device, dlpack_device, copy)
   return _place_array(_arr, device, dlpack_device, copy)
 
 def _is_tensorflow_tensor(external_array):
@@ -239,6 +243,9 @@ def _from_dlpack(external_array, device: xla_client.Device | None = None,
 
   backend = xla_bridge.get_backend(dl_device_platform)
   dlpack_device = backend.device_from_local_hardware_id(device_id)
+
+  _check_device(device, dlpack_device, copy)
+
   if _is_tensorflow_tensor(external_array):
     # TensorFlow does not support stream=.
     stream = None
@@ -250,10 +257,31 @@ def _from_dlpack(external_array, device: xla_client.Device | None = None,
         stream = None
       else:
         raise
+
   dlpack = external_array.__dlpack__(stream=stream)
 
-  _arr = jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
-      dlpack, dlpack_device, stream))
+  try:
+    if jaxlib_version < (0, 7, 2):
+      _buf = xla_client._xla.dlpack_managed_tensor_to_buffer(
+        dlpack, dlpack_device, stream)
+    else:
+      _buf = xla_client._xla.dlpack_managed_tensor_to_buffer(
+        dlpack, dlpack_device, stream, copy)
+  except xla_client.XlaRuntimeError as e:
+    se = str(e)
+    if "is not aligned to" in se:
+      i = se.index("is not aligned to")
+      raise ValueError(
+        "Specified input which requires a copy since the source data "
+        f"buffer {se[i:]} However copy=False. Set copy=True or "
+        "copy=None to perform the requested operation."
+      )
+    else:
+      raise
+  _arr = jnp.asarray(_buf)
+  if copy and jaxlib_version >= (0, 7, 2):
+    # copy was already handled by dlpack_managed_tensor_to_buffer.
+    copy = None
   return _place_array(_arr, device, dlpack_device, copy)
 
 def from_dlpack(external_array,
