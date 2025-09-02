@@ -58,6 +58,7 @@ from jax._src.config import (
   log_compiles as log_compiles,
   no_tracing as no_tracing,
   explain_cache_misses as explain_cache_misses,
+  default_device as default_device,
   default_matmul_precision as default_matmul_precision,
   default_prng_impl as default_prng_impl,
   numpy_dtype_promotion as numpy_dtype_promotion,
@@ -80,7 +81,6 @@ del _xc
 from jax._src.core import typeof as typeof
 from jax._src.api import effects_barrier as effects_barrier
 from jax._src.api import block_until_ready as block_until_ready
-from jax._src.api import default_device as default_device
 from jax._src.ad_checkpoint import checkpoint_wrapper as checkpoint  # noqa: F401
 from jax._src.ad_checkpoint import checkpoint_policies as checkpoint_policies
 from jax._src.api import clear_caches as clear_caches

@@ -68,10 +68,9 @@ from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
-from jax._src.mesh import (get_concrete_mesh, use_abstract_mesh,
-                           empty_abstract_mesh, empty_concrete_mesh)
+from jax._src.mesh import get_concrete_mesh
 from jax._src.sharding_impls import (PmapSharding, PartitionSpec as P,
-                                     NamedSharding, internal_use_concrete_mesh)
+                                     NamedSharding)
 from jax._src.layout import Format
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
@@ -3168,17 +3167,6 @@ def copy_to_host_async(x):
       copy_fn()
 
   return x
-
-
-@contextmanager
-def default_device(val):
-  if not core.trace_state_clean():
-    raise ValueError(
-        "`jax.default_device` can only be used outside of `jax.jit`.")
-  with (use_abstract_mesh(empty_abstract_mesh),
-        internal_use_concrete_mesh(empty_concrete_mesh),
-        config.default_device(val)):
-    yield
 
 
 def clear_backends():

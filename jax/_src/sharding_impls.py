@@ -1219,7 +1219,7 @@ class set_mesh:
 
 
 @contextlib.contextmanager
-def internal_use_concrete_mesh(mesh: mesh_lib.Mesh):
+def _internal_use_concrete_mesh(mesh: mesh_lib.Mesh):
   assert isinstance(mesh, mesh_lib.Mesh)
   prev_val = config.device_context.swap_local(mesh)
   try:

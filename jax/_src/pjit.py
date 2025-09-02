@@ -68,7 +68,7 @@ from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding,
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
     prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
-    internal_use_concrete_mesh)
+    _internal_use_concrete_mesh)
 from jax._src.layout import Format, Layout, AutoLayout, get_layout_for_vmap
 from jax._src.state.types import RefEffect
 from jax._src.traceback_util import api_boundary
@@ -634,7 +634,7 @@ def _infer_params(
   ) -> tuple[PjitParams, list[core.Value]]:
   if ji.use_resource_env:  # pjit
     phys_mesh = mesh_lib.thread_resources.env.physical_mesh
-    with (internal_use_concrete_mesh(phys_mesh),
+    with (_internal_use_concrete_mesh(phys_mesh),
           mesh_lib.use_abstract_mesh(phys_mesh.abstract_mesh)):
       return _infer_params_internal(fun, ji, args, kwargs)
   else:
