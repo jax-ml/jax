@@ -913,7 +913,13 @@ def _tmem_alloc_equation_system(
   del ctx
   result = OperandOrResult(op, VariableType.RESULT, 0)
   variable = eqns.Variable(result)
-  return eqns.EquationSystem(), {variable: [result]}, []
+  layout = tcgen05._infer_tmem_layout(
+      tuple(op.result.type.shape), op.collective, packing=1
+  )
+  # This is a hint, not a hard constraint. This will be the default layout if
+  # none can be inferred.
+  hint = Hint(variable, eqns.TMEMLayout(layout))
+  return eqns.EquationSystem(), {variable: [result]}, [hint]
 
 
 @_add_equation_system_derivation_rule(mgpu.TmemDeallocOp)

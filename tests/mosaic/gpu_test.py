@@ -4488,11 +4488,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
           packing=packing,
       )
 
-      # Layout cast is required to guide layout inference.
-      # TODO(allanrenucci): Should we infer default TMEM layout?
-      layout = mgpu_layouts.to_layout_attr(tcgen05.tmem_default_layout(packing))
-      tmem_ref = mgpu_dialect.tmem_layout_cast(tmem_ref, layout)
-
       mgpu_dialect.tmem_relinquish_alloc_permit(collective=collective)
       mgpu_dialect.tmem_dealloc(tmem_ref)
 
@@ -4548,10 +4543,9 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
         ctx: launch_context.LaunchContext,
         input: ir.Value,
         result: ir.Value,
-        smem: list[ir.Value],
+        tmem: list[ir.Value],
     ):
       del ctx
-      [tmem_ref] = smem
       el_ty = utils.dtype_to_ir_type(dtype)
 
       zero_index = arith.constant(ir.IndexType.get(), 0)
@@ -4561,18 +4555,12 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       vector_type = ir.VectorType.get(shape, el_ty)
       r_in = vector.load(vector_type, input, zero_vector_indices)
 
-      # TODO(allanrenucci): Should this be inferred?
-      tmem_layout = mgpu_layouts.to_layout_attr(tcgen05.TMEM_NATIVE_LAYOUT)
-
       # registers -> TMEM
-      r_in = mgpu_dialect.layout_cast(r_in, tmem_layout)
-      tmem_ref = mgpu_dialect.tmem_layout_cast(tmem_ref, tmem_layout)
-      mgpu_dialect.async_store_tmem(r_in, tmem_ref)
+      mgpu_dialect.async_store_tmem(r_in, tmem)
       tcgen05.commit_tmem()
 
       # TMEM ->registers
-      r_out = mgpu_dialect.async_load_tmem(tmem_ref)
-      r_out = mgpu_dialect.layout_cast(r_out, tmem_layout)
+      r_out = mgpu_dialect.async_load_tmem(tmem)
       # no need to wait in this case, see:
       # https://docs.jax.dev/en/latest/pallas/gpu/reference.html#allocating-the-accumulator-using-tmem
 
@@ -4587,7 +4575,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
         block=(128, 1, 1),
         in_shape=jax_shape,
         out_shape=jax_shape,
-        smem_scratch_shape=[mgpu.TMEM(shape, dtype, packing=packing)],
+        smem_scratch_shape=mgpu.TMEM(shape, dtype, packing=packing),
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 
