@@ -1212,12 +1212,21 @@ def _trace_kernel_to_jaxpr(
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
           wrapped_kernel_fun, kernel_avals)
     if consts:
-      consts_avals = [jax_core.get_aval(c) for c in consts]
-      if any(not isinstance(aval, state.AbstractRef) for aval in consts_avals):
+      consts_avals = [
+          aval
+          for c in consts
+          if not isinstance(aval := jax_core.get_aval(c), state.AbstractRef)
+      ]
+      if consts_avals:
+        ctx = jax_core.JaxprPpContext()
+        pp_consts_avals = ", ".join(
+            jax_core.pp_aval(aval, ctx) for aval in consts_avals
+        )
         raise ValueError(
-            f"The kernel function in the pallas_call {debug_info.func_src_info} "
-            f"captures constants {consts_avals}. "
-            "You should pass them as inputs")
+            "The kernel function in the pallas_call"
+            f" {debug_info.func_src_info} captures constants"
+            f" [{pp_consts_avals}]. You should pass them as inputs."
+        )
 
   kernel_out_tree = out_tree_thunk()
   if not indexer and kernel_out_tree != tree_util.tree_structure(None):
