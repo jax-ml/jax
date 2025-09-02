@@ -1723,8 +1723,11 @@ def shaped_abstractify(x):
       stacklevel=6)
     return shaped_abstractify(x.__jax_array__())
   if hasattr(x, 'dtype'):
-    aval = ShapedArray(np.shape(x), x.dtype,
-                       weak_type=getattr(x, 'weak_type', False))
+    aval = ShapedArray(
+        np.shape(x),
+        dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
+        weak_type=getattr(x, "weak_type", False),
+    )
     return update_aval_with_sharding(aval, getattr(x, 'sharding', None))
   raise TypeError(
       f"Cannot interpret value of type {typ} as an abstract array; it "

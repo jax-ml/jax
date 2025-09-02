@@ -2538,8 +2538,8 @@ def fori_loop(lower, upper, body_fun, init_val,
     raise TypeError("lax.fori_loop: body_fun argument should be callable.")
 
   # TODO(phawkins): perhaps do more type checking here, better error messages.
-  lower_dtype = dtypes.canonicalize_dtype(lax.dtype(lower))
-  upper_dtype = dtypes.canonicalize_dtype(lax.dtype(upper))
+  lower_dtype = lax.dtype(lower)
+  upper_dtype = lax.dtype(upper)
   if lower_dtype == upper_dtype:
     dtype = lower_dtype
   else:
@@ -2977,7 +2977,7 @@ def _cumred_dtype_rule(name, operand, *args, **kw):
   if not dtypes.issubdtype(operand.dtype, np.number):
     raise TypeError("{} does not accept dtype {}. Accepted dtypes are subtypes "
                     "of number.".format(name, np.dtype(operand.dtype).name))
-  return dtypes.canonicalize_dtype(operand.dtype)
+  return operand.dtype
 
 
 def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):

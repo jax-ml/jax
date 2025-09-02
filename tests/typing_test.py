@@ -24,6 +24,7 @@ from typing import Any, TYPE_CHECKING
 
 import jax
 from jax._src import core
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import typing
 from jax import lax
@@ -45,7 +46,7 @@ def dtypelike_to_dtype(x: typing.DTypeLike) -> typing.DType:
 # inputs to jax primitive functions; use convert_element_type here
 # for simplicity.
 def arraylike_to_array(x: typing.ArrayLike) -> typing.Array:
-  return lax.convert_element_type(x, np.result_type(x))
+  return lax.convert_element_type(x, dtypes.dtype(np.result_type(x)))
 
 
 class HasDType:

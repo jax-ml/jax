@@ -69,7 +69,7 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (PmapSharding, NamedSharding,
                                      ShardingContext, SPMDAxisContext,
                                      PartitionSpec as P, canonicalize_sharding)
-from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
+from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DType, DTypeLike, Shape
 from jax._src.util import (cache, canonicalize_axis,
                            safe_map, safe_zip, split_list, weakref_lru_cache,
                            foreach)
@@ -1652,11 +1652,13 @@ def convert_element_type(operand: ArrayLike,
   .. _stablehlo.convert: https://openxla.org/stablehlo/spec#convert
   .. _x64 mode: https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
   """
+  new_dtype = dtypes.check_and_canonicalize_user_dtype(
+      new_dtype, 'convert_element_type')
   return _convert_element_type(operand, new_dtype, weak_type=False)  # type: ignore[unused-ignore,bad-return-type]
 
 def _convert_element_type(
     operand: ArrayLike,
-    new_dtype: DTypeLike | dtypes.ExtendedDType | None = None,
+    new_dtype: DType | None = None,
     weak_type: bool = False,
     sharding: Sharding | None = None,
     warn_on_complex_to_real_cast: bool = True):
@@ -1693,8 +1695,7 @@ def _convert_element_type(
   if new_dtype is None:
     new_dtype = old_dtype
   else:
-    new_dtype = np.dtype(new_dtype)
-  new_dtype = dtypes.dtype(new_dtype)
+    assert isinstance(new_dtype, DType), new_dtype
 
   if sharding is not None and not isinstance(sharding, Sharding):
     raise ValueError(f'{sharding=} must be an instance of jax.sharding.Sharding')
@@ -3376,20 +3377,20 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     raise TypeError(msg.format(np.shape(fill_value)))
   if dtype is None:
     weak_type = dtypes.is_weakly_typed(fill_value)
-    dtype = _dtype(fill_value)
+    fill_dtype = _dtype(fill_value)
   else:
     if dtypes.issubdtype(dtype, dtypes.extended):
       return dtype._rules.full(shape, fill_value, dtype)  # type: ignore[union-attr]
     weak_type = False
-    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full")
-  fill_value = _convert_element_type(fill_value, dtype, weak_type)
+    fill_dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full")
+  fill_value = _convert_element_type(fill_value, fill_dtype, weak_type)
   if (sharding is not None and not isinstance(sharding, PmapSharding) and
       isinstance(fill_value, array.ArrayImpl) and sharding._is_concrete):
     broadcast_shape = sharding.shard_shape(shape)
     shard = broadcast(fill_value, broadcast_shape)
     shard = shard.addressable_data(0)
     return array.make_array_from_callback(
-        shape, sharding, lambda _: shard, dtype=dtype)
+        shape, sharding, lambda _: shard, dtype=fill_dtype)
 
   if sharding is not None and not sharding._is_concrete:
     return broadcast(fill_value, shape, out_sharding=sharding)
@@ -3593,7 +3594,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
   """
   fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)  # type: ignore[arg-type]
   weak_type = dtype is None and dtypes.is_weakly_typed(x)
-  dtype = dtype or _dtype(x)
+  dtype = _dtype(dtype) if dtype is not None else _dtype(x)
   if dtypes.issubdtype(dtype, dtypes.extended):
     return dtype._rules.full(fill_shape, fill_value, dtype)  # type: ignore[union-attr]
 

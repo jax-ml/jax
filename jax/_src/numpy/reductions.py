@@ -134,7 +134,6 @@ def _reduction(a: ArrayLike, name: str, op: ReductionOp, init_val: ArrayLike,
     result_dtype = a.dtype
     if promote_integers:
       result_dtype = _promote_integer_dtype(result_dtype)
-    result_dtype = dtypes.canonicalize_dtype(result_dtype)
   else:
     result_dtype = dtypes.check_and_canonicalize_user_dtype(dtype, name)
 
@@ -2040,12 +2039,10 @@ def _cumulative_reduction(
     result_type = a_type
     if promote_integers or dtypes.issubdtype(result_type, np.bool_):
       result_type = _promote_integer_dtype(result_type)
-    result_type = dtypes.canonicalize_dtype(result_type)
   else:
     result_type = dtypes.check_and_canonicalize_user_dtype(dtype, name)
     if dtypes.issubdtype(result_type, np.bool_):
       result_type = _promote_integer_dtype(result_type)
-      result_type = dtypes.canonicalize_dtype(result_type)
 
   if a_type != np.bool_ and dtype == np.bool_:
     a = lax.asarray(a).astype(np.bool_)

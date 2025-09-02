@@ -2387,7 +2387,7 @@ def rint(x: ArrayLike, /) -> Array:
   x = ensure_arraylike('rint', x)
   dtype = x.dtype
   if dtype == bool or dtypes.issubdtype(dtype, np.integer):
-    return lax.convert_element_type(x, dtypes.float_)
+    return lax.convert_element_type(x, dtypes.default_float_dtype())
   if dtypes.issubdtype(dtype, np.complexfloating):
     return lax.complex(rint(lax.real(x)), rint(lax.imag(x)))
   return lax.round(x, lax.RoundingMethod.TO_NEAREST_EVEN)

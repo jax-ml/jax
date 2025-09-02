@@ -696,6 +696,7 @@ pytype_strict_library(
     deps = [
         ":api",
         ":deprecations",
+        ":dtypes",
         ":lax",
         ":numpy",
         ":sharding",

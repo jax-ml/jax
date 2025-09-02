@@ -191,7 +191,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
       length, = unique_lengths
 
   x_shapes = [x.shape[1:] for x in xs_flat]
-  x_dtypes = [dtypes.canonicalize_dtype(x.dtype) for x in xs_flat]
+  x_dtypes = [dtypes.dtype(x) for x in xs_flat]
   x_avals = tuple(map(core.ShapedArray, x_shapes, x_dtypes))
 
   init_flat = tree_leaves(init)

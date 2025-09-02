@@ -695,7 +695,7 @@ def _get_and_check_dtype(arrays: Sequence[basearray.Array | np.ndarray],
           "If the Array has no addressable shards, `dtype` must be provided "
           f"via the `dtype` argument to `jax.{fname}`.")
   else:
-    dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, fname)
     if arrays and arrays[0].dtype != dtype:
       raise ValueError(
           f"If `dtype` is provided to `jax.{fname}`, it must match the dtype "

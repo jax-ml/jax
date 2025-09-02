@@ -33,7 +33,11 @@ from jax._src.lax.lax import PrecisionLike
 from jax._src.numpy import fft as jnp_fft
 from jax._src.numpy import linalg
 from jax._src.numpy.util import (
-    check_arraylike, promote_dtypes_inexact, promote_dtypes_complex)
+    check_arraylike,
+    ensure_arraylike,
+    promote_dtypes_complex,
+    promote_dtypes_inexact,
+)
 from jax._src.third_party.scipy import signal_helper
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import canonicalize_axis, tuple_delete, tuple_insert
@@ -1095,7 +1099,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
     [1. 2. 3. 2. 1. 0. 1. 2.]
   """
   # Input validation
-  check_arraylike("istft", Zxx)
+  Zxx = ensure_arraylike("istft", Zxx)
   if Zxx.ndim < 2:
     raise ValueError('Input stft must be at least 2d!')
   freq_axis = canonicalize_axis(freq_axis, Zxx.ndim)
@@ -1103,8 +1107,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   if freq_axis == time_axis:
     raise ValueError('Must specify differing time and frequency axes!')
 
-  Zxx = jnp.asarray(Zxx, dtype=dtypes.canonicalize_dtype(
-    dtypes.to_complex_dtype(Zxx.dtype)))
+  Zxx = jnp.asarray(Zxx, dtype=dtypes.to_complex_dtype(Zxx.dtype))
 
   n_default = (2 * (Zxx.shape[freq_axis] - 1) if input_onesided
                else Zxx.shape[freq_axis])
