@@ -43,26 +43,10 @@ class PallasSCTest(jtu.JaxTestCase):
     super().setUp()
 
 
-class VectorSubcoreTest(PallasSCTest):
-
-  # Used for testing masked loads and stores below
-  MASK_FNS = [lambda x: x < 4, lambda x: x >= 4, lambda x: x % 2 == 0]
-
-  @parameterized.product(
-      dtype=[jnp.int32, jnp.float32], op=[jnp.add, jnp.subtract]
-  )
-  def test_add_sub_one(self, dtype, op):
-    x = jnp.arange(8, dtype=dtype)
-
-    @plsc.vector_subcore_kernel(out_shape=x)
-    def kernel(x_ref, o_ref):
-      x = x_ref[...]
-      o_ref[...] = op(x, 1)
-
-    np.testing.assert_array_equal(kernel(x), op(x, 1))
+class DebugPrintTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
-  def test_debug_print(self, dtype):
+  def test_vector_subcore(self, dtype):
     x = jnp.arange(16, dtype=dtype)
     debug_int = 1234552
     debug_float = 12344.625
@@ -98,6 +82,79 @@ class VectorSubcoreTest(PallasSCTest):
     self.assertIn("Single float, data: f32[1]", get_output())
     self.assertIn(str(debug_float), get_output())
     self.assertIn("No values", get_output())
+
+  def test_scalar_subcore(self):
+    int32s = jnp.arange(512, dtype=jnp.int32).reshape(64, 8)
+    int16s = jnp.arange(512, dtype=jnp.int16).reshape(32, 16)
+    int8s = jnp.arange(512, dtype=jnp.int8).reshape(16, 32)
+    debug_int = 1234552
+    debug_float = 12344.625
+
+    @plsc.scalar_subcore_kernel(
+        out_shape=int32s,
+        mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=self.num_cores),
+    )
+    def kernel(int32s_hbm_ref, int16s_hbm_ref, int8s_hbm_ref, o_hbm_ref):
+      @functools.partial(
+          pl.run_scoped,
+          tmp_ref=pltpu.VMEM_SHARED(int32s.shape, int32s.dtype),
+          sem=pltpu.SemaphoreType.DMA,
+      )
+      def _(tmp_ref, sem):
+        @pl.when(lax.axis_index("core") == 0)
+        def _():
+          pltpu.async_copy(int32s_hbm_ref, tmp_ref, sem).wait()
+          pltpu.async_copy(tmp_ref, o_hbm_ref, sem).wait()
+          pl.debug_print("s32 array", tmp_ref)
+          pl.debug_print("s16 array", int16s_hbm_ref)
+          pl.debug_print("s8 array", int8s_hbm_ref)
+          pl.debug_print("Single int", debug_int)
+          pl.debug_print("Single float", debug_float)
+          pl.debug_print("No values")
+
+    compiled_kernel = jax.jit(
+        kernel, compiler_options={"xla_tpu_enable_sc_log_recorder": "true"}
+    )
+    with jtu.capture_stderr() as get_output:
+      jax.block_until_ready(compiled_kernel(int32s, int16s, int8s))
+    print(get_output())
+    self.assertIn("s32 array, data: s32", get_output())
+    self.assertIn("{ 8, 9, 10, 11, 12, 13, 14, 15 }", get_output())
+    self.assertIn("s16 array, data: s16", get_output())
+    self.assertIn(
+        "{ 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31 }",
+        get_output(),
+    )
+    self.assertIn("s8 array, data: s8", get_output())
+    self.assertIn(
+        "{ 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47"
+        ", 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63 }",
+        get_output(),
+    )
+    self.assertIn("Single int", get_output())
+    self.assertIn(str(debug_int), get_output())
+    self.assertIn("Single float", get_output())
+    self.assertIn(str(debug_float), get_output())
+    self.assertIn("No values", get_output())
+
+
+class VectorSubcoreTest(PallasSCTest):
+
+  # Used for testing masked loads and stores below
+  MASK_FNS = [lambda x: x < 4, lambda x: x >= 4, lambda x: x % 2 == 0]
+
+  @parameterized.product(
+      dtype=[jnp.int32, jnp.float32], op=[jnp.add, jnp.subtract]
+  )
+  def test_add_sub_one(self, dtype, op):
+    x = jnp.arange(8, dtype=dtype)
+
+    @plsc.vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, o_ref):
+      x = x_ref[...]
+      o_ref[...] = op(x, 1)
+
+    np.testing.assert_array_equal(kernel(x), op(x, 1))
 
   def test_add_one_block_specs(self):
     x = jnp.arange(32, dtype=jnp.int32)
@@ -623,60 +680,6 @@ class ScalarSubcoreTest(PallasSCTest):
   @property
   def num_cores(self):
     return sc_core._num_available_cores()
-
-  def test_debug_print(self):
-    int32s = jnp.arange(512, dtype=jnp.int32).reshape(64, 8)
-    int16s = jnp.arange(512, dtype=jnp.int16).reshape(32, 16)
-    int8s = jnp.arange(512, dtype=jnp.int8).reshape(16, 32)
-    debug_int = 1234552
-    debug_float = 12344.625
-
-    @plsc.scalar_subcore_kernel(
-        out_shape=int32s,
-        mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=self.num_cores),
-    )
-    def kernel(int32s_hbm_ref, int16s_hbm_ref, int8s_hbm_ref, o_hbm_ref):
-      @functools.partial(
-          pl.run_scoped,
-          tmp_ref=pltpu.VMEM_SHARED(int32s.shape, int32s.dtype),
-          sem=pltpu.SemaphoreType.DMA,
-      )
-      def _(tmp_ref, sem):
-        @pl.when(lax.axis_index("core") == 0)
-        def _():
-          pltpu.async_copy(int32s_hbm_ref, tmp_ref, sem).wait()
-          pltpu.async_copy(tmp_ref, o_hbm_ref, sem).wait()
-          pl.debug_print("s32 array", tmp_ref)
-          pl.debug_print("s16 array", int16s_hbm_ref)
-          pl.debug_print("s8 array", int8s_hbm_ref)
-          pl.debug_print("Single int", debug_int)
-          pl.debug_print("Single float", debug_float)
-          pl.debug_print("No values")
-
-    compiled_kernel = jax.jit(
-        kernel, compiler_options={"xla_tpu_enable_sc_log_recorder": "true"}
-    )
-    with jtu.capture_stderr() as get_output:
-      jax.block_until_ready(compiled_kernel(int32s, int16s, int8s))
-    print(get_output())
-    self.assertIn("s32 array, data: s32", get_output())
-    self.assertIn("{ 8, 9, 10, 11, 12, 13, 14, 15 }", get_output())
-    self.assertIn("s16 array, data: s16", get_output())
-    self.assertIn(
-        "{ 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31 }",
-        get_output(),
-    )
-    self.assertIn("s8 array, data: s8", get_output())
-    self.assertIn(
-        "{ 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47"
-        ", 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63 }",
-        get_output(),
-    )
-    self.assertIn("Single int", get_output())
-    self.assertIn(str(debug_int), get_output())
-    self.assertIn("Single float", get_output())
-    self.assertIn(str(debug_float), get_output())
-    self.assertIn("No values", get_output())
 
   def test_copy(self):
     x = jnp.arange(16)
