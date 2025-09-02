@@ -290,7 +290,7 @@ def add_matrices_pipelined_megacore(x: jax.Array, y: jax.Array) -> jax.Array:
   block_spec = pl.BlockSpec((256, 512), lambda i: (i, 0))
   return pl.pallas_call(
       add_matrices_kernel,
-      out_shape=x,
+      out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
       in_specs=[block_spec, block_spec],
       out_specs=block_spec,
       grid=(2,),
