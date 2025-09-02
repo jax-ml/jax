@@ -3532,7 +3532,7 @@ class APITest(jtu.JaxTestCase):
     def f(x, y):
       return x, y
 
-    x = np.ones((1, 1, 1))
+    x = np.ones((1, 1, 1), dtype=np.float32)
 
     # All defaults
     with jtu.assert_num_jit_and_pmap_compilations(1):
@@ -4665,6 +4665,9 @@ class APITest(jtu.JaxTestCase):
 
   @jtu.thread_unsafe_test()
   def test_cache_clear_pmap(self):
+    if config.pmap_shmap_merge.value:
+      self.skipTest("Already tested by pjit tests under pmap_shmap_merge=True.")
+
     @jax.pmap
     def f(i):
       return i * 2

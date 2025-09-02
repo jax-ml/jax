@@ -26,6 +26,7 @@ except ImportError:
 import jax
 from jax import numpy as jnp
 from jax.interpreters import pxla
+from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import GSPMDSharding
@@ -77,6 +78,13 @@ class CloudpickleTest(jtu.JaxTestCase):
 
   @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")
   def testPickleOfPmappedFunctions(self):
+    if config.pmap_shmap_merge.value:
+      self.skipTest(
+          'Nested pmaps are not relevant for `pmap_shmap_merge=True` and'
+          ' `pmap`s pickled prior to `pmap_shmap_merge=True` may not work, but'
+          " perhaps it's worth making sure that freshly pickled `pmap`s still"
+          ' work?'
+      )
 
     @jax.pmap
     def f(x, y):

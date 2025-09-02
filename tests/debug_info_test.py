@@ -1599,16 +1599,29 @@ class DebugInfoTest(jtu.JaxTestCase):
       tracer_spy.append(x)
       return jnp.sin(x)
 
+    if config.pmap_shmap_merge.value:
+      expected_jaxpr_debug_infos = [
+          # TODO(necula): We should not include `call_wrapped` in the debug info.
+          re.compile(r"traced_for=jit, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=args\[0\], result_paths=result\[0\]"),
+          re.compile(r"traced_for=shard_map, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=args\[0\], result_paths=result\[0\]"),
+      ]
+      expected_tracer_debug_infos = [
+          re.compile(r"traced_for=shard_map, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=args\[0\], from args\[0\]"),
+      ]
+    else:
+      expected_jaxpr_debug_infos = [
+          "traced_for=pmap, fun=my_f, arg_names=x, result_paths=result",
+      ]
+      expected_tracer_debug_infos = [
+            "traced_for=pmap, fun=my_f, arg_names=x, from x"
+      ]
+
     self._check_tracers_and_jaxprs(
         jax.pmap(my_f),
         np.ones((jax.device_count(),), dtype=np.float32),
-        expected_jaxpr_debug_infos=[
-            "traced_for=pmap, fun=my_f, arg_names=x, result_paths=result"
-        ],
+        expected_jaxpr_debug_infos=expected_jaxpr_debug_infos,
         tracer_spy=tracer_spy,
-        expected_tracer_debug_infos=[
-            "traced_for=pmap, fun=my_f, arg_names=x, from x"
-        ],
+        expected_tracer_debug_infos=expected_tracer_debug_infos,
     )
 
   def test_pmap_with_arg_and_result_names(self):
@@ -1630,6 +1643,35 @@ class DebugInfoTest(jtu.JaxTestCase):
       s0 = x0 + y1[0] + b4[0] + args[1][0] + kwargs["c6"][0]
       return dict(v1=jnp.broadcast_to(s0, (1,)), u0=s0)
 
+    if config.pmap_shmap_merge.value:
+      expected_jaxpr_debug_infos = [
+          # TODO(necula): We should not include `call_wrapped` in the debug info.
+          re.compile(r"traced_for=jit, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=(args\[\d+\],)+ result_paths=result\[0\],result\[1\]"),
+          re.compile(r"traced_for=shard_map, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=(args\[\d+\],)+ result_paths=result\[0\],result\[1\]"),
+      ]
+      expected_tracer_debug_infos = [
+          re.compile(r"traced_for=shard_map, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=(args\[\d+\],)+ from args\[\d+\]"),
+      ]
+      expected_lowering_lines = []
+    else:
+      expected_jaxpr_debug_infos = [
+          "traced_for=pmap, fun=my_f, arg_names=y1,args[0],args[1],kwargs['a5'],b4,kwargs['c6'], result_paths=result['u0'],result['v1']",
+      ]
+      expected_tracer_debug_infos = [
+          "traced_for=pmap, fun=my_f, arg_names=y1,args[0],args[1],kwargs['a5'],b4,kwargs['c6'], from args[1]",
+          "traced_for=pmap, fun=my_f, arg_names=y1,args[0],args[1],kwargs['a5'],b4,kwargs['c6'], from b4",
+          "traced_for=pmap, fun=my_f, arg_names=y1,args[0],args[1],kwargs['a5'],b4,kwargs['c6'], from kwargs['c6']",
+      ]
+      expected_lowering_lines = [
+          re.compile(r".*func.func public @main\(.*%arg0: tensor<1x1xf..> loc\(\"y1\"\)"),
+          re.compile(r".*func.func public @main\(.*%arg1: tensor<1x2xf..> loc\(\"args\[0\]\"\)"),
+          re.compile(r".*func.func public @main\(.*%arg2: tensor<1x3xf..> loc\(\"args\[1\]\"\)"),
+          re.compile(r".*func.func public @main\(.*%arg3: tensor<1x5xf..> loc\(\"kwargs\['a5'\]\"\)"),
+          re.compile(r".*func.func public @main\(.*%arg4: tensor<1x4xf..> loc\(\"b4\"\)"),
+          re.compile(r".*func.func public @main\(.*%arg5: tensor<1x6xf..> loc\(\"kwargs\['c6'\]\"\)"),
+          re.compile(r".*func.func public @main\(.* -> .*\{jax.result_info = \"result\['u0'\]\"\}"),
+          re.compile(r".*func.func public @main\(.* -> .*\{jax.result_info = \"result\['v1'\]\"\}"),
+      ]
     self._check_tracers_and_jaxprs(
         jax.pmap(my_f, static_broadcasted_argnums=(0,)),
         1.,  # x0
@@ -1639,25 +1681,10 @@ class DebugInfoTest(jtu.JaxTestCase):
         b4=np.ones((jax.device_count(), 4), dtype=np.float32),
         a5=np.ones((jax.device_count(), 5), dtype=np.float32),
         c6=np.ones((jax.device_count(), 6), dtype=np.float32),
-        expected_jaxpr_debug_infos=[
-            "traced_for=pmap, fun=my_f, arg_names=y1,args[0],args[1],kwargs['a5'],b4,kwargs['c6'], result_paths=result['u0'],result['v1']",
-        ],
+        expected_jaxpr_debug_infos=expected_jaxpr_debug_infos,
         tracer_spy=tracer_spy,
-        expected_tracer_debug_infos=[
-            "traced_for=pmap, fun=my_f, arg_names=y1,args[0],args[1],kwargs['a5'],b4,kwargs['c6'], from args[1]",
-            "traced_for=pmap, fun=my_f, arg_names=y1,args[0],args[1],kwargs['a5'],b4,kwargs['c6'], from b4",
-            "traced_for=pmap, fun=my_f, arg_names=y1,args[0],args[1],kwargs['a5'],b4,kwargs['c6'], from kwargs['c6']",
-        ],
-        expected_lowering_lines=[
-            re.compile(r".*func.func public @main\(.*%arg0: tensor<1x1xf..> loc\(\"y1\"\)"),
-            re.compile(r".*func.func public @main\(.*%arg1: tensor<1x2xf..> loc\(\"args\[0\]\"\)"),
-            re.compile(r".*func.func public @main\(.*%arg2: tensor<1x3xf..> loc\(\"args\[1\]\"\)"),
-            re.compile(r".*func.func public @main\(.*%arg3: tensor<1x5xf..> loc\(\"kwargs\['a5'\]\"\)"),
-            re.compile(r".*func.func public @main\(.*%arg4: tensor<1x4xf..> loc\(\"b4\"\)"),
-            re.compile(r".*func.func public @main\(.*%arg5: tensor<1x6xf..> loc\(\"kwargs\['c6'\]\"\)"),
-            re.compile(r".*func.func public @main\(.* -> .*\{jax.result_info = \"result\['u0'\]\"\}"),
-            re.compile(r".*func.func public @main\(.* -> .*\{jax.result_info = \"result\['v1'\]\"\}"),
-        ]
+        expected_tracer_debug_infos=expected_tracer_debug_infos,
+        expected_lowering_lines=expected_lowering_lines,
     )
 
   def test_pmap_of_grad(self):
@@ -1666,20 +1693,31 @@ class DebugInfoTest(jtu.JaxTestCase):
       tracer_spy.append(x)
       return jnp.sin(x)
 
+    if config.pmap_shmap_merge.value:
+      expected_jaxpr_debug_infos = [
+          # TODO(necula): We should not include `call_wrapped` in the debug info.
+          re.compile(r"traced_for=jit, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=args\[0\], result_paths=result\[0\]"),
+          re.compile(r"traced_for=shard_map, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=args\[0\], result_paths=result\[0\]"),
+      ]
+    else:
+      expected_jaxpr_debug_infos = [
+          "traced_for=pmap, fun=my_f, arg_names=x, result_paths=result",
+      ]
     self._check_tracers_and_jaxprs(
         jax.pmap(jax.grad(my_f)),
         np.ones((jax.device_count(),), dtype=np.float32),
-        expected_jaxpr_debug_infos=[
-            "traced_for=pmap, fun=my_f, arg_names=x, result_paths=result",
-        ],
+        expected_jaxpr_debug_infos=expected_jaxpr_debug_infos,
         tracer_spy=tracer_spy,
         expected_tracer_debug_infos=[
             # TODO(necula): missing debug_info
-            'None'
+            "None"
         ],
     )
 
   def test_jvp_pmap_eager(self):
+    if config.pmap_shmap_merge.value:
+      self.skipTest("TODO(dsuo): How to check for tpu version?")
+
     tracer_spy = TracerSpy()
     def my_f(x, y, *args):
       # y is dead, x is static broadcasted
@@ -1690,20 +1728,38 @@ class DebugInfoTest(jtu.JaxTestCase):
     x = jnp.ones((jax.device_count(), 1), dtype=np.float32)
     x_tan = jnp.full_like(x, .1)
 
+    if config.pmap_shmap_merge.value:
+      expected_jaxpr_debug_infos = [
+          # TODO(necula): We should not include `call_wrapped` in the debug info.
+          re.compile(r"traced_for=jit, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=,,,, result_paths=,,,"),
+          re.compile(r"traced_for=shard_map, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=,,,, result_paths=,,,"),
+      ]
+      # TODO(dsuo): Need to add tpu_pjrt_c_api and tpu_v3 to this conditional.
+      if jtu.test_device_matches(["cpu"]):
+        expected_jaxpr_debug_infos.extend([
+            re.compile(r"traced_for=jit, fun=dynamic_slice at .*jax._src.dispatch.py:.*, arg_names=(args\[\d+\],)+ result_paths=result"),
+        ])
+      expected_tracer_debug_infos = [
+          re.compile(r"traced_for=shard_map, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=(args\[\d+\],)+ from args\[\d+\]"),
+      ]
+    else:
+      expected_jaxpr_debug_infos = [
+          # TODO(necula): why this?
+          re.compile(r"traced_for=jit, fun=_multi_slice at .*array_methods.py:.*, arg_names=self, result_paths=.*"),
+          "traced_for=pmap, fun=my_f, arg_names=x,y,args[0],args[1], result_paths=result['u'],result['v']",
+      ]
+      expected_tracer_debug_infos = [
+          # TODO(necula): missing debug_info
+          "None"
+      ]
+
     self._check_tracers_and_jaxprs(
         lambda x, x_tan: jax.jvp(jax.pmap(my_f),
                                  (x, x, x, x), (x_tan, x_tan, x_tan, x_tan)),
         x, x_tan,
-        expected_jaxpr_debug_infos=[
-            # TODO(necula): why this?
-            re.compile(r'traced_for=jit, fun=_multi_slice at .*array_methods.py:.*, arg_names=self, result_paths=.*'),
-            "traced_for=pmap, fun=my_f, arg_names=x,y,args[0],args[1], result_paths=result['u'],result['v']",
-        ],
+        expected_jaxpr_debug_infos=expected_jaxpr_debug_infos,
         tracer_spy=tracer_spy,
-        expected_tracer_debug_infos=[
-            # TODO(necula): missing debug_info
-            "None"
-        ],
+        expected_tracer_debug_infos=expected_tracer_debug_infos,
     )
 
   @jtu.ignore_warning(category=UserWarning,
@@ -1717,18 +1773,32 @@ class DebugInfoTest(jtu.JaxTestCase):
     x = np.ones((jax.device_count(), 1), dtype=np.float32)
     x_tan = np.full_like(x, .1)
 
+    if config.pmap_shmap_merge.value:
+      expected_jaxpr_debug_infos = [
+          # TODO(necula): We should not include `call_wrapped` in the debug info.
+          re.compile(r"traced_for=jit, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=(args\[\d+\],)+ result_paths=result\[0\]"),
+          r"traced_for=jit, fun=<lambda>, arg_names=x,x_tan, result_paths=result[0],result[1]",
+          re.compile(r"traced_for=shard_map, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=(args\[\d+\],)+ result_paths=result\[0\]"),
+      ]
+      expected_tracer_debug_infos = [
+          re.compile(r"traced_for=shard_map, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=args\[0\],args\[1\], from args\[0\]"),
+      ]
+    else:
+      expected_jaxpr_debug_infos = [
+          "traced_for=jit, fun=<lambda>, arg_names=x,x_tan, result_paths=result[0],result[1]",
+          "traced_for=pmap, fun=my_f, arg_names=x,y, result_paths=result",
+      ]
+      expected_tracer_debug_infos = [
+          # TODO(necula): missing debug_info
+          "None"
+      ]
+
     self._check_tracers_and_jaxprs(
         jax.jit(lambda x, x_tan: jax.jvp(jax.pmap(my_f), (x, x), (x_tan, x_tan))),
         x, x_tan,
-        expected_jaxpr_debug_infos=[
-            "traced_for=jit, fun=<lambda>, arg_names=x,x_tan, result_paths=result[0],result[1]",
-            "traced_for=pmap, fun=my_f, arg_names=x,y, result_paths=result",
-        ],
+        expected_jaxpr_debug_infos=expected_jaxpr_debug_infos,
         tracer_spy=tracer_spy,
-        expected_tracer_debug_infos=[
-            # TODO(necula): missing debug_info
-            "None"
-        ],
+        expected_tracer_debug_infos=expected_tracer_debug_infos,
     )
 
   @unittest.skip("testing for incorrect debug info (pjit transpose)")
@@ -1867,19 +1937,33 @@ class DebugInfoTest(jtu.JaxTestCase):
       y2 = jnp.sin(my_x)
       return (y1 + y2,)
 
+    if config.pmap_shmap_merge.value:
+      expected_jaxpr_debug_infos = [
+          # TODO(necula): We should not include `call_wrapped` in the debug info.
+          re.compile(r"traced_for=jit, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=args\[0\], result_paths=result\[0\]"),
+          re.compile(r"traced_for=shard_map, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=args\[0\], result_paths=result\[0\]"),
+          re.compile(r"traced_for=jit, fun=checked_fun at .*jax._src.checkify.py:.*, arg_names=args\[0\], result_paths=(result\[\d+\]\[\d+\]\[ErrorEffect\(error_type=<class.*>, shape_dtypes=.*\)\])*"),
+      ]
+      expected_tracer_debug_infos = [
+          re.compile(r"traced_for=shard_map, fun=call_wrapped at .*jax._src.linear_util.py:.*, arg_names=args\[0\], from args\[0\]"),
+      ]
+    else:
+      expected_jaxpr_debug_infos = [
+          # TODO(necula): this should not be pointing into the JAX internals
+          re.compile(r"traced_for=jit, fun=checked_fun at .*jax._src.checkify.py:.*, arg_names=args\[0\]"),
+          re.compile(r"traced_for=jit, fun=argsort at .*numpy.sorting.py:.*, arg_names=a, result_paths=result"),
+          "traced_for=pmap, fun=my_f, arg_names=my_x, result_paths=result[0]",
+        ]
+      expected_tracer_debug_infos = [
+          "traced_for=pmap, fun=my_f, arg_names=my_x, from my_x",
+      ]
+
     self._check_tracers_and_jaxprs(
         jax.jit(checkify.checkify(my_f, errors=checkify.nan_checks)),
         np.arange(len(jax.devices()), dtype=np.float32),
         tracer_spy=tracer_spy,
-        expected_jaxpr_debug_infos=[
-            # TODO(necula): this should not be pointing into the JAX internals
-            re.compile(r"traced_for=jit, fun=checked_fun at .*jax._src.checkify.py:.*, arg_names=args\[0\]"),
-            re.compile(r"traced_for=jit, fun=argsort at .*numpy.sorting.py:.*, arg_names=a, result_paths=result"),
-            "traced_for=pmap, fun=my_f, arg_names=my_x, result_paths=result[0]",
-        ],
-        expected_tracer_debug_infos=[
-            "traced_for=pmap, fun=my_f, arg_names=my_x, from my_x",
-        ],
+        expected_jaxpr_debug_infos=expected_jaxpr_debug_infos,
+        expected_tracer_debug_infos=expected_tracer_debug_infos,
         check_lowering=False,  # TODO(necula): warning during lowering
     )
 
@@ -2104,7 +2188,6 @@ class DebugInfoTest(jtu.JaxTestCase):
     def my_consts(x):
       tracer_spy.append(x)
       return x / scale
-
 
     x = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32)
 
