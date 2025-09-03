@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import dataclasses
+import enum
 import functools
 import itertools as it
 import math
@@ -473,6 +474,12 @@ class ComputeContext(Protocol):
     ...
 
 
+class PipelinePipeline(enum.IntEnum):
+  START = 0
+  STEADY = 1
+  STOP = 2
+
+
 def emit_pipeline_warp_specialized(
     body: Callable[..., None],
     *,
@@ -483,6 +490,7 @@ def emit_pipeline_warp_specialized(
     max_concurrent_steps: int = 2,
     wg_axis: str,
     num_compute_wgs: int,
+    pipeline_state: jax.Array | PipelinePipeline | None = None,
     manual_consumed_barriers: bool = False,
     compute_context: ComputeContext | None = None,
     memory_thread_idx: int | None = None,
@@ -531,6 +539,15 @@ def emit_pipeline_warp_specialized(
       final carry.
     memory_thread_idx: The index of the memory thread. If not specified,
       defaults to the last thread.
+    pipeline_state: If multiple pipelines that have almost the same parameters
+      (only in/out_specs and body can differ) are going to be evaluated
+      in sequence, this argument can be used to avoid pipeline bubbles between
+      their invocations. The first pipeline in the sequence should use the
+      ``START`` state, followed by an arbitrary number of ``STEADY`` states,
+      followed by a single ``STOP`` state. Note that until the pipeline with
+      ``STOP`` is done, the memory thread will not wait for the compute threads
+      to complete and fully consume their work. Any modification of their
+      operands other than invoking another pipeline is disallowed.
   """
 
   # TODO(justinfu): Factor out common code between warp-specialized and
@@ -850,6 +867,26 @@ def emit_pipeline_warp_specialized(
       else:
         assert max_concurrent_steps <= num_steps
         prologue_steps = max_concurrent_steps
+      pipeline_init_prologue_steps = prologue_steps
+      if pipeline_state is not None:
+        if has_dynamic_grid:
+          raise NotImplementedError(
+              "A pipeline of pipelines is not supported with dynamic grids"
+          )
+        if num_steps % max_concurrent_steps:
+          raise NotImplementedError(
+              "A pipeline of pipelines is only allowed when the number of steps"
+              f" (product of grid, here {num_steps}) is divisible by"
+              f" {max_concurrent_steps=}"
+          )
+        if delay_release:
+          raise NotImplementedError(
+              "A pipeline of pipelines is not supported with delay_release"
+          )
+        if isinstance(pipeline_state, PipelinePipeline):
+          prologue_steps = prologue_steps if pipeline_state == PipelinePipeline.START else 0
+        else:
+          prologue_steps = jnp.where(pipeline_state == PipelinePipeline.START, prologue_steps, 0)
 
       # Begin initial copies.
       def _init_step(step, indices):
@@ -885,15 +922,20 @@ def emit_pipeline_warp_specialized(
           bref.copy_in(buf_slot, indices, in_smem_barrier_ref, barrier_slot)
         next_indices = _inc_grid_by_1(indices, grid)
         return (next_indices,)
-      lax.fori_loop(0, num_steps - max_concurrent_steps,
-                    memory_loop_body, (indices,))
+      lax.fori_loop(0, num_steps - prologue_steps, memory_loop_body, (indices,))
       # Await all the arrivals to not leave barriers in a bad state.
       # We only need to account for the prologue steps, only the first
       # delay_release of them skip arrivals, so we subtract them.
-      @pl.loop(0, prologue_steps - delay_release, unroll=not has_dynamic_grid)
-      def _epi_step(step):
-        for barrier in flat_consumed_barrier_refs:
-          gpu_primitives.barrier_wait(barrier.at[step])
+      @pl.when(pipeline_state is None or pipeline_state == PipelinePipeline.STOP)
+      def _quiesce():
+        @pl.loop(
+            0,
+            pipeline_init_prologue_steps - delay_release,
+            unroll=not has_dynamic_grid,
+        )
+        def _epi_step(step):
+          for barrier in flat_consumed_barrier_refs:
+            gpu_primitives.barrier_wait(barrier.at[step])
 
     wg_idx = lax.axis_index(wg_axis)
     lax.cond(
