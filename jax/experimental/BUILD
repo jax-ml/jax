@@ -696,6 +696,7 @@ py_library_providing_imports_info(
         "//jax/_src:core",
         "//jax/_src:dtypes",
         "//jax/_src:earray",
+        "//jax/experimental/roofline",
     ],
 )
 
@@ -705,7 +706,6 @@ filegroup(
     name = "jax_public",
     srcs = glob([
         "key_reuse/**/*.py",
-        "roofline/**/*.py",
         "compilation_cache/**/*.py",
     ]) + [
         "checkify.py",

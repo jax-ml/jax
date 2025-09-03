@@ -39,6 +39,9 @@ from jax._src.lax import (
   special,
   windowed_reductions,
 )
+from jax.experimental.jax2tf import call_tf
+
+
 from jax.experimental import roofline
 
 # One FMA (Fused Multiply Add) takes 2 flops to compute.
@@ -48,6 +51,7 @@ for prim in it.chain(
   ad_checkpoint.__dict__.values(),
   ad_util.__dict__.values(),
   ann.__dict__.values(),
+  call_tf.__dict__.values(),
   control_flow.__dict__.values(),
   convolution.__dict__.values(),
   dispatch.__dict__.values(),

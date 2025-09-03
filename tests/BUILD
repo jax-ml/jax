@@ -1664,7 +1664,9 @@ jax_multiplatform_test(
     name = "roofline_test",
     srcs = ["roofline_test.py"],
     enable_backends = ["cpu"],
-    deps = py_deps("absl/testing"),
+    deps = [
+        "//jax/experimental/roofline",
+    ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
