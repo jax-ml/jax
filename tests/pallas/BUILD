@@ -748,7 +748,7 @@ jax_multiplatform_test(
         "tpu_v5e_x8",
         "tpu_v5p_x4",
     ],
-    shard_count = 5,
+    shard_count = 10,
     deps = [
         "//jax:extend",
         "//jax:pallas_tpu",
