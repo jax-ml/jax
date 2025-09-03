@@ -1016,19 +1016,32 @@ class VectorLayoutInferer {
                  "Not implemented: Only f32 is supported.")
     TPU_CHECK_OP(input_rank > 1,
                  "Not implemented: Only input rank > 1 is supported.");
-    TPU_CHECK_OP(op.getAxis() == input_rank - 1,
-                 "Not implemented: Only reduction on last dimension supported");
     TPU_CHECK_OP(
         input_ty.getShape()[input_rank - 2] % target_shape_[0] == 0 &&
         input_ty.getShape()[input_rank - 1] % target_shape_[1] == 0,
         "Not implemented: The input size is not a multiple of native vreg size "
         "on trailing dimensions.");
-
-    VectorLayout in_layout(bitwidth, {0, 0}, nativeTiling(bitwidth),
-                        ImplicitDim::kNone);
-    VectorLayout out_layout(bitwidth, {0, std::nullopt}, nativeTiling(bitwidth),
-                        ImplicitDim::kMinor);
-    setLayout(op, in_layout, out_layout);
+    auto some_layout = getLayout(op.getInput());
+    TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
+    if (op.getAxis() < input_rank - 2) {
+      VectorLayout& in_layout = *some_layout;
+      setLayout(op, in_layout, in_layout);
+    } else {
+      VectorLayout in_layout(bitwidth, {0, 0}, nativeTiling(bitwidth),
+                             ImplicitDim::kNone);
+      LayoutOffsets out_offsets = {0, 0};
+      ImplicitDim out_implicit_dim = ImplicitDim::kNone;
+      if (op.getAxis() == input_rank - 1) {
+        out_implicit_dim = ImplicitDim::kMinor;
+        out_offsets[1] = std::nullopt;
+      } else if (op.getAxis() == input_rank - 2) {
+        out_implicit_dim = ImplicitDim::kSecondMinor;
+        out_offsets[0] = std::nullopt;
+      }
+      VectorLayout out_layout(bitwidth, out_offsets, nativeTiling(bitwidth),
+                              out_implicit_dim);
+      setLayout(op, in_layout, out_layout);
+    }
     return success();
   }
 
