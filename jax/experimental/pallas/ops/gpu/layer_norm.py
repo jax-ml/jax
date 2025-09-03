@@ -21,7 +21,6 @@ import functools
 import jax
 from jax import lax
 import jax.numpy as jnp
-from jax._src.lax.control_flow.for_loop import for_loop
 
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import triton as plgpu
@@ -32,33 +31,46 @@ def layer_norm_forward_kernel(
     *, eps: float, block_size: int):
   n_col = x_ref.shape[0]
 
-  def mean_body(i, acc_ref):
+  def mean_body(i, acc):
     col_idx = i * block_size + jnp.arange(block_size)
     mask = col_idx < n_col
     a = plgpu.load(
         x_ref.at[col_idx], mask=mask, other=0.0, eviction_policy="evict_last"
     ).astype(jnp.float32)
-    acc_ref[:] += a
-  mean = for_loop(pl.cdiv(n_col, block_size), mean_body,
-                  jnp.zeros(block_size)).sum() / n_col
+    return acc + a
 
-  def var_body(i, acc_ref):
+  mean = lax.fori_loop(
+      0,
+      pl.cdiv(n_col, block_size),
+      mean_body,
+      init_val=jnp.zeros(block_size),
+  ).sum()
+  mean /= n_col
+
+  def var_body(i, acc):
     col_idx = i * block_size + jnp.arange(block_size)
     mask = col_idx < n_col
     a = plgpu.load(
         x_ref.at[col_idx], mask=mask, other=0.0, eviction_policy="evict_last"
     ).astype(jnp.float32)
     a = jnp.where(mask, a - mean, 0.)
-    acc_ref[:] += a * a
-  var = for_loop(pl.cdiv(n_col, block_size), var_body,
-                 jnp.zeros(block_size)).sum() / n_col
+    return acc + a * a
+
+  var = lax.fori_loop(
+      0,
+      pl.cdiv(n_col, block_size),
+      var_body,
+      init_val=jnp.zeros(block_size),
+  ).sum()
+  var /= n_col
   rstd = 1 / jnp.sqrt(var + eps)
   if mean_ref is not None:
     mean_ref[...] = mean.astype(mean_ref.dtype)
   if rstd_ref is not None:
     rstd_ref[...] = rstd.astype(rstd_ref.dtype)
 
-  def body(i, _):
+  @pl.loop(0, pl.cdiv(n_col, block_size))
+  def body(i):
     col_idx = i * block_size + jnp.arange(block_size)
     mask = col_idx < n_col
     weight = plgpu.load(weight_ref.at[col_idx], mask=mask)
@@ -68,7 +80,6 @@ def layer_norm_forward_kernel(
     ).astype(jnp.float32)
     out = (x - mean) * rstd * weight + bias
     plgpu.store(o_ref.at[col_idx], out.astype(o_ref.dtype), mask=mask)
-  for_loop(pl.cdiv(n_col, block_size), body, ())
 
 
 def layer_norm_forward(
@@ -119,7 +130,7 @@ def layer_norm_backward_kernel_dx(
     *, eps: float, block_size: int):
   n_col = x_ref.shape[0]
 
-  def mean_body(i, acc_ref):
+  def mean_body(i, acc):
     col_idx = i * block_size + jnp.arange(block_size)
     mask = col_idx < n_col
     a = plgpu.load(
@@ -136,16 +147,19 @@ def layer_norm_backward_kernel_dx(
     ).astype(jnp.float32)
     a_hat = (a - mean_ref[...]) * rstd_ref[...]
     wdout = weight * dout
-    mean1_acc_ref, mean2_acc_ref = acc_ref
-    mean1_acc_ref[:] += a_hat * wdout
-    mean2_acc_ref[:] += wdout
-  mean = for_loop(pl.cdiv(n_col, block_size), mean_body,
-                  (jnp.zeros(block_size), jnp.zeros(block_size)))
-  mean1, mean2 = mean
+    mean1_acc, mean2_acc = acc
+    return mean1_acc + a_hat * wdout, mean2_acc + wdout
+  mean1, mean2 = lax.fori_loop(
+      0,
+      pl.cdiv(n_col, block_size),
+      mean_body,
+      init_val=(jnp.zeros(block_size), jnp.zeros(block_size)),
+  )
   mean1 = mean1.sum() / n_col
   mean2 = mean2.sum() / n_col
 
-  def dx_body(i, acc_ref):
+  @pl.loop(0, pl.cdiv(n_col, block_size))
+  def dx_body(i):
     col_idx = i * block_size + jnp.arange(block_size)
     mask = col_idx < n_col
     a = plgpu.load(
@@ -164,7 +178,6 @@ def layer_norm_backward_kernel_dx(
     wdout = weight * dout
     da = (wdout - (a_hat * mean1 + mean2)) * rstd_ref[...]
     plgpu.store(dx_ref.at[col_idx], da.astype(dx_ref.dtype), mask=mask)
-  for_loop(pl.cdiv(n_col, block_size), dx_body, ())
 
 
 def layer_norm_backward_kernel_dw_db(
@@ -179,7 +192,7 @@ def layer_norm_backward_kernel_dw_db(
   col_idx = j * block_n + jnp.arange(block_n)
   col_mask = col_idx < n_col
 
-  def body(i, acc_ref):
+  def body(i, acc):
     row_idx = i * block_m + jnp.arange(block_m)
     row_mask = row_idx < m
     mask = row_mask[:, None] & col_mask[None, :]
@@ -196,10 +209,17 @@ def layer_norm_backward_kernel_dw_db(
         jnp.float32
     )
     a_hat = (a - mean[:, None]) * rstd[:, None]
-    dw_acc_ref, db_acc_ref = acc_ref
-    dw_acc_ref[:] += (dout * a_hat).sum(axis=0)
-    db_acc_ref[:] += dout.sum(axis=0)
-  dw_acc, db_acc = for_loop(pl.cdiv(m, block_m), body, (jnp.zeros(block_n), jnp.zeros(block_n)))
+    dw_acc_ref, db_acc_ref = acc
+    return dw_acc_ref + (dout * a_hat).sum(axis=0), db_acc_ref + dout.sum(
+        axis=0
+    )
+
+  dw_acc, db_acc = lax.fori_loop(
+      0,
+      pl.cdiv(m, block_m),
+      body,
+      init_val=(jnp.zeros(block_n), jnp.zeros(block_n)),
+  )
   plgpu.store(dw_ref.at[col_idx], dw_acc.astype(dw_ref.dtype), mask=col_mask)
   plgpu.store(db_ref.at[col_idx], db_acc.astype(db_ref.dtype), mask=col_mask)
 
