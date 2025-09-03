@@ -181,16 +181,15 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     np.testing.assert_allclose(out, x.reshape((8, 8, -1))[s].reshape(x.shape))
 
   @parameterized.parameters(
-      # (jnp.bfloat16, 0),
-      # (jnp.bfloat16, 3),
-      # (jnp.bfloat16, 129),
-      # (jnp.int16, 2),
-      # (jnp.int16, 5),
-      # (jnp.int16, 257),
-      # (jnp.int8, 311),
-      # (jnp.int8, 597),
-      # (jnp.int8, 1025),
-      (jnp.int32, 1025),
+      (jnp.bfloat16, 0),
+      (jnp.bfloat16, 3),
+      (jnp.bfloat16, 129),
+      (jnp.int16, 2),
+      (jnp.int16, 5),
+      (jnp.int16, 257),
+      (jnp.int8, 311),
+      (jnp.int8, 597),
+      (jnp.int8, 1025),
   )
   def test_narrow_bitwidth_scalar_prefetch(self, dtype, index):
     def body(s_ref, o_ref):
