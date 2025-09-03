@@ -2192,10 +2192,10 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
     if len(unused) == 1:
       (i, a), = unused
       start, was = "an input value", "was"
-      msg = f" {dbg.arg_names[i]} of type {a.str_short()}"
+      msg = f" {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'} of type {a.str_short()}"
     else:
       start, was = "multiple input values", "were"
-      msg = "\n" + "\n".join(f"  * {dbg.arg_names[i]} of type {a.str_short()}"
+      msg = "\n" + "\n".join(f"  * {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'} of type {a.str_short()}"
                              for i, a in unused)
     raise Exception(f"with {allow_unused=}, {start} marked to be saved {was} "
                     f"not used by the backward pass:{msg}")

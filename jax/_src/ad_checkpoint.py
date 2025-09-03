@@ -491,10 +491,11 @@ def saved_residuals(f: Callable,
   jaxpr = jaxpr_.jaxpr
   out_shape = out_shape_[1]
   num_res = tree_structure(out_shape).num_leaves
-  jaxpr = jaxpr.replace(outvars=jaxpr.outvars[len(jaxpr.outvars) - num_res:])
-  out_tree = lambda: tree_structure(out_shape)
+  jaxpr = jaxpr.replace(
+      outvars=jaxpr.outvars[len(jaxpr.outvars) - num_res:],
+      debug_info=debug_info._replace(result_paths=None))
   assert len(jaxpr.invars) == len(in_leaves)
-  return _saved_residuals(jaxpr, debug_info.arg_names)
+  return _saved_residuals(jaxpr, debug_info.arg_names or ("unknown",) * len(jaxpr.invars))
 
 def _saved_residuals(jaxpr: core.Jaxpr,
                      arg_names: Sequence[str]) -> list[tuple[core.AbstractValue, str]]:
@@ -781,7 +782,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     in_cts_nz, _ = partition_list(in_zeros, in_cts)
     return in_cts_nz
 
-  dbg = jaxpr.jaxpr.debug_info._replace(arg_names=(), result_paths=())
+  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   transposed_wrapped = lu.wrap_init(transposed, debug_info=dbg)
   transposed_jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(
       transposed_wrapped, in_avals)

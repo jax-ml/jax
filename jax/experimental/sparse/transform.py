@@ -448,7 +448,8 @@ def sparsify_raw(f):
         lu.wrap_init(
             f, params,
             debug_info=api_util.debug_info("sparsify", f,
-                                           spvalues_to_arrays(spenv, spvalues), {})),
+                                           in_tree.unflatten([True] * len(in_avals_flat)),
+                                           {})),
         in_tree)
     jaxpr, out_avals_flat, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
     result = eval_sparse(jaxpr, consts, spvalues_flat, spenv)
@@ -751,7 +752,7 @@ def _sparsify_jaxpr(spenv: SparsifyEnv,
   args_flat, in_tree = tree_flatten(args)
   avals_flat = [core.get_aval(arg) for arg in args_flat]
   sp_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(wrapped, debug_info=jaxpr.jaxpr.debug_info), avals_flat)
+      lu.wrap_init(wrapped, debug_info=jaxpr.jaxpr.debug_info.with_unknown_names()), avals_flat)
   sp_jaxpr = pe.ClosedJaxpr(sp_jaxpr, consts)
   assert out_tree is not None
   return sp_jaxpr, out_tree

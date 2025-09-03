@@ -90,6 +90,8 @@ no_effects: Effects = effects.no_effects
 
 
 DebugInfo = lu.DebugInfo
+InitialResultPaths = lu.InitialResultPaths
+initial_result_paths = lu.initial_result_paths
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
@@ -160,11 +162,9 @@ class Jaxpr:
     # TODO(https://github.com/jax-ml/jax/issues/26480)
     debug_info = debug_info or lu._missing_debug_info("core.Jaxpr")
     self._debug_info = debug_info.resolve_result_paths()
-    # TODO(necula): re-enable these safety checks
-    # assert (len(debug_info.arg_names) == len(invars)), (debug_info, invars)
-    # assert (len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
+    config.enable_checks.value and self._debug_info.assert_arg_names(len(invars))
+    config.enable_checks.value and self._debug_info.assert_result_paths(len(outvars))
     self._is_high = is_high
-    num_vars = len(constvars) + len(invars)
 
   def __str__(self):
     return str(self.pretty_print())

@@ -222,7 +222,7 @@ class PythonPmapTest(jtu.JaxTestCase):
         TypeError,
         r"Argument types differ .*"
         r"The mismatches are:\n"
-        r"Argument 'x' compiled with.*float32.*and called with.*int32.*",
+        r"Argument '' compiled with.*float32.*and called with.*int32.*",
         lambda: f_exe(x_i32))
 
   def testLowerCompileMultiArg(self):

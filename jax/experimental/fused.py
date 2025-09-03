@@ -145,7 +145,7 @@ def _transpose_jaxpr(jaxpr, in_tree, in_avals):
     out = [ct if not isinstance(ct, ad.Zero) else None for ct in out]
     cts_out, cell.out_tree = tree_flatten(out)  # type: ignore
     return cts_out
-  dbg = jaxpr.jaxpr.debug_info._replace(arg_names=(), result_paths=())
+  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
   return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # type: ignore

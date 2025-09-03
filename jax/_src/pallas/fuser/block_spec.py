@@ -358,7 +358,7 @@ def _pull_block_spec(
           jaxpr.invars,
           needed_invars,
           jaxpr.eqns[: jaxpr.eqns.index(eqn)],
-          debug_info=jaxpr.debug_info,
+          debug_info=jaxpr.debug_info._replace(result_paths=None),
       )
       scalar_prefetch_jaxpr, used_consts, used_invars = pe.dce_jaxpr_consts(
           scalar_prefetch_jaxpr_no_dce,
@@ -368,6 +368,7 @@ def _pull_block_spec(
       scalar_prefetch_jaxpr = scalar_prefetch_jaxpr.replace(
           constvars=[],
           invars=jaxpr.constvars,
+          debug_info=scalar_prefetch_jaxpr.debug_info.with_unknown_names()
       )
 
       def _scalar_prefetch_fn(jaxpr):

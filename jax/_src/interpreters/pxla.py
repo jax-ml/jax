@@ -758,7 +758,8 @@ def stage_parallel_callable(
     with dispatch.log_elapsed_time(
         "Finished tracing + transforming {fun_name} for pmap in {elapsed_time} sec",
         fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
-      jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_dynamic(fun, sharded_avals)
+      jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_dynamic(
+          fun.with_unknown_names(), sharded_avals)
 
   assert len(out_sharded_avals) == len(pci.out_axes), (
       len(out_sharded_avals), len(pci.out_axes))
@@ -1835,7 +1836,7 @@ def _move_mutable_consts(
   effects = pe.make_jaxpr_effects(constvars, invars, jaxpr.outvars, jaxpr.eqns)
   # TODO(mattjj): debug_info must be updated...
   jaxpr = core.Jaxpr(constvars, invars, jaxpr.outvars, jaxpr.eqns,
-                     effects, closed_jaxpr.jaxpr.debug_info)
+                     effects, closed_jaxpr.jaxpr.debug_info.with_unknown_names())
   return core.ClosedJaxpr(jaxpr, consts), in_mut
 
 @weakref_lru_cache
@@ -2172,10 +2173,14 @@ def hoist_constants_as_args(
           in_mut=mut.in_mut,
           out_mut=[None if i_idx is None else i_idx + num_const_args
                    for i_idx in mut.out_mut])
+    if all_args_info.debug_info.arg_names is None:
+      arg_names = None
+    else:
+      arg_names = (("",) * num_const_args + all_args_info.debug_info.arg_names)
     all_args_info = AllArgsInfo(
         const_arg_avals + all_args_info.in_avals,  # type: ignore
-        all_args_info.debug_info._replace(
-            arg_names=(("",) * num_const_args + all_args_info.debug_info.arg_names)))
+        all_args_info.debug_info._replace(arg_names=arg_names))
+
   return (const_args, global_in_avals, in_shardings, in_layouts, donated_invars,
           kept_var_idx, inout_aliases, mut, all_args_info)
 
@@ -3231,7 +3236,7 @@ class MeshExecutable(stages.Executable):
       # See https://github.com/jax-ml/jax/issues/26480.
       debug_info = core.DebugInfo(
           "MeshExecutable", "<unknown>",
-          tuple(f"args[{i}]" for i in range(len(args))), ())
+          tuple(f"args[{i}]" for i in range(len(args))), None)
     else:
       kept_args = args
       ref_avals = self._all_args_info.in_avals
