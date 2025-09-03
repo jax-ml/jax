@@ -4898,6 +4898,71 @@ class WarpSpecializedPipelineTest(PallasTest):
     ref = 10 * x.reshape(m // blk_m, blk_m, n // blk_n, blk_n).sum((0, 2))
     np.testing.assert_allclose(kernel(x), ref, rtol=5e-6)
 
+  @parameterized.product(manual_consumed_barriers=[False, True])
+  def test_pipelined_pipeline(self, manual_consumed_barriers):
+    self.skip_if_wg_semantics()  # Times out!
+    m = n = 512
+
+    x = jax.random.randint(jax.random.key(0), (m, n), -10, 15, dtype=jnp.int32)
+    blk_m = blk_n = 64
+
+    def body(x_ref, out_gmem_ref, out_ref):
+      wg_idx = jax.lax.axis_index("wg")
+      @pl.when(wg_idx == 0)
+      def _zero_output():
+        out_ref[...] = jnp.zeros_like(out_ref)
+
+      def pipeline_body(_, x_smem, *consumed_barriers):
+        out_ref[...] += x_smem[...]
+        if manual_consumed_barriers:
+          [x_barrier] = consumed_barriers
+          plgpu.barrier_arrive(x_barrier)
+
+      spec = pl.BlockSpec(
+          block_shape=(blk_m, blk_n), index_map=lambda i, j: (i, j)
+      )
+      pipeline = functools.partial(
+          mgpu_pipeline.emit_pipeline_warp_specialized,
+          body=pipeline_body,
+          grid=(m // blk_m, n // blk_n),
+          memory_registers=40,
+          max_concurrent_steps=2,
+          num_compute_wgs=1,
+          wg_axis="wg",
+          manual_consumed_barriers=manual_consumed_barriers,
+          in_specs=[spec],
+      )
+
+      @pl.loop(0, 2)
+      def _outer_loop(_):
+        @pl.loop(0, 4)
+        def _pipeline_loop(i):
+          state = plgpu.PipelinePipeline.START
+          state = jnp.where(i > 0, plgpu.PipelinePipeline.STEADY, state)
+          state = jnp.where(i == 3, plgpu.PipelinePipeline.STOP, state)
+          pipeline(pipeline_state=state)(x_ref)
+        # Make sure we have properly quiesced the pipeline.
+        pipeline(pipeline_state=None)(x_ref)
+
+      @pl.when(wg_idx == 0)
+      def _store_out():
+        out_gmem_ref[...] = out_ref[...]
+
+    kernel = self.kernel(
+        body,
+        out_shape=jax.ShapeDtypeStruct((blk_m, blk_n), jnp.int32),
+        compiler_params=plgpu.CompilerParams(approx_math=True),
+        scratch_shapes=[plgpu.SMEM((blk_m, blk_n), jnp.int32)],
+        grid=(1,),
+        grid_names=("_",),
+        num_threads=2,
+        thread_name="wg",
+    )
+    out = kernel(x)
+    np.testing.assert_array_equal(
+        out, x.reshape(m // blk_m, blk_m, n // blk_n, blk_n).sum((0, 2)) * 10
+    )
+
 
 class WarpSpecializedPipelineWGTest(
     WarpSpecializedPipelineTest,
