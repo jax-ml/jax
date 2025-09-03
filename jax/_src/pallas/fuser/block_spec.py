@@ -1092,7 +1092,8 @@ def _get_pull_rule(
   block_shape_iter = iter(block_spec.block_shape)
   block_shape = []
   if not all(
-      isinstance(bd, (int, pallas_core.Blocked, pallas_core.Squeezed, None))
+      bd is None
+      or isinstance(bd, (int, pallas_core.Blocked, pallas_core.Squeezed))
       for bd in block_spec.block_shape
   ):
     raise NotImplementedError('get not supported yet')
