@@ -335,6 +335,7 @@ nanobind_pywrap_extension(
         ":py_client",
         ":python_ref_manager",
         ":pytree",
+        ":reshard_arrays_lib",
         ":traceback",
         ":util",
         ":xla_compiler",
@@ -530,6 +531,35 @@ cc_library(
         "@xla//xla/python:debug_callback_partitioner",
         "@xla//xla/python:inspect_sharding",
         "@xla//xla/tsl/platform:logging",
+        "@xla//xla/tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "reshard_arrays_lib",
+    srcs = ["reshard_arrays_lib.cc"],
+    hdrs = ["reshard_arrays_lib.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        ":nb_class_ptr",
+        ":py_client",
+        ":traceback",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@nanobind",
+        "@xla//third_party/python_runtime:headers",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/python:nb_numpy",
+        "@xla//xla/python:types",
+        "@xla//xla/python/ifrt",
+        "@xla//xla/tsl/concurrency:ref_count",
         "@xla//xla/tsl/platform:statusor",
     ],
 )
