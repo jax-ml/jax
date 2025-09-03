@@ -107,38 +107,32 @@ ShardingSpec = sharding_specs.ShardingSpec
 
 ### util
 
-
-def to_xc_copy_semantics(cs):
-  if cs is None or cs == dispatch.CopySemantics.ALIAS:
-    return xc.ArrayCopySemantics.REUSE_INPUT
-  elif cs == dispatch.CopySemantics.COPY:
-    return xc.ArrayCopySemantics.ALWAYS_COPY
-  elif cs == dispatch.CopySemantics.DONATE:
-    return xc.ArrayCopySemantics.DONATE_INPUT
-  else:
-    assert isinstance(cs, xc.ArrayCopySemantics)
-    return cs
-
-
 def identity(x): return x
 
+
 @profiler.annotate_function
-def shard_args(shardings: Sequence[JSharding], layouts, copy_semantics,
-               args, canonicalize=True) -> Sequence[xc.ArrayImpl]:
+def shard_args(
+    shardings: Sequence[JSharding],
+    layouts: Sequence[Any | None],
+    copy_semantics: Sequence[xc.ArrayCopySemantics | None],
+    args: Sequence[Any],
+    canonicalize: bool = True,
+) -> Sequence[xc.ArrayImpl]:
   # Fast path for one argument.
   if len(args) == 1:
     arg = args[0]
     if canonicalize:
       arg = dtypes.canonicalize_value(arg)
-    return shard_arg_handlers[type(arg)](
-        [arg], shardings, layouts, [to_xc_copy_semantics(copy_semantics[0])])
+    cs = copy_semantics[0]
+    cs = xc.ArrayCopySemantics.REUSE_INPUT if cs is None else cs
+    return shard_arg_handlers[type(arg)]([arg], shardings, layouts, [cs])
 
   # type(arg) -> (list[indices], list[args], list[shardings], list[layouts],
   #               list[copy_semantics])
   batches = collections.defaultdict(lambda: ([], [], [], [], []))  # type: ignore
   for i, (arg, sharding, layout, cs) in enumerate(
       safe_zip(args, shardings, layouts, copy_semantics)):
-    xcs = to_xc_copy_semantics(cs)
+    cs = xc.ArrayCopySemantics.REUSE_INPUT if cs is None else cs
     if canonicalize:
       arg = dtypes.canonicalize_value(arg)
     batch = batches[type(arg)]
@@ -146,7 +140,7 @@ def shard_args(shardings: Sequence[JSharding], layouts, copy_semantics,
     batch[1].append(arg)
     batch[2].append(sharding)
     batch[3].append(layout)
-    batch[4].append(xcs)
+    batch[4].append(cs)
 
   # Call `shard_arg_handlers` per batch and build a flat list of arrays returned
   # from each call in the same order as `args`. Since `batches` is grouped by
@@ -162,8 +156,12 @@ def shard_args(shardings: Sequence[JSharding], layouts, copy_semantics,
 
 
 shard_arg_handlers: dict[
-    Any, Callable[[Sequence[Any], Sequence[Any], Sequence[Any], Sequence[Any]],
-                  Sequence[Any]]
+    Any,
+    Callable[
+      [Sequence[Any], Sequence[Any], Sequence[Any],
+       Sequence[xc.ArrayCopySemantics]],
+      Sequence[Any],
+    ],
 ] = {}
 
 

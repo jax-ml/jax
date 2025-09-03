@@ -18,7 +18,6 @@ from __future__ import annotations
 import atexit
 from collections.abc import Sequence
 import dataclasses
-import enum
 from functools import partial
 import itertools
 import logging
@@ -67,6 +66,7 @@ xe = xc._xla
 
 Backend = xe.Client
 Device = xc.Device
+ArrayCopySemantics = xc.ArrayCopySemantics
 
 CompileOptions = xc.CompileOptions
 
@@ -319,20 +319,18 @@ def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
     if config.debug_infs.value and np.any(np.isinf(np.asarray(buf))):
       raise InternalFloatingPointError(name, "inf")
 
-class CopySemantics(enum.Enum):
-  ALIAS = enum.auto()
-  COPY = enum.auto()
-  DONATE = enum.auto()
-
 def _identity_fn(x):
   return x
 
-def _different_device_order_reshard(x, target_sharding, copy: CopySemantics):
+
+def _different_device_order_reshard(
+    x: array.ArrayImpl, target_sharding: NamedSharding, copy: ArrayCopySemantics
+) -> array.ArrayImpl:
   x._check_if_deleted()
   inp_sharding = x.sharding
   assert isinstance(inp_sharding, NamedSharding)
 
-  donate_argnums = 0 if copy == CopySemantics.DONATE else None
+  donate_argnums = 0 if copy == ArrayCopySemantics.DONATE_INPUT else None
   if inp_sharding._device_assignment == target_sharding._device_assignment:
     return api.jit(_identity_fn, out_shardings=target_sharding,
                    donate_argnums=donate_argnums)(x)
@@ -349,15 +347,9 @@ def _different_device_order_reshard(x, target_sharding, copy: CopySemantics):
       new_mesh, inp_sharding.spec, memory_kind=target_sharding.memory_kind,
       _logical_device_ids=(None if permute_order is None else
                             tuple(permute_order.tolist())))
-  new_x = _reorder_shards(x, new_s, CopySemantics.ALIAS)
+  new_x = xc.reorder_shards(x, new_s, ArrayCopySemantics.REUSE_INPUT)  # type: ignore
   return api.jit(_identity_fn, out_shardings=target_sharding,
                 donate_argnums=donate_argnums)(new_x)
-
-
-def _reorder_shards(x, new_s, copy_semantics: CopySemantics):
-  """Reorders array shards to match the order indicated by the new sharding."""
-  xc_copy_semantics = pxla.to_xc_copy_semantics(copy_semantics)
-  return xc.reorder_shards(x, new_s, xc_copy_semantics)  # type: ignore
 
 
 @util.cache(max_size=2048, trace_context_in_key=False)
@@ -402,14 +394,19 @@ class _DeferredShardArg:
   s: Sharding
   aval: core.AbstractValue
   committed: bool
-  copy_semantics: CopySemantics
+  copy_semantics: ArrayCopySemantics
 
   def result_handler(self, shard_arg_result):
     return pxla.global_aval_to_result_handler(
         self.aval, self.s, self.committed)(shard_arg_result)
 
 
-def _device_put_sharding_impl(x, aval, device, copy):
+def _device_put_sharding_impl(
+    x: Any,
+    aval: core.ShapedArray,
+    device: Device | Sharding | None,
+    copy: ArrayCopySemantics,
+):
   from jax.experimental import multihost_utils  # pytype: disable=import-error
 
   if isinstance(x, array.ArrayImpl):
@@ -423,27 +420,27 @@ def _device_put_sharding_impl(x, aval, device, copy):
     s = device
     s_is_fully_addressable = s.is_fully_addressable
     if (getattr(x, 'sharding', None) == s and getattr(x, '_committed', False)
-        and copy == CopySemantics.ALIAS):
+        and copy == ArrayCopySemantics.REUSE_INPUT):
       return x
 
     if (not s_is_fully_addressable and
         x_is_jax_array and not x_is_fully_addressable and
         s.device_set == x_sharding.device_set):
-      assert isinstance(s, Sharding)
+      assert isinstance(s, NamedSharding), s
       return _different_device_order_reshard(x, s, copy)
 
     if (s_is_fully_addressable and x_is_jax_array and
         x_is_fully_addressable and s.num_devices > 1 and
         s._internal_device_list != x_sharding._internal_device_list and  # pytype: disable=attribute-error
         s.device_set == x_sharding.device_set):
-      assert isinstance(s, Sharding)
+      assert isinstance(s, NamedSharding), s
       return _different_device_order_reshard(x, s, copy)
 
     if (x_is_jax_array and x._committed and xla_bridge.process_count() > 1
         and _is_supported_cross_host_transfer(x.ndim, x_sharding, s)):
       return xc.batched_copy_array_to_devices_with_sharding(
           [x], [s._internal_device_list], [s],  # pytype: disable=attribute-error
-          [pxla.to_xc_copy_semantics(copy)])[0]
+          [copy])[0]
 
     if not s_is_fully_addressable:
       # If both the source and target shardings are not fully addressable and
@@ -495,13 +492,13 @@ def _device_put_sharding_impl(x, aval, device, copy):
           "device_put's first argument must be a fully addressable array, but "
           f"got value with devices {x.devices()}")
     if device is None:
-      if copy == CopySemantics.ALIAS:
+      if copy == ArrayCopySemantics.REUSE_INPUT:
         return x
       else:
         return _DeferredShardArg(x, x_sharding, aval, x.committed, copy)
     elif is_single_device_sharding(x_sharding):
       device = x_sharding._device_assignment[0] if device is None else device
-      if copy == CopySemantics.COPY:
+      if copy == ArrayCopySemantics.ALWAYS_COPY:
         return xc.batched_device_put(aval, SingleDeviceSharding(device), [x],
                                      [device], True, True)
       return pxla.batched_device_put(aval, SingleDeviceSharding(device), [x],
@@ -514,7 +511,7 @@ def _device_put_sharding_impl(x, aval, device, copy):
 
 def _device_put_impl(
     x, *, device: Device | Sharding | Format | None,
-    src: Device | Sharding | Format | None, copy: CopySemantics, aval):
+    src: Device | Sharding | Format | None, copy: ArrayCopySemantics, aval):
   if aval is None:
     try:
       aval = core.abstractify(x)
@@ -538,13 +535,15 @@ def _device_put_impl(
           "sharding and layout in `Layout` instance should be"
           f" concrete. Got layout: {l} for input {aval.str_short()}")
     if (getattr(x, 'format', None) == l and getattr(x, '_committed', False) and
-        copy == CopySemantics.ALIAS):
+        copy == ArrayCopySemantics.REUSE_INPUT):
       return x
     if x_dll is None and dll is None:
       return _device_put_sharding_impl(x, aval, l.sharding, copy)
     return api.jit(
-        _identity_fn, out_shardings=l,
-        donate_argnums=(0 if copy == CopySemantics.DONATE else None))(x)
+        _identity_fn,
+        out_shardings=l,
+        donate_argnums=(0 if copy == ArrayCopySemantics.DONATE_INPUT else None),
+    )(x)
 
   return _device_put_sharding_impl(x, aval, device, copy)
 
@@ -553,7 +552,8 @@ def _batched_device_put_impl(
     *xs,
     devices: Sequence[Device | Sharding | Format | None],
     srcs: Sequence[Device | Sharding | Format | None],
-    copy_semantics: Sequence[CopySemantics], x_avals):
+    copy_semantics: Sequence[ArrayCopySemantics],
+    x_avals: Sequence[core.ShapedArray | None]):
   ys = []
   dsa_indices, dsa_xs, dsa_shardings, dsa_copy_semantics = [], [], [], []
   for i, (x, device, src, cp, aval) in enumerate(
@@ -582,7 +582,7 @@ def batched_device_put_impl(
     *xs,
     devices: Sequence[Device | Sharding | Format | None],
     srcs: Sequence[Device | Sharding | Format | None],
-    copy_semantics: Sequence[CopySemantics]):
+    copy_semantics: Sequence[ArrayCopySemantics]):
   return _batched_device_put_impl(
       *xs, devices=devices, srcs=srcs, copy_semantics=copy_semantics,
       x_avals=[None] * len(devices))
@@ -615,15 +615,15 @@ def _device_put_transpose(cts, *_, devices, srcs, copy_semantics):
     indices, args, devices, srcs, copy_semantics = list(zip(*dp_args))
     new_copy_semantics = []
     for cp in copy_semantics:
-      if cp == CopySemantics.DONATE:
+      if cp == ArrayCopySemantics.DONATE_INPUT:
         raise ValueError(
             "donate=True is not allowed during tranposition of device_put."
             " Please file an issue if you want this to be supported.")
-      elif cp == CopySemantics.ALIAS:
-        new_copy_semantics.append(CopySemantics.COPY)
+      elif cp == ArrayCopySemantics.REUSE_INPUT:
+        new_copy_semantics.append(ArrayCopySemantics.ALWAYS_COPY)
       else:
-        assert cp == CopySemantics.COPY
-        new_copy_semantics.append(CopySemantics.COPY)
+        assert cp == ArrayCopySemantics.ALWAYS_COPY
+        new_copy_semantics.append(ArrayCopySemantics.ALWAYS_COPY)
     ys = device_put_p.bind(*args, devices=srcs, srcs=devices,
                            copy_semantics=tuple(new_copy_semantics))
     for i, y in zip(indices, ys):

@@ -2728,12 +2728,12 @@ def device_put(
       if m is None:
         m = not d
       if m and not d:
-        copy_semantics.append(dispatch.CopySemantics.ALIAS)
+        copy_semantics.append(dispatch.ArrayCopySemantics.REUSE_INPUT)
       elif not m and d:
-        copy_semantics.append(dispatch.CopySemantics.DONATE)
+        copy_semantics.append(dispatch.ArrayCopySemantics.DONATE_INPUT)
       else:
         assert not m and not d
-        copy_semantics.append(dispatch.CopySemantics.COPY)
+        copy_semantics.append(dispatch.ArrayCopySemantics.ALWAYS_COPY)
 
     x_avals = tuple(shaped_abstractify(i) for i in x_flat)
     for aval, d in zip(x_avals, device_flat):
