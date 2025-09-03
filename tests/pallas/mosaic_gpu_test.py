@@ -4716,6 +4716,7 @@ class WarpSpecializedPipelineTest(PallasTest):
             block_shape=(blk_m, blk_n),
             index_map=lambda i, j: (i, j),
             delay_release=delay,
+            pipeline_mode=pl.Buffered(buffer_count=delay + 1),
         )
         for delay in range(3)
     ]
@@ -4732,7 +4733,6 @@ class WarpSpecializedPipelineTest(PallasTest):
       return mgpu_pipeline.emit_pipeline(
           tiled_add_kernel,
           grid=grid,
-          max_concurrent_steps=4,
           in_specs=in_specs,
           out_specs=[out_spec],
       )(*gmem_refs)
