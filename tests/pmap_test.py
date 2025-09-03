@@ -1296,7 +1296,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     if jax.device_count() == 1:
       raise SkipTest("this test requires multiple devices")
 
-    devices = jax.devices()[:-1]
+    devices = jax.devices()
     shuffle(devices)
     f = self.pmap(lambda x: 3, devices=devices)
     x = jnp.arange(len(devices))
@@ -1872,7 +1872,8 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     @jax.jit
     @jax.pmap
-    def foo(x): return x + x
+    def foo(x):
+      return x + x
 
     x = np.ones((2,2,2), dtype=np.float32)
     for _ in range(10):
@@ -1891,7 +1892,8 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     @jax.jit
     @jax.pmap
-    def foo(x): return x + x
+    def foo(x):
+      return x + x
 
     x = np.ones((2,2,2), dtype=np.float32)
 
