@@ -62,6 +62,9 @@ class TMEMLayout(Constant):
 
   value: tcgen05.TMEMLayout
 
+  def __str__(self):
+    return f"C({self.value})"
+
 
 @dataclasses.dataclass(frozen=True)
 class LeastReplicated:
