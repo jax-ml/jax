@@ -27,7 +27,6 @@ from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.state import discharge as state_discharge
-from jax.extend import backend as jex_backend
 
 
 @dataclasses.dataclass
@@ -108,15 +107,15 @@ class ScalarSubcoreMesh:
 
 def _num_available_cores():
   """Returns the number of SparseCores on the current TPU chip."""
-  device = jex_backend.get_default_device()
-  match device.device_kind:
+  device_kind = tpu_core.get_device_kind()
+  match device_kind:
     case "TPU v5" | "TPU v5p" | "TPU v6" | "TPU7x":
       return 4
     case "TPU v6 lite":
       return 2
     case _:
       raise NotImplementedError(
-          f"Unsupported device kind: {device.device_kind}"
+          f"Unsupported device kind: {device_kind}"
       )
 
 
