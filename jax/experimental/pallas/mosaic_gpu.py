@@ -46,6 +46,7 @@ from jax._src.pallas.mosaic_gpu.helpers import find_swizzle as find_swizzle
 from jax._src.pallas.mosaic_gpu.helpers import format_tcgen05_sparse_metadata as format_tcgen05_sparse_metadata
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline_warp_specialized as emit_pipeline_warp_specialized
+from jax._src.pallas.mosaic_gpu.pipeline import PipelinePipeline as PipelinePipeline
 from jax._src.pallas.mosaic_gpu.primitives import async_copy_scales_to_tmem as async_copy_scales_to_tmem
 from jax._src.pallas.mosaic_gpu.primitives import async_copy_sparse_metadata_to_tmem as async_copy_sparse_metadata_to_tmem
 from jax._src.pallas.mosaic_gpu.primitives import async_load_tmem as async_load_tmem
