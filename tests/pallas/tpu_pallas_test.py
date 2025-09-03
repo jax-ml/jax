@@ -2155,8 +2155,30 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(jax_nans, mosaic_nans)
 
   @parameterized.product(
-      in_dtype=[jnp.int8, jnp.int16, jnp.int32, jnp.bfloat16, jnp.float32],
-      out_dtype=[jnp.int8, jnp.int16, jnp.int32, jnp.bfloat16, jnp.float32],
+      in_dtype=[
+          jnp.uint4,
+          jnp.uint8,
+          jnp.uint16,
+          jnp.uint32,
+          jnp.int4,
+          jnp.int8,
+          jnp.int16,
+          jnp.int32,
+          jnp.bfloat16,
+          jnp.float32,
+      ],
+      out_dtype=[
+          jnp.uint4,
+          jnp.uint8,
+          jnp.uint16,
+          jnp.uint32,
+          jnp.int4,
+          jnp.int8,
+          jnp.int16,
+          jnp.int32,
+          jnp.bfloat16,
+          jnp.float32,
+      ],
   )
   def test_scalar_casting(self, in_dtype, out_dtype):
     def kernel(x_ref, o_ref):
@@ -2170,12 +2192,23 @@ class PallasCallTest(PallasBaseTest):
         jnp.int32,
     ]:
       self.skipTest('Any casting of bf16 -> iX requires bf16 -> f32 support')
-    elif in_dtype == jnp.int8 and out_dtype == jnp.int16:
-      self.skipTest('TODO(b/440044271): i8 -> i16 casting is not supported')
-    elif in_dtype == jnp.int16 and out_dtype == jnp.int8:
-      self.skipTest('TODO(b/440044490): i16 -> i8 casting is not supported')
+    elif (
+        in_dtype == jnp.int8
+        and out_dtype == jnp.int16
+        and is_cloud_tpu_older_than(2025, 9, 5)
+    ):
+      self.skipTest('i8 -> i16 casting support was added on Sep 5, 2025')
+    elif (
+        in_dtype == jnp.int16
+        and out_dtype == jnp.int8
+        and is_cloud_tpu_older_than(2025, 9, 5)
+    ):
+      self.skipTest('i16 -> i8 casting support was added on Sep 5, 2025')
 
-    x = jnp.asarray([-1], dtype=in_dtype)
+    x = jnp.asarray([7], dtype=in_dtype)
+    if jnp.isdtype(in_dtype, 'signed integer'):
+      x *= -1
+
     y = pl.pallas_call(
         kernel,
         in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
