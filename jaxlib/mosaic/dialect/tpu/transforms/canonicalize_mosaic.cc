@@ -940,13 +940,39 @@ FailureOr<Value> canonicalize_arith_addi(const CanonicalizeContext& ctx,
     if (result_type.isSignlessInteger(32)) {
       return op.getResult();
     }
-    // TODO(pazz): Emulate int16 addition.
     return op.emitOpError("Not implemented: ")
-           << "Only int32 scalar addition is supported, but got " << result_type
-           << ". Please cast your input to int32.";
+           << "Only i32 addition is supported, but got " << result_type
+           << ". Please cast your input to i32.";
   }
 
-  return op.getResult();
+  VectorType result_vty = dyn_cast<VectorType>(result_type);
+  if (!result_vty) {
+    return op.getResult();
+  }
+
+  Type element_type = result_vty.getElementType();
+  if (element_type.isSignlessInteger(32)) {
+    // 32-bit vector addition is always supported.
+    return op.getResult();
+  }
+
+  if (!element_type.isSignlessInteger(16)) {
+    return op.emitOpError("Not implemented: ")
+           << "Only vector<i16> and vector<i32> are supported, but got "
+           << element_type << ". Please cast your input.";
+  }
+
+  // 16-bit vector addition is only supported on v6+ hardware.
+  if (ctx.hardware_generation >= 6) {
+    return op.getResult();
+  }
+
+  // TODO(pazz): Emulate 16-bit vector addition on older hardware.
+  return op.emitOpError(
+             "vector<i16> addition is not "
+             "supported on hardware generation: ")
+         << ctx.hardware_generation
+         << ". Use hardware generation v6+ or cast to 32-bits.";
 }
 
 FailureOr<Value> canonicalize_select(const CanonicalizeContext &ctx,
