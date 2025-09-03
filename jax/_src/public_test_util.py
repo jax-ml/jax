@@ -155,8 +155,7 @@ def _assert_numpy_close(a, b, atol=None, rtol=None, err_msg=''):
   assert a.shape == b.shape
   atol = max(tolerance(a.dtype, atol), tolerance(b.dtype, atol))
   rtol = max(tolerance(a.dtype, rtol), tolerance(b.dtype, rtol))
-  _assert_numpy_allclose(a, b, atol=atol * a.size, rtol=rtol * b.size,
-                         err_msg=err_msg)
+  _assert_numpy_allclose(a, b, atol=atol, rtol=rtol, err_msg=err_msg)
 
 
 def check_close(xs, ys, atol=None, rtol=None, err_msg=''):
