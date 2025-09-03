@@ -191,6 +191,38 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(np.asarray(actual.addressable_shards[0].data), expected,
                         check_dtypes=False)
 
+  @jtu.with_explicit_mesh((2,), 'i')
+  def test_i64_matrix_index(self, mesh):
+    if ifrt_version < 25:
+      self.skipTest('Requires ifrt_version >= 25')
+    n = 8
+    Xs = jnp.zeros((n, 2, 10))
+    indices = jnp.zeros(n, dtype=int)
+
+    i, j = jnp.triu_indices(n, 1)
+
+    Xs = reshard(Xs, P())
+    indices = reshard(indices, P())
+    i = reshard(i, P('i'))
+    j = reshard(j, P('i'))
+
+    def f(X, index):
+      val = X.at[index].get()
+      res = jnp.diag(val)
+      return res
+
+    @jax.jit
+    def compute(Xs, indices, i, j):
+      @partial(shard_map, in_specs=(P(), P(), P('i'), P('i')), out_specs=P('i'))
+      def _fun(Xs, indices, i, j):
+        def _f(Xs, indices, ij):
+          i,j = ij
+          return f(Xs.at[i].get(), indices.at[j].get())
+        return jax.lax.map(partial(_f, Xs, indices), (i, j), batch_size=1)
+      return _fun(Xs, indices, i, j).sum()
+
+    y = compute(Xs, indices, i, j)
+
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testBasic2D(self):
     @partial(pjit,
