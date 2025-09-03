@@ -32,7 +32,6 @@ from jax._src import checkify
 from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
-from jax._src.lax.control_flow.for_loop import for_loop
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -86,7 +85,7 @@ def matmul(x, y, *, bm, bn, gm, bk, interpret, debug=False):
     idx_m = pl.max_contiguous(pl.multiple_of(idx_m, bm), bm)
     idx_n = pl.max_contiguous(pl.multiple_of(idx_n, bn), bn)
     acc = jnp.zeros((bm, bn), dtype=jnp.float32)
-    def body(i, acc_ref):
+    def body(i, acc):
       idx_k = i * bk + jnp.arange(bk)
       x_idx = (
           jax.lax.broadcast_in_dim(idx_m, (bm, bk), (0,)),
@@ -96,8 +95,9 @@ def matmul(x, y, *, bm, bn, gm, bk, interpret, debug=False):
           jax.lax.broadcast_in_dim(idx_n, (bk, bn), (1,)))
       x_block, y_block = x_ref[x_idx], y_ref[y_idx]
       out = pl.dot(x_block, y_block)
-      acc_ref[:, :] += out
-    acc = for_loop(k // bk, body, acc).astype(o_ref.dtype)
+      return acc + out
+
+    acc = lax.fori_loop(0, k // bk, body, acc).astype(o_ref.dtype)
     o_idx = (
         jax.lax.broadcast_in_dim(idx_m, (bm, bn), (0,)),
         jax.lax.broadcast_in_dim(idx_n, (bm, bn), (1,)),
@@ -124,11 +124,11 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
   )
   def matmul_kernel(x_ref, y_ref, o_ref):
     acc = jnp.zeros(o_ref.shape, dtype=jnp.float32)
-    def body(i, acc_ref):
+    def body(i, acc):
       x_block = x_ref[:, pl.ds(i * bk, bk)]
       y_block = y_ref[pl.ds(i * bk, bk), :]
-      acc_ref[:, :] += pl.dot(x_block, y_block)
-    acc = for_loop(k // bk, body, acc).astype(o_ref.dtype)
+      return acc + pl.dot(x_block, y_block)
+    acc = lax.fori_loop(0, k // bk, body, acc).astype(o_ref.dtype)
     o_ref[:, :] = acc
   return matmul_kernel(x, y)
 
