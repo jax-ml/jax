@@ -90,6 +90,8 @@ SEMAPHORE = MemorySpace.SEMAPHORE
 ANY = GeneralMemorySpace.ANY
 del GeneralMemorySpace
 
+print("!!!!!!!!!!!!!!!!!!!!")
+
 import typing as _typing  # pylint: disable=g-import-not-at-top
 if _typing.TYPE_CHECKING:
   TPUCompilerParams = CompilerParams
