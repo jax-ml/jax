@@ -1364,6 +1364,25 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(
         api.jvp(f1, (x, y), (0.0, 1.0)), (f1(x, y), -0.5 * jnp.sin(y)))
 
+  def test_dce_symbolic_zeros(self):
+    # https://github.com/jax-ml/jax/issues/31448
+    @jax.custom_jvp
+    def f(x):
+      return x
+
+    @partial(f.defjvp, symbolic_zeros=True)
+    def f_jvp(primals, tangents):
+      x, = primals
+      tx, = tangents
+      return f(x), tx
+
+    @jax.jacfwd
+    @jax.jacrev
+    def f_wrapped(x):
+        return jax.jit(f)((x, 3.))
+
+    f_wrapped(jnp.zeros(2))  # doesn't crash
+
   def test_resolve_kwargs_error_message(self):
     @jax.custom_jvp
     def f(x, y, *, z=None):
