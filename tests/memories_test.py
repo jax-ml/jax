@@ -729,6 +729,22 @@ class DevicePutTest(jtu.JaxTestCase):
 
     jax.block_until_ready(inp_host_donate_copy)
 
+  def test_host_to_device_transfer(self):
+    orig = np.arange(8)
+    d = jax.device_put(orig, jax.memory.Space.Device)
+    self.assertTrue(d.committed)
+
+    for _ in range(2):
+      h = jax.device_put(d, jax.memory.Space.Host)
+      self.assertTrue(h.committed)
+      self.assertEqual(h.sharding.memory_kind, 'pinned_host')
+      self.assertArraysEqual(h, orig)
+
+      d = jax.device_put(h, jax.memory.Space.Device)
+      self.assertTrue(d.committed)
+      self.assertEqual(d.sharding.memory_kind, 'device')
+      self.assertArraysEqual(d, orig)
+
 
 class ComputeOffload(jtu.BufferDonationTestCase):
 

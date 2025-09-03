@@ -2030,7 +2030,6 @@ def are_all_shardings_default_mem_kind(
 ):
   if device_list is None:
     return True
-
   try:
     default_mem_kind = device_list.default_memory_kind
   except:
@@ -2353,16 +2352,18 @@ def lower_sharding_computation(
           "AbstractMesh cannot be used when jaxpr contains primitives that"
           " require devices to be present during lowering.")
 
+  device_list = _create_device_list(device_assignment)
+  transfer_mem_kind_in_jaxpr = jaxpr_transfer_mem_kinds(jaxpr)
+
   committed = bool(
       devices_from_context
       or num_devices > 1
       or any(not isinstance(s, UnspecifiedValue) for s in it.chain(
           unique_in_shardings, unique_out_shardings,
-          unique_intermediate_shardings)))
+          unique_intermediate_shardings))
+      or transfer_mem_kind_in_jaxpr
+  )
 
-  device_list = _create_device_list(device_assignment)
-
-  transfer_mem_kind_in_jaxpr = jaxpr_transfer_mem_kinds(jaxpr)
   all_default_mem_kind = are_all_shardings_default_mem_kind(
       device_list,
       it.chain(unique_in_shardings, unique_out_shardings,
