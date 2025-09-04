@@ -30,7 +30,7 @@ from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map
 
 from jax._src.hijax import (HiPrimitive, HiType, Box, new_box, box_set, box_get,
-                            box_effect)
+                            box_effect, register_hitype, ShapedArray)
 
 config.parse_flags_with_absl()
 
@@ -39,6 +39,39 @@ zip, unsafe_zip = safe_zip, zip
 
 
 class HijaxTest(jtu.JaxTestCase):
+
+  def test_basic_register(self):
+    @dataclass(frozen=True)
+    class QArray:
+      arr: jax.Array
+      scale: jax.Array
+      axis: int
+
+    @dataclass(frozen=True)
+    class QArrayTy(HiType):
+      shape: tuple[int, int]
+      axis: int
+
+      ndim = property(lambda self: len(self.shape))
+
+      # how to lower to (lo)jax types
+      def lo_ty(self) -> list[ShapedArray]:
+        m, k = self.shape
+        return [ShapedArray((m, k), jnp.dtype('int8')),
+                ShapedArray((m,  ), jnp.dtype('float32'))]
+
+      # these next two are essentially the pytree interface
+      def lower_val(self, hi_val: QArray) -> list[jax.Array]:
+        return [hi_val.arr, hi_val.scale]
+      def raise_val(self, arr, scale) -> QArray:
+        return QArray(arr, scale, self.axis)
+
+    register_hitype(QArray, lambda q: QArrayTy(q.arr.shape, q.axis))
+
+    q = QArray(jnp.zeros((4, 4), 'int8'),
+              jnp.ones(4, 'float32'),
+              axis=1)
+    jax.jit(lambda x: x)(q)  # don't crash
 
   def test_custom_types_and_primitive(self):
     if config.enable_x64.value: raise unittest.SkipTest("no x64")

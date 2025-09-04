@@ -75,6 +75,7 @@ class HiPrimitive(core.Primitive):
 
 
 class HiType(core.AbstractValue):
+  is_high = True
   has_qdd = False  # immutable
 
   # type equality
@@ -101,6 +102,7 @@ class HiType(core.AbstractValue):
     assert False, "must override"
 
 class MutableHiType(core.AbstractValue):
+  is_high = True
   has_qdd = True  # mutable and potentially type-changing
   type_state = core.aval_method(core.cur_qdd)
 
