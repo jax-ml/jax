@@ -930,6 +930,24 @@ FailureOr<Value> canonicalize_broadcast(const CanonicalizeContext &ctx,
   return raw_op.getResult(0);
 }
 
+FailureOr<Value> canonicalize_arith_addi(const CanonicalizeContext& ctx,
+                                         Operation& raw_op) {
+  arith::AddIOp op = cast<arith::AddIOp>(raw_op);
+  Type lhs_type = op.getLhs().getType();
+  Type rhs_type = op.getRhs().getType();
+
+  if (lhs_type.isInteger() && rhs_type.isInteger()) {
+    if (lhs_type.isSignlessInteger(32) && rhs_type.isSignlessInteger(32)) {
+      return raw_op.getResult(0);
+    }
+    return op.emitOpError("Only 32-bit scalar addition is supported. ")
+           << "Type: " << lhs_type << " is not supported. "
+           << "Please cast your input to 32 bits.";
+  }
+
+  return raw_op.getResult(0);
+}
+
 FailureOr<Value> canonicalize_select(const CanonicalizeContext &ctx,
                                      Operation &raw_op) {
   auto op = dyn_cast<arith::SelectOp>(raw_op);
@@ -1726,6 +1744,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {vector::TransposeOp::getOperationName(), canonicalize_vector_transpose},
       {vector::ShapeCastOp::getOperationName(), canonicalize_shape_cast},
       {vector::BroadcastOp::getOperationName(), canonicalize_broadcast},
+      {arith::AddIOp::getOperationName(), canonicalize_arith_addi},
       {arith::SelectOp::getOperationName(), canonicalize_select},
       {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
       {arith::SIToFPOp::getOperationName(), canonicalize_sitofp},

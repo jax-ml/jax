@@ -36,6 +36,7 @@ from jax._src import test_util as jtu
 from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import _jax
+from jax._src.pallas.mosaic import error_handling
 from jax._src.state import discharge as state_discharge
 from jax._src.state import utils as state_utils
 from jax.experimental import mesh_utils
@@ -3511,6 +3512,42 @@ class MiscellaneousTest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct((q1, m1, n1), dtype),
     )(x)
     np.testing.assert_array_equal(out, x.reshape([q1, m1, n1]))
+
+  @parameterized.parameters([
+      jnp.int4,
+      jnp.int8,
+      jnp.int16,
+      jnp.int32,
+      jnp.uint4,
+      jnp.uint8,
+      jnp.uint16,
+      jnp.uint32,
+  ])
+  def test_scalar_integer_addition(self, dtype):
+    def kernel(x_ref, y_ref):
+      y_ref[0] = x_ref[0] + x_ref[0]
+
+    x = jnp.asarray([3], dtype=dtype)
+
+    if dtype in [jnp.int32, jnp.uint32]:
+      y = pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+          out_shape=jax.ShapeDtypeStruct(x.shape, dtype),
+      )(x)
+      np.testing.assert_array_equal(y, x + x)
+    else:
+      with self.assertRaisesRegex(
+          error_handling.MosaicError,
+          'Only 32-bit scalar addition is supported.',
+      ):
+        _ = pl.pallas_call(
+            kernel,
+            in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+            out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+            out_shape=jax.ShapeDtypeStruct(x.shape, dtype),
+        )(x)
 
 
 class MiscellaneousInterpretTest(MiscellaneousTest):
