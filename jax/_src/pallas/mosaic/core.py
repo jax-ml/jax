@@ -24,6 +24,7 @@ from collections.abc import Mapping
 
 import jax
 import jax.extend as jex
+import jax.extend.backend  # This should be imported by jex, but somehow isn't.
 from jax._src import core as jax_core
 from jax._src import state
 from jax._src import util
