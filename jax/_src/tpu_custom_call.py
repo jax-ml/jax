@@ -24,6 +24,7 @@ import dataclasses
 import enum
 import io
 import json
+import math
 from typing import Any, TypedDict
 
 from jax._src import api
@@ -329,6 +330,16 @@ def _tpu_custom_call_lowering(
   if kernel_name is not None:
     extra_attributes = dict(kernel_name=ir.StringAttr.get(kernel_name))
   has_side_effects = has_side_effects if has_side_effects is not None else False
+  for input_index, output_index in input_output_aliases:
+    aval = ctx.avals_in[input_index]
+    assert isinstance(aval, core.ShapedArray)
+    if aval != ctx.avals_out[output_index]:
+      raise ValueError("Aliased inputs and outputs must have the shape type")
+    if math.prod(aval.shape) == 1:
+      raise ValueError(
+          "Aliasing is only supported for arrays that have more than one"
+          " element"
+      )
   call = mlir.custom_call(
       "tpu_custom_call",
       result_types=result_types,
