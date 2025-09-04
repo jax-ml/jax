@@ -636,7 +636,8 @@ class Primitive:
     if self.is_high(**params) and trace.requires_low:
       with set_current_trace(trace):
         return self.to_lojax(*args, **params)  # type: ignore
-
+    elif config.enable_checks.value:
+      assert not any(typeof(x).is_high for x in args)
     return trace.process_primitive(self, args, params)
 
   def def_impl(self, impl):
