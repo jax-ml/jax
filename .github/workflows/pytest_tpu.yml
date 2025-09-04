@@ -47,8 +47,8 @@ on:
         # - "pypi_latest": Use the latest libtpu wheel from PyPI.
         # - "oldest_supported_libtpu": Use the oldest supported libtpu wheel.
         default: "nightly"
-      download-jax-only-from-gcs:
-        description: "Whether to download only the jax wheel from GCS (e.g for testing a jax only release)"
+      skip-download-jaxlib-from-gcs:
+        description: "Whether to skip downloading the jaxlib artifact from GCS (e.g for testing a jax only release)"
         default: '0'
         type: string
       gcs_download_uri:
@@ -85,7 +85,7 @@ jobs:
         with:
           runner: ${{ inputs.runner }}
           python: ${{ inputs.python }}
-          download-jax-only-from-gcs: ${{ inputs.download-jax-only-from-gcs }}
+          skip-download-jaxlib-from-gcs: ${{ inputs.skip-download-jaxlib-from-gcs }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
       - name: Install Python dependencies
         run: |
