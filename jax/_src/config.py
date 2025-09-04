@@ -378,6 +378,7 @@ def bool_state(
     upgrade: bool = False,
     extra_description: str = '',
     include_in_jit_key: bool = False,
+    validator: Callable[[Any], None] | None = None,
 ) -> State[bool]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -405,6 +406,9 @@ def bool_state(
       for the outgoing functionality to be deprecated.
     extra_description: string, optional: extra information to add to the
       summary description.
+    validator: an optional callback that is called with the new
+      value on any update, and should raise an error if the new value is
+      invalid.
 
   Returns:
     A contextmanager to control the thread-local state value.
@@ -443,7 +447,7 @@ def bool_state(
       name, default, help, update_global_hook=update_global_hook,
       update_thread_local_hook=update_thread_local_hook,
       extra_description=extra_description, default_context_manager_value=True,
-      include_in_jit_key=include_in_jit_key)
+      include_in_jit_key=include_in_jit_key, validator=validator)
   config.add_option(name, s, bool, meta_args=[], meta_kwargs={"help": help})
   setattr(Config, name, property(lambda _: s.value))
   return s
@@ -1067,13 +1071,25 @@ random_seed_offset = int_state(
     include_in_jit_key=True,
 )
 
+def _safer_randint_deprecation(new_val):
+  if not new_val:
+    deprecations.warn(
+      'safer-randint-config',
+      (
+        'The jax_safer_randint configuration is deprecated in JAX v0.7.2'
+        ' and will be removed in JAX v0.9.0.'
+      ),
+      stacklevel=4
+    )
+
 # TODO(jakevdp): remove this flag.
 safer_randint = bool_state(
     name='jax_safer_randint',
     default=True,
     help='Use a safer randint algorithm for 8-bit and 16-bit dtypes.',
     include_in_jit_key=True,
-    upgrade=True
+    upgrade=True,
+    validator=_safer_randint_deprecation
 )
 
 legacy_prng_key = enum_state(
@@ -1335,9 +1351,9 @@ def _default_dtype_bits_deprecation(new_val):
       'default-dtype-bits-config',
       (
         'The jax_default_dtype_bits configuration is deprecated in JAX v0.7.1'
-        ' and will be remove in JAX v0.9.0.'
+        ' and will be removed in JAX v0.9.0.'
       ),
-      stacklevel=3
+      stacklevel=4
     )
 
 
