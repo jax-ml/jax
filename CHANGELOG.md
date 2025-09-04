@@ -16,6 +16,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Breaking changes:
+
+  * {func}`jax.dlpack.from_dlpack` no longer accepts a DLPack capsule. This
+    behavior was deprecated and is now removed. The function must be called
+    with an array implementing `__dlpack__` and `__dlpack_device__`.
+
 * Changes
   * The minimum supported NumPy version is now 2.0. Since SciPy 1.13 is required
     for NumPy 2.0 support, the minimum supported SciPy version is now 1.13.
@@ -31,7 +37,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 * Deprecations:
   * The parameters `enable_xla` and `native_serialization` for `jax2tf.convert`
-    are deprecated and will be removed in a future versionof JAX. These were
+    are deprecated and will be removed in a future version of JAX. These were
     used for jax2tf with non-native serialization, which has been now removed.
 
 ## JAX 0.7.1 (August 20, 2025)
