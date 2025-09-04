@@ -83,6 +83,7 @@ jobs:
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
       build_jaxlib: "false"
+      run-backend_independent-test-suite: "1"
 
   run-pytest-cuda:
     uses: ./.github/workflows/pytest_cuda.yml

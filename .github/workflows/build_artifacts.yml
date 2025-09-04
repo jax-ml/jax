@@ -125,7 +125,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Enable RBE if building on Linux x86 or Windows x86
-        if: contains(inputs.runner, 'linux-x86') || contains(inputs.runner, 'windows-x86')
+        if: contains(inputs.runner, 'linux-x86') || contains(inputs.runner, 'windows-x86') || contains(inputs.runner, 'linux-arm64')
         run: echo "JAXCI_BUILD_ARTIFACT_WITH_RBE=1" >> $GITHUB_ENV
       - name: Set bazel output base on Windows runner machine
         if: contains(inputs.runner, 'windows-x86')

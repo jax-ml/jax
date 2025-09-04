@@ -37,6 +37,14 @@ on:
         description: "Which jaxlib version to test? (head/pypi_latest)"
         type: string
         default: "head"
+      clone_main_xla:
+        description: "Should latest XLA be used?"
+        type: string
+        default: "0"
+      run-backend_independent-test-suite:
+        description: "Should the backend independent test suite be run?"
+        type: string
+        default: "1"
       gcs_download_uri:
         description: "GCS location URI from where the artifacts should be downloaded"
         default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
@@ -66,7 +74,9 @@ jobs:
       JAXCI_CUDA_VERSION: ${{ inputs.cuda-version }}
       # Enable writing to the Bazel remote cache bucket.
       JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: "1"
+      JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
+      JAXCI_RUN_BACKEND_INDEPENDENT_TESTS: "${{ inputs.run-backend_independent-test-suite }}"
 
     name: "jaxlib=${{ inputs.jaxlib-version }},
           ${{ (contains(inputs.runner, 'h100') && 'h100') ||
