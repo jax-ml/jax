@@ -100,8 +100,6 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
       )
     if m_shard % block_m:
       self.skipTest("m_shard must be divisible by block_m for now.")
-    if (132 // sm_n_tile) < m_shard // block_m and sm_n_tile > 1:
-      self.skipTest("The kernel has races when M is large and sm_n_tile > 1")
 
     k1, k2 = random.split(random.key(1234), num=2)
     lhs = random.normal(k1, (num_devices * m_shard, k), dtype)
