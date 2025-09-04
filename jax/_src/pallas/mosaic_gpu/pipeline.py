@@ -502,7 +502,7 @@ def emit_pipeline_warp_specialized(
   ``manual_consumed_barriers`` argument is True.
 
   ```
-  def body(indices, *input_refs, *output_refs, [consumed_barriers]) -> None:
+  def body(indices, *input_refs, *output_refs, *consumed_barriers) -> None:
   ```
 
   or with a carries enabled (enabled via the ``compute_context`` argument),
@@ -510,9 +510,12 @@ def emit_pipeline_warp_specialized(
 
   ```
   def body(
-      indices, *input_refs, *output_refs, [consumed_barriers], carry
+      indices, *input_refs, *output_refs, *consumed_barriers, carry
   ) -> Carry:
   ```
+
+  When ``manual_consumed_barriers`` is True, the user must arrive on all the
+  consumed barriers from all compute warpgroups at each pipeline step.
 
   Args:
     body: The pipeline body.
