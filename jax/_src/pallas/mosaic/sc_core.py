@@ -19,14 +19,14 @@ from collections.abc import Sequence
 import dataclasses
 import functools
 
+import jax
 from jax._src import core as jax_core
 from jax._src import tree_util
+from jax._src.lax import lax
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import helpers as pallas_helpers
 from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic import core as tpu_core
-from jax._src.state import discharge as state_discharge
 
 
 @dataclasses.dataclass
@@ -263,21 +263,25 @@ def kernel(
     out_shape = (out_shape,)
 
   def decorator(body):
+    @jax.jit
     def wrapper(*args):
-      def stateful(operand_and_out_refs):
-        arg_refs, out_refs = operand_and_out_refs
-
-        def cmap_body():
-          return pallas_primitives.run_scoped(
-              lambda *scratch_refs: body(*arg_refs, *out_refs, *scratch_refs),
-              *scratch_shapes,
-          )
-
-        pallas_core.core_map(mesh, **kwargs)(cmap_body)
-
-      _, outs = state_discharge.run_state(stateful)(
-          (args, pallas_helpers.empty_like(out_shape, backend="mosaic_tpu"))
+      arg_refs = jax.tree.map(jax_core.mutable_array, args)
+      out_refs = jax.tree.map(
+          lambda out: jax_core.mutable_array(
+              lax.empty(out.shape, out.dtype),
+              memory_space=getattr(out, "memory_space", None),
+          ),
+          out_shape,
       )
+
+      @pallas_core.core_map(mesh, **kwargs)
+      def _():
+        return pallas_primitives.run_scoped(
+            lambda *scratch_refs: body(*arg_refs, *out_refs, *scratch_refs),
+            *scratch_shapes,
+        )
+
+      outs = jax.tree.map(lambda ref: ref[...], out_refs)
       return outs[0] if unwrap_out else outs
 
     return wrapper

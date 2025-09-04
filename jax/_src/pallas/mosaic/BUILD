@@ -164,11 +164,11 @@ pytype_strict_library(
     visibility = ["//jax/experimental:pallas_sc_users"],
     deps = [
         ":core",
+        "//jax",
         "//jax/_src:core",
         "//jax/_src:lax",
         "//jax/_src:tree_util",
         "//jax/_src/pallas",
-        "//jax/extend:backend",
     ],
 )
 
