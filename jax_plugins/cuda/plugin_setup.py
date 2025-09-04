@@ -21,7 +21,7 @@ __version__ = None
 cuda_version = 0  # placeholder
 project_name = f"jax-cuda{cuda_version}-plugin"
 package_name = f"jax_cuda{cuda_version}_plugin"
-cuda_whl_sfx = "-cu12" if cuda_version == 12 else ""
+cuda_wheel_suffix = ''  # placeholder
 
 nvidia_cublas_version = ''  # placeholder
 nvidia_cuda_cupti_version = ''  # placeholder
@@ -67,14 +67,14 @@ setup(
     install_requires=[f"jax-cuda{cuda_version}-pjrt=={__version__}"],
     extras_require={
       'with-cuda': [
-          f"nvidia-cublas{cuda_whl_sfx}{nvidia_cublas_version}",
-          f"nvidia-cuda-cupti{cuda_whl_sfx}{nvidia_cuda_cupti_version}",
-          f"nvidia-cuda-nvcc{cuda_whl_sfx}{nvidia_cuda_nvcc_version}",
-          f"nvidia-cuda-runtime{cuda_whl_sfx}{nvidia_cuda_runtime_version}",
+          f"nvidia-cublas{cuda_wheel_suffix}{nvidia_cublas_version}",
+          f"nvidia-cuda-cupti{cuda_wheel_suffix}{nvidia_cuda_cupti_version}",
+          f"nvidia-cuda-nvcc{cuda_wheel_suffix}{nvidia_cuda_nvcc_version}",
+          f"nvidia-cuda-runtime{cuda_wheel_suffix}{nvidia_cuda_runtime_version}",
           f"nvidia-cudnn-cu{cuda_version}{nvidia_cudnn_version}",
-          f"nvidia-cufft{cuda_whl_sfx}{nvidia_cufft_version}",
-          f"nvidia-cusolver{cuda_whl_sfx}{nvidia_cusolver_version}",
-          f"nvidia-cusparse{cuda_whl_sfx}{nvidia_cusparse_version}",
+          f"nvidia-cufft{cuda_wheel_suffix}{nvidia_cufft_version}",
+          f"nvidia-cusolver{cuda_wheel_suffix}{nvidia_cusolver_version}",
+          f"nvidia-cusparse{cuda_wheel_suffix}{nvidia_cusparse_version}",
           f"nvidia-nccl-cu{cuda_version}{nvidia_nccl_version}",
           # nvjitlink is not a direct dependency of JAX, but it is a transitive
           # dependency via, for example, cuSOLVER. NVIDIA's cuSOLVER packages
@@ -83,9 +83,9 @@ setup(
           # problems (https://github.com/jax-ml/jax/issues/18027#issuecomment-1756305196)
           # Until NVIDIA add version constraints, add a version constraint
           # here.
-          f"nvidia-nvjitlink{cuda_whl_sfx}{nvidia_nvjitlink_version}",
+          f"nvidia-nvjitlink{cuda_wheel_suffix}{nvidia_nvjitlink_version}",
           # nvrtc is a transitive and undeclared dep of cudnn.
-          f"nvidia-cuda-nvrtc{cuda_whl_sfx}{nvidia_cuda_nvrtc_version}",
+          f"nvidia-cuda-nvrtc{cuda_wheel_suffix}{nvidia_cuda_nvrtc_version}",
           # NVSHMEM is used by Mosaic GPU collectives and can be used by XLA to
           # speed up collectives too.
           f"nvidia-nvshmem-cu{cuda_version}{nvidia_nvshmem_version}",

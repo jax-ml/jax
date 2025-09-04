@@ -19,14 +19,14 @@ from __future__ import annotations
 import os
 import pathlib
 import platform
-import re
 import shutil
 import sys
 import subprocess
 import glob
 from collections.abc import Sequence
-from jaxlib.tools import platform_tags
 
+from jaxlib.tools import platform_tags
+import third_party.py.setup_py_nvidia_dependencies_util as util
 
 MAIN_RUNFILES_DIR = "__main__/"
 
@@ -157,30 +157,12 @@ def build_editable(
 def update_setup_with_cuda_and_nvidia_wheel_versions(
     file_dir: pathlib.Path, cuda_version: str, nvidia_wheel_versions_data: str
 ):
-  nvidia_wheel_versions = {"12": {}, "13": {}}
-  pattern = re.compile(r"^([a-z0-9_-]+)(\W*[0-9\.]*.*)$")
-  if nvidia_wheel_versions_data:
-    for line in nvidia_wheel_versions_data.splitlines():
-      match = pattern.match(line)
-      if match:
-        wheel_name = match.group(1).replace("-", "_")
-        if wheel_name.endswith("_cu12"):
-          wheel_name = wheel_name.replace("_cu12", "") + "_version"
-          nvidia_wheel_versions["12"][wheel_name] = match.group(2).strip()
-        else:
-          wheel_name = wheel_name.replace("_cu13", "") + "_version"
-          nvidia_wheel_versions["13"][wheel_name] = match.group(2).strip()
-
   src_file = file_dir / "setup.py"
   with open(src_file) as f:
     content = f.read()
-  content = content.replace(
-      "cuda_version = 0  # placeholder", f"cuda_version = {cuda_version}"
+  content = util.get_setup_py_content_with_nvidia_wheel_versions(
+      content, cuda_version, nvidia_wheel_versions_data
   )
-  for version_name, version_value in nvidia_wheel_versions[str(cuda_version)].items():
-    content = content.replace(
-        f"{version_name} = ''  # placeholder", f"{version_name} = '{version_value}'"
-    )
 
   with open(src_file, "w") as f:
     f.write(content)

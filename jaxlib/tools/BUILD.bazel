@@ -57,6 +57,7 @@ pytype_strict_library(
         "build_utils.py",
         ":platform_tags_py",
     ],
+    deps = ["@xla//third_party/py:setup_py_nvidia_dependencies_util"],
 )
 
 py_binary(
