@@ -1853,8 +1853,10 @@ class JaxprStackFrame:
     for v, qdd in self.mutable_qdds:
       v.final_qdd = qdd.cur_val
 
-    jaxpr = Jaxpr(constvars, self.invars, outvars, eqns, effs, debug_info,
-                  self.is_high)
+    all_vars = it.chain(constvars, self.invars, outvars)
+    is_high = self.is_high or any(v.aval.is_high for v in all_vars)
+
+    jaxpr = Jaxpr(constvars, self.invars, outvars, eqns, effs, debug_info, is_high)
     return jaxpr, list(constvals)
 
   def to_jaxpr2(self, out_tracers: Sequence[core.Tracer],
