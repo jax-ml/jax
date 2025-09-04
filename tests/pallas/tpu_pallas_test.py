@@ -2170,12 +2170,19 @@ class PallasCallTest(PallasBaseTest):
         jnp.int32,
     ]:
       self.skipTest('Any casting of bf16 -> iX requires bf16 -> f32 support')
-    elif in_dtype == jnp.int8 and out_dtype == jnp.int16:
-      self.skipTest('TODO(b/440044271): i8 -> i16 casting is not supported')
+    elif (
+        in_dtype == jnp.int8
+        and out_dtype == jnp.int16
+        and is_cloud_tpu_older_than(2025, 9, 10)
+    ):
+      self.skipTest('i8 -> i16 casting support was added on Sep 10, 2025')
     elif in_dtype == jnp.int16 and out_dtype == jnp.int8:
       self.skipTest('TODO(b/440044490): i16 -> i8 casting is not supported')
 
-    x = jnp.asarray([-1], dtype=in_dtype)
+    x = jnp.asarray([7], dtype=in_dtype)
+    if jnp.issubdtype(in_dtype, jnp.signedinteger):
+      x *= -1
+
     y = pl.pallas_call(
         kernel,
         in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
