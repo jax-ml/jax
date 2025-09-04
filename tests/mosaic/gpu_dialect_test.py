@@ -24,7 +24,7 @@ from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
-from jax._src.lib.mlir.dialects import func
+from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import memref
@@ -82,6 +82,12 @@ def workgroup_ptr_ty() -> ir.Type:
       gpu.AddressSpace.Workgroup
   )
   return ir.Type.parse(f"!llvm.ptr<{workgroup_nvptx_address_space}>")
+
+
+def undefs(*tys: ir.Type) -> list[ir.Value]:
+  """Returns a list of undefined values of the given types."""
+  # TODO(allanrenucci): Use `ub.poison` once Python bindings are available.
+  return [builtin.unrealized_conversion_cast([ty], []) for ty in tys]
 
 
 class MosaicGpuTest(parameterized.TestCase):
@@ -146,7 +152,7 @@ class DialectTest(MosaicGpuTest):
 
   def test_async_load_op_dest_must_be_contiguous(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      source, destination, barrier, *indices = undefs(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get(
               [4, 8],
@@ -156,16 +162,14 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
-          name="async_load",
-      )(
-          lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
-              source,
-              destination,
-              barrier,
-              indices,
-              slice_lengths=[4, 8],
-              collective=ir.ArrayAttr.get([]),
-          )
+      )
+      mgpu.dialect.async_load(
+          source,
+          destination,
+          barrier,
+          indices,
+          slice_lengths=[4, 8],
+          collective=ir.ArrayAttr.get([]),
       )
 
     with self.assertRaisesRegex(
@@ -176,22 +180,20 @@ class DialectTest(MosaicGpuTest):
 
   def test_async_load_op_source_and_dest_must_have_same_element_type(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      source, destination, barrier, *indices = undefs(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F64Type.get()),
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
-          name="async_load",
-      )(
-          lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
-              source,
-              destination,
-              barrier,
-              indices,
-              slice_lengths=[4, 8],
-              collective=ir.ArrayAttr.get([]),
-          )
+      )
+      mgpu.dialect.async_load(
+          source,
+          destination,
+          barrier,
+          indices,
+          slice_lengths=[4, 8],
+          collective=ir.ArrayAttr.get([]),
       )
 
     with self.assertRaisesRegex(
@@ -202,22 +204,20 @@ class DialectTest(MosaicGpuTest):
 
   def test_async_load_op_slice_lengths_must_be_larger_than_minus_two(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      source, destination, barrier, *indices = undefs(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
-          name="async_load",
-      )(
-          lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
-              source,
-              destination,
-              barrier,
-              indices,
-              slice_lengths=[-2, 8],
-              collective=ir.ArrayAttr.get([]),
-          )
+      )
+      mgpu.dialect.async_load(
+          source,
+          destination,
+          barrier,
+          indices,
+          slice_lengths=[-2, 8],
+          collective=ir.ArrayAttr.get([]),
       )
 
     with self.assertRaisesRegex(
@@ -228,23 +228,21 @@ class DialectTest(MosaicGpuTest):
 
   def test_async_load_op_source_and_dest_ranks_must_match_with_collapse(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      source, destination, barrier, *indices = undefs(
           ir.MemRefType.get([1, 4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
-          name="async_load",
-      )(
-          lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
-              source,
-              destination,
-              barrier,
-              indices,
-              slice_lengths=[-1, 4, 8],
-              collective=ir.ArrayAttr.get([]),
-          )
+      )
+      mgpu.dialect.async_load(
+          source,
+          destination,
+          barrier,
+          indices,
+          slice_lengths=[-1, 4, 8],
+          collective=ir.ArrayAttr.get([]),
       )
 
     with self.assertRaisesRegex(
@@ -255,21 +253,19 @@ class DialectTest(MosaicGpuTest):
 
   def test_async_load_op_indices_size_must_match_source_rank(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      source, destination, barrier, *indices = undefs(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
           ir.IntegerType.get_signless(32),
-          name="async_load",
-      )(
-          lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
-              source,
-              destination,
-              barrier,
-              indices,
-              slice_lengths=[4, 8],
-              collective=ir.ArrayAttr.get([]),
-          )
+      )
+      mgpu.dialect.async_load(
+          source,
+          destination,
+          barrier,
+          indices,
+          slice_lengths=[4, 8],
+          collective=ir.ArrayAttr.get([]),
       )
 
     with self.assertRaisesRegex(
@@ -280,21 +276,19 @@ class DialectTest(MosaicGpuTest):
 
   def test_async_load_op_slice_lengths_size_must_match_source_rank(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      source, destination, barrier, *indices = undefs(
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
           ir.IntegerType.get_signless(32),
-          name="async_load",
-      )(
-          lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
-              source,
-              destination,
-              barrier,
-              indices,
-              slice_lengths=[4, 8],
-              collective=ir.ArrayAttr.get([]),
-          )
+      )
+      mgpu.dialect.async_load(
+          source,
+          destination,
+          barrier,
+          indices,
+          slice_lengths=[4, 8],
+          collective=ir.ArrayAttr.get([]),
       )
 
     with self.assertRaisesRegex(
@@ -306,24 +300,22 @@ class DialectTest(MosaicGpuTest):
   def test_async_load_op_slice_collective_must_be_unique(self):
     with ir.InsertionPoint(self.module.body):
       i32 = ir.IntegerType.get_signless(32)
-      func.FuncOp.from_py_func(
+      source, destination, barrier, *indices = undefs(
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
           i32,
-          name="async_load",
-      )(
-          lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
-              source,
-              destination,
-              barrier,
-              indices,
-              slice_lengths=[4],
-              collective=ir.ArrayAttr.get([
-                  ir.IntegerAttr.get(i32, mgpu.dialect.Dimension.x),
-                  ir.IntegerAttr.get(i32, mgpu.dialect.Dimension.x),
-              ]),
-          )
+      )
+      mgpu.dialect.async_load(
+          source,
+          destination,
+          barrier,
+          indices,
+          slice_lengths=[4],
+          collective=ir.ArrayAttr.get([
+              ir.IntegerAttr.get(i32, mgpu.dialect.Dimension.x),
+              ir.IntegerAttr.get(i32, mgpu.dialect.Dimension.x),
+          ]),
       )
 
     with self.assertRaisesRegex(
@@ -334,7 +326,7 @@ class DialectTest(MosaicGpuTest):
 
   def test_async_store_op_source_must_be_contiguous(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      source, destination, *indices = undefs(
           ir.MemRefType.get(
               [4, 8],
               ir.F32Type.get(),
@@ -343,14 +335,12 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
-          name="async_store",
-      )(
-          lambda source, destination, *indices: mgpu.dialect.async_store(
-              source,
-              destination,
-              indices,
-              slice_lengths=[4, 8],
-          )
+      )
+      mgpu.dialect.async_store(
+          source,
+          destination,
+          indices,
+          slice_lengths=[4, 8],
       )
 
     with self.assertRaisesRegex(
@@ -361,19 +351,17 @@ class DialectTest(MosaicGpuTest):
 
   def test_async_store_op_source_and_dest_must_have_same_element_type(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      source, destination, *indices = undefs(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F64Type.get()),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
-          name="async_store",
-      )(
-          lambda source, destination, *indices: mgpu.dialect.async_store(
-              source,
-              destination,
-              indices,
-              slice_lengths=[4, 8],
-          )
+      )
+      mgpu.dialect.async_store(
+          source,
+          destination,
+          indices,
+          slice_lengths=[4, 8],
       )
 
     with self.assertRaisesRegex(
@@ -384,19 +372,17 @@ class DialectTest(MosaicGpuTest):
 
   def test_async_store_op_slice_lengths_must_be_larger_than_minus_two(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      source, destination, *indices = undefs(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
-          name="async_store",
-      )(
-          lambda source, destination, *indices: mgpu.dialect.async_store(
-              source,
-              destination,
-              indices,
-              slice_lengths=[-2, 8],
-          )
+      )
+      mgpu.dialect.async_store(
+          source,
+          destination,
+          indices,
+          slice_lengths=[-2, 8],
       )
 
     with self.assertRaisesRegex(
@@ -407,20 +393,18 @@ class DialectTest(MosaicGpuTest):
 
   def test_async_store_op_source_and_dest_ranks_must_match_with_collapse(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      source, destination, *indices = undefs(
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([1, 4, 8], ir.F32Type.get()),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
-          name="async_store",
-      )(
-          lambda source, destination, *indices: mgpu.dialect.async_store(
-              source,
-              destination,
-              indices,
-              slice_lengths=[-1, 4, 8],
-          )
+      )
+      mgpu.dialect.async_store(
+          source,
+          destination,
+          indices,
+          slice_lengths=[-1, 4, 8],
       )
 
     with self.assertRaisesRegex(
@@ -431,18 +415,16 @@ class DialectTest(MosaicGpuTest):
 
   def test_async_store_op_indices_size_must_match_destination_rank(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      source, destination, *indices = undefs(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.IntegerType.get_signless(32),
-          name="async_store",
-      )(
-          lambda source, destination, *indices: mgpu.dialect.async_store(
-              source,
-              destination,
-              indices,
-              slice_lengths=[4, 8],
-          )
+      )
+      mgpu.dialect.async_store(
+          source,
+          destination,
+          indices,
+          slice_lengths=[4, 8],
       )
 
     with self.assertRaisesRegex(
@@ -453,18 +435,16 @@ class DialectTest(MosaicGpuTest):
 
   def test_async_store_op_slice_lengths_size_must_match_source_rank(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      source, destination, *indices = undefs(
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.IntegerType.get_signless(32),
-          name="async_store",
-      )(
-          lambda source, destination, *indices: mgpu.dialect.async_store(
-              source,
-              destination,
-              indices,
-              slice_lengths=[4, 8],
-          )
+      )
+      mgpu.dialect.async_store(
+          source,
+          destination,
+          indices,
+          slice_lengths=[4, 8],
       )
 
     with self.assertRaisesRegex(
@@ -476,12 +456,12 @@ class DialectTest(MosaicGpuTest):
 
   def test_wgmma_types_match(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b = undefs(
           ir.VectorType.get([128, 160], ir.F32Type.get()),
           ir.MemRefType.get([128, 128], ir.F16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
-          name="wgmma",
-      )(mgpu.dialect.wgmma)
+      )
+      mgpu.dialect.wgmma(acc, a, b)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -491,12 +471,12 @@ class DialectTest(MosaicGpuTest):
 
   def test_wgmma_acc_m_dim_not_multiple_of_64(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b = undefs(
           ir.VectorType.get([127, 160], ir.F32Type.get()),
           ir.MemRefType.get([127, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
-          name="wgmma",
-      )(mgpu.dialect.wgmma)
+      )
+      mgpu.dialect.wgmma(acc, a, b)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -506,12 +486,12 @@ class DialectTest(MosaicGpuTest):
 
   def test_wgmma_acc_m_not_equal_to_a_m_dim(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b = undefs(
           ir.VectorType.get([256, 160], ir.F32Type.get()),
           ir.MemRefType.get([512, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
-          name="wgmma",
-      )(mgpu.dialect.wgmma)
+      )
+      mgpu.dialect.wgmma(acc, a, b)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -521,12 +501,12 @@ class DialectTest(MosaicGpuTest):
 
   def test_wgmma_a_k_dim_not_equal_to_b_k_dim(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b = undefs(
           ir.VectorType.get([128, 160], ir.F32Type.get()),
           ir.MemRefType.get([128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([160, 160], ir.BF16Type.get()),
-          name="wgmma",
-      )(mgpu.dialect.wgmma)
+      )
+      mgpu.dialect.wgmma(acc, a, b)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -537,12 +517,12 @@ class DialectTest(MosaicGpuTest):
 
   def test_wgmma_b_n_dim_not_equal_to_acc_n_dim(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b = undefs(
           ir.VectorType.get([128, 160], ir.F32Type.get()),
           ir.MemRefType.get([128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 192], ir.BF16Type.get()),
-          name="wgmma",
-      )(mgpu.dialect.wgmma)
+      )
+      mgpu.dialect.wgmma(acc, a, b)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -552,12 +532,13 @@ class DialectTest(MosaicGpuTest):
 
   def test_tcgen05_mma_types_match(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b, accumulate = undefs(
           ir.MemRefType.get([128, 160], ir.F16Type.get()),
           ir.MemRefType.get([128, 128], ir.F16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           ir.IntegerType.get_signless(1),
-      )(mgpu.dialect.tcgen05_mma)
+      )
+      mgpu.dialect.tcgen05_mma(acc, a, b, accumulate)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -567,12 +548,13 @@ class DialectTest(MosaicGpuTest):
 
   def test_tcgen05_mma_acc_m_dim_not_multiple_of_128(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b, accumulate = undefs(
           ir.MemRefType.get([127, 160], ir.F16Type.get()),
           ir.MemRefType.get([127, 128], ir.F16Type.get()),
           ir.MemRefType.get([128, 160], ir.F16Type.get()),
           ir.IntegerType.get_signless(1),
-      )(mgpu.dialect.tcgen05_mma)
+      )
+      mgpu.dialect.tcgen05_mma(acc, a, b, accumulate)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -582,12 +564,13 @@ class DialectTest(MosaicGpuTest):
 
   def test_tcgen05_mma_acc_m_not_equal_to_a_m_dim(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b, accumulate = undefs(
           ir.MemRefType.get([256, 160], ir.F16Type.get()),
           ir.MemRefType.get([512, 128], ir.F16Type.get()),
           ir.MemRefType.get([128, 160], ir.F16Type.get()),
           ir.IntegerType.get_signless(1),
-      )(mgpu.dialect.tcgen05_mma)
+      )
+      mgpu.dialect.tcgen05_mma(acc, a, b, accumulate)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -597,12 +580,13 @@ class DialectTest(MosaicGpuTest):
 
   def test_tcgen05_mma_a_k_dim_not_equal_to_b_k_dim(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b, accumulate = undefs(
           ir.MemRefType.get([128, 160], ir.F16Type.get()),
           ir.MemRefType.get([128, 128], ir.F16Type.get()),
           ir.MemRefType.get([160, 160], ir.F16Type.get()),
           ir.IntegerType.get_signless(1),
-      )(mgpu.dialect.tcgen05_mma)
+      )
+      mgpu.dialect.tcgen05_mma(acc, a, b, accumulate)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -613,12 +597,13 @@ class DialectTest(MosaicGpuTest):
 
   def test_tcgen05_mma_b_n_dim_not_equal_to_acc_n_dim(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b, accumulate = undefs(
           ir.MemRefType.get([128, 160], ir.F16Type.get()),
           ir.MemRefType.get([128, 128], ir.F16Type.get()),
           ir.MemRefType.get([128, 192], ir.F16Type.get()),
           ir.IntegerType.get_signless(1),
-      )(mgpu.dialect.tcgen05_mma)
+      )
+      mgpu.dialect.tcgen05_mma(acc, a, b, accumulate)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -628,16 +613,13 @@ class DialectTest(MosaicGpuTest):
 
   def test_tcgen05_mma_b_n_dim_not_equal_to_half_acc_n_dim(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b, accumulate = undefs(
           ir.MemRefType.get([128, 160], ir.F16Type.get()),
           ir.MemRefType.get([128, 128], ir.F16Type.get()),
           ir.MemRefType.get([128, 160], ir.F16Type.get()),
           ir.IntegerType.get_signless(1),
-      )(
-          lambda acc, a, b, accumulate: mgpu.dialect.tcgen05_mma(
-              acc, a, b, accumulate, collective=True
-          )
       )
+      mgpu.dialect.tcgen05_mma(acc, a, b, accumulate, collective=True)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -648,12 +630,13 @@ class DialectTest(MosaicGpuTest):
   def test_tcgen05_mma_acc_mem_space_is_tmem(self):
     smem = mgpu_utils.smem()
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b, accumulate = undefs(
           ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=smem),
           ir.MemRefType.get([128, 128], ir.F16Type.get()),
           ir.MemRefType.get([128, 160], ir.F16Type.get()),
           ir.IntegerType.get_signless(1),
-      )(mgpu.dialect.tcgen05_mma)
+      )
+      mgpu.dialect.tcgen05_mma(acc, a, b, accumulate)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -664,12 +647,13 @@ class DialectTest(MosaicGpuTest):
   def test_tcgen05_mma_a_mem_space_is_smem_or_tmem(self):
     tmem = mgpu_utils.tmem()
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b, accumulate = undefs(
           ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
           ir.MemRefType.get([128, 128], ir.F16Type.get()),
           ir.MemRefType.get([128, 160], ir.F16Type.get()),
           ir.IntegerType.get_signless(1),
-      )(mgpu.dialect.tcgen05_mma)
+      )
+      mgpu.dialect.tcgen05_mma(acc, a, b, accumulate)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -680,12 +664,13 @@ class DialectTest(MosaicGpuTest):
   def test_tcgen05_mma_b_mem_space_is_smem(self):
     smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b, accumulate = undefs(
           ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
           ir.MemRefType.get([128, 128], ir.F16Type.get(), memory_space=smem),
           ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
           ir.IntegerType.get_signless(1),
-      )(mgpu.dialect.tcgen05_mma)
+      )
+      mgpu.dialect.tcgen05_mma(acc, a, b, accumulate)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -697,17 +682,14 @@ class DialectTest(MosaicGpuTest):
     smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
     f8e0m0 = ir.Float8E8M0FNUType.get()
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b, accumulate, a_scale = undefs(
           ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
           ir.MemRefType.get([128, 128], ir.F16Type.get(), memory_space=smem),
           ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=smem),
           ir.IntegerType.get_signless(1),
           ir.MemRefType.get([128, 4], f8e0m0, memory_space=tmem),
-      )(
-          lambda acc, a, b, accumulate, a_scale: mgpu.dialect.tcgen05_mma(
-              acc, a, b, accumulate, a_scale=a_scale
-          )
       )
+      mgpu.dialect.tcgen05_mma(acc, a, b, accumulate, a_scale=a_scale)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -719,17 +701,16 @@ class DialectTest(MosaicGpuTest):
     smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
     f8e0m0 = ir.Float8E8M0FNUType.get()
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b, accumulate, a_scale, b_scale = undefs(
           ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
           ir.MemRefType.get([128, 128], ir.F16Type.get(), memory_space=smem),
           ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=smem),
           ir.IntegerType.get_signless(1),
           ir.MemRefType.get([128, 4], f8e0m0, memory_space=smem),
           ir.MemRefType.get([160, 4], f8e0m0, memory_space=tmem),
-      )(
-          lambda acc, a, b, accumulate, a_scale, b_scale: mgpu.dialect.tcgen05_mma(
-              acc, a, b, accumulate, a_scale=a_scale, b_scale=b_scale
-          )
+      )
+      mgpu.dialect.tcgen05_mma(
+          acc, a, b, accumulate, a_scale=a_scale, b_scale=b_scale
       )
 
     with self.assertRaisesRegex(
@@ -742,17 +723,16 @@ ir.MLIRError,
     smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
     f8e0m0 = ir.Float8E8M0FNUType.get()
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      acc, a, b, accumulate, a_scale, b_scale = undefs(
           ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
           ir.MemRefType.get([128, 128], ir.F16Type.get(), memory_space=smem),
           ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=smem),
           ir.IntegerType.get_signless(1),
           ir.MemRefType.get([128, 4], f8e0m0, memory_space=tmem),
           ir.MemRefType.get([160, 4], f8e0m0, memory_space=smem),
-      )(
-          lambda acc, a, b, accumulate, a_scale, b_scale: mgpu.dialect.tcgen05_mma(
-              acc, a, b, accumulate, a_scale=a_scale, b_scale=b_scale
-          )
+      )
+      mgpu.dialect.tcgen05_mma(
+          acc, a, b, accumulate, a_scale=a_scale, b_scale=b_scale
       )
 
     with self.assertRaisesRegex(
@@ -775,30 +755,22 @@ ir.MLIRError,
 
   def test_broadcast_in_dim_ok(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
-          ir.VectorType.get([64], ir.F32Type.get()),
-          name="broadcast_in_dim",
-      )(
-          lambda operand: mgpu.dialect.broadcast_in_dim(
-              ir.VectorType.get([64, 64], ir.F32Type.get()),
-              operand,
-              broadcast_dimensions=[0],
-          )
+      (operand,) = undefs(ir.VectorType.get([64], ir.F32Type.get()))
+      mgpu.dialect.broadcast_in_dim(
+          ir.VectorType.get([64, 64], ir.F32Type.get()),
+          operand,
+          broadcast_dimensions=[0],
       )
 
     self.assertTrue(self.module.operation.verify())
 
   def test_broadcast_in_dim_no_0d(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
-          ir.VectorType.get([], ir.F32Type.get()),
-          name="broadcast_in_dim",
-      )(
-          lambda operand: mgpu.dialect.broadcast_in_dim(
-              ir.VectorType.get([64], ir.F32Type.get()),
-              operand,
-              broadcast_dimensions=[],
-          )
+      (operand,) = undefs(ir.VectorType.get([], ir.F32Type.get()))
+      mgpu.dialect.broadcast_in_dim(
+          ir.VectorType.get([64], ir.F32Type.get()),
+          operand,
+          broadcast_dimensions=[],
       )
 
     with self.assertRaisesRegex(
@@ -809,15 +781,11 @@ ir.MLIRError,
 
   def test_broadcast_in_dim_no_input_larger_than_output(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
-          ir.VectorType.get([64, 64], ir.F32Type.get()),
-          name="broadcast_in_dim",
-      )(
-          lambda operand: mgpu.dialect.broadcast_in_dim(
-              ir.VectorType.get([64], ir.F32Type.get()),
-              operand,
-              broadcast_dimensions=[],
-          )
+      (operand,) = undefs(ir.VectorType.get([64, 64], ir.F32Type.get()))
+      mgpu.dialect.broadcast_in_dim(
+          ir.VectorType.get([64], ir.F32Type.get()),
+          operand,
+          broadcast_dimensions=[],
       )
 
     with self.assertRaisesRegex(
@@ -828,15 +796,11 @@ ir.MLIRError,
 
   def test_broadcast_in_dim_too_many_dims(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
-          ir.VectorType.get([64], ir.F32Type.get()),
-          name="broadcast_in_dim",
-      )(
-          lambda operand: mgpu.dialect.broadcast_in_dim(
-              ir.VectorType.get([64, 64], ir.F32Type.get()),
-              operand,
-              broadcast_dimensions=[0, 1],
-          )
+      (operand,) = undefs(ir.VectorType.get([64], ir.F32Type.get()))
+      mgpu.dialect.broadcast_in_dim(
+          ir.VectorType.get([64, 64], ir.F32Type.get()),
+          operand,
+          broadcast_dimensions=[0, 1],
       )
 
     with self.assertRaisesRegex(
@@ -847,15 +811,11 @@ ir.MLIRError,
 
   def test_broadcast_in_dim_dim_oob(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
-          ir.VectorType.get([64], ir.F32Type.get()),
-          name="broadcast_in_dim",
-      )(
-          lambda operand: mgpu.dialect.broadcast_in_dim(
-              ir.VectorType.get([64, 64], ir.F32Type.get()),
-              operand,
-              broadcast_dimensions=[2],
-          )
+      (operand,) = undefs(ir.VectorType.get([64], ir.F32Type.get()))
+      mgpu.dialect.broadcast_in_dim(
+          ir.VectorType.get([64, 64], ir.F32Type.get()),
+          operand,
+          broadcast_dimensions=[2],
       )
 
     with self.assertRaisesRegex(
@@ -866,15 +826,11 @@ ir.MLIRError,
 
   def test_broadcast_in_dim_dim_transpose(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      (operand,) = undefs(ir.VectorType.get([64, 64, 64, 64], ir.F32Type.get()))
+      mgpu.dialect.broadcast_in_dim(
           ir.VectorType.get([64, 64, 64, 64], ir.F32Type.get()),
-          name="broadcast_in_dim",
-      )(
-          lambda operand: mgpu.dialect.broadcast_in_dim(
-              ir.VectorType.get([64, 64, 64, 64], ir.F32Type.get()),
-              operand,
-              broadcast_dimensions=[0, 1, 3, 2],
-          )
+          operand,
+          broadcast_dimensions=[0, 1, 3, 2],
       )
 
     with self.assertRaisesRegex(
@@ -884,7 +840,7 @@ ir.MLIRError,
       self.module.operation.verify()
 
   def test_custom_primitive_op_args_must_match_args_of_terminator(self):
-    def kernel():
+    with ir.InsertionPoint(self.module.body):
       shape = (128,)
       elt_ty = ir.F32Type.get()
       ty = ir.VectorType.get(shape, elt_ty)
@@ -904,9 +860,6 @@ ir.MLIRError,
         v = llvm.mlir_undef(ir.VectorType.get([256], ir.F32Type.get()))
         mgpu.dialect.ReturnOp(operands_=[v])
 
-    with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(name="kernel")(kernel)
-
     with self.assertRaisesRegex(
         ir.MLIRError,
         r"type of return operand 0 \('vector<256xf32>'\) doesn't match the"
@@ -916,20 +869,18 @@ ir.MLIRError,
 
   def test_tmem_alloc_op_must_have_smem_ref_input(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
-          ir.MemRefType.get([], ir.IntegerType.get_signless(32)),
-          name="alloc_op",
-      )(
-          lambda smem_ptr: mgpu.dialect.tmem_alloc(
-              result=ir.MemRefType.get(
-                  [128, 32],
-                  ir.BF16Type.get(),
-                  memory_space=ir.Attribute.parse("#mosaic_gpu.tmem"),
-              ),
-              smem_ptr=smem_ptr,
-              collective=False,
-              packing=1,
-          )
+      (smem_ptr,) = undefs(
+          ir.MemRefType.get([], ir.IntegerType.get_signless(32))
+      )
+      mgpu.dialect.tmem_alloc(
+          result=ir.MemRefType.get(
+              [128, 32],
+              ir.BF16Type.get(),
+              memory_space=ir.Attribute.parse("#mosaic_gpu.tmem"),
+          ),
+          smem_ptr=smem_ptr,
+          collective=False,
+          packing=1,
       )
 
     with self.assertRaisesRegex(
@@ -940,23 +891,21 @@ ir.MLIRError,
 
   def test_tmem_alloc_op_result_must_have_tmem_memory_space(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      (smem_ptr,) = undefs(
           ir.MemRefType.get(
               [],
               ir.IntegerType.get_signless(32),
               memory_space=mgpu_utils.smem(),
-          ),
-          name="alloc_op",
-      )(
-          lambda smem_ptr: mgpu.dialect.tmem_alloc(
-              result=ir.MemRefType.get(
-                  [128, 32],
-                  ir.BF16Type.get(),
-              ),
-              smem_ptr=smem_ptr,
-              collective=False,
-              packing=1,
           )
+      )
+      mgpu.dialect.tmem_alloc(
+          result=ir.MemRefType.get(
+              [128, 32],
+              ir.BF16Type.get(),
+          ),
+          smem_ptr=smem_ptr,
+          collective=False,
+          packing=1,
       )
 
     with self.assertRaisesRegex(
@@ -967,24 +916,22 @@ ir.MLIRError,
 
   def test_tmem_alloc_op_exact_column_count_must_be_at_most_512(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      (smem_ptr,) = undefs(
           ir.MemRefType.get(
               [],
               ir.IntegerType.get_signless(32),
               memory_space=mgpu_utils.smem(),
-          ),
-          name="alloc_op",
-      )(
-          lambda smem_ptr: mgpu.dialect.tmem_alloc(
-              result=ir.MemRefType.get(
-                  [128, 1024],
-                  ir.BF16Type.get(),
-                  memory_space=ir.Attribute.parse("#mosaic_gpu.tmem"),
-              ),
-              smem_ptr=smem_ptr,
-              collective=False,
-              packing=1,
           )
+      )
+      mgpu.dialect.tmem_alloc(
+          result=ir.MemRefType.get(
+              [128, 1024],
+              ir.BF16Type.get(),
+              memory_space=ir.Attribute.parse("#mosaic_gpu.tmem"),
+          ),
+          smem_ptr=smem_ptr,
+          collective=False,
+          packing=1,
       )
 
     with self.assertRaisesRegex(
@@ -996,24 +943,22 @@ ir.MLIRError,
 
   def test_tmem_alloc_op_bad_packing(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      (smem_ptr,) = undefs(
           ir.MemRefType.get(
               [],
               ir.IntegerType.get_signless(32),
               memory_space=mgpu_utils.smem(),
-          ),
-          name="alloc_op",
-      )(
-          lambda smem_ptr: mgpu.dialect.tmem_alloc(
-              result=ir.MemRefType.get(
-                  [128, 128],
-                  ir.BF16Type.get(),
-                  memory_space=ir.Attribute.parse("#mosaic_gpu.tmem"),
-              ),
-              smem_ptr=smem_ptr,
-              collective=False,
-              packing=4,
           )
+      )
+      mgpu.dialect.tmem_alloc(
+          result=ir.MemRefType.get(
+              [128, 128],
+              ir.BF16Type.get(),
+              memory_space=ir.Attribute.parse("#mosaic_gpu.tmem"),
+          ),
+          smem_ptr=smem_ptr,
+          collective=False,
+          packing=4,
       )
 
     with self.assertRaisesRegex(
@@ -1024,72 +969,66 @@ ir.MLIRError,
 
   def test_tmem_alloc_op_exact_false_column_count_15_ok(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      (smem_ptr,) = undefs(
           ir.MemRefType.get(
               [],
               ir.IntegerType.get_signless(32),
               memory_space=mgpu_utils.smem(),
-          ),
-          name="alloc_op",
-      )(
-          lambda smem_ptr: mgpu.dialect.tmem_alloc(
-              result=ir.MemRefType.get(
-                  [128, 15],
-                  ir.BF16Type.get(),
-                  memory_space=ir.Attribute.parse("#mosaic_gpu.tmem"),
-              ),
-              smem_ptr=smem_ptr,
-              collective=False,
-              packing=1,
           )
+      )
+      mgpu.dialect.tmem_alloc(
+          result=ir.MemRefType.get(
+              [128, 15],
+              ir.BF16Type.get(),
+              memory_space=ir.Attribute.parse("#mosaic_gpu.tmem"),
+          ),
+          smem_ptr=smem_ptr,
+          collective=False,
+          packing=1,
       )
 
     self.assertTrue(self.module.operation.verify())
 
   def test_tmem_alloc_op_exact_false_column_count_100_ok(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      (smem_ptr,) = undefs(
           ir.MemRefType.get(
               [],
               ir.IntegerType.get_signless(32),
               memory_space=mgpu_utils.smem(),
-          ),
-          name="alloc_op",
-      )(
-          lambda smem_ptr: mgpu.dialect.tmem_alloc(
-              result=ir.MemRefType.get(
-                  [128, 100],
-                  ir.BF16Type.get(),
-                  memory_space=ir.Attribute.parse("#mosaic_gpu.tmem"),
-              ),
-              smem_ptr=smem_ptr,
-              collective=False,
-              packing=1,
           )
+      )
+      mgpu.dialect.tmem_alloc(
+          result=ir.MemRefType.get(
+              [128, 100],
+              ir.BF16Type.get(),
+              memory_space=ir.Attribute.parse("#mosaic_gpu.tmem"),
+          ),
+          smem_ptr=smem_ptr,
+          collective=False,
+          packing=1,
       )
 
     self.assertTrue(self.module.operation.verify())
 
   def test_tmem_alloc_op_exact_false_column_count_777_packed_not_ok(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      (smem_ptr,) = undefs(
           ir.MemRefType.get(
               [],
               ir.IntegerType.get_signless(32),
               memory_space=mgpu_utils.smem(),
-          ),
-          name="alloc_op",
-      )(
-          lambda smem_ptr: mgpu.dialect.tmem_alloc(
-              result=ir.MemRefType.get(
-                  [128, 777],
-                  ir.BF16Type.get(),
-                  memory_space=ir.Attribute.parse("#mosaic_gpu.tmem"),
-              ),
-              smem_ptr=smem_ptr,
-              collective=False,
-              packing=2,
           )
+      )
+      mgpu.dialect.tmem_alloc(
+          result=ir.MemRefType.get(
+              [128, 777],
+              ir.BF16Type.get(),
+              memory_space=ir.Attribute.parse("#mosaic_gpu.tmem"),
+          ),
+          smem_ptr=smem_ptr,
+          collective=False,
+          packing=2,
       )
 
     with self.assertRaisesRegex(
@@ -1100,47 +1039,43 @@ ir.MLIRError,
 
   def test_tmem_alloc_op_exact_false_column_count_778_packed_ok(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      (smem_ptr,) = undefs(
           ir.MemRefType.get(
               [],
               ir.IntegerType.get_signless(32),
               memory_space=mgpu_utils.smem(),
-          ),
-          name="alloc_op",
-      )(
-          lambda smem_ptr: mgpu.dialect.tmem_alloc(
-              result=ir.MemRefType.get(
-                  [128, 778],
-                  ir.BF16Type.get(),
-                  memory_space=ir.Attribute.parse("#mosaic_gpu.tmem"),
-              ),
-              smem_ptr=smem_ptr,
-              collective=False,
-              packing=2,
           )
+      )
+      mgpu.dialect.tmem_alloc(
+          result=ir.MemRefType.get(
+              [128, 778],
+              ir.BF16Type.get(),
+              memory_space=ir.Attribute.parse("#mosaic_gpu.tmem"),
+          ),
+          smem_ptr=smem_ptr,
+          collective=False,
+          packing=2,
       )
 
     self.assertTrue(self.module.operation.verify())
 
   def test_tmem_layout_cast_invalid_tmem_ref(self):
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func(
+      (tmem_ref,) = undefs(
           ir.MemRefType.get(
               [128, 128],
               ir.BF16Type.get(),
               memory_space=mgpu_utils.smem(),
-          ),
-          name="tmem_layout_cast_op",
-      )(
-          lambda tmem_ref: mgpu.dialect.tmem_layout_cast(
-              tmem_ref, layouts.to_layout_attr(tcgen05.TMEM_NATIVE_LAYOUT)
           )
       )
-      with self.assertRaisesRegex(
-          ir.MLIRError,
-          "The tmem memref must have a mosaic_gpu.tmem memory space",
-      ):
-        self.module.operation.verify()
+      mgpu.dialect.tmem_layout_cast(
+          tmem_ref, layouts.to_layout_attr(tcgen05.TMEM_NATIVE_LAYOUT)
+      )
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The tmem memref must have a mosaic_gpu.tmem memory space",
+    ):
+      self.module.operation.verify()
 
 
 class DialectLoweringTest(MosaicGpuTest):
@@ -1250,13 +1185,11 @@ class DialectLoweringTest(MosaicGpuTest):
     self.assertEmpty(all_ops_with_layouts)
 
   def test_lowering_splat_constant(self):
-    cst = None
     elt_ty = ir.BF16Type.get()
 
-    def body():
+    with ir.InsertionPoint(self.module.body):
       vec_ty = ir.VectorType.get((16, 8), elt_ty)
       zero = ir.FloatAttr.get(elt_ty, 0)
-      nonlocal cst
       cst = arith.ConstantOp(
           vec_ty, ir.DenseElementsAttr.get_splat(vec_ty, zero)
       )
@@ -1265,9 +1198,6 @@ class DialectLoweringTest(MosaicGpuTest):
               mgpu.WGStridedFragLayout.from_shaped_type(vec_ty)
           )
       ])
-
-    with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func()(body)
 
     mgpu.lower_mgpu_dialect(self.module, None)
 
@@ -1359,19 +1289,13 @@ class DialectLoweringTest(MosaicGpuTest):
     self.assertSequenceEqual(result_types, [i32, reg_vec_ty, reg_vec_ty])
 
   def test_lowering_slice_smem_op(self):
-    shift = 1234
-    offset = None
-
-    def body():
-      nonlocal offset
+    with ir.InsertionPoint(self.module.body):
+      shift = 1234
       i32 = ir.IntegerType.get_signless(32)
       memref_ty = ir.MemRefType.get((4, 32), i32, memory_space=mgpu_utils.smem())
       offset = arith.constant(i32, shift)
       op = mgpu.dialect.SliceSMEMOp(memref_ty, offset)
       op.attributes["out_transforms"] = ir.ArrayAttr.get([ir.ArrayAttr.get([])])
-
-    with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func()(body)
 
     mgpu.lower_mgpu_dialect(self.module, None)
     # Avoid making a change detector, only validate that lowering runs as
@@ -1442,14 +1366,14 @@ class DialectLoweringTest(MosaicGpuTest):
     in_transforms = [] if omit_in_transforms else in_transforms
     out_layouts = [] if omit_out_layouts else out_layouts
 
-    def body(vec1, vec2, ref):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(
+          (4, 32), ir.BF16Type.get(), memory_space=mgpu_utils.smem()
+      )
+      vec1, vec2, ref = undefs(vec_ty, vec_ty, ref_ty)
       mgpu.dialect.custom_primitive(
           [vec_ty], [vec1, vec2, ref], in_layouts, in_transforms, out_layouts
       )
-
-    with ir.InsertionPoint(self.module.body):
-      ref_ty = ir.MemRefType.get((4, 32), ir.BF16Type.get(), memory_space=mgpu_utils.smem())
-      func.FuncOp.from_py_func(vec_ty, vec_ty, ref_ty)(body)
 
     if omit_in_layouts:
       error = "layout for each vector operand"
