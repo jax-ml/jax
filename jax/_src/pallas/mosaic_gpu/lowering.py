@@ -810,6 +810,7 @@ def lower_pipelined_jaxpr_to_module(
             for bm in out_block_mappings
         ],
         max_concurrent_steps=params.max_concurrent_steps,
+        delay_release=params.delay_release,
     )(*refs)
 
   with grid_mapping.trace_env():
