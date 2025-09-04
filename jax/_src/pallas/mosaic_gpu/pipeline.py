@@ -551,6 +551,13 @@ def emit_pipeline_warp_specialized(
       ``STOP`` is done, the memory thread will not wait for the compute threads
       to complete and fully consume their work. Any modification of their
       operands other than invoking another pipeline is disallowed.
+
+      Important: To achieve bubble-free execution, it is important to also use
+      the manual allocation mode by calling ``get_allocations`` on the returned
+      function, passing the result to ``pl.run_scoped`` and the provided results
+      to the returned function as an ``allocations`` keyword argument.
+      Otherwise, the pipeline function will perform the scoped allocation itself
+      which can lead to synchronization that can still cause pipeline bubbles.
   """
 
   # TODO(justinfu): Factor out common code between warp-specialized and
@@ -619,21 +626,11 @@ def emit_pipeline_warp_specialized(
   if not has_dynamic_grid and max_concurrent_steps > num_steps:
     max_concurrent_steps = cast(int, num_steps)
 
-  def pipeline(*gmem_refs: AbstractRefPytree):
-    """
-    Run the pipeline.
-
-    Args:
-      *gmem_refs: A list of pytrees of pallas refs
-    """
-
+  def _get_scoped_allocs(*gmem_refs: AbstractRefPytree):
     in_gmem_refs = gmem_refs[:len(in_specs)]
     out_gmem_refs = gmem_refs[len(in_specs):]
-
     flat_in_gmem_refs, in_gmem_refs_treedef = jax.tree.flatten(in_gmem_refs)
     flat_out_gmem_refs, out_gmem_refs_treedef = jax.tree.flatten(out_gmem_refs)
-    flat_gmem_refs = [*flat_in_gmem_refs, *flat_out_gmem_refs]
-
     if in_specs_treedef != in_gmem_refs_treedef:
       raise ValueError(
           "Input specs and input gmem refs must have the same pytree structure."
@@ -644,6 +641,7 @@ def emit_pipeline_warp_specialized(
           "Output specs and output gmem refs must have the same pytree structure."
           f" {out_specs_treedef} != {out_gmem_refs_treedef}"
       )
+    flat_gmem_refs = [*flat_in_gmem_refs, *flat_out_gmem_refs]
     smem_allocs = []
     for spec, has_seq_dim, gmem_ref in zip(
         it.chain(flat_in_specs, flat_out_specs),
@@ -659,9 +657,6 @@ def emit_pipeline_warp_specialized(
       )
     flat_in_smem_refs, flat_out_smem_refs = util.split_list(
         smem_allocs, [len(flat_in_specs)])
-
-    if any(not has_seq_dim for has_seq_dim in in_spec_has_seq_axis):
-      raise NotImplementedError("Only inputs with a dependency on the grid are supported.")
     in_smem_barrier = gpu_core.Barrier(num_arrivals=len(flat_in_specs), num_barriers=max_concurrent_steps)
     flat_consumed_barriers = []
     for _ in flat_in_specs:
@@ -681,18 +676,56 @@ def emit_pipeline_warp_specialized(
               num_barriers=max_concurrent_steps,
           )
       ]
-    return pl.run_scoped(
-        functools.partial(
-            scoped_pipeline,
-            flat_in_gmem_refs=flat_in_gmem_refs,
-            flat_out_gmem_refs=flat_out_gmem_refs,
-        ),
+    return dict(
         flat_in_smem_refs=flat_in_smem_refs,
         flat_out_smem_refs=flat_out_smem_refs,
         in_smem_barrier_ref=in_smem_barrier,
         flat_consumed_barrier_refs=flat_consumed_barriers,
-        collective_axes=wg_axis,
     )
+
+  def pipeline(*gmem_refs: AbstractRefPytree, allocations: Any | None = None):
+    """
+    Run the pipeline.
+
+    Args:
+      *gmem_refs: A list of pytrees of pallas refs
+      allocations: The allocation provided by ``pl.run_scoped`` when the result
+        of calling ``get_allocations(*gmem_refs)`` is passed to
+        ``pl.run_scoped``.
+    """
+    in_gmem_refs = gmem_refs[:len(in_specs)]
+    out_gmem_refs = gmem_refs[len(in_specs):]
+    flat_in_gmem_refs, in_gmem_refs_treedef = jax.tree.flatten(in_gmem_refs)
+    flat_out_gmem_refs, out_gmem_refs_treedef = jax.tree.flatten(out_gmem_refs)
+    if in_specs_treedef != in_gmem_refs_treedef:
+      raise ValueError(
+          "Input specs and input gmem refs must have the same pytree structure."
+          f" {in_specs_treedef} != {in_gmem_refs_treedef}"
+      )
+    if out_specs_treedef != out_gmem_refs_treedef:
+      raise ValueError(
+          "Output specs and output gmem refs must have the same pytree structure."
+          f" {out_specs_treedef} != {out_gmem_refs_treedef}"
+      )
+
+    if allocations is None:
+      return pl.run_scoped(
+          functools.partial(
+              scoped_pipeline,
+              flat_in_gmem_refs=flat_in_gmem_refs,
+              flat_out_gmem_refs=flat_out_gmem_refs,
+          ),
+          **_get_scoped_allocs(*gmem_refs),
+          collective_axes=wg_axis,
+      )
+    else:
+      scoped_pipeline(
+          flat_in_gmem_refs=flat_in_gmem_refs,
+          flat_out_gmem_refs=flat_out_gmem_refs,
+          **allocations,
+      )
+
+  pipeline.get_allocations = _get_scoped_allocs
 
   def scoped_pipeline(
       *,
