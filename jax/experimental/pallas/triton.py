@@ -28,30 +28,3 @@ from jax._src.pallas.triton.primitives import debug_barrier as debug_barrier
 from jax._src.pallas.triton.primitives import elementwise_inline_asm as elementwise_inline_asm
 from jax._src.pallas.triton.primitives import load as load
 from jax._src.pallas.triton.primitives import store as store
-
-
-import typing as _typing  # pylint: disable=g-import-not-at-top
-
-if _typing.TYPE_CHECKING:
-  TritonCompilerParams = CompilerParams
-else:
-  from jax._src.deprecations import (
-      deprecation_getattr as _deprecation_getattr,
-      is_accelerated as is_accelerated,
-  )
-
-  if is_accelerated("jax-pallas-triton-compiler-params"):
-    _deprecated_TritonCompilerParams = None
-  else:
-    _deprecated_TritonCompilerParams = CompilerParams
-
-  _deprecations = {
-      # Deprecated on May 27th 2025.
-      "TritonCompilerParams": (
-          "TritonCompilerParams is deprecated, use CompilerParams instead.",
-          _deprecated_TritonCompilerParams,
-      ),
-  }
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing
