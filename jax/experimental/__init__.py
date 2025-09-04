@@ -42,3 +42,4 @@ from jax._src.core import (
     mutable_array as mutable_array,
     MutableArray as MutableArray,
 )
+from jax.experimental import roofline as roofline
