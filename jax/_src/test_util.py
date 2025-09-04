@@ -471,6 +471,8 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
     return "v5 lite" in device_kind
   elif expected_version == "v6e":
     return "v6 lite" in device_kind
+  elif expected_version == "v5p":
+    return device_kind.endswith("v5")
   return expected_version in device_kind
 
 def pattern_search(patterns: str | Sequence[str], string: str):
