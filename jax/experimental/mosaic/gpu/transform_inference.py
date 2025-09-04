@@ -162,34 +162,38 @@ def _infer_transforms_for_mma_ref(
   )
 
 
-def _infer_mma_transforms(
-    a_type: ir.Type, b_type: ir.Type
-) -> OptionalTransforms:
-  b_transforms, b_swizzle = _infer_transforms_for_mma_ref(
-      ir.MemRefType(b_type), max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
-  )
-  if ir.MemRefType.isinstance(a_type):
-    a_transforms, a_swizzle = _infer_transforms_for_mma_ref(
-        cast(ir.MemRefType, a_type), max_swizzle=b_swizzle
-    )
-    if a_swizzle != b_swizzle:
-      # The swizzle for a and b has to match.
-      b_transforms, b_swizzle = _infer_transforms_for_mma_ref(
-          ir.MemRefType(b_type), max_swizzle=a_swizzle
-      )
-      assert a_swizzle == b_swizzle
-    return [a_transforms, b_transforms], []
-  return [b_transforms], []
-
-
 @partial(_add_transform_inference_rule, mgpu.WGMMAOp)
 def infer_wgmma_transforms(op: mgpu.WGMMAOp) -> OptionalTransforms:
-  return _infer_mma_transforms(op.a.type, op.b.type)
+  b_transforms, b_swizzle = _infer_transforms_for_mma_ref(
+      ir.MemRefType(op.b.type), max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
+  )
+  if not ir.MemRefType.isinstance(op.a.type):
+    return [b_transforms], []
+
+  a_transforms, a_swizzle = _infer_transforms_for_mma_ref(
+      ir.MemRefType(op.a.type), max_swizzle=b_swizzle
+  )
+  if a_swizzle != b_swizzle:
+    # The swizzle for a and b has to match.
+    b_transforms, b_swizzle = _infer_transforms_for_mma_ref(
+        ir.MemRefType(op.b.type), max_swizzle=a_swizzle
+    )
+    assert a_swizzle == b_swizzle
+  return [a_transforms, b_transforms], []
 
 
 @partial(_add_transform_inference_rule, mgpu.TcGen05MMAOp)
 def infer_tcgen05_mma_transforms(op: mgpu.TcGen05MMAOp) -> OptionalTransforms:
-  return _infer_mma_transforms(op.a.type, op.b.type)
+  b_transforms, _ = _infer_transforms_for_mma_ref(
+      ir.MemRefType(op.b.type), max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
+  )
+  if not utils.is_smem_ref(op.a.type):
+    return [b_transforms], []
+
+  a_transforms, _ = _infer_transforms_for_mma_ref(
+      ir.MemRefType(op.a.type), max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
+  )
+  return [a_transforms, b_transforms], []
 
 
 @partial(_add_transform_inference_rule, mgpu.AsyncStoreOp)

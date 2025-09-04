@@ -4586,7 +4586,8 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
   @parameterized.product(
       m=(64, 128),
       n=(128, 256, 512),
-      swizzle=(32, 64, 128),
+      # TODO(allanrenucci): Add 32-byte swizzle once implemented.
+      swizzle=(64, 128),
       ab_type=(jnp.float16, jnp.bfloat16),
       acc_type=(jnp.float16, jnp.float32),
   )
@@ -4683,7 +4684,8 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
   @parameterized.product(
       m=(128, 256),
       n=(128, 256),
-      swizzle=(32, 64, 128),
+      # TODO(allanrenucci): Add 32-byte swizzle once implemented.
+      swizzle=(64, 128),
       ab_type=(jnp.float16, jnp.bfloat16),
       acc_type=(jnp.float16, jnp.float32),
   )
