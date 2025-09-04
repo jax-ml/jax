@@ -2158,7 +2158,7 @@ class DynamicJaxprTrace(core.Trace):
                                               source_info)
     in_tracers = map(to_jaxpr_tracer, [*implicit_tracers, *explicit_tracers])
     # TODO(mattjj): check in_tracers are consistent with f.in_type annotation
-    jaxpr, out_type, consts = trace_to_jaxpr_dynamic2(f.with_unknown_names())
+    jaxpr, out_type, consts = trace_to_jaxpr_dynamic2(f)
     if params.get('inline', False):
       return core.eval_jaxpr(jaxpr, consts, *in_tracers,
                              propagate_source_info=False)
