@@ -51,9 +51,11 @@ limitations under the License.
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
+#include "mlir/IR/Visitors.h"
 #include "mlir/Support/LLVM.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "shardy/dialect/sdy/ir/dialect.h"
 #include "shardy/integrations/c/passes.h"
 #include "jaxlib/mlir/_mlir_libs/traceback_to_location.h"
 #include "jaxlib/mosaic/gpu/integrations/c/passes.h"
@@ -136,7 +138,7 @@ absl::StatusOr<std::vector<MlirValue>> InlinedCall(
       }
     } else {
       mlir::Operation* cloned_op = op_builder.clone(op, mapping);
-      cloned_op->walk([&](mlir::Operation* op) {
+      cloned_op->walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation* op) {
         // Compute a new location for the cloned op.
         // * The name should be "parent_op_name/child_op_name" (assuming both
         //   are present).
@@ -166,6 +168,12 @@ absl::StatusOr<std::vector<MlirValue>> InlinedCall(
               op_builder.getStringAttr(parent_op_type), child_loc);
         }
         op->setLoc(child_loc);
+        if (mlir::isa<mlir::sdy::ManualComputationOp>(op)) {
+          // Skip `ManualComputationOp`s and their nested operations, they will
+          // be handled separately.
+          return mlir::WalkResult::skip();
+        }
+        return mlir::WalkResult::advance();
       });
     }
   }
