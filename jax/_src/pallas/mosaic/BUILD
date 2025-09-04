@@ -33,6 +33,7 @@ py_library(
     deps = [
         "//jax",
         "//jax/_src/pallas",
+        "//jax/extend:backend",
     ],
 )
 

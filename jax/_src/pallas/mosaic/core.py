@@ -23,8 +23,7 @@ from typing import Any, ClassVar, Literal
 from collections.abc import Mapping
 
 import jax
-import jax.extend as jex
-import jax.extend.backend  # This should be imported by jex, but somehow isn't.
+from jax.extend import backend as jex_backend
 from jax._src import core as jax_core
 from jax._src import state
 from jax._src import util
@@ -348,4 +347,4 @@ pallas_core._out_shape_to_aval_mapping[SemaphoreType] = (
 def get_device_kind() -> str:
   if abstract_device := jax.sharding.get_abstract_mesh().abstract_device:
     return abstract_device.device_kind
-  return jex.backend.get_default_device().device_kind
+  return jex_backend.get_default_device().device_kind
