@@ -106,7 +106,7 @@ class ScalarSubcoreMesh:
 
 
 def _num_available_cores():
-  """Returns the number of SparseCores on the current TPU chip."""
+  """Returns the number of SparseCores on the current device."""
   device_kind = tpu_core.get_device_kind()
   match device_kind:
     case "TPU v5" | "TPU v5p" | "TPU v6" | "TPU7x":
@@ -169,6 +169,76 @@ pallas_core._core_map_mesh_rules[ScalarSubcoreMesh] = (
 )
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class VectorSubcoreMesh:
+  core_axis_name: str
+  subcore_axis_name: str
+  num_cores: int
+  num_subcores: int = dataclasses.field(default=16, init=False)
+
+  @property
+  def backend(self) -> str:
+    return "mosaic_tpu"
+
+  @property
+  def shape(self):
+    return dict(core=self.num_cores, subcore=self.num_subcores)
+
+  def discharges_effect(self, effect):
+    del effect  # Unused.
+    return False
+
+
+def _vector_subcore_mesh_discharge_rule(
+    in_avals,
+    out_avals,
+    *args,
+    mesh,
+    jaxpr,
+    compiler_params,
+    interpret,
+    debug,
+    cost_estimate,
+    name,
+    metadata,
+):
+  if not isinstance(mesh, VectorSubcoreMesh):
+    raise TypeError(f"Mesh must be a VectorSubcoreMesh, got {type(mesh)}")
+  assert len(mesh.shape) == 2
+  if mesh.num_cores > (num_expected := _num_available_cores()):
+    raise ValueError(
+        f"Mesh has {mesh.num_cores} cores, but the current TPU chip has only"
+        f" {num_expected} SparseCores"
+    )
+  if compiler_params is None:
+    compiler_params = tpu_core.CompilerParams()
+  if compiler_params.dimension_semantics is not None:
+    raise ValueError("VectorSubcoreMesh does not support dimension_semantics=")
+  return pallas_core.default_mesh_discharge_rule(
+      in_avals,
+      out_avals,
+      *args,
+      mesh=mesh,
+      jaxpr=jaxpr,
+      compiler_params=dataclasses.replace(
+          compiler_params,
+          dimension_semantics=["core_parallel", "subcore_parallel"],
+          kernel_type=tpu_core.KernelType.SC_VECTOR_SUBCORE,
+      ),
+      interpret=interpret,
+      debug=debug,
+      cost_estimate=cost_estimate,
+      name=name,
+      memory_space=tpu_core.MemorySpace.HBM,
+      metadata=metadata,
+  )
+
+
+pallas_core._core_map_mesh_rules[VectorSubcoreMesh] = (
+    _vector_subcore_mesh_discharge_rule
+)
+
+# TODO(slebedev): Remove this from the public API and only use in tests.
 def vector_subcore_kernel(**kwargs):
   # We currently ignore kernel_type= provided by the user, because
   # the default kernel_type= is not None.
@@ -182,7 +252,7 @@ def vector_subcore_kernel(**kwargs):
   )
 
 
-def scalar_subcore_kernel(
+def kernel(
     out_shape: object,
     *,
     mesh: pallas_core.Mesh,

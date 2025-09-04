@@ -15,12 +15,10 @@
 """Mosaic-specific Pallas APIs."""
 
 from jax._src.pallas.mosaic import core as core
-from jax._src.pallas.mosaic.core import ARBITRARY as ARBITRARY
 from jax._src.pallas.mosaic.core import create_tensorcore_mesh as create_tensorcore_mesh
 from jax._src.pallas.mosaic.core import dma_semaphore as dma_semaphore
 from jax._src.pallas.mosaic.core import GridDimensionSemantics as GridDimensionSemantics
 from jax._src.pallas.mosaic.core import KernelType as KernelType
-from jax._src.pallas.mosaic.core import PARALLEL as PARALLEL
 from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec as PrefetchScalarGridSpec
 from jax._src.pallas.mosaic.core import SemaphoreType as SemaphoreType
 from jax._src.pallas.mosaic.core import MemorySpace as MemorySpace
@@ -78,6 +76,11 @@ verification = types.SimpleNamespace(
     assume=assume, pretend=pretend, skip=skip, define_model=define_model
 )
 del types, assume, pretend, skip, define_model  # Clean up.
+
+PARALLEL = GridDimensionSemantics.PARALLEL
+CORE_PARALLEL = GridDimensionSemantics.CORE_PARALLEL
+SUBCORE_PARALLEL = GridDimensionSemantics.SUBCORE_PARALLEL
+ARBITRARY = GridDimensionSemantics.ARBITRARY
 
 CMEM = MemorySpace.CMEM
 SMEM = MemorySpace.SMEM

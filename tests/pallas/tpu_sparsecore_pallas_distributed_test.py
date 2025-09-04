@@ -43,7 +43,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     shape = (8, 128)
 
     # Implements a very simple collective permute.
-    @plsc.scalar_subcore_kernel(
+    @plsc.kernel(
         out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
         mesh=plsc.ScalarSubcoreMesh(axis_name='core', num_cores=1),
         scratch_shapes=(
@@ -93,7 +93,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
   def test_collective_permute_2d(self, direction):
     shape = (8, 128)
 
-    @plsc.scalar_subcore_kernel(
+    @plsc.kernel(
         out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
         mesh=plsc.ScalarSubcoreMesh(axis_name='core', num_cores=1),
         scratch_shapes=(

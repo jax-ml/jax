@@ -90,7 +90,7 @@ class DebugPrintTest(PallasSCTest):
     debug_int = 1234552
     debug_float = 12344.625
 
-    @plsc.scalar_subcore_kernel(
+    @plsc.kernel(
         out_shape=int32s,
         mesh=plsc.ScalarSubcoreMesh(
             axis_name="core", num_cores=sc_core._num_available_cores()
@@ -676,6 +676,26 @@ class VectorSubcoreTest(PallasSCTest):
     with self.assertRaisesRegex(ValueError, "must be a multiple of 8"):
       kernel(x)
 
+  def test_subcore_parallel(self):
+    num_subcores = 16
+
+    @plsc.kernel(
+        out_shape=jax.ShapeDtypeStruct(
+            shape=(num_subcores, 8), dtype=jnp.int32
+        ),
+        mesh=plsc.VectorSubcoreMesh(
+            core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+        ),
+    )
+    def kernel(x_ref, o_ref):
+      # This is a smoke test, since it does not in fact check that the kernel
+      # is executed in parallel over the subcores.
+      subcore_id = lax.axis_index("subcore")
+      pltpu.sync_copy(x_ref.at[subcore_id], o_ref.at[subcore_id])
+
+    x = jnp.arange(num_subcores * 8, dtype=jnp.int32).reshape(-1, 8)
+    np.testing.assert_array_equal(kernel(x), x)
+
 
 class ScalarSubcoreTest(PallasSCTest):
 
@@ -686,7 +706,7 @@ class ScalarSubcoreTest(PallasSCTest):
   def test_copy(self):
     x = jnp.arange(16)
 
-    @plsc.scalar_subcore_kernel(
+    @plsc.kernel(
         out_shape=x,
         mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=self.num_cores),
     )
@@ -702,7 +722,7 @@ class ScalarSubcoreTest(PallasSCTest):
   def test_sliced_copy(self):
     x = jnp.arange(self.num_cores * 8).reshape(self.num_cores, -1)
 
-    @plsc.scalar_subcore_kernel(
+    @plsc.kernel(
         out_shape=x,
         mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=self.num_cores),
     )
@@ -719,7 +739,7 @@ class ScalarSubcoreTest(PallasSCTest):
   def test_scalar_load_store(self):
     x = jnp.arange(8)
 
-    @plsc.scalar_subcore_kernel(
+    @plsc.kernel(
         out_shape=x, mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
     )
     def kernel(x_ref, o_ref):
@@ -742,7 +762,7 @@ class ScalarSubcoreTest(PallasSCTest):
   def test_parallel_loop(self):
     x = jnp.arange(8*8).reshape(8, 8)
 
-    @plsc.scalar_subcore_kernel(
+    @plsc.kernel(
         out_shape=x,
         mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
         scratch_shapes=(
