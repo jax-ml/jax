@@ -2413,7 +2413,10 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(smem_ref, out_ref)
       plgpu.wait_smem_to_gmem(0)
-    with self.assertRaisesRegex(Exception, "core_map .* captures constants"):
+    with self.assertRaisesRegex(
+        mgpu_lowering.LoweringError,
+        "Can only close over scalars and Refs .* with WarpMesh",
+    ):
       kernel()
 
   @parameterized.parameters(True, False)

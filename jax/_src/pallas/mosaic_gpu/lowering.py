@@ -3158,6 +3158,12 @@ def _core_map_lowering_rule(
         warp_axis_name=mesh.axis_name,
         primitive_semantics=gpu_core.PrimitiveSemantics.Warp,
     )
+    for aval_in in ctx.avals_in:
+      if isinstance(aval_in, jax_core.ShapedArray) and aval_in.shape:
+        raise LoweringError(
+          "Can only close over scalars and Refs when using core_map with "
+          f"WarpMesh. Found array of shape {aval_in}."
+        )
     # We allow the warps to schedule async copies without synchronizing with
     # other warps, so we need to add a barrier here to make sure all reads and
     # writes have completed.

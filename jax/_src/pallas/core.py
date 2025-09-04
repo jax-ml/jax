@@ -1280,22 +1280,6 @@ def core_map(
     ):
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_args)
 
-    if consts:
-      consts_avals = [
-          aval
-          for c in consts
-          if not isinstance(aval := jax_core.get_aval(c), state.AbstractRef)
-      ]
-      if consts_avals:
-        ctx = jax_core.JaxprPpContext()
-        pp_const_avals = ", ".join(
-            jax_core.pp_aval(aval, ctx) for aval in consts_avals
-        )
-        raise ValueError(
-            "The kernel function in core_map"
-            f" {debug_info.func_src_info} captures constants"
-            f" [{pp_const_avals}]. You should pass them as inputs."
-        )
     out_tree = out_tree_thunk()
     if out_tree != tree_util.tree_structure(None):
       raise ValueError(
@@ -1306,6 +1290,7 @@ def core_map(
     out = core_map_p.bind(
         *consts,
         jaxpr=jaxpr,
+        debug_info=debug_info,
         mesh=mesh,
         compiler_params=compiler_params,
         interpret=(
@@ -1483,9 +1468,28 @@ def default_mesh_discharge_rule(
 
 
 @state_discharge.register_discharge_rule(core_map_p)
-def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, mesh, **kwargs):
+def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, debug_info, mesh, **kwargs):
   if type(mesh) not in _core_map_mesh_rules:
     raise NotImplementedError(f"Mesh type {type(mesh)} not supported.")
+  if jaxpr.constvars:
+    # The mapped jaxpr can only close over refs. Closing over anything else,
+    # including arrays, is not allowed -- these must be passed into the jaxpr
+    # as inputs.
+    consts_avals = [
+        aval
+        for var in jaxpr.constvars
+        if not isinstance(aval := var.aval, state.AbstractRef)
+    ]
+    if consts_avals:
+      ctx = jax_core.JaxprPpContext()
+      pp_const_avals = ", ".join(
+          jax_core.pp_aval(aval, ctx) for aval in consts_avals
+      )
+      raise ValueError(
+          "The kernel function in core_map"
+          f" {debug_info.func_src_info} captures constants"
+          f" [{pp_const_avals}]. You should pass them as inputs."
+      )
   return _core_map_mesh_rules[type(mesh)](
       in_avals, out_avals, *args_flat, jaxpr=jaxpr, mesh=mesh, **kwargs
   )
