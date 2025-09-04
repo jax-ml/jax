@@ -343,3 +343,29 @@ def has_any_replication(layout: fa.FragmentedLayout) -> bool:
       return is_warp_replicated or is_lane_replicated
     case _ as unreachable:
       return assert_never(unreachable)  # pytype: disable=wrong-arg-types
+
+
+_tile_transform_attr_pattern = re.compile(
+    r"^#mosaic_gpu.tile<[^>]+>$"
+)
+
+
+def is_tile_transform(attr: ir.Attribute) -> bool:
+  return bool(_tile_transform_attr_pattern.search(str(attr)))
+
+
+_transpose_transform_attr_pattern = re.compile(
+    r"^#mosaic_gpu.transpose<[^>]+>$"
+)
+
+
+def is_transpose_transform(attr: ir.Attribute) -> bool:
+  return bool(_transpose_transform_attr_pattern.search(str(attr)))
+
+
+_swizzle_transform_attr_pattern = re.compile(
+    r"^#mosaic_gpu.swizzle<[^>]+>$"
+)
+
+def is_swizzle_transform(attr: ir.Attribute) -> bool:
+  return bool(_swizzle_transform_attr_pattern.search(str(attr)))
