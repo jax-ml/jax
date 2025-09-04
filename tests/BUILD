@@ -938,6 +938,10 @@ jax_multiplatform_test(
             "nodebug",  # Times out.
             "notsan",  # Times out.
         ],
+        "cpu": [
+            "noasan",
+            "nomsan",
+        ],  # TODO(phawkins): Latest SciPy leaks memory.
     },
     shard_count = {
         "cpu": 40,
