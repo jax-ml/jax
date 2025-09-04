@@ -1841,18 +1841,6 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "for_loop_test",
-    srcs = ["for_loop_test.py"],
-    shard_count = {
-        "tpu": 20,
-    },
-    deps = py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
     name = "ragged_collective_test",
     srcs = ["ragged_collective_test.py"],
     disable_configs = [
