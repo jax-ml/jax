@@ -27,7 +27,7 @@ from jax._src.custom_derivatives import (
   custom_vjp_call_p as custom_vjp_call_p,
 )
 
-from jax._src.dispatch import device_put_p as device_put_p
+from jax._src.device_put import device_put_p as device_put_p
 
 from jax._src.interpreters.ad import (
   add_jaxvals_p as add_jaxvals_p,

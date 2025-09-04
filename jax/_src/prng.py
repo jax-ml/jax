@@ -24,6 +24,7 @@ import numpy as np
 from jax._src import api
 from jax._src import config as config
 from jax._src import core
+from jax._src import device_put
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import ffi
@@ -170,8 +171,8 @@ class PRNGKeyArray(Array):
     if isinstance(key_data, np.ndarray):
       aval = core.get_aval(key_data)
       device = pxla.get_default_device()
-      key_data = pxla.batched_device_put(aval, SingleDeviceSharding(device),
-                                         [key_data], [device], committed=False)
+      key_data = device_put.batched_device_put(
+          aval, SingleDeviceSharding(device), [key_data], [device], committed=False)
     self._base_array = key_data
 
   def _replace_with(self, value: PRNGKeyArray):
@@ -438,7 +439,7 @@ class KeyTyRules:
     physical_aval = core.physical_aval(aval)
     physical_buf = random_unwrap(val)
     phys_sharding = physical_sharding(aval, sharding)
-    physical_result = pxla.batched_device_put(
+    physical_result = device_put.batched_device_put(
         physical_aval, phys_sharding, [physical_buf] * len(devices), devices)
     return random_wrap(physical_result, impl=aval.dtype._impl)
 
@@ -490,10 +491,10 @@ def key_array_shard_arg_handler(xs: Sequence[PRNGKeyArray], shardings, layouts,
   phys_shardings = [physical_sharding(x.aval, sharding)
                     for x, sharding in zip(xs, shardings)]
   # TODO(yashkatariya): `layouts` should be converted to physical layouts.
-  return pxla.shard_args(phys_shardings, layouts, copy_semantics, arrs)
+  return device_put.shard_args(phys_shardings, layouts, copy_semantics, arrs)
 
 
-pxla.shard_arg_handlers[PRNGKeyArray] = key_array_shard_arg_handler
+device_put.shard_arg_handlers[PRNGKeyArray] = key_array_shard_arg_handler
 
 
 def key_array_constant_handler(x, aval):

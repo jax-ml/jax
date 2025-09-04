@@ -27,7 +27,7 @@ from jax._src import basearray
 from jax._src import config
 from jax._src import core
 from jax._src import deprecations
-from jax._src import dispatch
+from jax._src import device_put
 from jax._src import dtypes
 from jax._src import errors
 from jax._src import profiler
@@ -45,7 +45,8 @@ from jax._src.tree_util import broadcast_prefix, tree_flatten, tree_unflatten
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding,
     device_replica_id_map, hashed_index, num_addressable_indices,
-    local_to_global_shape, _internal_use_concrete_mesh)  # pyformat: disable
+    local_to_global_shape, _internal_use_concrete_mesh,
+    is_single_device_sharding)
 from jax._src.typing import ArrayLike, DLDeviceType, DTypeLike, ExtendedDType
 from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method, cache
 import numpy as np
@@ -387,7 +388,7 @@ class ArrayImpl(basearray.Array):
       raise TypeError("iteration over a 0-d array")  # same as numpy error
     else:
       assert self.is_fully_replicated or self.is_fully_addressable
-      if dispatch.is_single_device_sharding(self.sharding) or self.is_fully_replicated:
+      if is_single_device_sharding(self.sharding) or self.is_fully_replicated:
         return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())
       elif isinstance(self.sharding, PmapSharding):
         return (self[i] for i in range(self.shape[0]))
@@ -823,7 +824,7 @@ def make_array_from_callback(
 
   if dll is not None:
     devices = [Format(dll, SingleDeviceSharding(d)) for d in devices]  # type: ignore
-    # pxla.batched_device_put doesn't support Layout... Take the slow route
+    # device_put.batched_device_put doesn't support Layout... Take the slow route
     arrays = api.device_put(per_device_values, devices)
     return ArrayImpl(aval, sharding, arrays, committed=True)
 
@@ -832,7 +833,7 @@ def make_array_from_callback(
     # to target device.
     per_device_values = api.device_put(per_device_values, devices)
 
-  return pxla.batched_device_put(aval, sharding, per_device_values, devices)
+  return device_put.batched_device_put(aval, sharding, per_device_values, devices)
 
 
 def make_array_from_process_local_data(
@@ -1173,7 +1174,7 @@ def shard_device_array(x, devices, indices, sharding):
     with _internal_use_concrete_mesh(empty_concrete_mesh):
       shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   aval = core.shaped_abstractify(x)
-  return pxla.batched_device_put(aval, sharding, shards, devices)
+  return device_put.batched_device_put(aval, sharding, shards, devices)
 
 
 def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
@@ -1188,9 +1189,9 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
     # Look up all buffers that contain the correct slice of the logical array.
     candidates_list = candidates[hashed_index(idx)]
     if not candidates_list:
-      return pxla.shard_args([sharding], [None],
-                             [xc.ArrayCopySemantics.REUSE_INPUT], [x._value],
-                             canonicalize=False)[0]
+      return device_put.shard_args(
+          [sharding], [None], [xc.ArrayCopySemantics.REUSE_INPUT], [x._value],
+          canonicalize=False)[0]
     # Try to find a candidate buffer already on the correct device,
     # otherwise copy one of them.
     for buf in candidates_list:
@@ -1199,7 +1200,7 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
         break
     else:
       bufs.append(candidates_list[-1])
-  return pxla.batched_device_put(x.aval, sharding, bufs, devices)
+  return device_put.batched_device_put(x.aval, sharding, bufs, devices)
 
 
 @cache(max_size=4096, trace_context_in_key=False)
@@ -1217,8 +1218,8 @@ def _sharding_indices_and_eq(src_sharding, dst_sharding, ndim):
   return hlos_eq and len_eq
 
 
-def _array_shard_arg(xs, shardings, layouts, copy_semantics):
-  util.test_event("_array_shard_arg")
+def array_shard_arg(xs, shardings, layouts, copy_semantics):
+  util.test_event("array_shard_arg")
   results = []
   batch_xs, batch_devs, batch_shardings, batch_indices = [], [], [], []
   batch_cs = []
@@ -1254,7 +1255,7 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
         results.append(api.device_put(x, Format(layout, sharding)))
       else:
         indices = sharding.addressable_devices_indices_map(x.shape).values()
-        if dispatch.is_single_device_sharding(x.sharding):
+        if is_single_device_sharding(x.sharding):
           results.append(shard_device_array(x, devices, indices, sharding))
         else:
           results.append(
@@ -1267,7 +1268,6 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
     assert results[i] is None
     results[i] = copy_out
   return results
-pxla.shard_arg_handlers[ArrayImpl] = _array_shard_arg
 
 
 def _array_global_result_handler(global_aval, out_sharding, committed):
@@ -1297,7 +1297,7 @@ pxla.local_result_handlers[core.ShapedArray] = _array_local_result_handler
 
 # Token handlers
 
-def _token_shard_arg(xs, shardings, layouts, copy_semantics):
+def token_shard_arg(xs, shardings, layouts, copy_semantics):
   results = []
   for x, sharding, layout in safe_zip(xs, shardings, layouts):
     assert layout is None
@@ -1305,10 +1305,9 @@ def _token_shard_arg(xs, shardings, layouts, copy_semantics):
     x = np.array([], dtype=bool)
     aval = core.get_aval(x)
     devices = sharding._addressable_device_assignment
-    results.append(pxla.batched_device_put(
+    results.append(device_put.batched_device_put(
         aval, sharding, [x] * len(devices), devices))
   return results
-pxla.shard_arg_handlers[core.Token] = _token_shard_arg
 
 
 def _token_global_result_handler(global_aval, out_sharding, committed):

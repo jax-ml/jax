@@ -41,6 +41,7 @@ from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import pretty_printer as pp
+from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import tree_util
@@ -9057,7 +9058,7 @@ class BIntRules:
     phys_aval = core.physical_aval(aval)
     phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
 
-    if not dispatch.is_single_device_sharding(out_sharding):
+    if not sharding_impls.is_single_device_sharding(out_sharding):
       raise NotImplementedError  # TODO(mattjj)
     else:
       phys_sharding = out_sharding

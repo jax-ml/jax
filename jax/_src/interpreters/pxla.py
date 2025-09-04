@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import collections
 from collections import namedtuple
 from collections.abc import Callable, Sequence, Iterable
 import dataclasses
@@ -34,6 +33,7 @@ from jax._src import array
 from jax._src import compiler
 from jax._src import config
 from jax._src import core
+from jax._src import device_put
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
@@ -46,17 +46,15 @@ from jax._src import profiler
 from jax._src import sharding_impls
 from jax._src import stages
 from jax._src import tree_util
-from jax._src import typing
 from jax._src import util
 from jax._src import xla_bridge as xb
-from jax._src.abstract_arrays import array_types
 from jax._src.core import DShapedArray
 from jax._src.core import ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
-from jax._src.layout import Layout, AutoLayout, Format
+from jax._src.layout import Layout, AutoLayout
 from jax._src.lib import xla_client as xc
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
@@ -110,57 +108,6 @@ ShardingSpec = sharding_specs.ShardingSpec
 def identity(x): return x
 
 
-@profiler.annotate_function
-def shard_args(
-    shardings: Sequence[JSharding],
-    layouts: Sequence[Any | None],
-    copy_semantics: Sequence[xc.ArrayCopySemantics],
-    args: Sequence[Any],
-    canonicalize: bool = True,
-) -> Sequence[xc.ArrayImpl]:
-  # Fast path for one argument.
-  if len(args) == 1:
-    arg = args[0]
-    if canonicalize:
-      arg = dtypes.canonicalize_value(arg)
-    return shard_arg_handlers[type(arg)]([arg], shardings, layouts,
-                                         copy_semantics)
-
-  # type(arg) -> (list[indices], list[args], list[shardings], list[layouts],
-  #               list[copy_semantics])
-  batches = collections.defaultdict(lambda: ([], [], [], [], []))  # type: ignore
-  for i, (arg, sharding, layout, cs) in enumerate(
-      safe_zip(args, shardings, layouts, copy_semantics)):
-    if canonicalize:
-      arg = dtypes.canonicalize_value(arg)
-    batch = batches[type(arg)]
-    batch[0].append(i)
-    batch[1].append(arg)
-    batch[2].append(sharding)
-    batch[3].append(layout)
-    batch[4].append(cs)
-
-  # Call `shard_arg_handlers` per batch and build a flat list of arrays returned
-  # from each call in the same order as `args`. Since `batches` is grouped by
-  # types, we cannot simply flatten the results and we have to use the original
-  # indices to put each array back to its original position.
-  results: list[typing.Array | None] = [None] * len(args)
-  for t, (indices, a, s, l, xcs) in batches.items():
-    outs = shard_arg_handlers[t](a, s, l, xcs)
-    for i, out in safe_zip(indices, outs):
-      results[i] = out
-  assert all(result is not None for result in results)
-  return results
-
-
-shard_arg_handlers: dict[
-    Any,
-    Callable[
-      [Sequence[Any], Sequence[Any], Sequence[Any],
-       Sequence[xc.ArrayCopySemantics]],
-      Sequence[Any],
-    ],
-] = {}
 
 
 @util.cache(max_size=2048, trace_context_in_key=False)
@@ -187,62 +134,6 @@ def is_default_layout(curr_layout, sharding, aval):
       return True
     else:
       raise
-
-
-def _masked_array_error(xs, shardings, layouts, copy_semantics):
-  raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
-                   "Use arr.filled() to convert the value to a standard numpy array.")
-shard_arg_handlers[np.ma.MaskedArray] = _masked_array_error
-
-def _shard_np_array(xs, shardings, layouts, copy_semantics):
-  results = []
-  for x, sharding, layout in safe_zip(xs, shardings, layouts):
-    devices = sharding._addressable_device_assignment
-    if x.dtype == dtypes.float0:
-      x = np.zeros(x.shape, dtype=np.dtype(bool))
-    aval = core.shaped_abstractify(x)
-    if layout is not None:
-      results.append(api.device_put(x, Format(layout, sharding)))
-    else:
-      if sharding.is_fully_replicated:
-        shards = [x] * len(devices)
-      else:
-        indices = tuple(sharding.addressable_devices_indices_map(x.shape).values())
-        shards = [x[i] for i in indices]
-      results.append(batched_device_put(aval, sharding, shards, devices))
-  return results
-for _t in array_types:
-  shard_arg_handlers[_t] = _shard_np_array
-
-def _shard_python_scalar(xs, shardings, layouts, copy_semantics):
-  return shard_args(shardings, layouts, copy_semantics,
-                    [np.array(x) for x in xs])
-for _t in dtypes.python_scalar_types:
-  shard_arg_handlers[_t] = _shard_python_scalar
-
-def _shard_darray(xs, shardings, layouts, copy_semantics):
-  return shard_args(shardings, layouts, copy_semantics, [x._data for x in xs])
-shard_arg_handlers[core.DArray] = _shard_darray
-
-def _shard_mutable_array(xs, shardings, layouts, copy_semantics):
-  return shard_args(shardings, layouts, copy_semantics, [x._buf for x in xs])
-shard_arg_handlers[core.MutableArray] = _shard_mutable_array
-
-def batched_device_put(aval: core.ShapedArray,
-                       sharding: JSharding, xs: Sequence[Any],
-                       devices: Sequence[xc.Device], committed: bool = True):
-  util.test_event("batched_device_put_start")
-  try:
-    bufs = [x for x, d in safe_zip(xs, devices)
-            if (isinstance(x, array.ArrayImpl) and
-                dispatch.is_single_device_sharding(x.sharding) and
-                x.devices() == {d})]
-    if len(bufs) == len(xs) > 0:
-      return array.ArrayImpl(
-          aval, sharding, bufs, committed=committed, _skip_checks=True)
-    return xc.batched_device_put(aval, sharding, xs, list(devices), committed)
-  finally:
-    util.test_event("batched_device_put_end")
 
 def _shard_aval(size, axis: int, aval):
   try:
@@ -1224,7 +1115,7 @@ class InputsHandler:
   def __init__(self, in_shardings, in_layouts, local_devices=None,
                input_indices=None):
     self.handler = partial(
-        shard_args, in_shardings, in_layouts,
+        device_put.shard_args, in_shardings, in_layouts,
         [xc.ArrayCopySemantics.REUSE_INPUT] * len(in_shardings))
     self.in_shardings = in_shardings
     self.in_layouts = in_layouts
@@ -2014,7 +1905,7 @@ def _create_device_list(
 def jaxpr_transfer_mem_kinds(jaxpr: core.Jaxpr):
   out = []  # type: ignore
   for eqn in jaxpr.eqns:
-    if eqn.primitive is dispatch.device_put_p:
+    if eqn.primitive is device_put.device_put_p:
       out.extend(d for d in eqn.params['devices']
                  if isinstance(d, core.MemorySpace))
   for subjaxpr in core.subjaxprs(jaxpr):
@@ -3296,8 +3187,8 @@ class MeshExecutable(stages.Executable):
         JitGlobalCppCacheKeys(), tree_util.dispatch_registry, cc_shard_arg)
 
 def cc_shard_arg(x, sharding, layout):
-  return shard_args([sharding], [layout], [xc.ArrayCopySemantics.REUSE_INPUT],
-                    [x])[0]
+  return device_put.shard_args(
+      [sharding], [layout], [xc.ArrayCopySemantics.REUSE_INPUT], [x])[0]
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,
