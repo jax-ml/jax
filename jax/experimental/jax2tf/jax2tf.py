@@ -120,9 +120,6 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def _get_current_name_stack() -> NameStack | str:
-  return source_info_util.current_name_stack()
-
 @contextlib.contextmanager
 def inside_call_tf():
   # Set the inside_call_tf flag for a context.
@@ -800,12 +797,6 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
       if do_memoize:
         _thread_local_state.constant_cache[const_key] = (val, tf_val)
     return tf_val, jax_dtype
-
-
-def _maybe_cast_to_int64(x: TfVal) -> TfVal:
-  if x.dtype != tf.int32 and x.dtype != tf.int64:
-    return tf.cast(x, tf.int64)
-  return x
 
 
 PartitionsOrReplicated = Union[tuple[int, ...], None]

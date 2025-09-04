@@ -77,17 +77,6 @@ def _expect(*, current, best):
 def _bounds(e: shape_poly.DimSize) -> tuple[float, float]:
   return shape_poly._bounds_decision(e, shape_poly.BoundsPrecision.BEST)
 
-def _assert_equal_bounds(tst: jtu.JaxTestCase,
-                         e: shape_poly.DimSize,
-                         bounds: tuple[float, float]):
-  if isinstance(e, shape_poly._DimExpr):
-    scope = e.scope
-  else:
-    scope = shape_poly.SymbolicScope()
-  decision = shape_poly._make_decision_state(scope)
-  found_bounds = decision.bounds(e)
-  tst.assertEqual(bounds, found_bounds)
-
 def _start_profile(tst: jtu.JaxTestCase):
   tst.prof = None
   if os.getenv("JAX_PROFILE_TEST", False):

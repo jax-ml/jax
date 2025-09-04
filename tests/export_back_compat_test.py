@@ -73,15 +73,8 @@ from jax.sharding import NamedSharding as NS
 
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import cuda_versions
 
 config.parse_flags_with_absl()
-
-
-def _is_required_cusolver_version_satisfied(required_version):
-  if cuda_versions is None:
-    return False
-  return cuda_versions.cusolver_get_version() >= required_version
 
 
 @jtu.with_config(jax_legacy_prng_key="allow",
