@@ -442,7 +442,7 @@ def _pointwise_op_equation_system(
     op: ir.OpView,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   del ctx
-  all_operands_and_results = operands_and_results(op)
+  all_operands_and_results = vector_operands_and_results(op)
   variable = eqns.Variable(all_operands_and_results[0])
   return eqns.EquationSystem(), {variable: all_operands_and_results}, []
 
@@ -629,7 +629,7 @@ def _while_equation_system(
 
   operand_or_results_for_variable: OperandOrResultsForVariable = {}
 
-  for operand_or_result in operands_and_results(op):
+  for operand_or_result in vector_operands_and_results(op):
     match operand_or_result.type:
       case VariableType.OPERAND:
         yield_operand = OperandOrResult(
@@ -661,7 +661,7 @@ def _index_switch_equation_system(
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   del ctx
   operand_or_results_for_variable: OperandOrResultsForVariable = {
-      eqns.Variable(o): [o] for o in operands_and_results(op)
+      eqns.Variable(o): [o] for o in vector_operands_and_results(op)
   }
   for region in op.regions:
     [block] = region.blocks
@@ -699,7 +699,7 @@ def _wgmma_equation_system(
     op: mgpu.WGMMAOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   del ctx
-  operands_or_results = operands_and_results(op)
+  operands_or_results = vector_operands_and_results(op)
   variable = eqns.Variable(operands_or_results[0])
   system = eqns.EquationSystem(
       assignments={variable: eqns.RegisterLayout(fa.WGMMA_LAYOUT)}
@@ -1117,8 +1117,8 @@ def assign_layouts(
       op.attributes["out_tmem_layouts"] = ir.ArrayAttr.get(attrs)
 
 
-def operands_and_results(op: ir.OpView) -> list[OperandOrResult]:
-  """Returns all the operands and results for the given op."""
+def vector_operands_and_results(op: ir.OpView) -> list[OperandOrResult]:
+  """Returns all the vector operands and results for the given op."""
   operands_or_results = [
       OperandOrResult(op, VariableType.OPERAND, i)
       for i, o in enumerate(op.operands)

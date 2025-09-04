@@ -659,7 +659,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
 
-    [key] = layout_inference.operands_and_results(x)
+    [key] = layout_inference.vector_operands_and_results(x)
     variable = eqns.Variable(key)
     assignments = layout_inference.find_assignments_for(
         {variable},
@@ -677,8 +677,8 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       ty = ir.VectorType.get((32, 4), ir.BF16Type.get())
       op0, op1 = [llvm.mlir_undef(ty).owner.opview for _ in range(2)]
-    [kv0] = layout_inference.operands_and_results(op0)
-    [kv1] = layout_inference.operands_and_results(op1)
+    [kv0] = layout_inference.vector_operands_and_results(op0)
+    [kv1] = layout_inference.vector_operands_and_results(op1)
     v0, v1 = eqns.Variable(kv0), eqns.Variable(kv1)
     splat_layout = RL(mgpu.WGSplatFragLayout((3, 128)))
     assignments = layout_inference.find_assignments_for(
