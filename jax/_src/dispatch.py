@@ -145,7 +145,11 @@ class RuntimeTokenSet(threading.local):
     # We only use replicated sharding for the first time when the token for the
     # order effect hasn't been created.
     s = GSPMDSharding.get_replicated(devices)
-    sharded_tok = core.Token(pxla.shard_args([s], [None], [None], [tok])[0])
+    sharded_tok = core.Token(
+        pxla.shard_args(
+            [s], [None], [xc.ArrayCopySemantics.REUSE_INPUT], [tok]
+        )[0]
+    )
     self.current_tokens[eff] = sharded_tok
     return sharded_tok
 

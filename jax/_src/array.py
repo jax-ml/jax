@@ -1188,7 +1188,8 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
     # Look up all buffers that contain the correct slice of the logical array.
     candidates_list = candidates[hashed_index(idx)]
     if not candidates_list:
-      return pxla.shard_args([sharding], [None], [None], [x._value],
+      return pxla.shard_args([sharding], [None],
+                             [xc.ArrayCopySemantics.REUSE_INPUT], [x._value],
                              canonicalize=False)[0]
     # Try to find a candidate buffer already on the correct device,
     # otherwise copy one of them.

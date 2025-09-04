@@ -114,7 +114,7 @@ def identity(x): return x
 def shard_args(
     shardings: Sequence[JSharding],
     layouts: Sequence[Any | None],
-    copy_semantics: Sequence[xc.ArrayCopySemantics | None],
+    copy_semantics: Sequence[xc.ArrayCopySemantics],
     args: Sequence[Any],
     canonicalize: bool = True,
 ) -> Sequence[xc.ArrayImpl]:
@@ -123,16 +123,14 @@ def shard_args(
     arg = args[0]
     if canonicalize:
       arg = dtypes.canonicalize_value(arg)
-    cs = copy_semantics[0]
-    cs = xc.ArrayCopySemantics.REUSE_INPUT if cs is None else cs
-    return shard_arg_handlers[type(arg)]([arg], shardings, layouts, [cs])
+    return shard_arg_handlers[type(arg)]([arg], shardings, layouts,
+                                         copy_semantics)
 
   # type(arg) -> (list[indices], list[args], list[shardings], list[layouts],
   #               list[copy_semantics])
   batches = collections.defaultdict(lambda: ([], [], [], [], []))  # type: ignore
   for i, (arg, sharding, layout, cs) in enumerate(
       safe_zip(args, shardings, layouts, copy_semantics)):
-    cs = xc.ArrayCopySemantics.REUSE_INPUT if cs is None else cs
     if canonicalize:
       arg = dtypes.canonicalize_value(arg)
     batch = batches[type(arg)]
@@ -1225,8 +1223,9 @@ class InputsHandler:
 
   def __init__(self, in_shardings, in_layouts, local_devices=None,
                input_indices=None):
-    self.handler = partial(shard_args, in_shardings, in_layouts,
-                           [None] * len(in_shardings))
+    self.handler = partial(
+        shard_args, in_shardings, in_layouts,
+        [xc.ArrayCopySemantics.REUSE_INPUT] * len(in_shardings))
     self.in_shardings = in_shardings
     self.in_layouts = in_layouts
     self.local_devices = local_devices
@@ -3297,7 +3296,8 @@ class MeshExecutable(stages.Executable):
         JitGlobalCppCacheKeys(), tree_util.dispatch_registry, cc_shard_arg)
 
 def cc_shard_arg(x, sharding, layout):
-  return shard_args([sharding], [layout], [None], [x])[0]
+  return shard_args([sharding], [layout], [xc.ArrayCopySemantics.REUSE_INPUT],
+                    [x])[0]
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,

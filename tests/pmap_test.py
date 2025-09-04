@@ -50,6 +50,7 @@ from jax._src.internal_test_util import lax_test_util
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
 from jax._src.lib import _jax
+from jax._src.lib import xla_client as xc
 from jax._src.util import safe_map, safe_zip
 
 config.parse_flags_with_absl()
@@ -3009,7 +3010,8 @@ class ShardArgsTest(jtu.JaxTestCase):
     x = np.arange(math.prod(shape)).reshape(shape)
     arg = make_arg(x)
     sharding = jax.sharding.PmapSharding(jax.devices()[:nshards], spec)
-    results = pxla.shard_args([sharding], [None], [None], [arg])
+    results = pxla.shard_args([sharding], [None],
+                              [xc.ArrayCopySemantics.REUSE_INPUT], [arg])
     self.assertEqual(len(results), 1)
     if isinstance(results[0], array.ArrayImpl):
       bufs = results[0]._arrays

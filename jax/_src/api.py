@@ -1745,7 +1745,8 @@ def _cpp_pmap(
 
   cpp_mapped_f = pmap_lib.pmap(
       fun, cache_miss, static_broadcasted_tuple,
-      lambda x, s: pxla.shard_args([s], [None], [None], [x])[0],
+      lambda x, s: pxla.shard_args([s], [None],
+                                   [xc.ArrayCopySemantics.REUSE_INPUT], [x])[0],
       pytree_registry=tree_util.default_registry)
   _pmap_cache_clears.add(cpp_mapped_f)
 
