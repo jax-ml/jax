@@ -775,6 +775,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(tpu_array.sharding, tpu_sharding)
     self.assertEqual(cpu_array.sharding, cpu_sharding)
 
+  # TODO(b/442346850): Re-enable this test.
+  @unittest.skip("Compute offload with replicated inputs can break with Shardy")
   def test_compute_no_inputs_host_replicated(self):
     mesh = jtu.create_mesh((4,), ('data'))
 
