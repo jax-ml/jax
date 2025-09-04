@@ -27,6 +27,7 @@ from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import gpu
+from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import vector
 
@@ -289,6 +290,17 @@ def _infer_memref_view_transforms(op: memref.ViewOp) -> OptionalTransforms:
   # TODO(bchetioui): do we actually need to assign a transform to the input of
   # the view op? Presumably, it'll only be used to access scratch memory.
   return None if transforms is None else ([], [transforms])
+
+
+@partial(_add_transform_inference_rule, llvm.UndefOp)
+def _infer_llvm_undef_transforms(op: llvm.UndefOp) -> OptionalTransforms:
+  # This is only needed for tests and will be deleted once we move to SMEM
+  # inference in the new constraint-based system.
+  transforms = _transforms_from_uses(op)
+
+  if transforms is None:
+    return None
+  return [], [transforms]
 
 
 def _get_tile_and_swizzle_transforms(
