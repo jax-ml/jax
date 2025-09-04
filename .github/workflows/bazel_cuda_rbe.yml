@@ -33,6 +33,7 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ matrix.python }}
       JAXCI_ENABLE_X64: ${{ matrix.enable-x_64 }}
       JAXCI_BUILD_JAXLIB: ${{ (matrix.jaxlib-version == 'head' && true) || false }}
+      JAXCI_CUDA_VERSION: ${{ matrix.cuda-version }}
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:
       matrix:
@@ -40,28 +41,25 @@ jobs:
         runner: ["linux-x86-n4-16"]
         jaxlib-version: ["head", "pypi_latest"]
         enable-x_64: [1, 0]
+        cuda-version: ["12", "13"]
         exclude:
             # Exclude x64=1 on the oldest Python and x64=0 on the newest Python. As long as we have
             # coverage for one of each, we don't need to run both.
             - python: "3.11"
               enable-x_64: 1
-              jaxlib-version: "head"
-            - python: "3.11"
-              enable-x_64: 1
-              jaxlib-version: "pypi_latest"
             - python: "3.11"
               enable-x_64: 0
               jaxlib-version: "head"
-            - python: "3.13"
-              enable-x_64: 0
-              jaxlib-version: "head"
-            - python: "3.13"
+            - python: "3.11"
               enable-x_64: 0
               jaxlib-version: "pypi_latest"
+              cuda-version: "13"
+            - python: "3.13"
+              enable-x_64: 0
             - python: "3.13"
               enable-x_64: 1
               jaxlib-version: "pypi_latest"
-    name: "Bazel single accelerator CUDA tests (${{ matrix.runner }}, jaxlib=${{ matrix.jaxlib-version }}, Python ${{ matrix.python }}, x64=${{ matrix.enable-x_64 }})"
+    name: "Bazel single accelerator CUDA tests (${{ matrix.runner }}, CUDA=${{ matrix.cuda-version }}, jaxlib=${{ matrix.jaxlib-version }}, Python ${{ matrix.python }}, x64=${{ matrix.enable-x_64 }})"
 # End Presubmit Naming Check github-cuda-presubmits
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0

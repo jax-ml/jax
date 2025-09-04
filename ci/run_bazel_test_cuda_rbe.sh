@@ -34,10 +34,27 @@ fi
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
 
+# TODO(ybaturina): Remove this once RBE drivers are updated to 580+.
+if [[ "$JAXCI_CUDA_VERSION" == "13" ]]; then
+  additional_flags="--@cuda_driver//:enable_forward_compatibility=true"
+else
+  additional_flags=""
+fi
+
+if [[ "$JAXCI_BUILD_JAXLIB" == "false" ]]; then
+  WHEEL_SIZE_TESTS="//:jax_wheel_size_test"
+else
+  WHEEL_SIZE_TESTS="//jaxlib/tools:jax_cuda_plugin_wheel_size_test \
+      //jaxlib/tools:jax_cuda_pjrt_wheel_size_test \
+      //jaxlib/tools:jaxlib_wheel_size_test \
+      //:jax_wheel_size_test"
+fi
+
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
 echo "Running RBE GPU tests..."
 
-bazel test --config=rbe_linux_x86_64_cuda \
+bazel test --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \
+      $additional_flags \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
@@ -52,7 +69,4 @@ bazel test --config=rbe_linux_x86_64_cuda \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
       //tests:gpu_tests //tests:backend_independent_tests \
       //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests \
-      //jaxlib/tools:jax_cuda_plugin_wheel_size_test \
-      //jaxlib/tools:jax_cuda_pjrt_wheel_size_test \
-      //jaxlib/tools:jaxlib_wheel_size_test \
-      //:jax_wheel_size_test
+      $WHEEL_SIZE_TESTS
