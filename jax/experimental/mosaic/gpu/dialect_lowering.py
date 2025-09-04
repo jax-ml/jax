@@ -1589,15 +1589,6 @@ def _swizzle(attrs: Sequence[ir.Attribute]) -> mgpu.SwizzlingMode:
   return swizzle if swizzle is not None else mgpu.SwizzlingMode.kNoSwizzle
 
 
-def _tmem_ref_to_ir(ref: tcgen05.TMEMRef) -> ir.Value:
-  """Returns an IR value from a TMEMRef."""
-  type = ir.MemRefType.get(ref.shape, ref.dtype, memory_space=mgpu_utils.tmem())
-  cast = builtin.UnrealizedConversionCastOp([type], [ref.address])
-  layout = layouts_lib.to_layout_attr(ref.layout)
-  cast.attributes["layout"] = layout
-  return cast.result
-
-
 def _tmem_ref_from_ir(
     ref: ir.Value, expected_layout: ir.Attribute
 ) -> tcgen05.TMEMRef:
