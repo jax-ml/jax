@@ -933,6 +933,8 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
       return
     if cudnn_version < 90100:
       self.skipTest("Requires >= cuDNN 9.1.0")
+    if cudnn_version == 91000:
+      self.skipTest("cuDNN 9.10.0 does not support SDPA FP8")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Requires at least Hopper arch")
     if jtu.is_cuda_compute_capability_equal("12.0"):
