@@ -253,6 +253,7 @@ def register_custom_call_target(
     capsule: Any,
     platform: str,
     api_version: int = ...,
+    traits: int = ...,
 ) -> _Status: ...
 def register_custom_call_partitioner(
     name: str,
@@ -645,7 +646,7 @@ ArrayImpl = Any
 
 def batched_copy_array_to_devices_with_sharding(
     arrays: Sequence[ArrayImpl],
-    devices: Sequence[list[Device]],
+    devices: Sequence[list[Device] | DeviceList],
     sharding: Sequence[Any],
     array_copy_semantics: Sequence[ArrayCopySemantics],
 ) -> Sequence[ArrayImpl]: ...
