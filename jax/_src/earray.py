@@ -18,10 +18,10 @@ import math
 
 from jax._src import basearray
 from jax._src import core
+from jax._src import device_put
 from jax._src import dtypes
 from jax._src import tree_util
 from jax._src import sharding_impls
-from jax._src.interpreters import pxla
 from jax._src.util import safe_zip, safe_map
 
 map, unsafe_map = safe_map, map
@@ -112,8 +112,8 @@ def _earray_shard_arg_handler(xs, shardings, layouts, copy_semantics):
   phys_shardings = [sharding_impls.physical_sharding(x.aval, sharding)
                     for x, sharding in zip(xs, shardings)]
   # TODO(yashkatariya): `layouts` should be converted to physical layouts.
-  return pxla.shard_args(phys_shardings, layouts, copy_semantics, arrs)
-pxla.shard_arg_handlers[EArray] = _earray_shard_arg_handler
+  return device_put.shard_args(phys_shardings, layouts, copy_semantics, arrs)
+device_put.shard_arg_handlers[EArray] = _earray_shard_arg_handler
 
 core.pytype_aval_mappings[EArray] = lambda x: x.aval
 dtypes.canonicalize_value_handlers[EArray] = lambda x, *, canonicalize_scalar_dtypes: x

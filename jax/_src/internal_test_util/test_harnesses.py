@@ -50,7 +50,7 @@ import numpy as np
 from jax._src import ad_util
 from jax._src import api
 from jax._src import config
-from jax._src import dispatch
+from jax._src import device_put
 from jax._src import dtypes
 from jax._src import lax
 from jax._src import numpy as jnp
@@ -656,9 +656,9 @@ def _make_device_put_harness(name,
   define(
       "device_put",
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_{device=}",
-      lambda x: dispatch.device_put_p.bind(
+      lambda x: device_put.device_put_p.bind(
           x, devices=(_device_fn(),), srcs=(None,),
-          copy_semantics=(dispatch.ArrayCopySemantics.REUSE_INPUT,))[0],
+          copy_semantics=(device_put.ArrayCopySemantics.REUSE_INPUT,))[0],
       [RandArg(shape, dtype)],
       shape=shape,
       dtype=dtype,

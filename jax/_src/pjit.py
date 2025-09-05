@@ -1642,7 +1642,7 @@ def finalize_arg_sharding(arg_s, committed):
       return UNSPECIFIED if isinstance(arg_s, PmapSharding) else arg_s
     else:
       assert isinstance(arg_s, Sharding)
-      if dispatch.is_single_device_sharding(arg_s):
+      if sharding_impls.is_single_device_sharding(arg_s):
         return UNSPECIFIED
       raise NotImplementedError('Having uncommitted Array sharded on '
                                 'multiple devices is not supported.')

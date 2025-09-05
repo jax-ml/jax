@@ -27,9 +27,9 @@ from jax._src import api
 from jax._src import array
 from jax._src import config
 from jax._src import core
-from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
+from jax._src import sharding_impls
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
@@ -557,7 +557,7 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None,
   # dynamic_slice, so we fall back to gather.
   # TODO(yashkatariya): fix dynamic_slice with sharding
   is_sharded = (isinstance(arr, array.ArrayImpl) and
-                not dispatch.is_single_device_sharding(arr.sharding))
+                not sharding_impls.is_single_device_sharding(arr.sharding))
   has_partial_slices = any(idx[i].indices(arr.shape[i]) != (0, arr.shape[i], 1)
                            for i in contiguous_slices)
   if is_sharded and (int_indices or has_partial_slices):

@@ -33,7 +33,7 @@ from absl.testing import parameterized
 
 import jax
 from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
-                 linearize, device_put)
+                 linearize)
 from jax import lax
 import jax.scipy.linalg
 from jax import random
@@ -43,6 +43,7 @@ from jax._src import api as src_api
 from jax._src import array
 from jax._src import core
 from jax._src import config
+from jax._src import device_put
 from jax._src import sharding_impls
 from jax._src import sharding_specs
 from jax._src import test_util as jtu
@@ -836,7 +837,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
     # test that we can pass in a regular Array
-    y = f(device_put(x))
+    y = f(jax.device_put(x))
     self.assertIsInstance(y, array.ArrayImpl)
     self.assertAllClose(y, 2 * x, check_dtypes=False)
 
@@ -3010,8 +3011,8 @@ class ShardArgsTest(jtu.JaxTestCase):
     x = np.arange(math.prod(shape)).reshape(shape)
     arg = make_arg(x)
     sharding = jax.sharding.PmapSharding(jax.devices()[:nshards], spec)
-    results = pxla.shard_args([sharding], [None],
-                              [xc.ArrayCopySemantics.REUSE_INPUT], [arg])
+    results = device_put.shard_args(
+        [sharding], [None], [xc.ArrayCopySemantics.REUSE_INPUT], [arg])
     self.assertEqual(len(results), 1)
     if isinstance(results[0], array.ArrayImpl):
       bufs = results[0]._arrays

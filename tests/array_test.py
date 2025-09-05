@@ -24,8 +24,8 @@ import jax
 import jax.numpy as jnp
 from jax._src import config
 from jax._src import core
-from jax._src import dispatch
 from jax._src import op_shardings
+from jax._src import sharding_impls
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
@@ -76,7 +76,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     arr, global_data = create_array(
         input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes))
     for s in arr.addressable_shards:
-      self.assertTrue(dispatch.is_single_device_sharding(s.data.sharding))
+      self.assertTrue(sharding_impls.is_single_device_sharding(s.data.sharding))
       self.assertArraysEqual(s.data, global_data[s.index])
     self.assertArraysEqual(arr._value, global_data)
     if arr._npy_value is not None:
@@ -246,7 +246,7 @@ class JaxArrayTest(jtu.JaxTestCase):
   def test_jnp_array(self):
     arr = jnp.array([1, 2, 3])
     self.assertIsInstance(arr, array.ArrayImpl)
-    self.assertTrue(dispatch.is_single_device_sharding(arr.sharding))
+    self.assertTrue(sharding_impls.is_single_device_sharding(arr.sharding))
     self.assertEqual(arr._committed, False)
     self.assertFalse(arr.weak_type)
 
@@ -331,7 +331,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     out = jnp.zeros_like(a)
     expected = np.zeros(a.shape, dtype=np.int32)
     self.assertArraysEqual(out, expected)
-    self.assertTrue(dispatch.is_single_device_sharding(out.sharding))
+    self.assertTrue(sharding_impls.is_single_device_sharding(out.sharding))
 
   def test_wrong_num_arrays(self):
     if jax.device_count() < 4:
@@ -802,7 +802,7 @@ class JaxArrayTest(jtu.JaxTestCase):
         inp_shape, jax.sharding.NamedSharding(global_mesh, P()))
     fs = arr._fully_replicated_shard()
     self.assertEqual(fs.shape, inp_shape)
-    self.assertTrue(dispatch.is_single_device_sharding(fs.sharding))
+    self.assertTrue(sharding_impls.is_single_device_sharding(fs.sharding))
     self.assertArraysEqual(fs, inp_data)
     self.assertArraysEqual(arr.addressable_data(0), inp_data)
 

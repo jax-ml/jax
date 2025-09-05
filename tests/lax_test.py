@@ -39,12 +39,12 @@ import jax.util
 from jax.interpreters import batching
 from jax._src import array
 from jax._src import config
+from jax._src import device_put
 from jax._src import dtypes
 from jax._src import lax_reference
 from jax._src import test_util as jtu
 from jax._src.errors import UnexpectedTracerError
 from jax._src.interpreters import mlir
-from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
@@ -3974,7 +3974,7 @@ def shard_foo_array_handler(xs, shardings, layouts, copy_semantics):
   for x, sharding in safe_zip(xs, shardings):
     device, = sharding._addressable_device_assignment
     aval = core.get_aval(x.data)
-    results.append(pxla.batched_device_put(
+    results.append(device_put.batched_device_put(
         aval, jax.sharding.SingleDeviceSharding(device), [x.data], [device]))
   return results
 
@@ -4011,7 +4011,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     core.pytype_aval_mappings[FooArray] = \
         lambda x: core.ShapedArray(x.shape, FooTy(), sharding=None)
     dtypes.canonicalize_value_handlers[FooArray] = lambda x, *, canonicalize_scalar_dtypes: x
-    pxla.shard_arg_handlers[FooArray] = shard_foo_array_handler
+    device_put.shard_arg_handlers[FooArray] = shard_foo_array_handler
     mlir._constant_handlers[FooArray] = foo_array_constant_handler
     mlir.register_lowering(make_p, mlir.lower_fun(make_lowering, False))
     mlir.register_lowering(bake_p, mlir.lower_fun(bake_lowering, False))

@@ -49,6 +49,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import array
 from jax._src import basearray
+from jax._src import device_put as _device_put
 from jax._src import distributed
 from jax._src import dtypes
 from jax._src import sharding_impls
@@ -1745,8 +1746,8 @@ def _cpp_pmap(
 
   cpp_mapped_f = pmap_lib.pmap(
       fun, cache_miss, static_broadcasted_tuple,
-      lambda x, s: pxla.shard_args([s], [None],
-                                   [xc.ArrayCopySemantics.REUSE_INPUT], [x])[0],
+      lambda x, s: _device_put.shard_args(
+          [s], [None], [xc.ArrayCopySemantics.REUSE_INPUT], [x])[0],
       pytree_registry=tree_util.default_registry)
   _pmap_cache_clears.add(cpp_mapped_f)
 
@@ -2729,22 +2730,22 @@ def device_put(
       if m is None:
         m = not d
       if m and not d:
-        copy_semantics.append(dispatch.ArrayCopySemantics.REUSE_INPUT)
+        copy_semantics.append(_device_put.ArrayCopySemantics.REUSE_INPUT)
       elif not m and d:
-        copy_semantics.append(dispatch.ArrayCopySemantics.DONATE_INPUT)
+        copy_semantics.append(_device_put.ArrayCopySemantics.DONATE_INPUT)
       else:
         assert not m and not d
-        copy_semantics.append(dispatch.ArrayCopySemantics.ALWAYS_COPY)
+        copy_semantics.append(_device_put.ArrayCopySemantics.ALWAYS_COPY)
 
     x_avals = tuple(shaped_abstractify(i) for i in x_flat)
     for aval, d in zip(x_avals, device_flat):
       _check_sharding(aval, d)
     if core.trace_state_clean():
-      out_flat = dispatch._batched_device_put_impl(
+      out_flat = _device_put._batched_device_put_impl(
           *x_flat, devices=device_flat, srcs=src_flat,  # type: ignore
           copy_semantics=copy_semantics, x_avals=x_avals)
     else:
-      out_flat = dispatch.device_put_p.bind(
+      out_flat = _device_put.device_put_p.bind(
           *x_flat, devices=tuple(device_flat), srcs=tuple(src_flat),
           copy_semantics=tuple(copy_semantics))
     return tree_unflatten(treedef, out_flat)
@@ -2826,7 +2827,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
         ys.append(x[None])
     else:
       ys = xs
-    return pxla.batched_device_put(stacked_aval, sharding, ys, list(devices))
+    return _device_put.batched_device_put(stacked_aval, sharding, ys, list(devices))
 
 
   with config.explicit_device_put_scope():
@@ -2881,7 +2882,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
     sharding = PmapSharding(np.array(devices), sharding_spec)
     if dtypes.issubdtype(aval.dtype, dtypes.extended):
       return aval.dtype._rules.device_put_replicated(buf, aval, sharding, devices)
-    return pxla.batched_device_put(aval, sharding, [buf] * len(devices), devices)
+    return _device_put.batched_device_put(aval, sharding, [buf] * len(devices), devices)
 
   with config.explicit_device_put_scope():
     return tree_map(_device_put_replicated, x)

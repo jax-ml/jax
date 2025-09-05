@@ -28,6 +28,7 @@ from jax._src import api
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
+from jax._src import device_put
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import linear_util as lu
@@ -1321,7 +1322,7 @@ def _device_put_eager_rule(mesh, *xs, srcs, devices, copy_semantics):
       raise ValueError("device_put with explicit device not allowed within "
                        f"shard_map-decorated functions, but got device {device}")
   return xs
-eager_rules[dispatch.device_put_p] = _device_put_eager_rule
+eager_rules[device_put.device_put_p] = _device_put_eager_rule
 
 
 # Batching

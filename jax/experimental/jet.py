@@ -67,7 +67,7 @@ from jax.tree_util import (register_pytree_node, tree_structure,
 
 from jax._src import ad_util
 from jax._src import core
-from jax._src import dispatch
+from jax._src import device_put
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import sharding_impls
@@ -358,7 +358,7 @@ deflinear(lax.reduce_sum_p)
 deflinear(lax.reduce_window_sum_p)
 deflinear(lax.fft_p)
 deflinear(lax.copy_p)
-deflinear(dispatch.device_put_p)
+deflinear(device_put.device_put_p)
 
 def _dynamic_slice_jet_rule(primals_in, series_in, **params):
   operand, *start_indices = primals_in
