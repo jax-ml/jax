@@ -39,7 +39,6 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import helpers as pallas_helpers
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
@@ -244,9 +243,10 @@ def kernel(
         # fallback if the kernel name is not set explicitly.
         cmap_body.__name__ = getattr(body, "__name__", "anonymous")
       pallas_core.core_map(mesh, compiler_params=compiler_params)(cmap_body)
-    _, outs = state_discharge.run_state(stateful)(
-        (operands, pallas_helpers.empty_like(out_shape, backend="mosaic_gpu"))
-    )
+    _, outs = state_discharge.run_state(stateful)((
+        operands,
+        jax.tree.map(lambda s: jax.lax.empty(s.shape, s.dtype), out_shape),
+    ))
     return outs[0] if unwrap_out else outs
 
   @wrapper.def_vmap
