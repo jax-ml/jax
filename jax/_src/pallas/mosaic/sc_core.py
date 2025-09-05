@@ -15,8 +15,11 @@
 
 from __future__ import annotations
 
+import collections
 from collections.abc import Sequence
 import dataclasses
+import math
+from typing import Any
 
 import jax
 from jax._src import core as jax_core
@@ -25,6 +28,7 @@ from jax._src.lax import lax
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic import core as tpu_core
+import jax.numpy as jnp
 
 
 @dataclasses.dataclass
@@ -271,3 +275,44 @@ def kernel(
     return wrapper
 
   return decorator
+
+
+# TODO(slebedev): Add more dtypes and vector shapes.
+SUPPORTED_VECTOR_SHAPES = collections.defaultdict(list)
+for dtype in [jnp.int32, jnp.uint32, jnp.float32]:
+  SUPPORTED_VECTOR_SHAPES[jnp.dtype(dtype)].extend([
+      # fmt: off
+      (8,), (16,), (32,), (64,),
+      (1, 8), (1, 16),
+      (2, 8), (2, 16),
+      (4, 8), (4, 16),
+      # fmt: on
+  ])
+for dtype in [jnp.int16, jnp.uint16, jnp.float16, jnp.bfloat16]:
+  SUPPORTED_VECTOR_SHAPES[jnp.dtype(dtype)].extend([
+      # fmt: off
+      (16,), (32,), (64,),
+      (2, 8), (2, 16),
+      # fmt: on
+  ])
+for dtype in [jnp.float16, jnp.bfloat16]:
+  SUPPORTED_VECTOR_SHAPES[jnp.dtype(dtype)].extend([
+      # fmt: off
+      (4, 8), (4, 16),
+      # fmt: on
+  ])
+for dtype in [jnp.int8, jnp.uint8]:
+  SUPPORTED_VECTOR_SHAPES[jnp.dtype(dtype)].extend([
+      # fmt: off
+      (32,), (64,),
+      (4, 8), (4, 16),
+      # fmt: on
+  ])
+
+
+# Make sure all combinations are divisible by the vector register size.
+supported_shapes: list[Any] = []
+for dtype, supported_shapes in SUPPORTED_VECTOR_SHAPES.items():
+  for shape in supported_shapes:
+    assert (math.prod(shape) * dtype.itemsize) % 32 == 0
+del dtype, supported_shapes

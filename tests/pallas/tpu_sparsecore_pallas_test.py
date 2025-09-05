@@ -24,7 +24,6 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic import sc_core
-from jax._src.pallas.mosaic import sc_lowering
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import tpu_sc as plsc
@@ -193,7 +192,7 @@ class VectorSubcoreTest(PallasSCTest):
           out_shape=shape,
           minor_scale=minor_scale,
       )
-      for dtype, shapes in sc_lowering._SUPPORTED_VECTOR_SHAPES.items()
+      for dtype, shapes in sc_core.SUPPORTED_VECTOR_SHAPES.items()
       for shape in shapes
       for minor_scale in [1, 2, 4]
   ))

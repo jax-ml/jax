@@ -13,11 +13,9 @@
 # limitations under the License.
 """Lowering for Pallas TPU SparseCore."""
 
-import collections
 from collections.abc import Sequence
 import dataclasses
 import functools
-import math
 from typing import NoReturn, cast
 
 import jax
@@ -399,50 +397,12 @@ def _store_lowering_rule(
   return old_val
 
 
-# TODO(slebedev): Add more dtypes and vector shapes.
-_SUPPORTED_VECTOR_SHAPES = collections.defaultdict(list)
-for dtype in [jnp.int32, jnp.uint32, jnp.float32]:
-  _SUPPORTED_VECTOR_SHAPES[jnp.dtype(dtype)].extend([
-      # fmt: off
-      (8,), (16,), (32,), (64,),
-      (1, 8), (1, 16),
-      (2, 8), (2, 16),
-      (4, 8), (4, 16),
-      # fmt: on
-  ])
-for dtype in [jnp.int16, jnp.uint16, jnp.float16, jnp.bfloat16]:
-  _SUPPORTED_VECTOR_SHAPES[jnp.dtype(dtype)].extend([
-      # fmt: off
-      (16,), (32,), (64,),
-      (2, 8), (2, 16),
-      # fmt: on
-  ])
-for dtype in [jnp.float16, jnp.bfloat16]:
-  _SUPPORTED_VECTOR_SHAPES[jnp.dtype(dtype)].extend([
-      # fmt: off
-      (4, 8), (4, 16),
-      # fmt: on
-  ])
-for dtype in [jnp.int8, jnp.uint8]:
-  _SUPPORTED_VECTOR_SHAPES[jnp.dtype(dtype)].extend([
-      # fmt: off
-      (32,), (64,),
-      (4, 8), (4, 16),
-      # fmt: on
-  ])
-
-
-# Make sure all combinations are divisible by the vector register size.
-for dtype, supported_shapes in _SUPPORTED_VECTOR_SHAPES.items():
-  for shape in supported_shapes:
-    assert (math.prod(shape) * dtype.itemsize) % 32 == 0
-del dtype, supported_shapes
-
-
 def _check_aval_is_supported(caller: str, aval: jax_core.ShapedArray) -> None:
-  if aval.shape in _SUPPORTED_VECTOR_SHAPES.get(aval.dtype, []):
+  if aval.shape in sc_core.SUPPORTED_VECTOR_SHAPES.get(aval.dtype, []):
     return
-  supported_shapes = ", ".join(map(repr, _SUPPORTED_VECTOR_SHAPES[aval.dtype]))
+  supported_shapes = ", ".join(
+      map(repr, sc_core.SUPPORTED_VECTOR_SHAPES[aval.dtype])
+  )
   if not supported_shapes:
     raise NotImplementedError(f"{caller} does not support {aval.dtype} arrays")
   else:
