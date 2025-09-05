@@ -33,7 +33,6 @@ from jax._src import checkify
 from jax._src import shard_map
 from jax._src import state
 from jax._src import test_util as jtu
-from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import _jax
 from jax._src.state import discharge as state_discharge
@@ -195,7 +194,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     def body(s_ref, o_ref):
       o_ref[...] = jnp.broadcast_to(s_ref[index], o_ref.shape)
 
-    if is_cloud_tpu_older_than(2025, 8, 21):
+    if not jtu.if_cloud_tpu_at_least(2025, 8, 21):
       self.skipTest("Feature will land by 2025-08-21")
 
     s = jnp.arange(16 * 128, dtype=dtype)
@@ -1970,7 +1969,7 @@ class PallasCallTest(PallasBaseTest):
     if (
         dty == jnp.int32
         and 1 in reduced_dims
-        and is_cloud_tpu_older_than(2025, 9, 1)
+        and not jtu.if_cloud_tpu_at_least(2025, 9, 1)
     ):
       self.skipTest('Requires libtpu built after 2025-09-01')
     if not jtu.is_device_tpu_at_least(4) and len(replicated) == 2:
@@ -2173,7 +2172,7 @@ class PallasCallTest(PallasBaseTest):
     elif (
         in_dtype == jnp.int8
         and out_dtype == jnp.int16
-        and is_cloud_tpu_older_than(2025, 9, 10)
+        and not jtu.if_cloud_tpu_at_least(2025, 9, 10)
     ):
       self.skipTest('i8 -> i16 casting support was added on Sep 10, 2025')
     elif in_dtype == jnp.int16 and out_dtype == jnp.int8:
