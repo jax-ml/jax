@@ -662,6 +662,7 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
     mosaic::gpu::NvshmemApi::Default().barrier_all_on_stream(
         reinterpret_cast<cudaStream_t>(stream));
   }
+  tsl::profiler::TraceMe trace("MosaicGpuLaunchKernel");
   std::get<1>(ctx_kernel_comm)(args);
 }
 
@@ -724,6 +725,7 @@ absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
     mosaic::gpu::NvshmemApi::Default().barrier_all_on_stream(
         reinterpret_cast<cudaStream_t>(stream));
   }
+  tsl::profiler::TraceMe trace("MosaicGpuLaunchKernel");
   std::get<1>(ctx_kernel_comm)(args);
   return absl::OkStatus();
 }

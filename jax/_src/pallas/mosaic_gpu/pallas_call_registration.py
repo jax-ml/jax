@@ -120,24 +120,33 @@ def pallas_call_lowering(
   )
   if (prof_spec := lowering_result.profiler_spec) is not None:
     *outs, prof_buffer = outs
-    out_file = os.path.join(
-        prof_spec.dump_path,
-        f"{mlir.sanitize_name(debug_info.func_name)}-{time.time_ns()}-trace.json",
-    )
     def dump_profile(prof_buffer):
-      try:
-        with open(out_file, "x") as f:
-          prof_spec.dump(
-              prof_buffer,
-              f,
-              grid=lowering_result.grid,
-              block=lowering_result.block,
-          )
-      except FileExistsError:
-        warnings.warn(
-            f"Failed to dump profile for pallas_call {debug_info.func_src_info}, "
-            f"profile already exists at {out_file}"
+      if prof_spec.dump_path is None:
+        prof_spec.dump(
+            prof_buffer,
+            None,
+            grid=lowering_result.grid,
+            block=lowering_result.block,
         )
+      else:
+        out_file = os.path.join(
+            prof_spec.dump_path,
+            f"{mlir.sanitize_name(debug_info.func_name)}-{time.time_ns()}-trace.json",
+        )
+        try:
+          with open(out_file, "x") as f:
+            prof_spec.dump(
+                prof_buffer,
+                f,
+                grid=lowering_result.grid,
+                block=lowering_result.block,
+            )
+        except FileExistsError:
+          warnings.warn(
+              "Failed to dump profile for pallas_call"
+              f" {debug_info.func_src_info}, profile already exists at"
+              f" {out_file}"
+          )
     def do_callback(prof_buffer):
       jax.debug.callback(dump_profile, prof_buffer)
       return ()
