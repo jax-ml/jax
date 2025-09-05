@@ -266,6 +266,10 @@ class ProfilerTest(unittest.TestCase):
   @jtu.run_on_devices("gpu")
   @jtu.thread_unsafe_test()
   def testProgrammaticGpuCuptiTracingWithPmSampling(self):
+    uid = os.geteuid()
+    user = os.getenv('USER', 'Not Set')
+    print(f"Inside test_check_user: UID={uid}, USER={user}")
+
     if not (jtu.is_cuda_compute_capability_equal("9.0")):
       self.skipTest("Only works on GPU with capability sm90")
 
@@ -283,10 +287,7 @@ class ProfilerTest(unittest.TestCase):
       tmpdir = pathlib.Path(tmpdir_string)
       options = jax.profiler.ProfileOptions()
       options.advanced_configuration = {
-          "gpu_pm_sample_counters": (
-              "sm__cycles_active.avg.pct_of_peak_sustained_elapsed,"
-              "dramc__read_throughput.avg.pct_of_peak_sustained_elapsed"
-          ),
+          "gpu_pm_sample_counters": "sm__cycles_active.sum",
           "gpu_pm_sample_interval_us": 100,
       }
       with jax.profiler.trace(tmpdir, profiler_options=options):
@@ -296,13 +297,9 @@ class ProfilerTest(unittest.TestCase):
       proto_bytes = proto_path[0].read_bytes()
       self.assertIn(b"/device:GPU", proto_bytes)
       # TODO(jiyaz): Fix OSS and reenable those assertions
-      # self.assertIn(
-      #     b"sm__cycles_active.avg.pct_of_peak_sustained_elapsed", proto_bytes
-      # )
-      # self.assertIn(
-      #     b"dramc__read_throughput.avg.pct_of_peak_sustained_elapsed",
-      #     proto_bytes,
-      # )
+      self.assertIn(
+          b"sm__cycles_active.sum", proto_bytes
+      )
 
   def testProgrammaticProfilingContextManagerPathlib(self):
     with tempfile.TemporaryDirectory() as tmpdir_string:

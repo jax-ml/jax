@@ -114,6 +114,57 @@ jobs:
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Configure NVIDIA Driver for Profiling Access
+        run: |
+          echo "Attempting to allow GPU performance counter access for any user..."
+
+          # Update package list and install kmod
+          echo "Installing kmod package to provide modprobe..."
+          if ! command -v modprobe &> /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y kmod
+            if [ $? -ne 0 ]; then
+                echo "ERROR: Failed to install kmod. modprobe will not be available."
+                exit 1 # Exit if kmod installation fails, as subsequent commands depend on it
+            fi
+            echo "kmod installed successfully."
+          else
+            echo "modprobe is already available."
+          fi
+
+          # This requires the container to be run with --privileged
+          echo "Attempting to set NVreg_RestrictProfilingToAdminUsers=0..."
+          if sudo modprobe nvidia NVreg_RestrictProfilingToAdminUsers=0; then
+            echo "Successfully set NVreg_RestrictProfilingToAdminUsers=0."
+          else
+            echo "Failed to set NVreg_RestrictProfilingToAdminUsers=0 directly. Attempting to unload/reload modules..."
+            # Unload NVIDIA modules
+            if sudo modprobe -rf nvidia_uvm nvidia_drm nvidia_modeset nvidia-vgpu-vfio nvidia; then
+              echo "Successfully unloaded NVIDIA modules."
+            else
+                echo "Warning: Failed to unload NVIDIA modules. Continuing..."
+            fi
+
+            # Reload nvidia module with the desired option
+            if sudo modprobe nvidia NVreg_RestrictProfilingToAdminUsers=0; then
+              echo "Successfully loaded NVIDIA module with NVreg_RestrictProfilingToAdminUsers=0."
+            else
+              echo "ERROR: Failed to load NVIDIA module with NVreg_RestrictProfilingToAdminUsers=0. Profiling may not be fully available."
+            fi
+          fi
+
+          echo "Verifying NVIDIA driver parameters..."
+          if [ -f /sys/module/nvidia/parameters/NVreg_RestrictProfilingToAdminUsers ]; then
+            echo -n "NVreg_RestrictProfilingToAdminUsers value: "
+            cat /sys/module/nvidia/parameters/NVreg_RestrictProfilingToAdminUsers
+          elif [ -f /proc/driver/nvidia/params ]; then
+             echo "Checking /proc/driver/nvidia/params..."
+             grep RestrictProfilingToAdminUsers /proc/driver/nvidia/params || echo "RestrictProfilingToAdminUsers parameter not found in /proc/driver/nvidia/params."
+          else
+            echo "Warning: Neither /sys/module/nvidia/parameters/NVreg_RestrictProfilingToAdminUsers nor /proc/driver/nvidia/params found. Cannot verify setting."
+          fi
+        shell: bash
+
       - name: Run Bazel multiple H100 CUDA Tests
         run: |
             nvidia-smi
