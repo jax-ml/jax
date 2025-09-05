@@ -25,10 +25,13 @@ limitations under the License.
 #include "absl/cleanup/cleanup.h"
 #include "absl/strings/str_cat.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/tuple.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
+#include "xla/backends/profiler/gpu/cupti_collector.h"
+#include "xla/backends/profiler/gpu/cupti_tracer.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 
@@ -37,6 +40,14 @@ namespace {
 
 namespace ffi = xla::ffi;
 namespace nb = nanobind;
+
+using xla::profiler::CuptiTraceCollector;
+using xla::profiler::CuptiPmSamplerOptions;
+using xla::profiler::CuptiTracer;
+using xla::profiler::CuptiTracerCollectorOptions;
+using xla::profiler::CuptiTracerOptions;
+using xla::profiler::PmSamples;
+using xla::profiler::SamplerRange;
 
 static std::string ToString(CUresult result) {
   const char* error_name;
@@ -153,7 +164,23 @@ XLA_FFI_Error* EventElapsed(XLA_FFI_CallFrame* call_frame) {
 struct {
   CUpti_SubscriberHandle subscriber;
   std::vector<std::tuple<const char* /*kernel_name*/, double /*ms*/>> timings;
+
+  // For metric collection
+  std::unique_ptr<CuptiTraceCollector> collector;
+  std::vector<std::pair<std::string, uint64_t>> raw_metric_results;
 } profiler_state;
+
+void HandlePmSamples(PmSamples* samples) {
+  const std::vector<std::string>& metrics = samples->GetMetrics();
+  const std::vector<SamplerRange>& sampler_ranges = samples->GetSamplerRanges();
+  for (int i = 0; i < metrics.size(); ++i) {
+    uint64_t value = 0;
+    for (const auto& range : sampler_ranges) {
+      value += range.metric_values[i];
+    }
+    profiler_state.raw_metric_results.emplace_back(metrics[i], value);
+  }
+}
 
 void callback_request(uint8_t** buffer, size_t* size, size_t* maxNumRecords) {
   // 10 MiB buffer size is generous but somewhat arbitrary, it's at the upper
@@ -262,6 +289,50 @@ NB_MODULE(_mosaic_gpu_ext, m) {
         return profiler_state.timings;
       },
       nb::arg("finalize") = true);
+  m.def(
+      "start_metrics",
+      [](const std::vector<std::string>& metrics) {
+        CuptiTracer* tracer = CuptiTracer::GetCuptiTracerSingleton();
+        THROW_IF(!tracer->IsAvailable(), "Metric profiler is already active.");
+        profiler_state.raw_metric_results.clear();
+
+        CuptiTracerCollectorOptions collector_options;
+        collector_options.num_gpus = CuptiTracer::NumGpus();
+        uint64_t start_walltime_ns = absl::GetCurrentTimeNanos();
+        uint64_t start_gputime_ns = CuptiTracer::GetTimestamp();
+        profiler_state.collector = xla::profiler::CreateCuptiCollector(
+            collector_options, start_walltime_ns, start_gputime_ns);
+
+        CuptiPmSamplerOptions sampler_options;
+        sampler_options.enable = true;
+        sampler_options.metrics = metrics;
+        sampler_options.process_samples = HandlePmSamples;
+
+        CuptiTracerOptions tracer_options;
+        tracer_options.enable_nvtx_tracking = false;
+        tracer_options.pm_sampler_options = sampler_options;
+
+        auto status =
+            tracer->Enable(tracer_options, profiler_state.collector.get());
+        if (absl::IsPermissionDenied(status)) {
+          THROW("Permission denied to enable CUPTI tracer.");
+        } else if (!status.ok()) {
+          THROW("Failed to enable CUPTI tracer: ", status.ToString());
+        }
+      },
+      nb::arg("metrics"));
+  m.def("stop_metrics", []() {
+    CuptiTracer* tracer = CuptiTracer::GetCuptiTracerSingleton();
+    THROW_IF(tracer->IsAvailable(), "Metric profiler is not active.");
+    tracer->Disable();
+    profiler_state.collector.reset();
+    nb::dict results;
+    for (const auto& [name, value] : profiler_state.raw_metric_results) {
+      results[nb::str(name.c_str())] = nb::int_(value);
+    }
+    profiler_state.raw_metric_results.clear();
+    return results;
+  });
 }
 
 }  // namespace
