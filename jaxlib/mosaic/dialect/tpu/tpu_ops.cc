@@ -682,8 +682,11 @@ LogicalResult StridedStoreOp::verify() {
 
 template <typename Op>
 LogicalResult verifyStoreOp(Op op) {
-  VectorType value_ty = op.getValueToStore().getType();
   MemRefType ref_ty = op.getBase().getType();
+  if (!HasMemorySpace(ref_ty, MemorySpace::kVmem)) {
+    return op.emitOpError("Expected base memref to be in VMEM.");
+  }
+  VectorType value_ty = op.getValueToStore().getType();
   if (value_ty.getElementType() != ref_ty.getElementType()) {
     return op.emitOpError(
         "Expected base and valueToStore element type to match");
@@ -715,6 +718,9 @@ LogicalResult VectorStoreOp::verify() {
 template <typename Op>
 LogicalResult verifyLoadOp(Op op) {
   MemRefType ref_ty = op.getBase().getType();
+  if (!HasMemorySpace(ref_ty, MemorySpace::kVmem)) {
+    return op.emitOpError("Expected base memref to be in VMEM.");
+  }
   VectorType value_ty = op.getResult().getType();
   if (value_ty.getElementType() != ref_ty.getElementType()) {
     return op.emitOpError("Expected base and result element type to match.");
@@ -750,9 +756,6 @@ LogicalResult VectorLoadOp::verify() {
 LogicalResult VectorLoadIdxOp::verify() {
   VectorType value_ty = getResult().getType();
   MemRefType ref_ty = getBase().getType();
-  if (!HasMemorySpace(ref_ty, MemorySpace::kVmem)) {
-    return emitOpError("Expected base memref to be in VMEM.");
-  }
   if (llvm::size(getIndices()) != ref_ty.getRank()) {
     return emitOpError(
                "Expected one index vector for each dimension of the base "
@@ -773,9 +776,6 @@ LogicalResult VectorLoadIdxOp::verify() {
 LogicalResult VectorStoreIdxOp::verify() {
   VectorType value_ty = getValueToStore().getType();
   MemRefType ref_ty = getBase().getType();
-  if (!HasMemorySpace(ref_ty, MemorySpace::kVmem)) {
-    return emitOpError("Expected base memref to be in VMEM.");
-  }
   if (llvm::size(getIndices()) != ref_ty.getRank()) {
     return emitOpError(
                "Expected one index vector for each dimension of the base "
