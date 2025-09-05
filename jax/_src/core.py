@@ -631,6 +631,7 @@ class Primitive:
     args = args if self.skip_canonicalization else map(canonicalize_value, args)
     return self._true_bind(*args, **params)
 
+  @traceback_util.repro.true_bind_wrapper
   def _true_bind(self, *args, **params):
     for arg in args:
       if isinstance(arg, Tracer) and not arg._trace.is_valid():

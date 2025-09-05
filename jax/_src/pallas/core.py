@@ -478,8 +478,9 @@ class BlockSpec:
   pipeline_mode: Buffered | None = None
 
   def __post_init__(self):
+    from jax.experimental import repro
     if self.index_map is not None:
-      self.index_map = _IndexMapFunc(self.index_map)
+      self.index_map = _IndexMapFunc(repro.wrap_callable(self.index_map, is_jax=False))
 
   def to_block_mapping(
       self,

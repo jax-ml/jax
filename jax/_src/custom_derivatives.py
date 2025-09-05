@@ -136,6 +136,7 @@ class custom_jvp(Generic[ReturnValue]):
   nondiff_argnums: Sequence[int]
   nondiff_argnames: Sequence[str]
   jvp: Callable[..., tuple[ReturnValue, ReturnValue]] | None = None
+  jvps: Sequence[Callable[..., ReturnValue]] | None = None
   symbolic_zeros: bool = False
 
   def __init__(self,
@@ -245,6 +246,7 @@ class custom_jvp(Generic[ReturnValue]):
     """
     if self.nondiff_argnums:
       raise TypeError("Can't use ``defjvps`` with ``nondiff_argnums``.")
+    self.jvps = jvps if traceback_util.repro_enabled() else None  # type: ignore
 
     def jvp(primals, tangents):
       primal_out = self(*primals)
@@ -256,7 +258,8 @@ class custom_jvp(Generic[ReturnValue]):
 
     self.defjvp(jvp)
 
-  @traceback_util.api_boundary
+  @partial(traceback_util.api_boundary,
+           repro_api_name="jax.custom_jvp.__call__")
   def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
     debug = debug_info("custom_jvp fun", self.fun, args, kwargs,
                        static_argnums=self.nondiff_argnums)
@@ -561,7 +564,6 @@ class custom_vjp(Generic[ReturnValue]):
 
   .. _tutorial: https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
   """
-
   def __init__(self,
                fun: Callable[..., ReturnValue],
                nondiff_argnums: Sequence[int] = (),
@@ -687,7 +689,8 @@ class custom_vjp(Generic[ReturnValue]):
       raise NotImplementedError(
           "remat optimization for custom_vjp does not support symbolic zeros")
 
-  @traceback_util.api_boundary
+  @partial(traceback_util.api_boundary,
+           repro_api_name="jax.custom_vjp.__call__")
   def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
     debug_fun = debug_info("custom_vjp fun", self.fun, args, kwargs,
                            static_argnums=self.nondiff_argnums)
