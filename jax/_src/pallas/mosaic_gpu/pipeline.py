@@ -480,6 +480,17 @@ class PipelinePipeline(enum.IntEnum):
   STOP = 2
 
 
+class WarpSpecializedPipeline(Protocol):
+  """Protocol for a warp specialized pipeline."""
+  def __call__(
+      self, *gmem_refs: Any, allocations: Any | None = None,
+  ) -> None:
+    ...
+
+  def get_allocations(self, *gmem_refs: Any) -> Any:
+    ...
+
+
 def emit_pipeline_warp_specialized(
     body: Callable[..., None],
     *,
@@ -494,7 +505,7 @@ def emit_pipeline_warp_specialized(
     manual_consumed_barriers: bool = False,
     compute_context: ComputeContext | None = None,
     memory_thread_idx: int | None = None,
-):
+) -> WarpSpecializedPipeline:
   """Creates a function to emit a warp-specialized pipeline.
 
   The ``body`` function should have the following signature (without carry).
@@ -979,7 +990,8 @@ def emit_pipeline_warp_specialized(
         compute_block,
         memory_block
     )
-  return pipeline
+  # Mypy doesn't notice the .get_allocations assignment above.
+  return pipeline  # type: ignore
 
 def _compute_registers(
     memory_registers: int,
