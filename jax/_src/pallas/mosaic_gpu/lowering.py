@@ -3442,15 +3442,15 @@ def _semaphore_signal_lowering_rule(
 
 @register_lowering_rule(primitives.semaphore_wait_p, mgpu.LoweringSemantics.Lane)
 def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
-  sem, transforms, value = tree_util.tree_unflatten(args_tree, args)
+  sem, transforms, value, decrement = tree_util.tree_unflatten(args_tree, args)
   sem, transforms = _handle_transforms(ctx, sem, transforms)
   if transforms:
     raise NotImplementedError(
         f"Unhandled transforms for semaphore_wait: {transforms}"
     )
-  i32 = ir.IntegerType.get_signless(32)
-  val = _ir_constant(value, i32)
-  mgpu_utils.SemaphoreRef(mgpu.utils.memref_ptr(sem)).wait(val)
+  mgpu_utils.SemaphoreRef(mgpu.utils.memref_ptr(sem)).wait(
+      _ensure_ir_value(value, jnp.int32), decrement=decrement
+  )
   return ()
 
 

@@ -1148,16 +1148,19 @@ state_discharge.register_discharge_rule(semaphore_signal_p)(
 semaphore_wait_p = jax_core.Primitive('semaphore_wait')
 semaphore_wait_p.multiple_results = True
 
-def semaphore_wait(sem_or_view, dec: int | jax.Array = 1):
+
+def semaphore_wait(
+    sem_or_view, value: int | jax.Array = 1, *, decrement: bool = True
+):
   ref, transforms = _get_ref_and_transforms(sem_or_view)
-  dec = jnp.asarray(dec, dtype=jnp.int32)
-  args = [ref, transforms, dec]
+  value = jnp.asarray(value, dtype=jnp.int32)
+  args = [ref, transforms, value, decrement]
   flat_args, args_tree = tree_util.tree_flatten(args)
   semaphore_wait_p.bind(*flat_args, args_tree=args_tree)
 
 @semaphore_wait_p.def_abstract_eval
 def _semaphore_wait_abstract_eval(*avals, args_tree):
-  sem_aval, sem_transforms_avals, value_aval = tree_util.tree_unflatten(
+  sem_aval, sem_transforms_avals, value_aval, _ = tree_util.tree_unflatten(
       args_tree, avals
   )
   check_sem_avals(sem_aval, sem_transforms_avals, "wait")
@@ -1175,14 +1178,20 @@ def _semaphore_wait_pp_eqn(eqn: jax_core.JaxprEqn,
       sem,
       sem_transforms,
       value,
+      decrement,
   ) = tree_util.tree_unflatten(tree, invars)
-  return pp.concat([
+  parts = [
       pp.text("semaphore_wait"),
+  ]
+  if decrement:
+    parts.append(pp.text("[dec]"))
+  parts += [
       pp.text(" "),
       sp.pp_ref_transforms(context, sem, sem_transforms),
       pp.text(" "),
       pp.text(jax_core.pp_var(value, context)),
-  ])
+  ]
+  return pp.concat(parts)
 jax_core.pp_eqn_rules[semaphore_wait_p] = _semaphore_wait_pp_eqn
 
 def _semaphore_wait_discharge_rule(in_avals,
@@ -1190,12 +1199,15 @@ def _semaphore_wait_discharge_rule(in_avals,
                                      *flat_args,
                                      args_tree):
   del out_avals
-  [ref, transforms, dec] = args_tree.unflatten(flat_args)
+  [ref, transforms, value, decrement] = args_tree.unflatten(flat_args)
   sem_value = _transform_semaphore(ref, transforms, in_avals[0])
-  dec = dec.astype(pallas_core.SEMAPHORE_INTERPRET_DTYPE)
-  _, new_sem_value = state_discharge.transform_swap_array(
-      ref, transforms, sem_value - dec
-  )
+  value = value.astype(pallas_core.SEMAPHORE_INTERPRET_DTYPE)
+  if decrement:
+    _, new_sem_value = state_discharge.transform_swap_array(
+        ref, transforms, sem_value - value
+    )
+  else:
+    new_sem_value = sem_value
   return (new_sem_value,) + (None,) * (len(in_avals) - 1), ()
 state_discharge.register_discharge_rule(semaphore_wait_p)(
     _semaphore_wait_discharge_rule

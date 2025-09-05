@@ -1828,8 +1828,10 @@ def _interpret_jaxpr(
         out = []
 
       elif prim is primitives.semaphore_wait_p:
-        sem, sem_transforms, value = (
+        sem, sem_transforms, value, decrement = (
             jax.tree.unflatten(eqn.params['args_tree'], deferred_invals()))
+        if not decrement:
+          raise NotImplementedError('Non-decrementing wait is not supported.')
         callback.io_callback(
             semaphore_wait,
             (),
