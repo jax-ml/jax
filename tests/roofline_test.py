@@ -1122,6 +1122,44 @@ class RooflineTest(jtu.JaxTestCase):
     self.assertEqual(result.unfused_flops, 0)
     self.assertEqual(result.unfused_hbm_bytes, 0)
 
+  @jtu.parameterized.named_parameters(
+      dict(
+          testcase_name="pure_callback",
+          callback_fn=jax.pure_callback,
+      ),
+      dict(
+          testcase_name="io_callback",
+          callback_fn=jax._src.callback.io_callback,
+      ),
+  )
+  def test_callback_with_output_roofline(self, callback_fn):
+    def _example_callback_function(x):
+      result_shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
+      return callback_fn(example_function, result_shape, x)
+
+    x = jnp.zeros((3, 8), dtype=jnp.float32)
+    out, result = roofline.roofline(_example_callback_function)(x)
+
+    # Bytes accessed is sum of inputs and output.
+    expected_hbm_bytes = (
+        x.dtype.itemsize * x.size + out.dtype.itemsize * out.size
+    )
+    self.assertEqual(result.unfused_hbm_bytes, expected_hbm_bytes)
+    self.assertEqual(result.unfused_flops, 0)
+
+  def test_debug_callback_roofline(self):
+    def _example_debug_callback_function(x):
+      jax.debug.callback(example_function, x)
+      return x
+
+    x = jnp.zeros((3, 8), dtype=jnp.float32)
+    _, result = roofline.roofline(_example_debug_callback_function)(x)
+
+    # Bytes accessed is only the input, as debug.callback does not return a
+    # value.
+    self.assertEqual(result.unfused_hbm_bytes, x.dtype.itemsize * x.size)
+    self.assertEqual(result.unfused_flops, 0)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
