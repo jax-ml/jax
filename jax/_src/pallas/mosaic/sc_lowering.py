@@ -478,7 +478,7 @@ def _debug_print_lowering_rule(
   match args:
     case []:
       tpu.log(inputs=[], tag=fmt)
-    case [arg] if ir.MemRefType.isinstance(arg.type):
+    case [arg] if isinstance(arg.type, ir.MemRefType):
       tpu.log_buffer(arg, ctx.avals_in[0].shape, fmt)  # pytype: disable=attribute-error
     case [arg]:
       tpu.log(inputs=[arg], tag=fmt)
@@ -641,8 +641,7 @@ def _extract_indirect_offsets(
         indexing.NDIndexer(indices=[ir.Value() as offsets, *_]) as indexer
     ] if (
         # fmt: off
-        ir.MemRefType.isinstance(offsets.type) or
-        ir.VectorType.isinstance(offsets.type)
+        isinstance(offsets.type, (ir.MemRefType, ir.VectorType))
     ):  # fmt: on
       shape = indexer.get_indexer_shape()
       if shape != expected_shape:

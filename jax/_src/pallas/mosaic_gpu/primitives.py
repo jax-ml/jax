@@ -2180,7 +2180,7 @@ def _inline_mgpu_discharge(*args, **kwargs):
 
 def _type_check_mgpu_lane_semantics(v, ty):
   match (ty, v):
-    case (RefType(), ir.Value()) if ir.MemRefType.isinstance(v.type):
+    case (RefType(), ir.Value()) if isinstance(v.type, ir.MemRefType):
       pass
     case (ShapeDtypeStruct(), mgpu.FragmentedArray()):
       mlir_dtype = mgpu_utils.dtype_to_ir_type(ty.dtype)
@@ -2204,10 +2204,10 @@ def _type_check_mgpu_lane_semantics(v, ty):
 
 
 def _type_check_mgpu_warpgroup_semantics(v: ir.Value, ty : Any):
-  if isinstance(ty, RefType) and ir.MemRefType.isinstance(v.type):
+  if isinstance(ty, RefType) and isinstance(v.type, ir.MemRefType):
     return
 
-  if isinstance(ty, ShapeDtypeStruct) and ir.VectorType.isinstance(v.type):
+  if isinstance(ty, ShapeDtypeStruct) and isinstance(v.type, ir.VectorType):
     vector_type = ir.VectorType(v.type)
     el_dtype = mgpu_utils.dtype_to_ir_type(ty.dtype)
     if vector_type.element_type != el_dtype:
@@ -2228,7 +2228,7 @@ def _type_check_mgpu_warpgroup_semantics(v: ir.Value, ty : Any):
       )
     return
 
-  if ir.VectorType.isinstance(v.type) and isinstance(
+  if isinstance(v.type, ir.VectorType) and isinstance(
       ty, (Layout, ParameterizedLayout)
   ):
     layout_attr = mgpu_inference_utils.value_layout(v)
@@ -2390,9 +2390,9 @@ def _clone_custom_op_with_extra_args(
   with this function is therefore required to restore the isolation property.
   """
   for arg in extra_args:
-    if ir.MemRefType.isinstance(arg.type) and mgpu_utils.is_smem_ref(arg.type):
+    if isinstance(arg.type, ir.MemRefType) and mgpu_utils.is_smem_ref(arg.type):
       raise ValueError(f"Extra arg {arg} must not be an SMEM ref.")
-    if ir.VectorType.isinstance(arg.type):
+    if isinstance(arg.type, ir.VectorType):
       raise ValueError(f"Extra arg {arg} must not have a vector type.")
 
   new_operands = list(custom_op.operands) + list(extra_args)
@@ -2509,7 +2509,7 @@ def _populate_custom_primitive_op_block(
     in_transforms_it = iter(in_transforms)
     avals_in = ctx.avals_in[:pytree_args.num_leaves]
     for arg, aval in zip(block.arguments, avals_in, strict=True):
-      if ir.MemRefType.isinstance(arg.type):
+      if isinstance(arg.type, ir.MemRefType):
         memref_ty = ir.MemRefType(arg.type)
         if not mgpu_utils.is_smem_ref(memref_ty):
           fn_inputs.append(arg)
@@ -2531,7 +2531,7 @@ def _populate_custom_primitive_op_block(
             [transformed_type], [arg]
         )
         fn_inputs.append(conversion_cast.result)
-      elif ir.VectorType.isinstance(arg.type):
+      elif isinstance(arg.type, ir.VectorType):
         layout_attr = next(in_layouts_it)
         layout = mgpu.layouts.from_layout_attr(layout_attr)
 
@@ -2577,7 +2577,7 @@ def _populate_custom_primitive_op_block(
     for fa, result_ty, out_layout in zip(
         inner_ret, results_ty, out_layouts, strict=True
     ):
-      if not ir.VectorType.isinstance(result_ty):
+      if not isinstance(result_ty, ir.VectorType):
         raise NotImplementedError(
             "Only vector return types from the inline mgpu_fn are supported,"
             f" but got: {result_ty}"
@@ -2675,9 +2675,7 @@ def _inline_mgpu_lowering_rule_wg_semantics(
   else:
     ret = list(custom_op.results)
 
-  is_leaf = lambda x: isinstance(x, ir.Value) and ir.VectorType.isinstance(
-      x.type
-  )
+  is_leaf = lambda x: isinstance(x, ir.Value) and isinstance(x.type, ir.VectorType)
   return _inline_mgpu_flat_results(
       ctx, ret, pytree_ret_ty, flat_ret_ty, is_leaf=is_leaf
   )

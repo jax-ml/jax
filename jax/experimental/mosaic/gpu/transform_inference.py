@@ -92,7 +92,7 @@ def _resolve_transforms(
   for a, b in zip(transforms, other_transforms, strict=True):
     if a == b:
       new_transforms.append(a)
-    elif mgpu.TileTransformAttr.isinstance(a) and mgpu.TileTransformAttr.isinstance(b):
+    elif isinstance(a, mgpu.TileTransformAttr) and isinstance(b, mgpu.TileTransformAttr):
       a = mgpu.TileTransformAttr(a)
       b = mgpu.TileTransformAttr(b)
       if len(a.tiling) != len(b.tiling):
@@ -168,7 +168,7 @@ def infer_wgmma_transforms(op: mgpu.WGMMAOp) -> OptionalTransforms:
   b_transforms, b_swizzle = _infer_transforms_for_mma_ref(
       ir.MemRefType(op.b.type), max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
   )
-  if not ir.MemRefType.isinstance(op.a.type):
+  if not isinstance(op.a.type, ir.MemRefType):
     return [b_transforms], []
 
   a_transforms, a_swizzle = _infer_transforms_for_mma_ref(
@@ -309,8 +309,8 @@ def _get_tile_and_swizzle_transforms(
   if len(transforms) == 2:
     tile_transform, swizzle_transform = transforms
     if not (
-        mgpu.TileTransformAttr.isinstance(tile_transform)
-        and mgpu.SwizzleTransformAttr.isinstance(swizzle_transform)
+        isinstance(tile_transform, mgpu.TileTransformAttr)
+        and isinstance(swizzle_transform, mgpu.SwizzleTransformAttr)
     ):
       raise NotImplementedError(f"Unsupported transforms {transforms}.")
     return tile_transform, swizzle_transform
