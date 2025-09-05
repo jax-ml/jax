@@ -469,8 +469,9 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
   options.squash_64bit_types = !enable_x64;
   options.allow_zero_copy = true;
   xla::ifrt::Device* data_device = nullptr;
-  if (executable.ifrt_loaded_executable()->num_devices() == 1) {
-    data_device = executable.ifrt_loaded_executable()->addressable_devices()[0];
+  if (executable.ifrt_loaded_executable()->num_devices() == 1 &&
+      !addressable_devices.empty()) {
+    data_device = addressable_devices[0];
   }
   int dce_i = 0;
   for (int i = 0; i < num_args; ++i) {
@@ -549,7 +550,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
     DCHECK(ifrt_array != nullptr) << "PyArray has been unexpectedly deleted.";
 
     const auto& ifrt_sharding = ifrt_array->sharding();
-    if (sharding_num_devices == 1 &&
+    if (sharding_num_devices == 1 && !addressable_devices.empty() &&
         ifrt_sharding.devices()->devices().front() != addressable_devices[0]) {
       auto& copy_group = copy_groups[std::make_tuple(
           ifrt_sharding.devices()->devices().front(),
@@ -564,7 +565,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
     keep_alive_objects.push_back(arg);
   }
 
-  if (!copy_groups.empty()) {
+  if (!copy_groups.empty() && !addressable_devices.empty()) {
     xla::ifrt::Client* const ifrt_client =
         executable.ifrt_loaded_executable()->client();
     TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef ifrt_devices,
