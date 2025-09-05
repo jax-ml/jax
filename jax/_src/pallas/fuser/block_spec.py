@@ -38,6 +38,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.fuser import fuser_utils
+from jax._src.pallas.mosaic import primitives as mosaic_primitives
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 import jax.numpy as jnp
@@ -1732,6 +1733,57 @@ def _reduce_sum_eval_rule(
           f' {block_shape=}'
       )
   return jax.lax.reduce_sum(x, axes=axes)
+
+
+@register_pull_block_spec_rule(mosaic_primitives.repeat_p)
+def _repeat_pull_rule(
+    ctx: PullRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    *,
+    repeats: int,
+    axis: int,
+):
+  del repeats
+  in_aval = ctx.avals_in[0]
+  assert isinstance(in_aval, core.ShapedArray)
+  axis = util.canonicalize_axis(axis, in_aval.ndim)
+  in_dim = in_aval.shape[axis]
+  out_block_dim = block_spec.block_shape[axis]
+  if out_block_dim % in_dim != 0:
+    raise NotImplementedError(
+        'The block size on the repeated axis must be a multiple of the input'
+        f' size. Got {in_dim=} {out_block_dim=}.'
+    )
+  def new_index_map(*args):
+    ids = block_spec.index_map(*args)
+    return util.tuple_update(ids, axis, 0)
+  new_block_shape = util.tuple_update(block_spec.block_shape, axis, in_dim)
+  out_block_spec = block_spec.replace(
+      block_shape=new_block_shape, index_map=new_index_map
+  )
+  return [out_block_spec]
+
+
+@register_eval_rule(mosaic_primitives.repeat_p)
+def _repeat_eval_rule(
+    ctx: KernelEvalContext,
+    x,
+    *,
+    repeats: int,
+    axis: int,
+):
+  del repeats
+  axis = util.canonicalize_axis(axis, x.ndim)
+  in_dim = x.shape[axis]
+  out_block_spec = ctx.out_block_specs[0]
+  out_block_dim = out_block_spec.block_shape[axis]
+  if out_block_dim % in_dim != 0:
+    raise NotImplementedError(
+        'The block size on the repeated axis must be a multiple of the input'
+        f' size. Got {in_dim=} {out_block_dim=}.'
+    )
+  repeats_in_block = out_block_dim // in_dim
+  return mosaic_primitives.repeat(x, repeats_in_block, axis)
 
 
 # Higher order primitives
