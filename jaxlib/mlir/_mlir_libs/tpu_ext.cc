@@ -93,6 +93,8 @@ struct nb::detail::type_caster<MlirTpuImplicitDim> {
       value = MlirTpuImplicitDimMinor;
     } else if (src.is(implicit_dim_cls.attr("SECOND_MINOR"))) {
       value = MlirTpuImplicitDimSecondMinor;
+    } else if (src.is(implicit_dim_cls.attr("MINOR_AND_SECOND_MINOR"))) {
+      value = MlirTpuImplicitDimMinorAndSecondMinor;
     } else {
       return false;
     }
@@ -111,6 +113,10 @@ struct nb::detail::type_caster<MlirTpuImplicitDim> {
             .release();
       case MlirTpuImplicitDimSecondMinor:
         return static_cast<nb::object>(implicit_dim_cls.attr("SECOND_MINOR"))
+            .release();
+      case MlirTpuImplicitDimMinorAndSecondMinor:
+        return static_cast<nb::object>(
+                   implicit_dim_cls.attr("MINOR_AND_SECOND_MINOR"))
             .release();
     }
   }

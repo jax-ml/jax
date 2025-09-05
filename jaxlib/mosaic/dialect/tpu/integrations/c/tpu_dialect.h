@@ -50,6 +50,7 @@ typedef enum MlirTpuImplicitDim {
   MlirTpuImplicitDimNone = 0,
   MlirTpuImplicitDimMinor = 1,
   MlirTpuImplicitDimSecondMinor = 2,
+  MlirTpuImplicitDimMinorAndSecondMinor = 3,
 } MlirTpuImplicitDim;
 
 typedef enum MlirTpuDirection {
