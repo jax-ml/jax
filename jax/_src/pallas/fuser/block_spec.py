@@ -73,6 +73,7 @@ class PushRuleContext:
   avals_out: tuple[core.AbstractValue, ...]
 
 
+@functools.partial(core.repro_boundary, api_name="fuser.make_scalar_prefetch_handler")
 def make_scalar_prefetch_handler(*args):
   def scalar_prefetch_getter(*sp_inputs):
     result = sp_inputs
@@ -234,6 +235,7 @@ def _unwrap_block_spec_scalar_prefetch(
   return out_block_spec
 
 
+@functools.partial(core.repro_boundary, api_name="fuser.pull_block_spec")
 def pull_block_spec(
     f: Callable,
     out_block_specs: pallas_core.BlockSpec | tuple[pallas_core.BlockSpec, ...],
@@ -540,6 +542,7 @@ def make_kernel_function(
   return kernel_fn
 
 
+@functools.partial(core.repro_boundary, api_name="fuser.get_fusion_values")
 def get_fusion_values(
     fusion: Callable, *args, **kwargs
 ) -> tuple[Callable, tuple[jax.Array, ...], tuple[jax.Array, ...]]:
@@ -1941,6 +1944,7 @@ def _custom_vjp_call_pull_block_spec_rule(
   return in_block_specs
 
 
+@functools.partial(core.repro_boundary, api_name="fuser.push_block_spec")
 def push_block_spec(
     f: Callable,
     *in_spec_args,

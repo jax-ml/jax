@@ -13,7 +13,8 @@
 # limitations under the License.
 
 """Fusible primitive."""
-from typing import Any
+from functools import partial
+from typing import Any, Callable
 
 import jax
 from jax._src import api_util
@@ -37,7 +38,8 @@ def _make_trivial_fusion(x: jax.Array) -> fusion_lib.Fusion:
   )
 
 
-def fusible(f=None, *, output_fusion_prefix: Any = True):
+@partial(jax_core.repro_boundary, api_name="fuser.fusible")
+def fusible(f: Callable | None = None, *, output_fusion_prefix: Any = True) -> Callable:
   def decorator(f):
     def wrapper(*args):
       def wrapped(*args):

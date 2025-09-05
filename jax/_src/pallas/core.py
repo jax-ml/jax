@@ -479,7 +479,7 @@ class BlockSpec:
 
   def __post_init__(self):
     if self.index_map is not None:
-      self.index_map = _IndexMapFunc(self.index_map)
+      self.index_map = _IndexMapFunc(jax_core.wrap_repro_boundary_callable(self.index_map, is_jax=False))
 
   def to_block_mapping(
       self,
