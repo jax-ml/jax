@@ -1168,12 +1168,12 @@ def custom_gradient(fun):
 
   >>> @jax.custom_gradient
   ... def f(x):
-  ...   return x ** 2, lambda g: (g * x,)
+  ...   return x ** 2, lambda g: (g * 2 * x,)
   ...
   >>> print(f(3.))
   9.0
   >>> print(jax.grad(f)(3.))
-  3.0
+  6.0
 
   An example with a function on two arguments, so that the VJP function must
   return a tuple of length two:
