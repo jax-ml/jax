@@ -689,6 +689,8 @@ class VectorSubcoreTest(PallasSCTest):
       kernel(x)
 
   def test_subcore_parallel(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 9, 10):
+      self.skipTest("Test requires a newer libTPU")
     num_subcores = 16
 
     @plsc.kernel(
