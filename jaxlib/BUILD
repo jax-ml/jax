@@ -14,6 +14,7 @@
 
 # JAX is Autograd and XLA
 
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load(
     "//jaxlib:jax.bzl",
     "cc_proto_library",
