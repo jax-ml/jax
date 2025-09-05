@@ -2245,3 +2245,26 @@ jax_pallas_verbose_errors = bool_flag(
     default=bool_env("JAX_PALLAS_VERBOSE_ERRORS", False),
     help="If True, print verbose error messages for Pallas kernels.",
 )
+
+# DO_NOT_SUBMIT
+test_repros_path = os.path.abspath(os.path.dirname(__file__) + "/../../../repros")
+
+repro_dir = string_flag(
+    name='jax_repro_dir',
+    default=(
+        test_repros_path
+        if os.path.isdir(test_repros_path)
+        else os.getenv("JAX_REPRO_DIR", "")),
+    help=(
+        'Turn on saving of repros. EXPERIMENTAL, expect changes and/or removal.'
+    ),
+)
+
+repro_flags = string_flag(
+    name='jax_repro_flags',
+    default=os.getenv("JAX_REPRO_FLAGS", ""),
+    help=(
+        'Comma-separated flags for repros. '
+        'EXPERIMENTAL, expect changes and/or removal.'
+    ),
+)
