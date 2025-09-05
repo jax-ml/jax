@@ -41,6 +41,7 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lib import _gpu_ondevice_tracing as gpu_ondevice_tracing
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import cf as cf_dialect
@@ -605,7 +606,9 @@ class LoweringResult:
 
 @dataclasses.dataclass(frozen=True)
 class ProfilerContext:
-  dump_path: str
+  dump_path: str | None
+  prof_ver: int
+  injection_instance_id: int
   spec: mgpu_profiler.ProfilerSpec
 
 
@@ -1012,10 +1015,24 @@ def lower_jaxpr_to_module(
     scratch_buffers.append(None)
 
   prof_ctx = prof_spec = None
-  if params.profile_space:
+  prof_ver = (
+      gpu_ondevice_tracing.active_version()
+      if gpu_ondevice_tracing is not None
+      else 0
+  )
+  injection_instance_id = (
+      0
+      if prof_ver == 0 or gpu_ondevice_tracing is None
+      else gpu_ondevice_tracing.start_injection_instance(prof_ver)
+  )
+  if bool(params.profile_space) and (
+      bool(prof_dir := params.profile_dir) or (injection_instance_id > 0)
+  ):
     # Each range is 2 events, each event is 4 bytes.
     prof_spec = mgpu_profiler.ProfilerSpec(params.profile_space * 2 * 4)
-    prof_ctx = ProfilerContext(params.profile_dir, prof_spec)
+    prof_ctx = ProfilerContext(
+        prof_dir, prof_ver, injection_instance_id, prof_spec
+    )
   cuda_grid = tuple(map(operator.mul, parallel_grid, cluster))
 
   scoped_semaphores_shape = []

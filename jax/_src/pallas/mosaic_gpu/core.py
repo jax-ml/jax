@@ -122,9 +122,9 @@ class CompilerParams(pallas_core.CompilerParams):
       object.__setattr__(
           self, "dimension_semantics", tuple(self.dimension_semantics)
       )
-    if bool(self.profile_space) ^ bool(self.profile_dir):
+    if bool(self.profile_dir) and not bool(self.profile_space):
       raise ValueError(
-          "Either both profile_space and profile_dir must be set, or neither."
+          "If profile_dir is set, the profile_space must be set first."
       )
 
 

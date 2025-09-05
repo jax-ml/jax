@@ -13,27 +13,28 @@
 # limitations under the License.
 # ==============================================================================
 
+from collections.abc import Callable
 from collections.abc import Sequence
 import contextlib
 import ctypes
 import dataclasses
 import enum
 import hashlib
+import itertools
 import math
 import os
 import pathlib
 import time
 from typing import Any, Generic, TypeVar
-from collections.abc import Callable
 import weakref
 
-import itertools
 import jax
 from jax._src import dtypes
 from jax._src import lib
 from jax._src import sharding_impls
 from jax._src import util as jax_util
 from jax._src.interpreters import mlir
+from jax._src.lib import _gpu_ondevice_tracing as gpu_ondevice_tracing
 from jax._src.lib import mosaic_gpu_dialect as dialect
 from jaxlib.mlir import ir
 from jaxlib.mlir import passmanager
@@ -890,13 +891,30 @@ def as_gpu_kernel(
       _check_args(*args)
       *results, prof_buffer = bind(*args)
       def dump_profile(prof_buffer):
+        prof_ver = (
+            gpu_ondevice_tracing.active_version()
+            if gpu_ondevice_tracing is not None
+            else 0
+        )
+        injection_instance_id = (
+            0
+            if prof_ver == 0 or gpu_ondevice_tracing is None
+            else gpu_ondevice_tracing.start_injection_instance(prof_ver)
+        )
         out_file = os.path.join(
             os.getenv("TEST_UNDECLARED_OUTPUTS_DIR", "/tmp"),
             f"{time.time_ns()}-trace.json",
         )
         try:
           with open(out_file, "x") as f:
-            prof_spec.dump(prof_buffer, f, grid=grid, block=block)
+            prof_spec.dump(
+                prof_buffer,
+                f,
+                grid=grid,
+                block=block,
+                tracing_version=prof_ver,
+                injection_id=injection_instance_id,
+            )
         except FileExistsError:
           pass  # TODO: Retry
       jax.debug.callback(dump_profile, prof_buffer)

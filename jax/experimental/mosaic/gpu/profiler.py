@@ -23,6 +23,7 @@ import warnings
 
 import jax
 from jax._src import stages
+from jax._src.lib import _gpu_ondevice_tracing as gpu_ondevice_tracing
 from jax._src.lib import xla_client
 import jax.numpy as jnp
 from jaxlib.mlir import ir
@@ -250,7 +251,15 @@ class ProfilerSpec:
       raise RuntimeError("Allocated too many names")
     return name_id
 
-  def dump(self, buffer, f, grid: tuple[int, ...], block: tuple[int, ...]):
+  def dump(
+      self,
+      buffer,
+      f,
+      grid: tuple[int, ...],
+      block: tuple[int, ...],
+      tracing_version: int = 0,
+      injection_id: int = 0,
+  ):
     buffer = np.asarray(buffer)
     num_blocks = math.prod(grid)
     warpgroups_per_block = self._num_warpgroups((), block)
@@ -318,7 +327,35 @@ class ProfilerSpec:
           events.append(block_events)
     events = sorted(events, key=lambda x: x[0]["ts"])
     flat_events = list(itertools.chain.from_iterable(events))
-    return json.dump({"displayTimeUnit": "ns", "traceEvents": flat_events}, f)
+
+    if f is not None:
+      json.dump({"displayTimeUnit": "ns", "traceEvents": flat_events}, f)
+
+    if (
+        tracing_version > 0
+        and injection_id > 0
+        and gpu_ondevice_tracing is not None
+    ):
+      range_dict = {}
+      for event in flat_events:
+        range_key = (event["name"], event["pid"], event["tid"])
+        if event["ph"] == "B":
+          range_dict[range_key] = event["ts"]
+        elif event["ph"] == "E":
+          if range_key in range_dict:
+            begin_ts = range_dict[range_key]
+            range_dict.pop(range_key)
+            gpu_ondevice_tracing.inject(
+                version=tracing_version,
+                injection_instance_id=injection_id,
+                tag_name=event["name"],
+                tag_id=self.interned_names[event["name"]],
+                pid=event["pid"],
+                tid=event["tid"],
+                start_time_ns=int(begin_ts * 1e3),
+                duration_ps=int((event["ts"] - begin_ts) * 1e6),
+            )
+    return
 
 
 class OnDeviceProfiler:
