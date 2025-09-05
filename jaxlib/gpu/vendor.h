@@ -410,8 +410,12 @@ typedef cusolverDnParams_t gpusolverDnParams_t;
 #define gpusolverDnCreateParams cusolverDnCreateParams
 #define gpusolverDnDestroyParams cusolverDnDestroyParams
 
+#define gpusolverGetVersion cusolverGetVersion
+
 #define gpusolverDnXsyevd_bufferSize cusolverDnXsyevd_bufferSize
 #define gpusolverDnXsyevd cusolverDnXsyevd
+#define gpusolverDnXsyevBatched_bufferSize cusolverDnXsyevBatched_bufferSize
+#define gpusolverDnXsyevBatched cusolverDnXsyevBatched
 #define gpusolverDnXgesvd_bufferSize cusolverDnXgesvd_bufferSize
 #define gpusolverDnXgesvd cusolverDnXgesvd
 
