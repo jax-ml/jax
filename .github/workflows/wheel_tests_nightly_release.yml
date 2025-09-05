@@ -8,7 +8,7 @@
 #                     JAX wheels that were built by internal CI jobs and runs Bazel CPU tests.
 # 3. run-pytest-cuda: Calls the `pytest_cuda.yml` workflow which downloads the JAX wheels that were
 #                     built by internal CI jobs and runs CUDA tests.
-# 4. run-bazel-test-cuda: Calls the `bazel_cuda_non_rbe.yml` workflow which downloads the JAX wheels
+# 4. run-bazel-test-cuda: Calls the `bazel_cuda.yml` workflow which downloads the JAX wheels
 #                     that were built by internal CI jobs and runs Bazel CUDA tests.
 # 5. run-pytest-tpu: Calls the `pytest_tpu.yml` workflow which downloads the JAX wheels that were
 #                    built by internal CI jobs and runs TPU tests.
@@ -83,6 +83,7 @@ jobs:
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
       build_jaxlib: "false"
+      build_jax: "false"
 
   run-pytest-cuda:
     uses: ./.github/workflows/pytest_cuda.yml
@@ -136,7 +137,7 @@ jobs:
       halt-for-connection: ${{inputs.halt-for-connection}}
 
   run-bazel-test-cuda:
-    uses: ./.github/workflows/bazel_cuda_non_rbe.yml
+    uses: ./.github/workflows/bazel_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
@@ -155,7 +156,9 @@ jobs:
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
       build_jaxlib: "false"
+      build_jax: "false"
       jaxlib-version: "head"
+      write_to_bazel_remote_cache: 1
 
   run-pytest-tpu:
     uses: ./.github/workflows/pytest_tpu.yml
@@ -248,6 +251,7 @@ jobs:
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
       build_jaxlib: "false"
+      build_jax: "false"
       jaxlib-version: "head"
       clone_main_xla: 0
 

@@ -45,9 +45,16 @@ if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
   bazel_output_base="--output_base=C:\actions-runner\_work\bazel_output_base"
 fi
 
-WHEEL_SIZE_TESTS=""
-if [[ "$JAXCI_BUILD_JAXLIB" == 'true' ]]; then
-    WHEEL_SIZE_TESTS="//jaxlib/tools:jaxlib_wheel_size_test //:jax_wheel_size_test"
+if [[ "$JAXCI_BUILD_JAXLIB" == "false" ]]; then
+  JAXLIB_WHEEL_SIZE_TEST=""
+else
+  JAXLIB_WHEEL_SIZE_TEST="//jaxlib/tools:jaxlib_wheel_size_test"
+fi
+
+if [[ "$JAXCI_BUILD_JAX" == "false" ]]; then
+  JAX_WHEEL_SIZE_TEST=""
+else
+  JAX_WHEEL_SIZE_TEST="//:jax_wheel_size_test"
 fi
 
 if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
@@ -71,13 +78,14 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
               --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
               --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
               --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-              --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
+              --//jax:build_jax=$JAXCI_BUILD_JAX \
               --test_env=JAX_NUM_GENERATED_CASES=25 \
               --test_env=JAX_SKIP_SLOW_TESTS=true \
               --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
               --test_output=errors \
               --color=yes \
-              $WHEEL_SIZE_TESTS \
+              $JAXLIB_WHEEL_SIZE_TEST \
+              $JAX_WHEEL_SIZE_TEST \
               //tests:cpu_tests //tests:backend_independent_tests
       else
           echo "Running RBE CPU tests..."
@@ -86,13 +94,14 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
               --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
               --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
               --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-              --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
+              --//jax:build_jax=$JAXCI_BUILD_JAX \
               --strategy=TestRunner=local \
               --test_env=JAX_SKIP_SLOW_TESTS=true \
               --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
               --test_output=errors \
               --color=yes \
-              $WHEEL_SIZE_TESTS \
+              $JAXLIB_WHEEL_SIZE_TEST \
+              $JAX_WHEEL_SIZE_TEST \
               //tests:cpu_tests //tests:backend_independent_tests
       fi
 else
@@ -102,12 +111,13 @@ else
             --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
             --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
             --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-            --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
+            --//jax:build_jax=$JAXCI_BUILD_JAX \
             --test_env=JAX_NUM_GENERATED_CASES=25 \
             --test_env=JAX_SKIP_SLOW_TESTS=true \
             --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
             --test_output=errors \
             --color=yes \
-            $WHEEL_SIZE_TESTS \
+            $JAXLIB_WHEEL_SIZE_TEST \
+            $JAX_WHEEL_SIZE_TEST \
             //tests:cpu_tests //tests:backend_independent_tests
 fi

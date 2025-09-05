@@ -73,6 +73,11 @@ on:
         required: false
         default: 'false'
         type: string
+      build_jax:
+        description: 'Should jax be built from source?'
+        required: false
+        default: 'false'
+        type: string
 permissions: {}
 jobs:
   run-bazel-tests:
@@ -92,6 +97,7 @@ jobs:
       JAXCI_RUN_FULL_TPU_TEST_SUITE: "${{ inputs.run-full-tpu-test-suite }}"
       JAXCI_TPU_CORES: "${{ inputs.cores }}"
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
+      JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
 
     steps:
