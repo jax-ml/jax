@@ -486,7 +486,9 @@ def _custom_jvp_call_dce(
   @pe._memoize
   def dce_jvp_jaxpr_thunk(*in_zeros):
     jvp_jaxpr, consts, out_zeros = jvp_jaxpr_fun.call_wrapped(*in_zeros)
-    dce_jvp_jaxpr, _ = pe.dce_jaxpr(jvp_jaxpr, [*used_outs, *used_outs], True)
+    sz = eqn.params["symbolic_zeros"]
+    nz_used_outs = [u for u, z in zip(used_outs, out_zeros) if not z] if sz else used_outs
+    dce_jvp_jaxpr, _ = pe.dce_jaxpr(jvp_jaxpr, [*used_outs, *nz_used_outs], True)
     dce_out_zeros = [v for used, v in zip(used_outs, out_zeros) if used]
     return dce_jvp_jaxpr, consts, dce_out_zeros
 
