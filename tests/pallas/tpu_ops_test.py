@@ -327,16 +327,19 @@ class OpsTest(PallasBaseTest):
     expected = reduce_func(x, axis, keepdims=True)
     np.testing.assert_array_equal(result, expected)
 
-  @parameterized.product(reduce_func = [jnp.argmax, jnp.argmin])
-  def test_reduce_index(self, reduce_func):
-    if not jtu.if_cloud_tpu_at_least(2025, 8, 29):
-      self.skipTest("Requires libtpu built after 2025-08-29")
+  @parameterized.product(
+      axis=[0, 1, 2],
+      reduce_func = [jnp.argmax, jnp.argmin]
+  )
+  def test_reduce_index(self, axis, reduce_func):
+    if not jtu.if_cloud_tpu_at_least(2025, 9, 8):
+      self.skipTest("Requires libtpu built after 2025-09-08")
     dtype = jnp.float32
-    axis = 1
-    if (axis == 1 and not jtu.is_device_tpu_at_least(version=4)):
+    in_shape = (2, 32, 256)
+    rank = len(in_shape)
+    if axis == rank - 1 and not jtu.is_device_tpu_at_least(version=4):
       self.skipTest("Requires TPUv4+ for axis=1")
 
-    in_shape = (32, 256)
     out_shape = list(in_shape)
     out_shape[axis] = 1
 

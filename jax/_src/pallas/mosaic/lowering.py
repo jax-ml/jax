@@ -2608,8 +2608,8 @@ def _reduce_index_helper(
   )
   if x_aval.dtype != jnp.float32:
     raise NotImplementedError("Only float32 is supported")
-  if len(axes) != 1 or axes[0] != 1:
-    raise NotImplementedError("Only axes=(1,) is supported")
+  if len(axes) != 1:
+    raise NotImplementedError("Only single axis reduction supported")
   if index_dtype != jnp.int32:
     raise NotImplementedError("Only index_dtype=int32 is supported")
   return tpu.reduce_index(out_type, x, axes[0], reduction_kind)
