@@ -1154,6 +1154,7 @@ jax_multiplatform_test(
         "gpu",
         "tpu",
     ],
+    tags = ["multiaccelerator"],
     deps = [
         "//jax/_src:profiler",
     ] + py_deps("absl/testing"),
