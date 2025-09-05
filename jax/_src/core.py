@@ -632,6 +632,16 @@ class Primitive:
     return self._true_bind(*args, **params)
 
   def _true_bind(self, *args, **params):
+    # repros intercept _true_bind because subclasses of Primitive have their
+    # own `bind`, which can call to `_true_bind`.
+    # TODO: we miss the canonicalization if we do this
+    if traceback_util.repro_enabled():
+      from jax._src.repro import tracker
+      return tracker.true_bind_primitive(self, args, params)
+    else:
+      return self._true_bind_internal(*args, **params)
+
+  def _true_bind_internal(self, *args, **params):
     for arg in args:
       if isinstance(arg, Tracer) and not arg._trace.is_valid():
         raise escaped_tracer_error(arg)

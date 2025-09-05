@@ -32,6 +32,7 @@ from jax._src import effects
 from jax._src import hijax
 from jax._src import linear_util as lu
 from jax._src import state
+from jax._src.traceback_util import api_boundary, bypass_repro_wrapper
 from jax._src import tree_util
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import ad
@@ -1776,6 +1777,7 @@ def _normalize_compiler_params(
   return compiler_params
 
 
+@partial(api_boundary, repro_api_name="jax.experimental.pallas.pallas_call")
 def _pallas_call(
     kernel: Callable[..., None],
     out_shape: Any,
@@ -1816,7 +1818,7 @@ def _pallas_call(
   flat_out_shapes_with_paths, out_tree = tree_util.tree_flatten_with_path(out_shape)
   out_paths, flat_out_shapes = unzip2(flat_out_shapes_with_paths)
 
-  @partial(jax.jit, inline=True)
+  @partial(bypass_repro_wrapper(jax.jit), inline=True)
   def wrapped(*args):
     flat_args_with_paths, in_tree = tree_util.tree_flatten_with_path(args)
     in_paths, flat_args = unzip2(flat_args_with_paths)

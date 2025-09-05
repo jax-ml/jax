@@ -199,7 +199,7 @@ checkpoint_policies = types.SimpleNamespace(
 
 ### Main API
 
-@api_boundary
+@partial(api_boundary, repro_api_name="jax.checkpoint")
 def checkpoint(fun: Callable, *, prevent_cse: bool = True,
                policy: Callable[..., bool] | None = None,
                static_argnums: int | tuple[int, ...] = (),
