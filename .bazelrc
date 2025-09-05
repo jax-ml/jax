@@ -401,9 +401,9 @@ build:rbe_linux_x86_64_base --linkopt=-lm
 build:rbe_linux_x86_64_base --host_linkopt=-lm
 
 # Set the host, execution, and target platform
-build:rbe_linux_x86_64_base --host_platform="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_platform//:platform"
-build:rbe_linux_x86_64_base --extra_execution_platforms="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_platform//:platform"
-build:rbe_linux_x86_64_base --platforms="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_platform//:platform"
+build:rbe_linux_x86_64_base --host_platform="@ml_build_config_platform//:platform"
+build:rbe_linux_x86_64_base --extra_execution_platforms="@ml_build_config_platform//:platform"
+build:rbe_linux_x86_64_base --platforms="@ml_build_config_platform//:platform"
 
 build:rbe_linux_x86_64 --config=rbe_linux_x86_64_base
 build:rbe_linux_x86_64 --config=ci_linux_x86_64
