@@ -108,7 +108,7 @@ class TransformInferenceTest(parameterized.TestCase):
       gmem_ref, smem_ref, barrier = undefs(gmem_ty, smem_ty, barrier_ty)
 
       transforms = ir.ArrayAttr.get(
-          [mgpu.dialect.TransposeTransformAttr.get((1, 0))]
+          [mgpu.dialect.TileTransformAttr.get((8, 32))]
       )
       transformed_smem_ref = mgpu.dialect.with_transforms(smem_ref, transforms)
 
@@ -139,7 +139,7 @@ class TransformInferenceTest(parameterized.TestCase):
       gmem_ref, smem_ref = undefs(gmem_ty, smem_ty)
 
       transforms = ir.ArrayAttr.get(
-          [mgpu.dialect.TransposeTransformAttr.get((1, 0))]
+          [mgpu.dialect.TileTransformAttr.get((8, 32))]
       )
       smem_ref = mgpu.dialect.with_transforms(smem_ref, transforms)
 
@@ -376,7 +376,7 @@ class TransformInferenceTest(parameterized.TestCase):
       )
 
       transforms = ir.ArrayAttr.get(
-          [ir.ArrayAttr.get([mgpu.dialect.TransposeTransformAttr.get((1, 0))])]
+          [ir.ArrayAttr.get([mgpu.dialect.TileTransformAttr.get((8, 32))])]
       )
       smem_ref = mgpu.dialect.with_transforms(slice_smem_op.result, transforms)
 
