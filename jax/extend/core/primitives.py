@@ -15,11 +15,14 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
+from jax._src.ad_checkpoint import name_p as name_p
+
 from jax._src.ad_util import stop_gradient_p as stop_gradient_p
 
 from jax._src.core import (
   call_p as call_p,
-  closed_call_p as closed_call_p
+  closed_call_p as closed_call_p,
+  pvary_p as pvary_p,
 )
 
 from jax._src.custom_derivatives import (
@@ -121,6 +124,7 @@ from jax._src.lax.lax import (
   sin_p as sin_p,
   sinh_p as sinh_p,
   sort_p as sort_p,
+  split_p as split_p,
   sqrt_p as sqrt_p,
   square_p as square_p,
   squeeze_p as squeeze_p,
@@ -182,6 +186,7 @@ from jax._src.lax.control_flow import (
   cumprod_p as cumprod_p,
   cumsum_p as cumsum_p,
   linear_solve_p as linear_solve_p,
+  optimization_barrier_p as optimization_barrier_p,
   scan_p as scan_p,
   while_p as while_p,
 )
@@ -230,7 +235,12 @@ from jax._src.prng import (
   random_fold_in_p as random_fold_in_p,
   random_seed_p as random_seed_p,
   random_split_p as random_split_p,
+  random_unwrap_p as random_unwrap_p,
+  random_wrap_p as random_wrap_p,
   threefry2x32_p as threefry2x32_p,
 )
 
-from jax._src.random import random_gamma_p as random_gamma_p
+from jax._src.random import (
+  random_clone_p as random_clone_p,
+  random_gamma_p as random_gamma_p
+)
