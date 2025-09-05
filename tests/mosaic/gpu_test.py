@@ -4815,7 +4815,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
         core.TMABarrier(1),
         mgpu.Barrier(1),
         mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)),
-        mgpu.TMEM(acc_block_shape, acc_type),
+        mgpu.TMEM(acc_block_shape, acc_type, collective=True),
         mgpu.TMEM(a_block_shape, ab_type, collective=True, packing=a_packing)
         if a_in_tmem
         else None,
@@ -4845,6 +4845,32 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
         atol=atol,
         rtol=rtol,
     )
+
+  def test_inconsistent_collective_attributes_in_kernel_raise(self):
+    def body(ctx, out, smem_ptr):
+      del ctx, out
+      ref_ty = ir.MemRefType.get(
+          (128, 128),
+          ir.BF16Type.get(),
+          memory_space=mgpu_utils.tmem(),
+      )
+      mgpu_dialect.tmem_alloc(ref_ty, smem_ptr, collective=False)
+      mgpu_dialect.tmem_alloc(ref_ty, smem_ptr, collective=True)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Collective attributes are inconsistent across operations in the"
+        " kernel",
+    ):
+      mgpu.as_gpu_kernel(
+          body,
+          grid=(1, 1, 1),
+          block=(128, 1, 1),
+          in_shape=(),
+          out_shape=(jax.ShapeDtypeStruct((), jnp.int32),),
+          smem_scratch_shape=jax.ShapeDtypeStruct((), jnp.int32),
+          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+      )
 
 
 class UtilsTest(TestCase):

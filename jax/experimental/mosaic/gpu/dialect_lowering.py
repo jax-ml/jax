@@ -60,6 +60,25 @@ class LoweringContext:
   lowered_operations: set[ir.Operation | ir.OpView] = dataclasses.field(
       default_factory=set
   )
+  is_collective_kernel: bool | None = dataclasses.field(
+      init=False, default=None
+  )
+
+  def check_collective(self, op: ir.OpView) -> None:
+    """Checks that the collective attribute is consistent across operations.
+
+    It is an error to mix collective and non-collective operations in the same
+    kernel.
+    """
+    if "collective" not in op.attributes:
+      return
+    if self.is_collective_kernel is None:
+      self.is_collective_kernel = op.attributes["collective"]
+    elif self.is_collective_kernel != op.attributes["collective"]:
+      raise ValueError(
+          "Collective attributes are inconsistent across operations in the"
+          " kernel."
+      )
 
   def lower_op(self, op: ir.OpView):
     if not _should_lower(op):
@@ -1531,6 +1550,8 @@ def _tmem_alloc_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.TmemAllocOp
 ) -> Sequence[ir.Value]:
   """Lowering rule for mgpu.TmemAllocOp."""
+  ctx.check_collective(op)
+
   output_shape = ir.MemRefType(op.result.type).shape
   ncols = output_shape[1] // op.packing.value
 
@@ -1554,6 +1575,7 @@ def _tmem_relinquish_alloc_permit_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.TmemRelinquishAllocPermitOp
 ) -> Sequence[ir.Value]:
   """Lowering rule for mgpu.TmemRelinquishAllocPermitOp."""
+  ctx.check_collective(op)
   with mgpu_utils.when(ctx.single_warp_per_block_predicate):
     tcgen05.tmem_relinquish_alloc_permit(op.collective)
   return []
@@ -1628,6 +1650,8 @@ def _tmem_ref_from_ir(
 def _tcgen05_mma_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.TcGen05MMAOp
 ) -> Sequence[ir.Value]:
+  ctx.check_collective(op)
+
   in_tmem_layouts = inference_utils.in_tmem_layouts(op)
   acc_layout = in_tmem_layouts[0]
   acc_ref = _tmem_ref_from_ir(op.accumulator, acc_layout)
