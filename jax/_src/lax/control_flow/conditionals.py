@@ -132,6 +132,7 @@ def switch(index, branches: Sequence[Callable], *operands,
                           branches_platforms=None)
 
 
+@partial(api_boundary, repro_api_name="jax_switch")
 def _switch_internal(
     index: ArrayLike,
     branches: Sequence[Callable],

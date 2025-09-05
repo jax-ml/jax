@@ -242,6 +242,7 @@ pytype_strict_library(
         ":partial_eval",
         ":partition_spec",
         ":profiler",
+        ":repro",
         ":sharding",
         ":sharding_impls",
         ":sharding_specs",
@@ -522,6 +523,7 @@ pytype_strict_library(
         ":named_sharding",
         ":partition_spec",
         ":pretty_printer",
+        ":repro",
         ":sharding",
         ":source_info_util",
         ":traceback_util",
@@ -1384,6 +1386,60 @@ pytype_strict_library(
         ":traceback_util",
         "//jax/_src/lib",
     ],
+)
+
+pytype_strict_library(
+    name = "repro",
+    srcs = [
+        "repro/__init__.py",
+        "repro/emitter.py",
+        "repro/reducer.py",
+        "repro/repro_api.py",
+        "repro/tracker.py",
+        "repro/ddmin.py",
+    ],
+    visibility = ["//jax:internal"],
+    deps = [
+        ":config",
+        ":dtypes",
+        ":frozen_dict",
+        ":literals",
+        ":path",
+        ":source_info_util",
+        ":traceback_util",
+        ":tree_util",
+        ":util",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "repro_runtime",
+    srcs = [
+        "repro/repro_runtime.py",
+    ],
+    visibility = ["//jax:internal"],
+    deps = [
+        ":api",
+        ":config",
+        ":core",
+        ":custom_derivatives",
+        ":dtypes",
+        ":lax",
+        ":literals",
+        ":mesh",
+        ":mlir",
+        ":named_sharding",
+        ":path",
+        ":partition_spec",
+        ":random",
+        ":repro",
+        ":shard_map",
+        ":sharding",
+        ":source_info_util",
+        ":traceback_util",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(

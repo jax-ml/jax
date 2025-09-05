@@ -136,6 +136,7 @@ class custom_jvp(Generic[ReturnValue]):
   nondiff_argnums: Sequence[int]
   nondiff_argnames: Sequence[str]
   jvp: Callable[..., tuple[ReturnValue, ReturnValue]] | None = None
+  jvps: Sequence[Callable[..., ReturnValue]] | None = None
   symbolic_zeros: bool = False
 
   def __init__(self,
@@ -245,6 +246,7 @@ class custom_jvp(Generic[ReturnValue]):
     """
     if self.nondiff_argnums:
       raise TypeError("Can't use ``defjvps`` with ``nondiff_argnums``.")
+    self.jvps = jvps if traceback_util.repro_is_enabled() else None  # type: ignore
 
     def jvp(primals, tangents):
       primal_out = self(*primals)
@@ -552,7 +554,6 @@ class custom_vjp(Generic[ReturnValue]):
 
   .. _tutorial: https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
   """
-
   def __init__(self,
                fun: Callable[..., ReturnValue],
                nondiff_argnums: Sequence[int] = (),
