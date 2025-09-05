@@ -102,7 +102,13 @@ class DebugCheckTest(jtu.JaxTestCase):
   def test_vector_debug_check(self):
     x = jnp.arange(8)
 
-    @plsc.vector_subcore_kernel(out_shape=x)
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=x,
+        compiler_params=pltpu.CompilerParams(
+            kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE
+        ),
+    )
     def kernel(_):
       pl.debug_check(True, "Check success!")
       pl.debug_check(False, "Check failure!")
@@ -129,7 +135,13 @@ class DebugCheckTest(jtu.JaxTestCase):
     # Index 8 is out-of-bounds.
     indices = jnp.array([0, 1, 2, 3, 4, 5, 6, 8], dtype=jnp.int32)
 
-    @plsc.vector_subcore_kernel(out_shape=x)
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=x,
+        compiler_params=pltpu.CompilerParams(
+            kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE
+        ),
+    )
     def kernel(x_ref, indices_ref, o_ref):
       o_ref[...] = plsc.load_gather(x_ref, [indices_ref[...]])
 

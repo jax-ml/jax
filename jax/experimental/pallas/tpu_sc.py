@@ -16,7 +16,6 @@
 from jax._src.pallas.mosaic.sc_core import BlockSpec as BlockSpec
 from jax._src.pallas.mosaic.sc_core import kernel as kernel
 from jax._src.pallas.mosaic.sc_core import ScalarSubcoreMesh as ScalarSubcoreMesh
-from jax._src.pallas.mosaic.sc_core import vector_subcore_kernel as vector_subcore_kernel
 from jax._src.pallas.mosaic.sc_core import VectorSubcoreMesh as VectorSubcoreMesh
 from jax._src.pallas.mosaic.sc_primitives import addupdate as addupdate
 from jax._src.pallas.mosaic.sc_primitives import addupdate_compressed as addupdate_compressed

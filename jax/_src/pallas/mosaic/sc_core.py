@@ -17,14 +17,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import dataclasses
-import functools
 
 import jax
 from jax._src import core as jax_core
 from jax._src import tree_util
 from jax._src.lax import lax
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic import core as tpu_core
 
@@ -237,20 +235,6 @@ def _vector_subcore_mesh_discharge_rule(
 pallas_core._core_map_mesh_rules[VectorSubcoreMesh] = (
     _vector_subcore_mesh_discharge_rule
 )
-
-# TODO(slebedev): Remove this from the public API and only use in tests.
-def vector_subcore_kernel(**kwargs):
-  # We currently ignore kernel_type= provided by the user, because
-  # the default kernel_type= is not None.
-  # TODO(slebedev): Set the default kernel_type= to None and update this.
-  compiler_params = kwargs.pop("compiler_params", tpu_core.CompilerParams())
-  compiler_params = dataclasses.replace(
-      compiler_params, kernel_type=tpu_core.KernelType.SC_VECTOR_SUBCORE
-  )
-  return functools.partial(
-      pallas_call.pallas_call, compiler_params=compiler_params, **kwargs
-  )
-
 
 def kernel(
     out_shape: object,
