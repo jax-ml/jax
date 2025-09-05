@@ -1354,7 +1354,6 @@ def _pallas_call_state_discharge_rule(
   updated_vals_in = refs_out + [None] * len(rest_in_avals)
   return updated_vals_in, rest
 
-
 @partial(api_boundary, repro_api_name="jax.experimental.pallas.pallas_call")
 def pallas_call(
     kernel: Callable[..., None],

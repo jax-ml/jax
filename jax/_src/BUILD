@@ -282,6 +282,7 @@ pytype_strict_library(
         ":partition_spec",
         ":profiler",
         ":remat",
+        ":repro",
         ":sharding",
         ":sharding_impls",
         ":source_info_util",
@@ -569,6 +570,7 @@ pytype_strict_library(
         ":named_sharding",
         ":partition_spec",
         ":pretty_printer",
+        ":repro",
         ":sharding",
         ":source_info_util",
         ":traceback_util",
@@ -1276,6 +1278,7 @@ pytype_strict_library(
         ":custom_derivatives",
         ":dtypes",
         ":effects",
+        ":traceback_util",
         ":partial_eval",
         ":remat",
         ":state_types",
@@ -1476,6 +1479,67 @@ pytype_strict_library(
         ":traceback_util",
         "//jax/_src/lib",
     ],
+)
+
+# TODO(necula): avoid circular dependency: repro imports many of its
+# dependencies lazily, and we can list here as dependencies only very
+# basic modules. Include the repro_runtime dependency to allow
+# inline_runtime to be used in the emitters.
+pytype_strict_library(
+    name = "repro",
+    srcs = [
+        "repro/__init__.py",
+        "repro/ddmin.py",
+        "repro/emitter.py",
+        "repro/reducer.py",
+        "repro/repro_api.py",
+        "repro/tracker.py",
+        "repro/repro_runtime.py",  # buildcleaner: keep
+    ],
+    visibility = ["//jax:internal"],
+    deps = [
+        ":config",
+        ":dtypes",
+        ":frozen_dict",
+        ":path",
+        ":source_info_util",
+        ":traceback_util",
+        ":tree_util",
+        ":util",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "repro_runtime",
+    srcs = [
+        "repro/repro_runtime.py",
+    ],
+    visibility = ["//jax:internal"],
+    deps = [
+        ":ad",
+        ":api",
+        ":config",
+        ":core",
+        ":custom_derivatives",
+        ":dtypes",
+        ":frozen_dict",
+        ":lax",
+        ":literals",
+        ":mesh",
+        ":mlir",
+        ":named_sharding",
+        ":path",
+        ":partition_spec",
+        ":random",
+        ":repro",
+        ":shard_map",
+        ":sharding",
+        ":source_info_util",
+        ":traceback_util",
+        ":typing",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(

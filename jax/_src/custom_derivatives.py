@@ -134,6 +134,7 @@ class custom_jvp(Generic[ReturnValue]):
   nondiff_argnums: Sequence[int]
   nondiff_argnames: Sequence[str]
   jvp: Callable[..., tuple[ReturnValue, ReturnValue]] | None = None
+  jvps: Sequence[Callable[..., ReturnValue]] | None = None
   symbolic_zeros: bool = False
 
   def __init__(self,
@@ -243,6 +244,7 @@ class custom_jvp(Generic[ReturnValue]):
     """
     if self.nondiff_argnums:
       raise TypeError("Can't use ``defjvps`` with ``nondiff_argnums``.")
+    self.jvps = jvps if traceback_util.repro_is_enabled() else None  # type: ignore
 
     def jvp(primals, tangents):
       primal_out = self(*primals)
@@ -1119,6 +1121,7 @@ mlir.register_lowering(ad.custom_lin_p, ad.raise_custom_vjp_error_on_jvp,
                        cacheable=False)
 
 
+@partial(traceback_util.api_boundary, repro_api_name="jax.custom_gradient")
 def custom_gradient(fun):
   """Convenience function for defining custom VJP rules (aka custom gradients).
 
