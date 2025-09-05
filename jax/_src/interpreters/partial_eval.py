@@ -2384,7 +2384,6 @@ def trace_to_jaxpr_dynamic(
     in_tracers = _input_type_to_tracers(
         partial(trace.new_arg, source_info=source_info), in_avals)
     in_tracers = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
-
     with core.set_current_trace(trace):
       ans = fun.call_wrapped(*in_tracers)
     _check_returned_jaxtypes(fun.debug_info, ans)

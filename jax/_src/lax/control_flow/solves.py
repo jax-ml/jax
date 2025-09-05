@@ -204,6 +204,8 @@ def _check_shapes(func_name, expected_name, actual, expected):
 
 
 @api_boundary
+@partial(core.jax_boundary, api_name="jax.custom_linear_solve",
+         func_argnums=(2, 3))
 def custom_linear_solve(
     matvec: Callable,
     b: Any,
