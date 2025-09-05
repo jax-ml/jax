@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator, Sequence, Set
+from collections.abc import Callable, Iterator, Sequence, Set
 import dataclasses
 import enum
 import itertools
@@ -252,7 +252,7 @@ def _strided_layout_for_variable(
 
 def _extract_variable_assignments_from_constraint(
     constraint: eqns.Constraint,
-) -> Generator[tuple[eqns.Variable, eqns.Constant], None, None]:
+) -> Iterator[tuple[eqns.Variable, eqns.Constant]]:
   """Attempts to extract variable assignments from a `Constraint`."""
   if not isinstance(constraint, eqns.IsTransferable):
     return
@@ -287,7 +287,7 @@ def conjure_assignment(
     unknowns: Set[eqns.Variable],
     equation_system: eqns.EquationSystem,
     hints: Sequence[Hint],
-) -> Generator[tuple[eqns.Variable, eqns.Constant], None, None]:
+) -> Iterator[tuple[eqns.Variable, eqns.Constant]]:
   """Attempts to conjure an assignment for an unknown variable."""
   for constraint in equation_system.constraints:
     # TODO(allanrenucci): We should be able to short-circuit the search here if
