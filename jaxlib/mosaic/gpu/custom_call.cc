@@ -24,6 +24,7 @@ limitations under the License.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -407,15 +408,15 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
           "`pip install nvidia-nvshmem-cu12`).");
     }
   }
-  const char* dump_llvm_debug_only = getenv("MOSAIC_GPU_DUMP_LLVM");
-  const char* debug_only = getenv("MOSAIC_GPU_LLVM_DEBUG_ONLY");
+  const char* dump_llvm = getenv("MOSAIC_GPU_DUMP_LLVM");
+  const char* llvm_debug_only = getenv("MOSAIC_GPU_LLVM_DEBUG_ONLY");
 #ifndef NDEBUG
   bool old_debug_state = false;
   std::vector<std::string_view> debug_only_types;
-  if (debug_only) {
-    debug_only_types = absl::StrSplit(debug_only, ',');
+  if (llvm_debug_only) {
+    debug_only_types = absl::StrSplit(llvm_debug_only, ',');
   }
-  if (dump_llvm_debug_only) {
+  if (dump_llvm) {
     debug_only_types.push_back("serialize-to-llvm");
   }
   if (!debug_only_types.empty()) {
@@ -430,7 +431,7 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
     llvm::DebugFlag = true;
   }
 #else
-  if (debug_only || dump_llvm_debug_only) {
+  if (llvm_debug_only || dump_llvm) {
     fprintf(
         stderr,
         "MOSAIC_GPU_LLVM_DEBUG_ONLY or MOSAIC_GPU_DUMP_LLVM is set but LLVM "
@@ -457,15 +458,26 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
   }
   // Create a transformer to run all LLVM optimization passes at the
   // specified optimization level.
-  auto transformer = mlir::makeOptimizingTransformer(
-      /*optLevel=*/3, /*sizeLevel=*/0, /*targetMachine=*/nullptr);
+  std::function<llvm::Error(llvm::Module*)> transformer =
+      [dump_opts](llvm::Module* module) {
+        if (getenv("MOSAIC_GPU_DUMP_HOST_LLVM")) {
+          std::string ll_str;
+          llvm::raw_string_ostream os(ll_str);
+          module->print(os, nullptr);
+          os.flush();
+          mosaic::gpu::DumpToFileOrStdout(
+              ll_str, dump_opts.module_basename + ".ll", dump_opts.dump_path);
+        }
+        return mlir::makeOptimizingTransformer(
+            /*optLevel=*/3, /*sizeLevel=*/0, /*targetMachine=*/nullptr)(module);
+      };
   mlir::ExecutionEngineOptions options;
   options.transformer = transformer;
   options.jitCodeGenOptLevel = llvm::CodeGenOptLevel::Aggressive;
   options.sharedLibPaths = runtime_libs;
   auto maybe_execution_engine = mlir::ExecutionEngine::create(module, options);
 #ifndef NDEBUG
-  if (debug_only) {
+  if (llvm_debug_only || dump_llvm) {
     llvm::DebugFlag = old_debug_state;
   }
 #endif
