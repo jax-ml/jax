@@ -2796,7 +2796,7 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
                            ops: Sequence[ir.Value],
                            ops_avals: Sequence[core.AbstractValue],
                            out_shape: core.Shape,
-                           out_sharding=None) -> Sequence[ir.Value]:
+                           out_sharding) -> Sequence[ir.Value]:
   """Broadcasts multiple ops to the out_shape."""
   out = []
   for op, op_aval in zip(ops, ops_avals):
@@ -2805,10 +2805,8 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
     out_aval = core.ShapedArray(
         out_shape, op_aval.dtype, sharding=out_sharding)  # type: ignore
     if core.definitely_equal_shape(op_aval_shape, out_shape):
-      if out_sharding is None or op_aval_sharding == out_sharding:
-        out.append(op)
-      else:
-        out.append(lower_with_sharding_in_types(ctx, op, out_aval))
+      out.append(op if op_aval_sharding == out_sharding else
+                 lower_with_sharding_in_types(ctx, op, out_aval))
     else:
       assert len(op_aval_shape) <= len(out_shape), (op_aval_shape, out_shape)
       broadcast_dimensions = list(range(len(out_shape) - len(op_aval_shape), len(out_shape)))
