@@ -3227,32 +3227,35 @@ class MeshExecutable(stages.Executable):
 
   def call(self, *args):
     args_after_dce = [a for i, a in enumerate(args) if i in self._kept_var_idx]
-    if self._all_args_info is None:
-      kept_args = args_after_dce
-      ref_avals = self.in_avals
-      # TODO(necula): ensure we have actual debug info; need it before DCE.
-      # See https://github.com/jax-ml/jax/issues/26480.
-      debug_info = core.DebugInfo(
-          "MeshExecutable", "<unknown>",
-          tuple(f"args[{i}]" for i in range(len(args))), None)
+    if (self._all_args_info is not None and
+        self._all_args_info.debug_info.arg_names is not None):
+      arg_names_after_dce = [
+          n for i, n in enumerate(self._all_args_info.debug_info.arg_names)
+          if i in self._kept_var_idx]
     else:
-      kept_args = args
-      ref_avals = self._all_args_info.in_avals
-      debug_info = self._all_args_info.debug_info
+      arg_names_after_dce = ("",) * len(args_after_dce)
 
-    check_arg_avals_for_call(ref_avals, map(core.shaped_abstractify, kept_args),
-                             debug_info)
-
+    if self._all_args_info is not None:
+      # We check all args before DCE
+      check_arg_avals_for_call(self._all_args_info.in_avals,
+                               map(core.shaped_abstractify, args),
+                               self._all_args_info.debug_info)
+    else:
+      # We can only check the args after DCE
+      check_arg_avals_for_call(self.in_avals,
+                               map(core.shaped_abstractify, args_after_dce),
+                               core.DebugInfo("MeshExecutable", "<unknown>",
+                                              arg_names_after_dce, None))
     if not self._mut:
-      arg_names = [n for i, n in enumerate(debug_info.arg_names)
-                   if i in self._kept_var_idx]
       check_array_xla_sharding_layout_match(
-          args_after_dce, self._in_shardings, self._xla_in_layouts, arg_names)
+          args_after_dce, self._in_shardings, self._xla_in_layouts,
+          arg_names_after_dce)
     else:
       args_after_dce = [*args_after_dce, *self._mut.in_mut]
-      arg_names = debug_info.arg_names + ('',) * len(self._mut.in_mut)
+      arg_names_after_dce += (("",) * len(self._mut.in_mut))
       check_array_xla_sharding_layout_match(
-          args_after_dce, self._in_shardings, self._xla_in_layouts, arg_names)
+          args_after_dce, self._in_shardings, self._xla_in_layouts,
+          arg_names_after_dce)
     return self.unsafe_call(*args)  # pylint: disable=not-callable
 
   def create_cpp_call(self, params: stages.CompiledCallParams):

@@ -2703,7 +2703,8 @@ def _maybe_pattern_match_fori_loop(
   jaxpr = jaxpr.replace(
       eqns=jaxpr.eqns[:eqn_index] + jaxpr.eqns[eqn_index + 1:],
       invars=new_invars,
-      outvars=new_outvars)
+      outvars=new_outvars,
+      debug_info=jaxpr.debug_info.with_unknown_names())
   _, body_consts, carry = split_list(args, [cond_nconsts, body_nconsts])
   (lb, ub), args = carry[:2], carry[2:]
   const_block_infos, args_block_infos = split_list(ctx.block_infos,

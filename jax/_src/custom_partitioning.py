@@ -508,7 +508,7 @@ class custom_partitioning:
   def __call__(self, *args, **kwargs):
     args = _resolve_kwargs(self.fun, args, kwargs)
     debug = api_util.debug_info("custom_partitioning", self.fun,
-                                args, kwargs,
+                                args, {},
                                 static_argnums=self.static_argnums)
     if self.static_argnums:
       static_argnums = set(self.static_argnums)

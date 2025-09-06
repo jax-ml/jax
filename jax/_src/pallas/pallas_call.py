@@ -1479,7 +1479,8 @@ def _pallas_call_state_discharge_rule(
       )
   )
   new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(_rewritten_body, debug_info=jaxpr.debug_info),
+      lu.wrap_init(_rewritten_body,
+                   debug_info=jaxpr.debug_info.with_unknown_names()),
       [
           *index_map_avals,
           *ref_avals,

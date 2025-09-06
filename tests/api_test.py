@@ -5775,7 +5775,7 @@ class RematTest(jtu.JaxTestCase):
       def named_f(*args):
         my_f = lambda: (f(*args),)
         f_ = lu.wrap_init(
-            my_f, debug_info=api_util.debug_info("test_remat", my_f, args, {}))
+            my_f, debug_info=api_util.debug_info("test_remat", my_f, (), {}))
         out, = core.call_p.bind(f_)
         return out
       return named_f

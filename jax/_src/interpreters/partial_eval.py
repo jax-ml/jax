@@ -276,6 +276,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     # which were unknown to the first call (corresponding to in_avals).
 
     # Wrap f to perform the partial evaluation and plumb out aux data.
+    f = f.with_unknown_names()
     f_ = trace_to_subjaxpr_nounits_fwd(f, self.tag, f.debug_info, False)
     f_, aux = partial_eval_wrapper_nounits(f_, tuple(in_knowns), tuple(in_avals))
 
@@ -2443,6 +2444,7 @@ def trace_to_jaxpr_dynamic2(
     fun: lu.WrappedFun,
   ) -> tuple[Jaxpr, OutputType, list[Any]]:
   assert fun.in_type is not None, "fun must be annotated with lu.annotate()"
+  config.enable_checks.value and fun.debug_info.assert_arg_names(len(fun.in_type))
 
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(fun.debug_info, parent_trace=parent_trace)

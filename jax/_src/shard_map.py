@@ -1455,7 +1455,8 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
   known_params = dict(mesh=mesh, in_specs=(*known_in_specs,),
                       out_specs_thunk=known_out_specs, check_vma=check_vma,
                       manual_axes=manual_axes)
-  out = shard_map_p.bind_with_trace(trace.parent_trace, (f_known, *in_consts),
+  out = shard_map_p.bind_with_trace(trace.parent_trace,
+                                    (f_known.with_unknown_names(), *in_consts),
                                     known_params)
   in_fwd, out_fwd, out_knowns, res_avals, jaxpr, env = aux()
   num_res = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
@@ -1484,7 +1485,8 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
   unk_arg_tracers = [t for t in tracers if not t.is_known()]
   out_avals_sharded = [v.aval for v in jaxpr.outvars]
   unk_params = dict(mesh=mesh, in_specs=unk_in_specs,
-                    out_specs=tuple(unk_out_specs), jaxpr=jaxpr,
+                    out_specs=tuple(unk_out_specs),
+                    jaxpr=jaxpr.replace(debug_info=jaxpr.debug_info.with_unknown_names()),
                     check_vma=check_vma, manual_axes=manual_axes)
   out_avals = map(partial(unshard_aval, mesh, check_vma), unk_out_specs,
                   out_avals_sharded)

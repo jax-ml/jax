@@ -1053,7 +1053,7 @@ def lower_fun(fun: Callable, *, multiple_results: bool) -> Callable:
     wrapped_fun = lu.wrap_init(
         f, params,
         debug_info=api_util.debug_info("mosaic lower_fun", f,
-                                       args, params))
+                                       args, {}))
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
     if consts:
       raise NotImplementedError
