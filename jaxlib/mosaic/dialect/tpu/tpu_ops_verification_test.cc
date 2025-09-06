@@ -21,6 +21,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/types/span.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -1241,5 +1242,119 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
       VerifyOp(wait),
       StatusIs(_, HasSubstr("Indirect DMA wait semaphore must be rank 0")));
 }
+
+class TpuOpsBarrierVerificationTest : public TpuOpsVerificationTest {
+ protected:
+  func::FuncOp EnterVectorKernel(int num_dims) {
+    std::vector<Type> func_input_types(num_dims, builder().getI32Type());
+    auto func_op = Create<func::FuncOp>(
+        "vector_kernel", builder().getFunctionType(func_input_types, {}));
+    func_op->setAttr(
+        TPUDialect::GetCoreTypeKey(),
+        CoreTypeAttr::get(builder().getContext(), CoreType::kScVectorSubcore));
+    builder().setInsertionPointToStart(func_op.addEntryBlock());
+    return func_op;
+  }
+
+  ArrayAttr MakeDimensionSemanticsAttr(
+      absl::Span<const DimensionSemantics> semantics) {
+    std::vector<Attribute> attrs;
+    for (const auto& s : semantics) {
+      attrs.push_back(DimensionSemanticsAttr::get(builder().getContext(), s));
+    }
+    return ArrayAttr::get(builder().getContext(), attrs);
+  }
+
+  DenseI64ArrayAttr MakeIterationBoundsAttr(absl::Span<const int64_t> bounds) {
+    return DenseI64ArrayAttr::get(builder().getContext(), bounds);
+  }
+};
+
+TEST_F(TpuOpsBarrierVerificationTest, Valid) {
+  auto func_op = EnterVectorKernel(4);
+  func_op->setAttr(
+      "dimension_semantics",
+      MakeDimensionSemanticsAttr({DimensionSemantics::core_parallel,
+                                  DimensionSemantics::subcore_parallel,
+                                  DimensionSemantics::parallel,
+                                  DimensionSemantics::arbitrary}));
+  func_op->setAttr("iteration_bounds",
+                   MakeIterationBoundsAttr({1337, 1337, 1337, 1337}));
+  EXPECT_OK(VerifyOp(Create<BarrierOp>(
+      /*barrier_id=*/Create<arith::ConstantIndexOp>(5))));
+}
+
+TEST_F(TpuOpsBarrierVerificationTest, WithoutFuncInvalid) {
+  EXPECT_THAT(
+      VerifyOp(
+          Create<BarrierOp>(/*barrier_id=*/Create<arith::ConstantIndexOp>(5))),
+      StatusIs(_, HasSubstr("'tpu.barrier' op is not inside a func.func")));
+}
+
+TEST_F(TpuOpsBarrierVerificationTest, WithoutSubcoreParallelDimInvalid) {
+  auto func_op = EnterVectorKernel(3);
+  func_op->setAttr(
+      "dimension_semantics",
+      MakeDimensionSemanticsAttr({DimensionSemantics::core_parallel,
+                                  DimensionSemantics::parallel,
+                                  DimensionSemantics::arbitrary}));
+  func_op->setAttr("iteration_bounds",
+                   MakeIterationBoundsAttr({1337, 1337, 1337}));
+  EXPECT_THAT(
+      VerifyOp(Create<BarrierOp>(
+          /*barrier_id=*/Create<arith::ConstantIndexOp>(5))),
+      StatusIs(_,
+               HasSubstr("'tpu.barrier' op parent function must have exactly "
+                         "one subcore parallel dimension, but has 0")));
+}
+
+TEST_F(TpuOpsBarrierVerificationTest, WithMultipleSubcoreParallelDimInvalid) {
+  auto func_op = EnterVectorKernel(4);
+  func_op->setAttr(
+      "dimension_semantics",
+      MakeDimensionSemanticsAttr({DimensionSemantics::core_parallel,
+                                  DimensionSemantics::subcore_parallel,
+                                  DimensionSemantics::subcore_parallel,
+                                  DimensionSemantics::arbitrary}));
+  func_op->setAttr("iteration_bounds",
+                   MakeIterationBoundsAttr({1337, 1337, 1337, 1337}));
+  EXPECT_THAT(
+      VerifyOp(Create<BarrierOp>(
+          /*barrier_id=*/Create<arith::ConstantIndexOp>(5))),
+      StatusIs(_,
+               HasSubstr("'tpu.barrier' op parent function must have exactly "
+                         "one subcore parallel dimension, but has 2")));
+}
+
+TEST_F(TpuOpsBarrierVerificationTest, OnScalarSubcoreInvalid) {
+  auto func_op =
+      Create<func::FuncOp>("scalar_kernel", builder().getFunctionType({}, {}));
+  func_op->setAttr(
+      TPUDialect::GetCoreTypeKey(),
+      CoreTypeAttr::get(builder().getContext(), CoreType::kScScalarSubcore));
+  builder().setInsertionPointToStart(func_op.addEntryBlock());
+  EXPECT_THAT(VerifyOp(Create<BarrierOp>(
+                  /*barrier_id=*/Create<arith::ConstantIndexOp>(5))),
+              StatusIs(_, HasSubstr("'tpu.barrier' op is supported only on "
+                                    "the SC vector subcore")));
+}
+
+TEST_F(TpuOpsBarrierVerificationTest, WithMismatchedIterationBoundsInvalid) {
+  auto func_op = EnterVectorKernel(4);
+  func_op->setAttr(
+      "dimension_semantics",
+      MakeDimensionSemanticsAttr({DimensionSemantics::core_parallel,
+                                  DimensionSemantics::subcore_parallel,
+                                  DimensionSemantics::parallel,
+                                  DimensionSemantics::arbitrary}));
+  func_op->setAttr("iteration_bounds",
+                   MakeIterationBoundsAttr({1337, 1337, 1337}));
+  EXPECT_THAT(
+      VerifyOp(Create<BarrierOp>(
+          /*barrier_id=*/Create<arith::ConstantIndexOp>(5))),
+      StatusIs(_, HasSubstr("'tpu.barrier' op parent function must have an "
+                            "iteration bound for each dimension")));
+}
+
 }  // namespace
 }  // namespace mlir::tpu

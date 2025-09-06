@@ -242,6 +242,7 @@ cc_test(
         ":tpu_dialect",
         "//testing/base/public:gunit_main",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",

@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "llvm/ADT/FloatingPointMode.h"
@@ -1302,6 +1303,55 @@ LogicalResult SemaphoreWaitOp::verify() {
   if (sem_type.getRank() != 0) {
     return emitOpError("Semaphore reference must be rank 0");
   }
+  return success();
+}
+
+LogicalResult BarrierOp::verify() {
+  func::FuncOp parent_func = getOperation()->getParentOfType<func::FuncOp>();
+  if (!parent_func) {
+    return emitOpError() << "is not inside a func.func";
+  }
+  if (GetCoreTypeOfParentFunc(**this) != CoreType::kScVectorSubcore) {
+    return emitOpError("is supported only on the SC vector subcore");
+  }
+  auto dimension_semantics =
+      parent_func->getAttrOfType<ArrayAttr>("dimension_semantics");
+  if (!dimension_semantics) {
+    return emitOpError(
+        "parent function must have dimension_semantics");
+  }
+
+  auto is_subcore_parallel_dim = [](Attribute attr) {
+    auto semantics = dyn_cast<DimensionSemanticsAttr>(attr);
+    return semantics &&
+           semantics.getValue() == DimensionSemantics::subcore_parallel;
+  };
+
+  int subcore_parallel_dim_count =
+      absl::c_count_if(dimension_semantics, is_subcore_parallel_dim);
+  if (subcore_parallel_dim_count != 1) {
+    return emitOpError(
+        absl::StrCat("parent function must have exactly one subcore parallel "
+                     "dimension, but has ",
+                     subcore_parallel_dim_count));
+  }
+  int subcore_parallel_dim_idx =
+      absl::c_find_if(dimension_semantics, is_subcore_parallel_dim) -
+      dimension_semantics.begin();
+
+  auto iteration_bounds =
+      parent_func->getAttrOfType<DenseI64ArrayAttr>("iteration_bounds");
+  if (!iteration_bounds ||
+      iteration_bounds.size() != dimension_semantics.size()) {
+    return emitOpError(
+        "parent function must have an iteration bound for each dimension");
+  }
+  if (ShapedType::isDynamic(iteration_bounds[subcore_parallel_dim_idx])) {
+    return emitOpError(
+        "Dynamic subcore parallel dimension is not currently supported with "
+        "barriers");
+  }
+
   return success();
 }
 
