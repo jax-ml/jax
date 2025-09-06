@@ -135,6 +135,8 @@ jobs:
             --action_env=NCCL_DEBUG=WARN \
             --flaky_test_attempts=1 \
             --color=yes \
+            --test_arg=--vmodule=cupti_error_manager=4,profiler_session=2,cupti_tracer=5 \
+            --test_arg=--alsologtostderr \
             //tests/mosaic:gpu_tests \
             //tests/pallas:gpu_tests \
             //tests:array_interoperability_test_gpu \
@@ -142,4 +144,5 @@ jobs:
             //tests:fused_attention_stablehlo_test_gpu \
             //tests:gpu_tests \
             //tests:python_callback_test_gpu \
-            //tests:ragged_collective_test_gpu
+            //tests:ragged_collective_test_gpu \
+            //tests:profiler_test_gpu
