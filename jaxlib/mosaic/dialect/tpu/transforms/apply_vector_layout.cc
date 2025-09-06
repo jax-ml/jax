@@ -7877,26 +7877,163 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
 }
 
 // TODO(apaszke): Test this function properly
-FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
-                                           OpBuilder &builder,
-                                           TypedValue<VectorType> v,
-                                           VectorLayout src,
-                                           VectorLayout dst) {
+FailureOr<std::pair<VectorLayout, xla::Array<Value>>> relayoutVregs(
+    RewriteContext& ctx, OpBuilder& builder, Location loc, VectorType vty,
+    xla::Array<Value> src_tiles, VectorLayout src, VectorLayout dst) {
+  CHECK(!vty.getElementType().isSignlessInteger(1));
   const auto target_shape = ctx.target_shape;
-  VectorType vty = v.getType();
   const int8_t bitwidth = src.bitwidth();
-  const bool is_mask = vty.getElementTypeBitWidth() == 1;
+  if (bitwidth != dst.bitwidth()) {
+    return emitError(loc, "Can't change bitwidth during a relayout");
+  }
+
+  // Two easy cases: source is more general, or is replicated.
+  if (src.generalizes(dst, vty.getShape(), target_shape)) {
+    // A value with a replicated offset might use fewer vregs than a value with
+    // a non-zero offset.
+    auto src_product =
+        xla::Product(src.tileArrayShape(vty.getShape(), target_shape));
+    auto dst_product =
+        xla::Product(dst.tileArrayShape(vty.getShape(), target_shape));
+    // If the product is not the same, fall through - it should still be no-op
+    // TODO(tlongeri): Remove this check and handle everything through
+    // changeTiling/changeOffsets. Currently changeTiling is not smart when
+    // tilings are equivalent due to a small shape.
+    if (src_product == dst_product) {
+      src_tiles.Reshape(
+          dst.tileArrayImplicitShape(vty.getShape(), target_shape));
+      return std::make_pair(dst, std::move(src_tiles));
+    }
+  }
+
+  if (const LayoutOffsets src_offsets =
+          src.getCanonicalOffsets(vty.getShape(), ctx.target_shape);
+      src.layout_rank() >= dst.layout_rank() && !src_offsets[0].has_value() &&
+      !src_offsets[1].has_value()) {
+    // A fully replicated value is always easy to relayout
+    xla::Array<Value> dst_tiles(
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
+    SmallVector<int64_t> idxs;
+    dst_tiles.Each([&](const absl::Span<const int64_t> src_idx, Value *vreg) {
+      idxs.assign(src_idx.begin(), src_idx.end());
+      dst.eraseImplicit(idxs);
+      src.insertImplicit<int64_t>(idxs, 0);
+      *(idxs.end() - 2) = 0;
+      *(idxs.end() - 1) = 0;
+      *vreg = src_tiles(idxs);
+    });
+    return std::make_pair(dst, std::move(dst_tiles));
+  }
+
+  // Consider (1,128),-2 -> (8,128). In this case we can change the implicit
+  // dim for free before we change the tiling, but not after.
+  // TODO(apaszke): In general the number of vregs necessary to represent a
+  // value for different implicit dims satisfies kNone < kSecondMinor < kMinor.
+  // We should use this property to decide if we should change the implicit dim
+  // before or after changing the tiling and offsets.
+  if (src.implicit_dim() != dst.implicit_dim()) {
+    VectorLayout src_candidate(src.bitwidth(), src.offsets(), src.tiling(),
+                               dst.implicit_dim());
+    if (src_candidate.equivalentTo(src, vty.getShape(), target_shape)) {
+      src = src_candidate;
+      src_tiles.Reshape(
+          src.tileArrayImplicitShape(vty.getShape(), target_shape));
+    }
+  }
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      std::tie(src, src_tiles),
+      changeTiling(ctx, builder, loc, vty, src, std::move(src_tiles),
+                   dst.tiling(), dst.offsets()));
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      std::tie(src, src_tiles),
+      changeImplicitDim(ctx, builder, loc, vty, src, std::move(src_tiles),
+                        dst.implicit_dim(), dst.offsets()));
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      std::tie(src, src_tiles),
+      changeOffsets(ctx, builder, loc, vty, src, std::move(src_tiles),
+                    dst.offsets()));
+
+  CHECK_EQ(src, dst);
+  return std::make_pair(dst, std::move(src_tiles));
+}
+
+FailureOr<std::pair<VectorLayout, xla::Array<Value>>> relayoutMasks(
+    RewriteContext& ctx, OpBuilder& builder, Location loc, VectorType vty,
+    xla::Array<Value> src_regs, VectorLayout src, VectorLayout dst) {
+  CHECK(vty.getElementType().isSignlessInteger(1));
+  const std::array<int64_t, 2> target_shape = ctx.target_shape;
+  const int8_t bitwidth = src.bitwidth();
+
   const bool is_mask_pack =
-      is_mask && bitwidth == 32 && dst.bitwidth() == 16 &&
+      bitwidth == 32 && dst.bitwidth() == 16 &&
       src.tiling()[0] == src.packing() * target_shape[0] &&
       src.tiling()[1] == target_shape[1] && src.tiling() == dst.tiling() &&
       src.offsets() == dst.offsets() &&
       src.implicit_dim() == dst.implicit_dim();
-
-  if (bitwidth != dst.bitwidth() && !is_mask_pack) {
-    return emitError(v.getLoc(), "Can't change bitwidth during a relayout");
+  if (is_mask_pack) {
+    std::vector<int64_t> masks_shape(src_regs.dimensions().begin(),
+                                     src_regs.dimensions().end());
+    *(masks_shape.end() - 1) = llvm::divideCeil(masks_shape.back(), 2);
+    xla::Array<Value> out_masks(masks_shape);
+    SmallVector<int64_t> val_idx;
+    const VectorType packed_mask_ty = getNativeVregOrVmaskType(
+        builder.getI1Type(), bitwidth / 2, target_shape);
+    out_masks.Each([&](absl::Span<const int64_t> idx, Value* v_slot_in_array) {
+      val_idx.assign(idx.begin(), idx.end());
+      if (!src.offsets()[1].has_value()) {
+        CHECK_EQ(*(val_idx.end() - 1), 0);
+        Value src_vreg = src_regs(val_idx);
+        *v_slot_in_array =
+            builder.create<PackMaskOp>(loc, packed_mask_ty, src_vreg, src_vreg);
+      } else {
+        val_idx.assign(idx.begin(), idx.end());
+        val_idx.back() *= 2;
+        CHECK_LT(val_idx.back(), src_regs.dimensions().back());
+        Value low_part = src_regs(val_idx);
+        val_idx.back() += 1;
+        // If we don't care about the high part, just use the low part to avoid
+        // depending on other vmask values.
+        Value high_part = val_idx.back() < src_regs.dimensions().back()
+                              ? src_regs(val_idx)
+                              : low_part;
+        *v_slot_in_array = builder.create<PackMaskOp>(loc, packed_mask_ty,
+                                                      low_part, high_part);
+      }
+    });
+    return std::make_pair(dst, std::move(out_masks));
   }
+  // Fall back to a vreg relayout
+  Type extended_ty = builder.getIntegerType(bitwidth);
+  VectorType vreg_ty =
+      getNativeVregOrVmaskType(extended_ty, bitwidth, target_shape);
+  src_regs.Each([&](const absl::Span<const int64_t> idx, Value* reg) {
+    *reg = builder.create<arith::ExtUIOp>(loc, vreg_ty, *reg);
+  });
+  FAILUREOR_ASSIGN_OR_RETURN(
+      std::tie(src, src_regs),
+      relayoutVregs(ctx, builder, loc,
+                    VectorType::get(vty.getShape(), extended_ty), src_regs, src,
+                    dst));
+  // Convert back to masks
+  auto zeros_vreg = builder.create<arith::ConstantOp>(
+      loc, DenseElementsAttr::get(
+               vreg_ty,
+               builder.getIntegerAttr(builder.getIntegerType(bitwidth), 0)));
+  src_regs.Each([&](const absl::Span<const int64_t> idx, Value* reg) {
+    *reg = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, *reg,
+                                         zeros_vreg);
+  });
+  return std::make_pair(dst, std::move(src_regs));
+}
 
+FailureOr<TypedValue<VectorType>> relayout(RewriteContext& ctx,
+                                           OpBuilder& builder,
+                                           TypedValue<VectorType> v,
+                                           VectorLayout src, VectorLayout dst) {
+  VectorType vty = v.getType();
   {
     // Replication imposes a replication constraint on the *logical* value of
     // the vector: When moving along a replicated axis, all elements must be
@@ -7927,146 +8064,23 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
     }
   }
 
-  FAILUREOR_ASSIGN_OR_RETURN(
-      xla::Array<Value> src_tiles,
-      disassemble(builder, src, v, target_shape, /*use_implicit_shape=*/true));
+  FAILUREOR_ASSIGN_OR_RETURN(xla::Array<Value> src_regs,
+                             disassemble(builder, src, v, ctx.target_shape,
+                                         /*use_implicit_shape=*/true));
 
-  if (is_mask_pack) {
-    std::vector<int64_t> vmsks_shape(src_tiles.dimensions().begin(),
-                                     src_tiles.dimensions().end());
-    *(vmsks_shape.end() - 1) = llvm::divideCeil(vmsks_shape.back(), 2);
-    xla::Array<Value> out_vmsks(vmsks_shape);
-    SmallVector<int64_t> val_idx;
-    const VectorType mask_ty = getNativeVregOrVmaskType(
-        builder.getI1Type(), bitwidth / 2, target_shape);
-    out_vmsks.Each([&](absl::Span<const int64_t> idx, Value* v_slot_in_array) {
-      val_idx.assign(idx.begin(), idx.end());
-      if (!src.offsets()[1].has_value()) {
-        CHECK_EQ(*(val_idx.end() - 1), 0);
-        Value src_vreg = src_tiles(val_idx);
-        *v_slot_in_array =
-            builder.create<PackMaskOp>(v.getLoc(), mask_ty, src_vreg, src_vreg);
-      } else {
-        val_idx.assign(idx.begin(), idx.end());
-        val_idx.back() *= 2;
-        CHECK_LT(val_idx.back(), src_tiles.dimensions().back());
-        Value low_part = src_tiles(val_idx);
-        val_idx.back() += 1;
-        // If we don't care about the high part, just use the low part to avoid
-        // depending on other vmask values.
-        Value high_part = val_idx.back() < src_tiles.dimensions().back()
-                              ? src_tiles(val_idx)
-                              : low_part;
-        *v_slot_in_array = builder.create<PackMaskOp>(v.getLoc(), mask_ty,
-                                                      low_part, high_part);
-      }
-    });
-    return assemble(builder, vty, dst, out_vmsks, target_shape,
-                    /*use_implicit_shape=*/true)
-        .getResult();
+  if (vty.getElementType().isSignlessInteger(1)) {
+    FAILUREOR_ASSIGN_OR_RETURN(
+        std::tie(src, src_regs),
+        relayoutMasks(ctx, builder, v.getLoc(), vty, src_regs, src, dst));
+  } else {
+    FAILUREOR_ASSIGN_OR_RETURN(
+        std::tie(src, src_regs),
+        relayoutVregs(ctx, builder, v.getLoc(), vty, src_regs, src, dst));
   }
-
-  if (is_mask) {
-    auto new_tile_ty = getNativeVregOrVmaskType(
-        builder.getIntegerType(bitwidth), bitwidth, target_shape);
-    src_tiles.Each([&](const absl::Span<const int64_t> idx, Value *tile) {
-      *tile =
-          builder.create<arith::ExtUIOp>(tile->getLoc(), new_tile_ty, *tile);
-    });
-    vty = VectorType::get(vty.getShape(), builder.getIntegerType(bitwidth));
-  }
-  auto assemble_with_mask_check = [&](xla::Array<Value> &tiles,
-                                      bool use_implicit_shape = false) {
-
-
-    if (is_mask) {
-      auto zeros_tile = builder.create<arith::ConstantOp>(
-          tiles.begin()->getLoc(),
-          DenseElementsAttr::get(
-              cast<VectorType>(tiles.begin()->getType()),
-              builder.getIntegerAttr(builder.getIntegerType(bitwidth), 0)));
-      tiles.Each([&](const absl::Span<const int64_t> idx, Value *tile) {
-        *tile = builder.create<arith::CmpIOp>(
-            tile->getLoc(), arith::CmpIPredicate::ne, *tile, zeros_tile);
-      });
-      vty = VectorType::get(vty.getShape(), builder.getI1Type());
-    }
-    return assemble(builder, vty, dst, tiles, target_shape, use_implicit_shape)
-        .getResult();
-  };
-  // Two easy cases: source is more general, or is replicated.
-  if (src.generalizes(dst, vty.getShape(), target_shape)) {
-    // A value with a replicated offset might use fewer vregs than a value with
-    // a non-zero offset.
-    auto src_product =
-        xla::Product(src.tileArrayShape(vty.getShape(), target_shape));
-    auto dst_product =
-        xla::Product(dst.tileArrayShape(vty.getShape(), target_shape));
-    // If the product is not the same, fall through - it should still be no-op
-    // TODO(tlongeri): Remove this check and handle everything through
-    // changeTiling/changeOffsets. Currently changeTiling is not smart when
-    // tilings are equivalent due to a small shape.
-    if (src_product == dst_product) {
-      src_tiles.Reshape(
-          dst.tileArrayImplicitShape(vty.getShape(), target_shape));
-      return assemble_with_mask_check(src_tiles,
-                                      /*use_implicit_shape=*/true);
-    }
-  }
-
-  if (const LayoutOffsets src_offsets =
-          src.getCanonicalOffsets(vty.getShape(), ctx.target_shape);
-      src.layout_rank() >= dst.layout_rank() && !src_offsets[0].has_value() &&
-      !src_offsets[1].has_value()) {
-    // A fully replicated value is always easy to relayout
-    xla::Array<Value> dst_tiles(
-        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
-    SmallVector<int64_t> idxs;
-    dst_tiles.Each([&](const absl::Span<const int64_t> src_idx, Value *vreg) {
-      idxs.assign(src_idx.begin(), src_idx.end());
-      dst.eraseImplicit(idxs);
-      src.insertImplicit<int64_t>(idxs, 0);
-      *(idxs.end() - 2) = 0;
-      *(idxs.end() - 1) = 0;
-      *vreg = src_tiles(idxs);
-    });
-    return assemble_with_mask_check(dst_tiles, /*use_implicit_shape=*/true);
-  }
-
-  // Consider (1,128),-2 -> (8,128). In this case we can change the implicit
-  // dim for free before we change the tiling, but not after.
-  // TODO(apaszke): In general the number of vregs necessary to represent a
-  // value for different implicit dims satisfies kNone < kSecondMinor < kMinor.
-  // We should use this property to decide if we should change the implicit dim
-  // before or after changing the tiling and offsets.
-  if (src.implicit_dim() != dst.implicit_dim()) {
-    VectorLayout src_candidate(src.bitwidth(), src.offsets(), src.tiling(),
-                               dst.implicit_dim());
-    if (src_candidate.equivalentTo(src, vty.getShape(), target_shape)) {
-      src = src_candidate;
-      src_tiles.Reshape(
-          src.tileArrayImplicitShape(vty.getShape(), target_shape));
-    }
-  }
-
-  FAILUREOR_ASSIGN_OR_RETURN(
-      std::tie(src, src_tiles),
-      changeTiling(ctx, builder, v.getLoc(), vty, src, std::move(src_tiles),
-                   dst.tiling(), dst.offsets()));
-
-  FAILUREOR_ASSIGN_OR_RETURN(
-      std::tie(src, src_tiles),
-      changeImplicitDim(ctx, builder, v.getLoc(), vty, src,
-                        std::move(src_tiles), dst.implicit_dim(),
-                        dst.offsets()));
-
-  FAILUREOR_ASSIGN_OR_RETURN(
-      std::tie(src, src_tiles),
-      changeOffsets(ctx, builder, v.getLoc(), vty, src, std::move(src_tiles),
-                    dst.offsets()));
-
-  CHECK_EQ(src, dst);
-  return assemble_with_mask_check(src_tiles, /*use_implicit_shape=*/true);
+  CHECK(src == dst);
+  return assemble(builder, vty, src, src_regs, ctx.target_shape,
+                  /*use_implicit_shape=*/true)
+      .getResult();
 }
 
 LogicalResult tpu_relayout_rule(RewriteContext &ctx, Operation &op,
