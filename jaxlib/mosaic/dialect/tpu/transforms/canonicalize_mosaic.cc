@@ -930,6 +930,57 @@ FailureOr<Value> canonicalize_broadcast(const CanonicalizeContext &ctx,
   return raw_op.getResult(0);
 }
 
+FailureOr<Value> canonicalize_arith_addi(const CanonicalizeContext& ctx,
+                                         Operation& raw_op) {
+  arith::AddIOp op = cast<arith::AddIOp>(raw_op);
+  Type lhs_type = op.getLhs().getType();
+  Type rhs_type = op.getRhs().getType();
+
+  if (lhs_type.isInteger() && rhs_type.isInteger()) {
+    if (lhs_type.isSignlessInteger(32) && rhs_type.isSignlessInteger(32)) {
+      return raw_op.getResult(0);
+    }
+    return op.emitOpError("Only 32-bit scalar addition is supported. ")
+           << "Type: " << lhs_type << " is not supported. "
+           << "Please cast your input to 32 bits.";
+  }
+
+  if (!isa<VectorType>(lhs_type) || !isa<VectorType>(rhs_type)) {
+    return op.emitOpError("Input is neither a scalar nor a vector.");
+  }
+
+  Type lhs_element_type = cast<VectorType>(lhs_type).getElementType();
+  Type rhs_element_type = cast<VectorType>(rhs_type).getElementType();
+  bool is_16bit = lhs_element_type.isSignlessInteger(16) &&
+                  rhs_element_type.isSignlessInteger(16);
+  bool is_32bit = lhs_element_type.isSignlessInteger(32) &&
+                  rhs_element_type.isSignlessInteger(32);
+
+  if (is_32bit) {
+    // 32-bit vector addition is always supported.
+    return raw_op.getResult(0);
+  }
+
+  if (!is_16bit) {
+    return op.emitOpError(
+               "Only 16-bit and 32-bit vector addition are supported. ")
+           << "Type: " << lhs_element_type << " is not supported. "
+           << "Please cast your input to a different type.";
+  }
+
+  // 16-bit vector addition is only supported on v6+ hardware.
+  if (ctx.hardware_generation >= 6) {
+    return raw_op.getResult(0);
+  }
+
+  // TODO(pazz): Emulate 16-bit vector addition on older hardware.
+  return op.emitOpError(
+             "16-bit vector addition is not "
+             "supported on hardware generation: ")
+         << ctx.hardware_generation
+         << ". Use hardware generation v6+ or cast to 32-bits.";
+}
+
 FailureOr<Value> canonicalize_select(const CanonicalizeContext &ctx,
                                      Operation &raw_op) {
   auto op = dyn_cast<arith::SelectOp>(raw_op);
@@ -1726,6 +1777,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {vector::TransposeOp::getOperationName(), canonicalize_vector_transpose},
       {vector::ShapeCastOp::getOperationName(), canonicalize_shape_cast},
       {vector::BroadcastOp::getOperationName(), canonicalize_broadcast},
+      {arith::AddIOp::getOperationName(), canonicalize_arith_addi},
       {arith::SelectOp::getOperationName(), canonicalize_select},
       {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
       {arith::SIToFPOp::getOperationName(), canonicalize_sitofp},
