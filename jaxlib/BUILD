@@ -76,6 +76,7 @@ pytype_strict_library(
         "//jaxlib/mlir:math_dialect",
         "//jaxlib/mlir:memref_dialect",
         "//jaxlib/mlir:mhlo_dialect",
+        "//jaxlib/mlir:mpmd_dialect",
         "//jaxlib/mlir:nvgpu_dialect",
         "//jaxlib/mlir:nvvm_dialect",
         "//jaxlib/mlir:pass_manager",
