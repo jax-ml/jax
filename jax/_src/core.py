@@ -1684,7 +1684,7 @@ def mem_space_to_kind(mem_space: MemorySpace) -> str:
     assert False, "unreachable"
 
 
-@cache(max_size=4096, trace_context_in_key=False)
+@cache(max_size=4096, trace_context_in_key=True)
 def update_aval_with_sharding(aval, sharding):
   if isinstance(sharding, NamedSharding):
     return aval.update(
@@ -2082,6 +2082,17 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
                  if mesh._name_to_type[u] == AxisType.Explicit}
   return P(*new_spec, unreduced=new_unreduced, reduced=new_reduced)
 
+def remove_size_one_mesh_axis(spec, mesh) -> P:
+  new_spec = []  # type: ignore
+  for s in spec:
+    if s is None:
+      new_spec.append(s)  # type: ignore
+    elif isinstance(s, tuple):
+      new_spec.append(tuple(i for i in s if mesh.shape[i] != 1))
+    else:
+      new_spec.append(None if mesh.shape[s] == 1 else s)  # type: ignore
+  return P(*new_spec, unreduced=spec.unreduced, reduced=spec.reduced)
+
 def _maybe_modify_sharding(sharding, ndim):
   if len(sharding.spec) == 0 or all(s is None for s in sharding.spec):
     out = sharding
@@ -2090,6 +2101,8 @@ def _maybe_modify_sharding(sharding, ndim):
   else:
     out = sharding.update(spec=modify_spec_for_auto_manual(
         sharding.spec, sharding.mesh))
+  if config.remove_size_one_mesh_axis_from_type.value:
+    out = out.update(spec=remove_size_one_mesh_axis(out.spec, out.mesh))
   if len(out.spec) != ndim:
     out = _make_lengths_same(out, ndim)
   return out
@@ -2108,7 +2121,7 @@ def _check_divisibility(sharding, shape):
           f" {size} times, but does not evenly divide the dimension size {sh}."
           f" Got shape: {shape} and sharding {sharding}")
 
-@cache(max_size=4096, trace_context_in_key=False)
+@cache(max_size=4096, trace_context_in_key=True)
 def get_sharding(sharding, shape):
   """Modifies and checks the sharding.
 

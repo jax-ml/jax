@@ -8658,6 +8658,29 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         f(inp)
     self.assertEqual(tracing_count(), 2)  # twice for f
 
+  @parameterized.named_parameters(
+      ('1', P('x', 'y'), P('x', None)),
+      ('2', P(('x', 'y')), P('x', None)),
+      ('3', P('y'), P(None, None)),
+  )
+  @config.remove_size_one_mesh_axis_from_type(True)
+  @jtu.with_explicit_mesh((2, 1), ('x', 'y'))
+  def test_remove_size_one_mesh_axis(self, arr_spec, type_spec, mesh):
+    arr = jax.device_put(np.arange(16).reshape(8, 2), arr_spec)
+
+    @jax.jit
+    def f(x):
+      self.assertEqual(x.aval.sharding.spec, type_spec)
+      out = x * 2
+      self.assertEqual(out.aval.sharding.spec, type_spec)
+      # wsc should act as an assert.
+      out = with_sharding_constraint(out, arr_spec)
+      return out
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, type_spec))
+    self.assertArraysEqual(out, arr * 2)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

@@ -233,6 +233,7 @@ def trace_context():
           eager_constant_folding.value,
           numpy_dtype_promotion.value,
           default_device.value, random_seed_offset.value,
+          remove_size_one_mesh_axis_from_type.value,
           threefry_partitionable.value,
           threefry_gpu_kernel_lowering.value,
           use_direct_linearize.value,
@@ -1148,6 +1149,13 @@ use_simplified_jaxpr_constants = bool_state(
           'This flag will exist only briefly, while we transition '
           'users. See https://github.com/jax-ml/jax/pull/29679.'
           'DO NOT RELY ON THIS FLAG.'),
+    include_in_jit_key=True)
+
+remove_size_one_mesh_axis_from_type = bool_state(
+    name='jax_remove_size_one_mesh_axis_from_type',
+    default=False,
+    upgrade=True,
+    help="Removes mesh axes of size 1 from ShapedArray.sharding",
     include_in_jit_key=True)
 
 # TODO make it so people don't use this, this is internal...
