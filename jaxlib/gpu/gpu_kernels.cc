@@ -31,6 +31,14 @@ namespace jax {
 namespace JAX_GPU_NAMESPACE {
 namespace {
 
+xla::ffi::Error AllocateBufferImpl(xla::ffi::RemainingRets results) {
+  return xla::ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(AllocateBufferFfi, AllocateBufferImpl,
+    xla::ffi::Ffi::Bind<xla::ffi::ExecutionStage::kExecute>().RemainingRets());
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "AllocateBuffer", "CUDA", AllocateBufferFfi);
+
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cudnn_rnn", "CUDA", RNNForwardFfi);
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cudnn_rnn_bwd", "CUDA",
                          RNNBackwardFfi);
