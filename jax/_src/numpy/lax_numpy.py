@@ -8184,6 +8184,10 @@ def argmax(a: ArrayLike, axis: int | None = None, out: None = None,
     - :func:`jax.numpy.argmin`: return the index of the minimum value.
     - :func:`jax.numpy.nanargmax`: compute ``argmax`` while ignoring NaN values.
 
+  Note:
+    When the maximum value occurs more than once along a particular axis, the
+    smallest index is returned.
+
   Examples:
     >>> x = jnp.array([1, 3, 5, 4, 2])
     >>> jnp.argmax(x)
@@ -8236,6 +8240,10 @@ def argmin(a: ArrayLike, axis: int | None = None, out: None = None,
 
   Returns:
     an array containing the index of the minimum value along the specified axis.
+
+  Note:
+    When the minimum value occurs more than once along a particular axis, the
+    smallest index is returned.
 
   See also:
     - :func:`jax.numpy.argmax`: return the index of the maximum value.
