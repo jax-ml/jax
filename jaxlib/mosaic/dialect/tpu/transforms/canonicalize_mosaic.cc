@@ -516,36 +516,6 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
     }
   }
 
-  // Attempt to canonicalize matmul(x, transpose(y)) to a matmul with the
-  // dimension numbers changed which will later be lowered into a more efficient
-  // operation that fuses the transpose into the matmul.
-  auto transpose_op =
-      dyn_cast_if_present<tpu::TransposeOp>(rhs.getDefiningOp());
-  if (!is_matrix_vector_dot && transpose_op && transpose_op->hasOneUse() &&
-      dimension_numbers->getRhsContractingDims().size() == 1 &&
-      dimension_numbers->getRhsNonContractingDims().size() == 1) {
-    auto rhs_non_contracting_dim =
-        dimension_numbers->getRhsNonContractingDims()[0];
-    auto rhs_contracting_dim = dimension_numbers->getRhsContractingDims()[0];
-    auto permutation = transpose_op.getPermutation();
-    if (permutation[rhs_contracting_dim] == rhs_non_contracting_dim &&
-        permutation[rhs_non_contracting_dim] == rhs_contracting_dim &&
-        std::all_of(dimension_numbers->getRhsBatchDims().begin(),
-                    dimension_numbers->getRhsBatchDims().end(),
-                    [&](int64_t batch_dim) {
-                      return permutation[batch_dim] == batch_dim;
-                    })) {
-      if (auto transpose_op_vector_operand =
-              dyn_cast<TypedValue<VectorType>>(transpose_op.getOperand())) {
-        // The transpose is DCE'ed away at a later point.
-        rhs = transpose_op_vector_operand;
-        transpose_rhs = !transpose_rhs;
-      } else {
-        return op->emitOpError("Unexpected operand type for transpose op.");
-      }
-    }
-  }
-
   auto dot_dim_matmul = [&](Value lhs, Value rhs, Value acc) {
     auto precision_attr = op.getPrecisionAttr();
     auto lhs_ty = cast<VectorType>(lhs.getType());

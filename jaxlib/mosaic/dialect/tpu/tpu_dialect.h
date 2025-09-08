@@ -89,6 +89,8 @@ std::unique_ptr<OperationPass<func::FuncOp>> createRelayoutInsertionPass(
 std::unique_ptr<OperationPass<func::FuncOp>> createApplyVectorLayoutPass(
     const ApplyVectorLayoutContext &ctx = ApplyVectorLayoutContext{});
 
+std::unique_ptr<OperationPass<func::FuncOp>> createPreInferOptimizationPass();
+
 std::unique_ptr<OperationPass<func::FuncOp>>
 createLogicalToPhysicalDeviceIdPass(int64_t total_devices);
 
