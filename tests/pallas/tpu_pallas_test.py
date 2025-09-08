@@ -2155,21 +2155,31 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(jax_nans, mosaic_nans)
 
   @parameterized.product(
-      in_dtype=[jnp.int8, jnp.int16, jnp.int32, jnp.bfloat16, jnp.float32],
-      out_dtype=[jnp.int8, jnp.int16, jnp.int32, jnp.bfloat16, jnp.float32],
+      in_dtype=[
+          jnp.int8,
+          jnp.int16,
+          jnp.int32,
+          jnp.float8_e5m2,
+          jnp.float8_e4m3fn,
+          jnp.float8_e4m3b11fnuz,
+          jnp.bfloat16,
+          jnp.float32,
+      ],
+      out_dtype=[
+          jnp.int8,
+          jnp.int16,
+          jnp.int32,
+          jnp.float32,
+      ],
   )
   def test_scalar_casting(self, in_dtype, out_dtype):
     def kernel(x_ref, o_ref):
       o_ref[0] = x_ref[0].astype(out_dtype)
 
-    if in_dtype == jnp.bfloat16 and out_dtype == jnp.float32:
-      self.skipTest('TODO(b/412984649): bf16 -> f32 casting is not supported')
-    elif in_dtype == jnp.bfloat16 and out_dtype in [
-        jnp.int8,
-        jnp.int16,
-        jnp.int32,
-    ]:
-      self.skipTest('Any casting of bf16 -> iX requires bf16 -> f32 support')
+    if jnp.issubdtype(in_dtype, jnp.floating) and is_cloud_tpu_older_than(
+        2025, 9, 13
+    ):
+      self.skipTest('bf16 -> f32 casting support was added on Sep 13, 2025')
     elif (
         in_dtype == jnp.int8
         and out_dtype == jnp.int16
