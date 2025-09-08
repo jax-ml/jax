@@ -2363,11 +2363,16 @@ class AsyncCopyTest(TestCase):
         jax.ShapeDtypeStruct(tile_shape(shape, tiling), dtype),
         mgpu.TMABarrier(),
     )
-    with jtu.set_env(MOSAIC_GPU_DUMP_HOST_LLVM="1"), self.capture_stdout() as llvm_ir:
+    env_vars = {
+        "MOSAIC_GPU_DUMP_HOST_LLVM": "1",
+        "MOSAIC_GPU_DUMP_PTX": "1",
+    }
+    with jtu.set_env(**env_vars), self.capture_stdout() as ptx_llvm_ir:
       f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)
       y = f(x)
     # We should only create one descriptor for both prefetch and copy.
-    self.assertEqual(llvm_ir().count("call void @mosaic_gpu_init_tma_desc("), 1)
+    self.assertEqual(ptx_llvm_ir().count("call void @mosaic_gpu_init_tma_desc("), 1)
+    self.assertIn("cp.async.bulk.prefetch.tensor", ptx_llvm_ir())
     np.testing.assert_array_equal(y, x)
 
   @parameterized.product(swizzle=(None, 128))
