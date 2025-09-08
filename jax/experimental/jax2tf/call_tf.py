@@ -44,6 +44,7 @@ from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
+from jax.experimental import roofline
 from jax.experimental.jax2tf import jax2tf as jax2tf_internal
 from jax._src.interpreters import mlir
 import ml_dtypes
@@ -713,3 +714,8 @@ def add_to_call_tf_concrete_function_list(concrete_tf_fn: Any, call_tf_concrete_
     called_index = len(call_tf_concrete_function_list)
     call_tf_concrete_function_list.append(concrete_tf_fn)
   return called_index
+
+# Register a roofline call so that users can use roofline on functions that
+# contain call_tf. We register roofline in this file (instead of within the
+# roofline module) to avoid having to import jax2tf in roofline.
+roofline.register_standard_roofline(call_tf_p)
