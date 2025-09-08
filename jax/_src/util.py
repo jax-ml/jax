@@ -284,8 +284,10 @@ def split_merge(
   return lhs, rhs, merge
 
 
-def cache(max_size=4096, trace_context_in_key=True):
+def cache(max_size=4096, trace_context_in_key: bool | Callable = True):
   if trace_context_in_key:
+    trace_context = (trace_context_in_key if callable(trace_context_in_key)
+                     else config.trace_context)
     def wrap(f):
       @functools.lru_cache(max_size)
       def cached(_, *args, **kwargs):
@@ -295,7 +297,7 @@ def cache(max_size=4096, trace_context_in_key=True):
       def wrapper(*args, **kwargs):
         if config.check_tracer_leaks.value:
           return f(*args, **kwargs)
-        return cached(config.trace_context(), *args, **kwargs)
+        return cached(trace_context(), *args, **kwargs)
 
       wrapper.cache_clear = cached.cache_clear
       wrapper.cache_info = cached.cache_info

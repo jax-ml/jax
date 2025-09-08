@@ -1684,7 +1684,8 @@ def mem_space_to_kind(mem_space: MemorySpace) -> str:
     assert False, "unreachable"
 
 
-@cache(max_size=4096, trace_context_in_key=True)
+@cache(max_size=4096,
+       trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
 def update_aval_with_sharding(aval, sharding):
   if isinstance(sharding, NamedSharding):
     return aval.update(
@@ -2121,7 +2122,8 @@ def _check_divisibility(sharding, shape):
           f" {size} times, but does not evenly divide the dimension size {sh}."
           f" Got shape: {shape} and sharding {sharding}")
 
-@cache(max_size=4096, trace_context_in_key=True)
+@cache(max_size=4096,
+       trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
 def get_sharding(sharding, shape):
   """Modifies and checks the sharding.
 
