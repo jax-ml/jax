@@ -209,6 +209,7 @@ def _get_fastpath_data(
         hasattr(arg, 'dtype') and dtypes.issubdtype(arg.dtype, dtypes.prng_key)
         for arg in (*args_flat, *out_flat, *consts_for_constvars)))
       and not _need_to_rebuild_with_fdo(pgle_profiler)
+      and not config.no_execution.value
       )
   if jaxlib_extension_version < 366:
     use_fastpath = use_fastpath and not const_args

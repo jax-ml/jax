@@ -57,6 +57,7 @@ from jax._src.config import (
   debug_infs as debug_infs,
   log_compiles as log_compiles,
   no_tracing as no_tracing,
+  no_execution as no_execution,
   explain_cache_misses as explain_cache_misses,
   default_device as default_device,
   default_matmul_precision as default_matmul_precision,

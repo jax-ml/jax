@@ -1570,6 +1570,17 @@ class JitTest(jtu.BufferDonationTestCase):
       with jax.no_tracing():
         _ = f(y)  # crash!
 
+  def test_no_execution(self):
+    @jax.jit
+    def f():
+      return jnp.ones(3)
+
+    f()  # no crash
+    with self.assertRaisesRegex(RuntimeError, 'no_execution'):
+      with jax.no_execution():
+        f()  # crash
+    f()  # no crash
+
 
 class APITest(jtu.JaxTestCase):
 

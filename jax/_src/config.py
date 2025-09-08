@@ -243,6 +243,7 @@ def trace_context():
           jax_xla_profile_version.value,
           _check_vma.value,
           mutable_array_checks.value,  # pallas may need to disable locally
+          no_execution.value,
           # Technically this affects jaxpr->stablehlo lowering, not tracing.
           hlo_source_file_canonicalization_regex.value,
           pgle_profiling_runs.value,
@@ -1597,6 +1598,12 @@ no_tracing = bool_state(
     name='jax_no_tracing',
     default=False,
     help='Disallow tracing for JIT compilation.')
+
+no_execution = bool_state(
+    name='jax_no_execution',
+    default=False,
+    help='Disallow JAX executions.',
+    include_in_jit_key=True)
 
 disable_vmap_shmap_error = bool_state(
     name='jax_disable_vmap_shmap_error',
