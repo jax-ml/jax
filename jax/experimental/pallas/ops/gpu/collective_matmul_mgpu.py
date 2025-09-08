@@ -130,11 +130,10 @@ def all_gather_lhs_matmul(
                 max_concurrent_steps=max_concurrent_steps,
             )
             def k_loop(idxs, lhs_smem, rhs_smem):
+              (ki,) = idxs
               plgpu.wgmma(acc_ref, lhs_smem, rhs_smem)
-              # TODO: Load balance across SMs.
-              @pl.when(send and jnp.logical_and(next_scratch_slot < num_devices - 1, sm_n == 0))
+              @pl.when(send and jnp.logical_and(next_scratch_slot < num_devices - 1, lax.rem(ki, sm_n_tile) == sm_n))
               def _():
-                (ki,) = idxs
                 k_slice = pl.ds(ki * block_k, block_k)
                 plgpu.copy_smem_to_gmem(
                     lhs_smem, send_scratch_ref.at[next_scratch_slot, m_tile_slice, k_slice]
@@ -143,7 +142,7 @@ def all_gather_lhs_matmul(
                 # previous copies.
                 plgpu.wait_smem_to_gmem(1, wait_read_only=True)
             k_loop(lhs_source_ref.at[m_tile_slice], rhs_ref.at[..., n_tile_slice])
-            @pl.when(send and jnp.logical_and(next_scratch_slot < num_devices - 1, sm_n == 0))
+            @pl.when(send and next_scratch_slot < num_devices - 1)
             def _signal():
               # Make sure the copy is done and signal the receiving device.
               plgpu.wait_smem_to_gmem(0, wait_read_only=False)
@@ -168,7 +167,7 @@ def all_gather_lhs_matmul(
         def _wait():
           # We reuse the semaphores across the M and device loops.
           prior_arrivals = sm_m_step * (num_devices - 1) + device_offset
-          pl.semaphore_wait(received_sem, value=prior_arrivals + 1, decrement=False)
+          pl.semaphore_wait(received_sem, value=(prior_arrivals + 1) * sm_n_tile, decrement=False)
 
       device_step(lhs_ref, 0, 0)
       @pl.loop(1, num_devices)
