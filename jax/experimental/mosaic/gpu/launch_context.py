@@ -749,7 +749,7 @@ class LaunchContext:
   def _prepare_tma(
       self,
       gmem_ref: ir.Value,
-      smem_ref: ir.Value,
+      smem_ref: ir.Value | None,
       swizzle: int | None,
       slice_shape: list[int],
       dyn_base_indices: tuple[ir.Value, ...],
@@ -798,7 +798,7 @@ class LaunchContext:
     # and tiling change that order and if we picked a partition based on the
     # untransformed slice shape, we might have ended up with a non-contiguous
     # SMEM window, which would no longer be realizable in a single TMA transfer.
-    collective_size = math.prod(self.cluster_size[d] for d in collective)
+    collective_size = math.prod(self.cluster_size[d] for d in collective)  # type: ignore
     if collective_size > 1 and partitioned is None:
       assert gather_indices is None  # Checked above.
       def partition_dim(dim: int, idx: ir.Value, num_chunks: int):
@@ -1078,6 +1078,7 @@ class LaunchContext:
             partitioned,
         )
     )
+    assert smem_ref is not None  # For type checkers.
 
     smem_strides, _ = ir.MemRefType(smem_ref.type).get_strides_and_offset()
     if any(
@@ -1249,14 +1250,15 @@ class LaunchContext:
     ]
     if isinstance(predicate, _DefaultPredicate):
       predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
+    if predicate is None:
+      predicate = c(1, ir.IntegerType.get_signless(1))
     smem_ptr = utils.memref_ptr(smem_ref, memory_space=3)
     if gmem_ref is src_ref:
       assert barrier is not None  # for pytype
       barrier_ptr = barrier.get_ptr()
       assert reduction_op is None
       if collective_size > 1 and partitioned is not None:
-        if predicate is None:
-          predicate = c(1, ir.IntegerType.get_signless(1))
+        assert collective_size == 2
         if arrive:
           first_block = arith.cmpi(
               arith.CmpIPredicate.eq, self.cluster_idx(collective), c(0, index),
@@ -1298,8 +1300,6 @@ class LaunchContext:
         )
     else:
       if reduction_op is not None:
-        if predicate is None:
-          predicate = c(1, ir.IntegerType.get_signless(1))
         rank = len(slice_shape)
         idx_operands = ",".join(f"${i}" for i in range(3, 3 + rank))
         llvm.inline_asm(
@@ -1317,6 +1317,83 @@ class LaunchContext:
         )
         if arrive:
           nvvm.cp_async_bulk_commit_group()
+
+  def async_prefetch(
+    self,
+    *,
+    gmem_ref: ir.Value,
+    gmem_slice: Any = (),
+    gmem_transform: MemRefTransform | tuple[MemRefTransform, ...] = (),
+    gmem_peer_id: int | ir.Value | None = None,
+    swizzle: int | None = None,
+    collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
+    partitioned: int | None = None,
+    # Should select 0 or 1 threads from the WG.
+    predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
+  ):
+    i32 = ir.IntegerType.get_signless(32)
+
+    if isinstance(collective, gpu.Dimension):
+      collective = (collective,)
+    elif collective is None:
+      collective = ()
+    if not isinstance(gmem_transform, tuple):
+      gmem_transform = (gmem_transform,)
+    if not isinstance(gmem_slice, tuple):
+      gmem_slice = (gmem_slice,)
+
+    impl =  AsyncCopyImplementation.TMA
+    (
+        slice_shape,
+        dyn_base_indices,
+        squeezed_dims,
+        gather_indices,
+        gmem_transform,
+    ) = self._prepare_async_copy(
+        gmem_ref, gmem_slice, gmem_transform, collective, partitioned, impl
+    )
+    del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
+
+    (_, slice_shape, dyn_base_indices, gmem_transform) = (
+        self._prepare_tma(
+            gmem_ref,
+            None,
+            swizzle,
+            slice_shape,
+            dyn_base_indices,
+            gather_indices,
+            squeezed_dims,
+            gmem_transform,
+            collective,
+            partitioned,
+        )
+    )
+
+    if gather_indices is not None:
+      raise NotImplementedError("Gather/scatter prefetch not implemented yet")
+
+    tma_desc = self._get_tma_desc(
+        gmem_ref, gmem_transform, gmem_peer_id,
+        tuple(slice_shape), swizzle, reduction_op=None,
+    )
+    # We construct TMA descriptors in column-major order.
+    rev_dyn_base_indices = [
+        arith.index_cast(i32, idx) for idx in reversed(dyn_base_indices)
+    ]
+    if isinstance(predicate, _DefaultPredicate):
+      predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
+    if predicate is None:
+      predicate = c(1, ir.IntegerType.get_signless(1))
+    rank = len(slice_shape)
+    idx_operands = ",".join(f"${i}" for i in range(2, 2 + rank))
+    llvm.inline_asm(
+        ir.Type.parse("!llvm.void"),
+        [predicate, tma_desc, *rev_dyn_base_indices],
+        f"@$0 cp.async.bulk.prefetch.tensor.{rank}d.L2.global.tile [$1, {{{idx_operands}}}];",
+        "b,l" + ",r" * rank,
+        has_side_effects=True,
+    )
+
 
   def await_async_copy(
       self, allow_groups: int, await_read_only: bool = False,

@@ -2074,6 +2074,27 @@ class AsyncCopyTest(TestCase):
     np.testing.assert_array_equal(y, x)
 
   @parameterized.product(
+      swizzle=(None, 32, 64, 128),
+      shape=((64, None), (5, None), (2, 3, 5, None)),
+      dtype=(jnp.float32, jnp.float16, jnp.int4),
+  )
+  def test_tma_prefetch_basic(self, swizzle, shape, dtype):
+    bw = bitwidth(dtype_to_ir_type(dtype))
+    minor_size = 64 if swizzle is None else 8 * swizzle // bw
+    shape = (*shape[:-1], minor_size)
+    i1 = ir.IntegerType.get_signless(1)
+    def kernel(ctx, src, dst, smem):
+      tmp, barrier = smem
+      ctx.async_prefetch(gmem_ref=src, swizzle=swizzle)
+      ctx.async_copy(src_ref=src, dst_ref=tmp, swizzle=swizzle, barrier=barrier)
+      barrier.wait_parity(c(0, i1))
+      copy(tmp, dst, swizzle=swizzle)
+    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    smem = (x, mgpu.TMABarrier())
+    y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
+    np.testing.assert_array_equal(y, x)
+
+  @parameterized.product(
       swizzle=(16, 32, 64, 128),
       shape=((64, None),),
       dtype=(jnp.int32, jnp.int16),
@@ -2302,6 +2323,51 @@ class AsyncCopyTest(TestCase):
     )
     f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)
     y = f(x)
+    np.testing.assert_array_equal(y, x)
+
+  @parameterized.product(
+      swizzle=(None, 128),
+      shape=((128, 128), (5, 32, 128)),
+      dtype=(jnp.float16, jnp.float32),
+  )
+  @jtu.thread_unsafe_test()
+  def test_tma_prefetch_tiled(self, swizzle, shape, dtype):
+    # TODO(apaszke): ptxas seems to freeze when generating code for copy with
+    # swizzle 32 and 64.
+    i1 = ir.IntegerType.get_signless(1)
+    index = ir.IndexType.get()
+    tiling = (32, (swizzle or 128) // jnp.dtype(dtype).itemsize)
+    tiled_shape = tile_shape(shape, tiling)[:len(shape)]
+    def kernel(ctx, src, dst, scratch):
+      tmp, barrier = scratch
+      ctx.async_prefetch(
+          gmem_ref=src, swizzle=swizzle, gmem_transform=mgpu.TileTransform(tiling)
+      )
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=tmp,
+          swizzle=swizzle,
+          barrier=barrier,
+          gmem_transform=mgpu.TileTransform(tiling),
+      )
+      barrier.wait_parity(c(0, i1))
+      for idxs in np.ndindex(tiled_shape):
+        untiled_idxs, tiled_idxs = idxs[:-len(tiling)], idxs[-len(tiling):]
+        s = (
+            *untiled_idxs,
+            *(ds(c(ix * t, index), t) for ix, t in zip(tiled_idxs, tiling)),
+        )
+        copy(memref_slice(tmp, idxs), memref_slice(dst, s), swizzle=swizzle)
+    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    smem = (
+        jax.ShapeDtypeStruct(tile_shape(shape, tiling), dtype),
+        mgpu.TMABarrier(),
+    )
+    with jtu.set_env(MOSAIC_GPU_DUMP_HOST_LLVM="1"), self.capture_stdout() as llvm_ir:
+      f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)
+      y = f(x)
+    # We should only create one descriptor for both prefetch and copy.
+    self.assertEqual(llvm_ir().count("call void @mosaic_gpu_init_tma_desc("), 1)
     np.testing.assert_array_equal(y, x)
 
   @parameterized.product(swizzle=(None, 128))
