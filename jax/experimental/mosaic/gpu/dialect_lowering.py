@@ -862,6 +862,9 @@ def _mgpu_async_load_op_lowering_rule(
     v = idx if size < 0 else utils.DynamicSlice(idx, size)
     gmem_slice.append(v)
 
+  if load_op.collective:
+    raise NotImplementedError("Collective loads are not supported yet.")
+
   # TODO(dasenov): async_copy requires all GMEM strides except the last one
   # to be a multiple of 16 bytes. This restriction could be loosned with
   # strided layouts when they are contiguous in GMEM. In that case, we could do:
@@ -882,6 +885,32 @@ def _mgpu_async_load_op_lowering_rule(
       predicate=ctx.single_thread_per_warpgroup_predicate,
   )
   return []
+
+
+if jaxlib.version >= (0, 7, 2):
+  @_register_lowering(mgpu.AsyncPrefetchOp)
+  def _mgpu_async_prefetch_op_lowering_rule(
+      ctx: LoweringContext, load_op: mgpu.AsyncPrefetchOp
+  ) -> Sequence[ir.Value]:
+    assert ctx.launch_context is not None
+
+    gmem_slice = []
+    for idx_i32, size in zip(load_op.indices, load_op.slice_lengths):
+      idx = arith.index_cast(ir.IndexType.get(), idx_i32)
+      v = idx if size < 0 else utils.DynamicSlice(idx, size)
+      gmem_slice.append(v)
+
+    if load_op.collective:
+      raise NotImplementedError("Collective prefetches are not supported yet.")
+
+    ctx.launch_context.async_prefetch(
+        gmem_ref=load_op.source,
+        gmem_slice=tuple(gmem_slice),
+        swizzle=None,
+        gmem_transform=(),
+        predicate=ctx.single_thread_per_warpgroup_predicate,
+    )
+    return []
 
 
 @_register_lowering(mgpu.AsyncStoreOp)

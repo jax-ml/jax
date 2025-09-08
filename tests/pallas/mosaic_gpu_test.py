@@ -646,7 +646,6 @@ class PallasCallTest(PallasTest):
 
   @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
   def test_async_prefetch(self, indexer):
-    self.skip_if_wg_semantics()
 
     @functools.partial(
         self.pallas_call,
@@ -2547,7 +2546,6 @@ class PallasCallWGTest(
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
     expected_missing_primitives = {
-        mgpu_primitives.async_prefetch_p,
         mgpu_primitives.tcgen05_mma_p,
         mgpu_primitives.print_layout_p,
         mgpu_primitives.tcgen05_commit_arrive_p,

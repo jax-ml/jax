@@ -306,6 +306,28 @@ llvm::LogicalResult AsyncLoadOp::verify() {
   return llvm::success();
 }
 
+llvm::LogicalResult AsyncPrefetchOp::verify() {
+  if (absl::c_any_of(getSliceLengths(), [](int64_t s) { return s < -1; })) {
+    return emitOpError(
+        "The `slice_lengths` attribute must not contain values less than -1.");
+  }
+  if (getIndices().size() != getSource().getType().getRank()) {
+     return emitOpError(
+        "The size of `indices` must be equal to the rank of `source`.");
+  }
+
+  for (int i = 0; i < getCollective().size(); ++i) {
+    for (int k = i + 1; k < getCollective().size(); ++k)
+      if (getCollective()[i] == getCollective()[k]) {
+        return emitError(
+            "The `collective` attribute must not contain duplicate "
+            "dimensions.");
+      }
+  }
+
+  return llvm::success();
+}
+
 llvm::LogicalResult AsyncStoreOp::verify() {
   return VerifyCommonLoadStoreOp(getLoc(), getDestination().getType(),
                                  "destination", getSource().getType(), "source",

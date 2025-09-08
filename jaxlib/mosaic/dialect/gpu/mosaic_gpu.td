@@ -280,6 +280,46 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
   let hasVerifier = 1;
 }
 
+def MosaicGPU_AsyncPrefetchOp : Op<MosaicGPU_Dialect, "async_prefetch",
+      [AttrSizedOperandSegments]> {
+  let summary = "Schedules an async prefetch of a MemRef from GMEM to L2";
+  let description = [{
+    Schedules an async prefetch of the contents of the `source` MemRef in GMEM
+    to the L2 cache, making subsequent loads of the same data from GMEM faster.
+
+    The `indices` and `slice_lengths` inputs define what slice of the GMEM
+    `source` is going to be prefetched. Both `indices` and `slice_lengths` must
+    have a length equal to the rank of the `source`. The values in `indices` are
+    the starting indices of each dimension and the values in `slice_lengths` are
+    the lengths. Providing -1 in `slice_lengths` indicates that the slice length
+    is 1.
+
+    The `collective` attribute can be provided to partition the prefetch over
+    multiple blocks in a cluster.
+
+    The `predicate` allows scheduling the prefetch conditionally.
+  }];
+
+  let arguments = (ins
+    AnyMemRef:$source,
+    Variadic<I32>:$indices,
+    PtxPredicate:$predicate,
+
+    // Attributes
+    DenseI64ArrayAttr:$slice_lengths,
+    TypedArrayAttrBase<MosaicGPU_Dimension, "dimensions">:$collective
+  );
+
+  let assemblyFormat = [{
+    `source` `(` $source `:` type($source) `)`
+    `indices` `(` $indices `)`
+    `predicate` `(` $predicate `)`
+    attr-dict
+  }];
+
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
       [AttrSizedOperandSegments]> {
   let summary = "Schedules an async store of a MemRef from SMEM to GMEM";

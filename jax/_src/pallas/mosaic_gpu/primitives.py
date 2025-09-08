@@ -664,7 +664,11 @@ def _async_prefetch_abstract_eval(ref, *args, **params):
   _check_ref(ref, "ref", gpu_core.GMEM)
   return (), {state.ReadEffect(0)}
 
+
 @lowering.register_lowering_rule(async_prefetch_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(
+    async_prefetch_p, mgpu.LoweringSemantics.Warpgroup
+)
 def _async_prefetch_lowering(
     ctx: lowering.LoweringRuleContext,
     ref,
@@ -682,20 +686,39 @@ def _async_prefetch_lowering(
         for axis in collective_axes
     )
 
-  predicate_kwarg = dict(predicate=ctx.module_ctx.single_lane_predicate)
-  if gmem_slice := copy_params.get("gmem_slice", ()):
-    first_idx = gmem_slice[0]
-    # Gathers are a warpgroup-level collective and can't take a predicate.
-    if isinstance(first_idx, mgpu.FragmentedArray) and first_idx.shape:
-      predicate_kwarg = {}
-  ctx.launch_ctx.async_prefetch(
-      gmem_ref=ref,
-      collective=collective,
-      partitioned=partitioned_axis,
-      **copy_params,
-      **predicate_kwarg,
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    predicate_kwarg = dict(predicate=ctx.module_ctx.single_lane_predicate)
+    if gmem_slice := copy_params.get("gmem_slice", ()):
+      first_idx = gmem_slice[0]
+      # Gathers are a warpgroup-level collective and can't take a predicate.
+      if isinstance(first_idx, mgpu.FragmentedArray) and first_idx.shape:
+        predicate_kwarg = {}
+    ctx.launch_ctx.async_prefetch(
+        gmem_ref=ref,
+        collective=collective,
+        partitioned=partitioned_axis,
+        **copy_params,
+        **predicate_kwarg,
+    )
+    return ()
+
+  if "gmem_slice" not in copy_params:
+    i32 = ir.IntegerType.get_signless(32)
+    slice_lengths = ir.MemRefType(ref.type).shape
+    indices = [mgpu.utils.c(0, i32)] * len(slice_lengths)
+  else:
+    indices, slice_lengths = _split_gmem_slice(copy_params["gmem_slice"])
+  assert copy_params.get("swizzle") is None
+  assert not copy_params.get("gmem_transform")
+  if copy_params.get("gmem_peer_id", None) is not None:
+    raise NotImplementedError(
+        "GMEM refs with peer ids are not supported in warpgroup lowering."
+    )
+  mgpu.dialect.async_prefetch(
+      ref, indices, slice_lengths, collective=ir.ArrayAttr.get([])
   )
   return ()
+
 
 def async_prefetch(
     ref: _Ref,
