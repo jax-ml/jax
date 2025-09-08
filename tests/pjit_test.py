@@ -8681,6 +8681,22 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, type_spec))
     self.assertArraysEqual(out, arr * 2)
 
+  @jtu.with_explicit_mesh((2, 1), ('x', 'y'))
+  def test_typeof_not_mesh_context_dependent(self, mesh):
+    arr = jax.device_put(np.arange(16).reshape(8, 2), P('x', 'y'))
+    self.assertEqual(jax.sharding.get_abstract_mesh().axis_names, ('x', 'y'))
+    self.assertEqual(jax.typeof(arr).sharding.spec, P('x', 'y'))
+
+    with jax.set_mesh(mesh.update(axis_names=('a', 'b'))):
+      self.assertEqual(jax.sharding.get_abstract_mesh().axis_names, ('a', 'b'))
+      # Even though the mesh changed axis_names, the type's spec didn't change.
+      self.assertEqual(jax.typeof(arr).sharding.spec, P('x', 'y'))
+
+      # There needs to be an explicit cast via reshard to change the
+      # type's spec.
+      arr = jax.sharding.reshard(arr, P('a', 'b'))
+      self.assertEqual(jax.typeof(arr).sharding.spec, P('a', 'b'))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
