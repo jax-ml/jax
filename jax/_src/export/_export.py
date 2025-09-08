@@ -1102,6 +1102,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "ApproxTopK", "stablehlo.dynamic_approx_top_k",
     "tf.call_tf_function",  # From jax2tf.call_tf(func, call_tf_graph=True)
     "tpu_custom_call",  # Pallas/TPU kernels
+    "AllocateBuffer",  # lax.empty implementation
     "mosaic_gpu_v2",  # Pallas Mosaic GPU kernels
     # TODO(burmako): maintain backwards compatibility for these, until they
     # are upstreamed to StableHLO.
