@@ -1671,8 +1671,8 @@ def get_pipeline_schedule(schedule) -> Any:
 
 def make_pipeline_allocations(
     *refs,
-    in_specs=None,
-    out_specs=None,
+    in_specs=(),
+    out_specs=(),
     should_accumulate_out=False,
     needs_swap_ref=True,
     grid=None,
@@ -1868,8 +1868,8 @@ def emit_pipeline(
     body,
     *,
     grid: tuple[int | jax.Array, ...],
-    in_specs=None,
-    out_specs=None,
+    in_specs=(),
+    out_specs=(),
     should_accumulate_out: bool = False,
     core_axis: int | None = None,
     core_axis_name: str | None = None,
@@ -2138,8 +2138,8 @@ def emit_pipeline_with_allocations(
     body,
     *,
     grid,
-    in_specs=None,
-    out_specs=None,
+    in_specs=(),
+    out_specs=(),
     should_accumulate_out=False,
 ):
   """Creates pallas pipeline and top-level allocation preparation functions.
