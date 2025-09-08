@@ -5898,6 +5898,20 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ValueError, "0th dimension of all xs should be replicated"):
       f(carry, jax.device_put(arr, NamedSharding(mesh, P('x', None, None))))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_scan_carry_shardings_diff_error(self, mesh):
+    @jax.jit
+    def f(x):
+      def g(carry, _):
+        y = reshard(carry, P())
+        return y, None
+      return jax.lax.scan(g, x, None, length=1)[0]
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r'scan.*carry input and carry output must have equal types'):
+      f(jax.device_put(np.arange(4), P('x')))
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_argminmax(self, mesh):
     np_inp = np.arange(16.).reshape(8, 2)
@@ -7462,7 +7476,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   def test_scan_unroll(self, mesh):
     np_inp = np.arange(64, dtype=jnp.float32).reshape(8, 8)
     arr = jax.device_put(np_inp, NamedSharding(mesh, P(None, 'y')))
-    carry = jnp.ones((8,), dtype=jnp.float32)
+    carry = jnp.ones((8,), dtype=jnp.float32, out_sharding=P('y'))
 
     @jax.jit
     def f(carry, xs):
