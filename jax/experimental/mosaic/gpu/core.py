@@ -13,21 +13,21 @@
 # limitations under the License.
 # ==============================================================================
 
+from collections.abc import Callable
 from collections.abc import Sequence
 import contextlib
 import ctypes
 import dataclasses
 import enum
 import hashlib
+import itertools
 import math
 import os
 import pathlib
 import time
 from typing import Any, Generic, TypeVar
-from collections.abc import Callable
 import weakref
 
-import itertools
 import jax
 from jax._src import dtypes
 from jax._src import lib
@@ -49,6 +49,7 @@ import numpy as np
 from . import dialect_lowering
 from . import launch_context
 from . import layout_inference
+from . import layouts
 from . import profiler
 from . import tcgen05
 from . import transform_inference
@@ -443,13 +444,21 @@ def _construct_smem_reftree(
         packing = 1 if packing is None else packing
         ir_dtype = utils.dtype_to_ir_type(dtype)
         if lowering_semantics == LoweringSemantics.Warpgroup:
+          if layout is not None:
+            packing = layout.vector_length
+
           alloc = _TMEMDialectAlloc(
               addr_ref, shape, ir_dtype, packing, collective
           )
           tmem_allocs.append(alloc)
-          def ref(alloc=alloc):
+          def ref(alloc=alloc, layout=layout):
             assert alloc.tmem_ref is not None
-            return alloc.tmem_ref
+            if layout is not None:
+              layout_attr = layouts.to_layout_attr(layout)
+              return dialect.tmem_layout_cast(alloc.tmem_ref, layout_attr)
+            else:
+              return alloc.tmem_ref
+
         else:
           if layout is None:
             layout = tcgen05._infer_tmem_layout(shape, collective, packing)

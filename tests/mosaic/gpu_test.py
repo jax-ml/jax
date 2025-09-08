@@ -4600,15 +4600,17 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
     self.assertEqual(relinquish[0], "2" if collective else "1")
 
   @parameterized.named_parameters(
-      ("unpacked", (128, 128), jnp.bfloat16, 1),
-      ("packed", (128, 128), jnp.bfloat16, 2),
+      ("unpacked", 1, None),
+      ("packed", 2, None),
+      ("custom layout", None, tcgen05.tmem_default_layout(packing=1)),
   )
-  def test_tmem_load_store(
-      self, shape, dtype, packing,
-  ):
+  def test_tmem_load_store(self, packing, layout):
     # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.2.
     if jaxlib.version < (0, 7, 2):
       self.skipTest("Require JAX version 0.7.2 or higher.")
+
+    dtype = jnp.bfloat16
+    shape = (128, 128)
 
     def body(
         ctx: launch_context.LaunchContext,
@@ -4646,7 +4648,9 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
         block=(128, 1, 1),
         in_shape=jax_shape,
         out_shape=jax_shape,
-        smem_scratch_shape=mgpu.TMEM(shape, dtype, packing=packing),
+        smem_scratch_shape=mgpu.TMEM(
+            shape, dtype, packing=packing, layout=layout
+        ),
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 
