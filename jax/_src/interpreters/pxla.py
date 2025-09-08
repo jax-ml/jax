@@ -1342,6 +1342,10 @@ class ExecuteReplicated:
 
   @profiler.annotate_function
   def __call__(self, *args):
+    if config.no_execution.value:
+      raise RuntimeError(
+      f"JAX tried to execute function {self.name}, but the no_execution config "
+      "option is set")
     args = [x for i, x in enumerate(args) if i in self.kept_var_idx]
     if self.mut:
       args = [*args, *self.mut.in_mut]
