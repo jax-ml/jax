@@ -50,6 +50,7 @@ from jax._src.pallas.mosaic_gpu.pipeline import PipelinePipeline as PipelinePipe
 from jax._src.pallas.mosaic_gpu.primitives import async_copy_scales_to_tmem as async_copy_scales_to_tmem
 from jax._src.pallas.mosaic_gpu.primitives import async_copy_sparse_metadata_to_tmem as async_copy_sparse_metadata_to_tmem
 from jax._src.pallas.mosaic_gpu.primitives import async_load_tmem as async_load_tmem
+from jax._src.pallas.mosaic_gpu.primitives import async_prefetch as async_prefetch
 from jax._src.pallas.mosaic_gpu.primitives import async_store_tmem as async_store_tmem
 from jax._src.pallas.mosaic_gpu.primitives import barrier_arrive as barrier_arrive
 from jax._src.pallas.mosaic_gpu.primitives import barrier_wait as barrier_wait

@@ -644,6 +644,30 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
 
+  @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
+  def test_async_prefetch(self, indexer):
+    self.skip_if_wg_semantics()
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+        in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
+        scratch_shapes=[
+            plgpu.SMEM((256,), jnp.float32),
+            plgpu.Barrier(),
+        ],
+    )
+    def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
+      plgpu.async_prefetch(x_ref_gmem.at[indexer])
+      plgpu.copy_gmem_to_smem(
+          x_ref_gmem.at[indexer], scratch_ref.at[indexer], barrier_ref
+      )
+      plgpu.barrier_wait(barrier_ref)
+      o_ref[...] = scratch_ref[...] + 1
+
+    x = jnp.arange(256).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
+
   @parameterized.named_parameters(
       {
           "testcase_name": "1d_none",
@@ -2523,6 +2547,7 @@ class PallasCallWGTest(
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
     expected_missing_primitives = {
+        mgpu_primitives.async_prefetch_p,
         mgpu_primitives.tcgen05_mma_p,
         mgpu_primitives.print_layout_p,
         mgpu_primitives.tcgen05_commit_arrive_p,
