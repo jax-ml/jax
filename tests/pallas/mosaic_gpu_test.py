@@ -2383,6 +2383,7 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
           # copies instead to produce a testable result.
           @pl.when(warp_id == 1)
           def _():
+            plgpu.async_prefetch(y_ref.at[1:2])
             plgpu.copy_smem_to_gmem(ones_smem_ref, y_ref.at[0:1])
           @pl.when(warp_id == 3)
           def _():

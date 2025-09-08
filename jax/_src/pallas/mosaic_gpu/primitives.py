@@ -667,6 +667,11 @@ def _async_prefetch_abstract_eval(ref, *args, **params):
 
 @lowering.register_lowering_rule(async_prefetch_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(
+    async_prefetch_p,
+    mgpu.LoweringSemantics.Lane,
+    primitive_semantics=gpu_core.PrimitiveSemantics.Warp,
+)
+@lowering.register_lowering_rule(
     async_prefetch_p, mgpu.LoweringSemantics.Warpgroup
 )
 def _async_prefetch_lowering(
