@@ -3690,6 +3690,45 @@ class LaxTest(jtu.JaxTestCase):
     result = exported.call(np.ones((3, 4), dtype=np.float32))
     self.assertArraysEqual(result, np.asarray((3, 4), np.int64))
 
+  @jtu.sample_product(
+      name = ['abs'],
+      dtype = ['int4', 'uint4'],
+  )
+  def test_int4_non_support_errors(self, name, dtype):
+    func = getattr(lax, name)
+    arg = lax.iota(dtype, 3)
+    with self.assertRaisesRegex(TypeError, f'{name} does not accept dtype {dtype}.'):
+      func(arg)
+
+  @jtu.sample_product(
+      name = ['bitwise_not', 'neg', 'sign'],
+      dtype = ['int4', 'uint4'],
+  )
+  def test_int4_unary_ops(self, name, dtype):
+    func = getattr(lax, name)
+    rng = jtu.rand_default(self.rng())
+    x = rng(3, dtype)
+    actual = func(x)
+    expected = func(x.astype('int8')).astype(dtype)
+    self.assertArraysEqual(actual, expected, check_dtypes=True)
+
+  @jtu.sample_product(
+      name = ['add', 'sub', 'mul', 'div', 'rem', 'max', 'min',
+              'shift_left', 'shift_right_arithmetic', 'shift_right_logical',
+              'bitwise_and', 'bitwise_or', 'bitwise_xor',
+              'eq', 'ne', 'gt', 'ge', 'lt', 'le'],
+      dtype = ['int4', 'uint4'],
+  )
+  def test_int4_binary_ops(self, name, dtype):
+    func = getattr(lax, name)
+    rng = jtu.rand_default(self.rng())
+    x, y = rng(3, dtype), rng(3, dtype)
+    actual = func(x, y)
+    expected = func(x.astype('int8'), y.astype('int8'))
+    if expected.dtype == 'int8':
+      expected = expected.astype(dtype)
+    self.assertArraysEqual(actual, expected, check_dtypes=True)
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
