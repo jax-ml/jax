@@ -130,13 +130,16 @@ def _fftconvolve_unbatched(in1: Array, in2: Array, mode: str) -> Array:
     if swap:
       in1, in2 = in2, in1
 
-  if jnp.iscomplexobj(in1):
-    fft, ifft = jnp.fft.fftn, jnp.fft.ifftn
+  if (all(s1 == 1 or s2 == 1 for s1, s2 in zip(in1.shape, in2.shape))):
+    conv = in1 * in2
   else:
-    fft, ifft = jnp.fft.rfftn, jnp.fft.irfftn
-  sp1 = fft(in1, fft_shape)
-  sp2 = fft(in2, fft_shape)
-  conv = ifft(sp1 * sp2, fft_shape)
+    if jnp.iscomplexobj(in1):
+      fft, ifft = jnp.fft.fftn, jnp.fft.ifftn
+    else:
+      fft, ifft = jnp.fft.rfftn, jnp.fft.irfftn
+    sp1 = fft(in1, fft_shape)
+    sp2 = fft(in2, fft_shape)
+    conv = ifft(sp1 * sp2, fft_shape)
 
   if mode == "full":
     out_shape = full_shape
