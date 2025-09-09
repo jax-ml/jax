@@ -489,8 +489,6 @@ void BuildJaxjitSubmodule(nb::module_& m) {
   jitlib.def("_ArgSignatureOfValue",
              xla::ValueOrThrowWrapper(PyArgSignatureOfValue));
 
-  jitlib.def("_is_float0", &IsFloat0);
-
   nb::class_<ArgumentSignature> argument_signature(jitlib, "ArgumentSignature");
   argument_signature.def_ro("static_args", &ArgumentSignature::static_args)
       .def_ro("static_arg_names", &ArgumentSignature::static_arg_names)

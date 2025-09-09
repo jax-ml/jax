@@ -100,9 +100,6 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
     absl::Span<const int64_t> shape, nanobind::handle sharding,
     const DevicePutOptions& options);
 
-// Returns `true` if `arg` is a JAX float0 array.
-bool IsFloat0(xla::nb_numpy_ndarray arg);
-
 // Describes the abstract shape and dtype of an argument.
 struct PyArgSignature {
   PyArgSignature(xla::PrimitiveType dtype, absl::Span<const int64_t> shape,

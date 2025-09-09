@@ -51,8 +51,6 @@ def _ArgSignatureOfValue(
     __arg: Any,
     __jax_enable_x64: bool) -> ArgSignature: ...
 
-def _is_float0(__arg: Any) -> bool: ...
-
 
 class ArgumentSignature:
   static_args: Sequence[Any]

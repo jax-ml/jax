@@ -729,15 +729,6 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
 
 }  // namespace
 
-bool IsFloat0(xla::nb_numpy_ndarray arg) {
-  const nb::object& float0_dtype = xla::SafeStaticInit<nb::object>([] {
-    nb::module_ dtypes_module = nb::module_::import_("jax.dtypes");
-    nb::object float0_dtype = dtypes_module.attr("float0");
-    return std::make_unique<nb::object>(float0_dtype);
-  });
-  return float0_dtype.is(arg.attr("dtype"));
-}
-
 std::string PyArgSignature::DebugString() const {
   std::string result = "";
   if (weak_type) {
