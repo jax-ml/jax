@@ -930,6 +930,25 @@ FailureOr<Value> canonicalize_broadcast(const CanonicalizeContext &ctx,
   return raw_op.getResult(0);
 }
 
+FailureOr<Value> canonicalize_arith_addi(const CanonicalizeContext& ctx,
+                                         Operation& raw_op) {
+  arith::AddIOp op = cast<arith::AddIOp>(raw_op);
+  Type result_type = op.getType();
+
+  // The verifier ensures operands and results have the same type.
+  if (result_type.isInteger()) {
+    if (result_type.isSignlessInteger(32)) {
+      return op.getResult();
+    }
+    // TODO(pazz): Emulate int16 addition.
+    return op.emitOpError("Not implemented: ")
+           << "Only int32 scalar addition is supported, but got " << result_type
+           << ". Please cast your input to int32.";
+  }
+
+  return op.getResult();
+}
+
 FailureOr<Value> canonicalize_select(const CanonicalizeContext &ctx,
                                      Operation &raw_op) {
   auto op = dyn_cast<arith::SelectOp>(raw_op);
@@ -1726,6 +1745,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {vector::TransposeOp::getOperationName(), canonicalize_vector_transpose},
       {vector::ShapeCastOp::getOperationName(), canonicalize_shape_cast},
       {vector::BroadcastOp::getOperationName(), canonicalize_broadcast},
+      {arith::AddIOp::getOperationName(), canonicalize_arith_addi},
       {arith::SelectOp::getOperationName(), canonicalize_select},
       {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
       {arith::SIToFPOp::getOperationName(), canonicalize_sitofp},
