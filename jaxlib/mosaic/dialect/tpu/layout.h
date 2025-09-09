@@ -28,6 +28,7 @@ limitations under the License.
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/bit.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
@@ -170,8 +171,8 @@ struct VRegDataBounds {
 //   tiling: The tiling used to lay out values (see the XLA docs). For values of
 //     bitwidth < 32, an implicit (32 / bitwidth, 1) tiling is appended to the
 //     one specified as an attribute.
-//   implicit_dim: If specified, the value has an implicit dim inserted in
-//     either minormost or second minormost position.
+//   implicit_dim: If specified, the value has implicit dims inserted in the
+//     minormost and/or second minormost position.
 //
 // Note: There is a special case when VectorLayout is used for an mlir::Value
 // of i1 type. In this case, we use it to represent a vmask, which has a smaller
@@ -183,11 +184,15 @@ struct VRegDataBounds {
 // but we might want to split out a separate class if it gets used more widely.
 class VectorLayout {
  public:
-  enum class ImplicitDim {
-    kNone = 0,  // To make if (implicit_dim) work.
-    // Also want to do dims[dims.size() - xla::to_underlying(implicit_dim)]
+  enum class ImplicitDim : unsigned {
+    // Each bit indicates whether the corresponding dimension is implicit.
+    // When bit 0 is set, the minor dimension is implicit.
+    // When bit 1 is set, the second minor dimension is implicit.
+    // WARNING: This should not be relied on outside of VectorLayout.
+    kNone = 0,
     kMinor = 1,
     kSecondMinor = 2,
+    kMinorAndSecondMinor = 3,
   };
   VectorLayout(const int8_t bitwidth, const LayoutOffsets offsets,
                const std::array<int64_t, 2> tiling,
@@ -206,13 +211,7 @@ class VectorLayout {
   }
 
   static int num_implicit_dims(const ImplicitDim implicit_dim) {
-    switch (implicit_dim) {
-      case ImplicitDim::kNone:
-        return 0;
-      case ImplicitDim::kMinor:
-      case ImplicitDim::kSecondMinor:
-        return 1;
-    }
+    return llvm::popcount(static_cast<unsigned>(implicit_dim));
   }
 
   // The number of non-implicit dimensions that are tiled.
@@ -288,9 +287,13 @@ class VectorLayout {
       case ImplicitDim::kNone:
         break;
       case ImplicitDim::kMinor:
+        vec.push_back(value);
+        break;
       case ImplicitDim::kSecondMinor:
-        vec.insert(vec.end() - (static_cast<int64_t>(implicit_dim_) - 1),
-                   value);
+        vec.insert(vec.end() - 1, value);
+        break;
+      case ImplicitDim::kMinorAndSecondMinor:
+        vec.append(2, value);
         break;
     }
   }
@@ -302,8 +305,13 @@ class VectorLayout {
       case ImplicitDim::kNone:
         break;
       case ImplicitDim::kMinor:
+        vec.pop_back();
+        break;
       case ImplicitDim::kSecondMinor:
-        vec.erase(vec.end() - static_cast<int64_t>(implicit_dim_));
+        vec.erase(vec.end() - 2);
+        break;
+      case ImplicitDim::kMinorAndSecondMinor:
+        vec.pop_back_n(2);
         break;
     }
   }
@@ -319,6 +327,8 @@ class VectorLayout {
         return {*(arr.end() - 1), implicit_value};
       case ImplicitDim::kSecondMinor:
         return {implicit_value, *(arr.end() - 1)};
+      case ImplicitDim::kMinorAndSecondMinor:
+        return {implicit_value, implicit_value};
     }
   }
   // Returns the dimension of the implicit shape that corresponds to the given
@@ -338,6 +348,8 @@ class VectorLayout {
       case ImplicitDim::kSecondMinor:
         CHECK_EQ(dimension, rank - 1);
         return rank;
+      case ImplicitDim::kMinorAndSecondMinor:
+        llvm_unreachable("Invalid dimension");
     }
   }
 
