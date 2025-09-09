@@ -340,7 +340,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in all_shapes
       for axis in list(range(-len(shape), len(shape)))],
     discont=[None, "pi", 2],
-    period=["2pi", "pi"],
+    period=["2pi", "pi", 2, 4],
     dtype=default_dtypes,
   )
   def testUnwrap(self, shape, dtype, axis, discont, period):
@@ -363,7 +363,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       # This case requires implicit dtype promotion
       jnp_fun = jax.numpy_dtype_promotion('standard')(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True,
                             atol={dtypes.bfloat16: 1e-1, np.float16: 1e-2})
     self._CompileAndCheck(jnp_fun, args_maker, atol={dtypes.bfloat16: 1e-1})
 
