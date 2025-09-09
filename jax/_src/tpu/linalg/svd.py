@@ -204,7 +204,7 @@ def svd(
     is_flip = True
 
   reduce_to_square = False
-  if full_matrices:
+  if full_matrices and m > n:
     q_full, a_full = lax_linalg.qr(a, pivoting=False, full_matrices=True)
     q = q_full[:, :n]
     u_out_null = q_full[:, n:]
@@ -230,7 +230,7 @@ def svd(
     if reduce_to_square:
       u_out = q @ u_out
 
-  if full_matrices:
+  if full_matrices and m > n:
     u_out = jnp.hstack((u_out, u_out_null))
 
   is_finite = jnp.all(jnp.isfinite(a))
