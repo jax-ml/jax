@@ -232,6 +232,8 @@ class ClosedJaxpr:
 
   jaxpr = property(lambda self: self._jaxpr)
   consts = property(lambda self: self._consts)
+  is_high = property(lambda self: self._jaxpr.is_high)
+  debug_info = property(lambda self: self._jaxpr.debug_info)
 
   def __init__(self, jaxpr: Jaxpr, consts: Sequence):
     assert len(consts) == len(jaxpr.constvars)

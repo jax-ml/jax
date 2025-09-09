@@ -309,15 +309,9 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 @api_boundary
 def jit_trace(jit_func, *args, **kwargs) -> stages.Traced:
   p, args_flat = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs)
-  donate_argnums = tuple(i for i, d in enumerate(p.params['donated_invars']) if d)
-  args_info = stages.make_args_info(p.in_tree, p.in_avals, donate_argnums)
-  lower_callable = partial(_resolve_and_lower, args_flat, **p.params,
-                           pgle_profiler=None)
-  return stages.Traced(
-      p.params['jaxpr'], args_info, p.params["name"], p.out_tree,
-      lower_callable, args_flat, p.arg_names, len(p.consts),
-      p.params['out_shardings'])
-
+  lower_callable = partial(_resolve_and_lower, args_flat, pgle_profiler=None)
+  return stages.Traced(lower_callable, p.params, p.in_tree, p.out_tree,
+                       len(p.consts))
 
 @api_boundary
 def jit_lower(jit_func, *args, **kwargs):
