@@ -790,7 +790,10 @@ def polygamma(n: ArrayLike, x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.gamma`
     - :func:`jax.scipy.special.digamma`
   """
-  assert dtypes.issubdtype(lax.dtype(n), np.integer)
+  if not dtypes.issubdtype(lax.dtype(n), np.integer):
+    raise ValueError(
+        f"Argument `n` to polygamma must be of integer type. Got dtype {lax.dtype(n)}."
+    )
   n_arr, x_arr = promote_args_inexact("polygamma", n, x)
   return lax.polygamma(n_arr, x_arr)
 
