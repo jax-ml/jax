@@ -14,7 +14,6 @@
 
 """Test exporting Pallas kernels."""
 
-import contextlib
 import sys
 
 from absl.testing import absltest
@@ -99,9 +98,7 @@ class ExportTestWithMosaicGpu(ExportTestWithTriton):
       self.skipTest(
           "LLVM seems to care about the compute capability if a GPU is present"
       )
-    context_stack = contextlib.ExitStack()
-    context_stack.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(True))
-    self.addCleanup(context_stack.close)
+    self.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(True))
     super().setUp()
 
   def _check_cuda_export(self, exp):

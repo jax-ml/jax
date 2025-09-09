@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-import contextlib
 import dataclasses
 import re
 import os
@@ -195,9 +194,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       export.maximum_supported_calling_convention_version,
       tfxla.call_module_maximum_supported_version())
 
-    with contextlib.ExitStack() as stack:
-      stack.enter_context(tf.device(self.tf_default_device))
-      self.addCleanup(stack.pop_all().close)
+    self.enter_context(tf.device(self.tf_default_device))
 
   def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
     """Compares dtypes across JAX and TF dtypes. Overrides super method."""

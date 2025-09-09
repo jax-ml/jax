@@ -120,9 +120,7 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
   def setUp(self):
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on a GPU with capability >= sm90")
-    context_stack = contextlib.ExitStack()
-    context_stack.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
-    self.addCleanup(context_stack.close)
+    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
 
     super().setUp()
 

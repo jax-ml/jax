@@ -14,7 +14,6 @@
 # ==============================================================================
 """Test different parameterizations of our Mosaic GPU ragged dot kernel."""
 
-import contextlib
 import os
 
 from absl.testing import absltest, parameterized  # pylint: disable=g-multiple-import
@@ -48,9 +47,7 @@ class RaggedDotTestCase(jtu.JaxTestCase):
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_equal("9.0")):
       self.skipTest("Only works on GPU with capability sm90a")
-    context_stack = contextlib.ExitStack()
-    context_stack.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
-    self.addCleanup(context_stack.close)
+    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
 
   @parameterized.product(
       block_m=(64, 128, 192),

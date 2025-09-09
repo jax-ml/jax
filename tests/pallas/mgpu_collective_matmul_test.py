@@ -14,7 +14,6 @@
 # ==============================================================================
 """Test different parameterizations of our Mosaic GPU collective matmul."""
 
-import contextlib
 import functools
 import os
 
@@ -53,14 +52,12 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
       self.skipTest("Test requires multiple processes.")
     if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
       self.skipTest("NVSHMEM doesn't work with the platform allocator.")
-    context_stack = contextlib.ExitStack()
-    self.addCleanup(context_stack.close)
-    context_stack.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
+    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
     num_devices = jax.device_count()
     mesh = jax.make_mesh(
         (num_devices,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
     )
-    context_stack.enter_context(jax.set_mesh(mesh))
+    self.enter_context(jax.set_mesh(mesh))
 
   @parameterized.product(
       m_shard=(3072,),

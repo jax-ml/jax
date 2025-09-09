@@ -14,7 +14,6 @@
 # ==============================================================================
 """Test different parameterizations of matrix multiplication."""
 
-import contextlib
 import os
 
 from absl.testing import absltest
@@ -51,9 +50,7 @@ class MatrixMultiplicationSm100ATest(jtu.JaxTestCase):
       self.skipTest("Mosaic GPU not available.")
     if not jtu.test_device_matches(["cuda"]):
       self.skipTest("Test requires an NVIDIA GPU")
-    context_stack = contextlib.ExitStack()
-    context_stack.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
-    self.addCleanup(context_stack.close)
+    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
 
   @parameterized.product(
       m=(1024, 4096),
