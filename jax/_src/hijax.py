@@ -19,7 +19,7 @@ import itertools as it
 from typing import Any
 
 from jax._src import core
-from jax._src.effects import Effect
+from jax._src import effects
 from jax._src.interpreters import ad
 from jax._src.interpreters import partial_eval as pe
 from jax._src import ad_util
@@ -232,7 +232,9 @@ class Box:  # noqa: F811
 
 register_hitype(Box, lambda b: b.ty)
 
-box_effect = Effect()
+class BoxEffect(effects.Effect): ...
+box_effect = BoxEffect()
+effects.control_flow_allowed_effects.add_type(BoxEffect)
 
 class NewBox(HiPrimitive):
   def is_high(self, *, treedef) -> bool: return True  # type: ignore

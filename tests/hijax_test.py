@@ -459,7 +459,6 @@ class BoxTest(jtu.JaxTestCase):
     self.assertAllClose(g, 2.0)
     self.assertAllClose(box.get(), 2.0)
 
-  @unittest.skip('Need to figure out effects and scan')
   @parameterized.parameters([False, True])
   def test_scan_basic(self, jit):
     box = Box(1.0)
