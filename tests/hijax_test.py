@@ -243,6 +243,34 @@ class BoxTest(jtu.JaxTestCase):
 
     f(Box(val1))
 
+  def test_jit_internal(self):
+    @jax.jit
+    def f(x):
+      box = new_box()  # TODO not Box
+      box.set(x)
+      box.set(box.get() + box.get())
+      return box.get()
+
+    f(1)
+
+  def test_jit_internal_box_constructor(self):
+    @jax.jit
+    def f(x):
+      box = Box(x)
+      box.set(box.get() + box.get())
+      return box.get()
+
+    f(1)
+
+  @parameterized.parameters([False, True])
+  def test_isinstance(self, jit):
+    def f():
+      box = Box()
+      self.assertIsInstance(box, Box)
+    if jit:
+      f = jax.jit(f)
+    f()
+
   def test_jit_arg(self):
     @jax.jit
     def f(box, x):
