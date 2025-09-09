@@ -389,9 +389,6 @@ class ModuleContext:
   tmem_requested_cols: int
   tmem_used_cols: int
   tmem_base_ptr: ir.Value
-  tmem_collective_requested_cols: int
-  tmem_collective_used_cols: int
-  tmem_collective_base_ptr: ir.Value
   scoped_gmem_used_semaphores: dict[CollectiveAxesType, int]
   scoped_gmem_semaphore_base_ptr: dict[CollectiveAxesType, ir.Value]
   runtime_barriers: MutableMapping[AnyBarrier, MutableSequence[AnyBarrierRef]]
@@ -461,17 +458,10 @@ class ModuleContext:
       struct: jax.ShapeDtypeStruct,
       *,
       layout: tcgen05.TMEMLayout,
-      collective: bool,
   ) -> Iterator[ir.Value]:
-    if collective:
-      off = arith_dialect.addi(
-          self.tmem_collective_base_ptr,
-          _i32_constant(self.tmem_collective_used_cols),
-      )
-    else:
-      off = arith_dialect.addi(
-          self.tmem_base_ptr, _i32_constant(self.tmem_used_cols)
-      )
+    off = arith_dialect.addi(
+        self.tmem_base_ptr, _i32_constant(self.tmem_used_cols)
+    )
     tmem_ref = tcgen05.TMEMRef(
         address=off,
         shape=struct.shape,
@@ -481,14 +471,9 @@ class ModuleContext:
         struct.shape, dtypes.bit_width(struct.dtype)
     )
     cols_used = gpu_core.align_to(cols_used, gpu_core.TMEM_COL_ALIGNMENT)
-    if collective:
-      self.tmem_collective_used_cols += cols_used
-      yield tmem_ref
-      self.tmem_collective_used_cols -= cols_used
-    else:
-      self.tmem_used_cols += cols_used
-      yield tmem_ref
-      self.tmem_used_cols -= cols_used
+    self.tmem_used_cols += cols_used
+    yield tmem_ref
+    self.tmem_used_cols -= cols_used
 
   # TODO(cperivol): Only return the shapes and figure out the sizes when freeing.
   @contextlib.contextmanager
@@ -893,7 +878,6 @@ def lower_jaxpr_to_module(
         runtime_smem,
         runtime_barriers,
         runtime_tmem,
-        runtime_tmem_collective,
     ) = buffers
     num_input_buffers = (len(in_shapes) +
                          len(rs.scoped_gmem_semaphores))
@@ -937,12 +921,6 @@ def lower_jaxpr_to_module(
       tmem_cols = math.prod(runtime_tmem.shape) // tcgen05.TMEM_ROWS
     else:
       tmem_cols = 0
-    if runtime_tmem_collective is not None:
-      tmem_collective_cols = (
-          math.prod(runtime_tmem_collective.shape) // tcgen05.TMEM_ROWS
-      )
-    else:
-      tmem_collective_cols = 0
 
     if lowering_semantics == mgpu.LoweringSemantics.Lane:
       single_wg_lane_predicate = mgpu.single_thread_predicate(
@@ -956,7 +934,10 @@ def lower_jaxpr_to_module(
     module_ctx = ModuleContext(
         mlir.sanitize_name(debug_info.func_name),
         axis_names,
-        [_program_id(axis, squashed_dims, len(grid)) for axis in range(len(grid))],
+        [
+            _program_id(axis, squashed_dims, len(grid))
+            for axis in range(len(grid))
+        ],
         approx_math,
         single_wg_lane_predicate,
         single_warp_lane_predicate,
@@ -965,11 +946,6 @@ def lower_jaxpr_to_module(
         tmem_requested_cols=tmem_cols,
         tmem_used_cols=0,
         tmem_base_ptr=runtime_tmem.address if runtime_tmem else None,
-        tmem_collective_requested_cols=tmem_collective_cols,
-        tmem_collective_used_cols=0,
-        tmem_collective_base_ptr=runtime_tmem_collective.address
-        if runtime_tmem_collective
-        else None,
         scoped_gmem_used_semaphores={k: 0 for k in scoped_gmem_semaphores},
         scoped_gmem_semaphore_base_ptr=scoped_gmem_semaphores,
         runtime_barriers=grouped_barriers,
@@ -978,7 +954,9 @@ def lower_jaxpr_to_module(
         squashed_dims=squashed_dims,
         lowering_semantics=lowering_semantics,
         primitive_semantics=gpu_core.PrimitiveSemantics.Warpgroup,
-        mesh_info=pallas_utils.MeshInfo.from_mesh(jax_mesh) if jax_mesh is not None else None,
+        mesh_info=pallas_utils.MeshInfo.from_mesh(jax_mesh)
+        if jax_mesh is not None
+        else None,
         auto_barriers=not params.unsafe_no_auto_barriers,
     )
     del runtime_smem, grouped_barriers, runtime_barriers
@@ -990,22 +968,18 @@ def lower_jaxpr_to_module(
       jax.ShapeDtypeStruct(shape=[rs.smem_scratch_bytes], dtype=np.int8),
       rs.barriers,
   ]
-  if rs.tmem_scratch_cols > 0:
-    scratch_buffers.append(
-        mgpu.TMEM(
-            shape=(tcgen05.TMEM_ROWS, rs.tmem_scratch_cols),
-            dtype=np.int32,
-            collective=False,
-        ),
+  if rs.tmem_scratch_cols > 0 and rs.tmem_collective_scratch_cols > 0:
+    raise ValueError(
+        "Can't mix collective and non-collective TMEM allocations within the"
+        " same kernel."
     )
-  else:
-    scratch_buffers.append(None)
-  if rs.tmem_collective_scratch_cols > 0:
+  tmem_scratch_cols = rs.tmem_scratch_cols + rs.tmem_collective_scratch_cols
+  if tmem_scratch_cols > 0:
     scratch_buffers.append(
         mgpu.TMEM(
-            shape=(tcgen05.TMEM_ROWS, rs.tmem_collective_scratch_cols),
+            shape=(tcgen05.TMEM_ROWS, tmem_scratch_cols),
             dtype=np.int32,
-            collective=True,
+            collective=rs.tmem_collective_scratch_cols > 0,
         ),
     )
   else:
@@ -2676,7 +2650,6 @@ def _run_scoped_lowering_rule(
             ctx.module_ctx.alloc_tmem(
                 jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype),
                 layout=aval.layout,
-                collective=aval.collective,
             )
         )
         input_refs.append(input_ref)
