@@ -7971,8 +7971,32 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> relayoutMasks(
     RewriteContext& ctx, OpBuilder& builder, Location loc, VectorType vty,
     xla::Array<Value> src_regs, VectorLayout src, VectorLayout dst) {
   CHECK(vty.getElementType().isSignlessInteger(1));
+  VectorType dst_mask_reg_ty = getNativeVregOrVmaskType(
+      builder.getI1Type(), dst.bitwidth(), ctx.target_shape);
   const std::array<int64_t, 2> target_shape = ctx.target_shape;
   const int8_t bitwidth = src.bitwidth();
+
+  if (const LayoutOffsets src_offsets =
+          src.getCanonicalOffsets(vty.getShape(), ctx.target_shape);
+      src.layout_rank() >= dst.layout_rank() && !src_offsets[0].has_value() &&
+      !src_offsets[1].has_value()) {
+    // Fully replicated masks are easy to relayout, even to different bitwidths
+    src_regs.Each([&](const absl::Span<const int64_t> idx, Value* vreg) {
+      *vreg = builder.create<tpu::MaskCastOp>(loc, dst_mask_reg_ty, *vreg);
+    });
+    xla::Array<Value> dst_regs(
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
+    SmallVector<int64_t> src_idx;
+    dst_regs.Each([&](const absl::Span<const int64_t> dst_idx, Value* vreg) {
+      src_idx.assign(dst_idx.begin(), dst_idx.end());
+      dst.eraseImplicit(src_idx);
+      src.insertImplicit<int64_t>(src_idx, 0);
+      *(src_idx.end() - 2) = 0;
+      *(src_idx.end() - 1) = 0;
+      *vreg = src_regs(src_idx);
+    });
+    return std::make_pair(dst, std::move(dst_regs));
+  }
 
   const bool is_mask_pack =
       bitwidth == 32 && dst.bitwidth() == 16 &&
@@ -7986,15 +8010,13 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> relayoutMasks(
     *(masks_shape.end() - 1) = llvm::divideCeil(masks_shape.back(), 2);
     xla::Array<Value> out_masks(masks_shape);
     SmallVector<int64_t> val_idx;
-    const VectorType packed_mask_ty = getNativeVregOrVmaskType(
-        builder.getI1Type(), bitwidth / 2, target_shape);
     out_masks.Each([&](absl::Span<const int64_t> idx, Value* v_slot_in_array) {
       val_idx.assign(idx.begin(), idx.end());
       if (!src.offsets()[1].has_value()) {
         CHECK_EQ(*(val_idx.end() - 1), 0);
         Value src_vreg = src_regs(val_idx);
-        *v_slot_in_array =
-            builder.create<PackMaskOp>(loc, packed_mask_ty, src_vreg, src_vreg);
+        *v_slot_in_array = builder.create<PackMaskOp>(loc, dst_mask_reg_ty,
+                                                      src_vreg, src_vreg);
       } else {
         val_idx.assign(idx.begin(), idx.end());
         val_idx.back() *= 2;
@@ -8006,7 +8028,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> relayoutMasks(
         Value high_part = val_idx.back() < src_regs.dimensions().back()
                               ? src_regs(val_idx)
                               : low_part;
-        *v_slot_in_array = builder.create<PackMaskOp>(loc, packed_mask_ty,
+        *v_slot_in_array = builder.create<PackMaskOp>(loc, dst_mask_reg_ty,
                                                       low_part, high_part);
       }
     });
