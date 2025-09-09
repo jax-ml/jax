@@ -414,14 +414,13 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
         f"{differences}\n"
         "Revise the function so that the carry output has the same pytree "
         "structure as the carry input.")
-  if not all(_map(partial(core.typematch, enable_sharding_check=True),
-                  in_avals, out_avals)):
+  if not all(_map(core.typematch, in_avals, out_avals)):
     diffs = [f'{component(path)} has type {in_aval.str_short()}'
              ' but the corresponding output carry component has type '
              f'{out_aval.str_short()}'
-             f'{core.aval_mismatch_extra(in_aval, out_aval, enable_sharding_check=True)}'
+             f'{core.aval_mismatch_extra(in_aval, out_aval)}'
              for path, in_aval, out_aval in zip(paths, in_avals, out_avals)
-             if not core.typematch(in_aval, out_aval, enable_sharding_check=True)]
+             if not core.typematch(in_aval, out_aval)]
 
     if len(diffs) == 0:
       return  # seems unreachable but in any case we don't have a good error msg
@@ -1453,8 +1452,7 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
   y_avals = [core.unmapped_aval(length, 0, a)
              for a in y_avals_mapped]
 
-  if not all(_map(partial(core.typematch, enable_sharding_check=True),
-                  init_avals_jaxpr, carry_avals_jaxpr)):
+  if not all(_map(core.typematch, init_avals_jaxpr, carry_avals_jaxpr)):
     raise core.JaxprTypeError(
       f'scan input carry input and output types mismatch: '
       f'\n{_avals_short(init_avals_jaxpr)}\nvs\n{_avals_short(carry_avals_jaxpr)}')

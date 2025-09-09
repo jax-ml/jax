@@ -274,7 +274,8 @@ def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
   # check that shape is concrete
   shape = core.canonicalize_shape(shape)  # type: ignore[arg-type]
   arr_shape = np.shape(arr)
-  if core.definitely_equal_shape(arr_shape, shape):
+  if (core.definitely_equal_shape(arr_shape, shape) and
+      (sharding is None or core.typeof(arr).sharding == sharding)):
     return arr
   elif len(shape) < len(arr_shape):
     raise ValueError(f"Cannot broadcast to shape with fewer dimensions: {arr_shape=} {shape=}")

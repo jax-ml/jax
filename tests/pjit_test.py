@@ -6763,9 +6763,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, embed.sharding)
 
   @parameterized.named_parameters(
-      (f'operand_{spec_name}_sharded_{op_name}', operand_spec, op)
-      for (spec_name, operand_spec), (op_name, op) in itertools.product(
-          (('xy', P('x', None, 'y')), ('x', P('x', None, None))),
+      (f'operand_{spec_name}_sharded_{op_name}', operand_spec, update_spec, op)
+      for (spec_name, operand_spec, update_spec), (op_name, op) in itertools.product(
+          (('xy', P('x', None, 'y'), P('x', 'y')),
+           ('x', P('x', None, None), P('x', None))),
           (('set', lambda x, ind, y: x.at[ind].set(y)),
            ('add', lambda x, ind, y: x.at[ind].add(y)),
            ('mul', lambda x, ind, y: x.at[ind].mul(y)),
@@ -6776,25 +6777,26 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       )
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_scatter_sharding_rule(self, operand_spec, scatter_fn, mesh):
+  def test_scatter_sharding_rule(self, operand_spec, update_spec, scatter_fn,
+                                 mesh):
     operand = jax.device_put(jnp.zeros((2, 10, 8)),
                              jax.NamedSharding(mesh, operand_spec))
     indices = jax.device_put(jnp.array([2, 3], dtype=jnp.int32),
                              jax.NamedSharding(mesh, P('x')))
     updates = jax.device_put(jnp.ones((2, 8)),
-                             jax.NamedSharding(mesh, P('x', 'y')))
+                             jax.NamedSharding(mesh, update_spec))
 
     f = jax.jit(jax.vmap(scatter_fn))
 
     out = f(operand, indices, updates)
-    self.assertEqual(out.sharding.spec, P('x', None, 'y'))
+    self.assertEqual(out.sharding.spec, operand_spec)
 
     def g(*args):
       return f(*args).sum()
 
     outs = jax.grad(g, argnums=(0, 2))(operand, indices, updates)
-    self.assertEqual(outs[0].sharding.spec, P('x', None, 'y'))
-    self.assertEqual(outs[1].sharding.spec, P('x', 'y'))
+    self.assertEqual(outs[0].sharding.spec, operand_spec)
+    self.assertEqual(outs[1].sharding.spec, update_spec)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reshard_api(self, mesh):

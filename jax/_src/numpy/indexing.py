@@ -39,7 +39,7 @@ from jax._src.numpy import lax_numpy
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.pjit import auto_axes
-from jax._src.sharding_impls import canonicalize_sharding
+from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.tree_util import tree_flatten
 from jax._src.typing import Array, ArrayLike, StaticScalar
 from jax._src.util import canonicalize_axis, safe_zip, set_module, tuple_update
@@ -670,7 +670,9 @@ def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
 def _gather(arr, dynamic_idx, *, treedef, static_idx, indices_are_sorted,
             unique_indices, mode, fill_value, normalize_indices):
   idx = merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = index_to_gather(np.shape(arr), idx, normalize_indices=normalize_indices)  # shared with _scatter_update
+  indexer = index_to_gather(
+      np.shape(arr), idx, core.typeof(arr).sharding,
+      normalize_indices=normalize_indices)  # shared with _scatter_update
   jnp_error._check_precondition_oob_gather(arr.shape, indexer.gather_indices)
   y = arr
 
@@ -733,6 +735,9 @@ class _Indexer(NamedTuple):
   # for gathers before performing other index operations.
   scalar_bool_dims: Sequence[int]
 
+  # The expected sharding of the slice output.
+  slice_sharding: NamedSharding | None = None
+
 
 def split_index_for_jit(idx, shape):
   """Splits indices into necessarily-static and dynamic parts.
@@ -783,7 +788,7 @@ def _aval_or_none(x):
     return None
 
 def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
-                    normalize_indices: bool = True) -> _Indexer:
+                    x_sharding, normalize_indices: bool = True) -> _Indexer:
   # Convert sequences to arrays
   idx = tuple(lax_numpy.asarray(i, dtype=None if i else int)
               if isinstance(i, Sequence) else i for i in idx)
@@ -809,15 +814,20 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
   # Remove ellipses and add trailing slice(None)s.
   idx = _canonicalize_tuple_index(len(x_shape), idx)
 
+  x_spec = x_sharding.spec
+
   # Check for scalar boolean indexing: this requires inserting extra dimensions
   # before performing the rest of the logic.
   scalar_bool_dims: Sequence[int] = [n for n, i in enumerate(idx) if isinstance(i, bool)]
   if scalar_bool_dims:
     idx = tuple(np.arange(int(i)) if isinstance(i, bool) else i for i in idx)
     x_shape = list(x_shape)
+    x_spec = list(x_spec)
     for i in sorted(scalar_bool_dims):
       x_shape.insert(i, 1)
+      x_spec.insert(i, None)
     x_shape = tuple(x_shape)
+    x_spec = tuple(x_spec)
 
   # Check for advanced indexing:
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
@@ -863,15 +873,14 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
   # First, y is broadcast to slice_shape. In general `y` only need broadcast to
   # the right shape.
   slice_shape: list[int] = []
-
   # Next, y is squeezed to remove newaxis_dims. This removes np.newaxis/`None`
   # indices, which the scatter cannot remove itself.
   newaxis_dims: list[int] = []
-
   # Finally, we reverse reversed_y_dims to handle slices with negative strides.
   reversed_y_dims: list[int] = []
 
   gather_slice_shape: list[int] = []
+  slice_spec = []
 
   for idx_pos, i in enumerate(idx):
     # Handle the advanced indices here if:
@@ -882,6 +891,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
          not advanced_axes_are_contiguous and idx_pos == 0)):
       advanced_index_arrs = util._broadcast_arrays(*advanced_indexes)
       shape = advanced_index_arrs[0].shape
+      aia_spec = core.typeof(advanced_index_arrs[0]).sharding.spec
       ndim = len(shape)
 
       start_dim = len(gather_indices_shape)
@@ -895,6 +905,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
       start_index_map.extend(x_advanced_axes)
       collapsed_slice_dims.extend(x_advanced_axes)
       slice_shape.extend(shape)
+      slice_spec.extend(aia_spec)
       y_axis += ndim
       collapsed_y_axis += ndim
 
@@ -920,6 +931,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
     # Handle np.newaxis (None)
     elif i is None:
       slice_shape.append(1)
+      slice_spec.append(None)
       newaxis_dims.append(y_axis)
       y_axis += 1
 
@@ -938,6 +950,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
 
       start, step, slice_size = core.canonicalize_slice(i, x_shape[x_axis])
       slice_shape.append(slice_size)
+      slice_spec.append(x_spec[x_axis])
 
       if core.definitely_equal(step, 1):
         # Avoid generating trivial gather (an optimization)
@@ -991,6 +1004,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
     collapsed_slice_dims = tuple(sorted(collapsed_slice_dims)),
     start_index_map = tuple(start_index_map)
   )
+  slice_sharding = x_sharding.update(spec=slice_spec)
   return _Indexer(
     slice_shape=slice_shape,
     newaxis_dims=tuple(newaxis_dims),
@@ -1000,7 +1014,8 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
     gather_indices=gather_indices_array,
     unique_indices=advanced_indexes is None,
     indices_are_sorted=advanced_indexes is None,
-    scalar_bool_dims=scalar_bool_dims)
+    scalar_bool_dims=scalar_bool_dims,
+    slice_sharding=slice_sharding)
 
 def _should_unpack_list_index(x):
   """Helper for eliminate_deprecated_list_indexing."""

@@ -2653,7 +2653,7 @@ def _scatter_spec_computation(
   # 3 - Sub slice dims in `operand` and `updates` must be replicated.
   update_and_operand_window_dims_resolvable = all(
       (updates.shape[update_dim] == operand.shape[operand_dim] and
-       _is_resolvable(updates_spec[update_dim], operand_spec[operand_dim]))
+       updates_spec[update_dim] == operand_spec[operand_dim])
       or (updates_spec[update_dim] is None and operand_spec[operand_dim] is None)
       for update_dim, operand_dim in zip(
           update_window_dims, operand_window_dims))
@@ -2715,7 +2715,8 @@ def _scatter_sharding_rule(
     raise core.ShardingTypeError(
         "Use `.at[...].set/add/mul/...(out_sharding=)` to provide output"
         " PartitionSpec for the scatter update as out sharding could not be"
-        " resolved unambiguously (or would require collectives on inputs).")
+        " resolved unambiguously (or would require collectives on inputs). Got"
+        f" {operand=}, {indices=}, {updates=}")
   return NamedSharding(out_mesh, out_spec)
 
 def _clamp_scatter_indices(operand, indices, updates, *, dnums):
@@ -3197,8 +3198,10 @@ def _scatter_transpose_rule(t, operand, indices, updates, *,
   assert not ad.is_undefined_primal(indices)
   if ad.is_undefined_primal(updates):
     updates_shape = updates.aval.shape
+    updates_sharding = updates.aval.sharding
   else:
     updates_shape = updates.shape
+    updates_sharding = core.typeof(updates).sharding
   if type(t) is ad_util.Zero:
     operand_t = ad_util.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
     update_t = ad_util.Zero(updates.aval) if ad.is_undefined_primal(updates) else None
@@ -3206,10 +3209,11 @@ def _scatter_transpose_rule(t, operand, indices, updates, *,
     operand_t = update_t = None
     if ad.is_undefined_primal(operand):
       # Zero out gradient entries that correspond to updated indices.
-      operand_t = scatter(t, indices, lax.full(updates_shape, 0, dtype=t.dtype),
-                          dimension_numbers=dimension_numbers,
-                          indices_are_sorted=indices_are_sorted,
-                          unique_indices=True, mode=mode)
+      operand_t = scatter(
+          t, indices,
+          lax.full(updates_shape, 0, dtype=t.dtype, sharding=updates_sharding),
+          dimension_numbers=dimension_numbers,
+          indices_are_sorted=indices_are_sorted, unique_indices=True, mode=mode)
 
     if ad.is_undefined_primal(updates):
       gather_dnums = GatherDimensionNumbers(
