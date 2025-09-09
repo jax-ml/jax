@@ -114,28 +114,11 @@ bool GetEnableX64() {
   return thread_local_state.enable_x64.value_or(*global_state.enable_x64);
 }
 
-std::optional<nb::object> GetDefaultDevice() {
-  auto& global_state = GlobalJitState();
-  auto& thread_local_state = ThreadLocalJitState();
-  return thread_local_state.default_device.has_value()
-             ? thread_local_state.default_device
-             : global_state.default_device;
-}
-
 std::optional<nb::callable> GetPostHook() {
   auto& global_state = GlobalJitState();
   auto& thread_local_state = ThreadLocalJitState();
   return thread_local_state.post_hook.has_value() ? thread_local_state.post_hook
                                                   : global_state.post_hook;
-}
-
-static std::string OptionalDebugString(
-    const std::optional<nb::object> optional) {
-  if (optional.has_value()) {
-    return nb::cast<std::string>(nb::str(optional.value()));
-  } else {
-    return "None";
-  }
 }
 
 std::string ArgumentSignature::DebugString() const {
@@ -213,7 +196,6 @@ std::string CallSignature::DebugString() const {
       "dynamic arg layouts: %s\n"
       "committed args: %s\n"
       "device: %s\n"
-      "default_device: %s\n"
       "jax_enable_x64: %d\n"
       "configs: %s\n",
       arg_signature.DebugString(),
@@ -221,8 +203,7 @@ std::string CallSignature::DebugString() const {
       absl::StrJoin(dynamic_arg_shardings, ", ", py_object_formatter),
       absl::StrJoin(dynamic_arg_layouts, ", ", layout_formatter),
       absl::StrJoin(committed_args, ",", bool_formatter),
-      device != nullptr ? device->DebugString() : "nullptr",
-      OptionalDebugString(default_device), jax_enable_x64,
+      device != nullptr ? device->DebugString() : "nullptr", jax_enable_x64,
       absl::StrJoin(configs, ", ", py_object_formatter));
 }
 
@@ -322,9 +303,6 @@ bool CallSignature::operator==(const CallSignature& other) const {
                        const std::shared_ptr<const xla::PjRtLayout>& b) {
                       return (a && b) ? *a == *b : a == b;
                     }) &&
-      (default_device.has_value() == other.default_device.has_value()) &&
-      (!default_device.has_value() ||
-       default_device->equal(*other.default_device)) &&
       configs.size() == other.configs.size() &&
       absl::c_equal(
           configs, other.configs,
@@ -432,8 +410,6 @@ void BuildJaxjitSubmodule(nb::module_& m) {
   nb::class_<JitState> jit_state_(jitlib, "JitState");
   jit_state_.def_rw("disable_jit", &JitState::disable_jit, nb::arg().none());
   jit_state_.def_rw("enable_x64", &JitState::enable_x64, nb::arg().none());
-  jit_state_.def_rw("default_device", &JitState::default_device,
-                    nb::arg().none());
   jit_state_.def_rw("post_hook", &JitState::post_hook, nb::arg().none());
 
   jitlib.def(

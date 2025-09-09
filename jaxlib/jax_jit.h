@@ -53,9 +53,6 @@ struct JitState {
   ~JitState() {
     // We likely do not hold the GIL if this JitState is thread-local, so we
     // hand the Python objects to the global reference manager to destroy.
-    if (default_device) {
-      GlobalPyRefManager()->AddGarbage(std::move(*default_device));
-    }
     if (post_hook) {
       GlobalPyRefManager()->AddGarbage(std::move(*post_hook));
     }
@@ -63,12 +60,6 @@ struct JitState {
 
   std::optional<bool> disable_jit;
   std::optional<bool> enable_x64;
-
-  // Used to manually set the default device jax should use. May be unset even
-  // in global state, indicating there is no manual override.
-  // TODO(skyewm): make this a C++ type when all JAX backends support a single
-  // C++ device interface
-  std::optional<nanobind::object> default_device;
 
   // A callback that, if present, is called when a JITted function is executed
   // from cache. May be unset even in global state.
@@ -204,10 +195,6 @@ struct CallSignature {
   // This is not the case for PMAP, and is set to `nullptr`.
   xla::PjRtDevice* device = nullptr;
   bool jax_enable_x64;
-
-  // For JIT on PJIT, we need to fallback to python whenever default_device
-  // changes.
-  std::optional<nanobind::object> default_device;
 
   std::vector<nanobind::object> configs;
 

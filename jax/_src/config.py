@@ -767,6 +767,7 @@ def string_or_object_state(
     update_global_hook: Callable[[Any], None] | None = None,
     update_thread_local_hook: Callable[[Any], None] | None = None,
     validator: Callable[[Any], None] | None = None,
+    include_in_jit_key: bool = False,
 ) -> State[Any]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -799,7 +800,7 @@ def string_or_object_state(
 
   s = State[Any](
       name, default, help, update_global_hook, update_thread_local_hook,
-      validator)
+      validator, include_in_jit_key=include_in_jit_key)
   setattr(Config, name, property(lambda _: s.value))
   config.add_option(name, s, str, meta_args=[], meta_kwargs={"help": help})
   return s
@@ -1448,14 +1449,6 @@ config._contextmanager_flags.remove('jax_enable_x64')
 
 setattr(Config, "x64_enabled", property(lambda _: enable_x64.value))
 
-def _update_default_device_global(val):
-  jax_jit.global_state().default_device = val
-
-
-def _update_default_device_thread_local(val):
-  jax_jit.thread_local_state().default_device = val
-
-
 def _validate_default_device(val):
   if (val is not None and
       not isinstance(val, xla_client.Device) and
@@ -1482,9 +1475,8 @@ default_device = string_or_object_state(
         'no effect on multi-device computations, e.g. pmapped function calls). '
         'Set to None to use the system default device. See '
         ':ref:`faq-data-placement` for more information on device placement.'),
-    update_global_hook=_update_default_device_global,
-    update_thread_local_hook=_update_default_device_thread_local,
-    validator=_validate_default_device)
+    validator=_validate_default_device,
+    include_in_jit_key=True)
 
 def _update_disable_jit_global(val):
   jax_jit.global_state().disable_jit = val
