@@ -75,9 +75,7 @@ namespace nb = nanobind;
 
 namespace {
 
-// `thread_local_state.extra_jit_context` is set from Python. It's done when
-// loading the Python jax modules on the main-thread. For other threads, we
-// need to initialize the field the first time we access `thread_local_state`.
+// Callback called the first time the C++ jit accesses thread-local state.
 nb::object& initialize_local_state = *new nb::object();
 
 }  // namespace
@@ -92,11 +90,11 @@ JitState& ThreadLocalJitState() {
   // TODO(phawkins): Google style guide forbids thread-local values with
   // non-trivial destructors.
   ABSL_CONST_INIT thread_local JitState thread_local_state;  // NOLINT
+  ABSL_CONST_INIT thread_local bool local_state_callback_called = false;
   DCHECK(PyGILState_Check());
-  if (thread_local_state.extra_jit_context == std::nullopt) {
-    CHECK(initialize_local_state.ptr() != nullptr);
+  if (!local_state_callback_called && initialize_local_state.ptr() != nullptr) {
     // Avoids reentrant calls to the initialization function.
-    thread_local_state.extra_jit_context = nb::none();
+    local_state_callback_called = true;
     initialize_local_state();
   }
   return thread_local_state;
@@ -217,8 +215,6 @@ std::string CallSignature::DebugString() const {
       "device: %s\n"
       "default_device: %s\n"
       "jax_enable_x64: %d\n"
-      "global_extra_jit_context: %s\n"
-      "thread_local_extra_jit_context: %s\n"
       "configs: %s\n",
       arg_signature.DebugString(),
       absl::StrJoin(dynamic_arg_signatures, ", ", signature_formatter),
@@ -227,8 +223,6 @@ std::string CallSignature::DebugString() const {
       absl::StrJoin(committed_args, ",", bool_formatter),
       device != nullptr ? device->DebugString() : "nullptr",
       OptionalDebugString(default_device), jax_enable_x64,
-      OptionalDebugString(global_extra_jit_context),
-      OptionalDebugString(thread_local_extra_jit_context),
       absl::StrJoin(configs, ", ", py_object_formatter));
 }
 
@@ -328,18 +322,9 @@ bool CallSignature::operator==(const CallSignature& other) const {
                        const std::shared_ptr<const xla::PjRtLayout>& b) {
                       return (a && b) ? *a == *b : a == b;
                     }) &&
-      (global_extra_jit_context.has_value() ==
-       other.global_extra_jit_context.has_value()) &&
-      (!global_extra_jit_context.has_value() ||
-       global_extra_jit_context->equal(*other.global_extra_jit_context)) &&
       (default_device.has_value() == other.default_device.has_value()) &&
       (!default_device.has_value() ||
        default_device->equal(*other.default_device)) &&
-      (thread_local_extra_jit_context.has_value() ==
-       other.thread_local_extra_jit_context.has_value()) &&
-      (!thread_local_extra_jit_context.has_value() ||
-       thread_local_extra_jit_context->equal(
-           *other.thread_local_extra_jit_context)) &&
       configs.size() == other.configs.size() &&
       absl::c_equal(
           configs, other.configs,
@@ -448,8 +433,6 @@ void BuildJaxjitSubmodule(nb::module_& m) {
   jit_state_.def_rw("disable_jit", &JitState::disable_jit, nb::arg().none());
   jit_state_.def_rw("enable_x64", &JitState::enable_x64, nb::arg().none());
   jit_state_.def_rw("default_device", &JitState::default_device,
-                    nb::arg().none());
-  jit_state_.def_rw("extra_jit_context", &JitState::extra_jit_context,
                     nb::arg().none());
   jit_state_.def_rw("post_hook", &JitState::post_hook, nb::arg().none());
 

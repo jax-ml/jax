@@ -51,12 +51,13 @@ namespace jax {
 //   used to implement context managers that locally override the global state.
 struct JitState {
   ~JitState() {
-    if (extra_jit_context) {
-      // We likely do not hold the GIL if this JitState is thread-local, so we
-      // hand the Python object to the global reference manager to destroy.
-      nanobind::object o = std::move(*extra_jit_context);
-      GlobalPyRefManager()->AddGarbage(absl::MakeSpan(&o, 1));
-      extra_jit_context = std::nullopt;
+    // We likely do not hold the GIL if this JitState is thread-local, so we
+    // hand the Python objects to the global reference manager to destroy.
+    if (default_device) {
+      GlobalPyRefManager()->AddGarbage(std::move(*default_device));
+    }
+    if (post_hook) {
+      GlobalPyRefManager()->AddGarbage(std::move(*post_hook));
     }
   }
 
@@ -68,10 +69,6 @@ struct JitState {
   // TODO(skyewm): make this a C++ type when all JAX backends support a single
   // C++ device interface
   std::optional<nanobind::object> default_device;
-
-  // Extra context that should be included in the JIT cache key. Must be
-  // hashable and have an equality defined.
-  std::optional<nanobind::object> extra_jit_context;
 
   // A callback that, if present, is called when a JITted function is executed
   // from cache. May be unset even in global state.
@@ -211,10 +208,6 @@ struct CallSignature {
   // For JIT on PJIT, we need to fallback to python whenever default_device
   // changes.
   std::optional<nanobind::object> default_device;
-
-  // Opaque additional context that should be included as part of the cache key.
-  std::optional<nanobind::object> global_extra_jit_context;
-  std::optional<nanobind::object> thread_local_extra_jit_context;
 
   std::vector<nanobind::object> configs;
 

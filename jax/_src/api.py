@@ -3179,7 +3179,6 @@ def clear_backends():
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
   xc._xla.PjitFunctionCache.clear_all()
-  xc._xla.jax_jit.thread_local_state().extra_jit_context = None
 
 @atexit.register
 def clean_up():

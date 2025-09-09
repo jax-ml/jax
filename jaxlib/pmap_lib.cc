@@ -356,8 +356,6 @@ class PmapFunction {
     signature.function_name = function_name_;
 
     // Get dynamic argument signatures.
-    JitState& global_state = GlobalJitState();
-    JitState& tls = ThreadLocalJitState();
     const bool jax_enable_x64 = GetEnableX64();
     signature.jax_enable_x64 = jax_enable_x64;
     for (nb::handle arg : flat_dynamic_args) {
@@ -370,8 +368,6 @@ class PmapFunction {
       signature.dynamic_arg_signatures.push_back(
           std::move(signature_or_error).value());
     }
-    signature.thread_local_extra_jit_context = tls.extra_jit_context;
-    signature.global_extra_jit_context = global_state.extra_jit_context;
     signature.configs = JitConfigs();
     signature.cached_hash = absl::HashOf(signature);
     return absl::Status();

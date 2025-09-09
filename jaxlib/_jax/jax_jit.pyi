@@ -29,7 +29,6 @@ class JitState:
   disable_jit: bool | None
   enable_x64: bool | None
   default_device: Any | None
-  extra_jit_context: Any | None
   post_hook: Callable[..., Any] | None
 
 def global_state() -> JitState: ...

@@ -852,8 +852,6 @@ absl::Status PjitFunction::ComputeCallSignature(
   signature.function_name = function_name_;
 
   // Get dynamic argument signatures.
-  JitState& global_state = GlobalJitState();
-  JitState& tls = ThreadLocalJitState();
   bool jax_enable_x64 = GetEnableX64();
 
   signature.default_device = GetDefaultDevice();
@@ -890,8 +888,6 @@ absl::Status PjitFunction::ComputeCallSignature(
     }
   }
 
-  signature.thread_local_extra_jit_context = tls.extra_jit_context;
-  signature.global_extra_jit_context = global_state.extra_jit_context;
   signature.configs = JitConfigs();
   signature.cached_hash = absl::HashOf(signature);
 
