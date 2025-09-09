@@ -1159,7 +1159,7 @@ def _partial_eval_jaxpr_custom_cached(
         foreach(partial(write, False, False), eqn.outvars)
       elif isinstance(policy, Offloadable):
         # TODO(slebedev): This is a legit error which requires a BUILD fix.
-        from jax._src.dispatch import device_put_p, ArrayCopySemantics  # type: ignore
+        from jax._src.device_put import device_put_p, ArrayCopySemantics  # type: ignore
         resvars = [Var(v.aval.update(memory_space=core.mem_kind_to_space(policy.dst)))
                    for v in eqn.outvars]
         offload_eqn = core.JaxprEqn(

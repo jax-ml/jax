@@ -28,6 +28,7 @@ from jax._src import api
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
+from jax._src import device_put
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
@@ -867,8 +868,8 @@ def _maybe_put(x):
     s = sharding.SingleDeviceSharding(xb.local_devices(backend='cpu')[0])
     result_handler = pxla.global_aval_to_result_handler(aval, s, False)
     return result_handler(
-        pxla.shard_args(
-            [s], [None], [dispatch.ArrayCopySemantics.REUSE_INPUT], [x]
+        device_put.shard_args(
+            [s], [None], [device_put.ArrayCopySemantics.REUSE_INPUT], [x]
         )
     )
   else:

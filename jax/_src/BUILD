@@ -213,6 +213,7 @@ pytype_strict_library(
     srcs = [
         "api.py",
         "array.py",
+        "device_put.py",
         "dispatch.py",
         "interpreters/pxla.py",
         "pjit.py",

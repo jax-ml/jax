@@ -20,17 +20,17 @@ import jax
 from jax import numpy as jnp
 from jax._src import config
 from jax._src import core
+from jax._src import device_put
 from jax._src import dtypes
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
-from jax._src.interpreters import pxla
 import numpy as np
 
 config.parse_flags_with_absl()
 
 def _cpp_device_put(value, device):
   aval = core.shaped_abstractify(value)
-  return pxla.batched_device_put(
+  return device_put.batched_device_put(
       aval, jax.sharding.SingleDeviceSharding(device), [value], [device])
 
 

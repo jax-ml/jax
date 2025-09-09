@@ -23,6 +23,7 @@ import jax
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import core
+from jax._src import device_put
 from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -259,7 +260,7 @@ def host_local_array_to_global_array_impl(
   global_aval = _local_to_global_aval(
       core.ShapedArray(arr.shape, arr.dtype), global_mesh, pspec)
 
-  return pxla.batched_device_put(
+  return device_put.batched_device_put(
       global_aval, jax.sharding.NamedSharding(global_mesh, pspec),
       arrays, list(global_mesh.local_mesh.devices.flat))
 
@@ -411,7 +412,7 @@ def global_array_to_host_local_array_impl(
     arrays = [
         arr[index]
         for d, index in local_sharding.devices_indices_map(arr.shape).items()]
-    return pxla.batched_device_put(
+    return device_put.batched_device_put(
         local_aval, local_sharding, arrays,
         list(global_mesh.local_mesh.devices.flat))
 
