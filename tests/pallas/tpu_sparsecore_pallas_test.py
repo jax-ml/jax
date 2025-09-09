@@ -709,6 +709,31 @@ class VectorSubcoreTest(PallasSCTest):
     x = jnp.arange(num_subcores * 8, dtype=jnp.int32).reshape(-1, 8)
     np.testing.assert_array_equal(kernel(x), x)
 
+  def test_lax_bitcast(self):
+    num_subcores = 16
+
+    @plsc.kernel(
+        out_shape=jax.ShapeDtypeStruct(
+            shape=(num_subcores, 8), dtype=jnp.uint32
+        ),
+        mesh=plsc.VectorSubcoreMesh(
+            core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+        ),
+        scratch_shapes=(pltpu.VMEM([8], jnp.float32),
+                        pltpu.VMEM([8], jnp.uint32)),
+    )
+    def kernel(x_ref, o_ref, scratch_f32_ref, scratch_u32_ref):
+      subcore_id = lax.axis_index("subcore")
+      pltpu.sync_copy(x_ref.at[subcore_id], scratch_f32_ref)
+      scratch_u32_ref[...] = scratch_f32_ref[...].view(jnp.uint32)
+      pltpu.sync_copy(scratch_u32_ref, o_ref.at[subcore_id])
+      # TODO: b/443906446 - Rewrite without scratch, Ref.view -> memref.view
+      # pltpu.sync_copy(
+      #     x_ref.at[subcore_id].view(jnp.uint32), o_ref.at[subcore_id])
+
+    x = jnp.arange(num_subcores * 8, dtype=jnp.float32).reshape(-1, 8)
+    np.testing.assert_array_equal(kernel(x), x.view(np.uint32))
+
 
 class ScalarSubcoreTest(PallasSCTest):
 

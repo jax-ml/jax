@@ -3481,21 +3481,29 @@ def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
   )
 
 
-@register_lowering_rule(lax.bitcast_convert_type_p)
 def _bitcast_convert_type_lowering_rule(
-    ctx: LoweringRuleContext, x, *, new_dtype):
+    ctx: LoweringRuleContext, x, *, new_dtype, bitcast_fn):
   (in_aval, ) = ctx.avals_in
   (out_aval,) = ctx.avals_out
   old_bitwidth = dtypes.bit_width(in_aval.dtype)
   new_bitwidth = dtypes.bit_width(new_dtype)
   if old_bitwidth != new_bitwidth:
     raise NotImplementedError("Changing bitwidths not supported.")
-  return tpu.bitcast(
+  return bitcast_fn(
       aval_to_ir_type(
           ctx.lowering_context.dynamic_shape_replacement_fn, out_aval
       ),
       x,
   )
+register_lowering_rule(lax.bitcast_convert_type_p)(
+    partial(_bitcast_convert_type_lowering_rule, bitcast_fn=tpu.bitcast))
+register_lowering_rule(
+    lax.bitcast_convert_type_p,
+    kernel_types=[
+        tpu_core.KernelType.SC_SCALAR_SUBCORE,
+        tpu_core.KernelType.SC_VECTOR_SUBCORE,
+    ],
+)(partial(_bitcast_convert_type_lowering_rule, bitcast_fn=vector.bitcast))
 
 
 def _alloc_value(
