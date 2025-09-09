@@ -1403,9 +1403,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         raise unittest.SkipTest("Cannot lower nested pmap: jit-of-pmap warning")
       raise unittest.SkipTest("TODO: figure out how to invoke pmap from TF")
 
-    f_tf = jax2tf.convert(func_to_convert,
-                          native_serialization_platforms=('tpu',))
-    f_tf = tf.function(f_tf, jit_compile=True, autograph=False)
     with contextlib.ExitStack() as stack:
       if with_mesh:
         stack.enter_context(mesh)
