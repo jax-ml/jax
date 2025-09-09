@@ -634,6 +634,16 @@ def _array_ref_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     return eqn, eqn, [False], [True], res  # full remat
 pe.partial_eval_jaxpr_custom_rules[core.array_ref_p] = _array_ref_partial_eval_custom
 
+def _array_ref_batched(axis_data, vals_in, dims_in, memory_space):
+  val, = vals_in
+  dim, = dims_in
+  if dim is None:
+    val2 = batching.broadcast(val, axis_data.size, 0)
+    return core.array_ref_p.bind(val2, memory_space=memory_space), 0
+  else:
+    return core.array_ref_p.bind(val, memory_space=memory_space), dim
+batching.fancy_primitive_batchers[core.array_ref_p] = _array_ref_batched
+
 def _state_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   del saveable  # ignored, always full remat state ops on known inputs
   ref_unk, *_ = unks_in

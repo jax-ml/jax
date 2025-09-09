@@ -877,6 +877,16 @@ class MutableArrayTest(jtu.JaxTestCase):
     f = lambda x: jax.array_ref(x)[0]
     jax.grad(f)(jnp.array([3.]))  # don't crash
 
+  def test_vmap_create_ref_from_unbatched_value(self):
+    @jax.jit
+    def internally_pure(x):
+      ref = jax.array_ref(1.)
+      ref[...] += x
+      return ref[...]
+
+    ans = jax.vmap(internally_pure)(jnp.arange(4.))
+    self.assertAllClose(ans, jnp.array([1., 2., 3., 4.]))
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
