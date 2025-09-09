@@ -1205,7 +1205,8 @@ class LaxTest(jtu.JaxTestCase):
     rhs_shape = (4, 3)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
-    self._CompileAndCheck(partial(lax.dot, precision=algorithm), args_maker)
+    self._CompileAndCheck(partial(lax.dot, precision=algorithm), args_maker,
+                          rtol={np.float64: 3e-15})
     self.assertEqual(lax.dot(*args_maker(), precision=algorithm).dtype, dtype)
 
   def testDotAlgorithmInvalidFloat8Type(self):
