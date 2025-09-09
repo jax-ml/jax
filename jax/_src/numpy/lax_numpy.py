@@ -3787,10 +3787,15 @@ def unwrap(p: ArrayLike, discont: ArrayLike | None = None,
   Returns:
     An unwrapped copy of ``p``.
 
+  Notes:
+    This implementation follows that of :func:`numpy.unwrap`, and is not
+    well-suited for integer-period unwrapping of narrow-width integers
+    (e.g. `int8`, `int16`) or unsigned integers.
+
   Examples:
     Consider a situation in which you are making measurements of the position of
     a rotating disk via the ``x`` and ``y`` locations of some point on that disk.
-    The underlying variable is an always-increating angle which we'll generate
+    The underlying variable is an always-increasing angle which we'll generate
     this way, using degrees for ease of representation:
 
     >>> rng = np.random.default_rng(0)
@@ -3828,13 +3833,20 @@ def unwrap(p: ArrayLike, discont: ArrayLike | None = None,
     that satisfy this assumption, :func:`unwrap` can recover the original phased signal.
   """
   p = util.ensure_arraylike("unwrap", p)
+  p, period = util.promote_dtypes(p, period)
+
   if issubdtype(p.dtype, np.complexfloating):
     raise ValueError("jnp.unwrap does not support complex inputs.")
   if p.shape[axis] == 0:
-    return util.promote_dtypes_inexact(p)[0]
+    return p
+
   if discont is None:
     discont = period / 2
-  interval = period / 2
+  if dtypes.issubdtype(p.dtype, np.integer):
+    interval = period // 2
+  else:
+    interval = period / 2
+
   dd = diff(p, axis=axis)
   ddmod = ufuncs.mod(dd + interval, period) - interval
   ddmod = where((ddmod == -interval) & (dd > 0), interval, ddmod)
