@@ -669,11 +669,11 @@ class VectorSubcoreTest(PallasSCTest):
 
     @vector_subcore_kernel(
         out_shape=x,
-        scratch_shapes=(pltpu.VMEM([8], jnp.int32),),
+        scratch_shapes=(pltpu.VMEM([8], jnp.float32),),
     )
-    def kernel(x_ref, scratch_ref, o_ref):
-      scratch_ref[...] = x_ref[...]
-      o_ref[...] = scratch_ref[...]
+    def kernel(x_ref, o_ref, scratch_ref):
+      scratch_ref[...] = x_ref[...].astype(jnp.float32)
+      o_ref[...] = scratch_ref[...].astype(x.dtype)
 
     np.testing.assert_array_equal(kernel(x), x)
 
