@@ -82,6 +82,18 @@ class ProfilerCuptiTest(parameterized.TestCase):
       "such as Nsight Systems or Nsight Compute, is active."):
       profiler.measure(self.f, aggregate=False)(self.x)
 
+  def test_collect_metrics(self):
+    if not profiler.has_registrations:
+      self.skipTest("Mosaic GPU custom calls not registered")
+    k = jax.jit(lambda x, y: x + y)
+    x = jnp.ones((1024, 1024))
+    y = jnp.ones((1024, 1024))
+    jax.block_until_ready(k(x, y))  # Warmup
+    with profiler.collect_metrics(metrics=["sm__cycles_active.sum"]) as m:
+      jax.block_until_ready(k(x, y))
+    self.assertIn("sm__cycles_active.sum", m)
+    self.assertGreater(m["sm__cycles_active.sum"], 0)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
