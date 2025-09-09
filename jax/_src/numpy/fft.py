@@ -54,8 +54,8 @@ def _fft_core(func_name: str, fft_type: lax_fft.FftType, a: ArrayLike,
 
   if s is not None:
     s = tuple(map(operator.index, s))
-    if np.any(np.less(s, 0)):
-      raise ValueError("Shape should be non-negative.")
+    if np.any(np.less_equal(s, 0)):
+      raise ValueError("Shape should be positive.")
 
   if s is not None and axes is not None and len(s) != len(axes):
     # Same error as numpy.
