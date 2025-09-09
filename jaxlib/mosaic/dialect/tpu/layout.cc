@@ -538,6 +538,9 @@ Stream& printImplicitDim(Stream& os, VectorLayout::ImplicitDim dim) {
     case VectorLayout::ImplicitDim::kSecondMinor:
       os << "-2";
       break;
+    case VectorLayout::ImplicitDim::kMinorAndSecondMinor:
+      os << "-2,-1";
+      break;
   }
   return os;
 }
@@ -627,7 +630,9 @@ std::optional<VectorLayout> VectorLayout::parse(StringRef* data) {
       local.consumeInteger(10, tiling[1]) || !local.consume_front(")")) {
     return std::nullopt;
   }
-  if (local.consume_front(",-1")) {
+  if (local.consume_front(",-2,-1")) {
+    implicit_dim = ImplicitDim::kMinorAndSecondMinor;
+  } else if (local.consume_front(",-1")) {
     implicit_dim = ImplicitDim::kMinor;
   } else if (local.consume_front(",-2")) {
     implicit_dim = ImplicitDim::kSecondMinor;

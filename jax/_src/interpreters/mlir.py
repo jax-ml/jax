@@ -347,7 +347,7 @@ def _python_scalar_handler(val, aval: core.AbstractValue | None):
   assert aval.shape == (), aval
   return _numpy_array_constant(np.array(val, aval.dtype))
 
-for ptype in dtypes.python_scalar_dtypes.keys():
+for ptype in dtypes.python_scalar_types:
   register_constant_handler(ptype, _python_scalar_handler)
 
 def _token_constant_handler(val: core.Token, aval: core.AbstractValue | None):
@@ -413,7 +413,7 @@ register_attribute_handler(np.generic, _dtype_attribute_handler)
 def _python_scalar_attribute_handler(dtype, val):
   return _numpy_scalar_attribute(np.array(val, dtype))
 
-for ptype, dtype in dtypes.python_scalar_dtypes.items():
+for ptype, dtype in dtypes.python_scalar_types_to_dtypes.items():
   register_attribute_handler(
       ptype, partial(_python_scalar_attribute_handler, dtype))
 
@@ -2542,7 +2542,7 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
     wrapped_fun = lu.wrap_init(f, params,
-        debug_info=api_util.debug_info("lower_fun", fun, args, params))
+        debug_info=api_util.debug_info("lower_fun", fun, args, {}))
     manager = (contextlib.nullcontext() if ctx.jaxpr_eqn_ctx is None else
                ctx.jaxpr_eqn_ctx.manager)
 
@@ -2796,7 +2796,7 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
                            ops: Sequence[ir.Value],
                            ops_avals: Sequence[core.AbstractValue],
                            out_shape: core.Shape,
-                           out_sharding=None) -> Sequence[ir.Value]:
+                           out_sharding) -> Sequence[ir.Value]:
   """Broadcasts multiple ops to the out_shape."""
   out = []
   for op, op_aval in zip(ops, ops_avals):
@@ -2805,10 +2805,8 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
     out_aval = core.ShapedArray(
         out_shape, op_aval.dtype, sharding=out_sharding)  # type: ignore
     if core.definitely_equal_shape(op_aval_shape, out_shape):
-      if out_sharding is None or op_aval_sharding == out_sharding:
-        out.append(op)
-      else:
-        out.append(lower_with_sharding_in_types(ctx, op, out_aval))
+      out.append(op if op_aval_sharding == out_sharding else
+                 lower_with_sharding_in_types(ctx, op, out_aval))
     else:
       assert len(op_aval_shape) <= len(out_shape), (op_aval_shape, out_shape)
       broadcast_dimensions = list(range(len(out_shape) - len(op_aval_shape), len(out_shape)))
@@ -2860,8 +2858,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     elt_shape = core.physical_element_aval(aval_out.dtype).shape
     index_avals = ctx.avals_in[1:]
-    dtype = dtypes.canonicalize_dtype(
-        index_avals[0].dtype if index_avals else 'int64')  # type: ignore
+    dtype = index_avals[0].dtype if index_avals else np.int32  # type: ignore
     trailing_zeros = [ir_constant(np.array(0, dtype))] * len(elt_shape)
     start_indices = (*start_indices, *trailing_zeros)
     aval_out = core.physical_aval(aval_out)
@@ -2893,8 +2890,7 @@ def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     elt_shape = core.physical_element_aval(aval_out.dtype).shape
     index_avals = ctx.avals_in[2:]
-    dtype = dtypes.canonicalize_dtype(
-        index_avals[0].dtype if index_avals else 'int64')  # type: ignore
+    dtype = index_avals[0].dtype if index_avals else np.int32  # type: ignore
     zeros = [ir_constant(np.array(0, dtype=dtype))] * len(elt_shape)
     start_indices = (*start_indices, *zeros)
     physical_aval_out = core.physical_aval(aval_out)
@@ -2934,7 +2930,7 @@ def iota(ctx: LoweringRuleContext, aval_out, *, dimension: int):
 
 def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""
-  zero = ir_constant(np.array(value, dtypes.canonicalize_dtype(aval.dtype)))
+  zero = ir_constant(np.array(value, aval.dtype))
   return broadcast_in_dim(ctx, zero, aval, broadcast_dimensions=())
 
 def add_jaxvals_lowering(ctx, x, y):

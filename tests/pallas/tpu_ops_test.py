@@ -305,12 +305,13 @@ class OpsTest(PallasBaseTest):
       reduce_func = [jnp.sum, jnp.max, jnp.min]
   )
   def test_reduction(self, dtype, axis, reduce_func):
-    if dtype == jnp.int32:
-      if axis == 2:
-        self.skipTest("Int32 reduction on minor is not supported.")
-    # TODO(b/384127570): fix bfloat16 reduction.
-    if dtype == jnp.bfloat16 and reduce_func != jnp.sum:
-      self.skipTest("b/384127570")
+    # TODO(b/395579834): Remove this skip later.
+    if (
+        dtype == jnp.int32
+        and axis == 2
+        and not jtu.if_cloud_tpu_at_least(2025, 9, 1)
+    ):
+      self.skipTest("Requires libtpu built after 2025-09-01")
     in_shape = (2, 16, 128)
     out_shape = list(in_shape)
     out_shape[axis] = 1
@@ -327,18 +328,18 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_array_equal(result, expected)
 
   @parameterized.product(
+      axis=[0, 1, 2],
       reduce_func = [jnp.argmax, jnp.argmin]
   )
-  @jtu.skip_on_devices('tpu') # TODO: apaszke - This test is breaking presubmits.
-  def test_reduce_index(self, reduce_func):
-    if not jtu.if_cloud_tpu_at_least(2025, 8, 25):
-      self.skipTest("Requires libtpu built after 2025-08-25")
+  def test_reduce_index(self, axis, reduce_func):
+    if not jtu.if_cloud_tpu_at_least(2025, 9, 8):
+      self.skipTest("Requires libtpu built after 2025-09-08")
     dtype = jnp.float32
-    axis = 1
-    if (axis == 1 and not jtu.is_device_tpu_at_least(version=4)):
+    in_shape = (2, 32, 256)
+    rank = len(in_shape)
+    if axis == rank - 1 and not jtu.is_device_tpu_at_least(version=4):
       self.skipTest("Requires TPUv4+ for axis=1")
 
-    in_shape = (32, 256)
     out_shape = list(in_shape)
     out_shape[axis] = 1
 

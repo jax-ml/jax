@@ -106,7 +106,7 @@ def pallas_call_lowering(
 
   serialized_metadata = None
   if metadata is not None:
-    serialized_metadata = json.dumps(metadata)
+    serialized_metadata = json.dumps(dict(metadata))
 
   # TODO(b/394629193): Remove True once the bug is fixed.
   if True:

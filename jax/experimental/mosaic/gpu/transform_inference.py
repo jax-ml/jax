@@ -27,6 +27,7 @@ from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import gpu
+from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import vector
 
@@ -162,34 +163,38 @@ def _infer_transforms_for_mma_ref(
   )
 
 
-def _infer_mma_transforms(
-    a_type: ir.Type, b_type: ir.Type
-) -> OptionalTransforms:
-  b_transforms, b_swizzle = _infer_transforms_for_mma_ref(
-      ir.MemRefType(b_type), max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
-  )
-  if ir.MemRefType.isinstance(a_type):
-    a_transforms, a_swizzle = _infer_transforms_for_mma_ref(
-        cast(ir.MemRefType, a_type), max_swizzle=b_swizzle
-    )
-    if a_swizzle != b_swizzle:
-      # The swizzle for a and b has to match.
-      b_transforms, b_swizzle = _infer_transforms_for_mma_ref(
-          ir.MemRefType(b_type), max_swizzle=a_swizzle
-      )
-      assert a_swizzle == b_swizzle
-    return [a_transforms, b_transforms], []
-  return [b_transforms], []
-
-
 @partial(_add_transform_inference_rule, mgpu.WGMMAOp)
 def infer_wgmma_transforms(op: mgpu.WGMMAOp) -> OptionalTransforms:
-  return _infer_mma_transforms(op.a.type, op.b.type)
+  b_transforms, b_swizzle = _infer_transforms_for_mma_ref(
+      ir.MemRefType(op.b.type), max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
+  )
+  if not ir.MemRefType.isinstance(op.a.type):
+    return [b_transforms], []
+
+  a_transforms, a_swizzle = _infer_transforms_for_mma_ref(
+      ir.MemRefType(op.a.type), max_swizzle=b_swizzle
+  )
+  if a_swizzle != b_swizzle:
+    # The swizzle for a and b has to match.
+    b_transforms, b_swizzle = _infer_transforms_for_mma_ref(
+        ir.MemRefType(op.b.type), max_swizzle=a_swizzle
+    )
+    assert a_swizzle == b_swizzle
+  return [a_transforms, b_transforms], []
 
 
 @partial(_add_transform_inference_rule, mgpu.TcGen05MMAOp)
 def infer_tcgen05_mma_transforms(op: mgpu.TcGen05MMAOp) -> OptionalTransforms:
-  return _infer_mma_transforms(op.a.type, op.b.type)
+  b_transforms, _ = _infer_transforms_for_mma_ref(
+      ir.MemRefType(op.b.type), max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
+  )
+  if not utils.is_smem_ref(op.a.type):
+    return [b_transforms], []
+
+  a_transforms, _ = _infer_transforms_for_mma_ref(
+      ir.MemRefType(op.a.type), max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
+  )
+  return [a_transforms, b_transforms], []
 
 
 @partial(_add_transform_inference_rule, mgpu.AsyncStoreOp)
@@ -287,6 +292,17 @@ def _infer_memref_view_transforms(op: memref.ViewOp) -> OptionalTransforms:
   return None if transforms is None else ([], [transforms])
 
 
+@partial(_add_transform_inference_rule, llvm.UndefOp)
+def _infer_llvm_undef_transforms(op: llvm.UndefOp) -> OptionalTransforms:
+  # This is only needed for tests and will be deleted once we move to SMEM
+  # inference in the new constraint-based system.
+  transforms = _transforms_from_uses(op)
+
+  if transforms is None:
+    return None
+  return [], [transforms]
+
+
 def _get_tile_and_swizzle_transforms(
     transforms: ir.ArrayAttr,
 ) -> tuple[ir.Attribute, ir.Attribute]:
@@ -334,6 +350,8 @@ def _infer_memref_subview_transforms(
         "unchanged."
     )
 
+  is_dynamic = lambda x: ir.ShapedType.is_dynamic_size(x)
+
   # Check tile transform propagation.
   old_tiling = mgpu.TileTransformAttr(tile_transform).tiling
   num_tiled_axes = len(old_tiling)
@@ -341,14 +359,17 @@ def _infer_memref_subview_transforms(
   last_n_sizes = list(op.static_sizes)[-num_tiled_axes:]
   last_n_offsets = list(op.static_offsets)[-num_tiled_axes:]
 
-  if any(ir.ShapedType.is_dynamic_size(x) for x in last_n_sizes):
+  if any(is_dynamic(x) for x in last_n_sizes):
     raise NotImplementedError(
         "Subview transforms with dynamic sizes are not supported."
     )
 
-  dynamic_index = 0
+  num_non_tiled_axes = len(op.source.type.shape) - num_tiled_axes
+  non_tiled_offsets = list(op.static_offsets)[:num_non_tiled_axes]
+  dynamic_index = sum(1 for x in non_tiled_offsets if is_dynamic(x))
+
   for i in range(len(last_n_offsets)):
-    if ir.ShapedType.is_dynamic_size(last_n_offsets[i]):
+    if is_dynamic(last_n_offsets[i]):
       if utils.is_known_divisible(
           op.offsets[dynamic_index], last_n_sizes[i]
       ):

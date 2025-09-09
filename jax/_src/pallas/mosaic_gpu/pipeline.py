@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import dataclasses
+import enum
 import functools
 import itertools as it
 import math
@@ -69,7 +70,7 @@ map_brefs = functools.partial(
 @jax.tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class BufferedRef:
-  spec: pallas_core.BlockSpec = dataclasses.field(metadata={"static": True})
+  spec: gpu_core.BlockSpec = dataclasses.field(metadata={"static": True})
   is_index_invariant: bool = dataclasses.field(metadata={"static": True})
   gmem_ref: state.AbstractRef
   # ``None`` if the ref is pinned to GMEM; otherwise, has shape
@@ -184,6 +185,20 @@ jax.tree_util.register_dataclass(
 )
 
 
+def _downcast_spec(
+    spec: gpu_core.BlockSpec | pallas_core.BlockSpec,
+) -> gpu_core.BlockSpec:
+  if isinstance(spec, gpu_core.BlockSpec):
+    return spec
+
+  return gpu_core.BlockSpec(
+      block_shape=spec.block_shape,
+      index_map=spec.index_map,
+      memory_space=spec.memory_space,
+      pipeline_mode=spec.pipeline_mode,
+  )
+
+
 def emit_pipeline(
     body: Callable[..., T],
     *,
@@ -191,7 +206,6 @@ def emit_pipeline(
     in_specs: Sequence[pallas_core.BlockSpec] = (),
     out_specs: Sequence[pallas_core.BlockSpec] = (),
     max_concurrent_steps: int = 1,
-    delay_release: int = 0,
     init_carry: T | None = None,
 ):
   r"""Creates a function to emit a manual pipeline within a Pallas kernel.
@@ -212,10 +226,6 @@ def emit_pipeline(
     out_specs: A sequence of :class:`~jax.experimental.pallas.BlockSpec`\s
       for outputs.
     max_concurrent_steps: Maximum concurrently active pipeline stages.
-    delay_release: Number of steps to delay before reusing input
-      references. Must be ``< max_concurrent_steps``. Useful for hiding WGMMA
-      latency (typically set to 1). Note that the output references will be
-      reused immediately!
     init_carry: Optional initial carry. If provided, ``body`` handles
       carry-over state between iterations, and the pipeline returns the
       final carry.
@@ -225,10 +235,16 @@ def emit_pipeline(
     pipeline and returns the final carry value (if ``init_carry`` was used),
     otherwise it returns None.
   """
-  if max_concurrent_steps <= delay_release:
+
+  in_specs = tuple(map(_downcast_spec, in_specs))
+  out_specs = tuple(map(_downcast_spec, out_specs))
+  # TODO(justinfu): Factor out common code between warp-specialized and
+  # normal pipelines.
+  delay_release_levels = sorted({s.delay_release for s in in_specs}) or [0]
+  if delay_release_levels and max_concurrent_steps <= delay_release_levels[0]:
     raise ValueError(
-        "max_concurrent_steps must be greater than delay_release, but"
-        f" {max_concurrent_steps=}, {delay_release=}"
+        "max_concurrent_steps must be greater than all delay_release values,"
+        f" but {max_concurrent_steps=} and {delay_release_levels=}."
     )
 
   num_steps = math.prod(grid)
@@ -306,7 +322,7 @@ def emit_pipeline(
 
     def loop_body(step, carry):
       slot = lax.rem(step, max_concurrent_steps)
-      indices, fetch_indices, last_store_slices, prev_body_carry = carry
+      indices, fetch_index_levels, last_store_slices, prev_body_carry = carry
 
       if barrier_ref is not None:
         # Wait for the current GMEM->SMEM copy to complete, if any.
@@ -358,31 +374,43 @@ def emit_pipeline(
       if copies_out_in_loop:
         gpu_primitives.commit_smem_to_gmem_group()
 
-      fetch_step = step + (max_concurrent_steps - delay_release)
-      fetch_slot = lax.rem(fetch_step, max_concurrent_steps)
+      for delay_release, fetch_indices in zip(
+          delay_release_levels, fetch_index_levels
+      ):
+        fetch_step = step + (max_concurrent_steps - delay_release)
+        fetch_slot = lax.rem(fetch_step, max_concurrent_steps)
 
-      def do_fetch():
-        for bref in in_brefs:
-          bref.copy_in(fetch_slot, fetch_indices, barrier_ref)
+        # pylint: disable=cell-var-from-loop
+        def do_fetch():
+          for bref in in_brefs:
+            if bref.spec.delay_release == delay_release:
+              bref.copy_in(fetch_slot, fetch_indices, barrier_ref)
+        # pylint: enable=cell-var-from-loop
 
-      jax.lax.cond(
-          lax.bitwise_and(step >= delay_release, fetch_step < num_steps),
-          do_fetch,
-          lambda: None,
-      )
+        jax.lax.cond(
+            lax.bitwise_and(step >= delay_release, fetch_step < num_steps),
+            do_fetch,
+            lambda: None,
+        )
 
+      next_fetch_indices_levels = [
+          _inc_grid_by_1(fetch_indices, grid)
+          for fetch_indices in fetch_index_levels
+      ]
       return (
           _inc_grid_by_1(indices, grid),
-          _inc_grid_by_1(fetch_indices, grid),
+          next_fetch_indices_levels,
           new_store_slices,
           next_body_carry if init_carry is not None else None,
       )
 
-    # Invariant: ``indices`` and ``fetch_indices`` are always
-    # ``max_concurrent_steps-delay_release`` apart.
-    fetch_indices = indices
-    for _ in range(max_concurrent_steps-delay_release):
-      fetch_indices = _inc_grid_by_1(fetch_indices, grid)
+    fetch_index_levels = []
+    for delay_release in delay_release_levels:
+      fetch_indices = indices
+      for _ in range(max_concurrent_steps - delay_release):
+        fetch_indices = _inc_grid_by_1(fetch_indices, grid)
+      fetch_index_levels.append(fetch_indices)
+
     # TODO(justinfu): Only store base pointer instead of all indices.
     last_store_slices = [
         None
@@ -394,7 +422,7 @@ def emit_pipeline(
         0,
         num_steps,
         loop_body,
-        (indices, fetch_indices, last_store_slices, init_carry),
+        (indices, fetch_index_levels, last_store_slices, init_carry),
     )
 
     # Outputs invariant to the sequential axis are never written from inside the
@@ -446,6 +474,23 @@ class ComputeContext(Protocol):
     ...
 
 
+class PipelinePipeline(enum.IntEnum):
+  START = 0
+  STEADY = 1
+  STOP = 2
+
+
+class WarpSpecializedPipeline(Protocol):
+  """Protocol for a warp specialized pipeline."""
+  def __call__(
+      self, *gmem_refs: Any, allocations: Any | None = None,
+  ) -> None:
+    ...
+
+  def get_allocations(self, *gmem_refs: Any) -> Any:
+    ...
+
+
 def emit_pipeline_warp_specialized(
     body: Callable[..., None],
     *,
@@ -456,11 +501,11 @@ def emit_pipeline_warp_specialized(
     max_concurrent_steps: int = 2,
     wg_axis: str,
     num_compute_wgs: int,
-    delay_release: int = 0,
+    pipeline_state: jax.Array | PipelinePipeline | None = None,
     manual_consumed_barriers: bool = False,
     compute_context: ComputeContext | None = None,
     memory_thread_idx: int | None = None,
-):
+) -> WarpSpecializedPipeline:
   """Creates a function to emit a warp-specialized pipeline.
 
   The ``body`` function should have the following signature (without carry).
@@ -468,7 +513,7 @@ def emit_pipeline_warp_specialized(
   ``manual_consumed_barriers`` argument is True.
 
   ```
-  def body(indices, *input_refs, *output_refs, [consumed_barriers]) -> None:
+  def body(indices, *input_refs, *output_refs, *consumed_barriers) -> None:
   ```
 
   or with a carries enabled (enabled via the ``compute_context`` argument),
@@ -476,9 +521,12 @@ def emit_pipeline_warp_specialized(
 
   ```
   def body(
-      indices, *input_refs, *output_refs, [consumed_barriers], carry
+      indices, *input_refs, *output_refs, *consumed_barriers, carry
   ) -> Carry:
   ```
+
+  When ``manual_consumed_barriers`` is True, the user must arrive on all the
+  consumed barriers from all compute warpgroups at each pipeline step.
 
   Args:
     body: The pipeline body.
@@ -489,10 +537,6 @@ def emit_pipeline_warp_specialized(
     out_specs: The block specs for the outputs.
     max_concurrent_steps: The maximum number of sequential stages that are
       active concurrently. Defaults to 2.
-    delay_release: Number of steps to delay before reusing input
-      references. Must be ``< max_concurrent_steps``. Useful for hiding WGMMA
-      latency (typically set to 1). Note that the output references will be
-      reused immediately!
     wg_axis: The axis name for the warp group axis.
     num_compute_wgs: The number of compute warpgroups
     manual_consumed_barriers: If True, consumed barriers will be
@@ -509,15 +553,26 @@ def emit_pipeline_warp_specialized(
       final carry.
     memory_thread_idx: The index of the memory thread. If not specified,
       defaults to the last thread.
+    pipeline_state: If multiple pipelines that have almost the same parameters
+      (only in/out_specs and body can differ) are going to be evaluated
+      in sequence, this argument can be used to avoid pipeline bubbles between
+      their invocations. The first pipeline in the sequence should use the
+      ``START`` state, followed by an arbitrary number of ``STEADY`` states,
+      followed by a single ``STOP`` state. Note that until the pipeline with
+      ``STOP`` is done, the memory thread will not wait for the compute threads
+      to complete and fully consume their work. Any modification of their
+      operands other than invoking another pipeline is disallowed.
+
+      Important: To achieve bubble-free execution, it is important to also use
+      the manual allocation mode by calling ``get_allocations`` on the returned
+      function, passing the result to ``pl.run_scoped`` and the provided results
+      to the returned function as an ``allocations`` keyword argument.
+      Otherwise, the pipeline function will perform the scoped allocation itself
+      which can lead to synchronization that can still cause pipeline bubbles.
   """
+
   # TODO(justinfu): Factor out common code between warp-specialized and
   # normal pipelines.
-  if max_concurrent_steps <= delay_release:
-    raise ValueError(
-        "max_concurrent_steps must be greater than delay_release, but"
-        f" {max_concurrent_steps=}, {delay_release=}"
-    )
-
   if not isinstance(in_specs, (list, tuple)):
     in_specs = (in_specs,)
   if not isinstance(out_specs, (list, tuple)):
@@ -529,6 +584,24 @@ def emit_pipeline_warp_specialized(
 
   flat_in_specs, in_specs_treedef = jax.tree.flatten(in_specs)
   flat_out_specs, out_specs_treedef = jax.tree.flatten(out_specs)
+  delay_release = None
+  for in_spec in in_specs:
+    if not isinstance(in_spec, gpu_core.BlockSpec):
+      delay_release = 0
+      continue
+    delay_release = in_spec.delay_release
+    if in_spec.delay_release != delay_release:
+      raise NotImplementedError(
+          "All inputs must have the same delay_release, but"
+          f" {in_spec.delay_release=} != {delay_release=}"
+      )
+
+  delay_release = delay_release or 0
+  if max_concurrent_steps <= delay_release:
+    raise ValueError(
+        "max_concurrent_steps must be greater than delay_release, but"
+        f" {max_concurrent_steps=}, {delay_release=}"
+    )
 
   if memory_thread_idx is None:
     memory_thread_idx = num_compute_wgs
@@ -564,21 +637,11 @@ def emit_pipeline_warp_specialized(
   if not has_dynamic_grid and max_concurrent_steps > num_steps:
     max_concurrent_steps = cast(int, num_steps)
 
-  def pipeline(*gmem_refs: AbstractRefPytree):
-    """
-    Run the pipeline.
-
-    Args:
-      *gmem_refs: A list of pytrees of pallas refs
-    """
-
+  def _get_scoped_allocs(*gmem_refs: AbstractRefPytree):
     in_gmem_refs = gmem_refs[:len(in_specs)]
     out_gmem_refs = gmem_refs[len(in_specs):]
-
     flat_in_gmem_refs, in_gmem_refs_treedef = jax.tree.flatten(in_gmem_refs)
     flat_out_gmem_refs, out_gmem_refs_treedef = jax.tree.flatten(out_gmem_refs)
-    flat_gmem_refs = [*flat_in_gmem_refs, *flat_out_gmem_refs]
-
     if in_specs_treedef != in_gmem_refs_treedef:
       raise ValueError(
           "Input specs and input gmem refs must have the same pytree structure."
@@ -589,6 +652,7 @@ def emit_pipeline_warp_specialized(
           "Output specs and output gmem refs must have the same pytree structure."
           f" {out_specs_treedef} != {out_gmem_refs_treedef}"
       )
+    flat_gmem_refs = [*flat_in_gmem_refs, *flat_out_gmem_refs]
     smem_allocs = []
     for spec, has_seq_dim, gmem_ref in zip(
         it.chain(flat_in_specs, flat_out_specs),
@@ -604,9 +668,6 @@ def emit_pipeline_warp_specialized(
       )
     flat_in_smem_refs, flat_out_smem_refs = util.split_list(
         smem_allocs, [len(flat_in_specs)])
-
-    if any(not has_seq_dim for has_seq_dim in in_spec_has_seq_axis):
-      raise NotImplementedError("Only inputs with a dependency on the grid are supported.")
     in_smem_barrier = gpu_core.Barrier(num_arrivals=len(flat_in_specs), num_barriers=max_concurrent_steps)
     flat_consumed_barriers = []
     for _ in flat_in_specs:
@@ -626,18 +687,56 @@ def emit_pipeline_warp_specialized(
               num_barriers=max_concurrent_steps,
           )
       ]
-    return pl.run_scoped(
-        functools.partial(
-            scoped_pipeline,
-            flat_in_gmem_refs=flat_in_gmem_refs,
-            flat_out_gmem_refs=flat_out_gmem_refs,
-        ),
+    return dict(
         flat_in_smem_refs=flat_in_smem_refs,
         flat_out_smem_refs=flat_out_smem_refs,
         in_smem_barrier_ref=in_smem_barrier,
         flat_consumed_barrier_refs=flat_consumed_barriers,
-        collective_axes=wg_axis,
     )
+
+  def pipeline(*gmem_refs: AbstractRefPytree, allocations: Any | None = None):
+    """
+    Run the pipeline.
+
+    Args:
+      *gmem_refs: A list of pytrees of pallas refs
+      allocations: The allocation provided by ``pl.run_scoped`` when the result
+        of calling ``get_allocations(*gmem_refs)`` is passed to
+        ``pl.run_scoped``.
+    """
+    in_gmem_refs = gmem_refs[:len(in_specs)]
+    out_gmem_refs = gmem_refs[len(in_specs):]
+    flat_in_gmem_refs, in_gmem_refs_treedef = jax.tree.flatten(in_gmem_refs)
+    flat_out_gmem_refs, out_gmem_refs_treedef = jax.tree.flatten(out_gmem_refs)
+    if in_specs_treedef != in_gmem_refs_treedef:
+      raise ValueError(
+          "Input specs and input gmem refs must have the same pytree structure."
+          f" {in_specs_treedef} != {in_gmem_refs_treedef}"
+      )
+    if out_specs_treedef != out_gmem_refs_treedef:
+      raise ValueError(
+          "Output specs and output gmem refs must have the same pytree structure."
+          f" {out_specs_treedef} != {out_gmem_refs_treedef}"
+      )
+
+    if allocations is None:
+      return pl.run_scoped(
+          functools.partial(
+              scoped_pipeline,
+              flat_in_gmem_refs=flat_in_gmem_refs,
+              flat_out_gmem_refs=flat_out_gmem_refs,
+          ),
+          **_get_scoped_allocs(*gmem_refs),
+          collective_axes=wg_axis,
+      )
+    else:
+      scoped_pipeline(
+          flat_in_gmem_refs=flat_in_gmem_refs,
+          flat_out_gmem_refs=flat_out_gmem_refs,
+          **allocations,
+      )
+
+  pipeline.get_allocations = _get_scoped_allocs
 
   def scoped_pipeline(
       *,
@@ -668,6 +767,21 @@ def emit_pipeline_warp_specialized(
 
       # This is true if any of the outputs need to be transferred inside the loop.
       smem_out_brefs = [bref for bref in flat_out_brefs if _in_smem(bref.spec)]
+      # The implementation below has races when we have multiple compute WGs.
+      # The problem is that we expect the compute WGs to deal with issuing the
+      # SMEM->GMEM copies, but (1) we never predicate them, so we repeat the
+      # same copy multiple times, and (2) we don't synchronize the compute WGs
+      # in any way. In the unlikely event that one of the compute WGs runs 2
+      # steps ahead, it might start overwriting the output buffer before the
+      # other WG has issued its copy.
+      #
+      # The best fix here would be to move the SMEM->GMEM copies into the memory
+      # WG and use proper barriers (with arrival_count=2) to ensure all WGs have
+      # produced their outputs before it is sent out to GMEM.
+      if smem_out_brefs and num_compute_wgs > 1:
+        raise NotImplementedError(
+            "SMEM outputs are not supported with multiple compute warpgroups"
+        )
       copies_out_in_loop = not all(bref.is_index_invariant for bref in smem_out_brefs)
       needs_epilogue = any(bref.is_index_invariant for bref in smem_out_brefs)
 
@@ -800,6 +914,26 @@ def emit_pipeline_warp_specialized(
       else:
         assert max_concurrent_steps <= num_steps
         prologue_steps = max_concurrent_steps
+      pipeline_init_prologue_steps = prologue_steps
+      if pipeline_state is not None:
+        if has_dynamic_grid:
+          raise NotImplementedError(
+              "A pipeline of pipelines is not supported with dynamic grids"
+          )
+        if num_steps % max_concurrent_steps:
+          raise NotImplementedError(
+              "A pipeline of pipelines is only allowed when the number of steps"
+              f" (product of grid, here {num_steps}) is divisible by"
+              f" {max_concurrent_steps=}"
+          )
+        if delay_release:
+          raise NotImplementedError(
+              "A pipeline of pipelines is not supported with delay_release"
+          )
+        if isinstance(pipeline_state, PipelinePipeline):
+          prologue_steps = prologue_steps if pipeline_state == PipelinePipeline.START else 0
+        else:
+          prologue_steps = jnp.where(pipeline_state == PipelinePipeline.START, prologue_steps, 0)
 
       # Begin initial copies.
       def _init_step(step, indices):
@@ -835,15 +969,20 @@ def emit_pipeline_warp_specialized(
           bref.copy_in(buf_slot, indices, in_smem_barrier_ref, barrier_slot)
         next_indices = _inc_grid_by_1(indices, grid)
         return (next_indices,)
-      lax.fori_loop(0, num_steps - max_concurrent_steps,
-                    memory_loop_body, (indices,))
+      lax.fori_loop(0, num_steps - prologue_steps, memory_loop_body, (indices,))
       # Await all the arrivals to not leave barriers in a bad state.
       # We only need to account for the prologue steps, only the first
       # delay_release of them skip arrivals, so we subtract them.
-      @pl.loop(0, prologue_steps - delay_release, unroll=not has_dynamic_grid)
-      def _epi_step(step):
-        for barrier in flat_consumed_barrier_refs:
-          gpu_primitives.barrier_wait(barrier.at[step])
+      @pl.when(pipeline_state is None or pipeline_state == PipelinePipeline.STOP)
+      def _quiesce():
+        @pl.loop(
+            0,
+            pipeline_init_prologue_steps - delay_release,
+            unroll=not has_dynamic_grid,
+        )
+        def _epi_step(step):
+          for barrier in flat_consumed_barrier_refs:
+            gpu_primitives.barrier_wait(barrier.at[step])
 
     wg_idx = lax.axis_index(wg_axis)
     lax.cond(
@@ -851,7 +990,8 @@ def emit_pipeline_warp_specialized(
         compute_block,
         memory_block
     )
-  return pipeline
+  # Mypy doesn't notice the .get_allocations assignment above.
+  return pipeline  # type: ignore
 
 def _compute_registers(
     memory_registers: int,

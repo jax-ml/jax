@@ -85,7 +85,7 @@ from jax._src.interpreters import pxla
 
 traceback_util.register_exclusion(__file__)
 
-_dtype = partial(dtypes.dtype, canonicalize=True)
+_dtype = dtypes.dtype
 
 AxisName = Hashable
 
@@ -1091,13 +1091,16 @@ def vmap(fun: F,
 
     args_flat, in_tree  = tree_flatten((args, kwargs), is_leaf=batching.is_vmappable)
     dbg = debug_info("vmap", fun, args, kwargs)
-    if config.mutable_array_checks.value:
-      avals = [core.shaped_abstractify(arg) for arg in args_flat]
-      api_util._check_no_aliased_ref_args(dbg, avals, args_flat)
 
     f = lu.wrap_init(fun, debug_info=dbg)
     flat_fun, out_tree = batching.flatten_fun_for_vmap(f, in_tree)
     in_axes_flat = flatten_axes("vmap in_axes", in_tree, (in_axes, 0), kws=True)
+
+    if config.mutable_array_checks.value:
+      avals = [None if d is None or batching.is_vmappable(x) else core.typeof(x)
+               for x, d in zip(args_flat, in_axes_flat)]
+      api_util._check_no_aliased_ref_args(dbg, avals, args_flat)
+
     axis_size_ = (axis_size if axis_size is not None else
                   _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))
     explicit_mesh_axis = _mapped_axis_spec(args_flat, in_axes_flat)
@@ -1742,7 +1745,8 @@ def _cpp_pmap(
 
   cpp_mapped_f = pmap_lib.pmap(
       fun, cache_miss, static_broadcasted_tuple,
-      lambda x, s: pxla.shard_args([s], [None], [None], [x])[0],
+      lambda x, s: pxla.shard_args([s], [None],
+                                   [xc.ArrayCopySemantics.REUSE_INPUT], [x])[0],
       pytree_registry=tree_util.default_registry)
   _pmap_cache_clears.add(cpp_mapped_f)
 
@@ -2132,15 +2136,14 @@ def vjp(
     raise NotImplementedError("reduce_axes argument to vjp is deprecated")
   del reduce_axes
   check_callable(fun)
-  if config.vjp3.value:
-    return vjp3(fun, *primals, has_aux=has_aux)
-  else:
-    wrapped_fun = lu.wrap_init(
-        fun, debug_info=debug_info("vjp", fun, primals, {}))
-    return _vjp(wrapped_fun, *primals, has_aux=has_aux)
+  wrapped_fun = lu.wrap_init(
+      fun, debug_info=debug_info("vjp", fun, primals, {}))
+  return _vjp(wrapped_fun, *primals, has_aux=has_aux)
 
 def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
   """Variant of vjp() that takes an lu.WrappedFun."""
+  if config.vjp3.value:
+    return _vjp3(fun, *primals, has_aux=has_aux)
   primals_flat, in_tree = tree_flatten(primals)
   for arg in primals_flat: dispatch.check_arg(arg)
   if not has_aux:
@@ -2190,10 +2193,10 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
     if len(unused) == 1:
       (i, a), = unused
       start, was = "an input value", "was"
-      msg = f" {dbg.arg_names[i]} of type {a.str_short()}"
+      msg = f" {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'} of type {a.str_short()}"
     else:
       start, was = "multiple input values", "were"
-      msg = "\n" + "\n".join(f"  * {dbg.arg_names[i]} of type {a.str_short()}"
+      msg = "\n" + "\n".join(f"  * {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'} of type {a.str_short()}"
                              for i, a in unused)
     raise Exception(f"with {allow_unused=}, {start} marked to be saved {was} "
                     f"not used by the backward pass:{msg}")
@@ -2242,7 +2245,11 @@ si_vjp = saved_input_vjp
 def vjp3(f, *primals, has_aux=False):
   dbg = debug_info("vjp", f, primals, {})
   fun = lu.wrap_init(f, debug_info=dbg)
+  return _vjp3(fun, *primals, has_aux=has_aux)
+
+def _vjp3(fun, *primals, has_aux=False):
   primals_flat, in_tree = tree_flatten(primals)
+  for arg in primals_flat: dispatch.check_arg(arg)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
     out_primals_flat, out_pvals, jaxpr, residuals = ad.linearize(
@@ -2261,8 +2268,9 @@ def vjp3(f, *primals, has_aux=False):
           RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
           for r in residuals]
   args_res = tree_map(lambda x: x if id(x) in used else NotNeeded(), primals)
-  f_vjp = VJP(partial(_vjp3, spec, out_known, jaxpr), in_tree, out_tree,
-              list(args_res), opaque_residuals)
+  out_primal_avals = [typeof(x) for x in out_primals_flat]
+  f_vjp = VJP(partial(_vjp3_callable, spec, out_known, jaxpr, out_primal_avals),
+              in_tree, out_tree, list(args_res), opaque_residuals)
   out_primals = tree_unflatten(out_tree, out_primals_flat)
   if not has_aux:
     return out_primals, f_vjp
@@ -2274,8 +2282,8 @@ def _is_ref(x):
   try: return isinstance(typeof(x), AbstractRef)
   except: return False
 
-def _vjp3(spec, out_known, jaxpr, in_tree, out_tree, args_res, opaque_res,
-          *maybe_ct_refs):
+def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
+                   args_res, opaque_res, *maybe_ct_refs):
   maybe_ct_refs_flat, in_tree_ = tree_flatten(maybe_ct_refs)
   if in_tree != in_tree_: raise Exception
   args_res_flat, in_tree_ = tree_flatten(
@@ -2284,18 +2292,68 @@ def _vjp3(spec, out_known, jaxpr, in_tree, out_tree, args_res, opaque_res,
   residuals = [args_res_flat[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
   maybe_refs = [ad.RefAccum(v.aval, x) if _is_ref(x) else ad.ValAccum(v.aval)
                 for v, x in zip(jaxpr.invars, maybe_ct_refs_flat)]
-  return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr),
-                 residuals, maybe_refs)
+  return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr,
+                         out_primal_avals), residuals, maybe_refs)
 
-def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, residuals, maybe_refs, out_ct):
+def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, out_primal_avals, residuals,
+              maybe_refs, out_ct):
   cts_flat, out_tree_ = tree_flatten(out_ct)
-  if out_tree != out_tree_: raise Exception
+  if out_tree != out_tree_: _vjp_ct_tree_error(jaxpr, out_tree, out_tree_)
+  _vjp_check_ct_avals(cts_flat, out_primal_avals)
   cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
   ad.backward_pass3(jaxpr, True, residuals, maybe_refs, cts_flat)
   arg_cts = [x.freeze() if isinstance(x, ad.ValAccum) else GradRef()
              for x in maybe_refs]
   arg_cts = map(ad.instantiate_zeros, arg_cts)
   return tree_unflatten(in_tree, arg_cts)
+
+_vjp_too_many_args = """
+The function returned by `jax.vjp` applied to {} was called with {} arguments,
+but functions returned by `jax.vjp` must be called with a single argument
+corresponding to the single value returned by the function being differentiated
+(even if that returned value is a tuple or other container).
+
+For example, if we have:
+
+  def f(x):
+    return (x, x)
+  _, f_vjp = jax.vjp(f, 1.0)
+
+the function `f` returns a single tuple as output, and so we call `f_vjp` with a
+single tuple as its argument:
+
+  x_bar, = f_vjp((2.0, 2.0))
+
+If we instead call `f_vjp(2.0, 2.0)`, with the values 'splatted out' as
+arguments rather than in a tuple, this error can arise.
+""".format
+
+def _vjp_ct_tree_error(jaxpr, out_tree, ct_tree):
+  msg = f"""unexpected tree structure.
+
+The argument to a VJP function returned by `jax.vjp` must match the pytree
+structure of the differentiated function {jaxpr.debug_info.func_src_info}.
+
+But the tree structures differ:
+"""
+  msg += '\n'.join(f"  * out{keystr(path)} was a {thing1} in the original "
+                   f" output, but a {thing2} here, so {explanation}."
+                   for path, thing1, thing2, explanation
+                   in equality_errors_pytreedef(out_tree, ct_tree))
+  raise ValueError(msg)
+
+def _vjp_check_ct_avals(cts, primal_avals):
+  # TODO(mattjj): improve this error  by flattening with keys in the first place
+  for ct, aval in zip(cts, primal_avals):
+    ct_aval = typeof(ct)
+    ct_aval_expected = aval.to_tangent_aval()
+    if (not core.typecompat(ct_aval, ct_aval_expected) and
+        not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
+      raise ValueError(
+          "unexpected JAX type (e.g. shape/dtype) for argument to VJP function: "
+          f"got {ct_aval.str_short()}, but expected {ct_aval_expected.str_short()} "
+          "because the corresponding output of the differentiated function had JAX type "
+          f"{aval.str_short()}")
 
 @register_dataclass
 @dataclasses.dataclass(frozen=True)
@@ -2317,8 +2375,12 @@ class VJP:
   out_tree: PyTreeDef
   args_res: list[Any]
   opaque_residuals: list[Any]
+  jaxpr = property(lambda self: self.fun.args[2])  # type: ignore
 
-  def __call__(self, out_ct):
+  def __call__(self, out_ct, *extra_args):
+    if extra_args:
+      name, *_ = self.jaxpr.debug_info.func_src_info.split(' ')
+      raise TypeError(_vjp_too_many_args(name, len(extra_args)))
     dums = tree_unflatten(self.in_tree, [GradValue()] * self.in_tree.num_leaves)
     return self.fun(self.in_tree, self.out_tree, self.args_res,
                     self.opaque_residuals, *dums)(out_ct)
@@ -2383,14 +2445,14 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
                    debug_info=debug_info("linear_transpose", fun, primals, {})),
       in_tree)
   in_avals = map(shaped_abstractify, primals_flat)
-  in_dtypes = map(dtypes.dtype, in_avals)
+  in_dtypes = map(lambda a: a.dtype, in_avals)
 
   in_pvals = map(pe.PartialVal.unknown, in_avals)
   jaxpr, out_pvals, const = pe.trace_to_jaxpr_nounits(flat_fun, in_pvals,
                                                       instantiate=True)
   jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars), True)
   out_avals, _ = unzip2(out_pvals)
-  out_dtypes = map(dtypes.dtype, out_avals)
+  out_dtypes = map(lambda a: a.dtype, out_avals)
   if not (all(dtypes.issubdtype(d, np.inexact) for d in in_dtypes + out_dtypes)
           or all(dtypes.issubdtype(d, np.integer)
                  for d in in_dtypes + out_dtypes)):
@@ -2565,8 +2627,7 @@ def _check_string_compatible_sharding(s):
       "String arrays can only be sharded to CPU devices. Received"
       f" unsupported device or sharding: {s}")
 
-# TODO(yashkatariya): Generalize check_compatible_aval (maybe renamed) and use
-# that to check if shardings are compatible with the input.
+
 @util.cache(max_size=2048, trace_context_in_key=False)
 def _check_sharding(aval, s):
   if (s is not None and
@@ -2575,7 +2636,6 @@ def _check_sharding(aval, s):
         "`jax.device_put` only accepts `None`, `jax.sharding.Sharding`,"
         " `jax.Device`, `Format`, `jax.memory.Space` or a pytree of these"
         f" values. Received invalid value: {s}")
-
   if isinstance(aval, core.ShapedArray) and dtypes.is_string_dtype(aval.dtype):
     _check_string_compatible_sharding(s)
 
@@ -2669,18 +2729,24 @@ def device_put(
       if m is None:
         m = not d
       if m and not d:
-        copy_semantics.append(dispatch.CopySemantics.ALIAS)
+        copy_semantics.append(dispatch.ArrayCopySemantics.REUSE_INPUT)
       elif not m and d:
-        copy_semantics.append(dispatch.CopySemantics.DONATE)
+        copy_semantics.append(dispatch.ArrayCopySemantics.DONATE_INPUT)
       else:
         assert not m and not d
-        copy_semantics.append(dispatch.CopySemantics.COPY)
+        copy_semantics.append(dispatch.ArrayCopySemantics.ALWAYS_COPY)
 
-    for xf, d in zip(x_flat, device_flat):
-      _check_sharding(shaped_abstractify(xf), d)
-    out_flat = dispatch.device_put_p.bind(
-        *x_flat, devices=tuple(device_flat), srcs=tuple(src_flat),
-        copy_semantics=tuple(copy_semantics))
+    x_avals = tuple(shaped_abstractify(i) for i in x_flat)
+    for aval, d in zip(x_avals, device_flat):
+      _check_sharding(aval, d)
+    if core.trace_state_clean():
+      out_flat = dispatch._batched_device_put_impl(
+          *x_flat, devices=device_flat, srcs=src_flat,  # type: ignore
+          copy_semantics=copy_semantics, x_avals=x_avals)
+    else:
+      out_flat = dispatch.device_put_p.bind(
+          *x_flat, devices=tuple(device_flat), srcs=tuple(src_flat),
+          copy_semantics=tuple(copy_semantics))
     return tree_unflatten(treedef, out_flat)
 
 
@@ -3102,6 +3168,7 @@ def copy_to_host_async(x):
       copy_fn()
 
   return x
+
 
 def clear_backends():
   """

@@ -775,14 +775,13 @@ def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
     prim.def_abstract_eval(
       partial(lax_utils.standard_abstract_eval, prim, shape_rule, dtype_rule,
               lax_utils._standard_weak_type_rule, sharding_rule,
-              partial(core.standard_vma_rule, name),
-              None))
+              partial(core.standard_vma_rule, name), None, None))
   if supports_batching:
     batching.primitive_batchers[prim] = partial(
         batching.expand_dims_batcher, prim)
   return prim
 
-standard_linalg_primitive = partial(linalg_primitive, lax._input_dtype)
+standard_linalg_primitive = partial(linalg_primitive, lax.input_dtype)
 
 
 # Primitive implementations
@@ -1589,11 +1588,19 @@ def _generic_lu_pivots_to_permutation(swaps, permutation_size):
   """
   assert len(swaps.shape) >= 1
   batch_dims = swaps.shape[:-1]
+  swaps_sharding = core.typeof(swaps).sharding
+  batch_spec = swaps_sharding.spec[:-1]
+  if swaps_sharding.spec[-1] != None:
+    raise ValueError(
+        "The last dim of swaps should be unsharded but got:"
+        f" {swaps_sharding.spec[-1]} for type {core.typeof(swaps)}")
+  permutation_sharding = swaps_sharding.update(spec=batch_spec + (None,))
   k = swaps.shape[-1]
   m = permutation_size
 
-  permutation = lax.broadcasted_iota(np.int32, batch_dims + (m,),
-                                     len(batch_dims))
+  permutation = lax.broadcasted_iota(
+      np.int32, batch_dims + (m,), len(batch_dims),
+      out_sharding=permutation_sharding)
   if m == 0 or k == 0:
     return permutation
   upper = np.array(k, np.int32) if is_constant_dim(k) else k
@@ -2615,9 +2622,10 @@ def _broadcasting_select_hlo(ctx, which, which_aval, x, x_aval, y, y_aval) -> ir
   """Wrapper around XLA `Select` that broadcasts its arguments."""
   out_shapes = list(lax.broadcast_shapes(
       tuple(which_aval.shape), tuple(x_aval.shape), tuple(y_aval.shape)))
+  out_sharding = lax.broadcast_shardings(which_aval, x_aval, y_aval)
   which, x, y = mlir.multi_broadcast_in_dim(ctx, (which, x, y),
                                             (which_aval, x_aval, y_aval),
-                                            out_shapes)
+                                            out_shapes, out_sharding)
   return hlo.select(which, x, y)
 
 def _replace_not_ok_with_nan(ctx, batch_dims, ok, x, x_aval):

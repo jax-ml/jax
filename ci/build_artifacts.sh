@@ -97,7 +97,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
 
   # Use the "_cuda" configs when building the CUDA artifacts.
   if [[ ("$artifact" == "jax-cuda-plugin") || ("$artifact" == "jax-cuda-pjrt") ]]; then
-    bazelrc_config="${bazelrc_config}_cuda${JAXCI_ARTIFACT_CUDA_MAJOR_VERSION}"
+    bazelrc_config="${bazelrc_config}_cuda${JAXCI_CUDA_VERSION}"
   fi
 
   # Build the artifact.
@@ -106,7 +106,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
     --bazel_options=--config=use_tar_archive_files \
     --bazel_startup_options="$bazel_startup_options" \
     --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
-    --cuda_major_version=$JAXCI_ARTIFACT_CUDA_MAJOR_VERSION \
+    --cuda_major_version=$JAXCI_CUDA_VERSION \
     --verbose --detailed_timestamped_log --use_new_wheel_build_rule \
     --output_path="$JAXCI_OUTPUT_DIR" \
     $artifact_tag_flags
@@ -119,7 +119,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
       --bazel_options=--config=use_tar_archive_files \
       --bazel_startup_options="$bazel_startup_options" \
       --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
-      --cuda_major_version=$JAXCI_ARTIFACT_CUDA_MAJOR_VERSION \
+      --cuda_major_version=$JAXCI_CUDA_VERSION \
       --verbose --detailed_timestamped_log --use_new_wheel_build_rule \
       --output_path="$JAXCI_OUTPUT_DIR" \
       $artifact_tag_flags --bazel_options=--repo_env=ML_WHEEL_VERSION_SUFFIX="$JAXCI_WHEEL_RC_VERSION"

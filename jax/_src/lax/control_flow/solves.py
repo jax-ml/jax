@@ -112,13 +112,11 @@ def custom_root(f: Callable,
     unchecked_zeros, f_jvp = api.linearize(f, x)
     return tangent_solve(f_jvp, b)
 
-  tangent_solve_debug = api_util.debug_info("custom_root tangent_solve",
-                                            tangent_solve,
-                                            (f, initial_guess), {},
-                                            static_argnums=(0,))
+  linearize_and_solve_dbg = api_util.debug_info("custom_root tangent_solve",
+      tangent_solve, (initial_guess, initial_guess), {})
   l_and_s_jaxpr, l_and_s_consts, out_tree = _initial_style_jaxpr(
       linearize_and_solve, treedef_tuple((in_tree,) * 2), guess_avals * 2,
-      tangent_solve_debug)
+      linearize_and_solve_dbg)
   _check_tree("tangent_solve", "x", out_tree, in_tree, False)
 
   all_consts = [f_consts, solve_consts, l_and_s_consts]

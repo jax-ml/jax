@@ -547,7 +547,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       delta = plgpu.load(delta_smem, (), layout=plgpu.Layout.WGMMA_COL)
       plgpu.barrier_arrive(delta_consumed_barrier)
 
-      dsT = pT * (dpT - lax.broadcast_in_dim(delta, (block_kv, block_q), [1]))
+      dsT = pT * (dpT - lax.broadcast_in_dim(delta, (block_kv, block_q), [1]))  # pytype: disable=wrong-arg-types  # jax-operator-types
 
       def compute_dk(acc_ref):
         plgpu.wgmma(acc_ref, dsT.astype(dtype), q_smem)

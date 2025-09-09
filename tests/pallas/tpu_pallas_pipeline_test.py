@@ -127,6 +127,22 @@ class PallasCallPipelineTest(parameterized.TestCase):
 
     super().setUp()
 
+  def test_pipeline_without_inputs(self):
+    def kernel(o_hbm_ref):
+      def body(o_ref):
+        o_ref[...] = jnp.full(o_ref.shape, 42, dtype=o_ref.dtype)
+
+      pltpu.emit_pipeline(
+          body, grid=(4,), out_specs=pl.BlockSpec((8, 128), lambda i: (0, i))
+      )(o_hbm_ref)
+
+    out = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 512), jnp.int32),
+        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY),
+    )()
+    np.testing.assert_allclose(out, jnp.full_like(out, 42))
+
   @parameterized.product(
       no_pipelining=[False, True],
   )

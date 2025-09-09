@@ -13,6 +13,15 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* Removals
+
+  * Removed the previously deprecated
+    {class}`jax.experimental.pallas.tpu.TPUCompilerParams`,
+    {class}`jax.experimental.pallas.tpu.TPUMemorySpace`,
+    {class}`jax.experimental.pallas.tpu.TritonCompilerParams`.
+
+## Released with jax 0.7.1
+
 * New features:
 
   * `pltpu.make_async_remote_copy` and `pltpu.semaphore_signal`'s `device_id`

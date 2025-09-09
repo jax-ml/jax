@@ -38,9 +38,10 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
+from jax._src.lax import utils as lax_utils
 from jax._src.lax.utils import (
     _argnum_weak_type,
-    _input_dtype,
+    input_dtype,
     standard_primitive,
 )
 from jax._src.lib.mlir import ir
@@ -53,7 +54,7 @@ from jax._src.util import safe_map, safe_zip
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
-_dtype = partial(dtypes.dtype, canonicalize=True)
+_dtype = dtypes.dtype
 
 
 def slice(operand: ArrayLike, start_indices: Sequence[int],
@@ -1451,7 +1452,7 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
   out = slice(operand, new_start_indices, new_limit_indices, new_strides)
   return out, bdim
 
-slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice',
+slice_p = standard_primitive(_slice_shape_rule, input_dtype, 'slice',
                              sharding_rule=_slice_sharding_rule,
                              vma_rule=partial(core.standard_vma_rule, 'slice'))
 ad.deflinear2(slice_p, _slice_transpose_rule)
@@ -2107,16 +2108,19 @@ def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
                  output_shape):
   """Lowers a FILL_OR_DROP gather as a PROMISE_IN_BOUNDS gather with masking."""
   dnums = dimension_numbers
-  intarray = partial(np.array, dtype=np.int64)
-  operand_dims = lax.shape_as_value(operand.shape)
-  indices = lax.convert_element_type(indices, np.int64)
+  index_dtype = lax_utils.int_dtype_for_shape(operand.shape, signed=True)
+  intarray = partial(np.array, dtype=index_dtype)
+  operand_dims = lax.shape_as_value(operand.shape).astype(index_dtype)
+  indices = lax.convert_element_type(indices, index_dtype)
   num_batch_dims = len(indices.shape) - 1
 
-  upper_bound = (
-      operand_dims[intarray(dnums.start_index_map)] -
-      lax.shape_as_value(slice_sizes)[intarray(dnums.start_index_map)])
+  upper_bound = operand_dims[
+      intarray(dnums.start_index_map)
+  ] - lax.shape_as_value(slice_sizes)[intarray(dnums.start_index_map)].astype(
+      index_dtype
+  )
   mask = lax.bitwise_and(
-      lax.ge(indices, np.int64(0)),
+      lax.ge(indices, index_dtype.type(0)),
       lax.le(indices, lax.expand_dims(upper_bound, tuple(range(num_batch_dims)))))
   mask = lax.reduce_and(mask, [num_batch_dims])
 
@@ -2649,7 +2653,7 @@ def _scatter_spec_computation(
   # 3 - Sub slice dims in `operand` and `updates` must be replicated.
   update_and_operand_window_dims_resolvable = all(
       (updates.shape[update_dim] == operand.shape[operand_dim] and
-       _is_resolvable(updates_spec[update_dim], operand_spec[operand_dim]))
+       updates_spec[update_dim] == operand_spec[operand_dim])
       or (updates_spec[update_dim] is None and operand_spec[operand_dim] is None)
       for update_dim, operand_dim in zip(
           update_window_dims, operand_window_dims))
@@ -2694,6 +2698,12 @@ def _scatter_spec_computation(
   return None
 
 
+def _scatter_memory_space_rule(
+    operand, indices, updates, *, update_jaxpr, update_consts,
+    dimension_numbers, indices_are_sorted, unique_indices, mode):
+  return operand.memory_space
+
+
 def _scatter_sharding_rule(
     operand, indices, updates, *, update_jaxpr, update_consts,
     dimension_numbers, indices_are_sorted, unique_indices, mode):
@@ -2705,7 +2715,8 @@ def _scatter_sharding_rule(
     raise core.ShardingTypeError(
         "Use `.at[...].set/add/mul/...(out_sharding=)` to provide output"
         " PartitionSpec for the scatter update as out sharding could not be"
-        " resolved unambiguously (or would require collectives on inputs).")
+        " resolved unambiguously (or would require collectives on inputs). Got"
+        f" {operand=}, {indices=}, {updates=}")
   return NamedSharding(out_mesh, out_spec)
 
 def _clamp_scatter_indices(operand, indices, updates, *, dnums):
@@ -2721,18 +2732,20 @@ def _clamp_scatter_indices(operand, indices, updates, *, dnums):
 
   upper_bounds: core.Shape = tuple(operand.shape[i] - slice_sizes[i]
                                    for i in dnums.scatter_dims_to_operand_dims)
+
   # Stack upper_bounds into a Array[n]
   upper_bound = lax.shape_as_value(upper_bounds)
   # This fix fails lax_test_no_jax_array
-  upper_bound = lax.min(upper_bound,
-                        lax.convert_element_type(np.uint64(np.iinfo(indices.dtype).max),
-                                                  np.int64))
-
+  upper_bound = lax.min(
+      upper_bound,
+      upper_bound.dtype.type(
+          min(np.iinfo(upper_bound.dtype).max, np.iinfo(indices.dtype).max)
+      ),
+  )
+  upper_bound = lax.convert_element_type(upper_bound, indices.dtype)
   upper_bound = lax.broadcast_in_dim(upper_bound, indices.shape,
                                      (len(indices.shape) - 1,))
-  return lax.clamp(np.int64(0), lax.convert_element_type(indices, np.int64),
-                   upper_bound)
-
+  return lax.clamp(indices.dtype.type(0), indices, upper_bound)
 
 def _scatter_addsub_jvp(
     prim, primals, tangents, *, update_jaxpr, update_consts, dimension_numbers,
@@ -2905,7 +2918,8 @@ def _scatter_batching_rule(scatter_op, axis_data, batched_args, batch_dims, *,
 scatter_add_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
     weak_type_rule=_argnum_weak_type(0), sharding_rule=_scatter_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'scatter_add'))
+    vma_rule=partial(core.standard_vma_rule, 'scatter_add'),
+    memory_space_rule=_scatter_memory_space_rule)
 ad.primitive_jvps[scatter_add_p] = partial(_scatter_addsub_jvp, scatter_add_p)
 ad.primitive_transposes[scatter_add_p] = partial(_scatter_addsub_transpose_rule, scatter_add_p)
 batching.fancy_primitive_batchers[scatter_add_p] = partial(_scatter_batching_rule, scatter_add_p)
@@ -2914,7 +2928,8 @@ batching.skippable_batchers[scatter_add_p] = lambda _: ()
 scatter_sub_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-sub',
     weak_type_rule=_argnum_weak_type(0), sharding_rule=_scatter_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'scatter_sub')
+    vma_rule=partial(core.standard_vma_rule, 'scatter_sub'),
+    memory_space_rule=_scatter_memory_space_rule
 )
 ad.primitive_jvps[scatter_sub_p] = partial(_scatter_addsub_jvp, scatter_sub_p)
 ad.primitive_transposes[scatter_sub_p] = partial(_scatter_addsub_transpose_rule, scatter_sub_p)
@@ -2925,7 +2940,8 @@ batching.skippable_batchers[scatter_sub_p] = lambda _: ()
 scatter_mul_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
     weak_type_rule=_argnum_weak_type(0), sharding_rule=_scatter_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'scatter_mul'))
+    vma_rule=partial(core.standard_vma_rule, 'scatter_mul'),
+    memory_space_rule=_scatter_memory_space_rule)
 
 def _scatter_mul_jvp_rhs(g, x, i, y, *, dimension_numbers,
                          indices_are_sorted, unique_indices, mode, **kw):
@@ -3056,7 +3072,8 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
 scatter_min_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-min',
     weak_type_rule=_argnum_weak_type(0), sharding_rule=_scatter_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'scatter_min'))
+    vma_rule=partial(core.standard_vma_rule, 'scatter_min'),
+    memory_space_rule=_scatter_memory_space_rule)
 batching.fancy_primitive_batchers[scatter_min_p] = (
   partial(_scatter_batching_rule, scatter_min_p))
 batching.skippable_batchers[scatter_min_p] = lambda _: ()
@@ -3065,7 +3082,8 @@ ad.primitive_jvps[scatter_min_p] = partial(_scatter_extremal_jvp, scatter_min_p)
 scatter_max_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-max',
     weak_type_rule=_argnum_weak_type(0), sharding_rule=_scatter_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'scatter_max'))
+    vma_rule=partial(core.standard_vma_rule, 'scatter_max'),
+    memory_space_rule=_scatter_memory_space_rule)
 batching.fancy_primitive_batchers[scatter_max_p] = (
   partial(_scatter_batching_rule, scatter_max_p))
 batching.skippable_batchers[scatter_max_p] = lambda _: ()
@@ -3121,10 +3139,7 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
   for update_dim in dnums.update_window_dims:
     ids_shape[update_dim] = 1
   num_ids = math.prod(ids_shape)
-  if core.is_constant_dim(num_ids):
-    id_dtype = np.uint32 if (num_ids + 1) < np.iinfo(np.uint32).max else np.uint64
-  else:
-    id_dtype = np.uint64
+  id_dtype = lax_utils.int_dtype_for_dim(num_ids, signed=False)
   update_ids = lax.add(lax.reshape(lax.iota(id_dtype, num_ids), ids_shape),
                        lax._ones(updates, dtype=id_dtype))
 
@@ -3183,8 +3198,10 @@ def _scatter_transpose_rule(t, operand, indices, updates, *,
   assert not ad.is_undefined_primal(indices)
   if ad.is_undefined_primal(updates):
     updates_shape = updates.aval.shape
+    updates_sharding = updates.aval.sharding
   else:
     updates_shape = updates.shape
+    updates_sharding = core.typeof(updates).sharding
   if type(t) is ad_util.Zero:
     operand_t = ad_util.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
     update_t = ad_util.Zero(updates.aval) if ad.is_undefined_primal(updates) else None
@@ -3192,10 +3209,11 @@ def _scatter_transpose_rule(t, operand, indices, updates, *,
     operand_t = update_t = None
     if ad.is_undefined_primal(operand):
       # Zero out gradient entries that correspond to updated indices.
-      operand_t = scatter(t, indices, lax.full(updates_shape, 0, dtype=t.dtype),
-                          dimension_numbers=dimension_numbers,
-                          indices_are_sorted=indices_are_sorted,
-                          unique_indices=True, mode=mode)
+      operand_t = scatter(
+          t, indices,
+          lax.full(updates_shape, 0, dtype=t.dtype, sharding=updates_sharding),
+          dimension_numbers=dimension_numbers,
+          indices_are_sorted=indices_are_sorted, unique_indices=True, mode=mode)
 
     if ad.is_undefined_primal(updates):
       gather_dnums = GatherDimensionNumbers(
@@ -3225,7 +3243,8 @@ def _scatter_transpose_rule(t, operand, indices, updates, *,
 scatter_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter',
     weak_type_rule=_argnum_weak_type(0), sharding_rule=_scatter_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'scatter'))
+    vma_rule=partial(core.standard_vma_rule, 'scatter'),
+    memory_space_rule=_scatter_memory_space_rule)
 ad.primitive_jvps[scatter_p] = _scatter_jvp
 ad.primitive_transposes[scatter_p] = _scatter_transpose_rule
 batching.fancy_primitive_batchers[scatter_p] = (

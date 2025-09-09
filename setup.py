@@ -63,9 +63,9 @@ setup(
     install_requires=[
         f'jaxlib >={_minimum_jaxlib_version}, <={_jax_version}',
         'ml_dtypes>=0.5.0',
-        'numpy>=1.26',
+        'numpy>=2.0',
         'opt_einsum',
-        'scipy>=1.12',
+        'scipy>=1.13',
     ],
     extras_require={
         # Minimum jaxlib version; used in testing.
@@ -136,6 +136,7 @@ setup(
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
         "Programming Language :: Python :: Free Threading :: 3 - Stable",
     ],
     zip_safe=False,

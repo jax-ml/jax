@@ -2482,12 +2482,19 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     too_big = 2 * jax.device_count()
 
+    if config.pmap_shmap_merge.value:
+      expected_regex = re.compile(
+          "cannot select an axis to squeeze out which has size not equal to "
+          r"one, got shape=\(\d,\) and dimensions=\(\d,\)"
+      )
+    else:
+      expected_regex = re.escape(
+          "compiling computation `jit(scan)` that requires {} "
+          "replicas, but only {} XLA devices are available."
+          .format(too_big, jax.device_count()))
+
     self.assertRaisesRegex(
-        ValueError,
-        re.escape(
-            "compiling computation `jit(scan)` that requires {} "
-            "replicas, but only {} XLA devices are available."
-            .format(too_big, jax.device_count())),
+        ValueError, expected_regex,
         lambda: f_loop(jnp.ones(too_big)))
 
   @parameterized.named_parameters(
@@ -2778,10 +2785,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     # TODO(mattjj): should we re-enable this check? The constants are now
     # inlined in the Jaxprs, not easy to find them.
-    # Need to spelunk into vjp_fun. This is fragile, and if it causes problems
-    # just skip this test and make an issue for mattjj.
+    # ==> Yes, we don't want to change autodiff const behavior. We must make
+    # these tessts pass under use_simplified_jaxpr_constants.
     if not config.use_simplified_jaxpr_constants.value:
-      *_, ext_res = vjp_fun.args[0].args[0]
+      if config.vjp3.value:
+        ext_res, = vjp_fun.args_res
+      else:
+        *_, ext_res = vjp_fun.args[0].args[0]
       self.assertIs(ext_res, x)
 
     if remat is not None:
@@ -2791,7 +2801,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     x = rng.randn(32, 2, 32).astype('float32')  # numpy.ndarray, not Array
     _, vjp_fun = jax.vjp(cumprod, x)
     if not config.use_simplified_jaxpr_constants.value:
-      *_, ext_res = vjp_fun.args[0].args[0]
+      if config.vjp3.value:
+        ext_res, *_ = vjp_fun.opaque_residuals
+      else:
+        *_, ext_res = vjp_fun.args[0].args[0]
       self.assertIsInstance(ext_res, jax.Array)
 
   def test_scan_vmap_collectives(self):

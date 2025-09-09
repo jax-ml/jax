@@ -6,6 +6,10 @@ inputs:
     description: "Which python version should the artifact be downloaded for?"
     type: string
     required: true
+  cuda-version:
+    description: "Which cuda version should the artifact be downloaded for?"
+    type: string
+    default: "12"
   use-nvidia-pip-wheels:
     description: "Whether to download Nvidia CUDA packages from PyPI?"
     type: boolean
@@ -14,6 +18,10 @@ inputs:
     description: "Which jaxlib version to download? (head/pypi_latest)"
     type: string
     default: "head"
+  download-jax-from-gcs:
+    description: "Whether to download the jax wheel from GCS"
+    default: '1'
+    type: string
   download-jax-only-from-gcs:
     description: "Whether to download only the jax wheel from GCS (e.g for testing a jax only release)"
     default: '0'
@@ -45,6 +53,10 @@ runs:
         # `*-cp<py_version>-cp<py_version>-*`, while free-threaded wheels use
         # `*-cp<py_version>-cp<py_version>t-*`.
         echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
+
+        # Get the CUDA major version only
+        full_cuda_version="${{ inputs.cuda-version }}"
+        echo "JAXCI_CUDA_VERSION=${full_cuda_version%%.*}" >> $GITHUB_ENV
     - name: Download wheels
       shell: bash
       id: download-wheel-artifacts
@@ -54,7 +66,11 @@ runs:
       continue-on-error: true
       run: |
         mkdir -p $(pwd)/dist
-        gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+        if [[ "${{ inputs.download-jax-from-gcs }}" == "1" ]]; then
+          gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+        else
+          echo "JAX wheel won't be downloaded, only jaxlib pre-built wheel is tested."
+        fi
 
         # Do not download the jaxlib and CUDA plugin artifacts if we are testing a jax only
         # release.
@@ -63,11 +79,11 @@ runs:
         else
           if [[ ${{ inputs.jaxlib-version }} == "head" ]]; then
             gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
-            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda${JAXCI_CUDA_VERSION}*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jax*cuda${JAXCI_CUDA_VERSION}*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
           elif [[ ${{ inputs.jaxlib-version }} == "pypi_latest" ]]; then
             PYTHON=python${{ inputs.python }}
-            $PYTHON -m pip download jaxlib jax-cuda12-pjrt jax-cuda12-plugin --dest $(pwd)/dist/
+            $PYTHON -m pip download jaxlib jax-cuda${JAXCI_CUDA_VERSION}-pjrt jax-cuda${JAXCI_CUDA_VERSION}-plugin --dest $(pwd)/dist/
           else
             echo "Invalid jaxlib version: ${{ inputs.jaxlib-version }}"
             exit 1

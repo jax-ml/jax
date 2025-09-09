@@ -306,6 +306,28 @@ llvm::LogicalResult AsyncLoadOp::verify() {
   return llvm::success();
 }
 
+llvm::LogicalResult AsyncPrefetchOp::verify() {
+  if (absl::c_any_of(getSliceLengths(), [](int64_t s) { return s < -1; })) {
+    return emitOpError(
+        "The `slice_lengths` attribute must not contain values less than -1.");
+  }
+  if (getIndices().size() != getSource().getType().getRank()) {
+     return emitOpError(
+        "The size of `indices` must be equal to the rank of `source`.");
+  }
+
+  for (int i = 0; i < getCollective().size(); ++i) {
+    for (int k = i + 1; k < getCollective().size(); ++k)
+      if (getCollective()[i] == getCollective()[k]) {
+        return emitError(
+            "The `collective` attribute must not contain duplicate "
+            "dimensions.");
+      }
+  }
+
+  return llvm::success();
+}
+
 llvm::LogicalResult AsyncStoreOp::verify() {
   return VerifyCommonLoadStoreOp(getLoc(), getDestination().getType(),
                                  "destination", getSource().getType(), "source",
@@ -566,8 +588,7 @@ int kTmemCellBitwidth = 32;
 
 llvm::LogicalResult VerifyTmemRefType(
     mlir::MLIRContext* context, mlir::Operation* op,
-    mlir::MemRefType tmem_ref_type, bool exact = false,
-    std::optional<int> packing = std::nullopt) {
+    mlir::MemRefType tmem_ref_type, std::optional<int> packing = std::nullopt) {
   mlir::Attribute tmem = TmemAttr::get(context);
   if (tmem_ref_type.getMemorySpace() != tmem) {
     return op->emitError() << "The tmem memref must have a "
@@ -607,12 +628,6 @@ llvm::LogicalResult VerifyTmemRefType(
          rounded_column_count < kTmemMaxColumns) {
     rounded_column_count *= 2;
   }
-  if (exact && num_allocated_columns != rounded_column_count) {
-    return op->emitError()
-           << "When `exact` is true the number of allocated columns must "
-              "be a power of two in the range [32, 512], but got : "
-           << num_allocated_columns;
-  }
 
   return llvm::success();
 }
@@ -630,7 +645,7 @@ llvm::LogicalResult TmemAllocOp::verify() {
   }
 
   return VerifyTmemRefType(getContext(), getOperation(), getResult().getType(),
-                           getExact(), getPacking());
+                           getPacking());
 }
 
 llvm::LogicalResult TmemDeallocOp::verify() {

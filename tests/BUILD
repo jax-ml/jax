@@ -938,6 +938,10 @@ jax_multiplatform_test(
             "nodebug",  # Times out.
             "notsan",  # Times out.
         ],
+        "cpu": [
+            "noasan",
+            "nomsan",
+        ],  # TODO(phawkins): Latest SciPy leaks memory.
     },
     shard_count = {
         "cpu": 40,
@@ -1338,6 +1342,7 @@ jax_multiplatform_test(
     name = "scipy_stats_test",
     srcs = ["scipy_stats_test.py"],
     backend_tags = {
+        "cpu": ["nomsan"],  # Times out
         "tpu": ["nomsan"],  # Times out
     },
     shard_count = {
@@ -1832,18 +1837,6 @@ jax_multiplatform_test(
     srcs = ["mutable_array_test.py"],
     shard_count = {
         "cpu": 10,
-    },
-    deps = py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "for_loop_test",
-    srcs = ["for_loop_test.py"],
-    shard_count = {
-        "tpu": 20,
     },
     deps = py_deps([
         "absl/testing",

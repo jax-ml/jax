@@ -36,8 +36,8 @@ EPS = 1e-4
 def _dtype(x: Any) -> np.dtype:
   if hasattr(x, 'dtype'):
     return x.dtype
-  elif type(x) in _dtypes.python_scalar_dtypes:
-    return np.dtype(_dtypes.python_scalar_dtypes[type(x)])
+  elif (dt := _dtypes.python_scalar_types_to_dtypes.get(type(x))) is not None:
+    return dt
   else:
     return np.asarray(x).dtype
 

@@ -1107,6 +1107,8 @@ class SemaphoreRef:
   def wait(
       self,
       value: ir.Value | int = 1,
+      *,
+      decrement: bool = True,
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
   ):
     i32 = ir.IntegerType.get_signless(32)
@@ -1115,7 +1117,6 @@ class SemaphoreRef:
     elif value.type != i32:
       raise ValueError(f"Expected a i32 value, got {value.type}")
 
-    ne_pred = arith.CmpIPredicate.ne
 
     with single_thread(scope=scope):
       # Create the while loop for busy waiting
@@ -1123,20 +1124,40 @@ class SemaphoreRef:
       before_block = while_op.before.blocks.append(i32)
       with ir.InsertionPoint.at_block_begin(before_block):
         [expected_in_memory] = before_block.arguments
-        new_val = arith.subi(expected_in_memory, value)
-        in_memory = llvm.inline_asm(
-          i32,
-          [self.ptr, expected_in_memory, new_val],
-          "atom.acquire.sys.global.cas.b32 $0, [$1], $2, $3;",
-          "=r,l,r,r",
-          has_side_effects=True,
-        )
-        comparison = arith.cmpi(ne_pred, in_memory, expected_in_memory)
-        new_expected_in_memory = arith.maxui(in_memory, value)
+        if decrement:
+          new_val = arith.subi(expected_in_memory, value)
+          in_memory = llvm.inline_asm(
+            i32,
+            [self.ptr, expected_in_memory, new_val],
+            "atom.acquire.sys.global.cas.b32 $0, [$1], $2, $3;",
+            "=r,l,r,r",
+            has_side_effects=True,
+          )
+          ne_pred = arith.CmpIPredicate.ne
+          comparison = arith.cmpi(ne_pred, in_memory, expected_in_memory)
+          new_expected_in_memory = arith.maxui(in_memory, value)
+        else:
+          in_memory = llvm.inline_asm(
+            i32,
+            [self.ptr],
+            "ld.relaxed.sys.global.b32 $0, [$1];",
+            "=r,l",
+            has_side_effects=True,
+          )
+          lt_pred = arith.CmpIPredicate.ult
+          comparison = arith.cmpi(lt_pred, in_memory, value)
+          new_expected_in_memory = expected_in_memory
         scf.condition(comparison, [new_expected_in_memory])
       after_block = while_op.after.blocks.append(i32)
       with ir.InsertionPoint.at_block_begin(after_block):
         scf.yield_(after_block.arguments)
+      llvm.inline_asm(
+          ir.Type.parse("!llvm.void"),
+          [],
+          "fence.acquire.sys;",
+          "",
+          has_side_effects=True,
+      )
     if scope == ThreadSubset.WARPGROUP:
       warpgroup_barrier()
     elif scope == ThreadSubset.WARP:

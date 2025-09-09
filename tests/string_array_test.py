@@ -26,14 +26,6 @@ jtu.request_cpu_devices(2)
 
 class StringArrayTest(jtu.JaxTestCase):
 
-  def setUp(self):
-    super().setUp()
-    if jtu.numpy_version() < (2, 0, 0):
-      self.skipTest(
-          "Skipping this test because the numpy.dtype.StringDType is not"
-          " available in NumPy v1.X."
-      )
-
   def make_test_string_array(self, device=None):
     """Makes and returns a simple 2x1 string array on the first CPU device."""
     if device is None:

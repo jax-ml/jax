@@ -44,7 +44,8 @@ from jax._src.state import discharge
 from jax._src.state.types import AbstractRef
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
-    PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix)
+    PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
+    tree_map)
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
 
@@ -59,11 +60,15 @@ logger = logging.getLogger(__name__)
 ### Policies
 
 def everything_saveable(*_, **__) -> bool:
-  # This is the effective policy without any use of jax.remat.
+  """The default strategy, as if ``jax.checkpoint`` were not being used at all.
+
+  This is the effective policy without any use of jax.remat."""
   return True
 
 def nothing_saveable(*_, **__) -> bool:
-  # This is the effective policy when using jax.remat without explicit policy.
+  """Rematerialize everything, as if a custom policy were not being used at all.
+
+  This is the effective policy when using jax.remat without explicit policy."""
   return False
 
 def dots_saveable(prim, *_, **__) -> bool:
@@ -76,7 +81,7 @@ def dots_saveable(prim, *_, **__) -> bool:
 checkpoint_dots = dots_saveable
 
 def dots_with_no_batch_dims_saveable(prim, *args, **params) -> bool:
-  # This is a useful heuristic for transformers.
+  """This is a useful heuristic for transformers."""
   if prim is lax_internal.dot_general_p:
     (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
     if not lhs_b and not rhs_b:
@@ -92,8 +97,11 @@ def dots_with_no_batch_dims_saveable(prim, *args, **params) -> bool:
   return False
 
 def offload_dot_with_no_batch_dims(offload_src, offload_dst):
+  """Same as ``dots_with_no_batch_dims_saveable``, but offload to CPU memory
+  instead of recomputing.
+
+  This is a useful heuristic for transformers."""
   def policy(prim, *_, **params):
-    # This is a useful heuristic for transformers.
     if prim is lax_internal.dot_general_p:
       (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
       if not lhs_b and not rhs_b:
@@ -114,7 +122,8 @@ def save_anything_except_these_names(*names_not_to_save):
   return policy
 
 def save_any_names_but_these(*names_not_to_save):
-  """Save only named values, excluding the names given."""
+  """Save only named values, i.e. any outputs of `checkpoint_name`, excluding
+  the names given."""
   names_not_to_save = frozenset(names_not_to_save)
   def policy(prim, *_, **params):
     if prim is name_p:
@@ -134,6 +143,8 @@ def save_only_these_names(*names_which_can_be_saved):
 def save_and_offload_only_these_names(
     *, names_which_can_be_saved, names_which_can_be_offloaded,
     offload_src, offload_dst):
+  """Same as ``save_only_these_names``, but offload to CPU memory instead of
+  recomputing."""
   names_which_can_be_saved = set(names_which_can_be_saved)
   names_which_can_be_offloaded = set(names_which_can_be_offloaded)
   intersection = names_which_can_be_saved.intersection(names_which_can_be_offloaded)
@@ -154,7 +165,9 @@ def save_and_offload_only_these_names(
 
 
 def save_from_both_policies(policy_1, policy_2):
+  """Logical OR of the given policies.
 
+  A residual is saveable iff it is saveable according to either policy."""
   def policy(prim, *args, **params):
     out1 = policy_1(prim, *args, **params)
     out2 = policy_2(prim, *args, **params)
@@ -478,10 +491,11 @@ def saved_residuals(f: Callable,
   jaxpr = jaxpr_.jaxpr
   out_shape = out_shape_[1]
   num_res = tree_structure(out_shape).num_leaves
-  jaxpr = jaxpr.replace(outvars=jaxpr.outvars[len(jaxpr.outvars) - num_res:])
-  out_tree = lambda: tree_structure(out_shape)
+  jaxpr = jaxpr.replace(
+      outvars=jaxpr.outvars[len(jaxpr.outvars) - num_res:],
+      debug_info=debug_info._replace(result_paths=None))
   assert len(jaxpr.invars) == len(in_leaves)
-  return _saved_residuals(jaxpr, debug_info.arg_names)
+  return _saved_residuals(jaxpr, debug_info.arg_names or ("unknown",) * len(jaxpr.invars))
 
 def _saved_residuals(jaxpr: core.Jaxpr,
                      arg_names: Sequence[str]) -> list[tuple[core.AbstractValue, str]]:
@@ -768,7 +782,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     in_cts_nz, _ = partition_list(in_zeros, in_cts)
     return in_cts_nz
 
-  dbg = jaxpr.jaxpr.debug_info._replace(arg_names=(), result_paths=())
+  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   transposed_wrapped = lu.wrap_init(transposed, debug_info=dbg)
   transposed_jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(
       transposed_wrapped, in_avals)
@@ -860,7 +874,7 @@ mlir.register_lowering(remat_p, _remat_lowering)
 
 
 def checkpoint_name(x, name):
-  return name_p.bind(x, name=name)
+  return tree_map(partial(name_p.bind, name=name), x)
 
 name_p.def_impl(lambda x, *, name: x)
 name_p.def_abstract_eval(lambda x, *, name: x)

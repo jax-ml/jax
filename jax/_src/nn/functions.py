@@ -522,7 +522,7 @@ logsumexp = _logsumexp
 @partial(api.jit, static_argnames=("axis", "keepdims"))
 def logmeanexp(
     x: ArrayLike,
-    axis: int | tuple[int, ...] | None = None,
+    axis: Axis = None,
     where: ArrayLike | None = None,
     keepdims: bool = False,
 ) -> Array:
@@ -636,7 +636,7 @@ def _softmax(
     x: ArrayLike,
     axis: Axis = -1,
     where: ArrayLike | None = None,
-    initial: ArrayLike | None = -np.inf) -> Array:
+    initial: ArrayLike = -np.inf) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   x_safe = x if where is None else jnp.where(where, x, initial)
   unnormalized = jnp.exp(x_safe - x_max)
@@ -655,7 +655,7 @@ def _softmax_deprecated(
     x: ArrayLike,
     axis: Axis = -1,
     where: ArrayLike | None = None,
-    initial: ArrayLike | None = -np.inf) -> Array:
+    initial: ArrayLike = -np.inf) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   x_safe = x if where is None else jnp.where(where, x, initial)
   unnormalized = jnp.exp(x_safe - lax.stop_gradient(x_max))
@@ -1350,8 +1350,8 @@ def scaled_matmul(
             f"{a_scales.shape}, b_scales: {b_scales.shape}"
         )
 
-    preferred_element_type = dtypes.canonicalize_dtype(
-        np.dtype(preferred_element_type)
+    preferred_element_type = dtypes.check_and_canonicalize_user_dtype(
+        preferred_element_type, "scaled_matmul"
     )
     out = cudnn_scaled_matmul(
         a,

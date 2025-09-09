@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/check.h"
+#include "absl/strings/str_cat.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Sequence.h"
@@ -381,24 +382,79 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
         "dim and rhs must be vector-like [B, K] or [B, 1, K].");
   }
 
-  auto extsi_sitofp = [&builder, &op](TypedValue<VectorType> element) {
+  auto extsi_sitofp = [&builder, &op](
+                          TypedValue<VectorType> element,
+                          std::optional<FloatType> maybe_dest = std::nullopt) {
+    FloatType dest = maybe_dest.value_or(builder.getF32Type());
     const VectorType ty = element.getType();
+    unsigned int source_width = ty.getElementType().getIntOrFloatBitWidth();
     auto shape = ty.getShape();
     CHECK(ty.getElementType().isInteger());
-    TypedValue<VectorType> ext_ele;
-    if (ty.getElementType().getIntOrFloatBitWidth() == 32) {
-      ext_ele = element;
-    } else {
-      ext_ele = cast<TypedValue<VectorType>>(builder.create<arith::ExtSIOp>(
-          VectorType::get(shape, builder.getI32Type()), element));
-    }
+    CHECK(source_width <= dest.getWidth())
+        << "Unexpected narrowing int " << source_width << " -> float "
+        << dest.getWidth() << " conversion";
     // TODO(mvoz): Go to bf16 when hardware supported, requires adding support
     // for 16 bitwidth in extsiop in infer/apply.
     auto ele_as_fp = builder.create<arith::SIToFPOp>(
-        op.getLoc(), VectorType::get(shape, builder.getF32Type()), ext_ele);
-    return ele_as_fp;
+        op.getLoc(), VectorType::get(shape, dest), element);
+    return cast<TypedValue<VectorType>>(ele_as_fp);
   };
-
+  if (ctx.hardware_generation == 7) {
+    auto require_compatibility_mode = [&]() -> LogicalResult {
+      if (!ctx.compatibility_mode) {
+        return op->emitOpError(
+            "Automatic int->float conversion for matmuls requires "
+            "compatibility mode.");
+      }
+      return success();
+    };
+    auto get_dest_type =
+        [&](::mlir::Type element_type) -> FailureOr<FloatType> {
+      switch (element_type.getIntOrFloatBitWidth()) {
+        case 4:
+          return static_cast<FloatType>(
+              Float8E4M3FNType::get(builder.getContext()));
+        case 8:
+          return builder.getBF16Type();
+        case 32:
+          return builder.getF32Type();
+        default:
+          return op->emitOpError(
+              absl::StrCat("Integer inputs with bitwidth ",
+                           element_type.getIntOrFloatBitWidth(),
+                           " are not supported as matmul/accumulator inputs."));
+      }
+    };
+    // i32 is not normally supported for matmul inputs, only for accumulation.
+    // But don't throw an error because it may be handled by the mixed element
+    // type canonicalization pass below.
+    if (lhs_element_type.isInteger() &&
+        lhs_element_type.getIntOrFloatBitWidth() != 32) {
+      RETURN_IF_FAILED(require_compatibility_mode());
+      FAILUREOR_ASSIGN_OR_RETURN(FloatType dest_type,
+                                 get_dest_type(lhs_element_type));
+      lhs = extsi_sitofp(lhs, dest_type);
+      op->setOperand(0, lhs);
+      lhs_element_type = dest_type;
+    }
+    if (rhs_element_type.isInteger() &&
+        rhs_element_type.getIntOrFloatBitWidth() != 32) {
+      RETURN_IF_FAILED(require_compatibility_mode());
+      FAILUREOR_ASSIGN_OR_RETURN(FloatType dest_type,
+                                 get_dest_type(rhs_element_type));
+      rhs = extsi_sitofp(rhs, dest_type);
+      op->setOperand(1, rhs);
+      rhs_element_type = dest_type;
+    }
+    if (acc_element_type.isInteger()) {
+      RETURN_IF_FAILED(require_compatibility_mode());
+      FAILUREOR_ASSIGN_OR_RETURN(FloatType dest_type,
+                                 get_dest_type(acc_element_type));
+      acc = extsi_sitofp(acc, dest_type);
+      op->setOperand(2, acc);
+      acc_element_type = acc.getType().getElementType();
+    }
+  }
   if (lhs_element_type != rhs_element_type) {
     if (!ctx.compatibility_mode) {
       return op->emitOpError(
@@ -420,11 +476,13 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
       auto float_lhs = extsi_sitofp(lhs);
       op->setOperand(0, float_lhs);
       lhs = cast<TypedValue<VectorType>>(float_lhs);
+      lhs_element_type = builder.getF32Type();
     }
     if (rhs_element_type.isInteger()) {
       auto float_rhs = extsi_sitofp(rhs);
       op->setOperand(1, float_rhs);
       rhs = cast<TypedValue<VectorType>>(float_rhs);
+      rhs_element_type = builder.getF32Type();
     }
   }
   // TODO(mvoz): Add more invariants.
@@ -574,6 +632,14 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
     }
   } else {
     res = dot_dim_matmul(lhs, rhs, acc);
+  }
+
+  // If the matmul was converted from int -> float, convert back to s32.
+  if (acc_element_type.isFloat() && old_acc_ty.getElementType().isInteger()) {
+    res = builder.create<arith::FPToSIOp>(
+        op.getLoc(),
+        VectorType::get(acc.getType().getShape(), old_acc_ty.getElementType()),
+        res);
   }
 
   // Reshape the result to the old one as dims might have been collapsed.
@@ -1360,218 +1426,6 @@ FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
   return final_vec;
 }
 
-Value _canonicalize_store(const CanonicalizeContext &ctx, Operation &raw_op) {
-  // Fuses a vector.shape_cast (that expands dimensions) into a subsequent
-  // vector.store or dense tpu.vector_store. This is the inverse of the
-  // canonicalize_reshape func.
-  //
-  // def fused_reshape_store(source_vector, target_memref, indices):
-  //   # `source_vector` is large and flat, e.g., shape (P..., T_collapsed)
-  //   # `target_memref` has an expanded shape, e.g., (P..., S1, S2, ..., Lane)
-  //
-  //   # 1. Create a memref view for packed i32 storing.
-  //   # Original target shape: <Prefix_mem..., S1, S2, ..., Lane, ElemTy>
-  //   # Let S_prod = S1 * S2 * ...
-  //   # New i32 view shape:   <Prefix_mem..., S_prod/packing, Lane, i32>
-  //   i32_view = target_memref.reshape_and_bitcast(...)
-  //
-  //   # 2. Loop over the rows of the i32 view, packing and storing data for
-  //   each.
-  //   for i in range(S_prod / packing):
-  //     # a. Gather `packing` number of slices from the large source_vector.
-  //     #    Each slice corresponds to one row of the original target memref.
-  //     slices_to_pack = extract_slices(source_vector, base_offset=i*packing)
-  //
-  //     # b. Pack these smaller-typed slices into a single i32 vector chunk.
-  //     #    This is the inverse of unpacking with right shifts. It involves
-  //     #    extending, left-shifting, and OR-ing.
-  //     i32_chunk = (slices_to_pack[0] << 0) | \
-  //                 (slices_to_pack[1] << bitwidth) | \
-  //                 ...
-  //
-  //     # c. Store the resulting packed i32_chunk into the i-th row of the
-  //     #    `i32_view`. This corresponds to a `StridedStoreOp`.
-  //     store_i32_row(i32_chunk, i32_view, indices_prefix, i)
-  Value value_to_store;
-  TypedValue<MemRefType> base;
-  ValueRange indices;
-
-  Operation *store_op;
-
-  // Note(mvoz): We have code that handles both, and am not sure why
-  // we don't just use the tpu::VectorStoreOp? Either way, they are
-  // similar enough that we can handle them both here.
-  if (auto store = dyn_cast<vector::StoreOp>(raw_op)) {
-    store_op = store.getOperation();
-    value_to_store = store.getValueToStore();
-    base = store.getBase();
-    indices = store.getIndices();
-  } else if (auto store = dyn_cast<tpu::VectorStoreOp>(raw_op)) {
-    store_op = store.getOperation();
-    value_to_store = store.getValueToStore();
-    base = store.getBase();
-    indices = store.getIndices();
-    if (!store.getStrides().empty() || store.getMask() || store.getAdd()) {
-      // We don't support these cases.
-      return value_to_store;
-    }
-  } else {
-    return value_to_store;
-  }
-
-  auto reshape_op =
-      dyn_cast_if_present<tpu::ReshapeOp>(value_to_store.getDefiningOp());
-  if (!reshape_op || !reshape_op.getResult().hasOneUse()) {
-    // Not a shape cast... (or has more than one use)
-    // Note(mvoz): We could potentially support the case of > 1 users,
-    // by just not eliding the reshape at the end, and only rewriting the
-    // store.
-    return value_to_store;
-  }
-
-  auto src_ty = reshape_op.getSource().getType();
-  auto tgt_ty = reshape_op.getResult().getType();
-  auto memref_ty = base.getType();
-  // Consider src_shape=(1, 384) -> tgt_shape=(1, 1, 3, 128)
-  // Upstream padding actually makes this:
-  // Store shapes base: (1,1,4,128)
-  // Store shapes src: (1,384)
-  // Store shapes tgt: (1,1,3,128)
-  // Store shapes memref: (1,1,4,128)
-  if (tgt_ty.getShape() != memref_ty.getShape()) {
-    return value_to_store;
-  }
-  if (!isContiguousMemref(base)) {
-    return value_to_store;
-  }
-  if (src_ty.getRank() > tgt_ty.getRank()) {
-    // Src is not a collapse of target!
-    // TODO(mvoz): We can handle an arbitrary number of major
-    // dimensions by adding a "free" major dimension reshape between
-    // here and the strided loads!
-    return value_to_store;
-  }
-  auto last_src_lanes = src_ty.getShape().back();
-  if (last_src_lanes % ctx.target_shape[1] != 0) {
-    // We don't support cases where the last dimension is not a multiple of
-    // the lane size.
-    return value_to_store;
-  }
-  std::optional<std::pair<int, int>> split_opt =
-      findSplitPoint(tgt_ty.getShape(), src_ty.getShape());
-  if (!split_opt) {
-    // Not a collapse...
-    return value_to_store;
-  }
-  auto [split_point, sublane_prod] = *split_opt;
-
-  int bitwidth = src_ty.getElementTypeBitWidth();
-  int packing = 32 / bitwidth;
-  if (ctx.hardware_generation < 4 && packing > 1) {
-    // Old hardware doesn't support strided store with packing > 1.
-    return value_to_store;
-  }
-  if (sublane_prod % packing != 0) {
-    // We don't support cases where we have offsets in the sublane dimension.
-    return value_to_store;
-  }
-
-  // Note(mvoz): This is an inverse of the packing logic in
-  // canonicalize_reshape.
-  CanonicalBuilder b(ctx, store_op->getLoc(), store_op);
-  auto loc = store_op->getLoc();
-  auto i32_type = b.getI32Type();
-  int64_t num_i32_rows = sublane_prod / packing;
-
-  SmallVector<int64_t> mem_shape(memref_ty.getShape().begin(),
-                                 memref_ty.getShape().begin() + split_point);
-  mem_shape.push_back(sublane_prod);
-  auto lane_dim = memref_ty.getShape().back();
-  if (lane_dim != ctx.target_shape[1]) {
-    // Note(mvoz): The math below *is* sound, but we don't support this case
-    // because apply has a restriction on strided_store where
-    // it expects that "The last dim size is not 128 in original base memref"
-    return value_to_store;
-  }
-  mem_shape.push_back(lane_dim);
-  Value reshaped_ref = b.create<tpu::MemRefReshapeOp>(
-      MemRefType::get(mem_shape, memref_ty.getElementType()), base);
-
-  *(mem_shape.end() - 2) = num_i32_rows;
-  Value i32_view = b.create<tpu::MemRefBitcastOp>(
-      MemRefType::get(mem_shape, i32_type), reshaped_ref);
-
-  Value src_vec = reshape_op.getSource();
-  SmallVector<int64_t> slice_sizes(src_ty.getShape());
-  slice_sizes.back() = lane_dim;
-  SmallVector<int64_t> unit_strides(src_ty.getRank(), 1);
-
-  SmallVector<Value> store_indices(indices.begin(),
-                                   indices.begin() + split_point);
-  store_indices.push_back(nullptr);
-  store_indices.push_back(IdxConst(0, b, loc));
-  int stride_dim = split_point;
-
-  for (int i = 0; i < num_i32_rows; ++i) {
-    SmallVector<int64_t> offsets(src_ty.getRank(), 0);
-    offsets.back() = i * packing * lane_dim;
-    Value slice = b.create<vector::ExtractStridedSliceOp>(
-        src_vec, offsets, slice_sizes, unit_strides);
-
-    auto i_chunk_ty =
-        VectorType::get(cast<VectorType>(slice.getType()).getShape(),
-                        b.getIntegerType(bitwidth));
-    auto i32_chunk_ty =
-        VectorType::get(cast<VectorType>(slice.getType()).getShape(), i32_type);
-    Value packed_chunk;
-    if (packing > 1) {
-      Value acc = b.create<arith::ExtUIOp>(
-          i32_chunk_ty, b.create<arith::BitcastOp>(i_chunk_ty, slice));
-      for (int p = 1; p < packing; ++p) {
-        offsets.back() = (i * packing + p) * lane_dim;
-        // Akin to updating offsets on the slice
-        // Note(mvoz): Maybe find a better way to do this?
-        slice = b.create<vector::ExtractStridedSliceOp>(
-            src_vec, offsets, slice_sizes, unit_strides);
-        Value sj_i32 = b.create<arith::ExtUIOp>(
-            i32_chunk_ty, b.create<arith::BitcastOp>(i_chunk_ty, slice));
-        Value sh = I32Const(p * bitwidth, i32_chunk_ty.getShape(), b, loc);
-        acc = b.create<arith::OrIOp>(acc, b.create<arith::ShLIOp>(sj_i32, sh));
-      }
-      packed_chunk = acc;
-    } else {
-      packed_chunk = b.create<arith::BitcastOp>(i32_chunk_ty, slice);
-    }
-
-    auto i32_view_shape = cast<MemRefType>(i32_view.getType()).getShape();
-    SmallVector<int64_t> target_vector_shape(i32_view_shape);
-    target_vector_shape[stride_dim] = 1;
-    auto target_vector_type = VectorType::get(target_vector_shape, i32_type);
-
-    Value chunk_to_store =
-        b.create<tpu::ReshapeOp>(target_vector_type, packed_chunk);
-
-    store_indices[stride_dim] = IdxConst(i, b, loc);
-    b.create<tpu::StridedStoreOp>(
-        chunk_to_store, i32_view, store_indices,
-        SmallVector<int32_t>(i32_view_shape.size(), 1));
-  }
-
-  store_op->erase();
-  reshape_op->erase();
-
-  return base;
-}
-
-FailureOr<Value> canonicalize_store(const CanonicalizeContext &ctx,
-                                    Operation &raw_op) {
-  return _canonicalize_store(ctx, raw_op);
-}
-
-FailureOr<Value> canonicalize_vector_store(const CanonicalizeContext &ctx,
-                                           Operation &raw_op) {
-  return _canonicalize_store(ctx, raw_op);
-}
 
 FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
                                         Operation &raw_op) {
@@ -1583,54 +1437,142 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
 
   auto create_or_decompose_transpose =
       [&](Value input, ArrayRef<int64_t> permutation) -> Value {
-    auto create_transpose_op = [&builder](Value input, ArrayRef<int64_t> perm) {
+    if (llvm::is_sorted(permutation)) {
+      // Early exit if the permutation doesn't change the order.
+      return input;
+    }
+
+    int64_t dim_size = permutation.size();
+    // Keep track of the current permutation.
+    SmallVector<int64_t> curr_perm =
+        llvm::to_vector(llvm::seq<int64_t>(0, dim_size));
+
+    auto create_transpose_op = [&builder, &curr_perm](Value input,
+                                                      ArrayRef<int64_t> perm) {
+      if (llvm::is_sorted(perm)) {
+        // Early exit if the permutation doesn't change the order.
+        return input;
+      }
       auto input_vty = cast<VectorType>(input.getType());
       SmallVector<int64_t> new_shape(input_vty.getShape().size());
+      SmallVector<int64_t> new_perm(perm.size());
       for (int i = 0; i < input_vty.getShape().size(); ++i) {
         new_shape[i] = input_vty.getShape()[perm[i]];
+        new_perm[i] = curr_perm[perm[i]];
       }
+      curr_perm = new_perm;
       return builder.create<tpu::TransposeOp>(
           VectorType::get(new_shape, input_vty.getElementType()), input, perm);
     };
 
+    // Returns a permutation that permutes from `from` to `to`.
+    auto get_perm = [&](ArrayRef<int64_t> from, ArrayRef<int64_t> to) {
+      SmallVector<int64_t> perm(from.size());
+      SmallVector<int64_t> index(from.size());
+      for (int i = 0; i < from.size(); ++i) {
+        index[from[i]] = i;
+      }
+      for (int i = 0; i < to.size(); ++i) {
+        perm[i] = index[to[i]];
+      }
+      return perm;
+    };
+
     // We support transpositions of the following dims in apply:
     //
-    // (1) 3D transpose for second-minor > major.
-    // (2) ND transpose between majors and between second-minor and minormost.
+    // (1) ND transpose between 2nd minor and 3rd minor.
+    // (2) ND transpose between 2nd minor and minormost.
+    // (3) ND transpose between 3rd+ minors. (noop)
     //
-    // Other cases can be decomposed into multiple transpositions of (1) and
-    // (2).
-    if (permutation == ArrayRef<int64_t>({1, 2, 0}) ||
-        permutation == ArrayRef<int64_t>({2, 0, 1}) ||
-        permutation == ArrayRef<int64_t>({2, 1, 0})) {
-      int64_t dim_size = permutation.size();
-      bool minormost_to_untiled = permutation[dim_size - 3] == dim_size - 1;
-      bool unchanged_second_minor = permutation[dim_size - 2] == dim_size - 2;
-      bool minormost_to_second_minor =
-          permutation[dim_size - 2] == dim_size - 1;
-      // For example, given the permutation (2, 1, 0), transpose order is:
-      // (0, 1, 2) > (0, 2, 1) > (2, 0, 1) > (2, 1, 0)
-      //           |           |           |
-      //          (2)         (1)         (2)
-      // TODO(b/419268277): The decomposition can be generalized to dim_size !=
-      // 3, but we don't support > 3D transposition between major and
-      // second-minor in apply.
-      Value res = input;
-      if (minormost_to_untiled) {
-        // Transpose minormost to second-minor to use (1).
-        res = create_transpose_op(res, ArrayRef<int64_t>({0, 2, 1}));
-      }
-      res = create_transpose_op(res, ArrayRef<int64_t>({1, 0, 2}));
-      if ((minormost_to_untiled && unchanged_second_minor) ||
-          minormost_to_second_minor) {
-        // When transposing minormost to major, we need an additional
-        // transposition between minormost and second-minor to reposition the
-        // original second-minor if it's unchanged.
-        res = create_transpose_op(res, ArrayRef<int64_t>({0, 2, 1}));
-      }
-      return res;
+    // Other cases can be decomposed into multiple of the above transpositions.
+    if (permutation.take_back(2) ==
+            ArrayRef<int64_t>{dim_size - 2, dim_size - 1} ||
+        permutation.take_back(2) ==
+            ArrayRef<int64_t>{dim_size - 1, dim_size - 2} ||
+        permutation.take_back(3) ==
+            ArrayRef<int64_t>{dim_size - 2, dim_size - 3, dim_size - 1}) {
+      return create_transpose_op(input, permutation);
     }
-    return create_transpose_op(input, permutation);
+
+    // 2D case is supported in apply. Safely assume it's 3D+.
+    CHECK_GE(dim_size, 3);
+
+    SmallVector<int64_t> swap_2nd_minor_minormost =
+        llvm::to_vector(llvm::seq<int64_t>(0, dim_size));
+    swap_2nd_minor_minormost[dim_size - 2] = dim_size - 1;
+    swap_2nd_minor_minormost[dim_size - 1] = dim_size - 2;
+    SmallVector<int64_t> swap_3rd_minor_2nd_minor =
+        llvm::to_vector(llvm::seq<int64_t>(0, dim_size));
+    swap_3rd_minor_2nd_minor[dim_size - 3] = dim_size - 2;
+    swap_3rd_minor_2nd_minor[dim_size - 2] = dim_size - 3;
+
+    // Three stages for the decomposition.
+    //
+    // a. Permute minormost to the correct position.
+    // b. Permute 2nd minor to the correct position.
+    // c. Permute 3rd+ minors to the correct position.
+    //
+    // Given permutation = (3, 2, 1, 0) for example, starting with original
+    // permutation = (0, 1, 2, 3), the following stages will happen in order:
+    //
+    //                 (2)              (3)              (1)              (2)
+    // a. (0, 1, 2, 3) --> (0, 1, 3, 2) --> (1, 0, 3, 2) --> (1, 3, 0, 2) -->
+    //    (1, 3, 2, 0)
+    //
+    //                 (3)              (1)
+    // b. (1, 3, 2, 0) --> (3, 1, 2, 0) --> (3, 2, 1, 0)
+    //
+    //
+    // c. n/a
+
+    Value res = input;
+    // Permute minormost to the correct position.
+    if (curr_perm.back() != permutation.back()) {
+      // (2).
+      res = create_transpose_op(res, swap_2nd_minor_minormost);
+      if (curr_perm.back() != permutation.back()) {
+        // If it's still not in the correct position, it must be in 3rd+ minors.
+        // Need (3) to put that dim at 3rd minor and use (1).
+        SmallVector<int64_t> perm =
+            llvm::to_vector(llvm::seq<int64_t>(0, dim_size));
+        std::swap(perm[dim_size - 3], perm[permutation.back()]);
+        // (3).
+        res = create_transpose_op(res, perm);
+        // (1).
+        res = create_transpose_op(res, swap_3rd_minor_2nd_minor);
+        // (2).
+        res = create_transpose_op(res, swap_2nd_minor_minormost);
+      }
+    }
+
+    // Minormost must be in the correct position now.
+    CHECK_EQ(permutation.back(), curr_perm.back());
+
+    // Permute second-minor to the correct position.
+    if (curr_perm[dim_size - 2] != permutation[dim_size - 2]) {
+      SmallVector<int64_t> required_perm = get_perm(curr_perm, permutation);
+      SmallVector<int64_t> perm =
+          llvm::to_vector(llvm::seq<int64_t>(0, dim_size));
+      // Need (3) to put the dim supposed at 2nd minor dim to 3rd minor and use
+      // (1).
+      std::swap(perm[dim_size - 3], perm[required_perm[dim_size - 2]]);
+      // (3).
+      res = create_transpose_op(res, perm);
+      // (1).
+      res = create_transpose_op(res, swap_3rd_minor_2nd_minor);
+    }
+
+    // 2nd minor must be in the correct position now.
+    CHECK_EQ(permutation[dim_size - 2], curr_perm[dim_size - 2]);
+
+    // Permute 3rd+ minors with (3).
+    res = create_transpose_op(res, get_perm(curr_perm, permutation));
+    for (int i = 0; i < dim_size; ++i) {
+      CHECK_EQ(permutation[i], curr_perm[i])
+          << "permutation[" << i << "] = " << permutation[i] << ", curr_perm["
+          << i << "] = " << curr_perm[i];
+    }
+    return res;
   };
 
   // TODO(mvoz): Even gen 7 support is spotty on all test targets.
@@ -1793,9 +1735,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {tpu::ExtFOp::getOperationName(), canonicalize_tpu_extf},
       {tpu::TransposeOp::getOperationName(), canonicalize_transpose},
       {tpu::RepeatOp::getOperationName(), canonicalize_repeat},
-      {tpu::ReshapeOp::getOperationName(), canonicalize_reshape},
-      {vector::StoreOp::getOperationName(), canonicalize_store},
-      {tpu::VectorStoreOp::getOperationName(), canonicalize_vector_store}};
+      {tpu::ReshapeOp::getOperationName(), canonicalize_reshape}};
   return *rules;
 }
 

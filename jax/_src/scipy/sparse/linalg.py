@@ -177,7 +177,7 @@ def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 
   r0 = _sub(b, A(x0))
   rho0 = alpha0 = omega0 = lax_internal._convert_element_type(
-      1, *dtypes._lattice_result_type(*tree_leaves(b)))
+      1, *dtypes.lattice_result_type(*tree_leaves(b)))
   initial_value = (x0, r0, r0, alpha0, omega0, rho0, r0, r0, 0)
 
   x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
@@ -296,8 +296,7 @@ def _safe_normalize(x, thresh=None):
   taken to be 0, and the normalized x to be the zero vector.
   """
   norm = _norm(x)
-  dtype, weak_type = dtypes._lattice_result_type(*tree_leaves(x))
-  dtype = dtypes.canonicalize_dtype(dtype)
+  dtype, weak_type = dtypes.lattice_result_type(*tree_leaves(x))
   if thresh is None:
     thresh = dtypes.finfo(norm.dtype).eps
   thresh = thresh.astype(dtype).real
@@ -398,8 +397,7 @@ def _kth_arnoldi_iteration(k, A, M, V, H):
   subspace is declared to have been found, in which case in which case the new
   vector is taken to be the zero vector.
   """
-  dtype, _ = dtypes._lattice_result_type(*tree_leaves(V))
-  dtype = dtypes.canonicalize_dtype(dtype)
+  dtype, _ = dtypes.lattice_result_type(*tree_leaves(V))
   eps = dtypes.finfo(dtype).eps
 
   v = tree_map(lambda x: x[..., k], V)  # Gets V[:, k]
@@ -530,8 +528,7 @@ def _gmres_batched(A, b, x0, unit_residual, residual_norm, ptol, restart, M):
       lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
       unit_residual,
   )
-  dtype, weak_type = dtypes._lattice_result_type(*tree_leaves(b))
-  dtype = dtypes.canonicalize_dtype(dtype)
+  dtype, weak_type = dtypes.lattice_result_type(*tree_leaves(b))
   H = lax_internal._convert_element_type(
       jnp.eye(restart, restart + 1, dtype=dtype), weak_type=weak_type)
 

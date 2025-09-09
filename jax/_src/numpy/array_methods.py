@@ -219,7 +219,7 @@ def _item(self: Array, *args: int) -> bool | int | float | complex:
 
 def _itemsize_property(self: Array) -> int:
   """Length of one array element in bytes."""
-  return dtypes.dtype(self, canonicalize=True).itemsize
+  return self.dtype.itemsize
 
 def _matrix_transpose_property(self: Array):
   """Compute the (batched) matrix transpose.
@@ -261,7 +261,7 @@ def _min(self: Array, axis: reductions.Axis = None, out: None = None,
 
 def _nbytes_property(self: Array) -> int:
   """Total bytes consumed by the elements of the array."""
-  return np.size(self) * dtypes.dtype(self, canonicalize=True).itemsize
+  return np.size(self) * self.dtype.itemsize
 
 def _nonzero(self: Array, *, fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None,
              size: int | None = None) -> tuple[Array, ...]:
@@ -505,19 +505,29 @@ def _view(self: Array, dtype: DTypeLike | None = None, type: None = None) -> Arr
     Array([ True, False,  True], dtype=bool)
 
   However, there are no guarantees about the results of any expression involving
-  a view such as this: `jnp.array([1, 2, 3], dtype=jnp.int8).view(jnp.bool_)`.
+  a view such as this: ``jnp.array([1, 2, 3], dtype=jnp.int8).view(jnp.bool_)``.
   In particular, the results may change between JAX releases and depending on
   the platform. To safely convert such an array to a boolean array, compare it
   with `0`::
 
     >>> jnp.array([1, 2, 0], dtype=jnp.int8) != 0
     Array([ True,  True, False], dtype=bool)
+
+  Args:
+    dtype: An optional output dtype. If not specified, the output dtype is the
+      same as the input dtype.
+    type: Not implemented; accepted for NumPy compatibility.
+  Returns:
+    The array, viewed as the new dtype. Unlike NumPy, the array may or may not
+    be a copy of the input array.
   """
   if type is not None:
     raise NotImplementedError("`type` argument of array.view() is not supported.")
 
-  dtypes.check_user_dtype_supported(dtype, "view")
-  dtype = dtypes.canonicalize_dtype(dtype)
+  if dtype is None:
+    return self
+
+  dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "view")
 
   nbits_in = dtypes.bit_width(self.dtype)
   nbits_out = dtypes.bit_width(dtype)

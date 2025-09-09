@@ -30,6 +30,7 @@ from jax._src import deprecations
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax
 from jax._src.lax import linalg as lax_linalg
+from jax._src.lax import utils as lax_utils
 from jax._src.numpy import array_creation
 from jax._src.numpy import einsum
 from jax._src.numpy import indexing
@@ -294,7 +295,9 @@ def svd(
     s = lax.abs(v)
     if compute_uv:
       sign = lax.sign(v)
-      idxs = lax.broadcasted_iota(np.int64, s.shape, dimension=s.ndim - 1)
+      idx_dtype = lax_utils.int_dtype_for_dim(
+          s.shape[s.ndim - 1], signed=False)
+      idxs = lax.broadcasted_iota(idx_dtype, s.shape, dimension=s.ndim - 1)
       s, idxs, sign = lax.sort((s, idxs, sign), dimension=-1, num_keys=1)
       s = lax.rev(s, dimensions=[s.ndim - 1])
       idxs = lax.rev(idxs, dimensions=[s.ndim - 1])

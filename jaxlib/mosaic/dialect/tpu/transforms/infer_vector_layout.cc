@@ -692,9 +692,14 @@ class VectorLayoutInferer {
         // output layout falls back to a normalized layout which has offsets 0
         // and the native tiling.
         if (!compatible_layout.has_value()) {
-          compatible_layout = VectorLayout(in_layout->bitwidth(), {0, 0},
-                                           nativeTiling(in_layout->bitwidth()),
-                                           ImplicitDim::kNone);
+          if (vty.getRank() == 0) {
+            return op.emitOpError("Not implemented: 0D vector");
+          }
+          compatible_layout =
+              VectorLayout(in_layout->bitwidth(), {0, 0},
+                           nativeTiling(in_layout->bitwidth()),
+                           vty.getRank() == 1 ? ImplicitDim::kSecondMinor
+                                              : ImplicitDim::kNone);
         }
         if (!require_reinfer &&
             (compatible_layout.value() != in_layout.value() ||
@@ -1011,19 +1016,32 @@ class VectorLayoutInferer {
                  "Not implemented: Only f32 is supported.")
     TPU_CHECK_OP(input_rank > 1,
                  "Not implemented: Only input rank > 1 is supported.");
-    TPU_CHECK_OP(op.getAxis() == input_rank - 1,
-                 "Not implemented: Only reduction on last dimension supported");
     TPU_CHECK_OP(
         input_ty.getShape()[input_rank - 2] % target_shape_[0] == 0 &&
         input_ty.getShape()[input_rank - 1] % target_shape_[1] == 0,
         "Not implemented: The input size is not a multiple of native vreg size "
         "on trailing dimensions.");
-
-    VectorLayout in_layout(bitwidth, {0, 0}, nativeTiling(bitwidth),
-                        ImplicitDim::kNone);
-    VectorLayout out_layout(bitwidth, {0, std::nullopt}, nativeTiling(bitwidth),
-                        ImplicitDim::kMinor);
-    setLayout(op, in_layout, out_layout);
+    auto some_layout = getLayout(op.getInput());
+    TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
+    if (op.getAxis() < input_rank - 2) {
+      VectorLayout& in_layout = *some_layout;
+      setLayout(op, in_layout, in_layout);
+    } else {
+      VectorLayout in_layout(bitwidth, {0, 0}, nativeTiling(bitwidth),
+                             ImplicitDim::kNone);
+      LayoutOffsets out_offsets = {0, 0};
+      ImplicitDim out_implicit_dim = ImplicitDim::kNone;
+      if (op.getAxis() == input_rank - 1) {
+        out_implicit_dim = ImplicitDim::kMinor;
+        out_offsets[1] = std::nullopt;
+      } else if (op.getAxis() == input_rank - 2) {
+        out_implicit_dim = ImplicitDim::kSecondMinor;
+        out_offsets[0] = std::nullopt;
+      }
+      VectorLayout out_layout(bitwidth, out_offsets, nativeTiling(bitwidth),
+                              out_implicit_dim);
+      setLayout(op, in_layout, out_layout);
+    }
     return success();
   }
 
@@ -1402,6 +1420,8 @@ class VectorLayoutInferer {
             std::find(dims.begin(), dims.end(), src_rank - 1) != dims.end(),
             false};
         break;
+      case VectorLayout::ImplicitDim::kMinorAndSecondMinor:
+        return op.emitOpError("Not implemented: double implicit dimensions");
     }
     if ((reduces[0] || reduces[1]) &&
         !src_layout.hasNativeTiling(target_shape_)) {
@@ -1409,25 +1429,54 @@ class VectorLayoutInferer {
                                 nativeTiling(src_layout.bitwidth()),
                                 src_layout.implicit_dim());
     }
+    ImplicitDim out_implicit_dim = src_layout.implicit_dim();
+    if ((reduces[0] && reduces[1]) ||
+        (src_layout.implicit_dim() != ImplicitDim::kNone &&
+         (reduces[0] || reduces[1]))) {
+      if (dst_ty.getRank() > 0 && *(dst_ty.getShape().end() - 1) == 1) {
+        out_implicit_dim = VectorLayout::ImplicitDim::kSecondMinor;
+      } else {
+        // TODO(tlongeri): Remove this once we have proper support for double
+        // implicit dims.
+        if (src_ty.getRank() > 1 &&
+            src_layout.implicit_dim() != ImplicitDim::kNone) {
+          LayoutOffsets new_src_offsets = src_layout.offsets();
+          switch (src_layout.implicit_dim()) {
+            case ImplicitDim::kNone:
+              CHECK(false);  // We excluded this case above.
+            case ImplicitDim::kSecondMinor:
+              CHECK((reduces == std::array<bool, 2>{false, true}));
+              new_src_offsets[0] = new_src_offsets[0].value_or(0);
+              break;
+            case ImplicitDim::kMinor:
+              CHECK((reduces == std::array<bool, 2>{true, false}));
+              reduces = {false, true};
+              new_src_offsets[1] = new_src_offsets[0];
+              new_src_offsets[0] = 0;
+              break;
+            case ImplicitDim::kMinorAndSecondMinor:
+              CHECK(false);  // Checked in switch statement above
+          }
+          out_implicit_dim = ImplicitDim::kMinor;
+          src_layout = VectorLayout(src_layout.bitwidth(), new_src_offsets,
+                                    src_layout.tiling(), ImplicitDim::kNone);
+        } else {
+          op.emitOpError(
+              "Not implemented: reductions over both trailing dimensions are "
+              "only supported when the resulting value has a trailing axis of "
+              "size 1");
+        }
+      }
+    } else if (reduces[0]) {
+      out_implicit_dim = VectorLayout::ImplicitDim::kSecondMinor;
+    } else if (reduces[1]) {
+      out_implicit_dim = VectorLayout::ImplicitDim::kMinor;
+    }
     LayoutOffsets out_offsets = src_layout.offsets();
     for (int i = 0; i < out_offsets.size(); ++i) {
       if (reduces[i]) {
         out_offsets[i] = std::nullopt;
       }
-    }
-    ImplicitDim out_implicit_dim = src_layout.implicit_dim();
-    if ((reduces[0] && reduces[1]) ||
-        (src_layout.implicit_dim() != ImplicitDim::kNone &&
-         (reduces[0] || reduces[1]))) {
-      TPU_CHECK_OP(
-          dst_ty.getRank() > 0 && *(dst_ty.getShape().end() - 1) == 1,
-          "Not implemented: reductions over both trailing dimensions are only "
-          "supported when the resulting value has a trailing axis of size 1");
-      out_implicit_dim = VectorLayout::ImplicitDim::kSecondMinor;
-    } else if (reduces[0]) {
-      out_implicit_dim = VectorLayout::ImplicitDim::kSecondMinor;
-    } else if (reduces[1]) {
-      out_implicit_dim = VectorLayout::ImplicitDim::kMinor;
     }
     setLayout(op, {src_layout, acc_layout},
               VectorLayout(src_layout.bitwidth(), out_offsets,
@@ -1720,8 +1769,9 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(permutation.size() == src_ty.getRank(),
                  "Transpose permutation has incorrect rank");
     bool untiled_tiled_swap = false;
-    // TODO(mvoz): Expand to more general cases. b/419268277
-    if (permutation.size() == 3 && permutation[0] == 1 && permutation[1] == 0) {
+    const int64_t rank = src_ty.getRank();
+    if (permutation.take_back(3) ==
+        ArrayRef<int64_t>({rank - 2, rank - 3, rank - 1})) {
       untiled_tiled_swap = true;
     } else {
       for (auto dim : permutation.drop_back(2)) {

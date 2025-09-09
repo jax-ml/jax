@@ -102,10 +102,12 @@ def dot(a: ArrayLike, b: ArrayLike, *,
     (3, 2, 1)
   """
   a, b = util.ensure_arraylike("dot", a, b)
-  dtypes.check_user_dtype_supported(preferred_element_type, "dot")
   if preferred_element_type is None:
-    preferred_element_type, output_weak_type = dtypes.result_type(a, b, return_weak_type_flag=True)
+    preferred_element_type, output_weak_type = dtypes.result_type(
+        a, b, return_weak_type_flag=True)
   else:
+    preferred_element_type = dtypes.check_and_canonicalize_user_dtype(
+        preferred_element_type, "dot")
     output_weak_type = False
 
   batch_dims = ((), ())
@@ -190,7 +192,6 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
            [49, 64]], dtype=int32)
   """
   a, b = util.ensure_arraylike("matmul", a, b)
-  dtypes.check_user_dtype_supported(preferred_element_type, "matmul")
   for i, x in enumerate((a, b)):
     if np.ndim(x) < 1:
       msg = (f"matmul input operand {i} must have ndim at least 1, "
@@ -199,6 +200,8 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
   if preferred_element_type is None:
     preferred_element_type, output_weak_type = dtypes.result_type(a, b, return_weak_type_flag=True)
   else:
+    preferred_element_type = dtypes.check_and_canonicalize_user_dtype(
+        preferred_element_type, "matmul")
     output_weak_type = False
 
   a_is_mat, b_is_mat = (np.ndim(a) > 1), (np.ndim(b) > 1)
@@ -382,7 +385,7 @@ def vdot(
     Array(0.+14.j, dtype=complex64)
   """
   a, b = util.ensure_arraylike("vdot", a, b)
-  if dtypes.issubdtype(dtypes.dtype(a, canonicalize=True), np.complexfloating):
+  if dtypes.issubdtype(a.dtype, np.complexfloating):
     a = ufuncs.conj(a)
   return dot(a.ravel(), b.ravel(), precision=precision,
              preferred_element_type=preferred_element_type)
@@ -524,13 +527,14 @@ def tensordot(a: ArrayLike, b: ArrayLike,
            [2, 4, 6]], dtype=int32)
   """
   a, b = util.ensure_arraylike("tensordot", a, b)
-  dtypes.check_user_dtype_supported(preferred_element_type, "tensordot")
   a_ndim = np.ndim(a)
   b_ndim = np.ndim(b)
 
   if preferred_element_type is None:
     preferred_element_type, output_weak_type = dtypes.result_type(a, b, return_weak_type_flag=True)
   else:
+    preferred_element_type = dtypes.check_and_canonicalize_user_dtype(
+        preferred_element_type, "tensordot")
     output_weak_type = False
 
   if type(axes) is int:

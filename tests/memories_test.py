@@ -729,6 +729,22 @@ class DevicePutTest(jtu.JaxTestCase):
 
     jax.block_until_ready(inp_host_donate_copy)
 
+  def test_host_to_device_transfer(self):
+    orig = np.arange(8)
+    d = jax.device_put(orig, jax.memory.Space.Device)
+    self.assertTrue(d.committed)
+
+    for _ in range(2):
+      h = jax.device_put(d, jax.memory.Space.Host)
+      self.assertTrue(h.committed)
+      self.assertEqual(h.sharding.memory_kind, 'pinned_host')
+      self.assertArraysEqual(h, orig)
+
+      d = jax.device_put(h, jax.memory.Space.Device)
+      self.assertTrue(d.committed)
+      self.assertEqual(d.sharding.memory_kind, 'device')
+      self.assertArraysEqual(d, orig)
+
 
 class ComputeOffload(jtu.BufferDonationTestCase):
 
@@ -760,8 +776,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(cpu_array.sharding, cpu_sharding)
 
   def test_compute_no_inputs_host_replicated(self):
-    if xb.backend_xla_version() is not None and xb.backend_xla_version() < 3:
-      self.skipTest("This test requires an xla_version >= 3.")
     mesh = jtu.create_mesh((4,), ('data'))
 
     tpu_sharding = NamedSharding(mesh, P('data'))
@@ -1644,6 +1658,19 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(x_out, x1 * x1)
     self.assertArraysEqual(y_out, y1 + y1)
 
+  def test_indexing_on_host(self):
+    @jax.jit
+    @compute_on("device_host")
+    def fn2(x):
+      x = jax.device_put(x, jax.memory.Space.Host)
+      y = jnp.ones((2, 1, 4))
+      y = jax.device_put(y, jax.memory.Space.Host)
+      z = x.at[:, 1:2, :].set(y)
+      return z
+
+    x_host = jax.device_put(jnp.ones((2,3,4)), jax.memory.Space.Host)
+    fn2(x_host)  # doesn't crash
+
   def test_compute_on_cache_miss(self):
     @jax.jit
     def f(x):
@@ -1911,8 +1938,6 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     compiled_text = compiled_f.as_text()
     if compiled_text is not None:
       self.assertIn('S(5)', compiled_text)
-      self.assertNotRegex(compiled_text, r"copy-start.*S\(5\)")
-      self.assertNotRegex(compiled_text, r"copy-done.*S\(5\)")
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None:
@@ -1950,8 +1975,6 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     compiled_text = compiled_f.as_text()
     if compiled_text is not None:
       self.assertIn('S(5)', compiled_text)
-      self.assertNotRegex(compiled_text, r"copy-start.*S\(5\)")
-      self.assertNotRegex(compiled_text, r"copy-done.*S\(5\)")
       self.assertRegex(compiled_text, r"dynamic-update-slice-start.*S\(5\)")
       self.assertRegex(compiled_text, r"dynamic-update-slice-done.*S\(5\)")
       self.assertRegex(compiled_text, r"dynamic-slice-start.*S\(5\)")

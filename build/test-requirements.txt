@@ -12,3 +12,4 @@ rich
 # TODO(phawkins): enable matplotlib once it ships a 3.14 wheel.
 matplotlib; python_version<"3.14"
 auditwheel
+scipy-stubs

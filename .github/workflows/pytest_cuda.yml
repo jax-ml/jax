@@ -58,7 +58,6 @@ jobs:
     # If testing the CUDA packages from PyPI, then use the ml-build image which does not have any
     # CUDA pckages installed on the system.
     container:  ${{ !inputs.use-nvidia-pip-wheels && (contains(inputs.cuda-version, '12.1') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda12.1-cudnn9.8:latest') ||
-                !inputs.use-nvidia-pip-wheels && (contains(inputs.cuda-version, '12.8') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda12.8-cudnn9.8:latest') ||
                 inputs.use-nvidia-pip-wheels && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'}}
     name: "${{ (contains(inputs.runner, 'h100') && 'h100') ||
         (contains(inputs.runner, 'b200') && 'b200') ||
@@ -77,6 +76,7 @@ jobs:
         uses: ./.github/actions/download-jax-cuda-wheels
         with:
           python: ${{ inputs.python }}
+          cuda-version: ${{ inputs.cuda-version }}
           download-jax-only-from-gcs: ${{ inputs.download-jax-only-from-gcs }}
           use-nvidia-pip-wheels: ${{ inputs.use-nvidia-pip-wheels }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
@@ -84,10 +84,15 @@ jobs:
         run: |
           # Set the "jax" wheel extra to configure whether to download the Nvidia Pip packages from
           # PyPI.
-          if [[ "${{ inputs.use-nvidia-pip-wheels }}" == false ]]; then
+          if [[ "${{ inputs.use-nvidia-pip-wheels }}" == false ]] && [[ "${{ inputs.cuda-version }}" == 12* ]]; then
             echo "JAXCI_JAX_PYPI_EXTRAS=cuda12-local">> $GITHUB_ENV
-          else
+          elif [[ "${{ inputs.use-nvidia-pip-wheels }}" == true ]] && [[ "${{ inputs.cuda-version }}" == 12* ]]; then
             echo "JAXCI_JAX_PYPI_EXTRAS=cuda12">> $GITHUB_ENV
+          elif [[ "${{ inputs.use-nvidia-pip-wheels }}" == true ]] && [[ "${{ inputs.cuda-version }}" == 13* ]]; then
+            echo "JAXCI_JAX_PYPI_EXTRAS=cuda13">> $GITHUB_ENV
+          else
+            echo "Invalid CUDA version: ${{ inputs.cuda-version }}"
+            exit 1
           fi
       - name: Install Python dependencies
         run: |

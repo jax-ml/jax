@@ -66,12 +66,6 @@ echo "Detected GPU type: $gpu_name"
 export memory_per_gpu_mib=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits --id=0)
 echo "Reported memory per GPU: $memory_per_gpu_mib MiB"
 
-if [[ "$gpu_name" =~ H100 ]]; then
-  echo "H100 detected. Reducing available memory by 60% to try prevent OOM errors"
-  memory_per_gpu_mib=$((memory_per_gpu_mib * 40 / 100))
-  echo "Adjusted effective memory per GPU: $memory_per_gpu_mib MiB"
-fi
-
 # Convert effective memory from MiB to GiB.
 export memory_per_gpu_gib=$((memory_per_gpu_mib / 1024))
 echo "Effective memory per GPU: $memory_per_gpu_gib GiB"
@@ -106,6 +100,7 @@ fi
 
 echo "Final number of processes to run: $num_processes"
 
+export JAX_ENABLE_CUDA_XDIST="$gpu_count"
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
 

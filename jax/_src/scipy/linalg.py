@@ -2188,7 +2188,7 @@ def hilbert(n: int) -> Array:
            [0.5       , 0.33333334, 0.25      ],
            [0.33333334, 0.25      , 0.2       ]], dtype=float32)
   """
-  a = lax.broadcasted_iota(np.float64, (n, 1), 0)
+  a = lax.broadcasted_iota(float, (n, 1), 0)
   return 1/(a + a.T + 1)
 
 @partial(jit, static_argnames=("n", "kind",))

@@ -307,6 +307,8 @@ jax.profiler.stop_trace()
 
 #### Advanced configuration options
 
+##### TPU options
+
 1.  `tpu_trace_mode`: Specifies the mode for TPU tracing.
 
     Supported Values:
@@ -331,6 +333,30 @@ jax.profiler.stop_trace()
     each sparse core to trace on the TPU.
 4.  `tpu_num_chips_to_profile_per_task`: Specifies the number of TPU chips to
     profile per task.
+
+##### GPU options
+
+The following options are available for GPU profiling:
+
+*   `gpu_max_callback_api_events`: Sets the maximum number of events collected
+    by the CUPTI callback API. Defaults to `2*1024*1024`.
+*   `gpu_max_activity_api_events`: Sets the maximum number of events collected
+    by the CUPTI activity API. Defaults to `2*1024*1024`.
+*   `gpu_max_annotation_strings`: Sets the maximum number of annotation
+    strings that can be collected. Defaults to `1024*1024`.
+*   `gpu_enable_nvtx_tracking`: Enables NVTX tracking in CUPTI. Defaults to
+    `False`.
+*   `gpu_enable_cupti_activity_graph_trace`: Enables CUPTI activity graph
+    tracing for CUDA graphs. Defaults to `False`.
+*   `gpu_pm_sample_counters`: A comma-separated string of GPU
+    Performance Monitoring metrics to collect using CUPTI's PM sampling feature
+    (e.g. `"sm__cycles_active.avg.pct_of_peak_sustained_elapsed"`). PM sampling
+    is disabled by default. For available metrics, see
+    [NVIDIA's CUPTI documentation](https://docs.nvidia.com/cupti/main/main.html#metrics-table).
+*   `gpu_pm_sample_interval_us`: Sets the sampling interval in microseconds
+    for CUPTI PM sampling. Defaults to `500`.
+*   `gpu_dump_graph_node_mapping`: If enabled, dumps CUDA graph node
+    mapping information into the trace. Defaults to `False`.
 
 For example:
 

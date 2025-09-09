@@ -66,10 +66,6 @@ class PyTreeFuture(Future[Any]):
     return f"PyTreeFuture(done={self.done()}, pytree={self.pytree})"
 
 
-def _cls2typerepr(cls):
-  return f"{cls.__module__}.{cls.__name__}"
-
-
 def serialize_pytreedef(node) -> dict[str, Any]:
   builder = flatbuffers.Builder(65536)
   exported = _serialize_pytreedef(builder, node)

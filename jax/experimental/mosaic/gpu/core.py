@@ -13,21 +13,21 @@
 # limitations under the License.
 # ==============================================================================
 
+from collections.abc import Callable
 from collections.abc import Sequence
 import contextlib
 import ctypes
 import dataclasses
 import enum
 import hashlib
+import itertools
 import math
 import os
 import pathlib
 import time
 from typing import Any, Generic, TypeVar
-from collections.abc import Callable
 import weakref
 
-import itertools
 import jax
 from jax._src import dtypes
 from jax._src import lib
@@ -49,6 +49,7 @@ import numpy as np
 from . import dialect_lowering
 from . import launch_context
 from . import layout_inference
+from . import layouts
 from . import profiler
 from . import tcgen05
 from . import transform_inference
@@ -336,7 +337,6 @@ class _TMEMDialectAlloc:
         result_type,
         self.addr_ref,
         collective=self.collective,
-        exact=False,
         packing=self.packing,
     )
     ncols = self.shape[1] // self.packing
@@ -444,31 +444,28 @@ def _construct_smem_reftree(
         packing = 1 if packing is None else packing
         ir_dtype = utils.dtype_to_ir_type(dtype)
         if lowering_semantics == LoweringSemantics.Warpgroup:
-          tmem_allocs.append(
-              _TMEMDialectAlloc(addr_ref, shape, ir_dtype, packing, collective)
+          if layout is not None:
+            packing = layout.vector_length
+
+          alloc = _TMEMDialectAlloc(
+              addr_ref, shape, ir_dtype, packing, collective
           )
+          tmem_allocs.append(alloc)
+          def ref(alloc=alloc, layout=layout):
+            assert alloc.tmem_ref is not None
+            if layout is not None:
+              layout_attr = layouts.to_layout_attr(layout)
+              return dialect.tmem_layout_cast(alloc.tmem_ref, layout_attr)
+            else:
+              return alloc.tmem_ref
+
         else:
           if layout is None:
             layout = tcgen05._infer_tmem_layout(shape, collective, packing)
           num_cols = layout.cols_in_shape(shape, utils.bitwidth(ir_dtype))
           tmem_allocs.append(_TMEMAlloc(addr_ref, num_cols, collective))
-
-        def ref(
-            addr_ref=addr_ref,
-            shape=shape,
-            ir_dtype=ir_dtype,
-            layout=layout,
-            lowering_semantics=lowering_semantics,
-        ):
-          addr = memref.load(addr_ref, [])
-          if lowering_semantics == LoweringSemantics.Warpgroup:
-            ref_type = ir.MemRefType.get(
-                shape=shape,
-                element_type=ir_dtype,
-                memory_space=utils.tmem(),
-            )
-            return builtin.unrealized_conversion_cast([ref_type], [addr])
-          else:
+          def ref(addr_ref=addr_ref, shape=shape, ir_dtype=ir_dtype, layout=layout):
+            addr = memref.load(addr_ref, [])
             return tcgen05.TMEMRef(addr, shape, ir_dtype, layout)
 
         dynamic_smem_offset += 4  # i32 takes up 4 bytes
@@ -636,21 +633,22 @@ def _launch(
                 f"Requested {cols_used} columns which exceeds limit of "
                 f"{tcgen05.TMEM_MAX_COLS}."
             )
-          if any(alloc.collective for alloc in tmem_allocs):
-            if math.prod(cluster) % 2:
-              raise ValueError(
-                  "Collective TMEM allocations are only supported for"
-                  " clusters with an even number of blocks in them."
-              )
-            if lowering_semantics == LoweringSemantics.Warpgroup:
-              dialect.tmem_relinquish_alloc_permit(collective=True)
-            else:
-              tcgen05.tmem_relinquish_alloc_permit(collective=True)
-          if any(not alloc.collective for alloc in tmem_allocs):
-            if lowering_semantics == LoweringSemantics.Warpgroup:
-              dialect.tmem_relinquish_alloc_permit(collective=False)
-            else:
-              tcgen05.tmem_relinquish_alloc_permit(collective=False)
+          collective_types = {alloc.collective for alloc in tmem_allocs}
+          if len(collective_types) > 1:
+            raise ValueError(
+                "Can't mix collective and non-collective TMEM allocations"
+                " within the same kernel."
+            )
+          collective = True in collective_types
+          if collective and math.prod(cluster) % 2:
+            raise ValueError(
+                "Collective TMEM allocations are only supported for"
+                " clusters with an even number of blocks in them."
+            )
+          if lowering_semantics == LoweringSemantics.Warpgroup:
+            dialect.tmem_relinquish_alloc_permit(collective=collective)
+          else:
+            tcgen05.tmem_relinquish_alloc_permit(collective=collective)
       gpu.barrier()  # Make sure the init is visible to all threads.
       smem_ref_tree = smem_ref_tree_thunk()
 

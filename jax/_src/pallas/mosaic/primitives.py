@@ -73,7 +73,7 @@ bitcast_p = jax_core.Primitive("bitcast")
 
 
 def bitcast(x, ty: DTypeLike):
-  ty = dtypes.canonicalize_dtype(ty)
+  ty = dtypes.check_and_canonicalize_user_dtype(ty)
   if len(x.shape) < 2:
     raise ValueError("Not implemented: bitcast 1D")
   src_bitwidth = dtypes.bit_width(x.dtype)
@@ -304,6 +304,10 @@ def _dma_start_abstract_eval(*args, tree, device_id_type, priority):
       src_sem_transforms_avals,
       device_id_aval,
   ) = tree_util.tree_unflatten(tree, args)
+  if not all(isinstance(x, state.AbstractRef) for x in [
+      src_ref_aval, dst_ref_aval, dst_sem_aval]):
+    raise ValueError(
+        "DMA source/destination/semaphore arguments must be Refs.")
   dst_sem_shape = dst_sem_aval.shape
   if dst_sem_transforms_avals:
     dst_sem_shape = dst_sem_transforms_avals[-1].get_indexer_shape()
@@ -312,6 +316,9 @@ def _dma_start_abstract_eval(*args, tree, device_id_type, priority):
         f"Cannot signal on a non-()-shaped semaphore: {dst_sem_shape}"
     )
   if src_sem_aval is not None:
+    if not isinstance(src_sem_aval, state.AbstractRef):
+      raise ValueError(
+          "DMA source semaphore must be a Ref.")
     src_sem_shape = src_sem_aval.shape
     if src_sem_transforms_avals:
       src_sem_shape = src_sem_transforms_avals[-1].get_indexer_shape()

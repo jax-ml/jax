@@ -216,7 +216,6 @@ class JaxToTfTestCase(jtu.JaxTestCase):
   def ConvertAndCompare(self,
                         func_jax: Callable,
                         *args,
-                        enable_xla: bool = True,
                         limitations: Sequence = ()):
     """Compares jax_func(*args) with convert(jax_func)(*args).
 
@@ -229,8 +228,6 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     Args:
       func_jax: the function to invoke (``func_jax(*args)``)
       args: the arguments.
-      enable_xla: if True, allows the use of XLA ops in jax2tf.convert
-        (default: True).
       limitations: the set of limitations for this harness (not yet filtered
         by mode).
     """
@@ -239,7 +236,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     result_jax = func_jax(*args)  # JAX
     result_tf = None
 
-    func_tf = jax2tf.convert(func_jax, enable_xla=enable_xla)
+    func_tf = jax2tf.convert(func_jax)
 
     unexpected_successes: list[str] = []
     # Run the "compiled" mode first, it is most important
@@ -249,7 +246,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       def log_message(extra):
         return f"[{self._testMethodName}] {mode=}: {extra}"
 
-      jax2tf_limits = tuple(filter(lambda l: l.filter(mode=mode), limitations))
+      jax2tf_limits = tuple(filter(lambda l: l.filter(), limitations))
 
       skip_tf_run = [l for l in jax2tf_limits if l.skip_tf_run]
       if skip_tf_run:

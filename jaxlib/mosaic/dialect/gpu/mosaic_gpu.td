@@ -280,6 +280,46 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
   let hasVerifier = 1;
 }
 
+def MosaicGPU_AsyncPrefetchOp : Op<MosaicGPU_Dialect, "async_prefetch",
+      [AttrSizedOperandSegments]> {
+  let summary = "Schedules an async prefetch of a MemRef from GMEM to L2";
+  let description = [{
+    Schedules an async prefetch of the contents of the `source` MemRef in GMEM
+    to the L2 cache, making subsequent loads of the same data from GMEM faster.
+
+    The `indices` and `slice_lengths` inputs define what slice of the GMEM
+    `source` is going to be prefetched. Both `indices` and `slice_lengths` must
+    have a length equal to the rank of the `source`. The values in `indices` are
+    the starting indices of each dimension and the values in `slice_lengths` are
+    the lengths. Providing -1 in `slice_lengths` indicates that the slice length
+    is 1.
+
+    The `collective` attribute can be provided to partition the prefetch over
+    multiple blocks in a cluster.
+
+    The `predicate` allows scheduling the prefetch conditionally.
+  }];
+
+  let arguments = (ins
+    AnyMemRef:$source,
+    Variadic<I32>:$indices,
+    PtxPredicate:$predicate,
+
+    // Attributes
+    DenseI64ArrayAttr:$slice_lengths,
+    TypedArrayAttrBase<MosaicGPU_Dimension, "dimensions">:$collective
+  );
+
+  let assemblyFormat = [{
+    `source` `(` $source `:` type($source) `)`
+    `indices` `(` $indices `)`
+    `predicate` `(` $predicate `)`
+    attr-dict
+  }];
+
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
       [AttrSizedOperandSegments]> {
   let summary = "Schedules an async store of a MemRef from SMEM to GMEM";
@@ -430,6 +470,13 @@ def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", []> {
   let results = (outs AnyMemRef);
 }
 
+def MosaicGPU_WGMMASupportedABType : AnyTypeOf<[F16, BF16, TF32, F32, F8E4M3FN, F8E5M2, I8],
+    "A type supported by the `a` and `b` operands of the `wgmma.mma_async` instruction">;
+
+def MosaicGPU_WGMMASupportedAccumulatorType : AnyTypeOf<[F16, F32, I32],
+    "A type supported by the accumulator `wgmma.mma_async` instruction">;
+
+
 def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   let summary = "Multiply two matrices asynchronously using warpgroup level matrix multiply operations.";
   let description = [{
@@ -466,13 +513,13 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   }];
 
   let arguments = (ins
-    VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedType]>:$accumulator,
+    VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedAccumulatorType]>:$accumulator,
     AnyTypeOf<[
-      MemRefRankOf<[MosaicGPU_WGMMASupportedType], [2]>,
-      VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedType]>]>:$a,
-    MemRefRankOf<[MosaicGPU_WGMMASupportedType], [2]>:$b
+      MemRefRankOf<[MosaicGPU_WGMMASupportedABType], [2]>,
+      VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedABType]>]>:$a,
+    MemRefRankOf<[MosaicGPU_WGMMASupportedABType], [2]>:$b
   );
-  let results = (outs VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedType]>);
+  let results = (outs VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedAccumulatorType]>);
 
   let assemblyFormat = [{
     `accumulator` `(` $accumulator `:` type($accumulator) `)`
@@ -666,11 +713,9 @@ def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
         unpacked_columns = allocated_columns * packing
 
     The number of allocated columns in TMEM can be any power of two in the
-    range [32, 512]. If `exact` is `true`, then the calculated
-    number of allocated columns must match that restriction. If `exact` is
-    `false` and the calculated number of allocated columns is less than 32 or
-    not a power of two, then it will be rounded up to the nearest power of two
-    larger or equal to 32.
+    range [32, 512]. If the calculated number of allocated columns is less than
+    32 or not a power of two, then it will be rounded up to the nearest power of
+    two larger or equal to 32.
 
     If `collective` is `true` 2 CTAs will perform the allocation collectively,
     otherwise, only one CTA will perform the allocation.
@@ -681,7 +726,6 @@ def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
 
     // Attributes
     DefaultValuedAttr<BoolAttr, "false">:$collective,
-    DefaultValuedAttr<BoolAttr, "true">:$exact,
     DefaultValuedAttr<ConfinedAttr<I32Attr, [IntPositive]>, "1">:$packing
   );
 

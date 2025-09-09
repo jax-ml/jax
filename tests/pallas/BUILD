@@ -143,6 +143,7 @@ jax_multiplatform_test(
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
     ] + py_deps([
+        "absl/testing:flagsaver",
         "absl/testing",
         "hypothesis",
         "numpy",
@@ -185,6 +186,7 @@ jax_multiplatform_test(
         "//jax:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax:pallas_tpu",
     ] + py_deps([
+        "absl/testing:flagsaver",
         "absl/testing",
         "hypothesis",
         "numpy",
@@ -746,7 +748,7 @@ jax_multiplatform_test(
         "tpu_v5e_x8",
         "tpu_v5p_x4",
     ],
-    shard_count = 5,
+    shard_count = 10,
     deps = [
         "//jax:extend",
         "//jax:pallas_tpu",
@@ -779,7 +781,7 @@ jax_multiplatform_test(
     srcs = [
         "gpu_attention_test.py",
     ],
-    enable_backends = ["cpu"],
+    enable_backends = [],
     enable_configs = [
         "gpu_a100_x32",
         "gpu_h100_x32",
@@ -980,6 +982,29 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "blackwell_ragged_dot_mgpu_run",
+    srcs = [
+        "//jax/experimental/pallas/ops/gpu:blackwell_ragged_dot_mgpu.py",
+        "//jax/experimental/pallas/ops/gpu:ragged_dot_mgpu.py",
+    ],
+    enable_backends = [],
+    enable_configs = ["gpu_b200"],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    main = "//jax/experimental/pallas/ops/gpu:blackwell_ragged_dot_mgpu.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_mosaic_gpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "mgpu_ragged_dot_run",
     srcs = ["//jax/experimental/pallas/ops/gpu:ragged_dot_mgpu.py"],
     enable_backends = [],
@@ -1132,5 +1157,74 @@ jax_multiplatform_test(
     ] + py_deps([
         "absl/testing",
         "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_sparsecore_pallas_test",
+    srcs = ["tpu_sparsecore_pallas_test.py"],
+    # Include at least v5p in presubmit.
+    config_tags_overrides = {
+        "tpu_v5p": {"ondemand": False},
+    },
+    enable_backends = [],
+    enable_configs = [
+        "tpu_v5p",
+        "tpu_v6e",
+        # TODO(slebedev): Run on ISS or GRM.
+    ],
+    shard_count = 4,
+    deps = [
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_sc",
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_pallas_sparsecore_debug_check_test",
+    srcs = ["tpu_pallas_sparsecore_debug_check_test.py"],
+    # Include at least v6e in presubmit. v5p doesn't run all the tests.
+    config_tags_overrides = {
+        "tpu_v6e": {"ondemand": False},
+    },
+    enable_backends = [],
+    enable_configs = [
+        "tpu_v5p",
+        "tpu_v6e",
+        "cpu",  # Just to make sure we at least check the shard_count in presubmit.
+        # TODO(slebedev): Run on GRM.
+    ],
+    shard_count = 3,
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_tpu",
+        "//jax/experimental:pallas_tpu_sc",
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+        "absl/flags",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_sparsecore_pallas_distributed_test",
+    srcs = ["tpu_sparsecore_pallas_distributed_test.py"],
+    enable_backends = [],
+    enable_configs = [
+        "tpu_v5p_x4",
+        "tpu_v6e_x8",
+        # TODO(slebedev): Run on ISS or GRM.
+    ],
+    deps = [
+        "//jax:mesh_utils",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_sc",
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
     ]),
 )

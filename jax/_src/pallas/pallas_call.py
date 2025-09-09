@@ -248,7 +248,7 @@ def _batch_block_mapping(
 
   block_mapping_flat_fn, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(_block_map_function,
-                   debug_info=block_mapping.index_map_jaxpr.jaxpr.debug_info),
+                   debug_info=block_mapping.index_map_jaxpr.jaxpr.debug_info.with_unknown_names()),
       tree_util.tree_structure(idx_avals))
   with grid_mapping.trace_env():
     block_mapping_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
@@ -1208,15 +1208,25 @@ def _trace_kernel_to_jaxpr(
       wrapped_kernel_fun, kernel_in_transforms
   )
   with grid_mapping.trace_env(), config._check_vma(False):
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
-                                                     kernel_avals)
+    with config.mutable_array_checks(False):
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+          wrapped_kernel_fun, kernel_avals)
     if consts:
-      consts_avals = [jax_core.get_aval(c) for c in consts]
-      if any(not isinstance(aval, state.AbstractRef) for aval in consts_avals):
+      consts_avals = [
+          aval
+          for c in consts
+          if not isinstance(aval := jax_core.get_aval(c), state.AbstractRef)
+      ]
+      if consts_avals:
+        ctx = jax_core.JaxprPpContext()
+        pp_consts_avals = ", ".join(
+            jax_core.pp_aval(aval, ctx) for aval in consts_avals
+        )
         raise ValueError(
-            f"The kernel function in the pallas_call {debug_info.func_src_info} "
-            f"captures constants {consts_avals}. "
-            "You should pass them as inputs")
+            "The kernel function in the pallas_call"
+            f" {debug_info.func_src_info} captures constants"
+            f" [{pp_consts_avals}]. You should pass them as inputs."
+        )
 
   kernel_out_tree = out_tree_thunk()
   if not indexer and kernel_out_tree != tree_util.tree_structure(None):
@@ -1469,7 +1479,8 @@ def _pallas_call_state_discharge_rule(
       )
   )
   new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(_rewritten_body, debug_info=jaxpr.debug_info),
+      lu.wrap_init(_rewritten_body,
+                   debug_info=jaxpr.debug_info.with_unknown_names()),
       [
           *index_map_avals,
           *ref_avals,
@@ -1555,7 +1566,7 @@ def pallas_call(
       etc.
     input_output_aliases: a dictionary mapping the index of some inputs to
       the index of the output that aliases them. These indices are in the
-      flattened inputs and outputs.
+      flattened inputs and outputs (ignoring None values).
     debug: if True, Pallas prints various intermediate forms of the kernel
       as it is being processed.
     interpret: runs the ``pallas_call`` as a ``jax.jit`` of a scan over the

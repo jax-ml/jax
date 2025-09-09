@@ -660,7 +660,9 @@ class WGStridedFragLayout:
       raise TypeError(shaped_ty)
 
     shaped_ty = ir.ShapedType(shaped_ty)
-    bw = mgpu.bytewidth(shaped_ty.element_type)
+    if (bitwidth := mgpu.bitwidth(shaped_ty.element_type)) % 8:
+      return None
+    bw = bitwidth // 8
     assert 8 % bw == 0 and 8 // bw != 0, bw
     if math.prod(shaped_ty.shape) % WARPGROUP_SIZE != 0:
       return None
@@ -2577,40 +2579,33 @@ class FragmentedArray:
       layout: FragmentedLayout = WGMMA_LAYOUT,
       optimized: bool = True,
   ) -> FragmentedArray:
+    if not isinstance(layout, TiledLayout):
+      raise NotImplementedError(layout)
     ref_ty = ir.MemRefType(ref.type)
     dtype = ref_ty.element_type
-    match layout:
-      case TiledLayout():
-        ref_ty = ir.MemRefType(ref.type)
-        tiled_shape = ref_ty.shape
-        if len(tiled_shape) % 2:
-          raise ValueError("Tiled reference must have even rank")
-        if len(tiled_shape) < 2:
-          raise ValueError("Tiled reference must have at least two dimensions")
-        tiling = Tiling((tiled_shape[len(tiled_shape) // 2 :],))
-        shape = tiling.untile_shape(tiled_shape)
-        zero = (
-            vector.splat(
-                ir.VectorType.get((layout.vector_length,), dtype), c(0, dtype)
-            ),
-        )
-        registers = np.full(layout.registers_shape(shape), zero, dtype=object)
-        is_f8 = ir.FloatType.isinstance(dtype) and utils.bitwidth(dtype) == 8
-        i8 = ir.IntegerType.get_signless(8)
-        reg_ty = ir.VectorType.get((layout.vector_length,), dtype)
-        # f8 data types are not handled by the LLVM dialect, so we need to
-        # transfer them as i8 and bitcast them back to f8.
-        transfer_ty = ir.VectorType.get(
-            (layout.vector_length,), i8 if is_f8 else dtype
-        )
-        loads = cls.transfer_tiled2(ref, swizzle, layout, shape, optimized)
-        for _get, update, _idx, ptr in loads:
-          loaded_reg = llvm.load(transfer_ty, ptr)
-          if is_f8:
-            loaded_reg = vector.bitcast(reg_ty, loaded_reg)
-          update(registers, loaded_reg)
-      case _:
-        raise NotImplementedError(layout)
+    tiled_shape = ref_ty.shape
+    if len(tiled_shape) % 2:
+      raise ValueError("Tiled reference must have even rank")
+    if len(tiled_shape) < 2:
+      raise ValueError("Tiled reference must have at least two dimensions")
+    tiling = Tiling((tiled_shape[len(tiled_shape) // 2 :],))
+    shape = tiling.untile_shape(tiled_shape)
+    reg_ty = ir.VectorType.get((layout.vector_length,), dtype)
+    zero = vector.splat(reg_ty, c(0, dtype))
+    registers = np.full(layout.registers_shape(shape), zero, dtype=object)
+    is_f8 = ir.FloatType.isinstance(dtype) and utils.bitwidth(dtype) == 8
+    i8 = ir.IntegerType.get_signless(8)
+    # f8 data types are not handled by the LLVM dialect, so we need to
+    # transfer them as i8 and bitcast them back to f8.
+    transfer_ty = ir.VectorType.get(
+        (layout.vector_length,), i8 if is_f8 else dtype
+    )
+    loads = cls.transfer_tiled2(ref, swizzle, layout, shape, optimized)
+    for _get, update, _idx, ptr in loads:
+      loaded_reg = llvm.load(transfer_ty, ptr)
+      if is_f8:
+        loaded_reg = vector.bitcast(reg_ty, loaded_reg)
+      update(registers, loaded_reg)
     return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
 
   @staticmethod

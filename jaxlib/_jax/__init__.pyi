@@ -253,6 +253,7 @@ def register_custom_call_target(
     capsule: Any,
     platform: str,
     api_version: int = ...,
+    traits: int = ...,
 ) -> _Status: ...
 def register_custom_call_partitioner(
     name: str,
@@ -645,7 +646,7 @@ ArrayImpl = Any
 
 def batched_copy_array_to_devices_with_sharding(
     arrays: Sequence[ArrayImpl],
-    devices: Sequence[list[Device]],
+    devices: Sequence[list[Device] | DeviceList],
     sharding: Sequence[Any],
     array_copy_semantics: Sequence[ArrayCopySemantics],
 ) -> Sequence[ArrayImpl]: ...
@@ -659,6 +660,11 @@ def batched_device_put(
     force_copy: bool = ...,
     host_buffer_semantics: Any = ...,
 ) -> ArrayImpl: ...
+def internal_transfer_to_shardings(
+    arrays: Sequence[ArrayImpl],
+    out_shardings: Sequence[Any],
+    donate: bool = ...,
+) -> Sequence[ArrayImpl]: ...
 def reorder_shards(
     x: ArrayImpl,
     dst_sharding: Any,
@@ -735,16 +741,11 @@ class DeviceTopology:
 def buffer_to_dlpack_managed_tensor(
     buffer: ArrayImpl, stream: int | None = None
 ) -> Any: ...
-@overload
+
 def dlpack_managed_tensor_to_buffer(
     tensor: Any, device: Device, stream: int | None
 ) -> ArrayImpl: ...
-@overload
-def dlpack_managed_tensor_to_buffer(  # Legacy overload
-    tensor: Any,
-    cpu_backend: Client | None = ...,
-    gpu_backend: Client | None = ...,
-) -> ArrayImpl: ...
+
 def cuda_array_interface_to_buffer(
     cai: dict[
         str,
@@ -812,6 +813,7 @@ class DistributedRuntimeClient:
   ) -> _Status: ...
   def key_value_try_get(self, key: str) -> _Status: ...
   def key_value_try_get_bytes(self, key: str) -> _Status: ...
+  def key_value_increment(self, key: str, increment: int) -> _Status: ...
   def key_value_dir_get(self, key: str) -> _Status: ...
   def key_value_dir_get_bytes(self, key: str) -> _Status: ...
   def key_value_set(

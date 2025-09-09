@@ -32,7 +32,6 @@ from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import helpers as tpu_helpers
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax.experimental import pallas as pl
-from jax.extend.backend import get_default_device
 import jax.numpy as jnp
 import numpy as np
 
@@ -78,7 +77,7 @@ def _broadcast_pytree_to(from_pytree, to_pytree):
 
 @jax_util.cache(trace_context_in_key=False)
 def _get_tpu_generation() -> int:
-  kind = get_default_device().device_kind
+  kind = tpu_core.get_device_kind()
   if kind.endswith(' lite'):
     kind = kind[:-len(' lite')]
   if kind.startswith("TPU v"):
@@ -1672,8 +1671,8 @@ def get_pipeline_schedule(schedule) -> Any:
 
 def make_pipeline_allocations(
     *refs,
-    in_specs=None,
-    out_specs=None,
+    in_specs=(),
+    out_specs=(),
     should_accumulate_out=False,
     needs_swap_ref=True,
     grid=None,
@@ -1869,8 +1868,8 @@ def emit_pipeline(
     body,
     *,
     grid: tuple[int | jax.Array, ...],
-    in_specs=None,
-    out_specs=None,
+    in_specs=(),
+    out_specs=(),
     should_accumulate_out: bool = False,
     core_axis: int | None = None,
     core_axis_name: str | None = None,
@@ -2139,8 +2138,8 @@ def emit_pipeline_with_allocations(
     body,
     *,
     grid,
-    in_specs=None,
-    out_specs=None,
+    in_specs=(),
+    out_specs=(),
     should_accumulate_out=False,
 ):
   """Creates pallas pipeline and top-level allocation preparation functions.

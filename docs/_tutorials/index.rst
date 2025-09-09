@@ -9,11 +9,11 @@ JAX tutorials draft
 
    The tutorials below are a work in progress; for the time being, please refer
    to the older tutorial content, including :ref:`beginner-guide`,
-   :ref:`user-guides`, and the now-deleted *JAX 101* tutorials.
+   :ref:`jax-101`, and the now-deleted *JAX 101* tutorials.
 
 JAX 101
 -------
-Mostly finalized at :ref:`jax-tutorials`!
+Mostly finalized at :ref:`jax-101`!
 
 .. toctree::
    :maxdepth: 1

@@ -48,7 +48,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
-from jax._src.lax.control_flow import BranchesPlatforms, for_loop
+from jax._src.lax.control_flow import BranchesPlatforms
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -67,7 +67,6 @@ from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import error_handling
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import random as pl_random
-from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.state.types import RefBitcaster, RefReshaper
@@ -1054,7 +1053,7 @@ def lower_fun(fun: Callable, *, multiple_results: bool) -> Callable:
     wrapped_fun = lu.wrap_init(
         f, params,
         debug_info=api_util.debug_info("mosaic lower_fun", f,
-                                       args, params))
+                                       args, {}))
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
     if consts:
       raise NotImplementedError
@@ -2479,15 +2478,6 @@ def _gather_lowering_rule(
 
 @register_lowering_rule(lax.transpose_p)
 def _transpose_lowering_rule(ctx: LoweringRuleContext, x, *, permutation):
-  dim_size = len(ctx.avals_in[0].shape)
-  if (
-      permutation[-2:] != (dim_size - 1, dim_size - 2)
-      and permutation[-2:] != (dim_size - 2, dim_size - 1)
-      and len(permutation) != 3
-  ):
-    raise NotImplementedError(
-        f"Unsupported transpose permutation: {permutation}"
-    )
   out_type = aval_to_ir_type(
       ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
   )
@@ -2618,8 +2608,8 @@ def _reduce_index_helper(
   )
   if x_aval.dtype != jnp.float32:
     raise NotImplementedError("Only float32 is supported")
-  if len(axes) != 1 or axes[0] != 1:
-    raise NotImplementedError("Only axes=(1,) is supported")
+  if len(axes) != 1:
+    raise NotImplementedError("Only single axis reduction supported")
   if index_dtype != jnp.int32:
     raise NotImplementedError("Only index_dtype=int32 is supported")
   return tpu.reduce_index(out_type, x, axes[0], reduction_kind)
@@ -3075,38 +3065,6 @@ def _clamp_lowering_rule(ctx: LoweringRuleContext, min, operand, max):
   return lower_fun(_clamp, multiple_results=False)(ctx, min, operand, max)
 
 
-@register_lowering_rule(for_loop.for_p)
-def _for_lowering_rule(
-    ctx: LoweringRuleContext,
-    *args,
-    jaxpr,
-    nsteps,
-    reverse,
-    unroll,
-    which_linear,
-):
-  should_discharge = [
-      not isinstance(aval, state.AbstractRef) for aval in ctx.avals_in
-  ]
-  jaxpr, () = state_discharge.discharge_state(
-      jaxpr, (), should_discharge=[False, *should_discharge]
-  )
-  for i in range(nsteps):
-    if reverse:
-      i = nsteps - i - 1
-    i = ir_constant(i)
-    lowering_context = ctx.lowering_context.replace(
-        block_shapes=[(), *ctx.block_shapes],
-    )
-    non_ref_args = jaxpr_subcomp(lowering_context, jaxpr, i, *args)
-    non_ref_args_iter = iter(non_ref_args)
-    args = [
-        next(non_ref_args_iter) if s else a
-        for a, s in zip(args, should_discharge)
-    ]
-  return args
-
-
 def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
                              jaxpr: jax_core.Jaxpr, start: int | ir.Value,
                              num_steps: int | ir.Value, consts, *args,
@@ -3336,8 +3294,8 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   return jaxpr_subcomp(lowering_context, jaxpr.jaxpr, *args)
 
 
-@register_lowering_rule(pjit.mesh_cast_p)
-def _mesh_cast_lowering_rule(ctx: LoweringRuleContext, x, dst_sharding):
+@register_lowering_rule(pjit.reshard_p)
+def _reshard_lowering_rule(ctx: LoweringRuleContext, x, dst_sharding):
   return x
 
 
@@ -3523,21 +3481,29 @@ def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
   )
 
 
-@register_lowering_rule(lax.bitcast_convert_type_p)
 def _bitcast_convert_type_lowering_rule(
-    ctx: LoweringRuleContext, x, *, new_dtype):
+    ctx: LoweringRuleContext, x, *, new_dtype, bitcast_fn):
   (in_aval, ) = ctx.avals_in
   (out_aval,) = ctx.avals_out
   old_bitwidth = dtypes.bit_width(in_aval.dtype)
   new_bitwidth = dtypes.bit_width(new_dtype)
   if old_bitwidth != new_bitwidth:
     raise NotImplementedError("Changing bitwidths not supported.")
-  return tpu.bitcast(
+  return bitcast_fn(
       aval_to_ir_type(
           ctx.lowering_context.dynamic_shape_replacement_fn, out_aval
       ),
       x,
   )
+register_lowering_rule(lax.bitcast_convert_type_p)(
+    partial(_bitcast_convert_type_lowering_rule, bitcast_fn=tpu.bitcast))
+register_lowering_rule(
+    lax.bitcast_convert_type_p,
+    kernel_types=[
+        tpu_core.KernelType.SC_SCALAR_SUBCORE,
+        tpu_core.KernelType.SC_VECTOR_SUBCORE,
+    ],
+)(partial(_bitcast_convert_type_lowering_rule, bitcast_fn=vector.bitcast))
 
 
 def _alloc_value(
@@ -3675,8 +3641,10 @@ def _semaphore_signal_lowering_rule(
     primitives.semaphore_wait_p, kernel_types=[*tpu_core.KernelType]
 )
 def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
-  sem_aval, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
-  sem, transforms, value = tree_util.tree_unflatten(args_tree, args)
+  sem_aval, _, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, transforms, value, decrement = tree_util.tree_unflatten(args_tree, args)
+  if not decrement:
+    raise NotImplementedError("Non-decrementing wait is not supported.")
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
   tpu.sem_wait(sem, value)
   return []

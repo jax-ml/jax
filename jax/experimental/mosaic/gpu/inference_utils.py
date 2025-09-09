@@ -17,7 +17,6 @@
 from collections.abc import Callable, Sequence
 import enum
 from functools import partial
-import itertools
 from typing import cast, Union
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu
@@ -197,14 +196,21 @@ in_transforms_for_operand = partial(
     _in_attr_for_operand, attr_name="in_transforms"
 )
 
+
+def should_have_in_transforms(op: ir.OpView) -> bool:
+  """Returns 'True' if the operation should be assigned in transforms."""
+  return any(map(is_transformable_smem_memref, op.operands))
+
+
+def should_have_out_transforms(op: ir.OpView) -> bool:
+  """Returns 'True' if the operation should be assigned out transforms."""
+  return any(map(is_transformable_smem_memref, op.results))
+
+
 def should_have_transforms(op: ir.OpView) -> bool:
   """Returns 'True' if the operation should be assigned in/out transforms."""
-  return any(
-      map(
-          is_transformable_smem_memref,
-          itertools.chain(op.operands, op.results),
-      )
-  )
+  return should_have_in_transforms(op) or should_have_out_transforms(op)
+
 
 def is_transformable_smem_memref(v: ir.Value) -> bool:
   """Whether the value is a memref in SMEM on which transforms should be applied."""

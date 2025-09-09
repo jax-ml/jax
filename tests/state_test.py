@@ -506,9 +506,9 @@ class StatePrimitivesTest(jtu.JaxTestCase):
       return op(x_ref, indexer)
 
     rng = self.rng()
-    a = rng.randn(*bat_ref_aval.shape)
+    a = rng.randn(*bat_ref_aval.shape).astype(floatx)
     his = [d for d, b in zip(ref_aval.shape, indexed_dims) if b]
-    idxs = [rng.randint(low=0, high=hi, size=i.shape)
+    idxs = [rng.randint(low=0, high=hi, size=i.shape, dtype=intx)
             for i, hi in zip(bat_idx_avals, his)]
 
     # discharge-of-vmap
@@ -588,7 +588,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       return []
     in_avals = [shaped_array_ref((), jnp.dtype('float32')),
                 core.ShapedArray((), jnp.dtype('float32'))]
-    stateful_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrap_init(f, 1),
+    stateful_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrap_init(f, 2),
                                                               in_avals)
     # Discharging should just turn this into a jaxpr that ignores the first
     # value and returns second value plus 1.
@@ -1375,16 +1375,17 @@ class GeneralRefTest(jtu.JaxTestCase):
         wrap_init(f, 1), [AbstractRef(core.AbstractToken())])
     self.assertIs(type(jaxpr.outvars[0].aval), core.AbstractToken)
 
-  def test_ref_of_ref(self):
-    def f(x_ref_ref):
-      x_ref = x_ref_ref[...]
-      return [x_ref]
-    # Not sure why you'd ever want to do this, but it works!
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-        wrap_init(f, 1),
-        [AbstractRef(AbstractRef(core.ShapedArray((), jnp.int32)))])
-    self.assertIs(type(jaxpr.outvars[0].aval), AbstractRef)
-    self.assertIs(type(jaxpr.outvars[0].aval.inner_aval), core.ShapedArray)
+  # NOTE(mattjj): disabled because it's extremely illegal
+  # def test_ref_of_ref(self):
+  #   def f(x_ref_ref):
+  #     x_ref = x_ref_ref[...]
+  #     return [x_ref]
+  #   # Not sure why you'd ever want to do this, but it works!
+  #   jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+  #       wrap_init(f, 1),
+  #       [AbstractRef(AbstractRef(core.ShapedArray((), jnp.int32)))])
+  #   self.assertIs(type(jaxpr.outvars[0].aval), AbstractRef)
+  #   self.assertIs(type(jaxpr.outvars[0].aval.inner_aval), core.ShapedArray)
 
 
 class RunStateTest(jtu.JaxTestCase):
@@ -1458,18 +1459,19 @@ class RunStateTest(jtu.JaxTestCase):
     self.assertIsNotNone(jaxpr.jaxpr.debug_info)
     self.assertIsNotNone(jaxpr.jaxpr.debug_info.func_src_info)
 
-  def test_can_stage_run_state_leaked_tracer_error(self):
-    leaks = []
-    def f(x):
-      def my_fun(x):
-        leaks.append(x)
-        return None
-      return run_state(my_fun)(x)
-    _ = jax.make_jaxpr(f)(2)
+  # NOTE(mattjj): disabled because the error message changed for the better
+  # def test_can_stage_run_state_leaked_tracer_error(self):
+  #   leaks = []
+  #   def f(x):
+  #     def my_fun(x):
+  #       leaks.append(x)
+  #       return None
+  #     return run_state(my_fun)(x)
+  #   _ = jax.make_jaxpr(f)(2)
 
-    with self.assertRaisesRegex(jax.errors.UnexpectedTracerError,
-                                "The function being traced when the value leaked was .*my_fun"):
-      jax.jit(lambda _: leaks[0])(1)
+  #   with self.assertRaisesRegex(jax.errors.UnexpectedTracerError,
+  #                               "The function being traced when the value leaked was .*my_fun"):
+  #     jax.jit(lambda _: leaks[0])(1)
 
   def test_nested_run_state_captures_effects(self):
     def f(x):

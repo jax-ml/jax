@@ -4425,6 +4425,9 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
           std::find(dims.begin(), dims.end(), src_rank - 1) != dims.end(),
           false};
       break;
+    case VectorLayout::ImplicitDim::kMinorAndSecondMinor:
+      return multi_reduction_op.emitOpError(
+          "Not implemented: Double implicit dimensions");
   }
 
   if ((reduces[0] || reduces[1]) &&
@@ -4724,37 +4727,55 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_OP(layouts_in.front().has_value());
   TPU_ASSERT_OP(llvm::none_of(layouts_in.drop_front(),
                               [&](const Layout &l) { return l.has_value(); }));
-  const Location loc = op.getLoc();
   const VectorLayout &in_layout = *layouts_in.front();
   const VectorLayout &out_layout = *layouts_out.front();
-  // TODO(yixiuliu): Support any input shapes
-  TPU_ASSERT_OP(in_layout ==
-                VectorLayout(32, {0, 0}, ctx.target_shape,
-                             VectorLayout::ImplicitDim::kNone));
-  TPU_ASSERT_OP(out_layout ==
-                VectorLayout(32, {0, std::nullopt}, ctx.target_shape,
-                             VectorLayout::ImplicitDim::kMinor));
 
   tpu::ReduceIndexOp reduce_index_op = cast<tpu::ReduceIndexOp>(op);
 
   auto in_ty = cast<VectorType>(reduce_index_op.getInput().getType());
   auto out_ty = cast<VectorType>(reduce_index_op.getResult().getType());
   auto in_element_type = in_ty.getElementType();
+  const int64_t rank = in_ty.getRank();
+  const int64_t axis = reduce_index_op.getAxis();
+  if (axis < rank - 2) {
+    if (in_layout != out_layout) {
+      return op.emitOpError("Not implemented: Expect output layout to be ")
+        << "the same as input layout " << in_layout
+        << " for reduction on non-tiling dimensions, but got " << out_layout;
+    }
+  } else {
+    if (in_layout != VectorLayout(32, {0, 0}, ctx.target_shape,
+                                VectorLayout::ImplicitDim::kNone)) {
+      return op.emitOpError("Not implemented: unsupported input layout ")
+        << in_layout << " for reduction on tiling dimensions";
+    };
+    if (axis == rank - 1 &&
+        out_layout != VectorLayout(32, {0, std::nullopt}, ctx.target_shape,
+                                  VectorLayout::ImplicitDim::kMinor)) {
+      return op.emitOpError("Not implemented: unsupported output layout ")
+        << out_layout << " for lane reduction";
+    }
+    if (axis == rank - 2 &&
+        out_layout != VectorLayout(32, {std::nullopt, 0}, ctx.target_shape,
+                                  VectorLayout::ImplicitDim::kSecondMinor)) {
+      return op.emitOpError("Not implemented: unsupported output layout ")
+        << out_layout << " for sublane reduction";
+    }
+  }
+
   if (!in_element_type.isF32()) {
     return op.emitOpError("Not implemented: Only f32 input is supported");
   }
   if (!out_ty.getElementType().isSignlessInteger(32)) {
     return op.emitOpError("Not implemented: Only i32 output is supported");
   }
-  const int64_t rank = in_ty.getRank();
-  const int64_t axis = reduce_index_op.getAxis();
-  TPU_ASSERT_EQ_OP(axis, rank - 1);
+  // TODO(yixiuliu): Support any input shapes
   TPU_ASSERT_OP(
     in_ty.getShape()[rank - 2] % ctx.target_shape[0] == 0 &&
     in_ty.getShape()[rank - 1] % ctx.target_shape[1] == 0);
   tpu::ReductionKind kind = reduce_index_op.getKind();
 
-  OpBuilder builder(&op);
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
   FAILUREOR_ASSIGN_OR_RETURN(
     xla::Array<Value> tiles,
     disassemble(builder, in_layout, reduce_index_op.getInput(),
@@ -4800,28 +4821,35 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
           Value lhs, Value rhs, Value lhs_idx, Value rhs_idx) ->
           std::pair<Value, Value> {
         Value keep_lhs = builder.create<arith::CmpFOp>(
-            loc, predicate, lhs, rhs).getResult();
+            predicate, lhs, rhs);
         Value result_val = builder.create<arith::SelectOp>(
-            loc, keep_lhs, lhs, rhs);
+            keep_lhs, lhs, rhs);
         Value result_idx = builder.create<arith::SelectOp>(
-            loc, keep_lhs, lhs_idx, rhs_idx);
+            keep_lhs, lhs_idx, rhs_idx);
         return {result_val, result_idx};
       };
       Value acc_vreg = nullptr;
       Value acc_vreg_idx = nullptr;
-      const int64_t reduction_step = ctx.target_shape[1];
+      const std::optional<int32_t> in_tile_reduction_dim =
+          (axis == rank - 2 || axis == rank - 1)
+              ? std::make_optional(axis - (rank - 2))
+              : std::nullopt;
+      const int64_t reduction_step =
+          in_tile_reduction_dim ? ctx.target_shape[*in_tile_reduction_dim] : 1;
       slice_vregs.Each(
         [&](const absl::Span<const int64_t> red_idx, Value *const src_vreg) {
         // Calculate the index of acc_vreg on reduction dimension in full input.
-        Value base_idx = builder.create<arith::ConstantOp>(
-            loc, index_ty,
+        Value src_vreg_idx = builder.create<arith::ConstantOp>(
+            index_ty,
             DenseIntElementsAttr::get(
                 index_ty,
                 static_cast<int32_t>(red_idx[axis] * reduction_step)));
-        Value iota = builder.create<tpu::IotaOp>(
-            loc, index_ty,
-            /*dimensions=*/ArrayRef<int32_t>{1});
-        Value src_vreg_idx = builder.create<arith::AddIOp>(loc, base_idx, iota);
+        if (in_tile_reduction_dim) {
+          Value iota = builder.create<tpu::IotaOp>(
+              index_ty,
+              /*dimensions=*/ArrayRef<int32_t>{*in_tile_reduction_dim});
+          src_vreg_idx = builder.create<arith::AddIOp>(src_vreg_idx, iota);
+        }
 
         if (acc_vreg == nullptr || acc_vreg_idx == nullptr) {
           acc_vreg = *src_vreg;
@@ -4831,17 +4859,38 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
               acc_vreg, *src_vreg, acc_vreg_idx, src_vreg_idx);
         }
       });
-      acc_vreg = builder.create<tpu::AllReduceOp>(
-          reduce_index_op.getLoc(), index_ty, acc_vreg, /*dim=*/1, kind);
-      if (slice_vregs.dim(axis) > 1) {
-        // Convert back to original index in acc_vreg_idx
-        *out_vreg = builder.create<tpu::DynamicGatherOp>(
-            loc, index_ty,
-            /*source=*/acc_vreg_idx,
-            /*indices=*/acc_vreg,
-            /*dimensions=*/ArrayRef<int32_t>{1});
+      if (in_tile_reduction_dim) {
+        if (*in_tile_reduction_dim == 0) {  // sublane reduction
+          Value val = acc_vreg;
+          Value idx = acc_vreg_idx;
+          for (int i = ctx.target_shape[0] / 2; i > 0; i /= 2) {
+            Value rotated_val = builder.create<tpu::RotateOp>(
+                val, /*amount=*/i, /*dimension=*/0, /*stride=*/nullptr,
+                /*stride_dimension=*/nullptr);
+            Value rotated_idx = builder.create<tpu::RotateOp>(
+                idx, /*amount=*/i, /*dimension=*/0, /*stride=*/nullptr,
+                /*stride_dimension=*/nullptr);
+            std::tie(val, idx) =
+                reduce_elementwise(val, rotated_val, idx, rotated_idx);
+          }
+          *out_vreg = idx;
+        } else {  // lane reduction
+          CHECK_EQ(*in_tile_reduction_dim, 1);
+          acc_vreg = builder.create<tpu::AllReduceOp>(
+              index_ty, acc_vreg, /*dim=*/1, kind);
+          if (slice_vregs.dim(axis) > 1) {
+            // Convert back to original index in acc_vreg_idx
+            *out_vreg = builder.create<tpu::DynamicGatherOp>(
+                index_ty,
+                /*source=*/acc_vreg_idx,
+                /*indices=*/acc_vreg,
+                /*dimensions=*/ArrayRef<int32_t>{1});
+          } else {
+            *out_vreg = acc_vreg;
+          }
+        }
       } else {
-        *out_vreg = acc_vreg;
+        *out_vreg = acc_vreg_idx;
       }
   });
 
@@ -5428,8 +5477,8 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
   const auto tile_perm = permutation.take_back(2);
 
   // Major minor pemute
-  if (tile_perm != ArrayRef<int64_t>{rank - 2, rank - 1} &&
-      tile_perm != ArrayRef<int64_t>{rank - 1, rank - 2}) {
+  if (permutation.take_back(3) ==
+      ArrayRef<int64_t>({rank - 2, rank - 3, rank - 1})) {
     // This is a 3 stage algorithm that uses combinations and shuffles
     // to do a transposition of an 8x8 block of sublanes.
     // In the following algorithm description, A, B, ..., H represent 8
@@ -5529,14 +5578,13 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
     // (e.g. L=s2_vregs[1], R=s2_vregs[5]).
     //
     // This results in the correctly transposed 8x8 block.
-
-    constexpr int64_t kMajorDimOriginalIdx = 0;
-    constexpr int64_t kSecondMinorDimOriginalIdx = 1;
-    constexpr int64_t kMinorMostDimOriginalIdx = 2;
+    const int64_t major_dim_original_idx = permutation.size() - 3;
+    const int64_t second_minor_dim_original_idx = permutation.size() - 2;
+    const int64_t minor_most_dim_original_idx = permutation.size() - 1;
 
     auto vec_shape = src_ty.getShape();
-    auto major_dim_size = vec_shape[kMajorDimOriginalIdx];
-    auto second_minor_dim_size = vec_shape[kSecondMinorDimOriginalIdx];
+    auto major_dim_size = vec_shape[major_dim_original_idx];
+    auto second_minor_dim_size = vec_shape[second_minor_dim_original_idx];
 
     if (layout_in.offsets() != LayoutOffsets{0, 0}) {
       return transpose_op.emitOpError("Not implemented: Layout with offset.");
@@ -5575,6 +5623,15 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
           "Not implemented: Major-second-minor transpose expects 8 sublanes.");
     }
 
+    {
+      // Transpose 4th+ minors if applicable.
+      SmallVector<int64_t> p(permutation);
+      p[rank - 3] = rank - 3;
+      p[rank - 2] = rank - 2;
+      p[rank - 1] = rank - 1;
+      src_vregs.TransposeDimensions(p);
+    }
+
     auto vreg_dimensions = src_vregs.dimensions();
     // Note(mvoz): Slice is a weird word here, This is used for constructing
     // the output vregs - the reason we divide here is because we multiply it
@@ -5586,11 +5643,11 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
     // minor_most_dim_slice_idx} becomes {second_minor_dim_slice_idx *
     // sublane_count, major_dim_slice_idx, minor_most_dim_slice_idx}
     auto num_slices_in_major_dim =
-        vreg_dimensions[kMajorDimOriginalIdx] / sublane_count;
+        vreg_dimensions[major_dim_original_idx] / sublane_count;
     auto num_slices_in_second_minor_dim =
-        vreg_dimensions[kSecondMinorDimOriginalIdx];
+        vreg_dimensions[second_minor_dim_original_idx];
     auto num_slices_in_minor_most_dim =
-        vreg_dimensions[kMinorMostDimOriginalIdx];
+        vreg_dimensions[minor_most_dim_original_idx];
 
     auto shuffle = [&](Value lhs_vreg, Value rhs_vreg, ArrayRef<int> pattern) {
       auto lhs_vreg_type = lhs_vreg.getType();
@@ -5634,100 +5691,127 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
         8,  9,  12, 13,
         10, 11, 14, 15};  // Selects from CH_XY to make A2B2C2D2A3B3C3D3
 
-    for (int major_dim_slice_idx = 0;
-         major_dim_slice_idx < num_slices_in_major_dim; ++major_dim_slice_idx) {
-      for (int second_minor_dim_slice_idx = 0;
-           second_minor_dim_slice_idx < num_slices_in_second_minor_dim;
-           ++second_minor_dim_slice_idx) {
-        for (int minor_most_dim_slice_idx = 0;
-             minor_most_dim_slice_idx < num_slices_in_minor_most_dim;
-             ++minor_most_dim_slice_idx) {
-          // STAGE 1!
-          std::array<Value, 8>
-              stage1_output_vregs;  // Stores s1_vregs from comments
-          constexpr int num_pairs_stage1 =
-              4;  // Processes 4 pairs of vregs (A,B), (C,D), (E,F), (G,H)
+    auto reshape_to_4d = [&](xla::Array<Value>& arr) {
+      auto dims = arr.dimensions();
+      // Keep the last 3 dims, and flatten the rest to the first dim or expand
+      // it.
+      auto last_3_dims = dims.last(3);
+      const int64_t num_elements_in_last_3_dims =
+          std::accumulate(last_3_dims.begin(), last_3_dims.end(),
+                          static_cast<int64_t>(1), std::multiplies<int64_t>());
+      llvm::SmallVector<int64_t, 4> new_dims = {
+          arr.num_elements() / num_elements_in_last_3_dims,
+      };
+      new_dims.append(last_3_dims.begin(), last_3_dims.end());
+      arr.Reshape(new_dims);
+    };
 
-          for (int i = 0; i < num_pairs_stage1; ++i) {
-            Value first_vreg = src_vregs(
-                {(2 * i) + (sublane_count * major_dim_slice_idx),
-                 second_minor_dim_slice_idx, minor_most_dim_slice_idx});
-            Value second_vreg = src_vregs(
-                {(2 * i) + (sublane_count * major_dim_slice_idx) + 1,
-                 second_minor_dim_slice_idx, minor_most_dim_slice_idx});
+    llvm::SmallVector<int64_t, 4> original_dst_vregs_dims(
+        dst_vregs.dimensions().begin(), dst_vregs.dimensions().end());
 
-            auto combined_low_val = combine_low(first_vreg, second_vreg);
-            auto combined_high_val = combine_high(first_vreg, second_vreg);
+    reshape_to_4d(src_vregs);
+    reshape_to_4d(dst_vregs);
 
-            stage1_output_vregs[2 * i] =
-                shuffle(combined_low_val, combined_high_val,
-                        permute_pattern_stage1_low_arr);
-            stage1_output_vregs[2 * i + 1] =
-                shuffle(combined_low_val, combined_high_val,
-                        permute_pattern_stage1_high_arr);
-          }
+    // Iterate over the first dim. The algorithm operates on the last 3 dims.
+    for (int outer_idx = 0; outer_idx < src_vregs.dim(0); ++outer_idx) {
+      for (int major_dim_slice_idx = 0;
+           major_dim_slice_idx < num_slices_in_major_dim;
+           ++major_dim_slice_idx) {
+        for (int second_minor_dim_slice_idx = 0;
+             second_minor_dim_slice_idx < num_slices_in_second_minor_dim;
+             ++second_minor_dim_slice_idx) {
+          for (int minor_most_dim_slice_idx = 0;
+               minor_most_dim_slice_idx < num_slices_in_minor_most_dim;
+               ++minor_most_dim_slice_idx) {
+            // STAGE 1!
+            std::array<Value, 8>
+                stage1_output_vregs;  // Stores s1_vregs from comments
+            constexpr int num_pairs_stage1 =
+                4;  // Processes 4 pairs of vregs (A,B), (C,D), (E,F), (G,H)
 
-          // STAGE 2!
-          std::array<Value, 8>
-              stage2_output_vregs;  // Stores s2_vregs from comments
-          constexpr int num_pairs_stage2 =
-              4;  // Processes 4 pairs of vregs from stage1_output_vregs
+            for (int i = 0; i < num_pairs_stage1; ++i) {
+              Value first_vreg = src_vregs(
+                  {outer_idx, (2 * i) + (sublane_count * major_dim_slice_idx),
+                   second_minor_dim_slice_idx, minor_most_dim_slice_idx});
+              Value second_vreg = src_vregs(
+                  {outer_idx,
+                   (2 * i) + (sublane_count * major_dim_slice_idx) + 1,
+                   second_minor_dim_slice_idx, minor_most_dim_slice_idx});
 
-          for (int i = 0; i < num_pairs_stage2; ++i) {
-            // Determine the indices for the input pair from
-            // stage1_output_vregs. The 4 pairs processed in this stage are:
-            // i=0: (s1_vregs[0], s1_vregs[2])
-            // i=1: (s1_vregs[1], s1_vregs[3])
-            // i=2: (s1_vregs[4], s1_vregs[6])
-            // i=3: (s1_vregs[5], s1_vregs[7])
-            int s1_lhs_idx = (i / 2) * 4 + (i % 2);
-            int s1_rhs_idx = s1_lhs_idx + 2;
+              auto combined_low_val = combine_low(first_vreg, second_vreg);
+              auto combined_high_val = combine_high(first_vreg, second_vreg);
 
-            Value s1_lhs_vreg = stage1_output_vregs[s1_lhs_idx];
-            Value s1_rhs_vreg = stage1_output_vregs[s1_rhs_idx];
+              stage1_output_vregs[2 * i] =
+                  shuffle(combined_low_val, combined_high_val,
+                          permute_pattern_stage1_low_arr);
+              stage1_output_vregs[2 * i + 1] =
+                  shuffle(combined_low_val, combined_high_val,
+                          permute_pattern_stage1_high_arr);
+            }
 
-            auto combined_low_val = combine_low(s1_lhs_vreg, s1_rhs_vreg);
-            auto combined_high_val = combine_high(s1_lhs_vreg, s1_rhs_vreg);
+            // STAGE 2!
+            std::array<Value, 8>
+                stage2_output_vregs;  // Stores s2_vregs from comments
+            constexpr int num_pairs_stage2 =
+                4;  // Processes 4 pairs of vregs from stage1_output_vregs
 
-            // Determine the output indices for stage2_output_vregs.
-            // Each pair from Stage 1 produces a pair of vregs for Stage 2.
-            // Results are stored pair-wise:
-            // i=0 -> s2_vregs[0], s2_vregs[1]
-            // i=1 -> s2_vregs[2], s2_vregs[3]
-            // i=2 -> s2_vregs[4], s2_vregs[5]
-            // i=3 -> s2_vregs[6], s2_vregs[7]
-            int s2_out_idx_base = 2 * i;
+            for (int i = 0; i < num_pairs_stage2; ++i) {
+              // Determine the indices for the input pair from
+              // stage1_output_vregs. The 4 pairs processed in this stage are:
+              // i=0: (s1_vregs[0], s1_vregs[2])
+              // i=1: (s1_vregs[1], s1_vregs[3])
+              // i=2: (s1_vregs[4], s1_vregs[6])
+              // i=3: (s1_vregs[5], s1_vregs[7])
+              int s1_lhs_idx = (i / 2) * 4 + (i % 2);
+              int s1_rhs_idx = s1_lhs_idx + 2;
 
-            stage2_output_vregs[s2_out_idx_base] =
-                shuffle(combined_low_val, combined_high_val,
-                        permute_pattern_stage2_low_arr);
-            stage2_output_vregs[s2_out_idx_base + 1] =
-                shuffle(combined_low_val, combined_high_val,
-                        permute_pattern_stage2_high_arr);
-          }
+              Value s1_lhs_vreg = stage1_output_vregs[s1_lhs_idx];
+              Value s1_rhs_vreg = stage1_output_vregs[s1_rhs_idx];
 
-          // STAGE 3! Combine results from stage 2.
-          std::array<int64_t, 3> output_idx_parts{
-              second_minor_dim_slice_idx * sublane_count, major_dim_slice_idx,
-              minor_most_dim_slice_idx};
+              auto combined_low_val = combine_low(s1_lhs_vreg, s1_rhs_vreg);
+              auto combined_high_val = combine_high(s1_lhs_vreg, s1_rhs_vreg);
 
-          constexpr int num_final_combines =
-              4;  // Corresponds to s2_vregs[0]..s2_vregs[3] pairing with
-                  // s2_vregs[4]..s2_vregs[7]
-          for (int i = 0; i < num_final_combines; ++i) {
-            Value lhs = stage2_output_vregs[i];      // e.g., s2_ABCD_0
-            Value rhs = stage2_output_vregs[i + 4];  // e.g., s2_EFGH_0
-            auto final_combined_low = combine_low(lhs, rhs);
-            auto final_combined_high = combine_high(lhs, rhs);
+              // Determine the output indices for stage2_output_vregs.
+              // Each pair from Stage 1 produces a pair of vregs for Stage 2.
+              // Results are stored pair-wise:
+              // i=0 -> s2_vregs[0], s2_vregs[1]
+              // i=1 -> s2_vregs[2], s2_vregs[3]
+              // i=2 -> s2_vregs[4], s2_vregs[5]
+              // i=3 -> s2_vregs[6], s2_vregs[7]
+              int s2_out_idx_base = 2 * i;
 
-            dst_vregs(output_idx_parts) = final_combined_low;
-            output_idx_parts[0] += 1;
-            dst_vregs(output_idx_parts) = final_combined_high;
-            output_idx_parts[0] += 1;
+              stage2_output_vregs[s2_out_idx_base] =
+                  shuffle(combined_low_val, combined_high_val,
+                          permute_pattern_stage2_low_arr);
+              stage2_output_vregs[s2_out_idx_base + 1] =
+                  shuffle(combined_low_val, combined_high_val,
+                          permute_pattern_stage2_high_arr);
+            }
+
+            // STAGE 3! Combine results from stage 2.
+            std::array<int64_t, 4> output_idx_parts{
+                outer_idx, second_minor_dim_slice_idx * sublane_count,
+                major_dim_slice_idx, minor_most_dim_slice_idx};
+
+            constexpr int num_final_combines =
+                4;  // Corresponds to s2_vregs[0]..s2_vregs[3] pairing with
+                    // s2_vregs[4]..s2_vregs[7]
+            for (int i = 0; i < num_final_combines; ++i) {
+              Value lhs = stage2_output_vregs[i];      // e.g., s2_ABCD_0
+              Value rhs = stage2_output_vregs[i + 4];  // e.g., s2_EFGH_0
+              auto final_combined_low = combine_low(lhs, rhs);
+              auto final_combined_high = combine_high(lhs, rhs);
+
+              dst_vregs(output_idx_parts) = final_combined_low;
+              output_idx_parts[1] += 1;
+              dst_vregs(output_idx_parts) = final_combined_high;
+              output_idx_parts[1] += 1;
+            }
           }
         }
       }
     }
+    dst_vregs.Reshape(original_dst_vregs_dims);
     auto assembled =
         assemble(builder, dst_ty, layout_out, dst_vregs, ctx.target_shape);
     transpose_op.getOperation()->replaceAllUsesWith(assembled);
@@ -7361,12 +7445,6 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   if (src.tiling() == dst_tiling) {
     return std::pair(src, std::move(vregs));
   }
-  // TODO(tlongeri): Using canonical vs non-canonical offsets can change the
-  // value of try_replicate rows, and it breaks some tests. It doesn't make
-  // sense that we have different behavior for equivalent layouts, though. We
-  // need better logic for picking the relayout strategy.
-  const bool try_replicate_rows =
-      src.offsets()[0].has_value() && !dst_offsets_hint[0].has_value();
   // Canonicalize offsets
   src = VectorLayout(src.bitwidth(),
                      src.getCanonicalOffsets(vty.getShape(), ctx.target_shape),
@@ -7421,7 +7499,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
       // slightly cheaper for some dst vregs you rotate by 0.
       // TODO(tlongeri): Using store + multiple replicated loads is good on
       // older gens. I wonder if we can integrate this logic to scratch retiling
-      (try_replicate_rows || ctx.hardware_generation >= 5)) {
+      (!dst_offsets_hint[0].has_value() || ctx.hardware_generation >= 5)) {
     const LayoutOffset dst_minor_offset =
         src.offsets()[1].has_value() ? *src.offsets()[1] % dst_vreg_slice[1]
                                      : LayoutOffset();
@@ -7577,6 +7655,10 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
   const auto &target_shape = ctx.target_shape;
   if (src.implicit_dim() == dst_implicit_dim) {
     return std::make_pair(src, std::move(vregs));
+  }
+  if (src.implicit_dim() == VectorLayout::ImplicitDim::kMinorAndSecondMinor ||
+      dst_implicit_dim == VectorLayout::ImplicitDim::kMinorAndSecondMinor) {
+    return emitError(loc, "Not implemented: Double implicit dimensions");
   }
   // It's possible that the implicit dim change is a no-op.
   VectorLayout src_candidate(src.bitwidth(), src.offsets(), src.tiling(),
@@ -7802,26 +7884,185 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
 }
 
 // TODO(apaszke): Test this function properly
-FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
-                                           OpBuilder &builder,
-                                           TypedValue<VectorType> v,
-                                           VectorLayout src,
-                                           VectorLayout dst) {
+FailureOr<std::pair<VectorLayout, xla::Array<Value>>> relayoutVregs(
+    RewriteContext& ctx, OpBuilder& builder, Location loc, VectorType vty,
+    xla::Array<Value> src_tiles, VectorLayout src, VectorLayout dst) {
+  CHECK(!vty.getElementType().isSignlessInteger(1));
   const auto target_shape = ctx.target_shape;
-  VectorType vty = v.getType();
   const int8_t bitwidth = src.bitwidth();
-  const bool is_mask = vty.getElementTypeBitWidth() == 1;
+  if (bitwidth != dst.bitwidth()) {
+    return emitError(loc, "Can't change bitwidth during a relayout");
+  }
+
+  // Two easy cases: source is more general, or is replicated.
+  if (src.generalizes(dst, vty.getShape(), target_shape)) {
+    // A value with a replicated offset might use fewer vregs than a value with
+    // a non-zero offset.
+    auto src_product =
+        xla::Product(src.tileArrayShape(vty.getShape(), target_shape));
+    auto dst_product =
+        xla::Product(dst.tileArrayShape(vty.getShape(), target_shape));
+    // If the product is not the same, fall through - it should still be no-op
+    // TODO(tlongeri): Remove this check and handle everything through
+    // changeTiling/changeOffsets. Currently changeTiling is not smart when
+    // tilings are equivalent due to a small shape.
+    if (src_product == dst_product) {
+      src_tiles.Reshape(
+          dst.tileArrayImplicitShape(vty.getShape(), target_shape));
+      return std::make_pair(dst, std::move(src_tiles));
+    }
+  }
+
+  if (const LayoutOffsets src_offsets =
+          src.getCanonicalOffsets(vty.getShape(), ctx.target_shape);
+      src.layout_rank() >= dst.layout_rank() && !src_offsets[0].has_value() &&
+      !src_offsets[1].has_value()) {
+    // A fully replicated value is always easy to relayout
+    xla::Array<Value> dst_tiles(
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
+    SmallVector<int64_t> idxs;
+    dst_tiles.Each([&](const absl::Span<const int64_t> src_idx, Value *vreg) {
+      idxs.assign(src_idx.begin(), src_idx.end());
+      dst.eraseImplicit(idxs);
+      src.insertImplicit<int64_t>(idxs, 0);
+      *(idxs.end() - 2) = 0;
+      *(idxs.end() - 1) = 0;
+      *vreg = src_tiles(idxs);
+    });
+    return std::make_pair(dst, std::move(dst_tiles));
+  }
+
+  // Consider (1,128),-2 -> (8,128). In this case we can change the implicit
+  // dim for free before we change the tiling, but not after.
+  // TODO(apaszke): In general the number of vregs necessary to represent a
+  // value for different implicit dims satisfies kNone < kSecondMinor < kMinor.
+  // We should use this property to decide if we should change the implicit dim
+  // before or after changing the tiling and offsets.
+  if (src.implicit_dim() != dst.implicit_dim()) {
+    VectorLayout src_candidate(src.bitwidth(), src.offsets(), src.tiling(),
+                               dst.implicit_dim());
+    if (src_candidate.equivalentTo(src, vty.getShape(), target_shape)) {
+      src = src_candidate;
+      src_tiles.Reshape(
+          src.tileArrayImplicitShape(vty.getShape(), target_shape));
+    }
+  }
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      std::tie(src, src_tiles),
+      changeTiling(ctx, builder, loc, vty, src, std::move(src_tiles),
+                   dst.tiling(), dst.offsets()));
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      std::tie(src, src_tiles),
+      changeImplicitDim(ctx, builder, loc, vty, src, std::move(src_tiles),
+                        dst.implicit_dim(), dst.offsets()));
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      std::tie(src, src_tiles),
+      changeOffsets(ctx, builder, loc, vty, src, std::move(src_tiles),
+                    dst.offsets()));
+
+  CHECK_EQ(src, dst);
+  return std::make_pair(dst, std::move(src_tiles));
+}
+
+FailureOr<std::pair<VectorLayout, xla::Array<Value>>> relayoutMasks(
+    RewriteContext& ctx, OpBuilder& builder, Location loc, VectorType vty,
+    xla::Array<Value> src_regs, VectorLayout src, VectorLayout dst) {
+  CHECK(vty.getElementType().isSignlessInteger(1));
+  VectorType dst_mask_reg_ty = getNativeVregOrVmaskType(
+      builder.getI1Type(), dst.bitwidth(), ctx.target_shape);
+  const std::array<int64_t, 2> target_shape = ctx.target_shape;
+  const int8_t bitwidth = src.bitwidth();
+
+  if (const LayoutOffsets src_offsets =
+          src.getCanonicalOffsets(vty.getShape(), ctx.target_shape);
+      src.layout_rank() >= dst.layout_rank() && !src_offsets[0].has_value() &&
+      !src_offsets[1].has_value()) {
+    // Fully replicated masks are easy to relayout, even to different bitwidths
+    src_regs.Each([&](const absl::Span<const int64_t> idx, Value* vreg) {
+      *vreg = builder.create<tpu::MaskCastOp>(loc, dst_mask_reg_ty, *vreg);
+    });
+    xla::Array<Value> dst_regs(
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
+    SmallVector<int64_t> src_idx;
+    dst_regs.Each([&](const absl::Span<const int64_t> dst_idx, Value* vreg) {
+      src_idx.assign(dst_idx.begin(), dst_idx.end());
+      dst.eraseImplicit(src_idx);
+      src.insertImplicit<int64_t>(src_idx, 0);
+      *(src_idx.end() - 2) = 0;
+      *(src_idx.end() - 1) = 0;
+      *vreg = src_regs(src_idx);
+    });
+    return std::make_pair(dst, std::move(dst_regs));
+  }
+
   const bool is_mask_pack =
-      is_mask && bitwidth == 32 && dst.bitwidth() == 16 &&
+      bitwidth == 32 && dst.bitwidth() == 16 &&
       src.tiling()[0] == src.packing() * target_shape[0] &&
       src.tiling()[1] == target_shape[1] && src.tiling() == dst.tiling() &&
       src.offsets() == dst.offsets() &&
       src.implicit_dim() == dst.implicit_dim();
-
-  if (bitwidth != dst.bitwidth() && !is_mask_pack) {
-    return emitError(v.getLoc(), "Can't change bitwidth during a relayout");
+  if (is_mask_pack) {
+    std::vector<int64_t> masks_shape(src_regs.dimensions().begin(),
+                                     src_regs.dimensions().end());
+    *(masks_shape.end() - 1) = llvm::divideCeil(masks_shape.back(), 2);
+    xla::Array<Value> out_masks(masks_shape);
+    SmallVector<int64_t> val_idx;
+    out_masks.Each([&](absl::Span<const int64_t> idx, Value* v_slot_in_array) {
+      val_idx.assign(idx.begin(), idx.end());
+      if (!src.offsets()[1].has_value()) {
+        CHECK_EQ(*(val_idx.end() - 1), 0);
+        Value src_vreg = src_regs(val_idx);
+        *v_slot_in_array = builder.create<PackMaskOp>(loc, dst_mask_reg_ty,
+                                                      src_vreg, src_vreg);
+      } else {
+        val_idx.assign(idx.begin(), idx.end());
+        val_idx.back() *= 2;
+        CHECK_LT(val_idx.back(), src_regs.dimensions().back());
+        Value low_part = src_regs(val_idx);
+        val_idx.back() += 1;
+        // If we don't care about the high part, just use the low part to avoid
+        // depending on other vmask values.
+        Value high_part = val_idx.back() < src_regs.dimensions().back()
+                              ? src_regs(val_idx)
+                              : low_part;
+        *v_slot_in_array = builder.create<PackMaskOp>(loc, dst_mask_reg_ty,
+                                                      low_part, high_part);
+      }
+    });
+    return std::make_pair(dst, std::move(out_masks));
   }
+  // Fall back to a vreg relayout
+  Type extended_ty = builder.getIntegerType(bitwidth);
+  VectorType vreg_ty =
+      getNativeVregOrVmaskType(extended_ty, bitwidth, target_shape);
+  src_regs.Each([&](const absl::Span<const int64_t> idx, Value* reg) {
+    *reg = builder.create<arith::ExtUIOp>(loc, vreg_ty, *reg);
+  });
+  FAILUREOR_ASSIGN_OR_RETURN(
+      std::tie(src, src_regs),
+      relayoutVregs(ctx, builder, loc,
+                    VectorType::get(vty.getShape(), extended_ty), src_regs, src,
+                    dst));
+  // Convert back to masks
+  auto zeros_vreg = builder.create<arith::ConstantOp>(
+      loc, DenseElementsAttr::get(
+               vreg_ty,
+               builder.getIntegerAttr(builder.getIntegerType(bitwidth), 0)));
+  src_regs.Each([&](const absl::Span<const int64_t> idx, Value* reg) {
+    *reg = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, *reg,
+                                         zeros_vreg);
+  });
+  return std::make_pair(dst, std::move(src_regs));
+}
 
+FailureOr<TypedValue<VectorType>> relayout(RewriteContext& ctx,
+                                           OpBuilder& builder,
+                                           TypedValue<VectorType> v,
+                                           VectorLayout src, VectorLayout dst) {
+  VectorType vty = v.getType();
   {
     // Replication imposes a replication constraint on the *logical* value of
     // the vector: When moving along a replicated axis, all elements must be
@@ -7852,146 +8093,23 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
     }
   }
 
-  FAILUREOR_ASSIGN_OR_RETURN(
-      xla::Array<Value> src_tiles,
-      disassemble(builder, src, v, target_shape, /*use_implicit_shape=*/true));
+  FAILUREOR_ASSIGN_OR_RETURN(xla::Array<Value> src_regs,
+                             disassemble(builder, src, v, ctx.target_shape,
+                                         /*use_implicit_shape=*/true));
 
-  if (is_mask_pack) {
-    std::vector<int64_t> vmsks_shape(src_tiles.dimensions().begin(),
-                                     src_tiles.dimensions().end());
-    *(vmsks_shape.end() - 1) = llvm::divideCeil(vmsks_shape.back(), 2);
-    xla::Array<Value> out_vmsks(vmsks_shape);
-    SmallVector<int64_t> val_idx;
-    const VectorType mask_ty = getNativeVregOrVmaskType(
-        builder.getI1Type(), bitwidth / 2, target_shape);
-    out_vmsks.Each([&](absl::Span<const int64_t> idx, Value* v_slot_in_array) {
-      val_idx.assign(idx.begin(), idx.end());
-      if (!src.offsets()[1].has_value()) {
-        CHECK_EQ(*(val_idx.end() - 1), 0);
-        Value src_vreg = src_tiles(val_idx);
-        *v_slot_in_array =
-            builder.create<PackMaskOp>(v.getLoc(), mask_ty, src_vreg, src_vreg);
-      } else {
-        val_idx.assign(idx.begin(), idx.end());
-        val_idx.back() *= 2;
-        CHECK_LT(val_idx.back(), src_tiles.dimensions().back());
-        Value low_part = src_tiles(val_idx);
-        val_idx.back() += 1;
-        // If we don't care about the high part, just use the low part to avoid
-        // depending on other vmask values.
-        Value high_part = val_idx.back() < src_tiles.dimensions().back()
-                              ? src_tiles(val_idx)
-                              : low_part;
-        *v_slot_in_array = builder.create<PackMaskOp>(v.getLoc(), mask_ty,
-                                                      low_part, high_part);
-      }
-    });
-    return assemble(builder, vty, dst, out_vmsks, target_shape,
-                    /*use_implicit_shape=*/true)
-        .getResult();
+  if (vty.getElementType().isSignlessInteger(1)) {
+    FAILUREOR_ASSIGN_OR_RETURN(
+        std::tie(src, src_regs),
+        relayoutMasks(ctx, builder, v.getLoc(), vty, src_regs, src, dst));
+  } else {
+    FAILUREOR_ASSIGN_OR_RETURN(
+        std::tie(src, src_regs),
+        relayoutVregs(ctx, builder, v.getLoc(), vty, src_regs, src, dst));
   }
-
-  if (is_mask) {
-    auto new_tile_ty = getNativeVregOrVmaskType(
-        builder.getIntegerType(bitwidth), bitwidth, target_shape);
-    src_tiles.Each([&](const absl::Span<const int64_t> idx, Value *tile) {
-      *tile =
-          builder.create<arith::ExtUIOp>(tile->getLoc(), new_tile_ty, *tile);
-    });
-    vty = VectorType::get(vty.getShape(), builder.getIntegerType(bitwidth));
-  }
-  auto assemble_with_mask_check = [&](xla::Array<Value> &tiles,
-                                      bool use_implicit_shape = false) {
-
-
-    if (is_mask) {
-      auto zeros_tile = builder.create<arith::ConstantOp>(
-          tiles.begin()->getLoc(),
-          DenseElementsAttr::get(
-              cast<VectorType>(tiles.begin()->getType()),
-              builder.getIntegerAttr(builder.getIntegerType(bitwidth), 0)));
-      tiles.Each([&](const absl::Span<const int64_t> idx, Value *tile) {
-        *tile = builder.create<arith::CmpIOp>(
-            tile->getLoc(), arith::CmpIPredicate::ne, *tile, zeros_tile);
-      });
-      vty = VectorType::get(vty.getShape(), builder.getI1Type());
-    }
-    return assemble(builder, vty, dst, tiles, target_shape, use_implicit_shape)
-        .getResult();
-  };
-  // Two easy cases: source is more general, or is replicated.
-  if (src.generalizes(dst, vty.getShape(), target_shape)) {
-    // A value with a replicated offset might use fewer vregs than a value with
-    // a non-zero offset.
-    auto src_product =
-        xla::Product(src.tileArrayShape(vty.getShape(), target_shape));
-    auto dst_product =
-        xla::Product(dst.tileArrayShape(vty.getShape(), target_shape));
-    // If the product is not the same, fall through - it should still be no-op
-    // TODO(tlongeri): Remove this check and handle everything through
-    // changeTiling/changeOffsets. Currently changeTiling is not smart when
-    // tilings are equivalent due to a small shape.
-    if (src_product == dst_product) {
-      src_tiles.Reshape(
-          dst.tileArrayImplicitShape(vty.getShape(), target_shape));
-      return assemble_with_mask_check(src_tiles,
-                                      /*use_implicit_shape=*/true);
-    }
-  }
-
-  if (const LayoutOffsets src_offsets =
-          src.getCanonicalOffsets(vty.getShape(), ctx.target_shape);
-      src.layout_rank() >= dst.layout_rank() && !src_offsets[0].has_value() &&
-      !src_offsets[1].has_value()) {
-    // A fully replicated value is always easy to relayout
-    xla::Array<Value> dst_tiles(
-        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
-    SmallVector<int64_t> idxs;
-    dst_tiles.Each([&](const absl::Span<const int64_t> src_idx, Value *vreg) {
-      idxs.assign(src_idx.begin(), src_idx.end());
-      dst.eraseImplicit(idxs);
-      src.insertImplicit<int64_t>(idxs, 0);
-      *(idxs.end() - 2) = 0;
-      *(idxs.end() - 1) = 0;
-      *vreg = src_tiles(idxs);
-    });
-    return assemble_with_mask_check(dst_tiles, /*use_implicit_shape=*/true);
-  }
-
-  // Consider (1,128),-2 -> (8,128). In this case we can change the implicit
-  // dim for free before we change the tiling, but not after.
-  // TODO(apaszke): In general the number of vregs necessary to represent a
-  // value for different implicit dims satisfies kNone < kSecondMinor < kMinor.
-  // We should use this property to decide if we should change the implicit dim
-  // before or after changing the tiling and offsets.
-  if (src.implicit_dim() != dst.implicit_dim()) {
-    VectorLayout src_candidate(src.bitwidth(), src.offsets(), src.tiling(),
-                               dst.implicit_dim());
-    if (src_candidate.equivalentTo(src, vty.getShape(), target_shape)) {
-      src = src_candidate;
-      src_tiles.Reshape(
-          src.tileArrayImplicitShape(vty.getShape(), target_shape));
-    }
-  }
-
-  FAILUREOR_ASSIGN_OR_RETURN(
-      std::tie(src, src_tiles),
-      changeTiling(ctx, builder, v.getLoc(), vty, src, std::move(src_tiles),
-                   dst.tiling(), dst.offsets()));
-
-  FAILUREOR_ASSIGN_OR_RETURN(
-      std::tie(src, src_tiles),
-      changeImplicitDim(ctx, builder, v.getLoc(), vty, src,
-                        std::move(src_tiles), dst.implicit_dim(),
-                        dst.offsets()));
-
-  FAILUREOR_ASSIGN_OR_RETURN(
-      std::tie(src, src_tiles),
-      changeOffsets(ctx, builder, v.getLoc(), vty, src, std::move(src_tiles),
-                    dst.offsets()));
-
-  CHECK_EQ(src, dst);
-  return assemble_with_mask_check(src_tiles, /*use_implicit_shape=*/true);
+  CHECK(src == dst);
+  return assemble(builder, vty, src, src_regs, ctx.target_shape,
+                  /*use_implicit_shape=*/true)
+      .getResult();
 }
 
 LogicalResult tpu_relayout_rule(RewriteContext &ctx, Operation &op,

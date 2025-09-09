@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from jax._src import array
-from jax._src import deprecations
+from jax._src import dtypes
 from jax._src import xla_bridge
 from jax._src.api import device_put
 from jax._src.lax.lax import _array_copy
@@ -184,77 +184,12 @@ def _place_array(_arr, device, dlpack_device, copy):
     return jnp.array(_arr, copy=True)
   return _arr
 
-def _legacy_from_dlpack(dlpack, device: xla_client.Device | None = None,
-                        copy: bool | None = None):
-  preferred_platform = getattr(device, "platform", None)
-  if device and preferred_platform == "gpu":
-    preferred_platform = "cuda" if "cuda" in device.client.platform_version else "rocm"
-
-  cpu_backend = xla_bridge.get_backend("cpu")
-  gpu_backend = None
-
-  if preferred_platform in {"cuda", "rocm"}:
-    try:
-      gpu_backend = xla_bridge.get_backend(preferred_platform)
-    except RuntimeError:
-      raise TypeError(
-        f"A {str.upper(preferred_platform)} device was specified, however no "
-        f"{str.upper(preferred_platform)} backend was found."
-      )
-
-  if preferred_platform is None:
-    try:
-      gpu_backend = xla_bridge.get_backend("cuda")
-    except RuntimeError:
-      pass
-    # Try ROCm if CUDA backend not found
-    if gpu_backend is None:
-      try:
-        gpu_backend = xla_bridge.get_backend("rocm")
-      except RuntimeError:
-        pass
-
-  _arr = jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
-      dlpack, cpu_backend, gpu_backend))
-  dlpack_device, = _arr.devices()
-  return _place_array(_arr, device, dlpack_device, copy)
-
 def _is_tensorflow_tensor(external_array):
   t = type(external_array)
   return (
       t.__qualname__ == "EagerTensor"
       and t.__module__.endswith("tensorflow.python.framework.ops")
   )
-
-def _from_dlpack(external_array, device: xla_client.Device | None = None,
-                 copy: bool | None = None):
-  dl_device_type, device_id = external_array.__dlpack_device__()
-  try:
-    dl_device_platform = _DL_DEVICE_TO_PLATFORM[dl_device_type]
-  except KeyError:
-    raise TypeError(
-        "Array passed to from_dlpack is on unsupported device type "
-        f"(DLDeviceType: {dl_device_type}, array: {external_array}"
-    ) from None
-
-  backend = xla_bridge.get_backend(dl_device_platform)
-  dlpack_device = backend.device_from_local_hardware_id(device_id)
-  if _is_tensorflow_tensor(external_array):
-    # TensorFlow does not support stream=.
-    stream = None
-  else:
-    try:
-      stream = dlpack_device.get_stream_for_external_ready_events()
-    except xla_client.XlaRuntimeError as err:
-      if "UNIMPLEMENTED" in str(err):
-        stream = None
-      else:
-        raise
-  dlpack = external_array.__dlpack__(stream=stream)
-
-  _arr = jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
-      dlpack, dlpack_device, stream))
-  return _place_array(_arr, device, dlpack_device, copy)
 
 def from_dlpack(external_array,
                 device: xla_client.Device | Sharding | None = None,
@@ -297,18 +232,38 @@ def from_dlpack(external_array,
         f"a Sharding with {len(device_set)} devices was provided."
       )
     device, = device_set
-  if hasattr(external_array, "__dlpack__"):
-    return _from_dlpack(external_array, device, copy)
+  if not hasattr(external_array, "__dlpack__") or not hasattr(external_array, "__dlpack_device__"):
+    raise TypeError(
+        "The array passed to from_dlpack must have __dlpack__ and __dlpack_device__ methods."
+    )
 
-  # Deprecated legacy path.
-  # TODO(slebedev): Remove on or after December 3rd 2023.
-  deprecations.warn(
-      "jax-dlpack-import-legacy",
-      (
-          "Calling from_dlpack with a DLPack tensor is deprecated. The argument"
-          " to from_dlpack should be an array from another framework that"
-          " implements the __dlpack__ protocol."
-      ),
-      stacklevel=2,
-  )
-  return _legacy_from_dlpack(external_array, device, copy)
+  dl_device_type, device_id = external_array.__dlpack_device__()
+  try:
+    dl_device_platform = _DL_DEVICE_TO_PLATFORM[dl_device_type]
+  except KeyError:
+    raise TypeError(
+        "Array passed to from_dlpack is on unsupported device type "
+        f"(DLDeviceType: {dl_device_type}, array: {external_array}"
+    ) from None
+
+  backend = xla_bridge.get_backend(dl_device_platform)
+  dlpack_device = backend.device_from_local_hardware_id(device_id)
+  if _is_tensorflow_tensor(external_array):
+    # TensorFlow does not support stream=.
+    stream = None
+  else:
+    try:
+      stream = dlpack_device.get_stream_for_external_ready_events()
+    except xla_client.XlaRuntimeError as err:
+      if "UNIMPLEMENTED" in str(err):
+        stream = None
+      else:
+        raise
+  dlpack = external_array.__dlpack__(stream=stream)
+
+  arr = xla_client._xla.dlpack_managed_tensor_to_buffer(
+      dlpack, dlpack_device, stream)
+  # TODO(phawkins): when we are ready to support x64 arrays in
+  # non-x64 mode, change the semantics to not canonicalize here.
+  arr = jnp.asarray(arr, dtype=dtypes.canonicalize_dtype(arr.dtype))
+  return _place_array(arr, device, dlpack_device, copy)

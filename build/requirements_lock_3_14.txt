@@ -96,9 +96,13 @@ jaxlib==0.7.1 \
     --hash=sha256:eaf5f68f53bf4dcb93b6512538547667625588e4f3ccaeef048788fd18d8c0d5 \
     --hash=sha256:f0f1f52956b8c2518ab000a4d3d8c21be777e1d47f926ba03640e391061a41ee
     # via -r build/requirements.in
-libtpu==0.0.20 ; sys_platform == "linux" and platform_machine == "x86_64" \
-    --hash=sha256:b0f5fbd0669704515cbb127f77830c5129843e93dc3da69fb124a82064fef92a
-    # via -r build/requirements.in
+libtpu==0.0.21.1 ; sys_platform == "linux" and platform_machine == "x86_64" \
+    --hash=sha256:507f7e907e409b10b5d55a1543ac110bd2b24b91d9f96e3a82b46a9ff18da3f4 \
+    --hash=sha256:6172b39ddab2fbdfb8c9c10b8dfaf1584a59982e308dc81d4dee8d7eec07662f \
+    --hash=sha256:81d4df873505eed98710f244ed82a74b40036ca029d142db8b2ea73f57c70495 \
+    --hash=sha256:966659d801136bfe133bd6e4ab0ca3540c082220897fb0c27b51e9b018e71c39 \
+    --hash=sha256:be87a60fe9ce5c0ecef6062d0b6ffb6ad60fe0ddc508f12d59ada082c706abc4 \
+    --hash=sha256:ef85ed23cfaa3db955db7c085213c3f83bd752455aef369e8dbecc673713769f
 markdown-it-py==4.0.0 \
     --hash=sha256:87327c59b172c5011896038353a81343b6754500a08cd7a4973bb48c6d578147 \
     --hash=sha256:cb0a2b4aa34f932c007117b194e945bd74e0ec24133ceb5bac59009cda1cb9f3

@@ -42,6 +42,9 @@ for wheel in $WHEELS; do
     # manylinux2014 is an alias for manylinux_2_17.
     if echo "$OUTPUT" | grep -q "manylinux_2_27"; then
         printf "\n$wheel_name is manylinux_2_27 compliant.\n"
+    # jax_cudaX_plugin...aarch64.whl is consistent with tag: manylinux_2_26_aarch64"
+    elif echo "$OUTPUT" | grep -q "manylinux_2_26"; then
+        printf "\n$wheel_name is manylinux_2_26 compliant.\n"
     elif echo "$OUTPUT" | grep -q "manylinux_2_17"; then
         printf "\n$wheel_name is manylinux2014 compliant.\n"
     else

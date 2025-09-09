@@ -575,7 +575,6 @@ def _dot_product_attention_fwd_abstract(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
     page_table_k, page_table_v, *, scale, seed, dropout_rate, variadic_args,
     mask_type, layout, sliding_window_length, is_training):
-  query_dtype = dtypes.canonicalize_dtype(query.dtype)
   if layout == AttentionLayout.BNTH.value:
     B, N, T, _ = query.shape
     _, _, S, H = value.shape
@@ -590,50 +589,45 @@ def _dot_product_attention_fwd_abstract(
 
   if is_training:
     return (
-      core.ShapedArray(output_shape, query_dtype),  # output
+      core.ShapedArray(output_shape, query.dtype),  # output
       core.ShapedArray(softmax_stat_shape, np.float32),  # softmax_stat
     )
   else:
     return (
-      core.ShapedArray(output_shape, query_dtype),  # output
+      core.ShapedArray(output_shape, query.dtype),  # output
     )
 
 def _dot_product_attention_bwd_abstract(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
     page_table_k, page_table_v, activation, fwd_output, grad_output, *,
     scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length):
-  query_dtype = dtypes.canonicalize_dtype(query.dtype)
-  key_dtype = dtypes.canonicalize_dtype(key.dtype)
-  value_dtype = dtypes.canonicalize_dtype(value.dtype)
-
   _, has_dbias = variadic_args
   if has_dbias:
     # cuDNN supports bias for this case
-    bias_dtype = dtypes.canonicalize_dtype(bias.dtype)
     return (
       core.ShapedArray(
-          query.shape, query_dtype
+          query.shape, query.dtype
       ),  # grad query
       core.ShapedArray(
-          key.shape, key_dtype
+          key.shape, key.dtype
       ),  # grad key
       core.ShapedArray(
-          value.shape, value_dtype
+          value.shape, value.dtype
       ),  # grad value
       core.ShapedArray(
-          bias.shape, bias_dtype
+          bias.shape, bias.dtype
       ),  # grad bias
     )
   else:
     return (
       core.ShapedArray(
-          query.shape, query_dtype
+          query.shape, query.dtype
       ),  # grad query
       core.ShapedArray(
-          key.shape, key_dtype
+          key.shape, key.dtype
       ),  # grad key
       core.ShapedArray(
-          value.shape, value_dtype
+          value.shape, value.dtype
       ),  # grad value
     )
 
@@ -1353,7 +1347,6 @@ def _dot_product_attention_fp8_fwd_abstract(
     query, key, value,
     descale_q, descale_k, descale_v, descale_s, scale_s, scale_o,
     scale, use_causal_mask, layout, is_training):
-  query_dtype = dtypes.canonicalize_dtype(query.dtype)
   if layout == AttentionLayout.BNTH.value:
     B, N, T, _ = query.shape
     _, _, S, _ = key.shape
@@ -1366,14 +1359,14 @@ def _dot_product_attention_fp8_fwd_abstract(
   # output, amax_s, amax_o[, softmax_stat]
   if is_training:
     return (
-      core.ShapedArray(output_shape, query_dtype),
+      core.ShapedArray(output_shape, query.dtype),
       core.ShapedArray((1,1,1,1), np.float32),
       core.ShapedArray((1,1,1,1), np.float32),
       core.ShapedArray(softmax_stat_shape, np.float32),
     )
   else:
     return (
-      core.ShapedArray(output_shape, query_dtype),
+      core.ShapedArray(output_shape, query.dtype),
       core.ShapedArray((1,1,1,1), np.float32),
       core.ShapedArray((1,1,1,1), np.float32),
     )
@@ -1383,16 +1376,11 @@ def _dot_product_attention_fp8_bwd_abstract(
     descale_q, descale_k, descale_v, descale_o, descale_dO, descale_s,
     descale_dP, scale_s, scale_dQ, scale_dK, scale_dV, scale_dP,
     scale, use_causal_mask, layout):
-  query_dtype = dtypes.canonicalize_dtype(query.dtype)
-  key_dtype = dtypes.canonicalize_dtype(key.dtype)
-  value_dtype = dtypes.canonicalize_dtype(value.dtype)
-
   amax_shape = (1,1,1,1)
-
   return (
-    core.ShapedArray(query.shape, query_dtype),
-    core.ShapedArray(key.shape, key_dtype),
-    core.ShapedArray(value.shape, value_dtype),
+    core.ShapedArray(query.shape, query.dtype),
+    core.ShapedArray(key.shape, key.dtype),
+    core.ShapedArray(value.shape, value.dtype),
     core.ShapedArray(amax_shape, np.float32),
     core.ShapedArray(amax_shape, np.float32),
     core.ShapedArray(amax_shape, np.float32),

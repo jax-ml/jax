@@ -93,10 +93,6 @@ class DLPackTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
 
-    def _check_copy(x: jax.Array, y: jax.Array, expect_copy):
-      copied = x.unsafe_buffer_pointer() != y.unsafe_buffer_pointer()
-      assert copied == expect_copy, f"Expected {'a' if expect_copy else 'no'} copy"
-
     # Check if the source device is preserved
     x = jax.device_put(np, jax.devices("cpu")[0])
     device = jax.devices("gpu")[0]

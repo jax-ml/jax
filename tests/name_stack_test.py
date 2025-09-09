@@ -18,6 +18,7 @@ import jax
 from jax import api_util
 from jax import lax
 import jax.numpy as jnp
+from jax._src import config
 from jax._src import core
 from jax._src.pjit import pjit
 from jax._src import linear_util as lu
@@ -120,6 +121,9 @@ class NameStackTest(jtu.JaxTestCase):
     self.assertIn('foo/jit(_f)', hlo_text)
 
   def test_pmap_call_primitive_jaxpr_should_not_store_outer_name_stack(self):
+    if config.pmap_shmap_merge.value:
+      self.skipTest("Is this test still relevant?")
+
     @jax.named_scope('foo')
     @jax.pmap
     def f(x):

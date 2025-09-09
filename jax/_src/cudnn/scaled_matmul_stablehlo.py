@@ -105,7 +105,6 @@ def _scaled_matmul_cuda_lowering(
 
 
 def _scaled_matmul_abstract(a, b, a_scale, b_scale, *, preferred_element_type):
-  a_dtype = dtypes.canonicalize_dtype(a.dtype)
   batch, non_contracting_lhs, contracting_lhs = a.shape
   _, non_contracting_rhs, _ = b.shape
   output_shape = (batch, non_contracting_lhs, non_contracting_rhs)
@@ -405,9 +404,8 @@ def scaled_matmul_wrapper(
     assert lhs_K == rhs_K
     _, _, K_block = lhs_scales.shape
 
-    preferred_element_type = dtypes.canonicalize_dtype(
-        np.dtype(preferred_element_type)
-    )
+    preferred_element_type = dtypes.check_and_canonicalize_user_dtype(
+        preferred_element_type, "scaled_matmul_wrapper")
 
     out = _scaled_matmul(
         lhs,
@@ -562,9 +560,8 @@ def scaled_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type,
         lhs, rhs, return_weak_type_flag=False
     )
   else:
-    preferred_element_type = dtypes.canonicalize_dtype(
-        np.dtype(preferred_element_type)
-    )
+    preferred_element_type = dtypes.check_and_canonicalize_user_dtype(
+        preferred_element_type, "scaled_dot_impl")
 
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_dn = (lhs_contract, lhs_batch)

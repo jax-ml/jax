@@ -30,7 +30,7 @@ try:
   # We only import this to see if Mosaic is available.
   import jax.experimental.mosaic.gpu  # noqa: F401
 except ImportError:
-  ragged_dot = None
+  ragged_dot_mgpu = None
 else:
   from jax.experimental.pallas.ops.gpu import ragged_dot_mgpu
 

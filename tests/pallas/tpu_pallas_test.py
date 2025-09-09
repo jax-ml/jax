@@ -181,16 +181,15 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     np.testing.assert_allclose(out, x.reshape((8, 8, -1))[s].reshape(x.shape))
 
   @parameterized.parameters(
-      # (jnp.bfloat16, 0),
-      # (jnp.bfloat16, 3),
-      # (jnp.bfloat16, 129),
-      # (jnp.int16, 2),
-      # (jnp.int16, 5),
-      # (jnp.int16, 257),
-      # (jnp.int8, 311),
-      # (jnp.int8, 597),
-      # (jnp.int8, 1025),
-      (jnp.int32, 1025),
+      (jnp.bfloat16, 0),
+      (jnp.bfloat16, 3),
+      (jnp.bfloat16, 129),
+      (jnp.int16, 2),
+      (jnp.int16, 5),
+      (jnp.int16, 257),
+      (jnp.int8, 311),
+      (jnp.int8, 597),
+      (jnp.int8, 1025),
   )
   def test_narrow_bitwidth_scalar_prefetch(self, dtype, index):
     def body(s_ref, o_ref):
@@ -1967,9 +1966,13 @@ class PallasCallTest(PallasBaseTest):
   def test_replicated_broadcast_reduction(
       self, m, replicated, reduced_dims, dty, reduce_func
   ):
-    if dty == jnp.int32 and 1 in reduced_dims:
-      # TODO(b/395579834): Remove this skip once we implement this.
-      self.skipTest('int32 reduction on last dimension not supported')
+    # TODO(b/395579834): Remove this skip later.
+    if (
+        dty == jnp.int32
+        and 1 in reduced_dims
+        and is_cloud_tpu_older_than(2025, 9, 1)
+    ):
+      self.skipTest('Requires libtpu built after 2025-09-01')
     if not jtu.is_device_tpu_at_least(4) and len(replicated) == 2:
       self.skipTest(
           'Brodcast in both sublanes and lanes not supported on this hardware'
@@ -2152,27 +2155,44 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(jax_nans, mosaic_nans)
 
   @parameterized.product(
-      in_dtype=[jnp.int8, jnp.int16, jnp.int32, jnp.bfloat16, jnp.float32],
-      out_dtype=[jnp.int8, jnp.int16, jnp.int32, jnp.bfloat16, jnp.float32],
+      in_dtype=[
+          jnp.int8,
+          jnp.int16,
+          jnp.int32,
+          jnp.float8_e5m2,
+          jnp.float8_e4m3fn,
+          jnp.float8_e4m3b11fnuz,
+          jnp.bfloat16,
+          jnp.float32,
+      ],
+      out_dtype=[
+          jnp.int8,
+          jnp.int16,
+          jnp.int32,
+          jnp.float32,
+      ],
   )
   def test_scalar_casting(self, in_dtype, out_dtype):
     def kernel(x_ref, o_ref):
       o_ref[0] = x_ref[0].astype(out_dtype)
 
-    if in_dtype == jnp.bfloat16 and out_dtype == jnp.float32:
-      self.skipTest('TODO(b/412984649): bf16 -> f32 casting is not supported')
-    elif in_dtype == jnp.bfloat16 and out_dtype in [
-        jnp.int8,
-        jnp.int16,
-        jnp.int32,
-    ]:
-      self.skipTest('Any casting of bf16 -> iX requires bf16 -> f32 support')
-    elif in_dtype == jnp.int8 and out_dtype == jnp.int16:
-      self.skipTest('TODO(b/440044271): i8 -> i16 casting is not supported')
+    if jnp.issubdtype(in_dtype, jnp.floating) and is_cloud_tpu_older_than(
+        2025, 9, 13
+    ):
+      self.skipTest('bf16 -> f32 casting support was added on Sep 13, 2025')
+    elif (
+        in_dtype == jnp.int8
+        and out_dtype == jnp.int16
+        and is_cloud_tpu_older_than(2025, 9, 10)
+    ):
+      self.skipTest('i8 -> i16 casting support was added on Sep 10, 2025')
     elif in_dtype == jnp.int16 and out_dtype == jnp.int8:
       self.skipTest('TODO(b/440044490): i16 -> i8 casting is not supported')
 
-    x = jnp.asarray([-1], dtype=in_dtype)
+    x = jnp.asarray([7], dtype=in_dtype)
+    if jnp.issubdtype(in_dtype, jnp.signedinteger):
+      x *= -1
+
     y = pl.pallas_call(
         kernel,
         in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],

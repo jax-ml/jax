@@ -417,7 +417,8 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
   if not all(_map(core.typematch, in_avals, out_avals)):
     diffs = [f'{component(path)} has type {in_aval.str_short()}'
              ' but the corresponding output carry component has type '
-             f'{out_aval.str_short()}{core.aval_mismatch_extra(in_aval, out_aval)}'
+             f'{out_aval.str_short()}'
+             f'{core.aval_mismatch_extra(in_aval, out_aval)}'
              for path, in_aval, out_aval in zip(paths, in_avals, out_avals)
              if not core.typematch(in_aval, out_aval)]
 
@@ -540,7 +541,12 @@ def _empty_array(prefix, length_spec, aval):
   # empty = lax.empty((*prefix, *aval.shape), aval.dtype, out_sharding=sharding)
   # return core.pvary(empty, tuple(aval.vma))
   empty = core.pvary(lax.empty2(aval.dtype), tuple(aval.vma))
-  return lax.broadcast(empty, (*prefix, *aval.shape), out_sharding=sharding)
+  out = lax.broadcast(empty, (*prefix, *aval.shape), out_sharding=sharding)
+  # TODO(yashkatariya): Maybe make this more general by passing
+  # aval.memory_space to lax.broadcast and then remove this hack?
+  if aval.memory_space != core.typeof(out).memory_space:
+    out = api.device_put(out, aval.memory_space)
+  return out
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True
@@ -860,7 +866,11 @@ def _maybe_put(x):
     aval = core.shaped_abstractify(x)
     s = sharding.SingleDeviceSharding(xb.local_devices(backend='cpu')[0])
     result_handler = pxla.global_aval_to_result_handler(aval, s, False)
-    return result_handler(pxla.shard_args([s], [None], [None], [x]))
+    return result_handler(
+        pxla.shard_args(
+            [s], [None], [dispatch.ArrayCopySemantics.REUSE_INPUT], [x]
+        )
+    )
   else:
     return x
 
@@ -872,12 +882,14 @@ def _rearrange_mutable_binders(
   is_mutable = [isinstance(v.aval, AbstractRef) for v in invars]
   immut_invars, mut_invars = partition_list(is_mutable, invars)
   new_invars = [*fst, *mut_invars, *immut_invars, *rst]
-
-  arg_names = jaxpr.jaxpr.debug_info.safe_arg_names(len(jaxpr.in_avals))
-  fst, names, rst = split_list(arg_names, [num_prefix, num_binders])
-  immut_names, mut_names = partition_list(is_mutable, names)
-  dbg = jaxpr.jaxpr.debug_info._replace(
-      arg_names=[*fst, *mut_names, *immut_names, *rst])
+  if jaxpr.jaxpr.debug_info.arg_names is None:
+    new_arg_names = None
+  else:
+    fst, names, rst = split_list(jaxpr.jaxpr.debug_info.arg_names,
+                                 [num_prefix, num_binders])
+    immut_names, mut_names = partition_list(is_mutable, names)
+    new_arg_names = [*fst, *mut_names, *immut_names, *rst]
+  dbg = jaxpr.jaxpr.debug_info._replace(arg_names=new_arg_names)
 
   # TODO(mattjj): don't we need to re-number effects? test coverage?
   new_effs = pe._renumber_effects((*jaxpr.jaxpr.constvars, *new_invars),
@@ -1196,7 +1208,7 @@ def _transpose_scan_jaxpr_fancy(
     return [ad.instantiate_zeros(x.freeze()) for x in primals
             if isinstance(x, ad.ValAccum)]
 
-  dbg = jaxpr.jaxpr.debug_info._replace(arg_names=(), result_paths=())
+  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   transposed_wrapped = lu.wrap_init(transposed, debug_info=dbg)
   return _make_closed_jaxpr(transposed_wrapped, trans_avals)
 
@@ -1461,7 +1473,6 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
 def _scan_state_partial_discharge_rule(
     should_discharge, in_avals, out_avals, *args, jaxpr, num_consts, num_carry,
     linear, unroll, reverse, length, _split_transpose):
-  if jaxpr.consts: raise NotImplementedError("open an issue!")  # TODO(mattjj)
   # jaxpr: [*consts, *pure_carry, *xs] -> [*pure_carry, *pure_ys]
   # jaxpr_: [*consts, *pure_carry, *xs] -> [*pure_carry, *pure_ys, *ref_outs]
   discharged_jaxpr = state_discharge.discharge_state2(jaxpr, should_discharge)
@@ -1501,17 +1512,15 @@ def _scan_state_partial_discharge_rule(
   pure_x_avals = [core.mapped_aval(length, 0, a) for a in pure_xs_avals]
   in_avals = [*pure_const_avals, core.typeof(0), *carry_avals, *pure_x_avals]
 
-  if len(jaxpr.in_avals) != len(jaxpr.jaxpr.debug_info.arg_names):
-    # TODO(mattjj): debug caller giving us arg names of the wrong length
-    dbg = jaxpr.jaxpr.debug_info._replace(
-        arg_names=('',) * len(jaxpr.in_avals), result_paths=None)
+  if jaxpr.jaxpr.debug_info.arg_names is None:
+    arg_names = None
   else:
     arg_names = rearrange(jaxpr.jaxpr.debug_info.arg_names)
     pure_const_names, carry_names, pure_xs_names = split_list(
         arg_names, [num_pure_consts, num_const_refs + num_carry + num_xs_refs])
-    dbg = jaxpr.jaxpr.debug_info._replace(
-        arg_names=(*pure_const_names, 'iter', *carry_names, *pure_xs_names),
-        result_paths=None)
+    arg_names = (*pure_const_names, 'iter', *carry_names, *pure_xs_names)
+
+  dbg = jaxpr.jaxpr.debug_info._replace(arg_names=arg_names, result_paths=None)
 
   new_jaxpr_, _, new_consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(body, debug_info=dbg), in_avals)
@@ -2379,7 +2388,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
     return predicate
 
   new_cond_jaxpr, _, new_cond_consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(new_cond, debug_info=cond_jaxpr.debug_info),
+      lu.wrap_init(new_cond, debug_info=cond_jaxpr.debug_info.with_unknown_names()),
       [*remaining_cond_const_avals,
        *[a.inner_aval for a in body_ref_avals],
        *[a.inner_aval for a in cond_ref_avals],
@@ -2453,11 +2462,15 @@ def _fori_body_fun(body_fun: Callable, body_fun_dbg: core.DebugInfo) -> Callable
   def while_body_fun(loop_carry):
     i, upper, x = loop_carry
     return lax.add(i, lax._const(i, 1)), upper, body_fun_ref()(i, x)
+  if body_fun_dbg.arg_names is not None:
+    arg_names = (body_fun_dbg.arg_names[0],
+                 "",  # upper,
+                 * body_fun_dbg.arg_names[1:])
+  else:
+    arg_names = None
   api_util.save_wrapped_fun_debug_info(
       while_body_fun,
-      body_fun_dbg._replace(arg_names=(body_fun_dbg.arg_names[0],
-                                       "",  # upper,
-                                       * body_fun_dbg.arg_names[1:])))
+      body_fun_dbg._replace(arg_names=arg_names))
   return while_body_fun
 
 @weakref_lru_cache
@@ -2467,8 +2480,7 @@ def _fori_scan_body_fun(body_fun: Callable, body_fun_dbg: core.DebugInfo) -> Cal
     i, x = loop_carry
     return (i + 1, body_fun_ref()(i, x)), None
   api_util.save_wrapped_fun_debug_info(
-      scanned_fun,
-      body_fun_dbg._replace(arg_names=body_fun_dbg.arg_names + ("",)))
+      scanned_fun, body_fun_dbg._replace(result_paths=None))
   return scanned_fun
 
 @api_boundary
@@ -2534,8 +2546,8 @@ def fori_loop(lower, upper, body_fun, init_val,
     raise TypeError("lax.fori_loop: body_fun argument should be callable.")
 
   # TODO(phawkins): perhaps do more type checking here, better error messages.
-  lower_dtype = dtypes.canonicalize_dtype(lax.dtype(lower))
-  upper_dtype = dtypes.canonicalize_dtype(lax.dtype(upper))
+  lower_dtype = lax.dtype(lower)
+  upper_dtype = lax.dtype(upper)
   if lower_dtype == upper_dtype:
     dtype = lower_dtype
   else:
@@ -2973,7 +2985,7 @@ def _cumred_dtype_rule(name, operand, *args, **kw):
   if not dtypes.issubdtype(operand.dtype, np.number):
     raise TypeError("{} does not accept dtype {}. Accepted dtypes are subtypes "
                     "of number.".format(name, np.dtype(operand.dtype).name))
-  return dtypes.canonicalize_dtype(operand.dtype)
+  return operand.dtype
 
 
 def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):

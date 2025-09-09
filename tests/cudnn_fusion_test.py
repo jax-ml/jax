@@ -35,6 +35,9 @@ class CudnnFusionTest(jtu.JaxTestCase):
   @parameterized.parameters(["", "pmap"])
   @jtu.run_on_devices("cuda")
   def test_cudnn_fusion(self, mode):
+    if jtu.is_cuda_version_at_least(13, 0):
+      self.skipTest("cuDNN creates no execution plans on CUDA 13.0.")
+
     batch_size = 2
     if mode == "pmap" and jax.device_count() < batch_size:
         raise SkipTest("pmap test requires 2 GPUs")

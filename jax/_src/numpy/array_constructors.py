@@ -32,7 +32,7 @@ from jax._src.sharding import Sharding
 
 export = util.set_module('jax.numpy')
 
-for pkg_name in ['jax_cuda13_plugin', 'jax_cuda12_plugin', 'jax.jaxlib.cuda']:
+for pkg_name in ['jax_cuda13_plugin', 'jax_cuda12_plugin', 'jaxlib.cuda']:
   try:
     cuda_plugin_extension = importlib.import_module(
         f'{pkg_name}.cuda_plugin_extension'
@@ -152,7 +152,8 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     raise NotImplementedError("Only implemented for order='K'")
 
   # check if the given dtype is compatible with JAX
-  dtypes.check_user_dtype_supported(dtype, "array")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "array")
 
   # Here we make a judgment call: we only return a weakly-typed array when the
   # input object itself is weakly typed. That ensures asarray(x) is a no-op
@@ -224,15 +225,16 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     # Use lattice_result_type rather than result_type to avoid canonicalization.
     # Otherwise, weakly-typed inputs would have their dtypes canonicalized.
     try:
-      dtype = dtypes._lattice_result_type(*leaves)[0] if leaves else dtypes.float_
+      dtype = (
+          dtypes.lattice_result_type(*leaves)[0]
+          if leaves
+          else dtypes.default_float_dtype()
+      )
     except TypeError:
       # This happens if, e.g. one of the entries is a memoryview object.
       # This is rare, so we only handle it if the normal path fails.
       leaves = [_convert_to_array_if_dtype_fails(leaf) for leaf in leaves]
-      dtype = dtypes._lattice_result_type(*leaves)[0]
-
-  if not weak_type:
-    dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)  # type: ignore[assignment]
+      dtype = dtypes.lattice_result_type(*leaves)[0]
 
   object = treedef.unflatten(leaves)
   out: ArrayLike
@@ -377,7 +379,6 @@ def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
     raise ValueError(f"jnp.asarray: cannot convert object of type {type(a)} to JAX Array "
                      f"on platform={_get_platform(device)} with "
                      "copy=False. Consider using copy=None or copy=True instead.")
-  dtypes.check_user_dtype_supported(dtype, "asarray")
   if dtype is not None:
-    dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)  # type: ignore[assignment]
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "asarray")
   return array(a, dtype=dtype, copy=bool(copy), order=order, device=device)

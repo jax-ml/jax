@@ -27,6 +27,8 @@ from jax._src import pjit
 from jax._src import prng
 from jax._src import random
 from jax._src import shard_map
+from jax._src import callback
+from jax._src import debugging
 from jax._src.lax import (
   ann,
   control_flow,
@@ -48,6 +50,7 @@ for prim in it.chain(
   ad_checkpoint.__dict__.values(),
   ad_util.__dict__.values(),
   ann.__dict__.values(),
+  callback.__dict__.values(),
   control_flow.__dict__.values(),
   convolution.__dict__.values(),
   dispatch.__dict__.values(),
@@ -784,3 +787,36 @@ def _select_n_p_roofline(
           x.dtype.itemsize * x.size + out.dtype.itemsize * out.size
       ),
   )
+
+
+@roofline.register_roofline(callback.pure_callback_p)
+@roofline.register_roofline(callback.io_callback_p)
+def _callback_with_output_roofline(
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    **kw,
+) -> roofline.RooflineResult:
+  avals_in = ctx.avals_in
+  avals_out = ctx.avals_out
+  # HBM bytes for transferring inputs to host and results back to device.
+  hbm_bytes = roofline.RooflineShape.total_bytes(
+      avals_in
+  ) + roofline.RooflineShape.total_bytes(avals_out)
+  # We don't have access to the `callback_func`, so we assume it contributes 0
+  # flops.
+  return roofline.RooflineResult(unfused_hbm_bytes=hbm_bytes)
+
+
+@roofline.register_roofline(debugging.debug_callback_p)
+def _debug_callback_roofline(
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    **kw,
+) -> roofline.RooflineResult:
+  avals_in = ctx.avals_in
+  # `debug_callback` does not return values to the JAX program, so only input
+  # HBM bytes are considered.
+  hbm_bytes = roofline.RooflineShape.total_bytes(avals_in)
+  # We don't have access to the `callback_func`, so we assume it contributes 0
+  # flops.
+  return roofline.RooflineResult(unfused_hbm_bytes=hbm_bytes)

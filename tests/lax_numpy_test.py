@@ -100,8 +100,10 @@ def _bitcast_uint8_to_uint4(operand):
   result[..., 1::2] = ((operand & 0b11110000) >> 4).astype('uint4')
   return result
 
-def np_view(arr, dtype):
+def np_view(arr: np.ndarray, dtype) -> np.ndarray:
   # Implementation of np.ndarray.view() that works for int4/uint4
+  if dtype is None:
+    return arr
   dtype = np.dtype(dtype)
   nbits_in = dtypes.bit_width(arr.dtype)
   nbits_out = dtypes.bit_width(dtype)
@@ -666,8 +668,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
     @jtu.promote_like_jnp
     def np_fn(x, y, axis=axis):
-      f = jtu.numpy_vecdot if jtu.numpy_version() < (2, 0, 0) else np.vecdot
-      return f(x, y, axis=axis).astype(x.dtype)
+      return np.vecdot(x, y, axis=axis).astype(x.dtype)
     jnp_fn = partial(jnp.vecdot, axis=axis)
     tol = {np.float16: 1e-2, np.float32: 1E-3, np.float64: 1e-12,
            np.complex64: 1E-3, np.complex128: 1e-12, jnp.bfloat16: 1e-1}
@@ -1539,13 +1540,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp_fun = lambda x: jnp.asarray(x).mT
     else:
       jnp_fun = jnp.matrix_transpose
-    if jtu.numpy_version() >= (2, 0, 0):
-      np_fun = np.matrix_transpose
-    else:
-      np_fun = lambda x: np.swapaxes(x, -1, -2)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CheckAgainstNumpy(np.matrix_transpose, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
@@ -1658,7 +1655,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testIntegerPowerOverflow(self, x, y):
     # Regression test for https://github.com/jax-ml/jax/issues/5987
     args_maker = lambda: [x, y]
-    self._CheckAgainstNumpy(np.power, jnp.power, args_maker)
+    check_dtypes = platform.system() != 'Windows'
+    self._CheckAgainstNumpy(
+        np.power, jnp.power, args_maker, check_dtypes=check_dtypes
+    )
     self._CompileAndCheck(jnp.power, args_maker)
 
   @jtu.sample_product(
@@ -1822,10 +1822,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
               for size in [3, 1, 4]]
     @jtu.promote_like_jnp
     def np_fun(*args):
-      if jtu.numpy_version() >= (2, 0, 0):
-        return np.concat(args, axis=axis)
-      else:
-        return np.concatenate(args, axis=axis)
+      return np.concat(args, axis=axis)
     jnp_fun = lambda *args: jnp.concat(args, axis=axis)
     args_maker = lambda: [rng(shape, dtype) for shape in shapes]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
@@ -2105,40 +2102,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testUniqueAll(self, shape, dtype):
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    if jtu.numpy_version() < (2, 0, 0):
-      np_fun = partial(np_unique_backport, return_index=True, return_inverse=True, return_counts=True)
-    else:
-      np_fun = np.unique_all
-    self._CheckAgainstNumpy(jnp.unique_all, np_fun, args_maker)
+    self._CheckAgainstNumpy(jnp.unique_all, np.unique_all, args_maker)
 
   @jtu.sample_product(shape=all_shapes, dtype=number_dtypes)
   def testUniqueCounts(self, shape, dtype):
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    if jtu.numpy_version() < (2, 0, 0):
-      np_fun = lambda x: np.unique(x, return_counts=True)
-    else:
-      np_fun = np.unique_counts
-    self._CheckAgainstNumpy(jnp.unique_counts, np_fun, args_maker)
+    self._CheckAgainstNumpy(jnp.unique_counts, np.unique_counts, args_maker)
 
   @jtu.sample_product(shape=all_shapes, dtype=number_dtypes)
   def testUniqueInverse(self, shape, dtype):
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    if jtu.numpy_version() < (2, 0, 0):
-      np_fun = partial(np_unique_backport, return_inverse=True)
-    else:
-      np_fun = np.unique_inverse
-    self._CheckAgainstNumpy(jnp.unique_inverse, np_fun, args_maker)
+    self._CheckAgainstNumpy(jnp.unique_inverse, np.unique_inverse, args_maker)
 
   @jtu.sample_product(shape=all_shapes, dtype=number_dtypes)
   def testUniqueValues(self, shape, dtype):
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    if jtu.numpy_version() < (2, 0, 0):
-      np_fun = np.unique
-    else:
-      np_fun = lambda *args: np.sort(np.unique_values(*args))
+    np_fun = lambda *args: np.sort(np.unique_values(*args))
     self._CheckAgainstNumpy(jnp.unique_values, np_fun, args_maker)
 
   @jtu.sample_product(
@@ -2889,11 +2871,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if config.enable_x64.value:
       out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
       self.assertEqual(out_int64.dtype, np.int64)
-    elif jtu.numpy_version() < (2, 0, 0):
-      with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype int64"):
-        with jtu.ignore_warning(category=DeprecationWarning,
-                                message="NumPy will stop allowing conversion.*"):
-          out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
     else:
       with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype.*int64"):
         with self.assertRaisesRegex(OverflowError, "Python integer 2147483648 out of bounds.*"):
@@ -3878,7 +3855,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     # out of bounds leads to an OverflowError
     val = jnp.iinfo(jnp.int64).min - 1
-    with self.assertRaisesRegex(OverflowError, "Python int too large.*"):
+    expected_regex = '(Python int too large.*)|(int too big to convert)'
+    with self.assertRaisesRegex(OverflowError, expected_regex):
       jnp.array([0, val])
 
   def testArrayNone(self):
@@ -3979,8 +3957,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     equal_nan=[True, False]
   )
   def testIsCloseCornerCases(self, atol, rtol, equal_nan):
-    if jtu.numpy_version() < (2, 0, 0) and (np.isinf(atol) or np.isinf(rtol)):
-      self.skipTest("fails on older NumPy")
     if jtu.numpy_version() >= (2, 3, 0) and (np.isinf(atol) or np.isinf(rtol)):
       self.skipTest("NumPy 2.3.0 now throws warnings for inf atol/rtol")
     vals = np.array([-np.nan, -np.inf, -1.00001, -1.0, -0.00001, -0.0,
@@ -4236,7 +4212,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testAstype(self, from_dtype, to_dtype, use_method):
     rng = self.rng()
     args_maker = lambda: [rng.randn(3, 4).astype(from_dtype)]
-    if (not use_method) and jtu.numpy_version() >= (2, 0, 0):
+    if not use_method:
       np_op = lambda x: np.astype(x, to_dtype)
     else:
       np_op = lambda x: np.asarray(x).astype(to_dtype)
@@ -4254,7 +4230,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testAstypeBool(self, from_dtype, use_method, to_dtype='bool'):
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng((3, 4), from_dtype)]
-    if (not use_method) and jtu.numpy_version() >= (2, 0, 0):
+    if not use_method:
       np_op = lambda x: np.astype(x, to_dtype)
     else:
       np_op = lambda x: np.asarray(x).astype(to_dtype)
@@ -5070,14 +5046,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
   @jtu.sample_product(
-    dtype=[int, float, bool, complex],
+    scalar_type=[int, float, bool, complex],
     op=["atleast_1d", "atleast_2d", "atleast_3d"],
   )
-  def testAtLeastNdLiterals(self, dtype, op):
+  def testAtLeastNdLiterals(self, scalar_type, op):
     # Fixes: https://github.com/jax-ml/jax/issues/634
-    np_fun = lambda arg: getattr(np, op)(arg).astype(dtypes.python_scalar_dtypes[dtype])
+    np_fun = lambda arg: getattr(np, op)(arg).astype(
+        dtypes.python_scalar_types_to_dtypes[scalar_type]
+    )
     jnp_fun = lambda arg: getattr(jnp, op)(arg)
-    args_maker = lambda: [dtype(2)]
+    args_maker = lambda: [scalar_type(2)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -5666,7 +5644,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         axis=axis).astype(dtype)
 
     # JAX follows NumPy 2.0 semantics for complex geomspace.
-    if not (jtu.numpy_version() < (2, 0, 0) and dtypes.issubdtype(dtype, jnp.complexfloating)):
+    if not dtypes.issubdtype(dtype, jnp.complexfloating):
       self._CheckAgainstNumpy(np_op, jnp_op, args_maker,
                               check_dtypes=False, tol=tol)
     if dtype in (inexact_dtypes + [None,]):
@@ -6211,7 +6189,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def test_isdtype(self, dtype, kind):
     # Full tests also in dtypes_test.py; here we just compare against numpy
     jax_result = jnp.isdtype(dtype, kind)
-    if jtu.numpy_version() < (2, 0, 0) or dtype == dtypes.bfloat16:
+    if dtype == dtypes.bfloat16:
       # just a smoke test
       self.assertIsInstance(jax_result, bool)
     else:
@@ -6237,10 +6215,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def test_trapezoid(self, yshape, xshape, dtype, dx, axis):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(yshape, dtype), rng(xshape, dtype) if xshape is not None else None]
-    if jtu.numpy_version() >= (2, 0, 0):
-      np_fun = partial(np.trapezoid, dx=dx, axis=axis)
-    else:
-      np_fun = partial(np.trapz, dx=dx, axis=axis)
+    np_fun = partial(np.trapezoid, dx=dx, axis=axis)
     jnp_fun = partial(jnp.trapezoid, dx=dx, axis=axis)
     tol = jtu.tolerance(dtype, {np.float16: 2e-3, np.float64: 1e-12,
                                 jax.dtypes.bfloat16: 4e-2})

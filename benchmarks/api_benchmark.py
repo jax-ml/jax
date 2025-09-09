@@ -461,7 +461,7 @@ bench_xla_abstractify()
 
 @google_benchmark.register
 @google_benchmark.option.unit(google_benchmark.kMicrosecond)
-def bench_are_op_shardings_equal(state):
+def bench_are_hlo_shardings_equal(state):
   op1 = xc.OpSharding()
   op1.type = xc.OpSharding.Type.OTHER
   op1.tile_assignment_dimensions = [4, 192, 16]
@@ -472,8 +472,11 @@ def bench_are_op_shardings_equal(state):
   op2.tile_assignment_dimensions = [4, 192, 16]
   op2.tile_assignment_devices = list(range(12288))
 
+  hs1 = xc.HloSharding.from_proto(op1)
+  hs2 = xc.HloSharding.from_proto(op2)
+
   while state:
-    op_shardings.are_op_shardings_equal(op1, op2)
+    op_shardings.are_hlo_shardings_equal(hs1, hs2)
 
 
 @google_benchmark.register

@@ -44,6 +44,7 @@ from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
+from jax.experimental import roofline
 from jax.experimental.jax2tf import jax2tf as jax2tf_internal
 from jax._src.interpreters import mlir
 import ml_dtypes
@@ -303,10 +304,7 @@ def check_tf_result(idx: int, r_tf: TfVal, r_aval: core.ShapedArray | None) -> T
   # that tf.ensure_shape did this, but it can only take shapes that contain None
   # not computed shapes. However, in eager mode we should be able to resolve
   # the declared shapes to constants and we get better checking.
-  if tf.executing_eagerly():
-    r_aval_shape_tf = jax2tf_internal._eval_shape(r_aval.shape)
-  else:
-    r_aval_shape_tf = jax2tf_internal._aval_to_tf_shape(r_aval)
+  r_aval_shape_tf = jax2tf_internal._aval_to_tf_shape(r_aval)
   # We do as much checking as we can here, instead of relying on tf.ensure_shape
   # because the latter gives different errors in eager vs. compiled mode.
   # TODO(b/279454591): This strange error is from TF. Eager function suppose
@@ -646,16 +644,6 @@ def _register_call_lowering(platform):
 for platform in ("cpu", "cuda", "tpu"):
   _register_call_lowering(platform)
 
-# Support the call_tf under jax2tf.convert in eager mode
-def _jax2tf_call_tf(*args: TfVal,
-                    callable_flat_tf: Callable,
-                    **_) -> TfVal:
-  with jax2tf_internal.inside_call_tf():
-    res_tf_flat = callable_flat_tf(*args)
-  return res_tf_flat
-
-jax2tf_internal.tf_impl[call_tf_p] = _jax2tf_call_tf
-
 
 def emit_tf_embedded_graph_custom_call(
     ctx: mlir.LoweringRuleContext,
@@ -726,3 +714,8 @@ def add_to_call_tf_concrete_function_list(concrete_tf_fn: Any, call_tf_concrete_
     called_index = len(call_tf_concrete_function_list)
     call_tf_concrete_function_list.append(concrete_tf_fn)
   return called_index
+
+# Register a roofline call so that users can use roofline on functions that
+# contain call_tf. We register roofline in this file (instead of within the
+# roofline module) to avoid having to import jax2tf in roofline.
+roofline.register_standard_roofline(call_tf_p)

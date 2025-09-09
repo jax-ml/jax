@@ -51,6 +51,7 @@ limitations under the License.
 #include "jaxlib/ffi.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_program.h"
+#include "jaxlib/reshard_arrays_lib.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/distributed/client.h"
@@ -575,17 +576,6 @@ NB_MODULE(_jax, m) {
             tensor, device->device(), device->client(), stream));
       },
       nb::arg("dlpack"), nb::arg("device"), nb::arg("stream").none());
-  // Legacy overload
-  m.def(
-      "dlpack_managed_tensor_to_buffer",
-      [](const nb::capsule& tensor,
-         std::optional<nb_class_ptr<PyClient>> cpu_client,
-         std::optional<nb_class_ptr<PyClient>> gpu_client) {
-        return xla::ValueOrThrow(DLPackManagedTensorToBuffer(
-            tensor, std::move(cpu_client), std::move(gpu_client)));
-      },
-      nb::arg("dlpack"), nb::arg("cpu_backend").none() = nb::none(),
-      nb::arg("gpu_backend").none() = nb::none());
   m.def("cuda_array_interface_to_buffer",
         xla::ValueOrThrowWrapper(CudaArrayInterfaceToBuffer), nb::arg("cai"),
         nb::arg("gpu_backend").none() = nb::none(),
@@ -693,6 +683,14 @@ NB_MODULE(_jax, m) {
             return nb::bytes(result.data(), result.size());
           },
           nb::arg("key"))
+      .def(
+          "key_value_increment",
+          [](xla::DistributedRuntimeClient& client, std::string key,
+             int64_t increment) {
+            nb::gil_scoped_release gil_release;
+            return xla::ValueOrThrow(client.KeyValueIncrement(key, increment));
+          },
+          nb::arg("key"), nb::arg("increment"))
       .def(
           "wait_at_barrier",
           [](xla::DistributedRuntimeClient& client, std::string barrier_id,
@@ -950,6 +948,9 @@ NB_MODULE(_jax, m) {
       nb::arg("committed") = true, nb::arg("force_copy") = false,
       nb::arg("host_buffer_semantics") =
           xla::PjRtClient::HostBufferSemantics::kImmutableZeroCopy);
+  m.def("internal_transfer_to_shardings",
+        xla::ValueOrThrowWrapper(ExperimentalReshardArrays), nb::arg("arrays"),
+        nb::arg("out_shardings"), nb::arg("donate") = false);
   m.def(
       "reorder_shards",
       [](PyArray x, nb::object dst_sharding,

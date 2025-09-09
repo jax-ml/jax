@@ -30,7 +30,6 @@ from jax._src import callback
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import frozen_dict
-from jax._src.lax.control_flow import for_loop
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src.interpreters import mlir
@@ -1648,9 +1647,6 @@ def _interpret_jaxpr(
                 eqn.params['body_jaxpr'].jaxpr, *body_consts, *args),
             init_vals)
 
-      elif prim is for_loop.for_p:
-        raise NotImplementedError('for_p')
-
       elif prim is pjit.jit_p:
         def f(*args, jaxpr):
           return _interpret(jaxpr.jaxpr, *jaxpr.consts, *args)
@@ -1832,8 +1828,10 @@ def _interpret_jaxpr(
         out = []
 
       elif prim is primitives.semaphore_wait_p:
-        sem, sem_transforms, value = (
+        sem, sem_transforms, value, decrement = (
             jax.tree.unflatten(eqn.params['args_tree'], deferred_invals()))
+        if not decrement:
+          raise NotImplementedError('Non-decrementing wait is not supported.')
         callback.io_callback(
             semaphore_wait,
             (),

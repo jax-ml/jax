@@ -16,6 +16,29 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Breaking changes:
+
+  * {func}`jax.dlpack.from_dlpack` no longer accepts a DLPack capsule. This
+    behavior was deprecated and is now removed. The function must be called
+    with an array implementing `__dlpack__` and `__dlpack_device__`.
+
+* Changes
+  * The minimum supported NumPy version is now 2.0. Since SciPy 1.13 is required
+    for NumPy 2.0 support, the minimum supported SciPy version is now 1.13.
+
+* Bug fixes
+  * `arr.view(dtype=None)` now returns the array unchanged, matching NumPy's
+    semantics. Previously it returned the array with a float dtype.
+  * `jax.random.randint` now produces a less-biased distribution for 8-bit and
+    16-bit integer types ({jax-issue}`#27742`). To restore the previous biased
+    behavior, you may temporarily set the `jax_safer_randint` configuration to
+    `False`, but note this is a temporary config that will be removed in a
+    future release.
+
+* Deprecations:
+  * The parameters `enable_xla` and `native_serialization` for `jax2tf.convert`
+    are deprecated and will be removed in a future version of JAX. These were
+    used for jax2tf with non-native serialization, which has been now removed.
 
 ## JAX 0.7.1 (August 20, 2025)
 
@@ -2035,7 +2058,7 @@ Changes:
     Please upgrade to NumPy 1.20 or newer.
 * Changes
   * Added {mod}`jax.debug` that includes utilities for runtime value debugging such at {func}`jax.debug.print` and {func}`jax.debug.breakpoint`.
-  * Added new documentation for [runtime value debugging](debugging/index)
+  * Added new documentation for [runtime value debugging](https://github.com/jax-ml/jax/blob/7ac8181cce087d8bcd564d07e19f5067cb5d9d3b/docs/debugging/index.md)
 * Deprecations
   * {func}`jax.mask` {func}`jax.shapecheck` APIs have been removed.
     See {jax-issue}`#11557`.

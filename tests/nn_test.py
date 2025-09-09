@@ -205,6 +205,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
       raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
     if impl == 'cudnn' and dtype == jnp.float32:
       raise unittest.SkipTest("cuDNN only supports fp16 or bf16.")
+    if impl == 'cudnn' and jtu.is_cuda_version_at_least(13, 0):
+      raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
     B, S, T, N, H, G = 2, 128, 128, 4, 32, group_num
     keys = random.split(random.PRNGKey(0), 5)
@@ -252,6 +254,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
     min_cudnn_version = 90200 if 'sliding_window' in mask_mode else 8904
     if not _is_required_cudnn_version_satisfied("8.0", min_cudnn_version):
       raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
+    if jtu.is_cuda_version_at_least(13, 0):
+      raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
     dtype = jnp.bfloat16
     B, S, T, N, H = 2, 128, 128, 4, 32
@@ -315,6 +319,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testDotProductAttentionBiasGradient(self, batch_size, use_vmap):
     if not _is_required_cudnn_version_satisfied("8.0", 8904):
       raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
+    if jtu.is_cuda_version_at_least(13, 0):
+      raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
     dtype = jnp.bfloat16
     B, S, N, H = batch_size, 128, 4, 32

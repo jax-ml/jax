@@ -596,23 +596,58 @@ def addupdate_transpose(cts_in, ref, x, *idx, **params):
   return [None, g] + [None] * len(idx)
 ad.primitive_transposes[addupdate_p] = addupdate_transpose
 
+
+def _get_transpose_fancy(g, ref_, *idx, **params):
+  if idx and type(g) is not ad_util.Zero:
+    addupdate_p.bind(ref_.inst().ref, g, *idx, **params)
+  else:
+    ref_.accum(g)
+ad.fancy_transposes[get_p] = _get_transpose_fancy
+
+def _swap_transpose_fancy(g, ref_, x, *idx, **params):
+  if ref_.ref is None and type(g) is ad_util.Zero:
+    return
+  elif ref_.ref is None:
+    swap_p.bind(ref_.inst().ref, ad_util.instantiate(g), *idx, **params)
+  else:
+    x_bar = swap_p.bind(ref_.inst().ref, ad_util.instantiate(g), *idx, **params)
+    x.accum(x_bar)
+ad.fancy_transposes[swap_p] = _swap_transpose_fancy
+
+def addupdate_transpose_fancy(cts_in, ref_, x, *idx, **params):
+  if ref_.ref is not None:
+    x_bar = get_p.bind(ref_.ref, *idx, **params)
+    x.accum(x_bar)
+ad.fancy_transposes[addupdate_p] = addupdate_transpose_fancy
+
 ## get/swap/addupdate partial_eval_custom rules
 
-def _state_partial_eval_custom(prim, saveable, unks_in, inst_in, eqn):
-  if any(unks_in):
-    res = [v for v, inst in zip(eqn.invars, inst_in) if not inst]
-    return None, eqn, [True] * len(eqn.outvars), [True] * len(eqn.outvars), res
-  elif saveable(prim, *[var.aval for var in eqn.invars], **eqn.params):
-    return eqn, None, [False] * len(eqn.outvars), [False] * len(eqn.outvars), []
-  res = [v for v, inst in zip(eqn.invars, inst_in) if not inst]
-  return eqn, eqn, [False] * len(eqn.outvars), [True] * len(eqn.outvars), res
+def _array_ref_partial_eval_custom(saveable, unks_in, inst_in, eqn):
+  del saveable  # ignored, always full remat array_ref on known input
+  unk, = unks_in
+  inst, = inst_in
+  invar, = eqn.invars
+  res = [invar] if not inst else []
+  if unk:
+    return None, eqn, [True], [True], res  # tangent operation
+  else:
+    return eqn, eqn, [False], [True], res  # full remat
+pe.partial_eval_jaxpr_custom_rules[core.array_ref_p] = _array_ref_partial_eval_custom
 
-pe.partial_eval_jaxpr_custom_rules[get_p] = partial(_state_partial_eval_custom,
-                                                    get_p)
-pe.partial_eval_jaxpr_custom_rules[swap_p] = partial(_state_partial_eval_custom,
-                                                     swap_p)
-pe.partial_eval_jaxpr_custom_rules[addupdate_p] = partial(
-    _state_partial_eval_custom, addupdate_p)
+def _state_partial_eval_custom(saveable, unks_in, inst_in, eqn):
+  del saveable  # ignored, always full remat state ops on known inputs
+  ref_unk, *_ = unks_in
+  ref_inst, *inst_in = inst_in
+  _, *val_vars = eqn.invars
+  assert ref_inst
+  res = [v for v, inst in zip(val_vars, inst_in) if not inst]
+  if ref_unk:
+    return None, eqn, [True], [True], res  # tangent operation
+  else:
+    return eqn, eqn, [False], [True], res  # full remat
+pe.partial_eval_jaxpr_custom_rules[get_p] = _state_partial_eval_custom
+pe.partial_eval_jaxpr_custom_rules[swap_p] = _state_partial_eval_custom
+pe.partial_eval_jaxpr_custom_rules[addupdate_p] = _state_partial_eval_custom
 
 ##  get/swap/addupdate batching rules
 

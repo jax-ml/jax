@@ -227,6 +227,14 @@ class WrappedFun:
             self.params == other.params and self.in_type == other.in_type and
             self.debug_info == other.debug_info)
 
+  def replace_debug_info(self, dbg: core.DebugInfo) -> WrappedFun:
+    return WrappedFun(self.f, self.f_transformed, self.transforms,
+                      self.stores, self.params, self.in_type,
+                      dbg)
+
+  def with_unknown_names(self) -> WrappedFun:
+    return self.replace_debug_info(self.debug_info.with_unknown_names())
+
 @curry
 def transformation2(gen, fun: WrappedFun, *gen_static_args) -> WrappedFun:
   """Adds one more transformation to a WrappedFun.
@@ -267,6 +275,9 @@ def transformation_with_aux2(
   out_thunk = lambda: out_store.val
   return fun.wrap(gen, gen_static_args, out_store), out_thunk
 
+class InitialResultPaths:
+  pass
+initial_result_paths = InitialResultPaths()
 
 class DebugInfo(NamedTuple):
   """Debugging info about a func, its arguments, and results."""
@@ -278,39 +289,39 @@ class DebugInfo(NamedTuple):
   which may be '<unknown>'.
   """
 
-  arg_names: tuple[str, ...]
+  arg_names: tuple[str, ...] | None
   """The paths of the flattened non-static argnames,
   e.g. `('x', 'dict_arg["a"]', ... )`.
   Uses the empty string for the args that do not correspond to
   user-named arguments, e.g., tangent args in `jax.jvp`, or for arguments that
-  we are not yet tracking properly.
+  we are not yet tracking properly. The value `None` denotes argument names.
+
   At the moment, `arg_names` accuracy is best-effort.
   Use `safe_arg_names` to detect and handle an unexpected
   number of elements in `arg_names`.
   """
 
-  result_paths: tuple[str, ...] | Callable[[], tuple[str, ...]] | None
+  result_paths: tuple[str, ...] | InitialResultPaths | Callable[[], tuple[str, ...]] | None
   """The paths to the flattened results, e.g., `('result[0]', result[1])` for a
   function that returns a tuple of arrays, or `(result,)` for a function that
-  returns a single array.
-  The result paths are not available while we are tracing the function,
-  instead we keep a thunk. It is possible for the result paths to be `None`
-  only when we first create a `DebugInfo`, before we put it in `lu.WrappedFun`
-  and before we start tracing.
-  Inside a `lu.WrappedFun` it can be only a thunk or a tuple of strings.
-  Once we are done tracing, we use
-  `self.resolve_result_paths()` to execute the thunk and replace the
-  actual result paths.
-  At the moment, `result_paths` accuracy is best-effort.
+  returns a single array. The value `None` denotes unknown paths.
+
+  When we first create a `DebugInfo`, we may use the value
+  `initial_result_paths`, which we replace with a thunk when we put the
+  debug info into a `lu.WrappedFun`, before we start tracing. After tracing,
+  we call `self.resolve_result_paths()` to execute the thunk and replace
+  the result paths with a tuple.
+
   Use `safe_result_paths` to detect and handle an unexpected
   number of elements in `result_paths`.
   """
 
   def resolve_result_paths(self) -> DebugInfo:
     """Return a debug info with resolved result paths."""
-    assert self.result_paths is not None
+    assert self.result_paths is not initial_result_paths
     if callable(self.result_paths):
-      return self._replace(result_paths=tuple(self.result_paths()))
+      paths = tuple(self.result_paths())
+      return self._replace(result_paths=paths)
     return self
 
   @property
@@ -334,31 +345,53 @@ class DebugInfo(NamedTuple):
     if not m or m.group(4) is None: return None
     return int(m.group(4))
 
-  def safe_arg_names(self, expected: int) -> tuple[str, ...]:
+  def safe_arg_names(self, expected_count: int) -> tuple[str, ...]:
     """Get the arg_names with a safety check."""
-    if len(self.arg_names) == expected:
+    if self.arg_names is not None:
+      # TODO(necula): re-enable this assertion
+      #assert len(self.arg_names) == expected_count, (self.arg_names, expected_count)
+      if len(self.arg_names) != expected_count:
+        return ("",) * expected_count
       return self.arg_names
-    else:
-      # TODO(necula): this should not happen
-      return ("",) * expected
+    return ("",) * expected_count
 
-  def filter_arg_names(self, keep: Sequence[bool]) -> tuple[str, ...]:
+  def assert_arg_names(self, expected_count: int):
+    # TODO(necula): re-enable this assertion
+    #assert self.arg_names is None or len(self.arg_names) == expected_count, (
+    #      self.arg_names, expected_count)
+    pass
+
+  def filter_arg_names(self, keep: Sequence[bool]) -> tuple[str, ...] | None:
     """Keep only the arg_names for which `keep` is True."""
+    if self.arg_names is None:
+      return None
     return tuple(v for v, b in zip(self.safe_arg_names(len(keep)), keep) if b)
 
-  def safe_result_paths(self, expected: int) -> tuple[str, ...]:
-    """Get the result paths with a safety check."""
-    assert self.result_paths is not None and not callable(self.result_paths), self
-    if self.result_paths is not None and len(self.result_paths) == expected:
-      return self.result_paths
-    else:
-      # TODO(necula): this should not happen
-      return ("",) * expected
+  def safe_result_paths(self, expected_count: int) -> tuple[str, ...]:
+    """Get the result paths with a safety check. Empty paths mean unknown."""
+    assert self.result_paths is not initial_result_paths and not callable(self.result_paths), self
+    if self.result_paths is not None:
+      # TODO(necula): re-enable this assertion
+      # assert len(self.result_paths) == expected_count, (self.result_paths, expected_count)  # type: ignore
+      return self.result_paths  # type: ignore
 
-  def filter_result_paths(self, keep: Sequence[bool]) -> tuple[str, ...]:
+    return ("",) * expected_count
+
+  def assert_result_paths(self, expected_count: int):
+    # TODO(necula): re-enable this assertion
+    #assert self.result_paths is None or len(self.result_paths) == expected_count, (  # type: ignore
+    #      self.result_paths, expected_count)
+    pass
+
+  def filter_result_paths(self, keep: Sequence[bool]) -> tuple[str, ...] | None:
     """Keep only the result_paths for which `keep` is True."""
-    assert self.result_paths is not None and not callable(self.result_paths), self
-    return tuple(v for v, b in zip(self.safe_result_paths(len(keep)), keep) if b)
+    assert self.result_paths is not initial_result_paths and not callable(self.result_paths), self
+    if self.result_paths is None: return None
+    return tuple(v for v, b in zip(self.result_paths, keep) if b)  # type: ignore
+
+  def with_unknown_names(self) -> DebugInfo:
+    return self._replace(arg_names=None, result_paths=None)
+
 
 _re_func_src_info = re.compile(r"([^ ]+)( at (.+):(\d+))?$")
 
@@ -369,7 +402,7 @@ def _missing_debug_info(for_what: str) -> DebugInfo:
       "construct a proper DebugInfo object and propagate it to this function. "
       "See https://github.com/jax-ml/jax/issues/26480 for more details.",
       DeprecationWarning, stacklevel=2)
-  return DebugInfo("missing_debug_info", "<missing_debug_info>", (), ())
+  return DebugInfo("missing_debug_info", "<missing_debug_info>", None, None)
 
 def wrap_init(f: Callable, params=None, *,
               debug_info: DebugInfo) -> WrappedFun:
@@ -377,7 +410,7 @@ def wrap_init(f: Callable, params=None, *,
   params_dict = {} if params is None else params
   params = () if params is None else tuple(sorted(params.items()))
   fun = WrappedFun(f, partial(f, **params_dict), (), (), params, None, debug_info)
-  if debug_info.result_paths is None:
+  if debug_info.result_paths is initial_result_paths:
     fun, result_paths_thunk = _get_result_paths_thunk(fun)
     debug_info = debug_info._replace(
         result_paths=HashableFunction(result_paths_thunk, closure=()))

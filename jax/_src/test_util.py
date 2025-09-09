@@ -53,6 +53,7 @@ from jax._src import util
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import mlir
 from jax._src.lax import lax
+from jax._src.lib import cuda_versions
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.public_test_util import (  # noqa: F401
@@ -470,6 +471,8 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
     return "v5 lite" in device_kind
   elif expected_version == "v6e":
     return "v6 lite" in device_kind
+  elif expected_version == "v5p":
+    return device_kind.endswith("v5")
   return expected_version in device_kind
 
 def pattern_search(patterns: str | Sequence[str], string: str):
@@ -539,6 +542,14 @@ def is_cuda_compute_capability_equal(capability: str) -> bool:
   target = tuple(int(x) for x in capability.split("."))
   current = tuple(int(x) for x in d.compute_capability.split("."))
   return current == target
+
+def is_cuda_version_at_least(major: int, minor: int):
+  assert 0 <= major
+  assert 0 <= minor < 100
+  return (
+      cuda_versions is not None
+      and cuda_versions.cuda_runtime_get_version() >= major * 1000 + minor * 10
+  )
 
 
 class CudaArchSpecificTest:
@@ -1749,16 +1760,6 @@ def fwd_bwd_jaxprs(f, *example_args):
       lambda *args: api.vjp(f, *args), return_shape=True)(*example_args)
   bwd_jaxpr = api.make_jaxpr(lambda res, outs: res(outs))(res_shape, y_shape)
   return fwd_jaxpr, bwd_jaxpr
-
-
-def numpy_vecdot(x, y, axis):
-  """Implementation of numpy.vecdot for testing on numpy < 2.0.0"""
-  if numpy_version() >= (2, 0, 0):
-    raise ValueError("should be calling vecdot directly on numpy 2.0.0")
-  x = np.moveaxis(x, axis, -1)
-  y = np.moveaxis(y, axis, -1)
-  x, y = np.broadcast_arrays(x, y)
-  return np.matmul(np.conj(x[..., None, :]), y[..., None])[..., 0, 0]
 
 
 def complex_plane_sample(dtype, size_re=10, size_im=None):

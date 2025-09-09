@@ -365,7 +365,7 @@ def _flatten_jvp(f, store, primal_name, jvp_name, in_tree, maybe_out_type, *args
   tangent_avals_out = [core.get_aval(t).strip_weak_type()
                        if type(t) is not SymbolicZero else t.aval.strip_weak_type()
                        for t in tangents_out]
-  if expected_tangent_avals_out != tangent_avals_out:
+  if not all(map(core.typematch, expected_tangent_avals_out, tangent_avals_out)):
     if len(expected_tangent_avals_out) == 1:
       (av_p,), (av_et,), (av_t,) = primal_avals_out, expected_tangent_avals_out, tangent_avals_out
       msg = ("Custom JVP rule must produce primal and tangent outputs with "
@@ -466,7 +466,9 @@ def _cached_closed_call_dce_instantiate(jaxpr_: core.ClosedJaxpr,
                                         used_outputs: tuple[bool, ...]
                                         ) -> tuple[core.ClosedJaxpr, list[bool]]:
   jaxpr, consts = jaxpr_.jaxpr, jaxpr_.consts
-  new_jaxpr, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs, True)
+  new_jaxpr, used_inputs = pe.dce_jaxpr(
+      jaxpr.replace(debug_info=jaxpr.debug_info.with_unknown_names()),
+      used_outputs, True)
   return core.ClosedJaxpr(new_jaxpr, consts), used_inputs
 
 def _custom_jvp_call_dce(
@@ -486,7 +488,9 @@ def _custom_jvp_call_dce(
   @pe._memoize
   def dce_jvp_jaxpr_thunk(*in_zeros):
     jvp_jaxpr, consts, out_zeros = jvp_jaxpr_fun.call_wrapped(*in_zeros)
-    dce_jvp_jaxpr, _ = pe.dce_jaxpr(jvp_jaxpr, [*used_outs, *used_outs], True)
+    sz = eqn.params["symbolic_zeros"]
+    nz_used_outs = [u for u, z in zip(used_outs, out_zeros) if not z] if sz else used_outs
+    dce_jvp_jaxpr, _ = pe.dce_jaxpr(jvp_jaxpr, [*used_outs, *nz_used_outs], True)
     dce_out_zeros = [v for used, v in zip(used_outs, out_zeros) if used]
     return dce_jvp_jaxpr, consts, dce_out_zeros
 
@@ -1474,7 +1478,8 @@ def linear_call(fun: Callable,
 
   @pe._memoize
   def transpose_thunk():
-    t_jaxpr, t_consts = _initial_style_jaxpr(t, (*res_avals, *out_avals))
+    t_jaxpr, t_consts = _initial_style_jaxpr(t.with_unknown_names(),
+                                             (*res_avals, *out_avals))
     if t_out_tree() != lin_tree:
       raise TypeError(
           'transpose output pytree structure must match that of linear inputs, '
@@ -1646,7 +1651,6 @@ def optimize_remat_of_custom_vjp_fwd(
   def wrapped_fwd(*args, **kwargs) -> tuple[ReturnValue, Any]:
     # TODO(dfm): This initial logic is duplicated from custom_vjp.__call__
     # above and it would be good to consolidate it.
-    fwd_name = debug_fwd.func_name if debug_fwd else str(fwd)
     # Note: we use `fun` instead of `fwd` here for consistency with
     # custom_vjp.__call__ above.
     args = resolve_kwargs(fun, args, kwargs)
@@ -1670,7 +1674,8 @@ def optimize_remat_of_custom_vjp_fwd(
     flat_fwd = _fix_fwd_args(flat_fwd)
 
     in_avals = [core.get_aval(x) for x in args_flat]
-    fwd_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fwd, in_avals)
+    fwd_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fwd.with_unknown_names(),
+                                                     in_avals)
     fwd_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(fwd_jaxpr))
     prim_tree, res_tree, fwds = out_trees()
     num_res_out = res_tree.num_leaves - sum(f is not None for f in fwds)

@@ -127,7 +127,9 @@ class DtypesTest(jtu.JaxTestCase):
     {"testcase_name": f"_type={type_.__name__}", "type_": type_}
     for type_ in python_scalar_types)
   def testDefaultTypes(self, type_):
-    expected_dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[type_])
+    expected_dtype = dtypes.canonicalize_dtype(
+        dtypes.python_scalar_types_to_dtypes[type_]
+    )
     for f in [jnp.array, jax.jit(jnp.array), jax.jit(lambda x: x)]:
       y = f(type_(0))
       self.assertTrue(isinstance(y, jax.Array), msg=(f, y))
@@ -200,9 +202,10 @@ class DtypesTest(jtu.JaxTestCase):
         # np.dtype(int) is int32 on Windows and int64 on Linux/Mac.
         py_result_dtype = (np.dtype(np.int64) if py_result is int
                            else np.dtype(py_result))
-        lattice_dtype, lattice_weak_type = dtypes._lattice_result_type(t1, t2)
+        lattice_dtype, lattice_weak_type = dtypes.lattice_result_type(t1, t2)
         self.assertTrue(lattice_weak_type)
-        self.assertEqual(lattice_dtype, py_result_dtype)
+        self.assertEqual(lattice_dtype,
+                         dtypes.canonicalize_dtype(py_result_dtype))
 
     # Check that weak promotion only works if strong value is not cast:
     for t1 in bool_dtypes:
@@ -270,8 +273,15 @@ class DtypesTest(jtu.JaxTestCase):
     for groups in [bool_dtypes + np_signed_dtypes + np_unsigned_dtypes,
                    np_float_dtypes + complex_dtypes]:
       for t1, t2 in itertools.combinations(groups, 2):
-        self.assertEqual(np.promote_types(t1, t2),
-                         dtypes.promote_types(t1, t2))
+        expected = np.promote_types(t1, t2)
+        if (
+            not config.enable_x64.value
+            and np.issubdtype(t1, np.signedinteger)
+            and t1 != np.int64
+            and t2 == np.uint32
+        ):
+          expected = np.dtype(np.int32)
+        self.assertEqual(expected, dtypes.promote_types(t1, t2))
 
     # Promotion between weak types matches numpy promotion
     for t1 in [int, float, complex]:
@@ -280,9 +290,10 @@ class DtypesTest(jtu.JaxTestCase):
         # np.dtype(int) is int32 on Windows and int64 on Linux/Mac.
         py_result_dtype = (np.dtype(np.int64) if py_result is int
                            else np.dtype(py_result))
-        lattice_dtype, lattice_weak_type = dtypes._lattice_result_type(t1, t2)
+        lattice_dtype, lattice_weak_type = dtypes.lattice_result_type(t1, t2)
         self.assertTrue(lattice_weak_type)
-        self.assertEqual(lattice_dtype, py_result_dtype)
+        self.assertEqual(lattice_dtype,
+                         dtypes.canonicalize_dtype(py_result_dtype))
 
   @parameterized.parameters([jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64])
   def testScalarInstantiation(self, scalar_type):
@@ -373,25 +384,40 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(jnp.int32(101),
                      jax.jit(lambda x: jnp.int32(x))(jnp.float32(101.4)))
 
-  @parameterized.parameters(python_scalar_types)
-  def testDtypeFromScalarType(self, typ):
-    self.assertEqual(dtypes.dtype(typ), dtypes.python_scalar_dtypes[typ])
+  def testDtypeFromScalarType(self):
+    self.assertEqual(dtypes.dtype(bool), np.dtype(np.bool_))
+    if config.enable_x64.value:
+      self.assertEqual(dtypes.dtype(int), np.dtype(np.int64))
+      self.assertEqual(dtypes.dtype(float), np.dtype(np.float64))
+      self.assertEqual(dtypes.dtype(complex), np.dtype(np.complex128))
+    else:
+      self.assertEqual(dtypes.dtype(int), np.dtype(np.int32))
+      self.assertEqual(dtypes.dtype(float), np.dtype(np.float32))
+      self.assertEqual(dtypes.dtype(complex), np.dtype(np.complex64))
 
-  @parameterized.parameters(python_scalar_types)
-  def testDtypeFromScalarValue(self, typ):
-    self.assertEqual(dtypes.dtype(typ(0)), dtypes.python_scalar_dtypes[typ])
+  def testDtypeFromScalarValue(self):
+    self.assertEqual(dtypes.dtype(bool(0)), np.dtype(np.bool_))
+    if config.enable_x64.value:
+      self.assertEqual(dtypes.dtype(int(0)), np.dtype(np.int64))
+      self.assertEqual(dtypes.dtype(float(0)), np.dtype(np.float64))
+      self.assertEqual(dtypes.dtype(complex(0)), np.dtype(np.complex128))
+    else:
+      self.assertEqual(dtypes.dtype(int(0)), np.dtype(np.int32))
+      self.assertEqual(dtypes.dtype(float(0)), np.dtype(np.float32))
+      self.assertEqual(dtypes.dtype(complex(0)), np.dtype(np.complex64))
 
   @parameterized.parameters(all_dtypes)
   def testDtypeFromValue(self, dtype):
-    self.assertEqual(dtypes.dtype(dtype.type(0)), dtype)
+    self.assertEqual(dtypes.dtype(dtype.type(0)),
+                     dtypes.canonicalize_dtype(dtype))
 
   @parameterized.parameters(all_dtypes)
   def testDtypeFromDtype(self, dtype):
-    self.assertEqual(dtypes.dtype(dtype), dtype)
+    self.assertEqual(dtypes.dtype(dtype), dtypes.canonicalize_dtype(dtype))
 
   @parameterized.parameters(all_dtypes)
   def testDtypeFromString(self, dtype):
-    self.assertEqual(dtypes.dtype(str(dtype)), dtype)
+    self.assertEqual(dtypes.dtype(str(dtype)), dtypes.canonicalize_dtype(dtype))
 
   def testDtypeFromNone(self):
     with self.assertRaisesRegex(ValueError, "Invalid argument to dtype"):
@@ -411,15 +437,17 @@ class DtypesTest(jtu.JaxTestCase):
     class MyDtype:
       __hash__ = None
       dtype = np.dtype('float32')
-    dtypes.check_user_dtype_supported(MyDtype())
+    dtypes.check_and_canonicalize_user_dtype(MyDtype())
 
   def test_check_dtype_array(self):
     x = jnp.arange(4)
     msg = "Passing an array as a dtype argument is deprecated"
     with self.assertWarnsRegex(DeprecationWarning, msg):
-      dtypes.check_user_dtype_supported(x)
+      dtypes.check_and_canonicalize_user_dtype(x)
     with self.assertWarnsRegex(DeprecationWarning, msg):
-      jax.jit(dtypes.check_user_dtype_supported)(x)
+      def f(x):
+        dtypes.check_and_canonicalize_user_dtype(x)
+      jax.jit(f)(x)
 
 
 class ExtendedDTypeTest(jtu.JaxTestCase):
@@ -778,12 +806,16 @@ class TestPromotionTables(jtu.JaxTestCase):
       {"testcase_name": f"_{jaxtype=}", "jaxtype": jaxtype}
       for jaxtype in dtypes._jax_types + dtypes._weak_types)
   def testJaxTypeFromType(self, jaxtype):
+    if isinstance(jaxtype, np.dtype):
+      jaxtype = dtypes.canonicalize_dtype(jaxtype)
     self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(jaxtype)), jaxtype)
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{jaxtype=}", "jaxtype": jaxtype}
       for jaxtype in dtypes._jax_types + dtypes._weak_types)
   def testJaxTypeFromVal(self, jaxtype):
+    if isinstance(jaxtype, np.dtype):
+      jaxtype = dtypes.canonicalize_dtype(jaxtype)
     try:
       val = jaxtype(0)
     except TypeError:
@@ -954,6 +986,7 @@ class TestPromotionTables(jtu.JaxTestCase):
       self.skipTest("TPU does not support float8_e8m0fnu.")
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
       self.skipTest("TPU does not support float4_e2m1fn.")
+    dtype = dtypes.canonicalize_dtype(dtype)
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     if weak_type:
       expected = dtypes.canonicalize_dtype(
@@ -1015,6 +1048,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     if dtype in intn_dtypes:
       self.skipTest("XLA support for int2 and int4 is incomplete.")
     # Regression test for https://github.com/jax-ml/jax/issues/6051
+    dtype = dtypes.canonicalize_dtype(dtype)
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     with jax.numpy_dtype_promotion(promotion):
       y = (x + x)
@@ -1046,6 +1080,7 @@ class TestPromotionTables(jtu.JaxTestCase):
       self.skipTest('TPU does not support float8_e8m0fnu.')
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float4_e2m1fn.')
+    dtype = dtypes.canonicalize_dtype(dtype)
     val = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     rep = repr(val)
     self.assertStartsWith(rep, 'Array(')

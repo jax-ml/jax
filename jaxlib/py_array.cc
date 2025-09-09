@@ -809,7 +809,15 @@ absl::StatusOr<size_t> PyArray::GetOnDeviceSizeInBytes() {
     return xla::InvalidArgument(
         "GetOnDeviceSizeInBytes() called on deleted or donated buffer");
   }
-
+  // TODO(emilyaf): Support this method for non-addressable arrays by calling
+  // py_client()->pjrt_client()->GetOnDeviceBytesCount once all clients
+  // implement it.
+  if (ifrt_array()->sharding().devices()->AddressableDeviceList()->size() ==
+      0) {
+    return xla::Unimplemented(
+        "GetOnDeviceSizeInBytes() is not yet supported for arrays with no "
+        "addressable devices");
+  }
   TF_ASSIGN_OR_RETURN(size_t shard_size,
                       GetPjrtBuffer(ifrt_array())->GetOnDeviceSizeInBytes());
   return shard_size * nb::len(nb::object(sharding().attr("device_set")));

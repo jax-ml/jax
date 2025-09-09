@@ -50,6 +50,7 @@ from jax._src.internal_test_util import lax_test_util
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
 from jax._src.lib import _jax
+from jax._src.lib import xla_client as xc
 from jax._src.util import safe_map, safe_zip
 
 config.parse_flags_with_absl()
@@ -222,7 +223,7 @@ class PythonPmapTest(jtu.JaxTestCase):
         TypeError,
         r"Argument types differ .*"
         r"The mismatches are:\n"
-        r"Argument 'x' compiled with.*float32.*and called with.*int32.*",
+        r"Argument '' compiled with.*float32.*and called with.*int32.*",
         lambda: f_exe(x_i32))
 
   def testLowerCompileMultiArg(self):
@@ -2100,7 +2101,10 @@ class PythonPmapTest(jtu.JaxTestCase):
     save_cos = lambda prim, *_, **__: str(prim) == 'cos'
     f = remat(g, policy=save_cos)
     _, f_vjp = jax.vjp(f, x)
-    jaxpr = f_vjp.args[0].func.args[1]
+    if config.vjp3.value:
+      jaxpr = f_vjp.jaxpr
+    else:
+      jaxpr = f_vjp.args[0].func.args[1]
     jaxpr_text = str(jaxpr)
     self.assertEqual(jaxpr_text.count(' sin '), 0)
     self.assertEqual(jaxpr_text.count(' cos '), 0)
@@ -2108,7 +2112,10 @@ class PythonPmapTest(jtu.JaxTestCase):
     save_sin = lambda prim, *_, **__: str(prim) == 'sin'
     f = remat(g, policy=save_sin)
     _, f_vjp = jax.vjp(f, x)
-    jaxpr = f_vjp.args[0].func.args[1]
+    if config.vjp3.value:
+      jaxpr = f_vjp.jaxpr
+    else:
+      jaxpr = f_vjp.args[0].func.args[1]
     jaxpr_text = str(jaxpr)
     self.assertEqual(jaxpr_text.count(' sin '), 0)
     self.assertEqual(jaxpr_text.count(' cos '), 2)
@@ -2116,7 +2123,10 @@ class PythonPmapTest(jtu.JaxTestCase):
     save_nothing = lambda prim, *_, **__: False
     f = remat(g, policy=save_nothing)
     _, f_vjp = jax.vjp(f, x)
-    jaxpr = f_vjp.args[0].func.args[1]
+    if config.vjp3.value:
+      jaxpr = f_vjp.jaxpr
+    else:
+      jaxpr = f_vjp.args[0].func.args[1]
     jaxpr_text = str(jaxpr)
     self.assertEqual(jaxpr_text.count(' sin '), 1)
     self.assertEqual(jaxpr_text.count(' cos '), 2)
@@ -3000,7 +3010,8 @@ class ShardArgsTest(jtu.JaxTestCase):
     x = np.arange(math.prod(shape)).reshape(shape)
     arg = make_arg(x)
     sharding = jax.sharding.PmapSharding(jax.devices()[:nshards], spec)
-    results = pxla.shard_args([sharding], [None], [None], [arg])
+    results = pxla.shard_args([sharding], [None],
+                              [xc.ArrayCopySemantics.REUSE_INPUT], [arg])
     self.assertEqual(len(results), 1)
     if isinstance(results[0], array.ArrayImpl):
       bufs = results[0]._arrays

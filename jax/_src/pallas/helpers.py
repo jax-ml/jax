@@ -72,7 +72,19 @@ def empty_ref_like(x: object) -> jax.Array:
   return jax_core.mutable_array(out, memory_space=memory_space)
 
 
-def when(condition):
+def when(
+    condition: bool | jax.typing.ArrayLike, /
+) -> Callable[[Callable[[], None]], Callable[[], None]]:
+  """Calls the decorated function when the condition is met.
+
+  Args:
+    condition: If a boolean, this is equivalent to ``if condition: f()``. If an
+      array, ``when`` produces a :func:`jax.lax.cond` with the decorated
+      function as the true branch.
+
+  Returns:
+    A decorator.
+  """
   def _wrapped(f):
     if isinstance(condition, bool):
       if condition:

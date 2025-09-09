@@ -49,10 +49,6 @@ from .layout_inference import (
     infer_layout as infer_layout,
 )
 
-from .layout_inference2 import (
-    infer_layout as infer_layout2,  # noqa: F401
-)
-
 from .layouts import (
     to_layout_attr as to_layout_attr,
 )
@@ -113,6 +109,10 @@ from .utils import (
     warpgroup_barrier as warpgroup_barrier,
     warpgroup_idx as warpgroup_idx,
     when as when,
+)
+from .mma import (
+    MMALayouts as MMALayouts,
+    mma as mma,
 )
 from .wgmma import (
     WGMMAAccumulator as WGMMAAccumulator,

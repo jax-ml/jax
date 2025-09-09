@@ -23,6 +23,7 @@ from typing import Any, ClassVar, Literal
 from collections.abc import Mapping
 
 import jax
+from jax.extend import backend as jex_backend
 from jax._src import core as jax_core
 from jax._src import state
 from jax._src import util
@@ -48,15 +49,18 @@ class KernelType(enum.Enum):
 class GridDimensionSemantics(enum.Enum):
   PARALLEL = "parallel"
   CORE_PARALLEL = "core_parallel"
+  SUBCORE_PARALLEL = "subcore_parallel"
   ARBITRARY = "arbitrary"
 
 PARALLEL = GridDimensionSemantics.PARALLEL
 CORE_PARALLEL = GridDimensionSemantics.CORE_PARALLEL
+SUBCORE_PARALLEL = GridDimensionSemantics.SUBCORE_PARALLEL
 ARBITRARY = GridDimensionSemantics.ARBITRARY
 
 
 DimensionSemantics = (
-    Literal["parallel", "core_parallel", "arbitrary"] | GridDimensionSemantics
+    Literal["parallel", "core_parallel", "subcore_parallel", "arbitrary"]
+    | GridDimensionSemantics
 )
 
 
@@ -263,7 +267,11 @@ def create_tensorcore_mesh(
     raise ValueError('cannot specify both devices and num_cores')
   if num_cores is None:
     if devices is None:
-      devices = jax.devices()
+      abstract_device = jax.sharding.get_abstract_mesh().abstract_device
+      if abstract_device is None:
+        devices = [jax.devices()[0]]
+      else:
+        devices = [abstract_device]
     num_cores = devices[0].num_cores
   return TensorCoreMesh(
       np.array([TensorCore(i) for i in range(num_cores)]),
@@ -337,3 +345,9 @@ def _convert_semaphore_type_to_aval(
 pallas_core._out_shape_to_aval_mapping[SemaphoreType] = (
     _convert_semaphore_type_to_aval
 )
+
+
+def get_device_kind() -> str:
+  if abstract_device := jax.sharding.get_abstract_mesh().abstract_device:
+    return abstract_device.device_kind
+  return jex_backend.get_default_device().device_kind

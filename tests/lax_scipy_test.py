@@ -118,10 +118,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
           "TODO(https://github.com/scipy/scipy/issues/22903): logsumexp with a"
           " b scale array is buggy in scipy 1.15"
       )
-    if not jtu.test_device_matches(["cpu", "gpu"]):
-      rng = jtu.rand_some_inf_and_nan(self.rng())
-    else:
-      rng = jtu.rand_default(self.rng())
+    rng = jtu.rand_default(self.rng())
     # TODO(mattjj): test autodiff
     if use_b:
       def scipy_fun(array_to_reduce, scale_array):
@@ -193,6 +190,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
         result = lsp_special.logsumexp(1.0, b=1.0)
         self.assertEqual(result, 1.0)
+
+  def testLogSumExpInfs(self):
+    out, sign = lsp_special.logsumexp(jnp.array([1.0, np.inf]), return_sign=True)
+    self.assertEqual(out, np.inf)
+    self.assertEqual(sign, 1.0)
 
   @jtu.sample_product(
     shape=[(0,), (1,), (2,), (3,), (4,), (5,)],

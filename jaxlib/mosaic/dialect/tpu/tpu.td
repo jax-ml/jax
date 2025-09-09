@@ -84,7 +84,8 @@ def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>
 def TPU_DimensionSemantics : I32EnumAttr<"DimensionSemantics", "Dimension semantics", [
   I32EnumAttrCase<"parallel", 0>,
   I32EnumAttrCase<"arbitrary", 1>,
-  I32EnumAttrCase<"core_parallel", 2>
+  I32EnumAttrCase<"core_parallel", 2>,
+  I32EnumAttrCase<"subcore_parallel", 3>
 ]> {
     let genSpecializedAttr = 0;
     let cppNamespace = "::mlir::tpu";
@@ -813,16 +814,16 @@ def TPU_ReciprocalOp : TPU_Op<"reciprocal", [Pure, SameOperandsAndResultType, El
 }
 
 def TPU_RollVectorsOp : TPU_Op<"roll_vectors", [Pure]> {
-  let arguments = (ins Variadic<AnyVectorOfNonZeroRank>:$input);
-  let results = (outs AnyVectorOfNonZeroRank:$output);
+  let arguments = (ins Variadic<AnyVectorOfAnyRank>:$input);
+  let results = (outs AnyVectorOfAnyRank:$output);
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($output)
   }];
 }
 
 def TPU_UnrollVectorsOp : TPU_Op<"unroll_vectors", [Pure]> {
-  let arguments = (ins AnyVectorOfNonZeroRank:$input);
-  let results = (outs Variadic<AnyVectorOfNonZeroRank>:$output);
+  let arguments = (ins AnyVectorOfAnyRank:$input);
+  let results = (outs Variadic<AnyVectorOfAnyRank>:$output);
   let hasCanonicalizeMethod = 1;
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($output)
@@ -1199,8 +1200,16 @@ def TPU_DelayOp : TPU_Op<"delay"> {
 
 // Expands the granularity of mask to subelements.
 def TPU_MaskCastOp : TPU_Op<"mask_cast", [Pure]> {
-  let arguments = (ins AnyVectorOfNonZeroRank:$input);
-  let results = (outs AnyVectorOfNonZeroRank:$result);
+  let description = [{
+    Cast a mask register into a different packing.
+
+    If casting to a type with smaller packing, then values being packed together
+    must be identical. For example, for 8x128x4xi1 -> 8x128x2xi1,
+    input[i, j, 0] == input[i, j, 1] and input[i, j, 2] == input[i, j, 3] must
+    hold for all i, j. Otherwise, the result is undefined.
+  }];
+  let arguments = (ins VectorOfNonZeroRankOf<[I1]>:$input);
+  let results = (outs VectorOfNonZeroRankOf<[I1]>:$result);
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($result)
   }];

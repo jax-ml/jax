@@ -290,7 +290,7 @@ def add_matrices_pipelined_megacore(x: jax.Array, y: jax.Array) -> jax.Array:
   block_spec = pl.BlockSpec((256, 512), lambda i: (i, 0))
   return pl.pallas_call(
       add_matrices_kernel,
-      out_shape=x,
+      out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
       in_specs=[block_spec, block_spec],
       out_specs=block_spec,
       grid=(2,),
@@ -319,12 +319,15 @@ When using `pltpu.emit_pipeline`, `core_axis` should be passed into `emit_pipeli
 def kernel_body(...):
   def inner_pipeline_body(...):
     ...
-  pltpu.emit_pipeline(inner_pipeline_body, core_axis=0)
+  pltpu.emit_pipeline(inner_pipeline_body,
+                      grid=(4, 4), 
+                      core_axis=0,
+                      dimension_semantics=("parallel", "sequential"))
 
 pl.pallas_call(
       kernel_body,
-      grid=(4, 4),
+      grid=(num_cores,),
       compiler_params=pltpu.CompilerParams(
-          dimension_semantics=("parallel", "sequential"))
+          dimension_semantics=("parallel",))
   )
 ```

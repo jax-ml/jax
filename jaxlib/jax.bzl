@@ -62,7 +62,7 @@ loops_visibility = []
 
 PLATFORM_TAGS_DICT = {
     ("Linux", "x86_64"): ("manylinux_2_27", "x86_64"),
-    ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
+    ("Linux", "aarch64"): ("manylinux_2_27", "aarch64"),
     ("Linux", "ppc64le"): ("manylinux2014", "ppc64le"),
     ("Darwin", "x86_64"): ("macosx_11_0", "x86_64"),
     ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
@@ -84,6 +84,7 @@ _py_deps = {
     "absl-all": ["@pypi//absl_py"],
     "absl/logging": ["@pypi//absl_py"],
     "absl/testing": ["@pypi//absl_py"],
+    "absl/testing:flagsaver": ["@pypi//absl_py"],
     "absl/flags": ["@pypi//absl_py"],
     "cloudpickle": get_optional_dep("@pypi//cloudpickle"),
     "epath": get_optional_dep("@pypi//etils"),  # etils.epath

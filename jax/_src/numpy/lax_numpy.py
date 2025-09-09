@@ -48,6 +48,7 @@ from jax._src.lax import convolution as lax_conv
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.lax import special as lax_special
+from jax._src.lax import utils as lax_utils
 from jax._src.lib import xla_client as xc
 from jax._src.numpy.array_constructors import array, asarray
 from jax._src.numpy import array_creation
@@ -151,8 +152,7 @@ def iscomplexobj(x: Any) -> bool:
   return issubdtype(typ, np.complexfloating)
 
 
-def _dtype(x: Any) -> DType:
-  return dtypes.dtype(x, canonicalize=True)
+_dtype = dtypes.dtype
 
 # Dtype-related functions
 iinfo = dtypes.iinfo
@@ -162,47 +162,6 @@ can_cast = dtypes.can_cast
 promote_types = dtypes.promote_types
 
 ComplexWarning = np.exceptions.ComplexWarning
-
-
-def _convert_and_clip_integer(val: ArrayLike, dtype: DType) -> Array:
-  """
-  Convert integer-typed val to specified integer dtype, clipping to dtype
-  range rather than wrapping.
-
-  Args:
-    val: value to be converted
-    dtype: dtype of output
-
-  Returns:
-    equivalent of val in new dtype
-
-  Examples
-  --------
-  Normal integer type conversion will wrap:
-
-  >>> val = jnp.uint32(0xFFFFFFFF)
-  >>> val.astype('int32')
-  Array(-1, dtype=int32)
-
-  This function clips to the values representable in the new type:
-
-  >>> _convert_and_clip_integer(val, 'int32')
-  Array(2147483647, dtype=int32)
-  """
-  val = val if isinstance(val, Array) else asarray(val)
-  dtype = dtypes.canonicalize_dtype(dtype)
-  if not (issubdtype(dtype, np.integer) and issubdtype(val.dtype, np.integer)):
-    raise TypeError("_convert_and_clip_integer only accepts integer dtypes.")
-
-  val_dtype = dtypes.canonicalize_dtype(val.dtype)
-  if val_dtype != val.dtype:
-    # TODO(jakevdp): this is a weird corner case; need to figure out how to handle it.
-    # This happens in X32 mode and can either come from a jax value created in another
-    # context, or a Python integer converted to int64.
-    pass
-  min_val = lax._const(val, max(iinfo(dtype).min, iinfo(val_dtype).min))
-  max_val = lax._const(val, min(iinfo(dtype).max, iinfo(val_dtype).max))
-  return clip(val, min_val, max_val).astype(dtype)
 
 
 @export
@@ -579,7 +538,7 @@ def trunc(x: ArrayLike) -> Array:
            [-8.,  5.,  3.]], dtype=float32)
   """
   x = util.ensure_arraylike('trunc', x)
-  if dtypes.isdtype(dtypes.dtype(x), ('integral', 'bool')):
+  if dtypes.isdtype(x.dtype, ('integral', 'bool')):
     return x
   return where(lax.lt(x, lax._const(x, 0)), ufuncs.ceil(x), ufuncs.floor(x))
 
@@ -1582,9 +1541,9 @@ def angle(z: ArrayLike, deg: bool = False) -> Array:
   z = util.ensure_arraylike('angle', z)
   re = ufuncs.real(z)
   im = ufuncs.imag(z)
-  dtype = _dtype(re)
+  dtype = re.dtype
   if not issubdtype(dtype, np.inexact) or (
-      issubdtype(_dtype(z), np.floating) and np.ndim(z) == 0):
+      issubdtype(z.dtype, np.floating) and np.ndim(z) == 0):
     dtype = dtypes.default_float_dtype()
     re = lax.convert_element_type(re, dtype)
     im = lax.convert_element_type(im, dtype)
@@ -2156,8 +2115,7 @@ def ravel_multi_index(multi_index: Sequence[ArrayLike], dims: Sequence[int],
   else:
     raise ValueError(f"invalid order={order!r}. Expected 'C' or 'F'")
 
-  result = array(0, dtype=(multi_index_arr[0].dtype if multi_index_arr
-                           else dtypes.canonicalize_dtype(dtypes.int_)))
+  result = array(0, dtype=multi_index_arr[0].dtype if multi_index_arr else int)
   for i, s in zip(multi_index_arr, strides):
     result = result + i * int(s)
   return result
@@ -2584,12 +2542,12 @@ def isclose(a: ArrayLike, b: ArrayLike, rtol: ArrayLike = 1e-05, atol: ArrayLike
     Array([ True,  True,  True], dtype=bool)
   """
   a, b = util.promote_args("isclose", a, b)
-  dtype = _dtype(a)
+  dtype = a.dtype
   if dtypes.issubdtype(dtype, dtypes.extended):
     return lax.eq(a, b)
 
   a, b = util.promote_args_inexact("isclose", a, b)
-  dtype = _dtype(a)
+  dtype = a.dtype
   if issubdtype(dtype, np.complexfloating):
     dtype = np.array(0, dtype).real.dtype
   rtol = lax.convert_element_type(rtol, dtype)
@@ -2962,10 +2920,10 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     Array([2, 1, 0, 1, 0], dtype=int32)
   """
   x = util.ensure_arraylike("bincount", x)
-  if _dtype(x) == bool:
+  if x.dtype == bool:
     x = lax.convert_element_type(x, 'int32')
-  if not issubdtype(_dtype(x), np.integer):
-    raise TypeError(f"x argument to bincount must have an integer type; got {_dtype(x)}")
+  if not issubdtype(x.dtype, np.integer):
+    raise TypeError(f"x argument to bincount must have an integer type; got {x.dtype}")
   if np.ndim(x) != 1:
     raise ValueError("only 1-dimensional input supported.")
   minlength = core.concrete_or_error(operator.index, minlength,
@@ -3468,7 +3426,7 @@ def round(a: ArrayLike, decimals: int = 0, out: None = None) -> Array:
   decimals = core.concrete_or_error(operator.index, decimals, "'decimals' argument of jnp.round")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.round is not supported.")
-  dtype = _dtype(a)
+  dtype = a.dtype
   if issubdtype(dtype, np.integer):
     if decimals < 0:
       raise NotImplementedError(
@@ -3591,14 +3549,14 @@ def nan_to_num(x: ArrayLike, copy: bool = True, nan: ArrayLike = 0.0,
   """
   del copy
   x = util.ensure_arraylike("nan_to_num", x)
-  dtype = _dtype(x)
+  dtype = x.dtype
   if not issubdtype(dtype, np.inexact):
     return x
   if issubdtype(dtype, np.complexfloating):
     return lax.complex(
       nan_to_num(lax.real(x), nan=nan, posinf=posinf, neginf=neginf),
       nan_to_num(lax.imag(x), nan=nan, posinf=posinf, neginf=neginf))
-  info = finfo(dtypes.canonicalize_dtype(dtype))
+  info = finfo(dtype)
   posinf = info.max if posinf is None else posinf
   neginf = info.min if neginf is None else neginf
   out = where(ufuncs.isnan(x), asarray(nan, dtype=dtype), x)
@@ -5001,7 +4959,7 @@ def choose(a: ArrayLike, choices: Array | np.ndarray | Sequence[ArrayLike],
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.choose is not supported.")
   a, *choices = util.ensure_arraylike_tuple('choose', (a, *choices))
-  if not issubdtype(_dtype(a), np.integer):
+  if not issubdtype(a.dtype, np.integer):
     raise ValueError("`a` array must be integer typed")
   N = len(choices)
 
@@ -5357,7 +5315,8 @@ def astype(x: ArrayLike, dtype: DTypeLike | None,
 
   if dtype is None:
     dtype = dtypes.default_float_dtype()
-  dtypes.check_user_dtype_supported(dtype, "astype")
+  else:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "astype")
   if issubdtype(x_arr.dtype, np.complexfloating):
     if dtypes.isdtype(dtype, ("integral", "real floating")):
       deprecations.warn(
@@ -5836,7 +5795,8 @@ def eye(N: DimSize, M: DimSize | None = None,
 def _eye(N: DimSize, M: DimSize | None = None,
         k: int | ArrayLike = 0,
         dtype: DTypeLike | None = None) -> Array:
-  dtypes.check_user_dtype_supported(dtype, "eye")
+  dtype = dtypes.check_and_canonicalize_user_dtype(
+      float if dtype is None else dtype, "eye")
   if isinstance(k, int):
     k = lax._clip_int_to_valid_range(k, np.int32,
                                               "`argument `k` of jax.numpy.eye")
@@ -5882,7 +5842,8 @@ def identity(n: DimSize, dtype: DTypeLike | None = None) -> Array:
     Array([[1, 0],
            [0, 1]], dtype=int32)
   """
-  dtypes.check_user_dtype_supported(dtype, "identity")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "identity")
   return eye(n, dtype=dtype)
 
 
@@ -5977,7 +5938,8 @@ def arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
 def _arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
             step: ArrayLike | None = None, dtype: DTypeLike | None = None,
             out_sharding: NamedSharding | None = None) -> Array:
-  dtypes.check_user_dtype_supported(dtype, "arange")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "arange")
   if not config.dynamic_shapes.value:
     util.check_arraylike("arange", start)
     if stop is None and step is None:
@@ -6159,7 +6121,7 @@ def i0(x: ArrayLike) -> Array:
   """
   x_arr, = util.promote_args_inexact("i0", x)
   if not issubdtype(x_arr.dtype, np.floating):
-    raise ValueError(f"Unsupported input type to jax.numpy.i0: {_dtype(x)}")
+    raise ValueError(f"Unsupported input type to jax.numpy.i0: {x_arr.dtype}")
   return _i0(x_arr)
 
 
@@ -6214,7 +6176,7 @@ def ix_(*args: ArrayLike) -> tuple[Array, ...]:
     if len(a.shape) != 1:
       msg = "Arguments to jax.numpy.ix_ must be 1-dimensional, got shape {}"
       raise ValueError(msg.format(a.shape))
-    if _dtype(a) == bool:
+    if a.dtype == bool:
       raise NotImplementedError(
         "Boolean arguments to jax.numpy.ix_ are not implemented")
     shape = [1] * n
@@ -6269,8 +6231,8 @@ def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
     (Array([[0],
            [1]], dtype=int32), Array([[0, 1, 2]], dtype=int32))
   """
-  dtypes.check_user_dtype_supported(dtype, "indices")
-  dtype = dtype or dtypes.canonicalize_dtype(dtypes.int_)
+  dtype = dtypes.check_and_canonicalize_user_dtype(
+      int if dtype is None else dtype, "indices")
   dimensions = tuple(
       core.concrete_or_error(operator.index, d, "dimensions argument of jnp.indices")
       for d in dimensions)
@@ -6583,9 +6545,12 @@ def tri(N: int, M: int | None = None, k: int = 0, dtype: DTypeLike | None = None
            [1., 0., 0., 0.],
            [1., 1., 0., 0.]], dtype=float32)
   """
-  dtypes.check_user_dtype_supported(dtype, "tri")
+  if dtype is None:
+    # TODO(phawkins): this is a strange default.
+    dtype = np.dtype(np.float32)
+  else:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "tri")
   M = M if M is not None else N
-  dtype = dtype or np.dtype('float32')
   return lax._tri(dtype, (N, M), k)
 
 
@@ -6774,7 +6739,8 @@ def trace(a: ArrayLike, offset: int | ArrayLike = 0, axis1: int = 0, axis2: int 
   if _canonicalize_axis(axis1, np.ndim(a)) == _canonicalize_axis(axis2, np.ndim(a)):
     raise ValueError(f"axis1 and axis2 can not be same. axis1={axis1} and axis2={axis2}")
 
-  dtypes.check_user_dtype_supported(dtype, "trace")
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "trace")
 
   a_shape = np.shape(a)
   a = moveaxis(a, (axis1, axis2), (-2, -1))
@@ -7201,7 +7167,12 @@ def diag_indices(n: int, ndim: int = 2) -> tuple[Array, ...]:
   if ndim < 0:
     raise ValueError("ndim argument to diag_indices must be nonnegative, got {}"
                      .format(ndim))
-  return (lax.iota(dtypes.int_, n),) * ndim
+  index_dtype = lax_utils.int_dtype_for_dim(n, signed=True)
+  # We'd give the correct output values with int32, but use the default dtype to
+  # match NumPy type semantics if x64 mode is enabled for now.
+  if index_dtype == np.dtype(np.int32):
+    index_dtype = dtypes.default_int_dtype()
+  return (lax.iota(index_dtype, n),) * ndim
 
 
 @export
@@ -7305,17 +7276,17 @@ def diagonal(a: ArrayLike, offset: int = 0, axis1: int = 0,
 
   # The mosaic lowering rule for diag is only defined for square arrays.
   # TODO(mvoz): Add support for offsets.
-  if np.shape(a)[0] != np.shape(a)[1] or np.ndim(a) != 2 or offset != 0 or _dtype(a) == bool:
+  if np.shape(a)[0] != np.shape(a)[1] or np.ndim(a) != 2 or offset != 0 or a.dtype == bool:
     return _default_diag(a)
   else:
-    a_shape_eye = eye(np.shape(a)[0], dtype=_dtype(a))
+    a_shape_eye = eye(np.shape(a)[0], dtype=a.dtype)
 
     def _mosaic_diag(a):
       def _sum(x, axis):
         return lax.reduce(
             x,
-            np.array(0, _dtype(x)),
-            lax.add if _dtype(x) != bool else lax.bitwise_or,
+            np.array(0, x.dtype),
+            lax.add if x.dtype != bool else lax.bitwise_or,
             (axis,),
         )
       return _sum(lax.mul(a_shape_eye, a), axis=0)
@@ -7660,9 +7631,9 @@ def delete(
     obj = asarray(obj).ravel()
     obj = clip(where(obj < 0, obj + a.shape[axis], obj), 0, a.shape[axis])
     obj = sort(obj)
-    obj -= arange(len(obj))  # type: ignore[arg-type,operator]
-    i = arange(a.shape[axis] - obj.size)
-    i += (i[None, :] >= obj[:, None]).sum(0)
+    obj -= arange(len(obj), dtype=obj.dtype)  # type: ignore
+    i = arange(a.shape[axis] - obj.size, dtype=obj.dtype)
+    i += (i[None, :] >= obj[:, None]).sum(0, dtype=i.dtype)
     return a[(slice(None),) * axis + (i,)]
 
   # Case 3b: non-unique indices: must be static.
@@ -8213,6 +8184,10 @@ def argmax(a: ArrayLike, axis: int | None = None, out: None = None,
     - :func:`jax.numpy.argmin`: return the index of the minimum value.
     - :func:`jax.numpy.nanargmax`: compute ``argmax`` while ignoring NaN values.
 
+  Note:
+    When the maximum value occurs more than once along a particular axis, the
+    smallest index is returned.
+
   Examples:
     >>> x = jnp.array([1, 3, 5, 4, 2])
     >>> jnp.argmax(x)
@@ -8243,7 +8218,8 @@ def _argmax(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
     dims = [axis]
   if a.shape[axis] == 0:
     raise ValueError("attempt to get argmax of an empty sequence")
-  result = lax.argmax(a, _canonicalize_axis(axis, a.ndim), dtypes.canonicalize_dtype(dtypes.int_))
+  # TODO(phawkins): use an int64 index if the dimension is large enough.
+  result = lax.argmax(a, _canonicalize_axis(axis, a.ndim), int)
   return expand_dims(result, dims) if keepdims else result
 
 
@@ -8264,6 +8240,10 @@ def argmin(a: ArrayLike, axis: int | None = None, out: None = None,
 
   Returns:
     an array containing the index of the minimum value along the specified axis.
+
+  Note:
+    When the minimum value occurs more than once along a particular axis, the
+    smallest index is returned.
 
   See also:
     - :func:`jax.numpy.argmax`: return the index of the maximum value.
@@ -8299,7 +8279,8 @@ def _argmin(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
     dims = [axis]
   if a.shape[axis] == 0:
     raise ValueError("attempt to get argmin of an empty sequence")
-  result = lax.argmin(a, _canonicalize_axis(axis, a.ndim), dtypes.canonicalize_dtype(dtypes.int_))
+  # TODO(phawkins): use an int64 index if the dimension is large enough.
+  result = lax.argmin(a, _canonicalize_axis(axis, a.ndim), int)
   return expand_dims(result, dims) if keepdims else result
 
 
@@ -8363,7 +8344,7 @@ def nanargmax(
 
 @partial(api.jit, static_argnames=('axis', 'keepdims'))
 def _nanargmax(a: Array, axis: int | None = None, keepdims: bool = False):
-  if not issubdtype(_dtype(a), np.inexact):
+  if not issubdtype(a.dtype, np.inexact):
     return argmax(a, axis=axis, keepdims=keepdims)
   nan_mask = ufuncs.isnan(a)
   a = where(nan_mask, -np.inf, a)
@@ -8424,7 +8405,7 @@ def nanargmin(
 
 @partial(api.jit, static_argnames=('axis', 'keepdims'))
 def _nanargmin(a: Array, axis: int | None = None, keepdims : bool = False):
-  if not issubdtype(_dtype(a), np.inexact):
+  if not issubdtype(a.dtype, np.inexact):
     return argmin(a, axis=axis, keepdims=keepdims)
   nan_mask = ufuncs.isnan(a)
   a = where(nan_mask, np.inf, a)
@@ -8805,7 +8786,7 @@ def gcd(x1: ArrayLike, x2: ArrayLike) -> Array:
   """
   x1, x2 = util.ensure_arraylike("gcd", x1, x2)
   x1, x2 = util.promote_dtypes(x1, x2)
-  if not issubdtype(_dtype(x1), np.integer):
+  if not issubdtype(x1.dtype, np.integer):
     raise ValueError("Arguments to jax.numpy.gcd must be integers.")
   x1, x2 = broadcast_arrays(x1, x2)
   gcd, _ = control_flow.while_loop(_gcd_cond_fn, _gcd_body_fn, (ufuncs.abs(x1), ufuncs.abs(x2)))
@@ -8853,7 +8834,7 @@ def lcm(x1: ArrayLike, x2: ArrayLike) -> Array:
   x1, x2 = util.ensure_arraylike("lcm", x1, x2)
   x1, x2 = util.promote_dtypes(x1, x2)
   x1, x2 = ufuncs.abs(x1), ufuncs.abs(x2)
-  if not issubdtype(_dtype(x1), np.integer):
+  if not issubdtype(x1.dtype, np.integer):
     raise ValueError("Arguments to jax.numpy.lcm must be integers.")
   d = gcd(x1, x2)
   return where(d == 0, lax._const(d, 0),
@@ -9145,7 +9126,7 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
       raise RuntimeError("cannot handle multidimensional fweights")
     if np.shape(fweights)[0] != X.shape[1]:
       raise RuntimeError("incompatible numbers of samples and fweights")
-    if not issubdtype(_dtype(fweights), np.integer):
+    if not issubdtype(fweights.dtype, np.integer):
       raise TypeError("fweights must be integer.")
     # Ensure positive fweights; note that numpy raises an error on negative fweights.
     w = abs(fweights)
@@ -9290,7 +9271,8 @@ def _searchsorted_via_scan(unrolled: bool, sorted_arr: Array, query: Array, side
 
 
 def _searchsorted_via_sort(sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
-  working_dtype = np.dtype('int32') if sorted_arr.size + query.size < np.iinfo(np.int32).max else np.dtype('int64')
+  working_dtype = lax_utils.int_dtype_for_dim(sorted_arr.size + query.size,
+                                              signed=False)
   def _rank(x):
     idx = lax.iota(working_dtype, x.shape[0])
     return array_creation.zeros_like(idx).at[argsort(x)].set(idx)
@@ -9386,7 +9368,7 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   a, v = util.promote_dtypes(a, v)
   if sorter is not None:
     a = a[sorter]
-  dtype = np.dtype('int32') if a.shape[0] <= np.iinfo(np.int32).max else np.dtype('int64')
+  dtype = lax_utils.int_dtype_for_dim(a.shape[0], signed=True)
   if a.shape[0] == 0:
     return array_creation.zeros_like(v, dtype=dtype)
   impl = {
@@ -9545,7 +9527,7 @@ def _piecewise(x: Array, condlist: Array, consts: dict[int, ArrayLike],
   funclist = [consts.get(i, funcdict.get(i)) for i in range(len(condlist) + 1)]
   indices = argmax(reductions.cumsum(concatenate(
       [array_creation.zeros_like(condlist[:1]), condlist], 0), 0), 0)
-  dtype = _dtype(x)
+  dtype = x.dtype
   def _call(f):
     return lambda x: f(x, *args, **kw).astype(dtype)
   def _const(v):

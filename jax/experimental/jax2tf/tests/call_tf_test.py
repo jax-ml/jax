@@ -619,7 +619,9 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
       return x * tf.broadcast_to(outer_var, x.shape) + 1.
 
     hlo = tf.function(fun_tf, jit_compile=True, autograph=False).experimental_get_compiler_ir(x)()
-    self.assertIn("(arg0.1: f32[3], arg1.2: f32[1]) -> f32[3]", hlo)
+    self.assertRegex(
+        hlo, r"\(arg0.[0-9]+: f32\[3\], arg1.[0-9]+: f32\[1\]\) -> f32\[3\]"
+    )
 
     # Capture a constant
     outer_ct = np.array([3.], dtype=np.float32)

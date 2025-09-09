@@ -34,6 +34,16 @@ on:
         - "3.11"
         - "3.12"
         - "3.13"
+        - "3.13-ft"
+        - "3.14"
+        - "3.14-ft"
+      cuda-version:
+        description: "Which cuda version should the artifact be built for?"
+        type: choice
+        default: "12"
+        options:
+        - "12"
+        - "13"
       clone_main_xla:
         description: "Should latest XLA be used?"
         type: choice
@@ -62,6 +72,10 @@ on:
         description: "Which python version should the artifact be built for?"
         type: string
         default: "3.12"
+      cuda-version:
+        description: "Which cuda version should the artifact be built for?"
+        type: string
+        default: "12"
       clone_main_xla:
         description: "Should latest XLA be used?"
         type: string
@@ -94,12 +108,13 @@ jobs:
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
+      JAXCI_CUDA_VERSION: "${{ inputs.cuda-version }}"
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
 
     name: "${{ inputs.artifact }},
             ${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
             (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||
-            (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py ${{ inputs.python }}, clone main XLA=${{ inputs.clone_main_xla }}"
+            (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py ${{ inputs.python }} ${{ (contains(inputs.artifact, 'cuda') && format(', cuda {0}', inputs.cuda-version)) || '' }}, clone main XLA=${{ inputs.clone_main_xla }}"
 
     # Map the job outputs to step outputs
     outputs:

@@ -252,6 +252,7 @@ nanobind_pywrap_extension(
         "@llvm-project//mlir:Support",
         "@local_config_python//:headers",
         "@nanobind",
+        "@shardy//shardy/dialect/sdy/ir:dialect",
         "@shardy//shardy/integrations/c:sdy_capi",
         "@xla//xla/pjrt:status_casters",
         "@xla//xla/python:nb_absl_span",

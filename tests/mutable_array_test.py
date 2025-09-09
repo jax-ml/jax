@@ -872,6 +872,11 @@ class MutableArrayTest(jtu.JaxTestCase):
     g, = f_vjp(1.)
     self.assertAllClose(g, 1., check_dtypes=False)
 
+  def test_get_transpose_uninstantiated_grad_ref(self):
+    # from https://github.com/jax-ml/jax/pull/31412#discussion_r2308151559
+    f = lambda x: jax.array_ref(x)[0]
+    jax.grad(f)(jnp.array([3.]))  # don't crash
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):

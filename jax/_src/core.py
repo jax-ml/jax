@@ -90,6 +90,8 @@ no_effects: Effects = effects.no_effects
 
 
 DebugInfo = lu.DebugInfo
+InitialResultPaths = lu.InitialResultPaths
+initial_result_paths = lu.initial_result_paths
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
@@ -160,11 +162,9 @@ class Jaxpr:
     # TODO(https://github.com/jax-ml/jax/issues/26480)
     debug_info = debug_info or lu._missing_debug_info("core.Jaxpr")
     self._debug_info = debug_info.resolve_result_paths()
-    # TODO(necula): re-enable these safety checks
-    # assert (len(debug_info.arg_names) == len(invars)), (debug_info, invars)
-    # assert (len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
+    config.enable_checks.value and self._debug_info.assert_arg_names(len(invars))
+    config.enable_checks.value and self._debug_info.assert_result_paths(len(outvars))
     self._is_high = is_high
-    num_vars = len(constvars) + len(invars)
 
   def __str__(self):
     return str(self.pretty_print())
@@ -1684,7 +1684,8 @@ def mem_space_to_kind(mem_space: MemorySpace) -> str:
     assert False, "unreachable"
 
 
-@cache(max_size=4096, trace_context_in_key=False)
+@cache(max_size=4096,
+       trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
 def update_aval_with_sharding(aval, sharding):
   if isinstance(sharding, NamedSharding):
     return aval.update(
@@ -1723,8 +1724,11 @@ def shaped_abstractify(x):
       stacklevel=6)
     return shaped_abstractify(x.__jax_array__())
   if hasattr(x, 'dtype'):
-    aval = ShapedArray(np.shape(x), x.dtype,
-                       weak_type=getattr(x, 'weak_type', False))
+    aval = ShapedArray(
+        np.shape(x),
+        dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
+        weak_type=getattr(x, "weak_type", False),
+    )
     return update_aval_with_sharding(aval, getattr(x, 'sharding', None))
   raise TypeError(
       f"Cannot interpret value of type {typ} as an abstract array; it "
@@ -2039,8 +2043,8 @@ def canonicalize_value(val):
   # Manual or Auto to allow casting.
   if cur_mesh._any_axis_manual and cur_mesh._are_all_axes_auto_or_manual:
     if aval.sharding.mesh.are_all_axes_auto:
-      from jax._src.pjit import mesh_cast  # pytype: disable=import-error
-      return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
+      from jax._src.pjit import reshard  # pytype: disable=import-error
+      return reshard(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
     elif aval.sharding.mesh._any_axis_explicit:
       raise NotImplementedError(
           "Closing over inputs to shard_map where the input is sharded on"
@@ -2079,6 +2083,17 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
                  if mesh._name_to_type[u] == AxisType.Explicit}
   return P(*new_spec, unreduced=new_unreduced, reduced=new_reduced)
 
+def remove_size_one_mesh_axis(spec, mesh) -> P:
+  new_spec = []  # type: ignore
+  for s in spec:
+    if s is None:
+      new_spec.append(s)  # type: ignore
+    elif isinstance(s, tuple):
+      new_spec.append(tuple(i for i in s if mesh.shape[i] != 1))
+    else:
+      new_spec.append(None if mesh.shape[s] == 1 else s)  # type: ignore
+  return P(*new_spec, unreduced=spec.unreduced, reduced=spec.reduced)
+
 def _maybe_modify_sharding(sharding, ndim):
   if len(sharding.spec) == 0 or all(s is None for s in sharding.spec):
     out = sharding
@@ -2087,6 +2102,8 @@ def _maybe_modify_sharding(sharding, ndim):
   else:
     out = sharding.update(spec=modify_spec_for_auto_manual(
         sharding.spec, sharding.mesh))
+  if config.remove_size_one_mesh_axis_from_type.value:
+    out = out.update(spec=remove_size_one_mesh_axis(out.spec, out.mesh))
   if len(out.spec) != ndim:
     out = _make_lengths_same(out, ndim)
   return out
@@ -2105,7 +2122,8 @@ def _check_divisibility(sharding, shape):
           f" {size} times, but does not evenly divide the dimension size {sh}."
           f" Got shape: {shape} and sharding {sharding}")
 
-@cache(max_size=4096, trace_context_in_key=False)
+@cache(max_size=4096,
+       trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
 def get_sharding(sharding, shape):
   """Modifies and checks the sharding.
 
@@ -2582,6 +2600,7 @@ class InternalMutableArrayEffect(effects.Effect):
   pass
 array_ref_effect = internal_mutable_array_effect = InternalMutableArrayEffect()
 effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
+effects.remat_allowed_effects.add_type(InternalMutableArrayEffect)
 
 @array_ref_p.def_effectful_abstract_eval
 def array_ref_abstract_eval(init_aval, *, memory_space: Any):
@@ -3137,10 +3156,17 @@ def typematch(t1: AbstractValue, t2: AbstractValue) -> bool:
         isinstance(t2, (ShapedArray, DShapedArray))):
     # This case handles DShapedArray and shape polynomials. Alternatively we
     # could try normalizing first and then doing simple equality.
-    # TODO(yashkatariya): Also check `sharding` here.
+    cmp = (t1.dtype == t2.dtype and definitely_equal_shape(t1.shape, t2.shape)
+           and t1.vma == t2.vma and t1.memory_space == t2.memory_space)  # type: ignore
+    # TODO(yashkatariya): Expand this to Manual and Auto mode.
     # See https://github.com/jax-ml/jax/issues/26474
-    return (t1.dtype == t2.dtype and definitely_equal_shape(t1.shape, t2.shape)
-            and t1.vma == t2.vma and t1.memory_space == t2.memory_space)  # type: ignore
+    if (not t1.sharding.mesh.empty and not t2.sharding.mesh.empty and
+        (t1.sharding.mesh._any_axis_explicit or
+         t2.sharding.mesh._any_axis_explicit)):
+      sh_eq = t1.sharding == t2.sharding
+    else:
+      sh_eq = True
+    return cmp and sh_eq
   elif isinstance(t1, AbstractRef) and isinstance(t2, AbstractRef):
     # We want to use the regular typecheck for ShapedArray here.
     return (typematch(t1.inner_aval, t2.inner_aval) and  # type: ignore

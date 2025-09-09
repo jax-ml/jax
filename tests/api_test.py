@@ -1570,6 +1570,17 @@ class JitTest(jtu.BufferDonationTestCase):
       with jax.no_tracing():
         _ = f(y)  # crash!
 
+  def test_no_execution(self):
+    @jax.jit
+    def f():
+      return jnp.ones(3)
+
+    f()  # no crash
+    with self.assertRaisesRegex(RuntimeError, 'no_execution'):
+      with jax.no_execution():
+        f()  # crash
+    f()  # no crash
+
 
 class APITest(jtu.JaxTestCase):
 
@@ -3532,7 +3543,7 @@ class APITest(jtu.JaxTestCase):
     def f(x, y):
       return x, y
 
-    x = np.ones((1, 1, 1))
+    x = np.ones((1, 1, 1), dtype=np.float32)
 
     # All defaults
     with jtu.assert_num_jit_and_pmap_compilations(1):
@@ -4665,6 +4676,9 @@ class APITest(jtu.JaxTestCase):
 
   @jtu.thread_unsafe_test()
   def test_cache_clear_pmap(self):
+    if config.pmap_shmap_merge.value:
+      self.skipTest("Already tested by pjit tests under pmap_shmap_merge=True.")
+
     @jax.pmap
     def f(i):
       return i * 2
@@ -5772,7 +5786,7 @@ class RematTest(jtu.JaxTestCase):
       def named_f(*args):
         my_f = lambda: (f(*args),)
         f_ = lu.wrap_init(
-            my_f, debug_info=api_util.debug_info("test_remat", my_f, args, {}))
+            my_f, debug_info=api_util.debug_info("test_remat", my_f, (), {}))
         out, = core.call_p.bind(f_)
         return out
       return named_f
@@ -6071,7 +6085,7 @@ class RematTest(jtu.JaxTestCase):
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
     if config.vjp3.value:
-      jaxpr_text = str(f_vjp.fun.args[2])
+      jaxpr_text = str(f_vjp.jaxpr)
     else:
       jaxpr_text = str(f_vjp.args[0].func.args[1])
 
@@ -6210,6 +6224,16 @@ class RematTest(jtu.JaxTestCase):
     @partial(jax.remat, policy=lambda p, *_, **__: 'mul' in str(p))
     def f(x):
       x = checkpoint_name(x * x, 'foo')
+      x = x * x
+      return x
+
+    res = saved_residuals(f, 3.)
+    self.assertStartsWith(res[1][1], "named 'foo'")
+
+  def test_name_pytree(self):
+    @partial(jax.remat, policy=lambda p, *_, **__: 'mul' in str(p))
+    def f(x):
+      x = checkpoint_name({'a': x * x}, 'foo')['a']
       x = x * x
       return x
 
@@ -6440,7 +6464,7 @@ class RematTest(jtu.JaxTestCase):
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
     if config.vjp3.value:
-      jaxpr = f_vjp.fun.args[2]
+      jaxpr = f_vjp.jaxpr
     else:
       jaxpr = f_vjp.args[0].func.args[1]
     jaxpr_text = str(jaxpr)
@@ -6642,7 +6666,7 @@ class RematTest(jtu.JaxTestCase):
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
     if config.vjp3.value:
-      jaxpr_text = str(f_vjp.fun.args[2])
+      jaxpr_text = str(f_vjp.jaxpr)
     else:
       jaxpr_text = str(f_vjp.args[0].func.args[1])
 
@@ -6675,7 +6699,7 @@ class RematTest(jtu.JaxTestCase):
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
     if config.vjp3.value:
-      jaxpr = f_vjp.fun.args[2]
+      jaxpr = f_vjp.jaxpr
     else:
       jaxpr = f_vjp.args[0].func.args[1]
     jaxpr_text = str(jaxpr)

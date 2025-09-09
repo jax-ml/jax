@@ -168,7 +168,7 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
     A dictionary of plugin options.
   """
 
-  options = {}
+  options: dict[str, Any] = {}
   options['platform_name'] = 'cuda'
   allocator = os.getenv('XLA_PYTHON_CLIENT_ALLOCATOR', 'default').lower()
   memory_fraction = os.getenv('XLA_CLIENT_MEM_FRACTION', '')
@@ -352,8 +352,8 @@ def LoadedExecutable_execute_with_token(self, arguments, device=None):
   )
 
 
-LoadedExecutable.execute = LoadedExecutable_execute
-LoadedExecutable.execute_with_token = LoadedExecutable_execute_with_token
+LoadedExecutable.execute = LoadedExecutable_execute  # type: ignore[method-assign]
+LoadedExecutable.execute_with_token = LoadedExecutable_execute_with_token  # type: ignore[method-assign]
 
 
 class CustomCallTargetTraits(enum.IntFlag):
@@ -449,7 +449,7 @@ def register_custom_call_handler(
 
 class CustomTypeIdHandler(Protocol):
 
-  def __call__(self, name: str, capsule: Any) -> None:
+  def __call__(self, type_name: str, type_id: Any, /) -> None:
     ...
 
 

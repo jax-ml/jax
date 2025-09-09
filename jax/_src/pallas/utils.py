@@ -108,9 +108,9 @@ def pattern_match_scan_to_fori_loop(
 
 
 def pattern_match_while_to_fori_loop(
-    cond_jaxpr: jax_core.Jaxpr,
+    cond_jaxpr: jax_core.ClosedJaxpr,
     cond_nconsts: int,
-    body_jaxpr: jax_core.Jaxpr,
+    body_jaxpr: jax_core.ClosedJaxpr,
     body_nconsts: int,
 ) -> tuple[jax_core.Jaxpr | None, str | None]:
   # Try to pattern match to fori loop.
@@ -166,10 +166,23 @@ def pattern_match_while_to_fori_loop(
       *jaxpr.invars[body_nconsts + 2 :],
   )
   new_outvars = tuple(jaxpr.outvars[2:])
+  if jaxpr.debug_info.arg_names is not None:
+    new_arg_names = (*jaxpr.debug_info.arg_names[:body_nconsts],
+                     "",
+                     *jaxpr.debug_info.arg_names[body_nconsts + 2:])
+  else:
+    new_arg_names = None
+  if jaxpr.debug_info.result_paths is not None:
+    new_result_paths = jaxpr.debug_info.result_paths[2:]
+  else:
+    new_result_paths = None
+
   jaxpr = jaxpr.replace(
       eqns=jaxpr.eqns[:eqn_index] + jaxpr.eqns[eqn_index + 1 :],
       invars=new_invars,
       outvars=new_outvars,
+      debug_info=jaxpr.debug_info._replace(arg_names=new_arg_names,
+                                           result_paths=new_result_paths)
   )
   return jaxpr, None
 

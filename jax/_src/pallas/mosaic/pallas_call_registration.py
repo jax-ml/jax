@@ -31,9 +31,11 @@ from jax._src import sharding_impls
 from jax._src import tpu_custom_call
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir import passmanager
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering
+from jax._src.pallas.mosaic import sc_lowering
 from jax._src.pallas.mosaic import verification
 from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
@@ -73,7 +75,7 @@ def _get_memory_space_from_aval(
     out_aval: jax_core.AbstractValue,
 ) -> tpu_custom_call.MemorySpace | None:
   if not isinstance(out_aval, jax_core.ShapedArray):
-    raise ValueError('Memory spaces not defined for non-ShapedArrays')
+    raise ValueError("Memory spaces not defined for non-ShapedArrays")
   if not isinstance(out_aval, pallas_core.ShapedArrayWithMemorySpace):
     # If we are passed a regular old ShapedArray, we don't constrain the
     # memory space
@@ -109,35 +111,21 @@ def _get_memory_spaces_from_avals(
   return memory_spaces
 
 
-def pallas_call_tpu_lowering_rule(
+def _tc_lowering_rule(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
     jaxpr: jax_core.Jaxpr,
     grid_mapping: pallas_core.GridMapping,
-    mesh: pallas_core.Mesh | None,
     input_output_aliases: tuple[tuple[int, int], ...],
     debug: bool,
-    interpret: bool,
-    compiler_params: dict[str, pallas_core.CompilerParams],
+    mesh: pallas_core.Mesh | None,
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
     metadata: frozen_dict.FrozenDict[str, str] | None,
+    mosaic_params: tpu_core.CompilerParams,
+    debug_info: jax_core.DebugInfo,
 ):
-  """Lowers a pallas_call to a Mosaic TPU custom call."""
-  del mesh, interpret  # Unused.
-
-  debug_info = jaxpr._debug_info
-  if debug:
-    print(f"\nThe kernel jaxpr for pallas_call {debug_info.func_src_info}:")
-    print(jaxpr)
-
-  if "mosaic_tpu" in compiler_params:
-    mosaic_params = cast(
-        tpu_core.CompilerParams, compiler_params["mosaic_tpu"]
-    )
-  else:
-    mosaic_params = tpu_core.CompilerParams()
-
+  del mesh
   jax_mesh = None
   axis_context = ctx.module_context.axis_context
   if axis_context is not None:
@@ -200,7 +188,8 @@ def pallas_call_tpu_lowering_rule(
           mode="w",
           prefix=mlir.sanitize_name(debug_info.func_name) + "-",
           suffix=".pml",
-          dir=promela_dump_path, delete=False,
+          dir=promela_dump_path,
+          delete=False,
       )
       with dump_ctx as f:
         f.write(model)
@@ -215,6 +204,7 @@ def pallas_call_tpu_lowering_rule(
   def _maybe_cast_inputs(*args):
     args = [_maybe_cast_to_int(x) for x in args]
     return args
+
   kernel_in_avals = [_maybe_cast_to_int(x) for x in ctx.avals_in]
   kernel_out_avals = [_maybe_cast_to_int(x) for x in out_avals]
   cast_ctx = ctx.replace(avals_out=kernel_in_avals)
@@ -255,7 +245,9 @@ def pallas_call_tpu_lowering_rule(
     # Filter out the memory spaces that are not supported for input memory
     # spaces.
     input_memory_spaces = tuple(
-        i if i in {  # pylint: disable=g-long-ternary
+        i
+        if i
+        in {  # pylint: disable=g-long-ternary
             tpu_custom_call.MemorySpace.HBM,
             tpu_custom_call.MemorySpace.VMEM,
             tpu_custom_call.MemorySpace.SMEM,
@@ -287,10 +279,131 @@ def pallas_call_tpu_lowering_rule(
       skip_device_barrier=mosaic_params.skip_device_barrier,
       allow_collective_id_without_custom_barrier=mosaic_params.allow_collective_id_without_custom_barrier,
   )
-  _maybe_cast_to_bool = lambda x, aval: x.astype(
-      jax.numpy.bool_) if aval.dtype == jax.numpy.bool_ else x
+  _maybe_cast_to_bool = (
+      lambda x, aval: x.astype(jax.numpy.bool_)
+      if aval.dtype == jax.numpy.bool_
+      else x
+  )
+
   def _maybe_cast_outputs(*args):
     args = [_maybe_cast_to_bool(x, aval) for x, aval in zip(args, out_avals)]
     return args
+
   cast_ctx = ctx.replace(avals_in=kernel_out_avals)
   return mlir.lower_fun(_maybe_cast_outputs)(cast_ctx, *out_nodes)
+
+
+# TODO(sharadmv,slebedev): Dedup with _tc_lowering_rule.
+def _sc_lowering_rule(
+    ctx: mlir.LoweringRuleContext,
+    *in_nodes,
+    jaxpr: jax_core.Jaxpr,
+    grid_mapping: pallas_core.GridMapping,
+    mesh: pallas_core.Mesh | None,
+    input_output_aliases: tuple[tuple[int, int], ...],
+    debug: bool,
+    mosaic_params: tpu_core.CompilerParams,
+    cost_estimate: pallas_core.CostEstimate | None,
+    out_avals: tuple[jax_core.AbstractValue, ...],
+    backend: str | None = None,
+    metadata: frozen_dict.FrozenDict[str, str] | None,
+    debug_info: jax_core.DebugInfo,
+):
+  """Lowers a pallas_call to a Mosaic SparseCore custom call."""
+  del mesh, out_avals, backend
+  out_shapes = grid_mapping.out_shapes
+
+  jax_mesh = None
+  axis_context = ctx.module_context.axis_context
+  if axis_context is not None:
+    if isinstance(axis_context, sharding_impls.SPMDAxisContext):
+      jax_mesh = axis_context.mesh
+
+  with mlir.JaxIrContext() as mlir_ctx, ir.Location.unknown(mlir_ctx):
+    mlir_ctx.append_dialect_registry(mlir.upstream_dialects)
+    mlir_ctx.load_all_available_dialects()
+    tpu.register_dialect(mlir_ctx)
+    mosaic_module = sc_lowering.lower_jaxpr_to_module(
+        ctx, jaxpr, grid_mapping, mosaic_params, mesh=jax_mesh
+    )
+  if debug:
+    pm = passmanager.PassManager.parse("builtin.module(canonicalize)", mlir_ctx)
+    pm.run(mosaic_module.operation)
+    print(
+        "\nThe Mosaic SparseCore module for pallas_call"
+        f" {debug_info.func_src_info}:"
+    )
+    print(mosaic_module)
+  out_avals = [jax_core.ShapedArray(s.shape, s.dtype) for s in out_shapes]
+  mosaic_cost_estimate = None
+  if cost_estimate is not None:
+    mosaic_cost_estimate = cast(
+        tpu_custom_call.CostEstimate, dataclasses.asdict(cost_estimate)
+    )
+
+  def _lower_fun(*args):
+    # Dynamic grid bounds have to go at the front.
+    out = mosaic.as_tpu_kernel(
+        mosaic_module,
+        out_avals,
+        kernel_name=mlir.sanitize_name(debug_info.func_name),
+        cost_estimate=mosaic_cost_estimate,
+        input_output_aliases=input_output_aliases,
+        metadata=metadata,
+        collective_id=mosaic_params.collective_id,
+    )(*args)
+    return out
+
+  return mlir.lower_fun(_lower_fun, multiple_results=True)(ctx, *in_nodes)
+
+
+def pallas_call_tpu_lowering_rule(
+    ctx: mlir.LoweringRuleContext,
+    *in_nodes,
+    jaxpr: jax_core.Jaxpr,
+    grid_mapping: pallas_core.GridMapping,
+    mesh: pallas_core.Mesh | None,
+    input_output_aliases: tuple[tuple[int, int], ...],
+    debug: bool,
+    interpret: bool,
+    compiler_params: dict[str, pallas_core.CompilerParams],
+    cost_estimate: pallas_core.CostEstimate | None,
+    out_avals: tuple[jax_core.AbstractValue, ...],
+    metadata: frozen_dict.FrozenDict[str, str] | None,
+):
+  """Lowers a pallas_call to a Mosaic TPU custom call."""
+  del interpret  # Unused.
+
+  debug_info = jaxpr.debug_info
+  if debug:
+    print(f"\nThe kernel jaxpr for pallas_call {debug_info.func_src_info}:")
+    print(jaxpr)
+
+  if "mosaic_tpu" in compiler_params:
+    mosaic_params = cast(tpu_core.CompilerParams, compiler_params["mosaic_tpu"])
+  else:
+    mosaic_params = tpu_core.CompilerParams()
+  match mosaic_params.kernel_type:
+    case tpu_core.KernelType.TC:
+      lowering_rule = _tc_lowering_rule
+    case (
+        tpu_core.KernelType.SC_SCALAR_SUBCORE
+        | tpu_core.KernelType.SC_VECTOR_SUBCORE
+    ):
+      lowering_rule = _sc_lowering_rule
+    case _:
+      raise ValueError(f"Unsupported kernel type: {mosaic_params.kernel_type}")
+  return lowering_rule(
+      ctx,
+      *in_nodes,
+      jaxpr=jaxpr,
+      grid_mapping=grid_mapping,
+      input_output_aliases=input_output_aliases,
+      mesh=mesh,
+      debug=debug,
+      cost_estimate=cost_estimate,
+      out_avals=out_avals,
+      metadata=metadata,
+      mosaic_params=mosaic_params,
+      debug_info=debug_info,
+  )

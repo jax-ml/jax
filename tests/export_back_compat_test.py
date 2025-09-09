@@ -73,15 +73,8 @@ from jax.sharding import NamedSharding as NS
 
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import cuda_versions
 
 config.parse_flags_with_absl()
-
-
-def _is_required_cusolver_version_satisfied(required_version):
-  if cuda_versions is None:
-    return False
-  return cuda_versions.cusolver_get_version() >= required_version
 
 
 @jtu.with_config(jax_legacy_prng_key="allow",
@@ -169,6 +162,7 @@ class CompatTest(bctu.CompatTestBase):
       "tf.call_tf_function",  # tested in jax2tf/tests/back_compat_tf_test.py
       "tpu_custom_call",  # tested separately
       "mosaic_gpu_v2",  # tested in pallas/export_back_compat_pallas_test.py
+      "AllocateBuffer",  # tested in pallas/export_back_compat_pallas_test.py
       "__gpu$xla.gpu.triton",  # tested in pallas/export_back_compat_pallas_test.py
       # The following require ROCm to test
       "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",

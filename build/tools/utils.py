@@ -280,3 +280,7 @@ def copy_individual_files(src: str, dst: str, glob_pattern: str):
 def is_linux_x86_64(arch: str, os_name: str):
   """Returns true if the architecture is Linux x86_64."""
   return arch == "x86_64" and os_name == "linux"
+
+def is_linux_aarch64(arch: str, os_name: str):
+  """Returns true if the architecture is Linux aarch64."""
+  return arch == "aarch64" and os_name == "linux"

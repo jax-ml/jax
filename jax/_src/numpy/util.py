@@ -40,7 +40,8 @@ map, unsafe_map = safe_map, map
 
 export = set_module('jax.numpy')
 
-_dtype = partial(dtypes.dtype, canonicalize=True)
+_dtype = dtypes.dtype
+
 
 def promote_shapes(fun_name: str, *args: ArrayLike) -> list[Array]:
   """Apply NumPy-style broadcasting, making args shape-compatible for lax.py."""
@@ -88,8 +89,7 @@ def promote_dtypes(*args: ArrayLike) -> list[Array]:
   if len(args) < 2:
     return [lax.asarray(arg) for arg in args]
   else:
-    to_dtype, weak_type = dtypes._lattice_result_type(*args)
-    to_dtype = dtypes.canonicalize_dtype(to_dtype, allow_extended_dtype=True)
+    to_dtype, weak_type = dtypes.lattice_result_type(*args)
     return [lax._convert_element_type(x, to_dtype, weak_type) for x in args]
 
 
@@ -97,8 +97,7 @@ def promote_dtypes_inexact(*args: ArrayLike) -> list[Array]:
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to an inexact type."""
-  to_dtype, weak_type = dtypes._lattice_result_type(*args)
-  to_dtype = dtypes.canonicalize_dtype(to_dtype, allow_extended_dtype=True)
+  to_dtype, weak_type = dtypes.lattice_result_type(*args)
   to_dtype_inexact = dtypes.to_inexact_dtype(to_dtype)  # type: ignore[arg-type]
   return [lax._convert_element_type(x, to_dtype_inexact, weak_type)
           for x in args]
@@ -108,8 +107,7 @@ def promote_dtypes_numeric(*args: ArrayLike) -> list[Array]:
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to a numeric (non-bool) type."""
-  to_dtype, weak_type = dtypes._lattice_result_type(*args)
-  to_dtype = dtypes.canonicalize_dtype(to_dtype)
+  to_dtype, weak_type = dtypes.lattice_result_type(*args)
   to_dtype_numeric = dtypes.to_numeric_dtype(to_dtype)
   return [lax._convert_element_type(x, to_dtype_numeric, weak_type)
           for x in args]
@@ -119,8 +117,7 @@ def promote_dtypes_complex(*args: ArrayLike) -> list[Array]:
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to a complex type."""
-  to_dtype, weak_type = dtypes._lattice_result_type(*args)
-  to_dtype = dtypes.canonicalize_dtype(to_dtype)
+  to_dtype, weak_type = dtypes.lattice_result_type(*args)
   to_dtype_complex = dtypes.to_complex_dtype(to_dtype)
   return [lax._convert_element_type(x, to_dtype_complex, weak_type)
           for x in args]
@@ -277,7 +274,8 @@ def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
   # check that shape is concrete
   shape = core.canonicalize_shape(shape)  # type: ignore[arg-type]
   arr_shape = np.shape(arr)
-  if core.definitely_equal_shape(arr_shape, shape):
+  if (core.definitely_equal_shape(arr_shape, shape) and
+      (sharding is None or core.typeof(arr).sharding == sharding)):
     return arr
   elif len(shape) < len(arr_shape):
     raise ValueError(f"Cannot broadcast to shape with fewer dimensions: {arr_shape=} {shape=}")

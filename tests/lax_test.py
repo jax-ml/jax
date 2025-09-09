@@ -47,6 +47,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
+from jax._src.lax import utils as lax_utils
 from jax._src.util import safe_zip
 from jax._src.tree_util import tree_map
 
@@ -165,7 +166,12 @@ class LaxTest(jtu.JaxTestCase):
   def testConvertElementType(self, from_dtype, to_dtype, weak_type):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng((2, 3), from_dtype)]
-    op = lambda x: lax_internal._convert_element_type(x, to_dtype, weak_type)
+    to_dtype_canonicalized = (
+        dtypes.canonicalize_dtype(to_dtype) if to_dtype is not None else None
+    )
+    op = lambda x: lax_internal._convert_element_type(
+        x, to_dtype_canonicalized, weak_type
+    )
     self._CompileAndCheck(op, args_maker)
 
     x = rng((1,), from_dtype)
@@ -242,7 +248,7 @@ class LaxTest(jtu.JaxTestCase):
   )
   def testBitcastConvertWeakType(self, from_dtype, to_dtype, weak_type):
     rng = jtu.rand_default(self.rng())
-    x_in = lax_internal._convert_element_type(rng((2, 3), from_dtype),
+    x_in = lax_internal._convert_element_type(rng((2, 3), np.dtype(from_dtype)),
                                               weak_type=weak_type)
     op = lambda x: lax.bitcast_convert_type(x, to_dtype)
     self.assertEqual(dtypes.is_weakly_typed(x_in), weak_type)
@@ -1258,7 +1264,8 @@ class LaxTest(jtu.JaxTestCase):
                               preferred_element_type):
     if (not config.enable_x64.value and
        (dtype == np.float64 or preferred_element_type == np.float64
-        or dtype == np.int64 or preferred_element_type == np.int64)):
+        or dtype == np.int64 or preferred_element_type == np.int64
+        or dtype == np.complex128 or preferred_element_type == np.complex128)):
       raise SkipTest("64-bit mode disabled")
     if (jtu.test_device_matches(["tpu"]) and
        (dtype == np.complex128 or preferred_element_type == np.complex128)):
@@ -2018,9 +2025,10 @@ class LaxTest(jtu.JaxTestCase):
   )
   def testReduceWeakType(self, op_namespace, op, arr_weak_type, init_weak_type):
     op = getattr(op_namespace, op)
-    arr = lax_internal._convert_element_type(np.arange(10), int,
+    arr = lax_internal._convert_element_type(np.arange(10), dtypes.dtype(int),
                                              weak_type=arr_weak_type)
-    init = lax_internal._convert_element_type(1, int, weak_type=init_weak_type)
+    init = lax_internal._convert_element_type(1, dtypes.dtype(int),
+                                              weak_type=init_weak_type)
     fun = lambda arr, init: lax.reduce(arr, init, op, (0,))
     out = fun(arr, init)
     self.assertEqual(dtypes.is_weakly_typed(out), arr_weak_type and init_weak_type)
@@ -2555,8 +2563,8 @@ class LaxTest(jtu.JaxTestCase):
     # - NaNs are sorted to the end, regardless of representation
     # - sign bit of 0.0 is ignored
     x = jnp.array([-np.inf, 0.0, -0.0, np.inf, np.nan, -np.nan], dtype=dtype)
-    index = lax.iota(dtypes.int_, x.size)
-    argsort = lambda x: lax.sort_key_val(x, lax.iota(dtypes.int_, x.size), is_stable=True)[1]
+    index = lax.iota(int, x.size)
+    argsort = lambda x: lax.sort_key_val(x, lax.iota(int, x.size), is_stable=True)[1]
     self.assertArraysEqual(argsort(x), index)
     self.assertArraysEqual(jax.jit(argsort)(x), index)
 
@@ -3550,11 +3558,11 @@ class LaxTest(jtu.JaxTestCase):
     if dtype in set(lax_test_util.python_scalar_types):
       val = dtype(0)
     else:
-      val = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
+      val = lax_internal._convert_element_type(0, np.dtype(dtype),
+                                               weak_type=weak_type)
 
     const = lax_internal._const(val, 0)
-    self.assertEqual(dtypes.dtype(val, canonicalize=True),
-                     dtypes.dtype(const, canonicalize=True))
+    self.assertEqual(dtypes.dtype(val), dtypes.dtype(const))
 
   def testIgammaSpecial(self):
     self.assertEqual(lax.igamma(1., np.inf), 1.)
@@ -3652,13 +3660,13 @@ class LaxTest(jtu.JaxTestCase):
 
   def test_shape_as_value_handles_static_shapes(self):
     result = lax.shape_as_value(())
-    self.assertArraysEqual(result, lax.full((0,), np.array(0, np.int64)))
+    self.assertArraysEqual(result, lax.full((0,), np.array(0, np.int32)))
 
     result = lax.shape_as_value((2,))
-    self.assertArraysEqual(result, np.asarray((2,), np.int64))
+    self.assertArraysEqual(result, np.asarray((2,), np.int32))
 
     result = lax.shape_as_value((2, 3))
-    self.assertArraysEqual(result, np.asarray((2, 3), np.int64))
+    self.assertArraysEqual(result, np.asarray((2, 3), np.int32))
 
   def test_shape_as_value_handles_polymorphic_shapes(self):
     @jax.jit
@@ -4128,6 +4136,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     b, = e.outvars
     self.assertEqual(b.aval, core.ShapedArray((3, 4), FooTy()))
 
+  @unittest.skip('removed split_transpose')
   def test_scan_jaxpr_split_transpose(self):
     def stage(x, w):
       x = x @ w
@@ -5228,6 +5237,61 @@ class RaggedTest(jtu.JaxTestCase):
       self.assertArraysAllClose(
           batch_res[i, 0:upper_bound, :], ref_res, rtol=tol, atol=tol
       )
+
+class LaxUtilsTest(jtu.JaxTestCase):
+
+  def test_int_dtype_for_dim(self):
+    self.assertEqual(lax_utils.int_dtype_for_dim(10, signed=True), np.int32)
+    self.assertEqual(lax_utils.int_dtype_for_dim(10, signed=False), np.uint32)
+    self.assertEqual(
+        lax_utils.int_dtype_for_dim(np.iinfo(np.int32).max, signed=True),
+        np.int32,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_dim(np.iinfo(np.int32).max + 1, signed=True),
+        np.int64,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_dim(np.iinfo(np.uint32).max, signed=False),
+        np.uint32,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_dim(np.iinfo(np.uint32).max + 1, signed=False),
+        np.uint64,
+    )
+
+  def test_int_dtype_for_shape(self):
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape([10, 20], signed=True), np.int32
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape([10, 20], signed=False), np.uint32
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape(
+            [10, np.iinfo(np.int32).max], signed=True
+        ),
+        np.int32,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape(
+            [np.iinfo(np.int32).max + 1, 20], signed=True
+        ),
+        np.int64,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape(
+            [10, np.iinfo(np.uint32).max], signed=False
+        ),
+        np.uint32,
+    )
+    self.assertEqual(
+        lax_utils.int_dtype_for_shape(
+            [np.iinfo(np.uint32).max + 1, 20], signed=False
+        ),
+        np.uint64,
+    )
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

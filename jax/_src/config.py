@@ -233,6 +233,7 @@ def trace_context():
           eager_constant_folding.value,
           numpy_dtype_promotion.value,
           default_device.value, random_seed_offset.value,
+          remove_size_one_mesh_axis_from_type.value,
           threefry_partitionable.value,
           threefry_gpu_kernel_lowering.value,
           use_direct_linearize.value,
@@ -241,6 +242,8 @@ def trace_context():
           debug_key_reuse.value,
           jax_xla_profile_version.value,
           _check_vma.value,
+          mutable_array_checks.value,  # pallas may need to disable locally
+          no_execution.value,
           # Technically this affects jaxpr->stablehlo lowering, not tracing.
           hlo_source_file_canonicalization_regex.value,
           pgle_profiling_runs.value,
@@ -377,6 +380,7 @@ def bool_state(
     upgrade: bool = False,
     extra_description: str = '',
     include_in_jit_key: bool = False,
+    validator: Callable[[Any], None] | None = None,
 ) -> State[bool]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -404,6 +408,9 @@ def bool_state(
       for the outgoing functionality to be deprecated.
     extra_description: string, optional: extra information to add to the
       summary description.
+    validator: an optional callback that is called with the new
+      value on any update, and should raise an error if the new value is
+      invalid.
 
   Returns:
     A contextmanager to control the thread-local state value.
@@ -442,7 +449,7 @@ def bool_state(
       name, default, help, update_global_hook=update_global_hook,
       update_thread_local_hook=update_thread_local_hook,
       extra_description=extra_description, default_context_manager_value=True,
-      include_in_jit_key=include_in_jit_key)
+      include_in_jit_key=include_in_jit_key, validator=validator)
   config.add_option(name, s, bool, meta_args=[], meta_kwargs={"help": help})
   setattr(Config, name, property(lambda _: s.value))
   return s
@@ -1066,13 +1073,25 @@ random_seed_offset = int_state(
     include_in_jit_key=True,
 )
 
+def _safer_randint_deprecation(new_val):
+  if not new_val:
+    deprecations.warn(
+      'safer-randint-config',
+      (
+        'The jax_safer_randint configuration is deprecated in JAX v0.7.2'
+        ' and will be removed in JAX v0.9.0.'
+      ),
+      stacklevel=4
+    )
+
 # TODO(jakevdp): remove this flag.
 safer_randint = bool_state(
     name='jax_safer_randint',
     default=True,
     help='Use a safer randint algorithm for 8-bit and 16-bit dtypes.',
     include_in_jit_key=True,
-    upgrade=True
+    upgrade=True,
+    validator=_safer_randint_deprecation
 )
 
 legacy_prng_key = enum_state(
@@ -1131,6 +1150,13 @@ use_simplified_jaxpr_constants = bool_state(
           'This flag will exist only briefly, while we transition '
           'users. See https://github.com/jax-ml/jax/pull/29679.'
           'DO NOT RELY ON THIS FLAG.'),
+    include_in_jit_key=True)
+
+remove_size_one_mesh_axis_from_type = bool_state(
+    name='jax_remove_size_one_mesh_axis_from_type',
+    default=False,
+    upgrade=True,
+    help="Removes mesh axes of size 1 from ShapedArray.sharding",
     include_in_jit_key=True)
 
 # TODO make it so people don't use this, this is internal...
@@ -1334,9 +1360,9 @@ def _default_dtype_bits_deprecation(new_val):
       'default-dtype-bits-config',
       (
         'The jax_default_dtype_bits configuration is deprecated in JAX v0.7.1'
-        ' and will be remove in JAX v0.9.0.'
+        ' and will be removed in JAX v0.9.0.'
       ),
-      stacklevel=3
+      stacklevel=4
     )
 
 
@@ -1573,6 +1599,12 @@ no_tracing = bool_state(
     default=False,
     help='Disallow tracing for JIT compilation.')
 
+no_execution = bool_state(
+    name='jax_no_execution',
+    default=False,
+    help='Disallow JAX executions.',
+    include_in_jit_key=True)
+
 disable_vmap_shmap_error = bool_state(
     name='jax_disable_vmap_shmap_error',
     default=False,
@@ -1588,7 +1620,7 @@ custom_vjp_disable_shape_check = bool_state(
 
 mutable_array_checks = bool_state(
     name='jax_mutable_array_checks',
-    default=False,
+    default=True,
     upgrade=True,
     help='Enable error checks for mutable arrays that rule out aliasing.')
 

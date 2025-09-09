@@ -358,7 +358,7 @@ def _pull_block_spec(
           jaxpr.invars,
           needed_invars,
           jaxpr.eqns[: jaxpr.eqns.index(eqn)],
-          debug_info=jaxpr.debug_info,
+          debug_info=jaxpr.debug_info._replace(result_paths=None),
       )
       scalar_prefetch_jaxpr, used_consts, used_invars = pe.dce_jaxpr_consts(
           scalar_prefetch_jaxpr_no_dce,
@@ -368,6 +368,7 @@ def _pull_block_spec(
       scalar_prefetch_jaxpr = scalar_prefetch_jaxpr.replace(
           constvars=[],
           invars=jaxpr.constvars,
+          debug_info=scalar_prefetch_jaxpr.debug_info.with_unknown_names()
       )
 
       def _scalar_prefetch_fn(jaxpr):
@@ -452,9 +453,6 @@ def make_kernel_function(
   unflat_in_block_arg_avals, unflat_in_block_kwarg_avals = (
       tree_util.tree_unflatten(in_tree, in_block_avals)
   )
-  unflat_arg_usages, unflat_kwarg_usages = tree_util.tree_unflatten(
-      in_tree, invar_usages
-  )
 
   def sds_like(x):
     if x is _no_aval:
@@ -471,39 +469,6 @@ def make_kernel_function(
     return bs_env.get(atom, pallas_core.no_block_spec)
 
   def kernel_fn(program_ids, scalar_prefetch, *args, **kwargs):
-    def _check_args(prefix, path, x, y, usage):
-      if usage == {Usage.SCALAR_PREFETCH}:
-        return
-      if y is _no_aval:
-        return
-      x_aval, y_aval = core.get_aval(x), core.get_aval(y)
-      if x_aval.shape != y_aval.shape:
-        raise ValueError(
-            f'Shapes do not match: actual={x_aval.shape} !='
-            f' expected={y_aval.shape}. Path:'
-            f' {prefix}{jax.tree_util.keystr(path)}. Expected type:'
-            f' {kernel_in_type}. Actual args: {(args, kwargs)}'
-        )
-      if x_aval.dtype != y_aval.dtype:
-        raise ValueError(
-            f'DTypes do not match: actual={x_aval.dtype} !='
-            f' expected={y_aval.dtype}. Path:'
-            f' {prefix}{jax.tree_util.keystr(path)}. Expected type:'
-            f' {kernel_in_type}. Actual args: {(args, kwargs)}'
-        )
-
-    jax.tree_util.tree_map_with_path(
-        functools.partial(_check_args, 'args'),
-        args,
-        kernel_in_type[0],
-        unflat_arg_usages,
-    )
-    jax.tree_util.tree_map_with_path(
-        functools.partial(_check_args, 'kwargs'),
-        kwargs,
-        kernel_in_type[1],
-        unflat_kwarg_usages,
-    )
     flat_args, in_tree_ = tree_util.tree_flatten((args, kwargs))
     if in_tree_ != tree_util.tree_structure(kernel_in_type):
       raise ValueError(f'Expected {kernel_in_type} PyTree, got {in_tree_}')
@@ -1127,7 +1092,8 @@ def _get_pull_rule(
   block_shape_iter = iter(block_spec.block_shape)
   block_shape = []
   if not all(
-      isinstance(bd, (int, pallas_core.Blocked, pallas_core.Squeezed, None))
+      bd is None
+      or isinstance(bd, (int, pallas_core.Blocked, pallas_core.Squeezed))
       for bd in block_spec.block_shape
   ):
     raise NotImplementedError('get not supported yet')

@@ -816,11 +816,8 @@ def _module_to_bytecode(module: ir.Module) -> bytes:
   # Note that this does not verify any JAX custom calls, which are only
   # guaranteed 3w of forward compatibility, and only prevents use of new
   # StableHLO features from failing on older hardware.
-  if hlo.get_api_version() < 9:
-    target_version = hlo.get_minimum_version()
-  else:
-    target_version = hlo.get_version_from_compatibility_requirement(
-      hlo.StablehloCompatibilityRequirement.WEEK_4)
+  target_version = hlo.get_version_from_compatibility_requirement(
+    hlo.StablehloCompatibilityRequirement.WEEK_4)
   module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
       mlir_str, target_version, xb.get_backend().serialize_with_sdy)
   return module_serialized
@@ -1102,6 +1099,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "ApproxTopK", "stablehlo.dynamic_approx_top_k",
     "tf.call_tf_function",  # From jax2tf.call_tf(func, call_tf_graph=True)
     "tpu_custom_call",  # Pallas/TPU kernels
+    "AllocateBuffer",  # lax.empty implementation
     "mosaic_gpu_v2",  # Pallas Mosaic GPU kernels
     # TODO(burmako): maintain backwards compatibility for these, until they
     # are upstreamed to StableHLO.

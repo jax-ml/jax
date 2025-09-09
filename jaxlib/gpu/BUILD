@@ -14,13 +14,15 @@
 
 # Shared CUDA/ROCM GPU kernels.
 
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+# Placeholder: load proto_library
+
 load(
     "//jaxlib:jax.bzl",
     "cc_proto_library",
     "jax_visibility",
     "xla_py_proto_library",
 )
-# Placeholder: load proto_library
 
 licenses(["notice"])
 
