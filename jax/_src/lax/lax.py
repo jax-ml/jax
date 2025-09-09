@@ -3918,7 +3918,8 @@ _complex_basetype = lambda dtype, **kwargs: np.abs(np.zeros((), dtype)).dtype
 _strip_weak_type = lambda *args, **_: False
 
 
-def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
+def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval,
+                    supports_narrow_ints=True, **kwargs):
   if aval.dtype == dtypes.float0:
     raise TypeError(
         f"Called {name} with a float0 array. "
@@ -3933,11 +3934,17 @@ def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
     typename = dtype_to_string(aval.dtype)
     accepted_typenames = (t.__name__ for t in accepted_dtypes)
     raise TypeError(msg.format(name, typename, ', '.join(accepted_typenames)))
+  if (not supports_narrow_ints) and aval.dtype in [dtypes.uint2, dtypes.int2, dtypes.uint4, dtypes.int4]:
+    raise TypeError(f'{name} does not accept dtype {dtype_to_string(aval.dtype)}.'
+                    ' Support for narrow-width integers is platform-dependent'
+                    ' and limited to a few specific operations, e.g. basic'
+                    ' arithmetic and type casting.')
   return result_dtype(aval.dtype, **kwargs)
 
 
-def unop(result_dtype, accepted_dtypes, name):
-  dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name)
+def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True):
+  dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name,
+                       supports_narrow_ints=supports_narrow_ints)
   prim = standard_primitive(_attrgetter('shape'), dtype_rule, name,
                             sharding_rule=_attrgetter('sharding'),
                             vma_rule=_attrgetter('vma'))
@@ -4425,7 +4432,8 @@ def _conj_transpose_rule(t, x, *, input_dtype):
 ad.primitive_jvps[conj_p] = partial(ad.linear_jvp, conj_p)
 ad.primitive_transposes[conj_p] = _conj_transpose_rule
 
-abs_p = unop(_complex_basetype, _signedint | _float | _complex, 'abs')
+abs_p = unop(_complex_basetype, _signedint | _float | _complex, 'abs',
+             supports_narrow_ints=False)
 mlir.register_lowering(abs_p, partial(_nary_lower_hlo, hlo.abs))
 
 def _abs_jvp_rule(g, ans, x):
