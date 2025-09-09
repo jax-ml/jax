@@ -1175,6 +1175,27 @@ class TCGen05Test(TestCase):
     )(x)
     np.testing.assert_array_equal(x, y)
 
+  def test_mixed_tmem_allocations_raise(self):
+    def body(ctx, out, scratch):
+      del ctx, out, scratch
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Can't mix collective and non-collective TMEM allocations within the"
+        " same kernel.",
+    ):
+      mgpu.as_gpu_kernel(
+          body,
+          grid=(1, 1, 1),
+          block=(128, 1, 1),
+          in_shape=(),
+          out_shape=(jax.ShapeDtypeStruct((), jnp.int32),),
+          smem_scratch_shape=[
+              mgpu.TMEM((128, 128), jnp.float16, collective=True),
+              mgpu.TMEM((128, 128), jnp.float16, collective=False),
+          ],
+      )
+
   @parameterized.parameters([
       (jnp.float32, 1, "130.0000"),
       (jnp.float16, 1, "130.0000"),

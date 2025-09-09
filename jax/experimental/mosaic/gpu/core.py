@@ -633,21 +633,22 @@ def _launch(
                 f"Requested {cols_used} columns which exceeds limit of "
                 f"{tcgen05.TMEM_MAX_COLS}."
             )
-          if any(alloc.collective for alloc in tmem_allocs):
-            if math.prod(cluster) % 2:
-              raise ValueError(
-                  "Collective TMEM allocations are only supported for"
-                  " clusters with an even number of blocks in them."
-              )
-            if lowering_semantics == LoweringSemantics.Warpgroup:
-              dialect.tmem_relinquish_alloc_permit(collective=True)
-            else:
-              tcgen05.tmem_relinquish_alloc_permit(collective=True)
-          if any(not alloc.collective for alloc in tmem_allocs):
-            if lowering_semantics == LoweringSemantics.Warpgroup:
-              dialect.tmem_relinquish_alloc_permit(collective=False)
-            else:
-              tcgen05.tmem_relinquish_alloc_permit(collective=False)
+          collective_types = {alloc.collective for alloc in tmem_allocs}
+          if len(collective_types) > 1:
+            raise ValueError(
+                "Can't mix collective and non-collective TMEM allocations"
+                " within the same kernel."
+            )
+          collective = True in collective_types
+          if collective and math.prod(cluster) % 2:
+            raise ValueError(
+                "Collective TMEM allocations are only supported for"
+                " clusters with an even number of blocks in them."
+            )
+          if lowering_semantics == LoweringSemantics.Warpgroup:
+            dialect.tmem_relinquish_alloc_permit(collective=collective)
+          else:
+            tcgen05.tmem_relinquish_alloc_permit(collective=collective)
       gpu.barrier()  # Make sure the init is visible to all threads.
       smem_ref_tree = smem_ref_tree_thunk()
 
