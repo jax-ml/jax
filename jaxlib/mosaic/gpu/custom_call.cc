@@ -88,6 +88,7 @@ limitations under the License.
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OperationSupport.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
@@ -271,7 +272,8 @@ mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
                         /*printModuleScope=*/true,
                         /*printAfterOnlyOnChange=*/false,
                         /*printAfterOnlyOnFailure=*/true,
-                        dump_stream.has_value() ? *dump_stream : llvm::outs());
+                        dump_stream.has_value() ? *dump_stream : llvm::outs(),
+                        mlir::OpPrintingFlags().enableDebugInfo());
   }
   return pm.run(module);
 }
