@@ -52,7 +52,7 @@ class HiPrimitive(core.Primitive):
     return trace.default_process_primitive(
         self, args, kwargs, source_info=source_info)
 
-  def is_high(self, **params) -> bool:
+  def is_high(self, *avals, **params) -> bool:
     return True
 
   def is_effectful(self, params) -> bool:  # type: ignore
@@ -277,7 +277,7 @@ new_box_p = NewBox('new_box')
 class BoxSet(HiPrimitive):
   multiple_results = True
 
-  def is_high(self, *, treedef) -> bool: return True  # type: ignore
+  def is_high(self, *leaf_avals, treedef) -> bool: return True  # type: ignore
 
   def abstract_eval(self, box_ty, *leaf_avals, treedef):
     box_ty.mutable_qdd.update(BoxTypeState(leaf_avals, treedef))

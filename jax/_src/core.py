@@ -635,11 +635,16 @@ class Primitive:
 
   def bind_with_trace(self, trace, args, params):
     # TODO(mattjj,dougalm): remove this block?
-    if self.is_high(**params) and trace.requires_low:
-      with set_current_trace(trace):
-        return self.to_lojax(*args, **params)  # type: ignore
+    try: in_type = map(typeof, args)
+    except: pass  # try lojax error message
+    else:
+      if self.is_high(*in_type, **params) and trace.requires_low:
+        with set_current_trace(trace):
+          return self.to_lojax(*args, **params)  # type: ignore
+      return trace.process_primitive(self, args, params)
+    trace.process_primitive(self, args, params)  # may raise lojax error
+    raise Exception(f"couldn't apply typeof to args: {args}")
 
-    return trace.process_primitive(self, args, params)
 
   def def_impl(self, impl):
     self.impl = impl
@@ -672,7 +677,7 @@ class Primitive:
   def get_bind_params(self, params):
     return [], params
 
-  def is_high(self, **params) -> bool:
+  def is_high(self, *avals, **params) -> bool:
     return False
 
 
@@ -2661,7 +2666,7 @@ def accum_grad_in_ref(x):
   return accum_grad_in_ref_p.bind(x)
 
 accum_grad_in_ref_p = Primitive('accum_grad_in_ref')
-accum_grad_in_ref_p.is_high = lambda: True  # type: ignore
+accum_grad_in_ref_p.is_high = lambda *_: True  # type: ignore
 accum_grad_in_ref_p.to_lojax = lambda x: x  # type: ignore
 accum_grad_in_ref_p.def_abstract_eval(lambda x: x)  # type: ignore
 accum_grad_in_ref_p.def_impl(lambda x: x)  # type: ignore

@@ -102,7 +102,7 @@ class HijaxTest(jtu.JaxTestCase):
     core.pytype_aval_mappings[MyArray] = lambda _: MyTy()
 
     class ToMy(HiPrimitive):
-      def is_high(self): return True
+      def is_high(self, _): return True
 
       def abstract_eval(_, lo_aval):
         return MyTy(), set()
@@ -118,7 +118,7 @@ class HijaxTest(jtu.JaxTestCase):
         return from_(out_bar),
 
     class FromMy(HiPrimitive):
-      def is_high(self): return True
+      def is_high(self, _): return True
 
       def abstract_eval(_, hi_aval):
         return hi_aval.lo_ty()[0], set()
@@ -143,7 +143,7 @@ class HijaxTest(jtu.JaxTestCase):
     def add(x, y): return add_p.bind(x, y)
 
     class MyMul(HiPrimitive):
-      def is_high(self): return True
+      def is_high(self, *_): return True
 
       def abstract_eval(_, hi_x, hi_y):
         if hi_x != hi_y: raise Exception
@@ -164,7 +164,7 @@ class HijaxTest(jtu.JaxTestCase):
           return None, mul(x, out_bar)
 
     class MyAdd(HiPrimitive):
-      def is_high(self): return True
+      def is_high(self, *_): return True
 
       def abstract_eval(_, hi_x, hi_y):
         if hi_x != hi_y: raise Exception
@@ -540,7 +540,7 @@ class BoxTest(jtu.JaxTestCase):
     if config.enable_x64.value: raise unittest.SkipTest("no x64")
 
     class StashTangents(HiPrimitive):
-      def is_high(self):
+      def is_high(self, *_):
         return True
 
       def abstract_eval(_, box_aval, x_aval):
