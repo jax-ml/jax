@@ -38,12 +38,11 @@ from jax._src import profiler
 from jax._src import source_info_util
 from jax._src import compute_on
 from jax._src import xla_metadata_lib
-from jax._src.core import (Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval,
-                           AbstractValue, ClosedJaxpr, new_jaxpr_eqn,
-                           Var, DropVar, Atom,
-                           JaxprEqn, Primitive, ShapedArray, DShapedArray,
-                           mapped_aval, unmapped_aval, DBIdx, InDBIdx, OutDBIdx,
-                           InputType, OutputType, get_referent, JaxprEqnContext)
+from jax._src.core import (
+    Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval, AbstractValue,
+    ClosedJaxpr, new_jaxpr_eqn, Var, DropVar, Atom, JaxprEqn, Primitive,
+    ShapedArray, DShapedArray, mapped_aval, unmapped_aval, DBIdx, InDBIdx,
+    OutDBIdx, InputType, OutputType, get_referent, JaxprEqnContext, typeof)
 from jax._src.source_info_util import SourceInfo
 from jax._src.state.types import AbstractRef, ReadEffect
 from jax._src.tree_util import PyTreeDef, treedef_tuple, register_static
@@ -527,7 +526,7 @@ def partial_eval_wrapper_nounits2(
   assert next(in_avals_, sentinel) is next(in_consts_, sentinel) is sentinel
   jaxpr, (*maybe_fwds, out_pvals, res, env) = f(in_pvals)
   out_knowns, _, out_consts = partition_pvals(out_pvals)
-  res_avals = [core.typeof(r) for r in res]
+  res_avals = [typeof(r) for r in res]
   store.store((*maybe_fwds, out_knowns, res_avals, jaxpr, env))
   return (*out_consts, *res)
 
@@ -2097,7 +2096,7 @@ class DynamicJaxprTrace(core.Trace):
     return self.to_jaxpr_tracer(x, source_info=source_info).mutable_qdd.cur_val
 
   def process_primitive(self, primitive, tracers, params):
-    self.frame.is_high |= primitive.is_high(**params)
+    self.frame.is_high |= primitive.is_high(*map(typeof, tracers), **params)
     if config.eager_constant_folding.value and not any(isinstance(x, Tracer) for x in tracers):
       return primitive.bind_with_trace(core.eval_trace, tracers, params)
     source_info = source_info_util.current()
@@ -2397,8 +2396,7 @@ def trace_to_jaxpr_dynamic(
 
 def _check_returned_jaxtypes(dbg, out_tracers):
   for i, x in enumerate(out_tracers):
-    try:
-      core.typeof(x)
+    try: typeof(x)
     except TypeError:
       if (dbg and len(paths := dbg.resolve_result_paths()) > i and
           (p := paths[i].removeprefix('result'))):
@@ -2847,7 +2845,7 @@ def lower_traceable(jaxpr, *lo_args):
   return mut_outs + lo_outs
 
 def convert_const_himutables(jaxpr):
-  move = [core.typeof(c).has_qdd for c in jaxpr.consts]
+  move = [typeof(c).has_qdd for c in jaxpr.consts]
   constvals, in_mutables = partition_list(move, jaxpr.consts)
   constvars, boxvars = partition_list(move, jaxpr.jaxpr.constvars)
   invars = *boxvars, *jaxpr.jaxpr.invars

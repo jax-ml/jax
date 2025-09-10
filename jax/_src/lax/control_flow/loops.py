@@ -1562,7 +1562,7 @@ pe.padding_rules[scan_p] = _scan_padding_rule
 pe.dce_rules[scan_p] = _scan_dce_rule
 state_discharge.register_partial_discharge_rule(scan_p)(_scan_state_partial_discharge_rule)
 
-def _is_high(jaxpr, **_) -> bool:
+def _is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.jaxpr.is_high
 scan_p.is_high = _is_high  # type: ignore
 

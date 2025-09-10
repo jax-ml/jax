@@ -1478,7 +1478,7 @@ jit_p.is_effectful = lambda params: bool(params['jaxpr'].effects)  # type: ignor
 jit_p.multiple_results = True
 jit_p.skip_canonicalization = True
 
-def _is_high(jaxpr, **_) -> bool:
+def _is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.jaxpr.is_high
 jit_p.is_high = _is_high  # type: ignore
 
