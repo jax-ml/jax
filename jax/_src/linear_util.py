@@ -404,8 +404,7 @@ def _missing_debug_info(for_what: str) -> DebugInfo:
       DeprecationWarning, stacklevel=2)
   return DebugInfo("missing_debug_info", "<missing_debug_info>", None, None)
 
-def wrap_init(f: Callable, params=None, *,
-              debug_info: DebugInfo) -> WrappedFun:
+def wrap_init(f: Callable, params=None, *, debug_info: DebugInfo) -> WrappedFun:
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
   params_dict = {} if params is None else params
   params = () if params is None else tuple(sorted(params.items()))
