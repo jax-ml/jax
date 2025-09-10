@@ -37,7 +37,7 @@ from jax._src import state
 from jax._src import util
 from jax._src.api_util import (
     _check_no_aliased_ref_args, _check_no_aliased_closed_over_refs)
-from jax._src.core import ShapedArray, typeof, ClosedJaxpr
+from jax._src.core import ShapedArray, typeof, cur_qdd, ClosedJaxpr
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -1562,13 +1562,12 @@ pe.padding_rules[scan_p] = _scan_padding_rule
 pe.dce_rules[scan_p] = _scan_dce_rule
 state_discharge.register_partial_discharge_rule(scan_p)(_scan_state_partial_discharge_rule)
 
-def _is_high(*_, jaxpr, **__) -> bool:
+def _scan_is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.jaxpr.is_high
-scan_p.is_high = _is_high  # type: ignore
+scan_p.is_high = _scan_is_high  # type: ignore
 
-def _to_lojax(*hi_args, jaxpr, num_carry, num_consts, linear, **params):
-
-  # move box binders and hi_args from consts slots to carry slots
+def _scan_to_lojax(*hi_args, jaxpr, num_carry, num_consts, linear, **params):
+  # move qdd binders and corresponding hi_args from consts slots to carry slots
   to_move = [t.has_qdd for t in jaxpr.in_aval_qdds[:num_consts]]
   jaxpr = pe.move_invars_right(jaxpr, to_move)
   hi_args = _move_right(hi_args, to_move)
@@ -1597,13 +1596,11 @@ def _to_lojax(*hi_args, jaxpr, num_carry, num_consts, linear, **params):
   # collect and apply mutations
   out_mut_ = iter(out_mut)
   in_idx = {v: i for i, v in enumerate(jaxpr.jaxpr.invars)}
-
   for v in jaxpr.jaxpr.invars:
     if v.final_qdd is not None:
       qdd = v.final_qdd
       lo_vals = it.islice(out_mut_, len(v.aval.lo_ty_qdd(qdd)))
       v.aval.update_from_loval(qdd, hi_args[in_idx[v]], *lo_vals)
-
   assert next(out_mut_, None) is None
 
   # collect output values into hi types
@@ -1613,7 +1610,7 @@ def _to_lojax(*hi_args, jaxpr, num_carry, num_consts, linear, **params):
   assert next(lo_outs_, None) is None
 
   return hi_outs
-scan_p.to_lojax = _to_lojax
+scan_p.to_lojax = _scan_to_lojax
 
 def _move_right(lst, to_move):
   lst, rest = split_list(lst, [len(to_move)])
@@ -1724,6 +1721,9 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   assert len(in_tree_children) == 1
   _check_carry_type('while_loop body', body_fun, new_init_val, body_tree,
                     body_jaxpr.out_avals)
+  if not all(not v.aval.has_qdd or v.initial_qdd == v.final_qdd for v in
+             body_jaxpr.jaxpr.invars):
+    raise TypeError("type-changing mutations not allowed in while_loop body")
   joined_effects = core.join_effects(cond_jaxpr.effects, body_jaxpr.effects)
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
@@ -2429,6 +2429,71 @@ pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 core.custom_typechecks[while_p] = _while_typecheck
 mlir.register_lowering(while_p, _while_lowering)
 state_discharge.register_partial_discharge_rule(while_p)(_while_partial_discharge_rule)
+
+def _while_is_high(*_, cond_jaxpr, body_jaxpr, **__):
+  return cond_jaxpr.is_high or body_jaxpr.is_high
+while_p.is_high = _while_is_high  # type: ignore
+
+def _while_to_lojax(*hi_args, cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts):
+  if any(a.has_qdd for a in cond_jaxpr.in_avals[:cond_nconsts]):
+    raise NotImplementedError  # TODO(mattjj,dougalm)
+  assert not any(a.has_qdd for a in cond_jaxpr.in_avals[cond_nconsts:])
+
+  hi_cconsts, hi_bconsts, hi_carry = split_list(hi_args, [cond_nconsts, body_nconsts])
+
+  # move qdd binders and corresponding hi_args from consts slots to carry slots
+  to_move = [t.has_qdd for t in body_jaxpr.in_aval_qdds[:body_nconsts]]
+  body_jaxpr = pe.move_invars_right(body_jaxpr, to_move)
+  hi_bconsts, hi_bconsts_qdd = partition_list(to_move, hi_bconsts)
+  hi_carry = [*hi_bconsts_qdd, *hi_carry]
+  body_nconsts -= sum(to_move)
+  cond_jaxpr = _insert_binders(cond_jaxpr, cond_nconsts, hi_bconsts_qdd)
+  del hi_bconsts_qdd
+
+  # collect input values
+  loval = lambda a, x: a.read_loval(x) if a.has_qdd else a.lower_val(x)
+  lovals = lambda avals, xs: [lo for a, x in zip(avals, xs) for lo in loval(a, x)]
+  lo_cconsts = lovals(cond_jaxpr.in_aval_qdds[:cond_nconsts], hi_cconsts)
+  lo_bconsts = lovals(body_jaxpr.in_aval_qdds[:body_nconsts], hi_bconsts)
+  lo_carry = lovals(body_jaxpr.in_aval_qdds[body_nconsts:], hi_carry)
+
+  # expand cond_nconsts and body_nconsts according to lo types
+  cond_nconsts = sum(len(typeof(x).lo_ty()) for x in hi_cconsts)
+  body_nconsts = sum(len(typeof(x).lo_ty()) for x in hi_bconsts)
+  lo_muts_out = sum(len(a.lo_ty()) for a in body_jaxpr.final_aval_qdds if a.has_qdd)
+
+  # lower jaxprs and bind
+  all_outs = while_p.bind(*lo_cconsts, *lo_bconsts, *lo_carry,
+                          cond_jaxpr=pe.lower_jaxpr(cond_jaxpr),
+                          body_jaxpr=pe.lower_jaxpr(body_jaxpr),
+                          cond_nconsts=cond_nconsts, body_nconsts=body_nconsts)
+  out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
+
+  # collect and apply mutations
+  out_mut_ = iter(out_mut)
+  in_idx = {v: i for i, v in enumerate(body_jaxpr.jaxpr.invars)}
+  for v in body_jaxpr.jaxpr.invars:
+    if v.final_qdd is not None:
+      qdd = v.final_qdd
+      lo_vals = it.islice(out_mut_, len(v.aval.lo_ty_qdd(qdd)))
+      v.aval.update_from_loval(qdd, hi_args[in_idx[v]], *lo_vals)
+  assert next(out_mut_, None) is None
+
+  # collect output values into hi types
+  lo_outs_ = iter(lo_outs)
+  hi_outs = [t.raise_val(*it.islice(lo_outs_, len(t.lo_ty())))
+             for t in body_jaxpr.out_avals]
+  assert next(lo_outs_, None) is None
+
+  return hi_outs
+while_p.to_lojax = _while_to_lojax  # type: ignore
+
+def _insert_binders(jaxpr, n_after, vals):
+  avals = _map(typeof, vals)
+  invars = [core.Var(lo_ty) for a, x in zip(avals, vals) for lo_ty in
+            (a.lo_ty_qdd(cur_qdd(x)) if a.has_qdd else a.lo_ty())]
+  invars = jaxpr.jaxpr.invars[:n_after] + invars + jaxpr.jaxpr.invars[n_after:]
+  return jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(invars=invars))
 
 
 def _pred_bcast_select_hlo(ctx,

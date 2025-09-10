@@ -38,9 +38,80 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 
-class HijaxTest(jtu.JaxTestCase):
+@dataclass(frozen=True)
+class QArray:
+  arr: jax.Array  # int8[m, k]
+  scale: jax.Array  # f32[m]
 
+# Define a type
+@dataclass(frozen=True)
+class QArrayTy(HiType):
+  shape: tuple[int, int]
+
+  # how to lower to (lo)jax types
+  def lo_ty(self) -> list[ShapedArray]:
+    m, k = self.shape
+    return [ShapedArray((m, k), jnp.dtype('int8')),
+            ShapedArray((m,  ), jnp.dtype('float32'))]
+  # these next two are essentially the pytree interface
+  def lower_val(self, hi_val: QArray) -> list[jax.Array]:
+    return [hi_val.arr, hi_val.scale]
+  def raise_val(self, arr, scale) -> QArray:
+    return QArray(arr, scale)  # alternative: LowerTrace
+
+  # autodiff
+  def to_tangent_aval(self):
+    return self  # different from what a pytree would do!
+  def vspace_zero(self):
+    m, k = self.shape
+    return QArray(jnp.zeros((m, k), jnp.dtype('int8')),
+                  jnp.ones ((m,  ), jnp.dtype('float32')))
+
+register_hitype(QArray, lambda q: QArrayTy(q.arr.shape))
+
+
+def to_qarray(x):
+  return to_qarray_p.bind(x)
+
+def from_qarray(x):
+  return from_qarray_p.bind(x)
+
+class ToQ(HiPrimitive):
+  def abstract_eval(_, lo_aval):
+    return QArrayTy(lo_aval.shape), set()
+
+  def to_lojax(_, lo_val):
+    m, _ = lo_val.shape
+    scale = lo_val.max(1) / 32.
+    return QArray((lo_val / scale[:, None]).astype('int8'), scale)
+
+  def jvp(_, primals, tangents):
+    (x,), (xdot,) = primals, tangents
+    return to_qarray(x), to_qarray(xdot)
+
+  def transpose(_, out_bar, __):
+    return [from_qarray(out_bar)]
+to_qarray_p = ToQ('to_q')
+
+class FromQ(HiPrimitive):
+  def abstract_eval(_, hi_aval):
+    return ShapedArray(hi_aval.shape, jnp.dtype('float32')), set()
+
+  def to_lojax(_, hi_val):
+    return hi_val.arr.astype('float32') * hi_val.scale[:, None]
+
+  def jvp(_, primals, tangents):
+    (x,), (xdot,) = primals, tangents
+    return from_qarray(x), from_qarray(xdot)
+
+  def transpose(_, out_bar, __):
+    return [to_qarray(out_bar)]
+from_qarray_p = FromQ('from_q')
+
+
+class HijaxTest(jtu.JaxTestCase):
   def test_basic_register(self):
+    # older test that defines a slightly different QArray internally
     @dataclass(frozen=True)
     class QArray:
       arr: jax.Array
@@ -68,9 +139,7 @@ class HijaxTest(jtu.JaxTestCase):
 
     register_hitype(QArray, lambda q: QArrayTy(q.arr.shape, q.axis))
 
-    q = QArray(jnp.zeros((4, 4), 'int8'),
-              jnp.ones(4, 'float32'),
-              axis=1)
+    q = QArray(jnp.zeros((4, 4), 'int8'), jnp.ones(4, 'float32'), axis=1)
     jax.jit(lambda x: x)(q)  # don't crash
 
   def test_custom_types_and_primitive(self):
@@ -237,6 +306,30 @@ class HijaxTest(jtu.JaxTestCase):
 
     q = ArrayTuple(jnp.zeros((4, 4), 'int8'), jnp.ones(4, 'float32'))
     jax.jit(lambda x: x).lower(q).as_text()  # don't crash
+
+  @parameterized.parameters([False, True])
+  def test_while_loop(self, jit):
+    q = to_qarray(jnp.ones((2, 2), 'float32'))
+
+    def f(q1, q2):
+      def cond_fun(i_carry):
+        i, _, __ = i_carry
+        return i < 1
+      def body_fun(i_carry):
+        i, q_carry, _ = i_carry
+        q_carry = to_qarray(from_qarray(q_carry))
+        return i + 1, q_carry, q
+      n, q_out, _ = jax.lax.while_loop(cond_fun, body_fun, (0, q1, q2))
+      return n, q_out
+
+    if jit:
+      f = jax.jit(f)
+
+    jax.make_jaxpr(f)(q, q)  # doesn't crash
+    n, q_out = f(q, q)
+    self.assertEqual(n, 1)
+    expected = from_qarray(to_qarray(from_qarray(q)))
+    self.assertAllClose(from_qarray(q_out), expected, check_dtypes=False)
 
 
 class BoxTest(jtu.JaxTestCase):
@@ -725,6 +818,26 @@ class BoxTest(jtu.JaxTestCase):
     f()
     self.assertEqual(box.get(), dict(a=5, b=3))
     self.assertEqual(box2.get(), 3)
+
+  def test_while_loop(self):
+    box = Box(1.)
+    def cond_fun(i):
+      return i < 5
+    def body_fun(i):
+      box.set(box.get() * 2.)
+      return i + 1
+    _ = jax.lax.while_loop(cond_fun, body_fun, 0)
+    self.assertAllClose(box.get(), 32, check_dtypes=False)
+
+  def test_while_loop_typechange_error(self):
+    box = Box([1.])
+    def cond_fun(i):
+      return i < 5
+    def body_fun(i):
+      box.set(box.get() * 2)
+      return i + 1
+    with self.assertRaisesRegex(TypeError, "type-changing mutations not allowed"):
+      _ = jax.lax.while_loop(cond_fun, body_fun, 0)
 
 
 if __name__ == '__main__':

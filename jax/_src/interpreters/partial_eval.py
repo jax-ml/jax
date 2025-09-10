@@ -1607,7 +1607,8 @@ def _move_invars_right(jaxpr: ClosedJaxpr, to_move: tuple[bool, ...]):
       (*jaxpr.jaxpr.constvars, *new_invars),
       (*jaxpr.jaxpr.constvars, *jaxpr.jaxpr.invars),
       jaxpr.jaxpr.effects)
-  return jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(invars=new_invars, effects=new_effs))
+  new_jaxpr = jaxpr.jaxpr.replace(invars=new_invars, effects=new_effs)
+  return jaxpr.replace(jaxpr=new_jaxpr)
 
 def move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]
                           ) -> ClosedJaxpr:
