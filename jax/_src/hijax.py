@@ -190,7 +190,7 @@ class BoxTy(MutableHiType):
     hi_vals = [hi_ty.raise_val(*it.islice(lo_vals_, len(hi_ty.lo_ty())))  # type: ignore
                for hi_ty in box_state.leaf_avals]
     assert next(lo_vals_, None) is None
-    return Box(tree_unflatten(box_state.treedef, hi_vals))  # will be mutated
+    return Box._new(tree_unflatten(box_state.treedef, hi_vals))  # will be mutated
 
   def read_loval(self, box_state: BoxTypeState, box) -> list:  # type: ignore
     leaf_vals, treedef = tree_flatten(box_get(box))
@@ -208,9 +208,29 @@ class BoxTy(MutableHiType):
   def to_tangent_aval(self):
     return BoxTy()
 
-class Box:  # noqa: F811
-  def __init__(self, val):
-    self._val = val
+# Override isinstance checks under tracing
+class _BoxMeta(type):
+  def __instancecheck__(self, instance):
+    return (super().__instancecheck__(instance) or
+            isinstance(instance, core.Tracer) and
+            isinstance(core.typeof(instance), BoxTy))
+
+class Box(metaclass=_BoxMeta):  # noqa: F811
+  _val = None  # always clobbered by __new__, but pytype likes this
+
+  # We want `Box(x)` to bind a primitive, so we override __new__ and provide a
+  # raw `_new` method below.
+  def __new__(cls, init_val=None):
+    (), treedef = tree_flatten(None)
+    box = new_box_p.bind(treedef=treedef)
+    box.set(init_val)
+    return box
+
+  @classmethod
+  def _new(cls, init_val):
+    new = super().__new__(cls)
+    new._val = init_val
+    return new
 
   def get(self):
     return box_get(self)
@@ -245,7 +265,7 @@ class NewBox(HiPrimitive):
     return core.AvalQDD(BoxTy(), qdd), {box_effect}
 
   def to_lojax(_, *, treedef):
-    return Box(None)
+    return Box._new(None)
 
   def jvp(_, primals, tangents, *, treedef):
     assert False  # TODO
