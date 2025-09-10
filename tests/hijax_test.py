@@ -839,6 +839,16 @@ class BoxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "type-changing mutations not allowed"):
       _ = jax.lax.while_loop(cond_fun, body_fun, 0)
 
+  def test_eval_shape(self):
+    qarray = QArray(jnp.ones((2, 2)), jnp.ones(2))
+
+    @jax.jit
+    def f():
+      return qarray
+
+    out_type = jax.eval_shape(f)
+    self.assertEqual(out_type, QArrayTy((2, 2)))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
