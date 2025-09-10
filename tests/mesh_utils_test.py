@@ -650,6 +650,54 @@ class MeshUtilsTest(test_util.JaxTestCase):
           mesh_shape, devices=devices, contiguous_submeshes=True
       )
 
+  @parameterized.named_parameters(
+      #        <-logical-> <-physical->
+      ('1x1x2', [1, 1, 2], [1, 1, 1], [[[0, 1]]]),
+      ('2x1x4', [2, 1, 4], [2, 2, 1], [[[0, 1, 2, 3]], [[7, 6, 5, 4]]]),
+      ('4x1x2', [4, 1, 2], [2, 2, 1], [[[0, 1]], [[2, 3]], [[7, 6]], [[5, 4]]]),
+      ('4x2x2', [4, 2, 2], [2, 2, 2], [[[0, 1], [2, 3]],
+                                       [[7, 6], [5, 4]],
+                                       [[8, 9], [10, 11]],
+                                       [[15, 14], [13, 12]]]),
+      ('8x2',   [2, 8],    [2, 2, 2], [[0, 1, 2, 3, 7, 6, 5, 4],
+                                       [8, 9, 10, 11, 15, 14, 13, 12]]),
+      ('4x4x2', [4, 4, 2], [2, 2, 4], [[[0, 1], [2, 3],
+                                        [7, 6], [5, 4]],
+                                       [[8, 9], [10, 11],
+                                        [15, 14], [13, 12]],
+                                       [[16, 17], [18, 19],
+                                        [23, 22], [21, 20]],
+                                       [[24, 25], [26, 27],
+                                        [31, 30], [29, 28]]]),
+      ('4x2x4', [4, 2, 4], [2, 2, 4], [[[0, 1, 2, 3], [7, 6, 5, 4]],
+                                       [[8, 9, 10, 11], [15, 14, 13, 12]],
+                                       [[16, 17, 18, 19], [23, 22, 21, 20]],
+                                       [[24, 25, 26, 27], [31, 30, 29, 28]]]),
+      ('8x4',   [8, 4],    [2, 2, 4], [[0, 1, 2, 3], [7, 6, 5, 4],
+                                       [8, 9, 10, 11], [15, 14, 13, 12],
+                                       [16, 17, 18, 19], [23, 22, 21, 20],
+                                       [24, 25, 26, 27], [31, 30, 29, 28]]),
+      ('4x8',   [4, 8],    [2, 2, 4], [[0, 1, 2, 3, 7, 6, 5, 4],
+                                       [8, 9, 10, 11, 15, 14, 13, 12],
+                                       [16, 17, 18, 19, 23, 22, 21, 20],
+                                       [24, 25, 26, 27, 31, 30, 29, 28]]),
+  )
+  def test_v7x_create_device_mesh(
+      self, logical_mesh_shape, physical_mesh_shape, expected_device_id_mesh
+  ):
+    global_devices = mock_tpu_devices(
+        physical_mesh_shape[0],
+        physical_mesh_shape[1],
+        physical_mesh_shape[2],
+        mesh_utils._TPU_7X,
+        one_device_per_chip=False,
+    )
+    mesh = mesh_utils.create_device_mesh(
+        logical_mesh_shape, devices=global_devices, contiguous_submeshes=False
+    )
+    device_id_mesh = np.vectorize(lambda d: d.id)(mesh)
+    self.assertAllClose(device_id_mesh, np.array(expected_device_id_mesh))
+
 
 def int64_array(x) -> np.ndarray:
   return np.array(x, dtype=np.int64)
