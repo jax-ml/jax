@@ -15,6 +15,7 @@
 import dataclasses
 import functools
 import itertools
+import statistics
 import jax
 from jax import lax
 from jax._src import test_util as jtu  # noqa: F401
@@ -283,6 +284,7 @@ def main(_) -> None:
         out, runtime_ms = profiler.measure(
             functools.partial(matmul_kernel, config=config)
         )(a, b)
+        runtime_ms = statistics.median(runtimes_ms)
       except ValueError as e:
         if ("exceeds available shared memory" in e.args[0] or
             "Accumulator layout mismatch:" in e.args[0]):

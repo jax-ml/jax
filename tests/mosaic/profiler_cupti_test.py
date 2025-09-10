@@ -70,6 +70,24 @@ class ProfilerCuptiTest(parameterized.TestCase):
     _, timings = profiler.measure(self.f, mode="cupti", aggregate=False)(self.x)
     self.assertEqual(len(timings), 1)
 
+  def test_iterations(self):
+    _, timings = profiler.measure(
+        self.f, mode="cupti", aggregate=False, iterations=10
+    )(self.x)
+    self.assertEqual(len(timings), 10)
+    self.assertTrue(
+        all(
+            isinstance(n, str) and isinstance(t, float)
+            for iter_timings in timings
+            for n, t in iter_timings
+        )
+    )
+    _, timings = profiler.measure(
+        self.f, mode="cupti", aggregate=True, iterations=5
+    )(self.x)
+    self.assertEqual(len(timings), 5)
+    self.assertTrue(all(isinstance(t, float) for t in timings))
+
   def test_measure_double_subscription(self):
     # This needs to run in a separate process, otherwise it affects the
     # outcomes of other tests since CUPTI state is global.
