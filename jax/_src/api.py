@@ -60,10 +60,9 @@ from jax._src import xla_bridge as xb
 from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray, typeof
 from jax._src.api_util import (
   flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
-  flatten_axes, donation_vector,
-  rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
-  apply_flat_fun_nokwargs, check_callable, debug_info,
-  flat_out_axes)
+  _split_args, flatten_axes, donation_vector, rebase_donate_argnums,
+  _ensure_index, _ensure_index_tuple, apply_flat_fun_nokwargs, check_callable,
+  debug_info, flat_out_axes)
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
@@ -1762,45 +1761,30 @@ def _cpp_pmap(
   # every pmap
   cpp_mapped_f_class = type(pmap_f)
   cpp_mapped_f_class.lower = _cpp_mapped_lower
-  cpp_mapped_f_class.trace = _cpp_mapped_trace
   # We return directly the function produced by pmap_lib.pmap, because we do not
   # want to have Python in the dispatch path.
   return pmap_f
 
 @api_boundary
-def _cpp_mapped_trace(pmap_f, *args, **kwargs):
+def _cpp_mapped_lower(pmap_f, *args, **kwargs):
   p = pmap_f._prepare_pmap(args, kwargs)
   abstract_args = list(map(shaped_abstractify, p.flat_args))
   closed_jaxpr, xc_backend, replicas, shards, pci = pxla.get_pmap_jaxpr(
       p.flat_fun, pmap_f._backend, pmap_f._axis_name,
       axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
-      devices=p.devices,
-      name=p.flat_fun.__name__,
-      in_axes=p.in_axes_flat,
-      out_axes_thunk=p.out_axes_thunk,
-      avals=abstract_args)
-  lower_callable = partial(
-      pxla.lower_parallel_callable, p.flat_fun, pmap_f._axis_name,
-      axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
-      devices=p.devices,
-      name=p.flat_fun.__name__,
-      in_axes=p.in_axes_flat,
+      devices=p.devices, name=p.flat_fun.__name__, in_axes=p.in_axes_flat,
+      out_axes_thunk=p.out_axes_thunk, avals=abstract_args)
+  lowering = pxla.lower_parallel_callable(
+      p.flat_fun, pmap_f._axis_name, axis_size=p.local_axis_size,
+      global_axis_size=p.global_axis_size, devices=p.devices,
+      name=p.flat_fun.__name__, in_axes=p.in_axes_flat,
       donated_invars=p.donated_invars,
       is_explicit_global_axis_size=p.is_explicit_global_axis_size,
-      avals=abstract_args,
-      closed_jaxpr=closed_jaxpr,
-      backend=xc_backend,
-      replicas=replicas,
-      shards=shards,
-      pci=pci)
+      avals=abstract_args, closed_jaxpr=closed_jaxpr, backend=xc_backend,
+      replicas=replicas, shards=shards, pci=pci, lowering_platforms=None,
+      lowering_parameters=pxla.mlir.LoweringParameters())
   args_info = stages.make_args_info(p.in_tree, abstract_args, pmap_f._donate_tuple)
-  return stages.Traced(closed_jaxpr, args_info, p.flat_fun.__name__,
-                       p.out_tree(), lower_callable)
-
-@api_boundary
-def _cpp_mapped_lower(pmap_f, *args, **kwargs):
-  return _cpp_mapped_trace(pmap_f, *args, **kwargs).lower()
-
+  return stages.Lowered(lowering, args_info, p.out_tree())
 
 _pmap_cache_clears = weakref.WeakSet()  # type: ignore
 
@@ -2579,15 +2563,18 @@ def make_jaxpr(
   @wraps(fun)
   @api_boundary
   def make_jaxpr_f(*args, **kwargs):
+    _, _, dyn_args = _split_args(static_argnums, args, allow_invalid=True)
+    args_flat = tree_leaves((dyn_args, kwargs))
+
     with core.extend_axis_env_nd(axis_env or []):
       traced = jit(fun, static_argnums=static_argnums,
                    abstracted_axes=abstracted_axes).trace(*args, **kwargs)
-    # `jit` converts tracers in consts to args but that breaks the semantics of
-    # `make_jaxpr`. Hence convert the tracers in args back to consts in jaxpr.
-    if traced._num_consts:
-      consts, _ = split_list(traced._args_flat, [traced._num_consts])
-      jaxpr_ = pe.convert_invars_to_constvars(traced.jaxpr.jaxpr,
-                                              traced._num_consts)
+    # `jit` converts tracers in consts to args but `make_jaxpr` callers expect
+    # consts not to be converted.
+    num_consts = traced._num_consts
+    if num_consts:
+      consts, _ = split_list(traced._args_flat, [num_consts])
+      jaxpr_ = pe.convert_invars_to_constvars(traced.jaxpr.jaxpr, num_consts)
       jaxpr = core.ClosedJaxpr(jaxpr_, consts)
     else:
       jaxpr = traced.jaxpr

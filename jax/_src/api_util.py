@@ -248,15 +248,19 @@ def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
     result.append(i % num_args)  # Resolve negative
   return tuple(result)
 
+def _split_args(static_argnums, args, allow_invalid):
+  static_argnums = _ensure_inbounds(allow_invalid, len(args), static_argnums)
+  dyn_argnums = tuple(i for i in range(len(args)) if i not in static_argnums)
+  dyn_args = tuple(args[i] for i in dyn_argnums)
+  return static_argnums, dyn_argnums, dyn_args
 
 def argnums_partial_except(f: lu.WrappedFun, static_argnums: tuple[int, ...],
                            args: tuple[Any, ...], *, allow_invalid: bool):
   "Version of ``argnums_partial`` that checks hashability of static_argnums."
   if not static_argnums:
     return f, args
-  static_argnums = _ensure_inbounds(allow_invalid, len(args), static_argnums)
-  dyn_argnums = tuple(i for i in range(len(args)) if i not in static_argnums)
-  dyn_args = tuple(args[i] for i in dyn_argnums)
+  static_argnums, dyn_argnums, dyn_args = _split_args(
+      static_argnums, args, allow_invalid)
 
   fixed_args = []
   for i in sorted(static_argnums):
