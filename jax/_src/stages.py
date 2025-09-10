@@ -34,6 +34,7 @@ import dataclasses
 import enum
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, NamedTuple, Protocol, Union, runtime_checkable
 
 from jax._src import core
@@ -50,6 +51,7 @@ from jax._src.sharding_impls import UnspecifiedValue, AUTO
 from jax._src.lib.mlir import ir
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
+from jax._src.tree_util import tree_structure, tree_unflatten
 
 
 source_info_util.register_exclusion(__file__)
@@ -319,7 +321,7 @@ class Stage:
   @property
   def in_tree(self) -> tree_util.PyTreeDef:
     """Tree structure of the pair (positional arguments, keyword arguments)."""
-    return tree_util.tree_structure(self.args_info)
+    return tree_structure(self.args_info)
 
   @property
   def in_avals(self):
@@ -686,6 +688,24 @@ class Lowered(Stage):
     except NotImplementedError:
       return None
 
+def _traced_args_info(self):
+  don8_rgn = tuple(i for i, d in enumerate(self._params['donated_invars']) if d)
+  arg_avals = self.jaxpr.in_avals[self._num_consts:]
+  return make_args_info(self._in_tree, arg_avals, don8_rgn)
+
+def _traced_out_info(self):
+  out_shardings = [None if isinstance(s, UnspecifiedValue) else s
+                    for s in self._params['out_shardings']]
+  out = []
+  for a, out_s in zip(self.jaxpr.out_avals, out_shardings):
+    s = (a.sharding if a.sharding.mesh.are_all_axes_explicit else out_s
+          if out_s is None else out_s)
+    # TODO(yashkatariya): Add `Layout` to SDS.
+    out.append(
+        core.ShapeDtypeStruct(
+            a.shape, a.dtype, sharding=s, weak_type=a.weak_type,
+            vma=(a.vma if config._check_vma.value else None)))
+  return tree_util.tree_unflatten(self._out_tree, out)
 
 class Traced(Stage):
   """Traced form of a function specialized to argument types and values.
@@ -694,38 +714,78 @@ class Traced(Stage):
   traced representation with the remaining information needed to later
   lower, compile, and execute it.
   """
-  __slots__ = ["jaxpr", "args_info", "fun_name", "_out_tree", "_lower_callable",
-               "_args_flat", "_arg_names", "_num_consts"]
+  __slots__ = ['_lfg', '_params', '_in_tree', '_out_tree', '_num_consts']
 
-  def __init__(self, jaxpr: core.ClosedJaxpr, args_info, fun_name, out_tree,
-               lower_callable, args_flat=None, arg_names=None,
-               num_consts: int = 0, params_out_shardings=None):
-    self.jaxpr = jaxpr
-    self.args_info = args_info  # Not including the const_args
-    self.fun_name = fun_name
+  def __init__(self, lfg, params, in_tree, out_tree, num_consts):
+    self._lfg = lfg
+    self._params = params
+    self._in_tree = in_tree
     self._out_tree = out_tree
-    self._lower_callable = lower_callable
-    if args_flat is not None:
-      assert len(args_flat) == len(jaxpr.in_avals)  # Not including the const_args
-    self._args_flat = args_flat
-    self._arg_names = arg_names  # Not including the const_args
     self._num_consts = num_consts
-    self._params_out_shardings = params_out_shardings
 
-  @property
-  def out_info(self):
-    out_shardings = [None if isinstance(s, UnspecifiedValue) else s
-                     for s in self._params_out_shardings]
-    out = []
-    for a, out_s in zip(self.jaxpr.out_avals, out_shardings):
-      s = (a.sharding if a.sharding.mesh.are_all_axes_explicit else out_s
-           if out_s is None else out_s)
-      # TODO(yashkatariya): Add `Layout` to SDS.
-      out.append(
-          core.ShapeDtypeStruct(
-              a.shape, a.dtype, sharding=s, weak_type=a.weak_type,
-              vma=(a.vma if config._check_vma.value else None)))
-    return tree_util.tree_unflatten(self._out_tree, out)
+  jaxpr = property(lambda self: self._params['jaxpr'])
+  fun_name = property(lambda self: self._params['name'])
+  args_info = property(_traced_args_info)
+  out_info = property(_traced_out_info)
+  _args_flat = property(lambda self: self._lfg.args[0])
+
+  def fall(self):
+    if not self.jaxpr.is_high:
+      return Fallen(self._lfg, self._params, self._in_tree, self._out_tree,
+                    self._num_consts)
+
+    # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
+    from jax._src import api  # type: ignore
+    from jax._src.pjit import _resolve_and_lower  # type: ignore
+    from jax._src.interpreters import partial_eval as pe  # type:ignore
+    hi_jaxpr = self.jaxpr
+    _, closed_over_himutables = pe.convert_const_himutables(hi_jaxpr)
+    if closed_over_himutables: raise NotImplementedError  # TODO(mattjj)
+    lo_jaxpr = pe.lower_jaxpr(hi_jaxpr)
+    in_tree = lojax_pytree(hi_jaxpr.in_aval_qdds, self._in_tree)
+    out_tree = lojax_pytree(hi_jaxpr.out_avals, self._out_tree)
+    params = dict(lojax_expand_params(hi_jaxpr, self._params), jaxpr=lo_jaxpr)
+    lo_args = [lo_val for aval, x in zip(hi_jaxpr.in_aval_qdds, self._args_flat)
+               for lo_val in (aval.read_loval(x) if aval.has_qdd
+                              else aval.lower_val(x))]
+    lfg = partial(_resolve_and_lower, lo_args, pgle_profiler=None)
+    return Fallen(lfg, params, in_tree, out_tree, self._num_consts)
+
+  def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
+            _private_parameters: mlir.LoweringParameters | None = None):
+    """Lower to compiler input, returning a ``Lowered`` instance."""
+    return self.fall().lower(lowering_platforms=lowering_platforms,
+                             _private_parameters=_private_parameters)
+
+def lojax_expand_params(jaxpr, params):
+  from jax._src.pjit import _lojax_expand_params  # type: ignore
+  lo_nums_in = [len(aval.lo_ty()) for aval in jaxpr.in_aval_qdds]
+  lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]
+  lo_muts_out = sum(len(aval.lo_ty()) for aval in jaxpr.final_aval_qdds
+                    if aval.has_qdd)
+  if lo_muts_out: raise NotImplementedError  # TODO(mattjj)
+  return _lojax_expand_params(lo_nums_in, lo_nums_out, lo_muts_out,
+                              **dict(params, jaxpr=jaxpr))
+
+def lojax_pytree(hi_avals, tree):
+  lo_avals = [t.lo_ty_qdd() if t.has_qdd else t.lo_ty() for t in hi_avals]
+  return tree_structure(tree_unflatten(tree, lo_avals))
+
+class Fallen(Stage):
+  """True leader of the Decepticons."""
+
+  def __init__(self, lfg, params, in_tree, out_tree, num_consts):
+    self._lfg = lfg
+    self._params = params
+    self._in_tree = in_tree
+    self._out_tree = out_tree
+    self._num_consts = num_consts
+
+  jaxpr = property(lambda self: self._params['jaxpr'])
+  fun_name = property(lambda self: self._params['name'])
+  args_info = property(_traced_args_info)
+  out_info = property(_traced_out_info)
+  _args_flat = property(lambda self: self._lfg.args[0])
 
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
             _private_parameters: mlir.LoweringParameters | None = None):
@@ -733,16 +793,16 @@ class Traced(Stage):
     if _private_parameters is None:
       _private_parameters = mlir.LoweringParameters()
     try:
-      lowering = self._lower_callable(
-          lowering_platforms=lowering_platforms,
-          lowering_parameters=_private_parameters)
+      lowering = self._lfg(**self._params,
+                           lowering_platforms=lowering_platforms,
+                           lowering_parameters=_private_parameters)
     except DeviceAssignmentMismatchError as e:
       fails, = e.args
       msg = _device_assignment_mismatch_error(
-          self.fun_name, fails, self._args_flat, 'jit', self._arg_names)
+          self._params['name'], fails, self._args_flat, 'jit',
+          self.jaxpr.debug_info.safe_arg_names(len(self.jaxpr.in_avals)))
       raise ValueError(msg) from None
     return Lowered(lowering, self.args_info, self._out_tree)
-
 
 @runtime_checkable
 class Wrapped(Protocol):

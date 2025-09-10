@@ -1360,9 +1360,7 @@ class ExecuteReplicated:
       if (self.ordered_effects or self.has_unordered_effects
           or self.has_host_callbacks):
         input_bufs = self._add_tokens_to_inputs(input_bufs)
-        results = self.xla_executable.execute_sharded(
-            input_bufs, with_tokens=True
-        )
+        results = self.xla_executable.execute_sharded(input_bufs, with_tokens=True)
 
         result_token_bufs = results.disassemble_prefix_into_single_device_arrays(
             len(self.ordered_effects))

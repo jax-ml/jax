@@ -210,6 +210,34 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertIsInstance(a_grad, MyArray)
     self.assertAllClose(a_grad.arr, 2.0, check_dtypes=False)
 
+  def test_stages(self):
+    @dataclass(frozen=True)
+    class ArrayTuple:
+      x0: jax.Array
+      x1: jax.Array
+
+    @dataclass(frozen=True)
+    class ShapedArrayTuple(HiType):
+      x0: ShapedArray
+      x1: ShapedArray
+      # sharding=None
+
+      # how to lower to (lo)jax types
+      def lo_ty(self) -> list[ShapedArray]:
+        return [self.x0, self.x1]
+
+      # these next two are essentially the pytree interface
+      def lower_val(self, hi_val: ArrayTuple) -> list[jax.Array]:
+        return [hi_val.x0, hi_val.x1]
+      def raise_val(self, x0, x1) -> ArrayTuple:
+        return ArrayTuple(x0, x1)
+
+    register_hitype(ArrayTuple, lambda q: ShapedArrayTuple(
+      jax.typeof(q.x0), jax.typeof(q.x1)))
+
+    q = ArrayTuple(jnp.zeros((4, 4), 'int8'), jnp.ones(4, 'float32'))
+    jax.jit(lambda x: x).lower(q).as_text()  # don't crash
+
 
 class BoxTest(jtu.JaxTestCase):
 
