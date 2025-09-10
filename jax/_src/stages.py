@@ -735,7 +735,6 @@ class Traced(Stage):
                     self._num_consts)
 
     # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
-    from jax._src import api  # type: ignore
     from jax._src.pjit import _resolve_and_lower  # type: ignore
     from jax._src.interpreters import partial_eval as pe  # type:ignore
     hi_jaxpr = self.jaxpr
