@@ -3367,11 +3367,6 @@ class FragmentedArrayTest(TestCase):
 
 class ProfilerTest(TestCase):
 
-  def test_measure_events_explicit(self):
-    x = jnp.arange(1024 * 1024)
-    _, runtime_ms = profiler.measure(lambda x, y: x + y, mode="events")(x, x)
-    self.assertIsInstance(runtime_ms, float)
-
   def test_profile(self):
     def kernel(ctx, src, dst, _):
       mgpu.FragmentedArray.load_strided(src).store_untiled(dst)

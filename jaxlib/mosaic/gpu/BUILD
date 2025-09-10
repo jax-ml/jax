@@ -352,8 +352,6 @@ nanobind_extension(
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/strings",
         "@nanobind",
-        "@xla//xla/ffi/api:c_api",
-        "@xla//xla/ffi/api:ffi",
         "@xla//xla/tsl/cuda:cudart",
     ],
 )

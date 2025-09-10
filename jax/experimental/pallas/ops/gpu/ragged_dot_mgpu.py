@@ -268,7 +268,7 @@ def main(unused_argv):
       continue
     try:
       f = functools.partial(ragged_dot, group_sizes=group_sizes, **kwargs)
-      _, runtime = profiler.measure(f, mode="cupti")(lhs, rhs)
+      _, runtime = profiler.measure(f)(lhs, rhs)
     except ValueError as e:
       if "Mosaic GPU kernel exceeds available shared memory" not in str(e):
         raise

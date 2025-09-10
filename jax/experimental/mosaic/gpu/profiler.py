@@ -23,7 +23,6 @@ import warnings
 
 import jax
 from jax._src import stages
-from jax._src.lib import xla_client
 import jax.numpy as jnp
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -37,65 +36,12 @@ from .utils import *  # noqa: F403
 try:
   from jax._src.lib import mosaic_gpu as mosaic_gpu_lib
 except ImportError:
-  has_registrations = False
-else:
-  # TODO(slebedev): Remove the if once the minimum jaxlib is 0.4.36.
-  has_registrations = hasattr(mosaic_gpu_lib._mosaic_gpu_ext, "registrations")
-  if has_registrations:
-    for name, handler in mosaic_gpu_lib._mosaic_gpu_ext.registrations():
-      xla_client.register_custom_call_target(
-          name, handler, platform="CUDA", api_version=1
-      )
+  mosaic_gpu_lib = None  # type: ignore[assignment]
 
 # ruff: noqa: F405
 
 T = TypeVar("T")
 P = ParamSpec("P")
-
-def _event_record(args, *, copy_before):
-  flat_args, treedef = jax.tree.flatten(args)
-  event, *flat_outs = jax.ffi.ffi_call(
-      "mgpu_event_record",
-      result_shape_dtypes=(jax.core.ShapedArray((), jnp.uint64), *flat_args),
-      input_output_aliases={i: i + 1 for i in range(len(flat_args))},
-  )(*flat_args, copy_before=copy_before)
-  return event, treedef.unflatten(flat_outs)
-
-
-def _event_elapsed(start_event, end_event):
-  return jax.ffi.ffi_call(
-      "mgpu_event_elapsed",
-      result_shape_dtypes=jax.core.ShapedArray((), jnp.float32),
-  )(start_event, end_event)
-
-
-def _measure_events(
-    f: Callable[P, T], *args: P.args, **kwargs: P.kwargs
-) -> tuple[T, float]:
-  if not has_registrations:
-    raise RuntimeError(
-        "This function requires jaxlib >=0.4.36 with CUDA support."
-    )
-
-  if not (args or kwargs):
-    # We require at least one argument and at least one output to ensure
-    # that there is a data dependency between `_event_record` calls in
-    # the resulting HLO program.
-    raise ValueError("Can only measure functions with arguments")
-
-  @jax.jit
-  def run(*args, **kwargs):
-    start_event, (args, kwargs) = _event_record(
-        (args, kwargs), copy_before=True
-    )
-    end_event, outs = _event_record(f(*args, **kwargs), copy_before=False)
-    if jax.tree.structure(outs).num_leaves == 0:
-      raise ValueError("Can only measure functions with at least one output")
-    return outs, _event_elapsed(start_event, end_event)
-
-  jax.block_until_ready(run(*args, **kwargs))  # Warmup.
-  outs, elapsed = run(*args, **kwargs)
-  return outs, float(elapsed)
 
 
 Timings: TypeAlias = list[tuple[str, float]] | float | None
@@ -115,6 +61,9 @@ class Cupti:
       f = jax.jit(f)
 
     def wrapper(*args: P.args, **kwargs: P.kwargs):
+      if mosaic_gpu_lib is None:
+        raise RuntimeError("CUPTI profiling is not supported on this platform")
+
       jax.block_until_ready(f(*args, **kwargs))  # Warmup.
       ext = mosaic_gpu_lib._mosaic_gpu_ext
       ext._cupti_init()
@@ -134,73 +83,35 @@ class Cupti:
 
 
 def measure(
-    f: Callable[P, T], *, mode: str = "events", aggregate: bool = True
+    f: Callable[P, T], *, aggregate: bool = True
 ) -> Callable[P, tuple[T, Timings]]:
-  """Sets up a function ``f`` for profiling on GPU.
+  """Measures the GPU runtime of a function using CUPTI.
 
-  ``measure`` is a higher-order function that augments the argument ``f`` to
-  return GPU runtime in milliseconds, in addition to its proper outputs.
+  ``measure`` is a higher-order function that wraps a function ``f`` to
+  return GPU runtime in milliseconds, in addition to its regular outputs.
 
   Args:
-    f: The function to measure. It must accept at least one argument and return
-      at least one output to be measurable.
-    mode: The mode of operation. Possible values are:
-
-      - "cupti", for CUPTI-based profiling.
-      - "events", for CUDA events-based profiling.
-
-      The two modes use different measurement methodologies and should not be
-      treated as interchangeable backends. See the Notes section for important
-      discussion.
-    aggregate: Whether to report an aggregate runtime. When ``False`` (only
-      supported by ``mode="cupti"``), the per-kernel timings are returned as a
-      list of tuples ``(<kernel name>, <runtime in ms>)``.
+    f: The function to measure.
+    aggregate: If ``True``, returns the sum of kernel runtimes in milliseconds.
+      If ``False``, returns a list of ``(kernel_name, runtime_ms)`` tuples for
+      each kernel launched by ``f``. Runtimes do not include time when the
+      device is idle between kernel launches.
 
   Returns:
-    A new function ``g`` that returns the measured GPU runtime as its last
-    additional output. Otherwise ``g`` accepts the same inputs and returns the
-    same outputs as ``f``.
+    A function that accepts the same inputs as ``f`` and returns
+    ``(f_outputs, timings)``, where ``f_outputs`` are the outputs of ``f``,
+    and ``timings`` is either a float or a list of tuples, depending on
+    ``aggregate``. If no kernels are launched, ``timings`` is ``None``.
 
   Notes:
     `CUPTI (CUDA Profiling Tools Interface)
-    <https://docs.nvidia.com/cupti/index.html>`_ is a high-accuracy,
-    high-precision profiling and tracing API, used in particular by Nsight
-    Systems and Nsight Compute. When using ``measure`` with ``mode="cupti"``,
-    device (GPU) execution runtimes are recorded for each kernel launched
-    during the execution of the function. In that mode, setting
-    ``aggregate=True`` will sum the individual kernel runtimes to arrive at an
-    aggregate measurement. The "gaps" between the kernels when the device is
-    idle are not included in the aggregate.
-
-    The CUPTI API only allows a single "subscriber". This means that the
-    CUPTI-based profiler will fail when the program is run using tools that
-    make use of CUPTI, such as CUDA-GDB, Compute Sanitizer, Nsight Systems, or
-    Nsight Compute.
-
-    ``mode="events"`` uses a different approach: a CUDA event is recorded
-    before and after the function ``f`` is executed. The reported runtime is
-    the time elapsed between the two events. In particular, included in the
-    measurement are:
-
-    - any potential "gaps" between the kernels when the device is idle
-    - any potential "gaps" between the "before" event and the start of the
-      first kernel, or between the end of the last kernel and the "after" event
-
-    In an attempt to minimize the second effect, internally the events-based
-    implementation may execute ``f`` more than once to "warm up" and exclude
-    compilation time from the measurement.
+    <https://docs.nvidia.com/cupti/index.html>`_ is a high-accuracy profiling
+    API used by Nsight Systems and Nsight Compute. The CUPTI API only allows a
+    single subscriber, so ``measure`` cannot be used with other CUPTI-based
+    tools like CUDA-GDB, Compute Sanitizer, Nsight Systems, or Nsight
+    Compute.
   """  # fmt: skip
-  match mode:
-    case "cupti":
-      return Cupti().measure(f, aggregate=aggregate)
-    case "events":
-      if not aggregate:
-        raise ValueError(f"{aggregate=} is not supported with {mode=}")
-      def measure_events_wrapper(*args, **kwargs):
-        return _measure_events(f, *args, **kwargs)
-      return measure_events_wrapper
-    case _:
-      raise ValueError(f"Unrecognized profiler mode {mode}")
+  return Cupti().measure(f, aggregate=aggregate)
 
 
 class ProfilerSpec:
