@@ -1059,6 +1059,30 @@ ir.MLIRError,
 
     self.assertTrue(self.module.operation.verify())
 
+  def test_tmem_alloc_dealloc_packed_large_shape_ok(self):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(
+          [128, 1024],
+          ir.BF16Type.get(),
+          memory_space=mgpu_utils.tmem(),
+      )
+      (smem_ptr,) = undefs(
+          ir.MemRefType.get(
+              [],
+              ir.IntegerType.get_signless(32),
+              memory_space=mgpu_utils.smem(),
+          )
+      )
+      # This allocation would exceed the 512 columns limit if it were not packed.
+      ref = mgpu.dialect.tmem_alloc(
+          result=ref_ty,
+          smem_ptr=smem_ptr,
+          collective=False,
+          packing=2,
+      )
+      mgpu.dialect.tmem_dealloc(ref)
+    self.assertTrue(self.module.operation.verify())
+
   def test_tmem_layout_cast_invalid_tmem_ref(self):
     with ir.InsertionPoint(self.module.body):
       (tmem_ref,) = undefs(

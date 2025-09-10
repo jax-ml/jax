@@ -582,51 +582,17 @@ llvm::LogicalResult ReturnOp::verify() {
 }
 
 namespace {
-int kTmemMinColumns = 32;
 int kTmemMaxColumns = 512;
 int kTmemCellBitwidth = 32;
 
-llvm::LogicalResult VerifyTmemRefType(
-    mlir::MLIRContext* context, mlir::Operation* op,
-    mlir::MemRefType tmem_ref_type, std::optional<int> packing = std::nullopt) {
+llvm::LogicalResult VerifyTmemRefType(mlir::MLIRContext* context,
+                                      mlir::Operation* op,
+                                      mlir::MemRefType tmem_ref_type) {
   mlir::Attribute tmem = TmemAttr::get(context);
   if (tmem_ref_type.getMemorySpace() != tmem) {
     return op->emitError() << "The tmem memref must have a "
                               "mosaic_gpu.tmem memory space but got: "
                            << tmem_ref_type.getMemorySpace();
-  }
-
-  int num_unpacked_columns = tmem_ref_type.getShape()[1];
-  int num_allocated_columns = num_unpacked_columns;
-  if (packing.has_value() && packing.value() != 1) {
-    if (packing.value() * tmem_ref_type.getElementTypeBitWidth() !=
-        kTmemCellBitwidth) {
-      return op->emitError() << "Only unpacked, or fully packed allocations "
-                                "are supported. Expected packing to be either "
-                                "1 or 32 / element_bitwidth, but got: "
-                                "packing = "
-                             << packing.value() << ", element_bitwidth = "
-                             << tmem_ref_type.getElementTypeBitWidth();
-    }
-    if (num_unpacked_columns % packing.value() != 0) {
-      return op->emitError()
-             << "The number of unpacked columns must be "
-                "divisible by the packing factor, but got: "
-             << num_unpacked_columns << " / " << packing.value();
-    }
-    num_allocated_columns /= packing.value();
-  }
-
-  if (num_allocated_columns > kTmemMaxColumns) {
-    return op->emitError()
-           << "The number of allocated columns must be less than or equal to "
-           << kTmemMaxColumns << " but got: " << num_allocated_columns;
-  }
-
-  int rounded_column_count = kTmemMinColumns;
-  while (num_allocated_columns > rounded_column_count &&
-         rounded_column_count < kTmemMaxColumns) {
-    rounded_column_count *= 2;
   }
 
   return llvm::success();
@@ -644,8 +610,39 @@ llvm::LogicalResult TmemAllocOp::verify() {
            << smem_ref_type.getMemorySpace();
   }
 
-  return VerifyTmemRefType(getContext(), getOperation(), getResult().getType(),
-                           getPacking());
+  mlir::MemRefType tmem_ref_type = getResult().getType();
+  llvm::LogicalResult result =
+      VerifyTmemRefType(getContext(), getOperation(), tmem_ref_type);
+  if (result.failed()) {
+    return result;
+  }
+
+  int num_unpacked_columns = tmem_ref_type.getShape()[1];
+  int packing = getPacking();
+  if (packing != 1) {
+    if (packing * tmem_ref_type.getElementTypeBitWidth() != kTmemCellBitwidth) {
+      return emitError() << "Only unpacked, or fully packed allocations "
+                            "are supported. Expected packing to be either "
+                            "1 or 32 / element_bitwidth, but got: "
+                            "packing = "
+                         << packing << ", element_bitwidth = "
+                         << tmem_ref_type.getElementTypeBitWidth();
+    }
+    if (num_unpacked_columns % packing != 0) {
+      return emitError() << "The number of unpacked columns must be "
+                            "divisible by the packing factor, but got: "
+                         << num_unpacked_columns << " / " << packing;
+    }
+  }
+
+  int num_allocated_columns = num_unpacked_columns / packing;
+  if (num_allocated_columns > kTmemMaxColumns) {
+    return emitError()
+           << "The number of allocated columns must be less than or equal to "
+           << kTmemMaxColumns << " but got: " << num_allocated_columns;
+  }
+
+  return llvm::success();
 }
 
 llvm::LogicalResult TmemDeallocOp::verify() {
