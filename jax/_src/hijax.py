@@ -110,12 +110,11 @@ class MutableHiType(core.AbstractValue):
   def __hash__(self): assert False, "must override"
   def __eq__(self, other): assert False, "must override"
 
-  def lo_ty(self):
-    assert False, "mutable hitypes should use lo_ty_qdd instead"
-
   # define lowering from (mutable) hijax type to (immutable) lojax types
   def lo_ty_qdd(self, state: QDD) -> list[core.AbstractValue]:
     assert False, "must override"
+  def lo_ty(self):
+    assert False, "mutable hitypes should use lo_ty_qdd instead"
 
   # define lowering from hijax value to lojax values and back, depending on qdd
   def new_from_loval(self, state: QDD, *vals: LoVal) -> HiVal:
