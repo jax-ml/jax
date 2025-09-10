@@ -5717,5 +5717,78 @@ class ExamplesSm90AWGTest(
   ...
 
 
+class HelpersTest(PallasTest):
+
+  @parameterized.product(
+      m=[4, 16],
+      n=[4, 16],
+      minor_dim=[0, 1],
+      tile_width=[1, 2, 4],
+  )
+  def test_planar_snake(self, m, n, minor_dim, tile_width):
+    reference = np.full((m, n), -1)
+    counter = itertools.count()
+    minor_size, major_size = (m, n) if minor_dim == 0 else (n, m)
+    for minor_tile in range(minor_size // tile_width):
+      for major in range(major_size):
+        major = major if minor_tile % 2 == 0 else major_size - 1 - major
+        for minor_in_tile in range(tile_width):
+          minor = minor_tile * tile_width + minor_in_tile
+          idx = (minor, major) if minor_dim == 0 else (major, minor)
+          reference[idx] = next(counter)
+    results = np.full((m, n), -1)
+    for lin in range(m * n):
+      results[plgpu.planar_snake(np.int32(lin), (m, n), minor_dim, tile_width)] = lin
+    np.testing.assert_array_equal(results, reference)
+
+  def test_planar_snake_golden(self):
+    m, n = 8, 8
+    with self.subTest("minor_dim=0 tile_width=2"):
+      results = np.full((m, n), -1)
+      for lin in range(m * n):
+        results[plgpu.planar_snake(np.int32(lin), (m, n), 0, 2)] = lin
+      expected = np.array([
+          [0, 2, 4, 6, 8, 10, 12, 14],
+          [1, 3, 5, 7, 9, 11, 13, 15],
+          [30, 28, 26, 24, 22, 20, 18, 16],
+          [31, 29, 27, 25, 23, 21, 19, 17],
+          [32, 34, 36, 38, 40, 42, 44, 46],
+          [33, 35, 37, 39, 41, 43, 45, 47],
+          [62, 60, 58, 56, 54, 52, 50, 48],
+          [63, 61, 59, 57, 55, 53, 51, 49],
+      ])
+      np.testing.assert_array_equal(results, expected)
+    with self.subTest("minor_dim=1 tile_width=2"):
+      results = np.full((m, n), -1)
+      for lin in range(m * n):
+        results[plgpu.planar_snake(np.int32(lin), (m, n), 1, 2)] = lin
+      expected = np.array([
+          [0, 1, 30, 31, 32, 33, 62, 63],
+          [2, 3, 28, 29, 34, 35, 60, 61],
+          [4, 5, 26, 27, 36, 37, 58, 59],
+          [6, 7, 24, 25, 38, 39, 56, 57],
+          [8, 9, 22, 23, 40, 41, 54, 55],
+          [10, 11, 20, 21, 42, 43, 52, 53],
+          [12, 13, 18, 19, 44, 45, 50, 51],
+          [14, 15, 16, 17, 46, 47, 48, 49],
+      ])
+      np.testing.assert_array_equal(results, expected)
+    with self.subTest("minor_dim=0 tile_width=1"):
+      results = np.full((m, n), -1)
+      for lin in range(m * n):
+        results[plgpu.planar_snake(np.int32(lin), (m, n), 0, 1)] = lin
+      expected = np.array([
+          [0, 1, 2, 3, 4, 5, 6, 7],
+          [15, 14, 13, 12, 11, 10, 9, 8],
+          [16, 17, 18, 19, 20, 21, 22, 23],
+          [31, 30, 29, 28, 27, 26, 25, 24],
+          [32, 33, 34, 35, 36, 37, 38, 39],
+          [47, 46, 45, 44, 43, 42, 41, 40],
+          [48, 49, 50, 51, 52, 53, 54, 55],
+          [63, 62, 61, 60, 59, 58, 57, 56],
+      ])
+      np.testing.assert_array_equal(results, expected)
+
+
 if __name__ == "__main__":
   absltest.main()

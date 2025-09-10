@@ -151,5 +151,5 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax/_src:dtypes",
-    ],
+    ] + py_deps("numpy"),
 )
