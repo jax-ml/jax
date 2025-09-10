@@ -116,22 +116,37 @@ def pallas_call_lowering(
       input_output_aliases=input_output_aliases,
       use_custom_barrier=False, # False until we add get_barrier_semaphore() feature
   )
+
   if (prof_ctx := lowering_result.profiler_context) is not None:
     *outs, prof_buffer = outs
-    if (dump_path := prof_ctx.dump_path) == "sponge":
-      dump_path = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR")  # type: ignore
-    out_file = os.path.join(
-        dump_path, f"{mlir.sanitize_name(debug_info.func_name)}-{time.time_ns()}-trace.json"
-    )
+    if prof_ctx.dump_path is None:
+      out_file = None
+    else:
+      if (dump_path := prof_ctx.dump_path) == "sponge":
+        dump_path = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR")  # type: ignore
+      out_file = os.path.join(
+          dump_path,
+          f"{mlir.sanitize_name(debug_info.func_name)}-{time.time_ns()}-trace.json",
+      )
+
     def dump_profile(prof_buffer):
+
+      def dump_buffer_to_output(f):
+        prof_ctx.spec.dump(
+            prof_buffer,
+            f,
+            grid=lowering_result.grid,
+            block=lowering_result.block,
+            tracing_version=prof_ctx.prof_ver,
+            injection_id=prof_ctx.injection_instance_id,
+        )
+
+      if out_file is None:
+        dump_buffer_to_output(None)
+        return
       try:
         with open(out_file, "x") as f:
-          prof_ctx.spec.dump(
-              prof_buffer,
-              f,
-              grid=lowering_result.grid,
-              block=lowering_result.block,
-          )
+          dump_buffer_to_output(f)
       except FileExistsError:
         warnings.warn(
             f"Failed to dump profile for pallas_call {debug_info.func_src_info}, "
