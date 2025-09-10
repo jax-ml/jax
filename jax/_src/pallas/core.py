@@ -210,24 +210,34 @@ mlir.ir_type_handlers[ShapedArrayWithMemorySpace] = mlir._array_ir_types
 @dataclasses.dataclass(frozen=True)
 class MemoryRef:
   """Like jax.ShapeDtypeStruct but with memory spaces."""
-  shape: tuple[int, ...]
-  dtype: jnp.dtype | dtypes.ExtendedDType
+  type: Any
   # TODO(b/368122763): Unify memory space types across backends
   memory_space: Any
 
   def get_array_aval(self) -> jax_core.ShapedArray:
-    dtype = self.dtype
+    if not isinstance(self.type, jax_core.ShapedArray):
+      raise ValueError(
+          f"MemoryRef type must be a ShapedArray, got {type(self.type)}"
+      )
+    dtype = self.type.dtype
     if not isinstance(dtype, (jnp.dtype, dtypes.ExtendedDType)):
       dtype = jnp.dtype(dtype)
     return ShapedArrayWithMemorySpace(
-        self.shape, dtype, memory_space=self.memory_space
+        self.type.shape, dtype, memory_space=self.memory_space
     )
 
   def get_ref_aval(self) -> TransformedRef | state.AbstractRef:
     # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
     # try to apply JAX ops to it.
-    return state.AbstractRef(
-        jax_core.ShapedArray(self.shape, self.dtype), self.memory_space)
+    return state.AbstractRef(self.type, self.memory_space)
+
+  @property
+  def dtype(self):
+    return self.type.dtype
+
+  @property
+  def shape(self):
+    return self.type.shape
 
 
 class MemorySpace(enum.Enum):
@@ -242,10 +252,29 @@ class MemorySpace(enum.Enum):
   KEY = "key"  # Memory space for PRNG keys.
   HOST = "host"  # Host memory space.
 
-  def __call__(self, shape, dtype):
-    if self == MemorySpace.ANY:
-      return jax.ShapeDtypeStruct(shape, dtype)
-    return MemoryRef(shape, dtype, self)
+  def __call__(self, *args, **kwargs):
+    # A convenience function for constructing MemoryRef types.
+    if len(args) + len(kwargs) == 2:
+      # Backwards compatibility for existing code.
+      if len(args) == 2:
+        shape, dtype = args
+      elif len(args) == len(kwargs) == 1:
+        shape = args[0]
+        dtype = kwargs["dtype"]
+      else:
+        shape = kwargs["shape"]
+        dtype = kwargs["dtype"]
+      if self is MemorySpace.ANY:
+        return jax.ShapeDtypeStruct(shape, dtype)
+      shaped_array = jax_core.ShapedArray(shape, dtype)
+      return MemoryRef(shaped_array, memory_space=self)
+    elif len(args) == 1:
+      return MemoryRef(args[0], memory_space=self)
+    else:
+      raise ValueError(
+          f"Expected 1 or 2 arguments, got {len(args)}: {args}"
+      )
+
 
   def __str__(self) -> str:
     return self.value

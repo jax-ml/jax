@@ -363,6 +363,9 @@ def _traced_out_info(self):
                     for s in self._params['out_shardings']]
   out = []
   for a, out_s in zip(self.jaxpr.out_avals, out_shardings):
+    if not isinstance(a, core.ShapedArray):
+      out.append(a)
+      continue
     s = (a.sharding if a.sharding.mesh.are_all_axes_explicit else out_s
           if out_s is None else out_s)
     # TODO(yashkatariya): Add `Layout` to SDS.
