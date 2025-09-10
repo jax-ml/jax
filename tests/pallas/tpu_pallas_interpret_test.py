@@ -164,6 +164,32 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_allclose(z, x @ y, atol=1e-3)
 
   @parameterized.parameters('raise', 'uninitialized')
+  def test_out_of_bounds_block_spec(self, out_of_bounds_reads):
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    @jax.jit
+    def run():
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+          out_specs=pl.BlockSpec((4, 128), lambda i: (i, 0)),
+          in_specs=[pl.BlockSpec((4, 128), lambda i: (i+1, 0))],
+          grid=(4,),
+          interpret=pltpu.InterpretParams(
+              out_of_bounds_reads=out_of_bounds_reads),
+      )(jnp.zeros((16, 128), jnp.float32))
+
+    if out_of_bounds_reads == 'uninitialized':
+      out = np.array(run())
+      np.testing.assert_equal(out[:12], 0.0)
+      self.assertTrue(np.isnan(out[12:]).all())
+    elif out_of_bounds_reads == 'raise':
+      with self.assertRaisesRegex(Exception, 'Out-of-bounds block index'):
+        run()
+      pltpu.reset_tpu_interpret_mode_state()
+
+  @parameterized.parameters('raise', 'uninitialized')
   def test_out_of_bounds_read_index(self, out_of_bounds_reads):
     def kernel(s_ref, x_ref, o_ref):
       def read(ref, i):
