@@ -39,6 +39,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The parameters `enable_xla` and `native_serialization` for `jax2tf.convert`
     are deprecated and will be removed in a future version of JAX. These were
     used for jax2tf with non-native serialization, which has been now removed.
+  * Setting the config state `jax_pmap_no_rank_reduction` to `False` is
+    deprecated. By default, `jax_pmap_no_rank_reduction` will be set to `True`
+    and `jax.pmap` shards will not have their rank reduced, keeping the same
+    rank as their enclosing array.
 
 ## JAX 0.7.1 (August 20, 2025)
 

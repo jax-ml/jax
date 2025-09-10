@@ -380,7 +380,7 @@ def bool_state(
     upgrade: bool = False,
     extra_description: str = '',
     include_in_jit_key: bool = False,
-    validator: Callable[[Any], None] | None = None,
+    validator: Callable[[str], None] | None = None,
 ) -> State[bool]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -408,9 +408,9 @@ def bool_state(
       for the outgoing functionality to be deprecated.
     extra_description: string, optional: extra information to add to the
       summary description.
-    validator: an optional callback that is called with the new
-      value on any update, and should raise an error if the new value is
-      invalid.
+    include_in_jit_key: bool, optional: whether to include the state in the
+      JIT cache key.
+    validator: optional function to validate the value of the config option.
 
   Returns:
     A contextmanager to control the thread-local state value.
@@ -449,7 +449,7 @@ def bool_state(
       name, default, help, update_global_hook=update_global_hook,
       update_thread_local_hook=update_thread_local_hook,
       extra_description=extra_description, default_context_manager_value=True,
-      include_in_jit_key=include_in_jit_key, validator=validator)
+      validator=validator, include_in_jit_key=include_in_jit_key)
   config.add_option(name, s, bool, meta_args=[], meta_kwargs={"help": help})
   setattr(Config, name, property(lambda _: s.value))
   return s
@@ -479,6 +479,10 @@ def enum_state(
     default: string, default value.
     help: string, used to populate the flag help information as well as the
       docstring of the returned context manager.
+    include_in_jit_key: bool, optional: whether to include the state in the
+      JIT cache key.
+    extra_validator: optional function to validate the value of the config
+      option.
 
   Returns:
     A contextmanager to control the thread-local state value.
@@ -1829,10 +1833,26 @@ optional_enum_state(
       logging_config.update_logging_level_global(logging_level=logging_level)
 )
 
+def _default_pmap_no_rank_reduction(new_val):
+  if not new_val:
+    deprecations.warn(
+        'jax-pmap-no-rank-reduction',
+        (
+            'Setting `jax_pmap_no_rank_reduction` to `False` is deprecated in '
+            'JAX v0.7.2 and will be removed in JAX v0.9.0.'
+        ),
+        stacklevel=3,
+    )
+
 pmap_no_rank_reduction = bool_state(
     name='jax_pmap_no_rank_reduction',
     default=True,
-    help='If True, pmap shards have a the same rank as their enclosing array.',
+    help=(
+        '[deprecated] If True, pmap shards have the same rank as their '
+        'enclosing array. Setting to `False` is deprecated and in the future '
+        'all `pmap` calls will proceed without rank reduction.'
+    ),
+    validator=_default_pmap_no_rank_reduction,
 )
 
 use_shardy_partitioner = bool_state(
