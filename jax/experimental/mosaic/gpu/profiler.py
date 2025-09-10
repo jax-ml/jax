@@ -23,6 +23,7 @@ import warnings
 
 import jax
 from jax._src import stages
+from jax._src import util
 from jax._src.lib import xla_client
 import jax.numpy as jnp
 from jaxlib.mlir import ir
@@ -99,6 +100,7 @@ def _measure_events(
 
 
 Timings: TypeAlias = list[tuple[str, float]] | float | None
+IteratedTimings: TypeAlias = list[Timings] | Timings
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -109,7 +111,7 @@ class Cupti:
   finalize: bool = True
 
   def measure(
-      self, f: Callable[P, T], *, aggregate: bool = True
+      self, f: Callable[P, T], *, aggregate: bool = True, iterations: int = 1,
   ) -> Callable[P, tuple[T, Timings]]:
     if not isinstance(f, (stages.Wrapped, stages.Compiled)):
       f = jax.jit(f)
@@ -119,22 +121,41 @@ class Cupti:
       ext = mosaic_gpu_lib._mosaic_gpu_ext
       ext._cupti_init()
       try:
-        results = jax.block_until_ready(f(*args, **kwargs))
+        all_results = [f(*args, **kwargs) for _ in range(iterations)]
+        for r in all_results:
+          jax.block_until_ready(r)
+        results = all_results[0]
       finally:
         timings = ext._cupti_get_timings(self.finalize)
-
       if not timings:
         return results, None
-      elif aggregate:
-        return results, sum(item[1] for item in timings)
-      else:
-        return results, timings
+
+      if len(timings) % iterations != 0:
+        raise RuntimeError(
+            "The number of kernel launches is not divisible by the number of"
+            " iterations"
+        )
+      kernels_per_iter = len(timings) // iterations
+      iter_timings = util.split_list(
+          timings, [kernels_per_iter] * (iterations - 1)
+      )
+      for kernel_idx, (kernel_name, _) in enumerate(iter_timings[0]):
+        for i in range(1, iterations):
+          if iter_timings[i][kernel_idx][0] != kernel_name:
+            raise RuntimeError("Kernel names are not consistent across iterations")
+
+      if aggregate:
+        iter_timings = [
+            sum(item[1] for item in timings) for timings in iter_timings
+        ]
+
+      return results, iter_timings[0] if len(iter_timings) == 1 else iter_timings
 
     return wrapper
 
 
 def measure(
-    f: Callable[P, T], *, mode: str = "events", aggregate: bool = True
+    f: Callable[P, T], *, mode: str = "events", aggregate: bool = True, iterations: int = 1,
 ) -> Callable[P, tuple[T, Timings]]:
   """Sets up a function ``f`` for profiling on GPU.
 
@@ -155,6 +176,9 @@ def measure(
     aggregate: Whether to report an aggregate runtime. When ``False`` (only
       supported by ``mode="cupti"``), the per-kernel timings are returned as a
       list of tuples ``(<kernel name>, <runtime in ms>)``.
+    iterations: How many times to run the function. Only supported by
+      ``mode="cupti"``. When greater than 1, the return type will become a list
+      of measurements.
 
   Returns:
     A new function ``g`` that returns the measured GPU runtime as its last
@@ -190,9 +214,11 @@ def measure(
     implementation may execute ``f`` more than once to "warm up" and exclude
     compilation time from the measurement.
   """  # fmt: skip
+  if iterations < 1:
+    raise ValueError(f"{iterations=} must be positive")
   match mode:
     case "cupti":
-      return Cupti().measure(f, aggregate=aggregate)
+      return Cupti().measure(f, aggregate=aggregate, iterations=iterations)
     case "events":
       if not aggregate:
         raise ValueError(f"{aggregate=} is not supported with {mode=}")
