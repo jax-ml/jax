@@ -26,6 +26,7 @@ from jax._src import test_util as jtu
 from jax._src.interpreters import pxla
 import numpy as np
 
+
 config.parse_flags_with_absl()
 
 def _cpp_device_put(value, device):
@@ -242,6 +243,24 @@ class JaxJitTest(jtu.JaxTestCase):
 
       with config.captured_constants_warn_bytes(-1):
         jit_maker()(x)
+
+  def testParseArguments(self):
+    pytree_registry = jaxlib.pytree.default_registry()
+    sig, args = jaxlib.jax_jit.parse_arguments(
+        positional_args=[1, 2, 3],
+        keyword_args=[4, 5],
+        kwnames=("a", "b"),
+        static_argnums=[0, 2],
+        static_argnames=["a"],
+        pytree_registry=pytree_registry,
+    )
+    self.assertEqual(args, [2, 5])
+    self.assertEqual(sig.static_args, [1, 3, 4])
+    self.assertEqual(sig.static_arg_names, ["a"])
+    _, leaf = pytree_registry.flatten(0)
+    self.assertEqual(sig.dynamic_arg_names, ["b"])
+    self.assertEqual(sig.dynamic_arg_treedefs, [leaf, leaf])
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

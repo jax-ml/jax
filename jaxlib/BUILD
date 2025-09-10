@@ -1372,16 +1372,3 @@ py_strict_test(
         "absl/testing",
     ]),
 )
-
-py_strict_test(
-    name = "jax_jit_test",
-    srcs = ["jax_jit_test.py"],
-    deps = [
-        ":xla_client",
-    ] + py_deps([
-        "absl/flags",
-        "absl/logging",
-        "absl/testing",
-        "numpy",
-    ]),
-)

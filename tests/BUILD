@@ -581,6 +581,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "jax_jit_test",
     srcs = ["jax_jit_test.py"],
+    enable_backends = ["cpu"],
     main = "jax_jit_test.py",
     deps = py_deps([
         "absl/testing",
