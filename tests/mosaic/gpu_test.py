@@ -241,6 +241,23 @@ class TestCase(parameterized.TestCase):
       # We need to cudaDeviceSynchronize to make sure printfs are flushed.
       mosaic_gpu_lib._mosaic_gpu_ext._sync_all_devices()
 
+  @contextlib.contextmanager
+  def assert_good_memory_access(self):
+    metric_names = [
+        "l1tex__average_t_sector_pipe_lsu_mem_global_op_ld.ratio",
+        "l1tex__t_sectors.sum",
+        # "l1tex__average_t_sector_pipe_lsu_mem_global_op_st.ratio",
+    ]
+    with contextlib.ExitStack() as stack:
+      stack.enter_context(jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"))
+      sass = stack.enter_context(self.capture_stdout())
+      metrics = stack.enter_context(profiler.collect_metrics(metric_names))
+      # metrics = {}
+      yield metrics
+      mosaic_gpu_lib._mosaic_gpu_ext._sync_all_devices()
+    print(metrics)
+    # print(sass())
+
 
 class Sm90ATestCase(TestCase, jtu.CudaArchSpecificTest):
 
@@ -3363,6 +3380,24 @@ class FragmentedArrayTest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
     )(x)
     np.testing.assert_array_equal(y, x)
+
+  def test_memory_access_analysis(self):
+    def kernel(ctx, src, dst, _):
+      for i in range(128):
+        idxs = [
+            arith.index_cast(ir.IndexType.get(), utils.thread_idx()),
+            c(i, ir.IndexType.get()),
+        ]
+        # Uncommenting this should produce coalesced accesses.
+        # idxs = idxs[::-1]
+        memref.store(memref.load(src, idxs), dst, idxs)
+
+    with self.assert_good_memory_access():
+      x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
+      f = mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x, x, (),
+      )
+      jax.block_until_ready(f(x))
 
 
 class ProfilerTest(TestCase):
