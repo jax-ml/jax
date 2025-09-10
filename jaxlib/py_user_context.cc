@@ -36,6 +36,7 @@ limitations under the License.
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/traceback.h"
 #include "xla/python/ifrt/user_context.h"
+#include "xla/python/version.h"
 #include "xla/service/slow_operation_alarm.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "tsl/platform/fingerprint.h"
@@ -108,6 +109,12 @@ uint64_t PyUserContext::Fingerprint() const {
   }
   return *fingerprint_;
 }
+
+#if JAX_IFRT_VERSION_NUMBER >= 25
+xla::ifrt::UserContextId PyUserContext::Id() const {
+  return xla::ifrt::UserContextId(Fingerprint());
+}
+#endif
 
 std::string PyUserContext::DebugString() const {
   absl::MutexLock lock(mu_);

@@ -25,6 +25,7 @@ limitations under the License.
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "jaxlib/traceback.h"
 #include "xla/python/ifrt/user_context.h"
+#include "xla/python/version.h"
 
 namespace jax {
 
@@ -57,6 +58,10 @@ class PyUserContext
   // UserContext implementation.
 
   uint64_t Fingerprint() const override;
+
+#if JAX_IFRT_VERSION_NUMBER >= 25
+  xla::ifrt::UserContextId Id() const override;
+#endif
 
   // Returns a string representation of the traceback captured by this
   // `PyUserContext`.

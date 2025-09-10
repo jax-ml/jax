@@ -1164,6 +1164,7 @@ cc_library(
         "@nanobind",
         "@tsl//tsl/platform:fingerprint",
         "@xla//third_party/python_runtime:headers",
+        "@xla//xla/python:version",
         "@xla//xla/python/ifrt:user_context",
         "@xla//xla/service:slow_operation_alarm",
         "@xla//xla/tsl/concurrency:ref_count",
