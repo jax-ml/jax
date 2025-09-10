@@ -63,9 +63,8 @@ absl::StatusOr<mlir::func::FuncOp> FromCppFunc(
   mlir::OpBuilder b(context);
   b.setInsertionPointToEnd(module.getBody());
 
-  auto fn = mlir::func::FuncOp::create(
-      b, b.getUnknownLoc(), "function_wrapper",
-      b.getFunctionType({type1, type2}, std::nullopt));
+  auto fn = mlir::func::FuncOp::create(b, b.getUnknownLoc(), "function_wrapper",
+                                       b.getFunctionType({type1, type2}, {}));
   fn.addEntryBlock();
   b.setInsertionPointToStart(&fn.front());
 
