@@ -262,6 +262,9 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
 
   ops, ops_tree = tree_flatten(operands)
   ops_avals = tuple(map(core.get_aval, ops))
+  ops_avals = tuple(core.AvalQDD(a, cur_qdd(x)) if a.has_qdd  # type: ignore
+                    else a for a, x in zip(ops_avals, ops))
+
 
   dbg_true_fun = api_util.debug_info("cond", true_fun, operands, {})
   if config.mutable_array_checks.value:
@@ -1027,6 +1030,39 @@ core.custom_typechecks[cond_p] = partial(_cond_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[cond_p] = _cond_partial_eval_custom
 pe.dce_rules[cond_p] = _cond_dce_rule
 batching.ragged_prop_rules[cond_p] = batching.ragged_mask_assert_no_op_rule
+
+def _cond_is_high(*_, branches, **__) -> bool:
+  return any(j.jaxpr.is_high for j in branches)
+cond_p.is_high = _cond_is_high  # type: ignore
+
+def _cond_to_lojax(pred, *hi_args, branches):
+  jaxpr = branches[0]
+  lo_branches = tuple(pe.lower_jaxpr(j) for j in branches)
+  lo_args = [lo_val for aval, x in zip(branches[0].in_aval_qdds, hi_args)
+             for lo_val in (aval.read_loval(x) if aval.has_qdd
+                            else aval.lower_val(x))]
+  all_outs = cond_p.bind(pred, *lo_args, branches=lo_branches)
+  lo_muts_out = sum(len(aval.lo_ty()) for aval in branches[0].final_aval_qdds if aval.has_qdd)
+  out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
+
+  # collect and apply mutations
+  out_mut_ = iter(out_mut)
+  in_idx = {v: i for i, v in enumerate(jaxpr.jaxpr.invars)}
+
+  for v in jaxpr.jaxpr.invars:
+    if v.final_qdd is not None:
+      qdd = v.final_qdd
+      lo_vals = itertools.islice(out_mut_, len(v.aval.lo_ty_qdd(qdd)))
+      v.aval.update_from_loval(qdd, hi_args[in_idx[v]], *lo_vals)
+
+  lo_outs_ = iter(lo_outs)
+
+  hi_outs = [t.raise_val(*itertools.islice(lo_outs_, len(t.lo_ty())))
+             for t in jaxpr.out_avals]
+  assert next(lo_outs_, None) is None
+  return hi_outs
+
+cond_p.to_lojax = _cond_to_lojax
 
 def _cond_lowering(ctx, index, *args, branches,
                    **params):
