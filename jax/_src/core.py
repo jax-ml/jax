@@ -1616,7 +1616,7 @@ class AbstractValue:
     raise NotImplementedError("must override")
 
   def lo_ty(self):
-    raise NotImplementedError("must override")
+    return [self]
 
   def lo_ty_qdd(self, qdd):
     raise NotImplementedError("avals with qdd must override")
@@ -1864,6 +1864,11 @@ def cur_qdd(x):
     return prev_trace.cur_qdd(x)
   finally:
     trace_ctx.set_trace(prev_trace)
+
+def cur_aval_qdd(x):
+  aval = typeof(x)
+  qdd = cur_qdd(x) if aval.has_qdd else None
+  return AvalQDD(aval, qdd)
 
 ### Extended dtypes
 #

@@ -532,6 +532,43 @@ class BoxTest(jtu.JaxTestCase):
 
     self.assertAllClose(box.get(), 1024., check_dtypes=False)
 
+  def test_cond_box_internally_pure(self):
+    @jax.jit
+    def doubleit(x):
+      b = new_box()
+      b.set(x)
+      b.set(b.get() + b.get())
+      return b.get()
+
+    def identity(x): return x
+
+    @jax.jit
+    def f(x):
+      return jax.lax.cond(x > 0, doubleit, identity, x)
+
+    self.assertAllClose(f(1.0), 2.0)
+
+  def test_cond_box_arg(self):
+    @jax.jit
+    def f(x):
+      b = new_box()
+      b.set(x)
+      jax.lax.cond(x > 0, lambda box: box.set(box.get() + 1), lambda _: None, b)
+      return b.get()
+
+    self.assertAllClose(f(1.0), 2.0)
+
+  def test_cond_closed_over_box(self):
+    # TODO: good error messages in the case that qdd changes differently in each branch
+    def f(x):
+      b = new_box()
+      b.set(1.0)
+      jax.lax.cond(x > 0., lambda _: b.set(b.get() + 1.0), lambda _: None, 1.0)
+      return b.get()
+
+    self.assertAllClose(f(1.0), 2.0)
+
+
   # TODO error-checking tests from attrs_test.py
 
   ###

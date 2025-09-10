@@ -47,7 +47,7 @@ def _typecheck_param(prim, param, name, msg_required, pred):
 @weakref_lru_cache
 def _initial_style_open_jaxpr(fun: Callable,
                               in_tree: PyTreeDef,
-                              in_avals: Sequence[core.AbstractValue],
+                              in_avals: Sequence[core.AbstractValue | core.AvalQDD],
                               debug_info: core.DebugInfo):
   wrapped_fun, out_tree = api_util.flatten_fun_nokwargs(
       lu.wrap_init(fun, debug_info=debug_info),
@@ -67,7 +67,7 @@ def _initial_style_jaxpr(fun: Callable,
 
 def _initial_style_jaxprs_with_common_consts(
     funs: Sequence[Callable],
-    in_tree: PyTreeDef, in_avals: Sequence[core.AbstractValue],
+    in_tree: PyTreeDef, in_avals: Sequence[core.AbstractValue | core.AvalQDD],
     debug_infos: Sequence[core.DebugInfo]):
   jaxpr_data = [_initial_style_open_jaxpr(fn, in_tree, in_avals, debug_info)
                 for fn, debug_info in zip(funs, debug_infos)]
@@ -77,8 +77,8 @@ def _initial_style_jaxprs_with_common_consts(
   # Jaxprs must share consts, so we concat consts and pad the jaxprs' constvars.
   lens = map(len, all_consts)
   consts = [c for cs in all_consts for c in cs]
-  avals = tuple(map(core.typeof, consts))
-  jaxprs = [_pad_constvars(jaxpr, avals[:sum(lens[:i])], avals[sum(lens[:i+1]):])
+  avalqdds = tuple(map(core.cur_aval_qdd, consts))
+  jaxprs = [_pad_constvars(jaxpr, avalqdds[:sum(lens[:i])], avalqdds[sum(lens[:i+1]):])
             for i, jaxpr in enumerate(jaxprs)]
   # De-duplicate shared constants.
   const_ids = tuple(id(c) for c in consts)
@@ -91,9 +91,11 @@ def _initial_style_jaxprs_with_common_consts(
   return closed_jaxprs, consts, all_out_trees
 
 @weakref_lru_cache
-def _pad_constvars(jaxpr: core.Jaxpr, left: tuple[core.AbstractValue, ...],
+def _pad_constvars(jaxpr: core.Jaxpr, left: tuple[core.AvalQDD, ...],
                    right: tuple[core.AbstractValue, ...]) -> core.Jaxpr:
-  constvars = [*map(core.Var, left), *jaxpr.constvars, *map(core.Var, right)]
+  def make_var(aq):
+    return core.Var(aq.aval, initial_qdd=aq.qdd, final_qdd=aq.qdd)
+  constvars = [*map(make_var, left), *jaxpr.constvars, *map(make_var, right)]
   effs = pe._renumber_effects([*constvars, *jaxpr.invars],
                               [*jaxpr.constvars, *jaxpr.invars], jaxpr.effects)
   jaxpr = jaxpr.replace(constvars=constvars, effects=effs)
