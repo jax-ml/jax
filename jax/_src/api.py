@@ -60,7 +60,7 @@ from jax._src import xla_bridge as xb
 from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray, typeof
 from jax._src.api_util import (
   flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
-  _split_args, flatten_axes, donation_vector, rebase_donate_argnums,
+  flatten_axes, donation_vector, rebase_donate_argnums,
   _ensure_index, _ensure_index_tuple, apply_flat_fun_nokwargs, check_callable,
   debug_info, flat_out_axes)
 from jax._src.lib import jax_jit
@@ -2562,9 +2562,6 @@ def make_jaxpr(
   @wraps(fun)
   @api_boundary
   def make_jaxpr_f(*args, **kwargs):
-    _, _, dyn_args = _split_args(static_argnums, args, allow_invalid=True)
-    args_flat = tree_leaves((dyn_args, kwargs))
-
     with core.extend_axis_env_nd(axis_env or []):
       traced = jit(fun, static_argnums=static_argnums,
                    abstracted_axes=abstracted_axes).trace(*args, **kwargs)

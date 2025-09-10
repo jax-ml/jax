@@ -353,6 +353,259 @@ class CompiledCallParams(NamedTuple):
   const_args: list[ArrayLike]
 
 
+def _traced_args_info(self):
+  don8_rgn = tuple(i for i, d in enumerate(self._params['donated_invars']) if d)
+  arg_avals = self.jaxpr.in_avals[self._num_consts:]
+  return make_args_info(self._in_tree, arg_avals, don8_rgn)
+
+def _traced_out_info(self):
+  out_shardings = [None if isinstance(s, UnspecifiedValue) else s
+                    for s in self._params['out_shardings']]
+  out = []
+  for a, out_s in zip(self.jaxpr.out_avals, out_shardings):
+    s = (a.sharding if a.sharding.mesh.are_all_axes_explicit else out_s
+          if out_s is None else out_s)
+    # TODO(yashkatariya): Add `Layout` to SDS.
+    out.append(
+        core.ShapeDtypeStruct(
+            a.shape, a.dtype, sharding=s, weak_type=a.weak_type,
+            vma=(a.vma if config._check_vma.value else None)))
+  return tree_util.tree_unflatten(self._out_tree, out)
+
+
+class Traced(Stage):
+  """Traced form of a function specialized to argument types and values.
+
+  A traced computation is ready for lowering. This class carries the
+  traced representation with the remaining information needed to later
+  lower, compile, and execute it.
+  """
+  __slots__ = ['_lfg', '_params', '_in_tree', '_out_tree', '_num_consts']
+
+  def __init__(self, lfg, params, in_tree, out_tree, num_consts):
+    self._lfg = lfg
+    self._params = params
+    self._in_tree = in_tree
+    self._out_tree = out_tree
+    self._num_consts = num_consts
+
+  jaxpr = property(lambda self: self._params['jaxpr'])
+  fun_name = property(lambda self: self._params['name'])
+  args_info = property(_traced_args_info)
+  out_info = property(_traced_out_info)
+  _args_flat = property(lambda self: self._lfg.args[0])
+
+  def fall(self):
+    if not self.jaxpr.is_high:
+      return Fallen(self._lfg, self._params, self._in_tree, self._out_tree,
+                    self._num_consts)
+
+    # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
+    from jax._src.pjit import _resolve_and_lower  # type: ignore
+    from jax._src.interpreters import partial_eval as pe  # type:ignore
+    hi_jaxpr = self.jaxpr
+    _, closed_over_himutables = pe.convert_const_himutables(hi_jaxpr)
+    if closed_over_himutables: raise NotImplementedError  # TODO(mattjj)
+    lo_jaxpr = pe.lower_jaxpr(hi_jaxpr)
+    in_tree = lojax_pytree(hi_jaxpr.in_aval_qdds, self._in_tree)
+    out_tree = lojax_pytree(hi_jaxpr.out_avals, self._out_tree)
+    params = dict(lojax_expand_params(hi_jaxpr, self._params), jaxpr=lo_jaxpr)
+    lo_args = [lo_val for aval, x in zip(hi_jaxpr.in_aval_qdds, self._args_flat)
+               for lo_val in (aval.read_loval(x) if aval.has_qdd
+                              else aval.lower_val(x))]
+    lfg = partial(_resolve_and_lower, lo_args, pgle_profiler=None)
+    return Fallen(lfg, params, in_tree, out_tree, self._num_consts)
+
+  def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
+            _private_parameters: mlir.LoweringParameters | None = None):
+    """Lower to compiler input, returning a ``Lowered`` instance."""
+    return self.fall().lower(lowering_platforms=lowering_platforms,
+                             _private_parameters=_private_parameters)
+
+def lojax_expand_params(jaxpr, params):
+  from jax._src.pjit import _lojax_expand_params  # type: ignore
+  lo_nums_in = [len(aval.lo_ty()) for aval in jaxpr.in_aval_qdds]
+  lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]
+  lo_muts_out = sum(len(aval.lo_ty()) for aval in jaxpr.final_aval_qdds
+                    if aval.has_qdd)
+  if lo_muts_out: raise NotImplementedError  # TODO(mattjj)
+  return _lojax_expand_params(lo_nums_in, lo_nums_out, lo_muts_out,
+                              **dict(params, jaxpr=jaxpr))
+
+def lojax_pytree(hi_avals, tree):
+  lo_avals = [t.lo_ty_qdd() if t.has_qdd else t.lo_ty() for t in hi_avals]
+  return tree_structure(tree_unflatten(tree, lo_avals))
+
+class Fallen(Stage):
+  """True leader of the Decepticons."""
+  __slots__ = ['_lfg', '_params', '_in_tree', '_out_tree', '_num_consts']
+
+  def __init__(self, lfg, params, in_tree, out_tree, num_consts):
+    self._lfg = lfg
+    self._params = params
+    self._in_tree = in_tree
+    self._out_tree = out_tree
+    self._num_consts = num_consts
+
+  jaxpr = property(lambda self: self._params['jaxpr'])
+  fun_name = property(lambda self: self._params['name'])
+  args_info = property(_traced_args_info)
+  out_info = property(_traced_out_info)
+  _args_flat = property(lambda self: self._lfg.args[0])
+
+  def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
+            _private_parameters: mlir.LoweringParameters | None = None):
+    """Lower to compiler input, returning a ``Lowered`` instance."""
+    if _private_parameters is None:
+      _private_parameters = mlir.LoweringParameters()
+    try:
+      lowering = self._lfg(**self._params,
+                           lowering_platforms=lowering_platforms,
+                           lowering_parameters=_private_parameters)
+    except DeviceAssignmentMismatchError as e:
+      fails, = e.args
+      msg = _device_assignment_mismatch_error(
+          self._params['name'], fails, self._args_flat, 'jit',
+          self.jaxpr.debug_info.safe_arg_names(len(self.jaxpr.in_avals)))
+      raise ValueError(msg) from None
+    return Lowered(lowering, self.args_info, self._out_tree)
+
+
+class Lowered(Stage):
+  """Lowering of a function specialized to argument types and values.
+
+  A lowering is a computation ready for compilation. This class
+  carries a lowering together with the remaining information needed to
+  later compile and execute it. It also provides a common API for
+  querying properties of lowered computations across JAX's various
+  lowering paths (:func:`~jax.jit`, :func:`~jax.pmap`, etc.).
+  """
+  __slots__ = ["_lowering", "args_info", "out_tree", "_no_kwargs"]
+  _lowering: Lowering
+  args_info: Any  # PyTree of ArgInfo, not including the const_args
+  out_tree: tree_util.PyTreeDef
+  _no_kwargs: bool
+
+  def __init__(
+      self,
+      lowering: Lowering,
+      args_info,
+      out_tree: tree_util.PyTreeDef,
+      no_kwargs: bool = False):
+
+    self._lowering = lowering
+    self.args_info = args_info
+    self.out_tree = out_tree
+    self._no_kwargs = no_kwargs
+
+  @classmethod
+  def from_flat_info(cls,
+                     lowering: Lowering,
+                     in_tree: tree_util.PyTreeDef,
+                     in_avals,
+                     donate_argnums: tuple[int, ...],
+                     out_tree: tree_util.PyTreeDef,
+                     no_kwargs: bool = False):
+    """Initialize from flat info (``in_avals`` etc.) and an input PyTreeDef.
+
+    Args:
+      in_tree: The ``PyTreeDef`` of (args, kwargs).
+      out_tree: The ``PyTreeDef`` of the outputs.
+      no_kwargs: If ``True`` the transformation, and the
+        ``Compiled`` returned from this object will not support keyword
+        arguments (an error will be raised if some are provided).
+    """
+    return cls(
+        lowering,
+        make_args_info(in_tree, in_avals, donate_argnums),
+        out_tree,
+        no_kwargs=no_kwargs)
+
+  @property
+  def out_info(self):  # PyTree of OutInfo
+    out_avals = self._lowering.compile_args["global_out_avals"]
+    out_shardings = self._lowering.compile_args["out_shardings"]
+    out_layouts = self._lowering.compile_args["out_layouts"]
+    outs = []
+    for o, l, s in zip(out_avals, out_layouts, out_shardings):
+      s = None if isinstance(s, (UnspecifiedValue, AUTO)) else s
+      l = None if isinstance(l, AutoLayout) else l
+      format = Format(l, s)
+      outs.append(core.ShapeDtypeStruct(o.shape, o.dtype, sharding=format))
+    return self.out_tree.unflatten(outs)
+
+  def compile(
+      self, compiler_options: CompilerOptions | None = None, *,
+      device_assignment: tuple[xc.Device, ...] | None = None) -> Compiled:
+    """Compile, returning a corresponding ``Compiled`` instance."""
+
+    kw: dict[str, Any] = {
+        "compiler_options": compiler_options,
+        "device_assignment": device_assignment
+    }
+    return Compiled(
+        self._lowering.compile(**kw),  # pytype: disable=wrong-keyword-args
+        self._lowering.const_args,
+        self.args_info,
+        self.out_tree,
+        no_kwargs=self._no_kwargs,
+    )
+
+  def as_text(self, dialect: str | None = None, *,
+              debug_info: bool = False) -> str:
+    """A human-readable text representation of this lowering.
+
+    Intended for visualization and debugging purposes. This need not be a valid
+    nor reliable serialization.
+    Use `jax.export` if you want reliable and portable serialization.
+
+    Args:
+      dialect: Optional string specifying a lowering dialect (e.g. "stablehlo",
+        or "hlo").
+      debug_info: Whether to include debugging information,
+        e.g., source location.
+    """
+    return self._lowering.as_text(dialect, debug_info=debug_info)
+
+  def compiler_ir(self, dialect: str | None = None) -> Any | None:
+    """An arbitrary object representation of this lowering.
+
+    Intended for debugging purposes. This is not a valid nor reliable
+    serialization. The output has no guarantee of consistency across
+    invocations.
+    Use `jax.export` if you want reliable and portable serialization.
+
+    Returns ``None`` if unavailable, e.g. based on backend, compiler, or
+    runtime.
+
+    Args:
+      dialect: Optional string specifying a lowering dialect (e.g. "stablehlo",
+        or "hlo").
+    """
+    try:
+      return self._lowering.compiler_ir(dialect)
+    except NotImplementedError:
+      return None
+
+  def cost_analysis(self) -> Any | None:
+    """A summary of execution cost estimates.
+
+    Intended for visualization and debugging purposes. The object output by
+    this is some simple data structure that can easily be printed or serialized
+    (e.g. nested dicts, lists, and tuples with numeric leaves). However, its
+    structure can be arbitrary: it may be inconsistent across versions of JAX
+    and jaxlib, or even across invocations.
+
+    Returns ``None`` if unavailable, e.g. based on backend, compiler, or
+    runtime.
+    """
+    # TODO(frostig): improve annotation (basic pytree of arbitrary structure)
+    try:
+      return self._lowering.cost_analysis()
+    except NotImplementedError:
+      return None
+
+
 class Compiled(Stage):
   """Compiled representation of a function specialized to types/values.
 
@@ -553,255 +806,6 @@ class Compiled(Stage):
         self._call = cpp_call_fallback
     return self._call(*args, **kwargs)
 
-
-class Lowered(Stage):
-  """Lowering of a function specialized to argument types and values.
-
-  A lowering is a computation ready for compilation. This class
-  carries a lowering together with the remaining information needed to
-  later compile and execute it. It also provides a common API for
-  querying properties of lowered computations across JAX's various
-  lowering paths (:func:`~jax.jit`, :func:`~jax.pmap`, etc.).
-  """
-  __slots__ = ["_lowering", "args_info", "out_tree", "_no_kwargs"]
-  _lowering: Lowering
-  args_info: Any  # PyTree of ArgInfo, not including the const_args
-  out_tree: tree_util.PyTreeDef
-  _no_kwargs: bool
-
-  def __init__(
-      self,
-      lowering: Lowering,
-      args_info,
-      out_tree: tree_util.PyTreeDef,
-      no_kwargs: bool = False):
-
-    self._lowering = lowering
-    self.args_info = args_info
-    self.out_tree = out_tree
-    self._no_kwargs = no_kwargs
-
-  @classmethod
-  def from_flat_info(cls,
-                     lowering: Lowering,
-                     in_tree: tree_util.PyTreeDef,
-                     in_avals,
-                     donate_argnums: tuple[int, ...],
-                     out_tree: tree_util.PyTreeDef,
-                     no_kwargs: bool = False):
-    """Initialize from flat info (``in_avals`` etc.) and an input PyTreeDef.
-
-    Args:
-      in_tree: The ``PyTreeDef`` of (args, kwargs).
-      out_tree: The ``PyTreeDef`` of the outputs.
-      no_kwargs: If ``True`` the transformation, and the
-        ``Compiled`` returned from this object will not support keyword
-        arguments (an error will be raised if some are provided).
-    """
-    return cls(
-        lowering,
-        make_args_info(in_tree, in_avals, donate_argnums),
-        out_tree,
-        no_kwargs=no_kwargs)
-
-  @property
-  def out_info(self):  # PyTree of OutInfo
-    out_avals = self._lowering.compile_args["global_out_avals"]
-    out_shardings = self._lowering.compile_args["out_shardings"]
-    out_layouts = self._lowering.compile_args["out_layouts"]
-    outs = []
-    for o, l, s in zip(out_avals, out_layouts, out_shardings):
-      s = None if isinstance(s, (UnspecifiedValue, AUTO)) else s
-      l = None if isinstance(l, AutoLayout) else l
-      format = Format(l, s)
-      outs.append(core.ShapeDtypeStruct(o.shape, o.dtype, sharding=format))
-    return self.out_tree.unflatten(outs)
-
-  def compile(
-      self, compiler_options: CompilerOptions | None = None, *,
-      device_assignment: tuple[xc.Device, ...] | None = None) -> Compiled:
-    """Compile, returning a corresponding ``Compiled`` instance."""
-
-    kw: dict[str, Any] = {
-        "compiler_options": compiler_options,
-        "device_assignment": device_assignment
-    }
-    return Compiled(
-        self._lowering.compile(**kw),  # pytype: disable=wrong-keyword-args
-        self._lowering.const_args,
-        self.args_info,
-        self.out_tree,
-        no_kwargs=self._no_kwargs,
-    )
-
-  def as_text(self, dialect: str | None = None, *,
-              debug_info: bool = False) -> str:
-    """A human-readable text representation of this lowering.
-
-    Intended for visualization and debugging purposes. This need not be a valid
-    nor reliable serialization.
-    Use `jax.export` if you want reliable and portable serialization.
-
-    Args:
-      dialect: Optional string specifying a lowering dialect (e.g. "stablehlo",
-        or "hlo").
-      debug_info: Whether to include debugging information,
-        e.g., source location.
-    """
-    return self._lowering.as_text(dialect, debug_info=debug_info)
-
-  def compiler_ir(self, dialect: str | None = None) -> Any | None:
-    """An arbitrary object representation of this lowering.
-
-    Intended for debugging purposes. This is not a valid nor reliable
-    serialization. The output has no guarantee of consistency across
-    invocations.
-    Use `jax.export` if you want reliable and portable serialization.
-
-    Returns ``None`` if unavailable, e.g. based on backend, compiler, or
-    runtime.
-
-    Args:
-      dialect: Optional string specifying a lowering dialect (e.g. "stablehlo",
-        or "hlo").
-    """
-    try:
-      return self._lowering.compiler_ir(dialect)
-    except NotImplementedError:
-      return None
-
-  def cost_analysis(self) -> Any | None:
-    """A summary of execution cost estimates.
-
-    Intended for visualization and debugging purposes. The object output by
-    this is some simple data structure that can easily be printed or serialized
-    (e.g. nested dicts, lists, and tuples with numeric leaves). However, its
-    structure can be arbitrary: it may be inconsistent across versions of JAX
-    and jaxlib, or even across invocations.
-
-    Returns ``None`` if unavailable, e.g. based on backend, compiler, or
-    runtime.
-    """
-    # TODO(frostig): improve annotation (basic pytree of arbitrary structure)
-    try:
-      return self._lowering.cost_analysis()
-    except NotImplementedError:
-      return None
-
-def _traced_args_info(self):
-  don8_rgn = tuple(i for i, d in enumerate(self._params['donated_invars']) if d)
-  arg_avals = self.jaxpr.in_avals[self._num_consts:]
-  return make_args_info(self._in_tree, arg_avals, don8_rgn)
-
-def _traced_out_info(self):
-  out_shardings = [None if isinstance(s, UnspecifiedValue) else s
-                    for s in self._params['out_shardings']]
-  out = []
-  for a, out_s in zip(self.jaxpr.out_avals, out_shardings):
-    s = (a.sharding if a.sharding.mesh.are_all_axes_explicit else out_s
-          if out_s is None else out_s)
-    # TODO(yashkatariya): Add `Layout` to SDS.
-    out.append(
-        core.ShapeDtypeStruct(
-            a.shape, a.dtype, sharding=s, weak_type=a.weak_type,
-            vma=(a.vma if config._check_vma.value else None)))
-  return tree_util.tree_unflatten(self._out_tree, out)
-
-class Traced(Stage):
-  """Traced form of a function specialized to argument types and values.
-
-  A traced computation is ready for lowering. This class carries the
-  traced representation with the remaining information needed to later
-  lower, compile, and execute it.
-  """
-  __slots__ = ['_lfg', '_params', '_in_tree', '_out_tree', '_num_consts']
-
-  def __init__(self, lfg, params, in_tree, out_tree, num_consts):
-    self._lfg = lfg
-    self._params = params
-    self._in_tree = in_tree
-    self._out_tree = out_tree
-    self._num_consts = num_consts
-
-  jaxpr = property(lambda self: self._params['jaxpr'])
-  fun_name = property(lambda self: self._params['name'])
-  args_info = property(_traced_args_info)
-  out_info = property(_traced_out_info)
-  _args_flat = property(lambda self: self._lfg.args[0])
-
-  def fall(self):
-    if not self.jaxpr.is_high:
-      return Fallen(self._lfg, self._params, self._in_tree, self._out_tree,
-                    self._num_consts)
-
-    # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
-    from jax._src.pjit import _resolve_and_lower  # type: ignore
-    from jax._src.interpreters import partial_eval as pe  # type:ignore
-    hi_jaxpr = self.jaxpr
-    _, closed_over_himutables = pe.convert_const_himutables(hi_jaxpr)
-    if closed_over_himutables: raise NotImplementedError  # TODO(mattjj)
-    lo_jaxpr = pe.lower_jaxpr(hi_jaxpr)
-    in_tree = lojax_pytree(hi_jaxpr.in_aval_qdds, self._in_tree)
-    out_tree = lojax_pytree(hi_jaxpr.out_avals, self._out_tree)
-    params = dict(lojax_expand_params(hi_jaxpr, self._params), jaxpr=lo_jaxpr)
-    lo_args = [lo_val for aval, x in zip(hi_jaxpr.in_aval_qdds, self._args_flat)
-               for lo_val in (aval.read_loval(x) if aval.has_qdd
-                              else aval.lower_val(x))]
-    lfg = partial(_resolve_and_lower, lo_args, pgle_profiler=None)
-    return Fallen(lfg, params, in_tree, out_tree, self._num_consts)
-
-  def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
-            _private_parameters: mlir.LoweringParameters | None = None):
-    """Lower to compiler input, returning a ``Lowered`` instance."""
-    return self.fall().lower(lowering_platforms=lowering_platforms,
-                             _private_parameters=_private_parameters)
-
-def lojax_expand_params(jaxpr, params):
-  from jax._src.pjit import _lojax_expand_params  # type: ignore
-  lo_nums_in = [len(aval.lo_ty()) for aval in jaxpr.in_aval_qdds]
-  lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]
-  lo_muts_out = sum(len(aval.lo_ty()) for aval in jaxpr.final_aval_qdds
-                    if aval.has_qdd)
-  if lo_muts_out: raise NotImplementedError  # TODO(mattjj)
-  return _lojax_expand_params(lo_nums_in, lo_nums_out, lo_muts_out,
-                              **dict(params, jaxpr=jaxpr))
-
-def lojax_pytree(hi_avals, tree):
-  lo_avals = [t.lo_ty_qdd() if t.has_qdd else t.lo_ty() for t in hi_avals]
-  return tree_structure(tree_unflatten(tree, lo_avals))
-
-class Fallen(Stage):
-  """True leader of the Decepticons."""
-
-  def __init__(self, lfg, params, in_tree, out_tree, num_consts):
-    self._lfg = lfg
-    self._params = params
-    self._in_tree = in_tree
-    self._out_tree = out_tree
-    self._num_consts = num_consts
-
-  jaxpr = property(lambda self: self._params['jaxpr'])
-  fun_name = property(lambda self: self._params['name'])
-  args_info = property(_traced_args_info)
-  out_info = property(_traced_out_info)
-  _args_flat = property(lambda self: self._lfg.args[0])
-
-  def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
-            _private_parameters: mlir.LoweringParameters | None = None):
-    """Lower to compiler input, returning a ``Lowered`` instance."""
-    if _private_parameters is None:
-      _private_parameters = mlir.LoweringParameters()
-    try:
-      lowering = self._lfg(**self._params,
-                           lowering_platforms=lowering_platforms,
-                           lowering_parameters=_private_parameters)
-    except DeviceAssignmentMismatchError as e:
-      fails, = e.args
-      msg = _device_assignment_mismatch_error(
-          self._params['name'], fails, self._args_flat, 'jit',
-          self.jaxpr.debug_info.safe_arg_names(len(self.jaxpr.in_avals)))
-      raise ValueError(msg) from None
-    return Lowered(lowering, self.args_info, self._out_tree)
 
 @runtime_checkable
 class Wrapped(Protocol):
