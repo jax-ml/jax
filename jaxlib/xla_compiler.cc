@@ -1333,6 +1333,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
   op_sharding_type.value("REPLICATED", OpSharding::REPLICATED)
       .value("MAXIMAL", OpSharding::MAXIMAL)
       .value("MANUAL", OpSharding::MANUAL)
+      .value("UNREDUCED", OpSharding::UNREDUCED)
       .value("TUPLE", OpSharding::TUPLE)
       .value("OTHER", OpSharding::OTHER)
       .value("UNKNOWN", OpSharding::UNKNOWN);
@@ -1420,6 +1421,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
           nb::arg("subgroup_types") = absl::Span<const xla::OpSharding::Type>())
       .def_static("manual", [] { return HloSharding::Manual(); })
       .def_static("replicate", [] { return HloSharding::Replicate(); })
+      .def_static("unreduced", [] { return HloSharding::Unreduced(); })
       .def_static("unknown", [] { return HloSharding::Unknown(); })
       .def_static(
           "subgroup_with_device_ordering",
@@ -1432,6 +1434,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
            [](const xla::HloSharding& self) { return absl::HashOf(self); })
       .def("is_replicated", &xla::HloSharding::IsReplicated)
       .def("is_manual", &xla::HloSharding::IsManual)
+      .def("is_unreduced", &xla::HloSharding::IsUnreduced)
       .def("is_unknown", &xla::HloSharding::IsUnknown)
       .def("is_tiled", &xla::HloSharding::IsTiled)
       .def("is_maximal", &xla::HloSharding::IsTileMaximal)
