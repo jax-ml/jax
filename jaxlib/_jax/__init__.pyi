@@ -659,6 +659,7 @@ def batched_device_put(
     committed: bool = ...,
     force_copy: bool = ...,
     host_buffer_semantics: Any = ...,
+    enable_x64: bool | None = ...,
 ) -> ArrayImpl: ...
 def internal_transfer_to_shardings(
     arrays: Sequence[ArrayImpl],

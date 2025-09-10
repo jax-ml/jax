@@ -230,7 +230,8 @@ shard_arg_handlers[core.MutableArray] = _shard_mutable_array
 
 def batched_device_put(aval: core.ShapedArray,
                        sharding: JSharding, xs: Sequence[Any],
-                       devices: Sequence[xc.Device], committed: bool = True):
+                       devices: Sequence[xc.Device], committed: bool = True,
+                       enable_x64: bool | None = None):
   util.test_event("batched_device_put_start")
   try:
     bufs = [x for x, d in safe_zip(xs, devices)
@@ -240,7 +241,12 @@ def batched_device_put(aval: core.ShapedArray,
     if len(bufs) == len(xs) > 0:
       return array.ArrayImpl(
           aval, sharding, bufs, committed=committed, _skip_checks=True)
-    return xc.batched_device_put(aval, sharding, xs, list(devices), committed)
+    if jaxlib_extension_version >= 370:
+      return xc.batched_device_put(aval, sharding, xs, list(devices), committed,
+                                  enable_x64=enable_x64)
+    else:
+      assert enable_x64 is None, enable_x64
+      return xc.batched_device_put(aval, sharding, xs, list(devices), committed)
   finally:
     util.test_event("batched_device_put_end")
 

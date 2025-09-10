@@ -938,16 +938,18 @@ NB_MODULE(_jax, m) {
       [](nb::object aval, nb::object sharding, std::vector<nb::object> xs,
          std::vector<const PyDevice*> dst_devices, bool committed,
          bool force_copy,
-         xla::PjRtClient::HostBufferSemantics host_buffer_semantics)
-          -> nb::object {
+         xla::PjRtClient::HostBufferSemantics host_buffer_semantics,
+         std::optional<bool> enable_x64) -> nb::object {
         return xla::ValueOrThrow(PyArray::BatchedDevicePut(
             aval, sharding, std::move(xs), std::move(dst_devices), committed,
-            force_copy, host_buffer_semantics, GetEnableX64()));
+            force_copy, host_buffer_semantics,
+            enable_x64.has_value() ? *enable_x64 : GetEnableX64()));
       },
       nb::arg("aval"), nb::arg("sharding"), nb::arg("xs"), nb::arg("devices"),
       nb::arg("committed") = true, nb::arg("force_copy") = false,
       nb::arg("host_buffer_semantics") =
-          xla::PjRtClient::HostBufferSemantics::kImmutableZeroCopy);
+          xla::PjRtClient::HostBufferSemantics::kImmutableZeroCopy,
+      nb::arg("enable_x64").none() = std::nullopt);
   m.def("internal_transfer_to_shardings",
         xla::ValueOrThrowWrapper(ExperimentalReshardArrays), nb::arg("arrays"),
         nb::arg("out_shardings"), nb::arg("donate") = false);
