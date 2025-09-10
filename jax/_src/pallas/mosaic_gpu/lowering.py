@@ -477,10 +477,8 @@ class ModuleContext:
 
   # TODO(cperivol): Only return the shapes and figure out the sizes when freeing.
   @contextlib.contextmanager
-  def scratch_view(
-      self, structs: Sequence[jax.ShapeDtypeStruct]
-  ) -> Iterator[Sequence[ir.Value]]:
-    """Creates a view into the runtime scratch buffer for each struct.
+  def scratch_view(self, struct: jax.ShapeDtypeStruct) -> Iterator[ir.Value]:
+    """Creates a view into the runtime scratch buffer for the given struct.
 
     This is a low-level API. Use it only if you know what you are doing.
 
@@ -489,12 +487,10 @@ class ModuleContext:
     After deallocation, the view is invalid and cannot be used.
 
     Args:
-      structus: The shapes and dtypes of the views to create.
+      struct: The shape and dtype of the view to create.
 
     Returns:
-      A tuple, where the first element is the number of bytes allocated,
-      and the second element is a sequence of memref views into the
-      runtime scratch buffer.
+      A memref view into the runtime scratch buffer.
     """
     smem_base = None
     i8 = ir.IntegerType.get_signless(8)
@@ -505,35 +501,32 @@ class ModuleContext:
               (mgpu_utils.DYNAMIC,), i8, memory_space=mgpu_utils.smem()
           )
       )
-    views = []
     off = initial_used_bytes = self.smem_used_bytes
     assert off % gpu_core.SMEM_ALIGNMENT == 0
-    for s in structs:
-      scratch_ty = ir.MemRefType.get(
-          s.shape,
-          mgpu_utils.dtype_to_ir_type(s.dtype),
-          memory_space=mgpu_utils.smem(),
-      )
-      # The below code emission relies on the assumption that the first scratch
-      # operand provided by Mosaic GPU always begins at the beginning of
-      # dynamic SMEM. Mosaic GPU is expected to uphold that invariant.
-      if self.lowering_semantics == mgpu.LoweringSemantics.Lane:
-        view = memref_dialect.view(
-            scratch_ty, smem_base, _as_index(off), []
-        )
-      else:
-        view = mgpu.dialect.slice_smem(scratch_ty, mgpu_utils.c(off, i32))
-      views.append(view)
+    scratch_ty = ir.MemRefType.get(
+        struct.shape,
+        mgpu_utils.dtype_to_ir_type(struct.dtype),
+        memory_space=mgpu_utils.smem(),
+    )
+    # The below code emission relies on the assumption that the first scratch
+    # operand provided by Mosaic GPU always begins at the beginning of
+    # dynamic SMEM. Mosaic GPU is expected to uphold that invariant.
+    if self.lowering_semantics == mgpu.LoweringSemantics.Lane:
+      view = memref_dialect.view(scratch_ty, smem_base, _as_index(off), [])
+    else:
+      view = mgpu.dialect.slice_smem(scratch_ty, mgpu_utils.c(off, i32))
 
-      off += gpu_core.align_to(
-          math.prod(s.shape) * dtypes.bit_width(jnp.dtype(s.dtype)) // 8,
-          gpu_core.SMEM_ALIGNMENT,
-      )
+    off += gpu_core.align_to(
+        math.prod(struct.shape)
+        * dtypes.bit_width(jnp.dtype(struct.dtype))
+        // 8,
+        gpu_core.SMEM_ALIGNMENT,
+    )
     assert off <= self.smem_requested_bytes, "Ran out of scoped SMEM"
     assert off % gpu_core.SMEM_ALIGNMENT == 0
 
     self.smem_used_bytes = off
-    yield views
+    yield view
     self.smem_used_bytes = initial_used_bytes
 
 
@@ -2272,7 +2265,7 @@ def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes):
             " threads"
         )
       scratch_ty = jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)
-      with ctx.module_ctx.scratch_view([scratch_ty]) as [scratch]:
+      with ctx.module_ctx.scratch_view(scratch_ty) as scratch:
         return x.reduce(op, axes, scratch)
     case mgpu.TiledLayout():
       if len(axes) != 1:
@@ -2280,10 +2273,10 @@ def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes):
       reduced_dim = x.layout.tiling.tile_dimension(axes[0])
       if any(reduced_dim[d] for d in x.layout.partitioned_warp_dims):
         scratch_ty = jax.ShapeDtypeStruct(shape=(REDUCE_SCRATCH_ELEMS,), dtype=x_aval.dtype)
-        ctx = ctx.module_ctx.scratch_view([scratch_ty])
+        ctx = ctx.module_ctx.scratch_view(scratch_ty)
       else:
-        ctx = contextlib.nullcontext([None])
-      with ctx as [scratch]:
+        ctx = contextlib.nullcontext(None)
+      with ctx as scratch:
         return x.reduce(op, axes[0], scratch=scratch)
     case _:
       raise NotImplementedError(f"Unsupported layout {x.layout}")
@@ -2638,9 +2631,9 @@ def _run_scoped_lowering_rule(
       if not isinstance(aval, state_types.AbstractRef):
         raise ValueError(f"Can't convert to ref: {aval}")
       if aval.memory_space == gpu_core.SMEM:
-        [input_ref] = alloc_stack.enter_context(
+        input_ref = alloc_stack.enter_context(
             ctx.module_ctx.scratch_view(
-                [jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype)]
+                jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype)
             )
         )
         input_refs.append(input_ref)
