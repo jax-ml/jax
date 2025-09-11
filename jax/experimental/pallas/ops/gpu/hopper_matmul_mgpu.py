@@ -119,6 +119,7 @@ def matmul_kernel(a, b, config: TuningConfig):
 
       def mma_body(_, a_smem, b_smem, acc_ref):
         plgpu.wgmma(acc_ref, a_smem.at[wg_m_slice], b_smem)
+        plgpu.wgmma_wait(0)
         return acc_ref
 
       plgpu.emit_pipeline_warp_specialized(
@@ -131,14 +132,12 @@ def matmul_kernel(a, b, config: TuningConfig):
                   lambda k: (0, k),
                   transforms=transforms,
                   memory_space=plgpu.SMEM,
-                  delay_release=1,
               ),
               plgpu.BlockSpec(
                   (tile_k, tile_n),
                   lambda k: (k, 0),
                   transforms=transforms,
                   memory_space=plgpu.SMEM,
-                  delay_release=1,
               ),
           ],
           wg_axis="wg",
@@ -185,8 +184,8 @@ def main(_) -> None:
     a = jax.random.uniform(jax.random.key(0), (M, K), jnp.float16)
     b = jax.random.uniform(jax.random.key(1), (K, N), jnp.float16)
     tuning_it = itertools.product(
-        (64, 128,),  # tile_m
-        (64, 128,),  # tile_n
+        (128,),  # tile_m
+        (128,),  # tile_n
         (64,),  # tile_k
         (4,),  # max_concurrent_steps
         (True,),  # Tiled epilogue
