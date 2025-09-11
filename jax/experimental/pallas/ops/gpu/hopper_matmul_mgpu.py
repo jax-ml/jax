@@ -33,16 +33,8 @@ class TuningConfig:
   tile_n: int
   tile_k: int
   max_concurrent_steps: int
-
-
-def _find_swizzle(dim_size_bits: int):
-  """Finds the largest swizzle that fits the dimension size."""
-  for swizzle_bytes in (128, 64, 32, 16):
-    if dim_size_bits % (swizzle_bytes * 8) == 0:
-      return swizzle_bytes
-  raise ValueError(
-      f"Dimension size has {dim_size_bits} bits, which is not a multiple of 128"
-  )
+  epi_tile_n: int | None = 64  # This needs to be lowered for for small N.
+  epi_tile_m: int | None = 64
 
 
 def matmul_kernel(a, b, config: TuningConfig):
@@ -59,7 +51,7 @@ def matmul_kernel(a, b, config: TuningConfig):
     )
   tile_m, tile_n, tile_k = config.tile_m, config.tile_n, config.tile_k
   max_concurrent_steps = config.max_concurrent_steps
-  swizzle = _find_swizzle(tile_k * jnp.dtype(dtype).itemsize * 8)
+  swizzle = plgpu.find_swizzle(tile_k * jnp.dtype(dtype).itemsize * 8)
   swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
   transforms = (
       plgpu.TilingTransform((8, swizzle_elems)), plgpu.SwizzleTransform(swizzle)
@@ -70,12 +62,20 @@ def matmul_kernel(a, b, config: TuningConfig):
     raise ValueError(f"{n=} must be divisible by {tile_n=}")
   if k % tile_k != 0:
     raise ValueError(f"{k=} must be divisible by {tile_k=}")
+  epi_tile_n = config.epi_tile_n or tile_n
+  epi_tile_m = config.epi_tile_m or tile_m
+  if tile_n % epi_tile_n != 0:
+    raise ValueError(f"{tile_n=} must be divisible by {epi_tile_n=}")
+  if tile_m % epi_tile_m != 0:
+    raise ValueError(f"{tile_m=} must be divisible by {epi_tile_m=}")
   m_iters = m // (2 * tile_m)
   n_iters = n // tile_n
   k_iters = k // tile_k
 
   def kernel(a_gmem, b_gmem, out_gmem, out_smem):
     # TODO(apaszke): Grid tiling
+    # TODO(apaszke): Avoid memory pipeline bubbles between MN blocks
+    wg_idx = lax.axis_index("wg")
     @plgpu.nd_loop((m_iters, n_iters), collective_axes="sm")
     def _mn_loop(idx):
       m_idx, n_idx = idx
@@ -89,10 +89,20 @@ def matmul_kernel(a, b, config: TuningConfig):
         )
         def _acc_scope(acc_ref):
           eval_pipeline(acc_ref)
+          acc = acc_ref[...].astype(dtype)
           plgpu.wait_smem_to_gmem(0, wait_read_only=True)
-          out_smem[wg_m_slice] = acc_ref[...].astype(dtype)
-          plgpu.commit_smem()
-          plgpu.copy_smem_to_gmem(out_smem.at[wg_m_slice], out_gmem.at[m_slice, n_slice].at[wg_m_slice])
+          for epi_mi in range(tile_m // epi_tile_m):
+            for epi_ni in range(tile_n // epi_tile_n):
+              epi_m_slice = slice(epi_mi * epi_tile_m, (epi_mi + 1) * epi_tile_m)
+              epi_n_slice = slice(epi_ni * epi_tile_n, (epi_ni + 1) * epi_tile_n)
+              slot = (epi_mi * (tile_n // epi_tile_n) + epi_ni) % 2
+              plgpu.wait_smem_to_gmem(1, wait_read_only=True)
+              out_smem[wg_idx, slot] = acc[epi_m_slice, epi_n_slice]
+              plgpu.commit_smem()
+              plgpu.copy_smem_to_gmem(
+                  out_smem.at[wg_idx, slot],
+                  out_gmem.at[m_slice, n_slice].at[wg_m_slice].at[epi_m_slice, epi_n_slice],
+              )
 
       def mma_body(_, a_smem, b_smem, acc_ref):
         plgpu.wgmma(acc_ref, a_smem.at[wg_m_slice], b_smem)
@@ -125,6 +135,21 @@ def matmul_kernel(a, b, config: TuningConfig):
       )(a_gmem.at[m_slice, :], b_gmem.at[:, n_slice])
       plgpu.wait_smem_to_gmem(0, wait_read_only=True)
 
+  # We don't need multiple slots if there's only one epilogue tile.
+  num_out_slots = min(2, (tile_m * tile_n) // (epi_tile_m * epi_tile_n))
+  out_swizzle = plgpu.find_swizzle(epi_tile_n * jnp.dtype(dtype).itemsize * 8)
+  out_swizzle_elems = out_swizzle // jnp.dtype(dtype).itemsize
+  out_transforms = (
+      plgpu.TilingTransform((8, out_swizzle_elems)),
+      plgpu.SwizzleTransform(out_swizzle),
+  )
+  scratch_shapes = [
+      plgpu.SMEM(
+          (2, num_out_slots, epi_tile_m, epi_tile_n),
+          dtype,
+          transforms=out_transforms,
+      ),
+  ]
   num_sms = backend.get_default_device().core_count
   f = plgpu.kernel(
       kernel,
@@ -133,7 +158,7 @@ def matmul_kernel(a, b, config: TuningConfig):
       grid_names=("sm",),
       num_threads=3,
       thread_name="wg",
-      scratch_shapes=[plgpu.SMEM((2 * tile_m, tile_n), dtype, transforms=transforms)],
+      scratch_shapes=scratch_shapes,
   )
   return f(a, b)
 
@@ -147,19 +172,22 @@ def main(_) -> None:
     a = jax.random.uniform(jax.random.key(0), (M, K), jnp.float16)
     b = jax.random.uniform(jax.random.key(1), (K, N), jnp.float16)
     tuning_it = itertools.product(
-        (64, 128),  # tile_m
+        (64, 128,),  # tile_m
         (64, 128, 256),  # tile_n
         (64, 128),  # tile_k
         (2, 4),  # max_concurrent_steps
+        (True,),  # Tiled epilogue
     )
     best_util = 0.0
     best_runtime = float("inf")
-    for tile_m, tile_n, tile_k, max_concurrent_steps in tuning_it:
+    for tile_m, tile_n, tile_k, max_concurrent_steps, tiled_epilogue in tuning_it:
       config = TuningConfig(
           tile_m=tile_m,
           tile_n=tile_n,
           tile_k=tile_k,
           max_concurrent_steps=max_concurrent_steps,
+          epi_tile_n=64 if tiled_epilogue else None,
+          epi_tile_m=64 if tiled_epilogue else None,
       )
       try:
         out, runtimes_ms = profiler.measure(
@@ -169,6 +197,9 @@ def main(_) -> None:
         runtime_ms = statistics.median(runtimes_ms)
       except ValueError as e:
         if "exceeds available shared memory" in e.args[0]:  # Ignore SMEM OOMs.
+          print(
+              f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=} {tiled_epilogue=}: OOM"
+          )
           continue
         raise
       np.testing.assert_allclose(out, a @ b)
@@ -179,9 +210,8 @@ def main(_) -> None:
         best_runtime = runtime_us
         best_util = achieved_tc_util
       print(
-          f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=}: "
-          f"{runtime_us:<7.1f}us"
-          f" = {achieved_tc_util:4.1f}% TC utilization"
+          f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=} {tiled_epilogue=}:"
+          f" {runtime_us:<7.1f}us = {achieved_tc_util:4.1f}% TC utilization"
       )
     print(f"\tBest: {best_runtime:<7.1f}us = {best_util:4.1f}% TC utilization")
 
