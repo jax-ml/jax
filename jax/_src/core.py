@@ -133,24 +133,6 @@ class Jaxpr:
   def is_high(self) -> bool:
     return self._is_high
 
-  @property
-  def in_avals(self):
-    return [v.aval for v in self.invars]
-
-  @property
-  def in_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
-    return [v.aval if v.initial_qdd is None else AvalQDD(v.aval, v.initial_qdd)
-            for v in self.invars]
-
-  @property
-  def final_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
-    return [v.aval if v.final_qdd is None else AvalQDD(v.aval, v.final_qdd)
-            for v in self.invars]
-
-  @property
-  def out_avals(self):
-    return [v.aval for v in self.outvars]
-
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
                effects: Effects = no_effects,
@@ -250,15 +232,8 @@ class ClosedJaxpr:
 
   jaxpr = property(lambda self: self._jaxpr)
   consts = property(lambda self: self._consts)
-  literals = consts
-
-  constvars = property(lambda self: self._jaxpr.constvars)
-  invars = property(lambda self: self._jaxpr.invars)
-  outvars = property(lambda self: self._jaxpr.outvars)
-  eqns = property(lambda self: self._jaxpr.eqns)
-  effects = property(lambda self: self._jaxpr.effects)
-  debug_info = property(lambda self: self._jaxpr.debug_info)
   is_high = property(lambda self: self._jaxpr.is_high)
+  debug_info = property(lambda self: self._jaxpr.debug_info)
 
   def __init__(self, jaxpr: Jaxpr, consts: Sequence):
     assert len(consts) == len(jaxpr.constvars)
@@ -268,21 +243,33 @@ class ClosedJaxpr:
 
   @property
   def in_avals(self):
-    return [v.aval for v in self.invars]
+    return [v.aval for v in self.jaxpr.invars]
 
   @property
   def in_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
     return [v.aval if v.initial_qdd is None else AvalQDD(v.aval, v.initial_qdd)
-            for v in self.invars]
+            for v in self.jaxpr.invars]
 
   @property
   def final_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
     return [v.aval if v.final_qdd is None else AvalQDD(v.aval, v.final_qdd)
-            for v in self.invars]
+            for v in self.jaxpr.invars]
 
   @property
   def out_avals(self):
-    return [v.aval for v in self.outvars]
+    return [v.aval for v in self.jaxpr.outvars]
+
+  @property
+  def literals(self):
+    return self.consts  # backwards compatible alias
+
+  @property
+  def eqns(self):
+    return self.jaxpr.eqns
+
+  @property
+  def effects(self) -> Effects:
+    return self.jaxpr.effects
 
   def map_jaxpr(self, f):
     return ClosedJaxpr(f(self.jaxpr), self.consts)

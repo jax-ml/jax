@@ -331,6 +331,7 @@ class HijaxTest(jtu.JaxTestCase):
     expected = from_qarray(to_qarray(from_qarray(q)))
     self.assertAllClose(from_qarray(q_out), expected, check_dtypes=False)
 
+
 class BoxTest(jtu.JaxTestCase):
 
   @parameterized.parameters([False, True])
@@ -818,24 +819,14 @@ class BoxTest(jtu.JaxTestCase):
     self.assertEqual(box.get(), dict(a=5, b=3))
     self.assertEqual(box2.get(), 3)
 
-  @parameterized.parameters([False, True])
-  def test_while_loop(self, jit):
+  def test_while_loop(self):
     box = Box(1.)
-
-    def f():
-      zero = jnp.zeros((), 'int32')
-
-      def cond_fun(i):
-        return i + zero < 5
-      def body_fun(i):
-        box.set(box.get() * 2.)
-        return i + 1
-      _ = jax.lax.while_loop(cond_fun, body_fun, 0)
-
-    if jit:
-      f = jax.jit(f)
-
-    f()
+    def cond_fun(i):
+      return i < 5
+    def body_fun(i):
+      box.set(box.get() * 2.)
+      return i + 1
+    _ = jax.lax.while_loop(cond_fun, body_fun, 0)
     self.assertAllClose(box.get(), 32, check_dtypes=False)
 
   def test_while_loop_typechange_error(self):

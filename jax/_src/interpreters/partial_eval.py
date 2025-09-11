@@ -2855,23 +2855,3 @@ def convert_const_himutables(jaxpr):
   new_jaxpr = jaxpr.jaxpr.replace(constvars=constvars, invars=invars,
                                   effects=effects)
   return jaxpr.replace(jaxpr=new_jaxpr, consts=constvals), in_mutables
-
-def num_himuts_out(jaxpr):
-  return sum(len(a.lo_ty()) for a in jaxpr.final_aval_qdds if a.has_qdd)
-
-def apply_himut(jaxpr: Jaxpr | ClosedJaxpr, hi_args, out_mut):
-  out_mut_ = iter(out_mut)
-  in_idx = {v: i for i, v in enumerate(jaxpr.invars)}
-  for v in jaxpr.invars:
-    if v.final_qdd is not None:
-      qdd = v.final_qdd
-      lo_vals = it.islice(out_mut_, len(v.aval.lo_ty_qdd(qdd)))
-      v.aval.update_from_loval(qdd, hi_args[in_idx[v]], *lo_vals)  # type: ignore
-  assert next(out_mut_, None) is None
-
-def raise_lo_outs(jaxpr: Jaxpr | ClosedJaxpr, lo_outs):
-  lo_outs_ = iter(lo_outs)
-  hi_outs = [t.raise_val(*it.islice(lo_outs_, len(t.lo_ty())))
-             for t in jaxpr.out_avals]
-  assert next(lo_outs_, None) is None
-  return hi_outs

@@ -1580,6 +1580,7 @@ def _scan_to_lojax(*hi_args, jaxpr, num_carry, num_consts, linear, **params):
   num_carry = sum(len(aval.lo_ty()) for aval in carry_in_avals)
   linear = [l for aval, l_ in zip(jaxpr.in_aval_qdds, linear)
             for l in (l_,) * len(aval.lo_ty())]
+  lo_muts_out = sum(len(aval.lo_ty()) for aval in jaxpr.final_aval_qdds if aval.has_qdd)
 
   # collect lo input values
   lo_args = [lo_val for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
@@ -1590,9 +1591,25 @@ def _scan_to_lojax(*hi_args, jaxpr, num_carry, num_consts, linear, **params):
   lo_jaxpr = pe.lower_jaxpr(jaxpr)
   all_outs = scan_p.bind(*lo_args, jaxpr=lo_jaxpr, num_consts=num_consts,
                          num_carry=num_carry, linear=tuple(linear), **params)
-  out_mut, lo_outs = split_list(all_outs, [pe.num_himuts_out(jaxpr)])
-  pe.apply_himut(jaxpr, hi_args, out_mut)
-  return pe.raise_lo_outs(jaxpr, lo_outs)
+  out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
+
+  # collect and apply mutations
+  out_mut_ = iter(out_mut)
+  in_idx = {v: i for i, v in enumerate(jaxpr.jaxpr.invars)}
+  for v in jaxpr.jaxpr.invars:
+    if v.final_qdd is not None:
+      qdd = v.final_qdd
+      lo_vals = it.islice(out_mut_, len(v.aval.lo_ty_qdd(qdd)))
+      v.aval.update_from_loval(qdd, hi_args[in_idx[v]], *lo_vals)
+  assert next(out_mut_, None) is None
+
+  # collect output values into hi types
+  lo_outs_ = iter(lo_outs)
+  hi_outs = [t.raise_val(*it.islice(lo_outs_, len(t.lo_ty())))
+             for t in jaxpr.out_avals]
+  assert next(lo_outs_, None) is None
+
+  return hi_outs
 scan_p.to_lojax = _scan_to_lojax
 
 def _move_right(lst, to_move):
@@ -2443,15 +2460,32 @@ def _while_to_lojax(*hi_args, cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts
   # expand cond_nconsts and body_nconsts according to lo types
   cond_nconsts = sum(len(typeof(x).lo_ty()) for x in hi_cconsts)
   body_nconsts = sum(len(typeof(x).lo_ty()) for x in hi_bconsts)
+  lo_muts_out = sum(len(a.lo_ty()) for a in body_jaxpr.final_aval_qdds if a.has_qdd)
 
   # lower jaxprs and bind
   all_outs = while_p.bind(*lo_cconsts, *lo_bconsts, *lo_carry,
                           cond_jaxpr=pe.lower_jaxpr(cond_jaxpr),
                           body_jaxpr=pe.lower_jaxpr(body_jaxpr),
                           cond_nconsts=cond_nconsts, body_nconsts=body_nconsts)
-  out_mut, lo_outs = split_list(all_outs, [pe.num_himuts_out(body_jaxpr)])
-  pe.apply_himut(body_jaxpr, [*hi_bconsts, *hi_carry], out_mut)
-  return pe.raise_lo_outs(body_jaxpr, lo_outs)
+  out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
+
+  # collect and apply mutations
+  out_mut_ = iter(out_mut)
+  in_idx = {v: i for i, v in enumerate(body_jaxpr.jaxpr.invars)}
+  for v in body_jaxpr.jaxpr.invars:
+    if v.final_qdd is not None:
+      qdd = v.final_qdd
+      lo_vals = it.islice(out_mut_, len(v.aval.lo_ty_qdd(qdd)))
+      v.aval.update_from_loval(qdd, hi_args[in_idx[v]], *lo_vals)
+  assert next(out_mut_, None) is None
+
+  # collect output values into hi types
+  lo_outs_ = iter(lo_outs)
+  hi_outs = [t.raise_val(*it.islice(lo_outs_, len(t.lo_ty())))
+             for t in body_jaxpr.out_avals]
+  assert next(lo_outs_, None) is None
+
+  return hi_outs
 while_p.to_lojax = _while_to_lojax  # type: ignore
 
 def _insert_binders(jaxpr, n_after, vals):
