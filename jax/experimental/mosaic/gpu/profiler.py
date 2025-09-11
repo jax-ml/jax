@@ -58,7 +58,7 @@ class Cupti:
     if not isinstance(f, (stages.Wrapped, stages.Compiled)):
       f = jax.jit(f)
 
-    def wrapper(*args: P.args, **kwargs: P.kwargs):  # type: ignore
+    def wrapper(*args, **kwargs):
       if mosaic_gpu_lib is None:
         raise RuntimeError("CUPTI profiling is not supported on this platform")
 
