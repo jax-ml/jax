@@ -23,6 +23,7 @@ from typing import Any, TypeVar, cast
 
 from jax._src import config
 from jax._src import util
+from jax._src.lib import _jax
 
 
 C = TypeVar("C", bound=Callable[..., Any])
@@ -31,6 +32,8 @@ _exclude_paths: list[str] = [__file__, util.__file__]
 
 def register_exclusion(path: str):
   _exclude_paths.append(path)
+  if hasattr(_jax, "add_exclude_path"):
+    _jax.add_exclude_path(path)
 
 _jax_message_append = (
     'The stack trace below excludes JAX-internal frames.\n'
@@ -212,3 +215,6 @@ def api_boundary(fun: C) -> C:
         del unfiltered
         del mode
   return cast(C, reraise_with_filtered_traceback)
+
+if hasattr(_jax, "set_exclude_paths"):
+  _jax.set_exclude_paths(_exclude_paths)
