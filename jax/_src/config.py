@@ -215,6 +215,7 @@ class Config:
       self.complete_absl_config(absl.flags)
       already_configured_with_absl = True
 
+register_trace_context_callback = []  # type: ignore
 
 def trace_context():
   """Returns a tuple of configuration values that affect tracing.
@@ -224,37 +225,43 @@ def trace_context():
   Values included in this set should also most likely be included in
   the C++ JIT state, which is handled separately.
   """
-  return (axis_env_state.value, mesh_context_manager.value,
-          xla_metadata_context_manager.value,
-          abstract_mesh_context_manager.value,
-          compute_on_context_manager.value, enable_x64.value,
-          numpy_rank_promotion.value, default_matmul_precision.value,
-          dynamic_shapes.value,
-          eager_constant_folding.value,
-          numpy_dtype_promotion.value,
-          default_device.value, random_seed_offset.value,
-          remove_size_one_mesh_axis_from_type.value,
-          threefry_partitionable.value,
-          threefry_gpu_kernel_lowering.value,
-          use_direct_linearize.value,
-          softmax_custom_jvp.value,
-          disable_jit.value,
-          debug_key_reuse.value,
-          jax_xla_profile_version.value,
-          _check_vma.value,
-          mutable_array_checks.value,  # pallas may need to disable locally
-          no_execution.value,
+  out = (axis_env_state.value, mesh_context_manager.value,
+         xla_metadata_context_manager.value,
+         abstract_mesh_context_manager.value,
+         compute_on_context_manager.value,
+         enable_x64.value,
+         numpy_rank_promotion.value,
+         default_matmul_precision.value,
+         dynamic_shapes.value,
+         eager_constant_folding.value,
+         numpy_dtype_promotion.value,
+         default_device.value,
+         random_seed_offset.value,
+         remove_size_one_mesh_axis_from_type.value,
+         threefry_partitionable.value,
+         threefry_gpu_kernel_lowering.value,
+         use_direct_linearize.value,
+         softmax_custom_jvp.value,
+         disable_jit.value,
+         debug_key_reuse.value,
+         jax_xla_profile_version.value,
+         _check_vma.value,
+         mutable_array_checks.value,  # pallas may need to disable locally
+         no_execution.value,
           # Technically this affects jaxpr->stablehlo lowering, not tracing.
-          hlo_source_file_canonicalization_regex.value,
-          pgle_profiling_runs.value,
-          enable_pgle.value,
-          use_shardy_partitioner.value,
-          use_high_dynamic_range_gumbel.value,
-          error_checking_behavior_nan.value,
-          error_checking_behavior_divide.value,
-          error_checking_behavior_oob.value,
-          use_simplified_jaxpr_constants.value,
-          pallas_tpu_interpret_mode_context_manager.value)
+         hlo_source_file_canonicalization_regex.value,
+         pgle_profiling_runs.value,
+         enable_pgle.value,
+         use_shardy_partitioner.value,
+         use_high_dynamic_range_gumbel.value,
+         error_checking_behavior_nan.value,
+         error_checking_behavior_divide.value,
+         error_checking_behavior_oob.value,
+         use_simplified_jaxpr_constants.value,
+         pallas_tpu_interpret_mode_context_manager.value)
+  if register_trace_context_callback:
+    out = out + tuple(r() for r in register_trace_context_callback)
+  return out
 
 config = Config()
 
@@ -883,6 +890,56 @@ compute_on_context_manager = config_ext.Config(None, include_in_jit_key=True)
 xla_metadata_context_manager = config_ext.Config(None, include_in_jit_key=True)
 pallas_tpu_interpret_mode_context_manager = config_ext.Config(
     None, include_in_jit_key=True)
+
+
+class UserConfig:
+  def __init__(self, default_value):
+    self._obj = config_ext.Config(default_value, include_in_jit_key=True)
+
+  @property
+  def value(self):
+    return self._obj.value
+
+  def __call__(self, new_value):
+    return UserContext(self._obj, new_value)
+
+class UserContext:
+  __slots__ = ["_config", "_new_value", "_prev_value"]
+
+  def __init__(self, config, new_value):
+    self._config = config
+    self._new_value = new_value
+
+  def __enter__(self):
+    self._prev_value = self._config.swap_local(self._new_value)
+
+  def __exit__(self, exc_type, exc_val, exc_tb):
+    self._config.set_local(self._prev_value)
+
+def make_user_context(default_value=None):
+  """Creates a `jax.jit` cache sensitive context.
+
+  If the value of the context changes, JAX's tracing, lowering and compilation
+  cache won't get a hit and the jitted function will be re-traced, re-lowered
+  and re-compiled.
+
+  Example:
+
+  ```
+  @jax.jit
+  def f(x):
+    return x * 2
+
+  my_context = jax.make_user_context(default_value=None)
+  with my_context(1):
+    f(1.)
+  with my_context(2):
+    f(1.)  # tracing cache miss
+  ```
+  """
+  obj = UserConfig(default_value)
+  register_trace_context_callback.append(lambda: obj.value)
+  return obj
 
 
 # TODO(b/214340779): remove flag when XLA:CPU is improved.

@@ -5269,6 +5269,23 @@ class APITest(jtu.JaxTestCase):
 
     self.assertNotIn('mul', str(f_vjp))
 
+  def test_user_trace_context_hooks(self):
+    my_config = jax.make_user_context()
+
+    @jax.jit
+    def f(x):
+      return x
+
+    with jtu.count_jit_tracing_cache_miss() as tracing_count:
+      f(1.)
+      with my_config(2):
+        f(1.)
+      with my_config(3):
+        f(1.)
+        with my_config(4):
+          f(1.)
+    self.assertEqual(tracing_count(), 4)
+
   # TODO(mattjj,dougalm): re-enable if we set auto_dce=True by default
   # @jtu.run_on_devices('cpu')
   # def test_implicit_dce(self):
@@ -5281,6 +5298,7 @@ class APITest(jtu.JaxTestCase):
   #     assert r() is None, "oops, the constant wasn't DCE'd"
   #     return x + x
   #   foo(1.0)
+
 
 class RematTest(jtu.JaxTestCase):
 
