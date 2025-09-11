@@ -29,7 +29,6 @@ from jax._src import state
 from jax._src import util
 from jax._src.frozen_dict import FrozenDict
 from jax._src.pallas import core as pallas_core
-import jax.numpy as jnp
 import numpy as np
 
 
@@ -166,9 +165,29 @@ class MemorySpace(enum.Enum):
   def __str__(self) -> str:
     return self.value
 
-  def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
+  def memory_ref_from_ty(self, ty):
+    return pallas_core.MemoryRef(ty, memory_space=self)
+
+  def __call__(self, *args, **kwargs):
     # A convenience function for constructing MemoryRef types.
-    return pallas_core.MemoryRef(shape, dtype, self)
+    if len(args) + len(kwargs) == 2:
+      # Backwards compatibility for existing code.
+      if len(args) == 2:
+        shape, dtype = args
+      elif len(args) == len(kwargs) == 1:
+        shape = args[0]
+        dtype = kwargs["dtype"]
+      else:
+        shape = kwargs["shape"]
+        dtype = kwargs["dtype"]
+      shaped_array = jax_core.ShapedArray(shape, dtype)
+      return pallas_core.MemoryRef(shaped_array, memory_space=self)
+    elif len(args) == 1:
+      return pallas_core.MemoryRef(args[0], memory_space=self)
+    else:
+      raise ValueError(
+          f"Expected 1 or 2 arguments, got {len(args)}: {args}"
+      )
 
 class dma_semaphore(pallas_core.semaphore_dtype): pass
 
@@ -189,7 +208,8 @@ class SemaphoreType(enum.Enum):
       dtype = pallas_core.BarrierSemaphore()
     else:
       dtype = pallas_core.Semaphore()
-    return pallas_core.MemoryRef(shape, dtype, MemorySpace.SEMAPHORE)
+    return pallas_core.MemoryRef(jax_core.ShapedArray(shape, dtype),
+                                 MemorySpace.SEMAPHORE)
 
   def get_array_aval(self) -> pallas_core.ShapedArrayWithMemorySpace:
     return self(()).get_array_aval()
