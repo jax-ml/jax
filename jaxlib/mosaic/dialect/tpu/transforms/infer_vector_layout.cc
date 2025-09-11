@@ -2011,9 +2011,14 @@ class VectorLayoutInferer {
       } else if (out_layout_candidate) {
         final_out_layout = *out_layout_candidate;
       } else {
-        op->emitOpError(
-            "Elementwise op has no vector operands but returns a vector?");
-        return failure();
+        if (bitwidth == -1) {
+          // bitwidth may be unset when all operands are i1s.
+          bitwidth = 32;
+        }
+        // out_layout might not be set if all operands are i1s and their
+        // layout bitwidths don't match the output bitwidth.
+        final_out_layout = VectorLayout(
+            bitwidth, {0, 0}, nativeTiling(bitwidth), ImplicitDim::kNone);
       }
     }
     SmallVector<Layout> final_in_layouts(op->getNumOperands());
