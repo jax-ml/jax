@@ -2357,6 +2357,26 @@ class PallasCallTest(PallasTest):
     )
     jax_core.check_jaxpr(jax.make_jaxpr(f)().jaxpr)
 
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_line_info(self):
+    self.skip_if_wg_semantics()
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), jtu.capture_stdout() as output:
+      @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+      )
+      def kernel(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + x_ref[0]
+
+      kernel(jnp.arange(256, dtype=jnp.float32))
+
+    ptx = output()
+    self.assertIn(".file", ptx)
+    self.assertIn(".loc", ptx)
+    [path] = re.findall(r'.file\s+\d+\s+"(.+)"', ptx)
+    self.assertEndsWith(__file__, path)
+
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def setUp(self):

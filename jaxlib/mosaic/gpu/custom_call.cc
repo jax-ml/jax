@@ -189,6 +189,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         mosaic::gpu::registerConvertGpuToLLVMPass();
         mosaic::gpu::registerByvalInsertionPass();
         mosaic::gpu::registerLLVMAttrInsertionPass();
+        mosaic::gpu::registerResolveTrivialLocationsPass();
         mlir::arith::registerArithExpandOpsPass();
         mlir::LLVM::registerDIScopeForLLVMFuncOpPass();
         return true;
@@ -205,6 +206,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
   return mlir::parsePassPipeline(absl::StrCat(
       R"(
       builtin.module(
+        mosaic-gpu-resolve-trivial-locations,
         arith-expand,
         canonicalize,
         gpu-launch-sink-index-computations,
