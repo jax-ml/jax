@@ -67,6 +67,12 @@ def matmul_kernel(a, b, config: TuningConfig):
       plgpu.TilingTransform((8, swizzle_elems)),
       plgpu.SwizzleTransform(swizzle),
   )
+  out_swizzle = plgpu.find_swizzle(epilogue_tile_n * jnp.dtype(dtype).itemsize * 8)
+  out_swizzle_elems = out_swizzle // jnp.dtype(dtype).itemsize
+  out_transforms = (
+      plgpu.TilingTransform((8, out_swizzle_elems)),
+      plgpu.SwizzleTransform(out_swizzle),
+  )
   if m % tile_m != 0:
     raise ValueError(f"{m=} must be divisible by {tile_m=}")
   if n % tile_n != 0:
@@ -220,7 +226,8 @@ def matmul_kernel(a, b, config: TuningConfig):
               (block_tile_m, tile_n * 2), jnp.float32, collective=collective),
           # Temporary SMEM used for storing accumulator output to GMEM.
           plgpu.SMEM(
-              (block_tile_m, epilogue_tile_n), dtype, transforms=transforms),
+              (block_tile_m, epilogue_tile_n), dtype, transforms=out_transforms
+          ),
           # ab_tma_barrier
           plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
           # store_done_barrier, double-buffered
@@ -255,10 +262,11 @@ def main(_) -> None:
         (None, 4, 8, 16),  # grid_tile_n
         (2, 4, 6),  # max_concurrent_steps
         (False, True),  # collective
+        (64,),  # epilogue_tile_n
     )
     best_util = -float("inf")
     for (tile_m, tile_n, tile_k, grid_tile_n,
-         max_concurrent_steps, collective) in tuning_it:
+         max_concurrent_steps, collective, epilogue_tile_n) in tuning_it:
       # Only N <= 128 are supported for collective MMAs
       if collective and tile_n > 128:
         continue
@@ -269,6 +277,7 @@ def main(_) -> None:
           max_concurrent_steps=max_concurrent_steps,
           collective=collective,
           grid_tile_n=grid_tile_n,
+          epilogue_tile_n=epilogue_tile_n,
       )
       if collective:
         tile_m *= 2
@@ -296,6 +305,7 @@ def main(_) -> None:
       print(
           f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=} "
           f"{grid_tile_n=} "
+          f"{epilogue_tile_n=} "
           f"{collective=} : "
           f"{runtime_us:<7.1f}us"
           f" = {achieved_tc_util:4.1f}% TC utilization"
