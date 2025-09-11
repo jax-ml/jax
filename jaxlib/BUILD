@@ -55,6 +55,7 @@ pytype_strict_library(
     deps = [
         ":_ifrt_proxy",
         ":_jax",
+        ":_pathways",
         ":_pretty_printer",
         ":cpu_feature_guard",
         ":jax",
@@ -155,6 +156,7 @@ pywrap_library(
     deps = [
         ":_ifrt_proxy",
         ":_jax",
+        ":_pathways",
         ":_pretty_printer",
         ":utils",
         ":weakref_lru_cache",
@@ -336,7 +338,6 @@ nanobind_pywrap_extension(
         ":py_client",
         ":python_ref_manager",
         ":pytree",
-        ":reshard_arrays_lib",
         ":traceback",
         ":util",
         ":xla_compiler",
@@ -537,35 +538,6 @@ cc_library(
 )
 
 cc_library(
-    name = "reshard_arrays_lib",
-    srcs = ["reshard_arrays_lib.cc"],
-    hdrs = ["reshard_arrays_lib.h"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    deps = [
-        ":nb_class_ptr",
-        ":py_client",
-        ":traceback",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-        "@nanobind",
-        "@xla//third_party/python_runtime:headers",
-        "@xla//xla:xla_data_proto_cc",
-        "@xla//xla/python:nb_numpy",
-        "@xla//xla/python:types",
-        "@xla//xla/python/ifrt",
-        "@xla//xla/tsl/concurrency:ref_count",
-        "@xla//xla/tsl/platform:statusor",
-    ],
-)
-
-cc_library(
     name = "dlpack_support",
     srcs = ["dlpack_support.cc"],
     hdrs = ["dlpack_support.h"],
@@ -698,6 +670,35 @@ nanobind_pywrap_extension(
         "@xla//xla/python/ifrt_proxy/client:grpc_client",
         "@xla//xla/python/ifrt_proxy/client:registry",
         "@xla//xla/tsl/platform:env",
+        "@xla//xla/tsl/platform:statusor",
+    ],
+)
+
+nanobind_pywrap_extension(
+    name = "_pathways",
+    srcs = ["pathways.cc"],
+    pytype_srcs = ["_pathways.pyi"],
+    deps = [
+        ":nb_class_ptr",
+        ":py_client",
+        ":traceback",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@nanobind",
+        "@xla//third_party/python_runtime:headers",
+        "@xla//xla:util",
+        "@xla//xla/pjrt:status_casters",
+        "@xla//xla/python:nb_absl_span",
+        "@xla//xla/python:types",
+        "@xla//xla/python/ifrt",
+        "@xla//xla/tsl/concurrency:ref_count",
+        "@xla//xla/tsl/platform:errors",
+        "@xla//xla/tsl/platform:status",
         "@xla//xla/tsl/platform:statusor",
     ],
 )

@@ -51,7 +51,6 @@ limitations under the License.
 #include "jaxlib/ffi.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_program.h"
-#include "jaxlib/reshard_arrays_lib.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/distributed/client.h"
@@ -950,9 +949,6 @@ NB_MODULE(_jax, m) {
       nb::arg("host_buffer_semantics") =
           xla::PjRtClient::HostBufferSemantics::kImmutableZeroCopy,
       nb::arg("enable_x64").none() = std::nullopt);
-  m.def("internal_transfer_to_shardings",
-        xla::ValueOrThrowWrapper(ExperimentalReshardArrays), nb::arg("arrays"),
-        nb::arg("out_shardings"), nb::arg("donate") = false);
   m.def(
       "reorder_shards",
       [](PyArray x, nb::object dst_sharding,

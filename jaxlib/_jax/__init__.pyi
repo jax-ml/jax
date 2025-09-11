@@ -665,11 +665,6 @@ def batched_device_put(
     host_buffer_semantics: Any = ...,
     enable_x64: bool | None = ...,
 ) -> ArrayImpl: ...
-def internal_transfer_to_shardings(
-    arrays: Sequence[ArrayImpl],
-    out_shardings: Sequence[Any],
-    donate: bool = ...,
-) -> Sequence[ArrayImpl]: ...
 def reorder_shards(
     x: ArrayImpl,
     dst_sharding: Any,
