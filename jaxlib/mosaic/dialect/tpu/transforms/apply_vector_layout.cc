@@ -46,7 +46,6 @@ limitations under the License.
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/Traits.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Attributes.h"
@@ -56,7 +55,6 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
-#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
@@ -4505,6 +4503,13 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
           "Not implemented: unsupported reduction kind");
   }
   const ArrayRef<int64_t> src_shape = src_ty.getShape();
+  // We need at least `kMinTotalParallelism` partial accumulators to keep TPU
+  // busy. This threshold is a tunable heuristic; while a higher value increases
+  // parallelism, an excessively large value can cause performance loss due to
+  // register spilling.
+  constexpr int64_t kMinTotalParallelism = 8;
+  const int64_t num_partial_accs =
+      xla::CeilOfRatio(kMinTotalParallelism, dst_vregs.num_elements());
   auto all_results_ok = dst_vregs.EachStatus(
       [&](const absl::Span<const int64_t> idx, Value *const dst_vreg) {
     // Extract a subset of source vregs that reduce into this result vreg.
@@ -4523,7 +4528,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     }
     xla::Array<Value> reduced_vregs =
         src_vregs.Slice(src_slice_start, src_slice_end);
-    std::optional<Value> acc_vreg;
+    std::array<Value, kMinTotalParallelism> partial_accs;
     auto reduce_elementwise = [&](Value lhs, Value rhs) -> Value {
       Value result;
       switch (tpu_kind) {
@@ -4554,6 +4559,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
       }
       return result;
     };
+    int64_t reduced_vreg_idx = 0;
     auto reduction_status = reduced_vregs.EachStatus(
         [&](const absl::Span<const int64_t> red_idx, Value *const src_vreg) {
           SmallVector<int64_t> src_idx(red_idx.begin(), red_idx.end());
@@ -4580,23 +4586,41 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
             return absl::UnknownError("");
           }
           Value vreg = failure_or_vreg.value();
-          if (!acc_vreg.has_value()) {
-            acc_vreg = vreg;
+          int64_t partial_acc_idx = reduced_vreg_idx % num_partial_accs;
+          if (partial_accs[partial_acc_idx] == nullptr) {
+            partial_accs[partial_acc_idx] = vreg;
           } else {
-            acc_vreg = reduce_elementwise(*acc_vreg, vreg);
+            partial_accs[partial_acc_idx] =
+                reduce_elementwise(partial_accs[partial_acc_idx], vreg);
           }
+          ++reduced_vreg_idx;
           return absl::OkStatus();
         });
     TF_RETURN_IF_ERROR(reduction_status);
-    TPU_ASSERT_OP(acc_vreg.has_value());
+    TPU_ASSERT_OP(partial_accs[0] != nullptr);
+    // Reduce the partial accumulators to a single VReg in a tree-like fashion.
+    // We take the min because there are cases where we have more partial
+    // accumulators than the number of vregs to reduce.
+    int64_t num_valid_partial_accs =
+        std::min(num_partial_accs, reduced_vreg_idx);
+    if (num_valid_partial_accs > 1) {
+      for (int stride = 1; stride < num_valid_partial_accs; stride *= 2) {
+        for (int i = 0; i < (num_valid_partial_accs - stride);
+             i += 2 * stride) {
+          partial_accs[i] =
+              reduce_elementwise(partial_accs[i], partial_accs[i + stride]);
+        }
+      }
+    }
+    Value acc_vreg = partial_accs[0];
     const bool is_double_replicated_double_reduced =
         reduces[0] && reduces[1] && !src_layout.offsets()[0].has_value() &&
         !src_layout.offsets()[1].has_value();
     if (reduces[1]) {
       if (src_layout.offsets()[1].has_value()) {
         acc_vreg = builder.create<tpu::AllReduceOp>(
-            multi_reduction_op->getLoc(), acc_vreg->getType(),
-            *acc_vreg, /* dim= */ 1, tpu_kind);
+            multi_reduction_op->getLoc(), acc_vreg.getType(), acc_vreg,
+            /* dim= */ 1, tpu_kind);
       } else {
         int64_t size_dim1 = src_layout.getImplicitTiledDims(src_shape, 1)[1];
         if (is_double_replicated_double_reduced) {
@@ -4611,7 +4635,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
                   getNativeVregType(builder.getI32Type(), ctx.target_shape),
                   size_attr);
               acc_vreg =
-                  builder.create<arith::MulIOp>(loc, *acc_vreg, source_value);
+                  builder.create<arith::MulIOp>(loc, acc_vreg, source_value);
             } else {
               FloatAttr size_attr = builder.getF32FloatAttr(size_dim1);
               TypedValue<VectorType> source_value = getFullVector(
@@ -4619,7 +4643,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
                   getNativeVregType(builder.getF32Type(), ctx.target_shape),
                   size_attr);
               acc_vreg =
-                  builder.create<arith::MulFOp>(loc, *acc_vreg, source_value);
+                  builder.create<arith::MulFOp>(loc, acc_vreg, source_value);
             }
             break;
           // We don't need to do anything for other reduction kinds.
@@ -4638,7 +4662,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
       // Packed types are compressed along rows, so we need to reduce them
       // within each 32-bit word. There's no performance penalty for doing
       // this in 32-bit precision, so we take advantage of it.
-      Type acc_vreg_ty = acc_vreg->getType();
+      Type acc_vreg_ty = acc_vreg.getType();
       if (acc_layout.packing() > 1) {
         Type vreg_ty_32 = nullptr;
         if (acc.getType().getElementType().isBF16()) {
@@ -4650,10 +4674,10 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
           return absl::UnknownError("");
         }
         Value acc_vreg_32 = builder.create<tpu::UnpackSubelementsOp>(
-            loc, vreg_ty_32, *acc_vreg, 0, tpu::PackFormat::kInterleaved);
+            loc, vreg_ty_32, acc_vreg, 0, tpu::PackFormat::kInterleaved);
         for (int i = 1; i < acc_layout.packing(); ++i) {
           Value acc_vreg_part_32 = builder.create<tpu::UnpackSubelementsOp>(
-              loc, vreg_ty_32, *acc_vreg, i, tpu::PackFormat::kInterleaved);
+              loc, vreg_ty_32, acc_vreg, i, tpu::PackFormat::kInterleaved);
           acc_vreg_32 = reduce_elementwise(acc_vreg_32, acc_vreg_part_32);
         }
         acc_vreg = acc_vreg_32;
@@ -4661,8 +4685,8 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
       // At this point acc_vreg is always 32-bit.
       if (src_layout.offsets()[0].has_value()) {
         acc_vreg = builder.create<tpu::AllReduceOp>(
-            multi_reduction_op->getLoc(), acc_vreg->getType(),
-            *acc_vreg, 0, tpu_kind);
+            multi_reduction_op->getLoc(), acc_vreg.getType(), acc_vreg, 0,
+            tpu_kind);
       } else if (!is_double_replicated_double_reduced) {
         int64_t size_dim0 = src_layout.getImplicitTiledDims(src_shape, 1)[0];
         switch (tpu_kind) {
@@ -4674,7 +4698,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
                   getNativeVregType(builder.getI32Type(), ctx.target_shape),
                   size_attr);
               acc_vreg =
-                  builder.create<arith::MulIOp>(loc, *acc_vreg, source_value);
+                  builder.create<arith::MulIOp>(loc, acc_vreg, source_value);
             } else {
               FloatAttr size_attr = builder.getF32FloatAttr(size_dim0);
               TypedValue<VectorType> source_value = getFullVector(
@@ -4682,7 +4706,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
                   getNativeVregType(builder.getF32Type(), ctx.target_shape),
                   size_attr);
               acc_vreg =
-                  builder.create<arith::MulFOp>(loc, *acc_vreg, source_value);
+                  builder.create<arith::MulFOp>(loc, acc_vreg, source_value);
             }
             break;
           case tpu::ReductionKind::kMax:
@@ -4698,16 +4722,14 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
       // We pack the final result back into the original type.
       if (acc_layout.packing() > 1) {
         SmallVector<int32_t> positions(acc_layout.packing());
-            std::iota(positions.begin(), positions.end(),
-                      static_cast<int32_t>(0));
-        SmallVector<Value> parts(acc_layout.packing(), *acc_vreg);
+        std::iota(positions.begin(), positions.end(), static_cast<int32_t>(0));
+        SmallVector<Value> parts(acc_layout.packing(), acc_vreg);
         acc_vreg = builder.create<tpu::PackSubelementsOp>(
-                loc, acc_vreg_ty, parts,
-                builder.getDenseI32ArrayAttr(positions),
+            loc, acc_vreg_ty, parts, builder.getDenseI32ArrayAttr(positions),
             tpu::PackFormat::kInterleaved);
       }
     }
-    *dst_vreg = *acc_vreg;
+    *dst_vreg = acc_vreg;
     return absl::OkStatus();
   });
   if (!all_results_ok.ok()) {
@@ -4967,7 +4989,6 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(layouts_in.front().has_value());
   TPU_ASSERT_OP(layouts_out.front().has_value());
-  using Tiling = std::array<int64_t, 2>;
   const VectorLayout &layout_in = *layouts_in.front();
   const VectorLayout &layout_out = *layouts_out.front();
   TPU_ASSERT_EQ_OP(
