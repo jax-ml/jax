@@ -90,6 +90,7 @@ limitations under the License.
 #include "xla/backends/cpu/collectives/mpi_collectives.h"
 #endif  // !_WIN32 && !PLATFORM_GOOGLE
 
+#include "jaxlib/call_location.h"
 #include "jaxlib/config.h"
 #include "jaxlib/custom_call_sharding.h"
 #include "jaxlib/dlpack.h"
@@ -604,6 +605,7 @@ NB_MODULE(_jax, m) {
         nb::arg("gpu_backend").none() = nb::none(),
         nb::arg("device_id").none() = nb::none());
 
+  BuildCallLocationSubmodule(m);
   BuildConfigSubmodule(m);
   BuildIfrtProgramsSubmodule(m);
   BuildPytreeSubmodule(m);

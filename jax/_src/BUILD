@@ -1429,6 +1429,7 @@ pytype_strict_library(
     deps = [
         ":config",
         ":util",
+        "//jax/_src/lib",
     ],
 )
 
