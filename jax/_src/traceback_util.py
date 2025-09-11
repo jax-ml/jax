@@ -23,14 +23,21 @@ from typing import Any, TypeVar, cast
 
 from jax._src import config
 from jax._src import util
+from jax._src.lib import _jax
 
 
 C = TypeVar("C", bound=Callable[..., Any])
 
-_exclude_paths: list[str] = [__file__, util.__file__]
+_exclude_paths: list[str] = []
 
 def register_exclusion(path: str):
   _exclude_paths.append(path)
+  # TODO(nbasile): Remove hasattr checks after jaxlib 0.8.2 release
+  if hasattr(_jax, "add_exclude_path"):
+    _jax.add_exclude_path(path)
+
+register_exclusion(__file__)
+register_exclusion(util.__file__)
 
 _jax_message_append = (
     'The stack trace below excludes JAX-internal frames.\n'

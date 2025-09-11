@@ -337,6 +337,7 @@ nanobind_pywrap_extension(
     },
     visibility = jax_visibility("jaxlib/_jax"),
     deps = [
+        ":call_location",
         ":config",
         ":custom_call_sharding",
         ":dlpack",
@@ -494,6 +495,32 @@ cc_library(
         "@xla//xla/python:nb_numpy",
         "@xla//xla/tsl/platform:statusor",
         "@xla//xla/tsl/python/lib/core:numpy",
+    ],
+)
+
+cc_library(
+    name = "call_location",
+    srcs = ["call_location.cc"],
+    hdrs = ["call_location.h"],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        ":py_user_context",
+        ":traceback",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@nanobind",
+        "@xla//xla/python/ifrt",
+        "@xla//xla/python/ifrt:attribute_map",
+        "@xla//xla/python/ifrt:user_context",
+        "@xla//xla/python/pjrt_ifrt",
     ],
 )
 
@@ -814,6 +841,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":call_location",
         ":config",
         ":guard_lib",
         ":jax_jit",
@@ -863,6 +891,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":call_location",
         ":config",
         ":jax_jit",
         ":nb_class_ptr",
@@ -956,6 +985,7 @@ cc_library(
     visibility = jax_visibility("jaxlib/py_client"),
     deps = [
         ":cached_py_object",
+        ":call_location",
         ":guard_lib",
         ":nb_class_ptr",
         ":pprof_profile_builder",
