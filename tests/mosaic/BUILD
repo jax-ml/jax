@@ -152,6 +152,9 @@ jax_multiplatform_test(
     enable_backends = [],
     enable_configs = ["gpu_h100"],
     shard_count = 5,
+    tags = [
+        "noasan",
+    ],
     deps = [
         "//jax:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:matmul",
@@ -171,6 +174,7 @@ jax_multiplatform_test(
     main = "//jax/experimental/mosaic/gpu/examples:flash_attention.py",
     tags = [
         "manual",
+        "noasan",
         "notap",
     ],
     deps = [
