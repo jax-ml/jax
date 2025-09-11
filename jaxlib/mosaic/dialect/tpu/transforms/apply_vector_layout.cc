@@ -4756,7 +4756,7 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
         << out_layout << " for lane reduction";
     }
     if (axis == rank - 2 &&
-        out_layout != VectorLayout(32, {std::nullopt, 0}, ctx.target_shape,
+        out_layout != VectorLayout(32, {0, 0}, ctx.target_shape,
                                   VectorLayout::ImplicitDim::kSecondMinor)) {
       return op.emitOpError("Not implemented: unsupported output layout ")
         << out_layout << " for sublane reduction";
@@ -4769,10 +4769,6 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
   if (!out_ty.getElementType().isSignlessInteger(32)) {
     return op.emitOpError("Not implemented: Only i32 output is supported");
   }
-  // TODO(yixiuliu): Support any input shapes
-  TPU_ASSERT_OP(
-    in_ty.getShape()[rank - 2] % ctx.target_shape[0] == 0 &&
-    in_ty.getShape()[rank - 1] % ctx.target_shape[1] == 0);
   tpu::ReductionKind kind = reduce_index_op.getKind();
 
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
@@ -4793,7 +4789,29 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
   SmallVector<int64_t> slice_end;
   slice_end.reserve(rank);
 
-  out_vregs.Each(
+  arith::CmpFPredicate predicate;
+  Attribute neutral;
+  switch (kind) {
+    case tpu::ReductionKind::kArgMax:
+      predicate = arith::CmpFPredicate::OGE;
+      neutral = builder.getFloatAttr(
+          in_element_type,
+          APFloat::getInf(cast<FloatType>(in_element_type).getFloatSemantics(),
+                          /*Negative=*/true));
+      break;
+    case tpu::ReductionKind::kArgMin:
+      predicate = arith::CmpFPredicate::OLE;
+      neutral = builder.getFloatAttr(
+          in_element_type,
+          APFloat::getInf(cast<FloatType>(in_element_type).getFloatSemantics(),
+                          /*Negative=*/false));
+      break;
+    default:
+      reduce_index_op.emitOpError(
+          "Unsupported reduction kind ") << stringifyReductionKind(kind);
+  }
+
+  auto all_results_ok = out_vregs.EachStatus(
     [&](const absl::Span<const int64_t> idx, Value *const out_vreg) {
       slice_start.clear();
       slice_end.clear();
@@ -4805,18 +4823,6 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
       slice_end.insert(slice_end.begin() + axis, tiles.dim(axis));
       xla::Array<Value> slice_vregs = tiles.Slice(slice_start, slice_end);
 
-      arith::CmpFPredicate predicate;
-      switch (kind) {
-        case tpu::ReductionKind::kArgMax:
-          predicate = arith::CmpFPredicate::OGE;
-          break;
-        case tpu::ReductionKind::kArgMin:
-          predicate = arith::CmpFPredicate::OLE;
-          break;
-        default:
-          reduce_index_op.emitOpError(
-              "Unsupported reduction kind ") << stringifyReductionKind(kind);
-      }
       auto reduce_elementwise = [&](
           Value lhs, Value rhs, Value lhs_idx, Value rhs_idx) ->
           std::pair<Value, Value> {
@@ -4836,7 +4842,7 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
               : std::nullopt;
       const int64_t reduction_step =
           in_tile_reduction_dim ? ctx.target_shape[*in_tile_reduction_dim] : 1;
-      slice_vregs.Each(
+      auto reduction_status = slice_vregs.EachStatus(
         [&](const absl::Span<const int64_t> red_idx, Value *const src_vreg) {
         // Calculate the index of acc_vreg on reduction dimension in full input.
         Value src_vreg_idx = builder.create<arith::ConstantOp>(
@@ -4851,14 +4857,33 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
           src_vreg_idx = builder.create<arith::AddIOp>(src_vreg_idx, iota);
         }
 
+        // Mask out-of-bounds values.
+        SmallVector<int64_t> src_idx(red_idx.begin(), red_idx.end());
+        for (int i = 0; i < src_idx.size(); ++i) {
+          src_idx[i] += slice_start[i];
+        }
+        std::unique_ptr<VRegDataBounds> bounds =
+            in_layout.tileDataBounds(
+              builder.getContext(), in_ty.getShape(), src_idx, ctx.target_shape
+            );
+        FailureOr<Value> failure_or_vreg = maskOOB(
+            ctx, builder, cast<TypedValue<VectorType>>(*src_vreg), *bounds,
+            neutral);
+        if (failed(failure_or_vreg)) {
+          reduce_index_op.emitOpError("Failed to mask out-of-bounds values");
+          return absl::UnknownError("");
+        }
+        Value vreg = *failure_or_vreg;
         if (acc_vreg == nullptr || acc_vreg_idx == nullptr) {
-          acc_vreg = *src_vreg;
+          acc_vreg = vreg;
           acc_vreg_idx = src_vreg_idx;
         } else {
           std::tie(acc_vreg, acc_vreg_idx) = reduce_elementwise(
-              acc_vreg, *src_vreg, acc_vreg_idx, src_vreg_idx);
+              acc_vreg, vreg, acc_vreg_idx, src_vreg_idx);
         }
+        return absl::OkStatus();
       });
+      TF_RETURN_IF_ERROR(reduction_status);
       if (in_tile_reduction_dim) {
         if (*in_tile_reduction_dim == 0) {  // sublane reduction
           Value val = acc_vreg;
@@ -4892,7 +4917,11 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
       } else {
         *out_vreg = acc_vreg_idx;
       }
+      return absl::OkStatus();
   });
+  if (!all_results_ok.ok()) {
+    return failure();
+  }
 
   reduce_index_op->replaceAllUsesWith(
     assemble(builder, out_ty, out_layout, out_vregs, ctx.target_shape));

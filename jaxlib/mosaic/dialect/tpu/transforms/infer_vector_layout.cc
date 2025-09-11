@@ -1011,16 +1011,10 @@ class VectorLayoutInferer {
     int8_t bitwidth = input_ty.getElementTypeBitWidth();
     int64_t input_rank = input_ty.getRank();
 
-    // TODO(yixiuliu): Support any input shapes.
     TPU_CHECK_OP(input_ty.getElementType().isF32(),
                  "Not implemented: Only f32 is supported.")
     TPU_CHECK_OP(input_rank > 1,
                  "Not implemented: Only input rank > 1 is supported.");
-    TPU_CHECK_OP(
-        input_ty.getShape()[input_rank - 2] % target_shape_[0] == 0 &&
-        input_ty.getShape()[input_rank - 1] % target_shape_[1] == 0,
-        "Not implemented: The input size is not a multiple of native vreg size "
-        "on trailing dimensions.");
     auto some_layout = getLayout(op.getInput());
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     if (op.getAxis() < input_rank - 2) {
@@ -1036,7 +1030,6 @@ class VectorLayoutInferer {
         out_offsets[1] = std::nullopt;
       } else if (op.getAxis() == input_rank - 2) {
         out_implicit_dim = ImplicitDim::kSecondMinor;
-        out_offsets[0] = std::nullopt;
       }
       VectorLayout out_layout(bitwidth, out_offsets, nativeTiling(bitwidth),
                               out_implicit_dim);
