@@ -2328,12 +2328,59 @@ class PallasCallTest(PallasBaseTest):
     else:
       with self.assertRaisesRegex(
           error_handling.MosaicError,
-          'Not implemented: Only int32 scalar addition is supported.',
+          'Not implemented: Only i32 addition is supported.',
       ):
         _ = pl.pallas_call(
             kernel,
             in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
             out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+            out_shape=jax.ShapeDtypeStruct(x.shape, dtype),
+        )(x)
+
+  @parameterized.parameters([
+      jnp.int4,
+      jnp.int8,
+      jnp.int16,
+      jnp.int32,
+      jnp.uint4,
+      jnp.uint8,
+      jnp.uint16,
+      jnp.uint32,
+  ])
+  def test_vector_integer_addition(self, dtype):
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...] + x_ref[...]
+
+    if is_cloud_tpu_older_than(2025, 9, 15):
+      self.skipTest('Descriptive message was added on Sep 15, 2025')
+
+    x = jnp.full((128, 16), 7, dtype=dtype)
+
+    is_supported = dtype in [jnp.int32, jnp.uint32] or (
+        dtype in [jnp.int16, jnp.uint16] and jtu.is_device_tpu_at_least(6)
+    )
+
+    if is_supported:
+      y = pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+          out_shape=jax.ShapeDtypeStruct(x.shape, dtype),
+      )(x)
+      np.testing.assert_array_equal(y, x + x)
+    else:
+      if dtype in [jnp.int16, jnp.uint16]:
+        expected_error = 'vector<i16> addition is not supported on hardware'
+      else:
+        expected_error = 'Not implemented: Only vector<i16> and vector<i32>'
+      with self.assertRaisesRegex(
+          error_handling.MosaicError,
+          expected_error
+      ):
+        _ = pl.pallas_call(
+            kernel,
+            in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+            out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
             out_shape=jax.ShapeDtypeStruct(x.shape, dtype),
         )(x)
 
