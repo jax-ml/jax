@@ -8732,6 +8732,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.skipTest('Requires jaxlib_extension_version >= 371')
     if not jtu.if_cloud_tpu_at_least(2025, 9, 12):
       self.skipTest("Requires libtpu built after 2025-09-12")
+
     mesh = jtu.create_mesh(axis_sizes, axis_names,
                            axis_types=(AxisType.Explicit,) * len(axis_names))
     with jax.set_mesh(mesh):
@@ -8747,6 +8748,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
       out = f(x, y)
       self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+      self.assertNotEmpty(out.sharding.spec.unreduced)
       self.assertEqual(out.shape, (8, 8))
       self.assertEqual(out.sharding.shard_shape(out.shape), shard_shape)
       for s in out.addressable_shards:
@@ -8755,8 +8757,114 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       expected_out = jnp.dot(x, y, out_sharding=P('x', None))
 
       reshard_out = jax.sharding.reshard(out, P('x', None))
+      self.assertEmpty(reshard_out.sharding.spec.unreduced)
       self.assertEqual(reshard_out.sharding, NamedSharding(mesh, P('x', None)))
       self.assertArraysEqual(reshard_out, expected_out)
+
+  @parameterized.named_parameters(
+      ('Ux', (2,), ('x',), P(None, 'x'), P('x', None),
+       P(None, None, unreduced={'x'}), (8, 8)),
+      ('Sx,Uy', (2, 2), ('x', 'y'), P('x', 'y'), P('y', None),
+       P('x', None, unreduced={'y'}), (4, 8)),
+      ('Rx,Uy', (2, 2), ('x', 'y'), P(None, 'y'), P('y', None),
+       P(None, None, unreduced={'y'}), (8, 8)),
+      ('Sx,Uy,Rz', (2, 2, 2), ('x', 'y', 'z'), P('x', 'y'), P('y', None),
+       P('x', None, unreduced={'y'}), (4, 8)),
+  )
+  def test_unreduced_input_to_jit(
+      self, axis_sizes, axis_names, x_spec, y_spec, out_spec, shard_shape):
+    if ifrt_version < 27:
+      self.skipTest('Requires ifrt_version >= 27')
+    if jaxlib_extension_version < 371:
+      self.skipTest('Requires jaxlib_extension_version >= 371')
+    if not jtu.if_cloud_tpu_at_least(2025, 9, 12):
+      self.skipTest("Requires libtpu built after 2025-09-12")
+
+    mesh = jtu.create_mesh(axis_sizes, axis_names,
+                           axis_types=(AxisType.Explicit,) * len(axis_names))
+    with jax.set_mesh(mesh):
+      np_inp = np.arange(16.).reshape(8, 2)
+      x = jax.device_put(np_inp, x_spec)
+      y = jax.device_put(np_inp.T, y_spec)
+
+      @jax.jit
+      def f(x, y):
+        out = jnp.einsum('xy,yz->xz', x, y, out_sharding=out_spec)
+        self.assertEqual(out.aval.sharding.spec, out_spec)
+        return out
+
+      out = f(x, y)
+      self.assertNotEmpty(out.sharding.spec.unreduced)
+
+      @jax.jit
+      def g(x):
+        self.assertEqual(x.aval.sharding.spec, out_spec)
+        y = x + x
+        return jax.sharding.reshard(y, P('x', None))
+
+      expected_out = jnp.dot(x, y, out_sharding=P('x', None)) * 2
+
+      out2 = g(out)
+      self.assertArraysEqual(out2, expected_out)
+      self.assertEqual(out2.sharding, NamedSharding(mesh, P('x', None)))
+      self.assertEmpty(out2.sharding.spec.unreduced)
+
+  @parameterized.named_parameters(
+      ('Ux', (2,), ('x',), P(None, 'x'), P('x', None),
+       P(None, None, unreduced={'x'}), (8, 8)),
+      ('Sx,Uy', (2, 2), ('x', 'y'), P('x', 'y'), P('y', None),
+       P('x', None, unreduced={'y'}), (4, 8)),
+      ('Rx,Uy', (2, 2), ('x', 'y'), P(None, 'y'), P('y', None),
+       P(None, None, unreduced={'y'}), (8, 8)),
+      ('Sx,Uy,Rz', (2, 2, 2), ('x', 'y', 'z'), P('x', 'y'), P('y', None),
+       P('x', None, unreduced={'y'}), (4, 8)),
+  )
+  def test_in_and_out_unreduced(
+      self, axis_sizes, axis_names, x_spec, y_spec, out_spec, shard_shape):
+    if ifrt_version < 27:
+      self.skipTest('Requires ifrt_version >= 27')
+    if jaxlib_extension_version < 371:
+      self.skipTest('Requires jaxlib_extension_version >= 371')
+    if not jtu.if_cloud_tpu_at_least(2025, 9, 12):
+      self.skipTest("Requires libtpu built after 2025-09-12")
+
+    mesh = jtu.create_mesh(axis_sizes, axis_names,
+                           axis_types=(AxisType.Explicit,) * len(axis_names))
+    with jax.set_mesh(mesh):
+      np_inp = np.arange(16.).reshape(8, 2)
+      x = jax.device_put(np_inp, x_spec)
+      y = jax.device_put(np_inp.T, y_spec)
+
+      @jax.jit
+      def f(x, y):
+        out = jnp.einsum('xy,yz->xz', x, y, out_sharding=out_spec)
+        self.assertEqual(out.aval.sharding.spec, out_spec)
+        return out
+
+      out = f(x, y)
+      self.assertNotEmpty(out.sharding.spec.unreduced)
+
+      @jax.jit
+      def g(x):
+        self.assertEqual(x.aval.sharding.spec, out_spec)
+        y = x + x
+        self.assertEqual(y.aval.sharding.spec, out_spec)
+        return y
+
+      out2 = g(out)
+      self.assertEqual(out2.sharding, NamedSharding(mesh, out_spec))
+      self.assertNotEmpty(out2.sharding.spec.unreduced)
+      self.assertEqual(out2.shape, (8, 8))
+      self.assertEqual(out2.sharding.shard_shape(out2.shape), shard_shape)
+      for s in out2.addressable_shards:
+        self.assertEqual(s.data.shape, shard_shape)
+
+      expected_out = jnp.dot(x, y, out_sharding=P('x', None)) * 2
+
+      reshard_out2 = jax.sharding.reshard(out2, P('x', None))
+      self.assertArraysEqual(reshard_out2, expected_out)
+      self.assertEqual(reshard_out2.sharding, NamedSharding(mesh, P('x', None)))
+      self.assertEmpty(reshard_out2.sharding.spec.unreduced)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
