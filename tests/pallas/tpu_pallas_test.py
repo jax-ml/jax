@@ -2356,11 +2356,7 @@ class PallasCallTest(PallasBaseTest):
 
     x = jnp.full((128, 16), 7, dtype=dtype)
 
-    is_supported = dtype in [jnp.int32, jnp.uint32] or (
-        dtype in [jnp.int16, jnp.uint16] and jtu.is_device_tpu_at_least(6)
-    )
-
-    if is_supported:
+    if dtype in [jnp.int32, jnp.uint32, jnp.int16, jnp.uint16]:
       y = pl.pallas_call(
           kernel,
           in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
@@ -2369,13 +2365,9 @@ class PallasCallTest(PallasBaseTest):
       )(x)
       np.testing.assert_array_equal(y, x + x)
     else:
-      if dtype in [jnp.int16, jnp.uint16]:
-        expected_error = 'vector<i16> addition is not supported on hardware'
-      else:
-        expected_error = 'Not implemented: Only vector<i16> and vector<i32>'
       with self.assertRaisesRegex(
           error_handling.MosaicError,
-          expected_error
+          'Not implemented: Only vector<i16> and vector<i32>'
       ):
         _ = pl.pallas_call(
             kernel,

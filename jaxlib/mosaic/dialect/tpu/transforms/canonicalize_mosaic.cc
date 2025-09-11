@@ -967,12 +967,21 @@ FailureOr<Value> canonicalize_arith_addi(const CanonicalizeContext& ctx,
     return op.getResult();
   }
 
-  // TODO(pazz): Emulate 16-bit vector addition on older hardware.
-  return op.emitOpError(
-             "vector<i16> addition is not "
-             "supported on hardware generation: ")
-         << ctx.hardware_generation
-         << ". Use hardware generation v6+ or cast to 32-bits.";
+  if (!ctx.compatibility_mode) {
+    return op.emitOpError(
+        "vector<i16> addition is only supported on hardware generation v6+."
+        "Enable compatibility mode or upcast to i32.");
+  }
+
+  CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
+  VectorType new_vector_type = result_vty.scaleElementBitwidth(2);
+  Value lhs_i32 = builder.create<arith::ExtSIOp>(new_vector_type, op.getLhs());
+  Value rhs_i32 = builder.create<arith::ExtSIOp>(new_vector_type, op.getRhs());
+  Value result_i32 = builder.create<arith::AddIOp>(lhs_i32, rhs_i32);
+  auto new_op = builder.create<arith::TruncIOp>(result_type, result_i32);
+  op.replaceAllUsesWith(new_op);
+  op.erase();
+  return new_op;
 }
 
 FailureOr<Value> canonicalize_select(const CanonicalizeContext &ctx,
