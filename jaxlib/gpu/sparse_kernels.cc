@@ -44,7 +44,7 @@ template <>
 /*static*/ absl::StatusOr<SparseHandlePool::Handle> SparseHandlePool::Borrow(
     gpuStream_t stream) {
   SparseHandlePool* pool = Instance();
-  absl::MutexLock lock(&pool->mu_);
+  absl::MutexLock lock(pool->mu_);
   gpusparseHandle_t handle;
   if (pool->handles_[stream].empty()) {
     JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreate(&handle)));
