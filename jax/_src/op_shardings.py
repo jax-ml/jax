@@ -22,17 +22,30 @@ from typing import Union
 import numpy as np
 
 from jax._src.lib import xla_client as xc
+from jax._src.lib import jaxlib_extension_version
 
 
 def get_num_ways_dim_sharded(
     hlo_sharding: xc.HloSharding) -> tuple[list[int], int]:
   if hlo_sharding.is_replicated():
     return [], 1
+  if jaxlib_extension_version >= 371 and hlo_sharding.is_unreduced():
+    return [], 1
   partitions = hlo_sharding.tile_assignment_dimensions()
   subgroup_types = hlo_sharding.subgroup_types()
 
+  replicate_on_last_tile_dim = False
+  unreduced_on_last_tile_dim = False
+  unreduced_and_replicated = False
   if subgroup_types == [xc.OpSharding.Type.REPLICATED]:
     replicate_on_last_tile_dim = True
+  elif (jaxlib_extension_version >= 371 and
+        subgroup_types == [xc.OpSharding.Type.UNREDUCED]):
+    unreduced_on_last_tile_dim = True
+  elif (jaxlib_extension_version >= 371 and len(subgroup_types) == 2 and
+        xc.OpSharding.Type.REPLICATED in subgroup_types and
+        xc.OpSharding.Type.UNREDUCED in subgroup_types):
+    unreduced_and_replicated = True
   else:
     replicate_on_last_tile_dim = hlo_sharding.replicate_on_last_tile_dim()
     if subgroup_types:
@@ -42,6 +55,13 @@ def get_num_ways_dim_sharded(
   if replicate_on_last_tile_dim:
     num_replicas = partitions[-1]
     partitions = partitions[:-1]
+  if unreduced_on_last_tile_dim:
+    num_replicas = 1
+    partitions = partitions[:-1]
+  if unreduced_and_replicated:
+    replicated_loc = subgroup_types.index(xc.OpSharding.Type.REPLICATED)
+    num_replicas = partitions[-2:][replicated_loc]
+    partitions = partitions[:-2]
   return list(partitions), num_replicas
 
 
@@ -91,7 +111,7 @@ def op_sharding_to_numpy_indices(
 
   device_it = iter(hlo_sharding.tile_assignment_devices())
 
-  for i, idxs in enumerate(itertools.product(*axis_indices)):
+  for idxs in itertools.product(*axis_indices):
     for _ in range(num_replicas):
       indices[next(device_it)] = idxs
   return indices

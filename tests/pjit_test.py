@@ -8713,6 +8713,46 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       arr = jax.sharding.reshard(arr, P('a', 'b'))
       self.assertEqual(jax.typeof(arr).sharding.spec, P('a', 'b'))
 
+  @parameterized.named_parameters(
+      ('Ux', (2,), ('x',), P(None, 'x'), P('x', None),
+       P(None, None, unreduced={'x'}), (8, 8)),
+      ('Sx,Uy', (2, 2), ('x', 'y'), P('x', 'y'), P('y', None),
+       P('x', None, unreduced={'y'}), (4, 8)),
+      ('Rx,Uy', (2, 2), ('x', 'y'), P(None, 'y'), P('y', None),
+       P(None, None, unreduced={'y'}), (8, 8)),
+      ('Sx,Uy,Rz', (2, 2, 2), ('x', 'y', 'z'), P('x', 'y'), P('y', None),
+       P('x', None, unreduced={'y'}), (4, 8)),
+  )
+  def test_unreduced_output_from_jit(
+      self, axis_sizes, axis_names, x_spec, y_spec, out_spec, shard_shape):
+    if ifrt_version < 27:
+      self.skipTest('Requires ifrt_version >= 27')
+    mesh = jtu.create_mesh(axis_sizes, axis_names,
+                           axis_types=(AxisType.Explicit,) * len(axis_names))
+    with jax.set_mesh(mesh):
+      np_inp = np.arange(16.).reshape(8, 2)
+      x = jax.device_put(np_inp, x_spec)
+      y = jax.device_put(np_inp.T, y_spec)
+
+      @jax.jit
+      def f(x, y):
+        out = jnp.einsum('xy,yz->xz', x, y, out_sharding=out_spec)
+        self.assertEqual(out.aval.sharding.spec, out_spec)
+        return out
+
+      out = f(x, y)
+      self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+      self.assertEqual(out.shape, (8, 8))
+      self.assertEqual(out.sharding.shard_shape(out.shape), shard_shape)
+      for s in out.addressable_shards:
+        self.assertEqual(s.data.shape, shard_shape)
+
+      expected_out = jnp.dot(x, y, out_sharding=P('x', None))
+
+      reshard_out = jax.sharding.reshard(out, P('x', None))
+      self.assertEqual(reshard_out.sharding, NamedSharding(mesh, P('x', None)))
+      self.assertArraysEqual(reshard_out, expected_out)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

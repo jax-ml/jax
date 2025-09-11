@@ -20,6 +20,7 @@ import functools
 from jax._src.util import safe_zip, use_cpp_class, cache
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import jaxlib_extension_version
 from jax._src.op_shardings import (
     are_hlo_shardings_equal, get_num_ways_dim_sharded,
     is_hlo_sharding_replicated, op_sharding_to_indices)
@@ -44,6 +45,12 @@ def common_devices_indices_map(
     s: Sharding, global_shape: Shape) -> Mapping[Device, Index]:
   s.shard_shape(global_shape)  # raises a good error message
   hlo_sharding = s._to_xla_hlo_sharding(len(global_shape))
+  if jaxlib_extension_version >= 371:
+    if (xc.OpSharding.Type.UNREDUCED in hlo_sharding.subgroup_types() or
+        hlo_sharding.is_unreduced()):
+      raise NotImplementedError(
+          "device_indices_map doesn't work with unreduced. Please file a bug at"
+          ' https://github.com/jax-ml/jax/issues')
   indices = op_sharding_to_indices(hlo_sharding, global_shape,
                                    len(s._device_assignment))
   return dict(safe_zip(s._device_assignment, indices))
@@ -53,6 +60,8 @@ def common_devices_indices_map(
 def _common_shard_shape(self, global_shape: Shape) -> Shape:
   hlo_sharding = self._to_xla_hlo_sharding(len(global_shape))
   if is_hlo_sharding_replicated(hlo_sharding):
+    return global_shape
+  if jaxlib_extension_version >= 371 and hlo_sharding.is_unreduced():
     return global_shape
   partitions, _ = get_num_ways_dim_sharded(hlo_sharding)
   assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))

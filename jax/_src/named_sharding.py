@@ -22,6 +22,7 @@ from typing import Any, Union
 
 from jax._src.util import use_cpp_class, cache, use_cpp_method
 from jax._src.lib import xla_client as xc
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir.dialects import sdy
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
@@ -361,11 +362,6 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArray, mesh):
 @cache(max_size=4096, trace_context_in_key=False)
 def named_sharding_to_xla_hlo_sharding(
     self, num_dimensions: int) -> xc.HloSharding:
-  if self.spec.unreduced or self.spec.reduced:
-    raise ValueError(
-        'unreduced/reduced only works with the shardy partitioner. Please use'
-        " `jax.config.update('jax_use_shardy_partitioner', True)` to switch"
-        ' shardy on.')
   mesh_shape = self.mesh.shape
   array_mapping = get_array_mapping(self.spec)
   mesh_axis_pos = {name: i for i, name in enumerate(self.mesh.axis_names)}
@@ -376,6 +372,13 @@ def named_sharding_to_xla_hlo_sharding(
     axis_names = self.mesh.axis_names
     for manual_axis in manual_axes:
       special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
+
+  if jaxlib_extension_version >= 371:
+    unreduced_axes = self.spec.unreduced
+    if unreduced_axes:
+      axis_names = self.mesh.axis_names
+      for u in unreduced_axes:
+        special_axes[axis_names.index(u)] = xc.OpSharding.Type.UNREDUCED
 
   replicated_mesh_axes = []
   for i, (axis_name, axis_val) in enumerate(mesh_shape.items()):
