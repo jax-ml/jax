@@ -2630,13 +2630,13 @@ def _check_sharding(aval, s):
           (s,), (aval,), ("",), "device_put args", allow_uneven_sharding=False)
     s.shard_shape(aval.shape)  # should raise an Error if incompatible
 
-def pspec_to_sharding(val):
+def pspec_to_sharding(name, val):
   if isinstance(val, P):
     mesh = get_concrete_mesh()
     if mesh.empty:
       raise ValueError(
           "Please set a mesh via `jax.set_mesh` if a PartitionSpec is"
-          " passed to device_put")
+          f" passed to {name}")
     return NamedSharding(mesh, val)
   return val
 
@@ -2692,8 +2692,8 @@ def device_put(
       src_flat = flatten_axes("device_put source", treedef, src)
       src_flat = list(map(_infer_src_sharding, src_flat, x_flat))
 
-    device_flat = map(pspec_to_sharding, device_flat)
-    src_flat = map(pspec_to_sharding, src_flat)
+    device_flat = map(partial(pspec_to_sharding, 'device_put'), device_flat)
+    src_flat = map(partial(pspec_to_sharding, 'device_put'), src_flat)
 
     if isinstance(donate, bool):
       donate_flat = [donate] * len(x_flat)

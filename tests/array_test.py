@@ -860,6 +860,11 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(result, data)
     self.assertEqual(result.sharding, s)
 
+    with jax.set_mesh(mesh):
+      result = jax.make_array_from_process_local_data(P('x'), data)
+      self.assertArraysEqual(result, data)
+      self.assertEqual(result.sharding, s)
+
   @parameterized.product(dtype=jtu.dtypes.all + jtu.dtypes.custom_floats)
   @jtu.run_on_devices("gpu")
   def test_pinned_host_npy_value_doesnt_cache(self, dtype):

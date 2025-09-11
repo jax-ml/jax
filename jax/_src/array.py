@@ -18,6 +18,7 @@ from collections import defaultdict
 from collections.abc import Callable, Sequence
 import enum
 import functools
+from functools import partial
 import math
 import operator as op
 from typing import Any, TYPE_CHECKING, cast
@@ -951,9 +952,11 @@ def make_array_from_process_local_data(
     Tensor that will have sharding=sharding and of shape global_shape.
   """
   # pyformat: enable
-
   local_data_flat, treedef = tree_flatten(local_data)
   sharding_flat = broadcast_prefix(sharding, local_data)
+  sharding_flat = map(
+      partial(api.pspec_to_sharding, 'make_array_from_process_local_data'),
+      sharding_flat)
   global_shape_flat = broadcast_prefix(
       global_shape, local_data,
       is_leaf=lambda x: x is None or isinstance(x, tuple))
