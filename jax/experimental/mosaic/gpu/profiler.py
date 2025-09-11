@@ -13,16 +13,17 @@
 # limitations under the License.
 # ==============================================================================
 
+from collections.abc import Callable
 import contextlib
 import itertools
 import json
 import math
-from typing import ParamSpec, TypeAlias, TypeVar
-from collections.abc import Callable
+from typing import Literal, ParamSpec, TypeVar, overload
 import warnings
 
 import jax
 from jax._src import stages
+from jax._src import util
 import jax.numpy as jnp
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -44,9 +45,6 @@ T = TypeVar("T")
 P = ParamSpec("P")
 
 
-Timings: TypeAlias = list[tuple[str, float]] | float | None
-
-
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class Cupti:
   """CUPTI-based profiler."""
@@ -55,8 +53,8 @@ class Cupti:
   finalize: bool = True
 
   def measure(
-      self, f: Callable[P, T], *, aggregate: bool = True
-  ) -> Callable[P, tuple[T, Timings]]:
+      self, f, *, aggregate: bool = True, iterations: int = 1,
+  ):
     if not isinstance(f, (stages.Wrapped, stages.Compiled)):
       f = jax.jit(f)
 
@@ -68,23 +66,78 @@ class Cupti:
       ext = mosaic_gpu_lib._mosaic_gpu_ext
       ext._cupti_init()
       try:
-        results = jax.block_until_ready(f(*args, **kwargs))
+        all_results = [f(*args, **kwargs) for _ in range(iterations)]
+        for r in all_results:
+          jax.block_until_ready(r)
+        results = all_results[0]
       finally:
         timings = ext._cupti_get_timings(self.finalize)
-
       if not timings:
         return results, None
-      elif aggregate:
-        return results, sum(item[1] for item in timings)
-      else:
-        return results, timings
+
+      if len(timings) % iterations != 0:
+        raise RuntimeError(
+            "The number of kernel launches is not divisible by the number of"
+            " iterations"
+        )
+      kernels_per_iter = len(timings) // iterations
+      iter_timings = util.split_list(
+          timings, [kernels_per_iter] * (iterations - 1)
+      )
+      for kernel_idx, (kernel_name, _) in enumerate(iter_timings[0]):
+        for i in range(1, iterations):
+          if iter_timings[i][kernel_idx][0] != kernel_name:
+            raise RuntimeError("Kernel names are not consistent across iterations")
+
+      if aggregate:
+        iter_timings = [
+            sum(item[1] for item in timings) for timings in iter_timings
+        ]
+
+      return results, iter_timings[0] if len(iter_timings) == 1 else iter_timings
 
     return wrapper
 
+@overload
+def measure(
+    f: Callable[P, T],
+    *,
+    aggregate: Literal[True] = ...,
+    iterations: Literal[1] = ...,
+) -> Callable[P, tuple[T, float | None]]:
+  ...
+
+@overload
+def measure(
+    f: Callable[P, T],
+    *,
+    aggregate: Literal[False] = ...,
+    iterations: Literal[1] = ...,
+) -> Callable[P, tuple[T, list[tuple[str, float]] | None]]:
+  ...
+
+@overload
+def measure(
+    f: Callable[P, T],
+    *,
+    aggregate: Literal[True] = ...,
+    iterations: int = ...,
+) -> Callable[P, tuple[T, list[float] | None]]:
+  ...
+
+@overload
+def measure(
+    f: Callable[P, T],
+    *,
+    aggregate: Literal[False] = ...,
+    iterations: int = ...,
+) -> Callable[P, tuple[T, list[list[tuple[str, float]]] | None]]:
+  ...
+
 
 def measure(
-    f: Callable[P, T], *, aggregate: bool = True
-) -> Callable[P, tuple[T, Timings]]:
+    f, *, aggregate: bool = True, iterations: int = 1,
+):
   """Measures the GPU runtime of a function using CUPTI.
 
   ``measure`` is a higher-order function that wraps a function ``f`` to
@@ -92,10 +145,12 @@ def measure(
 
   Args:
     f: The function to measure.
-    aggregate: If ``True``, returns the sum of kernel runtimes in milliseconds.
-      If ``False``, returns a list of ``(kernel_name, runtime_ms)`` tuples for
-      each kernel launched by ``f``. Runtimes do not include time when the
-      device is idle between kernel launches.
+    aggregate: Whether to report an aggregate runtime. When ``False`` (only
+      supported by ``mode="cupti"``), the per-kernel timings are returned as a
+      list of tuples ``(<kernel name>, <runtime in ms>)``.
+    iterations: How many times to run the function. Only supported by
+      ``mode="cupti"``. When greater than 1, the return type will become a list
+      of measurements.
 
   Returns:
     A function that accepts the same inputs as ``f`` and returns
@@ -111,7 +166,9 @@ def measure(
     tools like CUDA-GDB, Compute Sanitizer, Nsight Systems, or Nsight
     Compute.
   """  # fmt: skip
-  return Cupti().measure(f, aggregate=aggregate)
+  if iterations < 1:
+    raise ValueError(f"{iterations=} must be positive")
+  return Cupti().measure(f, aggregate=aggregate, iterations=iterations)
 
 
 class ProfilerSpec:
