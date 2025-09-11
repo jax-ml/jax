@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Matrix Multiplication kernel for Hopper GPUs."""
+import statistics
 import dataclasses
 import functools
 import itertools
@@ -161,9 +162,11 @@ def main(_) -> None:
           max_concurrent_steps=max_concurrent_steps,
       )
       try:
-        out, runtime_ms = profiler.measure(
-            functools.partial(matmul_kernel, config=config)
+        out, runtimes_ms = profiler.measure(
+            functools.partial(matmul_kernel, config=config), iterations=10,
         )(a, b)
+        assert runtimes_ms is not None
+        runtime_ms = statistics.median(runtimes_ms)
       except ValueError as e:
         if "exceeds available shared memory" in e.args[0]:  # Ignore SMEM OOMs.
           continue
