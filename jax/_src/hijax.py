@@ -21,7 +21,6 @@ from typing import Any
 from jax._src import core
 from jax._src import effects
 from jax._src.interpreters import ad
-from jax._src.interpreters import partial_eval as pe
 from jax._src import ad_util
 from jax._src.util import safe_zip, safe_map
 from jax._src.tree_util import tree_flatten, tree_unflatten, tree_leaves
@@ -45,12 +44,6 @@ class HiPrimitive(core.Primitive):
     self.name = name
     ad.primitive_jvps[self] = self.jvp
     ad.primitive_transposes[self] = self.transpose
-    pe.custom_staging_rules[self] = self.staging
-
-  def staging(self, trace, source_info, *args, **kwargs):
-    trace.frame.is_high = True
-    return trace.default_process_primitive(
-        self, args, kwargs, source_info=source_info)
 
   def is_high(self, *avals, **params) -> bool:
     return True
@@ -64,7 +57,7 @@ class HiPrimitive(core.Primitive):
 
   # lowering implements the primitive in terms of lojax inputs/outputs/ops
   def to_lojax(self, *lotypes_wrapped_in_hitypes, **params):
-    assert False, "must override"
+    assert False, f"must override for {self}"
 
   # autodiff interface
   def jvp(self, primals, tangents, **params):
