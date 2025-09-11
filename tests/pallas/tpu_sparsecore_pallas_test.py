@@ -850,6 +850,64 @@ class VectorSubcoreTest(PallasSCTest):
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
     np.testing.assert_array_equal(kernel(x), x)
 
+  def test_parallel_loop_with_carry(self):
+    chunk_size = sc_core._vector_dimension()
+    nchunks = 4
+    per_step_increment = 10
+    sentinel_multiplier = 1000
+    x = jnp.arange(16 * chunk_size * nchunks, dtype=np.int32)
+
+    @vector_subcore_kernel(
+        out_shape=x,
+        grid=(16,),
+        in_specs=[pl.BlockSpec([chunk_size * nchunks], lambda i: (i,))],
+        out_specs=pl.BlockSpec([chunk_size * nchunks], lambda i: (i,)),
+    )
+    def kernel(x_ref, o_ref):
+      @pl.when(pl.program_id(0) < 16)
+      def _():
+        init = (jnp.zeros([], x_ref.dtype),  # scalar
+                jnp.zeros([chunk_size], x_ref.dtype),  # vector
+               )
+        def for_each_chunk(i, carry):
+          incr, running_sum = carry
+          incr += per_step_increment
+          o_ref[pl.ds(i, chunk_size)] = x_ref[pl.ds(i, chunk_size)] + incr
+          return incr, running_sum + x_ref[pl.ds(i, chunk_size)]
+        result = plsc.parallel_loop(0, x_ref.shape[0], chunk_size, carry=init)(
+            for_each_chunk)
+        o_ref[pl.ds(0, chunk_size)] = jnp.where(
+            jnp.arange(chunk_size) == 0,
+            result[0] * sentinel_multiplier,
+            result[1])
+
+    output = kernel(x)
+    expected = np.array(x).reshape(16, nchunks, chunk_size)
+    # Check that the increment was properly applied.
+    expected += 10 * np.arange(1, 5)[:, None]
+    # Check the final carry values:
+    # - Scalar in 0th position.
+    expected[:, 0, 0] = sentinel_multiplier * per_step_increment * nchunks
+    # - Vector in 1:chunk_size-1 positions.
+    expected[:, 0, 1:] = x.reshape(16, nchunks, chunk_size).sum(1)[:, 1:]
+    np.testing.assert_array_equal(output, expected.reshape(-1))
+
+  @parameterized.parameters(
+      (lambda x_ref: x_ref, r"may not be.*Ref\{"),
+      (lambda x_ref: x_ref.at[pl.ds(0, 8)], r"TransformedRef.*not a valid"),
+  )
+  def test_parallel_loop_disallows_ref_carries(self, carry_fn, expected_regex):
+    x = jnp.arange(64, dtype=jnp.int32)
+
+    with self.assertRaisesRegex(TypeError, expected_regex):
+      @vector_subcore_kernel(out_shape=x)
+      def kernel(x_ref, o_ref):
+        @plsc.parallel_loop(0, 1, carry=carry_fn(x_ref))
+        def for_each_chunk(i, carry):
+          x_ref[...] = o_ref[...]
+
+      kernel(x)
+
 
 class ScalarSubcoreTest(PallasSCTest):
 
@@ -945,6 +1003,32 @@ class ScalarSubcoreTest(PallasSCTest):
       pltpu.async_copy(tmp_ref, o_ref, sem).wait()
 
     np.testing.assert_array_equal(kernel(x), x + 1)
+
+  def test_parallel_loop_with_carry(self):
+    x = jnp.arange(8*8).reshape(8, 8)
+
+    @plsc.kernel(
+        out_shape=x,
+        mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
+        scratch_shapes=(
+            pltpu.SMEM(x.shape, x.dtype),
+            pltpu.SemaphoreType.DMA,
+        ),
+    )
+    def kernel(x_ref, o_ref, tmp_ref, sem):
+      pltpu.async_copy(x_ref, tmp_ref, sem).wait()
+
+      @plsc.parallel_loop(0, tmp_ref.shape[0], carry=jnp.zeros([], x.dtype))
+      def _(i, carry):
+        carry += 1
+        @plsc.parallel_loop(0, tmp_ref.shape[1], unroll=2)
+        def _(j):
+          tmp_ref[i, j] += carry
+        return carry
+
+      pltpu.async_copy(tmp_ref, o_ref, sem).wait()
+
+    np.testing.assert_array_equal(kernel(x), x + jnp.arange(1, 9)[:, None])
 
 
 if __name__ == "__main__":
