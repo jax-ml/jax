@@ -14,6 +14,7 @@
 """Matrix Multiplication kernel for Hopper GPUs."""
 import statistics
 import dataclasses
+import enum
 import functools
 import itertools
 import jax
@@ -27,6 +28,11 @@ import jax.numpy as jnp
 import numpy as np
 
 
+class MatmulDimension(enum.IntEnum):
+  M = 0
+  N = 1
+
+
 @dataclasses.dataclass(frozen=True)
 class TuningConfig:
   tile_m: int
@@ -35,6 +41,8 @@ class TuningConfig:
   max_concurrent_steps: int
   epi_tile_n: int | None = 64  # This needs to be lowered for for small N.
   epi_tile_m: int | None = 64
+  grid_minor_dim: MatmulDimension = MatmulDimension.N
+  grid_tile_width: int = 1
 
 
 def matmul_kernel(a, b, config: TuningConfig):
@@ -73,12 +81,17 @@ def matmul_kernel(a, b, config: TuningConfig):
   k_iters = k // tile_k
 
   def kernel(a_gmem, b_gmem, out_gmem, out_smem):
-    # TODO(apaszke): Grid tiling
     # TODO(apaszke): Avoid memory pipeline bubbles between MN blocks
     wg_idx = lax.axis_index("wg")
-    @plgpu.nd_loop((m_iters, n_iters), collective_axes="sm")
-    def _mn_loop(idx):
-      m_idx, n_idx = idx
+    @plgpu.nd_loop((m_iters * n_iters,), collective_axes="sm")
+    def _mn_loop(idxs):
+      (lin_idx,) = idxs
+      m_idx, n_idx = plgpu.planar_snake(
+          lin_idx,
+          (m_iters, n_iters),
+          config.grid_minor_dim,
+          config.grid_tile_width,
+      )
       m_slice = pl.ds(m_idx * 2 * tile_m, 2 * tile_m)
       wg_m_slice = pl.ds(lax.axis_index("wg") * tile_m, tile_m)
       n_slice = pl.ds(n_idx * tile_n, tile_n)
@@ -164,7 +177,7 @@ def matmul_kernel(a, b, config: TuningConfig):
 
 
 def main(_) -> None:
-  problem_it = [(4096, 4096, 4096)]
+  problem_it = [(4096, 8192, 4096)]
   for M, N, K in problem_it:
     print(f"==== {M=} {N=} {K=} ====")
     matmul_flops = 2 * M * N * K
@@ -173,14 +186,16 @@ def main(_) -> None:
     b = jax.random.uniform(jax.random.key(1), (K, N), jnp.float16)
     tuning_it = itertools.product(
         (64, 128,),  # tile_m
-        (64, 128, 256),  # tile_n
-        (64, 128),  # tile_k
-        (2, 4),  # max_concurrent_steps
+        (64, 128,),  # tile_n
+        (64,),  # tile_k
+        (4,),  # max_concurrent_steps
         (True,),  # Tiled epilogue
+        (MatmulDimension.M, MatmulDimension.N),  # grid_minor_dim
+        (1, 4, 8, 16),  # grid_tile_width
     )
     best_util = 0.0
     best_runtime = float("inf")
-    for tile_m, tile_n, tile_k, max_concurrent_steps, tiled_epilogue in tuning_it:
+    for tile_m, tile_n, tile_k, max_concurrent_steps, tiled_epilogue, grid_minor_dim, grid_tile_width in tuning_it:
       config = TuningConfig(
           tile_m=tile_m,
           tile_n=tile_n,
@@ -188,6 +203,8 @@ def main(_) -> None:
           max_concurrent_steps=max_concurrent_steps,
           epi_tile_n=64 if tiled_epilogue else None,
           epi_tile_m=64 if tiled_epilogue else None,
+          grid_minor_dim=grid_minor_dim,
+          grid_tile_width=grid_tile_width,
       )
       try:
         out, runtimes_ms = profiler.measure(
@@ -197,9 +214,6 @@ def main(_) -> None:
         runtime_ms = statistics.median(runtimes_ms)
       except ValueError as e:
         if "exceeds available shared memory" in e.args[0]:  # Ignore SMEM OOMs.
-          print(
-              f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=} {tiled_epilogue=}: OOM"
-          )
           continue
         raise
       np.testing.assert_allclose(out, a @ b)
@@ -210,7 +224,7 @@ def main(_) -> None:
         best_runtime = runtime_us
         best_util = achieved_tc_util
       print(
-          f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=} {tiled_epilogue=}:"
+          f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=} {tiled_epilogue=} {grid_minor_dim=} {grid_tile_width=}:"
           f" {runtime_us:<7.1f}us = {achieved_tc_util:4.1f}% TC utilization"
       )
     print(f"\tBest: {best_runtime:<7.1f}us = {best_util:4.1f}% TC utilization")
