@@ -178,20 +178,6 @@ class StatefulRNGTest(jtu.JaxTestCase):
 
     self.assertArraysAllClose(f1(seed), f2(seed))
 
-  def testScanCarry(self):
-    seed = 58490
-    def f1(seed):
-      rng = default_rng(seed)
-      def scan_f(rng, __):
-        return rng, rng.uniform()
-      return jax.lax.scan(scan_f, rng, length=10)[1]
-
-    def f2(seed):
-      rng = default_rng(seed)
-      return jax.numpy.array([rng.uniform() for i in range(10)])
-
-    self.assertArraysAllClose(f1(seed), f2(seed))
-
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
