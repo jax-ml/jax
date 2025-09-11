@@ -19,7 +19,6 @@ from collections.abc import Callable, Sequence, Iterable
 import dataclasses
 from functools import partial
 import inspect
-import itertools as it
 import logging
 import weakref
 from typing import NamedTuple, Any, Union, cast
@@ -1491,7 +1490,7 @@ def _to_lojax(*hi_args, jaxpr, **params):
   # expand pjit params that must match number of lo inputs/outputs
   lo_nums_in = [len(aval.lo_ty()) for aval in jaxpr.in_aval_qdds]
   lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]
-  lo_muts_out = sum(len(aval.lo_ty()) for aval in jaxpr.final_aval_qdds if aval.has_qdd)
+  lo_muts_out = pe.num_himuts_out(jaxpr)
   params = _lojax_expand_params(lo_nums_in, lo_nums_out, lo_muts_out, **params)
 
   # collect lo input values
@@ -1503,24 +1502,8 @@ def _to_lojax(*hi_args, jaxpr, **params):
   lo_jaxpr = pe.lower_jaxpr(jaxpr)
   all_outs = jit_p.bind(*lo_args, jaxpr=lo_jaxpr, **params)
   out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
-
-  # collect and apply mutations
-  out_mut_ = iter(out_mut)
-  in_idx = {v: i for i, v in enumerate(jaxpr.jaxpr.invars)}
-  for v in jaxpr.jaxpr.invars:
-    if v.final_qdd is not None:
-      qdd = v.final_qdd
-      lo_vals = it.islice(out_mut_, len(v.aval.lo_ty_qdd(qdd)))
-      v.aval.update_from_loval(qdd, hi_args[in_idx[v]], *lo_vals)
-  assert next(out_mut_, None) is None
-
-  # collect output values into hi types
-  lo_outs_ = iter(lo_outs)
-  hi_outs = [t.raise_val(*it.islice(lo_outs_, len(t.lo_ty())))
-             for t in jaxpr.out_avals]
-  assert next(lo_outs_, None) is None
-
-  return hi_outs
+  pe.apply_himut(jaxpr, hi_args, out_mut)
+  return pe.raise_lo_outs(jaxpr, lo_outs)
 jit_p.to_lojax = _to_lojax
 
 def _converted_mutables_add_params(
