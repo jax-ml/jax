@@ -82,6 +82,9 @@ class Traceback : public nanobind::object {
   static bool Check(PyObject* o);
 };
 
+// Returns the first non-JAX internal frame in the format "file:line"
+std::string GetCallLocation(const jax::Traceback& traceback);
+
 }  // namespace jax
 
 #endif  // JAXLIB_TRACEBACK_H_
