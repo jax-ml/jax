@@ -151,5 +151,8 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax/_src:dtypes",
+        "//jax/_src:util",
+        "//jax/_src/lib",
+        "//jax/experimental:mosaic_gpu",
     ],
 )
