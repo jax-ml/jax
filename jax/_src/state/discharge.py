@@ -587,6 +587,27 @@ def _closed_call_discharge_rule(
 run_state_p = core.Primitive("run_state")
 run_state_p.multiple_results = True
 
+def _run_state_is_high(*_, jaxpr, **__):
+  return jaxpr.is_high
+run_state_p.is_high = _run_state_is_high  # type: ignore
+
+def _run_state_to_lojax(*args, jaxpr, is_initialized, **params):
+  assert not jaxpr.constvars
+  closed_jaxpr = core.ClosedJaxpr(jaxpr, ())
+  args, is_initialized = unzip2([
+      (lo_val, is_init)
+      for aval, x, is_init in zip(closed_jaxpr.in_avals, args, is_initialized)
+      for lo_val in (aval.read_loval(x) if aval.has_qdd else aval.lower_val(x))
+  ])
+  lo_jaxpr = pe.lower_jaxpr(closed_jaxpr)
+  all_outs = run_state_p.bind(*lo_jaxpr.consts, *args, jaxpr=lo_jaxpr.jaxpr,
+                              is_initialized=is_initialized, **params)
+  out_mut, lo_outs = split_list(all_outs, [pe.num_himuts_out(jaxpr)])
+  pe.apply_himut(jaxpr, args, out_mut)
+  return pe.raise_lo_outs(jaxpr, lo_outs)
+run_state_p.to_lojax = _run_state_to_lojax
+
+
 def _default_initialization(x):
   assert hasattr(x, 'shape')
   assert hasattr(x, 'dtype')
