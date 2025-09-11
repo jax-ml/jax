@@ -4532,10 +4532,11 @@ class PipelineSm90AWGTest(
 class WarpSpecializedPipelineTest(PallasTest):
 
   @parameterized.product(m=[512], n=[512], repeats=[1, 10],
-                         manual_consumed_barriers=[False, True])
-  def test_pipelined_copy(self, m, n, repeats, manual_consumed_barriers):
-    self.skip_if_wg_semantics()  # Times out!
-
+                         manual_consumed_barriers=[False, True],
+                         max_concurrent_steps=[2, 3])
+  def test_pipelined_copy(
+      self, m, n, repeats, manual_consumed_barriers, max_concurrent_steps
+  ):
     x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float16)
     blk_m = blk_n = 64
 
@@ -4555,7 +4556,7 @@ class WarpSpecializedPipelineTest(PallasTest):
           copy_kernel,
           grid=(m // (2 * blk_m), n // blk_n),
           memory_registers=40,
-          max_concurrent_steps=2,
+          max_concurrent_steps=max_concurrent_steps,
           num_compute_wgs=1,
           wg_axis="wg",
           manual_consumed_barriers=manual_consumed_barriers,
@@ -4713,10 +4714,13 @@ class WarpSpecializedPipelineTest(PallasTest):
       static=[False, True],
       manual_consumed_barriers=[False, True],
       small_shape=[True, False],
+      max_concurrent_steps=[2, 3, 4],
   )
   @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
-  def test_delay_release(self, num_compute_wgs, static, manual_consumed_barriers, small_shape):
-    self.skip_if_wg_semantics()  # Crashes!
+  def test_delay_release(
+      self, num_compute_wgs, static, manual_consumed_barriers, small_shape,
+      max_concurrent_steps
+  ):
     if small_shape:
       m = n = 64
     else:
@@ -4749,7 +4753,7 @@ class WarpSpecializedPipelineTest(PallasTest):
       return mgpu_pipeline.emit_pipeline_warp_specialized(
           tiled_add_kernel,
           grid=grid,
-          max_concurrent_steps=4,
+          max_concurrent_steps=max_concurrent_steps,
           manual_consumed_barriers=manual_consumed_barriers,
           num_compute_wgs=num_compute_wgs,
           memory_registers=40,

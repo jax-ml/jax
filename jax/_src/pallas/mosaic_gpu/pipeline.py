@@ -976,13 +976,14 @@ def emit_pipeline_warp_specialized(
       @pl.when(pipeline_state is None or pipeline_state == PipelinePipeline.STOP)
       def _quiesce():
         @pl.loop(
-            0,
-            pipeline_init_prologue_steps - delay_release,
+            num_steps - pipeline_init_prologue_steps,
+            num_steps - delay_release,
             unroll=not has_dynamic_grid,
         )
         def _epi_step(step):
+          consumed_slot = lax.rem(step, max_concurrent_steps)
           for barrier in flat_consumed_barrier_refs:
-            gpu_primitives.barrier_wait(barrier.at[step])
+            gpu_primitives.barrier_wait(barrier.at[consumed_slot])
 
     wg_idx = lax.axis_index(wg_axis)
     lax.cond(
