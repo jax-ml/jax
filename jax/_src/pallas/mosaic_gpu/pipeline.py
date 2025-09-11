@@ -241,7 +241,7 @@ def emit_pipeline(
   # TODO(justinfu): Factor out common code between warp-specialized and
   # normal pipelines.
   delay_release_levels = sorted({s.delay_release for s in in_specs}) or [0]
-  if delay_release_levels and max_concurrent_steps <= delay_release_levels[0]:
+  if delay_release_levels and max_concurrent_steps <= delay_release_levels[-1]:
     raise ValueError(
         "max_concurrent_steps must be greater than all delay_release values,"
         f" but {max_concurrent_steps=} and {delay_release_levels=}."
@@ -584,23 +584,19 @@ def emit_pipeline_warp_specialized(
 
   flat_in_specs, in_specs_treedef = jax.tree.flatten(in_specs)
   flat_out_specs, out_specs_treedef = jax.tree.flatten(out_specs)
-  delay_release = None
-  for in_spec in in_specs:
-    if not isinstance(in_spec, gpu_core.BlockSpec):
-      delay_release = 0
-      continue
-    delay_release = in_spec.delay_release
-    if in_spec.delay_release != delay_release:
-      raise NotImplementedError(
-          "All inputs must have the same delay_release, but"
-          f" {in_spec.delay_release=} != {delay_release=}"
-      )
+  flat_in_specs = tuple(map(_downcast_spec, flat_in_specs))
+  flat_out_specs = tuple(map(_downcast_spec, flat_out_specs))
+  delay_release_levels = sorted({s.delay_release for s in flat_in_specs}) or [0]
+  if delay_release_levels and max_concurrent_steps <= delay_release_levels[0]:
+    raise ValueError(
+        "max_concurrent_steps must be greater than all delay_release values,"
+        f" but {max_concurrent_steps=} and {delay_release_levels=}."
+    )
 
-  delay_release = delay_release or 0
-  if max_concurrent_steps <= delay_release:
+  if max_concurrent_steps <= delay_release_levels[-1]:
     raise ValueError(
         "max_concurrent_steps must be greater than delay_release, but"
-        f" {max_concurrent_steps=}, {delay_release=}"
+        f" {max_concurrent_steps=}, {delay_release_levels=}"
     )
 
   if memory_thread_idx is None:
@@ -759,6 +755,12 @@ def emit_pipeline_warp_specialized(
             flat_out_specs, out_spec_has_seq_axis, flat_out_gmem_refs, flat_out_smem_refs
         )
     ]
+    if manual_consumed_barriers:
+      first_consume_step = 0
+      last_consume_step = num_steps
+    else:
+      first_consume_step = delay_release_levels[0]
+      last_consume_step = num_steps - max_concurrent_steps + delay_release_levels[-1]
 
     def compute_block():
       gpu_primitives.set_max_registers(
@@ -788,7 +790,7 @@ def emit_pipeline_warp_specialized(
       def compute_loop_body(step, carry):
         indices, last_store_slices, prev_body_carry = carry
         slot = lax.rem(step, max_concurrent_steps)
-        consumed_slot = lax.rem(step - delay_release, max_concurrent_steps)
+        consumed_slot = lax.rem(step, max_concurrent_steps)
         # Wait for the current GMEM->SMEM copies to complete.
         gpu_primitives.barrier_wait(in_smem_barrier_ref.at[_get_slot(slot, True)])
 
@@ -820,14 +822,10 @@ def emit_pipeline_warp_specialized(
 
         if not manual_consumed_barriers:
           [consumed_barrier_ref] = flat_consumed_barrier_refs
-          if delay_release > 0:
-            lax.cond(
-                step < delay_release,
-                lambda: None,
-                lambda: gpu_primitives.barrier_arrive(consumed_barrier_ref.at[consumed_slot]),
-            )
-          else:
-            gpu_primitives.barrier_arrive(consumed_barrier_ref.at[consumed_slot])
+          @pl.when((step >= first_consume_step) & (step < last_consume_step))
+          def _():
+            current_slot = lax.rem(step, max_concurrent_steps)
+            gpu_primitives.barrier_arrive(consumed_barrier_ref.at[current_slot])
         # TODO(justinfu,apaszke): This should probably be done by the memory WG.
         # Copy the output from SMEM to GMEM.
         if copies_out_in_loop:
@@ -914,7 +912,6 @@ def emit_pipeline_warp_specialized(
       else:
         assert max_concurrent_steps <= num_steps
         prologue_steps = max_concurrent_steps
-      pipeline_init_prologue_steps = prologue_steps
       if pipeline_state is not None:
         if has_dynamic_grid:
           raise NotImplementedError(
@@ -926,7 +923,7 @@ def emit_pipeline_warp_specialized(
               f" (product of grid, here {num_steps}) is divisible by"
               f" {max_concurrent_steps=}"
           )
-        if delay_release:
+        if delay_release_levels[-1]:
           raise NotImplementedError(
               "A pipeline of pipelines is not supported with delay_release"
           )
@@ -943,33 +940,47 @@ def emit_pipeline_warp_specialized(
           bref.copy_in(buf_slot, indices, in_smem_barrier_ref, barrier_slot)
         return _inc_grid_by_1(indices, grid)
 
-      indices = jax.lax.fori_loop(
+      jax.lax.fori_loop(
           0, prologue_steps, _init_step, indices, unroll=not has_dynamic_grid
       )
 
       def memory_loop_body(step, carry):
         indices, = carry
-        slot = lax.rem(step, max_concurrent_steps)
-        fetch_slot = slot  # (x + y) % y == x % y
+        # We wait on all the consume barriers even if there is nothing
+        # yet to fetch to make sure they are not arrived to a second
+        # time before being waited on.
+        consume_barrier_slot = lax.rem(step, max_concurrent_steps)
 
         if not manual_consumed_barriers:
           # We only have one consumed barrier when using automatic consumed
           # barrier management.
           [consumed_barrier_ref] = flat_consumed_barrier_refs
-          gpu_primitives.barrier_wait(consumed_barrier_ref.at[slot])
+          gpu_primitives.barrier_wait(consumed_barrier_ref.at[consume_barrier_slot])
           consumed_barrier_it = [None] * len(flat_in_brefs)
         else:
           consumed_barrier_it = flat_consumed_barrier_refs
 
         for bref, consumed_barrier in zip(flat_in_brefs, consumed_barrier_it):
           if manual_consumed_barriers:
-            gpu_primitives.barrier_wait(consumed_barrier.at[slot])  # pytype: disable=attribute-error
-          buf_slot = _get_slot(fetch_slot, not bref.is_index_invariant)
-          barrier_slot = _get_slot(fetch_slot, True)
-          bref.copy_in(buf_slot, indices, in_smem_barrier_ref, barrier_slot)
+            gpu_primitives.barrier_wait(consumed_barrier.at[consume_barrier_slot])  # pytype: disable=attribute-error
+          # pylint: disable=cell-var-from-loop
+          def do_fetch():
+            fetch_slot = lax.rem(step - bref.spec.delay_release, max_concurrent_steps)
+            buf_slot = _get_slot(fetch_slot, not bref.is_index_invariant)
+            fetch_barrier_slot = _get_slot(fetch_slot, True)
+            bref.copy_in(buf_slot, indices, in_smem_barrier_ref, fetch_barrier_slot)
+          # pylint: enable=cell-var-from-loop
+
+          if bref.spec.delay_release == 0:
+            do_fetch()
+          else:
+            final_fetch_step = num_steps - max_concurrent_steps + bref.spec.delay_release
+            pl.when(
+                (bref.spec.delay_release <= step) & (step < final_fetch_step)
+            )(do_fetch)
         next_indices = _inc_grid_by_1(indices, grid)
         return (next_indices,)
-      lax.fori_loop(0, num_steps - prologue_steps, memory_loop_body, (indices,))
+      lax.fori_loop(first_consume_step, last_consume_step, memory_loop_body, (indices,))
       # Await all the arrivals to not leave barriers in a bad state.
       # We only need to account for the prologue steps, only the first
       # delay_release of them skip arrivals, so we subtract them.
@@ -977,7 +988,7 @@ def emit_pipeline_warp_specialized(
       def _quiesce():
         @pl.loop(
             0,
-            pipeline_init_prologue_steps - delay_release,
+            num_steps - (last_consume_step - first_consume_step),
             unroll=not has_dynamic_grid,
         )
         def _epi_step(step):
