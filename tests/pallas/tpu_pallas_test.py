@@ -2187,8 +2187,12 @@ class PallasCallTest(PallasBaseTest):
         and is_cloud_tpu_older_than(2025, 9, 10)
     ):
       self.skipTest('i8 -> i16 casting support was added on Sep 10, 2025')
-    elif in_dtype == jnp.int16 and out_dtype == jnp.int8:
-      self.skipTest('TODO(b/440044490): i16 -> i8 casting is not supported')
+    elif (
+        in_dtype == jnp.int16
+        and out_dtype == jnp.int8
+        and is_cloud_tpu_older_than(2025, 9, 14)
+    ):
+      self.skipTest('i16 -> i8 casting support was added on Sep 14, 2025')
 
     x = jnp.asarray([7], dtype=in_dtype)
     if jnp.issubdtype(in_dtype, jnp.signedinteger):
