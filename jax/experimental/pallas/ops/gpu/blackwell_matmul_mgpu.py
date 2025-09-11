@@ -85,7 +85,7 @@ def matmul_kernel(a, b, config: TuningConfig):
 
   def kernel(a_gmem, b_gmem, out_gmem,
              a_smem, b_smem, acc_tmem, acc_smem,
-             a_tma_barrier, b_tma_barrier, store_done_barrier, mma_done_barrier,
+             ab_tma_barrier, store_done_barrier, mma_done_barrier,
              consumed_barrier):
     if collective:
       grid = (m_iters, n_iters, 2)
@@ -137,14 +137,14 @@ def matmul_kernel(a, b, config: TuningConfig):
               plgpu.copy_gmem_to_smem(
                   a_gmem.at[slice_m, slice_k],
                   a_smem.at[slot],
-                  a_tma_barrier.at[slot],
+                  ab_tma_barrier.at[slot],
                   partitioned_axis=0 if collective else None,
                   collective_axes="x" if collective else None,
               )
               plgpu.copy_gmem_to_smem(
                   b_gmem.at[slice_k, slice_n],
                   b_smem.at[slot],
-                  b_tma_barrier.at[slot],
+                  ab_tma_barrier.at[slot],
                   partitioned_axis=1 if collective else None,
                   collective_axes="x" if collective else None,
               )
@@ -157,8 +157,7 @@ def matmul_kernel(a, b, config: TuningConfig):
           def _compute():
             def _loop_body(ki, _):
               slot = lax.rem(ki, max_concurrent_steps)
-              plgpu.barrier_wait(a_tma_barrier.at[slot])
-              plgpu.barrier_wait(b_tma_barrier.at[slot])
+              plgpu.barrier_wait(ab_tma_barrier.at[slot])
 
               is_last_iter = ki >= k_iters - 1
               acc_tmem_slice = acc_tmem.at[:, pl.ds(acc_slot * tile_n, tile_n)]
@@ -222,9 +221,8 @@ def matmul_kernel(a, b, config: TuningConfig):
           # Temporary SMEM used for storing accumulator output to GMEM.
           plgpu.SMEM(
               (block_tile_m, epilogue_tile_n), dtype, transforms=transforms),
-          # a/b_tma_barrier
-          plgpu.Barrier(num_arrivals=1, num_barriers=max_concurrent_steps),
-          plgpu.Barrier(num_arrivals=1, num_barriers=max_concurrent_steps),
+          # ab_tma_barrier
+          plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
           # store_done_barrier, double-buffered
           plgpu.Barrier(num_arrivals=1, num_barriers=2,
                         orders_tensor_core=True),
@@ -243,9 +241,7 @@ def matmul_kernel(a, b, config: TuningConfig):
 
 
 def main(_) -> None:
-  problem_it = itertools.product(
-      (1024, 4096, 8192), (1024, 4096, 8192), (1024, 8192)
-  )
+  problem_it = [(4096, 8192, 4096)]
   for M, N, K in problem_it:
     print(f"==== {M=} {N=} {K=} ====")
     matmul_flops = 2 * M * N * K
@@ -255,7 +251,7 @@ def main(_) -> None:
     tuning_it = itertools.product(
         (128,),  # tile_m
         (128, 256),  # tile_n
-        (64, 128),  # tile_k
+        (64,),  # tile_k
         (None, 4, 8, 16),  # grid_tile_n
         (2, 4, 6),  # max_concurrent_steps
         (False, True),  # collective
