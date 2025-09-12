@@ -1086,6 +1086,9 @@ jax_multiplatform_test(
             "noasan",  # Times out under asan.
             "requires-mem:16g",  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
         ],
+        "gpu": [
+            "noasan",  # Times out under asan.
+        ],
     },
     enable_configs = [
         "gpu_v100",
