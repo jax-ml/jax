@@ -22,7 +22,6 @@ import subprocess
 import time
 
 from absl import app
-import absl.flags
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -32,6 +31,7 @@ from jax._src import test_util as jtu
 from jax._src.config import config
 from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client as xc
+from tests.multiprocess import multiprocess_test
 
 try:
   import portpicker  # pytype: disable=import-error
@@ -40,30 +40,7 @@ except ImportError:
 
 
 
-_NUM_PROCESSES = absl.flags.DEFINE_integer(
-    "num_processes", None, "Number of processes to use."
-)
-
-_GPUS_PER_PROCESS = absl.flags.DEFINE_integer(
-    "gpus_per_process",
-    0,
-    "Number of GPUs per worker process.",
-)
-
-_MULTIPROCESS_TEST_WORKER_ID = absl.flags.DEFINE_integer(
-    "multiprocess_test_worker_id",
-    -1,
-    "Worker id. Set by main test process; should not be set by users.",
-)
-
-_MULTIPROCESS_TEST_CONTROLLER_ADDRESS = absl.flags.DEFINE_string(
-    "multiprocess_test_controller_address",
-    "",
-    "Address of the JAX controller. Set by the main test process; should not be"
-    " set by users.",
-)
-
-
+# DO NOT SUBMIT just delete this and use multiprocess_test?
 expect_failures_with_regex = None
 
 
@@ -88,11 +65,11 @@ class GracefulKiller:
 
 
 def _main(argv):
-  if _MULTIPROCESS_TEST_WORKER_ID.value >= 0:
+  if multiprocess_test.MULTIPROCESS_TEST_WORKER_ID.value >= 0:
     distributed.initialize(
-        _MULTIPROCESS_TEST_CONTROLLER_ADDRESS.value,
-        num_processes=_NUM_PROCESSES.value,
-        process_id=_MULTIPROCESS_TEST_WORKER_ID.value,
+        multiprocess_test.MULTIPROCESS_TEST_CONTROLLER_ADDRESS.value,
+        num_processes=multiprocess_test.NUM_PROCESSES.value,
+        process_id=multiprocess_test.MULTIPROCESS_TEST_WORKER_ID.value,
         initialization_timeout=10,
     )
     absltest.main(testLoader=jtu.JaxTestLoader())
@@ -100,10 +77,10 @@ def _main(argv):
   if not argv[0].endswith(".py"):  # Skip the interpreter path if present.
     argv = argv[1:]
 
-  num_processes = _NUM_PROCESSES.value
+  num_processes = multiprocess_test.NUM_PROCESSES.value
   if num_processes is None:
     raise ValueError("num_processes must be set")
-  gpus_per_process = _GPUS_PER_PROCESS.value
+  gpus_per_process = multiprocess_test.GPUS_PER_PROCESS.value
   # Get the number of GPUs visible to this process without initializing the runtime
   if cuda_versions is not None:
     local_device_count = cuda_versions.cuda_device_count()
@@ -234,9 +211,9 @@ class MultiProcessTest(parameterized.TestCase):
   def setUp(self):
     """Start tests together."""
     super().setUp()
-    assert xb.process_count() == _NUM_PROCESSES.value, (
+    assert xb.process_count() == multiprocess_test.NUM_PROCESSES.value, (
         xb.process_count(),
-        _NUM_PROCESSES.value,
+        multiprocess_test.NUM_PROCESSES.value,
     )
     # Make sure all processes are at the same test case.
     client = distributed.global_state.client
