@@ -90,6 +90,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record(
         "expit", 1, float_dtypes, jtu.rand_small_positive, True
     ),
+    op_record(
+        "sici", 1, float_dtypes, jtu.rand_default, True
+    ),
     # TODO: gammaln has slightly high error.
     op_record(
         "gammaln", 1, float_dtypes, jtu.rand_positive, False
@@ -382,6 +385,23 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 5e-5
     self._CheckAgainstNumpy(osp_special.hyp2f1, lsp_special.hyp2f1, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.hyp2f1, args_maker, rtol=rtol)
+
+  def testSiciEdgeCases(self):
+    dtype = jnp.zeros(0).dtype  # default float dtype
+    # Only the edge cases: 0, inf, -inf
+    x_samples = np.array([0.0, np.inf, -np.inf], dtype=dtype)
+    scipy_op = lambda x: osp_special.sici(x)
+    lax_op = lambda x: lsp_special.sici(x)
+    si_scipy, ci_scipy = scipy_op(x_samples)
+    si_jax, ci_jax = lax_op(x_samples)
+    # Values at x = 0, inf, -inf according to mathematical definition and SciPy
+    expected_si = np.array([0.0, np.pi/2, -np.pi/2], dtype=dtype)
+    expected_ci = np.array([-np.inf, 0.0, 0.0], dtype=dtype)
+    # Compare JAX and SciPy outputs to each other and to expected values
+    self.assertAllClose(si_scipy, si_jax, atol=1e-6, rtol=1e-6)
+    self.assertAllClose(ci_scipy, ci_jax, atol=1e-6, rtol=1e-6)
+    self.assertAllClose(si_scipy, expected_si, atol=1e-6, rtol=1e-6)
+    self.assertAllClose(ci_scipy, expected_ci, atol=1e-6, rtol=1e-6)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

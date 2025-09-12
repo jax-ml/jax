@@ -2106,6 +2106,47 @@ def expi(x: ArrayLike) -> Array:
   x_arr, = promote_args_inexact("expi", x)
   return jnp.piecewise(x_arr, [x_arr < 0], [_expi_neg, _expi_pos])
 
+@partial(jit, inline=True)
+def sici(x: ArrayLike, /) -> Array:
+    """Compute the sine and cosine integrals Si(x) and Ci(x).
+
+    The sine integral Si(x) and cosine integral Ci(x) are defined as
+
+        Si(x) = ∫₀ˣ (sin t / t) dt
+        Ci(x) = γ + ln(x) + ∫₀ˣ (cos t - 1) / t dt
+
+    where γ is the Euler–Mascheroni constant.
+
+    Returns:
+        An array of shape (..., 2), where the last dimension contains [Si(x), Ci(x)].
+    """
+    x = jnp.asarray(x, dtype=jnp.complex64)  # promote to complex for generality
+
+    # core formula (Ei representation)
+    w1 = 1j * x
+    w2 = -1j * x
+    term1 = jnp.exp(w1) * expi(w1)
+    term2 = jnp.exp(w2) * expi(w2)
+    Si = -0.5j * (term1 - term2)
+    Ci = 0.5 * (term1 + term2)
+
+    # --- edge case corrections ---
+    zero_mask = x == 0
+    posinf_mask = jnp.isposinf(x.real)
+    neginf_mask = jnp.isneginf(x.real)
+
+    # Use consistent types: wrap scalars in jnp.full_like
+    Si = jnp.where(zero_mask, jnp.zeros_like(x, dtype=x.dtype), Si)
+    Ci = jnp.where(zero_mask, jnp.full_like(x, -jnp.inf, dtype=x.dtype), Ci)
+
+    Si = jnp.where(posinf_mask, jnp.full_like(x, jnp.pi / 2, dtype=x.dtype), Si)
+    Ci = jnp.where(posinf_mask, jnp.zeros_like(x, dtype=x.dtype), Ci)
+
+    Si = jnp.where(neginf_mask, jnp.full_like(x, -jnp.pi / 2, dtype=x.dtype), Si)
+    Ci = jnp.where(neginf_mask, jnp.full_like(x, 1j * jnp.pi, dtype=x.dtype), Ci)
+
+    # Stack outputs into shape (..., 2)
+    return jnp.stack([Si, Ci], axis=-1)
 
 @expi.defjvp
 @jit
