@@ -226,11 +226,13 @@ for _t in dtypes.python_scalar_types:
   shard_arg_handlers[_t] = _shard_python_scalar
 
 def _shard_darray(xs, shardings, layouts, copy_semantics):
-  return shard_args(shardings, layouts, copy_semantics, [x._data for x in xs])
+  bufs = [x._data for x in xs]
+  return shard_args(shardings, layouts, copy_semantics, bufs)
 shard_arg_handlers[core.DArray] = _shard_darray
 
 def _shard_mutable_array(xs, shardings, layouts, copy_semantics):
-  return shard_args(shardings, layouts, copy_semantics, [x._buf for x in xs])
+  bufs = [x._refs._buf for x in xs]
+  return shard_args(shardings, layouts, copy_semantics, bufs)
 shard_arg_handlers[core.MutableArray] = _shard_mutable_array
 
 def batched_device_put(aval: core.ShapedArray,
@@ -1392,7 +1394,7 @@ class ExecuteReplicated:
       out_ = []
       for i, o in zip(self.mut.out_mut, out):
         if i is not None:
-          args[i]._buf._replace_with(o)  # type: ignore
+          args[i]._refs._buf._replace_with(o)  # type: ignore
         else:
           out_.append(o)
       return out_

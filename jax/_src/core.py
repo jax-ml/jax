@@ -72,6 +72,8 @@ map, unsafe_map = safe_map, map
 
 config_ext = xla_client._xla.config
 
+PyTree = Any
+
 
 _TRACER_ERROR_NUM_TRACEBACK_FRAMES = config.int_flag(
     'jax_tracer_error_num_traceback_frames',
@@ -2574,27 +2576,48 @@ class ArrayRef:
 
   .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
   """
-  _aval: ShapedArray
-  _buf: Array
-  def __init__(self, aval, buf):
-    assert isinstance(buf, Array)
+  _aval: AbstractValue
+  _refs: PyTree  # pytree of ArrayRefImpl
+
+  def __init__(self, aval, refs):
+    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    assert isinstance(aval, AbstractRef)
     self._aval = aval
-    self._buf = buf
+    self._refs = refs
+
+  # TODO(mattjj): update repr to handle non-lojax refs
+  def __repr__(self) -> str: return 'ArrayRef' + repr(self._refs._buf)[5:]
+
+  # forward type-level info to aval
   aval = property(lambda self: self._aval)
   shape = property(lambda self: self._aval.shape)
   dtype = property(lambda self: self._aval.dtype)
-  sharding = property(lambda self: self._buf.sharding)
-  format = property(lambda self: self._buf.format)
-  committed = _committed = property(lambda self: self._buf._committed)
+
+  # get operations from aval, munging the name
   def __getitem__(self, idx): return self._aval._getitem(self, idx)
   def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)
-  def __repr__(self) -> str: return 'ArrayRef' + repr(self._buf)[5:]
   def __len__(self) -> int: return self._aval._len(self)
   def addupdate(self, x, idx=()): return self._aval._addupdate(self, idx, x)
-  def unsafe_buffer_pointer(self): return self._buf.unsafe_buffer_pointer()
-  @property
-  def at(self): raise NotImplementedError()
 
+  # some attributes/methods only work for lojax refs
+  sharding = property(lambda self: self._refs._buf.sharding)
+  format = property(lambda self: self._refs._buf.format)
+  committed = _committed = property(lambda self: self._refs._buf._committed)
+  def unsafe_buffer_pointer(self): return self._refs._buf.unsafe_buffer_pointer()
+
+  @property
+  def at(self): raise NotImplementedError()  # TODO(mattjj)
+
+class ArrayRefImpl:
+  _aval: ShapedArray
+  _buf: Array  # mutable field
+
+  def __init__(self, aval, buf):
+    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    assert isinstance(aval, AbstractRef) and isinstance(aval.inner_aval, ShapedArray)
+    assert isinstance(buf, Array)
+    self._aval = aval
+    self._buf = buf
 
 pytype_aval_mappings[ArrayRef] = lambda x: x._aval
 dtypes.canonicalize_value_handlers[ArrayRef] = _canonicalize_identity
@@ -2640,11 +2663,11 @@ def array_ref_abstract_eval(init_aval, *, memory_space: Any):
 def _array_ref_impl(init_val, *, memory_space: Any):
   if memory_space is not None:
     raise NotImplementedError(
-        "array ref with memory space only works inside of a `jit`."
-    )
+        "array ref with memory space only works inside of a `jit`.")
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
-  return ArrayRef(AbstractRef(get_aval(init_val)), _array_copy(init_val))
+  aval = AbstractRef(typeof(init_val))
+  return ArrayRef(aval, ArrayRefImpl(aval, _array_copy(init_val)))
 
 def freeze(ref: ArrayRef) -> Array:
   """Invalidate a given reference and return its final value.
