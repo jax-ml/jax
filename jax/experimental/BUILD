@@ -288,6 +288,7 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:scf_dialect",
         "//jaxlib/mlir:vector_dialect",
         "//jaxlib/mosaic/python:gpu_dialect",
+        "@xla//xla/python:_gpu_ondevice_tracing",
     ] + py_deps("absl-all") + py_deps("numpy"),
 )
 

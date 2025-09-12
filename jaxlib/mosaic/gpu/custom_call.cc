@@ -676,6 +676,7 @@ absl::Status LegacyCustomCall(cudaStream_t stream, void** buffers,
     NvshmemApi::Default().barrier_all_on_stream(stream);
   }
   void* args[4] = {&ctx, &stream, &buffers};
+  tsl::profiler::TraceMe trace("MosaicGpuLaunchKernel");
   kernel->host_launch(args);
   return absl::OkStatus();
 }
@@ -945,6 +946,7 @@ absl::Status MosaicGpuExecute(
   }
   void** buffers_data = buffer_ptrs.data();
   void* args[4] = {&ctx, &stream, &buffers_data};
+  tsl::profiler::TraceMe trace("MosaicGpuLaunchKernel");
   kernel->host_launch(args);
   return absl::OkStatus();
 }
