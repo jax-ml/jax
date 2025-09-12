@@ -191,6 +191,9 @@ jax_multiplatform_test(
     enable_backends = [],
     enable_configs = ["gpu_h100"],
     shard_count = 8,
+    tags = [
+        "noasan",  # Remove the tag once the CUPTI issue is fixed.
+    ],
     deps = [
         "//jax:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:flash_attention",
