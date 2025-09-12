@@ -3031,6 +3031,37 @@ class PrettyPrintingTest(PallasBaseTest):
 class MiscellaneousTest(PallasBaseTest):
   """Tests for reported bugs. Only pass in interpret mode unless fixed."""
 
+  def test_casting_bool_to_i8(self):
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest("Operation not supported on this TPU version.")
+
+    def greater_than(x: jax.Array, y: jax.Array):
+      def kernel(x_ref, y_ref, out_ref):
+        cmp = (x_ref[...] > y_ref[...]).astype(jnp.int8)
+        out_ref[:] = cmp
+
+      in_specs = [
+          pl.BlockSpec(memory_space=pltpu.VMEM),
+          pl.BlockSpec(memory_space=pltpu.VMEM),
+      ]
+      out_specs = pl.BlockSpec(memory_space=pltpu.VMEM)
+
+      return self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int8),
+          in_specs=in_specs,
+          out_specs=out_specs,
+      )(x, y)
+
+    key = jax.random.key(0)
+    x_key, y_key = jax.random.split(key)
+    x = jax.random.normal(x_key, (128, 16), dtype=jnp.float32)
+    y = jax.random.normal(y_key, (128, 16), dtype=jnp.float32)
+    out = jax.jit(greater_than)(x, y)
+
+    expected = (x > y).astype(jnp.int8)
+    np.testing.assert_array_equal(out, expected)
+
   def test_float32_stack(self):
     x = np.arange(128, dtype=jnp.float32).reshape(1, 128)
     y = x + 128
