@@ -24,12 +24,16 @@ limitations under the License.
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep.
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep.
 #include "mlir/IR/Location.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
@@ -83,6 +87,39 @@ Operation *TPUDialect::materializeConstant(OpBuilder &builder, Attribute value,
     return std::nullopt;
   }
   return mlir::cast<CoreTypeAttr>(attr).getValue();
+}
+
+struct MemRefCastEraseLayout : public OpRewritePattern<memref::CastOp> {
+  // Set the benefit to 0 to ensure that other patterns that fold in the cast
+  // are tried first.
+  MemRefCastEraseLayout(MLIRContext* context)
+      : OpRewritePattern<memref::CastOp>(context, /*benefit=*/0) {}
+  LogicalResult matchAndRewrite(memref::CastOp cast_op,
+                                PatternRewriter& rewriter) const final {
+    // Push tpu.erase_memref_layout through memref.cast
+    auto erase_layout_op = cast_op.getOperand().getDefiningOp<EraseLayoutOp>();
+    if (!erase_layout_op) {
+      return failure();
+    }
+    TypedValue<MemRefType> orig_value = erase_layout_op.getOperand();
+    const MemRefType orig_type = orig_value.getType();
+    const ArrayRef<int64_t> cast_shape = cast_op.getType().getShape();
+    MemRefType new_cast_type =
+        MemRefType::Builder(orig_type).setShape(cast_shape);
+    auto new_cast_op = memref::CastOp::create(rewriter, cast_op.getLoc(),
+                                              new_cast_type, orig_value);
+    MemRefType new_erase_layout_type =
+        MemRefType::Builder(new_cast_type).setLayout(nullptr);
+    auto new_erase_layout_op = EraseLayoutOp::create(
+        rewriter, erase_layout_op.getLoc(), new_erase_layout_type, new_cast_op);
+    rewriter.replaceOp(cast_op, new_erase_layout_op);
+    return success();
+  }
+};
+
+void TPUDialect::getCanonicalizationPatterns(RewritePatternSet& results) const
+/*override*/ {
+  results.add<MemRefCastEraseLayout>(getContext());
 }
 
 FailureOr<CoreType> GetCoreTypeOfParentFunc(Operation &op) {
