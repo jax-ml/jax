@@ -62,6 +62,9 @@ else
   FREETHREADED_FLAG_VALUE="no"
 fi
 
+# TODO(b/446172564): This test hangs on CPU.
+IGNORE_TESTS="-//tests/multiprocess:array_test_cpu"
+
 # When running on Mac or Linux Aarch64, we only build the test targets and
 # not run them. These platforms do not have native RBE support so we
 # RBE cross-compile them on remote Linux x86 machines. As the tests still
@@ -82,9 +85,13 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
               --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
               --test_output=errors \
               --color=yes \
+              -- \
               $WHEEL_SIZE_TESTS \
               //tests:cpu_tests //tests:backend_independent_tests \
-              //jax/experimental/jax2tf/tests:jax2tf_test_cpu
+              //jax/experimental/jax2tf/tests:jax2tf_test_cpu \
+              //tests/multiprocess:cpu_tests \
+              //jax/experimental/jax2tf/tests/multiprocess:cpu_tests \
+              $IGNORE_TESTS
       else
           echo "Running RBE CPU tests..."
           bazel test --config=rbe_cross_compile_${os}_${arch} \
@@ -98,9 +105,13 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
               --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
               --test_output=errors \
               --color=yes \
+              -- \
               $WHEEL_SIZE_TESTS \
               //tests:cpu_tests //tests:backend_independent_tests \
-              //jax/experimental/jax2tf/tests:jax2tf_test_cpu
+              //jax/experimental/jax2tf/tests:jax2tf_test_cpu \
+              //tests/multiprocess:cpu_tests \
+              //jax/experimental/jax2tf/tests/multiprocess:cpu_tests \
+              $IGNORE_TESTS
       fi
 else
       echo "Running RBE CPU tests..."
@@ -115,7 +126,11 @@ else
             --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
             --test_output=errors \
             --color=yes \
+            -- \
             $WHEEL_SIZE_TESTS \
             //tests:cpu_tests //tests:backend_independent_tests \
-            //jax/experimental/jax2tf/tests:jax2tf_test_cpu
+            //jax/experimental/jax2tf/tests:jax2tf_test_cpu \
+            //tests/multiprocess:cpu_tests \
+            //jax/experimental/jax2tf/tests/multiprocess:cpu_tests \
+            $IGNORE_TESTS
 fi
