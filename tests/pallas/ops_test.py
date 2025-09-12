@@ -636,6 +636,9 @@ class OpsTest(PallasBaseTest):
   @hp.given(hps.data())
   @hp.settings(suppress_health_check=[hp.HealthCheck.too_slow])  # ASAN is slow
   def test_cast_from_32bit(self, from_dtype, to_dtype, data):
+    if jtu.test_device_matches(["cpu"]) and jtu.SKIP_SLOW_TESTS.value:
+      self.skipTest("Test is slow on CPU.")
+
     sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and use_mosaic_gpu
     if to_dtype in {"float8_e4m3b11fnuz", "float8_e5m2", "float8_e4m3fn"}:
       if not jtu.test_device_matches(["tpu"]):
@@ -1285,7 +1288,6 @@ class OpsTest(PallasBaseTest):
       )
   )
   def test_comparison(self, fn, dtype):
-
     if jtu.test_device_matches(["gpu"]) and dtype == jnp.bool_:
       self.skipTest("Not implemented on GPU.")
 
@@ -1313,6 +1315,9 @@ class OpsTest(PallasBaseTest):
       )
   )
   def test_comparison_scalar(self, fn, dtype):
+    if jtu.test_device_matches(["cpu"]) and jtu.SKIP_SLOW_TESTS.value:
+      self.skipTest("Test is slow on CPU.")
+
     if jtu.test_device_matches(["tpu"]) and dtype == jnp.float16:
       self.skipTest("float16 is not supported on TPU")
 
