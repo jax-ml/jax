@@ -2541,10 +2541,7 @@ def _darray_aval(x):
   return DShapedArray(x._aval.shape, x._aval.dtype, x._aval.weak_type)
 
 pytype_aval_mappings[DArray] = _darray_aval
-
-def _canonicalize_identity(x, *, canonicalize_scalar_dtypes):
-  return x
-dtypes.canonicalize_value_handlers[DArray] = _canonicalize_identity
+dtypes.canonicalize_value_handlers[DArray] = lambda x: x
 
 
 @dataclass(frozen=True)
@@ -2597,7 +2594,7 @@ class ArrayRef:
 
 
 pytype_aval_mappings[ArrayRef] = lambda x: x._aval
-dtypes.canonicalize_value_handlers[ArrayRef] = _canonicalize_identity
+dtypes.canonicalize_value_handlers[ArrayRef] = lambda x: x
 
 def array_ref(init_val, *, memory_space: Any = None):
   """Create a mutable array reference with initial value ``init_val``.
@@ -2712,7 +2709,7 @@ class Token:
   def block_until_ready(self):
     self._buf.block_until_ready()
 pytype_aval_mappings[Token] = lambda _: abstract_token
-dtypes.canonicalize_value_handlers[Token] = _canonicalize_identity
+dtypes.canonicalize_value_handlers[Token] = lambda x: x
 
 
 ### Operations on shapes and dimension sizes.

@@ -33,7 +33,7 @@ from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import debugging
 from jax._src import dtypes
-from jax._src import literal_array
+from jax._src import literals
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
@@ -1208,7 +1208,7 @@ def _ensure_mlir_value(val: object, aval: ShapedAbstractValue) -> Any:
     # TODO(slebedev): Drop this branch and change the return type to ir.Value.
     return val
   elif isinstance(val, (np.generic, np.ndarray, int, float,
-                        literal_array.LiteralArray)):
+                        literals.LiteralArray)):
     return ir_constant(val, _dtype_to_ir_type(aval.dtype))
   else:
     raise RuntimeError(
@@ -1257,7 +1257,7 @@ def _swap_lowering_rule(
 
 
 def _make_index(s):
-  if isinstance(s, (int, np.ndarray, literal_array.LiteralArray)):
+  if isinstance(s, (int, np.ndarray, literals.LiteralArray)):
     return ir_constant(s, ir.IndexType.get())
   if s.type == ir.IndexType.get():
     return s
@@ -3147,6 +3147,7 @@ def _scan_lowering_rule(
   consts_avals, args_avals = split_list(ctx.avals_in, [num_consts])
   if has_loop_index:
     loop_index_start, *args = args
+    loop_index_start = loop_index_start
     args_avals = args_avals[1:]
   else:
     loop_index_start = 0

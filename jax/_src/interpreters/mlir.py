@@ -39,7 +39,7 @@ from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import frozen_dict
 from jax._src import hashable_array
-from jax._src import literal_array
+from jax._src import literals
 from jax._src import jaxpr_util
 from jax._src import linear_util as lu
 from jax._src import path
@@ -335,7 +335,7 @@ def _ndarray_constant_handler(val: np.ndarray | np.generic,
     return _numpy_array_constant(val)
 
 register_constant_handler(np.ndarray, _ndarray_constant_handler)
-register_constant_handler(literal_array.LiteralArray, _ndarray_constant_handler)
+register_constant_handler(literals.LiteralArray, _ndarray_constant_handler)
 
 for _scalar_type in [np.int8, np.int16, np.int32, np.int64,
                      np.uint8, np.uint16, np.uint32, np.uint64,

@@ -12,11 +12,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
 from typing import Sequence
 from jax._src import typing
 from jax._src.lib import _jax
 from jax._src.lib import jaxlib_extension_version
+import numpy as np
+
+# LiteralInt, LiteralFloat, and LiteralComplex are subclasses of int, float, and
+# complex that carry a JAX dtype. Canonicalization forms these types from int,
+# float, and complex. Repeated canonicalization, including under different
+# jax_enable_x64 modes, preserves the dtype.
+
+class LiteralInt(int):
+
+  dtype: np.dtype
+
+  def __new__(cls, value: int, dtype: np.dtype):
+    v = super(LiteralInt, cls).__new__(cls, value)
+    v.dtype = dtype
+    return v
+
+
+class LiteralFloat(float):
+
+  dtype: np.dtype
+
+  def __new__(cls, value: float, dtype: np.dtype):
+    v = super(LiteralFloat, cls).__new__(cls, value)
+    v.dtype = dtype
+    return v
+
+
+class LiteralComplex(complex):
+
+  dtype: np.dtype
+
+  def __new__(cls, value: complex, dtype: np.dtype):
+    v = super(LiteralComplex, cls).__new__(cls, value)
+    v.dtype = dtype
+    return v
+
+
+literal_scalar_types: set[type] = {LiteralInt, LiteralFloat, LiteralComplex}
 
 
 class LiteralArray:
@@ -29,6 +66,7 @@ class LiteralArray:
     mode
   * it can be weakly typed.
   """
+
   __slots__ = ('val', 'weak_type')
 
   val: np.ndarray
@@ -65,17 +103,22 @@ class LiteralArray:
     else:
       dtype_str = f'dtype={self.val.dtype.name})'
 
-    line_width = np.get_printoptions()["linewidth"]
+    line_width = np.get_printoptions()['linewidth']
     if self.size == 0:
-      s = f"[], shape={self.val.shape}"
+      s = f'[], shape={self.val.shape}'
     else:
-      s = np.array2string(self.val, prefix=prefix, suffix=',',
-                          separator=', ', max_line_width=line_width)
+      s = np.array2string(
+          self.val,
+          prefix=prefix,
+          suffix=',',
+          separator=', ',
+          max_line_width=line_width,
+      )
     last_line_len = len(s) - s.rfind('\n') + 1
     sep = ' '
     if last_line_len + len(dtype_str) + 1 > line_width:
       sep = ' ' * len(prefix)
-    return f"{prefix}{s},{sep}{dtype_str}"
+    return f'{prefix}{s},{sep}{dtype_str}'
 
   def __array__(self, dtype=None, copy=None):
     # You might think that we can do the following here:
@@ -134,6 +177,12 @@ class LiteralArray:
   def __float__(self):
     return self.val.__float__()
 
+  def __complex__(self):
+    return self.val.__complex__()
+
+  def __index__(self):
+    return self.val.__index__()
+
   def __lt__(self, other):
     return self.val.__lt__(other)
 
@@ -167,8 +216,10 @@ class LiteralArray:
     return self.val.mT
 
   def astype(self, dtype, order='K', casting='unsafe', subok=True, copy=True):
-    return self.val.astype(dtype, order=order, casting=casting, subok=subok,
-                           copy=copy)
+    return self.val.astype(
+        dtype, order=order, casting=casting, subok=subok, copy=copy
+    )
+
 
 if jaxlib_extension_version >= 371:
   _jax.set_literal_array_type(LiteralArray)

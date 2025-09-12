@@ -33,7 +33,7 @@ import numpy as np
 
 from jax._src import config
 from jax._src import deprecations
-from jax._src import literal_array
+from jax._src import literals
 from jax._src.typing import Array, DType, DTypeLike
 from jax._src.util import set_module, StrictABC
 
@@ -364,15 +364,15 @@ canonicalize_value_handlers: dict[Any, Callable] = {}
 
 
 # TODO(mattjj): try to remove this canonicalize_dtype stuff
-def canonicalize_value(x, canonicalize_scalar_dtypes: bool = False):
+def canonicalize_value(x):
   typ = type(x)
   handler = canonicalize_value_handlers.get(typ)
   if handler:
-    return handler(x, canonicalize_scalar_dtypes=canonicalize_scalar_dtypes)
+    return handler(x)
   for typ in typ.__mro__:
     handler = canonicalize_value_handlers.get(typ)
     if handler:
-      return handler(x, canonicalize_scalar_dtypes=canonicalize_scalar_dtypes)
+      return handler(x)
   if hasattr(x, '__jax_array__'):
     deprecations.warn(
         'jax-abstract-dunder-array',
@@ -879,7 +879,7 @@ _registered_weak_types: list[JAXType] = []
 def is_weakly_typed(x: Any) -> bool:
   if type(x) in _weak_types or type(x) in _registered_weak_types:
     return True
-  if isinstance(x, literal_array.LiteralArray):
+  if isinstance(x, literals.LiteralArray):
     return x.weak_type
   try:
     return x.aval.weak_type

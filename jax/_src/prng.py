@@ -27,7 +27,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import ffi
-from jax._src import literal_array
+from jax._src import literals
 from jax._src import numpy as jnp
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
@@ -168,7 +168,7 @@ class PRNGKeyArray(Array):
     _check_prng_key_data(impl, key_data)
     self._impl = impl
     self._consumed = False  # TODO(jakevdp): default to True here?
-    if isinstance(key_data, (np.ndarray, literal_array.LiteralArray)):
+    if isinstance(key_data, (np.ndarray, literals.LiteralArray)):
       aval = core.get_aval(key_data)
       device = pxla.get_default_device()
       key_data = pxla.batched_device_put(
@@ -483,7 +483,7 @@ class KeyTy(dtypes.ExtendedDType):
 
 
 core.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
-dtypes.canonicalize_value_handlers[PRNGKeyArray] = lambda x, *, canonicalize_scalar_dtypes: x
+dtypes.canonicalize_value_handlers[PRNGKeyArray] = lambda x: x
 
 
 def key_array_shard_arg_handler(xs: Sequence[PRNGKeyArray], shardings, layouts,

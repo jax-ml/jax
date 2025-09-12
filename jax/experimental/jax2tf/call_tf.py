@@ -135,7 +135,7 @@ def call_tf(
     args_flat_jax = tuple(map(canonical_arg, args_flat_jax))
     def make_tensorspec(a_jax):
       a_tf_dtype = jax2tf_internal._to_tf_dtype(a_jax.dtype)
-      a_tf_shape = [d if core.is_constant_dim(d) else None for d in a_jax.shape]
+      a_tf_shape = [d if core.is_constant_dim(d) else None for d in getattr(a_jax, "shape", ())]
       return tf.TensorSpec(a_tf_shape, a_tf_dtype)
     args_flat_sig_tf = tuple(map(make_tensorspec, args_flat_jax))
 

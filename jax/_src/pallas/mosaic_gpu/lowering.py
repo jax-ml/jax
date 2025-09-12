@@ -33,7 +33,7 @@ from jax._src import checkify
 from jax._src import core as jax_core
 from jax._src import debugging
 from jax._src import dtypes
-from jax._src import literal_array
+from jax._src import literals
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
@@ -3246,7 +3246,7 @@ def _ensure_ir_value(x: Any, dtype: jnp.dtype) -> ir.Value:
 
 def _ir_constant(v: object, t: ir.Type) -> ir.Value:
   if isinstance(
-      v, (np.number, np.ndarray, int, float, literal_array.LiteralArray)
+      v, (np.number, np.ndarray, int, float, literals.LiteralArray)
   ):
     if isinstance(t, (ir.IntegerType, ir.IndexType)):
       v = int(v)
@@ -3279,7 +3279,7 @@ def _as_index(v: object) -> ir.Value:
       return arith_dialect.index_cast(ir.IndexType.get(), v)
     case mgpu.FragmentedArray(layout=mgpu.WGSplatFragLayout()):
       return _as_index(v.registers.item())
-    case literal_array.LiteralArray() if (
+    case literals.LiteralArray() if (
         np.issubdtype(v.dtype, np.integer) and v.ndim == 0
     ):
       return arith_dialect.constant(ir.IndexType.get(), int(v))
@@ -3321,7 +3321,7 @@ def merge_indexers(
       if isinstance(x, int):
         return mgpu.FragmentedArray.splat(mgpu.c(x, i32), (), is_signed=False)
       if (
-          isinstance(x, literal_array.LiteralArray)
+          isinstance(x, literals.LiteralArray)
           and x.ndim == 0
           and np.issubdtype(x.dtype, np.signedinteger)
       ):

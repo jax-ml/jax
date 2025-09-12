@@ -30,7 +30,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
-from jax._src import literal_array
+from jax._src import literals
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
@@ -682,7 +682,7 @@ def _gather(arr, dynamic_idx, *, treedef, static_idx, indices_are_sorted,
                            "fill_value argument to indexed get()")
     if np.ndim(fill_value) != 0:
       raise ValueError("fill_value argument to indexed get() must be a scalar")
-    if isinstance(fill_value, (np.ndarray, literal_array.LiteralArray)):
+    if isinstance(fill_value, (np.ndarray, literals.LiteralArray)):
       fill_value = fill_value.item()
 
   if indexer.scalar_bool_dims:
@@ -810,7 +810,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
   # move the advanced axes to the front.
   (is_advanced,) = np.nonzero([
       isinstance(e, (int, np.integer, Array, np.ndarray,
-                     literal_array.LiteralArray))
+                     literals.LiteralArray))
       or lax_numpy.isscalar(e)
       for e in idx
   ])
@@ -852,7 +852,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
       (lax_numpy.asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
       if lax_numpy.isscalar(e)
       or isinstance(e, (Sequence, Array, np.ndarray,
-                        literal_array.LiteralArray)))
+                        literals.LiteralArray)))
     if normalize_indices:
       advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
                         for e, i, j in advanced_pairs)
@@ -1026,7 +1026,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
 
 def _should_unpack_list_index(x):
   """Helper for eliminate_deprecated_list_indexing."""
-  return (isinstance(x, (np.ndarray, Array, literal_array.LiteralArray))
+  return (isinstance(x, (np.ndarray, Array, literals.LiteralArray))
           and np.ndim(x) != 0
           or isinstance(x, (Sequence, slice))
           or x is Ellipsis or x is None)
@@ -1037,7 +1037,7 @@ def eliminate_deprecated_list_indexing(idx):
   # objects]". Detects this and raises a TypeError.
   if not isinstance(idx, tuple):
     if isinstance(idx, Sequence) and not isinstance(
-        idx, (Array, np.ndarray, literal_array.LiteralArray, str)
+        idx, (Array, np.ndarray, literals.LiteralArray, str)
     ):
       # As of numpy 1.16, some non-tuple sequences of indices result in a warning, while
       # others are converted to arrays, based on a set of somewhat convoluted heuristics
@@ -1141,7 +1141,7 @@ def _is_int_arraylike(x):
 def _is_scalar(x):
   """Checks if a Python or NumPy scalar."""
   return np.isscalar(x) or (
-      isinstance(x, (np.ndarray, literal_array.LiteralArray, Array))
+      isinstance(x, (np.ndarray, literals.LiteralArray, Array))
       and np.ndim(x) == 0
   )
 

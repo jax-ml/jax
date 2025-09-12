@@ -38,7 +38,7 @@ from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import literal_array
+from jax._src import literals
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import pretty_printer as pp
@@ -143,7 +143,7 @@ def asarray(x: ArrayLike) -> Array:
     return x
   elif isinstance(x, (bool, np.ndarray, np.generic)):
     return _convert_element_type(x, weak_type=False)
-  elif isinstance(x, literal_array.LiteralArray):
+  elif isinstance(x, literals.LiteralArray):
     return _convert_element_type(x, weak_type=x.weak_type)
   elif isinstance(x, (int, float, builtins.complex)):
     return _convert_element_type(dtypes.coerce_to_array(x), weak_type=True)
@@ -1660,7 +1660,7 @@ def convert_element_type(operand: ArrayLike,
   return _convert_element_type(operand, new_dtype, weak_type=False)  # type: ignore[unused-ignore,bad-return-type]
 
 def _convert_element_type(
-    operand: ArrayLike | literal_array.LiteralArray,
+    operand: ArrayLike | literals.LiteralArray,
     new_dtype: DType | None = None,
     weak_type: bool = False,
     sharding: Sharding | None = None,
@@ -1715,7 +1715,7 @@ def _convert_element_type(
   # first canonicalize the input to a value of dtype int32 or int64, leading to
   # an overflow error.
   if type(operand) is int and new_dtype != dtypes.float0:
-    operand = literal_array.LiteralArray(np.asarray(operand).astype(new_dtype),
+    operand = literals.LiteralArray(np.asarray(operand).astype(new_dtype),
                                          weak_type)
   elif (
       isinstance(operand, np.ndarray) and operand.dtype != dtypes.float0
@@ -1725,7 +1725,7 @@ def _convert_element_type(
       # If the value is a literal, we convert it to a LiteralArray to avoid
       # any canonicalization of it as a NumPy array. We may as well just do the
       # conversion while we are here.
-      operand = literal_array.LiteralArray(
+      operand = literals.LiteralArray(
           np.asarray(operand).astype(new_dtype), weak_type
       )
     except TypeError:
@@ -4932,6 +4932,13 @@ def _convert_element_type_jvp_rule(tangent, primal_result, operand, *,
     return convert_element_type_p.bind(tangent, new_dtype=new_tangent_dtype,
                                        weak_type=weak_type, sharding=sharding)
 
+_foldable_types = {
+    literals.LiteralArray,
+    np.ndarray,
+    *dtypes.python_scalar_types,
+    *literals.literal_scalar_types,
+}
+
 def _convert_elt_type_folding_rule(consts, params, out_avals):
   # We constant-fold convert_element_types applied to constants if those
   # constants are Python builtin numeric types or numpy.ndarrays (so as not
@@ -4944,15 +4951,15 @@ def _convert_elt_type_folding_rule(consts, params, out_avals):
   c, = consts
   out_aval, = out_avals
   new_dtype = params['new_dtype']
-  if (type(c) in {literal_array.LiteralArray, np.ndarray, *dtypes.python_scalar_types} and
-      isinstance(out_aval, core.UnshapedArray) and not np.shape(c) and
-      not dtypes.issubdtype(new_dtype, dtypes.extended)):
+  if (type(c) in _foldable_types and isinstance(out_aval, core.UnshapedArray)
+      and not np.shape(c)
+      and not dtypes.issubdtype(new_dtype, dtypes.extended)):
     out = np.asarray(c)
     if (dtypes.issubdtype(out.dtype, np.complexfloating) and
         not dtypes.issubdtype(new_dtype, np.complexfloating)):
       out = out.real
     out = out.astype(new_dtype)
-    return [literal_array.LiteralArray(out, weak_type=out_aval.weak_type)]
+    return [literals.LiteralArray(out, weak_type=out_aval.weak_type)]
   return None
 
 def _convert_elt_type_fwd_rule(eqn):

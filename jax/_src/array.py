@@ -31,7 +31,7 @@ from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
-from jax._src import literal_array
+from jax._src import literals
 from jax._src import profiler
 from jax._src import util
 from jax._src import xla_bridge
@@ -39,6 +39,7 @@ from jax._src.op_shardings import are_hlo_shardings_equal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.layout import AutoLayout, Format, Layout
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import empty_concrete_mesh
@@ -165,7 +166,7 @@ def _process_has_full_value_in_mcjax(s, shape):
 
 
 def _validate_shape_and_dtype_for_per_device_arrays(
-    arrays: Sequence[ArrayImpl | np.ndarray],
+    arrays: Sequence[ArrayImpl | np.ndarray | literals.LiteralArray],
     sharding: Sharding,
     aval: core.ShapedArray,
     expected_shape: Shape,
@@ -687,8 +688,12 @@ def _get_shape_from_index(slc: Index, shape: Shape) -> Shape:
       if isinstance(s, slice)  # If element is int, this dimension is reduced
   )
 
-def _get_and_check_dtype(arrays: Sequence[basearray.Array | np.ndarray],
-                         dtype: DTypeLike | ExtendedDType | None, fname: str):
+
+def _get_and_check_dtype(
+    arrays: Sequence[basearray.Array | np.ndarray | literals.LiteralArray],
+    dtype: DTypeLike | ExtendedDType | None,
+    fname: str,
+):
   if dtype is None:
     if arrays:
       dtype = arrays[0].dtype
@@ -704,6 +709,7 @@ def _get_and_check_dtype(arrays: Sequence[basearray.Array | np.ndarray],
           f"of the addressable shards. Got dtype={dtype} and shard "
           f"dtype={arrays[0].dtype}`.")
   return dtype
+
 
 # explicitly set to be unhashable.
 setattr(ArrayImpl, "__hash__", None)
@@ -768,7 +774,9 @@ def make_array_from_callback(
         f"sharding should be an instance of `jax.sharding`. Got {sharding} of"
         f" type {type(sharding)}")
 
-  def get_data(index: Index | None) -> ArrayImpl | np.ndarray:
+  def get_data(
+      index: Index | None,
+  ) -> ArrayImpl | literals.LiteralArray | np.ndarray:
     # Perhaps cache on index here, then we can unify fully_replicated
     # and non-fully_replicated cases below and become faster for
     # partially replicated cases.
@@ -779,12 +787,16 @@ def make_array_from_callback(
           "jax.make_array_from_callback cannot be called within a traced"
           " context."
       )
-    # Value can be python scalar, resolve it into something with dtype.
-    out = dtypes.canonicalize_value(r, canonicalize_scalar_dtypes=True)
-    # TODO(phawkins): we probably don't need to remove the LiteralArray here.
-    if isinstance(out, literal_array.LiteralArray):
-      out = np.asarray(out)
-    return out
+    # Value can be python scalars, resolve it into something with dtype.
+    r = dtypes.canonicalize_value(r)
+    if isinstance(r, (literals.LiteralInt, literals.LiteralFloat,
+                      literals.LiteralComplex)):
+      r = literals.LiteralArray(np.asarray(r, dtype=r.dtype), weak_type=False)
+    elif isinstance(r, bool):
+      r = literals.LiteralArray(np.asarray(r, dtype=np.bool_), weak_type=False)
+    if jaxlib_extension_version < 372 and isinstance(r, literals.LiteralArray):
+      r = np.asarray(r)
+    return r
 
   if sharding.is_fully_replicated:
     devices = list(sharding._internal_device_list.addressable_device_list)  # type: ignore
@@ -1116,7 +1128,7 @@ def make_array_from_single_device_arrays(
           f" arrays as input, but got types {set(map(type, arrays))}")
     raise
 
-dtypes.canonicalize_value_handlers[ArrayImpl] = lambda x, *, canonicalize_scalar_dtypes: x
+dtypes.canonicalize_value_handlers[ArrayImpl] = lambda x: x
 
 def _get_aval_array(self):
   return core.update_aval_with_sharding(self.aval, self.sharding)

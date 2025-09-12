@@ -32,7 +32,7 @@ from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import debugging
-from jax._src import literal_array
+from jax._src import literals
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import source_info_util
@@ -184,14 +184,14 @@ def _bcast(
     out_aval: jax_core.ShapedArray,
 ) -> ir.Value:
   if isinstance(
-      x, (np.ndarray, np.number, int, float, literal_array.LiteralArray)
+      x, (np.ndarray, np.number, int, float, literals.LiteralArray)
   ):
     x_dtype = x_aval.dtype
     if x_aval.weak_type:
       x_dtype = y_aval.dtype
     x = _ir_constant(x, _dtype_to_ir_type(x_dtype))
   if isinstance(
-      y, (np.ndarray, np.number, int, float, literal_array.LiteralArray)
+      y, (np.ndarray, np.number, int, float, literals.LiteralArray)
   ):
     y_dtype = y_aval.dtype
     if y_aval.weak_type:
@@ -2852,7 +2852,7 @@ def _ensure_ir_value(x: object, aval: jax_core.ShapedArray) -> ir.Value:
   if isinstance(x, ir.Value):
     return x
   elif isinstance(
-      x, (np.number, np.ndarray, int, float, literal_array.LiteralArray)
+      x, (np.number, np.ndarray, int, float, literals.LiteralArray)
   ):
     return _ir_constant(x, _dtype_to_ir_type(aval.dtype))
   raise NotImplementedError
@@ -2860,7 +2860,7 @@ def _ensure_ir_value(x: object, aval: jax_core.ShapedArray) -> ir.Value:
 
 def _ir_constant(v: object, t: ir.Type) -> ir.Value:
   if isinstance(
-      v, (np.number, np.ndarray, int, float, literal_array.LiteralArray)
+      v, (np.number, np.ndarray, int, float, literals.LiteralArray)
   ):
     if isinstance(t, ir.IntegerType):
       v = int(v)

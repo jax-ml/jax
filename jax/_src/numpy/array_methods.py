@@ -34,7 +34,7 @@ import numpy as np
 from jax._src import api
 from jax._src import core
 from jax._src import dtypes
-from jax._src import literal_array
+from jax._src import literals
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.array import ArrayImpl
 from jax._src.lax import lax
@@ -590,7 +590,7 @@ _accepted_binop_types = (
     np.generic,
     np.ndarray,
     Array,
-    literal_array.LiteralArray,
+    literals.LiteralArray,
 )
 _rejected_binop_types = (list, tuple, set, dict)
 

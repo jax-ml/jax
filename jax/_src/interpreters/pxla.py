@@ -37,7 +37,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import literal_array
+from jax._src import literals
 from jax._src import jaxpr_util
 from jax._src import linear_util as lu
 from jax._src import op_shardings
@@ -217,12 +217,14 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_np_array
 
-shard_arg_handlers[literal_array.LiteralArray] = _shard_np_array
+shard_arg_handlers[literals.LiteralArray] = _shard_np_array
 
 def _shard_python_scalar(xs, shardings, layouts, copy_semantics):
   return shard_args(shardings, layouts, copy_semantics,
                     [np.array(x) for x in xs])
 for _t in dtypes.python_scalar_types:
+  shard_arg_handlers[_t] = _shard_python_scalar
+for _t in literals.literal_scalar_types:
   shard_arg_handlers[_t] = _shard_python_scalar
 
 def _shard_darray(xs, shardings, layouts, copy_semantics):

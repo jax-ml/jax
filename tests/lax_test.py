@@ -4050,7 +4050,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
   def setUp(self):
     core.pytype_aval_mappings[FooArray] = \
         lambda x: core.ShapedArray(x.shape, FooTy(), sharding=None)
-    dtypes.canonicalize_value_handlers[FooArray] = lambda x, *, canonicalize_scalar_dtypes: x
+    dtypes.canonicalize_value_handlers[FooArray] = lambda x: x
     pxla.shard_arg_handlers[FooArray] = shard_foo_array_handler
     mlir._constant_handlers[FooArray] = foo_array_constant_handler
     mlir.register_lowering(make_p, mlir.lower_fun(make_lowering, False))

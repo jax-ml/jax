@@ -251,7 +251,7 @@ def host_local_array_to_global_array_impl(
       arr.sharding.is_equivalent_to(local_sharding, arr.ndim)):
     arrays = [x.data for x in arr.addressable_shards]
   else:
-    arr = dtypes.canonicalize_value(arr, canonicalize_scalar_dtypes=True)
+    arr = dtypes.canonicalize_value(arr)
     arrays = [
         arr[index]
         for d, index in local_sharding.devices_indices_map(arr.shape).items()]

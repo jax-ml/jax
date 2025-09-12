@@ -32,7 +32,7 @@ import jax.numpy as jnp
 from jax._src import core
 from jax._src import config
 from jax._src import dispatch
-from jax._src import literal_array
+from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src import dtypes
 from jax import stages
@@ -3721,7 +3721,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       f()  # doesn't crash
 
   def test_closed_constants_at_top_level(self):
-    const = literal_array.LiteralArray(
+    const = literals.LiteralArray(
         np.arange(8, dtype=np.float32), weak_type=False)
 
     @jax.jit
