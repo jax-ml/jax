@@ -1040,6 +1040,7 @@ class ShardMapTest(jtu.JaxTestCase):
     g2 = jax.grad(lambda x: f2(x).sum())(x)  # doesn't crash
     self.assertAllClose(g2, jnp.cos(x), check_dtypes=False)
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_remat_scalar_residuals(self):
     mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
 
@@ -4406,6 +4407,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
       for check_rep in [True, False]
   )
   @jax.default_matmul_precision("float32")
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_grads(self, fun, mesh, jit, in_specs, out_specs, args, _, check_rep):
     mesh = self.make_mesh(mesh)
     args = map(jnp.array, args)
@@ -4418,6 +4420,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
   @parameterized.parameters(
       sample(jtu.NUM_GENERATED_CASES.value, sample_shmap))
   @jax.default_matmul_precision("float32")
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_grads_closure(self, fun, mesh, jit, in_specs, out_specs, args, _):
     mesh = self.make_mesh(mesh)
     no_sharding = [all(elt is None for elt in spec) for spec in in_specs]
