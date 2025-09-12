@@ -32,6 +32,12 @@ class MatmulDimension(enum.IntEnum):
   M = 0
   N = 1
 
+  def __str__(self):
+    return self.name
+
+  def __repr__(self):
+    return self.name
+
 
 @dataclasses.dataclass(frozen=True)
 class TuningConfig:
@@ -43,6 +49,7 @@ class TuningConfig:
   epi_tile_m: int | None = 64
   grid_minor_dim: MatmulDimension = MatmulDimension.N
   grid_tile_width: int = 1
+  wg_dimension: MatmulDimension = MatmulDimension.N
 
 
 def matmul_kernel(a, b, config: TuningConfig):
@@ -76,8 +83,10 @@ def matmul_kernel(a, b, config: TuningConfig):
     raise ValueError(f"{tile_n=} must be divisible by {epi_tile_n=}")
   if tile_m % epi_tile_m != 0:
     raise ValueError(f"{tile_m=} must be divisible by {epi_tile_m=}")
-  m_iters = m // (2 * tile_m)
-  n_iters = n // tile_n
+  cta_tile_m = tile_m * (1 + (config.wg_dimension == MatmulDimension.M))
+  cta_tile_n = tile_n * (1 + (config.wg_dimension == MatmulDimension.N))
+  m_iters = m // cta_tile_m
+  n_iters = n // cta_tile_n
   k_iters = k // tile_k
 
   def kernel(a_gmem, b_gmem, out_gmem, out_smem):
@@ -89,13 +98,13 @@ def matmul_kernel(a, b, config: TuningConfig):
           memory_registers=40,
           in_specs=[
               plgpu.BlockSpec(
-                  (2 * tile_m, tile_k),
+                  (cta_tile_m, tile_k),
                   lambda k: (0, k),
                   transforms=transforms,
                   memory_space=plgpu.SMEM,
               ),
               plgpu.BlockSpec(
-                  (tile_k, tile_n),
+                  (tile_k, cta_tile_n),
                   lambda k: (k, 0),
                   transforms=transforms,
                   memory_space=plgpu.SMEM,
@@ -125,9 +134,14 @@ def matmul_kernel(a, b, config: TuningConfig):
             config.grid_minor_dim,
             config.grid_tile_width,
         )
-        m_slice = pl.ds(m_idx * 2 * tile_m, 2 * tile_m)
-        wg_m_slice = pl.ds(lax.axis_index("wg") * tile_m, tile_m)
-        n_slice = pl.ds(n_idx * tile_n, tile_n)
+        cta_m_slice = pl.ds(m_idx * cta_tile_m, cta_tile_m)
+        cta_n_slice = pl.ds(n_idx * cta_tile_n, cta_tile_n)
+        if config.wg_dimension == MatmulDimension.M:
+          wg_m_slice = pl.ds(wg_idx * tile_m, tile_m)
+          wg_n_slice = slice(None)
+        else:
+          wg_m_slice = slice(None)
+          wg_n_slice = pl.ds(wg_idx * tile_n, tile_n)
 
         def compute_context(eval_pipeline):
           @functools.partial(
@@ -147,17 +161,19 @@ def matmul_kernel(a, b, config: TuningConfig):
                 plgpu.commit_smem()
                 plgpu.copy_smem_to_gmem(
                     out_smem.at[wg_idx, slot],
-                    out_gmem.at[m_slice, n_slice].at[wg_m_slice].at[epi_m_slice, epi_n_slice],
+                    out_gmem.at[cta_m_slice, cta_n_slice]
+                    .at[wg_m_slice, wg_n_slice]
+                    .at[epi_m_slice, epi_n_slice],
                 )
 
         def mma_body(_, a_smem, b_smem, acc_ref):
-          plgpu.wgmma(acc_ref, a_smem.at[wg_m_slice], b_smem)
+          plgpu.wgmma(acc_ref, a_smem.at[wg_m_slice], b_smem.at[:, wg_n_slice])
           plgpu.wgmma_wait(0)
           return acc_ref
 
         get_pipeline(mma_body, compute_context)(
-            a_gmem.at[m_slice, :],
-            b_gmem.at[:, n_slice],
+            a_gmem.at[cta_m_slice, :],
+            b_gmem.at[:, cta_n_slice],
             allocations=pipeline_allocs,
         )
     # Await all transfers before we exit.
@@ -207,10 +223,11 @@ def main(_) -> None:
         (True,),  # Tiled epilogue
         (MatmulDimension.M, MatmulDimension.N),  # grid_minor_dim
         (1, 4, 8, 16),  # grid_tile_width
+        (MatmulDimension.M,),  # wg_dimension
     )
     best_util = 0.0
     best_runtime = float("inf")
-    for tile_m, tile_n, tile_k, max_concurrent_steps, tiled_epilogue, grid_minor_dim, grid_tile_width in tuning_it:
+    for tile_m, tile_n, tile_k, max_concurrent_steps, tiled_epilogue, grid_minor_dim, grid_tile_width, wg_dimension in tuning_it:
       config = TuningConfig(
           tile_m=tile_m,
           tile_n=tile_n,
@@ -220,6 +237,7 @@ def main(_) -> None:
           epi_tile_m=64 if tiled_epilogue else None,
           grid_minor_dim=grid_minor_dim,
           grid_tile_width=grid_tile_width,
+          wg_dimension=wg_dimension,
       )
       try:
         out, runtimes_ms = profiler.measure(
@@ -239,7 +257,7 @@ def main(_) -> None:
         best_runtime = runtime_us
         best_util = achieved_tc_util
       print(
-          f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=} {tiled_epilogue=} {grid_minor_dim=} {grid_tile_width=}:"
+          f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=} {tiled_epilogue=} {grid_minor_dim=} {grid_tile_width=} {wg_dimension=}:"
           f" {runtime_us:<7.1f}us = {achieved_tc_util:4.1f}% TC utilization"
       )
     print(f"\tBest: {best_runtime:<7.1f}us = {best_util:4.1f}% TC utilization")
