@@ -2360,7 +2360,7 @@ class PallasCallTest(PallasTest):
       def kernel(x_ref, o_ref):
         o_ref[...] = x_ref[...] + x_ref[0]
 
-      kernel(jnp.arange(256, dtype=jnp.float32))
+      jax.block_until_ready(kernel(jnp.arange(256, dtype=jnp.float32)))
 
     ptx = output()
     self.assertIn(".file", ptx)
