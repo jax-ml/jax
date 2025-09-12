@@ -67,6 +67,13 @@ get_p.is_effectful = lambda params: True  # type: ignore
 get_p.def_impl(partial(dispatch.apply_primitive, get_p))
 batching.ragged_prop_rules[get_p] = batching.ragged_mask_transfer_identity
 
+get_p.is_high = lambda ref_aval, *_, tree: ref_aval.is_high  # type: ignore
+def _get_to_lojax(ref, *idx, tree):
+  if idx: raise NotImplementedError
+  val_ty = core.typeof(ref._refs)
+  return val_ty.raise_val(*map(ref_get, val_ty.lower_val(ref._refs)))
+get_p.to_lojax = _get_to_lojax  # type: ignore
+
 Indexer = Union[int, slice, Array, types.EllipsisType]
 
 
@@ -102,17 +109,17 @@ def get_ref_and_transforms(
 def ref_get(
     ref: Any, idx: Indexer | tuple[Indexer, ...] | None = None
 ) -> Array:
-  """Read a value from an ArrayRef.
+  """Read a value from an Ref.
 
   This is equivalent to ``ref[idx]`` for a NumPy-style indexer ``idx``.
-  For more on mutable array refs, refer to the `ArrayRef guide`_.
+  For more on mutable array refs, refer to the `Ref guide`_.
 
   Args:
-    ref: a :class:`jax.ref.ArrayRef` object.
+    ref: a :class:`jax.ref.Ref` object.
     idx: a NumPy-style indexer
 
   Returns:
-    A :class:`jax.Array` object (note, not a :class:`jax.ref.ArrayRef`) containing
+    A :class:`jax.Array` object (note, not a :class:`jax.ref.Ref`) containing
     the indexed elements of the mutable reference.
 
   Examples:
@@ -131,7 +138,7 @@ def ref_get(
     >>> ref[...]
     Array([0, 1, 2, 3, 4], dtype=int32)
 
-  .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
   ref, transforms = get_ref_and_transforms(ref, idx, "ref_get")
   flat_transforms, tree = tree_util.tree_flatten(transforms)
@@ -179,13 +186,13 @@ def ref_swap(
 
   This is equivalent to ``ref[idx], prev = value, ref[idx]`` while returning
   ``prev``, for a NumPy-style indexer ``idx``.
-  For more on mutable array refs, refer to the `ArrayRef guide`_.
+  For more on mutable array refs, refer to the `Ref guide`_.
 
   Args:
-    ref: a :class:`jax.ref.ArrayRef` object. On return, the buffer will be
+    ref: a :class:`jax.ref.Ref` object. On return, the buffer will be
       mutated by this operation.
     idx: a NumPy-style indexer
-    value: a :class:`jax.Array` object (note, not a :class:`jax.ref.ArrayRef`)
+    value: a :class:`jax.Array` object (note, not a :class:`jax.ref.Ref`)
       containing the values to set in the array.
 
   Returns:
@@ -197,7 +204,7 @@ def ref_swap(
     >>> jax.ref.swap(ref, 3, 10)
     Array(3, dtype=int32)
     >>> ref
-    ArrayRef([ 0,  1,  2, 10,  4], dtype=int32)
+    Ref([ 0,  1,  2, 10,  4], dtype=int32)
 
     Equivalent operation via indexing syntax:
 
@@ -206,7 +213,7 @@ def ref_swap(
     >>> prev
     Array(3, dtype=int32)
     >>> ref
-    ArrayRef([ 0,  1,  2, 10,  4], dtype=int32)
+    Ref([ 0,  1,  2, 10,  4], dtype=int32)
 
     Use ``...`` to swap the value of a scalar ref:
 
@@ -214,9 +221,9 @@ def ref_swap(
     >>> jax.ref.swap(ref, ..., 10)
     Array(5, dtype=int32)
     >>> ref
-    ArrayRef(10, dtype=int32)
+    Ref(10, dtype=int32)
 
-  .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
   "Sets a ref's value as `ref[idx], prev = value, ref[idx]` and returns `prev`."
   if hasattr(ref, 'dtype'):
@@ -244,16 +251,16 @@ def ref_set(
     idx: Indexer | tuple[Indexer, ...] | None,
     value: Array,
 ) -> None:
-  """Set a value in an ArrayRef in-place.
+  """Set a value in an Ref in-place.
 
   This is equivalent to ``ref[idx] = value`` for a NumPy-style indexer
-  ``idx``. For more on mutable array refs, refer to the `ArrayRef guide`_.
+  ``idx``. For more on mutable array refs, refer to the `Ref guide`_.
 
   Args:
-    ref: a :class:`jax.ref.ArrayRef` object. On return, the buffer will be
+    ref: a :class:`jax.ref.Ref` object. On return, the buffer will be
       mutated by this operation.
     idx: a NumPy-style indexer
-    value: a :class:`jax.Array` object (note, not a :class:`jax.ref.ArrayRef`)
+    value: a :class:`jax.Array` object (note, not a :class:`jax.ref.Ref`)
       containing the values to set in the array.
 
   Returns:
@@ -264,23 +271,23 @@ def ref_set(
     >>> ref = jax.array_ref(jax.numpy.zeros(5))
     >>> jax.ref.set(ref, 1, 10.0)
     >>> ref
-    ArrayRef([ 0., 10.,  0.,  0.,  0.], dtype=float32)
+    Ref([ 0., 10.,  0.,  0.,  0.], dtype=float32)
 
     Equivalent operation via indexing syntax:
 
     >>> ref = jax.array_ref(jax.numpy.zeros(5))
     >>> ref[1] = 10.0
     >>> ref
-    ArrayRef([ 0., 10.,  0.,  0.,  0.], dtype=float32)
+    Ref([ 0., 10.,  0.,  0.,  0.], dtype=float32)
 
     Use ``...`` to set the value of a scalar ref:
 
     >>> ref = jax.array_ref(jax.numpy.int32(0))
     >>> ref[...] = 4
     >>> ref
-    ArrayRef(4, dtype=int32)
+    Ref(4, dtype=int32)
 
-  .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
   ref_swap(ref, idx, value, _function_name="ref_set")
 
@@ -307,19 +314,19 @@ def ref_addupdate(
     idx: Indexer | tuple[Indexer, ...] | None,
     x: Array,
 ) -> None:
-  """Add to an element in an ArrayRef in-place.
+  """Add to an element in an Ref in-place.
 
   This is analogous to ``ref[idx] += value`` for a NumPy array ``ref`` and
-  NumPy-style indexer ``idx``. However, for an ArrayRef ``ref``, executing
+  NumPy-style indexer ``idx``. However, for an Ref ``ref``, executing
   ``ref[idx] += value`` actually performs a ``ref_get``, add, and ``ref_set``,
   so using this function can be more efficient under autodiff. For more on
-  mutable array refs, refer to the `ArrayRef guide`_.
+  mutable array refs, refer to the `Ref guide`_.
 
   Args:
-    ref: a :class:`jax.ref.ArrayRef` object. On return, the buffer will be
+    ref: a :class:`jax.ref.Ref` object. On return, the buffer will be
       mutated by this operation.
     idx: a NumPy-style indexer
-    x: a :class:`jax.Array` object (note, not a :class:`jax.ref.ArrayRef`)
+    x: a :class:`jax.Array` object (note, not a :class:`jax.ref.Ref`)
       containing the values to add at the specified indices.
 
   Returns:
@@ -330,23 +337,23 @@ def ref_addupdate(
     >>> ref = jax.array_ref(jax.numpy.arange(5))
     >>> jax.ref.addupdate(ref, 2, 10)
     >>> ref
-    ArrayRef([ 0,  1, 12,  3,  4], dtype=int32)
+    Ref([ 0,  1, 12,  3,  4], dtype=int32)
 
     Equivalent operation via indexing syntax:
 
     >>> ref = jax.array_ref(jax.numpy.arange(5))
     >>> ref[2] += 10
     >>> ref
-    ArrayRef([ 0,  1, 12,  3,  4], dtype=int32)
+    Ref([ 0,  1, 12,  3,  4], dtype=int32)
 
     Use ``...`` to add to a scalar ref:
 
     >>> ref = jax.array_ref(jax.numpy.int32(2))
     >>> ref[...] += 10
     >>> ref
-    ArrayRef(12, dtype=int32)
+    Ref(12, dtype=int32)
 
-  .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
   ref, transforms = get_ref_and_transforms(ref, idx, "ref_addupdate")
   flat_transforms, tree = tree_util.tree_flatten(transforms)

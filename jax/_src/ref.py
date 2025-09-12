@@ -15,19 +15,21 @@
 from typing import Any
 from jax._src import core
 
-def array_ref(init_val, *, memory_space: Any = None) -> core.ArrayRef:
+def new_ref(init_val, *, memory_space: Any = None) -> core.Ref:
   """Create a mutable array reference with initial value ``init_val``.
 
-  For more discussion, see the `ArrayRef guide`_.
+  For more discussion, see the `Ref guide`_.
 
   Args:
     init_val: A :class:`jax.Array` representing the initial state
       of the buffer.
-    memory_space: An optional memory space attribute for the ArrayRef.
+    memory_space: An optional memory space attribute for the Ref.
 
   Returns:
-    A :class:`jax.ref.ArrayRef` containing a reference to a mutable buffer.
+    A :class:`jax.ref.Ref` containing a reference to a mutable buffer.
 
-  .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
-  return core.array_ref(init_val, memory_space=memory_space)
+  return core.new_ref(init_val, memory_space=memory_space)
+
+array_ref = new_ref

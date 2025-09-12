@@ -139,7 +139,9 @@ from jax._src.partition_spec import P as P
 from jax._src.shard_map import shard_map as shard_map
 from jax._src.shard_map import smap as smap
 
+from jax.ref import new_ref as new_ref
 from jax.ref import array_ref as array_ref
+from jax.ref import Ref as Ref
 from jax.ref import ArrayRef as ArrayRef
 
 # Force import, allowing jax.interpreters.* to be used after import jax.

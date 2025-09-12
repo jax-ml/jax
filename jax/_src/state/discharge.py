@@ -39,13 +39,8 @@ from jax._src.lax import slicing as lax_slicing
 from jax._src.state import indexing
 from jax._src.state.primitives import addupdate_p, get_p, swap_p
 from jax._src.state.types import (
-    AbstractRef,
-    RefBitcaster,
-    RefEffect,
-    RefReshaper,
-    get_ref_aval_from_value,
-    uninitialized,
-)
+    AbstractRef, RefBitcaster, RefEffect, RefReshaper, get_ref_aval_from_value,
+    uninitialized,)
 from jax._src.state.utils import bitcast, hoist_consts_to_refs
 from jax._src.typing import Array
 from jax._src.util import (foreach, safe_map, safe_zip, split_list, unzip2,
@@ -595,17 +590,16 @@ run_state_p.is_high = _run_state_is_high  # type: ignore
 def _run_state_to_lojax(*args, jaxpr, is_initialized, **params):
   assert not jaxpr.constvars
   closed_jaxpr = core.ClosedJaxpr(jaxpr, ())
-  args, is_initialized = unzip2([
-      (lo_val, is_init)
-      for aval, x, is_init in zip(closed_jaxpr.in_avals, args, is_initialized)
-      for lo_val in (aval.read_loval(x) if aval.has_qdd else aval.lower_val(x))
-  ])
+  arg_avals = map(core.typeof, args)
+  args, is_initialized = unzip2(
+      (lo_val, is_init) for a, x, is_init in zip(arg_avals, args, is_initialized)
+      for lo_val in (a.read_loval(x) if a.has_qdd else a.lower_val(x)))
   lo_jaxpr = pe.lower_jaxpr(closed_jaxpr)
   all_outs = run_state_p.bind(*lo_jaxpr.consts, *args, jaxpr=lo_jaxpr.jaxpr,
                               is_initialized=is_initialized, **params)
   out_mut, lo_outs = split_list(all_outs, [pe.num_himuts_out(jaxpr)])
   pe.apply_himut(jaxpr, args, out_mut)
-  return pe.raise_lo_outs(jaxpr, lo_outs)
+  return pe.raise_lo_outs(arg_avals, lo_outs)
 run_state_p.to_lojax = _run_state_to_lojax
 
 

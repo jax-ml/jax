@@ -1592,7 +1592,7 @@ def _scan_to_lojax(*hi_args, jaxpr, num_carry, num_consts, linear, **params):
                          num_carry=num_carry, linear=tuple(linear), **params)
   out_mut, lo_outs = split_list(all_outs, [pe.num_himuts_out(jaxpr)])
   pe.apply_himut(jaxpr, hi_args, out_mut)
-  return pe.raise_lo_outs(jaxpr, lo_outs)
+  return pe.raise_lo_outs(jaxpr.out_avals, lo_outs)
 scan_p.to_lojax = _scan_to_lojax
 
 def _move_right(lst, to_move):
@@ -2451,7 +2451,7 @@ def _while_to_lojax(*hi_args, cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts
                           cond_nconsts=cond_nconsts, body_nconsts=body_nconsts)
   out_mut, lo_outs = split_list(all_outs, [pe.num_himuts_out(body_jaxpr)])
   pe.apply_himut(body_jaxpr, [*hi_bconsts, *hi_carry], out_mut)
-  return pe.raise_lo_outs(body_jaxpr, lo_outs)
+  return pe.raise_lo_outs(body_jaxpr.out_avals, lo_outs)
 while_p.to_lojax = _while_to_lojax  # type: ignore
 
 def _insert_binders(jaxpr, n_after, vals):

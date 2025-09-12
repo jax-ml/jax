@@ -16,21 +16,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial
+import itertools as it
 import unittest
 
 from absl.testing import absltest, parameterized
 
 import jax
 import jax.numpy as jnp
+from jax import typeof
 
 from jax._src import config
 from jax._src import core
 from jax._src.interpreters import ad
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map
+from jax._src.state.discharge import run_state
 
 from jax._src.hijax import (HiPrimitive, HiType, Box, new_box, box_set, box_get,
-                            box_effect, register_hitype, ShapedArray)
+                            box_effect, register_hitype, ShapedArray, Ty)
 
 config.parse_flags_with_absl()
 
@@ -69,7 +72,6 @@ class QArrayTy(HiType):
 
 register_hitype(QArray, lambda q: QArrayTy(q.arr.shape))
 
-
 def to_qarray(x):
   return to_qarray_p.bind(x)
 
@@ -107,6 +109,55 @@ class FromQ(HiPrimitive):
   def transpose(_, out_bar, __):
     return [to_qarray(out_bar)]
 from_qarray_p = FromQ('from_q')
+
+
+@dataclass
+class HiTup:
+  elts: tuple
+  def __repr__(self):
+    return 'Tup{' + ','.join(map(repr, self.elts)) + '}'
+
+@dataclass(frozen=True)
+class TupTy(HiType):
+  tys: tuple[Ty]
+  def __repr__(self):
+    return 'Tup{' + ','.join(a.str_short() for a in self.tys) + '}'
+
+  def lo_ty(self):
+    return list(self.tys)
+
+  def lower_val(self, hi_val: HiTup):
+    return [lo for ty, elt in zip(self.tys, hi_val.elts)
+            for lo in ty.lower_val(elt)]
+
+  def raise_val(self, *elts_flat):
+    elts_iter = iter(elts_flat)
+    return HiTup(tuple(ty.raise_val(*it.islice(elts_iter, len(ty.lo_ty())))
+                       for ty in self.tys))
+
+register_hitype(HiTup, lambda t: TupTy(tuple(map(typeof, t.elts))))
+
+class MakeTup(HiPrimitive):
+  def abstract_eval(_, *in_avals):
+    return TupTy(in_avals), set()
+
+  def to_lojax(self, *elts):
+    return HiTup(elts)
+make_tup_p = MakeTup('make_tup')
+
+class GetTupElt(HiPrimitive):
+  def abstract_eval(_, tup, *, idx):
+    return tup.tys[idx], set()
+
+  def to_lojax(self, tup, *, idx):
+    return tup.elts[idx]
+get_tup_elt_p = GetTupElt('get_tup_elt')
+
+def make_tup(*elts):
+  return make_tup_p.bind(*elts)
+
+def get_tuple_element(tup, idx):
+  return get_tup_elt_p.bind(tup, idx=idx)
 
 
 class HijaxTest(jtu.JaxTestCase):
@@ -330,6 +381,50 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertEqual(n, 1)
     expected = from_qarray(to_qarray(from_qarray(q)))
     self.assertAllClose(from_qarray(q_out), expected, check_dtypes=False)
+
+  @parameterized.parameters([False, True])
+  def test_tuple_basic(self, jit):
+    def f():
+      tup = make_tup(1, 2)
+      return get_tuple_element(tup, 1)
+
+    if jit:
+      f = jax.jit(f)
+
+    self.assertEqual(f(), 2)
+
+  @parameterized.parameters([False, True])
+  def test_ref_to_tuple(self, jit):
+    def f():
+      tup = make_tup(1, 2)
+      ref = jax.new_ref(tup)
+      tup_ = ref[...]
+      return get_tuple_element(tup_, 1)
+
+    if jit:
+      f = jax.jit(f)
+
+    self.assertEqual(f(), 2)
+
+  @parameterized.parameters([False, True])
+  def test_run_state(self, jit):
+    def f():
+      @run_state
+      def g(ref_args):
+        tup_ref, x_ref = ref_args
+        tup = tup_ref[...]
+        x_ref[...] = get_tuple_element(tup, 1)
+
+      tup = make_tup(1, 2)
+      _, ans =  g((tup, 3))
+      return ans
+
+    if jit:
+      f = jax.jit(f)
+
+    ans = f()
+    self.assertEqual(ans, 2)
+
 
 class BoxTest(jtu.JaxTestCase):
 

@@ -2564,17 +2564,17 @@ class bint(dtypes.ExtendedDType):
 AxisSize = Union[int, DArray, Tracer, Var, DBIdx, InDBIdx, OutDBIdx]
 
 
-class ArrayRef:
+class Ref:
   """Mutable array reference.
 
   In most cases this should not be constructed directly, but rather
   via :func:`jax.ref.array_ref`. For examples of how this can be
-  used, refer to the `ArrayRef guide`_.
+  used, refer to the `Ref guide`_.
 
-  .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
   _aval: AbstractValue
-  _refs: PyTree  # pytree of ArrayRefImpl
+  _refs: PyTree  # list of ArrayRefImpl
 
   def __init__(self, aval, refs):
     from jax._src.state.types import AbstractRef  # pytype: disable=import-error
@@ -2583,7 +2583,7 @@ class ArrayRef:
     self._refs = refs
 
   # TODO(mattjj): update repr to handle non-lojax refs
-  def __repr__(self) -> str: return 'ArrayRef' + repr(self._refs._buf)[5:]
+  def __repr__(self) -> str: return 'Ref' + repr(self._refs._buf)[5:]
 
   # forward type-level info to aval
   aval = property(lambda self: self._aval)
@@ -2616,33 +2616,47 @@ class ArrayRefImpl:
     self._aval = aval
     self._buf = buf
 
-pytype_aval_mappings[ArrayRef] = lambda x: x._aval
-dtypes.canonicalize_value_handlers[ArrayRef] = lambda x: x
+pytype_aval_mappings[Ref] = lambda x: x._aval
+dtypes.canonicalize_value_handlers[Ref] = lambda x: x
 
-def array_ref(init_val, *, memory_space: Any = None):
+def new_ref(init_val, *, memory_space: Any = None):
   """Create a mutable array reference with initial value ``init_val``.
 
-  For more discussion, see the `ArrayRef guide`_.
+  For more discussion, see the `Ref guide`_.
 
   Args:
     init_val: A :class:`jax.Array` representing the initial state
       of the buffer.
-    memory_space: An optional memory space attribute for the ArrayRef.
+    memory_space: An optional memory space attribute for the Ref.
 
   Returns:
-    A :class:`jax.ref.ArrayRef` containing a reference to a mutable buffer.
+    A :class:`jax.ref.Ref` containing a reference to a mutable buffer.
 
-  .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
-  return array_ref_p.bind(init_val, memory_space=memory_space)
-array_ref_p = Primitive('array_ref')
-array_ref_p.is_effectful = lambda params: True  # type: ignore
-array_ref_p.ref_primitive = True
+  return ref_p.bind(init_val, memory_space=memory_space)
+ref_p = Primitive('new_ref')
+ref_p.is_effectful = lambda params: True  # type: ignore
+ref_p.ref_primitive = True
+
+ref_p.is_high = lambda aval, *, memory_space: aval.is_high  # type: ignore
+def _ref_to_lojax(init_val, *, memory_space):
+  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+  val_ty = typeof(init_val)
+  hival_of_refs = val_ty.raise_val(*map(new_ref, val_ty.lower_val(init_val)))  # type: ignore
+  aval = AbstractRef(typeof(init_val))
+  return Ref(AbstractRef(val_ty), hival_of_refs)
+  # return Ref(
+ref_p.to_lojax = _ref_to_lojax  # type: ignore
 
 # back compat
-MutableArray = ArrayRef
-mutable_array = array_ref
-mutable_array_p = array_ref_p
+MutableArray = Ref
+mutable_array = new_ref
+mutable_array_p = ref_p
+ArrayRef = Ref
+array_ref = new_ref
+array_ref_p = ref_p
+
 
 class InternalMutableArrayEffect(effects.Effect):
   pass
@@ -2650,13 +2664,13 @@ array_ref_effect = internal_mutable_array_effect = InternalMutableArrayEffect()
 effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
 effects.remat_allowed_effects.add_type(InternalMutableArrayEffect)
 
-@array_ref_p.def_effectful_abstract_eval
+@ref_p.def_effectful_abstract_eval
 def array_ref_abstract_eval(init_aval, *, memory_space: Any):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   return (AbstractRef(init_aval, memory_space=memory_space),
           {internal_mutable_array_effect})
 
-@array_ref_p.def_impl
+@ref_p.def_impl
 def _array_ref_impl(init_val, *, memory_space: Any):
   if memory_space is not None:
     raise NotImplementedError(
@@ -2670,10 +2684,10 @@ def freeze(ref: ArrayRef) -> Array:
   """Invalidate a given reference and return its final value.
 
   For more information about mutable array references, refer to the
-  `ArrayRef guide`_.
+  `Ref guide`_.
 
   Args:
-    ref: A :class:`jax.ref.ArrayRef` object.
+    ref: A :class:`jax.ref.Ref` object.
 
   Returns:
     A :class:`jax.Array` containing the contents of ``ref``.
@@ -2683,12 +2697,12 @@ def freeze(ref: ArrayRef) -> Array:
     >>> ref = jax.array_ref(jax.numpy.arange(5))
     >>> ref[3] = 100
     >>> ref
-    ArrayRef([  0,   1,   2, 100,   4], dtype=int32)
+    Ref([  0,   1,   2, 100,   4], dtype=int32)
 
     >>> jax.ref.freeze(ref)
     Array([  0,   1,   2, 100,   4], dtype=int32)
 
-  .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
   return freeze_p.bind(ref)
 freeze_p = Primitive('freeze')
@@ -3388,7 +3402,7 @@ def _check_jaxpr(
       # Check the computed effect type matches the eqn's annotation, and is
       # included in the jaxpr's annotation.
       if prim.ref_primitive:
-        if prim is array_ref_p:
+        if prim is ref_p:
           outvar, = eqn.outvars
           in_idx[outvar] = None  # type: ignore
           mut_arrays.add(outvar)
