@@ -153,8 +153,8 @@ colab:
 id: FjZzkxI8ky4r
 outputId: 2a1b6e7a-1c29-4347-c020-7b47c27a5cc3
 ---
-f = jax.jit(lambda x: x, out_shardings=s_dev)
-out_host = f(arr_host)      # Input arrays in the device memory while output arrays in the host memory
+f = jax.jit(lambda x: x, out_shardings=s_host)
+out_host = f(arr_dev)      # Input arrays in the device memory while output arrays in the host memory
 print("Result value of D2H: \n", out_host)
 ```
 
