@@ -1016,30 +1016,19 @@ def check_and_canonicalize_user_dtype(dtype, fun_name=None) -> DType:
   if isinstance(dtype, type) and (f := _DEFAULT_TYPEMAP.get(dtype)) is not None:
     return f()
   np_dtype = np.dtype(dtype)
-  is_custom_dtype = np_dtype.type in [
-      *_custom_float_scalar_types,
-      int2,
-      int4,
-      uint2,
-      uint4
-  ]
-  if (
-      np_dtype.kind not in 'biufcT'
-      and not is_custom_dtype
-      and not dtype == float0
-  ):
+  if np_dtype not in _jax_dtype_set:
     msg = (
         f'JAX only supports number, bool, and string dtypes, got dtype {dtype}'
     )
     msg += f" in {fun_name}" if fun_name else ""
     raise TypeError(msg)
-  if dtype is not None and np_dtype != canonicalize_dtype(np_dtype):
-    msg = ("Explicitly requested dtype {} {} is not available, "
+  if np_dtype != canonicalize_dtype(np_dtype):
+    msg = ("Explicitly requested dtype {}{} is not available, "
            "and will be truncated to dtype {}. To enable more dtypes, set the "
            "jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell "
            "environment variable. "
            "See https://github.com/jax-ml/jax#current-gotchas for more.")
-    fun_name = f"requested in {fun_name}" if fun_name else ""
+    fun_name = f" requested in {fun_name}" if fun_name else ""
     truncated_dtype = canonicalize_dtype(np_dtype)
     warnings.warn(msg.format(dtype, fun_name, truncated_dtype.name), stacklevel=3)
     return truncated_dtype
