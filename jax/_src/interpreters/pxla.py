@@ -202,7 +202,7 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
     if x.dtype == dtypes.float0:
       x = np.zeros(x.shape, dtype=np.dtype(bool))
     aval = core.shaped_abstractify(x)
-    if jaxlib_extension_version < 371:
+    if jaxlib_extension_version < 373:
       x = np.asarray(x)
     if layout is not None:
       results.append(api.device_put(x, Format(layout, sharding)))

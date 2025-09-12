@@ -221,5 +221,5 @@ class LiteralArray:
     )
 
 
-if jaxlib_extension_version >= 371:
+if jaxlib_extension_version >= 373:
   _jax.set_literal_array_type(LiteralArray)
