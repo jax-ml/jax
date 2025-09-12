@@ -1555,7 +1555,9 @@ def _get_lowering_rule(
 
 
 @register_lowering_rule(sp.get_p, mgpu.LoweringSemantics.Warpgroup)
-def _get_lowering_rule_wg(ctx: LoweringRuleContext, x_smem, *leaves, tree):
+def _get_lowering_rule_wg(
+    ctx: LoweringRuleContext, x_smem, *leaves, tree, optimized=True
+):
   if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
     raise TypeError(f"Can only load from references (got {x_smem}).")
 
@@ -1576,7 +1578,10 @@ def _get_lowering_rule_wg(ctx: LoweringRuleContext, x_smem, *leaves, tree):
   if shape:
     zero_index = arith_dialect.constant(ir.IndexType.get(), 0)
     indices = [zero_index for _ in range(len(shape))]
-    return vector_dialect.load(ty, x_smem, indices)
+    op = vector_dialect.LoadOp(ty, x_smem, indices)
+    if optimized:
+      op.attributes["optimized"] = ir.BoolAttr.get(True)
+    return op.result
   else:
     return memref_dialect.load(x_smem, [])
 
