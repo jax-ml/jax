@@ -71,23 +71,24 @@ def matmul_kernel(a, b, config: TuningConfig):
   transforms = (
       plgpu.TilingTransform((8, swizzle_elems)), plgpu.SwizzleTransform(swizzle)
   )
-  if m % (2 * tile_m) != 0:
-    raise ValueError(f"{m=} must be divisible by {tile_m=}")
-  if n % tile_n != 0:
-    raise ValueError(f"{n=} must be divisible by {tile_n=}")
+  cta_tile_m = tile_m * (1 + (config.wg_dimension == MatmulDimension.M))
+  cta_tile_n = tile_n * (1 + (config.wg_dimension == MatmulDimension.N))
+  if m % cta_tile_m != 0:
+    raise ValueError(f"{m=} must be divisible by {tile_m} for the given config")
+  if n % cta_tile_n != 0:
+    raise ValueError(f"{n=} must be divisible by {tile_n} for the given config")
   if k % tile_k != 0:
     raise ValueError(f"{k=} must be divisible by {tile_k=}")
+  m_iters = m // cta_tile_m
+  n_iters = n // cta_tile_n
+  k_iters = k // tile_k
+
   epi_tile_n = config.epi_tile_n or tile_n
   epi_tile_m = config.epi_tile_m or tile_m
   if tile_n % epi_tile_n != 0:
     raise ValueError(f"{tile_n=} must be divisible by {epi_tile_n=}")
   if tile_m % epi_tile_m != 0:
     raise ValueError(f"{tile_m=} must be divisible by {epi_tile_m=}")
-  cta_tile_m = tile_m * (1 + (config.wg_dimension == MatmulDimension.M))
-  cta_tile_n = tile_n * (1 + (config.wg_dimension == MatmulDimension.N))
-  m_iters = m // cta_tile_m
-  n_iters = n // cta_tile_n
-  k_iters = k // tile_k
 
   def kernel(a_gmem, b_gmem, out_gmem, out_smem):
 

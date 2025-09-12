@@ -2368,6 +2368,23 @@ class PallasCallTest(PallasTest):
     [path] = re.findall(r'.file\s+\d+\s+"(.+)"', ptx)
     self.assertEndsWith(__file__, path)
 
+  def test_collective_arrival_count(self):
+    def kernel(dst, collective_barrier):
+      plgpu.barrier_arrive(collective_barrier)
+      plgpu.barrier_arrive(collective_barrier)
+      plgpu.barrier_arrive(collective_barrier)
+      plgpu.barrier_arrive(collective_barrier)
+      plgpu.barrier_wait(collective_barrier)
+      dst[...] = jnp.ones_like(dst)
+    y = plgpu.kernel(
+      kernel,
+      out_shape=jax.ShapeDtypeStruct((128,), jnp.int32),
+      scratch_shapes=[plgpu.ClusterBarrier(collective_axes=("x",), num_arrivals=4)],
+      cluster=(2,),
+      cluster_names=("x",)
+    )()
+    np.testing.assert_array_equal(y, np.ones((), dtype=np.int32))
+
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def setUp(self):
@@ -4963,6 +4980,43 @@ class WarpSpecializedPipelineTest(PallasTest):
         kernel(x, y),
         (x + y).reshape(m // blk_m, blk_m, n // blk_n, blk_n).sum((0, 2)) * 4,
     )
+
+  def test_collective(self):
+    num_steps = 4
+
+    def kernel(x_gmem, o_gmem):
+      cluster_idx = lax.axis_index("cluster")
+      in_specs = [
+          plgpu.BlockSpec(
+              (64, 64), lambda i: (0, i), collective_axes=("cluster",)
+          )
+      ]
+      out_specs = [plgpu.BlockSpec((1, 64, 64), lambda i: (cluster_idx, 0, i))]
+      for _ in range(3):
+        def pipeline_body(_, x_smem, o_smem):
+          o_smem[0, ...] = x_smem[...] + 1.0
+        plgpu.emit_pipeline_warp_specialized(
+            pipeline_body,
+            in_specs=in_specs,
+            out_specs=out_specs,
+            grid=(num_steps,),
+            max_concurrent_steps=2,
+            num_compute_wgs=1,
+            memory_registers=40,
+            wg_axis="wg",
+        )(x_gmem, o_gmem)
+
+    x = jnp.arange(64 * num_steps * 64)
+    x = x.reshape(-1, num_steps * 64).astype(jnp.float32)
+    kernel_fn = self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((2, *x.shape), x.dtype),
+        num_threads=2,
+        thread_name="wg",
+        cluster=(2,),
+        cluster_names=("cluster",)
+    )
+    np.testing.assert_array_equal(kernel_fn(x), np.stack([x + 1.0, x + 1.0]))
 
 
 class WarpSpecializedPipelineWGTest(
