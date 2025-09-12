@@ -566,8 +566,9 @@ class PallasCallTest(PallasTest):
 
   @parameterized.parameters(jnp.bfloat16, jnp.float16, jnp.float32)
   def test_copy_smem_to_gmem_reduction(self, dtype):
+    self.skip_if_wg_semantics()
     @functools.partial(
-        pl.pallas_call,
+        self.pallas_call,
         grid=(200,),
         in_specs=[pl.BlockSpec((128,), lambda *i: i), pl.BlockSpec(memory_space=plgpu.GMEM)],
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -856,6 +857,8 @@ class PallasCallTest(PallasTest):
 
   @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_scoped_copy_with_user_transforms(self):
+    self.skip_if_wg_semantics()
+
     def kernel(x_ref, o_ref, barrier_ref):
       def body(tmp_ref):
         tmp_ref = plgpu.unswizzle_ref(tmp_ref, 128)
@@ -866,7 +869,7 @@ class PallasCallTest(PallasTest):
       pl.run_scoped(body, plgpu.SMEM((16, 4, 8, 32), jnp.float32))
 
     in_spec = pl.BlockSpec(memory_space=plgpu.GMEM)
-    f = pl.pallas_call(
+    f = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct([128, 128], jnp.float32),
         in_specs=(in_spec,),
@@ -1683,6 +1686,7 @@ class PallasCallTest(PallasTest):
       ],
   )
   def test_transposed_layout(self, layouts):
+    self.skip_if_wg_semantics()
     layout, transposed_layout = layouts
     dtype = jnp.dtype(jnp.float16)
     swizzle_elems = 128 // dtype.itemsize
@@ -1691,7 +1695,7 @@ class PallasCallTest(PallasTest):
         plgpu.TilingTransform((8, swizzle_elems)), plgpu.SwizzleTransform(128),
     )
     @functools.partial(
-        pl.pallas_call,
+        self.pallas_call,
         out_shape=jax.ShapeDtypeStruct(shape[::-1], dtype),
         out_specs=plgpu.BlockSpec(transforms=transforms),
     )
@@ -2068,7 +2072,7 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(127, dtype=jnp.int4)  # Size is not a multiple of bytes
     offending_line = "plgpu.copy_gmem_to_smem(x_ref, y_ref, barrier)"
     try:
-      pl.pallas_call(
+      self.pallas_call(
           body,
           in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
           out_specs=pl.BlockSpec(memory_space=plgpu.SMEM),
