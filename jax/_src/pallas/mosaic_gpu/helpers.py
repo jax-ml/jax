@@ -241,14 +241,27 @@ def planar_snake(
   """
   tile_width = np.int32(tile_width)
   major_size = np.int32(shape[1 - minor_dim])
-  # if minor_dim == 0 then tiles are (tile_width, major_size) else (major_size, tile_width)
-  minor_within_tile = lax.rem(lin_idx, tile_width)
-  major_within_tile = lax.rem(lax.div(lin_idx, tile_width), major_size)
+  minor_size = np.int32(shape[minor_dim])
   minor_tile_idx = lax.div(lin_idx, tile_width * major_size)
-  major = lax.select(
+
+  def tile_coordinates(lin_idx, width):
+    # if minor_dim == 0 then tiles are (tile_width, major_size) else (major_size, tile_width)
+    minor_within_tile = lax.rem(lin_idx, width)
+    major_within_tile = lax.rem(lax.div(lin_idx, width), major_size)
+    minor = minor_tile_idx * tile_width + minor_within_tile
+    major = lax.select(
       lax.rem(minor_tile_idx, np.int32(2)) == 0,
       major_within_tile,
       major_size - 1 - major_within_tile,
+    )
+    return (minor, major) if minor_dim == 0 else (major, minor)
+
+  num_full_tiles = shape[minor_dim] // tile_width
+  full_tiles_minor_size = num_full_tiles * tile_width
+  num_full_tiles_elements = num_full_tiles * tile_width * major_size
+  is_full_tile = lin_idx < num_full_tiles_elements
+  return jax.tree.map(
+      functools.partial(jax.lax.select, is_full_tile),
+      tile_coordinates(lin_idx, tile_width),
+      tile_coordinates(lin_idx - num_full_tiles_elements, minor_size - full_tiles_minor_size)
   )
-  minor = minor_tile_idx * tile_width + minor_within_tile
-  return (minor, major) if minor_dim == 0 else (major, minor)

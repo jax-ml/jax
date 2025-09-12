@@ -5771,6 +5771,31 @@ class HelpersTest(PallasTest):
       results[plgpu.planar_snake(np.int32(lin), (m, n), minor_dim, tile_width)] = lin
     np.testing.assert_array_equal(results, reference)
 
+  def test_planar_snake_golden_with_partial_tile(self):
+    m, n = 5, 5
+    with self.subTest("minor_dim=0 tile_width=3"):
+      results = np.full((m, n), -1)
+      for lin in range(m * n):
+        results[plgpu.planar_snake(np.int32(lin), (m, n), 0, 3)] = lin
+      expected = np.array([
+          [0, 3, 6, 9, 12],
+          [1, 4, 7, 10, 13],
+          [2, 5, 8, 11, 14],
+          [23, 21, 19, 17, 15],
+          [24, 22, 20, 18, 16]])
+      np.testing.assert_array_equal(results, expected)
+    with self.subTest("minor_dim=1 tile_width=3"):
+      results = np.full((m, n), -1)
+      for lin in range(m * n):
+        results[plgpu.planar_snake(np.int32(lin), (m, n), 1, 3)] = lin
+      expected = np.array([
+          [0, 1, 2, 23, 24],
+          [3, 4, 5, 21, 22],
+          [6, 7, 8, 19, 20],
+          [9, 10, 11, 17, 18],
+          [12, 13, 14, 15, 16]])
+      np.testing.assert_array_equal(results, expected)
+
   def test_planar_snake_golden(self):
     m, n = 8, 8
     with self.subTest("minor_dim=0 tile_width=2"):
