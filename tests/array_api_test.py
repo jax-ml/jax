@@ -25,7 +25,7 @@ from absl.testing import absltest, parameterized
 import jax
 import jax.numpy as jnp
 from jax._src import config, test_util as jtu
-from jax._src.dtypes import _default_types, canonicalize_dtype
+from jax._src.dtypes import default_types
 from jax._src import xla_bridge as xb
 
 ARRAY_API_NAMESPACE = jnp
@@ -271,7 +271,7 @@ class ArrayAPIInspectionUtilsTest(jtu.JaxTestCase):
   def build_dtype_dict(self, dtypes):
     out = {}
     for name in dtypes:
-        out[name] = jnp.dtype(name)
+      out[name] = jnp.dtype(name)
     return out
 
   def test_capabilities_info(self):
@@ -297,9 +297,8 @@ class ArrayAPIInspectionUtilsTest(jtu.JaxTestCase):
       "indexing": "i",
     }
     target_dict = {
-      dtype_name: canonicalize_dtype(
-        _default_types.get(kind)
-      ) for dtype_name, kind in _default_dtypes.items()
+        dtype_name: default_types.get(kind)()
+        for dtype_name, kind in _default_dtypes.items()
     }
     assert self.info.default_dtypes() == target_dict
 

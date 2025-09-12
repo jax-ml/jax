@@ -989,8 +989,11 @@ class TestPromotionTables(jtu.JaxTestCase):
     dtype = dtypes.canonicalize_dtype(dtype)
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     if weak_type:
-      expected = dtypes.canonicalize_dtype(
-        dtypes._default_types['f' if x.dtype in ["bfloat16", *fp8_dtypes, *fp4_dtypes] else x.dtype.kind])
+      expected = dtypes.default_types[
+          'f'
+          if x.dtype in ['bfloat16', *fp8_dtypes, *fp4_dtypes]
+          else x.dtype.kind
+      ]()
     else:
       expected = x.dtype
     self.assertEqual(dtypes.result_type(x), expected)

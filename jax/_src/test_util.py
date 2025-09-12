@@ -135,8 +135,8 @@ def to_default_dtype(arr: ArrayLike) -> np.ndarray:
   ``jax_default_dtype_bits`` flags.
   """
   arr = np.asarray(arr)
-  dtype = _dtypes._default_types.get(arr.dtype.kind)
-  return arr.astype(_dtypes.canonicalize_dtype(dtype)) if dtype else arr
+  dtype_fn = _dtypes.default_types.get(arr.dtype.kind)
+  return arr.astype(dtype_fn()) if dtype_fn else arr
 
 def with_jax_dtype_defaults(func: Callable[..., Any], use_defaults: bool = True):
   """Return a version of a function with outputs that match JAX's default dtypes.

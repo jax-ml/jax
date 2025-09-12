@@ -199,13 +199,6 @@ else:
   uint = np.uint64
   float_ = np.float64
   complex_ = np.complex128
-_default_types: dict[str, type[Any]] = {
-    'b': bool_,
-    'i': int_,
-    'u': uint,
-    'f': float_,
-    'c': complex_,
-}
 
 
 # Default dtypes. These are intended to have the same semantics as, say,
@@ -244,6 +237,14 @@ def default_complex_dtype() -> DType:
       else np.dtype(np.complex64)
   )
 
+
+default_types: dict[str, Callable[[], DType]] = {
+    'b': lambda: np.dtype(bool),
+    'i': default_int_dtype,
+    'u': default_uint_dtype,
+    'f': default_float_dtype,
+    'c': default_complex_dtype,
+}
 
 def jax_dtype(obj: DTypeLike | None, *, align: bool = False,
               copy: bool = False) -> DType:
@@ -990,10 +991,9 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tupl
   if len(args) == 0:
     raise ValueError("at least one array or dtype is required")
   dtype: DType | ExtendedDType
-  dtype, weak_type = lattice_result_type(*(float_ if arg is None else arg for arg in args))
+  dtype, weak_type = lattice_result_type(*(default_float_dtype() if arg is None else arg for arg in args))
   if weak_type:
-    dtype = canonicalize_dtype(
-      _default_types['f' if dtype in _custom_float_dtypes else dtype.kind])
+    dtype = default_types['f' if dtype in _custom_float_dtypes else dtype.kind]()
   # TODO(jakevdp): fix return type annotation and remove this ignore.
   return (dtype, weak_type) if return_weak_type_flag else dtype  # type: ignore[return-value]
 
