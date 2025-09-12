@@ -5001,16 +5001,22 @@ class WarpSpecializedPipelineTest(PallasTest):
           in_specs=[spec],
       )
 
-      @pl.loop(0, 2)
-      def _outer_loop(_):
-        @pl.loop(0, 4)
-        def _pipeline_loop(i):
-          state = plgpu.PipelinePipeline.START
-          state = jnp.where(i > 0, plgpu.PipelinePipeline.STEADY, state)
-          state = jnp.where(i == 3, plgpu.PipelinePipeline.STOP, state)
-          pipeline(pipeline_state=state)(x_ref)
-        # Make sure we have properly quiesced the pipeline.
-        pipeline(pipeline_state=None)(x_ref)
+      @functools.partial(
+          pl.run_scoped,
+          allocs=pipeline(pipeline_state=None).get_allocations(x_ref),
+          collective_axes="wg",
+      )
+      def _pipeline_scope(allocs):
+        @pl.loop(0, 2)
+        def _outer_loop(_):
+          @pl.loop(0, 4)
+          def _pipeline_loop(i):
+            state = plgpu.PipelinePipeline.START
+            state = jnp.where(i > 0, plgpu.PipelinePipeline.STEADY, state)
+            state = jnp.where(i == 3, plgpu.PipelinePipeline.STOP, state)
+            pipeline(pipeline_state=state)(x_ref, allocations=allocs)
+          # Make sure we have properly quiesced the pipeline.
+          pipeline(pipeline_state=None)(x_ref, allocations=allocs)
 
       @pl.when(wg_idx == 0)
       def _store_out():

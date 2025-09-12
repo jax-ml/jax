@@ -81,49 +81,10 @@ def matmul_kernel(a, b, config: TuningConfig):
   k_iters = k // tile_k
 
   def kernel(a_gmem, b_gmem, out_gmem, out_smem):
-    # TODO(apaszke): Avoid memory pipeline bubbles between MN blocks
-    wg_idx = lax.axis_index("wg")
-    @plgpu.nd_loop((m_iters * n_iters,), collective_axes="sm")
-    def _mn_loop(idxs):
-      (lin_idx,) = idxs
-      m_idx, n_idx = plgpu.planar_snake(
-          lin_idx,
-          (m_iters, n_iters),
-          config.grid_minor_dim,
-          config.grid_tile_width,
-      )
-      m_slice = pl.ds(m_idx * 2 * tile_m, 2 * tile_m)
-      wg_m_slice = pl.ds(lax.axis_index("wg") * tile_m, tile_m)
-      n_slice = pl.ds(n_idx * tile_n, tile_n)
 
-      def prologue_epilogue(eval_pipeline):
-        @functools.partial(
-            pl.run_scoped, acc_ref=plgpu.ACC((tile_m, tile_n), jnp.float32)
-        )
-        def _acc_scope(acc_ref):
-          eval_pipeline(acc_ref)
-          acc = acc_ref[...].astype(dtype)
-          plgpu.wait_smem_to_gmem(0, wait_read_only=True)
-          for epi_mi in range(tile_m // epi_tile_m):
-            for epi_ni in range(tile_n // epi_tile_n):
-              epi_m_slice = slice(epi_mi * epi_tile_m, (epi_mi + 1) * epi_tile_m)
-              epi_n_slice = slice(epi_ni * epi_tile_n, (epi_ni + 1) * epi_tile_n)
-              slot = (epi_mi * (tile_n // epi_tile_n) + epi_ni) % 2
-              plgpu.wait_smem_to_gmem(1, wait_read_only=True)
-              out_smem[wg_idx, slot] = acc[epi_m_slice, epi_n_slice]
-              plgpu.commit_smem()
-              plgpu.copy_smem_to_gmem(
-                  out_smem.at[wg_idx, slot],
-                  out_gmem.at[m_slice, n_slice].at[wg_m_slice].at[epi_m_slice, epi_n_slice],
-              )
-
-      def mma_body(_, a_smem, b_smem, acc_ref):
-        plgpu.wgmma(acc_ref, a_smem.at[wg_m_slice], b_smem)
-        plgpu.wgmma_wait(0)
-        return acc_ref
-
-      plgpu.emit_pipeline_warp_specialized(
-          mma_body,
+    def get_pipeline(pipeline_body, compute_context):
+      return plgpu.emit_pipeline_warp_specialized(
+          pipeline_body,
           grid=(k_iters,),
           memory_registers=40,
           in_specs=[
@@ -143,9 +104,64 @@ def matmul_kernel(a, b, config: TuningConfig):
           wg_axis="wg",
           num_compute_wgs=2,
           max_concurrent_steps=max_concurrent_steps,
-          compute_context=prologue_epilogue,
-      )(a_gmem.at[m_slice, :], b_gmem.at[:, n_slice])
-      plgpu.wait_smem_to_gmem(0, wait_read_only=True)
+          compute_context=compute_context,
+      )
+
+    # Functions don't influence the allocations necessary to run the pipeline.
+    ignore = lambda *_, **__: None
+    @functools.partial(
+        pl.run_scoped,
+        pipeline_allocs=get_pipeline(ignore, ignore).get_allocations(a_gmem, b_gmem),
+        collective_axes="wg",
+    )
+    def _pipeline_scope(pipeline_allocs):
+      wg_idx = lax.axis_index("wg")
+      @plgpu.nd_loop((m_iters * n_iters,), collective_axes="sm")
+      def _mn_loop(idxs):
+        (lin_idx,) = idxs
+        m_idx, n_idx = plgpu.planar_snake(
+            lin_idx,
+            (m_iters, n_iters),
+            config.grid_minor_dim,
+            config.grid_tile_width,
+        )
+        m_slice = pl.ds(m_idx * 2 * tile_m, 2 * tile_m)
+        wg_m_slice = pl.ds(lax.axis_index("wg") * tile_m, tile_m)
+        n_slice = pl.ds(n_idx * tile_n, tile_n)
+
+        def compute_context(eval_pipeline):
+          @functools.partial(
+              pl.run_scoped, acc_ref=plgpu.ACC((tile_m, tile_n), jnp.float32)
+          )
+          def _acc_scope(acc_ref):
+            eval_pipeline(acc_ref)
+            acc = acc_ref[...].astype(dtype)
+            plgpu.wait_smem_to_gmem(0, wait_read_only=True)
+            for epi_mi in range(tile_m // epi_tile_m):
+              for epi_ni in range(tile_n // epi_tile_n):
+                epi_m_slice = slice(epi_mi * epi_tile_m, (epi_mi + 1) * epi_tile_m)
+                epi_n_slice = slice(epi_ni * epi_tile_n, (epi_ni + 1) * epi_tile_n)
+                slot = (epi_mi * (tile_n // epi_tile_n) + epi_ni) % 2
+                plgpu.wait_smem_to_gmem(1, wait_read_only=True)
+                out_smem[wg_idx, slot] = acc[epi_m_slice, epi_n_slice]
+                plgpu.commit_smem()
+                plgpu.copy_smem_to_gmem(
+                    out_smem.at[wg_idx, slot],
+                    out_gmem.at[m_slice, n_slice].at[wg_m_slice].at[epi_m_slice, epi_n_slice],
+                )
+
+        def mma_body(_, a_smem, b_smem, acc_ref):
+          plgpu.wgmma(acc_ref, a_smem.at[wg_m_slice], b_smem)
+          plgpu.wgmma_wait(0)
+          return acc_ref
+
+        get_pipeline(mma_body, compute_context)(
+            a_gmem.at[m_slice, :],
+            b_gmem.at[:, n_slice],
+            allocations=pipeline_allocs,
+        )
+    # Await all transfers before we exit.
+    plgpu.wait_smem_to_gmem(0, wait_read_only=True)
 
   # We don't need multiple slots if there's only one epilogue tile.
   num_out_slots = min(2, (tile_m * tile_n) // (epi_tile_m * epi_tile_n))

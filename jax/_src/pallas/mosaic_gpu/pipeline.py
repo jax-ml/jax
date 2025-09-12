@@ -720,6 +720,10 @@ def emit_pipeline_warp_specialized(
       )
 
     if allocations is None:
+      if pipeline_state is not None:
+        raise ValueError(
+            "Pipeline state should not be set when using automatic allocation."
+        )
       return pl.run_scoped(
           functools.partial(
               scoped_pipeline,
