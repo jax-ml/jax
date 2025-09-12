@@ -997,6 +997,7 @@ cc_library(
         "@xla//xla/python/ifrt:plugin_program",
         "@xla//xla/python/ifrt:plugin_program_serdes",
         "@xla//xla/python/ifrt:user_context",
+        "@xla//xla/python/ifrt:user_context_status_util",
         "@xla//xla/python/ifrt/hlo:hlo_program",
         "@xla//xla/python/pjrt_ifrt",
         "@xla//xla/python/pjrt_ifrt:pjrt_dtype",

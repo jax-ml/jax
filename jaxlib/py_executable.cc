@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/user_context_status_util.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
@@ -90,18 +91,35 @@ namespace jax {
 
 absl::Status PyToken::Await() {
   CHECK(future_.IsValid());
-  nb::gil_scoped_release gil_release;
-  return future_.Await();
+  absl::Status status;
+  {
+    nb::gil_scoped_release gil_release;
+    status = future_.Await();
+  }
+  // `status` originates from `ifrt::ExecuteResult::status`, which can reference
+  // an asynchronously propagated `ifrt::UserContext` representing the context
+  // of an error. We expand this future result right before returning it to
+  // Python (outside of `nb::gil_scoped_release`) so that any attached user
+  // context is appended to the status message.
+  return xla::ifrt::ExpandUserContexts(std::move(status));
 }
 
 absl::Status PyShardedToken::Await() {
-  nb::gil_scoped_release gil_release;
   absl::Status status = absl::OkStatus();
-  for (auto& future : futures_) {
-    auto s = future.Await();
-    if (!s.ok()) status = std::move(s);
+  {
+    nb::gil_scoped_release gil_release;
+    for (auto& future : futures_) {
+      auto s = future.Await();
+      if (!s.ok()) status = std::move(s);
+    }
   }
-  return status;
+  // `status` combines the statuses originating from
+  // `ifrt::ExecuteResult::status`, which can reference an asynchronously
+  // propagated `ifrt::UserContext` representing the context of an error. We
+  // expand this future result right before returning it to Python (outside of
+  // `nb::gil_scoped_release`) so that any attached user context is appended to
+  // the status message.
+  return xla::ifrt::ExpandUserContexts(std::move(status));
 }
 
 PyLoadedExecutable::PyLoadedExecutable(

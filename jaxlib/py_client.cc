@@ -80,6 +80,7 @@ limitations under the License.
 #include "xla/python/ifrt/host_callback.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/program.h"
+#include "xla/python/ifrt/user_context_status_util.h"
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
@@ -443,14 +444,25 @@ PyClient::CompileAndLoadIfrtProgram(
 
   ifrt::LoadedExecutableRef ifrt_loaded_executable;
   std::optional<std::string> fingerprint;
+  absl::Status compile_status;
   {
     nb::gil_scoped_release gil_release;
     TF_ASSIGN_OR_RETURN(
         ifrt_loaded_executable,
         client->ifrt_client_->GetDefaultCompiler()->CompileAndLoad(
             std::move(ifrt_program), std::move(ifrt_options)));
-    TF_RETURN_IF_ERROR(ifrt_loaded_executable->GetReadyFuture().Await());
-    TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
+    compile_status = ifrt_loaded_executable->GetReadyFuture().Await();
+    if (compile_status.ok()) {
+      TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
+    }
+  }
+  if (!compile_status.ok()) {
+    // `compile_status.status()` can reference an asynchronously propagated
+    // `ifrt::UserContext` representing the context of an error. We expand this
+    // future result right before returning it to Python (outside of
+    // `nb::gil_scoped_release`) so that any attached user context is appended
+    // to the status message.
+    return xla::ifrt::ExpandUserContexts(std::move(compile_status));
   }
   auto traceback = Traceback::Get();
   return make_nb_class<PyLoadedExecutable>(

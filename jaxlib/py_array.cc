@@ -87,6 +87,7 @@ limitations under the License.
 #include "xla/python/ifrt/remap_plan.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/user_context_status_util.h"
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/nb_helpers.h"
 #include "xla/python/nb_numpy.h"
@@ -795,13 +796,22 @@ absl::StatusOr<PyArray> PyArray::FullyReplicatedShard() {
 }
 
 absl::Status PyArray::BlockUntilReady() const {
-  nb::gil_scoped_release gil_release;
-  if (ifrt_array() == nullptr) {
-    return xla::InvalidArgument(
-        "BlockHostUntilReady() called on deleted or donated buffer");
+  absl::Status status;
+  {
+    nb::gil_scoped_release gil_release;
+    if (ifrt_array() == nullptr) {
+      return xla::InvalidArgument(
+          "BlockHostUntilReady() called on deleted or donated buffer");
+    }
+    ifrt::Array* ifrt_array = this->ifrt_array();
+    status = AwaitBuffersReady(absl::MakeConstSpan(&ifrt_array, 1));
   }
-  ifrt::Array* ifrt_array = this->ifrt_array();
-  return AwaitBuffersReady(absl::MakeConstSpan(&ifrt_array, 1));
+  // The array ready future can reference an asynchronously propagated
+  // `ifrt::UserContext` representing the context of an error. We expand this
+  // future result right before returning it to Python (outside of
+  // `nb::gil_scoped_release`) so that any attached user context is appended to
+  // the status message.
+  return xla::ifrt::ExpandUserContexts(std::move(status));
 }
 
 absl::StatusOr<size_t> PyArray::GetOnDeviceSizeInBytes() {
@@ -830,13 +840,21 @@ absl::Status PyArray::BlockUntilResultStatusIsReady() {
   if (!result_status.IsValid()) {
     return absl::OkStatus();
   }
+  absl::Status status;
   if (!result_status.IsReady()) {
     // Only release the gil if we need to Await().
     nb::gil_scoped_release release_gil;
     BlockUntilReadyWithCancel(result_status);
-    return result_status.Await();
+    status = result_status.Await();
+  } else {
+    status = result_status.Await();
   }
-  return result_status.Await();
+  // `result_status` originates from `ifrt::ExecuteResult::status`, which can
+  // reference an asynchronously propagated `ifrt::UserContext` representing the
+  // context of an error. We expand this future result right before returning it
+  // to Python (outside of `nb::gil_scoped_release`) so that any attached user
+  // context is appended to the status message.
+  return xla::ifrt::ExpandUserContexts(std::move(status));
 }
 
 absl::StatusOr<std::pair<nb::object, bool>>
@@ -1470,8 +1488,16 @@ absl::Status PyArray::BatchedBlockUntilReady(std::vector<nb::object> objs) {
   }
 
   GlobalPyRefManager()->CollectGarbage();
-  nb::gil_scoped_release gil_release;
-  return AwaitBuffersReady(absl::MakeConstSpan(ifrt_arrays));
+  absl::Status status;
+  {
+    nb::gil_scoped_release gil_release;
+    status = AwaitBuffersReady(absl::MakeConstSpan(ifrt_arrays));
+  }
+  // `status` can reference an asynchronously propagated `ifrt::UserContext`
+  // representing the context of an error. We expand this future result right
+  // before returning it to Python (outside of `nb::gil_scoped_release`) so that
+  // any attached user context is appended to the status message.
+  return xla::ifrt::ExpandUserContexts(std::move(status));
 }
 
 absl::Status PyArray::ReplaceWithAlias(PyArray o) {
@@ -1777,12 +1803,21 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
   }
 
   TF_RETURN_IF_ERROR(CopyToHostAsync(dynamic_shape_holder, ifrt_array));
+  absl::Status status;
   if (!ready_.IsReady()) {
     nb::gil_scoped_release gil;
     BlockUntilReadyWithCancel(ready_);
-    TF_RETURN_IF_ERROR(ready_.Await());
+    status = ready_.Await();
   } else {
-    TF_RETURN_IF_ERROR(ready_.Await());
+    status = ready_.Await();
+  }
+  if (!status.ok()) {
+    // `ready_` is the returned future of `ifrt::Array::CopyToHostBuffer`, which
+    // can reference an asynchronously propagated `ifrt::UserContext`
+    // representing the context of an error. We expand this future result right
+    // before returning it to Python (outside of `nb::gil_scoped_release`) so
+    // that any attached user context is appended to the status message.
+    return xla::ifrt::ExpandUserContexts(std::move(status));
   }
   if (string_array_contents_ != nullptr) {
     TF_RETURN_IF_ERROR(ConvertStringArrayContentsToNumpyArray(ifrt_array));
