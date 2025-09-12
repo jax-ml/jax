@@ -31,6 +31,7 @@ from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
+from jax._src import literal_array
 from jax._src import profiler
 from jax._src import util
 from jax._src import xla_bridge
@@ -779,7 +780,11 @@ def make_array_from_callback(
           " context."
       )
     # Value can be python scalar, resolve it into something with dtype.
-    return dtypes.canonicalize_value(r, canonicalize_scalar_dtypes=True)
+    out = dtypes.canonicalize_value(r, canonicalize_scalar_dtypes=True)
+    # TODO(phawkins): we probably don't need to remove the LiteralArray here.
+    if isinstance(out, literal_array.LiteralArray):
+      out = np.asarray(out)
+    return out
 
   if sharding.is_fully_replicated:
     devices = list(sharding._internal_device_list.addressable_device_list)  # type: ignore

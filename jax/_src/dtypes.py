@@ -33,6 +33,7 @@ import numpy as np
 
 from jax._src import config
 from jax._src import deprecations
+from jax._src import literal_array
 from jax._src.typing import Array, DType, DTypeLike
 from jax._src.util import set_module, StrictABC
 
@@ -878,6 +879,8 @@ _registered_weak_types: list[JAXType] = []
 def is_weakly_typed(x: Any) -> bool:
   if type(x) in _weak_types or type(x) in _registered_weak_types:
     return True
+  if isinstance(x, literal_array.LiteralArray):
+    return x.weak_type
   try:
     return x.aval.weak_type
   except AttributeError:

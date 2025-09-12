@@ -19,6 +19,7 @@ from functools import partial
 import numpy as np
 
 from jax._src import core
+from jax._src import literal_array
 from jax._src import dtypes
 
 from jax._src import traceback_util
@@ -60,6 +61,17 @@ def _make_shaped_array_for_numpy_array(x: np.ndarray) -> ShapedArray:
 core.pytype_aval_mappings[np.ndarray] = _make_shaped_array_for_numpy_array
 
 
+def _make_shaped_array_for_literal_array(
+    x: literal_array.LiteralArray,
+) -> ShapedArray:
+  dtype = x.dtype
+  dtypes.check_valid_dtype(dtype)
+  return ShapedArray(x.shape, dtype, sharding=None, weak_type=x.weak_type)
+
+
+core.pytype_aval_mappings[literal_array.LiteralArray] = _make_shaped_array_for_literal_array
+
+
 def _make_shaped_array_for_numpy_scalar(x: np.generic) -> ShapedArray:
   dtype = np.dtype(x)
   dtypes.check_valid_dtype(dtype)
@@ -71,6 +83,8 @@ for t in numpy_scalar_types:
 
 core.literalable_types.update(array_types)
 
+
+core.literalable_types.add(literal_array.LiteralArray)
 
 def _make_abstract_python_scalar(typ, val):
   # Note: all python scalar types are weak except bool, because bool only
@@ -85,7 +99,8 @@ core.literalable_types.update(dtypes.python_scalar_types)
 
 
 def _canonicalize_ndarray_dtype(x, *, canonicalize_scalar_dtypes):
-  return np.asarray(x, dtypes.canonicalize_dtype(x.dtype))
+  dtype = dtypes.canonicalize_dtype(x.dtype)
+  return literal_array.LiteralArray(np.asarray(x, dtype), weak_type=False)
 
 def _canonicalize_masked_array_dtype(x, *, canonicalize_scalar_dtypes):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
@@ -95,7 +110,8 @@ def _canonicalize_python_scalar_dtype(typ, x, *, canonicalize_scalar_dtypes):
   # If canonicalize_scalar_dtypes is True, we canonicalize to a NumPy array
   # with a fixed dtype.
   if canonicalize_scalar_dtypes:
-    return np.asarray(x, dtypes.scalar_type_to_dtype(typ, x))
+    return literal_array.LiteralArray(
+        np.asarray(x, dtypes.scalar_type_to_dtype(typ, x)), weak_type=True)
   else:
     # Otherwise, we leave the result as a Python scalar. However, we might have
     # a subtype of a python scalar type, e.g., an IntEnum which will surprise
@@ -104,6 +120,14 @@ def _canonicalize_python_scalar_dtype(typ, x, *, canonicalize_scalar_dtypes):
 
 dtypes.canonicalize_value_handlers.update(
     (t, _canonicalize_ndarray_dtype) for t in numpy_scalar_types)
+
+
+def _canonicalize_literal_array(x, *, canonicalize_scalar_dtypes):
+  return x
+
+dtypes.canonicalize_value_handlers[literal_array.LiteralArray] = (
+    _canonicalize_literal_array
+)
 
 dtypes.canonicalize_value_handlers[np.ndarray] = _canonicalize_ndarray_dtype
 dtypes.canonicalize_value_handlers[np.ma.MaskedArray] = _canonicalize_masked_array_dtype

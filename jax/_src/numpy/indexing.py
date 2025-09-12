@@ -30,6 +30,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
+from jax._src import literal_array
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
@@ -681,7 +682,7 @@ def _gather(arr, dynamic_idx, *, treedef, static_idx, indices_are_sorted,
                            "fill_value argument to indexed get()")
     if np.ndim(fill_value) != 0:
       raise ValueError("fill_value argument to indexed get() must be a scalar")
-    if isinstance(fill_value, np.ndarray):
+    if isinstance(fill_value, (np.ndarray, literal_array.LiteralArray)):
       fill_value = fill_value.item()
 
   if indexer.scalar_bool_dims:
@@ -807,8 +808,12 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
   # removing ellipses (https://github.com/jax-ml/jax/issues/25109)
   # If advanced idexing axes do not appear contiguously, NumPy semantics
   # move the advanced axes to the front.
-  is_advanced, = np.nonzero([isinstance(e, (int, np.integer, Array, np.ndarray))
-                             or lax_numpy.isscalar(e) for e in idx])
+  (is_advanced,) = np.nonzero([
+      isinstance(e, (int, np.integer, Array, np.ndarray,
+                     literal_array.LiteralArray))
+      or lax_numpy.isscalar(e)
+      for e in idx
+  ])
   advanced_axes_are_contiguous = np.all(np.diff(is_advanced) == 1)
 
   # Remove ellipses and add trailing slice(None)s.
@@ -845,7 +850,9 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
     idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
     advanced_pairs = (
       (lax_numpy.asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
-      if lax_numpy.isscalar(e) or isinstance(e, (Sequence, Array, np.ndarray)))
+      if lax_numpy.isscalar(e)
+      or isinstance(e, (Sequence, Array, np.ndarray,
+                        literal_array.LiteralArray)))
     if normalize_indices:
       advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
                         for e, i, j in advanced_pairs)
@@ -1019,7 +1026,8 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
 
 def _should_unpack_list_index(x):
   """Helper for eliminate_deprecated_list_indexing."""
-  return (isinstance(x, (np.ndarray, Array)) and np.ndim(x) != 0
+  return (isinstance(x, (np.ndarray, Array, literal_array.LiteralArray))
+          and np.ndim(x) != 0
           or isinstance(x, (Sequence, slice))
           or x is Ellipsis or x is None)
 
@@ -1028,7 +1036,9 @@ def eliminate_deprecated_list_indexing(idx):
   # non-tuple sequence containing slice objects, [Ellipses, or newaxis
   # objects]". Detects this and raises a TypeError.
   if not isinstance(idx, tuple):
-    if isinstance(idx, Sequence) and not isinstance(idx, (Array, np.ndarray, str)):
+    if isinstance(idx, Sequence) and not isinstance(
+        idx, (Array, np.ndarray, literal_array.LiteralArray, str)
+    ):
       # As of numpy 1.16, some non-tuple sequences of indices result in a warning, while
       # others are converted to arrays, based on a set of somewhat convoluted heuristics
       # (See https://github.com/numpy/numpy/blob/v1.19.2/numpy/core/src/multiarray/mapping.c#L179-L343)
@@ -1130,8 +1140,10 @@ def _is_int_arraylike(x):
 
 def _is_scalar(x):
   """Checks if a Python or NumPy scalar."""
-  return  np.isscalar(x) or (isinstance(x, (np.ndarray, Array))
-                             and np.ndim(x) == 0)
+  return np.isscalar(x) or (
+      isinstance(x, (np.ndarray, literal_array.LiteralArray, Array))
+      and np.ndim(x) == 0
+  )
 
 def _canonicalize_tuple_index(arr_ndim, idx):
   """Helper to remove Ellipsis and add in the implicit trailing slice(None)."""

@@ -34,6 +34,7 @@ import numpy as np
 from jax._src import api
 from jax._src import core
 from jax._src import dtypes
+from jax._src import literal_array
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.array import ArrayImpl
 from jax._src.lax import lax
@@ -582,7 +583,15 @@ def _notimplemented_flat(self):
   raise NotImplementedError("JAX Arrays do not implement the arr.flat property: "
                             "consider arr.flatten() instead.")
 
-_accepted_binop_types = (int, float, complex, np.generic, np.ndarray, Array)
+_accepted_binop_types = (
+    int,
+    float,
+    complex,
+    np.generic,
+    np.ndarray,
+    Array,
+    literal_array.LiteralArray,
+)
 _rejected_binop_types = (list, tuple, set, dict)
 
 def _defer_to_unrecognized_arg(opchar, binary_op, swap=False):

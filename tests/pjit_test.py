@@ -32,6 +32,7 @@ import jax.numpy as jnp
 from jax._src import core
 from jax._src import config
 from jax._src import dispatch
+from jax._src import literal_array
 from jax._src import test_util as jtu
 from jax._src import dtypes
 from jax import stages
@@ -61,8 +62,8 @@ from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import _jax
-from jax._src.lib import xla_client as xc
 from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import xla_client as xc
 from jax._src.lib import ifrt_version
 from jax._src.util import curry, unzip2
 
@@ -660,6 +661,8 @@ class PJitTest(jtu.BufferDonationTestCase):
     jtu.check_grads(g, (jnp.arange(16.).reshape((4, 4)) / 100,), order=2)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
+  @unittest.skipIf(jaxlib_extension_version < 371,
+                   'LiteralArray support in jaxlib required')
   def testAutodiffCache(self):
     f = pjit(lambda x: jnp.sin(x).sum(), in_shardings=P('x'), out_shardings=None)
     x = jnp.arange(16, dtype=jnp.float32)
@@ -3718,7 +3721,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
       f()  # doesn't crash
 
   def test_closed_constants_at_top_level(self):
-    const = np.arange(8, dtype=np.float32)
+    const = literal_array.LiteralArray(
+        np.arange(8, dtype=np.float32), weak_type=False)
 
     @jax.jit
     def f(x):

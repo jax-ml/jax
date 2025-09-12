@@ -552,11 +552,14 @@ class Literal:
   def pretty_print(self, context: JaxprPpContext, *, print_dtype: bool = True):
     del context  # unused
     dtype = getattr(self.aval, 'dtype', None)
-    val_str = str(self.val) if not np.shape(self.val) else "[...]"
+    if not np.shape(self.val):
+      val_str = str(np.asarray(self.val).item())
+    else:
+      val_str = "[...]"
     if print_dtype and dtype:
       return f'{val_str}:{self.aval.str_short(short_dtypes=True)}'
     else:
-      return f'{val_str}'
+      return val_str
 
   def __repr__(self):
     return f'Literal({self.val})'

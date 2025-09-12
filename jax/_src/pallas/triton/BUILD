@@ -68,6 +68,7 @@ pytype_strict_library(
         "//jax/_src:custom_derivatives",
         "//jax/_src:debugging",
         "//jax/_src:lax",
+        "//jax/_src:literal_array",
         "//jax/_src:mlir",
         "//jax/_src:partial_eval",
         "//jax/_src:source_info_util",

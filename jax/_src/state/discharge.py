@@ -24,6 +24,7 @@ from typing import Any, Protocol, TypeVar
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import core
+from jax._src import literal_array
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import sharding_impls
@@ -363,7 +364,7 @@ def _convert_to_gather_arrays(indexer: indexing.NDIndexer) -> tuple[Array, ...]:
       diff = len(total_shape) - idx_in_shape_after_indexing - 1
       arr = arr.reshape(arr.shape + (1,) * diff)
       arrs.append(arr)
-    elif isinstance(idxer, (np.ndarray, Array)):
+    elif isinstance(idxer, (np.ndarray, Array, literal_array.LiteralArray)):
       diff = n_idxers - 1 - last_int_index_idx
       arr = idxer.reshape(idxer.shape + (1,) * diff)
       arrs.append(arr)

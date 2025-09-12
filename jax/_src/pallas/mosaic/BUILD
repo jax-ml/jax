@@ -114,6 +114,7 @@ pytype_strict_library(
         "//jax/_src:dtypes",
         "//jax/_src:export",
         "//jax/_src:lax",
+        "//jax/_src:literal_array",
         "//jax/_src:mesh",
         "//jax/_src:mlir",
         "//jax/_src:partial_eval",

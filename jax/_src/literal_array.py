@@ -1,0 +1,174 @@
+# Copyright 2025 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import numpy as np
+from typing import Sequence
+from jax._src import typing
+from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
+
+
+class LiteralArray:
+  """A LiteralArray is a host-side array used by JAX during tracing.
+
+  To most intents and purposes a LiteralArray is a thin wrapper around a numpy
+  array and should act like it. The primary differences are that a LiteralArray
+  carries a JAX type:
+  * its type is not canonicalized by JAX, irrespective of the jax_enable_x64
+    mode
+  * it can be weakly typed.
+  """
+  __slots__ = ('val', 'weak_type')
+
+  val: np.ndarray
+  weak_type: bool
+
+  def __init__(self, val: np.ndarray, weak_type: bool):
+    self.val = val
+    self.weak_type = weak_type
+
+  @property
+  def dtype(self) -> typing.DType:
+    return self.val.dtype
+
+  @property
+  def shape(self) -> typing.Shape:
+    return self.val.shape
+
+  @property
+  def strides(self) -> Sequence[int]:
+    return self.val.strides
+
+  @property
+  def ndim(self) -> int:
+    return self.val.ndim
+
+  @property
+  def size(self) -> int:
+    return self.val.size
+
+  def __repr__(self):
+    prefix = 'LiteralArray('
+    if self.weak_type:
+      dtype_str = f'dtype={self.val.dtype.name}, weak_type=True)'
+    else:
+      dtype_str = f'dtype={self.val.dtype.name})'
+
+    line_width = np.get_printoptions()["linewidth"]
+    if self.size == 0:
+      s = f"[], shape={self.val.shape}"
+    else:
+      s = np.array2string(self.val, prefix=prefix, suffix=',',
+                          separator=', ', max_line_width=line_width)
+    last_line_len = len(s) - s.rfind('\n') + 1
+    sep = ' '
+    if last_line_len + len(dtype_str) + 1 > line_width:
+      sep = ' ' * len(prefix)
+    return f"{prefix}{s},{sep}{dtype_str}"
+
+  def __array__(self, dtype=None, copy=None):
+    # You might think that we can do the following here:
+    # return self.val.__array__(dtype=dtype, copy=copy)
+    # Unfortunately __array__ appears to be buggy on NumPy < 2.3 and interprets
+    # the "dtype=None" as "the default float type".
+    # TODO(phawkins): revert to the above form once NumPy 2.3 is the minimum
+    # supported version.
+    return np.asarray(self.val, dtype=dtype, copy=copy)  # pytype: disable=wrong-keyword-args
+
+  def __add__(self, other):
+    return self.val.__add__(other)
+
+  def __sub__(self, other):
+    return self.val.__sub__(other)
+
+  def __mul__(self, other):
+    return self.val.__mul__(other)
+
+  def __floordiv__(self, other):
+    return self.val.__floordiv__(other)
+
+  def __truediv__(self, other):
+    return self.val.__truediv__(other)
+
+  def __mod__(self, other):
+    return self.val.__mod__(other)
+
+  def __radd__(self, other):
+    return self.val.__radd__(other)
+
+  def __rsub__(self, other):
+    return self.val.__rsub__(other)
+
+  def __rmul__(self, other):
+    return self.val.__rmul__(other)
+
+  def __rtruediv__(self, other):
+    return self.val.__rtruediv__(other)
+
+  def __rfloordiv__(self, other):
+    return self.val.__rfloordiv__(other)
+
+  def __rmod__(self, other):
+    return self.val.__rmod__(other)
+
+  def __getitem__(self, index):
+    return self.val.__getitem__(index)
+
+  def __bool__(self):
+    return self.val.__bool__()
+
+  def __int__(self):
+    return self.val.__int__()
+
+  def __float__(self):
+    return self.val.__float__()
+
+  def __lt__(self, other):
+    return self.val.__lt__(other)
+
+  def __le__(self, other):
+    return self.val.__le__(other)
+
+  def __eq__(self, other):
+    return self.val.__eq__(other)
+
+  def __ne__(self, other):
+    return self.val.__ne__(other)
+
+  def __gt__(self, other):
+    return self.val.__gt__(other)
+
+  def __ge__(self, other):
+    return self.val.__ge__(other)
+
+  def reshape(self, *args, **kw):
+    return self.val.reshape(*args, **kw)
+
+  def item(self, *args):
+    return self.val.item(*args)
+
+  @property
+  def T(self):
+    return self.val.T
+
+  @property
+  def mT(self):
+    return self.val.mT
+
+  def astype(self, dtype, order='K', casting='unsafe', subok=True, copy=True):
+    return self.val.astype(dtype, order=order, casting=casting, subok=subok,
+                           copy=copy)
+
+if jaxlib_extension_version >= 371:
+  _jax.set_literal_array_type(LiteralArray)

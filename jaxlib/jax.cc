@@ -51,6 +51,7 @@ limitations under the License.
 #include "jaxlib/ffi.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_program.h"
+#include "jaxlib/py_values.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/distributed/client.h"
@@ -977,6 +978,8 @@ NB_MODULE(_jax, m) {
         []() { return DevicePutInfo::GetInfo(); });
 
   PartitionSpec::Register(m);
+
+  m.def("set_literal_array_type", &SetLiteralArrayType);
 }  // NOLINT(readability/fn_size)
 
 }  // namespace jax

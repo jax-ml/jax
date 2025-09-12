@@ -153,6 +153,9 @@ struct DevicePutInfo {
   static std::unordered_map<std::string, int64_t> GetInfo();
 };
 
+// Tells the C++ code about the Python type LiteralArray.
+void SetLiteralArrayType(nanobind::object t);
+
 }  // namespace jax
 
 #endif  // JAXLIB_PY_VALUES_H_

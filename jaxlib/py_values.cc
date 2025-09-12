@@ -81,6 +81,9 @@ namespace jax {
 
 namespace {
 
+// The LiteralArray type.
+nb::object& literal_array_type = *new nb::object();
+
 // For xla::S64/U64/F64/C128 types, returns the largest 32-bit equivalent.
 xla::PrimitiveType Squash64BitType(xla::PrimitiveType type) {
   switch (type) {
@@ -561,6 +564,16 @@ absl::StatusOr<ShardFn> HandleNumpyArray(nb::handle h, ifrt::Client* client,
   };
 }
 
+absl::StatusOr<ShardFn> HandleLiteralArray(nb::handle h, ifrt::Client* client,
+                                           ifrt::Device* to_device,
+                                           ifrt::MemoryKind to_memory_kind,
+                                           const DevicePutOptions& options) {
+  DevicePutOptions o = options;
+  o.squash_64bit_types = false;
+  return HandleNumpyArray(h.attr("val"), client, to_device, to_memory_kind,
+                          options);
+}
+
 absl::StatusOr<ShardFn> HandlePyArray(nb::handle obj, ifrt::Client* client,
                                       ifrt::Device* to_device,
                                       ifrt::MemoryKind to_memory_kind,
@@ -658,6 +671,9 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
 
     (*p)[reinterpret_cast<PyObject*>(&PyArray_Type)] = HandleNumpyArray;
 
+    if (literal_array_type.ptr() != nullptr) {
+      (*p)[literal_array_type.ptr()] = HandleLiteralArray;
+    }
     // Numpy scalar types. For some of them, we share the handler with
     // Python types (np_int64, np_float64, np_complex128).
     (*p)[dtypes.np_bool.ptr()] = HandleNumpyScalar<bool>;
@@ -728,6 +744,8 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
 }
 
 }  // namespace
+
+void SetLiteralArrayType(nb::object t) { literal_array_type = t; }
 
 std::string PyArgSignature::DebugString() const {
   std::string result = "";
@@ -822,6 +840,16 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         };
         (*p)[reinterpret_cast<PyObject*>(&PyArray_Type)] = numpy_handler;
 
+        ToPyArgSignatureHandler literal_array_handler =
+            [numpy_handler](
+                nb::handle h,
+                bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
+          return numpy_handler(h.attr("val"), /*jax_enable_x64=*/true);
+        };
+        if (literal_array_type.ptr() != nullptr) {
+          (*p)[literal_array_type.ptr()] = literal_array_handler;
+        }
+
         ToPyArgSignatureHandler np_uint64_handler =
             [](nb::handle h,
                bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
@@ -913,8 +941,7 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
     return xla::InvalidArgument(
         "%s",
         absl::StrCat("Not supported: The C++ ToPyArgSignature only accepts "
-                     "Buffer/DeviceArray, Numpy "
-                     "arrays scalars of supported types "
+                     "JAX Arrays, Numpy arrays and scalars of supported types "
                      "(see implementation), or Python scalars. Got type ",
                      nb::cast<std::string_view>(nb::str(arg.type()))));
   }

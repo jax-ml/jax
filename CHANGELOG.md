@@ -26,6 +26,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The minimum supported NumPy version is now 2.0. Since SciPy 1.13 is required
     for NumPy 2.0 support, the minimum supported SciPy version is now 1.13.
 
+  * JAX now represents constants in its internal jaxpr representation as a
+    `LiteralArray`, which is a private JAX type that duck types as a
+    `numpy.ndarray`. This type may be exposed to users via `custom_jvp` rules,
+    for example, and may break code that uses `isinstance(x, np.ndarray)`. If
+    this breaks your code, you may convert these arrays to classic NumPy arrays
+    using `np.asarray(x)`.
+
 * Bug fixes
   * `arr.view(dtype=None)` now returns the array unchanged, matching NumPy's
     semantics. Previously it returned the array with a float dtype.

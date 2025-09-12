@@ -192,6 +192,7 @@ pytype_strict_library(
         ":ad_util",
         ":core",
         ":dtypes",
+        ":literal_array",
         ":traceback_util",
     ] + py_deps("numpy"),
 )
@@ -232,6 +233,7 @@ pytype_strict_library(
         ":effects",
         ":jaxpr_util",
         ":layout",
+        ":literal_array",
         ":mesh",
         ":mlir",
         ":monitoring",
@@ -436,6 +438,7 @@ py_library_providing_imports_info(
         ":dtypes",
         ":effects",
         ":ffi",
+        ":literal_array",
         ":mesh",
         ":mlir",
         ":named_sharding",
@@ -525,6 +528,15 @@ pytype_strict_library(
         ":typing",
         ":util",
         ":xla_metadata_lib",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "literal_array",
+    srcs = ["literal_array.py"],
+    deps = [
+        ":typing",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
@@ -714,6 +726,7 @@ pytype_strict_library(
     deps = [
         ":config",
         ":deprecations",
+        ":literal_array",
         ":traceback_util",
         ":typing",
         ":util",
@@ -950,6 +963,7 @@ pytype_strict_library(
         ":hashable_array",
         ":jaxpr_util",
         ":layout",
+        ":literal_array",
         ":mesh",
         ":op_shardings",
         ":partial_eval",
@@ -1303,6 +1317,7 @@ py_library_providing_imports_info(
         ":error_check",
         ":export",
         ":lax",
+        ":literal_array",
         ":mesh",
         ":sharding",
         ":sharding_impls",
@@ -1521,6 +1536,7 @@ pytype_strict_library(
         ":dtypes",
         ":ffi",
         ":lax",
+        ":literal_array",
         ":mesh",
         ":mlir",
         ":numpy",
