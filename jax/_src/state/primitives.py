@@ -67,6 +67,13 @@ get_p.is_effectful = lambda params: True  # type: ignore
 get_p.def_impl(partial(dispatch.apply_primitive, get_p))
 batching.ragged_prop_rules[get_p] = batching.ragged_mask_transfer_identity
 
+get_p.is_high = lambda ref_aval, *_, tree: ref_aval.is_high  # type: ignore
+def _get_to_lojax(ref, *idx, tree):
+  if idx: raise NotImplementedError
+  val_ty = core.typeof(ref._refs)
+  return val_ty.raise_val(*map(ref_get, val_ty.lower_val(ref._refs)))
+get_p.to_lojax = _get_to_lojax  # type: ignore
+
 Indexer = Union[int, slice, Array, types.EllipsisType]
 
 

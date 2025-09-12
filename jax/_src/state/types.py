@@ -381,6 +381,24 @@ class AbstractRef(core.AbstractValue):
     self.memory_space = memory_space
 
   @property
+  def is_high(self):
+    return self.inner_aval.is_high
+
+  def lo_ty(self):
+    return map(AbstractRef, self.inner_aval.lo_ty())
+
+  def lower_val(self, ref):
+    if not self.is_high:
+      return [ref]
+    return self.inner_aval.lower_val(ref._refs)
+
+  def raise_val(self, *vals):
+    if not self.is_high:
+      ref, = vals
+      return ref
+    return core.Ref(self, self.inner_aval.raise_val(*vals))
+
+  @property
   def weak_type(self) -> bool:
     if not hasattr(self.inner_aval, "weak_type"):
       raise AttributeError

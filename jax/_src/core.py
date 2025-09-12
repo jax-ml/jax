@@ -2567,7 +2567,7 @@ class bint(dtypes.ExtendedDType):
 AxisSize = Union[int, DArray, Tracer, Var, DBIdx, InDBIdx, OutDBIdx]
 
 
-class ArrayRef:
+class Ref:
   """Mutable array reference.
 
   In most cases this should not be constructed directly, but rather
@@ -2619,10 +2619,10 @@ class ArrayRefImpl:
     self._aval = aval
     self._buf = buf
 
-pytype_aval_mappings[ArrayRef] = lambda x: x._aval
-dtypes.canonicalize_value_handlers[ArrayRef] = _canonicalize_identity
+pytype_aval_mappings[Ref] = lambda x: x._aval
+dtypes.canonicalize_value_handlers[Ref] = _canonicalize_identity
 
-def array_ref(init_val, *, memory_space: Any = None):
+def new_ref(init_val, *, memory_space: Any = None):
   """Create a mutable array reference with initial value ``init_val``.
 
   For more discussion, see the `ArrayRef guide`_.
@@ -2637,15 +2637,29 @@ def array_ref(init_val, *, memory_space: Any = None):
 
   .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
   """
-  return array_ref_p.bind(init_val, memory_space=memory_space)
-array_ref_p = Primitive('array_ref')
-array_ref_p.is_effectful = lambda params: True  # type: ignore
-array_ref_p.ref_primitive = True
+  return ref_p.bind(init_val, memory_space=memory_space)
+ref_p = Primitive('new_ref')
+ref_p.is_effectful = lambda params: True  # type: ignore
+ref_p.ref_primitive = True
+
+ref_p.is_high = lambda aval, *, memory_space: aval.is_high  # type: ignore
+def _ref_to_lojax(init_val, *, memory_space):
+  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+  val_ty = typeof(init_val)
+  hival_of_refs = val_ty.raise_val(*map(new_ref, val_ty.lower_val(init_val)))
+  aval = AbstractRef(typeof(init_val))
+  return Ref(AbstractRef(val_ty), hival_of_refs)
+  # return Ref(
+ref_p.to_lojax = _ref_to_lojax  # type: ignore
 
 # back compat
-MutableArray = ArrayRef
-mutable_array = array_ref
-mutable_array_p = array_ref_p
+MutableArray = Ref
+mutable_array = new_ref
+mutable_array_p = ref_p
+ArrayRef = Ref
+array_ref = new_ref
+array_ref_p = ref_p
+
 
 class InternalMutableArrayEffect(effects.Effect):
   pass
@@ -2653,13 +2667,13 @@ array_ref_effect = internal_mutable_array_effect = InternalMutableArrayEffect()
 effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
 effects.remat_allowed_effects.add_type(InternalMutableArrayEffect)
 
-@array_ref_p.def_effectful_abstract_eval
+@ref_p.def_effectful_abstract_eval
 def array_ref_abstract_eval(init_aval, *, memory_space: Any):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   return (AbstractRef(init_aval, memory_space=memory_space),
           {internal_mutable_array_effect})
 
-@array_ref_p.def_impl
+@ref_p.def_impl
 def _array_ref_impl(init_val, *, memory_space: Any):
   if memory_space is not None:
     raise NotImplementedError(
@@ -3391,7 +3405,7 @@ def _check_jaxpr(
       # Check the computed effect type matches the eqn's annotation, and is
       # included in the jaxpr's annotation.
       if prim.ref_primitive:
-        if prim is array_ref_p:
+        if prim is ref_p:
           outvar, = eqn.outvars
           in_idx[outvar] = None  # type: ignore
           mut_arrays.add(outvar)
