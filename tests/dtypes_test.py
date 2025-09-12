@@ -441,10 +441,10 @@ class DtypesTest(jtu.JaxTestCase):
 
   def test_check_dtype_array(self):
     x = jnp.arange(4)
-    msg = "Passing an array as a dtype argument is deprecated"
-    with self.assertWarnsRegex(DeprecationWarning, msg):
+    msg = "Passing an array as a dtype argument is no longer supported"
+    with self.assertRaisesRegex(ValueError, msg):
       dtypes.check_and_canonicalize_user_dtype(x)
-    with self.assertWarnsRegex(DeprecationWarning, msg):
+    with self.assertRaisesRegex(ValueError, msg):
       def f(x):
         dtypes.check_and_canonicalize_user_dtype(x)
       jax.jit(f)(x)
