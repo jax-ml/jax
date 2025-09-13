@@ -988,6 +988,7 @@ class CollectiveBarrierRef:
   @staticmethod
   def initialize(
       barrier_memref: ir.Value,
+      arrival_count: int,
       dims: Sequence[gpu.Dimension | Sequence[gpu.Dimension]],
       cluster_shape: tuple[int, int, int],
   ) -> "CollectiveBarrierRef":
@@ -1001,8 +1002,8 @@ class CollectiveBarrierRef:
         else math.prod(cluster_shape[dd] for dd in d)
         for d in dims
     ]
-    arrival_count = sum(dims_shape) - len(dims) + 1
-    if arrival_count == 1:
+    cluster_arrival_count = sum(dims_shape) - len(dims) + 1
+    if cluster_arrival_count == 1:
       assert all(s == 1 for s in dims_shape)
       cluster_mask = None
     else:
@@ -1015,7 +1016,9 @@ class CollectiveBarrierRef:
         cluster_mask = arith.ori(
             cluster_mask, cluster_collective_mask(cluster_shape, d)
         )
-    barrier = BarrierRef.initialize(barrier_memref, arrival_count=arrival_count)
+    barrier = BarrierRef.initialize(
+        barrier_memref, arrival_count=arrival_count * cluster_arrival_count
+    )
     return CollectiveBarrierRef(barrier, cluster_mask)
 
   def __iter__(self):
