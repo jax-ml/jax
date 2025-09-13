@@ -63,6 +63,11 @@ def main(_):
   print_custom_call("backendconfig", [aval1], [aval2], api_version=1,
                     backend_config=b"hello")
 
+  # CHECK-LABEL: TEST: backendconfig_dict
+  # CHECK: stablehlo.custom_call @backendconfig_dict(%arg0) {api_version = 4 : i32, backend_config = {some_int = 2 : i64}} : (tensor<2x3xf32>) -> tensor<3x4xi64>
+  print_custom_call("backendconfig_dict", [aval1], [aval2],
+                    backend_config={"some_int" : 2})
+
   # CHECK-LABEL: TEST: calledcomputations
   # CHECK: stablehlo.custom_call @calledcomputations(%arg0) {backend_config = "", called_computations = [@a, @b]} : (tensor<2x3xf32>) -> tensor<3x4xi64>
   print_custom_call("calledcomputations", [aval1], [aval2], api_version=1,
