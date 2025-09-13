@@ -29,7 +29,6 @@ from jax._src import state
 from jax._src import util
 from jax._src.frozen_dict import FrozenDict
 from jax._src.pallas import core as pallas_core
-import jax.numpy as jnp
 import numpy as np
 
 
@@ -166,9 +165,12 @@ class MemorySpace(enum.Enum):
   def __str__(self) -> str:
     return self.value
 
-  def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
-    # A convenience function for constructing MemoryRef types.
-    return pallas_core.MemoryRef(shape, dtype, self)
+  def from_type(self, ty):
+    return pallas_core.MemoryRef(ty, memory_space=self)
+
+  def __call__(self, *args, **kwargs):
+    # A convenience function for constructing MemoryRef types of ShapedArrays.
+    return self.from_type(jax_core.ShapedArray(*args, **kwargs))
 
 class dma_semaphore(pallas_core.semaphore_dtype): pass
 
@@ -189,7 +191,8 @@ class SemaphoreType(enum.Enum):
       dtype = pallas_core.BarrierSemaphore()
     else:
       dtype = pallas_core.Semaphore()
-    return pallas_core.MemoryRef(shape, dtype, MemorySpace.SEMAPHORE)
+    return pallas_core.MemoryRef(jax_core.ShapedArray(shape, dtype),
+                                 MemorySpace.SEMAPHORE)
 
   def get_array_aval(self) -> pallas_core.ShapedArrayWithMemorySpace:
     return self(()).get_array_aval()

@@ -621,7 +621,7 @@ def _check_block_mappings(
     return (
         f"Block spec for {bm.origin} in pallas_call {debug_info.func_src_info}"
         f" has block shape {bm.block_shape}, array shape"
-        f" {bm.array_shape_dtype.shape},"
+        f" {bm.array_aval.shape},"
         # TODO(necula): add index_map source location info
         f" and index_map {bm.index_map_jaxpr.jaxpr} in"
         f" memory space {bm.transformed_block_aval.memory_space}."
@@ -748,11 +748,12 @@ def lower_pipelined_jaxpr_to_module(
       return gpu_core.WGMMAAccumulatorRef(aval.shape, aval.dtype)
     elif isinstance(aval, gpu_core.AbstractTMEMRef):
       return gpu_core.GPUMemoryRef(
-          aval.shape, aval.dtype, gpu_core.TMEM,
+          jax_core.ShapedArray(aval.shape, aval.dtype), gpu_core.TMEM,
           transforms=(), layout=aval.layout, collective=aval.collective,
       )
     elif isinstance(aval, state_types.AbstractRef):
-      return pallas_core.MemoryRef(aval.shape, aval.dtype, aval.memory_space)
+      return pallas_core.MemoryRef(jax_core.ShapedArray(aval.shape, aval.dtype),
+                                   aval.memory_space)
     else:
       return gpu_core.SMEM(aval.shape, aval.dtype)
 
@@ -796,7 +797,7 @@ def lower_pipelined_jaxpr_to_module(
         lu.wrap_init(pipeline_fn, debug_info=jaxpr.debug_info.with_unknown_names()),
         [
             gpu_core.GMEM(
-                bm.array_shape_dtype.shape, bm.array_shape_dtype.dtype
+                bm.array_aval.shape, bm.array_aval.dtype
             ).get_ref_aval()
             for bm in block_mappings
         ],
@@ -815,8 +816,8 @@ def lower_pipelined_jaxpr_to_module(
         parallel_grid,
         block,
         gpu_mesh.cluster if gpu_mesh is not None else (),
-        [bm.array_shape_dtype for bm in in_block_mappings],
-        [bm.array_shape_dtype for bm in out_block_mappings],
+        [bm.array_aval for bm in in_block_mappings],
+        [bm.array_aval for bm in out_block_mappings],
         new_jaxpr,
         params,
         new_consts,
@@ -829,8 +830,8 @@ def lower_jaxpr_to_module(
     grid: tuple[int, ...],
     block: tuple[int, ...],
     cluster: tuple[int, ...],
-    in_shapes: Sequence[jax.ShapeDtypeStruct],
-    out_shapes: Sequence[jax.ShapeDtypeStruct],
+    in_shapes: Sequence[jax_core.ShapedArray],
+    out_shapes: Sequence[jax_core.ShapedArray],
     jaxpr: jax_core.Jaxpr,
     params: gpu_core.CompilerParams,
     consts=(),

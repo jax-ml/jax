@@ -83,7 +83,7 @@ class ModuleContext:
 
 @dataclasses.dataclass
 class BlockInfo:
-  full_shape_dtype: jax.ShapeDtypeStruct
+  full_shape_dtype: jax_core.ShapedArray
   start_indices: Sequence[Any]
   start_indices_alignment: Sequence[int]
   block_shape: tuple[int | pallas_core.Squeezed, ...]
@@ -358,7 +358,7 @@ def lower_jaxpr_to_triton_module(
         )
       block_infos = [
           BlockInfo(
-              block_mapping.array_shape_dtype,
+              block_mapping.array_aval,
               _eval_index_map(ctx, program_ids, block_mapping),
               _get_index_alignment(block_mapping),
               tuple(pallas_core.squeezed if isinstance(b, pallas_core.Squeezed)

@@ -149,8 +149,8 @@ def _initialize_output_vals(
       output_vals.append(input_args[oi_map[i]])
     else:
       output_vals.append(primitives.uninitialized_value(
-          bm.array_shape_dtype.shape,
-          bm.array_shape_dtype.dtype))
+          bm.array_aval.shape,
+          bm.array_aval.dtype))
   return output_vals
 
 
@@ -487,7 +487,7 @@ def pallas_call_hlo_interpret(
       pad_low, pad_high = zip(*padding)
       limit_indices = [s - p for s, p in zip(o.shape, pad_high)]
       o = lax.slice(o, pad_low, limit_indices)
-    if o.shape != bm.array_shape_dtype.shape:
-      o = lax.slice(o, (0,) * o.ndim, bm.array_shape_dtype.shape)
+    if o.shape != bm.array_aval.shape:
+      o = lax.slice(o, (0,) * o.ndim, bm.array_aval.shape)
     out_nopad.append(o)
   return out_nopad
