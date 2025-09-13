@@ -46,9 +46,9 @@ flatbuffers==25.2.10 \
     --hash=sha256:97e451377a41262f8d9bd4295cc836133415cc03d8cb966410a4af92eb00d26e \
     --hash=sha256:ebba5f4d5ea615af3f7fd70fc310636fbb2bbd1f566ac0a23d98dd412de50051
     # via -r build/test-requirements.txt
-fsspec==2025.7.0 \
-    --hash=sha256:786120687ffa54b8283d942929540d8bc5ccfa820deb555a2b5d0ed2b737bf58 \
-    --hash=sha256:8b012e39f63c7d5f10474de957f3ab793b47b45ae7d39f2fb735f8bbe25c0e21
+fsspec==2025.9.0 \
+    --hash=sha256:19fd429483d25d28b65ec68f9f4adc16c17ea2c7c7bf54ec61360d478fb19c19 \
+    --hash=sha256:530dc2a2af60a414a832059574df4a6e10cce927f6f4a78209390fe38955cfb7
     # via etils
 hypothesis==6.138.2 \
     --hash=sha256:2886c5e7569437781d1dc42973021f70f7facb7e410249dcb899b0edb249e5b8 \
