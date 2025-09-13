@@ -51,8 +51,8 @@ on:
         required: false
         type: string
         default: "head"
-      download-jax-only-from-gcs:
-        description: "Whether to download only the jax wheel from GCS (e.g for testing a jax only release)"
+      skip-download-jaxlib-from-gcs:
+        description: "Whether to skip downloading the jaxlib artifact from GCS (e.g for testing a jax only release)"
         default: '0'
         type: string
       gcs_download_uri:
@@ -70,6 +70,11 @@ on:
         default: 'no'
       build_jaxlib:
         description: 'Should jaxlib be built from source?'
+        required: false
+        default: 'false'
+        type: string
+      build_jax:
+        description: 'Should jax be built from source?'
         required: false
         default: 'false'
         type: string
@@ -92,6 +97,7 @@ jobs:
       JAXCI_RUN_FULL_TPU_TEST_SUITE: "${{ inputs.run-full-tpu-test-suite }}"
       JAXCI_TPU_CORES: "${{ inputs.cores }}"
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
+      JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
 
     steps:
@@ -100,10 +106,11 @@ jobs:
           persist-credentials: false
       - name: Download JAX wheels
         if: inputs.build_jaxlib == 'false'
-        uses: ./.github/actions/download-jax-cuda-wheels
+        uses: ./.github/actions/download-jax-cpu-wheels
         with:
+          runner: ${{ inputs.runner }}
           python: ${{ inputs.python }}
-          download-jax-only-from-gcs: ${{ inputs.download-jax-only-from-gcs }}
+          skip-download-jaxlib-from-gcs: ${{ inputs.skip-download-jaxlib-from-gcs }}
           jaxlib-version: ${{ inputs.jaxlib-version }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
       - name: Download libtpu wheels

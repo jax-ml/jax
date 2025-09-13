@@ -1,18 +1,26 @@
-# CI - Bazel CUDA tests (Non-RBE)
+# CI - Bazel CUDA tests
 #
 # This workflow runs the CUDA tests with Bazel. It can only be triggered by other workflows via
-# `workflow_call`. It is used by the `CI - Wheel Tests (Continuous)` and
-# `CI - Wheel Tests (Nightly/Release)` workflows to run the Bazel CUDA tests.
+# `workflow_call`. It is used by the `CI - Bazel CUDA tests (RBE)`,`CI - Wheel Tests (Continuous)`
+# and `CI - Wheel Tests (Nightly/Release)` workflows to run the Bazel CUDA tests.
 #
 # It consists of the following job:
 # run-tests:
 #    - Downloads the jaxlib and CUDA artifacts from a GCS bucket if build_jaxlib is `false`.
 #       Otherwise, the artifacts are built from source.
-#    - Executes the `run_bazel_test_cuda_non_rbe.sh` script, which performs the following actions:
+#    - Downloads the jax artifact from a GCS bucket if build_jax is `false`.
+#       Otherwise, the artifact is built from source.
+#    - If `run_multiaccelerator_tests` is `false`, executes the `run_bazel_test_cuda_rbe.sh` script,
+#      which performs the following actions:
 #      - `build_jaxlib=wheel`: Runs the Bazel CPU tests with py_import dependencies.
-#        `build_jaxlib=false`: Runs the Bazel CPU tests with downloaded wheel dependencies.
+#      - `build_jaxlib=false`: Runs the Bazel CPU tests with downloaded wheel dependencies.
+#      - `build_jaxlib=true`: Runs the Bazel CPU tests with individual Bazel target dependencies.
+#    - If `run_multiaccelerator_tests` is `true`, executes the `run_bazel_test_cuda_non_rbe.sh`
+#      script, which performs the following actions:
+#      - `build_jaxlib=wheel`: Runs the Bazel CPU tests with py_import dependencies.
+#      - `build_jaxlib=false`: Runs the Bazel CPU tests with downloaded wheel dependencies.
 
-name: CI - Bazel CUDA tests (Non-RBE)
+name: CI - Bazel CUDA tests
 
 on:
   workflow_call:
@@ -37,12 +45,33 @@ on:
         description: "Which jaxlib version to test? (head/pypi_latest)"
         type: string
         default: "head"
+      download-jax-from-gcs:
+        description: "Whether to download the jax wheel from GCS"
+        default: '1'
+        type: string
+      skip-download-jaxlib-and-cuda-plugins-from-gcs:
+        description: "Whether to skip downloading the jaxlib and cuda plugins from GCS (e.g for testing a jax only release)"
+        default: '0'
+        type: string
       gcs_download_uri:
         description: "GCS location URI from where the artifacts should be downloaded"
         default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
         type: string
       build_jaxlib:
         description: 'Should jaxlib be built from source?'
+        required: true
+        type: string
+      build_jax:
+        description: 'Should jax be built from source?'
+        required: true
+        type: string
+      write_to_bazel_remote_cache:
+        description: 'Whether to enable writing to the Bazel remote cache bucket'
+        required: false
+        default: '0'
+        type: string
+      run_multiaccelerator_tests:
+        description: 'Whether to run multi-accelerator tests'
         required: false
         default: 'false'
         type: string
@@ -64,15 +93,12 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
       JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
       JAXCI_CUDA_VERSION: ${{ inputs.cuda-version }}
-      # Enable writing to the Bazel remote cache bucket.
-      JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: "1"
+      JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: ${{ inputs.write_to_bazel_remote_cache }}
+      JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
-
-    name: "jaxlib=${{ inputs.jaxlib-version }},
-          ${{ (contains(inputs.runner, 'h100') && 'h100') ||
-          (contains(inputs.runner, 'b200') && 'b200') ||
-          (contains(inputs.runner, 'l4') && 'l4') }}, py ${{ inputs.python }}, cuda ${{ inputs.cuda-version }}, x64=${{ inputs.enable-x64 }}"
-
+# Begin Presubmit Naming Check - name modification requires internal check to be updated
+    name: "jaxlib=${{ inputs.jaxlib-version }}, CUDA=${{ inputs.cuda-version }}, Python=${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
+# End Presubmit Naming Check github-cuda-presubmits
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
@@ -83,7 +109,8 @@ jobs:
         with:
           python: ${{ inputs.python }}
           cuda-version: ${{ inputs.cuda-version }}
-          download-jax-only-from-gcs: ${{ inputs.download-jax-only-from-gcs }}
+          download-jax-from-gcs: ${{ inputs.download-jax-from-gcs }}
+          skip-download-jaxlib-and-cuda-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs }}
           jaxlib-version: ${{ inputs.jaxlib-version }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
       # Halt for testing
@@ -91,6 +118,6 @@ jobs:
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: "Bazel non-RBE CUDA tests with build_jaxlib=${{ format('{0}', inputs.build_jaxlib) }}"
+      - name: "Bazel CUDA tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
         timeout-minutes: 60
-        run: ./ci/run_bazel_test_cuda_non_rbe.sh
+        run: ${{ ((inputs.run_multiaccelerator_tests == 'false') && './ci/run_bazel_test_cuda_rbe.sh') || './ci/run_bazel_test_cuda_non_rbe.sh' }}

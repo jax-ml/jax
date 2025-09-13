@@ -10,8 +10,12 @@ inputs:
     description: "Which python version should the artifact be downloaded for?"
     required: true
     type: string
-  download-jax-only-from-gcs:
-    description: "Whether to download only the jax wheel from GCS (e.g for testing a jax only release)"
+  jaxlib-version:
+    description: "Which jaxlib version to download? (head/pypi_latest)"
+    type: string
+    default: "head"
+  skip-download-jaxlib-from-gcs:
+    description: "Whether to skip downloading the jaxlib artifact from GCS (e.g for testing a jax only release)"
     default: '0'
     type: string
   gcs_download_uri:
@@ -59,10 +63,18 @@ runs:
         mkdir -p $(pwd)/dist
         gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
 
-        if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
+        if [[ "${{ inputs.skip-download-jaxlib-from-gcs }}" == "1" ]]; then
           echo "JAX only release. Only downloading the jax wheel from the release bucket."
         else
-          gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          if [[ ${{ inputs.jaxlib-version }} == "head" ]]; then
+            gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          elif [[ ${{ inputs.jaxlib-version }} == "pypi_latest" ]]; then
+            PYTHON=python${{ inputs.python }}
+            $PYTHON -m pip download jaxlib --dest $(pwd)/dist/
+          else
+            echo "Invalid jaxlib version: ${{ inputs.jaxlib-version }}"
+            exit 1
+          fi
         fi
     - name: Download wheels from GCS (Windows runs)
       shell: cmd
@@ -78,7 +90,7 @@ runs:
         @REM See https://github.com/GoogleCloudPlatform/gsutil/issues/233#issuecomment-196150652
         call gcloud storage cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl dist/
 
-        if "${{ inputs.download-jax-only-from-gcs }}"=="1" (
+        if "${{ inputs.skip-download-jaxlib-from-gcs }}"=="1" (
           echo "JAX only release. Only downloading the jax wheel from the release bucket."
         ) else (
           call gcloud storage cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/

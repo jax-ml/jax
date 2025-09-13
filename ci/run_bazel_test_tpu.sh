@@ -13,8 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-# Runs Bazel TPU tests. If $JAXCI_BUILD_JAXLIB=false, the job requires that jax
-# and jaxlib wheels are stored inside the ../dist folder
+# Runs Bazel TPU tests. If $JAXCI_BUILD_JAXLIB=false and $JAXCI_BUILD_JAX=false,
+# the job requires that jax and jaxlib wheels are stored inside the ../dist
+# folder.
 #
 # -e: abort script if one command fails
 # -u: error if undefined variable used
@@ -93,7 +94,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --config=ci_rbe_cache \
     --config=use_tar_archive_files \
     --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-    --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
+    --//jax:build_jax=$JAXCI_BUILD_JAX \
     --run_under="$(pwd)/build/parallel_accelerator_execute.sh" \
     --test_env=JAX_ACCELERATOR_COUNT=${NB_TPUS} \
     --test_env=JAX_TESTS_PER_ACCELERATOR=${JOBS_PER_ACC} \
