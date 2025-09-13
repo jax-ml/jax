@@ -39,6 +39,7 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/bit.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/MathExtras.h"
@@ -46,7 +47,6 @@ limitations under the License.
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/Traits.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Attributes.h"
@@ -56,7 +56,6 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
-#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
@@ -989,6 +988,36 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> unpackVregs(
       unpackVregs(ctx, builder, loc, input_vregs, input_ty, result_ty,
                   layout_in, layout_out));
   return std::make_pair(layout_out, std::move(output_vregs));
+}
+
+int64_t toLinearIndex(absl::Span<const int64_t> indices,
+                      absl::Span<const int64_t> bounds) {
+  CHECK_EQ(indices.size(), bounds.size());
+  int linear_index = 0;
+  int multiplier = 1;
+  for (int i = indices.size() - 1; i >= 0; --i) {
+    linear_index += multiplier * indices[i];
+    multiplier *= bounds[i];
+  }
+  return linear_index;
+}
+
+SmallVector<int64_t> fromLinearIndex(int64_t linear_index,
+                                     absl::Span<const int64_t> bounds) {
+  SmallVector<int64_t> indices(bounds.size(), 0);
+  int64_t divisor = std::accumulate(bounds.begin(), bounds.end(), 1,
+                                    std::multiplies<int64_t>());
+  CHECK_GT(divisor, 0);
+  int64_t remainder = linear_index % divisor;
+  for (int i = 0; i < bounds.size(); ++i) {
+    int64_t radix = bounds[i];
+    CHECK_GT(radix, 0);
+    divisor /= radix;
+    CHECK_GT(divisor, 0);
+    indices[i] = remainder / divisor;
+    remainder = remainder % divisor;
+  }
+  return indices;
 }
 
 template <typename OpTy>
@@ -5086,6 +5115,92 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
           layout_out.tileArrayImplicitShape(dst_shape, ctx.target_shape));
       return dst_vregs_local;
     } else if (
+        // Sublane shuffle within a vreg if the last dims exactly fit in a vreg
+        // with small tiling.
+        dst_shape.size() > 1 && src_shape.size() > 1 &&
+        dst_shape.back() % ctx.target_shape[1] == 0 &&
+        src_shape.back() % ctx.target_shape[1] == 0 &&
+        llvm::has_single_bit(
+            static_cast<uint64_t>(dst_shape[dst_shape.size() - 2])) &&
+        llvm::has_single_bit(
+            static_cast<uint64_t>(src_shape[src_shape.size() - 2])) &&
+        src_shape[src_shape.size() - 2] * src_shape[src_shape.size() - 1] ==
+            ctx.target_shape[0] * ctx.target_shape[1] &&
+        dst_shape[dst_shape.size() - 2] * dst_shape[dst_shape.size() - 1] ==
+            ctx.target_shape[0] * ctx.target_shape[1] &&
+        layout_in.offsets() == LayoutOffsets{0, 0} &&
+        layout_in.bitwidth() == 32 &&
+        layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+        layout_in.tiling()[0] < ctx.target_shape[0] &&
+        layout_out.offsets() == LayoutOffsets{0, 0} &&
+        layout_out.bitwidth() == 32 &&
+        layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+        layout_out.tiling()[0] < ctx.target_shape[0]) {
+      auto [sublane_count, lane_count] = ctx.target_shape;
+      xla::Array<Value> dst_vregs(
+          layout_out.tileArrayShape(false, false, dst_shape, ctx.target_shape));
+      SmallVector<int64_t> dst_shape_in_rows(dst_shape);
+      dst_shape_in_rows[dst_shape.size() - 1] =
+          dst_shape[dst_shape.size() - 1] / lane_count;
+      SmallVector<int64_t> src_shape_in_rows(src_shape);
+      src_shape_in_rows[src_shape.size() - 1] =
+          src_shape[src_shape.size() - 1] / lane_count;
+      // The last two dims exactly fit in a vreg and sublane indices are in
+      // "column-major order". For example, (4, 256) with (4, 128) tiling
+      // reshapes to (2, 512) with (2, 128) tiling:
+      //
+      //      src vreg           dst vreg indexed by src sublane
+      //
+      //   0     128    256       0     128    256    384    512
+      // 0 +------+------+      0 +------+------+------+------+
+      //   | SL 0 | SL 4 |        | SL 0 | SL 4 | SL 1 | SL 5 |
+      // 1 +------+------+      1 +------+------+------+------+
+      //   | SL 1 | SL 5 |        | SL 2 | SL 6 | SL 3 | SL 7 |
+      // 2 +------+------+      2 +------+------+------+------+
+      //   | SL 2 | SL 6 |
+      // 3 +------+------+
+      //   | SL 3 | SL 7 |
+      // 4 +------+------+
+      //
+      // The shuffle pattern is a sequence of the sublane index in the src vreg
+      // when traversing the dst tiles in column-major order.
+      SmallVector<int32_t> shuffle_pattern;
+      for (int32_t dst_col_index = 0;
+           dst_col_index < dst_shape_in_rows[dst_shape_in_rows.size() - 1];
+           ++dst_col_index) {
+        for (int32_t dst_row_index = 0;
+             dst_row_index < dst_shape_in_rows[dst_shape_in_rows.size() - 2];
+             ++dst_row_index) {
+          // Linear index in row-major order is the same in both src and dst
+          // because reshape traverses the data in row-major order.
+          int32_t linear_index_in_row_major =
+              dst_row_index * dst_shape_in_rows[dst_shape_in_rows.size() - 1] +
+              dst_col_index;
+          int32_t src_row_index =
+              linear_index_in_row_major /
+              src_shape_in_rows[src_shape_in_rows.size() - 1];
+          int32_t src_col_index =
+              linear_index_in_row_major %
+              src_shape_in_rows[src_shape_in_rows.size() - 1];
+          int32_t src_linear_index_in_col_major =
+              src_col_index * src_shape_in_rows[src_shape_in_rows.size() - 2] +
+              src_row_index;
+          shuffle_pattern.push_back(src_linear_index_in_col_major);
+        }
+      }
+      dst_vregs.Each(
+          [&](absl::Span<const int64_t> dst_vreg_indices, Value* dst_vreg) {
+            int64_t dst_vreg_linear_index =
+                toLinearIndex(dst_vreg_indices, dst_shape_in_rows);
+            auto src_vreg_indices =
+                fromLinearIndex(dst_vreg_linear_index, src_shape_in_rows);
+            Value src_vreg = src_vregs(src_vreg_indices);
+            *dst_vreg = builder.create<tpu::SublaneShuffleOp>(
+                src_vreg.getLoc(), src_vreg.getType(), src_vreg, src_vreg,
+                builder.getDenseI32ArrayAttr(shuffle_pattern));
+          });
+      return dst_vregs;
+    } else if (
         // Lower shape_casts for {32/16/8}-bit types where the minor dimension
         // both before and after the shape cast is a multiple of 128. For
         // example (given k % 128 == 0 in the following):
@@ -5110,34 +5225,6 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
       xla::Array<Value> dst_vregs(
           layout_out.tileArrayShape(false, false, dst_shape, ctx.target_shape));
 
-      auto to_linear_index = [&](absl::Span<const int64_t> indices,
-                                 absl::Span<const int64_t> bounds) {
-        CHECK_EQ(indices.size(), bounds.size());
-        int linear_index = 0;
-        int multiplier = 1;
-        for (int i = indices.size() - 1; i >= 0; --i) {
-          linear_index += multiplier * indices[i];
-          multiplier *= bounds[i];
-        }
-        return linear_index;
-      };
-      auto from_linear_index = [&](int linear_index,
-                                   absl::Span<const int64_t> bounds) {
-        SmallVector<int64_t> indices(bounds.size(), 0);
-        int64_t divisor = std::accumulate(bounds.begin(), bounds.end(), 1,
-                                          std::multiplies<int64_t>());
-        CHECK_GT(divisor, 0);
-        int64_t remainder = linear_index % divisor;
-        for (int i = 0; i < bounds.size(); ++i) {
-          int64_t radix = bounds[i];
-          CHECK_GT(radix, 0);
-          divisor /= radix;
-          CHECK_GT(divisor, 0);
-          indices[i] = remainder / divisor;
-          remainder = remainder % divisor;
-        }
-        return indices;
-      };
       int packing_factor = layout_in.packing();
       // Gather rows from src_vregs via rotating and selecting each relevant
       // row from the source, into the destination vreg.
@@ -5184,7 +5271,7 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
                          Value *dst_vreg) {
         indices.assign(dst_vreg_indices.begin(), dst_vreg_indices.end());
         indices[indices.size() - 2] *= target_sublanes * packing_factor;
-        int row_offset = to_linear_index(indices, dst_shape_in_rows);
+        int row_offset = toLinearIndex(indices, dst_shape_in_rows);
         // Only move non-padding rows to the destination vreg.
         int num_non_padding_rows =
             std::min(dst_shape_in_rows[dst_shape_in_rows.size() - 2] -
@@ -5197,7 +5284,7 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
             num_non_padding_rows);
         for (int i = 0; i < gathered_row_indices.size(); ++i) {
           gathered_row_indices[i] =
-              from_linear_index(row_offset, src_shape_in_rows);
+              fromLinearIndex(row_offset, src_shape_in_rows);
           row_offset += stride_in_rows;
         }
         *dst_vreg = gather_rows(ctx, op, gathered_row_indices, src_vregs);
