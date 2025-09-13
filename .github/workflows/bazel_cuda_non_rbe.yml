@@ -90,7 +90,7 @@ jobs:
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
-          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+          halt-dispatch-input: True
       - name: "Bazel non-RBE CUDA tests with build_jaxlib=${{ format('{0}', inputs.build_jaxlib) }}"
         timeout-minutes: 60
         run: ./ci/run_bazel_test_cuda_non_rbe.sh
