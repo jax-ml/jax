@@ -314,6 +314,41 @@ class TestUtilTest(TestCase):
             (thread_rows[:, None] + row_half * 8) * n + thread_cols + col_half
         )
 
+  @parameterized.parameters(((149, 1, 1),), ((1, 149, 1),), ((1, 1, 149),))
+  def test_cluster_launch_control(self, grid):
+    def kernel(ctx, out, scratch):
+      handle_smem_ref, barrier, _ = scratch
+
+      with utils.single_thread():
+        utils.try_cluster_cancel(handle_smem_ref, barrier)
+
+      barrier.wait()
+      *cta_ids, cancelled_launch = utils.cluster_cancel_query(
+          handle_smem_ref
+      )
+      cta_id = arith.addi(cta_ids[0], arith.addi(cta_ids[1], cta_ids[2]))
+
+      # Store a sentinel value if no work can be scheduled.
+      idx = arith.index_cast(ir.IndexType.get(), utils.block_idx())
+      sentinel_val = arith.constant(ir.IntegerType.get_signless(32), -1)
+
+      value = arith.select(cancelled_launch, cta_id, sentinel_val)
+      memref.store(value, out, [idx])
+
+    num_sms = 148
+    smem_ref = jax.ShapeDtypeStruct((16,), jnp.int8)  # 128 bits
+    out_ty = jax.ShapeDtypeStruct((num_sms,), jnp.int32)
+    scratch = (
+        smem_ref,
+        mgpu.Barrier(1),
+        # Requesting SMEM close to the 228kb limit.
+        jax.ShapeDtypeStruct((220 * 1024,), jnp.int8),
+    )
+    out = mgpu.as_gpu_kernel(kernel, grid, (128, 1, 1), (), out_ty, scratch)()
+
+    out = np.sort(out)
+    out_ref = np.array([-1] * 147 + [148])
+    np.testing.assert_array_equal(out, out_ref)
 
 class MemRefTest(TestCase):
   @parameterized.product(
