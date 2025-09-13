@@ -1285,7 +1285,7 @@ def infer_layout(module: ir.Module):
     hints.extend(op_hints)
 
   for op in module.body:
-    inference_utils.traverse_op(op, gather_equations, pre_order=True)
+    inference_utils.traverse_op(op, gather_equations)
 
   if isinstance(global_equation_system, eqns.Unsatisfiable):
     raise ValueError(
