@@ -28,12 +28,19 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/attributes.h"
 #include "absl/base/casts.h"
+#include "absl/base/const_init.h"
+#include "absl/base/no_destructor.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
@@ -42,6 +49,7 @@ limitations under the License.
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "xla/pjrt/exceptions.h"
 #include "xla/python/nb_helpers.h"
+#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/platform.h"
 
 #ifdef PLATFORM_GOOGLE
@@ -186,6 +194,22 @@ nb::object AsPythonTraceback(const Traceback& tb) {
   return traceback;
 }
 
+ABSL_CONST_INIT absl::Mutex exclude_paths_mutex(absl::kConstInit);
+static absl::NoDestructor<std::vector<std::string>> exclude_paths_from_python
+    ABSL_GUARDED_BY(exclude_paths_mutex);
+
+// Function to be called from Python to set the initial list
+void SetExcludePaths(std::vector<std::string> paths) {
+  absl::MutexLock lock(&exclude_paths_mutex);  // NOLINT
+  *exclude_paths_from_python = std::move(paths);
+}
+
+// Function to be called from Python to add a single path
+void AddExcludePath(std::string path) {
+  absl::MutexLock lock(&exclude_paths_mutex);  // NOLINT
+  exclude_paths_from_python->push_back(std::move(path));
+}
+
 }  // namespace
 
 std::vector<Traceback::Frame> Traceback::Frames() const {
@@ -277,6 +301,35 @@ absl::Span<const TracebackEntry> Traceback::RawFrames() const {
   return traceback;
 }
 
+bool IsJaxInternalFrame(absl::string_view file_name) {
+  absl::MutexLock lock(&exclude_paths_mutex);  // NOLINT
+  if (exclude_paths_from_python->empty()) {
+    // Fallback in case no paths were ever set.
+    return absl::StrContains(file_name, "/jax/_src/") ||
+           absl::StrContains(file_name, "/jax/jaxlib/");
+  }
+  for (const auto& prefix : *exclude_paths_from_python) {
+    if (absl::StartsWith(file_name, prefix)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::string GetCallLocation(const jax::Traceback& traceback) {
+  auto frames = traceback.Frames();
+  for (const auto& frame : frames) {
+    if (nb::isinstance<nb::str>(frame.file_name) ||
+        nb::isinstance<nb::bytes>(frame.file_name)) {
+      std::string file_name = nb::cast<std::string>(frame.file_name);
+      if (!IsJaxInternalFrame(file_name)) {
+        return absl::StrCat(file_name, ":", frame.line_num);
+      }
+    }
+  }
+  return "";
+}
+
 void Traceback::RegisterType(nb::module_& m) {
   nb::class_<Traceback::Frame>(m, "Frame")
       .def(nb::init<const nb::str&, const nb::str&, int, int>())
@@ -313,7 +366,10 @@ void Traceback::RegisterType(nb::module_& m) {
   m.def("tracebacks_enabled", []() { return traceback_enabled_.load(); });
   m.def("set_tracebacks_enabled",
         [](bool value) { traceback_enabled_.store(value); });
-
+  m.def("set_exclude_paths", &SetExcludePaths,
+        "Sets the paths to exclude from tracebacks.");
+  m.def("add_exclude_path", &AddExcludePath,
+        "Adds a path to exclude from tracebacks.");
   type.attr("get_traceback") = nb::cpp_function(Traceback::Get,
                                                 R"doc(
       Returns a :class:`Traceback` for the current thread.
