@@ -18,4 +18,5 @@ implementation, in no particular order, see the :doc:`advanced guides <advanced_
    random-numbers
    sharded-computation
    control-flow
+   tracing
    stateful-computations
