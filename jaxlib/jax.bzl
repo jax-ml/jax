@@ -649,3 +649,46 @@ def if_pypi_cuda_wheel_deps(if_true, if_false = []):
         "//jaxlib/tools:pypi_cuda_wheel_deps": if_true,
         "//conditions:default": if_false,
     })
+
+def jax_multiprocess_test(
+        name,
+        srcs = [],
+        deps = [],
+        args = [],
+        env = {},
+        enable_backends = None,
+        disable_configs = [],
+        enable_configs = [],
+        data = [],
+        tags = [],
+        config_tags_overrides = {},
+        backend_variant_args = {},
+        backend_tags = {},
+        backend_deps = {},
+        main = None,
+        shard_count = None,
+        size = None,
+        python_version = None):
+    return jax_multiplatform_test(
+        name = name,
+        srcs = srcs,
+        deps = deps,
+        args = args,
+        env = env,
+        enable_backends = enable_backends,
+        disable_configs = disable_configs,
+        enable_configs = enable_configs,
+        data = data,
+        tags = tags,
+        config_tags_overrides = config_tags_overrides,
+        backend_variant_args = backend_variant_args,
+        backend_tags = backend_tags,
+        backend_deps = backend_deps,
+        main = main,
+        shard_count = shard_count,
+        size = size,
+        python_version = python_version,
+    )
+
+def jax_multiprocess_generate_backend_suites(name = None, backends = []):
+    return jax_generate_backend_suites(backends = backends)
