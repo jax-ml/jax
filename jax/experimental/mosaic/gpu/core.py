@@ -266,6 +266,7 @@ class Barrier:
 @dataclasses.dataclass(frozen=True)
 class ClusterBarrier:
   collective_dims: Sequence[gpu.Dimension]
+  arrival_count: int = 1
   num_barriers: int = 1
 
 @dataclasses.dataclass(frozen=True)
@@ -430,9 +431,9 @@ def _construct_smem_reftree(
             else utils.BarrierRef.initialize
         )
         ref = init_fn(barrier_memref(num_barriers), arrival_count=arrival_count)
-      case ClusterBarrier(collective_dims, num_barriers):
+      case ClusterBarrier(collective_dims, arrival_count, num_barriers):
         ref = utils.CollectiveBarrierRef.initialize(
-            barrier_memref(num_barriers), collective_dims, cluster_shape
+            barrier_memref(num_barriers), arrival_count, collective_dims, cluster_shape
         )
       case TMEM(shape, dtype, layout=layout, collective=collective, packing=packing):
         addr_ref = _slice_smem(
@@ -501,7 +502,7 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
         size += max(_smem_tree_size(s) for s in members)
       case (
           TMABarrier(num_barriers)
-          | ClusterBarrier(_, num_barriers=num_barriers)
+          | ClusterBarrier(_, _, num_barriers=num_barriers)
           | Barrier(_, num_barriers=num_barriers)
       ):
         if size % utils.MBARRIER_BYTES:
