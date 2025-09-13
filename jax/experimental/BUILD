@@ -296,6 +296,7 @@ pytype_strict_library(
         "//jax/_src:core",
         "//jax/_src:dtypes",
         "//jax/_src:mlir",
+        "//jax/_src:random",
         "//jax/_src:sharding_impls",
         "//jax/_src:util",
         "//jax/_src:xla_bridge",

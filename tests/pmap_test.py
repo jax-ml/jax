@@ -2167,6 +2167,19 @@ class PythonPmapTest(jtu.JaxTestCase):
       result2 = jax.jit(jax.pmap(jax.random.bits))(keys)
     self.assertArraysEqual(result1, result2)
 
+  @config.pmap_shmap_merge(True)
+  def test_pmap_shmap_merge_prng_key(self):
+    if jax.device_count() < 2:
+      raise SkipTest('test requires at least two devices')
+    keys = jax.random.split(jax.random.key(0), jax.device_count())
+    out = jax.pmap(lambda x: x)(keys)
+    self.assertEqual(type(out), type(keys))
+    out = jax.pmap(lambda x, y: y, in_axes=(0, None))(keys, jax.random.key(0))
+    self.assertEqual(type(out), type(keys))
+    out = jax.pmap(lambda x, y: y, in_axes=(0, None), out_axes=None)(
+        keys, jax.random.key(0))
+    self.assertEqual(type(out), type(keys))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class CppPmapTest(PythonPmapTest):
