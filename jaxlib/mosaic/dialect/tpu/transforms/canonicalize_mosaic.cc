@@ -30,6 +30,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -274,6 +275,162 @@ collapse_matmul_non_contracting_dims(
   return std::make_tuple(lhs, rhs, new_acc, new_dimension_numbers);
 }
 
+struct RhsTraversalResult {
+  tpu::TransposeOp transpose_op = nullptr;
+  vector::ExtractStridedSliceOp slice_op = nullptr;
+  // TODO(mvoz): This can actually be upgraded to a vec of unary ops we
+  // can teach this how to walk through.
+  tpu::SIToFPOp sitofp_op = nullptr;
+  tpu::FPToSIOp fptosi_op = nullptr;
+  Value pre_cast_rhs;
+};
+
+std::optional<RhsTraversalResult> walkRhsForFusibleTranspose(Value rhs) {
+  RhsTraversalResult result;
+  Value current_operand = rhs;
+
+  // Walk backwards from matmul RHS: slice -> fptosi -> transpose
+  while (Operation* defining_op = current_operand.getDefiningOp()) {
+    if (auto slice_op = dyn_cast<vector::ExtractStridedSliceOp>(defining_op)) {
+      if (slice_op->hasOneUse() && !result.slice_op) {
+        result.slice_op = slice_op;
+        current_operand = slice_op.getVector();
+        continue;
+      }
+    } else if (auto fptosi_op = dyn_cast<tpu::FPToSIOp>(defining_op)) {
+      if (!result.fptosi_op) {
+        result.fptosi_op = fptosi_op;
+        current_operand = fptosi_op.getInput();
+        continue;
+      }
+    } else if (auto transpose_op = dyn_cast<tpu::TransposeOp>(defining_op)) {
+      if (transpose_op->hasOneUse()) {
+        result.transpose_op = transpose_op;
+        // The value *before* the transpose.
+        current_operand = transpose_op.getVector();
+      }
+      break;
+    }
+    break;
+  }
+
+  if (!result.transpose_op) {
+    return std::nullopt;
+  }
+
+  if (auto sitofp_op =
+          dyn_cast_or_null<tpu::SIToFPOp>(current_operand.getDefiningOp())) {
+    if (sitofp_op) {
+      result.sitofp_op = sitofp_op;
+      result.pre_cast_rhs = sitofp_op.getIn();
+    }
+  } else {
+    result.pre_cast_rhs = current_operand;
+  }
+
+  return result;
+}
+
+// Attempts to fuse a transpose on the RHS of a matmul
+std::optional<std::pair<Value, bool>> tryFuseRhsTranspose(
+    tpu::MatmulOp op, bool current_transpose_rhs, CanonicalBuilder& builder) {
+  std::optional<RhsTraversalResult> trace_result =
+      walkRhsForFusibleTranspose(op.getRhs());
+
+  if (!trace_result.has_value()) {
+    return std::nullopt;
+  }
+
+  auto& trace = *trace_result;
+  auto dimension_numbers = op.getDimensionNumbers().value();
+
+  // This fusion logic is for matmuls with one contracting and one
+  // non-contracting dimension on the RHS
+  if (dimension_numbers.getRhsContractingDims().size() != 1 ||
+      dimension_numbers.getRhsNonContractingDims().size() != 1) {
+    return std::nullopt;
+  }
+
+  auto rhs_non_contracting_dim =
+      dimension_numbers.getRhsNonContractingDims()[0];
+  auto rhs_contracting_dim = dimension_numbers.getRhsContractingDims()[0];
+  auto permutation = trace.transpose_op.getPermutation();
+
+  // The transpose is fusible if it swaps the contracting and non-contracting
+  // dimensions and leaves all batch dimensions unchanged.
+  bool is_fusible_perm =
+      (permutation[rhs_contracting_dim] == rhs_non_contracting_dim &&
+       permutation[rhs_non_contracting_dim] == rhs_contracting_dim &&
+       std::all_of(dimension_numbers.getRhsBatchDims().begin(),
+                   dimension_numbers.getRhsBatchDims().end(),
+                   [&](int64_t batch_dim) {
+                     return permutation[batch_dim] == batch_dim;
+                   }));
+
+  if (!is_fusible_perm) {
+    return std::nullopt;
+  }
+
+  Value current_val = trace.pre_cast_rhs;
+
+  // Check if we found a sitofp -> ... -> fptosi pair that performs a perfect
+  // type round-trip. If so, we can eliminate both casts.
+  // TODO(mvoz): I think this is entirely self inflicted lol.
+  bool cancelled_casts = false;
+  if (trace.sitofp_op && trace.fptosi_op) {
+    auto pre_cast_type = cast<VectorType>(trace.pre_cast_rhs.getType());
+    auto post_cast_type = cast<VectorType>(trace.fptosi_op.getType());
+    if (pre_cast_type.getElementType() == post_cast_type.getElementType()) {
+      cancelled_casts = true;
+    }
+  }
+
+  // If we didn't cancel the casts, we may need to reconstruct the fptosi.
+  // The sitofp is already effectively removed because our 'current_val' is its
+  // input. This handles the case where only one cast was present.
+  if (!cancelled_casts && trace.fptosi_op) {
+    auto pre_transpose_type = cast<VectorType>(current_val.getType());
+    auto new_fptosi_type = VectorType::get(
+        pre_transpose_type.getShape(),
+        cast<VectorType>(trace.fptosi_op.getType()).getElementType());
+    current_val = builder.create<tpu::FPToSIOp>(
+        op.getLoc(), new_fptosi_type, current_val, trace.fptosi_op->getAttrs());
+  }
+
+  Value new_rhs;
+  if (trace.slice_op) {
+    auto get_i64_values = [](ArrayAttr attr) {
+      return llvm::map_to_vector(attr, [](Attribute a) {
+        return cast<IntegerAttr>(a).getValue().getSExtValue();
+      });
+    };
+
+    auto old_offsets = get_i64_values(trace.slice_op.getOffsets());
+    auto old_sizes = get_i64_values(trace.slice_op.getSizes());
+    auto old_strides = get_i64_values(trace.slice_op.getStrides());
+
+    SmallVector<int64_t> permuted_offsets(old_offsets.size());
+    SmallVector<int64_t> permuted_sizes(old_sizes.size());
+    SmallVector<int64_t> permuted_strides(old_strides.size());
+
+    // Permute the slice
+    for (const auto& it : llvm::enumerate(permutation)) {
+      permuted_offsets[it.index()] = old_offsets[it.value()];
+      permuted_sizes[it.index()] = old_sizes[it.value()];
+      permuted_strides[it.index()] = old_strides[it.value()];
+    }
+
+    new_rhs = builder.create<vector::ExtractStridedSliceOp>(
+        op.getLoc(), current_val, permuted_offsets, permuted_sizes,
+        permuted_strides);
+  } else {
+    // If there was no slice, the new RHS is simply the (potentially casted)
+    // value.
+    new_rhs = current_val;
+  }
+  return std::make_pair(new_rhs, !current_transpose_rhs);
+}
+
 FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
                                      Operation &raw_op) {
   auto op = cast<tpu::MatmulOp>(raw_op);
@@ -506,33 +663,20 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
     }
   }
 
-  // Attempt to canonicalize matmul(x, transpose(y)) to a matmul with the
-  // dimension numbers changed which will later be lowered into a more efficient
-  // operation that fuses the transpose into the matmul.
-  auto transpose_op =
-      dyn_cast_if_present<tpu::TransposeOp>(rhs.getDefiningOp());
-  if (!is_matrix_vector_dot && transpose_op && transpose_op->hasOneUse() &&
-      dimension_numbers->getRhsContractingDims().size() == 1 &&
-      dimension_numbers->getRhsNonContractingDims().size() == 1) {
-    auto rhs_non_contracting_dim =
-        dimension_numbers->getRhsNonContractingDims()[0];
-    auto rhs_contracting_dim = dimension_numbers->getRhsContractingDims()[0];
-    auto permutation = transpose_op.getPermutation();
-    if (permutation[rhs_contracting_dim] == rhs_non_contracting_dim &&
-        permutation[rhs_non_contracting_dim] == rhs_contracting_dim &&
-        std::all_of(dimension_numbers->getRhsBatchDims().begin(),
-                    dimension_numbers->getRhsBatchDims().end(),
-                    [&](int64_t batch_dim) {
-                      return permutation[batch_dim] == batch_dim;
-                    })) {
-      if (auto transpose_op_vector_operand =
-              dyn_cast<TypedValue<VectorType>>(transpose_op.getOperand())) {
-        // The transpose is DCE'ed away at a later point.
-        rhs = transpose_op_vector_operand;
-        transpose_rhs = !transpose_rhs;
+  // Attempt to canonicalize matmul(x, transpose(y)) or matmul(x,
+  // slice(transpose(y))) to a matmul with the dimension numbers changed.
+  if (!is_matrix_vector_dot) {
+    if (auto fusion_result = tryFuseRhsTranspose(op, transpose_rhs, builder)) {
+      std::pair<Value, bool> new_rhs_and_transpose = fusion_result.value();
+      if (auto new_rhs =
+              dyn_cast<TypedValue<VectorType>>(new_rhs_and_transpose.first)) {
+        rhs = new_rhs;
       } else {
-        return op->emitOpError("Unexpected operand type for transpose op.");
+        // Invariant violated? this should never happen.
+        op->emitOpError("Failed to fuse rhs transpose.");
+        return failure();
       }
+      transpose_rhs = new_rhs_and_transpose.second;
     }
   }
 
