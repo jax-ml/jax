@@ -5611,10 +5611,6 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
     const int64_t second_minor_dim_original_idx = permutation.size() - 2;
     const int64_t minor_most_dim_original_idx = permutation.size() - 1;
 
-    auto vec_shape = src_ty.getShape();
-    auto major_dim_size = vec_shape[major_dim_original_idx];
-    auto second_minor_dim_size = vec_shape[second_minor_dim_original_idx];
-
     if (layout_in.offsets() != LayoutOffsets{0, 0}) {
       return transpose_op.emitOpError("Not implemented: Layout with offset.");
     }
@@ -5624,12 +5620,6 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
     }
 
     auto sublane_count = ctx.target_shape[0];
-    if (second_minor_dim_size % sublane_count != 0 ||
-        major_dim_size % sublane_count != 0) {
-      return transpose_op.emitOpError(
-          "Not implemented: Swapping major and second minor dimensions must "
-          "result in dimension sizes that are multiples of sublane_count.");
-    }
 
     if (!layout_in.hasNativeTiling(ctx.target_shape)) {
       return transpose_op.emitOpError(
@@ -5660,6 +5650,39 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
       p[rank - 1] = rank - 1;
       src_vregs.TransposeDimensions(p);
     }
+
+    int64_t src_vregs_dim = src_vregs.num_dimensions();
+    int64_t dst_vregs_dim = dst_vregs.num_dimensions();
+    TPU_ASSERT_EQ_OP(src_vregs_dim, dst_vregs_dim);
+
+    // The algorithm works on 8x8 blocks so third minor and second minor must be
+    // divisible by 8.
+    auto src_zeros_vreg = getZerosVector(
+        builder, getNativeVregType(src_ty.getElementType(), ctx.target_shape));
+    llvm::SmallVector<int64_t> new_src_vregs_dims(
+        src_vregs.dimensions().begin(), src_vregs.dimensions().end());
+    new_src_vregs_dims[src_vregs_dim - 3] =
+        llvm::alignTo(src_vregs.dim(src_vregs_dim - 3), sublane_count);
+    xla::Array<Value> tmp_src_vregs(new_src_vregs_dims, src_zeros_vreg);
+    tmp_src_vregs.UpdateSlice(src_vregs,
+                              SmallVector<int64_t>(src_vregs_dim, 0));
+    src_vregs = std::move(tmp_src_vregs);
+
+    // The dimensions without padding is used for slicing the output.
+    llvm::SmallVector<int64_t> dst_vregs_dims_pre_padding(
+        dst_vregs.dimensions().begin(), dst_vregs.dimensions().end());
+    auto dst_zeros_vreg = getZerosVector(
+        builder, getNativeVregType(dst_ty.getElementType(), ctx.target_shape));
+    llvm::SmallVector<int64_t> new_dst_vregs_dims(
+        dst_vregs.dimensions().begin(), dst_vregs.dimensions().end());
+    // 3rd minor of dst comes from 2nd minor of src, which has to be
+    // sublane aligned.
+    new_dst_vregs_dims[dst_vregs_dim - 3] =
+        src_vregs.dim(src_vregs_dim - 2) * sublane_count;
+    xla::Array<Value> tmp_dst_vregs(new_dst_vregs_dims, dst_zeros_vreg);
+    tmp_dst_vregs.UpdateSlice(dst_vregs,
+                              SmallVector<int64_t>(dst_vregs_dim, 0));
+    dst_vregs = std::move(tmp_dst_vregs);
 
     auto vreg_dimensions = src_vregs.dimensions();
     // Note(mvoz): Slice is a weird word here, This is used for constructing
@@ -5841,6 +5864,10 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
       }
     }
     dst_vregs.Reshape(original_dst_vregs_dims);
+    // Remove padding.
+    dst_vregs =
+        dst_vregs.Slice(SmallVector<int64_t>(dst_vregs.num_dimensions(), 0),
+                        dst_vregs_dims_pre_padding);
     auto assembled =
         assemble(builder, dst_ty, layout_out, dst_vregs, ctx.target_shape);
     transpose_op.getOperation()->replaceAllUsesWith(assembled);
