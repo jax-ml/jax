@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import abc
 import collections
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Hashable, Iterable, Sequence
 import dataclasses
 import enum
 import functools
@@ -929,9 +929,16 @@ class BlockSpec(pallas_core.BlockSpec):
       reference.
     delay_release: used during pipelining to delay the release of
       resources of a slot after it is used in the computation.
+    collective_axes: When set, all blocks along the specified axes must execute
+      the same sequence of pipeline operations (with the only exception being
+      the index_map in non-collective ``BlockSpec``s), and all of them must
+      return the same block from the index_map for this operand. This enables
+      the pipelining helpers to use collective async copies, which can improve
+      performance.
   """
   transforms: Sequence[MemoryRefTransform] = ()
   delay_release: int = 0
+  collective_axes: tuple[Hashable, ...] = ()
 
   def to_block_mapping(
       self,
@@ -992,6 +999,7 @@ class ClusterBarrierType(dtypes.ExtendedDType):
   name: ClassVar[str] = "cluster_barrier"
 
   collective_axes: tuple[str | tuple[str, ...], ...]
+  num_arrivals: int
 
   def __str__(self):
     return self.name
@@ -1036,10 +1044,11 @@ class Barrier:
 class ClusterBarrier:
   collective_axes: tuple[str | tuple[str, ...], ...]
   num_barriers: int = 1
+  num_arrivals: int = 1
 
   def get_ref_aval(self) -> state.AbstractRef:
     aval = jax_core.ShapedArray(
-        [self.num_barriers], ClusterBarrierType(self.collective_axes)
+        [self.num_barriers], ClusterBarrierType(self.collective_axes, self.num_arrivals)
     )
     return state.AbstractRef(aval, SMEM)
 
