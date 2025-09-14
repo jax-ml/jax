@@ -364,8 +364,8 @@ def register_lowering_rule(
   def decorator(rule: T) -> T:
     for kernel_type in kernel_types:
       lowering_rules[kernel_type][prim] = rule
-    if not ensure_mlir_values:
-      skip_mlir_conversions.add(prim)
+      if not ensure_mlir_values:
+        skip_mlir_conversions.add((prim, kernel_type))
     return rule
 
   return decorator
@@ -1133,7 +1133,7 @@ def jaxpr_subcomp(
     with (source_info_util.user_context(eqn.source_info.traceback), loc,
           eqn.ctx.manager):
       if eqn.primitive in lowering_rules[ctx.kernel_type]:
-        if eqn.primitive not in skip_mlir_conversions:
+        if (eqn.primitive, ctx.kernel_type) not in skip_mlir_conversions:
           invals = [
               _ensure_mlir_value(x, cast(ShapedAbstractValue, v.aval))
               for x, v in zip(invals, eqn.invars)

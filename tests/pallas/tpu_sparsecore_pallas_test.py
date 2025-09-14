@@ -734,6 +734,33 @@ class VectorSubcoreTest(PallasSCTest):
     x = jnp.arange(num_subcores * 8, dtype=jnp.float32).reshape(-1, 8)
     np.testing.assert_array_equal(kernel(x), x.view(np.uint32))
 
+  def test_smem_vmem_store_literals(self):
+    num_subcores = 16
+
+    @plsc.kernel(
+        out_shape=jax.ShapeDtypeStruct(
+            shape=(num_subcores, 8), dtype=jnp.float32
+        ),
+        mesh=plsc.VectorSubcoreMesh(
+            core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+        ),
+        scratch_shapes=(pltpu.SMEM([1], jnp.float32),
+                        pltpu.VMEM([8], jnp.float32)),
+    )
+    def kernel(x_ref, o_ref, scratch_scalar_ref, scratch_vec_ref):
+      subcore_id = lax.axis_index("subcore")
+      scratch_scalar_ref[0] = 7.
+      pltpu.sync_copy(x_ref.at[subcore_id], scratch_vec_ref)
+      scratch_vec_ref[...] = jnp.where(
+          subcore_id < 3, scratch_scalar_ref[0], scratch_vec_ref[...])
+      pltpu.sync_copy(scratch_vec_ref, o_ref.at[subcore_id])
+
+    x = jnp.arange(num_subcores * 8, dtype=jnp.float32).reshape(-1, 8)
+    expected = jnp.where(jnp.arange(num_subcores)[:, jnp.newaxis] < 3,
+                         jnp.full((num_subcores, 8), 7.),
+                         x)
+    np.testing.assert_array_equal(kernel(x), expected)
+
 
 class ScalarSubcoreTest(PallasSCTest):
 

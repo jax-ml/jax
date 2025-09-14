@@ -3034,6 +3034,8 @@ class MiscellaneousTest(PallasBaseTest):
   def test_casting_bool_to_i8(self):
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest("Operation not supported on this TPU version.")
+    if not jtu.if_cloud_tpu_at_least(2025, 9, 12):
+      self.skipTest("Needs a newer libtpu")
 
     def greater_than(x: jax.Array, y: jax.Array):
       def kernel(x_ref, y_ref, out_ref):
