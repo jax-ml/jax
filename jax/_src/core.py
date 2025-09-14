@@ -1751,7 +1751,7 @@ def shaped_abstractify(x):
   if hasattr(x, 'dtype'):
     aval = ShapedArray(
         np.shape(x),
-        dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
+        dtypes.check_and_canonicalize_user_dtype(x.dtype),
         weak_type=getattr(x, "weak_type", False),
     )
     return update_aval_with_sharding(aval, getattr(x, 'sharding', None))
@@ -3706,7 +3706,8 @@ class ShapeDtypeStruct:
 
 def _sds_aval_mapping(x):
   aval = ShapedArray(
-      x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
+      x.shape,
+      dtypes.check_and_canonicalize_user_dtype(x.dtype, "ShapeDtypeStruct"),
       weak_type=x.weak_type, vma=(frozenset() if x.vma is None else x.vma))
   aval = update_aval_with_sharding(aval, x.sharding)
   if x.is_ref:

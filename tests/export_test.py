@@ -1074,6 +1074,8 @@ class JaxExportTest(jtu.JaxTestCase):
       self.skipTest("TPU does not support float8_e8m0fnu.")
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
       self.skipTest("TPU does not support float4_e2m1fn.")
+    if dtype != dtypes.canonicalize_dtype(dtype):
+      self.skipTest("x64 mode is disabled")
     @jax.jit
     def f_jax(x):
       return x + x
