@@ -287,7 +287,7 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x), jnp.sum(x))
 
   def test_reshape(self):
-    self.skip_if_wg_semantics()
+    self.skip_if_wg_semantics()  # Can't infer transforms for `memref.expand_shape`.
 
     shape1, shape2 = (128,), (2, 16, 4)
 
@@ -433,7 +433,7 @@ class PallasCallTest(PallasTest):
 
   @parameterized.parameters(jnp.float32, jnp.int32, jnp.uint32)
   def test_iota(self, dtype):
-    self.skip_if_wg_semantics()
+    self.skip_if_wg_semantics()  # No WG lowering for iota.
 
     dimension = 1
 
@@ -579,7 +579,7 @@ class PallasCallTest(PallasTest):
 
   @parameterized.parameters(jnp.bfloat16, jnp.float16, jnp.float32)
   def test_copy_smem_to_gmem_reduction(self, dtype):
-    self.skip_if_wg_semantics()
+    self.skip_if_wg_semantics()  # Reduction not implemented.
     @functools.partial(
         self.pallas_call,
         grid=(200,),
@@ -5383,8 +5383,6 @@ class ExamplesTest(PallasTest):
 
   # Transforms
   def test_stage5(self):
-    self.skip_if_wg_semantics()  # Needs WGMMA to support slices.
-
     row_block, col_block = 64, 32
     x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
 
@@ -5549,7 +5547,7 @@ class ExamplesSm90ATest(PallasSm90ATest):
 
   # WGMMA
   def test_stage6(self):
-    self.skip_if_wg_semantics()  # Needs WGMMA to support slices.
+    self.skip_if_wg_semantics()  # `fa.optimization_barrier` does not support f16 arrays.
 
     m_block = n_block = 64
     k_block = 32
