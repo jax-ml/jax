@@ -205,7 +205,7 @@ Using words, this alternative implementation doesn't compute `g_vjp`, or the res
 
 The cost you pay is redundant work: in `f_bwd2` you must re-evaluate `g(x)` as part of `jax.vjp(g, x)` just to discard its value (in the underscore variable on the line `_, g_vjp = jax.vjp(g, x)`).
 
-You can get this VJP behavior in autodiff &#151; without having to write VJP functions directly &#151; by instead using {func}`jax.checkpoint` in an alternative definition of the original function `f`:
+You can get this VJP behavior in autodiff --- without having to write VJP functions directly --- by instead using {func}`jax.checkpoint` in an alternative definition of the original function `f`:
 
 ```{code-cell}
 def f_checkpoint(x):
@@ -500,7 +500,7 @@ def net(params: ParamsList, x: jnp.ndarray):
 Instead, iterate over the layer application with {func}`jax.lax.scan`:
 
 ```{code-cell}
-params = [(jnp.array([[0.5, 0.5], [1., 1.]]), jnp.array([0.5, 0.5])), 
+params = [(jnp.array([[0.5, 0.5], [1., 1.]]), jnp.array([0.5, 0.5])),
           (jnp.array([[0.5, 0.5], [1., 1.]]), jnp.array([0.5, 0.5]))]
 
 all_weights = jnp.stack([W for W, _ in params])
