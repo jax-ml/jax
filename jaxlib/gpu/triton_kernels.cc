@@ -524,8 +524,10 @@ absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
   // pointer.
   // TODO: b/381242007 - Allocate a proper buffer if we want to use
   // device-side TMA APIs.
-  void* scratch_ptr = nullptr;  // Alive until kernel_.Launch returns.
-  params.push_back(&scratch_ptr);
+  void* tma_descriptor_buffer = nullptr;  // Alive until kernel_.Launch returns.
+  params.push_back(&tma_descriptor_buffer);
+  void* profiling_buffer = nullptr;  // Alive until kernel_.Launch returns.
+  params.push_back(&profiling_buffer);
 
   return kernel_.Launch(stream, grid_, params.data());
 }
