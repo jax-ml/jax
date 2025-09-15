@@ -210,24 +210,34 @@ mlir.ir_type_handlers[ShapedArrayWithMemorySpace] = mlir._array_ir_types
 @dataclasses.dataclass(frozen=True)
 class MemoryRef:
   """Like jax.ShapeDtypeStruct but with memory spaces."""
-  shape: tuple[int, ...]
-  dtype: jnp.dtype | dtypes.ExtendedDType
+  inner_aval: jax_core.AbstractValue
   # TODO(b/368122763): Unify memory space types across backends
   memory_space: Any
 
   def get_array_aval(self) -> jax_core.ShapedArray:
-    dtype = self.dtype
+    if not isinstance(self.inner_aval, jax_core.ShapedArray):
+      raise ValueError(
+          f"MemoryRef type must be a ShapedArray, got {type(self.inner_aval)}"
+      )
+    dtype = self.inner_aval.dtype
     if not isinstance(dtype, (jnp.dtype, dtypes.ExtendedDType)):
       dtype = jnp.dtype(dtype)
     return ShapedArrayWithMemorySpace(
-        self.shape, dtype, memory_space=self.memory_space
+        self.inner_aval.shape, dtype, memory_space=self.memory_space
     )
 
   def get_ref_aval(self) -> TransformedRef | state.AbstractRef:
     # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
     # try to apply JAX ops to it.
-    return state.AbstractRef(
-        jax_core.ShapedArray(self.shape, self.dtype), self.memory_space)
+    return state.AbstractRef(self.inner_aval, self.memory_space)
+
+  @property
+  def dtype(self):
+    return self.inner_aval.dtype
+
+  @property
+  def shape(self):
+    return self.inner_aval.shape
 
 
 class MemorySpace(enum.Enum):
@@ -242,10 +252,13 @@ class MemorySpace(enum.Enum):
   KEY = "key"  # Memory space for PRNG keys.
   HOST = "host"  # Host memory space.
 
-  def __call__(self, shape, dtype):
-    if self == MemorySpace.ANY:
-      return jax.ShapeDtypeStruct(shape, dtype)
-    return MemoryRef(shape, dtype, self)
+  def from_type(self, type: jax_core.AbstractValue) -> MemoryRef:
+    return MemoryRef(type, memory_space=self)
+
+  def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
+    # A convenience function for constructing MemoryRef types of ShapedArrays.
+    return self.from_type(jax_core.ShapedArray(shape, dtype))
+
 
   def __str__(self) -> str:
     return self.value

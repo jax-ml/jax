@@ -748,11 +748,12 @@ def lower_pipelined_jaxpr_to_module(
       return gpu_core.WGMMAAccumulatorRef(aval.shape, aval.dtype)
     elif isinstance(aval, gpu_core.AbstractTMEMRef):
       return gpu_core.GPUMemoryRef(
-          aval.shape, aval.dtype, gpu_core.TMEM,
+          jax_core.ShapedArray(aval.shape, aval.dtype), gpu_core.TMEM,
           transforms=(), layout=aval.layout, collective=aval.collective,
       )
     elif isinstance(aval, state_types.AbstractRef):
-      return pallas_core.MemoryRef(aval.shape, aval.dtype, aval.memory_space)
+      return pallas_core.MemoryRef(jax_core.ShapedArray(aval.shape, aval.dtype),
+                                   aval.memory_space)
     else:
       return gpu_core.SMEM(aval.shape, aval.dtype)
 

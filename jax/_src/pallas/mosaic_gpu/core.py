@@ -150,6 +150,7 @@ class MemorySpace(enum.Enum):
       collective: bool | None = None,
       layout: TMEMLayout | None = None,
   ) -> pallas_core.MemoryRef:
+    # TODO(sharadmv): Add HiType constructor support.
     if self == MemorySpace.TMEM:
       if transforms:
         raise ValueError("transforms are not supported for TMEM")
@@ -174,8 +175,9 @@ class MemorySpace(enum.Enum):
       if packed is not None or collective is not None or layout is not None:
         raise ValueError("packed, collective and layout arguments are only supported for TMEM.")
       mgpu_layout = None
-    return GPUMemoryRef(shape, dtype, memory_space=self, transforms=transforms,
-                        layout=mgpu_layout, collective=collective)
+    return GPUMemoryRef(jax_core.ShapedArray(shape, dtype), memory_space=self,
+                        transforms=transforms, layout=mgpu_layout,
+                        collective=collective)
 
 
 class SemaphoreType(enum.Enum):
@@ -188,7 +190,8 @@ class SemaphoreType(enum.Enum):
       dtype = pallas_core.BarrierSemaphore()
     else:
       dtype = pallas_core.Semaphore()
-    return pallas_core.MemoryRef(shape, dtype, MemorySpace.GMEM)
+    return pallas_core.MemoryRef(jax_core.ShapedArray(shape, dtype),
+                                 MemorySpace.GMEM)
 
   def get_array_aval(self) -> jax_core.ShapedArray:
     return self(()).get_array_aval()
@@ -484,8 +487,9 @@ class RefUnion(GPUMemoryRef):
       object.__setattr__(self, "refs", refs)
       num_bytes = max(map(_ref_group_size, self.refs))
       super().__init__(
-          shape=(num_bytes,),
-          dtype=jnp.int8,
+          inner_aval=jax_core.ShapedArray(
+              (num_bytes,), jnp.int8
+          ),
           memory_space=SMEM,
           transforms=(),
       )
@@ -498,8 +502,10 @@ class RefUnion(GPUMemoryRef):
             "Some aliased TMEM references are collective and some are not."
         )
       super().__init__(
-          shape=(128, max_cols,),
-          dtype=jnp.int32,
+          inner_aval=jax_core.ShapedArray(
+              shape=(128, max_cols,),
+              dtype=jnp.int32,
+          ),
           memory_space=TMEM,
           transforms=(),
           layout=tcgen05.tmem_default_layout(packing=1),
