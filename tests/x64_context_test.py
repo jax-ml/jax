@@ -16,12 +16,12 @@
 import concurrent.futures
 from functools import partial
 import time
-import unittest
 
 from absl.testing import absltest
 import numpy as np
 
 import jax
+from jax import custom_jvp, custom_vjp, grad, jvp
 from jax import lax
 from jax import random
 from jax.experimental import enable_x64, disable_x64
@@ -126,7 +126,6 @@ class X64ContextTests(jtu.JaxTestCase):
       for _ in range(2):
         f()
 
-  @unittest.skip("test fails, see #8552")
   def test_convert_element_type(self):
     # Regression test for part of https://github.com/jax-ml/jax/issues/5982
     with enable_x64():
@@ -138,6 +137,95 @@ class X64ContextTests(jtu.JaxTestCase):
 
     z = jax.jit(lambda x: x.astype(jnp.int32))(x)
     self.assertEqual(z.dtype, jnp.int32)
+
+  def test_python_scalar(self):
+    @jax.jit
+    def f(a):
+      with enable_x64():
+        return 2 + a
+    self.assertEqual(f(1).dtype, jnp.int64)
+
+  @jtu.sample_product(disable_jit=[True, False])
+  def test_scan_with_contextmanager(self, disable_jit):
+    with jax.disable_jit(disable_jit):
+      def f(a):
+        def body(carry, _):
+          with enable_x64():
+            y = (carry + a).astype(jnp.int64)
+            assert y.dtype == jnp.int64
+            z = y.astype(jnp.int32)
+          return carry, (z, y)
+        return lax.scan(body, jnp.int32(2), jnp.arange(4))
+      carry_out, ys_out = f(3)
+      self.assertEqual(carry_out.dtype, jnp.int32)
+      self.assertEqual(ys_out[0].dtype, jnp.int32)
+      self.assertEqual(ys_out[1].dtype, jnp.int64)
+
+  def test_custom_jvp(self):
+
+    @custom_jvp
+    def f(x):
+      return x ** 2.
+
+    @f.defjvp
+    def f_jvp(xs, ts):
+      x, = xs
+      t, = ts
+      self.assertTrue(jax.config.x64_enabled)
+      return f(x), t * jnp.sin(x)
+
+    def g(x):
+      with enable_x64():
+        x = jnp.array(x, jnp.float64)
+        return f(x)
+
+    self.assertEqual(g(5.).dtype, jnp.float64)
+    out_primal, out_tangent = jvp(g, (5.,), (1.,))
+    self.assertEqual(out_primal.dtype, jnp.float64)
+    self.assertEqual(out_tangent.dtype, jnp.float64)
+
+    self.assertEqual(g(5.).dtype, jnp.float64)
+    # TODO(phawkins,mattjj): these do not yet pass
+    # self.assertEqual(grad(g)(5.).dtype, jnp.float32)
+    # self.assertEqual(grad(grad(g))(5.).dtype, jnp.float32)
+    # self.assertEqual(grad(grad(grad(g)))(5.).dtype, jnp.float32)
+
+    with enable_x64(True):
+      self.assertEqual(g(5.).dtype, jnp.float64)
+      self.assertEqual(grad(g)(5.).dtype, jnp.float64)
+      self.assertEqual(grad(grad(g))(5.).dtype, jnp.float64)
+      self.assertEqual(grad(grad(grad(g)))(5.).dtype, jnp.float64)
+
+  def test_custom_vjp(self):
+
+    @custom_vjp
+    def f(x):
+      return x ** 2.
+
+    def f_fwd(x):
+      return f(x), jnp.sin(x)
+
+    def f_bwd(res, t):
+      return (res * t,)
+    f.defvjp(f_fwd, f_bwd)
+
+    def g(x):
+      with enable_x64():
+        x = jnp.array(x, jnp.float64)
+        return f(x)
+
+    self.assertEqual(g(5.).dtype, jnp.float64)
+    # TODO(phawkins,mattjj): these do not yet pass
+    # self.assertEqual(grad(g)(5.).dtype, jnp.float32)
+    # self.assertEqual(grad(grad(g))(5.).dtype, jnp.float32)
+    # self.assertEqual(grad(grad(grad(g)))(5.).dtype, jnp.float32)
+
+    with enable_x64(True):
+      self.assertEqual(g(5.).dtype, jnp.float64)
+      self.assertEqual(grad(g)(5.).dtype, jnp.float64)
+      self.assertEqual(grad(grad(g))(5.).dtype, jnp.float64)
+      self.assertEqual(grad(grad(grad(g)))(5.).dtype, jnp.float64)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

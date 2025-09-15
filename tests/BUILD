@@ -1678,6 +1678,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "x64_context_test",
     srcs = ["x64_context_test.py"],
+    enable_backends = ["cpu"],
     deps = [
         "//jax:experimental",
     ] + py_deps([
