@@ -3027,7 +3027,7 @@ def named_call(
       within the name scope. Use the fun.__name__ if not specified.
 
   Returns:
-    A version of `fun` that is wrapped in a name_scope.
+    A version of ``fun`` that is wrapped in a ``named_scope``.
   """
   if name is None:
     name = fun.__name__
