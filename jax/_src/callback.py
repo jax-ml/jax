@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import logging
-from typing import Any
+from typing import Any, cast
 
 from jax._src import api
 from jax._src import config
@@ -774,7 +774,7 @@ def emit_python_callback(
           f"Partitioned callback not implemented on {platform} backend.")
     if result_avals:
       raise ValueError("Partitioned callback not supported with return values.")
-  backend = ctx.module_context.get_backend()
+  backend: xb.XlaBackend = cast(xb.XlaBackend, ctx.module_context.get_backend())
   result_shapes = [_aval_to_xla_shape(aval) for aval in result_avals]
   operand_shapes = [_aval_to_xla_shape(aval) for aval in operand_avals]
 

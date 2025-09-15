@@ -170,6 +170,7 @@ class LoweringContext:
   traceback_caches: mlir.TracebackCaches
   for_verification: bool
   forward_compatible: bool
+  backend: xla_bridge.XlaBackend | None
   dynamic_shape_replacement_fn: DynamicShapeReplacementFn
 
   def replace(self, **changes: Any) -> LoweringContext:
@@ -221,6 +222,13 @@ class LoweringRuleContext:
   @property
   def forward_compatible(self):
     return self.lowering_context.forward_compatible
+
+  def is_cloud_tpu_older_than(self, year: int, month: int, day: int):
+    # No way for us to query the version, so assume the oldest possible backend.
+    if self.lowering_context.backend is None:
+      return True
+    backend = self.lowering_context.backend
+    return is_cloud_tpu_older_than(year, month, day, backend)
 
 
 def _memory_space_to_tpu_memory_space(memory_space: AnyMemorySpace | None
@@ -689,8 +697,9 @@ def lower_jaxpr_to_module(
     for_verification: bool = False,
     dynamic_shape_replacement_enabled: bool = False,
 ) -> tuple[ir.Module, tuple[Any, ...]]:
+  backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
-  if is_cloud_tpu_older_than(2025, 1, 10):
+  if backend is not None and is_cloud_tpu_older_than(2025, 8, 1, backend):
     platform_version = xla_bridge.get_backend().platform_version
     raise RuntimeError(
         "Pallas TPU requires a libtpu version that's at most a month old. Found"
@@ -740,6 +749,7 @@ def lower_jaxpr_to_module(
       forward_compatible=lowering_context.is_forward_compat(),
       dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
       dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
+      backend=backend,
   )
   m.body.append(func_op)
   sym_tab.insert(func_op)
@@ -776,6 +786,7 @@ def lower_jaxpr_to_module(
           for_verification=for_verification,
           forward_compatible=lowering_context.is_forward_compat(),
           dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+          backend=backend,
       )
       assert mlir_func.verify(), mlir_func
       block_shape = list(pallas_core._get_block_shape(bm.block_shape))
@@ -929,6 +940,7 @@ def lower_jaxpr_to_transform_func(
     kernel_type: tpu_core.KernelType,
     for_verification: bool,
     forward_compatible: bool,
+    backend: Any | None,
     dynamic_shape_replacement_fn: DynamicShapeReplacementFn | None = None,
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
@@ -958,6 +970,7 @@ def lower_jaxpr_to_transform_func(
         traceback_caches=mlir.TracebackCaches(),
         for_verification=for_verification,
         forward_compatible=forward_compatible,
+        backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
     )
     out = jaxpr_subcomp(lowering_context, jaxpr, *jaxpr_indices,
@@ -979,13 +992,6 @@ def lower_jaxpr_to_transform_func(
   return body.func_op
 
 
-lower_jaxpr_to_func_fns = {}
-
-
-def register_jaxpr_to_func(kernel_type: tpu_core.KernelType):
-  lower_jaxpr_to_func_fns[kernel_type] = lower_jaxpr_to_func
-
-
 def lower_jaxpr_to_func(
     jaxpr: jax_core.Jaxpr,
     *,
@@ -994,6 +1000,7 @@ def lower_jaxpr_to_func(
     kernel_type: tpu_core.KernelType,
     for_verification: bool,
     forward_compatible: bool,
+    backend: Any | None,
     dynamic_shape_replacement_fn: DynamicShapeReplacementFn | None = None,
     dynamic_shape_replacement_enabled: bool = False,
 ) -> func.FuncOp:
@@ -1028,6 +1035,7 @@ def lower_jaxpr_to_func(
         traceback_caches=mlir.TracebackCaches(),
         for_verification=for_verification,
         forward_compatible=forward_compatible,
+        backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
     )
     return jaxpr_subcomp(
@@ -1403,11 +1411,7 @@ def _slice_memref(
     target_offset = sum(
         map(operator.mul, static_starts, ref_strides), ref_offset
     )
-  out_layout = (
-      ir.StridedLayoutAttr.get(target_offset, ref_strides)
-      if not is_cloud_tpu_older_than(2025, 6, 20)
-      else None
-  )
+  out_layout = ir.StridedLayoutAttr.get(target_offset, ref_strides)
   out_ty = ir.MemRefType.get(
       static_sizes, ref_ty.element_type, out_layout, ref_ty.memory_space
   )
@@ -1424,11 +1428,7 @@ def _slice_memref(
     # from [1, 1, 128] to [1, 128].
     squeeze_dims = _compute_squeezed_dims(ref_ty.shape, target_sizes)
     target_strides = [s for i, s in enumerate(ref_strides) if not squeeze_dims[i]]
-    out_layout = (
-        ir.StridedLayoutAttr.get(ref_offset, target_strides)
-        if not is_cloud_tpu_older_than(2025, 6, 20)
-        else None
-    )
+    out_layout = ir.StridedLayoutAttr.get(ref_offset, target_strides)
     out_ty = ir.MemRefType.get(
         target_sizes,
         ref_ty.element_type,
@@ -1990,7 +1990,7 @@ def _broadcast_in_dim_lowering_rule(
     return val
 
   if jnp.issubdtype(aval_in.dtype, jnp.bool_) and (
-      ctx.forward_compatible or is_cloud_tpu_older_than(2025, 6, 3)
+      ctx.forward_compatible or ctx.is_cloud_tpu_older_than(2025, 6, 3)
   ):
     # Direct broadcasts for bools are not supported in Mosaic due to booleans
     # living in mask registers and broadcast operating on vregs. Broadcast as an
@@ -2131,7 +2131,7 @@ def _dot_general_lowering_rule(
           lhs_aval.dtype != jnp.float32
           or rhs_aval.dtype != jnp.float32
           or ctx.forward_compatible
-          or is_cloud_tpu_older_than(2025, 8, 10)
+          or ctx.is_cloud_tpu_older_than(2025, 8, 10)
       )
   ):
     if ctx.avals_in[0].shape != ctx.avals_in[1].shape:
@@ -2277,7 +2277,7 @@ def _convert_element_type_lowering_rule(
   new_bitwidth = dtypes.bit_width(new_dtype)
   both_32bit = old_bitwidth == 32 and new_bitwidth == 32
   if _from(floating) and _to(floating):
-    forward_compat = ctx.forward_compatible or is_cloud_tpu_older_than(
+    forward_compat = ctx.forward_compatible or ctx.is_cloud_tpu_older_than(
         2025, 6, 29
     )
     if old_bitwidth < new_bitwidth and (
@@ -2303,7 +2303,7 @@ def _convert_element_type_lowering_rule(
     return arith.fptosi(out_type, x)
   elif _from(signed) and _to(floating):
     if (
-        not (ctx.forward_compatible or is_cloud_tpu_older_than(2025, 5, 12))
+        not (ctx.forward_compatible or ctx.is_cloud_tpu_older_than(2025, 5, 12))
         or both_32bit
     ):
       return arith.sitofp(out_type, x)
@@ -2483,7 +2483,7 @@ def _transpose_lowering_rule(ctx: LoweringRuleContext, x, *, permutation):
   out_type = aval_to_ir_type(
       ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
   )
-  if ctx.forward_compatible or is_cloud_tpu_older_than(2025, 5, 8):
+  if ctx.forward_compatible or ctx.is_cloud_tpu_older_than(2025, 5, 8):
     return vector.transpose(out_type, x, permutation)
   else:
     return tpu.transpose(out_type, x, permutation)
@@ -2773,7 +2773,7 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, *, y):
 def _exp2_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
-  if ctx.forward_compatible or is_cloud_tpu_older_than(2025, 7, 26):
+  if ctx.forward_compatible or ctx.is_cloud_tpu_older_than(2025, 7, 26):
     # exp2 in JAX lowers to exp(ln2 * x), not to pow2. We match that behavior
     # here.
     return lower_fun(
@@ -3735,7 +3735,7 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   if device_id is not None:
     device_id, core_id = _device_id_to_logical(ctx, device_id, device_id_type)
 
-  if ctx.forward_compatible or is_cloud_tpu_older_than(2025, 7, 27):
+  if ctx.forward_compatible or ctx.is_cloud_tpu_older_than(2025, 7, 27):
     tpu.wait_dma2(sem, src, dst, core_id=core_id)
   else:
     tpu.wait_dma2(sem, src, dst, device_id=device_id, core_id=core_id)

@@ -818,14 +818,18 @@ class ModuleContext:
     self.all_default_mem_kind = all_default_mem_kind
     self.lowering_parameters = lowering_parameters
 
-  def get_backend(self) -> xb.XlaBackend:
+  def get_backend(self, optional: bool = False) -> xb.XlaBackend | None:
     if len(self.platforms) > 1:
+      if optional:
+        return None
       raise NotImplementedError(
         "accessing .backend in multi-lowering setting. This can occur when "
         "lowering a primitive that has not been adapted to multi-platform "
         "lowering")
     if self.backend is not None:
       if xb.canonicalize_platform(self.backend.platform) != self.platforms[0]:
+        if optional:
+          return None
         raise ValueError(
           "the platform for the specified backend "
           f"{xb.canonicalize_platform(self.backend.platform)} is different "
