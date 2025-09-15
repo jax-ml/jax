@@ -304,6 +304,12 @@ pip install -U --pre jax jaxlib -i https://us-python.pkg.dev/ml-oss-artifacts-pu
 pip install -U --pre jax jaxlib libtpu requests -i https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/ -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 ```
 
+- NVIDIA GPU (CUDA 13):
+
+```bash
+pip install -U --pre jax jaxlib "jax-cuda13-plugin[with-cuda]" jax-cuda13-pjrt -i https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/
+```
+
 - NVIDIA GPU (CUDA 12):
 
 ```bash
