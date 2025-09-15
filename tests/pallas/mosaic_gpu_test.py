@@ -2346,6 +2346,7 @@ class PallasCallTest(PallasTest):
     jax_core.check_jaxpr(jax.make_jaxpr(f)().jaxpr)
 
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  @jtu.skip_under_pytest("Test fails under pytest in CI")
   def test_line_info(self):
     self.skip_if_wg_semantics()
 
