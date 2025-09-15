@@ -177,10 +177,17 @@ def fragmented_array_to_ir(
   return conversion_cast.result
 
 
+def _is_signed(ty: ir.Type) -> bool | None:
+  """Returns whether `ty` is signed or None if not an integer type."""
+  if ir.IntegerType.isinstance(ty):
+    return ir.IntegerType(ty).is_signed
+  else:
+    return None
+
+
 def _fragmented_array_from_ir(
     fragmented_array_as_ir: ir.Value,
     layout: ir.Attribute,
-    is_signed: bool | None = None,
 ) -> fa.FragmentedArray:
   producer_layout_attr = fragmented_array_as_ir.owner.attributes["layout"]
   producer_layout = layouts.from_layout_attr(producer_layout_attr)
@@ -192,6 +199,8 @@ def _fragmented_array_from_ir(
       fragmented_array_as_ir, [reg_ty] * math.prod(reg_shape)
   )
 
+  is_signed = _is_signed(vector_ty.element_type)
+
   reverse_conversion_cast = converted_outputs[0].owner.opview
   for attribute in conversion_cast.attributes:
     attribute = cast(ir.NamedAttribute, attribute)
@@ -200,9 +209,6 @@ def _fragmented_array_from_ir(
   registers = np.array(list(converted_outputs)).reshape(
     [attr.value for attr in conversion_cast.attributes["registers_shape"]]
   )
-
-  if ir.IntegerType.isinstance(conversion_cast.outputs[0].type.element_type):
-    is_signed = False if is_signed is None else is_signed
 
   return fa.FragmentedArray(
       _registers=registers, _layout=producer_layout, _is_signed=is_signed
@@ -315,11 +321,7 @@ def _optimization_barrier_op_lowering_rule(
 
   fragmented_arrays = []
   for operand, layout in safe_zip(op.operands, inference_utils.in_layouts(op)):
-    ty = ir.VectorType(operand.type)
-    is_signed = False if ir.IntegerType.isinstance(ty.element_type) else None
-    fragmented_arrays.append(
-        _fragmented_array_from_ir(operand, layout, is_signed=is_signed)
-    )
+    fragmented_arrays.append(_fragmented_array_from_ir(operand, layout))
 
   lowered_fragmented_arrays = fa.optimization_barrier(*fragmented_arrays)
   if isinstance(lowered_fragmented_arrays, fa.FragmentedArray):
@@ -343,15 +345,13 @@ def _arith_constant_op_lowering_rule(
     raise NotImplementedError(f"Unsupported constant op: {op}")
 
   ty = ir.VectorType(op.result.type)
-  is_signed = False if ir.IntegerType.isinstance(ty.element_type) else None
-
   return [
       fragmented_array_to_ir(
           fa.FragmentedArray.splat(
               arith.constant(ty.element_type, value.get_splat_value()),
               tuple(ty.shape),
               layouts.from_layout_attr(op.attributes["out_layouts"][0]),
-              is_signed=is_signed,
+              is_signed=_is_signed(ty.element_type),
           ),
           op.result.type,
       )
@@ -435,8 +435,7 @@ def _vector_load_op_lowering_rule(
           f"for {vector_load_op}"
       )
 
-  element_type = vector_load_op.result.type.element_type
-  is_signed = False if ir.IntegerType.isinstance(element_type) else None
+  is_signed = _is_signed(vector_load_op.result.type.element_type)
 
   def _fragmented_array_to_ir(fragmented_array: fa.FragmentedArray) -> ir.Value:
     return fragmented_array_to_ir(fragmented_array, vector_load_op.result.type)
@@ -557,9 +556,7 @@ def _vector_splat_op_lowering_rule(
 ) -> Sequence[ir.Value]:
 
   out_vec_ty = ir.VectorType(vector_splat_op.aggregate.type)
-  is_signed = (
-      False if ir.IntegerType.isinstance(out_vec_ty.element_type) else None
-  )
+  is_signed = _is_signed(out_vec_ty.element_type)
   fragmented_array = fa.FragmentedArray.splat(
       vector_splat_op.input,
       tuple(out_vec_ty.shape),
@@ -575,9 +572,7 @@ def _vector_broadcast_op_lowering_rule(
 ) -> Sequence[ir.Value]:
 
   out_vec_ty = ir.VectorType(vector_broadcast_op.vector.type)
-  is_signed = (
-      False if ir.IntegerType.isinstance(out_vec_ty.element_type) else None
-  )
+  is_signed = _is_signed(out_vec_ty.element_type)
   fragmented_array = fa.FragmentedArray.splat(
       vector_broadcast_op.source,
       tuple(out_vec_ty.shape),
@@ -596,10 +591,7 @@ def _vector_shape_cast_op_lowering_rule(
   [layout] = inference_utils.in_layouts(op)
   out_vec_ty = ir.VectorType(op.result.type)
   assert out_vec_ty.has_static_shape
-  is_signed = (
-      False if ir.IntegerType.isinstance(out_vec_ty.element_type) else None
-  )
-  a = _fragmented_array_from_ir(op.source, layout, is_signed)
+  a = _fragmented_array_from_ir(op.source, layout)
   return [fragmented_array_to_ir(a.reshape(out_vec_ty.shape), out_vec_ty)]
 
 
@@ -610,8 +602,7 @@ def _vector_reduction_op_lowering_rule(
   del ctx  # Unused.
   [layout] = inference_utils.in_layouts(op)
   element_type = ir.VectorType(op.vector.type).element_type
-  is_signed = False if ir.IntegerType.isinstance(element_type) else None
-  a = _fragmented_array_from_ir(op.vector, layout, is_signed)
+  a = _fragmented_array_from_ir(op.vector, layout)
   match str(op.kind):
     case "#vector.kind<add>":
       scratch = _slice_smem(
@@ -649,11 +640,8 @@ def _vector_multi_dim_reduction_op_lowering_rule(
         f" {acc_layout}"
     )
 
-  element_type = ir.VectorType(op.source.type).element_type
-
-  is_signed = False if ir.IntegerType.isinstance(element_type) else None
-  source_fa = _fragmented_array_from_ir(op.source, in_layout, is_signed)
-  acc_fa = _fragmented_array_from_ir(op.acc, acc_layout, is_signed)
+  source_fa = _fragmented_array_from_ir(op.source, in_layout)
+  acc_fa = _fragmented_array_from_ir(op.acc, acc_layout)
   match vector.CombiningKind[
       str(op.kind).removeprefix("#vector.kind<").removesuffix(">").upper()
   ]:
@@ -967,49 +955,43 @@ if jaxlib.version >= (0, 7, 2):
 def _conversion_op_lowering_rule(
     _: LoweringContext,
     op: ir.OpView,
-    source_is_signed: bool | None,
-    target_is_signed: bool | None,
 ) -> Sequence[ir.Value]:
   [in_layout] = inference_utils.in_layouts(op)
   [layout] = inference_utils.out_layouts(op)
   if in_layout != layout:
     raise ValueError("Layout mismatch")
 
-  target_ty = op.result.type.element_type  # pytype: disable=attribute-error
-  operand = _fragmented_array_from_ir(op.operands[0], layout, source_is_signed)
+  target_ty = ir.VectorType(op.result.type).element_type
+  operand = _fragmented_array_from_ir(op.operands[0], layout)
+  target_is_signed = _is_signed(target_ty)
   converted = operand.astype(target_ty, is_signed=target_is_signed)
   return [fragmented_array_to_ir(converted, op.result.type)]
 
 
-for op, source_is_signed, target_is_signed in [
-    (arith.ExtFOp, None, None),
-    (arith.ExtSIOp, True, True),
-    (arith.ExtUIOp, False, False),
-    (arith.FPToSIOp, None, True),
-    (arith.FPToUIOp, None, False),
-    (arith.SIToFPOp, True, None),
-    (arith.TruncFOp, None, None),
-    (arith.TruncIOp, False, False),
-    (arith.UIToFPOp, False, None),
+for op in [
+    arith.ExtFOp,
+    arith.ExtSIOp,
+    arith.ExtUIOp,
+    arith.FPToSIOp,
+    arith.FPToUIOp,
+    arith.SIToFPOp,
+    arith.TruncFOp,
+    arith.TruncIOp,
+    arith.UIToFPOp,
 ]:
-  _lowerings[op.OPERATION_NAME] = functools.partial(
-      _conversion_op_lowering_rule,
-      source_is_signed=source_is_signed,
-      target_is_signed=target_is_signed,
-  )
+  _lowerings[op.OPERATION_NAME] = _conversion_op_lowering_rule
 
 
 def _unary_op_lowering_rule(
     _: LoweringContext,
     op: Any,
     impl: Callable[..., fa.FragmentedArray],
-    is_signed: bool | None = None,
 ) -> Sequence[ir.Value]:
   in_layouts = inference_utils.in_layouts(op)
   [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
-  a = _fragmented_array_from_ir(op.operand, layout, is_signed)
+  a = _fragmented_array_from_ir(op.operand, layout)
   if hasattr(op, "fastmath"):
     approx = op.fastmath == ir.Attribute.parse("#arith.fastmath<afn>")
     result_fa = impl(a, approx=approx)
@@ -1019,22 +1001,21 @@ def _unary_op_lowering_rule(
   return [fragmented_array_to_ir(result_fa, op.result.type)]
 
 
-for op, unary_impl, is_signed in [
-    (mlir_math.RsqrtOp, fa.FragmentedArray.rsqrt, None),
-    (mlir_math.ExpOp, fa.FragmentedArray.exp, None),
-    (mlir_math.Exp2Op, fa.FragmentedArray.exp2, None),
-    (mlir_math.LogOp, fa.FragmentedArray.log, None),
-    (mlir_math.TanhOp, fa.FragmentedArray.tanh, None),
+for op, unary_impl in [
+    (mlir_math.RsqrtOp, fa.FragmentedArray.rsqrt),
+    (mlir_math.ExpOp, fa.FragmentedArray.exp),
+    (mlir_math.Exp2Op, fa.FragmentedArray.exp2),
+    (mlir_math.LogOp, fa.FragmentedArray.log),
+    (mlir_math.TanhOp, fa.FragmentedArray.tanh),
 ]:
   _lowerings[op.OPERATION_NAME] = functools.partial(
-      _unary_op_lowering_rule, impl=unary_impl, is_signed=is_signed
+      _unary_op_lowering_rule, impl=unary_impl
   )
 
 
 def _binary_op_lowering_rule(
     _: LoweringContext,
     op: Any,
-    is_signed: bool | None,
     impl: Callable[
         [fa.FragmentedArray, fa.FragmentedArray], fa.FragmentedArray
     ],
@@ -1043,50 +1024,50 @@ def _binary_op_lowering_rule(
   [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
-  lhs = _fragmented_array_from_ir(op.lhs, layout, is_signed)
-  rhs = _fragmented_array_from_ir(op.rhs, layout, is_signed)
+  lhs = _fragmented_array_from_ir(op.lhs, layout)
+  rhs = _fragmented_array_from_ir(op.rhs, layout)
   return [fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
 
 
-for op, binary_impl, is_signed in [
-    (arith.AddIOp, operator.add, False),
-    (arith.AddFOp, operator.add, None),
-    (arith.SubIOp, operator.sub, False),
-    (arith.SubFOp, operator.sub, None),
-    (arith.MulIOp, operator.mul, False),
-    (arith.MulFOp, operator.mul, None),
-    (arith.FloorDivSIOp, operator.floordiv, True),
-    (arith.DivUIOp, operator.floordiv, False),
-    (arith.DivFOp, operator.truediv, None),
-    (arith.RemSIOp, operator.mod, True),
-    (arith.RemUIOp, operator.mod, False),
-    (arith.RemFOp, operator.mod, None),
-    (arith.AndIOp, operator.and_, False),
-    (arith.OrIOp, operator.or_, False),
-    (arith.XOrIOp, operator.xor, False),
-    (arith.MaxSIOp, fa.FragmentedArray.max, True),
-    (arith.MaxUIOp, fa.FragmentedArray.max, False),
-    (arith.MaximumFOp, fa.FragmentedArray.max, None),
-    (arith.MinSIOp, fa.FragmentedArray.min, True),
-    (arith.MinUIOp, fa.FragmentedArray.min, False),
-    (arith.MinimumFOp, fa.FragmentedArray.min, None),
+for op, binary_impl in [
+    (arith.AddIOp, operator.add),
+    (arith.AddFOp, operator.add),
+    (arith.SubIOp, operator.sub),
+    (arith.SubFOp, operator.sub),
+    (arith.MulIOp, operator.mul),
+    (arith.MulFOp, operator.mul),
+    (arith.FloorDivSIOp, operator.floordiv),
+    (arith.DivUIOp, operator.floordiv),
+    (arith.DivFOp, operator.truediv),
+    (arith.RemSIOp, operator.mod),
+    (arith.RemUIOp, operator.mod),
+    (arith.RemFOp, operator.mod),
+    (arith.AndIOp, operator.and_),
+    (arith.OrIOp, operator.or_),
+    (arith.XOrIOp, operator.xor),
+    (arith.MaxSIOp, fa.FragmentedArray.max),
+    (arith.MaxUIOp, fa.FragmentedArray.max),
+    (arith.MaximumFOp, fa.FragmentedArray.max),
+    (arith.MinSIOp, fa.FragmentedArray.min),
+    (arith.MinUIOp, fa.FragmentedArray.min),
+    (arith.MinimumFOp, fa.FragmentedArray.min),
 ]:
   _lowerings[op.OPERATION_NAME] = functools.partial(
-      _binary_op_lowering_rule, impl=binary_impl, is_signed=is_signed
+      _binary_op_lowering_rule, impl=binary_impl
   )
 
 
 CMPI_IMPLS = {
-    arith.CmpIPredicate.eq: (operator.eq, False),
-    arith.CmpIPredicate.ne: (operator.ne, False),
-    arith.CmpIPredicate.slt: (operator.lt, True),
-    arith.CmpIPredicate.sle: (operator.le, True),
-    arith.CmpIPredicate.sgt: (operator.gt, True),
-    arith.CmpIPredicate.sge: (operator.ge, True),
-    arith.CmpIPredicate.ult: (operator.lt, False),
-    arith.CmpIPredicate.ule: (operator.le, False),
-    arith.CmpIPredicate.ugt: (operator.gt, False),
-    arith.CmpIPredicate.uge: (operator.ge, False),
+    arith.CmpIPredicate.eq: operator.eq,
+    arith.CmpIPredicate.ne: operator.ne,
+    arith.CmpIPredicate.slt: operator.lt,
+    arith.CmpIPredicate.sle: operator.le,
+    arith.CmpIPredicate.sgt: operator.gt,
+    arith.CmpIPredicate.sge: operator.ge,
+    arith.CmpIPredicate.ult: operator.lt,
+    arith.CmpIPredicate.ule: operator.le,
+    arith.CmpIPredicate.ugt: operator.gt,
+    arith.CmpIPredicate.uge: operator.ge,
 }
 
 
@@ -1098,9 +1079,9 @@ def _cmpi_op_lowering_rule(
   [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
-  impl, is_signed = CMPI_IMPLS[op.predicate.value]
-  lhs = _fragmented_array_from_ir(op.lhs, layout, is_signed)
-  rhs = _fragmented_array_from_ir(op.rhs, layout, is_signed)
+  impl = CMPI_IMPLS[op.predicate.value]
+  lhs = _fragmented_array_from_ir(op.lhs, layout)
+  rhs = _fragmented_array_from_ir(op.rhs, layout)
   return [fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
 
 
@@ -1140,9 +1121,7 @@ def _bitcast_op_lowering_rule(
   out_element_type = ir.VectorType(op.result.type).element_type
   out = in_.bitcast(
       out_element_type,
-      output_is_signed=False
-      if ir.IntegerType.isinstance(out_element_type)
-      else None,
+      output_is_signed=_is_signed(out_element_type),
   )
   return [fragmented_array_to_ir(out, op.result.type)]
 
@@ -1724,8 +1703,7 @@ def _async_load_tmem_op_lowering_rule(
   tmem_ref = _tmem_ref_from_ir(op.source, in_layout_attr)
   out_layout_attr = inference_utils.out_layouts(op)[0]
   out_layout = layouts_lib.from_tiled_layout_attr(out_layout_attr)
-  el_type = ir.MemRefType(op.source.type).element_type
-  is_signed = False if ir.IntegerType.isinstance(el_type) else None
+  is_signed = _is_signed(ir.MemRefType(op.source.type).element_type)
   fa = tmem_ref.load(out_layout, is_signed)
   return [fragmented_array_to_ir(fa, op.result.type)]
 
@@ -1739,9 +1717,7 @@ def _async_store_tmem_op_lowering_rule(
   in_layout_attr = inference_utils.in_tmem_layouts(op)[0]
   tmem_ref = _tmem_ref_from_ir(op.destination, in_layout_attr)
   in_layout_attr = inference_utils.in_layouts(op)[0]
-  el_type = ir.VectorType(op.source.type).element_type
-  is_signed = False if ir.IntegerType.isinstance(el_type) else None
-  fa = _fragmented_array_from_ir(op.source, in_layout_attr, is_signed)
+  fa = _fragmented_array_from_ir(op.source, in_layout_attr)
   tmem_ref.store(fa)
 
   return []
@@ -1861,9 +1837,7 @@ def _unflatten_ir_values(
     value = fa.FragmentedArray(
         _registers=value_registers.reshape(registers_shape),
         _layout=layout,
-        _is_signed=False
-        if ir.IntegerType.isinstance(vec_type.element_type)
-        else None,
+        _is_signed=_is_signed(vec_type.element_type),
     )
     result.append(fragmented_array_to_ir(value, vec_type))
   return result
