@@ -1015,6 +1015,17 @@ let assemblyFormat = [{
   ];
 }
 
+def TPU_BarrierOp : TPU_Op<"barrier"> {
+  let summary = [{Barrier synchronization across SC vector subcores.}];
+  let description = [{
+    Performs barrier synchronization across all SC vector subcores at the
+    specified barrier id.
+  }];
+  let arguments = (ins Index:$barrier_id);
+  let results = (outs);
+  let assemblyFormat = [{ `barrier_id` `(` $barrier_id `)` attr-dict }];
+}
+
 // tpu.enqueue_dma enqueues a DMA operation.
 //
 // source            : Memref to copy from.
