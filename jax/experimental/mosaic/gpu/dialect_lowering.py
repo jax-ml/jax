@@ -458,13 +458,14 @@ def _vector_load_op_lowering_rule(
         f"{vector_load_op} has an unsupported layout: {out_layout_attr}"
     )
 
+  optimized = vector_load_op.attributes["optimized"].value
   layout = layouts.from_tiled_layout_attr(out_layout_attr)
   ref_ty = ir.MemRefType(vector_load_op.base.type)
   if ref_ty.memory_space is None:  # GMEM
     fragmented_array = fa.FragmentedArray.load_untiled(
         vector_load_op.base,
         layout=layout,
-        optimized=False,
+        optimized=optimized,
         is_signed=is_signed,
     )
     return [_fragmented_array_to_ir(fragmented_array)]
@@ -489,11 +490,10 @@ def _vector_load_op_lowering_rule(
         layout=layout,
     )
   else:
-    is_tmem_native = layout == tcgen05.TMEM_NATIVE_LAYOUT
     fragmented_array = fa.FragmentedArray.load_untiled(
         vector_load_op.base,
         layout=layout,
-        optimized=not is_tmem_native,
+        optimized=optimized,
         is_signed=is_signed,
     )
 

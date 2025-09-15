@@ -539,7 +539,7 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x), x[0] + x[0] + 1)
 
   def test_sync_copy(self):
-    self.skip_if_wg_semantics()
+    self.skip_if_wg_semantics()  # Transforms inference not implemented.
 
     shape = (128, 128)
     transforms = self.default_transforms(dtype=jnp.float32)
@@ -953,8 +953,6 @@ class PallasCallTest(PallasTest):
       ]
   )
   def test_load_to_strided_layout_with_indexing(self, src_memory_space, layout):
-    self.skip_if_wg_semantics()
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct([2, 128], jnp.float32),
@@ -1701,7 +1699,7 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(), x)
 
   def test_profiler(self):
-    self.skip_if_wg_semantics()  # Transform inference fails.
+    self.skip_if_wg_semantics()  # Transform inference not implemented.
 
     def kernel(x_ref, o_ref):
       with jax.named_scope("add"):
@@ -1948,8 +1946,7 @@ class PallasCallTest(PallasTest):
       kernel(jnp.arange(128).astype(jnp.float32))
 
   def test_loading_from_ref_union_works(self):
-    # `load_p` does not have a defined lowering for warpgroup semantics.
-    self.skip_if_wg_semantics()
+    self.skip_if_wg_semantics()  # Transform inference not implemented.
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
@@ -2215,7 +2212,7 @@ class PallasCallTest(PallasTest):
       hint=(True, False),
   )
   def test_broadcast_in_dim(self, layout, axis, hint):
-    self.skip_if_wg_semantics()
+    self.skip_if_wg_semantics()  # Transform inference not implemented.
 
     @functools.partial(
         self.kernel,
@@ -2248,7 +2245,7 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(x_result, expected)
 
   def test_broadcast_in_dim_tcgen05_native_layout(self):
-    self.skip_if_wg_semantics()
+    self.skip_if_wg_semantics()  # Transform inference not implemented.
 
     @functools.partial(
         self.kernel,
@@ -2278,7 +2275,7 @@ class PallasCallTest(PallasTest):
   @parameterized.named_parameters((l.name.lower(), l) for l in plgpu.Layout)
   @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_copy_layout(self, layout):
-    self.skip_if_wg_semantics()
+    self.skip_if_wg_semantics()  # Transform inference not implemented.
     if layout in {
         plgpu.Layout.WG_SPLAT,
         plgpu.Layout.WGMMA_TRANSPOSED,
@@ -2565,7 +2562,6 @@ class PallasCallWGTest(
         mgpu_primitives.async_store_tmem_p,
         mgpu_primitives.wait_load_tmem_p,
         mgpu_primitives.commit_tmem_p,
-        mgpu_primitives.load_p,
         mgpu_primitives.semaphore_signal_parallel_p,
         lax.slice_p,
         lax.iota_p,
@@ -2907,8 +2903,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
       m=[64, 128, 192],
   )
   def test_load_to_wgmma_row_col_layout_with_indexing(self, src_memory_space, layout, m):
-    self.skip_if_wg_semantics()
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct([2, m], jnp.float32),
@@ -2930,8 +2924,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
       layout=[plgpu.Layout.WGMMA_ROW, plgpu.Layout.WGMMA_COL],
   )
   def test_load_row_input_to_wgmma_with_transforms(self, src_memory_space, layout):
-    self.skip_if_wg_semantics()
-
     m, k, n = 64, 128, 192
     key1, key2 = jax.random.split(jax.random.key(42), 2)
     if layout == plgpu.Layout.WGMMA_ROW:

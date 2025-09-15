@@ -1555,16 +1555,18 @@ def _get_lowering_rule(
 
 
 @register_lowering_rule(sp.get_p, mgpu.LoweringSemantics.Warpgroup)
-def _get_lowering_rule_wg(ctx: LoweringRuleContext, x_smem, *leaves, tree):
-  if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
-    raise TypeError(f"Can only load from references (got {x_smem}).")
+def _get_lowering_rule_wg(
+    ctx: LoweringRuleContext, x_ref, *leaves, tree, optimized=True
+):
+  if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
+    raise TypeError(f"Can only load from references (got {x_ref}).")
 
   transforms = jax.tree.unflatten(tree, leaves)
-  x_smem, transforms = _handle_transforms(
-      ctx, x_smem, transforms, allow_peer_refs=True
+  x_ref, transforms = _handle_transforms(
+      ctx, x_ref, transforms, allow_peer_refs=True
   )
-  assert isinstance(x_smem, ir.Value)
-  mlir_dtype = ir.MemRefType(x_smem.type).element_type
+  assert isinstance(x_ref, ir.Value)
+  mlir_dtype = ir.MemRefType(x_ref.type).element_type
 
   if transforms:
     raise NotImplementedError(
@@ -1576,9 +1578,11 @@ def _get_lowering_rule_wg(ctx: LoweringRuleContext, x_smem, *leaves, tree):
   if shape:
     zero_index = arith_dialect.constant(ir.IndexType.get(), 0)
     indices = [zero_index for _ in range(len(shape))]
-    return vector_dialect.load(ty, x_smem, indices)
+    op = vector_dialect.LoadOp(ty, x_ref, indices)
+    op.attributes["optimized"] = ir.BoolAttr.get(optimized)
+    return op.result
   else:
-    return memref_dialect.load(x_smem, [])
+    return memref_dialect.load(x_ref, [])
 
 
 @register_lowering_rule(sp.swap_p, mgpu.LoweringSemantics.Lane)

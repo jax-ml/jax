@@ -2810,6 +2810,9 @@ def _load_abstract_eval(src, *avals_flat, tree, optimized):
 lowering.register_lowering_rule(load_p, mgpu.LoweringSemantics.Lane)(
     lowering._get_lowering_rule
 )
+lowering.register_lowering_rule(load_p, mgpu.LoweringSemantics.Warpgroup)(
+    lowering._get_lowering_rule_wg
+)
 
 
 def load(

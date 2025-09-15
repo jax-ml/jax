@@ -3710,6 +3710,17 @@ def set_in_transforms(
   op.attributes["in_transforms"] = ir.ArrayAttr.get(in_transforms)
 
 
+def vector_load(ref: ir.Value, optimized: bool = True) -> ir.Value:
+  """Loads from the given SMEM/GMEM reference."""
+  ref_type = ir.MemRefType(ref.type)
+  zero = arith.constant(ir.IndexType.get(), 0)
+  zero_indices = [zero] * len(ref_type.shape)
+  vector_type = ir.VectorType.get(ref_type.shape, ref_type.element_type)
+  op = vector.LoadOp(vector_type, ref, zero_indices)
+  op.attributes["optimized"] = ir.BoolAttr.get(optimized)
+  return op.result
+
+
 class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
   """Device tests with lowering from the MLIR dialect and layout inference."""
 
@@ -3726,21 +3737,19 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     def body(ctx, param: ir.Value, result: ir.Value, smem: list[ir.Value]):
       del ctx
       shape = ir.MemRefType(param.type).shape
-      elt_type = ir.MemRefType(param.type).element_type
-
       zero_index = arith.constant(ir.IndexType.get(), 0)
       zero_vector_indices = [zero_index] * len(shape)
 
       # GMEM -> Registers
-      vector_type = ir.VectorType.get(shape, elt_type)
-      reg = vector.load(vector_type, param, zero_vector_indices)
+      reg = vector_load(param, optimized=False)
       reg = mgpu_dialect.layout_cast(reg, mgpu_layouts.to_layout_attr(layout))
 
       # Registers -> SMEM
       vector.store(reg, smem, zero_vector_indices)
 
       # SMEM -> Registers
-      reg = vector.load(vector_type, smem, zero_vector_indices)
+      optimized = layout != tcgen05.TMEM_NATIVE_LAYOUT
+      reg = vector_load(smem, optimized=optimized)
       reg = mgpu_dialect.layout_cast(reg, mgpu_layouts.to_layout_attr(layout))
 
       # Registers -> GMEM
@@ -3761,6 +3770,28 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     param = self.prng.uniform(-1, 1, shape).astype(dtype)
     self.assertArraysEqual(kernel(param), param)
 
+  def test_optimized_gmem_transfers_are_not_supported(self):
+    def body(ctx, input, output, scratch):
+      del ctx, output, scratch
+      reg = vector_load(input, optimized=True)
+      layout = mgpu_layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+      reg = mgpu_dialect.layout_cast(reg, layout)
+
+    shape = (128, 128)
+    dtype = jnp.bfloat16
+    with self.assertRaisesRegex(
+        NotImplementedError, "Only optimized transfers to SMEM supported"
+    ):
+      mgpu.as_gpu_kernel(
+          body,
+          grid=(1, 1, 1),
+          block=(128, 1, 1),
+          in_shape=jax.ShapeDtypeStruct(shape, dtype),
+          out_shape=jax.ShapeDtypeStruct(shape, dtype),
+          smem_scratch_shape=(),
+          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+      )
+
   @parameterized.product(
       layout=(fa.WGMMA_LAYOUT, tcgen05.TMEM_NATIVE_LAYOUT, fa.WGStridedFragLayout((128, 128), 1)),
       dtype=(jnp.bfloat16, jnp.int8),
@@ -3769,14 +3800,11 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     def body(ctx, param: ir.Value, result: ir.Value, smem):
       del ctx, smem
       shape = ir.MemRefType(param.type).shape
-      elt_type = ir.MemRefType(param.type).element_type
-
       zero_index = arith.constant(ir.IndexType.get(), 0)
       zero_vector_indices = [zero_index] * len(shape)
 
       # GMEM -> Registers
-      vector_type = ir.VectorType.get(shape, elt_type)
-      reg = vector.load(vector_type, param, zero_vector_indices)
+      reg = vector_load(param, optimized=False)
       reg = mgpu_dialect.layout_cast(reg, mgpu_layouts.to_layout_attr(layout))
 
       # Registers -> GMEM
@@ -3807,9 +3835,8 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       zero_vector_indices = [zero_index] * len(shape)
 
       # GMEM -> registers
-      ab_type = ir.VectorType.get(shape, elt_type)
-      a = vector.load(ab_type, a, zero_vector_indices)
-      b = vector.load(ab_type, b, zero_vector_indices)
+      a = vector_load(a)
+      b = vector_load(b)
 
       # Computation
       add = arith.addf(a, b)
@@ -4023,9 +4050,8 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       zero_vector_indices = [zero_index] * memref_type.rank
 
       # SMEM -> registers
-      ab_type = ir.VectorType.get(shape, elt_type)
-      a = vector.load(ab_type, a_smem_ref, zero_vector_indices)
-      b = vector.load(ab_type, b_smem_ref, zero_vector_indices)
+      a = vector_load(a_smem_ref)
+      b = vector_load(b_smem_ref)
 
       # Computation
       add = arith.addf(arith.addf(a, b), b)
@@ -4475,9 +4501,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
       zero_index = arith.constant(ir.IndexType.get(), 0)
       if load_a_in_registers:
         # SMEM -> Registers
-        lhs_ty = ir.VectorType.get(lhs_shape, operand_elt_type)
-        zero_vector_indices = [zero_index] * len(lhs_shape)
-        lhs_operand = vector.load(lhs_ty, lhs_smem_ref, zero_vector_indices)
+        lhs_operand = vector_load(lhs_smem_ref)
       else:
         lhs_operand = lhs_smem_ref
 
@@ -4642,7 +4666,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
 
       # GMEM -> registers
       vector_type = ir.VectorType.get(shape, el_ty)
-      r_in = vector.load(vector_type, input, zero_vector_indices)
+      r_in = vector_load(input, optimized=False)
 
       # registers -> TMEM
       mgpu_dialect.async_store_tmem(r_in, tmem)
@@ -4731,8 +4755,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
 
       if a_in_tmem:
         # GMEM -> Registers -> TMEM
-        vector_type = ir.VectorType.get(a_shape, a_tmem.type.element_type)
-        reg = vector.load(vector_type, a_gmem, [zero_index] * len(a_shape))
+        reg = vector_load(a_gmem, optimized=False)
         mgpu_dialect.async_store_tmem(reg, a_tmem)
         tcgen05.commit_tmem()
       else:
@@ -4855,11 +4878,8 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
 
       if a_in_tmem:
         # GMEM -> Registers -> TMEM
-        vector_type = ir.VectorType.get(a_block_shape, a_tmem.type.element_type)
         sliced_a_gmem = memref_slice(a_gmem, ds(m_index, m // 2))
-        reg = vector.load(
-            vector_type, sliced_a_gmem, [zero_index] * len(a_block_shape)
-        )
+        reg = vector_load(sliced_a_gmem, optimized=False)
         mgpu_dialect.async_store_tmem(reg, a_tmem)
         tcgen05.commit_tmem()
       else:
