@@ -27,6 +27,8 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.sharding_impls import (
+    NamedSharding, PartitionSpec as P, canonicalize_sharding)
 from jax._src.lax import lax
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.typing import Array, DTypeLike
@@ -63,7 +65,8 @@ def conv_general_dilated(
   dimension_numbers: ConvGeneralDilatedDimensionNumbers  = None,
   feature_group_count: int = 1, batch_group_count: int = 1,
   precision: lax.PrecisionLike = None,
-  preferred_element_type: DTypeLike | None = None) -> Array:
+  preferred_element_type: DTypeLike | None = None,
+  out_sharding: NamedSharding | P | None = None) -> Array:
   """General n-dimensional convolution operator, with optional dilation.
 
   Wraps XLA's `Conv
@@ -132,6 +135,7 @@ def conv_general_dilated(
   'NCHW')`` (for a 2D convolution).
   """
   dnums = conv_dimension_numbers(lhs.shape, rhs.shape, dimension_numbers)
+  out_sharding = canonicalize_sharding(out_sharding, 'dot_general')
   if lhs_dilation is None:
     lhs_dilation = (1,) * (lhs.ndim - 2)
   elif isinstance(padding, str) and not len(lhs_dilation) == lhs_dilation.count(1):
@@ -171,7 +175,8 @@ def conv_general_dilated(
       feature_group_count=feature_group_count,
       batch_group_count=batch_group_count,
       precision=lax.canonicalize_precision(precision),
-      preferred_element_type=preferred_element_type)
+      preferred_element_type=preferred_element_type,
+      out_sharding=out_sharding)
 
 
 ### convenience wrappers around traceables
@@ -423,7 +428,10 @@ def _conv_general_dilated_shape_rule(
 def _conv_general_dilated_sharding_rule(
     lhs: core.ShapedArray, rhs: core.ShapedArray, *, window_strides, padding,
     lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
-    batch_group_count, **unused_kwargs):
+    batch_group_count, out_sharding, **unused_kwargs):
+  if out_sharding is not None:
+    assert isinstance(out_sharding, NamedSharding)
+    return out_sharding
   # Only allow if rhs is fully replicated and lhs's feature dim is not sharded
   if ((rhs.sharding.mesh.empty or rhs.sharding.is_fully_replicated) and
       lhs.sharding.spec[dimension_numbers.lhs_spec[1]] is None):
@@ -435,10 +443,9 @@ def _conv_general_dilated_sharding_rule(
         batch_group_count=batch_group_count)
     return lax.slicing._get_sharding_for_varying_out_shape(
         out_shape, lhs, "conv_general_dilated")
-  # TODO(yashkatariya): In this case, just let the user specify the out_sharding
-  # via `out_sharding` argument to `conv_general_dilated`.
   raise core.ShardingTypeError(
-      "Please file an issue at https://github.com/jax-ml/jax/issues")
+      "Please specify the output sharding via `out_sharding` parameter of"
+      " `conv_general_dilated`")
 
 def _conv_general_dilated_dtype_rule(
     lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
@@ -483,7 +490,7 @@ _conv_sdims = lambda spec: spec[2:]
 def _conv_general_dilated_transpose_lhs(
     g, lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, feature_group_count, batch_group_count,
-    precision, preferred_element_type):
+    precision, preferred_element_type, out_sharding):
   assert type(dimension_numbers) is ConvDimensionNumbers
   assert batch_group_count == 1 or feature_group_count == 1
   rhs_shape = rhs.shape
@@ -512,7 +519,8 @@ def _conv_general_dilated_transpose_lhs(
       dimension_numbers=trans_dimension_numbers,
       feature_group_count=feature_group_count,
       batch_group_count=1, precision=precision,
-      preferred_element_type=preferred_element_type)
+      preferred_element_type=preferred_element_type,
+      out_sharding=lhs.aval.sharding)
   if batch_group_count > 1:
     out = _reshape_axis_out_of(lhs_spec[1], batch_group_count, out)
     out = _reshape_axis_into(lhs_spec[1], lhs_spec[0], out)
@@ -521,7 +529,7 @@ def _conv_general_dilated_transpose_lhs(
 def _conv_general_dilated_transpose_rhs(
     g, lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers: ConvDimensionNumbers, feature_group_count: int,
-    batch_group_count: int, precision, preferred_element_type):
+    batch_group_count: int, precision, preferred_element_type, out_sharding):
   assert type(dimension_numbers) is ConvDimensionNumbers
   if np.size(g) == 0:
     # Avoids forming degenerate convolutions where the RHS has spatial size 0.
@@ -548,17 +556,21 @@ def _conv_general_dilated_transpose_rhs(
       dimension_numbers=trans_dimension_numbers,
       feature_group_count=feature_group_count,
       batch_group_count=batch_group_count, precision=precision,
-      preferred_element_type=preferred_element_type)
+      preferred_element_type=preferred_element_type,
+      out_sharding=rhs.aval.sharding)
 
 def _conv_general_dilated_batch_rule(
     batched_args, batch_dims, *, window_strides, padding,
     lhs_dilation, rhs_dilation, dimension_numbers,
     feature_group_count, batch_group_count, precision,
-    preferred_element_type, **unused_kwargs):
+    preferred_element_type, out_sharding, **unused_kwargs):
   assert batch_group_count == 1 or feature_group_count == 1
   lhs, rhs = batched_args
   lhs_bdim, rhs_bdim = batch_dims
   lhs_spec, rhs_spec, out_spec = dimension_numbers
+
+  if out_sharding is not None:
+    raise NotImplementedError
 
   # Some of the cases that reshape into batch or feature dimensions do not work
   # with size 0 batch dimensions. The best fix would be to extend HLO to support
@@ -666,8 +678,8 @@ conv_general_dilated_p = lax.standard_primitive(
 ad.defbilinear(conv_general_dilated_p,
                _conv_general_dilated_transpose_lhs,
                _conv_general_dilated_transpose_rhs)
-batching.primitive_batchers[conv_general_dilated_p] = \
-    _conv_general_dilated_batch_rule
+
+batching.primitive_batchers[conv_general_dilated_p] = _conv_general_dilated_batch_rule
 
 def _complex_mul(mul, x, y):
   # We use a trick for complex multiplication sometimes attributed to Gauss
@@ -693,7 +705,7 @@ _real_dtype = lambda dtype: np.finfo(dtype).dtype
 def _conv_general_dilated_lower(
     ctx, lhs, rhs, *, window_strides, padding,
     lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
-    batch_group_count, precision, preferred_element_type,
+    batch_group_count, precision, preferred_element_type, out_sharding,
     expand_complex_convolutions=False, **unused_kwargs):
   lhs_aval, rhs_aval = ctx.avals_in
   aval_out, = ctx.avals_out
@@ -712,7 +724,8 @@ def _conv_general_dilated_lower(
                 rhs_dilation=rhs_dilation, dimension_numbers=dimension_numbers,
                 feature_group_count=feature_group_count,
                 batch_group_count=batch_group_count, precision=precision,
-                preferred_element_type=preferred_element_type)),
+                preferred_element_type=preferred_element_type,
+                out_sharding=out_sharding)),
       multiple_results=False)
     return complex_conv(ctx, lhs, rhs)
 

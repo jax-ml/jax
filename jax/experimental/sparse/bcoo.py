@@ -2360,14 +2360,16 @@ def bcoo_gather(operand: BCOO, start_indices: Array,
 def bcoo_conv_general_dilated(lhs, rhs, *, window_strides, padding,
                               lhs_dilation=None, rhs_dilation=None, dimension_numbers=None,
                               feature_group_count=1, batch_group_count=1, precision=None,
-                              preferred_element_type=None) -> BCOO:
+                              preferred_element_type=None,
+                              out_sharding=None) -> BCOO:
   # Validate and process parameters using lax.conv_general_dilated abstract evaluation.
   func = functools.partial(
       lax.conv_general_dilated,
       window_strides=window_strides, padding=padding,
       lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation, dimension_numbers=dimension_numbers,
       feature_group_count=feature_group_count, batch_group_count=batch_group_count,
-      precision=precision, preferred_element_type=preferred_element_type)
+      precision=precision, preferred_element_type=preferred_element_type,
+      out_sharding=out_sharding)
   jaxpr = jax.make_jaxpr(func)(jax.ShapeDtypeStruct(lhs.shape, lhs.dtype),
                                jax.ShapeDtypeStruct(rhs.shape, rhs.dtype))
   assert isinstance(jaxpr, core.ClosedJaxpr) and len(jaxpr.eqns) == 1

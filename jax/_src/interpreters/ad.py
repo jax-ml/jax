@@ -442,7 +442,7 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
                          " https://github.com/jax-ml/jax/issues")
             if extra_msg in str(e):
               raise
-            raise core.ShardingTypeError(f"{str(e)}\n{extra_msg}")
+            raise core.ShardingTypeError(f"{str(e)}\n{extra_msg}") from e
           except (FloatingPointError, ZeroDivisionError) as e:
             msg = "When differentiating the code at the top of the callstack:"
             if msg not in e.args[0]:
