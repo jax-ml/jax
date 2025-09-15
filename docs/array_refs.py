@@ -24,7 +24,7 @@
 #       jupytext_version: 1.16.4
 # ---
 
-# # `ArrayRef`: mutable arrays for data plumbing and memory control
+# # `Ref`: mutable arrays for data plumbing and memory control
 #
 # JAX `Array`s are immutable, representing mathematical values. Immutability can
 # make code easier to reason about, and is useful for optimized compilation,
@@ -36,7 +36,7 @@
 # * **performance** --- it's more difficult to reason about performance, like
 #   memory lifetimes and in-place updates.
 #
-# `ArrayRef`s can help! They represent mutable arrays that can be read and written
+# `Ref`s can help! They represent mutable arrays that can be read and written
 # in-place. These array references are compatible with JAX transformations, like
 # `jax.jit` and `jax.grad`:
 
@@ -50,15 +50,15 @@ x_ref = jax.array_ref(jnp.zeros(3))  # new array ref, with initial value [0., 0.
 def f():
   x_ref[1] += 1.  # indexed add-update
 
-print(x_ref)  # ArrayRef([0., 0., 0.])
+print(x_ref)  # Ref([0., 0., 0.])
 f()
 f()
-print(x_ref)  # ArrayRef([0., 2., 0.])
+print(x_ref)  # Ref([0., 2., 0.])
 
 
 # -
 
-# The indexing syntax follows NumPy's. For an `ArrayRef` called `x_ref`, we can
+# The indexing syntax follows NumPy's. For a `Ref` called `x_ref`, we can
 # read its entire value into an `Array` by writing `x_ref[...]`, and write its
 # entire value using `x_ref[...] = A` for some `Array`-valued expression `A`:
 
@@ -71,9 +71,9 @@ def g(x):
 print(jax.grad(g)(1.0))  # 0.54
 # -
 
-# `ArrayRef` is a distinct type from `Array`, and it comes with some important
+# `Ref` is a distinct type from `Array`, and it comes with some important
 # constraints and limitations. In particular, indexed reading and writing is just
-# about the *only* thing you can do with an `ArrayRef`. References can't be passed
+# about the *only* thing you can do with an `Ref`. References can't be passed
 # where `Array`s are expected:
 
 x_ref = jax.array_ref(1.0)
@@ -84,21 +84,21 @@ except Exception as e:
 
 # To do math, you need to read the ref's value first, like `jnp.sin(x_ref[...])`.
 #
-# So what _can_ you do with `ArrayRef`? Read on for the details, and some useful
+# So what _can_ you do with `Ref`? Read on for the details, and some useful
 # recipes.
 #
 # ### API
 #
 # If you've ever used
-# [Pallas](https://docs.jax.dev/en/latest/pallas/quickstart.html), then `ArrayRef`
-# should look familiar. A big difference is that you can create new `ArrayRef`s
+# [Pallas](https://docs.jax.dev/en/latest/pallas/quickstart.html), then `Ref`
+# should look familiar. A big difference is that you can create new `Ref`s
 # yourself directly using `jax.array_ref`:
 
 # +
-from jax import Array, ArrayRef
+from jax import Array, Ref
 
-def array_ref(init_val: Array) -> ArrayRef:
-  """Introduce a new array reference with given initial value."""
+def array_ref(init_val: Array) -> Ref:
+  """Introduce a new reference with given initial value."""
 
 
 # -
@@ -106,7 +106,7 @@ def array_ref(init_val: Array) -> ArrayRef:
 # `jax.freeze` is its antithesis, invalidating the given ref (so that accessing it
 # afterwards is an error) and producing its final value:
 
-def freeze(ref: ArrayRef) -> Array:
+def freeze(ref: Ref) -> Array:
   """Invalidate given reference and produce its final value."""
 
 
@@ -119,10 +119,10 @@ import types
 Index = int | slice | Array | types.EllipsisType
 Indexer = Index | tuple[Index, ...]
 
-def get(ref: ArrayRef, idx: Indexer) -> Array:
+def get(ref: Ref, idx: Indexer) -> Array:
   """Returns `ref[idx]` for NumPy-style indexer `idx`."""
 
-def swap(ref: ArrayRef, idx: Indexer, val: Array) -> Array:
+def swap(ref: Ref, idx: Indexer, val: Array) -> Array:
   """Performs `newval, ref[idx] = ref[idx], val` and returns `newval`."""
 
 
@@ -196,7 +196,7 @@ def pure1(x):
 #
 # ### Restrictions
 #
-# ArrayRefs are second-class, in the sense that there are restrictions on their
+# `Ref`s are second-class, in the sense that there are restrictions on their
 # use:
 #
 # * **Can't return refs** from `jit`\-decorated functions or the bodies of
@@ -295,7 +295,7 @@ except Exception as e:
 # The latter is an error because it's not clear which value `x_ref` should be
 # after we run `jax.vmap(err5)`.
 #
-# ### `ArrayRef`s and automatic differentiation
+# ### `Ref`s and automatic differentiation
 #
 # Autodiff can be applied to pure functions as before, even if they use array refs
 # internally. For example:
@@ -366,14 +366,14 @@ print(grads_ref)
 
 # -
 
-# Notice `stash_grads_fwd` is returning an `ArrayRef` here. That's a special
+# Notice `stash_grads_fwd` is returning a `Ref` here. That's a special
 # allowance for `custom_vjp` fwd rules: it's really syntax for indicating which
 # ref arguments should be shared by both the fwd and bwd rules. So any refs
 # returned by a fwd rule must be arguments to that fwd rule.
 #
-# ### `ArrayRef`s and performance
+# ### `Ref`s and performance
 #
-# At the top level, when calling `jit`\-decorated functions, `ArrayRef`s obviate
+# At the top level, when calling `jit`\-decorated functions, `Ref`s obviate
 # the need for donation, since they are effectively always donated:
 
 # +
@@ -394,7 +394,7 @@ print(x_ref.unsafe_buffer_pointer(), x_ref)
 # addresses, and for indexed updates to be performed in-place.
 #
 # **Temporary caveat:** dispatch from Python to impure `jit`\-compiled functions
-# that take `ArrayRef` inputs is currently slower than dispatch to pure
+# that take `Ref` inputs is currently slower than dispatch to pure
 # `jit`\-compiled functions, since it takes a less optimized path.
 #
 # ### `foreach`, a new way to write `scan`
@@ -406,7 +406,7 @@ print(x_ref.unsafe_buffer_pointer(), x_ref)
 # up, which can be asymptotically inefficient. See [Sec 5.3.3 of the Dex
 # paper](https://arxiv.org/pdf/2104.05372).
 #
-# But reading slices of `ArrayRef`s doesn't have this efficiency problem: when we
+# But reading slices of `Ref`s doesn't have this efficiency problem: when we
 # apply reverse-mode autodiff, we always generate in-place accumulation
 # operations. As a result, we no longer need to be constrained by `scan`'s fixed
 # access pattern. We can write more flexible loops, e.g. with non-sequential
@@ -435,7 +435,7 @@ def ys(x):
   r[...] += x
   return x * 2
 
-print(r)   # ArrayRef(45, dtype=int32)
+print(r)   # Ref(45, dtype=int32)
 print(ys)  # [ 0  2  4  6  8 10 12 14 16 18]
 # -
 

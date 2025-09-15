@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__all__ = ['AbstractRef', 'ArrayRef', 'addupdate', 'array_ref', 'freeze', 'get', 'set', 'swap']
+__all__ = ['AbstractRef', 'Ref', 'ArrayRef', 'addupdate', 'new_ref', 'array_ref',
+           'freeze', 'get', 'set', 'swap']
 
-from jax._src.core import ArrayRef, freeze
-from jax._src.ref import array_ref
+from jax._src.core import Ref, ArrayRef, freeze
+from jax._src.ref import new_ref, array_ref
 from jax._src.state.types import AbstractRef
 from jax._src.state.primitives import (
     ref_get as get,

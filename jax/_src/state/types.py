@@ -370,15 +370,33 @@ class TransformedRef:
 class AbstractRef(core.AbstractValue):
   """Abstract mutable array reference.
 
-  Refer to the `ArrayRef guide`_ for more information.
+  Refer to the `Ref guide`_ for more information.
 
-  .. _ArrayRef guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
   __slots__ = ["inner_aval", "memory_space"]
 
   def __init__(self, inner_aval: core.AbstractValue, memory_space: Any = None):
     self.inner_aval = inner_aval
     self.memory_space = memory_space
+
+  @property
+  def is_high(self):
+    return self.inner_aval.is_high
+
+  def lo_ty(self):
+    return map(AbstractRef, self.inner_aval.lo_ty())
+
+  def lower_val(self, ref):
+    if not self.is_high:
+      return [ref]
+    return self.inner_aval.lower_val(ref._refs)  # type: ignore
+
+  def raise_val(self, *vals):
+    if not self.is_high:
+      ref, = vals
+      return ref
+    return core.Ref(self, self.inner_aval.raise_val(*vals))  # type: ignore
 
   @property
   def weak_type(self) -> bool:

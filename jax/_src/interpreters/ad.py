@@ -44,7 +44,7 @@ from jax._src.util import (unzip2, safe_map, safe_zip, split_list, wrap_name,
                            partition_list, subs_list2, foreach)
 
 Array = Any
-ArrayRef = Any
+Ref = Any
 zip = safe_zip
 map = safe_map
 def identity(x): return x
@@ -486,7 +486,7 @@ def get_primitive_transpose(p):
 
 def backward_pass3(
     jaxpr: core.Jaxpr, transform_stack: bool,
-    consts: Sequence[Array], primals_in: Sequence[Array | ArrayRef | GradAccum],
+    consts: Sequence[Array], primals_in: Sequence[Array | Ref | GradAccum],
     cotangents_in: Sequence[Array]) -> None:
   if all(type(ct) is Zero for ct in cotangents_in) and not jaxpr.effects:
     return

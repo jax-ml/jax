@@ -1503,7 +1503,7 @@ def _to_lojax(*hi_args, jaxpr, **params):
   all_outs = jit_p.bind(*lo_args, jaxpr=lo_jaxpr, **params)
   out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
   pe.apply_himut(jaxpr, hi_args, out_mut)
-  return pe.raise_lo_outs(jaxpr, lo_outs)
+  return pe.raise_lo_outs(jaxpr.out_avals, lo_outs)
 jit_p.to_lojax = _to_lojax
 
 def _converted_mutables_add_params(

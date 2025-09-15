@@ -2869,9 +2869,8 @@ def apply_himut(jaxpr: Jaxpr | ClosedJaxpr, hi_args, out_mut):
       v.aval.update_from_loval(qdd, hi_args[in_idx[v]], *lo_vals)  # type: ignore
   assert next(out_mut_, None) is None
 
-def raise_lo_outs(jaxpr: Jaxpr | ClosedJaxpr, lo_outs):
+def raise_lo_outs(avals, lo_outs):
   lo_outs_ = iter(lo_outs)
-  hi_outs = [t.raise_val(*it.islice(lo_outs_, len(t.lo_ty())))
-             for t in jaxpr.out_avals]
+  hi_outs = [t.raise_val(*it.islice(lo_outs_, len(t.lo_ty()))) for t in avals]
   assert next(lo_outs_, None) is None
   return hi_outs
