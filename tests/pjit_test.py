@@ -8870,6 +8870,30 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertEqual(reshard_out2.sharding, NamedSharding(mesh, P('x', None)))
       self.assertEmpty(reshard_out2.sharding.spec.unreduced)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_grad_conv_general_dilated(self, mesh):
+    @jax.jit
+    def model(kernel, inputs):
+      padded_inputs = jnp.pad(inputs, ((0, 0), (2, 0), (0, 0)))
+      return lax.conv_general_dilated(
+          padded_inputs,
+          kernel,
+          window_strides=(1,),
+          padding="VALID",
+          dimension_numbers=lax.ConvDimensionNumbers(
+              (0, 2, 1), (2, 1, 0), (0, 2, 1)))
+
+    batch_size = 64
+    seq_length = 32
+    kernel = jax.random.normal(jax.random.key(0), (3, 1, 16))
+    inputs = jax.random.normal(jax.random.key(1), (batch_size, seq_length, 1))
+    inputs = jax.device_put(inputs, P('x', None, None))
+
+    out1, out2 = jax.jit(jax.grad(lambda x, y: model(x, y).sum(), argnums=(0, 1))
+                         )(kernel, inputs)
+    self.assertEqual(out1.sharding, kernel.sharding)
+    self.assertEqual(out2.sharding, inputs.sharding)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
