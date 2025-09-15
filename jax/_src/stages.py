@@ -361,15 +361,17 @@ def _traced_args_info(self):
 def _traced_out_info(self):
   out_shardings = [None if isinstance(s, UnspecifiedValue) else s
                     for s in self._params['out_shardings']]
+  out_layouts = [None if isinstance(l, AutoLayout) else l
+                 for l in self._params['out_layouts']]
   out = []
-  for a, out_s in zip(self.jaxpr.out_avals, out_shardings):
+  for a, out_s, out_l in zip(self.jaxpr.out_avals, out_shardings, out_layouts):
     if isinstance(a, core.ShapedArray):
       s = (a.sharding if a.sharding.mesh.are_all_axes_explicit else out_s
            if out_s is None else out_s)
-      # TODO(yashkatariya): Add `Layout` to SDS.
       out.append(
           core.ShapeDtypeStruct(
-              a.shape, a.dtype, sharding=s, weak_type=a.weak_type,
+              a.shape, a.dtype, sharding=Format(out_l, s),
+              weak_type=a.weak_type,
               vma=(a.vma if config._check_vma.value else None)))
     else:
       out.append(a)

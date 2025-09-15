@@ -792,6 +792,24 @@ class LayoutTest(jtu.JaxTestCase):
     out = jax.jit(jax.vmap(f))(arr)
     self.assertEqual(out.format.layout.major_to_minor, (0, 1))
 
+  def test_eval_shape_format(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (128, 16)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+
+    custom_dll = Layout(major_to_minor=(0, 1))
+    l = Format(custom_dll, s)
+    arr = jax.device_put(np_inp, l)
+
+    @partial(jax.jit, in_shardings=l, out_shardings=l)
+    def f(x):
+      return x * x
+
+    out = jax.eval_shape(f, arr)
+    self.assertEqual(out.format, l)
+    self.assertEqual(out.sharding, s)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
