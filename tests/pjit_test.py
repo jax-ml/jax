@@ -8894,6 +8894,15 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out1.sharding, kernel.sharding)
     self.assertEqual(out2.sharding, inputs.sharding)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_device_put_typeof(self, mesh):
+    array = jnp.zeros(8)
+    self.assertEqual(jax.typeof(array).sharding,
+                     NamedSharding(mesh.abstract_mesh, P(None)))
+
+    array = jax.device_put(array, SingleDeviceSharding(jax.devices()[0]))
+    self.assertTrue(jax.typeof(array).sharding.mesh.empty)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

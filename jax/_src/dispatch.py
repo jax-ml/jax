@@ -519,6 +519,7 @@ def _device_put_impl(
   if aval is None:
     try:
       aval = core.abstractify(x)
+      aval = update_dp_aval(aval, device)
     except TypeError as err:
       raise TypeError(
           f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
@@ -557,11 +558,11 @@ def _batched_device_put_impl(
     devices: Sequence[Device | Sharding | Format | None],
     srcs: Sequence[Device | Sharding | Format | None],
     copy_semantics: Sequence[ArrayCopySemantics],
-    x_avals: Sequence[core.ShapedArray | None]):
+    dst_avals: Sequence[core.ShapedArray | None]):
   ys = []
   dsa_indices, dsa_xs, dsa_shardings, dsa_copy_semantics = [], [], [], []
   for i, (x, device, src, cp, aval) in enumerate(
-      zip(xs, devices, srcs, copy_semantics, x_avals)):
+      zip(xs, devices, srcs, copy_semantics, dst_avals)):
     y = _device_put_impl(x, device=device, src=src, copy=cp, aval=aval)
     if isinstance(y, _DeferredShardArg):
       dsa_indices.append(i)
@@ -589,7 +590,7 @@ def batched_device_put_impl(
     copy_semantics: Sequence[ArrayCopySemantics]):
   return _batched_device_put_impl(
       *xs, devices=devices, srcs=srcs, copy_semantics=copy_semantics,
-      x_avals=[None] * len(devices))
+      dst_avals=[None] * len(devices))
 
 
 device_put_p = core.Primitive('device_put')
@@ -597,16 +598,21 @@ device_put_p.multiple_results = True
 device_put_p.def_impl(batched_device_put_impl)
 
 
+def update_dp_aval(aval, d):
+  if not isinstance(aval, core.ShapedArray):
+    return aval
+  if isinstance(d, Sharding):
+    aval = (aval.update(sharding=aval.sharding.update(mesh=d.mesh.abstract_mesh))
+            if isinstance(d, NamedSharding) else aval.update(sharding=None))
+    if d.memory_kind is not None:
+      aval = aval.update(memory_space=core.mem_kind_to_space(d.memory_kind))
+    return aval
+  elif isinstance(d, core.MemorySpace):
+    return aval.update(memory_space=d)
+  return aval
+
 def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
-  out = []
-  for x, d in zip(xs, devices):
-    if isinstance(d, Sharding) and d.memory_kind is not None:
-      out.append(x.update(memory_space=core.mem_kind_to_space(d.memory_kind)))
-    elif isinstance(d, core.MemorySpace):
-      out.append(x.update(memory_space=d))
-    else:
-      out.append(x)
-  return out
+  return [update_dp_aval(x, d) for x, d in zip(xs, devices)]
 device_put_p.def_abstract_eval(_device_put_abstract_eval)
 
 def _device_put_transpose(cts, *_, devices, srcs, copy_semantics):

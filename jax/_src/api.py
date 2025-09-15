@@ -2719,13 +2719,16 @@ def device_put(
         assert not m and not d
         copy_semantics.append(dispatch.ArrayCopySemantics.ALWAYS_COPY)
 
-    x_avals = tuple(shaped_abstractify(i) for i in x_flat)
-    for aval, d in zip(x_avals, device_flat):
+    dst_avals = []
+    for xf, d in zip(x_flat, device_flat):
+      aval = shaped_abstractify(xf)
+      aval = dispatch.update_dp_aval(aval, d)
+      dst_avals.append(aval)
       _check_sharding(aval, d)
     if core.trace_state_clean():
       out_flat = dispatch._batched_device_put_impl(
           *x_flat, devices=device_flat, srcs=src_flat,  # type: ignore
-          copy_semantics=copy_semantics, x_avals=x_avals)
+          copy_semantics=copy_semantics, dst_avals=dst_avals)
     else:
       out_flat = dispatch.device_put_p.bind(
           *x_flat, devices=tuple(device_flat), srcs=tuple(src_flat),
