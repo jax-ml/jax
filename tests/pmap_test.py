@@ -2168,6 +2168,17 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertArraysEqual(result1, result2)
 
   @config.pmap_shmap_merge(True)
+  def test_pmap_shmap_merge_store_exception(self):
+    if jax.device_count() < 2:
+      raise SkipTest("test requires at least two devices")
+    def f(x):
+      return x
+    inp = jnp.ones((jax.device_count(), 1), dtype=jnp.float32)
+    jax.pmap(f, axis_name='i')(inp)
+    inp = jnp.ones((jax.device_count(), 1), dtype=jnp.int32)
+    jax.pmap(f, axis_name='i')(inp)
+
+  @config.pmap_shmap_merge(True)
   def test_pmap_shmap_merge_prng_key(self):
     if jax.device_count() < 2:
       raise SkipTest('test requires at least two devices')
