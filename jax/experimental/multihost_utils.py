@@ -31,6 +31,7 @@ from jax._src import array
 from jax._src import sharding_impls
 from jax._src.interpreters import pxla
 from jax._src import pjit as pjit_lib
+from jax._src import prng
 from jax.sharding import PartitionSpec as P
 from jax._src import distributed
 from jax._src.util import safe_zip
@@ -238,9 +239,13 @@ def host_local_array_to_global_array_impl(
   # If the Array is not fully addressable i.e. not host local, return it.
   if isinstance(arr, array.ArrayImpl) and not arr.is_fully_addressable:
     return arr
-  if isinstance(arr, array.ArrayImpl) and isinstance(
-      arr.sharding, jax.sharding.PmapSharding):
+  if (isinstance(arr, array.ArrayImpl) and isinstance(
+      arr.sharding, jax.sharding.PmapSharding)) or not hasattr(arr, 'shape'):
     arr = np.array(arr)
+  is_prng_key_array = isinstance(arr, prng.PRNGKeyArray)
+  if is_prng_key_array:
+    dtype = arr.dtype
+    arr = arr._base_array
 
   local_sharding = jax.sharding.NamedSharding(global_mesh.local_mesh, pspec)
 
@@ -253,15 +258,18 @@ def host_local_array_to_global_array_impl(
   else:
     arr = dtypes.canonicalize_value(arr)
     arrays = [
-        arr[index]
-        for d, index in local_sharding.devices_indices_map(arr.shape).items()]
+        arr[i] for i in local_sharding.devices_indices_map(arr.shape).values()
+    ]
 
   global_aval = _local_to_global_aval(
       core.ShapedArray(arr.shape, arr.dtype), global_mesh, pspec)
 
-  return pxla.batched_device_put(
+  out = pxla.batched_device_put(
       global_aval, jax.sharding.NamedSharding(global_mesh, pspec),
       arrays, list(global_mesh.local_mesh.devices.flat))
+  if is_prng_key_array:
+    return prng.PRNGKeyArray(dtype._impl, out)  # pytype: disable=undefined-variable
+  return out
 
 
 def host_local_array_to_global_array(
@@ -392,6 +400,12 @@ def global_array_to_host_local_array_impl(
   # If the Array is already fully addressable i.e. host local, return it.
   if isinstance(arr, array.ArrayImpl) and arr.is_fully_addressable:
     return arr
+  if not hasattr(arr, 'shape'):
+    arr = np.array(arr)
+  is_prng_key_array = isinstance(arr, prng.PRNGKeyArray)
+  if is_prng_key_array:
+    dtype = arr.dtype
+    arr = arr._base_array
 
   global_sharding = jax.sharding.NamedSharding(global_mesh, pspec)
   local_sharding = jax.sharding.NamedSharding(global_mesh.local_mesh, pspec)
@@ -404,16 +418,19 @@ def global_array_to_host_local_array_impl(
     else:
       resharded_array = jax.device_put(arr, global_sharding)
       arrays = resharded_array._arrays
-    return array.ArrayImpl(local_aval, local_sharding, arrays, committed=True)
+    out = array.ArrayImpl(local_aval, local_sharding, arrays, committed=True)
+    if is_prng_key_array:
+      return prng.PRNGKeyArray(dtype._impl, out)  # pytype: disable=undefined-variable
+    return out
   else:
     # numpy array can show up here during AD.
     arr = dtypes.canonicalize_value(arr)
     arrays = [
-        arr[index]
-        for d, index in local_sharding.devices_indices_map(arr.shape).items()]
-    return pxla.batched_device_put(
-        local_aval, local_sharding, arrays,
-        list(global_mesh.local_mesh.devices.flat))
+        arr[i] for i in local_sharding.devices_indices_map(arr.shape).values()
+    ]
+  return pxla.batched_device_put(
+      local_aval, local_sharding, arrays,
+      list(global_mesh.local_mesh.devices.flat))
 
 
 def global_array_to_host_local_array(
