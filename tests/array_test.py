@@ -29,7 +29,6 @@ from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version
 from jax._src.util import safe_zip
 from jax._src.mesh import AxisType, AbstractMesh
 from jax._src.sharding import common_devices_indices_map
@@ -1541,9 +1540,6 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertTrue(out_sdy_sharding, ns._to_sdy_sharding(ndim))
 
   def test_nested_tuple_pspec_error(self):
-    if jaxlib_extension_version < 369:
-      self.skipTest('Requires jaxlib_extension_version >= 369')
-
     with self.assertRaisesRegex(
         ValueError,
         "A tuple inside PartitionSpec cannot contain a nested tuple"):

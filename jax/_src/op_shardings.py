@@ -22,7 +22,6 @@ from typing import Union
 import numpy as np
 
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version
 
 
 def get_num_ways_dim_sharded(
@@ -31,19 +30,17 @@ def get_num_ways_dim_sharded(
   assert not hlo_sharding.is_manual()
   if hlo_sharding.is_replicated():
     return [], 1
-  if jaxlib_extension_version >= 371 and hlo_sharding.is_unreduced():
+  if hlo_sharding.is_unreduced():
     return [], 1
   partitions = hlo_sharding.tile_assignment_dimensions()
   subgroup_types = hlo_sharding.subgroup_types()
 
   if subgroup_types == [xc.OpSharding.Type.REPLICATED]:
     return list(partitions[:-1]), partitions[-1]
-  elif (jaxlib_extension_version >= 371 and
-        subgroup_types == [xc.OpSharding.Type.UNREDUCED]):
+  elif subgroup_types == [xc.OpSharding.Type.UNREDUCED]:
     return list(partitions[:-1]), 1
-  elif (jaxlib_extension_version >= 371 and
-        set(subgroup_types) == {xc.OpSharding.Type.REPLICATED,
-                                xc.OpSharding.Type.UNREDUCED}):
+  elif set(subgroup_types) == {xc.OpSharding.Type.REPLICATED,
+                               xc.OpSharding.Type.UNREDUCED}:
     replicated_loc = subgroup_types.index(xc.OpSharding.Type.REPLICATED)
     return list(partitions[:-2]), partitions[-2:][replicated_loc]
   elif allow_partial_manual and xc.OpSharding.Type.MANUAL in subgroup_types:
@@ -54,13 +51,12 @@ def get_num_ways_dim_sharded(
               {xc.OpSharding.Type.REPLICATED, xc.OpSharding.Type.MANUAL})
       replicated_loc = subgroup_types.index(xc.OpSharding.Type.REPLICATED)
       return list(partitions[:-2]), partitions[-2:][replicated_loc]
+  elif hlo_sharding.replicate_on_last_tile_dim():
+    return list(partitions[:-1]), partitions[-1]
   else:
-    replicate_on_last_tile_dim = hlo_sharding.replicate_on_last_tile_dim()
     if subgroup_types:
       raise NotImplementedError(f"Unhandled OpSharding type: {hlo_sharding}. "
                                 "Please open a bug report!")
-    if replicate_on_last_tile_dim:
-      return list(partitions[:-1]), partitions[-1]
     return list(partitions), 1
 
 

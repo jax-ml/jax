@@ -52,7 +52,6 @@ from jax._src.layout import AutoLayout, Layout
 from jax._src.lib import _jax
 from jax._src.lib import jax_mlir_ext
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import dialects, ir, passmanager
 from jax._src.lib.mlir.dialects import func as func_dialect, hlo
 from jax._src.mesh import AxisType
@@ -470,49 +469,7 @@ def _is_user_file(ctx: ModuleContext, file_name: str) -> bool:
 
 def _traceback_to_location(ctx: ModuleContext, tb: xc.Traceback) -> ir.Location:
   """Converts a full traceback to a callsite() MLIR location."""
-  if jaxlib_extension_version >= 368:
-    return ctx.traceback_caches.traceback_to_location_cache.get(tb)
-
-  loc = ctx.traceback_caches.traceback_cache.get(tb, None)
-  if loc is not None:
-    return loc
-
-  frame_locs = []
-  frames_limit = config.traceback_in_locations_limit.value
-  frames_limit = frames_limit if frames_limit >= 0 else 1000
-
-  codes, lastis = tb.raw_frames()
-  for i, code in enumerate(codes):
-    if not _is_user_file(ctx, code.co_filename):
-      continue
-
-    lasti = lastis[i]
-    code_lasti = code, lasti
-    loc = ctx.traceback_caches.location_cache.get(code_lasti, None)
-    if loc is None:
-      frame = source_info_util.raw_frame_to_frame(code, lasti)
-      file_loc = ir.Location.file(
-          get_canonical_source_file(frame.file_name, ctx.traceback_caches),
-          frame.start_line,
-          frame.start_column,
-          frame.end_line,
-          frame.end_column,
-      )
-      loc = ir.Location.name(frame.function_name, childLoc=file_loc)
-      ctx.traceback_caches.location_cache[code_lasti] = loc
-    frame_locs.append(loc)
-    if len(frame_locs) >= frames_limit:
-      break
-
-  n = len(frame_locs)
-  if n == 0:
-    loc = ir.Location.unknown()
-  elif n == 1:
-    loc = frame_locs[0]
-  else:
-    loc = ir.Location.callsite(frame_locs[0], frame_locs[1:])
-  ctx.traceback_caches.traceback_cache[tb] = loc
-  return loc
+  return ctx.traceback_caches.traceback_to_location_cache.get(tb)
 
 def source_info_to_location(
     ctx: ModuleContext, primitive: core.Primitive | None,
@@ -714,13 +671,10 @@ class TracebackCaches:
   is_user_file_cache: dict[str, bool]
 
   def __init__(self):
-    if jaxlib_extension_version >= 368:
-      frame_limit = config.traceback_in_locations_limit.value
-      frame_limit = frame_limit if frame_limit >= 0 else 1000
-      self.traceback_to_location_cache = jax_mlir_ext.TracebackToLocationCache(
-          code_to_filename=_code_to_filename, frame_limit=frame_limit)
-    else:
-      self.traceback_to_location_cache = None
+    frame_limit = config.traceback_in_locations_limit.value
+    frame_limit = frame_limit if frame_limit >= 0 else 1000
+    self.traceback_to_location_cache = jax_mlir_ext.TracebackToLocationCache(
+        code_to_filename=_code_to_filename, frame_limit=frame_limit)
     self.traceback_cache = {}
     self.location_cache = {}
     self.canonical_name_cache = {}

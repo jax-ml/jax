@@ -59,9 +59,7 @@ class PyUserContext
 
   uint64_t Fingerprint() const override;
 
-#if JAX_IFRT_VERSION_NUMBER >= 25
   xla::ifrt::UserContextId Id() const override;
-#endif
 
   // Returns a string representation of the traceback captured by this
   // `PyUserContext`.

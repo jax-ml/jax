@@ -62,9 +62,7 @@ from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
-from jax._src.lib import ifrt_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -661,8 +659,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     jtu.check_grads(g, (jnp.arange(16.).reshape((4, 4)) / 100,), order=2)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
-  @unittest.skipIf(jaxlib_extension_version < 371,
-                   'LiteralArray support in jaxlib required')
   def testAutodiffCache(self):
     f = pjit(lambda x: jnp.sin(x).sum(), in_shardings=P('x'), out_shardings=None)
     x = jnp.arange(16, dtype=jnp.float32)
@@ -1901,8 +1897,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(count(), 1)
 
   def test_cpu_bfloat16_to_tpu(self):
-    if ifrt_version < 17:
-      self.skipTest('Requires ifrt_version >= 17')
     mesh = jtu.create_mesh((1,), 'x')
     np_inp = np.zeros((8, 2), dtype=jnp.bfloat16)
 
@@ -8744,13 +8738,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   def test_unreduced_output_from_jit(
       self, axis_sizes, axis_names, x_spec, y_spec, out_spec, shard_shape):
-    if ifrt_version < 27:
-      self.skipTest('Requires ifrt_version >= 27')
-    if jaxlib_extension_version < 371:
-      self.skipTest('Requires jaxlib_extension_version >= 371')
-    if not jtu.if_cloud_tpu_at_least(2025, 9, 12):
-      self.skipTest("Requires libtpu built after 2025-09-12")
-
     mesh = jtu.create_mesh(axis_sizes, axis_names,
                            axis_types=(AxisType.Explicit,) * len(axis_names))
     with jax.set_mesh(mesh):
@@ -8791,13 +8778,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   def test_unreduced_input_to_jit(
       self, axis_sizes, axis_names, x_spec, y_spec, out_spec, shard_shape):
-    if ifrt_version < 27:
-      self.skipTest('Requires ifrt_version >= 27')
-    if jaxlib_extension_version < 371:
-      self.skipTest('Requires jaxlib_extension_version >= 371')
-    if not jtu.if_cloud_tpu_at_least(2025, 9, 12):
-      self.skipTest("Requires libtpu built after 2025-09-12")
-
     mesh = jtu.create_mesh(axis_sizes, axis_names,
                            axis_types=(AxisType.Explicit,) * len(axis_names))
     with jax.set_mesh(mesh):
@@ -8839,13 +8819,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   def test_in_and_out_unreduced(
       self, axis_sizes, axis_names, x_spec, y_spec, out_spec, shard_shape):
-    if ifrt_version < 27:
-      self.skipTest('Requires ifrt_version >= 27')
-    if jaxlib_extension_version < 371:
-      self.skipTest('Requires jaxlib_extension_version >= 371')
-    if not jtu.if_cloud_tpu_at_least(2025, 9, 12):
-      self.skipTest("Requires libtpu built after 2025-09-12")
-
     mesh = jtu.create_mesh(axis_sizes, axis_names,
                            axis_types=(AxisType.Explicit,) * len(axis_names))
     with jax.set_mesh(mesh):

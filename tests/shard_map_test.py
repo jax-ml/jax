@@ -42,7 +42,6 @@ from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.mesh import AxisType, get_abstract_mesh
 from jax._src.interpreters import partial_eval as pe
-from jax._src.lib import ifrt_version
 from jax._src import linear_util as lu
 from jax._src import tree_util
 from jax.custom_derivatives import SymbolicZero
@@ -389,9 +388,6 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices('gpu')
   def test_psend_precv_basic_with_deadlock_cycle(self):
-    if ifrt_version < 23:
-      self.skipTest('Test requires StableHLO v1.12.0 or higher.')
-
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
         jnp.arange(2 * 2, dtype=jnp.float32).reshape((2, 2)),
@@ -431,9 +427,6 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices('gpu')
   def test_psend_precv_basic_with_dangling_recv(self):
-    if ifrt_version < 24:
-      self.skipTest('Test requires StableHLO v1.12.0 or higher.')
-
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
         jnp.arange(2 * 2, dtype=jnp.float32).reshape((2, 2)),
@@ -465,9 +458,6 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices('gpu')
   def test_psend_precv_basic_with_non_matching_source_target_pairs(self):
-    if ifrt_version < 24:
-      self.skipTest('Test requires StableHLO v1.12.0 or higher.')
-
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
         jnp.arange(2 * 2, dtype=jnp.float32).reshape((2, 2)),
@@ -507,9 +497,6 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices('gpu')
   def test_psend_precv_basic_with_duplicate_source_target_pairs(self):
-    if ifrt_version < 23:
-      self.skipTest('Test requires StableHLO v1.12.0 or higher.')
-
     mesh = jtu.create_mesh((2,), 'x')
     a = jax.device_put(
         jnp.arange(2 * 2, dtype=jnp.float32).reshape((2, 2)),
@@ -1354,8 +1341,6 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x'))
   def test_pure_callback_return_multiple_arrays(self, mesh):
-    if ifrt_version < 22:
-      self.skipTest('Requires ifrt_version >= 22')
     def host_kernel(arr: np.ndarray):
       return arr + 1, arr * 2.0
 

@@ -186,20 +186,11 @@ MakeIfrtArrayFromFullyReplicatedShard(ifrt::Client* ifrt_client,
                                       Shard& shard) {
   auto host_buffer_shard = std::get<ifrt::Client::HostBuffer>(
       std::move(shard.ifrt_array_or_host_buffer));
-#if JAX_IFRT_VERSION_NUMBER >= 18
   return ifrt_client->MakeArrayFromHostBuffer(
       host_buffer_shard.data, host_buffer_shard.dtype,
       std::move(host_buffer_shard.shape),
       std::move(host_buffer_shard.byte_strides), std::move(ifrt_sharding),
       shard.host_buffer_semantics, std::move(host_buffer_shard.on_done));
-#else
-  return ifrt_client->MakeArrayFromHostBuffer(
-      host_buffer_shard.data, host_buffer_shard.dtype,
-      std::move(host_buffer_shard.shape),
-      std::move(host_buffer_shard.byte_strides), std::move(ifrt_sharding),
-      shard.host_buffer_semantics, std::move(host_buffer_shard.on_done),
-      ifrt::UserContextScope::current());
-#endif
 }
 
 // Shared logic that makes a single-device IFRT array from a `shard`. `shard`
@@ -251,16 +242,9 @@ absl::StatusOr<ifrt::ArrayRef> MakeIfrtArrayFromShardsInBatch(
                       /*shape=*/std::move(ifrt_shape),
                       /*sharding=*/std::move(ifrt_sharding),
                       /*layout=*/nullptr}});
-#if JAX_IFRT_VERSION_NUMBER >= 18
   TF_ASSIGN_OR_RETURN(auto arrays,
                       ifrt_client->MakeArraysFromHostBufferShards(
                           absl::MakeSpan(specs), safe_host_semantics));
-#else
-  TF_ASSIGN_OR_RETURN(auto arrays,
-                      ifrt_client->MakeArraysFromHostBufferShards(
-                          absl::MakeSpan(specs), safe_host_semantics,
-                          ifrt::UserContextScope::current()));
-#endif
   return std::move(arrays.front());
 }
 

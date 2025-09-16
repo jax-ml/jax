@@ -29,7 +29,6 @@ from jax import lax
 from jax import numpy as jnp
 from jax import export
 from jax.experimental import pjit
-from jax._src.lib import ifrt_version
 from jax._src.shard_map import shard_map
 from jax.sharding import NamedSharding
 from jax.sharding import Mesh
@@ -2140,9 +2139,6 @@ class JaxExportTest(jtu.JaxTestCase):
     ])
   def test_lower_load_with_different_partitioners(self, use_shardy_on_save,
                                                   error_msg, poly_shape):
-    if ifrt_version < 16:
-      self.skipTest("Falling back to GSPMD when Shardy is enabled for an old "
-                    "GSPMD checkpoint is only supported in IFRT version 16+")
     with config.use_shardy_partitioner(use_shardy_on_save):
       mesh = jtu.create_mesh((8,), ("a",))
       @jax.jit

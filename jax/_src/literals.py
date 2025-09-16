@@ -15,7 +15,6 @@
 from typing import Sequence
 from jax._src import typing
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 import numpy as np
 
 # LiteralInt, LiteralFloat, and LiteralComplex are subclasses of int, float, and
@@ -229,6 +228,4 @@ class LiteralArray:
         dtype, order=order, casting=casting, subok=subok, copy=copy
     )
 
-
-if jaxlib_extension_version >= 373:
-  _jax.set_literal_array_type(LiteralArray)
+_jax.set_literal_array_type(LiteralArray)

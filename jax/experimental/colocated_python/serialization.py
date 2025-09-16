@@ -105,20 +105,11 @@ def _reduce_named_sharding(
     sharding: jax.sharding.NamedSharding,
 ) -> tuple[Callable[..., jax.sharding.NamedSharding], Any]:
 
-  def make_named_sharding(
-      mesh: jax.sharding.Mesh,
-      spec: jax.sharding.PartitionSpec,
-      memory_kind: str | None,
-  ) -> jax.sharding.NamedSharding:
-    if jax._src.lib.ifrt_version < 19:
-      memory_kind = None
-    return jax.sharding.NamedSharding(mesh, spec, memory_kind=memory_kind)
+  def make_named_sharding(mesh, spec, memory_kind):
+    return jax.NamedSharding(mesh, spec, memory_kind=memory_kind)
 
-  return make_named_sharding, (
-      sharding.mesh,
-      sharding.spec,
-      sharding.memory_kind,
-  )
+  return make_named_sharding, (sharding.mesh, sharding.spec,
+                               sharding.memory_kind)
 
 
 def _reduce_device_list(
@@ -142,8 +133,6 @@ def _reduce_single_device_sharding(
   def make_single_device_sharding(
       device_id: int, memory_kind: str | None
   ) -> jax.sharding.SingleDeviceSharding:
-    if jax._src.lib.ifrt_version < 19:
-      memory_kind = None
     cpu_device_map = _get_cpu_device_map()
     device = _lookup_cpu_device(cpu_device_map, device_id)
     return jax.sharding.SingleDeviceSharding(device, memory_kind=memory_kind)

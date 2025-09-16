@@ -39,7 +39,6 @@ from jax._src.op_shardings import are_hlo_shardings_equal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.layout import AutoLayout, Format, Layout
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import empty_concrete_mesh
@@ -794,8 +793,6 @@ def make_array_from_callback(
       r = literals.LiteralArray(np.asarray(r, dtype=r.dtype), weak_type=False)
     elif isinstance(r, bool):
       r = literals.LiteralArray(np.asarray(r, dtype=np.bool_), weak_type=False)
-    if jaxlib_extension_version < 372 and isinstance(r, literals.LiteralArray):
-      r = np.asarray(r)
     return r
 
   if sharding.is_fully_replicated:

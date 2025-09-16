@@ -60,7 +60,6 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version
 from jax._src.mesh import AbstractMesh
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
@@ -210,8 +209,6 @@ def _get_fastpath_data(
       and not _need_to_rebuild_with_fdo(pgle_profiler)
       and not config.no_execution.value
       )
-  if jaxlib_extension_version < 366:
-    use_fastpath = use_fastpath and not const_args
 
   if use_fastpath:
     out_avals = [o.aval for o in out_reflattened]

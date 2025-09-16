@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import inspect
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -24,7 +23,6 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.interpreters import pxla
 import numpy as np
 
@@ -197,8 +195,6 @@ class JaxJitTest(jtu.JaxTestCase):
       self.assertEqual(signature.shape, ())
       self.assertTrue(signature.weak_type)
 
-  @unittest.skipIf(jaxlib_extension_version < 370,
-                   "requires jaxlib version >= 370")
   def test_device_put_on_numpy_arrays_x64_enabled(self):
     device = jax.devices()[0]
     for dtype in jtu.supported_dtypes():

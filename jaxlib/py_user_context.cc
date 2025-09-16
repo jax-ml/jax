@@ -110,11 +110,9 @@ uint64_t PyUserContext::Fingerprint() const {
   return *fingerprint_;
 }
 
-#if JAX_IFRT_VERSION_NUMBER >= 25
 xla::ifrt::UserContextId PyUserContext::Id() const {
   return xla::ifrt::UserContextId(Fingerprint());
 }
-#endif
 
 std::string PyUserContext::DebugString() const {
   absl::MutexLock lock(mu_);

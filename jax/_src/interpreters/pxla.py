@@ -59,7 +59,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.layout import Layout, AutoLayout, Format
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
@@ -202,8 +201,6 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
     if x.dtype == dtypes.float0:
       x = np.zeros(x.shape, dtype=np.dtype(bool))
     aval = core.shaped_abstractify(x)
-    if jaxlib_extension_version < 373:
-      x = np.asarray(x)
     if layout is not None:
       results.append(api.device_put(x, Format(layout, sharding)))
     else:
@@ -250,12 +247,8 @@ def batched_device_put(aval: core.ShapedArray,
     if len(bufs) == len(xs) > 0:
       return array.ArrayImpl(
           aval, sharding, bufs, committed=committed, _skip_checks=True)
-    if jaxlib_extension_version >= 370:
-      return xc.batched_device_put(aval, sharding, xs, list(devices), committed,
-                                  enable_x64=enable_x64)
-    else:
-      assert enable_x64 is None, enable_x64
-      return xc.batched_device_put(aval, sharding, xs, list(devices), committed)
+    return xc.batched_device_put(aval, sharding, xs, list(devices), committed,
+                                 enable_x64=enable_x64)
   finally:
     util.test_event("batched_device_put_end")
 
@@ -3289,8 +3282,6 @@ class MeshExecutable(stages.Executable):
           params.out_tree, out_flat)
       use_fastpath = (all(isinstance(x, xc.ArrayImpl) for x in out_flat)
                       and not self._mut)
-      if jaxlib_extension_version < 366:
-        use_fastpath = use_fastpath and not params.const_args
 
       if use_fastpath:
         out_avals = [o.aval for o in out_flat]

@@ -23,7 +23,6 @@ from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import dlpack as dlpack_src
 from jax._src import test_util as jtu
-from jax._src.lib import version as jaxlib_version
 
 import numpy as np
 
@@ -47,24 +46,22 @@ dlpack_dtypes = sorted([dt.type for dt in  dlpack_src.SUPPORTED_DTYPES_SET],
 
 # These dtypes are not supported by neither NumPy nor TensorFlow, therefore
 # we list them separately from ``jax.dlpack.SUPPORTED_DTYPES``.
-extra_dlpack_dtypes = []
-if jaxlib_version >= (0, 5, 3):
-  extra_dlpack_dtypes = [
-      jnp.float8_e4m3b11fnuz,
-      jnp.float8_e4m3fn,
-      jnp.float8_e4m3fnuz,
-      jnp.float8_e5m2,
-      jnp.float8_e5m2fnuz,
-  ] + [
-      dtype
-      for name in [
-          "float4_e2m1fn",
-          "float8_e3m4",
-          "float8_e4m3",
-          "float8_e8m0fnu",
-      ]
-      if (dtype := getattr(jnp, name, None))
-  ]
+extra_dlpack_dtypes = [
+    jnp.float8_e4m3b11fnuz,
+    jnp.float8_e4m3fn,
+    jnp.float8_e4m3fnuz,
+    jnp.float8_e5m2,
+    jnp.float8_e5m2fnuz,
+] + [
+    dtype
+    for name in [
+        "float4_e2m1fn",
+        "float8_e3m4",
+        "float8_e4m3",
+        "float8_e8m0fnu",
+    ]
+    if (dtype := getattr(jnp, name, None))
+]
 
 numpy_dtypes = [dt for dt in dlpack_dtypes if dt != jnp.bfloat16]
 cuda_array_interface_dtypes = [dt for dt in dlpack_dtypes if dt != jnp.bfloat16]
@@ -201,9 +198,6 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertAllClose(x_np, x_jax)
 
   def testNondefaultLayout(self):
-    if jaxlib_version < (0, 7, 2):
-      self.skipTest("Non-default layout check was implemented in jaxlib 0.7.2")
-
     # Generate numpy array with nonstandard layout
     a = np.arange(4).reshape(2, 2)
     b = a.T

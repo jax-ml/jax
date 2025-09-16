@@ -22,7 +22,6 @@ from jax._src import core
 from jax._src import test_util as jtu
 import jax._src.lib
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version
 from jax.experimental import topologies
 from jax.experimental.pjit import pjit
 from jax.experimental.serialize_executable import (
@@ -169,8 +168,7 @@ class JaxAotTest(jtu.JaxTestCase):
     self.assertArraysEqual(compiled(inp), const[0:8] + inp)
     # Trigger cache hit
     expected_aot_calls = 0
-    if (config.use_simplified_jaxpr_constants.value and
-        jaxlib_extension_version < 366):
+    if config.use_simplified_jaxpr_constants.value:
       expected_aot_calls = 1
     self.assertCacheMisses(lambda: compiled(inp), cpp=0, aot_call=expected_aot_calls)
 
@@ -231,8 +229,7 @@ class JaxAotTest(jtu.JaxTestCase):
                            lax.convert_element_type(const, inp.dtype) + inp)
     # Trigger cache hit
     expected_aot_calls = 0
-    if (config.use_simplified_jaxpr_constants.value and
-        jaxlib_extension_version < 366):
+    if config.use_simplified_jaxpr_constants.value:
       expected_aot_calls = 1
     self.assertCacheMisses(run, cpp=0, aot_call=expected_aot_calls)
 

@@ -22,7 +22,6 @@ from typing import Any, Union
 
 from jax._src.util import use_cpp_class, cache, use_cpp_method
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir.dialects import sdy
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
@@ -373,12 +372,11 @@ def named_sharding_to_xla_hlo_sharding(
     for manual_axis in manual_axes:
       special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
 
-  if jaxlib_extension_version >= 371:
-    unreduced_axes = self.spec.unreduced
-    if unreduced_axes:
-      axis_names = self.mesh.axis_names
-      for u in unreduced_axes:
-        special_axes[axis_names.index(u)] = xc.OpSharding.Type.UNREDUCED
+  unreduced_axes = self.spec.unreduced
+  if unreduced_axes:
+    axis_names = self.mesh.axis_names
+    for u in unreduced_axes:
+      special_axes[axis_names.index(u)] = xc.OpSharding.Type.UNREDUCED
 
   replicated_mesh_axes = []
   for i, (axis_name, axis_val) in enumerate(mesh_shape.items()):
