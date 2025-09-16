@@ -322,25 +322,16 @@ jobs:
       - name: Verify JAX CUDA packages can be installed (Nvidia Pip Packages)
         run: |
           $PYTHON -m uv venv ~/test_cuda_pip && source ~/test_cuda_pip/bin/activate
-          if [[ ${{ matrix.cuda-version }} == 13* ]]; then
-            EXTRA_INDEX="--extra-index-url https://pypi.nvidia.com"
-          else
-            EXTRA_INDEX=""
-          fi
           if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
-            uv pip install $JAX_WHEEL[cuda${{ matrix.cuda-version }}] $EXTRA_INDEX
+            uv pip install $JAX_WHEEL[cuda${{ matrix.cuda-version }}]
           else
             uv pip install $JAX_WHEEL[cuda${{ matrix.cuda-version }}] $JAXLIB_WHEEL $JAX_CUDA_PJRT_WHEEL $JAX_CUDA_PLUGIN_WHEEL[with-cuda] $EXTRA_INDEX
           fi
       - name: Verify JAX CUDA packages can be installed (CUDA local)
         run: |
           $PYTHON -m uv venv ~/test_cuda_local && source ~/test_cuda_local/bin/activate
-          if [[ ${{ matrix.cuda-version }} == 13* ]]; then
-            EXTRA_INDEX="--extra-index-url https://pypi.nvidia.com"
-          else
-            EXTRA_INDEX=""
           if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
-            uv pip install $JAX_WHEEL[cuda${{ matrix.cuda-version }}-local] $EXTRA_INDEX
+            uv pip install $JAX_WHEEL[cuda${{ matrix.cuda-version }}-local]
           else
-            uv pip install $JAX_WHEEL $JAXLIB_WHEEL $JAX_CUDA_PJRT_WHEEL $JAX_CUDA_PLUGIN_WHEEL $EXTRA_INDEX
+            uv pip install $JAX_WHEEL $JAXLIB_WHEEL $JAX_CUDA_PJRT_WHEEL $JAX_CUDA_PLUGIN_WHEEL
           fi
