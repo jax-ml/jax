@@ -577,9 +577,6 @@ class MosaicGridMapping:
       )
     return bool(nonlocal_axis_names)
 
-  def get_extra_args(self) -> tuple[Any, ...]:
-    return ()
-
   def get_dimension_semantics(self) -> ir.ArrayAttr:
 
     def _get_semantics(s: str | None) -> str:
@@ -696,7 +693,7 @@ def lower_jaxpr_to_module(
     mesh: mesh_lib.Mesh | None = None,
     for_verification: bool = False,
     dynamic_shape_replacement_enabled: bool = False,
-) -> tuple[ir.Module, tuple[Any, ...]]:
+) -> ir.Module:
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
   if backend is not None and is_cloud_tpu_older_than(2025, 8, 1, backend):
@@ -928,7 +925,7 @@ def lower_jaxpr_to_module(
         m.operation.attributes[
             "tpu.dynamic_dimension_mapping_arg_name_" + str(placeholder)
         ] = ir.StringAttr.get(arg_name_str)
-  return m, mosaic_grid_mapping.get_extra_args()
+  return m
 
 
 def lower_jaxpr_to_transform_func(
