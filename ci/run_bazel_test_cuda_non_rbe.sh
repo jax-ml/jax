@@ -92,6 +92,11 @@ if [[ "$driver_major_version" -lt "580" ]]; then
   TEST_CONFIG="$TEST_CONFIG --@cuda_driver//:enable_forward_compatibility=true"
 fi
 
+if [[ "$JAXCI_RUN_BACKEND_INDEPENDENT_TESTS" == "1" ]]; then
+  TEST_TARGETS="//tests:gpu_tests //tests:backend_independent_tests //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests"
+else
+  TEST_TARGETS="//tests:gpu_tests //tests/pallas:gpu_tests"
+fi
 
 # Don't abort the script if one command fails to ensure we run both test
 # commands below.
@@ -106,6 +111,7 @@ bazel test --config=$TEST_CONFIG \
       --config=use_tar_archive_files \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
+      --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
       --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
@@ -123,8 +129,7 @@ bazel test --config=$TEST_CONFIG \
       --action_env=NCCL_DEBUG=WARN \
       --color=yes \
       --config=cuda_libraries_from_stubs \
-      //tests:gpu_tests //tests:backend_independent_tests \
-      //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests
+      $TEST_TARGETS
 
 # Store the return value of the first bazel command.
 first_bazel_cmd_retval=$?
@@ -136,6 +141,7 @@ bazel test --config=$TEST_CONFIG \
       --config=use_tar_archive_files \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
+      --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
       --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \

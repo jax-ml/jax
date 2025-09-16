@@ -1,0 +1,78 @@
+# CI - Bazel presubmit wheel tests (RBE)
+#
+# This workflow is triggered in the presubmit.
+#
+# It consists of the following jobs:
+# build-cpu-wheels:
+#    - Builds the jax, jaxlib artifacts from source via build.py invocation. Uses
+#      bazel_build_wheels.yml.
+# build-cuda-wheels:
+#    - Builds the jax-cuda-plugin, jax-cuda-pjrt artifacts from source via build.py invocation. Uses
+#      bazel_build_wheels.yml.
+# run-bazel-wheel-tests:
+#    - Runs the Bazel CPU and CUDA tests with py_import dependencies. Uses bazel_test_wheels.yml.
+
+name: CI - Bazel presubmit wheel tests (RBE)
+
+on:
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        required: true
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - 'release/**'
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # Don't cancel in-progress jobs for main/release branches.
+  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
+
+jobs:
+  build-cpu-wheels:
+    uses: ./.github/workflows/bazel_build_wheels.yml
+    name: "Build CPU wheels"
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+    with:
+        runners: '["linux-x86-n4-16", "linux-arm64-c4a-16", "windows-x86-n2-16"]'
+        python-versions: '["3.11"]'
+        artifacts: '["jax", "jaxlib"]'
+        clone_main_xla: 1
+        upload_artifacts_to_gcs: false
+
+  build-gpu-wheels:
+    uses: ./.github/workflows/bazel_build_wheels.yml
+    name: "Build GPU wheels"
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+    with:
+        runners: '["linux-x86-n4-16"]'
+        python-versions: '["3.11"]'
+        cuda-versions: '["12", "13"]'
+        artifacts: '["jax-cuda-plugin", "jax-cuda-pjrt"]'
+        clone_main_xla: 1
+        upload_artifacts_to_gcs: false
+
+  run-bazel-py-import-tests:
+    uses: ./.github/workflows/bazel_py_import.yml
+    name: "Run Bazel py_import tests"
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+    with:
+        python-versions: '["3.11"]'
+        cuda-versions: '["12", "13"]'
+        jaxlib-versions: '["head"]'
+        clone_main_xla: 1
+        enable-x64: '["0"]'
+        run-backend_independent-test-suite: "0"

@@ -34,6 +34,7 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ matrix.python }}
       JAXCI_ENABLE_X64: ${{ matrix.enable-x_64 }}
       JAXCI_BUILD_JAXLIB: "true"
+      JAXCI_RUN_BACKEND_INDEPENDENT_TESTS: "1"
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:
       matrix:
