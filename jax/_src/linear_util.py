@@ -511,6 +511,7 @@ def cache(call: Callable, *,
   def _evict_function(f):
     fun_caches.pop(f, None)
 
+  memoized_fun.cache = fun_caches
   memoized_fun.cache_clear = fun_caches.clear  # type: ignore
   memoized_fun.evict_function = _evict_function  # type: ignore
   register_cache(memoized_fun, str(call))
