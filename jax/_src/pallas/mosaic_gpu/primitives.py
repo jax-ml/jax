@@ -3208,3 +3208,140 @@ def _semaphore_signal_lowering_rule(
     )
     mgpu_utils.fence_release_sys()
   return ()
+
+try_cluster_cancel_p = jax_core.Primitive('try_cluster_cancel')
+try_cluster_cancel_p.multiple_results = True
+
+@try_cluster_cancel_p.def_effectful_abstract_eval
+def _try_cluster_cancel_abstract_eval(
+    result_ref, barrier, *barrier_transforms_leaves, barrier_transforms_tree
+):
+  del result_ref, barrier, barrier_transforms_leaves, barrier_transforms_tree
+  return (), {gpu_core._memory_effect}
+
+@lowering.register_lowering_rule(
+    try_cluster_cancel_p, mgpu.LoweringSemantics.Lane
+)
+
+def try_cluster_cancel_lowering(
+    ctx: lowering.LoweringRuleContext,
+    result_ref,
+    barrier: mgpu.BarrierRef,
+    *barrier_transforms_leaves,
+    barrier_transforms_tree,
+):
+  i1 = ir.IntegerType.get_signless(1)
+  i32 = ir.IntegerType.get_signless(32)
+
+  if barrier_transforms_tree is not None:
+    barrier_indexer = _extract_barrier_indexer(
+        barrier_transforms_tree.unflatten(barrier_transforms_leaves)
+    )
+    if barrier_indexer is not None:
+      barrier = barrier.__getitem__(
+          *map(lowering._as_index, barrier_indexer.indices)
+      )
+
+  collective_axes = ctx.module_ctx.axis_names.cluster
+  is_leader_thread = ctx.module_ctx.single_lane_predicate
+  first_cta = arith_dialect.constant(i1, 1)
+
+  if len(collective_axes) > 0:
+    for axis in collective_axes:
+      dim = lowering._resolve_cluster_axis(ctx.module_ctx.axis_names, axis)  # pytype: disable=wrong-arg-types
+      first_cta = arith_dialect.andi(
+          first_cta,
+          arith_dialect.cmpi(
+              arith_dialect.CmpIPredicate.eq,
+              ctx.launch_ctx.cluster_idx(dim),
+              mgpu.c(0, ir.IndexType.get()),
+          ),
+      )
+
+  bytes = arith_dialect.select(
+      is_leader_thread, mgpu.c(16, i32), mgpu.utils.c(0, i32)
+  )
+  barrier.arrive_expect_tx(bytes)
+
+  mgpu.try_cluster_cancel(
+      result_ref,
+      barrier,
+      predicate=arith_dialect.andi(is_leader_thread, first_cta),
+  )
+
+  return []
+
+
+def try_cluster_cancel(result_ref: _Ref, barrier: _Ref):
+  """Initiates an async request to claim a new work unit from the grid.
+
+  It allows an SM to dynamically acquire work by atomically canceling the launch
+  of a pending cluster from the grid and claiming its CTA ID as the next unit
+  of work.
+
+  Args:
+    result_ref: An SMEM ref where the 16-byte result will be stored.
+    barrier: A barrier used to coordinate the completion of the query.
+  """
+  if isinstance(result_ref, pallas_core.TransformedRef):
+    raise ValueError()
+
+  if isinstance(barrier, pallas_core.TransformedRef):
+    barrier_transforms_leaves, barrier_transforms_tree = jax.tree.flatten(
+        barrier.transforms
+    )
+    barrier = barrier.ref
+  else:
+    barrier_transforms_leaves, barrier_transforms_tree = [], None
+
+  try_cluster_cancel_p.bind(
+      result_ref,
+      barrier,
+      *barrier_transforms_leaves,
+      barrier_transforms_tree=barrier_transforms_tree,
+  )
+
+
+query_cluster_cancel_p = jax_core.Primitive("query_cluster_cancel")
+query_cluster_cancel_p.multiple_results = True
+
+@query_cluster_cancel_p.def_effectful_abstract_eval
+def _query_cluster_cancel_abstract_eval(_):
+  return (
+      (
+          jax_core.ShapedArray((), jnp.int32),
+          jax_core.ShapedArray((), jnp.int32),
+          jax_core.ShapedArray((), jnp.int32),
+          jax_core.ShapedArray((), jnp.bool_),
+      ),
+      {gpu_core._memory_effect},
+  )
+
+
+@lowering.register_lowering_rule(
+    query_cluster_cancel_p, mgpu.LoweringSemantics.Lane
+)
+def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext, result_ref):
+  del ctx
+  return mgpu.query_cluster_cancel(result_ref)
+
+
+def query_cluster_cancel(result_ref: _Ref):
+  """Decodes the result of a `try_cluster_cancel` operation.
+
+  It interprets the 16-byte opaque response written to shared memory by a
+  completed `try_cluster_cancel` call to determine if a new work unit was
+  successfully claimed.
+
+  Args:
+    result_ref: The SMEM ref containing the query response.
+  Returns:
+    A tuple containing the decoded response:
+      - the X,Y,Z coordinates of the claimed CTA ID.
+      - A boolean indicating if the cancellation was successful.
+  """
+  if isinstance(result_ref, pallas_core.TransformedRef):
+    raise ValueError()
+
+
+  return query_cluster_cancel_p.bind(result_ref)
