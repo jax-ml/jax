@@ -121,6 +121,20 @@ def _num_available_cores():
       )
 
 
+def _vector_dimension():
+  """Returns the supported vector dimension for the current device."""
+  device_kind = tpu_core.get_device_kind()
+  match device_kind:
+    case "TPU v5" | "TPU v5p" | "TPU v6" | "TPU v6 lite":
+      return 8
+    case "TPU7x":
+      return 16
+    case _:
+      raise NotImplementedError(
+          f"Unsupported device kind: {device_kind}"
+      )
+
+
 def _scalar_subcore_mesh_discharge_rule(
     in_avals,
     out_avals,

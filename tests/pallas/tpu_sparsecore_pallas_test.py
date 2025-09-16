@@ -627,6 +627,18 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(x), np.broadcast_to(np.count_nonzero(x < 50), x.shape)
     )
 
+  def test_iota(self):
+    key = jax.random.key(42)
+    x = jax.random.randint(key, [8], 0, 100)
+
+    @vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.arange(8) + x_ref[...]
+
+    np.testing.assert_array_equal(
+        kernel(x), x + np.arange(8)
+    )
+
   @parameterized.named_parameters(
       ("mixed", [0, 0, 1, 0, 1, 0, 0, 0], 2),
       ("all_zero", [0, 0, 0, 0, 0, 0, 0, 0], 8),

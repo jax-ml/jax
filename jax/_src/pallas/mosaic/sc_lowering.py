@@ -402,6 +402,20 @@ def _store_lowering_rule(
   return old_val
 
 
+@register_lowering_rule(jax.lax.iota_p,
+                        kernel_types=[tpu_core.KernelType.SC_VECTOR_SUBCORE])
+def _iota_lowering_rule_sc(ctx: LoweringRuleContext, dtype, shape, dimension,
+                           sharding):
+  if shape != (sc_core._vector_dimension(),):
+    raise ValueError(
+        f"Unsupported iota shape for SC vector subcore. Got {shape}, supported "
+        f"shape is {(sc_core._vector_dimension(),)}.")
+  [out_aval] = ctx.avals_out
+  out_type = ir.VectorType.get(
+      [sc_core._vector_dimension()], _dtype_to_ir_type(out_aval.dtype))
+  return tpu.iota(out_type, dimensions=[dimension])
+
+
 def _check_aval_is_supported(caller: str, aval: jax_core.ShapedArray) -> None:
   if aval.shape in sc_core.SUPPORTED_VECTOR_SHAPES.get(aval.dtype, []):
     return
