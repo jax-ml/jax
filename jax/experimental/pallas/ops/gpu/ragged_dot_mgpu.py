@@ -46,7 +46,7 @@ class GroupInfo:
     """Get the group info for the current block."""
 
     tile = jnp.int32(tile)
-    group_boundaries = [group_lengths[i] for i in range(group_lengths.shape[0])]
+    group_boundaries = [group_lengths[i] for i in range(len(group_lengths))]
 
     # We usually only have very few groups, so we unroll the loop processing
     # them. Normally we'd break out of the loop early, once we'd have found our

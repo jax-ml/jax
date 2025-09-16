@@ -157,8 +157,6 @@ def do_matmul(a_gmem,
   def _():
     plgpu.barrier_wait(mma_done_barrier.at[acc_slot])
     acc_tmem_slot = acc_tmem.at[:, pl.ds(acc_slot * tile_n, tile_n)]
-    acc_regs_slot = plgpu.async_load_tmem(acc_tmem_slot,
-                                          layout=regs_layout).astype(dtype)
     step_out_gmem = out_gmem.at[block_slice_m, slice_n]
     # group_info contains start/size info relative to the logical
     # tiling (tile_m) but because for collective matmuls we use 2 CTAs per
@@ -190,8 +188,9 @@ def do_matmul(a_gmem,
       group_info.actual_size - block0_copy_size
     )
     for ni in range(tile_n // epilogue_tile_n):
-      acc_smem[...] = acc_regs_slot[
-          :, ni * epilogue_tile_n: (ni + 1) * epilogue_tile_n]
+      acc_smem[...] = plgpu.async_load_tmem(
+          acc_tmem_slot.at[:, pl.ds(ni * epilogue_tile_n, epilogue_tile_n)],
+          layout=regs_layout).astype(dtype)
       plgpu.commit_smem()
       cur_smem_idx = smem_start
       remaining_rows = min(block_tile_m, m)
@@ -270,6 +269,7 @@ def ragged_dot_kernel(a, b, group_sizes, config: TuningConfig):
         grid_tiling += (2,)
     else:
       grid_tiling = None
+    group_sizes_regs = [group_sizes_gmem[i] for i in range(num_groups)]
 
     @functools.partial(pl.run_scoped,
         a_smem=plgpu.SMEM(
@@ -312,7 +312,7 @@ def ragged_dot_kernel(a, b, group_sizes, config: TuningConfig):
         m_index = idx[0]
         with jax.named_scope("create_group_info"):
           group_info = ragged_dot_mgpu.GroupInfo.create(
-              group_sizes_gmem, tile_m, m_index
+              group_sizes_regs, tile_m, m_index
           )
         do_matmul(
             a_gmem,
