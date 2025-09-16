@@ -4862,6 +4862,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
       apply(x)
     self.assertEqual(count(), 3)  # misses for init, apply and inner (only once)
 
+  def test_wsc_aval_diff_shardings(self):
+    mesh = jtu.create_mesh((1,), 'x')
+    x = jax.device_put(jnp.zeros((2,2)), NamedSharding(mesh, P()))
+
+    @jax.jit
+    def f(x):
+      out1 = with_sharding_constraint(x, NamedSharding(mesh, P('x')))
+      self.assertEqual(out1.aval.sharding.mesh, mesh.abstract_mesh)
+      out2 = with_sharding_constraint(out1, SingleDeviceSharding(jax.devices()[0]))
+      self.assertTrue(out2.aval.sharding.mesh.empty)
+      return out2
+
+    f(x)  # doesn't crash
+
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_sds_input_to_zeros_like_propagates_sharding(self, mesh):
     val = jax.ShapeDtypeStruct(

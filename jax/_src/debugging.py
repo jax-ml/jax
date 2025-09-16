@@ -144,9 +144,7 @@ ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
 def _debug_callback_partial_auto(axis_context, *args, **params):
   partial_auto = list(set(axis_context.mesh.axis_names) - axis_context.manual_axes)
   def f():
-    idx = pjit.with_sharding_constraint(
-        lax.axis_index(*partial_auto),
-        NamedSharding(axis_context.mesh, P()))
+    idx = pjit.with_sharding_constraint(lax.axis_index(*partial_auto), P())
     return lax.cond(idx == 0,
                     lambda: debug_callback_p.bind(*args, **params),
                     lambda: [])

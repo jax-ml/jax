@@ -1424,7 +1424,8 @@ class IgnoreKey:
 
 def pjit_check_aval_sharding(
     shardings, flat_avals, names: Sequence[str],
-    what_aval: str, allow_uneven_sharding: bool):
+    what_aval: str, allow_uneven_sharding: bool,
+    allow_partial_manual: bool = False):
   for aval, s, name in zip(flat_avals, shardings, names):
     if isinstance(s, (UnspecifiedValue, AUTO)):
       continue
@@ -1446,7 +1447,8 @@ def pjit_check_aval_sharding(
     # Sharding.
     hlo_sharding = s._to_xla_hlo_sharding(len(shape))
     assert hlo_sharding is not None
-    num_ways_dim_sharded, _ = op_shardings.get_num_ways_dim_sharded(hlo_sharding)
+    num_ways_dim_sharded, _ = op_shardings.get_num_ways_dim_sharded(
+        hlo_sharding, allow_partial_manual)
     for i, size in enumerate(num_ways_dim_sharded):
       if not allow_uneven_sharding and shape[i] % size != 0:
         raise ValueError(f"One of {what_aval}{name_str} was given the sharding "
@@ -2754,9 +2756,12 @@ def with_sharding_constraint(x, shardings):
       flatten_axes("with_sharding_constraint layouts", tree, layouts))
   del layouts
 
-  context_mesh = (
-      mesh_lib.get_abstract_mesh() if not mesh_lib.get_concrete_mesh().empty
-      else mesh_lib.thread_resources.env.physical_mesh)
+  if not mesh_lib.get_concrete_mesh().empty:
+    context_mesh = mesh_lib.get_abstract_mesh()
+  elif not mesh_lib.get_abstract_mesh().empty:
+    context_mesh = mesh_lib.get_abstract_mesh()
+  else:
+    context_mesh = mesh_lib.thread_resources.env.physical_mesh
 
   shardings_flat = [_create_sharding_for_array(context_mesh, a, 'shardings',
                                                'with_sharding_constraint')
@@ -2777,7 +2782,7 @@ def with_sharding_constraint(x, shardings):
   pjit_check_aval_sharding(
       shardings_flat, x_avals_flat, ("",) * len(shardings_flat),
       "with_sharding_constraint arguments",
-      allow_uneven_sharding=True)
+      allow_uneven_sharding=True, allow_partial_manual=True)
   check_aval_layout_compatibility(user_layouts_flat, x_avals_flat,
                                   ("",) * len(user_layouts_flat),
                                   "with_sharding_constraint arguments")
@@ -2840,10 +2845,10 @@ ad.deflinear2(sharding_constraint_p,
 
 def _sharding_constraint_abstract_eval(
     x_aval, *, sharding, layout, context_mesh, unconstrained_dims):
-  if x_aval.sharding.mesh.empty and isinstance(sharding, NamedSharding):
+  if isinstance(sharding, NamedSharding):
     return x_aval.update(
         sharding=x_aval.sharding.update(mesh=sharding.mesh.abstract_mesh))
-  return x_aval
+  return x_aval.update(sharding=None)
 sharding_constraint_p.def_abstract_eval(_sharding_constraint_abstract_eval)
 
 def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding, layout,

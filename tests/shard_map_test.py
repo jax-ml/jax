@@ -2634,8 +2634,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def g(x):
       self.assertTupleEqual(x.aval.sharding.mesh.axis_types,
                             (AxisType.Manual, AxisType.Auto))
-      x = jax.lax.with_sharding_constraint(
-          x, jax.sharding.NamedSharding(mesh, P(None, 'j')))
+      x = jax.lax.with_sharding_constraint(x, P(None, 'j'))
       return x * x
 
     @jax.jit
