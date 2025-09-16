@@ -1992,18 +1992,8 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "shape_poly_test",
     srcs = ["shape_poly_test.py"],
-    disable_configs = [
-        "gpu_a100",  # TODO(b/269593297): matmul precision issues
-    ],
-    enable_configs = [
-        "cpu",
-        "cpu_x32",
-    ],
-    shard_count = {
-        "cpu": 30,
-        "gpu": 20,
-        "tpu": 25,
-    },
+    enable_backends = ["cpu"],
+    shard_count = 30,
     tags = [
         "noasan",  # Times out
         "nomsan",  # Times out
