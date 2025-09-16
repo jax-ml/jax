@@ -16,6 +16,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+
+## JAX 0.7.2 (September 16, 2025)
+
 * Breaking changes:
 
   * {func}`jax.dlpack.from_dlpack` no longer accepts a DLPack capsule. This
