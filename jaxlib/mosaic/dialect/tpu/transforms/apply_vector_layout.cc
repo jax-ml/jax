@@ -8170,8 +8170,26 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
   // Add second minor implicit dim
   if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
       dst_implicit_dim == VectorLayout::ImplicitDim::kSecondMinor) {
-    // TODO(tlongeri): Detect replicated source 2nd minor as a no-op above
-    const int64_t src_offset = src.offsets()[0].value_or(0);
+    if (!src.offsets()[0].has_value()) {
+      // This is a no-op relayout that drops information about logical
+      // replication.
+      // TODO(tlongeri): This should be part of the generalizes check.
+      VectorLayout dst(src.bitwidth(), src.offsets(), src.tiling(),
+                       VectorLayout::ImplicitDim::kSecondMinor);
+      xla::Array<Value> dst_vregs(
+          dst.tileArrayImplicitShape(vty.getShape(), target_shape));
+      // We need to broadcast across the new implicit 3rd minor (previously the
+      // implicit 2nd minor).
+      SmallVector<int64_t> src_idx;
+      dst_vregs.Each([&](const absl::Span<const int64_t> idx, Value* dst_vreg) {
+        src_idx.assign(idx.begin(), idx.end());
+        *(src_idx.end() - 3) = 0;
+        dst.eraseImplicit(src_idx);
+        *dst_vreg = vregs(src_idx);
+      });
+      return std::make_pair(dst, dst_vregs);
+    }
+    const int64_t src_offset = *src.offsets()[0];
     // TODO(tlongeri): Do broadcast (different path) for replicated output
     const int64_t dst_offset = dst_offset_hints[0].value_or(0);
     VectorLayout dst(src.bitwidth(), {dst_offset, src.offsets()[1]},
@@ -8204,6 +8222,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
       if (row_rotate_amt < 0) {
         row_rotate_amt += rows_per_sublane * target_shape[0];
       }
+      CHECK(vreg != nullptr);
       *new_vreg = rotateVregRows(
           builder, loc, vreg, row_rotate_amt, rows_per_sublane,
           /*is_high=*/src_offset_in_sublane <= dst_offset_in_sublane,
