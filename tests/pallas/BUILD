@@ -984,6 +984,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "blackwell_ragged_dot_mgpu_run",
     srcs = [
+        "//jax/experimental/pallas/ops/gpu:blackwell_matmul_mgpu.py",
         "//jax/experimental/pallas/ops/gpu:blackwell_ragged_dot_mgpu.py",
         "//jax/experimental/pallas/ops/gpu:ragged_dot_mgpu.py",
     ],

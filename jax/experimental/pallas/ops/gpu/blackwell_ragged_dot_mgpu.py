@@ -22,6 +22,7 @@ from jax._src import test_util as jtu  # noqa: F401
 from jax.experimental.mosaic.gpu import profiler
 import jax.experimental.pallas as pl
 import jax.experimental.pallas.mosaic_gpu as plgpu
+from jax.experimental.pallas.ops.gpu import blackwell_matmul_mgpu
 from jax.experimental.pallas.ops.gpu import ragged_dot_mgpu
 import jax.numpy as jnp
 import numpy as np
@@ -35,7 +36,8 @@ class TuningConfig:
   tile_k: int
   max_concurrent_steps: int
   collective: bool
-  grid_tile_n: int = 1
+  grid_tile_width: int
+  grid_minor_dim: blackwell_matmul_mgpu.MatmulDimension
   epilogue_tile_n: int = 64
 
   def __str__(self):
@@ -257,19 +259,9 @@ def ragged_dot_kernel(a, b, group_sizes, config: TuningConfig):
   )
 
   def kernel(a_gmem, b_gmem, group_sizes_gmem, out_gmem):
-    if collective:
-      grid = (m_iters + num_groups - 1, n_iters, 2)
-      grid_axes = ("sm", "x")
-    else:
-      grid = (m_iters + num_groups - 1, n_iters)
-      grid_axes = ("sm")
-    if config.grid_tile_n is not None:
-      grid_tiling = (m_iters + num_groups - 1, config.grid_tile_n)
-      if collective:
-        grid_tiling += (2,)
-    else:
-      grid_tiling = None
+    linear_grid = (m_iters + num_groups - 1) * n_iters
     group_sizes_regs = [group_sizes_gmem[i] for i in range(num_groups)]
+    cluster_idx = lax.axis_index("x")
 
     @functools.partial(pl.run_scoped,
         a_smem=plgpu.SMEM(
@@ -304,12 +296,17 @@ def ragged_dot_kernel(a, b, group_sizes, config: TuningConfig):
         collective_axes=("wg",)
     )
     def _scoped(**ref_kwargs):
-      @plgpu.nd_loop(grid,
-                    tiling=grid_tiling,
-                    collective_axes=grid_axes,
-                    include_wave_step=True)
+      @plgpu.nd_loop(grid=(linear_grid,),
+                     collective_axes="sm",
+                     include_wave_step=True)
       def mn_loop(idx, wave_step):  # pylint: disable=unused-variable
-        m_index = idx[0]
+        linear_idx, = idx
+        m_index, n_index = plgpu.planar_snake(
+          linear_idx,
+          (m_iters + num_groups - 1, n_iters),
+          config.grid_minor_dim,
+          config.grid_tile_width,
+        )
         with jax.named_scope("create_group_info"):
           group_info = ragged_dot_mgpu.GroupInfo.create(
               group_sizes_regs, tile_m, m_index
@@ -318,7 +315,7 @@ def ragged_dot_kernel(a, b, group_sizes, config: TuningConfig):
             a_gmem,
             b_gmem.at[group_info.group_id],
             out_gmem,
-            (group_info.block,) + idx[1:],
+            grid_indices=(group_info.block, n_index, cluster_idx),
             wg_axis="wg",
             collective_axes=("x",) if collective else (),
             wave_step=wave_step,
@@ -389,17 +386,19 @@ def main(_) -> None:
       (128,),  # tile_m
       (128,),  # tile_n
       (64,),  # tile_k
-      (1, 8, 16),  # grid_tile_n
+      (1, 8, 12, 16),  # grid_tile_width
+      blackwell_matmul_mgpu.MatmulDimension,  # grid_minor_dim
       (4, 6)  # max_concurrent_steps
   )
   best_util = -float("inf")
-  for (tile_m, tile_n, tile_k, grid_tile_n,
+  for (tile_m, tile_n, tile_k, grid_tile_width, grid_minor_dim,
         max_concurrent_steps,) in tuning_it:
     config = TuningConfig(
       tile_m=tile_m,
       tile_n=tile_n,
       tile_k=tile_k,
-      grid_tile_n=grid_tile_n,
+      grid_tile_width=grid_tile_width,
+      grid_minor_dim=grid_minor_dim,
       max_concurrent_steps=max_concurrent_steps,
       collective=True,
     )
@@ -424,7 +423,7 @@ def main(_) -> None:
     if achieved_tc_util > best_util:
       best_util = achieved_tc_util
     print(
-        f"{tile_m=} {tile_n=} {tile_k=} {grid_tile_n=} {max_concurrent_steps=} "
+        f"{tile_m=} {tile_n=} {tile_k=} {grid_tile_width=} {grid_minor_dim=} {max_concurrent_steps=} "
         f"{runtime_us:<7.1f}us"
         f" = {achieved_tc_util:4.1f}% TC utilization"
     )
