@@ -32,6 +32,9 @@ class LiteralInt(int):
     v.dtype = dtype
     return v
 
+  def __getnewargs__(self):
+    return (int(self), self.dtype)
+
 
 class LiteralFloat(float):
 
@@ -42,6 +45,9 @@ class LiteralFloat(float):
     v.dtype = dtype
     return v
 
+  def __getnewargs__(self):
+    return (float(self), self.dtype)
+
 
 class LiteralComplex(complex):
 
@@ -51,6 +57,9 @@ class LiteralComplex(complex):
     v = super(LiteralComplex, cls).__new__(cls, value)
     v.dtype = dtype
     return v
+
+  def __getnewargs__(self):
+    return (complex(self), self.dtype)
 
 
 literal_scalar_types: set[type] = {LiteralInt, LiteralFloat, LiteralComplex}

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import pickle
 import unittest
 
@@ -27,6 +28,7 @@ import jax
 from jax import numpy as jnp
 from jax.interpreters import pxla
 from jax._src import config
+from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import GSPMDSharding
@@ -236,6 +238,21 @@ class PickleTest(jtu.JaxTestCase):
         )
         self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
+  def test_pickle_literal_scalar(self):
+    for l in [
+        literals.LiteralInt(3, np.dtype(np.int32)),
+        literals.LiteralFloat(2.0, np.dtype(np.float32)),
+        literals.LiteralComplex(1j, np.dtype(np.complex64)),
+    ]:
+      m = pickle.loads(pickle.dumps(l))
+      self.assertEqual(type(l), type(m))
+      self.assertEqual(l, m)
+      self.assertEqual(l.dtype, m.dtype)
+
+      n = copy.deepcopy(l)
+      self.assertEqual(type(l), type(n))
+      self.assertEqual(l, n)
+      self.assertEqual(l.dtype, n.dtype)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

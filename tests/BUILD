@@ -1069,6 +1069,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "pickle_test",
     srcs = ["pickle_test.py"],
+    enable_backends = ["cpu"],
     deps = [
         "//jax:experimental",
     ] + py_deps([
