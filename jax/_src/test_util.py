@@ -412,6 +412,21 @@ def is_device_cuda():
 def is_cloud_tpu():
   return running_in_cloud_tpu_vm
 
+def is_optimized_build():
+  return _jaxlib._jax.is_optimized_build()
+
+def is_asan():
+  return _jaxlib._jax.is_asan()
+
+def is_msan():
+  return _jaxlib._jax.is_msan()
+
+def is_tsan():
+  return _jaxlib._jax.is_tsan()
+
+def is_sanitized():
+  return _jaxlib._jax.is_sanitized()
+
 # Returns True if it is not cloud TPU. If it is cloud TPU, returns True if it is
 # built at least `date``.
 # TODO(b/327203806): after libtpu adds a XLA version and the oldest support

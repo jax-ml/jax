@@ -4185,6 +4185,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     idx_shape=all_shapes,
   )
   def testUnravelIndex(self, shape, idx_shape, dtype):
+    if not jtu.is_optimized_build():
+      self.skipTest("Test fails under debug mode. See https://github.com/numpy/numpy/issues/29690.")
     size = math.prod(shape)
     unsigned = dtypes.issubdtype(dtype, np.unsignedinteger)
     rng = jtu.rand_int(
