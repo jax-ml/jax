@@ -34,7 +34,6 @@ from jax._src import dispatch
 from jax._src import effects
 from jax._src import lax
 from jax._src import mesh as mesh_lib
-from jax._src import pjit
 from jax._src import sharding_impls
 from jax._src import shard_map
 from jax._src import tree_util
@@ -144,7 +143,7 @@ ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
 def _debug_callback_partial_auto(axis_context, *args, **params):
   partial_auto = list(set(axis_context.mesh.axis_names) - axis_context.manual_axes)
   def f():
-    idx = pjit.with_sharding_constraint(lax.axis_index(*partial_auto), P())
+    idx = lax.axis_index(*partial_auto)
     return lax.cond(idx == 0,
                     lambda: debug_callback_p.bind(*args, **params),
                     lambda: [])

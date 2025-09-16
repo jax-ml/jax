@@ -833,7 +833,7 @@ def _shard_map_lowering_shardy(
   tokens = [ctx.tokens_in.get(eff) for eff in ctx.tokens_in.effects()]
   num_tokens = len(tokens)
   manual_axes = order_wrt_mesh(mesh, shardy_manual_axes)
-  if np.prod([mesh.shape[a] for a in manual_axes]) == 1:
+  if prod([mesh.shape[a] for a in manual_axes]) == 1:
     # No need for a `ManualComputationOp` if all manual axes are size 1.
     with _extend_axis_env(mesh, manual_axes), config._check_vma(check_vma):
       out_nodes, tokens_out = mlir.jaxpr_subcomp(

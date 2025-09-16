@@ -28,6 +28,7 @@ from jax._src.lib import jaxlib_extension_version
 def get_num_ways_dim_sharded(
     hlo_sharding: xc.HloSharding, allow_partial_manual: bool = False
 ) -> tuple[list[int], int]:
+  assert not hlo_sharding.is_manual()
   if hlo_sharding.is_replicated():
     return [], 1
   if jaxlib_extension_version >= 371 and hlo_sharding.is_unreduced():
