@@ -1975,6 +1975,9 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     dtype=float_types + complex_types,
   )
   @jtu.run_on_devices("cpu")
+  @jtu.ignore_warning(
+      category=RuntimeWarning, message='invalid value encountered in matmul'
+  )
   def testSqrtmPSDMatrix(self, shape, dtype):
     # Checks against scipy.linalg.sqrtm when the principal square root
     # is guaranteed to be unique (i.e no negative real eigenvalue)
@@ -1986,11 +1989,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       tol = 1e-4
     else:
       tol = 1e-8
-    self._CheckAgainstNumpy(osp.linalg.sqrtm,
-                            jsp.linalg.sqrtm,
-                            args_maker,
-                            tol=tol,
-                            check_dtypes=False)
+    self._CheckAgainstNumpy(osp.linalg.sqrtm, jsp.linalg.sqrtm, args_maker,
+                            tol=tol, check_dtypes=False)
     self._CompileAndCheck(jsp.linalg.sqrtm, args_maker)
 
   @jtu.sample_product(
