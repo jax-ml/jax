@@ -1667,3 +1667,52 @@ def is_tmem_ref(ref: ir.Value | ir.Type) -> bool:
     raise ValueError(f"Expected a memref type but got {ref}")
   ref = ir.MemRefType(ref)
   return ref.memory_space is not None and ref.memory_space == tmem()
+
+
+def try_cluster_cancel(result_ref, barrier: BarrierRef):
+  """Atomically cancels a pending cluster launch.
+
+  The response is stored in a opaque 128-bit value containing the CTA id of the
+  first CTA in the canceled cluster.
+  """
+
+  addr = memref_ptr(result_ref, memory_space=3)
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [addr, barrier.get_ptr()],
+      "clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128"
+      " [$0], [$1];",
+      "r,r",
+      has_side_effects=True,
+  )
+
+
+def query_cluster_cancel(result_ref) -> tuple[int, int, int, bool]:
+  """Decodes the response of `try_cluster_cancel`.
+
+  It checks if the cancellation was successful, and if yes, it also extracts
+  the CTA ID of the first CTA in the canceled cluster.
+  """
+
+  i32 = ir.IntegerType.get_signless(32)
+  i1 = ir.IntegerType.get_signless(1)
+  struct_ty = llvm.StructType.get_literal([i32, i32, i32, i1])
+
+  addr = memref_ptr(result_ref, memory_space=3)
+  desc = llvm.inline_asm(
+    struct_ty,
+    [addr],
+    """
+    {
+        .reg .b128 handle;
+        ld.shared.b128 handle, [$4];
+        clusterlaunchcontrol.query_cancel.is_canceled.pred.b128 $3, handle;
+        @$3 clusterlaunchcontrol.query_cancel.get_first_ctaid.v4.b32.b128 {$0, $1, $2, _},  handle;
+    }""",
+    "=r,=r,=r,=b,r",
+  )
+
+  cta_ids = [llvm.extractvalue(i32, desc, [idx]) for idx in [0, 1, 2]]
+  cancelled_launch = llvm.extractvalue(i1, desc, [3])
+
+  return (*cta_ids, cancelled_launch)

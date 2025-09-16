@@ -1950,6 +1950,45 @@ class TCGen05Test(TestCase):
           kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
       )(x).block_until_ready()
 
+  @parameterized.parameters(((149, 1, 1),), ((1, 149, 1),), ((1, 1, 149),))
+  def test_cluster_launch_control(self, grid):
+    # We attempt to schedule 149 blocks on 148 SMs. Only one SM will succeed
+    # in stealing the 149th block, and the others will fail. Therefore we test
+    # that there is exactly 1 stolen block and the others fail and return -1.
+    def kernel(ctx, out, scratch):
+      cancel_result_ref, barrier, _ = scratch
+
+      with mgpu.single_thread():
+        barrier.arrive_expect_tx(16)
+        mgpu.try_cluster_cancel(cancel_result_ref, barrier)
+
+      barrier.wait()
+      *cta_ids, cancelled_launch = mgpu.query_cluster_cancel(cancel_result_ref)
+      cta_id = arith.addi(cta_ids[0], arith.addi(cta_ids[1], cta_ids[2]))
+
+      # Store a sentinel value if no work can be scheduled.
+      idx = arith.index_cast(ir.IndexType.get(), utils.block_idx())
+      sentinel_val = arith.constant(ir.IntegerType.get_signless(32), -1)
+
+      value = arith.select(cancelled_launch, cta_id, sentinel_val)
+      memref.store(value, out, [idx])
+
+    num_sms = jax.devices()[0].core_count
+    cancel_result_ref = jax.ShapeDtypeStruct((16,), jnp.int8)  # 128 bits
+    out_ty = jax.ShapeDtypeStruct((num_sms,), jnp.int32)
+    scratch = (
+        cancel_result_ref,
+        mgpu.Barrier(1),
+        # Requesting SMEM close to the 228kb limit to ensure that each SM only
+        # schedules 1 block.
+        jax.ShapeDtypeStruct((220 * 1024,), jnp.int8),
+    )
+    out = mgpu.as_gpu_kernel(kernel, grid, (128, 1, 1), (), out_ty, scratch)()
+
+    out = np.sort(out)
+    out_ref = np.array([-1] * 147 + [148])
+    np.testing.assert_array_equal(out, out_ref)
+
 
 class BarrierTest(TestCase):
 
