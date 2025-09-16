@@ -26,9 +26,9 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src.state.types import AbstractRef
 from jax._src.tree_util import (
-    PyTreeDef, tree_flatten, tree_unflatten, tree_map,
-    treedef_children, generate_key_paths, broadcast_prefix,
-    prefix_errors, _replace_nones)
+    PyTreeDef, tree_flatten, tree_unflatten, treedef_children,
+    generate_key_paths, broadcast_prefix, prefix_errors, none_leaf_registry,
+    broadcast_flattened_prefix_with_treedef)
 from jax._src import linear_util as lu
 from jax._src.util import (safe_map, WrapKwArgs, Hashable, HashableFunction,
                            Unhashable, safe_zip as zip)
@@ -398,13 +398,10 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
   # leaves, i.e. the Nones are to be considered leaves) that is a tree prefix of
   # the given treedef, build a complete axis spec tree with the same structure
   # and return the flattened result
-  # TODO(mattjj,phawkins): improve this implementation
-  proxy = object()
-  dummy = tree_unflatten(treedef, [SENTINEL] * treedef.num_leaves)
-  axes = []
-  add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
+  axis_tree_leaves, axis_treedef = none_leaf_registry.flatten(axis_tree)
   try:
-    tree_map(add_leaves, _replace_nones(proxy, axis_tree), dummy)
+    axes = broadcast_flattened_prefix_with_treedef(
+        axis_tree_leaves, axis_treedef, treedef)
   except ValueError:
     if kws:
       # if keyword arguments are included in the tree, we make adapt the error
@@ -427,7 +424,6 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
     raise ValueError(f"{name} specification must be a tree prefix of the "
                      f"corresponding value, got specification {axis_tree} "
                      f"for value tree {treedef}.{hint}") from None
-  axes = [None if a is proxy else a for a in axes]
   assert len(axes) == treedef.num_leaves
   return axes
 
