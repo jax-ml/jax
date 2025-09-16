@@ -239,7 +239,7 @@ Notebook](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 | Platform        | Instructions                                                                                                    |
 |-----------------|-----------------------------------------------------------------------------------------------------------------|
 | CPU             | `pip install -U jax`                                                                                            |
-| NVIDIA GPU      | `pip install -U "jax[cuda12]"`                                                                                  |
+| NVIDIA GPU      | `pip install -U "jax[cuda13]"`                                                                                  |
 | Google TPU      | `pip install -U "jax[tpu]"`                                                                                     |
 | AMD GPU (Linux) | Follow [AMD's instructions](https://github.com/jax-ml/jax/blob/main/build/rocm/README.md).                      |
 | Mac GPU         | Follow [Apple's instructions](https://developer.apple.com/metal/jax/).                                          |
