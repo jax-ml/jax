@@ -651,6 +651,23 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
   return res;
 };
 
+FailureOr<Value> canonicalize_scalar_integers_ops(
+    const CanonicalizeContext& ctx, Operation& op) {
+  IntegerType result_ty = dyn_cast<IntegerType>(op.getResult(0).getType());
+  if (!result_ty) {
+    // Not an scalar integer.
+    return op.getResult(0);
+  }
+  unsigned int width = result_ty.getWidth();
+  // Checking for i1 for cases like arith::andi i1, i1: i1,
+  // which are supported.
+  if (width != 32 && width != 1) {
+    op.emitOpError("Not implemented: Only i32 intergers are supported.");
+    return failure();
+  }
+  return op.getResult(0);
+}
+
 FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
                                           Operation &op) {
   OpBuilder builder(&op);
@@ -662,8 +679,6 @@ FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
   }
   if (!res_ty) {
     // scalar
-    // TODO(mvoz): Add canonicalization and invariants for scalar elementwise
-    // ops.
     return success();
   }
   auto shape = res_ty.getShape();
@@ -937,12 +952,7 @@ FailureOr<Value> canonicalize_arith_addi(const CanonicalizeContext& ctx,
 
   // The verifier ensures operands and results have the same type.
   if (result_type.isInteger()) {
-    if (result_type.isSignlessInteger(32)) {
-      return op.getResult();
-    }
-    return op.emitOpError("Not implemented: ")
-           << "Only i32 addition is supported, but got " << result_type
-           << ". Please cast your input to i32.";
+    return op.emitOpError("ERROR: we should never reach here.");
   }
 
   VectorType result_vty = dyn_cast<VectorType>(result_type);
@@ -1828,6 +1838,26 @@ bool need_elementwise_canonicalization(const CanonicalizeContext &ctx,
   });
 }
 
+llvm::ArrayRef<StringRef> scalar_integer_ops() {
+  static const StringRef ops[] = {
+      arith::AddIOp::getOperationName(),  arith::AndIOp::getOperationName(),
+      arith::DivSIOp::getOperationName(), arith::DivUIOp::getOperationName(),
+      arith::MaxSIOp::getOperationName(), arith::MaxUIOp::getOperationName(),
+      arith::MinSIOp::getOperationName(), arith::MinUIOp::getOperationName(),
+      arith::MulIOp::getOperationName(),  arith::OrIOp::getOperationName(),
+      arith::ShLIOp::getOperationName(),  arith::ShRSIOp::getOperationName(),
+      arith::ShRUIOp::getOperationName(), arith::SubIOp::getOperationName(),
+      arith::XOrIOp::getOperationName(),
+  };
+  return ops;
+}
+
+bool is_scalar_integer_op(const CanonicalizeContext& ctx, Operation& op) {
+  const auto ops = scalar_integer_ops();
+  auto it = std::find(ops.begin(), ops.end(), op.getName().getStringRef());
+  return it != ops.end() && isa<IntegerType>(op.getResult(0).getType());
+}
+
 class MosaicCanonicalizer {
  public:
   MosaicCanonicalizer(int hardware_generation, bool compatibility_mode,
@@ -1873,6 +1903,9 @@ class MosaicCanonicalizer {
     }
     if (need_elementwise_canonicalization(ctx, any_op)) {
       return canonicalize_elementwise(ctx, any_op);
+    }
+    if (is_scalar_integer_op(ctx, any_op)) {
+      return canonicalize_scalar_integers_ops(ctx, any_op);
     }
     if (auto rule_it = rules().find(any_op.getName().getStringRef());
         rule_it != rules().end()) {

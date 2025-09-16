@@ -2307,45 +2307,6 @@ class PallasCallTest(PallasBaseTest):
       jnp.uint16,
       jnp.uint32,
   ])
-  def test_scalar_integer_addition(self, dtype):
-    def kernel(x_ref, y_ref):
-      y_ref[0] = x_ref[0] + x_ref[0]
-
-    if not jtu.if_cloud_tpu_at_least(2025, 9, 13):
-      self.skipTest('Scalar integer addition support was added on Sep 13, 2025')
-
-    x = jnp.asarray([3], dtype=dtype)
-
-    if dtype in [jnp.int32, jnp.uint32]:
-      y = pl.pallas_call(
-          kernel,
-          in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
-          out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
-          out_shape=jax.ShapeDtypeStruct(x.shape, dtype),
-      )(x)
-      np.testing.assert_array_equal(y, x + x)
-    else:
-      with self.assertRaisesRegex(
-          error_handling.MosaicError,
-          'Not implemented: Only i32 addition is supported.',
-      ):
-        _ = pl.pallas_call(
-            kernel,
-            in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
-            out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
-            out_shape=jax.ShapeDtypeStruct(x.shape, dtype),
-        )(x)
-
-  @parameterized.parameters([
-      jnp.int4,
-      jnp.int8,
-      jnp.int16,
-      jnp.int32,
-      jnp.uint4,
-      jnp.uint8,
-      jnp.uint16,
-      jnp.uint32,
-  ])
   def test_vector_integer_addition(self, dtype):
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...] + x_ref[...]
@@ -2374,6 +2335,149 @@ class PallasCallTest(PallasBaseTest):
             out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
             out_shape=jax.ShapeDtypeStruct(x.shape, dtype),
         )(x)
+
+
+class PallasScalarIOpsTest(PallasBaseTest):
+
+  @staticmethod
+  def parameterized_integer_types(func):
+    _DEFAULT_INT_TYPES = [
+        jnp.int4,
+        jnp.int8,
+        jnp.int16,
+        jnp.int32,
+        jnp.uint4,
+        jnp.uint8,
+        jnp.uint16,
+        jnp.uint32,
+    ]
+
+    @parameterized.parameters(_DEFAULT_INT_TYPES)
+    def wrapper(*args, **kwargs):
+      return func(*args, **kwargs)
+
+    return wrapper
+
+  def _integer_ops_canonicalization_helper(self, kernel, result, dtype):
+    """For integer scalar ops, only i32 is supported."""
+    if not jtu.if_cloud_tpu_at_least(2025, 9, 22):
+      self.skipTest('Error message was changed on Sep 22, 2025')
+
+    x = jnp.arange(3, dtype=dtype)
+
+    if dtype in [jnp.int32, jnp.uint32]:
+      y = pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+          out_shape=jax.ShapeDtypeStruct(x.shape, dtype),
+      )(x)
+      np.testing.assert_array_equal(y, jnp.asarray([result, 0, 0], dtype=dtype))
+    else:
+      with self.assertRaisesRegex(
+          error_handling.MosaicError,
+          'Not implemented: Only i32 intergers are supported.',
+      ):
+        _ = pl.pallas_call(
+            kernel,
+            in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+            out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+            out_shape=jax.ShapeDtypeStruct(x.shape, dtype),
+        )(x)
+
+  @parameterized_integer_types
+  def test_addi_op_canonicalization(self, dtype):
+    def kernel(x_ref, y_ref):
+      y_ref[0] = x_ref[1] + x_ref[2]
+
+    self._integer_ops_canonicalization_helper(kernel, 1 + 2, dtype)
+
+  @parameterized_integer_types
+  def test_andi_op_canonicalization(self, dtype):
+    def kernel(x_ref, y_ref):
+      y_ref[0] = x_ref[1] & x_ref[2]
+
+    self._integer_ops_canonicalization_helper(kernel, 1 & 2, dtype)
+
+
+# TODO: I AM HERE
+
+
+  @parameterized_integer_types
+  def test_XXX_op_canonicalization(self, dtype):
+    def kernel(x_ref, y_ref):
+      y_ref[0] = jnp.floor(x_ref[1])
+
+    self._integer_ops_canonicalization_helper(kernel, 1, dtype)
+
+  @parameterized_integer_types
+  def test_divi_op_canonicalization(self, dtype):
+    # both divsi and divui
+    def kernel(x_ref, y_ref):
+      y_ref[0] = x_ref[1] // x_ref[2]
+
+    self._integer_ops_canonicalization_helper(kernel, 0, dtype)
+
+
+# TODO: I AM HERE
+
+
+  @parameterized_integer_types
+  def test_max_op_canonicalization(self, dtype):
+    def kernel(x_ref, y_ref):
+      y_ref[0] = jnp.maximum(x_ref[1], x_ref[2])
+
+    self._integer_ops_canonicalization_helper(kernel, max(1, 2), dtype)
+
+  @parameterized_integer_types
+  def test_min_op_canonicalization(self, dtype):
+    def kernel(x_ref, y_ref):
+      y_ref[0] = jnp.minimum(x_ref[1], x_ref[2])
+
+    self._integer_ops_canonicalization_helper(kernel, min(1, 2), dtype)
+
+  @parameterized_integer_types
+  def test_muli_op_canonicalization(self, dtype):
+    def kernel(x_ref, y_ref):
+      y_ref[0] = x_ref[1] * x_ref[2]
+
+    self._integer_ops_canonicalization_helper(kernel, 1 * 2, dtype)
+
+  @parameterized_integer_types
+  def test_ori_op_canonicalization(self, dtype):
+    def kernel(x_ref, y_ref):
+      y_ref[0] = x_ref[1] | x_ref[2]
+
+    self._integer_ops_canonicalization_helper(kernel, 1 | 2, dtype)
+
+  @parameterized_integer_types
+  def test_shli_op_canonicalization(self, dtype):
+    def kernel(x_ref, y_ref):
+      y_ref[0] = x_ref[1] << x_ref[2]
+
+    self._integer_ops_canonicalization_helper(kernel, 1 << 2, dtype)
+
+  @parameterized_integer_types
+  def test_shri_op_canonicalization(self, dtype):
+    # Includes both shrsi and shrui
+    def kernel(x_ref, y_ref):
+      y_ref[0] = x_ref[1] >> x_ref[2]
+
+    self._integer_ops_canonicalization_helper(kernel, 1 >> 2, dtype)
+
+  @parameterized_integer_types
+  def test_subi_op_canonicalization(self, dtype):
+    def kernel(x_ref, y_ref):
+      y_ref[0] = x_ref[2] - x_ref[1]
+
+    self._integer_ops_canonicalization_helper(kernel, 2 - 1, dtype)
+
+  @parameterized_integer_types
+  def test_xori_op_canonicalization(self, dtype):
+    def kernel(x_ref, y_ref):
+      y_ref[0] = x_ref[1] ^ x_ref[2]
+
+    self._integer_ops_canonicalization_helper(kernel, 1 ^ 2, dtype)
 
 
 class PallasUXTest(PallasBaseTest):
