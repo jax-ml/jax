@@ -231,7 +231,7 @@ The cost we pay is redundant work: in `f_bwd2` we must re-evaluate `g(x)` as par
 
 +++ {"id": "LqTrjPoGqrK7"}
 
-We can get this VJP behavior in autodiff &#151; without having to write VJP functions directly &#151; by instead using `jax.checkpoint` in an alternative definition of the original function `f`:
+We can get this VJP behavior in autodiff --- without having to write VJP functions directly --- by instead using `jax.checkpoint` in an alternative definition of the original function `f`:
 
 ```{code-cell}
 def f_checkpoint(x):
