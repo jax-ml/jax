@@ -25,7 +25,7 @@ jax-cuda12-pjrt; sys_platform == "linux"
 jax-cuda13-pjrt
 
 # TPU dependencies
-libtpu ; sys_platform == "linux" and platform_machine == "x86_64"
+libtpu; sys_platform == "linux" and platform_machine == "x86_64"
 
 # Platform-specific dependencies that are being ignored by pip-compile
 colorama>=0.4.4 ; sys_platform == "win32"
