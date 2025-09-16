@@ -43,9 +43,11 @@ constexpr llvm::StringRef kVersionAttrName = "stable_mosaic_gpu.version";
 // When this is bumped, we should file a TODO to update the forward-compatible
 // version in Mosaic GPU lowering in a month!
 //
-// TODO(bchetioui): Update the forward-compatible version in Mosaic GPU
+// TODO(bchetioui): Update the forward-compatible version to 2 in Mosaic GPU
 // lowering after 2025-09-08.
-constexpr int kVersion = 2;
+// TODO(apaszke): Update the forward-compatible version to 3 in Mosaic GPU
+// lowering after 2025-10-08.
+constexpr int kVersion = 3;
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
 
@@ -91,17 +93,69 @@ LogicalResult vector_insertelement_upgrade(Operation* op, int version,
   return success();
 }
 
+LogicalResult nvvm_cp_async_bulk_tensor_global_shared_cta_upgrade(
+    Operation* op, int version, bool& erased) {
+  // A new operand was added in
+  // https://github.com/llvm/llvm-project/pull/155435/commits/216550ca2169677dd6fc33bc47c3e1ba6d93fc20
+  if (version < 3) {
+    auto sizes_attr =
+        op->getAttrOfType<mlir::DenseI32ArrayAttr>("operandSegmentSizes");
+    if (!sizes_attr) {
+      return op->emitOpError(
+          "Missing or invalid operandSegmentSizes attribute");
+    }
+    if (sizes_attr.getSize() != 4) {
+      return op->emitOpError("operandSegmentSizes attribute has wrong size");
+    }
+    auto new_sizes = sizes_attr.asArrayRef().vec();
+    new_sizes.insert(new_sizes.end() - 1, 0);
+    op->setAttr("operandSegmentSizes",
+                mlir::DenseI32ArrayAttr::get(op->getContext(), new_sizes));
+  }
+  op->dump();
+  return success();
+}
+
+LogicalResult nvvm_cp_async_bulk_tensor_global_shared_cta_downgrade(
+    Operation* op, int version, bool& erased) {
+  // A new operand was added in
+  // https://github.com/llvm/llvm-project/pull/155435/commits/216550ca2169677dd6fc33bc47c3e1ba6d93fc20
+  if (version < 3) {
+    auto sizes_attr =
+        op->getAttrOfType<mlir::DenseI32ArrayAttr>("operandSegmentSizes");
+    if (!sizes_attr) {
+      return op->emitOpError(
+          "Missing or invalid operandSegmentSizes attribute");
+    }
+    if (sizes_attr.getSize() != 5) {
+      return op->emitOpError("operandSegmentSizes attribute has wrong size");
+    }
+    auto new_sizes = sizes_attr.asArrayRef().vec();
+    if (*(new_sizes.end() - 2) != 0) {
+      return op->emitOpError("Can't downgrade: l2 hint operand is present");
+    }
+    new_sizes.erase(new_sizes.end() - 2);
+    op->setAttr("operandSegmentSizes",
+                mlir::DenseI32ArrayAttr::get(op->getContext(), new_sizes));
+  }
+  return success();
+}
+
 const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
   static auto rules = new llvm::StringMap<SerdeRuleType>{
       {::llvm::StringLiteral("vector.extractelement"),
        vector_extractelement_upgrade},
       {::llvm::StringLiteral("vector.insertelement"),
-       vector_insertelement_upgrade}};
+       vector_insertelement_upgrade},
+      {::llvm::StringLiteral("nvvm.cp.async.bulk.tensor.global.shared.cta"),
+       nvvm_cp_async_bulk_tensor_global_shared_cta_upgrade}};
   return *rules;
 }
 
 const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
-  static auto rules = new llvm::StringMap<SerdeRuleType>{};
+  static auto rules = new llvm::StringMap<SerdeRuleType>{
+      {::llvm::StringLiteral("nvvm.cp.async.bulk.tensor.global.shared.cta"),
+       nvvm_cp_async_bulk_tensor_global_shared_cta_downgrade}};
   return *rules;
 }
 
