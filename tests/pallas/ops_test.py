@@ -2641,12 +2641,7 @@ class OpsTest(PallasBaseTest):
           ((1, 2, 8, 8, 1), (0, 1, 3, 2, 4)),
           ((3, 2, 8, 8, 8), (1, 0, 3, 2, 4)),
       ]
-      + [
-          # Any 5D permutation. It might involve 3rd <-> 2nd minor swap, which
-          # has a stricter dim size requirement, so we use 8x8x8x8x8 here.
-          ((8, 8, 8, 8, 8), perm)
-          for perm in itertools.permutations(range(5))
-      ]
+      + [((1, 2, 9, 3, 4), perm) for perm in itertools.permutations(range(5))]
   )
   def test_transpose(self, shape_and_axes):
     if jtu.test_device_matches(["gpu"]):
@@ -2670,10 +2665,10 @@ class OpsTest(PallasBaseTest):
 
     if (
         rank == 5
-        and in_shape == (8, 8, 8, 8, 8)
-        and not jtu.if_cloud_tpu_at_least(2025, 9, 7)
+        and in_shape == (1, 2, 9, 3, 4)
+        and not jtu.if_cloud_tpu_at_least(2025, 9, 19)
     ):
-      self.skipTest("Requires libtpu built after 2025-9-7")
+      self.skipTest("Requires libtpu built after 2025-9-19")
 
     x = jnp.arange(math.prod(in_shape), dtype=jnp.float32).reshape(in_shape)
     expected = jnp.transpose(x, axes=transpose_axes)

@@ -3272,9 +3272,10 @@ class MiscellaneousTest(PallasBaseTest):
 
     np.testing.assert_array_equal(out, np.zeros((8, 2, 128), dtype=jnp.float32))
 
-  @only_passes_in_interpret()
   def test_transpose(self):
-    """b/356475128"""
+    if not jtu.if_cloud_tpu_at_least(2025, 9, 19):
+      self.skipTest('Needs a newer libTPU')
+
     x = np.zeros((8, 2, 8, 128), dtype=jnp.float32)
 
     def kernel(x_ref, out_ref):
