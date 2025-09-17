@@ -43,5 +43,6 @@ jobs:
       libtpu-version-type: "nightly"
       halt-for-connection: false
       build_jaxlib: "true"
+      build_jax: "true"
       clone_main_xla: 1
     # End Presubmit Naming Check github-tpu-presubmits

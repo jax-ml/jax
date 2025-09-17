@@ -107,7 +107,7 @@ bazel test --config=$TEST_CONFIG \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-      --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
+      --//jax:build_jax=$JAXCI_BUILD_JAX \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
       --test_output=errors \
@@ -137,7 +137,7 @@ bazel test --config=$TEST_CONFIG \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-      --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
+      --//jax:build_jax=$JAXCI_BUILD_JAX \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --test_output=errors \
       $TEST_STRATEGY \
