@@ -25,6 +25,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     behavior was deprecated and is now removed. The function must be called
     with an array implementing `__dlpack__` and `__dlpack_device__`.
 
+* Breaking changes
+  * Fixed a numerical issue in the gradients produced by `jax.remat`. This may
+    cause ``f(x) != jax.value_and_grad(f)(x)[0]`` (due to numerical differences)
+    for more functions f than previously. See
+    https://github.com/google/jax/pull/22244 for more information.
+
 * Changes
   * The minimum supported NumPy version is now 2.0. Since SciPy 1.13 is required
     for NumPy 2.0 support, the minimum supported SciPy version is now 1.13.
