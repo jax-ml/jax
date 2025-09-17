@@ -16,6 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Breaking changes:
+
+  * The deprecated function {func}`jax.interpreters.mlir.custom_call` was
+    removed.
 
 ## JAX 0.7.2 (September 16, 2025)
 
