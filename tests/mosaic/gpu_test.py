@@ -3835,7 +3835,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       layout=tuple(RegisterLayout),
       dtype=(jnp.bfloat16, jnp.int8),
   )
-  def test_smem_registers_load_store(self, layout, dtype):
+  def test_smem_gmem_registers_load_store(self, layout, dtype):
     if layout in _wg_unsupported_layouts():
       self.skipTest(f"Layout {layout} is not supported on WG")
     optimized = layout != RegisterLayout.TCGEN05_TMEM_NATIVE
@@ -3862,7 +3862,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       # Registers -> GMEM
       vector.store(reg, result, zero_vector_indices)
 
-    shape = (128, 128)
     jax_shape = jax.ShapeDtypeStruct(shape, dtype)
     kernel = mgpu.as_gpu_kernel(
         body,
@@ -3898,43 +3897,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           smem_scratch_shape=(),
           thread_semantics=mgpu.LoweringSemantics.Warpgroup,
       )
-
-  @parameterized.product(
-      layout=tuple(RegisterLayout),
-      dtype=(jnp.bfloat16, jnp.int8),
-  )
-  def test_gmem_registers_load_store(self, layout, dtype):
-    if layout in _wg_unsupported_layouts():
-      self.skipTest(f"Layout {layout} is not supported on WG")
-    shape = (128, 128)
-    layout_attr = layout.to_layout_attr(shape, dtype)
-
-    def body(ctx, param: ir.Value, result: ir.Value, smem):
-      del ctx, smem
-      shape = ir.MemRefType(param.type).shape
-      zero_index = arith.constant(ir.IndexType.get(), 0)
-      zero_vector_indices = [zero_index] * len(shape)
-
-      # GMEM -> Registers
-      reg = vector_load(param, optimized=False)
-      reg = mgpu_dialect.layout_cast(reg, layout_attr)
-
-      # Registers -> GMEM
-      vector.store(reg, result, zero_vector_indices)
-
-    jax_shape = jax.ShapeDtypeStruct(shape, dtype)
-    kernel = mgpu.as_gpu_kernel(
-        body,
-        grid=(1, 1, 1),
-        block=(128, 1, 1),
-        in_shape=jax_shape,
-        out_shape=jax_shape,
-        smem_scratch_shape=[],
-        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
-    )
-
-    param = self.prng.uniform(-1, 1, shape).astype(dtype)
-    self.assertArraysEqual(kernel(param), param)
 
   def test_pointwise_kernel(self):
     def add(ctx, a, b, result, smem):
