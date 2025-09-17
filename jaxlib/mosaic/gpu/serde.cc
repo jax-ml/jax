@@ -112,7 +112,6 @@ LogicalResult nvvm_cp_async_bulk_tensor_global_shared_cta_upgrade(
     op->setAttr("operandSegmentSizes",
                 mlir::DenseI32ArrayAttr::get(op->getContext(), new_sizes));
   }
-  op->dump();
   return success();
 }
 
