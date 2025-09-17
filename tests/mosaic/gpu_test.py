@@ -3760,6 +3760,66 @@ def vector_load(ref: ir.Value, optimized: bool = True) -> ir.Value:
   return op.result
 
 
+def vector_store(reg: ir.Value, ref: ir.Value) -> None:
+  """Stores the given vector to the given SMEM/GMEM reference."""
+  reg_type = ir.VectorType(reg.type)
+  zero = arith.constant(ir.IndexType.get(), 0)
+  zero_indices = [zero] * len(reg_type.shape)
+  vector.store(reg, ref, zero_indices)
+
+
+class RegisterLayout(enum.Enum):
+  """The list of supported register layouts."""
+
+  WGMMA = enum.auto()
+  WG_STRIDED = enum.auto()
+  TCGEN05 = enum.auto()
+  TCGEN05_M64_COLLECTIVE = enum.auto()
+  TCGEN05_TMEM_NATIVE = enum.auto()
+  SMEM_GMEM_COPY = enum.auto()
+  TMA_GATHER_INDICES = enum.auto()
+
+  def to_mgpu(
+      self, shape: tuple[int, int], dtype: jnp.dtype
+  ) -> fa.FragmentedLayout:
+    match self:
+      case RegisterLayout.WGMMA:
+        return fa.WGMMA_LAYOUT
+      case RegisterLayout.WG_STRIDED:
+        return fa.WGStridedFragLayout(shape, vec_size=1)
+      case RegisterLayout.TCGEN05:
+        return fa.TCGEN05_LAYOUT
+      case RegisterLayout.TCGEN05_M64_COLLECTIVE:
+        return fa.fa_m64_collective_layout(shape[1])
+      case RegisterLayout.TCGEN05_TMEM_NATIVE:
+        return fa.TMEM_NATIVE_LAYOUT
+      case RegisterLayout.SMEM_GMEM_COPY:
+        swizzle = 128
+        bitwidth = dtypes.bit_width(dtype)
+        tiling = (8, 8 * swizzle // bitwidth)
+        row_tiles, col_tiles = tile_shape(shape, tiling)[-4:-2]
+        return fa.tiled_copy_smem_gmem_layout(
+            row_tiles, col_tiles, swizzle, bitwidth
+        )
+      case RegisterLayout.TMA_GATHER_INDICES:
+        return fa.TMA_GATHER_INDICES_LAYOUT
+
+  def to_layout_attr(
+      self, shape: tuple[int, int], dtype: jnp.dtype
+  ) -> ir.Attribute:
+    return mgpu_layouts.to_layout_attr(self.to_mgpu(shape, dtype))
+
+
+# TODO(allanrenucci): Add support for these layouts.
+def _wg_unsupported_layouts() -> set[RegisterLayout]:
+  return {
+      RegisterLayout.TCGEN05_M64_COLLECTIVE,
+      RegisterLayout.SMEM_GMEM_COPY,
+      RegisterLayout.TMA_GATHER_INDICES,
+      RegisterLayout.TCGEN05,
+  }
+
+
 class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
   """Device tests with lowering from the MLIR dialect and layout inference."""
 
@@ -3769,10 +3829,16 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     super().setUp()
 
   @parameterized.product(
-      layout=(fa.WGMMA_LAYOUT, tcgen05.TMEM_NATIVE_LAYOUT, fa.WGStridedFragLayout((128, 128), 1)),
+      layout=tuple(RegisterLayout),
       dtype=(jnp.bfloat16, jnp.int8),
   )
   def test_smem_registers_load_store(self, layout, dtype):
+    if layout in _wg_unsupported_layouts():
+      self.skipTest(f"Layout {layout} is not supported on WG")
+    optimized = layout != RegisterLayout.TCGEN05_TMEM_NATIVE
+    shape = (128, 128)
+    layout_attr = layout.to_layout_attr(shape, dtype)
+
     def body(ctx, param: ir.Value, result: ir.Value, smem: list[ir.Value]):
       del ctx
       shape = ir.MemRefType(param.type).shape
@@ -3781,15 +3847,14 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
       # GMEM -> Registers
       reg = vector_load(param, optimized=False)
-      reg = mgpu_dialect.layout_cast(reg, mgpu_layouts.to_layout_attr(layout))
+      reg = mgpu_dialect.layout_cast(reg, layout_attr)
 
       # Registers -> SMEM
       vector.store(reg, smem, zero_vector_indices)
 
       # SMEM -> Registers
-      optimized = layout != tcgen05.TMEM_NATIVE_LAYOUT
       reg = vector_load(smem, optimized=optimized)
-      reg = mgpu_dialect.layout_cast(reg, mgpu_layouts.to_layout_attr(layout))
+      reg = mgpu_dialect.layout_cast(reg, layout_attr)
 
       # Registers -> GMEM
       vector.store(reg, result, zero_vector_indices)
@@ -3832,10 +3897,15 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       )
 
   @parameterized.product(
-      layout=(fa.WGMMA_LAYOUT, tcgen05.TMEM_NATIVE_LAYOUT, fa.WGStridedFragLayout((128, 128), 1)),
+      layout=tuple(RegisterLayout),
       dtype=(jnp.bfloat16, jnp.int8),
   )
   def test_gmem_registers_load_store(self, layout, dtype):
+    if layout in _wg_unsupported_layouts():
+      self.skipTest(f"Layout {layout} is not supported on WG")
+    shape = (128, 128)
+    layout_attr = layout.to_layout_attr(shape, dtype)
+
     def body(ctx, param: ir.Value, result: ir.Value, smem):
       del ctx, smem
       shape = ir.MemRefType(param.type).shape
@@ -3844,12 +3914,11 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
       # GMEM -> Registers
       reg = vector_load(param, optimized=False)
-      reg = mgpu_dialect.layout_cast(reg, mgpu_layouts.to_layout_attr(layout))
+      reg = mgpu_dialect.layout_cast(reg, layout_attr)
 
       # Registers -> GMEM
       vector.store(reg, result, zero_vector_indices)
 
-    shape = (128, 128)
     jax_shape = jax.ShapeDtypeStruct(shape, dtype)
     kernel = mgpu.as_gpu_kernel(
         body,
@@ -5424,6 +5493,51 @@ if hp is not None:
             kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
         )(x)
         np.testing.assert_array_equal(y, x)
+      run()
+
+    def test_dialect_vector_load_store(self):
+      @hps.composite
+      def strategy(draw):
+        shape, layout = draw(shape_and_tiled_layout(vector_transfer=True))
+        return shape, layout
+
+      @hp.given(strategy())
+      @hp.example(((128, 128), fa.WGMMA_LAYOUT))
+      @hp.example(((128, 128), fa.TCGEN05_LAYOUT))
+      @hp.example(((128, 128), fa.TMEM_NATIVE_LAYOUT))
+      def run(args):
+        shape, layout = args
+        dtype = jnp.float32
+        layout_attr = mgpu_layouts.to_layout_attr(layout)
+
+        def body(ctx, input, result, smem):
+          del ctx
+          # GMEM -> Registers
+          reg = vector_load(input, optimized=False)
+          reg = mgpu_dialect.layout_cast(reg, layout_attr)
+          # Registers -> SMEM
+          vector_store(reg, smem)
+          # SMEM -> Registers
+          reg = vector_load(smem, optimized=False)
+          reg = mgpu_dialect.layout_cast(reg, layout_attr)
+          # Registers -> GMEM
+          vector_store(reg, result)
+
+        jax_shape = jax.ShapeDtypeStruct(shape, dtype)
+        kernel = mgpu.as_gpu_kernel(
+            body,
+            grid=(1, 1, 1),
+            block=(128, 1, 1),
+            in_shape=jax_shape,
+            out_shape=jax_shape,
+            smem_scratch_shape=jax_shape,
+            thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+        )
+
+        input = self.prng.uniform(-1, 1, shape).astype(dtype)
+        np.testing.assert_array_equal(kernel(input), input)
+
+      self.skipTest("Transform inference not implemented")
       run()
 
 
