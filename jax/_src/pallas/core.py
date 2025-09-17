@@ -168,16 +168,17 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
     return hash((self.shape, self.dtype, self.weak_type, self.sharding,
                  self.vma, self.memory_space))
 
-  def str_short(self, short_dtypes=False):
-    dt_str = (dtypes.short_dtype_name(self.dtype) if short_dtypes else
-              self.dtype.name)
-    dt_str = dt_str.replace("void", "float0")
-    shapestr = ",".join(map(str, self.shape))
-    sharding_str = (f"{dt_str}[{shapestr}]({self.sharding})"
-                    if self.sharding else "")
-    memoryspace_str = ("" if self.memory_space is None
-                       else f"<{self.memory_space}>")
-    return f"{dt_str}{memoryspace_str}[{shapestr}]{sharding_str}"
+  def str_short(self, short_dtypes=False, mesh_axis_types=False):
+    return jax_core.str_short_aval(
+        self.shape,
+        self.dtype,
+        self.sharding.mesh,
+        self.sharding.spec,
+        self.vma,
+        self.memory_space,
+        short_dtypes,
+        mesh_axis_types,
+    )
 
   def update(
       self,
