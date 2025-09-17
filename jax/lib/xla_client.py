@@ -15,35 +15,6 @@
 from jax._src.lib import xla_client as _xc
 
 _deprecations = {
-    # Finalized for JAX v0.7.0
-    "heap_profile": (
-        (
-            "jax.lib.xla_client.heap_profile was deprecated in JAX v0.6.0 and"
-            " removed in JAX v0.7.0"
-        ),
-        None,
-    ),
-    "get_topology_for_devices": (
-        (
-            "jax.lib.xla_client.get_topology_for_devices was deprecated in JAX"
-            " v0.6.0 and removed in JAX v0.7.0"
-        ),
-        None,
-    ),
-    "mlir_api_version": (
-        (
-            "jax.lib.xla_client.mlir_api_version was deprecated in JAX v0.6.0"
-            " and removed in JAX v0.7.0"
-        ),
-        None,
-    ),
-    "DeviceAssignment": (
-        (
-            "jax.lib.xla_client.DeviceAssignment was deprecated in JAX v0.6.0"
-            " and removed in JAX v0.7.0"
-        ),
-        None,
-    ),
     # Added April 4 2025.
     "Client": (
         (

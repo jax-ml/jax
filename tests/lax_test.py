@@ -34,7 +34,6 @@ from jax import jvp, grad
 from jax import lax
 import jax.numpy as jnp
 from jax.test_util import check_grads
-import jax.util
 
 from jax.interpreters import batching
 from jax._src import array

@@ -29,23 +29,6 @@ del _xc
 
 # Deprecations
 _deprecations = {
-    # Finalized in JAX v0.7.0
-    "abstractify": (
-        (
-            "jax.interpreters.xla.abstractify was deprecated in JAX v0.5.0"
-            " and removed in JAX v0.7.0. jax.core.get_aval can be used as"
-            " a replacement in most cases."
-        ),
-        None,
-    ),
-    "pytype_aval_mappings": (
-        (
-            "jax.interpreters.xla.pytype_aval_mappings was deprecated in JAX"
-            " v0.5.0 and removed in JAX v0.7.0. jax.core.pytype_aval_mappings"
-            " can be used as a replacement in most cases."
-        ),
-        None,
-    ),
     # Added in JAX v0.7.0
     "canonicalize_dtype": (
         (

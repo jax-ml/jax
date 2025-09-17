@@ -125,7 +125,6 @@ def warn(deprecation_id: str, message: str, stacklevel: int) -> None:
 # always registered by the time `accelerate` and `is_acelerated` are called.
 register('default-dtype-bits-config')
 register('jax-aval-named-shape')
-register('jax-experimental-host-callback')
 register('jax-lax-dot-positional-args')
 register('jax-nn-one-hot-float-input')
 register("jax-numpy-astype-complex-to-real")

@@ -17,68 +17,6 @@ from jax._src.lib import ifrt_proxy as _ifrt_proxy
 from jax._src.lib import _jax
 
 _deprecations = {
-    # Finalized for JAX v0.7.0
-    "Device": (
-        (
-            "jax.lib.xla_extension.Device was deprecated in JAX v0.6.0"
-            " and removed in JAX v0.7.0; use jax.Device instead."
-        ),
-        None,
-    ),
-    "DistributedRuntimeClient": (
-        (
-            "jax.lib.xla_extension.DistributedRuntimeClient deprecated in JAX"
-            " v0.6.0 and removed in JAX v0.7.0; use jax.distributed instead."
-        ),
-        None,
-    ),
-    "HloModule": (
-        (
-            "jax.lib.xla_extension.HloModule deprecated in JAX v0.6.0"
-            " and removed in JAX v0.7.0."
-        ),
-        None,
-    ),
-    "OpSharding": (
-        (
-            "jax.lib.xla_extension.OpSharding deprecated in JAX v0.6.0"
-            " and removed in JAX v0.7.0."
-        ),
-        None,
-    ),
-    "PjitFunctionCache": (
-        (
-            "jax.lib.xla_extension.PjitFunctionCache was deprecated in JAX v0.6.0"
-            " and removed in JAX v0.7.0."
-        ),
-        None,
-    ),
-    "get_distributed_runtime_client": (
-        (
-            "jax.lib.xla_extension.get_distributed_runtime_client was deprecated"
-            " in JAX v0.6.0 and removed in JAX v0.7.0; use jax.distributed instead."
-        ),
-       None,
-    ),
-    "get_distributed_runtime_service": (
-        (
-            "jax.lib.xla_extension.get_distributed_runtime_service was deprecated"
-            " in JAX v0.6.0 and removed in JAX v0.7.0; use jax.distributed instead."
-        ),
-        None,
-    ),
-    "jax_jit": (
-        "jax.lib.xla_extension.jax_jit deprecated in JAX v0.6.0 and removed in JAX v0.7.0.",
-        None,
-    ),
-    "pmap_lib": (
-        "jax.lib.xla_extension.pmap_lib deprecated in JAX v0.6.0 and removed in JAX v0.7.0.",
-       None
-    ),
-    "pytree": (
-        "jax.lib.xla_extension.pytree deprecated in JAX v0.6.0 and removed in JAX v0.7.0.",
-        None,
-    ),
     # Deprecated March 26 2025.
     "ifrt_proxy": (
         "jax.lib.xla_extension.ifrt_proxy is deprecated.",

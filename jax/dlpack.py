@@ -31,17 +31,6 @@ _deprecations = {
         ),
         jax._src.dlpack.SUPPORTED_DTYPES
     ),
-    # Finalized in JAX v0.7.0; remove in JAX v0.8.0
-    "to_dlpack": (
-        (
-            "jax.dlpack.to_dlpack was deprecated in JAX v0.6.0 and"
-            " removed in JAX v0.7.0. Please use the newer DLPack API based on"
-            " __dlpack__ and __dlpack_device__ instead. Typically, you can pass"
-            " a JAX array directly to the `from_dlpack` function of another"
-            " framework without using `to_dlpack`."
-        ),
-        None,
-    ),
 }
 
 

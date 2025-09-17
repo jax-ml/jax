@@ -274,7 +274,6 @@ jax_multiplatform_test(
     ],
     # TODO(dfm): Remove after removal of jex.ffi imports.
     deps = [
-        "//jax:extend",
         "//jax/_src:ffi",
     ] + py_deps([
         "absl/testing",

@@ -39,28 +39,9 @@ Breaking changes will be announced via the
 from jax.extend import (
     backend as backend,
     core as core,
-    ffi as _ffi,
     linear_util as linear_util,
     mlir as mlir,
     random as random,
     sharding as sharding,
     source_info_util as source_info_util,
 )
-
-_deprecations = {
-    # Added 2025-7-7
-    "ffi": (
-        "The jax.extend.ffi module was deprecated in JAX v0.5.0, use jax.ffi instead.",
-        _ffi,
-    ),
-}
-
-import typing
-if typing.TYPE_CHECKING:
-  ffi = _ffi
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del typing
-del _ffi

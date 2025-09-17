@@ -20,6 +20,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
   * The deprecated function {func}`jax.interpreters.mlir.custom_call` was
     removed.
+  * The `jax.util`, `jax.extend.ffi`, and `jax.experimental.host_callback`
+    modules have been removed. All public APIs within these modules were
+    deprecated and removed in v0.7.0 or earlier.
+
 
 ## JAX 0.7.2 (September 16, 2025)
 
