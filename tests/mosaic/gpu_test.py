@@ -28,7 +28,6 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import dtypes
-from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
@@ -4650,10 +4649,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
   def test_tmem_alloc_dealloc(
       self, shape, dtype, packing, collective, expected_allocated_columns
   ):
-    # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.2.
-    if jaxlib.version < (0, 7, 2):
-      self.skipTest("Require JAX version 0.7.2 or higher.")
-
     tmem_type = ir.MemRefType.get(
         shape,
         utils.dtype_to_ir_type(dtype),
@@ -4718,10 +4713,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       ("custom layout", None, tcgen05.tmem_default_layout(packing=1)),
   )
   def test_tmem_load_store(self, packing, layout):
-    # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.2.
-    if jaxlib.version < (0, 7, 2):
-      self.skipTest("Require JAX version 0.7.2 or higher.")
-
     dtype = jnp.bfloat16
     shape = (128, 128)
 
@@ -4781,9 +4772,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       a_in_tmem=(False, True),
   )
   def test_tcgen05_mma(self, m, n, swizzle, ab_type, acc_type, a_in_tmem):
-    # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.2.
-    if jaxlib.version < (0, 7, 2):
-      self.skipTest("Require JAX version 0.7.2 or higher.")
     if acc_type == jnp.float16 and ab_type != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
     if a_in_tmem and m != 128:
@@ -4902,9 +4890,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       a_in_tmem=(False, True),
   )
   def test_tcgen05_collective_mma(self, m, n, swizzle, ab_type, acc_type, a_in_tmem):
-    # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.2.
-    if jaxlib.version < (0, 7, 2):
-      self.skipTest("Require JAX version 0.7.2 or higher.")
     if acc_type == jnp.float16 and ab_type != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
     if a_in_tmem and m != 256:

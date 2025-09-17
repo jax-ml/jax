@@ -22,7 +22,6 @@ import math
 import operator
 from typing import Any, cast
 
-from jax._src import lib as jaxlib
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
@@ -887,30 +886,29 @@ def _mgpu_async_load_op_lowering_rule(
   return []
 
 
-if jaxlib.version >= (0, 7, 2):
-  @_register_lowering(mgpu.AsyncPrefetchOp)
-  def _mgpu_async_prefetch_op_lowering_rule(
-      ctx: LoweringContext, load_op: mgpu.AsyncPrefetchOp
-  ) -> Sequence[ir.Value]:
-    assert ctx.launch_context is not None
+@_register_lowering(mgpu.AsyncPrefetchOp)
+def _mgpu_async_prefetch_op_lowering_rule(
+    ctx: LoweringContext, load_op: mgpu.AsyncPrefetchOp
+) -> Sequence[ir.Value]:
+  assert ctx.launch_context is not None
 
-    gmem_slice = []
-    for idx_i32, size in zip(load_op.indices, load_op.slice_lengths):
-      idx = arith.index_cast(ir.IndexType.get(), idx_i32)
-      v = idx if size < 0 else utils.DynamicSlice(idx, size)
-      gmem_slice.append(v)
+  gmem_slice = []
+  for idx_i32, size in zip(load_op.indices, load_op.slice_lengths):
+    idx = arith.index_cast(ir.IndexType.get(), idx_i32)
+    v = idx if size < 0 else utils.DynamicSlice(idx, size)
+    gmem_slice.append(v)
 
-    if load_op.collective:
-      raise NotImplementedError("Collective prefetches are not supported yet.")
+  if load_op.collective:
+    raise NotImplementedError("Collective prefetches are not supported yet.")
 
-    ctx.launch_context.async_prefetch(
-        gmem_ref=load_op.source,
-        gmem_slice=tuple(gmem_slice),
-        swizzle=None,
-        gmem_transform=(),
-        predicate=ctx.single_thread_per_warpgroup_predicate,
-    )
-    return []
+  ctx.launch_context.async_prefetch(
+      gmem_ref=load_op.source,
+      gmem_slice=tuple(gmem_slice),
+      swizzle=None,
+      gmem_transform=(),
+      predicate=ctx.single_thread_per_warpgroup_predicate,
+  )
+  return []
 
 
 @_register_lowering(mgpu.AsyncStoreOp)
@@ -950,18 +948,17 @@ def _mgpu_async_store_op_lowering_rule(
   return []
 
 
-if jaxlib.version >= (0, 7, 2):
-  @_register_lowering(mgpu.TmemLayoutCastOp)
-  def _tmem_layout_cast_lowering_rule(
-      ctx: LoweringContext,
-      op: mgpu.TmemLayoutCastOp,
-  ) -> Sequence[ir.Value]:
-    del ctx
-    in_layout = inference_utils.in_tmem_layouts(op)[0]
-    tmem_ref = _tmem_ref_from_ir(op.ref, in_layout)
-    # We can't relayout TMEM.
-    assert layouts.to_layout_attr(tmem_ref.layout) == op.new_layout
-    return [op.ref]
+@_register_lowering(mgpu.TmemLayoutCastOp)
+def _tmem_layout_cast_lowering_rule(
+    ctx: LoweringContext,
+    op: mgpu.TmemLayoutCastOp,
+) -> Sequence[ir.Value]:
+  del ctx
+  in_layout = inference_utils.in_tmem_layouts(op)[0]
+  tmem_ref = _tmem_ref_from_ir(op.ref, in_layout)
+  # We can't relayout TMEM.
+  assert layouts.to_layout_attr(tmem_ref.layout) == op.new_layout
+  return [op.ref]
 
 
 def _conversion_op_lowering_rule(

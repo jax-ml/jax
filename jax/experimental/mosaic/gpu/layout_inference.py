@@ -23,7 +23,6 @@ import itertools
 import re
 from typing import assert_never, cast
 
-from jax._src import lib as jaxlib
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -888,21 +887,20 @@ def _tmem_layout_from_layout_attr(
   )
 
 
-if jaxlib.version >= (0, 7, 2):
-  @_add_equation_system_derivation_rule(mgpu.TmemLayoutCastOp)
-  def _tmem_layout_cast_equation_system(
-      ctx: DerivationContext,
-      op: mgpu.TmemLayoutCastOp,
-  ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
-    operand = OperandOrResult(op, VariableType.OPERAND, 0)
-    variable = ctx.producer_ref(operand)
-    result = OperandOrResult(op, VariableType.RESULT, 0)
-    out_layout = eqns.TMEMLayout(_tmem_layout_from_layout_attr(op.new_layout))
-    return (
-        eqns.EquationSystem(assignments={variable: out_layout}),
-        {variable: [operand, result]},
-        [],
-    )
+@_add_equation_system_derivation_rule(mgpu.TmemLayoutCastOp)
+def _tmem_layout_cast_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.TmemLayoutCastOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  operand = OperandOrResult(op, VariableType.OPERAND, 0)
+  variable = ctx.producer_ref(operand)
+  result = OperandOrResult(op, VariableType.RESULT, 0)
+  out_layout = eqns.TMEMLayout(_tmem_layout_from_layout_attr(op.new_layout))
+  return (
+      eqns.EquationSystem(assignments={variable: out_layout}),
+      {variable: [operand, result]},
+      [],
+  )
 
 
 @_add_equation_system_derivation_rule(mgpu.TmemAllocOp)
