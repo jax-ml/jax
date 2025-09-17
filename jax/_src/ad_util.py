@@ -47,7 +47,7 @@ raw_jaxval_adders = {}  # type: ignore
 
 @add_jaxvals_p.def_abstract_eval
 def add_abstract(x, y):
-  assert core.typematch(x, y)
+  assert core.typematch(x, y), (x, y)
   return x
 
 def zeros_like_aval(aval: core.AbstractValue) -> Array:

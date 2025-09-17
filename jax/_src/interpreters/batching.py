@@ -1202,21 +1202,24 @@ def bdim_at_front(x, bdim, size, mesh_axis=None):
     return moveaxis(x, bdim, 0)
 
 
-def add_batched(batched_args, batch_dims):
+def add_batched(axis_data, batched_args, batch_dims):
   bdx, bdy = batch_dims
   x, y = batched_args
+  mesh_axis = axis_data.explicit_mesh_axis
   if bdx == bdy:
     return add_jaxvals(x, y), bdx
   elif bdx is not_mapped:
-    x = broadcast(x, y.shape[bdy], bdy)
+    x = broadcast(x, y.shape[bdy], bdy, mesh_axis=mesh_axis)
     return add_jaxvals(x, y), bdy
   elif bdy is not_mapped:
-    y = broadcast(y, x.shape[bdx], bdx)
+    y = broadcast(y, x.shape[bdx], bdx, mesh_axis=mesh_axis)
     return add_jaxvals(x, y), bdx
   else:
     x = moveaxis(x, bdx, bdy)
     return add_jaxvals(x, y), bdy
-primitive_batchers[add_jaxvals_p] = add_batched
+
+fancy_primitive_batchers[add_jaxvals_p] = add_batched
+skippable_batchers[add_jaxvals_p] = lambda _: ()
 
 ########################### core. ##################################
 

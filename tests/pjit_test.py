@@ -8896,6 +8896,25 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaises(core.ShardingTypeError):
       f(arr, indices)
 
+  @config.numpy_dtype_promotion('standard')
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_yash(self, mesh):
+    @jax.jit
+    def f(w, samples):
+      def f(w, x):
+        y = jnp.dot(x, w)
+        return jnp.sum(jnp.log1p(jnp.exp(-2 * y))) + 1j * jnp.sum(y)
+
+      def vjp_step(x):
+        r, vjp_fn = jax.vjp(lambda w: f(w, x), w)
+        return vjp_fn(jnp.ones_like(r))[0]
+
+      return jax.vmap(vjp_step)(samples)
+
+    samples = reshard(jax.random.normal(jax.random.key(1), (4, 4)), P("x"))
+    w = jax.random.normal(jax.random.key(1), (4, 8))
+    f(w, samples)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
