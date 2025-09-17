@@ -240,7 +240,8 @@ class TiledRectangularVregBounds : public VRegDataBounds {
     for (int64_t tile = start_tile; tile < end_tile; ++tile) {
       const int64_t sublane_offset = sublanes_per_tile * tile;
       const int64_t row_offset = sublane_offset * layout_.packing();
-      const int64_t start_lane = tile == 0 ? start_offsets_[1] : 0;
+      const int64_t start_lane =
+          tile == start_tile ? start_offsets_[1] % layout_.tiling()[1] : 0;
       const int64_t end_lane =
           tile == end_tile - 1
               ? positiveMod(end_offsets_[1], layout_.tiling()[1])
