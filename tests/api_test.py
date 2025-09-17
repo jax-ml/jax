@@ -33,6 +33,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import traceback
 import types
 from typing import NamedTuple
@@ -4924,6 +4925,32 @@ class APITest(jtu.JaxTestCase):
     # ``operator.add`` is a built-in function and does not have source info.
     with config.explain_cache_misses(True):
       jax.jit(operator.add)(42, 24)
+
+  def test_cache_miss_explanations_are_thread_safe(self):
+    @jax.jit
+    def f(i):
+      return jnp.sum(i)
+
+    saw_exception = False
+
+    def thread(i0):
+      nonlocal saw_exception
+      try:
+        for i in range(i0, 100, 10):
+          if saw_exception:
+            break
+          with config.explain_cache_misses(True):
+            f(jnp.zeros(i))
+      except Exception:
+        saw_exception = True
+        raise
+
+    t = [threading.Thread(target=thread, args=(i,)) for i in range(10)]
+    for i in t:
+      i.start()
+    for i in t:
+      i.join()
+    self.assertFalse(saw_exception)
 
   @parameterized.named_parameters([
       {"testcase_name": f"{np.dtype(dtype)}", "dtype": dtype}

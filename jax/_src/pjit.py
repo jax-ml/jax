@@ -1293,8 +1293,16 @@ def explain_tracing_cache_miss(
 
   p(f"  for {func_name}{src_info}")
 
+  # Do *not* remove the list() around the call to keys(). The cache may be
+  # updated concurrently by other threads, and we need to perform the iteration
+  # over the dictionary keys in a way that is concurrency safe. Here we are
+  # relying on an implementation behavior of CPython wherein the particular list
+  # constructor used here acts atomically.
+  # See https://github.com/jax-ml/jax/issues/30163
+  cache_keys = list(cache.keys())
+
   diffs = [diff_tracing_cache_keys(key, ok, debug_info)
-           for ok in cache.keys() if key != ok]
+           for ok in cache_keys if key != ok]
   assert diffs, "we must find some diffs if key differs from all cache keys"
   min_diff = min(diffs, key=lambda v: v[1])
   smallest_diffs: Sequence[Sequence[str]]  # the diffs for the closest keys
