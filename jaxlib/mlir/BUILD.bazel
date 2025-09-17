@@ -239,6 +239,20 @@ symlink_inputs(
 )
 
 symlink_inputs(
+    name = "mpmd_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@shardy//shardy/integrations/python/ir/mpmd:mpmd_ops_py_files"],
+    }},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+        "//jaxlib/mlir/_mlir_libs:_sdyMpmd",
+    ],
+)
+
+symlink_inputs(
     name = "stablehlo_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {
