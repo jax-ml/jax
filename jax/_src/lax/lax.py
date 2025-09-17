@@ -8405,7 +8405,6 @@ def _rng_bit_generator_sharding_rule(key, *, shape, dtype, algorithm,
   return (key.sharding, out_sharding)
 
 def _rng_bit_generator_vma_rule(key, *, shape, dtype, algorithm, out_sharding):
-  assert key.vma == frozenset()
   return (key.vma, frozenset())
 
 def _rng_bit_generator_dtype_rule(key, *, shape, dtype, algorithm, out_sharding):

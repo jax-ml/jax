@@ -1448,6 +1448,21 @@ class ShardMapTest(jtu.JaxTestCase):
     g = shard_map(f, mesh=mesh, in_specs=(pspec,), out_specs=pspec)
     _ = g(sharded_rng)  # don't crash!
 
+  @parameterized.parameters(['threefry2x32', 'rbg', 'unsafe_rbg'])
+  def test_sharded_random_bits(self, prng_impl):
+    mesh = jtu.create_mesh((4,), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, P('x'))
+
+    rng = jax.random.key(0, impl=prng_impl)
+    sharded_rng = jax.random.split(rng, num=4)
+    sharded_rng = jax.device_put(sharded_rng, sharding)
+
+    def f(key):
+      return jax.random.bits(key[0], shape=(4,), dtype=jnp.uint8)
+
+    g = shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    g(sharded_rng)  # don't crash!
+
   def test_vma_out_specs_error_check(self):
     mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'))
     @shard_map(mesh=mesh, in_specs=P('x', 'y', 'z'), out_specs=P('x'))
