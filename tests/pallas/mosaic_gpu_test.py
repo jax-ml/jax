@@ -5506,6 +5506,31 @@ class SemaphoreTest(PallasTest):
     result = kernel()
     np.testing.assert_array_equal(result, jnp.ones((128,), jnp.float32))
 
+  def test_global_semaphore_with_multiple_threads(self):
+    def body(out_ref):
+      @functools.partial(pl.run_scoped,
+                         sem_ref=plgpu.SemaphoreType.REGULAR,
+                         collective_axes=("x", "wg"))
+      def _scoped(sem_ref):
+        block_id = lax.axis_index("x")
+        @pl.when(block_id == 0)
+        def _():
+          pl.semaphore_signal(sem_ref)
+        @pl.when(block_id == 1)
+        def _():
+          pl.semaphore_wait(sem_ref)
+          out_ref[...] = jnp.ones_like(out_ref)
+    kernel = plgpu.kernel(
+        body,
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+        grid=(10,),
+        grid_names=("x",),
+        thread_name="wg",
+        num_threads=2,
+    )
+    result = kernel()
+    np.testing.assert_array_equal(result, jnp.ones((128,), jnp.float32))
+
   def test_multiple_semaphore_scopes(self):
     def body(out_ref):
       # Allocate a global-scoped semaphore.

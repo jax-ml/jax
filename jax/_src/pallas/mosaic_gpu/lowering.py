@@ -2597,6 +2597,20 @@ def _run_scoped_lowering_rule(
           input_refs.append(acc)
         should_discharge.append(True)
         continue
+      if (
+          isinstance(aval, state_types.AbstractRef)
+          and aval.memory_space == gpu_core.GMEM
+          and jnp.issubdtype(aval.dtype, pallas_core.semaphore)
+      ):
+        input_ref = alloc_stack.enter_context(
+            ctx.module_ctx.reserve_semaphores(
+                aval.shape, collective_axes=collective_axes
+            )
+        )
+        input_refs.append(input_ref)
+        should_discharge.append(False)
+        continue
+
       # All other allocations must be made collectively across all threads.
       if is_multithreaded and not is_thread_collective:
         raise NotImplementedError(
@@ -2650,13 +2664,6 @@ def _run_scoped_lowering_rule(
                 jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype),
                 layout=aval.layout,
             )
-        )
-        input_refs.append(input_ref)
-        should_discharge.append(False)
-      elif aval.memory_space == gpu_core.GMEM and jnp.issubdtype(aval.dtype, pallas_core.semaphore):
-        input_ref = alloc_stack.enter_context(
-            ctx.module_ctx.reserve_semaphores(aval.shape,
-                                              collective_axes=collective_axes)
         )
         input_refs.append(input_ref)
         should_discharge.append(False)
