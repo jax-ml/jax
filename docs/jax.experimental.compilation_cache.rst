@@ -8,7 +8,5 @@ JAX disk compilation cache.
 API
 ---
 
-.. autofunction:: is_initialized
-.. autofunction:: initialize_cache
 .. autofunction:: set_cache_dir
 .. autofunction:: reset_cache

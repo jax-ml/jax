@@ -13,34 +13,31 @@
 # limitations under the License.
 
 from jax._src.compilation_cache import (
-  is_initialized as _deprecated_is_initialized,
-  initialize_cache as _deprecated_initialize_cache,
   set_cache_dir as set_cache_dir,
   reset_cache as reset_cache,
 )
 
 _deprecations = {
-    # Added for v0.7.1; deprecation warning has been raised since v0.4.24
+    # Finalized for v0.8.0; remove in v0.9.0
     "is_initialized": (
         (
-            "compilation_cache.is_initialized was deprecated in JAX v0.4.24 and will"
-            " be removed in JAX v0.8.0."
+            "compilation_cache.is_initialized was deprecated in JAX v0.4.24 and"
+            " removed in JAX v0.8.0."
         ),
-        _deprecated_is_initialized,
+        None,
     ),
     "initialize_cache": (
         (
-            "compilation_cache.initialize_cache was deprecated in JAX v0.4.24 and will"
-            " be removed in JAX v0.8.0. use compilation_cache.set_cache_dir instead."
+            "compilation_cache.initialize_cache was deprecated in JAX v0.4.24 and"
+            " removed in JAX v0.8.0. use compilation_cache.set_cache_dir instead."
         ),
-        _deprecated_initialize_cache,
+        None,
     ),
 }
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  is_initialized = _deprecated_is_initialized
-  initialize_cache = _deprecated_initialize_cache
+  pass
 else:
   from jax._src.deprecations import deprecation_getattr
   __getattr__ = deprecation_getattr(__name__, _deprecations)

@@ -23,7 +23,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The `jax.util`, `jax.extend.ffi`, and `jax.experimental.host_callback`
     modules have been removed. All public APIs within these modules were
     deprecated and removed in v0.7.0 or earlier.
-
+  * The deprecated symbol {obj}`jax.custom_derivatives.custom_jvp_call_jaxpr_p`
+    was removed.
+  * from {mod}`jax.experimental.compilation_cache`, the deprecated symbols
+    `is_initialized` and `initialize_cache` were removed.
+  * The deprecated function {func}`jax.interpreters.xla.canonicalize_dtype`
+    was removed.
 
 ## JAX 0.7.2 (September 16, 2025)
 

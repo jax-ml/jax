@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from jax._src.dtypes import (
-  canonicalize_value as _deprecated_canonicalize_dtype,
   canonicalize_value_handlers as _canonicalize_value_handlers,
 )
 
@@ -29,21 +28,21 @@ del _xc
 
 # Deprecations
 _deprecations = {
-    # Added in JAX v0.7.0
+    # Finalized in JAX v0.8.0; remove in v0.9.0
     "canonicalize_dtype": (
         (
             "jax.interpreters.xla.canonicalize_dtype was deprecated in JAX"
-            " v0.7.0 and will be removed in JAX v0.8.0. For canonicalizing"
-            " dtypes, prefer jax.dtypes.canonicalize_dtype. For checking whether"
-            " an object is a valid jax input, prefer jax.core.valid_jaxtype."
+            " v0.7.0 and removed in JAX v0.8.0. For canonicalizing dtypes,"
+            " prefer jax.dtypes.canonicalize_dtype. For checking whether an"
+            " object is a valid jax input, prefer jax.core.valid_jaxtype."
         ),
-        _deprecated_canonicalize_dtype,
+        None,
     )
 }
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  canonicalize_dtype = _deprecated_canonicalize_dtype
+  pass
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
