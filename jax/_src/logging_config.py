@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import logging
-import os
 import sys
 from jax._src.lib import utils
 
@@ -58,10 +57,7 @@ def _set_cpp_min_log_level(logging_level: str | None = None):
                       f" {list(_tf_cpp_map.keys())}.")
   # config the CPP logging level 0 - debug, 1 - info, 2 - warning, 3 - error
   log_level = _tf_cpp_map[logging_level]
-  os.environ["TF_CPP_MIN_LOG_LEVEL"] = str(log_level)
-  # TODO(allanrenucci): Remove this after the minimal jaxlib version is 0.7.2.
-  if hasattr(utils, 'absl_set_min_log_level'):
-    utils.absl_set_min_log_level(log_level)
+  utils.absl_set_min_log_level(log_level)
 
 def update_logging_level_global(logging_level: str | None) -> None:
   # remove previous handlers
