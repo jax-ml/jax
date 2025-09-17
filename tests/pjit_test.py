@@ -6752,19 +6752,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out2 = jax.vmap(lambda x, y: x[y])(embed_vd, token_vmap)
       self.assertEqual(out2.shape, (64, 4))
       self.assertEqual(out2.aval.sharding.spec, P('x', None))
-
-      # Operand sharded in full slice dim and indices sharded.
-      embed_y_sharded = reshard(embed_vd, P('y', None))
-      out3 = embed_y_sharded.at[:, token_vmap].get()
-      self.assertEqual(out3.shape, (64, 64, 4))
-      self.assertEqual(out3.aval.sharding.spec, P('y', 'x', None))
-      return out, out2, out3
+      return out, out2
 
     outs = f(embed, tok, tok_vmap)
     self.assertEqual(outs[0].sharding, NamedSharding(mesh, P('x', None, None)))
 
-    # Grad on out3 not returned as it has sharded (unbatched with operand)
-    # indexing, so transpose would require collectives.
     def g(x, y, z):
       outs = f(x, y, z)
       return outs[0].sum() + outs[1].sum()
@@ -8889,6 +8881,20 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     array = jax.device_put(array, SingleDeviceSharding(jax.devices()[0]))
     self.assertTrue(jax.typeof(array).sharding.mesh.empty)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_indices_sharded_gather_error(self, mesh):
+    arr = jax.device_put(jnp.arange(8, dtype=jnp.float32).reshape(4, 2),
+                         P(None, None))
+    indices = jax.device_put(jnp.array([0, 2]), P('x'))
+
+    @jax.jit
+    def f(arr, ids):
+      out = arr[ids, :]
+      return jnp.sum(out)
+
+    with self.assertRaises(core.ShardingTypeError):
+      f(arr, indices)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

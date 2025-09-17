@@ -2037,11 +2037,15 @@ def _gather_spec_computation(operand, indices, dimension_numbers, slice_sizes):
       for (operand_dim, indices_dim) in zip(
           operand_batching_dims, start_indices_batching_dims)
   )
-  index_vector_dim_is_replicated = indices.sharding.spec[index_vector_dim] is None
+  # Leads to comms on the bwd pass in scatter
+  indices_non_batch_dims_replicated = all(
+      s is None for i, s in enumerate(indices_spec)
+      if i not in start_indices_batching_dims
+  )
 
   if (operand_index_dims_full_slice_or_replicated
       and batching_dims_resolve_unambiguously
-      and index_vector_dim_is_replicated):
+      and indices_non_batch_dims_replicated):
     # Resolve any batched shardings into indices shardings.
     for operand_dim, indices_dim in zip(
         operand_batching_dims, start_indices_batching_dims):
