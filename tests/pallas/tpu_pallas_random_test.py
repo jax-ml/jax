@@ -255,7 +255,7 @@ class ThreefryTest(parameterized.TestCase):
   def test_pallas_matches_jax_threefry(self, shape, generator_and_dtype):
     generator, dtype = generator_and_dtype
     def body(key_ref, o_ref):
-      key = jax.random.wrap_key_data(key_ref[...], impl='threefry2x32')
+      key = key_ref[...]
       o_ref[...] = generator(key, shape=o_ref[...].shape)
 
     threefry_key = jax_random.key(0, impl="threefry2x32")
@@ -266,7 +266,7 @@ class ThreefryTest(parameterized.TestCase):
           body,
           in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
           out_shape=o_shape,
-      )(jax.random.key_data(threefry_key))
+      )(threefry_key)
       jax_result = generator(threefry_key, shape=o_shape.shape)
     np.testing.assert_array_equal(result, jax_result)
 
