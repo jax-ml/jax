@@ -2397,6 +2397,27 @@ class PallasCallTest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(y[0], jnp.maximum(x[0], x[1]))
 
+  @parameterized.parameters([
+      jnp.int32,
+      jnp.uint32,
+      jnp.float32,
+  ])
+  def test_min_operation(self, dtype):
+    def kernel(x_ref, y_ref):
+      y_ref[0] = jnp.minimum(x_ref[0], x_ref[1])
+
+    if not jtu.if_cloud_tpu_at_least(2025, 9, 20):
+      self.skipTest('Support added on Sep 20, 2025')
+
+    x = jnp.asarray([242, 87], dtype=dtype)
+
+    y = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+        out_shape=jax.ShapeDtypeStruct(x.shape, dtype),
+    )(x)
+    np.testing.assert_array_equal(y[0], jnp.minimum(x[0], x[1]))
 
 class PallasUXTest(PallasBaseTest):
 
