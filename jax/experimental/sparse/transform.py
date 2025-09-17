@@ -279,6 +279,7 @@ def spvalues_to_avals(
 # Implementation of sparsify() using tracers.
 
 class SparseTracer(core.Tracer):
+  __slots__ = ["_spvalue"]
   def __init__(self, trace: core.Trace, *, spvalue):
     self._spvalue = spvalue
     self._trace = trace
