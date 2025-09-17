@@ -1,4 +1,4 @@
-name: CI - Bazel CPU tests (RBE)
+name: CI - Bazel CPU tests (Presubmit)
 
 on:
   workflow_dispatch:
