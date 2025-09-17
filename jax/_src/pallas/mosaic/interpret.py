@@ -2285,8 +2285,8 @@ def interpret_pallas_call(
       output_buffer_shapes.append(input_args[oi_alias_map[i]].shape)
       output_vals.append(input_args[oi_alias_map[i]])
     else:
-      out_val = _uninitialized_array(bm.array_aval.shape,
-                                     bm.array_aval.dtype,
+      out_val = _uninitialized_array(bm.array_shape_dtype.shape,
+                                     bm.array_shape_dtype.dtype,
                                      interpret_params)
       padded_val = _pad_to_block_dimension(
           out_val, output_block_shapes[i], interpret_params

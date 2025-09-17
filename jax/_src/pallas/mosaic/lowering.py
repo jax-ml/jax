@@ -611,7 +611,7 @@ def _check_block_mappings(
     def err_details():
       return (f"Block spec for {bm.origin} in pallas_call {debug_info.func_src_info} "
               "has block shape "
-              f"{bm.block_shape}, array shape {bm.array_aval.shape}, "
+              f"{bm.block_shape}, array shape {bm.array_shape_dtype.shape}, "
               # TODO(necula): add index_map source location info
               f"and index_map {bm.index_map_jaxpr.jaxpr}, in "
               f"memory space {bm.block_aval.memory_space}."
@@ -632,9 +632,9 @@ def _check_block_mappings(
           "and a trivial index_map (returning all 0s)." + err_details())
 
     unmapped_bs = pallas_core._get_block_shape(bm.block_shape)
-    bs0, as0 = unmapped_bs[-1], bm.array_aval.shape[-1]
+    bs0, as0 = unmapped_bs[-1], bm.array_shape_dtype.shape[-1]
     if rank >= 2:
-      bs1, as1 = unmapped_bs[-2], bm.array_aval.shape[-2]
+      bs1, as1 = unmapped_bs[-2], bm.array_shape_dtype.shape[-2]
     else:
       bs1, as1 = 1, 1
 
@@ -663,10 +663,10 @@ def _check_block_mappings(
     else:
       assert rank == 1
       # bools get a bitwidth of 32 due to how mosaic handles them
-      if bm.array_aval.dtype == jnp.bool_:
+      if bm.array_shape_dtype.dtype == jnp.bool_:
         bitwidth = 32
       else:
-        bitwidth = dtypes.bit_width(bm.array_aval.dtype)
+        bitwidth = dtypes.bit_width(bm.array_shape_dtype.dtype)
       packing = 32 // bitwidth
       tiling_size = 128 * packing
       evenly_divisible = (bs0 == as0 or bs0 % tiling_size == 0)
@@ -677,7 +677,7 @@ def _check_block_mappings(
             " shape is equal to the first (and only) dimension of the array"
             " shape, or 2) the first (and only) dimension of the block shape"
             f" is a multiple of the tiling size ({tiling_size} = 128 * (32 //"
-            f" {dtypes.bit_width(bm.array_aval.dtype)})) of the"
+            f" {dtypes.bit_width(bm.array_shape_dtype.dtype)})) of the"
             " array shape. "
             + err_details()
         )
