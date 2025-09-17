@@ -1621,7 +1621,8 @@ def _ragged_all_to_all_batched_collective(axis_data, vals_in, dims_in,
 
   def bdim_at_second(x, d):
     assert x.ndim == 2
-    return batching.broadcast(x, size, 1) if d is None else x if d == 1 else x.T
+    return (batching.broadcast(x, size, 1, None) if d is None else
+            x if d == 1 else x.T)
   def merge(x): return x.reshape(-1, *x.shape[2:])
   def split(x): return x.reshape(size, -1, *x.shape[1:])
 

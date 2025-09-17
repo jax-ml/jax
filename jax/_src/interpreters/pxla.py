@@ -582,7 +582,7 @@ def _match_annot(axis_name: core.AxisName, axis_size: int, val: Any,
       outval = batching.moveaxis(val, src, dst)
       shard_axis_out = _moveaxis(np.ndim(val), shard_axis_src, src, dst)
     elif src is None and dst is not None:
-      outval = batching.broadcast(val, axis_size, dst)
+      outval = batching.broadcast(val, axis_size, dst, None)
       shard_axis_out = {n: d + (dst <= d) for n, d in shard_axis_out.items()}
     else:
       raise NotImplementedError

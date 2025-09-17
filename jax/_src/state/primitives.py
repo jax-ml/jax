@@ -645,7 +645,8 @@ def _array_ref_batched(axis_data, vals_in, dims_in, memory_space):
   val, = vals_in
   dim, = dims_in
   if dim is None:
-    val2 = batching.broadcast(val, axis_data.size, 0)
+    val2 = batching.broadcast(val, axis_data.size, 0,
+                              axis_data.explicit_mesh_axis)
     return core.array_ref_p.bind(val2, memory_space=memory_space), 0
   else:
     return core.array_ref_p.bind(val, memory_space=memory_space), dim
@@ -863,7 +864,7 @@ def _swap_vmap(batched_args, batched_dims, *, tree):
 
   if not val_is_batched:
     if ref_is_batched or idx_is_batched:
-      val = batching.broadcast(val, axis_size, batched_dim_in_result)
+      val = batching.broadcast(val, axis_size, batched_dim_in_result, None)
   else:
     val = batching.moveaxis(val, val_dim, batched_dim_in_result)
 
@@ -933,7 +934,7 @@ def _addupdate_vmap(batched_args, batched_dims, *, tree):
 
   if not val_is_batched:
     if ref_is_batched or idx_is_batched:
-      val = batching.broadcast(val, axis_size, batched_dim_in_result)
+      val = batching.broadcast(val, axis_size, batched_dim_in_result, None)
   else:
     val = batching.moveaxis(val, val_dim, batched_dim_in_result)
 

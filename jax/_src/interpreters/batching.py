@@ -1138,7 +1138,7 @@ def move_stacked_axis(operand, bdim, dst):
 
 ### general utilities for manipulating axes on jaxpr types (not vmappables)
 
-def broadcast(x, sz, axis, mesh_axis=None):
+def broadcast(x, sz, axis, mesh_axis):
   # Callers of this utility must be in a context where lax is importable.
   from jax import lax  # pytype: disable=import-error
   shape = list(np.shape(x))

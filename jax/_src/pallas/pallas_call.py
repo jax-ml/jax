@@ -316,7 +316,8 @@ def _broadcast_input_output_aliases(
       return tuple(args_), tuple(dims_)
 
     if dim is batching.not_mapped:
-      args_[input_index] = batching.broadcast(args_[input_index], axis_size, 0)
+      args_[input_index] = batching.broadcast(
+          args_[input_index], axis_size, 0, None)
     elif dim != 0:
       # TODO(cjfj): Change output batching axis instead?
       args_[input_index] = jnp.moveaxis(args[input_index], dim, 0)
