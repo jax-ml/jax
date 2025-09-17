@@ -23,7 +23,8 @@ import operator
 import re
 import sys
 
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
+from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import dtypes
@@ -34,17 +35,28 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import cf
+from jax._src.lib.mlir.dialects import gpu
+from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
+import jax.experimental.mosaic.gpu as mgpu
+from jax.experimental.mosaic.gpu import core
 from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
 from jax.experimental.mosaic.gpu import fragmented_array as fa
+from jax.experimental.mosaic.gpu import inference_utils
+from jax.experimental.mosaic.gpu import launch_context
+from jax.experimental.mosaic.gpu import layouts
 from jax.experimental.mosaic.gpu import layouts as mgpu_layouts
+from jax.experimental.mosaic.gpu import profiler
 from jax.experimental.mosaic.gpu import tcgen05
-from jax.experimental.mosaic.gpu import utils as mgpu_utils
+from jax.experimental.mosaic.gpu import utils
+from jax.experimental.mosaic.gpu.utils import *  # noqa: F403
 import jax.numpy as jnp
 import numpy as np
+
+
 try:
-  import jax._src.lib.mosaic_gpu  as mosaic_gpu_lib # noqa: F401
+  import jax._src.lib.mosaic_gpu as mosaic_gpu_lib  # noqa: F401
   HAS_MOSAIC_GPU = True
 except ImportError:
   mosaic_gpu_lib = None
@@ -55,17 +67,8 @@ except ImportError:
     y = 1
     z = 2
 else:
-  import jax.experimental.mosaic.gpu as mgpu
-  from jax.experimental.mosaic.gpu import core
-  from jax.experimental.mosaic.gpu import launch_context
-  from jax.experimental.mosaic.gpu import layouts
-  from jax.experimental.mosaic.gpu import utils as utils
-  from jax.experimental.mosaic.gpu import profiler
-  from jax.experimental.mosaic.gpu import inference_utils
-  from jax.experimental.mosaic.gpu.utils import *  # noqa: F403
-  from jax._src.lib.mlir.dialects import gpu
-  from jax._src.lib.mlir.dialects import llvm
   Dimension = gpu.Dimension
+
 try:
   import hypothesis as hp
   import hypothesis.strategies as hps
@@ -146,7 +149,7 @@ def copy(src: ir.Value, dst: ir.Value, swizzle: int | None = None):
           ir.StridedLayoutAttr.get(0, new_strides),
           ref_ty.memory_space,
       )
-      ptr_space = 3 if mgpu_utils.is_smem_ref(ref_ty) else None
+      ptr_space = 3 if utils.is_smem_ref(ref_ty) else None
       return ptr_as_memref(
           # NOTE: memref_ptr applies the offset in case there was any.
           memref_ptr(ref, memory_space=ptr_space),
@@ -4692,7 +4695,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
     tmem_type = ir.MemRefType.get(
         shape,
         utils.dtype_to_ir_type(dtype),
-        memory_space=mgpu_utils.tmem(),
+        memory_space=utils.tmem(),
     )
 
     def body(
@@ -5071,7 +5074,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       ref_ty = ir.MemRefType.get(
           (128, 128),
           ir.BF16Type.get(),
-          memory_space=mgpu_utils.tmem(),
+          memory_space=utils.tmem(),
       )
       mgpu_dialect.tmem_alloc(ref_ty, smem_ptr, collective=False)
       mgpu_dialect.tmem_alloc(ref_ty, smem_ptr, collective=True)
