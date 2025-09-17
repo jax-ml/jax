@@ -1403,6 +1403,20 @@ class ShardMapTest(jtu.JaxTestCase):
     for i in range(len(jax.devices())):
       self.assertIn(f'x=[{2*i} {2*i+1}]', output())
 
+  def test_partial_auto_axis_index_eager(self):
+    mesh = jtu.create_mesh((2, 2, 1), ('i', 'j', 'k'))
+
+    def f():
+      return jax.lax.axis_index('i').reshape((1,))
+
+    def g():
+      return jax.shard_map(f, mesh=mesh, in_specs=(), out_specs=P('i'),
+                           axis_names={'i'}, check_vma=False)()
+
+    out = g()
+    expected_out = jax.jit(g)()
+    self.assertArraysEqual(out, expected_out)
+
   def test_partial_eval_custom_axis_env(self):
     mesh = Mesh(jax.devices(), ('i',))
 

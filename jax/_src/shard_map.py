@@ -1041,7 +1041,8 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs, out_specs_thunk,
     _check_vmas(mesh, out_specs_thunk(), out_vma)
     src_pspecs = tuple(_vma_to_spec(mesh, r) for r in out_vma)
   else:
-    src_pspecs = tuple(P(mesh.axis_names) for _ in out_vma)
+    src_pspecs = tuple(P(order_wrt_mesh(mesh, manual_axes))
+                       for _ in range(len(out_vma)))
   dst_pspecs = out_specs_thunk()
   return map(partial(_match_spec, mesh, check_vma, manual_axes),
              src_pspecs, dst_pspecs, outs)
@@ -1176,7 +1177,7 @@ class ShardMapTrace(core.Trace):
       out_specs = tree_map(partial(_vma_to_spec, self.mesh), out_vma)
     else:
       out_vma = frozenset()
-      in_specs = out_specs = P(self.mesh.axis_names)
+      in_specs = out_specs = P(order_wrt_mesh(self.mesh, self.manual_axes))
 
     eager_rule = eager_rules.get(prim)
     if eager_rule:
