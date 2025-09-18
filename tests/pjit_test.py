@@ -7988,6 +7988,28 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(reshard_eqn.params['dst_sharding'].spec.unreduced,
                     frozenset())
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_einsum_unreduced_with_transpose(self, mesh):
+    arr1 = jax.device_put(jnp.arange(192).reshape(6, 4, 8), P(None, 'x', 'y'))
+    arr2 = jax.device_put(jnp.arange(320).reshape(4, 8, 10), P('x', 'y', None))
+
+    @jax.jit
+    def f(arr1, arr2):
+      out = jnp.einsum("heb,eba->hea", arr1, arr2,
+                       out_sharding=P(None, 'x', None, unreduced={'y'}))
+      self.assertEqual(out.aval.sharding.spec,
+                       P(None, 'x', None, unreduced={'y'}))
+      return out
+
+    out = f(arr1, arr2)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(None, 'x', None, unreduced={'y'})))
+
+    reshard_out = jax.sharding.reshard(out, P(None, 'x', None))
+    expected_out = jnp.einsum("heb,eba->hea", arr1, arr2,
+                              out_sharding=P(None, 'x', None))
+    self.assertArraysEqual(reshard_out, expected_out)
+
   @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
   def test_dot_general_unreduced_error(self, mesh):
     np_inp = np.arange(16).reshape(8, 2)

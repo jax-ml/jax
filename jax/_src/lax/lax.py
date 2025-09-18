@@ -2967,7 +2967,6 @@ def transpose(operand: ArrayLike,
   if permutation == tuple(range(np.ndim(operand))) and isinstance(operand, Array):
     return operand
   else:
-
     return transpose_p.bind(operand, permutation=permutation)
 
 def argmin(operand: ArrayLike, axis: int,
@@ -4667,7 +4666,7 @@ def _add_transpose(t, x, y):
   else:
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, t)]
 
-def _add_unreduced(out_sharding, x, y):
+def _add_unreduced_rule(out_sharding, x, y):
   x_ur, y_ur = x.sharding.spec.unreduced, y.sharding.spec.unreduced
   if x_ur and y_ur:
     if x_ur != y_ur:
@@ -4690,7 +4689,7 @@ def _add_unreduced(out_sharding, x, y):
   return out_sharding.update(spec=out_sharding.spec.update(unreduced=res_unreduced))
 
 add_p: Primitive = naryop(input_dtype, [_num, _num], 'add',
-                          unreduced_rule=_add_unreduced)
+                          unreduced_rule=_add_unreduced_rule)
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
 mlir.register_lowering(add_p, partial(_nary_lower_hlo, hlo.add))
@@ -7434,7 +7433,10 @@ def _transpose_shape_rule(operand, *, permutation):
 def _transpose_sharding_rule(operand, *, permutation):
   o_spec = operand.sharding.spec
   new_spec = [o_spec[old_idx] for old_idx in permutation]
-  return operand.sharding.update(spec=new_spec)
+  return operand.sharding.update(spec=o_spec.update(partitions=new_spec))
+
+def _transpose_unreduced_rule(out_s, operand, *, permutation):
+  return out_s
 
 def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   operand, = batched_args
@@ -7459,7 +7461,8 @@ def _transpose_lower(ctx, x, *, permutation):
 transpose_p = standard_primitive(
     _transpose_shape_rule, input_dtype, 'transpose',
     sharding_rule=_transpose_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'transpose'))
+    vma_rule=partial(core.standard_vma_rule, 'transpose'),
+    unreduced_rule=_transpose_unreduced_rule)
 ad.deflinear2(transpose_p,
               lambda t, _, permutation: [transpose(t, np.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
