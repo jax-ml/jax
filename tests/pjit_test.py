@@ -8895,6 +8895,37 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out1.sharding, kernel.sharding)
     self.assertEqual(out2.sharding, inputs.sharding)
 
+  @jtu.with_explicit_mesh((2, 2,), ('x', 'y'))
+  def test_vmap_conv_general_dilated(self, mesh):
+    @jax.jit
+    def model(kernel, inputs):
+      padded_inputs = jnp.pad(inputs, ((0, 0), (2, 0), (0, 0)))
+      return lax.conv_general_dilated(
+          padded_inputs,
+          kernel,
+          window_strides=(1,),
+          padding="VALID",
+          dimension_numbers=lax.ConvDimensionNumbers(
+              (0, 2, 1), (2, 1, 0), (0, 2, 1)),
+          out_sharding=P(None, None, None))
+
+    batch_size = 64
+    seq_length = 32
+    vmap_size = 16
+    kernel = jax.random.normal(
+        jax.random.key(0), (3, 1, 16))
+    inputs = jax.random.normal(
+        jax.random.key(1), (batch_size, vmap_size, seq_length, 1))
+    inputs = jax.device_put(inputs, P('x', None, None, None))
+    kernel = jax.device_put(kernel, P(None, None, None))
+
+    out = jax.jit(
+        jax.vmap(model, in_axes=(None, 0), out_axes=1))(kernel, inputs)
+
+    self.assertEqual(
+        out.sharding, NamedSharding(mesh, P(None, 'x', None, None)))
+
+
   @jtu.with_explicit_mesh((2,), 'x')
   def test_device_put_typeof(self, mesh):
     array = jnp.zeros(8)
