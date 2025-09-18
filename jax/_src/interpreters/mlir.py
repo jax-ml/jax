@@ -580,6 +580,9 @@ def make_ir_context() -> ir.Context:
 
   context.set_thread_pool(global_thread_pool)
   dialects.sdy.register_dialect(context)
+  # TODO(joelwee): Remove this once jaxlib 0.8 is the minimum.
+  if dialects.mpmd:
+    dialects.mpmd.register_dialect(context)
   dialects.mhlo.register_mhlo_dialect(context)
   dialects.chlo.register_dialect(context)
   dialects.hlo.register_dialect(context)
