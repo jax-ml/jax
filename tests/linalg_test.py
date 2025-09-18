@@ -221,6 +221,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     shape=[(0, 0), (1, 1), (3, 3), (4, 4), (10, 10), (200, 200), (2, 2, 2),
            (2, 3, 3), (3, 2, 2)],
   )
+  @jtu.ignore_warning(message="(divide by zero|overflow|invalid value)", category=RuntimeWarning)
   def testSlogdet(self, shape, dtype, method):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
