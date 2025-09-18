@@ -21,19 +21,11 @@ from absl.testing import parameterized
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
+import jax.experimental.mosaic.gpu  # noqa: F401
+from jax.experimental.pallas.ops.gpu import blackwell_matmul_mgpu
+from jax.experimental.pallas.ops.gpu import hopper_matmul_mgpu
 import jax.numpy as jnp
 import numpy as np
-
-
-# pylint: disable=g-import-not-at-top
-try:
-  # We only import this to see if Mosaic is available.
-  import jax.experimental.mosaic.gpu  # noqa: F401
-except ImportError:
-  blackwell_matmul_mgpu = None
-else:
-  from jax.experimental.pallas.ops.gpu import blackwell_matmul_mgpu
-  from jax.experimental.pallas.ops.gpu import hopper_matmul_mgpu
 
 
 config.parse_flags_with_absl()
@@ -46,8 +38,6 @@ class MatrixMultiplicationSm100ATest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if blackwell_matmul_mgpu is None:
-      self.skipTest("Mosaic GPU not available.")
     if not jtu.test_device_matches(["cuda"]):
       self.skipTest("Test requires an NVIDIA GPU")
     self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
@@ -83,23 +73,79 @@ class MatrixMultiplicationSm100ATest(jtu.JaxTestCase):
     out_ref = a @ b
     np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
 
+@jtu.with_config(jax_traceback_filtering="off")
+class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.test_device_matches(["cuda"]):
+      self.skipTest("Test requires an NVIDIA GPU")
+    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
+
   @parameterized.product(
       m=(4096,),
       k=(4096,),
       n=(4096,),
-      tile_m=(64, 128,),
-      tile_n=(64, 128, 256),
-      tile_k=(64, 128,),
+      tile_m=(64, 128),
+      tile_n=(64, 128),
+      tile_k=(64, 128),
       max_concurrent_steps=(2, 4),
       dtype=(jnp.float16,),
+      epi_tile_n=(None, 64),
+      epi_tile_m=(None, 64),
+      wg_dimension=tuple(hopper_matmul_mgpu.MatmulDimension),
   )
-  def test_hopper_matmul(
-      self, m, n, k, dtype, tile_m, tile_n, tile_k, max_concurrent_steps,
+  def test_hopper_matmul(self, *args, **kwargs):
+    self.check_hopper_matmul(*args, **kwargs)
+
+  # Grid tiling doesn't really interact with many other options so we can test
+  # it separately.
+  @parameterized.product(
+      grid_minor_dim=tuple(hopper_matmul_mgpu.MatmulDimension),
+      grid_tile_width=(1, 3, 4),
+  )
+  def test_hopper_matmul_grid_tiling(self, grid_minor_dim, grid_tile_width):
+    self.check_hopper_matmul(
+        m=4096,
+        k=4096,
+        n=4096,
+        dtype=jnp.float16,
+        tile_m=64,
+        tile_n=64,
+        tile_k=64,
+        max_concurrent_steps=2,
+        epi_tile_m=64,
+        epi_tile_n=64,
+        wg_dimension=hopper_matmul_mgpu.MatmulDimension.M,
+        grid_minor_dim=grid_minor_dim,
+        grid_tile_width=grid_tile_width,
+    )
+
+  def check_hopper_matmul(
+      self,
+      m,
+      n,
+      k,
+      dtype,
+      tile_m,
+      tile_n,
+      tile_k,
+      max_concurrent_steps,
+      epi_tile_m,
+      epi_tile_n,
+      wg_dimension,
+      **kwargs
   ):
     if not jtu.is_cuda_compute_capability_equal("9.0"):
       self.skipTest("Only works on GPU with capability sm90a")
+
+    epi_tile_size = (epi_tile_m or tile_m) * (epi_tile_n or tile_n)
+    num_epi_tiles = tile_m * tile_n // epi_tile_size
+    cta_tile_m = tile_m * (1 + (wg_dimension == hopper_matmul_mgpu.MatmulDimension.M))
+    cta_tile_n = tile_n * (1 + (wg_dimension == hopper_matmul_mgpu.MatmulDimension.N))
     if (
-        (2 * tile_m + tile_n) * tile_k * max_concurrent_steps + 2 * tile_m * tile_n
+        (cta_tile_m + cta_tile_n) * tile_k * max_concurrent_steps
+        + 2 * min(2, num_epi_tiles) * epi_tile_size
     ) * 2 > 228000:
       self.skipTest("Tile too big to fit into SMEM")
     k1, k2, = jax.random.split(jax.random.key(42), 2)
@@ -111,10 +157,15 @@ class MatrixMultiplicationSm100ATest(jtu.JaxTestCase):
         tile_n=tile_n,
         tile_k=tile_k,
         max_concurrent_steps=max_concurrent_steps,
+        epi_tile_m=epi_tile_m,
+        epi_tile_n=epi_tile_n,
+        wg_dimension=wg_dimension,
+        **kwargs,
     )
     out = hopper_matmul_mgpu.matmul_kernel(a, b, spec)
     out_ref = jnp.dot(a, b, precision=jax.lax.DotAlgorithmPreset.F16_F16_F32)
     np.testing.assert_allclose(out, out_ref)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

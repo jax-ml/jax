@@ -931,6 +931,7 @@ jax_multiplatform_test(
     enable_backends = [],
     enable_configs = ["gpu_h100"],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    shard_count = 8,
     tags = ["mosaic_gpu_test"],
     deps = [
         "//jax:pallas",
