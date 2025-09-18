@@ -221,8 +221,15 @@ def _shard_python_scalar(xs, shardings, layouts, copy_semantics):
                     [np.array(x) for x in xs])
 for _t in dtypes.python_scalar_types:
   shard_arg_handlers[_t] = _shard_python_scalar
+
+def _shard_literal_scalar(xs, shardings, layouts, copy_semantics):
+  return _shard_np_array(
+      [literals.LiteralArray(np.array(x, dtype=x.dtype), weak_type=True)
+       for x in xs],
+      shardings, layouts, copy_semantics
+  )
 for _t in literals.literal_scalar_types:
-  shard_arg_handlers[_t] = _shard_python_scalar
+  shard_arg_handlers[_t] = _shard_literal_scalar
 
 def _shard_darray(xs, shardings, layouts, copy_semantics):
   bufs = [x._data for x in xs]

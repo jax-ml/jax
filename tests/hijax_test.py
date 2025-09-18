@@ -27,6 +27,7 @@ from jax import typeof
 
 from jax._src import config
 from jax._src import core
+from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map
@@ -220,6 +221,7 @@ class HijaxTest(jtu.JaxTestCase):
       def vspace_add(self, x, y):
         return add(x, y)
     core.pytype_aval_mappings[MyArray] = lambda _: MyTy()
+    dtypes.canonicalize_value_handlers[MyArray] = lambda x: x
 
     class ToMy(HiPrimitive):
       def is_high(self, _): return True

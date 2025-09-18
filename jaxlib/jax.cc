@@ -979,6 +979,9 @@ NB_MODULE(_jax, m) {
 
   PartitionSpec::Register(m);
 
+  m.def("set_literal_int_type", &SetLiteralIntType);
+  m.def("set_literal_float_type", &SetLiteralFloatType);
+  m.def("set_literal_complex_type", &SetLiteralComplexType);
   m.def("set_literal_array_type", &SetLiteralArrayType);
 }  // NOLINT(readability/fn_size)
 

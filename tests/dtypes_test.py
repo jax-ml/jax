@@ -31,6 +31,7 @@ from jax import numpy as jnp
 from jax._src import earray
 from jax._src import config
 from jax._src import dtypes
+from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
 
@@ -112,6 +113,10 @@ def identity(x):
   """A named identity function for use in tests"""
   return x
 
+LiteralInt = literals.LiteralInt
+LiteralFloat = literals.LiteralFloat
+LiteralComplex = literals.LiteralComplex
+LiteralArray = literals.LiteralArray
 
 class DtypesTest(jtu.JaxTestCase):
 
@@ -122,6 +127,34 @@ class DtypesTest(jtu.JaxTestCase):
     }
     for in_dtype, expected_dtype in expected[config.enable_x64.value].items():
       self.assertEqual(dtypes.canonicalize_dtype(in_dtype), expected_dtype)
+
+  def test_canonicalize_value_preserves_literal_dtypes(self):
+    self.assertEqual(np.dtype(np.int32), dtypes.canonicalize_value(
+        LiteralInt(6, dtype=np.dtype(np.int32))).dtype)
+    self.assertEqual(np.dtype(np.int64), dtypes.canonicalize_value(
+        LiteralInt(6, dtype=np.dtype(np.int64))).dtype)
+    self.assertEqual(np.dtype(np.float32), dtypes.canonicalize_value(
+        LiteralFloat(6, dtype=np.dtype(np.float32))).dtype)
+    self.assertEqual(np.dtype(np.float64), dtypes.canonicalize_value(
+        LiteralFloat(6, dtype=np.dtype(np.float64))).dtype)
+    self.assertEqual(np.dtype(np.complex64), dtypes.canonicalize_value(
+        LiteralComplex(6, dtype=np.dtype(np.complex64))).dtype)
+    self.assertEqual(np.dtype(np.complex128), dtypes.canonicalize_value(
+        LiteralComplex(6, dtype=np.dtype(np.complex128))).dtype)
+    self.assertEqual(
+        np.dtype(np.int32),
+        dtypes.canonicalize_value(
+            LiteralArray(np.array([6], dtype=np.dtype(np.int32)),
+                         weak_type=False)
+        ).dtype,
+    )
+    self.assertEqual(
+        np.dtype(np.int64),
+        dtypes.canonicalize_value(
+            LiteralArray(np.array([6], dtype=np.dtype(np.int64)),
+                         weak_type=False)
+        ).dtype,
+    )
 
   @parameterized.named_parameters(
     {"testcase_name": f"_type={type_.__name__}", "type_": type_}
@@ -405,6 +438,16 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertEqual(dtypes.dtype(int(0)), np.dtype(np.int32))
       self.assertEqual(dtypes.dtype(float(0)), np.dtype(np.float32))
       self.assertEqual(dtypes.dtype(complex(0)), np.dtype(np.complex64))
+
+  def testDtypeFromLiteralValue(self):
+    self.assertEqual(dtypes.dtype(LiteralInt(0, np.dtype(np.int64))), np.dtype(np.int64))
+    self.assertEqual(dtypes.dtype(LiteralFloat(0, np.dtype(np.float64))), np.dtype(np.float64))
+    self.assertEqual(dtypes.dtype(LiteralComplex(0, np.dtype(np.complex128))), np.dtype(np.complex128))
+    self.assertEqual(dtypes.dtype(LiteralInt(0, np.dtype(np.int32))), np.dtype(np.int32))
+    self.assertEqual(dtypes.dtype(LiteralFloat(0, np.dtype(np.float32))), np.dtype(np.float32))
+    self.assertEqual(dtypes.dtype(LiteralComplex(0, np.dtype(np.complex64))), np.dtype(np.complex64))
+    self.assertEqual(dtypes.dtype(LiteralArray(np.array([0], dtype=np.int32), weak_type=False)), np.dtype(np.int32))
+    self.assertEqual(dtypes.dtype(LiteralArray(np.array([0], dtype=np.int64), weak_type=False)), np.dtype(np.int64))
 
   @parameterized.parameters(all_dtypes)
   def testDtypeFromValue(self, dtype):

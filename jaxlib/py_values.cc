@@ -81,7 +81,10 @@ namespace jax {
 
 namespace {
 
-// The LiteralArray type.
+// The LiteralInt, LiteralFloat, LiteralComplex, and LiteralArray types.
+nb::object& literal_int_type = *new nb::object();
+nb::object& literal_float_type = *new nb::object();
+nb::object& literal_complex_type = *new nb::object();
 nb::object& literal_array_type = *new nb::object();
 
 // For xla::S64/U64/F64/C128 types, returns the largest 32-bit equivalent.
@@ -548,14 +551,73 @@ absl::StatusOr<ShardFn> HandleNumpyArray(nb::handle h, ifrt::Client* client,
   };
 }
 
+absl::StatusOr<ShardFn> HandleLiteralInt(nb::handle h, ifrt::Client* client,
+                                         ifrt::Device* to_device,
+                                         ifrt::MemoryKind to_memory_kind,
+                                         const DevicePutOptions& options) {
+  xla::nb_dtype dtype = nb::cast<xla::nb_dtype>(h.attr("dtype"));
+  TF_ASSIGN_OR_RETURN(xla::PrimitiveType type,
+                      xla::DtypeToPrimitiveType(dtype));
+  switch (type) {
+    case xla::S64:
+      return HandlePythonScalar<int64_t, int64_t>(h, client, to_device,
+                                                  to_memory_kind, options);
+    case xla::S32:
+      return HandlePythonScalar<int32_t, int32_t>(h, client, to_device,
+                                                  to_memory_kind, options);
+    default:
+      return xla::InvalidArgument("Unsupported type: %s",
+                                  xla::PrimitiveType_Name(type));
+  }
+}
+
+absl::StatusOr<ShardFn> HandleLiteralFloat(nb::handle h, ifrt::Client* client,
+                                           ifrt::Device* to_device,
+                                           ifrt::MemoryKind to_memory_kind,
+                                           const DevicePutOptions& options) {
+  xla::nb_dtype dtype = nb::cast<xla::nb_dtype>(h.attr("dtype"));
+  TF_ASSIGN_OR_RETURN(xla::PrimitiveType type,
+                      xla::DtypeToPrimitiveType(dtype));
+  switch (type) {
+    case xla::F64:
+      return HandlePythonScalar<double, double>(h, client, to_device,
+                                                to_memory_kind, options);
+    case xla::F32:
+      return HandlePythonScalar<float, float>(h, client, to_device,
+                                              to_memory_kind, options);
+    default:
+      return xla::InvalidArgument("Unsupported type: %s",
+                                  xla::PrimitiveType_Name(type));
+  }
+}
+
+absl::StatusOr<ShardFn> HandleLiteralComplex(nb::handle h, ifrt::Client* client,
+                                             ifrt::Device* to_device,
+                                             ifrt::MemoryKind to_memory_kind,
+                                             const DevicePutOptions& options) {
+  xla::nb_dtype dtype = nb::cast<xla::nb_dtype>(h.attr("dtype"));
+  TF_ASSIGN_OR_RETURN(xla::PrimitiveType type,
+                      xla::DtypeToPrimitiveType(dtype));
+  switch (type) {
+    case xla::C128:
+      return HandlePythonScalar<xla::complex128, xla::complex128>(
+          h, client, to_device, to_memory_kind, options);
+    case xla::C64:
+      return HandlePythonScalar<xla::complex64, xla::complex64>(
+          h, client, to_device, to_memory_kind, options);
+    default:
+      return xla::InvalidArgument("Unsupported type: %s",
+                                  xla::PrimitiveType_Name(type));
+  }
+}
+
 absl::StatusOr<ShardFn> HandleLiteralArray(nb::handle h, ifrt::Client* client,
                                            ifrt::Device* to_device,
                                            ifrt::MemoryKind to_memory_kind,
                                            const DevicePutOptions& options) {
   DevicePutOptions o = options;
   o.squash_64bit_types = false;
-  return HandleNumpyArray(h.attr("val"), client, to_device, to_memory_kind,
-                          options);
+  return HandleNumpyArray(h.attr("val"), client, to_device, to_memory_kind, o);
 }
 
 absl::StatusOr<ShardFn> HandlePyArray(nb::handle obj, ifrt::Client* client,
@@ -653,6 +715,15 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
     (*p)[reinterpret_cast<PyObject*>(&PyComplex_Type)] =
         HandlePythonScalar<xla::complex128, xla::complex64>;
 
+    if (literal_int_type.ptr() != nullptr) {
+      (*p)[literal_int_type.ptr()] = HandleLiteralInt;
+    }
+    if (literal_float_type.ptr() != nullptr) {
+      (*p)[literal_float_type.ptr()] = HandleLiteralFloat;
+    }
+    if (literal_complex_type.ptr() != nullptr) {
+      (*p)[literal_complex_type.ptr()] = HandleLiteralComplex;
+    }
     (*p)[reinterpret_cast<PyObject*>(&PyArray_Type)] = HandleNumpyArray;
 
     if (literal_array_type.ptr() != nullptr) {
@@ -729,6 +800,9 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
 
 }  // namespace
 
+void SetLiteralIntType(nb::object t) { literal_int_type = t; }
+void SetLiteralFloatType(nb::object t) { literal_float_type = t; }
+void SetLiteralComplexType(nb::object t) { literal_complex_type = t; }
 void SetLiteralArrayType(nb::object t) { literal_array_type = t; }
 
 std::string PyArgSignature::DebugString() const {
@@ -799,6 +873,24 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         (*p)[reinterpret_cast<PyObject*>(&PyLong_Type)] = int_handler;
         (*p)[reinterpret_cast<PyObject*>(&PyFloat_Type)] = float_handler;
         (*p)[reinterpret_cast<PyObject*>(&PyComplex_Type)] = complex_handler;
+
+        ToPyArgSignatureHandler literal_scalar_handler =
+            [](nb::handle h,
+               bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
+          TF_ASSIGN_OR_RETURN(
+              xla::PrimitiveType dtype,
+              DtypeToPrimitiveType(nb::cast<xla::nb_dtype>(h.attr("dtype"))));
+          return PyArgSignature(dtype, {}, true);
+        };
+        if (literal_int_type.ptr() != nullptr) {
+          (*p)[literal_int_type.ptr()] = literal_scalar_handler;
+        }
+        if (literal_float_type.ptr() != nullptr) {
+          (*p)[literal_float_type.ptr()] = literal_scalar_handler;
+        }
+        if (literal_complex_type.ptr() != nullptr) {
+          (*p)[literal_complex_type.ptr()] = literal_scalar_handler;
+        }
 
         ToPyArgSignatureHandler numpy_handler =
             [](nb::handle h,

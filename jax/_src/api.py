@@ -2128,6 +2128,10 @@ def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
   if config.vjp3.value:
     return _vjp3(fun, *primals, has_aux=has_aux)
   primals_flat, in_tree = tree_flatten(primals)
+  primals_flat = [
+      dtypes.canonicalize_value(v) if not isinstance(v, core.Tracer) else v
+      for v in primals_flat
+  ]
   for arg in primals_flat: dispatch.check_arg(arg)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)

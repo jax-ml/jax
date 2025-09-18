@@ -3922,7 +3922,8 @@ def _add_arrays(x, y):
   return add(x, y)
 
 for t in itertools.chain(
-    dtypes.python_scalar_types, array_types, [array.ArrayImpl]):
+    dtypes.python_scalar_types, array_types, [array.ArrayImpl],
+    literals.literal_scalar_types):
   ad_util.raw_jaxval_adders[t] = _add_arrays
 
 

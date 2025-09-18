@@ -27,6 +27,7 @@ from jax import random
 from jax.experimental import enable_x64, disable_x64
 import jax.numpy as jnp
 import jax._src.test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 
 jax.config.parse_flags_with_absl()
 
@@ -184,11 +185,14 @@ class X64ContextTests(jtu.JaxTestCase):
     self.assertEqual(out_primal.dtype, jnp.float64)
     self.assertEqual(out_tangent.dtype, jnp.float64)
 
-    self.assertEqual(g(5.).dtype, jnp.float64)
-    # TODO(phawkins,mattjj): these do not yet pass
-    # self.assertEqual(grad(g)(5.).dtype, jnp.float32)
-    # self.assertEqual(grad(grad(g))(5.).dtype, jnp.float32)
-    # self.assertEqual(grad(grad(grad(g)))(5.).dtype, jnp.float32)
+    if jaxlib_extension_version < 374:
+      return
+
+    with enable_x64(False):
+      self.assertEqual(g(5.).dtype, jnp.float64)
+      self.assertEqual(grad(g)(5.).dtype, jnp.float32)
+      self.assertEqual(grad(grad(g))(5.).dtype, jnp.float32)
+      self.assertEqual(grad(grad(grad(g)))(5.).dtype, jnp.float32)
 
     with enable_x64(True):
       self.assertEqual(g(5.).dtype, jnp.float64)
@@ -214,11 +218,14 @@ class X64ContextTests(jtu.JaxTestCase):
         x = jnp.array(x, jnp.float64)
         return f(x)
 
-    self.assertEqual(g(5.).dtype, jnp.float64)
-    # TODO(phawkins,mattjj): these do not yet pass
-    # self.assertEqual(grad(g)(5.).dtype, jnp.float32)
-    # self.assertEqual(grad(grad(g))(5.).dtype, jnp.float32)
-    # self.assertEqual(grad(grad(grad(g)))(5.).dtype, jnp.float32)
+    if jaxlib_extension_version < 374:
+      return
+
+    with enable_x64(False):
+      self.assertEqual(g(5.).dtype, jnp.float64)
+      self.assertEqual(grad(g)(5.).dtype, jnp.float32)
+      self.assertEqual(grad(grad(g))(5.).dtype, jnp.float32)
+      self.assertEqual(grad(grad(grad(g)))(5.).dtype, jnp.float32)
 
     with enable_x64(True):
       self.assertEqual(g(5.).dtype, jnp.float64)

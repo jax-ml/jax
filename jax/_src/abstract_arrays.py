@@ -42,7 +42,7 @@ if dtypes.int2 is not None:
   numpy_scalar_types.add(dtypes.int2)
   numpy_scalar_types.add(dtypes.uint2)
 
-array_types: set[type] = {np.ndarray} | numpy_scalar_types  # pylint: disable=g-bare-generic
+array_types: set[type] = {literals.LiteralArray, np.ndarray} | numpy_scalar_types  # pylint: disable=g-bare-generic
 
 
 def masked_array_error(*args, **kwargs):
@@ -135,3 +135,7 @@ dtypes.canonicalize_value_handlers[float] = _canonicalize_python_scalar(
     literals.LiteralFloat, float)
 dtypes.canonicalize_value_handlers[complex] = _canonicalize_python_scalar(
     literals.LiteralComplex, complex)
+
+dtypes.canonicalize_value_handlers[literals.LiteralInt] = lambda x: x
+dtypes.canonicalize_value_handlers[literals.LiteralFloat] = lambda x: x
+dtypes.canonicalize_value_handlers[literals.LiteralComplex] = lambda x: x

@@ -873,8 +873,13 @@ def promote_types(a: DTypeLike, b: DTypeLike) -> DType:
 
 def register_weak_scalar_type(typ: type):
   """Register a scalar type as a weak type."""
-  _registered_weak_types.append(typ)
-_registered_weak_types: list[JAXType] = []
+  _registered_weak_types.add(typ)
+
+_registered_weak_types: set[JAXType] = {
+    literals.LiteralInt,
+    literals.LiteralFloat,
+    literals.LiteralComplex,
+}
 
 
 def is_weakly_typed(x: Any) -> bool:
@@ -897,6 +902,14 @@ def check_valid_dtype(dtype: DType) -> None:
   if dtype not in _jax_dtype_set:
     raise TypeError(f"Dtype {dtype} is not a valid JAX array "
                     "type. Only arrays of numeric types are supported by JAX.")
+
+_types_whose_dtype_should_not_be_canonicalized = (
+    Array,
+    literals.LiteralArray,
+    literals.LiteralInt,
+    literals.LiteralFloat,
+    literals.LiteralComplex,
+)
 
 def dtype(x: Any) -> DType:
   """Return the dtype object for a value or type.
@@ -921,11 +934,10 @@ def dtype(x: Any) -> DType:
   # Python scalar values, e.g., int(3), float(3.14)
   elif (dt := python_scalar_types_to_dtypes.get(type(x))) is not None:
     return canonicalize_dtype(dt)
-
-  # jax Arrays. We intentionally do not canonicalize jax Arrays: once we've
-  # formed an x64 value in a jax Array, that is something we respect
-  # irrespective of the x64 mode.
-  elif isinstance(x, Array):
+  # Jax Arrays, literal arrays, and scalars.
+  # We intentionally do not canonicalize these types: once we've formed an x64
+  # value, that is something we respect irrespective of the x64 mode.
+  elif isinstance(x, _types_whose_dtype_should_not_be_canonicalized):
     return x.dtype
 
   if issubdtype(getattr(x, 'dtype', None), extended):

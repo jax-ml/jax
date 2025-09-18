@@ -32,6 +32,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
+from jax._src import literals
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import util
@@ -644,9 +645,11 @@ def _scan_linearize(nzs, *primals_in, reverse: bool, length: int, num_consts:
   const_nz, init_nz, xs_nz = split_list(nzs, [num_consts, num_carry])
   num_ys = len(jaxpr.out_avals) - num_carry
   carry_nz = init_nz
-  allow_fwds = ([True] * len(jaxpr.consts) +
-                [(i < num_consts or i >= num_consts + num_carry) and
-                 not isinstance(x, np.ndarray) for i, x in enumerate(primals_in)])
+  allow_fwds = [True] * len(jaxpr.consts) + [
+      (i < num_consts or i >= num_consts + num_carry)
+      and not isinstance(x, (np.ndarray, literals.LiteralArray))
+      for i, x in enumerate(primals_in)
+  ]
   for _ in range(1 + num_carry):
     nzs = const_nz + carry_nz + xs_nz
     primal_jaxpr, num_res_out, nzs_out, in_fwd_res, tangent_jaxpr = \
@@ -759,8 +762,11 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
   # iterations to decide carry_uk, plus one to prepare the jaxpr.
   carry_uk = init_uk
   # Don't allow forwarding from the carry or numpy.ndarrays.
-  fwd = [(i < num_consts or i >= num_consts + num_carry) and
-         not isinstance(t.pval.get_known(), np.ndarray) for i, t in enumerate(tracers)]
+  fwd = [
+      (i < num_consts or i >= num_consts + num_carry) and
+      not isinstance(t.pval.get_known(), (np.ndarray, literals.LiteralArray))
+      for i, t in enumerate(tracers)
+  ]
   for _ in range(1 + len(carry_uk)):
     unknowns = const_uk + carry_uk + xs_uk
     jaxpr_known, jaxpr_unknown, out_uk, res_avals, in_fwd_res = \
@@ -862,7 +868,7 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
   return util.merge_lists(out_uk, known_outs, out_tracers)
 
 def _maybe_put(x):
-  if isinstance(x, np.ndarray):
+  if isinstance(x, (np.ndarray, literals.LiteralArray)):
     aval = core.shaped_abstractify(x)
     s = sharding.SingleDeviceSharding(xb.local_devices(backend='cpu')[0])
     result_handler = pxla.global_aval_to_result_handler(aval, s, False)

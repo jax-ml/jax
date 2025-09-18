@@ -15,12 +15,14 @@
 from typing import Sequence
 from jax._src import typing
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 import numpy as np
 
 # LiteralInt, LiteralFloat, and LiteralComplex are subclasses of int, float, and
 # complex that carry a JAX dtype. Canonicalization forms these types from int,
 # float, and complex. Repeated canonicalization, including under different
 # jax_enable_x64 modes, preserves the dtype.
+
 
 class LiteralInt(int):
 
@@ -30,6 +32,9 @@ class LiteralInt(int):
     v = super(LiteralInt, cls).__new__(cls, value)
     v.dtype = dtype
     return v
+
+  def __repr__(self):
+    return f'LiteralInt({int(self)}, dtype={self.dtype.name})'
 
   def __getnewargs__(self):
     return (int(self), self.dtype)
@@ -44,6 +49,9 @@ class LiteralFloat(float):
     v.dtype = dtype
     return v
 
+  def __repr__(self):
+    return f'LiteralFloat({float(self)}, dtype={self.dtype.name})'
+
   def __getnewargs__(self):
     return (float(self), self.dtype)
 
@@ -57,8 +65,17 @@ class LiteralComplex(complex):
     v.dtype = dtype
     return v
 
+  def __repr__(self):
+    return f'LiteralComplex({complex(self)}, dtype={self.dtype.name})'
+
   def __getnewargs__(self):
     return (complex(self), self.dtype)
+
+
+if jaxlib_extension_version >= 374:
+  _jax.set_literal_int_type(LiteralInt)
+  _jax.set_literal_float_type(LiteralFloat)
+  _jax.set_literal_complex_type(LiteralComplex)
 
 
 literal_scalar_types: set[type] = {LiteralInt, LiteralFloat, LiteralComplex}
@@ -103,6 +120,9 @@ class LiteralArray:
   @property
   def size(self) -> int:
     return self.val.size
+
+  def __len__(self) -> int:
+    return self.val.__len__()
 
   def __repr__(self):
     prefix = 'LiteralArray('
@@ -209,6 +229,9 @@ class LiteralArray:
   def __ge__(self, other):
     return self.val.__ge__(other)
 
+  def __abs__(self):
+    return self.val.__abs__()
+
   def reshape(self, *args, **kw):
     return self.val.reshape(*args, **kw)
 
@@ -222,6 +245,9 @@ class LiteralArray:
   @property
   def mT(self):
     return self.val.mT
+
+  def clip(self, *args, **kwargs):
+    return self.val.clip(*args, **kwargs)
 
   def astype(self, dtype, order='K', casting='unsafe', subok=True, copy=True):
     return self.val.astype(

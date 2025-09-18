@@ -34,6 +34,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The option `jax_cpu_enable_gloo_collectives` has been removed. Use
     `jax_cpu_collectives_implementation` instead.
 
+* Changes
+  * `jax.grad` and `jax.vjp` will now round always primals to float32 if float64
+    mode is not enabled.
+
+
 ## JAX 0.7.2 (September 16, 2025)
 
 * Breaking changes:
