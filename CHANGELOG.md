@@ -16,7 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
-* Breaking changes:
+* Breaking changes.
+
+  * JAX no longer accepts `Array` values where a `dtype` value is expected. Call
+    `.dtype` on these values first.
 
   * The deprecated function {func}`jax.interpreters.mlir.custom_call` was
     removed.

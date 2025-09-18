@@ -1005,11 +1005,8 @@ def check_and_canonicalize_user_dtype(dtype, fun_name=None) -> DType:
   if dtype is None:
     raise ValueError("dtype must be specified.")
   if isinstance(dtype, Array):
-    # Deprecation warning added 2024 June 13.
-    warnings.warn("Passing an array as a dtype argument is deprecated; "
-                  "instead of dtype=arr use dtype=arr.dtype.",
-                  category=DeprecationWarning, stacklevel=3)
-    return dtype.dtype # no further check needed, as array dtypes have already been validated.
+    raise ValueError("Passing an array as a dtype argument is no longer "
+                     "supported; instead of dtype=arr use dtype=arr.dtype.")
   if issubdtype(dtype, extended):
     return dtype
   # Avoid using `dtype in [...]` because of numpy dtype equality overloading.
