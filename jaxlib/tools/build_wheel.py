@@ -196,7 +196,6 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           if build_utils.is_windows()
           else f"{source_file_prefix}jaxlib/libjax_common.{soext}",
           f"{source_file_prefix}jaxlib/lapack.py",
-          f"{source_file_prefix}jaxlib/hlo_helpers.py",
           f"{source_file_prefix}jaxlib/gpu_prng.py",
           f"{source_file_prefix}jaxlib/gpu_linalg.py",
           f"{source_file_prefix}jaxlib/gpu_rnn.py",

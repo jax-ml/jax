@@ -15,7 +15,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 -->
 
 ## Unreleased
-
+ 
 * Breaking changes:
 
   * JAX no longer accepts `Array` values where a `dtype` value is expected. Call
@@ -31,6 +31,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `is_initialized` and `initialize_cache` were removed.
   * The deprecated function {func}`jax.interpreters.xla.canonicalize_dtype`
     was removed.
+  * {mod}`jaxlib.hlo_helpers` has been removed. Use {mod}`jax.ffi` instead.
   * The option `jax_cpu_enable_gloo_collectives` has been removed. Use
     `jax_cpu_collectives_implementation` instead.
 

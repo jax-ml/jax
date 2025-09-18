@@ -107,7 +107,6 @@ pytype_library(
         "gpu_solver.py",
         "gpu_sparse.py",
         "gpu_triton.py",
-        "hlo_helpers.py",
         "init.py",
         "lapack.py",
         "plugin_support.py",
