@@ -60,6 +60,33 @@ To build `jaxlib` from source, you must also install some prerequisites:
   during the build; please check
   [Managing hermetic Python](#managing-hermetic-python) for details.
 
+### Building `jaxlib` with AddressSanitizer (ASan)
+
+AddressSanitizer (ASan) helps detect memory errors such as buffer overflows and use-after-free bugs.
+To build `jaxlib` with ASan support, follow these steps:
+
+1. Install build dependencies:
+
+   ```
+   pip install -r build_requirements.txt
+   ```
+
+2. Set compiler and sanitizer flags:
+
+   ```
+   export CC=clang
+   export CXX=clang++
+   export CFLAGS="-fsanitize=address -O1 -fno-omit-frame-pointer"
+   export CXXFLAGS="-fsanitize=address -O1 -fno-omit-frame-pointer"
+   export LDFLAGS="-fsanitize=address"
+   ```
+
+3. Build jaxlib:
+
+   ```
+   python build/build.py build --wheels=jaxlib --verbose
+   ```
+
 To build `jaxlib` for CPU or TPU, you can run:
 
 ```
