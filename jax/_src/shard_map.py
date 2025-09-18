@@ -629,14 +629,11 @@ MaybeTracer = Union[JaxType, Tracer]
 
 class ShardMapPrimitive(core.Primitive):
   multiple_results = True
-
-  def bind(self, *args, **params):
-    return self._true_bind(*args, **params)
+  skip_canonicalization = True
 
   def bind_with_trace(self, trace, fun_and_args, params):
-    fun: lu.WrappedFun
     fun, *args = fun_and_args
-    return trace.process_shard_map(shard_map_p, fun, args, **params)
+    return trace.process_shard_map(shard_map_p, fun, args, **params)  # type: ignore
 
   def get_bind_params(self, params):
     new_params = dict(params)

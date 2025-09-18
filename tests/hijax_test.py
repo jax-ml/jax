@@ -120,7 +120,7 @@ class HiTup:
 
 @dataclass(frozen=True)
 class TupTy(HiType):
-  tys: tuple[Ty]
+  tys: tuple[Ty, ...]
   def __repr__(self):
     return 'Tup{' + ','.join(a.str_short() for a in self.tys) + '}'
 
@@ -426,6 +426,24 @@ class HijaxTest(jtu.JaxTestCase):
 
     ans = f()
     self.assertEqual(ans, 2)
+
+  def test_closed_over_hitype(self):
+    tup = make_tup(1, 2)
+
+    @jax.custom_vjp
+    def inner(tup):
+      return get_tuple_element(tup, 1)
+    def fwd(tup):
+      assert False
+    def bwd(*_):
+      assert False
+    inner.defvjp(fwd, bwd)
+
+    @jax.jit
+    def f():
+      return inner(tup)
+
+    self.assertEqual(f(), 2)
 
 
 class BoxTest(jtu.JaxTestCase):

@@ -384,13 +384,15 @@ def _flatten_jvp(f, store, primal_name, jvp_name, in_tree, maybe_out_type, *args
 
 class CustomJVPCallPrimitive(core.Primitive):
   multiple_results = True
-
-  def bind(self, *args, **params):
-    return self._true_bind(*args, **params)
+  skip_canonicalization = True
 
   def bind_with_trace(self, trace, args, params):
-    fun, jvp, tracers = args[0], args[1], args[2:]
-    return trace.process_custom_jvp_call(self, fun, jvp, tracers, **params)
+    fun, jvp, *tracers = args
+    if trace.requires_low:
+      with core.set_current_trace(trace):
+        return fun.call_wrapped(*tracers)
+    else:
+      return trace.process_custom_jvp_call(self, fun, jvp, tracers, **params)
 
   def impl(self, fun, _, *args):
     raise NotImplementedError
@@ -994,13 +996,15 @@ def _temporary_shape_exception(a, a_) -> bool:
 
 class CustomVJPCallPrimitive(core.Primitive):
   multiple_results = True
-
-  def bind(self, *args, **params):
-    return self._true_bind(*args, **params)
+  skip_canonicalization = True
 
   def bind_with_trace(self, trace, args, params):
-    fun, fwd, bwd, tracers = args[0], args[1], args[2], args[3:]
-    return trace.process_custom_vjp_call(self, fun, fwd, bwd, tracers, **params)
+    fun, fwd, bwd, *tracers = args
+    if trace.requires_low:
+      with core.set_current_trace(trace):
+        return fun.call_wrapped(*tracers)
+    else:
+      return trace.process_custom_vjp_call(self, fun, fwd, bwd, tracers, **params)
 
   def impl(self, fun, fwd, bwd, *args):
     raise NotImplementedError
@@ -1619,6 +1623,8 @@ def custom_vjp_by_custom_transpose(fun, fwd, bwd):
     return outs, tan_fn(tan_out_types, residuals, tangents)
 
   return fun
+
+custom_vjp_call_p.is_high = lambda *_, **__: True  # type: ignore
 
 
 # TODO(mattjj): remove these stubs, which exist to avoid breaking internal users
