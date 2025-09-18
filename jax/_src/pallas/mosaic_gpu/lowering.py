@@ -310,7 +310,7 @@ def _run_scoped_resource_estimator(
       )
       rs += Resources(
           barrier_counts=collections.Counter(
-              [mgpu.ClusterBarrier(collective_dims, *aval.shape)]
+              [mgpu.ClusterBarrier(collective_dims, 1, *aval.shape)]
           )
       )
       continue
@@ -2647,7 +2647,7 @@ def _run_scoped_lowering_rule(
         )
         barrier_ref = alloc_stack.enter_context(
             ctx.module_ctx.reserve_barrier(
-                mgpu.ClusterBarrier(collective_dims, *aval.shape)
+                mgpu.ClusterBarrier(collective_dims, 1, *aval.shape)
             )
         )
         input_refs.append(barrier_ref)

@@ -2112,6 +2112,23 @@ class BarrierTest(TestCase):
         expected_mask |= np.bitwise_or.reduce(mask_bits, axis=None)
       self.assertEqual(min(mask), expected_mask)
 
+  def test_collective_arrival_count(self):
+    i32 = ir.IntegerType.get_signless(32)
+    cluster = [2, 1, 1]
+    def kernel(ctx, dst, collective_barrier):
+      collective_barrier.arrive()
+      collective_barrier.arrive()
+      collective_barrier.arrive()
+      collective_barrier.arrive()
+      collective_barrier.wait()
+      memref.store(arith.constant(i32, 1), dst, [])
+    out_shape = jax.ShapeDtypeStruct((), jnp.int32)
+    scratch = mgpu.ClusterBarrier((gpu.Dimension.x,), arrival_count=4)
+    y = mgpu.as_gpu_kernel(
+        kernel, cluster, (128, 1, 1), (), out_shape, scratch, cluster=cluster,
+    )()
+    np.testing.assert_array_equal(y, np.ones((), dtype=np.int32))
+
 
 class AsyncCopyTest(TestCase):
 
