@@ -525,9 +525,10 @@ def _vector_store_op_lowering_rule(
 
   ref = vector_store_op.base
   ref_type = ir.MemRefType(ref.type)
+  optimized = vector_store_op.attributes["optimized"].value
 
   if ref_type.memory_space is None:  # GMEM
-    fragmented_array.store_untiled(ref, optimized=False)
+    fragmented_array.store_untiled(ref, optimized=optimized)
   elif ref_type.memory_space == utils.smem():
     transforms_attr = inference_utils.in_transforms(vector_store_op)[0]
     swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
@@ -539,8 +540,7 @@ def _vector_store_op_lowering_rule(
       unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
       fragmented_array.store_tiled(unwrapped_ref, swizzle)
     else:
-      is_tmem_native = fragmented_array.layout == tcgen05.TMEM_NATIVE_LAYOUT
-      fragmented_array.store_untiled(ref, optimized=not is_tmem_native)
+      fragmented_array.store_untiled(ref, optimized=optimized)
   else:
     raise ValueError(f"Unsupported memory space: {ref_type.memory_space}")
 

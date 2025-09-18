@@ -34,7 +34,6 @@ from jax._src.lib.mlir.dialects import vector
 from . import fragmented_array as fa
 from . import inference_utils
 from . import layouts as layouts_lib
-from . import tcgen05
 from . import utils
 
 
@@ -239,18 +238,8 @@ def _infer_vector_load_store_transforms(
         ir.MemRefType(op.base.type),
         max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle,
     )
-  elif (
-      layout == fa.WGMMA_ROW_LAYOUT
-      or layout == fa.WGMMA_COL_LAYOUT
-      or layout == tcgen05.TMEM_NATIVE_LAYOUT
-      or isinstance(layout, fa.WGStridedFragLayout)
-      or isinstance(layout, fa.WGSplatFragLayout)
-  ):
-    layout_transforms = None
   else:
-    raise NotImplementedError(
-        f"Got layout {layout} which is not yet supported"
-    )
+    layout_transforms = None
 
   transforms = _resolve_transforms(transforms, layout_transforms)
   return None if transforms is None else ([transforms], [])

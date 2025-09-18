@@ -539,8 +539,6 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x), x[0] + x[0] + 1)
 
   def test_sync_copy(self):
-    self.skip_if_wg_semantics()  # Transforms inference not implemented.
-
     shape = (128, 128)
     transforms = self.default_transforms(dtype=jnp.float32)
     @functools.partial(
@@ -2212,7 +2210,7 @@ class PallasCallTest(PallasTest):
       hint=(True, False),
   )
   def test_broadcast_in_dim(self, layout, axis, hint):
-    self.skip_if_wg_semantics()  # Transform inference not implemented.
+    self.skip_if_wg_semantics()  # Broadcast in dim with non-trivial broadcast dimensions is not supported.
 
     @functools.partial(
         self.kernel,
@@ -2245,7 +2243,7 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(x_result, expected)
 
   def test_broadcast_in_dim_tcgen05_native_layout(self):
-    self.skip_if_wg_semantics()  # Transform inference not implemented.
+    self.skip_if_wg_semantics()  # Broadcast in dim with non-trivial broadcast dimensions is not supported.
 
     @functools.partial(
         self.kernel,
@@ -2275,7 +2273,6 @@ class PallasCallTest(PallasTest):
   @parameterized.named_parameters((l.name.lower(), l) for l in plgpu.Layout)
   @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_copy_layout(self, layout):
-    self.skip_if_wg_semantics()  # Transform inference not implemented.
     if layout in {
         plgpu.Layout.WG_SPLAT,
         plgpu.Layout.WGMMA_TRANSPOSED,
@@ -2283,6 +2280,18 @@ class PallasCallTest(PallasTest):
         plgpu.Layout.TILED
     }:
       self.skipTest("Not the right layout for this test")
+
+    # TODO(allanrenucci, dasenov): Infer optimized transfer-compatible layout transforms.
+    optimized = (
+        self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane
+        or layout
+        not in {
+            plgpu.Layout.TCGEN05,
+            plgpu.Layout.TCGEN05_M64_COLLECTIVE,
+            plgpu.Layout.TCGEN05_TMEM_NATIVE,
+            plgpu.Layout._WGMMA_ACC_32BIT,
+        }
+    )
 
     shape = (128, 128)
     transforms = self.default_transforms(dtype=jnp.float32)
@@ -2301,7 +2310,7 @@ class PallasCallTest(PallasTest):
         out_specs=plgpu.BlockSpec(transforms=transforms),
     )
     def kernel(x_ref, o_ref):
-      o_ref[...] = plgpu.load(x_ref, (), layout=layout)
+      o_ref[...] = plgpu.load(x_ref, (), layout=layout, optimized=optimized)
 
     x = jnp.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
     np.testing.assert_array_equal(kernel(x), x)
