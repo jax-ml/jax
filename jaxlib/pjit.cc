@@ -365,7 +365,7 @@ class PjitFunction {
 
  private:
   absl::Status ComputeCallSignature(
-      absl::Span<nb::object const> flat_dynamic_args,
+      absl::Span<nb::object const> flat_dynamic_args, bool enable_x64,
       CallSignature& call_signature);
 
   void PopulateCacheEntry(PjitCacheEntry& cache_entry,
@@ -598,6 +598,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   //   f(x)
   // may never free temporary buffers for copies of arguments.
   GlobalPyRefManager()->MaybeCollectGarbage();
+  InitializeThreadLocalState();
 
   if (GetDisableJit()) {
     if (!fun_.has_value()) {
@@ -672,7 +673,8 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     }
   }
 
-  status = ComputeCallSignature(flat_dynamic_args, call_signature);
+  bool enable_x64 = GetEnableX64();
+  status = ComputeCallSignature(flat_dynamic_args, enable_x64, call_signature);
   if (!status.ok()) {
     VLOG(2) << "ComputeCallSignature failed: " << status;
     return fallback_to_cache_miss();
@@ -759,9 +761,8 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
                              cache_entry->const_args.end());
 
     for (nb::handle const_arg : cache_entry->const_args) {
-      TF_ASSIGN_OR_RETURN(
-          auto const_arg_signature,
-          PyArgSignatureOfValue(const_arg, call_signature.jax_enable_x64));
+      TF_ASSIGN_OR_RETURN(auto const_arg_signature,
+                          PyArgSignatureOfValue(const_arg, enable_x64));
       dynamic_arg_signatures.push_back(std::move(const_arg_signature));
     }
   }
@@ -772,9 +773,9 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // A vector of [num_inputs].
   auto num_args_arrays = PrepareIfrtInputs(
       *cache_entry->executable, flat_dynamic_args, dynamic_arg_signatures,
-      call_signature.jax_enable_x64, cache_entry->kept_var_bitvec,
-      cache_entry->in_shardings, cache_entry->in_device_local_layouts,
-      shard_arg_fallback_, keep_alive_objects);
+      enable_x64, cache_entry->kept_var_bitvec, cache_entry->in_shardings,
+      cache_entry->in_device_local_layouts, shard_arg_fallback_,
+      keep_alive_objects);
 
   if (!num_args_arrays.ok()) {
     VLOG(2) << "Failed to prepare IFRT inputs: " << num_args_arrays.status();
@@ -848,14 +849,11 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
 }
 
 absl::Status PjitFunction::ComputeCallSignature(
-    absl::Span<nb::object const> flat_dynamic_args, CallSignature& signature) {
+    absl::Span<nb::object const> flat_dynamic_args, bool enable_x64,
+    CallSignature& signature) {
   signature.function_name = function_name_;
 
   // Get dynamic argument signatures.
-  bool jax_enable_x64 = GetEnableX64();
-
-  signature.jax_enable_x64 = jax_enable_x64;
-
   auto& dynamic_arg_signatures = signature.dynamic_arg_signatures;
   dynamic_arg_signatures.reserve(flat_dynamic_args.size());
   auto& dynamic_arg_shardings = signature.dynamic_arg_shardings;
@@ -865,7 +863,7 @@ absl::Status PjitFunction::ComputeCallSignature(
 
   for (nb::handle arg : flat_dynamic_args) {
     TF_ASSIGN_OR_RETURN(auto arg_signature,
-                        PyArgSignatureOfValue(arg, jax_enable_x64));
+                        PyArgSignatureOfValue(arg, enable_x64));
     signature.dynamic_arg_signatures.push_back(std::move(arg_signature));
 
     // It should be already checked previously in the entry point of

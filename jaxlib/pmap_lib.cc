@@ -357,7 +357,6 @@ class PmapFunction {
 
     // Get dynamic argument signatures.
     const bool jax_enable_x64 = GetEnableX64();
-    signature.jax_enable_x64 = jax_enable_x64;
     for (nb::handle arg : flat_dynamic_args) {
       auto signature_or_error = PyArgSignatureOfValue(arg, jax_enable_x64);
       if (!signature_or_error.ok()) {
@@ -513,6 +512,7 @@ absl::StatusOr<nb::object> PmapFunction::Call(nb::handle callable,
                                               PyObject* const* args,
                                               size_t nargs, PyObject* kwnames) {
   GlobalPyRefManager()->MaybeCollectGarbage();
+  InitializeThreadLocalState();
 
   // Calls the cache_miss_ function. This just calls the Python function; it may
   // return nullptr value if a Python exception is thrown.

@@ -197,43 +197,6 @@ int GlobalConfigState::tp_clear(int key, PyObject* self) {
   return 0;
 }
 
-// A Config object represents a configurable object with both global and
-// thread-local state. This class is wrapped using nanobind and exposed to
-// Python.
-class Config {
- public:
-  Config(nb::object value, bool include_in_jit_key);
-
-  // Returns the thread-local value if it is set, otherwise the global value.
-  nb::object Get();
-
-  // Returns the global value.
-  nb::object GetGlobal();
-
-  // Sets the global value.
-  void SetGlobal(nb::object value);
-
-  // Returns the thread-local value.
-  nb::object GetLocal();
-
-  // Sets the thread-local value. May be `unset`.
-  void SetLocal(nb::object value);
-
-  // Swaps the thread-local value with `value`. Returns the previous value.
-  // Either may be `unset`.
-  nb::object SwapLocal(nb::object value);
-
-  // This class doesn't actually hold any data, but it's the only type
-  // known to Python. We pretend that this object owns both the global and any
-  // thread-local values corresponding to this key.
-  static int tp_traverse(PyObject* self, visitproc visit, void* arg);
-  static int tp_clear(PyObject* self);
-  static PyType_Slot slots_[];
-
- private:
-  int key_;
-};
-
 Config::Config(nb::object value, bool include_in_jit_key) {
   auto& instance = GlobalConfigState::Instance();
   key_ = instance.entries_.size();
@@ -311,6 +274,10 @@ PyType_Slot Config::slots_[] = {
     {Py_tp_clear, reinterpret_cast<void*>(Config::tp_clear)},
     {0, nullptr},
 };
+
+/* static */ const nb::object& Config::UnsetObject() {
+  return GlobalConfigState::Instance().unset();
+}
 
 void BuildConfigSubmodule(nanobind::module_& m) {
   nb::module_ config_module = m.def_submodule("config", "Config library");

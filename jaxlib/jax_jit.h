@@ -36,7 +36,6 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "jaxlib/py_values.h"
-#include "jaxlib/python_ref_manager.h"
 #include "jaxlib/pytree.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_layout.h"
@@ -44,41 +43,9 @@ limitations under the License.
 
 namespace jax {
 
-// Flags, such as JIT disable and the x64 mode, are controlled by:
-// - a global flag value, e.g., associated to --jax_enable_x64
-// - possibly a thread-local value, which initially is std::nullopt and
-//   overrides the global value if set. The thread-local state is
-//   used to implement context managers that locally override the global state.
-struct JitState {
-  ~JitState() {
-    // We likely do not hold the GIL if this JitState is thread-local, so we
-    // hand the Python objects to the global reference manager to destroy.
-    if (post_hook) {
-      GlobalPyRefManager()->AddGarbage(std::move(*post_hook));
-    }
-  }
-
-  std::optional<bool> disable_jit;
-  std::optional<bool> enable_x64;
-
-  // A callback that, if present, is called when a JITted function is executed
-  // from cache. May be unset even in global state.
-  std::optional<nanobind::callable> post_hook;
-};
-
-JitState& GlobalJitState();
-
-// Requires the GIL.
-JitState& ThreadLocalJitState();
-
-// Getters for JitState fields that first look in thread-local state, then
-// fallback to global state.
+void InitializeThreadLocalState();
 bool GetDisableJit();
 bool GetEnableX64();
-
-// TODO(skyewm): return a C++ type when all JAX backends support a single C++
-// device interface
-std::optional<nanobind::object> GetDefaultDevice();
 std::optional<nanobind::callable> GetPostHook();
 
 // An ArgumentSignature describes the static arguments to a function call, and
@@ -194,7 +161,6 @@ struct CallSignature {
   // we may have multiple executables depending on the devices the data is on.
   // This is not the case for PMAP, and is set to `nullptr`.
   xla::PjRtDevice* device = nullptr;
-  bool jax_enable_x64;
 
   std::vector<nanobind::object> configs;
 
@@ -250,7 +216,7 @@ H AbslHashValue(H h, const CallSignature& s) {
     }
   }
 
-  h = H::combine(std::move(h), s.committed_args, s.device, s.jax_enable_x64);
+  h = H::combine(std::move(h), s.committed_args, s.device);
 
   // We do not hash the extra_jit_context fields since calling Python hash
   // functions is expensive (~300ns) and we don't expect a large number of

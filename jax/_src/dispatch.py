@@ -23,7 +23,7 @@ import itertools
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from jax._src import api
 from jax._src import array
@@ -44,6 +44,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.api_util import InternalFloatingPointError
 from jax._src.layout import Layout, Format
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.monitoring import record_scalar, record_event_duration_secs, record_event_time_span
@@ -80,17 +81,30 @@ _on_exit = False
 
 ### op-by-op execution
 
-def apply_primitive(prim, *args, **params):
-  """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
-  fun = xla_primitive_callable(prim, **params)
-  # TODO(yashkatariya): Investigate adding is_primitive to jit and never
-  # triggering the disable jit path instead of messing around with it here.
-  prev = lib.jax_jit.swap_thread_local_state_disable_jit(False)
-  try:
-    outs = fun(*args)
-  finally:
-    lib.jax_jit.swap_thread_local_state_disable_jit(prev)
-  return outs
+if TYPE_CHECKING or jaxlib_extension_version >= 375:
+  def apply_primitive(prim, *args, **params):
+    """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
+    fun = xla_primitive_callable(prim, **params)
+    # TODO(yashkatariya): Investigate adding is_primitive to jit and never
+    # triggering the disable jit path instead of messing around with it here.
+    prev = config.disable_jit.swap_local(False)
+    try:
+      outs = fun(*args)
+    finally:
+      config.disable_jit.set_local(prev)
+    return outs
+else:
+  def apply_primitive(prim, *args, **params):
+    """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
+    fun = xla_primitive_callable(prim, **params)
+    # TODO(yashkatariya): Investigate adding is_primitive to jit and never
+    # triggering the disable jit path instead of messing around with it here.
+    prev = lib.jax_jit.swap_thread_local_state_disable_jit(False)
+    try:
+      outs = fun(*args)
+    finally:
+      lib.jax_jit.swap_thread_local_state_disable_jit(prev)
+    return outs
 
 # TODO(necula): this cache will contain strong references to all
 # Jaxprs in `params` (for higher-order primitives).

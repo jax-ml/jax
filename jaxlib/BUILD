@@ -715,8 +715,9 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":config",
+        ":nb_class_ptr",
         ":py_client",
-        ":python_ref_manager",
         ":pytree",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",

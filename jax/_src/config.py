@@ -22,10 +22,11 @@ import itertools
 import logging
 import os
 import sys
-from typing import Any, Generic, NoReturn, Optional, Protocol, TypeVar, cast
+from typing import Any, Generic, NoReturn, Optional, Protocol, TypeVar, cast, TYPE_CHECKING
 
 from jax._src import deprecations
 from jax._src.lib import guard_lib
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
 from jax._src import logging_config
@@ -1492,18 +1493,27 @@ error_checking_behavior_oob = enum_state(
     include_in_jit_key=True,
 )
 
-def _update_x64_global(val):
-  jax_jit.global_state().enable_x64 = val
+if TYPE_CHECKING or jaxlib_extension_version >= 375:
+  enable_x64 = bool_state(
+      name='jax_enable_x64',
+      default=False,
+      help='Enable 64-bit types to be used',
+      include_in_jit_key=True)
 
-def _update_x64_thread_local(val):
-  jax_jit.thread_local_state().enable_x64 = val
+  jax_jit.set_enable_x64_state(enable_x64)
+else:
+  def _update_x64_global(val):
+    jax_jit.global_state().enable_x64 = val
 
-enable_x64 = bool_state(
-    name='jax_enable_x64',
-    default=False,
-    help='Enable 64-bit types to be used',
-    update_global_hook=_update_x64_global,
-    update_thread_local_hook=_update_x64_thread_local)
+  def _update_x64_thread_local(val):
+    jax_jit.thread_local_state().enable_x64 = val
+
+  enable_x64 = bool_state(
+      name='jax_enable_x64',
+      default=False,
+      help='Enable 64-bit types to be used',
+      update_global_hook=_update_x64_global,
+      update_thread_local_hook=_update_x64_thread_local)
 
 # TODO(phawkins): remove after fixing users of FLAGS.x64_enabled.
 config._contextmanager_flags.remove('jax_enable_x64')
@@ -1539,19 +1549,26 @@ default_device = string_or_object_state(
     validator=_validate_default_device,
     include_in_jit_key=True)
 
-def _update_disable_jit_global(val):
-  jax_jit.global_state().disable_jit = val
+if TYPE_CHECKING or jaxlib_extension_version >= 375:
+  disable_jit = bool_state(
+      name='jax_disable_jit',
+      default=False,
+      help=('Disable JIT compilation and just call original Python.'))
 
-def _update_disable_jit_thread_local(val):
-  jax_jit.thread_local_state().disable_jit = val
+  jax_jit.set_disable_jit_state(disable_jit)
+else:
+  def _update_disable_jit_global(val):
+    jax_jit.global_state().disable_jit = val
 
-disable_jit = bool_state(
-    name='jax_disable_jit',
-    default=False,
-    help=('Disable JIT compilation and just call original Python.'),
-    update_global_hook=_update_disable_jit_global,
-    update_thread_local_hook=_update_disable_jit_thread_local)
+  def _update_disable_jit_thread_local(val):
+    jax_jit.thread_local_state().disable_jit = val
 
+  disable_jit = bool_state(
+      name='jax_disable_jit',
+      default=False,
+      help=('Disable JIT compilation and just call original Python.'),
+      update_global_hook=_update_disable_jit_global,
+      update_thread_local_hook=_update_disable_jit_thread_local)
 
 numpy_rank_promotion = enum_state(
     name='jax_numpy_rank_promotion',

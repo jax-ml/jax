@@ -39,7 +39,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/base/attributes.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
@@ -54,6 +53,8 @@ limitations under the License.
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/config.h"
+#include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_values.h"
 #include "jaxlib/pytree.h"
 #include "jaxlib/sharding.h"
@@ -75,50 +76,45 @@ namespace nb = nanobind;
 
 namespace {
 
+nb_class_ptr<Config>& disable_jit_state = *new nb_class_ptr<Config>();
+nb_class_ptr<Config>& enable_x64_state = *new nb_class_ptr<Config>();
+nb_class_ptr<Config>& post_hook_state = *new nb_class_ptr<Config>();
+
 // Callback called the first time the C++ jit accesses thread-local state.
 nb::object& initialize_local_state = *new nb::object();
 
 }  // namespace
 
-JitState& GlobalJitState() {
-  // Protected by the GIL.
-  static JitState& global_state = *new JitState();
-  return global_state;
-}
-
-JitState& ThreadLocalJitState() {
-  // TODO(phawkins): Google style guide forbids thread-local values with
-  // non-trivial destructors.
-  ABSL_CONST_INIT thread_local JitState thread_local_state;  // NOLINT
-  ABSL_CONST_INIT thread_local bool local_state_callback_called = false;
-  DCHECK(PyGILState_Check());
-  if (!local_state_callback_called && initialize_local_state.ptr() != nullptr) {
-    // Avoids reentrant calls to the initialization function.
-    local_state_callback_called = true;
+void InitializeThreadLocalState() {
+  thread_local bool initialized = false;
+  if (!initialized) {
+    initialized = true;
+    // Set the flag first to avoid reentrant calls to the initialization
+    // function.
     initialize_local_state();
   }
-  return thread_local_state;
 }
 
 bool GetDisableJit() {
-  auto& global_state = GlobalJitState();
-  auto& thread_local_state = ThreadLocalJitState();
-  CHECK(global_state.disable_jit.has_value());
-  return thread_local_state.disable_jit.value_or(*global_state.disable_jit);
+  if (!disable_jit_state.ptr()) {
+    throw std::runtime_error("disable_jit_state is not set");
+  }
+  return nb::cast<bool>(disable_jit_state->Get());
 }
 
 bool GetEnableX64() {
-  auto& global_state = GlobalJitState();
-  auto& thread_local_state = ThreadLocalJitState();
-  CHECK(global_state.enable_x64.has_value());
-  return thread_local_state.enable_x64.value_or(*global_state.enable_x64);
+  if (!enable_x64_state.ptr()) {
+    throw std::runtime_error("enable_x64_state is not set");
+  }
+  bool out = nb::cast<bool>(enable_x64_state->Get());
+  return out;
 }
 
 std::optional<nb::callable> GetPostHook() {
-  auto& global_state = GlobalJitState();
-  auto& thread_local_state = ThreadLocalJitState();
-  return thread_local_state.post_hook.has_value() ? thread_local_state.post_hook
-                                                  : global_state.post_hook;
+  if (!post_hook_state.ptr()) {
+    throw std::runtime_error("post_hook_state is not set");
+  }
+  return nb::cast<std::optional<nb::callable>>(post_hook_state->Get());
 }
 
 std::string ArgumentSignature::DebugString() const {
@@ -196,14 +192,13 @@ std::string CallSignature::DebugString() const {
       "dynamic arg layouts: %s\n"
       "committed args: %s\n"
       "device: %s\n"
-      "jax_enable_x64: %d\n"
       "configs: %s\n",
       arg_signature.DebugString(),
       absl::StrJoin(dynamic_arg_signatures, ", ", signature_formatter),
       absl::StrJoin(dynamic_arg_shardings, ", ", py_object_formatter),
       absl::StrJoin(dynamic_arg_layouts, ", ", layout_formatter),
       absl::StrJoin(committed_args, ",", bool_formatter),
-      device != nullptr ? device->DebugString() : "nullptr", jax_enable_x64,
+      device != nullptr ? device->DebugString() : "nullptr",
       absl::StrJoin(configs, ", ", py_object_formatter));
 }
 
@@ -286,9 +281,6 @@ bool CallSignature::operator==(const CallSignature& other) const {
     return false;
   }
   if (device != other.device) {
-    return false;
-  }
-  if (jax_enable_x64 != other.jax_enable_x64) {
     return false;
   }
   if (committed_args != other.committed_args) {
@@ -407,29 +399,13 @@ absl::Status ParseArguments(
 void BuildJaxjitSubmodule(nb::module_& m) {
   nb::module_ jitlib = m.def_submodule("jax_jit", "Jax C++ jit library");
 
-  nb::class_<JitState> jit_state_(jitlib, "JitState");
-  jit_state_.def_rw("disable_jit", &JitState::disable_jit, nb::arg().none());
-  jit_state_.def_rw("enable_x64", &JitState::enable_x64, nb::arg().none());
-  jit_state_.def_rw("post_hook", &JitState::post_hook, nb::arg().none());
+  jitlib.def("set_disable_jit_state",
+             [](nb_class_ptr<Config> config) { disable_jit_state = config; });
+  jitlib.def("set_enable_x64_state",
+             [](nb_class_ptr<Config> config) { enable_x64_state = config; });
+  jitlib.def("set_post_hook_state",
+             [](nb_class_ptr<Config> config) { post_hook_state = config; });
 
-  jitlib.def(
-      "global_state", [&]() { return &GlobalJitState(); },
-      nb::rv_policy::reference);
-  jitlib.def(
-      "thread_local_state", [&]() { return &ThreadLocalJitState(); },
-      nb::rv_policy::reference);
-
-  jitlib.def(
-      "swap_thread_local_state_disable_jit",
-      [&](std::optional<bool> value) -> std::optional<bool> {
-        auto tls = &ThreadLocalJitState();
-        auto result = tls->disable_jit;
-        tls->disable_jit = value;
-        return result;
-      },
-      nb::arg("value").none(), nb::rv_policy::reference);
-
-  jitlib.def("get_enable_x64", &GetEnableX64);
   jitlib.def("set_thread_local_state_initialization_callback",
              [](nb::object f) { initialize_local_state = f; });
 
