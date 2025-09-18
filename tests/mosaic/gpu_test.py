@@ -1960,9 +1960,9 @@ class TCGen05Test(TestCase):
     def kernel(ctx, out, scratch):
       cancel_result_ref, barrier, _ = scratch
 
-      with mgpu.single_thread():
-        barrier.arrive_expect_tx(16)
-        mgpu.try_cluster_cancel(cancel_result_ref, barrier)
+      is_leader_thread = single_thread_predicate()
+      barrier.arrive_expect_tx(16, predicate=is_leader_thread)
+      mgpu.try_cluster_cancel(cancel_result_ref, barrier, is_leader_thread)
 
       barrier.wait()
       *cta_ids, cancelled_launch = mgpu.query_cluster_cancel(cancel_result_ref)
