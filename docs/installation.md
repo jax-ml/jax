@@ -7,37 +7,20 @@ Using JAX requires installing two packages: `jax`, which is pure Python and
 cross-platform, and `jaxlib` which contains compiled binaries, and requires
 different builds for different operating systems and accelerators.
 
-**Note:**  
-[uv](https://github.com/astral-sh/uv) is a fast, modern Python package manager that can be used as a drop-in replacement for pip.  
-To use it, simply replace `pip` with `uv pip` in the installation commands below.
-
 **Summary:** For most users, a typical JAX installation may look something like this:
 
 * **CPU-only (Linux/macOS/Windows)**
   ```
   pip install -U jax
   ```
-  Or with uv:
-  ```
-  uv pip install -U jax
-  ```
-
 * **GPU (NVIDIA, CUDA 12)**
   ```
   pip install -U "jax[cuda12]"
-  ```
-  Or with uv:
-  ```
-  uv pip install -U "jax[cuda12]"
   ```
 
 * **TPU (Google Cloud TPU VM)**
   ```
   pip install -U "jax[tpu]"
-  ```
-  Or with uv:
-  ```
-  uv pip install -U "jax[tpu]"
   ```
 
 (install-supported-platforms)=
