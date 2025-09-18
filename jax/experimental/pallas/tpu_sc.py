@@ -29,6 +29,7 @@ from jax._src.pallas.mosaic.sc_primitives import pack as pack
 from jax._src.pallas.mosaic.sc_primitives import PackFormat as PackFormat
 from jax._src.pallas.mosaic.sc_primitives import parallel_loop as parallel_loop
 from jax._src.pallas.mosaic.sc_primitives import scan_count as scan_count
+from jax._src.pallas.mosaic.sc_primitives import shapecast as shapecast
 from jax._src.pallas.mosaic.sc_primitives import store_compressed as store_compressed
 from jax._src.pallas.mosaic.sc_primitives import store_scatter as store_scatter
 from jax._src.pallas.mosaic.sc_primitives import unpack as unpack
