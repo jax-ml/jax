@@ -221,9 +221,7 @@ class VectorLayout {
 
   int8_t bitwidth() const { return bitwidth_; }
   const LayoutOffsets &offsets() const { return offsets_; }
-  LayoutOffsets getCanonicalOffsets(
-      const ArrayRef<int64_t> shape,
-      const std::array<int64_t, 2> target_shape) const {
+  LayoutOffsets getCanonicalOffsets(const ArrayRef<int64_t> shape) const {
     // For (1, n) tiling with a single row, 2nd minor replication does not
     // change anything about the layout - it is equivalent to an offset of 0.
     // We choose a replicated offset as "canonical".

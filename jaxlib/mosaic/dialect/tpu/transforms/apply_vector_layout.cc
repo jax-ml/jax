@@ -7893,8 +7893,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
     return std::pair(src, std::move(vregs));
   }
   // Canonicalize offsets
-  src = VectorLayout(src.bitwidth(),
-                     src.getCanonicalOffsets(vty.getShape(), ctx.target_shape),
+  src = VectorLayout(src.bitwidth(), src.getCanonicalOffsets(vty.getShape()),
                      src.tiling(), src.implicit_dim());
   const std::array<int64_t, 2> tiled_ishape =
       src.getImplicitTiledDims(vty.getShape(), 1);
@@ -8423,8 +8422,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> relayoutVregs(
     }
   }
 
-  if (const LayoutOffsets src_offsets =
-          src.getCanonicalOffsets(vty.getShape(), ctx.target_shape);
+  if (const LayoutOffsets src_offsets = src.getCanonicalOffsets(vty.getShape());
       src.layout_rank() >= dst.layout_rank() && !src_offsets[0].has_value() &&
       !src_offsets[1].has_value()) {
     // A fully replicated value is always easy to relayout
@@ -8486,8 +8484,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> relayoutMasks(
   const std::array<int64_t, 2> target_shape = ctx.target_shape;
   const int8_t bitwidth = src.bitwidth();
 
-  if (const LayoutOffsets src_offsets =
-          src.getCanonicalOffsets(vty.getShape(), ctx.target_shape);
+  if (const LayoutOffsets src_offsets = src.getCanonicalOffsets(vty.getShape());
       src.layout_rank() >= dst.layout_rank() && !src_offsets[0].has_value() &&
       !src_offsets[1].has_value()) {
     // Fully replicated masks are easy to relayout, even to different bitwidths
