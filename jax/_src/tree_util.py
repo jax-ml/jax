@@ -660,7 +660,7 @@ def broadcast_flattened_prefix_with_treedef(
   ret = []
 
   # TODO(jburnim): Should this traversal be done in C++?
-  def _broadcast(leaf_start, leaf_end, prefix_treedef, treedef):
+  def _broadcast(broadcast_fn, leaf_start, leaf_end, prefix_treedef, treedef):
     if treedef_is_strict_leaf(prefix_treedef):
       # We have encountered a leaf in the prefix, so we repeat the prefix leaf
       # for each leaf in the corresponding part of the tree.
@@ -679,12 +679,14 @@ def broadcast_flattened_prefix_with_treedef(
     prefix_i = leaf_start
     for prefix_child, tree_child in zip(
         prefix_treedef.children(), treedef.children(), strict=True):
-      _broadcast(prefix_i, prefix_i + prefix_child.num_leaves,
-                 prefix_child,
-                 tree_child)
+      broadcast_fn(broadcast_fn, prefix_i, prefix_i + prefix_child.num_leaves,
+                   prefix_child, tree_child,
+      )
       prefix_i += prefix_child.num_leaves
 
-  _broadcast(0, len(prefix_leaves), prefix_treedef, full_treedef)
+  # Pass _broadcast as arg to avoid it being a free variable within its own
+  # closure, which creates a reference cycle.
+  _broadcast(_broadcast, 0, len(prefix_leaves), prefix_treedef, full_treedef)
   return ret
 
 
