@@ -330,7 +330,6 @@ jax_multiplatform_test(
         "gpu_p100",
         "gpu_p100_x32",
         "gpu_v100_x32",
-        "gpu_p100_pjrt_c_api",
     ],
     enable_configs = [
         "gpu_a100_x32",

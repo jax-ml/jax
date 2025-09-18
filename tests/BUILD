@@ -963,7 +963,6 @@ jax_multiplatform_test(
     ],
     enable_configs = [
         "gpu_h100x2",
-        "gpu_p100x2_pjrt_c_api",
     ],
     shard_count = {
         "cpu": 10,
