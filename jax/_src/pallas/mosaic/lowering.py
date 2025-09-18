@@ -1845,7 +1845,7 @@ def _multiple_of_lowering_rule(ctx: LoweringRuleContext, val, *, values):
 
 
 def reduce_lowering_rule(reduce_fn, type_to_kind, type_to_identity):
-  def _lowering_rule(ctx: LoweringRuleContext, x, *, axes):
+  def _lowering_rule(ctx: LoweringRuleContext, x, *, axes, **kwargs):
     (x_aval,) = ctx.avals_in
     if not ctx.avals_out[0].shape:
       # If reducing to a scalar, we reduce by adding a leading singleton

@@ -702,7 +702,7 @@ def _div_sparse(spenv, *spvalues):
 
 sparse_rules_bcoo[lax.div_p] = _div_sparse
 
-def _reduce_sum_sparse(spenv, *spvalues, axes):
+def _reduce_sum_sparse(spenv, *spvalues, axes, out_sharding):
   X, = spvalues
   X_promoted = spvalues_to_arrays(spenv, X)
   mat = sparse.bcoo_reduce_sum(X_promoted, axes=axes)

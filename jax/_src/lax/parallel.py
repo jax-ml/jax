@@ -1058,7 +1058,8 @@ def _psum_transpose_rule(cts, *args, axes, axis_index_groups):
     def broadcast_positional(ct, arg):
       assert ad.is_undefined_primal(arg)
       if type(ct) is ad.Zero: return ad.Zero(arg.aval)
-      return lax._reduce_sum_transpose_rule(ct, arg, axes=pos_axes)[0]
+      return lax._reduce_sum_transpose_rule(ct, arg, axes=pos_axes,
+                                            out_sharding=None)[0]
     cts = map(broadcast_positional, cts, args)
 
   # We treat psum as psum + pbroadcast, which is why the transpose reduces

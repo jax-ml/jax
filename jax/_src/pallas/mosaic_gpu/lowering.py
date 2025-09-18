@@ -349,7 +349,8 @@ REDUCE_SCRATCH_ELEMS = 128 * 2  # vector of 2 elements per lane in each WG
 @_register_resource_estimator(lax.reduce_sum_p)
 @_register_resource_estimator(lax.reduce_max_p)
 def _reduce_resource_estimator(
-    ctx: ResourceEstimatorContext, x_aval: jax_core.ShapedArray, *, axes
+    ctx: ResourceEstimatorContext, x_aval: jax_core.ShapedArray, *, axes,
+    **kwargs
 ) -> Resources:
   del ctx, axes  # Unused.
   # We don't need SMEM for some reductions, but it depends on the layout, so we
@@ -2262,7 +2263,7 @@ def _log_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
   return math_dialect.log(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
-def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes):
+def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
   [x_aval] = ctx.avals_in
   match x.layout:
     case mgpu.WGStridedFragLayout():
@@ -2328,7 +2329,8 @@ def _reduce_lowering_rule_wg(
 
 
 @register_lowering_rule(lax.reduce_sum_p, mgpu.LoweringSemantics.Warpgroup)
-def _reduce_sum_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
+def _reduce_sum_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes,
+                                 out_sharding):
   op = _reduce_lowering_rule_wg(
       vector_dialect.CombiningKind.ADD, 0, ctx, x, axes=axes
   )

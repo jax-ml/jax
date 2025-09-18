@@ -400,10 +400,8 @@ def einsum_path(
 
   .. _opt_einsum: https://github.com/dgasmith/opt_einsum
   """
-  if optimize is True:
-    optimize = 'optimal'
-  elif optimize is False:
-    optimize = Unoptimized()
+  if isinstance(optimize, bool):
+    optimize = 'optimal' if optimize else Unoptimized()
   return opt_einsum.contract_path(subscripts, *operands, optimize=optimize)
 
 def _removechars(s, chars):
@@ -435,8 +433,9 @@ def _einsum(
   def sum(x, axes):
     if dtypes.result_type(x, preferred_element_type) != x.dtype:
       x = x.astype(preferred_element_type)
-    return lax.reduce(x, np.array(0, x.dtype),
-                      lax.add if x.dtype != bool else lax.bitwise_or, axes)
+    return lax.reduce(
+        x, np.array(0, x.dtype), lax.add if x.dtype != bool else lax.bitwise_or,
+        axes, out_sharding)
 
   def sum_uniques(operand, names, uniques):
     if uniques:

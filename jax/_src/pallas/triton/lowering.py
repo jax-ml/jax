@@ -2432,7 +2432,7 @@ def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
   return list(reduce_op.result)
 
 
-def _reduce_lowering(body, ctx: LoweringRuleContext, a, *, axes):
+def _reduce_lowering(body, ctx: LoweringRuleContext, a, *, axes, **kwargs):
   assert isinstance(axes, tuple)
   if not axes:
     return a

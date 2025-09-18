@@ -1688,6 +1688,7 @@ def _reduce_sum_pull_rule(
     block_spec: pallas_core.BlockSpec,
     *,
     axes: tuple[int, ...],
+    out_sharding,
 ):
   aval_in = ctx.avals_in[0]
   assert isinstance(aval_in, core.ShapedArray)
@@ -1721,6 +1722,7 @@ def _reduce_sum_eval_rule(
     x,
     *,
     axes: tuple[int, ...],
+    out_sharding,
 ):
   aval_in = ctx.avals_in[0]
   assert isinstance(aval_in, core.ShapedArray)

@@ -2094,7 +2094,8 @@ def _make_lengths_same(sharding, ndim):
     return sharding.update(spec=pspec._normalized_spec_for_aval(ndim))
   if ndim < len(pspec):
     assert all(s is None for s in pspec[ndim:]), (ndim, pspec)
-    return sharding.update(spec=P(*pspec[:ndim], unreduced=pspec.unreduced))
+    return sharding.update(spec=P(*pspec[:ndim], unreduced=pspec.unreduced,
+                                  reduced=pspec.reduced))
   assert False, "unreachable"
 
 def modify_spec_for_auto_manual(spec, mesh) -> P:

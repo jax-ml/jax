@@ -8915,6 +8915,61 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     w = jax.random.normal(jax.random.key(1), (4, 8))
     f(w, samples)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_unreduced_einsum_lowers_to_reduce_sum(self, mesh):
+    arr = jax.device_put(jnp.arange(8).reshape(4, 2), P('x', None))
+
+    @jax.jit
+    def f(x):
+      out = jnp.einsum("ab->b", x, out_sharding=P(None, unreduced={'x'}))
+      self.assertEqual(out.aval.sharding.spec, P(None, unreduced={'x'}))
+      return out
+
+    compiled_text = f.lower(arr).compile().as_text()
+    if compiled_text is not None:
+      self.assertNotIn('all-reduce', compiled_text)
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+    for s in out.addressable_shards:
+      self.assertEqual(s.data.shape, (2,))
+
+    reshard_out = jax.sharding.reshard(out, P(None))
+    self.assertArraysEqual(reshard_out, jnp.sum(arr, axis=0))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reduce_sum_unreduced(self, mesh):
+    np_inp = np.arange(16).reshape(4, 2, 2)
+    arr = jax.device_put(np_inp, P('x', 'y', None))
+
+    # TODO(yashkatariya): Uncomment once shardy is fixed.
+    # @jax.jit
+    # def f(x):
+    #   out = jax.lax.reduce_sum(
+    #       x, axes=(0, 1), out_sharding=P(None, unreduced={'x'}))
+    #   self.assertEqual(out.aval.sharding.spec, P(None, unreduced={'x'}))
+    #   return out
+
+    # out = f(arr)
+    # self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+    # for s in out.addressable_shards:
+    #   self.assertEqual(s.data.shape, (2,))
+
+    # reshard_out = jax.sharding.reshard(out, P(None))
+    # self.assertArraysEqual(reshard_out, jnp.sum(arr, axis=(0, 1)))
+
+    @jax.jit
+    def g(x):
+      return jax.lax.reduce_sum(
+          x, axes=(0,), out_sharding=P(None, unreduced={'x'}))
+
+    arr2 = jax.device_put(np.arange(16).reshape(8, 2), P(('x', 'y'), None))
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        "out_sharding's unreduced axes should be in operand's specs that were"
+        ' summed over'):
+      g(arr2)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

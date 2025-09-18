@@ -2985,7 +2985,8 @@ def argmax(operand: ArrayLike, axis: int,
 def reduce(operands: Any,
            init_values: Any,
            computation: Callable[[Any, Any], Any],
-           dimensions: Sequence[int]) -> Any:
+           dimensions: Sequence[int],
+           out_sharding: NamedSharding | P | None = None) -> Any:
   """Wraps XLA's `Reduce
   <https://www.openxla.org/xla/operation_semantics#reduce>`_
   operator.
@@ -3010,15 +3011,20 @@ def reduce(operands: Any,
   monoid_reducer = _get_monoid_reducer(computation, flat_init_values)
   if monoid_reducer:
     # monoid reducers bypass the weak_type_rule, so we set it explicitly.
-    weak_type = dtypes.is_weakly_typed(*flat_operands) and dtypes.is_weakly_typed(*flat_init_values)
-    return _convert_element_type(monoid_reducer(*flat_operands, dimensions),
-                                 weak_type=weak_type)
+    weak_type = (dtypes.is_weakly_typed(*flat_operands) and
+                 dtypes.is_weakly_typed(*flat_init_values))
+    if out_sharding is not None and monoid_reducer is not reduce_sum:
+      raise NotImplementedError
+    out_sharding_dict = ({'out_sharding': out_sharding}
+                         if out_sharding is not None else {})
+    out = monoid_reducer(*flat_operands, dimensions, **out_sharding_dict)
+    return _convert_element_type(out, weak_type=weak_type)
   else:
     flat_init_avals = safe_map(core.get_aval, flat_init_values)
     closed_jaxpr, out_tree = _variadic_reduction_jaxpr(
         computation, comp_debug, tuple(flat_init_avals), init_value_tree)
     flat_operands = core.standard_insert_pvary(*flat_operands)
-    flat_init_avals = core.standard_insert_pvary(*flat_init_values)
+    flat_init_values = core.standard_insert_pvary(*flat_init_values)
     out = reduce_p.bind(*flat_operands, *flat_init_values, computation=computation,
                         jaxpr=closed_jaxpr, dimensions=tuple(dimensions))
     return tree_util.tree_unflatten(out_tree, out)
@@ -3122,7 +3128,8 @@ def _get_min_identity(dtype: DTypeLike) -> np.ndarray:
   else:
     raise ValueError(f"Unsupported dtype for min: {dtype}")
 
-def reduce_sum(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_sum(operand: ArrayLike, axes: Sequence[int], *,
+               out_sharding=None) -> Array:
   """Compute the sum of elements over one or more array axes.
 
   Args:
@@ -3146,7 +3153,8 @@ def reduce_sum(operand: ArrayLike, axes: Sequence[int]) -> Array:
       :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_max`, :func:`jax.lax.reduce_min`,
       :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
   """
-  return reduce_sum_p.bind(operand, axes=tuple(axes))
+  out_sharding = canonicalize_sharding(out_sharding, 'reduce_sum')
+  return reduce_sum_p.bind(operand, axes=tuple(axes), out_sharding=out_sharding)
 
 def reduce_prod(operand: ArrayLike, axes: Sequence[int]) -> Array:
   """Compute the product of elements over one or more array axes.
@@ -7784,7 +7792,7 @@ def _reduce_number_dtype_rule(name, operand, *args, **kw):
                     "of number.".format(name, dtype_to_string(operand.dtype)))
   return operand.dtype
 
-def _reduce_sum_transpose_rule(cotangent, operand, *, axes):
+def _reduce_sum_transpose_rule(cotangent, operand, *, axes, out_sharding):
   assert ad.is_undefined_primal(operand)
   input_shape = operand.aval.shape
   broadcast_dimensions = tuple(np.delete(np.arange(len(input_shape)), axes))
@@ -7793,7 +7801,8 @@ def _reduce_sum_transpose_rule(cotangent, operand, *, axes):
   assert result.shape == input_shape
   return [result]
 
-def _reducer_padding(traceable, ident, in_avals, out_avals, operand, *, axes):
+def _reducer_padding(traceable, ident, in_avals, out_avals, operand, *, axes,
+                     **kwargs):
   del out_avals
   aval, = in_avals
   padded_axes = [(i, d.val) for i, d in enumerate(aval.shape)
@@ -7807,7 +7816,7 @@ def _replace_masked_values(x, val, padded_axes):
   masks = [broadcasted_iota(dtype, x.shape, i) < d for i, d in padded_axes]
   return select(_reduce(operator.and_, masks), x, full_like(x, val))
 
-def _reduce_op_shape_rule(operand, *, axes, input_shape=None):
+def _reduce_op_shape_rule(operand, *, axes, input_shape=None, **kwargs):
   del input_shape  # Unused.
   if len(axes) != len(set(axes)):
     raise ValueError(f"duplicate value in 'axes' of reduction: {axes}")
@@ -7816,16 +7825,32 @@ def _reduce_op_shape_rule(operand, *, axes, input_shape=None):
   axes = frozenset(axes)
   return tuple(d for i, d in enumerate(operand.shape) if i not in axes)
 
-def _reduce_op_sharding_rule(operand, *, axes):
+def _reduce_sum_sharding_rule(operand, *, axes, out_sharding):
+  if out_sharding is not None:
+    assert isinstance(out_sharding, NamedSharding)
+    return out_sharding
   axes = frozenset(axes)
   new_spec = P(*tuple(s for i, s in enumerate(operand.sharding.spec)
                       if i not in axes))
   return operand.sharding.update(spec=new_spec)
 
+def _reduce_sum_unreduced_rule(out_s, operand, *, axes, **kwargs):
+  if unreduced_spec := out_s.spec.unreduced:
+    axes = frozenset(axes)
+    reduced_spec = frozenset(s for i, s in enumerate(operand.sharding.spec)
+                             if i in axes)
+    if not all(u in reduced_spec for u in unreduced_spec):
+      raise core.ShardingTypeError(
+          "out_sharding's unreduced axes should be in operand's specs that"
+          f' were summed over. Got {operand=}, {axes=},'
+          f' unreduced_spec={unreduced_spec}')
+  return out_s
+
 reduce_sum_p = standard_primitive(
   _reduce_op_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_sum'),
-  'reduce_sum', sharding_rule=_reduce_op_sharding_rule,
-  vma_rule=partial(core.standard_vma_rule, 'reduce_sum'))
+  'reduce_sum', sharding_rule=_reduce_sum_sharding_rule,
+  vma_rule=partial(core.standard_vma_rule, 'reduce_sum'),
+  unreduced_rule=_reduce_sum_unreduced_rule)
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p, _get_sum_identity)
 pe.padding_rules[reduce_sum_p] = partial(_reducer_padding, reduce_sum,
@@ -7837,6 +7862,12 @@ def _reduce_prod_jvp_rule(primals, tangents, *, axes):
   primals_out, tangents_out = _reduce_jvp(reducer, [_const(primals[0], 1)],
                                           primals, tangents, axes)
   return primals_out[0], tangents_out[0]
+
+def _reduce_op_sharding_rule(operand, *, axes):
+  axes = frozenset(axes)
+  new_spec = P(*tuple(s for i, s in enumerate(operand.sharding.spec)
+                      if i not in axes))
+  return operand.sharding.update(spec=new_spec)
 
 reduce_prod_p = standard_primitive(
   _reduce_op_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_prod'),
@@ -8007,7 +8038,7 @@ reduce_xor_p = standard_primitive(
 batching.defreducer(reduce_xor_p, _get_bitwise_or_identity)
 
 
-def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes):
+def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes, **kwargs):
   aval_out, = ctx.avals_out
   dtype = aval_out.dtype
   op = hlo.ReduceOp([mlir.aval_to_ir_type(aval_out)], [x],
