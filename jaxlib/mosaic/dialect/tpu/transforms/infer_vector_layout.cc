@@ -1611,17 +1611,64 @@ class VectorLayoutInferer {
       return success();
     }
 
+    // Find the small tiling such that there is not padding and each vreg holds
+    // a continuous slice of the flatten data.
+    auto small_second_minor_tiling_layout =
+        [&](ArrayRef<int64_t> shape) -> std::optional<VectorLayout> {
+      if (shape.size() < 2 ||
+          (target_shape_[0] * target_shape_[1]) % shape.back() != 0) {
+        return std::nullopt;
+      }
+      // TODO(b/440370770): Add support for other bitwidths.
+      if (bitwidth != kNativeBitwidth) {
+        return std::nullopt;
+      }
+      int64_t second_minor_tiling =
+          target_shape_[0] * target_shape_[1] / shape.back();
+      // TODO(b/440370770): Preserve replicated offsets.
+      auto layout = VectorLayout(bitwidth, {0, 0},
+                                 {second_minor_tiling, target_shape_[1]},
+                                 ImplicitDim::kNone);
+      auto vreg_slice = layout.vregSlice(target_shape_);
+      if (shape.back() != vreg_slice[1] ||
+          shape[shape.size() - 2] % vreg_slice[0] != 0) {
+        return std::nullopt;
+      }
+      return layout;
+    };
+
+    // Use the small tiling if there's no padding and each vreg holds a
+    // contiguous slice of the flattened data. It makes reshape a sublane
+    // shuffle within a vreg.
+    //
+    // For example,
+    // - (4, 256) with (4, 128) tiling to (1, 1024) with (1, 128) tiling is
+    //  to shuffle sublane from [0, 1, 2, 3, 4, 5, 6, 7] to
+    //  [0, 4, 1, 5, 2, 6, 3, 7]
+    // - (4, 256) with (4, 128) tiling to (2, 512) with (2, 128) tiling is
+    //  to shuffle sublane from [0, 1, 2, 3, 4, 5, 6, 7] to
+    //  [0, 2, 4, 6, 1, 3, 5, 7]
+    auto src_small_second_minor_tiling_layout =
+        small_second_minor_tiling_layout(src_shape);
+    auto res_small_second_minor_tiling_layout =
+        small_second_minor_tiling_layout(res_shape);
+
+    if (src_small_second_minor_tiling_layout.has_value() &&
+        res_small_second_minor_tiling_layout.has_value()) {
+      setLayout(op, *src_small_second_minor_tiling_layout,
+                *res_small_second_minor_tiling_layout);
+      return success();
+    }
+
     // Shape casts for {32/16/8}-bit vector types with rank >= 2.
     if (bitwidth >= 8 && bitwidth <= kNativeBitwidth && res_shape.size() >= 2 &&
         src_shape.size() >= 2 && src_shape.back() % native_tiling[1] == 0 &&
         res_shape.back() % native_tiling[1] == 0) {
-      // TODO(jsreeram): Add support for picking space-efficient tilings for
+      // TODO(b/440370770): Add support for picking space-efficient tilings for
       // small 2nd minor dim shapes.
       // Example 1: (4, 2, 1024) -> (4, 2048) If we infer src and tgt layout to
-      // be (1, 128), it is no-op because essentially we just shufflle the VREGs
+      // be (1, 128), it is no-op because essentially we just shuffle the VREGs
       // in VREG array.
-      // Example 2: (4, 256) -> (1, 1024) is actually sublane
-      // shuffle inside each vreg from [0, 1, 2, 3, 4,..7] to [0, 4, 1, 5, ...]
       setLayout(op,
                 VectorLayout(layout.bitwidth(), {0, 0}, native_tiling,
                              ImplicitDim::kNone),
