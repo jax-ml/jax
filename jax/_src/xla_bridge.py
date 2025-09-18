@@ -101,12 +101,6 @@ MOCK_GPU_TOPOLOGY = config.string_flag(
          '<number-of-devices-per-host>". Empty string turns off mocking.',
 )
 
-_CPU_ENABLE_GLOO_COLLECTIVES = config.bool_flag(
-    name="jax_cpu_enable_gloo_collectives",
-    default=False,
-    help="Deprecated, please use jax_cpu_collectives_implementation instead.",
-)
-
 _CPU_ENABLE_ASYNC_DISPATCH = config.bool_flag(
     name="jax_cpu_enable_async_dispatch",
     default=True,
@@ -316,14 +310,6 @@ def make_cpu_client(
   # https://github.com/jax-ml/jax/pull/26172 goes in.
   if collectives is None and distributed.global_state.client is not None:
     collectives_impl = config.cpu_collectives_implementation.value
-    if _CPU_ENABLE_GLOO_COLLECTIVES.value:
-      collectives_impl = 'gloo'
-      warnings.warn('Setting `jax_cpu_enable_gloo_collectives` is '
-                      'deprecated. Please use `jax.config.update('
-                      '"jax_cpu_collectives_implementation", "gloo")` instead.',
-                      DeprecationWarning,
-                      )
-
     if collectives_impl == 'gloo':
       collectives = xla_client._xla.make_gloo_tcp_collectives(
         distributed_client=distributed.global_state.client,

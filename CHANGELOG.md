@@ -16,11 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
-* Breaking changes.
+* Breaking changes:
 
   * JAX no longer accepts `Array` values where a `dtype` value is expected. Call
     `.dtype` on these values first.
-
   * The deprecated function {func}`jax.interpreters.mlir.custom_call` was
     removed.
   * The `jax.util`, `jax.extend.ffi`, and `jax.experimental.host_callback`
@@ -32,6 +31,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `is_initialized` and `initialize_cache` were removed.
   * The deprecated function {func}`jax.interpreters.xla.canonicalize_dtype`
     was removed.
+  * The option `jax_cpu_enable_gloo_collectives` has been removed. Use
+    `jax_cpu_collectives_implementation` instead.
 
 ## JAX 0.7.2 (September 16, 2025)
 
