@@ -292,7 +292,7 @@ def jax_multiplatform_test(
             test_tags += tf_cuda_tests_tags()
         elif backend == "tpu":
             test_deps += ["@pypi//libtpu"]
-        native.py_test(
+        py_test(
             name = name + "_" + backend,
             srcs = srcs,
             args = test_args,
@@ -599,7 +599,7 @@ def pytype_test(name, **kwargs):
     deps = kwargs.get("deps", [])
     test_deps = _cpu_test_deps() + _get_jax_test_deps(deps)
     kwargs["deps"] = test_deps
-    native.py_test(name = name, **kwargs)
+    py_test(name = name, **kwargs)
 
 def if_oss(oss_value, google_value = []):
     """Returns one of the arguments based on the non-configurable build env.

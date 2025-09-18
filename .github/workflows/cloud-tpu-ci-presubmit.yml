@@ -39,7 +39,8 @@ jobs:
       runner: "linux-x86-ct5lp-224-8tpu"
       cores: "8"
       tpu-type: "v5e-8"
-      python: "3.13-nogil"
+      # TODO(ybaturina): Replace with 3.13-nogil once rules_python issue is fixed.
+      python: "3.13"
       libtpu-version-type: "nightly"
       halt-for-connection: false
       build_jaxlib: "true"

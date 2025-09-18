@@ -263,9 +263,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
       dst_dir=jaxlib_dir / "mlir",
       src_files=[
           f"{source_file_prefix}jaxlib/mlir/ir.py",
-          f"{source_file_prefix}jaxlib/mlir/ir.pyi",
           f"{source_file_prefix}jaxlib/mlir/passmanager.py",
-          f"{source_file_prefix}jaxlib/mlir/passmanager.pyi",
       ],
   )
   copy_files(
