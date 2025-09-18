@@ -30,6 +30,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import stages
 from jax._src import linear_util as lu
 from jax._src import sharding_impls
 from jax._src import source_info_util
@@ -1931,16 +1932,17 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
     return tree_unflatten(out_tree(), outs)
 
   def lower(*args, **kwargs):
-    jitted_f, _, _, _, _ = infer_params(*args, **kwargs)
-    return jitted_f.lower(*args, **kwargs)
+    jitted_f, _, out_tree, _, _ = infer_params(*args, **kwargs)
+    lowered = jitted_f.lower(*args, **kwargs)
+    lowered = stages.Lowered(lowered._lowering, lowered.args_info, out_tree(),
+                             lowered._no_kwargs)
+    return lowered
   wrapped.lower = lower
-
   return wrapped
 
 
 @lu.cache
 def _cached_shard_map(flat_fun, mesh, in_axes_flat, out_axes_thunk, axis_name):
-
   f_transformed = flat_fun.f_transformed
   def reset_stores_f_transformed(*args, **kwargs):
     for store in flat_fun.stores:
