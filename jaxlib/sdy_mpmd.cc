@@ -101,6 +101,7 @@ NB_MODULE(_sdy_mpmd, m) {
   nb::enum_<PartitioningPhase>(m, "PartitioningPhase")
       .value("NONE", PartitioningPhase::kNone)
       .value("IMPORT", PartitioningPhase::kImport)
+      .value("OPTIMIZE", PartitioningPhase::kOptimize)
       .value("PARTITION", PartitioningPhase::kPartition)
       .value("ALL", PartitioningPhase::kAll)
       .export_values()
