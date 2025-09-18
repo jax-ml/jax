@@ -113,10 +113,10 @@ def identity(x):
   """A named identity function for use in tests"""
   return x
 
-LiteralInt = literals.LiteralInt
-LiteralFloat = literals.LiteralFloat
-LiteralComplex = literals.LiteralComplex
-LiteralArray = literals.LiteralArray
+TypedInt = literals.TypedInt
+TypedFloat = literals.TypedFloat
+TypedComplex = literals.TypedComplex
+TypedNdArray = literals.TypedNdArray
 
 class DtypesTest(jtu.JaxTestCase):
 
@@ -130,28 +130,28 @@ class DtypesTest(jtu.JaxTestCase):
 
   def test_canonicalize_value_preserves_literal_dtypes(self):
     self.assertEqual(np.dtype(np.int32), dtypes.canonicalize_value(
-        LiteralInt(6, dtype=np.dtype(np.int32))).dtype)
+        TypedInt(6, dtype=np.dtype(np.int32))).dtype)
     self.assertEqual(np.dtype(np.int64), dtypes.canonicalize_value(
-        LiteralInt(6, dtype=np.dtype(np.int64))).dtype)
+        TypedInt(6, dtype=np.dtype(np.int64))).dtype)
     self.assertEqual(np.dtype(np.float32), dtypes.canonicalize_value(
-        LiteralFloat(6, dtype=np.dtype(np.float32))).dtype)
+        TypedFloat(6, dtype=np.dtype(np.float32))).dtype)
     self.assertEqual(np.dtype(np.float64), dtypes.canonicalize_value(
-        LiteralFloat(6, dtype=np.dtype(np.float64))).dtype)
+        TypedFloat(6, dtype=np.dtype(np.float64))).dtype)
     self.assertEqual(np.dtype(np.complex64), dtypes.canonicalize_value(
-        LiteralComplex(6, dtype=np.dtype(np.complex64))).dtype)
+        TypedComplex(6, dtype=np.dtype(np.complex64))).dtype)
     self.assertEqual(np.dtype(np.complex128), dtypes.canonicalize_value(
-        LiteralComplex(6, dtype=np.dtype(np.complex128))).dtype)
+        TypedComplex(6, dtype=np.dtype(np.complex128))).dtype)
     self.assertEqual(
         np.dtype(np.int32),
         dtypes.canonicalize_value(
-            LiteralArray(np.array([6], dtype=np.dtype(np.int32)),
+            TypedNdArray(np.array([6], dtype=np.dtype(np.int32)),
                          weak_type=False)
         ).dtype,
     )
     self.assertEqual(
         np.dtype(np.int64),
         dtypes.canonicalize_value(
-            LiteralArray(np.array([6], dtype=np.dtype(np.int64)),
+            TypedNdArray(np.array([6], dtype=np.dtype(np.int64)),
                          weak_type=False)
         ).dtype,
     )
@@ -440,14 +440,14 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertEqual(dtypes.dtype(complex(0)), np.dtype(np.complex64))
 
   def testDtypeFromLiteralValue(self):
-    self.assertEqual(dtypes.dtype(LiteralInt(0, np.dtype(np.int64))), np.dtype(np.int64))
-    self.assertEqual(dtypes.dtype(LiteralFloat(0, np.dtype(np.float64))), np.dtype(np.float64))
-    self.assertEqual(dtypes.dtype(LiteralComplex(0, np.dtype(np.complex128))), np.dtype(np.complex128))
-    self.assertEqual(dtypes.dtype(LiteralInt(0, np.dtype(np.int32))), np.dtype(np.int32))
-    self.assertEqual(dtypes.dtype(LiteralFloat(0, np.dtype(np.float32))), np.dtype(np.float32))
-    self.assertEqual(dtypes.dtype(LiteralComplex(0, np.dtype(np.complex64))), np.dtype(np.complex64))
-    self.assertEqual(dtypes.dtype(LiteralArray(np.array([0], dtype=np.int32), weak_type=False)), np.dtype(np.int32))
-    self.assertEqual(dtypes.dtype(LiteralArray(np.array([0], dtype=np.int64), weak_type=False)), np.dtype(np.int64))
+    self.assertEqual(dtypes.dtype(TypedInt(0, np.dtype(np.int64))), np.dtype(np.int64))
+    self.assertEqual(dtypes.dtype(TypedFloat(0, np.dtype(np.float64))), np.dtype(np.float64))
+    self.assertEqual(dtypes.dtype(TypedComplex(0, np.dtype(np.complex128))), np.dtype(np.complex128))
+    self.assertEqual(dtypes.dtype(TypedInt(0, np.dtype(np.int32))), np.dtype(np.int32))
+    self.assertEqual(dtypes.dtype(TypedFloat(0, np.dtype(np.float32))), np.dtype(np.float32))
+    self.assertEqual(dtypes.dtype(TypedComplex(0, np.dtype(np.complex64))), np.dtype(np.complex64))
+    self.assertEqual(dtypes.dtype(TypedNdArray(np.array([0], dtype=np.int32), weak_type=False)), np.dtype(np.int32))
+    self.assertEqual(dtypes.dtype(TypedNdArray(np.array([0], dtype=np.int64), weak_type=False)), np.dtype(np.int64))
 
   @parameterized.parameters(all_dtypes)
   def testDtypeFromValue(self, dtype):

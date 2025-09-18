@@ -876,16 +876,16 @@ def register_weak_scalar_type(typ: type):
   _registered_weak_types.add(typ)
 
 _registered_weak_types: set[JAXType] = {
-    literals.LiteralInt,
-    literals.LiteralFloat,
-    literals.LiteralComplex,
+    literals.TypedInt,
+    literals.TypedFloat,
+    literals.TypedComplex,
 }
 
 
 def is_weakly_typed(x: Any) -> bool:
   if type(x) in _weak_types or type(x) in _registered_weak_types:
     return True
-  if isinstance(x, literals.LiteralArray):
+  if isinstance(x, literals.TypedNdArray):
     return x.weak_type
   try:
     return x.aval.weak_type
@@ -905,10 +905,10 @@ def check_valid_dtype(dtype: DType) -> None:
 
 _types_whose_dtype_should_not_be_canonicalized = (
     Array,
-    literals.LiteralArray,
-    literals.LiteralInt,
-    literals.LiteralFloat,
-    literals.LiteralComplex,
+    literals.TypedNdArray,
+    literals.TypedInt,
+    literals.TypedFloat,
+    literals.TypedComplex,
 )
 
 def dtype(x: Any) -> DType:

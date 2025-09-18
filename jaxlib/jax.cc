@@ -979,10 +979,10 @@ NB_MODULE(_jax, m) {
 
   PartitionSpec::Register(m);
 
-  m.def("set_literal_int_type", &SetLiteralIntType);
-  m.def("set_literal_float_type", &SetLiteralFloatType);
-  m.def("set_literal_complex_type", &SetLiteralComplexType);
-  m.def("set_literal_array_type", &SetLiteralArrayType);
+  m.def("set_typed_int_type", &SetTypedIntType);
+  m.def("set_typed_float_type", &SetTypedFloatType);
+  m.def("set_typed_complex_type", &SetTypedComplexType);
+  m.def("set_typed_ndarray_type", &SetTypedNdArrayType);
 }  // NOLINT(readability/fn_size)
 
 }  // namespace jax

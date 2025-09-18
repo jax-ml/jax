@@ -647,7 +647,7 @@ def _scan_linearize(nzs, *primals_in, reverse: bool, length: int, num_consts:
   carry_nz = init_nz
   allow_fwds = [True] * len(jaxpr.consts) + [
       (i < num_consts or i >= num_consts + num_carry)
-      and not isinstance(x, (np.ndarray, literals.LiteralArray))
+      and not isinstance(x, (np.ndarray, literals.TypedNdArray))
       for i, x in enumerate(primals_in)
   ]
   for _ in range(1 + num_carry):
@@ -764,7 +764,7 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
   # Don't allow forwarding from the carry or numpy.ndarrays.
   fwd = [
       (i < num_consts or i >= num_consts + num_carry) and
-      not isinstance(t.pval.get_known(), (np.ndarray, literals.LiteralArray))
+      not isinstance(t.pval.get_known(), (np.ndarray, literals.TypedNdArray))
       for i, t in enumerate(tracers)
   ]
   for _ in range(1 + len(carry_uk)):
@@ -868,7 +868,7 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
   return util.merge_lists(out_uk, known_outs, out_tracers)
 
 def _maybe_put(x):
-  if isinstance(x, (np.ndarray, literals.LiteralArray)):
+  if isinstance(x, (np.ndarray, literals.TypedNdArray)):
     aval = core.shaped_abstractify(x)
     s = sharding.SingleDeviceSharding(xb.local_devices(backend='cpu')[0])
     result_handler = pxla.global_aval_to_result_handler(aval, s, False)

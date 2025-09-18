@@ -590,7 +590,7 @@ _accepted_binop_types = (
     np.generic,
     np.ndarray,
     Array,
-    literals.LiteralArray,
+    literals.TypedNdArray,
 )
 _rejected_binop_types = (list, tuple, set, dict)
 

@@ -153,12 +153,12 @@ struct DevicePutInfo {
   static std::unordered_map<std::string, int64_t> GetInfo();
 };
 
-// Tells the C++ code about the Python types LiteralInt, LiteralFloat,
-// LiteralComplex, and LiteralArray.
-void SetLiteralIntType(nanobind::object t);
-void SetLiteralFloatType(nanobind::object t);
-void SetLiteralComplexType(nanobind::object t);
-void SetLiteralArrayType(nanobind::object t);
+// Tells the C++ code about the Python types TypedInt, TypedFloat,
+// TypedComplex, and TypedNdArray.
+void SetTypedIntType(nanobind::object t);
+void SetTypedFloatType(nanobind::object t);
+void SetTypedComplexType(nanobind::object t);
+void SetTypedNdArrayType(nanobind::object t);
 
 }  // namespace jax
 

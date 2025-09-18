@@ -334,7 +334,7 @@ def _ndarray_constant_handler(val: np.ndarray | np.generic,
     return _numpy_array_constant(val)
 
 register_constant_handler(np.ndarray, _ndarray_constant_handler)
-register_constant_handler(literals.LiteralArray, _ndarray_constant_handler)
+register_constant_handler(literals.TypedNdArray, _ndarray_constant_handler)
 
 for _scalar_type in [np.int8, np.int16, np.int32, np.int64,
                      np.uint8, np.uint16, np.uint32, np.uint64,

@@ -124,7 +124,7 @@ def promote_dtypes_complex(*args: ArrayLike) -> list[Array]:
           for x in args]
 
 
-_arraylike_types = (np.ndarray, Array, literals.LiteralArray)
+_arraylike_types = (np.ndarray, Array, literals.TypedNdArray)
 
 def _arraylike(x: ArrayLike) -> bool:
   return (isinstance(x, _arraylike_types) or

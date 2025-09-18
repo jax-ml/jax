@@ -143,7 +143,7 @@ def asarray(x: ArrayLike) -> Array:
     return x
   elif isinstance(x, (bool, np.ndarray, np.generic)):
     return _convert_element_type(x, weak_type=False)
-  elif isinstance(x, literals.LiteralArray):
+  elif isinstance(x, literals.TypedNdArray):
     return _convert_element_type(x, weak_type=x.weak_type)
   elif isinstance(x, (int, float, builtins.complex)):
     return _convert_element_type(dtypes.coerce_to_array(x), weak_type=True)
@@ -1660,7 +1660,7 @@ def convert_element_type(operand: ArrayLike,
   return _convert_element_type(operand, new_dtype, weak_type=False)  # type: ignore[unused-ignore,bad-return-type]
 
 def _convert_element_type(
-    operand: ArrayLike | literals.LiteralArray,
+    operand: ArrayLike | literals.TypedNdArray,
     new_dtype: DType | None = None,
     weak_type: bool = False,
     sharding: Sharding | None = None,
@@ -1715,17 +1715,17 @@ def _convert_element_type(
   # first canonicalize the input to a value of dtype int32 or int64, leading to
   # an overflow error.
   if type(operand) is int and new_dtype != dtypes.float0:
-    operand = literals.LiteralArray(np.asarray(operand).astype(new_dtype),
+    operand = literals.TypedNdArray(np.asarray(operand).astype(new_dtype),
                                          weak_type)
   elif (
       isinstance(operand, np.ndarray) and operand.dtype != dtypes.float0
       and new_dtype != dtypes.float0
   ):
     try:
-      # If the value is a literal, we convert it to a LiteralArray to avoid
+      # If the value is a literal, we convert it to a TypedNdArray to avoid
       # any canonicalization of it as a NumPy array. We may as well just do the
       # conversion while we are here.
-      operand = literals.LiteralArray(
+      operand = literals.TypedNdArray(
           np.asarray(operand).astype(new_dtype), weak_type
       )
     except TypeError:
@@ -3930,7 +3930,7 @@ def _add_arrays(x, y):
 
 for t in itertools.chain(
     dtypes.python_scalar_types, array_types, [array.ArrayImpl],
-    literals.literal_scalar_types):
+    literals.typed_scalar_types):
   ad_util.raw_jaxval_adders[t] = _add_arrays
 
 
@@ -4941,10 +4941,10 @@ def _convert_element_type_jvp_rule(tangent, primal_result, operand, *,
                                        weak_type=weak_type, sharding=sharding)
 
 _foldable_types = {
-    literals.LiteralArray,
+    literals.TypedNdArray,
     np.ndarray,
     *dtypes.python_scalar_types,
-    *literals.literal_scalar_types,
+    *literals.typed_scalar_types,
 }
 
 def _convert_elt_type_folding_rule(consts, params, out_avals):
@@ -4967,7 +4967,7 @@ def _convert_elt_type_folding_rule(consts, params, out_avals):
         not dtypes.issubdtype(new_dtype, np.complexfloating)):
       out = out.real
     out = out.astype(new_dtype)
-    return [literals.LiteralArray(out, weak_type=out_aval.weak_type)]
+    return [literals.TypedNdArray(out, weak_type=out_aval.weak_type)]
   return None
 
 def _convert_elt_type_fwd_rule(eqn):

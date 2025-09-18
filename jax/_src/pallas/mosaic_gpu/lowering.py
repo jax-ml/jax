@@ -3266,7 +3266,7 @@ def _ensure_ir_value(x: Any, dtype: jnp.dtype) -> ir.Value:
 
 def _ir_constant(v: object, t: ir.Type) -> ir.Value:
   if isinstance(
-      v, (np.number, np.ndarray, int, float, literals.LiteralArray)
+      v, (np.number, np.ndarray, int, float, literals.TypedNdArray)
   ):
     if isinstance(t, (ir.IntegerType, ir.IndexType)):
       v = int(v)
@@ -3299,7 +3299,7 @@ def _as_index(v: object) -> ir.Value:
       return arith_dialect.index_cast(ir.IndexType.get(), v)
     case mgpu.FragmentedArray(layout=mgpu.WGSplatFragLayout()):
       return _as_index(v.registers.item())
-    case literals.LiteralArray() if (
+    case literals.TypedNdArray() if (
         np.issubdtype(v.dtype, np.integer) and v.ndim == 0
     ):
       return arith_dialect.constant(ir.IndexType.get(), int(v))
@@ -3341,7 +3341,7 @@ def merge_indexers(
       if isinstance(x, int):
         return mgpu.FragmentedArray.splat(mgpu.c(x, i32), (), is_signed=False)
       if (
-          isinstance(x, literals.LiteralArray)
+          isinstance(x, literals.TypedNdArray)
           and x.ndim == 0
           and np.issubdtype(x.dtype, np.signedinteger)
       ):

@@ -2091,33 +2091,33 @@ class APITest(jtu.JaxTestCase):
   def test_device_put_literals(self):
     self.assertEqual(
         np.dtype(np.int32),
-        jax.device_put(literals.LiteralInt(1, np.dtype(np.int32))).dtype)
+        jax.device_put(literals.TypedInt(1, np.dtype(np.int32))).dtype)
     self.assertEqual(
         np.dtype(np.int64),
-        jax.device_put(literals.LiteralInt(1, np.dtype(np.int64))).dtype)
+        jax.device_put(literals.TypedInt(1, np.dtype(np.int64))).dtype)
     self.assertEqual(
         np.dtype(np.float32),
-        jax.device_put(literals.LiteralFloat(1, np.dtype(np.float32))).dtype)
+        jax.device_put(literals.TypedFloat(1, np.dtype(np.float32))).dtype)
     self.assertEqual(
         np.dtype(np.float64),
-        jax.device_put(literals.LiteralFloat(1, np.dtype(np.float64))).dtype)
+        jax.device_put(literals.TypedFloat(1, np.dtype(np.float64))).dtype)
     self.assertEqual(
         np.dtype(np.complex64),
-        jax.device_put(literals.LiteralComplex(
+        jax.device_put(literals.TypedComplex(
             1,np.dtype(np.complex64))).dtype)
     if jtu.device_under_test() != "tpu":
       # The TPU compiler does not support complex128.
       self.assertEqual(
           np.dtype(np.complex128),
-          jax.device_put(literals.LiteralComplex(
+          jax.device_put(literals.TypedComplex(
               1, np.dtype(np.complex128))).dtype)
     self.assertEqual(
         np.dtype(np.int32),
-        jax.device_put(literals.LiteralArray(np.array([1], dtype=np.int32),
+        jax.device_put(literals.TypedNdArray(np.array([1], dtype=np.int32),
                                              weak_type=False)).dtype)
     self.assertEqual(
         np.dtype(np.int64),
-        jax.device_put(literals.LiteralArray(np.array([1], dtype=np.int64),
+        jax.device_put(literals.TypedNdArray(np.array([1], dtype=np.int64),
                                              weak_type=False)).dtype)
 
 

@@ -81,11 +81,11 @@ namespace jax {
 
 namespace {
 
-// The LiteralInt, LiteralFloat, LiteralComplex, and LiteralArray types.
-nb::object& literal_int_type = *new nb::object();
-nb::object& literal_float_type = *new nb::object();
-nb::object& literal_complex_type = *new nb::object();
-nb::object& literal_array_type = *new nb::object();
+// The TypedInt, TypedFloat, TypedComplex, and TypedNdArray types.
+nb::object& typed_int_type = *new nb::object();
+nb::object& typed_float_type = *new nb::object();
+nb::object& typed_complex_type = *new nb::object();
+nb::object& typed_ndarray_type = *new nb::object();
 
 // For xla::S64/U64/F64/C128 types, returns the largest 32-bit equivalent.
 xla::PrimitiveType Squash64BitType(xla::PrimitiveType type) {
@@ -551,10 +551,10 @@ absl::StatusOr<ShardFn> HandleNumpyArray(nb::handle h, ifrt::Client* client,
   };
 }
 
-absl::StatusOr<ShardFn> HandleLiteralInt(nb::handle h, ifrt::Client* client,
-                                         ifrt::Device* to_device,
-                                         ifrt::MemoryKind to_memory_kind,
-                                         const DevicePutOptions& options) {
+absl::StatusOr<ShardFn> HandleTypedInt(nb::handle h, ifrt::Client* client,
+                                       ifrt::Device* to_device,
+                                       ifrt::MemoryKind to_memory_kind,
+                                       const DevicePutOptions& options) {
   xla::nb_dtype dtype = nb::cast<xla::nb_dtype>(h.attr("dtype"));
   TF_ASSIGN_OR_RETURN(xla::PrimitiveType type,
                       xla::DtypeToPrimitiveType(dtype));
@@ -571,10 +571,10 @@ absl::StatusOr<ShardFn> HandleLiteralInt(nb::handle h, ifrt::Client* client,
   }
 }
 
-absl::StatusOr<ShardFn> HandleLiteralFloat(nb::handle h, ifrt::Client* client,
-                                           ifrt::Device* to_device,
-                                           ifrt::MemoryKind to_memory_kind,
-                                           const DevicePutOptions& options) {
+absl::StatusOr<ShardFn> HandleTypedFloat(nb::handle h, ifrt::Client* client,
+                                         ifrt::Device* to_device,
+                                         ifrt::MemoryKind to_memory_kind,
+                                         const DevicePutOptions& options) {
   xla::nb_dtype dtype = nb::cast<xla::nb_dtype>(h.attr("dtype"));
   TF_ASSIGN_OR_RETURN(xla::PrimitiveType type,
                       xla::DtypeToPrimitiveType(dtype));
@@ -591,10 +591,10 @@ absl::StatusOr<ShardFn> HandleLiteralFloat(nb::handle h, ifrt::Client* client,
   }
 }
 
-absl::StatusOr<ShardFn> HandleLiteralComplex(nb::handle h, ifrt::Client* client,
-                                             ifrt::Device* to_device,
-                                             ifrt::MemoryKind to_memory_kind,
-                                             const DevicePutOptions& options) {
+absl::StatusOr<ShardFn> HandleTypedComplex(nb::handle h, ifrt::Client* client,
+                                           ifrt::Device* to_device,
+                                           ifrt::MemoryKind to_memory_kind,
+                                           const DevicePutOptions& options) {
   xla::nb_dtype dtype = nb::cast<xla::nb_dtype>(h.attr("dtype"));
   TF_ASSIGN_OR_RETURN(xla::PrimitiveType type,
                       xla::DtypeToPrimitiveType(dtype));
@@ -611,7 +611,7 @@ absl::StatusOr<ShardFn> HandleLiteralComplex(nb::handle h, ifrt::Client* client,
   }
 }
 
-absl::StatusOr<ShardFn> HandleLiteralArray(nb::handle h, ifrt::Client* client,
+absl::StatusOr<ShardFn> HandleTypedNdArray(nb::handle h, ifrt::Client* client,
                                            ifrt::Device* to_device,
                                            ifrt::MemoryKind to_memory_kind,
                                            const DevicePutOptions& options) {
@@ -715,19 +715,19 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
     (*p)[reinterpret_cast<PyObject*>(&PyComplex_Type)] =
         HandlePythonScalar<xla::complex128, xla::complex64>;
 
-    if (literal_int_type.ptr() != nullptr) {
-      (*p)[literal_int_type.ptr()] = HandleLiteralInt;
+    if (typed_int_type.ptr() != nullptr) {
+      (*p)[typed_int_type.ptr()] = HandleTypedInt;
     }
-    if (literal_float_type.ptr() != nullptr) {
-      (*p)[literal_float_type.ptr()] = HandleLiteralFloat;
+    if (typed_float_type.ptr() != nullptr) {
+      (*p)[typed_float_type.ptr()] = HandleTypedFloat;
     }
-    if (literal_complex_type.ptr() != nullptr) {
-      (*p)[literal_complex_type.ptr()] = HandleLiteralComplex;
+    if (typed_complex_type.ptr() != nullptr) {
+      (*p)[typed_complex_type.ptr()] = HandleTypedComplex;
     }
     (*p)[reinterpret_cast<PyObject*>(&PyArray_Type)] = HandleNumpyArray;
 
-    if (literal_array_type.ptr() != nullptr) {
-      (*p)[literal_array_type.ptr()] = HandleLiteralArray;
+    if (typed_ndarray_type.ptr() != nullptr) {
+      (*p)[typed_ndarray_type.ptr()] = HandleTypedNdArray;
     }
     // Numpy scalar types. For some of them, we share the handler with
     // Python types (np_int64, np_float64, np_complex128).
@@ -800,10 +800,10 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
 
 }  // namespace
 
-void SetLiteralIntType(nb::object t) { literal_int_type = t; }
-void SetLiteralFloatType(nb::object t) { literal_float_type = t; }
-void SetLiteralComplexType(nb::object t) { literal_complex_type = t; }
-void SetLiteralArrayType(nb::object t) { literal_array_type = t; }
+void SetTypedIntType(nb::object t) { typed_int_type = t; }
+void SetTypedFloatType(nb::object t) { typed_float_type = t; }
+void SetTypedComplexType(nb::object t) { typed_complex_type = t; }
+void SetTypedNdArrayType(nb::object t) { typed_ndarray_type = t; }
 
 std::string PyArgSignature::DebugString() const {
   std::string result = "";
@@ -874,7 +874,7 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         (*p)[reinterpret_cast<PyObject*>(&PyFloat_Type)] = float_handler;
         (*p)[reinterpret_cast<PyObject*>(&PyComplex_Type)] = complex_handler;
 
-        ToPyArgSignatureHandler literal_scalar_handler =
+        ToPyArgSignatureHandler typed_scalar_handler =
             [](nb::handle h,
                bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
           TF_ASSIGN_OR_RETURN(
@@ -882,14 +882,14 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
               DtypeToPrimitiveType(nb::cast<xla::nb_dtype>(h.attr("dtype"))));
           return PyArgSignature(dtype, {}, true);
         };
-        if (literal_int_type.ptr() != nullptr) {
-          (*p)[literal_int_type.ptr()] = literal_scalar_handler;
+        if (typed_int_type.ptr() != nullptr) {
+          (*p)[typed_int_type.ptr()] = typed_scalar_handler;
         }
-        if (literal_float_type.ptr() != nullptr) {
-          (*p)[literal_float_type.ptr()] = literal_scalar_handler;
+        if (typed_float_type.ptr() != nullptr) {
+          (*p)[typed_float_type.ptr()] = typed_scalar_handler;
         }
-        if (literal_complex_type.ptr() != nullptr) {
-          (*p)[literal_complex_type.ptr()] = literal_scalar_handler;
+        if (typed_complex_type.ptr() != nullptr) {
+          (*p)[typed_complex_type.ptr()] = typed_scalar_handler;
         }
 
         ToPyArgSignatureHandler numpy_handler =
@@ -916,14 +916,14 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         };
         (*p)[reinterpret_cast<PyObject*>(&PyArray_Type)] = numpy_handler;
 
-        ToPyArgSignatureHandler literal_array_handler =
+        ToPyArgSignatureHandler typed_ndarray_handler =
             [numpy_handler](
                 nb::handle h,
                 bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
           return numpy_handler(h.attr("val"), /*jax_enable_x64=*/true);
         };
-        if (literal_array_type.ptr() != nullptr) {
-          (*p)[literal_array_type.ptr()] = literal_array_handler;
+        if (typed_ndarray_type.ptr() != nullptr) {
+          (*p)[typed_ndarray_type.ptr()] = typed_ndarray_handler;
         }
 
         ToPyArgSignatureHandler np_uint64_handler =

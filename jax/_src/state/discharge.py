@@ -359,7 +359,7 @@ def _convert_to_gather_arrays(indexer: indexing.NDIndexer) -> tuple[Array, ...]:
       diff = len(total_shape) - idx_in_shape_after_indexing - 1
       arr = arr.reshape(arr.shape + (1,) * diff)
       arrs.append(arr)
-    elif isinstance(idxer, (np.ndarray, Array, literals.LiteralArray)):
+    elif isinstance(idxer, (np.ndarray, Array, literals.TypedNdArray)):
       diff = n_idxers - 1 - last_int_index_idx
       arr = idxer.reshape(idxer.shape + (1,) * diff)
       arrs.append(arr)

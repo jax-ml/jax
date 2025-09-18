@@ -238,11 +238,11 @@ class PickleTest(jtu.JaxTestCase):
         )
         self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
-  def test_pickle_literal_scalar(self):
+  def test_pickle_typed_scalar(self):
     for l in [
-        literals.LiteralInt(3, np.dtype(np.int32)),
-        literals.LiteralFloat(2.0, np.dtype(np.float32)),
-        literals.LiteralComplex(1j, np.dtype(np.complex64)),
+        literals.TypedInt(3, np.dtype(np.int32)),
+        literals.TypedFloat(2.0, np.dtype(np.float32)),
+        literals.TypedComplex(1j, np.dtype(np.complex64)),
     ]:
       m = pickle.loads(pickle.dumps(l))
       self.assertEqual(type(l), type(m))

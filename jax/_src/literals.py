@@ -18,74 +18,78 @@ from jax._src.lib import _jax
 from jax._src.lib import jaxlib_extension_version
 import numpy as np
 
-# LiteralInt, LiteralFloat, and LiteralComplex are subclasses of int, float, and
+# TypedInt, TypedFloat, and TypedComplex are subclasses of int, float, and
 # complex that carry a JAX dtype. Canonicalization forms these types from int,
 # float, and complex. Repeated canonicalization, including under different
 # jax_enable_x64 modes, preserves the dtype.
 
 
-class LiteralInt(int):
+class TypedInt(int):
 
   dtype: np.dtype
 
   def __new__(cls, value: int, dtype: np.dtype):
-    v = super(LiteralInt, cls).__new__(cls, value)
+    v = super(TypedInt, cls).__new__(cls, value)
     v.dtype = dtype
     return v
 
   def __repr__(self):
-    return f'LiteralInt({int(self)}, dtype={self.dtype.name})'
+    return f'TypedInt({int(self)}, dtype={self.dtype.name})'
 
   def __getnewargs__(self):
     return (int(self), self.dtype)
 
 
-class LiteralFloat(float):
+class TypedFloat(float):
 
   dtype: np.dtype
 
   def __new__(cls, value: float, dtype: np.dtype):
-    v = super(LiteralFloat, cls).__new__(cls, value)
+    v = super(TypedFloat, cls).__new__(cls, value)
     v.dtype = dtype
     return v
 
   def __repr__(self):
-    return f'LiteralFloat({float(self)}, dtype={self.dtype.name})'
+    return f'TypedFloat({float(self)}, dtype={self.dtype.name})'
 
   def __getnewargs__(self):
     return (float(self), self.dtype)
 
 
-class LiteralComplex(complex):
+class TypedComplex(complex):
 
   dtype: np.dtype
 
   def __new__(cls, value: complex, dtype: np.dtype):
-    v = super(LiteralComplex, cls).__new__(cls, value)
+    v = super(TypedComplex, cls).__new__(cls, value)
     v.dtype = dtype
     return v
 
   def __repr__(self):
-    return f'LiteralComplex({complex(self)}, dtype={self.dtype.name})'
+    return f'TypedComplex({complex(self)}, dtype={self.dtype.name})'
 
   def __getnewargs__(self):
     return (complex(self), self.dtype)
 
 
-if jaxlib_extension_version >= 374:
-  _jax.set_literal_int_type(LiteralInt)
-  _jax.set_literal_float_type(LiteralFloat)
-  _jax.set_literal_complex_type(LiteralComplex)
+if jaxlib_extension_version >= 375:
+  _jax.set_typed_int_type(TypedInt)
+  _jax.set_typed_float_type(TypedFloat)
+  _jax.set_typed_complex_type(TypedComplex)
+elif jaxlib_extension_version >= 374:
+  _jax.set_literal_int_type(TypedInt)  # pytype: disable=module-attr
+  _jax.set_literal_float_type(TypedFloat)  # pytype: disable=module-attr
+  _jax.set_literal_complex_type(TypedComplex)  # pytype: disable=module-attr
 
 
-literal_scalar_types: set[type] = {LiteralInt, LiteralFloat, LiteralComplex}
+typed_scalar_types: set[type] = {TypedInt, TypedFloat, TypedComplex}
 
 
-class LiteralArray:
-  """A LiteralArray is a host-side array used by JAX during tracing.
+class TypedNdArray:
+  """A TypedNdArray is a host-side array used by JAX during tracing.
 
-  To most intents and purposes a LiteralArray is a thin wrapper around a numpy
-  array and should act like it. The primary differences are that a LiteralArray
+  To most intents and purposes a TypedNdArray is a thin wrapper around a numpy
+  array and should act like it. The primary differences are that a TypedNdArray
   carries a JAX type:
   * its type is not canonicalized by JAX, irrespective of the jax_enable_x64
     mode
@@ -125,7 +129,7 @@ class LiteralArray:
     return self.val.__len__()
 
   def __repr__(self):
-    prefix = 'LiteralArray('
+    prefix = 'TypedNdArray('
     if self.weak_type:
       dtype_str = f'dtype={self.val.dtype.name}, weak_type=True)'
     else:
@@ -254,4 +258,7 @@ class LiteralArray:
         dtype, order=order, casting=casting, subok=subok, copy=copy
     )
 
-_jax.set_literal_array_type(LiteralArray)
+if jaxlib_extension_version >= 375:
+  _jax.set_typed_ndarray_type(TypedNdArray)
+else:
+  _jax.set_literal_array_type(TypedNdArray)  # pytype: disable=module-attr

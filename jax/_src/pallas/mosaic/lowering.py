@@ -1213,7 +1213,7 @@ def _ensure_mlir_value(val: object, aval: ShapedAbstractValue) -> Any:
     # TODO(slebedev): Drop this branch and change the return type to ir.Value.
     return val
   elif isinstance(val, (np.generic, np.ndarray, int, float,
-                        literals.LiteralArray)):
+                        literals.TypedNdArray)):
     return ir_constant(val, _dtype_to_ir_type(aval.dtype))
   else:
     raise RuntimeError(
@@ -1262,7 +1262,7 @@ def _swap_lowering_rule(
 
 
 def _make_index(s):
-  if isinstance(s, (int, np.ndarray, literals.LiteralArray)):
+  if isinstance(s, (int, np.ndarray, literals.TypedNdArray)):
     return ir_constant(s, ir.IndexType.get())
   if s.type == ir.IndexType.get():
     return s

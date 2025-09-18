@@ -1422,11 +1422,11 @@ def linear_call(fun: Callable,
   >>> custom_id(1.)
   1.0
   >>> transpose(custom_id, 1.)(1.)
-  LiteralFloat(7.0, dtype=float32)
+  TypedFloat(7.0, dtype=float32)
   >>> transpose(transpose(custom_id, 1.), 1.)(1.)
   1.0
   >>> transpose(transpose(transpose(custom_id, 1.), 1.), 1.)(1.)
-  LiteralFloat(7.0, dtype=float32)
+  TypedFloat(7.0, dtype=float32)
 
   Args:
     fun: a Python callable specifying a linear function. It should

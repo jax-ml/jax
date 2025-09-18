@@ -165,7 +165,7 @@ def _process_has_full_value_in_mcjax(s, shape):
 
 
 def _validate_shape_and_dtype_for_per_device_arrays(
-    arrays: Sequence[ArrayImpl | np.ndarray | literals.LiteralArray],
+    arrays: Sequence[ArrayImpl | np.ndarray | literals.TypedNdArray],
     sharding: Sharding,
     aval: core.ShapedArray,
     expected_shape: Shape,
@@ -689,7 +689,7 @@ def _get_shape_from_index(slc: Index, shape: Shape) -> Shape:
 
 
 def _get_and_check_dtype(
-    arrays: Sequence[basearray.Array | np.ndarray | literals.LiteralArray],
+    arrays: Sequence[basearray.Array | np.ndarray | literals.TypedNdArray],
     dtype: DTypeLike | ExtendedDType | None,
     fname: str,
 ):
@@ -775,7 +775,7 @@ def make_array_from_callback(
 
   def get_data(
       index: Index | None,
-  ) -> ArrayImpl | literals.LiteralArray | np.ndarray:
+  ) -> ArrayImpl | literals.TypedNdArray | np.ndarray:
     # Perhaps cache on index here, then we can unify fully_replicated
     # and non-fully_replicated cases below and become faster for
     # partially replicated cases.
@@ -788,11 +788,11 @@ def make_array_from_callback(
       )
     # Value can be python scalars, resolve it into something with dtype.
     r = dtypes.canonicalize_value(r)
-    if isinstance(r, (literals.LiteralInt, literals.LiteralFloat,
-                      literals.LiteralComplex)):
-      r = literals.LiteralArray(np.asarray(r, dtype=r.dtype), weak_type=False)
+    if isinstance(r, (literals.TypedInt, literals.TypedFloat,
+                      literals.TypedComplex)):
+      r = literals.TypedNdArray(np.asarray(r, dtype=r.dtype), weak_type=False)
     elif isinstance(r, bool):
-      r = literals.LiteralArray(np.asarray(r, dtype=np.bool_), weak_type=False)
+      r = literals.TypedNdArray(np.asarray(r, dtype=np.bool_), weak_type=False)
     return r
 
   if sharding.is_fully_replicated:
