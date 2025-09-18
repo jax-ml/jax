@@ -3519,7 +3519,11 @@ def _shift_left_lowering_rule(ctx: LoweringRuleContext, x, d):
   return arith.shli(x, d)
 
 
-@register_lowering_rule(lax.shift_right_arithmetic_p, ensure_mlir_values=False)
+@register_lowering_rule(
+    lax.shift_right_arithmetic_p,
+    kernel_types=[*tpu_core.KernelType],
+    ensure_mlir_values=False,
+)
 def _shift_right_arithmetic_lowering_rule(ctx: LoweringRuleContext, x, d):
   x, d = _bcast(x, d, *ctx.avals_in, *ctx.avals_out)
   return arith.shrsi(x, d)
