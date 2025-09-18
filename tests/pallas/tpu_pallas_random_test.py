@@ -126,24 +126,19 @@ class PRNGTest(jtu.JaxTestCase):
     self.assertGreaterEqual(jnp.max(result), jnp.min(result))
 
   @parameterized.parameters(
-      (jax_random.uniform, jnp.float32, None),
-      (jax_random.uniform, jnp.float32, (1, 1)),
-      (jax_random.normal, jnp.float32, None),
-      (jax_random.bits, jnp.uint32, None),
+      (jax_random.uniform, jnp.float32),
+      (jax_random.normal, jnp.float32),
+      (jax_random.bits, jnp.uint32),
   )
-  def test_stateless_sample(self, generator, dtype, key_shape):
+  def test_stateless_sample(self, generator, dtype):
     # Test keyed RNG using the jax.random API.
     def body(key_ref, o_ref):
-      if key_shape:
-        key_ref = key_ref.at[*((0,) * len(key_shape))]
       o_ref[...] = generator(
           key_ref[...], shape=o_ref[...].shape
       )
 
     rbg_key = jax_random.key(0, impl="rbg")
     key = pltpu.to_pallas_key(rbg_key)
-    if key_shape:
-      key = jnp.reshape(key, key_shape)
     o_shape = jax.ShapeDtypeStruct((8, 128), dtype)
     result = pl.pallas_call(
         body,
@@ -260,17 +255,18 @@ class ThreefryTest(parameterized.TestCase):
   def test_pallas_matches_jax_threefry(self, shape, generator_and_dtype):
     generator, dtype = generator_and_dtype
     def body(key_ref, o_ref):
-      key = key_ref[...]
+      key = jax.random.wrap_key_data(key_ref[...], impl='threefry2x32')
       o_ref[...] = generator(key, shape=o_ref[...].shape)
 
     threefry_key = jax_random.key(0, impl="threefry2x32")
     o_shape = jax.ShapeDtypeStruct(shape, dtype)
     with jax.threefry_partitionable(True):
+      # TODO(justinfu): support passing keys into VMEM.
       result = pl.pallas_call(
           body,
           in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
           out_shape=o_shape,
-      )(threefry_key)
+      )(jax.random.key_data(threefry_key))
       jax_result = generator(threefry_key, shape=o_shape.shape)
     np.testing.assert_array_equal(result, jax_result)
 
