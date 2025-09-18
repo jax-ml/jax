@@ -2375,6 +2375,23 @@ class PallasCallTest(PallasTest):
     [path] = re.findall(r'.file\s+\d+\s+"(.+)"', ptx)
     self.assertEndsWith(__file__, path)
 
+  def test_collective_arrival_count(self):
+    def kernel(dst, collective_barrier):
+      plgpu.barrier_arrive(collective_barrier)
+      plgpu.barrier_arrive(collective_barrier)
+      plgpu.barrier_arrive(collective_barrier)
+      plgpu.barrier_arrive(collective_barrier)
+      plgpu.barrier_wait(collective_barrier)
+      dst[...] = jnp.ones_like(dst)
+    y = plgpu.kernel(
+      kernel,
+      out_shape=jax.ShapeDtypeStruct((128,), jnp.int32),
+      scratch_shapes=[plgpu.ClusterBarrier(collective_axes=("x",), num_arrivals=4)],
+      cluster=(2,),
+      cluster_names=("x",)
+    )()
+    np.testing.assert_array_equal(y, np.ones((), dtype=np.int32))
+
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def setUp(self):

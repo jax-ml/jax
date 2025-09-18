@@ -998,6 +998,7 @@ class ClusterBarrierType(dtypes.ExtendedDType):
   name: ClassVar[str] = "cluster_barrier"
 
   collective_axes: tuple[str | tuple[str, ...], ...]
+  num_arrivals: int
 
   def __str__(self):
     return self.name
@@ -1042,10 +1043,11 @@ class Barrier:
 class ClusterBarrier:
   collective_axes: tuple[str | tuple[str, ...], ...]
   num_barriers: int = 1
+  num_arrivals: int = 1
 
   def get_ref_aval(self) -> state.AbstractRef:
     aval = jax_core.ShapedArray(
-        [self.num_barriers], ClusterBarrierType(self.collective_axes)
+        [self.num_barriers], ClusterBarrierType(self.collective_axes, self.num_arrivals)
     )
     return state.AbstractRef(aval, SMEM)
 
