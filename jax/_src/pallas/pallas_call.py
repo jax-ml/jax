@@ -258,7 +258,7 @@ def _batch_block_mapping(
   shape = block_mapping.block_shape
   if dim is batching.not_mapped:
     new_block_shape = shape
-    new_array_shape_dtype = block_mapping.array_shape_dtype
+    new_array_aval = block_mapping.array_aval
   else:
     if isinstance(dim, batching.RaggedAxis):
       assert for_ragged, "Ragged axis not supported for non-ragged batching."
@@ -270,7 +270,7 @@ def _batch_block_mapping(
     else:
       new_block_shape = tuple_insert(shape, dim, pallas_core.squeezed)
 
-    array_shape = block_mapping.array_shape_dtype.shape
+    array_shape = block_mapping.array_aval.shape
     if isinstance(dim, batching.RaggedAxis):
       assert for_ragged, "Ragged axis not supported for non-ragged batching."
       stacked_axis = dim.stacked_axis
@@ -278,13 +278,13 @@ def _batch_block_mapping(
     else:
       array_shape = tuple_insert(array_shape, dim, axis_size)
 
-    new_array_shape_dtype = jax.ShapeDtypeStruct(
-        array_shape, block_mapping.array_shape_dtype.dtype
+    new_array_aval = jax_core.ShapedArray(
+        array_shape, block_mapping.array_aval.dtype
     )
 
   jaxpr = jax_core.ClosedJaxpr(block_mapping_jaxpr, consts)
   return block_mapping.replace(block_shape=new_block_shape,
-                               array_shape_dtype=new_array_shape_dtype,
+                               array_aval=new_array_aval,
                                index_map_jaxpr=jaxpr,
                                index_map_out_tree=new_index_map_out_tree)
 
@@ -371,8 +371,8 @@ def _batch_with_explicit_loop(
   # The output arrays are completely overwritten, so we can just initialize
   # empty arrays.
   initial_state = [
-      jnp.empty(tuple_insert(bm.array_shape_dtype.shape, 0, axis_size),
-                dtype=bm.array_shape_dtype.dtype)
+      jnp.empty(tuple_insert(bm.array_aval.shape, 0, axis_size),
+                dtype=bm.array_aval.dtype)
       for bm in grid_mapping.block_mappings_output
   ]
 

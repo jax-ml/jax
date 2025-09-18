@@ -299,10 +299,13 @@ def _pallas_call_physicalize_rule(
   _assert_no_fusion_types(ctx.avals_out)
   with grid_mapping.trace_env():
     new_jaxpr = physicalize_closed_jaxpr(core.ClosedJaxpr(jaxpr, ()))
-  num_new_vals = len(new_jaxpr.jaxpr.invars) - len(jaxpr.invars)
-  grid_mapping = grid_mapping.replace(
-      num_scratch_operands=grid_mapping.num_scratch_operands + num_new_vals
-  )
+  if diff := len(new_jaxpr.jaxpr.invars) - len(jaxpr.invars):
+    num_scratch_avals = len(grid_mapping.scratch_avals) + diff
+    new_scratch_avals = tuple(v.aval for v in
+                              new_jaxpr.jaxpr.invars[-num_scratch_avals:])
+    grid_mapping = grid_mapping.replace(
+        scratch_avals=new_scratch_avals
+    )
   return pallas_call.pallas_call_p.bind(
       *args, jaxpr=new_jaxpr.jaxpr, grid_mapping=grid_mapping, **kwargs
   )
