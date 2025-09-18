@@ -117,4 +117,9 @@ jobs:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Run Pytest TPU tests
         timeout-minutes: ${{ github.event_name == 'pull_request' && 30 || 210 }}
-        run: ./ci/run_pytest_tpu.sh
+        run: |
+          if [[ ${{ inputs.python }} == "3.13-nogil" && ${{ inputs.tpu-type }} == "v5e-8" ]]; then
+            echo "Uninstalling xprof as it is not compatible with python 3.13t."
+            $JAXCI_PYTHON -m uv pip uninstall -y xprof
+          fi
+          ./ci/run_pytest_tpu.sh
