@@ -32,6 +32,7 @@ limitations under the License.
 #include "mlir/Dialect/CommonFolders.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
@@ -40,6 +41,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Region.h"
@@ -211,24 +213,79 @@ LogicalResult MemRefSliceOp::verify() {
   return success();
 }
 
-LogicalResult MemRefSliceOp::canonicalize(MemRefSliceOp op,
-                                          PatternRewriter &rewriter) {
-  auto erase_layout = op.getMemRef().getDefiningOp<tpu::EraseLayoutOp>();
-  if (!erase_layout) {
-    return failure();
+struct MemRefSliceFoldConstantDynamicDim
+    : public OpRewritePattern<MemRefSliceOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MemRefSliceOp op,
+                                PatternRewriter& rewriter) const override {
+    if (llvm::none_of(op.getDynamicSizes(), [](Value dynamic_size) {
+          APInt constant_value;  // Would be nice if we could pass nullptr below
+          return matchPattern(dynamic_size, m_ConstantInt(&constant_value));
+        })) {
+      return failure();
+    }
+    SmallVector<int64_t> new_shape(op.getType().getShape());
+    SmallVector<Value> new_dynamic_sizes;
+    int64_t dynamic_dim_index = 0;
+    for (Value dynamic_size : op.getDynamicSizes()) {
+      // Find the index of the corresponding dynamic dimension in the shape
+      while (new_shape[dynamic_dim_index] != ShapedType::kDynamic) {
+        ++dynamic_dim_index;
+        CHECK(dynamic_dim_index < new_shape.size());
+      }
+      APInt constant_value;
+      if (matchPattern(dynamic_size, m_ConstantInt(&constant_value))) {
+        if (constant_value.getSExtValue() <= 0) {
+          return op.emitWarning() << "Non-positive constant for dynamic size";
+        }
+        new_shape[dynamic_dim_index] = constant_value.getSExtValue();
+      } else {
+        new_dynamic_sizes.push_back(dynamic_size);
+      }
+    }
+    // Update the memref_slice op and create a cast op to convert to the old
+    // type.
+    MemRefType old_type = op.getType();
+    MemRefType new_type = MemRefType::Builder(old_type).setShape(new_shape);
+    rewriter.modifyOpInPlace(op, [&]() {
+      op.getResult().setType(new_type);
+      op.getDynamicSizesMutable().assign(new_dynamic_sizes);
+    });
+    auto cast_op = memref::CastOp::create(rewriter, op.getLoc(), old_type, op);
+    rewriter.replaceAllUsesExcept(op, cast_op, cast_op);
+    return success();
   }
-  // Push layout erasure through slicing. It is important we see the layout
-  // for lowering and don't make it hard for other ops to query it.
-  auto layout_ref = erase_layout.getOperand();
-  MemRefType layout_ty = layout_ref.getType();
-  auto new_result_type = MemRefType::get(
-      op.getResult().getType().getShape(), layout_ty.getElementType(),
-      layout_ty.getLayout(), layout_ty.getMemorySpace());
-  auto slice =
-      MemRefSliceOp::create(rewriter, op.getLoc(), new_result_type, layout_ref,
-                            op.getBaseIdx(), op.getDynamicSizes());
-  rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), slice);
-  return success();
+};
+
+struct MemRefSliceEraseLayout : public OpRewritePattern<MemRefSliceOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MemRefSliceOp op,
+                                PatternRewriter& rewriter) const override {
+    auto erase_layout = op.getMemRef().getDefiningOp<tpu::EraseLayoutOp>();
+    if (!erase_layout) {
+      return failure();
+    }
+    // Push layout erasure through slicing. It is important we see the layout
+    // for lowering and don't make it hard for other ops to query it.
+    auto layout_ref = erase_layout.getOperand();
+    MemRefType layout_ty = layout_ref.getType();
+    auto new_result_type = MemRefType::get(
+        op.getResult().getType().getShape(), layout_ty.getElementType(),
+        layout_ty.getLayout(), layout_ty.getMemorySpace());
+    auto slice = MemRefSliceOp::create(rewriter, op.getLoc(), new_result_type,
+                                       layout_ref, op.getBaseIdx(),
+                                       op.getDynamicSizes());
+    rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), slice);
+    return success();
+  }
+};
+
+void MemRefSliceOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                                MLIRContext* context) {
+  results.add<MemRefSliceFoldConstantDynamicDim, MemRefSliceEraseLayout>(
+      context);
 }
 
 LogicalResult MemRefSqueezeOp::verify() {
