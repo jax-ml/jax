@@ -100,7 +100,7 @@ class ScalarSubcoreMesh:
 
   @property
   def shape(self):
-    return dict(core=self.num_cores)
+    return collections.OrderedDict(core=self.num_cores)
 
   def discharges_effect(self, effect):
     del effect  # Unused.
@@ -198,7 +198,8 @@ class VectorSubcoreMesh:
 
   @property
   def shape(self):
-    return dict(core=self.num_cores, subcore=self.num_subcores)
+    return collections.OrderedDict(
+        core=self.num_cores, subcore=self.num_subcores)
 
   def discharges_effect(self, effect):
     del effect  # Unused.
