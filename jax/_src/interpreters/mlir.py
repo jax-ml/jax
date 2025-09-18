@@ -1973,42 +1973,6 @@ def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
       ctx, val, aval, xc.HloSharding.replicate().to_proto(),
       unspecified_dims=set(range(aval.ndim)))
 
-class HashableLiteral:
-  """Hashable wrapper of core.Literal, used for deduplicating IR constants."""
-
-  __slots__ = ["value", "data"]
-
-  value: core.Literal
-
-  # Copy of the value suitable for an equality comparison. We are careful to
-  # avoid floating point comparisons here, because in particular we don't want
-  # 0.0 and -0.0 to be considered equal, but we are fine with NaNs being equal.
-  data: bytes | int | bool | None
-
-  def __init__(self, value):
-    self.value = value
-    if isinstance(value.val, (np.generic, np.ndarray)):
-      self.data = value.val.tobytes()
-    elif isinstance(value.val, (bool, int)):
-      self.data = value.val
-    elif isinstance(value.val, float):
-      self.data = np.float64(value.val).tobytes()
-    elif isinstance(value.val, complex):
-      self.data = np.complex128(value.val).tobytes()
-    else:
-      self.data = None  # Unhandled case.
-
-  def __hash__(self):
-    return hash(self.data)
-
-  def __eq__(self, other):
-    if type(self.value.val) != type(other.value.val):
-      return False
-    if self.value.aval != other.value.aval:
-      return False
-    if self.data is None:
-      return self is other
-    return self.data == other.data
 
 _uncacheable_primitives: set[core.Primitive] = set()
 
@@ -2031,17 +1995,10 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     See https://docs.jax.dev/en/latest/internals/constants.html
   """
   assert "gpu" not in ctx.platforms
-  cached_ir_consts: dict[HashableLiteral, IrValues] = {}
 
   def read(v: core.Atom) -> IrValues:
     if type(v) is core.Literal:
-      h = HashableLiteral(v)
-      c = cached_ir_consts.get(h)
-      if c is None:
-        c = ir_constant(v.val, const_lowering=const_lowering, aval=v.aval)
-        # TODO(necula): do we really need the cache, now that we hoist?
-        cached_ir_consts[h] = c
-      return c
+      return ir_constant(v.val, const_lowering=const_lowering, aval=v.aval)
     else:
       assert isinstance(v, core.Var)
       return env[v]
