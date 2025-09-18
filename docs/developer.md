@@ -65,27 +65,20 @@ To build `jaxlib` from source, you must also install some prerequisites:
 AddressSanitizer (ASan) helps detect memory errors such as buffer overflows and use-after-free bugs.
 To build `jaxlib` with ASan support, follow these steps:
 
-1. Install build dependencies:
+1. Build `jaxlib` with ASan:
 
    ```
-   pip install -r build_requirements.txt
+   python build/build.py --bazel_options=--copt=-fsanitize=address
    ```
-
-2. Set compiler and sanitizer flags:
-
-   ```
-   export CC=clang
-   export CXX=clang++
-   export CFLAGS="-fsanitize=address -O1 -fno-omit-frame-pointer"
-   export CXXFLAGS="-fsanitize=address -O1 -fno-omit-frame-pointer"
-   export LDFLAGS="-fsanitize=address"
-   ```
-
-3. Build jaxlib:
+2. (Optional) Build a Python interpreter with ASan support (example for CPython):
 
    ```
-   python build/build.py build --wheels=jaxlib --verbose
+   CC=clang-18 CXX=clang++-18 ./configure --prefix /path/to/cpythonasan --with-address-sanitizer --without-pymalloc
+   make -j
+   make install
    ```
+
+For more details, see the [ASan CI workflow](https://github.com/jax-ml/jax/actions/workflows/asan.yaml).
 
 To build `jaxlib` for CPU or TPU, you can run:
 
