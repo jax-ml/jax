@@ -1776,7 +1776,10 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
           continue
         if (input_index := all_vars.get(eqn_invar, sentinel)) is sentinel:
           # TODO(mattjj): ask for forgiveness
-          dbg = type('Fake', (), {'resolve_result_paths': lambda _: None})()
+          dbg = type('Fake', (), {'resolve_result_paths': lambda self_: self_,
+                                  'assert_arg_names': lambda _, __: None,
+                                  'assert_result_paths': lambda _, __: None,
+                                  })()
           raise ValueError(
                 f"`JaxprInputEffect` {eff} does not have "
                 f"corresponding jaxpr input: {eqn_invar=}."
