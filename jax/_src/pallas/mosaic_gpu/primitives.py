@@ -3208,3 +3208,188 @@ def _semaphore_signal_lowering_rule(
     )
     mgpu_utils.fence_release_sys()
   return ()
+
+try_cluster_cancel_p = jax_core.Primitive('try_cluster_cancel')
+try_cluster_cancel_p.multiple_results = True
+
+@try_cluster_cancel_p.def_effectful_abstract_eval
+def _try_cluster_cancel_abstract_eval(*args, **params):
+  del args, params
+
+  return (), {gpu_core._memory_effect}
+
+@lowering.register_lowering_rule(
+    try_cluster_cancel_p, mgpu.LoweringSemantics.Lane
+)
+
+def try_cluster_cancel_lowering(
+    ctx: lowering.LoweringRuleContext,
+    result_ref,
+    barrier: mgpu.BarrierRef,
+    *barrier_transforms_leaves,
+    barrier_transforms_tree,
+):
+  i1 = ir.IntegerType.get_signless(1)
+  i32 = ir.IntegerType.get_signless(32)
+
+  if barrier_transforms_tree is not None:
+    barrier_indexer = _extract_barrier_indexer(
+        barrier_transforms_tree.unflatten(barrier_transforms_leaves)
+    )
+    if barrier_indexer is not None:
+      barrier = barrier.__getitem__(
+          *map(lowering._as_index, barrier_indexer.indices)
+      )
+
+  result_ty = ir.MemRefType(result_ref.type)
+  bits = math.prod(result_ty.shape) * mgpu.bitwidth(result_ty.element_type)
+  if bits != 128:
+    raise TypeError(
+        f"Try cluster cancel response must be 128 bits, but is {bits} bits."
+    )
+
+  collective_axes = ctx.module_ctx.axis_names.cluster
+  is_leader_thread = ctx.module_ctx.single_lane_predicate
+  first_cta = mgpu.c(1, i1)
+
+  if len(collective_axes) > 0:
+    for axis in collective_axes:
+      dim = lowering._resolve_cluster_axis(ctx.module_ctx.axis_names, axis)  # type: ignore[arg-type]
+      first_cta = arith_dialect.andi(
+          first_cta,
+          arith_dialect.cmpi(
+              arith_dialect.CmpIPredicate.eq,
+              ctx.launch_ctx.cluster_idx(dim),
+              mgpu.c(0, ir.IndexType.get()),
+          ),
+      )
+
+  bytes = arith_dialect.select(
+      is_leader_thread, mgpu.c(16, i32), mgpu.c(0, i32)
+  )
+  barrier.arrive_expect_tx(bytes)
+
+  mgpu.try_cluster_cancel(
+      result_ref,
+      barrier,
+      predicate=arith_dialect.andi(is_leader_thread, first_cta),
+  )
+
+  return []
+
+
+def try_cluster_cancel(result_ref: _Ref, barrier: _Ref) -> None:
+  """Initiates an async request to claim a new work unit from the grid.
+
+  It allows an SM to dynamically acquire work by atomically canceling the launch
+  of a pending cluster from the grid and claiming its CTA ID as the next unit
+  of work.
+
+  Args:
+    result_ref: An SMEM ref where the 16-byte result will be stored.
+    barrier: A barrier used to coordinate the completion of the query.
+  """
+  if isinstance(result_ref, pallas_core.TransformedRef):
+    raise NotImplementedError(
+        "Transforms on the try cluster cancel result are not supported."
+    )
+
+  if isinstance(barrier, pallas_core.TransformedRef):
+    barrier_transforms_leaves, barrier_transforms_tree = jax.tree.flatten(
+        barrier.transforms
+    )
+    barrier = barrier.ref
+  else:
+    barrier_transforms_leaves, barrier_transforms_tree = (), None
+
+  try_cluster_cancel_p.bind(
+      result_ref,
+      barrier,
+      *barrier_transforms_leaves,
+      barrier_transforms_tree=barrier_transforms_tree,
+  )
+
+
+query_cluster_cancel_p = jax_core.Primitive("query_cluster_cancel")
+query_cluster_cancel_p.multiple_results = True
+
+@query_cluster_cancel_p.def_effectful_abstract_eval
+def _query_cluster_cancel_abstract_eval(try_cancel_buffer, *,
+                                        grid_names):
+  del try_cancel_buffer
+  grid_idxs = (jax_core.ShapedArray((), jnp.int32),) * len(grid_names)
+  return (
+      (
+          *grid_idxs,
+          jax_core.ShapedArray((), jnp.bool_),
+      ),
+      {gpu_core._memory_effect},
+  )
+
+
+@lowering.register_lowering_rule(
+    query_cluster_cancel_p, mgpu.LoweringSemantics.Lane
+)
+def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext, result_ref,
+                                  grid_names):
+
+  result_ty = ir.MemRefType(result_ref.type)
+  bits = math.prod(result_ty.shape) * mgpu.bitwidth(result_ty.element_type)
+  if bits != 128:
+    raise TypeError(f"Response to decode must be 128 bits, but is {bits} bits.")
+
+  x, y, z, success = mgpu.query_cluster_cancel(result_ref)
+  cta_grid = (x, y, z)
+
+  # TODO(justinfu): Merge with axis_index lowering
+  squashed_dims = ctx.module_ctx.squashed_dims
+  module_axis_names = ctx.module_ctx.axis_names
+  requested_idxs = []
+  for axis_name in grid_names:
+    if axis_name not in module_axis_names.grid:
+      raise ValueError(
+          f"{axis_name} not found in grid axis names {module_axis_names.grid}")
+    if squashed_dims:
+      unsquashed_names = module_axis_names.grid[:2]
+      squashed_names = module_axis_names.grid[2:]
+      if axis_name in unsquashed_names:
+        idx = unsquashed_names.index(axis_name)
+        requested_idxs.append(cta_grid[idx])
+      else:
+        assert axis_name in squashed_names
+        axis = squashed_names.index(axis_name)
+        z_idx = lowering._as_index(cta_grid[2])
+        requested_idxs.append(lowering._unravel_program_id(
+            z_idx, axis, squashed_dims
+        ))
+    else:
+      idx = module_axis_names.grid.index(axis_name)
+      requested_idxs.append(cta_grid[idx])
+  return (*requested_idxs, success)
+
+
+# TODO(justinfu): Automatically infer the grid_names argument.
+def query_cluster_cancel(
+    result_ref: _Ref,
+    grid_names: Sequence[str]) -> tuple[tuple[int, ...], bool]:
+  """Decodes the result of a `try_cluster_cancel` operation.
+
+  It interprets the 16-byte opaque response written to shared memory by a
+  completed `try_cluster_cancel` call to determine if a new work unit was
+  successfully claimed.
+
+  Args:
+    result_ref: The SMEM ref containing the query response.
+    grid_names: A tuple of grid axis names to query for.
+
+  Returns:
+    A tuple containing the decoded response:
+      - the grid indices for the requested axis names.
+      - A boolean indicating if the cancellation was successful.
+  """
+  if isinstance(result_ref, pallas_core.TransformedRef):
+    raise NotImplementedError(
+        "Transforms on the try cluster cancel result are not supported."
+    )
+  result = query_cluster_cancel_p.bind(result_ref, grid_names=grid_names)
+  return tuple(result[:-1]), result[-1]

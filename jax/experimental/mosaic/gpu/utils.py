@@ -1672,20 +1672,28 @@ def is_tmem_ref(ref: ir.Value | ir.Type) -> bool:
   return ref.memory_space is not None and ref.memory_space == tmem()
 
 
-def try_cluster_cancel(result_ref, barrier: BarrierRef):
+def try_cluster_cancel(
+    result_ref,
+    barrier: BarrierRef,
+    predicate: ir.Value | None = None,
+):
   """Atomically cancels a pending cluster launch.
 
   The response is stored in a opaque 128-bit value containing the CTA id of the
   first CTA in the canceled cluster.
   """
+  pred_ptx = pred_constraint = ""
+  if predicate is not None:
+    pred_ptx = "@$2"
+    pred_constraint = ",b"
 
   addr = memref_ptr(result_ref, memory_space=3)
   llvm.inline_asm(
       ir.Type.parse("!llvm.void"),
-      [addr, barrier.get_ptr()],
-      "clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128"
+      [addr, barrier.get_ptr()] + ([predicate] if predicate is not None else []),
+      f"{pred_ptx} clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128"
       " [$0], [$1];",
-      "r,r",
+      "r,r" + pred_constraint,
       has_side_effects=True,
   )
 
