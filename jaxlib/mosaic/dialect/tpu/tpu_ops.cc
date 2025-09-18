@@ -1894,6 +1894,129 @@ LogicalResult DynamicGatherOp::verify() {
   return success();
 }
 
+void MultiDimReductionOp::build(OpBuilder& builder, OperationState& result,
+                                Value source, Value acc,
+                                ArrayRef<bool> reductionMask,
+                                ::mlir::vector::CombiningKind kind,
+                                bool consistent_reduce_order) {
+  SmallVector<int64_t> reductionDims;
+  for (const auto& en : llvm::enumerate(reductionMask))
+    if (en.value()) reductionDims.push_back(en.index());
+  build(builder, result, kind, source, acc, reductionDims,
+        consistent_reduce_order);
+}
+
+OpFoldResult MultiDimReductionOp::fold(FoldAdaptor adaptor) {
+  // Single parallel dim, this is a noop.
+  if (getSourceVectorType().getRank() == 1 && !isReducedDim(0))
+    return getSource();
+  return {};
+}
+
+std::optional<SmallVector<int64_t, 4>>
+MultiDimReductionOp::getShapeForUnroll() {
+  return llvm::to_vector<4>(getSourceVectorType().getShape());
+}
+
+LogicalResult MultiDimReductionOp::verify() {
+  SmallVector<int64_t> targetShape;
+  SmallVector<bool> scalableDims;
+  Type inferredReturnType;
+  auto sourceScalableDims = getSourceVectorType().getScalableDims();
+  for (auto [dimIdx, dimSize] :
+       llvm::enumerate(getSourceVectorType().getShape()))
+    if (!llvm::any_of(getReductionDims(),
+                      [dimIdx = dimIdx](int64_t reductionDimIdx) {
+                        return reductionDimIdx == static_cast<int64_t>(dimIdx);
+                      })) {
+      targetShape.push_back(dimSize);
+      scalableDims.push_back(sourceScalableDims[dimIdx]);
+    }
+  // TODO: update to also allow 0-d vectors when available.
+  if (targetShape.empty())
+    inferredReturnType = getSourceVectorType().getElementType();
+  else
+    inferredReturnType = VectorType::get(
+        targetShape, getSourceVectorType().getElementType(), scalableDims);
+  if (getType() != inferredReturnType)
+    return emitOpError() << "destination type " << getType()
+                         << " is incompatible with source type "
+                         << getSourceVectorType();
+
+  return success();
+}
+
+/// Returns the mask type expected by this operation.
+Type MultiDimReductionOp::getExpectedMaskType() {
+  auto vecType = getSourceVectorType();
+  return VectorType::get(vecType.getShape(),
+                         IntegerType::get(vecType.getContext(), /*width=*/1),
+                         vecType.getScalableDims());
+}
+
+namespace {
+// Only unit dimensions that are being reduced are folded. If the dimension is
+// unit, but not reduced, it is not folded, thereby keeping the output type the
+// same. If not all dimensions which are reduced are of unit dimension, this
+// transformation does nothing. This is just a generalization of
+// ElideSingleElementReduction for ReduceOp.
+struct ElideUnitDimsInMultiDimReduction
+    : public OpRewritePattern<MultiDimReductionOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MultiDimReductionOp reductionOp,
+                                PatternRewriter& rewriter) const override {
+    ArrayRef<int64_t> shape = reductionOp.getSourceVectorType().getShape();
+    for (const auto& dim : enumerate(shape)) {
+      if (reductionOp.isReducedDim(dim.index()) && dim.value() != 1)
+        return failure();
+    }
+
+    // Vector mask setup.
+    OpBuilder::InsertionGuard guard(rewriter);
+    Operation* rootOp;
+    Value mask;
+    if (reductionOp.isMasked()) {
+      rewriter.setInsertionPoint(reductionOp.getMaskingOp());
+      rootOp = reductionOp.getMaskingOp();
+      mask = reductionOp.getMaskingOp().getMask();
+    } else {
+      rootOp = reductionOp;
+    }
+
+    Location loc = reductionOp.getLoc();
+    Value acc = reductionOp.getAcc();
+    Value cast;
+    if (auto dstVecType = dyn_cast<VectorType>(reductionOp.getDestType())) {
+      if (mask) {
+        VectorType newMaskType =
+            VectorType::get(dstVecType.getShape(), rewriter.getI1Type(),
+                            dstVecType.getScalableDims());
+        mask = vector::ShapeCastOp::create(rewriter, loc, newMaskType, mask);
+      }
+      cast = vector::ShapeCastOp::create(
+          rewriter, loc, reductionOp.getDestType(), reductionOp.getSource());
+    } else {
+      // This means we are reducing all the dimensions, and all reduction
+      // dimensions are of size 1. So a simple extraction would do.
+      if (mask) mask = vector::ExtractOp::create(rewriter, loc, mask);
+      cast = vector::ExtractOp::create(rewriter, loc, reductionOp.getSource());
+    }
+
+    Value result =
+        vector::makeArithReduction(rewriter, loc, reductionOp.getKind(), acc,
+                                   cast, /*fastmath=*/nullptr, mask);
+    rewriter.replaceOp(rootOp, result);
+    return success();
+  }
+};
+}  // namespace
+
+void MultiDimReductionOp::getCanonicalizationPatterns(
+    RewritePatternSet& results, MLIRContext* context) {
+  results.add<ElideUnitDimsInMultiDimReduction>(context);
+}
+
 LogicalResult AllReduceOp::verify() {
   auto in_ty = getInput().getType();
   auto in_bitwidth = in_ty.getElementTypeBitWidth();

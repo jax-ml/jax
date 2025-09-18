@@ -25,6 +25,10 @@ include "mlir/Pass/PassBase.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
+include "mlir/Interfaces/VectorInterfaces.td"
+include "mlir/Dialect/Vector/Interfaces/MaskableOpInterface.td"
+include "mlir/Dialect/Vector/IR/VectorAttributes.td"
+include "jaxlib/mosaic/dialect/tpu/tpu_enums.td"
 
 def TPU_Dialect : Dialect {
   let name = "tpu";
@@ -53,25 +57,8 @@ class TPU_Type<string name, string mnemonic_, list<Trait> traits = []>
   let mnemonic = mnemonic_;
 }
 
-def TPU_CoreType : I32EnumAttr<"CoreType", "Core type", [
-  I32EnumAttrCase<"kTc", 0, "tc">,
-  I32EnumAttrCase<"kScScalarSubcore", 1, "sc_scalar_subcore">,
-  I32EnumAttrCase<"kScVectorSubcore", 2, "sc_vector_subcore">
-]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
-}
-
 def TPU_CoreTypeEnum : EnumAttr<TPU_Dialect, TPU_CoreType, "core_type"> {
     let assemblyFormat = "`<` $value `>`";
-}
-
-def TPU_PipelineMode : I32EnumAttr<"PipelineMode", "Pipeline mode", [
-  I32EnumAttrCase<"kSynchronous", 1, "synchronous">,
-  I32EnumAttrCase<"kDoubleBuffered", 2, "double_buffered">
-  ]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
 }
 
 def TPU_PipelineModeEnum : EnumAttr<TPU_Dialect, TPU_PipelineMode, "pipeline_mode"> {
@@ -81,16 +68,6 @@ def TPU_PipelineModeEnum : EnumAttr<TPU_Dialect, TPU_PipelineMode, "pipeline_mod
 def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore", [MemRefElementTypeInterface]>;
 def TPU_DMASemaphoreType : TPU_Type<"DMASemaphore", "dma_semaphore", [MemRefElementTypeInterface]>;
 def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>;
-
-def TPU_DimensionSemantics : I32EnumAttr<"DimensionSemantics", "Dimension semantics", [
-  I32EnumAttrCase<"parallel", 0>,
-  I32EnumAttrCase<"arbitrary", 1>,
-  I32EnumAttrCase<"core_parallel", 2>,
-  I32EnumAttrCase<"subcore_parallel", 3>
-]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
-}
 
 def TPU_DimensionSemanticsEnum
     : EnumAttr<TPU_Dialect, TPU_DimensionSemantics, "dimension_semantics"> {
@@ -108,27 +85,10 @@ def TPU_ElementWindowAttr : TPU_Attr<"ElementWindow", "element_window"> {
   let assemblyFormat = "`<` `[` $pad_low `]` `,` `[` $pad_high `]` `>`";
 }
 
-def TPU_ContractPrecision : I32EnumAttr<"ContractPrecision", "Contraction precision", [
-  I32EnumAttrCase<"kBF16", 0, "bf16">,
-  I32EnumAttrCase<"kFP32", 1, "fp32">
-]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
-}
-
 def TPU_ContractPrecisionEnum
     : EnumAttr<TPU_Dialect, TPU_ContractPrecision, "contract_precision"> {
     let assemblyFormat = "`<` $value `>`";
 }
-
-def TPU_PackFormat : I32EnumAttr<"PackFormat", "Pack format", [
-  I32EnumAttrCase<"kCompressed", 0, "compressed">,
-  I32EnumAttrCase<"kInterleaved", 1, "interleaved">
-]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
-}
-
 def TPU_PackFormatEnum : EnumAttr<TPU_Dialect, TPU_PackFormat, "pack_format"> {
     let assemblyFormat = "`<` $value `>`";
 }
@@ -158,20 +118,6 @@ def TPU_TiledLayoutAttr
   let hasCustomAssemblyFormat = 1;
 }
 
-def TPU_MemorySpace : I32EnumAttr<"MemorySpace", "Memory space", [
-  I32EnumAttrCase<"kAny", 4294967295, "any">,
-  I32EnumAttrCase<"kVmem", 0, "vmem">,
-  I32EnumAttrCase<"kSmem", 1, "smem">,
-  I32EnumAttrCase<"kHbm", 2, "hbm">,
-  I32EnumAttrCase<"kCmem", 3, "cmem">,
-  I32EnumAttrCase<"kSemaphoreMem", 4, "semaphore_mem">,
-  I32EnumAttrCase<"kVmemShared", 5, "vmem_shared">,
-  I32EnumAttrCase<"kHost", 6, "host">
-]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
-}
-
 def TPU_MemorySpaceEnum
     : EnumAttr<TPU_Dialect, TPU_MemorySpace, "memory_space"> {
     let assemblyFormat = "`<` $value `>`";
@@ -183,18 +129,6 @@ class TPU_Op<string mnemonic, list<Trait> traits = []> :
 
 def DefaultMemWrite : MemoryEffects<[MemWrite<DefaultResource>]>;
 def DefaultMemRead : MemoryEffects<[MemRead<DefaultResource>]>;
-
-def TPU_ReductionKind : I32EnumAttr<"ReductionKind", "Reduction kind", [
-  I32EnumAttrCase<"kSum", 0, "sum">,
-  I32EnumAttrCase<"kMax", 1, "max">,
-  I32EnumAttrCase<"kMin", 2, "min">,
-  I32EnumAttrCase<"kArgMax", 3, "arg_max">,
-  I32EnumAttrCase<"kArgMin", 4, "arg_min">,
-  I32EnumAttrCase<"kFindFirstSet", 5, "find_first_set">
-]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
-}
 
 def TPU_ReductionKindAttr
     : EnumAttr<TPU_Dialect, TPU_ReductionKind, "reduction_kind"> {
@@ -218,6 +152,81 @@ def TPU_ReduceIndexOp : TPU_Op<"reduce_index", [Pure]> {
   );
   let results = (outs VectorOfNonZeroRankOf<[I32]>:$output);
   let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+  let hasVerifier = 1;
+}
+
+def TPU_MultiDimReductionOp :
+  TPU_Op<"multi_reduction", [Pure,
+     AllTypesMatch<["dest", "acc"]>,
+     PredOpTrait<"source operand and result have same element type",
+                 TCresVTEtIsSameAsOpBase<0, 0>>,
+     DeclareOpInterfaceMethods<InferTypeOpInterface>,
+     DeclareOpInterfaceMethods<MaskableOpInterface>,
+     DeclareOpInterfaceMethods<VectorUnrollOpInterface,
+                               ["getShapeForUnroll"]>]>,
+    Arguments<(ins Vector_CombiningKindAttr:$kind,
+                   AnyVectorOfNonZeroRank:$source,
+                   AnyType:$acc,
+                   DenseI64ArrayAttr:$reduction_dims,
+                   BoolAttr:$consistent_reduce_order)>,
+    Results<(outs AnyType:$dest)> {
+  let summary = "Multi-dimensional reduction operation";
+  let description = [{
+    Reduces an n-D vector into an (n-k)-D vector (or a scalar when k == n)
+    using the given operation: `add`/`mul`/`minsi`/`minui`/`maxsi`/`maxui`
+    /`and`/`or`/`xor` for integers, and `add`/`mul`/`minnumf`/`maxnumf`/`minimumf`
+    /`maximumf` for floats.
+    Takes an initial accumulator operand.
+
+    Example:
+
+    ```mlir
+    %1 = tpu.multi_reduction <add>, %0, %acc0 [1, 3] :
+      vector<4x8x16x32xf32> to vector<4x16xf32>
+    %2 = tpu.multi_reduction <add>, %1, %acc1 [0, 1] :
+      vector<4x16xf32> to f32
+    ```
+  }];
+  let builders = [
+    OpBuilder<(ins "Value":$source, "Value":$acc,
+                   "ArrayRef<bool>":$reductionMask,
+                   "::mlir::vector::CombiningKind":$kind,
+                   "bool":$consistent_reduce_order)>
+  ];
+  let extraClassDeclaration = [{
+    VectorType getSourceVectorType() {
+      return ::llvm::cast<VectorType>(getSource().getType());
+    }
+    Type getDestType() {
+      return getDest().getType();
+    }
+
+    bool isReducedDim(int64_t d) {
+      assert(d >= 0 && d < static_cast<int64_t>(getReductionMask().size()) &&
+        "d overflows the number of dims");
+      return getReductionMask()[d];
+    }
+
+    SmallVector<bool> getReductionMask() {
+      SmallVector<bool> res(getSourceVectorType().getRank(), false);
+      for (int64_t dim : getReductionDims())
+        res[dim] = true;
+      return res;
+    }
+    static SmallVector<bool> getReductionMask(
+        ArrayRef<int64_t> reductionDims, unsigned sourceRank) {
+      SmallVector<bool> res(sourceRank, false);
+      for (auto idx : reductionDims)
+        res[idx] = true;
+      return res;
+    }
+  }];
+  let assemblyFormat =
+    "$kind `,` $source `,` $acc `,` "
+    "`consistent_reduce_order` `=` $consistent_reduce_order `,` "
+    "attr-dict $reduction_dims `:` type($source) `to` type($dest)";
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
   let hasVerifier = 1;
 }
 
@@ -679,14 +688,6 @@ def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure, DeclareOpInterfaceMeth
     `:` type($source) `,` type($indices) `->` type($output)
   }];
   let hasVerifier = 1;
-}
-
-def TPU_RoundingMode : I32EnumAttr<"RoundingMode", "Rounding mode", [
-  I32EnumAttrCase<"kTowardsZero", 0, "towards_zero">,
-  I32EnumAttrCase<"kToNearestEven", 1, "to_nearest_even">,
-]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
 }
 
 def TPU_RoundingModeEnum : EnumAttr<TPU_Dialect, TPU_RoundingMode, "rounding_mode"> {

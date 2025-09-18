@@ -314,7 +314,11 @@ class VectorLayoutInferer {
           return failure();
         }
       } else if (auto op = dyn_cast<vector::MultiDimReductionOp>(any_op)) {
-        if (infer(op).failed()) {
+        if (inferMultiDimReduction(op).failed()) {
+          return failure();
+        }
+      } else if (auto op = dyn_cast<tpu::MultiDimReductionOp>(any_op)) {
+        if (inferMultiDimReduction(op).failed()) {
           return failure();
         }
       } else if (auto op = dyn_cast<vector::ShapeCastOp>(any_op)) {
@@ -1381,7 +1385,8 @@ class VectorLayoutInferer {
     return success();
   }
 
-  LogicalResult infer(vector::MultiDimReductionOp op) {
+  template <typename Op>
+  LogicalResult inferMultiDimReduction(Op op) {
     auto src_ty = op.getSourceVectorType();
     auto dst_ty = dyn_cast<VectorType>(op.getDestType());
     TPU_CHECK_OP(dst_ty, "only reductions with vector results supported");
@@ -2036,20 +2041,28 @@ class VectorLayoutInferer {
     return success();
   }
 
+  template <typename Op>
+  bool reduces_tiled_dims(Op reduce) {
+    for (int64_t dim : reduce.getReductionDims()) {
+      if (dim >= reduce.getSourceVectorType().getRank() - 2) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   bool allUsersRequireNativeTiling(Value x) {
     for (Operation *user : getNontrivialTransitiveUsers(x)) {
       if (isa<tpu::MatmulOp>(user)) {
         continue;
       }
       if (auto reduce = dyn_cast<vector::MultiDimReductionOp>(user)) {
-        bool reduces_tiled_dims = false;
-        for (int64_t dim : reduce.getReductionDims()) {
-          if (dim >= reduce.getSourceVectorType().getRank() - 2) {
-            reduces_tiled_dims = true;
-            break;
-          }
+        if (reduces_tiled_dims(reduce)) {
+          continue;
         }
-        if (reduces_tiled_dims) {
+      }
+      if (auto reduce = dyn_cast<tpu::MultiDimReductionOp>(user)) {
+        if (reduces_tiled_dims(reduce)) {
           continue;
         }
       }

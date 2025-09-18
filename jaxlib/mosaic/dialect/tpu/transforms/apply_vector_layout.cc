@@ -4712,9 +4712,11 @@ LogicalResult vector_extract_strided_slice_rule(
   return success();
 }
 
-LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
-                                          const ArrayRef<Layout> layouts_in,
-                                          const ArrayRef<Layout> layouts_out) {
+template <typename Op>
+LogicalResult multi_reduction_rule_impl(RewriteContext& ctx,
+                                        ImplicitLocOpBuilder& builder, Op op,
+                                        const ArrayRef<Layout> layouts_in,
+                                        const ArrayRef<Layout> layouts_out) {
   TPU_ASSERT_EQ_OP(layouts_in.size(), 2);
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(
@@ -4723,8 +4725,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
   const VectorLayout &src_layout = *layouts_in[0];
   const VectorLayout &acc_layout = *layouts_in[1];
   const VectorLayout &dst_layout = *layouts_out[0];
-  ImplicitLocOpBuilder builder(op.getLoc(), &op);
-  auto multi_reduction_op = cast<vector::MultiDimReductionOp>(op);
+  auto multi_reduction_op = op;
   const VectorType src_ty = multi_reduction_op.getSourceVectorType();
   auto element_type = src_ty.getElementType();
   int64_t src_rank = src_ty.getRank();
@@ -5114,6 +5115,21 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
       assemble(builder, res_ty, dst_layout, dst_vregs, ctx.target_shape));
   multi_reduction_op->erase();
   return success();
+}
+
+LogicalResult multi_reduction_rule(RewriteContext& ctx, Operation& op,
+                                   const ArrayRef<Layout> layouts_in,
+                                   const ArrayRef<Layout> layouts_out) {
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
+  if (auto vec_op = dyn_cast<vector::MultiDimReductionOp>(op)) {
+    return multi_reduction_rule_impl(ctx, builder, vec_op, layouts_in,
+                                     layouts_out);
+  } else if (auto tpu_op = dyn_cast<tpu::MultiDimReductionOp>(op)) {
+    return multi_reduction_rule_impl(ctx, builder, tpu_op, layouts_in,
+                                     layouts_out);
+  }
+  return op.emitError(
+      "Operator is not vector.multi_reduction or tpu.multi_reduction");
 }
 
 LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
@@ -8650,7 +8666,7 @@ LogicalResult tpu_relayout_rule(RewriteContext &ctx, Operation &op,
 }
 
 const llvm::StringMap<rule_type> &rules() {
-  static const llvm::StringMap<rule_type> *rules = [] {
+  static const llvm::StringMap<rule_type>* rules = [] {
     static auto rules = new llvm::StringMap<rule_type>{
         {arith::ConstantOp::getOperationName(), arith_constant_rule},
         {arith::ExtSIOp::getOperationName(), arith_extsi_rule},
@@ -8690,8 +8706,8 @@ const llvm::StringMap<rule_type> &rules() {
         {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
         {vector::ExtractOp::getOperationName(), vector_extract_rule},
         {vector::LoadOp::getOperationName(), vector_load_rule},
-        {vector::MultiDimReductionOp::getOperationName(),
-         vector_multi_reduction_rule},
+        {vector::MultiDimReductionOp::getOperationName(), multi_reduction_rule},
+        {tpu::MultiDimReductionOp::getOperationName(), multi_reduction_rule},
         {vector::ExtractStridedSliceOp::getOperationName(),
          vector_extract_strided_slice_rule},
         {vector::ShapeCastOp::getOperationName(), reshape_rule},
