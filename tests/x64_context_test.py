@@ -146,6 +146,32 @@ class X64ContextTests(jtu.JaxTestCase):
         return 2 + a
     self.assertEqual(f(1).dtype, jnp.int64)
 
+  def test_grad(self):
+    def fun(x):
+      with enable_x64(True):
+        return jnp.sin(x)
+    self.assertEqual(
+        jax.grad(fun)(0.5).dtype,
+        jnp.float64 if jax.config.x64_enabled else jnp.float32,
+    )
+
+  def test_sin(self):
+    def fun(x):
+      with enable_x64(True):
+        x = jnp.asarray(x, dtype=jnp.float64)
+      return lax.sin(x)
+
+    self.assertEqual(fun(0.5).dtype, jnp.float64)
+
+  def test_mul(self):
+    def fun(x, y):
+      with enable_x64(True):
+        x = jnp.asarray(x, dtype=jnp.float64)
+        y = jnp.asarray(y, dtype=jnp.float64)
+      return lax.mul(x, y)
+
+    self.assertEqual(fun(0.5, 1.5).dtype, jnp.float64)
+
   @jtu.sample_product(disable_jit=[True, False])
   def test_scan_with_contextmanager(self, disable_jit):
     with jax.disable_jit(disable_jit):
