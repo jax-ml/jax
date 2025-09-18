@@ -22,6 +22,9 @@ from typing import TypeVar, overload
 import jax
 from jax import lax
 from jax._src import dtypes
+from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
+from jax._src.pallas.mosaic_gpu import core as gpu_core
+from jax._src.pallas import primitives as pallas_primitives
 import numpy as np
 
 _T = TypeVar("_T")
@@ -265,3 +268,54 @@ def planar_snake(
       tile_coordinates(lin_idx, tile_width),
       tile_coordinates(lin_idx - num_full_tiles_elements, minor_size - full_tiles_minor_size)
   )
+
+
+def dynamic_scheduling_loop(grid_names) -> Callable[
+    [Callable[[Sequence[jax.Array], jax.Array], None]], None]:
+  """A loop over program instances using dynamic work scheduling.
+
+  This loop will iterate through available program instances until all 
+  work has been scheduled. The kernel should be instantiated with a grid
+  equal to the logical amount of work to be done (as opposed to a persistent
+  kernel where the grid is set to the number of cores). Each core running
+  this loop will continuously query the next available block of work and
+  the loop will terminate when the entire grid has been scheduled.
+
+  Usage:
+  ```
+  @dynamic_scheduling_loop(grid_names)
+  def body(grid_idx, wave_step):
+    # do work....
+  ```
+
+  Args:
+    grid_names: The names of the axes in the grid.
+  """
+  def decorator(body):
+    grid_idx = tuple(lax.axis_index(axis_name) for axis_name in grid_names)
+    success = True
+    @functools.partial(
+        pallas_primitives.run_scoped,
+        try_cancel_buffer=gpu_core.TRY_CLUSTER_CANCEL_RESULT,
+        try_cancel_barrier=gpu_core.Barrier()
+    )
+    def _scoped(try_cancel_buffer, try_cancel_barrier):
+      def try_cancel_cond(carry):
+        _, success, _ = carry
+        return success
+      def try_cancel_body(carry):
+        grid_idx, _, wave_step = carry
+        gpu_primitives.try_cluster_cancel(try_cancel_buffer, try_cancel_barrier)
+        body(grid_idx, wave_step)
+        gpu_primitives.barrier_wait(try_cancel_barrier)
+        grid_idx, success = gpu_primitives.query_cluster_cancel(
+            try_cancel_buffer,
+            grid_names=grid_names)
+        return (grid_idx, success, wave_step + 1)
+      init_carry = (grid_idx, success, 0)
+      lax.while_loop(
+          try_cancel_cond,
+          try_cancel_body,
+          init_carry,
+      )
+  return decorator

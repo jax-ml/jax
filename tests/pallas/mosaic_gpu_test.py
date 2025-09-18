@@ -2590,6 +2590,8 @@ class PallasCallWGTest(
         mgpu_primitives.wait_load_tmem_p,
         mgpu_primitives.commit_tmem_p,
         mgpu_primitives.semaphore_signal_parallel_p,
+        mgpu_primitives.try_cluster_cancel_p,
+        mgpu_primitives.query_cluster_cancel_p,
         lax.slice_p,
         lax.iota_p,
         pallas_core.core_map_p,
@@ -3999,6 +4001,69 @@ class PallasCallSm100ATest(PallasSm100ATest):
         ),
     )
     np.testing.assert_array_equal(f(), np.ones((128,), np.float32))
+
+  @parameterized.parameters(
+      ((149, 1, 1), (1,)),
+      ((1, 149, 1), (1,)),
+      ((1, 1, 149), (1,)),
+      ((75, 1, 1), (1, 2,)),
+      ((75, 1, 1), (2, 1,)),
+  )
+  def test_cluster_launch_control(self, grid, cluster):
+    self.skip_if_wg_semantics()
+    # We attempt to schedule 1 more CTA than can be scheduled at once. Only
+    # one CTA will succeed in stealing the last block, and the others will
+    # fail. Therefore we test that there is exactly 1 stolen block and the
+    # others fail and return -1.
+
+    grid_names = tuple("xyz"[: len(grid)])
+    cluster_names = tuple("abc"[: len(cluster)])
+    is_collective = math.prod(cluster) > 1
+
+    def kernel(out_ref, cancel_result_ref, barrier, cluster_barrier, _):
+      if cluster_barrier is not None:
+        plgpu.barrier_arrive(cluster_barrier)
+        plgpu.barrier_wait(cluster_barrier)
+
+      plgpu.try_cluster_cancel(cancel_result_ref, barrier)
+      plgpu.barrier_wait(barrier)
+
+      cta_ids, cancelled_launch = plgpu.query_cluster_cancel(cancel_result_ref,
+                                                             grid_names)
+      cta_id = sum(cta_ids)
+
+      # Store a sentinel value if no work can be scheduled.
+      value = lax.select(cancelled_launch, cta_id, jnp.int32(-1))
+
+      grid_idx = lax.axis_index(grid_names) * lax.axis_size(
+          cluster_names
+      ) + lax.axis_index(cluster_names)
+      out_ref[grid_idx] = value
+
+    f = self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((148,), jnp.int32),
+        grid=grid,
+        grid_names=grid_names,
+        cluster=cluster,
+        cluster_names=cluster_names,
+        scratch_shapes=[
+            plgpu.TRY_CLUSTER_CANCEL_RESULT,
+            plgpu.Barrier(num_arrivals=1),
+            plgpu.ClusterBarrier(collective_axes=cluster_names)
+            if is_collective
+            else None,
+            # Requesting SMEM close to the 228kb limit to ensure that each SM
+            # only schedules 1 block.
+            plgpu.SMEM((220 * 1024,), jnp.int8),
+        ],
+    )
+    result = np.sort(f())
+    cluster_size = math.prod(cluster)
+    num_sms = jax.devices()[0].core_count
+    last_cta_id = math.ceil(num_sms / cluster_size)
+    expected = np.array([-1] * (num_sms - cluster_size) + [last_cta_id] * cluster_size)
+    np.testing.assert_equal(result, expected)
 
 
 class PallasCallSm100AWGTest(
@@ -5741,6 +5806,37 @@ class HelpersTest(PallasTest):
           [63, 62, 61, 60, 59, 58, 57, 56],
       ])
       np.testing.assert_array_equal(results, expected)
+
+  @parameterized.parameters(
+      (100,),  # grid < SM count
+      (300,),  # grid > SM count
+      (3, 3, 3, 3, 3)  #  squashed grid dimensions
+  )
+  def test_dynamic_work_scheduling(self, grid):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("Only works on a GPU with capability >= sm100a")
+    grid_names = tuple(str(i) for i in range(len(grid)))
+    def body(out_gmem, _):
+      sm_idx = lax.axis_index(grid_names)
+      @plgpu.dynamic_scheduling_loop(grid_names)
+      def loop_body(grid_idx, _):
+        out_gmem[*grid_idx] = sm_idx
+    result = plgpu.kernel(body,
+                 out_shape=jax.ShapeDtypeStruct(grid, jnp.int32),
+                 grid=grid,
+                 grid_names=grid_names,
+                 # Allocate a large amount of SMEM to prevent multiple blocks
+                 # being scheduled on the same SM.
+                 scratch_shapes=[plgpu.SMEM((200_000,), jnp.int8)],
+                 )()
+
+    # Result maps grid_idx -> SM that performed the work.
+    # Check that each SM had at least 1 block of work.
+    num_sms = min(jax.devices()[0].core_count, np.prod(grid))
+    for sm_idx in range(num_sms):
+      self.assertGreaterEqual(np.sum(result == sm_idx), 1)
+    # Make sure all blocks > num_sms were stolen.
+    self.assertLess(np.max(result), jnp.int32(num_sms))
 
 
 if __name__ == "__main__":
