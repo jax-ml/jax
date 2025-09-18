@@ -1216,17 +1216,21 @@ class CostEstimate:
   flops: int
   transcendentals: int
   bytes_accessed: int
+  remote_bytes_transferred: int = 0
 
   def __post_init__(self):
     for k, v in dataclasses.asdict(self).items():
       if not isinstance(v, int):
-        raise ValueError("All fields in CostEstimate must be ints. "
-                         f"{k} is not an int: {type(v)}({v})")
+        raise ValueError(
+            "All fields in CostEstimate must be ints. "
+            f"{k} is not an int: {type(v)}({v})"
+        )
 
   def to_json(self) -> bytes:
     return (
         f'{{"flops": {self.flops}, "transcendentals": {self.transcendentals},'
-        f' "bytes_accessed": {self.bytes_accessed}}}'
+        f' "bytes_accessed": {self.bytes_accessed},'
+        f' "remote_bytes_transferred": {self.remote_bytes_transferred}}}'
     ).encode("ascii")
 
 
