@@ -216,20 +216,6 @@ bool incrementIndexSubsequence(const MutableArrayRef<int64_t> idx,
   return false;
 }
 
-bool incrementIndex(const MutableArrayRef<int64_t> idx,
-                    const absl::Span<const int64_t> limits) {
-  const int64_t nd = idx.size();
-  CHECK_EQ(nd, limits.size());
-  for (int64_t i = nd - 1; i >= 0; --i) {
-    ++idx[i];
-    if (idx[i] < limits[i]) {
-      return true;
-    }
-    idx[i] = 0;
-  }
-  return false;
-}
-
 FailureOr<int64_t> expectIntConst(Value v) {
   if (auto cst = getIntConst(v)) {
     return cst.value();
@@ -4052,8 +4038,8 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
       layout_out.vregSlice(ctx.target_shape);
   const int64_t num_dims = vty.getRank();
   const int64_t num_batch_dims = num_dims - (is_1d ? 1 : 2);
-  const absl::Status status =
-      tiles.EachStatus([&](absl::Span<const int64_t> tile_idxs, Value * /*v*/) {
+  RETURN_IF_FAILED(Each(
+      tiles, [&](ArrayRef<int64_t> tile_idxs, Value* /*v*/) -> LogicalResult {
         CHECK_EQ(num_dims, tile_idxs.size());
         SmallVector<Value> idxs(tile_idxs.size());
         for (int64_t i = 0; i < num_batch_dims; ++i) {
@@ -4073,7 +4059,7 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
         TPU_ASSERT_OP(tile_idxs[num_dims - 1] + ctx.target_shape[1] <=
                       memref_ty.getShape()[num_dims - 1]);
         std::unique_ptr<VRegDataBounds> bounds = layout_out.tileDataBounds(
-            mlir_ctx, vty.getShape(), toArrayRef(tile_idxs), ctx.target_shape,
+            mlir_ctx, vty.getShape(), tile_idxs, ctx.target_shape,
             /*allow_replicated =*/{true, false});
         Operation *tile;
         if (bounds->maskVariesAlong(Direction::kSublanes, ctx.target_shape)) {
@@ -4085,8 +4071,7 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
         } else {
           if (load_map) {
             if (layout_out.bitwidth() != 32) {
-              load_op.emitOpError("Not implemented");
-              return absl::UnimplementedError("");
+              return load_op.emitOpError("Not implemented");
             }
             Value padding = builder.create<arith::ConstantOp>(
                 target_ty.getElementType(),
@@ -4104,11 +4089,8 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
           }
         }
         tiles(tile_idxs) = tile->getResult(0);
-        return absl::OkStatus();
-      });
-  if (!status.ok()) {
-    return failure();
-  }
+        return success();
+      }));
   load_op->replaceAllUsesWith(
       assemble(builder, vty, layout_out, std::move(tiles), ctx.target_shape));
   load_op->erase();
@@ -4298,20 +4280,18 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
         }
         const DenseI32ArrayAttr sublane_pattern =
             builder.getDenseI32ArrayAttr(pattern);
-        const absl::Status status =
-            src_tiles.EachStatus([&](const absl::Span<const int64_t> src_idx,
-                                     Value *const src_vreg) {
+        RETURN_IF_FAILED(Each(
+            src_tiles,
+            [&](const ArrayRef<int64_t> src_idx,
+                Value* const src_vreg) -> LogicalResult {
               Value dst_vreg = *src_vreg;
               // Replicate the value within each sublane.
               if (packing != 1) {
-                if (auto new_dst_vreg = broadcastSubelements(
-                        builder, cast<TypedValue<VectorType>>(dst_vreg),
-                        subelement_offset, ctx.target_shape);
-                    succeeded(new_dst_vreg)) {
-                  dst_vreg = *new_dst_vreg;
-                } else {
-                  return absl::InternalError("");
-                }
+                FAILUREOR_ASSIGN_OR_RETURN(
+                    dst_vreg,
+                    broadcastSubelements(builder,
+                                         cast<TypedValue<VectorType>>(dst_vreg),
+                                         subelement_offset, ctx.target_shape));
               }
               dst_vreg = builder.create<tpu::GatherOp>(
                   dst_vreg.getType(), dst_vreg, sublane_pattern, 0);
@@ -4327,11 +4307,8 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
                 }
               }
               updateSlice<Value>(dst_tiles, dst_vreg, dst_starts, dst_limits);
-              return absl::OkStatus();
-            });
-        if (!status.ok()) {
-          return failure();
-        }
+              return success();
+            }));
       } else if (needs_physical_broadcast ==
                  std::array{false, true}) {  // Lane broadcast
         TPU_ASSERT_EQ_OP(*(src_tiles.dimensions().end() - 1), 1);
@@ -4900,214 +4877,208 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
           "Not implemented: unsupported reduction kind");
   }
   const ArrayRef<int64_t> src_shape = src_ty.getShape();
-  auto all_results_ok = dst_vregs.EachStatus(
-      [&](const absl::Span<const int64_t> idx, Value *const dst_vreg) {
-    // Extract a subset of source vregs that reduce into this result vreg.
-    SmallVector<int64_t> src_slice_start;
-    src_slice_start.reserve(src_rank);
-    SmallVector<int64_t> src_slice_end;
-    src_slice_end.reserve(src_rank);
-    for (int64_t i : idx) {
-      src_slice_start.push_back(i);
-      src_slice_end.push_back(i + 1);
-    }
-    for (int64_t d : dims) {
-      int64_t d_size = src_vregs.dim(d);
-      src_slice_start.insert(src_slice_start.begin() + d, 0);
-      src_slice_end.insert(src_slice_end.begin() + d, d_size);
-    }
-    xla::Array<Value> reduced_vregs =
-        src_vregs.Slice(src_slice_start, src_slice_end);
-    std::optional<Value> acc_vreg;
-    auto reduce_elementwise = [&](Value lhs, Value rhs) -> Value {
-      Value result;
-      switch (tpu_kind) {
-        case tpu::ReductionKind::kSum:
-          result =
+  RETURN_IF_FAILED(Each(
+      dst_vregs,
+      [&](const ArrayRef<int64_t> idx, Value* const dst_vreg) -> LogicalResult {
+        // Extract a subset of source vregs that reduce into this result vreg.
+        SmallVector<int64_t> src_slice_start;
+        src_slice_start.reserve(src_rank);
+        SmallVector<int64_t> src_slice_end;
+        src_slice_end.reserve(src_rank);
+        for (int64_t i : idx) {
+          src_slice_start.push_back(i);
+          src_slice_end.push_back(i + 1);
+        }
+        for (int64_t d : dims) {
+          int64_t d_size = src_vregs.dim(d);
+          src_slice_start.insert(src_slice_start.begin() + d, 0);
+          src_slice_end.insert(src_slice_end.begin() + d, d_size);
+        }
+        xla::Array<Value> reduced_vregs =
+            src_vregs.Slice(src_slice_start, src_slice_end);
+        std::optional<Value> acc_vreg;
+        auto reduce_elementwise = [&](Value lhs, Value rhs) -> Value {
+          Value result;
+          switch (tpu_kind) {
+            case tpu::ReductionKind::kSum:
+              result =
                   is_int
                       ? builder.create<arith::AddIOp>(loc, lhs, rhs).getResult()
                       : builder.create<arith::AddFOp>(loc, lhs, rhs)
                             .getResult();
-          break;
-        case tpu::ReductionKind::kMax:
+              break;
+            case tpu::ReductionKind::kMax:
               result = is_int ? builder.create<arith::MaxSIOp>(loc, lhs, rhs)
                                     .getResult()
                      : builder.create<arith::MaximumFOp>(loc, lhs, rhs)
                            .getResult();
-          break;
-        case tpu::ReductionKind::kMin:
+              break;
+            case tpu::ReductionKind::kMin:
               result = is_int ? builder.create<arith::MinSIOp>(loc, lhs, rhs)
                                     .getResult()
                      : builder.create<arith::MinimumFOp>(loc, lhs, rhs)
                            .getResult();
-          break;
-        default:
-          multi_reduction_op.emitOpError(
-              "Not implemented: unsupported reduction kind ")
-              << stringifyReductionKind(tpu_kind);
-          return Value();
-      }
-      return result;
-    };
-    auto reduction_status = reduced_vregs.EachStatus(
-        [&](const absl::Span<const int64_t> red_idx, Value *const src_vreg) {
-          SmallVector<int64_t> src_idx(red_idx.begin(), red_idx.end());
-          for (int i = 0; i < src_idx.size(); ++i) {
-            src_idx[i] += src_slice_start[i];
+              break;
+            default:
+              multi_reduction_op.emitOpError(
+                  "Not implemented: unsupported reduction kind ")
+                  << stringifyReductionKind(tpu_kind);
+              return Value();
           }
-          // Note that the generated data bounds will not mask along
-          // replicated dimensions.
-          // TODO(tlongeri): Also don't need to mask dimensions that are not
-          // being reduced.
-          const std::unique_ptr<VRegDataBounds> data_bounds =
-              src_layout.tileDataBounds(builder.getContext(), src_shape,
-                                        src_idx, ctx.target_shape,
-                                        {true, true});
-          if (data_bounds == nullptr) {
-            // Op error has already been emitted inside tileDataBounds().
-            return absl::UnknownError("Unable to obtain data bounds");
-          }
-          FailureOr<Value> failure_or_vreg =
-              maskOOB(ctx, builder, cast<TypedValue<VectorType>>(*src_vreg),
-                      *data_bounds, neutral);
-          if (failed(failure_or_vreg)) {
-            op.emitOpError("Failed to mask vreg");
-            return absl::UnknownError("");
-          }
-          Value vreg = failure_or_vreg.value();
-          if (!acc_vreg.has_value()) {
-            acc_vreg = vreg;
+          return result;
+        };
+        RETURN_IF_FAILED(Each(
+            reduced_vregs,
+            [&](ArrayRef<int64_t> red_idx,
+                Value* const src_vreg) -> LogicalResult {
+              SmallVector<int64_t> src_idx(red_idx);
+              for (int i = 0; i < src_idx.size(); ++i) {
+                src_idx[i] += src_slice_start[i];
+              }
+              // Note that the generated data bounds will not mask along
+              // replicated dimensions.
+              // TODO(tlongeri): Also don't need to mask dimensions that are not
+              // being reduced.
+              const std::unique_ptr<VRegDataBounds> data_bounds =
+                  src_layout.tileDataBounds(builder.getContext(), src_shape,
+                                            src_idx, ctx.target_shape,
+                                            {true, true});
+              if (data_bounds == nullptr) {
+                // Op error has already been emitted inside tileDataBounds().
+                return failure();
+              }
+              FAILUREOR_ASSIGN_OR_RETURN(
+                  Value vreg,
+                  maskOOB(ctx, builder, cast<TypedValue<VectorType>>(*src_vreg),
+                          *data_bounds, neutral));
+              if (!acc_vreg.has_value()) {
+                acc_vreg = vreg;
+              } else {
+                acc_vreg = reduce_elementwise(*acc_vreg, vreg);
+              }
+              return success();
+            }));
+        TPU_ASSERT_OP(acc_vreg.has_value());
+        const bool is_double_replicated_double_reduced =
+            reduces[0] && reduces[1] && !src_layout.offsets()[0].has_value() &&
+            !src_layout.offsets()[1].has_value();
+        if (reduces[1]) {
+          if (src_layout.offsets()[1].has_value()) {
+            acc_vreg = builder.create<tpu::AllReduceOp>(
+                multi_reduction_op->getLoc(), acc_vreg->getType(), *acc_vreg,
+                /* dim= */ 1, tpu_kind);
           } else {
-            acc_vreg = reduce_elementwise(*acc_vreg, vreg);
+            int64_t size_dim1 =
+                src_layout.getImplicitTiledDims(src_shape, 1)[1];
+            if (is_double_replicated_double_reduced) {
+              size_dim1 *= src_layout.getImplicitTiledDims(src_shape, 1)[0];
+            }
+            switch (tpu_kind) {
+              case tpu::ReductionKind::kSum:
+                if (is_int) {
+                  IntegerAttr size_attr = builder.getI32IntegerAttr(size_dim1);
+                  TypedValue<VectorType> source_value = getFullVector(
+                      builder,
+                      getNativeVregType(builder.getI32Type(), ctx.target_shape),
+                      size_attr);
+                  acc_vreg = builder.create<arith::MulIOp>(loc, *acc_vreg,
+                                                           source_value);
+                } else {
+                  FloatAttr size_attr = builder.getF32FloatAttr(size_dim1);
+                  TypedValue<VectorType> source_value = getFullVector(
+                      builder,
+                      getNativeVregType(builder.getF32Type(), ctx.target_shape),
+                      size_attr);
+                  acc_vreg = builder.create<arith::MulFOp>(loc, *acc_vreg,
+                                                           source_value);
+                }
+                break;
+              // We don't need to do anything for other reduction kinds.
+              case tpu::ReductionKind::kMax:
+              case tpu::ReductionKind::kMin:
+                break;
+              default:
+                return multi_reduction_op.emitOpError(
+                           "Not implemented: unsupported reduction kind ")
+                       << stringifyReductionKind(tpu_kind);
+            }
           }
-          return absl::OkStatus();
-        });
-    TF_RETURN_IF_ERROR(reduction_status);
-    TPU_ASSERT_OP(acc_vreg.has_value());
-    const bool is_double_replicated_double_reduced =
-        reduces[0] && reduces[1] && !src_layout.offsets()[0].has_value() &&
-        !src_layout.offsets()[1].has_value();
-    if (reduces[1]) {
-      if (src_layout.offsets()[1].has_value()) {
-        acc_vreg = builder.create<tpu::AllReduceOp>(
-            multi_reduction_op->getLoc(), acc_vreg->getType(),
-            *acc_vreg, /* dim= */ 1, tpu_kind);
-      } else {
-        int64_t size_dim1 = src_layout.getImplicitTiledDims(src_shape, 1)[1];
-        if (is_double_replicated_double_reduced) {
-          size_dim1 *= src_layout.getImplicitTiledDims(src_shape, 1)[0];
         }
-        switch (tpu_kind) {
-          case tpu::ReductionKind::kSum:
-            if (is_int) {
-              IntegerAttr size_attr = builder.getI32IntegerAttr(size_dim1);
-              TypedValue<VectorType> source_value = getFullVector(
-                  builder,
-                  getNativeVregType(builder.getI32Type(), ctx.target_shape),
-                  size_attr);
-              acc_vreg =
-                  builder.create<arith::MulIOp>(loc, *acc_vreg, source_value);
+        if (reduces[0]) {
+          // Packed types are compressed along rows, so we need to reduce them
+          // within each 32-bit word. There's no performance penalty for doing
+          // this in 32-bit precision, so we take advantage of it.
+          Type acc_vreg_ty = acc_vreg->getType();
+          if (acc_layout.packing() > 1) {
+            Type vreg_ty_32 = nullptr;
+            if (acc.getType().getElementType().isBF16()) {
+              vreg_ty_32 =
+                  getNativeVregType(builder.getF32Type(), ctx.target_shape);
             } else {
-              FloatAttr size_attr = builder.getF32FloatAttr(size_dim1);
-              TypedValue<VectorType> source_value = getFullVector(
-                  builder,
-                  getNativeVregType(builder.getF32Type(), ctx.target_shape),
-                  size_attr);
-              acc_vreg =
-                  builder.create<arith::MulFOp>(loc, *acc_vreg, source_value);
+              return multi_reduction_op.emitOpError(
+                  "Not implemented: Unsupported reduction dtype");
             }
-            break;
-          // We don't need to do anything for other reduction kinds.
-          case tpu::ReductionKind::kMax:
-          case tpu::ReductionKind::kMin:
-            break;
-          default:
-            multi_reduction_op.emitOpError(
-                "Not implemented: unsupported reduction kind ")
-                << stringifyReductionKind(tpu_kind);
-            return absl::UnknownError("");
-        }
-      }
-    }
-    if (reduces[0]) {
-      // Packed types are compressed along rows, so we need to reduce them
-      // within each 32-bit word. There's no performance penalty for doing
-      // this in 32-bit precision, so we take advantage of it.
-      Type acc_vreg_ty = acc_vreg->getType();
-      if (acc_layout.packing() > 1) {
-        Type vreg_ty_32 = nullptr;
-        if (acc.getType().getElementType().isBF16()) {
-          vreg_ty_32 =
-              getNativeVregType(builder.getF32Type(), ctx.target_shape);
-        } else {
-          multi_reduction_op.emitOpError(
-              "Not implemented: Unsupported reduction dtype");
-          return absl::UnknownError("");
-        }
-        Value acc_vreg_32 = builder.create<tpu::UnpackSubelementsOp>(
-            loc, vreg_ty_32, *acc_vreg, 0, tpu::PackFormat::kInterleaved);
-        for (int i = 1; i < acc_layout.packing(); ++i) {
-          Value acc_vreg_part_32 = builder.create<tpu::UnpackSubelementsOp>(
-              loc, vreg_ty_32, *acc_vreg, i, tpu::PackFormat::kInterleaved);
-          acc_vreg_32 = reduce_elementwise(acc_vreg_32, acc_vreg_part_32);
-        }
-        acc_vreg = acc_vreg_32;
-      }
-      // At this point acc_vreg is always 32-bit.
-      if (src_layout.offsets()[0].has_value()) {
-        acc_vreg = builder.create<tpu::AllReduceOp>(
-            multi_reduction_op->getLoc(), acc_vreg->getType(),
-            *acc_vreg, 0, tpu_kind);
-      } else if (!is_double_replicated_double_reduced) {
-        int64_t size_dim0 = src_layout.getImplicitTiledDims(src_shape, 1)[0];
-        switch (tpu_kind) {
-          case tpu::ReductionKind::kSum:
-            if (is_int) {
-              IntegerAttr size_attr = builder.getI32IntegerAttr(size_dim0);
-              TypedValue<VectorType> source_value = getFullVector(
-                  builder,
-                  getNativeVregType(builder.getI32Type(), ctx.target_shape),
-                  size_attr);
-              acc_vreg =
-                  builder.create<arith::MulIOp>(loc, *acc_vreg, source_value);
-            } else {
-              FloatAttr size_attr = builder.getF32FloatAttr(size_dim0);
-              TypedValue<VectorType> source_value = getFullVector(
-                  builder,
-                  getNativeVregType(builder.getF32Type(), ctx.target_shape),
-                  size_attr);
-              acc_vreg =
-                  builder.create<arith::MulFOp>(loc, *acc_vreg, source_value);
+            Value acc_vreg_32 = builder.create<tpu::UnpackSubelementsOp>(
+                loc, vreg_ty_32, *acc_vreg, 0, tpu::PackFormat::kInterleaved);
+            for (int i = 1; i < acc_layout.packing(); ++i) {
+              Value acc_vreg_part_32 = builder.create<tpu::UnpackSubelementsOp>(
+                  loc, vreg_ty_32, *acc_vreg, i, tpu::PackFormat::kInterleaved);
+              acc_vreg_32 = reduce_elementwise(acc_vreg_32, acc_vreg_part_32);
             }
-            break;
-          case tpu::ReductionKind::kMax:
-          case tpu::ReductionKind::kMin:
-            break;
-          default:
-            multi_reduction_op.emitOpError(
-                "Not implemented: unsupported reduction kind ")
-                << stringifyReductionKind(tpu_kind);
-            return absl::UnknownError("");
-        }
-      }
-      // We pack the final result back into the original type.
-      if (acc_layout.packing() > 1) {
-        SmallVector<int32_t> positions(acc_layout.packing());
+            acc_vreg = acc_vreg_32;
+          }
+          // At this point acc_vreg is always 32-bit.
+          if (src_layout.offsets()[0].has_value()) {
+            acc_vreg = builder.create<tpu::AllReduceOp>(
+                multi_reduction_op->getLoc(), acc_vreg->getType(), *acc_vreg, 0,
+                tpu_kind);
+          } else if (!is_double_replicated_double_reduced) {
+            int64_t size_dim0 =
+                src_layout.getImplicitTiledDims(src_shape, 1)[0];
+            switch (tpu_kind) {
+              case tpu::ReductionKind::kSum:
+                if (is_int) {
+                  IntegerAttr size_attr = builder.getI32IntegerAttr(size_dim0);
+                  TypedValue<VectorType> source_value = getFullVector(
+                      builder,
+                      getNativeVregType(builder.getI32Type(), ctx.target_shape),
+                      size_attr);
+                  acc_vreg = builder.create<arith::MulIOp>(loc, *acc_vreg,
+                                                           source_value);
+                } else {
+                  FloatAttr size_attr = builder.getF32FloatAttr(size_dim0);
+                  TypedValue<VectorType> source_value = getFullVector(
+                      builder,
+                      getNativeVregType(builder.getF32Type(), ctx.target_shape),
+                      size_attr);
+                  acc_vreg = builder.create<arith::MulFOp>(loc, *acc_vreg,
+                                                           source_value);
+                }
+                break;
+              case tpu::ReductionKind::kMax:
+              case tpu::ReductionKind::kMin:
+                break;
+              default:
+                return multi_reduction_op.emitOpError(
+                           "Not implemented: unsupported reduction kind ")
+                       << stringifyReductionKind(tpu_kind);
+            }
+          }
+          // We pack the final result back into the original type.
+          if (acc_layout.packing() > 1) {
+            SmallVector<int32_t> positions(acc_layout.packing());
             std::iota(positions.begin(), positions.end(),
                       static_cast<int32_t>(0));
-        SmallVector<Value> parts(acc_layout.packing(), *acc_vreg);
-        acc_vreg = builder.create<tpu::PackSubelementsOp>(
+            SmallVector<Value> parts(acc_layout.packing(), *acc_vreg);
+            acc_vreg = builder.create<tpu::PackSubelementsOp>(
                 loc, acc_vreg_ty, parts,
                 builder.getDenseI32ArrayAttr(positions),
-            tpu::PackFormat::kInterleaved);
-      }
-    }
-    *dst_vreg = *acc_vreg;
-    return absl::OkStatus();
-  });
-  if (!all_results_ok.ok()) {
-    return failure();
-  }
+                tpu::PackFormat::kInterleaved);
+          }
+        }
+        *dst_vreg = *acc_vreg;
+        return success();
+      }));
   multi_reduction_op->replaceAllUsesWith(
       assemble(builder, res_ty, dst_layout, dst_vregs, ctx.target_shape));
   multi_reduction_op->erase();
@@ -5206,117 +5177,112 @@ LogicalResult tpu_reduce_index_rule(RewriteContext &ctx, Operation &op,
           "Unsupported reduction kind ") << stringifyReductionKind(kind);
   }
 
-  auto all_results_ok = out_vregs.EachStatus(
-    [&](const absl::Span<const int64_t> idx, Value *const out_vreg) {
-      slice_start.clear();
-      slice_end.clear();
-      for (int64_t i : idx) {
-        slice_start.push_back(i);
-        slice_end.push_back(i + 1);
-      }
-      slice_start.insert(slice_start.begin() + axis, 0);
-      slice_end.insert(slice_end.begin() + axis, tiles.dim(axis));
-      xla::Array<Value> slice_vregs = tiles.Slice(slice_start, slice_end);
+  RETURN_IF_FAILED(Each(
+      out_vregs,
+      [&](const ArrayRef<int64_t> idx, Value* const out_vreg) -> LogicalResult {
+        slice_start.clear();
+        slice_end.clear();
+        for (int64_t i : idx) {
+          slice_start.push_back(i);
+          slice_end.push_back(i + 1);
+        }
+        slice_start.insert(slice_start.begin() + axis, 0);
+        slice_end.insert(slice_end.begin() + axis, tiles.dim(axis));
+        xla::Array<Value> slice_vregs = tiles.Slice(slice_start, slice_end);
 
-      auto reduce_elementwise = [&](
-          Value lhs, Value rhs, Value lhs_idx, Value rhs_idx) ->
-          std::pair<Value, Value> {
-        Value keep_lhs = builder.create<arith::CmpFOp>(
-            predicate, lhs, rhs);
-        Value result_val = builder.create<arith::SelectOp>(
-            keep_lhs, lhs, rhs);
-        Value result_idx = builder.create<arith::SelectOp>(
-            keep_lhs, lhs_idx, rhs_idx);
-        return {result_val, result_idx};
-      };
-      Value acc_vreg = nullptr;
-      Value acc_vreg_idx = nullptr;
-      const std::optional<int32_t> in_tile_reduction_dim =
-          (axis == rank - 2 || axis == rank - 1)
-              ? std::make_optional(axis - (rank - 2))
-              : std::nullopt;
-      const int64_t reduction_step =
-          in_tile_reduction_dim ? ctx.target_shape[*in_tile_reduction_dim] : 1;
-      auto reduction_status = slice_vregs.EachStatus(
-        [&](const absl::Span<const int64_t> red_idx, Value *const src_vreg) {
-        // Calculate the index of acc_vreg on reduction dimension in full input.
-        Value src_vreg_idx = builder.create<arith::ConstantOp>(
-            index_ty,
-            DenseIntElementsAttr::get(
-                index_ty,
-                static_cast<int32_t>(red_idx[axis] * reduction_step)));
+        auto reduce_elementwise =
+            [&](Value lhs, Value rhs, Value lhs_idx,
+                Value rhs_idx) -> std::pair<Value, Value> {
+          Value keep_lhs = builder.create<arith::CmpFOp>(predicate, lhs, rhs);
+          Value result_val =
+              builder.create<arith::SelectOp>(keep_lhs, lhs, rhs);
+          Value result_idx =
+              builder.create<arith::SelectOp>(keep_lhs, lhs_idx, rhs_idx);
+          return {result_val, result_idx};
+        };
+        Value acc_vreg = nullptr;
+        Value acc_vreg_idx = nullptr;
+        const std::optional<int32_t> in_tile_reduction_dim =
+            (axis == rank - 2 || axis == rank - 1)
+                ? std::make_optional(axis - (rank - 2))
+                : std::nullopt;
+        const int64_t reduction_step =
+            in_tile_reduction_dim ? ctx.target_shape[*in_tile_reduction_dim]
+                                  : 1;
+        RETURN_IF_FAILED(Each(
+            slice_vregs,
+            [&](const ArrayRef<int64_t> red_idx,
+                Value* const src_vreg) -> LogicalResult {
+              // Calculate the index of acc_vreg on reduction dimension in full
+              // input.
+              Value src_vreg_idx = builder.create<arith::ConstantOp>(
+                  index_ty, DenseIntElementsAttr::get(
+                                index_ty, static_cast<int32_t>(
+                                              red_idx[axis] * reduction_step)));
+              if (in_tile_reduction_dim) {
+                Value iota = builder.create<tpu::IotaOp>(
+                    index_ty,
+                    /*dimensions=*/ArrayRef<int32_t>{*in_tile_reduction_dim});
+                src_vreg_idx =
+                    builder.create<arith::AddIOp>(src_vreg_idx, iota);
+              }
+
+              // Mask out-of-bounds values.
+              SmallVector<int64_t> src_idx(red_idx.begin(), red_idx.end());
+              for (int i = 0; i < src_idx.size(); ++i) {
+                src_idx[i] += slice_start[i];
+              }
+              std::unique_ptr<VRegDataBounds> bounds = in_layout.tileDataBounds(
+                  builder.getContext(), in_ty.getShape(), src_idx,
+                  ctx.target_shape);
+              FAILUREOR_ASSIGN_OR_RETURN(
+                  Value vreg,
+                  maskOOB(ctx, builder, cast<TypedValue<VectorType>>(*src_vreg),
+                          *bounds, neutral));
+              if (acc_vreg == nullptr || acc_vreg_idx == nullptr) {
+                acc_vreg = vreg;
+                acc_vreg_idx = src_vreg_idx;
+              } else {
+                std::tie(acc_vreg, acc_vreg_idx) = reduce_elementwise(
+                    acc_vreg, vreg, acc_vreg_idx, src_vreg_idx);
+              }
+              return success();
+            }));
         if (in_tile_reduction_dim) {
-          Value iota = builder.create<tpu::IotaOp>(
-              index_ty,
-              /*dimensions=*/ArrayRef<int32_t>{*in_tile_reduction_dim});
-          src_vreg_idx = builder.create<arith::AddIOp>(src_vreg_idx, iota);
-        }
-
-        // Mask out-of-bounds values.
-        SmallVector<int64_t> src_idx(red_idx.begin(), red_idx.end());
-        for (int i = 0; i < src_idx.size(); ++i) {
-          src_idx[i] += slice_start[i];
-        }
-        std::unique_ptr<VRegDataBounds> bounds =
-            in_layout.tileDataBounds(
-              builder.getContext(), in_ty.getShape(), src_idx, ctx.target_shape
-            );
-        FailureOr<Value> failure_or_vreg = maskOOB(
-            ctx, builder, cast<TypedValue<VectorType>>(*src_vreg), *bounds,
-            neutral);
-        if (failed(failure_or_vreg)) {
-          reduce_index_op.emitOpError("Failed to mask out-of-bounds values");
-          return absl::UnknownError("");
-        }
-        Value vreg = *failure_or_vreg;
-        if (acc_vreg == nullptr || acc_vreg_idx == nullptr) {
-          acc_vreg = vreg;
-          acc_vreg_idx = src_vreg_idx;
+          if (*in_tile_reduction_dim == 0) {  // sublane reduction
+            Value val = acc_vreg;
+            Value idx = acc_vreg_idx;
+            for (int i = ctx.target_shape[0] / 2; i > 0; i /= 2) {
+              Value rotated_val = builder.create<tpu::RotateOp>(
+                  val, /*amount=*/i, /*dimension=*/0, /*stride=*/nullptr,
+                  /*stride_dimension=*/nullptr);
+              Value rotated_idx = builder.create<tpu::RotateOp>(
+                  idx, /*amount=*/i, /*dimension=*/0, /*stride=*/nullptr,
+                  /*stride_dimension=*/nullptr);
+              std::tie(val, idx) =
+                  reduce_elementwise(val, rotated_val, idx, rotated_idx);
+            }
+            *out_vreg = idx;
+          } else {  // lane reduction
+            CHECK_EQ(*in_tile_reduction_dim, 1);
+            acc_vreg = builder.create<tpu::AllReduceOp>(index_ty, acc_vreg,
+                                                        /*dim=*/1, kind);
+            if (slice_vregs.dim(axis) > 1) {
+              // Convert back to original index in acc_vreg_idx
+              *out_vreg = builder.create<tpu::DynamicGatherOp>(
+                  index_ty,
+                  /*source=*/acc_vreg_idx,
+                  /*indices=*/acc_vreg,
+                  /*dimensions=*/ArrayRef<int32_t>{1});
+            } else {
+              *out_vreg = acc_vreg;
+            }
+          }
         } else {
-          std::tie(acc_vreg, acc_vreg_idx) = reduce_elementwise(
-              acc_vreg, vreg, acc_vreg_idx, src_vreg_idx);
+          *out_vreg = acc_vreg_idx;
         }
-        return absl::OkStatus();
-      });
-      TF_RETURN_IF_ERROR(reduction_status);
-      if (in_tile_reduction_dim) {
-        if (*in_tile_reduction_dim == 0) {  // sublane reduction
-          Value val = acc_vreg;
-          Value idx = acc_vreg_idx;
-          for (int i = ctx.target_shape[0] / 2; i > 0; i /= 2) {
-            Value rotated_val = builder.create<tpu::RotateOp>(
-                val, /*amount=*/i, /*dimension=*/0, /*stride=*/nullptr,
-                /*stride_dimension=*/nullptr);
-            Value rotated_idx = builder.create<tpu::RotateOp>(
-                idx, /*amount=*/i, /*dimension=*/0, /*stride=*/nullptr,
-                /*stride_dimension=*/nullptr);
-            std::tie(val, idx) =
-                reduce_elementwise(val, rotated_val, idx, rotated_idx);
-          }
-          *out_vreg = idx;
-        } else {  // lane reduction
-          CHECK_EQ(*in_tile_reduction_dim, 1);
-          acc_vreg = builder.create<tpu::AllReduceOp>(
-              index_ty, acc_vreg, /*dim=*/1, kind);
-          if (slice_vregs.dim(axis) > 1) {
-            // Convert back to original index in acc_vreg_idx
-            *out_vreg = builder.create<tpu::DynamicGatherOp>(
-                index_ty,
-                /*source=*/acc_vreg_idx,
-                /*indices=*/acc_vreg,
-                /*dimensions=*/ArrayRef<int32_t>{1});
-          } else {
-            *out_vreg = acc_vreg;
-          }
-        }
-      } else {
-        *out_vreg = acc_vreg_idx;
-      }
-      return absl::OkStatus();
-  });
-  if (!all_results_ok.ok()) {
-    return failure();
-  }
+        return success();
+      }));
 
   reduce_index_op->replaceAllUsesWith(
     assemble(builder, out_ty, out_layout, out_vregs, ctx.target_shape));
@@ -5836,13 +5802,13 @@ LogicalResult vector_store_impl(RewriteContext &ctx, Op store_op,
       to_store_layout.implicitShape(ty.getShape());
   const std::array<int64_t, 2> vreg_slice =
       to_store_layout.vregSlice(ctx.target_shape);
-  const absl::Status status =
-      tiles.EachStatus([&](const absl::Span<const int64_t> idx,
-                           const Value tile) -> absl::Status {
+  RETURN_IF_FAILED(Each(
+      tiles,
+      [&](const ArrayRef<int64_t> idx, const Value tile) -> LogicalResult {
         const auto tile_mask = store_mask ? (*tile_masks)(idx) : nullptr;
         const std::unique_ptr<VRegDataBounds> bounds =
-            to_store_layout.tileDataBounds(mlir_ctx, stored_shape,
-                                           toArrayRef(idx), ctx.target_shape);
+            to_store_layout.tileDataBounds(mlir_ctx, stored_shape, idx,
+                                           ctx.target_shape);
         const int64_t sidx = *(idx.end() - 2);
         const int64_t lidx = *(idx.end() - 1);
         SmallVector<Value> indices(ndims);
@@ -5861,13 +5827,10 @@ LogicalResult vector_store_impl(RewriteContext &ctx, Op store_op,
             bounds->maskVariesAlong(Direction::kSubelements, ctx.target_shape);
         if (bounds->maskVariesAlong(Direction::kLanes, ctx.target_shape) ||
             masks_subelements) {
-          auto failure_or_mask =
+          FAILUREOR_ASSIGN_OR_RETURN(
+              TypedValue<VectorType> mask,
               bounds->getVectorMask(builder, store_op.getLoc(),
-                                    ctx.hardware_generation, ctx.target_shape);
-          if (failed(failure_or_mask)) {
-            return absl::UnimplementedError("Failed to get vector mask");
-          }
-          TypedValue<VectorType> mask = failure_or_mask.value();
+                                    ctx.hardware_generation, ctx.target_shape));
           // Vmem stores don't support masking below 32-bit granularity, so we
           // need to load and blend explicitly if needed.
           if (masks_subelements) {
@@ -5914,11 +5877,8 @@ LogicalResult vector_store_impl(RewriteContext &ctx, Op store_op,
               tile, base_addr, indices, sublane_mask, tile_mask,
               /*sublane_stride=*/builder.getI32IntegerAttr(sublane_stride));
         }
-        return absl::OkStatus();
-      });
-  if (!status.ok()) {
-    return failure();
-  }
+        return success();
+      }));
   store_op->erase();
   return success();
 }
