@@ -94,7 +94,7 @@ def all_gather_lhs_matmul(
     )
 
     @plgpu.nd_loop((m_shard // block_m,), collective_axes="sm_m", init_carry=0)
-    def _m_loop(idx, carry):
+    def _m_loop(idx, _, carry):
       (mi,) = idx
       m_tile_slice = pl.ds(mi * block_m, block_m)
       sm_m_step = carry

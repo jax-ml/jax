@@ -127,7 +127,7 @@ def matmul_kernel(a, b, config: TuningConfig):
     def _pipeline_scope(pipeline_allocs):
       wg_idx = lax.axis_index("wg")
       @plgpu.nd_loop((m_iters * n_iters,), collective_axes="sm")
-      def _mn_loop(idxs):
+      def _mn_loop(idxs, _):
         (lin_idx,) = idxs
         m_idx, n_idx = plgpu.planar_snake(
             lin_idx,

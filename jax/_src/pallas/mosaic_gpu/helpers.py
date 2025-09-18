@@ -34,7 +34,7 @@ def nd_loop(
     collective_axes: Sequence[Hashable] | Hashable,
     tiling: Sequence[int] | None = None,
     init_carry: None = None
-) -> Callable[[Callable[[Sequence[jax.Array]], None]], None]:
+) -> Callable[[Callable[[Sequence[jax.Array], jax.Array], None]], None]:
   ...
 
 
@@ -45,27 +45,20 @@ def nd_loop(
     collective_axes: Sequence[Hashable] | Hashable,
     tiling: Sequence[int] | None = None,
     init_carry: _T
-) -> Callable[[Callable[[Sequence[jax.Array], _T], _T]], _T]:
-  ...
-
-
-# TODO(justinfu): Fix the type signature to include both carry and wave_step.
-@overload
-def nd_loop(
-    grid: Sequence[int],
-    *,
-    collective_axes: Sequence[Hashable] | Hashable,
-    tiling: Sequence[int] | None = None,
-    include_wave_step: bool
-) -> Callable[[Callable[[Sequence[jax.Array], jax.Array], None]], None]:
+) -> Callable[[Callable[[Sequence[jax.Array], jax.Array, _T], _T]], _T]:
   ...
 
 
 def nd_loop(grid, *, collective_axes,
             tiling=None,
-            init_carry=None,
-            include_wave_step=False):
+            init_carry=None):
   """A loop over a multi-dimensional grid partitioned along the given axes.
+
+  The body of the loop should take as arguments:
+    index: A tuple containing the grid indices.
+    wave_step: The local iteration of the loop (the number of times this
+      loop has been called for the current thread).
+    (optional) carry: The loop carry.
 
   For example, if ``collective_axes`` is ``"x"`` with :func:`lax.axis_size`
   equal to 4 and the grid is (2, 3), the implementation would produce the
@@ -97,10 +90,6 @@ def nd_loop(grid, *, collective_axes,
   If ``init_carry`` is passed then ``nd_loop()`` will expect the body to
   take and return the carry. If it's ``None`` then no carry argument is
   expected.
-
-  If ``include_wave_step`` is True then the body will be called with an
-  additional ``wave_step`` keyword argument that specifies the current
-  iteration local to the thread.
 
   See also:
     - :func:`jax.experimental.pallas.loop`: A loop over a single dimension.
@@ -141,12 +130,10 @@ def nd_loop(grid, *, collective_axes,
           untiled_index.append(sub_idx + tile_idx * tile_dim)
         index = untiled_index
 
-      if include_wave_step:
-        body = functools.partial(body, wave_step=wave_step)
       if init_carry is None:
-        body(tuple(index))
+        body(tuple(index), wave_step)
       else:
-        return body(tuple(index), carry=carry)
+        return body(tuple(index), wave_step, carry=carry)
 
     upper = lax.div(grid_size, axis_size) + lax.convert_element_type(
         axis_index < grid_size % axis_size, axis_index.dtype
