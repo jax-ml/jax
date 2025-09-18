@@ -67,9 +67,9 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import (PmapSharding, NamedSharding,
-                                     ShardingContext, SPMDAxisContext,
-                                     PartitionSpec as P, canonicalize_sharding)
+from jax._src.sharding_impls import (
+    PmapSharding, NamedSharding, ShardingContext, SPMDAxisContext,
+    PartitionSpec as P, canonicalize_sharding, flatten_spec)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DType, DTypeLike, Shape
 from jax._src.util import (cache, canonicalize_axis,
                            safe_map, safe_zip, split_list, weakref_lru_cache,
@@ -5394,7 +5394,8 @@ def _dot_general_unreduced_rule(out_s, lhs, rhs, *, dimension_numbers,
           ' out_sharding provided to dot_general mentions unreduced_axes.'
           f' Got {out_s=}, {lhs_contracting_spec=},'
           f' {rhs_contracting_spec=}')
-    if out_s.spec.unreduced != frozenset(lhs_contracting_spec):
+    flat_spec = [s for s in flatten_spec(lhs_contracting_spec) if s is not None]
+    if out_s.spec.unreduced != frozenset(flat_spec):
       raise core.ShardingTypeError(
           "out_sharding's unreduced axes should be equal to the contracting"
           f' specs. Got unreduced axes={out_s.spec.unreduced} and'
@@ -7840,8 +7841,9 @@ def _reduce_sum_sharding_rule(operand, *, axes, out_sharding):
 def _reduce_sum_unreduced_rule(out_s, operand, *, axes, **kwargs):
   if unreduced_spec := out_s.spec.unreduced:
     axes = frozenset(axes)
-    reduced_spec = frozenset(s for i, s in enumerate(operand.sharding.spec)
-                             if i in axes)
+    reduced_spec = frozenset(
+        s for i, spec in enumerate(operand.sharding.spec) if i in axes
+        for s in (spec if isinstance(spec, tuple) else (spec,)))
     if not all(u in reduced_spec for u in unreduced_spec):
       raise core.ShardingTypeError(
           "out_sharding's unreduced axes should be in operand's specs that"
