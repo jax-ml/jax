@@ -53,14 +53,17 @@ load_p.is_effectful = lambda params: True  # type: ignore
 
 @load_p.def_effectful_abstract_eval
 def _load_abstract_eval(ref, *args, has_mask, tree):
-  del tree  # Unused.
+  flat_transforms = args[:-1] if has_mask else args
+  tref = state_types.TransformedRef(
+      ref, jax.tree.unflatten(tree, flat_transforms))
   if has_mask:
     mask = args[-1]
     if mask.dtype != jnp.bool:
       raise TypeError(f"Mask must be a boolean array, got {mask.dtype}")
-    if mask.shape != ref.shape:
-      raise ValueError(f"Mask must have shape {ref.shape}, got {mask.shape}")
-  return jax_core.ShapedArray(ref.shape, ref.dtype), {state_types.ReadEffect(0)}
+    if mask.shape != tref.shape:
+      raise ValueError(f"Mask must have shape {tref.shape}, got {mask.shape}")
+  return (
+      jax_core.ShapedArray(tref.shape, ref.dtype), {state_types.ReadEffect(0)})
 
 
 @sc_lowering.register_lowering_rule(load_p)
@@ -110,19 +113,21 @@ swap_p.is_effectful = lambda params: True  # type: ignore
 
 @swap_p.def_effectful_abstract_eval
 def _swap_abstract_eval(ref, x, *args, has_mask, tree, add):
-  del tree  # Unused.
+  flat_transforms = args[:-1] if has_mask else args
+  tref = state_types.TransformedRef(
+      ref, jax.tree.unflatten(tree, flat_transforms))
   if has_mask:
     mask = args[-1]
     if mask.dtype != jnp.bool:
       raise TypeError(f"Mask must be a boolean array, got {mask.dtype}")
-    if mask.shape != ref.shape:
-      raise ValueError(f"Mask must have shape {ref.shape}, got {mask.shape}")
+    if mask.shape != tref.shape:
+      raise ValueError(f"Mask must have shape {tref.shape}, got {mask.shape}")
   if ref.dtype != x.dtype:
     raise TypeError(
         f"Ref and value must have the same dtype, got {ref.dtype} and {x.dtype}"
     )
-  if ref.shape != x.shape:
-    raise ValueError(f"Value must have shape {ref.shape}, got {x.shape}")
+  if tref.shape != x.shape:
+    raise ValueError(f"Value must have shape {tref.shape}, got {x.shape}")
   effects = {state_types.WriteEffect(0)}
   if add:
     effects.add(state_types.ReadEffect(0))

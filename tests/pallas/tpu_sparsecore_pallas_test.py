@@ -639,6 +639,25 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(x), x + np.arange(8)
     )
 
+  def test_write_to_transformed_ref(self):
+    x = jnp.arange(16)
+
+    @vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, o_ref):
+      plsc.store_compressed(
+          o_ref.at[pl.ds(5, 8)], x_ref[pl.ds(2, 8)], mask=jnp.ones(8, jnp.bool),
+      )
+    np.testing.assert_array_equal(kernel(x)[5:13], x[2:10])
+
+  def test_load_transformed_ref(self):
+    x = jnp.arange(16)
+
+    @vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, o_ref):
+      o_ref[pl.ds(5, 8)] = plsc.load_expanded(
+          x_ref.at[pl.ds(2, 8)], mask=jnp.arange(8) % 2 == 0)
+    np.testing.assert_array_equal(kernel(x)[5:13:2], x[2:6])
+
   @parameterized.named_parameters(
       ("mixed", [0, 0, 1, 0, 1, 0, 0, 0], 2),
       ("all_zero", [0, 0, 0, 0, 0, 0, 0, 0], 8),
