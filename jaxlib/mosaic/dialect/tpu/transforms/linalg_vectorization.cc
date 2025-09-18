@@ -122,7 +122,7 @@ LogicalResult matchAndRewriteTransferOfExpandOrCollapseShape(
   if (failed(checkPreconditions(op, rewriter))) {
     return failure();
   }
-  auto expand = op.getSource().template getDefiningOp<DefiningOp>();
+  auto expand = op.getBase().template getDefiningOp<DefiningOp>();
   if (!expand) {
     return rewriter.notifyMatchFailure(
         op, "not a tensor.expand_shape/collapse_shape");
@@ -177,7 +177,7 @@ struct TransferReadOfConstant
                                 PatternRewriter& rewriter) const override {
     DenseElementsAttr constant_elements;
     Attribute constant_value;
-    if (matchPattern(op.getSource(), m_Constant(&constant_elements)) &&
+    if (matchPattern(op.getBase(), m_Constant(&constant_elements)) &&
         constant_elements.isSplat()) {
       constant_value = constant_elements.getSplatValue<Attribute>();
     } else {
@@ -200,7 +200,7 @@ struct TransferReadOfSelect : public OpRewritePattern<vector::TransferReadOp> {
     if (failed(checkPreconditions(op, rewriter))) {
       return failure();
     }
-    auto select = op.getSource().getDefiningOp<arith::SelectOp>();
+    auto select = op.getBase().getDefiningOp<arith::SelectOp>();
     if (!select) {
       return rewriter.notifyMatchFailure(op, "source not an arith.select");
     }
@@ -241,7 +241,7 @@ struct TransferReadOfCmpI : public OpRewritePattern<vector::TransferReadOp> {
     if (failed(checkPreconditions(op, rewriter))) {
       return failure();
     }
-    auto cmp = op.getSource().getDefiningOp<arith::CmpIOp>();
+    auto cmp = op.getBase().getDefiningOp<arith::CmpIOp>();
     if (!cmp) {
       return rewriter.notifyMatchFailure(op, "source not an arith.cmpi");
     }
@@ -272,7 +272,7 @@ struct TransferReadOfSplat : public OpRewritePattern<vector::TransferReadOp> {
     if (failed(checkPreconditions(op, rewriter))) {
       return failure();
     }
-    auto splat = op.getSource().getDefiningOp<tensor::SplatOp>();
+    auto splat = op.getBase().getDefiningOp<tensor::SplatOp>();
     if (!splat) {
       return rewriter.notifyMatchFailure(op, "source not a tensor.splat");
     }

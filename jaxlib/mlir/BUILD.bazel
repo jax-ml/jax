@@ -47,7 +47,6 @@ symlink_inputs(
     symlinked_inputs = {"srcs": {
         ".": [
             "@llvm-project//mlir/python:IRPyFiles",
-            "@llvm-project//mlir/python:IRPyIFiles",
         ],
     }},
     deps = [
@@ -216,7 +215,6 @@ symlink_inputs(
     symlinked_inputs = {"srcs": {
         ".": [
             "@llvm-project//mlir/python:PassManagerPyFiles",
-            "@llvm-project//mlir/python:PassManagerPyIFiles",
         ],
     }},
     deps = [
