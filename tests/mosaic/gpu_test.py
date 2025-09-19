@@ -664,6 +664,7 @@ class WGMMALayoutTest(TestCase):
       jax_dtype_from_to=(
           (jnp.int8, jnp.bfloat16),
           (jnp.int4, jnp.bfloat16),
+          (jnp.int4, jnp.int8),
       ),
       layout=(
           fa.WGMMA_LAYOUT,
@@ -678,16 +679,14 @@ class WGMMALayoutTest(TestCase):
     mlir_dtype_from = utils.dtype_to_ir_type(jax_dtype_from)
     mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)
     m = 128
-    n = 256 * 8 // bitwidth(mlir_dtype_from)
+    n = 256
     def kernel(ctx, inp, out, smem):
-      del ctx
-      smem_from, smem_to = smem
-      copy(inp, smem_from, swizzle=128)
-      t = mgpu.FragmentedArray.load_tiled(
-          smem_from,
-          swizzle=128,
+      del ctx, smem
+      t = mgpu.FragmentedArray.load_untiled(
+          inp,
           is_signed=utils.is_signed(jax_dtype_from),
           layout=layout,
+          optimized=False,
       )
       if change_layout:
         if (
@@ -697,11 +696,8 @@ class WGMMALayoutTest(TestCase):
           self.skipTest("Unimplemented relayout")
         t = t.to_layout(fa.WGMMA_LAYOUT)
       t = t.astype(mlir_dtype_to, is_signed=utils.is_signed(jax_dtype_to))
-      t.store_tiled(smem_to, swizzle=128)
-      copy(smem_to, out, swizzle=128)
+      t.store_untiled(out, optimized=False)
 
-    from_tiling = (64, 128 * 8 // bitwidth(mlir_dtype_from))
-    to_tiling = (64, 128 * 8 // bitwidth(mlir_dtype_to))
     # We only test lossless conversions for now.
     # TODO(apaszke): Test and fix failures that appear with lossy conversions.
     int_sample_dtype = getattr(
@@ -709,25 +705,15 @@ class WGMMALayoutTest(TestCase):
         "int" + str(min(bitwidth(mlir_dtype_from), bitwidth(mlir_dtype_to))),
     )
     sample_iinfo = jnp.iinfo(int_sample_dtype)
-    expected_raw = self.prng.integers(
-        low=sample_iinfo.min, high=sample_iinfo.max,
-        size=(m, n), dtype=np.int32
-    )
-    expected = lambda jax_dtype, tiling: expected_raw.reshape(
-        m // tiling[0], tiling[0], n // tiling[1], tiling[1]
-    ).transpose(0, 2, 1, 3).astype(jax_dtype)
+    values = self.prng.integers(
+        low=sample_iinfo.min, high=sample_iinfo.max, size=(m, n), dtype=np.int32
+    ).astype(jax_dtype_from)
 
-    expected_from = expected(jax_dtype_from, from_tiling)
-    expected_to = expected(jax_dtype_to, to_tiling)
+    expected = values.astype(jax_dtype_to)
     res = mgpu.as_gpu_kernel(
-        kernel,
-        (1, 1, 1),
-        (128, 1, 1),
-        expected_from,
-        expected_to,
-        (expected_from, expected_to),
-    )(expected_from)
-    np.testing.assert_array_equal(res, expected_to)
+        kernel, (1, 1, 1), (128, 1, 1), values, expected, ()
+    )(values)
+    np.testing.assert_array_equal(res, expected)
 
   @parameterized.named_parameters(
       ("f32", jnp.float32),

@@ -1854,7 +1854,7 @@ class FragmentedArray:
       return FragmentedArray(
           _registers=new_registers, _layout=self.layout, _is_signed=None
       )
-    if cur_dtype == i4 and self.is_signed and new_dtype == bf16:
+    if cur_dtype == i4 and self.is_signed and new_dtype == bf16 and vector_len % 2 == 0:
       new_registers = np.empty_like(self.registers)
       out_vec_ty = ir.VectorType.get((vector_len,), new_dtype)
       for idx, reg in np.ndenumerate(self.registers):
@@ -1925,6 +1925,59 @@ class FragmentedArray:
         new_registers[idx] = utils.bitcast(out_vec_int, out_vec_ty)
       return FragmentedArray(
           _registers=new_registers, _layout=self.layout, _is_signed=None
+      )
+    if cur_dtype == i4 and self.is_signed and new_dtype == i8 and is_signed:
+      new_registers = np.empty_like(self.registers)
+      out_vec_ty = ir.VectorType.get((vector_len,), new_dtype)
+      for idx, reg in np.ndenumerate(self.registers):
+        def upcast_i4_to_i8(reg: ir.Value):
+          # Note: (0xf0 & 0xaa) | (0xcc & ~0xaa) = 0xe4. lop3 acts as a blend.
+          # Below xN means the value of nibble N, sN means that all 4 bits are
+          # equal to the sign bit of nibble N, and 00 means an all 0 nibble.
+          out_struct = llvm.inline_asm(
+              ir.Type.parse("!llvm.struct<(i32, i32)>"),
+              [reg],
+              """
+              {
+              .reg .b32 high_even;  // $2 is high_odd
+              .reg .b32 low_odd;    // $2 is low_even
+              .reg .b32 sign_even, sign_odd;
+              .reg .b32 i8_odd, i8_even;
+              shl.b32 high_even, $2, 4;                              // x6x5x4x3x2x1x000
+              prmt.b32 sign_even, high_even, high_even, 0xba98;      // s6s6s4s4s2s2s0s0
+              prmt.b32 sign_odd, $2, $2, 0xba98;                     // s7s7s5s5s3s3s1s1
+              shr.u32 low_odd, $2, 4;                                // 00x7x6x5x4x3x2x1
+              lop3.b32 i8_odd, sign_odd, low_odd, 0xf0f0f0f0, 0xe4;  // s7x7s5x5s3x3s1x1
+              lop3.b32 i8_even, sign_even, $2, 0xf0f0f0f0, 0xe4;     // s6x6s4x4s2x2s0x0
+              prmt.b32 $0, i8_even, i8_odd, 0x5140;                  // s3x3s2x2s1x2s0x0
+              prmt.b32 $1, i8_even, i8_odd, 0x7362;                  // s7x7s6x5s4x4s3x3
+              }
+              """,
+              "=r,=r,r",
+          )
+          i8_vec = ir.VectorType.get((4,), i8)
+          return utils.vector_concat([
+              utils.bitcast(llvm.extractvalue(i32, out_struct, (i,)), i8_vec)
+              for i in range(2)
+          ])
+        offset = 0
+        out_regs: list[ir.Value] = []
+        for group_size in (8, 4, 2):
+          int_ty = ir.IntegerType.get_signless(group_size * 4)
+          while vector_len - offset >= group_size:
+            # TODO(apaszke): Fuse slicing into the conversion here as well.
+            reg_slice = utils.vector_slice(reg, slice(offset, offset + group_size))
+            reg_slice_int = utils.bitcast(reg_slice, int_ty)
+            if int_ty != i32:
+              reg_slice_int = arith.extsi(i32, reg_slice_int)
+            reg_i8 = upcast_i4_to_i8(reg_slice_int)
+            out_regs.append(utils.vector_slice(reg_i8, slice(group_size)))
+            offset += group_size
+        assert offset == vector_len
+        new_registers[idx] = new_reg = utils.vector_concat(out_regs)
+        assert new_reg.type == out_vec_ty
+      return FragmentedArray(
+          _registers=new_registers, _layout=self.layout, _is_signed=is_signed
       )
     if cur_dtype == i8 and self.is_signed and new_dtype == bf16 and vector_len in {2, 4}:
       new_registers = np.empty_like(self.registers)
