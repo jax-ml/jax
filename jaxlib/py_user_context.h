@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef JAXLIB_PY_USER_CONTEXT_H_
 #define JAXLIB_PY_USER_CONTEXT_H_
 
-#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -57,7 +56,9 @@ class PyUserContext
 
   // UserContext implementation.
 
-  uint64_t Fingerprint() const override;
+#if JAX_IFRT_VERSION_NUMBER < 28
+  uint64_t Fingerprint() const override { return 1; }
+#endif
 
   xla::ifrt::UserContextId Id() const override;
 
@@ -77,10 +78,8 @@ class PyUserContext
 
   Traceback traceback_;
 
-  // Fingerprinting or debug string generation can be expensive. Maintain a
-  // cache for them.
+  // Debug string generation can be expensive. Maintain a cache for them.
   mutable absl::Mutex mu_;
-  mutable std::optional<uint64_t> fingerprint_ ABSL_GUARDED_BY(mu_);
   mutable std::optional<std::string> debug_str_ ABSL_GUARDED_BY(mu_);
 };
 
