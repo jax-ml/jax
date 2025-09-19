@@ -3563,7 +3563,7 @@ class LayoutTest(TestCase):
     np.testing.assert_array_equal(f(x), x)
 
   @parameterized.product(
-      dtype=[jnp.int16],  # TODO(apaszke): More dtypes
+      dtype=[jnp.int16, jnp.int32],  # TODO(apaszke): More dtypes
       swizzle=[16, 32, 64, 128],
       layouts=[
           (fa.WGMMA_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT),
@@ -3575,8 +3575,15 @@ class LayoutTest(TestCase):
     mlir_dtype = utils.dtype_to_ir_type(dtype)
     bw = bytewidth(mlir_dtype)
     col_tiling = swizzle // bw
-    m, n = 256, 192
+    if bw == 2:
+      m, n = 256, 192
+    elif bw == 4:
+      m, n = 256, 96
+    else:
+      raise ValueError(f"Unsupported bitwidth: {bw}")
     tiling = (8, col_tiling)
+    if col_tiling < 8:
+      self.skipTest("Swizzle too small")
     layout, transpose_layout = layouts
     def kernel(ctx, in_, out, smems):
       smem_in, smem_out, barrier = smems
