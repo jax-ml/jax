@@ -236,31 +236,42 @@ def emit_pipeline(
     otherwise it returns None.
   """
 
-  in_specs = tuple(map(_downcast_spec, in_specs))
-  out_specs = tuple(map(_downcast_spec, out_specs))
-  # TODO(justinfu): Factor out common code between warp-specialized and
-  # normal pipelines.
-  delay_release_levels = sorted({s.delay_release for s in in_specs}) or [0]
-  if delay_release_levels and max_concurrent_steps <= delay_release_levels[0]:
-    raise ValueError(
-        "max_concurrent_steps must be greater than all delay_release values,"
-        f" but {max_concurrent_steps=} and {delay_release_levels=}."
-    )
-
   num_steps = math.prod(grid)
   has_dynamic_grid = not isinstance(num_steps, int)
+  stage_cap = 10000 if has_dynamic_grid else num_steps
+  def _stages(spec: pallas_core.BlockSpec):
+    if (
+        spec.pipeline_mode is not None
+        and (ret := spec.pipeline_mode.buffer_count) is not None
+    ):
+      return min(ret, stage_cap)
+    return min(max_concurrent_steps, stage_cap)
 
-  # Shrink ``max_concurrent_steps`` if the total number of steps is lower to
-  # reduce the size of the refs allocated in SMEM.
-  if not has_dynamic_grid and max_concurrent_steps > num_steps:
-    max_concurrent_steps = cast(int, num_steps)
+  in_specs = tuple(map(_downcast_spec, in_specs))
+  out_specs = tuple(map(_downcast_spec, out_specs))
+  in_concurrent_steps_levels = sorted({_stages(s) for s in in_specs}) or [1]
+  in_lcm_concurrent_steps = math.lcm(*in_concurrent_steps_levels)
+  out_max_concurrent_steps = max(_stages(s) for s in out_specs) if out_specs else 1
+  if any(_stages(s) != out_max_concurrent_steps for s in out_specs):
+    raise NotImplementedError("All outputs must have the same number of pipeline stages.")
+
+  # TODO(justinfu): Factor out common code between warp-specialized and
+  # normal pipelines.
+  in_delay_release_levels = sorted({s.delay_release for s in in_specs}) or [0]
+  in_delay_release_stages_levels = list({(s.delay_release, _stages(s)) for s in in_specs}) or [(0, 1)]
+  for s in in_specs:
+    if _stages(s) < s.delay_release:
+      raise ValueError(
+          "pipeline_mode.buffer_count must be greater than delay_release, but"
+          f" {_stages(s)} and {s.delay_release=}"
+      )
 
   def pipeline(*gmem_refs: state.AbstractRef):
     in_gmem_refs, out_gmem_refs = util.split_list(gmem_refs, [len(in_specs)])
     in_smem_refs, out_smem_refs = util.split_list(
         [
             gpu_core.SMEM(
-                (max_concurrent_steps, *_get_block_shape(spec)),  # type: ignore
+                (_stages(spec), *_get_block_shape(spec)),  # type: ignore
                 ref.dtype,
                 transforms=tuple(
                     t.batch(1) for t in getattr(spec, "transforms", ())
@@ -286,7 +297,7 @@ def emit_pipeline(
         else gpu_core.Barrier(
             # TODO(slebedev): Change this to arrive only once.
             num_arrivals=num_arrivals,
-            num_barriers=max_concurrent_steps,
+            num_barriers=in_lcm_concurrent_steps,
         ),
     )
 
@@ -308,12 +319,12 @@ def emit_pipeline(
 
     # Initialize the pipeline.
     indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
-    fetch_indices = indices
-    for step in range(max_concurrent_steps):
-      for bref in in_brefs:
+
+    for bref in in_brefs:
+      fetch_indices = indices
+      for step in range(_stages(bref.spec)):
         bref.copy_in(step, fetch_indices, barrier_ref)
-      fetch_indices = _inc_grid_by_1(fetch_indices, grid)
-    del fetch_indices
+        fetch_indices = _inc_grid_by_1(fetch_indices, grid)
 
     # This is true if any of the outputs need to be transferred inside the loop.
     smem_out_brefs = [bref for bref in out_brefs if _in_smem(bref.spec)]
@@ -321,22 +332,22 @@ def emit_pipeline(
     needs_epilogue = any(bref.is_index_invariant for bref in smem_out_brefs)
 
     def loop_body(step, carry):
-      slot = lax.rem(step, max_concurrent_steps)
+      wait_barrier_slot = lax.rem(step, in_lcm_concurrent_steps)
       indices, fetch_index_levels, last_store_slices, prev_body_carry = carry
 
       if barrier_ref is not None:
         # Wait for the current GMEM->SMEM copy to complete, if any.
-        gpu_primitives.barrier_wait(barrier_ref.at[slot])
+        gpu_primitives.barrier_wait(barrier_ref.at[wait_barrier_slot])
       # Wait for the previous output SMEM->GMEM copy to complete.
       if copies_out_in_loop:
         gpu_primitives.wait_smem_to_gmem(
-            max_concurrent_steps - 1, wait_read_only=True
+            out_max_concurrent_steps - 1, wait_read_only=True
         )
 
       next_body_carry = body(
           indices,
           *(
-              bref.get_ref_for_slot(slot)
+              bref.get_ref_for_slot(lax.rem(step, _stages(bref.spec)))
               for bref in it.chain(in_brefs, out_brefs)
           ),
           *(prev_body_carry,) if init_carry is not None else (),
@@ -366,7 +377,7 @@ def emit_pipeline(
         # TPU semantics in that it will move on to the next SMEM output slice
         # even if it's not storing the previous one.
         bref.copy_out(
-            slot,
+            lax.rem(step, out_max_concurrent_steps),
             indices,
             predicate=lax.bitwise_or(slices_changed, is_last_step),
         )
@@ -374,17 +385,21 @@ def emit_pipeline(
       if copies_out_in_loop:
         gpu_primitives.commit_smem_to_gmem_group()
 
-      for delay_release, fetch_indices in zip(
-          delay_release_levels, fetch_index_levels
+      for (delay_release, stages), fetch_indices in zip(
+          in_delay_release_stages_levels, fetch_index_levels
       ):
-        fetch_step = step + (max_concurrent_steps - delay_release)
-        fetch_slot = lax.rem(fetch_step, max_concurrent_steps)
+        fetch_step = step + (stages - delay_release)
+        fetch_slot = lax.rem(fetch_step, stages)
+        barrier_slot = lax.rem(fetch_step, in_lcm_concurrent_steps)
 
         # pylint: disable=cell-var-from-loop
         def do_fetch():
           for bref in in_brefs:
-            if bref.spec.delay_release == delay_release:
-              bref.copy_in(fetch_slot, fetch_indices, barrier_ref)
+            if (
+                bref.spec.delay_release == delay_release
+                and _stages(bref.spec) == stages
+            ):
+              bref.copy_in(fetch_slot, fetch_indices, barrier_ref, barrier_slot=barrier_slot)
         # pylint: enable=cell-var-from-loop
 
         jax.lax.cond(
@@ -405,9 +420,9 @@ def emit_pipeline(
       )
 
     fetch_index_levels = []
-    for delay_release in delay_release_levels:
+    for delay_release in in_delay_release_levels:
       fetch_indices = indices
-      for _ in range(max_concurrent_steps - delay_release):
+      for _ in range(in_lcm_concurrent_steps - delay_release):
         fetch_indices = _inc_grid_by_1(fetch_indices, grid)
       fetch_index_levels.append(fetch_indices)
 
@@ -431,7 +446,7 @@ def emit_pipeline(
       gpu_primitives.commit_smem()
 
     if needs_epilogue:
-      last_slot = lax.rem(num_steps - 1, max_concurrent_steps)
+      last_slot = lax.rem(num_steps - 1, out_max_concurrent_steps)
       for bref in out_brefs:
         if bref.is_index_invariant:
           bref.copy_out(last_slot, last_indices, predicate=None)
