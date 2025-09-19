@@ -26,7 +26,6 @@ import numpy as np
 from jax._src import api
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src.numpy.util import (
     _broadcast_to, ensure_arraylike,
@@ -84,15 +83,12 @@ def _promote_integer_dtype(dtype: DType) -> DType:
 def check_where(name: str, where: ArrayLike | None) -> Array | None:
   if where is None:
     return where
-  where_arr = ensure_arraylike(name, where)
-  if where_arr.dtype != bool:
-    # Deprecation added 2024-12-05
-    deprecations.warn(
-      'jax-numpy-reduction-non-boolean-where',
-      f"jnp.{name}: where must be None or a boolean array; got dtype={where_arr.dtype}.",
-      stacklevel=2)
-    return where_arr.astype(bool)
-  return where_arr
+  where = ensure_arraylike(name, where)
+  if where.dtype != bool:
+    raise ValueError(
+      f"jnp.{name}: where must be None or a boolean array; got {where.dtype=}."
+    )
+  return where
 
 
 ReductionOp = Callable[[Any, Any], Any]
