@@ -275,6 +275,7 @@ def _tc_lowering_rule(
       metadata=dict(metadata) if metadata is not None else None,
       skip_device_barrier=mosaic_params.skip_device_barrier,
       allow_collective_id_without_custom_barrier=mosaic_params.allow_collective_id_without_custom_barrier,
+      shape_invariant_numerics=mosaic_params.shape_invariant_numerics,
   )
   _maybe_cast_to_bool = (
       lambda x, aval: x.astype(jax.numpy.bool_)

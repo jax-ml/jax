@@ -4811,6 +4811,12 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     if (src_layout.offsets()[i] != dst_layout.offsets()[i] && !reduces[i]) {
       return multi_reduction_op.emitOpError("Not implemented: Offset change");
     }
+    if (ctx.shape_invariant_numerics && src_layout.offsets()[i] != 0 &&
+        reduces[i]) {
+      return multi_reduction_op.emitOpError(
+          "When shape_invariant_numerics is enabled, input layout must have "
+          "zero offsets over dimensions that are being reduced");
+    }
   }
   VectorLayout::ImplicitDim dst_implicit_dim;
   if ((reduces[0] && reduces[1]) ||
@@ -8851,6 +8857,7 @@ struct ApplyVectorLayoutPass
     max_sublanes_in_scratch = ctx.max_sublanes_in_scratch;
     vmem_banks = ctx.vmem_banks;
     max_shuffle_sublane_offset = ctx.max_shuffle_sublane_offset;
+    shape_invariant_numerics = ctx.shape_invariant_numerics;
   }
   void runOnOperation() override {
     // Fail if hardware_generation has not been set from the default value.
@@ -8865,6 +8872,7 @@ struct ApplyVectorLayoutPass
         .max_sublanes_in_scratch = max_sublanes_in_scratch,
         .vmem_banks = vmem_banks,
         .max_shuffle_sublane_offset = max_shuffle_sublane_offset,
+        .shape_invariant_numerics = shape_invariant_numerics,
     };
     if (failed(applyLayoutFunc(ctx, getOperation()))) {
       signalPassFailure();
