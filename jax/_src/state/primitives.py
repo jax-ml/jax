@@ -35,6 +35,7 @@ from jax._src.lax import lax
 from jax._src.state import indexing
 from jax._src.state.types import (
     AbstractRef,
+    AbstractLinVal,
     AccumEffect,
     ReadEffect,
     Transform,
@@ -1011,3 +1012,67 @@ ad.primitive_linearizations[core.mutable_array_p] = _mut_lin
 # TODO(mattjj): lin rule for freeze and accum_grad_in_ref?
 ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))
 ad.defjvp(core.accum_grad_in_ref_p, lambda g, _: core.accum_grad_in_ref_p.bind(g))
+
+# === pinned, chained LinearVals ===
+
+def create_linear(ty, memory_space=None):
+  return create_linear_p.bind(ty=ty, memory_space=memory_space)
+create_linear_p = core.Primitive('create_linear')
+
+@create_linear_p.def_abstract_eval
+def _create_linear_abstract_eval(*, ty, memory_space):
+  if not isinstance(ty, core.ShapedArray): raise NotImplementedError(ty)
+  return AbstractLinVal(ty, memory_space)
+
+def _lower_create_linear(ctx):
+  out_aval, = ctx.avals_out
+  return mlir.custom_call(
+      "CreateBuffer",
+      operands=[],
+      result_types=[mlir.aval_to_ir_type(out_aval)],
+  ).results
+mlir.register_lowering(create_linear_p, _lower_create_linear)
+
+
+def pin(x):
+  return pin_p.bind(x)
+pin_p = core.Primitive('pin')
+
+@pin_p.def_abstract_eval
+def _pin_abstract_eval(aval):
+  if not isinstance(aval, core.ShapedArray): raise NotImplementedError(aval)
+  return AbstractLinVal(aval)
+
+def _lower_pin(ctx, x_op):
+  out_aval, = ctx.avals_out
+  return mlir.custom_call(
+      "Pin",
+      operands=mlir.flatten_ir_values([x_op]),
+      result_types=[mlir.aval_to_ir_type(out_aval)],
+  ).results
+mlir.register_lowering(pin_p, _lower_pin)
+
+
+def unpin(x):
+  return unpin_p.bind(x)
+unpin_p = core.Primitive('unpin')
+
+@unpin_p.def_abstract_eval
+def _unpin_abstract_eval(aval):
+  if not isinstance(aval, AbstractLinVal): raise TypeError(aval)
+  return aval.inner_aval
+
+def _lower_unpin(ctx, x_op):
+  out_aval, = ctx.avals_out
+  return mlir.custom_call(
+      "Unpin",
+      operands=mlir.flatten_ir_values([x_op]),
+      result_types=[mlir.aval_to_ir_type(out_aval)],
+  ).results
+mlir.register_lowering(unpin_p, _lower_unpin)
+
+
+def _linval_to_mlir_type(a):
+  return mlir.ir.MemRefType.get(a.shape, mlir.dtype_to_ir_type(a.dtype),
+                                memory_space=a.memory_space)
+mlir.ir_type_handlers[AbstractLinVal] = _linval_to_mlir_type

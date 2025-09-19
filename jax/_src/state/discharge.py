@@ -23,6 +23,7 @@ from typing import Any, Protocol, TypeVar
 
 from jax._src import ad_util
 from jax._src import api_util
+from jax._src import config
 from jax._src import core
 from jax._src import literals
 from jax._src import linear_util as lu
@@ -37,7 +38,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.state import indexing
-from jax._src.state.primitives import addupdate_p, get_p, swap_p
+from jax._src.state.primitives import addupdate_p, get_p, swap_p, pin, unpin
 from jax._src.state.types import (
     AbstractRef, RefBitcaster, RefEffect, RefReshaper, get_ref_aval_from_value,
     uninitialized,)
@@ -164,10 +165,14 @@ def _eval_jaxpr_discharge_state(
       if eqn.primitive is core.mutable_array_p:
         [invar], [outvar] = eqn.invars, eqn.outvars
         ans = env.read(invar)
+        if config.refs_to_pins.value:
+          ans = pin(ans)
         refs_to_discharge.add(id(outvar.aval))
       elif eqn.primitive is core.freeze_p:
         [invar], [outvar] = eqn.invars, eqn.outvars
         ans = env.read(invar)
+        if config.refs_to_pins.value:
+          ans = unpin(ans)
         refs_to_discharge.remove(id(invar.aval))
       elif any(should_discharge) or core.internal_mutable_array_effect in eqn.effects:
         if eqn.primitive in _partial_discharge_rules:
