@@ -670,9 +670,10 @@ class WGMMALayoutTest(TestCase):
           fa.WGMMA_LAYOUT_UPCAST_2X,
           fa.WGMMA_LAYOUT_UPCAST_4X,
       ),
+      change_layout=(False, True),
   )
   @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
-  def test_optimized_conversion(self, jax_dtype_from_to, layout):
+  def test_optimized_conversion(self, jax_dtype_from_to, layout, change_layout):
     jax_dtype_from, jax_dtype_to = jax_dtype_from_to
     mlir_dtype_from = utils.dtype_to_ir_type(jax_dtype_from)
     mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)
@@ -688,6 +689,13 @@ class WGMMALayoutTest(TestCase):
           is_signed=utils.is_signed(jax_dtype_from),
           layout=layout,
       )
+      if change_layout:
+        if (
+            layout == fa.WGMMA_LAYOUT_UPCAST_4X
+            and utils.bitwidth(mlir_dtype_from) > 4
+        ):
+          self.skipTest("Unimplemented relayout")
+        t = t.to_layout(fa.WGMMA_LAYOUT)
       t = t.astype(mlir_dtype_to, is_signed=utils.is_signed(jax_dtype_to))
       t.store_tiled(smem_to, swizzle=128)
       copy(smem_to, out, swizzle=128)

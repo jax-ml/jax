@@ -1951,10 +1951,12 @@ class FragmentedArray:
             "=r,r",
         )
       empty_vec_32 = llvm.mlir_undef(ir.VectorType.get((vector_len // 2,), i32))
+      pad_vec_16 = llvm.mlir_undef(ir.VectorType.get((1,), i16))
       for idx, reg in np.ndenumerate(self.registers):
         if vector_len == 2:
           reg_16 = vector.bitcast(ir.VectorType.get((1,), i16), reg)
-          new_reg_32 = upcast_i8_to_bf16(reg_16, high=False)
+          reg_32 = utils.vector_concat([reg_16, pad_vec_16])
+          new_reg_32 = upcast_i8_to_bf16(reg_32, high=False)
           new_vec_32 = llvm.insertelement(empty_vec_32, new_reg_32, c(0, i32))
         elif vector_len == 4:
           reg_32 = vector.bitcast(ir.VectorType.get((1,), i32), reg)
