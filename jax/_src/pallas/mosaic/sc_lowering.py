@@ -187,6 +187,15 @@ class MosaicGridMapping(tc_lowering.MosaicGridMapping):
             f"The minormost dimension of a block for {bm.origin} must be a"
             f" multiple of 8, got shape {shape}"
         )
+    if any(
+        isinstance(var.aval, sc_core.AbstractRef)
+        for var in jaxpr.invars[grid_mapping.slice_scratch_ops]
+    ):
+      # TODO(slebedev): Support tiling annotations for kernel operands.
+      raise NotImplementedError(
+          "``plsc.MemoryRef``s are not supported as scratch operands to the"
+          " kernel. Allocate them in the kernel body via ``pl.run_scoped``."
+      )
     super().__init__(
         jaxpr,
         grid_mapping,
@@ -640,3 +649,56 @@ def _extract_indirect_offsets(
       return offsets, transforms[:-1]
     case _:
       return None, transforms
+
+
+@register_lowering_rule(pallas_primitives.run_scoped_p)
+def _run_scoped_lowering_rule(
+    ctx: LoweringRuleContext, *consts, jaxpr, collective_axes
+):
+  return tc_lowering._run_scoped_lowering_rule(
+      ctx,
+      *consts,
+      jaxpr=jaxpr,
+      collective_axes=collective_axes,
+      alloc_fn=_alloc_value,
+  )
+
+
+def _default_tile_strides(
+    tiling: sc_core.Tiling, shape: Sequence[int]
+) -> Sequence[int]:
+  """Returns default tile strides for a given shape and tiling."""
+  assert tiling
+
+  cdiv = lambda a, b: (a + b - 1) // b
+
+  strides = [0] * len(shape)
+  stride = 1
+  first_tile, *_ = tiling
+  for d in reversed(range(len(shape))):
+    assert shape[d] != ir.ShapedType.get_dynamic_size()
+    strides[d] = stride
+    if d >= len(shape) - len(first_tile):
+      tile_d = d - (len(shape) - len(first_tile))
+      stride *= cdiv(shape[d], first_tile[tile_d])
+    else:
+      stride *= shape[d]
+  return strides
+
+
+def _alloc_value(
+    aval: jax_core.AbstractValue, *, ctx: LoweringRuleContext
+) -> ir.Value:
+  if isinstance(aval, sc_core.AbstractRef) and aval.tiling is not None:
+    tiling = "".join(f"({','.join(map(str, tile))})" for tile in aval.tiling)
+    strides = _default_tile_strides(aval.tiling, aval.shape)
+    out_type = ir.MemRefType.get(
+        aval.shape,
+        _dtype_to_ir_type(aval.dtype, is_kernel_boundary=True),
+        layout=ir.Attribute.parse(f"#tpu.tiled<{tiling},{strides}>"),
+        memory_space=tc_lowering._memory_space_to_mosaic_attribute(
+            aval.memory_space or tpu_core.MemorySpace.VMEM
+        ),
+    )
+    return memref.alloca(out_type, [], [])
+  return tc_lowering._alloc_value(aval, ctx=ctx)

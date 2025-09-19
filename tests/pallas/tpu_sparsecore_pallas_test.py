@@ -31,7 +31,6 @@ import jax.numpy as jnp
 import numpy as np
 
 
-
 jax.config.parse_flags_with_absl()
 
 
@@ -684,6 +683,26 @@ class VectorSubcoreTest(PallasSCTest):
       pltpu.sync_copy(x_ref, o_hbm_ref)
 
     np.testing.assert_array_equal(kernel(x), x)
+
+  def test_run_scoped_with_tiling(self):
+    x = jnp.arange(2 * 8).reshape(-1, 8)
+
+    @vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, o_ref):
+      def scoped_kernel(scratch_ref):
+        scratch_ref[...] = x_ref[...]
+        o_ref[...] = scratch_ref[...]
+
+      pl.run_scoped(
+          scoped_kernel,
+          plsc.MemoryRef(
+              x.shape, x_ref.dtype, memory_space=pltpu.VMEM, tiling=[(2, 1)]
+          ),
+      )
+
+    # Just make sure it compiles. The unrolling logic in the SC compiler
+    # does not yet handle tiled layouts properly, so the result is wrong.
+    _ = kernel(x)
 
   def test_concatenate(self):
     x = jnp.arange(2 * 8).reshape(-1, 8)

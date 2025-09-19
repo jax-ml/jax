@@ -19,16 +19,77 @@ import collections
 from collections.abc import Sequence
 import dataclasses
 import math
-from typing import Any
+from typing import Any, TypeAlias
 
 import jax
 from jax._src import core as jax_core
+from jax._src import state
 from jax._src import tree_util
 from jax._src.lax import lax
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic import core as tpu_core
 import jax.numpy as jnp
+
+
+Tiling: TypeAlias = Sequence[Sequence[int]]
+
+
+@dataclasses.dataclass(frozen=True)
+class MemoryRef(pallas_core.MemoryRef):
+  """A MemoryRef for SparseCore."""
+
+  tiling: Tiling | None = None
+
+  def __init__(
+      self,
+      shape: Sequence[int],
+      dtype: jax.typing.DTypeLike,
+      memory_space: tpu_core.MemorySpace,
+      tiling: Tiling | None = None,
+  ):
+    super().__init__(jax_core.ShapedArray(shape, dtype), memory_space)
+
+    for tile in tiling or ():
+      if len(tile) > len(shape):
+        raise ValueError(
+            f"Tile rank must not exceed shape rank: {tile=} vs {shape=}"
+        )
+
+    object.__setattr__(self, "tiling", tiling)
+
+  def get_ref_aval(self) -> state.TransformedRef | state.AbstractRef:
+    # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
+    # try to apply JAX ops to it.
+    return AbstractRef(self.inner_aval, self.memory_space, self.tiling)
+
+
+class AbstractRef(state.AbstractRef):
+  """An AbstractRef for SparseCore."""
+
+  tiling: Tiling | None = None
+
+  def __init__(
+      self,
+      aval: jax_core.AbstractValue,
+      memory_space: tpu_core.MemorySpace,
+      tiling: Tiling | None,
+  ):
+    super().__init__(aval, memory_space)
+
+    self.tiling = tiling
+
+  def update(  # type: ignore[override]
+      self,
+      inner_aval: Any | None = None,
+      memory_space: Any | None = None,
+      tiling: Tiling | None = None,
+  ) -> AbstractRef:
+    return AbstractRef(
+        inner_aval if inner_aval is not None else self.inner_aval,
+        memory_space if memory_space is not None else self.memory_space,
+        tiling if tiling is not None else self.tiling,
+    )
 
 
 @dataclasses.dataclass
@@ -46,7 +107,6 @@ class BlockSpec(pallas_core.BlockSpec):
     :class:`jax.experimental.pallas.BlockSpec`
   """
 
-  # TODO(slebedev): Can we infer these from the ``index_map``?
   indexed_by: int | None = None
   indexed_dim: int | None = None
 
