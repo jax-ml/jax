@@ -398,6 +398,7 @@ pytype_strict_library(
         ":pallas",
         ":pallas_mosaic_gpu",
         "//jax",
+        "//jax/_src:dtypes",
         "//jax/_src:test_util",  # This is only to make them runnable as jax_multiplatform_test...
         "//jax/_src/lib",
         "//jax/extend:backend",
