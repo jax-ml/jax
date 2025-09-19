@@ -510,8 +510,8 @@ def _parallel_loop_lowering_rule(
       [],
   )
   for_op.attributes["sc.parallel_access"] = ir.UnitAttr.get()
-  for_op.attributes["sc.loop_unroll_factor"] = ir.DenseI64ArrayAttr.get(
-      [unroll]
+  for_op.attributes["sc.loop_unroll_factor"] = ir.IntegerAttr.get(
+      ir.IntegerType.get_signless(64), unroll
   )
   with ir.InsertionPoint(for_op.body):
     *_, consts_block_shapes = tree.unflatten(ctx.block_shapes)
