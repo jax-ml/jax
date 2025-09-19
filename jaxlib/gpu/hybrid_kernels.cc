@@ -221,7 +221,7 @@ absl::StatusOr<void*> MagmaLookup::Find(const char name[]) {
 absl::StatusOr<void*> FindMagmaSymbol(const char name[]) {
   static absl::Mutex mu;
   static MagmaLookup& lookup = *new MagmaLookup ABSL_GUARDED_BY(mu);
-  absl::MutexLock lock(&mu);
+  absl::MutexLock lock(mu);
   auto status = lookup.Initialize();
   if (!status.ok()) {
     return status;

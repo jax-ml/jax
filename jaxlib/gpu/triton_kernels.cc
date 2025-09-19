@@ -111,7 +111,7 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
       *new absl::flat_hash_map<decltype(key), std::unique_ptr<ModuleImage>>
           ABSL_GUARDED_BY(mutex);
 
-  absl::MutexLock lock(&mutex);
+  absl::MutexLock lock(mutex);
   auto it = module_images.find(key);
   if (it != module_images.end()) return it->second.get();
 
@@ -176,7 +176,7 @@ absl::StatusOr<KernelCall*> GetKernelCall(std::string_view opaque,
 
   {
     // Fast path uses reader lock (as hash map look-up is relatively slow).
-    absl::ReaderMutexLock lock(&mutex);
+    absl::ReaderMutexLock lock(mutex);
     auto it = kernel_calls.find(opaque);
     if (ABSL_PREDICT_TRUE(it != kernel_calls.end())) {
       JAX_RETURN_IF_ERROR(it->second.status());
@@ -188,7 +188,7 @@ absl::StatusOr<KernelCall*> GetKernelCall(std::string_view opaque,
     return absl::InvalidArgumentError("Opaque data is empty.");
   }
 
-  absl::MutexLock lock(&mutex);
+  absl::MutexLock lock(mutex);
 
   auto get_kernel_call = [&]() -> absl::StatusOr<std::unique_ptr<KernelCall>> {
     // The opaque data is a zlib compressed protobuf.
@@ -237,7 +237,7 @@ class ModuleImage {
         shared_mem_bytes_(shared_mem_bytes) {}
 
   absl::StatusOr<gpuFunction_t> GetFunctionForContext(gpuContext_t context) {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     auto it = functions_.find(context);
     if (ABSL_PREDICT_TRUE(it != functions_.end())) {
       return it->second;
