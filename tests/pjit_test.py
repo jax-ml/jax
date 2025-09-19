@@ -9043,7 +9043,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @config.numpy_dtype_promotion('standard')
   @jtu.with_explicit_mesh((2,), 'x')
-  def test_yash(self, mesh):
+  def test_vmap_vjp_complex_explicit_mode(self, mesh):
     @jax.jit
     def f(w, samples):
       def f(w, x):
