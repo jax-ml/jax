@@ -22,6 +22,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_unflatten
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src.interpreters import ad
@@ -260,6 +261,12 @@ def host_local_array_to_global_array_impl(
     arrays = [
         arr[i] for i in local_sharding.devices_indices_map(arr.shape).values()
     ]
+    if config.pmap_shmap_merge.value:
+      # NOTE(dsuo): Each array must have exactly one shard. Force reshard if
+      # not. Is there a better way or place to do this? E.g., fancy indexing.
+      for i in range(len(arrays)):
+        if arrays[i].sharding.num_devices > 1:
+          arrays[i] = np.array(arrays[i])
 
   global_aval = _local_to_global_aval(
       core.ShapedArray(arr.shape, arr.dtype), global_mesh, pspec)
