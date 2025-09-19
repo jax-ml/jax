@@ -575,6 +575,8 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
           VectorType::get(lhs_ty.getShape().drop_back(),
                           acc_ty.getElementType()),
           acc);
+      // TODO(yueshengys): Investigate whether we need to use
+      // tpu::MultiDimReductionOp.
       auto res = builder.create<vector::MultiDimReductionOp>(
           vector::CombiningKind::ADD, multiply, acc,
           /*reduction_dims=*/
@@ -736,10 +738,9 @@ FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
   return op.getResult(0);
 }
 
-FailureOr<Value> canonicalize_multi_dim_reduction(
-    const CanonicalizeContext &ctx, Operation &operation) {
-  CanonicalBuilder builder(ctx, operation.getLoc(), &operation);
-  auto op = cast<vector::MultiDimReductionOp>(operation);
+template <typename Op>
+FailureOr<Value> canonicalize_multi_dim_reduction_impl(
+    const CanonicalizeContext& ctx, Op op, CanonicalBuilder& builder) {
   auto source_ty = op.getSourceVectorType();
   auto result_ty = dyn_cast<VectorType>(op.getDestType());
   if (!result_ty) {
@@ -748,7 +749,7 @@ FailureOr<Value> canonicalize_multi_dim_reduction(
 
   auto element_type = source_ty.getElementType();
   if (element_type.isF32()) {
-    return operation.getResult(0);
+    return op.getResult();
   } else if (element_type.isBF16()) {
     bool reduces_sublanes = false;
     for (int64_t dim : op.getReductionDims()) {
@@ -767,24 +768,47 @@ FailureOr<Value> canonicalize_multi_dim_reduction(
       // extensions to f32 are always supported.
       Value new_acc =
           builder.createOrFold<tpu::ExtFOp>(result_ty_f32, op.getAcc());
-      auto new_op = builder.create<vector::MultiDimReductionOp>(
-          op.getLoc(), new_acc.getType(), op.getKindAttr(), new_source, new_acc,
-          DenseI64ArrayAttr::get(builder.getContext(), op.getReductionDims()));
+      Value new_op;
+      if constexpr (std::is_same_v<Op, vector::MultiDimReductionOp>) {
+        new_op = builder.create<vector::MultiDimReductionOp>(
+            op.getLoc(), new_acc.getType(), op.getKindAttr(), new_source,
+            new_acc,
+            DenseI64ArrayAttr::get(builder.getContext(),
+                                   op.getReductionDims()));
+      } else if constexpr (std::is_same_v<Op, tpu::MultiDimReductionOp>) {
+        new_op = builder.create<tpu::MultiDimReductionOp>(
+            op.getLoc(), new_acc.getType(), op.getKindAttr(), new_source,
+            new_acc,
+            DenseI64ArrayAttr::get(builder.getContext(), op.getReductionDims()),
+            op.getConsistentReduceOrderAttr());  // Pass the flag
+      }
       auto new_result = builder.create<tpu::TruncFOp>(
           op.getLoc(), result_ty, new_op, tpu::RoundingMode::kToNearestEven);
       op.replaceAllUsesWith(new_result);
       op.erase();
       return new_result;
     }
-    return operation.getResult(0);
+    return op.getResult();
   } else if (element_type.isSignlessInteger(32) &&
              // TODO(b/384774084): Add support for u32 reductions.
              (op.getKind() == vector::CombiningKind::ADD ||
               op.getKind() == vector::CombiningKind::MAXSI ||
               op.getKind() == vector::CombiningKind::MINSI)) {
-    return operation.getResult(0);
+    return op.getResult();
   }
   return op.emitOpError("Unsupported element type for the selected reduction");
+}
+
+FailureOr<Value> canonicalize_multi_dim_reduction(
+    const CanonicalizeContext& ctx, Operation& operation) {
+  CanonicalBuilder builder(ctx, operation.getLoc(), &operation);
+  if (auto vec_op = dyn_cast<vector::MultiDimReductionOp>(operation)) {
+    return canonicalize_multi_dim_reduction_impl(ctx, vec_op, builder);
+  } else if (auto tpu_op = dyn_cast<tpu::MultiDimReductionOp>(operation)) {
+    return canonicalize_multi_dim_reduction_impl(ctx, tpu_op, builder);
+  }
+  return operation.emitOpError(
+      "Operation is not a supported MultiDimReductionOp");
 }
 
 FailureOr<Value> canonicalize_contraction(const CanonicalizeContext &ctx,
@@ -1776,6 +1800,8 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {vector::ContractionOp::getOperationName(), canonicalize_contraction},
       {vector::ExtractOp::getOperationName(), canonicalize_extract},
       {vector::MultiDimReductionOp::getOperationName(),
+       canonicalize_multi_dim_reduction},
+      {tpu::MultiDimReductionOp::getOperationName(),
        canonicalize_multi_dim_reduction},
       {vector::TransposeOp::getOperationName(), canonicalize_vector_transpose},
       {vector::ShapeCastOp::getOperationName(), canonicalize_shape_cast},
