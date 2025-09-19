@@ -31,6 +31,7 @@ import jax.numpy as jnp
 import numpy as np
 
 
+
 jax.config.parse_flags_with_absl()
 
 
@@ -791,6 +792,28 @@ class VectorSubcoreTest(PallasSCTest):
                          jnp.full((num_subcores, 8), 7.),
                          x)
     np.testing.assert_array_equal(kernel(x), expected)
+
+  def test_parallel_loop_effects(self):
+    chunk_size = 8
+
+    @plsc.kernel(
+        out_shape=(),
+        mesh=plsc.VectorSubcoreMesh(
+            core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+        ),
+        scratch_shapes=(pltpu.VMEM((chunk_size,), jnp.uint32),) * 3,
+    )
+    def _kernel(a_ref, b_ref, c_ref):
+      @pl.loop(0, 4)
+      def outer(i):
+        const = jnp.array(0, jnp.uint32)
+
+        @plsc.parallel_loop(0, chunk_size)
+        def body(_):
+          x = a_ref[...] >> i.astype(jnp.uint32)
+          plsc.store_compressed(c_ref.at[...], b_ref[...], mask=x > const)
+
+    _kernel()
 
 
 class ScalarSubcoreTest(PallasSCTest):

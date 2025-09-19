@@ -484,7 +484,14 @@ parallel_loop_p.multiple_results = True
 @parallel_loop_p.def_effectful_abstract_eval
 def _parallel_loop_abstract_eval(*args, jaxpr, **params):
   del args, params  # Unused.
-  return (), jaxpr.effects
+  updated_effects = set()
+  for eff in jaxpr.effects:
+    if isinstance(eff, effects.JaxprInputEffect):
+      # Offset for the parallel_loop eqn to account for start, stop, and step
+      # args passed to parallel_loop_p.bind.
+      eff = eff.replace(input_index=eff.input_index + 3)
+    updated_effects.add(eff)
+  return (), updated_effects
 
 
 @sc_lowering.register_lowering_rule(parallel_loop_p)
