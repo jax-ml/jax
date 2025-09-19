@@ -300,7 +300,10 @@ class State(config_ext.Config[_T]):
   ):
     if parser is not None:
       default = parser(default)
-    super().__init__(default, include_in_jit_key)
+    if TYPE_CHECKING or jaxlib_extension_version >= 376:
+      super().__init__(name, default, include_in_jit_key=include_in_jit_key)
+    else:
+      super().__init__(default, include_in_jit_key)
     self._name = name
     self.__name__ = name[4:] if name.startswith('jax_') else name
     self.__doc__ = (f"Context manager for `{name}` config option"
@@ -975,20 +978,46 @@ def enum_flag(name, default, *args, **kwargs) -> Flag[str]:
 already_configured_with_absl = False
 
 
-trace_state = config_ext.Config(None, include_in_jit_key=True)
-axis_env_state = config_ext.Config((), include_in_jit_key=True)
-mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
-abstract_mesh_context_manager = config_ext.Config(None, include_in_jit_key=True)
-device_context = config_ext.Config(None, include_in_jit_key=True)
-compute_on_context_manager = config_ext.Config(None, include_in_jit_key=True)
-xla_metadata_context_manager = config_ext.Config(None, include_in_jit_key=True)
-pallas_tpu_interpret_mode_context_manager = config_ext.Config(
-    None, include_in_jit_key=True)
-
+if TYPE_CHECKING or jaxlib_extension_version >= 376:
+  trace_state = config_ext.Config('trace_state', None, include_in_jit_key=True)
+  axis_env_state = config_ext.Config(
+      'axis_env_state', (), include_in_jit_key=True
+  )
+  mesh_context_manager = config_ext.Config(
+      'mesh_context_manager', (), include_in_jit_key=True
+  )
+  abstract_mesh_context_manager = config_ext.Config(
+      'abstract_mesh_context_manager', None, include_in_jit_key=True
+  )
+  device_context = config_ext.Config(
+      'device_context', None, include_in_jit_key=True
+  )
+  compute_on_context_manager = config_ext.Config(
+      'compute_on_context_manager', None, include_in_jit_key=True
+  )
+  xla_metadata_context_manager = config_ext.Config(
+      'xla_metadata_context_manager', None, include_in_jit_key=True
+  )
+  pallas_tpu_interpret_mode_context_manager = config_ext.Config(
+      'pallas_tpu_interpret_mode_context_manager', None, include_in_jit_key=True
+  )
+else:
+  trace_state = config_ext.Config(None, include_in_jit_key=True)
+  axis_env_state = config_ext.Config((), include_in_jit_key=True)
+  mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
+  abstract_mesh_context_manager = config_ext.Config(None, include_in_jit_key=True)
+  device_context = config_ext.Config(None, include_in_jit_key=True)
+  compute_on_context_manager = config_ext.Config(None, include_in_jit_key=True)
+  xla_metadata_context_manager = config_ext.Config(None, include_in_jit_key=True)
+  pallas_tpu_interpret_mode_context_manager = config_ext.Config(
+      None, include_in_jit_key=True)
 
 class UserConfig:
   def __init__(self, default_value):
-    self._obj = config_ext.Config(default_value, include_in_jit_key=True)
+    if TYPE_CHECKING or jaxlib_extension_version >= 376:
+      self._obj = config_ext.Config("user_context", default_value, include_in_jit_key=True)
+    else:
+      self._obj = config_ext.Config(default_value, include_in_jit_key=True)
 
   @property
   def value(self):

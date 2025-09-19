@@ -18,6 +18,7 @@ limitations under the License.
 #include <Python.h>
 
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -27,6 +28,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "jaxlib/python_ref_manager.h"
 #include "xla/tsl/platform/logging.h"
 
@@ -114,6 +116,9 @@ class GlobalConfigState {
     return include_in_jit_key_;
   }
 
+  absl::Span<std::string const> names() const { return names_; }
+  const std::string& name(int key) const { return names_[key]; }
+
  private:
   friend class Config;
 
@@ -122,6 +127,7 @@ class GlobalConfigState {
   absl::Mutex mu_;
   absl::flat_hash_set<ThreadLocalConfigState*> thread_local_states_
       ABSL_GUARDED_BY(mu_);
+  std::vector<std::string> names_;
   std::vector<nb::object> entries_;
   std::vector<int> include_in_jit_key_;
   nb::object unset_ = UnsetObject();
@@ -197,13 +203,18 @@ int GlobalConfigState::tp_clear(int key, PyObject* self) {
   return 0;
 }
 
-Config::Config(nb::object value, bool include_in_jit_key) {
+Config::Config(std::string name, nb::object value, bool include_in_jit_key) {
   auto& instance = GlobalConfigState::Instance();
   key_ = instance.entries_.size();
+  instance.names_.push_back(std::move(name));
   instance.entries_.push_back(std::move(value));
   if (include_in_jit_key) {
     instance.include_in_jit_key_.push_back(key_);
   }
+}
+
+const std::string& Config::Name() {
+  return GlobalConfigState::Instance().name(key_);
 }
 
 nb::object Config::GetLocal() {
@@ -286,9 +297,11 @@ void BuildConfigSubmodule(nanobind::module_& m) {
 
   nb::class_<Config> config(config_module, "Config",
                             nb::type_slots(Config::slots_), nb::is_generic());
-  config.def(nb::init<nb::object, bool>(), nb::arg("value").none(),
+  config.def(nb::init<std::string, nb::object, bool>(), nb::arg("name"),
+             nb::arg("value").none(), nb::kw_only(),
              nb::arg("include_in_jit_key") = false);
   config.def_prop_ro("value", &Config::Get);
+  config.def_prop_ro("name", &Config::Name);
   config.def("get_local", &Config::GetLocal);
   config.def("get_global", &Config::GetGlobal);
   config.def("set_local", &Config::SetLocal, nb::arg("value").none());
@@ -308,6 +321,16 @@ std::vector<nanobind::object> JitConfigs() {
     } else {
       result.push_back(instance.Get(i));
     }
+  }
+  return result;
+}
+
+std::vector<std::string> JitConfigNames() {
+  auto& instance = GlobalConfigState::Instance();
+  std::vector<std::string> result;
+  result.reserve(instance.include_in_jit_key().size());
+  for (int i : instance.include_in_jit_key()) {
+    result.push_back(instance.name(i));
   }
   return result;
 }

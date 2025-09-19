@@ -128,9 +128,9 @@ def _nan_check_posthook(fun, args, kwargs, output):
       # TODO(emilyaf): Shouldn't need this fallback.
       raise
 
-if TYPE_CHECKING or jaxlib_extension_version >= 375:
+if TYPE_CHECKING or jaxlib_extension_version >= 376:
   _post_hook_state = config_ext.Config[Optional[Callable]](
-      None, include_in_jit_key=False
+      "post_hook", None, include_in_jit_key=False
   )
   jax_jit.set_post_hook_state(_post_hook_state)
 

@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef JAXLIB_CONFIG_H_
 #define JAXLIB_CONFIG_H_
 
+#include <string>
 #include <vector>
 
 // placeholder for index annotation headers
@@ -29,7 +30,10 @@ namespace jax {
 // Python.
 class Config {
  public:
-  Config(nanobind::object value, bool include_in_jit_key);
+  Config(std::string name, nanobind::object value, bool include_in_jit_key);
+
+  // Returns the name of the config.
+  const std::string& Name();
 
   // Returns the thread-local value if it is set, otherwise the global value.
   nanobind::object Get();
@@ -66,6 +70,9 @@ class Config {
 // Returns the set of configuration values that should be included in the JIT
 // cache key.
 std::vector<nanobind::object> JitConfigs();
+
+// The corresponding config names, for debugging.
+std::vector<std::string> JitConfigNames();
 
 void BuildConfigSubmodule(nanobind::module_& m);
 

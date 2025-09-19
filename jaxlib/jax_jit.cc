@@ -185,6 +185,14 @@ std::string CallSignature::DebugString() const {
   auto bool_formatter = [](std::string* out, bool o) {
     out->append(o ? "true" : "false");
   };
+  std::vector<std::string> config_names = JitConfigNames();
+  std::vector<std::string> config_strs;
+  config_strs.reserve(configs.size());
+  for (int i = 0; i < configs.size(); ++i) {
+    config_strs.push_back(absl::StrFormat(
+        "%s: %s", i < config_names.size() ? config_names[i] : "unknown",
+        nb::cast<std::string_view>(nb::str(configs[i]))));
+  }
   return absl::StrFormat(
       "arg signature: %s\n"
       "dynamic arg signatures (positional + keyword): %s\n"
@@ -199,7 +207,7 @@ std::string CallSignature::DebugString() const {
       absl::StrJoin(dynamic_arg_layouts, ", ", layout_formatter),
       absl::StrJoin(committed_args, ",", bool_formatter),
       device != nullptr ? device->DebugString() : "nullptr",
-      absl::StrJoin(configs, ", ", py_object_formatter));
+      absl::StrJoin(config_strs, ", "));
 }
 
 size_t HashShardingForJit(nb::handle sharding) {
