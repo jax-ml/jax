@@ -13,9 +13,9 @@ different builds for different operating systems and accelerators.
   ```
   pip install -U jax
   ```
-* **GPU (NVIDIA, CUDA 12)**
+* **GPU (NVIDIA, CUDA 13)**
   ```
-  pip install -U "jax[cuda12]"
+  pip install -U "jax[cuda13]"
   ```
 
 * **TPU (Google Cloud TPU VM)**
@@ -339,16 +339,6 @@ pip install -U --pre jax jaxlib "jax-cuda13-plugin[with-cuda]" jax-cuda13-pjrt -
 
 ```bash
 pip install -U --pre jax jaxlib "jax-cuda12-plugin[with-cuda]" jax-cuda12-pjrt -i https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/
-```
-
-- NVIDIA GPU (CUDA 12) legacy:
-
-Use the following for historical nightly releases of monolithic CUDA jaxlibs.
-You most likely do not want this; no further monolithic CUDA jaxlibs will be
-built and those that exist will expire by Sep 2024. Use the "CUDA 12" option above.
-
-```bash
-pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_cuda12_releases.html
 ```
 
 (building-jax-from-source)=
