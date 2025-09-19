@@ -363,13 +363,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
       _, f_vjp = jax.vjp(attn_ans, x, bias, mask)
       return f_vjp(x)
 
-    if batch_size != 1:
-      with self.assertRaisesRegex(ValueError, _cudnn_dbias_error):
-        _, dbias_ans, _ = bwd_ans(x, bias, mask)
-    else:
-      _, dbias_ref, _ = bwd_ref(x, bias, mask)
-      _, dbias_ans, _ = bwd_ans(x, bias, mask)
-      self.assertAllClose(dbias_ans, dbias_ref, rtol=0.1, atol=0.1)
+    _, dbias_ref, _ = bwd_ref(x, bias, mask)
+    _, dbias_ans, _ = bwd_ans(x, bias, mask)
+    self.assertAllClose(dbias_ans, dbias_ref, rtol=0.1, atol=0.1)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
