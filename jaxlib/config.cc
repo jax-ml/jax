@@ -116,6 +116,11 @@ class GlobalConfigState {
     return include_in_jit_key_;
   }
 
+  // Returns the set of keys that should be included in the trace context.
+  absl::Span<int const> include_in_trace_context() const {
+    return include_in_trace_context_;
+  }
+
   absl::Span<std::string const> names() const { return names_; }
   const std::string& name(int key) const { return names_[key]; }
 
@@ -130,6 +135,7 @@ class GlobalConfigState {
   std::vector<std::string> names_;
   std::vector<nb::object> entries_;
   std::vector<int> include_in_jit_key_;
+  std::vector<int> include_in_trace_context_;
   nb::object unset_ = UnsetObject();
 };
 
@@ -203,13 +209,17 @@ int GlobalConfigState::tp_clear(int key, PyObject* self) {
   return 0;
 }
 
-Config::Config(std::string name, nb::object value, bool include_in_jit_key) {
+Config::Config(std::string name, nb::object value, bool include_in_jit_key,
+               bool include_in_trace_context) {
   auto& instance = GlobalConfigState::Instance();
   key_ = instance.entries_.size();
   instance.names_.push_back(std::move(name));
   instance.entries_.push_back(std::move(value));
   if (include_in_jit_key) {
     instance.include_in_jit_key_.push_back(key_);
+  }
+  if (include_in_trace_context) {
+    instance.include_in_trace_context_.push_back(key_);
   }
 }
 
@@ -290,25 +300,6 @@ PyType_Slot Config::slots_[] = {
   return GlobalConfigState::Instance().unset();
 }
 
-void BuildConfigSubmodule(nanobind::module_& m) {
-  nb::module_ config_module = m.def_submodule("config", "Config library");
-
-  config_module.attr("unset") = GlobalConfigState::Instance().unset();
-
-  nb::class_<Config> config(config_module, "Config",
-                            nb::type_slots(Config::slots_), nb::is_generic());
-  config.def(nb::init<std::string, nb::object, bool>(), nb::arg("name"),
-             nb::arg("value").none(), nb::kw_only(),
-             nb::arg("include_in_jit_key") = false);
-  config.def_prop_ro("value", &Config::Get);
-  config.def_prop_ro("name", &Config::Name);
-  config.def("get_local", &Config::GetLocal);
-  config.def("get_global", &Config::GetGlobal);
-  config.def("set_local", &Config::SetLocal, nb::arg("value").none());
-  config.def("swap_local", &Config::SwapLocal, nb::arg("value").none());
-  config.def("set_global", &Config::SetGlobal, nb::arg("value").none());
-}
-
 std::vector<nanobind::object> JitConfigs() {
   auto& instance = GlobalConfigState::Instance();
   auto& thread_local_instance = ThreadLocalConfigState::Instance();
@@ -333,6 +324,47 @@ std::vector<std::string> JitConfigNames() {
     result.push_back(instance.name(i));
   }
   return result;
+}
+
+nanobind::tuple TraceContext() {
+  auto& instance = GlobalConfigState::Instance();
+  auto& thread_local_instance = ThreadLocalConfigState::Instance();
+  nb::tuple result = nb::steal<nb::tuple>(
+      PyTuple_New(instance.include_in_trace_context().size()));
+  int pos = 0;
+  for (int i : instance.include_in_trace_context()) {
+    nb::object local = thread_local_instance.Get(i);
+    if (local.is_valid()) {
+      PyTuple_SET_ITEM(result.ptr(), pos, local.release().ptr());
+    } else {
+      nb::object global = instance.Get(i);
+      PyTuple_SET_ITEM(result.ptr(), pos, global.release().ptr());
+    }
+    ++pos;
+  }
+  return result;
+}
+
+void BuildConfigSubmodule(nanobind::module_& m) {
+  nb::module_ config_module = m.def_submodule("config", "Config library");
+
+  config_module.attr("unset") = GlobalConfigState::Instance().unset();
+
+  nb::class_<Config> config(config_module, "Config",
+                            nb::type_slots(Config::slots_), nb::is_generic());
+  config.def(nb::init<std::string, nb::object, bool, bool>(), nb::arg("name"),
+             nb::arg("value").none(), nb::kw_only(),
+             nb::arg("include_in_jit_key") = false,
+             nb::arg("include_in_trace_context") = false);
+  config.def_prop_ro("value", &Config::Get);
+  config.def_prop_ro("name", &Config::Name);
+  config.def("get_local", &Config::GetLocal);
+  config.def("get_global", &Config::GetGlobal);
+  config.def("set_local", &Config::SetLocal, nb::arg("value").none());
+  config.def("swap_local", &Config::SwapLocal, nb::arg("value").none());
+  config.def("set_global", &Config::SetGlobal, nb::arg("value").none());
+
+  config_module.def("trace_context", &TraceContext);
 }
 
 }  // namespace jax

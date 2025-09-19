@@ -24,13 +24,13 @@ limitations under the License.
 
 namespace jax {
 
-
 // A Config object represents a configurable object with both global and
 // thread-local state. This class is wrapped using nanobind and exposed to
 // Python.
 class Config {
  public:
-  Config(std::string name, nanobind::object value, bool include_in_jit_key);
+  Config(std::string name, nanobind::object value, bool include_in_jit_key,
+         bool include_in_trace_context);
 
   // Returns the name of the config.
   const std::string& Name();
@@ -73,6 +73,8 @@ std::vector<nanobind::object> JitConfigs();
 
 // The corresponding config names, for debugging.
 std::vector<std::string> JitConfigNames();
+
+nanobind::tuple TraceContext();
 
 void BuildConfigSubmodule(nanobind::module_& m);
 
