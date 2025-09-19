@@ -50,6 +50,7 @@ class TuningConfig:
   grid_minor_dim: MatmulDimension = MatmulDimension.N
   grid_tile_width: int = 1
   wg_dimension: MatmulDimension = MatmulDimension.N
+  cluster_dimension: None | MatmulDimension = None
 
 
 def matmul_kernel(a, b, config: TuningConfig):
@@ -71,16 +72,19 @@ def matmul_kernel(a, b, config: TuningConfig):
   transforms = (
       plgpu.TilingTransform((8, swizzle_elems)), plgpu.SwizzleTransform(swizzle)
   )
+
   cta_tile_m = tile_m * (1 + (config.wg_dimension == MatmulDimension.M))
   cta_tile_n = tile_n * (1 + (config.wg_dimension == MatmulDimension.N))
-  if m % cta_tile_m != 0:
+  cluster_tile_m = cta_tile_m * (1 + (config.cluster_dimension == MatmulDimension.M))
+  cluster_tile_n = cta_tile_n * (1 + (config.cluster_dimension == MatmulDimension.N))
+  if m % cluster_tile_m != 0:
     raise ValueError(f"{m=} must be divisible by {tile_m} for the given config")
-  if n % cta_tile_n != 0:
+  if n % cluster_tile_n != 0:
     raise ValueError(f"{n=} must be divisible by {tile_n} for the given config")
   if k % tile_k != 0:
     raise ValueError(f"{k=} must be divisible by {tile_k=}")
-  m_iters = m // cta_tile_m
-  n_iters = n // cta_tile_n
+  m_iters = m // cluster_tile_m
+  n_iters = n // cluster_tile_n
   k_iters = k // tile_k
 
   epi_tile_n = config.epi_tile_n or tile_n
@@ -103,12 +107,18 @@ def matmul_kernel(a, b, config: TuningConfig):
                   lambda k: (0, k),
                   transforms=transforms,
                   memory_space=plgpu.SMEM,
+                  collective_axes=("cluster",)
+                  if config.cluster_dimension == MatmulDimension.N
+                  else (),
               ),
               plgpu.BlockSpec(
                   (tile_k, cta_tile_n),
                   lambda k: (k, 0),
                   transforms=transforms,
                   memory_space=plgpu.SMEM,
+                  collective_axes=("cluster",)
+                  if config.cluster_dimension == MatmulDimension.M
+                  else (),
               ),
           ],
           wg_axis="wg",
@@ -126,15 +136,22 @@ def matmul_kernel(a, b, config: TuningConfig):
     )
     def _pipeline_scope(pipeline_allocs):
       wg_idx = lax.axis_index("wg")
-      @plgpu.nd_loop((m_iters * n_iters,), collective_axes="sm")
+      cta_idx = lax.axis_index("cluster")
+      @plgpu.nd_loop((m_iters * n_iters,), collective_axes="cluster_grid")
       def _mn_loop(idxs):
         (lin_idx,) = idxs
-        m_idx, n_idx = plgpu.planar_snake(
+        m_cluster_idx, n_cluster_idx = plgpu.planar_snake(
             lin_idx,
             (m_iters, n_iters),
             config.grid_minor_dim,
             config.grid_tile_width,
         )
+        m_idx = m_cluster_idx
+        n_idx = n_cluster_idx
+        if config.cluster_dimension == MatmulDimension.M:
+          m_idx = m_cluster_idx * 2 + cta_idx
+        elif config.cluster_dimension == MatmulDimension.N:
+          n_idx = n_cluster_idx * 2 + cta_idx
         cta_m_slice = pl.ds(m_idx * cta_tile_m, cta_tile_m)
         cta_n_slice = pl.ds(n_idx * cta_tile_n, cta_tile_n)
         if config.wg_dimension == MatmulDimension.M:
@@ -196,11 +213,14 @@ def matmul_kernel(a, b, config: TuningConfig):
       ),
   ]
   num_sms = backend.get_default_device().core_count
+  cluster_size = 1 + (config.cluster_dimension is not None)
   f = plgpu.kernel(
       kernel,
       out_shape=jax.ShapeDtypeStruct((m, n), dtype),
-      grid=(num_sms,),
-      grid_names=("sm",),
+      grid=(num_sms // cluster_size,),
+      grid_names=("cluster_grid",),
+      cluster=(cluster_size,),
+      cluster_names=("cluster",),
       num_threads=3,
       thread_name="wg",
       scratch_shapes=scratch_shapes,
@@ -216,19 +236,22 @@ def main(_) -> None:
     peak_flops = 990e12  # f16 TensorCore peak = 990 TFLOPS
     a = jax.random.uniform(jax.random.key(0), (M, K), jnp.float16)
     b = jax.random.uniform(jax.random.key(1), (K, N), jnp.float16)
+    ref = a @ b
     tuning_it = itertools.product(
-        (128,),  # tile_m
-        (128,),  # tile_n
+        (128, 256,),  # tile_m
+        (64, 128),  # tile_n
         (64,),  # tile_k
         (4,),  # max_concurrent_steps
         (True,),  # Tiled epilogue
         (MatmulDimension.M, MatmulDimension.N),  # grid_minor_dim
-        (1, 4, 8, 16),  # grid_tile_width
-        (MatmulDimension.M,),  # wg_dimension
+        (4, 8, 16),  # grid_tile_width
+        MatmulDimension,  # wg_dimension
+        # Consider adding MatmulDimension here to try out collective TMA kernels
+        (None,)  # cluster_dimension
     )
     best_util = 0.0
     best_runtime = float("inf")
-    for tile_m, tile_n, tile_k, max_concurrent_steps, tiled_epilogue, grid_minor_dim, grid_tile_width, wg_dimension in tuning_it:
+    for tile_m, tile_n, tile_k, max_concurrent_steps, tiled_epilogue, grid_minor_dim, grid_tile_width, wg_dimension, cluster_dimension in tuning_it:
       config = TuningConfig(
           tile_m=tile_m,
           tile_n=tile_n,
@@ -239,6 +262,7 @@ def main(_) -> None:
           grid_minor_dim=grid_minor_dim,
           grid_tile_width=grid_tile_width,
           wg_dimension=wg_dimension,
+          cluster_dimension=cluster_dimension,
       )
       try:
         out, runtimes_ms = profiler.measure(
@@ -250,7 +274,7 @@ def main(_) -> None:
         if "exceeds available shared memory" in e.args[0]:  # Ignore SMEM OOMs.
           continue
         raise
-      np.testing.assert_allclose(out, a @ b)
+      np.testing.assert_allclose(out, ref)
       runtime_us = runtime_ms * 1e3   # type: ignore
       optimal_time = matmul_flops / peak_flops * 1e6  # us
       achieved_tc_util = optimal_time / runtime_us * 100
@@ -258,7 +282,7 @@ def main(_) -> None:
         best_runtime = runtime_us
         best_util = achieved_tc_util
       print(
-          f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=} {tiled_epilogue=} {grid_minor_dim=} {grid_tile_width=} {wg_dimension=}:"
+          f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=} {tiled_epilogue=} {grid_minor_dim=} {grid_tile_width=} {wg_dimension=} {cluster_dimension=}:"
           f" {runtime_us:<7.1f}us = {achieved_tc_util:4.1f}% TC utilization"
       )
     print(f"\tBest: {best_runtime:<7.1f}us = {best_util:4.1f}% TC utilization")

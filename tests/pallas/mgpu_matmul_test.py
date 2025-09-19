@@ -121,6 +121,28 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
         grid_tile_width=grid_tile_width,
     )
 
+  @parameterized.product(
+    tile_m=(64, 128),
+    tile_n=(64, 128),
+    wg_dimension=tuple(hopper_matmul_mgpu.MatmulDimension),
+    cluster_dimension=tuple(hopper_matmul_mgpu.MatmulDimension),
+  )
+  def test_hopper_matmul_cluster(self, tile_m, tile_n, wg_dimension, cluster_dimension):
+    self.check_hopper_matmul(
+        m=4096,
+        k=4096,
+        n=4096,
+        dtype=jnp.float16,
+        tile_m=tile_m,
+        tile_n=tile_n,
+        tile_k=64,
+        max_concurrent_steps=4,
+        epi_tile_m=64,
+        epi_tile_n=64,
+        wg_dimension=wg_dimension,
+        cluster_dimension=cluster_dimension,
+    )
+
   def check_hopper_matmul(
       self,
       m,
