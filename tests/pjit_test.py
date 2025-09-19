@@ -8116,6 +8116,30 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "unreduced axes should be equal to the contracting specs"):
       h.trace(x, y)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_three_operand_einsum_unreduced(self, mesh):
+    n1, n2, n3 = np.arange(2), np.arange(8).reshape(2, 4), np.arange(2)
+    arr1 = jax.device_put(n1, P('x'))
+    arr2 = jax.device_put(n2, P('x', 'y'))
+    arr3 = jax.device_put(n3, P('x'))
+
+    @jax.jit
+    def f(arr1, arr2, arr3):
+      out = jnp.einsum('d,dh,d->h', arr1, arr2, arr3,
+                       out_sharding=P('y', unreduced={'x'}))
+      self.assertEqual(out.aval.sharding.spec, P('y', unreduced={'x'}))
+      return out
+
+    lowered_text = f.lower(arr1, arr2, arr3).as_text()
+    self.assertEqual(lowered_text.count('unreduced={"x"}'), 2)
+
+    out = f(arr1, arr2, arr3)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('y', unreduced={'x'})))
+
+    reshard_out = reshard(out, P('y'))
+    expected_out = np.einsum("d,dh,d->h", n1, n2, n3)
+    self.assertArraysEqual(reshard_out, expected_out)
+
   @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
   def test_add_unreduced_error(self, mesh):
     np_inp = np.arange(16).reshape(8, 2)
