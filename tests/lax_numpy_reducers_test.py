@@ -752,8 +752,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   )
   def testQuantileDeprecatedArgs(self, op):
     func = getattr(jnp, op)
-    with self.assertDeprecationWarnsOrRaises("jax-numpy-quantile-interpolation",
-                                             f"The interpolation= argument to '{op}' is deprecated. "):
+    with self.assertRaisesRegex(TypeError, rf"{op}\(\) argument interpolation"):
       func(jnp.arange(4), 0.5, interpolation='linear')
 
   @unittest.skipIf(not config.enable_x64.value, "test requires X64")

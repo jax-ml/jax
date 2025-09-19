@@ -2366,7 +2366,7 @@ def cumulative_prod(
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation', 'keepdims', 'method'))
 def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
              out: None = None, overwrite_input: bool = False, method: str = "linear",
-             keepdims: bool = False, *, interpolation: DeprecatedArg | str = DeprecatedArg()) -> Array:
+             keepdims: bool = False, *, interpolation: DeprecatedArg = DeprecatedArg()) -> Array:
   """Compute the quantile of the data along the specified axis.
 
   JAX implementation of :func:`numpy.quantile`.
@@ -2383,8 +2383,6 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
       default is ``linear``.
     keepdims: if True, then the returned array will have the same number of
       dimensions as the input. Default is False.
-    interpolation: deprecated alias of the ``method`` argument. Will result
-      in a :class:`DeprecationWarning` if used.
 
   Returns:
     An array containing the specified quantiles along the specified axes.
@@ -2410,12 +2408,10 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
   if overwrite_input or out is not None:
     raise ValueError("jax.numpy.quantile does not support overwrite_input=True "
                      "or out != None")
+  # TODO(jakevdp): remove the interpolation argument in JAX v0.9.0
   if not isinstance(interpolation, DeprecatedArg):
-    deprecations.warn(
-      "jax-numpy-quantile-interpolation",
-      ("The interpolation= argument to 'quantile' is deprecated. "
-       "Use 'method=' instead."), stacklevel=2)
-    method = interpolation
+    raise TypeError("quantile() argument interpolation was removed in JAX"
+                    " v0.8.0. Use method instead.")
   return _quantile(lax.asarray(a), lax.asarray(q), axis, method, keepdims, False)
 
 # TODO(jakevdp): interpolation argument deprecated 2024-05-16
@@ -2423,7 +2419,7 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation', 'keepdims', 'method'))
 def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
                 out: None = None, overwrite_input: bool = False, method: str = "linear",
-                keepdims: bool = False, *, interpolation: DeprecatedArg | str = DeprecatedArg()) -> Array:
+                keepdims: bool = False, *, interpolation: DeprecatedArg = DeprecatedArg()) -> Array:
   """Compute the quantile of the data along the specified axis, ignoring NaNs.
 
   JAX implementation of :func:`numpy.nanquantile`.
@@ -2440,8 +2436,6 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
       default is ``linear``.
     keepdims: if True, then the returned array will have the same number of
       dimensions as the input. Default is False.
-    interpolation: deprecated alias of the ``method`` argument. Will result
-      in a :class:`DeprecationWarning` if used.
 
   Returns:
     An array containing the specified quantiles along the specified axes.
@@ -2469,12 +2463,10 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
     msg = ("jax.numpy.nanquantile does not support overwrite_input=True or "
            "out != None")
     raise ValueError(msg)
+  # TODO(jakevdp): remove the interpolation argument in JAX v0.9.0
   if not isinstance(interpolation, DeprecatedArg):
-    deprecations.warn(
-      "jax-numpy-quantile-interpolation",
-      ("The interpolation= argument to 'nanquantile' is deprecated. "
-       "Use 'method=' instead."), stacklevel=2)
-    method = interpolation
+    raise TypeError("nanquantile() argument interpolation was removed in JAX"
+                    " v0.8.0. Use method instead.")
   return _quantile(lax.asarray(a), lax.asarray(q), axis, method, keepdims, True)
 
 def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
@@ -2607,7 +2599,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
 def percentile(a: ArrayLike, q: ArrayLike,
                axis: int | tuple[int, ...] | None = None,
                out: None = None, overwrite_input: bool = False, method: str = "linear",
-               keepdims: bool = False, *, interpolation: str | DeprecatedArg = DeprecatedArg()) -> Array:
+               keepdims: bool = False, *, interpolation: DeprecatedArg = DeprecatedArg()) -> Array:
   """Compute the percentile of the data along the specified axis.
 
   JAX implementation of :func:`numpy.percentile`.
@@ -2624,8 +2616,6 @@ def percentile(a: ArrayLike, q: ArrayLike,
       default is ``linear``.
     keepdims: if True, then the returned array will have the same number of
       dimensions as the input. Default is False.
-    interpolation: deprecated alias of the ``method`` argument. Will result
-      in a :class:`DeprecationWarning` if used.
 
   Returns:
     An array containing the specified percentiles along the specified axes.
@@ -2649,12 +2639,10 @@ def percentile(a: ArrayLike, q: ArrayLike,
   """
   a, q = ensure_arraylike("percentile", a, q)
   q, = promote_dtypes_inexact(q)
+  # TODO(jakevdp): remove the interpolation argument in JAX v0.9.0
   if not isinstance(interpolation, DeprecatedArg):
-    deprecations.warn(
-      "jax-numpy-quantile-interpolation",
-      ("The interpolation= argument to 'percentile' is deprecated. "
-       "Use 'method=' instead."), stacklevel=2)
-    method = interpolation
+    raise TypeError("percentile() argument interpolation was removed in JAX"
+                    " v0.8.0. Use method instead.")
   return quantile(a, q / 100, axis=axis, out=out, overwrite_input=overwrite_input,
                   method=method, keepdims=keepdims)
 
@@ -2665,7 +2653,7 @@ def percentile(a: ArrayLike, q: ArrayLike,
 def nanpercentile(a: ArrayLike, q: ArrayLike,
                   axis: int | tuple[int, ...] | None = None,
                   out: None = None, overwrite_input: bool = False, method: str = "linear",
-                  keepdims: bool = False, *, interpolation: str | DeprecatedArg = DeprecatedArg()) -> Array:
+                  keepdims: bool = False, *, interpolation: DeprecatedArg = DeprecatedArg()) -> Array:
   """Compute the percentile of the data along the specified axis, ignoring NaN values.
 
   JAX implementation of :func:`numpy.nanpercentile`.
@@ -2682,8 +2670,6 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
       default is ``linear``.
     keepdims: if True, then the returned array will have the same number of
       dimensions as the input. Default is False.
-    interpolation: deprecated alias of the ``method`` argument. Will result
-      in a :class:`DeprecationWarning` if used.
 
   Returns:
     An array containing the specified percentiles along the specified axes.
@@ -2710,12 +2696,10 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
   a, q = ensure_arraylike("nanpercentile", a, q)
   q, = promote_dtypes_inexact(q)
   q = q / 100
+  # TODO(jakevdp): remove the interpolation argument in JAX v0.9.0
   if not isinstance(interpolation, DeprecatedArg):
-    deprecations.warn(
-      "jax-numpy-quantile-interpolation",
-      ("The interpolation= argument to 'nanpercentile' is deprecated. "
-       "Use 'method=' instead."), stacklevel=2)
-    method = interpolation
+    raise TypeError("nanpercentile() argument interpolation was removed in JAX"
+                    " v0.8.0. Use method instead.")
   return nanquantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                      method=method, keepdims=keepdims)
 

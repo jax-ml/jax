@@ -34,6 +34,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {mod}`jaxlib.hlo_helpers` has been removed. Use {mod}`jax.ffi` instead.
   * The option `jax_cpu_enable_gloo_collectives` has been removed. Use
     `jax_cpu_collectives_implementation` instead.
+  * The previously-deprecated `interpolation` argument to
+    {func}`jax.numpy.percentile` and {func}`jax.numpy.quantile` has been
+    removed; use `method` instead.
 
 * Changes
   * `jax.grad` and `jax.vjp` will now round always primals to float32 if float64
