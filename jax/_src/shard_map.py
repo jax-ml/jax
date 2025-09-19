@@ -1919,7 +1919,7 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
     jitted_f = api.jit(
         _pmapped,
         donate_argnums=[i for i, val in enumerate(p.donated_invars) if val])
-    if __check or xb.process_count() > 1:
+    if __check and xb.process_count() > 1:
       flat_global_args = mhu.host_local_array_to_global_array(
           p.flat_args, mesh, list(in_specs))
     else:

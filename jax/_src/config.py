@@ -1286,7 +1286,7 @@ log_checkpoint_residuals = bool_state(
 
 pmap_shmap_merge = bool_state(
     name='jax_pmap_shmap_merge',
-    default=False,
+    default=True,
     upgrade=True,
     help='If True, pmap and shard_map API will be merged.')
 
@@ -1846,7 +1846,7 @@ traceback_filtering = enum_state(
     name = 'jax_traceback_filtering',
     enum_values=["off", "tracebackhide", "remove_frames", "quiet_remove_frames",
                  "auto"],
-    default="auto",
+    default="off",
     help="Controls how JAX filters internal frames out of tracebacks. Valid values are:\n"
          "- ``off``: disables traceback filtering.\n"
          "- ``auto``: use ``tracebackhide`` if running under a sufficiently "
