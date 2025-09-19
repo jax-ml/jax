@@ -429,6 +429,29 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertNotDeleted(x)
 
   @jtu.run_on_devices('tpu', 'cpu', 'gpu')
+  def testBufferDonationDifferentIOShapes(self):
+    mesh = jtu.create_mesh((2,), 'x')
+
+    s1 = NamedSharding(mesh, P('x'))
+    s2 = NamedSharding(mesh, P('x', None))
+    s3 = NamedSharding(mesh, P('x', None, None))
+    s4 = NamedSharding(mesh, P(None, 'x', None))
+
+    x = jax.device_put(np.arange(16), s1)
+    y = jax.device_put(np.arange(16).reshape(16, 1), s2)
+    z = jax.device_put(np.arange(16).reshape(2, 2, 4), s3)
+
+    @partial(pjit, out_shardings=(s1, s1, s4), donate_argnames=('x', 'y', 'z'))
+    def f(x, y, z):
+      return x, jnp.reshape(y, (16,)), z
+
+    lowered = f.lower(x, y, z)
+    f(x, y, z)
+    self.assertDeleted(x)
+    self.assertDeleted(y)
+    self.assertDeleted(z)
+
+  @jtu.run_on_devices('tpu', 'cpu', 'gpu')
   def testBufferDonationMixedConstrainedness(self):
     mesh = jtu.create_mesh((2,), 'x')
     s = NamedSharding(mesh, P())
@@ -4858,13 +4881,15 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   def test_wsc_aval_diff_shardings(self):
     mesh = jtu.create_mesh((1,), 'x')
-    x = jax.device_put(jnp.zeros((2,2)), NamedSharding(mesh, P()))
+    x = jax.device_put(jnp.zeros((2, 2)), NamedSharding(mesh, P()))
 
     @jax.jit
     def f(x):
       out1 = with_sharding_constraint(x, NamedSharding(mesh, P('x')))
       self.assertEqual(out1.aval.sharding.mesh, mesh.abstract_mesh)
-      out2 = with_sharding_constraint(out1, SingleDeviceSharding(jax.devices()[0]))
+      out2 = with_sharding_constraint(
+          out1, SingleDeviceSharding(jax.devices()[0])
+      )
       self.assertTrue(out2.aval.sharding.mesh.empty)
       return out2
 
@@ -8972,9 +8997,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
           padded_inputs,
           kernel,
           window_strides=(1,),
-          padding="VALID",
+          padding='VALID',
           dimension_numbers=lax.ConvDimensionNumbers(
-              (0, 2, 1), (2, 1, 0), (0, 2, 1)))
+              (0, 2, 1), (2, 1, 0), (0, 2, 1)
+          ),
+      )
 
     batch_size = 64
     seq_length = 32
@@ -8982,8 +9009,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     inputs = jax.random.normal(jax.random.key(1), (batch_size, seq_length, 1))
     inputs = jax.device_put(inputs, P('x', None, None))
 
-    out1, out2 = jax.jit(jax.grad(lambda x, y: model(x, y).sum(), argnums=(0, 1))
-                         )(kernel, inputs)
+    out1, out2 = jax.jit(
+        jax.grad(lambda x, y: model(x, y).sum(), argnums=(0, 1))
+    )(kernel, inputs)
     self.assertEqual(out1.sharding, kernel.sharding)
     self.assertEqual(out2.sharding, inputs.sharding)
 
@@ -9021,8 +9049,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2,), 'x')
   def test_device_put_typeof(self, mesh):
     array = jnp.zeros(8)
-    self.assertEqual(jax.typeof(array).sharding,
-                     NamedSharding(mesh.abstract_mesh, P(None)))
+    self.assertEqual(
+        jax.typeof(array).sharding, NamedSharding(mesh.abstract_mesh, P(None))
+    )
 
     array = jax.device_put(array, SingleDeviceSharding(jax.devices()[0]))
     self.assertTrue(jax.typeof(array).sharding.mesh.empty)

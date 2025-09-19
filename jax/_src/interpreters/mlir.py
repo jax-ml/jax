@@ -1453,6 +1453,32 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
           xla_donated_args = [False] * len(avals_in)
         xla_donated_args[input_id] = True
 
+  aliased_output_ids = {
+      res_idx for res_idx in input_output_aliases if res_idx is not None
+  }
+
+  results_not_matched = collections.defaultdict(collections.deque)
+  for res_idx, (aval, rm) in enumerate(zip(avals_out, result_memory_kinds)):
+    if res_idx not in aliased_output_ids and aval is not core.abstract_token:
+      results_not_matched[(aval.size, rm)].append(res_idx)
+
+  # For each donated argument that hasn't been aliased or donated to XLA, try to
+  # find an output array with matching size ignoring shapes and layouts. If a
+  # matching output array is found, then the argument is donated to XLA.
+  for input_idx in range(len(out_donated_args)):
+    if (
+        out_donated_args[input_idx]
+        and avals_in[input_idx] is not core.abstract_token
+    ):
+      key = (avals_in[input_idx].size, arg_memory_kinds[input_idx])
+      if results_not_matched.get(key, ()):
+        # XLA donate the argument because there's a matching output array.
+        results_not_matched[key].popleft()
+        out_donated_args[input_idx] = False
+        if xla_donated_args is None:
+          xla_donated_args = [False] * len(avals_in)
+        xla_donated_args[input_idx] = True
+
   return input_output_aliases, out_donated_args, xla_donated_args
 
 Token = ir.Value
