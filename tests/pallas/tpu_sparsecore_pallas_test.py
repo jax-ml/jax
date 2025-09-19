@@ -855,8 +855,17 @@ class ScalarSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), jnp.cumsum(x))
 
-  def test_parallel_loop(self):
+  @parameterized.product(
+      first_parallel=[False, True], second_parallel=[False, True]
+  )
+  def test_parallel_loop(self, first_parallel, second_parallel):
     x = jnp.arange(8*8).reshape(8, 8)
+
+    loop = lambda start, end, parallel, **kwargs: (
+        plsc.parallel_loop(start, end, **kwargs)
+        if parallel
+        else pl.loop(start, end, **kwargs)
+    )
 
     @plsc.kernel(
         out_shape=x,
@@ -869,9 +878,9 @@ class ScalarSubcoreTest(PallasSCTest):
     def kernel(x_ref, o_ref, tmp_ref, sem):
       pltpu.async_copy(x_ref, tmp_ref, sem).wait()
 
-      @plsc.parallel_loop(0, tmp_ref.shape[0])
+      @loop(0, tmp_ref.shape[0], first_parallel)
       def _(i):
-        @plsc.parallel_loop(0, tmp_ref.shape[1], unroll=2)
+        @loop(0, tmp_ref.shape[1], second_parallel, unroll=tmp_ref.shape[1])
         def _(j):
           tmp_ref[i, j] += 1
 

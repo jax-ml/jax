@@ -102,14 +102,19 @@ def loop(
     unroll: int | bool | None = None,
 ) -> Callable[[Callable[[jax.Array], None]], None]:
   """Returns a decorator that calls the decorated function in a loop."""
-  idx_type = jnp.result_type(lower, upper, step)
-  lower = jax.lax.convert_element_type(lower, idx_type)
-  upper = jax.lax.convert_element_type(upper, idx_type)
-  step = jax.lax.convert_element_type(step, idx_type)
+  zero: jax.typing.ArrayLike
+  if not all(map(jax_core.is_concrete, (lower, upper, step))):
+    idx_type = jnp.result_type(lower, upper, step)
+    lower = jax.lax.convert_element_type(lower, idx_type)
+    upper = jax.lax.convert_element_type(upper, idx_type)
+    step = jax.lax.convert_element_type(step, idx_type)
+    zero = jnp.array(0, dtype=idx_type)
+  else:
+    zero = 0
 
   def decorator(body):
     jax.lax.fori_loop(
-        jnp.array(0, dtype=idx_type),
+        zero,
         pl_utils.cdiv(upper - lower, step),
         lambda idx, _: body(lower + idx * step),
         init_val=None,
