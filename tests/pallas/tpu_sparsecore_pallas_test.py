@@ -834,6 +834,17 @@ class VectorSubcoreTest(PallasSCTest):
 
     _kernel()
 
+  def test_reshape(self):
+    shape = (8,)
+    dtype = jnp.int32
+
+    @vector_subcore_kernel(out_shape=jax.ShapeDtypeStruct(shape, dtype))
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...].reshape(2, 4).reshape(8)
+
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    np.testing.assert_array_equal(kernel(x), x)
+
 
 class ScalarSubcoreTest(PallasSCTest):
 

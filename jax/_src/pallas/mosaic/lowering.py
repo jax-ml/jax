@@ -2310,7 +2310,7 @@ def _convert_element_type_lowering_rule(
                    multiple_results=False)(ctx, x)
 
 
-@register_lowering_rule(lax.reshape_p)
+@register_lowering_rule(lax.reshape_p, kernel_types=[*tpu_core.KernelType])
 def _reshape_lowering_rule(ctx: LoweringRuleContext, x, new_sizes, dimensions,
                            sharding):
   if dimensions is not None:
