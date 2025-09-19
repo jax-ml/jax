@@ -589,3 +589,13 @@ def get_ref_aval_from_value(x: Any):
   if type(x) in _ref_type_aval_mappings:
     return _ref_type_aval_mappings[type(x)](x)
   return _default_value_to_ref_aval(x)
+
+# === pinned, chained LinearVals ===
+
+@dataclasses.dataclass(frozen=True)
+class AbstractLinVal(core.AbstractValue):
+  inner_aval: core.AbstractValue
+  memory_space: Any = None
+
+  shape = property(lambda self: self.inner_aval.shape)  # type: ignore
+  dtype = property(lambda self: self.inner_aval.dtype)  # type: ignore

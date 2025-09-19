@@ -44,7 +44,7 @@ from jax._src.state.discharge import (run_state, run_state_reference,
                                       discharge_state)
 from jax._src.state.primitives import (get_p, swap_p, addupdate_p,
                                        ref_addupdate, ref_get, ref_set,
-                                       ref_swap)
+                                       ref_swap, pin, unpin)
 from jax._src.state.types import (shaped_array_ref, ReadEffect, WriteEffect,
                                   AccumEffect, AbstractRef)
 
@@ -1647,6 +1647,22 @@ class RunStateHypothesisTest(jtu.JaxTestCase):
     y_ref, y_ref_t = jax.jvp(ref, (x,), (t,))
     self.assertAllClose(y, y_ref)
     self.assertAllClose(y_t, y_ref_t)
+
+
+class PinnedBuffersTest(jtu.JaxTestCase):
+
+  def test_pin_unpin_basic(self):
+    @jax.jit
+    def f(x):
+      return unpin(pin(x))
+
+    x = jnp.arange(3.)
+    txt = f.lower(x).as_text('hlo')
+    self.assertIn("Pin", txt)
+
+    if jtu.test_device_matches(['gpu']):
+      y = f(x)
+      self.assertAllClose(y, x)
 
 
 if __name__ == '__main__':
