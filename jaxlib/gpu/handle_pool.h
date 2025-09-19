@@ -98,7 +98,7 @@ HandlePool<HandleType, StreamType>::Instance() {
 template <typename HandleType, typename StreamType>
 void HandlePool<HandleType, StreamType>::Return(HandleType handle,
                                                 StreamType stream) {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   handles_[stream].push_back(handle);
 }
 
