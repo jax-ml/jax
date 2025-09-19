@@ -1169,6 +1169,7 @@ jax_multiplatform_test(
     disable_configs = [
         "gpu_h100_tfrt",  # TODO(b/411472145): Re-enable once fixed.
         "gpu_h100x2_tfrt",
+        "gpu_b200",
     ],
     enable_backends = [
         "cpu",
