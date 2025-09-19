@@ -15,7 +15,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 -->
 
 ## Unreleased
- 
+
 * Breaking changes:
 
   * JAX no longer accepts `Array` values where a `dtype` value is expected. Call
@@ -37,6 +37,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The previously-deprecated `interpolation` argument to
     {func}`jax.numpy.percentile` and {func}`jax.numpy.quantile` has been
     removed; use `method` instead.
+  * The JAX-internal `for_loop` primitive was removed. Its functionality,
+    reading from and writing to refs in the loop body, is now directly
+    supported by {func}`jax.lax.fori_loop`. If you need help updating your
+    code, please file a bug.
 
 * Changes
   * `jax.grad` and `jax.vjp` will now round always primals to float32 if float64
