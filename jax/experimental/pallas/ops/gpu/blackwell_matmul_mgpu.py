@@ -106,8 +106,7 @@ def matmul_kernel(a, b, config: TuningConfig):
     is_lead_block = cluster_idx == 0
 
     @plgpu.nd_loop((m_iters * n_iters,),
-                   collective_axes="sm",
-                   include_wave_step=True)
+                   collective_axes="sm")
     def mn_loop(idx, wave_step):  # pylint: disable=unused-variable
       (lin_idx,) = idx
       m_index, n_index = plgpu.planar_snake(
