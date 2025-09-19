@@ -78,12 +78,12 @@ def _check_prng_key(name: str, key: ArrayLike, *,
     # Call random_wrap here to surface errors for invalid keys.
     wrapped_key = prng.random_wrap(key, impl=default_prng_impl())
     wrapped = True
-    if config.legacy_prng_key.value == 'error':
+    if config.legacy_prng_key.value == config.LegacyPrngKeyState.ERROR:
       raise ValueError(
         'Legacy uint32 key array passed as key to jax.random function. '
         'Please create keys using jax.random.key(). If use of a raw key array '
         'was intended, set jax_legacy_prng_key="allow".')
-    elif config.legacy_prng_key.value == 'warn':
+    elif config.legacy_prng_key.value == config.LegacyPrngKeyState.WARN:
       warnings.warn(
         'Legacy uint32 key array passed as key to jax.random function. '
         'Please create keys using jax.random.key(). If use of a raw key array '

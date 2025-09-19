@@ -22,7 +22,7 @@ import itertools
 import logging
 import os
 import sys
-from typing import Any, Generic, NoReturn, Optional, Protocol, TypeVar, cast, TYPE_CHECKING
+from typing import Any, Generic, NoReturn, Optional, Protocol, Type, TypeVar, cast, TYPE_CHECKING
 
 from jax._src import deprecations
 from jax._src.lib import guard_lib
@@ -36,7 +36,7 @@ config_ext = xla_client._xla.config
 logger = logging.getLogger(__name__)
 
 _T = TypeVar('_T')
-
+_ET = TypeVar('_ET', bound=enum.Enum)
 
 class EffortLevel(enum.Enum):
   """Effort level enum, mirroring the XLA effort options."""
@@ -163,11 +163,14 @@ class Config:
 
     self.use_absl = True
     self.absl_flags = absl_flags
-    absl_defs = { bool: absl_flags.DEFINE_bool,
-                  int:  absl_flags.DEFINE_integer,
-                  float: absl_flags.DEFINE_float,
-                  str:  absl_flags.DEFINE_string,
-                  'enum': absl_flags.DEFINE_enum }
+    absl_defs = {
+        bool: absl_flags.DEFINE_bool,
+        int: absl_flags.DEFINE_integer,
+        float: absl_flags.DEFINE_float,
+        str: absl_flags.DEFINE_string,
+        'enum': absl_flags.DEFINE_enum,
+        'enum_class': absl_flags.DEFINE_enum_class,
+    }
 
     for name, (flag_type, meta_args, meta_kwargs) in self.meta.items():
       holder = self._value_holders[name]
@@ -280,7 +283,7 @@ class State(config_ext.Config[_T]):
 
   __slots__ = (
       '_name', '_update_thread_local_hook', '_update_global_hook',
-      '_validator', '_default_context_manager_value', '__doc__', '__name__',
+      '_parser', '_default_context_manager_value', '__doc__', '__name__',
   )
 
   def __init__(
@@ -290,11 +293,13 @@ class State(config_ext.Config[_T]):
       help,
       update_global_hook: Callable[[_T], None] | None = None,
       update_thread_local_hook: Callable[[_T | None], None] | None = None,
-      validator: Callable[[Any], None] | None = None,
+      parser: Callable[[Any], Any] | None = None,
       extra_description: str = '',
       default_context_manager_value: Any = no_default,
       include_in_jit_key: bool = False,
   ):
+    if parser is not None:
+      default = parser(default)
     super().__init__(default, include_in_jit_key)
     self._name = name
     self.__name__ = name[4:] if name.startswith('jax_') else name
@@ -302,10 +307,8 @@ class State(config_ext.Config[_T]):
                     f"{extra_description}.\n\n{help}")
     self._update_global_hook = update_global_hook
     self._update_thread_local_hook = update_thread_local_hook
-    self._validator = validator
+    self._parser = parser
     self._default_context_manager_value = default_context_manager_value
-    if self._validator:
-      self._validator(default)
     if self._update_global_hook:
       self._update_global_hook(default)
     config_states[name] = self
@@ -317,8 +320,8 @@ class State(config_ext.Config[_T]):
             type(self).__name__))
 
   def _set(self, value: _T) -> None:
-    if self._validator:
-      self._validator(value)
+    if self._parser:
+      value = self._parser(value)
     self.set_global(value)
     if self._update_global_hook:
       self._update_global_hook(value)
@@ -340,7 +343,6 @@ class StateContextManager(contextlib.ContextDecorator):
 
   def __init__(self, state, new_val):
     self.state = state
-    self.new_val = new_val
 
     if new_val is no_default:
       if state._default_context_manager_value is not no_default:
@@ -351,8 +353,10 @@ class StateContextManager(contextlib.ContextDecorator):
         raise TypeError(f"Context manager for {state.__name__} config option "
                         "requires an argument representing the new value for "
                         "the config option.")
-    if state._validator:
-      state._validator(new_val)
+    if state._parser:
+      self.new_val = state._parser(new_val)
+    else:
+      self.new_val = new_val
 
 
   def __enter__(self):
@@ -453,11 +457,16 @@ def bool_state(
     extra_description += UPGRADE_BOOL_EXTRA_DESC
   config._contextmanager_flags.add(name)
 
+  def parser(val):
+    if validator:
+      validator(val)
+    return val
+
   s = State[bool](
       name, default, help, update_global_hook=update_global_hook,
       update_thread_local_hook=update_thread_local_hook,
       extra_description=extra_description, default_context_manager_value=True,
-      validator=validator, include_in_jit_key=include_in_jit_key)
+      parser=parser, include_in_jit_key=include_in_jit_key)
   config.add_option(name, s, bool, meta_args=[], meta_kwargs={"help": help})
   setattr(Config, name, property(lambda _: s.value))
   return s
@@ -504,12 +513,13 @@ def enum_state(
     raise ValueError(f"Invalid value \"{default}\" for JAX flag {name}")
   config._contextmanager_flags.add(name)
 
-  def validator(new_val):
+  def parser(new_val):
     if type(new_val) is not str or new_val not in enum_values:
       raise ValueError(f"new enum value must be in {enum_values}, "
                        f"got {new_val} of type {type(new_val)}.")
     if extra_validator is not None:
       extra_validator(new_val)
+    return new_val
 
   s = State[str](
       name,
@@ -517,7 +527,7 @@ def enum_state(
       help,
       update_global_hook=update_global_hook,
       update_thread_local_hook=update_thread_local_hook,
-      validator=validator,
+      parser=parser,
       include_in_jit_key=include_in_jit_key,
   )
   config.add_option(
@@ -565,20 +575,96 @@ def optional_enum_state(
     raise ValueError(f"Invalid value \"{default}\" for JAX flag {name}")
   config._contextmanager_flags.add(name)
 
-  def validate(new_val):
+  def parser(new_val):
     if (new_val is not None and
       (type(new_val) is not str or new_val not in enum_values)):
       raise ValueError(f"new enum value must be None or in {enum_values}, "
                        f"got {new_val} of type {type(new_val)}.")
+    return new_val
 
   s = State['str | None'](
       name, default, help, update_global_hook, update_thread_local_hook,
-      validate, include_in_jit_key=include_in_jit_key,
+      parser, include_in_jit_key=include_in_jit_key,
   )
   config.add_option(
       name, s, 'enum',
       meta_args=[],
       meta_kwargs={"enum_values": enum_values, "help": help}
+  )
+  setattr(Config, name, property(lambda _: s.value))
+  return s
+
+
+def enum_class_state(
+    name: str,
+    enum_class: Type[_ET],
+    default: _ET,
+    help: str,
+    *,
+    update_global_hook: Callable[[_ET], None] | None = None,
+    update_thread_local_hook: Callable[[_ET | None], None] | None = None,
+    include_in_jit_key: bool = False,
+    extra_validator: Callable[[_ET], None] | None = None,
+) -> State[_ET]:
+  """Set up thread-local state and return a contextmanager for managing it.
+
+  See docstring for ``bool_state``.
+
+  Args:
+    name: string, converted to lowercase to define the name of the config
+      option (and absl flag). It is converted to uppercase to define the
+      corresponding shell environment variable.
+    enum_class: a subtype of enum.Enum.
+    default: an instance of enum_class that is the default value.
+    help: string, used to populate the flag help information as well as the
+      docstring of the returned context manager.
+    include_in_jit_key: bool, optional: whether to include the state in the
+      JIT cache key.
+    extra_validator: optional function to validate the value of the config
+      option.
+
+  Returns:
+    A contextmanager to control the thread-local state value.
+  """
+  if not isinstance(default, enum_class):
+    raise TypeError(
+        f'Default value must be of type {enum_class}, got {default} '
+        f"of type {getattr(type(default), '__name__', type(default))}"
+    )
+  name = name.lower()
+  default_str = os.getenv(name.upper(), None)
+  if default_str is not None:
+    try:
+      default = enum_class(default_str)
+    except ValueError as e:
+      raise ValueError(f"Invalid value \"{default_str}\" for JAX flag {name}") from e
+  config._contextmanager_flags.add(name)
+
+  def parser(new_val):
+    if isinstance(new_val, str):
+      return enum_class(new_val)
+    if not isinstance(new_val, enum_class):
+      raise TypeError(
+          f'new enum value must be an instance of {enum_class}, got'
+          f' {new_val} of type {type(new_val)}.'
+      )
+    if extra_validator is not None:
+      extra_validator(new_val)
+    return new_val
+
+  s = State[_ET](
+      name,
+      default,
+      help,
+      update_global_hook=update_global_hook,
+      update_thread_local_hook=update_thread_local_hook,
+      parser=parser,
+      include_in_jit_key=include_in_jit_key,
+  )
+  config.add_option(
+      name, s, 'enum_class',
+      meta_args=[],
+      meta_kwargs={"enum_class": enum_class, "help": help}
   )
   setattr(Config, name, property(lambda _: s.value))
   return s
@@ -621,15 +707,16 @@ def int_state(
       raise ValueError(f"Invalid value \"{default_env}\" for JAX flag {name}")
   config._contextmanager_flags.add(name)
 
-  def validate(new_val):
+  def parser(new_val):
     if new_val is not None and not isinstance(new_val, int):
       raise ValueError(f'new int config value must be None or of type int, '
                        f'got {new_val} of type {type(new_val)}')
     if new_val is not None and validator is not None:
       validator(new_val)
+    return new_val
 
   s = State[int](name, default, help, update_global_hook,
-                 update_thread_local_hook, validate,
+                 update_thread_local_hook, parser,
                  include_in_jit_key=include_in_jit_key)
   config.add_option(name, s, int, meta_args=[], meta_kwargs={"help": help})
   setattr(Config, name, property(lambda _: s.value))
@@ -671,14 +758,15 @@ def float_state(
       raise ValueError(f"Invalid value \"{default_env}\" for JAX flag {name}")
   config._contextmanager_flags.add(name)
 
-  def validate(new_val):
+  def parser(new_val):
     if new_val is not None and not isinstance(new_val, (float, int)):
       raise ValueError(
         f'new float config value must be None or of type float, '
         f'got {new_val} of type {type(new_val)}')
+    return new_val
 
   s = State[float](name, default, help, update_global_hook,
-                   update_thread_local_hook, validate)
+                   update_thread_local_hook, parser)
   config.add_option(name, s, float, meta_args=[], meta_kwargs={"help": help})
   setattr(Config, name, property(lambda _: s.value))
   return s
@@ -810,9 +898,14 @@ def string_or_object_state(
   default = os.getenv(name.upper(), default)
   config._contextmanager_flags.add(name)
 
+  def parser(new_val):
+    if validator is not None:
+      validator(new_val)
+    return new_val
+
   s = State[Any](
       name, default, help, update_global_hook, update_thread_local_hook,
-      validator, include_in_jit_key=include_in_jit_key)
+      parser, include_in_jit_key=include_in_jit_key)
   setattr(Config, name, property(lambda _: s.value))
   config.add_option(name, s, str, meta_args=[], meta_kwargs={"help": help})
   return s
@@ -1157,10 +1250,15 @@ safer_randint = bool_state(
     validator=_safer_randint_deprecation
 )
 
-legacy_prng_key = enum_state(
+class LegacyPrngKeyState(enum.StrEnum):
+  ALLOW = 'allow'
+  WARN = 'warn'
+  ERROR = 'error'
+
+legacy_prng_key = enum_class_state(
     name='jax_legacy_prng_key',
-    enum_values=['allow', 'warn', 'error'],
-    default='allow',
+    enum_class=LegacyPrngKeyState,
+    default=LegacyPrngKeyState.ALLOW,
     help=('Specify the behavior when raw PRNG keys are passed to '
           'jax.random APIs.')
 )
@@ -1439,10 +1537,14 @@ default_dtype_bits = enum_state(
     extra_validator=_default_dtype_bits_deprecation)
 
 
-numpy_dtype_promotion = enum_state(
+class NumpyDtypePromotion(enum.StrEnum):
+  STANDARD = 'standard'
+  STRICT = 'strict'
+
+numpy_dtype_promotion = enum_class_state(
     name='jax_numpy_dtype_promotion',
-    enum_values=['standard', 'strict'],
-    default='standard',
+    enum_class=NumpyDtypePromotion,
+    default=NumpyDtypePromotion.STANDARD,
     help=('Specify the rules used for implicit type promotion in operations '
           'between arrays. Options are "standard" or "strict"; in strict-mode, '
           'binary operations between arrays of differing strongly-specified '

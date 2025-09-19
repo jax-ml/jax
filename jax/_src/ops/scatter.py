@@ -108,7 +108,7 @@ def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
     warnings.warn(
       "scatter inputs have incompatible types: cannot safely cast value "
       f"from dtype={lax.dtype(y)} to dtype={lax.dtype(x)} with "
-      f"jax_numpy_dtype_promotion={config.numpy_dtype_promotion.value!r}. "
+      f"jax_numpy_dtype_promotion={config.numpy_dtype_promotion.value}. "
       "In future JAX releases this will result in an error.",
       FutureWarning)
 
