@@ -1930,15 +1930,21 @@ class FragmentedArray:
       new_registers = np.empty_like(self.registers)
       out_vec_ty = ir.VectorType.get((vector_len,), new_dtype)
       for idx, reg in np.ndenumerate(self.registers):
-        def upcast_i4_to_i8(reg: ir.Value):
+        def upcast_i4_to_i8(reg: ir.Value, first_valid_nibble: int = 0):
+          # When first_valid_nibble is >0, then only the nibbles in the range
+          # [first_valid_nibble, 8) will be upcast and placed in the low
+          # elements of the output vector. All high entries are undefined.
+          assert first_valid_nibble % 2 == 0
+          low_prmt = "".join(str(min(first_valid_nibble // 2 + i, 7)) for i in [5, 1, 4, 0])
+          high_prmt = "".join(str(min(first_valid_nibble // 2 + i, 7)) for i in [7, 3, 6, 2])
           # Note: (0xf0 & 0xaa) | (0xcc & ~0xaa) = 0xe4. lop3 acts as a blend.
           # Below xN means the value of nibble N, sN means that all 4 bits are
           # equal to the sign bit of nibble N, and 00 means an all 0 nibble.
           out_struct = llvm.inline_asm(
               ir.Type.parse("!llvm.struct<(i32, i32)>"),
               [reg],
-              """
-              {
+              f"""
+              {{
               .reg .b32 high_even;  // $2 is high_odd
               .reg .b32 low_odd;    // $2 is low_even
               .reg .b32 sign_even, sign_odd;
@@ -1949,9 +1955,9 @@ class FragmentedArray:
               shr.u32 low_odd, $2, 4;                                // 00x7x6x5x4x3x2x1
               lop3.b32 i8_odd, sign_odd, low_odd, 0xf0f0f0f0, 0xe4;  // s7x7s5x5s3x3s1x1
               lop3.b32 i8_even, sign_even, $2, 0xf0f0f0f0, 0xe4;     // s6x6s4x4s2x2s0x0
-              prmt.b32 $0, i8_even, i8_odd, 0x5140;                  // s3x3s2x2s1x2s0x0
-              prmt.b32 $1, i8_even, i8_odd, 0x7362;                  // s7x7s6x5s4x4s3x3
-              }
+              prmt.b32 $0, i8_even, i8_odd, 0x{low_prmt};            // s3x3s2x2s1x2s0x0
+              prmt.b32 $1, i8_even, i8_odd, 0x{high_prmt};           // s7x7s6x5s4x4s3x3
+              }}
               """,
               "=r,=r,r",
           )
@@ -1965,12 +1971,21 @@ class FragmentedArray:
         for group_size in (8, 4, 2):
           int_ty = ir.IntegerType.get_signless(group_size * 4)
           while vector_len - offset >= group_size:
-            # TODO(apaszke): Fuse slicing into the conversion here as well.
-            reg_slice = utils.vector_slice(reg, slice(offset, offset + group_size))
-            reg_slice_int = utils.bitcast(reg_slice, int_ty)
-            if int_ty != i32:
-              reg_slice_int = arith.extsi(i32, reg_slice_int)
-            reg_i8 = upcast_i4_to_i8(reg_slice_int)
+            # If the vector originates from a slice (common after relayouts), we
+            # can fuse the slicing into the conversion and reuse many
+            # preprocessing ops (shifts, prmts) accross different vectors.
+            if (isinstance(slice_op := reg.owner.opview, vector.ExtractStridedSliceOp)
+                and utils.bitwidth(slice_op.vector.type) == 32
+                and slice_op.strides[0].value == 1):
+              slice_offset = slice_op.offsets[0].value + offset
+              reg_int = utils.bitcast(slice_op.vector, i32)
+              reg_i8 = upcast_i4_to_i8(reg_int, first_valid_nibble=slice_offset)
+            else:
+              reg_slice = utils.vector_slice(reg, slice(offset, offset + group_size))
+              reg_slice_int = utils.bitcast(reg_slice, int_ty)
+              if int_ty != i32:
+                reg_slice_int = arith.extsi(i32, reg_slice_int)
+              reg_i8 = upcast_i4_to_i8(reg_slice_int)
             out_regs.append(utils.vector_slice(reg_i8, slice(group_size)))
             offset += group_size
         assert offset == vector_len
