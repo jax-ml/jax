@@ -144,6 +144,7 @@ class CustomCallBackendConfig:
   active_core_count: int | None
   input_memory_spaces: tuple[MemorySpace | None, ...] | None
   skip_device_barrier: bool
+  shape_invariant_numerics: bool
 
   def __post_init__(self):
     if self.allow_input_fusion is not None:
@@ -185,6 +186,9 @@ class CustomCallBackendConfig:
     if self.needs_layout_passes:
       config.write(b', "needs_layout_passes": ')
       config.write(str(self.needs_layout_passes).lower().encode("ascii"))
+    if self.shape_invariant_numerics:
+      config.write(b', "shape_invariant_numerics": ')
+      config.write(str(self.shape_invariant_numerics).lower().encode("ascii"))
     if self.allow_input_fusion is not None:
       config.write(b', "allow_input_fusion": [')
       for i, value in enumerate(self.allow_input_fusion):
@@ -518,6 +522,7 @@ def _lower_to_custom_call_config(
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     skip_device_barrier: bool = False,
     allow_collective_id_without_custom_barrier: bool = False,
+    shape_invariant_numerics: bool = False,
 ) -> CustomCallBackendConfig:
   device_type = _get_device_type(module)
   lowered_module_asm, (
@@ -551,6 +556,7 @@ def _lower_to_custom_call_config(
       input_memory_spaces=input_memory_spaces,
       skip_device_barrier=skip_device_barrier,
       allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
+      shape_invariant_numerics=shape_invariant_numerics,
   )
 
 
@@ -575,6 +581,7 @@ def _lowered_to_custom_call_config(
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     skip_device_barrier: bool = False,
     allow_collective_id_without_custom_barrier: bool = False,
+    shape_invariant_numerics: bool = False,
 ):
   if has_custom_barrier:
     if collective_id is None:
@@ -609,6 +616,7 @@ def _lowered_to_custom_call_config(
       active_core_count=active_core_count,
       input_memory_spaces=input_memory_spaces,
       skip_device_barrier=skip_device_barrier,
+      shape_invariant_numerics=shape_invariant_numerics,
   )
   return config
 
@@ -634,6 +642,7 @@ def lower_module_to_custom_call(
     metadata: Any | None = None,
     skip_device_barrier: bool = False,
     allow_collective_id_without_custom_barrier: bool = False,
+    shape_invariant_numerics: bool = False,
 ) -> Sequence[ir.Value]:
   config = _lower_to_custom_call_config(
       module,
@@ -650,6 +659,7 @@ def lower_module_to_custom_call(
       input_memory_spaces=input_memory_spaces,
       skip_device_barrier=skip_device_barrier,
       allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
+      shape_invariant_numerics=shape_invariant_numerics,
   )
   return _tpu_custom_call_lowering(
       ctx,
@@ -680,6 +690,7 @@ def as_tpu_kernel(
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     disable_bounds_checks: bool = False,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
+    shape_invariant_numerics: bool = False,
     metadata: Any | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
@@ -695,6 +706,7 @@ def as_tpu_kernel(
       output_memory_spaces=output_memory_spaces,
       disable_bounds_checks=disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
+      shape_invariant_numerics=shape_invariant_numerics,
   )
   return _as_jax_callable(
       config,
