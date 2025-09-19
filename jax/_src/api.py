@@ -1120,7 +1120,7 @@ def vmap(fun: F,
     if config.mutable_array_checks.value:
       avals = [None if d is None or batching.is_vmappable(x) else core.typeof(x)
                for x, d in zip(args_flat, in_axes_flat)]
-      api_util._check_no_aliased_ref_args(dbg, avals, args_flat)
+      api_util.check_no_aliased_ref_args(lambda: dbg, avals, args_flat)
 
     axis_size_ = (axis_size if axis_size is not None else
                   _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))

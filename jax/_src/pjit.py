@@ -48,7 +48,7 @@ from jax._src.core import typeof, cur_qdd
 from jax._src.api_util import (
   argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
   donation_vector, check_callable, resolve_argnums,
-  argnames_partial_except, debug_info, _check_no_aliased_ref_args,
+  argnames_partial_except, debug_info, check_no_aliased_ref_args,
   _check_no_aliased_closed_over_refs)
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
@@ -636,23 +636,24 @@ def _infer_params_internal(
     fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
   ) -> tuple[PjitParams, list[Any]]:
   ctx_mesh = mesh_lib.get_concrete_mesh()
-  dbg = debug_info(
+  dbg_fn = lambda: debug_info(
       'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
       static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,
       signature=ji.fun_signature)
 
   if config.dynamic_shapes.value:  # don't use the cache
-    p, args_flat = _infer_params_impl(fun, ji, ctx_mesh, dbg,
+    p, args_flat = _infer_params_impl(fun, ji, ctx_mesh, dbg_fn(),
                                       args, kwargs, in_avals=None)
     return p, p.consts + args_flat
 
   signature, dynargs = jax_jit.parse_arguments(
       args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
       ji.static_argnames, tree_util.default_registry)
-  avals = _infer_input_type(fun, dbg, dynargs)
+  avals = _infer_input_type(fun, dbg_fn, dynargs)
   entry = _infer_params_cached(fun, ji, signature, avals, ctx_mesh)
 
   if entry.pjit_params is None:
+    dbg = dbg_fn()
     p, args_flat = _infer_params_impl(
         fun, ji, ctx_mesh, dbg, args, kwargs, in_avals=avals)
     if p.params['jaxpr'].jaxpr.is_high:
@@ -660,19 +661,21 @@ def _infer_params_internal(
     entry.pjit_params = p
   return entry.pjit_params, entry.pjit_params.consts + dynargs
 
-def _infer_input_type(fun: Callable, dbg: core.DebugInfo,
+def _infer_input_type(fun: Callable, dbg_fn: Callable[[], core.DebugInfo],
                       explicit_args) -> tuple[core.AbstractValue, ...]:
   avals = []
   try:
     for i, x in enumerate(explicit_args):
       avals.append(core.shaped_abstractify(x))
   except OverflowError:
+    dbg = dbg_fn()
     arg_path = f"argument path is {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'}"  # pytype: disable=name-error
     raise OverflowError(
       "An overflow was encountered while parsing an argument to a jitted "
       f"computation, whose {arg_path}."
     ) from None
   except TypeError:
+    dbg = dbg_fn()
     arg_description = f"path {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'}"  # pytype: disable=name-error
     raise TypeError(
       f"Error interpreting argument to {fun} as an abstract array."
@@ -683,7 +686,7 @@ def _infer_input_type(fun: Callable, dbg: core.DebugInfo,
       " static_argnums or static_argnames parameters of jax.jit."
     ) from None
   if config.mutable_array_checks.value:
-    _check_no_aliased_ref_args(dbg, avals, explicit_args)
+    check_no_aliased_ref_args(dbg_fn, avals, explicit_args)
   return tuple(avals)
 
 def _extract_implicit_args(

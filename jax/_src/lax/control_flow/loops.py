@@ -37,7 +37,7 @@ from jax._src import source_info_util
 from jax._src import state
 from jax._src import util
 from jax._src.api_util import (
-    _check_no_aliased_ref_args, _check_no_aliased_closed_over_refs)
+    check_no_aliased_ref_args, _check_no_aliased_closed_over_refs)
 from jax._src.core import ShapedArray, typeof, cur_qdd, ClosedJaxpr
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -273,7 +273,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   if config.mutable_array_checks.value:
     in_flat, in_tree = tree_flatten((init, xs))
     in_avals = tuple(_map(core.get_aval, in_flat))
-    _check_no_aliased_ref_args(dbg_body, in_avals, in_flat)
+    check_no_aliased_ref_args(lambda: dbg_body, in_avals, in_flat)
 
   def _create_jaxpr(init):
     init_flat, init_tree = tree_flatten(init)

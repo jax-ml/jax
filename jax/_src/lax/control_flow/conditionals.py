@@ -147,7 +147,7 @@ def _switch_internal(
   ops_avals = tuple(map(core.get_aval, ops))
 
   if config.mutable_array_checks.value:
-    api_util._check_no_aliased_ref_args(dbgs[0], ops_avals, ops)
+    api_util.check_no_aliased_ref_args(lambda: dbgs[0], ops_avals, ops)
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
       branches, ops_tree, ops_avals, dbgs)
@@ -268,7 +268,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
 
   dbg_true_fun = api_util.debug_info("cond", true_fun, operands, {})
   if config.mutable_array_checks.value:
-    api_util._check_no_aliased_ref_args(dbg_true_fun, ops_avals, ops)
+    api_util.check_no_aliased_ref_args(lambda: dbg_true_fun, ops_avals, ops)
   dbg_false_fun = api_util.debug_info("cond", false_fun, operands, {})
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
       (true_fun, false_fun), ops_tree, ops_avals,
