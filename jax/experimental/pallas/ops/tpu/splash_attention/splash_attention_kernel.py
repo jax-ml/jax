@@ -742,7 +742,7 @@ def flash_attention_kernel(
   def init():
     o_scratch_ref[...] = jnp.zeros_like(o_scratch_ref)
     if sinks_ref is not None:
-      sinks = sinks_ref[h].astype(m_scratch_ref.dtype)
+      sinks = sinks_ref[0, h].astype(m_scratch_ref.dtype)
       # initialize `max = sinks`, so `exp(sinks - max = 0) = 1`
       m_scratch_ref[...] = sinks * jnp.ones_like(m_scratch_ref)
       l_scratch_ref[...] = jnp.ones_like(l_scratch_ref)
@@ -1064,9 +1064,13 @@ def _splash_attention_forward(
 
   if sinks is not None:
     assert sinks.shape == (num_q_heads,)
-    in_specs += [pl.BlockSpec((num_q_heads,), lambda h, i, j, *_: (0,),
-                              memory_space=pltpu.SMEM)]
-    sinks = sinks.astype(jnp.float32)
+    # align sinks to sublanes to allow vmap and shard_map over the kernel
+    in_specs += [
+        pl.BlockSpec((NUM_SUBLANES, num_q_heads), lambda h, i, j, *_: (0, 0),
+                     memory_space=pltpu.SMEM)
+    ]
+    sinks = jnp.broadcast_to(sinks.astype(jnp.float32)[None, :],
+                             (NUM_SUBLANES, num_q_heads))
   else:
     in_specs += [None]
 
@@ -1546,9 +1550,13 @@ def _splash_attention_bwd_dq(
 
   if sinks is not None:
     assert sinks.shape == (num_q_heads,)
-    sinks_spec = pl.BlockSpec((num_q_heads,), lambda h, *_: (0,),
-                              memory_space=pltpu.SMEM)
-    sinks = sinks.astype(jnp.float32)
+    # align sinks to sublanes to allow vmap and shard_map over the kernel
+    sinks_spec = pl.BlockSpec(
+        (NUM_SUBLANES, num_q_heads), lambda h, i, j, *_: (0, 0),
+        memory_space=pltpu.SMEM
+    )
+    sinks = jnp.broadcast_to(sinks.astype(jnp.float32)[None, :],
+                             (NUM_SUBLANES, num_q_heads))
   else:
     sinks_spec = None
 
@@ -2071,9 +2079,13 @@ def _splash_attention_bwd_dkv(
 
   if sinks is not None:
     assert sinks.shape == (num_q_heads,)
-    sinks_spec = pl.BlockSpec((num_q_heads,), lambda kv_index, h, *_: (0,),
-                              memory_space=pltpu.SMEM)
-    sinks = sinks.astype(jnp.float32)
+    # align sinks to sublanes to allow vmap and shard_map over the kernel
+    sinks_spec = pl.BlockSpec(
+        (NUM_SUBLANES, num_q_heads), lambda h, i, j, *_: (0, 0),
+        memory_space=pltpu.SMEM
+    )
+    sinks = jnp.broadcast_to(sinks.astype(jnp.float32)[None, :],
+                             (NUM_SUBLANES, num_q_heads))
   else:
     sinks_spec = None
 
