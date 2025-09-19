@@ -7946,8 +7946,35 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     f(arr)  # doesn't crash
     jax.jit(f)(arr)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_unreduced_einsum_basic(self, mesh):
+    np_inp = np.arange(4).reshape(2, 2)
+    x = jax.device_put(np_inp, P(None, 'x'))
+    y = jax.device_put(np_inp, P('x', None))
+
+    @jax.jit
+    def f(x, y):
+      out = jnp.einsum('ab,bc->ac', x, y,
+                       out_sharding=P(None, None, unreduced={'x'}))
+      self.assertEqual(out.aval.sharding.spec, P(None, None, unreduced={'x'}))
+      return out
+
+    out = f(x, y)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+    self.assertEqual(out.shape, (2, 2))
+    self.assertEqual(out.sharding.shard_shape(out.shape), (2, 2))
+
+    expected_shards = [np.array([[0, 0], [0, 2]]), np.array([[2, 3], [6, 9]])]
+    for s, es in zip(out.addressable_shards, expected_shards):
+      self.assertEqual(s.data.shape, (2, 2))
+      self.assertArraysEqual(s.data, es)
+
+    reshard_out = reshard(out, P(None, None))
+    self.assertArraysEqual(reshard_out, np_inp @ np_inp)
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_unreduced_basic(self, mesh):
+  def test_unreduced_einsum_add_basic(self, mesh):
     np_inp = np.arange(16.).reshape(8, 2)
     x = jax.device_put(np_inp, P('x', 'y'))
     y = jax.device_put(np_inp.T, P('y', None))
