@@ -107,6 +107,7 @@ class BufferedRef:
         self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
         self.smem_ref.at[slot],  # pytype: disable=unsupported-operands
         barrier_ref.at[barrier_slot if barrier_slot is not None else slot],
+        collective_axes=getattr(self.spec, "collective_axes", ()),
     )
 
   def copy_out(self, slot, grid_indices, predicate=None):
@@ -238,6 +239,14 @@ def emit_pipeline(
 
   in_specs = tuple(map(_downcast_spec, in_specs))
   out_specs = tuple(map(_downcast_spec, out_specs))
+  for spec in in_specs:
+    if spec.collective_axes:
+      raise NotImplementedError(
+          "BlockSpecs with collective_axes are not supported in emit_pipeline"
+      )
+  for spec in out_specs:
+    if spec.collective_axes:
+      raise ValueError("Output BlockSpecs cannot have collective_axes")
   # TODO(justinfu): Factor out common code between warp-specialized and
   # normal pipelines.
   delay_release_levels = sorted({s.delay_release for s in in_specs}) or [0]
@@ -583,7 +592,21 @@ def emit_pipeline_warp_specialized(
     out_specs = tuple(out_specs)
 
   flat_in_specs, in_specs_treedef = jax.tree.flatten(in_specs)
+  flat_in_specs = tuple(map(_downcast_spec, flat_in_specs))
+  for spec in flat_in_specs:
+    if len(spec.collective_axes) > 1:
+      raise ValueError(
+          "Only a single collective axis supported in input BlockSpecs, but"
+          f" got {spec.collective_axes}"
+      )
+  collective_axes = tuple(frozenset(
+      a for spec in flat_in_specs for a in spec.collective_axes
+  ))
   flat_out_specs, out_specs_treedef = jax.tree.flatten(out_specs)
+  flat_out_specs = tuple(map(_downcast_spec, flat_out_specs))
+  for spec in flat_out_specs:
+    if spec.collective_axes:
+      raise ValueError("Output BlockSpecs cannot have collective_axes")
   delay_release = None
   for in_spec in in_specs:
     if not isinstance(in_spec, gpu_core.BlockSpec):
@@ -670,10 +693,17 @@ def emit_pipeline_warp_specialized(
         smem_allocs, [len(flat_in_specs)])
     in_smem_barrier = gpu_core.Barrier(num_arrivals=len(flat_in_specs), num_barriers=max_concurrent_steps)
     flat_consumed_barriers = []
+    consumed_barrier_type: Any
+    if collective_axes:
+      consumed_barrier_type = functools.partial(
+          gpu_core.ClusterBarrier, collective_axes=collective_axes  # type: ignore
+      )
+    else:
+      consumed_barrier_type = gpu_core.Barrier
     for _ in flat_in_specs:
       if manual_consumed_barriers:
         flat_consumed_barriers.append(
-            gpu_core.Barrier(
+            consumed_barrier_type(
                 num_arrivals=num_compute_wgs,
                 num_barriers=max_concurrent_steps,
             )
@@ -682,7 +712,7 @@ def emit_pipeline_warp_specialized(
       # We only allocated one consumed barrier for all inputs when using
       # automatic consumed barriers.
       flat_consumed_barriers = [
-          gpu_core.Barrier(
+          consumed_barrier_type(
               num_arrivals=num_compute_wgs,
               num_barriers=max_concurrent_steps,
           )

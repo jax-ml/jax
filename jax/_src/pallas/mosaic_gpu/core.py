@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import abc
 import collections
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Hashable, Iterable, Sequence
 import dataclasses
 import enum
 import functools
@@ -928,16 +928,23 @@ class UnswizzleRef(state_types.Transform):
 
 @dataclasses.dataclass
 class BlockSpec(pallas_core.BlockSpec):
-  """A GPU-specific `BlockSpec`.
+  r"""A GPU-specific ``BlockSpec``.
 
   Attributes:
     transforms: A sequence of transforms that will be applied to the
       reference.
     delay_release: used during pipelining to delay the release of
       resources of a slot after it is used in the computation.
+    collective_axes: When set, all blocks along the specified axes must execute
+      the same sequence of pipeline operations (with the only exception being
+      the index_map in non-collective ``BlockSpec``\ s), and all of them must
+      return the same block from the index_map for this operand. This enables
+      the pipelining helpers to use collective async copies, which can improve
+      performance.
   """
   transforms: Sequence[MemoryRefTransform] = ()
   delay_release: int = 0
+  collective_axes: tuple[Hashable, ...] = ()
 
   def to_block_mapping(
       self,
@@ -950,6 +957,11 @@ class BlockSpec(pallas_core.BlockSpec):
       vmapped_dims: tuple[int, ...],
       debug: bool = False,
   ) -> pallas_core.BlockMapping:
+    if self.collective_axes:
+      raise ValueError(
+          "collective_axes is not supported in pallas_call. Use plgpu.kernel"
+          " with plgpu.emit_pipeline_warp_specialized instead."
+      )
     bm = super().to_block_mapping(
         origin,
         array_aval,
