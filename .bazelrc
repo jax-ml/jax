@@ -420,6 +420,9 @@ build:rbe_linux_x86_64_cuda_common --config=rbe_linux_x86_64_base
 build:rbe_linux_x86_64_cuda_common --repo_env=REMOTE_GPU_TESTING=1
 # Speed up CUDA repos creation by downloading ".tar" dists from the mirror.
 build:rbe_linux_x86_64_cuda_common --config=use_tar_archive_files
+# Enable forward compatibility for CUDA builds because RBE docker image doesn't
+# have latest CUDA drivers installed.
+build:rbe_linux_x86_64_cuda_common --@cuda_driver//:enable_forward_compatibility=true
 
 build:rbe_linux_x86_64_cuda12 --config=rbe_linux_x86_64_cuda_common
 build:rbe_linux_x86_64_cuda12 --config=ci_linux_x86_64_cuda12
