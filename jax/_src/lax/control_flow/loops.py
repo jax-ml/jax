@@ -111,6 +111,7 @@ X = TypeVar('X')
 Y = TypeVar('Y')
 
 @api_boundary
+@partial(core.jax_boundary, api_name="jax.lax.scan")
 def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
          init: Carry,
          xs: X | None = None,
@@ -1609,6 +1610,8 @@ def _move_right(lst, to_move):
 ### while_loop
 
 @api_boundary
+@partial(core.jax_boundary, api_name="jax.lax.while_loop",
+         func_argnums=(0, 1))
 def while_loop(cond_fun: Callable[[T], BooleanNumeric],
                body_fun: Callable[[T], T],
                init_val: T) -> T:

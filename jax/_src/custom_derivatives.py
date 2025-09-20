@@ -138,6 +138,8 @@ class custom_jvp(Generic[ReturnValue]):
   jvp: Callable[..., tuple[ReturnValue, ReturnValue]] | None = None
   symbolic_zeros: bool = False
 
+  @partial(core.jax_boundary, api_name="jax.custom_jvp",
+           api_constructor=True, func_argnums=(1,))
   def __init__(self,
                fun: Callable[..., ReturnValue],
                nondiff_argnums: Sequence[int] = (),
@@ -162,6 +164,8 @@ class custom_jvp(Generic[ReturnValue]):
 
   __getattr__ = custom_api_util.forward_attr
 
+  @partial(core.jax_boundary, api_name="jax_defjvp",
+           func_argnums=(1,))
   def defjvp(self,
              jvp: Callable[..., tuple[ReturnValue, ReturnValue]],
              symbolic_zeros: bool = False,
@@ -214,6 +218,7 @@ class custom_jvp(Generic[ReturnValue]):
     self.symbolic_zeros = symbolic_zeros
     return jvp
 
+  @partial(core.jax_boundary, api_name="jax_defjvps")
   def defjvps(self, *jvps: Callable[..., ReturnValue] | None) -> None:
     """Convenience wrapper for defining JVPs for each argument separately.
 
@@ -257,6 +262,8 @@ class custom_jvp(Generic[ReturnValue]):
     self.defjvp(jvp)
 
   @traceback_util.api_boundary
+  @partial(core.jax_boundary, api_name="jax_call_custom_jvp",
+           func_argnums=())
   def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
     debug = debug_info("custom_jvp fun", self.fun, args, kwargs,
                        static_argnums=self.nondiff_argnums)
@@ -559,7 +566,8 @@ class custom_vjp(Generic[ReturnValue]):
 
   .. _tutorial: https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
   """
-
+  @partial(core.jax_boundary, api_name="jax.custom_vjp", api_constructor=True,
+           func_argnums=(1,))
   def __init__(self,
                fun: Callable[..., ReturnValue],
                nondiff_argnums: Sequence[int] = (),
@@ -587,6 +595,8 @@ class custom_vjp(Generic[ReturnValue]):
 
   __getattr__ = custom_api_util.forward_attr
 
+  @partial(core.jax_boundary, api_name="jax_defvjp",
+           func_argnums=(1, 2))
   def defvjp(self,
              fwd: Callable[..., tuple[ReturnValue, Any]],
              bwd: Callable[..., tuple[Any, ...]],
@@ -686,6 +696,8 @@ class custom_vjp(Generic[ReturnValue]):
           "remat optimization for custom_vjp does not support symbolic zeros")
 
   @traceback_util.api_boundary
+  @partial(core.jax_boundary, api_name="jax_call_custom_vjp",
+           func_argnums=())
   def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
     debug_fun = debug_info("custom_vjp fun", self.fun, args, kwargs,
                            static_argnums=self.nondiff_argnums)

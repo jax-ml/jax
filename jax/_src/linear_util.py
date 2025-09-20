@@ -316,6 +316,10 @@ class DebugInfo(NamedTuple):
   number of elements in `result_paths`.
   """
 
+  static_argnums: tuple[int, ...] = ()
+  static_argnames: tuple[str, ...] = ()
+
+
   def resolve_result_paths(self) -> DebugInfo:
     """Return a debug info with resolved result paths."""
     assert self.result_paths is not initial_result_paths
@@ -495,6 +499,9 @@ def cache(call: Callable, *,
     cache = fun_caches.setdefault(fun.f, new_cache := {})  # type: ignore
     key = (fun.transforms, fun.params, fun.in_type, args, config.trace_context())
     result = cache.get(key, None)
+    if config.repro_dir.value and explain:
+      # Force cache miss when we are building repros
+      result = None
     if result is not None:
       ans, stores = result
       fun.populate_stores(stores)

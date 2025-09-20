@@ -190,7 +190,8 @@ def _get_fastpath_data(
     abstracted_axes, pgle_profiler, const_args: Sequence[ArrayLike]
     ) -> pxla.MeshExecutableFastpathData | None:
   out_reflattened, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
-
+  if config.repro_dir.value:
+    return None
   use_fastpath = (
       executable is not None
       and isinstance(executable, pxla.MeshExecutable)
@@ -652,7 +653,7 @@ def _infer_params_internal(
   avals = _infer_input_type(fun, dbg_fn, dynargs)
   entry = _infer_params_cached(fun, ji, signature, avals, ctx_mesh)
 
-  if entry.pjit_params is None:
+  if entry.pjit_params is None or config.repro_dir.value:
     dbg = dbg_fn()
     p, args_flat = _infer_params_impl(
         fun, ji, ctx_mesh, dbg, args, kwargs, in_avals=avals)

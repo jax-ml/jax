@@ -621,7 +621,8 @@ def debug_info(
     signature = fun_signature(fun)
   arg_names = _non_static_arg_names(signature, args, kwargs, static_argnums,
                                     static_argnames)
-  return core.DebugInfo(traced_for, sourceinfo, arg_names, result_paths_thunk)
+  return core.DebugInfo(traced_for, sourceinfo, arg_names, result_paths_thunk,
+                        static_argnums, static_argnames)
 
 
 def fun_signature(fun: Callable) -> inspect.Signature | None:

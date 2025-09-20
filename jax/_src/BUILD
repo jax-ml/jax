@@ -521,6 +521,7 @@ pytype_strict_library(
         ":named_sharding",
         ":partition_spec",
         ":pretty_printer",
+        ":repro",
         ":sharding",
         ":source_info_util",
         ":traceback_util",
@@ -1357,6 +1358,39 @@ pytype_strict_library(
         ":traceback_util",
         "//jax/_src/lib",
     ],
+)
+
+pytype_strict_library(
+    name = "repro",
+    srcs = [
+        "repro.py",
+    ],
+    visibility = ["//third_party/py/jax:internal"] + jax_visibility("repro"),
+    deps = [
+        ":config",
+        ":dtypes",
+        ":literals",
+        ":path",
+        ":source_info_util",
+        ":traceback_util",
+        "//third_party/py/jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "repro_runtime",
+    srcs = [
+        "repro_runtime.py",
+    ],
+    visibility = ["//third_party/py/jax:internal"] + jax_visibility("repro_runtime"),
+    deps = [
+        ":lax",
+        ":path",
+        ":repro",
+        ":source_info_util",
+        ":traceback_util",
+        "//third_party/py/jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
