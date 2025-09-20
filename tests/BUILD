@@ -1089,6 +1089,9 @@ jax_multiplatform_test(
             "noasan",  # Times out under asan.
         ],
     },
+    disable_configs = [
+        "gpu_b200",  # TODO(b/444050002): NVML version problem in CI.
+    ],
     enable_configs = [
         "gpu_v100",
         "tpu_v3_x4",
@@ -1421,6 +1424,9 @@ jax_multiplatform_test(
         "gpu": ["--jax_num_generated_cases=40"],
         "tpu": ["--jax_num_generated_cases=40"],
     },
+    disable_configs = [
+        "gpu_b200",  # Times out
+    ],
     minimal_shard_count = {
         "tpu": 8,
     },
