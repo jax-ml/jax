@@ -1172,6 +1172,8 @@ class IOCallbackTest(jtu.JaxTestCase):
     self.assertEqual(_mut, 8)
 
   def test_cannot_call_ordered_io_in_pmap(self):
+    if config.pmap_shmap_merge.value:
+      self.skipTest("Test does not raise under pmap_shmap_merge=True")
     def f(x):
       return io_callback(
           lambda x: x, jax.ShapeDtypeStruct((), jnp.int32), x, ordered=True)

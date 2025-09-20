@@ -26,16 +26,14 @@ import math
 
 from absl import logging
 from absl.testing import absltest
-
-import numpy as np
-
 import jax
 from jax import export
 from jax import lax
+from jax import random
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import test_harnesses
-from jax import random
+import numpy as np
 
 
 class PrimitiveTest(jtu.JaxTestCase):
@@ -104,6 +102,7 @@ class PrimitiveTest(jtu.JaxTestCase):
   def export_and_compare_to_native(
       self, func_jax: Callable,
       *args: jax.Array,
+      is_pmap: bool = False,
       unimplemented_platforms: set[str] = set(),
       skip_run_on_platforms: set[str] = set(),
       tol: float | None = None):
@@ -116,7 +115,7 @@ class PrimitiveTest(jtu.JaxTestCase):
     # lowering_platforms uses "cuda" or "rocm" instead of "gpu"
     gpu_platform = "cuda"
     if jtu.is_device_rocm():
-        gpu_platform = "rocm"
+      gpu_platform = "rocm"
     lowering_platforms: list[str] = [
         p if p != "gpu" else gpu_platform
         for p in ("cpu", "gpu", "tpu")
@@ -128,11 +127,23 @@ class PrimitiveTest(jtu.JaxTestCase):
           "Harness is uninteresting with fewer than 2 platforms"
       )
 
+    fn = func_jax
+    # NOTE(dsuo): There are two issues with `shard_map.pmap` under `jit`:
+    # 1. `shard_map.pmap`'s default devices may be different from the devices
+    #    where args live.
+    # 2. `shard_map.pmap` sets its mesh when the pmap is constructed. In this
+    #    test, we subsequently change which devices the args are put on.
+    # In both cases, we get a `stages.DeviceAssignmentMismatchError`.
+    if is_pmap:
+      fn = jax.pmap(func_jax, axis_name="i")
     logging.info("Exporting harness for %s", lowering_platforms)
-    exp = export.export(jax.jit(func_jax),
+    exp = export.export(jax.jit(fn),
                         platforms=lowering_platforms)(*args)
 
     for device in devices:
+      logging.info("Exporting harness for %s", device)
+      if is_pmap:
+        fn = jax.pmap(func_jax, axis_name="i", devices=[device])
       if device.platform in skip_run_on_platforms:
         logging.info("Skipping running on %s", device)
         continue
@@ -140,7 +151,7 @@ class PrimitiveTest(jtu.JaxTestCase):
           lambda x: jax.device_put(x, device), args
       )
       logging.info("Running harness natively on %s", device)
-      native_res = jax.jit(func_jax)(*device_args)
+      native_res = jax.jit(fn)(*device_args)
       logging.info("Running exported harness on %s", device)
       exported_res = exp.call(*device_args)
       if tol is not None:
@@ -149,13 +160,10 @@ class PrimitiveTest(jtu.JaxTestCase):
       # TODO(necula): Check HLO equivalence for the ultimate test.
 
   def test_psum_scatter(self):
-    f = jax.jit(jax.pmap(lambda x: lax.psum_scatter(x, 'i'),
-                         axis_name='i',
-                         devices=jax.devices()[:1]))
-
     shape = (1, 1, 8)
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
-    self.export_and_compare_to_native(f, x)
+    f = lambda x: lax.psum_scatter(x, "i")
+    self.export_and_compare_to_native(f, x, is_pmap=True)
 
   # The lowering rule for all_gather has special cases for bool.
   @jtu.parameterized_filterable(
@@ -164,15 +172,12 @@ class PrimitiveTest(jtu.JaxTestCase):
       for dtype in [np.bool_, np.float32]],
   )
   def test_all_gather(self, *, dtype):
-    f = jax.jit(jax.pmap(lambda x: lax.all_gather(x, 'i'),
-                         axis_name='i',
-                         devices=jax.devices()[:1]))
-
+    f = lambda x: lax.all_gather(x, axis_name='i')
     shape = (1, 4)
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     if dtype == np.bool_:
       x = (x % 2).astype(np.bool_)
-    self.export_and_compare_to_native(f, x)
+    self.export_and_compare_to_native(f, x, is_pmap=True)
 
   def test_random_with_threefry_gpu_kernel_lowering(self):
     # On GPU we use a custom call for threefry2x32
