@@ -18,6 +18,7 @@ from __future__ import annotations
 from functools import partial, lru_cache
 import zlib
 
+import contextlib
 from typing import Any
 import jax
 import jax.numpy as jnp
@@ -494,15 +495,56 @@ def _gtl_lowering(ctx, x, *, global_mesh, pspec):
 mlir.register_lowering(global_array_to_host_local_array_p, _gtl_lowering)
 
 
-def live_devices(devices: list[xla_client.Device]) -> list[xla_client.Device]:
-  """Returns the subset of the provided devices that are live and healthy.
+def _live_devices(devices: list[xla_client.Device]) -> dict[xla_client.Device, int]:
+  """Returns the subset of the provided devices that are live and healthy."""
+  process_ids = {d.process_index for d in devices}
+  if xla_bridge.process_index() not in process_ids:
+    # A process can only participate in an live_devices call if it hosts some of
+    # the provided devices.
+    raise ValueError('Provided devices do not have any local devices.')
 
-  This API is under active development and is not stable.
+  client = distributed.global_state.client
+  live_process_ids = client.get_live_nodes(list(process_ids))
+  return {
+      d: live_process_ids[d.process_index]
+      for d in devices
+      if d.process_index in live_process_ids
+  }
 
-  `live_devices` is a low-level fault tolerance primitive that can be used to
-  implement fault tolerant multi-process JAX programs.
 
-  Barrier Semantics
+class _LiveDevices:
+  """A context manager for atomically running code on the set of live devices.
+
+  THIS API IS UNDER ACTIVE DEVELOPMENT AND IS NOT STABLE.
+
+  # Overview
+
+  `live_devices` is a low-level primitive that can be used to make
+  multi-controller JAX programs fault tolerant. A multi-controller JAX program
+  runs across many devices, and the machines that host these devices might fail.
+  `live_devices` is a context manager that yields the current set of healthy
+  devices, allowing you to run JAX code on the healthy devices while ignoring
+  the failed ones.
+
+  Concretely, `live_devices` is a context manager. You provide it the set of
+  devices you are interested in, and it yields the subset of these devices that
+  are live. In the body of the `with` statement, you can execute arbitrary JAX
+  code using the set of live devices.
+
+  # Example Usage
+
+      try:
+        with jax.live_devices(jax.devices()) as devices:
+          # Run JAX code here with devices.
+          pass
+      except:
+        # A device died while executing the with statement above.
+        pass
+      else:
+        # The with statement executed successfully.
+        pass
+
+  # Barrier Semantics
 
   It's important that every process agrees on which devices are live to avoid
   the processes' behavior from diverging. For example, imagine a set of
@@ -510,19 +552,19 @@ def live_devices(devices: list[xla_client.Device]) -> list[xla_client.Device]:
   should be participating in the AllGather. This is buggy.
 
   To ensure that every process agrees on the set of live devices, the
-  `live_devices` function has barrier-like semantics. Consider an invocation
-  `live_devices(devices)` where `devices` includes devices across a set of
-  processes P. The invocation acts as a barrier, waiting for every process in P
-  to call `live_devices(devices)`. Afterwards, `live_devices` returns the same
-  set of live devices `A` to all the processes in P. This ensures that every
-  process agrees on the set of live devices.
+  `live_devices` context manager has barrier-like semantics. Consider an
+  invocation `with live_devices(devices)` where `devices` includes devices
+  across a set of processes P. The invocation acts as a barrier, waiting for
+  every process in P to call `with live_devices(devices)`. Afterwards,
+  `live_devices` returns the same set of live devices `A` to all the processes
+  in P. This ensures that every process agrees on the set of live devices.
 
   `live_devices` does not actually act as a barrier for *every* process in P
   because some processes in P might have failed. Instead, the `live_devices`
   function waits only for the processes with a device in the returned set of
   live devices A.
 
-  An Example
+  # An Example
 
   Imagine we have four processes, each with two devices:
 
@@ -531,11 +573,39 @@ def live_devices(devices: list[xla_client.Device]) -> list[xla_client.Device]:
     Process C: Devices 5 and 6
     Process D: Devices 7 and 8
 
-  Further imagine that process D fails and that every process calls
-  `live_devices(jax.devices())`. The invocation returns devices 1, 2, 3, 4, 5,
+  Further imagine that process D fails and that every process calls `with
+  live_devices(jax.devices())`. The invocation returns devices 1, 2, 3, 4, 5,
   and 6. Because these devices are hosted by processes A, B, and C, the call to
   `live_devices` acts as a barrier across processes A, B, and C. Process D,
   which failed, is ignored.
+
+  # Atomicity
+
+  `live_devices` also provides the following transaction-like atomicity
+  property. When a process exits the body of a `with jax.live_devices(...) as
+  devices:` block, there are two possibilities.
+
+    1. All processes in `devices` successfully executed all code in the block
+       without any exceptions being raised.
+    2. All processes in `devices` did not successfully execute the code in the
+       block, and all the processes will raise an exception.
+
+  Consider the following code.
+
+      try:
+        with jax.live_devices(...) as devices:
+          pass
+      except:
+        pass # A
+      else:
+        pass # B
+
+  The atomicity property says that either every process with devices in
+  `devices` will enter the except branch (A) or every process with devices in
+  `devices` will enter the else branch (B). It is impossible for some processes
+  to enter A and others to enter B.
+
+  TODO: mwhittaker - Link to formal live devices semantics.
 
   Args:
     devices: A list of devices. The provided devices must include at least one
@@ -548,26 +618,37 @@ def live_devices(devices: list[xla_client.Device]) -> list[xla_client.Device]:
     RuntimeError: If the distributed runtime was not initialized.
     ValueError: If no local devices are provided.
   """
-  client = distributed.global_state.client
-  if client is None:
-    raise RuntimeError('Distributed JAX not initialized.')
 
-  if not devices:
-    # TODO(mwhittaker): Make devices optional. If it's not provided, use
-    # jax.devices() as a default.
-    raise ValueError('No devices provided.')
+  def __init__(self):
+    self.devices = None
 
-  process_ids = {d.process_index for d in devices}
-  if xla_bridge.process_index() not in process_ids:
-    # A process can only participate in an live_devices call if it hosts some
-    # of the provided devices.
-    raise ValueError('Provided devices do not have any local devices.')
+  @contextlib.contextmanager
+  def __call__(self, devices):
+    client = distributed.global_state.client
+    if client is None:
+      raise RuntimeError('Distributed JAX not initialized.')
 
-  if len(process_ids) == 1:
-    # If the provided devices are hosted by a single process (this one), then we
-    # don't have to perform any distributed computation. We know our local
-    # devices are all live.
-    return devices
+    if not devices:
+      # TODO(mwhittaker): Make devices optional. If it's not provided, use
+      # jax.devices() as a default.
+      raise ValueError('No devices provided.')
 
-  live_process_ids = client.get_live_nodes(list(process_ids))
-  return [d for d in devices if d.process_index in live_process_ids]
+    if self.devices is None:
+      self.devices = _live_devices(devices)
+    exception = None
+    try:
+      alive = list(self.devices.keys())
+      alive.sort(key=lambda d: d.id)
+      yield alive
+    except Exception as e:
+      exception = e
+    finally:
+      old_devices = self.devices
+      new_devices = _live_devices(devices)
+      self.devices = new_devices
+      if exception:
+        raise exception
+      if not old_devices.items() <= new_devices.items():
+        raise ValueError(f'{old_devices} is not a subset of {new_devices}')
+
+live_devices = _LiveDevices()
