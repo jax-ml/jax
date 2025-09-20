@@ -459,8 +459,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     x = jnp.zeros((10,), dtype)
     where = jnp.ones(10, dtype=int)
     func = getattr(jnp, rec.name)
-    with self.assertDeprecationWarnsOrRaises("jax-numpy-reduction-non-boolean-where",
-                                             f"jnp.{rec.name}: where must be None or a boolean array"):
+    with self.assertRaisesRegex(
+        ValueError, f"jnp.{rec.name}: where must be None or a boolean array"):
       func(x, where=where, initial=jnp.array(0, dtype=dtype))
 
   @jtu.sample_product(rec=JAX_REDUCER_WHERE_NO_INITIAL_RECORDS)
@@ -469,8 +469,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     x = jnp.zeros((10,), dtype)
     where = jnp.ones(10, dtype=int)
     func = getattr(jnp, rec.name)
-    with self.assertDeprecationWarnsOrRaises("jax-numpy-reduction-non-boolean-where",
-                                             f"jnp.{rec.name}: where must be None or a boolean array"):
+    with self.assertRaisesRegex(
+        ValueError, f"jnp.{rec.name}: where must be None or a boolean array"):
       func(x, where=where)
 
   @parameterized.parameters(itertools.chain.from_iterable(

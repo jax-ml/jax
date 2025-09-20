@@ -42,6 +42,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     supported by {func}`jax.lax.fori_loop`. If you need help updating your
     code, please file a bug.
   * {func}`jax.numpy.trimzeros` now errors for non-1D input.
+  * The `where` argument to {func}`jax.numpy.sum` and other reductions is now
+    required to be boolean. Non-boolean values have resulted in a
+    `DeprecationWarning` since JAX v0.5.0.
 
 * Changes
   * `jax.grad` and `jax.vjp` will now round always primals to float32 if float64
