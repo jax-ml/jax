@@ -246,7 +246,7 @@ def jax_multiplatform_test(
         deps = [],
         data = [],
         enable_backends = None,
-        backend_variant_args = {},  # buildifier: disable=unused-variable
+        backend_variant_args = {},
         backend_tags = {},  # buildifier: disable=unused-variable
         disable_configs = None,  # buildifier: disable=unused-variable
         enable_configs = [],
@@ -280,6 +280,7 @@ def jax_multiplatform_test(
             "--jax_test_dut=" + backend,
             "--jax_platform_name=" + backend,
         ]
+        test_args += backend_variant_args.get(backend, [])
         test_tags = list(tags) + ["jax_test_%s" % backend] + backend_tags.get(backend, [])
         if enable_backends != None and backend not in enable_backends and not any([config.startswith(backend) for config in enable_configs]):
             test_tags.append("manual")
@@ -649,3 +650,57 @@ def if_pypi_cuda_wheel_deps(if_true, if_false = []):
         "//jaxlib/tools:pypi_cuda_wheel_deps": if_true,
         "//conditions:default": if_false,
     })
+
+def jax_multiprocess_test(
+        name,
+        srcs,
+        args = [],
+        env = {},
+        shard_count = None,
+        minimal_shard_count = None,
+        deps = [],
+        data = [],
+        enable_backends = None,
+        backend_variant_args = {},
+        backend_tags = {},
+        disable_configs = None,
+        enable_configs = [],
+        config_tags_overrides = None,
+        tags = [],
+        main = None):
+    multiprocess_backend_args = {
+        "cpu": backend_variant_args.get("cpu", []) + [
+            "--num_processes=4",
+            "--cpu_collectives_implementation=gloo",
+        ],
+        "gpu": backend_variant_args.get("gpu", []) + [
+            "--num_processes=2",
+            "--gpus_per_process=1",
+        ],
+        "tpu": backend_variant_args.get("tpu", []) + [
+            "--num_processes=4",
+            "--tpu_chips_per_process=1",
+        ],
+    }
+    tags = tags + ["multiaccelerator"]
+    return jax_multiplatform_test(
+        name = name,
+        srcs = srcs,
+        args = args,
+        env = env,
+        shard_count = shard_count,
+        minimal_shard_count = minimal_shard_count,
+        deps = deps,
+        data = data,
+        enable_backends = enable_backends,
+        backend_variant_args = multiprocess_backend_args,
+        backend_tags = backend_tags,
+        disable_configs = disable_configs,
+        enable_configs = enable_configs,
+        config_tags_overrides = config_tags_overrides,
+        tags = tags,
+        main = main,
+    )
+
+def jax_multiprocess_generate_backend_suites(name = None, backends = []):
+    return jax_generate_backend_suites(backends = backends)
