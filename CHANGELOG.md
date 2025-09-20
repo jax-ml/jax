@@ -41,6 +41,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     reading from and writing to refs in the loop body, is now directly
     supported by {func}`jax.lax.fori_loop`. If you need help updating your
     code, please file a bug.
+  * {func}`jax.numpy.trimzeros` now errors for non-1D input.
 
 * Changes
   * `jax.grad` and `jax.vjp` will now round always primals to float32 if float64

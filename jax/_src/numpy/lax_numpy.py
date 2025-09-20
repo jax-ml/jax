@@ -32,7 +32,6 @@ import math
 import operator
 import os
 from typing import Any, IO, Literal, Protocol, TypeVar, Union, overload
-import warnings
 
 import numpy as np
 
@@ -7457,13 +7456,7 @@ def trim_zeros(filt: ArrayLike, trim: str ='fb') -> Array:
   filt_arr = asarray(filt)
   del filt
   if filt_arr.ndim != 1:
-    # Added on 2024-09-11
-    if deprecations.is_accelerated("jax-numpy-trimzeros-not-1d-array"):
-      raise TypeError(f"'filt' must be 1-D array, but received {filt_arr.ndim}-D array.")
-    warnings.warn(
-      "Passing arrays with ndim != 1 to jnp.trim_zeros() is deprecated. Currently, it "
-      "works with Arrays having ndim != 1. In the future this will result in an error.",
-      DeprecationWarning, stacklevel=2)
+    raise TypeError(f"'filt' must be 1-D array, but received {filt_arr.ndim}-D array.")
   nz = (filt_arr == 0)
   if reductions.all(nz):
     return array_creation.empty(0, filt_arr.dtype)
