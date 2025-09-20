@@ -189,45 +189,43 @@ def _get_fastpath_data(
     executable, out_tree, args_flat, out_flat, effects, consts_for_constvars,
     abstracted_axes, pgle_profiler, const_args: Sequence[ArrayLike]
     ) -> pxla.MeshExecutableFastpathData | None:
-  out_reflattened, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
-
-  use_fastpath = (
-      executable is not None
-      and isinstance(executable, pxla.MeshExecutable)
-      and isinstance(executable.unsafe_call, pxla.ExecuteReplicated)
+  if (
+      executable is None
+      or not isinstance(executable, pxla.MeshExecutable)
+      or not isinstance(executable.unsafe_call, pxla.ExecuteReplicated)
       # No effects in computation
-      and not executable.unsafe_call.ordered_effects
-      and not executable.unsafe_call.has_unordered_effects
-      and all(isinstance(x, xc.ArrayImpl) for x in out_reflattened)
-      and abstracted_axes is None
+      or executable.unsafe_call.ordered_effects
+      or executable.unsafe_call.has_unordered_effects
+      or abstracted_axes is not None
       # no ref state effects
-      and not any(isinstance(e, RefEffect) for e in effects)
+      or any(isinstance(e, RefEffect) for e in effects)
       # no prng reuse checking
-      and not (config.debug_key_reuse.value and any(
+      or (config.debug_key_reuse.value and any(
         hasattr(arg, 'dtype') and dtypes.issubdtype(arg.dtype, dtypes.prng_key)
         for arg in (*args_flat, *out_flat, *consts_for_constvars)))
-      and not _need_to_rebuild_with_fdo(pgle_profiler)
-      and not config.no_execution.value
-      )
+      or _need_to_rebuild_with_fdo(pgle_profiler)
+      or config.no_execution.value
+  ):
+    return None
 
-  if use_fastpath:
-    out_avals = [o.aval for o in out_reflattened]
-    out_committed = [o._committed for o in out_reflattened]
-    kept_var_bitvec = [i in executable._kept_var_idx
-                       for i in range(len(const_args) + len(args_flat))]
-    in_shardings = [
-        sharding_impls.physical_sharding(a, s)
-        if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
-        else s
-        for s, a in zip(executable._in_shardings, executable.in_avals)
-    ]
-    fastpath_data = pxla.MeshExecutableFastpathData(
-        executable.xla_executable, out_tree, in_shardings,
-        executable._out_shardings, out_avals, out_committed, kept_var_bitvec,
-        executable._dispatch_in_layouts, const_args)
-  else:
-    fastpath_data = None
-  return fastpath_data
+  out_reflattened, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
+  if not all(isinstance(x, xc.ArrayImpl) for x in out_reflattened):
+    return None
+
+  out_avals = [o.aval for o in out_reflattened]
+  out_committed = [o._committed for o in out_reflattened]
+  kept_var_bitvec = [i in executable._kept_var_idx
+                      for i in range(len(const_args) + len(args_flat))]
+  in_shardings = [
+      sharding_impls.physical_sharding(a, s)
+      if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
+      else s
+      for s, a in zip(executable._in_shardings, executable.in_avals)
+  ]
+  return pxla.MeshExecutableFastpathData(
+      executable.xla_executable, out_tree, in_shardings,
+      executable._out_shardings, out_avals, out_committed, kept_var_bitvec,
+      executable._dispatch_in_layouts, const_args)
 
 
 # The entries are doubled here from the default 4096 because _pjit_call_impl
