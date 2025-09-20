@@ -183,18 +183,19 @@ def matmul_kernel(a, b, config: TuningConfig):
 
       @pl.when(wg_idx == STORE_WG)
       def _():
+        plgpu.wait_smem_to_gmem(0, wait_read_only=True)
         plgpu.barrier_wait(mma_done_barrier.at[acc_slot])
         acc_tmem_slot = acc_tmem.at[:, pl.ds(acc_slot * tile_n, tile_n)]
-        acc_regs_slot = plgpu.async_load_tmem(acc_tmem_slot).astype(dtype)
         step_out_gmem = out_gmem.at[block_slice_m, slice_n]
         for ni in range(tile_n // epilogue_tile_n):
-          acc_smem[...] = acc_regs_slot[
-              :, ni * epilogue_tile_n: (ni + 1) * epilogue_tile_n]
+          acc_smem_ni = acc_smem.at[ni % 2]
+          ni_col_slice = pl.ds(ni * epilogue_tile_n, epilogue_tile_n)
+          acc_smem_ni[...] = plgpu.async_load_tmem(
+              acc_tmem_slot.at[:, ni_col_slice]
+          ).astype(dtype)
           plgpu.commit_smem()
-          ep_gmem_slice = pl.ds(ni * epilogue_tile_n, epilogue_tile_n)
-          plgpu.copy_smem_to_gmem(acc_smem, step_out_gmem.at[:, ep_gmem_slice])
-          # TODO(justinfu): Double-buffer acc_smem
-          plgpu.wait_smem_to_gmem(0, wait_read_only=True)
+          plgpu.copy_smem_to_gmem(acc_smem_ni, step_out_gmem.at[:, ni_col_slice])
+          plgpu.wait_smem_to_gmem(1, wait_read_only=True)
         plgpu.wait_load_tmem()  # Load must complete before we continue.
         plgpu.barrier_arrive(store_done_barrier.at[acc_slot])
 
@@ -223,7 +224,7 @@ def matmul_kernel(a, b, config: TuningConfig):
               (block_tile_m, tile_n * 2), jnp.float32, collective=collective),
           # Temporary SMEM used for storing accumulator output to GMEM.
           plgpu.SMEM(
-              (block_tile_m, epilogue_tile_n), dtype, transforms=out_transforms
+              (2, block_tile_m, epilogue_tile_n), dtype, transforms=out_transforms
           ),
           # ab_tma_barrier
           plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
@@ -260,7 +261,7 @@ def main(_) -> None:
         (1, 4, 8, 12, 16),  # grid_tile_width
         (2, 4, 6),  # max_concurrent_steps
         (False, True),  # collective
-        (64,),  # epilogue_tile_n
+        (32,),  # epilogue_tile_n
     )
     best_util = -float("inf")
     for (tile_m, tile_n, tile_k, grid_minor_dim, grid_tile_width,
