@@ -60,7 +60,7 @@ template <>
 /*static*/ absl::StatusOr<DnnHandlePool::Handle> DnnHandlePool::Borrow(
     gpuStream_t stream) {
   DnnHandlePool* pool = Instance();
-  absl::MutexLock lock(&pool->mu_);
+  absl::MutexLock lock(pool->mu_);
   gpudnnHandle_t handle;
   if (pool->handles_[stream].empty()) {
     JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnCreate(&handle)));
