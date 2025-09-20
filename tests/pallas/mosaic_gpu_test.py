@@ -33,7 +33,6 @@ from jax import export
 from jax import lax
 from jax._src import checkify
 from jax._src import core as jax_core
-from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lib.mlir import ir
