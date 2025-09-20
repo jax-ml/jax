@@ -294,15 +294,13 @@ def traverse_op(
     callback: Callable[[ir.OpView], None],
     traversal_order: TraversalOrder = TraversalOrder.FORWARD,
     do_not_recurse_into_ops: tuple[type, ...] = (mgpu.CustomPrimitiveOp,),
-    pre_order: bool = False,
 ):
   """Traverses the operation and applies the callback in the given order.
 
   If do_not_recurse_into_ops is provided, the callback will be executed on these
   ops, but any regions they might have will not be traversed.
   """
-  if pre_order:
-    callback(op)
+  callback(op)
   if not isinstance(op, do_not_recurse_into_ops):
     # The block of a mosaic_gpu.custom_primitive op is already lowered so it
     # should not be traversed.
@@ -316,5 +314,3 @@ def traverse_op(
           traverse_op(
               block_op, callback, traversal_order, do_not_recurse_into_ops
           )
-  if not pre_order:
-    callback(op)
