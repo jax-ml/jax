@@ -41,14 +41,15 @@ limitations under the License.
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Block.h"
+#include "mlir/IR/BlockSupport.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Region.h"
 #include "mlir/IR/Value.h"
+#include "mlir/IR/ValueRange.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
@@ -110,6 +111,23 @@ class CanonicalBuilder : public ImplicitLocOpBuilder {
   template <typename Op, typename... Args>
   Value create(Args &&...args) {
     return create<Op>(getLoc(), std::forward<Args>(args)...);
+  }
+
+  Value create(StringAttr opName, ValueRange operands, TypeRange types = {},
+               ArrayRef<NamedAttribute> attributes = {},
+               BlockRange successors = {},
+               MutableArrayRef<std::unique_ptr<Region>> regions = {}) {
+    Operation* op = OpBuilder::create(getLoc(), opName, operands, types,
+                                      attributes, successors, regions);
+    auto rule_it = rules().find(opName);
+    if (op_->getName().getStringRef() != opName.strref() &&
+        rule_it != rules().end()) {
+      const canonicalize_rule_type &rule = rule_it->getValue();
+      FailureOr<Value> result = rule(ctx_, *op);
+      CHECK(succeeded(result));
+      return *result;
+    }
+    return op->getResult(0);
   }
 
  private:
@@ -653,7 +671,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
 
 FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
                                           Operation &op) {
-  OpBuilder builder(&op);
+  CanonicalBuilder builder(ctx, op.getLoc(), &op);
   auto operands = op.getOperands();
   auto res_ty = dyn_cast<VectorType>(op.getResult(0).getType());
   if (op.getNumResults() != 1) {
@@ -687,8 +705,7 @@ FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
       if (element_type.isBF16()) {
         if (ctx.compatibility_mode) {
           auto target_f32 =
-              builder.create<tpu::ExtFOp>(op.getLoc(), target_f32_ty, operand)
-                  .getResult();
+              builder.create<tpu::ExtFOp>(op.getLoc(), target_f32_ty, operand);
           should_rewrite_op = true;
           new_operands.push_back(target_f32);
         } else {
@@ -720,18 +737,15 @@ FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
     auto new_res_ty =
         VectorType::get(shape, should_truncate ? builder.getF32Type()
                                                : res_ty.getElementType());
-    // NOTE: We don't canonicalize recursively here
-    Operation *new_op =
-        builder.create(op.getLoc(), op.getName().getIdentifier(), new_operands,
-                       new_res_ty, op.getAttrs());
+    Value new_op = builder.create(
+        op.getName().getIdentifier(), new_operands, new_res_ty, op.getAttrs());
     if (should_truncate) {
-      new_op = builder.create<tpu::TruncFOp>(op.getLoc(), res_ty,
-                                             new_op->getResult(0),
+      new_op = builder.create<tpu::TruncFOp>(op.getLoc(), res_ty, new_op,
                                              tpu::RoundingMode::kToNearestEven);
     }
-    op.replaceAllUsesWith(new_op);
+    op.getResult(0).replaceAllUsesWith(new_op);
     op.erase();
-    return new_op->getResult(0);
+    return new_op;
   }
   return op.getResult(0);
 }
