@@ -909,6 +909,12 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   size = _aval_property('size')
   shape = _aval_property('shape')
 
+  _all_slots = frozenset((*__slots__, '__weakref__'))
+
+  def __init_subclass__(cls, **kwargs):
+    super().__init_subclass__(**kwargs)
+    cls._all_slots = cls._all_slots.union(cls.__slots__)
+
   def __init__(self, trace: Trace):
     self._trace = trace
 
@@ -1064,6 +1070,18 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
       else:
         return attr
 
+  def __setattr__(self, name, value):
+    if name in self._all_slots:
+      return object.__setattr__(self, name, value)
+    try:
+      attr = getattr(self.aval, name)
+    except AttributeError:
+      return object.__setattr__(self.aval, name, value)
+    t = type(attr)
+    if t is aval_property and attr.fset is not None:
+      return attr.fset(self, value)
+    object.__setattr__(self.aval, name, value)
+
   def _short_repr(self) -> str:
     return f'{self.__class__.__name__}<{self.aval}>'
 
@@ -1165,8 +1183,12 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
 
 # these can be used to set up forwarding of properties and instance methods from
 # Tracer instances to the underlying avals
-aval_property = namedtuple("aval_property", ["fget"])
 aval_method = namedtuple("aval_method", ["fun"])
+class aval_property(NamedTuple):
+  fget: Any = None
+  fset: Any = None
+  def setter(self, fset) -> "aval_property":
+    return aval_property(self.fget, fset)
 
 pytype_aval_mappings[Tracer] = lambda x: x.aval
 

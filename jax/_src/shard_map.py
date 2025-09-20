@@ -1261,6 +1261,7 @@ class ShardMapTrace(core.Trace):
 
 
 class ShardMapTracer(core.Tracer):
+  __slots__ = ["vma", "val"]
   vma: frozenset[AxisName]
   val: JaxType
 
