@@ -565,23 +565,40 @@ class VectorSubcoreTest(PallasSCTest):
     with self.assertRaisesRegex(ValueError, "is not divisible"):
       kernel(x)
 
-  @parameterized.parameters(*plsc.PackFormat)
-  def test_pack_unpack(self, format):
+  @parameterized.product(
+      pack_format=[*plsc.PackFormat],
+      dtype=[jnp.float32, jnp.int32, jnp.uint32],
+  )
+  def test_pack_unpack(self, pack_format, dtype):
     shape = (8,)
-    dtype = jnp.float32
 
     @vector_subcore_kernel(
         out_shape=(jax.ShapeDtypeStruct((8,), dtype),) * 2
     )
     def kernel(a_ref, b_ref, oa_ref, ob_ref):
-      ab = plsc.pack(a_ref[...], b_ref[...], format=format)
-      oa_ref[...], ob_ref[...] = plsc.unpack(ab, format=format)
+      ab = plsc.pack(a_ref[...], b_ref[...], format=pack_format)
+      oa_ref[...], ob_ref[...] = plsc.unpack(ab, format=pack_format)
 
     a = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
     b = a * a
     out_a, out_b = kernel(a, b)
     np.testing.assert_array_equal(out_a, a)
     np.testing.assert_array_equal(out_b, b)
+
+  def test_shapecast(self):
+    shape = [8]
+    dtype = jnp.int32
+
+    @vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape, dtype)
+    )
+    def kernel(a_ref, o_ref):
+      # The two shape casts should cancel out during lowering.
+      a = plsc.shapecast(a_ref[...], [1, 4, 2])
+      o_ref[...] = plsc.shapecast(a, shape)
+
+    a = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    np.testing.assert_array_equal(kernel(a), a)
 
   def test_scan_count(self):
     shape = [8]
