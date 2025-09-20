@@ -21,6 +21,7 @@ from functools import partial
 import operator
 import math
 import numpy as np
+import platform
 from typing import Any, Literal
 import warnings
 
@@ -49,6 +50,7 @@ from jax._src.numpy.reductions import Axis
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.ops.special import logsumexp as _logsumexp
+from jax._src.xla_bridge import devices
 
 
 # activations
@@ -473,15 +475,22 @@ def gelu(x: ArrayLike, approximate: bool = True) -> Array:
   """
   [x_arr] = numpy_util.promote_args_inexact("gelu", x)
 
+  x_dtype = x_arr.dtype
+  is_cpu = len(devices()) == 1 and devices()[0].platform == "cpu"
+  is_aarch64 = platform.machine().lower() in ("aarch64", "arm64")
+  
+  if is_cpu and is_aarch64 and x_arr.dtype == dtypes.bfloat16:
+    x_arr = x_arr.astype("float32")
+
   if approximate:
     sqrt_2_over_pi = np.sqrt(2 / np.pi).astype(x_arr.dtype)
     cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x_arr + 0.044715 * (x_arr ** 3))))
-    return x_arr * cdf
+    return (x_arr * cdf).astype(x_dtype)
   else:
     sqrt_half = np.sqrt(0.5).astype(x_arr.dtype)
     return jnp.array(
         0.5 * x_arr * (lax.erfc(-x_arr * sqrt_half)), dtype=x_arr.dtype
-    )
+    ).astype(x_dtype)
 
 @partial(api.jit, static_argnames=("axis",))
 def glu(x: ArrayLike, axis: int = -1) -> Array:
