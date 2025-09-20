@@ -13,6 +13,7 @@ API
 
    AbstractRef
    ArrayRef
+   Ref
    array_ref
    freeze
    get
