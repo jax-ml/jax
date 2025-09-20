@@ -25,6 +25,7 @@ import sys
 from typing import Any, Generic, NoReturn, Optional, Protocol, Type, TypeVar, cast, TYPE_CHECKING
 
 from jax._src import deprecations
+from jax._src.lib import _jax
 from jax._src.lib import guard_lib
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import jax_jit
@@ -2089,6 +2090,24 @@ array_garbage_collection_guard = optional_enum_state(
     update_thread_local_hook=lambda val: _update_garbage_collection_guard(
         guard_lib.thread_local_state(), 'garbage_collect_array', val
     ),
+)
+
+
+def _update_full_call_location_traceback_enabled(val):
+  if hasattr(_jax, "set_full_call_location_traceback_enabled"):
+    _jax.set_full_call_location_traceback_enabled(val)
+
+
+jax_full_call_location_traceback = bool_state(
+    name='jax_full_call_location_traceback',
+    default=False,  # Default to not showing full call location tracebacks
+    help=(
+        'If True, JAX will capture and provide the full Python traceback of the'
+        " compiled program's call location to the runtime for error reporting"
+        ' and debugging, rather than just the most recent non-JAX frame'
+        ' location. This has a slight performance cost and should be used only'
+        ' for debugging.'),
+    update_global_hook=_update_full_call_location_traceback_enabled,
 )
 
 # Don't define a context manager since this isn't threadsafe.
