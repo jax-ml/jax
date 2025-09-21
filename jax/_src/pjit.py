@@ -3050,6 +3050,7 @@ def auto_axes(f=None, /, *, axes: str | tuple[str, ...] | None = None,
   return _auto_axes(f, **kwargs)
 
 def _auto_axes(fun, *, axes_, out_sharding):
+  @wraps(fun)
   def decorator(*args, **kwargs):
     if out_sharding is None:
       if "out_sharding" in kwargs:
@@ -3079,6 +3080,7 @@ def explicit_axes(f=None, /, *, axes: str | tuple[str, ...] | None = None,
   return _explicit_axes(f, **kwargs)
 
 def _explicit_axes(fun, *, axes, in_sharding):
+  @wraps(fun)
   def decorator(*args, **kwargs):
     if in_sharding is None:
       if "in_sharding" in kwargs:
