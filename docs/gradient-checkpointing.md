@@ -288,7 +288,7 @@ As shown so far, using {func}`jax.checkpoint` switches from one extreme to anoth
 
 To operate between these two extremes, saving some things and not others, you can carefully place {func}`jax.checkpoint` decorators on sub-functions. But that requires editing the function to be differentiated, e.g. model code, which may be inconvenient. It can also be hard to experiment with variations.
 
-So an alternative is to use the `policy` argument to {func}`jax.checkpoint`. A policy is a callable (i.e. a function) which takes as input a type-level specification of a first order primitive application and returns a boolean indicating whether the corresponding output value(s) are allowed to be saved as residuals (or instead must be recomputed in the (co)tangent computation as needed). To write robust code, a policy should be selected from the attributes on {func}`jax.checkpoint_policies`, like {func}`jax.checkpoint_policies.dots_with_no_batch_dims_saveable`, since the API for writing custom policy callables is considered internal.
+So an alternative is to use the `policy` argument to {func}`jax.checkpoint`. A policy is a callable (i.e. a function) which takes as input a type-level specification of a first order primitive application and returns a boolean indicating whether the corresponding output value(s) are allowed to be saved as residuals (or instead must be recomputed in the (co)tangent computation as needed). To write robust code, a policy should be selected from the attributes on {obj}`jax.checkpoint_policies`, like {func}`jax.checkpoint_policies.dots_with_no_batch_dims_saveable`, since the API for writing custom policy callables is considered internal.
 
 For example, consider this function to be differentiated:
 
