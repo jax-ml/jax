@@ -49,7 +49,7 @@ x = jnp.ones(4)
 # Inspect the 'residual' values to be saved on the forward pass
 # if you were to evaluate `jax.grad(f)(W1, W2, W3, x)`
 from jax.ad_checkpoint import print_saved_residuals
-jax.ad_checkpoint.print_saved_residuals(f, W1, W2, W3, x)
+print_saved_residuals(f, W1, W2, W3, x)
 ```
 
 By applying {func}`jax.checkpoint` to sub-functions, as a decorator or at specific application sites, you force JAX not to save any of that sub-function's residuals. Instead, only the inputs of a {func}`jax.checkpoint`-decorated function might be saved, and any residuals consumed on the backward pass are re-computed from those inputs as needed:
@@ -61,7 +61,7 @@ def f2(W1, W2, W3, x):
   x = jax.checkpoint(g)(W3, x)
   return x
 
-jax.ad_checkpoint.print_saved_residuals(f2, W1, W2, W3, x)
+print_saved_residuals(f2, W1, W2, W3, x)
 ```
 
 Here, the values of two `sin` applications are saved because they are arguments
@@ -73,7 +73,7 @@ To control which values are saveable without having to edit the definition of th
 
 ```{code-cell}
 f3 = jax.checkpoint(f, policy=jax.checkpoint_policies.dots_with_no_batch_dims_saveable)
-jax.ad_checkpoint.print_saved_residuals(f3, W1, W2, W3, x)
+print_saved_residuals(f3, W1, W2, W3, x)
 ```
 
 You can also use policies to refer to intermediate values you name using {func}`jax.ad_checkpoint.checkpoint_name`:
@@ -88,7 +88,7 @@ def f4(W1, W2, W3, x):
   return x
 
 f4 = jax.checkpoint(f4, policy=jax.checkpoint_policies.save_only_these_names('a'))
-jax.ad_checkpoint.print_saved_residuals(f4, W1, W2, W3, x)
+print_saved_residuals(f4, W1, W2, W3, x)
 ```
 
 When playing around with these toy examples, you can get a closer look at what's going on using a custom `print_fwd_bwd` utility defined in this notebook:
