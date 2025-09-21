@@ -14,10 +14,9 @@
 
 from __future__ import annotations
 
-from functools import partial
-
 import numpy as np
 
+from jax._src import config
 from jax._src import core
 from jax._src import literals
 from jax._src import dtypes
@@ -86,14 +85,39 @@ core.literalable_types.update(array_types)
 
 core.literalable_types.add(literals.TypedNdArray)
 
-def _make_abstract_python_scalar(typ, val):
-  # Note: all python scalar types are weak except bool, because bool only
-  # comes in a single width.
-  return ShapedArray((), dtypes.scalar_type_to_dtype(typ, val),
-                     weak_type=typ is not bool, sharding=None)
+_int32_min = np.iinfo(np.int32).min
+_int32_max = np.iinfo(np.int32).max
+_int64_min = np.iinfo(np.int64).min
+_int64_max = np.iinfo(np.int64).max
 
-for t in dtypes.python_scalar_types:
-  core.pytype_aval_mappings[t] = partial(_make_abstract_python_scalar, t)
+# Note: all python scalar types are weak except bool, because bool only
+# comes in a single width.
+_bool_aval = ShapedArray((), dtype=np.dtype(bool))
+_int32_aval = ShapedArray((), dtype=np.dtype(np.int32), weak_type=True)
+_int64_aval = ShapedArray((), dtype=np.dtype(np.int64), weak_type=True)
+_float32_aval = ShapedArray((), dtype=np.dtype(np.float32), weak_type=True)
+_float64_aval = ShapedArray((), dtype=np.dtype(np.float64), weak_type=True)
+_complex64_aval = ShapedArray((), dtype=np.dtype(np.complex64), weak_type=True)
+_complex128_aval = ShapedArray((), dtype=np.dtype(np.complex128), weak_type=True)
+
+core.pytype_aval_mappings[bool] = lambda v: _bool_aval
+
+def _int_aval(value):
+  if config.enable_x64.value:
+    if value < _int64_min or value > _int64_max:
+      raise OverflowError(f"Python int {value} too large to convert to int64")
+    return _int64_aval
+  else:
+    if value < _int32_min or value > _int32_max:
+      raise OverflowError(f"Python int {value} too large to convert to int32")
+    return _int32_aval
+core.pytype_aval_mappings[int] = _int_aval
+
+_float_aval = lambda v: _float64_aval if config.enable_x64.value else _float32_aval
+core.pytype_aval_mappings[float] = _float_aval
+
+_complex_aval = lambda v: _complex128_aval if config.enable_x64.value else _complex64_aval
+core.pytype_aval_mappings[complex] = _complex_aval
 
 core.literalable_types.update(dtypes.python_scalar_types)
 

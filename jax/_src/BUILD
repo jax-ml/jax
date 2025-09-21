@@ -190,6 +190,7 @@ pytype_strict_library(
     srcs = ["abstract_arrays.py"],
     deps = [
         ":ad_util",
+        ":config",
         ":core",
         ":dtypes",
         ":literals",
