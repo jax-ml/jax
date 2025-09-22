@@ -28,6 +28,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.numpy import util
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.sharding import Sharding
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 
 
 export = util.set_module('jax.numpy')
@@ -83,7 +84,8 @@ def _make_string_array(
 @export
 def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
           order: str | None = "K", ndmin: int = 0,
-          *, device: xc.Device | Sharding | None = None) -> Array:
+          *, device: xc.Device | Sharding | None = None,
+          out_sharding: NamedSharding | P | None = None) -> Array:
   """Convert an object to a JAX array.
 
   JAX implementation of :func:`numpy.array`.
@@ -101,6 +103,10 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
       output array.
     device: optional :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
       to which the created array will be committed.
+    out_sharding: (optional) :class:`~jax.sharding.PartitionSpec` or :class:`~jax.NamedSharding`
+      representing the sharding of the created array (see `explicit sharding`_ for more details).
+      This argument exists for consistency with other array creation routines across JAX.
+      Specifying both ``out_sharding`` and ``device`` will result in an error.
 
   Returns:
     A JAX array constructed from the input.
@@ -147,6 +153,8 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     >>> pybuffer = array('i', [2, 3, 5, 7])
     >>> jnp.array(pybuffer)
     Array([2, 3, 5, 7], dtype=int32)
+
+  .. _explicit sharding: https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html
   """
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
@@ -160,11 +168,12 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   # whenever x is weak, but avoids introducing weak types with something like
   # array([1, 2, 3])
   weak_type = dtype is None and dtypes.is_weakly_typed(object)
-  if device is None and isinstance(object, core.Tracer):
+
+  if device is None and out_sharding is None and isinstance(object, core.Tracer):
     sharding = object.aval.sharding
     sharding = None if sharding.mesh.empty else sharding
   else:
-    sharding = util.canonicalize_device_to_sharding(device)
+    sharding = util.choose_device_or_out_sharding(device, out_sharding, "jnp.array")
 
   # Use device_put to avoid a copy for ndarray inputs.
   if (not copy and isinstance(object, np.ndarray) and

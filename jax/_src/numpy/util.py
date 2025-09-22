@@ -249,13 +249,6 @@ def promote_args_inexact(fun_name: str, *args: ArrayLike) -> list[Array]:
   return promote_shapes(fun_name, *promote_dtypes_inexact(*args))
 
 
-def canonicalize_device_to_sharding(device: xc.Device | Sharding | None
-                                    ) -> Sharding | None:
-  if isinstance(device, xc.Device):
-    return SingleDeviceSharding(device)
-  return device
-
-
 @partial(api.jit, inline=True)
 def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
   """Like Numpy's broadcast_arrays but doesn't return views."""
@@ -318,12 +311,11 @@ def _where(condition: ArrayLike, x: ArrayLike, y: ArrayLike) -> Array:
     is_always_empty = False  # can fail with dynamic shapes
   return lax.select(condition, x_arr, y_arr) if not is_always_empty else x_arr
 
-
-def normalize_device_to_sharding(device: xc.Device | Sharding | None) -> Sharding | None:
+def canonicalize_device_to_sharding(device: xc.Device | Sharding | None
+                                    ) -> Sharding | None:
   if isinstance(device, xc.Device):
     return SingleDeviceSharding(device)
-  else:
-    return device
+  return device
 
 def choose_device_or_out_sharding(device: xc.Device | Sharding | None,
                                   out_sharding: NamedSharding | P | None,
@@ -333,7 +325,7 @@ def choose_device_or_out_sharding(device: xc.Device | Sharding | None,
         f"Only one of `device` or `out_sharding` can be set. Got {device=} and"
         f" {out_sharding=}")
   if device is not None and out_sharding is None:
-    return normalize_device_to_sharding(device)
+    return canonicalize_device_to_sharding(device)
   if device is None and out_sharding is not None:
     return canonicalize_sharding(out_sharding, name)
   return None

@@ -243,7 +243,7 @@ def full(shape: Any, fill_value: ArrayLike,
   if np.ndim(fill_value) == 0:
     shape = canonicalize_shape(shape)
     return lax.full(shape, fill_value, dtype,
-                    sharding=util.normalize_device_to_sharding(device))
+                    sharding=util.canonicalize_device_to_sharding(device))
   else:
     return api.device_put(
         util._broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
@@ -293,7 +293,7 @@ def zeros_like(a: ArrayLike | DuckTypedArray,
   if shape is not None:
     shape = canonicalize_shape(shape)
   return lax.full_like(a, 0, dtype, shape,
-                       sharding=util.normalize_device_to_sharding(device))
+                       sharding=util.canonicalize_device_to_sharding(device))
 
 
 @export
@@ -340,7 +340,7 @@ def ones_like(a: ArrayLike | DuckTypedArray,
   if shape is not None:
     shape = canonicalize_shape(shape)
   return lax.full_like(a, 1, dtype, shape,
-                       sharding=util.normalize_device_to_sharding(device))
+                       sharding=util.canonicalize_device_to_sharding(device))
 
 
 @export
@@ -389,7 +389,7 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
   if shape is not None:
     shape = canonicalize_shape(shape)
   return lax.full_like(prototype, 0, dtype, shape,
-                       sharding=util.normalize_device_to_sharding(device))
+                       sharding=util.canonicalize_device_to_sharding(device))
 
 
 @export
@@ -445,7 +445,7 @@ def full_like(a: ArrayLike | DuckTypedArray,
     shape = canonicalize_shape(shape)
   if np.ndim(fill_value) == 0:
     return lax.full_like(a, fill_value, dtype, shape,
-                         sharding=util.normalize_device_to_sharding(device))
+                         sharding=util.canonicalize_device_to_sharding(device))
   else:
     shape = np.shape(a) if shape is None else shape  # type: ignore[arg-type]
     dtype = dtypes.result_type(a) if dtype is None else dtype
