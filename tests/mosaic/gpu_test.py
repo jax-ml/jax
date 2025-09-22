@@ -709,7 +709,7 @@ class WGMMALayoutTest(TestCase):
         low=sample_iinfo.min, high=sample_iinfo.max, size=(m, n), dtype=np.int32
     ).astype(jax_dtype_from)
 
-    expected = values.astype(jax_dtype_to)
+    expected = values.astype(np.int32).astype(jax_dtype_to)
     res = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), values, expected, ()
     )(values)
