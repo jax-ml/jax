@@ -293,6 +293,8 @@ def _dtype_to_ir_type(dtype: DTypeLike,
       return ir.Type.parse("!tpu.semaphore")
     else:
       raise NotImplementedError
+  if jnp.issubdtype(dtype, dtypes.extended):
+    raise NotImplementedError(f"Extended dtype {dtype} is unsupported.")
   if is_kernel_boundary and jnp.issubdtype(dtype, jnp.bool):
     dtype = BOOL_MEMREF_TYPE
   # TODO(justinfu): Remove after mosaic supports unsigned types.
@@ -3581,11 +3583,14 @@ def _alloc_value(
       )
       return tpu.sem_alloc(memref_type)
     else:
-      out_type = ir.MemRefType.get(
-          aval.shape,
-          _dtype_to_ir_type(aval.dtype, is_kernel_boundary=True),
-          memory_space=memspace)
-      return memref.alloca(out_type, [], [])
+      memref_type = aval_to_ir_type(
+          ctx.lowering_context.dynamic_shape_replacement_fn,
+          aval,
+          is_kernel_boundary=True,
+          memory_space=aval.memory_space,
+      )
+      assert isinstance(memref_type, ir.MemRefType)
+      return memref.alloca(memref_type, [], [])
   elif isinstance(aval, tpu_core.AbstractSemaphore):
     memref_type = aval_to_ir_type(
         ctx.lowering_context.dynamic_shape_replacement_fn,
@@ -3618,6 +3623,8 @@ def _run_scoped_lowering_rule(
     args = map(lambda aval: alloc_fn(aval, ctx=ctx), in_avals)
     block_shapes = tuple(a.shape if isinstance(a, state.AbstractRef) else None
                          for a in in_avals)
+    block_shapes = tuple(map(_maybe_physicalize_block_shape,
+                             in_avals, block_shapes))
     ctx = ctx.lowering_context.replace(
         block_shapes=(*ctx.block_shapes, *block_shapes)
     )

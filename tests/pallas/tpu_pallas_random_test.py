@@ -14,6 +14,7 @@
 
 from absl.testing import absltest
 from absl.testing import parameterized
+import functools
 import jax
 from jax import random as jax_random
 from jax._src import test_util as jtu
@@ -195,6 +196,34 @@ class PRNGTest(jtu.JaxTestCase):
     result_a = result[0]
     result_b = result[1]
     np.testing.assert_array_compare(np.not_equal, result_a, result_b)
+
+  def test_key_in_core_map(self):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Fails on TPU <= v3")
+
+    def main(refs):
+      key_hbm, o_ref = refs
+      @pl.core_map(pltpu.create_tensorcore_mesh('core'))
+      def _():
+        @functools.partial(pl.run_scoped,
+                          key_smem=pltpu.SMEM((), key_hbm.dtype),
+                          o_vmem=pltpu.VMEM(o_ref.shape, o_ref.dtype))
+        def _scoped(key_smem, o_vmem):
+          pltpu.sync_copy(key_hbm, key_smem)
+          o_vmem[...] = jax_random.uniform(
+              key_smem[...], shape=o_ref.shape, minval=0.0, maxval=1.0
+          )
+          pltpu.sync_copy(o_vmem, o_ref)
+
+    @jax.jit
+    def f(rng_key):
+      y = jnp.zeros((8, 128), dtype=jnp.float32)
+      _, y = pl.run_state(main)((rng_key, y))
+      return y
+
+    key = pltpu.to_pallas_key(jax_random.key(0, impl="rbg"))
+    y = f(key)
+    self.assertGreaterEqual(jnp.max(y), jnp.min(y))
 
 
 class BlockInvarianceTest(parameterized.TestCase):
