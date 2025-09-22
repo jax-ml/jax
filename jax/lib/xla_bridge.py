@@ -13,22 +13,15 @@
 # limitations under the License.
 
 # ruff: noqa: F401
-from jax._src.xla_bridge import (
-  get_backend as _deprecated_get_backend,
-)
 
-from jax._src.compiler import (
-  get_compile_options as _deprecated_get_compile_options,
-)
-
-_deprecations = {
+_deprecations = {  # pylint: disable=g-statement-before-imports
     # Added July 31, 2024
     "get_backend": (
         (
             "jax.lib.xla_bridge.get_backend is deprecated and will be removed"
             " in JAX v0.8.0; use jax.extend.backend.get_backend."
         ),
-        _deprecated_get_backend,
+        None,
     ),
     # Added for JAX v0.7.0
     "get_compile_options": (
@@ -37,16 +30,10 @@ _deprecations = {
             " and will be removed in JAX v0.8.0. Use"
             " jax.extend.backend.get_compile_options."
         ),
-        _deprecated_get_compile_options,
+        None,
     ),
 }
 
-import typing as _typing
-if _typing.TYPE_CHECKING:
-  from jax._src.xla_bridge import get_backend as get_backend
-  from jax._src.compiler import get_compile_options as get_compile_options
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

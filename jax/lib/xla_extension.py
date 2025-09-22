@@ -12,59 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import jax._src.lib
-from jax._src.lib import ifrt_proxy as _ifrt_proxy
-from jax._src.lib import _jax
-
-_deprecations = {
+_deprecations = {  # pylint: disable=g-statement-before-imports
     # Deprecated March 26 2025.
     "ifrt_proxy": (
         "jax.lib.xla_extension.ifrt_proxy is deprecated.",
-        _ifrt_proxy,
+        None,
     ),
-    "mlir": ("jax.lib.xla_extension.mlir is deprecated.", _jax.mlir),
+    "mlir": ("jax.lib.xla_extension.mlir is deprecated.", None),
     "profiler": (
         "jax.lib.xla_extension.profiler is deprecated.",
-        jax._src.lib._profiler,
+        None,
     ),
     "hlo_module_cost_analysis": (
         "jax.lib.xla_extension.hlo_module_cost_analysis is deprecated.",
-        _jax.hlo_module_cost_analysis,
+        None,
     ),
     "hlo_module_to_dot_graph": (
         "jax.lib.xla_extension.hlo_module_to_dot_graph is deprecated.",
-        _jax.hlo_module_to_dot_graph,
+        None,
     ),
     "HloPrintOptions": (
         "jax.lib.xla_extension.HloPrintOptions is deprecated.",
-        _jax.HloPrintOptions,
+        None,
     ),
     "PjitFunction": (
         "jax.lib.xla_extension.PjitFunction is deprecated.",
-        _jax.PjitFunction,
+        None,
     ),
     "PmapFunction": (
         "jax.lib.xla_extension.PmapFunction is deprecated.",
-        _jax.PmapFunction,
+        None,
     ),
 }
 
-import typing as _typing
-
-if _typing.TYPE_CHECKING:
-  HloPrintOptions = _jax.HloPrintOptions
-  PjitFunction = _jax.PjitFunction
-  PmapFunction = _jax.PmapFunction
-  hlo_module_cost_analysis = _jax.hlo_module_cost_analysis
-  hlo_module_to_dot_graph = _jax.hlo_module_to_dot_graph
-  ifrt_proxy = _ifrt_proxy
-  mlir = _jax.mlir
-  profiler = jax._src.lib._profiler
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing
-del _ifrt_proxy
-del _jax
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

@@ -14,12 +14,10 @@
 
 
 import jax._src.dlpack
-import jax._src.deprecations
 
 from jax._src.dlpack import (
   from_dlpack as from_dlpack,
   is_supported_dtype as is_supported_dtype,
-  SUPPORTED_DTYPES as SUPPORTED_DTYPES,
 )
 
 _deprecations = {
@@ -29,17 +27,11 @@ _deprecations = {
             "jax.SUPPORTED_DTYPES is deprecated in JAX v0.7.0 and will be removed"
             " in JAX v0.8.0. Use jax.dlpack.is_supported_dtype() instead."
         ),
-        jax._src.dlpack.SUPPORTED_DTYPES
+        None,
     ),
 }
 
 
-import typing as _typing
-
-if _typing.TYPE_CHECKING:
-  SUPPORTED_DTYPES = jax._src.dlpack.SUPPORTED_DTYPES
-else:
-  __getattr__ = jax._src.deprecations.deprecation_getattr(
-      __name__, _deprecations
-  )
-del _typing
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = jax._src.deprecations.deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

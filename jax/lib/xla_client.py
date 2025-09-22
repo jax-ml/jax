@@ -12,66 +12,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.lib import xla_client as _xc
-
-_deprecations = {
+_deprecations = {  # pylint: disable=g-statement-before-imports
     # Added April 4 2025.
     "Client": (
         (
             "jax.lib.xla_client.Client was deprecated in JAX v0.6.0 and will be"
             " removed in JAX v0.8.0"
         ),
-        _xc.Client,
+        None,
     ),
     "CompileOptions": (
         (
             "jax.lib.xla_client.CompileOptions was deprecated in JAX v0.6.0 and"
             " will be removed in JAX v0.8.0"
         ),
-        _xc.CompileOptions,
+        None,
     ),
     "Frame": (
         (
             "jax.lib.xla_client.Frame was deprecated in JAX v0.6.0 and will be"
             " removed in JAX v0.8.0"
         ),
-        _xc.Frame,
+        None,
     ),
     "HloSharding": (
         (
             "jax.lib.xla_client.HloSharding was deprecated in JAX v0.6.0 and"
             " will be removed in JAX v0.8.0"
         ),
-        _xc.HloSharding,
+        None,
     ),
     "OpSharding": (
         (
             "jax.lib.xla_client.OpSharding was deprecated in JAX v0.6.0 and"
             " will be removed in JAX v0.8.0"
         ),
-        _xc.OpSharding,
+        None,
     ),
     "Traceback": (
         (
             "jax.lib.xla_client.Traceback was deprecated in JAX v0.6.0 and will"
             " be removed in JAX v0.8.0"
         ),
-        _xc.Traceback,
+        None,
     ),
 }
 
-import typing as _typing
-
-if _typing.TYPE_CHECKING:
-  Client = _xc.Client
-  CompileOptions = _xc.CompileOptions
-  Frame = _xc.Frame
-  HloSharding = _xc.HloSharding
-  OpSharding = _xc.OpSharding
-  Traceback = _xc.Traceback
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing
-del _xc
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

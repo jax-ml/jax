@@ -35,11 +35,6 @@ Subpackages
    jax.example_libraries
    jax.experimental
 
-.. toctree::
-   :hidden:
-
-   jax.lib
-
 Configuration
 -------------
 

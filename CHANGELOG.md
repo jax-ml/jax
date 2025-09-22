@@ -45,6 +45,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The `where` argument to {func}`jax.numpy.sum` and other reductions is now
     required to be boolean. Non-boolean values have resulted in a
     `DeprecationWarning` since JAX v0.5.0.
+  * The deprecated functions in {mod} `jax.dlpack`, {mod} `jax.errors`, {mod}
+    `jax.lib.xla_bridge`, {mod} `jax.lib.xla_client`, and {mod}
+    `jax.lib.xla_extension` were removed.
 
 * Changes
   * `jax.grad` and `jax.vjp` will now round always primals to float32 if float64
