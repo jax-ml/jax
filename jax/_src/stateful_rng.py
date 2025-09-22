@@ -238,7 +238,9 @@ def default_rng(seed: typing.ArrayLike | None = None, *,
         "When used within transformed code, jnp.random.default_rng()"
         " requires an explicit seed to be set.")
     entropy = np.random.SeedSequence().entropy
+    assert isinstance(entropy, int)
     seed = np.int64(entropy & np.iinfo(np.int64).max)
+  assert seed is not None
   return StatefulPRNG(
     base_key=random.key(seed, impl=impl),
     counter=ref.new_ref(0)
