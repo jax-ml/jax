@@ -190,6 +190,18 @@ class StatefulRNGTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "When used within transformed code"):
       jax.jit(f)()
 
+  def testDefaultSeedErrorUnderGrad(self):
+    def f(x):
+      return x + jnp.random.default_rng().uniform()
+    with self.assertRaisesRegex(TypeError, "When used within transformed code"):
+      jax.grad(f)(1.0)
+
+  def testDefaultSeedErrorUnderVmap(self):
+    def f(x):
+      return x + jnp.random.default_rng().uniform()
+    with self.assertRaisesRegex(TypeError, "When used within transformed code"):
+      jax.vmap(f)(jnp.arange(5.0))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

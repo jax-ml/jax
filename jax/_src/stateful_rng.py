@@ -170,20 +170,6 @@ class StatefulPRNG:
     return [self.__class__(self.key(), ref.new_ref(0)) for _ in range(n_children)]
 
 
-make_seed_p = core.Primitive("make_seed")
-
-@make_seed_p.def_impl
-def make_seed_impl():
-  entropy = np.random.SeedSequence().entropy
-  return np.int64(entropy & np.iinfo(np.int64).max)
-
-@make_seed_p.def_abstract_eval
-def make_seed_abstract_eval():
-  raise TypeError(
-    "When used within transformed code, jnp.random.default_rng() requires"
-    " an explicit seed to be set.")
-
-
 def default_rng(seed: typing.ArrayLike | None = None, *,
                 impl: random.PRNGSpecDesc | None = None) -> StatefulPRNG:
   """
@@ -246,8 +232,14 @@ def default_rng(seed: typing.ArrayLike | None = None, *,
     Array((), dtype=key<fry>) overlaying:
     [2765691542  824333390]
   """
+  if seed is None:
+    if not core.trace_ctx.is_top_level():
+      raise TypeError(
+        "When used within transformed code, jnp.random.default_rng()"
+        " requires an explicit seed to be set.")
+    entropy = np.random.SeedSequence().entropy
+    seed = np.int64(entropy & np.iinfo(np.int64).max)
   return StatefulPRNG(
-    base_key=random.key(
-      make_seed_p.bind() if seed is None else seed, impl=impl),
+    base_key=random.key(seed, impl=impl),
     counter=ref.new_ref(0)
   )
