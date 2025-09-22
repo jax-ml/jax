@@ -1582,3 +1582,19 @@ pytype_strict_library(
     srcs = ["ref.py"],
     deps = [":core"],
 )
+
+pytype_strict_library(
+    name = "stateful_rng",
+    srcs = [
+        "stateful_rng.py",
+    ],
+    deps = [
+        ":api_util",
+        ":core",
+        ":dtypes",
+        ":numpy",
+        ":random",
+        ":tree_util",
+        ":typing",
+    ] + py_deps("numpy"),
+)

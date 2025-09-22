@@ -188,7 +188,17 @@ def default_rng(seed: typing.ArrayLike, *,
     A StatefulPRNG object, with methods for generating random values.
 
   Notes:
-    The StatefulPRNG object created by this method uses
+    The StatefulPRNG object created by this method uses :func:`~jax.ref.Ref`
+    objects to allow implicit updates of state, and thus inherits some of
+    its limitiations. For example:
+
+    - StatefulPRNG objects cannot be among the return values of functions
+      wrapped in JIT or other JAX transformations. This means in particular
+      they cannot be used as `carry` values for :func:`jax.lax.scan`,
+      :func:`jax.lax.while_loop`, and other JAX control flow.
+    - StatefulPRNG objects cannot be used together with :func:`jax.checkpoint`
+      or :func:`jax.remat`; in these cases it's best to use the
+      :meth:`StatefulPRNG.key` method to produce a standard JAX PRNG key.
 
   Examples:
     >>> from jax.experimental.stateful_rng import default_rng

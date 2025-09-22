@@ -235,6 +235,7 @@ py_library_providing_imports_info(
         "//jax/_src:source_info_util",
         "//jax/_src:sourcemap",
         "//jax/_src:stages",
+        "//jax/_src:stateful_rng",
         "//jax/_src:tpu",
         "//jax/_src:traceback_util",
         "//jax/_src:tree",

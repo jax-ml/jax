@@ -1886,7 +1886,7 @@ jax_multiplatform_test(
     name = "stateful_rng_test",
     srcs = ["stateful_rng_test.py"],
     deps = [
-        "//jax/experimental:stateful_rng",
+        "//jax/_src:stateful_rng",
     ] + py_deps([
         "absl/testing",
         "numpy",
