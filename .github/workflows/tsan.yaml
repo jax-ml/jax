@@ -209,7 +209,8 @@ jobs:
           ln -s ${bazel_exec} bazel
 
           # Check python version
-          ./bazel run --@rules_python//python/config_settings:py_freethreaded="yes" @python//:python3 -- -VV
+          python_version="${{ matrix.python-version }}"
+          ./bazel run --@rules_python//python/config_settings:py_freethreaded="yes" @python_${python_version//./_}_host//:python -- -VV
 
           # Check numpy version
           ./bazel cquery @pypi_numpy//:* | grep whl
