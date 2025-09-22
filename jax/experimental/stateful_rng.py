@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Experimental implicitly-updated PRNG, based on ArrayRef.
+Experimental implicitly-updated PRNG, based on Ref.
 """
 
 import dataclasses
@@ -25,6 +25,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import numpy as jnp
 from jax._src import random
+from jax._src import ref
 from jax._src import tree_util
 from jax._src import typing
 from jax._src.typing import Array, ArrayLike, DTypeLike
@@ -44,22 +45,22 @@ def _canonicalize_size(size: int | Sequence[int] | None, *args: ArrayLike) -> tu
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class StatefulPRNG:
-  """Implicit PRNG backed by ArrayRef.
+  """Implicit PRNG backed by Ref.
 
   This should be instantiated using the :func:`default_rng` function.
 
   Attributes:
     base_key: a typed JAX PRNG key object (see :func:`jax.random.key`).
-    counter: a scalar integer wrapped in a :class:`ArrayRef`
+    counter: a scalar integer wrapped in a :class:`Ref`
 
   >>> from jax.experimental.stateful_rng import default_rng
   >>> rng = default_rng(42)
   >>> rng
   StatefulPRNG(base_key=Array((), dtype=key<fry>) overlaying:
-  [ 0 42], counter=ArrayRef(0, dtype=int32, weak_type=True))
+  [ 0 42], counter=Ref(0, dtype=int32, weak_type=True))
   """
   base_key: Array
-  counter: core.ArrayRef
+  counter: core.Ref
 
   def __post_init__(self):
     if self.base_key is api_util.SENTINEL:
@@ -68,7 +69,7 @@ class StatefulPRNG:
             and dtypes.issubdtype(self.base_key.dtype, dtypes.prng_key)):
       raise ValueError(f"Expected base_key to be a typed PRNG key; got {self.base_key}")
     # TODO(jakevdp): how to validate a traced mutable array?
-    if not (isinstance(self.counter, (core.ArrayRef, core.Tracer))
+    if not (isinstance(self.counter, (core.Ref, core.Tracer))
             and self.counter.shape == ()
             and dtypes.issubdtype(self.counter.dtype, np.integer)):
       raise ValueError(f"Expected counter to be a mutable scalar integer; got {self.counter}")
@@ -166,7 +167,7 @@ class StatefulPRNG:
       >>> [crng.integers(0, 10, 2) for crng in child_rngs]
       [Array([1, 3], dtype=int32), Array([9, 9], dtype=int32)]
     """
-    return [self.__class__(self.key(), core.array_ref(0)) for _ in range(n_children)]
+    return [self.__class__(self.key(), ref.new_ref(0)) for _ in range(n_children)]
 
 
 def default_rng(seed: typing.ArrayLike, *,
@@ -187,7 +188,7 @@ def default_rng(seed: typing.ArrayLike, *,
     A StatefulPRNG object, with methods for generating random values.
 
   Notes:
-    The StatefulPRNG object created by this method uses 
+    The StatefulPRNG object created by this method uses
 
   Examples:
     >>> from jax.experimental.stateful_rng import default_rng
@@ -220,5 +221,5 @@ def default_rng(seed: typing.ArrayLike, *,
   """
   return StatefulPRNG(
     base_key=random.key(seed, impl=impl),
-    counter=core.array_ref(0)
+    counter=ref.new_ref(0)
   )
