@@ -459,14 +459,6 @@ def get_canonical_source_file(file_name: str, caches: TracebackCaches) -> str:
   caches.canonical_name_cache[file_name] = file_name
   return file_name
 
-def _is_user_file(ctx: ModuleContext, file_name: str) -> bool:
-  is_user = ctx.traceback_caches.is_user_file_cache.get(file_name, None)
-  if is_user is not None:
-    return is_user
-  out = source_info_util.is_user_filename(file_name)
-  ctx.traceback_caches.is_user_file_cache[file_name] = out
-  return out
-
 def _traceback_to_location(ctx: ModuleContext, tb: xc.Traceback) -> ir.Location:
   """Converts a full traceback to a callsite() MLIR location."""
   return ctx.traceback_caches.traceback_to_location_cache.get(tb)
@@ -666,22 +658,14 @@ def _code_to_filename(code: types.CodeType) -> str | None:
 @dataclasses.dataclass
 class TracebackCaches:
   traceback_to_location_cache: Any  # jax_mlir_ext.TracebackToLocationCache
-
-  # TODO(phawkins): remove after jaxlib 0.7.1 is the minimum supported version.
-  traceback_cache: dict[xc.Traceback, ir.Location]
-  location_cache: dict[tuple[types.CodeType, int], ir.Location]
   canonical_name_cache: dict[str, str]
-  is_user_file_cache: dict[str, bool]
 
   def __init__(self):
     frame_limit = config.traceback_in_locations_limit.value
     frame_limit = frame_limit if frame_limit >= 0 else 1000
     self.traceback_to_location_cache = jax_mlir_ext.TracebackToLocationCache(
         code_to_filename=_code_to_filename, frame_limit=frame_limit)
-    self.traceback_cache = {}
-    self.location_cache = {}
     self.canonical_name_cache = {}
-    self.is_user_file_cache = {}
 
 
 @dataclasses.dataclass(frozen=True)
