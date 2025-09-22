@@ -1573,6 +1573,7 @@ pytype_strict_library(
         ":dtypes",
         ":numpy",
         ":random",
+        ":ref",
         ":tree_util",
         ":typing",
     ] + py_deps("numpy"),
