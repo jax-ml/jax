@@ -9191,8 +9191,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     reshard_out = reshard(out, P())
     self.assertArraysEqual(reshard_out, jnp.sum(x))
 
+  @parameterized.named_parameters(
+      ('custom_vjp', True),
+      ('grad', False),
+  )
   @jtu.with_explicit_mesh((2,), 'x')
-  def test_minibatch_scan_unreduced(self, mesh):
+  def test_minibatch_scan_unreduced(self, use_custom_vjp, mesh):
     if ifrt_version < 30:
       self.skipTest('Requires ifrt_version >= 30')
     if not jtu.if_cloud_tpu_at_least(2025, 9, 21):
@@ -9202,17 +9206,21 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       for val in tup:
         self.assertEqual(val.aval.sharding.spec.unreduced, {'x'})
 
-    @jax.custom_vjp
-    def f(xs, w):
-      return jnp.dot(xs, w)
+    if use_custom_vjp:
+      @jax.custom_vjp
+      def f(xs, w):
+        return jnp.dot(xs, w)
 
-    def f_fwd(xs, w):
-      return f(xs, w), (xs, w)
+      def f_fwd(xs, w):
+        return f(xs, w), (xs, w)
 
-    def f_bwd(res, g):
-      xs, w = res
-      return jnp.dot(g, w), jnp.dot(xs.T, g, out_sharding=P(unreduced={'x'}))
-    f.defvjp(f_fwd, f_bwd)
+      def f_bwd(res, g):
+        xs, w = res
+        return jnp.dot(g, w), jnp.dot(xs.T, g, out_sharding=P(unreduced={'x'}))
+      f.defvjp(f_fwd, f_bwd)
+    else:
+      def f(xs, w):
+        return jnp.dot(xs, w)
 
     def model(ws, xs_mubatch):
       for w in ws:
@@ -9237,7 +9245,13 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       grad_acc = reshard(grad_acc, P())
       return jax.tree.map(lambda W, g: W - g * 0.01, ws, grad_acc)
 
-    ws = tuple(jax.device_put(jnp.ones((4, 4)), P()) for _ in range(4))
+    if use_custom_vjp:
+      ws = tuple(jax.device_put(jnp.ones((4, 4)), P()) for _ in range(4))
+    else:
+      # Mark `w` with `reduced={'x'}` so that on the bwd pass we will induce
+      # an `unreduced={'x'}`.
+      ws = tuple(jax.device_put(jnp.ones((4, 4)), P(reduced={'x'}))
+                 for _ in range(4))
     xs = jax.device_put(jnp.ones((2, 2, 4)), P(None, 'x', None))
 
     step(ws, xs)  # doesn't crash
