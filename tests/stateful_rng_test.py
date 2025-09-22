@@ -179,6 +179,17 @@ class StatefulRNGTest(jtu.JaxTestCase):
 
     self.assertArraysAllClose(f1(seed), f2(seed))
 
+  def testDefaultSeed(self):
+    rng = jnp.random.default_rng()
+    x = rng.uniform(size=10)
+    self.assertEqual(x.shape, (10,))
+
+  def testDefaultSeedErrorUnderJIT(self):
+    def f():
+      return jnp.random.default_rng().uniform(size=10)
+    with self.assertRaisesRegex(TypeError, "When used within transformed code"):
+      jax.jit(f)()
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

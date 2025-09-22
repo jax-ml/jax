@@ -170,7 +170,21 @@ class StatefulPRNG:
     return [self.__class__(self.key(), ref.new_ref(0)) for _ in range(n_children)]
 
 
-def default_rng(seed: typing.ArrayLike, *,
+make_seed_p = core.Primitive("make_seed")
+
+@make_seed_p.def_impl
+def make_seed_impl():
+  entropy = np.random.SeedSequence().entropy
+  return np.int64(entropy & np.iinfo(np.int64).max)
+
+@make_seed_p.def_abstract_eval
+def make_seed_abstract_eval():
+  raise TypeError(
+    "When used within transformed code, jnp.random.default_rng() requires"
+    " an explicit seed to be set.")
+
+
+def default_rng(seed: typing.ArrayLike | None = None, *,
                 impl: random.PRNGSpecDesc | None = None) -> StatefulPRNG:
   """
   Implicitly updated PRNG API.
@@ -180,7 +194,10 @@ def default_rng(seed: typing.ArrayLike, *,
   and others, with a few exceptions mentioned in the Notes below.
 
   Args:
-    seed: a 64- or 32-bit integer used as the value of the key.
+    seed: an optional 64- or 32-bit integer used as the value of the key.
+      This must be specified if the generator is instantiated within transformed
+      code; when used at the top level of the program, it may be omitted in
+      which case the RNG will be seeded using the default NumPy seeding.
     impl: optional string specifying the PRNG implementation (e.g.
       ``'threefry2x32'``)
 
@@ -230,6 +247,7 @@ def default_rng(seed: typing.ArrayLike, *,
     [2765691542  824333390]
   """
   return StatefulPRNG(
-    base_key=random.key(seed, impl=impl),
+    base_key=random.key(
+      make_seed_p.bind() if seed is None else seed, impl=impl),
     counter=ref.new_ref(0)
   )
