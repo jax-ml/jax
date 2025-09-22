@@ -3226,11 +3226,25 @@ def try_cluster_cancel_lowering(
     ctx: lowering.LoweringRuleContext,
     result_ref,
     barrier: mgpu.BarrierRef,
-    *barrier_transforms_leaves,
+    *transforms_leaves,
+    result_transforms_tree,
     barrier_transforms_tree,
 ):
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
+
+  if result_transforms_tree is not None:
+    res_transforms_leaves, barrier_transforms_leaves = util.split_list(
+      transforms_leaves, [result_transforms_tree.num_leaves])
+    res_transforms = result_transforms_tree.unflatten(res_transforms_leaves)
+    result_ref, res_transforms = lowering._handle_transforms(
+        ctx, result_ref, res_transforms)
+    if res_transforms:
+      raise NotImplementedError(
+          f"Unimplemented transforms for result ref: {res_transforms}"
+      )
+  else:
+    barrier_transforms_leaves = transforms_leaves
 
   if barrier_transforms_tree is not None:
     barrier_indexer = _extract_barrier_indexer(
@@ -3291,9 +3305,12 @@ def try_cluster_cancel(result_ref: _Ref, barrier: _Ref) -> None:
     barrier: A barrier used to coordinate the completion of the query.
   """
   if isinstance(result_ref, pallas_core.TransformedRef):
-    raise NotImplementedError(
-        "Transforms on the try cluster cancel result are not supported."
+    result_transforms_leaves, result_transforms_tree = jax.tree.flatten(
+        result_ref.transforms
     )
+    result_ref = result_ref.ref
+  else:
+    result_transforms_leaves, result_transforms_tree = [], None
 
   if isinstance(barrier, pallas_core.TransformedRef):
     barrier_transforms_leaves, barrier_transforms_tree = jax.tree.flatten(
@@ -3306,7 +3323,9 @@ def try_cluster_cancel(result_ref: _Ref, barrier: _Ref) -> None:
   try_cluster_cancel_p.bind(
       result_ref,
       barrier,
+      *result_transforms_leaves,
       *barrier_transforms_leaves,
+      result_transforms_tree=result_transforms_tree,
       barrier_transforms_tree=barrier_transforms_tree,
   )
 
@@ -3315,9 +3334,11 @@ query_cluster_cancel_p = jax_core.Primitive("query_cluster_cancel")
 query_cluster_cancel_p.multiple_results = True
 
 @query_cluster_cancel_p.def_effectful_abstract_eval
-def _query_cluster_cancel_abstract_eval(try_cancel_buffer, *,
-                                        grid_names):
-  del try_cancel_buffer
+def _query_cluster_cancel_abstract_eval(try_cancel_buffer,
+                                        *transforms_leaves,
+                                        grid_names,
+                                        transforms_tree):
+  del try_cancel_buffer, transforms_leaves, transforms_tree
   grid_idxs = (jax_core.ShapedArray((), jnp.int32),) * len(grid_names)
   return (
       (
@@ -3331,8 +3352,19 @@ def _query_cluster_cancel_abstract_eval(try_cancel_buffer, *,
 @lowering.register_lowering_rule(
     query_cluster_cancel_p, mgpu.LoweringSemantics.Lane
 )
-def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext, result_ref,
-                                  grid_names):
+def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext,
+                                  result_ref,
+                                  *transforms_leaves,
+                                  grid_names,
+                                  transforms_tree):
+  if transforms_tree is not None:
+    res_transforms = transforms_tree.unflatten(transforms_leaves)
+    result_ref, res_transforms = lowering._handle_transforms(
+        ctx, result_ref, res_transforms)
+    if res_transforms:
+      raise NotImplementedError(
+          f"Unimplemented transforms for result ref: {res_transforms}"
+      )
 
   result_ty = ir.MemRefType(result_ref.type)
   bits = math.prod(result_ty.shape) * mgpu.bitwidth(result_ty.element_type)
@@ -3375,8 +3407,15 @@ def query_cluster_cancel(
       - A boolean indicating if the cancellation was successful.
   """
   if isinstance(result_ref, pallas_core.TransformedRef):
-    raise NotImplementedError(
-        "Transforms on the try cluster cancel result are not supported."
+    result_transforms_leaves, result_transforms_tree = jax.tree.flatten(
+        result_ref.transforms
     )
-  result = query_cluster_cancel_p.bind(result_ref, grid_names=grid_names)
+    result_ref = result_ref.ref
+  else:
+    result_transforms_leaves, result_transforms_tree = [], None
+  result = query_cluster_cancel_p.bind(
+      result_ref,
+      *result_transforms_leaves,
+      grid_names=grid_names,
+      transforms_tree=result_transforms_tree)
   return tuple(result[:-1]), result[-1]

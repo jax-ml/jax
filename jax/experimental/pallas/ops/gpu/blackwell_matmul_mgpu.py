@@ -105,8 +105,8 @@ def matmul_kernel(a, b, config: TuningConfig):
     cluster_idx = lax.axis_index("x")
     is_lead_block = cluster_idx == 0
 
-    @plgpu.nd_loop((m_iters * n_iters,),
-                   collective_axes="sm")
+    @plgpu.dynamic_scheduling_loop(grid_names=("lin_idx",),
+                                   thread_axis="wg")
     def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
       (lin_idx,) = loop_info.index
       local_index = loop_info.local_index
@@ -199,12 +199,11 @@ def matmul_kernel(a, b, config: TuningConfig):
         plgpu.wait_load_tmem()  # Load must complete before we continue.
         plgpu.barrier_arrive(store_done_barrier.at[acc_slot])
 
-  num_sms = backend.get_default_device().core_count
   f = plgpu.kernel(
       kernel,
       out_shape=jax.ShapeDtypeStruct((m, n), dtype),
-      grid=(num_sms//2,) if collective else (num_sms,),
-      grid_names=("sm",),
+      grid=(m_iters* n_iters,),
+      grid_names=("lin_idx",),
       num_threads=2,
       thread_name="wg",
       cluster_names=("x",),
