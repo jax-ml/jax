@@ -1029,7 +1029,8 @@ class FragmentedArray:
     if self.layout == new_layout:
       return self
     shape = self.shape
-    if utils.bitwidth(self.mlir_dtype) == 16 and (
+    bitwidth = utils.bitwidth(self.mlir_dtype)
+    if bitwidth in {16, 32} and (
         (self.layout == WGMMA_LAYOUT and new_layout == WGMMA_TRANSPOSED_LAYOUT)
         or (self.layout == TCGEN05_LAYOUT and new_layout == TCGEN05_TRANSPOSED_LAYOUT)
     ):
@@ -1042,9 +1043,27 @@ class FragmentedArray:
       tmp_new_regs = []
       for reg in self.registers.flat:
         reg_ty = reg.type
-        reg = utils.bitcast(reg, i32)
-        reg_shfl = utils.shfl_bfly(reg, 4)
-        new_reg = utils.prmt(reg, reg_shfl, perm)
+        if bitwidth == 16:
+          reg = utils.bitcast(reg, i32)
+          reg_shfl = utils.shfl_bfly(reg, 4)
+          new_reg = utils.prmt(reg, reg_shfl, perm)
+        elif bitwidth == 32:
+          i32_vec = ir.VectorType.get((1,), i32)
+          regs = [
+              utils.bitcast(utils.vector_slice(reg, slice(i, i + 1)), i32)
+              for i in range(2)
+          ]
+          reg_to_shfl = arith.select(is_even_row, regs[1], regs[0])
+          reg_shfl = utils.shfl_bfly(reg_to_shfl, 4)
+          new_reg_low = arith.select(is_even_row, regs[0], reg_shfl)
+          new_reg_high = arith.select(is_even_row, reg_shfl, regs[1])
+          new_reg_i32 = utils.vector_concat([
+              utils.bitcast(new_reg_low, i32_vec),
+              utils.bitcast(new_reg_high, i32_vec),
+          ])
+          new_reg = utils.bitcast(new_reg_i32, reg_ty)
+        else:
+          raise ValueError(f"Unsupported bitwidth: {bitwidth}")
         tmp_new_regs.append(utils.bitcast(new_reg, reg_ty))
       new_regs = np.asarray(
           tmp_new_regs, dtype=object
