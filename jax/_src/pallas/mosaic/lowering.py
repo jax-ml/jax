@@ -2428,13 +2428,8 @@ def _squeeze_lowering_rule(ctx: LoweringRuleContext, x, dimensions):
 
 @register_lowering_rule(lax.concatenate_p, kernel_types=[*tpu_core.KernelType])
 def _concatenate_lowering_rule(ctx: LoweringRuleContext, *xs, dimension):
-  if jaxlib_version >= (0, 7, 1):
-    return tpu.concatenate(xs, dimension=dimension)
-  # TODO(slebedev): Remove once the minimum supported jaxlib version is 0.7.1.
-  out_type = aval_to_ir_type(
-      ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
-  )
-  return tpu.concatenate(out_type, xs, dimension=dimension)  # type: ignore
+  del ctx  # Unused.
+  return tpu.concatenate(xs, dimension=dimension)
 
 
 @register_lowering_rule(lax.split_p)
