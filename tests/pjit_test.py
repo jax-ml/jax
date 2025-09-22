@@ -8117,6 +8117,19 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "unreduced axes should be equal to the contracting specs"):
       h.trace(x, y)
 
+    # Case 4
+    x = jax.device_put(np_inp, P('x', 'y'))
+    y = jax.device_put(np_inp.T, P('y', None))
+
+    @jax.jit
+    def k(x, y):
+      z = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', unreduced={'y'}))
+      return jnp.einsum('xy,yz->xz', z, x)
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        "lhs or rhs passed to dot_general cannot be unreduced"):
+      k.trace(x, y)
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_three_operand_einsum_unreduced(self, mesh):
     n1, n2, n3 = np.arange(2), np.arange(8).reshape(2, 4), np.arange(2)
@@ -9110,6 +9123,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_sum_unreduced_error(self, mesh):
+    # Case 1
     arr2 = jax.device_put(np.arange(16).reshape(8, 2), P('y', None))
 
     @jax.jit
@@ -9122,6 +9136,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "out_sharding's unreduced axes should be in operand's specs that were"
         ' summed over'):
       g(arr2)
+
+    # Case 2
+    @jax.jit
+    def f(x):
+      out = jax.lax.reduce_sum(
+          x, axes=(0,), out_sharding=P(None, unreduced={'y'}))
+      return jax.lax.reduce_sum(out, axes=(0,))
+
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        "operand passed to reduce_sum cannot be unreduced"):
+      f(arr2)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_multi_axes_reduce_sum(self, mesh):
@@ -9164,6 +9190,65 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     reshard_out = reshard(out, P())
     self.assertArraysEqual(reshard_out, jnp.sum(x))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_minibatch_scan_unreduced(self, mesh):
+    if ifrt_version < 30:
+      self.skipTest('Requires ifrt_version >= 30')
+    if not jtu.if_cloud_tpu_at_least(2025, 9, 21):
+      self.skipTest("Requires libtpu built after 2025-09-21")
+
+    def assert_unreduced(tup):
+      for val in tup:
+        self.assertEqual(val.aval.sharding.spec.unreduced, {'x'})
+
+    @jax.custom_vjp
+    def f(xs, w):
+      return jnp.dot(xs, w)
+
+    def f_fwd(xs, w):
+      return f(xs, w), (xs, w)
+
+    def f_bwd(res, g):
+      xs, w = res
+      return jnp.dot(g, w), jnp.dot(xs.T, g, out_sharding=P(unreduced={'x'}))
+    f.defvjp(f_fwd, f_bwd)
+
+    def model(ws, xs_mubatch):
+      for w in ws:
+        xs_mubatch = f(xs_mubatch, w)
+      return jnp.sum(xs_mubatch)
+
+    @partial(jax.jit, donate_argnums=(0,))
+    def step(ws, xs):
+      def mubatch_loop_body(grad_acc, xs_mubatch):
+        grad = jax.grad(model)(ws, xs_mubatch)
+        assert_unreduced(grad)
+        assert_unreduced(grad_acc)
+        grad_acc = jax.tree.map(jnp.add, grad_acc, grad)
+        assert_unreduced(grad_acc)
+        return grad_acc, None
+
+      grad_acc = jax.tree.map(jnp.zeros_like, ws)
+      grad_acc = reshard(grad_acc, P(unreduced={'x'}))
+      grad_acc, _ = jax.lax.scan(mubatch_loop_body, grad_acc, xs)
+      assert_unreduced(grad_acc)
+      # AR once for a batch
+      grad_acc = reshard(grad_acc, P())
+      return jax.tree.map(lambda W, g: W - g * 0.01, ws, grad_acc)
+
+    ws = tuple(jax.device_put(jnp.ones((4, 4)), P()) for _ in range(4))
+    xs = jax.device_put(jnp.ones((2, 2, 4)), P(None, 'x', None))
+
+    step(ws, xs)  # doesn't crash
+
+    compiled_text = step.lower(ws, xs).compile().as_text()
+    if compiled_text is not None:
+      if jtu.test_device_matches(['gpu']):
+        self.assertEqual(compiled_text.count('all-reduce-start('), 1)
+        self.assertEqual(compiled_text.count('all-reduce-done('), 1)
+      else:
+        self.assertEqual(compiled_text.count('all-reduce('), 1)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

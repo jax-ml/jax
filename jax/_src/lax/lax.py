@@ -5384,6 +5384,10 @@ def _dot_general_sharding_computation(lhs_spec, rhs_spec,
 
 def _dot_general_unreduced_rule(out_s, lhs, rhs, *, dimension_numbers,
                                 **kwargs):
+  if lhs.sharding.spec.unreduced or rhs.sharding.spec.unreduced:
+    raise core.ShardingTypeError(
+        f'lhs or rhs passed to dot_general cannot be unreduced. Got {lhs=} and'
+        f' {rhs=}')
   if out_s.spec.unreduced:
     (lhs_contracting, rhs_contracting), _ = dimension_numbers
     lhs_contracting_spec = tuple(lhs.sharding.spec[i] for i in lhs_contracting)
@@ -7839,6 +7843,9 @@ def _reduce_sum_sharding_rule(operand, *, axes, out_sharding):
   return operand.sharding.update(spec=new_spec)
 
 def _reduce_sum_unreduced_rule(out_s, operand, *, axes, **kwargs):
+  if operand.sharding.spec.unreduced:
+    raise core.ShardingTypeError(
+        f'operand passed to reduce_sum cannot be unreduced. Got {operand=}')
   if unreduced_spec := out_s.spec.unreduced:
     axes = frozenset(axes)
     reduced_spec = frozenset(

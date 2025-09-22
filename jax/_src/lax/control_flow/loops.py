@@ -52,7 +52,7 @@ from jax._src.lax.control_flow.common import (
     _avals_short, _initial_style_jaxpr, _prune_zeros, _typecheck_param,
     _make_closed_jaxpr)
 from jax._src.lax.other import logaddexp
-from jax._src.pjit import auto_axes, PartitionSpec as P
+from jax._src.pjit import auto_axes, PartitionSpec as P, reshard
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import canonicalize_sharding
@@ -526,7 +526,16 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
   if remainder:
     carry, ys_rem = inner(remainder, carry, xs_rem)
     ys = _map(_concat, ys, ys_rem) if not reverse else _map(_concat, ys_rem, ys)
+  # If any carry leaf is unreduced, we need to add a reshard to
+  # typeof(carry).sharding which inserts a sharding_constraint so that shardy
+  # knows not to AR at the boundary of while. This is a no-op at the trace level
+  # but during lowering time, it inserts an extra sharding constraint.
+  carry = tree_map(_constrain_unreduced, carry)
   return [*carry, *ys]
+
+def _constrain_unreduced(val):
+  val_s = core.typeof(val).sharding
+  return reshard(val, val_s) if val_s.spec.unreduced else val
 
 def _split_leading(sz, x):
   return (slicing.slice_in_dim(x, 0, sz),
