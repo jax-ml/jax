@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Experimental implicitly-updated PRNG, based on Ref.
+Stateful, implicitly-updated PRNG implementation based on mutable refs.
 """
 
 import dataclasses
@@ -53,8 +53,8 @@ class StatefulPRNG:
     base_key: a typed JAX PRNG key object (see :func:`jax.random.key`).
     counter: a scalar integer wrapped in a :class:`Ref`
 
-  >>> from jax.experimental.stateful_rng import default_rng
-  >>> rng = default_rng(42)
+  >>> import jax.numpy as jnp
+  >>> rng = jnp.random.default_rng(42)
   >>> rng
   StatefulPRNG(base_key=Array((), dtype=key<fry>) overlaying:
   [ 0 42], counter=Ref(0, dtype=int32, weak_type=True))
@@ -85,8 +85,8 @@ class StatefulPRNG:
       ``self.base_key``.
 
     Examples:
-      >>> from jax.experimental.stateful_rng import default_rng
-      >>> rng = default_rng(0)
+      >>> import jax.numpy as jnp
+      >>> rng = jnp.random.default_rng(0)
       >>> rng.key()
       Array((), dtype=key<fry>) overlaying:
       [1797259609 2579123966]
@@ -161,8 +161,8 @@ class StatefulPRNG:
       spawned from the original instance.
 
     Examples:
-      >>> from jax.experimental.stateful_rng import default_rng
-      >>> rng = default_rng(123)
+      >>> import jax.numpy as jnp
+      >>> rng = jnp.random.default_rng(123)
       >>> child_rngs = rng.spawn(2)
       >>> [crng.integers(0, 10, 2) for crng in child_rngs]
       [Array([1, 3], dtype=int32), Array([9, 9], dtype=int32)]
@@ -201,8 +201,8 @@ def default_rng(seed: typing.ArrayLike, *,
       :meth:`StatefulPRNG.key` method to produce a standard JAX PRNG key.
 
   Examples:
-    >>> from jax.experimental.stateful_rng import default_rng
-    >>> rng = default_rng(42)
+    >>> import jax.numpy as jnp
+    >>> rng = jnp.random.default_rng(42)
 
     Repeated draws implicitly update the key:
 
