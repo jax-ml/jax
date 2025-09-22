@@ -2840,6 +2840,101 @@ def _hyp2f1_digamma_transform(a, b, c, x):
 
 @jit
 @jnp_vectorize.vectorize
+def _hyp2f1_a_derivative(a, b, c, x):
+  """
+  Define it as a serie using :
+  https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/01/
+  """
+
+  precision = dtypes.finfo(x.dtype).eps
+
+  def body(state):
+    serie, k, term = state
+    serie += term * (digamma(a + k) - digamma(a))
+    term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
+    k += 1
+
+    return serie, k, term
+
+  def cond(state):
+    serie, k, term = state
+
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
+
+  init = 0, 1, a * b / c * x
+
+  return lax.while_loop(cond, body, init)[0]
+
+
+@jit
+@jnp_vectorize.vectorize
+def _hyp2f1_b_derivative(a, b, c, x):
+  """
+  Define it as a serie using :
+  https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/02/
+  """
+
+  precision = dtypes.finfo(x.dtype).eps
+
+  def body(state):
+    serie, k, term = state
+    serie += term * (digamma(b + k) - digamma(b))
+    term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
+    k += 1
+
+    return serie, k, term
+
+  def cond(state):
+    serie, k, term = state
+
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
+
+  init = 0, 1, a * b / c * x
+
+  return lax.while_loop(cond, body, init)[0]
+
+
+@jit
+@jnp_vectorize.vectorize
+def _hyp2f1_c_derivative(a, b, c, x):
+  """
+  Define it as a serie using :
+  https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/03/
+  """
+
+  precision = dtypes.finfo(x.dtype).eps
+
+  def body(state):
+    serie, k, term = state
+    serie += term * (digamma(c) - digamma(c + k))
+    term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
+    k += 1
+
+    return serie, k, term
+
+  def cond(state):
+    serie, k, term = state
+
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
+
+  init = 0, 1, a * b / c * x
+
+  return lax.while_loop(cond, body, init)[0]
+
+
+@jit
+def _hyp2f1_x_derivative(a, b, c, x):
+  """
+  Define the derivative with regard to ``x`` :
+  https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/05/
+  """
+
+  return a * b / c * hyp2f1(a + 1, b + 1, c + 1, x)
+
+
+@custom_derivatives.custom_jvp
+@jit
+@jnp_vectorize.vectorize
 def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
   r"""The 2F1 hypergeometric function.
 
@@ -2898,6 +2993,14 @@ def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
                       s ** (-b),
                       gamma(c) * gamma(d) / (gamma(ca) * gamma(cb)),
                       _hyp2f1_terminal_or_serie(a, b, c, x))
+
+
+hyp2f1.defjvps(
+  lambda a_dot, primal_out, a, b, c, x: _hyp2f1_a_derivative(a, b, c, x) * a_dot,
+  lambda b_dot, primal_out, a, b, c, x: _hyp2f1_b_derivative(a, b, c, x) * b_dot,
+  lambda c_dot, primal_out, a, b, c, x: _hyp2f1_c_derivative(a, b, c, x) * c_dot,
+  lambda x_dot, primal_out, a, b, c, x: _hyp2f1_x_derivative(a, b, c, x) * x_dot
+)
 
 
 def softmax(x: ArrayLike,
