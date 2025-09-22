@@ -13,9 +13,11 @@ API
 
    AbstractRef
    ArrayRef
+   Ref
    array_ref
    freeze
    get
+   new_ref
    set
    swap
    addupdate
