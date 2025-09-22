@@ -548,14 +548,13 @@ def _empty_array(prefix, length_spec, aval):
   # TODO(yashkatariya): Replace `lax.empty2` with `lax.empty` once
   # AllocateBuffer issues are fixed. Also delete `empty2` after this usage is
   # removed. Basically uncomment the following 2 lines.
-  # empty = lax.empty((*prefix, *aval.shape), aval.dtype, out_sharding=sharding)
+  # lax.empty will also need to take a memory_space argument.
+  # empty = lax.empty((*prefix, *aval.shape), aval.dtype, out_sharding=sharding,
+  #                   memory_space=aval.memory_space)
   # return core.pvary(empty, tuple(aval.vma))
-  empty = core.pvary(lax.empty2(aval.dtype), tuple(aval.vma))
+  empty = core.pvary(lax.empty2(aval.dtype, memory_space=aval.memory_space),
+                     tuple(aval.vma))
   out = lax.broadcast(empty, (*prefix, *aval.shape), out_sharding=sharding)
-  # TODO(yashkatariya): Maybe make this more general by passing
-  # aval.memory_space to lax.broadcast and then remove this hack?
-  if aval.memory_space != core.typeof(out).memory_space:
-    out = api.device_put(out, aval.memory_space)
   return out
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')

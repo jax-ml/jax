@@ -9089,14 +9089,18 @@ mlir.register_lowering(empty_p, _empty_lower)
 
 # TODO(yashkatariya): Delete `empty2` and replace scan's usage with `empty` once
 # AllocateBuffer issues are fixed
-def empty2(dtype):
-  return empty2_p.bind(dtype=dtype)
+def empty2(dtype, *, memory_space):
+  return empty2_p.bind(dtype=dtype, memory_space=memory_space)
 empty2_p = core.Primitive('empty2')
-empty2_p.def_abstract_eval(lambda *, dtype: core.ShapedArray((), dtype))
-def _empty2_lower(ctx, *, dtype):
+
+def _empty2_abstract_eval(*, dtype, memory_space):
+  return core.ShapedArray((), dtype, memory_space=memory_space)
+empty2_p.def_abstract_eval(_empty2_abstract_eval)
+
+def _empty2_lower(ctx, *, dtype, memory_space):
   dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
   phys_aval = core.physical_aval(core.ShapedArray((), dtype))
-  return mlir.ir_constant(np.zeros(phys_aval.shape, phys_aval.dtype)),
+  return [mlir.ir_constant(np.zeros(phys_aval.shape, phys_aval.dtype))]
 mlir.register_lowering(empty2_p, _empty2_lower)
 
 
