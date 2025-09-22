@@ -2041,14 +2041,16 @@ class DynamicJaxprTrace(core.Trace):
     self.frame.add_eqn(eqn)
     return out_tracers
 
-  def new_const(self, c, source_info: SourceInfo):
+  def new_const(self, c, source_info: SourceInfo,
+                aval: AbstractValue | None = None):
     # TODO(mattjj): for ints, or hashable consts, don't rely on id
     tracer = self.frame.constid_to_tracer.get(id(c))
     if tracer is None:
-      aval = get_aval(c)
+      if aval is None:
+        aval = get_aval(c)
       if aval.has_qdd:
         with core.set_current_trace(self.parent_trace or core.eval_trace):
-          aval = core.AvalQDD(aval, core.cur_qdd(c))
+          aval = core.AvalQDD(aval, core.cur_qdd(c))  # type: ignore
       aval = self._lift_tracers_in_aval(aval, source_info)
       tracer = self._new_const(aval, c, source_info)
     return tracer
@@ -2137,7 +2139,8 @@ class DynamicJaxprTrace(core.Trace):
     maybe_consts_out = try_constant_folding(primitive, tracers, params, out_avals)
     if maybe_consts_out is not None:
       eqn = None
-      out_tracers = map(partial(self.new_const, source_info=source_info), maybe_consts_out)
+      out_tracers = [self.new_const(c, source_info=source_info, aval=aval)
+                     for c, aval in zip(maybe_consts_out, out_avals)]
     else:
       eqn, out_tracers = self.make_eqn(tracers, out_avals, primitive, params,
                                        effs, source_info=source_info)
@@ -2798,7 +2801,8 @@ def inline_jaxpr_into_trace(
 
     maybe_consts = try_constant_folding(eqn.primitive, in_tracers, eqn.params, out_avals)
     if maybe_consts is not None:
-      out_tracers = map(partial(trace.new_const, source_info=src_), maybe_consts)
+      out_tracers = [trace.new_const(c, source_info=src_, aval=aval)
+                     for c, aval in zip(maybe_consts, out_avals)]
     else:
       out_tracers = trace.emit_eqn(in_tracers, out_avals, eqn.primitive,
                                    eqn.params, eqn.effects, src_, eqn.ctx)
