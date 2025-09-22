@@ -174,6 +174,10 @@ def default_rng(seed: typing.ArrayLike, *,
   """
   Implicitly updated PRNG API.
 
+  This implements a stateful PRNG API similar to :func:`numpy.random.default_rng`.
+  It is compatible with JAX transformations like :func:`~jax.jit`, :func:`~jax.vmap`,
+  and others, with a few exceptions mentioned in the Notes below.
+
   Args:
     seed: a 64- or 32-bit integer used as the value of the key.
     impl: optional string specifying the PRNG implementation (e.g.
@@ -181,6 +185,9 @@ def default_rng(seed: typing.ArrayLike, *,
 
   Returns:
     A StatefulPRNG object, with methods for generating random values.
+
+  Notes:
+    The StatefulPRNG object created by this method uses 
 
   Examples:
     >>> from jax.experimental.stateful_rng import default_rng
