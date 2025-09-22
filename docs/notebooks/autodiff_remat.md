@@ -275,7 +275,7 @@ Notice that if `f = lambda x: h(g(x))` is the function we want to differentiate,
 That is, in code we'd have something like:
 
 ```{code-cell}
-def f_grad_bad(x):
+def f_grad_bad1(x):
   _ = f(x)                  # step 1
   _, f_vjp = jax.vjp(f, x)  # step 2
   x_bar, = f_vjp(1.0)       # step 3
