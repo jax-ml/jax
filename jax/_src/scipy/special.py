@@ -33,7 +33,6 @@ from jax._src.api import jit, jvp, vmap
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import vectorize as jnp_vectorize
-from jax._src.scipy import integrate
 from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact
 from jax._src.ops import special as ops_special
 from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
