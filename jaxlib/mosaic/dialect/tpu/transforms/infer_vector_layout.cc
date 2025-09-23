@@ -1852,9 +1852,11 @@ class VectorLayoutInferer {
     auto some_layout = getLayout(op->getOperand(0));
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     if (isa<tpu::ExtFOp>(op)) {
-      TPU_CHECK_OP(dst_bitwidth == 32 || dst_bitwidth == 16,
-                   "Only supported extensions to 32-bit (float32) or 16-bit "
-                   "(bfloat16)");
+      TPU_CHECK_OP(
+        dst_bitwidth == 32 || dst_bitwidth == 16 ||
+          (dst_bitwidth == 8 && hardware_generation_ >= 7),
+        "Only support extensions to 32-bit (float32), 16-bit (bfloat16), "
+        "or to 8-bit (float8) on TPUv7+");
     }
     auto &layout = *some_layout;
     Layout src_layout;
