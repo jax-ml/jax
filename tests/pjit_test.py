@@ -5142,6 +5142,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jnp.ones((8, 2), dtype=jnp.int32, device=s)
     self.assertEqual(out.sharding, s)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_jnp_like_functions(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+
+    out = jnp.zeros_like(np_inp, out_sharding=P('x'))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertArraysEqual(out, np.zeros_like(np_inp))
+
+    out = jnp.ones_like(np_inp, out_sharding=P('x'))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertArraysEqual(out, np.ones_like(np_inp))
+
   @jtu.with_explicit_mesh((2, 1), ('x', 'y'))
   def test_jnp_array_out_sharding(self, mesh):
     np_inp = np.arange(16).reshape(8, 2)
