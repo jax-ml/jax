@@ -607,24 +607,26 @@ def _pack_abstract_eval(a, b, *, format, preferred_element_type):
     raise TypeError(
         f"Packed arrays must have the same dtype, got {a.dtype} and {b.dtype}"
     )
-  # TODO(slebedev): Support more types.
-  if a.dtype != jnp.float32:
-    raise NotImplementedError(
-        f"Only float32 packing is supported, got {a.dtype}"
-    )
-  if preferred_element_type is not None:
+  if preferred_element_type is None:
+    match a.dtype:
+      case jnp.float32:
+        packed_dtype = jnp.bfloat16
+      case jnp.int32:
+        packed_dtype = jnp.int16
+      case _:
+        # TODO(slebedev): Support more types.
+        raise NotImplementedError(
+            f"Only packing of float32 and int32 is supported, got {a.dtype}"
+        )
+  else:
     packed_bw = dtypes.bit_width(a.dtype) // 2
     if dtypes.bit_width(preferred_element_type) != packed_bw:
       raise ValueError(
           f"preferred_element_type= must have bitwidth {packed_bw}, got"
           f" {dtypes.bit_width(preferred_element_type)}"
       )
-    if preferred_element_type != jnp.bfloat16:
-      raise NotImplementedError(
-          "Only packing into bfloat16 is supported, got"
-          f" {preferred_element_type}"
-      )
-  packed_dtype = jnp.bfloat16
+    packed_dtype = preferred_element_type
+
   match format:
     case PackFormat.INTERLEAVED:
       packed_shape = (2 * a.size,)
@@ -701,24 +703,25 @@ def _unpack_abstract_eval(ab, *, format, preferred_element_type):
             "Compressed unpack requires an array with shape (N, 2), got"
             f" {ab.shape}"
         )
-  # TODO(slebedev): Support more types.
-  if ab.dtype != jnp.bfloat16:
-    raise NotImplementedError(
-        f"Only bfloat16 unpacking is supported, got {ab.dtype}"
-    )
-  if preferred_element_type is not None:
+  if preferred_element_type is None:
+    match ab.dtype:
+      case jnp.bfloat16:
+        unpacked_dtype = jnp.float32
+      case jnp.int16:
+        unpacked_dtype = jnp.int32
+      case _:
+        # TODO(slebedev): Support more types.
+        raise NotImplementedError(
+            f"Only unpacking of bloat16 and int16 is supported, got {ab.dtype}"
+        )
+  else:
     unpacked_bw = dtypes.bit_width(ab.dtype) * 2
     if dtypes.bit_width(preferred_element_type) != unpacked_bw:
       raise ValueError(
           f"preferred_element_type= must have bitwidth {unpacked_bw}, got"
           f" {dtypes.bit_width(preferred_element_type)}"
       )
-    if preferred_element_type != jnp.float32:
-      raise NotImplementedError(
-          "Only unpacking into float32 is supported, got"
-          f" {preferred_element_type}"
-      )
-  unpacked_dtype = jnp.float32
+    unpacked_dtype = preferred_element_type
   return (jax_core.ShapedArray((ab.size // 2,), unpacked_dtype),) * 2
 
 

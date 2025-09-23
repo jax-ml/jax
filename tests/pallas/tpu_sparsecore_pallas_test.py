@@ -568,20 +568,22 @@ class VectorSubcoreTest(PallasSCTest):
     with self.assertRaisesRegex(ValueError, "is not divisible"):
       kernel(x)
 
-  @parameterized.parameters(*plsc.PackFormat)
-  def test_pack_unpack(self, format):
+  @parameterized.product(
+      pack_format=[*plsc.PackFormat],
+      dtype=[jnp.float32, jnp.int32],
+  )
+  def test_pack_unpack(self, pack_format, dtype):
     shape = (8,)
-    dtype = jnp.float32
 
     @vector_subcore_kernel(
         out_shape=(jax.ShapeDtypeStruct((8,), dtype),) * 2
     )
     def kernel(a_ref, b_ref, oa_ref, ob_ref):
-      ab = plsc.pack(a_ref[...], b_ref[...], format=format)
-      oa_ref[...], ob_ref[...] = plsc.unpack(ab, format=format)
+      ab = plsc.pack(a_ref[...], b_ref[...], format=pack_format)
+      oa_ref[...], ob_ref[...] = plsc.unpack(ab, format=pack_format)
 
     a = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
-    b = a * a
+    b = -a
     out_a, out_b = kernel(a, b)
     np.testing.assert_array_equal(out_a, a)
     np.testing.assert_array_equal(out_b, b)
