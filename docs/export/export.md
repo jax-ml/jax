@@ -85,9 +85,9 @@ function cannot be differentiated):
 >>> import jax
 >>> from jax import export
 >>> from typing import Callable
-
+...
 >>> def f(x): return 7 * x * x * x
-
+...
 >>> # Serialize 3 levels of VJP along with the primal function
 >>> blob: bytearray = export.export(jax.jit(f))(1.).serialize(vjp_order=3)
 >>> rehydrated_f: Callable = export.deserialize(blob).call
