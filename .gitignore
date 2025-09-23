@@ -8,6 +8,7 @@
 /dist/
 .ipynb_checkpoints
 /bazel-*
+MODULE.bazel.lock
 .jax_configure.bazelrc
 /tensorflow
 .DS_Store

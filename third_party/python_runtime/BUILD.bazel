@@ -1,0 +1,11 @@
+licenses(["notice"])  # New BSD, Python Software Foundation
+
+package(default_visibility = ["//visibility:public"])
+
+load("@bazel_features//:features.bzl", "bazel_features")
+
+alias(
+    name = "headers",
+    # With Bzlmod, we use the hermetic python toolchain from rules_python
+    actual = "@rules_python//python/cc:current_py_cc_headers" if bazel_features.external_deps.is_bzlmod_enabled else "@local_config_python//:python_headers",
+)
