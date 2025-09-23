@@ -1992,12 +1992,6 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
       assert isinstance(v, core.Var)
       return env[v]
 
-  def aval(v: core.Atom) -> core.AbstractValue:
-    if type(v) is core.Literal:
-      return core.abstractify(v.val)
-    else:
-      return v.aval
-
   def write(v: core.Var, node: IrValues):
     assert node is not None
     w: IrValues
@@ -2033,7 +2027,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     in_nodes = tuple(map(read, eqn.invars))
     assert all(_is_ir_values(v) for v in in_nodes), (eqn, in_nodes)
 
-    avals_in = tuple(map(aval, eqn.invars))
+    avals_in = tuple(v.aval for v in eqn.invars)
     ordered_effects = list(effects_lib.ordered_effects.filter_in(eqn.effects))
     tokens_in = tokens.subset(ordered_effects)
 
@@ -2065,7 +2059,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
             name_stack=eqn_name_stack,
             traceback=eqn.source_info.traceback,
             avals_in=avals_in,
-            avals_out=map(aval, eqn.outvars), tokens_in=tokens_in,
+            avals_out=tuple(v.aval for v in eqn.outvars), tokens_in=tokens_in,
             tokens_out=None, jaxpr_eqn_ctx=eqn.ctx,
             dim_var_values=dim_var_values,
             axis_size_env=axis_size_env,
@@ -2096,13 +2090,7 @@ def _cached_lowering(
   equation. For each such equation we either inline the function body or emit
   an out-of-line call to it, depending on whether any of the lowering rules
   opted out of inlining."""
-  def aval(v: core.Atom) -> core.AbstractValue:
-    if type(v) is core.Literal:
-      return core.abstractify(v.val)
-    else:
-      return v.aval
-
-  avals_in = tuple(map(aval, eqn.invars))
+  avals_in = tuple(v.aval for v in eqn.invars)
   ordered_effects = list(effects_lib.ordered_effects.filter_in(eqn.effects))
   cache_key = LoweringCacheKey(
       primitive=eqn.primitive,
