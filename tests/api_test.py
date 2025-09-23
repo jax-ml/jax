@@ -5299,6 +5299,7 @@ class APITest(jtu.JaxTestCase):
 
     self.assertNotIn('mul', str(f_vjp))
 
+  @jtu.thread_unsafe_test()  # make_user_context() is not thread-safe at the moment
   def test_user_trace_context_hooks(self):
     my_config = jax.make_user_context()
 

@@ -1088,6 +1088,9 @@ def make_user_context(default_value=None):
   cache won't get a hit and the jitted function will be re-traced, re-lowered
   and re-compiled.
 
+  This function is not thread-safe. Do not call it concurrently with other JAX
+  APIs.
+
   Example:
 
   ```
