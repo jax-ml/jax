@@ -2763,7 +2763,7 @@ def with_sharding_constraint(x, shardings):
   del layouts
 
   if not mesh_lib.get_concrete_mesh().empty:
-    context_mesh = mesh_lib.get_abstract_mesh()
+    context_mesh = mesh_lib.get_concrete_mesh()
   elif not mesh_lib.get_abstract_mesh().empty:
     context_mesh = mesh_lib.get_abstract_mesh()
   else:
