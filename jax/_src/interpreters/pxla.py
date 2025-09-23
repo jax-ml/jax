@@ -608,9 +608,9 @@ class MapTracer(core.Tracer):
   __slots__ = ["val", "shard_axes"]
 
   def __init__(self, trace: MapTrace, val, shard_axes: dict[core.AxisName, int]):
-    self._trace = trace
-    self.val = val
-    self.shard_axes = shard_axes
+    object.__setattr__(self, '_trace', trace)
+    object.__setattr__(self, 'val', val)
+    object.__setattr__(self, 'shard_axes', shard_axes)
     assert all(val < self.val.ndim for val in self.shard_axes.values())
 
   @property

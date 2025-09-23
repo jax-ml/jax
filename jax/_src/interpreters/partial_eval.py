@@ -606,9 +606,9 @@ class JaxprTracer(Tracer):
                recipe: JaxprTracerRecipe | None):
     assert isinstance(pval, PartialVal)
     pv, const = pval
-    self._trace = trace
-    self.pval = pval
-    self.recipe = recipe
+    object.__setattr__(self, '_trace', trace)
+    object.__setattr__(self, 'pval', pval)
+    object.__setattr__(self, 'recipe', recipe)
 
   def __repr__(self):
     return f'Traced<{self.aval}:{self._trace}>'
@@ -1729,13 +1729,13 @@ class DynamicJaxprTracer(core.Tracer):
     else:
       assert not aval.has_qdd
       qdd = None
-    self._trace = trace
-    self._line_info = line_info
-    self._debug_info = self._trace.frame.debug_info  # for UnexpectedTracerError
-    self.aval = aval  # type: ignore[misc]
-    self.val = val
-    self.mutable_qdd = core.MutableQuasiDynamicData(qdd)
-    self.parent = parent
+    object.__setattr__(self, '_trace', trace)
+    object.__setattr__(self, '_line_info', line_info)
+    object.__setattr__(self, '_debug_info', self._trace.frame.debug_info)  # for UnexpectedTracerError
+    object.__setattr__(self, 'aval', aval)  # type: ignore[misc]
+    object.__setattr__(self, 'val', val)
+    object.__setattr__(self, 'mutable_qdd', core.MutableQuasiDynamicData(qdd))
+    object.__setattr__(self, 'parent', parent)
 
   def _short_repr(self):
     return f"JitTracer<{self.aval}>"

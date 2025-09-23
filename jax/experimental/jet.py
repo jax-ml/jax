@@ -205,9 +205,9 @@ class JetTracer(core.Tracer):
 
   def __init__(self, trace, primal, terms):
     assert type(terms) in (ZeroSeries, list, tuple)
-    self._trace = trace
-    self.primal = primal
-    self.terms = terms
+    object.__setattr__(self, '_trace', trace)
+    object.__setattr__(self, 'primal', primal)
+    object.__setattr__(self, 'terms', terms)
 
   @property
   def aval(self):

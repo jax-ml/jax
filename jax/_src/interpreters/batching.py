@@ -458,10 +458,10 @@ class BatchTracer(Tracer):
       if type(batch_dim) is int:
         aval = core.get_aval(val)
         assert 0 <= batch_dim < len(aval.shape)
-    self._trace = trace
-    self.val = val
-    self.batch_dim = batch_dim
-    self.source_info = source_info
+    object.__setattr__(self, '_trace', trace)
+    object.__setattr__(self, 'val', val)
+    object.__setattr__(self, 'batch_dim', batch_dim)
+    object.__setattr__(self, 'source_info', source_info)
 
   def _short_repr(self):
     return f"VmapTracer<{self.aval}>"

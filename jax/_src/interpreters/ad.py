@@ -847,9 +847,9 @@ class JVPTracer(Tracer):
   def __init__(self, trace, primal, tangent):
     if config.enable_checks.value:
       _primal_tangent_shapes_match(primal, tangent)
-    self._trace = trace
-    self.primal = primal
-    self.tangent = tangent
+    object.__setattr__(self, '_trace', trace)
+    object.__setattr__(self, 'primal', primal)
+    object.__setattr__(self, 'tangent', tangent)
 
   def _short_repr(self):
     return f"GradTracer<{self.aval}>"
@@ -1219,9 +1219,9 @@ class LinearizeTracer(Tracer):
   def __init__(self, trace, primal, tangent):
     if config.enable_checks.value:
       _primal_tangent_shapes_match(primal, tangent)
-    self._trace = trace
-    self.primal = primal
-    self.tangent = tangent
+    object.__setattr__(self, '_trace', trace)
+    object.__setattr__(self, 'primal', primal)
+    object.__setattr__(self, 'tangent', tangent)
 
   @property
   def aval(self):

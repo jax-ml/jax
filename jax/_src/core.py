@@ -910,7 +910,7 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   shape = _aval_property('shape')
 
   def __init__(self, trace: Trace):
-    self._trace = trace
+    object.__setattr__(self, '_trace', trace)
 
   def _error_repr(self):
     if self.aval is None:
@@ -1064,6 +1064,22 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
       else:
         return attr
 
+  def __setattr__(self, name, value):
+    try:
+      attr = getattr(self.aval, name)
+    except AttributeError:
+      return object.__setattr__(self, name, value)
+    except RecursionError as e:
+      raise RecursionError(
+          "Got recursion error while trying to set attribute "
+          f"'{type(self).__name__}.{name}'. Try using "
+          f"`object.__setattr__(self, '{name}', value)` instead."
+      ) from e
+    t = type(attr)
+    if t is aval_property and attr.fset is not None:
+      return attr.fset(self, value)
+    object.__setattr__(self, name, value)
+
   def _short_repr(self) -> str:
     return f'{self.__class__.__name__}<{self.aval}>'
 
@@ -1165,8 +1181,12 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
 
 # these can be used to set up forwarding of properties and instance methods from
 # Tracer instances to the underlying avals
-aval_property = namedtuple("aval_property", ["fget"])
 aval_method = namedtuple("aval_method", ["fun"])
+class aval_property(NamedTuple):
+  fget: Any = None
+  fset: Any = None
+  def setter(self, fset) -> "aval_property":
+    return aval_property(self.fget, fset)
 
 pytype_aval_mappings[Tracer] = lambda x: x.aval
 

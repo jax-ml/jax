@@ -1262,12 +1262,12 @@ class ShardMapTracer(core.Tracer):
   val: JaxType
 
   def __init__(self, trace, vma, val):
-    self._trace = trace
+    object.__setattr__(self, '_trace', trace)
     if isinstance(vma, set):
       vma = frozenset(vma)
     assert isinstance(vma, frozenset)
-    self.vma = vma
-    self.val = val
+    object.__setattr__(self, 'vma', vma)
+    object.__setattr__(self, 'val', val)
 
   @property
   def aval(self):

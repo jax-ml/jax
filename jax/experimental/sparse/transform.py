@@ -280,8 +280,8 @@ def spvalues_to_avals(
 
 class SparseTracer(core.Tracer):
   def __init__(self, trace: core.Trace, *, spvalue):
-    self._spvalue = spvalue
-    self._trace = trace
+    object.__setattr__(self, '_spvalue', spvalue)
+    object.__setattr__(self, '_trace', trace)
 
   @property
   def spenv(self):
