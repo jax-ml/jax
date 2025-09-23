@@ -84,8 +84,8 @@ class CanonicalBuilder : public ImplicitLocOpBuilder {
       : ImplicitLocOpBuilder(loc, op), ctx_(ctx), op_(op) {}
 
   template <typename Op, typename... Args>
-  Value create(Location loc, Args &&...args) {
-    Op new_op = OpBuilder::create<Op>(loc, std::forward<Args>(args)...);
+  Value create(Args &&...args) {
+    Op new_op = ImplicitLocOpBuilder::create<Op>(std::forward<Args>(args)...);
     // We perform a one-level check to avoid infinite recursion when recreating
     // the canonicalized operation. However, if there is an op that in its
     // canonicalization rule creates another op and vice versa, it will still
@@ -106,11 +106,6 @@ class CanonicalBuilder : public ImplicitLocOpBuilder {
     } else {
       return new_op.getResult();
     }
-  }
-
-  template <typename Op, typename... Args>
-  Value create(Args &&...args) {
-    return create<Op>(getLoc(), std::forward<Args>(args)...);
   }
 
   Value create(StringAttr opName, ValueRange operands, TypeRange types = {},
@@ -413,8 +408,8 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
         << dest.getWidth() << " conversion";
     // TODO(mvoz): Go to bf16 when hardware supported, requires adding support
     // for 16 bitwidth in extsiop in infer/apply.
-    auto ele_as_fp = builder.create<arith::SIToFPOp>(
-        op.getLoc(), VectorType::get(shape, dest), element);
+    auto ele_as_fp =
+        builder.create<arith::SIToFPOp>(VectorType::get(shape, dest), element);
     return cast<TypedValue<VectorType>>(ele_as_fp);
   };
   if (ctx.hardware_generation == 7) {
@@ -609,10 +604,10 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
                                        transpose_rhs);
     // transpose flags are always false here, because ddn takes precedence
     // after this pass.
-    return builder.create<tpu::MatmulOp>(
-        op.getLoc(), acc.getType(), lhs, rhs, acc,
-        /*transpose_lhs=*/false,
-        /*transpose_rhs=*/false, precision_attr, ddn);
+    return builder.create<tpu::MatmulOp>(acc.getType(), lhs, rhs, acc,
+                                         /*transpose_lhs=*/false,
+                                         /*transpose_rhs=*/false,
+                                         precision_attr, ddn);
   };
 
   // If we have a batch_size, we want to slice rhs and lhs [:batch_size],
@@ -655,7 +650,6 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
   // If the matmul was converted from int -> float, convert back to s32.
   if (acc_element_type.isFloat() && old_acc_ty.getElementType().isInteger()) {
     res = builder.create<arith::FPToSIOp>(
-        op.getLoc(),
         VectorType::get(acc.getType().getShape(), old_acc_ty.getElementType()),
         res);
   }
@@ -704,8 +698,7 @@ FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
       // rewritten to f32 on later hardware.
       if (element_type.isBF16()) {
         if (ctx.compatibility_mode) {
-          auto target_f32 =
-              builder.create<tpu::ExtFOp>(op.getLoc(), target_f32_ty, operand);
+          auto target_f32 = builder.create<tpu::ExtFOp>(target_f32_ty, operand);
           should_rewrite_op = true;
           new_operands.push_back(target_f32);
         } else {
@@ -782,10 +775,10 @@ FailureOr<Value> canonicalize_multi_dim_reduction(
       Value new_acc =
           builder.createOrFold<tpu::ExtFOp>(result_ty_f32, op.getAcc());
       auto new_op = builder.create<vector::MultiDimReductionOp>(
-          op.getLoc(), new_acc.getType(), op.getKindAttr(), new_source, new_acc,
+          new_acc.getType(), op.getKindAttr(), new_source, new_acc,
           DenseI64ArrayAttr::get(builder.getContext(), op.getReductionDims()));
       auto new_result = builder.create<tpu::TruncFOp>(
-          op.getLoc(), result_ty, new_op, tpu::RoundingMode::kToNearestEven);
+          result_ty, new_op, tpu::RoundingMode::kToNearestEven);
       op.replaceAllUsesWith(new_result);
       op.erase();
       return new_result;
@@ -865,7 +858,7 @@ FailureOr<Value> canonicalize_contraction(const CanonicalizeContext &ctx,
       defaultDimensionNumbers(builder, false, transpose_rhs);
 
   Value matmul = builder.create<tpu::MatmulOp>(
-      contraction_op->getLoc(), acc_ty, lhs, rhs, acc,
+      acc_ty, lhs, rhs, acc,
       /*transpose_lhs=*/false,
       /*transpose_rhs=*/false, precision_attr, dot_dimension_numbers_attr);
   contraction_op.replaceAllUsesWith(matmul);
@@ -1011,7 +1004,7 @@ FailureOr<Value> canonicalize_select(const CanonicalizeContext &ctx,
                                  op.getCondition().getType());
   auto cond = builder.create<vector::BroadcastOp>(cond_ty, op.getCondition());
   auto new_op = builder.create<arith::SelectOp>(
-      op.getLoc(), cond, op.getTrueValue(), op.getFalseValue());
+      cond, op.getTrueValue(), op.getFalseValue());
   op.replaceAllUsesWith(new_op);
   op.erase();
   return new_op;
@@ -1494,7 +1487,6 @@ FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
   return final_vec;
 }
 
-
 FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
                                         Operation &raw_op) {
   auto op = cast<tpu::TransposeOp>(raw_op);
@@ -1885,13 +1877,13 @@ class MosaicCanonicalizer {
         }
       }
     }
-    if (need_elementwise_canonicalization(ctx, any_op)) {
-      return canonicalize_elementwise(ctx, any_op);
-    }
     if (auto rule_it = rules().find(any_op.getName().getStringRef());
         rule_it != rules().end()) {
       const canonicalize_rule_type &rule = rule_it->getValue();
       return rule(ctx, any_op);
+    }
+    if (need_elementwise_canonicalization(ctx, any_op)) {
+      return canonicalize_elementwise(ctx, any_op);
     }
     return success();
   }
