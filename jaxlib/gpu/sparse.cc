@@ -64,9 +64,7 @@ gpuDataType DtypeToCudaDataType(const dtype& np_type) {
           {{'u', 1}, CUDA_R_8U},
           {{'i', 4}, CUDA_R_32I},
           {{'u', 4}, CUDA_R_32U},
-#if JAX_GPU_HAVE_SPARSE
           {{'V', 2}, CUDA_R_16BF},
-#endif  // JAX_GPU_HAVE_SPARSE
 #endif  // JAX_GPU_CUDA
       });
   auto it = types->find({np_type.kind(), np_type.itemsize()});
@@ -102,7 +100,6 @@ DenseVecDescriptor BuildDenseVecDescriptor(const dtype& data_dtype, int size) {
   return DenseVecDescriptor{value_type, size};
 }
 
-#if JAX_GPU_HAVE_SPARSE
 // CsrToDense: Convert CSR matrix to dense matrix
 
 // Returns the descriptor for a Sparse matrix.
@@ -468,11 +465,8 @@ std::pair<size_t, nb::bytes> BuildCooMatmatDescriptor(
   return {buffer_size, PackDescriptor(CooMatmatDescriptor{A, B, C, op_A})};
 }
 
-#endif  // if JAX_GPU_HAVE_SPARSE
-
 nb::dict Registrations() {
   nb::dict dict;
-#if JAX_GPU_HAVE_SPARSE
   dict[JAX_GPU_PREFIX "sparse_csr_todense_ffi"] =
       EncapsulateFfiHandler(CsrToDenseFfi);
   dict[JAX_GPU_PREFIX "sparse_csr_fromdense_ffi"] =
@@ -489,7 +483,6 @@ nb::dict Registrations() {
       EncapsulateFfiHandler(CooMatvecFfi);
   dict[JAX_GPU_PREFIX "sparse_coo_matmat_ffi"] =
       EncapsulateFfiHandler(CooMatmatFfi);
-#endif
   dict[JAX_GPU_PREFIX "sparse_gtsv2_ffi"] = EncapsulateFfiHandler(kGtsv2);
 
   // TODO(tomhennigan): Add support for gtsv2 complex 32/64.
@@ -498,9 +491,7 @@ nb::dict Registrations() {
 
 NB_MODULE(_sparse, m) {
   tsl::ImportNumpy();
-  m.attr("sparse_supported") = nb::cast(JAX_GPU_HAVE_SPARSE);
   m.def("registrations", &Registrations);
-#if JAX_GPU_HAVE_SPARSE
   m.def("build_csr_todense_descriptor", &BuildCsrToDenseDescriptor);
   m.def("build_csr_fromdense_descriptor", &BuildCsrFromDenseDescriptor);
   m.def("build_csr_matvec_descriptor", &BuildCsrMatvecDescriptor);
@@ -509,7 +500,6 @@ NB_MODULE(_sparse, m) {
   m.def("build_coo_fromdense_descriptor", &BuildCooFromDenseDescriptor);
   m.def("build_coo_matvec_descriptor", &BuildCooMatvecDescriptor);
   m.def("build_coo_matmat_descriptor", &BuildCooMatmatDescriptor);
-#endif
 }
 
 }  // namespace

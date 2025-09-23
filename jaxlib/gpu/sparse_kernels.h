@@ -69,8 +69,6 @@ struct DenseVecDescriptor {
   int size;
 };
 
-#if JAX_GPU_HAVE_SPARSE
-
 struct CsrMatvecDescriptor {
   SparseMatDescriptor A;
   DenseVecDescriptor x, y;
@@ -103,9 +101,6 @@ XLA_FFI_DECLARE_HANDLER_SYMBOL(CooToDenseFfi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(CooFromDenseFfi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(CooMatvecFfi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(CooMatmatFfi);
-
-#endif  // JAX_GPU_HAVE_SPARSE
-
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kGtsv2);
 
 }  // namespace JAX_GPU_NAMESPACE

@@ -17,7 +17,6 @@
 from jax._src import core
 from jax._src import dispatch
 from jax._src.lax.lax import DotDimensionNumbers
-from jax._src.lib import gpu_sparse
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.typing import Array, DTypeLike
 from jax.interpreters import mlir
@@ -178,11 +177,8 @@ def _nm_spmm_abstract_eval(
 mlir.register_lowering(nm_spmm_p, _nm_spmm_default_lowering)
 dispatch.simple_impl(nm_spmm_p)
 
-if gpu_sparse.cuda_is_supported:
-  mlir.register_lowering(nm_spmm_p, _nm_spmm_gpu_lowering, platform="cuda")
-
-if gpu_sparse.rocm_is_supported:
-  mlir.register_lowering(nm_spmm_p, _nm_spmm_gpu_lowering, platform="rocm")
+mlir.register_lowering(nm_spmm_p, _nm_spmm_gpu_lowering, platform="cuda")
+mlir.register_lowering(nm_spmm_p, _nm_spmm_gpu_lowering, platform="rocm")
 
 # --------------------------------------------------------------------
 # nm_pack

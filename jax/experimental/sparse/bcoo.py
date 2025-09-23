@@ -49,7 +49,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.lax import (
   _const, ranges_like, remaining, _dot_general_batch_dim_nums, DotDimensionNumbers)
 from jax._src.lax.slicing import GatherDimensionNumbers, GatherScatterMode
-from jax._src.lib import gpu_sparse
 from jax._src.numpy.setops import _unique
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.util import canonicalize_axis
@@ -923,12 +922,10 @@ batching.primitive_batchers[bcoo_dot_general_p] = _bcoo_dot_general_batch_rule
 mlir.register_lowering(bcoo_dot_general_p, _bcoo_dot_general_default_lowering)
 dispatch.simple_impl(bcoo_dot_general_p)
 
-if gpu_sparse.cuda_is_supported:
-  mlir.register_lowering(
-      bcoo_dot_general_p, _bcoo_dot_general_gpu_lowering, platform='cuda')
-if gpu_sparse.rocm_is_supported:
-  mlir.register_lowering(
-      bcoo_dot_general_p, _bcoo_dot_general_gpu_lowering, platform='rocm')
+mlir.register_lowering(
+    bcoo_dot_general_p, _bcoo_dot_general_gpu_lowering, platform='cuda')
+mlir.register_lowering(
+    bcoo_dot_general_p, _bcoo_dot_general_gpu_lowering, platform='rocm')
 
 
 #----------------------------------------------------------------------

@@ -71,24 +71,19 @@ absl::StatusOr<SparseConst> ConstOne(gpuDataType type) {
   std::memset(&c, 0, sizeof(c));
   switch (type) {
 #ifdef JAX_GPU_CUDA
-#if JAX_GPU_HAVE_SPARSE
     // TODO(jakevdp): 4I/4U here might break on big endian platforms.
     case CUDA_R_4I:
     case CUDA_C_4I:
-#endif
     case CUDA_R_8I:
     case CUDA_C_8I:
       c.i8[0] = 1;
       break;
-#if JAX_GPU_HAVE_SPARSE
     case CUDA_R_4U:
     case CUDA_C_4U:
-#endif
     case CUDA_R_8U:
     case CUDA_C_8U:
       c.u8[0] = 1;
       break;
-#if JAX_GPU_HAVE_SPARSE
     case CUDA_R_16I:
     case CUDA_C_16I:
       c.i16[0] = 1;
@@ -97,7 +92,6 @@ absl::StatusOr<SparseConst> ConstOne(gpuDataType type) {
     case CUDA_C_16U:
       c.u16[0] = 1;
       break;
-#endif
     case CUDA_R_32I:
     case CUDA_C_32I:
       c.i32[0] = 1;
@@ -106,7 +100,6 @@ absl::StatusOr<SparseConst> ConstOne(gpuDataType type) {
     case CUDA_C_32U:
       c.u32[0] = 1;
       break;
-#if JAX_GPU_HAVE_SPARSE
     case CUDA_R_64I:
     case CUDA_C_64I:
       c.i64[0] = 1;
@@ -115,7 +108,6 @@ absl::StatusOr<SparseConst> ConstOne(gpuDataType type) {
     case CUDA_C_64U:
       c.u64[0] = 1;
       break;
-#endif
 #if JAX_GPU_HAVE_FP8
     case CUDA_R_8F_E4M3:
       c.u8[0] = __nv_cvt_float_to_fp8(1.0f, __NV_NOSAT, __NV_E4M3);
@@ -124,12 +116,10 @@ absl::StatusOr<SparseConst> ConstOne(gpuDataType type) {
       c.u8[0] = __nv_cvt_float_to_fp8(1.0f, __NV_NOSAT, __NV_E5M2);
       break;
 #endif
-#if JAX_GPU_HAVE_SPARSE
     case CUDA_R_16BF:
     case CUDA_C_16BF:
       c.u16[0] = 0b11111110000000;  // 1.0 in little-endian bfloat16
       break;
-#endif
 #endif  // JAX_GPU_CUDA
     // TODO(rocm): add more data types if new rocm supports them.
 
@@ -153,7 +143,6 @@ absl::StatusOr<SparseConst> ConstOne(gpuDataType type) {
   return c;
 }
 
-#if JAX_GPU_HAVE_SPARSE
 // CsrToDense: Convert CSR matrix to dense matrix
 
 static absl::Status CsrToDense_(gpuStream_t stream, void** buffers,
@@ -500,7 +489,6 @@ static absl::Status CooMatmat_(gpuStream_t stream, void** buffers,
 }
 
 JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooMatmatFfi, CooMatmat_);
-#endif  // if JAX_GPU_HAVE_SPARSE
 
 template <typename T, typename BufferSizeF, typename KernelF>
 ffi::Error Gtsv2Impl(BufferSizeF getBufferSize, KernelF kernel, int64_t batch,

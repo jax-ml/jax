@@ -38,11 +38,9 @@ limitations under the License.
 #include "third_party/gpus/cudnn/cudnn.h"
 // IWYU pragma: end_exports
 
-#if CUDA_VERSION < 11080
-#error "JAX requires CUDA 11.8 or newer."
-#endif  // CUDA_VERSION < 11080
-
-#define JAX_GPU_HAVE_SPARSE 1
+#if CUDA_VERSION < 12000
+#error "JAX requires CUDA 12.0 or newer."
+#endif  // CUDA_VERSION < 12000
 
 // CUDA-11.8 introduces FP8 E4M3/E5M2 types.
 #define JAX_GPU_HAVE_FP8 1
@@ -440,7 +438,6 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 #define JAX_GPU_PREFIX "hip"
 #define JAX_GPU_PLUGIN_NAME "rocm"
 
-#define JAX_GPU_HAVE_SPARSE 1
 #define JAX_GPU_HAVE_64_BIT 0
 #define JAX_GPU_HAVE_FP8 0
 // TODO(Ruturaj4): Currently equivalent API does exist in
