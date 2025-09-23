@@ -26,7 +26,7 @@ licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//:__subpackages__"],
+    default_visibility = ["//visibility:public"],
 )
 
 cc_library(
@@ -357,6 +357,7 @@ nanobind_extension(
         "//jaxlib:kernel_nanobind_helpers",
         "@local_config_rocm//rocm:hip_runtime",
         "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:hip",
         "@nanobind",
     ],
 )
@@ -400,6 +401,7 @@ nanobind_extension(
         "@com_google_absl//absl/base",
         "@local_config_rocm//rocm:hip_runtime",
         "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:hip",
         "@nanobind",
         "@xla//xla/ffi/api:ffi",
     ],
@@ -469,6 +471,7 @@ nanobind_extension(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:hip",
         "@nanobind",
     ],
 )
