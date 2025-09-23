@@ -43,7 +43,7 @@ pip install jax
 or, for NVIDIA GPU:
 
 ```
-pip install -U "jax[cuda12]"
+pip install -U "jax[cuda13]"
 ```
 For more detailed platform-specific installation information, check out [Installation](https://docs.jax.dev/en/latest/installation.html).
 
