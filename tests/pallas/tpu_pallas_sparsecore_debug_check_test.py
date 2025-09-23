@@ -127,7 +127,7 @@ class DebugCheckTest(jtu.JaxTestCase):
   def test_trigger_bounds_checker(self):
     if "xla_sc_assert_level" in flags.FLAGS:
       # The test crashes the process anyway, so no need to be clean.
-      flags.FLAGS.xla_sc_assert_level = "bounds"
+      flags.FLAGS.xla_sc_assert_level = "all-loads-stores"
     else:
       self.skipTest("TODO: Find another way to enable bounds checking.")
 
