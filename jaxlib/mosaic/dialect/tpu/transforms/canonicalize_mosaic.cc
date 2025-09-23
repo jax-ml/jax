@@ -130,9 +130,6 @@ class CanonicalBuilder : public ImplicitLocOpBuilder {
   Operation *op_;
 };
 
-bool need_elementwise_canonicalization(const CanonicalizeContext &ctx,
-                                       Operation &op);
-
 // Returns the collapsed lhs, rhs, acc and the new dimension numbers if the
 // non-contracting dims can be collapsed, otherwise returns std::nullopt.
 std::optional<std::tuple<TypedValue<VectorType>, TypedValue<VectorType>,
@@ -663,21 +660,11 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
   return res;
 };
 
-FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
-                                          Operation &op) {
+FailureOr<Value> canonicalize_bf16_vector(const CanonicalizeContext& ctx,
+                                          Operation& op) {
   CanonicalBuilder builder(ctx, op.getLoc(), &op);
   auto operands = op.getOperands();
-  auto res_ty = dyn_cast<VectorType>(op.getResult(0).getType());
-  if (op.getNumResults() != 1) {
-    op.emitOpError("Invariant violated: Unexpected number of results");
-    return failure();
-  }
-  if (!res_ty) {
-    // scalar
-    // TODO(mvoz): Add canonicalization and invariants for scalar elementwise
-    // ops.
-    return success();
-  }
+  auto res_ty = cast<VectorType>(op.getResult(0).getType());
   auto shape = res_ty.getShape();
   std::vector<Value> new_operands;
   new_operands.reserve(operands.size());
@@ -719,10 +706,6 @@ FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
     }
   }
   if (should_rewrite_op) {
-    if (!res_ty) {
-      op.emitOpError("Not implemented: Unexpected result type");
-      return failure();
-    }
     // Do the new op in f32, then truncate to the original element type if
     // needed. For example, result of arith::CmpF is i1 and doesn't need to be
     // truncated.
@@ -739,6 +722,17 @@ FailureOr<Value> canonicalize_elementwise(const CanonicalizeContext &ctx,
     op.getResult(0).replaceAllUsesWith(new_op);
     op.erase();
     return new_op;
+  }
+  return op.getResult(0);
+}
+
+FailureOr<Value> canonicalize_scalar_integers_ops(
+    const CanonicalizeContext& ctx, Operation& op) {
+  unsigned int width = cast<IntegerType>(op.getResult(0).getType()).getWidth();
+  // i1 is supported for cases like arith.andi i1, i1: i1
+  if (width != 32 && width != 1) {
+    op.emitOpError("Not implemented: Only i1 and i32 scalars are supported.");
+    return failure();
   }
   return op.getResult(0);
 }
@@ -1819,20 +1813,6 @@ const llvm::StringMap<int> &bf16_ops_min_supported_versions() {
   return *m;
 }
 
-bool need_elementwise_canonicalization(const CanonicalizeContext &ctx,
-                                       Operation &op) {
-  // Only rewrite when the hardware generation is below the minimum supported
-  // version.
-  auto it = bf16_ops_min_supported_versions().find(op.getName().getStringRef());
-  if (it == bf16_ops_min_supported_versions().end() ||
-      ctx.hardware_generation >= it->second) {
-    return false;
-  }
-  return llvm::any_of(op.getOperands(), [](Value operand) {
-    auto vty = dyn_cast<VectorType>(operand.getType());
-    return vty && vty.getElementType().isBF16();
-  });
-}
 
 class MosaicCanonicalizer {
  public:
@@ -1864,26 +1844,47 @@ class MosaicCanonicalizer {
     return success();
   }
 
-  LogicalResult canonicalizeOp(Operation &any_op) {
+  LogicalResult canonicalizeOp(Operation& op) {
     CanonicalizeContext ctx(
         {compatibility_mode_, hardware_generation_, target_shape_});
     // We must iterate over the op first, because canonicalization can cause
     // us to .erase() an op, and accessing getRegions on it after is not
     // sound. Invariant - top level ops with regions may never be invalidated.
-    for (Region &region : any_op.getRegions()) {
-      for (Block &block : region) {
+    for (Region& region : op.getRegions()) {
+      for (Block& block : region) {
         if (canonicalizeBlock(block).failed()) {
           return failure();
         }
       }
     }
-    if (auto rule_it = rules().find(any_op.getName().getStringRef());
+    if (auto rule_it = rules().find(op.getName().getStringRef());
         rule_it != rules().end()) {
-      const canonicalize_rule_type &rule = rule_it->getValue();
-      return rule(ctx, any_op);
+      const canonicalize_rule_type& rule = rule_it->getValue();
+      return rule(ctx, op);
     }
-    if (need_elementwise_canonicalization(ctx, any_op)) {
-      return canonicalize_elementwise(ctx, any_op);
+
+    bool has_bf16_vector_operands =
+        llvm::any_of(op.getOperands(), [](Value operand) {
+          auto vty = dyn_cast<VectorType>(operand.getType());
+          return vty && vty.getElementType().isBF16();
+        });
+
+    auto it =
+        bf16_ops_min_supported_versions().find(op.getName().getStringRef());
+    bool supports_bf16_op = (it == bf16_ops_min_supported_versions().end() ||
+                             ctx.hardware_generation >= it->second);
+
+    bool is_single_vector_result =
+        op.getNumResults() == 1 && isa<VectorType>(op.getResult(0).getType());
+
+    if (has_bf16_vector_operands && !supports_bf16_op &&
+        is_single_vector_result) {
+      return canonicalize_bf16_vector(ctx, op);
+    }
+    if (op.getNumResults() == 1 &&
+        isa<IntegerType>(op.getResult(0).getType()) &&
+        op.hasTrait<OpTrait::SameOperandsAndResultType>()) {
+      return canonicalize_scalar_integers_ops(ctx, op);
     }
     return success();
   }
