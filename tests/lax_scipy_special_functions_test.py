@@ -396,12 +396,12 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     si_jax, ci_jax = lax_op(x_samples)
     # Values at x = 0, inf, -inf according to mathematical definition and SciPy
     expected_si = np.array([0.0, np.pi/2, -np.pi/2], dtype=dtype)
-    expected_ci = np.array([-np.inf, 0.0, 0.0], dtype=dtype)
+    expected_ci = np.array([-np.inf, 0.0, np.nan], dtype=dtype)
     # Compare JAX and SciPy outputs to each other and to expected values
-    self.assertAllClose(si_scipy, si_jax, atol=1e-6, rtol=1e-6)
-    self.assertAllClose(ci_scipy, ci_jax, atol=1e-6, rtol=1e-6)
-    self.assertAllClose(si_scipy, expected_si, atol=1e-6, rtol=1e-6)
-    self.assertAllClose(ci_scipy, expected_ci, atol=1e-6, rtol=1e-6)
+    self.assertAllClose(si_jax, si_scipy, atol=1e-6, rtol=1e-6)
+    self.assertAllClose(ci_jax, ci_scipy, atol=1e-6, rtol=1e-6)
+    self.assertAllClose(si_jax, expected_si, atol=1e-6, rtol=1e-6)
+    self.assertAllClose(ci_jax, expected_ci, atol=1e-6, rtol=1e-6)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
