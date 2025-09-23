@@ -40,8 +40,6 @@ from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
 from jax._src.typing import Array, ArrayLike
 from jax._src.nn.functions import softmax as nn_softmax
 from jax._src.nn.functions import log_softmax as nn_log_softmax
-from jax._src.debugger import cli_debugger
-
 
 def gammaln(x: ArrayLike) -> Array:
   r"""Natural log of the absolute value of the gamma function.
@@ -2108,36 +2106,9 @@ def expi(x: ArrayLike) -> Array:
   x_arr, = promote_args_inexact("expi", x)
   return jnp.piecewise(x_arr, [x_arr < 0], [_expi_neg, _expi_pos])
 
-@custom_derivatives.custom_jvp
-@jit
-def expi(x: ArrayLike) -> Array:
-  r"""Exponential integral function.
-
-  JAX implementation of :obj:`scipy.special.expi`
-
-  .. math::
-
-     \mathrm{expi}(x) = \int_{-\infty}^x \frac{e^t}{t} \mathrm{d}t
-
-  Args:
-    x: arraylike, real-valued
-
-  Returns:
-    array of expi values
-
-  See also:
-    - :func:`jax.scipy.special.expn`
-    - :func:`jax.scipy.special.exp1`
-  """
-  x_arr, = promote_args_inexact("expi", x)
-  return jnp.piecewise(x_arr, [x_arr < 0], [_expi_neg, _expi_pos])
-
-
-
 def sici(x: ArrayLike) -> tuple[Array, Array]:
     gamma = -digamma(1) # Euler-Mascheroni constant
 
-    print(gamma)
     def Sinc(t):
         return jnp.where(t == 0, 1.0, jnp.sin(t)/t)
 
