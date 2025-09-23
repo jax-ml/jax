@@ -16,7 +16,6 @@ limitations under the License.
 #include <Python.h>
 
 #include <cstddef>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -29,6 +28,7 @@ limitations under the License.
 #include "absl/log/globals.h"
 #include "absl/synchronization/mutex.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "tsl/platform/platform.h"
 
 namespace nb = nanobind;
@@ -377,8 +377,8 @@ void SetMinLogLevel(int severity) {
   absl::SetMinLogLevel(static_cast<absl::LogSeverityAtLeast>(severity));
 }
 
-void SetVLogLevel(const std::string& module_pattern, int threshold) {
-  absl::SetVLogLevel(module_pattern, threshold);
+void SetStderrThreshold(int severity) {
+  absl::SetStderrThreshold(static_cast<absl::LogSeverityAtLeast>(severity));
 }
 
 }  // namespace
@@ -399,9 +399,11 @@ NB_MODULE(utils, m) {
         "parent objects. end_nodes is an iterable of objects from which we "
         "should start a backwards search.");
 
-  m.def("absl_set_min_log_level", &SetMinLogLevel, nb::arg("severity"));
-  m.def("absl_set_vlog_level", &SetVLogLevel, nb::arg("module_pattern"),
-        nb::arg("threshold"));
+  // Abseil C++ logging functions.
+  m.def("absl_set_min_log_level", &SetMinLogLevel);
+  m.def("absl_set_vlog_level", &absl::SetVLogLevel);
+  m.def("absl_set_global_vlog_level", &absl::SetGlobalVLogLevel);
+  m.def("absl_set_stderr_threshold", &SetStderrThreshold);
 
   // Python has no reader-writer lock in its standard library, so we expose
   // bindings around absl::Mutex.
