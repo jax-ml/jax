@@ -27,7 +27,7 @@ import math
 import operator
 import threading
 import types
-from typing import (Any, ClassVar, Generic, NamedTuple, TypeVar,
+from typing import (TYPE_CHECKING, Any, ClassVar, Generic, NamedTuple, TypeVar,
                     overload, Union)
 import warnings
 import weakref
@@ -895,14 +895,24 @@ pytype_aval_mappings[str] = _str_abstractify
 def _aval_property(name):
   return property(lambda self: getattr(self.aval, name))
 
+class TracerMeta(StrictABCMeta):
+  if not TYPE_CHECKING: # avoid weird typing issues
+    def __call__(cls, *args, **kwargs):
+      tracer = cls.__new__(cls, *args, **kwargs)
+      object.__setattr__(tracer, '_is_initializing', True)
+      cls.__init__(tracer, *args, **kwargs)
+      object.__setattr__(tracer, '_is_initializing', False)
+      return tracer
 
-class Tracer(typing.Array, metaclass=StrictABCMeta):
+
+class Tracer(typing.Array, metaclass=TracerMeta):
   __array_priority__ = 1000
-  __slots__ = ['_trace', '_line_info']
+  __slots__ = ['_trace', '_line_info', '_is_initializing']
   __hash__ = None  # type: ignore
 
   _trace: Trace
   _line_info: source_info_util.SourceInfo | None
+  _is_initializing: bool
 
   dtype = _aval_property('dtype')
   ndim = _aval_property('ndim')
@@ -1064,6 +1074,18 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
       else:
         return attr
 
+  def __setattr__(self, name, value):
+    if self._is_initializing:
+      return object.__setattr__(self, name, value)
+    try:
+      attr = getattr(self.aval, name)
+    except AttributeError:
+      return object.__setattr__(self, name, value)
+    t = type(attr)
+    if t is aval_property and attr.fset is not None:
+      return attr.fset(self, value)
+    object.__setattr__(self, name, value)
+
   def _short_repr(self) -> str:
     return f'{self.__class__.__name__}<{self.aval}>'
 
@@ -1165,8 +1187,12 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
 
 # these can be used to set up forwarding of properties and instance methods from
 # Tracer instances to the underlying avals
-aval_property = namedtuple("aval_property", ["fget"])
 aval_method = namedtuple("aval_method", ["fun"])
+class aval_property(NamedTuple):
+  fget: Any = None
+  fset: Any = None
+  def setter(self, fset) -> "aval_property":
+    return aval_property(self.fget, fset)
 
 pytype_aval_mappings[Tracer] = lambda x: x.aval
 
