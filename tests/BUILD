@@ -124,10 +124,6 @@ jax_py_test(
 jax_multiplatform_test(
     name = "array_interoperability_test",
     srcs = ["array_interoperability_test.py"],
-    disable_configs = [
-        "gpu_h100_tfrt",  # TODO(b/411472145): Re-enable once fixed.
-        "gpu_h100x2_tfrt",
-    ],
     enable_backends = [
         "cpu",
         "gpu",
@@ -1089,9 +1085,6 @@ jax_multiplatform_test(
             "noasan",  # Times out under asan.
         ],
     },
-    disable_configs = [
-        "gpu_b200",  # TODO(b/444050002): NVML version problem in CI.
-    ],
     enable_configs = [
         "gpu_v100",
         "tpu_v3_x4",
@@ -1169,11 +1162,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "pytorch_interoperability_test",
     srcs = ["pytorch_interoperability_test.py"],
-    disable_configs = [
-        "gpu_h100_tfrt",  # TODO(b/411472145): Re-enable once fixed.
-        "gpu_h100x2_tfrt",
-        "gpu_b200",
-    ],
     enable_backends = [
         "cpu",
         "gpu",
@@ -1998,9 +1986,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "shape_poly_test",
     srcs = ["shape_poly_test.py"],
-    disable_configs = [
-        "gpu_a100",  # TODO(b/269593297): matmul precision issues
-    ],
     enable_configs = [
         "cpu",
         "cpu_x32",
@@ -2027,7 +2012,6 @@ jax_multiplatform_test(
     name = "export_harnesses_multi_platform_test",
     srcs = ["export_harnesses_multi_platform_test.py"],
     disable_configs = [
-        "gpu_a100",  # TODO(b/269593297): matmul precision issues
         "gpu_h100",  # Scarce resources.
     ],
     minimal_shard_count = {
