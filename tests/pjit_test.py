@@ -5148,6 +5148,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jnp.array(np_inp, dtype=jnp.int32, out_sharding=P('x'))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
+    out = jnp.asarray(np_inp, dtype=jnp.int32, out_sharding=P('x'))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
   @parameterized.named_parameters(
       ('all', None, P('x', 'y'), P(), True),
       ('first', 0, P('x', 'y'), P('y'), True),
