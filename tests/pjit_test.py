@@ -4651,6 +4651,22 @@ class ArrayPjitTest(jtu.JaxTestCase):
         RuntimeError, 'device_assignment cannot be `None` during compilation'):
       lowered2.compile()
 
+  def test_abstract_mesh_lower_same_size_different_axis_name(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    mesh2 = jtu.create_mesh((2,), 'y')
+
+    a1 = jax.ShapeDtypeStruct(
+        (8, 2), jnp.float32, sharding=NamedSharding(mesh.abstract_mesh, P('x')))
+    a2 = jax.ShapeDtypeStruct(
+        (8, 2), jnp.float32, sharding=NamedSharding(mesh2.abstract_mesh, P('y')))
+
+    @jax.jit
+    def f(x, y):
+      return x * y
+
+    lowered = f.trace(a1, a2).lower(lowering_platforms=('tpu',))
+    self.assertIn('num_partitions = 2', lowered.as_text())
+
   def test_jit_out_shardings_unconstrained(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))

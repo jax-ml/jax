@@ -2103,8 +2103,8 @@ def _get_num_devices(
       continue
     elif (isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh) and
           not s.mesh.empty):
-      if abstract_mesh is not None and abstract_mesh != s.mesh:
-        raise ValueError("AbstractMesh should be the same across all "
+      if abstract_mesh is not None and abstract_mesh.size != s.mesh.size:
+        raise ValueError("AbstractMesh should be of the same size across all "
                          f"shardings. Got {abstract_mesh} and {s.mesh}")
       abstract_mesh = s.mesh
     else:
