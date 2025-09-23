@@ -387,17 +387,14 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_special.hyp2f1, args_maker, rtol=rtol)
 
   def testSiciEdgeCases(self):
-    dtype = jnp.zeros(0).dtype  # default float dtype
-    # Only the edge cases: 0, inf, -inf
+    dtype = jnp.zeros(0).dtype
     x_samples = np.array([0.0, np.inf, -np.inf], dtype=dtype)
     scipy_op = lambda x: osp_special.sici(x)
     lax_op = lambda x: lsp_special.sici(x)
     si_scipy, ci_scipy = scipy_op(x_samples)
     si_jax, ci_jax = lax_op(x_samples)
-    # Values at x = 0, inf, -inf according to mathematical definition and SciPy
     expected_si = np.array([0.0, np.pi/2, -np.pi/2], dtype=dtype)
     expected_ci = np.array([-np.inf, 0.0, np.nan], dtype=dtype)
-    # Compare JAX and SciPy outputs to each other and to expected values
     self.assertAllClose(si_jax, si_scipy, atol=1e-6, rtol=1e-6)
     self.assertAllClose(ci_jax, ci_scipy, atol=1e-6, rtol=1e-6)
     self.assertAllClose(si_jax, expected_si, atol=1e-6, rtol=1e-6)

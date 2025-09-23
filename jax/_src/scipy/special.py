@@ -2133,91 +2133,11 @@ def expi(x: ArrayLike) -> Array:
   return jnp.piecewise(x_arr, [x_arr < 0], [_expi_neg, _expi_pos])
 
 
-# @partial(jit, inline=True)
-# def sici(x: ArrayLike) -> Array:
-#     """Compute the sine and cosine integrals Si(x) and Ci(x).
-
-#     The sine integral Si(x) and cosine integral Ci(x) are defined as
-
-#         Si(x) = ∫₀ˣ (sin t / t) dt
-#         Ci(x) = γ + ln(x) + ∫₀ˣ (cos t - 1) / t dt
-
-#     where γ is the Euler–Mascheroni constant.
-
-#     Returns:
-#         An array of shape (..., 2), where the last dimension contains [Si(x), Ci(x)].
-#     """
-#     x = jnp.asarray(x, dtype=np.complex64)  # promote to complex for generality
-
-#     # core formula (Ei representation)
-#     w1 = 1j * x
-#     w2 = -1j * x
-#     term1 = jnp.exp(w1) * expi(w1)
-#     term2 = jnp.exp(w2) * expi(w2)
-#     Si = -0.5j * (term1 - term2)
-#     Ci = 0.5 * (term1 + term2)
-
-#     # --- edge case corrections ---
-#     zero_mask = x == 0
-#     posinf_mask = jnp.isposinf(x.real)
-#     neginf_mask = jnp.isneginf(x.real)
-
-#     # Use consistent types: wrap scalars in jnp.full_like
-#     Si = jnp.where(zero_mask, jnp.zeros_like(x, dtype=x.dtype), Si)
-#     Ci = jnp.where(zero_mask, jnp.full_like(x, -jnp.inf, dtype=x.dtype), Ci)
-
-#     Si = jnp.where(posinf_mask, jnp.full_like(x, jnp.pi / 2, dtype=x.dtype), Si)
-#     Ci = jnp.where(posinf_mask, jnp.zeros_like(x, dtype=x.dtype), Ci)
-
-#     Si = jnp.where(neginf_mask, jnp.full_like(x, -jnp.pi / 2, dtype=x.dtype), Si)
-#     Ci = jnp.where(neginf_mask, jnp.full_like(x, 1j * jnp.pi, dtype=x.dtype), Ci)
-
-#     # Stack outputs into shape (..., 2)
-#     return jnp.stack([Si, Ci], axis=-1)
-
-
-
-
-# # Euler–Mascheroni constant
-# gamma = 0.57721566490153286060
-
-# @jit
-# def sici(x: ArrayLike) -> tuple[Array, Array]:
-#     def trapz_integral(f, a, b, n=2000):
-#         ts = jnp.linspace(a, b, n)
-#         vals = f(ts)
-#         return integrate.trapezoid(vals, ts)
-
-#     # sine integral Si(x)
-#     def si_val(x):
-#         return trapz_integral(lambda t: jnp.sin(t)/t, 1e-8, x)
-
-#     # cosine integral Ci(x)
-#     def ci_val(x):
-#         # Use absolute value to avoid log of negative numbers
-#         return gamma + jnp.log(jnp.abs(x)) + trapz_integral(lambda t: (jnp.cos(t) - 1.0)/t, 1e-8, jnp.abs(x))
-
-#     # Explicit edge cases for Si
-#     si = jnp.piecewise(
-#         x,
-#         [x == 0, x == np.inf, x == -np.inf],
-#         [0.0, np.pi/2, -np.pi/2, si_val]  # default case
-#     )
-
-#     # Explicit edge cases for Ci
-#     ci = jnp.piecewise(
-#         x,
-#         [x == 0, x == np.inf, x == -np.inf],
-#         [-np.inf, 0.0, 0.0, ci_val]  # default case
-#     )
-
-#     return si, ci
-
-
-gamma = 0.57721566490153286060
 
 def sici(x: ArrayLike) -> tuple[Array, Array]:
-    # helper functions
+    gamma = -digamma(1) # Euler-Mascheroni constant
+
+    print(gamma)
     def Sinc(t):
         return jnp.where(t == 0, 1.0, jnp.sin(t)/t)
 
@@ -2236,7 +2156,6 @@ def sici(x: ArrayLike) -> tuple[Array, Array]:
     def ci_val(x):
         return gamma + jnp.log(jnp.abs(x)) + integral_enumerate(Cosc, 1e-8, jnp.abs(x))
 
-    # Si edge cases: 0, +inf, -inf
     si = jnp.piecewise(
         x,
         [x == 0, x == np.inf, x == -np.inf],
