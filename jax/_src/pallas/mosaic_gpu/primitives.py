@@ -954,7 +954,7 @@ def _wait_smem_to_gmem_lowering(
 
 
 def wait_smem_to_gmem(n: int, wait_read_only: bool = False) -> None:
-  """Waits until there are no more than ``n`` SMEM->GMEM copies in flight.
+  """Waits until no more than the most recent ``n`` SMEM->GMEM copies issued by the calling thread are in flight.
 
   Args:
     n: The maximum number of copies in flight to wait for.
