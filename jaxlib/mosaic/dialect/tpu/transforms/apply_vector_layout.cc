@@ -4608,7 +4608,7 @@ LogicalResult vector_extract_rule(RewriteContext &ctx, Operation &op,
     auto [sub_tile, lane_tile] = layout_in.tiling();
     FAILUREOR_ASSIGN_OR_RETURN(
         const xla::Array<Value> vregs,
-        disassemble(builder, layout_in, extract_op.getVector(),
+        disassemble(builder, layout_in, extract_op.getSource(),
                     ctx.target_shape));
     TPU_ASSERT_GT_OP(vregs.num_elements(), 0);
 

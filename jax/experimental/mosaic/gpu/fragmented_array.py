@@ -1916,10 +1916,10 @@ class FragmentedArray:
             # generating a bunch of shifts to align the vector data to the LSB.
             # This also lets us share the right shift among more vectors.
             if (isinstance(slice_op := reg.owner.opview, vector.ExtractStridedSliceOp)
-                and utils.bitwidth(slice_op.vector.type) == 32
+                and utils.bitwidth(slice_op.source.type) == 32
                 and slice_op.strides[0].value == 1):
               slice_offset = slice_op.offsets[0].value + offset
-              reg_int = utils.bitcast(slice_op.vector, i32)
+              reg_int = utils.bitcast(slice_op.source, i32)
               reg_int_shr = arith.shrui(reg_int, c(4, i32))
               out_int_regs.extend(
                   upcast_i4_to_bf16(reg_int, reg_int_shr, part=(slice_offset // 2 + part))
@@ -1994,10 +1994,10 @@ class FragmentedArray:
             # can fuse the slicing into the conversion and reuse many
             # preprocessing ops (shifts, prmts) accross different vectors.
             if (isinstance(slice_op := reg.owner.opview, vector.ExtractStridedSliceOp)
-                and utils.bitwidth(slice_op.vector.type) == 32
+                and utils.bitwidth(slice_op.source.type) == 32
                 and slice_op.strides[0].value == 1):
               slice_offset = slice_op.offsets[0].value + offset
-              reg_int = utils.bitcast(slice_op.vector, i32)
+              reg_int = utils.bitcast(slice_op.source, i32)
               reg_i8 = upcast_i4_to_i8(reg_int, first_valid_nibble=slice_offset)
             else:
               reg_slice = utils.vector_slice(reg, slice(offset, offset + group_size))

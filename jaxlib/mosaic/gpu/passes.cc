@@ -77,7 +77,7 @@ struct ConvertExtractStridedSlicePattern final
       result = rewriter.create<mlir::LLVM::InsertElementOp>(
           op.getLoc(), result,
           rewriter.create<mlir::LLVM::ExtractElementOp>(
-              op.getLoc(), subst.getVector(),
+              op.getLoc(), subst.getSource(),
               rewriter.create<mlir::LLVM::ConstantOp>(
                   op.getLoc(), rewriter.getI32IntegerAttr(i + start))),
           rewriter.create<mlir::LLVM::ConstantOp>(

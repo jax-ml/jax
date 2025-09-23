@@ -291,7 +291,7 @@ class TestUtilTest(TestCase):
       for i, vec_reg in enumerate(registers.flat):
         for j in range(2):
           reg = vector.extract(
-              vector=vec_reg,
+              source=vec_reg,
               dynamic_position=[],
               static_position=ir.DenseI64ArrayAttr.get([j]),
           )
