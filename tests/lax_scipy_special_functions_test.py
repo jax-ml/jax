@@ -160,7 +160,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     ),
     op_record(
         "hyp2f1", 4, float_dtypes,
-        functools.partial(jtu.rand_uniform, low=0.1, high=0.9), False
+        functools.partial(jtu.rand_uniform, low=0.1, high=0.9), True
     ),
     op_record("log_softmax", 1, float_dtypes, jtu.rand_default, True),
     op_record("softmax", 1, float_dtypes, jtu.rand_default, True),
