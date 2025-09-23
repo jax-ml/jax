@@ -678,6 +678,7 @@ nanobind_pywrap_extension(
     name = "_pathways",
     srcs = ["pathways.cc"],
     pytype_srcs = ["_pathways.pyi"],
+    visibility = jax_visibility("jaxlib/_pathways"),
     deps = [
         ":nb_class_ptr",
         ":py_client",
