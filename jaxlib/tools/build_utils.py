@@ -28,7 +28,7 @@ from collections.abc import Sequence
 from jaxlib.tools import platform_tags
 import third_party.py.setup_py_nvidia_dependencies_util as util
 
-MAIN_RUNFILES_DIR = "__main__/"
+MAIN_RUNFILES_DIR = "_main/"
 
 
 def is_windows() -> bool:
