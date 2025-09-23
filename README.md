@@ -229,7 +229,7 @@ Notebook](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 | CPU        | yes          | yes           | yes          | yes            | yes                 |
 | NVIDIA GPU | yes          | yes           | n/a          | no             | experimental        |
 | Google TPU | yes          | n/a           | n/a          | n/a            | n/a                 |
-| AMD GPU    | yes          | no            | n/a          | no             | no                  |
+| AMD GPU    | yes          | no            | n/a          | no             | experimental        |
 | Apple GPU  | n/a          | no            | experimental | n/a            | n/a                 |
 | Intel GPU  | experimental | n/a           | n/a          | no             | no                  |
 
