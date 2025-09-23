@@ -1091,6 +1091,8 @@ class ShardingTest(jtu.JaxTestCase):
           jax.sharding.Mesh(jax.devices()[: shape[sharded_dim]], 'x'),
           jax.P('x'),
       )
+      self.assertEqual(actual_sharding.spec, expected_sharding.spec)
+      self.assertEqual(actual_sharding._device_assignment, expected_sharding._device_assignment)
     else:
       compiled = jax.pmap(lambda x: x, in_axes=sharded_dim).lower(inp).compile()
       # TOOD(dsuo): Investigate why
@@ -1099,9 +1101,8 @@ class ShardingTest(jtu.JaxTestCase):
       # `NamedSharding`.
       actual_sharding, = compiled._executable.unsafe_call.in_handler.in_shardings
       expected_sharding = jax.sharding.PmapSharding.default(shape, sharded_dim)
-
-    self.assertEqual(actual_sharding.sharding_spec, expected_sharding.sharding_spec)
-    self.assertEqual(actual_sharding._device_assignment, expected_sharding._device_assignment)
+      self.assertEqual(actual_sharding.sharding_spec, expected_sharding.sharding_spec)
+      self.assertEqual(actual_sharding._device_assignment, expected_sharding._device_assignment)
 
   def test_default_pmap_sharding_with_devices(self):
     if jax.device_count() < 4:

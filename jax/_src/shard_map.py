@@ -30,10 +30,10 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
-from jax._src import stages
 from jax._src import linear_util as lu
 from jax._src import sharding_impls
 from jax._src import source_info_util
+from jax._src import stages
 from jax._src import traceback_util
 from jax._src import util
 from jax._src import xla_bridge as xb
@@ -1901,6 +1901,7 @@ def _shard_map_discharge(
 def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
          static_broadcasted_argnums=(), devices=None, backend=None,
          axis_size=None, donate_argnums=(), global_arg_shapes=None):
+  del global_arg_shapes
   # TODO(vanderplas): move these definitions into jax._src and avoid local import.
   import jax.experimental.multihost_utils as mhu  # pytype: disable=import-error
   devices = tuple(devices) if devices is not None else devices
@@ -1909,30 +1910,35 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
   if isinstance(axis_name, core._TempAxisName):
     axis_name = repr(axis_name)
 
-  def infer_params(*args, **kwargs):
+  def infer_params(*args, __check=True, **kwargs):
     p = _prepare_pmap(f, in_axes, out_axes, static_broadcasted_tuple,
                       donate_tuple, devices, backend, axis_size, args, kwargs)
-    for arg in p.flat_args:
-      dispatch.check_arg(arg)
+    if __check:
+      for arg in p.flat_args:
+        dispatch.check_arg(arg)
     mesh = Mesh(_get_devices(p, backend), (axis_name,))
     _pmapped, in_specs, out_specs = _cached_shard_map(
         p.flat_fun, mesh, p.in_axes_flat, p.out_axes_thunk, axis_name)
-    flat_global_args = mhu.host_local_array_to_global_array(
-        p.flat_args, mesh, list(in_specs))
     jitted_f = api.jit(
         _pmapped,
         donate_argnums=[i for i, val in enumerate(p.donated_invars) if val])
+    if __check or xb.process_count() > 1:
+      flat_global_args = mhu.host_local_array_to_global_array(
+          p.flat_args, mesh, list(in_specs))
+    else:
+      flat_global_args = p.flat_args
     return jitted_f, flat_global_args, p.out_tree, mesh, out_specs
 
   def wrapped(*args, **kwargs):
     (jitted_f, flat_global_args, out_tree, mesh,
      out_specs) = infer_params(*args, **kwargs)
     outs = jitted_f(*flat_global_args)
-    outs = mhu.global_array_to_host_local_array(outs, mesh, out_specs())
+    if xb.process_count() > 1:
+      outs = mhu.global_array_to_host_local_array(outs, mesh, out_specs())
     return tree_unflatten(out_tree(), outs)
 
   def lower(*args, **kwargs):
-    jitted_f, _, out_tree, _, _ = infer_params(*args, **kwargs)
+    jitted_f, _, out_tree, _, _ = infer_params(*args, __check=False, **kwargs)
     lowered = jitted_f.lower(*args, **kwargs)
     lowered = stages.Lowered(lowered._lowering, lowered.args_info, out_tree(),
                              lowered._no_kwargs)

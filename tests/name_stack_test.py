@@ -121,9 +121,6 @@ class NameStackTest(jtu.JaxTestCase):
     self.assertIn('foo/jit(_f)', hlo_text)
 
   def test_pmap_call_primitive_jaxpr_should_not_store_outer_name_stack(self):
-    if config.pmap_shmap_merge.value:
-      self.skipTest("Is this test still relevant?")
-
     @jax.named_scope('foo')
     @jax.pmap
     def f(x):
@@ -131,7 +128,10 @@ class NameStackTest(jtu.JaxTestCase):
         return x + 1
     jaxpr = jax.make_jaxpr(f)(jnp.ones(1)).jaxpr
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo')
-    self.assertEqual(str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
+    if config.pmap_shmap_merge.value:
+      self.assertEqual(str(jaxpr.eqns[1].params['jaxpr'].eqns[0].params['jaxpr'].eqns[1].source_info.name_stack), 'bar')
+    else:
+      self.assertEqual(str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
 
 
 class NameStackTransformationTest(jtu.JaxTestCase):
