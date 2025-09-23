@@ -315,7 +315,8 @@ def _convert_to_array_if_dtype_fails(x: ArrayLike) -> ArrayLike:
 @export
 def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
             *, copy: bool | None = None,
-            device: xc.Device | Sharding | None = None) -> Array:
+            device: xc.Device | Sharding | None = None,
+            out_sharding: NamedSharding | P | None = None) -> Array:
   """Convert an object to a JAX array.
 
   JAX implementation of :func:`numpy.asarray`.
@@ -390,4 +391,5 @@ def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
                      "copy=False. Consider using copy=None or copy=True instead.")
   if dtype is not None:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "asarray")
-  return array(a, dtype=dtype, copy=bool(copy), order=order, device=device)
+  return array(a, dtype=dtype, copy=bool(copy), order=order, device=device,
+               out_sharding=out_sharding)
