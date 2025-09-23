@@ -56,11 +56,9 @@ jobs:
     outputs:
       any_changed: ${{ steps.changed-files.outputs.any_changed || 'false' }}
   run_tests: 
-    needs: changed_files 
-    if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || needs.changed_files.outputs.any_changed == 'true' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
     runs-on: linux-x86-a4-224-b200-1gpu
     container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
-    name: "Bazel single B200 CUDA tests"
+    name: "Bazel single B200 CUDA testsss"
 # End Presubmit Naming Check github-cuda-presubmits
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
