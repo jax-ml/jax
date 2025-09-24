@@ -27,6 +27,7 @@ from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
@@ -476,6 +477,55 @@ def scan_count(
         counted.
   """
   return scan_count_p.bind(x, lax.full(x.shape, True) if mask is None else mask)
+
+
+masked_cumsum_p = jax_core.Primitive("masked_cumsum")
+masked_cumsum_p.multiple_results = False
+
+@masked_cumsum_p.def_abstract_eval
+def _masked_cumsum_abstract_eval(x, mask):
+  if x.dtype != jnp.int32 and x.dtype != jnp.float32:
+    raise NotImplementedError(f"x.dtype={x.dtype} must be int32 or float32")
+  if not jnp.issubdtype(mask.dtype, jnp.bool):
+    raise TypeError(f"mask.dtype={mask.dtype} is not a boolean dtype")
+  if x.shape != mask.shape:
+    raise ValueError(f"x.shape={x.shape} != mask.shape={mask.shape}")
+  return jax_core.ShapedArray(x.shape, x.dtype)
+
+@sc_lowering.register_lowering_rule(masked_cumsum_p)
+def _masked_cumsum_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask):
+  del ctx  # Unused.
+  return tpu.scan(
+      x.type, x, ir.Attribute.parse("#tpu.reduction_kind<sum>"), mask=mask)
+
+@sc_lowering.register_lowering_rule(lax.cumsum_p)
+def _lax_cumsum_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axis,
+                              reverse):
+  if axis != 0:
+    raise NotImplementedError(f"SC cumsum: axis={axis} must be 0.")
+  if len(ctx.avals_in[0].shape) != 1:
+    raise NotImplementedError(f"SC cumsum: x={ctx.avals_in[0]} must be rank 1")
+  if reverse:
+    raise NotImplementedError("SC cumsum: reverse=True is not yet supported")
+  i1t = ir.IntegerType.get_signless(1)
+  c1 = arith.constant(i1t, ir.IntegerAttr.get(i1t, 1))
+  c1v = vector.splat(ir.VectorType.get(x.type.shape, c1.type), c1)
+  return tpu.scan(
+      x.type, x, ir.Attribute.parse("#tpu.reduction_kind<sum>"), mask=c1v)
+
+def masked_cumsum(x: jax.Array, mask: jax.Array) -> jax.Array:
+  """Returns the cumulative sum of the array along its innermost axis.
+
+  This differs from `jnp.cumsum` in that it takes an additional `mask` argument.
+
+  Args:
+    x: An array of integers or floats.
+    mask: An optional array of booleans, which specifies which elements ``x``
+      are eligible for summing. If ``None``, all elements are eligible.
+  """
+  if x.ndim != 1:
+    raise NotImplementedError(f"masked_cumsum: x={x.aval} must be rank 1")
+  return masked_cumsum_p.bind(x, mask)
 
 
 parallel_loop_p = jax_core.Primitive("parallel_loop")

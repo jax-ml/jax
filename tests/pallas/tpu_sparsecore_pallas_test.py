@@ -850,6 +850,37 @@ class VectorSubcoreTest(PallasSCTest):
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
     np.testing.assert_array_equal(kernel(x), x)
 
+  @parameterized.product(dtype=[jnp.int32, jnp.float32])
+  def test_cumsum(self, dtype):
+    x = jnp.arange(sc_core._vector_dimension(), dtype=dtype)
+
+    @vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.cumsum(x_ref[...])
+
+    np.testing.assert_array_equal(kernel(x), np.cumsum(x))
+
+  @parameterized.product(dtype=[jnp.int32, jnp.float32])
+  def test_cumsum_2d_not_supported(self, dtype):
+    x = jnp.arange(sc_core._vector_dimension(), dtype=dtype)
+
+    with self.assertRaisesRegex(NotImplementedError, r"must be rank 1"):
+      @vector_subcore_kernel(out_shape=x)
+      def kernel(x_ref, o_ref):
+        o_ref[...] = jnp.cumsum(x_ref[...].reshape(4, 2), axis=0).reshape(-1)
+
+      kernel(x)
+
+  @parameterized.product(dtype=[jnp.int32, jnp.float32])
+  def test_masked_cumsum(self, dtype):
+    x = jnp.arange(sc_core._vector_dimension(), dtype=dtype)
+
+    @vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, o_ref):
+      o_ref[...] = plsc.masked_cumsum(x_ref[...], mask=(x_ref[...] % 2) == 1)
+
+    np.testing.assert_array_equal(kernel(x), np.cumsum(x * (x % 2)))
+
   def test_parallel_loop_with_carry(self):
     chunk_size = sc_core._vector_dimension()
     nchunks = 4
