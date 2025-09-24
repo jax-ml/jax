@@ -103,6 +103,8 @@ _py_deps = {
     "tensorflow_core": [],
     "tensorstore": get_optional_dep("@pypi//tensorstore"),
     "torch": [],
+    "tensorflow": ["@pypi//tensorflow"],
+    "tpu_ops": [],
     "zstandard": get_zstandard(),
 }
 
@@ -253,6 +255,7 @@ def jax_multiplatform_test(
         config_tags_overrides = None,  # buildifier: disable=unused-variable
         tags = [],
         main = None,
+        size = None,  # buildifier: disable=unused-variable
         pjrt_c_api_bypass = False):  # buildifier: disable=unused-variable
     # enable_configs and disable_configs do not do anything in OSS, only in Google's CI.
     # The order in which `enable_backends`, `enable_configs`, and `disable_configs` are applied is
