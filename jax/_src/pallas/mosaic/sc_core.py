@@ -171,9 +171,9 @@ def _num_available_cores():
   """Returns the number of SparseCores on the current device."""
   device_kind = tpu_core.get_device_kind()
   match device_kind:
-    case "TPU v5" | "TPU v5p" | "TPU v6" | "TPU7x":
+    case "TPU v5" | "TPU v5p":
       return 4
-    case "TPU v6 lite":
+    case "TPU v6 lite" | "TPU v6" | "TPU7x":
       return 2
     case _:
       raise NotImplementedError(
