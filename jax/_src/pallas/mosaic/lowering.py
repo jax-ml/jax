@@ -3728,7 +3728,10 @@ def _dma_start_lowering_rule(
     tree,
     device_id_type: primitives.DeviceIdType,
     priority: int,
+    add: bool,
 ):
+  if add:
+    raise NotImplementedError("DMA with add=true is not supported.")
   (
       src_ref,
       src_transforms,

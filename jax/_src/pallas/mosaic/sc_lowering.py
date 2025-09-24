@@ -30,8 +30,10 @@ from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import memref
+from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic import core as tpu_core
@@ -484,6 +486,7 @@ def _dma_start_lowering_rule(
     tree,
     device_id_type: pallas_primitives.DeviceIdType,
     priority: int,
+    add: bool,
 ):
   (
       src_ref,
@@ -531,7 +534,8 @@ def _dma_start_lowering_rule(
         src_sem, src_sem_aval.dtype, src_sem_aval.shape, src_sem_transforms
     )
 
-  if indirect_offsets is None:
+  # TODO: Support direct DMAs with add=True.
+  if indirect_offsets is None and not add:
     if device_id is not None:
       device_id, _ = tc_lowering._device_id_to_logical(
           ctx, device_id, device_id_type
@@ -545,6 +549,19 @@ def _dma_start_lowering_rule(
         priority=priority,
     )
     return []
+
+  if indirect_offsets is None:
+    if src_aval.shape[0] == sc_core._vector_dimension():
+      # Supports case add=True for memrefs with shape (vector_dimension, ...).
+      i32 = ir.IntegerType.get_signless(32)
+      i32v = ir.VectorType.get((sc_core._vector_dimension(),), i32)
+      indirect_offsets = tpu.iota(i32v, dimensions=[0])
+    else:
+      raise NotImplementedError(
+          "DMAs with `add=True` require specifying `indirect_offsets` unless "
+          "the majormost dimension matches vector dimension "
+          f"({sc_core._vector_dimension()}, ...). Got shape: {src_aval.shape}."
+      )
 
   if device_id is not None:
     raise NotImplementedError(

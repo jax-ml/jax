@@ -938,6 +938,34 @@ class VectorSubcoreTest(PallasSCTest):
 
       kernel(x)
 
+  def test_enqueue_dma_add(self):
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    shape = (mesh.num_subcores, 8, 32)
+    x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
+
+    @plsc.kernel(
+        out_shape=x,
+        mesh=mesh,
+        scratch_shapes=(
+            pltpu.SemaphoreType.DMA,
+            pltpu.VMEM(shape[1:], jnp.int32),
+        ),
+    )
+    def kernel(x_ref, o_ref, sem_ref, scratch_ref):
+      subcore_id = lax.axis_index("subcore")
+      pltpu.sync_copy(x_ref.at[subcore_id], scratch_ref)
+      pltpu.sync_copy(scratch_ref, o_ref.at[subcore_id])
+      pltpu.async_copy(
+          scratch_ref,
+          o_ref.at[subcore_id],
+          sem_ref,
+          add=True,
+      ).wait()
+
+    np.testing.assert_array_equal(kernel(x), x + x)
+
 
 class ScalarSubcoreTest(PallasSCTest):
 

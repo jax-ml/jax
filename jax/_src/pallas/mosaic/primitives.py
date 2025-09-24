@@ -228,7 +228,7 @@ class AsyncCopyDescriptor:
           self.device_id,
       ))
 
-  def start(self, priority: int = 0):
+  def start(self, priority: int = 0, add: bool = False):
     self._used = True
     flat_args, tree = self._get_args_and_tree()
     dma_start_p.bind(
@@ -236,6 +236,7 @@ class AsyncCopyDescriptor:
         tree=tree,
         device_id_type=self.device_id_type,
         priority=priority,
+        add=add,
     )
 
   def wait(self):
@@ -290,7 +291,7 @@ dma_start_p = jax_core.Primitive('dma_start')
 dma_start_p.multiple_results = True
 
 @dma_start_p.def_effectful_abstract_eval
-def _dma_start_abstract_eval(*args, tree, device_id_type, priority):
+def _dma_start_abstract_eval(*args, tree, device_id_type, priority, add):
   if priority < 0:
     raise ValueError(f"DMA start priority must be non-negative: {priority}")
   (
@@ -339,6 +340,7 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
   invars = eqn.invars
   tree = eqn.params["tree"]
   priority = eqn.params["priority"]
+  add = eqn.params["add"]
   (
       src_ref,
       src_transforms,
@@ -355,7 +357,7 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
   if src_sem or device_id:
     return jax_core._pp_eqn(eqn, context, settings)
   return pp.concat([
-      pp.text(f"dma_start(p{priority})"),
+      pp.text(f"dma_start(p{priority}{'' if add else ', add'})"),
       pp.text(" "),
       sp.pp_ref_transforms(context, src_ref, src_transforms),
       pp.text(" -> "),
@@ -368,10 +370,14 @@ jax_core.pp_eqn_rules[dma_start_p] = _dma_start_pp_eqn
 
 
 def dma_start_partial_discharge_rule(
-    should_discharge, in_avals, out_avals, *args, tree, device_id_type, priority
+    should_discharge, in_avals, out_avals, *args, tree, device_id_type,
+    priority, add
 ):
   # Note: we ignore the DMA priority in discharge rules.
   del priority
+  if add:
+    raise NotImplementedError(
+        "DMA partial discharge add=True not yet implemented.")
   (
       src_ref,
       src_transforms,
@@ -667,11 +673,11 @@ def make_async_copy(src_ref, dst_ref, sem) -> AsyncCopyDescriptor:
 
 
 def async_copy(
-    src_ref, dst_ref, sem, *, priority: int = 0
+    src_ref, dst_ref, sem, *, priority: int = 0, add: bool = False,
 ) -> AsyncCopyDescriptor:
   """Issues a DMA copying from src_ref to dst_ref."""
   copy_descriptor = make_async_copy(src_ref, dst_ref, sem)
-  copy_descriptor.start(priority=priority)
+  copy_descriptor.start(priority=priority, add=add)
   return copy_descriptor
 
 

@@ -333,6 +333,13 @@ class TransformedRef:
     )
 
   def reshape(self, *shape):
+    if any(s == -1 for s in shape):
+      num_elements = np.prod(self.shape)
+      defined_dims = [d for d in shape if d != -1]
+      if len(defined_dims) != len(shape) - 1:
+        raise ValueError(f"At most one dimension can be -1, but got {shape}")
+      remaining_dim = num_elements // np.prod(defined_dims)
+      shape = tuple(d if d != -1 else remaining_dim for d in shape)
     return TransformedRef(
         self.ref,
         (*self.transforms, RefReshaper.from_ref_new_shape(self, *shape)),
