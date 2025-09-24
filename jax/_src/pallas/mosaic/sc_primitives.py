@@ -431,6 +431,8 @@ def bitcast(x: jax.Array, dtype: jax.typing.DTypeLike) -> jax.Array:
   same rank as the input. The minormost dimension is expanded/shrunk to
   account for the difference in the element bitwidth.
   """
+  if x.dtype == dtype:
+    return x
   return bitcast_p.bind(x, dtype=jnp.dtype(dtype))
 
 
