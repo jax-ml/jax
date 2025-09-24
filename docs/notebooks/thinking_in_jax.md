@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.17.2
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   language: python
@@ -477,5 +477,3 @@ For more on pseudo random numbers in JAX, see the [Pseudorandom numbers tutorial
 ---
 
 This is just a taste of what JAX can do. We're really excited to see what you do with it!
-
-+++

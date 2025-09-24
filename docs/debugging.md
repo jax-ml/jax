@@ -22,15 +22,15 @@ to poke around the intermediate values in your computation? This section
 introduces you to a set of built-in JAX debugging methods that you can use with
 various JAX transformations.
 
-  **Summary:**
+**Summary:**
 
-  - Use {func}`jax.debug.print` to print values to stdout in `jax.jit`-,`jax.pmap`-, and `pjit`-decorated functions,
-    and {func}`jax.debug.breakpoint` to pause execution of your compiled function to inspect values in the call stack.
-  - {mod}`jax.experimental.checkify` lets you add `jit`-able runtime error checking (e.g. out of bounds indexing) to your JAX
-    code.
-  - JAX offers config flags and context managers that enable catching errors more easily. For example, enable the
-    `jax_debug_nans` flag to automatically detect when NaNs are produced in `jax.jit`-compiled code and enable the
-    `jax_disable_jit` flag to disable JIT-compilation.
+- Use {func}`jax.debug.print` to print values to stdout in `jax.jit`-,`jax.pmap`-, and `pjit`-decorated functions,
+  and {func}`jax.debug.breakpoint` to pause execution of your compiled function to inspect values in the call stack.
+- {mod}`jax.experimental.checkify` lets you add `jit`-able runtime error checking (e.g. out of bounds indexing) to your JAX
+  code.
+- JAX offers config flags and context managers that enable catching errors more easily. For example, enable the
+  `jax_debug_nans` flag to automatically detect when NaNs are produced in `jax.jit`-compiled code and enable the
+  `jax_disable_jit` flag to disable JIT-compilation.
 
 ## `jax.debug.print` for simple inspection
 
@@ -49,10 +49,10 @@ import jax.numpy as jnp
 
 @jax.jit
 def f(x):
-  print("print(x) ->", x)
-  y = jnp.sin(x)
-  print("print(y) ->", y)
-  return y
+    print("print(x) ->", x)
+    y = jnp.sin(x)
+    print("print(y) ->", y)
+    return y
 
 result = f(2.)
 ```
@@ -63,10 +63,10 @@ If you want to print the actual runtime values, you can use {func}`jax.debug.pri
 ```{code-cell}
 @jax.jit
 def f(x):
-  jax.debug.print("jax.debug.print(x) -> {x}", x=x)
-  y = jnp.sin(x)
-  jax.debug.print("jax.debug.print(y) -> {y}", y=y)
-  return y
+    jax.debug.print("jax.debug.print(x) -> {x}", x=x)
+    y = jnp.sin(x)
+    jax.debug.print("jax.debug.print(y) -> {y}", y=y)
+    return y
 
 result = f(2.)
 ```
@@ -76,10 +76,10 @@ to print the values being mapped over, use {func}`jax.debug.print`:
 
 ```{code-cell}
 def f(x):
-  jax.debug.print("jax.debug.print(x) -> {}", x)
-  y = jnp.sin(x)
-  jax.debug.print("jax.debug.print(y) -> {}", y)
-  return y
+    jax.debug.print("jax.debug.print(x) -> {}", x)
+    y = jnp.sin(x)
+    jax.debug.print("jax.debug.print(y) -> {}", y)
+    return y
 
 xs = jnp.arange(3.)
 
@@ -99,8 +99,8 @@ Below is an example with {func}`jax.grad`, where {func}`jax.debug.print` only pr
 
 ```{code-cell}
 def f(x):
-  jax.debug.print("jax.debug.print(x) -> {}", x)
-  return x ** 2
+    jax.debug.print("jax.debug.print(x) -> {}", x)
+    return x ** 2
 
 result = jax.grad(f)(1.)
 ```
@@ -112,9 +112,9 @@ For example:
 ```{code-cell}
 @jax.jit
 def f(x, y):
-  jax.debug.print("jax.debug.print(x) -> {}", x, ordered=True)
-  jax.debug.print("jax.debug.print(y) -> {}", y, ordered=True)
-  return x + y
+    jax.debug.print("jax.debug.print(x) -> {}", x, ordered=True)
+    jax.debug.print("jax.debug.print(y) -> {}", y, ordered=True)
+    return x + y
 
 f(1, 2)
 ```
@@ -136,9 +136,10 @@ Here is an example of what a debugger session might look like:
 
 @jax.jit
 def f(x):
-  y, z = jnp.sin(x), jnp.cos(x)
-  jax.debug.breakpoint()
-  return y * z
+    y, z = jnp.sin(x), jnp.cos(x)
+    jax.debug.breakpoint()
+    return y * z
+
 f(2.) # ==> Pauses during execution
 ```
 
@@ -148,18 +149,18 @@ For value-dependent breakpointing, you can use runtime conditionals like {func}`
 
 ```{code-cell}
 def breakpoint_if_nonfinite(x):
-  is_finite = jnp.isfinite(x).all()
-  def true_fn(x):
-    pass
-  def false_fn(x):
-    jax.debug.breakpoint()
-  jax.lax.cond(is_finite, true_fn, false_fn, x)
+    is_finite = jnp.isfinite(x).all()
+    def true_fn(x):
+        pass
+    def false_fn(x):
+        jax.debug.breakpoint()
+    jax.lax.cond(is_finite, true_fn, false_fn, x)
 
 @jax.jit
 def f(x, y):
-  z = x / y
-  breakpoint_if_nonfinite(z)
-  return z
+    z = x / y
+    breakpoint_if_nonfinite(z)
+    return z
 
 f(2., 1.) # ==> No breakpoint
 ```
@@ -185,12 +186,12 @@ For example:
 import logging
 
 def log_value(x):
-  logging.warning(f'Logged value: {x}')
+    logging.warning(f'Logged value: {x}')
 
 @jax.jit
 def f(x):
-  jax.debug.callback(log_value, x)
-  return x
+    jax.debug.callback(log_value, x)
+    return x
 
 f(1.0);
 ```
@@ -222,10 +223,10 @@ import jax
 import jax.numpy as jnp
 
 def f(x, i):
-  checkify.check(i >= 0, "index needs to be non-negative!")
-  y = x[i]
-  z = jnp.sin(y)
-  return z
+    checkify.check(i >= 0, "index needs to be non-negative!")
+    y = x[i]
+    z = jnp.sin(y)
+    return z
 
 jittable_f = checkify.checkify(f)
 
@@ -264,7 +265,8 @@ import jax
 jax.config.update("jax_debug_nans", True)
 
 def f(x, y):
-  return x / y
+    return x / y
+
 jax.jit(f)(0., 0.)  # ==> raises FloatingPointError exception!
 ```
 
