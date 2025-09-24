@@ -45,7 +45,6 @@ from jax.experimental.mosaic.gpu import fragmented_array as fa
 from jax.experimental.mosaic.gpu import inference_utils
 from jax.experimental.mosaic.gpu import launch_context
 from jax.experimental.mosaic.gpu import layouts
-from jax.experimental.mosaic.gpu import layouts as mgpu_layouts
 from jax.experimental.mosaic.gpu import profiler
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils
@@ -3828,7 +3827,7 @@ class RegisterLayout(enum.Enum):
   def to_layout_attr(
       self, shape: tuple[int, int], dtype: jnp.dtype
   ) -> ir.Attribute:
-    return mgpu_layouts.to_layout_attr(self.to_mgpu(shape, dtype))
+    return layouts.to_layout_attr(self.to_mgpu(shape, dtype))
 
 
 class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
@@ -3888,7 +3887,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     def body(ctx, input, output, scratch):
       del ctx, output, scratch
       reg = vector_load(input, optimized=True)
-      layout = mgpu_layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+      layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
       reg = mgpu_dialect.layout_cast(reg, layout)
 
     shape = (128, 128)
@@ -5446,7 +5445,7 @@ if hp is not None:
       def run(args):
         shape, layout = args
         dtype = jnp.float32
-        layout_attr = mgpu_layouts.to_layout_attr(layout)
+        layout_attr = layouts.to_layout_attr(layout)
 
         def body(ctx, input, result, smem):
           del ctx
