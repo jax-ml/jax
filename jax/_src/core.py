@@ -898,16 +898,22 @@ def _aval_property(name):
 
 class Tracer(typing.Array, metaclass=StrictABCMeta):
   __array_priority__ = 1000
-  __slots__ = ['_trace', '_line_info']
+  __slots__ = ['_trace', '_line_info', '_in_getattr']
   __hash__ = None  # type: ignore
 
   _trace: Trace
   _line_info: source_info_util.SourceInfo | None
+  _in_getattr: bool
 
   dtype = _aval_property('dtype')
   ndim = _aval_property('ndim')
   size = _aval_property('size')
   shape = _aval_property('shape')
+
+  def __new__(cls, *args, **kwargs):
+    tracer = object.__new__(cls)
+    object.__setattr__(tracer, '_in_getattr', False)
+    return tracer
 
   def __init__(self, trace: Trace):
     self._trace = trace
@@ -1043,26 +1049,42 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   def __getattr__(self, name):
     # if the aval property raises an AttributeError, gets caught here
     assert not config.enable_checks.value or name != "aval"
-
-    if name == 'sharding':
-      raise AttributeError(
-        f"The 'sharding' attribute is not available on {self._error_repr()}."
-        f"{self._origin_msg()}")
-
+    if self._in_getattr:
+      raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+    object.__setattr__(self, '_in_getattr', True)
     try:
-      attr = getattr(self.aval, name)
-    except AttributeError as err:
-      raise AttributeError(
-          f"{self.__class__.__name__} has no attribute {name}"
-      ) from err
-    else:
-      t = type(attr)
-      if t is aval_property:
-        return attr.fget(self)
-      elif t is aval_method:
-        return types.MethodType(attr.fun, self)
+      if name == 'sharding':
+        raise AttributeError(
+          f"The 'sharding' attribute is not available on {self._error_repr()}."
+          f"{self._origin_msg()}")
+      try:
+        aval = object.__getattribute__(self, 'aval')
+        attr = getattr(aval, name)
+      except AttributeError as err:
+        raise AttributeError(
+            f"{self.__class__.__name__} has no attribute {name}"
+        ) from err
       else:
-        return attr
+        t = type(attr)
+        if t is aval_property:
+          return attr.fget(self)
+        elif t is aval_method:
+          return types.MethodType(attr.fun, self)
+        else:
+          return attr
+    finally:
+      object.__setattr__(self, '_in_getattr', False)
+
+  def __setattr__(self, name, value):
+    try:
+      aval = object.__getattribute__(self, 'aval')
+      attr = getattr(aval, name)
+    except AttributeError:
+      return object.__setattr__(self, name, value)
+    t = type(attr)
+    if t is aval_property and attr.fset is not None:
+      return attr.fset(self, value)
+    object.__setattr__(self, name, value)
 
   def _short_repr(self) -> str:
     return f'{self.__class__.__name__}<{self.aval}>'
@@ -1165,8 +1187,12 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
 
 # these can be used to set up forwarding of properties and instance methods from
 # Tracer instances to the underlying avals
-aval_property = namedtuple("aval_property", ["fget"])
 aval_method = namedtuple("aval_method", ["fun"])
+class aval_property(NamedTuple):
+  fget: Any = None
+  fset: Any = None
+  def setter(self, fset) -> "aval_property":
+    return aval_property(self.fget, fset)
 
 pytype_aval_mappings[Tracer] = lambda x: x.aval
 
