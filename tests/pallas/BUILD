@@ -1186,9 +1186,8 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_sparsecore_pallas_test",
     srcs = ["tpu_sparsecore_pallas_test.py"],
-    # Include at least v5p in presubmit.
     config_tags_overrides = {
-        "tpu_v5p": {"ondemand": False},
+        "tpu_v5p": {"ondemand": True},
     },
     enable_backends = [],
     enable_configs = [
