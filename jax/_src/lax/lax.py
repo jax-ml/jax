@@ -1717,21 +1717,6 @@ def _convert_element_type(
   if type(operand) is int and new_dtype != dtypes.float0:
     operand = literals.TypedNdArray(np.asarray(operand).astype(new_dtype),
                                          weak_type)
-  elif (
-      isinstance(operand, np.ndarray) and operand.dtype != dtypes.float0
-      and new_dtype != dtypes.float0
-  ):
-    try:
-      # If the value is a literal, we convert it to a TypedNdArray to avoid
-      # any canonicalization of it as a NumPy array. We may as well just do the
-      # conversion while we are here.
-      operand = literals.TypedNdArray(
-          np.asarray(operand).astype(new_dtype), weak_type
-      )
-    except TypeError:
-      # Not every dtype we know about has a NumPy cast defined, e.g., for some
-      # combinations of ml_dtypes types.
-      pass
 
   if ((old_dtype, old_weak_type) == (new_dtype, weak_type) and
       isinstance(operand, Array) and

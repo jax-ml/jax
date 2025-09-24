@@ -5233,7 +5233,10 @@ class APITest(jtu.JaxTestCase):
   def test_make_jaxpr_deduplicates_consts(self):
     # We don't promise this behavior in the public API, but we've had it for a
     # long time. This test checks we don't *unintentionally* break it.
-    c = np.ones(3)
+
+    # We are careful to choose a type that would not be canonicalized here,
+    # otherwise the jnp.array(...) calls will induce constant duplication.
+    c = np.ones(3).astype(np.float32)
 
     def find_constants(jaxpr: core.ClosedJaxpr):
       for j in it.chain([jaxpr], core.subjaxprs(jaxpr)):
@@ -5247,7 +5250,7 @@ class APITest(jtu.JaxTestCase):
 
     @jax.make_jaxpr
     def f():
-      return c, jnp.sum(c), c, jnp.sum(c)
+      return jnp.array(c), jnp.sum(c), c, jnp.array(c), jnp.sum(c), c
 
     if config.use_simplified_jaxpr_constants.value:
       consts = uniq(find_constants(f()))
