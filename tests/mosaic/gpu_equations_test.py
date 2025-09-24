@@ -17,14 +17,34 @@
 from absl.testing import parameterized
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.interpreters import mlir as mlir_interpreter
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import llvm
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import equations
+from jax.experimental.mosaic.gpu import launch_context as lc
 
 config.parse_flags_with_absl()
 
 RL = equations.RegisterLayout
 Eq = equations.Equation
 V = equations.Variable
+
+
+def _make_ir_context():
+  context = ir.Context()
+  context.append_dialect_registry(mlir_interpreter.upstream_dialects)
+  context.load_all_available_dialects()
+  mgpu.dialect.register_dialect(context)
+  return context
+
+
+def nested_tuple(nested_list):
+  """Recursively convert a nested list to a nested tuple."""
+  if isinstance(nested_list, list):
+    return tuple(nested_tuple(x) for x in nested_list)
+  return nested_list
 
 
 class EquationSystemTest(parameterized.TestCase):
@@ -419,6 +439,157 @@ class EquationSystemTest(parameterized.TestCase):
             ],
         ),
     )
+
+  @parameterized.parameters(
+      (mgpu.WGMMA_LAYOUT, (64, 64), True),
+      (mgpu.WGMMA_LAYOUT, (64,), False),
+      (mgpu.WGMMA_LAYOUT, None, False),
+      (mgpu.WGMMA_ROW_LAYOUT, None, True),
+      (mgpu.WGMMA_ROW_LAYOUT, (64,), False),
+      (mgpu.WGMMA_COL_LAYOUT, None, True),
+      (mgpu.WGMMA_COL_LAYOUT, (64,), False),
+      (mgpu.WGSplatFragLayout((16, 16)), None, True),
+      (mgpu.WGSplatFragLayout((16, 16)), (16,), False),
+      (mgpu.WGStridedFragLayout((16, 128), vec_size=4), None, True),
+      (mgpu.WGStridedFragLayout((16, 128), vec_size=4), (1,), False),
+  )
+  def test_smem_is_transferable(self, layout, tiling, expected):
+    eq_layout = equations.RegisterLayout(layout)
+    eq_tiling = equations.SMEMTiling(lc.TileTransform(tiling) if tiling else None)
+
+    is_transferable = equations.IsTransferable(eq_layout, eq_tiling, ())
+    self.assertEqual(is_transferable.holds(), expected)
+    is_transferable = equations.IsTransferable(eq_tiling, eq_layout, ())
+    self.assertEqual(is_transferable.holds(), expected)
+
+  def test_transposed_constraint(self):
+    def transposed(lhs, rhs):
+      lhs = equations.SMEMTiling(None if lhs is None else lc.TileTransform(lhs))
+      rhs = equations.SMEMTiling(None if rhs is None else lc.TileTransform(rhs))
+      return equations.Transposed(lhs, rhs)
+
+    self.assertTrue(transposed(None, None).holds())
+    self.assertTrue(transposed((1,), (1,)).holds())
+    self.assertFalse(transposed((1,), (2,)).holds())
+    self.assertTrue(transposed((1, 2), (2, 1)).holds())
+    self.assertTrue(transposed((2, 2), (2, 2)).holds())
+    self.assertFalse(transposed((2, 3), (2, 2)).holds())
+
+  def test_divides_constraint(self):
+    def divides(tiling, dims):
+      tiling = None if tiling is None else lc.TileTransform(tiling)
+      return equations.Divides(equations.SMEMTiling(tiling), nested_tuple(dims))
+
+    self.assertTrue(divides(None, []).holds())
+    self.assertTrue(divides(None, [[5, 15], [16]]).holds())
+
+    self.assertTrue(divides((5, 8), [[3], [5], [8]]).holds())
+    self.assertTrue(divides((5, 8), [[3], [5, 10], [8, 0, 16]]).holds())
+    self.assertFalse(divides((1, 3, 5, 8), [[3], [5, 10], [8, 0, 16]]).holds())
+
+    self.enter_context(_make_ir_context())
+    self.enter_context(ir.Location.unknown())
+    ir.Module.create()
+
+    c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
+    self.assertTrue(divides((5, 8), [[c(3)], [c(5)], [c(8)]]).holds())
+    self.assertTrue(divides((5, 8), [[c(3)], [c(5), 10], [c(8), 16]]).holds())
+    self.assertTrue(divides((5, 8), [[c(3)], [5, c(10)], [8]]).holds())
+    self.assertFalse(divides((5, 8), [[c(3)], [5, c(4)], [8]]).holds())
+
+    u = llvm.mlir_undef(ir.IntegerType.get_signless(32))
+    self.assertTrue(divides((5, 8), [[u], [c(5)], [c(8)]]).holds())
+    self.assertFalse(divides((5, 8), [[10], [8, u]]).holds())
+
+  def test_merge_divides_constraints(self):
+    def divides(var, dims):
+      return equations.Divides(equations.Variable(var), nested_tuple(dims))
+
+    self.assertEqual(equations.merge_divides_constraints([
+        divides(0, [[16]]),
+        divides(1, [[8]]),
+    ]), [
+        divides(0, [[16]]),
+        divides(1, [[8]]),
+    ])
+
+    self.assertEqual(equations.merge_divides_constraints([
+        divides(0, [[16]]),
+        divides(0, [[8]]),
+    ]), [divides(0, [[16, 8]])])
+
+    self.assertEqual(equations.merge_divides_constraints([
+        divides(0, [[16, 10]]),
+        divides(0, [[8]]),
+    ]), [divides(0, [[16, 10, 8]])])
+
+    self.assertEqual(equations.merge_divides_constraints([
+        divides(0, [[16, 10]]),
+        divides(0, [[5],[8]]),
+    ]), [divides(0, [[5], [8, 16, 10]])])
+
+    self.assertEqual(equations.merge_divides_constraints([
+        divides(0, [[16, 10]]),
+        divides(0, [[5],[8]]),
+        divides(1, [[1], [2, 4], [5, 10]]),
+        divides(1, [[9], [20]]),
+    ]), [
+        divides(0, [[5], [8, 16, 10]]),
+        divides(1, [[1], [2, 4, 9], [5, 10, 20]]),
+    ])
+
+  def test_tiled_constraint(self,):
+    def tiled(tiling, dims):
+      tiling = None if tiling is None else lc.TileTransform(tiling)
+      return equations.Tiled( equations.SMEMTiling(tiling), dims)
+
+    self.assertTrue(tiled(None, 0).holds())
+    self.assertFalse(tiled((1,), 0).holds())
+    self.assertFalse(tiled(None, 1).holds())
+    self.assertTrue(tiled((1,), 1).holds())
+    self.assertTrue(tiled((1,2), 2).holds())
+    self.assertFalse(tiled((1,2), 1).holds())
+
+  def test_merge_tiled_constraints(self):
+    def tiled(var, dims):
+      return equations.Tiled(equations.Variable(var), dims)
+
+    self.assertEqual(equations.merge_tiled_constraints(
+        [tiled(0, 1), tiled(0, 1)]), [tiled(0, 1)])
+
+    self.assertEqual(equations.merge_tiled_constraints(
+        [tiled(0, 1), tiled(1, 2)]), [tiled(0, 1), tiled(1, 2)])
+
+    self.assertIsInstance(
+        equations.merge_tiled_constraints([tiled(0, 1), tiled(0, 2)]),
+        equations.Unsatisfiable,
+    )
+
+  def test_saturate_divides_and_tiled_constraints_for_equal_vars(self):
+    def divides(var, dims):
+      return equations.Divides(equations.Variable(var), nested_tuple(dims))
+    def tiled(var, dims):
+      return equations.Tiled(equations.Variable(var), dims)
+    def system(equal_vars, constraints):
+      return equations.EquationSystem(
+          equations=[
+              equations.Equation(equations.Variable(a), equations.Variable(b))
+              for a, b in equal_vars
+          ],
+          constraints=constraints,
+      )
+
+    s = system([(0, 1)], [divides(0, [[1]]), tiled(1, 1), tiled(2, 1)])
+    got = equations.saturate_divides_and_tiled_constraints_for_equal_vars(s)
+    want = s.constraints + [divides(1, [[1]]), tiled(0, 1)]
+    self.assertEqual(got.equations, s.equations)
+    self.assertCountEqual(got.constraints, want)
+
+    s = system([(0, 1), (2, 3), (4, 5)], [tiled(1, 1), tiled(2, 1)])
+    got = equations.saturate_divides_and_tiled_constraints_for_equal_vars(s)
+    want = s.constraints + [tiled(0, 1), tiled(3, 1)]
+    self.assertEqual(got.equations, s.equations)
+    self.assertCountEqual(got.constraints, want)
 
 
 if __name__ == "__main__":
