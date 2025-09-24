@@ -746,8 +746,8 @@ class DevicePutTest(jtu.JaxTestCase):
 class ComputeOffload(jtu.BufferDonationTestCase):
 
   def setUp(self):
-    if not jtu.test_device_matches(["tpu"]):
-      self.skipTest("Memories do not work on CPU and GPU backends yet.")
+    if not jtu.test_device_matches(["tpu", "gpu"]):
+      self.skipTest("Memories do not work on CPU backends yet.")
     super().setUp()
 
   def _check_mem_kind(self, executable_kind, out_sharding, expected_kind):
@@ -1094,7 +1094,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     g = jax.jit(jax.grad(lambda x: f(x).sum()))
 
     x = jnp.ones(3) * 4
-    all_true = jnp.ones(3)
+    all_true = jnp.ones(3, jnp.float32)
     self.assertArraysEqual(g(x), all_true)
 
   def test_host_offload_in_custom_vjp_sharded(self):
@@ -1474,6 +1474,10 @@ class ComputeOffload(jtu.BufferDonationTestCase):
   def test_qr_decomposition_offload(self):
     if jtu.is_cloud_tpu():
       self.skipTest("Test fails on cloud TPU")
+    if jtu.test_device_matches(["gpu"]):
+      # TODO(b/446898771) This test fails on GPU in OSS, it will work
+      # internally.
+      self.skipTest("Test doesn't work on GPU in OSS.")
 
     shape = (3, 3)
     dtype = np.float32
@@ -1493,7 +1497,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     out = f(operand)  # doesn't crash
     lowered_text = f.lower(operand).as_text()
     self.assertIn('@lapack_sgeqrf', lowered_text)
-    self.assertIn('@Qr', lowered_text)
+    if jtu.test_device_matches(["tpu"]):
+      self.assertIn("@Qr", lowered_text)
 
     @jax.jit
     def h(x):
@@ -1577,6 +1582,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(y_out, y1 + y1)
 
   def test_compute_offload_with_linear_layout(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("GPU does not support tiling.")
     sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     p_sharding = jax.sharding.SingleDeviceSharding(
         jax.devices()[0], memory_kind="pinned_host"
@@ -1695,8 +1702,10 @@ class ComputeOffload(jtu.BufferDonationTestCase):
                                         cpu=lambda x: x + 1.,
                                         default=lambda x: x + 2.)
 
-    self.assertAllClose(1., f_host(operand))
-    self.assertAllClose(1., f_host.lower(operand).compile()(operand))
+    self.assertAllClose(jnp.float32(1.0), f_host(operand))
+    self.assertAllClose(
+        jnp.float32(1.0), f_host.lower(operand).compile()(operand)
+    )
 
   def test_offload_take_host(self):
     @compute_on('device_host')
