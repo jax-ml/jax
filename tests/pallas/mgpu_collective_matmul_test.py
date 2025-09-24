@@ -63,10 +63,12 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
       m_shard=(3072,),
       n_shard=(256, 576),
       k=(4096,),
-      block_m=(64, 128, 192),
-      block_n=(64, 128, 192),
-      block_k=(64, 128),
-      sm_n_tile=(1, 2, 4),
+      tile_m=(64, 128, 192),
+      tile_n=(64, 128, 192),
+      tile_k=(64, 128),
+      grid_minor_dim=(collective_matmul_mgpu.MatmulDimension.N,),
+      grid_tile_width=(1,),
+      wg_dimension=(collective_matmul_mgpu.MatmulDimension.N,),
       max_concurrent_steps=(2, 4),
       dtype=(jnp.bfloat16,),
   )
@@ -75,27 +77,28 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
       m_shard,
       n_shard,
       k,
-      block_m,
-      block_n,
-      block_k,
-      sm_n_tile,
+      tile_m,
+      tile_n,
+      tile_k,
       max_concurrent_steps,
+      grid_minor_dim,
+      grid_tile_width,
+      wg_dimension,
       dtype,
   ):
     num_devices = jax.device_count()
-    lhs_smem_size = block_m * block_k * max_concurrent_steps * 2
-    rhs_smem_size = block_k * block_n * max_concurrent_steps * 2
-    out_smem_size = block_m * block_n * 2
-    # H100 SMEM limit is 228kB.
-    if lhs_smem_size + rhs_smem_size + out_smem_size > 228_000:
-      self.skipTest("This configuration requires too much SMEM.")
-    if n_shard % block_n:
+    epi_tile_size = 64 * 64
+    num_epi_tiles = tile_m * tile_n // epi_tile_size
+    cta_tile_m = tile_m * (1 + (wg_dimension == collective_matmul_mgpu.MatmulDimension.M))
+    cta_tile_n = tile_n * (1 + (wg_dimension == collective_matmul_mgpu.MatmulDimension.N))
+    if (
+        (cta_tile_m + cta_tile_n) * tile_k * max_concurrent_steps
+        + 2 * min(2, num_epi_tiles) * epi_tile_size
+    ) * 2 > 228000:
+      self.skipTest("Tile too big to fit into SMEM")
+    if n_shard % cta_tile_n:
       self.skipTest("n_shard must be divisible by block_n for now.")
-    if (n_shard // block_n) % sm_n_tile != 0:
-      self.skipTest(
-          "(n_shard // block_n) must be divisible by sm_n_tile for now."
-      )
-    if m_shard % block_m:
+    if m_shard % cta_tile_m:
       self.skipTest("m_shard must be divisible by block_m for now.")
 
     k1, k2 = random.split(random.key(1234), num=2)
@@ -116,15 +119,20 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
       return out
 
     ref_out = run(lambda x, y: lax.all_gather(x, "x", axis=0, tiled=True) @ y)
+    config = collective_matmul_mgpu.TuningConfig(
+        tile_m=tile_m,
+        tile_n=tile_n,
+        tile_k=tile_k,
+        max_concurrent_steps=max_concurrent_steps,
+        grid_minor_dim=grid_minor_dim,
+        grid_tile_width=grid_tile_width,
+        wg_dimension=wg_dimension,
+    )
     out = run(
         functools.partial(
             collective_matmul_mgpu.all_gather_lhs_matmul,
             axis_name="x",
-            block_m=block_m,
-            block_n=block_n,
-            block_k=block_k,
-            sm_n_tile=sm_n_tile,
-            max_concurrent_steps=max_concurrent_steps,
+            config=config,
             dtype=dtype,
         )
     )
