@@ -388,7 +388,7 @@ class CustomJVPCallPrimitive(core.Primitive):
 
   def bind_with_trace(self, trace, args, params):
     fun, jvp, *tracers = args
-    if trace.requires_low:
+    if trace.requires_low and config.vmap_primitive.value:
       with core.set_current_trace(trace):
         return fun.call_wrapped(*tracers)
     else:
@@ -1000,7 +1000,7 @@ class CustomVJPCallPrimitive(core.Primitive):
 
   def bind_with_trace(self, trace, args, params):
     fun, fwd, bwd, *tracers = args
-    if trace.requires_low:
+    if trace.requires_low and config.vmap_primitive.value:
       with core.set_current_trace(trace):
         return fun.call_wrapped(*tracers)
     else:
@@ -1623,8 +1623,6 @@ def custom_vjp_by_custom_transpose(fun, fwd, bwd):
     return outs, tan_fn(tan_out_types, residuals, tangents)
 
   return fun
-
-custom_vjp_call_p.is_high = lambda *_, **__: True  # type: ignore
 
 
 # TODO(mattjj): remove these stubs, which exist to avoid breaking internal users

@@ -1902,11 +1902,18 @@ vjp3 = bool_state(
     upgrade=True,
     help='Use new backward-pass code in jax.vjp')
 
+
 refs_to_pins = bool_state(
     name='jax_refs_to_pins',
     default=False,
     upgrade=True,
     help='Lower refs to pinned buffers in HLO.')
+
+vmap_primitive = bool_state(
+    name='jax_vmap_primitive',
+    default=False,
+    upgrade=True,
+    help='Make vmap a hijax primitive.')
 
 xla_runtime_errors = bool_state(
     name='jax_experimental_unsafe_xla_runtime_errors',

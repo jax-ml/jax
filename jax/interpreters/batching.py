@@ -118,6 +118,14 @@ _deprecations = {
     "jax.interpreters.batching.batch is deprecated. It is an internal API.",
     _src_batching.batch,
   ),
+  "batch_custom_jvp_subtrace": (
+    "jax.interpreters.batching.batch_custom_jvp_subtrace is deprecated. It is an internal API.",
+    _src_batching.batch_custom_jvp_subtrace,
+  ),
+  "batch_custom_vjp_bwd": (
+    "jax.interpreters.batching.batch_custom_vjp_bwd is deprecated. It is an internal API.",
+    _src_batching.batch_custom_vjp_bwd,
+  ),
   "batch_jaxpr": (
     "jax.interpreters.batching.batch_jaxpr is deprecated. It is an internal API.",
     _src_batching.batch_jaxpr,

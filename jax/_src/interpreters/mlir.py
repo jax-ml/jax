@@ -1574,7 +1574,7 @@ def lower_jaxpr_to_fun(
     MLIR func op
   """
   util.test_event("lower_jaxpr_to_fun", name)
-  assert not jaxpr.is_high, breakpoint()
+  assert not jaxpr.is_high
   if not config.use_simplified_jaxpr_constants.value:
     check_jaxpr_constants(jaxpr)
 
@@ -2014,7 +2014,6 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   """
   assert "gpu" not in ctx.platforms
   assert not jaxpr.is_high
-  cached_ir_consts: dict[HashableLiteral, IrValues] = {}
 
   def read(v: core.Atom) -> IrValues:
     if type(v) is core.Literal:
@@ -2497,7 +2496,7 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
         sub_context = ctx.module_context.replace(platforms=ctx.platforms)
       else:
         sub_context = ctx.module_context
-      assert not jaxpr.is_high, breakpoint()
+      assert not jaxpr.is_high
       out, tokens = jaxpr_subcomp(
           sub_context, jaxpr, ctx.name_stack, ctx.tokens_in,
           ir_consts(consts_for_constvars, [v.aval for v in jaxpr.constvars]),

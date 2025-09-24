@@ -548,19 +548,20 @@ def print_saved_residuals(f, *args, **kwargs):
 remat_p = core.Primitive('remat2')
 remat_p.multiple_results = True
 
-remat_p.is_high = lambda *_, jaxpr, **__: True
+if config.vmap_primitive.value:
+  remat_p.is_high = lambda *_, jaxpr, **__: True  # type: ignore
 
-def _remat_to_lojax(*args, jaxpr, prevent_cse, differentiated, policy):
-  del policy
-  if isinstance(prevent_cse, bool):
-    prevent_cse = (prevent_cse,) * len(args)  # type: ignore
-  assert isinstance(prevent_cse, tuple)
-  if differentiated and any(prevent_cse):
-    other_args, barrier_args = partition_list(prevent_cse, args)
-    barrier_args = lax_internal.optimization_barrier(barrier_args)
-    args = merge_lists(prevent_cse, other_args, barrier_args)
-  return core.eval_jaxpr(jaxpr, (), *args)
-remat_p.to_lojax = _remat_to_lojax
+  def _remat_to_lojax(*args, jaxpr, prevent_cse, differentiated, policy):
+    del policy
+    if isinstance(prevent_cse, bool):
+      prevent_cse = (prevent_cse,) * len(args)  # type: ignore
+    assert isinstance(prevent_cse, tuple)
+    if differentiated and any(prevent_cse):
+      other_args, barrier_args = partition_list(prevent_cse, args)
+      barrier_args = lax_internal.optimization_barrier(barrier_args)
+      args = merge_lists(prevent_cse, other_args, barrier_args)
+    return core.eval_jaxpr(jaxpr, (), *args)
+  remat_p.to_lojax = _remat_to_lojax  # type: ignore
 
 def _remat_bind(*args, jaxpr, prevent_cse, differentiated, policy):
   assert isinstance(prevent_cse, bool) or len(prevent_cse) == len(args)
@@ -838,6 +839,53 @@ pe.dce_rules[remat_p] = remat_dce
 
 def _has_effects(effects) -> bool:
   return bool({e for e in effects if not isinstance(e, core.NamedAxisEffect)})
+
+
+def remat_expansion(
+    *args, jaxpr: core.Jaxpr, prevent_cse: bool, differentiated: bool, **_
+):
+  assert not jaxpr.constvars
+
+  if differentiated and prevent_cse:
+    translation_rule = _remat_translation_using_opt_barrier
+  else:
+    translation_rule = lambda *args, jaxpr: core.eval_jaxpr(jaxpr, (), *args)
+
+  return api.named_call(translation_rule, name="checkpoint")(*args, jaxpr=jaxpr)
+
+
+def _remat_translation_using_opt_barrier(*args, jaxpr: core.Jaxpr):
+  args = lax_internal.optimization_barrier(args)
+  return core.eval_jaxpr(jaxpr, (), *args)
+
+
+def _remat_lowering(
+    ctx: mlir.LoweringRuleContext,
+    *args,
+    jaxpr: core.Jaxpr,
+    prevent_cse: bool,
+    differentiated: bool,
+    policy,
+):
+  if isinstance(prevent_cse, bool):
+    prevent_cse = (prevent_cse,) * len(ctx.avals_in)  # type: ignore
+  assert isinstance(prevent_cse, tuple)
+  if differentiated and any(prevent_cse):
+    _, barrier_avals = partition_list(prevent_cse, ctx.avals_in)
+    other_args, barrier_args = partition_list(prevent_cse, args)
+    barrier_op = hlo.OptimizationBarrierOp(
+        mlir.flatten_ir_values(barrier_args))
+    barrier_results = mlir.unflatten_ir_values_like_types(
+        barrier_op.results, map(mlir.aval_to_ir_type, barrier_avals))
+    args = merge_lists(prevent_cse, other_args, barrier_results)  # type: ignore
+  outs, tokens_out = mlir.jaxpr_subcomp(
+      ctx.module_context, jaxpr, ctx.name_stack.extend('checkpoint'),
+      ctx.tokens_in, (), *args, dim_var_values=ctx.dim_var_values,
+      const_lowering=ctx.const_lowering)
+  ctx.set_tokens_out(tokens_out)
+  return outs
+
+mlir.register_lowering(remat_p, _remat_lowering)
 
 
 def checkpoint_name(x, name):

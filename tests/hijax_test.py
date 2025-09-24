@@ -428,6 +428,9 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertEqual(ans, 2)
 
   def test_closed_over_hitype(self):
+    if not config.vmap_primitive.value:
+      raise unittest.SkipTest("requires vmap_primitive enabled")
+
     tup = make_tup(1, 2)
 
     @jax.custom_vjp

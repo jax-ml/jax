@@ -936,6 +936,7 @@ pytype_strict_library(
     name = "batching",
     srcs = ["interpreters/batching.py"],
     deps = [
+        ":ad",
         ":ad_util",
         ":config",
         ":core",

@@ -1508,7 +1508,7 @@ def _to_lojax(*hi_args, jaxpr, **params):
 
   # lower the jaxpr and bind it using lo input values
   lo_jaxpr = pe.lower_jaxpr(jaxpr)
-  assert not lo_jaxpr.is_high, breakpoint()
+  assert not lo_jaxpr.is_high
   all_outs = jit_p.bind(*lo_args, jaxpr=lo_jaxpr, **params)
   out_mut, lo_outs = split_list(all_outs, [lo_muts_out])
   pe.apply_himut(jaxpr, hi_args, out_mut)
