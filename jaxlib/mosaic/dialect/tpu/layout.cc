@@ -563,6 +563,16 @@ void VectorLayout::print(mlir::Diagnostic& diag) const {
 std::optional<VectorLayout> VectorLayout::join(const VectorLayout& l,
                                                const VectorLayout& r,
                                                ArrayRef<int64_t> shape) {
+  auto is_fully_replicated = [&](const VectorLayout& layout) {
+    const LayoutOffsets& offsets = layout.getCanonicalOffsets(shape);
+    return !offsets[0] && !offsets[1];
+  };
+  if (is_fully_replicated(l) && l.layout_rank() >= r.layout_rank()) {
+    return r;
+  }
+  if (is_fully_replicated(r) && r.layout_rank() >= l.layout_rank()) {
+    return l;
+  }
   if (l.bitwidth_ != r.bitwidth_ || l.tiling_ != r.tiling_) {
     return std::nullopt;
   }

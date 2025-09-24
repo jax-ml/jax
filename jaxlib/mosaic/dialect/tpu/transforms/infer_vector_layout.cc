@@ -1973,7 +1973,6 @@ class VectorLayoutInferer {
                  "elementwise ops with no operands unsupported");
     // Elementwise operators can be parameterized by both scalars and shaped
     // types, so make sure we infer layout based on a shaped-typed operand.
-    std::optional<VectorLayout> out_layout_candidate;
     std::optional<VectorLayout> out_layout;
     int64_t bitwidth = -1;
     // Find the bitwidth of the operands/results. They must all be the same
@@ -2006,38 +2005,23 @@ class VectorLayoutInferer {
           out_layout = layout;
         } else if (bitwidth != layout.bitwidth()) {
           DCHECK_EQ(vty.getElementTypeBitWidth(), 1);
-        } else if (is_fully_replicated(some_layout)) {
-          // If the input is fully replicated, don't use it to commit to any
-          // layout. Replicated values are easy to relayout.
-          // But we have to watch out: fully replicated values with implicit
-          // dimensions are _less replicated_ than those without implicit
-          // dimensions, because they tell us nothing about the replication of
-          // their untiled dims.
-          if (!out_layout_candidate) {
-            out_layout_candidate = layout;
-          } else if (out_layout_candidate->layout_rank() >
-                     layout.layout_rank()) {
-            out_layout_candidate = layout;
-          }
         } else if (!out_layout) {
           // TODO(apaszke): There are probably smarter ways to choose layout.
           out_layout = layout;
+        } else if (auto new_out = VectorLayout::join(layout, *out_layout,
+                                                     vty.getShape())) {
+          out_layout = *new_out;
         } else {
-          if (auto new_out =
-                  VectorLayout::join(layout, *out_layout, vty.getShape())) {
-            out_layout = *new_out;
-          } else {
-            // When we detect a layout conflict we cannot reconcile, we remove
-            // any replication bits that might have been present in out_layout,
-            // since there is no guarantee that the conflicting inputs could
-            // even become replicated.
-            DCHECK_EQ(out_layout->bitwidth(), bitwidth);
-            out_layout =
-                VectorLayout(bitwidth,
-                             {out_layout->offsets()[0].value_or(0),
-                              out_layout->offsets()[1].value_or(0)},
-                             out_layout->tiling(), out_layout->implicit_dim());
-          }
+          // When we detect a layout conflict we cannot reconcile, we remove any
+          // replication bits that might have been present in out_layout, since
+          // there is no guarantee that the conflicting inputs could even
+          // become replicated.
+          DCHECK_EQ(out_layout->bitwidth(), bitwidth);
+          out_layout =
+              VectorLayout(bitwidth,
+                           {out_layout->offsets()[0].value_or(0),
+                            out_layout->offsets()[1].value_or(0)},
+                           out_layout->tiling(), out_layout->implicit_dim());
         }
       } else {
         TPU_CHECK_OP(op->getOperand(i).getType().isSignlessIntOrIndexOrFloat(),
@@ -2048,8 +2032,6 @@ class VectorLayoutInferer {
     if (isa<VectorType>(op->getResult(0).getType())) {
       if (out_layout) {
         final_out_layout = *out_layout;
-      } else if (out_layout_candidate) {
-        final_out_layout = *out_layout_candidate;
       } else {
         if (bitwidth == -1) {
           // bitwidth may be unset when all operands are i1s.
