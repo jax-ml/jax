@@ -71,7 +71,7 @@ _TRAY_4x4_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 9, 10, 11, 15, 14, 13, 12, 8, 4)
 _V5E_TRAY_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 4)
 _V5E_TRAY_IOTA_ORDER = (0, 4, 2, 6, 1, 5, 3, 7)
 _V5P_2x2x2_ORDER = (0, 1, 3, 2, 6, 7, 5, 4)
-_7X_TRAY_2x4_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 4)
+_7X_TRAY_2x2x2_RING_ORDER = (0, 1, 2, 3, 6, 7, 4, 5)
 
 
 def _tpu_v2_v3_create_device_mesh(
@@ -203,7 +203,7 @@ def _7x_create_device_mesh(
 
   indices = []
   for i in range(0, len(devices), 8):
-    new_indices = [x + i for x in _7X_TRAY_2x4_RING_ORDER]
+    new_indices = [x + i for x in _7X_TRAY_2x2x2_RING_ORDER]
     indices.extend(new_indices)
 
   device_mesh = np.asarray(devices)
