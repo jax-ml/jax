@@ -105,8 +105,7 @@ def matmul_kernel(a, b, config: TuningConfig):
     cluster_idx = lax.axis_index("x")
     is_lead_block = cluster_idx == 0
 
-    @plgpu.nd_loop((m_iters * n_iters,),
-                   collective_axes="sm")
+    @plgpu.nd_loop((m_iters * n_iters,), collective_axes="sm")
     def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
       (lin_idx,) = loop_info.index
       local_index = loop_info.local_index
