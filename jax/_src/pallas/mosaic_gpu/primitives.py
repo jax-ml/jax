@@ -503,7 +503,10 @@ def _copy_gmem_to_smem_lowering(
       # But we should continue using this scheme as it's likely to be faster.
       bytes //= WARPGROUP_SIZE
       if ctx.module_ctx.auto_barriers:
-        mgpu.warpgroup_barrier()  # Make sure all reads have completed.
+        # Make sure all reads have completed. It is necessary to commit the
+        # shared memory here in order to synchronize across the async proxy
+        # (used for TMA) and the generic proxy (used for SMEM reads).
+        mgpu_utils.commit_shared()
       if is_partitioned_copy:
         first_block = arith_dialect.cmpi(
             arith_dialect.CmpIPredicate.eq,
