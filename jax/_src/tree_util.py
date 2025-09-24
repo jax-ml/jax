@@ -21,7 +21,7 @@ import functools
 from functools import partial
 import operator as op
 import textwrap
-from typing import Any, TypeVar, overload
+from typing import Any, TypeVar
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
@@ -420,39 +420,21 @@ _registry: dict[type[Any], _RegistryEntry] = {
     type(None): _RegistryEntry(lambda z: ((), None), lambda _, xs: None),
 }
 
-no_initializer = object()
 
-
-@overload
-def tree_reduce(function: Callable[[T, Any], T],
-                tree: Any,
-                *,
-                is_leaf: Callable[[Any], bool] | None = None) -> T:
-    ...
-
-
-@overload
-def tree_reduce(function: Callable[[T, Any], T],
-                tree: Any,
-                initializer: T,
-                is_leaf: Callable[[Any], bool] | None = None) -> T:
-    ...
+class Unspecified:
+  pass
 
 
 @export
 def tree_reduce(function: Callable[[T, Any], T],
                 tree: Any,
-                initializer: Any = no_initializer,
+                initializer: T | Unspecified = Unspecified(),
                 is_leaf: Callable[[Any], bool] | None = None) -> T:
   """Alias of :func:`jax.tree.reduce`."""
-  if initializer is no_initializer:
+  if isinstance(initializer, Unspecified):
     return functools.reduce(function, tree_leaves(tree, is_leaf=is_leaf))
   else:
     return functools.reduce(function, tree_leaves(tree, is_leaf=is_leaf), initializer)
-
-
-class Unspecified:
-  pass
 
 
 def _parallel_reduce(

@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import Any, TypeVar, overload
+from typing import Any, TypeVar
 
 from jax._src import tree_util
 
@@ -155,21 +155,9 @@ def map(f: Callable[..., Any],
   return tree_util.tree_map(f, tree, *rest, is_leaf=is_leaf)
 
 
-@overload
 def reduce(function: Callable[[T, Any], T],
            tree: Any,
-           *,
-           is_leaf: Callable[[Any], bool] | None = None) -> T:
-    ...
-@overload
-def reduce(function: Callable[[T, Any], T],
-           tree: Any,
-           initializer: T,
-           is_leaf: Callable[[Any], bool] | None = None) -> T:
-    ...
-def reduce(function: Callable[[T, Any], T],
-           tree: Any,
-           initializer: Any = tree_util.no_initializer,
+           initializer: T | tree_util.Unspecified = tree_util.Unspecified(),
            is_leaf: Callable[[Any], bool] | None = None) -> T:
   """Call reduce() over the leaves of a tree.
 
