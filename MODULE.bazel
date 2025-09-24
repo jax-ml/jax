@@ -16,17 +16,22 @@ bazel_dep(name = "rules_python", version = "1.6.1")
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
   module_name = "rules_ml_toolchain",
-  urls = ["https://github.com/meteorcloudy/rules_ml_toolchain/archive/a423a8d14dc7e2a83216ac2e8ba005dabbcad10d.tar.gz"],
-  strip_prefix = "rules_ml_toolchain-a423a8d14dc7e2a83216ac2e8ba005dabbcad10d",
+  urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/268595dbc215306e19c4bb82c99ed6d0af24aed5.tar.gz"],
+  strip_prefix = "rules_ml_toolchain-268595dbc215306e19c4bb82c99ed6d0af24aed5",
 )
 
 # TODO: use a released version when available
 bazel_dep(name = "xla")
 archive_override(
   module_name = "xla",
-  urls = ["https://github.com/meteorcloudy/xla/archive/212c047f80749a2e2686feb4982fc0eb333c14c8.tar.gz"],
-  strip_prefix = "xla-212c047f80749a2e2686feb4982fc0eb333c14c8",
+  urls = ["https://github.com/meteorcloudy/xla/archive/fd81795844eacf795a6bc353414f930d39f3ad63.tar.gz"],
+  strip_prefix = "xla-fd81795844eacf795a6bc353414f930d39f3ad63",
 )
+
+# local_path_override(
+#     module_name = "xla",
+#     path = "../xla",
+# )
 
 # TODO: upstream, otherwise we have to duplicate the patches in jax
 single_version_override(
@@ -79,19 +84,34 @@ use_repo(rocm, "local_config_rocm")
 # Python dependencies ###
 
 ### Toolchains
+
+SUPPORTED_PYTHON_VERSIONS = {
+    "3.11": "//build:requirements_lock_3_11.txt",
+    "3.12": "//build:requirements_lock_3_12.txt",
+    "3.13": "//build:requirements_lock_3_13.txt",
+    "3.14": "//build:requirements_lock_3_14.txt",
+    # "3.13-ft": "//build:requirements_lock_3_13_ft.txt",
+    # "3.14-ft": "//build:requirements_lock_3_14_ft.txt",
+}
+
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
-python.defaults(python_version = "3.11")
-python.toolchain(python_version = "3.11")
+python.defaults(python_version = "3.11", python_version_env = "HERMETIC_PYTHON_VERSION")
+[python.toolchain(python_version = version) for version in SUPPORTED_PYTHON_VERSIONS]
 
 ### Pypi
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
-pip.parse(
+
+[pip.parse(
     hub_name = "jax_pypi",
-    python_version = "3.11",
-    requirements_lock = "//build:requirements_lock_3_11.txt",
-)
+    python_version = version,
+    requirements_lock = requirements_lock,
+) for version, requirements_lock in SUPPORTED_PYTHON_VERSIONS.items()]
 
 use_repo(pip, pypi = "jax_pypi")
+
+# override XLA's pypi installation to use the one defined by JAX.
+# TODO: have a better way to unify the pypi installation.
+override_repo(pip, xla_pypi = "pypi")
 
 ### pybind
 pybind11_internal_configure = use_extension(
