@@ -113,6 +113,15 @@ def lower_jaxpr_to_module(
         block_mappings=tuple(new_block_mappings),
     )
     dimension_semantics = ("arbitrary",)
+
+  for bm in grid_mapping.block_mappings:
+    for bd in bm.block_shape:
+      if not isinstance(bd, pallas_core.Blocked):
+        raise NotImplementedError(
+            "Unsupported block dimension type: "
+            f"{type(bd)} for block shape: {bm.block_shape}"
+        )
+
   backend = lowering_context.module_context.get_backend(optional=True)
   mosaic_grid_mapping = MosaicGridMapping(
       jaxpr, grid_mapping, dimension_semantics, mesh=mesh
@@ -151,13 +160,6 @@ def lower_jaxpr_to_module(
     assert mlir_func.verify(), mlir_func
     m.body.append(mlir_func)
     sym_tab.insert(mlir_func)
-
-    for bd in bm.block_shape:
-      if not isinstance(bd, pallas_core.Blocked):
-        raise NotImplementedError(
-            "Unsupported block dimension type: "
-            f"{type(bd)} for block shape: {bm.block_shape}"
-        )
 
     block_shape = list(pallas_core._get_block_shape(bm.block_shape))
     block_params = dict(

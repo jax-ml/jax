@@ -938,6 +938,24 @@ class VectorSubcoreTest(PallasSCTest):
 
       kernel(x)
 
+  def test_squeezed_blockspec_error_message(self):
+    shape = (16, 8, 32)
+    spec_shape = (pl.squeezed, 8, 32)
+    x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
+
+    @vector_subcore_kernel(
+        out_shape=x,
+        grid=16,
+        in_specs=[pl.BlockSpec(spec_shape, lambda i: (i, 0, 0))],
+        out_specs=pl.BlockSpec(spec_shape, lambda i: (i, 0, 0)),
+    )
+    def kernel(x_ref, o_ref):
+      pass
+
+    with self.assertRaisesRegex(
+        NotImplementedError, r"Unsupported block dimension type.*Squeezed"):
+      kernel(x)
+
 
 class ScalarSubcoreTest(PallasSCTest):
 
