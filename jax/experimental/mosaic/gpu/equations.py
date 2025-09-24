@@ -23,6 +23,7 @@ import math
 from typing import Any, Callable, assert_never, final
 
 from . import fragmented_array as fa
+from . import launch_context as lc
 from . import layouts as layouts_lib
 from . import tcgen05
 
@@ -61,6 +62,20 @@ class TMEMLayout(Constant):
   """Wraps a known TMEM layout."""
 
   value: tcgen05.TMEMLayout
+
+  def __str__(self):
+    return f"C({self.value})"
+
+
+@dataclasses.dataclass(frozen=True)
+class SMEMTiling(Constant):
+  """Wraps a known SMEM Tile Transform.
+
+  If an SMEM reference may, in principle, have transforms but should not be
+  tiled, then `value` is `None`.
+  """
+
+  value: lc.TileTransform | None
 
   def __str__(self):
     return f"C({self.value})"
