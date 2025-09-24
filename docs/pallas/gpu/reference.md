@@ -495,6 +495,7 @@ Another interesting complication with TMEM is that all operations on it are asyn
 For that reason, reads and writes using the Python subscript syntax that are normally
 used e.g. for SMEM are not allowed for TMEM.
 
+(tmem-loads)=
 ##### Loads
 
 Loads can be performed using {py:func}`plgpu.async_load_tmem <jax.experimental.pallas.mosaic_gpu.async_load_tmem>` and awaited using {py:func}`plgpu.wait_load_tmem <jax.experimental.pallas.mosaic_gpu.wait_load_tmem>`:
@@ -834,6 +835,7 @@ usually undesired and not supported at the moment.
 In this section, we go over the most important functions and data structures
 used for synchronization between threads and also some asynchronous operations.
 
+(commit-smem)=
 ### `commit_smem`
 
 Regular reads/writes to references are guaranteed to produce values consistent
