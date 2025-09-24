@@ -1857,11 +1857,6 @@ class MosaicCanonicalizer {
         }
       }
     }
-    if (auto rule_it = rules().find(op.getName().getStringRef());
-        rule_it != rules().end()) {
-      const canonicalize_rule_type& rule = rule_it->getValue();
-      return rule(ctx, op);
-    }
 
     bool has_bf16_vector_operands =
         llvm::any_of(op.getOperands(), [](Value operand) {
@@ -1880,6 +1875,11 @@ class MosaicCanonicalizer {
     if (has_bf16_vector_operands && !supports_bf16_op &&
         is_single_vector_result) {
       return canonicalize_bf16_vector(ctx, op);
+    }
+    if (auto rule_it = rules().find(op.getName().getStringRef());
+        rule_it != rules().end()) {
+      const canonicalize_rule_type& rule = rule_it->getValue();
+      return rule(ctx, op);
     }
     if (op.getNumResults() == 1 &&
         isa<IntegerType>(op.getResult(0).getType()) &&
