@@ -33,7 +33,7 @@ The table below shows all supported platforms and installation options. Check if
 | CPU              | {ref}`yes <install-cpu>`              | {ref}`yes <install-cpu>`        | {ref}`yes <install-cpu>`              | {ref}`yes <install-cpu>` | {ref}`yes <install-cpu>`                 |
 | NVIDIA GPU       | {ref}`yes <install-nvidia-gpu>`       | {ref}`yes <install-nvidia-gpu>` | n/a                                   | no                       | {ref}`experimental <install-nvidia-gpu>` |
 | Google Cloud TPU | {ref}`yes <install-google-tpu>`       | n/a                             | n/a                                   | n/a                      | n/a                                      |
-| AMD GPU          | {ref}`yes <install-amd-gpu>`          | no                              | n/a                                   | no                       | no                                       |
+| AMD GPU          | {ref}`yes <install-amd-gpu>`          | no                              | n/a                                   | no                       | {ref}`experimental <install-amd-gpu>`                             |
 | Apple GPU        | n/a                                   | no                              | {ref}`experimental <install-mac-gpu>` | n/a                      | n/a                                      |
 | Intel GPU        | {ref}`experimental <install-intel-gpu>`| n/a                            | n/a                                     | no                       | no                                       |
 
@@ -254,6 +254,11 @@ AMD GPU support is provided by a ROCm JAX plugin supported by AMD.
 
 There are several ways to use JAX on AMDGPU devices.
 Please see [AMD's instructions](https://github.com/jax-ml/jax/blob/main/build/rocm/README.md) for details.
+
+**Note**: ROCm support on Windows WSL2 is experimental. For WSL installation, you may need to:
+1. Install [ROCm for WSL](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/tutorial/quick-start.html) following AMD's official guide
+2. Follow the standard Linux ROCm JAX installation steps within your WSL environment
+3. Be aware that performance and stability may differ from native Linux installations
 
 (install-intel-gpu)=
 ## Intel GPU
