@@ -1040,7 +1040,7 @@ class LaunchContext:
       dyn_offset = arith.divui(dyn_offset, c(offset_scale, i32))
       if gmem_ref_ty.rank != 2:
         raise NotImplementedError("Only 2D copies implemented")
-      transfers = fa.FragmentedArray.transfer_tiled2(
+      transfers = fa.FragmentedArray.transfer_tiled(
           smem_ref, swizzle, layout, tuple(gmem_ref_ty.shape), optimized=False
       )
       gmem_base_ptr = utils.getelementptr(utils.memref_ptr(gmem_ref), [dyn_offset], gep_type)

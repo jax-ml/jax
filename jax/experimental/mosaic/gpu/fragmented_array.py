@@ -2654,7 +2654,7 @@ class FragmentedArray:
     # Note that the loop below will "race" for layouts that replicate data.
     # However, in that case all of the racing writes store the same data, which
     # is ok in the CUDA memory model.
-    stores = self.transfer_tiled2(ref, swizzle, layout, shape, optimized)
+    stores = self.transfer_tiled(ref, swizzle, layout, shape, optimized)
     for get, _update, _idx, ptr in stores:
       llvm.store(get(self.registers), ptr)
 
@@ -2689,7 +2689,7 @@ class FragmentedArray:
     transfer_ty = ir.VectorType.get(
         (layout.vector_length,), i8 if is_f8 else dtype
     )
-    loads = cls.transfer_tiled2(ref, swizzle, layout, shape, optimized)
+    loads = cls.transfer_tiled(ref, swizzle, layout, shape, optimized)
     for _get, update, _idx, ptr in loads:
       loaded_reg = llvm.load(transfer_ty, ptr)
       if is_f8:
@@ -2698,91 +2698,7 @@ class FragmentedArray:
     return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
 
   @staticmethod
-  def transfer_tiled(shape, dtype, swizzle: int):
-    # TODO(apaszke): We could use ldmatrix/stmatrix for 16-bit types.
-    bw = mgpu.bitwidth(dtype)
-    m, n = shape
-    assert m % 64 == 0 and n % 8 == 0  # Implied by the layout.
-    cols_per_tile = swizzle_elems = (swizzle * 8) // bw
-    if n < swizzle_elems:
-      cols_per_tile = n
-    else:
-      assert n % swizzle_elems == 0, (n, swizzle_elems)
-    if swizzle not in {32, 64, 128}:
-      raise NotImplementedError("Only swizzled stores supported")
-
-    c = arith.ConstantOp.create_index
-    tidx = arith.remui(gpu.thread_id(gpu.Dimension.x), c(WARPGROUP_SIZE))
-    lane_id = arith.remui(tidx, c(32))  # {0, 1, ..., 31}
-    warp_id = arith.divui(tidx, c(32))  # {0, 1, 2, 3}
-    sub_row_base = arith.divui(lane_id, c(4))  # {0, 1, ..., 7}
-    if bw > 16:  # Stagger is only necessary for values larger than 16bit.
-      # We split the rows into two groups (left/right) and change the order in
-      # which they perform accesses to avoid bank conflicts.
-      # It seems that the STS.64 is 2x faster (and the hardware reports no
-      # conflicts) when the conflicts are split between half-warps, as
-      # opposed to having them within the half-warp. This requires a
-      # little more work for the selects, but is ultimately worth it.
-      match swizzle:
-        case 128:
-          is_stagger_left = arith.cmpi(
-              arith.CmpIPredicate.eq, arith.remui(sub_row_base, c(2)), c(0)
-          )
-        case 64:
-          is_stagger_left = arith.cmpi(
-              arith.CmpIPredicate.eq,
-              arith.remui(arith.divui(sub_row_base, c(2)), c(2)),
-              c(0),
-          )
-        case 32:
-          # 32-byte tiles of 4-byte types have only 8 columns so there is no way
-          # to stagger the memory accesses within a single tile. We could do it
-          # across tiles, but that would be a completely different scheme.
-          raise NotImplementedError
-        case _:
-          raise AssertionError(swizzle)
-      stagger_amount = swizzle // 64
-      if (cols_per_tile // 8) % (stagger_amount * 2):
-        raise NotImplementedError
-    else:
-      # We rely on canonicalization to clean up the selects.
-      i1 = ir.IntegerType.get_signless(1)
-      is_stagger_left = arith.constant(i1, ir.BoolAttr.get(True))
-      stagger_amount = 0
-    row_base = arith.addi(sub_row_base, arith.muli(warp_id, c(16)))
-    col_base = arith.muli(arith.remui(lane_id, c(4)), c(2))  # {0, 2, 4, 6}
-    # The swizzle pattern is constant for a given thread.
-    col_swizzle_bits = arith.muli(
-        arith.divui(sub_row_base, c(128 // swizzle)), c(128 // bw),
-    )
-    for row_group in range(m // 64):
-      for col_group in range(n // cols_per_tile):
-        for row_subidx in range(2):
-          row = arith.addi(row_base, c(row_subidx * 8))
-          for col_subidx in range(cols_per_tile // 8):
-            col_subidx_left = col_subidx
-            col_subidx_right = col_subidx ^ stagger_amount
-            col_off = arith.select(
-                is_stagger_left, c(col_subidx_left * 8), c(col_subidx_right * 8)
-            )
-            col = arith.addi(col_base, col_off)
-            col = arith.xori(col, col_swizzle_bits)
-            reg_idx_left = col_subidx_left + col_group * (cols_per_tile // 8)
-            reg_idx_right = col_subidx_right + col_group * (cols_per_tile // 8)
-            left_idx = row_group, reg_idx_left, row_subidx, 0
-            right_idx = row_group, reg_idx_right, row_subidx, 0
-            idx = c(row_group), c(col_group), row, col
-            def get_register(regs, left_idx=left_idx, right_idx=right_idx):
-              value_left = regs[left_idx]
-              value_right = regs[right_idx]
-              return arith.select(is_stagger_left, value_left, value_right)
-            def update_registers(regs, new, left_idx=left_idx, right_idx=right_idx):
-              regs[left_idx] = arith.select(is_stagger_left, new, regs[left_idx])
-              regs[right_idx] = arith.select(is_stagger_left, regs[right_idx], new)
-            yield get_register, update_registers, idx
-
-  @staticmethod
-  def transfer_tiled2(
+  def transfer_tiled(
       ref: ir.Value,
       swizzle: int | None,
       layout: TiledLayout,
@@ -3263,7 +3179,6 @@ def optimization_barrier(*arrays):
   Passing arrays through this function will make sure that they are computed
   before any side-effecting operations that follow this barrier.
   """
-  index = ir.IndexType.get()
   i32 = ir.IntegerType.get_signless(32)
 
   def _repack(regs_it, reg_ty):
