@@ -16,14 +16,15 @@ limitations under the License.
 #include "jaxlib/py_compile_only_client.h"
 
 #include <memory>
-#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "absl/status/statusor.h"
 #include "llvm/Support/Casting.h"
+#include "mlir-c/IR.h"
+#include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
+#include "mlir/CAPI/IR.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
@@ -33,7 +34,6 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device_list.h"
 #include "jaxlib/py_executable.h"
-#include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/status_casters.h"
@@ -43,12 +43,9 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
-#include "xla/python/version.h"
-#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/python/lib/core/numpy.h"
-#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace ifrt = xla::ifrt;
@@ -72,14 +69,14 @@ class CompileOnlyPyClient : public PyClient {
   }
 
   absl::StatusOr<nb_class_ptr<PyExecutable>> CompileUnloaded(
-      std::string_view mlir_module, ifrt::DeviceListRef executable_devices,
+      MlirModule mlir_module, ifrt::DeviceListRef executable_devices,
       xla::CompileOptions options) {
+    mlir::ModuleOp module = unwrap(mlir_module);
+    mlir::OwningOpRef<mlir::ModuleOp> clone(module.clone());
+    module = *clone;
     ifrt::ExecutableRef ifrt_executable;
     {
       nb::gil_scoped_release gil_release;
-      mlir::MLIRContext context;
-      TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                          xla::ParseMlirModuleString(mlir_module, context));
       auto* ifrt_client = llvm::dyn_cast_or_null<xla::CompileOnlyIfRtClient>(
           this->ifrt_client());
       CHECK(ifrt_client) << "CompileOnlyPyClient requires ifrt_client be a "
@@ -88,7 +85,7 @@ class CompileOnlyPyClient : public PyClient {
       auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(
           options, std::move(executable_devices));
       TF_ASSIGN_OR_RETURN(auto executable,
-                          PjRtCompile(std::move(options), module.get(),
+                          PjRtCompile(std::move(options), module,
                                       *ifrt_client->topology().description()));
       TF_ASSIGN_OR_RETURN(ifrt_executable,
                           ifrt::PjRtExecutable::Create(std::move(executable)));
@@ -113,14 +110,14 @@ void RegisterCompileOnlyClient(nb::module_& m) {
   nb::class_<CompileOnlyPyClient, PyClient>(m, "CompileOnlyPyClient")
       .def(
           "compile",
-          [](CompileOnlyPyClient& self, nb::bytes mlir_module,
+          [](CompileOnlyPyClient& self, MlirModule mlir_module,
              PyDeviceList& py_executable_devices, xla::CompileOptions options,
              std::vector<nb::capsule> host_callbacks) {
             ifrt::DeviceListRef executable_devices =
                 xla::ValueOrThrow(py_executable_devices.ifrt_device_list());
-            return xla::ValueOrThrow(self.CompileUnloaded(
-                std::string_view(mlir_module.c_str(), mlir_module.size()),
-                std::move(executable_devices), std::move(options)));
+            return xla::ValueOrThrow(
+                self.CompileUnloaded(mlir_module, std::move(executable_devices),
+                                     std::move(options)));
           },
           nb::arg("computation"), nb::arg("executable_devices"),
           nb::arg("compile_options") = xla::CompileOptions(),

@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "xla/pjrt/exceptions.h"
@@ -169,16 +170,16 @@ class PyClient {
       std::unique_ptr<xla::ifrt::CompileOptions> ifrt_options);
 
   static absl::StatusOr<nb_class_ptr<PyExecutable>> Compile(
-      nb_class_ptr<PyClient> client, std::string mlir_module,
+      nb_class_ptr<PyClient> client, mlir::ModuleOp mlir_module,
       xla::ifrt::DeviceListRef executable_devices, xla::CompileOptions options);
 
   static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
-      nb_class_ptr<PyClient> client, std::string mlir_module,
+      nb_class_ptr<PyClient> client, mlir::ModuleOp mlir_module,
       xla::ifrt::DeviceListRef executable_devices, xla::CompileOptions options,
       std::vector<nanobind::capsule> host_callbacks);
 
   static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> CompileAndLoad(
-      nb_class_ptr<PyClient> client, std::string mlir_module,
+      nb_class_ptr<PyClient> client, mlir::ModuleOp mlir_module,
       xla::ifrt::DeviceListRef executable_devices, xla::CompileOptions options,
       std::vector<nanobind::callable> host_callbacks);
 

@@ -36,6 +36,7 @@ from jax._src import profiler
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.interpreters import mlir
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
@@ -291,12 +292,8 @@ def backend_compile(
 ) -> xc.Executable:
   sym_name = module.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
-  # Convert ir.Module to a string representation, unless the backend
-  # explicitly flags the ability to handle a module directly (avoiding the
-  # overhead of back and forth conversions).
-  # TODO(slebedev): Change the backend.compile() to accept ir.Module.
   built_c: Any
-  if getattr(backend, "needs_str_ir", True):
+  if jaxlib_extension_version < 378:
     built_c = mlir.module_to_bytecode(module)
   else:
     built_c = module
@@ -334,7 +331,7 @@ def backend_compile_and_load(
   # overhead of back and forth conversions).
   # TODO(slebedev): Change the backend.compile() to accept ir.Module.
   built_c: Any
-  if getattr(backend, "needs_str_ir", True):
+  if jaxlib_extension_version < 378:
     built_c = mlir.module_to_bytecode(module)
   else:
     built_c = module
