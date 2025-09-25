@@ -1208,6 +1208,10 @@ def derive_hints_and_constraints(
     producers: list[eqns.Variable] = []
     consumers: list[eqns.Variable] = []
     for operand_or_result in operand_and_results:
+      # We can only relayout variables that are in registers.
+      if operand_or_result.memory_space != MemorySpace.REG:
+        continue
+
       if operand_or_result.type == VariableType.OPERAND:
         pr = producer_result(operand_or_result)
         producer_variable = variable_for_operand_or_result[pr]
@@ -1243,7 +1247,61 @@ def is_terminator(op: ir.OpView) -> bool:
   return isinstance(op, (scf.YieldOp, scf.ConditionOp))
 
 
-def infer_layout(module: ir.Module):
+def _drop_smem(
+    system: eqns.EquationSystem, ctx: DerivationContext
+) -> eqns.EquationSystem:
+  """Drops SMEM related variables constraints and hints.
+
+  This is only needed to enable the gradual implementation and testing of
+  SMEM inference.
+  TODO(b/447079781): Remove this function once SMEM inference is fully
+  implemented.
+  """
+  def is_smem(
+      x: (
+          OperandOrResult
+          | eqns.Constraint
+          | eqns.Variable
+          | eqns.Constant
+          | eqns.Equation
+      ),
+  ) -> bool:
+    match x:
+      case OperandOrResult(memory_space=MemorySpace.SMEM):
+        return True
+      case eqns.IsTransferable(source=source, target=target):
+        return is_smem(source) or is_smem(target)
+      case eqns.Tiled():
+        return True
+      case eqns.Divides():
+        return True
+      case eqns.Transposed():
+        return True
+      case eqns.Variable(key=key):
+        return is_smem(key)
+      case eqns.Constant(value=eqns.SMEMTiling):
+        return True
+      case eqns.Equation(lhs=lhs, rhs=rhs):
+        return is_smem(lhs) or is_smem(rhs)
+      case _:
+        return False
+
+  assign = {k: v for k, v in system.assignments.items() if not is_smem(v)}
+  equations = [e for e in system.equations if not is_smem(e)]
+  const = [c for c in system.constraints if not is_smem(c)]
+
+  oorfv = ctx.operand_and_results_for_variable
+  oorfv = {k: v for k, v in oorfv.items() if not is_smem(k)}
+  ctx.operand_and_results_for_variable = oorfv
+
+  vfoor = ctx.variable_for_operand_or_result
+  vfoor = {k: v for k, v in vfoor.items() if not is_smem(k)}
+  ctx.variable_for_operand_or_result = vfoor
+
+  return eqns.EquationSystem(assign, equations, const)
+
+
+def infer_layout(module: ir.Module, enable_smem_inference: bool = False):
   """Infers layouts for the given module.
 
   * If there are vector (respectively SMEM refs, TMEM refs) operands,
@@ -1254,6 +1312,11 @@ def infer_layout(module: ir.Module):
   and contain one element per relevant argument in the memory space.
   * Any of these attributes is guaranteed to not be set if there is no relevant
   input/output in the corresponding memory space.
+
+  If `enable_smem_inference` is False, SMEM transforms are not inferred. This
+  is only a temporary flag to allow for an incremental rollout of SMEM
+  inference.
+  TODO(b/447079781): Remove this flag once SMEM inference is fully implemented.
   """
   global_equation_system: eqns.EquationSystem | eqns.Unsatisfiable
   global_equation_system = eqns.EquationSystem()
@@ -1291,6 +1354,9 @@ def infer_layout(module: ir.Module):
         "user-provided layout casts are unsatisfiable."
     )
 
+  if not enable_smem_inference:
+    global_equation_system = _drop_smem(global_equation_system, ctx)
+
   propagation_hints, constraints = derive_hints_and_constraints(ctx.operand_and_results_for_variable)
   hints = reduce_hints(hints + propagation_hints, global_equation_system.assignments)  # pytype: disable=attribute-error
   global_equation_system &= eqns.EquationSystem(constraints=constraints)
@@ -1300,6 +1366,7 @@ def infer_layout(module: ir.Module):
   # faster.
   global_equation_system = eqns.saturate_distinct_from_splat(global_equation_system)
   assert not isinstance(global_equation_system, eqns.Unsatisfiable)
+  global_equation_system = eqns.saturate_divides_and_tiled_constraints_for_equal_vars(global_equation_system)
 
   # Attempt to find assignments that satisfy the equation system.
   solution = find_assignments_for(
