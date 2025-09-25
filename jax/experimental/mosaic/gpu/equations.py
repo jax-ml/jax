@@ -22,10 +22,13 @@ import dataclasses
 import math
 from typing import Any, Callable, assert_never, final
 
+from jax._src.lib.mlir import ir
+
 from . import fragmented_array as fa
 from . import launch_context as lc
 from . import layouts as layouts_lib
 from . import tcgen05
+from . import utils
 
 
 VariableKey = Any
@@ -397,6 +400,21 @@ class IsTransferable:
     packing = tmem_layout.vector_length
     return (tmem_layout, reg_layout) in self.supported_tmem_transfers(packing)
 
+  def _is_valid_smem_transfer(
+      self,
+      smem_layout: lc.TileTransform | None,
+      reg_layout: fa.FragmentedLayout,
+  ) -> bool:
+    # TODO(b/447079781): This is way too restrictive. We need to make it more
+    # precise by:
+    # - Consider whether the op is annotated with optimized copies or not.
+    # - If copies do not have to be optimized, always return True.
+    # - If copies have to be optimized, determine if the transfer is optimal by
+    #   calling fragmented_array.plan_tiled_transfer.
+    if reg_layout == fa.WGMMA_LAYOUT:
+      return smem_layout is not None and len(smem_layout.tiling) == 2
+    return smem_layout is None
+
   def holds(self) -> bool | None:
     """Returns whether the constraint holds.
 
@@ -411,6 +429,10 @@ class IsTransferable:
       return self._is_valid_tmem_transfer(target.value, source.value)
     if isinstance(source, TMEMLayout) and isinstance(target, TMEMLayout):
       return source == target
+    if isinstance(source, SMEMTiling) and isinstance(target, RegisterLayout):
+      return self._is_valid_smem_transfer(source.value, target.value)
+    if isinstance(target, SMEMTiling) and isinstance(source, RegisterLayout):
+      return self._is_valid_smem_transfer(target.value, source.value)
     if isinstance(target, Constant) and isinstance(source, Constant):
       source_type = type(source).__name__
       target_type = type(target).__name__
@@ -443,34 +465,204 @@ class Distinct:
     return f"{self.lhs} ≠ {self.rhs}"
 
 
-Constraint = Relayout | Distinct | IsTransferable
+@dataclasses.dataclass(frozen=True)
+class Transposed:
+  """States that the lhs SMEM tiling is the transpose of the rhs SMEM tiling.
+
+  Only tilings up to 2D are supported.
+  """
+  lhs: Expression
+  rhs: Expression
+
+  def holds(self) -> bool | None:
+    """Whether the transpose constraint holds.
+
+    Returns `None` if the constraint can't be checked.
+    """
+    if not isinstance(self.lhs, SMEMTiling):
+      return None
+    if not isinstance(self.rhs, SMEMTiling):
+      return None
+    if self.lhs.value is None and self.rhs.value is None:
+      return True
+    if self.lhs.value is None or self.rhs.value is None:
+      return False
+
+    lhs_tiling = self.lhs.value.tiling
+    rhs_tiling = self.rhs.value.tiling
+
+    if len(lhs_tiling) != len(rhs_tiling):
+      return False
+    if len(lhs_tiling) < 2:
+      return lhs_tiling == rhs_tiling
+    if len(lhs_tiling) > 2:
+      raise NotImplementedError(
+          f"Only 2D tilings are supported, got {len(lhs_tiling)}"
+      )
+
+    return lhs_tiling == rhs_tiling[::-1]
+
+  def __str__(self):
+    return f"Transposed({self.lhs} ⟶ {self.rhs})"
+
+
+@dataclasses.dataclass(frozen=True)
+class Divides:
+  """States that the `expr` tile divides the tail-end of the given dimensions.
+
+  `dimensions` is a list of dimension sequences, starting with a sequence for
+  the major dimension and ending with a sequence for the minor dimension. Each
+  sequence may contain ints and ir.Values that need to be evenly divided by the
+  corresponding tile size. Only the last `len(tiling)` dimensions are checked.
+
+  Example:
+
+  expr: SMEMTiling(lc.TileTransform(tiling=(4, 8)))
+    => tiling[0] == 4 and tiling[1] == 8
+  dimensions: [
+      [5, 15, ir_const(16),],  # Ignored, because the tile only has 2 dimensions
+      [4, 4, 8],               # Holds, because tiling[0] divides all elements
+      [16, ir_const(8), 4],    # Does not hold, because 4 % tiling[1] != 0
+  ]
+
+  """
+  expr: Expression
+  dimensions: list[Sequence[int | ir.Value]]
+
+  def holds(self) -> bool | None:
+    """Whether the divisibility constraint holds.
+
+    Returns `None` if the constraint can't be checked.
+    """
+    if not isinstance(self.expr, SMEMTiling):
+      return None
+    if self.expr.value is None:
+      # If there is no tiling, then it trivially holds.
+      return True
+
+    tiling = self.expr.value.tiling
+    num_tiled_axes = len(tiling)
+
+    if num_tiled_axes > len(self.dimensions):
+      # The tiling's size must be smaller or equal to the number of dimensions.
+      return False
+
+    last_n_dims = self.dimensions[-num_tiled_axes:]
+
+    for tile, sizes in zip(tiling, last_n_dims, strict=True):
+      if tile == 1:
+        continue
+
+      for size in sizes:
+        if isinstance(size, ir.Value):
+          if utils.is_known_divisible(size, tile):
+            continue
+          return False
+        else:
+          if size % tile == 0:
+            continue
+          return False
+    return True
+
+  def __str__(self):
+    return f"{self.dimensions} % {self.expr} == 0"
+
+
+@dataclasses.dataclass(frozen=True)
+class Tiled:
+  """States that the `expr` tiling needs a specific number of tiled dimensions.
+
+  A `num_tiled_dims` of 0 means that the expressions should not be tiled.
+
+  This consraint is used in combination with Divides to generate candidate
+  assignments for variables representing SMEM transforms.
+
+  Note that Tiled and Divides constraints do now always appear together. For
+  example a memref.subview op introduces a Divides constraint but no Tiled
+  constraint. If the subview is fed into a wgmma op, that op will introduce the
+  Tiled constraint. In a different case the subview may not need to tiled, in
+  which case the Divides constraint will trivially hold.
+  """
+  expr: Expression
+  num_tiled_dims: int
+
+  def __post_init__(self):
+    if self.num_tiled_dims < 0:
+      raise ValueError(
+          f"num_tiled_dims must be non-negative, got {self.num_tiled_dims}"
+      )
+
+  def holds(self) -> bool | None:
+    """Whether the Tiled constraint holds.
+
+    Returns `None` if the constraint can't be checked.
+    """
+    if not isinstance(self.expr, SMEMTiling):
+      return None
+    if self.num_tiled_dims == 0:
+      return self.expr.value is None
+    if self.expr.value is None:
+      return False
+    tiling = self.expr.value.tiling
+    return len(tiling) == self.num_tiled_dims
+
+  def __str__(self):
+    return f"{self.expr} #tiles: {self.num_tiled_dims}"
+
+
+Constraint = (
+    Relayout
+    | Distinct
+    | IsTransferable
+    | Transposed
+    | Divides
+    | Tiled
+)
 
 
 def reduce_constraint(
     constraint: Constraint, assignments: dict[Variable, Constant]
 ) -> Constraint | Tautological | Unsatisfiable:
   """Reduces a constraint."""
-  match constraint:
-    case Relayout(source=lhs, target=rhs):
-      ...
-    case Distinct(lhs=lhs, rhs=rhs):
-      ...
-    case IsTransferable(source=lhs, target=rhs, shape=_):
-      ...
-    case _ as never:
-      assert_never(never)
-
-  lhs_red = reduce_expression(lhs, assignments)
-  rhs_red = reduce_expression(rhs, assignments)
-
-  if isinstance(lhs_red, Unsatisfiable) or isinstance(rhs_red, Unsatisfiable):
-    return Unsatisfiable()
 
   new_constraint: Constraint
-  if isinstance(constraint, IsTransferable):
-    new_constraint = IsTransferable(lhs_red, rhs_red, constraint.shape)
-  else:
-    new_constraint = type(constraint)(lhs_red, rhs_red)
+  match constraint:
+    case Relayout(source=source, target=target):
+      source_red = reduce_expression(source, assignments)
+      target_red = reduce_expression(target, assignments)
+      if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = Relayout(source_red, target_red)
+    case Distinct(lhs=lhs, rhs=rhs):
+      lhs_red = reduce_expression(lhs, assignments)
+      rhs_red = reduce_expression(rhs, assignments)
+      if isinstance(lhs_red, Unsatisfiable) or isinstance(rhs_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = Distinct(lhs_red, rhs_red)
+    case IsTransferable(source=source, target=target, shape=shape):
+      source_red = reduce_expression(source, assignments)
+      target_red = reduce_expression(target, assignments)
+      if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = IsTransferable(source_red, target_red, shape)
+    case Transposed(lhs=lhs, rhs=rhs):
+      lhs_red = reduce_expression(lhs, assignments)
+      rhs_red = reduce_expression(rhs, assignments)
+      if isinstance(lhs_red, Unsatisfiable) or isinstance(rhs_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = Transposed(lhs_red, rhs_red)
+    case Divides(expr=expr, dimensions=dimensions):
+      expr_red = reduce_expression(expr, assignments)
+      if isinstance(expr_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = Divides(expr_red, dimensions)
+    case Tiled(expr=expr, num_tiled_dims=num_tiled_dims):
+      expr_red = reduce_expression(expr, assignments)
+      if isinstance(expr_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = Tiled(expr_red, num_tiled_dims)
+    case _ as never:
+      assert_never(never)
 
   constraint_holds = new_constraint.holds()
   if constraint_holds is None:
@@ -580,6 +772,13 @@ class EquationSystem:
         case IsTransferable(source=source, target=target, shape=_):
           extract_variables(source)
           extract_variables(target)
+        case Transposed(lhs=lhs, rhs=rhs):
+          extract_variables(lhs)
+          extract_variables(rhs)
+        case Divides(expr=expr):
+          extract_variables(expr)
+        case Tiled(expr=expr):
+          extract_variables(expr)
         case _ as never:
           assert_never(never)
     return free_variables
@@ -718,6 +917,54 @@ def saturate_distinct_from_splat(
   return equation_system & EquationSystem(constraints=new_constraints)
 
 
+def _merge_divides_dimensions(
+    a: Sequence[Sequence[int | ir.Value]],
+    b: Sequence[Sequence[int | ir.Value]],
+) -> list[Sequence[int | ir.Value]]:
+  """Merges two sequences of dimensions into a single sequence.
+
+  Each element of the outer Sequence is a sequence of values that must divide
+  the corresponding dimension in the original Divides constraints.
+
+  If the two sequences are of different lengths, the smaller sequence will be
+  merged with the tail of the longer one. This is the correct behavior for
+  tiling-related Divides constraints.
+  """
+  if len(a) >= len(b):
+    long = a
+    short = b
+  else:
+    long = b
+    short = a
+
+  len_diff = len(long) - len(short)
+  result = list(long[:len_diff])
+  for x_divisors, y_divisors in zip(long[len_diff:], short, strict=True):
+    result.append(list(x_divisors) + list(y_divisors))
+  return result
+
+
+def merge_divides_constraints(constraints: Sequence[Constraint]) -> list[Constraint]:
+  """Merges Divides constraints that can be merged."""
+  result: list[Constraint] = []
+  var_to_dims : dict[Variable, list[Sequence[int | ir.Value]]] = {}
+  for constraint in constraints:
+    match constraint:
+      case Divides(expr=expr, dimensions=dimensions) if isinstance(
+          expr, Variable
+      ):
+        prev = var_to_dims.get(expr)
+        if prev is None:
+          var_to_dims[expr] = dimensions
+        else:
+          var_to_dims[expr] = _merge_divides_dimensions(prev, dimensions)
+      case _:
+        result.append(constraint)
+  for expr, dimensions in var_to_dims.items():
+    result.append(Divides(expr=expr, dimensions=dimensions))
+  return result
+
+
 def _reduce_system_once(
     equation_system: EquationSystem,
 ) -> EquationSystem | Unsatisfiable | None:
@@ -761,6 +1008,8 @@ def _reduce_system_once(
       case _ as new_constraint:
         changed |= new_constraint != constraint
         constraints.append(new_constraint)
+
+  constraints = merge_divides_constraints(constraints)
 
   # Shortcut for a specific case of unsatisfiability. This shortcut
   # drastically reduces the size of the search space.
