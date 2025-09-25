@@ -2131,7 +2131,10 @@ def sici(x: ArrayLike) -> tuple[Array, Array]:
       - :func:`jax.scipy.special.expi`
     """
 
-    # x = promote_dtypes_inexact(x)
+    if dtypes.issubdtype(lax.dtype(x), np.complexfloating):
+      raise ValueError(
+          f"Argument `x` to sici must be real-valued. Got dtype {lax.dtype(x)}."
+      )
 
     gamma = -digamma(1) # Euler-Mascheroni constant
 

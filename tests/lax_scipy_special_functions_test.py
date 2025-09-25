@@ -400,5 +400,23 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(si_jax, expected_si, atol=1e-6, rtol=1e-6)
     self.assertAllClose(ci_jax, expected_ci, atol=1e-6, rtol=1e-6)
 
+  def testSiciRaiseOnComplexInput(self):
+    complex_dtype = jnp.zeros(0, dtype=jnp.complex64).dtype
+    complex_samples = np.array([
+        0.0 + 0.0j,
+        1.0j,
+        -1.0j,
+        1.0 + 1.0j,
+        -2.0 + 3.0j,
+    ], dtype=complex_dtype)
+
+    lax_op = lambda x: lsp_special.sici(x)
+
+    for x in complex_samples:
+        with self.assertRaises(Exception):
+            _ = lax_op(x)
+
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
