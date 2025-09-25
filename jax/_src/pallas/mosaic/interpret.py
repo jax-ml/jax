@@ -106,13 +106,11 @@ class InterpretParams:
       Default: None.
     grid_point_recorder: Callback that is invoked by the interpreter for each
       grid point in the order in which the grid points are traversed. The
-      callback is invoked with two arguments:
-        - A tuple of grid coordinates.
-        - The local core ID of the core that is processing the grid point.
-      This callback is intended for inspecting
-        - the randomization of coordinates along grid dimensions with 'parallel'
-          semantics and
-        - the mapping of grid points to local (i.e. per-device) cores.
+      callback is invoked with two arguments: - A tuple of grid coordinates. -
+      The local core ID of the core that is processing the grid point. This
+      callback is intended for inspecting - the randomization of coordinates
+      along grid dimensions with 'parallel' semantics and - the mapping of grid
+      points to local (i.e. per-device) cores.
       Default: None.
     num_cores_per_device: The number of cores per device.
       Default: 1.
@@ -122,6 +120,12 @@ class InterpretParams:
       allocating HBM buffers with `run_scoped` is not supported when executing
       Pallas kernels on a real TPU.
       Default: `False`.
+    vector_clock_size: The number of entries in the vector clocks. This should
+      be an integer bigger then the total number of cores, i.e. bigger than
+      `number of devices * num_cores_per_device`. If `None`, the vector clock
+      size that is used in the interpreter will default to twice the total
+      number of cores.
+      Default: None.
   """
   dma_execution_mode: Literal["eager", "on_wait"] = "on_wait"
   detect_races: bool = False
@@ -134,6 +138,7 @@ class InterpretParams:
   ) = None
   num_cores_per_device: int = 1
   allow_hbm_allocation_in_run_scoped: bool = False
+  vector_clock_size: int | None = None
 
 @contextlib.contextmanager
 def force_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
@@ -160,30 +165,30 @@ def force_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
 
 VectorClock = np.ndarray
 
-# Conceptually, each DMA runs on its own, independent device.  Representing
+# Conceptually, each DMA runs on its own, independent device. Representing
 # this precisely would require vector clocks to have sizes linear in the number
 # of DMAs.
 #
-# Instead, we use approximate vector clocks of fixed size.  We assign each DMA
+# Instead, we use approximate vector clocks of fixed size. We assign each DMA
 # a virtual core ID in the range
-#   [num_devices*num_cores_per_device + 1, NUM_VIRTUAL_CORES],
+#   [num_devices*num_cores_per_device, _vector_clock_size - 1],
 # and each operation of a DMA increments the corresponding coordinate in its
 # vector clock. (So the "virtual" part of a vector clock is effectively
 # counting, for each virtual core, the number of DMAs that happened-before
 # the vector clock and were assigned to that virtual core.)
 #
 # If two approximate clocks are unordered, then their corresponding events are
-# not ordered by the happens-before relation.  So this approximation will not
-# introduce any false positives in detecting data races.  But we may fail to
+# not ordered by the happens-before relation. So this approximation will not
+# introduce any false positives in detecting data races. But we may fail to
 # detect some true data races because there can be cases where two approximate
 # clocks are ordered, and we will treat the corresponding events as ordered
 # by the happens-before relation, but the corresponding events are not
 # actually ordered.
-NUM_VIRTUAL_CORES = 32
+_vector_clock_size: int
 
 def make_vector_clock(_: int) -> VectorClock:
   del _
-  return np.zeros(NUM_VIRTUAL_CORES, dtype=np.int32)
+  return np.zeros(_vector_clock_size, dtype=np.int32)
 
 def copy_vector_clock(x: VectorClock) -> VectorClock:
   if x is None:
@@ -315,7 +320,7 @@ class Semaphore:
       with dma.lock:
         if dma.virtual_device_id is None:
           dma.virtual_device_id = np.random.randint(
-              shared_memory.num_devices, NUM_VIRTUAL_CORES)
+              shared_memory.num_cores, _vector_clock_size)
 
         if dma.state == DmaState.STARTED:
           # Do the read.
@@ -658,16 +663,37 @@ def _clear_shared_memory():
   with _shared_memory_init_lock:
     _shared_memory = None
 
+
+def _get_vector_clock_size(
+    num_devices, num_cores_per_device, *, interpret_params
+) -> int:
+  """Returns the number of vector clocks to use.`"""
+  num_cores = num_devices * num_cores_per_device
+  if interpret_params.vector_clock_size is not None:
+    if num_cores >= interpret_params.vector_clock_size:
+      raise ValueError(
+          f'Vector clock size ({interpret_params.vector_clock_size}) must be '
+          f'greater than the total number of cores ({num_cores}).'
+      )
+    return interpret_params.vector_clock_size
+  else:
+    # Default the vector clock size to twice the total number of cores.
+    return 2 * num_cores
+
+
 def _initialize_shared_memory(
     device_id, num_devices, num_cores_per_device, *, interpret_params
 ):
-  global _shared_memory, races
+  global _vector_clock_size, _shared_memory, races
   del device_id
   num_devices = int(num_devices)
   num_cores_per_device = int(num_cores_per_device)
   num_cores = num_devices * num_cores_per_device
   with _shared_memory_init_lock:
     if _shared_memory is None:
+      _vector_clock_size = _get_vector_clock_size(
+          num_devices, num_cores_per_device, interpret_params=interpret_params
+      )
       _shared_memory = SharedMemory(
           interpret_params=interpret_params,
           num_devices=num_devices,
@@ -1305,7 +1331,7 @@ def execute_dma(dma):
     if dma.virtual_device_id is None:
       # See comment in Semaphore.wait .
       dma.virtual_device_id = np.random.randint(
-          shared_memory.num_cores, NUM_VIRTUAL_CORES)
+          shared_memory.num_cores, _vector_clock_size)
 
     # Do the read.
     if shared_memory.interpret_params.detect_races:
