@@ -1133,10 +1133,16 @@ def vmap(fun: F,
     try:
       axis_data = batching.AxisData(axis_name, axis_size_, spmd_axis_name,
                                     explicit_mesh_axis)
-      out_flat = batching.batch(
-          flat_fun, axis_data, in_axes_flat,
-          lambda: flatten_axes("vmap out_axes", out_tree(), out_axes)
-      ).call_wrapped(*args_flat)
+      if config.vmap_primitive.value:
+        out_axes_thunk = lambda: flatten_axes("vmap out_axes", out_tree(), out_axes)
+        out_flat = batching.vmap_p.bind(
+            flat_fun, *args_flat, axis_data=axis_data, in_axes=(*in_axes_flat,),
+            out_axes_thunk=out_axes_thunk)
+      else:
+        out_flat = batching.batch(
+            flat_fun, axis_data, in_axes_flat,
+            lambda: flatten_axes("vmap out_axes", out_tree(), out_axes)
+        ).call_wrapped(*args_flat)
     except batching.SpecMatchError as e:
       out_axes_flat = flatten_axes("vmap out_axes", out_tree(), out_axes)
       out_axes_full = tree_unflatten(out_tree(), out_axes_flat)
