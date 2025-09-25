@@ -2328,6 +2328,14 @@ def lower_sharding_computation(
   unique_in_shardings = unique_in_shardings | unique_const_shardings  # type: ignore
   del unique_const_shardings
 
+  # For device_assignment == 1, this doesn't matter.
+  if len(device_assignment) > 1:
+    rep_gs = GSPMDSharding.get_replicated(device_assignment)
+    in_shardings = tuple(
+        rep_gs if (isinstance(s, UnspecifiedValue) and
+                   aval is not core.abstract_token and aval.ndim == 0)
+        else s for s, aval in zip(in_shardings, global_in_avals))
+
   for a in global_out_avals:
     if (a is not core.abstract_token and not a.sharding.mesh.empty and
         a.sharding.mesh.are_all_axes_explicit and
