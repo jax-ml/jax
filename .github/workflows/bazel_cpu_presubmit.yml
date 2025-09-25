@@ -1,4 +1,4 @@
-name: CI - Bazel CPU tests (Presubmit)
+name: CI - Bazel CPU tests
 
 on:
   workflow_dispatch:
@@ -44,7 +44,7 @@ jobs:
             # Only test a single Python version on Arm64 as we don't run the tests.
             - python: "3.11"
               runner: "linux-arm64-c4a-16"
-    name: "Bazel CPU ${{ (contains(matrix.runner, 'linux-arm64') && 'build only' || 'tests') }} (${{ matrix.runner }})"
+    name: "Bazel CPU ${{ (contains(matrix.runner, 'linux-arm64') && 'build only' || 'tests') }}"
 # End Presubmit Naming Check github-cpu-presubmits
     with:
       runner: ${{ matrix.runner }}

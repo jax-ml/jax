@@ -1,4 +1,4 @@
-name: CI - Bazel CUDA tests (Presubmit)
+name: CI - Bazel CUDA tests
 
 on:
   workflow_dispatch:
@@ -54,7 +54,7 @@ jobs:
             - python: "3.13"
               enable-x64: 1
               jaxlib-version: "pypi_latest"
-    name: "Bazel single accelerator CUDA tests (${{ matrix.runner }})"
+    name: "Bazel single accelerator ${{ format('{0}', 'CUDA tests') }}"
 # End Presubmit Naming Check github-cuda-presubmits
     with:
       runner: ${{ matrix.runner }}
