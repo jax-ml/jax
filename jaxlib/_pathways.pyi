@@ -16,7 +16,7 @@
 from collections.abc import Sequence
 from typing import Any
 
-from jax.jaxlib import _jax
+from jaxlib import _jax
 
 def _transfer_to_shardings(
     arrays: Sequence[_jax.ArrayImpl],
