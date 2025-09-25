@@ -2395,6 +2395,38 @@ def _is_global_scope(collective_axes: CollectiveAxesType,
   """Returns whether the collective axes represents a GPU global scope."""
   return set(collective_axes) == set(axis_names)
 
+def block_id_to_grid_id(ctx: LoweringRuleContext,
+                        block_ids: Sequence[ir.Value],
+                        axis_name: Hashable):
+  squashed_dims = ctx.module_ctx.squashed_dims
+  axis_names = ctx.module_ctx.axis_names
+  if squashed_dims:
+    unsquashed_names = axis_names.grid[:2]
+    squashed_names = axis_names.grid[2:]
+  else:
+    # These are unused but initialized for type checkers.
+    unsquashed_names = squashed_names = ()
+
+  if squashed_dims:
+    if axis_name in unsquashed_names:
+      # We reversed the grid and cluster axes.
+      # e.g. for the grid (a, b, c, d, wg)
+      # squashed = (a, b)  Mapped to Dimension.z (2)
+      # unsquashed = (c, d)  Mapped to Dimension.y (1) and Dimension.x (0)
+      idx = unsquashed_names.index(axis_name)
+      return block_ids[gpu_dialect.Dimension(idx)]
+    else:
+      assert axis_name in squashed_names
+      # All squashed dimensions are mapped to Dimension.z.
+      axis = squashed_names.index(axis_name)
+      return _unravel_program_id(
+          _as_index(block_ids[gpu_dialect.Dimension.z]), axis, squashed_dims
+      )
+  else:
+    assert axis_name in axis_names.grid
+    idx = axis_names.grid.index(axis_name)
+    return block_ids[gpu_dialect.Dimension(idx)]
+
 
 @register_lowering_rule(lax.axis_index_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.axis_index_p, mgpu.LoweringSemantics.Lane, gpu_core.PrimitiveSemantics.Warp)
@@ -2447,40 +2479,11 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
             gpu_dialect.Dimension(axis_names.cluster.index(axis_name))
         ),
     )
-
-  squashed_dims = ctx.module_ctx.squashed_dims
-  if squashed_dims:
-    unsquashed_names = axis_names.grid[:2]
-    squashed_names = axis_names.grid[2:]
-  else:
-    # These are unused but initialized for type checkers.
-    unsquashed_names = squashed_names = ()
-
-  if squashed_dims:
-    if axis_name in unsquashed_names:
-      # We reversed the grid and cluster axes.
-      # e.g. for the grid (a, b, c, d, wg)
-      # squashed = (a, b)  Mapped to Dimension.z (2)
-      # unsquashed = (c, d)  Mapped to Dimension.y (1) and Dimension.x (0)
-      idx = unsquashed_names.index(axis_name)
-      return arith_dialect.index_cast(
+  block_ids = tuple(arith_dialect.index_cast(
           ir.IntegerType.get_signless(32),
-          _block_id(ctx, gpu_dialect.Dimension(idx)),
-      )
-    else:
-      assert axis_name in squashed_names
-      # All squashed dimensions are mapped to Dimension.z.
-      axis = squashed_names.index(axis_name)
-      return _unravel_program_id(
-          _block_id(ctx, gpu_dialect.Dimension.z), axis, squashed_dims
-      )
-  else:
-    assert axis_name in axis_names.grid
-    idx = axis_names.grid.index(axis_name)
-    return arith_dialect.index_cast(
-        ir.IntegerType.get_signless(32),
-        _block_id(ctx, gpu_dialect.Dimension(idx)),
-    )
+          _block_id(ctx, dimension),
+  ) for dimension in gpu_dialect.Dimension)
+  return block_id_to_grid_id(ctx, block_ids, axis_name)
 
 
 @register_lowering_rule(debugging.debug_print_p, mgpu.LoweringSemantics.Lane)

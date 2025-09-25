@@ -3315,12 +3315,13 @@ query_cluster_cancel_p = jax_core.Primitive("query_cluster_cancel")
 query_cluster_cancel_p.multiple_results = True
 
 @query_cluster_cancel_p.def_effectful_abstract_eval
-def _query_cluster_cancel_abstract_eval(_):
+def _query_cluster_cancel_abstract_eval(try_cancel_buffer, *,
+                                        grid_names):
+  del try_cancel_buffer
+  grid_idxs = (jax_core.ShapedArray((), jnp.int32),) * len(grid_names)
   return (
       (
-          jax_core.ShapedArray((), jnp.int32),
-          jax_core.ShapedArray((), jnp.int32),
-          jax_core.ShapedArray((), jnp.int32),
+          *grid_idxs,
           jax_core.ShapedArray((), jnp.bool_),
       ),
       {gpu_core._memory_effect},
@@ -3330,18 +3331,34 @@ def _query_cluster_cancel_abstract_eval(_):
 @lowering.register_lowering_rule(
     query_cluster_cancel_p, mgpu.LoweringSemantics.Lane
 )
-def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext, result_ref):
-  del ctx
+def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext, result_ref,
+                                  grid_names):
 
   result_ty = ir.MemRefType(result_ref.type)
   bits = math.prod(result_ty.shape) * mgpu.bitwidth(result_ty.element_type)
   if bits != 128:
     raise TypeError(f"Response to decode must be 128 bits, but is {bits} bits.")
 
-  return mgpu.query_cluster_cancel(result_ref)
+  x, y, z, success = mgpu.query_cluster_cancel(result_ref)
+  cta_grid = [x, y, z]
+  i32 = ir.IntegerType.get_signless(32)
+  # Divide out the cluster dimensions.
+  for axis in ctx.module_ctx.axis_names.cluster:
+    dim = lowering._resolve_cluster_axis(ctx.module_ctx.axis_names, axis)  # type: ignore[arg-type]
+    cta_grid[dim] = arith_dialect.divui(
+        cta_grid[dim],
+        mgpu.c(ctx.launch_ctx.cluster_size[dim], i32))
+  # Convert to grid indices.
+  requested_idxs = []
+  for axis_name in grid_names:
+    requested_idxs.append(lowering.block_id_to_grid_id(
+        ctx, cta_grid, axis_name))
+  return (*requested_idxs, success)
 
 
-def query_cluster_cancel(result_ref: _Ref) -> tuple[int, int, int, bool]:
+def query_cluster_cancel(
+    result_ref: _Ref,
+    grid_names: Sequence[str]) -> tuple[tuple[jax.Array, ...], jax.Array]:
   """Decodes the result of a `try_cluster_cancel` operation.
 
   It interprets the 16-byte opaque response written to shared memory by a
@@ -3350,15 +3367,16 @@ def query_cluster_cancel(result_ref: _Ref) -> tuple[int, int, int, bool]:
 
   Args:
     result_ref: The SMEM ref containing the query response.
+    grid_names: A tuple of grid axis names to query for.
 
   Returns:
     A tuple containing the decoded response:
-      - the X,Y,Z coordinates of the claimed CTA ID.
+      - the grid indices for the requested axis names.
       - A boolean indicating if the cancellation was successful.
   """
   if isinstance(result_ref, pallas_core.TransformedRef):
     raise NotImplementedError(
         "Transforms on the try cluster cancel result are not supported."
     )
-
-  return query_cluster_cancel_p.bind(result_ref)
+  result = query_cluster_cancel_p.bind(result_ref, grid_names=grid_names)
+  return tuple(result[:-1]), result[-1]

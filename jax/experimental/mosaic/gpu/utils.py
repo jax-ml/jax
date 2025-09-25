@@ -1709,7 +1709,8 @@ def try_cluster_cancel(
   )
 
 
-def query_cluster_cancel(result_ref) -> tuple[int, int, int, bool]:
+def query_cluster_cancel(result_ref) -> tuple[
+    ir.Value, ir.Value, ir.Value, ir.Value]:
   """Decodes the response of `try_cluster_cancel`.
 
   It checks if the cancellation was successful, and if yes, it also extracts
