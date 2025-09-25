@@ -18,6 +18,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 * Breaking changes:
 
+  * JAX is changing the default `jax.pmap` implementation to one implemented in
+    terms of `jax.jit` and `jax.shard_map`. `jax.pmap` is in maintenance mode
+    and we encourage all new code to use `jax.shard_map` directly. See the
+    [migration guide](https://docs.jax.dev/en/latest/deprecate_pmap.html) for
+    more information.
   * {func}`jax.numpy.cov` is now returns NaN for empty arrays ({jax-issue}`#32305`),
     and matches NumPy 2.2 behavior for single-row design matrices ({jax-issue}`#32308`).
   * JAX no longer accepts `Array` values where a `dtype` value is expected. Call
