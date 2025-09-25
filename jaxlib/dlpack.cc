@@ -64,6 +64,7 @@ limitations under the License.
 namespace ifrt = xla::ifrt;
 namespace nb = nanobind;
 
+// remove this
 namespace jax {
 namespace {
 
