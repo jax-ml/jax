@@ -58,6 +58,9 @@ jobs:
   run_tests: 
     needs: changed_files 
     if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || needs.changed_files.outputs.any_changed == 'true' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
+    strategy:
+      matrix:
+        tests-per-accelerator: ["8", "10", "12", "14", "16", "18", "20", "22", "24", "26","28", "30", "32"]
     runs-on: linux-x86-a4-224-b200-1gpu
     container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
     name: "Bazel single B200 CUDA tests"
@@ -84,9 +87,9 @@ jobs:
             --test_output=errors \
             --test_tag_filters=-multiaccelerator \
             --test_env=JAX_ACCELERATOR_COUNT=1 \
-            --test_env=JAX_TESTS_PER_ACCELERATOR=8 \
+            --test_env=JAX_TESTS_PER_ACCELERATOR=${{matrix.tests-per-accelerator}} \
             --strategy=TestRunner=local \
-            --local_test_jobs=8 \
+            --local_test_jobs=${{matrix.tests-per-accelerator}} \
             --test_env=JAX_EXCLUDE_TEST_TARGETS='PmapTest.testSizeOverflow|.*InterpretTest.*' \
             --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
             --test_env=JAX_SKIP_SLOW_TESTS=true \
