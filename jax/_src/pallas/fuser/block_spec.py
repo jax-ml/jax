@@ -147,8 +147,8 @@ class KernelEvalContext:
   program_ids: tuple[int | jax.Array, ...] | None
   avals_in: tuple[core.AbstractValue, ...] | None
   avals_out: tuple[core.AbstractValue, ...] | None
-  in_block_specs: tuple[pallas_core.BlockSpec, ...] | None
-  out_block_specs: tuple[pallas_core.BlockSpec, ...] | None
+  in_block_specs: tuple[pallas_core.BlockSpec, ...]
+  out_block_specs: tuple[pallas_core.BlockSpec, ...]
   grid: tuple[int | jax.Array, ...] | None
   scalar_prefetch_handler: Any | None
   out_usages: tuple[set[Usage], ...] | None

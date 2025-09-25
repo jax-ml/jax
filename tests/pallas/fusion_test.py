@@ -14,11 +14,11 @@
 
 from absl.testing import absltest
 import jax
+from jax import lax
 from jax._src import test_util as jtu
 from jax.experimental.pallas import fuser
 import jax.numpy as jnp
 import numpy as np
-from jax import lax
 
 jax.config.parse_flags_with_absl()
 
@@ -61,6 +61,40 @@ class FusionTest(jtu.JaxTestCase):
     x_out, y_out = g(x, y)
     np.testing.assert_array_equal(x_out, x)
     np.testing.assert_array_equal(y_out, y * 2)
+
+  def test_custom_fusion(self):
+    @fuser.custom_fusion
+    def c(x, y):
+      return x + y
+
+    c.def_pull_block_spec(lambda bss: (bss[0], bss[0]))
+    c.def_push_block_spec(lambda bss: (bss[0],))
+    c.def_eval_rule(lambda _, x, y: (c(x, y),))
+
+    @fuser.fusible(output_fusion_prefix=(True, True))
+    def f(x_fn, y_fn, z_fns):
+      x = x_fn()
+      y = y_fn()
+      if z_fns is None:
+        z_fns = lambda x: x, lambda x: x
+      z_fn1, z_fn2 = z_fns
+      return z_fn1(x), z_fn2(y)
+
+    def g(x, y, z):
+      x, y = f(x, c(y, z))
+      return c(x, z), y * 2
+
+    x = jax.random.normal(jax.random.key(0), (4, 4), dtype=jnp.float32)
+    y = jax.random.normal(jax.random.key(1), (1, 4), dtype=jnp.float32)
+    z = jax.random.normal(jax.random.key(2), (1, 4), dtype=jnp.float32)
+    x_out, y_out = g(x, y, z)
+    np.testing.assert_array_equal(x_out, (x + z))
+    np.testing.assert_array_equal(y_out, (y + z) * 2)
+
+    g_fused = jax.jit(fuser.fuse(g))
+    x_out, y_out = g_fused(x, y, z)
+    np.testing.assert_array_equal(x_out, (x + z))
+    np.testing.assert_array_equal(y_out, (y + z) * 2)
 
   def test_separate_output_fusions_should_error_if_not_disjoint(self):
 

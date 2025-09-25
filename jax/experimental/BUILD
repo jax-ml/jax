@@ -356,6 +356,7 @@ pytype_strict_library(
         ":pallas",  # build_cleaner: keep
         "//jax/_src/pallas/fuser:block_spec",
         "//jax/_src/pallas/fuser:custom_evaluate",
+        "//jax/_src/pallas/fuser:custom_fusion",
         "//jax/_src/pallas/fuser:fusible",
         "//jax/_src/pallas/fuser:fusion",
         "//jax/_src/pallas/fuser:jaxpr_fusion",

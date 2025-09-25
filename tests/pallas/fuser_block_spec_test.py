@@ -19,6 +19,7 @@ from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas.fuser import block_spec as block_spec_lib
+from jax._src.pallas.fuser import custom_fusion_lib
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -168,6 +169,53 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(
         kernel_fn((0, 0, 0), scalar_prefetch_values, (b,), x),
         fn(x) + b,
+    )
+
+  def test_custom_fusion(self):
+    @custom_fusion_lib.custom_fusion
+    def fn(x, y):
+      return x + y
+
+    fn.def_pull_block_spec(lambda bss: (bss[0], bss[0]))
+    fn.def_push_block_spec(lambda bss: (bss[0],))
+    fn.def_eval_rule(lambda _, x, y: (fn(x, y),))
+
+    in_type = (
+        jax.ShapeDtypeStruct((512, 512), jnp.float32),
+        jax.ShapeDtypeStruct((512, 512), jnp.float32),
+    )
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        fn, *in_type
+    )
+    self.assertEmpty(new_values)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec((128, 128), lambda i, j, k: (i, j))
+    kernel_fn, (value_block_specs, *in_block_specs), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid=(1, 1, 1),
+            scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+        )(new_values, *in_type)
+    )
+    self.assertEmpty(value_block_specs)
+    self.assertLen(in_block_specs, 2)
+    x_block_spec, y_block_spec = in_block_specs
+    self.assertEqual(x_block_spec.block_shape, (128, 128))
+    self.assertEqual(
+        x_block_spec.index_map(0, 1, 2), block_spec.index_map(0, 1, 2)
+    )
+    self.assertEqual(y_block_spec.block_shape, (128, 128))
+    self.assertEqual(
+        y_block_spec.index_map(0, 1, 2), block_spec.index_map(0, 1, 2)
+    )
+
+    x = np.ones((128, 128), dtype=np.float32)
+    y = np.ones((128, 128), dtype=np.float32)
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0, 0), scalar_prefetch_values, new_values, x, y),
+        x + y
     )
 
   @parameterized.product(

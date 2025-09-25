@@ -33,6 +33,7 @@ pytype_strict_library(
     deps = [
         ":block_spec",
         ":custom_evaluate",
+        ":custom_fusion",
         ":fusible",
         ":fusion",
         ":jaxpr_fusion",
@@ -59,6 +60,26 @@ pytype_strict_library(
         "//jax/_src:util",
         "//jax/_src/pallas",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "custom_fusion",
+    srcs = [
+        "custom_fusion_lib.py",
+    ],
+    deps = [
+        ":block_spec",
+        "//jax/_src:api_util",
+        "//jax/_src:core",
+        "//jax/_src:custom_api_util",
+        "//jax/_src:lax",
+        "//jax/_src:mlir",
+        "//jax/_src:partial_eval",
+        "//jax/_src:tree_util",
+        "//jax/_src:util",
+        "//jax/_src/pallas",
+        "//jax/_src/pallas/mosaic:lowering",
+    ],
 )
 
 pytype_strict_library(
