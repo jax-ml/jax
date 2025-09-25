@@ -51,7 +51,7 @@ def do_matmul(a_gmem,
               grid_indices: Sequence[jax.Array],
               wg_axis: str,
               collective_axes: tuple[str, ...],
-              wave_step: jax.Array,
+              local_index: jax.Array,
               config: TuningConfig,
               group_info: ragged_dot_mgpu.GroupInfo,
               a_smem, b_smem, acc_tmem, acc_smem,
@@ -91,7 +91,7 @@ def do_matmul(a_gmem,
   block_slice_m = pl.ds(block_m_index * block_tile_m, block_tile_m)
   slice_m = pl.ds(m_index * tile_m, tile_m)
   slice_n = pl.ds(n_index * tile_n, tile_n)
-  acc_slot = lax.rem(wave_step, jnp.int32(2))
+  acc_slot = lax.rem(local_index, jnp.int32(2))
   regs_layout = plgpu.Layout.TCGEN05
 
   @pl.when(wg_idx == COMPUTE_WG)
@@ -106,7 +106,7 @@ def do_matmul(a_gmem,
           slice_k = pl.ds(ki * tile_k, tile_k)
           slot = lax.rem(ki, max_concurrent_steps)
           @pl.when(jnp.logical_or(ki >= max_concurrent_steps,
-                                  wave_step > 0))
+                                  local_index > 0))
           def _():
             plgpu.barrier_wait(consumed_barrier.at[slot])
           plgpu.copy_gmem_to_smem(
@@ -125,7 +125,7 @@ def do_matmul(a_gmem,
           )
         lax.fori_loop(0, k_iters, _loop_body, None)
 
-      @pl.when(jnp.logical_and(warp_id == MMA_WARP, wave_step > 1))
+      @pl.when(jnp.logical_and(warp_id == MMA_WARP, local_index > 1))
       def _wait_store():
         plgpu.barrier_wait(store_done_barrier.at[acc_slot])
       @pl.when(jnp.logical_and(warp_id == MMA_WARP, is_lead_block))
@@ -297,10 +297,10 @@ def ragged_dot_kernel(a, b, group_sizes, config: TuningConfig):
     )
     def _scoped(**ref_kwargs):
       @plgpu.nd_loop(grid=(linear_grid,),
-                     collective_axes="sm",
-                     include_wave_step=True)
-      def mn_loop(idx, wave_step):  # pylint: disable=unused-variable
-        linear_idx, = idx
+                     collective_axes="sm")
+      def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
+        linear_idx, = loop_info.index
+        local_index = loop_info.local_index  # type: ignore
         m_index, n_index = plgpu.planar_snake(
           linear_idx,
           (m_iters + num_groups - 1, n_iters),
@@ -318,7 +318,7 @@ def ragged_dot_kernel(a, b, group_sizes, config: TuningConfig):
             grid_indices=(group_info.block, n_index, cluster_idx),
             wg_axis="wg",
             collective_axes=("x",) if collective else (),
-            wave_step=wave_step,
+            local_index=local_index,  # type: ignore
             config=config,
             group_info=group_info,
             **ref_kwargs

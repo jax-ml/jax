@@ -106,10 +106,10 @@ def matmul_kernel(a, b, config: TuningConfig):
     is_lead_block = cluster_idx == 0
 
     @plgpu.nd_loop((m_iters * n_iters,),
-                   collective_axes="sm",
-                   include_wave_step=True)
-    def mn_loop(idx, wave_step):  # pylint: disable=unused-variable
-      (lin_idx,) = idx
+                   collective_axes="sm")
+    def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
+      (lin_idx,) = loop_info.index
+      local_index = loop_info.local_index
       m_index, n_index = plgpu.planar_snake(
           lin_idx,
           (m_iters, n_iters),
@@ -121,7 +121,7 @@ def matmul_kernel(a, b, config: TuningConfig):
       block_slice_m = pl.ds(block_m_index * block_tile_m, block_tile_m)
       slice_m = pl.ds(m_index * tile_m, tile_m)
       slice_n = pl.ds(n_index * tile_n, tile_n)
-      acc_slot = lax.rem(wave_step, jnp.int32(2))
+      acc_slot = lax.rem(local_index, jnp.int32(2))
 
       @pl.when(wg_idx == COMPUTE_WG)
       def _():
@@ -134,7 +134,7 @@ def matmul_kernel(a, b, config: TuningConfig):
               slice_k = pl.ds(ki * tile_k, tile_k)
               slot = lax.rem(ki, max_concurrent_steps)
               @pl.when(jnp.logical_or(ki >= max_concurrent_steps,
-                                      wave_step > 0))
+                                      local_index > 0))
               def _():
                 plgpu.barrier_wait(consumed_barrier.at[slot])
               plgpu.copy_gmem_to_smem(
@@ -153,7 +153,7 @@ def matmul_kernel(a, b, config: TuningConfig):
               )
             lax.fori_loop(0, k_iters, _loop_body, None)
 
-          @pl.when(jnp.logical_and(warp_id == MMA_WARP, wave_step > 1))
+          @pl.when(jnp.logical_and(warp_id == MMA_WARP, local_index > 1))
           def _wait_store():
             plgpu.barrier_wait(store_done_barrier.at[acc_slot])
           @pl.when(jnp.logical_and(warp_id == MMA_WARP, is_lead_block))

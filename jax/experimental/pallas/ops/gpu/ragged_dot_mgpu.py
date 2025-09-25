@@ -126,8 +126,8 @@ def ragged_dot(
     )
 
     @plgpu.nd_loop(grid, collective_axes="sm")
-    def mn_loop(idx):  # pylint: disable=unused-variable
-      block_ni, mi, remainder_ni = idx
+    def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
+      block_ni, mi, remainder_ni = loop_info.index
       ni = block_ni * pl.cdiv(n, block_n * grid_block_n) + remainder_ni
       group_info = GroupInfo.create(rows_per_expert_gmem, block_m, mi)
 

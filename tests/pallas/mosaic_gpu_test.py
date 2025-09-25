@@ -1979,7 +1979,8 @@ class PallasCallTest(PallasTest):
         grid_names=("sm",),
     )
     def kernel(o_ref, steps_ref):
-      def body(idx, carry):
+      def body(loop_info, carry):
+        idx = loop_info.index
         assert len(idx) == 3
         # We need to use `mode="clip"`, because the indices are not static.
         flat_idx = jnp.ravel_multi_index(idx, (sm_steps, 4, 33), mode="clip")
@@ -2022,7 +2023,8 @@ class PallasCallTest(PallasTest):
     )
     def kernel(o_ref):
       @plgpu.nd_loop((sm_steps, 4, 33), tiling=tiling, collective_axes="sm")
-      def _(idx):
+      def _(loop_info):
+        idx = loop_info.index
         assert len(idx) == 3
         # We need to use `mode="clip"`, because the indices are not static.
         grid = (sm_steps, 4, 33)

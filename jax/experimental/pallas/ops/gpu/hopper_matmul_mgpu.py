@@ -138,8 +138,8 @@ def matmul_kernel(a, b, config: TuningConfig):
       wg_idx = lax.axis_index("wg")
       cta_idx = lax.axis_index("cluster")
       @plgpu.nd_loop((m_iters * n_iters,), collective_axes="cluster_grid")
-      def _mn_loop(idxs):
-        (lin_idx,) = idxs
+      def _mn_loop(loop_info: plgpu.NDLoopInfo):
+        (lin_idx,) = loop_info.index
         m_cluster_idx, n_cluster_idx = plgpu.planar_snake(
             lin_idx,
             (m_iters, n_iters),
@@ -159,7 +159,7 @@ def matmul_kernel(a, b, config: TuningConfig):
           wg_n_slice = slice(None)
         else:
           wg_m_slice = slice(None)
-          wg_n_slice = pl.ds(wg_idx * tile_n, tile_n)
+          wg_n_slice = pl.ds(wg_idx * tile_n, tile_n)  # type: ignore
 
         def compute_context(eval_pipeline):
           @functools.partial(

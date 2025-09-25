@@ -15,6 +15,7 @@
 """Helpers for Pallas Mosaic GPU kernels."""
 
 from collections.abc import Callable, Hashable, Sequence
+import dataclasses
 import functools
 import math
 from typing import TypeVar, overload
@@ -27,6 +28,20 @@ import numpy as np
 _T = TypeVar("_T")
 
 
+@dataclasses.dataclass(frozen=True, eq=False)
+class NDLoopInfo:
+  """Container dataclass for loop iteration information.
+
+  Attributes:
+    index: The grid indices corresponding to the current loop iteration.
+    local_index: The local iteration index.
+    num_local_steps: The total number of local iterations to run.
+  """
+  index: tuple[jax.Array, ...]
+  local_index: jax.Array | int
+  num_local_steps: jax.Array | int
+
+
 @overload
 def nd_loop(
     grid: Sequence[int],
@@ -34,7 +49,7 @@ def nd_loop(
     collective_axes: Sequence[Hashable] | Hashable,
     tiling: Sequence[int] | None = None,
     init_carry: None = None
-) -> Callable[[Callable[[Sequence[jax.Array]], None]], None]:
+) -> Callable[[Callable[[NDLoopInfo], None]], None]:
   ...
 
 
@@ -45,27 +60,17 @@ def nd_loop(
     collective_axes: Sequence[Hashable] | Hashable,
     tiling: Sequence[int] | None = None,
     init_carry: _T
-) -> Callable[[Callable[[Sequence[jax.Array], _T], _T]], _T]:
+) -> Callable[[Callable[[NDLoopInfo, _T], _T]], _T]:
   ...
 
 
-# TODO(justinfu): Fix the type signature to include both carry and wave_step.
-@overload
-def nd_loop(
-    grid: Sequence[int],
-    *,
-    collective_axes: Sequence[Hashable] | Hashable,
-    tiling: Sequence[int] | None = None,
-    include_wave_step: bool
-) -> Callable[[Callable[[Sequence[jax.Array], jax.Array], None]], None]:
-  ...
-
-
-def nd_loop(grid, *, collective_axes,
-            tiling=None,
-            init_carry=None,
-            include_wave_step=False):
+def nd_loop(grid, *, collective_axes, tiling=None, init_carry=None):
   """A loop over a multi-dimensional grid partitioned along the given axes.
+
+  The body of the loop a single argument `loop_info` which is an NDLoopInfo
+  object containing index and iteration information. However if a carry is
+  specified, the body will expect a second keyword argument `carry` containing
+  the loop carry.
 
   For example, if ``collective_axes`` is ``"x"`` with :func:`lax.axis_size`
   equal to 4 and the grid is (2, 3), the implementation would produce the
@@ -97,10 +102,6 @@ def nd_loop(grid, *, collective_axes,
   If ``init_carry`` is passed then ``nd_loop()`` will expect the body to
   take and return the carry. If it's ``None`` then no carry argument is
   expected.
-
-  If ``include_wave_step`` is True then the body will be called with an
-  additional ``wave_step`` keyword argument that specifies the current
-  iteration local to the thread.
 
   See also:
     - :func:`jax.experimental.pallas.loop`: A loop over a single dimension.
@@ -141,12 +142,15 @@ def nd_loop(grid, *, collective_axes,
           untiled_index.append(sub_idx + tile_idx * tile_dim)
         index = untiled_index
 
-      if include_wave_step:
-        body = functools.partial(body, wave_step=wave_step)
+      loop_info = NDLoopInfo(
+          index=tuple(index),
+          local_index=wave_step,
+          num_local_steps=upper
+      )
       if init_carry is None:
-        body(tuple(index))
+        body(loop_info)
       else:
-        return body(tuple(index), carry=carry)
+        return body(loop_info, carry=carry)
 
     upper = lax.div(grid_size, axis_size) + lax.convert_element_type(
         axis_index < grid_size % axis_size, axis_index.dtype

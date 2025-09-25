@@ -143,8 +143,8 @@ def all_gather_lhs_matmul(
     )
     def _pipeline_scope(pipeline_allocs):
       @plgpu.nd_loop((m_iters * n_iters,), collective_axes="sm")
-      def _mn_loop(idxs):
-        (lin_idx,) = idxs
+      def _mn_loop(loop_info: plgpu.NDLoopInfo):
+        (lin_idx,) = loop_info.index
         m_idx, n_idx = plgpu.planar_snake(
             lin_idx,
             (m_iters, n_iters),
@@ -158,7 +158,7 @@ def all_gather_lhs_matmul(
           wg_n_slice = slice(None)
         else:
           wg_m_slice = slice(None)
-          wg_n_slice = pl.ds(wg_idx * tile_n, tile_n)
+          wg_n_slice = pl.ds(wg_idx * tile_n, tile_n)  # type: ignore
 
         def compute_context(eval_pipeline):
           @functools.partial(
