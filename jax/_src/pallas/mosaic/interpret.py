@@ -116,6 +116,12 @@ class InterpretParams:
       Default: None.
     num_cores_per_device: The number of cores per device.
       Default: 1.
+    allow_hbm_allocation_in_run_scoped: If `True`, allows the allocation of HBM
+      buffers (which are then shared across the cores in a device) in
+      `run_scoped`. While this behavior can be enabled in the interpreter,
+      allocating HBM buffers with `run_scoped` is not supported when executing
+      Pallas kernels on a real TPU.
+      Default: `False`.
   """
   dma_execution_mode: Literal["eager", "on_wait"] = "on_wait"
   detect_races: bool = False
@@ -127,6 +133,7 @@ class InterpretParams:
       Callable[[tuple[np.int32, ...], np.int32], None] | None
   ) = None
   num_cores_per_device: int = 1
+  allow_hbm_allocation_in_run_scoped: bool = False
 
 @contextlib.contextmanager
 def force_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
@@ -556,6 +563,24 @@ def check_write(device_id, local_core_id, clock, buffer_key, rnge, source_info=N
 
 
 @dataclasses.dataclass
+class Buffer:
+  content: np.ndarray
+  _: dataclasses.KW_ONLY
+  ref_count: int = 1
+
+  def decrease_ref_count(self):
+    # We should never decrese the `ref_count` to below zero.
+    assert self.ref_count > 0
+    self.ref_count -= 1
+
+  def has_zero_ref_count(self) -> bool:
+    return self.ref_count == 0
+
+  def size(self) -> int:
+    return self.content.itemsize * self.content.size
+
+
+@dataclasses.dataclass
 class SharedMemory:
   interpret_params: InterpretParams
   num_devices: int
@@ -565,7 +590,7 @@ class SharedMemory:
   clean_up_barrier: threading.Barrier
 
   # (memory_space, buffer_id, device_id, local_core_id) -> NumPy array
-  mem: dict[tuple[str, int, int, int], np.ndarray] = dataclasses.field(
+  mem: dict[tuple[str, int, int, int], Buffer] = dataclasses.field(
       default_factory=dict)
 
   # semaphore_id -> Semaphore
@@ -785,13 +810,28 @@ def _allocate_buffer(
     for lci in local_core_ids:
       buffer_id = shared_memory.next_buffer_id[(device_id, lci)]
       shared_memory.next_buffer_id[(device_id, lci)] = buffer_id + 1
-      # If allocating in HBM, only actually allocate a buffer for core 0.
-      if lci == 0 or memory_space_str != 'any':
+      if memory_space_str in ['any', 'hbm']:
+        # If allocating in HBM, only actually allocate a buffer once.
+        # The first local core (i.e. thread) that gets here allocates the
+        # buffer, but the buffer is still keyed in the shared memory with core
+        # id 0. However, since the buffer is shared across all cores, we
+        # initialize the buffer's `ref_count` with the number of cores per
+        # device. This ensures that the buffer is not deallocated until all
+        # cores have exited the scope of the allocation (e.g. have exited the
+        # body of a `run_scoped`).
+        key = (memory_space_str, buffer_id, device_id, 0)
+        if key not in shared_memory.mem:
+          shared_memory.mem[key] = Buffer(
+              val, ref_count=shared_memory.num_cores_per_device
+          )
+      else:
         # If we are allocating more than one buffer, we must make additional
         # copies of `val` so that each buffer is a distinct ndarray.
         if len(local_core_id_to_buffer_id) > 0:
           val = val.copy()
-        shared_memory.mem[(memory_space_str, buffer_id, device_id, lci)] = val
+        shared_memory.mem[(memory_space_str, buffer_id, device_id, lci)] = (
+            Buffer(val)
+        )
 
       local_core_id_to_buffer_id[lci] = buffer_id
 
@@ -804,22 +844,30 @@ def _allocate_buffer(
   # TODO(jburnim): Raise an error if buffer_id is too big for int16.
   return np.int16(local_core_id_to_buffer_id[local_core_id_int])
 
+
+def _local_core_id_or_zero_if_hbm(local_core_id: int, memory_space: str) -> int:
+  if memory_space in ['any', 'hbm']:
+    return 0
+  return local_core_id
+
+
 def _deallocate_buffer(device_id, local_core_id, memory_space, buffer_id):
   device_id = int(device_id)
   local_core_id = int(local_core_id)
   memory_space = TPU_MEMORY_SPACE_NAMES[int(memory_space)]
   buffer_id = int(buffer_id)
 
-  if memory_space == 'any':
-    local_core_id = 0
+  local_core_id = _local_core_id_or_zero_if_hbm(local_core_id, memory_space)
 
   shared_memory = _get_shared_memory()
   with shared_memory.lock:
-    buff = shared_memory.mem.pop(
-        (memory_space, buffer_id, device_id, local_core_id)
-    )
-    shared_memory.deallocated_bytes += buff.size * buff.itemsize
-    del buff
+    key = (memory_space, buffer_id, device_id, local_core_id)
+    buff = shared_memory.mem[key]
+    buff.decrease_ref_count()
+    if buff.has_zero_ref_count():
+      shared_memory.mem.pop(key)
+      shared_memory.deallocated_bytes += buff.size()
+      del buff
 
     should_collect = shared_memory.deallocated_bytes > 100_000_000
     if should_collect:
@@ -1012,7 +1060,9 @@ def get(
     block_indices = tuple(int(x) for x in block_indices)
     grid_loop_idx = tuple(int(x) for x in tuple(grid_loop_idx))
 
-  local_core_id_for_buffer = 0 if memory_space == 'any' else local_core_id
+  local_core_id_for_buffer = _local_core_id_or_zero_if_hbm(
+      local_core_id, memory_space
+  )
   global_core_id = _get_global_core_id(device_id, local_core_id)
 
   shared_memory = _get_shared_memory()
@@ -1022,11 +1072,11 @@ def get(
       inc_vector_clock(shared_memory.clocks[global_core_id], global_core_id)
       if clock is None:
         clock = copy_vector_clock(shared_memory.clocks[global_core_id])
-    buffer = shared_memory.mem[
+    array = shared_memory.mem[
         (memory_space, buffer_id, device_id, local_core_id_for_buffer)
-    ]
+    ].content
     try:
-      ret = buffer[read_range].copy()
+      ret = array[read_range].copy()
     except:
       ret = None
 
@@ -1035,9 +1085,9 @@ def get(
     # callback to `get`.  Should we just pass the shape to `get`?
     # TODO(jburnim): Move to a helper function?
     full_read_shape = []
-    assert len(read_range) <= len(buffer.shape)
+    assert len(read_range) <= len(array.shape)
     for dim_size, idx_or_slice in (
-        itertools.zip_longest(buffer.shape, read_range, fillvalue=None)):
+        itertools.zip_longest(array.shape, read_range, fillvalue=None)):
       if idx_or_slice is None:
         full_read_shape.append(dim_size)
       elif isinstance(idx_or_slice, int):
@@ -1060,7 +1110,7 @@ def get(
             raise IndexError(
                 'Out-of-bounds read of'
                 f' ({device_id} {local_core_id} {memory_space} {buffer_id}):'
-                f' reading [{read_range}] but buffer has shape {buffer.shape}.'
+                f' reading [{read_range}] but buffer has shape {array.shape}.'
             )
           else:
             # Different error message when we are reading a block of an input,
@@ -1069,12 +1119,12 @@ def get(
               f'Out-of-bounds block index {block_indices} for'
               f' input "{input_name}" in iteration {grid_loop_idx}'
               f' on device {device_id} (core {local_core_id}):'
-              f' reading [{read_range}] but input has shape {buffer.shape}.')
+              f' reading [{read_range}] but input has shape {array.shape}.')
       # out_of_bounds_reads == "uninitialized"
       uninit_array = np.full(
           full_read_shape,
-          _uninitialized_value(buffer.dtype, shared_memory.interpret_params),
-          dtype=buffer.dtype)
+          _uninitialized_value(array.dtype, shared_memory.interpret_params),
+          dtype=array.dtype)
       if ret is None:
         ret = uninit_array
       else:
@@ -1122,7 +1172,9 @@ def store(
   src_device_id = _to_int(src_device_id)
   src_local_core_id = _to_int(src_local_core_id)
 
-  local_core_id_for_buffer = 0 if memory_space == 'any' else local_core_id
+  local_core_id_for_buffer = _local_core_id_or_zero_if_hbm(
+      local_core_id, memory_space
+  )
   global_core_id = _get_global_core_id(device_id, local_core_id)
 
   shared_memory = _get_shared_memory()
@@ -1132,20 +1184,20 @@ def store(
       if clock is None:
         clock = copy_vector_clock(shared_memory.clocks[global_core_id])
 
-    buff = shared_memory.mem[
+    array = shared_memory.mem[
         (memory_space, buffer_id, device_id, local_core_id_for_buffer)
-    ]
-    assert buff.dtype == val.dtype  # TODO(jburnim): Catch this statically.
+    ].content
+    assert array.dtype == val.dtype  # TODO(jburnim): Catch this statically.
     write_range = _to_range(transforms)
     # TODO(jburnim): Better error message if this raises?
-    in_bounds_shape = buff[write_range].shape
+    in_bounds_shape = array[write_range].shape
     if in_bounds_shape != val.shape:
       raise ValueError(
           'Out-of-bounds write of'
           f' ({device_id} {local_core_id} {memory_space} {buffer_id}): writing'
-          f' [{write_range}] but buffer has shape {buff.shape} .'
+          f' [{write_range}] but buffer has shape {array.shape} .'
       )
-    buff[write_range] = val
+    array[write_range] = val
 
   if shared_memory.interpret_params.detect_races:
     if src_device_id is None:
@@ -1185,7 +1237,9 @@ def swap(
   if mask is not None:
     assert mask.shape == val.shape
 
-  local_core_id_for_buffer = 0 if memory_space == 'any' else local_core_id
+  local_core_id_for_buffer = _local_core_id_or_zero_if_hbm(
+      local_core_id, memory_space
+  )
   global_core_id = _get_global_core_id(device_id, local_core_id)
 
   shared_memory = _get_shared_memory()
@@ -1193,13 +1247,13 @@ def swap(
     if shared_memory.interpret_params.detect_races:
       inc_vector_clock(shared_memory.clocks[global_core_id], global_core_id)
       clock = copy_vector_clock(shared_memory.clocks[global_core_id])
-    buff = shared_memory.mem[
+    array = shared_memory.mem[
         (memory_space, buffer_id, device_id, local_core_id_for_buffer)
-    ]
-    assert buff.dtype == val.dtype  # TODO(jburnim): Catch this statically.
+    ].content
+    assert array.dtype == val.dtype  # TODO(jburnim): Catch this statically.
     read_write_range = _to_range(transforms)
     # TODO(jburnim): Better error message if this raises?
-    raw_result = buff[read_write_range]
+    raw_result = array[read_write_range]
     in_bounds_shape = raw_result.shape
     if mask is None:
       if in_bounds_shape != val.shape:
@@ -1207,9 +1261,9 @@ def swap(
             'Out-of-bounds swap of'
             f' ({device_id} {local_core_id} {memory_space} {buffer_id}):'
             f' swapping [{read_write_range}] but buffer has shape'
-            f' {buff.shape} .'
+            f' {array.shape} .'
         )
-      buff[read_write_range] = val
+      array[read_write_range] = val
       return raw_result.copy()
 
     in_bounds_mask = np.full(mask.shape, True)
@@ -1221,14 +1275,14 @@ def swap(
       raise ValueError(
           'Out-of-bounds masked swap of'
           f' ({device_id} {local_core_id} {memory_space} {buffer_id}): swapping'
-          f' [{read_write_range}] but buffer has shape {buff.shape} . '
+          f' [{read_write_range}] but buffer has shape {array.shape} . '
       )
 
     in_bounds_idx = tuple(slice(i) for i in in_bounds_shape)
     result = val.copy()
     result[in_bounds_idx] = np.where(
         mask[in_bounds_idx], raw_result, val[in_bounds_idx])
-    buff[read_write_range] = np.where(
+    array[read_write_range] = np.where(
         mask[in_bounds_idx], val[in_bounds_idx], raw_result)
 
   if shared_memory.interpret_params.detect_races:
@@ -1491,17 +1545,16 @@ class Placeholder:
   dtype: jnp.dtype
 
 
-def _get_memory_space_and_raise_if_hbm(aval, primitive_name=None):
+def _get_memory_space_and_raise_if_hbm(aval, primitive_name, message=None):
   memory_space = aval.memory_space
-  if (
-      memory_space == mosaic_core.MemorySpace.HBM
-      or memory_space == mosaic_core.MemorySpace.ANY
-  ):
-    raise ValueError(
-        f'{primitive_name}: Buffers with a memory space of HBM or ANY cannot be'
-        ' referenced directly. Instead, use `pltpu.sync_copy` or'
-        ' `pltpu.async_copy`.'
-    )
+  if memory_space in [mosaic_core.MemorySpace.HBM, mosaic_core.MemorySpace.ANY]:
+    if message is None:
+      message = (
+          f'{primitive_name}: Buffers with a memory space of HBM or ANY cannot'
+          ' be referenced directly. Instead, use `pltpu.sync_copy` or'
+          ' `pltpu.async_copy`.'
+      )
+    raise ValueError(message)
   return memory_space
 
 
@@ -1692,12 +1745,18 @@ def _interpret_jaxpr(
                 v.aval.shape,
                 ordered=True))
           else:
+            if not interpret_params.allow_hbm_allocation_in_run_scoped:
+              memory_space = _get_memory_space_and_raise_if_hbm(
+                v.aval, 'run_scoped_p', "Cannot allocate HBM in `run_scoped`."
+              )
+            else:
+              memory_space = v.aval.memory_space
             allocs.append(callback.io_callback(
                 _allocate_buffer,
                 jax.ShapeDtypeStruct((), jnp.int16),
                 device_id,
                 local_core_id,
-                TPU_MEMORY_SPACE_IDXS[v.aval.memory_space],
+                TPU_MEMORY_SPACE_IDXS[memory_space],
                 _uninitialized_array(
                     v.aval.shape, v.aval.dtype, interpret_params),
                 ordered=True))

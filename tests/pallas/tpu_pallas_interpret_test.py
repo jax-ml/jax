@@ -657,6 +657,179 @@ class InterpretTest(jtu.JaxTestCase):
       y = f(x)
     np.testing.assert_array_equal(y, expected_out)
 
+  def test_hbm_allocation_in_run_scoped_raises(self):
+    mesh = pltpu.create_tensorcore_mesh('x', num_cores=1)
+
+    @jax.jit
+    def f(x):
+      y = jnp.zeros_like(x)
+
+      def inner(x):
+        x_ref, y_ref = x
+
+        @pl.core_map(
+            mesh,
+            interpret=pltpu.InterpretParams(
+                allow_hbm_allocation_in_run_scoped=False
+            ),
+        )
+        def _():
+          def copy(hbm):
+            pltpu.sync_copy(x_ref, hbm)
+            pltpu.sync_copy(hbm, y_ref)
+
+          pl.run_scoped(
+              copy,
+              pltpu.HBM(x_ref.shape, x_ref.dtype),
+          )
+
+      _, y =  pl.run_state(inner)((x, y))
+      return y
+
+    with self.assertRaisesRegex(
+        ValueError, r'Cannot allocate HBM in `run_scoped`.'
+    ):
+      f(jnp.arange(8))
+
+  @parameterized.product(
+      first_core_to_copy=[0, 1], dma_execution_mode=['eager', 'on_wait']
+  )
+  def test_allocate_shared_buffer_in_core_map(
+      self, first_core_to_copy, dma_execution_mode
+  ):
+    mesh = pltpu.create_tensorcore_mesh('x', num_cores=2)
+    second_core_to_copy = 1 if first_core_to_copy == 0 else 0
+
+    @jax.jit
+    def f(x):
+      y = jnp.zeros_like(x)
+
+      def inner(refs):
+        x_ref, y_ref = refs
+        # Thanks to the semaphore `sem` below, this test is race-free, and both
+        # cores access the shared HBM buffer entirely sequentially. If the
+        # runtime management of buffers were not done carefully, two issues
+        # could arise, each resulting in an attempt to access unallocated
+        # memory:
+        #  1. The first core to reach the `copy` function, inside the nested
+        #     `run_scoped`, might find that the shared HBM buffer has not been
+        #     allocated yet. This could happen if the other core were
+        #     repsonsible for allocating the HBM buffer when entering the nested
+        #     `run_scoped`; but that other core has not reached the nested
+        #     `run_scoped` yet, and hence has not allocated the HBM buffer yet.
+        #  2. The second core to reach the `copy` function might find that the
+        #     shared HBM buffer has been deallocated already. This could happen
+        #     if the other core (i.e. the first one to reach the `copy`
+        #     function) were responsible for deallocating the HBM buffer when
+        #     exiting the nested `run_scoped`. If that other core has already
+        #     run ahead to the end of the nested `run_scoped`, it will have
+        #     deallocated the HBM buffer.
+        @pl.core_map(
+            mesh,
+            interpret=pltpu.InterpretParams(
+                detect_races=True, allow_hbm_allocation_in_run_scoped=True,
+                dma_execution_mode=dma_execution_mode,
+            ),
+        )
+        def _():
+          def body(sem):
+            @pl.when(jax.lax.axis_index('x') == second_core_to_copy)
+            def _():
+              pltpu.semaphore_wait(sem, 1)
+
+            def copy(x_hbm_ref):
+              pltpu.sync_copy(x_ref, x_hbm_ref)
+              pltpu.sync_copy(x_hbm_ref, y_ref)
+
+            pl.run_scoped(
+                copy,
+                pltpu.HBM(x_ref.shape, x_ref.dtype),
+            )
+
+            @pl.when(jax.lax.axis_index('x') == first_core_to_copy)
+            def _():
+              pltpu.semaphore_signal(sem, 1, core_index=second_core_to_copy)
+
+          pl.run_scoped(
+              body,
+              pltpu.SemaphoreType.REGULAR,
+          )
+
+      _, y = pl.run_state(inner)((x, y))
+      return y
+
+    x = jnp.arange(16 * 128, dtype=jnp.int32).reshape((16, 128))
+    y = f(x)
+    np.testing.assert_array_equal(y, x)
+    self.assertFalse(mosaic_interpret.races.races_found)
+
+  @parameterized.product(
+      slow_core=[0, 1], dma_execution_mode=['eager', 'on_wait']
+  )
+  def test_allocate_shared_buffer_in_core_map_with_race(
+      self, slow_core, dma_execution_mode
+  ):
+    mesh = pltpu.create_tensorcore_mesh('x', num_cores=2)
+
+    @jax.jit
+    def f(x, y):
+      z = jnp.zeros_like(x)
+      o = jnp.zeros((y.shape[0], y.shape[0]), dtype=y.dtype)
+
+      def inner(refs):
+        """Copies `x_ref` to `z_ref` and computes `y_ref @ y_ref^t` into `o_ref`."""
+        x_ref, y_ref, z_ref, o_ref = refs
+        @pl.core_map(
+            mesh,
+            interpret=pltpu.InterpretParams(
+                detect_races=True,
+                allow_hbm_allocation_in_run_scoped=True,
+                dma_execution_mode=dma_execution_mode,
+            ),
+        )
+        def _():
+          # The slow core performs an expensive matrix multiplication, and then
+          # copies from `x_ref` to `z_ref`, going through an HBM buffer that is
+          # shared between the two cores. The other core, aka. the fast core,
+          # proceeds directly to copying from `x_ref` to `z_ref`, going through
+          # the same shared HBM buffer. If the shared buffer were, incorrectly,
+          # deallocated by the fast core (once it is done copying from `x_ref`
+          # to `z_ref`) and then reallocated by the slow core (before it starts
+          # copying from `x_ref` to `z_ref`), we would not see any attempts of
+          # accessing unallocated memory. However, we would also not detect any
+          # races since the cores would operate on separate buffers.
+          def body(x_hbm_ref, vmem_ref_0, vmem_ref_1):
+            @pl.when(jax.lax.axis_index('x') == slow_core)
+            def _():
+              pltpu.sync_copy(y_ref, vmem_ref_0)
+              vmem_ref_1[...] = vmem_ref_0[...] @ jnp.transpose(vmem_ref_0[...])
+              pltpu.sync_copy(vmem_ref_1, o_ref)
+
+            pltpu.sync_copy(x_ref, x_hbm_ref)
+            pltpu.sync_copy(x_hbm_ref, z_ref)
+
+          pl.run_scoped(
+              body,
+              pltpu.HBM(x.shape, dtype=x.dtype),
+              pltpu.VMEM(y.shape, dtype=y.dtype),
+              pltpu.VMEM((y.shape[0], y.shape[0]), dtype=y.dtype),
+          )
+
+      _, _, z, o = pl.run_state(inner)((x, y, z, o))
+      return z, o
+
+    x = jnp.arange(16 * 128, dtype=jnp.int32).reshape((16, 128))
+    y = jax.random.randint(
+        jax.random.key(0), (1024, 1024), minval=-100, maxval=100
+    )
+    _, o = f(x, y)
+    # We do not assert that the first result of `f` must be equal to `x`. This
+    # is because of the copying from `x` to the first result of `f` is racy, and
+    # we should therefore not expect the first result of `f` to have a
+    # well-defined value.
+    np.testing.assert_array_equal(o, y @ jnp.transpose(y))
+    self.assertTrue(mosaic_interpret.races.races_found)
+
   def test_two_cores_along_parallel_dimension_with_race(self):
     def kernel(x_ref, o_ref, vmem_ref):
       vmem_ref[...] = x_ref[...]
