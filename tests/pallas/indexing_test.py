@@ -19,6 +19,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import random
+from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.state import indexing
@@ -195,7 +196,39 @@ class IndexerTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, "Cannot broadcast shapes for indexing"
     ):
-      indexer = NDIndexer.from_indices_shape(indices, shape)
+      NDIndexer.from_indices_shape(indices, shape)
+
+  def test_ndindexer_with_ref(self):
+    indices = (core.mutable_array(jnp.tile(jnp.arange(4), (2,))),)
+    shape = (4, 2)
+    indexer = NDIndexer.from_indices_shape(indices, shape)
+    self.assertTupleEqual(indexer.get_indexer_shape(), (8, 2))
+
+  def test_ndindexer_with_multiple_refs(self):
+    indices = (
+        core.mutable_array(jnp.tile(jnp.arange(4), (2,))),
+        core.mutable_array(jnp.tile(jnp.arange(2), (4,))),
+    )
+    shape = (4, 2)
+    indexer = NDIndexer.from_indices_shape(indices, shape)
+    self.assertTupleEqual(indexer.get_indexer_shape(), (8,))
+
+  def test_ndindexer_with_multiple_broadcastable_refs(self):
+    indices = (
+        core.mutable_array(jnp.tile(jnp.arange(4), (2,))),
+        core.mutable_array(jnp.arange(1)),
+    )
+    shape = (4, 2)
+    with self.assertRaisesRegex(
+        ValueError, "All refs must have the same shape .*"
+    ):
+      NDIndexer.from_indices_shape(indices, shape)
+
+  def test_ndindexer_with_refs_and_ints(self):
+    indices = (core.mutable_array(jnp.tile(jnp.arange(4), (2,))), 0)
+    shape = (4, 2)
+    with self.assertRaisesRegex(ValueError, "Ref indexers cannot be mixed .*"):
+      NDIndexer.from_indices_shape(indices, shape)
 
   def test_indexer_with_all_types(self):
     indices = (0, slice(10), np.arange(5))
