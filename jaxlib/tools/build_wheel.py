@@ -89,10 +89,10 @@ def patch_copy_mlir_import(
 ):
   src_file = _get_file_path(src_file, runfiles, wheel_sources_map)
   src_filename = os.path.basename(src_file)
-  with open(src_file) as f:
+  with open(src_file, encoding="utf-8") as f:
     src = f.read()
 
-  with open(dst_dir / src_filename, "w") as f:
+  with open(dst_dir / src_filename, "w", encoding="utf-8") as f:
     replaced = re.sub(
         r"^from mlir(\..*)? import (.*)",
         r"from jaxlib.mlir\1 import \2",
