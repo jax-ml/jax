@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 
 import jax
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
@@ -75,6 +76,7 @@ class TypingTest(jtu.JaxTestCase):
     out5: typing.DType = dtypelike_to_dtype(HasDType("float32"))
     self.assertEqual(out5, float32_dtype)
 
+  @config.enable_x64(True)
   def testArrayLike(self) -> None:
     out1: typing.Array = arraylike_to_array(jnp.arange(4))
     self.assertArraysEqual(out1, jnp.arange(4))
@@ -82,8 +84,8 @@ class TypingTest(jtu.JaxTestCase):
     out2: typing.Array = jax.jit(arraylike_to_array)(jnp.arange(4))
     self.assertArraysEqual(out2, jnp.arange(4))
 
-    out3: typing.Array = arraylike_to_array(np.arange(4))
-    self.assertArraysEqual(out3, jnp.arange(4), check_dtypes=False)
+    out3: typing.Array = arraylike_to_array(np.arange(4, dtype=np.int32))
+    self.assertArraysEqual(out3, jnp.arange(4, dtype=np.int32))
 
     out4: typing.Array = arraylike_to_array(True)
     self.assertArraysEqual(out4, jnp.array(True))

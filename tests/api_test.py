@@ -64,6 +64,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 from jax.errors import (UnexpectedTracerError, TracerIntegerConversionError,
@@ -3276,47 +3277,66 @@ class APITest(jtu.JaxTestCase):
         x = jnp.array(0, dtype=dtype)
       self.assertEqual(x.dtype, dtypes.canonicalize_dtype(dtype))
 
-  def test_dtype_warning(self):
+  @jtu.sample_product(
+      explicit_x64_dtypes=[
+          config.ExplicitX64Mode.WARN,
+          config.ExplicitX64Mode.ERROR,
+          config.ExplicitX64Mode.ALLOW,
+      ],
+      enable_x64=[True, False],
+  )
+  def test_dtype_warning(self, explicit_x64_dtypes, enable_x64):
     # cf. issue #1230
-    if config.enable_x64.value:
-      raise unittest.SkipTest("test only applies when x64 is disabled")
+    @config.explicit_x64_dtypes(explicit_x64_dtypes)
+    @config.enable_x64(enable_x64)
+    def check(warn, nowarn):
+      if (
+          config.enable_x64.value
+          or config.explicit_x64_dtypes.value == config.ExplicitX64Mode.ALLOW
+      ):
+        if config.enable_x64.value or jaxlib_extension_version >= 377:
+          with self.assertNoWarnings():
+            warn()
+      elif config.explicit_x64_dtypes.value == config.ExplicitX64Mode.WARN:
+        with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype"):
+          warn()
+      else:
+        with self.assertRaisesRegex(ValueError, "Explicitly requested dtype"):
+          warn()
 
-    def check_warning(warn, nowarn):
-      with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype"):
-        warn()
       with self.assertNoWarnings():
         nowarn()
 
-    check_warning(lambda: jnp.array([1, 2, 3], dtype="float64"),
-                  lambda: jnp.array([1, 2, 3], dtype="float32"))
-    check_warning(lambda: jnp.array([1, 2, 3], dtype="float64"),
-                  lambda: jnp.array([1, 2, 3], dtype=float))
-    check_warning(lambda: jnp.ones(3, dtype=np.float64),
-                  lambda: jnp.ones(3))
-    check_warning(lambda: jnp.ones(3, dtype=np.float64),
-                  lambda: jnp.ones(3, dtype=float))
-    check_warning(lambda: jnp.ones_like(3, dtype=np.int64),
-                  lambda: jnp.ones_like(3, dtype=np.int32))
-    check_warning(lambda: jnp.zeros(3, dtype="int64"),
-                  lambda: jnp.zeros(3, dtype="int32"))
-    check_warning(lambda: jnp.zeros_like(3, dtype="float64"),
-                  lambda: jnp.zeros_like(3, dtype="float32"))
-    check_warning(lambda: jnp.full((2, 3), 1, dtype="int64"),
-                  lambda: jnp.full((2, 3), 1))
-    check_warning(lambda: jnp.ones(3).astype("float64"),
-                  lambda: jnp.ones(3).astype("float32"))
-    check_warning(lambda: jnp.eye(3, dtype=np.float64),
-                  lambda: jnp.eye(3))
-    check_warning(lambda: jnp.arange(3, dtype=np.float64),
-                  lambda: jnp.arange(3, dtype=np.float32))
-    check_warning(lambda: jnp.linspace(0, 3, dtype=np.float64),
-                  lambda: jnp.linspace(0, 3, dtype=np.float32))
-    check_warning(lambda: jnp.tri(2, dtype="float64"),
-                  lambda: jnp.tri(2, dtype="float32"))
-    check_warning(lambda: jnp.arange(1).astype("float64"),
-                  lambda: jnp.arange(1).astype(float))
-    check_warning(lambda: jnp.arange(1.0).astype("int64"),
-                  lambda: jnp.arange(1.0).astype(int))
+    check(lambda: jnp.array([1, 2, 3], dtype="float64"),
+          lambda: jnp.array([1, 2, 3], dtype="float32"))
+    check(lambda: jnp.array([1, 2, 3], dtype="float64"),
+          lambda: jnp.array([1, 2, 3], dtype=float))
+    check(lambda: jnp.ones(3, dtype=np.float64),
+          lambda: jnp.ones(3))
+    check(lambda: jnp.ones(3, dtype=np.float64),
+          lambda: jnp.ones(3, dtype=float))
+    check(lambda: jnp.ones_like(3, dtype=np.int64),
+          lambda: jnp.ones_like(3, dtype=np.int32))
+    check(lambda: jnp.zeros(3, dtype="int64"),
+          lambda: jnp.zeros(3, dtype="int32"))
+    check(lambda: jnp.zeros_like(3, dtype="float64"),
+          lambda: jnp.zeros_like(3, dtype="float32"))
+    check(lambda: jnp.full((2, 3), 1, dtype="int64"),
+          lambda: jnp.full((2, 3), 1))
+    check(lambda: jnp.ones(3).astype("float64"),
+          lambda: jnp.ones(3).astype("float32"))
+    check(lambda: jnp.eye(3, dtype=np.float64),
+          lambda: jnp.eye(3))
+    check(lambda: jnp.arange(3, dtype=np.float64),
+          lambda: jnp.arange(3, dtype=np.float32))
+    check(lambda: jnp.linspace(0, 3, dtype=np.float64),
+          lambda: jnp.linspace(0, 3, dtype=np.float32))
+    check(lambda: jnp.tri(2, dtype="float64"),
+          lambda: jnp.tri(2, dtype="float32"))
+    check(lambda: jnp.arange(1).astype("float64"),
+          lambda: jnp.arange(1).astype(float))
+    check(lambda: jnp.arange(1.0).astype("int64"),
+          lambda: jnp.arange(1.0).astype(int))
 
   def test_error_for_invalid_dtype(self):
     err_str = ("Error interpreting argument to .* as an abstract array. The problematic "

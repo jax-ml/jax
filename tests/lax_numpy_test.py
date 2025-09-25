@@ -2862,13 +2862,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     out_int32 = jax.eval_shape(jnp.searchsorted, a_int32, v)
     self.assertEqual(out_int32.dtype, np.int32)
 
-    if config.enable_x64.value:
+    if (
+        config.enable_x64.value
+        or config.explicit_x64_dtypes.value == config.ExplicitX64Mode.ALLOW
+    ):
       out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
       self.assertEqual(out_int64.dtype, np.int64)
-    else:
+    elif config.explicit_x64_dtypes.value == config.ExplicitX64Mode.WARN:
       with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype.*int64"):
         with self.assertRaisesRegex(OverflowError, "Python integer 2147483648 out of bounds.*"):
-          out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
+          jax.eval_shape(jnp.searchsorted, a_int64, v)
 
   @jtu.sample_product(
     dtype=inexact_dtypes,
@@ -3747,9 +3750,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     _check([jnp.array(1.0j)], jnp.complex128, False)
 
     # Lists of strongly-typed objects maintain their strong type.
-    _check([jnp.int64(1)], np.int64, False)
-    _check([jnp.float64(1)], np.float64, False)
-    _check([jnp.complex128(1)], np.complex128, False)
+    if config.explicit_x64_dtypes.value != config.ExplicitX64Mode.ERROR:
+      _check([jnp.int64(1)], np.int64, False)
+      _check([jnp.float64(1)], np.float64, False)
+      _check([jnp.complex128(1)], np.complex128, False)
 
     # Mixed inputs use JAX-style promotion.
     # (regression test for https://github.com/jax-ml/jax/issues/8945)
@@ -3845,7 +3849,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     # list of values results in promoted type.
     with jax.numpy_dtype_promotion('standard'):
-      self.assertEqual(jnp.array([0, np.float16(1)]).dtype, jnp.result_type('int64', 'float16'))
+      self.assertEqual(jnp.array([0, np.float16(1)]).dtype, jnp.result_type('int32', 'float16'))
 
     # out of bounds leads to an OverflowError
     val = jnp.iinfo(jnp.int64).min - 1
@@ -3861,6 +3865,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testIssue121(self):
     assert not np.isscalar(jnp.array(3))
+
+  @config.explicit_x64_dtypes('allow')
+  def testArrayExplicitDtypes(self):
+    self.assertEqual(jnp.array(1, dtype=jnp.int64).dtype, jnp.int64)
+    self.assertEqual(jnp.array(1.0, dtype=jnp.float64).dtype, jnp.float64)
+    if not jtu.test_device_matches(['tpu']):
+      self.assertEqual(jnp.array(1j, dtype=jnp.complex128).dtype, jnp.complex128)
 
   def testArrayOutputsArrays(self):
     assert type(jnp.array([])) is array.ArrayImpl

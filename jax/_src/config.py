@@ -1624,6 +1624,35 @@ default_dtype_bits = enum_state(
     extra_validator=_default_dtype_bits_deprecation)
 
 
+class ExplicitX64Mode(enum.IntEnum):
+  WARN = enum.auto()
+  ERROR = enum.auto()
+  ALLOW = enum.auto()
+
+  @classmethod
+  def _missing_(cls, value: object) -> ExplicitX64Mode | None:
+    if value == "warn":
+      return cls.WARN
+    if value == "error":
+      return cls.ERROR
+    if value == "allow":
+      return cls.ALLOW
+    return None
+
+
+explicit_x64_dtypes = enum_class_state(
+    name='jax_explicit_x64_dtypes',
+    enum_class=ExplicitX64Mode,
+    default=ExplicitX64Mode.WARN,
+    help=(
+        'If set to ALLOW, explicit specification of 64-bit types will be '
+        'respected even if enable_x64 is false. If set to WARN, a warning will '
+        'be issued, and if set to ERROR, an error will be raised.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
 class NumpyDtypePromotion(enum.StrEnum):
   STANDARD = 'standard'
   STRICT = 'strict'

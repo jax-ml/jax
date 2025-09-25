@@ -495,7 +495,7 @@ def result_type(*args: Any) -> DType:
     of the ``jax_enable_x64`` configuration flag, meaning that 64-bit types
     may be downcast to 32-bit:
 
-    >>> jnp.result_type('float64')
+    >>> jnp.result_type('float64')  # doctest: +SKIP
     dtype('float32')
 
     For details on 64-bit values, refer to `Sharp bits - double precision`_:
@@ -9263,7 +9263,7 @@ def _searchsorted_via_scan(unrolled: bool, sorted_arr: Array, query: Array, side
   def body_fun(state, _):
     low, high = state
     mid = low.astype(unsigned_dtype) + high.astype(unsigned_dtype)
-    mid = lax.div(mid, unsigned_dtype(2)).astype(dtype)
+    mid = lax.div(mid, array(2, dtype=unsigned_dtype)).astype(dtype)
     go_left = op(query, sorted_arr[mid])
     return (where(go_left, low, mid), where(go_left, mid, high)), ()
   n_levels = int(np.ceil(np.log2(len(sorted_arr) + 1)))

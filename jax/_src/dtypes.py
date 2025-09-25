@@ -903,6 +903,33 @@ def check_valid_dtype(dtype: DType) -> None:
     raise TypeError(f"Dtype {dtype} is not a valid JAX array "
                     "type. Only arrays of numeric types are supported by JAX.")
 
+def _maybe_canonicalize_explicit_dtype(dtype: DType, fun_name: str) -> DType:
+  "Canonicalizes explicitly requested dtypes, per explicit_x64_dtypes."
+  allow = config.explicit_x64_dtypes.value
+  if allow == config.ExplicitX64Mode.ALLOW or config.enable_x64.value:
+    return dtype
+  canonical_dtype = canonicalize_dtype(dtype)
+  if canonical_dtype == dtype:
+    return dtype
+  fun_name = f" requested in {fun_name}" if fun_name else ""
+  if allow == config.ExplicitX64Mode.ERROR:
+    msg = ("Explicitly requested dtype {}{} is not available. To enable more "
+           "dtypes, set the jax_enable_x64 or allow_explicit_x64_dtypes "
+           "configuration options."
+          "See https://github.com/jax-ml/jax#current-gotchas for more.")
+    msg = msg.format(dtype, fun_name, canonical_dtype.name)
+    raise ValueError(msg)
+  else:  # WARN
+    msg = ("Explicitly requested dtype {}{} is not available, "
+          "and will be truncated to dtype {}. To enable more dtypes, set the "
+          "jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell "
+          "environment variable. "
+          "See https://github.com/jax-ml/jax#current-gotchas for more.")
+    msg = msg.format(dtype, fun_name, canonical_dtype.name)
+    warnings.warn(msg, stacklevel=4)
+    return canonical_dtype
+
+
 _types_whose_dtype_should_not_be_canonicalized = (
     Array,
     literals.TypedNdArray,
@@ -915,7 +942,10 @@ def dtype(x: Any) -> DType:
   """Return the dtype object for a value or type.
 
   Python scalars, Python scalar types, NumPy scalar type, NumPy dtypes, and
-  non-JAX arrays will have their dtypes canonicalized."""
+  non-JAX arrays will have their dtypes canonicalized.
+
+  Note: this is not the same function as jax.numpy.dtype, which simply aliases
+  numpy.dtype."""
   # TODO(phawkins): in the future, we would like to:
   # - return the default dtype for Python scalar types and values
   # - canonicalize NumPy array and scalar types
@@ -929,7 +959,8 @@ def dtype(x: Any) -> DType:
 
     # Numpy scalar types, e.g., np.int32, np.float32
     if _issubclass(x, np.generic):
-      return canonicalize_dtype(np.dtype(x))
+      dt = np.dtype(x)
+      return _maybe_canonicalize_explicit_dtype(dt, "dtype")
 
   # Python scalar values, e.g., int(3), float(3.14)
   elif (dt := python_scalar_types_to_dtypes.get(type(x))) is not None:
@@ -939,6 +970,15 @@ def dtype(x: Any) -> DType:
   # value, that is something we respect irrespective of the x64 mode.
   elif isinstance(x, _types_whose_dtype_should_not_be_canonicalized):
     return x.dtype
+
+  if isinstance(x, str):
+    x = np.dtype(x)
+
+  if isinstance(x, np.dtype):
+    if x not in _jax_dtype_set and not issubdtype(x, extended):
+      raise TypeError(f"Value '{x}' with dtype {dt} is not a valid JAX array "
+                      "type. Only arrays of numeric types are supported by JAX.")
+    return _maybe_canonicalize_explicit_dtype(x, "dtype")
 
   if issubdtype(getattr(x, 'dtype', None), extended):
     dt = x.dtype
@@ -1031,17 +1071,7 @@ def check_and_canonicalize_user_dtype(dtype, fun_name=None) -> DType:
     )
     msg += f" in {fun_name}" if fun_name else ""
     raise TypeError(msg)
-  if np_dtype != canonicalize_dtype(np_dtype):
-    msg = ("Explicitly requested dtype {} {} is not available, "
-           "and will be truncated to dtype {}. To enable more dtypes, set the "
-           "jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell "
-           "environment variable. "
-           "See https://github.com/jax-ml/jax#current-gotchas for more.")
-    fun_name = f"requested in {fun_name}" if fun_name else ""
-    truncated_dtype = canonicalize_dtype(np_dtype)
-    warnings.warn(msg.format(dtype, fun_name, truncated_dtype.name), stacklevel=3)
-    return truncated_dtype
-  return np_dtype
+  return _maybe_canonicalize_explicit_dtype(np_dtype, fun_name)
 
 def safe_to_cast(input_dtype_or_value: Any,
                  output_dtype_or_value: Any) -> bool:
@@ -1063,13 +1093,13 @@ def safe_to_cast(input_dtype_or_value: Any,
 
   Examples:
 
-    >>> safe_to_cast('int32', 'float64')
+    >>> safe_to_cast('int16', 'float32')
     True
-    >>> safe_to_cast('float64', 'int32')
+    >>> safe_to_cast('float32', 'int16')
     False
     >>> safe_to_cast('float32', 'complex64')
     True
-    >>> safe_to_cast('complex64', 'float64')
+    >>> safe_to_cast('complex64', 'float32')
     False
   """
   input_dtype = dtype(input_dtype_or_value)

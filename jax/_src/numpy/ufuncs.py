@@ -32,6 +32,7 @@ from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax
 from jax._src.lax import other as lax_other
 from jax._src.typing import Array, ArrayLike
+from jax._src.numpy import array_constructors
 from jax._src.numpy import error as jnp_error
 from jax._src.numpy import reductions
 from jax._src.numpy.ufunc_api import ufunc
@@ -53,7 +54,7 @@ _INT_DTYPES = {
 }
 
 def _constant_like(x, const):
-  return np.array(const, dtype=dtypes.dtype(x))
+  return array_constructors.array(const, dtype=dtypes.dtype(x))
 
 def _replace_inf(x: ArrayLike) -> Array:
   return lax.select(isposinf(real(x)), lax._zeros(x), x)

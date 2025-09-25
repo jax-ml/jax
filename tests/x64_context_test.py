@@ -26,6 +26,7 @@ from jax import lax
 from jax import random
 from jax.experimental import enable_x64, disable_x64
 import jax.numpy as jnp
+from jax._src import config
 import jax._src.test_util as jtu
 from jax._src.lib import jaxlib_extension_version
 
@@ -114,10 +115,13 @@ class X64ContextTests(jtu.JaxTestCase):
   @jax.legacy_prng_key('allow')
   @jax.debug_key_reuse(False)
   @jtu.ignore_warning(category=UserWarning,
-                      message="Explicitly requested dtype float64  is not available")
+                      message="Explicitly requested dtype float64 is not available")
   def test_jit_cache(self):
     if jtu.test_device_matches(["tpu"]):
       self.skipTest("64-bit random not available on TPU")
+
+    if config.explicit_x64_dtypes.value == config.ExplicitX64Mode.ERROR:
+      self.skipTest("Test uses float64 which is not available")
 
     f = partial(random.uniform, random.PRNGKey(0), (1,), 'float64', -1, 1)
     with disable_x64():

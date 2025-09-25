@@ -733,7 +733,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
 
   def write(v: Var, val: Any) -> None:
     if config.enable_checks.value and not config.dynamic_shapes.value:
-      assert typecheck(v.aval, val), (v.aval, get_aval(val))
+      assert typecheck(v.aval, val), (v.aval, get_aval(val), val)
     env[v] = val
 
   env: dict[Var, Any] = {}

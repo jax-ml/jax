@@ -21,6 +21,7 @@ from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src import literals
 from jax._src import tree_util
 from jax._src import xla_bridge
 from jax._src.lax import lax
@@ -179,6 +180,10 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   if (not copy and isinstance(object, np.ndarray) and
       (dtype is None or dtype == object.dtype) and (ndmin <= object.ndim) and
       device is None):
+    if dtype is not None:
+      # If there is an explicit dtype, we've already canonicalized things and
+      # device_put should not canonicalize again.
+      object = literals.TypedNdArray(object, weak_type=False)
     # Keep the output uncommitted.
     return api.device_put(object)
 

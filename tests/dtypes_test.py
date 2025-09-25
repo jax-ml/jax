@@ -69,6 +69,9 @@ if dtypes.float4_e2m1fn is not None:
 float_dtypes += fp4_dtypes
 custom_float_dtypes += fp4_dtypes
 
+x64_dtypes = [np.dtype('int64'), np.dtype('uint64'), np.dtype('float64'),
+              np.dtype('complex128')]
+
 complex_dtypes = [np.dtype('complex64'), np.dtype('complex128')]
 
 
@@ -180,9 +183,12 @@ class DtypesTest(jtu.JaxTestCase):
                       message="Explicitly requested dtype.*")
   @jax.numpy_dtype_promotion('standard')
   def testBinaryPromotion(self, swap, jit):
+    if config.explicit_x64_dtypes.value == config.ExplicitX64Mode.ERROR:
+      self.skipTest("Test uses explicit x64 dtypes")
+    dfloat = dtypes.canonicalize_dtype(float)
     testcases = [
-      (jnp.array(1.), 0., jnp.float64),
-      (jnp.array(1.), jnp.array(0.), jnp.float64),
+      (jnp.array(1.), 0., dfloat),
+      (jnp.array(1.), jnp.array(0.), dfloat),
       (jnp.array(1.), jnp.array(0., dtype=jnp.float16), jnp.float16),
       (jnp.array(1.), jnp.array(0., dtype=jnp.float32), jnp.float32),
       (jnp.array(1.), jnp.array(0., dtype=jnp.float64), jnp.float64),
@@ -195,10 +201,10 @@ class DtypesTest(jtu.JaxTestCase):
       (jnp.array(1., dtype=jnp.float32), jnp.array(0., dtype=jnp.float32), jnp.float32),
       (jnp.array(1., dtype=jnp.float32), jnp.array(0., dtype=jnp.float64), jnp.float64),
       (jnp.array(1., dtype=jnp.float64), jnp.array(0., dtype=jnp.float64), jnp.float64),
-      (jnp.array([1.]), 0., jnp.float64),
-      (jnp.array([1.]), jnp.array(0.), jnp.float64),
-      (jnp.array([1.]), jnp.array(0., dtype=jnp.float16), jnp.float64),
-      (jnp.array([1.]), jnp.array(0., dtype=jnp.float32), jnp.float64),
+      (jnp.array([1.]), 0., dfloat),
+      (jnp.array([1.]), jnp.array(0.), dfloat),
+      (jnp.array([1.]), jnp.array(0., dtype=jnp.float16), dfloat),
+      (jnp.array([1.]), jnp.array(0., dtype=jnp.float32), dfloat),
       (jnp.array([1.]), jnp.array(0., dtype=jnp.float64), jnp.float64),
       (jnp.array([1.], dtype=jnp.float32), jnp.array(0., dtype=jnp.float16), jnp.float32),
       (jnp.array([1.], dtype=jnp.float16), jnp.array(0., dtype=jnp.float32), jnp.float32),
@@ -209,7 +215,10 @@ class DtypesTest(jtu.JaxTestCase):
       x, y = (y, x) if swap else (x, y)
       z = op(x, y)
       self.assertTrue(isinstance(z, jax.Array), msg=(x, y, z))
-      self.assertEqual(z.dtype, dtypes.canonicalize_dtype(dtype), msg=(x, y, z))
+      if config.explicit_x64_dtypes.value == config.ExplicitX64Mode.ALLOW:
+        self.assertEqual(z.dtype, dtype, msg=(x, y, z))
+      else:
+        self.assertEqual(z.dtype, dtypes.canonicalize_dtype(dtype), msg=(x, y, z))
 
   @jax.numpy_dtype_promotion('strict')
   def testPromoteDtypesStrict(self):
@@ -454,13 +463,29 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.dtype(dtype.type(0)),
                      dtypes.canonicalize_dtype(dtype))
 
-  @parameterized.parameters(all_dtypes)
-  def testDtypeFromDtype(self, dtype):
-    self.assertEqual(dtypes.dtype(dtype), dtypes.canonicalize_dtype(dtype))
+  @parameterized.product(
+      dtype=all_dtypes,
+      explicit_x64_dtypes=tuple(config.ExplicitX64Mode.__members__.values()),
+  )
+  def testDtypeFromDtype(self, dtype, explicit_x64_dtypes):
+    with config.explicit_x64_dtypes(explicit_x64_dtypes):
+      if explicit_x64_dtypes == config.ExplicitX64Mode.ALLOW:
+        self.assertEqual(dtypes.dtype(dtype), dtype)
+      elif explicit_x64_dtypes == config.ExplicitX64Mode.WARN:
+        with jtu.ignore_warning(category=UserWarning,
+                                message="Explicitly requested dtype.*"):
+          self.assertEqual(dtypes.dtype(dtype), dtypes.canonicalize_dtype(dtype))
+      else:
+        if config.enable_x64.value or dtype not in x64_dtypes:
+          self.assertEqual(dtypes.dtype(dtype), dtypes.canonicalize_dtype(dtype))
+        else:
+          with self.assertRaisesRegex(ValueError, "Explicitly requested dtype"):
+            dtypes.dtype(dtype)
 
   @parameterized.parameters(all_dtypes)
   def testDtypeFromString(self, dtype):
-    self.assertEqual(dtypes.dtype(str(dtype)), dtypes.canonicalize_dtype(dtype))
+    if config.explicit_x64_dtypes.value != config.ExplicitX64Mode.ERROR and dtype not in x64_dtypes:
+      self.assertEqual(dtypes.dtype(str(dtype)), dtypes.canonicalize_dtype(dtype))
 
   def testDtypeFromNone(self):
     with self.assertRaisesRegex(ValueError, "Invalid argument to dtype"):
@@ -938,6 +963,28 @@ class TestPromotionTables(jtu.JaxTestCase):
         ['f*','f*','f*','f*','f*','f*','f*','f*','f*','bf','f2','f4','f8','c4','c8','f*','f*','c*'],
         ['c*','c*','c*','c*','c*','c*','c*','c*','c*','c4','c4','c4','c8','c4','c8','c*','c*','c*'],
       ]
+    elif config.explicit_x64_dtypes.value == config.ExplicitX64Mode.ALLOW:
+      # This differs from enable_x64=True only because i4xu4 -> i4 instead of s8.
+      expected = [
+        ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*'],
+        ['u1','u1','u2','u4','u8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','u1','f*','c*'],
+        ['u2','u2','u2','u4','u8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','u2','f*','c*'],
+        ['u4','u4','u4','u4','u8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','u4','f*','c*'],
+        ['u8','u8','u8','u8','u8','f*','f*','f*','f*','bf','f2','f4','f8','c4','c8','u8','f*','c*'],
+        ['i1','i2','i4','i4','f*','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i1','f*','c*'],
+        ['i2','i2','i4','i4','f*','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','i2','f*','c*'],
+        ['i4','i4','i4','i4','f*','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','i4','f*','c*'],
+        ['i8','i8','i8','i8','f*','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','i8','f*','c*'],
+        ['bf','bf','bf','bf','bf','bf','bf','bf','bf','bf','f4','f4','f8','c4','c8','bf','bf','c4'],
+        ['f2','f2','f2','f2','f2','f2','f2','f2','f2','f4','f2','f4','f8','c4','c8','f2','f2','c4'],
+        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f8','c4','c8','f4','f4','c4'],
+        ['f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','c8','c8','f8','f8','c8'],
+        ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c8','c4','c8','c4','c4','c4'],
+        ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8'],
+        ['i*','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*'],
+        ['f*','f*','f*','f*','f*','f*','f*','f*','f*','bf','f2','f4','f8','c4','c8','f*','f*','c*'],
+        ['c*','c*','c*','c*','c*','c*','c*','c*','c*','c4','c4','c4','c8','c4','c8','c*','c*','c*'],
+      ]
     else:
       expected = [
         ['b1','u1','u2','u4','u4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i*','f*','c*'],
@@ -985,6 +1032,9 @@ class TestPromotionTables(jtu.JaxTestCase):
       if weak_type:
         typecode = typecode[:-1] + '*'
       return typecode
+
+    if config.explicit_x64_dtypes.value == config.ExplicitX64Mode.ERROR:
+      self.skipTest("Test uses x64 types")
 
     vals = [typecode_to_val(t) for t in typecodes]
     table = [[val_to_typecode(v1 + v2) for v1 in vals] for v2 in vals]
