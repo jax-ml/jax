@@ -43,11 +43,13 @@ limitations under the License.
 #include "xla/pjrt/transpose.h"
 #include "xla/primitive_util.h"
 #include "xla/python/nb_numpy.h"
+#include "xla/python/strides.h"
 #include "xla/python/types.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
+// todo:remove this
 namespace nb = nanobind;
 
 namespace jax {

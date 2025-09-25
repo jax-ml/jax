@@ -615,6 +615,7 @@ cc_library(
         "@xla//xla/pjrt:host_callback",
         "@xla//xla/pjrt:transpose",
         "@xla//xla/python:nb_numpy",
+        "@xla//xla/python:strides",
         "@xla//xla/python:types",
         "@xla//xla/service:platform_util",
     ],
