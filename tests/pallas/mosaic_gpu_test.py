@@ -2281,16 +2281,13 @@ class PallasCallTest(PallasTest):
     }:
       self.skipTest("Not the right layout for this test")
 
-    # TODO(allanrenucci, dasenov): Infer optimized transfer-compatible layout transforms.
+    # We don't infer optimized transfer-compatible transforms for load to
+    # registers with TCGEN05_TMEM_NATIVE layout.
+    # TODO(allanrenucci): Manually specify transforms when supported for WG
+    # lowering semantic.
     optimized = (
         self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane
-        or layout
-        not in {
-            plgpu.Layout.TCGEN05,
-            plgpu.Layout.TCGEN05_M64_COLLECTIVE,
-            plgpu.Layout.TCGEN05_TMEM_NATIVE,
-            plgpu.Layout._WGMMA_ACC_32BIT,
-        }
+        or layout != plgpu.Layout.TCGEN05_TMEM_NATIVE
     )
 
     shape = (128, 128)

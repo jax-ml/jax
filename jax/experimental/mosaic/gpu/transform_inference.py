@@ -34,6 +34,7 @@ from jax._src.lib.mlir.dialects import vector
 from . import fragmented_array as fa
 from . import inference_utils
 from . import layouts as layouts_lib
+from . import tcgen05
 from . import utils
 
 
@@ -207,6 +208,27 @@ def _infer_async_load_transforms(op: mgpu.AsyncLoadOp) -> OptionalTransforms:
   return None if in_transforms is None else ([in_transforms], [])
 
 
+def _is_mma_layout(layout: fa.FragmentedLayout) -> bool:
+  if not isinstance(layout, fa.TiledLayout):
+    return False
+  if layout in {
+      fa.WGMMA_LAYOUT,
+      fa.WGMMA_LAYOUT_ACC_32BIT,
+      fa.WGMMA_LAYOUT_UPCAST_2X,
+      fa.WGMMA_LAYOUT_UPCAST_4X,
+      fa.WGMMA_TRANSPOSED_LAYOUT,
+      fa.TCGEN05_LAYOUT,
+      fa.TCGEN05_TRANSPOSED_LAYOUT,
+  }:
+    return True
+  if len(layout.tiling.tiles[0]) != 2:
+    return False
+  columns = layout.tiling.tiles[0][1]
+  return columns % 16 == 0 and (
+      layout == tcgen05.fa_m64_collective_layout(columns)
+  )
+
+
 @partial(_add_transform_inference_rule, vector.LoadOp)
 @partial(_add_transform_inference_rule, vector.StoreOp)
 def _infer_vector_load_store_transforms(
@@ -230,16 +252,16 @@ def _infer_vector_load_store_transforms(
     [layout_attr] = inference_utils.in_layouts(op)
 
   layout = layouts_lib.from_layout_attr(layout_attr)
-  transforms = inference_utils.value_transforms(op.base)
-
-  if layout == fa.WGMMA_LAYOUT:
+  if _is_mma_layout(layout):
+    base_type = ir.MemRefType(op.base.type)
     layout_transforms, _ = _infer_transforms_for_mma_ref(
-        ir.MemRefType(op.base.type),
+        base_type,
         max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle,
     )
   else:
     layout_transforms = None
 
+  transforms = inference_utils.value_transforms(op.base)
   transforms = _resolve_transforms(transforms, layout_transforms)
   return None if transforms is None else ([transforms], [])
 

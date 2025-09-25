@@ -908,7 +908,7 @@ def tmem_half_lane_layout(columns, packing: int = 1) -> TMEMLayout:
   )
 
 
-def tmem_m64_collective_layout(columns, packing: int = 1) -> TMEMLayout:
+def tmem_m64_collective_layout(columns: int, packing: int = 1) -> TMEMLayout:
   """A TMEM layout used for 2CTA MMA with M=128."""
   if packing > 8 or packing.bit_count() != 1:
     raise ValueError(f"Packing must be <= 8 and a power of 2, got: {packing}")
@@ -926,10 +926,10 @@ def tmem_m64_collective_layout(columns, packing: int = 1) -> TMEMLayout:
   )
 
 
-def fa_m64_collective_layout(columns) -> fa.TiledLayout:
+def fa_m64_collective_layout(columns: int) -> fa.TiledLayout:
   """The register layout for transfers to/from tmem_m64_collective_layout."""
-  if columns % 8:
-    raise ValueError(f"Columns must be a multiple of 8, got: {columns}")
+  if columns % 16:
+    raise ValueError(f"Columns must be a multiple of 16, got: {columns}")
   return fa.TiledLayout(
       fa.Tiling((
           (TMEM_ROWS // 2, columns), (fa.WARP_SIZE, columns // 2), (8, 8), (2,)

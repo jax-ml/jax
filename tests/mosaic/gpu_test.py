@@ -3843,12 +3843,9 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       dtype=(jnp.bfloat16, jnp.int8),
   )
   def test_smem_gmem_registers_load_store(self, layout, dtype):
-    # TODO(allanrenucci, dasenov): Infer optimized transfer-compatible layout transforms.
-    optimized = layout not in {
-        RegisterLayout.TCGEN05,
-        RegisterLayout.TCGEN05_M64_COLLECTIVE,
-        RegisterLayout.TCGEN05_TMEM_NATIVE,
-    }
+    # We don't infer optimized transfer-compatible transforms for load to
+    # registers with TCGEN05_TMEM_NATIVE layout.
+    optimized = layout != RegisterLayout.TCGEN05_TMEM_NATIVE
     shape = (128, 128)
     layout_attr = layout.to_layout_attr(shape, dtype)
 

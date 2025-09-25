@@ -185,13 +185,7 @@ def is_tiled_layout(attr: ir.Attribute) -> bool:
   return bool(_tiled_layout_attr_pattern.search(str(attr)))
 
 
-def to_layout_attr(
-    layout: (
-        fa.WGSplatFragLayout
-        | fa.WGStridedFragLayout
-        | fa.TiledLayout
-    ),
-) -> ir.Attribute:
+def to_layout_attr(layout: fa.FragmentedLayout) -> ir.Attribute:
   """Constructs an MLIR attribute that corresponds to the given layout."""
   match layout:
     case fa.WGSplatFragLayout():
@@ -206,13 +200,7 @@ def to_layout_attr(
       )
 
 
-def from_layout_attr(
-    attr: ir.Attribute,
-) -> (
-    fa.WGSplatFragLayout
-    | fa.WGStridedFragLayout
-    | fa.TiledLayout
-):
+def from_layout_attr(attr: ir.Attribute) -> fa.FragmentedLayout:
   """Constructs a layout from an MLIR attribute."""
   if is_splat_fragmented_layout(attr):
     return from_splat_fragmented_layout_attr(attr)
