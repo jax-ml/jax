@@ -16,7 +16,7 @@
 from collections.abc import Callable, Sequence
 import enum
 import functools
-from typing import Any, TypeAlias
+from typing import TypeAlias, TypeVar, overload
 
 import jax
 from jax import api_util
@@ -32,8 +32,8 @@ from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic import core as tpu_core
-from jax._src.pallas.mosaic import sc_lowering
 from jax._src.pallas.mosaic import lowering as tc_lowering
+from jax._src.pallas.mosaic import sc_lowering
 from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
 from jax.experimental.mosaic.dialects import tpu
@@ -47,6 +47,8 @@ aval_to_ir_type = functools.partial(
 
 TransformedRef: TypeAlias = state_types.TransformedRef
 Ref: TypeAlias = state_types.AbstractRef | TransformedRef
+
+_T = TypeVar("_T")
 
 load_p = jax_core.Primitive("load")
 load_p.is_effectful = lambda params: True  # type: ignore
@@ -583,18 +585,32 @@ def _parallel_loop_lowering_rule(
     scf.yield_(carry_out)
   return for_op.results
 
-CarryType: TypeAlias = Any
 
+@overload
 def parallel_loop(
     lower: jax.typing.ArrayLike,
     upper: jax.typing.ArrayLike,
-    step: jax.typing.ArrayLike = 1,
+    step: jax.typing.ArrayLike = ...,
     *,
-    unroll: int = 1,
-    carry: CarryType | None = None,
-) -> Callable[[Callable[[jax.Array, CarryType], CarryType] |
-               Callable[[jax.Array], None]],
-              CarryType | None]:
+    unroll: int = ...,
+    carry: None = None,
+) -> Callable[[Callable[[jax.Array], None]], None]:
+  ...
+
+
+@overload
+def parallel_loop(
+    lower: jax.typing.ArrayLike,
+    upper: jax.typing.ArrayLike,
+    step: jax.typing.ArrayLike = ...,
+    *,
+    unroll: int = ...,
+    carry: _T,
+) -> Callable[[Callable[[jax.Array, _T], _T]], _T]:
+  ...
+
+
+def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
   """A parallel loop decorator.
 
   The decorated function forms the loop body. It is called with the current
@@ -609,46 +625,42 @@ def parallel_loop(
   Cross-iteration dependencies traceable via carried values are allowed. Refs
   may not be carried.
 
-  Safe usage of carried value:
-  ```
-  @parallel_loop(0, 64, step=8, carry=jnp.int32(1))
-  def body(i, j):
-    # Writes are independent across iterations.
-    x_ref[pl.ds(i, 8)] = j + jnp.arange(8)
-    return j + 1
-  ```
+  Safe usage of carried value::
 
-  Any pytree can be carried. The final value is returned by the decorator:
-  ```
-  def body(i, my_tree: MyTree):
-    # Writes are independent across iterations.
-    x_ref[pl.ds(i, 8)] = my_tree.transform(jnp.arange(8))
-    return my_tree.step(i)
-  final_value = parallel_loop(0, 64, step=8, carry=MyTree())(body)
-  ```
+    @parallel_loop(0, 64, step=8, carry=jnp.int32(1))
+    def body(i, j):
+      # Writes are independent across iterations.
+      x_ref[pl.ds(i, 8)] = j + jnp.arange(8)
+      return j + 1
 
-  Undefined result:
-  ```
-  @parallel_loop(0, 64, step=4, carry=jnp.int32(1))
-  def body(i, j):
-    # Because the step size is 4, the array written is of size 8, and loop
-    # iterations may be reordered, the values in indices 4-59 of x_ref are
-    # unspecified after the loop. (The values in 0-3 and 60-63 are only written
-    # by the first and last iterations, so are well-defined.)
-    x_ref[pl.ds(i, 8)] = j + jnp.arange(8)
-    return j + 1
-  ```
+  Any pytree can be carried. The final value is returned by the decorator::
 
-  Unsafe read of "previous" iteration's write (don't do this):
-  ```
-  @parallel_loop(0, 64, 8, carry=jnp.int32(1))
-  def body(i, j):
-    # Unsafe because it depends on the side-effect of "previous" iterations,
-    # which may be executed in parallel or reordered.
-    mask = x_ref[pl.ds(0, 8)] < j
-    x_ref[pl.ds(0, 8)] += jnp.where(mask, j + jnp.arange(8), 0)
-    return j + 1
-  ```
+    def body(i, my_tree: MyTree):
+      # Writes are independent across iterations.
+      x_ref[pl.ds(i, 8)] = my_tree.transform(jnp.arange(8))
+      return my_tree.step(i)
+    final_value = parallel_loop(0, 64, step=8, carry=MyTree())(body)
+
+  Undefined result::
+
+    @parallel_loop(0, 64, step=4, carry=jnp.int32(1))
+    def body(i, j):
+      # Because the step size is 4, the array written is of size 8, and loop
+      # iterations may be reordered, the values in indices 4-59 of x_ref are
+      # unspecified after the loop. (The values in 0-3 and 60-63 are only
+      # written by the first and last iterations, so are well-defined.)
+      x_ref[pl.ds(i, 8)] = j + jnp.arange(8)
+      return j + 1
+
+  Unsafe read of "previous" iteration's write (don't do this)::
+
+    @parallel_loop(0, 64, 8, carry=jnp.int32(1))
+    def body(i, j):
+      # Unsafe because it depends on the side-effect of "previous" iterations,
+      # which may be executed in parallel or reordered.
+      mask = x_ref[pl.ds(0, 8)] < j
+      x_ref[pl.ds(0, 8)] += jnp.where(mask, j + jnp.arange(8), 0)
+      return j + 1
 
   Args:
     lower: The starting value of the loop index.
@@ -661,21 +673,19 @@ def parallel_loop(
     A decorator that executes the given function in a parallel loop.
   """
 
-  def decorator(
-      body: (Callable[[jax.Array, CarryType], CarryType] |
-             Callable[[jax.Array], None])
-  ) -> CarryType | None:
-    carries, carry_tree = jax.tree.flatten(carry)
+  def decorator(body):
+    flat_carries, carry_tree = jax.tree.flatten(carry)
     def wrapped(idx, *carries):
       if carry is None:
-        return body(idx) or ()  # type: ignore
-      return jax.tree.leaves(body(idx, carry_tree.unflatten(carries)))  # type: ignore
+        body(idx)
+        return []
+      return jax.tree.leaves(body(idx, carry_tree.unflatten(carries)))
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
         lu.wrap_init(
             wrapped,
             debug_info=api_util.debug_info("parallel_loop", body, (), {}),
         ),
-        [pallas_core.index_map_grid_aval, *(c.aval for c in carries)],
+        [pallas_core.index_map_grid_aval, *(c.aval for c in flat_carries)],
     )
     disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(
         jaxpr.effects
@@ -684,16 +694,16 @@ def parallel_loop(
       raise NotImplementedError(
           f"Effects not supported in parallel_loop: {disallowed_effects}"
       )
-    flat_args, tree = jax.tree.flatten((lower, upper, step, consts, carries))
+    flat_args, tree = jax.tree.flatten(
+        (lower, upper, step, consts, flat_carries)
+    )
     flat_result = parallel_loop_p.bind(
-        *flat_args,
-        tree=tree,
-        unroll=unroll,
-        jaxpr=jaxpr,
+        *flat_args, tree=tree, unroll=unroll, jaxpr=jaxpr
     )
     if carry is None:
       return None
     return carry_tree.unflatten(flat_result)
+
   return decorator
 
 
