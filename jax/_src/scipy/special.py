@@ -2106,12 +2106,39 @@ def expi(x: ArrayLike) -> Array:
   return jnp.piecewise(x_arr, [x_arr < 0], [_expi_neg, _expi_pos])
 
 def sici(x: ArrayLike) -> tuple[Array, Array]:
+    r"""Sine and cosine integrals.
+
+    JAX implementation of :obj:`scipy.special.sici`
+
+    .. math::
+
+      \mathrm{Si}(x) = \int_0^x \frac{\sin t}{t} \, dt
+
+    .. math::
+
+      \mathrm{Ci}(x) = \gamma + \ln(x) + \int_0^x \frac{\cos t - 1}{t} \, dt
+
+    where :math:`\gamma` is the Euler–Mascheroni constant.
+
+    Args:
+      x: arraylike, real-valued
+
+    Returns:
+      array of shape ``(..., 2)``, where the last dimension contains
+      ``[Si(x), Ci(x)]``
+
+    See also:
+      - :func:`jax.scipy.special.expi`
+    """
+
+    # x = promote_dtypes_inexact(x)
+
     gamma = -digamma(1) # Euler-Mascheroni constant
 
-    def Sinc(t):
+    def sinc(t):
         return jnp.where(t == 0, 1.0, jnp.sin(t)/t)
 
-    def Cosc(t):
+    def cosc(t):
         return jnp.where(t == 0, 0.0, (jnp.cos(t)-1)/t)
 
     def integral_enumerate(f, a, b, n=2000):
@@ -2121,10 +2148,10 @@ def sici(x: ArrayLike) -> tuple[Array, Array]:
         return jnp.sum(vals) * dx
 
     def si_val(x):
-        return integral_enumerate(Sinc, 1e-8, x)
+        return integral_enumerate(sinc, 1e-8, x)
 
     def ci_val(x):
-        return gamma + jnp.log(jnp.abs(x)) + integral_enumerate(Cosc, 1e-8, jnp.abs(x))
+        return gamma + jnp.log(jnp.abs(x)) + integral_enumerate(cosc, 1e-8, jnp.abs(x))
 
     si = jnp.piecewise(
         x,
