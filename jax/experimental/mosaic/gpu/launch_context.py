@@ -364,10 +364,10 @@ class Scratch:
     assert alloc_op is not None
     [alloc_user] = alloc_op.result.uses
     load_op = alloc_user.owner
-    assert isinstance(load_op, llvm.LoadOp)
+    assert load_op.operation.name == "llvm.load"
     [load_op_user] = load_op.result.uses
     device_ptr = load_op_user.owner
-    assert isinstance(device_ptr, builtin.UnrealizedConversionCastOp)
+    assert device_ptr.operation.name == "builtin.unrealized_conversion_cast"
     return alloc_op, load_op, device_ptr.result
 
   def device_ptr(self) -> ir.Value:
