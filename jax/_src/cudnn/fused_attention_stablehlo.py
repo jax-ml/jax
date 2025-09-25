@@ -89,12 +89,7 @@ def has_padding(mask_type: MaskType) -> bool:
   return mask_type == MaskType.PADDING or mask_type == MaskType.PADDING_CAUSAL
 
 def should_export_dbias(bias_shape, query_shape, layout) -> bool:
-  b_B, b_N, _, _ = bias_shape
-  if layout == AttentionLayout.BNTH.value:
-    _, q_N, _, _ = query_shape
-  else:
-    _, _, q_N, _ = query_shape
-  return b_B == 1 and b_N == q_N
+  return True
 
 def get_large_negative_number(dtype):
   # temp WAR as cuDNN has a bug for subtraction between two large negative value
@@ -872,11 +867,6 @@ def _dot_product_attention_bwd_batcher(
     *_, S, _, _ = key.shape
   B = math.prod(Bs)
   has_bias, has_dbias = variadic_args
-  # Reset the has_dbias if the combined batch size is not 1, because cuDNN only
-  # supports dbias with a single batch. In this case, an all-zero dbias will be
-  # appended instead.
-  if B > 1:
-    variadic_args = (has_bias, False)
   original_query_shape = query.shape
   original_key_shape = key.shape
   original_value_shape = value.shape
@@ -1103,10 +1093,21 @@ def _dot_product_attention_bwd_partition(
     _, has_dbias = variadic_args
     if has_dbias:
       query_spec = arg_shardings[0].spec
-      batch_spec = query_spec[0]
-      local_dbias = grads[3]
-      global_dbias = lax_parallel.psum(local_dbias, batch_spec)
-      grads = grads[:3] + [global_dbias]
+      bias_spec = arg_shardings[3].spec
+      if layout == AttentionLayout.BNTH.value:
+        q_batch_spec, q_num_head_spec, _, _ = query_spec
+      else:
+        q_batch_spec, _, q_num_head_spec, _ = query_spec
+      b_batch_spec, b_num_head_spec, _, _ = bias_spec
+
+      dbias = grads[3]
+      if q_batch_spec is not None and b_batch_spec is None:
+        # bias is replicated alone batch dim
+        dbias = lax_parallel.psum(dbias, q_batch_spec)
+      if q_num_head_spec is not None and b_num_head_spec is None:
+        # bias is replicated alone num_head dim
+        dbias = lax_parallel.psum(dbias, q_num_head_spec)
+      grads = grads[:3] + [dbias]
     return grads
   return mesh, sharded_impl, out_shardings, arg_shardings
 
