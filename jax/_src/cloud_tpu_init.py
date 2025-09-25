@@ -38,9 +38,16 @@ def maybe_import_libtpu():
 
 
 def get_tpu_library_path() -> str | None:
-  path_from_env = os.getenv("TPU_LIBRARY_PATH")
-  if path_from_env is not None and os.path.isfile(path_from_env):
-    return path_from_env
+  path_from_env = os.getenv('TPU_LIBRARY_PATH')
+  if path_from_env is not None:
+    if os.path.isfile(path_from_env):
+      return path_from_env
+    warning_message = (
+        f'TPU_LIBRARY_PATH is set to a non-existent path: {path_from_env}.'
+        ' Falling back to default libtpu path. Please unset TPU_LIBRARY_PATH'
+        ' or set it to a valid path.'
+    )
+    warnings.warn(warning_message)
 
   libtpu_module = maybe_import_libtpu()
   if libtpu_module is not None:
@@ -99,8 +106,13 @@ def cloud_tpu_init() -> None:
   os.environ.setdefault('TPU_ML_PLATFORM', 'JAX')
   os.environ.setdefault('TPU_ML_PLATFORM_VERSION', version.__version__)
   os.environ.setdefault('ENABLE_RUNTIME_UPTIME_TELEMETRY', '1')
-  if '--xla_tpu_use_enhanced_launch_barrier' not in os.environ.get('LIBTPU_INIT_ARGS', ''):
-    os.environ['LIBTPU_INIT_ARGS'] = os.environ.get('LIBTPU_INIT_ARGS','') + ' --xla_tpu_use_enhanced_launch_barrier=true'
+  if '--xla_tpu_use_enhanced_launch_barrier' not in os.environ.get(
+      'LIBTPU_INIT_ARGS', ''
+  ):
+    os.environ['LIBTPU_INIT_ARGS'] = (
+        os.environ.get('LIBTPU_INIT_ARGS', '')
+        + ' --xla_tpu_use_enhanced_launch_barrier=true'
+    )
 
   # this makes tensorstore serialization work better on TPU
   os.environ.setdefault('TENSORSTORE_CURL_LOW_SPEED_TIME_SECONDS', '60')
@@ -114,13 +126,13 @@ def cloud_tpu_init() -> None:
 
   if config.jax_pjrt_client_create_options.value is None:
     config.update(
-      'jax_pjrt_client_create_options',
-      f'ml_framework_name:JAX;ml_framework_version:{version.__version__}'
-      )
+        'jax_pjrt_client_create_options',
+        f'ml_framework_name:JAX;ml_framework_version:{version.__version__}',
+    )
 
 
 def is_cloud_tpu_older_than(year: int, month: int, day: int, backend):
-  if "TFRT TPU" not in backend.platform_version:
+  if 'TFRT TPU' not in backend.platform_version:
     return False
   # The format of Cloud TPU platform_version is like:
   # PJRT C API
