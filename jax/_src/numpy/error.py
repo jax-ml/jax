@@ -109,6 +109,8 @@ def _check_precondition_oob_gather(
   """Check for out of bounds errors before calling `lax.gather`."""
   if config.error_checking_behavior_oob.value == "ignore":
     return
+  if not np.size(gather_indices):
+    return
 
   shape = array_constructors.array(shape, dtype='int32')
   error_check_lib.set_error_if(
