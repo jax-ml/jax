@@ -1415,3 +1415,5 @@ class TMEMLayout(enum.Enum):
         return tcgen05.scales_layout()
       case TMEMLayout.SPARSE_METADATA_LAYOUT:
         return tcgen05.sparse_meta_layout()
+
+TRY_CLUSTER_CANCEL_RESULT = SMEM((16,), jnp.int8)
