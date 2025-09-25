@@ -654,6 +654,16 @@ def memref_unsqueeze(ref: ir.Value, dim) -> ir.Value:
     return memref_unfold(ref, dim, (1, None))
 
 
+def is_memref_transposed(ref: ir.MemRefType) -> bool:
+  strides, _ = ref.get_strides_and_offset()
+  prev_stride = math.inf
+  for stride in strides:
+    if stride > prev_stride:
+      return True
+    prev_stride = stride
+  return False
+
+
 def memref_transpose(ref: ir.Value, permutation: Sequence[int]) -> ir.Value:
   ref_ty = ir.MemRefType(ref.type)
   strides, offset = ref_ty.get_strides_and_offset()

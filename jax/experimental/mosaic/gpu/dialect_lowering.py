@@ -751,23 +751,13 @@ def swizzle_and_transforms_from_transforms_attr(
   return swizzle or mgpu.SwizzlingMode.kNoSwizzle, tuple(gmem_transforms)
 
 
-def _is_memref_transposed(mem_ref_type: ir.MemRefType) -> bool:
-  strides, _ = mem_ref_type.get_strides_and_offset()
-  prev_stride = math.inf
-  for stride in strides:
-    if stride > prev_stride:
-      return True
-    prev_stride = stride
-  return False
-
-
 def transformed_smem_ref_type(
     ref_ty: ir.MemRefType,
     transforms: tuple[launch_context.MemRefTransform, ...],
 ) -> ir.MemRefType:
   """Returns the transformed ref type for the given logical ref and transforms.
   """
-  transposed = _is_memref_transposed(ref_ty)
+  transposed = utils.is_memref_transposed(ref_ty)
   if not transforms and not transposed:
     return ref_ty
 
@@ -1368,7 +1358,7 @@ def _memref_subview_op_lowering_rule(
         "SubViewOp only supports static strides of 1."
     )
 
-  if _is_memref_transposed(op.source.type):
+  if utils.is_memref_transposed(op.source.type):
     raise NotImplementedError(
         "SubViewOp does not support transposed memrefs."
     )

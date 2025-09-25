@@ -126,8 +126,7 @@ def _infer_transforms_for_mma_ref(
     raise ValueError(f"Expected a 2D memref, got {ref_ty}")
 
   element_bytewidth = utils.bytewidth(ref_ty.element_type)
-  strides, _ = ref_ty.get_strides_and_offset()
-  transposed = strides[0] < strides[1]
+  transposed = utils.is_memref_transposed(ref_ty)
   minor_dim = ref_ty.shape[0 if transposed else 1]
   major_tiling = 8
 
