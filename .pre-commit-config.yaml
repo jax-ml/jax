@@ -31,12 +31,12 @@ repos:
     files: \.py$
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: 54a455f7ce629598b7535ff828fd5fb796f4b83f  # frozen: v0.12.9
+  rev: a113f03edeabb71305f025e6e14bd2cd68660e29  # frozen: v0.13.1
   hooks:
   - id: ruff
 
 - repo: https://github.com/pre-commit/mirrors-mypy
-  rev: '412de98d50e846f31ea6f4b0ad036f2c24a7a024'  # frozen: v1.17.1
+  rev: 9f70dc58c23dfcca1b97af99eaeee3140a807c7e  # frozen: v1.18.2
   hooks:
   - id: mypy
     files: (jax/|tests/typing_test\.py)
