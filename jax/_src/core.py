@@ -1743,13 +1743,11 @@ def shaped_abstractify(x):
   if isinstance(x, AbstractValue):
     return x
   if hasattr(x, '__jax_array__'):
-    deprecations.warn(
-      'jax-abstract-dunder-array',
-      ('Triggering of __jax_array__() during abstractification is deprecated.'
-       ' To avoid this error, either explicitly convert your object using'
-       ' jax.numpy.array(), or register your object as a pytree.'),
-      stacklevel=6)
-    return shaped_abstractify(x.__jax_array__())
+    raise ValueError(
+        'Triggering __jax_array__() during abstractification is no longer'
+        ' supported. To avoid this error, either explicitly convert your object'
+        ' using jax.numpy.array(), or register your object as a pytree.'
+    )
   if hasattr(x, 'dtype'):
     aval = ShapedArray(
         np.shape(x),
@@ -1768,7 +1766,8 @@ def abstractify(x):
   return get_aval(x)
 
 
-def get_aval(x):
+# TODO(phawkins): the return type should be AbstractValue.
+def get_aval(x: Any) -> Any:
   typ = type(x)
   if (aval_fn := pytype_aval_mappings.get(typ)):  # fast path
     return aval_fn(x)
@@ -1776,13 +1775,11 @@ def get_aval(x):
     if (aval_fn := pytype_aval_mappings.get(t)):
       return aval_fn(x)
   if hasattr(x, '__jax_array__'):
-    deprecations.warn(
-      'jax-abstract-dunder-array',
-      ('Triggering of __jax_array__() during abstractification is deprecated.'
-       ' To avoid this error, either explicitly convert your object using'
-       ' jax.numpy.array(), or register your object as a pytree.'),
-      stacklevel=6)
-    return get_aval(x.__jax_array__())
+    raise ValueError(
+        'Triggering __jax_array__() during abstractification is no longer'
+        ' supported. To avoid this error, either explicitly convert your object'
+        ' using jax.numpy.array(), or register your object as a pytree.'
+    )
   raise TypeError(f"Argument '{x}' of type '{typ}' is not a valid JAX type")
 
 typeof = get_aval
