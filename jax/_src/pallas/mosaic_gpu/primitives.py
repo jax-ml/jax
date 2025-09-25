@@ -837,7 +837,10 @@ def _barrier_arrive_lowering(
     # We only do a single arrival for barriers with orders_tensor_core=True,
     # so we need to perfom a separate warpgroup barrier.
     mgpu_utils.warpgroup_barrier()
-    barrier.arrive(orders_tensor_core=True, predicate=ctx.module_ctx.single_lane_predicate)
+    if isinstance(barrier, mgpu.CollectiveBarrierRef):
+      barrier.arrive(orders_tensor_core=True)
+    else:
+      barrier.arrive(orders_tensor_core=True, predicate=ctx.module_ctx.single_lane_predicate)
   else:
     barrier.arrive()
   return ()
