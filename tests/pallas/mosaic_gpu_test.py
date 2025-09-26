@@ -4483,7 +4483,7 @@ class WarpSpecializedPipelineTest(PallasTest):
       self, m, n, repeats, manual_consumed_barriers, max_concurrent_steps
   ):
     x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float16)
-    blk_m = blk_n = 64
+    blk_m = blk_n = 32
 
     def copy_kernel(_, x_smem, o_smem, o_last_block_smem, *consumed_barriers):
       wg_idx = lax.axis_index("wg")
@@ -4723,7 +4723,7 @@ class WarpSpecializedPipelineTest(PallasTest):
   def test_different_delay_release(self):
     self.skip_if_wg_semantics()  # Crashes!
     m, n = 128, 64
-    blk_m, blk_n = 32, 64
+    blk_m, blk_n = 32, 32
     in_specs = [
         plgpu.BlockSpec(
             block_shape=(blk_m, blk_n),
