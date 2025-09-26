@@ -3768,24 +3768,28 @@ def set_in_transforms(
   op.attributes["in_transforms"] = ir.ArrayAttr.get(in_transforms)
 
 
-def vector_load(ref: ir.Value, optimized: bool = True) -> ir.Value:
+def vector_load(ref: ir.Value, optimized: bool | None = None) -> ir.Value:
   """Loads from the given SMEM/GMEM reference."""
   ref_type = ir.MemRefType(ref.type)
   zero = arith.constant(ir.IndexType.get(), 0)
   zero_indices = [zero] * len(ref_type.shape)
   vector_type = ir.VectorType.get(ref_type.shape, ref_type.element_type)
   op = vector.LoadOp(vector_type, ref, zero_indices)
-  op.attributes["optimized"] = ir.BoolAttr.get(optimized)
+  if optimized is not None:
+    op.attributes["optimized"] = ir.BoolAttr.get(optimized)
   return op.result
 
 
-def vector_store(reg: ir.Value, ref: ir.Value, optimized: bool = True) -> None:
+def vector_store(
+    reg: ir.Value, ref: ir.Value, optimized: bool | None = None
+) -> None:
   """Stores the given vector to the given SMEM/GMEM reference."""
   reg_type = ir.VectorType(reg.type)
   zero = arith.constant(ir.IndexType.get(), 0)
   zero_indices = [zero] * len(reg_type.shape)
   op = vector.StoreOp(reg, ref, zero_indices)
-  op.attributes["optimized"] = ir.BoolAttr.get(optimized)
+  if optimized is not None:
+    op.attributes["optimized"] = ir.BoolAttr.get(optimized)
 
 
 class RegisterLayout(enum.Enum):
@@ -3841,11 +3845,15 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
   @parameterized.product(
       layout=tuple(RegisterLayout),
       dtype=(jnp.bfloat16, jnp.int8),
+      optimized=(True, False, None),
   )
-  def test_smem_gmem_registers_load_store(self, layout, dtype):
-    # We don't infer optimized transfer-compatible transforms for load to
+  def test_smem_gmem_registers_load_store(self, layout, dtype, optimized):
+    # We don't infer optimized transfer-compatible transforms for load/store to
     # registers with TCGEN05_TMEM_NATIVE layout.
-    optimized = layout != RegisterLayout.TCGEN05_TMEM_NATIVE
+    if optimized and layout == RegisterLayout.TCGEN05_TMEM_NATIVE:
+      self.skipTest(
+          "Optimized loads not supported for TCGEN05_TMEM_NATIVE layout"
+      )
     shape = (128, 128)
     layout_attr = layout.to_layout_attr(shape, dtype)
 
@@ -3853,7 +3861,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       del ctx
 
       # GMEM -> Registers
-      reg = vector_load(param, optimized=False)
+      reg = vector_load(param)
       reg = mgpu_dialect.layout_cast(reg, layout_attr)
 
       # Registers -> SMEM
@@ -3864,7 +3872,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       reg = mgpu_dialect.layout_cast(reg, layout_attr)
 
       # Registers -> GMEM
-      vector_store(reg, result, optimized=False)
+      vector_store(reg, result)
 
     jax_shape = jax.ShapeDtypeStruct(shape, dtype)
     kernel = mgpu.as_gpu_kernel(
@@ -3914,7 +3922,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       add = arith.addf(a, b)
 
       # Registers -> GMEM
-      vector_store(add, result, optimized=False)
+      vector_store(add, result)
 
     dtype = jnp.bfloat16
     shape = (128, 128)
@@ -4183,7 +4191,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       expanded = mgpu_dialect.broadcast_in_dim(out_type, cast, bcast_dims)
 
       # Registers -> GMEM
-      vector_store(expanded, result_gmem_ref, optimized=False)
+      vector_store(expanded, result_gmem_ref)
 
     dtype = jnp.float32
     kernel = mgpu.as_gpu_kernel(
@@ -4277,7 +4285,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       reduced = vector.multi_reduction(kind, source, acc, red_dims)
 
       # Registers -> GMEM
-      vector_store(reduced, result_gmem_ref, optimized=False)
+      vector_store(reduced, result_gmem_ref)
 
     kernel = mgpu.as_gpu_kernel(
         body,
@@ -4716,7 +4724,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       del ctx
 
       # GMEM -> registers
-      r_in = vector_load(input, optimized=False)
+      r_in = vector_load(input)
 
       # registers -> TMEM
       mgpu_dialect.async_store_tmem(r_in, tmem)
@@ -4728,7 +4736,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       # https://docs.jax.dev/en/latest/pallas/gpu/reference.html#allocating-the-accumulator-using-tmem
 
       # Registers -> GMEM
-      vector_store(r_out, result, optimized=False)
+      vector_store(r_out, result)
 
     jax_shape = jax.ShapeDtypeStruct(shape, dtype)
     kernel = mgpu.as_gpu_kernel(
@@ -4801,7 +4809,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
 
       if a_in_tmem:
         # GMEM -> Registers -> TMEM
-        reg = vector_load(a_gmem, optimized=False)
+        reg = vector_load(a_gmem)
         mgpu_dialect.async_store_tmem(reg, a_tmem)
         tcgen05.commit_tmem()
       else:
@@ -4829,7 +4837,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
 
       # TMEM -> Registers -> GMEM
       r_out = mgpu_dialect.async_load_tmem(acc_tmem)
-      vector_store(r_out, result_gmem, optimized=False)
+      vector_store(r_out, result_gmem)
 
     # Required order: SMEM -> Barrier -> TMEM.
     scratch_shape = [
@@ -4921,7 +4929,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       if a_in_tmem:
         # GMEM -> Registers -> TMEM
         sliced_a_gmem = memref_slice(a_gmem, ds(m_index, m // 2))
-        reg = vector_load(sliced_a_gmem, optimized=False)
+        reg = vector_load(sliced_a_gmem)
         mgpu_dialect.async_store_tmem(reg, a_tmem)
         tcgen05.commit_tmem()
       else:
@@ -4959,7 +4967,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       # TMEM -> Registers -> GMEM
       r_out = mgpu_dialect.async_load_tmem(acc_tmem)
       sliced_result_gmem = memref_slice(result_gmem, ds(m_index, m // 2))
-      vector_store(r_out, sliced_result_gmem, optimized=False)
+      vector_store(r_out, sliced_result_gmem)
 
     # Required order: SMEM -> Barrier -> TMEM.
     scratch_shape = [
@@ -5447,15 +5455,15 @@ if hp is not None:
         def body(ctx, input, result, smem):
           del ctx
           # GMEM -> Registers
-          reg = vector_load(input, optimized=False)
+          reg = vector_load(input)
           reg = mgpu_dialect.layout_cast(reg, layout_attr)
           # Registers -> SMEM
-          vector_store(reg, smem, optimized=False)
+          vector_store(reg, smem)
           # SMEM -> Registers
-          reg = vector_load(smem, optimized=False)
+          reg = vector_load(smem)
           reg = mgpu_dialect.layout_cast(reg, layout_attr)
           # Registers -> GMEM
-          vector_store(reg, result, optimized=False)
+          vector_store(reg, result)
 
         jax_shape = jax.ShapeDtypeStruct(shape, dtype)
         kernel = mgpu.as_gpu_kernel(

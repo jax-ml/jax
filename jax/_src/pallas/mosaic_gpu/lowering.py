@@ -1717,14 +1717,8 @@ def _swap_lowering_rule_wg(
   if shape:
     zero_index = arith_dialect.constant(ir.IndexType.get(), 0)
     indices = [zero_index] * len(shape)
-    # TODO(allanrenucci): False is not the right default. It doesn't only
-    # silence the check, but it also does not even try to optimize the
-    # transfer, even if it would be possible.
-    load_op = vector_dialect.LoadOp(ty, x_smem, indices)
-    load_op.attributes["optimized"] = ir.BoolAttr.get(False)
-    old_value = load_op.result
-    store_op = vector_dialect.StoreOp(value, x_smem, indices)
-    store_op.attributes["optimized"] = ir.BoolAttr.get(False)
+    old_value = vector_dialect.load(ty, x_smem, indices)
+    vector_dialect.store(value, x_smem, indices)
   else:
     old_value = memref_dialect.load(x_smem, [])
     memref_dialect.store(value, x_smem, [])

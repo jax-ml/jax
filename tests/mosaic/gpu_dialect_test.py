@@ -1239,11 +1239,8 @@ class DialectLoweringTest(MosaicGpuTest):
       ref = llvm.mlir_undef(ir.MemRefType.get(shape, elt_ty))
       zero_index = arith.constant(ir.IndexType.get(), 0)
       ty = ir.VectorType.get(shape, elt_ty)
-      optimized = ir.BoolAttr.get(True)
-      load_op = vector.LoadOp(ty, ref, [zero_index, zero_index])
-      load_op.attributes["optimized"] = optimized
-      store_op = vector.StoreOp(load_op.result, ref, [zero_index, zero_index])
-      store_op.attributes["optimized"] = optimized
+      reg = vector.load(ty, ref, [zero_index, zero_index])
+      vector.store(reg, ref, [zero_index, zero_index])
 
     mgpu.infer_layout(self.module)
     mgpu.lower_mgpu_dialect(self.module, None)
