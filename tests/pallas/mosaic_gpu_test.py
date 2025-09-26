@@ -2201,25 +2201,16 @@ class PallasCallTest(PallasTest):
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_allclose(x_result, op(x, axis=axis), atol=1e-5)
 
-  @parameterized.product(
-      layout=(
-          plgpu.Layout.WGMMA,
-          plgpu.Layout.TCGEN05,
-          plgpu.Layout.TCGEN05_TMEM_NATIVE,
-          plgpu.Layout.TCGEN05_M64_COLLECTIVE(128),
-      ),
-      axis=(0, 1),
-      hint=(True, False),
-  )
-  def test_broadcast_in_dim(self, layout, axis, hint):
+  def _test_broadcast_in_dim_base(self, shape, layout, *, axis, hint):
+    assert len(shape) == 2
     self.skip_if_wg_semantics()  # Broadcast in dim with non-trivial broadcast dimensions is not supported.
 
     @functools.partial(
         self.kernel,
-        out_shape=jnp.zeros((128, 128), jnp.float32),
+        out_shape=jnp.zeros(shape, jnp.float32),
         scratch_shapes=[
-            plgpu.SMEM((128,), jnp.float32),
-            plgpu.SMEM((128, 128), jnp.float32),
+            plgpu.SMEM((shape[1 - axis],), jnp.float32),
+            plgpu.SMEM(shape, jnp.float32),
             plgpu.Barrier(),
         ],
     )
@@ -2228,7 +2219,7 @@ class PallasCallTest(PallasTest):
       plgpu.barrier_wait(barrier_ref)
       reduced_layout = layout.reduce(axis)
       reduced = plgpu.load(smem_ref, (), layout=reduced_layout)
-      broadcasted = lax.broadcast_in_dim(reduced, (128, 128), [1 - axis])
+      broadcasted = lax.broadcast_in_dim(reduced, shape, [1 - axis])
       if hint:
         broadcasted = plgpu.layout_cast(broadcasted, layout)
       # Note that without the hint, the layout of broadcasted is not guaranteed
@@ -2241,8 +2232,28 @@ class PallasCallTest(PallasTest):
     x = jax.random.uniform(jax.random.key(0), shape=(128,), dtype=jnp.float32)
     x_result = jax.block_until_ready(kernel(x))
     expected = jnp.expand_dims(x, axis=axis)
-    expected = jnp.broadcast_to(expected, (128, 128))
+    expected = jnp.broadcast_to(expected, shape)
     np.testing.assert_array_equal(x_result, expected)
+
+  @parameterized.product(
+      layout=(
+          plgpu.Layout.WGMMA,
+          plgpu.Layout.TCGEN05,
+          plgpu.Layout.TCGEN05_TMEM_NATIVE,
+          plgpu.Layout.TCGEN05_M64_COLLECTIVE(128),
+      ),
+      axis=(0, 1),
+      hint=(True, False),
+  )
+  def test_broadcast_in_dim(self, layout, axis, hint):
+    self._test_broadcast_in_dim_base((128, 128), layout, axis=axis, hint=hint)
+
+  # Regression test for a crash when using a small shape.
+  def test_broadcast_in_dim_does_not_crash_on_small_shape(self):
+    shape = (128, 4)
+    self._test_broadcast_in_dim_base(
+        shape, plgpu.Layout.TCGEN05_TMEM_NATIVE, axis=1, hint=False
+    )
 
   def test_broadcast_in_dim_tcgen05_native_layout(self):
     self.skip_if_wg_semantics()  # Broadcast in dim with non-trivial broadcast dimensions is not supported.
