@@ -79,6 +79,8 @@ jobs:
             nvidia-smi
             nvidia-smi -i 0 --query-gpu=timestamp,name,utilization.memory,memory.used,memory.total,pci.bus_id,driver_version,utilization.gpu --format=csv -l 1 -f memory_log.csv &
             smi_pid=$!
+            echo "$smi_pid"
+            ps aux
             bazel test \
             --config=ci_linux_x86_64_cuda \
             --config=ci_rbe_cache \
