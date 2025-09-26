@@ -75,6 +75,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_future.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/primitive_util.h"
 #include "xla/python/ifrt/array.h"
@@ -815,22 +816,37 @@ absl::Status PyArray::BlockUntilReady() const {
 }
 
 absl::StatusOr<size_t> PyArray::GetOnDeviceSizeInBytes() {
-  if (ifrt_array() == nullptr) {
+  const ifrt::Array* ifrt_array = this->ifrt_array();
+  if (ifrt_array == nullptr) {
     return xla::InvalidArgument(
         "GetOnDeviceSizeInBytes() called on deleted or donated buffer");
   }
   // TODO(emilyaf): Support this method for non-addressable arrays by calling
   // py_client()->pjrt_client()->GetOnDeviceBytesCount once all clients
   // implement it.
-  if (ifrt_array()->sharding().devices()->AddressableDeviceList()->size() ==
-      0) {
+  if (ifrt_array->sharding().devices()->AddressableDeviceList()->empty()) {
     return xla::Unimplemented(
         "GetOnDeviceSizeInBytes() is not yet supported for arrays with no "
         "addressable devices");
   }
-  TF_ASSIGN_OR_RETURN(size_t shard_size,
-                      GetPjrtBuffer(ifrt_array())->GetOnDeviceSizeInBytes());
-  return shard_size * nb::len(nb::object(sharding().attr("device_set")));
+  TF_ASSIGN_OR_RETURN(std::shared_ptr<const xla::PjRtLayout> pjrt_layout,
+                      layout());
+  TF_ASSIGN_OR_RETURN(xla::PrimitiveType element_type,
+                      ifrt::ToPrimitiveType(ifrt_array->dtype()));
+  if (sharding().type().is(SingleDeviceSharding::type())) {
+    // An array with `SingleDeviceSharding` takes a fast path. We do not need to
+    // compute a shard shape separately, and the array aval is often `None`.
+    xla::Shape shard_shape = xla::ShapeUtil::MakeShape(element_type, shape());
+    *shard_shape.mutable_layout() = pjrt_layout->xla_layout();
+    return xla::ShapeUtil::ArraySize(shard_shape);
+  }
+  auto shard_shape_dims = nb::cast<std::vector<int64_t>>(
+      sharding().attr("shard_shape")(aval().attr("shape")));
+  xla::Shape shard_shape =
+      xla::ShapeUtil::MakeShape(element_type, shard_shape_dims);
+  *shard_shape.mutable_layout() = pjrt_layout->xla_layout();
+  return xla::ShapeUtil::ArraySize(shard_shape) *
+         nb::len(nb::object(sharding().attr("device_set")));
 }
 
 absl::Status PyArray::BlockUntilResultStatusIsReady() {
