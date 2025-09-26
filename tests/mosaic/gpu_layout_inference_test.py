@@ -23,6 +23,7 @@ from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import math
 from jax._src.lib.mlir.dialects import scf
@@ -642,6 +643,49 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertEqual(hint_cst.variable, x_variable)
     self.assertEqual(hint_cst.expression, RL(layout))
     self.assertEqual(constraint, eqns.Relayout(x_variable, lc_variable))
+
+  @parameterized.parameters(*layout_inference.MemorySpace)
+  def test_relayout_only_derived_for_registers(self, memory_space):
+    with ir.InsertionPoint(self.module.body):
+      shape = (128,)
+      f32 = ir.F32Type.get()
+      match memory_space:
+        case layout_inference.MemorySpace.REG:
+          ty = ir.VectorType.get(shape, f32)
+        case layout_inference.MemorySpace.TMEM:
+          ty = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
+        case layout_inference.MemorySpace.SMEM:
+          ty = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.smem())
+        case _:
+          raise ValueError(f"Unsupported memory space: {memory_space}")
+
+      [producer] = undefs(ty)
+      consumer = builtin.unrealized_conversion_cast([ty], [producer])
+
+      r = layout_inference.OperandOrResult(
+          producer.owner, layout_inference.VariableType.RESULT, 0
+      )
+      r_var = eqns.Variable(r)
+      o = layout_inference.OperandOrResult(
+          consumer.owner, layout_inference.VariableType.OPERAND, 0
+      )
+      o_var = eqns.Variable(o)
+
+      hints, relayouts = layout_inference.derive_hints_and_constraints(
+          layout_inference.OperandOrResultsForVariable({r_var: [r], o_var: [o]})
+      )
+
+      if memory_space == layout_inference.MemorySpace.REG:
+        hint0 = layout_inference.Hint(r_var, eqns.MostReplicated((o_var,)))
+        hint1 = layout_inference.Hint(
+            o_var, eqns.MostReplicated((eqns.LeastReplicated((r_var,)),))
+        )
+
+        self.assertEqual(hints, [hint0, hint1])
+        self.assertEqual(relayouts, [eqns.Relayout(r_var, o_var)])
+      else:
+        self.assertEmpty(hints)
+        self.assertEmpty(relayouts)
 
   def test_unambiguous_hints_are_used_to_assign_variables_correctly(self):
     v0 = V(0)

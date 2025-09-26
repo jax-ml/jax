@@ -1208,6 +1208,10 @@ def derive_hints_and_constraints(
     producers: list[eqns.Variable] = []
     consumers: list[eqns.Variable] = []
     for operand_or_result in operand_and_results:
+      # We can only relayout variables that are in registers.
+      if operand_or_result.memory_space != MemorySpace.REG:
+        continue
+
       if operand_or_result.type == VariableType.OPERAND:
         pr = producer_result(operand_or_result)
         producer_variable = variable_for_operand_or_result[pr]
