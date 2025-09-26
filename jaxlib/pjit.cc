@@ -518,7 +518,8 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
            (!py_array.committed() && sharding_num_devices == 1));
 
     if (!in_device_local_layout.is_none()) {
-      TF_ASSIGN_OR_RETURN(auto arr_layout, py_array.ifrt_array()->layout());
+      TF_ASSIGN_OR_RETURN(auto arr_layout,
+                          py_array.ifrt_array()->pjrt_layout());
       xla::Layout in_xc_layout = nb::cast<xla::Layout>(
           in_device_local_layout.attr("_to_xla_layout")(py_array.dtype()));
       if (in_xc_layout != arr_layout->xla_layout()) {

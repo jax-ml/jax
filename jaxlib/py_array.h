@@ -96,8 +96,9 @@ struct PyArray_Storage {
                   std::vector<int64_t> shape, nanobind::object sharding,
                   bool committed, nb_class_ptr<PyClient> py_client,
                   std::optional<Traceback> traceback,
-                 
-                  xla::ifrt::ArrayRef ifrt_array, xla::PjRtFuture<> result_status);
+
+                  xla::ifrt::ArrayRef ifrt_array,
+                  xla::PjRtFuture<> result_status);
 
   ~PyArray_Storage();
   nanobind::handle AsHandle();
@@ -154,8 +155,7 @@ class PyArray : public nanobind::object {
   // checked.
   PyArray(nanobind::object aval, bool weak_type, xla::nb_dtype dtype,
           std::vector<int64_t> shape, nanobind::object sharding,
-          nb_class_ptr<PyClient> py_client,
-          std::optional<Traceback> traceback,
+          nb_class_ptr<PyClient> py_client, std::optional<Traceback> traceback,
           xla::ifrt::ArrayRef ifrt_array, bool committed, bool skip_checks,
           xla::PjRtFuture<> result_status = xla::PjRtFuture<>());
 
@@ -188,7 +188,7 @@ class PyArray : public nanobind::object {
   const nanobind::object& sharding() const { return GetStorage().sharding; }
 
   absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> layout() {
-    return ifrt_array()->layout();
+    return ifrt_array()->pjrt_layout();
   }
 
   bool committed() const { return GetStorage().committed; }
