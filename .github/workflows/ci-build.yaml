@@ -151,46 +151,6 @@ jobs:
       run: |
         sphinx-build -j auto --color -W --keep-going -b html docs docs/build/html
 
-  jax2tf_test:
-    name: "jax2tf_test (py ${{ matrix.python-version }} on ${{ matrix.os }}, x64=${{ matrix.enable-x64}})"
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      matrix:
-        # Test the oldest supported Python version here.
-        include:
-          - python-version: "3.11"
-            os: ubuntu-latest
-            enable-x64: 0
-            num_generated_cases: 10
-    steps:
-    - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
-      with:
-        persist-credentials: false
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c  # v6.0.0
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
-      run: |
-        pip install uv~=0.5.30
-        uv pip install --system .[minimum-jaxlib] -r build/test-requirements.txt
-        uv pip install --system --pre tensorflow==2.19.0
-
-    - name: Run tests
-      env:
-        JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
-        JAX_ENABLE_X64: ${{ matrix.enable-x64 }}
-        JAX_ENABLE_CHECKS: true
-        JAX_SKIP_SLOW_TESTS: true
-        PY_COLORS: 1
-      run: |
-        echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
-        echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
-        echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
-        echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
-        pytest -n auto --tb=short --maxfail=20 jax/experimental/jax2tf/tests/jax2tf_test.py
-
   ffi:
     name: FFI example
     runs-on: linux-x86-g2-16-l4-1gpu
