@@ -164,7 +164,7 @@ def init_adam_state(param: jax.Array) -> dot_dict:
 
 
 # tag: adam-apply
-def adam_update(config: Config, param: jax.ArrayRef, grad: jax.Array, adam_state: dot_dict):
+def adam_update(config: Config, param: jax.Ref, grad: jax.Array, adam_state: dot_dict):
   adam_state.mu[...] = (1 - config.beta_1) * adam_state.mu[...] + config.beta_1 * grad
   adam_state.nu[...] = (1 - config.beta_2) * adam_state.nu[...] + config.beta_2 * grad**2
   adam_state.count[...] += 1

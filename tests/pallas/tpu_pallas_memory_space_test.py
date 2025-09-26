@@ -171,10 +171,8 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
       self.skipTest('Needs a newer libTPU')
     @jax.jit
     def f(x):
-      x_ref = jax.experimental.mutable_array(x, memory_space=memory_space)
-      y_ref = jax.experimental.mutable_array(
-          pl.empty_like(x), memory_space=memory_space
-      )
+      x_ref = jax.new_ref(x, memory_space=memory_space)
+      y_ref = jax.new_ref(pl.empty_like(x), memory_space=memory_space)
 
       self.assertEqual(jax.typeof(x_ref).memory_space, memory_space)
       self.assertEqual(jax.typeof(y_ref).memory_space, memory_space)

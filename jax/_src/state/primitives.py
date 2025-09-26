@@ -129,7 +129,7 @@ def ref_get(
 
   Examples:
     >>> import jax
-    >>> ref = jax.array_ref(jax.numpy.arange(5))
+    >>> ref = jax.new_ref(jax.numpy.arange(5))
     >>> jax.ref.get(ref, slice(1, 3))
     Array([1, 2], dtype=int32)
 
@@ -223,7 +223,7 @@ def ref_swap(
 
   Examples:
     >>> import jax
-    >>> ref = jax.array_ref(jax.numpy.arange(5))
+    >>> ref = jax.new_ref(jax.numpy.arange(5))
     >>> jax.ref.swap(ref, 3, 10)
     Array(3, dtype=int32)
     >>> ref
@@ -231,7 +231,7 @@ def ref_swap(
 
     Equivalent operation via indexing syntax:
 
-    >>> ref = jax.array_ref(jax.numpy.arange(5))
+    >>> ref = jax.new_ref(jax.numpy.arange(5))
     >>> ref[3], prev = 10, ref[3]
     >>> prev
     Array(3, dtype=int32)
@@ -240,7 +240,7 @@ def ref_swap(
 
     Use ``...`` to swap the value of a scalar ref:
 
-    >>> ref = jax.array_ref(jax.numpy.int32(5))
+    >>> ref = jax.new_ref(jax.numpy.int32(5))
     >>> jax.ref.swap(ref, ..., 10)
     Array(5, dtype=int32)
     >>> ref
@@ -291,21 +291,21 @@ def ref_set(
 
   Examples:
     >>> import jax
-    >>> ref = jax.array_ref(jax.numpy.zeros(5))
+    >>> ref = jax.new_ref(jax.numpy.zeros(5))
     >>> jax.ref.set(ref, 1, 10.0)
     >>> ref
     Ref([ 0., 10.,  0.,  0.,  0.], dtype=float32)
 
     Equivalent operation via indexing syntax:
 
-    >>> ref = jax.array_ref(jax.numpy.zeros(5))
+    >>> ref = jax.new_ref(jax.numpy.zeros(5))
     >>> ref[1] = 10.0
     >>> ref
     Ref([ 0., 10.,  0.,  0.,  0.], dtype=float32)
 
     Use ``...`` to set the value of a scalar ref:
 
-    >>> ref = jax.array_ref(jax.numpy.int32(0))
+    >>> ref = jax.new_ref(jax.numpy.int32(0))
     >>> ref[...] = 4
     >>> ref
     Ref(4, dtype=int32)
@@ -357,21 +357,21 @@ def ref_addupdate(
 
   Examples:
     >>> import jax
-    >>> ref = jax.array_ref(jax.numpy.arange(5))
+    >>> ref = jax.new_ref(jax.numpy.arange(5))
     >>> jax.ref.addupdate(ref, 2, 10)
     >>> ref
     Ref([ 0,  1, 12,  3,  4], dtype=int32)
 
     Equivalent operation via indexing syntax:
 
-    >>> ref = jax.array_ref(jax.numpy.arange(5))
+    >>> ref = jax.new_ref(jax.numpy.arange(5))
     >>> ref[2] += 10
     >>> ref
     Ref([ 0,  1, 12,  3,  4], dtype=int32)
 
     Use ``...`` to add to a scalar ref:
 
-    >>> ref = jax.array_ref(jax.numpy.int32(2))
+    >>> ref = jax.new_ref(jax.numpy.int32(2))
     >>> ref[...] += 10
     >>> ref
     Ref(12, dtype=int32)

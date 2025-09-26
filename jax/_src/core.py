@@ -2569,7 +2569,7 @@ class Ref:
   """Mutable array reference.
 
   In most cases this should not be constructed directly, but rather
-  via :func:`jax.ref.array_ref`. For examples of how this can be
+  via :func:`jax.ref.new_ref`. For examples of how this can be
   used, refer to the `Ref guide`_.
 
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
@@ -2695,7 +2695,7 @@ def freeze(ref: ArrayRef) -> Array:
 
   Examples:
     >>> import jax
-    >>> ref = jax.array_ref(jax.numpy.arange(5))
+    >>> ref = jax.new_ref(jax.numpy.arange(5))
     >>> ref[3] = 100
     >>> ref
     Ref([  0,   1,   2, 100,   4], dtype=int32)

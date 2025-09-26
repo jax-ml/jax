@@ -5857,7 +5857,7 @@ class HelpersTest(PallasTest):
 #   def test_basic(self):
 #     @jax.jit
 #     def f(x):
-#       x_ref = jax.array_ref(x)  # lowers to pin
+#       x_ref = jax.new_ref(x)  # lowers to pin
 #       mesh = plgpu.Mesh(grid=(1,), grid_names=('x',))
 
 #       @pl.core_map(mesh)

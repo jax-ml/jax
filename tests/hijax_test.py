@@ -1031,7 +1031,7 @@ class RefTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(q):
-      ref = jax.array_ref(q)
+      ref = jax.new_ref(q)
       return ref[:, 0:2]
 
     qarray = QArray(jnp.ones((2, 2), dtype='int8'), jnp.ones(2, 'float32'))
@@ -1043,7 +1043,7 @@ class RefTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(q1, q2):
-      ref = jax.array_ref(q1)
+      ref = jax.new_ref(q1)
       ref[:, :] = q2
       return ref.get()
 

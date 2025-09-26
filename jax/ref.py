@@ -15,8 +15,8 @@
 __all__ = ['AbstractRef', 'Ref', 'ArrayRef', 'addupdate', 'new_ref', 'array_ref',
            'freeze', 'get', 'set', 'swap']
 
-from jax._src.core import Ref, ArrayRef, freeze
-from jax._src.ref import new_ref, array_ref
+from jax._src.core import Ref, freeze
+from jax._src.ref import new_ref
 from jax._src.state.types import AbstractRef
 from jax._src.state.primitives import (
     ref_get as get,
@@ -24,3 +24,26 @@ from jax._src.state.primitives import (
     ref_swap as swap,
     ref_addupdate as addupdate,
 )
+
+
+_deprecations = {
+  # Added for v0.8.0
+  "array_ref": (
+    "jax.array_ref is deprecated; use jax.new_ref instead.",
+    new_ref
+  ),
+  "ArrayRef": (
+    "jax.ArrayRef is deprecated; use jax.Ref instead.",
+    Ref
+  ),
+}
+
+import typing as _typing
+if _typing.TYPE_CHECKING:
+  array_ref = new_ref
+  ArrayRef = Ref
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing

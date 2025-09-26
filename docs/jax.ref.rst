@@ -12,9 +12,7 @@ API
    :toctree: _autosummary
 
    AbstractRef
-   ArrayRef
    Ref
-   array_ref
    freeze
    get
    new_ref
