@@ -377,7 +377,7 @@ load_p = jax_core.Primitive('masked_load')
 @load_p.def_effectful_abstract_eval
 def _load_abstract_eval(*avals_flat, args_tree, **_):
   ref, transforms, _, _ = args_tree.unflatten(avals_flat)
-  assert transforms is not None and isinstance(transforms[-1], NDIndexer)
+  assert transforms is not None
   transformed_ref = pallas_core.TransformedRef(ref, transforms)
   return (
       jax_core.ShapedArray(transformed_ref.shape, transformed_ref.dtype),
@@ -482,6 +482,10 @@ _unpad_values_to_avoid_dynamic_slice_oob_shift = functools.partial(
 def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
   del out_avals  # Unused.
   ref, transforms, mask, other = args_tree.unflatten(args_flat)
+  transforms = list(transforms)
+  if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
+    ref_shape = state.get_transforms_shape(transforms, in_avals[0].shape)
+    transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_shape))
   *prev_transforms, idx = transforms
   assert isinstance(idx, NDIndexer)
   ref = state_discharge.transform_array(ref, prev_transforms)
@@ -521,7 +525,7 @@ swap_p = jax_core.Primitive('masked_swap')
 @swap_p.def_effectful_abstract_eval
 def _swap_abstract_eval(*avals_flat, args_tree, **_):
   ref, transforms, val, mask = args_tree.unflatten(avals_flat)
-  assert transforms is not None and isinstance(transforms[-1], NDIndexer)
+  assert transforms is not None
   transformed_ref = pallas_core.TransformedRef(ref, transforms)
   expected_output_shape = transformed_ref.shape
   expected_output_dtype = transformed_ref.dtype
@@ -597,6 +601,10 @@ ad.primitive_jvps[swap_p] = _swap_jvp
 def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
   del out_avals  # Unused.
   ref, transforms, val, mask = args_tree.unflatten(args_flat)
+  transforms = list(transforms)
+  if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
+    ref_shape = state.get_transforms_shape(transforms, in_avals[0].shape)
+    transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_shape))
   *prev_transforms, idx = transforms
   assert isinstance(idx, NDIndexer)
   ref = state_discharge.transform_array(ref, prev_transforms)

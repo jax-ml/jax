@@ -28,6 +28,9 @@ from jax import typeof
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src import state
+from jax._src.state import indexing
+from jax._src.state import primitives as state_primitives
 from jax._src.interpreters import ad
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map
@@ -62,6 +65,52 @@ class QArrayTy(HiType):
     return [hi_val.arr, hi_val.scale]
   def raise_val(self, arr, scale) -> QArray:
     return QArray(arr, scale)  # alternative: LowerTrace
+
+  def ref_get_abstract_eval(self, ref_aval, *args, tree):
+    arr_aval = core.ShapedArray(self.shape, jnp.dtype('float32'))
+    updated_ref = ref_aval.update(inner_aval=arr_aval)
+    out, effects = state_primitives.get_p.abstract_eval(
+        updated_ref, *args, tree=tree
+    )
+    assert isinstance(out, core.ShapedArray)
+    return QArrayTy(out.shape), effects
+
+  def ref_swap_abstract_eval(self, ref_aval, val_aval, *args, tree):
+    arr_aval = core.ShapedArray(self.shape, jnp.dtype('float32'))
+    val_arr_aval = core.ShapedArray(val_aval.shape, jnp.dtype('float32'))
+    updated_ref = ref_aval.update(inner_aval=arr_aval)
+    out_aval, effects = state_primitives.swap_p.abstract_eval(
+        updated_ref, val_arr_aval,*args, tree=tree
+    )
+    assert isinstance(out_aval, core.ShapedArray)
+    return QArrayTy(out_aval.shape), effects
+
+  def ref_get_to_lojax(self, ref: state.TransformedRef | jax.Ref,
+                       idx: indexing.NDIndexer):
+    if isinstance(ref, state.TransformedRef):
+      if ref.transforms: raise NotImplementedError(ref)
+      ref = ref.ref
+    # Unpack Ref type
+    ref = ref._refs
+    if not all(i.start == 0 and i.size == s
+               for i, s in zip(idx.indices, ref.arr.shape)):
+      raise NotImplementedError
+    outs = [out.get() for out in self.lower_val(ref)]
+    return self.raise_val(*outs)
+
+  def ref_swap_to_lojax(self, ref: state.TransformedRef | jax.Ref,
+                        val: jax.Array, idx: indexing.NDIndexer):
+    if isinstance(ref, state.TransformedRef):
+      if ref.transforms: raise NotImplementedError(ref)
+      ref = ref.ref
+    # Unpack Ref type
+    ref = ref._refs
+    if not all(i.start == 0 and i.size == s
+               for i, s in zip(idx.indices, ref.arr.shape)):
+      raise NotImplementedError
+    outs = [out.swap(val) for out, val
+            in zip(self.lower_val(ref), self.lower_val(val))]
+    return self.raise_val(*outs)
 
   # autodiff
   def to_tangent_aval(self):
@@ -975,6 +1024,34 @@ class BoxTest(jtu.JaxTestCase):
 
     out_type = jax.eval_shape(f)
     self.assertEqual(out_type, QArrayTy((2, 2)))
+
+class RefTest(jtu.JaxTestCase):
+
+  def test_get_ref_hitype(self):
+
+    @jax.jit
+    def f(q):
+      ref = jax.array_ref(q)
+      return ref[:, 0:2]
+
+    qarray = QArray(jnp.ones((2, 2), dtype='int8'), jnp.ones(2, 'float32'))
+    o = f(qarray)
+    self.assertArraysEqual(o.arr, qarray.arr)
+    self.assertArraysEqual(o.scale, qarray.scale)
+
+  def test_swap_ref_hitype(self):
+
+    @jax.jit
+    def f(q1, q2):
+      ref = jax.array_ref(q1)
+      ref[:, :] = q2
+      return ref.get()
+
+    q1 = QArray(jnp.zeros((2, 2), dtype='int8'), jnp.zeros(2, 'float32'))
+    q2 = QArray(jnp.ones((2, 2), dtype='int8'), jnp.ones(2, 'float32'))
+    o = f(q1, q2)
+    self.assertArraysEqual(o.arr, q2.arr)
+    self.assertArraysEqual(o.scale, q2.scale)
 
 
 if __name__ == '__main__':

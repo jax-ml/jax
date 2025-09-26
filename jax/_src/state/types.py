@@ -366,6 +366,15 @@ class TransformedRef:
     return ref_set(self, slc, value)
 
 
+def get_transforms_shape(
+    ts: Sequence[Transform], shape: tuple[int | Array, ...]
+) -> tuple[int | Array, ...]:
+  for t in ts:
+    shape = t.transform_shape(shape)  # type: ignore
+  assert shape is not None
+  return shape
+
+
 # We need an aval for `Ref`s so we can represent `get` and `swap` in Jaxprs.
 class AbstractRef(core.AbstractValue):
   """Abstract mutable array reference.

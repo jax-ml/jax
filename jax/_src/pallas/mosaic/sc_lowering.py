@@ -327,7 +327,11 @@ def _load_lowering_rule(
   else:
     _check_aval_is_supported("Get", out_aval)
 
-  *prev_transforms, indexer = jax.tree.unflatten(tree, flat_transforms)
+  transforms = list(jax.tree.unflatten(tree, flat_transforms))
+  if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
+    ref_shape = state.get_transforms_shape(transforms, ref_aval.shape)
+    transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_shape))
+  *prev_transforms, indexer = transforms
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
       ref, ref_aval.dtype, ref_block_shape, prev_transforms
@@ -378,7 +382,15 @@ def _store_lowering_rule(
   else:
     _check_aval_is_supported("Swap", out_aval)
 
-  *prev_transforms, indexer = jax.tree.unflatten(tree, flat_transforms)
+  transforms = list(jax.tree.unflatten(tree, flat_transforms))
+  if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
+    ref_shape = (
+        ref_aval.shape
+        if not transforms
+        else state.get_transform_shape(transforms[-1])
+    )
+    transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_shape))
+  *prev_transforms, indexer = transforms
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
       ref, ref_aval.dtype, ref_block_shape, prev_transforms

@@ -287,6 +287,14 @@ class NDIndexer:
        )
     return cls(indices, shape, int_indexer_shape, validate=True)
 
+  @classmethod
+  def make_trivial_indexer(cls, shape: tuple[int, ...]) -> NDIndexer:
+    return NDIndexer.from_indices_shape(
+        tuple(slice(0, e) for e in shape),
+        shape,
+    )
+
+
   def get_indexer_shape(self) -> tuple[int | Array, ...]:
     is_int_indexing, slice_indexers, _ = unpack_ndindexer(self)
 

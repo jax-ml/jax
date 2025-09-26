@@ -530,6 +530,8 @@ def _addupdate_discharge_rule(
 
 def _addupdate_discharge(x, val, idx, tree):
   transforms = tree_util.tree_unflatten(tree, idx)
+  if not transforms:
+    return x + val
   if len(transforms) > 1:
     raise NotImplementedError("Only single indexer is supported.")
   indexer = transforms[0]

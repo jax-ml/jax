@@ -340,10 +340,10 @@ def copy_smem_to_gmem(
     :func:`jax.experimental.mosaic.gpu.commit_smem`
   """
   src, src_transforms = state_primitives.get_ref_and_transforms(
-      src, None, "copy_smem_to_gmem", force_trailing_indexer=False,
+      src, None, "copy_smem_to_gmem"
   )
   dst, dst_transforms = state_primitives.get_ref_and_transforms(
-      dst, None, "copy_smem_to_gmem", force_trailing_indexer=False,
+      dst, None, "copy_smem_to_gmem"
   )
   flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
       src_transforms
@@ -621,10 +621,10 @@ def copy_gmem_to_smem(
     :func:`jax.experimental.mosaic.gpu.barrier_wait`
   """
   src, src_transforms = state_primitives.get_ref_and_transforms(
-      src, None, "copy_gmem_to_smem", force_trailing_indexer=False,
+      src, None, "copy_gmem_to_smem"
   )
   dst, dst_transforms = state_primitives.get_ref_and_transforms(
-      dst, None, "copy_gmem_to_smem", force_trailing_indexer=False,
+      dst, None, "copy_gmem_to_smem"
   )
   flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
       src_transforms
@@ -633,7 +633,7 @@ def copy_gmem_to_smem(
       dst_transforms
   )
   barrier, barrier_transforms = state_primitives.get_ref_and_transforms(
-      barrier, None, "copy_gmem_to_smem", force_trailing_indexer=False,
+      barrier, None, "copy_gmem_to_smem"
   )
   flat_barrier_transforms, barrier_transforms_treedef = tree_util.tree_flatten(
       barrier_transforms
@@ -749,7 +749,7 @@ def async_prefetch(
       specified.
   """
   ref, ref_transforms = state_primitives.get_ref_and_transforms(
-      ref, None, "async_prefetch", force_trailing_indexer=False,
+      ref, None, "async_prefetch"
   )
   flat_ref_transforms, ref_transforms_treedef = tree_util.tree_flatten(
       ref_transforms
@@ -846,7 +846,7 @@ def _barrier_arrive_lowering(
 def barrier_arrive(barrier: state.AbstractRef) -> None:
   """Arrives at the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
-      barrier, None, "barrier_arrive", force_trailing_indexer=False,
+      barrier, None, "barrier_arrive"
   )
   flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
   barrier_arrive_p.bind(
@@ -914,7 +914,7 @@ def _barrier_wait_lowering(
 def barrier_wait(barrier: state.AbstractRef) -> None:
   """Waits on the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
-      barrier, None, "barrier_wait", force_trailing_indexer=False,
+      barrier, None, "barrier_wait"
   )
   flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
   barrier_wait_p.bind(
@@ -2801,10 +2801,12 @@ def _load_abstract_eval(src, *avals_flat, tree, optimized):
   del optimized  # Unused.
   transforms = tree.unflatten(avals_flat)
   dtype = lowering._transform_dtype(src.dtype, transforms)
-  return (
-      jax_core.ShapedArray(transforms[-1].get_indexer_shape(), dtype),
-      {state.ReadEffect(0)},
-  )
+  transforms = list(transforms)
+  if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
+    ref_shape = state.get_transforms_shape(transforms, src.shape)
+    transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_shape))
+  shape = transforms[-1].get_indexer_shape()
+  return jax_core.ShapedArray(shape, dtype), {state.ReadEffect(0)}
 
 
 lowering.register_lowering_rule(load_p, mgpu.LoweringSemantics.Lane)(
@@ -2835,7 +2837,7 @@ def load(
     The loaded array.
   """
   src, src_transforms = state_primitives.get_ref_and_transforms(
-      src, idx, "load", force_trailing_indexer=True,
+      src, idx, "load"
   )
   flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
       src_transforms
@@ -2879,7 +2881,7 @@ def async_load_tmem(src: _Ref, *, layout: SomeLayout | None = None) -> jax.Array
     layout: The optional layout hint to use for the resulting array.
   """
   src, src_transforms = state_primitives.get_ref_and_transforms(
-      src, None, "async_load_tmem", force_trailing_indexer=True,
+      src, None, "async_load_tmem"
   )
   flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
       src_transforms
@@ -2962,7 +2964,7 @@ def async_store_tmem(ref: _Ref, value):
     value: The value to store.
   """
   ref, ref_transforms = state_primitives.get_ref_and_transforms(
-      ref, None, "async_store_tmem", force_trailing_indexer=True,
+      ref, None, "async_store_tmem"
   )
   flat_ref_transforms, ref_transforms_treedef = tree_util.tree_flatten(
       ref_transforms
@@ -3010,13 +3012,13 @@ def async_copy_scales_to_tmem(smem_ref: _Ref, tmem_ref: _Ref):
   itself).
   """
   smem_ref, smem_transforms = state_primitives.get_ref_and_transforms(
-      smem_ref, None, "async_copy_scales_to_tmem", force_trailing_indexer=True,
+      smem_ref, None, "async_copy_scales_to_tmem"
   )
   flat_smem_transforms, smem_transforms_treedef = tree_util.tree_flatten(
       smem_transforms
   )
   tmem_ref, tmem_transforms = state_primitives.get_ref_and_transforms(
-      tmem_ref, None, "async_copy_scales_to_tmem", force_trailing_indexer=True,
+      tmem_ref, None, "async_copy_scales_to_tmem"
   )
   flat_tmem_transforms, tmem_transforms_treedef = tree_util.tree_flatten(
       tmem_transforms
@@ -3039,13 +3041,13 @@ def async_copy_sparse_metadata_to_tmem(smem_ref: _Ref, tmem_ref: _Ref):
   itself).
   """
   smem_ref, smem_transforms = state_primitives.get_ref_and_transforms(
-      smem_ref, None, "async_copy_sparse_metadata_to_tmem", force_trailing_indexer=True,
+      smem_ref, None, "async_copy_sparse_metadata_to_tmem"
   )
   flat_smem_transforms, smem_transforms_treedef = tree_util.tree_flatten(
       smem_transforms
   )
   tmem_ref, tmem_transforms = state_primitives.get_ref_and_transforms(
-      tmem_ref, None, "async_copy_sparse_metadata_to_tmem", force_trailing_indexer=True,
+      tmem_ref, None, "async_copy_sparse_metadata_to_tmem"
   )
   flat_tmem_transforms, tmem_transforms_treedef = tree_util.tree_flatten(
       tmem_transforms

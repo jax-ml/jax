@@ -1588,15 +1588,36 @@ class KeyScalarBundle:
   key_shape: tuple[int, ...]
   scalars: Sequence[ir.OpResult]
 
+def _canonicalize_transforms_to_indexer(
+      ref_aval,
+      transforms,
+      transforms_avals,
+):
+  if not transforms:
+    prev_transforms, idx = [], NDIndexer.make_trivial_indexer(ref_aval.shape)
+  else:
+    if not isinstance(transforms[-1], NDIndexer):
+      ref_shape = state.get_transforms_shape(transforms, ref_aval.shape)
+      idx = NDIndexer.make_trivial_indexer(ref_shape)
+      prev_transforms = transforms
+    else:
+      (*prev_transforms, idx) = transforms
+      (*_, idx_aval) = transforms_avals
+      if any(
+          (not isinstance(a, primitives.Slice) and a.shape)
+          for a in idx_aval.indices
+      ):
+        raise ValueError("Cannot do int indexing on TPU")
+  return prev_transforms, idx
+
 
 @register_lowering_rule(primitives.load_p, ensure_mlir_values=False)
 def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
   ref, transforms, mask, _ = args_tree.unflatten(args_flat)
   ref_aval, transforms_avals, _, _ = args_tree.unflatten(ctx.avals_in)
-  (*prev_transforms, idx) = transforms
-  # Select last aval, which is the one that will be used for the load.
-  (*_, idx_aval) = transforms_avals
-
+  prev_transforms, idx = _canonicalize_transforms_to_indexer(
+      ref_aval, transforms, transforms_avals
+  )
   if mask is not None:
     raise NotImplementedError
 
@@ -1638,11 +1659,6 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
   if not is_smem_load and not ref_block_shape:
     raise NotImplementedError(
         "Indexing into a ()-shaped Ref not yet supported on TPU.")
-  if any(
-      (not isinstance(a, primitives.Slice) and a.shape)
-      for a in idx_aval.indices
-  ):
-    raise ValueError("Cannot do int indexing on TPU")
   starts, sizes, strides, _, _ = _indexer_to_start_size_stride(
       idx,
       ref_block_shape,
@@ -1701,10 +1717,12 @@ def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree
   special case handling for functions that consume the key such as set_seed.
   """
   ref, transforms, _, _ = args_tree.unflatten(args_flat)
-  ref_aval, _, _, _ = args_tree.unflatten(
+  ref_aval, transforms_avals, _, _ = args_tree.unflatten(
       ctx.avals_in
   )
-  (*prev_transforms, idx) = transforms
+  prev_transforms, idx = _canonicalize_transforms_to_indexer(
+      ref_aval, transforms, transforms_avals
+  )
   (aval_out,) = ctx.avals_out
   assert isinstance(aval_out.dtype, prng.KeyTy)
   key_shape = aval_out.dtype._impl.key_shape
@@ -1797,8 +1815,9 @@ def _masked_swap_lowering_rule(
   ref_aval, transforms_avals, val_aval, mask_aval = args_tree.unflatten(
       ctx.avals_in
   )
-  (*prev_transforms, idx) = transforms
-  (*_, idx_aval) = transforms_avals
+  prev_transforms, idx = _canonicalize_transforms_to_indexer(
+      ref_aval, transforms, transforms_avals
+  )
 
   if mask is not None:
     if  val_aval.dtype.itemsize != 4:
@@ -1821,11 +1840,6 @@ def _masked_swap_lowering_rule(
   (aval_out,) = ctx.avals_out
   if not isinstance(val, ir.Value):
     val = ir_constant(val, mlir_type=_dtype_to_ir_type(val_aval.dtype))
-  if any(
-      (not isinstance(a, primitives.Slice) and a.shape)
-      for a in idx_aval.indices
-  ):
-    raise ValueError("Cannot do int indexing on TPU")
   if not is_smem_store and not ref_block_shape:
     raise NotImplementedError(
         "Indexing into a ()-shaped Ref not yet supported on TPU.")
@@ -1861,7 +1875,7 @@ def _masked_swap_lowering_rule(
     raise ValueError("Cannot store scalars to VMEM")
 
   mem_slice_shape = list(aval_out.shape)
-  for i, a in enumerate(idx_aval.indices):
+  for i, a in enumerate(idx.indices):
     if not isinstance(a, primitives.Slice):
       mem_slice_shape.insert(i, 1)
   mem_slice_shape_iter = iter(mem_slice_shape)

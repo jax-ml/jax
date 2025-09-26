@@ -70,8 +70,12 @@ batching.ragged_prop_rules[get_p] = batching.ragged_mask_transfer_identity
 
 get_p.is_high = lambda ref_aval, *_, tree: ref_aval.is_high  # type: ignore
 def _get_to_lojax(ref, *idx, tree):
-  if idx: raise NotImplementedError
   val_ty = core.typeof(ref._refs)
+  transforms = tree_util.tree_unflatten(tree, idx)
+  if transforms:
+    ref = TransformedRef(ref, transforms[:-1])
+    idx = transforms[-1]
+    return val_ty.ref_get_to_lojax(ref, idx)
   return val_ty.raise_val(*map(ref_get, val_ty.lower_val(ref._refs)))
 get_p.to_lojax = _get_to_lojax  # type: ignore
 
@@ -82,7 +86,6 @@ def get_ref_and_transforms(
     ref_or_view: Any,
     idx: Indexer | tuple[Indexer, ...] | None,
     function_name: str,
-    force_trailing_indexer: bool = True,  # TODO(apaszke): Clean this up.
 ) -> tuple[Any, tuple[Transform, ...]]:
   if isinstance(ref_or_view, TransformedRef):
     ref, transforms = ref_or_view.ref, ref_or_view.transforms
@@ -91,7 +94,8 @@ def get_ref_and_transforms(
   ref_aval = core.get_aval(ref)
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"Can only call `{function_name}` on a `Ref`: {ref}.")
-  if not isinstance(ref_aval.inner_aval, core.ShapedArray):
+  if (not isinstance(ref_aval.inner_aval, core.ShapedArray)
+      and not ref_aval.inner_aval.is_high):
     return ref, ()
 
   if idx is None or idx is Ellipsis:
@@ -99,7 +103,7 @@ def get_ref_and_transforms(
   elif not isinstance(idx, tuple):
     idx = (idx,)
 
-  if not idx and not force_trailing_indexer:
+  if not idx:
     return ref, transforms
   if not idx and transforms and isinstance(transforms[-1], indexing.NDIndexer):
     return ref, transforms
@@ -165,6 +169,24 @@ def ref_get(
 swap_p = core.Primitive("swap")
 swap_p.is_effectful = lambda params: True  # type: ignore
 swap_p.def_impl(partial(dispatch.apply_primitive, swap_p))
+
+swap_p.is_high = lambda ref_aval, *_, tree: ref_aval.is_high  # type: ignore
+def _swap_to_lojax(ref, val, *idx, tree):
+  ref_val_ty = core.typeof(ref._refs)
+  val_ty = core.typeof(val)
+  if ref_val_ty != val_ty:
+    raise TypeError(f"Cannot swap {ref_val_ty} into {val_ty}.")
+  transforms = tree_util.tree_unflatten(tree, idx)
+  if transforms:
+    ref = TransformedRef(ref, transforms[:-1])
+    idx = transforms[-1]
+    return ref_val_ty.ref_swap_to_lojax(ref, val, idx)
+  lo_refs = ref_val_ty.lower_val(ref._refs)
+  lo_vals = val_ty.lower_val(val)
+  outs = [ref_swap(lo_ref, idx, lo_val) for lo_ref, lo_val
+          in zip(lo_refs, lo_vals)]
+  return val_ty.raise_val(*outs)
+swap_p.to_lojax = _swap_to_lojax  # type: ignore
 
 
 def swap_ragged_prop_rule(eqn_params, invar_raggedness, outvars):
@@ -392,6 +414,8 @@ def _sharding_after_transforming(sharding, transforms):
 def _get_abstract_eval(ref_aval: AbstractRef, *args,
                        tree):
   transforms = tree_util.tree_unflatten(tree, args)
+  if transforms and ref_aval.inner_aval.is_high:
+    return ref_aval.inner_aval.ref_get_abstract_eval(ref_aval, *args, tree=tree)
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`get` must be called on `Ref` types: {ref_aval}.")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
@@ -411,6 +435,9 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
                         val_aval: core.AbstractValue,
                         *args: Any, tree):
   transforms = tree_util.tree_unflatten(tree, args)
+  if transforms and ref_aval.inner_aval.is_high:
+    return ref_aval.inner_aval.ref_swap_abstract_eval(
+        ref_aval, val_aval, *args, tree=tree)
   out_aval: core.AbstractValue
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`swap` must be called on `Ref` types: {ref_aval}.")
@@ -777,6 +804,8 @@ def _get_vmap(batched_args, batched_dims, *, tree):
   ref, *flat_idxs = batched_args
   ref_dim, *flat_idx_dims = batched_dims
   indexers = tree_util.tree_unflatten(tree, flat_idxs)
+  if not indexers:
+    return get_p.bind(ref, *flat_idxs, tree=tree), ref_dim
   indexers_dims = tree_util.tree_unflatten(tree, flat_idx_dims)
 
   idx_is_batched = any(i_dim is not batching.not_mapped
@@ -840,7 +869,8 @@ def _swap_vmap(batched_args, batched_dims, *, tree):
                     f"an unbatched array reference of type {core.typeof(ref)}. "
                     "Move the array reference to be an argument to the vmapped "
                     "function?")
-
+  if not indexers:
+    return swap_p.bind(ref, val, *flat_idxs, tree=tree), ref_dim
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
   # TODO(sharadmv): handle vmap of multiple indexers
