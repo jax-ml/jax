@@ -5850,26 +5850,5 @@ class HelpersTest(PallasTest):
       np.testing.assert_array_equal(results, expected)
 
 
-# TODO(mattjj): enable when we update pallas_call to handle the new types
-# class PinnedBuffersTest(PallasTest):
-
-#   @config.refs_to_pins(True)
-#   def test_basic(self):
-#     @jax.jit
-#     def f(x):
-#       x_ref = jax.array_ref(x)  # lowers to pin
-#       mesh = plgpu.Mesh(grid=(1,), grid_names=('x',))
-
-#       @pl.core_map(mesh)
-#       def kernel_body():
-#         x_ref[...] += 1
-
-#       return jax.ref.freeze(x_ref)  # lowers to unpin
-
-#     x = jnp.arange(32, dtype='float32')
-#     y = f(x)
-#     self.assertAllClose(y, x + 1)
-
-
 if __name__ == "__main__":
   absltest.main()

@@ -84,10 +84,9 @@ def _pallas_call_abstract_eval(
     out_avals: tuple[jax_core.AbstractValue, ...],
     interpret,
     backend,
+    input_output_aliases,
     **params
 ):
-  del avals
-
   if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
     # Report effects that will be introduced when running/lowering
     # mosaic_tpu_interpret.mosaic_tpu_interpret.interpret_pallas_call .
@@ -97,13 +96,20 @@ def _pallas_call_abstract_eval(
   else:
     effs = jax_core.no_effects
 
+  inout_aliases = dict(input_output_aliases)
+  lin_avals = {i for i, a in enumerate(avals)
+               if isinstance(a, state_types.AbstractLinVal)}
+  if (missing := lin_avals - set(inout_aliases)):
+    raise ValueError(f"input pinned buffers without input_output_aliases:"
+                     f"{missing}")
+  outin_aliases = {out_idx: in_idx for in_idx, out_idx in inout_aliases.items()}
+  out_avals = [jax_core.ShapedArray(a.shape, a.dtype, a.weak_type)
+               if isinstance(a, pallas_core.ShapedArrayWithMemorySpace) else
+               avals[outin_aliases[out_idx]] if out_idx in outin_aliases
+               else a for out_idx, a in enumerate(out_avals)]
+
   # Make sure we don't return ShapedArrayWithMemorySpace to the outside world.
-  return [
-      jax_core.ShapedArray(a.shape, a.dtype, a.weak_type)
-      if isinstance(a, pallas_core.ShapedArrayWithMemorySpace)
-      else a
-      for a in out_avals
-  ], effs
+  return out_avals, effs
 
 
 pallas_call_p.def_effectful_abstract_eval(_pallas_call_abstract_eval)
@@ -1353,7 +1359,8 @@ jax_core.custom_str_eqn_compact_rules[pallas_call_p] = (
     _pallas_custom_str_eqn_compact
 )
 
-def _pallas_call_typecheck_rule(*in_avals, grid_mapping, **params):
+def _pallas_call_typecheck_rule(ctx_factory, *in_atoms, grid_mapping, **params):
+  in_avals = [x.aval for x in in_atoms]
   with grid_mapping.trace_env():
     return pallas_call_p.abstract_eval(
         *in_avals, grid_mapping=grid_mapping, **params

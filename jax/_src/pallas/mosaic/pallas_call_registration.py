@@ -29,6 +29,7 @@ from jax._src import core as jax_core
 from jax._src import frozen_dict
 from jax._src import sharding_impls
 from jax._src import tpu_custom_call
+from jax._src.state import types as state_types
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager
@@ -49,7 +50,8 @@ def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
   after loading from a memref inside of the kernel.
   """
   assert isinstance(
-      x, (jax.Array, jax_core.ShapedArray, jax_core.DShapedArray)
+      x, (jax.Array, jax_core.ShapedArray, jax_core.DShapedArray,
+          state_types.AbstractLinVal)
   ), type(x)
   if isinstance(x, jax.Array):
     if dtypes.issubdtype(x.dtype, jax.numpy.bool_):
@@ -57,6 +59,7 @@ def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
     return x
   else:
     if dtypes.issubdtype(x.dtype, jax.numpy.bool_):
+      assert not isinstance(x, state_types.AbstractLinVal)
       return jax_core.ShapedArray(x.shape, lowering.BOOL_MEMREF_TYPE)
     return x
 
@@ -205,7 +208,7 @@ def _tc_lowering_rule(
     return args
 
   kernel_in_avals = [_maybe_cast_to_int(x) for x in ctx.avals_in]
-  kernel_out_avals = [_maybe_cast_to_int(x) for x in out_avals]
+  kernel_out_avals = [_maybe_cast_to_int(x) for x in ctx.avals_out]
   cast_ctx = ctx.replace(avals_out=kernel_in_avals)
   in_nodes = mlir.lower_fun(_maybe_cast_inputs)(cast_ctx, *in_nodes)
 

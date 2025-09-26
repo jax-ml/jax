@@ -608,3 +608,4 @@ class AbstractLinVal(core.AbstractValue):
 
   shape = property(lambda self: self.inner_aval.shape)  # type: ignore
   dtype = property(lambda self: self.inner_aval.dtype)  # type: ignore
+  ndim = property(lambda self: self.inner_aval.ndim)  # type: ignore

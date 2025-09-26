@@ -512,6 +512,10 @@ class BlockSpec:
       block_array_aval = jax_core.ShapedArray(
           ref_block_shape, array_aval.dtype, array_aval.weak_type
       )
+    elif isinstance(array_aval, state_types.AbstractLinVal):
+      if not isinstance(array_aval.inner_aval, jax_core.ShapedArray):
+        raise NotImplementedError  # TODO(mattjj,sharadmv)
+      block_array_aval = array_aval.inner_aval.update(shape=ref_block_shape)
     else:
       block_array_aval = array_aval.update(shape=ref_block_shape)
     block_aval = state.AbstractRef(block_array_aval, self.memory_space)
@@ -585,14 +589,16 @@ class BlockSpec:
           f"{origin} must not capture constants: {consts}"
       )
 
-    array_aval_shape = _max_shape_from_aval(array_aval)
+    if isinstance(array_aval, (jax_core.ShapedArray, jax_core.DShapedArray)):
+      array_aval_shape = _max_shape_from_aval(array_aval)
+      array_aval = array_aval.update(shape=array_aval_shape)
 
     mapping = BlockMapping(
         block_shape=block_shape,
         transformed_block_aval=block_aval,  # There are no transforms by default
         index_map_jaxpr=jax_core.ClosedJaxpr(jaxpr, consts),
         index_map_out_tree=index_map_out_tree,
-        array_aval=array_aval.update(shape=array_aval_shape),
+        array_aval=array_aval,
         origin=origin,
         pipeline_mode=self.pipeline_mode,
         debug=debug,
