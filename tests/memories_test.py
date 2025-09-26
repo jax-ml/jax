@@ -1624,6 +1624,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(y_out, y1 + y1)
 
   def test_compute_offload_mesh_with_linear_layout(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("GPU does not support tiling.")
     mesh = jtu.create_mesh((2, 2), ("x", "y"))
     sharding = NamedSharding(mesh, P("x", "y"))
     p_sharding = NamedSharding(mesh, P("x", "y"), memory_kind="pinned_host")
