@@ -1079,5 +1079,31 @@ class ScalarSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x + jnp.arange(1, 9)[:, None])
 
 
+class PipelineTest(PallasSCTest):
+
+  def test_basic(self):
+    num_steps = 16
+    x = jnp.arange(num_steps * 8).reshape(-1, 8)
+
+    @vector_subcore_kernel(
+        out_shape=x,
+        in_specs=(pl.BlockSpec(memory_space=pltpu.HBM),),
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_hbm_ref, o_hbm_ref):
+      @functools.partial(
+          pltpu.emit_pipeline,
+          grid=(num_steps // 2,),
+          in_specs=pl.BlockSpec((2, 8), lambda i: (i, 0)),
+          out_specs=pl.BlockSpec((2, 8), lambda i: (i, 0)),
+      )
+      def pipeline(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + 1
+
+      pipeline(x_hbm_ref, o_hbm_ref)
+
+    np.testing.assert_array_equal(kernel(x), x + 1)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
