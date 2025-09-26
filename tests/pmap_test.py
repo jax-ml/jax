@@ -1387,12 +1387,15 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(lambda x: 3)
     x = jnp.arange(device_count + 1)
     if config.pmap_shmap_merge.value:
-      if jtu.device_under_test() == "cpu" or jax.device_count() > 1:
-        expected_regex = r"Sharding.*implies.*but the dimension size.*"
-      else:
-        expected_regex = r"cannot select an axis to squeeze out which has size not equal to one.*"
+      expected_regex = [
+        # NOTE(dsuo): We get different error messages depending on backend.
+        r'shard_map applied.*axis sizes.*not evenly divisible.*mesh axis sizes.*',
+        r'cannot select an axis to squeeze out which has size not equal to one.*',
+        r'Sharding.*implies that array.*but the dimension size is.*',
+      ]
+      expected_regex = '|'.join(expected_regex)
     else:
-      expected_regex = r"compiling computation that requires \d+ logical devices, but only \d+ XLA devices are available .*"
+      expected_regex = r'compiling computation that requires \d+ logical devices, but only \d+ XLA devices are available .*'
     self.assertRaisesRegex(ValueError, expected_regex, lambda: f(x))
 
     # TODO(mattjj): test error message with explicit devices
@@ -2267,10 +2270,16 @@ class PythonPmapTest(jtu.JaxTestCase):
       result2 = jax.jit(jax.pmap(jax.random.bits))(keys)
     self.assertArraysEqual(result1, result2)
 
-  @config.pmap_shmap_merge(True)
-  def test_pmap_shmap_merge_store_exception(self):
+
+class PmapShmapMergeTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
     if jax.device_count() < 2:
-      raise SkipTest("test requires at least two devices")
+      raise SkipTest('test requires at least two devices')
+
+  @config.pmap_shmap_merge(True)
+  def test_store_exception(self):
     def f(x):
       return x
     inp = jnp.ones((jax.device_count(), 1), dtype=jnp.float32)
@@ -2279,9 +2288,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     jax.pmap(f, axis_name='i')(inp)
 
   @config.pmap_shmap_merge(True)
-  def test_pmap_shmap_merge_prng_key(self):
-    if jax.device_count() < 2:
-      raise SkipTest('test requires at least two devices')
+  def test_prng_key(self):
     keys = jax.random.split(jax.random.key(0), jax.device_count())
     out = jax.pmap(lambda x: x)(keys)
     self.assertEqual(type(out), type(keys))
@@ -2290,6 +2297,15 @@ class PythonPmapTest(jtu.JaxTestCase):
     out = jax.pmap(lambda x, y: y, in_axes=(0, None), out_axes=None)(
         keys, jax.random.key(0))
     self.assertEqual(type(out), type(keys))
+
+  @config.pmap_shmap_merge(True)
+  def test_lower_with_flattened_args(self):
+    shape = (jax.device_count(), 3)
+
+    inputs = np.reshape(np.arange(math.prod(shape)), shape)
+    # The shard_map implementation of pmap takes pytree args, but the inner
+    # jitted_f must take flattened args.
+    _ = jax.pmap(lambda x: x[0]).lower((inputs, ())).compile()  # doesn't crash
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

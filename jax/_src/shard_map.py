@@ -1935,8 +1935,10 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
     return tree_unflatten(out_tree(), outs)
 
   def lower(*args, **kwargs):
-    jitted_f, _, out_tree, _, _ = infer_params(*args, __check=False, **kwargs)
-    lowered = jitted_f.lower(*args, **kwargs)
+    jitted_f, flat_global_args, out_tree, _, _ = infer_params(
+        *args, __check=False, **kwargs
+    )
+    lowered = jitted_f.trace(*flat_global_args).lower()
     lowered = stages.Lowered(lowered._lowering, lowered.args_info, out_tree(),
                              lowered._no_kwargs)
     return lowered
