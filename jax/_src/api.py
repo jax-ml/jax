@@ -1156,17 +1156,18 @@ def vmap(fun: F,
   return cast(F, vmap_f)
 
 def _mapped_axis_spec(args_flat, in_axes_flat):
-  def _get_spec(arg, i):
+  def _get_sharding_spec(arg, i):
     try:
-      # Duck type arrays like BCOO arrays can be passed to vmap.
+      # TODO(mattjj,dougalm): we catch AttributeError because this is hardcoded
+      # on array types (having a `sharding` attribute). Revise!
       return shaped_abstractify(arg).sharding.spec[i]
-    except (IndexError, TypeError):
+    except (IndexError, TypeError, AttributeError):
       return None
 
   out_spec = None
   for arg, i in zip(args_flat, in_axes_flat):
     if i is not None:
-      spec = _get_spec(arg, i)
+      spec = _get_sharding_spec(arg, i)
       if out_spec is not None and out_spec != spec:
         raise ValueError(
             "Mapped away dimension of inputs passed to vmap should be sharded"
@@ -1184,20 +1185,29 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
         f"containing an array, got empty *args={args} and **kwargs={kwargs}"
     )
 
-  def _get_axis_size(name: str, shape: tuple[core.AxisSize, ...], axis: int
-                     ) -> core.AxisSize:
+  def _get_axis_size(x, axis) -> core.AxisSize:
     try:
-      return shape[axis]
-    except (IndexError, TypeError) as e:
-      min_rank = axis + 1 if axis >= 0 else -axis
-      # TODO(mattjj): better error message here
-      raise ValueError(
-          f"{name} was requested to map its argument along axis {axis}, "
-          f"which implies that its rank should be at least {min_rank}, "
-          f"but is only {len(shape)} (its shape is {shape})") from e
+      aval = typeof(x)
+    except TypeError:
+      pass
+    else:
+      return aval.axis_size(axis)
 
-  sizes = core.dedup_referents(_get_axis_size(name, np.shape(x), d)
-                               for x, d in zip(vals, dims) if d is not None)
+    # backcompat for pmap duck-typing
+    try:
+      shape = np.shape(x)
+    except:
+      pass
+    else:
+      return shape[axis]
+
+    typeof(x)  # raise an error
+    assert False
+
+
+
+  sizes = core.dedup_referents(
+      _get_axis_size(x, d) for x, d in zip(vals, dims) if d is not None)
   if len(sizes) == 1:
     sz, = sizes
     return sz
@@ -1240,7 +1250,7 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
     for p, x in generate_key_paths(kwargs)
   ]
   key_paths = [*args_paths, *kwargs_paths]
-  all_sizes = [_get_axis_size(name, np.shape(x), d) if d is not None else None
+  all_sizes = [_get_axis_size(x, d) if d is not None else None
                for x, d in zip(vals, dims)]
   size_counts = collections.Counter(s for s in all_sizes if s is not None)
   (sz, ct), *other_counts = counts = size_counts.most_common()

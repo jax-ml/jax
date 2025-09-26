@@ -29,7 +29,7 @@ from jax._src.partition_spec import PartitionSpec as P
 from jax._src.sharding_impls import NamedSharding
 from jax._src import mesh as mesh_lib
 from jax._src.ad_util import Zero, SymbolicZero, add_jaxvals, add_jaxvals_p
-from jax._src.core import Trace, Tracer, TraceTag, AxisName
+from jax._src.core import Trace, Tracer, TraceTag, AxisName, typeof
 from jax._src.interpreters import ad
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_unflatten, tree_flatten,
@@ -453,11 +453,6 @@ class BatchTracer(Tracer):
 
   def __init__(self, trace, val, batch_dim: NotMapped | int | RaggedAxis,
                source_info: source_info_util.SourceInfo | None = None):
-    if config.enable_checks.value:
-      assert type(batch_dim) in (NotMapped, int, RaggedAxis)
-      if type(batch_dim) is int:
-        aval = core.get_aval(val)
-        assert 0 <= batch_dim < len(aval.shape)
     self._trace = trace
     self.val = val
     self.batch_dim = batch_dim
@@ -468,26 +463,7 @@ class BatchTracer(Tracer):
 
   @property
   def aval(self):
-    aval = core.get_aval(self.val)
-    if self._trace.axis_data.spmd_name is not None:
-      if config._check_vma.value:
-        aval = aval.update(
-            vma=aval.vma - frozenset(self._trace.axis_data.spmd_name))
-    if self.batch_dim is not_mapped:
-      return aval
-    elif type(self.batch_dim) is int:
-      return core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
-    elif type(self.batch_dim) is RaggedAxis:
-      new_aval = core.mapped_aval(
-        aval.shape[self.batch_dim.stacked_axis], self.batch_dim.stacked_axis, aval)
-      shape = list(new_aval.shape)  # pytype: disable=attribute-error
-      for ragged_axis, segment_lengths in self.batch_dim.ragged_axes:
-        size_tracer = BatchTracer(self._trace, segment_lengths, 0)
-        if self.batch_dim.stacked_axis < ragged_axis:
-          ragged_axis -= 1
-        shape[ragged_axis] = size_tracer
-      return core.DShapedArray(shape=tuple(shape), dtype=aval.dtype,
-                               weak_type=aval.weak_type)
+    return typeof(self.val).dec_rank(self._trace.axis_data, self.batch_dim)
 
   def full_lower(self):
     if self.batch_dim is not_mapped:
@@ -558,6 +534,7 @@ class BatchTrace(Trace):
     assert isinstance(axis_data, AxisData)
     self.axis_data = axis_data
     self.tag = tag
+    self.requires_low = False
 
   def to_batch_info(self, val):
     if isinstance(val, BatchTracer) and val._trace.tag is self.tag:
