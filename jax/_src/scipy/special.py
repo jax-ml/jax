@@ -2135,6 +2135,8 @@ def sici(x: ArrayLike) -> tuple[Array, Array]:
       raise ValueError(
           f"Argument `x` to sici must be real-valued. Got dtype {lax.dtype(x)}."
       )
+    
+    x, = promote_args_inexact("sici", x)
 
     gamma = -digamma(1) # Euler-Mascheroni constant
 
