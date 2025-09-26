@@ -48,6 +48,7 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_a100",
         "gpu_h100",
+        "gpu_b200",
     ],
     shard_count = {
         "cpu": 8,
@@ -95,6 +96,7 @@ jax_multiplatform_test(
         "gpu_p100",
         "gpu_p100_x32",
         "gpu_h100",
+        "gpu_b200",
     ],
     deps = [
         "//jax:pallas",
@@ -122,6 +124,7 @@ jax_multiplatform_test(
         "gpu_a100_x32",
         "gpu_h100",
         "gpu_h100_x32",
+        "gpu_b200",
         "tpu_v6e",
     ],
     minimal_shard_count = {
@@ -169,6 +172,7 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_h100",
         "gpu_h100_x32",
+        "gpu_b200",
     ],
     env = {
         "JAX_PALLAS_USE_MOSAIC_GPU": "1",
@@ -226,6 +230,7 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_a100_x32",
         "gpu_h100_x32",
+        "gpu_b200",
     ],
     shard_count = 4,
     deps = [
@@ -249,6 +254,7 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_h100_x32",
         "gpu_h100",
+        "gpu_b200",
     ],
     shard_count = 2,
     tags = [
@@ -270,6 +276,7 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_a100_x32",
         "gpu_h100_x32",
+        "gpu_b200",
     ],
     tags = [],
     deps = [
@@ -458,7 +465,10 @@ jax_multiplatform_test(
         "--gpus_per_process=1",
     ],
     enable_backends = [],
-    enable_configs = ["gpu_h100x2"],
+    enable_configs = [
+        "gpu_h100x2",
+        "gpu_b200x2",
+    ],
     env = {
         "JAX_PALLAS_USE_MOSAIC_GPU": "1",
         "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
@@ -784,6 +794,7 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_a100_x32",
         "gpu_h100_x32",
+        "gpu_b200",
     ],
     shard_count = 1,
     deps = [
@@ -805,6 +816,7 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_a100_x32",
         "gpu_h100_x32",
+        "gpu_b200",
     ],
     shard_count = 20,
     tags = [
@@ -831,6 +843,7 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_a100_x32",
         "gpu_h100_x32",
+        "gpu_b200",
     ],
     shard_count = 6,
     deps = [
@@ -851,6 +864,7 @@ jax_multiplatform_test(
     enable_backends = ["cpu"],
     enable_configs = [
         "gpu_h100_x32",
+        "gpu_b200",
     ],
     shard_count = 1,
     deps = [
@@ -865,7 +879,10 @@ jax_multiplatform_test(
     name = "mgpu_attention_run",
     srcs = ["//jax/experimental/pallas/ops/gpu:attention_mgpu.py"],
     enable_backends = [],
-    enable_configs = ["gpu_h100_x32"],
+    enable_configs = [
+        "gpu_h100_x32",
+        "gpu_b200",
+    ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     tags = [
         "manual",
@@ -887,6 +904,7 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_h100_x32",
         "gpu_h100",
+        "gpu_b200",
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     shard_count = 8,
@@ -929,7 +947,10 @@ jax_multiplatform_test(
     name = "mgpu_matmul_test",
     srcs = ["mgpu_matmul_test.py"],
     enable_backends = [],
-    enable_configs = ["gpu_h100"],
+    enable_configs = [
+        "gpu_h100",
+        "gpu_b200",
+    ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     shard_count = 8,
     tags = ["mosaic_gpu_test"],
@@ -1031,6 +1052,7 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_h100_x32",
         "gpu_h100",
+        "gpu_b200",
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     tags = [
@@ -1049,6 +1071,7 @@ jax_multiplatform_test(
     enable_backends = [],
     enable_configs = [
         "gpu_h100",
+        "gpu_b200",
     ],
     shard_count = 12,
     tags = [
@@ -1097,6 +1120,7 @@ jax_multiplatform_test(
     enable_backends = [],
     enable_configs = [
         "gpu_h100x2",
+        "gpu_b200x2",
     ],
     env = {
         "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
