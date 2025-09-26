@@ -1082,9 +1082,9 @@ class BatchingTest(jtu.JaxTestCase):
                         jnp.sum(x, axis=(0, 1)))
 
 
-    error = (r"vmap was requested to map its argument along axis -4, which "
-             r"implies that its rank should be at least 4, but is only 3 "
-             r"\(its shape is \(3, 4, 5\)\)")
+    error = (r"along axis -4, which "
+             r"implies that its rank should be at least 4, but its rank is "
+             r"only 3 \(its shape is \(3, 4, 5\)\)")
     with self.assertRaisesRegex(ValueError, error):
       jax.vmap(jnp.sum, in_axes=-4)(x)
 

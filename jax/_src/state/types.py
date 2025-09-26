@@ -545,6 +545,10 @@ class AbstractRef(core.AbstractValue):
   def __hash__(self):
     return hash((self.__class__, self.inner_aval, self.memory_space))
 
+  def axis_size(self, axis_spec):
+    assert isinstance(axis_spec, int), axis_spec
+    return self.shape[axis_spec]
+
 def _map_ref(size, axis, ref_aval):
   return AbstractRef(core.mapped_aval(size, axis, ref_aval.inner_aval),
                      ref_aval.memory_space)

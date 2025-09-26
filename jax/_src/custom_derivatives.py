@@ -1000,7 +1000,8 @@ class CustomVJPCallPrimitive(core.Primitive):
 
   def bind_with_trace(self, trace, args, params):
     fun, fwd, bwd, *tracers = args
-    if trace.requires_low and config.vmap_primitive.value:
+    if trace.requires_low:
+      del fwd, bwd, params
       with core.set_current_trace(trace):
         return fun.call_wrapped(*tracers)
     else:

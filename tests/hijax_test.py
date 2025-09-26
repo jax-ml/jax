@@ -185,7 +185,29 @@ class TupTy(HiType):
     return HiTup(tuple(ty.raise_val(*it.islice(elts_iter, len(ty.lo_ty())))
                        for ty in self.tys))
 
+  # batching interface
+  def axis_size(self, axis_spec):
+    if not isinstance(axis_spec, tuple):
+      axis_spec = (axis_spec,) * len(self.tys)
+    size, *sizes = [ty.axis_size(s) for ty, s in zip(self.tys, axis_spec)
+                    if s is not None]
+    if any(size != sz for sz in sizes):
+      raise Exception
+    return size
+
+  def inc_rank(self, axis_data, axis_spec):
+    assert False  # TODO
+
+  def dec_rank(self, axis_data, axis_spec):
+    if isinstance(axis_spec, (int, type(None))):
+      axis_spec = HiTupBatchSpec((axis_spec,) * len(self.tys))
+    return TupTy(tuple(ty.dec_rank(axis_data, s) for ty, s in zip(self.tys, axis_spec.elts)))
+
 register_hitype(HiTup, lambda t: TupTy(tuple(map(typeof, t.elts))))
+
+@dataclass
+class HiTupBatchSpec:
+  elts: tuple
 
 class MakeTup(HiPrimitive):
   def abstract_eval(_, *in_avals):
@@ -193,6 +215,16 @@ class MakeTup(HiPrimitive):
 
   def to_lojax(self, *elts):
     return HiTup(elts)
+
+  def vmap(self, axis_data, args, in_axes):
+    outs = make_tup(*args)
+    if isinstance(in_axes, (int, type(None))):
+      out_axes = in_axes
+    elif in_axes[:-1] == in_axes[1:]:
+      out_axes, = set(in_axes)
+    else:
+      out_axes = HiTupBatchSpec(in_axes)
+    return outs, out_axes
 make_tup_p = MakeTup('make_tup')
 
 class GetTupElt(HiPrimitive):
@@ -201,6 +233,13 @@ class GetTupElt(HiPrimitive):
 
   def to_lojax(self, tup, *, idx):
     return tup.elts[idx]
+
+  def vmap(self, axis_data, args, in_axes, *, idx):
+    tup, = args
+    spec, = in_axes
+    if isinstance(spec, (int, type(None))):
+      spec = HiTupBatchSpec((spec,) * len(typeof(tup).tys))
+    return get_tuple_element(tup, idx), spec.elts[idx]
 get_tup_elt_p = GetTupElt('get_tup_elt')
 
 def make_tup(*elts):
@@ -477,9 +516,6 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertEqual(ans, 2)
 
   def test_closed_over_hitype(self):
-    if not config.vmap_primitive.value:
-      raise unittest.SkipTest("requires vmap_primitive enabled")
-
     tup = make_tup(1, 2)
 
     @jax.custom_vjp
@@ -496,6 +532,46 @@ class HijaxTest(jtu.JaxTestCase):
       return inner(tup)
 
     self.assertEqual(f(), 2)
+
+  def test_vmap_internal_tups(self):
+    @jax.vmap
+    def f(x):
+      tup = make_tup(x)
+      return get_tuple_element(tup, 0)
+    x = jnp.arange(3.)
+    x_ = f(x)
+    self.assertAllClose(x, x_)
+
+  def test_vmap_tups(self):
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.) + 1)
+
+    def f(tup):
+      x = get_tuple_element(tup, 0)
+      x = x + 1
+      return make_tup(x, get_tuple_element(tup, 1))
+
+    out = jax.vmap(f)(tup)
+    x_ = get_tuple_element(out, 0)
+    self.assertAllClose(x_, jnp.arange(3.) + 1)
+
+  def test_vmap_tup_custom_vjp(self):
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.) + 1)
+
+    @jax.custom_vjp
+    def inner(tup):
+      return get_tuple_element(tup, 1)
+    def fwd(tup):
+      assert False
+    def bwd(*_):
+      assert False
+    inner.defvjp(fwd, bwd)
+
+    @jax.jit
+    @jax.vmap
+    def f(tup):
+      return inner(tup)
+
+    self.assertAllClose(f(tup), jnp.arange(3.) + 1)
 
 
 class BoxTest(jtu.JaxTestCase):

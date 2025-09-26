@@ -3464,8 +3464,8 @@ class APITest(jtu.JaxTestCase):
         r"  \* one axis had size 10: axis 0 of argument a of type float32\[10,4\]"):
       api.vmap(h, in_axes=(0, 1))(X, [U, U])
 
-    error = (r"vmap was requested to map its argument along axis 0, which "
-             r"implies that its rank should be at least 1, but is only 0 "
+    error = (r"along axis 0, which "
+             r"implies that its rank should be at least 1, but its rank is only 0 "
              r"\(its shape is \(\)\)")
     with self.assertRaisesRegex(ValueError, error):
       # The mapped inputs cannot be scalars
@@ -3476,8 +3476,8 @@ class APITest(jtu.JaxTestCase):
       # If the output is mapped, there must be a non-None in_axes
       api.vmap(lambda x: x, in_axes=None)(jnp.array([1., 2.]))
 
-    error = (r"vmap was requested to map its argument along axis 1, which "
-             r"implies that its rank should be at least 2, but is only 1 "
+    error = (r"along axis 1, which "
+             r"implies that its rank should be at least 2, but its rank is only 1 "
              r"\(its shape is \(2,\)\)")
     with self.assertRaisesRegex(ValueError, error):
       api.vmap(lambda x: x, in_axes=1)(jnp.array([1., 2.]))
