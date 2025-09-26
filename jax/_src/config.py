@@ -1286,9 +1286,10 @@ log_checkpoint_residuals = bool_state(
 
 pmap_shmap_merge = bool_state(
     name='jax_pmap_shmap_merge',
-    default=False,
+    default=True,
     upgrade=True,
-    help='If True, pmap and shard_map API will be merged.')
+    help='If True, pmap and shard_map API will be merged.',
+)
 
 
 distributed_debug = bool_state(
