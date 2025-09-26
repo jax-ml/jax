@@ -1204,9 +1204,6 @@ def dot_product_attention(
           local_window_size=local_window_size,
       )
     case 'cudnn':
-      if bias is not None:
-        bias = check_valid_bias_batch(bias, query_arr.shape[-2])
-        bias = jnp.asarray(bias)
       use_padding = (
            query_seq_lengths is not None or key_value_seq_lengths is not None
       )
