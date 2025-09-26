@@ -1011,6 +1011,7 @@ class ClusterBarrierType(dtypes.ExtendedDType):
 
   collective_axes: tuple[str | tuple[str, ...], ...]
   num_arrivals: int
+  orders_tensor_core: bool
 
   def __str__(self):
     return self.name
@@ -1056,10 +1057,14 @@ class ClusterBarrier:
   collective_axes: tuple[str | tuple[str, ...], ...]
   num_barriers: int = 1
   num_arrivals: int = 1
+  orders_tensor_core: bool = False
 
   def get_ref_aval(self) -> state.AbstractRef:
     aval = jax_core.ShapedArray(
-        [self.num_barriers], ClusterBarrierType(self.collective_axes, self.num_arrivals)
+        [self.num_barriers],
+        ClusterBarrierType(
+            self.collective_axes, self.num_arrivals, self.orders_tensor_core
+        ),
     )
     return state.AbstractRef(aval, SMEM)
 

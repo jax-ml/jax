@@ -200,6 +200,17 @@ def matmul_kernel(a, b, config: TuningConfig):
         plgpu.barrier_arrive(store_done_barrier.at[acc_slot])
 
   num_sms = backend.get_default_device().core_count
+  if collective:
+    store_done_barrier = plgpu.ClusterBarrier(
+        collective_axes=("x",),
+        num_arrivals=1,
+        num_barriers=2,
+        orders_tensor_core=True,
+    )
+  else:
+    store_done_barrier = plgpu.Barrier(  # type: ignore
+        num_arrivals=1, num_barriers=2, orders_tensor_core=True
+    )
   f = plgpu.kernel(
       kernel,
       out_shape=jax.ShapeDtypeStruct((m, n), dtype),
@@ -229,8 +240,7 @@ def matmul_kernel(a, b, config: TuningConfig):
           # ab_tma_barrier
           plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
           # store_done_barrier, double-buffered
-          plgpu.Barrier(num_arrivals=1, num_barriers=2,
-                        orders_tensor_core=True),
+          store_done_barrier,
           # mma_done_barrier, double-buffered
           plgpu.Barrier(num_arrivals=1, num_barriers=2,
                         orders_tensor_core=True),
