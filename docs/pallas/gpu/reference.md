@@ -861,6 +861,14 @@ plgpu.commit_smem()
 plgpu.wgmma(smem_ref, ...)
 ```
 
+This explicit synchronization is also required in the other direction, for
+example:
+```python
+v = plgpu.load(smem_ref, ())
+plgpu.commit_smem()
+plgpu.copy_gmem_to_smem(..., smem_ref, ...)
+```
+
 Failing to call this function is likely to cause subtle data races, due to those asynchronous
 hardware units reading stale data from SMEM. Unfortunately, this function is relatively expensive,
 which is why we rely on you, the user, to insert it in the minimal number of places where it's necessary.
