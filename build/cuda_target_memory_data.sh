@@ -80,6 +80,9 @@ for i in `seq 0 $((JAX_ACCELERATOR_COUNT-1))`; do
       start_memory=$(awk -F',' 'NR==2 {print $4}' $NVIDIA_SMI_DUMP_PATH)
       max_memory=$(awk -F", " '($4+0 > max_value) {max_value = $4+0; max_record = $4} END {print max_record}' $NVIDIA_SMI_DUMP_PATH)
       echo "Max GPU memory: $max_memory, Starting Memory: $start_memory"
+      
+      # Print out the max to its own file that can be gathered at the end of a run
+      echo "$TEST_TARGET,$TEST_SHARD_INDEX,$max_memory,$start_memory" >> $TEST_UNDECLARED_OUTPUTS_DIR/max_memory.csv
 
       # The exit code is that of the bazel command.  Memory log errors are suppresed. 
       exit $command_exit
