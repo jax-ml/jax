@@ -1291,4 +1291,4 @@ primitive_batchers[core.pvary_p] = _pvary_batcher
 
 ### mutable arrays
 
-defvectorized(core.mutable_array_p)
+defvectorized(core.ref_p)

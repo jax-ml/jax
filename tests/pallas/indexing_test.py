@@ -199,15 +199,15 @@ class IndexerTest(jtu.JaxTestCase):
       NDIndexer.from_indices_shape(indices, shape)
 
   def test_ndindexer_with_ref(self):
-    indices = (core.mutable_array(jnp.tile(jnp.arange(4), (2,))),)
+    indices = (core.new_ref(jnp.tile(jnp.arange(4), (2,))),)
     shape = (4, 2)
     indexer = NDIndexer.from_indices_shape(indices, shape)
     self.assertTupleEqual(indexer.get_indexer_shape(), (8, 2))
 
   def test_ndindexer_with_multiple_refs(self):
     indices = (
-        core.mutable_array(jnp.tile(jnp.arange(4), (2,))),
-        core.mutable_array(jnp.tile(jnp.arange(2), (4,))),
+        core.new_ref(jnp.tile(jnp.arange(4), (2,))),
+        core.new_ref(jnp.tile(jnp.arange(2), (4,))),
     )
     shape = (4, 2)
     indexer = NDIndexer.from_indices_shape(indices, shape)
@@ -215,8 +215,8 @@ class IndexerTest(jtu.JaxTestCase):
 
   def test_ndindexer_with_multiple_broadcastable_refs(self):
     indices = (
-        core.mutable_array(jnp.tile(jnp.arange(4), (2,))),
-        core.mutable_array(jnp.arange(1)),
+        core.new_ref(jnp.tile(jnp.arange(4), (2,))),
+        core.new_ref(jnp.arange(1)),
     )
     shape = (4, 2)
     with self.assertRaisesRegex(
@@ -225,7 +225,7 @@ class IndexerTest(jtu.JaxTestCase):
       NDIndexer.from_indices_shape(indices, shape)
 
   def test_ndindexer_with_refs_and_ints(self):
-    indices = (core.mutable_array(jnp.tile(jnp.arange(4), (2,))), 0)
+    indices = (core.new_ref(jnp.tile(jnp.arange(4), (2,))), 0)
     shape = (4, 2)
     with self.assertRaisesRegex(ValueError, "Ref indexers cannot be mixed .*"):
       NDIndexer.from_indices_shape(indices, shape)

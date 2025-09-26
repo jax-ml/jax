@@ -4080,7 +4080,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_mutable_array_arg_basic(self, mesh):
-    x_ref = core.mutable_array(jnp.zeros(4, 'float32', out_sharding=P('x')))
+    x_ref = core.new_ref(jnp.zeros(4, 'float32', out_sharding=P('x')))
 
     @jax.jit
     @shard_map(out_specs=None)
@@ -4099,7 +4099,7 @@ class ShardMapTest(jtu.JaxTestCase):
     @jax.jit
     @shard_map(out_specs=P('x'))
     def f(x):
-      x_ref = core.mutable_array(jnp.zeros_like(x))
+      x_ref = core.new_ref(jnp.zeros_like(x))
       x_ref[...] = x
       return x_ref[...]
 

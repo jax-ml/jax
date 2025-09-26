@@ -3419,9 +3419,9 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   return core.pvary(out, tuple(aval.vma))
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
-def zeros_like_abstract_ref(aval: state.AbstractRef) -> core.MutableArray:
+def zeros_like_abstract_ref(aval: state.AbstractRef) -> core.Ref:
   val = ad_util.zeros_like_aval(aval.inner_aval)
-  return core.mutable_array(val)
+  return core.new_ref(val)
 
 # TODO(dougalm): this is nonsense but it's here because in places like
 # custom_vjp we assume that all arguments have tangent spaces. We could have

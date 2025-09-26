@@ -376,7 +376,7 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
   lin_eqns = []
   dangling_refs = set()
   for eqn in jaxpr.eqns:
-    if eqn.primitive is core.mutable_array_p:
+    if eqn.primitive is core.ref_p:
       dangling_refs.add(eqn.outvars[0])
     if eqn.primitive is core.freeze_p:
       dangling_refs.remove(eqn.invars[0])  # type: ignore
@@ -397,7 +397,7 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
       write_primal(eqn.outvars[0], ans)
 
   for v in dangling_refs:
-    write_primal(v, core.mutable_array(zeros_like_aval(v.aval.inner_aval)))  # type: ignore
+    write_primal(v, core.new_ref(zeros_like_aval(v.aval.inner_aval)))  # type: ignore
 
   ct_env: dict[Any, Any] = {}
   ctx = (source_info_util.transform_name_stack('transpose') if transform_stack
@@ -406,7 +406,7 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
     foreach(partial(write_cotangent, 'outvars'), jaxpr.outvars, cotangents_in)
     for eqn in lin_eqns[::-1]:
       if eqn.primitive.ref_primitive:
-        if eqn.primitive is core.mutable_array_p:
+        if eqn.primitive is core.ref_p:
           val_var, = eqn.invars
           ref_var, = eqn.outvars
           ref = read_primal(ref_var)
@@ -416,7 +416,7 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
           val_var, = eqn.outvars
           ref_var, = eqn.invars   # type: ignore
           ct_in = instantiate_zeros(read_cotangent(val_var))
-          write_primal(ref_var, core.mutable_array(ct_in))
+          write_primal(ref_var, core.new_ref(ct_in))
         continue
 
       invals = map(read_primal, eqn.invars)
@@ -502,7 +502,7 @@ def backward_pass3(
     if eqn.primitive.ref_primitive:
       v, = eqn.outvars
       lin_eqns.append(eqn)
-      if eqn.primitive is core.mutable_array_p:
+      if eqn.primitive is core.ref_p:
         env[v] = RefAccum(v.aval.inner_aval)  # type: ignore
       elif eqn.primitive is core.freeze_p:
         env[v] = ValAccum(v.aval)
@@ -582,7 +582,7 @@ class RefAccum(GradAccum):
     if isinstance(x, Zero) or x is None:
       return
     elif self.ref is None:
-      self.ref = core.array_ref(x)
+      self.ref = core.new_ref(x)
     else:
       self.ref.addupdate(x)
 
@@ -594,7 +594,7 @@ class RefAccum(GradAccum):
 
   def inst(self):
     if self.ref is None:
-      self.ref = core.array_ref(zeros_like_aval(self.aval))
+      self.ref = core.new_ref(zeros_like_aval(self.aval))
     return self
 
 class ValAccum(GradAccum):
@@ -678,7 +678,7 @@ class JVPTrace(Trace):
   def process_primitive(self, primitive, tracers, params):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if (all(type(t) is Zero for t in tangents_in) and
-        primitive is not core.mutable_array_p and
+        primitive is not core.ref_p and
         not any(isinstance(core.typeof(x), AbstractRef) for x in primals_in)):
       return primitive.bind_with_trace(self.parent_trace, primals_in, params)
     jvp = primitive_jvps.get(primitive)
@@ -915,7 +915,7 @@ class LinearizeTrace(Trace):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, args))
     tangent_nzs = [type(t) is not Zero for t in tangents_in]
     if (all(type(t) is Zero for t in tangents_in) and
-        primitive is not core.mutable_array_p and
+        primitive is not core.ref_p and
         not any(isinstance(core.typeof(x), AbstractRef) for x in primals_in)):
       return primitive.bind_with_trace(self.parent_trace, primals_in, params)
     fallback = partial(fallback_linearize_rule, primitive)

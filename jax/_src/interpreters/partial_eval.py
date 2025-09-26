@@ -1817,7 +1817,7 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
   all_vars = {v: i for i, v in enumerate(it.chain(constvars, invars))}
   mut_arrays = set()
   for eqn in eqns:
-    if eqn.primitive is core.mutable_array_p:
+    if eqn.primitive is core.ref_p:
       outvar, = eqn.outvars
       all_vars[outvar] = None  # type: ignore
       mut_arrays.add(outvar)
@@ -2516,7 +2516,7 @@ def _check_no_returned_refs(
       # TODO(dougalm): something more efficient
       eqn = next((e for e in eqns if v in e.outvars), None)
       if eqn:
-        assert eqn.primitive is core.mutable_array_p
+        assert eqn.primitive is core.ref_p
         origin_info = ('\n\nThe returned mutable array was created on line '
                        f'{source_info_util.summarize(eqn.source_info)}.')
       elif v in frame.invars:
