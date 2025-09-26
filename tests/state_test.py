@@ -1351,7 +1351,7 @@ class StateControlFlowTest(jtu.JaxTestCase):
       x_ref[...] += 1
       return (), ()
 
-    x_ref = jax.array_ref(jnp.arange(3.))
+    x_ref = jax.new_ref(jnp.arange(3.))
     jaxpr = jax.make_jaxpr(lambda x_ref: jax.lax.scan(body, (), x_ref))(x_ref)
     jaxpr, () = discharge_state(jaxpr.jaxpr, jaxpr.consts)
     scan_eqn = jaxpr.eqns[0]

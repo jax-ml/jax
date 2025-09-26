@@ -790,7 +790,7 @@ class MutableArrayTest(jtu.JaxTestCase):
       return jnp.mean(act)
 
     def process_batch(Ws, xs_batch):
-      grad_acc = jax.array_ref(jnp.zeros_like(Ws))               # CHANGED
+      grad_acc = jax.new_ref(jnp.zeros_like(Ws))               # CHANGED
 
       def process_mubatch(_, xs):
         loss, f_vjp = vjp3(lambda Ws: mubatch_loss(Ws, xs), Ws)  # CHANGED
@@ -813,7 +813,7 @@ class MutableArrayTest(jtu.JaxTestCase):
   def test_custom_vjp_internal_ref(self, jit):
     @jax.custom_vjp
     def f(x):
-      x_ref = jax.array_ref(jnp.zeros_like(x))
+      x_ref = jax.new_ref(jnp.zeros_like(x))
       x_ref[...] = x
       return x_ref[...]
     def f_fwd(x):
@@ -834,7 +834,7 @@ class MutableArrayTest(jtu.JaxTestCase):
   def test_custom_vjp_ad_after_discharge_error(self):
     @jax.custom_vjp
     def f(x):
-      x_ref = jax.array_ref(jnp.zeros_like(x))
+      x_ref = jax.new_ref(jnp.zeros_like(x))
       x_ref[...] = x
       return x_ref[...]
     def f_fwd(x):
@@ -864,23 +864,23 @@ class MutableArrayTest(jtu.JaxTestCase):
     if jit:
       f = jax.jit(f)
 
-    y = f(jax.array_ref(3.14))
+    y = f(jax.new_ref(3.14))
     self.assertAllClose(y, 3.14, check_dtypes=False)
 
     # this exercises the fallback path, not a fancy transpose
-    _, f_vjp = vjp3(lambda x: f(jax.array_ref(x)), 3.14)
+    _, f_vjp = vjp3(lambda x: f(jax.new_ref(x)), 3.14)
     g, = f_vjp(1.)
     self.assertAllClose(g, 1., check_dtypes=False)
 
   def test_get_transpose_uninstantiated_grad_ref(self):
     # from https://github.com/jax-ml/jax/pull/31412#discussion_r2308151559
-    f = lambda x: jax.array_ref(x)[0]
+    f = lambda x: jax.new_ref(x)[0]
     jax.grad(f)(jnp.array([3.]))  # don't crash
 
   def test_vmap_create_ref_from_unbatched_value(self):
     @jax.jit
     def internally_pure(x):
-      ref = jax.array_ref(1.)
+      ref = jax.new_ref(1.)
       ref[...] += x
       return ref[...]
 

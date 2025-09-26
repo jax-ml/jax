@@ -38,7 +38,27 @@ from jax._src.dtypes import (
 from jax._src.earray import (
     EArray as EArray
 )
-from jax._src.core import (
-    mutable_array as mutable_array,
-    MutableArray as MutableArray,
-)
+from jax._src import core as _src_core
+
+_deprecations = {
+  # Added for v0.8.0
+  "mutable_array": (
+    "jax.experimental.mutable_array is deprecated; use jax.new_ref instead.",
+    _src_core.new_ref
+  ),
+  "MutableArray": (
+    "jax.experimental.MutableArray is deprecated; use jax.Ref instead.",
+    _src_core.Ref
+  ),
+}
+
+import typing as _typing
+if _typing.TYPE_CHECKING:
+  mutable_array = _src_core.new_ref
+  MutableArray = _src_core.Ref
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing
+del _src_core

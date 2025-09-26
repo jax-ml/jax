@@ -140,9 +140,7 @@ from jax._src.shard_map import shard_map as shard_map
 from jax._src.shard_map import smap as smap
 
 from jax.ref import new_ref as new_ref
-from jax.ref import array_ref as array_ref
 from jax.ref import Ref as Ref
-from jax.ref import ArrayRef as ArrayRef
 
 # Force import, allowing jax.interpreters.* to be used after import jax.
 from jax.interpreters import ad, batching, mlir, partial_eval, pxla, xla
@@ -187,6 +185,15 @@ import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
 _deprecations = {
+  # Added for v0.8.0
+  "array_ref": (
+    "jax.array_ref is deprecated; use jax.new_ref instead.",
+    new_ref
+  ),
+  "ArrayRef": (
+    "jax.ArrayRef is deprecated; use jax.Ref instead.",
+    Ref
+  ),
   # Finalized 2025-03-25; remove after 2025-06-25
   "treedef_is_leaf": (
     "jax.treedef_is_leaf was removed in JAX v0.6.0: use jax.tree_util.treedef_is_leaf.",
@@ -226,7 +233,8 @@ _deprecations = {
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  pass
+  array_ref = new_ref
+  ArrayRef = Ref
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

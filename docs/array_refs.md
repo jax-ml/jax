@@ -50,7 +50,7 @@ in-place. These array references are compatible with JAX transformations, like
 import jax
 import jax.numpy as jnp
 
-x_ref = jax.array_ref(jnp.zeros(3))  # new array ref, with initial value [0., 0., 0.]
+x_ref = jax.new_ref(jnp.zeros(3))  # new array ref, with initial value [0., 0., 0.]
 
 @jax.jit
 def f():
@@ -68,7 +68,7 @@ entire value using `x_ref[...] = A` for some `Array`-valued expression `A`:
 
 ```{code-cell}
 def g(x):
-  x_ref = jax.array_ref(0.)
+  x_ref = jax.new_ref(0.)
   x_ref[...] = jnp.sin(x)
   return x_ref[...]
 
@@ -81,7 +81,7 @@ about the *only* thing you can do with an `Ref`. References can't be passed
 where `Array`s are expected:
 
 ```{code-cell}
-x_ref = jax.array_ref(1.0)
+x_ref = jax.new_ref(1.0)
 try:
   jnp.sin(x_ref)  # error! can't do math on refs
 except Exception as e:
@@ -98,7 +98,7 @@ recipes.
 If you've ever used
 [Pallas](https://docs.jax.dev/en/latest/pallas/quickstart.html), then `Ref`
 should look familiar. A big difference is that you can create new `Ref`s
-yourself directly using `jax.array_ref`:
+yourself directly using `jax.new_ref`:
 
 ```{code-cell}
 from jax import Array, Ref
@@ -134,7 +134,7 @@ def swap(ref: Ref, idx: Indexer, val: Array) -> Array:
 Here, `Indexer` can be any NumPy indexing expression:
 
 ```{code-cell}
-x_ref = jax.array_ref(jnp.arange(12.).reshape(3, 4))
+x_ref = jax.new_ref(jnp.arange(12.).reshape(3, 4))
 
 # int indexing
 row = x_ref[0]
@@ -169,7 +169,7 @@ def impure1(x_ref, y_ref):
   x_ref[...] = y_ref[...]
 
 # closes over ref => impure
-y_ref = jax.array_ref(0)
+y_ref = jax.new_ref(0)
 
 @jax.jit
 def impure2(x):
@@ -183,7 +183,7 @@ is in the eye of the caller. For example:
 # internal refs => still pure
 @jax.jit
 def pure1(x):
-  ref = jax.array_ref(x)
+  ref = jax.new_ref(x)
   ref[...] = ref[...] + ref[...]
   return ref[...]
 ```
@@ -210,7 +210,7 @@ use:
 For example, these are errors:
 
 ```{code-cell}
-x_ref = jax.array_ref(0.)
+x_ref = jax.new_ref(0.)
 
 # can't return refs
 @jax.jit
@@ -271,14 +271,14 @@ def dist(x, y, out_ref):
   out_ref[...] = jnp.sum((x - y) ** 2)
 
 vecs = jnp.arange(12.).reshape(3, 4)
-out_ref = jax.array_ref(jnp.zeros((3, 3)))
+out_ref = jax.new_ref(jnp.zeros((3, 3)))
 jax.vmap(jax.vmap(dist, (0, None, 0)), (None, 0, 0))(vecs, vecs, out_ref)  # ok!
 print(out_ref)
 ```
 
 ```{code-cell}
 # vmap with a closed-over ref is not
-x_ref = jax.array_ref(0.)
+x_ref = jax.new_ref(0.)
 
 def err5(x):
   x_ref[...] = x
@@ -300,7 +300,7 @@ internally. For example:
 ```{code-cell}
 @jax.jit
 def pure2(x):
-  ref = jax.array_ref(x)
+  ref = jax.new_ref(x)
   ref[...] = ref[...] + ref[...]
   return ref[...]
 
@@ -352,7 +352,7 @@ def f(x, grads_ref):
   x = stash_grads(grads_ref, x)
   return x
 
-grads_ref = jax.array_ref(0.)
+grads_ref = jax.new_ref(0.)
 f(1., grads_ref)
 print(grads_ref)
 ```
@@ -372,7 +372,7 @@ the need for donation, since they are effectively always donated:
 def sin_inplace(x_ref):
   x_ref[...] = jnp.sin(x_ref[...])
 
-x_ref = jax.array_ref(jnp.arange(3.))
+x_ref = jax.new_ref(jnp.arange(3.))
 print(x_ref.unsafe_buffer_pointer(), x_ref)
 sin_inplace(x_ref)
 print(x_ref.unsafe_buffer_pointer(), x_ref)
@@ -418,7 +418,7 @@ def foreach(*args):
 ```
 
 ```{code-cell}
-r = jax.array_ref(0)
+r = jax.new_ref(0)
 xs = jnp.arange(10)
 
 @foreach(xs)
