@@ -410,6 +410,21 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
     return cast<TypedValue<VectorType>>(ele_as_fp);
   };
   if (ctx.hardware_generation == 7) {
+    // Emulate 4E2M1FN with 8E4M3FN.
+    if (isa<Float4E2M1FNType>(lhs_element_type)) {
+      auto dest_type = Float8E4M3FNType::get(builder.getContext());
+      lhs = cast<TypedValue<VectorType>>(builder.create<tpu::ExtFOp>(
+          VectorType::get(lhs.getType().getShape(), dest_type), lhs));
+      op->setOperand(0, lhs);
+      lhs_element_type = dest_type;
+    }
+    if (isa<Float4E2M1FNType>(rhs_element_type)) {
+      auto dest_type = Float8E4M3FNType::get(builder.getContext());
+      rhs = cast<TypedValue<VectorType>>(builder.create<tpu::ExtFOp>(
+          VectorType::get(rhs.getType().getShape(), dest_type), rhs));
+      op->setOperand(1, rhs);
+      rhs_element_type = dest_type;
+    }
     auto require_compatibility_mode = [&]() -> LogicalResult {
       if (!ctx.compatibility_mode) {
         return op->emitOpError(
