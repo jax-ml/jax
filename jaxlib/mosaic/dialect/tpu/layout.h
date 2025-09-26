@@ -555,6 +555,16 @@ class TiledRectangularVregBounds : public VRegDataBounds {
       CHECK(0 <= start && start < end && end <= vs);
     }
   }
+  TiledRectangularVregBounds(const int8_t bitwidth,
+                             const std::array<int64_t, 2> tiling,
+                             const std::array<int64_t, 2> start_offsets,
+                             const std::array<int64_t, 2> end_offsets,
+                             const std::array<int64_t, 2> target_shape)
+      // The offsets and implicit dim of the layout are ignored.
+      : TiledRectangularVregBounds(
+            VectorLayout(bitwidth, LayoutOffsets(), tiling,
+                         VectorLayout::ImplicitDim::kNone),
+            start_offsets, end_offsets, target_shape) {}
 
   bool usesAllTiles(std::array<int64_t, 2> target_shape) const;
   // See base class.
@@ -572,6 +582,7 @@ class TiledRectangularVregBounds : public VRegDataBounds {
       std::array<int64_t, 2> target_shape) const override;
 
  private:
+  // TODO(tlongeri): Replace layout_ with bitwidth_ and tiling_
   VectorLayout layout_;
   std::array<int64_t, 2> start_offsets_;
   std::array<int64_t, 2> end_offsets_;

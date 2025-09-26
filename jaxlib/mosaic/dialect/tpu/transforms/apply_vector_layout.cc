@@ -421,46 +421,51 @@ FailureOr<BlockArgument> appendConstant(RewriteContext &ctx, func::FuncOp func,
   return argument;
 }
 
-// Masks all values outside of bounds.
+// Selects between values using the provided bounds.
 //
 // Arguments:
-//   value: A rank 2 MLIR vector to be masked.
-//   bounds: A TargetTuple of slices specifying a rectangular subregion of value
-//     that should be preserved during masking.
-//   neutral: A scalar attribute specifying the value that will be inserted
-//     for all values outside of specified bounds.
+//   bounds:  An object specifying the bounds of the data to be masked.
+//   in_bounds_vreg:     Vreg to select data that is in bounds.
+//   out_of_bounds_vreg: Vreg to select data that is out of bounds. Must have
+//                       the same type as in_bounds_vreg.
 //
 // Returns:
-//   An MLIR value of the same type as the value argument, with all entries
-//   outside of bounds replaced by neutral.
-FailureOr<Value> maskOOB(RewriteContext &ctx, ImplicitLocOpBuilder &builder,
-                         TypedValue<VectorType> value,
-                         const VRegDataBounds &bounds,
-                         const Attribute neutral) {
-  auto native_vreg_ty =
-      getNativeVregType(value.getType().getElementType(), ctx.target_shape);
-  TPU_ASSERT_LOC(value.getLoc(), llvm::equal(value.getType().getShape(),
-                                             native_vreg_ty.getShape()));
+//   A vreg with its elements selected according to the provided bounds.
+FailureOr<Value> selectWithBounds(RewriteContext& ctx,
+                                  ImplicitLocOpBuilder& builder,
+                                  const VRegDataBounds& bounds,
+                                  TypedValue<VectorType> in_bounds_vreg,
+                                  TypedValue<VectorType> out_of_bounds_vreg) {
+  auto native_vreg_ty = getNativeVregType(
+      in_bounds_vreg.getType().getElementType(), ctx.target_shape);
+  TPU_ASSERT_LOC(builder.getLoc(),
+                 llvm::equal(in_bounds_vreg.getType().getShape(),
+                             native_vreg_ty.getShape()));
   if (bounds.isComplete(ctx.target_shape)) {
-    return value;
+    return in_bounds_vreg;
   }
   FAILUREOR_ASSIGN_OR_RETURN(
       TypedValue<VectorType> mask,
-      bounds.getVectorMask(builder, value.getLoc(), ctx.hardware_generation,
+      bounds.getVectorMask(builder, builder.getLoc(), ctx.hardware_generation,
                            ctx.target_shape));
   if (cast<IntegerType>(mask.getType().getElementType()).getWidth() != 1) {
-    return emitError(value.getLoc(),
+    return emitError(builder.getLoc(),
                      "Not implemented: Unsupported mask bitwidth");
   }
   if (mask.getType().getShape() != native_vreg_ty.getShape()) {
     mask = builder.create<tpu::MaskCastOp>(
-        value.getLoc(),
         VectorType::get(native_vreg_ty.getShape(), builder.getI1Type()), mask);
   }
-  Value neutral_vec = getFullVector(builder, native_vreg_ty, neutral);
   return builder
-      .create<arith::SelectOp>(value.getLoc(), mask, value, neutral_vec)
+      .create<arith::SelectOp>(mask, in_bounds_vreg, out_of_bounds_vreg)
       .getResult();
+}
+FailureOr<Value> maskOOB(RewriteContext& ctx, ImplicitLocOpBuilder& builder,
+                         TypedValue<VectorType> vreg,
+                         const VRegDataBounds& bounds,
+                         const Attribute neutral) {
+  TypedValue<VectorType> oob_vreg = getFullLikeVector(builder, vreg, neutral);
+  return selectWithBounds(ctx, builder, bounds, vreg, oob_vreg);
 }
 
 // Transpose the 2nd minor dimension of the implicit shape.
@@ -3314,7 +3319,7 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_OP(
       llvm::all_of(layouts_in, [](const Layout &l) { return l.has_value(); }));
   TPU_ASSERT_OP(layouts_out.front().has_value());
-  OpBuilder builder(&op);
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
   auto concatenate_op = cast<tpu::ConcatenateOp>(op);
   const VectorType res_ty = concatenate_op.getResult().getType();
   uint32_t dimension = concatenate_op.getDimension();
@@ -3323,7 +3328,6 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
 
   auto res_layout = layouts_out.front();
   const int8_t bitwidth = res_layout->bitwidth();
-  const int packing = res_layout->packing();
   const std::array<int64_t, 2> tiling = res_layout->tiling();
   const std::array<int64_t, 2> vreg_slice =
       res_layout->vregSlice(ctx.target_shape);
@@ -3339,10 +3343,7 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
   // the verifier.
   for (int i = 0; i < op.getNumOperands(); ++i) {
     auto operand = op.getOperand(i);
-    if (!layouts_in[i].has_value()) {
-      return op.emitOpError("Not implemented: Expected input layout");
-    }
-    auto const &layout = *layouts_in[i];
+    const VectorLayout& layout = *layouts_in[i];
 
     if (layout.tiling() != tiling) {
       return op.emitOpError("Not implemented: result/input Tiling mismatch");
@@ -3374,9 +3375,6 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
       res_layout->tileArrayShape(res_ty.getShape(), ctx.target_shape);
   xla::Array<Value> out_vregs(vreg_array_shape);
 
-  auto boundIdxConst =
-      std::bind(IdxConst, std::placeholders::_1, builder, op.getLoc());
-
   // Handle the untiled concatenation case.
   if (idimension < irank - 2) {
     out_vregs = concatenate(operand_vregs, dimension);
@@ -3385,8 +3383,7 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
     if (res_layout->offsets()[tiling_dim] != 0) {
       return op.emitOpError("Not implemented: result non-zero offset.");
     }
-    if (!res_layout->hasNativeTiling(ctx.target_shape) &&
-        !(tiling_dim == 1 && tiling[1] == ctx.target_shape[1])) {
+    if (tiling[1] != ctx.target_shape[1]) {
       return op.emitOpError("Not implemented: Unsupported tiling.");
     }
 
@@ -3395,42 +3392,35 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
     for (size_t i = 0; i < op.getNumOperands(); ++i) {
       auto& vregs = operand_vregs[i];
 
+      const VectorLayout& operand_layout = *layouts_in[i];
       const int64_t operand_offset = offset_at_dim % vreg_slice[tiling_dim];
-      if (operand_offset != layouts_in[i]->offsets()[tiling_dim]) {
+      if (operand_offset != operand_layout.offsets()[tiling_dim]) {
         return op.emitOpError("Not implemented: Expected input offset ")
                << tiling_dim << " for operand " << i << " to be "
                << operand_offset << ", but it has layout " << *layouts_in[i];
       }
-      if (operand_offset >= tiling[tiling_dim]) {
-        return op.emitError(
-            "Not implemented: Input offsets outside of the first tile");
-      }
       SmallVector<int64_t> out_idx;
-      vregs.Each([&](absl::Span<const int64_t> idx, Value* v) {
-        out_idx.assign(idx.begin(), idx.end());
-        out_idx[dimension] += offset_at_dim / vreg_slice[tiling_dim];
-        if (idx[dimension] == 0 && operand_offset != 0) {
-          Value mask;
-          const VectorType vmask_ty = getNativeVregOrVmaskType(
-              builder.getI1Type(), bitwidth, ctx.target_shape);
-          if (tiling_dim == 0) {  // sublane
-            mask = createSubelementMask(builder, op.getLoc(), bitwidth,
-                                        /*from=*/0, /*to=*/operand_offset,
-                                        ctx.target_shape);
-          } else {  // lane
-            CHECK_EQ(tiling[0] % packing, 0);
-            mask = builder.create<tpu::CreateMaskOp>(
-                op.getLoc(), vmask_ty,
-                ArrayRef<Value>{boundIdxConst(0), boundIdxConst(0)},
-                ArrayRef<Value>{boundIdxConst(tiling[0] / packing),
-                                boundIdxConst(operand_offset)});
-          }
-          // Blend the current value with the existing value in the output.
-          *v = builder.create<arith::SelectOp>(op.getLoc(), mask,
-                                               out_vregs(out_idx), *v);
-        }
-        out_vregs(out_idx) = *v;
-      });
+      RETURN_IF_FAILED(Each(
+          vregs, [&](const ArrayRef<int64_t> idx, Value v) -> LogicalResult {
+            out_idx.assign(idx.begin(), idx.end());
+            out_idx[dimension] += offset_at_dim / vreg_slice[tiling_dim];
+            Value& out_vreg = out_vregs(out_idx);
+            if (idx[dimension] == 0 && operand_offset != 0) {
+              const std::array<int64_t, 2> start_offsets = {0, 0};
+              std::array<int64_t, 2> end_offsets = vreg_slice;
+              end_offsets[tiling_dim] = operand_offset;
+              TiledRectangularVregBounds bounds(bitwidth, tiling, start_offsets,
+                                                end_offsets, ctx.target_shape);
+              FAILUREOR_ASSIGN_OR_RETURN(
+                  out_vreg,
+                  selectWithBounds(ctx, builder, bounds,
+                                   cast<TypedValue<VectorType>>(out_vreg),
+                                   cast<TypedValue<VectorType>>(v)));
+            } else {
+              out_vreg = v;
+            }
+            return success();
+          }));
       auto operand_type = cast<VectorType>(op.getOperand(i).getType());
       offset_at_dim += operand_type.getDimSize(dimension);
     }
@@ -8787,8 +8777,9 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
   // support for offsets outside of the first tile. When support is more broad,
   // any op without support should check it within their own rule.
   if (!isa<arith::TruncIOp, arith::ExtSIOp, vector::BroadcastOp,
-           vector::ExtractStridedSliceOp, vector::ShapeCastOp, tpu::ReshapeOp,
-           tpu::RelayoutOp, tpu::TruncFOp>(op)) {
+           vector::ExtractStridedSliceOp, vector::ShapeCastOp,
+           tpu::ConcatenateOp, tpu::ReshapeOp, tpu::RelayoutOp, tpu::TruncFOp>(
+          op)) {
     for (const Layout &layout : layouts_in) {
       if (layout && layout->offsets()[1].has_value() &&
           layout->offsets()[1].value() >= layout->tiling()[1]) {
