@@ -61,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
-        tests-per-accelerator: ["8"] #, "10", "12", "14", "16", "18", "20", "22", "24", "26","28", "30", "32"]
+        tests-per-accelerator: ["8", "10", "12", "14", "16", "18", "20", "22", "24", "26","28", "30", "32"]
     runs-on: linux-x86-a4-224-b200-1gpu
     container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
     name: "Bazel single B200 CUDA tests"
@@ -77,6 +77,8 @@ jobs:
       - name: Run Bazel single B200 CUDA Tests
         run: |
             nvidia-smi
+            nvidia-smi -i 0 --query-gpu=timestamp,name,utilization.memory,memory.used,memory.total,pci.bus_id,driver_version,utilization.gpu --format=csv -l 1 -f memory_log.csv &
+            smi_pid=$!
             bazel test \
             --config=ci_linux_x86_64_cuda \
             --config=ci_rbe_cache \
@@ -105,6 +107,12 @@ jobs:
             //tests:nn_test_gpu \
             //tests/pallas:gpu_tests \
             //tests/mosaic:gpu_tests
+
+            kill $smi_pid && wait $smi_pid
+            cat memory_log.csv
+            max_memory=$(awk -F", " '($4+0 > max_value) {max_value = $4+0; max_record = $4} END {print max_record}' memory_log.csv)
+            echo "Max GPU memory: $max_memory, Starting Memory: $start_memory"
+
   gather_memory_data: 
     needs: changed_files 
     if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || needs.changed_files.outputs.any_changed == 'true' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
