@@ -963,6 +963,25 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "hopper_mixed_type_matmul_mgpu_run",
+    srcs = ["//jax/experimental/pallas/ops/gpu:hopper_mixed_type_matmul_mgpu.py"],
+    enable_backends = [],
+    enable_configs = ["gpu_h100"],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_mosaic_gpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "blackwell_matmul_mgpu_run",
     srcs = ["//jax/experimental/pallas/ops/gpu:blackwell_matmul_mgpu.py"],
     enable_backends = [],

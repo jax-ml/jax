@@ -18,12 +18,15 @@ import os
 
 from absl.testing import absltest
 from absl.testing import parameterized
+import jax
 from jax._src import config
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
 import jax.experimental.mosaic.gpu  # noqa: F401
 from jax.experimental.pallas.ops.gpu import blackwell_matmul_mgpu
 from jax.experimental.pallas.ops.gpu import hopper_matmul_mgpu
+from jax.experimental.pallas.ops.gpu import hopper_mixed_type_matmul_mgpu
 import jax.numpy as jnp
 import numpy as np
 
@@ -31,6 +34,11 @@ import numpy as np
 config.parse_flags_with_absl()
 os.environ["XLA_FLAGS"] = (
     os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0")
+
+
+def exceeds_h100_smem(alloc_bytes: int) -> bool:
+  """Whether the given allocation will exceed the amount of SMEM on H100."""
+  return alloc_bytes > 228000
 
 
 @jtu.with_config(jax_traceback_filtering="off")
@@ -72,6 +80,7 @@ class MatrixMultiplicationSm100ATest(jtu.JaxTestCase):
     )
     out_ref = a @ b
     np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
+
 
 @jtu.with_config(jax_traceback_filtering="off")
 class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
@@ -165,10 +174,10 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
     num_epi_tiles = tile_m * tile_n // epi_tile_size
     cta_tile_m = tile_m * (1 + (wg_dimension == hopper_matmul_mgpu.MatmulDimension.M))
     cta_tile_n = tile_n * (1 + (wg_dimension == hopper_matmul_mgpu.MatmulDimension.N))
-    if (
-        (cta_tile_m + cta_tile_n) * tile_k * max_concurrent_steps
-        + 2 * min(2, num_epi_tiles) * epi_tile_size
-    ) * 2 > 228000:
+    if exceeds_h100_smem(
+        ((cta_tile_m + cta_tile_n) * tile_k * max_concurrent_steps
+        + 2 * min(2, num_epi_tiles) * epi_tile_size) * 2
+    ):
       self.skipTest("Tile too big to fit into SMEM")
     k1, k2, = jax.random.split(jax.random.key(42), 2)
     a = jax.random.normal(k1, (m, k), dtype)
@@ -187,6 +196,69 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
     out = hopper_matmul_mgpu.matmul_kernel(a, b, spec)
     out_ref = jnp.dot(a, b, precision=jax.lax.DotAlgorithmPreset.F16_F16_F32)
     np.testing.assert_allclose(out, out_ref)
+
+  @parameterized.product(
+      m=(4096,),
+      k=(4096,),
+      n=(4096,),
+      tile_m=(64, 128),
+      tile_n=(64, 128, 256),
+      tile_k=(64, 128),
+      max_concurrent_steps=(2, 4),
+      lhs_dtype=(jnp.int8,),  # TODO(bchetioui): add int4.
+      rhs_dtype=(jnp.bfloat16, jnp.float16),
+  )
+  def test_hopper_mixed_type_matmul(
+      self,
+      m,
+      n,
+      k,
+      tile_m,
+      tile_n,
+      tile_k,
+      max_concurrent_steps,
+      lhs_dtype,
+      rhs_dtype,
+  ):
+    if not jtu.is_cuda_compute_capability_equal("9.0"):
+      self.skipTest("Only works on GPU with capability sm90a")
+    out_dtype = rhs_dtype
+    lhs_bits = dtypes.bit_width(lhs_dtype)
+    rhs_bits = dtypes.bit_width(rhs_dtype)
+    out_bits = dtypes.bit_width(out_dtype)
+
+    lhs_smem_bytes = 2 * tile_m * tile_k * lhs_bits // 8
+    rhs_smem_bytes = tile_k * tile_n * rhs_bits // 8
+    out_smem_bytes = 2 * tile_m * tile_n * out_bits // 8
+    if exceeds_h100_smem(
+        max_concurrent_steps * (lhs_smem_bytes + rhs_smem_bytes)
+        + out_smem_bytes
+    ):
+      self.skipTest("Tile too big to fit into SMEM")
+    (k1, k2) = jax.random.split(jax.random.key(42), 2)
+    lhs = jax.random.randint(
+        k1, (m, k), minval=-5, maxval=5, dtype=jnp.int8
+    ).astype(lhs_dtype)
+    rhs = jax.random.normal(k2, (k, n), rhs_dtype)
+
+    tuning_config = hopper_matmul_mgpu.TuningConfig(
+        tile_m=tile_m,
+        tile_n=tile_n,
+        tile_k=tile_k,
+        max_concurrent_steps=max_concurrent_steps,
+    )
+
+    out = hopper_mixed_type_matmul_mgpu.mixed_matmul_kernel(
+        lhs, rhs, out_dtype=out_dtype, config=tuning_config
+    )
+    precision = {
+        jnp.float16: jax.lax.DotAlgorithmPreset.F16_F16_F32,
+        jnp.bfloat16: jax.lax.DotAlgorithmPreset.BF16_BF16_F32,
+    }[rhs_dtype]
+    out_ref = jnp.dot(
+        lhs.astype(rhs_dtype), rhs, precision=precision,
+    ).astype(out_dtype)
+    np.testing.assert_allclose(out, out_ref, strict=True)
 
 
 if __name__ == "__main__":
