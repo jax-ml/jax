@@ -1924,22 +1924,24 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
           p.flat_args, mesh, list(in_specs))
     else:
       flat_global_args = p.flat_args
-    return jitted_f, flat_global_args, p.out_tree, mesh, out_specs
+    return jitted_f, flat_global_args, p, mesh, out_specs, donate_tuple
 
   def wrapped(*args, **kwargs):
-    (jitted_f, flat_global_args, out_tree, mesh,
-     out_specs) = infer_params(*args, **kwargs)
+    jitted_f, flat_global_args, p, mesh, out_specs, _ = infer_params(
+        *args, **kwargs)
     outs = jitted_f(*flat_global_args)
     if xb.process_count() > 1:
       outs = mhu.global_array_to_host_local_array(outs, mesh, out_specs())
-    return tree_unflatten(out_tree(), outs)
+    return tree_unflatten(p.out_tree(), outs)
 
   def lower(*args, **kwargs):
-    jitted_f, flat_global_args, out_tree, _, _ = infer_params(
+    jitted_f, flat_global_args, p, _, _, donate_tuple = infer_params(
         *args, __check=False, **kwargs
     )
+    abstract_args = list(map(core.shaped_abstractify, flat_global_args))
+    args_info = stages.make_args_info(p.in_tree, abstract_args, donate_tuple)
     lowered = jitted_f.trace(*flat_global_args).lower()
-    lowered = stages.Lowered(lowered._lowering, lowered.args_info, out_tree(),
+    lowered = stages.Lowered(lowered._lowering, args_info, p.out_tree(),
                              lowered._no_kwargs)
     return lowered
   wrapped.lower = lower
