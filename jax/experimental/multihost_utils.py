@@ -242,6 +242,8 @@ def host_local_array_to_global_array_impl(
   if (isinstance(arr, array.ArrayImpl) and isinstance(
       arr.sharding, jax.sharding.PmapSharding)) or not hasattr(arr, 'shape'):
     arr = np.array(arr)
+  if arr.dtype == dtypes.float0:
+    arr = np.zeros(arr.shape, dtype=np.dtype(bool))
   is_prng_key_array = isinstance(arr, prng.PRNGKeyArray)
   if is_prng_key_array:
     dtype = arr.dtype
@@ -404,6 +406,8 @@ def global_array_to_host_local_array_impl(
     return arr
   if not hasattr(arr, 'shape'):
     arr = np.array(arr)
+  if arr.dtype == dtypes.float0:
+    arr = np.zeros(arr.shape, dtype=np.dtype(bool))
   is_prng_key_array = isinstance(arr, prng.PRNGKeyArray)
   if is_prng_key_array:
     dtype = arr.dtype
