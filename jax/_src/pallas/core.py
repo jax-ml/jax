@@ -408,6 +408,19 @@ def _get_block_dim_size(dim: BlockDim) -> int:
     case _:
       raise ValueError(f"Unsupported block shape type: {type(dim)}")
 
+def get_block_size(dim: BlockDim | int | None) -> int:
+  match dim:
+    case int():
+      return dim
+    case Squeezed() | None:
+      return 1
+    case (
+        Blocked(block_size) | Element(block_size, _) | BoundedSlice(block_size)
+    ):
+      return block_size
+    case _:
+      raise ValueError(f"Unsupported block shape type: {type(dim)}")
+
 
 def _get_block_shape(block_shape: tuple[BlockDim, ...]) -> tuple[int, ...]:
   return tuple(_get_block_dim_size(dim) for dim in block_shape)
