@@ -42,6 +42,7 @@ from jax._src import api as src_api
 from jax._src import array
 from jax._src import core
 from jax._src import config
+from jax._src import dtypes
 from jax._src import sharding_impls
 from jax._src import sharding_specs
 from jax._src import test_util as jtu
@@ -2307,6 +2308,15 @@ class PmapShmapMergeTest(jtu.JaxTestCase):
     # jitted_f must take flattened args.
     _ = jax.pmap(lambda x: x[0]).lower((inputs, ())).compile()  # doesn't crash
 
+  @config.pmap_shmap_merge(True)
+  def test_float0_dtype_input(self):
+    inputs = np.array([b''] * jax.device_count(), dtype=dtypes.float0)
+    _ = jax.pmap(lambda x: x)(inputs)  # doesn't crash
+
+  @config.pmap_shmap_merge(True)
+  def test_float0_dtype_output(self):
+    inputs = np.ones(jax.device_count())
+    _ = jax.pmap(lambda x: jnp.array(b'', dtype=dtypes.float0))(inputs)  # doesn't crash
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class CppPmapTest(PythonPmapTest):
