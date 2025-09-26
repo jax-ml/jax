@@ -397,6 +397,21 @@ class IsTransferable:
     packing = tmem_layout.vector_length
     return (tmem_layout, reg_layout) in self.supported_tmem_transfers(packing)
 
+  def _is_valid_smem_transfer(
+      self,
+      smem_layout: lc.TileTransform | None,
+      reg_layout: fa.FragmentedLayout,
+  ) -> bool:
+    # TODO(b/447079781): This is way too restrictive. We need to make it more
+    # precise by:
+    # - Consider whether the op is annotated with optimized copies or not.
+    # - If copies do not have to be optimized, always return True.
+    # - If copies have to be optimized, determine if the transfer is optimal by
+    #   calling fragmented_array.plan_tiled_transfer.
+    if reg_layout == fa.WGMMA_LAYOUT:
+      return smem_layout is not None and len(smem_layout.tiling) == 2
+    return smem_layout is None
+
   def holds(self) -> bool | None:
     """Returns whether the constraint holds.
 
@@ -411,6 +426,10 @@ class IsTransferable:
       return self._is_valid_tmem_transfer(target.value, source.value)
     if isinstance(source, TMEMLayout) and isinstance(target, TMEMLayout):
       return source == target
+    if isinstance(source, SMEMTiling) and isinstance(target, RegisterLayout):
+      return self._is_valid_smem_transfer(source.value, target.value)
+    if isinstance(target, SMEMTiling) and isinstance(source, RegisterLayout):
+      return self._is_valid_smem_transfer(target.value, source.value)
     if isinstance(target, Constant) and isinstance(source, Constant):
       source_type = type(source).__name__
       target_type = type(target).__name__

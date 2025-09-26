@@ -19,6 +19,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import equations
+from jax.experimental.mosaic.gpu import launch_context as lc
 
 config.parse_flags_with_absl()
 
@@ -419,6 +420,28 @@ class EquationSystemTest(parameterized.TestCase):
             ],
         ),
     )
+
+  @parameterized.parameters(
+      (mgpu.WGMMA_LAYOUT, (64, 64), True),
+      (mgpu.WGMMA_LAYOUT, (64,), False),
+      (mgpu.WGMMA_LAYOUT, None, False),
+      (mgpu.WGMMA_ROW_LAYOUT, None, True),
+      (mgpu.WGMMA_ROW_LAYOUT, (64,), False),
+      (mgpu.WGMMA_COL_LAYOUT, None, True),
+      (mgpu.WGMMA_COL_LAYOUT, (64,), False),
+      (mgpu.WGSplatFragLayout((16, 16)), None, True),
+      (mgpu.WGSplatFragLayout((16, 16)), (16,), False),
+      (mgpu.WGStridedFragLayout((16, 128), vec_size=4), None, True),
+      (mgpu.WGStridedFragLayout((16, 128), vec_size=4), (1,), False),
+  )
+  def test_smem_is_transferable(self, layout, tiling, expected):
+    eq_layout = equations.RegisterLayout(layout)
+    eq_tiling = equations.SMEMTiling(lc.TileTransform(tiling) if tiling else None)
+
+    reg_to_smem = equations.IsTransferable(eq_layout, eq_tiling, ())
+    self.assertEqual(reg_to_smem.holds(), expected)
+    smem_to_reg = equations.IsTransferable(eq_tiling, eq_layout, ())
+    self.assertEqual(smem_to_reg.holds(), expected)
 
 
 if __name__ == "__main__":
