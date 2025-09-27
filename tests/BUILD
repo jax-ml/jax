@@ -1845,6 +1845,17 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "stateful_rng_test",
+    srcs = ["stateful_rng_test.py"],
+    deps = [
+        "//jax/_src:stateful_rng",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "ragged_collective_test",
     srcs = ["ragged_collective_test.py"],
     disable_configs = [
