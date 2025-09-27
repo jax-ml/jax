@@ -558,6 +558,7 @@ class BatchTrace(Trace):
     assert isinstance(axis_data, AxisData)
     self.axis_data = axis_data
     self.tag = tag
+    self.accumulator_states = {}
 
   def to_batch_info(self, val):
     if isinstance(val, BatchTracer) and val._trace.tag is self.tag:
@@ -570,6 +571,9 @@ class BatchTrace(Trace):
       p.abstract_eval(*(map(core.get_aval, tracers)), **params)
     vals_in, dims_in = unzip2(map(self.to_batch_info, tracers))
     args_not_mapped = all(bdim is not_mapped for bdim in dims_in)
+    # TODO: mwhittaker - Check against accumulate_p, but avoid cyclic imports.
+    if p.name == "accumulate":
+      params['trace'] = self
     if p in fancy_primitive_batchers:
       if (args_not_mapped
           and p in skippable_batchers
@@ -581,7 +585,8 @@ class BatchTrace(Trace):
         with core.set_current_trace(self.parent_trace):
           val_out, dim_out = fancy_primitive_batchers[p](
               self.axis_data, vals_in, dims_in, **params)
-    elif args_not_mapped:
+    # TODO: mwhittaker - Check against accumulate_p, but avoid cyclic imports.
+    elif p.name != "accumulate" and args_not_mapped:
       # no-op shortcut
       return p.bind_with_trace(self.parent_trace, vals_in, params)
     elif p in primitive_batchers:
@@ -719,6 +724,14 @@ def _batch_inner(f: Callable, axis_data, out_dim_dests, tag, in_dims, *in_vals):
       out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
       out_vals = map(partial(from_elt, trace, axis_data.size, axis_data.explicit_mesh_axis),
                      range(len(outs)), outs, out_dim_dests)
+
+      # Reduce accumulators.
+      with core.set_current_trace(parent_trace):
+        for ref, state in trace.accumulator_states.items():
+          aval = ref.aval
+          from jax import lax  # pytype: disable=import-error
+          reduced = lax.reduce(state[...], aval._identity(), aval._f(), [0])
+          aval._accumulate(ref, reduced, Ellipsis)
   return out_vals, trace
 
 # NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.

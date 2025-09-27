@@ -1817,7 +1817,8 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
   all_vars = {v: i for i, v in enumerate(it.chain(constvars, invars))}
   mut_arrays = set()
   for eqn in eqns:
-    if eqn.primitive is core.mutable_array_p:
+    # TODO: mwhittaker - Check against accumulator_p, but avoid cyclic imports.
+    if eqn.primitive is core.mutable_array_p or eqn.primitive.name == "accumulator":
       outvar, = eqn.outvars
       all_vars[outvar] = None  # type: ignore
       mut_arrays.add(outvar)
