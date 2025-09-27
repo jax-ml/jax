@@ -4002,13 +4002,14 @@ class PallasCallSm100ATest(PallasSm100ATest):
     np.testing.assert_array_equal(f(), np.ones((128,), np.float32))
 
   @parameterized.parameters(
-      (0, (1,)),
-      (1, (1,)),
-      (2, (1,)),
-      (0, (1, 2,)),
-      (0, (2, 1,)),
+      (0, (1,), False),
+      (0, (1,), True),
+      (1, (1,), False),
+      (2, (1,), False),
+      (0, (1, 2,), False),
+      (0, (2, 1,), False),
   )
-  def test_cluster_launch_control(self, dim, cluster):
+  def test_cluster_launch_control(self, dim, cluster, with_indexing):
     self.skip_if_wg_semantics()
     # We attempt to schedule 1 more CTA than can be scheduled at once. Only
     # one CTA will succeed in stealing the last block, and the others will
@@ -4025,10 +4026,13 @@ class PallasCallSm100ATest(PallasSm100ATest):
     cluster_names = tuple("abc"[: len(cluster)])
 
     def kernel(out_ref, cancel_result_ref, barrier, _):
+      if with_indexing:
+        cancel_result_ref = cancel_result_ref.at[0]
       plgpu.try_cluster_cancel(cancel_result_ref, barrier)
       plgpu.barrier_wait(barrier)
 
-      *cta_ids, cancelled_launch = plgpu.query_cluster_cancel(cancel_result_ref)
+      cta_ids, cancelled_launch = plgpu.query_cluster_cancel(
+          cancel_result_ref, grid_names=grid_names)
       cta_id = sum(cta_ids)
 
       # Store a sentinel value if no work can be scheduled.
@@ -4049,7 +4053,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
         cluster=cluster,
         cluster_names=cluster_names,
         scratch_shapes=[
-            plgpu.TRY_CLUSTER_CANCEL_RESULT,
+            plgpu.TryClusterCancelResult(2 if with_indexing else None),
             plgpu.Barrier(num_arrivals=2),
             # Requesting SMEM close to the 228kb limit to ensure that each SM
             # only schedules 1 block.
