@@ -1945,12 +1945,19 @@ class TCGen05Test(TestCase):
           kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
       )(x).block_until_ready()
 
-  @parameterized.parameters(((149, 1, 1),), ((1, 149, 1),), ((1, 1, 149),))
-  def test_cluster_launch_control(self, grid):
-    # We attempt to schedule 149 blocks on 148 SMs. Only one SM will succeed
-    # in stealing the 149th block, and the others will fail. Therefore we test
-    # that there is exactly 1 stolen block and the others fail and return -1.
+  @parameterized.parameters((0,), (1,), (2,))
+  def test_cluster_launch_control(self, dim):
+    # Let's say we have 148 SMs in our gpu. We attempt to schedule 149 blocks on
+    # 148 SMs. Only one SM will succeed in stealing the 149th block, and the
+    # others will fail. Therefore we test that there is exactly 1 stolen block
+    # and the others fail and return -1.
+    num_sms = jax.devices()[0].core_count
+    num_blocks = num_sms + 1
+    grid = [1, 1, 1]
+    grid[dim] = num_blocks
+
     def kernel(ctx, out, scratch):
+      del ctx
       cancel_result_ref, barrier, _ = scratch
 
       is_leader_thread = single_thread_predicate()
@@ -1968,7 +1975,6 @@ class TCGen05Test(TestCase):
       value = arith.select(cancelled_launch, cta_id, sentinel_val)
       memref.store(value, out, [idx])
 
-    num_sms = jax.devices()[0].core_count
     cancel_result_ref = jax.ShapeDtypeStruct((16,), jnp.int8)  # 128 bits
     out_ty = jax.ShapeDtypeStruct((num_sms,), jnp.int32)
     scratch = (
@@ -1981,7 +1987,7 @@ class TCGen05Test(TestCase):
     out = mgpu.as_gpu_kernel(kernel, grid, (128, 1, 1), (), out_ty, scratch)()
 
     out = np.sort(out)
-    out_ref = np.array([-1] * 147 + [148])
+    out_ref = np.array([-1] * (num_sms - 1) + [num_sms])
     np.testing.assert_array_equal(out, out_ref)
 
 
