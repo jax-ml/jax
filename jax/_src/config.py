@@ -2294,3 +2294,21 @@ jax_ragged_dot_use_ragged_dot_instruction = bool_state(
         ' ragged_dot_general_p.'
     ),
 )
+
+repro_dir = string_flag(
+    name='jax_repro_dir',
+    default=os.getenv("JAX_REPRO_DIR", ""),
+    # default=os.getenv("JAX_REPRO_DIR",
+    #                   os.path.abspath(os.path.dirname(__file__) + "/../../repros")),  # DO_NOT_SUBMIT
+    help=(
+        'Turn on saving of repros. EXPERIMENTAL.'
+    ),
+)
+
+repro_flags = string_flag(
+    name='jax_repro_flags',
+    default=os.getenv("JAX_REPRO_FLAGS", ""),
+    help=(
+        'Comma-separated flags for repros. EXPERIMENTAL.'
+    ),
+)

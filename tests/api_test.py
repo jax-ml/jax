@@ -5590,7 +5590,8 @@ class RematTest(jtu.JaxTestCase):
     def _constant_introducing_batcher(xs, ds):
       (x,), (d,) = xs, ds
       return (x + np.arange(x.size, dtype=x.dtype).reshape(x.shape)), d
-    batching.primitive_batchers[constant_introducing_p] = _constant_introducing_batcher
+    batching.primitive_batchers[constant_introducing_p] = core.jax_boundary(_constant_introducing_batcher,
+                                                                            is_jax=False)
 
     api.vmap(remat(constant_introducing_p.bind))(jnp.ones(20))
 
@@ -5900,7 +5901,7 @@ class RematTest(jtu.JaxTestCase):
     def add_one_jvp(pin, tin):
       pout = add_one(pin[0])
       return pout, pout * tin[0]
-    ad.primitive_jvps[add_one_p] = add_one_jvp
+    ad.primitive_jvps[add_one_p] = core.jax_boundary(add_one_jvp, is_jax=False)
 
     add_one_p.def_abstract_eval(lambda x: x)
 
@@ -5918,8 +5919,8 @@ class RematTest(jtu.JaxTestCase):
 
     @jax_util.curry
     def call(f, *args):
-      my_f = lambda *args: [f(*args)]
-      return core.call(
+      my_f = core.jax_boundary(lambda *args: [f(*args)], is_jax=False)
+      return core.jax_boundary(core.call, api_name="core.call")(
           lu.wrap_init(my_f,
                        debug_info=api_util.debug_info("test_remat", my_f,
                                                       args, {})),

@@ -13,7 +13,9 @@
 # limitations under the License.
 
 from collections.abc import Callable, Hashable
+from functools import partial
 from typing import Any
+from jax._src import core
 from jax._src import traceback_util
 from jax.sharding import Mesh, AbstractMesh
 from jax._src import shard_map as jshmap
@@ -22,6 +24,7 @@ Specs = Any
 AxisName = Hashable
 
 @traceback_util.api_boundary
+#@partial(core.jax_boundary, api_name="jax.shard_map")
 def shard_map(
     f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs, out_specs: Specs,
     check_rep: bool = True, auto: frozenset[AxisName] = frozenset()):
