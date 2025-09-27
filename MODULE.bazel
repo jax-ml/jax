@@ -1,0 +1,188 @@
+module(name = "jax")
+
+##############################################################
+# Bazel module dependencies
+
+bazel_dep(name = "abseil-cpp", version = "20250814.0", repo_name = "com_google_absl")
+bazel_dep(name = "bazel_features", version = "1.36.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.1")
+bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "pybind11_bazel", version = "2.13.6")
+bazel_dep(name = "rules_cc", version = "0.2.8")
+bazel_dep(name = "rules_python", version = "1.6.1")
+
+# TODO: use a released version when available
+bazel_dep(name = "rules_ml_toolchain")
+archive_override(
+  module_name = "rules_ml_toolchain",
+  urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/268595dbc215306e19c4bb82c99ed6d0af24aed5.tar.gz"],
+  strip_prefix = "rules_ml_toolchain-268595dbc215306e19c4bb82c99ed6d0af24aed5",
+)
+
+# TODO: use a released version when available
+bazel_dep(name = "xla")
+archive_override(
+  module_name = "xla",
+  urls = ["https://github.com/meteorcloudy/xla/archive/fd81795844eacf795a6bc353414f930d39f3ad63.tar.gz"],
+  strip_prefix = "xla-fd81795844eacf795a6bc353414f930d39f3ad63",
+)
+
+# local_path_override(
+#     module_name = "xla",
+#     path = "../xla",
+# )
+
+# TODO: upstream, otherwise we have to duplicate the patches in jax
+single_version_override(
+  module_name = "grpc",
+  patches = ["//third_party/grpc:grpc.patch"],
+  patch_strip = 1,
+)
+
+# TODO: upstream, otherwise we have to duplicate the patches in jax
+single_version_override(
+  module_name = "abseil-cpp",
+  patches = [
+      "//third_party/absl:btree.patch",
+      "//third_party/absl:build_dll.patch",
+      "//third_party/absl:endian.patch",
+      "//third_party/absl:rules_cc.patch",
+      "//third_party/absl:check_op.patch",
+      "//third_party/absl:check_op_2.patch",
+  ],
+  patch_strip = 1,
+)
+
+##############################################################
+# Dependencies defined in XLA
+
+### TSL
+tsl_extension = use_extension("@xla//third_party/extensions:tsl.bzl", "tsl_extension")
+use_repo(tsl_extension, "tsl")
+
+### LLVM
+llvm = use_extension("@xla//third_party/extensions:llvm.bzl", "llvm_extension")
+use_repo(llvm, "llvm-project")
+
+### C++ dependencies
+third_party = use_extension("@xla//third_party/extensions:third_party.bzl", "third_party_extension")
+use_repo(third_party,
+    "dlpack",
+    "eigen_archive",
+    "gloo",
+    "nanobind",
+    "shardy",
+    "stablehlo",
+    "triton",
+)
+
+rocm = use_extension("@xla//third_party/extensions:rocm.bzl", "rocm_extension")
+use_repo(rocm, "local_config_rocm")
+
+##############################################################
+# Python dependencies ###
+
+### Toolchains
+
+SUPPORTED_PYTHON_VERSIONS = {
+    "3.11": "//build:requirements_lock_3_11.txt",
+    "3.12": "//build:requirements_lock_3_12.txt",
+    "3.13": "//build:requirements_lock_3_13.txt",
+    "3.14": "//build:requirements_lock_3_14.txt",
+    # "3.13-ft": "//build:requirements_lock_3_13_ft.txt",
+    # "3.14-ft": "//build:requirements_lock_3_14_ft.txt",
+}
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.defaults(python_version = "3.11", python_version_env = "HERMETIC_PYTHON_VERSION")
+[python.toolchain(python_version = version) for version in SUPPORTED_PYTHON_VERSIONS]
+
+### Pypi
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+
+[pip.parse(
+    hub_name = "jax_pypi",
+    python_version = version,
+    requirements_lock = requirements_lock,
+) for version, requirements_lock in SUPPORTED_PYTHON_VERSIONS.items()]
+
+use_repo(pip, pypi = "jax_pypi")
+
+# override XLA's pypi installation to use the one defined by JAX.
+# TODO: have a better way to unify the pypi installation.
+override_repo(pip, xla_pypi = "pypi")
+
+### pybind
+pybind11_internal_configure = use_extension(
+    "@pybind11_bazel//:internal_configure.bzl",
+    "internal_configure_extension",
+)
+use_repo(pybind11_internal_configure, "pybind11")
+
+##############################################################
+# Dependencies defined in rules_ml_toolchain
+
+# CUDA dependencies
+cuda_extension = use_extension("@rules_ml_toolchain//third_party/extensions:cuda_extension.bzl", "cuda_extension")
+use_repo(cuda_extension, "local_config_cuda")
+cuda_json_ext = use_extension("@rules_ml_toolchain//third_party/extensions:cuda_json_ext.bzl", "cuda_json_ext")
+use_repo(cuda_json_ext, "cuda_redist_json")
+cuda_redist_init_ext = use_extension("@rules_ml_toolchain//third_party/extensions:cuda_redist_init_ext.bzl", "cuda_redist_init_ext")
+use_repo(
+    cuda_redist_init_ext,
+    "cuda_cccl",
+    "cuda_crt",
+    "cuda_cublas",
+    "cuda_cudart",
+    "cuda_cudnn",
+    "cuda_cufft",
+    "cuda_cupti",
+    "cuda_curand",
+    "cuda_cusolver",
+    "cuda_cusparse",
+    "cuda_nvcc",
+    "cuda_nvdisasm",
+    "cuda_nvjitlink",
+    "cuda_nvml",
+    "cuda_nvtx",
+    "cuda_nvvm",
+)
+
+##############################################################
+# Other dependencies via use_repo_rule
+
+nvidia_wheel_versions_repository = use_repo_rule(
+    "@xla//third_party/py:python_wheel.bzl",
+    "nvidia_wheel_versions_repository",
+)
+nvidia_wheel_versions_repository(
+    name = "nvidia_wheel_versions",
+    versions_source = "//build:nvidia-requirements.txt",
+)
+
+jax_python_wheel_repository = use_repo_rule(
+    "//jaxlib:jax_python_wheel.bzl",
+    "jax_python_wheel_repository",
+)
+jax_python_wheel_repository(
+    name = "jax_wheel",
+    version_source = "//jax:version.py",
+    version_key = "_version",
+)
+
+python_wheel_version_suffix_repository = use_repo_rule(
+    "@xla//third_party/py:python_wheel.bzl",
+    "python_wheel_version_suffix_repository",
+)
+python_wheel_version_suffix_repository(
+    name = "jax_wheel_version_suffix",
+)
+
+test_shard_count_repository = use_repo_rule(
+    "//:test_shard_count.bzl",
+    "test_shard_count_repository",
+)
+test_shard_count_repository(
+    name = "test_shard_count",
+)
