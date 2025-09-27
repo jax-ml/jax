@@ -716,7 +716,7 @@ FailureOr<Value> canonicalize_bf16_vector(const CanonicalizeContext& ctx,
     Value new_op = builder.create(
         op.getName().getIdentifier(), new_operands, new_res_ty, op.getAttrs());
     if (should_truncate) {
-      new_op = builder.create<tpu::TruncFOp>(op.getLoc(), res_ty, new_op,
+      new_op = builder.create<tpu::TruncFOp>(res_ty, new_op,
                                              tpu::RoundingMode::kToNearestEven);
     }
     op.getResult(0).replaceAllUsesWith(new_op);
@@ -985,20 +985,47 @@ FailureOr<Value> canonicalize_arith_addi(const CanonicalizeContext& ctx,
   return new_op;
 }
 
-FailureOr<Value> canonicalize_select(const CanonicalizeContext &ctx,
-                                     Operation &raw_op) {
-  auto op = dyn_cast<arith::SelectOp>(raw_op);
-  if (!isa<VectorType>(op.getType()) ||
-      isa<VectorType>(op.getCondition().getType())) {
-    return raw_op.getResult(0);
+FailureOr<Value> canonicalize_select(const CanonicalizeContext& ctx,
+                                     Operation& raw_op) {
+  auto op = cast<arith::SelectOp>(raw_op);
+  if (!isa<VectorType>(op.getType())) {
+    return op.getResult();
   }
-  // Canonicalize `i1 ? v1 : v2` -> `broadcast(i1) ? v1 : v2`.
+
   CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
-  auto cond_ty = VectorType::get(cast<VectorType>(op.getType()).getShape(),
-                                 op.getCondition().getType());
-  auto cond = builder.create<vector::BroadcastOp>(cond_ty, op.getCondition());
-  auto new_op = builder.create<arith::SelectOp>(
-      cond, op.getTrueValue(), op.getFalseValue());
+  VectorType result_type = cast<VectorType>(op.getType());
+
+  if (!isa<VectorType>(op.getCondition().getType())) {
+    // Canonicalize `i1 ? v1 : v2` -> `broadcast(i1) ? v1 : v2`.
+    auto cond_ty =
+        VectorType::get(result_type.getShape(), op.getCondition().getType());
+    auto cond = builder.create<vector::BroadcastOp>(cond_ty, op.getCondition());
+    auto new_op = builder.create<arith::SelectOp>(cond, op.getTrueValue(),
+                                                  op.getFalseValue());
+    op.replaceAllUsesWith(new_op);
+    op.erase();
+    return new_op;
+  }
+
+  // bf16 support was added on TPUv5+.
+  bool is_bf16 = result_type.getElementType().isBF16();
+  if (!is_bf16 || ctx.hardware_generation >= 5) {
+    return op.getResult();
+  }
+  if (!ctx.compatibility_mode) {
+    return op.emitOpError(
+        "arith.select with vector<bf16> is only supported on TPUv5+."
+        "Enable compatibility mode or upcast to f32.");
+  }
+
+  auto shape_f32 =
+      VectorType::get(result_type.getShape(), builder.getF32Type());
+  Value true_val = builder.create<tpu::ExtFOp>(shape_f32, op.getTrueValue());
+  Value false_val = builder.create<tpu::ExtFOp>(shape_f32, op.getFalseValue());
+  Value new_op =
+      builder.create<arith::SelectOp>(op.getCondition(), true_val, false_val);
+  new_op = builder.create<tpu::TruncFOp>(result_type, new_op,
+                                         tpu::RoundingMode::kToNearestEven);
   op.replaceAllUsesWith(new_op);
   op.erase();
   return new_op;
@@ -1797,7 +1824,6 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
 const llvm::StringMap<int> &bf16_ops_min_supported_versions() {
   static const auto m = new llvm::StringMap<int>{
       {arith::DivFOp::getOperationName(), 4},
-      {arith::SelectOp::getOperationName(), 5},
       {arith::CmpFOp::getOperationName(), 5},
       {arith::MulFOp::getOperationName(), 6},
       {arith::AddFOp::getOperationName(), 6},
@@ -1872,14 +1898,14 @@ class MosaicCanonicalizer {
     bool is_single_vector_result =
         op.getNumResults() == 1 && isa<VectorType>(op.getResult(0).getType());
 
-    if (has_bf16_vector_operands && !supports_bf16_op &&
-        is_single_vector_result) {
-      return canonicalize_bf16_vector(ctx, op);
-    }
     if (auto rule_it = rules().find(op.getName().getStringRef());
         rule_it != rules().end()) {
       const canonicalize_rule_type& rule = rule_it->getValue();
       return rule(ctx, op);
+    }
+    if (has_bf16_vector_operands && !supports_bf16_op &&
+        is_single_vector_result) {
+      return canonicalize_bf16_vector(ctx, op);
     }
     if (op.getNumResults() == 1 &&
         isa<IntegerType>(op.getResult(0).getType()) &&
