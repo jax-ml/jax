@@ -68,3 +68,5 @@ jobs:
       build_jaxlib: ${{ (matrix.jaxlib-version == 'head' && true) || false }}
       build_jax: 'true'
       run_multiaccelerator_tests: 'false'
+      run-backend_independent-test-suite: 1
+      clone_main_xla: 1

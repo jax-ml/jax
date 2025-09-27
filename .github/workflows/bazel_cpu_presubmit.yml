@@ -53,3 +53,5 @@ jobs:
       enable-x64:  ${{ matrix.enable-x64 }}
       build_jaxlib: 'true'
       build_jax: 'true'
+      run-backend_independent-test-suite: 1
+      clone_main_xla: 1

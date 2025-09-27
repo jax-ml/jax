@@ -46,10 +46,22 @@ if [[ "$JAXCI_BUILD_JAX" != "false" ]]; then
   WHEEL_SIZE_TESTS="$WHEEL_SIZE_TESTS //:jax_wheel_size_test"
 fi
 
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
+  FREETHREADED_FLAG_VALUE="yes"
+else
+  FREETHREADED_FLAG_VALUE="no"
+fi
+
 if [[ "$JAXCI_BUILD_JAXLIB" != "true" ]]; then
   cuda_libs_flag="--config=cuda_libraries_from_stubs"
 else
   cuda_libs_flag="--@local_config_cuda//cuda:override_include_cuda_libs=true"
+fi
+
+TEST_TARGETS="//tests:gpu_tests //tests/pallas:gpu_tests"
+if [[ "$JAXCI_RUN_BACKEND_INDEPENDENT_TESTS" == "1" ]]; then
+  TEST_TARGETS="$TEST_TARGETS //tests:backend_independent_tests //tests/pallas:backend_independent_tests"
 fi
 
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
@@ -57,6 +69,7 @@ echo "Running RBE GPU tests..."
 
 bazel test --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
+      --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --test_output=errors \
@@ -69,6 +82,5 @@ bazel test --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \
       $cuda_libs_flag \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
       --//jax:build_jax=$JAXCI_BUILD_JAX \
-      //tests:gpu_tests //tests:backend_independent_tests \
-      //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests \
+      $TEST_TARGETS \
       $WHEEL_SIZE_TESTS

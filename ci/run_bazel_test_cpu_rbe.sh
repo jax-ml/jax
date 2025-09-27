@@ -38,11 +38,15 @@ os=$(uname -s | awk '{print tolower($0)}')
 arch=$(uname -m)
 
 bazel_output_base=""
+bazel_nobuild_runfile_links=""
+bazel_nolegacy_external_runfiles=""
 # Adjust os and arch for Windows
 if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
   os="windows"
   arch="amd64"
   bazel_output_base="--output_base=C:\actions-runner\_work\bazel_output_base"
+  bazel_nobuild_runfile_links="--nobuild_runfile_links"
+  bazel_nolegacy_external_runfiles="--nolegacy_external_runfiles"
 fi
 
 if [[ "$JAXCI_BUILD_JAXLIB" == "false" ]]; then
@@ -62,6 +66,19 @@ else
   FREETHREADED_FLAG_VALUE="no"
 fi
 
+TEST_TARGETS="//tests:cpu_tests"
+if [[ "$JAXCI_RUN_BACKEND_INDEPENDENT_TESTS" == "1" ]]; then
+  TEST_TARGETS="$TEST_TARGETS //tests:backend_independent_tests"
+  JAX_NUM_GENERATED_CASES=25
+else
+  if [[ "$os" == "windows" ]]; then
+    # Windows RBE build is very slow, so we only run a minimum subset of tests
+    # to have the test step executed within SLO=10 mins.
+    TEST_TARGETS="//tests:backend_independent_tests"
+  fi
+  JAX_NUM_GENERATED_CASES=5
+fi
+
 # When running on Mac or Linux Aarch64, we only build the test targets and
 # not run them. These platforms do not have native RBE support so we
 # RBE cross-compile them on remote Linux x86 machines. As the tests still
@@ -77,13 +94,13 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
               --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
               --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
               --//jax:build_jax=$JAXCI_BUILD_JAX \
-              --test_env=JAX_NUM_GENERATED_CASES=25 \
+              --test_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
               --test_env=JAX_SKIP_SLOW_TESTS=true \
               --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
               --test_output=errors \
               --color=yes \
               $WHEEL_SIZE_TESTS \
-              //tests:cpu_tests //tests:backend_independent_tests
+              $TEST_TARGETS
       else
           echo "Running RBE CPU tests..."
           bazel test --config=rbe_cross_compile_${os}_${arch} \
@@ -92,27 +109,31 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
               --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
               --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
               --//jax:build_jax=$JAXCI_BUILD_JAX \
+              --test_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
               --strategy=TestRunner=local \
               --test_env=JAX_SKIP_SLOW_TESTS=true \
               --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
               --test_output=errors \
               --color=yes \
               $WHEEL_SIZE_TESTS \
-              //tests:cpu_tests //tests:backend_independent_tests
+              $TEST_TARGETS
       fi
 else
       echo "Running RBE CPU tests..."
-      bazel $bazel_output_base test --config=rbe_${os}_${arch} \
+      bazel $bazel_output_base test \
+            $bazel_nobuild_runfile_links \
+            $bazel_nolegacy_external_runfiles \
+            --config=rbe_${os}_${arch} \
             --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
             --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
             --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
             --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
             --//jax:build_jax=$JAXCI_BUILD_JAX \
-            --test_env=JAX_NUM_GENERATED_CASES=25 \
+            --test_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
             --test_env=JAX_SKIP_SLOW_TESTS=true \
             --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
             --test_output=errors \
             --color=yes \
             $WHEEL_SIZE_TESTS \
-            //tests:cpu_tests //tests:backend_independent_tests
+            $TEST_TARGETS
 fi

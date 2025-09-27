@@ -82,7 +82,13 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
   bazel_remote_cache=""
 
   if [[ "$JAXCI_BUILD_ARTIFACT_WITH_RBE" == 1 ]]; then
-    bazelrc_config="rbe_${bazelrc_config}"
+    if [[ "$os" == "linux" && "$arch" == "aarch64" ]]; then
+      # TODO(b/442914465): Use rbe_cross_compile_linux_aarch64 for AARCH64 CPU
+      # artifacts when the bug is fixed.
+      bazelrc_config="ci_${bazelrc_config}"
+    else
+      bazelrc_config="rbe_${bazelrc_config}"
+    fi
   else
     bazelrc_config="ci_${bazelrc_config}"
 
@@ -95,9 +101,11 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
     fi
   fi
 
+  cuda_version_flag=""
   # Use the "_cuda" configs when building the CUDA artifacts.
   if [[ ("$artifact" == "jax-cuda-plugin") || ("$artifact" == "jax-cuda-pjrt") ]]; then
     bazelrc_config="${bazelrc_config}_cuda${JAXCI_CUDA_VERSION}"
+    cuda_version_flag="--cuda_major_version=$JAXCI_CUDA_VERSION"
   fi
 
   # Build the artifact.
@@ -106,7 +114,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
     --bazel_options=--config=use_tar_archive_files \
     --bazel_startup_options="$bazel_startup_options" \
     --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
-    --cuda_major_version=$JAXCI_CUDA_VERSION \
+    $cuda_version_flag \
     --verbose --detailed_timestamped_log --use_new_wheel_build_rule \
     --output_path="$JAXCI_OUTPUT_DIR" \
     $artifact_tag_flags
@@ -119,7 +127,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
       --bazel_options=--config=use_tar_archive_files \
       --bazel_startup_options="$bazel_startup_options" \
       --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
-      --cuda_major_version=$JAXCI_CUDA_VERSION \
+      $cuda_version_flag \
       --verbose --detailed_timestamped_log --use_new_wheel_build_rule \
       --output_path="$JAXCI_OUTPUT_DIR" \
       $artifact_tag_flags --bazel_options=--repo_env=ML_WHEEL_VERSION_SUFFIX="$JAXCI_WHEEL_RC_VERSION"
