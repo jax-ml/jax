@@ -1007,7 +1007,6 @@ jax_multiplatform_test(
     srcs = ["//jax/experimental/pallas/ops/gpu:blackwell_matmul_mgpu.py"],
     enable_backends = [],
     enable_configs = ["gpu_b200"],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     tags = [
         "manual",
         "notap",
