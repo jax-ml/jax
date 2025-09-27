@@ -150,7 +150,10 @@ pytype_strict_library(
     name = "helpers",
     srcs = ["helpers.py"],
     deps = [
+        ":core",
+        ":primitives",
         "//jax",
         "//jax/_src:dtypes",
+        "//jax/_src/pallas",
     ] + py_deps("numpy"),
 )

@@ -37,7 +37,7 @@ from jax._src.pallas.mosaic_gpu.core import TMEMLayout as TMEMLayout
 from jax._src.pallas.mosaic_gpu.core import transform_ref as transform_ref
 from jax._src.pallas.mosaic_gpu.core import transpose_ref as transpose_ref
 from jax._src.pallas.mosaic_gpu.core import TransposeTransform as TransposeTransform
-from jax._src.pallas.mosaic_gpu.core import TRY_CLUSTER_CANCEL_RESULT as TRY_CLUSTER_CANCEL_RESULT
+from jax._src.pallas.mosaic_gpu.core import try_cluster_cancel_result_ref as try_cluster_cancel_result_ref
 from jax._src.pallas.mosaic_gpu.core import unswizzle_ref as unswizzle_ref
 from jax._src.pallas.mosaic_gpu.core import untile_ref as untile_ref
 from jax._src.pallas.mosaic_gpu.core import WarpMesh as WarpMesh
@@ -48,6 +48,7 @@ from jax._src.pallas.mosaic_gpu.helpers import format_tcgen05_sparse_metadata as
 from jax._src.pallas.mosaic_gpu.helpers import nd_loop as nd_loop
 from jax._src.pallas.mosaic_gpu.helpers import NDLoopInfo as NDLoopInfo
 from jax._src.pallas.mosaic_gpu.helpers import planar_snake as planar_snake
+from jax._src.pallas.mosaic_gpu.helpers import dynamic_scheduling_loop as dynamic_scheduling_loop
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline_warp_specialized as emit_pipeline_warp_specialized
 from jax._src.pallas.mosaic_gpu.pipeline import PipelinePipeline as PipelinePipeline

@@ -4002,13 +4002,14 @@ class PallasCallSm100ATest(PallasSm100ATest):
     np.testing.assert_array_equal(f(), np.ones((128,), np.float32))
 
   @parameterized.parameters(
-      (0, (1,)),
-      (1, (1,)),
-      (2, (1,)),
-      (0, (1, 2,)),
-      (0, (2, 1,)),
+      (0, (1,), False),
+      (0, (1,), True),
+      (1, (1,), False),
+      (2, (1,), False),
+      (0, (1, 2,), False),
+      (0, (2, 1,), False),
   )
-  def test_cluster_launch_control(self, dim, cluster):
+  def test_cluster_launch_control(self, dim, cluster, with_indexing):
     self.skip_if_wg_semantics()
     # We attempt to schedule 1 more CTA than can be scheduled at once. Only
     # one CTA will succeed in stealing the last block, and the others will
@@ -4025,10 +4026,13 @@ class PallasCallSm100ATest(PallasSm100ATest):
     cluster_names = tuple("abc"[: len(cluster)])
 
     def kernel(out_ref, cancel_result_ref, barrier, _):
+      if with_indexing:
+        cancel_result_ref = cancel_result_ref.at[0]
       plgpu.try_cluster_cancel(cancel_result_ref, barrier)
       plgpu.barrier_wait(barrier)
 
-      *cta_ids, cancelled_launch = plgpu.query_cluster_cancel(cancel_result_ref)
+      cta_ids, cancelled_launch = plgpu.query_cluster_cancel(
+          cancel_result_ref, grid_names=grid_names)
       cta_id = sum(cta_ids)
 
       # Store a sentinel value if no work can be scheduled.
@@ -4049,7 +4053,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
         cluster=cluster,
         cluster_names=cluster_names,
         scratch_shapes=[
-            plgpu.TRY_CLUSTER_CANCEL_RESULT,
+            plgpu.try_cluster_cancel_result_ref(2 if with_indexing else None),
             plgpu.Barrier(num_arrivals=2),
             # Requesting SMEM close to the 228kb limit to ensure that each SM
             # only schedules 1 block.
@@ -5848,6 +5852,37 @@ class HelpersTest(PallasTest):
           [63, 62, 61, 60, 59, 58, 57, 56],
       ])
       np.testing.assert_array_equal(results, expected)
+
+  @parameterized.parameters(
+      ((100,),),  # grid < SM count
+      ((300,),),  # grid > SM count
+      ((3, 3, 3, 3, 3),)  #  squashed grid dimensions
+  )
+  def test_dynamic_work_scheduling(self, grid):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("Only works on a GPU with capability >= sm100a")
+    grid_names = tuple(str(i) for i in range(len(grid)))
+    def body(out_gmem, _):
+      sm_idx = lax.axis_index(grid_names)
+      @plgpu.dynamic_scheduling_loop(grid_names)
+      def loop_body(loop_info: plgpu.NDLoopInfo):
+        out_gmem[*loop_info.index] = sm_idx
+    result = plgpu.kernel(body,
+                 out_shape=jax.ShapeDtypeStruct(grid, jnp.int32),
+                 grid=grid,
+                 grid_names=grid_names,
+                 # Allocate a large amount of SMEM to prevent multiple blocks
+                 # being scheduled on the same SM.
+                 scratch_shapes=[plgpu.SMEM((200_000,), jnp.int8)],
+                 )()
+
+    # Result maps grid_idx -> SM that performed the work.
+    # Check that each SM had at least 1 block of work.
+    num_sms = min(jax.devices()[0].core_count, np.prod(grid))
+    for sm_idx in range(num_sms):
+      self.assertGreaterEqual(np.sum(result == sm_idx), 1)
+    # Make sure all blocks > num_sms were stolen.
+    self.assertLess(np.max(result), jnp.int32(num_sms))
 
 
 # TODO(mattjj): enable when we update pallas_call to handle the new types
