@@ -18,6 +18,7 @@ import logging
 import os
 import pathlib
 
+from jax._src.lib import triton
 from jax._src.lib import xla_client
 import jax._src.xla_bridge as xb
 
@@ -102,5 +103,12 @@ def initialize():
             rocm_plugin_extension.register_custom_type_id, c_api
         ),
     )
+    if hasattr(rocm_plugin_extension, 'compile_triton_to_asm'):
+      triton.register_compilation_handler(
+          "ROCM",
+          functools.partial(
+              rocm_plugin_extension.compile_triton_to_asm, c_api
+          ),
+      )
   else:
     logger.warning('rocm_plugin_extension is not found.')
