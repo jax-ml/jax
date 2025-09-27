@@ -3005,7 +3005,7 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
   sharding_mesh = mesh_lib.empty_abstract_mesh
   for i in flat_shardings:
     if isinstance(i, NamedSharding):
-      if not sharding_mesh.empty and sharding_mesh != i.mesh:
+      if not sharding_mesh.empty and sharding_mesh != i.mesh.abstract_mesh:
         raise ValueError(
             f'Shardings passed to {name} should have the same mesh. Got one'
             f' mesh {sharding_mesh} and another {i.mesh}')
