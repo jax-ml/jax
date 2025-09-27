@@ -2173,13 +2173,13 @@ def sici(x: ArrayLike) -> tuple[Array, Array]:
         t = x * x
         return -digamma(1.0) + jnp.log(x) + t * jnp.polyval(CN, t) / jnp.polyval(CD, t)
         
+    x, = promote_args_inexact("sici", x)
 
     if dtypes.issubdtype(lax.dtype(x), np.complexfloating):
         raise ValueError(
             f"Argument `x` to sici must be real-valued. Got dtype {lax.dtype(x)}."
         )
-
-    x, = promote_args_inexact("sici", x)
+    
     sign = jnp.where(x < 0.0, -1.0, 1.0)
     xa = jnp.abs(x)
 
