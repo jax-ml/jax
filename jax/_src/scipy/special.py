@@ -2106,7 +2106,15 @@ def expi(x: ArrayLike) -> Array:
   x_arr, = promote_args_inexact("expi", x)
   return jnp.piecewise(x_arr, [x_arr < 0], [_expi_neg, _expi_pos])
 
+@expi.defjvp
+@jit
+def expi_jvp(primals, tangents):
+  (x,) = primals
+  (x_dot,) = tangents
+  return expi(x), jnp.exp(x) / x * x_dot
 
+@custom_derivatives.custom_jvp
+@jit
 def sici(x: ArrayLike) -> tuple[Array, Array]:
     r"""Sine and cosine integrals.
 
@@ -2187,19 +2195,17 @@ def sici(x: ArrayLike) -> tuple[Array, Array]:
         [-np.inf, 0.0, np.nan, ci_series]
     )
 
-    # Reapply sign for Si
     si = sign * si
 
     return si, ci
 
-
-@expi.defjvp
+@sici.defjvp
 @jit
-def expi_jvp(primals, tangents):
-  (x,) = primals
-  (x_dot,) = tangents
-  return expi(x), jnp.exp(x) / x * x_dot
-
+def sici_jvp(primals, tangents):
+    (p,), (t,) = primals, tangents
+    primal_out = sici(p)
+    tangent_out = (jnp.sin(p)/p * t, jnp.cos(p)/p * t)
+    return primal_out, tangent_out
 
 def _expn1(x: Array, n: Array) -> Array:
   # exponential integral En
