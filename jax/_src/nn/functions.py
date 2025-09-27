@@ -1014,10 +1014,6 @@ def bias_fwd_rule(a, query_head_num):
   return bias_fwd_p.bind(a, query_head_num), a
 def bias_bwd_rule(query_head_num, res, g):
   a = res
-  if a.shape[0] > 1 or a.shape[-3] != query_head_num:
-    raise ValueError("cuDNN only supports bias gradient when the batch size is "
-                     f"1 and the head number matches the query, but got "
-                     f"B={a.shape[0]}, N={a.shape[-3]}.")
   return (bias_bwd_p.bind(g, a, query_head_num),)
 
 # This function uses two custom primitives, `bias_fwd` and `bias_bwd`, to work
