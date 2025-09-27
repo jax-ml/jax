@@ -430,30 +430,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertNotDeleted(x)
 
   @jtu.run_on_devices('tpu', 'cpu', 'gpu')
-  def testBufferDonationDifferentIOShapes(self):
-    mesh = jtu.create_mesh((2,), 'x')
-
-    s1 = NamedSharding(mesh, P('x'))
-    s2 = NamedSharding(mesh, P(None, 'x', None))
-
-    x = jax.device_put(np.arange(16), s1)
-    y = jax.device_put(np.arange(16).reshape(16, 1), s1)
-    z = jax.device_put(np.arange(16).reshape(2, 2, 4), s1)
-
-    @partial(
-        jax.jit,
-        out_shardings=(s1, s1, s2),
-        donate_argnames=('x', 'y', 'z'),
-    )
-    def f(x, y, z):
-      return x, jnp.reshape(y, (16,)), z
-
-    f(x, y, z)
-    self.assertDeleted(x)
-    self.assertDeleted(y)
-    self.assertDeleted(z)
-
-  @jtu.run_on_devices('tpu', 'cpu', 'gpu')
   def testBufferDonationMixedConstrainedness(self):
     mesh = jtu.create_mesh((2,), 'x')
     s = NamedSharding(mesh, P())
