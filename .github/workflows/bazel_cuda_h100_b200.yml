@@ -61,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
-        tests-per-accelerator: ["8"] #, "10", "12", "14", "16", "18", "20", "22", "24", "26","28", "30", "32"]
+        tests-per-accelerator: ["8", "10", "12", "14", "16", "18", "20", "22", "24", "26","28", "30", "32"]
     runs-on: linux-x86-a4-224-b200-1gpu
     container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
     name: "Bazel single B200 CUDA tests"
@@ -78,7 +78,7 @@ jobs:
         continue-on-error: true
         run: |
             set +e # Allow command failure
-            
+
             nvidia-smi
             nvidia-smi -i 0 --query-gpu=timestamp,name,utilization.memory,memory.used,memory.total,pci.bus_id,driver_version,utilization.gpu --format=csv -l 1 -f memory_log.csv &
             smi_pid=$!
@@ -144,6 +144,7 @@ jobs:
       - name: Run Bazel single B200 CUDA Tests With Memory
         continue-on-error: true
         run: |
+            set +e # Allow command failure
             nvidia-smi
             bazel test \
             --config=ci_linux_x86_64_cuda \
@@ -175,9 +176,13 @@ jobs:
             //tests:nn_test_gpu \
             //tests/pallas:gpu_tests \
             //tests/mosaic:gpu_tests
+            command_exit=$?
 
             ./build/gather_shard_memory_footprint.sh
             cat combined_max_memory.csv
+
+            exit $command_exit
+
   run_multiaccelerator_tests:
     if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
     runs-on: linux-x86-a3-8g-h100-8gpu
