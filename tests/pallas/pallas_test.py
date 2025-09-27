@@ -1241,7 +1241,7 @@ class ApiErrorInterpretTest(ApiErrorTest):
 
 class PallasCallInputOutputAliasingTest(PallasBaseTest):
 
-  def test_basic_input_output_aliasing(self):
+  def test_vector_input_output_aliasing(self):
     # Input needs to be big so it doesn't fit in VMEM
     size = 1024
     if jtu.is_device_cuda():
@@ -1269,6 +1269,85 @@ class PallasCallInputOutputAliasingTest(PallasBaseTest):
     expected_num_bytes = np.prod(x.shape) * x.dtype.itemsize
     self.assertEqual(mem_analysis.alias_size_in_bytes, expected_num_bytes)
     self.assertEqual(mem_analysis.temp_size_in_bytes, 0)
+
+  def test_scalar_input_output_aliasing(self):
+    if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
+        2025, 9, 30
+    ):
+      self.skipTest("Requires libtpu built after 2025-09-30")
+
+    x = jnp.array([41.0], dtype=jnp.float32)
+    expected = x + 1.0
+
+    def kernel(x_ref, y_ref):
+      y_ref[0] = x_ref[0] + 1.0
+
+    shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
+    scalar_smem_spec = pl.BlockSpec(
+        block_shape=(1,), index_map=lambda *_: (0,), memory_space=pltpu.SMEM
+    )
+
+    @functools.partial(jax.jit, donate_argnums=(0,))
+    def f(x_in):
+      return self.pallas_call(
+          kernel,
+          out_shape=shape,
+          in_specs=[scalar_smem_spec],
+          out_specs=scalar_smem_spec,
+          grid=(1,),
+          input_output_aliases={0: 0},
+      )(x_in)
+
+    o = f(x)
+    np.testing.assert_array_equal(o, expected)
+    with self.assertRaisesRegex(RuntimeError, "Array has been deleted"):
+      print(x)
+
+  def test_mixed_scalar_vector_input_output_aliasing(self):
+    if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
+        2025, 9, 30
+    ):
+      self.skipTest("Requires libtpu built after 2025-09-30")
+
+    x_scalar = jnp.array([41.0], dtype=jnp.float32)
+    x_vector = jnp.arange(1024, dtype=jnp.float32).reshape((8, 128))
+    expected_scalar = x_scalar + 1.0
+    expected_vector = x_vector + 1.0
+
+    def kernel(scalar_in_ref, vector_in_ref, scalar_out_ref, vector_out_ref):
+      scalar_out_ref[0] = scalar_in_ref[0] + 1.0
+      vector_out_ref[:] = vector_in_ref[:] + 1.0
+
+    scalar_shape = jax.ShapeDtypeStruct(x_scalar.shape, x_scalar.dtype)
+    vector_shape = jax.ShapeDtypeStruct(x_vector.shape, x_vector.dtype)
+    scalar_spec = pl.BlockSpec(
+        block_shape=(1,), index_map=lambda *_: (0,), memory_space=pltpu.SMEM
+    )
+    vector_spec = pl.BlockSpec(
+        block_shape=x_vector.shape, index_map=lambda *_: (0,) * x_vector.ndim
+    )
+
+    @functools.partial(jax.jit, donate_argnums=(0, 1))
+    def f(x_scalar_in, x_vector_in):
+      return self.pallas_call(
+          kernel,
+          out_shape=(scalar_shape, vector_shape),
+          in_specs=[scalar_spec, vector_spec],
+          out_specs=[scalar_spec, vector_spec],
+          grid=(1,),
+          input_output_aliases={
+              0: 0,
+              1: 1,
+          },
+      )(x_scalar_in, x_vector_in)
+
+    o_scalar, o_vector = f(x_scalar, x_vector)
+    np.testing.assert_array_equal(o_scalar, expected_scalar)
+    np.testing.assert_array_equal(o_vector, expected_vector)
+    with self.assertRaisesRegex(RuntimeError, "Array has been deleted"):
+      print(x_scalar)
+    with self.assertRaisesRegex(RuntimeError, "Array has been deleted"):
+      print(x_vector)
 
 
 class PallasCallInputOutputAliasingInterpretTest(PallasBaseTest):
