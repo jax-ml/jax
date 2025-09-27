@@ -45,6 +45,7 @@ from jax._src import sharding_specs
 from jax._src import pjit
 from jax._src import profiler
 from jax._src import sharding_impls
+from jax._src import source_info_util
 from jax._src import stages
 from jax._src import tree_util
 from jax._src import typing
@@ -1365,18 +1366,24 @@ class ExecuteReplicated:
     if self.mut:
       args = [*args, *self.mut.in_mut]
     input_bufs = self.in_handler(args)
+    if config.jax_send_full_tracebacks_to_runtime.value:
+      call_location = str(source_info_util.current().traceback)
+    else:
+      call_location = source_info_util.summarize(source_info_util.current())
     with profiler.PGLEProfiler.trace(self.pgle_profiler):
       if (self.ordered_effects or self.has_unordered_effects
           or self.has_host_callbacks):
         input_bufs = self._add_tokens_to_inputs(input_bufs)
-        results = self.xla_executable.execute_sharded(input_bufs, with_tokens=True)
+        results = self.xla_executable.execute_sharded(
+            input_bufs, with_tokens=True, call_location=call_location)
 
         result_token_bufs = results.disassemble_prefix_into_single_device_arrays(
             len(self.ordered_effects))
         sharded_runtime_token = results.consume_token()
         self._handle_token_bufs(result_token_bufs, sharded_runtime_token)
       else:
-        results = self.xla_executable.execute_sharded(input_bufs)
+        results = self.xla_executable.execute_sharded(
+            input_bufs, call_location=call_location)
 
       if dispatch.needs_check_special():
         out_arrays = results.disassemble_into_single_device_arrays()

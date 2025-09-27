@@ -2130,6 +2130,19 @@ array_garbage_collection_guard = optional_enum_state(
     ),
 )
 
+
+jax_send_full_tracebacks_to_runtime = bool_state(
+    name='jax_send_full_tracebacks_to_runtime',
+    default=False,  # Default to not sending full call location tracebacks
+    help=(
+        'If True, JAX will capture and provide the full Python traceback of the'
+        ' compiled program\'s call location to the runtime for error reporting'
+        ' and debugging, rather than just the most recent user frame location.'
+        ' This has a high fixed cost and should be used only for debugging.'
+        ' This may be more expensive than the entire cost of a cheap'
+        ' computation on CPU.')
+)
+
 # Don't define a context manager since this isn't threadsafe.
 string_state(
     name='jax_debug_log_modules',

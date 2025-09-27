@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
@@ -53,6 +54,7 @@ limitations under the License.
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/user_context_status_util.h"
+#include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
@@ -405,13 +407,24 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
 }
 
 absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
-    std::vector<ExecuteShardedArg> args, bool with_tokens) {
+    std::vector<ExecuteShardedArg> args, bool with_tokens,
+    std::optional<std::string> call_location) {
   xla::ifrt::ExecuteOptions options = options_;
   options.launch_id = GetNextLaunchId();
   options.fill_status = with_tokens;
   options.execution_stream_id = GetExecutionStreamId();
   if (options.execution_stream_id == 0) {
     options.execution_stream_id = tsl::Env::Default()->GetCurrentThreadId();
+  }
+  if (call_location.has_value()) {
+    xla::ifrt::AttributeMap::Map attrs_map;
+    if (options.custom_options.has_value()) {
+      attrs_map = options.custom_options->map();
+    }
+    attrs_map.insert(
+        {std::string(xla::ifrt::PjRtCompatibleLoadedExecutable::kCallLocation),
+         xla::ifrt::AttributeMap::StringValue(std::move(*call_location))});
+    options.custom_options.emplace(std::move(attrs_map));
   }
   std::optional<std::vector<xla::PjRtFuture<>>> returned_futures;
   if (with_tokens) {

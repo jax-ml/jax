@@ -528,7 +528,8 @@ NB_MODULE(_jax, m) {
           xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetCompiledMemoryStats))
       .def("execute_sharded",
            xla::ValueOrThrowWrapper(&PyLoadedExecutable::ExecuteSharded),
-           nb::arg("arguments"), nb::arg("with_tokens") = false)
+           nb::arg("arguments"), nb::arg("with_tokens") = false,
+           nb::arg("call_location").none() = std::nullopt)
       .def("hlo_modules",
            xla::ValueOrThrowWrapper(&PyLoadedExecutable::HloModules))
       .def("get_output_memory_kinds",
