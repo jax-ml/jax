@@ -20,7 +20,6 @@ from typing import cast, Any
 
 import numpy as np
 
-import jax
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
