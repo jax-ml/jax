@@ -1409,10 +1409,11 @@ LogicalResult tpu_extf_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_OP(layouts_out.front().has_value());
   auto extf_op = cast<tpu::ExtFOp>(op);
   if (layouts_out.front()->bitwidth() != 32 &&
-      layouts_out.front()->bitwidth() != 16) {
+      layouts_out.front()->bitwidth() != 16 &&
+      (layouts_out.front()->bitwidth() != 8 && ctx.hardware_generation >= 7)) {
     return op.emitOpError(
         "Not implemented: Only support conversion to 32-bit (float32) or "
-        "16-bit (bfloat16)");
+        "16-bit (bfloat16), or to 8-bit (float8) on TPU v7+");
   }
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
   FAILUREOR_ASSIGN_OR_RETURN(
@@ -1653,9 +1654,14 @@ LogicalResult tpu_truncf_rule(RewriteContext &ctx, Operation &op,
   if ((layouts_in.front()->bitwidth() != 32 &&
        layouts_in.front()->bitwidth() != 16) ||
       (layouts_out.front()->bitwidth() != 16 &&
-       layouts_out.front()->bitwidth() != 8)) {
+       layouts_out.front()->bitwidth() != 8 &&
+       layouts_out.front()->bitwidth() != 4)) {
     return op.emitOpError(
-        "Not implemented: Only 32-bit to 16-or-8-bit conversion supported");
+        "Not implemented: Only 32/16-bit to 16/8/4-bit conversion supported");
+  }
+  if (layouts_out.front()->bitwidth() == 4 && ctx.hardware_generation < 7) {
+    return op.emitOpError(
+        "Not implemented: Conversion to 4-bit not supported before TPUv7");
   }
   return trunc_op_rule_impl(ctx, truncf_op, *layouts_in.front(),
                             *layouts_out.front());
