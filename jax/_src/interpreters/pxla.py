@@ -239,7 +239,7 @@ shard_arg_handlers[core.DArray] = _shard_darray
 def _shard_mutable_array(xs, shardings, layouts, copy_semantics):
   bufs = [x._refs._buf for x in xs]
   return shard_args(shardings, layouts, copy_semantics, bufs)
-shard_arg_handlers[core.MutableArray] = _shard_mutable_array
+shard_arg_handlers[core.Ref] = _shard_mutable_array
 
 def batched_device_put(aval: core.ShapedArray,
                        sharding: JSharding, xs: Sequence[Any],
@@ -1818,7 +1818,7 @@ def _dce_jaxpr(closed_jaxpr, keep_unused, donated_invars, auto_spmd_lowering):
   return closed_jaxpr, donated_invars, kept_var_idx
 
 class MutationData(NamedTuple):
-  in_mut: list[core.MutableArray]
+  in_mut: list[core.Ref]
   # out_mut[o_idx] = i_idx, when the output[o_idx] corresponds to the
   # mutable array args[i_idx]. None when it does not correspond to a mutable array.
   out_mut: list[int | None]
@@ -1841,9 +1841,9 @@ def _discharge_refs(
 @weakref_lru_cache
 def _move_mutable_consts(
     closed_jaxpr: core.ClosedJaxpr,
-) -> tuple[core.ClosedJaxpr, list[core.MutableArray]]:
+) -> tuple[core.ClosedJaxpr, list[core.Ref]]:
   jaxpr = closed_jaxpr.jaxpr
-  hoist = [isinstance(c, core.MutableArray) for c in closed_jaxpr.consts]
+  hoist = [isinstance(c, core.Ref) for c in closed_jaxpr.consts]
   consts, in_mut = partition_list(hoist, closed_jaxpr.consts)
   constvars, mutvars = partition_list(hoist, jaxpr.constvars)
   invars = (*jaxpr.invars, *mutvars)

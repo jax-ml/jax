@@ -58,7 +58,7 @@ _error_list: list[tuple[str, TracebackType | str]] = []
 class _ErrorStorage(threading.local):
 
   def __init__(self):
-    self.ref: core.MutableArray | None = None
+    self.ref: core.Ref | None = None
 
 
 _error_storage = _ErrorStorage()
@@ -85,7 +85,7 @@ def _initialize_error_code_ref() -> None:
         sharding=sharding,
     )
 
-  _error_storage.ref = core.mutable_array(error_code)
+  _error_storage.ref = core.new_ref(error_code)
 
 
 class error_checking_context:

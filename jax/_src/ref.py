@@ -31,5 +31,3 @@ def new_ref(init_val, *, memory_space: Any = None) -> core.Ref:
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
   return core.new_ref(init_val, memory_space=memory_space)
-
-array_ref = new_ref

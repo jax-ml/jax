@@ -236,7 +236,7 @@ def get_dataset_on_device(config: Config) -> Iterator[dict[str, jax.Array]]:
 def train_loop(config: Config):
   record_writer = RecordWriter()
   train_state = init_train_state(config)
-  train_state = jax.tree.map(jax.ref.array_ref, train_state)
+  train_state = jax.tree.map(jax.ref.new_ref, train_state)
   batch = iter(get_dataset_on_device(config))
   for step in range(config.num_train_steps):
     metrics = train_step(config, train_state, next(batch))
