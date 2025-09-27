@@ -29,7 +29,7 @@ from jax._src.partition_spec import PartitionSpec as P
 from jax._src.sharding_impls import NamedSharding
 from jax._src import mesh as mesh_lib
 from jax._src.ad_util import Zero, SymbolicZero, add_jaxvals, add_jaxvals_p
-from jax._src.core import Trace, Tracer, TraceTag, AxisName
+from jax._src.core import Trace, Tracer, TraceTag, AxisName, typeof
 from jax._src.interpreters import ad
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_unflatten, tree_flatten,
@@ -42,6 +42,12 @@ from jax._src.util import (
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
+
+def _lower_vmappable(hi_spec, hi_arg):
+  ty = typeof(hi_arg)
+  if not ty.is_high:
+    return hi_spec, hi_arg
+  return ty.lower_bspec(hi_spec), ty.lower_val(hi_arg)
 
 class VmapPrimitive(core.Primitive):
   multiple_results = True
@@ -453,11 +459,6 @@ class BatchTracer(Tracer):
 
   def __init__(self, trace, val, batch_dim: NotMapped | int | RaggedAxis,
                source_info: source_info_util.SourceInfo | None = None):
-    if config.enable_checks.value:
-      assert type(batch_dim) in (NotMapped, int, RaggedAxis)
-      if type(batch_dim) is int:
-        aval = core.get_aval(val)
-        assert 0 <= batch_dim < len(aval.shape)
     self._trace = trace
     self.val = val
     self.batch_dim = batch_dim
@@ -468,26 +469,7 @@ class BatchTracer(Tracer):
 
   @property
   def aval(self):
-    aval = core.get_aval(self.val)
-    if self._trace.axis_data.spmd_name is not None:
-      if config._check_vma.value:
-        aval = aval.update(
-            vma=aval.vma - frozenset(self._trace.axis_data.spmd_name))
-    if self.batch_dim is not_mapped:
-      return aval
-    elif type(self.batch_dim) is int:
-      return core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
-    elif type(self.batch_dim) is RaggedAxis:
-      new_aval = core.mapped_aval(
-        aval.shape[self.batch_dim.stacked_axis], self.batch_dim.stacked_axis, aval)
-      shape = list(new_aval.shape)  # pytype: disable=attribute-error
-      for ragged_axis, segment_lengths in self.batch_dim.ragged_axes:
-        size_tracer = BatchTracer(self._trace, segment_lengths, 0)
-        if self.batch_dim.stacked_axis < ragged_axis:
-          ragged_axis -= 1
-        shape[ragged_axis] = size_tracer
-      return core.DShapedArray(shape=tuple(shape), dtype=aval.dtype,
-                               weak_type=aval.weak_type)
+    return typeof(self.val).dec_rank(self._trace.axis_data, self.batch_dim)
 
   def full_lower(self):
     if self.batch_dim is not_mapped:
@@ -558,6 +540,7 @@ class BatchTrace(Trace):
     assert isinstance(axis_data, AxisData)
     self.axis_data = axis_data
     self.tag = tag
+    self.requires_low = False
 
   def to_batch_info(self, val):
     if isinstance(val, BatchTracer) and val._trace.tag is self.tag:
@@ -711,6 +694,7 @@ def _batch_inner(f: Callable, axis_data, out_dim_dests, tag, in_dims, *in_vals):
     idx = memoize(lambda: BatchTracer(trace, make_iota(axis_data.size), 0,
                                       source_info_util.current()))
     with core.set_current_trace(parent_trace):
+      # in_tracers = [typeof(x).to_elt(trace, d, x) for x, d in zip(in_vals, in_dims)]
       in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)
     with (core.set_current_trace(trace),
           core.extend_axis_env_nd([(axis_data.name, axis_data.size)]),
