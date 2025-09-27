@@ -1000,6 +1000,15 @@ LogicalResult MatmulOp::verify() {
     auto rhs_non_contracting_dims =
         dimension_numbers.getRhsNonContractingDims();
 
+    if (!llvm::is_sorted(lhs_non_contracting_dims)) {
+      emitOpError("Not implemented: lhs non contracting dims must be sorted");
+      return failure();
+    }
+    if (!llvm::is_sorted(rhs_non_contracting_dims)) {
+      emitOpError("Not implemented: rhs non contracting dims must be sorted");
+      return failure();
+    }
+
     if (lhs_contracting_dims.size() + lhs_non_contracting_dims.size() +
             lhs_batch_dims.size() !=
         lhs_ty.getShape().size()) {
