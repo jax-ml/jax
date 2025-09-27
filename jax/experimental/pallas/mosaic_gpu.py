@@ -37,7 +37,7 @@ from jax._src.pallas.mosaic_gpu.core import TMEMLayout as TMEMLayout
 from jax._src.pallas.mosaic_gpu.core import transform_ref as transform_ref
 from jax._src.pallas.mosaic_gpu.core import transpose_ref as transpose_ref
 from jax._src.pallas.mosaic_gpu.core import TransposeTransform as TransposeTransform
-from jax._src.pallas.mosaic_gpu.core import TRY_CLUSTER_CANCEL_RESULT as TRY_CLUSTER_CANCEL_RESULT
+from jax._src.pallas.mosaic_gpu.core import TryClusterCancelResult as TryClusterCancelResult
 from jax._src.pallas.mosaic_gpu.core import unswizzle_ref as unswizzle_ref
 from jax._src.pallas.mosaic_gpu.core import untile_ref as untile_ref
 from jax._src.pallas.mosaic_gpu.core import WarpMesh as WarpMesh
