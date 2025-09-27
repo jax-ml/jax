@@ -25,6 +25,7 @@ from typing import Any, Callable, assert_never, final
 from . import fragmented_array as fa
 from . import launch_context as lc
 from . import layouts as layouts_lib
+from . import inference_utils
 from . import tcgen05
 
 
@@ -408,7 +409,7 @@ class IsTransferable:
     # - If copies do not have to be optimized, always return True.
     # - If copies have to be optimized, determine if the transfer is optimal by
     #   calling fragmented_array.plan_tiled_transfer.
-    if reg_layout == fa.WGMMA_LAYOUT:
+    if inference_utils.is_mma_layout(reg_layout):
       return smem_layout is not None and len(smem_layout.tiling) == 2
     return smem_layout is None
 
