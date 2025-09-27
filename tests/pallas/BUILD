@@ -930,8 +930,6 @@ jax_multiplatform_test(
     shard_count = 8,
     tags = [
         "mosaic_gpu_test",
-        # TODO(b/330364373): Remove when B200 is fully supported.
-        "notap",
     ],
     deps = [
         "//jax:pallas",
@@ -1097,8 +1095,6 @@ jax_multiplatform_test(
     shard_count = 8,
     tags = [
         "mosaic_gpu_test",
-        # TODO(b/330364373): Remove when B200 is fully supported.
-        "notap",
     ],
     deps = [
         "//jax:pallas",
