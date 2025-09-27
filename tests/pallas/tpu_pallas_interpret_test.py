@@ -168,25 +168,34 @@ class InterpretTest(jtu.JaxTestCase):
     def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...]
 
-    @jax.jit
-    def run():
+    @functools.partial(jax.jit, static_argnums=(0, 1))
+    def run(input_offset, output_offset):
       return pl.pallas_call(
           kernel,
           out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
-          out_specs=pl.BlockSpec((4, 128), lambda i: (i, 0)),
-          in_specs=[pl.BlockSpec((4, 128), lambda i: (i+1, 0))],
+          out_specs=pl.BlockSpec((4, 128), lambda i: (i+output_offset, 0)),
+          in_specs=[pl.BlockSpec((4, 128), lambda i: (i+input_offset, 0))],
           grid=(4,),
           interpret=pltpu.InterpretParams(
               out_of_bounds_reads=out_of_bounds_reads),
       )(jnp.zeros((16, 128), jnp.float32))
 
+    # Out-of-bounds input block.
     if out_of_bounds_reads == 'uninitialized':
-      out = np.array(run())
+      out = np.array(run(1, 0))
       np.testing.assert_equal(out[:12], 0.0)
       self.assertTrue(np.isnan(out[12:]).all())
     elif out_of_bounds_reads == 'raise':
-      with self.assertRaisesRegex(Exception, 'Out-of-bounds block index'):
-        run()
+      with self.assertRaisesRegex(
+          Exception, 'Out-of-bounds block index .* for input'):
+        run(1, 0)
+      pltpu.reset_tpu_interpret_mode_state()
+
+    # Out-of-bounds output block.
+    if out_of_bounds_reads == 'raise':
+      with self.assertRaisesRegex(
+          Exception, 'Out-of-bounds block index .* for output'):
+        run(0, 2)
       pltpu.reset_tpu_interpret_mode_state()
 
   @parameterized.parameters('raise', 'uninitialized')
