@@ -177,7 +177,6 @@ def buffer_callback(
 
 buffer_callback_p = core.Primitive("buffer_callback")
 buffer_callback_p.multiple_results = True
-dispatch.prim_requires_devices_during_lowering.add(buffer_callback_p)
 dispatch.simple_impl(buffer_callback_p)
 
 
