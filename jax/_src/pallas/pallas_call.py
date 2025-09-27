@@ -770,7 +770,7 @@ def _pallas_call_batching_rule(
           continue
         arg_i_idx = (
             primitives.program_id(ragged_axis_dim)
-            * pallas_core._get_block_dim_size(block_shapes[i][ragged_axis_dim])
+            * pallas_core.get_block_dim_size(block_shapes[i][ragged_axis_dim])
         )
         run_kernel = jnp.logical_and(run_kernel, arg_i_idx < b_len)
 
@@ -816,7 +816,7 @@ def _pallas_call_batching_rule(
         nargs = list(rest_indexer_args)
 
         if ragged_axis_dim is not None:
-          val_at_ragged_dim = pallas_core._get_block_dim_size(
+          val_at_ragged_dim = pallas_core.get_block_dim_size(
               batched_block_mapping.block_shape[ragged_axis_dim])
 
           # The current index into the ragged dimension.
