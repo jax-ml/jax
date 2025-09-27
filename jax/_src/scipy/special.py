@@ -40,7 +40,6 @@ from jax._src.typing import Array, ArrayLike
 from jax._src.nn.functions import softmax as nn_softmax
 from jax._src.nn.functions import log_softmax as nn_log_softmax
 
-
 def gammaln(x: ArrayLike) -> Array:
   r"""Natural log of the absolute value of the gamma function.
 
@@ -2092,7 +2091,6 @@ def expi(x: ArrayLike) -> Array:
   x_arr, = promote_args_inexact("expi", x)
   return jnp.piecewise(x_arr, [x_arr < 0], [_expi_neg, _expi_pos])
 
-
 @expi.defjvp
 @jit
 def expi_jvp(primals, tangents):
@@ -2100,6 +2098,99 @@ def expi_jvp(primals, tangents):
   (x_dot,) = tangents
   return expi(x), jnp.exp(x) / x * x_dot
 
+@custom_derivatives.custom_jvp
+@jit
+def sici(x: ArrayLike) -> tuple[Array, Array]:
+    r"""Sine and cosine integrals.
+
+    JAX implementation of :obj:`scipy.special.sici`
+
+    .. math::
+
+      \mathrm{Si}(x) = \int_0^x \frac{\sin t}{t} \, dt
+
+    .. math::
+
+      \mathrm{Ci}(x) = \gamma + \ln(x) + \int_0^x \frac{\cos t - 1}{t} \, dt
+
+    where :math:`\gamma` is the Euler–Mascheroni constant.
+
+    Args:
+      x: arraylike, real-valued
+
+    Returns:
+      array of shape ``(..., 2)``, where the last dimension contains
+      ``[Si(x), Ci(x)]``
+
+    See also:
+      - :func:`jax.scipy.special.expi`
+    """
+
+    def si_series(x):
+        SN = jnp.array([-8.39167827910303881427E-11,
+              4.62591714427012837309E-8,
+              -9.75759303843632795789E-6,
+              9.76945438170435310816E-4,
+              -4.13470316229406538752E-2,
+              1.00000000000000000302E0])
+        SD = jnp.array([ 2.03269266195951942049E-12,
+              1.27997891179943299903E-9,
+              4.41827842801218905784E-7,
+              9.96412122043875552487E-5,
+              1.42085239326149893930E-2,
+              9.99999999999999996984E-1])
+        t = x * x
+        return (x * jnp.polyval(SN, t)) / jnp.polyval(SD, t)
+
+    def ci_series(x):
+        CN = jnp.array([ 2.02524002389102268789E-11,
+              -1.35249504915790756375E-8,
+              3.59325051419993077021E-6,
+              -4.74007206873407909465E-4,
+              2.89159652607555242092E-2,
+              -1.00000000000000000080E0])
+        CD = jnp.array([ 4.07746040061880559506E-12,
+              3.06780997581887812692E-9,
+              1.23210355685883423679E-6,
+              3.17442024775032769882E-4,
+              5.10028056236446052392E-2,
+              4.00000000000000000080E0])
+        t = x * x
+        return -digamma(1.0) + jnp.log(x) + t * jnp.polyval(CN, t) / jnp.polyval(CD, t)
+        
+    x, = promote_args_inexact("sici", x)
+
+    if dtypes.issubdtype(lax.dtype(x), np.complexfloating):
+        raise ValueError(
+            f"Argument `x` to sici must be real-valued. Got dtype {lax.dtype(x)}."
+        )
+    
+    sign = jnp.where(x < 0.0, -1.0, 1.0)
+    xa = jnp.abs(x)
+
+    si = jnp.piecewise(
+        xa,
+        [xa == 0, xa == np.inf],
+        [0.0, np.pi/2, si_series]
+    )
+
+    ci = jnp.piecewise(
+        xa,
+        [x == 0, x == np.inf, x == -np.inf],
+        [-np.inf, 0.0, np.nan, ci_series]
+    )
+
+    si = sign * si
+
+    return si, ci
+
+@sici.defjvp
+@jit
+def sici_jvp(primals, tangents):
+    (p,), (t,) = primals, tangents
+    primal_out = sici(p)
+    tangent_out = (jnp.sin(p)/p * t, jnp.cos(p)/p * t)
+    return primal_out, tangent_out
 
 def _expn1(x: Array, n: Array) -> Array:
   # exponential integral En
