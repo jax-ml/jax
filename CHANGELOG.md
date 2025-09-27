@@ -48,6 +48,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The deprecated functions in {mod} `jax.dlpack`, {mod} `jax.errors`, {mod}
     `jax.lib.xla_bridge`, {mod} `jax.lib.xla_client`, and {mod}
     `jax.lib.xla_extension` were removed.
+  * JAX is changing the default `jax.pmap` implementation to one implemented in
+    terms of `jax.jit` and `jax.shard_map`. `jax.pmap` is in maintenance mode
+    and we encourage all new code to use `jax.shard_map` directly. See the
+    [migration guide](https://docs.jax.dev/en/latest/deprecate_pmap.html) for
+    more information.
 
 * Changes
   * `jax.grad` and `jax.vjp` will now round always primals to float32 if float64
