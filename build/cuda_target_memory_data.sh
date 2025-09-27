@@ -24,7 +24,7 @@
 #     CUDA_MEMORY_LOG_DIR=path to put memory logs
 #     SAMPLE_TIME=how often to sample, defaults to 1
 
-
+echo "Merging cuda target memory data"
 SAMPLE_TIME=${SAMPLE_TIME:-1}
 JAX_ACCELERATOR_COUNT=${JAX_ACCELERATOR_COUNT:-1}
 
