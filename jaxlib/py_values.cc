@@ -58,7 +58,6 @@ limitations under the License.
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
-#include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
@@ -1040,8 +1039,6 @@ absl::StatusOr<DevicePutResult> DevicePutWithDevice(
                       MakeShardFn(addressable_shard, ifrt_client, ifrt_device,
                                   ifrt_memory_kind, options));
 
-  ifrt::UserContextScope user_context_scope(ifrt_client->CreateUserContext());
-
   nb::gil_scoped_release gil_release;
 
   TF_ASSIGN_OR_RETURN(Shard shard, std::move(shard_fn)());
@@ -1121,7 +1118,6 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
     // cases to reduce the number of host buffers to obtain.
     is_fully_replicated = ifrt_sharding->IsFullyReplicated();
   }
-  ifrt::UserContextScope user_context_scope(ifrt_client->CreateUserContext());
 
   nb::gil_scoped_release gil_release;
 

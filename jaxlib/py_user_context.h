@@ -76,6 +76,7 @@ class PyUserContext
  private:
   explicit PyUserContext(Traceback traceback);
 
+  xla::ifrt::UserContextId id_;
   Traceback traceback_;
 
   // Debug string generation can be expensive. Maintain a cache for them.

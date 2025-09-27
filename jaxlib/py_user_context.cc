@@ -58,7 +58,7 @@ xla::ifrt::UserContextRef PyUserContext::Create() {
 }
 
 PyUserContext::PyUserContext(Traceback traceback)
-    : traceback_(std::move(traceback)) {}
+    : id_(tsl::random::ThreadLocalNew64()), traceback_(std::move(traceback)) {}
 
 PyUserContext::~PyUserContext() {
   // The traceback must be destroyed under the GIL.
@@ -70,9 +70,7 @@ Traceback PyUserContext::traceback() const {
   return traceback_;
 }
 
-xla::ifrt::UserContextId PyUserContext::Id() const {
-  return xla::ifrt::UserContextId(tsl::random::ThreadLocalNew64());
-}
+xla::ifrt::UserContextId PyUserContext::Id() const { return id_; }
 
 std::string PyUserContext::DebugString() const {
   absl::MutexLock lock(mu_);

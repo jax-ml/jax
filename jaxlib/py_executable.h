@@ -1,3 +1,4 @@
+#include "jaxlib/py_user_context.h"
 /* Copyright 2020 The JAX Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +30,6 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/nb_class_ptr.h"
@@ -46,8 +46,6 @@ limitations under the License.
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
-#include "xla/tsl/concurrency/ref_count.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/xla_data.pb.h"
 
 namespace jax {
@@ -181,7 +179,6 @@ class PyLoadedExecutable {
  public:
   PyLoadedExecutable(nb_class_ptr<PyClient> client,
                      xla::ifrt::LoadedExecutableRef ifrt_loaded_executable,
-                     std::optional<Traceback> traceback,
                      std::optional<std::string> fingerprint);
   ~PyLoadedExecutable();
 
@@ -231,7 +228,9 @@ class PyLoadedExecutable {
 
   std::optional<std::vector<xla::OpSharding>> GetOutputShardings() const;
 
-  const std::optional<Traceback>& traceback() { return traceback_; }
+  std::optional<Traceback> traceback() {
+    return GetTraceback(ifrt_loaded_executable_->user_context().get());
+  }
 
   xla::ifrt::LoadedExecutable* ifrt_executable() const {
     return ifrt_loaded_executable_.get();
@@ -268,7 +267,6 @@ class PyLoadedExecutable {
 
   nb_class_ptr<PyClient> client_;
   xla::ifrt::LoadedExecutableRef ifrt_loaded_executable_;
-  std::optional<Traceback> traceback_;
 
   // Identical executables (i.e. representing the same program) will have the
   // same fingerprint. nullopt on platforms or executables where fingerprints
