@@ -707,7 +707,16 @@ NB_MODULE(_jax, m) {
           [](xla::DistributedRuntimeClient& client,
              std::vector<int32_t> process_ids) {
             nb::gil_scoped_release gil_release;
-            return xla::ValueOrThrow(client.GetLiveNodes(process_ids));
+            // Python doesn't understand the IncarnationId type, so we convert
+            // to regular integers before returning.
+            absl::flat_hash_map<int32_t, tsl::IncarnationId> nodes =
+                xla::ValueOrThrow(
+                    client.GetLiveNodesWithIncarnations(process_ids));
+            absl::flat_hash_map<int32_t, uint64_t> py_nodes;
+            for (const auto& [task_id, incarnation_id] : nodes) {
+              py_nodes[task_id] = incarnation_id.value();
+            }
+            return py_nodes;
           },
           nb::arg("process_ids"))
       // The key must be a string, but the value can either be a Python string
