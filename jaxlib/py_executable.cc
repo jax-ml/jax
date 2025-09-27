@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
@@ -53,6 +54,7 @@ limitations under the License.
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/user_context_status_util.h"
+#include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
@@ -241,6 +243,31 @@ void PopulateExecuteShardedResults(const nb_class_ptr<PyClient>& client,
   }
 }
 
+void PopulateCallLocation(xla::ifrt::ExecuteOptions& options) {
+  auto traceback = jax::Traceback::Get();
+  if (!traceback.has_value()) {
+    return;
+  }
+
+  std::string call_location_str;
+  if (jax::IsFullCallLocationTracebackEnabled()) {
+    call_location_str = traceback->ToString();
+  } else {
+    call_location_str = GetCallLocation(*traceback);
+  }
+
+  if (!call_location_str.empty()) {
+    xla::ifrt::AttributeMap::Map attrs_map;
+    if (options.custom_options.has_value()) {
+      attrs_map = options.custom_options->map();
+    }
+    attrs_map.insert(
+        {std::string(xla::ifrt::PjRtCompatibleLoadedExecutable::kCallLocation),
+         xla::ifrt::AttributeMap::StringValue(std::move(call_location_str))});
+    options.custom_options.emplace(std::move(attrs_map));
+  }
+}
+
 absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
     const ifrt::ExecuteOptions& options, const nb_class_ptr<PyClient>& client,
     ifrt::LoadedExecutable* ifrt_loaded_executable,
@@ -413,6 +440,7 @@ absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
   if (options.execution_stream_id == 0) {
     options.execution_stream_id = tsl::Env::Default()->GetCurrentThreadId();
   }
+  PopulateCallLocation(options);
   std::optional<std::vector<xla::PjRtFuture<>>> returned_futures;
   if (with_tokens) {
     returned_futures.emplace();
