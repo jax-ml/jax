@@ -17,13 +17,20 @@
 from collections.abc import Callable, Hashable, Sequence
 import dataclasses
 import functools
+import itertools
 import math
-from typing import TypeVar, overload
+from typing import overload, TypeVar
 
 import jax
 from jax import lax
 from jax._src import dtypes
+from jax._src import util
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import func
+from jax._src.lib.mlir.dialects import hlo
+from jax.experimental.mosaic.gpu import core as mgpu_core
 import numpy as np
+
 
 _T = TypeVar("_T")
 
@@ -268,4 +275,84 @@ def planar_snake(
       functools.partial(jax.lax.select, is_full_tile),
       tile_coordinates(lin_idx, tile_width),
       tile_coordinates(lin_idx - num_full_tiles_elements, minor_size - full_tiles_minor_size)
+  )
+
+
+def as_torch_kernel(fn):
+  """Decorator to compile a JAX function with a Mosaic GPU kernel for PyTorch.
+
+  Args:
+    fn: A JAX function containing a single Mosaic GPU kernel call.
+
+  Returns:
+    A function callable with PyTorch tensors.
+  """
+  @functools.wraps(fn)
+  def wrapper(*args):
+    in_structs = jax.tree.map(
+        lambda arg: jax.ShapeDtypeStruct(
+            # Drop the "torch." prefix from the dtype string, if present.
+            arg.shape,
+            str(arg.dtype).split(".")[-1],
+        ),
+        args,
+    )
+    return _compile_fn(fn, in_structs)(*args)
+
+  return wrapper
+
+
+def _find_mgpu_call(module: ir.Module) -> hlo.CustomCallOp:
+  custom_call: hlo.CustomCallOp | None = None
+  for func_op in module.body.operations:
+    if not isinstance(func_op, func.FuncOp):
+      continue
+    for block in func_op.body.blocks:
+      try:
+        idx = next(
+            idx
+            for idx, op in enumerate(block.operations)
+            if isinstance(op, hlo.CustomCallOp)
+            and op.call_target_name.value == "mosaic_gpu_v2"
+        )
+      except StopIteration:
+        continue
+      # We only accept functions where the Mosaic GPU call is immediately
+      # followed by a return op, and all preceding ops are buffer allocations.
+      num_allocs = sum(
+          isinstance(op, hlo.CustomCallOp)
+          and op.call_target_name.value == "AllocateBuffer"
+          for op in itertools.islice(block.operations, idx)
+      )
+      if idx != num_allocs or not isinstance(
+          block.operations[idx + 1], func.ReturnOp
+      ):
+        raise RuntimeError(
+            "Mosaic GPU call must be the only operation in the function"
+        )
+      if custom_call is not None:
+        raise RuntimeError("Multiple Mosaic GPU calls found in the module")
+      custom_call = block.operations[idx]
+  if custom_call is None:
+    raise RuntimeError("No Mosaic GPU call found in the module")
+  return custom_call
+
+
+@util.weakref_lru_cache
+def _compile_fn(fn, in_structs):
+  traced = jax.jit(fn).trace(*in_structs)
+  main_module = traced.lower().compiler_ir()
+  custom_call = _find_mgpu_call(main_module)
+  backend_config = custom_call.attributes["mhlo.backend_config"]
+  if not isinstance(in_structs, tuple):
+    in_structs = (in_structs,)
+  unwrap_output_tuple = False
+  if not isinstance(out_structs := traced.out_info, tuple):
+    out_structs = (out_structs,)
+    unwrap_output_tuple = True
+  return mgpu_core._as_torch_gpu_kernel(
+      backend_config["module"].value.encode(),
+      in_structs,
+      out_structs,
+      unwrap_output_tuple=unwrap_output_tuple,
   )

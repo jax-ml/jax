@@ -13,8 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-from collections.abc import Callable
-from collections.abc import Sequence
+from collections.abc import Callable, Iterable, Sequence
 import contextlib
 import ctypes
 import dataclasses
@@ -934,24 +933,45 @@ def as_torch_gpu_kernel(
     module_name: str = "unknown",
     kernel_name: str | None = None,
     thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
-    inout_shape = (),
+    inout_shape=(),
 ):
-  try:
-    import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
-  except ImportError:
-    raise RuntimeError("as_torch_gpu_kernel requires PyTorch")
-  torch.cuda.init()  # Make sure CUDA context is set up.
-
   module, in_shape, inout_shape, out_shape, unwrap_output_tuple, is_device_collective = _kernel_to_module(
       body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec,
       cluster, module_name, kernel_name, thread_semantics, inout_shape
   )
+  if is_device_collective:
+    raise RuntimeError(
+        "Kernel is a cross-device collective but no support is available for"
+        " Torch."
+    )
+  module = _run_serde_pass(module, serialize=True, ir_version=None)
+  return _as_torch_gpu_kernel(
+      module.operation.get_asm(binary=True, enable_debug_info=True),
+      in_shape,
+      out_shape,
+      inout_shape,
+      unwrap_output_tuple=unwrap_output_tuple,
+  )
+
+
+def _as_torch_gpu_kernel(
+    module_asm: bytes,
+    in_shape: Iterable[object],
+    out_shape: Iterable[object],
+    inout_shape: Iterable[object] = (),
+    *,
+    unwrap_output_tuple: bool = False,
+):
   flat_arg_types, expected_arg_treedef = jax.tree.flatten((*in_shape, *inout_shape))
   flat_out_types, _ = jax.tree.flatten(out_shape)
   out_treedef = jax.tree.structure((*out_shape, *inout_shape))
 
-  if is_device_collective:
-    raise RuntimeError("Kernel is a cross-device collective but no support is available for Torch.")
+  try:
+    import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
+  except ImportError:
+    raise RuntimeError("_as_torch_gpu_kernel requires PyTorch")
+
+  torch.cuda.init()  # Make sure CUDA context is set up.
 
   # Get our hands on the compilation and unload functions
   try:
@@ -970,8 +990,6 @@ def as_torch_gpu_kernel(
   unload_func.argtypes = [compile_func.restype]
   unload_func.restype = None
 
-  module = _run_serde_pass(module, serialize=True, ir_version=None)
-  module_asm = module.operation.get_asm(binary=True, enable_debug_info=True)
   compiled = compile_func(ctypes.c_char_p(module_asm))
   if not compiled:
     raise RuntimeError("Failed to compile the module")

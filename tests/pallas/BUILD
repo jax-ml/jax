@@ -1143,6 +1143,26 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "mgpu_torch_test",
+    srcs = ["mgpu_torch_test.py"],
+    enable_backends = [],
+    enable_configs = [
+        "gpu_h100_x32",
+        "gpu_h100",
+    ],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_experimental_gpu_ops",
+        "//jax:pallas_mosaic_gpu",
+    ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("torch"),
+)
+
+jax_multiplatform_test(
     name = "fuser_block_spec_test",
     srcs = [
         "fuser_block_spec_test.py",

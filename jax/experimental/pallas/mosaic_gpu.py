@@ -45,6 +45,7 @@ from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as ACC  # noqa: 
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as WGMMAAccumulatorRef
 from jax._src.pallas.mosaic_gpu.helpers import find_swizzle as find_swizzle
 from jax._src.pallas.mosaic_gpu.helpers import format_tcgen05_sparse_metadata as format_tcgen05_sparse_metadata
+from jax._src.pallas.mosaic_gpu.helpers import as_torch_kernel as as_torch_kernel
 from jax._src.pallas.mosaic_gpu.helpers import nd_loop as nd_loop
 from jax._src.pallas.mosaic_gpu.helpers import NDLoopInfo as NDLoopInfo
 from jax._src.pallas.mosaic_gpu.helpers import planar_snake as planar_snake
