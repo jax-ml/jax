@@ -7958,8 +7958,6 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   // Handle replicating small-to-large retiling for (a) replicated 2nd minor or
   // (b) 32-bit single-row.
   // This retiling is one-to-many vregs.
-  // TODO(tlongeri): Large-to-small retiling with replicated minor is analogous
-  // to this.
   if (src.tiling()[1] == ctx.target_shape[1] &&
       dst_tiling[1] == ctx.target_shape[1] &&
       dst_tiling[0] % src.tiling()[0] == 0 &&
@@ -8014,7 +8012,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
         gather_pattern.push_back(src_sublane);
       }
       idxs.assign(dst_idx.begin(), dst_idx.end());
-      *(idxs.end() - 2) = 0;
+      DCHECK_EQ(*(idxs.end() - 2), 0);
       *(idxs.end() - 1) = src_col_idx;
       Value src_vreg = vregs(idxs);
       *vreg = builder.create<tpu::GatherOp>(loc, src_vreg.getType(), src_vreg,
@@ -8023,6 +8021,51 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
     });
     return std::pair(dst, std::move(retiled));
   }
+  // Handle replicating large-to-small retiling for replicated minor.
+  // This retiling is one-to-many vregs.
+  if (src.tiling()[1] == dst_tiling[1] &&
+      src.tiling()[0] % dst_tiling[0] == 0 && !src.offsets()[1] &&
+      // This relayout relies on gathers, which are cheap on newer generations,
+      // so we always use it for them.
+      (!dst_offsets_hint[1] || ctx.hardware_generation >= 5)) {
+    CHECK(src.offsets()[0]);  // Full replication handled separately
+    const int tile_ratio = src.tiling()[0] / dst_tiling[0];
+    const int64_t dst_2nd_minor_offset = *src.offsets()[0] % dst_vreg_slice[0];
+    const VectorLayout dst(bitwidth, {dst_2nd_minor_offset, std::nullopt},
+                           dst_tiling, src.implicit_dim());
+    const SmallVector<int64_t> dst_vreg_array_shape =
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape);
+    const int64_t src_sublanes_per_tile = src.sublanesPerTile(ctx.target_shape);
+    const int64_t dst_sublanes_per_tile = dst.sublanesPerTile(ctx.target_shape);
+    xla::Array<Value> retiled(dst_vreg_array_shape);
+    SmallVector<int64_t> src_idx;
+    retiled.Each([&](absl::Span<const int64_t> dst_idx, Value* const vreg) {
+      const int64_t dst_padded_tile_row_idx =
+          *(dst_idx.end() - 2) +
+          (*src.offsets()[0] - dst_2nd_minor_offset) / dst_tiling[0];
+      const int64_t src_row_idx = dst_padded_tile_row_idx / tile_ratio;
+      const int64_t dst_tile_in_src_tile = dst_padded_tile_row_idx % tile_ratio;
+      SmallVector<int32_t, 8> gather_pattern;
+      for (int sublane = 0; sublane < ctx.target_shape[0]; ++sublane) {
+        const int64_t dst_sublane_in_tile = sublane % dst_sublanes_per_tile;
+        // Can pick any source tile since they are all identical
+        constexpr int64_t src_tile = 0;
+        const int64_t src_sublane =
+            src_tile * src_sublanes_per_tile +
+            dst_tile_in_src_tile * dst_sublanes_per_tile + dst_sublane_in_tile;
+        gather_pattern.push_back(src_sublane);
+      }
+      src_idx.assign(dst_idx.begin(), dst_idx.end());
+      *(src_idx.end() - 2) = src_row_idx;
+      DCHECK_EQ(*(src_idx.end() - 1), 0);
+      Value src_vreg = vregs(src_idx);
+      *vreg = builder.create<tpu::GatherOp>(loc, src_vreg.getType(), src_vreg,
+                                            gather_pattern,
+                                            /*dimension=*/0);
+    });
+    return std::pair(dst, std::move(retiled));
+  }
+
   // (8,128) <-> (8 * packing,128) tiling change for packed type.
   if (ctx.hardware_generation >= 4 && bitwidth < 32 && 32 % bitwidth == 0 &&
       ((src.tiling() == ctx.target_shape &&
