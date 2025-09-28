@@ -21,8 +21,12 @@ import math
 from typing import TypeVar, overload
 
 import jax
+from jax import numpy as jnp
 from jax import lax
 from jax._src import dtypes
+from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
+from jax._src.pallas.mosaic_gpu import core as gpu_core
+from jax._src.pallas import primitives as pallas_primitives
 import numpy as np
 
 _T = TypeVar("_T")
@@ -35,11 +39,12 @@ class NDLoopInfo:
   Attributes:
     index: The grid indices corresponding to the current loop iteration.
     local_index: The local iteration index.
-    num_local_steps: The total number of local iterations to run.
+    num_local_steps: The total number of local iterations to run. None
+      if unknown.
   """
   index: tuple[jax.Array, ...]
   local_index: jax.Array | int
-  num_local_steps: jax.Array | int
+  num_local_steps: jax.Array | int | None
 
 
 @overload
@@ -269,3 +274,72 @@ def planar_snake(
       tile_coordinates(lin_idx, tile_width),
       tile_coordinates(lin_idx - num_full_tiles_elements, minor_size - full_tiles_minor_size)
   )
+
+
+def dynamic_scheduling_loop(
+    grid_names,
+    thread_axis: str | None = None) -> Callable[
+    [Callable[[NDLoopInfo], None]], None]:
+  """A loop over program instances using dynamic work scheduling.
+
+  This loop will iterate through available program instances until all
+  work has been scheduled. The kernel should be instantiated with a grid
+  equal to the logical amount of work to be done (as opposed to a persistent
+  kernel where the grid is set to the number of cores). Each core running
+  this loop will continuously query the next available block of work and
+  the loop will terminate when the entire grid has been scheduled.
+
+  Usage:
+  ```
+  @dynamic_scheduling_loop(grid_names)
+  def body(loop_info):
+    # do work....
+  ```
+
+  Args:
+    grid_names: The names of the axes in the grid.
+    thread_axis: The name of the thread axis. This must be passed in if
+      the kernel uses multiple threads.
+  """
+  if thread_axis is not None:
+    num_threads = lax.axis_size(thread_axis)
+  else:
+    num_threads = 1
+
+  def decorator(body):
+    grid_idx = tuple(lax.axis_index(axis_name) for axis_name in grid_names)
+    success = True
+    @functools.partial(
+        pallas_primitives.run_scoped,
+        try_cancel_buffer=gpu_core.TryClusterCancelResult(2),
+        try_cancel_barrier=gpu_core.Barrier(num_arrivals=num_threads,
+                                            num_barriers=2),
+        collective_axes=thread_axis,
+    )
+    def _scoped(try_cancel_buffer, try_cancel_barrier):
+      def try_cancel_cond(carry):
+        _, success, _ = carry
+        return success
+      def try_cancel_body(carry):
+        grid_idx, _, wave_step = carry
+        slot = lax.rem(wave_step, jnp.int32(2))
+        gpu_primitives.try_cluster_cancel(try_cancel_buffer.at[slot],
+                                          try_cancel_barrier.at[slot])
+        loop_info = NDLoopInfo(
+            index=grid_idx,
+            local_index=wave_step,
+            num_local_steps=None,
+        )
+        body(loop_info)
+        gpu_primitives.barrier_wait(try_cancel_barrier.at[slot])
+        grid_idx, success = gpu_primitives.query_cluster_cancel(
+            try_cancel_buffer.at[slot],
+            grid_names=grid_names)
+        return (grid_idx, success, wave_step + jnp.int32(1))
+      init_carry = (grid_idx, success, jnp.int32(0))
+      lax.while_loop(
+          try_cancel_cond,
+          try_cancel_body,
+          init_carry,
+      )
+  return decorator

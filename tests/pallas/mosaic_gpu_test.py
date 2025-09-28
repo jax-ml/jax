@@ -5853,6 +5853,47 @@ class HelpersTest(PallasTest):
       ])
       np.testing.assert_array_equal(results, expected)
 
+  @parameterized.parameters(
+      ((100,), ()),  # grid < SM count
+      ((300,), ()),  # grid > SM count
+      ((3, 3, 3, 3, 3), ()),  #  squashed grid dimensions
+      ((50,), (2, 1)),  # small grid w/ cluster
+      ((50, 4), (1, 2)),  # large grid w/ cluster
+  )
+  def test_dynamic_work_scheduling(self, grid, cluster):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("Only works on a GPU with capability >= sm100a")
+    grid_names = tuple(str(i) for i in range(len(grid)))
+    cluster_names = tuple("c"+str(i) for i in range(len(cluster)))
+    def body(out_gmem, _):
+      sm_idx = lax.axis_index(grid_names)
+      cluster_idx = ()
+      if cluster:
+        cluster_idx = tuple(lax.axis_index(axis) for axis in cluster_names)
+      @plgpu.dynamic_scheduling_loop(grid_names)
+      def loop_body(loop_info: plgpu.NDLoopInfo):
+        out_gmem[*loop_info.index, *cluster_idx] = sm_idx
+    out_shape = (*grid, *cluster)
+    result = plgpu.kernel(body,
+                 out_shape=jax.ShapeDtypeStruct(out_shape, jnp.int32),
+                 grid=grid,
+                 grid_names=grid_names,
+                 cluster=cluster,
+                 cluster_names=cluster_names,
+                 # Allocate a large amount of SMEM to prevent multiple blocks
+                 # being scheduled on the same SM.
+                 scratch_shapes=[plgpu.SMEM((200_000,), jnp.int8)],
+                 )()
+
+    # Result maps grid_idx -> SM that performed the work.
+    # Check that each SM had at least 1 block of work.
+    num_sms = min(jax.devices()[0].core_count, np.prod(grid))
+    histogram = np.histogram(result, bins=range(num_sms+1))[0]
+    self.assertEqual(np.sum(histogram), np.prod(out_shape))
+    self.assertGreaterEqual(np.min(histogram), 1)
+    # Make sure all blocks > num_sms were stolen.
+    self.assertEqual(np.max(result), jnp.int32(num_sms) - 1)
+
 
 # TODO(mattjj): enable when we update pallas_call to handle the new types
 # class PinnedBuffersTest(PallasTest):
