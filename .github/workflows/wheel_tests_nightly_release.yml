@@ -84,6 +84,8 @@ jobs:
       halt-for-connection: ${{inputs.halt-for-connection}}
       build_jaxlib: "false"
       build_jax: "false"
+      run-backend_independent-test-suite: "1"
+      clone_main_xla: 0
 
   run-pytest-cuda:
     uses: ./.github/workflows/pytest_cuda.yml
@@ -159,6 +161,8 @@ jobs:
       build_jax: "false"
       jaxlib-version: "head"
       write_to_bazel_remote_cache: 1
+      run-backend_independent-test-suite: 1
+      clone_main_xla: 0
       run_multiaccelerator_tests: "true"
 
   run-pytest-tpu:
