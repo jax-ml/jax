@@ -79,7 +79,7 @@ jobs:
             set +e # Allow command failure
 
             nvidia-smi
-            nvidia-smi -i 0 --query-gpu=timestamp,name,utilization.memory,memory.used,memory.total,pci.bus_id,driver_version,utilization.gpu --format=csv -l 1 -f memory_log.csv &
+            nvidia-smi -i 0 --query-gpu=timestamp,name,utilization.memory,memory.used,memory.total,pci.bus_id,driver_version,utilization.gpu,utilization.cpu --format=csv -l 1 -f memory_log.csv &
             smi_pid=$!
             echo "$smi_pid"
             ps aux
@@ -88,7 +88,6 @@ jobs:
             --config=ci_rbe_cache \
             --config=use_tar_archive_files \
             --repo_env=HERMETIC_PYTHON_VERSION="3.13" \
-            --repo_env=HERMETIC_CUDNN_VERSION="9.11.0" \
             --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
             --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
             --test_output=errors \
@@ -149,7 +148,6 @@ jobs:
             --config=ci_rbe_cache \
             --config=use_tar_archive_files \
             --repo_env=HERMETIC_PYTHON_VERSION="3.13" \
-            --repo_env=HERMETIC_CUDNN_VERSION="9.11.0" \
             --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
             --run_under "$(pwd)/build/cuda_target_memory_data.sh" \
             --test_output=errors \
