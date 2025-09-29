@@ -289,12 +289,11 @@ def dynamic_scheduling_loop(
   this loop will continuously query the next available block of work and
   the loop will terminate when the entire grid has been scheduled.
 
-  Usage:
-  ```
-  @dynamic_scheduling_loop(grid_names)
-  def body(loop_info):
-    # do work....
-  ```
+  Example usage::
+
+    @plgpu.dynamic_scheduling_loop(grid_names)
+    def body(loop_info):
+      work(loop_info.index)  # do work...
 
   Args:
     grid_names: The names of the axes in the grid.

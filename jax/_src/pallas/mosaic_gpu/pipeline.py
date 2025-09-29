@@ -519,20 +519,16 @@ def emit_pipeline_warp_specialized(
 
   The ``body`` function should have the following signature (without carry).
   ``consumed_barriers`` is an optional argument that is only passed if the
-  ``manual_consumed_barriers`` argument is True.
+  ``manual_consumed_barriers`` argument is True::
 
-  ```
-  def body(indices, *input_refs, *output_refs, *consumed_barriers) -> None:
-  ```
+    def body(indices, *input_refs, *output_refs, *consumed_barriers) -> None:
 
   or with a carries enabled (enabled via the ``compute_context`` argument),
-  where the body returns the next carry:
+  where the body returns the next carry::
 
-  ```
-  def body(
-      indices, *input_refs, *output_refs, *consumed_barriers, carry
-  ) -> Carry:
-  ```
+    def body(
+        indices, *input_refs, *output_refs, *consumed_barriers, carry
+    ) -> Carry:
 
   When ``manual_consumed_barriers`` is True, the user must arrive on all the
   consumed barriers from all compute warpgroups at each pipeline step.

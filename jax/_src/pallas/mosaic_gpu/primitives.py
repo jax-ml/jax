@@ -1375,13 +1375,13 @@ def tcgen05_mma(acc: _Ref,
 
   If run in collective mode, `acc`, `a` (LHS), and `b` (RHS) should correspond
   to half of the total inputs to the MMA, where `acc` and `a` (LHS) are split
-  in half along the rows and `b` (RHS) is split along the columns like so:
+  in half along the rows and `b` (RHS) is split along the columns like so::
 
-   -----------    -----------   -----------
-   |  ACC1   |    |  LHS1   |   |    |    |
-   ----------- += ----------- @ |RHS1|RHS2|
-   |  ACC2   |    |  LHS2   |   |    |    |
-   -----------    -----------   -----------
+    -----------    -----------   -----------
+    |  ACC1   |    |  LHS1   |   |    |    |
+    ----------- += ----------- @ |RHS1|RHS2|
+    |  ACC2   |    |  LHS2   |   |    |    |
+    -----------    -----------   -----------
 
   To use the block-scaled matrix-multiply, provide `a_scale` and `b_scale`
   operands (they must be both present or both unspecified).
