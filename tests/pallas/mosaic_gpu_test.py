@@ -5887,7 +5887,8 @@ class HelpersTest(PallasTest):
 
     # Result maps grid_idx -> SM that performed the work.
     # Check that each SM had at least 1 block of work.
-    num_sms = min(jax.devices()[0].core_count, np.prod(grid))
+    cluster_size = int(np.prod(cluster))
+    num_sms = min(jax.devices()[0].core_count // cluster_size, np.prod(grid))
     histogram = np.histogram(result, bins=range(num_sms+1))[0]
     self.assertEqual(np.sum(histogram), np.prod(out_shape))
     self.assertGreaterEqual(np.min(histogram), 1)
