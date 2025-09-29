@@ -22,6 +22,8 @@ from typing import cast, Union
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 
+from . import fragmented_array as fa
+from . import tcgen05
 from . import utils
 
 MlirOperation = Union[ir.Operation, ir.OpView]
@@ -280,6 +282,27 @@ def value_transforms(value: ir.Value) -> ir.Attribute | None:
     raise ValueError(f"{value} is not a memref.")
 
   return _value_attr(value, "transforms")
+
+
+def is_mma_layout(layout: fa.FragmentedLayout) -> bool:
+  if not isinstance(layout, fa.TiledLayout):
+    return False
+  if layout in {
+      fa.WGMMA_LAYOUT,
+      fa.WGMMA_LAYOUT_ACC_32BIT,
+      fa.WGMMA_LAYOUT_UPCAST_2X,
+      fa.WGMMA_LAYOUT_UPCAST_4X,
+      fa.WGMMA_TRANSPOSED_LAYOUT,
+      fa.TCGEN05_LAYOUT,
+      fa.TCGEN05_TRANSPOSED_LAYOUT,
+  }:
+    return True
+  if len(layout.tiling.tiles[0]) != 2:
+    return False
+  columns = layout.tiling.tiles[0][1]
+  return columns % 16 == 0 and (
+      layout == tcgen05.fa_m64_collective_layout(columns)
+  )
 
 
 class TraversalOrder(enum.Enum):
