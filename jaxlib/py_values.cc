@@ -18,6 +18,7 @@ limitations under the License.
 #include <Python.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <functional>
@@ -25,6 +26,7 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -212,6 +214,25 @@ absl::StatusOr<ifrt::ArrayRef> MakeSingleDeviceIfrtArrayFromShard(
                                                std::move(ifrt_sharding), shard);
 }
 
+using HostBuffer = ifrt::Client::HostBuffer;
+
+struct HostBufferHash {
+  // We hash on everything except for on_done.
+  size_t operator()(const HostBuffer* h) const {
+    return absl::Hash<
+        std::tuple<const void*, xla::ifrt::DType, const xla::ifrt::Shape&,
+                   const std::optional<HostBuffer::ByteStrides>&>>()(
+        {h->data, h->dtype, h->shape, h->byte_strides});
+  }
+};
+
+struct HostBufferEq {
+  bool operator()(const HostBuffer* lhs, const HostBuffer* rhs) const {
+    return lhs->data == rhs->data && lhs->dtype == rhs->dtype &&
+           lhs->shape == rhs->shape && lhs->byte_strides == rhs->byte_strides;
+  }
+};
+
 // Makes an IFRT Array from `shards` using a batched array creation API (fast
 // path). `shards` will be consumed.
 //
@@ -222,15 +243,30 @@ absl::StatusOr<ifrt::ArrayRef> MakeIfrtArrayFromShardsInBatch(
   absl::InlinedVector<
       std::pair<absl::InlinedVector<int64_t, 1>, ifrt::Client::HostBuffer>, 1>
       host_buffers;
+  // Note: Dedup map relies on this reserve to give pointer stability.
   host_buffers.reserve(shards.size());
   ifrt::Client::HostBufferSemantics safe_host_semantics =
       ifrt::Client::HostBufferSemantics::kImmutableZeroCopy;
-  // TODO(hyeontaek): Deduplicate shards here or early on to create a unique
-  // HostBuffer for each set of replicated shards.
+
+  // TODO(hyeontaek): Consider performing this deduplication earlier to avoid
+  // even constructing the HostBuffers.
+  absl::flat_hash_map<const HostBuffer*, size_t, HostBufferHash, HostBufferEq>
+      host_buffer_dedup_map;
+  host_buffer_dedup_map.reserve(shards.size());
+
   for (int64_t i = 0; i < shards.size(); ++i) {
-    host_buffers.push_back({{i},
-                            std::get<ifrt::Client::HostBuffer>(std::move(
-                                shards[i].ifrt_array_or_host_buffer))});
+    auto insert_idx = host_buffers.size();
+    host_buffers.push_back(
+        {{},
+         std::move(std::get<ifrt::Client::HostBuffer>(
+             std::move(shards[i].ifrt_array_or_host_buffer)))});
+    auto [it, insert_happened] = host_buffer_dedup_map.emplace(
+        std::make_pair(&host_buffers.back().second, insert_idx));
+    if (!insert_happened) {
+      std::move(host_buffers.back().second.on_done)();
+      host_buffers.pop_back();
+    }
+    host_buffers[it->second].first.push_back(i);
     // The minimum host buffer semantics is a safe semantics that can be used
     // for all shards when they are created in a single batch.
     safe_host_semantics =
