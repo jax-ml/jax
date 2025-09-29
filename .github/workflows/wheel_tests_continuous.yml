@@ -225,6 +225,7 @@ jobs:
       build_jax: "wheel"
       jaxlib-version: "head"
       write_to_bazel_remote_cache: 1
+      run_multiaccelerator_tests: "true"
 
   run-pytest-tpu:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
