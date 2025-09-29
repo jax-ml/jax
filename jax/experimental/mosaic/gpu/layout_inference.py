@@ -1247,7 +1247,56 @@ def is_terminator(op: ir.OpView) -> bool:
   return isinstance(op, (scf.YieldOp, scf.ConditionOp))
 
 
-def infer_layout(module: ir.Module):
+def _drop_smem(
+    system: eqns.EquationSystem, ctx: DerivationContext
+) -> tuple[eqns.EquationSystem, DerivationContext]:
+  """Drops SMEM related variables constraints and hints.
+
+  This is only needed to enable the gradual implementation and testing of
+  SMEM inference.
+  TODO(b/447079781): Remove this function once SMEM inference is fully
+  implemented.
+  """
+  def is_smem(
+      x: (
+          OperandOrResult
+          | eqns.Constraint
+          | eqns.Expression
+          | eqns.Equation
+      ),
+  ) -> bool:
+    match x:
+      case OperandOrResult(memory_space=MemorySpace.SMEM):
+        return True
+      case eqns.IsTransferable(source=source, target=target):
+        return is_smem(source) or is_smem(target)
+      case eqns.Variable(key=key):
+        return is_smem(key)
+      case eqns.SMEMTiling():
+        return True
+      case eqns.Equation(lhs=lhs, rhs=rhs):
+        return is_smem(lhs) or is_smem(rhs)
+      case _:
+        return False
+
+  assign = {k: v for k, v in system.assignments.items() if not is_smem(v)}
+  equations = [e for e in system.equations if not is_smem(e)]
+  const = [c for c in system.constraints if not is_smem(c)]
+
+  new_ctx = DerivationContext()
+
+  new_ctx.operand_and_results_for_variable = {
+      k: v for k, v in ctx.operand_and_results_for_variable.items() if not is_smem(k)
+  }
+
+  new_ctx.variable_for_operand_or_result = {
+      k: v for k, v in ctx.variable_for_operand_or_result.items() if not is_smem(k)
+  }
+
+  return eqns.EquationSystem(assign, equations, const), new_ctx
+
+
+def infer_layout(module: ir.Module, enable_smem_inference: bool = False):
   """Infers layouts for the given module.
 
   * If there are vector (respectively SMEM refs, TMEM refs) operands,
@@ -1258,6 +1307,11 @@ def infer_layout(module: ir.Module):
   and contain one element per relevant argument in the memory space.
   * Any of these attributes is guaranteed to not be set if there is no relevant
   input/output in the corresponding memory space.
+
+  If `enable_smem_inference` is False, SMEM transforms are not inferred. This
+  is only a temporary flag to allow for an incremental rollout of SMEM
+  inference.
+  TODO(b/447079781): Remove this flag once SMEM inference is fully implemented.
   """
   global_equation_system: eqns.EquationSystem | eqns.Unsatisfiable
   global_equation_system = eqns.EquationSystem()
@@ -1294,6 +1348,9 @@ def infer_layout(module: ir.Module):
         "Failed to infer a possible set of layouts. This should only happen if "
         "user-provided layout casts are unsatisfiable."
     )
+
+  if not enable_smem_inference:
+    global_equation_system, ctx = _drop_smem(global_equation_system, ctx)
 
   propagation_hints, constraints = derive_hints_and_constraints(ctx.operand_and_results_for_variable)
   hints = reduce_hints(hints + propagation_hints, global_equation_system.assignments)  # pytype: disable=attribute-error
