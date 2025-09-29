@@ -114,7 +114,7 @@ jobs:
 
             echo "Stopping memory gathering"
             kill $smi_pid && wait $smi_pid
-            # cat memory_log.csv
+            cat memory_log.csv
             max_memory=$(awk -F", " '($4+0 > max_value) {max_value = $4+0; max_record = $4} END {print max_record}' memory_log.csv)
             echo "Max GPU memory: $max_memory, Starting Memory: $start_memory"
             exit $command_exit
