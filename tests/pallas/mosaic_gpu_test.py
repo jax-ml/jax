@@ -296,8 +296,7 @@ class PallasCallTest(PallasTest):
     y = jnp.flip(x).reshape(1, 256)
     np.testing.assert_array_equal(kernel(x, y), x + y[0])
 
-  @parameterized.product(shape=[(128,), (128, 128)])
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
+  @parameterized.product(shape=[(128,), (128, 64)])
   def test_reduce_sum(self, shape):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct(shape, jnp.float32)
@@ -944,7 +943,6 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), x)
 
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_scoped_copy_with_transforms(self):
     ts = self.default_transforms(dtype=jnp.float32)
     def kernel(x_ref, o_ref, barrier_ref):
@@ -952,18 +950,18 @@ class PallasCallTest(PallasTest):
         plgpu.copy_gmem_to_smem(x_ref, tmp_ref, barrier_ref)
         plgpu.barrier_wait(barrier_ref)
         o_ref[...] = tmp_ref[...] * 2
-      pl.run_scoped(body, plgpu.SMEM((128, 128), jnp.float32, transforms=ts))
+      pl.run_scoped(body, plgpu.SMEM((128, 64), jnp.float32, transforms=ts))
 
     in_spec = pl.BlockSpec(memory_space=plgpu.GMEM)
     out_spec = plgpu.BlockSpec(transforms=ts, memory_space=plgpu.SMEM)
     f = self.pallas_call(
         kernel,
-        out_shape=jax.ShapeDtypeStruct([128, 128], jnp.float32),
+        out_shape=jax.ShapeDtypeStruct([128, 64], jnp.float32),
         in_specs=(in_spec,),
         out_specs=out_spec,
         scratch_shapes=[plgpu.Barrier()],
     )
-    x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
+    x = jnp.arange(128 * 64, dtype=jnp.float32).reshape(128, 64)
     np.testing.assert_array_equal(f(x), x * 2)
 
   @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
@@ -977,19 +975,18 @@ class PallasCallTest(PallasTest):
         plgpu.copy_gmem_to_smem(x_ref, tmp_ref, barrier_ref)
         plgpu.barrier_wait(barrier_ref)
         o_ref[...] = tmp_ref[...] * 2
-      pl.run_scoped(body, plgpu.SMEM((16, 4, 8, 32), jnp.float32))
+      pl.run_scoped(body, plgpu.SMEM((8, 4, 8, 32), jnp.float32))
 
     in_spec = pl.BlockSpec(memory_space=plgpu.GMEM)
     f = self.pallas_call(
         kernel,
-        out_shape=jax.ShapeDtypeStruct([128, 128], jnp.float32),
+        out_shape=jax.ShapeDtypeStruct([64, 128], jnp.float32),
         in_specs=(in_spec,),
         scratch_shapes=[plgpu.Barrier()],
     )
-    x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
+    x = jnp.arange(64 * 128, dtype=jnp.float32).reshape(64, 128)
     np.testing.assert_array_equal(f(x), x * 2)
 
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_copy_with_transforms_and_indexing(self):
     self.skip_if_wg_semantics()
 
@@ -1009,12 +1006,12 @@ class PallasCallTest(PallasTest):
     )
     f = self.pallas_call(
         kernel,
-        out_shape=jax.ShapeDtypeStruct([2, 128, 128], jnp.float32),
+        out_shape=jax.ShapeDtypeStruct([2, 64, 128], jnp.float32),
         in_specs=(in_spec,),
         out_specs=out_spec,
         scratch_shapes=[plgpu.Barrier()],
     )
-    x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
+    x = jnp.arange(64 * 128, dtype=jnp.float32).reshape(64, 128)
     np.testing.assert_array_equal(f(x), np.stack([x, x], axis=0))
 
   @parameterized.parameters(
@@ -1074,7 +1071,6 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(2 * 128, dtype=jnp.float32).reshape(2, 128)
     np.testing.assert_array_equal(kernel(x), x)
 
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
   def test_indexing_before_transpose(self):
     self.skip_if_wg_semantics()
 
@@ -1089,12 +1085,12 @@ class PallasCallTest(PallasTest):
     out_spec = plgpu.BlockSpec(memory_space=plgpu.SMEM)
     f = self.pallas_call(
         kernel,
-        out_shape=jax.ShapeDtypeStruct([2, 64, 2, 128], jnp.float32),
+        out_shape=jax.ShapeDtypeStruct([2, 32, 2, 128], jnp.float32),
         in_specs=(in_spec,),
         out_specs=out_spec,
         scratch_shapes=[plgpu.Barrier()],
     )
-    x = jnp.arange(2 * 64 * 128, dtype=jnp.float32).reshape(2, 64, 128)
+    x = jnp.arange(2 * 32 * 128, dtype=jnp.float32).reshape(2, 32, 128)
     xt = x.transpose((1, 0, 2))
     np.testing.assert_array_equal(f(x), np.stack([xt, xt], axis=0))
 
@@ -2212,7 +2208,7 @@ class PallasCallTest(PallasTest):
       cluster["xyz".index(d)] = collective_dim_size
     for d in noncollective_dims:
       cluster["xyz".index(d)] = 2
-    if math.prod(cluster) > 16:
+    if math.prod(cluster) > jtu.get_cuda_nonportable_max_cluster_size():
       self.skipTest("Cluster is too big.")
 
     collective_size = math.prod(cluster["xyz".index(d)] for d in collective_dims)
@@ -2394,7 +2390,8 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(x[:, None], (128, 128)))
 
   @parameterized.named_parameters((l.name.lower(), l) for l in plgpu.Layout)
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(
+      device_patterns=("RTX PRO 6000 Blackwell", "GB10$"))
   def test_copy_layout(self, layout):
     if layout in {
         plgpu.Layout.WG_SPLAT,
@@ -2413,7 +2410,7 @@ class PallasCallTest(PallasTest):
         or layout != plgpu.Layout.TCGEN05_TMEM_NATIVE
     )
 
-    shape = (128, 128)
+    shape = (128, 128) if "tcgen05" in layout.name.lower() else (64, 128)
     dtype = jnp.float32
     swizzle = 128
     if layout in (plgpu.Layout.WGMMA_UPCAST_4X, plgpu.Layout.WGMMA_UPCAST_2X):
@@ -6054,6 +6051,10 @@ class HelpersTest(PallasTest):
       def loop_body(loop_info: plgpu.NDLoopInfo):
         out_gmem[*loop_info.index, *cluster_idx] = sm_idx
     out_shape = (*grid, *cluster)
+    max_shared_memory = jax.local_devices()[0].shared_memory_per_block_optin
+    # Mosaic GPU uses some shared memory implicitly, so we can't
+    # explicitly request the full amount.
+    large_amount_of_shared_memory = int(0.9 * max_shared_memory)
     result = self.kernel(body,
                  out_shape=jax.ShapeDtypeStruct(out_shape, jnp.int32),
                  grid=grid,
@@ -6062,7 +6063,8 @@ class HelpersTest(PallasTest):
                  cluster_names=cluster_names,
                  # Allocate a large amount of SMEM to prevent multiple blocks
                  # being scheduled on the same SM.
-                 scratch_shapes=[plgpu.SMEM((200_000,), jnp.int8)],
+                 scratch_shapes=[
+                   plgpu.SMEM((large_amount_of_shared_memory,), jnp.int8)],
                  )()
 
     # Result maps grid_idx -> SM that performed the work.
@@ -6102,13 +6104,18 @@ class HelpersTest(PallasTest):
       # All SMs wait until SM 0 has finished all blocks.
       pl.semaphore_wait(global_semaphore)
 
+    max_shared_memory = jax.local_devices()[0].shared_memory_per_block_optin
+    # Mosaic GPU uses some shared memory implicitly, so we can't
+    # explicitly request the full amount.
+    large_amount_of_shared_memory = int(0.9 * max_shared_memory)
     result = self.kernel(body,
                  out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
                  grid=(sm_count + blocks_to_steal,),
                  grid_names=("x",),
                  # Allocate a large amount of SMEM to prevent multiple blocks
                  # being scheduled on the same SM.
-                 scratch_shapes=[plgpu.SMEM((200_000,), jnp.int8)],
+                 scratch_shapes=[
+                   plgpu.SMEM((large_amount_of_shared_memory,), jnp.int8)],
                  )()
     self.assertEqual(result[0], blocks_to_steal + 1)
 

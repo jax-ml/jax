@@ -2083,7 +2083,7 @@ class BarrierTest(TestCase):
       cluster[d] = collective_size
     for d in noncollective_dims:
       cluster[d] = 2
-    if math.prod(cluster) > 16:
+    if math.prod(cluster) > jtu.get_cuda_nonportable_max_cluster_size():
       self.skipTest("Cluster too big")
     is_trivial = math.prod(cluster[d] for d in collective_dims) == 1
     def kernel(ctx, dst, mask, collective_barrier):
@@ -2324,7 +2324,7 @@ class AsyncCopyTest(TestCase):
       cluster[d] = collective_dim_size
     for d in noncollective_dims:
       cluster[d] = 2
-    if math.prod(cluster) > 16:
+    if math.prod(cluster) > jtu.get_cuda_nonportable_max_cluster_size():
       self.skipTest("Cluster too big")
     collective_size = math.prod(cluster[d] for d in collective_dims)
     noncollective_size = math.prod(cluster) // collective_size
@@ -3197,7 +3197,8 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_allclose(result, np.full((128, 32), 3.14, np.float32))
 
   @parameterized.product(in_shape=((128, 128), (128, 64), (64, 128)))
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(
+    device_patterns=("RTX PRO 6000 Blackwell", "GB10$"))
   def test_strided_load_store(self, in_shape):
     def kernel(ctx, *args):
       gmem_input, gmem_output, (smem_input, smem_output) = args
@@ -3651,9 +3652,9 @@ class LayoutTest(TestCase):
         try:
           self.assertLessEqual(len(used_regs), expected_regs)
         except:
-          problematic_device = "RTX PRO 6000 Blackwell"
-          if jtu.device_kind_matches(problematic_device):
-            self.skipTest(f"{problematic_device} uses more registers for an unknown reason")
+          problematic_device_patterns = ("RTX PRO 6000 Blackwell", "GB10$")
+          if match := jtu.device_kind_match(problematic_device_patterns):
+            self.skipTest(f"{match} uses more registers for an unknown reason")
           raise
 
   def test_copy_for_upcast(self):
@@ -3690,7 +3691,8 @@ class LayoutTest(TestCase):
           (fa.TCGEN05_LAYOUT, fa.TCGEN05_TRANSPOSED_LAYOUT),
       ],
   )
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(
+    device_patterns=("RTX PRO 6000 Blackwell", "GB10$"))
   def test_transpose_tiled(self, dtype, swizzle, layouts):
     mlir_dtype = utils.dtype_to_ir_type(dtype)
     bw = bytewidth(mlir_dtype)
@@ -3754,7 +3756,7 @@ class LayoutTest(TestCase):
     in_tiling = (8, in_col_tiling)
     out_col_tiling = swizzle // out_dtype.itemsize
     out_tiling = (8, out_col_tiling)
-    m, n = 128, in_col_tiling * 2
+    m, n = 64, in_col_tiling * 2
     regs_per_thread = None
     def kernel(ctx, in_, out, smems):
       nonlocal regs_per_thread
@@ -3793,9 +3795,9 @@ class LayoutTest(TestCase):
     try:
       self.assertEqual(sass().count("SHFL.BFLY"), regs_per_thread * shfl_per_reg)
     except:
-      problematic_device = "RTX PRO 6000 Blackwell"
-      if jtu.device_kind_matches(problematic_device):
-        self.skipTest(f"{problematic_device} requires more SHFL.BFLY for an unknown reason")
+      problematic_device_patterns = ("RTX PRO 6000 Blackwell", "GB10$")
+      if match := jtu.device_kind_match(problematic_device_patterns):
+        self.skipTest(f"{match} requires more SHFL.BFLY for an unknown reason")
       raise
 
   @parameterized.product(

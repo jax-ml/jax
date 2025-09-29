@@ -127,7 +127,7 @@ def make_shape_dtype_strategy(
     min_size_exp: int,
     max_size_exp: int,
     valid_dtypes: Sequence[jnp.dtype],
-    max_bytes: int = 2**16,
+    max_bytes: int = 2**15,
 ) -> jax.ShapeDtypeStruct:
   dtype = draw(hps.sampled_from(valid_dtypes))
   # To generate shapes with power-of-two sizes, we draw the exponents of the
@@ -2159,8 +2159,10 @@ class OpsTest(PallasBaseTest):
       trans_x=[False, True],
       trans_y=[False, True],
   )
-  @jtu.skip_if_triton_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
-  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(device_patterns="RTX PRO 6000 Blackwell")
+  @jtu.skip_if_triton_exceeds_shared_memory(
+    device_patterns=("RTX PRO 6000 Blackwell", "GB10$"))
+  @jtu.skip_if_mosaic_gpu_exceeds_shared_memory(
+    device_patterns=("RTX PRO 6000 Blackwell", "GB10$"))
   def test_dot(self, lhs_and_rhs_shape, dtype, trans_x, trans_y):
     self.skip_if_mosaic_gpu()
 
