@@ -383,5 +383,38 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_special.hyp2f1, lsp_special.hyp2f1, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.hyp2f1, args_maker, rtol=rtol)
 
+  @jtu.sample_product(
+      shape=all_shapes,
+      dtype=float_dtypes,
+  )
+  def testErfcx(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    x_samples = rng(shape, dtype)
+    
+    # Since scipy doesn't have erfcx, we implement the reference
+    def scipy_erfcx(x):
+      # erfcx(x) = exp(x^2) * erfc(x)
+      # But for large x, we need to be careful about overflow
+      # For x > 26, exp(x^2) overflows but erfcx(x) should still be finite
+      x = np.asarray(x)
+      # For moderate values, use the direct formula
+      small_mask = np.abs(x) < 26.0
+      result = np.empty_like(x)
+      result[small_mask] = np.exp(x[small_mask]**2) * osp_special.erfc(x[small_mask])
+      
+      # For large positive x, erfcx(x) ≈ 1/(sqrt(pi)*x)
+      large_pos_mask = x >= 26.0
+      result[large_pos_mask] = 1.0 / (np.sqrt(np.pi) * x[large_pos_mask])
+      
+      # For large negative x, erfcx(x) → ∞ as exp(x^2)
+      large_neg_mask = x <= -26.0
+      result[large_neg_mask] = np.inf
+      
+      return result
+    
+    args_maker = lambda: [x_samples]
+    self._CheckAgainstNumpy(scipy_erfcx, lsp_special.erfcx, args_maker, atol=1e-6, rtol=1e-6)
+    self._CompileAndCheck(lsp_special.erfcx, args_maker, rtol=1e-6)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
