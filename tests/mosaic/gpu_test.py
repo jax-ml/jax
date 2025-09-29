@@ -20,8 +20,10 @@ import enum
 import itertools
 import math
 import operator
+import os
 import re
 import sys
+import tempfile
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -3475,18 +3477,37 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_array_equal(y, x)
 
 
-class ProfilerTest(TestCase):
+class ProfilerTest(TestCase, jtu.JaxTestCase):
 
-  def test_profile(self):
-    def kernel(ctx, src, dst, _):
-      mgpu.FragmentedArray.load_strided(src).store_untiled(dst)
-    x = np.arange(64 * 64, dtype=jnp.float32).reshape(64, 64)
-    spec = profiler.ProfilerSpec(1024)
-    # This is just a smoke test.
-    f = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), x, x, (), prof_spec=spec
-    )
-    jax.block_until_ready(f(x))
+  def test_profiler(self):
+    def body(ctx, input, result, scratch):
+      del scratch
+      with ctx.named_region("load"):
+        reg = mgpu.FragmentedArray.load_strided(input)
+      with ctx.named_region("store"):
+        reg.store_untiled(result)
+
+    dtype = jnp.bfloat16
+    shape = (128, 128)
+    jax_shape = jax.ShapeDtypeStruct(shape, dtype)
+    with tempfile.TemporaryDirectory() as tmpdir:
+      kernel = mgpu.as_gpu_kernel(
+          body,
+          grid=(1, 1, 1),
+          block=(128, 1, 1),
+          in_shape=(jax_shape),
+          out_shape=jax_shape,
+          smem_scratch_shape=[],
+          prof_spec=profiler.ProfilerSpec(1024),
+          profiler_dump_path=tmpdir,
+      )
+      param = self.prng.uniform(-1, 1, shape).astype(dtype)
+      self.assertArraysEqual(kernel(param), param)
+      [name] = os.listdir(tmpdir)
+      with open(os.path.join(tmpdir, name)) as f:
+        data = f.read()
+        self.assertEqual(data.count('"name": "load"'), 2)
+        self.assertEqual(data.count('"name": "store"'), 2)
 
 
 class LayoutTest(TestCase):
@@ -4543,6 +4564,37 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           create_kernel()(x),
           x[slicing].reshape(sub_shape),
       )
+
+  def test_profiler(self):
+    def body(ctx, input, result, scratch):
+      del scratch
+      with ctx.named_region("load"):
+        reg = vector_load(input)
+      with ctx.named_region("store"):
+        vector_store(reg, result)
+
+    dtype = jnp.bfloat16
+    shape = (128, 128)
+    jax_shape = jax.ShapeDtypeStruct(shape, dtype)
+    with tempfile.TemporaryDirectory() as tmpdir:
+      kernel = mgpu.as_gpu_kernel(
+          body,
+          grid=(1, 1, 1),
+          block=(128, 1, 1),
+          in_shape=(jax_shape),
+          out_shape=jax_shape,
+          smem_scratch_shape=[],
+          prof_spec=profiler.ProfilerSpec(1024),
+          profiler_dump_path=tmpdir,
+          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+      )
+      param = self.prng.uniform(-1, 1, shape).astype(dtype)
+      self.assertArraysEqual(kernel(param), param)
+      [name] = os.listdir(tmpdir)
+      with open(os.path.join(tmpdir, name)) as f:
+        data = f.read()
+        self.assertEqual(data.count('"name": "load"'), 2)
+        self.assertEqual(data.count('"name": "store"'), 2)
 
 
 class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):

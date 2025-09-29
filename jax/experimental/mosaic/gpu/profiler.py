@@ -28,6 +28,7 @@ import jax.numpy as jnp
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import gpu
+from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import scf
 import numpy as np
@@ -291,99 +292,123 @@ class ProfilerSpec:
 
 class OnDeviceProfiler:
 
-  def __init__(self, spec: ProfilerSpec, smem_buffer: ir.Value, gmem_buffer: ir.Value):
-    self.spec = spec
-    self.start = globaltimer("low")
-    i32 = ir.IntegerType.get_signless(32)
-    index = ir.IndexType.get()
-    self.entries_per_wg = spec.entries_per_warpgroup
-    wg_idx = warpgroup_idx(sync=False)
-    self.smem_buffer = memref_slice(
-        smem_buffer,
-        ds(
-            arith.index_cast(
-                index, arith.muli(wg_idx, c(self.entries_per_wg, i32))
-            ),
-            self.entries_per_wg,
-        ),
-    )
-    self.smem_buffer_ptr = memref_ptr(self.smem_buffer, memory_space=3)
-    self.gmem_buffer = gmem_buffer
-    self.is_profiling_thread = arith.cmpi(
-        arith.CmpIPredicate.eq,
-        arith.remui(thread_idx(), c(WARPGROUP_SIZE, i32)),
-        c(0, i32),
-    )
-    # Hopefully mem2reg will remove the allocation.
-    self.offset = memref.alloca(ir.MemRefType.get((), i32), [], [])
-    memref.store(c(0, i32), self.offset, [])
+  def __init__(
+      self,
+      spec: ProfilerSpec,
+      smem_buffer: ir.Value,
+      gmem_buffer: ir.Value,
+  ):
+    with self._profiler_context():
+      self.spec = spec
+      self.start = globaltimer("low")
+      i32 = ir.IntegerType.get_signless(32)
+      index = ir.IndexType.get()
+      self.entries_per_wg = spec.entries_per_warpgroup
+      wg_idx = warpgroup_idx(sync=False)
+      self.smem_buffer = memref_slice(
+          smem_buffer,
+          ds(
+              arith.index_cast(
+                  index, arith.muli(wg_idx, c(self.entries_per_wg, i32))
+              ),
+              self.entries_per_wg,
+          ),
+      )
+      self.smem_buffer_ptr = memref_ptr(self.smem_buffer, memory_space=3)
+      self.gmem_buffer = gmem_buffer
+      self.is_profiling_thread = arith.cmpi(
+          arith.CmpIPredicate.eq,
+          arith.remui(thread_idx(), c(WARPGROUP_SIZE, i32)),
+          c(0, i32),
+      )
+      # Hopefully mem2reg will remove the allocation.
+      self.offset = memref.alloca(ir.MemRefType.get((), i32), [], [])
+      memref.store(c(0, i32), self.offset, [])
+
+  def _profiler_context(self):
+    """Insertion point for the profiler. No-op by default."""
+    del self
+    return contextlib.nullcontext()
 
   @contextlib.contextmanager
   def record(self, name: str):
     i32 = ir.IntegerType.get_signless(32)
     name_id = self.spec.intern_name(name)
     def store(modifier):
-      cur = memref.load(self.offset, [])
-      i64 = ir.IntegerType.get_signless(64)
-      base_addr = arith.addi(
-          llvm.ptrtoint(i64, self.smem_buffer_ptr),
-          arith.extui(i64, arith.muli(cur, c(4, i32))),
-      )
-      llvm.inline_asm(
-          ir.Type.parse("!llvm.void"),
-          [self.is_profiling_thread, base_addr, c(modifier | name_id, i32)],
-          """
-          @$0 st.shared.v2.u32 [$1], {$2, %clock};
-          """,
-          "b,l,r",
-          has_side_effects=True,
-      )
-      memref.store(
-          arith.addi(cur, c(2, cur.type)),
-          self.offset,
-          [],
-      )
+      with self._profiler_context():
+        cur = memref.load(self.offset, [])
+        i64 = ir.IntegerType.get_signless(64)
+        base_addr = arith.addi(
+            llvm.ptrtoint(i64, self.smem_buffer_ptr),
+            arith.extui(i64, arith.muli(cur, c(4, i32))),
+        )
+        llvm.inline_asm(
+            ir.Type.parse("!llvm.void"),
+            [self.is_profiling_thread, base_addr, c(modifier | name_id, i32)],
+            """
+            @$0 st.shared.v2.u32 [$1], {$2, %clock};
+            """,
+            "b,l,r",
+            has_side_effects=True,
+        )
+        memref.store(
+            arith.addi(cur, c(2, cur.type)),
+            self.offset,
+            [],
+        )
     store(ProfilerSpec.ENTER)
     yield
     store(ProfilerSpec.EXIT)
 
   def finalize(self, grid: tuple[int, ...], block: tuple[int, ...]):
-    index = ir.IndexType.get()
-    i32 = ir.IntegerType.get_signless(32)
+    with self._profiler_context():
+      index = ir.IndexType.get()
+      i32 = ir.IntegerType.get_signless(32)
 
-    gpu.barrier()   # Make sure all warpgroups are done.
+      gpu.barrier()  # Make sure all warpgroups are done.
 
-    block_idx = c(0, index)
-    for dim in gpu.Dimension:  # pytype: disable=wrong-arg-types
-      block_idx = arith.addi(
-          arith.muli(block_idx, gpu.grid_dim(dim)), gpu.block_id(dim)
+      block_idx = c(0, index)
+      for dim in gpu.Dimension:  # pytype: disable=wrong-arg-types
+        block_idx = arith.addi(
+            arith.muli(block_idx, gpu.grid_dim(dim)), gpu.block_id(dim)
+        )
+      wg_idx = warpgroup_idx(sync=False)
+      wg_per_block = math.prod(block) // WARPGROUP_SIZE
+      global_wg_idx = arith.addi(
+          arith.muli(block_idx, c(wg_per_block, index)),
+          arith.index_cast(index, wg_idx),
       )
-    wg_idx = warpgroup_idx(sync=False)
-    wg_per_block = math.prod(block) // WARPGROUP_SIZE
-    global_wg_idx = arith.addi(
-        arith.muli(block_idx, c(wg_per_block, index)),
-        arith.index_cast(index, wg_idx),
-    )
-    start_offset = arith.muli(global_wg_idx, c(self.entries_per_wg, index))
-    wg_gmem_buffer = memref.subview(
-        self.gmem_buffer, [start_offset], [self.entries_per_wg], [1],
-        result_type=ir.Type.parse(
-            f"memref<{self.entries_per_wg}xi32, strided<[1], offset: ?>>"
-        ),
-    )
-    is_profiling_thread = scf.IfOp(self.is_profiling_thread)
-    with ir.InsertionPoint(is_profiling_thread.then_block):
-      memref.store(self.start, wg_gmem_buffer, [c(0, index)])
-      memref.store(smid(), wg_gmem_buffer, [c(1, index)])
-      memref.store(
-          arith.addi(memref.load(self.offset, []), c(3, i32)),
-          wg_gmem_buffer,
-          [c(2, index)],
+      start_offset = arith.muli(global_wg_idx, c(self.entries_per_wg, index))
+      wg_gmem_buffer = memref.subview(
+          self.gmem_buffer,
+          [start_offset],
+          [self.entries_per_wg],
+          [1],
+          result_type=ir.Type.parse(
+              f"memref<{self.entries_per_wg}xi32, strided<[1], offset: ?>>"
+          ),
       )
-      tmp = vector.load(
-          ir.VectorType.get((self.entries_per_wg - 3,), i32),
-          self.smem_buffer,
-          [c(0, index)],
-      )
-      vector.store(tmp, wg_gmem_buffer, [c(3, index)])
-      scf.yield_([])
+      is_profiling_thread = scf.IfOp(self.is_profiling_thread)
+      with ir.InsertionPoint(is_profiling_thread.then_block):
+        memref.store(self.start, wg_gmem_buffer, [c(0, index)])
+        memref.store(smid(), wg_gmem_buffer, [c(1, index)])
+        memref.store(
+            arith.addi(memref.load(self.offset, []), c(3, i32)),
+            wg_gmem_buffer,
+            [c(2, index)],
+        )
+        tmp = vector.load(
+            ir.VectorType.get((self.entries_per_wg - 3,), i32),
+            self.smem_buffer,
+            [c(0, index)],
+        )
+        vector.store(tmp, wg_gmem_buffer, [c(3, index)])
+        scf.yield_([])
+
+
+class DialectOnDeviceProfiler(OnDeviceProfiler):
+
+  # @override
+  def _profiler_context(self):
+    del self
+    return no_wg_transform()

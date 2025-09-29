@@ -2115,6 +2115,9 @@ def _traverse_op_lowering_rule(
 
 def _should_lower(op: ir.OpView) -> bool:
   """Returns 'true' if the operation should be lowered."""
+  if "custom" in op.attributes:
+    return False
+
   return (
       op.OPERATION_NAME.startswith("mosaic_gpu.")  # pytype: disable=attribute-error
       or inference_utils.should_have_layout(op)
