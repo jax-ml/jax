@@ -29,6 +29,7 @@ from typing import Any, ClassVar, Literal, Union
 import jax
 from jax._src import core as jax_core
 from jax._src import custom_batching
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import frozen_dict
@@ -222,16 +223,29 @@ def kernel(
     *,
     scratch_shapes: pallas_core.ScratchShapeTree = (),
     compiler_params: pallas_core.CompilerParams | None = None,
+    mesh: Mesh | None = None,
     **mesh_kwargs: object,
 ):
   if unwrap_out := not isinstance(out_shape, (tuple, list)):
     out_shape = (out_shape,)
 
+  if mesh is None:
+    deprecations.warn(
+        "plgpu-mesh-kwargs",
+        "Specifying the mesh implicitly via keyword arguments is deprecated."
+        " Please use mesh=plgpu.Mesh(...) instead.",
+        stacklevel=1,
+    )
+    mesh = Mesh(**mesh_kwargs)
+  elif mesh_kwargs:
+    raise ValueError(
+        "No keyword arguments are allowed when mesh= is given explicitly"
+    )
+
   @custom_batching.custom_vmap
   def wrapper(*operands):
     def stateful(operand_and_out_refs):
       operand_refs, out_refs = operand_and_out_refs
-      mesh = Mesh(**mesh_kwargs)
       thread_name = mesh.thread_name if mesh.thread_name is not None else ()
       def cmap_body():
         pallas_primitives.run_scoped(
@@ -1149,6 +1163,7 @@ class Mesh:
   # Those are NOT CUDA threads. On Hopper they correspond to warpgroups.
   num_threads: int | None = None
   thread_name: str | None = None
+  # TODO(slebedev): Move this to ``CompilerParams``.
   kernel_name: str | None = None
 
   def __post_init__(self):

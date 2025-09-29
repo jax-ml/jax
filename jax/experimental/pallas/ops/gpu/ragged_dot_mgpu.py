@@ -223,8 +223,7 @@ def ragged_dot(
   kernel = plgpu.kernel(
       body,
       out_shape=jax.ShapeDtypeStruct((m, n), lhs.dtype),
-      grid=(num_sms,),
-      grid_names=("sm",),
+      mesh=plgpu.Mesh(grid=(num_sms,), grid_names=("sm",)),
       compiler_params=plgpu.CompilerParams(
           lowering_semantics=plgpu.LoweringSemantics.Warpgroup,
       ),

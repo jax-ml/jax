@@ -311,10 +311,12 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
   out, lse = plgpu.kernel(
       entry,
       out_shape=out_shape,
-      grid=(num_q_heads, num_q_tiles, batch_size),
-      grid_names=("heads", "q_seq", "batch"),
-      num_threads=3,
-      thread_name="wg",
+      mesh=plgpu.Mesh(
+          grid=(num_q_heads, num_q_tiles, batch_size),
+          grid_names=("heads", "q_seq", "batch"),
+          num_threads=3,
+          thread_name="wg",
+      ),
       compiler_params=plgpu.CompilerParams(approx_math=True),
   )(q, k, v)
 
@@ -592,17 +594,21 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
   lse_scratch = plgpu.SMEM((compute_wgs, config.block_q_dq), jnp.float32)
   delta_scratch = plgpu.SMEM((compute_wgs, config.block_q_dq), jnp.float32)
   dq = plgpu.kernel(
-      partial(kernel_dq, block_q=config.block_q_dq, block_kv=config.block_kv_dq),
+      partial(
+          kernel_dq, block_q=config.block_q_dq, block_kv=config.block_kv_dq
+      ),
       out_shape=q,
       scratch_shapes=[
           (q_scratch, do_scratch, lse_scratch, delta_scratch),  # type: ignore
-          (plgpu.Barrier(num_barriers=compute_wgs),) * 4  # type: ignore
+          (plgpu.Barrier(num_barriers=compute_wgs),) * 4,  # type: ignore
       ],
       compiler_params=plgpu.CompilerParams(approx_math=True),
-      grid=(num_q_heads, num_q_tiles, batch_size),
-      grid_names=("heads", "q_seq", "batch"),
-      num_threads=compute_wgs + 1,
-      thread_name="wg",
+      mesh=plgpu.Mesh(
+          grid=(num_q_heads, num_q_tiles, batch_size),
+          grid_names=("heads", "q_seq", "batch"),
+          num_threads=compute_wgs + 1,
+          thread_name="wg",
+      ),
   )(q, k, v, do, lse, delta)
 
   k_scratch = plgpu.SMEM(

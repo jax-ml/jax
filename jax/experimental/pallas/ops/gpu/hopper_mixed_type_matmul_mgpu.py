@@ -252,13 +252,15 @@ def mixed_matmul_kernel(
   f = plgpu.kernel(
       kernel,
       out_shape=jax.ShapeDtypeStruct((m, n), out_dtype),
-      grid=(num_sms // cluster_size,),
-      grid_names=("cluster_grid",),
-      cluster=(cluster_size,),
-      cluster_names=("cluster",),
-      num_threads=3,
-      thread_name="wg",
       scratch_shapes=scratch_shapes,
+      mesh=plgpu.Mesh(
+          grid=(num_sms // cluster_size,),
+          grid_names=("cluster_grid",),
+          cluster=(cluster_size,),
+          cluster_names=("cluster",),
+          num_threads=3,
+          thread_name="wg",
+      ),
   )
   return f(a, b)
 

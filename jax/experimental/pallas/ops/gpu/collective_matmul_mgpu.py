@@ -282,9 +282,11 @@ def all_gather_lhs_matmul(
               transforms=out_transforms,
           ),
       ],
-      grid=(num_sms,),
-      grid_names=("sm",),
-      num_threads=3,
-      thread_name="wg",
+      mesh=plgpu.Mesh(
+          grid=(num_sms,),
+          grid_names=("sm",),
+          num_threads=3,
+          thread_name="wg",
+      ),
   )(lhs, rhs)
   return result

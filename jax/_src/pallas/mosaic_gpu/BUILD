@@ -93,6 +93,7 @@ pytype_strict_library(
         "//jax",
         "//jax/_src:core",
         "//jax/_src:custom_batching",
+        "//jax/_src:deprecations",
         "//jax/_src:dtypes",
         "//jax/_src:effects",
         "//jax/_src:frozen_dict",
