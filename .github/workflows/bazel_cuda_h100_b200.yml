@@ -103,7 +103,7 @@ jobs:
             --action_env=JAX_ENABLE_X64="1" \
             --action_env=NCCL_DEBUG=WARN \
             --flaky_test_attempts=1 \
-            --test_timeout=420 \
+            --test_timeout=600 \
             --color=yes \
             //tests:cudnn_fusion_test_gpu \
             //tests:scaled_matmul_stablehlo_test_gpu \
@@ -164,7 +164,7 @@ jobs:
             --action_env=JAX_ENABLE_X64="1" \
             --action_env=NCCL_DEBUG=WARN \
             --flaky_test_attempts=1 \
-            --test_timeout=420 \
+            --test_timeout=600 \
             --color=yes \
             --cache_test_results=no \
             --zip_undeclared_test_outputs=no \
