@@ -250,7 +250,7 @@ jax_multiplatform_test(
         "gpu_h100_x32",
         "gpu_h100",
     ],
-    shard_count = 32,
+    shard_count = 8,
     tags = [
         "mosaic_gpu_test",
     ],
