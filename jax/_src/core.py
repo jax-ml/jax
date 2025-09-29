@@ -2319,7 +2319,7 @@ def str_short_aval(shape, dtype, mesh, spec, vma, memory_space,
   dt_str = dt_str.replace('void', 'float0')
   shapestr = _get_shape_sharding_str(shape, spec)
   mesh_axes = f'({_axis_types_dict(mesh)})' if mesh_axis_types else ''
-  vma_ur = _vma_ur_str(vma, spec.unreduced, spec.reduced)
+  vma_ur = _vma_ur_str(vma, spec.unreduced, spec.reduced, mesh)
   ms_str = ("" if memory_space == MemorySpace.Device else
             f"<{memory_space.name.lower()}>")
   return f'{dt_str}{ms_str}[{shapestr}]{vma_ur}{mesh_axes}'
@@ -2331,9 +2331,13 @@ def _create_str(x, prefix=None):
   x_str = x_str if len(x) == 1 else f"({x_str})"
   return f"{prefix}:{x_str}, "
 
-def _vma_ur_str(vma, unreduced, reduced):
+def order_wrt_mesh(mesh, x):
+  return tuple(a for a in mesh.axis_names if a in x)
+
+def _vma_ur_str(vma, unreduced, reduced, mesh):
   if not vma and not unreduced and not reduced:
     return ''
+  vma = vma if mesh.empty else order_wrt_mesh(mesh, vma)
   vma_str = f"{{{_create_str(vma, None)}}}" if vma else ''
   ur_str = _create_str(unreduced, 'U') if unreduced else ''
   red_str = _create_str(reduced, 'R') if reduced else ''

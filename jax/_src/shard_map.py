@@ -37,6 +37,7 @@ from jax._src import stages
 from jax._src import traceback_util
 from jax._src import util
 from jax._src import xla_bridge as xb
+from jax._src.core import order_wrt_mesh
 from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.core import pvary, Tracer, typeof, shard_aval, unshard_aval
 from jax._src.mesh import (AbstractMesh, Mesh, BaseMesh, AxisType,
@@ -1017,9 +1018,6 @@ def _vma_to_spec(mesh, vma):
 def _spec_to_vma(spec):
   return frozenset(p for s in spec if s is not None
                    for p in (s if isinstance(s, tuple) else (s,))) | spec.unreduced
-
-def order_wrt_mesh(mesh, x):
-  return tuple(a for a in mesh.axis_names if a in x)
 
 def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs, out_specs_thunk,
                     check_vma, manual_axes):
