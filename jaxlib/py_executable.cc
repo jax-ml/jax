@@ -49,10 +49,10 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
-#include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/user_context_status_util.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
@@ -247,7 +247,7 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
     absl::Span<const ExecuteShardedArg> args,
     std::optional<std::vector<xla::PjRtFuture<>>>& returned_futures) {
   std::vector<ifrt::ArrayRef> output_arrays;
-  std::unique_ptr<ifrt::Future<>> returned_future;
+  std::unique_ptr<tsl::Future<>> returned_future;
   int num_computations = ifrt_loaded_executable->addressable_devices().size();
   xla::PjRtFuture<> result_status;
   {

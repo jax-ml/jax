@@ -43,10 +43,10 @@ limitations under the License.
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device_list.h"
-#include "xla/python/ifrt/future.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/shape.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/util.h"
 
 namespace jax {
@@ -80,7 +80,7 @@ class PyHostValue {
   absl::Status ConvertStringArrayContentsToNumpyArray(
       xla::ifrt::Array* ifrt_array);
 
-  xla::ifrt::Future<> ready_;
+  tsl::Future<> ready_;
   xla::nb_numpy_ndarray value_;
 
   // Optional field, only used for arrays of type kString. This vector of cords

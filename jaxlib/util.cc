@@ -26,10 +26,10 @@ limitations under the License.
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/client.h"
-#include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/value.h"
 #include "xla/python/version.h"
 #include "xla/tsl/concurrency/async_value.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
 
@@ -58,7 +58,7 @@ absl::Status AwaitBuffersReady(absl::Span<ifrt::Array* const> ifrt_arrays) {
     return absl::OkStatus();
   }
 
-  ifrt::Future<> future;
+  tsl::Future<> future;
   if (ifrt_arrays.size() == 1) {
     future = ifrt_arrays[0]->GetReadyFuture();
   } else {

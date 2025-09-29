@@ -1008,6 +1008,7 @@ cc_library(
         "@xla//xla/python/pjrt_ifrt:xla_ifrt",
         "@xla//xla/service:platform_util",
         "@xla//xla/service/spmd/shardy:utils",
+        "@xla//xla/tsl/concurrency:future",
         "@xla//xla/tsl/concurrency:ref_count",
         "@xla//xla/tsl/framework:allocator",
         "@xla//xla/tsl/platform:env",
@@ -1285,6 +1286,7 @@ cc_library(
         "@xla//xla/python:version",
         "@xla//xla/python/ifrt",
         "@xla//xla/tsl/concurrency:async_value",
+        "@xla//xla/tsl/concurrency:future",
         "@xla//xla/tsl/concurrency:ref_count",
     ],
 )
