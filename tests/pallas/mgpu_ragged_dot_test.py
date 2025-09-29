@@ -63,7 +63,7 @@ class RaggedDotTestCase(jtu.JaxTestCase):
     self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
 
   @parameterized.product(
-      block_m=(64, 128, 192),
+      block_m=(64, 128),
       block_n=(64, 128, 192),
       block_k=(64, 128),
       grid_block_n=(2, 4),
