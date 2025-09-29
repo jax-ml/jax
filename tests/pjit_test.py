@@ -8348,9 +8348,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertEqual(x.aval.sharding.spec, P('x'))
       x = jax.lax.convert_element_type(x, 'int8')
       self.assertEqual(x.aval.sharding.spec, P('x'))
+      return x
 
-    x = jax.device_put(jnp.arange(8, dtype='int8'), P('x',))
-    f(x)  # doesn't crash
+    x = jax.device_put(jnp.arange(8, dtype='int8'), P('x'))
+    out = f(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_dot_empty_mesh_lhs_rhs(self, mesh):
