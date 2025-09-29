@@ -1073,7 +1073,8 @@ jax_multiplatform_test(
         "gpu_h100",
         "gpu_b200",
     ],
-    shard_count = 12,
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    shard_count = 20,
     tags = [
         "mosaic_gpu_test",
         "noasan",  # Times out.
