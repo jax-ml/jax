@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import abc
 from collections.abc import Callable, Sequence
 from types import ModuleType
 from typing import Any, Protocol, runtime_checkable, Union
@@ -41,8 +40,7 @@ Traceback = Any
 PrecisionLike = Any
 
 
-# TODO(slebedev): Remove the metaclass once ``jax_extension_version >= 325``.
-class Array(metaclass=abc.ABCMeta):
+class Array:
   aval: Any
 
   @property
