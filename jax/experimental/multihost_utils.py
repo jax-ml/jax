@@ -100,10 +100,6 @@ def _identity_fn(x):
 
 def _handle_array_process_allgather(inp, tiled):
   if isinstance(inp, array.ArrayImpl) and not inp.is_fully_addressable:
-    if not tiled:
-      raise ValueError(
-          'Gathering global non-fully-addressable arrays only supports'
-          ' tiled=True')
     if isinstance(inp.sharding, sharding_impls.NamedSharding):
       reps = inp.sharding.update(spec=P())
     else:

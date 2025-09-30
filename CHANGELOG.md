@@ -27,9 +27,6 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     deprecated and removed in v0.7.0 or earlier.
   * The deprecated symbol {obj}`jax.custom_derivatives.custom_jvp_call_jaxpr_p`
     was removed.
-  * `jax.experimental.multihost_utils.process_allgather` raises an error when
-    the input is a jax.Array and not fully-addressable and `tiled=False`. To fix
-    this, pass `tiled=True` to your `process_allgather` invocation.
   * from {mod}`jax.experimental.compilation_cache`, the deprecated symbols
     `is_initialized` and `initialize_cache` were removed.
   * The deprecated function {func}`jax.interpreters.xla.canonicalize_dtype`
