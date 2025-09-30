@@ -258,8 +258,8 @@ def main(_) -> None:
     print(f"==== {M=} {N=} {K=} ====")
     matmul_flops = 2 * M * N * K
     peak_flops = 2.25e15  # f16 TensorCore peak = 2250 TFLOPS
-    a = jax.random.uniform(jax.random.key(0), (M, K), jnp.float16)
-    b = jax.random.uniform(jax.random.key(1), (K, N), jnp.float16)
+    a = jax.random.uniform(jax.random.key(1), (M, K), jnp.float16, -1, 1)
+    b = jax.random.uniform(jax.random.key(2), (K, N), jnp.float16, -1, 1)
     tuning_it = itertools.product(
         (128,),  # tile_m
         (128, 256),  # tile_n
@@ -271,6 +271,7 @@ def main(_) -> None:
         (32,),  # epilogue_tile_n
     )
     best_util = -float("inf")
+    expected = jnp.dot(a, b, precision=jax.lax.DotAlgorithmPreset.F16_F16_F32)
     for (tile_m, tile_n, tile_k, grid_minor_dim, grid_tile_width,
          max_concurrent_steps, collective, epilogue_tile_n) in tuning_it:
       # Only N <= 128 are supported for collective MMAs
@@ -301,13 +302,11 @@ def main(_) -> None:
           # Accumulator layout mismatch triggers for tile_n=256 on some configs.
           continue
         raise
-      if M * N * K <= 1024 * 1024 * 1024:
-        expected = a @ b
-        np.testing.assert_allclose(out, expected)
       runtime_us = runtime_ms * 1e3   # type: ignore
       optimal_time = matmul_flops / peak_flops * 1e6  # us
       achieved_tc_util = optimal_time / runtime_us * 100
       if achieved_tc_util > best_util:
+        np.testing.assert_allclose(out, expected)
         best_util = achieved_tc_util
       print(
           f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=} "
@@ -318,6 +317,18 @@ def main(_) -> None:
           f" = {achieved_tc_util:4.1f}% TC utilization"
       )
     print(f"\tBest utilization: {best_util:4.1f}%")
+    _, runtimes_ms = profiler.measure(
+        functools.partial(
+            jnp.dot, precision=jax.lax.DotAlgorithmPreset.F16_F16_F32
+        ),
+        iterations=10,
+    )(a, b)
+    assert runtimes_ms is not None
+    runtime_ms = statistics.median(runtimes_ms)
+    runtime_us = runtime_ms * 1e3   # type: ignore
+    optimal_time = matmul_flops / peak_flops * 1e6  # us
+    achieved_tc_util = optimal_time / runtime_us * 100
+    print(f"\tReference: {achieved_tc_util:4.1f}%")
 
 
 if __name__ == "__main__":
