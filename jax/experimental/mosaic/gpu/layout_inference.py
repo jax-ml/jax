@@ -19,9 +19,10 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Sequence, Set
 import dataclasses
 import enum
+from functools import partial
 import itertools
 import re
-from typing import assert_never, cast
+from typing import Any, assert_never, cast
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
@@ -1003,7 +1004,9 @@ def _async_store_tmem_equation_system(
   )
 
 
-def _ensure_all_layouts_are_set(op: ir.OpView) -> None:
+def _ensure_all_layouts_are_set(
+    op: ir.OpView, enable_smem_inference: bool
+) -> None:
   if inference_utils.should_have_layout(op):
     _ensure_right_number_of_layouts(
         op,
@@ -1022,6 +1025,16 @@ def _ensure_all_layouts_are_set(op: ir.OpView) -> None:
         else [],
         inference_utils.out_tmem_layouts(op)
         if inference_utils.has_out_tmem_layouts_set(op)
+        else [],
+    )
+  if enable_smem_inference and inference_utils.should_have_transforms(op):
+    _ensure_right_number_of_transforms(
+        op,
+        inference_utils.in_transforms(op)
+        if inference_utils.has_in_transforms_set(op)
+        else [],
+        inference_utils.out_transforms(op)
+        if inference_utils.has_out_transforms_set(op)
         else [],
     )
 
@@ -1050,11 +1063,31 @@ def _ensure_right_number_of_tmem_layouts(
   """Ensures that the right number of in/out TMEM layouts are provided for an op."""
   if len(in_layouts) != sum(map(_is_tmem_ref, op.operands)):
     raise ValueError(
-        "Expected the same number of in_tmem_layouts as TMEM ref operands."
+        f"Expected the same number of in_tmem_layouts({in_layouts}) as TMEM ref operands. op=\n  {op}"
     )
   if len(out_layouts) != sum(map(_is_tmem_ref, op.results)):
     raise ValueError(
-        "Expected the same number of out_tmem_layouts as TMEM ref results."
+        f"Expected the same number of out_tmem_layouts({out_layouts}) as TMEM ref results. op=\n  {op}"
+    )
+
+
+def _ensure_right_number_of_transforms(
+    op: ir.OpView,
+    in_transforms: Sequence[Any],
+    out_transforms: Sequence[Any],
+) -> None:
+  """Ensures that the right number of in/out SMEM transforms are provided for an op."""
+  if len(in_transforms) != sum(
+      map(inference_utils.is_transformable_smem_memref, op.operands)
+  ):
+    raise ValueError(
+        f"Expected the same number of in_transforms({in_transforms}) as SMEM ref operands. op=\n  {op}"
+    )
+  if len(out_transforms) != sum(
+      map(inference_utils.is_transformable_smem_memref, op.results)
+  ):
+    raise ValueError(
+        f"Expected the same number of out_transforms({out_transforms}) as SMEM ref results. op=\n  {op}"
     )
 
 
@@ -1091,12 +1124,13 @@ def _compute_swizzle(
 
 def assign_layouts(
     solution: dict[OperandOrResult, eqns.Constant],
+    enable_smem_inference: bool,
 ) -> None:
   """Assigns the layouts in `solution` to the MLIR ops they belong to.
 
   This function requires that, for each MLIR op that appears in `solution`,
-  `solution` contains a layout assignment for all of its `vector` operands and
-  results.
+  `solution` contains a layout assignment for all of its `vector`, TMEM, and
+  SMEM operands and results.
   """
   solution_sorted_by_op = sorted(
       solution.items(), key=lambda kv: id(kv[0].operation)
@@ -1117,23 +1151,41 @@ def assign_layouts(
     in_assignments = assignments_by_type.get(VariableType.OPERAND, [])
     out_assignments = assignments_by_type.get(VariableType.RESULT, [])
 
+    @dataclasses.dataclass(frozen=True)
+    class TypeAndLayout:
+      type: ir.Type
+      layout: eqns.Constant
+
     index = lambda kv: kv[0].index
-    in_cs = [ce for _, ce in sorted(in_assignments, key=index)]
-    out_cs = [ce for _, ce in sorted(out_assignments, key=index)]
+    in_tls = [
+        TypeAndLayout(v.value.type, ce)
+        for v, ce in sorted(in_assignments, key=index)
+    ]
+    out_tls = [
+        TypeAndLayout(v.value.type, ce)
+        for v, ce in sorted(out_assignments, key=index)
+    ]
+
     in_layouts = [
-        ce.value for ce in in_cs if isinstance(ce, eqns.RegisterLayout)
+        tl.layout.value for tl in in_tls if isinstance(tl.layout, eqns.RegisterLayout)
     ]
     out_layouts = [
-        ce.value for ce in out_cs if isinstance(ce, eqns.RegisterLayout)
+        tl.layout.value for tl in out_tls if isinstance(tl.layout, eqns.RegisterLayout)
     ]
     in_tmem_layouts = [
-        ce.value for ce in in_cs if isinstance(ce, eqns.TMEMLayout)
+        tl.layout.value for tl in in_tls if isinstance(tl.layout, eqns.TMEMLayout)
     ]
     out_tmem_layouts = [
-        ce.value for ce in out_cs if isinstance(ce, eqns.TMEMLayout)
+        tl.layout.value for tl in out_tls if isinstance(tl.layout, eqns.TMEMLayout)
     ]
+    in_transforms = [tl for tl in in_tls if isinstance(tl.layout, eqns.SMEMTiling)]
+    out_transforms = [tl for tl in out_tls if isinstance(tl.layout, eqns.SMEMTiling)]
+
     _ensure_right_number_of_layouts(op, in_layouts, out_layouts)
     _ensure_right_number_of_tmem_layouts(op, in_tmem_layouts, out_tmem_layouts)
+    if enable_smem_inference:
+      _ensure_right_number_of_transforms(op, in_transforms, out_transforms)
+
     if inference_utils.should_have_in_layout(op):
       attrs = [layouts_lib.to_layout_attr(l) for l in in_layouts]
       op.attributes["in_layouts"] = ir.ArrayAttr.get(attrs)
@@ -1146,6 +1198,29 @@ def assign_layouts(
     if inference_utils.should_have_out_tmem_layout(op):
       attrs = [layouts_lib.to_layout_attr(l) for l in out_tmem_layouts]
       op.attributes["out_tmem_layouts"] = ir.ArrayAttr.get(attrs)
+
+    if enable_smem_inference:
+
+      def _to_transform_attrs(
+          transforms: list[TypeAndLayout],
+      ) -> list[ir.ArrayAttr]:
+        all_attrs: list[ir.ArrayAttr] = []
+        for tl in transforms:
+          assert isinstance(tl.layout, eqns.SMEMTiling)  # make pytype happy
+          attrs = []
+          if tl.layout.value is not None:
+            attrs.append(layouts_lib.to_transform_attr(tl.layout.value))
+            swizzle = _compute_swizzle(tl.type, tl.layout.value)
+            attrs.append(layouts_lib.to_transform_attr(swizzle))
+          all_attrs.append(ir.ArrayAttr.get(attrs))
+        return all_attrs
+
+      if inference_utils.should_have_in_transforms(op):
+        attrs = _to_transform_attrs(in_transforms)
+        op.attributes["in_transforms"] = ir.ArrayAttr.get(attrs)
+      if inference_utils.should_have_out_transforms(op):
+        attrs = _to_transform_attrs(out_transforms)
+        op.attributes["out_transforms"] = ir.ArrayAttr.get(attrs)
 
 
 def vector_operands_and_results(op: ir.OpView) -> list[OperandOrResult]:
@@ -1417,8 +1492,14 @@ def infer_layout(module: ir.Module, enable_smem_inference: bool = False):
   }
 
   # Assigns the layouts that we found to the ops.
-  assign_layouts(layout_for_operand_or_result)
+  assign_layouts(layout_for_operand_or_result, enable_smem_inference)
 
   # Sanity check: ensure that all ops have the right number of in/out layouts.
   for op in module.body:
-    inference_utils.traverse_op(op, _ensure_all_layouts_are_set)
+    inference_utils.traverse_op(
+        op,
+        partial(
+            _ensure_all_layouts_are_set,
+            enable_smem_inference=enable_smem_inference,
+        ),
+    )
