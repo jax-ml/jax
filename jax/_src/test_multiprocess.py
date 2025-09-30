@@ -38,9 +38,9 @@ try:
 except ImportError:
   portpicker = None
 
+multiprocess_test_helpers = None
 
-
-_NUM_PROCESSES = absl.flags.DEFINE_integer(
+NUM_PROCESSES = absl.flags.DEFINE_integer(
     "num_processes", None, "Number of processes to use."
 )
 
@@ -50,7 +50,24 @@ _GPUS_PER_PROCESS = absl.flags.DEFINE_integer(
     "Number of GPUs per worker process.",
 )
 
-_MULTIPROCESS_TEST_WORKER_ID = absl.flags.DEFINE_integer(
+_TPU_CHIPS_PER_PROCESS = absl.flags.DEFINE_integer(
+    "tpu_chips_per_process",
+    0,
+    "Number of TPU chips per worker process.",
+)
+
+CPU_COLLECTIVES_IMPLEMENTATION = absl.flags.DEFINE_string(
+    "cpu_collectives_implementation",
+    "",
+    "CPU collectives implementation to use. Uses default if empty.",
+)
+
+EXTRA_TEST_ARGS = absl.flags.DEFINE_multi_string(
+    "extra_test_args", [], "Extra flags to pass to worker process."
+)
+
+# For internal use.
+MULTIPROCESS_TEST_WORKER_ID = absl.flags.DEFINE_integer(
     "multiprocess_test_worker_id",
     -1,
     "Worker id. Set by main test process; should not be set by users.",
@@ -63,6 +80,43 @@ _MULTIPROCESS_TEST_CONTROLLER_ADDRESS = absl.flags.DEFINE_string(
     " set by users.",
 )
 
+_DEVICE_IDS = absl.flags.DEFINE_list(
+    "device_ids",
+    None,
+    "List of device ids to use. Set by main test process; should not be set by"
+    " users.",
+)
+
+_TPU_RUNTIME = absl.flags.DEFINE_string(
+    "tpu_runtime",
+    "auto",
+    "Which TPU runtime to use. 'auto' uses the TFRT TPU runtime.",
+)
+
+_ENABLE_MEGASCALE = absl.flags.DEFINE_bool(
+    "enable_megascale", False, "If true, enable Megascale runtime."
+)
+
+_HEARTBEAT_TIMEOUT = absl.flags.DEFINE_integer(
+    "heartbeat_timeout",
+    3,
+    "Timeout in seconds for heartbeat checks. Set to a higher number when"
+    " running under sanitizers.",
+)
+
+_BARRIER_TIMEOUT = absl.flags.DEFINE_integer(
+    "barrier_timeout",
+    10,
+    "Barrier timeout in seconds. Set to a higher number when running under"
+    " sanitizers.",
+)
+
+_DUMP_HLO = absl.flags.DEFINE_bool(
+    "dump_hlo",
+    False,
+    "If true, dump per-process HLO to undeclared outputs. They will show up in"
+    " sponge artifacts under the directory 'jax_%process_idx%_hlo_dump'.",
+)
 
 expect_failures_with_regex = None
 
@@ -88,11 +142,17 @@ class GracefulKiller:
 
 
 def _main(argv):
-  if _MULTIPROCESS_TEST_WORKER_ID.value >= 0:
+  num_processes = NUM_PROCESSES.value
+  if MULTIPROCESS_TEST_WORKER_ID.value >= 0:
+    local_device_ids = _DEVICE_IDS.value
+    if local_device_ids is not None:
+      local_device_ids = map(int, local_device_ids)
     distributed.initialize(
         _MULTIPROCESS_TEST_CONTROLLER_ADDRESS.value,
-        num_processes=_NUM_PROCESSES.value,
-        process_id=_MULTIPROCESS_TEST_WORKER_ID.value,
+        num_processes=num_processes,
+        process_id=MULTIPROCESS_TEST_WORKER_ID.value,
+        local_device_ids=local_device_ids,
+        heartbeat_timeout_seconds=_HEARTBEAT_TIMEOUT.value,
         initialization_timeout=10,
     )
     absltest.main(testLoader=jtu.JaxTestLoader())
@@ -100,21 +160,78 @@ def _main(argv):
   if not argv[0].endswith(".py"):  # Skip the interpreter path if present.
     argv = argv[1:]
 
-  num_processes = _NUM_PROCESSES.value
   if num_processes is None:
     raise ValueError("num_processes must be set")
   gpus_per_process = _GPUS_PER_PROCESS.value
-  # Get the number of GPUs visible to this process without initializing the runtime
-  if cuda_versions is not None:
-    local_device_count = cuda_versions.cuda_device_count()
-    if num_processes * gpus_per_process > local_device_count:
-      print(
-        f"Cannot run {num_processes} processes with {gpus_per_process} GPU(s) "
-        f"each on a system with only {local_device_count} local GPU(s), "
-        f"starting {local_device_count // gpus_per_process} instead - test "
-        "cases will likely be skipped!"
+  tpu_chips_per_process = _TPU_CHIPS_PER_PROCESS.value
+  num_tpu_chips = num_processes * tpu_chips_per_process
+  if num_tpu_chips == 0:
+    pass
+  elif num_tpu_chips == 1:
+    assert tpu_chips_per_process == 1
+    tpu_host_bounds = "1,1,1"
+    tpu_chips_per_host_bounds = "1,1,1"
+  elif num_tpu_chips == 4:
+    if tpu_chips_per_process == 1:
+      tpu_host_bounds = "2,2,1"
+      tpu_chips_per_host_bounds = "1,1,1"
+    elif tpu_chips_per_process == 2:
+      tpu_host_bounds = "2,1,1"
+      tpu_chips_per_host_bounds = "1,2,1"
+    elif tpu_chips_per_process == 4:
+      tpu_host_bounds = "1,1,1"
+      tpu_chips_per_host_bounds = "2,2,1"
+    else:
+      raise ValueError(
+          "Invalid number of TPU chips per worker {}".format(
+              tpu_chips_per_process
+          )
       )
-      num_processes = local_device_count // gpus_per_process
+  elif num_tpu_chips == 8:
+    if tpu_chips_per_process == 1:
+      tpu_host_bounds = "4,2,1"
+      tpu_chips_per_host_bounds = "1,1,1"
+    elif tpu_chips_per_process == 4:
+      # Note: this branch assumes we are using 2x4 GLP, and will not work with
+      # 4x2 VLPs.
+      tpu_host_bounds = "1,2,1"
+      tpu_chips_per_host_bounds = "2,2,1"
+    elif tpu_chips_per_process == 8:
+      tpu_host_bounds = "1,1,1"
+      tpu_chips_per_host_bounds = "2,4,1"
+    else:
+      # TODO(phawkins): implement other cases.
+      raise ValueError(
+          "Invalid number of TPU chips per worker {}".format(
+              tpu_chips_per_process
+          )
+      )
+  else:
+    raise ValueError(f"Invalid number of TPU chips {num_tpu_chips}")
+
+  if portpicker is None:
+    slicebuilder_ports = [10000 + i for i in range(num_processes)]
+  else:
+    slicebuilder_ports = [
+        portpicker.pick_unused_port() for _ in range(num_processes)
+    ]
+  slicebuilder_addresses = ",".join(
+      f"localhost:{port}" for port in slicebuilder_ports
+  )
+  megascale_coordinator_port = None
+
+  if gpus_per_process > 0:
+    # Get the number of GPUs visible to this process without initializing the runtime
+    if cuda_versions is not None:
+      local_device_count = cuda_versions.cuda_device_count()
+      if num_processes * gpus_per_process > local_device_count:
+        print(
+          f"Cannot run {num_processes} processes with {gpus_per_process} GPU(s) "
+          f"each on a system with only {local_device_count} local GPU(s), "
+          f"starting {local_device_count // gpus_per_process} instead - test "
+          "cases will likely be skipped!"
+        )
+        num_processes = local_device_count // gpus_per_process
 
   if portpicker is None:
     jax_port = 9876
@@ -124,6 +241,7 @@ def _main(argv):
   output_filenames = []
   output_files = []
   for i in range(num_processes):
+    device_ids = None
     env = os.environ.copy()
 
     args = [
@@ -132,16 +250,60 @@ def _main(argv):
         f"--num_processes={num_processes}",
         f"--multiprocess_test_worker_id={i}",
         f"--multiprocess_test_controller_address=localhost:{jax_port}",
+        f"--barrier_timeout={_BARRIER_TIMEOUT.value}",
         "--logtostderr",
     ]
 
+    if num_tpu_chips > 0:
+      device_ids = range(
+          i * tpu_chips_per_process, (i + 1) * tpu_chips_per_process)
+      env["CLOUD_TPU_TASK_ID"] = str(i)
+      env["TPU_CHIPS_PER_PROCESS_BOUNDS"] = tpu_chips_per_host_bounds
+      env["TPU_PROCESS_BOUNDS"] = tpu_host_bounds
+      env["TPU_PROCESS_ADDRESSES"] = slicebuilder_addresses
+      env["TPU_PROCESS_PORT"] = str(slicebuilder_ports[i])
+      env["TPU_VISIBLE_CHIPS"] = ",".join(map(str, device_ids))
+      env["ALLOW_MULTIPLE_LIBTPU_LOAD"] = "1"
+      if multiprocess_test_helpers is not None:
+        args += multiprocess_test_helpers.get_tpu_flags(env)
+        args.append(f"--jax_tpu_runtime={_TPU_RUNTIME.value}")
+
     if gpus_per_process > 0:
-      gpus = range(i * gpus_per_process, (i + 1) * gpus_per_process)
-      env["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpus))
+      device_ids = range(i * gpus_per_process, (i + 1) * gpus_per_process)
+      args.append(f"--jax_cuda_visible_devices={','.join(map(str, device_ids))}")
+
+    if device_ids is not None:
+      args.append(f"--device_ids={','.join(map(str, device_ids))}")
+
+    cpu_collectives_impl = CPU_COLLECTIVES_IMPLEMENTATION.value
+    if cpu_collectives_impl:
+      args.append(
+          f"--jax_cpu_collectives_implementation={cpu_collectives_impl}"
+      )
+
+    if _ENABLE_MEGASCALE.value or cpu_collectives_impl == "megascale":
+      if portpicker is None:
+        megascale_port = 9877
+      else:
+        megascale_port = portpicker.pick_unused_port()
+      if megascale_coordinator_port is None:
+        megascale_coordinator_port = megascale_port
+      args += [
+          f"--megascale_coordinator_address=localhost:{megascale_coordinator_port}",
+          f"--megascale_port={megascale_port}",
+      ]
+
+    args += EXTRA_TEST_ARGS.value
 
     undeclared_outputs = os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR", "/tmp")
     stdout_name = f"{undeclared_outputs}/jax_{i}_stdout.log"
     stderr_name = f"{undeclared_outputs}/jax_{i}_stderr.log"
+
+    if _DUMP_HLO.value:
+      hlo_dump_path = f"{undeclared_outputs}/jax_{i}_hlo_dump/"
+      os.makedirs(hlo_dump_path, exist_ok=True)
+      env["XLA_FLAGS"] = f"--xla_dump_to={hlo_dump_path}"
+
     stdout = open(stdout_name, "wb")
     stderr = open(stderr_name, "wb")
     print(f"Launching process {i}:")
@@ -234,14 +396,17 @@ class MultiProcessTest(parameterized.TestCase):
   def setUp(self):
     """Start tests together."""
     super().setUp()
-    assert xb.process_count() == _NUM_PROCESSES.value, (
+    if xb.process_count() == 1:
+      self.skipTest("Test requires multiple processes.")
+    assert xb.process_count() == NUM_PROCESSES.value, (
         xb.process_count(),
-        _NUM_PROCESSES.value,
+        NUM_PROCESSES.value,
     )
     # Make sure all processes are at the same test case.
     client = distributed.global_state.client
     try:
-      client.wait_at_barrier(self._testMethodName + "_start", 10000)
+      client.wait_at_barrier(
+          f"{self._testMethodName}_start", _BARRIER_TIMEOUT.value * 1000)
     except xc.XlaRuntimeError as e:
       msg, *_ = e.args
       if msg.startswith("DEADLINE_EXCEEDED"):
@@ -259,7 +424,8 @@ class MultiProcessTest(parameterized.TestCase):
     # test assertions (i.e. some processes may pass and some processes fail -
     # but the overall test should fail).
     try:
-      client.wait_at_barrier(self._testMethodName + "_end", 10000)
+      client.wait_at_barrier(
+          f"{self._testMethodName}_end", _BARRIER_TIMEOUT.value * 1000)
     except xc.XlaRuntimeError as e:
       msg, *_ = e.args
       if msg.startswith("DEADLINE_EXCEEDED"):
