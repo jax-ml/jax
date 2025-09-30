@@ -1805,14 +1805,15 @@ def _broadcast_in_dim_lowering_rule(
     raise NotImplementedError("broadcast_dimensions must be strictly increasing")
   new_dims = [d for d in range(y_aval.ndim) if d not in broadcast_dimensions]
   if (new_layout := ctx.out_layout_hint) is None:
-    candidates = (
+    candidates = [
       mgpu.WGMMA_LAYOUT,
       mgpu.WGMMA_TRANSPOSED_LAYOUT,
       mgpu.TCGEN05_LAYOUT,
       mgpu.TCGEN05_TRANSPOSED_LAYOUT,
       tcgen05.TMEM_NATIVE_LAYOUT,
-      tcgen05.fa_m64_collective_layout(y_aval.shape[-1]),
-    )
+    ]
+    if y_aval.shape[-1] % 16 == 0:
+      candidates.append(tcgen05.fa_m64_collective_layout(y_aval.shape[-1]))
     for candidate in candidates:
       if len(candidate.base_tile_shape) != len(shape):
         continue
