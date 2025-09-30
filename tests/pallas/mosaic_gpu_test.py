@@ -5907,6 +5907,43 @@ class HelpersTest(PallasTest):
     # Make sure all blocks > num_sms were stolen.
     self.assertEqual(np.max(result), jnp.int32(num_sms) - 1)
 
+  def test_dynamic_work_scheduling_with_carry(self):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("Only works on a GPU with capability >= sm100a")
+    # In this test we make SM 0 run a the dynamic scheduling loop while all
+    # other SMs spin. This means SM 0 should steal all of the work and we
+    # keep track of the number of stolen blocks in the carry.
+    blocks_to_steal = 100
+    sm_count = jax.devices()[0].core_count
+    def body(out_gmem, _):
+      sm_idx = lax.axis_index("x")
+
+      @functools.partial(pl.run_scoped,
+                         global_semaphore=plgpu.SemaphoreType.REGULAR,
+                         collective_axes="x")
+      def _scoped(global_semaphore):
+        @pl.when(sm_idx == 0)
+        def _steal_loop():
+          def loop_body(loop_info: plgpu.NDLoopInfo, carry: jax.Array):
+            del loop_info
+            return carry + jnp.int32(1)
+          final_carry = plgpu.dynamic_scheduling_loop(
+              ("x",), init_carry=jnp.int32(0))(loop_body)
+          out_gmem[0] = final_carry
+          pl.semaphore_signal(global_semaphore, inc=sm_count)
+        # All SMs wait until SM 0 has finished all blocks.
+        pl.semaphore_wait(global_semaphore)
+
+    result = plgpu.kernel(body,
+                 out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+                 grid=(sm_count + blocks_to_steal,),
+                 grid_names=("x",),
+                 # Allocate a large amount of SMEM to prevent multiple blocks
+                 # being scheduled on the same SM.
+                 scratch_shapes=[plgpu.SMEM((200_000,), jnp.int8)],
+                 )()
+    self.assertEqual(result[0], blocks_to_steal + 1)
+
 
 # TODO(mattjj): enable when we update pallas_call to handle the new types
 # class PinnedBuffersTest(PallasTest):

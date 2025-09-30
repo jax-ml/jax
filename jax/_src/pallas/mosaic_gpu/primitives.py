@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 import dataclasses
 import functools
 import itertools
@@ -3395,7 +3395,7 @@ def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext,
 
 def query_cluster_cancel(
     result_ref: _Ref,
-    grid_names: Sequence[str]) -> tuple[tuple[jax.Array, ...], jax.Array]:
+    grid_names: Sequence[Hashable]) -> tuple[tuple[jax.Array, ...], jax.Array]:
   """Decodes the result of a `try_cluster_cancel` operation.
 
   It interprets the 16-byte opaque response written to shared memory by a
