@@ -263,10 +263,12 @@ Alternatively, if you need more control, you may run the bazel command
 directly (the two commands are equivalent):
 
 ```
+# Regular Python
 bazel run //build:requirements.update --repo_env=HERMETIC_PYTHON_VERSION=3.12
-```
 
-where `3.12` is the `Python` version you wish to update.
+# Free-threaded Python
+bazel run //build:requirements_ft.update --repo_env=HERMETIC_PYTHON_VERSION=3.13-ft
+```
 
 Note, since it is still `pip` and `pip-compile` tools used under the hood, so
 most of the command line arguments and features supported by those tools will be
