@@ -23,7 +23,6 @@ from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 
 import jax
-from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
@@ -76,7 +75,8 @@ class TypingTest(jtu.JaxTestCase):
     out5: typing.DType = dtypelike_to_dtype(HasDType("float32"))
     self.assertEqual(out5, float32_dtype)
 
-  @config.enable_x64(True)
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype.*")
   def testArrayLike(self) -> None:
     out1: typing.Array = arraylike_to_array(jnp.arange(4))
     self.assertArraysEqual(out1, jnp.arange(4))
