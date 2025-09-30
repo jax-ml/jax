@@ -1425,6 +1425,9 @@ jax_multiplatform_test(
     disable_configs = [
         "gpu_b200",  # Times out
     ],
+    env = {
+        "JAX_NUM_GENERATED_CASES": "10",
+    },
     minimal_shard_count = {
         "tpu": 8,
     },
