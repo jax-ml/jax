@@ -376,6 +376,8 @@ def find_assignments_for(
 @dataclasses.dataclass()
 class DerivationContext:
   """Holds context information used for deriving an equation system."""
+  # TODO(b/447079781): Remove once SMEM transform inference is implemented.
+  enable_smem_inference : bool = False
   # A map of `OperandOrResult` to the variable that it is associated with.
   variable_for_operand_or_result: dict[OperandOrResult, eqns.Variable] = (
       dataclasses.field(default_factory=dict, init=False)
@@ -1428,7 +1430,7 @@ def infer_layout(module: ir.Module, enable_smem_inference: bool = False):
   global_equation_system: eqns.EquationSystem | eqns.Unsatisfiable
   global_equation_system = eqns.EquationSystem()
   hints: list[Hint] = []
-  ctx = DerivationContext()
+  ctx = DerivationContext(enable_smem_inference=enable_smem_inference)
 
   def gather_equations(op: ir.Operation):
     # Terminator ops are handled directly by the op whose region they belong to.
@@ -1440,6 +1442,7 @@ def infer_layout(module: ir.Module, enable_smem_inference: bool = False):
     should_have_layout = (
         inference_utils.should_have_layout(op)
         or inference_utils.should_have_tmem_layout(op)
+        or (inference_utils.should_have_transforms(op) and enable_smem_inference)
     )
     if not should_have_layout:
       return
