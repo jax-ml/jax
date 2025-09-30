@@ -259,6 +259,7 @@ jax_multiplatform_test(
     shard_count = 2,
     tags = [
         "mosaic_gpu_test",
+        "notsan",  # Times out.
     ],
     deps = [
         "//jax:pallas",
@@ -846,6 +847,7 @@ jax_multiplatform_test(
         "gpu_b200",
     ],
     shard_count = 6,
+    tags = ["notsan"],  # Times out.
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",

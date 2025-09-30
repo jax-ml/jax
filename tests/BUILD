@@ -144,6 +144,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "batching_test",
     srcs = ["batching_test.py"],
+    backend_tags = {
+        "tpu": ["noasan"],  # Times out.
+    },
     shard_count = {
         "gpu": 5,
     },
@@ -180,6 +183,9 @@ jax_py_test(
 jax_multiplatform_test(
     name = "core_test",
     srcs = ["core_test.py"],
+    backend_tags = {
+        "tpu": ["noasan"],  # Times out.
+    },
     shard_count = {
         "cpu": 5,
         "gpu": 10,
@@ -709,6 +715,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_numpy_indexing_test",
     srcs = ["lax_numpy_indexing_test.py"],
+    backend_tags = {
+        "tpu": ["noasan"],  # Times out.
+    },
     shard_count = {
         "cpu": 10,
         "gpu": 10,
@@ -793,6 +802,7 @@ jax_multiplatform_test(
             "nomsan",  # Times out.
             "notsan",  # Times out.
         ],
+        "tpu": ["nomsan"],  # Times out.
     },
     shard_count = {
         "cpu": 20,
@@ -1923,6 +1933,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "experimental_rnn_test",
     srcs = ["experimental_rnn_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Times out.
+    },
     disable_configs = [
         "gpu_a100",  # Numerical precision problems.
     ],
