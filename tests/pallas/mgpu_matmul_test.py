@@ -193,7 +193,7 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
         wg_dimension=wg_dimension,
         **kwargs,
     )
-    out = hopper_matmul_mgpu.matmul_kernel(a, b, spec)
+    out = hopper_matmul_mgpu.matmul(a, b, spec)
     out_ref = jnp.dot(a, b, precision=jax.lax.DotAlgorithmPreset.F16_F16_F32)
     np.testing.assert_allclose(out, out_ref)
 

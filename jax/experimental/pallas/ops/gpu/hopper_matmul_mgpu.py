@@ -27,6 +27,7 @@ from jax.extend import backend
 import jax.numpy as jnp
 import numpy as np
 
+# mypy: ignore-errors
 
 class MatmulDimension(enum.IntEnum):
   M = 0
@@ -53,18 +54,14 @@ class TuningConfig:
   cluster_dimension: None | MatmulDimension = None
 
 
-def matmul_kernel(a, b, config: TuningConfig):
-  dtype = a.dtype
-  if a.dtype != b.dtype:
-    raise ValueError(
-        f"Matmul LHS and RHS have incompatible dtypes {a.dtype} vs {b.dtype}"
-    )
-  m, k = a.shape
-  k2, n = b.shape
-  if k != k2:
-    raise ValueError(
-        f"Matmul LHS and RHS have incompatible shapes {a.shape} vs {b.shape}"
-    )
+# pipeline_callback and delay_release are only used for collective matmuls.
+def kernel(a_gmem, b_gmem, out_gmem, out_smem, config: TuningConfig,
+           pipeline_callback=None, delay_release=0):
+  dtype = a_gmem.dtype
+  assert b_gmem.dtype == dtype
+  m, k = a_gmem.shape
+  k2, n = b_gmem.shape
+  assert k == k2
   tile_m, tile_n, tile_k = config.tile_m, config.tile_n, config.tile_k
   max_concurrent_steps = config.max_concurrent_steps
   swizzle = plgpu.find_swizzle(tile_k * jnp.dtype(dtype).itemsize * 8)
@@ -87,115 +84,139 @@ def matmul_kernel(a, b, config: TuningConfig):
   n_iters = n // cluster_tile_n
   k_iters = k // tile_k
 
+  _2, out_slots, epi_tile_m, epi_tile_n = out_smem.shape
+  assert _2 == 2  # We have 2 compute warpgroups.
+  # Need 2 slots, unless there's only one epilogue tile.
+  assert out_slots == (1 + (epi_tile_m != tile_m or epi_tile_n != tile_n))
+  assert tile_n % epi_tile_n == 0
+  assert tile_m % epi_tile_m == 0
+  assert epi_tile_m == config.epi_tile_m
+  assert epi_tile_n == config.epi_tile_n
+
+  def get_pipeline(pipeline_body, compute_context):
+    return plgpu.emit_pipeline_warp_specialized(
+        pipeline_body,
+        grid=(k_iters,),
+        memory_registers=40,
+        in_specs=[
+            plgpu.BlockSpec(
+                (cta_tile_m, tile_k),
+                lambda k: (0, k),
+                transforms=transforms,
+                memory_space=plgpu.SMEM,
+                delay_release=delay_release,
+                collective_axes=("cluster",)
+                if config.cluster_dimension == MatmulDimension.N
+                else (),
+            ),
+            plgpu.BlockSpec(
+                (tile_k, cta_tile_n),
+                lambda k: (k, 0),
+                transforms=transforms,
+                memory_space=plgpu.SMEM,
+                delay_release=delay_release,
+                collective_axes=("cluster",)
+                if config.cluster_dimension == MatmulDimension.M
+                else (),
+            ),
+        ],
+        wg_axis="wg",
+        num_compute_wgs=2,
+        max_concurrent_steps=max_concurrent_steps,
+        compute_context=compute_context,
+    )
+
+  # Functions don't influence the allocations necessary to run the pipeline.
+  ignore = lambda *_, **__: None
+  @functools.partial(
+      pl.run_scoped,
+      pipeline_allocs=get_pipeline(ignore, ignore).get_allocations(a_gmem, b_gmem),
+      collective_axes="wg",
+  )
+  def _pipeline_scope(pipeline_allocs):
+    wg_idx = lax.axis_index("wg")
+    cta_idx = lax.axis_index("cluster")
+    @plgpu.nd_loop((m_iters * n_iters,), collective_axes="cluster_grid")
+    def _mn_loop(loop_info: plgpu.NDLoopInfo):
+      (lin_idx,) = loop_info.index
+      m_cluster_idx, n_cluster_idx = plgpu.planar_snake(
+          lin_idx,
+          (m_iters, n_iters),
+          config.grid_minor_dim,
+          config.grid_tile_width,
+      )
+      m_idx = m_cluster_idx
+      n_idx = n_cluster_idx
+      if config.cluster_dimension == MatmulDimension.M:
+        m_idx = m_cluster_idx * 2 + cta_idx
+      elif config.cluster_dimension == MatmulDimension.N:
+        n_idx = n_cluster_idx * 2 + cta_idx
+      cta_m_slice = pl.ds(m_idx * cta_tile_m, cta_tile_m)
+      cta_n_slice = pl.ds(n_idx * cta_tile_n, cta_tile_n)
+      if config.wg_dimension == MatmulDimension.M:
+        wg_m_slice = pl.ds(wg_idx * tile_m, tile_m)
+        wg_n_slice = slice(None)
+      else:
+        wg_m_slice = slice(None)
+        wg_n_slice = pl.ds(wg_idx * tile_n, tile_n)
+
+      def compute_context(eval_pipeline):
+        @functools.partial(
+            pl.run_scoped, acc_ref=plgpu.ACC((tile_m, tile_n), jnp.float32)
+        )
+        def _acc_scope(acc_ref):
+          eval_pipeline(acc_ref)
+          acc = acc_ref[...].astype(dtype)
+          plgpu.wait_smem_to_gmem(0, wait_read_only=True)
+          for epi_mi in range(tile_m // epi_tile_m):
+            for epi_ni in range(tile_n // epi_tile_n):
+              epi_m_slice = slice(epi_mi * epi_tile_m, (epi_mi + 1) * epi_tile_m)
+              epi_n_slice = slice(epi_ni * epi_tile_n, (epi_ni + 1) * epi_tile_n)
+              slot = (epi_mi * (tile_n // epi_tile_n) + epi_ni) % 2
+              plgpu.wait_smem_to_gmem(1, wait_read_only=True)
+              out_smem[wg_idx, slot] = acc[epi_m_slice, epi_n_slice]
+              plgpu.commit_smem()
+              plgpu.copy_smem_to_gmem(
+                  out_smem.at[wg_idx, slot],
+                  out_gmem.at[cta_m_slice, cta_n_slice]
+                  .at[wg_m_slice, wg_n_slice]
+                  .at[epi_m_slice, epi_n_slice],
+              )
+
+      def mma_body(idxs, a_smem, b_smem, acc_ref):
+        plgpu.wgmma(acc_ref, a_smem.at[wg_m_slice], b_smem.at[:, wg_n_slice])
+        if pipeline_callback is not None:
+          (k_idx,) = idxs
+          pipeline_callback(m_idx, n_idx, k_idx, a_smem, b_smem)
+        plgpu.wgmma_wait(delay_release)
+        return acc_ref
+
+      get_pipeline(mma_body, compute_context)(
+          a_gmem.at[cta_m_slice, :],
+          b_gmem.at[:, cta_n_slice],
+          allocations=pipeline_allocs,
+      )
+  # Await all transfers before we exit.
+  plgpu.wait_smem_to_gmem(0, wait_read_only=True)
+
+
+def matmul(a, b, config: TuningConfig):
+  dtype = a.dtype
+  if a.dtype != b.dtype:
+    raise ValueError(
+        f"Matmul LHS and RHS have incompatible dtypes {a.dtype} vs {b.dtype}"
+    )
+  m, k = a.shape
+  k2, n = b.shape
+  assert k == k2
+  if k != k2:
+    raise ValueError(
+        f"Matmul LHS and RHS have incompatible shapes {a.shape} vs {b.shape}"
+    )
+  tile_m, tile_n = config.tile_m, config.tile_n
   epi_tile_n = config.epi_tile_n or tile_n
   epi_tile_m = config.epi_tile_m or tile_m
-  if tile_n % epi_tile_n != 0:
-    raise ValueError(f"{tile_n=} must be divisible by {epi_tile_n=}")
-  if tile_m % epi_tile_m != 0:
-    raise ValueError(f"{tile_m=} must be divisible by {epi_tile_m=}")
-
-  def kernel(a_gmem, b_gmem, out_gmem, out_smem):
-
-    def get_pipeline(pipeline_body, compute_context):
-      return plgpu.emit_pipeline_warp_specialized(
-          pipeline_body,
-          grid=(k_iters,),
-          memory_registers=40,
-          in_specs=[
-              plgpu.BlockSpec(
-                  (cta_tile_m, tile_k),
-                  lambda k: (0, k),
-                  transforms=transforms,
-                  memory_space=plgpu.SMEM,
-                  collective_axes=("cluster",)
-                  if config.cluster_dimension == MatmulDimension.N
-                  else (),
-              ),
-              plgpu.BlockSpec(
-                  (tile_k, cta_tile_n),
-                  lambda k: (k, 0),
-                  transforms=transforms,
-                  memory_space=plgpu.SMEM,
-                  collective_axes=("cluster",)
-                  if config.cluster_dimension == MatmulDimension.M
-                  else (),
-              ),
-          ],
-          wg_axis="wg",
-          num_compute_wgs=2,
-          max_concurrent_steps=max_concurrent_steps,
-          compute_context=compute_context,
-      )
-
-    # Functions don't influence the allocations necessary to run the pipeline.
-    ignore = lambda *_, **__: None
-    @functools.partial(
-        pl.run_scoped,
-        pipeline_allocs=get_pipeline(ignore, ignore).get_allocations(a_gmem, b_gmem),
-        collective_axes="wg",
-    )
-    def _pipeline_scope(pipeline_allocs):
-      wg_idx = lax.axis_index("wg")
-      cta_idx = lax.axis_index("cluster")
-      @plgpu.nd_loop((m_iters * n_iters,), collective_axes="cluster_grid")
-      def _mn_loop(loop_info: plgpu.NDLoopInfo):
-        (lin_idx,) = loop_info.index
-        m_cluster_idx, n_cluster_idx = plgpu.planar_snake(
-            lin_idx,
-            (m_iters, n_iters),
-            config.grid_minor_dim,
-            config.grid_tile_width,
-        )
-        m_idx = m_cluster_idx
-        n_idx = n_cluster_idx
-        if config.cluster_dimension == MatmulDimension.M:
-          m_idx = m_cluster_idx * 2 + cta_idx
-        elif config.cluster_dimension == MatmulDimension.N:
-          n_idx = n_cluster_idx * 2 + cta_idx
-        cta_m_slice = pl.ds(m_idx * cta_tile_m, cta_tile_m)
-        cta_n_slice = pl.ds(n_idx * cta_tile_n, cta_tile_n)
-        if config.wg_dimension == MatmulDimension.M:
-          wg_m_slice = pl.ds(wg_idx * tile_m, tile_m)
-          wg_n_slice = slice(None)
-        else:
-          wg_m_slice = slice(None)
-          wg_n_slice = pl.ds(wg_idx * tile_n, tile_n)  # type: ignore
-
-        def compute_context(eval_pipeline):
-          @functools.partial(
-              pl.run_scoped, acc_ref=plgpu.ACC((tile_m, tile_n), jnp.float32)
-          )
-          def _acc_scope(acc_ref):
-            eval_pipeline(acc_ref)
-            acc = acc_ref[...].astype(dtype)
-            plgpu.wait_smem_to_gmem(0, wait_read_only=True)
-            for epi_mi in range(tile_m // epi_tile_m):
-              for epi_ni in range(tile_n // epi_tile_n):
-                epi_m_slice = slice(epi_mi * epi_tile_m, (epi_mi + 1) * epi_tile_m)
-                epi_n_slice = slice(epi_ni * epi_tile_n, (epi_ni + 1) * epi_tile_n)
-                slot = (epi_mi * (tile_n // epi_tile_n) + epi_ni) % 2
-                plgpu.wait_smem_to_gmem(1, wait_read_only=True)
-                out_smem[wg_idx, slot] = acc[epi_m_slice, epi_n_slice]
-                plgpu.commit_smem()
-                plgpu.copy_smem_to_gmem(
-                    out_smem.at[wg_idx, slot],
-                    out_gmem.at[cta_m_slice, cta_n_slice]
-                    .at[wg_m_slice, wg_n_slice]
-                    .at[epi_m_slice, epi_n_slice],
-                )
-
-        def mma_body(_, a_smem, b_smem, acc_ref):
-          plgpu.wgmma(acc_ref, a_smem.at[wg_m_slice], b_smem.at[:, wg_n_slice])
-          plgpu.wgmma_wait(0)
-          return acc_ref
-
-        get_pipeline(mma_body, compute_context)(
-            a_gmem.at[cta_m_slice, :],
-            b_gmem.at[:, cta_n_slice],
-            allocations=pipeline_allocs,
-        )
-    # Await all transfers before we exit.
-    plgpu.wait_smem_to_gmem(0, wait_read_only=True)
+  config = dataclasses.replace(config, epi_tile_n=epi_tile_n, epi_tile_m=epi_tile_m)
 
   # We don't need multiple slots if there's only one epilogue tile.
   num_out_slots = min(2, (tile_m * tile_n) // (epi_tile_m * epi_tile_n))
@@ -215,7 +236,7 @@ def matmul_kernel(a, b, config: TuningConfig):
   num_sms = backend.get_default_device().core_count
   cluster_size = 1 + (config.cluster_dimension is not None)
   f = plgpu.kernel(
-      kernel,
+      functools.partial(kernel, config=config),
       out_shape=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(num_sms // cluster_size,),
       grid_names=("cluster_grid",),
@@ -266,7 +287,7 @@ def main(_) -> None:
       )
       try:
         out, runtimes_ms = profiler.measure(
-            functools.partial(matmul_kernel, config=config), iterations=10,
+            functools.partial(matmul, config=config), iterations=10,
         )(a, b)
         assert runtimes_ms is not None
         runtime_ms = statistics.median(runtimes_ms)
