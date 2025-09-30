@@ -1083,6 +1083,9 @@ def get(
   src_device_id = _to_int(src_device_id)
   src_local_core_id = _to_int(src_local_core_id)
   if input_name is not None:
+    # NOTE: input_name, block_indices, and grid_loop_idx are set only if this
+    # function is being called to read a block from a pallas_call input (at the
+    # start of one iteration of the kernel body).
     block_indices = tuple(int(x) for x in block_indices)
     grid_loop_idx = tuple(int(x) for x in tuple(grid_loop_idx))
 
@@ -1180,11 +1183,14 @@ def store(
     buffer_id,
     transforms,
     val,
+    block_indices=None,
+    grid_loop_idx=None,
     *,
     src_device_id=None,
     src_local_core_id=None,
     clock=None,
     source_info=None,
+    output_name=None,
 ):
   device_id = int(device_id)
   local_core_id = int(local_core_id)
@@ -1197,6 +1203,12 @@ def store(
   val = np.array(val)
   src_device_id = _to_int(src_device_id)
   src_local_core_id = _to_int(src_local_core_id)
+  if output_name is not None:
+    # NOTE: output_name, block_indices, and grid_loop_idx are set only if this
+    # function is being called to store a block into a pallas_call output (at
+    # the end of one iteration of the kernel body).
+    block_indices = tuple(int(x) for x in block_indices)
+    grid_loop_idx = tuple(int(x) for x in tuple(grid_loop_idx))
 
   local_core_id_for_buffer = _local_core_id_or_zero_if_hbm(
       local_core_id, memory_space
@@ -1218,11 +1230,20 @@ def store(
     # TODO(jburnim): Better error message if this raises?
     in_bounds_shape = array[write_range].shape
     if in_bounds_shape != val.shape:
-      raise ValueError(
-          'Out-of-bounds write of'
-          f' ({device_id} {local_core_id} {memory_space} {buffer_id}): writing'
-          f' [{write_range}] but buffer has shape {array.shape} .'
-      )
+      if output_name is None:
+        raise ValueError(
+            'Out-of-bounds write of'
+            f' ({device_id} {local_core_id} {memory_space} {buffer_id}): writing'
+            f' [{write_range}] but buffer has shape {array.shape} .'
+         )
+      else:
+        # Different error message when we are copying a kernel buffer to a
+        # block of an output (just after a kernel invocation).
+        raise IndexError(
+            f'Out-of-bounds block index {block_indices} for'
+            f' output "{output_name}" in iteration {grid_loop_idx}'
+            f' on device {device_id} (core {local_core_id}):'
+            f' reading [{write_range}] but output has shape {array.shape}.')
     array[write_range] = val
 
   if shared_memory.interpret_params.detect_races:
@@ -2592,10 +2613,11 @@ def interpret_pallas_call(
             for bm in grid_mapping.block_mappings
         ])
         if jaxpr.debug_info.arg_names is not None:
-          input_names = jaxpr.debug_info.arg_names[grid_mapping.slice_block_ops]
+          input_names, output_names = split_list(
+            jaxpr.debug_info.arg_names[grid_mapping.slice_block_ops], [num_inputs])
         else:
-          input_names = (
-            ("unknown",) * (grid_mapping.num_inputs + grid_mapping.num_outputs))
+          input_names = ["unknown",] * grid_mapping.num_inputs
+          output_names = ["unknown",] * grid_mapping.num_outputs
 
         # Copy slices of the input to the kernel buffers.
         def _store_slice_to_kernel_input(index, input_var):
@@ -2686,7 +2708,7 @@ def interpret_pallas_call(
           callback.io_callback(
               # TODO(jburnim): Pass source_info from the pallas_call, in case this
               # store is involved in a data race.
-              store,
+              functools.partial(store, output_name=output_names[index]),
               (),
               device_id,
               core_index,
@@ -2694,6 +2716,8 @@ def interpret_pallas_call(
               output_buffer_ids[index],
               (transform,),
               kernel_output_val,
+              cur_block_indices[num_inputs + index],
+              grid_point,
               ordered=True,
           )
 
