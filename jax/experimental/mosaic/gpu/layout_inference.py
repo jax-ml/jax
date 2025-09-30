@@ -437,6 +437,10 @@ def is_vector(v: ir.Value) -> bool:
   return ir.VectorType.isinstance(v.type)
 
 
+def _is_smem_ref(v: ir.Value) -> bool:
+  return ir.MemRefType.isinstance(v.type) and utils.is_smem_ref(v)
+
+
 def _is_tmem_ref(v: ir.Value) -> bool:
   return ir.MemRefType.isinstance(v.type) and utils.is_tmem_ref(v)
 
