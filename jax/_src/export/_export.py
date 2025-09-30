@@ -78,11 +78,11 @@ class DisabledSafetyCheck:
 
   Most of these checks are performed on serialization, but some are deferred to
   deserialization. The list of disabled checks is attached to the serialization,
-  e.g., as a sequence of string attributes to `jax.export.Exported` or of
-  `tf.XlaCallModuleOp`.
+  e.g., as a sequence of string attributes to :class:`jax.export.Exported` or of
+  ``tf.XlaCallModuleOp``.
 
   When using jax2tf, you can disable more deserialization safety checks
-  by passing `TF_XLA_FLAGS=--tf_xla_call_module_disabled_checks=platform`.
+  by passing ``TF_XLA_FLAGS=--tf_xla_call_module_disabled_checks=platform``.
   """
   _impl: str
 
@@ -131,7 +131,7 @@ class Exported:
   Attributes:
     fun_name: the name of the exported function, for error messages.
     in_tree: a PyTreeDef describing the tuple (args, kwargs) of the lowered JAX
-        function. The actual lowering does not depend on the `in_tree`, but this
+        function. The actual lowering does not depend on the ``in_tree``, but this
         can be used to invoke the exported function using the same argument
         structure.
     in_avals: the flat tuple of input abstract values. May contain dimension
@@ -139,16 +139,16 @@ class Exported:
     out_tree: a PyTreeDef describing the result of the lowered JAX function.
     out_avals: the flat tuple of output abstract values. May contain dimension
         expressions in the shapes, with dimension variables among those in
-        `in_avals`.
+        ``in_avals``.
     in_shardings_hlo: the flattened input shardings, a sequence as long
-        as `in_avals`. `None` means unspecified sharding.
+        as ``in_avals``. ``None`` means unspecified sharding.
         Note that these do not include the mesh or the actual devices used in
-        the mesh. See `in_shardings_jax` for a way to turn these
+        the mesh. See ``in_shardings_jax`` for a way to turn these
         into sharding specification that can be used with JAX APIs.
     out_shardings_hlo: the flattened output shardings, a sequence as long
-        as `out_avals`. `None` means unspecified sharding.
+        as ``out_avals``. ``None`` means unspecified sharding.
         Note that these do not include the mesh or the actual devices used in
-        the mesh. See `out_shardings_jax` for a way to turn these
+        the mesh. See ``out_shardings_jax`` for a way to turn these
         into sharding specification that can be used with JAX APIs.
     nr_devices: the number of devices that the module has been lowered for.
     platforms: a tuple containing the platforms for which the function should
@@ -167,14 +167,14 @@ class Exported:
     module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
         must be passed to the module. The other arguments have been dropped
         because they are not used.
-    uses_global_constants: whether the `mlir_module_serialized` uses shape
+    uses_global_constants: whether the ``mlir_module_serialized`` uses shape
         polymorphism or multi-platform export.
-        This may be because `in_avals` contains dimension
+        This may be because ``in_avals`` contains dimension
         variables, or due to inner calls of Exported modules that have
         dimension variables or platform index arguments. Such modules need
         shape refinement before XLA compilation.
     disabled_safety_checks: a list of descriptors of safety checks that have been
-        disabled at export time. See docstring for `DisabledSafetyCheck`.
+        disabled at export time. See docstring for ``DisabledSafetyCheck``.
     _get_vjp: an optional function that takes the current exported function and
         returns the exported VJP function.
         The VJP function takes a flat list of arguments,
@@ -182,7 +182,8 @@ class Exported:
         for each primal output. It returns a tuple with the cotangents
         corresponding to the flattened primal inputs.
 
-  See a [description of the calling convention for the `mlir_module`](https://docs.jax.dev/en/latest/export/export.html#module-calling-convention).
+  See a description of the calling convention for the :meth:`~jax.export.Exported.mlir_module`
+  method at https://docs.jax.dev/en/latest/export/export.html#module-calling-convention.
   """
   fun_name: str
   in_tree: tree_util.PyTreeDef
@@ -206,7 +207,7 @@ class Exported:
   _get_vjp: Callable[[Exported], Exported] | None
 
   def mlir_module(self) -> str:
-    """A string representation of the `mlir_module_serialized`."""
+    """A string representation of the ``mlir_module_serialized``."""
     return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
 
   def __str__(self):
@@ -217,12 +218,12 @@ class Exported:
   def in_shardings_jax(
     self,
     mesh: mesh_lib.Mesh) -> Sequence[sharding.Sharding | None]:
-    """Creates Shardings corresponding to self.in_shardings_hlo.
+    """Creates Shardings corresponding to ``self.in_shardings_hlo``.
 
-    The Exported object stores `in_shardings_hlo` as HloShardings, which are
+    The Exported object stores ``in_shardings_hlo`` as HloShardings, which are
     independent of a mesh or set of devices. This method constructs
-    Sharding that can be used in JAX APIs such as `jax.jit` or
-    `jax.device_put`.
+    Sharding that can be used in JAX APIs such as :func:`jax.jit` or
+    :func:`jax.device_put`.
 
     Example usage:
 
@@ -257,7 +258,7 @@ class Exported:
   def out_shardings_jax(
       self,
       mesh: mesh_lib.Mesh) -> Sequence[sharding.Sharding | None]:
-    """Creates Shardings corresponding to `self.out_shardings_hlo`.
+    """Creates Shardings corresponding to ``self.out_shardings_hlo``.
 
     See documentation for in_shardings_jax.
     """
@@ -284,9 +285,9 @@ class Exported:
 
     Args:
       vjp_order: The maximum vjp order to include. E.g., the value 2 means that we
-        serialize the primal functions and two orders of the `vjp` function. This
+        serialize the primal functions and two orders of the ``vjp`` function. This
         should allow 2nd order reverse mode differentiation of the deserialized
-        function. i.e., `jax.grad(jax.grad(f)).`
+        function. i.e., ``jax.grad(jax.grad(f))``.
     """
     # Lazy load the serialization module, since flatbuffers is an optional
     # dependency.
@@ -316,7 +317,7 @@ def deserialize(blob: bytearray) -> Exported:
   """Deserializes an Exported.
 
   Args:
-    blob: a bytearray obtained from `Exported.serialize`.
+    blob: a bytearray obtained from :meth:`jax.export.Exported.serialize`.
   """
   # Lazy load the serialization module, since flatbuffers is an optional
   # dependency.
@@ -332,8 +333,8 @@ class _SerializeAuxData(Protocol):
   def __call__(self, aux_data: PyTreeAuxData) -> bytes:
     """Serializes the PyTree node AuxData.
 
-    The AuxData is returned by the `flatten_func` registered by
-    `tree_util.register_pytree_node`).
+    The AuxData is returned by the ``flatten_func`` registered by
+    :func:`jax.tree_util.register_pytree_node`).
     """
 
 
@@ -341,7 +342,7 @@ class _DeserializeAuxData(Protocol):
   def __call__(self, serialized_aux_data: bytes) -> PyTreeAuxData:
     """Deserializes the PyTree node AuxData.
 
-    The result will be passed to `_BuildFromChildren`.
+    The result will be passed to ``_BuildFromChildren``.
     """
 
 
@@ -349,7 +350,7 @@ class _BuildFromChildren(Protocol):
   def __call__(self, aux_data: PyTreeAuxData, children: Sequence[Any]) -> Any:
     """Materializes a T given a deserialized AuxData and children.
 
-    This is similar in scope with the `unflatten_func`.
+    This is similar in scope with the ``unflatten_func``.
     """
 
 
@@ -379,37 +380,37 @@ def register_pytree_node_serialization(
 
   You must use this function before you can serialize and deserialize PyTree
   nodes for the types not supported natively. We serialize PyTree nodes for
-  the `in_tree` and `out_tree` fields of `Exported`, which are part of the
+  the ``in_tree`` and ``out_tree`` fields of ``Exported``, which are part of the
   exported function's calling convention.
 
   This function must be called after calling
-  `jax.tree_util.register_pytree_node` (except for `collections.namedtuple`,
-  which do not require a call to `register_pytree_node`).
+  :func:`jax.tree_util.register_pytree_node` (except for ``collections.namedtuple``,
+  which do not require a call to ``register_pytree_node``).
 
   Args:
     nodetype: the type whose PyTree nodes we want to serialize. It is an
-      error to attempt to register multiple serializations for a `nodetype`.
+      error to attempt to register multiple serializations for a ``nodetype``.
     serialized_name: a string that will be present in the serialization and
       will be used to look up the registration during deserialization. It is an
       error to attempt to register multiple serializations for a
-      `serialized_name`.
+      ``serialized_name``.
     serialize_auxdata: serialize the PyTree auxdata (returned by the
-      `flatten_func` argument to `jax.tree_util.register_pytree_node`.).
+      ``flatten_func`` argument to :func:`jax.tree_util.register_pytree_node`.).
     deserialize_auxdata: deserialize the auxdata that was serialized by the
-      `serialize_auxdata`.
+      ``serialize_auxdata``.
     from_children: if present, this is a function that takes that result of
-      `deserialize_auxdata` along with some children and creates an instance
-      of `nodetype`. This is similar to the `unflatten_func` passed to
-      `jax.tree_util.register_pytree_node`. If not present, we look up
-      and use the `unflatten_func`. This is needed for `collections.namedtuple`,
-      which does not have a `register_pytree_node`, but it can be useful to
-      override that function. Note that the result of `from_children` is
-      only used with `jax.tree_util.tree_structure` to construct a proper
+      ``deserialize_auxdata`` along with some children and creates an instance
+      of ``nodetype``. This is similar to the ``unflatten_func`` passed to
+      :func:`jax.tree_util.register_pytree_node`. If not present, we look up
+      and use the ``unflatten_func``. This is needed for ``collections.namedtuple``,
+      which does not have a ``register_pytree_node``, but it can be useful to
+      override that function. Note that the result of ``from_children`` is
+      only used with :func:`jax.tree_util.tree_structure` to construct a proper
       PyTree node, it is not used to construct the outputs of the serialized
       function.
 
   Returns:
-    the same type passed as `nodetype`, so that this function can
+    the same type passed as ``nodetype``, so that this function can
     be used as a class decorator.
   """
   if nodetype in serialization_registry:
@@ -443,23 +444,23 @@ def register_namedtuple_serialization(
     serialized_name: str) -> type[T]:
   """Registers a namedtuple for serialization and deserialization.
 
-  JAX has native PyTree support for `collections.namedtuple`, and does not
-  require a call to `jax.tree_util.register_pytree_node`. However, if you
+  JAX has native PyTree support for ``collections.namedtuple``, and does not
+  require a call to :func:`jax.tree_util.register_pytree_node`. However, if you
   want to serialize functions that have inputs of outputs of a
   namedtuple type, you must register that type for serialization.
 
   Args:
     nodetype: the type whose PyTree nodes we want to serialize. It is an
-      error to attempt to register multiple serializations for a `nodetype`.
+      error to attempt to register multiple serializations for a ``nodetype``.
       On deserialization, this type must have the same set of keys that
       were present during serialization.
     serialized_name: a string that will be present in the serialization and
       will be used to look up the registration during deserialization. It is an
       error to attempt to register multiple serializations for
-      a `serialized_name`.
+      a ``serialized_name``.
 
   Returns:
-    the same type passed as `nodetype`, so that this function can
+    the same type passed as ``nodetype``, so that this function can
     be used as a class decorator.
 """
   if not _is_namedtuple(nodetype):
@@ -510,7 +511,7 @@ register_pytree_node_serialization(
 def default_export_platform() -> str:
   """Retrieves the default export platform.
 
-  One of: `tpu`, `cpu`, `cuda`, `rocm`.
+  One of: ``'tpu'``, ``'cpu'``, ``'cuda'``, ``'rocm'``.
   """
   # Canonicalize to turn 'gpu' into 'cuda' or 'rocm'
   return xb.canonicalize_platform(xb.default_backend())
@@ -535,7 +536,7 @@ def export(
   """Exports a JAX function for persistent serialization.
 
   Args:
-    fun_jit: the function to export. Should be the result of `jax.jit`.
+    fun_jit: the function to export. Should be the result of :func:`jax.jit`.
     platforms:
         Optional sequence containing a subset of 'tpu', 'cpu',
         'cuda', 'rocm'. If more than one platform is specified, then
@@ -551,12 +552,12 @@ def export(
         MLIR emitted through these custom lowering rules, rests with the user
         of these rules.
     disabled_checks: the safety checks to disable. See documentation for
-        of `jax.export.DisabledSafetyCheck`.
+        of :class:`jax.export.DisabledSafetyCheck`.
 
   Returns:
     a function that takes args and kwargs pytrees of :class:`jax.ShapeDtypeStruct`,
-    or values with `.shape` and `.dtype` attributes, and returns an
-    `Exported`.
+    or values with ``.shape`` and ``.dtype`` attributes, and returns an
+    :class:`~jax.export.Exported`.
 
   Usage:
 
@@ -593,10 +594,10 @@ def _export_internal(
   """Exports native serialization for a JAX function.
 
   Note: this function exists only for internal usage by jax2tf. Use
-    `jax.export` instead.
+    :mod:`jax.export` instead.
     See https://docs.jax.dev/en/latest/export/export.html
 
-  See docstring of `export` for more details.
+  See docstring of ``export`` for more details.
   """
   if not isinstance(fun_jit, stages.Wrapped):
     raise ValueError(
@@ -839,13 +840,13 @@ def _wrap_main_func(
   Args:
     module: a copy of HLO module as obtained from lowering.
     args_avals_flat: the avals for all the arguments of the lowered function,
-      which correspond to the array arguments of the `module`.
-    args_kwargs_tree: the PyTreeDef corresponding to `(args, kwargs)`, for error
+      which correspond to the array arguments of the ``module``.
+    args_kwargs_tree: the PyTreeDef corresponding to ``(args, kwargs)``, for error
       messages.
-    has_platform_index_argument: whether the `module` has a first platform
+    has_platform_index_argument: whether the ``module`` has a first platform
       index argument
     module_kept_var_idx: a sorted tuple of integers with the indices of arguments
-      in `args_avals_flat` that are kept as `module` arguments.
+      in ``args_avals_flat`` that are kept as ``module`` arguments.
     serialization_version: the target serialization version
 
   Returns the wrapped module, without dimension and token arguments.
