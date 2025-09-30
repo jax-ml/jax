@@ -10,3 +10,6 @@ zstandard; python_version<"3.14"
 
 # TODO(phawkins): enable tensorstore once it ships a 3.14 wheel.
 tensorstore; python_version<"3.14"
+
+# For jax2tf_test
+tensorflow; python_version<"3.14"

@@ -27,5 +27,7 @@ jax-cuda13-pjrt
 # TPU dependencies
 libtpu; sys_platform == "linux" and platform_machine == "x86_64"
 
-# Platform-specific dependencies that are being ignored by pip-compile
-colorama>=0.4.4 ; sys_platform == "win32"
+# Colorama is only needed on windows. Pip-compile ignores platform-specific
+# requirements therefore we include it unconditionally here so that the lockfile
+# regeneration always includes it.
+colorama>=0.4.4
