@@ -24,28 +24,14 @@ namespace jax {
 
 struct UnconstrainedSingleton {};
 
-class nb_frozenset : public nanobind::object {
-  NB_OBJECT(nb_frozenset, object, "frozenset", PyFrozenSet_Check)
-  nb_frozenset()
-      : object(PyFrozenSet_New(nullptr), nanobind::detail::steal_t()) {}
-  explicit nb_frozenset(handle h)
-      : object(nb_frozenset_from_obj(h.ptr()), nanobind::detail::steal_t{}) {}
-  size_t size() const { return (size_t)NB_SET_GET_SIZE(m_ptr); }
-  template <typename T>
-  bool contains(T&& key) const;
-
- private:
-  static PyObject* nb_frozenset_from_obj(PyObject* o);
-};
-
 class PartitionSpec {
  public:
-  PartitionSpec(nanobind::tuple partitions, nb_frozenset unreduced,
-                nb_frozenset reduced);
+  PartitionSpec(nanobind::tuple partitions, nanobind::frozenset unreduced,
+                nanobind::frozenset reduced);
 
   nanobind::tuple partitions() const { return partitions_; }
-  nb_frozenset unreduced() const { return unreduced_; }
-  nb_frozenset reduced() const { return reduced_; }
+  nanobind::frozenset unreduced() const { return unreduced_; }
+  nanobind::frozenset reduced() const { return reduced_; }
 
   bool operator==(const PartitionSpec& other) const;
 
@@ -56,8 +42,8 @@ class PartitionSpec {
 
  private:
   nanobind::tuple partitions_;
-  nb_frozenset unreduced_;
-  nb_frozenset reduced_;
+  nanobind::frozenset unreduced_;
+  nanobind::frozenset reduced_;
 
   static nanobind::object* unconstrained_singleton_;
 };

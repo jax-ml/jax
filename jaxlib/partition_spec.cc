@@ -30,24 +30,6 @@ namespace nb = nanobind;
 
 namespace jax {
 
-/*static*/ PyObject* nb_frozenset::nb_frozenset_from_obj(PyObject* o) {
-  PyObject* result = PyFrozenSet_New(o);
-  if (!result) {
-    throw nb::python_error();
-  }
-  return result;
-}
-
-template <typename T>
-bool nb_frozenset::contains(T&& key) const {
-  object o = nanobind::cast((nb::detail::forward_t<T>)key);
-  int rv = PySet_Contains(m_ptr, o.ptr());
-  if (rv == -1) {
-    throw nb::python_error();
-  }
-  return rv == 1;
-}
-
 namespace {
 
 bool IsTrue(nb::handle x) {
@@ -90,8 +72,8 @@ nb::object CanonicalizePartition(nb::object unconstrained_singleton,
   return partition;
 }
 
-void CheckPartitionSpec(nb::tuple partitions, nb_frozenset unreduced,
-                        nb_frozenset reduced) {
+void CheckPartitionSpec(nb::tuple partitions, nb::frozenset unreduced,
+                        nb::frozenset reduced) {
   if (unreduced.contains(nb::none())) {
     throw nb::value_error(
         "unreduced cannot contain None. All elements in unreduced should "
@@ -131,8 +113,6 @@ void CheckPartitionSpec(nb::tuple partitions, nb_frozenset unreduced,
       check_overlap(partition);
     }
   }
-  // TODO(yashkatariya, phawkins): Update this to `!(unreduced &
-  // reduced).empty()` after nanobind's version > 2.7.0
   if (nb::len((unreduced & reduced)) != 0) {
     throw nb::value_error(
         absl::StrFormat("`unreduced` and `reduced` argument to PartitionSpec "
@@ -146,8 +126,8 @@ void CheckPartitionSpec(nb::tuple partitions, nb_frozenset unreduced,
 
 }  // namespace
 
-PartitionSpec::PartitionSpec(nb::tuple partitions, nb_frozenset unreduced,
-                             nb_frozenset reduced)
+PartitionSpec::PartitionSpec(nb::tuple partitions, nb::frozenset unreduced,
+                             nb::frozenset reduced)
     : partitions_(std::move(partitions)),
       unreduced_(std::move(unreduced)),
       reduced_(std::move(reduced)) {}
@@ -220,8 +200,8 @@ void PartitionSpec::Register(nb::module_& m) {
                                    .release()
                                    .ptr());
             }
-            nb_frozenset unreduced;
-            nb_frozenset reduced;
+            nb::frozenset unreduced;
+            nb::frozenset reduced;
             if (!PyAnySet_Check(unreduced_arg.ptr())) {
               throw nb::type_error(
                   absl::StrFormat(
@@ -238,14 +218,14 @@ void PartitionSpec::Register(nb::module_& m) {
                       nb::cast<std::string>(nb::repr(reduced_arg.type())))
                       .c_str());
             }
-            unreduced = nb_frozenset(unreduced_arg);
-            reduced = nb_frozenset(reduced_arg);
+            unreduced = nb::frozenset(unreduced_arg);
+            reduced = nb::frozenset(reduced_arg);
             CheckPartitionSpec(partitions, unreduced, reduced);
             new (self) PartitionSpec(std::move(partitions),
                                      std::move(unreduced), std::move(reduced));
           },
-          nb::arg("partitions"), nb::arg("unreduced") = nb_frozenset(),
-          nb::arg("reduced") = nb_frozenset())
+          nb::arg("partitions"), nb::arg("unreduced") = nb::frozenset(),
+          nb::arg("reduced") = nb::frozenset())
       .def_prop_ro("_partitions", &PartitionSpec::partitions)
       .def_prop_ro("unreduced", &PartitionSpec::unreduced)
       .def_prop_ro("reduced", &PartitionSpec::reduced)
