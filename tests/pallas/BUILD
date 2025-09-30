@@ -1210,13 +1210,13 @@ jax_multiplatform_test(
     name = "tpu_sparsecore_pallas_test",
     srcs = ["tpu_sparsecore_pallas_test.py"],
     config_tags_overrides = {
+        # TODO(slebedev): Flip to False once we have more v5p capacity.
         "tpu_v5p": {"ondemand": True},
     },
     enable_backends = [],
     enable_configs = [
         "tpu_v5p",
         "tpu_v6e",
-        # TODO(slebedev): Run on ISS or GRM.
     ],
     shard_count = 4,
     deps = [
@@ -1232,16 +1232,15 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_sparsecore_debug_check_test",
     srcs = ["tpu_pallas_sparsecore_debug_check_test.py"],
-    # Include at least v6e in presubmit. v5p doesn't run all the tests.
     config_tags_overrides = {
-        "tpu_v6e": {"ondemand": False},
+        # TODO(slebedev): Flip to False once we have more v6e capacity.
+        "tpu_v6e": {"ondemand": True},
     },
     enable_backends = [],
     enable_configs = [
         "tpu_v5p",
         "tpu_v6e",
         "cpu",  # Just to make sure we at least check the shard_count in presubmit.
-        # TODO(slebedev): Run on GRM.
     ],
     shard_count = 3,
     deps = [
@@ -1258,11 +1257,14 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_sparsecore_pallas_distributed_test",
     srcs = ["tpu_sparsecore_pallas_distributed_test.py"],
+    config_tags_overrides = {
+        # TODO(slebedev): Flip to False once we have more v5p capacity.
+        "tpu_v5p_x4": {"ondemand": True},
+    },
     enable_backends = [],
     enable_configs = [
         "tpu_v5p_x4",
         "tpu_v6e_x8",
-        # TODO(slebedev): Run on ISS or GRM.
     ],
     deps = [
         "//jax:mesh_utils",
