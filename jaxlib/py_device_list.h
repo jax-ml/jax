@@ -64,8 +64,9 @@ class PyDeviceList {
       nb_class_ptr<PyDeviceList> self);
 
   // Requires the GIL in GIL mode. Acquires the self lock in non-GIL mode.
-  static absl::StatusOr<nanobind::tuple> MemoryKinds(
-      nb_class_ptr<PyDeviceList> self);
+  static absl::StatusOr<
+      nanobind::typed<nanobind::tuple, nanobind::str, nanobind::ellipsis>>
+  MemoryKinds(nb_class_ptr<PyDeviceList> self);
 
   // go/pywald-pybind-annotation BEGIN
   // refs {

@@ -637,11 +637,11 @@ def _share_fdo_profiles(
     backend: xc.Client,
     global_client: lib._jax.DistributedRuntimeClient,
     min_process_id
-) -> bytes | None:
+) -> bytes:
   sym_name = computation.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
   fdo_profile = compile_options.executable_build_options.fdo_profile
-  if fdo_profile is None or len(fdo_profile) == 0:
+  if len(fdo_profile) == 0:
     return fdo_profile
 
   compile_options.executable_build_options.fdo_profile = b""

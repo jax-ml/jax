@@ -48,7 +48,7 @@ class PyMemorySpace {
   std::string_view Str() const;
   std::string_view Repr() const;
 
-  nanobind::list AddressableByDevices() const;
+  nanobind::typed<nanobind::list, PyDevice> AddressableByDevices() const;
 
   static void RegisterPythonType(nanobind::module_& m);
 

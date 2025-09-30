@@ -341,9 +341,12 @@ void Traceback::RegisterType(nb::module_& m) {
         }
         return nb::make_tuple(out_code, out_lasti);
       },
-      nb::is_method());
-  type.attr("as_python_traceback") =
-      nb::cpp_function(AsPythonTraceback, nb::is_method());
+      nb::is_method(),
+      nb::sig(
+          "def raw_frames(self) -> tuple[list[types.CodeType], list[int]]"));
+  type.attr("as_python_traceback") = nb::cpp_function(
+      AsPythonTraceback, nb::is_method(),
+      nb::sig("def as_python_traceback(self) -> traceback.TracebackType"));
 
   type.attr("traceback_from_frames") = nb::cpp_function(
       [](std::vector<Traceback::Frame> frames) {
@@ -369,7 +372,12 @@ void Traceback::RegisterType(nb::module_& m) {
         }
         return traceback;
       },
-      "Creates a traceback from a list of frames.");
+      "Creates a traceback from a list of frames.",
+      nb::sig(
+          // clang-format off
+          "def traceback_from_frames(frames: list[Frame]) -> traceback.TracebackType"
+          // clang-format on
+          ));
 
   type.attr("code_addr2line") = nb::cpp_function(
       [](nb::handle code, int lasti) {
@@ -379,7 +387,8 @@ void Traceback::RegisterType(nb::module_& m) {
         return PyCode_Addr2Line(reinterpret_cast<PyCodeObject*>(code.ptr()),
                                 lasti);
       },
-      "Python wrapper around the Python C API function PyCode_Addr2Line");
+      "Python wrapper around the Python C API function PyCode_Addr2Line",
+      nb::sig("def code_addr2line(code: types.CodeType, lasti: int) -> int"));
 
   type.attr("code_addr2location") = nb::cpp_function(
       [](nb::handle code, int lasti) {
@@ -394,7 +403,9 @@ void Traceback::RegisterType(nb::module_& m) {
         }
         return nb::make_tuple(start_line, start_column, end_line, end_column);
       },
-      "Python wrapper around the Python C API function PyCode_Addr2Location");
+      "Python wrapper around the Python C API function PyCode_Addr2Location",
+      nb::sig("def code_addr2location(code: types.CodeType, lasti: int) -> "
+              "tuple[int, int, int, int]"));
 }
 
 }  // namespace jax

@@ -194,7 +194,7 @@ absl::StatusOr<nb_class_ptr<PyDevice>> PyClient::DeviceFromLocalHardwareId(
   return GetPyDevice(device);
 }
 
-nb::list PyClient::LiveExecutables() {
+nb::typed<nb::list, PyLoadedExecutable> PyClient::LiveExecutables() {
   CHECK(PyGILState_Check());
   nb::ft_lock_guard lock(executables_mutex_);
   nb::list executables;
@@ -799,9 +799,16 @@ PyType_Slot PyClient::slots_[] = {
           },
           nb::arg("computation"), nb::arg("executable_devices"),
           nb::arg("compile_options") = xla::CompileOptions(),
-          nb::sig("def compile(self, computation: mlir.ir.Module, "
-                  "executable_devices: DeviceList, compile_options: "
-                  "CompileOptions = ...) -> Executable"))
+          nb::sig(
+              // clang-format off
+              "def compile("
+              "self, "
+              "computation: object, "
+              "executable_devices: DeviceList, "
+              "compile_options: CompileOptions = ..."
+              ") -> Executable"
+              // clang-format on
+              ))
       .def(
           "compile_and_load",
           [](nb_class_ptr<PyClient> client, MlirModule mlir_module,
@@ -818,10 +825,16 @@ PyType_Slot PyClient::slots_[] = {
           nb::arg("compile_options") = xla::CompileOptions(),
           nb::arg("host_callbacks") = std::vector<nb::capsule>(),
           nb::sig(
-              "def compile_and_load(self, computation: mlir.ir.Module, "
-              "executable_devices: DeviceList, compile_options: "
-              "CompileOptions = ..., host_callbacks: "
-              "Sequence[Callable[..., typing.Any]] = ...) -> LoadedExecutable"))
+              // clang-format off
+              "def compile_and_load("
+              "self, "
+              "computation: object, "
+              "executable_devices: DeviceList, "
+              "compile_options: CompileOptions = ..., "
+              "host_callbacks: Sequence[typing_extensions.CapsuleType] = ..."
+              ") -> LoadedExecutable"
+              // clang-format on
+              ))
       .def(
           "compile_and_load",
           [](nb_class_ptr<PyClient> client, MlirModule mlir_module,
@@ -838,10 +851,16 @@ PyType_Slot PyClient::slots_[] = {
           nb::arg("compile_options") = xla::CompileOptions(),
           nb::arg("host_callbacks") = std::vector<nb::callable>(),
           nb::sig(
-              "def compile_and_load(self, computation: mlir.ir.Module, "
-              "executable_devices: DeviceList, compile_options: CompileOptions "
-              "= ..., host_callbacks: Sequence[Callable[..., typing.Any]] = "
-              "...)"))
+              // clang-format off
+              "def compile_and_load("
+              "self, "
+              "computation: object, "
+              "executable_devices: DeviceList, "
+              "compile_options: CompileOptions = ..., "
+              "host_callbacks: Sequence[Callable[..., typing.Any]] = ..."
+              ") -> LoadedExecutable"
+              // clang-format on
+              ))
       // The following two overloads are for users of deprecated APIs who call
       // `backend.compile` but do not have visibility to `DeviceList`.
       .def(

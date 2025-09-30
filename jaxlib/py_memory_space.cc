@@ -61,7 +61,7 @@ std::string_view PyMemorySpace::Str() const { return memory_->DebugString(); }
 
 std::string_view PyMemorySpace::Repr() const { return memory_->ToString(); }
 
-nb::list PyMemorySpace::AddressableByDevices() const {
+nb::typed<nb::list, PyDevice> PyMemorySpace::AddressableByDevices() const {
   nb::list devices;
   for (ifrt::Device* device : memory_->Devices()) {
     devices.append(client_->GetPyDevice(device));
