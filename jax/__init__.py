@@ -163,6 +163,7 @@ from jax import debug as debug
 from jax import dlpack as dlpack
 from jax import dtypes as dtypes
 from jax import errors as errors
+from jax import export as export
 from jax import ffi as ffi
 from jax import image as image
 from jax import lax as lax
