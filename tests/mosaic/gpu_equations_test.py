@@ -504,6 +504,53 @@ class EquationSystemTest(parameterized.TestCase):
       self.assertTrue(divides((5, 8), [[u], [c(5)], [c(8)]]).holds())
       self.assertFalse(divides((5, 8), [[10], [8, u]]).holds())
 
+  def test_reduce_merges_divides_constraints(self):
+    def divides(var, dims):
+      return equations.Divides(var, nested_tuple(dims))
+    def reduce(constraints):
+      system = equations.EquationSystem(constraints=constraints)
+      system = equations.reduce(system)
+      return system.constraints
+
+    v0 = equations.Variable(0)
+    v1 = equations.Variable(1)
+
+    # Constraints should not be merged if they apply to different vars.
+    self.assertEqual(reduce([
+        divides(v0, [[16]]),
+        divides(v1, [[8]]),
+    ]), [
+        divides(v0, [[16]]),
+        divides(v1, [[8]]),
+    ])
+
+    # Merging of constraints - one var.
+    self.assertEqual(reduce([
+        divides(v0, [[16]]),
+        divides(v0, [[8]]),
+    ]), [divides(v0, [[16, 8]])])
+
+    self.assertEqual(reduce([
+        divides(v0, [[16, 10]]),
+        divides(v0, [[8]]),
+    ]), [divides(v0, [[16, 10, 8]])])
+
+    self.assertEqual(reduce([
+        divides(v0, [[16, 10]]),
+        divides(v0, [[5],[8]]),
+    ]), [divides(v0, [[5], [8, 16, 10]])])
+
+   # Merging of constraints - multiple vars.
+    self.assertEqual(reduce([
+        divides(v0, [[16, 10]]),
+        divides(v0, [[5],[8]]),
+        divides(v1, [[1], [2, 4], [5, 10]]),
+        divides(v1, [[9], [20]]),
+    ]), [
+        divides(v0, [[5], [8, 16, 10]]),
+        divides(v1, [[1], [2, 4, 9], [5, 10, 20]]),
+    ])
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

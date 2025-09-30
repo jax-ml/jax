@@ -858,6 +858,54 @@ def saturate_distinct_from_splat(
   return equation_system & EquationSystem(constraints=new_constraints)
 
 
+def _merge_divides_dimensions(
+    a: tuple[tuple[int | ir.Value, ...], ...],
+    b: tuple[tuple[int | ir.Value, ...], ...],
+) -> tuple[tuple[int | ir.Value, ...], ...]:
+  """Merges two tuples of dimensions_to_tile into a single tuple.
+
+  Each element of the outer tuple is a sequence of values that must divide
+  the corresponding dimension in the original Divides constraints.
+
+  If the two outer tuples are of different lengths, the smaller tuple will be
+  merged with the tail of the longer one. This is the correct behavior for
+  tiling-related Divides constraints.
+  """
+  if len(a) >= len(b):
+    long = a
+    short = b
+  else:
+    long = b
+    short = a
+
+  len_diff = len(long) - len(short)
+  result = list(long[:len_diff])
+  for long_dims, short_dims in zip(long[len_diff:], short, strict=True):
+    # TODO(b/447079781): Canonicalize the dimensions.
+    result.append(long_dims + short_dims)
+  return tuple(result)
+
+
+def merge_divides_constraints(constraints: Sequence[Constraint]) -> list[Constraint]:
+  """Merges Divides constraints that can be merged."""
+  result: list[Constraint] = []
+  var_to_dims : dict[Variable, tuple[tuple[int | ir.Value, ...], ...]] = {}
+  for constraint in constraints:
+    match constraint:
+      case Divides(expr=Variable() as expr, dimensions_to_tile=dimensions_to_tile):
+        assert isinstance(expr, Variable)  # make pytype happy
+        prev = var_to_dims.get(expr)
+        if prev is None:
+          var_to_dims[expr] = dimensions_to_tile
+        else:
+          var_to_dims[expr] = _merge_divides_dimensions(prev, dimensions_to_tile)
+      case _:
+        result.append(constraint)
+  for expr, dimensions_to_tile in var_to_dims.items():
+    result.append(Divides(expr, dimensions_to_tile))
+  return result
+
+
 def _reduce_system_once(
     equation_system: EquationSystem,
 ) -> EquationSystem | Unsatisfiable | None:
@@ -902,9 +950,13 @@ def _reduce_system_once(
         changed |= new_constraint != constraint
         constraints.append(new_constraint)
 
+  new_constraints = merge_divides_constraints(constraints)
+  changed |= len(new_constraints) != len(constraints)
+  constraints = new_constraints
+
   # Shortcut for a specific case of unsatisfiability. This shortcut
   # drastically reduces the size of the search space.
-  if _has_relayout_of_non_splat_to_splat(equation_system.constraints):
+  if _has_relayout_of_non_splat_to_splat(constraints):
     return Unsatisfiable()
 
   if changed:
