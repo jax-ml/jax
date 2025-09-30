@@ -31,6 +31,7 @@ from jax._src.lib.mlir.dialects import vector
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import equations as eqns
 from jax.experimental.mosaic.gpu import fragmented_array as fa
+from jax.experimental.mosaic.gpu import launch_context as lc
 from jax.experimental.mosaic.gpu import layout_inference
 from jax.experimental.mosaic.gpu import layouts
 from jax.experimental.mosaic.gpu import tcgen05
@@ -1117,6 +1118,40 @@ class LayoutInferenceTest(parameterized.TestCase):
     strided_layout = layouts.to_layout_attr(mgpu.WGStridedFragLayout(shape, 1))
     self.checkOutLayouts(load, [strided_layout])
     self.checkInLayouts(store, [strided_layout])
+
+  @parameterized.parameters(
+      ((32, 256), ir.BF16Type, False, None, 16),
+      ((32, 256), ir.BF16Type, False, (2, 64), 128),
+      ((32, 256), ir.BF16Type, False, (2, 32), 64),
+      ((32, 256), ir.BF16Type, False, (2, 16), 32),
+      ((32, 256), ir.BF16Type, False, (2, 8), 16),
+      ((5, 32, 256), ir.BF16Type, False, (2, 64), 128),
+      ((5, 32, 256), ir.BF16Type, False, (2, 16), 32),
+      ((3, 32, 256), ir.Float8E4M3FNType, False, (2, 128), 128),
+      ((3, 32, 256), ir.Float8E4M3FNType, False, (2, 64), 64),
+      ((3, 32, 256), ir.Float8E4M3FNType, False, (2, 32), 32),
+      ((3, 32, 256), ir.Float8E4M3FNType, False, (2, 16), 16),
+      ((3, 32, 256), ir.BF16Type, True, (16, 32), 32),
+      ((3, 32, 256), ir.BF16Type, False, (64,), 128),
+      ((256,), ir.BF16Type, False, (2, 2), None),
+  )
+  def test_compute_swizzle(self, shape, type, transposed, tiling, want_swizzle):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(shape, type.get())
+      if transposed:
+        strides, offset = ref_ty.get_strides_and_offset()
+        strides[-1], strides[-2] = strides[-2], strides[-1]
+        layout = ir.StridedLayoutAttr.get(offset, strides)
+        ref_ty = ir.MemRefType.get(shape, type.get(), layout)
+
+      tile_transform = None if tiling is None else lc.TileTransform(tiling)
+
+      if want_swizzle is None:
+        with self.assertRaises(ValueError):
+          layout_inference._compute_swizzle(ref_ty, tile_transform)
+      else:
+        swizzle = layout_inference._compute_swizzle(ref_ty, tile_transform)
+        self.assertEqual(swizzle, mgpu.dialect.SwizzlingMode(want_swizzle))
 
 
 if __name__ == "__main__":

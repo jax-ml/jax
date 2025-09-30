@@ -33,9 +33,11 @@ from jax._src.lib.mlir.dialects import vector
 from . import equations as eqns
 from . import fragmented_array as fa
 from . import inference_utils
+from . import launch_context as lc
 from . import layouts as layouts_lib
 from . import tcgen05
 from . import utils
+import numpy as np
 
 
 class VariableType(enum.IntEnum):
@@ -1054,6 +1056,37 @@ def _ensure_right_number_of_tmem_layouts(
     raise ValueError(
         "Expected the same number of out_tmem_layouts as TMEM ref results."
     )
+
+
+def _compute_swizzle(
+    type: ir.Type, tile_transform: lc.TileTransform | None
+) -> mgpu.SwizzlingMode:
+  """Computes the swizzle mode given a tiling transform and a data type."""
+  if tile_transform is None:
+    # TODO(b/447079781): Revisit if this is the behavior we want.
+    return mgpu.SwizzlingMode.kNoSwizzle
+
+  if not ir.MemRefType.isinstance(type):
+    raise ValueError(f"Expected a MemRefType, got {type}.")
+  ref_ty = ir.MemRefType(type)
+  strides, _ = ref_ty.get_strides_and_offset()
+  tiling = tile_transform.tiling
+
+  if len(tiling) > len(strides):
+    raise ValueError(
+        f"The tile rank ({len(tiling)}) cannot be greater than the ref's rank"
+        f" ({len(strides)})."
+    )
+
+  minor_tiling = tiling[np.argmin(strides[-len(tiling):])]
+  swizzle = minor_tiling * utils.bytewidth(ref_ty.element_type)
+  assert swizzle in (
+      mgpu.SwizzlingMode.k128ByteSwizzle,
+      mgpu.SwizzlingMode.k64ByteSwizzle,
+      mgpu.SwizzlingMode.k32ByteSwizzle,
+      mgpu.SwizzlingMode.kNoSwizzle,
+  )
+  return mgpu.SwizzlingMode(swizzle)
 
 
 def assign_layouts(
