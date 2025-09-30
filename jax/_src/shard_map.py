@@ -930,7 +930,7 @@ def _shard_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes,
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   with _extend_axis_env(mesh, manual_axes), config._check_vma(check_vma):
     out_nodes_, tokens_out = mlir.call_lowering(
-        "shmap_body", jaxpr, None, sub_ctx, in_avals_,
+        "shmap_body", pe.close_jaxpr(jaxpr), None, sub_ctx, in_avals_,
         out_avals_, ctx.tokens_in, *in_nodes_,
         dim_var_values=ctx.dim_var_values,
         const_lowering=ctx.const_lowering,

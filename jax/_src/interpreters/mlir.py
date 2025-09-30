@@ -2563,7 +2563,7 @@ def check_backend_matches(inner_backend: str | None,
 
 def lower_called_computation(
     fn_name,
-    call_jaxpr: core.ClosedJaxpr | core.Jaxpr,
+    call_jaxpr: core.ClosedJaxpr,
     ctx: ModuleContext,
     num_const_args: int,
     in_avals,
@@ -2573,8 +2573,7 @@ def lower_called_computation(
     arg_names=None,
     result_names=None,
 ):
-  if isinstance(call_jaxpr, core.Jaxpr):
-    call_jaxpr = pe.close_jaxpr(call_jaxpr)
+  assert isinstance(call_jaxpr, core.ClosedJaxpr), type(call_jaxpr)
   check_backend_matches(backend, ctx.platforms)
   effects = list(tokens_in.effects())
   output_types = map(aval_to_ir_type, out_avals)
@@ -2592,18 +2591,15 @@ def lower_called_computation(
   return func_op, output_types, effects
 
 
-def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr | core.Jaxpr, backend,
+def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr, backend,
                   ctx: ModuleContext, in_avals,
                   out_avals, tokens_in, *args,
                   dim_var_values: Sequence[ir.Value],
                   const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
                   arg_names=None, result_names=None,
                   attributes: None | dict[str, Any] = None):
-  # TODO(necula): clean up the types
-  if isinstance(call_jaxpr, core.ClosedJaxpr):
-    const_args_and_avals = core.jaxpr_const_args(call_jaxpr.jaxpr)
-  else:
-    const_args_and_avals = core.jaxpr_const_args(call_jaxpr)
+  assert isinstance(call_jaxpr, core.ClosedJaxpr), type(call_jaxpr)
+  const_args_and_avals = core.jaxpr_const_args(call_jaxpr.jaxpr)
   const_args, const_avals = util.unzip2(const_args_and_avals)
   const_arg_values = [ir_constant(c, const_lowering=const_lowering, aval=aval)
                       for c, aval in const_args_and_avals]
@@ -2632,7 +2628,9 @@ def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr | core.Jaxpr, backend,
 
 def core_call_lowering(ctx: LoweringRuleContext,
                        *args, name, backend=None,
-                       call_jaxpr: core.ClosedJaxpr):
+                       call_jaxpr: core.ClosedJaxpr | core.Jaxpr):
+  if isinstance(call_jaxpr, core.Jaxpr):
+    call_jaxpr = pe.close_jaxpr(call_jaxpr)
   out_nodes, tokens = call_lowering(
       name, call_jaxpr, backend, ctx.module_context,
       ctx.avals_in, ctx.avals_out, ctx.tokens_in, *args,
