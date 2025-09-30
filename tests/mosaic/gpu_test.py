@@ -2639,7 +2639,7 @@ class AsyncCopyTest(TestCase):
       ctx.await_async_copy(0)
 
     def run_kernel(shape):
-      x = np.arange(np.prod(shape)).reshape(shape)
+      x = np.arange(np.prod(shape), dtype=np.int32).reshape(shape)
       _ = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, x)(x)
 
     with self.assertRaisesRegex(ValueError, "all GMEM strides except the last"):
