@@ -2565,15 +2565,19 @@ class FragmentedArray:
       utils.debug_print(fmt_str, *idx, val, uniform=False)
 
   def store_untiled(
-      self, ref: ir.Value, *, swizzle: int = 16, optimized: bool = True
+      self, ref: ir.Value | utils.MultimemRef, *, swizzle: int = 16, optimized: bool = True
   ) -> None:
     if not ir.MemRefType.isinstance(ref.type):
       raise ValueError(ref)
     match self.layout:
       case WGSplatFragLayout():
+        if isinstance(ref, utils.MultimemRef):
+          raise NotImplementedError("Splat layout does not support multimem")
         # All values are the same so swizzle does not affect anything here.
         self._store_untiled_splat(ref)
       case WGStridedFragLayout():
+        if isinstance(ref, utils.MultimemRef):
+          raise NotImplementedError("Strided layout does not support multimem")
         if swizzle != 16:
           raise NotImplementedError
         self._store_untiled_wg_strided(ref)
@@ -2647,16 +2651,21 @@ class FragmentedArray:
     for idx, reg in zip(idxs, self.registers.flat):
       vector.store(reg, ref_, idx)
 
-  def store_tiled(self, ref, swizzle: int | None, optimized: bool = True):
+  def store_tiled(self, ref: ir.Value | utils.MultimemRef, swizzle: int | None, optimized: bool = True):
     if not isinstance(self.layout, TiledLayout):
       raise NotImplementedError(self.layout)
     layout, shape = self.layout, self.shape
     # Note that the loop below will "race" for layouts that replicate data.
     # However, in that case all of the racing writes store the same data, which
     # is ok in the CUDA memory model.
-    stores = self.transfer_tiled(ref, swizzle, layout, shape, optimized)
-    for get, _update, _idx, ptr in stores:
-      llvm.store(get(self.registers), ptr)
+    if isinstance(ref, utils.MultimemRef):
+      stores = self.transfer_tiled(ref.ref, swizzle, layout, shape, optimized)
+      for get, _update, _idx, ptr in stores:
+        utils.multimem_store(ptr, get(self.registers))
+    else:
+      stores = self.transfer_tiled(ref, swizzle, layout, shape, optimized)
+      for get, _update, _idx, ptr in stores:
+        llvm.store(get(self.registers), ptr)
 
   @classmethod
   def load_tiled(

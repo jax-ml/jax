@@ -1455,14 +1455,24 @@ class LaunchContext:
   def to_remote_multicast(self, ref: ir.Value):
     i32 = ir.IntegerType.get_signless(32)
     self._ensure_nvshmem_decls()
-    if ir.MemRefType.isinstance(ref.type):
-      return self.to_remote_multicast(utils.memref_ptr(ref))
-    if ref.type != ir.Type.parse("!llvm.ptr"):
-      raise ValueError(f"Unsupported type for to_remote: {ref.type}")
-    world_team = arith.constant(i32, 0)
-    return utils.MulticastPointer(
-        llvm.call(ref.type, [world_team, ref], [], [], callee="nvshmemx_mc_ptr")
+    if not ir.MemRefType.isinstance(ref.type):
+      raise ValueError(f"Unsupported type for to_remote_multicast: {ref.type}")
+      # We replace the offset in the ref type by 0, because memref_ptr always
+      # folds the offset into the pointer.
+    ref_ty = ir.MemRefType(ref.type)
+    strides, _ = ref_ty.get_strides_and_offset()
+    result_type = ir.MemRefType.get(
+        ref_ty.shape,
+        ref_ty.element_type,
+        ir.StridedLayoutAttr.get(0, strides),
+        ref_ty.memory_space,
     )
+    world_team = arith.constant(i32, 0)
+    ptr = utils.memref_ptr(ref)
+    mc_ptr = llvm.call(
+        ptr.type, [world_team, ptr], [], [], callee="nvshmemx_mc_ptr",
+    )
+    return utils.MultimemRef(utils.ptr_as_memref(mc_ptr, result_type))
 
   def device_id(self) -> ir.Value:
     self._ensure_nvshmem_decls()

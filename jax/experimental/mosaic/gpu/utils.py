@@ -185,6 +185,46 @@ def debug_print(fmt, *args, uniform=True, scope=None):
 
 
 @dataclasses.dataclass(frozen=True)
+class MultimemRef:
+  ref: ir.Value
+
+  @property
+  def type(self) -> ir.Type:
+    return ir.MemRefType(self.ref.type)
+
+  def store(self, value: ir.Value, indices: Sequence[ir.Value]):
+    ptr = memref_ptr(memref_slice(self.ref, tuple(indices)))
+    multimem_store(ptr, value)
+
+
+def multimem_store(ptr: ir.Value, value: ir.Value):
+  i32 = ir.IntegerType.get_signless(32)
+  if (bw := bitwidth(value.type)) not in {32, 64, 128}:
+    raise ValueError("Only 32-, 64- and 128-bit stores are supported")
+  vector_length = bw // 32
+  value = bitcast(value, ir.VectorType.get((vector_length,), i32))
+  regs = [
+      llvm.extractelement(value, arith.constant(i32, i))
+      for i in range(vector_length)
+  ]
+  if vector_length == 1:
+    vec_ptx = "$1"
+    vec_mod = ""
+  else:
+    vec_ptx = f"{{{','.join(f'${i}' for i in range(1, vector_length + 1))}}}"
+    vec_mod = ".v" + str(vector_length)
+  # It's unclear to me why, but at least according to PTX docs, we have to use
+  # the floating-point instructions here to be able to store vectors.
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [ptr, *regs],
+      f"multimem.st.relaxed.sys.global{vec_mod}.f32 [$0], {vec_ptx};",
+      "l" + ",r" * len(regs),
+      has_side_effects=True,
+  )
+
+
+@dataclasses.dataclass(frozen=True)
 class ForResult:
   op: scf.ForOp
   results: tuple[Any, ...]
@@ -507,12 +547,15 @@ def _reshape(ref: ir.Value, sh0: list[int], sh1: list[int]):
   return ref
 
 
-def memref_reshape(ref: ir.Value, shape: tuple[int, ...]) -> ir.Value:
+def memref_reshape(ref: ir.Value | MultimemRef, shape: tuple[int, ...]) -> ir.Value:
   """Reshape by means of folding and unfolding.
 
   The use of memref fold/unfold may avoid some possible issues with
   strided memrefs.
   """
+
+  if isinstance(ref, MultimemRef):
+    return MultimemRef(memref_reshape(ref.ref, shape))
 
   ref_ty = ir.MemRefType(ref.type)
   if math.prod(ref_ty.shape) != math.prod(shape):
@@ -1739,40 +1782,3 @@ def query_cluster_cancel(result_ref) -> tuple[
   cancelled_launch = llvm.extractvalue(i1, desc, [3])
 
   return (*cta_ids, cancelled_launch)
-
-
-@dataclasses.dataclass(frozen=True)
-class MulticastPointer:
-  ptr: ir.Value
-
-  def store(self, value: ir.Value):
-    i32 = ir.IntegerType.get_signless(32)
-    if (bw := bitwidth(value.type)) not in {32, 64, 128}:
-      raise ValueError("Only 32-, 64- and 128-bit stores are supported")
-    vector_length = bw // 32
-    value = bitcast(value, ir.VectorType.get((vector_length,), i32))
-    regs = [
-        llvm.extractelement(value, arith.constant(i32, i))
-        for i in range(vector_length)
-    ]
-    if vector_length == 1:
-      vec_ptx = "$1"
-      vec_mod = ""
-    else:
-      vec_ptx = f"{{{','.join(f'${i}' for i in range(1, vector_length + 1))}}}"
-      vec_mod = ".v" + str(vector_length)
-    # It's unclear to me why, but at least according to PTX docs, we have to use
-    # the floating-point instructions here to be able to store vectors.
-    llvm.inline_asm(
-        ir.Type.parse("!llvm.void"),
-        [self.ptr, *regs],
-        f"multimem.st.relaxed.sys.global{vec_mod}.f32 [$0], {vec_ptx};",
-        "l" + ",r" * len(regs),
-        has_side_effects=True,
-    )
-
-  def getelementptr(self, index: ir.Value | int, element_type: ir.Type) -> ir.Value:
-    i64 = ir.IntegerType.get_signless(64)
-    if not isinstance(index, ir.Value):
-      index = arith.constant(i64, index)
-    return MulticastPointer(getelementptr(self.ptr, [index], element_type))
