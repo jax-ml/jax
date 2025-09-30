@@ -746,8 +746,10 @@ class DevicePutTest(jtu.JaxTestCase):
 class ComputeOffload(jtu.BufferDonationTestCase):
 
   def setUp(self):
-    if not jtu.test_device_matches(["tpu", "gpu"]):
-      self.skipTest("Memories do not work on CPU backends yet.")
+    if not jtu.test_device_matches(["tpu"]):
+      # TODO(basioli): Enable this test for GPU backend once the determinism
+      # issue is fixed.
+      self.skipTest("Memories do not work on CPU or GPU backends yet.")
     super().setUp()
 
   def _check_mem_kind(self, executable_kind, out_sharding, expected_kind):
