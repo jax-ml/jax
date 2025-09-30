@@ -34,7 +34,6 @@ from jax._src.interpreters.mlir import (
   aval_to_ir_types as aval_to_ir_types,
   core_call_lowering as core_call_lowering,
   dense_bool_elements as dense_bool_elements,
-  dense_bool_array as dense_bool_array,
   dense_int_array as dense_int_array,
   dense_int_elements as dense_int_elements,
   dtype_to_ir_type as dtype_to_ir_type,
@@ -51,7 +50,6 @@ from jax._src.interpreters.mlir import (
   lower_fun as lower_fun,
   lower_jaxpr_to_fun as lower_jaxpr_to_fun,
   lower_jaxpr_to_module as lower_jaxpr_to_module,
-  lowerable_effects as lowerable_effects,
   make_ir_context as make_ir_context,
   merge_mlir_modules as merge_mlir_modules,
   module_to_bytecode as module_to_bytecode,
@@ -69,6 +67,7 @@ from jax._src.sharding_impls import (
   SPMDAxisContext as SPMDAxisContext,
   ShardingContext as ShardingContext,
 )
+from jax._src.effects import lowerable_effects as lowerable_effects
 
 
 # TODO(dsuo): Temporarily maintain symbols related to callback lowering for sake
