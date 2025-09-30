@@ -1702,6 +1702,13 @@ FailureOr<Value> canonicalize_tpu_extf(const CanonicalizeContext &ctx,
     return raw_op.getResult(0);
   }
 
+  if (isa<Float8E5M2Type, Float8E4M3FNType>(dst_elem_ty) &&
+      isa<Float4E2M1FNType>(src_elem_ty) && ctx.hardware_generation >= 7) {
+    // We have low-level optimized code for f4e2m1fn -> f8e4m3fn and f8e5m2
+    // casts on TPU7x+.
+    return raw_op.getResult(0);
+  }
+
   if (!ctx.compatibility_mode) {
     return op.emitOpError(
         "Enable compatibility mode to support extension to non-f32.");
