@@ -463,34 +463,81 @@ class Distinct:
     return f"{self.lhs} ≠ {self.rhs}"
 
 
-Constraint = Relayout | Distinct | IsTransferable
+@dataclasses.dataclass(frozen=True)
+class Transposed:
+  """States that the lhs SMEM tiling is the transpose of the rhs SMEM tiling.
+
+  Only 2D tilings can be transposed.
+  """
+  lhs: Expression
+  rhs: Expression
+
+  def holds(self) -> bool | None:
+    """Whether the transpose constraint holds.
+
+    Returns `None` if the constraint can't be checked.
+    """
+    if not isinstance(self.lhs, SMEMTiling):
+      return None
+    if not isinstance(self.rhs, SMEMTiling):
+      return None
+    if self.lhs.value is None and self.rhs.value is None:
+      return True
+    if self.lhs.value is None or self.rhs.value is None:
+      return False
+
+    lhs_tiling = self.lhs.value.tiling
+    rhs_tiling = self.rhs.value.tiling
+
+    if len(lhs_tiling) != len(rhs_tiling):
+      return False
+    if len(lhs_tiling) != 2:
+      raise NotImplementedError(
+          f"Only 2D tilings are supported, got {len(lhs_tiling)}"
+      )
+
+    return lhs_tiling == rhs_tiling[::-1]
+
+  def __str__(self):
+    return f"Transposed({self.lhs} ⟶ {self.rhs})"
+
+
+Constraint = Relayout | Distinct | IsTransferable | Transposed
 
 
 def reduce_constraint(
     constraint: Constraint, assignments: dict[Variable, Constant]
 ) -> Constraint | Tautological | Unsatisfiable:
   """Reduces a constraint."""
-  match constraint:
-    case Relayout(source=lhs, target=rhs):
-      ...
-    case Distinct(lhs=lhs, rhs=rhs):
-      ...
-    case IsTransferable(source=lhs, target=rhs, shape=_):
-      ...
-    case _ as never:
-      assert_never(never)
-
-  lhs_red = reduce_expression(lhs, assignments)
-  rhs_red = reduce_expression(rhs, assignments)
-
-  if isinstance(lhs_red, Unsatisfiable) or isinstance(rhs_red, Unsatisfiable):
-    return Unsatisfiable()
 
   new_constraint: Constraint
-  if isinstance(constraint, IsTransferable):
-    new_constraint = IsTransferable(lhs_red, rhs_red, constraint.shape)
-  else:
-    new_constraint = type(constraint)(lhs_red, rhs_red)
+  match constraint:
+    case Relayout(source=source, target=target):
+      source_red = reduce_expression(source, assignments)
+      target_red = reduce_expression(target, assignments)
+      if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = Relayout(source_red, target_red)
+    case Distinct(lhs=lhs, rhs=rhs):
+      lhs_red = reduce_expression(lhs, assignments)
+      rhs_red = reduce_expression(rhs, assignments)
+      if isinstance(lhs_red, Unsatisfiable) or isinstance(rhs_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = Distinct(lhs_red, rhs_red)
+    case IsTransferable(source=source, target=target, shape=shape):
+      source_red = reduce_expression(source, assignments)
+      target_red = reduce_expression(target, assignments)
+      if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = IsTransferable(source_red, target_red, shape)
+    case Transposed(lhs=lhs, rhs=rhs):
+      lhs_red = reduce_expression(lhs, assignments)
+      rhs_red = reduce_expression(rhs, assignments)
+      if isinstance(lhs_red, Unsatisfiable) or isinstance(rhs_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = Transposed(lhs_red, rhs_red)
+    case _ as never:
+      assert_never(never)
 
   constraint_holds = new_constraint.holds()
   if constraint_holds is None:
@@ -600,6 +647,9 @@ class EquationSystem:
         case IsTransferable(source=source, target=target, shape=_):
           extract_variables(source)
           extract_variables(target)
+        case Transposed(lhs=lhs, rhs=rhs):
+          extract_variables(lhs)
+          extract_variables(rhs)
         case _ as never:
           assert_never(never)
     return free_variables
