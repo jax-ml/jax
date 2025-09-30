@@ -123,8 +123,10 @@ class ErrorEffect(effects.Effect):
     unpack = lambda x: (str(x.error_type), shape_dtypes(x))
     return (unpack(self) < unpack(other))
 
-effects.control_flow_allowed_effects.add_type(ErrorEffect)
 effects.lowerable_effects.add_type(ErrorEffect)
+effects.control_flow_allowed_effects.add_type(ErrorEffect)
+effects.custom_derivatives_allowed_effects.add_type(ErrorEffect)
+effects.remat_allowed_effects.add_type(ErrorEffect)
 
 class DivisionByZeroError(JaxException):
 
