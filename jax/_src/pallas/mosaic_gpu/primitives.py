@@ -330,14 +330,14 @@ def copy_smem_to_gmem(
       ``None``, the copy is always performed.
     commit_group: If ``True``, this and any previously uncommitted copies are
       committed to a group and can be awaited jointly via
-      :func:`jax.experimental.mosaic.gpu.wait_smem_to_gmem`.
+      :func:`jax.experimental.pallas.mosaic_gpu.wait_smem_to_gmem`.
     reduction_op: If set, perform the specified reduction operation when storing
       to GMEM. For example, using ``"add"`` is conceptually equivalent to
       doing ``src += dst``.
 
   See also:
-    :func:`jax.experimental.mosaic.gpu.wait_smem_to_gmem`
-    :func:`jax.experimental.mosaic.gpu.commit_smem`
+    :func:`jax.experimental.pallas.mosaic_gpu.wait_smem_to_gmem`
+    :func:`jax.experimental.pallas.mosaic_gpu.commit_smem`
   """
   src, src_transforms = state_primitives.get_ref_and_transforms(
       src, None, "copy_smem_to_gmem"
@@ -617,8 +617,8 @@ def copy_gmem_to_smem(
      collective_axes to also be specified.
 
   See also:
-    :func:`jax.experimental.mosaic.gpu.barrier_arrive`
-    :func:`jax.experimental.mosaic.gpu.barrier_wait`
+    :func:`jax.experimental.pallas.mosaic_gpu.barrier_arrive`
+    :func:`jax.experimental.pallas.mosaic_gpu.barrier_wait`
   """
   src, src_transforms = state_primitives.get_ref_and_transforms(
       src, None, "copy_gmem_to_smem"
@@ -1373,9 +1373,10 @@ def tcgen05_mma(acc: _Ref,
                 collective_axis: str | None = None):
   """Asynchronous matrix-multiply accumulate for TensorCore gen 5 (Blackwell).
 
-  If run in collective mode, `acc`, `a` (LHS), and `b` (RHS) should correspond
-  to half of the total inputs to the MMA, where `acc` and `a` (LHS) are split
-  in half along the rows and `b` (RHS) is split along the columns like so::
+  If run in collective mode, ``acc``, ``a`` (LHS), and ``b`` (RHS) should
+  correspond to half of the total inputs to the MMA, where ``acc`` and ``a``
+  (LHS) are split in half along the rows and ``b`` (RHS) is split along the
+  columns like so::
 
     -----------    -----------   -----------
     |  ACC1   |    |  LHS1   |   |    |    |
@@ -1383,7 +1384,7 @@ def tcgen05_mma(acc: _Ref,
     |  ACC2   |    |  LHS2   |   |    |    |
     -----------    -----------   -----------
 
-  To use the block-scaled matrix-multiply, provide `a_scale` and `b_scale`
+  To use the block-scaled matrix-multiply, provide ``a_scale`` and ``b_scale``
   operands (they must be both present or both unspecified).
 
   Args:
@@ -1393,7 +1394,7 @@ def tcgen05_mma(acc: _Ref,
     barrier: Optional barrier Ref for synchronizing with the tensor core.
       Must have orders_tensor_core set to True. If not specified, the MMA
       completion should be explicitly observed by calling
-      `tcgen05_commit_arrive`
+      :func:`jax.experimental.pallas.mosaic_gpu.tcgen05_commit_arrive`
     a_scale: An optional scale for the ``a`` operand. Must be a TMEM Ref if present.
     b_scale: An optional scale for the ``b`` operand. Must be a TMEM Ref if present.
     a_sparse_metadata: An optional sparse metadata for the ``a`` operand.
@@ -1771,7 +1772,7 @@ tcgen05_commit_arrive_p.multiple_results = True
 
 def tcgen05_commit_arrive(barrier: _Ref,
                           collective_axis: str | None = None):
-  """Arrive on a Barrier to track completion of a preceding `tcgen05_mma` call.
+  """Tracks completion of a preceding ``tcgen05_mma`` call.
 
   Args:
     barrier: Barrier Ref for synchronizing with the tensor core. Must have
@@ -1779,6 +1780,9 @@ def tcgen05_commit_arrive(barrier: _Ref,
     collective_axis: The name of the cluster axis along which the
       MMA was performed if it was collective. The cluster axis should have a
       size of exactly 2, and must be on the minormost cluster axis.
+
+  See also:
+    :func:`jax.experimental.pallas.mosaic_gpu.tcgen05_mma`
   """
   if isinstance(barrier, pallas_core.TransformedRef):
     barrier_transforms_leaves, barrier_transforms_tree = jax.tree.flatten(
@@ -3308,6 +3312,9 @@ def try_cluster_cancel(result_ref: _Ref, barrier: _Ref) -> None:
   Args:
     result_ref: An SMEM ref where the 16-byte result will be stored.
     barrier: A barrier used to coordinate the completion of the query.
+
+  See also:
+    :func:`jax.experimental.pallas.mosaic_gpu.query_cluster_cancel`
   """
   if isinstance(result_ref, pallas_core.TransformedRef):
     result_transforms_leaves, result_transforms_tree = jax.tree.flatten(
@@ -3396,10 +3403,10 @@ def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext,
 def query_cluster_cancel(
     result_ref: _Ref,
     grid_names: Sequence[Hashable]) -> tuple[tuple[jax.Array, ...], jax.Array]:
-  """Decodes the result of a `try_cluster_cancel` operation.
+  """Decodes the result of a ``try_cluster_cancel`` operation.
 
   It interprets the 16-byte opaque response written to shared memory by a
-  completed `try_cluster_cancel` call to determine if a new work unit was
+  completed ``try_cluster_cancel`` call to determine if a new work unit was
   successfully claimed.
 
   Args:
@@ -3410,6 +3417,9 @@ def query_cluster_cancel(
     A tuple containing the decoded response:
       - the grid indices for the requested axis names.
       - A boolean indicating if the cancellation was successful.
+
+  See also:
+    :func:`jax.experimental.pallas.mosaic_gpu.try_cluster_cancel`
   """
   if isinstance(result_ref, pallas_core.TransformedRef):
     result_transforms_leaves, result_transforms_tree = jax.tree.flatten(

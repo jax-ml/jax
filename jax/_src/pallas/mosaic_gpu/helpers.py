@@ -72,7 +72,7 @@ def nd_loop(
 def nd_loop(grid, *, collective_axes, tiling=None, init_carry=None):
   """A loop over a multi-dimensional grid partitioned along the given axes.
 
-  The body of the loop a single argument `loop_info` which is an NDLoopInfo
+  The body of the loop a single argument ``loop_info`` which is an NDLoopInfo
   object containing index and iteration information. However if a carry is
   specified, the body will expect a second keyword argument `carry` containing
   the loop carry.
@@ -81,14 +81,21 @@ def nd_loop(grid, *, collective_axes, tiling=None, init_carry=None):
   equal to 4 and the grid is (2, 3), the implementation would produce the
   following iteration order
 
-      loop step    index    axis index
-
-          0        (0, 0)       0
-          1        (0, 1)       1
-          2        (0, 2)       2
-          3        (1, 0)       3
-          4        (1, 1)       0
-          5        (1, 2)       1
+  +-----------+--------+------------+
+  | loop step | index  | axis index |
+  +===========+========+============+
+  |     0     | (0, 0) |     0      |
+  +-----------+--------+------------+
+  |     1     | (0, 1) |     1      |
+  +-----------+--------+------------+
+  |     2     | (0, 2) |     2      |
+  +-----------+--------+------------+
+  |     3     | (1, 0) |     3      |
+  +-----------+--------+------------+
+  |     4     | (1, 1) |     0      |
+  +-----------+--------+------------+
+  |     5     | (1, 2) |     1      |
+  +-----------+--------+------------+
 
   which comes from partitioning the flat iteration space into chunks in an
   interleaved fashion wrt the ``"x"`` axis index.
@@ -97,12 +104,17 @@ def nd_loop(grid, *, collective_axes, tiling=None, init_carry=None):
   by the axis size of ``"x"``, and thus for some ``"x"`` axis indices the
   loop will do one iteration less.
 
-      axis index       indices
-
-          0         (0, 0), (1, 1)
-          1         (0, 1), (1, 2)
-          2         (0, 2)
-          3         (1, 0)
+  +------------+------------------+
+  | axis index | indices          |
+  +============+==================+
+  |     0      | (0, 0), (1, 1)   |
+  +------------+------------------+
+  |     1      | (0, 1), (1, 2)   |
+  +------------+------------------+
+  |     2      | (0, 2)           |
+  +------------+------------------+
+  |     3      | (1, 0)           |
+  +------------+------------------+
 
   If ``init_carry`` is passed then ``nd_loop()`` will expect the body to
   take and return the carry. If it's ``None`` then no carry argument is

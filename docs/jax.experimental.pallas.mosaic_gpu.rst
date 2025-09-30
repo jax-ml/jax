@@ -83,6 +83,8 @@ Blackwell-specific functions
    async_store_tmem
    wait_load_tmem
    commit_tmem
+   try_cluster_cancel
+   query_cluster_cancel
 
 Aliases
 -------
