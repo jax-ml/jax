@@ -12,8 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-_deprecations = {  # pylint: disable=g-statement-before-imports
-    # Deprecated March 26 2025.
+from jax._src import deprecations as _deps
+
+_deps.warn(
+    'jax-lib-module',
+    (
+        'jax.lib.xla_extension module will be removed in JAX v0.9.0;'
+        ' all its APIs were deprecated and removed by JAX v0.8.0.'
+    ),
+    stacklevel=4
+)
+
+_deprecations = {
+    # Finalized in JAX v0.8.0; remove these messages in v0.9.0.
     "ifrt_proxy": (
         "jax.lib.xla_extension.ifrt_proxy is deprecated.",
         None,
@@ -45,6 +56,5 @@ _deprecations = {  # pylint: disable=g-statement-before-imports
     ),
 }
 
-from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-__getattr__ = _deprecation_getattr(__name__, _deprecations)
-del _deprecation_getattr
+__getattr__ = _deps.deprecation_getattr(__name__, _deprecations)
+del _deps

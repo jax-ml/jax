@@ -12,10 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa: F401
+from jax._src import deprecations as _deps
 
-_deprecations = {  # pylint: disable=g-statement-before-imports
-    # Added July 31, 2024
+_deps.warn(
+    'jax-lib-module',
+    (
+        'jax.lib.xla_bridge module will be removed in JAX v0.9.0;'
+        ' all its APIs were deprecated and removed by JAX v0.8.0.'
+    ),
+    stacklevel=4
+)
+
+_deprecations = {
+    # Finalized in JAX v0.8.0; remove these messages in v0.9.0.
     "get_backend": (
         (
             "jax.lib.xla_bridge.get_backend is deprecated and will be removed"
@@ -23,7 +32,6 @@ _deprecations = {  # pylint: disable=g-statement-before-imports
         ),
         None,
     ),
-    # Added for JAX v0.7.0
     "get_compile_options": (
         (
             "jax.lib.xla_bridge.get_compile_options is deprecated in JAX v0.7.0"
@@ -34,6 +42,5 @@ _deprecations = {  # pylint: disable=g-statement-before-imports
     ),
 }
 
-from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-__getattr__ = _deprecation_getattr(__name__, _deprecations)
-del _deprecation_getattr
+__getattr__ = _deps.deprecation_getattr(__name__, _deprecations)
+del _deps

@@ -16,8 +16,11 @@
 from jax._src.lib import (
   version_str as __version__,
 )
-from jax.lib import (
-  xla_bridge as xla_bridge,
-  xla_client as xla_client,
-  xla_extension as xla_extension,
-)
+
+# Dynamically load submodules because they warn on import.
+# TODO(jakevdp): remove this in JAX v0.9.0.
+def __getattr__(attr):
+  if attr in {'xla_bridge', 'xla_client', 'xla_extension'}:
+    import importlib
+    return importlib.import_module(f'jax.lib.{attr}')
+  raise AttributeError(f"module 'jax.lib' has no attribute {attr!r}")
