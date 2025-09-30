@@ -370,7 +370,7 @@ def MosaicGPU_WGMMASupportedType : AnyTypeOf<[F16, BF16, F32],
     "A type supported by the WGMMA operation">;
 
 def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
-    [InferTypeOpInterface]> {
+    [SameOperandsAndResultType]> {
   let summary = "Casts a vector to a new layout.";
   let description = [{Casts a vector value to a new strided or tiled layout.}];
   let arguments = (ins
@@ -386,28 +386,10 @@ def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
   let results = (outs AnyVectorOfAnyRank);
 
   let assemblyFormat = "`x` `(` $x `:` type($x) `)` attr-dict";
-
-  let extraClassDeclaration = [{
-    static llvm::LogicalResult inferReturnTypes(
-        mlir::MLIRContext *,
-        std::optional<mlir::Location> location,
-        mlir::ValueRange operands,
-        mlir::DictionaryAttr attributes,
-        mlir::OpaqueProperties properties,
-        mlir::RegionRange regions,
-        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
-      if (operands.empty()) {
-        return ::mlir::emitOptionalError(
-          location, "expected non-empty operands");
-      }
-      inferredReturnTypes.assign({operands[0].getType()});
-      return ::mlir::success();
-    }
-  }];
 }
 
 def MosaicGPU_TmemLayoutCastOp : Op<MosaicGPU_Dialect, "tmem_layout_cast",
-    [InferTypeOpInterface]> {
+    [SameOperandsAndResultType]> {
   let summary = "Casts a TMEM ref to a new TMEM layout.";
   let arguments = (ins
     MemRefRankOf<[AnyType], [2]>:$ref,
@@ -417,24 +399,6 @@ def MosaicGPU_TmemLayoutCastOp : Op<MosaicGPU_Dialect, "tmem_layout_cast",
   );
 
   let results = (outs MemRefRankOf<[AnyType], [2]>);
-
-  let extraClassDeclaration = [{
-    static llvm::LogicalResult inferReturnTypes(
-        mlir::MLIRContext *,
-        std::optional<mlir::Location> location,
-        mlir::ValueRange operands,
-        mlir::DictionaryAttr attributes,
-        mlir::OpaqueProperties properties,
-        mlir::RegionRange regions,
-        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
-      if (operands.empty()) {
-        return ::mlir::emitOptionalError(
-          location, "expected non-empty operands");
-      }
-      inferredReturnTypes.assign({operands[0].getType()});
-      return ::mlir::success();
-    }
-  }];
 
   let hasVerifier = 1;
 }

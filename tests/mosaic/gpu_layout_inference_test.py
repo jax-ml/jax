@@ -564,7 +564,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       lhs = layout_cast(lhs, splat_layout)
       rhs = layout_cast(rhs, splat_layout)
       add0 = arith.AddFOp(lhs, rhs)
-      cast = layout_cast(add0, strided_layout)
+      cast = layout_cast(add0.result, strided_layout)
       add1 = arith.AddFOp(cast, cast)
 
     mgpu.infer_layout(self.module)
@@ -625,7 +625,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     layout = mgpu.WGMMA_ROW_LAYOUT
     with ir.InsertionPoint(self.module.body):
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
-      lc = layout_cast(x, layouts.to_layout_attr(layout)).owner.opview
+      lc = layout_cast(x.result, layouts.to_layout_attr(layout)).owner.opview
 
     ctx = layout_inference.DerivationContext()
     x_system, x_mapping, _ = _undef_equation_system(ctx, x)
@@ -1098,7 +1098,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       c_044 = arith.constant(vector_ty, ir.DenseElementsAttr.get_splat(vector_ty,  ir.FloatAttr.get(f32, 0.044715)))
 
       zero = mgpu.utils.c(0, ir.IntegerType.get_signless(32))
-      memref = llvm.UndefOp(memref_ty)
+      memref = llvm.mlir_undef(memref_ty)
       load = vector.LoadOp(vector_ty, memref, [zero])
       x = load.result
       x2 = arith.mulf(x, x)
