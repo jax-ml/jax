@@ -1010,6 +1010,88 @@ TODO
 
 TODO
 
+## Cluster launch control
+
+[Cluster launch control](https://docs.nvidia.com/cutlass/media/docs/cpp/blackwell_cluster_launch_control.html#blackwell-cluster-launch-control)
+is a feature introduced in Blackwell GPUs (SM100A+) that enables work stealing
+or dynamic scheduling of the CUDA grid. This allows an SM
+(or cluster of SMs) that has finished its work to cancel the launch of block
+intended for another SM and execute the work for itself. The end result is
+that load balancing across SMs is improved and you should see better utilization
+of the GPU towards the tail end of a kernel. Mosaic GPU exposes both the
+low-level cluster launch control commands as well as a helper API that abstracts
+away most of the implementation details.
+
+### Directly using the cluster launch control API
+
+Mosaic GPU directly exposes the low-level cluster launch control API as two
+functions: {py:func}`plgpu.try_cluster_cancel <jax.experimental.pallas.mosaic_gpu.try_cluster_cancel>`
+and {py:func}`plgpu.query_cluster_cancel <jax.experimental.pallas.mosaic_gpu.query_cluster_cancel>`.
+`try_cluster_cancel` is an asynchronous operation that will atomically attempt
+to cancel the launch of an available block, and place the result in a Ref.
+The result Ref should be a scratch Ref allocated via
+`plgpu.TryClusterCancelResult()` (which under the hood is a 16-byte SMEM Ref).
+ `query_cluster_cancel` will read the result and return two
+values: a tuple containing the indices of the grid axes that were requested,
+and a boolean indicating whether the cancellation was successful. If
+`query_cluster_cancel` was not successful, then the result of the grid indices
+is undefined and should not be used.
+
+When used with clusters, all blocks within the same cluster will receive the
+same result from `query_cluster_cancel`.
+
+The following example demonstrates how to call these with a kernel:
+```python
+@functools.partial(
+  plgpu.kernel,
+  grid=grid,
+  grid_names=grid_names,
+  scratch_shapes=(
+    plgpu.TryCancelResultRef(),
+    plgpu.Barrier()
+  )
+)
+def kernel(result_ref, barrier_ref):
+  plgpu.try_cluster_cancel(result_ref, barrier_ref)
+  # ... do work
+  plgpu.barrier_wait(barrier_ref)
+  grid_idxs, success = plgpu.query_cluster_cancel(result_ref, grid_names)
+```
+```{warning}
+It is important to ensure proper synchronization on all threads throughout the
+cluster. In most cases when canceling multiple blocks, you may need to
+double-buffer the result and barrier to ensure no race conditions occur. For
+this reason we recommend using the {py:func}`plgpu.dynamic_scheduling_loop <jax.experimental.pallas.mosaic_gpu.dynamic_scheduling_loop>`
+helper function.
+```
+
+### Using the `plgpu.dynamic_scheduling_loop` helper
+
+A common pattern when using dynamic work scheduling is to continuously poll
+and execute work within the kernel body until there are no more work left, and
+then exit the kernel. The {py:func}`plgpu.dynamic_scheduling_loop <jax.experimental.pallas.mosaic_gpu.dynamic_scheduling_loop>`
+helper function implements exactly this pattern.
+
+```python
+@plgpu.dynamic_scheduling_loop(
+  grid_names=grid_names,
+  thread_axis=thread_name  # Required if using multiple threads in a kernel.
+)
+def body(loop_info):
+  grid_indices = loop_info.index
+  # ... do work
+```
+
+When using this pattern, the kernel should be instantiated with a grid
+equal to the logical amount of work to be done (as opposed to a persistent
+kernel where the grid is set to the number of cores). Each core running
+this loop will continuously query the next available block of work and
+the loop will terminate when the entire grid has been scheduled.
+The signature of the body function is identical to the one used in
+{py:func}`plgpu.nd_loop <jax.experimental.pallas.mosaic_gpu.nd_loop>` (which
+is used for normal persistent kernels) and takes in a `loop_info` dataclass
+that contains iteration info, and optionally supports carry values.
+
 ## Asynchronous copies
 
 TODO
