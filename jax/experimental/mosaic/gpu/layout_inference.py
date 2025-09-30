@@ -1270,6 +1270,8 @@ def _drop_smem(
         return True
       case eqns.IsTransferable(source=source, target=target):
         return is_smem(source) or is_smem(target)
+      case eqns.Divides():
+        return True
       case eqns.Transposed():
         return True
       case eqns.Variable(key=key):

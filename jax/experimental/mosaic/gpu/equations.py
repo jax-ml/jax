@@ -22,11 +22,14 @@ import dataclasses
 import math
 from typing import Any, Callable, assert_never, final
 
+from jax._src.lib.mlir import ir
+
 from . import fragmented_array as fa
 from . import launch_context as lc
 from . import layouts as layouts_lib
 from . import inference_utils
 from . import tcgen05
+from . import utils
 
 
 VariableKey = Any
@@ -502,7 +505,67 @@ class Transposed:
     return f"Transposed({self.lhs} ⟶ {self.rhs})"
 
 
-Constraint = Relayout | Distinct | IsTransferable | Transposed
+@dataclasses.dataclass(frozen=True)
+class Divides:
+  """States that the `expr` tile divides the tail-end of the given dimensions.
+
+  `dimensions_to_tile` is a tuple of dimensions tuples, ordered from major to
+  minor. Each dimension tuple may contain ints and ir.Values that need to be
+  evenly divided by the corresponding tile size. Only the tiled dimensions
+  require checking.
+
+  Example:
+
+  expr: SMEMTiling(lc.TileTransform(tiling=(4, 8)))
+    => tiling[0] == 4 and tiling[1] == 8
+  dimensions_to_tile: (
+      (5, 15, ir_const(16),),  # Ignored, because the tile only has 2 dimensions
+      (4, 4, 8),               # Holds, because tiling[0] divides all elements
+      (16, ir_const(8), 4),    # Does not hold, because 4 % tiling[1] != 0
+  )
+
+  """
+  expr: Expression
+  dimensions_to_tile: tuple[tuple[int | ir.Value, ...], ...]
+
+  def holds(self) -> bool | None:
+    """Whether the divisibility constraint holds.
+
+    Returns `None` if the constraint can't be checked.
+    """
+    if not isinstance(self.expr, SMEMTiling):
+      return None
+    if self.expr.value is None:
+      # If there is no tiling, then it trivially holds.
+      return True
+
+    tiling = self.expr.value.tiling
+    num_tiled_axes = len(tiling)
+
+    if num_tiled_axes > len(self.dimensions_to_tile):
+      # The tiling's size must be smaller or equal to the number of dimensions.
+      return False
+
+    last_n_dims = self.dimensions_to_tile[-num_tiled_axes:]
+
+    for tile, sizes in zip(tiling, last_n_dims, strict=True):
+      if tile == 1:
+        continue
+
+      for size in sizes:
+        if isinstance(size, ir.Value):
+          if not utils.is_known_divisible(size, tile):
+            return False
+        else:
+          if size % tile != 0:
+            return False
+    return True
+
+  def __str__(self):
+    return f"{self.dimensions_to_tile} % {self.expr} == 0"
+
+
+Constraint = Relayout | Distinct | IsTransferable | Transposed | Divides
 
 
 def reduce_constraint(
@@ -536,6 +599,11 @@ def reduce_constraint(
       if isinstance(lhs_red, Unsatisfiable) or isinstance(rhs_red, Unsatisfiable):
         return Unsatisfiable()
       new_constraint = Transposed(lhs_red, rhs_red)
+    case Divides(expr=expr, dimensions_to_tile=dimensions):
+      expr_red = reduce_expression(expr, assignments)
+      if isinstance(expr_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = Divides(expr_red, dimensions)
     case _ as never:
       assert_never(never)
 
@@ -650,6 +718,8 @@ class EquationSystem:
         case Transposed(lhs=lhs, rhs=rhs):
           extract_variables(lhs)
           extract_variables(rhs)
+        case Divides(expr=expr):
+          extract_variables(expr)
         case _ as never:
           assert_never(never)
     return free_variables

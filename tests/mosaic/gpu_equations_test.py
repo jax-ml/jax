@@ -17,6 +17,10 @@
 from absl.testing import parameterized
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.interpreters import mlir as mlir_interpreter
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import llvm
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import equations
 from jax.experimental.mosaic.gpu import launch_context as lc
@@ -26,6 +30,21 @@ config.parse_flags_with_absl()
 RL = equations.RegisterLayout
 Eq = equations.Equation
 V = equations.Variable
+
+
+def _make_ir_context():
+  context = ir.Context()
+  context.append_dialect_registry(mlir_interpreter.upstream_dialects)
+  context.load_all_available_dialects()
+  mgpu.dialect.register_dialect(context)
+  return context
+
+
+def nested_tuple(nested_list):
+  """Recursively convert a nested list to a nested tuple."""
+  if isinstance(nested_list, list):
+    return tuple(nested_tuple(x) for x in nested_list)
+  return nested_list
 
 
 class EquationSystemTest(parameterized.TestCase):
@@ -453,6 +472,37 @@ class EquationSystemTest(parameterized.TestCase):
     self.assertTrue(transposed((1, 2), (2, 1)).holds())
     self.assertTrue(transposed((2, 2), (2, 2)).holds())
     self.assertFalse(transposed((2, 3), (2, 2)).holds())
+
+  def test_divides_constraint(self):
+    def divides(tiling, dims):
+      tiling = None if tiling is None else lc.TileTransform(tiling)
+      return equations.Divides(equations.SMEMTiling(tiling), nested_tuple(dims))
+
+    with self.subTest("empty_tiling"):
+      self.assertTrue(divides(None, []).holds())
+      self.assertTrue(divides(None, [[5, 15], [16]]).holds())
+
+    with self.subTest("static_dimensions"):
+      self.assertTrue(divides((5, 8), [[3], [5], [8]]).holds())
+      self.assertTrue(divides((5, 8), [[3], [5, 10], [8, 0, 16]]).holds())
+      self.assertFalse(divides((1, 3, 5, 8), [[3], [5, 10], [8, 0, 16]]).holds())
+
+    self.enter_context(_make_ir_context())
+    self.enter_context(ir.Location.unknown())
+    ir.Module.create()
+
+    c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
+
+    with self.subTest("dynamic_dimensions_known_divisible"):
+      self.assertTrue(divides((5, 8), [[c(3)], [c(5)], [c(8)]]).holds())
+      self.assertTrue(divides((5, 8), [[c(3)], [c(5), 10], [c(8), 16]]).holds())
+      self.assertTrue(divides((5, 8), [[c(3)], [5, c(10)], [8]]).holds())
+      self.assertFalse(divides((5, 8), [[c(3)], [5, c(4)], [8]]).holds())
+
+    with self.subTest("dynamic_dimensions_not_known_divisible"):
+      u = llvm.mlir_undef(ir.IntegerType.get_signless(32))
+      self.assertTrue(divides((5, 8), [[u], [c(5)], [c(8)]]).holds())
+      self.assertFalse(divides((5, 8), [[10], [8, u]]).holds())
 
 
 if __name__ == "__main__":
