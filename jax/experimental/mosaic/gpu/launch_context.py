@@ -1394,7 +1394,6 @@ class LaunchContext:
         has_side_effects=True,
     )
 
-
   def await_async_copy(
       self, allow_groups: int, await_read_only: bool = False,
       scope: utils.ThreadSubset = utils.ThreadSubset.WARPGROUP,
@@ -1424,6 +1423,12 @@ class LaunchContext:
           ir.Type.parse("!llvm.func<!llvm.ptr(!llvm.ptr,i32)>")
       )
       llvm.LLVMFuncOp("nvshmem_ptr", nvshmem_ptr_type, sym_visibility="private")
+      nvshmemx_mc_ptr_type = ir.TypeAttr.get(
+          ir.Type.parse("!llvm.func<!llvm.ptr(i32,!llvm.ptr)>")
+      )
+      llvm.LLVMFuncOp(
+          "nvshmemx_mc_ptr", nvshmemx_mc_ptr_type, sym_visibility="private"
+      )
 
   def to_remote(self, ref: ir.Value, peer: ir.Value):
     self._ensure_nvshmem_decls()
@@ -1446,6 +1451,18 @@ class LaunchContext:
     if peer.type != ir.IntegerType.get_signless(32):
       raise ValueError(f"peer index must be an i32, got {peer.type}")
     return llvm.call(ref.type, [ref, peer], [], [], callee="nvshmem_ptr")
+
+  def to_remote_multicast(self, ref: ir.Value):
+    i32 = ir.IntegerType.get_signless(32)
+    self._ensure_nvshmem_decls()
+    if ir.MemRefType.isinstance(ref.type):
+      return self.to_remote_multicast(utils.memref_ptr(ref))
+    if ref.type != ir.Type.parse("!llvm.ptr"):
+      raise ValueError(f"Unsupported type for to_remote: {ref.type}")
+    world_team = arith.constant(i32, 0)
+    return utils.MulticastPointer(
+        llvm.call(ref.type, [world_team, ref], [], [], callee="nvshmemx_mc_ptr")
+    )
 
   def device_id(self) -> ir.Value:
     self._ensure_nvshmem_decls()
