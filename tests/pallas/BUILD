@@ -924,28 +924,6 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "mgpu_matmul_test_b200",
-    srcs = ["mgpu_matmul_test.py"],
-    enable_backends = [],
-    enable_configs = ["gpu_b200"],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
-    shard_count = 8,
-    tags = [
-        "mosaic_gpu_test",
-        # TODO(b/330364373): Remove when B200 is fully supported.
-        "notap",
-    ],
-    deps = [
-        "//jax:pallas",
-        "//jax:pallas_experimental_gpu_ops",
-        "//jax:pallas_mosaic_gpu",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
     name = "mgpu_examples_test_b200",
     srcs = ["mgpu_examples_test.py"],
     enable_backends = [],
@@ -1101,28 +1079,6 @@ jax_multiplatform_test(
     tags = [
         "mosaic_gpu_test",
         "noasan",  # Times out.
-    ],
-    deps = [
-        "//jax:pallas",
-        "//jax:pallas_experimental_gpu_ops",
-        "//jax:pallas_mosaic_gpu",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "mgpu_ragged_dot_test_b200",
-    srcs = ["mgpu_ragged_dot_test.py"],
-    enable_backends = [],
-    enable_configs = ["gpu_b200"],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
-    shard_count = 8,
-    tags = [
-        "mosaic_gpu_test",
-        # TODO(b/330364373): Remove when B200 is fully supported.
-        "notap",
     ],
     deps = [
         "//jax:pallas",
