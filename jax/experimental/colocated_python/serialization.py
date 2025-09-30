@@ -20,6 +20,7 @@ import collections
 from collections.abc import Callable, Sequence
 import functools
 import io
+import threading
 from typing import Any
 
 try:
@@ -35,6 +36,71 @@ from jax._src.lib import xla_client as xc
 import numpy as np
 
 DeviceList = xc.DeviceList
+
+
+class SharedObjectState(threading.local):
+  """Thread-local state that tracks an object that has already appeared or that
+
+  has been deserialized in the same serialization/deserialization context.
+  """
+
+  def __init__(self):
+    # Map from a shared object key to its ID. Any objects with a matching key
+    # will use the shared object ID instead of the full object during
+    # serialization.
+    self.shared_obj_index: dict[Any, int] | None = None
+
+    # Shared object that has been reconstructed when their key was seen for the
+    # first time during deserialization.
+    self.shared_obj: list[Any] | None = None
+
+
+_shared_obj_state = SharedObjectState()
+
+
+def _wrapped_unreduce_func_with_new_shared_obj(
+    shared_obj_id, unreduce_func, unreduce_args
+):
+  assert _shared_obj_state.shared_obj is not None
+  obj = unreduce_func(*unreduce_args)
+  assert len(_shared_obj_state.shared_obj) == shared_obj_id, (
+      f"Unexpected shared object id: {shared_obj_id}; only "
+      f"{len(_shared_obj_state.shared_obj)} shared objects seen so far"
+  )
+  _shared_obj_state.shared_obj.append(obj)
+  return obj
+
+
+def _wrapped_unreduce_func_with_existing_shared_obj(shared_obj_id):
+  assert _shared_obj_state.shared_obj is not None
+  return _shared_obj_state.shared_obj[shared_obj_id]
+
+
+# The following is commented out to demonstrate how it looks if this decorator
+# is inlined to reduce functions.
+
+# def _make_reduce_func_with_shared_obj(
+#     reduce_func: Callable[[Any], tuple[Any, Any]],
+# ) -> Callable[[Any], tuple[Any, Any]]:
+#   """Wraps a reduce function to serialize shared object once."""
+
+#   @functools.wraps(reduce_func)
+#   def wrapped_reduce_func(obj):
+#     assert _shared_obj_state.shared_obj_index is not None
+#     shared_obj_id = _shared_obj_state.shared_obj_index.get(obj)
+#     if shared_obj_id is None:
+#       unreduced_func, unreduced_args = reduce_func(obj)
+#       shared_obj_id = len(_shared_obj_state.shared_obj_index)
+#       _shared_obj_state.shared_obj_index[obj] = shared_obj_id
+#       return _wrapped_unreduce_func_with_new_shared_obj, (
+#           shared_obj_id,
+#           unreduced_func,
+#           unreduced_args,
+#       )
+#     else:
+#       return _wrapped_unreduce_func_with_existing_shared_obj, (shared_obj_id,)
+
+#   return wrapped_reduce_func
 
 
 @jax._src.util.cache(max_size=None)
@@ -88,59 +154,99 @@ def _lookup_cpu_device(
 def _reduce_mesh(
     mesh: jax.sharding.Mesh,
 ) -> tuple[Callable[..., jax.sharding.Mesh], Any]:
-  def make_mesh(
-      mesh_device_ids: np.ndarray, axis_names: Any
-  ) -> jax.sharding.Mesh:
-    cpu_device_map = _get_cpu_device_map()
-    mesh_devices = np.vectorize(
-        functools.partial(_lookup_cpu_device, cpu_device_map)
-    )(mesh_device_ids)
-    return jax.sharding.Mesh(mesh_devices, axis_names)
+  assert _shared_obj_state.shared_obj_index is not None
+  shared_obj_id = _shared_obj_state.shared_obj_index.get(mesh)
+  if shared_obj_id is None:
+    shared_obj_id = len(_shared_obj_state.shared_obj_index)
+    _shared_obj_state.shared_obj_index[mesh] = shared_obj_id
+    mesh_device_ids = np.vectorize(lambda d: d.id, otypes=[int])(mesh.devices)
+    return _wrapped_unreduce_func_with_new_shared_obj, (
+        shared_obj_id,
+        _unreduce_mesh,
+        (mesh_device_ids, mesh.axis_names, mesh.axis_types),
+    )
+  return _wrapped_unreduce_func_with_existing_shared_obj, (shared_obj_id,)
 
-  mesh_device_ids = np.vectorize(lambda d: d.id, otypes=[int])(mesh.devices)
-  return make_mesh, (mesh_device_ids, mesh.axis_names)
+
+def _unreduce_mesh(
+    mesh_device_ids: np.ndarray, axis_names: Any, axis_types: Any
+) -> jax.sharding.Mesh:
+  cpu_device_map = _get_cpu_device_map()
+  mesh_devices = np.vectorize(
+      functools.partial(_lookup_cpu_device, cpu_device_map)
+  )(mesh_device_ids)
+  return jax.sharding.Mesh(mesh_devices, axis_names, axis_types)
 
 
 def _reduce_named_sharding(
     sharding: jax.sharding.NamedSharding,
 ) -> tuple[Callable[..., jax.sharding.NamedSharding], Any]:
+  assert _shared_obj_state.shared_obj_index is not None
+  shared_obj_id = _shared_obj_state.shared_obj_index.get(sharding)
+  if shared_obj_id is None:
+    reduced_mesh = _reduce_mesh(sharding.mesh)
+    shared_obj_id = len(_shared_obj_state.shared_obj_index)
+    _shared_obj_state.shared_obj_index[sharding] = shared_obj_id
+    return _wrapped_unreduce_func_with_new_shared_obj, (
+        shared_obj_id,
+        _unreduce_named_sharding,
+        (reduced_mesh, sharding.spec, sharding.memory_kind),
+    )
+  return _wrapped_unreduce_func_with_existing_shared_obj, (shared_obj_id,)
 
-  def make_named_sharding(mesh, spec, memory_kind):
-    return jax.NamedSharding(mesh, spec, memory_kind=memory_kind)
 
-  return make_named_sharding, (sharding.mesh, sharding.spec,
-                               sharding.memory_kind)
+def _unreduce_named_sharding(reduced_mesh, spec, memory_kind):
+  mesh = reduced_mesh[0](*reduced_mesh[1])
+  return jax.NamedSharding(mesh, spec, memory_kind=memory_kind)
 
 
 def _reduce_device_list(
     device_list: DeviceList,
 ) -> tuple[Callable[..., DeviceList], Any]:
-  def make_device_list(device_ids: Sequence[int]) -> DeviceList:
-    cpu_device_map = _get_cpu_device_map()
-    devices = np.vectorize(
-        functools.partial(_lookup_cpu_device, cpu_device_map)
-    )(device_ids)
-    return DeviceList(tuple(devices))
+  assert _shared_obj_state.shared_obj_index is not None
+  shared_obj_id = _shared_obj_state.shared_obj_index.get(device_list)
+  if shared_obj_id is None:
+    shared_obj_id = len(_shared_obj_state.shared_obj_index)
+    _shared_obj_state.shared_obj_index[device_list] = shared_obj_id
+    device_ids = [d.id for d in device_list]
+    return _wrapped_unreduce_func_with_new_shared_obj, (
+        shared_obj_id,
+        _unreduce_device_list,
+        (device_ids,),
+    )
+  return _wrapped_unreduce_func_with_existing_shared_obj, (shared_obj_id,)
 
-  device_ids = [d.id for d in device_list]
-  return make_device_list, (device_ids,)
+
+def _unreduce_device_list(device_ids: Sequence[int]) -> DeviceList:
+  cpu_device_map = _get_cpu_device_map()
+  devices = np.vectorize(functools.partial(_lookup_cpu_device, cpu_device_map))(
+      device_ids
+  )
+  return DeviceList(tuple(devices))
 
 
 def _reduce_single_device_sharding(
     sharding: jax.sharding.SingleDeviceSharding,
 ) -> tuple[Callable[..., jax.sharding.SingleDeviceSharding], Any]:
+  assert _shared_obj_state.shared_obj_index is not None
+  shared_obj_id = _shared_obj_state.shared_obj_index.get(sharding)
+  if shared_obj_id is None:
+    shared_obj_id = len(_shared_obj_state.shared_obj_index)
+    _shared_obj_state.shared_obj_index[sharding] = shared_obj_id
+    return _wrapped_unreduce_func_with_new_shared_obj, (
+        shared_obj_id,
+        _unreduce_single_device_sharding,
+        (sharding.device_set.pop().id, sharding.memory_kind),
+    )
+  return _wrapped_unreduce_func_with_existing_shared_obj, (shared_obj_id,)
 
-  def make_single_device_sharding(
-      device_id: int, memory_kind: str | None
-  ) -> jax.sharding.SingleDeviceSharding:
-    cpu_device_map = _get_cpu_device_map()
-    device = _lookup_cpu_device(cpu_device_map, device_id)
-    return jax.sharding.SingleDeviceSharding(device, memory_kind=memory_kind)
 
-  return make_single_device_sharding, (
-      sharding.device_set.pop().id,
-      sharding.memory_kind,
-  )
+def _unreduce_single_device_sharding(
+    device_id: int, memory_kind: str | None
+) -> jax.sharding.SingleDeviceSharding:
+  cpu_device_map = _get_cpu_device_map()
+  device = _lookup_cpu_device(cpu_device_map, device_id)
+  return jax.sharding.SingleDeviceSharding(device, memory_kind=memory_kind)
 
 
 def _serialize(obj: Any) -> bytes:
@@ -174,9 +280,14 @@ def _serialize(obj: Any) -> bytes:
     )
     dispatch = dispatch_table
 
-  with io.BytesIO() as file:
-    _CustomPickler(file).dump(obj)
-    return file.getvalue()
+  prev_shared_obj_index = _shared_obj_state.shared_obj_index
+  _shared_obj_state.shared_obj_index = {}
+  try:
+    with io.BytesIO() as file:
+      _CustomPickler(file).dump(obj)
+      return file.getvalue()
+  finally:
+    _shared_obj_state.shared_obj_index = prev_shared_obj_index
 
 
 def _deserialize(serialized: bytes) -> Any:
@@ -191,7 +302,12 @@ def _deserialize(serialized: bytes) -> Any:
   if cloudpickle is None:
     raise ModuleNotFoundError('No module named "cloudpickle"')
 
-  return cloudpickle.loads(serialized)
+  prev_shared_obj = _shared_obj_state.shared_obj
+  _shared_obj_state.shared_obj = []
+  try:
+    return cloudpickle.loads(serialized)
+  finally:
+    _shared_obj_state.shared_obj = prev_shared_obj
 
 
 def _make_specs_for_serialized_specs(
