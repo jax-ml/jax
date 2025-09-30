@@ -371,11 +371,8 @@ class OnDeviceProfiler:
             f"memref<{self.entries_per_wg}xi32, strided<[1], offset: ?>>"
         ),
     )
-    thread_in_wg = arith.remui(thread_idx(), c(128, i32))
-    if_first = scf.IfOp(
-        arith.cmpi(arith.CmpIPredicate.eq, thread_in_wg, c(0, i32))
-    )
-    with ir.InsertionPoint(if_first.then_block):
+    is_profiling_thread = scf.IfOp(self.is_profiling_thread)
+    with ir.InsertionPoint(is_profiling_thread.then_block):
       memref.store(self.start, wg_gmem_buffer, [c(0, index)])
       memref.store(smid(), wg_gmem_buffer, [c(1, index)])
       memref.store(
