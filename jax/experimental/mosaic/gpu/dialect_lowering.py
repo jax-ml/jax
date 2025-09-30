@@ -736,19 +736,11 @@ def _mgpu_broadcast_in_dim_op_lowering_rule(
         f" supported: {op}"
     )
 
-  broadcast_dims = list(op.broadcast_dimensions)
-  in_layout = inference_utils.in_layouts(op)[0]
-  operand_fa = _fragmented_array_from_ir(op.operand, in_layout)
-
-  if operand_fa.layout == fa.WGMMA_ROW_LAYOUT and broadcast_dims == [0]:
-    out = operand_fa.broadcast_minor(out_ty.shape[1])
-  elif operand_fa.layout == fa.WGMMA_COL_LAYOUT and broadcast_dims == [1]:
-    out = operand_fa.broadcast_in_dim(out_ty.shape, (1,), fa.WGMMA_LAYOUT)
-  else:
-    raise NotImplementedError(
-        "Broadcast in dim with non-trivial broadcast dimensions is not"
-        f" supported: {op}"
-    )
+  broadcast_dims = tuple(op.broadcast_dimensions)
+  in_layout_attr = inference_utils.in_layouts(op)[0]
+  operand_fa = _fragmented_array_from_ir(op.operand, in_layout_attr)
+  out_layout = layouts.from_layout_attr(inference_utils.out_layouts(op)[0])
+  out = operand_fa.broadcast_in_dim(out_ty.shape, broadcast_dims, out_layout)
   return [fragmented_array_to_ir(out, out_ty)]
 
 

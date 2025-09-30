@@ -2202,8 +2202,11 @@ class PallasCallTest(PallasTest):
     np.testing.assert_allclose(x_result, op(x, axis=axis), atol=1e-5)
 
   def _test_broadcast_in_dim_base(self, shape, layout, *, axis, hint):
+    if not hint:
+      # When the hint is not set, inference may choose incompatible layouts.
+      # TODO(bchetioui): investigate and fix.
+      self.skip_if_wg_semantics()
     assert len(shape) == 2
-    self.skip_if_wg_semantics()  # Broadcast in dim with non-trivial broadcast dimensions is not supported.
 
     @functools.partial(
         self.kernel,
@@ -2256,8 +2259,6 @@ class PallasCallTest(PallasTest):
     )
 
   def test_broadcast_in_dim_tcgen05_native_layout(self):
-    self.skip_if_wg_semantics()  # Broadcast in dim with non-trivial broadcast dimensions is not supported.
-
     @functools.partial(
         self.kernel,
         out_shape=jnp.zeros((128, 128), jnp.float32),
