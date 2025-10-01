@@ -345,8 +345,8 @@ def seed_with_impl(impl: PRNGImpl, seed: int | typing.ArrayLike) -> PRNGKeyArray
 
 
 def keys_shaped_array(impl, shape, sharding, vma):
-  aval = core.ShapedArray(shape, KeyTy(impl), vma=vma)
-  return core.update_aval_with_sharding(aval, sharding)
+  aval = core.ShapedArray(shape, KeyTy(impl))
+  return core.update_aval_with_sharding(aval, sharding, vma=vma)
 
 def base_arr_shape_to_keys_shape(impl, base_arr_shape):
   base_ndim = len(impl.key_shape)
@@ -598,9 +598,13 @@ batching.defvectorized(random_split_p)
 def random_split_abstract_eval(keys_aval, *, shape):
   # TODO(yashkatariya): random_split should take sharding as an arg too so we
   # don't choose None here?
-  new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
+  if keys_aval.sharding.mesh.empty:
+    out_sharding = core.get_cur_mesh_sharding()
+  else:
+    new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
+    out_sharding = keys_aval.sharding.update(spec=new_spec)
   return keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape),
-                           keys_aval.sharding.update(spec=new_spec), keys_aval.vma)
+                           out_sharding, keys_aval.vma)
 
 @random_split_p.def_impl
 def random_split_impl(keys, *, shape):
@@ -679,7 +683,14 @@ batching.defvectorized(random_bits_p)
 def random_bits_abstract_eval(keys_aval, *, bit_width, shape):
   out_shape = (*keys_aval.shape, *shape)
   out_dtype = dtypes.dtype(f'uint{bit_width}')
-  return core.ShapedArray(out_shape, out_dtype, vma=keys_aval.vma)
+  # TODO(yashkatariya): random_bits should take an out_sharding argument.
+  if keys_aval.sharding.mesh.empty:
+    out_sharding = core.get_cur_mesh_sharding()
+  else:
+    new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
+    out_sharding = keys_aval.sharding.update(spec=new_spec)
+  return core.ShapedArray(out_shape, out_dtype, sharding=out_sharding,
+                          vma=keys_aval.vma)
 
 @random_bits_p.def_impl
 def random_bits_impl(keys, *, bit_width, shape):

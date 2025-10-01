@@ -1711,14 +1711,16 @@ def mem_space_to_kind(mem_space: MemorySpace) -> str:
 
 @cache(max_size=4096,
        trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
-def update_aval_with_sharding(aval, sharding):
+def update_aval_with_sharding(aval, sharding, vma=None):
+  if vma is None:
+    vma = aval.vma
   if isinstance(sharding, NamedSharding):
     return aval.update(
         sharding=NamedSharding(
             sharding.mesh.abstract_mesh,
             sharding.spec._normalized_spec_for_aval(aval.ndim)),
-        memory_space=mem_kind_to_space(sharding.memory_kind))
-  return aval
+        vma=vma, memory_space=mem_kind_to_space(sharding.memory_kind))
+  return aval.update(vma=vma)
 
 
 # We have three flavors of abstractification APIs here which each used to have
@@ -2184,6 +2186,7 @@ def get_sharding(sharding, shape):
 @cache(max_size=4096, trace_context_in_key=False)
 def get_vma(vma, mesh):
   if mesh.empty:
+    assert not vma, vma
     return vma
   axis_env = get_axis_env()
   for i in vma:
@@ -2337,8 +2340,7 @@ def order_wrt_mesh(mesh, x):
 def _vma_ur_str(vma, unreduced, reduced, mesh):
   if not vma and not unreduced and not reduced:
     return ''
-  vma = vma if mesh.empty else order_wrt_mesh(mesh, vma)
-  vma_str = f"{{{_create_str(vma, None)}}}" if vma else ''
+  vma_str = f"{{{_create_str(order_wrt_mesh(mesh, vma), None)}}}" if vma else ''
   ur_str = _create_str(unreduced, 'U') if unreduced else ''
   red_str = _create_str(reduced, 'R') if reduced else ''
   m_str = f"{ur_str}{red_str}".rstrip(', ')
@@ -3725,8 +3727,9 @@ class ShapeDtypeStruct:
 def _sds_aval_mapping(x):
   aval = ShapedArray(
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
-      weak_type=x.weak_type, vma=(frozenset() if x.vma is None else x.vma))
-  aval = update_aval_with_sharding(aval, x.sharding)
+      weak_type=x.weak_type)
+  aval = update_aval_with_sharding(
+      aval, x.sharding, vma=(frozenset() if x.vma is None else x.vma))
   if x.is_ref:
     from jax._src.state.types import AbstractRef  # type: ignore
     return AbstractRef(aval)

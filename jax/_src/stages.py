@@ -366,8 +366,8 @@ def _traced_out_info(self):
   out = []
   for a, out_s, out_l in zip(self.jaxpr.out_avals, out_shardings, out_layouts):
     if isinstance(a, core.ShapedArray):
-      s = (a.sharding if a.sharding.mesh.are_all_axes_explicit else out_s
-           if out_s is None else out_s)
+      s = ((a.sharding if a.sharding.mesh._are_all_axes_explicit_or_manual
+            else out_s) if out_s is None else out_s)
       out.append(
           core.ShapeDtypeStruct(
               a.shape, a.dtype, sharding=Format(out_l, s),

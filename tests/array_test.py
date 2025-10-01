@@ -1423,7 +1423,9 @@ class ShardingTest(jtu.JaxTestCase):
     aval = jax.core.ShapedArray((1, 1, 1, 1), np.float32, sharding=s)
     self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]{U:a}')
 
-    aval = jax.core.ShapedArray((1, 1, 1, 1), np.float32, vma=frozenset('c'))
+    s = NamedSharding(mesh, P())
+    aval = jax.core.ShapedArray((1, 1, 1, 1), np.float32, sharding=s,
+                                vma=frozenset('c'))
     self.assertEqual(aval.str_short(True), 'f32[1,1,1,1]{c}')
 
     aval = jax.core.ShapedArray((1, 1, 1, 1), np.float32)

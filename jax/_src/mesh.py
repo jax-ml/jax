@@ -165,6 +165,13 @@ class BaseMesh:
                for t in self.axis_types)
 
   @functools.cached_property
+  def _are_all_axes_explicit_or_manual(self) -> bool:
+    if not self.axis_types:
+      return False
+    return all(t == AxisType.Explicit or t == AxisType.Manual
+               for t in self.axis_types)
+
+  @functools.cached_property
   def _any_axis_manual(self) -> bool:
     return any_axis_types_match(self.axis_types, AxisType.Manual)
 

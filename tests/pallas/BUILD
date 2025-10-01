@@ -1260,6 +1260,7 @@ jax_multiplatform_test(
     config_tags_overrides = {
         # TODO(slebedev): Flip to False once we have more v5p capacity.
         "tpu_v5p_x4": {"ondemand": True},
+        "tpu_v6e_x8": {"ondemand": True},
     },
     enable_backends = [],
     enable_configs = [
