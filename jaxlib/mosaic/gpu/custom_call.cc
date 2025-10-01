@@ -203,49 +203,44 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
   if (!nvshmem_path.empty()) {
     libraries_to_link.push_back(nvshmem_path);
   }
-  return mlir::parsePassPipeline(absl::StrCat(
-      R"(
-      builtin.module(
-        mosaic-gpu-resolve-trivial-locations,
-        arith-expand,
-        canonicalize,
-        gpu-launch-sink-index-computations,
-        convert-nvgpu-to-nvvm,
-        gpu-kernel-outlining{data-layout-str=},
-        convert-vector-to-scf{full-unroll=false lower-tensors=false target-rank=1},
-        convert-scf-to-cf,
-        convert-nvvm-to-llvm,
-        expand-strided-metadata,
-        nvvm-attach-target{O=3 chip=)",
-      sm, " fast=false features=+", ptx_isa,
-      R"( ftz=false  module= triple=nvptx64-nvidia-cuda},
-        lower-affine,
-        convert-arith-to-llvm{index-bitwidth=0},
-        convert-index-to-llvm{index-bitwidth=64},
-        canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
-        cse,
-        )",
-      R"(
-        gpu.module(convert-gpu-to-nvvm{has-redux=false index-bitwidth=64 use-bare-ptr-memref-call-conv=false}),
-        gpu.module(canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true}),
-        gpu.module(cse),
-        gpu.module(mosaic-byval-insertion),
-        gpu.module(mosaic-llvm-attr-insertion),
-        gpu.module(reconcile-unrealized-casts),
-        mosaic-convert-gpu-to-llvm,
-        ensure-debug-info-scope-on-llvm-func{emission-kind=DebugDirectivesOnly},
-        mosaic-gpu-module-to-assembly{libraries-to-link=)",
-      absl::StrJoin(libraries_to_link, ","),
-      R"(},
-        convert-math-to-llvm{approximate-log1p=true},
-        canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
-        cse,
-        mosaic-gpu-assembly-to-binary,
-        gpu-launch-lowering,
-        convert-to-llvm,
-        reconcile-unrealized-casts
-      )
-  )"));
+  return mlir::parsePassPipeline(
+      absl::StrFormat(R"(
+        builtin.module(
+          mosaic-gpu-resolve-trivial-locations,
+          arith-expand,
+          canonicalize,
+          gpu-launch-sink-index-computations,
+          convert-nvgpu-to-nvvm,
+          gpu-kernel-outlining{data-layout-str=},
+          convert-vector-to-scf{full-unroll=false lower-tensors=false target-rank=1},
+          convert-scf-to-cf,
+          convert-nvvm-to-llvm,
+          expand-strided-metadata,
+          nvvm-attach-target{O=3 chip=%1$s fast=false features=+%2$s ftz=false  module= triple=nvptx64-nvidia-cuda},
+          lower-affine,
+          convert-arith-to-llvm{index-bitwidth=0},
+          convert-index-to-llvm{index-bitwidth=64},
+          canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
+          cse,
+          gpu.module(convert-gpu-to-nvvm{has-redux=false index-bitwidth=64 use-bare-ptr-memref-call-conv=false}),
+          gpu.module(canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true}),
+          gpu.module(cse),
+          gpu.module(mosaic-byval-insertion),
+          gpu.module(mosaic-llvm-attr-insertion),
+          gpu.module(reconcile-unrealized-casts),
+          mosaic-convert-gpu-to-llvm,
+          ensure-debug-info-scope-on-llvm-func{emission-kind=DebugDirectivesOnly},
+          mosaic-gpu-module-to-assembly{libraries-to-link=%3$s},
+          convert-math-to-llvm{approximate-log1p=true},
+          canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
+          cse,
+          mosaic-gpu-assembly-to-binary,
+          gpu-launch-lowering,
+          convert-to-llvm,
+          reconcile-unrealized-casts
+        )
+      )",
+                      sm, ptx_isa, absl::StrJoin(libraries_to_link, ",")));
 }
 
 mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
