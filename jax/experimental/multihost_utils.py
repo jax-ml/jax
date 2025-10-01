@@ -81,10 +81,10 @@ def broadcast_one_to_all(in_tree: Any, is_source: bool | None = None) -> Any:
     return jax.device_get(x.addressable_data(0))
 
   in_tree = jax.tree.map(pre_jit, in_tree)
-  out_tree = jax.jit(_psum, out_shardings=jax.sharding.NamedSharding(
-      global_mesh, P()))(in_tree)
-  return jax.tree.map(post_jit, out_tree)
+  with jax.set_mesh(global_mesh):
+    out_tree = jax.jit(_psum, out_shardings=P())(in_tree)
 
+  return jax.tree.map(post_jit, out_tree)
 
 def sync_global_devices(name: str):
   """Creates a barrier across all hosts/devices."""
