@@ -31,6 +31,7 @@ from jax._src.mesh import (
     AbstractMesh as AbstractMesh,
     AxisType as AxisType,
     get_abstract_mesh as get_abstract_mesh,
+    get_concrete_mesh as get_concrete_mesh,
     use_abstract_mesh as use_abstract_mesh,
 )
 
