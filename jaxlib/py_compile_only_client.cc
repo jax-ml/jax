@@ -121,11 +121,20 @@ void RegisterCompileOnlyClient(nb::module_& m) {
           },
           nb::arg("computation"), nb::arg("executable_devices"),
           nb::arg("compile_options") = xla::CompileOptions(),
-          nb::arg("host_callbacks") = std::vector<nb::capsule>())
+          nb::arg("host_callbacks") = std::vector<nb::capsule>(),
+          nb::sig(
+              "def compile(self, computation: mlir.ir.Module, "
+              "executable_devices: DeviceList, compile_options: "
+              "CompileOptions = ..., host_callbacks: "
+              "Sequence[typing_extensions.CapsuleType] = ...) -> Executable"))
       .def("compile",
            xla::ValueOrThrowWrapper(&CompileOnlyPyClient::CompileUnloaded),
-           nb::arg("computation"), nb::arg("executable_devices"),
-           nb::arg("compile_options") = xla::CompileOptions());
+           nb::arg("computation").sig("mlir.ir.Module"),
+           nb::arg("executable_devices"),
+           nb::arg("compile_options") = xla::CompileOptions(),
+           nb::sig("def compile(self, computation: mlir.ir.Module, "
+                   "executable_devices: DeviceList, compile_options: "
+                   "CompileOptions = ...) -> Executable"));
 }
 
 }  // namespace jax

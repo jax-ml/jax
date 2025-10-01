@@ -1278,13 +1278,19 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
                    &ExecutableBuildOptions::memory_fitting_effort,
                    &ExecutableBuildOptions::set_memory_fitting_effort)
       .def_prop_rw(
-          "optimization_level", &ExecutableBuildOptions::optimization_level,
+          "optimization_level",
+          [](ExecutableBuildOptions& options) {
+            return static_cast<int>(options.optimization_level());
+          },
           [](ExecutableBuildOptions& options, int value) {
             options.set_optimization_level(
                 static_cast<xla::ExecutionOptions::EffortLevel>(value));
           })
       .def_prop_rw(
-          "memory_fitting_level", &ExecutableBuildOptions::memory_fitting_level,
+          "memory_fitting_level",
+          [](ExecutableBuildOptions& options) {
+            return static_cast<int>(options.memory_fitting_level());
+          },
           [](ExecutableBuildOptions& options, int value) {
             options.set_memory_fitting_level(
                 static_cast<xla::ExecutionOptions::EffortLevel>(value));

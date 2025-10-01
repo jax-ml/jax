@@ -797,7 +797,10 @@ PyType_Slot PyClient::slots_[] = {
                 std::move(executable_devices), std::move(options)));
           },
           nb::arg("computation"), nb::arg("executable_devices"),
-          nb::arg("compile_options") = xla::CompileOptions())
+          nb::arg("compile_options") = xla::CompileOptions(),
+          nb::sig("def compile(self, computation: mlir.ir.Module, "
+                  "executable_devices: DeviceList, compile_options: "
+                  "CompileOptions = ...) -> Executable"))
       .def(
           "compile_and_load",
           [](nb_class_ptr<PyClient> client, MlirModule mlir_module,
@@ -812,7 +815,12 @@ PyType_Slot PyClient::slots_[] = {
           },
           nb::arg("computation"), nb::arg("executable_devices"),
           nb::arg("compile_options") = xla::CompileOptions(),
-          nb::arg("host_callbacks") = std::vector<nb::capsule>())
+          nb::arg("host_callbacks") = std::vector<nb::capsule>(),
+          nb::sig(
+              "def compile_and_load(self, computation: mlir.ir.Module, "
+              "executable_devices: DeviceList, compile_options: "
+              "CompileOptions = ..., host_callbacks: "
+              "Sequence[Callable[..., typing.Any]] = ...) -> LoadedExecutable"))
       .def(
           "compile_and_load",
           [](nb_class_ptr<PyClient> client, MlirModule mlir_module,
@@ -827,7 +835,12 @@ PyType_Slot PyClient::slots_[] = {
           },
           nb::arg("computation"), nb::arg("executable_devices"),
           nb::arg("compile_options") = xla::CompileOptions(),
-          nb::arg("host_callbacks") = std::vector<nb::callable>())
+          nb::arg("host_callbacks") = std::vector<nb::callable>(),
+          nb::sig(
+              "def compile_and_load(self, computation: mlir.ir.Module, "
+              "executable_devices: DeviceList, compile_options: CompileOptions "
+              "= ..., host_callbacks: Sequence[Callable[..., typing.Any]] = "
+              "...)"))
       // The following two overloads are for users of deprecated APIs who call
       // `backend.compile` but do not have visibility to `DeviceList`.
       .def(
