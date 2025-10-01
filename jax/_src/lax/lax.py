@@ -9014,7 +9014,7 @@ def _eq_meet(a, b):
   return eq(a, b)
 
 
-def empty(shape, dtype, *, out_sharding=None):
+def empty(shape, dtype, *, out_sharding=None, _out_memory_space=None):
   """Create an empty array of possibly uninitialized values.
 
   This initialization is backend dependent.
@@ -9034,18 +9034,25 @@ def empty(shape, dtype, *, out_sharding=None):
     Array([-5.7326739e+29 -7.7323739e+29 -3.14159256e-29], dtype=float32)
   """
   out_sharding = canonicalize_sharding(out_sharding, 'lax.empty')
-  return empty_p.bind(shape=shape, dtype=dtype, out_sharding=out_sharding)
+  if _out_memory_space is None:
+    _out_memory_space = core.MemorySpace.Device
+  assert isinstance(_out_memory_space, core.MemorySpace)
+  return empty_p.bind(shape=shape, dtype=dtype, out_sharding=out_sharding,
+                      _out_memory_space=_out_memory_space)
 
 empty_p = core.Primitive('empty')
 empty_p.def_impl(partial(dispatch.apply_primitive, empty_p))
 
-def _empty_abstract_eval(*, shape, dtype, out_sharding):
-  return core.ShapedArray(shape, dtype, sharding=out_sharding)
+def _empty_abstract_eval(*, shape, dtype, out_sharding, _out_memory_space):
+  return core.ShapedArray(shape, dtype, sharding=out_sharding,
+                          memory_space=_out_memory_space)
 empty_p.def_abstract_eval(_empty_abstract_eval)
 
-def _empty_custom_call_lower(ctx, *, shape, dtype, out_sharding):
+def _empty_custom_call_lower(ctx, *, shape, dtype, out_sharding,
+                             _out_memory_space):
   if not core.is_constant_shape(shape):
-    return _empty_lower(ctx, shape=shape, dtype=dtype, out_sharding=out_sharding)
+    return _empty_lower(ctx, shape=shape, dtype=dtype, out_sharding=out_sharding,
+                        _out_memory_space=_out_memory_space)
   dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
   aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding)
   phys_aval = core.physical_aval(aval_out)
@@ -9062,7 +9069,7 @@ def _empty_custom_call_lower(ctx, *, shape, dtype, out_sharding):
 mlir.register_lowering(empty_p, _empty_custom_call_lower, 'tpu')
 mlir.register_lowering(empty_p, _empty_custom_call_lower, 'gpu')
 
-def _empty_lower(ctx, *, shape, dtype, out_sharding):
+def _empty_lower(ctx, *, shape, dtype, out_sharding, _out_memory_space):
   dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
   aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding)
   phys_aval = core.physical_aval(aval_out)
@@ -9070,23 +9077,6 @@ def _empty_lower(ctx, *, shape, dtype, out_sharding):
   out = mlir.broadcast_in_dim(ctx, out, phys_aval, broadcast_dimensions=[])
   return [mlir.lower_with_sharding_in_types(ctx, out, phys_aval)]
 mlir.register_lowering(empty_p, _empty_lower)
-
-
-# TODO(yashkatariya): Delete `empty2` and replace scan's usage with `empty` once
-# AllocateBuffer issues are fixed
-def empty2(dtype, *, memory_space):
-  return empty2_p.bind(dtype=dtype, memory_space=memory_space)
-empty2_p = core.Primitive('empty2')
-
-def _empty2_abstract_eval(*, dtype, memory_space):
-  return core.ShapedArray((), dtype, memory_space=memory_space)
-empty2_p.def_abstract_eval(_empty2_abstract_eval)
-
-def _empty2_lower(ctx, *, dtype, memory_space):
-  dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-  phys_aval = core.physical_aval(core.ShapedArray((), dtype))
-  return [mlir.ir_constant(np.zeros(phys_aval.shape, phys_aval.dtype))]
-mlir.register_lowering(empty2_p, _empty2_lower)
 
 
 tie_p = core.Primitive('tie')

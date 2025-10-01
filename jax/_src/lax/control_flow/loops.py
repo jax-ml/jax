@@ -545,17 +545,9 @@ def _concat(a, b): return lax.concatenate([a, b], 0)
 
 def _empty_array(prefix, length_spec, aval):
   sharding = aval.sharding.update(spec=(*length_spec, *aval.sharding.spec))
-  # TODO(yashkatariya): Replace `lax.empty2` with `lax.empty` once
-  # AllocateBuffer issues are fixed. Also delete `empty2` after this usage is
-  # removed. Basically uncomment the following 2 lines.
-  # lax.empty will also need to take a memory_space argument.
-  # empty = lax.empty((*prefix, *aval.shape), aval.dtype, out_sharding=sharding,
-  #                   memory_space=aval.memory_space)
-  # return core.pvary(empty, tuple(aval.vma))
-  empty = core.pvary(lax.empty2(aval.dtype, memory_space=aval.memory_space),
-                     tuple(aval.vma))
-  out = lax.broadcast(empty, (*prefix, *aval.shape), out_sharding=sharding)
-  return out
+  empty = lax.empty((*prefix, *aval.shape), aval.dtype, out_sharding=sharding,
+                    _out_memory_space=aval.memory_space)
+  return core.pvary(empty, tuple(aval.vma))
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True
