@@ -223,6 +223,85 @@ def multimem_store(ptr: ir.Value, value: ir.Value):
       has_side_effects=True,
   )
 
+MultimemReductionOp = Literal["add", "min", "max", "and", "or", "xor"]
+
+def multimem_load_reduce(ty: ir.Type, ptr: ir.Value, reduction: MultimemReductionOp, is_signed: bool | None = None):
+  i32 = ir.IntegerType.get_signless(32)
+  if bitwidth(ty) not in {32, 64, 128}:
+    raise ValueError("Only 32-, 64- and 128-bit loads are supported")
+  if ir.VectorType.isinstance(ty):
+    vty = ir.VectorType(ty)
+    if len(vty.shape) > 1:
+      raise ValueError("Only 1D vectors are supported")
+    vector_length = vty.shape[0]
+    vector_i32_length = vector_length * bitwidth(vty.element_type) // 32
+    if ir.IntegerType.isinstance(vty.element_type):
+      # TODO(apaszke): Emulate this by unrolling.
+      if vector_length != 1:
+        raise NotImplementedError("Only single-element integer operations are supported")
+      if bitwidth(vty.element_type) not in {32, 64}:
+        raise NotImplementedError("Only 32-bit and 64-bit integer operations are supported")
+      if reduction in {"and", "or", "xor"}:
+        ptx_ty = f"b{bitwidth(vty.element_type)}"
+      elif reduction in {"min", "max", "add"}:
+        if is_signed is None:
+          raise ValueError("Signedness must be specified for integer min, max and add reductions")
+        ptx_ty = f"{'s' if is_signed else 'u'}{bitwidth(vty.element_type)}"
+      else:
+        raise ValueError(f"Unsupported reduction operation: {reduction}")
+    elif ir.FloatType.isinstance(vty.element_type):
+      if reduction not in {"add", "min", "max"}:
+        raise ValueError("Only add, min and max are supported for floats")
+      if ir.F32Type.isinstance(vty.element_type):
+        if reduction != "add":
+          raise ValueError("Only add is supported for f32")
+        ptx_ty = "f32"
+      elif ir.BF16Type.isinstance(vty.element_type):
+        ptx_ty = "bf16x2"
+      elif ir.F16Type.isinstance(vty.element_type):
+        ptx_ty = "f16x2"
+      elif ir.Float8E5M2Type.isinstance(vty.element_type):
+        ptx_ty = "e5m2x4"
+      elif ir.Float8E4M3FNType.isinstance(vty.element_type):
+        ptx_ty = "e4m3x4"
+      else:
+        raise NotImplementedError(vty.element_type)
+    else:
+      raise NotImplementedError(vty.element_type)
+  else:
+    raise NotImplementedError(ty)
+  if vector_i32_length == 1:
+    vec_ptx = "$0"
+    vec_mod = ""
+  else:
+    vec_ptx = f"{{{','.join(f'${i}' for i in range(vector_i32_length))}}}"
+    vec_mod = ".v" + str(vector_i32_length)
+  # It's unclear to me why, but at least according to PTX docs, we have to use
+  # the floating-point instructions here to be able to store vectors.
+  acc_prec = ""
+  if vector_i32_length == 1:
+    asm_out_ty = i32
+  else:
+    asm_out_ty = ir.Type.parse(f"!llvm.struct<({','.join(['i32'] * vector_i32_length)})>")
+  out_reg_struct = llvm.inline_asm(
+      asm_out_ty,
+      [ptr],
+      f"multimem.ld_reduce.relaxed.sys.global.{reduction}{acc_prec}{vec_mod}.{ptx_ty} {vec_ptx}, [${vector_i32_length}];",
+      "=r," * vector_i32_length + "l",
+      has_side_effects=True,
+  )
+  if vector_i32_length == 1:
+    return bitcast(out_reg_struct, ty)
+  else:
+    out_regs = [
+        llvm.extractvalue(i32, out_reg_struct, [i])
+        for i in range(vector_i32_length)
+    ]
+    vec_i32_ty = ir.VectorType.get((1,), i32)
+    return bitcast(
+        vector_concat([bitcast(out_reg, vec_i32_ty) for out_reg in out_regs]), ty
+    )
+
 
 @dataclasses.dataclass(frozen=True)
 class ForResult:

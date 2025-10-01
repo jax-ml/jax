@@ -29,13 +29,8 @@ from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disab
 from jax.experimental import multihost_utils
 import jax.numpy as jnp
 import numpy as np
-try:
-  import jax._src.lib.mosaic_gpu  # noqa: F401
-  HAS_MOSAIC_GPU = True
-except ImportError:
-  HAS_MOSAIC_GPU = False
-else:
-  import jax.experimental.mosaic.gpu as mgpu
+import jax.experimental.mosaic.gpu as mgpu
+import jax.experimental.mosaic.gpu.fragmented_array as fa
 
 
 # ruff: noqa: F405
@@ -46,8 +41,6 @@ P = jax.sharding.PartitionSpec
 class TestCase(parameterized.TestCase):
 
   def setUp(self):
-    if not HAS_MOSAIC_GPU:
-      self.skipTest("jaxlib built without Mosaic GPU")
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("Only works on GPU with capability >= sm90")
@@ -204,7 +197,7 @@ class ProfilerTest(TestCase):
       out = multihost_utils.process_allgather(out, tiled=True)
       np.testing.assert_array_equal(out, np.ones_like(out))
 
-  def test_multimem_array(self):
+  def test_multimem_store(self):
     i32 = ir.IntegerType.get_signless(32)
     def kernel(ctx, inp, sem, out, _):
       my_device = ctx.device_id()
@@ -239,6 +232,115 @@ class ProfilerTest(TestCase):
       np.testing.assert_array_equal(out_sems, np.zeros_like(out_sems))
       y = multihost_utils.process_allgather(y, tiled=True).reshape(2, *x.shape)
       np.testing.assert_array_equal(y, jnp.stack([x, x]))
+
+  @parameterized.parameters(
+      (jnp.int32, 1, "add"),
+      (jnp.int32, 1, "min"),
+      (jnp.int32, 1, "max"),
+      (jnp.int32, 1, "and"),
+      (jnp.int32, 1, "or"),
+      (jnp.int32, 1, "xor"),
+      (jnp.float32, 1, "add"),
+      (jnp.float32, 2, "add"),
+      (jnp.float32, 4, "add"),
+      (jnp.float16, 2, "add"),
+      (jnp.float16, 2, "min"),
+      (jnp.float16, 4, "max"),
+      (jnp.float16, 8, "add"),
+      (jnp.bfloat16, 2, "max"),
+      (jnp.bfloat16, 8, "add"),
+      (jnp.float8_e5m2, 4, "add"),
+      (jnp.float8_e5m2, 8, "min"),
+      (jnp.float8_e5m2, 16, "max"),
+      (jnp.float8_e4m3fn, 4, "min"),
+      (jnp.float8_e4m3fn, 8, "max"),
+      (jnp.float8_e4m3fn, 16, "add"),
+  )
+  def test_multimem_load_reduce(self, dtype, vector_length, reduction):
+    if dtype in (
+        jnp.float8_e5m2,
+        jnp.float8_e4m3fn,
+    ) and not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("Only works on GPU with capability >= sm100")
+    i32 = ir.IntegerType.get_signless(32)
+    def kernel(ctx, inp, sem, out, _):
+      my_device = ctx.device_id()
+      other_device = arith.subi(arith.constant(i32, 1), my_device)
+      my_sem = mgpu.SemaphoreRef(mgpu.utils.memref_ptr(sem))
+      other_dst = ctx.to_remote(sem, other_device)
+      other_sem = mgpu.SemaphoreRef(mgpu.utils.memref_ptr(other_dst))
+      layout = fa.TiledLayout(
+          fa.Tiling((
+              (64, 2 * vector_length), (16, 2 * vector_length), (vector_length,)
+          )),
+          warp_dims=(-5,),
+          lane_dims=(-3, -2),
+          vector_dim=-1,
+      )
+      arr = mgpu.FragmentedArray.load_reduce_untiled(
+          ctx.to_remote_multicast(inp),
+          layout=layout,
+          is_signed=True if jnp.issubdtype(dtype, jnp.integer) else None,
+          reduction=reduction,
+      )
+      arr.store_untiled(out, optimized=False)
+      other_sem.signal(arith.constant(i32, 1))
+      my_sem.wait(1)
+
+    mesh = jax.make_mesh(
+        (2,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
+    )
+    with jax.set_mesh(mesh):
+      sem = jax.sharding.reshard(jnp.zeros((1,), dtype=jnp.int32), P())
+      # The rounding we see in low precision types seems to be different from
+      # what JAX/XLA use.
+      match jnp.dtype(dtype).itemsize:
+        case 4:
+          bound = 800000
+        case 2:
+          bound = 128
+        case 1:
+          bound = 4
+        case _:
+          raise ValueError(f"Unsupported dtype: {dtype}")
+      x_local = jax.random.randint(
+          jax.random.key(1234), (128, 32), dtype=jnp.int32, minval=-bound, maxval=bound
+      ).astype(dtype)
+      x = jax.sharding.reshard(x_local, P("x"))
+      x_shard = jax.ShapeDtypeStruct((64, 32), dtype)
+      # TODO(b/448323639): We don't need x to be inout here, but without aliasing
+      # XLA doesn't actually insert the copy that puts the operand in symmetric
+      # memory, which causes the kernel to crash.
+      y, _, out_sem = jax.jit(
+          jax.shard_map(
+              mgpu.as_gpu_kernel(
+                  kernel, (1, 1, 1), (128, 1, 1), (), x_shard, (), inout_shape=(x_shard, sem)
+              ),
+              out_specs=P("x"),
+              check_vma=False,
+          )
+      )(x, sem)
+      out_sems = multihost_utils.process_allgather(out_sem, tiled=True)
+      np.testing.assert_array_equal(out_sems, np.zeros_like(out_sems))
+      y = multihost_utils.process_allgather(y, tiled=True)
+      match reduction:
+        case "add":
+          np_reduction = jnp.add
+        case "min":
+          np_reduction = jnp.minimum
+        case "max":
+          np_reduction = jnp.maximum
+        case "and":
+          np_reduction = jnp.bitwise_and
+        case "or":
+          np_reduction = jnp.bitwise_or
+        case "xor":
+          np_reduction = jnp.bitwise_xor
+        case _:
+          raise ValueError(reduction)
+      np.testing.assert_array_equal(
+          y.astype(jnp.float32), np.tile(np_reduction(x_local[:64], x_local[64:]), (2, 1))
+      )
 
 
 if __name__ == "__main__":

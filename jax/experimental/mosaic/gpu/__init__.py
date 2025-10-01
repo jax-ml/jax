@@ -35,7 +35,7 @@ from .launch_context import (
     AsyncCopyImplementation as AsyncCopyImplementation,
     LaunchContext as LaunchContext,
     MemRefTransform as MemRefTransform,
-    ReductionOp as ReductionOp,
+    TMAReductionOp as TMAReductionOp,
     Rounding as Rounding,
     TileTransform as TileTransform,
     TransposeTransform as TransposeTransform,

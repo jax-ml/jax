@@ -38,6 +38,7 @@ from . import fragmented_array as fa
 
 TMA_DESCRIPTOR_BYTES = 128
 TMA_DESCRIPTOR_ALIGNMENT = 64
+TMAReductionOp = Literal["add", "min", "max", "inc", "dec", "and", "or", "xor"]
 
 c = utils.c  # This is too common to fully qualify.
 
@@ -242,8 +243,6 @@ class CollapseLeadingIndicesTransform(MemRefTransform):
 
 
 OnDeviceProfiler = profiler.OnDeviceProfiler
-
-ReductionOp = Literal["add", "min", "max", "inc", "dec", "and", "or", "xor"]
 
 MOSAIC_GPU_SMEM_ALLOC_ATTR = "mosaic_gpu_smem_alloc"
 
@@ -503,9 +502,7 @@ class LaunchContext:
       gmem_peer_id: int | ir.Value | None,
       transformed_slice_shape: tuple[int, ...],
       swizzle: int | None,
-      reduction_op: Literal[
-        "add","min","max","inc","dec","and","or","xor"
-      ] | None,
+      reduction_op: TMAReductionOp | None,
   ):
     gmem_ref = _find_kernel_argument_for_gmem_ref(gmem_ref)
     # Using ir.Values in cache keys is a little sketchy, but I think it should
@@ -876,7 +873,7 @@ class LaunchContext:
       partitioned: int | None = None,
       # Should select 0 or 1 threads from the WG.
       predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
-      reduction_op: ReductionOp | None = None,
+      reduction_op: TMAReductionOp | None = None,
       implementation: AsyncCopyImplementation = AsyncCopyImplementation.TMA,
   ):
     """Initiates an async copy between GMEM and SMEM.

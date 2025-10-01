@@ -2589,6 +2589,29 @@ class FragmentedArray:
         raise NotImplementedError(self.layout)
 
   @classmethod
+  def load_reduce_untiled(
+      cls,
+      ref: utils.MultimemRef,
+      layout: TiledLayout,
+      reduction: utils.MultimemReductionOp,
+      swizzle: int = 16,
+      is_signed: bool | None = None,
+  ):
+    shape = ir.MemRefType(ref.type).shape
+    ref = utils.memref_reshape(ref, (*(1 for _ in shape), *shape))
+    return cls.load_tiled(
+        ref.ref,
+        swizzle=swizzle,
+        is_signed=is_signed,
+        layout=layout,
+        optimized=False,  # multimem refs are always GMEM refs.
+        _load_fun=functools.partial(
+            utils.multimem_load_reduce, reduction=reduction, is_signed=is_signed
+        ),
+        _f8_as_i8=False,
+    )
+
+  @classmethod
   def load_untiled(
       cls,
       ref: ir.Value,
@@ -2676,6 +2699,8 @@ class FragmentedArray:
       is_signed: bool | None = None,
       layout: FragmentedLayout = WGMMA_LAYOUT,
       optimized: bool = True,
+      _load_fun: Callable[[ir.VectorType, ir.Value], ir.Value] = llvm.load,
+      _f8_as_i8: bool = True,
   ) -> FragmentedArray:
     if not isinstance(layout, TiledLayout):
       raise NotImplementedError(layout)
@@ -2696,12 +2721,12 @@ class FragmentedArray:
     # f8 data types are not handled by the LLVM dialect, so we need to
     # transfer them as i8 and bitcast them back to f8.
     transfer_ty = ir.VectorType.get(
-        (layout.vector_length,), i8 if is_f8 else dtype
+        (layout.vector_length,), i8 if is_f8 and _f8_as_i8 else dtype
     )
     loads = cls.transfer_tiled(ref, swizzle, layout, shape, optimized)
     for _get, update, _idx, ptr in loads:
-      loaded_reg = llvm.load(transfer_ty, ptr)
-      if is_f8:
+      loaded_reg = _load_fun(transfer_ty, ptr)
+      if is_f8 and _f8_as_i8:
         loaded_reg = vector.bitcast(reg_ty, loaded_reg)
       update(registers, loaded_reg)
     return cls(_registers=registers, _layout=layout, _is_signed=is_signed)

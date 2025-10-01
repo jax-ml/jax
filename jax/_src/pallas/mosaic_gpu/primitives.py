@@ -319,7 +319,7 @@ def copy_smem_to_gmem(
     predicate: jax.Array | None = None,
     *,
     commit_group: bool = True,
-    reduction_op: mgpu.ReductionOp | None = None,
+    reduction_op: mgpu.TMAReductionOp | None = None,
 ) -> None:
   """Asynchronously copies a SMEM reference to a GMEM reference.
 
