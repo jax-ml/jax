@@ -380,18 +380,10 @@ class OnDeviceProfiler:
           wg_gmem_buffer,
           [c(2, index)],
       )
-
-      for_op = scf.ForOp(
-          c(0, index),
-          c(self.entries_per_wg - 3, index),
-          c(1, index),
+      tmp = vector.load(
+          ir.VectorType.get((self.entries_per_wg - 3,), i32),
+          self.smem_buffer,
+          [c(0, index)],
       )
-      with ir.InsertionPoint(for_op.body):
-        x = memref.load(self.smem_buffer, [for_op.induction_variable])
-        memref.store(
-            x,
-            wg_gmem_buffer,
-            [arith.addi(for_op.induction_variable, c(3, index))],
-        )
-        scf.yield_([])
+      vector.store(tmp, wg_gmem_buffer, [c(3, index)])
       scf.yield_([])
