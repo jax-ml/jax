@@ -191,6 +191,7 @@ jax.scipy.special
    poch
    polygamma
    rel_entr
+   sici
    softmax
    spence
    sph_harm
