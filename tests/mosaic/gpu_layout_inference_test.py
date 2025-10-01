@@ -413,7 +413,9 @@ class LayoutInferenceTest(parameterized.TestCase):
     shape = (64, 64)
     with ir.InsertionPoint(self.module.body):
       c_ty = ir.VectorType.get(shape, ir.BF16Type.get())
-      ab_type = ir.MemRefType.get(shape, ir.BF16Type.get())
+      ab_type = ir.MemRefType.get(
+          shape, ir.BF16Type.get(), memory_space=mgpu.utils.smem()
+      )
       i32 = ir.IntegerType.get_signless(32)
       lower_bound, upper_bound, step, a, b, c = undefs(
           i32, i32, i32, ab_type, ab_type, c_ty
@@ -794,7 +796,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     with ir.InsertionPoint(self.module.body):
       vec_ty = ir.VectorType.get(shape, f32)
-      ref_ty = ir.MemRefType.get(shape, f32)
+      ref_ty = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.smem())
       lhs_ty = ref_ty if lhs_memory_space == "shared" else vec_ty
       acc, lhs, rhs = undefs(vec_ty, lhs_ty, ref_ty)
       wgmma_op = mgpu.dialect.WGMMAOp(acc, lhs, rhs)
@@ -1252,6 +1254,62 @@ class LayoutInferenceTest(parameterized.TestCase):
       want = ir.ArrayAttr.get([ir.ArrayAttr.get([])])
       self.assertEqual(inference_utils.in_transforms(load_op), want)
       self.assertEqual(inference_utils.in_transforms(store_op), want)
+
+  def test_slice_smem_gets_empty_by_default(self):
+    with ir.InsertionPoint(self.module.body):
+      shape = (64, 64)
+      elt_ty = ir.BF16Type.get()
+      i32 = ir.IntegerType.get_signless(32)
+      [offset] = undefs(i32)
+      ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+      slice_smem_op = mgpu.dialect.SliceSMEMOp(ref_ty, offset)
+
+      transforms = ir.ArrayAttr.get([])
+      mgpu.infer_layout(self.module, enable_smem_inference=True)
+      self.assertSequenceEqual(
+          inference_utils.out_transforms(slice_smem_op), [transforms]
+      )
+
+  def test_infer_transforms_preserves_with_transforms_requirements(self):
+    shape = (64, 64)
+    elt_ty = ir.BF16Type.get()
+
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+      [ref] = undefs(ref_ty)
+
+      transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((8, 64)),
+        mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+      mgpu.dialect.with_transforms(ref, transforms)
+
+    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    self.assertSequenceEqual(
+        inference_utils.out_transforms(ref.owner), [transforms]
+    )
+
+  def test_infer_transforms_fails_on_conflicting_with_transforms_requirements(self):
+    shape = (64, 64)
+    elt_ty = ir.BF16Type.get()
+
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+      [ref] = undefs(ref_ty)
+
+      transforms1 = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((8, 64)),
+        mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+      transforms2 = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((16, 64)),
+        mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+      mgpu.dialect.with_transforms(ref, transforms1)
+      mgpu.dialect.with_transforms(ref, transforms2)
+
+    with self.assertRaisesRegex(ValueError, "Failed to infer"):
+      mgpu.infer_layout(self.module, enable_smem_inference=True)
 
 
 if __name__ == "__main__":
