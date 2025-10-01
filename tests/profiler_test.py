@@ -22,6 +22,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from absl.testing import absltest
 import pathlib
 
@@ -41,6 +42,7 @@ except ImportError:
 
 try:
   from xprof.convert import _pywrap_profiler_plugin
+  import jax.collect_profile
 except ImportError:
   _pywrap_profiler_plugin = None
 
@@ -469,6 +471,44 @@ class ProfilerTest(unittest.TestCase):
     jax.profiler.stop_server()
     thread_profiler.join()
     self._check_xspace_pb_exist(logdir)
+
+  @unittest.skipIf(
+      not (portpicker and _pywrap_profiler_plugin),
+    "Test requires xprof and portpicker")
+  def test_remote_profiler_gcs_path(self):
+    port = portpicker.pick_unused_port()
+    jax.profiler.start_server(port)
+
+    profile_done = threading.Event()
+    logdir = "gs://mock-test-bucket/test-dir"
+    # Mock XProf call in collect_profile.
+    _pywrap_profiler_plugin.trace = unittest.mock.MagicMock()
+    def on_profile():
+      jax.collect_profile(port, 500, logdir, no_perfetto_link=True)
+      profile_done.set()
+
+    thread_profiler = threading.Thread(
+        target=on_profile, args=())
+    thread_profiler.start()
+    start_time = time.time()
+    y = jnp.zeros((5, 5))
+    while not profile_done.is_set():
+      # The timeout here must be relatively high. The profiler takes a while to
+      # start up on Cloud TPUs.
+      if time.time() - start_time > 30:
+        raise RuntimeError("Profile did not complete in 30s")
+      y = jnp.dot(y, y)
+    jax.profiler.stop_server()
+    thread_profiler.join()
+    _pywrap_profiler_plugin.trace.assert_called_once_with(
+        unittest.mock.ANY,
+        logdir,
+        unittest.mock.ANY,
+        unittest.mock.ANY,
+        unittest.mock.ANY,
+        unittest.mock.ANY,
+        unittest.mock.ANY,
+    )
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
