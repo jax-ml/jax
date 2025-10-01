@@ -68,6 +68,7 @@ from jax._src.pallas.mosaic_gpu.primitives import copy_smem_to_gmem as copy_smem
 from jax._src.pallas.mosaic_gpu.primitives import inline_mgpu as inline_mgpu
 from jax._src.pallas.mosaic_gpu.primitives import load as load
 from jax._src.pallas.mosaic_gpu.primitives import multimem_store as multimem_store
+from jax._src.pallas.mosaic_gpu.primitives import multimem_load_reduce as multimem_load_reduce
 from jax._src.pallas.mosaic_gpu.primitives import print_layout as print_layout
 from jax._src.pallas.mosaic_gpu.primitives import query_cluster_cancel as query_cluster_cancel
 from jax._src.pallas.mosaic_gpu.primitives import RefType as RefType

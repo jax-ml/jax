@@ -3517,3 +3517,90 @@ def _multimem_store_lowering_rule(
   if ctx.module_ctx.auto_barriers:
     mgpu.warpgroup_barrier()  # Make sure the writes have completed.
   return ()
+
+
+multimem_load_reduce_p = jax_core.Primitive("multimem_load_reduce")
+
+@multimem_load_reduce_p.def_effectful_abstract_eval
+def _multimem_load_reduce_abstract_eval(ref, *avals_flat, tree, collective_axes, reduction_op):
+  del collective_axes, reduction_op
+  _check_ref(ref, "ref", gpu_core.GMEM)
+  shape, dtype = ref.shape, ref.dtype
+  if tree is not None:
+    transforms = jax.tree.unflatten(tree, avals_flat)
+    for t in transforms:
+      shape = t.transform_shape(shape)
+      dtype = t.transform_dtype(dtype)
+  return jax_core.ShapedArray(shape, dtype), {pallas_core.comms_effect}
+
+@lowering.register_lowering_rule(multimem_load_reduce_p, mgpu.LoweringSemantics.Lane)
+def _multimem_load_reduce_lowering_rule(
+    ctx: lowering.LoweringRuleContext, ref, *transforms_leaves, tree, collective_axes, reduction_op,
+):
+  if (mesh_info := ctx.module_ctx.mesh_info) is None:
+    raise ValueError(
+        "JAX device mesh is required by multimem_load_reduce, but not defined."
+    )
+  if set(collective_axes) != set(mesh_info.axis_names):
+    raise NotImplementedError(
+        "Only collective_axes that include all JAX device mesh"
+        f" ({mesh_info.axis_names}) axes are supported, but got"
+        f" {collective_axes}"
+    )
+  if (layout := ctx.out_layout_hint) is None:
+    raise RuntimeError(
+        "Failed to infer the output layout of multimem_load_reduce. Please apply"
+        " plgpu.layout_cast to its output right after its creation."
+    )
+  if not isinstance(layout, mgpu.TiledLayout):
+    raise ValueError(
+        "Only tiled layouts are supported by multimem_load_reduce, but got"
+        f" {layout}"
+    )
+  dtype = ctx.avals_out[0].dtype
+  transforms = tree.unflatten(transforms_leaves)
+  ref, transforms = lowering._handle_transforms(ctx, ref, transforms, allow_peer_refs=False)
+  if transforms:
+    raise NotImplementedError(
+        f"Unhandled transforms for multimem_load_reduce: {transforms}"
+    )
+  multi_ref = ctx.launch_ctx.to_remote_multicast(ref)
+  is_signed = mgpu_utils.is_signed(dtype)
+  arr = mgpu.FragmentedArray.load_reduce_untiled(
+      multi_ref, layout=layout, is_signed=is_signed, reduction=reduction_op
+  )
+  return arr
+
+def multimem_load_reduce(
+    ref: _Ref,
+    *,
+    collective_axes: Hashable | tuple[Hashable, ...],
+    reduction_op: mgpu.MultimemReductionOp,
+) -> jax.Array:
+  """Loads from a GMEM reference on all devices present in collective_axes and reduces the loaded values.
+
+  The supported dtypes are: ``jnp.float32``, ``jnp.float16``, ``jnp.bfloat16``,
+  ``jnp.float8_e5m2``, ``jnp.float8_e4m3fn``, ``jnp.int32`` and ``jnp.int64``.
+
+  8-bit floating point dtypes are only supported on Blackwell GPUs.
+
+  Args:
+    ref: The GMEM reference to load from.
+    collective_axes: The JAX mesh axes indicating the devices to load from.
+    reduction_op: The reduction operation to perform on the loaded values. The
+      allowed values are add (all dtypes), min, max (all dtypes but f32), as
+      well as and, or and xor (integer types only).
+  """
+  ref, ref_transforms = state_primitives.get_ref_and_transforms(
+      ref, None, "multimem_load_reduce"
+  )
+  flat_ref_transforms, ref_transforms_treedef = tree_util.tree_flatten(
+      ref_transforms
+  )
+  return multimem_load_reduce_p.bind(
+      ref,
+      *flat_ref_transforms,
+      tree=ref_transforms_treedef,
+      collective_axes=collective_axes,
+      reduction_op=reduction_op,
+  )

@@ -29,6 +29,7 @@ from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.experimental.mosaic.gpu as mgpu
 import jax.numpy as jnp
 import numpy as np
+import jax.experimental.mosaic.gpu.fragmented_array as fa
 
 
 P = jax.sharding.PartitionSpec
@@ -258,6 +259,123 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
     y = multihost_utils.process_allgather(y, tiled=True)
     ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
     np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
+
+  @parameterized.parameters(
+      (jnp.int32, 1, "add"),
+      (jnp.int32, 1, "min"),
+      (jnp.int32, 1, "max"),
+      (jnp.int32, 1, "and"),
+      (jnp.int32, 1, "or"),
+      (jnp.int32, 1, "xor"),
+      (jnp.float32, 1, "add"),
+      (jnp.float32, 2, "add"),
+      (jnp.float32, 4, "add"),
+      (jnp.float16, 2, "add"),
+      (jnp.float16, 2, "min"),
+      (jnp.float16, 4, "max"),
+      (jnp.float16, 8, "add"),
+      (jnp.bfloat16, 2, "max"),
+      (jnp.bfloat16, 8, "add"),
+      (jnp.float8_e5m2, 4, "add"),
+      (jnp.float8_e5m2, 8, "min"),
+      (jnp.float8_e5m2, 16, "max"),
+      (jnp.float8_e4m3fn, 4, "min"),
+      (jnp.float8_e4m3fn, 8, "max"),
+      (jnp.float8_e4m3fn, 16, "add"),
+  )
+  def test_multimem_load_reduce(self, dtype, vector_length, reduction):
+    if dtype in (
+        jnp.float8_e5m2,
+        jnp.float8_e4m3fn,
+    ) and not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("Only works on GPU with capability >= sm100")
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+    devices = jax.devices()[:2]
+
+    def kernel(x_ref, y_ref, _, sem_ref):
+      layout = plgpu.Layout.TILED(
+          fa.Tiling(
+              (
+                  (64, 2 * vector_length),
+                  (16, 2 * vector_length),
+                  (vector_length,),
+              )
+          ),
+          warp_dims=(-5,),
+          lane_dims=(-3, -2),
+          vector_dim=-1,
+      )
+      y_ref[...] = plgpu.layout_cast(
+          plgpu.multimem_load_reduce(
+              x_ref.at[16:-16], collective_axes="x", reduction_op=reduction,
+          ),
+          layout
+      )
+      my_device = lax.axis_index("x")
+      other_device = 1 - my_device
+      pl.semaphore_signal(sem_ref, 1, device_id=other_device)
+      pl.semaphore_wait(sem_ref)
+
+    # The rounding we see in low precision types seems to be different from
+    # what JAX/XLA use.
+    match jnp.dtype(dtype).itemsize:
+      case 4:
+        bound = 800000
+      case 2:
+        bound = 128
+      case 1:
+        bound = 4
+      case _:
+        raise ValueError(f"Unsupported dtype: {dtype}")
+    x_local = jax.random.randint(
+        jax.random.key(1234), (128 + 64, 32), dtype=jnp.int32, minval=-bound, maxval=bound,
+    ).astype(dtype)
+    mesh = jax.sharding.Mesh(devices, ("x",))
+    x_shard = jax.ShapeDtypeStruct((64 + 32, 32), dtype)
+    y_shape = jax.ShapeDtypeStruct((64, 32), dtype)
+    y, _ = jax.jit(
+        shard_map.shard_map(
+            pl.pallas_call(
+                kernel,
+                in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+                out_specs=[
+                    pl.BlockSpec(memory_space=plgpu.SMEM),
+                    pl.BlockSpec(memory_space=plgpu.GMEM),
+                ],
+                out_shape=(y_shape, x_shard),
+                scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+                # TODO(b/448323639): Without aliasing XLA doesn't actually
+                # insert the copy that puts the operand in symmetric memory,
+                # which causes the kernel to crash.
+                input_output_aliases={0: 1},
+            ),
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),  # Not really, but lets us test.
+            check_rep=False,
+        )
+    )(x_local)
+    y = multihost_utils.process_allgather(y, tiled=True)
+    match reduction:
+      case "add":
+        np_reduction = jnp.add
+      case "min":
+        np_reduction = jnp.minimum
+      case "max":
+        np_reduction = jnp.maximum
+      case "and":
+        np_reduction = jnp.bitwise_and
+      case "or":
+        np_reduction = jnp.bitwise_or
+      case "xor":
+        np_reduction = jnp.bitwise_xor
+      case _:
+        raise ValueError(reduction)
+    np.testing.assert_array_equal(
+        y.astype(jnp.float32),
+        np.tile(np_reduction(x_local[16:64+16], x_local[64+48:128+48]), (2, 1)),
+    )
 
 
 if __name__ == '__main__':

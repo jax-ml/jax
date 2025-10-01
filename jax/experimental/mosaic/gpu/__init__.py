@@ -86,6 +86,7 @@ from .utils import (
     Partition1D as Partition1D,
     SemaphoreRef as SemaphoreRef,
     ThreadSubset as ThreadSubset,
+    MultimemReductionOp as MultimemReductionOp,
     bitwidth as bitwidth,
     bytewidth as bytewidth,
     c as c,
