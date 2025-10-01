@@ -256,7 +256,7 @@ jax_multiplatform_test(
         "gpu_h100",
         "gpu_b200",
     ],
-    shard_count = 2,
+    shard_count = 4,
     tags = [
         "mosaic_gpu_test",
         "notsan",  # Times out.
