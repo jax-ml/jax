@@ -277,6 +277,7 @@ pytype_strict_library(
     srcs = ["basearray.py"],
     pytype_srcs = ["basearray.pyi"],
     deps = [
+        ":literals",
         ":named_sharding",
         ":partition_spec",
         ":sharding",
@@ -537,7 +538,6 @@ pytype_strict_library(
     name = "literals",
     srcs = ["literals.py"],
     deps = [
-        ":typing",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )

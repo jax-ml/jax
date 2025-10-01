@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from typing import Sequence
-from jax._src import typing
 from jax._src.lib import _jax
 from jax._src.lib import jaxlib_extension_version
 import numpy as np
@@ -106,11 +105,11 @@ class TypedNdArray:
     self.weak_type = weak_type
 
   @property
-  def dtype(self) -> typing.DType:
+  def dtype(self) -> np.dtype:
     return self.val.dtype
 
   @property
-  def shape(self) -> typing.Shape:
+  def shape(self) -> tuple[int, ...]:
     return self.val.shape
 
   @property
@@ -179,6 +178,9 @@ class TypedNdArray:
   def __mod__(self, other):
     return self.val.__mod__(other)
 
+  def __pow__(self, other):
+    return self.val.__pow__(other)
+
   def __radd__(self, other):
     return self.val.__radd__(other)
 
@@ -196,6 +198,9 @@ class TypedNdArray:
 
   def __rmod__(self, other):
     return self.val.__rmod__(other)
+
+  def __rpow__(self, other):
+    return self.val.__rpow__(other)
 
   def __getitem__(self, index):
     return self.val.__getitem__(index)
