@@ -528,6 +528,13 @@ class Divides:
   expr: Expression
   dimensions_to_tile: tuple[tuple[int | ir.Value, ...], ...]
 
+  def __post_init__(self):
+    object.__setattr__(
+        self,
+        "dimensions_to_tile",
+        _canonicalize_dimensions_to_tile(self.dimensions_to_tile),
+    )
+
   def holds(self) -> bool | None:
     """Whether the divisibility constraint holds.
 
@@ -568,6 +575,28 @@ class Divides:
 Constraint = Relayout | Distinct | IsTransferable | Transposed | Divides
 
 
+def _canonicalize_dimensions_to_tile(
+    dimensions_to_tile: tuple[tuple[int | ir.Value, ...], ...]
+) -> tuple[tuple[int | ir.Value, ...], ...]:
+  """Canonicalizes the dimensions to tile.
+
+  Int dimension values are merged into a single one by computing their greatest
+  common divisor. This works because any valid tiling must evenly divide all
+  dimensions, so it is a common divisor. Thus proving that it divides the gcd of
+  the dimensions proves that it divides all of them.
+
+  ir.Values are deduplicated and sorted at the end based on their string
+  representation.
+  """
+  def _canonicalize(vals: tuple[int | ir.Value, ...]) -> tuple[int | ir.Value, ...]:
+    static_val = math.gcd(*[x if isinstance(x, int) else 0 for x in vals])
+    dyn_vals = {x for x in vals if isinstance(x, ir.Value)}
+    dyn_vals = sorted(dyn_vals, key=str)
+    return (static_val,) + tuple(x for x in dyn_vals)
+
+  return tuple(_canonicalize(x) for x in dimensions_to_tile)
+
+
 def reduce_constraint(
     constraint: Constraint, assignments: dict[Variable, Constant]
 ) -> Constraint | Tautological | Unsatisfiable:
@@ -599,11 +628,11 @@ def reduce_constraint(
       if isinstance(lhs_red, Unsatisfiable) or isinstance(rhs_red, Unsatisfiable):
         return Unsatisfiable()
       new_constraint = Transposed(lhs_red, rhs_red)
-    case Divides(expr=expr, dimensions_to_tile=dimensions):
+    case Divides(expr=expr, dimensions_to_tile=dimensions_to_tile):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
-      new_constraint = Divides(expr_red, dimensions)
+      new_constraint = Divides(expr_red, dimensions_to_tile)
     case _ as never:
       assert_never(never)
 
@@ -881,7 +910,6 @@ def _merge_divides_dimensions(
   len_diff = len(long) - len(short)
   result = list(long[:len_diff])
   for long_dims, short_dims in zip(long[len_diff:], short, strict=True):
-    # TODO(b/447079781): Canonicalize the dimensions.
     result.append(long_dims + short_dims)
   return tuple(result)
 

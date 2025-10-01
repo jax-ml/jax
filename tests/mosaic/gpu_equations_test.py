@@ -528,17 +528,17 @@ class EquationSystemTest(parameterized.TestCase):
     self.assertEqual(reduce([
         divides(v0, [[16]]),
         divides(v0, [[8]]),
-    ]), [divides(v0, [[16, 8]])])
+    ]), [divides(v0, [[8]])])
 
     self.assertEqual(reduce([
         divides(v0, [[16, 10]]),
         divides(v0, [[8]]),
-    ]), [divides(v0, [[16, 10, 8]])])
+    ]), [divides(v0, [[2]])])
 
     self.assertEqual(reduce([
         divides(v0, [[16, 10]]),
         divides(v0, [[5],[8]]),
-    ]), [divides(v0, [[5], [8, 16, 10]])])
+    ]), [divides(v0, [[5], [2]])])
 
    # Merging of constraints - multiple vars.
     self.assertEqual(reduce([
@@ -547,9 +547,35 @@ class EquationSystemTest(parameterized.TestCase):
         divides(v1, [[1], [2, 4], [5, 10]]),
         divides(v1, [[9], [20]]),
     ]), [
-        divides(v0, [[5], [8, 16, 10]]),
-        divides(v1, [[1], [2, 4, 9], [5, 10, 20]]),
+        divides(v0, [[5], [2]]),
+        divides(v1, [[1], [1], [5]]),
     ])
+
+  def test_canonicalize_dimensions_to_tile(self):
+    def canonicalized(dims):
+      v = equations.Variable(0)
+      divides = equations.Divides(v, dims)
+      system = equations.EquationSystem(constraints=[divides])
+      system = equations.reduce(system)
+      [canonical] = system.constraints
+      return canonical.dimensions_to_tile
+
+    with self.subTest("static_dimensions"):
+      self.assertEqual(canonicalized(((1, 2, 3),)), ((1,),))
+      self.assertEqual(canonicalized(((4, 8, 16),)), ((4,),))
+      self.assertEqual(canonicalized(((20, 32, 0),)), ((4,),))
+
+    self.enter_context(_make_ir_context())
+    self.enter_context(ir.Location.unknown())
+    ir.Module.create()
+    c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
+    c0 = c(0)
+    c1 = c(1)
+
+    with self.subTest("dynamic_dimensions"):
+      self.assertEqual(canonicalized(((c0, 1, 2, c1, c1),)), ((1, c0, c1),))
+      self.assertEqual(canonicalized(((4, c1, c0, 8, 16),)), ((4, c0, c1),))
+      self.assertEqual(canonicalized(((c1, 20, c0, 32, 0, c1, c0),)), ((4, c0, c1),))
 
 
 if __name__ == "__main__":
