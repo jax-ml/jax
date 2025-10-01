@@ -105,10 +105,17 @@ def _colocated_cpu_devices_cached(
 def _colocated_cpu_devices_cached_fallback_to_cpu_backend(
     devices: tuple[jax.Device, ...],
 ) -> Sequence[jax.Device]:
-  # PjRt-IFRT currently defines CPU devices by using a CPU backend.
   # TODO(hyeontaek): Remove this fallback path once a PjRt-IFRT backend defines
   # CPU devices by its own instead of using a separate CPU backend.
-  cpu_backend_devices = jax.local_devices(backend="cpu")
+  if devices[0].device_kind == "cpu":
+    # Use the devices from the backend of an original device if it defines CPU
+    # devices.
+    cpu_backend_devices = [d for d in devices[0].client._get_all_devices()
+                           if d.device_kind == "cpu"]
+  else:
+    # PjRt-IFRT on a non-CPU platform currently defines CPU devices on a separae
+    # CPU backend.
+    cpu_backend_devices = jax.local_devices(backend="cpu")
   device_index_map = {device.id: i for i, device in enumerate(jax.devices())}
 
   available_devices = devices[: min(len(cpu_backend_devices), len(devices))]

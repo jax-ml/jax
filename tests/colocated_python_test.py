@@ -71,6 +71,32 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     )
     self.assertEqual(cpu_mesh1, cpu_mesh2)
 
+  def test_serialization_roundtrip(self):
+    cpu_devices = colocated_python.colocated_cpu_devices(
+        jax.local_devices()[:1])
+
+    mesh = jax.sharding.Mesh(np.array(cpu_devices).reshape((1, 1)), ("x", "y"))
+    self.assertEqual(
+        serialization._deserialize(serialization._serialize(mesh)), mesh)
+
+    sharding1 = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec("x"))
+    self.assertEqual(
+        serialization._deserialize(serialization._serialize([sharding1])),
+        [sharding1])
+
+    sharding2 = jax.sharding.SingleDeviceSharding(
+        cpu_devices[0], memory_kind="pinned_host")
+    self.assertEqual(
+        serialization._deserialize(serialization._serialize((sharding2,))),
+        (sharding2,))
+
+    def func(x):
+      return x + 1
+
+    self.assertEqual(
+        serialization._deserialize(serialization._serialize(func))(1), func(1))
+
   def test_make_colocated_python_program(self):
     def add_one(x):
       return x + 1
