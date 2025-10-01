@@ -2938,6 +2938,7 @@ def lower_traceable(jaxpr, *lo_args):
              for lo_val in v.aval.lower_val(hi_val)]
   return mut_outs + lo_outs
 
+@weakref_lru_cache
 def convert_const_himutables(jaxpr):
   move = [typeof(c).has_qdd for c in jaxpr.consts]
   constvals, in_mutables = partition_list(move, jaxpr.consts)
