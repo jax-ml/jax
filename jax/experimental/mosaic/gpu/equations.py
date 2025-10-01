@@ -887,6 +887,74 @@ def saturate_distinct_from_splat(
   return equation_system & EquationSystem(constraints=new_constraints)
 
 
+def compute_transitively_equal_vars(
+    system: EquationSystem,
+) -> dict[Variable, list[Variable]]:
+  """Computes all transitively equal variables in an equation system.
+
+  The output dictionary maps each variable that appears in equations in the
+  equation system to all the variables it is transitively equal to.
+  """
+  # The equality relations between variables form a graph where variables are
+  # nodes and an equation `v1 == v2` forms an edge. All variables in a
+  # connected component are transitively equal. We use a Union-Find data
+  # structure with path compression to efficiently find these connected
+  # components (i.e., equivalence classes).
+  parent: dict[Variable, Variable] = {}
+  def find(v: Variable) -> Variable:
+    if v not in parent:
+      parent[v] = v
+    if parent[v] != v:
+      parent[v] = find(parent[v])
+    return parent[v]
+
+  def union(v1: Variable, v2: Variable):
+    root1 = find(v1)
+    root2 = find(v2)
+    if root1 != root2:
+      parent[root2] = root1
+
+  all_vars: set[Variable] = set()
+  for eq in system.equations:
+    if isinstance(eq.lhs, Variable) and isinstance(eq.rhs, Variable):
+      all_vars.add(eq.lhs)
+      all_vars.add(eq.rhs)
+      union(eq.lhs, eq.rhs)
+
+  # Group variables by their component representative.
+  components: dict[Variable, list[Variable]] = {}
+  for v in sorted(all_vars, key=str):
+    root = find(v)
+    components.setdefault(root, []).append(v)
+
+  equal_vars: dict[Variable, list[Variable]] = {}
+  for component_vars in components.values():
+    for v in component_vars:
+      equal_vars[v] = [other for other in component_vars if other != v]
+
+  return equal_vars
+
+
+def saturate_divides_constraints_for_equal_vars(
+    system: EquationSystem,
+) -> EquationSystem:
+  """Saturates Divides constraints between all transitively equal vars.
+  """
+  equal_vars = compute_transitively_equal_vars(system)
+  new_constraints: list[Constraint] = []
+  for constraint in system.constraints:
+    new_constraints.append(constraint)
+    match constraint:
+      case Divides(expr=expr, dimensions_to_tile=dimensions_to_tile):
+        if isinstance(expr, Variable):
+          for equal_var in equal_vars.get(expr, []):
+            new_constraints.append(Divides(equal_var, dimensions_to_tile))
+      case _:
+        pass
+  new_constraints = merge_divides_constraints(new_constraints)
+  return dataclasses.replace(system, constraints=new_constraints)
+
+
 def _merge_divides_dimensions(
     a: tuple[tuple[int | ir.Value, ...], ...],
     b: tuple[tuple[int | ir.Value, ...], ...],

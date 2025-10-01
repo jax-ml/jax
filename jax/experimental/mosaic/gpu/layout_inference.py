@@ -1480,6 +1480,7 @@ def infer_layout(module: ir.Module, enable_smem_inference: bool = False):
   # faster.
   global_equation_system = eqns.saturate_distinct_from_splat(global_equation_system)
   assert not isinstance(global_equation_system, eqns.Unsatisfiable)
+  global_equation_system = eqns.saturate_divides_constraints_for_equal_vars(global_equation_system)
 
   # Attempt to find assignments that satisfy the equation system.
   solution = find_assignments_for(

@@ -540,7 +540,7 @@ class EquationSystemTest(parameterized.TestCase):
         divides(v0, [[5],[8]]),
     ]), [divides(v0, [[5], [2]])])
 
-   # Merging of constraints - multiple vars.
+    # Merging of constraints - multiple vars.
     self.assertEqual(reduce([
         divides(v0, [[16, 10]]),
         divides(v0, [[5],[8]]),
@@ -576,6 +576,41 @@ class EquationSystemTest(parameterized.TestCase):
       self.assertEqual(canonicalized(((c0, 1, 2, c1, c1),)), ((1, c0, c1),))
       self.assertEqual(canonicalized(((4, c1, c0, 8, 16),)), ((4, c0, c1),))
       self.assertEqual(canonicalized(((c1, 20, c0, 32, 0, c1, c0),)), ((4, c0, c1),))
+
+  def test_saturate_divides_constraints_for_equal_vars(self):
+    def divides(var, dims):
+      return equations.Divides(equations.Variable(var), nested_tuple(dims))
+    def system(equal_vars, constraints):
+      return equations.EquationSystem(
+          equations=[
+              equations.Equation(equations.Variable(a), equations.Variable(b))
+              for a, b in equal_vars
+          ],
+          constraints=constraints,
+      )
+
+    # One equality
+    s = system([(0, 1)], [divides(0, [[1]])])
+    got = equations.saturate_divides_constraints_for_equal_vars(s)
+    want = [divides(0, [[1]]), divides(1, [[1]])]
+    self.assertEqual(got.equations, s.equations)
+    self.assertEqual(got.constraints, want)
+
+    # Five transitively equal variables and one disconnected one.
+    s = system(
+        [(0, 1), (2, 3), (2, 4), (1, 4)], [divides(0, [[1]]), divides(5, [[1]])]
+    )
+    got = equations.saturate_divides_constraints_for_equal_vars(s)
+    want = [
+        divides(0, [[1]]),
+        divides(1, [[1]]),
+        divides(2, [[1]]),
+        divides(3, [[1]]),
+        divides(4, [[1]]),
+        divides(5, [[1]]),
+    ]
+    self.assertEqual(got.equations, s.equations)
+    self.assertEqual(got.constraints, want)
 
 
 if __name__ == "__main__":
