@@ -21,6 +21,7 @@ from typing import Any
 from jax._src import core
 from jax._src import effects
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src import ad_util
 from jax._src.util import safe_zip, safe_map
 from jax._src.tree_util import tree_flatten, tree_unflatten, tree_leaves
@@ -45,6 +46,7 @@ class HiPrimitive(core.Primitive):
     self.name = name
     ad.primitive_jvps[self] = self.jvp
     ad.primitive_transposes[self] = self.transpose
+    batching.fancy_primitive_batchers[self] = self.vmap
 
   def is_high(self, *avals, **params) -> bool:
     return True
@@ -65,6 +67,9 @@ class HiPrimitive(core.Primitive):
     assert False, "must override"
   # transposition is only required if the primitive is linear in some inputs
   def transpose(self, *args, **params):
+    assert False, "must override"
+
+  def vmap(self, axis_data, args, in_axes, **params):
     assert False, "must override"
 
 

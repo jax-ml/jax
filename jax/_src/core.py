@@ -1639,6 +1639,15 @@ class AbstractValue:
   def lo_ty_qdd(self, qdd):
     raise NotImplementedError("avals with qdd must override")
 
+  def axis_size(self, bdim):
+    raise NotImplementedError("must override")
+
+  def dec_rank(self, axis_data, bdim):
+    return mapped_aval(axis_data.size, bdim, self)
+
+  def inc_rank(self, axis_data, bdim):
+    raise unmapped_aval(axis_data.size, bdim, self)
+
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str(self)
 
@@ -2293,6 +2302,17 @@ class ShapedArray(UnshapedArray):
 
   def update_vma(self, vma):
     return self.update(vma=vma)
+
+  def axis_size(self, axis):
+    assert isinstance(axis, int), axis
+    try: return self.shape[axis]
+    except (IndexError, TypeError) as e:
+      shape = self.shape
+      min_rank = axis + 1 if axis >= 0 else -axis
+      raise ValueError(
+          f"tried to batch value of type {self} along axis {axis}, "
+          f"which implies that its rank should be at least {min_rank}, "
+          f"but its rank is only {len(shape)} (its shape is {shape})") from None
 
 
 def _get_shape_sharding_str(shape, spec):
