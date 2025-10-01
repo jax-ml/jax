@@ -34,7 +34,8 @@ def nanobind_pywrap_extension(
         pytype_deps = [],
         copts = [],
         linkopts = [],
-        visibility = None):
+        visibility = None,
+        **kwargs):  # @unused
     # buildifier: disable=function-docstring-args
     "Python extension rule using nanobind and the pywrap rules."
     module_name = name
