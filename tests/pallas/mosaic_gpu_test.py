@@ -2603,6 +2603,7 @@ class PallasCallWGTest(
         mgpu_primitives.semaphore_signal_parallel_p,
         mgpu_primitives.try_cluster_cancel_p,
         mgpu_primitives.query_cluster_cancel_p,
+        mgpu_primitives.multimem_store_p,
         lax.slice_p,
         lax.iota_p,
         pallas_core.core_map_p,

@@ -22,6 +22,7 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src import test_multiprocess as jt_multiprocess
+from jax.experimental import multihost_utils
 from jax.experimental import pallas as pl
 from jax.experimental import shard_map
 from jax.experimental.pallas import mosaic_gpu as plgpu
@@ -228,6 +229,35 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
     )
     with self.assertRaisesRegex(NotImplementedError, msg):
       f()
+
+  def test_multimem_store(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    def kernel(y_ref, sem):
+      @pl.when(lax.axis_index('x') == 0)
+      def _store():
+        output = plgpu.layout_cast(lax.broadcasted_iota(jnp.int32, (128, 128), 1), plgpu.Layout.WGMMA)
+        plgpu.multimem_store(output, y_ref, 'x')
+      other_dev_id = 1 - lax.axis_index('x')
+      pl.semaphore_signal(sem, 1, device_id=other_dev_id)
+      pl.semaphore_wait(sem)
+
+    kernel_call = pl.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+    )
+    mesh = jax.sharding.Mesh(jax.devices(), ['x'])
+    y = jax.jit(
+        shard_map.shard_map(
+            kernel_call, mesh, in_specs=(), out_specs=P("x"), check_rep=False,
+        )
+    )()
+    y = multihost_utils.process_allgather(y, tiled=True)
+    ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
+    np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
 
 
 if __name__ == '__main__':

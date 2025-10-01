@@ -3434,3 +3434,86 @@ def query_cluster_cancel(
       grid_names=grid_names,
       transforms_tree=result_transforms_tree)
   return tuple(result[:-1]), result[-1]
+
+
+multimem_store_p = jax_core.Primitive("multimem_store")
+multimem_store_p.multiple_results = True
+
+
+def multimem_store(source: jax.Array, ref: _Ref, collective_axes: Hashable | tuple[Hashable, ...]):
+  """Stores the value to ref on all devices present in collective_axes.
+
+  The stores is done using the multimem instructions, meaning that the data is
+  only transferred to the switch once, and broadcasted to all other devices
+  there.
+
+  Args:
+    source: The value to store.
+    ref: The GMEM reference to store the value to.
+    collective_axes: The JAX mesh axes indicating the devices to store to.
+  """
+  if isinstance(ref, pallas_core.TransformedRef):
+    transforms_leaves, transforms_tree = jax.tree.flatten(
+        ref.transforms
+    )
+    ref = ref.ref
+  else:
+    transforms_leaves, transforms_tree = [], None
+  multimem_store_p.bind(
+      source,
+      ref,
+      *transforms_leaves,
+      collective_axes=collective_axes,
+      transforms_tree=transforms_tree,
+  )
+
+
+@multimem_store_p.def_effectful_abstract_eval
+def _multimem_store_abstract_eval(source, ref, *transforms_leaves, transforms_tree, **_):
+  _check_ref(ref, "ref", gpu_core.GMEM)
+  shape, dtype = ref.shape, ref.dtype
+  if transforms_tree is not None:
+    transforms = jax.tree.unflatten(transforms_tree, transforms_leaves)
+    for t in transforms:
+      shape = t.transform_shape(shape)
+      dtype = t.transform_dtype(dtype)
+  if source.dtype != dtype:
+    raise ValueError(f"Value dtype {source.dtype} does not match ref dtype {dtype}")
+  if source.shape != shape:
+    raise ValueError(f"Value shape {source.shape} does not match ref shape {shape}")
+  return [], {pallas_core.comms_effect}
+
+
+@lowering.register_lowering_rule(multimem_store_p, mgpu.LoweringSemantics.Lane)
+def _multimem_store_lowering_rule(
+    ctx: lowering.LoweringRuleContext, value, local_ref, *transforms_leaves, transforms_tree, collective_axes,
+):
+  if (mesh_info := ctx.module_ctx.mesh_info) is None:
+    raise ValueError(
+        "JAX device mesh is required by multimem_store, but not defined."
+    )
+  if set(collective_axes) != set(mesh_info.axis_names):
+    raise NotImplementedError(
+        "Only collective_axes that include all JAX device mesh"
+        f" ({mesh_info.axis_names}) axes are supported, but got"
+        f" {collective_axes}"
+    )
+  if not isinstance(value, mgpu.FragmentedArray):
+    raise TypeError(f"Can only store arrays (got {value}).")
+  if transforms_tree is not None:
+    transforms = tree_util.tree_unflatten(transforms_tree, transforms_leaves)
+    local_ref, transforms = lowering._handle_transforms(
+        ctx, local_ref, transforms, allow_peer_refs=False
+    )
+    if transforms:
+      raise NotImplementedError(
+          f"Unhandled transforms for multimem_store: {transforms}"
+      )
+  multi_ref = ctx.launch_ctx.to_remote_multicast(local_ref)
+  if not ctx.avals_in[0].shape:
+    multi_ref.store(lowering._ensure_ir_value(value, ctx.avals_out[0].dtype), [])
+  else:
+    value.store_untiled(multi_ref, optimized=False)
+  if ctx.module_ctx.auto_barriers:
+    mgpu.warpgroup_barrier()  # Make sure the writes have completed.
+  return ()
