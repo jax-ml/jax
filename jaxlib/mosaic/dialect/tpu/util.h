@@ -25,6 +25,7 @@ limitations under the License.
 #include <type_traits>
 #include <utility>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Compiler.h"
