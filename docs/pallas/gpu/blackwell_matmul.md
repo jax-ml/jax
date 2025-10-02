@@ -9,8 +9,11 @@ and CUTLASS.
 ```{warning}
 The utilization shown in the table below might be different than what you see online,
 but the differences can likely be explained by a different input data distribution.
-All our benchmarks here use arrays with iid normal float16 entries. You can reproduce
+All our benchmarks here use arrays with iid normal float16 entries, which turn out
+to be one of the slower distributions you can choose. You can reproduce
 the numbers for yourself by running [our test file](https://github.com/jax-ml/jax/blob/main/tests/pallas/mgpu_examples_test.py) after changing the `BENCHMARK` variable to `True`.
+
+**tl;dr** don't believe matmul benchmarks if they don't specify input data distribution.
 ```
 
 | Implementation                  | TensorCore utilization | % of cuBLAS utilization |
