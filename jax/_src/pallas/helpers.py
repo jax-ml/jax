@@ -69,7 +69,7 @@ def empty_ref_like(x: object) -> jax.Array:
       ),
       out_shape=x,
   )()
-  return jax_core.mutable_array(out, memory_space=memory_space)
+  return jax_core.new_ref(out, memory_space=memory_space)
 
 
 def when(

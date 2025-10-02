@@ -234,7 +234,7 @@ class JaxAotTest(jtu.JaxTestCase):
     self.assertCacheMisses(run, cpp=0, aot_call=expected_aot_calls)
 
   def test_with_ref_constants(self):
-    x_ref = core.mutable_array(0)
+    x_ref = core.new_ref(0)
 
     @jax.jit
     def f(x):
