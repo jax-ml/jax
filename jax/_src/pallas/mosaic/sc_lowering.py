@@ -638,6 +638,7 @@ def _dma_wait_lowering_rule(
 def _extract_indirect_offsets(
     transforms: Sequence[ir.Value], expected_shape: tuple[int, ...]
 ) -> tuple[ir.Value | None, Sequence[pallas_core.MemoryRefTransform]]:
+  offsets_ref: Any  # Make mypy happy.
   match transforms[-1:]:
     case [
         indexing.NDIndexer(indices=[ir.Value() as offsets, *_]) as indexer
@@ -661,6 +662,30 @@ def _extract_indirect_offsets(
             " async_copy()"
         )
       return offsets, transforms[:-1]
+    case [
+        indexing.NDIndexer(indices=[state.TransformedRef() as offsets_ref, *_]) as indexer
+    ]:
+      offsets_type = ir.MemRefType(offsets_ref.ref.type)
+      if offsets_type.element_type != ir.IntegerType.get_signless(32):
+        raise NotImplementedError(
+            "Only int32 indices are supported in async_copy() with a"
+            " dynamically-shaped indexer"
+        )
+      offsets_ref, _ = _transform_ref(
+          offsets_ref.ref,
+          jnp.int32,  # Just a placeholder.
+          offsets_ref.shape,
+          offsets_ref.transforms,
+      )
+      if not state_discharge._is_trivial_indexer(
+          indexing.NDIndexer(indexer.indices[1:], indexer.shape[1:], ())
+      ):
+        # TODO(slebedev): Consider lifting this restriction.
+        raise NotImplementedError(
+            "Only indexing along the major dimension is supported in"
+            " async_copy()"
+        )
+      return offsets_ref, transforms[:-1]
     case _:
       return None, transforms
 

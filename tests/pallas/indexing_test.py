@@ -204,30 +204,34 @@ class IndexerTest(jtu.JaxTestCase):
     indexer = NDIndexer.from_indices_shape(indices, shape)
     self.assertTupleEqual(indexer.get_indexer_shape(), (8, 2))
 
-  def test_ndindexer_with_multiple_refs(self):
-    indices = (
-        core.mutable_array(jnp.tile(jnp.arange(4), (2,))),
-        core.mutable_array(jnp.tile(jnp.arange(2), (4,))),
-    )
-    shape = (4, 2)
-    indexer = NDIndexer.from_indices_shape(indices, shape)
-    self.assertTupleEqual(indexer.get_indexer_shape(), (8,))
+  def test_ndindexer_with_transformed_ref(self):
+    @jax.jit
+    def f(ref, size):
+      # We need the jit to make sure the ref has a dynamic size.
+      indices = (ref.at[pl.ds(0, size)],)
+      shape = (4, 2)
+      indexer = NDIndexer.from_indices_shape(indices, shape)
+      return indexer.get_indexer_shape()
 
-  def test_ndindexer_with_multiple_broadcastable_refs(self):
-    indices = (
-        core.mutable_array(jnp.tile(jnp.arange(4), (2,))),
-        core.mutable_array(jnp.arange(1)),
+    size = 4
+    np.testing.assert_array_equal(
+        f(core.mutable_array(jnp.tile(jnp.arange(4), (size,))), 4), (size, 2)
     )
+
+  def test_ndindexer_with_multiple_refs(self):
+    indices = (core.mutable_array(jnp.tile(jnp.arange(4), (2,))),) * 2
     shape = (4, 2)
     with self.assertRaisesRegex(
-        ValueError, "All refs must have the same shape .*"
+        NotImplementedError, "Multiple Ref indexers are not supported"
     ):
       NDIndexer.from_indices_shape(indices, shape)
 
-  def test_ndindexer_with_refs_and_ints(self):
+  def test_ndindexer_with_ref_and_int(self):
     indices = (core.mutable_array(jnp.tile(jnp.arange(4), (2,))), 0)
     shape = (4, 2)
-    with self.assertRaisesRegex(ValueError, "Ref indexers cannot be mixed .*"):
+    with self.assertRaisesRegex(
+        NotImplementedError, "Ref cannot be mixed with other non-slice indexers"
+    ):
       NDIndexer.from_indices_shape(indices, shape)
 
   def test_indexer_with_all_types(self):

@@ -156,7 +156,7 @@ def _maybe_concretize(x: Any):
 class NDIndexer:
   indices: tuple[DimIndexer, ...]
   shape: tuple[int, ...]
-  int_indexer_shape: tuple[int, ...]
+  int_indexer_shape: tuple[int | Array, ...]
   # Off by default to avoid doing validation during pytree operations.
   validate: bool = False
 
@@ -183,7 +183,12 @@ class NDIndexer:
         continue
       # The shape of indexer integers should be broadcastable up to the
       # int_indexer_shape of the whole NDIndexer
-      idx_shape = core.get_aval(idx).shape
+      from jax._src.state import types as state_types  # pytype: disable=import-error
+      idx_shape = (
+          idx.shape
+          if isinstance(idx, state_types.TransformedRef)
+          else core.get_aval(idx).shape
+      )
       if not idx_shape:
         if (value := _maybe_concretize(idx)) and value >= s:
           raise ValueError(f"Out of bound indexer: idx={value}, dim={s}.")
@@ -250,28 +255,41 @@ class NDIndexer:
       return cls(indices, shape, (), validate=True)
 
     other_indexers, slice_indexers = partition_list(is_slice_indexing, indices)
-    indexer_shapes = tuple(core.get_aval(i).shape for i in other_indexers)
-    try:
-      int_indexer_shape = np.broadcast_shapes(*indexer_shapes)
-    except ValueError as e:
-      # Raise a nicer error than the NumPy one.
-      raise ValueError(
-          f"Cannot broadcast shapes for indexing: {indexer_shapes}") from e
+    validate = True
 
+    # We treat refs differently from scalars and arrays, because refs can have
+    # a dynamic shape, making it impossible to statically determine the
+    # broadcasted shape in the presence of other non-slice indexers.
     from jax._src.state import types as state_types  # pytype: disable=import-error
-    if num_refs := sum(
-        isinstance(core.get_aval(i), state_types.AbstractRef)
+    if ref_indexers := [
+        i
         for i in other_indexers
-    ):
-      if num_refs != len(other_indexers):
-        raise ValueError(
-            "Ref indexers cannot be mixed with other non-slice indexers"
+        if isinstance(i, state_types.TransformedRef)
+        or isinstance(core.get_aval(i), state_types.AbstractRef)
+    ]:
+      # TODO(slebedev): Consider pushing these checks to lowering time.
+      if len(ref_indexers) > 1:
+        raise NotImplementedError("Multiple Ref indexers are not supported")
+      if len(ref_indexers) != len(other_indexers):
+        raise NotImplementedError(
+            "Ref cannot be mixed with other non-slice indexers"
         )
-      if len(set(indexer_shapes)) > 1:
-        raise ValueError(
-            "All refs must have the same shape when used as indexers"
-        )
+      [ref_indexer] = ref_indexers
+      indexer_shape = ref_indexer.shape  # type: ignore
+      try:
+        core.canonicalize_shape(indexer_shape)
+      except TypeError:
+        validate = False  # The shape is dynamic.
     else:
+      indexer_shapes = [core.get_aval(i).shape for i in other_indexers]
+      try:
+        indexer_shape = np.broadcast_shapes(*indexer_shapes)
+      except ValueError as e:
+        # Raise a nicer error than the NumPy one.
+        raise ValueError(
+            "Cannot broadcast shapes for indexing: {indexer_shapes}"
+        ) from e
+
       # Here we use the `broadcast_to` primitive instead of composing lax
       # primitives together because it is easier to lower in targets like
       # Triton/Mosaic.
@@ -280,12 +298,12 @@ class NDIndexer:
       # and this module.
       from jax._src.state import primitives as sp  # pytype: disable=import-error
       other_indexers = [
-          sp.broadcast_to(i, int_indexer_shape) for i in other_indexers  # type: ignore[arg-type]
+          sp.broadcast_to(i, indexer_shape) for i in other_indexers  # type: ignore[arg-type]
       ]
       indices = tuple(
           merge_lists(is_slice_indexing, other_indexers, slice_indexers)
        )
-    return cls(indices, shape, int_indexer_shape, validate=True)
+    return cls(indices, shape, indexer_shape, validate)
 
   @classmethod
   def make_trivial_indexer(cls, shape: tuple[int, ...]) -> NDIndexer:
@@ -293,7 +311,6 @@ class NDIndexer:
         tuple(slice(0, e) for e in shape),
         shape,
     )
-
 
   def get_indexer_shape(self) -> tuple[int | Array, ...]:
     is_int_indexing, slice_indexers, _ = unpack_ndindexer(self)

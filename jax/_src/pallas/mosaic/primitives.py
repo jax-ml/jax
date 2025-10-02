@@ -15,6 +15,7 @@
 """Module for Pallas:TPU-specific JAX primitives and functions."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 import dataclasses
 import logging
 from typing import Any
@@ -206,9 +207,9 @@ class AsyncCopyDescriptor:
     if swap_src_and_dst:
       return tree_util.tree_flatten((
           self.dst_ref,
-          self.dst_transforms,
+          _maybe_wrap_transformed_refs(self.dst_transforms),
           self.src_ref,
-          self.src_transforms,
+          _maybe_wrap_transformed_refs(self.src_transforms),
           self.src_sem,
           self.src_sem_transforms,
           self.dst_sem,
@@ -218,9 +219,9 @@ class AsyncCopyDescriptor:
     else:
       return tree_util.tree_flatten((
           self.src_ref,
-          self.src_transforms,
+          _maybe_wrap_transformed_refs(self.src_transforms),
           self.dst_ref,
-          self.dst_transforms,
+          _maybe_wrap_transformed_refs(self.dst_transforms),
           self.dst_sem,
           self.dst_sem_transforms,
           self.src_sem,
@@ -261,6 +262,44 @@ class AsyncCopyDescriptor:
     dma_wait_p.bind(
         *flat_args, tree=tree, device_id_type=self.device_id_type
     )
+
+
+def _maybe_wrap_transformed_refs(transforms: object) -> object:
+  return jax.tree.map(
+      lambda obj: TransformedRefTree.wrap(obj)
+      if isinstance(obj, state.TransformedRef)
+      else obj,
+      transforms,
+  )
+
+
+def _maybe_unwrap_transformed_refs(
+    transforms: Sequence[object],
+) -> Sequence[Transform]:
+  return jax.tree.map(
+      lambda obj: obj.unwrap()
+      if isinstance(obj, state.TransformedRef)
+      else obj,
+      transforms,
+      is_leaf=lambda obj: not isinstance(obj, TransformedRefTree),
+  )
+
+
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class TransformedRefTree(state.TransformedRef):
+  """A PyTree wrapper for a ``TransformedRef``.
+
+  The wrapper is necessary to support the case when a ``TransformedRef`` is
+  indexed with other ``TransformedRef``s.
+  """
+
+  @classmethod
+  def wrap(cls, ref: state.TransformedRef) -> TransformedRefTree:
+    return cls(ref.ref, ref.transforms)
+
+  def unwrap(self) -> state.TransformedRef:
+    return state.TransformedRef(self.ref, self.transforms)
 
 
 def _get_dma_effects(

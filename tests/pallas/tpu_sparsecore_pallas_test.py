@@ -351,6 +351,48 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x, indices), x[1, 2, indices])
 
+  def test_gather_1d_with_indexed_ref(self):
+    x = jnp.arange(16)
+    indices = jax.random.permutation(jax.random.key(42), jnp.arange(16))
+
+    @vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=(8,), dtype=jnp.int32),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+    )
+    def kernel(x_hbm_ref, indices_ref, o_ref):
+      pltpu.sync_copy(x_hbm_ref.at[indices_ref.at[:indices.size // 2]], o_ref)
+
+    np.testing.assert_array_equal(
+        kernel(x, indices), x[indices[:indices.size // 2]]
+    )
+
+  def test_gather_1d_with_dynamically_sized_ref(self):
+    x = jnp.arange(16)
+    indices = jax.random.permutation(jax.random.key(42), jnp.arange(16))
+
+    @vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=(8,), dtype=jnp.int32),
+        grid=(1,),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+    )
+    def kernel(x_hbm_ref, indices_ref, o_ref):
+      pid = pl.program_id(0)  # Always zero.
+      num_indices = pid + indices_ref.size // 2
+      pltpu.sync_copy(
+          x_hbm_ref.at[indices_ref.at[pl.ds(0, num_indices)]],
+          o_ref.at[pl.ds(0, num_indices)],
+      )
+
+    np.testing.assert_array_equal(
+        kernel(x, indices), x[indices[:indices.size // 2]]
+    )
+
   def test_implicit_gather_1d(self):
     num_steps = 4
     x = jnp.arange(num_steps * 8).reshape(num_steps, 8)
@@ -590,7 +632,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     x = jnp.arange(8, dtype=jnp.float32)
     np.testing.assert_array_equal(kernel(x), x.view(np.uint32))
-
 
   @parameterized.product(
       pack_format=[*plsc.PackFormat],
