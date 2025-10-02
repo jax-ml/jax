@@ -799,6 +799,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     def f(x):
       debug_print("{}", x, ordered=True)
     if config.pmap_shmap_merge.value:
+      if jax.device_count() == 1:
+        self.skipTest("This test won't raise with 1 device.")
       if jtu.device_under_test() == "gpu":
         self.skipTest("Test does not raise under GPU.")
       if jtu.device_under_test() == "tpu" and jtu.get_tpu_version() > 3:

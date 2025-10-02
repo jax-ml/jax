@@ -461,6 +461,8 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       effect_p.bind(effect=foo_effect)
       return x + 1
     if config.pmap_shmap_merge.value:
+      if jax.device_count() == 1:
+        self.skipTest("This test won't raise with 1 device.")
       if jtu.device_under_test() == "gpu":
         self.skipTest("Test does not raise under GPU.")
       if jtu.device_under_test() == "tpu" and jtu.get_tpu_version() > 3:
@@ -596,12 +598,13 @@ class ParallelEffectsTest(jtu.JaxTestCase):
       jax.pmap(f)(jnp.arange(jax.local_device_count()))
 
   def test_cannot_pmap_ordered_effect(self):
-
     def f(x):
       # foo is lowerable and ordered
       effect_p.bind(effect=foo_effect)
       return x
     if config.pmap_shmap_merge.value:
+      if jax.device_count() == 1:
+        self.skipTest("This test won't raise with 1 device.")
       if jtu.device_under_test() == "gpu":
         self.skipTest("Test does not raise under GPU.")
       if jtu.device_under_test() == "tpu" and jtu.get_tpu_version() > 3:

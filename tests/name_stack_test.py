@@ -129,7 +129,7 @@ class NameStackTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(f)(jnp.ones(1)).jaxpr
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo')
     if config.pmap_shmap_merge.value:
-      self.assertEqual(str(jaxpr.eqns[1].params['jaxpr'].eqns[0].params['jaxpr'].eqns[1].source_info.name_stack), 'bar')
+      self.assertEqual(str(jaxpr.eqns[0].params['jaxpr'].eqns[0].params['jaxpr'].eqns[1].source_info.name_stack), 'bar')
     else:
       self.assertEqual(str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
 

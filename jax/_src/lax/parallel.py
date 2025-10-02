@@ -726,31 +726,24 @@ def axis_index(axis_name: AxisName) -> Array:
 
   For example, with 8 XLA devices available:
 
-  >>> from functools import partial
-  >>> @partial(jax.pmap, axis_name='i')
-  ... def f(_):
-  ...   return lax.axis_index('i')
+  >>> mesh = jax.make_mesh((8,), 'i')
+  >>> @jax.shard_map(mesh=mesh, in_specs=(), out_specs=jax.P('i'))
+  ... def f():
+  ...   return lax.axis_index('i')[None]
   ...
-  >>> f(jnp.zeros(4))
-  Array([0, 1, 2, 3], dtype=int32)
-  >>> f(jnp.zeros(8))
+  >>> f()
   Array([0, 1, 2, 3, 4, 5, 6, 7], dtype=int32)
-  >>> @partial(jax.pmap, axis_name='i')
-  ... @partial(jax.pmap, axis_name='j')
-  ... def f(_):
-  ...   return lax.axis_index('i'), lax.axis_index('j')
+
+  >>> mesh = jax.make_mesh((4, 2), ('i', 'j'))
+  >>> @jax.shard_map(mesh=mesh, in_specs=(), out_specs=jax.P('i', 'j'))
+  ... def f():
+  ...   return lax.axis_index(('i', 'j'))[None, None]
   ...
-  >>> x, y = f(jnp.zeros((4, 2)))
-  >>> print(x)
-  [[0 0]
-  [1 1]
-  [2 2]
-  [3 3]]
-  >>> print(y)
-  [[0 1]
-  [0 1]
-  [0 1]
-  [0 1]]
+  >>> f()
+  Array([[0, 1],
+         [2, 3],
+         [4, 5],
+         [6, 7]], dtype=int32)
   """
   if not isinstance(axis_name, (tuple, list)):
     return axis_index_p.bind(axis_name=axis_name)
@@ -774,17 +767,16 @@ def axis_size(axis_name: AxisName) -> int:
 
   For example, with 8 XLA devices available:
 
-  >>> from functools import partial
-  >>> from jax.sharding import PartitionSpec as P
   >>> mesh = jax.make_mesh((8,), 'i')
-  >>> @partial(jax.shard_map, mesh=mesh, in_specs=P('i'), out_specs=P())
+  >>> @jax.shard_map(mesh=mesh, in_specs=jax.P('i'), out_specs=jax.P())
   ... def f(_):
   ...   return lax.axis_size('i')
   ...
   >>> f(jnp.zeros(16))
   Array(8, dtype=int32, weak_type=True)
+
   >>> mesh = jax.make_mesh((4, 2), ('i', 'j'))
-  >>> @partial(jax.shard_map, mesh=mesh, in_specs=P('i', 'j'), out_specs=P())
+  >>> @jax.shard_map(mesh=mesh, in_specs=jax.P('i', 'j'), out_specs=jax.P())
   ... def f(_):
   ...   return lax.axis_size(('i', 'j'))
   ...
