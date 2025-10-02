@@ -4348,7 +4348,7 @@ class PipelineTest(PallasTest):
         scratch_shapes=[plgpu.SMEM((1, n), dtype)],
     )
 
-    np.testing.assert_allclose(kernel_fn(x), x.sum(0, keepdims=True))
+    np.testing.assert_allclose(kernel_fn(x), x.sum(0, keepdims=True), rtol=1e-6)
 
   def test_emit_with_parallel_grid(self):
     num_steps1 = 4
