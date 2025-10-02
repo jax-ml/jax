@@ -687,7 +687,8 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
           coords[1] - min_coords[1],
           d.core_on_chip - min_cores_per_chip,
       ] = d
-  elif device_kind in (_TPU_7X,):
+  elif (device_kind in (_TPU_7X,) or
+        (device_kind in (_TPU_V5P,) and cores_per_chip == 2)):
     out = np.empty(dims + (cores_per_chip,), dtype=object)
     for d in jax_devices:
       coords = d.coords
