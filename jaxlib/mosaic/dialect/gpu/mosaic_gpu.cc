@@ -16,7 +16,6 @@ limitations under the License.
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 
 #include <cstdint>
-#include <optional>
 #include <string_view>
 #include <vector>
 
