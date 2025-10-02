@@ -35,7 +35,7 @@ jax_multiplatform_test(
     name = "api_test",
     srcs = ["api_test.py"],
     enable_configs = ["tpu_v3_x4"],
-    shard_count = 10,
+    shard_count = 5,
     deps = [
         "//jax:experimental",
     ] + py_deps([
@@ -47,7 +47,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "custom_api_test",
     srcs = ["custom_api_test.py"],
-    shard_count = 10,
     deps = [
         "//jax:experimental",
         "//jax/_src:custom_derivatives",
@@ -186,10 +185,7 @@ jax_multiplatform_test(
     backend_tags = {
         "tpu": ["noasan"],  # Times out.
     },
-    shard_count = {
-        "cpu": 5,
-        "gpu": 10,
-    },
+    shard_count = 2,
     deps = py_deps([
         "absl/testing",
         "numpy",
@@ -293,9 +289,9 @@ jax_multiplatform_test(
         ],  # Times out on TPU with asan/tsan.
     },
     shard_count = {
-        "tpu": 10,
-        "cpu": 20,
-        "gpu": 10,
+        "tpu": 5,
+        "cpu": 5,
+        "gpu": 5,
     },
     deps = py_deps([
         "absl/testing",
@@ -340,9 +336,6 @@ jax_multiplatform_test(
     # checkLobpcgMonotonicity and checkApproxEigs tests
     # using matplotlib plots
     # env = {"LOBPCG_EMIT_DEBUG_PLOTS": "1"},
-    shard_count = {
-        "cpu": 8,
-    },
     deps = [
         "//jax:experimental_sparse",
     ] + py_deps([
@@ -357,7 +350,7 @@ jax_multiplatform_test(
     name = "svd_test",
     srcs = ["svd_test.py"],
     shard_count = {
-        "cpu": 20,
+        "cpu": 10,
         "gpu": 10,
         "tpu": 15,
     },
@@ -429,9 +422,9 @@ jax_multiplatform_test(
         "gpu_h100x2",
     ],
     shard_count = {
-        "cpu": 15,
-        "gpu": 10,
-        "tpu": 15,
+        "cpu": 3,
+        "gpu": 2,
+        "tpu": 2,
     },
     tags = ["multiaccelerator"],
     deps = [
@@ -617,8 +610,7 @@ jax_multiplatform_test(
     name = "jet_test",
     srcs = ["jet_test.py"],
     shard_count = {
-        "cpu": 10,
-        "gpu": 4,
+        "gpu": 2,
     },
     deps = [
         "//jax:jet",
@@ -634,9 +626,9 @@ jax_multiplatform_test(
     name = "lax_control_flow_test",
     srcs = ["lax_control_flow_test.py"],
     shard_count = {
-        "cpu": 30,
-        "gpu": 30,
-        "tpu": 20,
+        "cpu": 15,
+        "gpu": 15,
+        "tpu": 10,
     },
     deps = py_deps([
         "absl/testing",
@@ -742,9 +734,9 @@ jax_multiplatform_test(
     name = "lax_numpy_ufuncs_test",
     srcs = ["lax_numpy_ufuncs_test.py"],
     shard_count = {
-        "cpu": 10,
-        "gpu": 5,
-        "tpu": 5,
+        "cpu": 5,
+        "gpu": 4,
+        "tpu": 2,
     },
     deps = py_deps([
         "absl/testing",
@@ -765,9 +757,9 @@ jax_multiplatform_test(
     name = "lax_scipy_test",
     srcs = ["lax_scipy_test.py"],
     shard_count = {
-        "cpu": 30,
-        "gpu": 20,
-        "tpu": 8,
+        "cpu": 10,
+        "gpu": 10,
+        "tpu": 3,
     },
     deps = py_deps([
         "numpy",
@@ -808,7 +800,7 @@ jax_multiplatform_test(
         ],
     },
     shard_count = {
-        "cpu": 20,
+        "cpu": 30,
         "gpu": 30,
         "tpu": 20,
     },
@@ -824,9 +816,9 @@ jax_multiplatform_test(
     name = "lax_scipy_spectral_dac_test",
     srcs = ["lax_scipy_spectral_dac_test.py"],
     shard_count = {
-        "cpu": 20,
-        "gpu": 8,
-        "tpu": 8,
+        "cpu": 2,
+        "gpu": 3,
+        "tpu": 3,
     },
     deps = [
         "//jax/_src:internal_test_util",
@@ -844,9 +836,9 @@ jax_multiplatform_test(
         "tpu": ["noasan"],  # Times out.
     },
     shard_count = {
-        "cpu": 40,
-        "gpu": 40,
-        "tpu": 40,
+        "cpu": 30,
+        "gpu": 30,
+        "tpu": 20,
     },
     deps = [
         "//jax/_src:internal_test_util",
@@ -876,8 +868,8 @@ jax_multiplatform_test(
     name = "lax_autodiff_test",
     srcs = ["lax_autodiff_test.py"],
     shard_count = {
-        "cpu": 40,
-        "gpu": 30,
+        "cpu": 20,
+        "gpu": 20,
         "tpu": 20,
     },
     deps = py_deps([
@@ -890,9 +882,9 @@ jax_multiplatform_test(
     name = "lax_vmap_test",
     srcs = ["lax_vmap_test.py"],
     shard_count = {
-        "cpu": 40,
-        "gpu": 40,
-        "tpu": 40,
+        "cpu": 20,
+        "gpu": 20,
+        "tpu": 20,
     },
     deps = ["//jax/_src:internal_test_util"] + py_deps([
         "numpy",
@@ -904,9 +896,9 @@ jax_multiplatform_test(
     name = "lax_vmap_op_test",
     srcs = ["lax_vmap_op_test.py"],
     shard_count = {
-        "cpu": 40,
-        "gpu": 40,
-        "tpu": 40,
+        "cpu": 20,
+        "gpu": 20,
+        "tpu": 20,
     },
     deps = ["//jax/_src:internal_test_util"] + py_deps([
         "numpy",
@@ -973,10 +965,7 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_h100x2",
     ],
-    shard_count = {
-        "cpu": 10,
-        "gpu": 10,
-    },
+    shard_count = 2,
     tags = [
         "multiaccelerator",
     ],
@@ -1106,9 +1095,9 @@ jax_multiplatform_test(
         "tpu": 8,
     },
     shard_count = {
-        "cpu": 30,
+        "cpu": 20,
         "gpu": 10,
-        "tpu": 30,
+        "tpu": 20,
     },
     tags = ["multiaccelerator"],
     deps = [
@@ -1124,9 +1113,6 @@ jax_multiplatform_test(
     srcs = ["polynomial_test.py"],
     # No implementation of nonsymmetric Eigendecomposition.
     enable_backends = ["cpu"],
-    shard_count = {
-        "cpu": 5,
-    },
     # This test ends up calling Fortran code that initializes some memory and
     # passes it to C code. MSan is not able to detect that the memory was
     # initialized by Fortran, and it makes the test fail. This can usually be
@@ -1200,7 +1186,7 @@ jax_multiplatform_test(
             "notsan",  # Times out
         ],
     },
-    shard_count = 8,
+    shard_count = 4,
     deps = py_deps([
         "absl/testing",
         "numpy",
@@ -1234,7 +1220,7 @@ jax_multiplatform_test(
         "gpu": ["--jax_num_generated_cases=40"],
     },
     shard_count = {
-        "cpu": 40,
+        "cpu": 20,
         "gpu": 50,
         "tpu": 40,
     },
@@ -1322,9 +1308,9 @@ jax_multiplatform_test(
         "gpu_h100",  # TODO(phawkins): numerical failure on h100
     ],
     shard_count = {
-        "cpu": 40,
-        "gpu": 40,
-        "tpu": 50,
+        "cpu": 20,
+        "gpu": 20,
+        "tpu": 30,
     },
     deps = py_deps([
         "absl/testing",
@@ -1337,8 +1323,8 @@ jax_multiplatform_test(
     name = "scipy_spatial_test",
     srcs = ["scipy_spatial_test.py"],
     shard_count = {
-        "cpu": 4,
-        "gpu": 4,
+        "cpu": 2,
+        "gpu": 2,
     },
     deps = py_deps([
         "absl/testing",
@@ -1388,9 +1374,9 @@ jax_multiplatform_test(
         "gpu": ["--jax_num_generated_cases=40"],
     },
     shard_count = {
-        "cpu": 50,
-        "gpu": 30,
-        "tpu": 20,
+        "cpu": 15,
+        "gpu": 20,
+        "tpu": 15,
     },
     tags = [
         "noasan",
@@ -1659,9 +1645,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "ode_test",
     srcs = ["ode_test.py"],
-    shard_count = {
-        "cpu": 10,
-    },
     deps = ["//jax:ode"] + py_deps([
         "absl/testing",
         "numpy",
@@ -1700,11 +1683,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "ann_test",
     srcs = ["ann_test.py"],
-    shard_count = {
-        "cpu": 5,
-        "gpu": 5,
-        "tpu": 10,
-    },
     deps = py_deps([
         "numpy",
         "absl/testing",
@@ -1835,11 +1813,6 @@ jax_multiplatform_test(
         "gpu_h100",
         "cpu",
     ],
-    shard_count = {
-        "cpu": 2,
-        "gpu": 2,
-        "tpu": 2,
-    },
     deps = py_deps([
         "absl/testing",
         "numpy",
@@ -2017,11 +1990,7 @@ jax_multiplatform_test(
         "cpu",
         "cpu_x32",
     ],
-    shard_count = {
-        "cpu": 30,
-        "gpu": 20,
-        "tpu": 25,
-    },
+    shard_count = 15,
     tags = [
         "noasan",  # Times out
         "nomsan",  # Times out
@@ -2045,9 +2014,9 @@ jax_multiplatform_test(
         "tpu": 8,
     },
     shard_count = {
-        "cpu": 40,
+        "cpu": 20,
         "gpu": 30,
-        "tpu": 20,
+        "tpu": 15,
     },
     tags = [
         "noasan",  # Times out
