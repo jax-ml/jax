@@ -1153,6 +1153,89 @@ class LayoutInferenceTest(parameterized.TestCase):
         swizzle = layout_inference._compute_swizzle(ref_ty, tile_transform)
         self.assertEqual(swizzle, mgpu.dialect.SwizzlingMode(want_swizzle))
 
+  @parameterized.parameters([False, True])
+  def test_conjure_smem_assignment_from_is_transferrable(self, transposed):
+    # Create a var to use in the equation system.
+    shape = (128, 128)
+    f32 = ir.F32Type.get()
+    layout = ir.StridedLayoutAttr.get(0, [1, 128]) if transposed else None
+    ref_ty = ir.MemRefType.get(shape, f32, layout=layout, memory_space=mgpu.utils.smem())
+    [ref] = undefs(ref_ty)
+    op_or_result = layout_inference.OperandOrResult(
+        operation=ref.owner,
+        type=layout_inference.VariableType.RESULT,
+        index=0,
+    )
+    var = eqns.Variable(op_or_result)
+
+    def conjure(constraints) -> list[tuple[eqns.Variable, eqns.Constant]]:
+      system = eqns.EquationSystem(constraints=constraints)
+      return list(layout_inference.conjure_assignment({var}, system, []))
+
+    # Yield only empty tiling with no constraints.
+    with self.subTest("no_constraints_yield_empty_tiling"):
+      self.assertEqual(conjure([]), [(var, eqns.SMEMTiling(None))])
+
+    # Yield empty if not an mma layout.
+    with self.subTest("not_mma_layout_yield_empty_tiling"):
+      layout = eqns.RegisterLayout(fa.WGSplatFragLayout(shape))
+      constraints = [eqns.IsTransferable(layout, var, (128, 128))]
+      conjured = conjure(constraints)
+      self.assertEqual(conjured, [(var, eqns.SMEMTiling(None))])
+
+    wgmma_layout = eqns.RegisterLayout(fa.WGMMA_LAYOUT)
+
+    # Yield also maximal tiling with no Divides constraints.
+    with self.subTest("no_divides_constraints_yield_maximal_tiling_with_mma"):
+      constraints = [eqns.IsTransferable(wgmma_layout, var, (128, 128))]
+      conjured = conjure(constraints)
+      if transposed:
+        expected_tiling = (32, 8)
+      else:
+        expected_tiling = (8, 32)
+      self.assertEqual(conjured, [
+              (var, eqns.SMEMTiling(lc.TileTransform(expected_tiling))),
+              (var, eqns.SMEMTiling(None)),
+          ]
+      )
+
+    # Yield also valid tiling with Divides constraints.
+    with self.subTest("divides_constraints_yield_valid_tiling"):
+      constraints = [
+          eqns.IsTransferable(wgmma_layout, var, (128, 128)),
+          eqns.Divides(var, ((64,), (64,))),
+          eqns.Divides(var, ((32,), (16,))),
+      ]
+      conjured = conjure(constraints)
+      if transposed:
+        expected_tiling = (32, 8)
+      else:
+        expected_tiling = (8, 16)
+      self.assertEqual(conjured, [
+              (var, eqns.SMEMTiling(lc.TileTransform(expected_tiling))),
+              (var, eqns.SMEMTiling(None)),
+          ]
+      )
+
+    # Do not yield 1-tiling with Divides constraints with ir.Value.
+    with self.subTest("dynamic_ir_values_in_divides_do_not_changes_constraints"):
+      i32 = ir.IntegerType.get_signless(32)
+      ir_value = arith.constant(i32, 0)
+      constraints = [
+          eqns.IsTransferable(wgmma_layout, var, (128, 128)),
+          eqns.Divides(var, ((32, ir_value), (32,))),
+      ]
+      conjured = conjure(constraints)
+      if transposed:
+        expected_tiling = (32, 8)
+      else:
+        expected_tiling = (8, 32)
+      self.assertEqual(conjured, [
+              (var, eqns.SMEMTiling(lc.TileTransform(expected_tiling))),
+              (var, eqns.SMEMTiling(None)),
+          ]
+      )
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

@@ -252,15 +252,45 @@ def _strided_layout_for_variable(
   return fa.WGStridedFragLayout.from_shaped_type(type)
 
 
-def _extract_variable_assignments_from_constraint(
-    constraint: eqns.Constraint,
+def _extract_tiling_candidate(
+    divides: eqns.Divides, num_tiled_dims: int
 ) -> Iterator[tuple[eqns.Variable, eqns.Constant]]:
-  """Attempts to extract variable assignments from a `Constraint`."""
-  if not isinstance(constraint, eqns.IsTransferable):
+  if not isinstance(divides.expr, eqns.Variable):
+    return
+  if num_tiled_dims > len(divides.dimensions_to_tile):
+    # TODO(b/447079781): Support this case, by just assuming 0 (no constraints).
     return
 
+  if num_tiled_dims == 0:
+    yield divides.expr, eqns.SMEMTiling(None)
+    return
+
+  static_tiling = []
+  dynamic_tiling = []
+  for dim in divides.dimensions_to_tile[-num_tiled_dims:]:
+    assert isinstance(dim[0], int)
+    static_tiling.append(dim[0])
+    # Any remaining values are dynamic. Use 1 for those to be safe.
+    dynamic_tiling.append(dim[0] if len(dim) == 1 else 1)
+
+  # The static tiling ignores dynamic values. Try this first as it yields
+  # larger tiles that are likely to have better performance.
+  yield divides.expr, eqns.SMEMTiling(lc.TileTransform(tuple(static_tiling)))
+
+  if dynamic_tiling != static_tiling:
+    # If that does not work, we could use a smaller, safe tiles by yielding
+    # dynamic_tiling here. However, performance will be worse, and we choose to
+    # return instead.
+    return
+
+def _extract_layout_candidates_from_memory_space_transfers(
+    constraint: eqns.IsTransferable,
+    divides_per_var: dict[eqns.Variable, list[eqns.Divides]],
+) -> Iterator[tuple[eqns.Variable, eqns.Constant]]:
+  """Attempts to extract variable assignments from a `Constraint`."""
   # This code assumes that the `IsTransferable` constraint is bidirectional.
-  # This is currently true for TMEM <-> REG transfers.
+  # This is currently true for TMEM <-> REG transfers and SMEM <-> REG
+  # transfers.
   src, tgt = constraint.source, constraint.target
   match src, tgt:
     case eqns.Variable(), eqns.Constant():
@@ -271,18 +301,60 @@ def _extract_variable_assignments_from_constraint(
       return
 
   if isinstance(constant, eqns.RegisterLayout):
-    for packing in (1, 2, 4, 8):
-      for tmem_layout, reg_layout in constraint.supported_tmem_transfers(
-          packing
-      ):
-        if constant.value == reg_layout:
-          yield variable, eqns.TMEMLayout(tmem_layout)
+    layout = constant.value
+    if variable.key.memory_space == MemorySpace.TMEM:
+      for packing in (1, 2, 4, 8):
+        for tmem_layout, reg_layout in constraint.supported_tmem_transfers(
+            packing
+        ):
+          if layout == reg_layout:
+            yield variable, eqns.TMEMLayout(tmem_layout)
+    elif variable.key.memory_space == MemorySpace.SMEM:
+      if inference_utils.is_mma_layout(layout):
+        tiling = _infer_tiling_for_mma_ref(
+            variable.key.value.type,
+            max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
+        )
+        assert len(tiling) == 2
+        divides = divides_per_var.get(variable, [])
+        divides.append(eqns.Divides(variable, ((tiling[0],), (tiling[1],))))
+        [divides] = eqns.merge_divides_constraints(divides)
+        assert isinstance(divides, eqns.Divides)
+        yield from _extract_tiling_candidate(divides, len(tiling))
+      else:
+        # An empty tiling is valid here but we don't yield it in order to
+        # avoid duplicating the empty tiling yielded by the caller.
+        return
 
   elif isinstance(constant, eqns.TMEMLayout):
-    packing = constant.value.vector_length
+    layout = constant.value
+    packing = layout.vector_length
     for tmem_layout, reg_layout in constraint.supported_tmem_transfers(packing):
-      if constant.value == tmem_layout:
+      if layout == tmem_layout:
         yield variable, eqns.RegisterLayout(reg_layout)
+
+
+def _divides_per_var(
+    constraints: Sequence[eqns.Constraint],
+) -> dict[eqns.Variable, list[eqns.Divides]]:
+  """Returns all Divides constraints per variable."""
+  result: dict[eqns.Variable, list[eqns.Divides]] = {}
+  for constraint in constraints:
+    match constraint:
+      case eqns.Divides(expr=expr) if isinstance(expr, eqns.Variable):
+        result.setdefault(expr, []).append(constraint)
+  return result
+
+
+def _extract_variable_assignments_from_constraints(
+    constraints: Sequence[eqns.Constraint],
+) -> Iterator[tuple[eqns.Variable, eqns.Constant]]:
+  """Attempts to extract variable assignments from all constraints."""
+  dpv = _divides_per_var(constraints)
+  for c in constraints:
+    match c:
+      case eqns.IsTransferable():
+        yield from _extract_layout_candidates_from_memory_space_transfers(c, dpv)
 
 
 def conjure_assignment(
@@ -291,11 +363,11 @@ def conjure_assignment(
     hints: Sequence[Hint],
 ) -> Iterator[tuple[eqns.Variable, eqns.Constant]]:
   """Attempts to conjure an assignment for an unknown variable."""
-  for constraint in equation_system.constraints:
-    # TODO(allanrenucci): We should be able to short-circuit the search here if
-    # the constraint is not satisfiable.
-    for assg in _extract_variable_assignments_from_constraint(constraint):
-      yield assg
+  # TODO(allanrenucci): We should be able to short-circuit the search here if
+  # the constraint is not satisfiable.
+  yield from _extract_variable_assignments_from_constraints(
+      equation_system.constraints
+  )
 
   for hint in hints:
     if (assignment := extract_variable_assignment_from_hint(hint)) is not None:
@@ -312,11 +384,10 @@ def conjure_assignment(
     # reduces the system.
     if variable.key.memory_space == MemorySpace.REG:
       layout = _strided_layout_for_variable(variable)
-    else:
-      layout = None
-    if layout is None:
-      continue
-    yield variable, eqns.RegisterLayout(layout)
+      if layout is not None:
+        yield variable, eqns.RegisterLayout(layout)
+    elif variable.key.memory_space == MemorySpace.SMEM:
+      yield variable, eqns.SMEMTiling(None)
 
 
 def find_assignments_for(
@@ -699,6 +770,40 @@ def _layout_cast_equation_system(
       {variable: [operand, result]},
       [],
   )
+
+
+def _infer_tiling_for_mma_ref(
+    ref_ty: ir.MemRefType, max_swizzle: mgpu.SwizzlingMode
+) -> tuple[int, int]:
+  element_bytewidth = utils.bytewidth(ref_ty.element_type)
+  strides, _ = ref_ty.get_strides_and_offset()
+  min_dim_index = np.argmin(strides)
+  minor_dim = ref_ty.shape[min_dim_index]
+
+  # Try tiling with all swizzling modes starting from the largest one.
+  for swizzle in [
+      mgpu.SwizzlingMode.k128ByteSwizzle,
+      mgpu.SwizzlingMode.k64ByteSwizzle,
+      mgpu.SwizzlingMode.k32ByteSwizzle,
+      mgpu.SwizzlingMode.kNoSwizzle,
+  ]:
+    if swizzle > max_swizzle:
+      continue
+    swizzle_elems = swizzle // element_bytewidth
+    if minor_dim % swizzle_elems == 0:
+      minor_tiling = swizzle_elems
+      break
+  else:
+    # No valid tile transform can be inferred.
+    raise ValueError(f"{ref_ty.shape} is not a valid WGMMA shape")
+
+  major_tiling = 8
+  transposed = min_dim_index != len(strides) - 1
+  if transposed:
+    tiling = (minor_tiling, major_tiling)
+  else:
+    tiling = (major_tiling, minor_tiling)
+  return tiling
 
 
 @_add_equation_system_derivation_rule(mgpu.WGMMAOp)
