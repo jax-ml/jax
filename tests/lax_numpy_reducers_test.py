@@ -692,6 +692,24 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
                           rtol=tol)
 
   @jtu.sample_product(
+    shape=[(0,), (3, 0), (0, 5)],
+    dtype=jtu.dtypes.floating,
+    rowvar=[True, False],
+  )
+  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
+  @jax.default_matmul_precision('float32')
+  def testEmptyCov(self, shape, dtype, rowvar):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    ignore_warning = jtu.ignore_warning(
+      category=RuntimeWarning,
+      message="(Mean of empty slice|[Ii]nvalid value|Degrees of freedom|divide by zero)")
+    np_fun = ignore_warning(partial(np.cov, rowvar=rowvar))
+    jnp_fun = partial(jnp.cov, rowvar=rowvar)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
     [dict(op=op, q_rng=q_rng)
       for (op, q_rng) in (
         ("percentile", partial(jtu.rand_uniform, low=0., high=100.)),
