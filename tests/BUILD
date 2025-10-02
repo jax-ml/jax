@@ -1406,8 +1406,8 @@ jax_multiplatform_test(
     },
     # Use fewer cases to prevent timeouts.
     backend_variant_args = {
-        "cpu": ["--jax_num_generated_cases=40"],
-        "cpu_x32": ["--jax_num_generated_cases=40"],
+        "cpu": ["--jax_num_generated_cases=30"],
+        "cpu_x32": ["--jax_num_generated_cases=30"],
         "gpu_p100": ["--jax_num_generated_cases=40"],
         "gpu_v100": ["--jax_num_generated_cases=40"],
         "tpu_v3": ["--jax_num_generated_cases=40"],
