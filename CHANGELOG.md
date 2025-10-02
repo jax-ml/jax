@@ -18,6 +18,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 * Breaking changes:
 
+  * {func}`jax.numpy.cov` is now returns NaN for empty arrays ({jax-issue}`#32305`),
+    and matches NumPy 2.2 behavior for single-row design matrices ({jax-issue}`#32308`).
   * JAX no longer accepts `Array` values where a `dtype` value is expected. Call
     `.dtype` on these values first.
   * The deprecated function {func}`jax.interpreters.mlir.custom_call` was
