@@ -253,39 +253,19 @@ def _strided_layout_for_variable(
 
 
 def _extract_tiling_candidate(
-    divides: eqns.Divides, num_tiled_dims: int
+    divide_constraint: eqns.Divides, num_tiled_dims: int
 ) -> Iterator[tuple[eqns.Variable, eqns.Constant]]:
-  if not isinstance(divides.expr, eqns.Variable):
+  if not isinstance(divide_constraint.expr, eqns.Variable):
     return
-  if num_tiled_dims > len(divides.dimensions_to_tile):
+  if num_tiled_dims > len(divide_constraint.tiling_multiple):
     # TODO(b/447079781): Support this case, by just assuming 0 (no constraints).
     return
+  yield divide_constraint.expr, eqns.SMEMTiling(lc.TileTransform(divide_constraint.tiling_multiple[-num_tiled_dims:]))
 
-  if num_tiled_dims == 0:
-    yield divides.expr, eqns.SMEMTiling(None)
-    return
 
-  static_tiling = []
-  dynamic_tiling = []
-  for dim in divides.dimensions_to_tile[-num_tiled_dims:]:
-    assert isinstance(dim[0], int)
-    static_tiling.append(dim[0])
-    # Any remaining values are dynamic. Use 1 for those to be safe.
-    dynamic_tiling.append(dim[0] if len(dim) == 1 else 1)
-
-  # The static tiling ignores dynamic values. Try this first as it yields
-  # larger tiles that are likely to have better performance.
-  yield divides.expr, eqns.SMEMTiling(lc.TileTransform(tuple(static_tiling)))
-
-  if dynamic_tiling != static_tiling:
-    # If that does not work, we could use a smaller, safe tiles by yielding
-    # dynamic_tiling here. However, performance will be worse, and we choose to
-    # return instead.
-    return
-
-def _extract_layout_candidates_from_memory_space_transfers(
+def _extract_layout_candidates_from_memory_space_transfer(
     constraint: eqns.IsTransferable,
-    divides_per_var: dict[eqns.Variable, list[eqns.Divides]],
+    division_constraint_per_var: dict[eqns.Variable, eqns.Divides],
 ) -> Iterator[tuple[eqns.Variable, eqns.Constant]]:
   """Attempts to extract variable assignments from a `Constraint`."""
   # This code assumes that the `IsTransferable` constraint is bidirectional.
@@ -300,6 +280,7 @@ def _extract_layout_candidates_from_memory_space_transfers(
     case _:
       return
 
+  assert isinstance(variable, eqns.Variable)  # Satisfy type checkers.
   if isinstance(constant, eqns.RegisterLayout):
     layout = constant.value
     if variable.key.memory_space == MemorySpace.TMEM:
@@ -315,18 +296,16 @@ def _extract_layout_candidates_from_memory_space_transfers(
             variable.key.value.type,
             max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
         )
-        assert len(tiling) == 2
-        divides = divides_per_var.get(variable, [])
-        divides.append(eqns.Divides(variable, ((tiling[0],), (tiling[1],))))
-        [divides] = eqns.merge_divides_constraints(divides)
-        assert isinstance(divides, eqns.Divides)
-        yield from _extract_tiling_candidate(divides, len(tiling))
+        divide = eqns.Divides(variable, tiling)
+        if (divide2 := division_constraint_per_var.get(variable)) is not None:
+          [divide] = eqns.merge_divides_constraints([divide, divide2])
+        yield from _extract_tiling_candidate(divide, len(tiling))
       else:
         # An empty tiling is valid here but we don't yield it in order to
         # avoid duplicating the empty tiling yielded by the caller.
         return
 
-  elif isinstance(constant, eqns.TMEMLayout):
+  if isinstance(constant, eqns.TMEMLayout):
     layout = constant.value
     packing = layout.vector_length
     for tmem_layout, reg_layout in constraint.supported_tmem_transfers(packing):
@@ -336,16 +315,16 @@ def _extract_layout_candidates_from_memory_space_transfers(
 
 def _divides_per_var(
     constraints: Sequence[eqns.Constraint],
-) -> dict[eqns.Variable, list[eqns.Divides]]:
-  """Returns all Divides constraints per variable."""
-  result: dict[eqns.Variable, list[eqns.Divides]] = {}
+) -> dict[eqns.Variable, eqns.Divides]:
+  result: dict[eqns.Variable, eqns.Divides] = {}
   for constraint in constraints:
-    match constraint:
-      case eqns.Divides(expr=expr) if isinstance(expr, eqns.Variable):
-        result.setdefault(expr, []).append(constraint)
+    if isinstance(constraint, eqns.Divides) and isinstance(constraint.expr, eqns.Variable):
+      assert constraint.expr not in result
+      result[constraint.expr] = constraint
   return result
 
 
+# TODO(bchetioui): flatten this call hierarchy.
 def _extract_variable_assignments_from_constraints(
     constraints: Sequence[eqns.Constraint],
 ) -> Iterator[tuple[eqns.Variable, eqns.Constant]]:
@@ -354,7 +333,7 @@ def _extract_variable_assignments_from_constraints(
   for c in constraints:
     match c:
       case eqns.IsTransferable():
-        yield from _extract_layout_candidates_from_memory_space_transfers(c, dpv)
+        yield from _extract_layout_candidates_from_memory_space_transfer(c, dpv)
 
 
 def conjure_assignment(
