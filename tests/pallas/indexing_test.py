@@ -199,7 +199,7 @@ class IndexerTest(jtu.JaxTestCase):
       NDIndexer.from_indices_shape(indices, shape)
 
   def test_ndindexer_with_ref(self):
-    indices = (core.mutable_array(jnp.tile(jnp.arange(4), (2,))),)
+    indices = (core.new_ref(jnp.tile(jnp.arange(4), (2,))),)
     shape = (4, 2)
     indexer = NDIndexer.from_indices_shape(indices, shape)
     self.assertTupleEqual(indexer.get_indexer_shape(), (8, 2))
@@ -215,11 +215,11 @@ class IndexerTest(jtu.JaxTestCase):
 
     size = 4
     np.testing.assert_array_equal(
-        f(core.mutable_array(jnp.tile(jnp.arange(4), (size,))), 4), (size, 2)
+        f(core.new_ref(jnp.tile(jnp.arange(4), (size,))), 4), (size, 2)
     )
 
   def test_ndindexer_with_multiple_refs(self):
-    indices = (core.mutable_array(jnp.tile(jnp.arange(4), (2,))),) * 2
+    indices = (core.new_ref(jnp.tile(jnp.arange(4), (2,))),) * 2
     shape = (4, 2)
     with self.assertRaisesRegex(
         NotImplementedError, "Multiple Ref indexers are not supported"
@@ -227,7 +227,7 @@ class IndexerTest(jtu.JaxTestCase):
       NDIndexer.from_indices_shape(indices, shape)
 
   def test_ndindexer_with_ref_and_int(self):
-    indices = (core.mutable_array(jnp.tile(jnp.arange(4), (2,))), 0)
+    indices = (core.new_ref(jnp.tile(jnp.arange(4), (2,))), 0)
     shape = (4, 2)
     with self.assertRaisesRegex(
         NotImplementedError, "Ref cannot be mixed with other non-slice indexers"

@@ -2656,14 +2656,6 @@ def _ref_to_lojax(init_val, *, memory_space):
   # return Ref(
 ref_p.to_lojax = _ref_to_lojax  # type: ignore
 
-# back compat
-MutableArray = Ref
-mutable_array = new_ref
-mutable_array_p = ref_p
-ArrayRef = Ref
-array_ref = new_ref
-array_ref_p = ref_p
-
 
 class InternalMutableArrayEffect(effects.Effect):
   pass
@@ -2685,9 +2677,9 @@ def _array_ref_impl(init_val, *, memory_space: Any):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
   aval = AbstractRef(typeof(init_val))
-  return ArrayRef(aval, ArrayRefImpl(aval, _array_copy(init_val)))
+  return Ref(aval, ArrayRefImpl(aval, _array_copy(init_val)))
 
-def freeze(ref: ArrayRef) -> Array:
+def freeze(ref: Ref) -> Array:
   """Invalidate a given reference and return its final value.
 
   For more information about mutable array references, refer to the

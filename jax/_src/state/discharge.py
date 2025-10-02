@@ -162,7 +162,7 @@ def _eval_jaxpr_discharge_state(
     with source_info_util.user_context(
         traceback, name_stack=name_stack), eqn.ctx.manager:
       should_discharge = [id(v.aval) in refs_to_discharge for v in eqn.invars]
-      if eqn.primitive is core.mutable_array_p:
+      if eqn.primitive is core.ref_p:
         [invar], [outvar] = eqn.invars, eqn.outvars
         ans = env.read(invar)
         if config.refs_to_pins.value:

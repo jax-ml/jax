@@ -667,7 +667,7 @@ def _array_ref_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     return None, eqn, [True], [True], res  # tangent operation
   else:
     return eqn, eqn, [False], [True], res  # full remat
-pe.partial_eval_jaxpr_custom_rules[core.array_ref_p] = _array_ref_partial_eval_custom
+pe.partial_eval_jaxpr_custom_rules[core.ref_p] = _array_ref_partial_eval_custom
 
 def _array_ref_batched(axis_data, vals_in, dims_in, memory_space):
   val, = vals_in
@@ -675,10 +675,10 @@ def _array_ref_batched(axis_data, vals_in, dims_in, memory_space):
   if dim is None:
     val2 = batching.broadcast(val, axis_data.size, 0,
                               axis_data.explicit_mesh_axis)
-    return core.array_ref_p.bind(val2, memory_space=memory_space), 0
+    return core.ref_p.bind(val2, memory_space=memory_space), 0
   else:
-    return core.array_ref_p.bind(val, memory_space=memory_space), dim
-batching.fancy_primitive_batchers[core.array_ref_p] = _array_ref_batched
+    return core.ref_p.bind(val, memory_space=memory_space), dim
+batching.fancy_primitive_batchers[core.ref_p] = _array_ref_batched
 
 def _state_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   del saveable  # ignored, always full remat state ops on known inputs
@@ -1020,25 +1020,25 @@ mlir.register_lowering(
 
 def _mut_jvp(primals, tangents, *, memory_space):
   (init_val,), (init_val_dot,) = primals, tangents
-  primal_out = core.mutable_array_p.bind(init_val, memory_space=memory_space)
+  primal_out = core.ref_p.bind(init_val, memory_space=memory_space)
   if type(init_val_dot) is ad_util.Zero:
-    tangent_out = core.mutable_array_p.bind(
+    tangent_out = core.ref_p.bind(
         ad_util.zeros_like_aval(init_val_dot.aval), memory_space=memory_space)
   else:
-    tangent_out = core.mutable_array_p.bind(init_val_dot,
+    tangent_out = core.ref_p.bind(init_val_dot,
                                             memory_space=memory_space)
   return primal_out, tangent_out
 
 def _mut_lin(nzs, x, *, memory_space):
   nz, = nzs
-  x_ref = core.mutable_array_p.bind(x, memory_space=memory_space)
+  x_ref = core.ref_p.bind(x, memory_space=memory_space)
   def mut_lin(_, x_dot):
-    return core.mutable_array_p.bind(ad_util.instantiate(x_dot),
+    return core.ref_p.bind(ad_util.instantiate(x_dot),
                                      memory_space=memory_space)
   return x_ref, True, None, mut_lin
 
-ad.primitive_jvps[core.mutable_array_p] = _mut_jvp
-ad.primitive_linearizations[core.mutable_array_p] = _mut_lin
+ad.primitive_jvps[core.ref_p] = _mut_jvp
+ad.primitive_linearizations[core.ref_p] = _mut_lin
 # TODO(mattjj): lin rule for freeze and accum_grad_in_ref?
 ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))
 ad.defjvp(core.accum_grad_in_ref_p, lambda g, _: core.accum_grad_in_ref_p.bind(g))

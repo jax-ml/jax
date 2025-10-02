@@ -328,9 +328,9 @@ def kernel(
   def decorator(body):
     @jax.jit
     def wrapper(*args):
-      arg_refs = jax.tree.map(jax_core.mutable_array, args)
+      arg_refs = jax.tree.map(jax_core.new_ref, args)
       out_refs = jax.tree.map(
-          lambda out: jax_core.mutable_array(
+          lambda out: jax_core.new_ref(
               lax.empty(out.shape, out.dtype),
               memory_space=getattr(out, "memory_space", None),
           ),

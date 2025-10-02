@@ -1914,7 +1914,7 @@ def pjit_staging_rule(trace, source_info, *args, **params):
     out_tracers = [args[f] if type(f) is int else next(out_tracers_)
                    for f in in_fwd]
     assert next(out_tracers_, None) is None
-  elif any(isinstance(c, core.MutableArray) for c in jaxpr.consts):
+  elif any(isinstance(c, core.Ref) for c in jaxpr.consts):
     jaxpr, consts = pxla._move_mutable_consts(jaxpr)
     consts = [trace.new_const(c, source_info) for c in consts]
     in_shardings = (*params['in_shardings'],) + (UNSPECIFIED,) * len(consts)
