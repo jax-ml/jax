@@ -462,16 +462,19 @@ class EquationSystemTest(parameterized.TestCase):
     smem_to_reg = equations.IsTransferable(eq_tiling, eq_layout, ())
     self.assertEqual(smem_to_reg.holds(), expected)
 
-  def test_transposed_constraint(self):
-    def transposed(lhs, rhs):
-      lhs = equations.SMEMTiling(None if lhs is None else lc.TileTransform(lhs))
-      rhs = equations.SMEMTiling(None if rhs is None else lc.TileTransform(rhs))
-      return equations.Transposed(lhs, rhs)
+  def test_transpose_expression(self):
+    def transpose(tiling):
+      transform = None if tiling is None else lc.TileTransform(tiling)
+      return equations.Transpose(equations.SMEMTiling(transform))
 
-    self.assertTrue(transposed(None, None).holds())
-    self.assertTrue(transposed((1, 2), (2, 1)).holds())
-    self.assertTrue(transposed((2, 2), (2, 2)).holds())
-    self.assertFalse(transposed((2, 3), (2, 2)).holds())
+    self.assertEqual(
+        equations.reduce_expression(transpose(None), {}),
+        equations.SMEMTiling(None),
+    )
+    self.assertEqual(
+        equations.reduce_expression(transpose((2, 3)), {}),
+        equations.SMEMTiling(lc.TileTransform((3, 2))),
+    )
 
   def test_divides_constraint(self):
     def divides(tiling, dims):

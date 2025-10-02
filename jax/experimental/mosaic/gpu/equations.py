@@ -124,6 +124,14 @@ class Reshape:
   target_shape: tuple[int, ...]
 
 
+@dataclasses.dataclass(frozen=True)
+class Transpose:
+  expression: Expression
+
+  def __str__(self):
+    return f"T({self.expression})"
+
+
 Expression = (
     Variable
     | Constant
@@ -132,6 +140,7 @@ Expression = (
     | Reduce
     | BroadcastInDim
     | Reshape
+    | Transpose
 )
 
 
@@ -272,7 +281,27 @@ def reduce_reshape_expression(
           # Therefore, we can return the tiled layout as is.
           return RegisterLayout(tiled_layout)
     case _:
-      return dataclasses.replace(reshape, expression=reduced_expr)
+      return dataclasses.replace(reshape, expression=reduced_expr)  # pytype: disable=bad-return-type
+
+
+def reduce_transpose_expression(
+    transpose: Transpose, assignments: dict[Variable, Constant]
+) -> Expression | Unsatisfiable:
+  reduced_expr = reduce_expression(transpose.expression, assignments)
+  match reduced_expr:
+    case Unsatisfiable():
+      return Unsatisfiable()
+    case SMEMTiling(value=tile_transform):
+      if tile_transform is None:
+        return SMEMTiling(None)
+      tiling = tile_transform.tiling
+      if len(tiling) != 2:
+        raise NotImplementedError(
+            f"Only 2D tilings are supported, got {len(tiling)}"
+        )
+      return SMEMTiling(lc.TileTransform(tiling[::-1]))
+    case _:
+      return Transpose(expression=reduced_expr)
 
 
 def reduce_expression(
@@ -305,6 +334,8 @@ def reduce_expression(
       return reduce_broadcast_expression(expr, assignments)
     case Reshape():
       return reduce_reshape_expression(expr, assignments)
+    case Transpose():
+      return reduce_transpose_expression(expr, assignments)
     case _:
       assert_never(expr)
 
@@ -467,45 +498,6 @@ class Distinct:
 
 
 @dataclasses.dataclass(frozen=True)
-class Transposed:
-  """States that the lhs SMEM tiling is the transpose of the rhs SMEM tiling.
-
-  Only 2D tilings can be transposed.
-  """
-  lhs: Expression
-  rhs: Expression
-
-  def holds(self) -> bool | None:
-    """Whether the transpose constraint holds.
-
-    Returns `None` if the constraint can't be checked.
-    """
-    if not isinstance(self.lhs, SMEMTiling):
-      return None
-    if not isinstance(self.rhs, SMEMTiling):
-      return None
-    if self.lhs.value is None and self.rhs.value is None:
-      return True
-    if self.lhs.value is None or self.rhs.value is None:
-      return False
-
-    lhs_tiling = self.lhs.value.tiling
-    rhs_tiling = self.rhs.value.tiling
-
-    if len(lhs_tiling) != len(rhs_tiling):
-      return False
-    if len(lhs_tiling) != 2:
-      raise NotImplementedError(
-          f"Only 2D tilings are supported, got {len(lhs_tiling)}"
-      )
-
-    return lhs_tiling == rhs_tiling[::-1]
-
-  def __str__(self):
-    return f"Transposed({self.lhs} ⟶ {self.rhs})"
-
-
-@dataclasses.dataclass(frozen=True)
 class Divides:
   """States that the `expr` tile divides the tail-end of the given dimensions.
 
@@ -572,7 +564,7 @@ class Divides:
     return f"{self.dimensions_to_tile} % {self.expr} == 0"
 
 
-Constraint = Relayout | Distinct | IsTransferable | Transposed | Divides
+Constraint = Relayout | Distinct | IsTransferable | Divides
 
 
 def _canonicalize_dimensions_to_tile(
@@ -622,12 +614,6 @@ def reduce_constraint(
       if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
         return Unsatisfiable()
       new_constraint = IsTransferable(source_red, target_red, shape)
-    case Transposed(lhs=lhs, rhs=rhs):
-      lhs_red = reduce_expression(lhs, assignments)
-      rhs_red = reduce_expression(rhs, assignments)
-      if isinstance(lhs_red, Unsatisfiable) or isinstance(rhs_red, Unsatisfiable):
-        return Unsatisfiable()
-      new_constraint = Transposed(lhs_red, rhs_red)
     case Divides(expr=expr, dimensions_to_tile=dimensions_to_tile):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
@@ -728,6 +714,8 @@ class EquationSystem:
           extract_variables(e)
         case Reshape(expression=e):
           extract_variables(e)
+        case Transpose(expression=e):
+          extract_variables(e)
         case _:
           assert_never(expr)
     for equation in self.equations:
@@ -744,9 +732,6 @@ class EquationSystem:
         case IsTransferable(source=source, target=target, shape=_):
           extract_variables(source)
           extract_variables(target)
-        case Transposed(lhs=lhs, rhs=rhs):
-          extract_variables(lhs)
-          extract_variables(rhs)
         case Divides(expr=expr):
           extract_variables(expr)
         case _ as never:

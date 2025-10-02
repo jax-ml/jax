@@ -1487,11 +1487,11 @@ def _drop_smem(
     match x:
       case OperandOrResult(memory_space=MemorySpace.SMEM):
         return True
+      case eqns.Transpose():
+        return True
       case eqns.IsTransferable(source=source, target=target):
         return is_smem(source) or is_smem(target)
       case eqns.Divides():
-        return True
-      case eqns.Transposed():
         return True
       case eqns.Variable(key=key):
         return is_smem(key)
