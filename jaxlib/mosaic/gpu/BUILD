@@ -339,6 +339,28 @@ cc_library(
     alwayslink = True,
 )
 
+cc_test(
+    name = "custom_call_test",
+    srcs = ["custom_call_test.cc"],
+    tags = ["requires-gpu-sm90"],
+    deps = [
+        ":custom_call",
+        "//testing/base/public:gunit_main",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@xla//xla/hlo/builder:xla_computation",
+        "@xla//xla/hlo/parser:hlo_parser",
+        "@xla//xla/pjrt:pjrt_client",
+        "@xla//xla/pjrt:pjrt_executable",
+        "@xla//xla/pjrt/plugin/xla_gpu:xla_gpu_pjrt_client",
+        "@xla//xla/service:gpu_plugin",
+        "@xla//xla/stream_executor/cuda:cuda_platform",
+        "@xla//xla/tsl/platform:env",
+        "@xla//xla/tsl/platform:status",
+        "@xla//xla/tsl/platform:statusor",
+    ],
+)
+
 nanobind_extension(
     name = "_mosaic_gpu_ext",
     srcs = ["mosaic_gpu_ext.cc"],

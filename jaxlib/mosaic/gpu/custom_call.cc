@@ -727,7 +727,8 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
                            .Attr<std::string_view>("kernel_hash")
                            .Attr<std::string_view>("module")
                            .Attr<bool>("use_custom_barrier")
-                           .Ctx<xla::RunId>());
+                           .Ctx<xla::RunId>(),
+                           {ffi::Traits::kCmdBufferCompatible});
 
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "mosaic_gpu_v2", "CUDA",
                          {
