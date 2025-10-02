@@ -1955,8 +1955,8 @@ def _cached_shard_map(flat_fun, mesh, in_axes_flat, out_axes_thunk, axis_name):
         store.reset()
     return f_transformed(*args, **kwargs)
   flat_fun.f_transformed = reset_stores_f_transformed
-  in_specs = tuple(map(partial(_axis_to_spec, axis_name), in_axes_flat))
-  out_specs = lambda: map(partial(_axis_to_spec, axis_name), out_axes_thunk())
+  in_specs = tuple(map(partial(_axes_to_pspec, axis_name), in_axes_flat))
+  out_specs = lambda: map(partial(_axes_to_pspec, axis_name), out_axes_thunk())
   fun = _handle_reshapes(flat_fun, in_axes_flat, out_axes_thunk)
   return (_shard_map(fun.call_wrapped, mesh=mesh, in_specs=in_specs,
                      out_specs=out_specs, check_vma=False,
@@ -1970,15 +1970,6 @@ def _handle_reshapes(f, in_axes, out_axes_thunk, *args, **kwargs):
   out = f(*args)
   return tree_map(lambda x, ax: x if ax is None else lax.expand_dims(x, [ax]),
                   list(out), list(out_axes_thunk()))
-
-def _axis_to_spec(axis_name, ax):
-  if isinstance(ax, int):
-    specs = [None] * ax + [axis_name]
-    return P(*specs)
-  elif ax is None:
-    return P()
-  else:
-    raise TypeError(ax)
 
 def _get_devices(p, backend):
   if backend is not None and p.devices is None:
