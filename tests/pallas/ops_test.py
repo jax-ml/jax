@@ -1447,6 +1447,16 @@ class OpsTest(PallasBaseTest):
           ((32, 8, 128), (8, 128, 32), ([0], [2])),
           # trailing lhs and trailing rhs non contracting dims.
           ((8, 8, 128), (8, 8, 128), ([0], [0])),
+          # non-contiguous lhs non contracting dims and leading rhs non contracting dims.
+          ((2, 128, 128), (2, 128, 128), ([1], [2])),
+          # non-contiguous lhs non contracting dims and trailing rhs non contracting dims.
+          ((2, 128, 128), (128, 2, 128), ([1], [0])),
+          # leading lhs non contracting dims and non-contiguous rhs non contracting dims.
+          ((2, 128, 128), (2, 128, 128), ([2], [1])),
+          # trailing lhs non contracting dims and non-contiguous rhs non contracting dims.
+          ((128, 2, 128), (2, 128, 128), ([0], [1])),
+          # non-contiguous lhs and rhs non contracting dims.
+          ((2, 128, 128), (2, 128, 128), ([1], [1])),
       ),
   )
   def test_dot_general_multiple_non_contracting_dims(
@@ -1456,9 +1466,9 @@ class OpsTest(PallasBaseTest):
       self.skipTest("TPU only test")
 
     if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
-        2025, 7, 19
+        2025, 10, 5
     ):
-      self.skipTest("Requires libtpu built after 2025-07-19")
+      self.skipTest("Requires libtpu built after 2025-10-05")
 
     x_shape, y_shape, dims_numbers = shapes_and_dims_numbers
     if batch_size is not None:
@@ -1502,6 +1512,121 @@ class OpsTest(PallasBaseTest):
         kernel(x, y),
         expected,
     )
+
+  @parameterized.product(
+      batch_size=(None, 1, 2),
+      # dims_numbers is without batch dims
+      shapes_and_dims_numbers=(
+          # Case with LHS already being a transpose
+          (
+              (4, 3, 2, 6),
+              (4, 6),
+              ([2], [1]),
+              (2, 1, 3, 0),
+              None,
+          ),
+          # Case with RHS already being a transpose
+          (
+              (3, 4, 2, 6),
+              (6, 4),
+              ([1], [0]),
+              None,
+              (1, 0),
+          ),
+          # Case with both LHS and RHS already being transposes
+          (
+              (3, 2, 6, 4),
+              (4, 6),
+              ([2], [1]),
+              (0, 1, 3, 2),
+              (1, 0),
+          ),
+      ),
+  )
+  def test_dot_general_multiple_non_contracting_dims_with_transposes(
+      self, batch_size, shapes_and_dims_numbers
+  ):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("TPU only test")
+
+    if jtu.test_device_matches(["tpu"]) and not jtu.if_cloud_tpu_at_least(
+        2025, 10, 5
+    ):
+      self.skipTest("Requires libtpu built after 2025-10-05")
+
+    (
+        x_shape_unbatched,
+        y_shape_unbatched,
+        dims_numbers_unbatched,
+        x_perm_unbatched,
+        y_perm_unbatched,
+    ) = shapes_and_dims_numbers
+    if batch_size is not None:
+      x_shape = (batch_size,) + x_shape_unbatched
+      y_shape = (batch_size,) + y_shape_unbatched
+
+      x_perm = (
+          tuple([0] + [i + 1 for i in x_perm_unbatched])
+          if x_perm_unbatched is not None
+          else None
+      )
+      y_perm = (
+          tuple([0] + [i + 1 for i in y_perm_unbatched])
+          if y_perm_unbatched is not None
+          else None
+      )
+
+      # Batch size is always the first dimension so we need to offset
+      # dims_numbers by 1.
+      def offset_by_one(x):
+        return [a + 1 for a in x]
+
+      dims_numbers = (
+          (
+              offset_by_one(dims_numbers_unbatched[0]),
+              offset_by_one(dims_numbers_unbatched[1]),
+          ),
+          ([0], [0]),
+      )
+    else:
+      x_shape = x_shape_unbatched
+      y_shape = y_shape_unbatched
+      x_perm = x_perm_unbatched
+      y_perm = y_perm_unbatched
+      dims_numbers = (
+          (dims_numbers_unbatched[0], dims_numbers_unbatched[1]),
+          ([], []),
+      )
+
+    k1, k2 = random.split(jax.random.key(0))
+    x = jax.random.normal(k1, x_shape, dtype=jnp.float32)
+    y = jax.random.normal(k2, y_shape, dtype=jnp.float32)
+    expected = jax.lax.dot_general(
+        jnp.transpose(x, x_perm) if x_perm else x,
+        jnp.transpose(y, y_perm) if y_perm else y,
+        dimension_numbers=dims_numbers,
+    )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.float32),
+    )
+    def kernel(x_ref, y_ref, out_ref):
+      if x_perm:
+        x_in_kernel = jnp.transpose(x_ref[...], x_perm)
+      else:
+        x_in_kernel = x_ref[...]
+      if y_perm:
+        y_in_kernel = jnp.transpose(y_ref[...], y_perm)
+      else:
+        y_in_kernel = y_ref[...]
+      out_ref[...] = jax.lax.dot_general(
+          x_in_kernel,
+          y_in_kernel,
+          dimension_numbers=dims_numbers,
+      )
+
+    np.testing.assert_allclose(kernel(x, y), expected, atol=1e-6, rtol=1e-6)
 
   @parameterized.product(
       batch_size=(None, 1, 2),

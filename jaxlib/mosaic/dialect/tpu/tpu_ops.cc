@@ -1000,6 +1000,15 @@ LogicalResult MatmulOp::verify() {
     auto rhs_non_contracting_dims =
         dimension_numbers.getRhsNonContractingDims();
 
+    if (!llvm::is_sorted(lhs_non_contracting_dims)) {
+      emitOpError("Not implemented: lhs non contracting dims must be sorted");
+      return failure();
+    }
+    if (!llvm::is_sorted(rhs_non_contracting_dims)) {
+      emitOpError("Not implemented: rhs non contracting dims must be sorted");
+      return failure();
+    }
+
     if (lhs_contracting_dims.size() + lhs_non_contracting_dims.size() +
             lhs_batch_dims.size() !=
         lhs_ty.getShape().size()) {
@@ -1134,93 +1143,30 @@ LogicalResult MatmulOp::verify() {
     // 1. Support multiple batch dims
     // 2. Support batch dims in any position in the output dim order
 
-    // A bit long winded, but the invariants we enforce below are:
-    // 1. The output order idx is 0 (lhs) or 1 (rhs)
-    // 2. The output dim order is in valid bounds
-    // 3. We saw the rhs and lhs non contracting dims in the output dim order
-    // 4. We never see the contracting dims in the output dim order
-    // 5. We only see each of the non contracting dim once
-    std::vector<bool> lhs_dims_seen_in_output(lhs_rank, false);
-    std::vector<bool> rhs_dims_seen_in_output(rhs_rank, false);
-
-    // Iterate over the output dimension order
-    for (int dim_pos = 0; dim_pos < output_dim_order.size(); dim_pos += 2) {
-      auto idx = output_dim_order[dim_pos];
-      auto dim = output_dim_order[dim_pos + 1];
-
-      if (idx != 0 && idx != 1) {
-        emitOpError("Illegal: output dim order index must be 0 or 1");
-        return failure();
-      }
-      auto is_lhs = (idx == 0);
-
-      if (is_lhs) {
-        if (dim < 0 || dim >= lhs_rank) {
-          emitOpError("Illegal: lhs dimension index out of bounds");
-          return failure();
-        }
-        if (lhs_dims_seen_in_output[dim]) {
-          emitOpError("Illegal: lhs dimension ")
-              << dim << " appears more than once in output dim order";
-          return failure();
-        }
-        if (dim == lhs_contracting_dim) {
-          emitOpError("Illegal: contracting dimension ")
-              << dim << " appears in lhs output dim order";
-          return failure();
-        }
-        // batch_dim_lhs is either 0 or nullopt
-        if (dim == batch_dim_lhs) {
-          // Upstream invariants enforce that batch dim is in position 0
-          // of the output dim order.
-          rhs_dims_seen_in_output[dim] = true;
-        }
-        lhs_dims_seen_in_output[dim] = true;
-      } else {
-        if (dim < 0 || dim >= rhs_rank) {
-          emitOpError("Illegal: rhs dimension index out of bounds");
-          return failure();
-        }
-        if (rhs_dims_seen_in_output[dim]) {
-          emitOpError("Illegal: rhs dimension ")
-              << dim << " appears more than once in output dim order";
-          return failure();
-        }
-        if (dim == rhs_contracting_dim) {
-          emitOpError("Illegal: contracting dimension ")
-              << dim << " appears in rhs output dim order";
-          return failure();
-        }
-        if (dim == batch_dim_rhs) {
-          // Upstream invariants enforce that batch dim is in position 0
-          // of the output dim order.
-          lhs_dims_seen_in_output[dim] = true;
-        }
-        rhs_dims_seen_in_output[dim] = true;
-      }
+    // Verify that the output dim order is always in the form of [0, batch_dims,
+    // 0, lhs_non_contracting_dims, 1, rhs_non_contracting_dims].
+    llvm::SmallVector<int64_t> expected_output_dim_order;
+    expected_output_dim_order.reserve(2 * (lhs_batch_dims.size() +
+                                           lhs_non_contracting_dims.size() +
+                                           rhs_non_contracting_dims.size()));
+    for (int64_t dim : lhs_batch_dims) {
+      expected_output_dim_order.push_back(0);
+      expected_output_dim_order.push_back(dim);
     }
-
-    // Check that all dims have been seen (except contracting dims)
-    for (int i = 0; i < lhs_rank; ++i) {
-      if (i == lhs_contracting_dim) {
-        continue;
-      }
-      if (!lhs_dims_seen_in_output[i]) {
-        emitOpError("Illegal: lhs non-contracting dimension ")
-            << i << " is not seen in output dim order";
-        return failure();
-      }
+    for (int64_t dim : lhs_non_contracting_dims) {
+      expected_output_dim_order.push_back(0);
+      expected_output_dim_order.push_back(dim);
     }
-
-    for (int i = 0; i < rhs_rank; ++i) {
-      if (i == rhs_contracting_dim) {
-        continue;
-      }
-      if (!rhs_dims_seen_in_output[i]) {
-        emitOpError("Illegal: rhs non-contracting dimension ")
-            << i << " is not seen in output dim order";
-        return failure();
-      }
+    for (int64_t dim : rhs_non_contracting_dims) {
+      expected_output_dim_order.push_back(1);
+      expected_output_dim_order.push_back(dim);
+    }
+    if (!absl::c_equal(output_dim_order, expected_output_dim_order)) {
+      emitOpError(
+          "Illegal: output dim order must be in the form of [0, "
+          "batch_dims, 0, lhs_non_contracting_dims, 1, "
+          "rhs_non_contracting_dims]");
+      return failure();
     }
   }
   return success();
