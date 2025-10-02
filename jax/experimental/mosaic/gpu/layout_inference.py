@@ -1125,6 +1125,17 @@ def _async_store_tmem_equation_system(
   )
 
 
+@_add_equation_system_derivation_rule(mgpu.SliceSMEMOp)
+def _slice_smem_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.SliceSMEMOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
+  res = OperandOrResult(op, VariableType.RESULT, 0)
+  res_var = eqns.Variable(res)
+  return (eqns.EquationSystem(), {res_var: [res]}, [])
+
+
 # `memref.load` and `memref.store` are used to load barrier phases which are
 # scalars---the rule needn't do anything interesting, but we need to have it.
 @_add_equation_system_derivation_rule(memref.LoadOp)
@@ -1146,6 +1157,43 @@ def _memref_load_store_op_equation_system(
   var = eqns.Variable(ref)
   assignments: dict[eqns.Variable, eqns.Constant] = {var: eqns.SMEMTiling(None)}
   return eqns.EquationSystem(assignments=assignments), {var: [ref]}, []
+
+
+@_add_equation_system_derivation_rule(mgpu.WithTransformsOp)
+def _with_transforms_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.WithTransformsOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  source = OperandOrResult(op, VariableType.OPERAND, 0)
+  dest = OperandOrResult(op, VariableType.RESULT, 0)
+  var = ctx.producer_ref(source)
+
+  transforms = [layouts_lib.from_transform_attr(x) for x in op.transforms]
+  match transforms:
+    case []:
+      tile_transform = None
+      swizzle = None
+    case [lc.TileTransform() as t]:
+      tile_transform = t
+      swizzle = None
+    case [lc.TileTransform() as t, mgpu.SwizzlingMode() as s]:
+      tile_transform = t
+      swizzle = s
+    case _:
+      raise NotImplementedError(f"Unsupported transforms {transforms}")
+
+  if swizzle is not None:
+    computed_swizzle = _compute_swizzle(op.ref.type, tile_transform)
+    if computed_swizzle != swizzle:
+      raise NotImplementedError(
+          f"Cannot honor caller-provided swizzle {swizzle} that is different "
+          f"from the computed swizle {computed_swizzle} on op {op}."
+      )
+
+  assignments: dict[eqns.Variable, eqns.Constant] = {
+      var: eqns.SMEMTiling(tile_transform)
+  }
+  return eqns.EquationSystem(assignments=assignments), {var: [source, dest]}, []
 
 
 def _ensure_all_layouts_are_set(
