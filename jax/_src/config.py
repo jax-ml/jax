@@ -2130,6 +2130,24 @@ array_garbage_collection_guard = optional_enum_state(
     ),
 )
 
+class RuntimeTracebackMode(enum.StrEnum):
+  OFF = 'off'
+  ON = 'on'
+  FULL = 'full'
+
+jax_send_traceback_to_runtime = enum_class_state(
+    name='jax_send_traceback_to_runtime',
+    enum_class=RuntimeTracebackMode,
+    default=RuntimeTracebackMode.OFF,  # Default to off
+    help=(
+        'Controls the level of Python traceback information sent to the runtime at dispatch time:\n'
+        '- "off": (default) No Python traceback information is sent.\n'
+        '- "on": Only the most recent user frame call location is sent.\n'
+        '- "full": The full Python traceback of the call location is sent. '
+        'This has a high fixed cost and should be used only for debugging.'
+    )
+)
+
 # Don't define a context manager since this isn't threadsafe.
 string_state(
     name='jax_debug_log_modules',
