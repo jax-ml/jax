@@ -58,12 +58,12 @@ limitations under the License.
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_executable.h"
+#include "jaxlib/py_user_context.h"
 #include "jaxlib/py_values.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/pytree.h"
 #include "jaxlib/sharding.h"
 #include "jaxlib/to_ifrt_sharding.h"
-#include "jaxlib/traceback.h"
 #include "xla/layout.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/lru_cache.h"
@@ -73,6 +73,7 @@ limitations under the License.
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_helpers.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/tsl/concurrency/ref_count.h"
@@ -771,6 +772,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     dynamic_arg_signatures.push_back(std::move(arg));
   }
 
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
   // A vector of [num_inputs].
   auto num_args_arrays = PrepareIfrtInputs(
       *cache_entry->executable, flat_dynamic_args, dynamic_arg_signatures,
@@ -803,8 +805,6 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     output_arrays = std::move(result.outputs);
   }
 
-  auto traceback = Traceback::Get();
-
   // Convert the ifrt::Array objects to PyArray.
   int num_outputs = output_arrays.size();
   absl::InlinedVector<nb::object, 4> outputs;
@@ -817,7 +817,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
         cache_entry->out_avals[i], cache_entry->out_weak_types[i],
         cache_entry->out_dtypes[i], cache_entry->out_shapes[i],
         cache_entry->out_shardings[i], cache_entry->executable->client(),
-        traceback, std::move(output_arrays[i]),
+        std::move(output_arrays[i]),
         /*committed=*/cache_entry->out_committed.at(i), /*skip_checks=*/true);
 
     outputs.push_back(std::move(py_array));

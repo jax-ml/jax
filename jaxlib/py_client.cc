@@ -60,6 +60,7 @@ limitations under the License.
 #include "jaxlib/py_executable.h"
 #include "jaxlib/py_host_callback.h"
 #include "jaxlib/py_memory_space.h"
+#include "jaxlib/py_user_context.h"
 #include "jaxlib/py_values.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/sharding.h"
@@ -83,6 +84,7 @@ limitations under the License.
 #include "xla/python/ifrt/host_callback.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/program.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt/user_context_status_util.h"
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/nb_numpy.h"
@@ -346,6 +348,7 @@ absl::Status PyClient::Defragment() {
   }
   GlobalPyRefManager()->CollectGarbage();
 
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
   DevicePutOptions options;
   options.squash_64bit_types = false;
   options.allow_zero_copy =
@@ -359,11 +362,9 @@ absl::Status PyClient::Defragment() {
   auto sharding =
       make_nb_class<SingleDeviceSharding>(client, std::move(device_list),
                                           /*memory_kind=*/nb::none());
-
-  auto traceback = Traceback::Get();
   return PyArray::MakeFromIfrtArrayAndSharding(
-      std::move(client), std::move(traceback),
-      std::move(device_put_result.ifrt_array), std::move(sharding),
+      std::move(client), std::move(device_put_result.ifrt_array),
+      std::move(sharding),
       /*weak_type=*/false, /*committed=*/false,
       /*skip_checks=*/true);
 }
@@ -445,6 +446,7 @@ PyClient::CompileAndLoadIfrtProgram(
     }
   }
 
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
   ifrt::LoadedExecutableRef ifrt_loaded_executable;
   std::optional<std::string> fingerprint;
   absl::Status compile_status;
@@ -467,10 +469,9 @@ PyClient::CompileAndLoadIfrtProgram(
     // to the status message.
     return xla::ifrt::ExpandUserContexts(std::move(compile_status));
   }
-  auto traceback = Traceback::Get();
-  return make_nb_class<PyLoadedExecutable>(
-      std::move(client), std::move(ifrt_loaded_executable),
-      std::move(traceback), std::move(fingerprint));
+  return make_nb_class<PyLoadedExecutable>(std::move(client),
+                                           std::move(ifrt_loaded_executable),
+                                           std::move(fingerprint));
 }
 
 /* static */ absl::StatusOr<nb_class_ptr<PyExecutable>> PyClient::Compile(
@@ -563,6 +564,7 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
   auto ifrt_deserialize_options = MakeIfrtDeserializeExecutableOptions(
       std::move(options), std::move(executable_devices),
       std::move(host_callbacks));
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
   {
     nb::gil_scoped_release gil_release;
     TF_ASSIGN_OR_RETURN(
@@ -572,10 +574,9 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
             std::move(ifrt_deserialize_options)));
   }
   TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
-  auto traceback = Traceback::Get();
-  return make_nb_class<PyLoadedExecutable>(
-      std::move(client), std::move(ifrt_loaded_executable),
-      std::move(traceback), std::move(fingerprint));
+  return make_nb_class<PyLoadedExecutable>(std::move(client),
+                                           std::move(ifrt_loaded_executable),
+                                           std::move(fingerprint));
 }
 
 namespace {

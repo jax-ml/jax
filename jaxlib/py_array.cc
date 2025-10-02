@@ -62,6 +62,7 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"
 #include "jaxlib/py_device_list.h"
+#include "jaxlib/py_user_context.h"
 #include "jaxlib/py_values.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/sharding.h"
@@ -87,6 +88,7 @@ limitations under the License.
 #include "xla/python/ifrt/remap_plan.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt/user_context_status_util.h"
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/nb_helpers.h"
@@ -337,9 +339,14 @@ extern "C" int PyArray_tp_clear(PyObject* self) {
       auto* obj = reinterpret_cast<PyArrayObject*>(self);
       std::string traceback_str;
       if (obj->initialized) {
-        auto traceback = GetPyArrayStorageFromObject(obj)->traceback;
-        if (traceback.has_value()) {
-          traceback_str = traceback.value().ToString();
+        xla::ifrt::Array* ifrt_array_ptr =
+            GetPyArrayStorageFromObject(obj)->ifrt_array.get();
+        if (ifrt_array_ptr != nullptr) {
+          std::optional<Traceback> traceback =
+              GetTraceback(ifrt_array_ptr->user_context().get());
+          if (traceback.has_value()) {
+            traceback_str = traceback->ToString();
+          }
         }
       }
       auto error_msg = absl::StrCat(
@@ -461,11 +468,13 @@ struct BatchedCopyToDeviceWithShardingKey {
 
 }  // namespace
 
-PyArray_Storage::PyArray_Storage(
-    nb::object aval, bool weak_type, xla::nb_dtype dtype,
-    std::vector<int64_t> shape, nb::object sharding, bool committed,
-    nb_class_ptr<PyClient> py_client, std::optional<Traceback> traceback,
-    ifrt::ArrayRef ifrt_array, xla::PjRtFuture<> result_status)
+PyArray_Storage::PyArray_Storage(nb::object aval, bool weak_type,
+                                 xla::nb_dtype dtype,
+                                 std::vector<int64_t> shape,
+                                 nb::object sharding, bool committed,
+                                 nb_class_ptr<PyClient> py_client,
+                                 ifrt::ArrayRef ifrt_array,
+                                 xla::PjRtFuture<> result_status)
     : aval(std::move(aval)),
       weak_type(weak_type),
       dtype(std::move(dtype)),
@@ -473,7 +482,6 @@ PyArray_Storage::PyArray_Storage(
       sharding(std::move(sharding)),
       committed(committed),
       py_client(std::move(py_client)),
-      traceback(std::move(traceback)),
       ifrt_array(std::move(ifrt_array)),
       result_status(std::move(result_status)) {
   static_assert(PyClient::kNumArraysShards <
@@ -503,12 +511,13 @@ void PyInit_helper(PyArray self, nb::object aval, nb::object sharding,
   Construct(reinterpret_cast<PyArrayObject*>(self.ptr()), aval,
             nb::cast<bool>(aval.attr("weak_type")), std::move(dtype),
             std::move(shape), std::move(sharding), committed, py_client,
-            Traceback::Get(), std::move(ifrt_array), xla::PjRtFuture<>());
+            std::move(ifrt_array), xla::PjRtFuture<>());
 }
 
 void PyArray::PyInit(PyArray self, nb::object aval, nb::object sharding,
                      absl::Span<const PyArray> py_arrays, bool committed,
                      bool skip_checks) {
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
   if (skip_checks) {
     PyInit_helper(self, aval, sharding, py_arrays, committed);
   } else {
@@ -521,7 +530,6 @@ void PyArray::PyInit(PyArray self, nb::object aval, nb::object sharding,
 }
 
 PyArray PyArray::MakeFromSingleDeviceArray(nb_class_ptr<PyClient> py_client,
-                                           std::optional<Traceback> traceback,
                                            ifrt::ArrayRef ifrt_array,
                                            bool weak_type, bool committed,
                                            xla::PjRtFuture<> result_status) {
@@ -550,14 +558,15 @@ PyArray PyArray::MakeFromSingleDeviceArray(nb_class_ptr<PyClient> py_client,
       py_client, ifrt_array->sharding().devices(), std::move(py_memory_kind));
   return PyArray(std::move(aval), weak_type, dtype, std::move(key.dims),
                  std::move(sharding), std::move(py_client),
-                 std::move(traceback), std::move(ifrt_array), committed,
+                 std::move(ifrt_array), committed,
                  /*skip_checks=*/true, std::move(result_status));
 }
 
-PyArray PyArray::MakeFromIfrtArrayAndSharding(
-    nb_class_ptr<PyClient> py_client, std::optional<Traceback> traceback,
-    ifrt::ArrayRef ifrt_array, nb::object sharding, bool weak_type,
-    bool committed, bool skip_checks) {
+PyArray PyArray::MakeFromIfrtArrayAndSharding(nb_class_ptr<PyClient> py_client,
+                                              ifrt::ArrayRef ifrt_array,
+                                              nb::object sharding,
+                                              bool weak_type, bool committed,
+                                              bool skip_checks) {
   auto shape_span = ifrt_array->shape().dims();
   ShapedArrayCacheKey key;
   key.dtype = ifrt_array->dtype();
@@ -570,8 +579,7 @@ PyArray PyArray::MakeFromIfrtArrayAndSharding(
       xla::IfrtDtypeToDtypeWithTokenCanonicalization(key.dtype).value();
   return PyArray(std::move(aval), weak_type, dtype, std::move(key.dims),
                  std::move(sharding), std::move(py_client),
-                 std::move(traceback), std::move(ifrt_array), committed,
-                 skip_checks);
+                 std::move(ifrt_array), committed, skip_checks);
 }
 
 PyArrayResultHandler::PyArrayResultHandler(nb::object aval, nb::object sharding,
@@ -593,6 +601,7 @@ PyArray PyArrayResultHandler::Call(absl::Span<const PyArray> py_arrays) const {
                      py_device_list.status().ToString())
             .c_str());
   }
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
   return Call(py_device_list.value()->py_client(),
               CreateIfRtArrayFromSingleDeviceShardedPyArrays(
                   dtype_, shape_, py_arrays, sharding_),
@@ -603,8 +612,8 @@ PyArray PyArrayResultHandler::Call(nb_class_ptr<PyClient> py_client,
                                    ifrt::ArrayRef ifrt_array,
                                    xla::PjRtFuture<> result_status) const {
   return PyArray(aval_, weak_type_, dtype_, shape_, sharding_,
-                 std::move(py_client), Traceback::Get(), std::move(ifrt_array),
-                 committed_, skip_checks_, std::move(result_status));
+                 std::move(py_client), std::move(ifrt_array), committed_,
+                 skip_checks_, std::move(result_status));
 }
 
 PyArray PyArrayResultHandler::Call(PyArray py_array) const {
@@ -614,8 +623,7 @@ PyArray PyArrayResultHandler::Call(PyArray py_array) const {
 
 PyArray::PyArray(nb::object aval, bool weak_type, xla::nb_dtype dtype,
                  std::vector<int64_t> shape, nb::object sharding,
-                 nb_class_ptr<PyClient> py_client,
-                 std::optional<Traceback> traceback, ifrt::ArrayRef ifrt_array,
+                 nb_class_ptr<PyClient> py_client, ifrt::ArrayRef ifrt_array,
                  bool committed, bool skip_checks,
                  xla::PjRtFuture<> result_status) {
   auto* self =
@@ -623,7 +631,7 @@ PyArray::PyArray(nb::object aval, bool weak_type, xla::nb_dtype dtype,
   m_ptr = self;
   Construct(reinterpret_cast<PyArrayObject*>(self), std::move(aval), weak_type,
             std::move(dtype), std::move(shape), std::move(sharding), committed,
-            std::move(py_client), std::move(traceback), std::move(ifrt_array),
+            std::move(py_client), std::move(ifrt_array),
             std::move(result_status));
 
   if (!skip_checks) {
@@ -654,6 +662,9 @@ const std::vector<PyArray>& PyArray::py_arrays_cached() {
   auto& py_arrays = this->py_arrays();
 
   if (py_arrays.empty()) {
+    // Use the user context of this array.
+    xla::ifrt::UserContextScope user_context_scope(
+        ifrt_array()->user_context());
     auto ifrt_arrays = ifrt_array()->DisassembleIntoSingleDeviceArrays(
         ifrt::ArrayCopySemantics::kReuseInput,
         ifrt::SingleDeviceShardSemantics::kAddressableShards);
@@ -666,8 +677,8 @@ const std::vector<PyArray>& PyArray::py_arrays_cached() {
     py_arrays.reserve(ifrt_arrays->size());
     for (auto& ifrt_array : *ifrt_arrays) {
       py_arrays.push_back(PyArray::MakeFromSingleDeviceArray(
-          py_client(), traceback(), std::move(ifrt_array), weak_type(),
-          committed(), result_status()));
+          py_client(), std::move(ifrt_array), weak_type(), committed(),
+          result_status()));
     }
   }
 
@@ -786,17 +797,20 @@ absl::StatusOr<PyArray> PyArray::FullyReplicatedShard() {
         "FullyReplicatedShard() called on deleted or donated buffer");
   }
 
+  // Use the user context of this array.
+  xla::ifrt::UserContextScope user_context_scope(ifrt_array()->user_context());
   TF_ASSIGN_OR_RETURN(auto fully_replicated_ifrt_shard,
                       ifrt_array()->FullyReplicatedShard(
                           ifrt::ArrayCopySemantics::kReuseInput));
   auto array = MakeFromSingleDeviceArray(
-      py_client(), traceback(), std::move(fully_replicated_ifrt_shard),
-      weak_type(), committed(), result_status());
+      py_client(), std::move(fully_replicated_ifrt_shard), weak_type(),
+      committed(), result_status());
   cached = array;
   return nb::cast<PyArray>(cached);
 }
 
 absl::Status PyArray::BlockUntilReady() const {
+  xla::ifrt::UserContextScope user_context_scope(jax::PyUserContext::Create());
   absl::Status status;
   {
     nb::gil_scoped_release gil_release;
@@ -1105,9 +1119,10 @@ absl::StatusOr<nb::object> CudaArrayInterfaceToBuffer(
     throw xla::XlaRuntimeError(
         "This operation is implemented for a PjRt-compatible backend only.");
   }
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
   TF_ASSIGN_OR_RETURN(auto ifrt_array,
                       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer)));
-  return PyArray::MakeFromSingleDeviceArray(std::move(client), Traceback::Get(),
+  return PyArray::MakeFromSingleDeviceArray(std::move(client),
                                             std::move(ifrt_array), false, true);
 }
 
@@ -1144,6 +1159,8 @@ bool PyArray::IsDeleted() const {
 PyArray PyArray::Clone() const {
   auto array = tsl::FormRef(ifrt_array());
   auto* ifrt_client = py_client()->ifrt_client();
+  // Use the user context of this array.
+  xla::ifrt::UserContextScope user_context_scope(array->user_context());
   ifrt::ArrayRef out =
       ifrt_client
           ->CopyArrays(absl::MakeSpan(&array, 1), /*devices=*/std::nullopt,
@@ -1153,8 +1170,8 @@ PyArray PyArray::Clone() const {
           .front();
   return PyArray(aval(), weak_type(), dtype(),
                  std::vector<int64_t>(shape().begin(), shape().end()),
-                 sharding(), py_client(), traceback(), std::move(out),
-                 committed(), /*skip_checks=*/true, result_status());
+                 sharding(), py_client(), std::move(out), committed(),
+                 /*skip_checks=*/true, result_status());
 }
 
 nb::handle PyArray::Storage::AsHandle() {
@@ -1207,7 +1224,7 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
   };
   absl::flat_hash_map<BatchedCopyToDeviceWithShardingKey, Batch> batches;
 
-  auto traceback = Traceback::Get();
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
   {
     tsl::profiler::TraceMe results_traceme(
         "BatchedCopyToDeviceWithSharding create batch");
@@ -1239,8 +1256,8 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
           results[i] = PyArray(
               py_array.aval(), py_array.weak_type(), py_array.dtype(),
               std::vector<int64_t>(shape_span.begin(), shape_span.end()),
-              dst_sharding, py_array.py_client(), traceback,
-              tsl::FormRef(ifrt_array_ptr), py_array.committed(),
+              dst_sharding, py_array.py_client(), tsl::FormRef(ifrt_array_ptr),
+              py_array.committed(),
               /*skip_checks=*/true, py_array.result_status());
         }
         continue;
@@ -1295,8 +1312,8 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
     results[i] =
         PyArray(py_array.aval(), py_array.weak_type(), py_array.dtype(),
                 std::vector<int64_t>(shape_span.begin(), shape_span.end()),
-                dst_shardings[i], py_array.py_client(), traceback,
-                std::move(ifrt_array), py_array.committed(),
+                dst_shardings[i], py_array.py_client(), std::move(ifrt_array),
+                py_array.committed(),
                 /*skip_checks=*/true, py_array.result_status());
   }
   return results;
@@ -1326,6 +1343,7 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
 
   GlobalPyRefManager()->CollectGarbage();
 
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
   auto n_devices = dst_devices.size();
 
   DevicePutOptions options;
@@ -1365,7 +1383,7 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
                             dtype, shape, sharding, options));
 
   return PyArray(aval, weak_type, dtype, std::move(shape), std::move(sharding),
-                 py_device_list->py_client(), Traceback::Get(),
+                 py_device_list->py_client(),
                  std::move(device_put_result.ifrt_array), committed,
                  /*skip_checks=*/true);
 }
@@ -1396,6 +1414,10 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
       xla::ifrt::ShardingRef dst_ifrt_sharding,
       GetIfrtConcreteEvenSharding(dst_sharding, ifrt_array_ptr->dtype(),
                                   ifrt_array_ptr->shape()));
+
+  // Use the user context of this array.
+  xla::ifrt::UserContextScope user_context_scope(
+      ifrt_array_ptr->user_context());
 
   xla::ifrt::ArrayRef new_ifrt_array;
   {
@@ -1475,7 +1497,7 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
   return PyArray(nb::borrow<nb::object>(x.aval().ptr()), x.weak_type(),
                  nb::borrow<xla::nb_dtype>(x.dtype().ptr()),
                  std::vector<int64_t>(x.shape().begin(), x.shape().end()),
-                 std::move(dst_sharding), x.py_client(), x.traceback(),
+                 std::move(dst_sharding), x.py_client(),
                  std::move(new_ifrt_array),
                  /*committed=*/true,
                  /*skip_checks=*/true);
@@ -1504,6 +1526,7 @@ absl::Status PyArray::BatchedBlockUntilReady(std::vector<nb::object> objs) {
   }
 
   GlobalPyRefManager()->CollectGarbage();
+  xla::ifrt::UserContextScope user_context_scope(jax::PyUserContext::Create());
   absl::Status status;
   {
     nb::gil_scoped_release gil_release;
@@ -1530,7 +1553,6 @@ absl::Status PyArray::ReplaceWithAlias(PyArray o) {
   storage.sharding = o_storage.sharding;
   storage.npy_value = o_storage.npy_value;
   storage.committed = o_storage.committed;
-  storage.traceback = o_storage.traceback;
   storage.ifrt_array = o_storage.ifrt_array;
   storage.fully_replicated_array = o_storage.fully_replicated_array;
   storage.py_arrays = o_storage.py_arrays;
@@ -1818,6 +1840,7 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
     }
   }
 
+  xla::ifrt::UserContextScope user_context_scope(jax::PyUserContext::Create());
   TF_RETURN_IF_ERROR(CopyToHostAsync(dynamic_shape_holder, ifrt_array));
   absl::Status status;
   if (!ready_.IsReady()) {
@@ -1903,6 +1926,7 @@ absl::Status PyHostValue::CopyStringArrayToHostAsync(
   // of the `AsNumPyArray` call.
   string_array_contents_ =
       std::make_shared<std::vector<absl::Cord>>(shape.num_elements());
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
   ready_ = ifrt_array->CopyToHostBuffer(string_array_contents_->data(),
                                         /*byte_strides=*/std::nullopt,
                                         ifrt::ArrayCopySemantics::kAlwaysCopy);
@@ -1971,6 +1995,7 @@ absl::Status PyHostValue::CopyToHostAsync(
   // knows better about an efficient layout for the host buffer. It will be
   // useful to revisit the semantics of xla::PjRtBuffer::ToLiteral() to see if
   // it is desirable for the runtime to choose the layout.
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
   ready_ = ifrt_array->CopyToHostBuffer(value_.mutable_data(), strides,
                                         ifrt::ArrayCopySemantics::kReuseInput);
   // Make sure the destination of the copy remains alive until the copy is done.

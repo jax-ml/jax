@@ -36,6 +36,7 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
+#include "jaxlib/py_user_context.h"
 #include "jaxlib/traceback.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -43,6 +44,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device_list.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/shape.h"
@@ -95,8 +97,6 @@ struct PyArray_Storage {
   PyArray_Storage(nanobind::object aval, bool weak_type, xla::nb_dtype dtype,
                   std::vector<int64_t> shape, nanobind::object sharding,
                   bool committed, nb_class_ptr<PyClient> py_client,
-                  std::optional<Traceback> traceback,
-
                   xla::ifrt::ArrayRef ifrt_array,
                   xla::PjRtFuture<> result_status);
 
@@ -113,7 +113,6 @@ struct PyArray_Storage {
   bool committed = false;
 
   nb_class_ptr<PyClient> py_client;
-  std::optional<Traceback> traceback;
   xla::ifrt::ArrayRef ifrt_array;
   nanobind::object fully_replicated_array = nanobind::none();
 
@@ -155,19 +154,20 @@ class PyArray : public nanobind::object {
   // checked.
   PyArray(nanobind::object aval, bool weak_type, xla::nb_dtype dtype,
           std::vector<int64_t> shape, nanobind::object sharding,
-          nb_class_ptr<PyClient> py_client, std::optional<Traceback> traceback,
+          nb_class_ptr<PyClient> py_client,
           xla::ifrt::ArrayRef ifrt_array, bool committed, bool skip_checks,
           xla::PjRtFuture<> result_status = xla::PjRtFuture<>());
 
   static PyArray MakeFromSingleDeviceArray(
-      nb_class_ptr<PyClient> py_client, std::optional<Traceback> traceback,
-      xla::ifrt::ArrayRef ifrt_array, bool weak_type, bool committed,
+      nb_class_ptr<PyClient> py_client, xla::ifrt::ArrayRef ifrt_array,
+      bool weak_type, bool committed,
       xla::PjRtFuture<> result_status = xla::PjRtFuture<>());
 
-  static PyArray MakeFromIfrtArrayAndSharding(
-      nb_class_ptr<PyClient> py_client, std::optional<Traceback> traceback,
-      xla::ifrt::ArrayRef ifrt_array, nanobind::object sharding, bool weak_type,
-      bool committed, bool skip_checks);
+  static PyArray MakeFromIfrtArrayAndSharding(nb_class_ptr<PyClient> py_client,
+                                              xla::ifrt::ArrayRef ifrt_array,
+                                              nanobind::object sharding,
+                                              bool weak_type, bool committed,
+                                              bool skip_checks);
 
   static absl::Status RegisterTypes(nanobind::module_& m);
 
@@ -202,8 +202,12 @@ class PyArray : public nanobind::object {
     return GetStorage().py_client;
   }
 
-  const std::optional<Traceback>& traceback() const {
-    return GetStorage().traceback;
+  std::optional<Traceback> traceback() const {
+    xla::ifrt::Array* ifrt_array_ptr = ifrt_array();
+    if (ifrt_array_ptr == nullptr) {
+      return std::nullopt;
+    }
+    return GetTraceback(ifrt_array_ptr->user_context().get());
   }
 
   // Returns xla::InvalidArgument if the buffer has been deleted.
@@ -213,6 +217,8 @@ class PyArray : public nanobind::object {
     if (ifrt_array_ptr->IsDeleted()) {
       return xla::InvalidArgument("Array has been deleted.");
     }
+    xla::ifrt::UserContextScope user_context_scope(
+        jax::PyUserContext::Create());
     return ifrt_array_ptr->GetReadyFuture().IsReady();
   }
 

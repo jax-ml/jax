@@ -51,12 +51,12 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"
 #include "jaxlib/py_executable.h"
+#include "jaxlib/py_user_context.h"
 #include "jaxlib/py_values.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/pytree.h"
 #include "jaxlib/sharded_device_array.h"
 #include "jaxlib/sharding.h"
-#include "jaxlib/traceback.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_helpers.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/safe_static_init.h"
@@ -611,6 +612,8 @@ absl::StatusOr<nb::object> PmapFunction::Call(nb::handle callable,
     return fallback_to_cache_miss();
   }
 
+  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
+
   // 1. Parse arguments.
   std::vector<xla::ifrt::Device*>& input_devices = cache_entry.devices;
   std::vector<InputSpec>& input_specs = cache_entry.input_specs;
@@ -654,7 +657,6 @@ absl::StatusOr<nb::object> PmapFunction::Call(nb::handle callable,
   // Having a C++ `Array`, keeping internally the PjRtBuffer
   // objects is sufficient, and we can lazily create the `PyBuffer` only if
   // we access them from Python.
-  auto traceback = Traceback::Get();
   // TODO(jblespiau): Change the `client` function to return a reference.
   nb_class_ptr<PyClient> client = cache_entry.executable->client();
 
@@ -671,7 +673,7 @@ absl::StatusOr<nb::object> PmapFunction::Call(nb::handle callable,
     const ResultSpec& result_spec = output_specs[i];
     PyArray py_array(result_spec.out_aval, result_spec.weak_type,
                      cache_entry.out_dtypes[i], cache_entry.out_shapes[i],
-                     cache_entry.out_array_shardings[i], client, traceback,
+                     cache_entry.out_array_shardings[i], client,
                      std::move(output_arrays[i]), cache_entry.out_committed[i],
                      /*skip_checks=*/true);
 
