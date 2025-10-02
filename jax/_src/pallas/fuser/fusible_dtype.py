@@ -145,7 +145,7 @@ def physicalize(f):
     wrapped_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
         lu.wrap_init(f, debug_info=debug_info), treedef
     )
-    avals = [core.ShapedArray(a.shape, a.dtype) for a in flattened_args]
+    avals = [core.get_aval(a) for a in flattened_args]
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
     new_jaxpr = physicalize_closed_jaxpr(core.ClosedJaxpr(jaxpr, consts))
     out_flat = core.eval_jaxpr(

@@ -11,10 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import dataclasses
 
 from absl.testing import absltest
 import jax
 from jax import lax
+from jax._src import core as jax_core
+from jax._src import hijax
 from jax._src import test_util as jtu
 from jax.experimental.pallas import fuser
 import jax.numpy as jnp
@@ -263,6 +266,51 @@ class FusionTest(jtu.JaxTestCase):
     a = jax.random.normal(jax.random.key(1), (128, 128), dtype=jnp.float32)
     y_out = g(x, a)
     np.testing.assert_array_equal(y_out, a)
+
+
+@dataclasses.dataclass(frozen=True)
+class ArrayTuple:
+  x0: jax.Array
+  x1: jax.Array
+
+
+@dataclasses.dataclass(frozen=True)
+class ArrayTupleTy(hijax.HiType):
+  x0: jax_core.ShapedArray
+  x1: jax_core.ShapedArray
+
+  def lo_ty(self) -> list[jax_core.ShapedArray]:
+    return [self.x0, self.x1]
+
+  def lower_val(self, hi_val: ArrayTuple) -> list[jax.Array]:
+    return [hi_val.x0, hi_val.x1]
+
+  def raise_val(self, x0, x1) -> ArrayTuple:
+    return ArrayTuple(x0, x1)
+
+
+hijax.register_hitype(
+    ArrayTuple, lambda t: ArrayTupleTy(jax.typeof(t.x0), jax.typeof(t.x1))
+)
+
+
+class FusionHijaxTest(jtu.JaxTestCase):
+
+  def test_basic_fusion(self):
+
+    @jax.jit
+    @fuser.fuse
+    @fuser.fusible
+    def f(x_fn, y_fn):
+      x = x_fn()
+      if y_fn is None:
+        y_fn = lambda x: x
+      return y_fn(x)
+
+    xt = ArrayTuple(x0=jnp.ones((8, 8)), x1=jnp.zeros(4))
+    ot = f(xt)
+    np.testing.assert_array_equal(ot.x0, xt.x0)
+    np.testing.assert_array_equal(ot.x1, xt.x1)
 
 
 if __name__ == "__main__":

@@ -92,13 +92,11 @@ def _construct_fusion_jaxpr(
       c for used, c in zip(used_consts, candidate_values, strict=True) if used
   )
   kernel_in_tree = tree_util.tree_structure((invars, kwargs))
-  flat_in_type = [
-      jax.ShapeDtypeStruct(x.aval.shape, x.aval.dtype) for x in flat_invars
-  ]
+  flat_in_type = [x.aval for x in flat_invars]
   in_type = tree_util.tree_unflatten(kernel_in_tree, flat_in_type)
   out_type = tree_util.tree_unflatten(
       out_tree,
-      [jax.ShapeDtypeStruct(x.aval.shape, x.aval.dtype) for x in flat_outvars],
+      [x.aval for x in flat_outvars],
   )
   return new_jaxpr, new_values, in_type, out_type, out_tree
 
@@ -229,14 +227,8 @@ def _construct_output_fusions(
       return tuple(out_flat)
 
     fn = functools.partial(_fn, jaxpr_out_for_group, values_for_jaxpr)
-    in_type = jax.tree.map(
-        lambda v: jax.ShapeDtypeStruct(v.aval.shape, v.aval.dtype),  # pytype: disable=attribute-error
-        outvars_group,
-    )
-    out_type = tuple(
-        jax.ShapeDtypeStruct(v.aval.shape, v.aval.dtype)  # pytype: disable=attribute-error
-        for v in jaxpr_out_for_group.outvars
-    )
+    in_type = jax.tree.map(lambda x: x.aval, outvars_group)
+    out_type = tuple(v.aval for v in jaxpr_out_for_group.outvars)
     fusion = fusion_lib.Fusion(
         fn,
         (in_type, {}),
