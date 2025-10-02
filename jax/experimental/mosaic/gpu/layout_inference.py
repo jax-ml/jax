@@ -28,6 +28,7 @@ from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import math as mlir_math
+from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 
@@ -1113,6 +1114,29 @@ def _async_store_tmem_equation_system(
       {source_variable: [source], destination_variable: [destination]},
       [],
   )
+
+
+# `memref.load` and `memref.store` are used to load barrier phases which are
+# scalars---the rule needn't do anything interesting, but we need to have it.
+@_add_equation_system_derivation_rule(memref.LoadOp)
+@_add_equation_system_derivation_rule(memref.StoreOp)
+def _memref_load_store_op_equation_system(
+    ctx: DerivationContext,
+    op: memref.LoadOp | memref.StoreOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
+
+  ref_shape = ir.MemRefType(op.memref.type).shape
+  if ref_shape != [] and ref_shape != [1]:
+    raise NotImplementedError(
+        f"Only scalar memrefs are supported, got {ref_shape}"
+    )
+
+  ref_op_index = 0 if isinstance(op, memref.LoadOp) else 1
+  ref = OperandOrResult(op, VariableType.OPERAND, ref_op_index)
+  var = eqns.Variable(ref)
+  assignments: dict[eqns.Variable, eqns.Constant] = {var: eqns.SMEMTiling(None)}
+  return eqns.EquationSystem(assignments=assignments), {var: [ref]}, []
 
 
 def _ensure_all_layouts_are_set(

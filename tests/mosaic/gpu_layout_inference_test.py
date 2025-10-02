@@ -26,11 +26,13 @@ from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import math
+from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import equations as eqns
 from jax.experimental.mosaic.gpu import fragmented_array as fa
+from jax.experimental.mosaic.gpu import inference_utils
 from jax.experimental.mosaic.gpu import launch_context as lc
 from jax.experimental.mosaic.gpu import layout_inference
 from jax.experimental.mosaic.gpu import layouts
@@ -1235,6 +1237,21 @@ class LayoutInferenceTest(parameterized.TestCase):
               (var, eqns.SMEMTiling(None)),
           ]
       )
+
+  def test_memref_load_store_op_transforms_are_empty(self):
+    with ir.InsertionPoint(self.module.body):
+      i32 = ir.IntegerType.get_signless(32)
+      ref_ty = ir.MemRefType.get((), i32, memory_space=mgpu.utils.smem())
+
+      [val, load_ref, store_ref] = undefs(i32, ref_ty, ref_ty)
+      load_op = memref.LoadOp(load_ref, [])
+      store_op = memref.StoreOp(val, store_ref, [])
+
+      mgpu.infer_layout(self.module, enable_smem_inference=True)
+
+      want = ir.ArrayAttr.get([ir.ArrayAttr.get([])])
+      self.assertEqual(inference_utils.in_transforms(load_op), want)
+      self.assertEqual(inference_utils.in_transforms(store_op), want)
 
 
 if __name__ == "__main__":
