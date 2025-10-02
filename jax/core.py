@@ -15,6 +15,8 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
+change = "Hi Copybara! Please run again!"
+
 from jax._src.core import (
   AbstractToken as AbstractToken,
   AbstractValue as AbstractValue,
