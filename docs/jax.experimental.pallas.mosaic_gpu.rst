@@ -86,6 +86,15 @@ Blackwell-specific functions
    try_cluster_cancel
    query_cluster_cancel
 
+Multimem operations
+-------------------
+
+.. autosummary::
+   :toctree: _autosummary
+
+   multimem_store
+   multimem_load_reduce
+
 Aliases
 -------
 
