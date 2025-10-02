@@ -1141,7 +1141,7 @@ def dot_product_attention(
       a symmetric window (window_size, window_size).
     implementation: A string to control which implementation backend to use.
       Supported strings are `xla`, `cudnn` (cuDNN flash attention). It defaults
-      to `None`, which will automatically select the best available backend.
+      to `None`, which currently falls back to `xla`.
       Note, `cudnn` supports only a subset of shapes/dtypes, and an exception
       will be thrown if its not supported.
 
@@ -1238,8 +1238,7 @@ def dot_product_attention(
           sliding_window_length=sliding_window,
       )
     case None:
-      # TODO(kaixih@nvidia) Defaults to XLA for now. Will automatically select
-      # best backend.
+      # TODO(kaixih@nvidia) Automatically select the best backend (defaults to XLA for now).
       out = _dot_product_attention_xla(
           query_arr, key_arr, value_arr, bias, mask, is_causal=is_causal,
           scale=scale_val, q_seqlen=query_seq_lengths,
