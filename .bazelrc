@@ -413,9 +413,6 @@ common:rbe_linux_x86_64_base --platforms="@ml_build_config_platform//:platform"
 common:rbe_linux_x86_64 --config=rbe_linux_x86_64_base
 common:rbe_linux_x86_64 --config=ci_linux_x86_64
 
-common:use_tar_archive_files --repo_env=USE_CUDA_TAR_ARCHIVE_FILES=1
-common:use_tar_archive_files --repo_env=USE_NVSHMEM_TAR_ARCHIVE_FILES=1
-
 common:rbe_linux_x86_64_cuda_common --config=rbe_linux_x86_64_base
 common:rbe_linux_x86_64_cuda_common --repo_env=REMOTE_GPU_TESTING=1
 # Speed up CUDA repos creation by downloading ".tar" dists from the mirror.
