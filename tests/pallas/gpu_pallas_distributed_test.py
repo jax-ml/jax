@@ -29,7 +29,6 @@ from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.experimental.mosaic.gpu as mgpu
 import jax.numpy as jnp
 import numpy as np
-import jax.experimental.mosaic.gpu.fragmented_array as fa
 
 
 P = jax.sharding.PartitionSpec
@@ -268,22 +267,22 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
       (jnp.int32, 1, "or"),
       (jnp.int32, 1, "xor"),
       (jnp.float32, 1, "add"),
-      (jnp.float32, 2, "add"),
+      (jnp.float32, 2, "add", True),
       (jnp.float32, 4, "add"),
       (jnp.float16, 2, "add"),
       (jnp.float16, 2, "min"),
       (jnp.float16, 4, "max"),
-      (jnp.float16, 8, "add"),
+      (jnp.float16, 8, "add", True),
       (jnp.bfloat16, 2, "max"),
       (jnp.bfloat16, 8, "add"),
       (jnp.float8_e5m2, 4, "add"),
       (jnp.float8_e5m2, 8, "min"),
-      (jnp.float8_e5m2, 16, "max"),
-      (jnp.float8_e4m3fn, 4, "min"),
+      (jnp.float8_e5m2, 16, "max", True),
+      (jnp.float8_e4m3fn, 4, "min", True),
       (jnp.float8_e4m3fn, 8, "max"),
       (jnp.float8_e4m3fn, 16, "add"),
   )
-  def test_multimem_load_reduce(self, dtype, vector_length, reduction):
+  def test_multimem_load_reduce(self, dtype, vector_length, reduction, tiled_layout=False):
     if dtype in (
         jnp.float8_e5m2,
         jnp.float8_e4m3fn,
@@ -294,18 +293,21 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
     devices = jax.devices()[:2]
 
     def kernel(x_ref, y_ref, _, sem_ref):
-      layout = plgpu.Layout.TILED(
-          fa.Tiling(
-              (
-                  (64, 2 * vector_length),
-                  (16, 2 * vector_length),
-                  (vector_length,),
-              )
-          ),
-          warp_dims=(-5,),
-          lane_dims=(-3, -2),
-          vector_dim=-1,
-      )
+      if tiled_layout:
+        layout = plgpu.Layout.TILED(
+            plgpu.Tiling(
+                (
+                    (64, 2 * vector_length),
+                    (16, 2 * vector_length),
+                    (vector_length,),
+                )
+            ),
+            warp_dims=(-5,),
+            lane_dims=(-3, -2),
+            vector_dim=-1,
+        )
+      else:
+        layout = plgpu.Layout.WG_STRIDED((64, 32), vec_size=vector_length)
       y_ref[...] = plgpu.layout_cast(
           plgpu.multimem_load_reduce(
               x_ref.at[16:-16], collective_axes="x", reduction_op=reduction,

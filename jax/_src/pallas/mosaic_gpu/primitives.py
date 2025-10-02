@@ -3552,10 +3552,10 @@ def _multimem_load_reduce_lowering_rule(
         "Failed to infer the output layout of multimem_load_reduce. Please apply"
         " plgpu.layout_cast to its output right after its creation."
     )
-  if not isinstance(layout, mgpu.TiledLayout):
+  if not isinstance(layout, (mgpu.TiledLayout, mgpu.WGStridedFragLayout)):
     raise ValueError(
-        "Only tiled layouts are supported by multimem_load_reduce, but got"
-        f" {layout}"
+        "Only tiled and WG strided layouts are supported by"
+        f" multimem_load_reduce, but got {layout}"
     )
   dtype = ctx.avals_out[0].dtype
   transforms = tree.unflatten(transforms_leaves)

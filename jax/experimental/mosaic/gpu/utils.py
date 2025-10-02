@@ -626,7 +626,7 @@ def _reshape(ref: ir.Value, sh0: list[int], sh1: list[int]):
   return ref
 
 
-def memref_reshape(ref: ir.Value | MultimemRef, shape: tuple[int, ...]) -> ir.Value:
+def memref_reshape(ref: ir.Value | MultimemRef, shape: tuple[int, ...]) -> ir.Value | MultimemRef:
   """Reshape by means of folding and unfolding.
 
   The use of memref fold/unfold may avoid some possible issues with
@@ -671,7 +671,10 @@ def memref_reshape(ref: ir.Value | MultimemRef, shape: tuple[int, ...]) -> ir.Va
   return _reshape(ref, src_shape, dst_shape)
 
 
-def memref_fold(ref: ir.Value, dim, fold_rank) -> ir.Value:
+def memref_fold(ref: ir.Value | MultimemRef, dim, fold_rank) -> ir.Value | MultimemRef:
+  if isinstance(ref, MultimemRef):
+    return MultimemRef(memref_fold(ref.ref, dim, fold_rank))
+
   ref_ty = ir.MemRefType(ref.type)
   new_shape = list(ref_ty.shape)
   if dim < 0:

@@ -2571,13 +2571,14 @@ class FragmentedArray:
         # All values are the same so swizzle does not affect anything here.
         self._store_untiled_splat(ref)
       case WGStridedFragLayout():
-        if isinstance(ref, utils.MultimemRef):
-          raise NotImplementedError("Strided layout does not support multimem")
         if swizzle != 16:
           raise ValueError("Only TiledLayouts support swizzling")
         assert isinstance(self.layout, WGStridedFragLayout)
         for get, _update, ref, idx in self.transfer_strided(ref, self.layout.vec_size):
-          vector.store(get(self.registers), ref, idx)
+          if isinstance(ref, utils.MultimemRef):
+            ref.store(get(self.registers), idx)
+          else:
+            vector.store(get(self.registers), ref, idx)
       case TiledLayout():
         ref_shape = ir.MemRefType(ref.type).shape
         ref = utils.memref_reshape(ref, (*(1 for _ in ref_shape), *ref_shape))
@@ -2589,12 +2590,22 @@ class FragmentedArray:
   def load_reduce_untiled(
       cls,
       ref: utils.MultimemRef,
-      layout: TiledLayout,
+      layout: TiledLayout | WGStridedFragLayout,
       reduction: utils.MultimemReductionOp,
       swizzle: int = 16,
       is_signed: bool | None = None,
   ):
-    shape = ir.MemRefType(ref.type).shape
+    ref_ty = ir.MemRefType(ref.type)
+    shape = tuple(ref_ty.shape)
+    if isinstance(layout, WGStridedFragLayout):
+      if swizzle != 16:
+        raise ValueError("Only TiledLayouts support swizzling")
+      registers = np.empty(layout.registers_shape(shape), dtype=object)
+      vec_ty = ir.VectorType.get((layout.vec_size,), ref_ty.element_type)
+      for _get, update, ref, idx in cls.transfer_strided(ref, layout.vec_size):
+        ptr = utils.memref_ptr(utils.memref_slice(ref.ref, tuple(idx)))
+        update(registers, utils.multimem_load_reduce(vec_ty, ptr, reduction, is_signed))
+      return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
     ref = utils.memref_reshape(ref, (*(1 for _ in shape), *shape))
     return cls.load_tiled(
         ref.ref,

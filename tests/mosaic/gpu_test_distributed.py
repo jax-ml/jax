@@ -206,9 +206,7 @@ class ProfilerTest(TestCase):
       other_dst = ctx.to_remote(sem, other_device)
       other_sem = mgpu.SemaphoreRef(mgpu.utils.memref_ptr(other_dst))
       with mgpu.when(arith.cmpi(arith.CmpIPredicate.eq, my_device, arith.constant(i32, 0))):
-        arr = mgpu.FragmentedArray.load_untiled(
-            inp, layout=mgpu.WGMMA_LAYOUT, optimized=False, is_signed=True
-        )
+        arr = mgpu.FragmentedArray.load_strided(inp, is_signed=True)
         arr.store_untiled(ctx.to_remote_multicast(out), optimized=False)
       other_sem.signal(arith.constant(i32, 1))
       my_sem.wait(1)
@@ -269,14 +267,7 @@ class ProfilerTest(TestCase):
       my_sem = mgpu.SemaphoreRef(mgpu.utils.memref_ptr(sem))
       other_dst = ctx.to_remote(sem, other_device)
       other_sem = mgpu.SemaphoreRef(mgpu.utils.memref_ptr(other_dst))
-      layout = fa.TiledLayout(
-          fa.Tiling((
-              (64, 2 * vector_length), (16, 2 * vector_length), (vector_length,)
-          )),
-          warp_dims=(-5,),
-          lane_dims=(-3, -2),
-          vector_dim=-1,
-      )
+      layout = fa.WGStridedFragLayout((64, 32), vec_size=vector_length)
       arr = mgpu.FragmentedArray.load_reduce_untiled(
           ctx.to_remote_multicast(inp),
           layout=layout,
