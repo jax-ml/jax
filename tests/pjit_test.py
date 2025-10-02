@@ -9126,7 +9126,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(
         out.sharding, NamedSharding(mesh, P(None, 'x', None, None)))
 
-
   @jtu.with_explicit_mesh((2,), 'x')
   def test_device_put_typeof(self, mesh):
     array = jnp.zeros(8)
@@ -9358,6 +9357,23 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         self.assertEqual(compiled_text.count('all-reduce-done('), 1)
       else:
         self.assertEqual(compiled_text.count('all-reduce('), 1)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_vmap_mapped_input_sharding_error(self, mesh):
+    np_inp = np.arange(8).reshape(4, 2)
+    arr1 = jax.device_put(np_inp, P('x'))
+    arr2 = jax.device_put(np_inp, P())
+
+    @jax.jit
+    @jax.vmap
+    def f(x, y):
+      return x, y
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'Mapped away dimension of inputs passed to vmap should be sharded the'
+        ' same'):
+      f(arr1, arr2)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
