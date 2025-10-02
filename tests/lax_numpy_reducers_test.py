@@ -709,6 +709,23 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @unittest.skipIf(jtu.numpy_version() < (2, 2, 0), "test covers NumPy 2.2+ behavior.")
+  @jtu.sample_product(
+      shape=[(1, 3), (3, 1)],
+      rowvar=[True, False]
+  )
+  def testCovTransposeBehavior(self, shape, rowvar):
+    # Tests compatibility with NumPy 2.2 API change:
+    # https://github.com/numpy/numpy/pull/27661
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, np.float32)]
+    np_fun = partial(np.cov, rowvar=rowvar, ddof=0)
+    jnp_fun = partial(jnp.cov, rowvar=rowvar, ddof=0)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+
+
   @jtu.sample_product(
     [dict(op=op, q_rng=q_rng)
       for (op, q_rng) in (
