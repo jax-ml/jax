@@ -9147,9 +9147,14 @@ def optimization_barrier(operand, /):
 
   Optimization barriers have a number of possible uses:
 
-  * An optimization barrier ensures that all inputs are evaluated before any
-    operators that depend on the barrier's outputs. This can be used to enforce
-    a particular order of operations.
+  * An optimization barrier ensures that every output of the barrier that is
+    used by any operator, has been evaluated before any operator that depends
+    on one of the barrier's outputs. This can be used to enforce a particular
+    order of operations.
+
+    Note that this implies no ordering constraints between an operator that uses
+    one of the barrier's outputs, and an operator that directly (not through
+    the barrier) uses one of the barrier's inputs.
   * An optimization barrier prevents common subexpression elimination. This is
     used by JAX to implement rematerialization.
   * Optimization barriers prevent compiler fusions. That is, operations before
