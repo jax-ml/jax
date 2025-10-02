@@ -413,7 +413,9 @@ class LayoutInferenceTest(parameterized.TestCase):
     shape = (64, 64)
     with ir.InsertionPoint(self.module.body):
       c_ty = ir.VectorType.get(shape, ir.BF16Type.get())
-      ab_type = ir.MemRefType.get(shape, ir.BF16Type.get())
+      ab_type = ir.MemRefType.get(
+          shape, ir.BF16Type.get(), memory_space=mgpu.utils.smem()
+      )
       i32 = ir.IntegerType.get_signless(32)
       lower_bound, upper_bound, step, a, b, c = undefs(
           i32, i32, i32, ab_type, ab_type, c_ty
@@ -794,7 +796,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     with ir.InsertionPoint(self.module.body):
       vec_ty = ir.VectorType.get(shape, f32)
-      ref_ty = ir.MemRefType.get(shape, f32)
+      ref_ty = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.smem())
       lhs_ty = ref_ty if lhs_memory_space == "shared" else vec_ty
       acc, lhs, rhs = undefs(vec_ty, lhs_ty, ref_ty)
       wgmma_op = mgpu.dialect.WGMMAOp(acc, lhs, rhs)
