@@ -183,6 +183,28 @@ class PallasSm100ATest(PallasTest, jtu.CudaArchSpecificTest):
 
 class PallasCallTest(PallasTest):
 
+  def test_jitted_function_containing_multiple_pallas_calls(self):
+    # This test aims to ensure that execution works correctly inside CUDA
+    # graphs. This is complementary to the test in
+    # jaxlib/mosaic/gpu/custom_call_test.cc that checks that such jitted
+    # functions do invoke CUDA graphs.
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1
+
+    @jax.jit
+    def f(x):
+      # Run the kernel 10 times because CUDA graphs only trigger for >= 5 ops.
+      for _ in range(10):
+        x = kernel(x)
+      return x
+
+    x = jnp.arange(256).astype(jnp.float32)
+    np.testing.assert_array_equal(f(x), x + 10)
+
   @parameterized.product(
       op=[
           lax.neg,
