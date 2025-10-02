@@ -1460,7 +1460,7 @@ def block_diag(*arrs: ArrayLike) -> Array:
            [0., 0., 0., 1., 1., 1.]], dtype=float32)
   """
   if len(arrs) == 0:
-    arrs =  (jnp.zeros((1, 0)),)
+    arrs = (jnp.zeros((1, 0)),)
   arrs = tuple(promote_dtypes(*arrs))
   bad_shapes = [i for i, a in enumerate(arrs) if np.ndim(a) > 2]
   if bad_shapes:
@@ -1468,14 +1468,17 @@ def block_diag(*arrs: ArrayLike) -> Array:
                      "most 2 dimensions, got {} at argument {}."
                      .format(arrs[bad_shapes[0]], bad_shapes[0]))
   converted_arrs = [jnp.atleast_2d(a) for a in arrs]
-  acc = converted_arrs[0]
-  dtype = lax.dtype(acc)
-  for a in converted_arrs[1:]:
-    _, c = a.shape
-    a = lax.pad(a, dtype.type(0), ((0, 0, 0), (acc.shape[-1], 0, 0)))
-    acc = lax.pad(acc, dtype.type(0), ((0, 0, 0), (0, c, 0)))
-    acc = lax.concatenate([acc, a], dimension=0)
-  return acc
+  dtype = lax.dtype(converted_arrs[0])
+  total_cols = sum(a.shape[1] for a in converted_arrs)
+
+  padded_arrs = []
+  current_col = 0
+  for arr in converted_arrs:
+    cols = arr.shape[1]
+    padding_config = ((0, 0, 0), (current_col, total_cols - cols - current_col, 0))
+    padded_arrs.append(lax.pad(arr, dtype.type(0), padding_config))
+    current_col += cols
+  return jnp.concatenate(padded_arrs, axis=0)
 
 
 @partial(jit, static_argnames=("eigvals_only", "select", "select_range"))
