@@ -150,7 +150,7 @@ and copy it back to GMEM using TMA.
 ```
 
 What remains is to actually turn the kernel into a function that can be called
-with JAX arrays. We use {py:func}`plgpu.kernel <jax.experimental.pallas.mosaic_gpu.kernel>
+with JAX arrays. We use {py:func}`plgpu.kernel <jax.experimental.pallas.mosaic_gpu.kernel>`
 for that. The grid is for now simply 2D and iterates over the output tiles. We
 allocate intermediates used by the kernel:
 1. The TMEM buffer used as an accumulator
