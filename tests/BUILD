@@ -802,7 +802,10 @@ jax_multiplatform_test(
             "nomsan",  # Times out.
             "notsan",  # Times out.
         ],
-        "tpu": ["nomsan"],  # Times out.
+        "tpu": [
+            "nomsan",  # Times out.
+            "notsan",  # Times out.
+        ],
     },
     shard_count = {
         "cpu": 20,
@@ -1419,15 +1422,14 @@ jax_multiplatform_test(
     backend_variant_args = {
         "cpu": ["--jax_num_generated_cases=40"],
         "cpu_x32": ["--jax_num_generated_cases=40"],
-        "gpu": ["--jax_num_generated_cases=40"],
-        "tpu": ["--jax_num_generated_cases=40"],
+        "gpu_p100": ["--jax_num_generated_cases=40"],
+        "gpu_v100": ["--jax_num_generated_cases=40"],
+        "tpu_v3": ["--jax_num_generated_cases=40"],
+        "tpu_v5e": ["--jax_num_generated_cases=40"],
     },
     disable_configs = [
         "gpu_b200",  # Times out
     ],
-    env = {
-        "JAX_NUM_GENERATED_CASES": "10",
-    },
     minimal_shard_count = {
         "tpu": 8,
     },
