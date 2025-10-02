@@ -1025,14 +1025,23 @@ def _tmem_alloc_equation_system(
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   del ctx
   result = OperandOrResult(op, VariableType.RESULT, 0)
-  variable = eqns.Variable(result)
+  result_var = eqns.Variable(result)
   layout = tcgen05._infer_tmem_layout(
       tuple(op.result.type.shape), op.collective, packing=1
   )
+
+  in_smem = OperandOrResult(op, VariableType.OPERAND, 0)
+  in_smem_var = eqns.Variable(in_smem)
+  assignments: dict[eqns.Variable, eqns.Constant] = {
+      in_smem_var: eqns.SMEMTiling(None)
+  }
+  operands_for_variable = {result_var: [result], in_smem_var: [in_smem]}
+
   # This is a hint, not a hard constraint. This will be the default layout if
   # none can be inferred.
-  hint = Hint(variable, eqns.TMEMLayout(layout))
-  return eqns.EquationSystem(), {variable: [result]}, [hint]
+  hint = Hint(result_var, eqns.TMEMLayout(layout))
+  system = eqns.EquationSystem(assignments=assignments)
+  return system, operands_for_variable, [hint]
 
 
 @_add_equation_system_derivation_rule(mgpu.TmemDeallocOp)
