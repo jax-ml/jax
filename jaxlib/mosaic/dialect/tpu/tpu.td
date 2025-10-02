@@ -606,6 +606,19 @@ def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
 
 // Integer packs are always signed at the moment.
 // Float to integer packing rounds to nearest even.
+// WARNING: pack(pack(a, b), pack(c, d)) == pack(a, b, c, d) only holds for
+// compressed packing!
+// If a and b are packed values, then interleaved packing first iterates over
+// the operand list and only them over the subelements within each word.
+// For example, an interleaved pack(a, b) from 16-bit values produces:
+//
+//   [a[0], b[0], a[1], b[1]]
+//
+// An interleaved pack(a, b, c, d) from 16-bit values produces the following
+// subelements:
+//
+//   [a[0], b[0], c[0], d[0], a[1], b[1], c[1], d[1]]
+//
 def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure, SameTypeOperands]> {
   let arguments = (ins
     Variadic<TPU_Vreg>:$sources,
