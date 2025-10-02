@@ -9121,6 +9121,10 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
     if not rowvar and y_arr.shape[0] != 1:
       y_arr = y_arr.T
     X = concatenate((X, y_arr), axis=0)
+  if X.shape[1] == 0:
+    cov_shape = () if X.shape[0] == 1 else (X.shape[0], X.shape[0])
+    return array_creation.full(cov_shape, np.nan, dtype=X.dtype)
+
   if ddof is None:
     ddof = 1 if bias == 0 else 0
 
