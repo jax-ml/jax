@@ -186,10 +186,19 @@ def create_descriptor(
   )
 
   mn_tiles_per_group, rem = divmod(mn_group_size, mn_tiling)
-  assert not rem
+  if rem:
+    raise ValueError(
+        f"The M or N MMA instruction size was chosen to be {mn_group_size},"
+        " which is not a multiple of the tiling of the non-contracting"
+        f" dimension {mn_tiling}"
+    )
   mn_group_stride = to_byte_stride(mn_tile_stride) * mn_tiles_per_group
   k_tiles_per_group, rem = divmod(k_group_size, k_tiling)
-  assert not rem
+  if rem:
+    raise ValueError(
+        f"The K MMA instruction size was chosen to be {k_group_size}, which is"
+        f" not a multiple of the tiling of the contracting dimension {k_tiling}"
+    )
   k_group_stride = to_byte_stride(k_tile_stride) * k_tiles_per_group
 
   return (

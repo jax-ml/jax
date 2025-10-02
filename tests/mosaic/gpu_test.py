@@ -1140,7 +1140,7 @@ class TCGen05Test(TestCase):
   def test_load_store_tmem(self, jax_dtype_packing, reg_tmem_layout_m):
     jax_dtype, packing = jax_dtype_packing
     reg_layout_f, tmem_layout_f, m = reg_tmem_layout_m
-    n = 256
+    n = 160
     reg_layout = reg_layout_f(n)
 
     def kernel(ctx, input, output, tmem):
@@ -1217,7 +1217,7 @@ class TCGen05Test(TestCase):
       in_jax_dtype=(jnp.float16, jnp.bfloat16, jnp.float8_e5m2, jnp.float8_e4m3fn),  # TODO(apaszke): f32
       out_jax_dtype=(jnp.float16, jnp.float32,),
       m=(64, 128,),  # TODO(apaszke): 64, 192, 256
-      n=(64, 128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
+      n=(64, 128, 192, 224, 256, 512),
       swizzle=(32, 64, 128,),
   )
   def test_mma_basic_float(self, **kwargs):
@@ -1227,8 +1227,9 @@ class TCGen05Test(TestCase):
     if lhs_transpose and kwargs["m"] * in_bytewidth < swizzle:
       self.skipTest("swizzle too large for input (lhs)")
     n_steps = 2 if kwargs["m"] == 64 else 1
-    if kwargs["n"] * in_bytewidth // n_steps < swizzle:
-      self.skipTest("swizzle too large for input (rhs)")
+    n_instr_size = kwargs["n"] * in_bytewidth // n_steps
+    if n_instr_size < swizzle or n_instr_size % swizzle != 0:
+      self.skipTest("swizzle doesn't work with this instruction size")
     if dtypes.bit_width(kwargs["in_jax_dtype"]) <= 8 and kwargs["n"] == swizzle:
       self.skipTest("Only 8-bit and larger inputs are supported for MMA")
     self._basic_mma_test(
@@ -1244,7 +1245,7 @@ class TCGen05Test(TestCase):
       in_jax_dtype=(jnp.int8,),
       out_jax_dtype=(jnp.int32,),
       m=(64, 128,),  # TODO(apaszke): 192, 256
-      n=(64, 128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
+      n=(64, 128, 160, 192, 256, 512),
       swizzle=(32, 64, 128,),
   )
   def test_mma_basic_int(self, **kwargs):
@@ -1254,8 +1255,9 @@ class TCGen05Test(TestCase):
     if lhs_transpose and kwargs["m"] * in_bytewidth < swizzle:
       self.skipTest("swizzle too large for input (lhs)")
     n_steps = 2 if kwargs["m"] == 64 else 1
-    if kwargs["n"] * in_bytewidth // n_steps < swizzle:
-      self.skipTest("swizzle too large for input (rhs)")
+    n_instr_size = kwargs["n"] * in_bytewidth // n_steps
+    if n_instr_size < swizzle or n_instr_size % swizzle != 0:
+      self.skipTest("swizzle doesn't work with this instruction size")
     if dtypes.bit_width(kwargs["in_jax_dtype"]) <= 8 and kwargs["n"] == swizzle:
       self.skipTest("Only 8-bit and larger inputs are supported for MMA")
     self._basic_mma_test(
@@ -1380,18 +1382,20 @@ class TCGen05Test(TestCase):
     y_shape = (n, k) if rhs_transpose else (k, n)
     y = self.prng.uniform(-1, 1, y_shape).astype(in_jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
+    if y_shape[0] % rhs_tiling[0] != 0 or y_shape[1] % rhs_tiling[1] != 0:
+      self.skipTest("rhs tiling must divide y_shape")
+    rhs_smem_shape = tile_shape(y_shape, rhs_tiling)
     if rhs_transpose_tiles:
       rhs_smem_shape = (
-          y_shape[1] // rhs_tiling[1], y_shape[0] // rhs_tiling[0], *rhs_tiling,
+          rhs_smem_shape[1], rhs_smem_shape[0], *rhs_smem_shape[2:]
       )
-    else:
-      rhs_smem_shape = tile_shape(y_shape, rhs_tiling)
+    if x_shape[0] % lhs_tiling[0] != 0 or x_shape[1] % lhs_tiling[1] != 0:
+      self.skipTest("lhs tiling must divide x_shape")
+    lhs_smem_shape = tile_shape(x_shape, lhs_tiling)
     if lhs_transpose_tiles:
       lhs_smem_shape = (
-          x_shape[1] // lhs_tiling[1], x_shape[0] // lhs_tiling[0], *lhs_tiling,
+          lhs_smem_shape[1], lhs_smem_shape[0], *lhs_smem_shape[2:]
       )
-    else:
-      lhs_smem_shape = tile_shape(x_shape, lhs_tiling)
     scratch_shape = [
         jax.ShapeDtypeStruct(lhs_smem_shape, in_jax_dtype),
         jax.ShapeDtypeStruct(rhs_smem_shape, in_jax_dtype),
@@ -1412,7 +1416,7 @@ class TCGen05Test(TestCase):
       in_jax_dtype=(jnp.float16, jnp.bfloat16),  # TODO(apaszke): f32
       out_jax_dtype=(jnp.float16, jnp.float32,),
       m=(128,),  # TODO(apaszke): 64, 192, 256
-      n=(64, 128, 256),  # TODO(apaszke): 192, other non-power-of-2
+      n=(64, 160, 128, 256),
   )
   def test_mma_lhs_tmem(self, m, n, in_jax_dtype, out_jax_dtype):
     swizzle = 128
@@ -1608,7 +1612,7 @@ class TCGen05Test(TestCase):
       rhs_transpose=(False, True),
       in_jax_dtype=(jnp.float16, jnp.bfloat16,),
       m=(128,),  # TODO(apaszke): 256
-      n=(128, 256),  # TODO(apaszke): 192, other non-power-of-2
+      n=(128, 192, 256),  # TODO(apaszke): other non-power-of-2
       lhs_swizzle=(32, 64, 128),
       rhs_swizzle=(64, 128),  # 32 is too small and unsuported.
   )
@@ -1700,7 +1704,7 @@ class TCGen05Test(TestCase):
       in_jax_dtype=(jnp.float16,),
       out_jax_dtype=(jnp.float32,),
       m=(128, 256),  # TODO(apaszke): 192, 256
-      n=(128, 256),  # TODO(apaszke): 192, other non-power-of-2
+      n=(128, 160, 256),
       swizzle=(32, 64, 128,),
   )
   def test_mma_collective(
@@ -1777,6 +1781,10 @@ class TCGen05Test(TestCase):
     y_block_shape = (n_block_tile, k) if rhs_transpose else (k, n_block_tile)
     y = quantize(self.prng.uniform(-1, 1, y_shape)).astype(in_jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
+    if any(s % t for s, t in zip(x_block_shape, tiling)):
+      self.skipTest("LHS block shape not divisible by tiling.")
+    if any(s % t for s, t in zip(y_block_shape, tiling)):
+      self.skipTest("RHS block shape not divisible by tiling.")
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_block_shape, tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_block_shape, tiling), in_jax_dtype),
@@ -1796,7 +1804,7 @@ class TCGen05Test(TestCase):
       in_jax_dtype=(jnp.float16,),
       out_jax_dtype=(jnp.float32,),
       m=(256,),  # TODO(apaszke): 64, 192, 256
-      n=(128, 256,),  # TODO(apaszke): 192, other non-power-of-2, 512
+      n=(128, 192, 224, 256,),
       k_steps=(2,),  # Note: reducing to 1 can be useful for debugging.
       swizzle=(32, 64, 128,),
   )
@@ -1892,6 +1900,10 @@ class TCGen05Test(TestCase):
     y_block_shape = (k, n_block_tile)
     y = quantize(self.prng.uniform(-1, 1, y_shape)).astype(in_jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
+    if any(s % t for s, t in zip(x_block_shape, tiling)):
+      self.skipTest("LHS block shape not divisible by tiling.")
+    if any(s % t for s, t in zip(y_block_shape, tiling)):
+      self.skipTest("RHS block shape not divisible by tiling.")
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_block_shape, tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_block_shape, tiling), in_jax_dtype),

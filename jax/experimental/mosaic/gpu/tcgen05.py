@@ -333,10 +333,25 @@ def mma(
     # This is a limitation of the implementation below. We could relax it if we
     # ever need to support k=32.
     k_group_elems = 64
-  if n % 8:
-    raise ValueError(f"N must be a multiple of 8, got: {n}")
-  if n.bit_count() != 1:
-    raise ValueError(f"N must be a power of 2, got: {n}")
+  required_multiple = 16 if collective else 8
+  mode_name = "2 CTA" if collective else "1 CTA"
+  if d.dtype == s32:
+    required_multiple *= 2
+    mode_name += " integer"
+  if n_lane_groups > 1:
+    mode_name += f" with {n_lane_groups} lane groups"
+  if (n // n_lane_groups) % required_multiple != 0:
+    raise ValueError(
+        f"In {mode_name} MMA, N must be a multiple of {required_multiple},"
+        f" got N={n}"
+    )
+  if (is_sparse or is_scaled) and n.bit_count() != 1:
+    raise NotImplementedError(
+        "Only N that is power of 2 supported for sparse and block-scaled MMA,"
+        f" but got N={n}"
+    )
+  if n > 256 and n.bit_count() != 1:
+    raise NotImplementedError(f"The only supported N > 256, is 512, but got N={n}")
   # TODO: We could relax those constraints if we have multiple n_lane_groups,
   # since we will be unrolling the instructions anyway.
   if collective and n > 128:
@@ -1182,22 +1197,27 @@ def _transfer_32xcols(
   atom_rows, atom_cols = atom_shape
   assert cols % atom_cols == 0
   total_num = cols // atom_cols
-  assert total_num.bit_count() == 1
   regs_per_instr = atom_shape[0] * atom_shape[1] // (utils.WARP_SIZE * reg_packing)
-  # We artificially lower the instr_num compared to its limits, because higher
-  # values can lead to register spills..
-  instr_num = min(total_num, 32 // regs_per_instr)
   assert 32 % atom_rows == 0
   num_row_steps = 32 // atom_rows
+  # We artificially lower the instr_num compared to its limits, because higher
+  # values can lead to register spills..
+  max_num = 1 << (total_num.bit_length() - 1)  # power of 2 <= than total_num
+  max_num = min(max_num, 32 // regs_per_instr)
   for lane_step in range(num_row_steps):
     addr_row = arith.addi(base_addr, utils.c((lane_step * atom_rows) << 16, i32))
-    cols_per_instr = instr_num * atom_cols
-    for num_step in range(total_num // instr_num):
-      num_slice = slice(num_step * instr_num, (num_step + 1) * instr_num)
+    num_processed = 0
+    instr_num = max_num
+    while (remaining := total_num - num_processed) > 0:
+      while instr_num > remaining:
+        instr_num //= 2
+      num_slice = slice(num_processed, num_processed + instr_num)
       addr_row_col = arith.addi(
-          addr_row, utils.c(num_step * cols_per_instr // tmem_packing, i32)
+          addr_row, utils.c(num_processed * atom_cols // tmem_packing, i32)
       )
       yield addr_row_col, instr_num, lane_step, num_slice
+      num_processed += instr_num
+    assert num_processed == total_num
 
 
 def _store_32xcols(base_addr, vector_regs, tmem_packing) -> None:
