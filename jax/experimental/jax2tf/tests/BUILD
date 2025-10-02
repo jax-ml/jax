@@ -13,7 +13,7 @@
 # limitations under the License.
 
 load("@rules_python//python:defs.bzl", "py_binary", "py_library")
-load("//jaxlib:jax.bzl", "jax_generate_backend_suites", "jax_multiplatform_test", "jax_visibility", "py_deps")
+load("//jaxlib:jax.bzl", "if_oss", "jax_generate_backend_suites", "jax_multiplatform_test", "jax_visibility", "py_deps")
 
 licenses(["notice"])
 
@@ -23,7 +23,6 @@ jax_generate_backend_suites()
 
 py_library(
     name = "jax2tf_limitations",
-    testonly = 1,
     srcs = [
         "jax2tf_limitations.py",
     ],
@@ -36,17 +35,17 @@ py_library(
 
 py_library(
     name = "tf_test_util",
-    testonly = 1,
     srcs = [
         "tf_test_util.py",
     ],
-    visibility = jax_visibility("tf_test_util"),
+    # //:wheel_additives needs visibility to this target
+    visibility = jax_visibility("tf_test_util") + if_oss(["//:__pkg__"]),
     deps = [
         ":jax2tf_limitations",
         "//jax/_src:internal_test_harnesses",
         "//jax/_src:test_util",
         "//jax/experimental/jax2tf",
-    ] + py_deps("tensorflow"),
+    ],
 )
 
 py_library(
@@ -79,7 +78,11 @@ jax_multiplatform_test(
     deps = [
         ":tf_test_util",
         "//jax/experimental/jax2tf",
-    ],
+    ] + py_deps([
+        "tensorflow",
+        "absl/testing",
+        "absl/logging",
+    ]),
 )
 
 jax_multiplatform_test(

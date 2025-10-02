@@ -119,6 +119,7 @@ genrule(
         "//jax/_src:internal_test_util",
         "//jax/_src:internal_export_back_compat_test_util",
         "//jax/_src:internal_export_back_compat_test_data",
+        "//jax/experimental/jax2tf/tests:tf_test_util",
         "//jax/experimental/mosaic/gpu/examples:flash_attention.py",
         "//jax/experimental/mosaic/gpu/examples:matmul.py",
         "//jax/_src:test_multiprocess",
