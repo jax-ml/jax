@@ -694,7 +694,7 @@ def memref_fold(ref: ir.Value, dim, fold_rank) -> ir.Value:
     new_strides[dim : dim + fold_rank] = [new_strides[dim + fold_rank - 1]]
     new_layout = ir.StridedLayoutAttr.get(offset, new_strides)
   else:
-    raise NotImplementedError(
+    raise ValueError(
         f"strides={ref_ty.get_strides_and_offset()[0]}, {ref_ty.shape=},"
         f" {dim=}, {fold_rank=}"
     )

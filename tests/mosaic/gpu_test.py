@@ -413,7 +413,7 @@ class MemRefTest(TestCase):
       # ("overap", (2, 4, 4), (16, 1, 1), 0, 3, True),
   ])
   def test_fold_strided(
-      self, shape, strides, dim, fold_rank, throws_not_impl
+      self, shape, strides, dim, fold_rank, throws
   ):
     expanded_shape = get_packed_shape(strides, shape)
     total_size = np.prod(expanded_shape)
@@ -426,7 +426,7 @@ class MemRefTest(TestCase):
       out_shape[dim : dim + fold_rank] = [
           int(np.prod(inp.shape[dim : dim + fold_rank]))
       ]
-      if throws_not_impl:
+      if throws:
         return jax.ShapeDtypeStruct(shape=out_shape, dtype=inp.dtype)
       else:
         return inp.reshape(*out_shape)
@@ -442,12 +442,12 @@ class MemRefTest(TestCase):
           kernel, (1, 1, 1), (128, 1, 1), np_inp, out, ()
       )(np_inp)
       assert (
-          not throws_not_impl
+          not throws
       ), "If it should have thrown it would during the call."
       np.testing.assert_array_equal(y, out)
 
-    if throws_not_impl:
-      with self.assertRaises(NotImplementedError):
+    if throws:
+      with self.assertRaises(ValueError):
         do_test()
     else:
       do_test()
@@ -2936,6 +2936,47 @@ class FragmentedArrayTest(TestCase):
     atol = 5e-3 if approx else 2e-7
     rtol = 4e-6 if approx else 2e-7
     np.testing.assert_allclose(result, np_op(x), atol=atol, rtol=rtol)
+
+  def test_strided_copy_noncontig_good(self):
+    def kernel(ctx, src, dst, _):
+      src_slice = mgpu.memref_slice(src, (slice(None), 1))
+      mgpu.FragmentedArray.load_strided(src_slice, is_signed=True, vec_size=4).store_untiled(dst)
+
+    in_shape = jax.ShapeDtypeStruct((32, 2, 32), jnp.int32)
+    out_shape = jax.ShapeDtypeStruct((32, 32), jnp.int32)
+
+    kernel_fn = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), in_shape, out_shape, ()
+    )
+    x = np.arange(math.prod(in_shape.shape), dtype=jnp.int32).reshape(in_shape.shape)
+    np.testing.assert_array_equal(kernel_fn(x), x[:, 1])
+
+  def test_strided_copy_noncontig_bad(self):
+    def kernel(ctx, src, dst, _):
+      src_slice = mgpu.memref_slice(src, (slice(None), 1))
+      mgpu.FragmentedArray.load_strided(src_slice, is_signed=True, vec_size=2).store_untiled(dst)
+
+    out_shape = jax.ShapeDtypeStruct((256, 7), jnp.int32)
+
+    in_shape = jax.ShapeDtypeStruct((256, 6, 7), jnp.int32)
+    msg = (
+        "The contiguous dimension of the reference must be a multiple of the"
+        " layout's vector size (got 7 and vector size 2)"
+    )
+    with self.assertRaises(ValueError, msg=msg):
+      mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), in_shape, out_shape, ()
+      )
+
+    in_shape = jax.ShapeDtypeStruct((256, 5, 7), jnp.int32)
+    msg = (
+        "Non-contiguous dimension of the reference must have strides that are"
+        " multiples of the layout's vector size (got 35 and vector size 2)"
+    )
+    with self.assertRaises(ValueError, msg=msg):
+      mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), in_shape, out_shape, ()
+      )
 
   @parameterized.product(
       dtype=[jnp.float32, jnp.int32],

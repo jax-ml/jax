@@ -966,16 +966,11 @@ class FragmentedArray:
         )
     else:
       layout = WGStridedFragLayout(shape=shape, vec_size=vec_size)
+    registers = np.empty(layout.registers_shape(shape), dtype=object)
     vec_ty = ir.VectorType.get((layout.vec_size,), ref_ty.element_type)
-    try:
-      # Flattening the reference potentially produces simpler PTX but
-      # if the ref is not already 1D and has strided dimensions
-      # flattening won't work.
-      ref_ = mgpu.memref_fold(ref, 0, len(ref_ty.shape))
-      vecs = [vector.load(vec_ty, ref_, [vec_idx]) for vec_idx in layout.linear_thread_idxs()]
-    except NotImplementedError:
-      vecs = [vector.load(vec_ty, ref, vec_idx) for vec_idx in layout.thread_idxs(shape)]
-    return cls(_registers=np.array(vecs), _layout=layout, _is_signed=is_signed)
+    for _get, update, ref, idx in cls.transfer_strided(ref, layout.vec_size):
+      update(registers, vector.load(vec_ty, ref, idx))
+    return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
 
   @classmethod
   def splat(
@@ -2579,8 +2574,10 @@ class FragmentedArray:
         if isinstance(ref, utils.MultimemRef):
           raise NotImplementedError("Strided layout does not support multimem")
         if swizzle != 16:
-          raise NotImplementedError
-        self._store_untiled_wg_strided(ref)
+          raise ValueError("Only TiledLayouts support swizzling")
+        assert isinstance(self.layout, WGStridedFragLayout)
+        for get, _update, ref, idx in self.transfer_strided(ref, self.layout.vec_size):
+          vector.store(get(self.registers), ref, idx)
       case TiledLayout():
         ref_shape = ir.MemRefType(ref.type).shape
         ref = utils.memref_reshape(ref, (*(1 for _ in ref_shape), *ref_shape))
@@ -2621,8 +2618,8 @@ class FragmentedArray:
       is_signed: bool | None = None,
       optimized: bool = True,
   ) -> FragmentedArray:
-    ref_shape = ir.MemRefType(ref.type).shape
-    ref = utils.memref_reshape(ref, (*(1 for _ in ref_shape), *ref_shape))
+    ref_ty = ir.MemRefType(ref.type)
+    ref = utils.memref_reshape(ref, (*(1 for _ in ref_ty.shape), *ref_ty.shape))
     return cls.load_tiled(
         ref, swizzle=swizzle, is_signed=is_signed, layout=layout, optimized=optimized
     )
@@ -2652,27 +2649,6 @@ class FragmentedArray:
         is_signed=self.is_signed,
     )
     fa.store_untiled(ref)
-
-  def _store_untiled_wg_strided(self, ref: ir.Value):
-    assert isinstance(self.layout, WGStridedFragLayout)
-    ref_ty = ir.MemRefType(ref.type)
-    idxs: Iterable[Sequence[ir.Value]]
-    try:
-      # Flattening the reference potentially produces simpler PTX but
-      # if the ref is not already 1D and has strided dimensions
-      # flattening won't work. We use a different variable for ref in
-      # case `NotImplementedError` is thrown by
-      # .linear_thread_idxs().
-      ref_ = mgpu.memref_fold(ref, 0, len(ref_ty.shape))
-      idxs = ((i,) for i in self.layout.linear_thread_idxs())
-    except NotImplementedError:
-      ref_ = ref
-      idxs = self.layout.thread_idxs(self.shape)
-    ref_shape = tuple(ref_ty.shape)
-    if ref_shape != self.shape:
-      raise ValueError((ref_shape, self.shape))
-    for idx, reg in zip(idxs, self.registers.flat):
-      vector.store(reg, ref_, idx)
 
   def store_tiled(self, ref: ir.Value | utils.MultimemRef, swizzle: int | None, optimized: bool = True):
     if not isinstance(self.layout, TiledLayout):
@@ -2730,6 +2706,51 @@ class FragmentedArray:
         loaded_reg = vector.bitcast(reg_ty, loaded_reg)
       update(registers, loaded_reg)
     return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
+
+  @classmethod
+  def transfer_strided(self, ref: ir.Value, vec_size: int):
+    ref_ty = ir.MemRefType(ref.type)
+    layout = WGStridedFragLayout(shape=tuple(ref_ty.shape), vec_size=vec_size)
+    try:
+      # Flattening the reference potentially produces simpler PTX but
+      # if the ref is not already 1D and has strided dimensions
+      # flattening won't work.
+      ref = mgpu.memref_fold(ref, 0, len(ref_ty.shape))
+    except ValueError:
+      strides, _ = ref_ty.get_strides_and_offset()
+      if vec_size > 1:
+        # TODO(apaszke): We could fold all the pairs of dims that are contiguous
+        # This check is a too strict if we don't do that.
+        has_contiguous_dim = False
+        for size, stride in zip(ref_ty.shape, strides):
+          if stride == 1:
+            has_contiguous_dim = True
+            if size % vec_size != 0:
+              raise ValueError(
+                  "The contiguous dimension of the reference must be a"
+                  f" multiple of the layout's vector size (got {size} and"
+                  f" vector size {vec_size})"
+              ) from None
+          elif size > 1:
+            if stride % vec_size != 0:
+              raise ValueError(
+                  "Non-contiguous dimension of the reference must have strides"
+                  " that are multiples of the layout's vector size (got"
+                  f" {stride} and vector size {vec_size})"
+              ) from None
+        if not has_contiguous_dim:
+          raise ValueError(
+              "The reference must have a contiguous dimension when vec_size > 1"
+          )
+      idx_gen = layout.thread_idxs(tuple(ref_ty.shape))
+    else:
+      idx_gen = map(lambda x: [x], layout.linear_thread_idxs())
+    for i, vec_idx in enumerate(idx_gen):
+      def update(registers, reg, _i=i):
+        registers[_i] = reg
+      def get(registers, _i=i):
+        return registers[_i]
+      yield get, update, ref, vec_idx
 
   @staticmethod
   def transfer_tiled(
