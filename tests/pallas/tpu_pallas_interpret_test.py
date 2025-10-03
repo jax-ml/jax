@@ -134,7 +134,7 @@ class InterpretTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         Exception, r'Revisited block .* of output 1 in iteration \(2, 0\)'):
       run()[0].block_until_ready()
-      pltpu.reset_tpu_interpret_mode_state()
+    pltpu.reset_tpu_interpret_mode_state()
 
   def test_matmul_example(self):
     def matmul_kernel(x_ref, y_ref, z_ref):
@@ -1222,7 +1222,7 @@ class InterpretTest(jtu.JaxTestCase):
           in_memory_space=disallowed_memory_space,
           out_memory_space=pltpu.MemorySpace.VMEM,
       )
-      pltpu.reset_tpu_interpret_mode_state()
+    pltpu.reset_tpu_interpret_mode_state()
 
     with self.assertRaisesRegex(
         ValueError,
@@ -1236,7 +1236,7 @@ class InterpretTest(jtu.JaxTestCase):
           in_memory_space=disallowed_memory_space,
           out_memory_space=pltpu.MemorySpace.VMEM,
       )
-      pltpu.reset_tpu_interpret_mode_state()
+    pltpu.reset_tpu_interpret_mode_state()
 
     with self.assertRaisesRegex(
         ValueError,
@@ -1250,7 +1250,7 @@ class InterpretTest(jtu.JaxTestCase):
           in_memory_space=pltpu.MemorySpace.VMEM,
           out_memory_space=disallowed_memory_space,
       )
-      pltpu.reset_tpu_interpret_mode_state()
+    pltpu.reset_tpu_interpret_mode_state()
 
     with self.assertRaisesRegex(
         ValueError,
@@ -1264,7 +1264,7 @@ class InterpretTest(jtu.JaxTestCase):
           in_memory_space=pltpu.MemorySpace.VMEM,
           out_memory_space=pltpu.MemorySpace.HBM,
       )
-      pltpu.reset_tpu_interpret_mode_state()
+    pltpu.reset_tpu_interpret_mode_state()
 
 
 if __name__ == '__main__':
