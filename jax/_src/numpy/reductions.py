@@ -36,7 +36,7 @@ from jax._src.lax import other as lax_other
 from jax._src.lax import parallel as lax_parallel
 from jax._src.lax import slicing as lax_slicing
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike, DeprecatedArg
-from jax._src.util import canonicalize_axis, maybe_named_axis, set_module
+from jax._src.util import canonicalize_axis, canonicalize_axis_tuple, maybe_named_axis, set_module
 
 
 export = set_module('jax.numpy')
@@ -937,8 +937,9 @@ def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
     a: array to be averaged
     axis: an optional integer or sequence of integers specifying the axis along which
       the mean to be computed. If not specified, mean is computed along all the axes.
-    weights: an optional array of weights for a weighted average. Must be
-      broadcast-compatible with ``a``.
+    weights: an optional array of weights for a weighted average. This must either exactly
+      match the shape of `a`, or if `axis` is specified, it must have shape ``a.shape[axis]``
+      for a single axis, or shape ``tuple(a.shape[ax] for ax in axis)`` for multiple axes.
     returned: If False (default) then return only the average. If True then return both
       the average and the normalization factor (i.e. the sum of weights).
     keepdims: If True, reduced axes are left in the result with size 1. If False (default)
@@ -985,6 +986,8 @@ def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
 @partial(api.jit, static_argnames=('axis', 'returned', 'keepdims'), inline=True)
 def _average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
              returned: bool = False, keepdims: bool = False) -> Array | tuple[Array, Array]:
+  axis = None if axis is None else canonicalize_axis_tuple(axis, np.ndim(a))
+
   if weights is None: # Treat all weights as 1
     a = ensure_arraylike("average", a)
     a, = promote_dtypes_inexact(a)
@@ -992,40 +995,20 @@ def _average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
     if axis is None:
       weights_sum = lax.full((), core.dimension_as_value(a.size), dtype=avg.dtype)
     elif isinstance(axis, tuple):
-      weights_sum = lax.full_like(avg, math.prod(core.dimension_as_value(a.shape[d]) for d in axis))
-    else:
-      weights_sum = lax.full_like(avg, core.dimension_as_value(a.shape[axis]))  # type: ignore[index]
+      weights_sum = lax.full((), math.prod(core.dimension_as_value(a.shape[d]) for d in axis), dtype=avg.dtype)
   else:
     a, weights = ensure_arraylike("average", a, weights)
     a, weights = promote_dtypes_inexact(a, weights)
 
-    a_shape = np.shape(a)
-    a_ndim = len(a_shape)
-    weights_shape = np.shape(weights)
-
-    if axis is None:
-      pass
-    elif isinstance(axis, Sequence):
-      axis = tuple(canonicalize_axis(d, a_ndim) for d in axis)
-    else:
-      axis = canonicalize_axis(axis, a_ndim)
-
-    if a_shape != weights_shape:
-      # Make sure the dimensions work out
-      if len(weights_shape) != 1:
-        raise ValueError("1D weights expected when shapes of a and "
-                         "weights differ.")
+    if a.shape != weights.shape:
       if axis is None:
         raise ValueError("Axis must be specified when shapes of a and "
                          "weights differ.")
-      elif isinstance(axis, tuple):
-        raise ValueError("Single axis expected when shapes of a and weights differ")
-      elif not core.definitely_equal(weights_shape[0], a_shape[axis]):
-        raise ValueError("Length of weights not "
-                         "compatible with specified axis.")
-
-      weights = _broadcast_to(weights, (a_ndim - 1) * (1,) + weights_shape)
-      weights = _moveaxis(weights, -1, axis)
+      if weights.shape != tuple(a.shape[ax] for ax in axis):
+        raise ValueError("Shape of weights must be consistent with shape "
+                         "of a along specified axis.")
+      new_shape = tuple(dim if i in axis else 1 for i, dim in enumerate(a.shape))
+      weights = lax.reshape(weights, new_shape, dimensions=tuple(np.argsort(axis)))
 
     weights_sum = sum(weights, axis=axis, keepdims=keepdims)
     avg = sum(a * weights, axis=axis, keepdims=keepdims) / weights_sum
