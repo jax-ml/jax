@@ -1257,6 +1257,46 @@ class LayoutInferenceTest(parameterized.TestCase):
       self.assertEqual(inference_utils.in_transforms(load_op), want)
       self.assertEqual(inference_utils.in_transforms(store_op), want)
 
+  @parameterized.parameters(mgpu.dialect.AsyncLoadOp, mgpu.dialect.AsyncStoreOp)
+  def test_infer_transforms_for_async_load_store(self, op_type):
+    shape = (64, 64)
+    elt_ty = ir.BF16Type.get()
+
+    with ir.InsertionPoint(self.module.body):
+      gmem_ty = ir.MemRefType.get(shape, elt_ty)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+      barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
+      gmem_ref, smem_ref, barrier = undefs(gmem_ty, smem_ty, barrier_ty)
+
+      transforms = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((8, 32)),
+          mgpu.dialect.SwizzleTransformAttr.get(64),
+      ])
+      zero = arith.constant(ir.IntegerType.get_signless(32), 0)
+      smem_ref = mgpu.dialect.with_transforms(smem_ref, transforms)
+      if op_type == mgpu.dialect.AsyncLoadOp:
+        op = mgpu.dialect.AsyncLoadOp(
+            source=gmem_ref,
+            destination=smem_ref,
+            barrier=barrier,
+            indices=[zero, zero],
+            slice_lengths=shape,
+            collective=ir.ArrayAttr.get([]),
+        )
+      else:
+        op = mgpu.dialect.AsyncStoreOp(
+            source=smem_ref,
+            destination=gmem_ref,
+            indices=[zero, zero],
+            slice_lengths=shape,
+        )
+
+    mgpu.infer_layout(self.module, enable_smem_inference=True)
+
+    self.assertSequenceEqual(
+        inference_utils.in_transforms(op), [transforms]
+    )
+
   @parameterized.product(
       layout=(
           fa.WGMMA_LAYOUT,
@@ -1401,6 +1441,30 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     with self.assertRaisesRegex(ValueError, "Failed to infer"):
       mgpu.infer_layout(self.module, enable_smem_inference=True)
+
+  def test_infer_transforms_sets_default_empty_transforms_on_async_load(self):
+    shape = (64, 64)
+    elt_ty = ir.BF16Type.get()
+
+    with ir.InsertionPoint(self.module.body):
+      gmem_ty = ir.MemRefType.get(shape, elt_ty)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+      barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
+      [gmem_ref, smem_ref, barrier] = undefs(gmem_ty, smem_ty, barrier_ty)
+
+      zero = arith.constant(ir.IntegerType.get_signless(32), 0)
+      async_load_op = mgpu.dialect.AsyncLoadOp(
+          source=gmem_ref,
+          destination=smem_ref,
+          barrier=barrier,
+          indices=[zero, zero],
+          slice_lengths=shape,
+          collective=ir.ArrayAttr.get([]),
+      )
+
+    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    [in_transform] = inference_utils.in_transforms(async_load_op)
+    self.assertSequenceEqual(in_transform, ir.ArrayAttr.get([]))
 
 
 if __name__ == "__main__":

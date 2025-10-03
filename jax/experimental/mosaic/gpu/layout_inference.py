@@ -1272,6 +1272,18 @@ def _with_transforms_equation_system(
   return eqns.EquationSystem(assignments=assignments), {var: [source, dest]}, []
 
 
+@_add_equation_system_derivation_rule(mgpu.AsyncLoadOp)
+@_add_equation_system_derivation_rule(mgpu.AsyncStoreOp)
+def _async_load_store_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.AsyncLoadOp | mgpu.AsyncStoreOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  operand_index = 1 if isinstance(op, mgpu.AsyncLoadOp) else 0
+  operand = OperandOrResult(op, VariableType.OPERAND, operand_index)
+  var = ctx.producer_ref(operand)
+  return eqns.EquationSystem(), {var: [operand]}, []
+
+
 def _ensure_all_layouts_are_set(
     op: ir.OpView, enable_smem_inference: bool
 ) -> None:
