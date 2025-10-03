@@ -78,7 +78,7 @@ def _compute_on2(f, *, compute_type, out_memory_spaces):
     in_avals = tuple(core.shaped_abstractify(x) for x in args_flat)
     jaxpr, out_tree = _trace_to_jaxpr(f, in_avals, in_tree, dbg)
     out_memory_spaces_flat = flatten_axes(
-        "compute_on out_memory_spaces", in_tree, out_memory_spaces)
+        "compute_on out_memory_spaces", out_tree, out_memory_spaces)
     outs_flat = compute_on_p.bind(
         *args_flat, jaxpr=jaxpr, compute_type=compute_type,
         out_memory_spaces=tuple(out_memory_spaces_flat))
