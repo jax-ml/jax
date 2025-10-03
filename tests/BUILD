@@ -414,7 +414,10 @@ jax_multiplatform_test(
     name = "pjit_test",
     srcs = ["pjit_test.py"],
     backend_tags = {
-        "tpu": ["notsan"],  # Times out under tsan.
+        "tpu": [
+            "notsan",  # Times out.
+            "noasan",  # Times out.
+        ],
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
     enable_configs = [
@@ -756,6 +759,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_scipy_test",
     srcs = ["lax_scipy_test.py"],
+    backend_tags = {
+        "tpu": ["noasan"],  # Times out.
+    },
     shard_count = {
         "cpu": 10,
         "gpu": 10,
@@ -815,6 +821,10 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_scipy_spectral_dac_test",
     srcs = ["lax_scipy_spectral_dac_test.py"],
+    backend_tags = {
+        "tpu": ["noasan"],  # Times out.
+        "gpu": ["noasan"],  # Times out.
+    },
     shard_count = {
         "cpu": 2,
         "gpu": 3,
@@ -1683,6 +1693,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "ann_test",
     srcs = ["ann_test.py"],
+    backend_tags = {
+        "tpu": ["noasan"],  # Times out.
+    },
     deps = py_deps([
         "numpy",
         "absl/testing",

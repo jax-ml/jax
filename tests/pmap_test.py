@@ -2347,10 +2347,6 @@ class CppPmapTest(PythonPmapTest):
     self.assertEqual(f._cache_size(), size+1)
 
   def test_cache_hits_across_threads(self):
-    if config.pmap_shmap_merge.value:
-      raise SkipTest(
-          'Pmapped functions no longer maintain their own cache under'
-          ' `pmap_shmap_merge=True`.')
     f = lambda x: x+1
     inputs = np.zeros([jax.device_count()], dtype=np.float32)
     pmaped_f = self.pmap(f)
@@ -2371,10 +2367,6 @@ class CppPmapTest(PythonPmapTest):
     np.testing.assert_array_equal(pmaped_f(inputs), outputs[0])
 
   def test_cache_uses_jax_key(self):
-    if config.pmap_shmap_merge.value:
-      raise SkipTest(
-          'Pmapped functions no longer maintain their own cache under'
-          ' `pmap_shmap_merge=True`.')
     f = lambda x: x+1
     inputs = np.zeros([jax.device_count()], dtype=np.float32)
     pmaped_f = self.pmap(f)

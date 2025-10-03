@@ -115,6 +115,7 @@ class CheckpointTest(jtu.JaxTestCase):
       self.assertArraysEqual(deserialized_array, inp)
 
   @jtu.skip_on_devices('cpu')
+  @jtu.thread_unsafe_test()
   def test_memory_consumption(self):
     global_mesh = jtu.create_mesh((2, 4), ('x', 'y'))
     inp_shape = (2_048, 4_096)
