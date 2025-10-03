@@ -14,6 +14,10 @@
 
 """Layout and transform inference pass for the MLIR Mosaic GPU dialect."""
 
+# mypy has been causing more problems than it solves here. Disable it for these
+# files. We have pytype checks anyway.
+# mypy: ignore-errors
+
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence, Set
