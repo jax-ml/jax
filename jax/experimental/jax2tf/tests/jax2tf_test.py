@@ -48,6 +48,7 @@ import tensorflow as tf
 config.parse_flags_with_absl()
 
 
+@jtu.thread_unsafe_test_class()
 class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def setUp(self):

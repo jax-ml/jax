@@ -81,6 +81,7 @@ REDUCE = (
 )
 
 
+@jtu.thread_unsafe_test_class()
 class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   # This test runs for all primitive harnesses. For each primitive "xxx" the

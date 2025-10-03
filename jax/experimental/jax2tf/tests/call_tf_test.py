@@ -66,6 +66,8 @@ _parameterized_jit = parameterized.named_parameters(
 _call_tf_non_compilable_error = "Error compiling TensorFlow function"
 _call_tf_dynamic_shape_error = "call_tf cannot call functions whose output has dynamic shape"
 
+
+@jtu.thread_unsafe_test_class()
 class CallTfTest(tf_test_util.JaxToTfTestCase):
 
   def setUp(self):
