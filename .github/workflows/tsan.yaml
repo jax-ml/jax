@@ -23,10 +23,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name-prefix: "with 3.13"
-            python-version: "3.13"
-            github_branch: "3.13"
-            requirements_lock_name: "requirements_lock_3_13_ft"
+          # Disabled. 3.13 has unfixed races in CPython itself; we get better signal from 3.14.
+          # - name-prefix: "with 3.13"
+          #   python-version: "3.13"
+          #   github_branch: "3.13"
+          #   requirements_lock_name: "requirements_lock_3_13_ft"
           - name-prefix: "with 3.14"
             python-version: "3.14"
             github_branch: "3.14"
