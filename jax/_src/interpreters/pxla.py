@@ -45,6 +45,7 @@ from jax._src import sharding_specs
 from jax._src import pjit
 from jax._src import profiler
 from jax._src import sharding_impls
+from jax._src import source_info_util
 from jax._src import stages
 from jax._src import tree_util
 from jax._src import typing
@@ -1294,6 +1295,22 @@ def global_avals_to_results_handler(
   return ResultsHandler(handlers, shardings, global_out_avals)
 
 
+def _get_call_location() -> str | None:
+  """Returns a string representation of the call location for logging."""
+  mode = config.jax_send_traceback_to_runtime.value
+  if mode is config.RuntimeTracebackMode.OFF:
+    return None
+
+  source_info = source_info_util.current()
+  if mode is config.RuntimeTracebackMode.ON:
+    user_frame = source_info_util.user_frame(source_info.traceback)
+    if user_frame is not None:
+      return source_info_util._summarize_frame(user_frame)
+  elif mode is config.RuntimeTracebackMode.FULL:
+    return str(source_info.traceback)
+  return None
+
+
 class ExecuteReplicated:
   """The logic to shard inputs, execute a replicated model, returning outputs."""
   __slots__ = ['xla_executable', 'name', 'backend', 'in_handler', 'out_handler',
@@ -1365,18 +1382,21 @@ class ExecuteReplicated:
     if self.mut:
       args = [*args, *self.mut.in_mut]
     input_bufs = self.in_handler(args)
+    call_location = _get_call_location()
     with profiler.PGLEProfiler.trace(self.pgle_profiler):
       if (self.ordered_effects or self.has_unordered_effects
           or self.has_host_callbacks):
         input_bufs = self._add_tokens_to_inputs(input_bufs)
-        results = self.xla_executable.execute_sharded(input_bufs, with_tokens=True)
+        results = self.xla_executable.execute_sharded(
+            input_bufs, with_tokens=True, call_location=call_location)
 
         result_token_bufs = results.disassemble_prefix_into_single_device_arrays(
             len(self.ordered_effects))
         sharded_runtime_token = results.consume_token()
         self._handle_token_bufs(result_token_bufs, sharded_runtime_token)
       else:
-        results = self.xla_executable.execute_sharded(input_bufs)
+        results = self.xla_executable.execute_sharded(
+            input_bufs, call_location=call_location)
 
       if dispatch.needs_check_special():
         out_arrays = results.disassemble_into_single_device_arrays()
