@@ -204,11 +204,17 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
       tile_m=(64, 128),
       tile_n=(64, 128, 256),
       tile_k=(64, 128),
+      epi_tile_m=(None, 64),
+      epi_tile_n=(None, 64),
       max_concurrent_steps=(2, 4),
       lhs_dtype=(jnp.int8,),  # TODO(bchetioui): add int4.
       rhs_dtype=(jnp.bfloat16, jnp.float16),
+      wg_dimension=tuple(hopper_mixed_type_matmul_mgpu.MatmulDimension),
   )
-  def test_hopper_mixed_type_matmul(
+  def test_hopper_mixed_type_matmul(self, *args, **kwargs):
+    self.check_hopper_mixed_type_matmul(*args, **kwargs)
+
+  def check_hopper_mixed_type_matmul(
       self,
       m,
       n,
@@ -217,8 +223,12 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
       tile_n,
       tile_k,
       max_concurrent_steps,
+      epi_tile_m,
+      epi_tile_n,
+      wg_dimension,
       lhs_dtype,
       rhs_dtype,
+      **kwargs,
   ):
     if not jtu.is_cuda_compute_capability_equal("9.0"):
       self.skipTest("Only works on GPU with capability sm90a")
@@ -227,9 +237,15 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
     rhs_bits = dtypes.bit_width(rhs_dtype)
     out_bits = dtypes.bit_width(out_dtype)
 
-    lhs_smem_bytes = 2 * tile_m * tile_k * lhs_bits // 8
-    rhs_smem_bytes = tile_k * tile_n * rhs_bits // 8
-    out_smem_bytes = 2 * tile_m * tile_n * out_bits // 8
+    cta_tile_m = tile_m * (1 + (wg_dimension == hopper_mixed_type_matmul_mgpu.MatmulDimension.M))
+    cta_tile_n = tile_n * (1 + (wg_dimension == hopper_mixed_type_matmul_mgpu.MatmulDimension.N))
+    lhs_smem_bytes = cta_tile_m * tile_k * lhs_bits // 8
+    rhs_smem_bytes = tile_k * cta_tile_n * rhs_bits // 8
+
+    epi_tile_size = (epi_tile_m or tile_m) * (epi_tile_n or tile_n)
+    num_epi_tiles = tile_m * tile_n // epi_tile_size
+    out_smem_bytes = 2 * min(2, num_epi_tiles) * epi_tile_size * out_bits // 8
+
     if exceeds_h100_smem(
         max_concurrent_steps * (lhs_smem_bytes + rhs_smem_bytes)
         + out_smem_bytes
@@ -241,11 +257,15 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
     ).astype(lhs_dtype)
     rhs = jax.random.normal(k2, (k, n), rhs_dtype)
 
-    tuning_config = hopper_matmul_mgpu.TuningConfig(
+    tuning_config = hopper_mixed_type_matmul_mgpu.TuningConfig(
         tile_m=tile_m,
         tile_n=tile_n,
         tile_k=tile_k,
+        epi_tile_m=epi_tile_m,
+        epi_tile_n=epi_tile_n,
         max_concurrent_steps=max_concurrent_steps,
+        wg_dimension=wg_dimension,
+        **kwargs,
     )
 
     out = hopper_mixed_type_matmul_mgpu.mixed_matmul_kernel(
@@ -259,6 +279,57 @@ class MatrixMultiplicationSm90ATest(jtu.JaxTestCase):
         lhs.astype(rhs_dtype), rhs, precision=precision,
     ).astype(out_dtype)
     np.testing.assert_allclose(out, out_ref, strict=True)
+
+  # Grid tiling doesn't really interact with many other options so we can test
+  # it separately.
+  @parameterized.product(
+      grid_minor_dim=tuple(hopper_matmul_mgpu.MatmulDimension),
+      grid_tile_width=(1, 3, 4),
+  )
+  def test_hopper_mixed_type_matmul_grid_tiling(
+      self, grid_minor_dim, grid_tile_width
+  ):
+    self.check_hopper_mixed_type_matmul(
+        m=4096,
+        k=4096,
+        n=4096,
+        lhs_dtype=jnp.int8,
+        rhs_dtype=jnp.float16,
+        tile_m=64,
+        tile_n=64,
+        tile_k=64,
+        max_concurrent_steps=2,
+        epi_tile_m=64,
+        epi_tile_n=64,
+        wg_dimension=hopper_matmul_mgpu.MatmulDimension.M,
+        grid_minor_dim=grid_minor_dim,
+        grid_tile_width=grid_tile_width,
+    )
+
+  @parameterized.product(
+    tile_m=(64, 128),
+    tile_n=(64, 128),
+    wg_dimension=tuple(hopper_matmul_mgpu.MatmulDimension),
+    cluster_dimension=tuple(hopper_matmul_mgpu.MatmulDimension),
+  )
+  def test_hopper_mixed_type_matmul_cluster(
+      self, tile_m, tile_n, wg_dimension, cluster_dimension
+  ):
+    self.check_hopper_mixed_type_matmul(
+        m=4096,
+        k=4096,
+        n=4096,
+        lhs_dtype=jnp.int8,
+        rhs_dtype=jnp.float16,
+        tile_m=tile_m,
+        tile_n=tile_n,
+        tile_k=64,
+        max_concurrent_steps=4,
+        epi_tile_m=64,
+        epi_tile_n=64,
+        wg_dimension=wg_dimension,
+        cluster_dimension=cluster_dimension,
+    )
 
 
 if __name__ == "__main__":
