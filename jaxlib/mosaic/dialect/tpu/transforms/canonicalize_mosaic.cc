@@ -1799,31 +1799,31 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
     return res;
   };
 
-  // TODO(mvoz): Even gen 7 support is spotty on all test targets.
+  // TODO(b/448848595): Enable 8-bit transposes on generation 7.
   if (element_type.getIntOrFloatBitWidth() == 8 && ctx.compatibility_mode &&
       ctx.hardware_generation > 3) {
-    Value val_bf16;
-    VectorType input_vty_bf16 =
-        VectorType::get(input_vty.getShape(), builder.getBF16Type());
-    if (isa<IntegerType>(element_type)) {
-      val_bf16 =
-          builder.create<arith::SIToFPOp>(input_vty_bf16, op.getOperand());
-    } else {
-      val_bf16 = builder.create<tpu::ExtFOp>(
-          VectorType::get(input_vty.getShape(), builder.getBF16Type()),
-          op.getOperand());
+    VectorType input_vty_int = VectorType::get(
+        input_vty.getShape(),
+        builder.getIntegerType(input_vty.getElementTypeBitWidth()));
+    Value input_int = op.getOperand();
+    if (input_int.getType() != input_vty_int) {
+      input_int = builder.create<arith::BitcastOp>(input_vty_int, input_int);
     }
+    Value input_int_16 = builder.create<arith::ExtSIOp>(
+        VectorType::get(input_vty.getShape(), builder.getIntegerType(16)),
+        input_int);
 
     Value transposed_bf16 =
-        create_or_decompose_transpose(val_bf16, op.getPermutation());
+        create_or_decompose_transpose(input_int_16, op.getPermutation());
 
-    Value new_result;
-    if (isa<IntegerType>(element_type)) {
-      new_result =
-          builder.create<arith::FPToSIOp>(op.getType(), transposed_bf16);
-    } else {
-      new_result = builder.create<tpu::TruncFOp>(
-          output_vty, transposed_bf16, tpu::RoundingMode::kToNearestEven);
+    VectorType output_vty_int = VectorType::get(
+        output_vty.getShape(),
+        builder.getIntegerType(output_vty.getElementTypeBitWidth()));
+    Value transposed_int =
+        builder.create<arith::TruncIOp>(output_vty_int, transposed_bf16);
+    Value new_result = transposed_int;
+    if (output_vty_int != output_vty) {
+      new_result = builder.create<arith::BitcastOp>(output_vty, new_result);
     }
     op.replaceAllUsesWith(new_result);
     op.erase();
