@@ -1003,8 +1003,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     def policy(prim, *avals, **params):
       return Recompute
 
-    @compute_on('device_host')
-    @jax.jit
+    @compute_on2(compute_type='device_host',
+                 out_memory_spaces=jax.memory.Space.Device)
     def g(x):
       x = jnp.sin(x)
       x = jnp.sin(x)
@@ -1022,7 +1022,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
     lowered_text = jf.lower(inp).as_text('hlo')
     out = re.findall(r"call.*to_apply.*_xla_compute_type", lowered_text)
-    self.assertLen(out, 2)
+    self.assertLen(out, 1)
 
   def test_nested_no_op_compute(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
