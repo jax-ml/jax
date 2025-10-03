@@ -1185,6 +1185,7 @@ def _tcgen05_mma_equation_system(
   assignments: dict[eqns.Variable, eqns.Constant] = {}
   operands_for_variable: OperandOrResultsForVariable = {}
 
+  # TMEM
   acc = OperandOrResult(op, VariableType.OPERAND, 0)
   acc_variable = ctx.producer_ref(acc)
   acc_type = ir.ShapedType(op.accumulator.type)
@@ -1194,18 +1195,39 @@ def _tcgen05_mma_equation_system(
   assignments[acc_variable] = eqns.TMEMLayout(acc_layout)
   operands_for_variable[acc_variable] = [acc]
 
-  if utils.is_tmem_ref(op.a):
+  if _is_tmem_ref(op.a):
     a = OperandOrResult(op, VariableType.OPERAND, 1)
     a_type = ir.ShapedType(op.a.type)
-    a_variable = ctx.producer_ref(a)
+    a_var = ctx.producer_ref(a)
     packing = 32 // utils.bitwidth(a_type.element_type)
     a_layout = tcgen05._infer_tmem_layout(
         tuple(a_type.shape), op.collective, packing
     )
-    assignments[a_variable] = eqns.TMEMLayout(a_layout)
-    operands_for_variable[a_variable] = [a]
+    assignments[a_var] = eqns.TMEMLayout(a_layout)
+    operands_for_variable[a_var] = [a]
 
-  return eqns.EquationSystem(assignments), operands_for_variable, []
+  # SMEM
+  if ctx.enable_smem_inference:
+    b_tiling = _infer_tiling_for_mma_ref(
+        ir.MemRefType(op.b.type),
+        max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle,
+    )
+    b = OperandOrResult(op, VariableType.OPERAND, 2)
+    b_var = ctx.producer_ref(b)
+    assignments[b_var] = eqns.SMEMTiling(lc.TileTransform(b_tiling))
+    operands_for_variable[b_var] = [b]
+
+    if _is_smem_ref(op.a):
+      a_tiling = _infer_tiling_for_mma_ref(
+          ir.MemRefType(op.a.type),
+          max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle,
+      )
+      a = OperandOrResult(op, VariableType.OPERAND, 1)
+      a_var = ctx.producer_ref(a)
+      assignments[a_var] = eqns.SMEMTiling(lc.TileTransform(a_tiling))
+      operands_for_variable[a_var] = [a]
+
+  return eqns.EquationSystem(assignments=assignments), operands_for_variable, []
 
 
 @_add_equation_system_derivation_rule(mgpu.AsyncLoadTmemOp)

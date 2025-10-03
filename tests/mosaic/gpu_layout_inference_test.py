@@ -943,26 +943,6 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInTmemLayouts(op, [layout])
     self.assertNotIn("out_tmem_layouts", op.attributes)
 
-  @parameterized.parameters(False, True)
-  def test_infer_tcgen05_mma_layouts_correctly(self, a_in_tmem):
-    f16, f32, i1 = ir.F16Type.get(), ir.F32Type.get(), ir.IntegerType.get_signless(1)
-    shape = (128, 128)
-    acc_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
-    a_mem_space = mgpu.utils.tmem() if a_in_tmem else mgpu.utils.smem()
-    a_type = ir.MemRefType.get(shape, f16, memory_space=a_mem_space)
-    b_type = ir.MemRefType.get(shape, f16, memory_space=mgpu.utils.smem())
-
-    with ir.InsertionPoint(self.module.body):
-      [acc, a, b, accumulate] = undefs(acc_type, a_type, b_type, i1)
-      op = mgpu.dialect.TcGen05MMAOp(acc, a, b, accumulate)
-
-    mgpu.infer_layout(self.module)
-    self.assertNotIn("out_tmem_layouts", op.attributes)
-    acc_layout = tcgen05._infer_tmem_layout(shape, collective=False, packing=1)
-    a_layout = tcgen05._infer_tmem_layout(shape, collective=False, packing=2)
-    expected_layouts = [acc_layout, a_layout] if a_in_tmem else [acc_layout]
-    self.checkInTmemLayouts(op, expected_layouts)
-
   def test_infer_async_load_chooses_in_tmem_layouts_compatible_with_register_layout(self):
     f32 = ir.F32Type.get()
     i32 = ir.IntegerType.get_signless(32)
@@ -1283,6 +1263,62 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkOutLayouts(wgmma_op, out_layouts)
     self.assertSequenceEqual(
         inference_utils.in_transforms(wgmma_op), in_transforms
+    )
+
+  @parameterized.product(
+      swizzle_lhs=tuple(mgpu.dialect.SwizzlingMode),
+      swizzle_rhs=tuple(mgpu.dialect.SwizzlingMode),
+      dtype=(jnp.bfloat16, jnp.float32),
+      lhs_in_tmem=(False, True),
+  )
+  def test_infer_transforms_for_tcgen05_mma_op(
+      self, swizzle_lhs, swizzle_rhs, dtype, lhs_in_tmem
+  ):
+    swizzle_elems_lhs = swizzle_lhs // np.dtype(dtype).itemsize
+    swizzle_elems_rhs = swizzle_rhs // np.dtype(dtype).itemsize
+    m = 128
+    # Note: `group_m` and `group_k` should be coprime with 2 for the test to be
+    # correct. Otherwise, we may infer larger swizzles than the test intends to
+    # check.
+    group_k, group_n = 3, 5
+    lhs_shape = (m, group_k * swizzle_elems_lhs)
+    rhs_shape = (group_k * swizzle_elems_lhs, group_n * swizzle_elems_rhs)
+    out_shape = (m, group_n * swizzle_elems_rhs)
+
+    with ir.InsertionPoint(self.module.body):
+      elt_ty = mgpu.utils.dtype_to_ir_type(dtype)
+      lhs_mem_space = mgpu.utils.tmem() if lhs_in_tmem else mgpu.utils.smem()
+      lhs_ty = ir.MemRefType.get(lhs_shape, elt_ty, memory_space=lhs_mem_space)
+      rhs_ty = ir.MemRefType.get(rhs_shape, elt_ty, memory_space=mgpu.utils.smem())
+      acc_ty = ir.MemRefType.get(out_shape, elt_ty, memory_space=mgpu.utils.tmem())
+      [acc, lhs, rhs] = undefs(acc_ty, lhs_ty, rhs_ty)
+      accumulate = arith.constant(ir.IntegerType.get_signless(1), 1)
+      tcgen05_mma_op = mgpu.dialect.TcGen05MMAOp(acc, lhs, rhs, accumulate)
+
+    mgpu.infer_layout(self.module, enable_smem_inference=True)
+
+    self.assertNotIn("out_tmem_layouts", tcgen05_mma_op.attributes)
+    acc_layout = tcgen05._infer_tmem_layout(out_shape, collective=False, packing=1)
+    a_packing = 2 if dtype == jnp.bfloat16 else 1
+    a_layout = tcgen05._infer_tmem_layout(lhs_shape, collective=False, packing=a_packing)
+    expected_layouts = [acc_layout, a_layout] if lhs_in_tmem else [acc_layout]
+    self.checkInTmemLayouts(tcgen05_mma_op, expected_layouts)
+
+    arg_transforms_lhs = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((8, swizzle_elems_lhs)),
+        mgpu.dialect.SwizzleTransformAttr.get(int(swizzle_lhs)),
+    ])
+    arg_transforms_rhs = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((8, swizzle_elems_rhs)),
+        mgpu.dialect.SwizzleTransformAttr.get(int(swizzle_rhs)),
+    ])
+    if lhs_in_tmem:
+      transforms = [arg_transforms_rhs]
+    else:
+      transforms = [arg_transforms_lhs, arg_transforms_rhs]
+
+    self.assertSequenceEqual(
+        inference_utils.in_transforms(tcgen05_mma_op), transforms
     )
 
   @parameterized.parameters(mgpu.dialect.AsyncLoadOp, mgpu.dialect.AsyncStoreOp)
