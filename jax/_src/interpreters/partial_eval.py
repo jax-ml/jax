@@ -36,7 +36,6 @@ from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import profiler
 from jax._src import source_info_util
-from jax._src import compute_on
 from jax._src import xla_metadata_lib
 from jax._src.core import (
     Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval, AbstractValue,
@@ -819,7 +818,7 @@ def new_eqn_recipe(trace: JaxprTrace,
             len(params["donated_invars"]) == len(params["call_jaxpr"].invars))
   out_avals = [t.aval for t in out_tracers]
   ctx = ctx or JaxprEqnContext(
-      compute_on.current_compute_type(),
+      config.compute_on_context_manager.value,
       config.threefry_partitionable.value,
       xla_metadata_lib.current_xla_metadata(),
   )
@@ -2083,7 +2082,7 @@ class DynamicJaxprTrace(core.Trace):
                effects, source_info=None, ctx = None):
     source_info = source_info or source_info_util.new_source_info()
     ctx = ctx or JaxprEqnContext(
-        compute_on.current_compute_type(),
+        config.compute_on_context_manager.value,
         config.threefry_partitionable.value,
         xla_metadata_lib.current_xla_metadata())
     outvars = map(self.frame.newvar, out_avals)

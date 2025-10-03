@@ -2061,12 +2061,10 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   args = (*ctx.dim_var_values, *tokens_in, *hoisted_const_values, *args)
   with mlir.source_info_to_location(
       ctx.module_context, None,
-      ctx.name_stack.extend(util.wrap_name('jit', name)),
-      ctx.traceback
-  ):
-    call = func_dialect.CallOp(flat_output_types,
-                              ir.FlatSymbolRefAttr.get(func.name.value),
-                              mlir.flatten_ir_values(args))
+      ctx.name_stack.extend(util.wrap_name('jit', name)), ctx.traceback):
+    call = func_dialect.CallOp(
+        flat_output_types, ir.FlatSymbolRefAttr.get(func.name.value),
+        mlir.flatten_ir_values(args))
   mlir.wrap_compute_type_in_place(ctx, call)
   out_nodes = mlir.unflatten_ir_values_like_types(call.results, output_types)
   tokens, out_nodes = split_list(out_nodes, [len(effects)])

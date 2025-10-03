@@ -36,6 +36,7 @@ from jax._src.sharding_impls import (
     NamedSharding, SingleDeviceSharding, GSPMDSharding, PartitionSpec as P)
 from jax._src.xla_metadata import set_xla_metadata
 from jax.experimental.compute_on import compute_on
+from jax._src.compute_on import compute_on2
 from jax._src.shard_map import shard_map
 import numpy as np
 
@@ -793,8 +794,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
   def test_compute_on_basic(self):
     out_s = SingleDeviceSharding(jax.devices()[0], memory_kind='pinned_host')
 
-    @compute_on('device_host')
-    @jax.jit
+    @compute_on2(compute_type='device_host',
+                 out_memory_spaces=jax.memory.Space.Device)
     def g(x):
       return x * 2
 
@@ -978,8 +979,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
       f2(jnp.arange(8))
 
   def test_compute_on_grad(self):
-    @compute_on('device_host')
-    @jax.jit
+    @compute_on2(compute_type='device_host',
+                 out_memory_spaces=jax.memory.Space.Device)
     def g(x):
       return jnp.sin(x)
 
@@ -994,7 +995,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
     lowered_text = jf.lower(inp).as_text('hlo')
     out = re.findall(r"call.*to_apply.*_xla_compute_type", lowered_text)
-    self.assertLen(out, 2)
+    self.assertLen(out, 1)
 
   def test_compute_on_remat(self):
     inp = jnp.arange(16.)

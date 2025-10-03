@@ -38,7 +38,6 @@ from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import config
 from jax._src import effects
-from jax._src import compute_on
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType, get_concrete_mesh
 from jax._src.partition_spec import PartitionSpec as P
@@ -478,7 +477,7 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
                   ctx=None) -> JaxprEqn:
   source_info = source_info or source_info_util.new_source_info()
   ctx = ctx or JaxprEqnContext(
-      compute_on.current_compute_type(),
+      config.compute_on_context_manager.value,
       config.threefry_partitionable.value,
       xla_metadata_lib.current_xla_metadata())
   if config.enable_checks.value:

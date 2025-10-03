@@ -512,7 +512,6 @@ pytype_strict_library(
         "linear_util.py",
     ],
     deps = [
-        ":compute_on",
         ":config",
         ":deprecations",
         ":dtypes",
@@ -1033,7 +1032,6 @@ pytype_strict_library(
     deps = [
         ":ad_util",
         ":api_util",
-        ":compute_on",
         ":config",
         ":core",
         ":dtypes",
@@ -1199,7 +1197,16 @@ pytype_strict_library(
     name = "compute_on",
     srcs = ["compute_on.py"],
     deps = [
+        ":ad",
+        ":api",
+        ":api_util",
+        ":batching",
         ":config",
+        ":core",
+        ":mlir",
+        ":partial_eval",
+        ":tree_util",
+        ":util",
         "//jax/_src/lib",
     ],
 )
