@@ -396,31 +396,43 @@ class LayoutInferenceTest(parameterized.TestCase):
       self, shape, layout
   ):
     with ir.InsertionPoint(self.module.body):
-      ab_type = ir.VectorType.get(shape, ir.BF16Type.get())
+      elt_ty = ir.BF16Type.get()
+      ab_type = ir.VectorType.get(shape, elt_ty)
+      ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       i32 = ir.IntegerType.get_signless(32)
-      lower_bound, upper_bound, step, a, b = undefs(
-          i32, i32, i32, ab_type, ab_type
+      lower_bound, upper_bound, step, a, b, ref = undefs(
+          i32, i32, i32, ab_type, ab_type, ref_ty
       )
-      for_op = scf.ForOp(lower_bound, upper_bound, step, [a, b])
-      [loop_a, loop_b] = list(for_op.inner_iter_args)
+      for_op = scf.ForOp(lower_bound, upper_bound, step, [a, b, ref])
+      [loop_a, loop_b, loop_ref] = list(for_op.inner_iter_args)
       with ir.InsertionPoint(for_op.body):
         add = layout_cast(arith.addf(loop_a, loop_b), layout)
-        yield_op = scf.YieldOp([add, add])
 
-    mgpu.infer_layout(self.module)
+        transforms = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((8, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(128),
+        ])
+        loop_ref = mgpu.dialect.with_transforms(loop_ref, transforms)
+
+        yield_op = scf.YieldOp([add, add, loop_ref])
+
+    mgpu.infer_layout(self.module, enable_smem_inference=True)
 
     carry_layouts = [layouts.to_layout_attr(layout)] * 2
     self.assertNotIn("out_layouts", yield_op.attributes)
     self.checkInLayouts(for_op, carry_layouts)
     self.checkOutLayouts(for_op, carry_layouts)
+    [in_transform] = inference_utils.in_transforms(for_op)
+    self.assertSequenceEqual(in_transform, transforms)
+    [out_transform] = inference_utils.out_transforms(for_op)
+    self.assertSequenceEqual(out_transform, transforms)
 
   def test_infer_layout_from_body_op_to_yield_op_to_for_op(self):
     shape = (64, 64)
     with ir.InsertionPoint(self.module.body):
-      c_ty = ir.VectorType.get(shape, ir.BF16Type.get())
-      ab_type = ir.MemRefType.get(
-          shape, ir.BF16Type.get(), memory_space=mgpu.utils.smem()
-      )
+      elt_ty = ir.BF16Type.get()
+      c_ty = ir.VectorType.get(shape, elt_ty)
+      ab_type = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
       i32 = ir.IntegerType.get_signless(32)
       lower_bound, upper_bound, step, a, b, c = undefs(
           i32, i32, i32, ab_type, ab_type, c_ty
@@ -431,13 +443,22 @@ class LayoutInferenceTest(parameterized.TestCase):
         new_loop_c = mgpu.dialect.wgmma(loop_c, loop_a, loop_b)
         yield_op = scf.YieldOp([loop_a, loop_b, new_loop_c])
 
-    mgpu.infer_layout(self.module)
+    mgpu.infer_layout(self.module, enable_smem_inference=True)
 
     wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
     self.checkInLayouts(yield_op, [wgmma_layout])
     self.assertNotIn("out_layouts", yield_op.attributes)
     self.checkInLayouts(for_op, [wgmma_layout])
     self.checkOutLayouts(for_op, [wgmma_layout])
+
+    transforms = ir.ArrayAttr.get([
+      mgpu.dialect.TileTransformAttr.get((8, 64)),
+      mgpu.dialect.SwizzleTransformAttr.get(128),
+    ])
+    in_transforms = inference_utils.in_transforms(for_op)
+    self.assertSequenceEqual(in_transforms, [transforms, transforms])
+    out_transforms = inference_utils.out_transforms(for_op)
+    self.assertSequenceEqual(out_transforms, [transforms, transforms])
 
   @parameterized.parameters(
       ((), None, (), None),

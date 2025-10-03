@@ -746,7 +746,6 @@ def _for_equation_system(
     ctx: DerivationContext,
     op: scf.ForOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
-  del ctx
   [block] = op.region.blocks
   yield_op = _terminator(block, scf.YieldOp)
   operand_or_results_for_variable: OperandOrResultsForVariable = {}
@@ -755,7 +754,7 @@ def _for_equation_system(
   # in the operands but not in the results.
   num_leading_args = 3
   for index, o in enumerate(op.operands):
-    if not is_vector(o):
+    if not is_vector(o) and not (ctx.enable_smem_inference and _is_smem_ref(o)):
       continue
     result_index = index - num_leading_args
     operand = OperandOrResult(op, VariableType.OPERAND, index)
@@ -763,9 +762,8 @@ def _for_equation_system(
     yield_operand = OperandOrResult(
         yield_op, VariableType.OPERAND, result_index
     )
-    operand_or_results_for_variable[eqns.Variable(operand)] = [
-        operand, result, yield_operand,
-    ]
+    var = eqns.Variable(operand) if is_vector(o) else ctx.producer_ref(operand)
+    operand_or_results_for_variable[var] = [operand, result, yield_operand]
 
   return eqns.EquationSystem(), operand_or_results_for_variable, []
 
