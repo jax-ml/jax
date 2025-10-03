@@ -1450,4 +1450,11 @@ def LinalgVectorizationPass : Pass<"linalg-vectorization", "::mlir::func::FuncOp
   ];
 }
 
+def BasicBlockTraceInsertionPass : Pass<"basic-block-trace-insertion", "::mlir::func::FuncOp"> {
+  let dependentDialects = [
+    "::mlir::tpu::TPUDialect",
+  ];
+  let constructor = "::mlir::tpu::createBasicBlockTraceInsertionPass()";
+}
+
 #endif  // TPU_ATTRS
