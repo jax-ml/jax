@@ -345,6 +345,9 @@ NB_MODULE(_jax, m) {
             ifrt_options.transfer_server_factory =
                 std::move(transfer_server_factory->factory_fn);
           }
+#if JAX_IFRT_VERSION_NUMBER >= 31
+          ifrt_options.require_user_context_scope = true;
+#endif
           ifrt_client = xla::ValueOrThrow(
               xla::ifrt::PjRtClient::Create(std::move(ifrt_options)));
         }
@@ -417,6 +420,9 @@ NB_MODULE(_jax, m) {
             ifrt_options.transfer_server_factory =
                 std::move(transfer_server_factory->factory_fn);
           }
+#if JAX_IFRT_VERSION_NUMBER >= 31
+          ifrt_options.require_user_context_scope = true;
+#endif
           ifrt_client = xla::ValueOrThrow(
               xla::ifrt::PjRtClient::Create(std::move(ifrt_options)));
         }
