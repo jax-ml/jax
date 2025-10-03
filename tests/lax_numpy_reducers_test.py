@@ -559,6 +559,26 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=check_dtypes,
                           rtol=tol, atol=tol)
 
+  @parameterized.parameters(
+      dict(shape=(2, 3, 4), axis=(1, 2)),
+      dict(shape=(2, 3, 4), axis=(2, 0)),
+      dict(shape=(2, 3, 4), axis=(0, 1, 2)),
+      dict(shape=(2, 3, 4), axis=(2, 0, 1)),
+      dict(shape=(2, 3, 4), axis=(2, 1, 0)),
+      dict(shape=(2, 3, 4, 5), axis=(3, 0)),
+      dict(shape=(2, 3, 4, 5), axis=(3, 0, 2, 1)),
+  )
+  def testAverageNDWeights(self, shape, axis):
+    weights_shape = tuple(shape[ax] for ax in axis)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, np.float32), rng(weights_shape, np.float32)]
+    np_fun = lambda x, weights: np.average(x, axis, weights)
+    jnp_fun = lambda x, weights: jnp.average(x, axis, weights)
+    tol = {dtypes.bfloat16: 2e-1, np.float16: 1e-2, np.float32: 1e-5,
+           np.float64: 1e-12, np.complex64: 1e-5}
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   @jtu.sample_product(
     test_fns=[(np.var, jnp.var), (np.std, jnp.std)],
     shape=[(5,), (10, 5)],
