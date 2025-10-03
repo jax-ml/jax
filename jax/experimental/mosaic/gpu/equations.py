@@ -386,8 +386,8 @@ class Relayout:
 
     source_layout, target_layout = source.value, target.value
     match source_layout, target_layout:
-      case fa.WGSplatFragLayout(), fa.WGStridedFragLayout():
-        return source_layout.shape == target_layout.shape
+      case fa.WGSplatFragLayout() as splat, fa.WGStridedFragLayout() as strided:
+        return splat.shape == strided.shape
       case fa.WGSplatFragLayout(), fa.TiledLayout():
         return layouts_lib.splat_is_compatible_with_tiled(
             source_layout, target_layout

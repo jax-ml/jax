@@ -301,6 +301,7 @@ def _extract_layout_candidates_from_memory_space_transfers(
     case _:
       return
 
+  assert isinstance(variable, eqns.Variable)  # Satisfy type checkers.
   if isinstance(constant, eqns.RegisterLayout):
     layout = constant.value
     if variable.key.memory_space == MemorySpace.TMEM:
@@ -584,7 +585,7 @@ def _vector_load_equation_system(
   result_is_not_splat = eqns.Distinct(
       result_variable,
       eqns.RegisterLayout(
-          fa.WGSplatFragLayout(shape=tuple(op.result.type.shape))
+          fa.WGSplatFragLayout(shape=tuple(ir.ShapedType(op.result.type).shape))
       ),
   )
   equation_system &= eqns.EquationSystem(constraints=[result_is_not_splat])
@@ -636,7 +637,7 @@ def _constant_equation_system(
   value = constant_op.value
   result = OperandOrResult(constant_op, VariableType.RESULT, 0)
   variable = eqns.Variable(result)
-  shape = tuple(constant_op.result.type.shape)
+  shape = tuple(ir.ShapedType(constant_op.result.type).shape)
   if (
       ir.DenseElementsAttr.isinstance(value)
       and ir.DenseElementsAttr(value).is_splat
@@ -880,7 +881,8 @@ def _multi_dim_reduction_equation_system(
   out_variable = eqns.Variable(out)
 
   reduction_equation, broadcast_hint = _reduction_equation_and_hint(
-      source_variable, out_variable, tuple(op.source.type.shape), tuple(op.reduction_dims)
+      source_variable, out_variable,
+      tuple(ir.ShapedType(op.source.type).shape), tuple(op.reduction_dims)
   )
   # TODO(bchetioui): in the future, we may need to add rules that prevent
   # strided layouts from being chosen---since trying to reduce a strided layout
@@ -1064,18 +1066,20 @@ def _tcgen05_mma_equation_system(
 
   acc = OperandOrResult(op, VariableType.OPERAND, 0)
   acc_variable = ctx.producer_ref(acc)
+  acc_type = ir.ShapedType(op.accumulator.type)
   acc_layout = tcgen05._infer_tmem_layout(
-      tuple(op.accumulator.type.shape), op.collective, packing=1
+      tuple(acc_type.shape), op.collective, packing=1
   )
   assignments[acc_variable] = eqns.TMEMLayout(acc_layout)
   operands_for_variable[acc_variable] = [acc]
 
   if utils.is_tmem_ref(op.a):
     a = OperandOrResult(op, VariableType.OPERAND, 1)
+    a_type = ir.ShapedType(op.a.type)
     a_variable = ctx.producer_ref(a)
-    packing = 32 // utils.bitwidth(op.a.type.element_type)
+    packing = 32 // utils.bitwidth(a_type.element_type)
     a_layout = tcgen05._infer_tmem_layout(
-        tuple(op.a.type.shape), op.collective, packing
+        tuple(a_type.shape), op.collective, packing
     )
     assignments[a_variable] = eqns.TMEMLayout(a_layout)
     operands_for_variable[a_variable] = [a]
@@ -1095,7 +1099,7 @@ def _async_load_tmem_equation_system(
   constraint = eqns.IsTransferable(
       source_variable,
       destination_variable,
-      tuple(op.source.type.shape),
+      tuple(ir.ShapedType(op.source.type).shape),
   )
   return (
       eqns.EquationSystem(constraints=[constraint]),
@@ -1116,7 +1120,7 @@ def _async_store_tmem_equation_system(
   constraint = eqns.IsTransferable(
       source_variable,
       destination_variable,
-      tuple(op.source.type.shape),
+      tuple(ir.ShapedType(op.source.type).shape),
   )
   return (
       eqns.EquationSystem(constraints=[constraint]),
@@ -1147,7 +1151,7 @@ def _memref_load_store_op_equation_system(
   del ctx
 
   ref_shape = ir.MemRefType(op.memref.type).shape
-  if ref_shape != [] and ref_shape != [1]:
+  if ref_shape and ref_shape != [1]:
     raise NotImplementedError(
         f"Only scalar memrefs are supported, got {ref_shape}"
     )
@@ -1314,6 +1318,12 @@ def _compute_swizzle(
   return mgpu.SwizzlingMode(swizzle)
 
 
+@dataclasses.dataclass(frozen=True)
+class _TypeAndLayout:
+  type: ir.Type
+  layout: eqns.Constant
+
+
 def assign_layouts(
     solution: dict[OperandOrResult, eqns.Constant],
     enable_smem_inference: bool,
@@ -1343,18 +1353,13 @@ def assign_layouts(
     in_assignments = assignments_by_type.get(VariableType.OPERAND, [])
     out_assignments = assignments_by_type.get(VariableType.RESULT, [])
 
-    @dataclasses.dataclass(frozen=True)
-    class TypeAndLayout:
-      type: ir.Type
-      layout: eqns.Constant
-
     index = lambda kv: kv[0].index
     in_tls = [
-        TypeAndLayout(v.value.type, ce)
+        _TypeAndLayout(v.value.type, ce)
         for v, ce in sorted(in_assignments, key=index)
     ]
     out_tls = [
-        TypeAndLayout(v.value.type, ce)
+        _TypeAndLayout(v.value.type, ce)
         for v, ce in sorted(out_assignments, key=index)
     ]
 
@@ -1394,7 +1399,7 @@ def assign_layouts(
     if enable_smem_inference:
 
       def _to_transform_attrs(
-          transforms: list[TypeAndLayout],
+          transforms: list[_TypeAndLayout],
       ) -> list[ir.ArrayAttr]:
         all_attrs: list[ir.ArrayAttr] = []
         for tl in transforms:
