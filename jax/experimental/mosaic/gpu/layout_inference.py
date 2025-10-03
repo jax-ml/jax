@@ -881,18 +881,66 @@ def _infer_tiling_for_mma_ref(
   return tiling
 
 
+def _infer_wgmma_tiling(
+    a_type: ir.Type, b_type: ir.MemRefType
+) -> tuple[tuple[int, int] | None, tuple[int, int]]:
+  """Infers the tiling for a (if in SMEM) and b of a WGMMAOp.
+
+  If both a and b are in SMEM, this function infers tilings that have matching
+  swizzle values.
+  """
+  b_tiling = _infer_tiling_for_mma_ref(
+      b_type, max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle
+  )
+  b_swizzle = _compute_swizzle(b_type, lc.TileTransform(b_tiling))
+  if not ir.MemRefType.isinstance(a_type):
+    return None, b_tiling
+
+  a_tiling = _infer_tiling_for_mma_ref(
+      cast(ir.MemRefType, a_type), max_swizzle=b_swizzle
+  )
+  a_swizzle = _compute_swizzle(a_type, lc.TileTransform(a_tiling))
+  if a_swizzle != b_swizzle:
+    # The swizzle for a and b has to match. This is not a fundamental
+    # limitation, rather the lowering doesn't currently support it.
+    b_tiling = _infer_tiling_for_mma_ref(b_type, max_swizzle=a_swizzle)
+    b_swizzle = _compute_swizzle(b_type, lc.TileTransform(b_tiling))
+    assert a_swizzle == b_swizzle
+  return a_tiling, b_tiling
+
+
 @_add_equation_system_derivation_rule(mgpu.WGMMAOp)
 def _wgmma_equation_system(
     ctx: DerivationContext,
     op: mgpu.WGMMAOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
-  del ctx
-  operands_or_results = vector_operands_and_results(op)
-  variable = eqns.Variable(operands_or_results[0])
+  assignments: dict[eqns.Variable, eqns.Constant] = {}
+  # Registers
+  vector_operands_or_results = vector_operands_and_results(op)
+  vec_variable = eqns.Variable(vector_operands_or_results[0])
+  assignments[vec_variable] = eqns.RegisterLayout(fa.WGMMA_LAYOUT)
+  operands_or_results_for_variable = {vec_variable: vector_operands_or_results}
+
+  # SMEM
+  if ctx.enable_smem_inference:
+    a_tiling, b_tiling = _infer_wgmma_tiling(op.a.type, op.b.type)
+    b = OperandOrResult(op, VariableType.OPERAND, 2)
+    b_var = ctx.producer_ref(b)
+
+    assignments[b_var] = eqns.SMEMTiling(lc.TileTransform(b_tiling))
+    operands_or_results_for_variable[b_var] = [b]
+
+    if a_tiling is not None:
+      # a is in SMEM
+      a = OperandOrResult(op, VariableType.OPERAND, 1)
+      a_var = ctx.producer_ref(a)
+      assignments[a_var] = eqns.SMEMTiling(lc.TileTransform(a_tiling))
+      operands_or_results_for_variable[a_var] = [a]
+
   system = eqns.EquationSystem(
-      assignments={variable: eqns.RegisterLayout(fa.WGMMA_LAYOUT)}
+      assignments=assignments,
   )
-  return system, {variable: operands_or_results}, []
+  return system, operands_or_results_for_variable, []
 
 
 @_add_equation_system_derivation_rule(vector.BroadcastOp)

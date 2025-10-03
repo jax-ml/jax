@@ -20,6 +20,7 @@ import math
 
 from absl.testing import parameterized
 import jax
+from jax import numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
@@ -40,6 +41,7 @@ from jax.experimental.mosaic.gpu import launch_context as lc
 from jax.experimental.mosaic.gpu import layout_inference
 from jax.experimental.mosaic.gpu import layouts
 from jax.experimental.mosaic.gpu import tcgen05
+import numpy as np
 
 config.parse_flags_with_absl()
 
@@ -792,29 +794,6 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
     self.assertIsNotNone(assignment)
 
-  @parameterized.parameters("registers", "shared")
-  def test_infer_wgmma_layout_correctly(self, lhs_memory_space):
-    f32 = ir.F32Type.get()
-    shape = (64, 64)
-
-    with ir.InsertionPoint(self.module.body):
-      vec_ty = ir.VectorType.get(shape, f32)
-      ref_ty = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.smem())
-      lhs_ty = ref_ty if lhs_memory_space == "shared" else vec_ty
-      acc, lhs, rhs = undefs(vec_ty, lhs_ty, ref_ty)
-      wgmma_op = mgpu.dialect.WGMMAOp(acc, lhs, rhs)
-
-    mgpu.infer_layout(self.module)
-
-    wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
-    in_layouts = [wgmma_layout]
-    out_layouts = [wgmma_layout]
-    if lhs_memory_space == "registers":
-      in_layouts.append(wgmma_layout)
-
-    self.checkInLayouts(wgmma_op, in_layouts)
-    self.checkOutLayouts(wgmma_op, out_layouts)
-
   def test_vector_broadcast_from_scalar_infers_splat_layout(self):
     shape = (128,)
     f32 = ir.F32Type.get()
@@ -1257,6 +1236,54 @@ class LayoutInferenceTest(parameterized.TestCase):
       want = ir.ArrayAttr.get([ir.ArrayAttr.get([])])
       self.assertEqual(inference_utils.in_transforms(load_op), want)
       self.assertEqual(inference_utils.in_transforms(store_op), want)
+
+  @parameterized.product(
+      swizzle=tuple(mgpu.dialect.SwizzlingMode),
+      dtype=(jnp.bfloat16, jnp.float32),
+      lhs_in_registers=(False, True),
+  )
+  def test_infer_transforms_for_wgmma_op(self, swizzle, dtype, lhs_in_registers):
+    swizzle_elems = swizzle // np.dtype(dtype).itemsize
+    m = 64
+    # Note: `group_m` and `group_k` should be coprime with 2 for the test to be
+    # correct. Otherwise, we may infer larger swizzles than the test intends to
+    # check.
+    group_m, group_k = 3, 3
+    lhs_shape = (group_m * m, group_k * swizzle_elems)
+    rhs_shape = (group_k * swizzle_elems, group_k * swizzle_elems)
+    out_shape = (group_m * m, group_k * swizzle_elems)
+
+    with ir.InsertionPoint(self.module.body):
+      elt_ty = mgpu.utils.dtype_to_ir_type(dtype)
+      lhs_ref_ty = ir.MemRefType.get(lhs_shape, elt_ty, memory_space=mgpu.utils.smem())
+      lhs_vec_ty = ir.VectorType.get(lhs_shape, elt_ty)
+      lhs_ty = lhs_vec_ty if lhs_in_registers else lhs_ref_ty
+      rhs_ty = ir.MemRefType.get(rhs_shape, elt_ty, memory_space=mgpu.utils.smem())
+      acc_ty = ir.VectorType.get(out_shape, elt_ty)
+      [acc, lhs, rhs] = undefs(acc_ty, lhs_ty, rhs_ty)
+      wgmma_op = mgpu.dialect.WGMMAOp(acc, lhs, rhs)
+
+    mgpu.infer_layout(self.module, enable_smem_inference=True)
+
+    wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
+    arg_transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((8, swizzle_elems)),
+        mgpu.dialect.SwizzleTransformAttr.get(int(swizzle)),
+    ])
+
+    in_layouts = [wgmma_layout]
+    out_layouts = [wgmma_layout]
+    in_transforms = [arg_transforms]
+    if lhs_in_registers:
+      in_layouts.append(wgmma_layout)
+    else:
+      in_transforms.append(arg_transforms)
+
+    self.checkInLayouts(wgmma_op, in_layouts)
+    self.checkOutLayouts(wgmma_op, out_layouts)
+    self.assertSequenceEqual(
+        inference_utils.in_transforms(wgmma_op), in_transforms
+    )
 
   @parameterized.parameters(mgpu.dialect.AsyncLoadOp, mgpu.dialect.AsyncStoreOp)
   def test_infer_transforms_for_async_load_store(self, op_type):
