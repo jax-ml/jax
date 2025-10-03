@@ -412,12 +412,13 @@ class IsTransferable:
   source: Expression
   target: Expression
   # TODO(allanrenucci): Can this be derived from the layouts?
-  shape: tuple[int, int]
+  shape: tuple[int, ...]
 
   def supported_tmem_transfers(
       self, packing: int
   ) -> set[tuple[tcgen05.TMEMLayout, fa.FragmentedLayout]]:
     """Returns the set of supported TMEM <-> Register transfers."""
+    assert len(self.shape) == 2
     columns = self.shape[1]
     tmem_default_layout = tcgen05.tmem_default_layout(packing)
     return {

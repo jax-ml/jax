@@ -571,9 +571,23 @@ for op in [
     mlir_math.LogOp,
     mlir_math.RsqrtOp,
     mlir_math.TanhOp,
-    vector.StoreOp,
 ]:
   _add_equation_system_derivation_rule(op)(_pointwise_op_equation_system)
+
+
+def _divides_constraint_from_indices(
+    var: eqns.Variable,
+    indices: Sequence[ir.Value],
+) -> eqns.Divides:
+  """Returns a Divides constraint from the given load/store indices."""
+  dimensions_to_tile : list[tuple[int | ir.Value, ...]] = []
+  for i in indices:
+    index_defining_op = i.owner.opview
+    if isinstance(index_defining_op, arith.ConstantOp):
+      dimensions_to_tile.append((index_defining_op.literal_value,))
+    else:
+      dimensions_to_tile.append((i,))
+  return eqns.Divides(var, tuple(dimensions_to_tile))
 
 
 @_add_equation_system_derivation_rule(vector.LoadOp)
@@ -581,20 +595,74 @@ def _vector_load_equation_system(
     ctx: DerivationContext,
     op: vector.LoadOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
-  equation_system: eqns.EquationSystem | eqns.Unsatisfiable
-  equation_system, operand_or_results_for_variable, hints = (
-      _pointwise_op_equation_system(ctx, op)
-  )
-  [result_variable] = operand_or_results_for_variable.keys()
-  result_is_not_splat = eqns.Distinct(
-      result_variable,
-      eqns.RegisterLayout(
-          fa.WGSplatFragLayout(shape=tuple(ir.ShapedType(op.result.type).shape))
+  # TODO(b/447079781): Investigate whether we should check for contiguous
+  # strides here. An initial implementaiton of this failed the
+  # test_gmem_to_smem_with_multiple_smem_indexers_and_transforms test, but
+  # we should confirm that this is properly supported.
+
+  # Registers
+  dest = OperandOrResult(op, VariableType.RESULT, 0)
+  dest_var = eqns.Variable(dest)
+  operand_or_results_for_variable = {dest_var: [dest]}
+  constraints = [
+      eqns.Distinct(
+          dest_var,
+          eqns.RegisterLayout(
+              fa.WGSplatFragLayout(shape=tuple(ir.ShapedType(op.result.type).shape))
+          ),
       ),
-  )
-  equation_system &= eqns.EquationSystem(constraints=[result_is_not_splat])
-  assert not isinstance(equation_system, eqns.Unsatisfiable)
-  return equation_system, operand_or_results_for_variable, hints
+  ]
+
+  # SMEM
+  if ctx.enable_smem_inference and utils.is_smem_ref(op.base):
+    source = OperandOrResult(op, VariableType.OPERAND, 0)
+    source_var = ctx.producer_ref(source)
+    operand_or_results_for_variable[source_var] = [source]
+    constraints.extend([
+        eqns.IsTransferable(
+            source=source_var,
+            target=dest_var,
+            shape=tuple(op.result.type.shape),
+        ),
+        _divides_constraint_from_indices(source_var, op.indices),
+    ])
+
+  system = eqns.EquationSystem(constraints=constraints)
+  return system, operand_or_results_for_variable, []
+
+
+@_add_equation_system_derivation_rule(vector.StoreOp)
+def _vector_store_equation_system(
+    ctx: DerivationContext,
+    op: vector.StoreOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  # TODO(b/447079781): Investigate whether we should check for contiguous
+  # strides here. An initial implementaiton of this failed the
+  # test_gmem_to_smem_with_multiple_smem_indexers_and_transforms test, but
+  # we should confirm that this is properly supported.
+
+  # Registers
+  value = OperandOrResult(op, VariableType.OPERAND, 0)
+  value_var = eqns.Variable(value)
+  operand_or_results_for_variable = {value_var: [value]}
+
+  # SMEM
+  constraints = []
+  if ctx.enable_smem_inference and utils.is_smem_ref(op.base):
+    dest = OperandOrResult(op, VariableType.OPERAND, 1)
+    dest_var = ctx.producer_ref(dest)
+    operand_or_results_for_variable[dest_var] = [dest]
+    constraints = [
+        eqns.IsTransferable(
+            source=value_var,
+            target=dest_var,
+            shape=tuple(op.base.type.shape),
+        ),
+        _divides_constraint_from_indices(dest_var, op.indices),
+    ]
+
+  system = eqns.EquationSystem(constraints=constraints)
+  return system, operand_or_results_for_variable, []
 
 
 @_add_equation_system_derivation_rule(mgpu.OptimizationBarrierOp)

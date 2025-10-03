@@ -16,6 +16,8 @@
 
 # pylint: disable=g-complex-comprehension
 
+import math
+
 from absl.testing import parameterized
 import jax
 from jax._src import config
@@ -25,7 +27,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import llvm
-from jax._src.lib.mlir.dialects import math
+from jax._src.lib.mlir.dialects import math as math_dialect
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
@@ -1111,7 +1113,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       y = arith.mulf(x3, c_044)
       x_y = arith.addf(x, y)
       z = arith.mulf(x_y, c_079)
-      t = math.tanh(z)
+      t = math_dialect.tanh(z)
       u = arith.addf(t, c_1)
       v = arith.mulf(u, c_05)
       r = arith.mulf(x, v)
@@ -1254,6 +1256,95 @@ class LayoutInferenceTest(parameterized.TestCase):
       want = ir.ArrayAttr.get([ir.ArrayAttr.get([])])
       self.assertEqual(inference_utils.in_transforms(load_op), want)
       self.assertEqual(inference_utils.in_transforms(store_op), want)
+
+  @parameterized.product(
+      layout=(
+          fa.WGMMA_LAYOUT,
+          fa.WGMMA_ROW_LAYOUT,
+          fa.WGMMA_COL_LAYOUT,
+          tcgen05.TMEM_NATIVE_LAYOUT,
+          fa.WGStridedFragLayout((64, 64), vec_size=4),
+      ),
+      major_dim_index=(0, 3, 4),
+  )
+  def test_infer_transforms_for_vector_load_op(
+      self, layout, major_dim_index
+  ):
+    big_shape = (128, 128)
+    small_shape = (64, 64)
+    elt_ty = ir.BF16Type.get()
+
+    with ir.InsertionPoint(self.module.body):
+      smem_ty = ir.MemRefType.get(big_shape, elt_ty, memory_space=mgpu.utils.smem())
+      [smem_ref] = undefs(smem_ty)
+
+      c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
+      zero = c(0)
+      major_index = c(major_dim_index)
+
+      vector_op = vector.LoadOp(
+          ir.VectorType.get(small_shape, elt_ty), smem_ref, [major_index, zero]
+      )
+
+      layout_cast(vector_op.result, layout)
+
+    if inference_utils.is_mma_layout(layout):
+      expected_major_dim = math.gcd(8, major_dim_index)
+      expected_transforms = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((expected_major_dim, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+    else:
+      expected_transforms = ir.ArrayAttr.get([])
+
+    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    self.assertSequenceEqual(
+        inference_utils.in_transforms(vector_op), [expected_transforms]
+    )
+
+  @parameterized.product(
+      layout=(
+          fa.WGMMA_LAYOUT,
+          fa.WGMMA_ROW_LAYOUT,
+          fa.WGMMA_COL_LAYOUT,
+          tcgen05.TMEM_NATIVE_LAYOUT,
+          fa.WGStridedFragLayout((64, 64), vec_size=4),
+          fa.WGSplatFragLayout((64, 64)),
+      ),
+      major_dim_index=(0, 3, 4),
+  )
+  def test_infer_transforms_for_vector_store_op(
+      self, layout, major_dim_index
+  ):
+    big_shape = (128, 128)
+    small_shape = (64, 64)
+    elt_ty = ir.BF16Type.get()
+
+    with ir.InsertionPoint(self.module.body):
+      smem_ty = ir.MemRefType.get(big_shape, elt_ty, memory_space=mgpu.utils.smem())
+      [smem_ref] = undefs(smem_ty)
+
+      c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
+      zero = c(0)
+      major_index = c(major_dim_index)
+
+      [value_to_store] = undefs(ir.VectorType.get(small_shape, elt_ty))
+      vector_op = vector.StoreOp(value_to_store, smem_ref, [major_index, zero])
+      layout_cast(value_to_store, layout)
+
+    if inference_utils.is_mma_layout(layout):
+      expected_major_dim = math.gcd(8, major_dim_index)
+      expected_transforms = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((expected_major_dim, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+    else:
+      expected_transforms = ir.ArrayAttr.get([])
+
+    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    self.assertSequenceEqual(
+        inference_utils.in_transforms(vector_op), [expected_transforms]
+    )
 
   def test_slice_smem_gets_empty_by_default(self):
     with ir.InsertionPoint(self.module.body):
