@@ -77,7 +77,7 @@ class AssemblyToBinaryPass
     compilation_options.dump_compilation_log = dump_opts.ptxas;
     compilation_options.generate_line_info = true;
 
-    module.walk([&](mlir::gpu::BinaryOp binary) {
+    mlir::WalkResult result = module.walk([&](mlir::gpu::BinaryOp binary) {
       if (binary.getObjects().size() != 1) {
         binary.emitOpError("Expected exactly one object in the binary.");
         return mlir::WalkResult::interrupt();
@@ -128,6 +128,10 @@ class AssemblyToBinaryPass
 
       return mlir::WalkResult::advance();
     });
+
+    if (result.wasInterrupted()) {
+      signalPassFailure();
+    }
   }
 
  private:
