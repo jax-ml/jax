@@ -1489,6 +1489,33 @@ class LayoutInferenceTest(parameterized.TestCase):
           inference_utils.out_transforms(view.owner), [transforms]
       )
 
+  @parameterized.parameters([False, True])
+  def test_infer_transforms_for_memref_cast_op(self, annotate_producer):
+    with ir.InsertionPoint(self.module.body):
+      shape = (64, 64)
+      elt_ty = ir.BF16Type.get()
+      ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+      [ref] = undefs(ref_ty)
+
+      transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((8, 64)),
+        mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+
+      if annotate_producer:
+        ref = mgpu.dialect.with_transforms(ref, transforms)
+      cast = memref.cast(ref_ty, ref)
+      if not annotate_producer:
+        mgpu.dialect.with_transforms(cast, transforms)
+
+      mgpu.infer_layout(self.module, enable_smem_inference=True)
+      self.assertSequenceEqual(
+          inference_utils.in_transforms(cast.owner), [transforms]
+      )
+      self.assertSequenceEqual(
+          inference_utils.out_transforms(cast.owner), [transforms]
+      )
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
