@@ -665,9 +665,9 @@ jax_multiplatform_test(
         "cpu": ["notsan"],  # Test times out.
     },
     shard_count = {
-        "cpu": 50,
-        "gpu": 40,
-        "tpu": 50,
+        "cpu": 45,
+        "gpu": 35,
+        "tpu": 45,
     },
     tags = [
         "noasan",  # Test times out on all backends
@@ -727,6 +727,27 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_numpy_einsum_test",
     srcs = ["lax_numpy_einsum_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "lax_numpy_setops_test",
+    srcs = ["lax_numpy_setops_test.py"],
+    backend_tags = {
+        "tpu": ["notsan"],  # Test times out.
+        "cpu": ["notsan"],  # Test times out.
+    },
+    shard_count = {
+        "cpu": 5,
+        "gpu": 5,
+        "tpu": 5,
+    },
+    tags = [
+        "noasan",  # Test times out on all backends
+    ],
     deps = py_deps([
         "absl/testing",
         "numpy",
