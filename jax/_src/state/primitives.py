@@ -174,8 +174,6 @@ swap_p.is_high = lambda ref_aval, *_, tree: ref_aval.is_high  # type: ignore
 def _swap_to_lojax(ref, val, *idx, tree):
   ref_val_ty = core.typeof(ref._refs)
   val_ty = core.typeof(val)
-  if ref_val_ty != val_ty:
-    raise TypeError(f"Cannot swap {ref_val_ty} into {val_ty}.")
   transforms = tree_util.tree_unflatten(tree, idx)
   if transforms:
     ref = TransformedRef(ref, transforms[:-1])
@@ -260,6 +258,8 @@ def ref_swap(
 #     value == np.array(value, dtype).item()): return cast
 def _maybe_implicit_cast(dtype, value):
   aval = core.typeof(value)
+  if not isinstance(aval, core.ShapedArray):
+    return value
   if (aval.weak_type and
       (dtypes.issubdtype(dtype, np.floating) and
        dtypes.issubdtype(aval.dtype, np.floating)) or

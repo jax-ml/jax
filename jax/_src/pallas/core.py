@@ -493,6 +493,12 @@ class BlockSpec:
       vmapped_dims: tuple[int, ...],
       debug: bool = False,
   ) -> BlockMapping:
+    if self.block_shape is not None:
+      if not hasattr(array_aval, "shape"):
+        raise ValueError(
+            "Array type must have a `shape` attribute, but got"
+            f" {type(array_aval)}"
+        )
     if self.index_map is None:
       index_map_func = default_index_map(len(array_aval.shape))
       index_map_dbg = api_util.debug_info("pallas_call index_map",
@@ -722,6 +728,46 @@ class BlockMapping:
         return False
     return True
 
+  def to_block_spec(self) -> BlockSpec:
+    def index_map(*args):
+      flat_args = tree_util.tree_leaves(args)
+      return jax_core.jaxpr_as_fun(self.index_map_jaxpr)(*flat_args)
+    return BlockSpec(
+        self.block_shape,
+        index_map,
+        memory_space=self.block_aval.memory_space,
+        pipeline_mode=self.pipeline_mode,
+    )
+
+  def to_lojax(
+      self, index_map_avals, index_map_tree, grid, vmapped_dims
+  ) -> list[BlockMapping]:
+    block_aval = self.transformed_block_aval
+    if not block_aval.inner_aval.is_high:
+      return [self]
+    assert self.array_aval.is_high
+    lo_array_avals = self.array_aval.lo_ty()
+    block_spec = self.to_block_spec()
+    if not hasattr(block_aval.inner_aval, "lower_block_spec"):
+      raise ValueError(
+          f"Cannot lower block spec {block_spec} on {block_aval.inner_aval}."
+          " Need to define lower_block_spec method on the type."
+      )
+    lo_block_specs = block_aval.inner_aval.lower_block_spec(block_spec)
+    return [
+        _convert_block_spec_to_block_mapping(
+            bs,
+            self.origin,
+            lo_array_aval,
+            index_map_avals=index_map_avals,
+            index_map_tree=index_map_tree,
+            grid=grid,
+            vmapped_dims=vmapped_dims,
+            debug=self.debug,
+        )
+        for bs, lo_array_aval in zip(lo_block_specs, lo_array_avals)
+    ]
+
   def __repr__(self):
     if self.debug:
       return (
@@ -928,6 +974,44 @@ class GridMapping:
     return tuple(
         jax.ShapeDtypeStruct(bm.array_aval.shape, bm.array_aval.dtype)
         for bm in self.block_mappings_output)
+
+  def to_lojax(self):
+    input_block_mappings, output_block_mappings, () = split_list(
+        self.block_mappings,
+        [self.num_inputs, self.num_inputs + self.num_outputs],
+    )
+    updated_input_block_mappings = [
+        lo_mapping
+        for bm in input_block_mappings
+        for lo_mapping in bm.to_lojax(
+            self.index_map_avals,
+            self.index_map_tree,
+            self.grid,
+            self.vmapped_dims,
+        )
+    ]
+    updated_output_block_mappings = [
+        lo_mapping
+        for bm in output_block_mappings
+        for lo_mapping in bm.to_lojax(
+            self.index_map_avals,
+            self.index_map_tree,
+            self.grid,
+            self.vmapped_dims,
+        )
+    ]
+    new_num_inputs = len(updated_input_block_mappings)
+    new_num_outputs = len(updated_output_block_mappings)
+    updated_scratch_avals = [
+        lo_aval
+        for aval in self.scratch_avals
+        for lo_aval in (aval.lo_ty() if aval.is_high else [aval])
+    ]
+    updated_block_mappings = updated_input_block_mappings + updated_output_block_mappings
+    return self.replace(block_mappings=tuple(updated_block_mappings),
+                        num_inputs=new_num_inputs,
+                        num_outputs=new_num_outputs,
+                        scratch_avals=tuple(updated_scratch_avals))
 
   def __repr__(self):
     if self.debug:
