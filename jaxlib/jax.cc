@@ -322,7 +322,7 @@ NB_MODULE(_jax, m) {
           options.process_id = node_id;
           options.cpu_device_count = num_devices;
           std::unique_ptr<xla::PjRtClient> client =
-              xla::ValueOrThrow(xla::GetXlaPjrtCpuClient(std::move(options)));
+              xla::ValueOrThrow(xla::GetPjRtCpuClient(std::move(options)));
           xla::ifrt::PjRtClient::CreateOptions ifrt_options;
           ifrt_options.pjrt_client =
               std::shared_ptr<xla::PjRtClient>(std::move(client));
