@@ -606,6 +606,45 @@ def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
 
 // Integer packs are always signed at the moment.
 // Float to integer packing rounds to nearest even.
+// WARNING: pack(pack(a, b), pack(c, d)) == pack(a, b, c, d) only holds for
+// compressed packing!
+// Below, we use [ ... ] to denote the bounds of the vreg and use regular parens
+// ( ... ) to denote packing of multiple subelements into a single 32-bit word.
+//
+//                          Interleaved packing
+//
+// Interleaved packing downcasts to a narrower dtype, and packs multiple elements
+// into the same word coordinate from which they originated. If a and b are packed
+// values, then interleaved packing first iterates over the operand list and only
+// then over the subelements within each word.
+// Take 16-bit vregs A, B, C and D:
+///
+//   [ (A000 A001) (A010 A011) ... ]
+//   [ (A100 A101) (A110 A111) ... ]
+//   ...
+//
+// An interleaved pack(a, b) from 16-bit values produces:
+//
+//   [ (A000 B000 A001 B001) (A010 B010 A011 B011) ...]
+//   ...
+//
+// While an interleaved pack(a, b, c, d) produces the following subelements in
+// each vreg word:
+//
+//   [ (A000 B000 C000 D000 A001 B001 C001 D001) ... ]
+//   ...
+//
+//                          Compressed packing
+//
+// Compressed packing downcasts each value and then packs multiple rows together.
+// A compressed pack(a, b) from 16-bit values produces:
+//
+//  [ (A000 A001 A100 A101) (A010 A011 A110 A111) ... ]
+//  [ (A200 A201 A300 A301) (A210 A211 A310 A311) ... ]
+//  ... # 2 more sublanes
+//  [ (B000 B001 B100 B101) (B010 B011 B110 B111) ... ]
+//  [ (B200 B201 B300 B301) (B210 B211 B310 B311) ... ]
+//  ...
 def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure, SameTypeOperands]> {
   let arguments = (ins
     Variadic<TPU_Vreg>:$sources,
