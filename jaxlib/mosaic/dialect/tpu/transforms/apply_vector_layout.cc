@@ -4777,6 +4777,22 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
            << neutral << ", but got " << val;
   }
 
+  bool is_shape_invariant_mode =
+      ctx.shape_invariant_numerics && isa<FloatType>(element_type) &&
+      (multi_reduction_op.getKind() == vector::CombiningKind::ADD ||
+       multi_reduction_op.getKind() == vector::CombiningKind::MUL);
+  if (is_shape_invariant_mode &&
+      ((src_rank > 1 &&
+        src_layout.implicit_dim() != VectorLayout::ImplicitDim::kNone) ||
+       (src_rank == 1 && src_layout.implicit_dim() !=
+                             VectorLayout::ImplicitDim::kSecondMinor))) {
+    return multi_reduction_op.emitOpError(
+        "When shape_invariant_numerics is enabled, input type is a float type, "
+        "and reduction kind is ADD or MUL, input layout must have kSecondMinor "
+        "implicit dim for 1d input and kNone implicit dim for "
+        "multi-dimensional input");
+  }
+
   std::array<bool, 2> reduces;
   switch (src_layout.implicit_dim()) {
     case VectorLayout::ImplicitDim::kNone:
@@ -4798,6 +4814,14 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
           "Not implemented: Double implicit dimensions");
   }
 
+  if (is_shape_invariant_mode &&
+      !src_layout.hasNativeTiling(ctx.target_shape)) {
+    return multi_reduction_op.emitOpError(
+        "When shape_invariant_numerics is enabled, input type is a float type, "
+        "and reduction kind is ADD or MUL, input layout must have native "
+        "tiling");
+  }
+
   if ((reduces[0] || reduces[1]) &&
       !src_layout.hasNativeTiling(ctx.target_shape)) {
     return multi_reduction_op.emitOpError(
@@ -4816,6 +4840,12 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     // Offsets have to be equal, unless we're reducing over that dimension.
     if (src_layout.offsets()[i] != dst_layout.offsets()[i] && !reduces[i]) {
       return multi_reduction_op.emitOpError("Not implemented: Offset change");
+    }
+    if (is_shape_invariant_mode && src_layout.offsets()[i] != 0 && reduces[i]) {
+      return multi_reduction_op.emitOpError(
+          "When shape_invariant_numerics is enabled, input type is a float "
+          "type, and reduction kind is ADD or MUL, input layout must have zero "
+          "offsets over dimensions that are being reduced");
     }
   }
   VectorLayout::ImplicitDim dst_implicit_dim;
@@ -8857,6 +8887,7 @@ struct ApplyVectorLayoutPass
     max_sublanes_in_scratch = ctx.max_sublanes_in_scratch;
     vmem_banks = ctx.vmem_banks;
     max_shuffle_sublane_offset = ctx.max_shuffle_sublane_offset;
+    shape_invariant_numerics = ctx.shape_invariant_numerics;
   }
   void runOnOperation() override {
     // Fail if hardware_generation has not been set from the default value.
@@ -8871,6 +8902,7 @@ struct ApplyVectorLayoutPass
         .max_sublanes_in_scratch = max_sublanes_in_scratch,
         .vmem_banks = vmem_banks,
         .max_shuffle_sublane_offset = max_shuffle_sublane_offset,
+        .shape_invariant_numerics = shape_invariant_numerics,
     };
     if (failed(applyLayoutFunc(ctx, getOperation()))) {
       signalPassFailure();
