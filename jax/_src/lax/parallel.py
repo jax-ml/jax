@@ -27,6 +27,7 @@ from jax._src import core
 from jax._src import config
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import effects as effects_lib
 from jax._src import tree_util
 from jax._src.sharding_impls import (SPMDAxisContext, ShardingContext,
                                      NamedSharding, PartitionSpec as P)
@@ -1205,7 +1206,7 @@ def _psend_lowering_gpu(ctx, x, *, axis_name, perm):
   return send_op.results
 
 
-mlir.lowerable_effects.add_type(SingleSideCollectiveEffect)
+effects_lib.lowerable_effects.add_type(SingleSideCollectiveEffect)
 
 
 def _psend_abstract_eval(x, *, axis_name, **params):
