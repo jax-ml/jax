@@ -817,6 +817,9 @@ class VectorLayoutInferer {
                  "Expect a valid concatenate dimension");
     VectorType res_ty = op.getResult().getType();
 
+    // TODO(tlongeri): This logic is flawed in that it assumes kNone or
+    // kSecondMinor implicit dim. We force this in the tiled case, but it might
+    // it might make us hit it unnecessarily when we could do a no-op concat.
     std::optional<int64_t> tiling_dim;
     if (dimension == res_ty.getRank() - 1) {
       tiling_dim = 1;
@@ -841,6 +844,12 @@ class VectorLayoutInferer {
           res_rank == 1 ? ImplicitDim::kSecondMinor : ImplicitDim::kNone;
       std::array<int64_t, 2> vreg_slice =
           VectorLayout::vregSlice(target_shape_, bitwidth, tiling);
+
+      LayoutOffsets res_layout_offsets(
+          {first_layout->offsets()[0].value_or(0) % vreg_slice[0],
+           first_layout->offsets()[1].value_or(0) % vreg_slice[1]});
+      res_layout_offsets[tiling_dim.value()] = 0;
+
       for (int i = 0; i < op.getSources().size(); ++i) {
         // Compute the offset per source.
         // Ex: for a cat of (10, 128), (10, 128) on dim 0, where the
@@ -849,29 +858,22 @@ class VectorLayoutInferer {
         // by 2, so the offset for the second input is 2.
         ArrayRef<int64_t> op_shape =
             cast<VectorType>(op.getSources()[i].getType()).getShape();
-        Layout op_layout = op_layouts[i];
         int64_t offset_amount = starting_point % vreg_slice[tiling_dim.value()];
+        LayoutOffsets in_offsets = res_layout_offsets;
         if (offset_amount >= tiling[tiling_dim.value()]) {
           return op.emitError(
               "Not implemented: Input offsets outside of the first tile");
         }
-        SmallVector<int64_t> in_idx{op_layout->offsets()[0].value_or(0),
-                                    op_layout->offsets()[1].value_or(0)};
-        in_idx[tiling_dim.value()] = offset_amount;
+        in_offsets[tiling_dim.value()] = offset_amount;
         starting_point += op_shape[dimension];
-        in_layouts.push_back(VectorLayout(bitwidth, {in_idx[0], in_idx[1]},
-                                          tiling, implicit_dim));
+        in_layouts.push_back(
+            VectorLayout(bitwidth, in_offsets, tiling, implicit_dim));
       }
-      SmallVector<int64_t> res_layout_offsets(
-          {first_layout->offsets()[0].value_or(0),
-           first_layout->offsets()[1].value_or(0)});
-      res_layout_offsets[tiling_dim.value()] = 0;
       // TODO(mvoz): A tiny optimization we could do here later is to
       // no-op setting tiling when sublane dim size is aligned to sublane
       // tiling.
       VectorLayout res_layout =
-          VectorLayout(bitwidth, {res_layout_offsets[0], res_layout_offsets[1]},
-                       tiling, implicit_dim);
+          VectorLayout(bitwidth, res_layout_offsets, tiling, implicit_dim);
       setLayout(op, in_layouts, res_layout);
       return success();
     } else {
