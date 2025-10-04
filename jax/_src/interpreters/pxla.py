@@ -150,7 +150,7 @@ def shard_args(
     for i, out in safe_zip(indices, outs):
       results[i] = out
   assert all(result is not None for result in results)
-  return results
+  return cast(list[xc.ArrayImpl], results)  # DNS: sort this out.
 
 
 shard_arg_handlers: dict[

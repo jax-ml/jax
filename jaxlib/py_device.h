@@ -59,8 +59,10 @@ class PyDevice {
   absl::StatusOr<nb_class_ptr<PyMemorySpace>> Memory(
       std::string_view kind) const;
   absl::StatusOr<nb_class_ptr<PyMemorySpace>> DefaultMemory() const;
-  nanobind::list AddressableMemories() const;
-  absl::StatusOr<std::optional<nanobind::dict>> MemoryStats() const;
+  nanobind::typed<nanobind::list, PyMemorySpace> AddressableMemories() const;
+  absl::StatusOr<
+      std::optional<nanobind::typed<nanobind::dict, nanobind::str, int>>>
+  MemoryStats() const;
 
   absl::StatusOr<std::intptr_t> GetStreamForExternalReadyEvents() const;
 

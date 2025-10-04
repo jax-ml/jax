@@ -118,7 +118,7 @@ def load_pjrt_plugin_dynamically(plugin_name: str, library_path: str) -> Any:
 
 
 def load_pjrt_plugin_with_c_api(plugin_name: str, c_api: Any) -> None:
-  return _xla.load_pjrt_plugin(plugin_name, None, c_api)
+  _xla.load_pjrt_plugin(plugin_name, None, c_api)
 
 
 def pjrt_plugin_initialized(plugin_name: str) -> bool:

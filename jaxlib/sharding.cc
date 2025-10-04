@@ -196,16 +196,16 @@ bool NamedSharding::Eq(const nanobind::object& other) const {
   return this == other_sharding || *this == *other_sharding;
 }
 
-nb::object NamedSharding::Hash() const {
+nb::int_ NamedSharding::Hash() const {
   // Caution: you may need to update HashShardingForJit in jax_jit.cc as well.
-  return hash_.Get([&]() {
+  return nb::cast<nb::int_>(hash_.Get([&]() {
     size_t h =
         absl::HashOf(nb::hash(mesh_), spec_->Hash(), nb::hash(memory_kind_),
                      nb::hash(logical_device_ids_));
     Py_hash_t s = absl::bit_cast<Py_hash_t>(h);  // Python hashes are signed.
     return nb::cast(
         s == -1 ? -2 : s);  // -1 must not be used as a Python hash value.
-  });
+  }));
 }
 
 SingleDeviceSharding::SingleDeviceSharding(nb::object device,
@@ -297,7 +297,7 @@ void RegisterSharding(nb::module_& m) {
                    [](const NamedSharding& s) {
                      return xla::ValueOrThrow(s.internal_device_list());
                    })
-      .def("__eq__", &NamedSharding::Eq, nb::arg().none())
+      .def("__eq__", &NamedSharding::Eq, nb::arg(), nb::is_operator())
       .def("__hash__", &NamedSharding::Hash);
   NamedSharding::InitializeType();
 
@@ -336,10 +336,12 @@ void RegisterSharding(nb::module_& m) {
       .def(nb::init<nb_class_ptr<PyDeviceList>, xla::HloSharding, nb::object>(),
            nb::arg("devices"), nb::arg("op_sharding"),
            nb::arg("memory_kind").none() = nb::none())
-      .def(nb::init<nb::sequence, xla::OpSharding, nb::object>(),
+      .def(nb::init<nb::typed<nb::sequence, PyDevice>, xla::OpSharding,
+                    nb::object>(),
            nb::arg("devices"), nb::arg("op_sharding"),
            nb::arg("memory_kind").none() = nb::none())
-      .def(nb::init<nb::sequence, xla::HloSharding, nb::object>(),
+      .def(nb::init<nb::typed<nb::sequence, PyDevice>, xla::HloSharding,
+                    nb::object>(),
            nb::arg("devices"), nb::arg("op_sharding"),
            nb::arg("memory_kind").none() = nb::none())
       .def_prop_ro("_devices", &GSPMDSharding::devices)
