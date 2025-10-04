@@ -46,6 +46,7 @@ nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
 all_shapes = nonempty_array_shapes + empty_array_shapes
 
 @unittest.skipIf(not torch, "Test requires PyTorch")
+@jtu.thread_unsafe_test_class()  # TODO(phawkins): debug the source of crashes
 class DLPackTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
