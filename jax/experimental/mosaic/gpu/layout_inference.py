@@ -1086,17 +1086,33 @@ def _custom_primitive_equation_system(
     ctx: DerivationContext,
     op: mgpu.CustomPrimitiveOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
-  del ctx
   assignments: dict[eqns.Variable, eqns.Constant] = {}
+  equations: list[eqns.Equation] = []
   in_layouts = iter(op.in_layouts)
+  in_transforms = iter(op.in_transforms)
   variables: list[eqns.Variable] = []
   for i, operand in enumerate(op.operands):
-    if ir.VectorType.isinstance(operand.type):
+    if is_vector(operand):
       v = eqns.Variable(OperandOrResult(op, VariableType.OPERAND, i))
       variables.append(v)
       assignments[v] = eqns.RegisterLayout(
           layouts_lib.from_layout_attr(next(in_layouts))
       )
+    elif ctx.enable_smem_inference and _is_smem_ref(operand):
+      # Here we need to create a new variable, even though it is equal to the
+      # source operand. This is because we directly assign the new variable and
+      # if we did that to the source there could be conflicting assignments.
+      # For example, the same ref could be passed into the custom op twice with
+      # different transforms, which needs to yield an unsatisfiable system.
+      operand_or_result = OperandOrResult(op, VariableType.OPERAND, i)
+      source_var = ctx.producer_ref(operand_or_result)
+      v = eqns.Variable(operand_or_result)
+      equations.append(eqns.Equation(lhs=source_var, rhs=v))
+      variables.append(v)
+      transforms = next(in_transforms)
+      ref_ty = operand_or_result.value.type
+      tiling = _extract_smem_tiling_from_custom_transform_attrs(ref_ty, transforms)
+      assignments[v] = tiling
 
   out_layouts = iter(op.out_layouts)
   for i, result in enumerate(op.results):
@@ -1107,7 +1123,7 @@ def _custom_primitive_equation_system(
           layouts_lib.from_layout_attr(next(out_layouts))
       )
   return (
-      eqns.EquationSystem(assignments=assignments),
+      eqns.EquationSystem(equations=equations, assignments=assignments),
       {v: [v.key] for v in variables},
       [],
   )
@@ -1281,6 +1297,53 @@ def _slice_smem_equation_system(
   return (eqns.EquationSystem(), {res_var: [res]}, [])
 
 
+@_add_equation_system_derivation_rule(memref.SubViewOp)
+def _memref_subview_equation_system(
+    ctx: DerivationContext,
+    op: memref.SubViewOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  source = OperandOrResult(op, VariableType.OPERAND, 0)
+  source_var = ctx.producer_ref(source)
+  dest = OperandOrResult(op, VariableType.RESULT, 0)
+  dest_var = eqns.Variable(dest)
+
+  # Note that even though we have source_var equal to dest_var, we should still
+  # use two different variables here. The reason is that the shapes of the
+  # ir values these variables refer to are not necessarily the same and these
+  # shapes are used during the layout inference.
+  equations = [eqns.Equation(source_var, dest_var)]
+
+  # Collect all the constraints from all dimensions.
+  dimensions_to_tile = []
+  index_of_last_dynamic_size = None
+  dynamic_offset_index = 0
+  for i, size in enumerate(op.static_sizes):
+    if ir.ShapedType.is_dynamic_size(size):
+      index_of_last_dynamic_size = i
+
+    offset = op.static_offsets[i]
+    if ir.ShapedType.is_dynamic_size(offset):
+      offset = op.offsets[dynamic_offset_index]
+      dynamic_offset_index += 1
+
+    dims = (op.static_sizes[i], op.source.type.shape[i], offset)
+    dimensions_to_tile.append(dims)
+
+  # Drop all dimensions up to and including the last dynamic size. Dynamic
+  # sizes are not supported yet. Note that is not trivial to directly compute
+  # the final array in the loop above, because we need to keep track of the
+  # dynamic offsets.
+  if index_of_last_dynamic_size is not None:
+    dimensions_to_tile = dimensions_to_tile[index_of_last_dynamic_size + 1 :]
+
+  constraints = [eqns.Divides(dest_var, tuple(dimensions_to_tile))]
+  return (
+      eqns.EquationSystem(constraints=constraints, equations=equations),
+      {source_var: [source], dest_var: [dest]},
+      [],
+  )
+
+
 # TODO(b/447079781): Check whether we still need this rule. Normally,
 # DynamicSharedMemory is only generated in the lowering pass. If there is
 # another case where a ViewOp is generated beforehand, and this rule cannot be
@@ -1329,6 +1392,35 @@ def _memref_cast_op_equation_system(
   )
 
 
+@_add_equation_system_derivation_rule(memref.TransposeOp)
+def _memref_transpose_op_equation_system(
+    ctx: DerivationContext,
+    op: memref.TransposeOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  in_ty = ir.MemRefType(op.in_.type)
+  if len(in_ty.shape) != 2:
+    raise NotImplementedError(f"Only 2D memrefs are supported, got {in_ty}")
+  in_strides, _ = in_ty.get_strides_and_offset()
+  out_strides, _ = ir.MemRefType(op.result.type).get_strides_and_offset()
+  transpose = in_strides != out_strides
+
+  source = OperandOrResult(op, VariableType.OPERAND, 0)
+  dest = OperandOrResult(op, VariableType.RESULT, 0)
+
+  if not transpose:
+    var = ctx.producer_ref(source)
+    return (eqns.EquationSystem(), {var: [source, dest]}, [])
+
+  source_var = ctx.producer_ref(source)
+  dest_var = eqns.Variable(dest)
+  equations = [
+      eqns.Equation(source_var, eqns.Transpose(dest_var)),
+      eqns.Equation(eqns.Transpose(source_var), dest_var),
+  ]
+  system = eqns.EquationSystem(equations=equations)
+  return system, {source_var: [source], dest_var: [dest]}, []
+
+
 # `memref.load` and `memref.store` are used to load barrier phases which are
 # scalars---the rule needn't do anything interesting, but we need to have it.
 @_add_equation_system_derivation_rule(memref.LoadOp)
@@ -1352,16 +1444,11 @@ def _memref_load_store_op_equation_system(
   return eqns.EquationSystem(assignments=assignments), {var: [ref]}, []
 
 
-@_add_equation_system_derivation_rule(mgpu.WithTransformsOp)
-def _with_transforms_equation_system(
-    ctx: DerivationContext,
-    op: mgpu.WithTransformsOp,
-) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
-  source = OperandOrResult(op, VariableType.OPERAND, 0)
-  dest = OperandOrResult(op, VariableType.RESULT, 0)
-  var = ctx.producer_ref(source)
-
-  transforms = [layouts_lib.from_transform_attr(x) for x in op.transforms]
+def _extract_smem_tiling_from_custom_transform_attrs(
+    ref_type : ir.MemRefType,
+    transform_attrs: ir.ArrayAttr,
+) -> eqns.SMEMTiling:
+  transforms = [layouts_lib.from_transform_attr(x) for x in transform_attrs]
   match transforms:
     case []:
       tile_transform = None
@@ -1376,16 +1463,26 @@ def _with_transforms_equation_system(
       raise NotImplementedError(f"Unsupported transforms {transforms}")
 
   if swizzle is not None:
-    computed_swizzle = _compute_swizzle(op.ref.type, tile_transform)
+    computed_swizzle = _compute_swizzle(ref_type, tile_transform)
     if computed_swizzle != swizzle:
       raise NotImplementedError(
           f"Cannot honor caller-provided swizzle {swizzle} that is different "
-          f"from the computed swizle {computed_swizzle} on op {op}."
+          f"from the computed swizle {computed_swizzle} for type {ref_type}."
       )
 
-  assignments: dict[eqns.Variable, eqns.Constant] = {
-      var: eqns.SMEMTiling(tile_transform)
-  }
+  return eqns.SMEMTiling(tile_transform)
+
+
+@_add_equation_system_derivation_rule(mgpu.WithTransformsOp)
+def _with_transforms_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.WithTransformsOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  source = OperandOrResult(op, VariableType.OPERAND, 0)
+  dest = OperandOrResult(op, VariableType.RESULT, 0)
+  var = ctx.producer_ref(source)
+  tiling = _extract_smem_tiling_from_custom_transform_attrs(op.ref.type, op.transforms)
+  assignments: dict[eqns.Variable, eqns.Constant] = {var: tiling}
   return eqns.EquationSystem(assignments=assignments), {var: [source, dest]}, []
 
 
