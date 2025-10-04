@@ -61,8 +61,8 @@ from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
 from jax._src.mesh import get_abstract_mesh, get_concrete_mesh
 from jax._src.lax.utils import (
-  input_dtype, dtype_to_string, standard_abstract_eval,
-  standard_multi_result_abstract_eval, standard_primitive)
+  input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
+  standard_primitive)
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -4972,7 +4972,11 @@ def _convert_elt_type_pp_rule(eqn, context, settings):
     del params['sharding']  # don't show trivial case
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 
-convert_element_type_p = Primitive('convert_element_type')
+convert_element_type_p = standard_primitive(
+    _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
+    'convert_element_type', weak_type_rule=_convert_element_type_weak_type_rule,
+    sharding_rule=_convert_element_type_sharding_rule,
+    vma_rule=partial(core.standard_vma_rule, 'convert_element_type'))
 
 # TODO(dougalm): I'm overriding bind_with_trace here because that's the closest thing to
 # the old "custom bind" but it might not be the best way to do this.
@@ -4986,13 +4990,6 @@ def _convert_element_type_bind_with_trace(trace, args, params):
 convert_element_type_p.def_bind_with_trace(_convert_element_type_bind_with_trace)
 
 convert_element_type_p.def_impl(partial(dispatch.apply_primitive, convert_element_type_p))
-convert_element_type_p.def_abstract_eval(
-    partial(standard_abstract_eval, convert_element_type_p,
-            _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
-            _convert_element_type_weak_type_rule,
-            _convert_element_type_sharding_rule,
-            partial(core.standard_vma_rule, convert_element_type_p.name),
-            None, None))
 ad.defjvp2(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 
