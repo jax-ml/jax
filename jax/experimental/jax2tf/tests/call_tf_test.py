@@ -871,6 +871,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
       jax2tf.call_tf(tf_fun)(jax_array_on_gpu)
 
 
+@jtu.thread_unsafe_test_class()
 class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
   """Reloading output of jax2tf into JAX with call_tf."""
 

@@ -232,6 +232,7 @@ def check_shape_poly(tst, f_jax: Callable, *,
   return h.run_test(tst)
 
 
+@jtu.thread_unsafe_test_class()
 class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
   def test_simple_unary(self):
