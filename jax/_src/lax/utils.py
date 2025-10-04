@@ -69,11 +69,15 @@ def _get_abstract_mesh_from_avals(in_avals) -> mesh_lib.AbstractMesh:
     m = a.sharding.mesh
   return mesh_lib.empty_abstract_mesh if m is None else m
 
-def call_unreduced_rule(prim, unreduced_rule, out_s, *avals, **kwargs):
+def call_unreduced_rule(prim, unreduced_rule, out_s, num_out, *avals, **kwargs):
   if unreduced_rule is not None:
     return unreduced_rule(out_s, *avals, **kwargs)
 
   if any(a.sharding.spec.unreduced for a in avals):
+    raise NotImplementedError(
+        f'unreduced rule for {prim.name} is not implemented. Please file an'
+        ' issue at https://github.com/jax-ml/jax/issues')
+  if any(s.spec.unreduced for s in ([out_s] if num_out is None else out_s)):
     raise NotImplementedError(
         f'unreduced rule for {prim.name} is not implemented. Please file an'
         ' issue at https://github.com/jax-ml/jax/issues')
@@ -85,9 +89,11 @@ def call_sharding_rule(prim, sh_rule, unreduced_rule, num_out, *avals, **kwargs)
   if ((cur_mesh.empty or cur_mesh._are_all_axes_auto_or_manual) and
       (aval_mesh.empty or aval_mesh._are_all_axes_auto_or_manual)):
     aval_mesh = cur_mesh if aval_mesh.empty else aval_mesh
-    s = NamedSharding(aval_mesh, P())
-    s = call_unreduced_rule(prim, unreduced_rule, s, *avals, **kwargs)
-    return s if num_out is None else [s] * num_out
+    out_s = NamedSharding(aval_mesh, P())
+    out_s = out_s if num_out is None else [out_s] * num_out
+    out_s = call_unreduced_rule(prim, unreduced_rule, out_s, num_out,
+                                *avals, **kwargs)
+    return out_s
   if sh_rule is None:
     raise core.ShardingTypeError(
         f'sharding rule for {prim.name} is not implemented. Please file an'
@@ -96,7 +102,7 @@ def call_sharding_rule(prim, sh_rule, unreduced_rule, num_out, *avals, **kwargs)
         ' mode via: `jax.sharding.auto_axes(fun, out_shardings=...)`')
   out_sharding = sh_rule(*avals, **kwargs)
   out_sharding = call_unreduced_rule(prim, unreduced_rule, out_sharding,
-                                     *avals, **kwargs)
+                                     num_out, *avals, **kwargs)
   return out_sharding
 
 def call_shape_dtype_sharding_rule(prim, shape_rule, dtype_rule, sharding_rule,

@@ -9375,8 +9375,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ' same'):
       f(arr1, arr2)
 
+  @parameterized.named_parameters(
+      ('custom_vjp', True),
+      ('grad', False),
+  )
   @jtu.with_explicit_mesh((2,), 'x')
-  def test_scan_over_layers_minibatch_unreduced(self, mesh):
+  def test_scan_over_layers_minibatch_unreduced(self, use_custom_vjp, mesh):
     if ifrt_version < 30:
       self.skipTest('Requires ifrt_version >= 30')
     if not jtu.if_cloud_tpu_at_least(2025, 9, 21):
@@ -9385,17 +9389,21 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     def assert_unreduced(val):
       self.assertEqual(val.aval.sharding.spec.unreduced, {'x'})
 
-    @jax.custom_vjp
-    def f(xs, w):
-      return jnp.dot(xs, w)
+    if use_custom_vjp:
+      @jax.custom_vjp
+      def f(xs, w):
+        return jnp.dot(xs, w)
 
-    def f_fwd(xs, w):
-      return f(xs, w), (xs, w)
+      def f_fwd(xs, w):
+        return f(xs, w), (xs, w)
 
-    def f_bwd(res, g):
-      xs, w = res
-      return jnp.dot(g, w), jnp.dot(xs.T, g, out_sharding=P(unreduced={'x'}))
-    f.defvjp(f_fwd, f_bwd)
+      def f_bwd(res, g):
+        xs, w = res
+        return jnp.dot(g, w), jnp.dot(xs.T, g, out_sharding=P(unreduced={'x'}))
+      f.defvjp(f_fwd, f_bwd)
+    else:
+      def f(xs, w):
+        return jnp.dot(xs, w)
 
     def model(stacked_ws, xs_mubatch):
       def scan_over_layers(carry_xs, w):
@@ -9423,7 +9431,14 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return jax.tree.map(
           lambda W, g: W - g * 0.01, stacked_ws, stacked_grad_acc)
 
-    ws = tuple(jax.device_put(jnp.ones((4, 4)), P()) for _ in range(4))
+    if use_custom_vjp:
+      ws = tuple(jax.device_put(jnp.ones((4, 4)), P()) for _ in range(4))
+    else:
+      # Mark `w` with `reduced={'x'}` so that on the bwd pass we will induce
+      # an `unreduced={'x'}`.
+      ws = tuple(jax.device_put(jnp.ones((4, 4)), P(reduced={'x'}))
+                 for _ in range(4))
+
     xs = jax.device_put(jnp.ones((2, 2, 4)), P(None, 'x', None))
     stacked_ws = jnp.stack(ws, axis=0)
     step(stacked_ws, xs)  # doesn't crash
