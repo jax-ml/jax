@@ -1670,6 +1670,15 @@ def _dynamic_update_slice_sharding_rule(operand, update, *start_indices):
         f" {update.str_short(mesh_axis_types=True)}.")
   return operand.sharding
 
+def _dynamic_update_slice_unreduced_rule(out_s, operand, update, *start_indices):
+  if operand.sharding.spec.unreduced != update.sharding.spec.unreduced:
+    raise core.ShardingTypeError(
+        "dynamic_update_slice operand and update must be unreduced along the"
+        " same axes. Got operand sharding"
+        f" {operand.str_short(mesh_axis_types=True)} and update sharding"
+        f" {update.str_short(mesh_axis_types=True)}.")
+  return out_s
+
 def _dynamic_update_slice_dtype_rule(operand, update, *start_indices):
   lax.check_same_dtypes("dynamic_update_slice", operand, update)
   if any(i.dtype != start_indices[0].dtype or
@@ -1735,7 +1744,8 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
 dynamic_update_slice_p = standard_primitive(
     _dynamic_update_slice_shape_rule, _dynamic_update_slice_dtype_rule,
     'dynamic_update_slice', sharding_rule=_dynamic_update_slice_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'dynamic_update_slice'))
+    vma_rule=partial(core.standard_vma_rule, 'dynamic_update_slice'),
+    unreduced_rule=_dynamic_update_slice_unreduced_rule)
 ad.primitive_jvps[dynamic_update_slice_p] = _dynamic_update_slice_jvp
 ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule

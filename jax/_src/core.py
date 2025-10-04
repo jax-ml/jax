@@ -3090,7 +3090,9 @@ def _map_shaped_array(
   assert axis is None or aval.shape[axis] == size
   if axis is None:
     return aval
-  sharding = aval.sharding.update(spec=tuple_delete(aval.sharding.spec, axis))
+  aval_s = aval.sharding
+  sharding = aval_s.update(
+      spec=aval_s.spec.update(partitions=tuple_delete(aval_s.spec, axis)))
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
                      weak_type=aval.weak_type, sharding=sharding, vma=aval.vma,
                      memory_space=aval.memory_space)
@@ -3101,8 +3103,9 @@ def _unmap_shaped_array(
   if axis is None:
     return aval
   elif type(axis) is int:
-    sharding = aval.sharding.update(spec=tuple_insert(
-        aval.sharding.spec, axis, explicit_mesh_axis))
+    aval_s = aval.sharding
+    sharding = aval_s.update(spec=aval_s.spec.update(partitions=tuple_insert(
+        aval_s.spec, axis, explicit_mesh_axis)))
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
                        weak_type=aval.weak_type, sharding=sharding,
                        vma=aval.vma, memory_space=aval.memory_space)

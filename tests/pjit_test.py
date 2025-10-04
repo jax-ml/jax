@@ -9375,6 +9375,67 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ' same'):
       f(arr1, arr2)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_scan_over_layers_minibatch_unreduced(self, mesh):
+    if ifrt_version < 30:
+      self.skipTest('Requires ifrt_version >= 30')
+    if not jtu.if_cloud_tpu_at_least(2025, 9, 21):
+      self.skipTest("Requires libtpu built after 2025-09-21")
+
+    def assert_unreduced(val):
+      self.assertEqual(val.aval.sharding.spec.unreduced, {'x'})
+
+    @jax.custom_vjp
+    def f(xs, w):
+      return jnp.dot(xs, w)
+
+    def f_fwd(xs, w):
+      return f(xs, w), (xs, w)
+
+    def f_bwd(res, g):
+      xs, w = res
+      return jnp.dot(g, w), jnp.dot(xs.T, g, out_sharding=P(unreduced={'x'}))
+    f.defvjp(f_fwd, f_bwd)
+
+    def model(stacked_ws, xs_mubatch):
+      def scan_over_layers(carry_xs, w):
+        return f(carry_xs, w), None
+      final_xs, _ = jax.lax.scan(scan_over_layers, xs_mubatch, stacked_ws)
+      return jnp.sum(final_xs)
+
+    @partial(jax.jit, donate_argnums=(0,))
+    def step(stacked_ws, xs):
+      def mubatch_loop_body(stacked_grad_acc, xs_mubatch):
+        grad = jax.grad(model)(stacked_ws, xs_mubatch)
+        assert_unreduced(grad)
+        assert_unreduced(stacked_grad_acc)
+        stacked_grad_acc = jax.tree.map(jnp.add, stacked_grad_acc, grad)
+        assert_unreduced(stacked_grad_acc)
+        return stacked_grad_acc, None
+
+      stacked_grad_acc = jax.tree.map(jnp.zeros_like, stacked_ws)
+      stacked_grad_acc = reshard(stacked_grad_acc, P(unreduced={'x'}))
+      stacked_grad_acc, _ = jax.lax.scan(
+          mubatch_loop_body, stacked_grad_acc, xs)
+      assert_unreduced(stacked_grad_acc)
+      # AR once for a batch
+      stacked_grad_acc = reshard(stacked_grad_acc, P())
+      return jax.tree.map(
+          lambda W, g: W - g * 0.01, stacked_ws, stacked_grad_acc)
+
+    ws = tuple(jax.device_put(jnp.ones((4, 4)), P()) for _ in range(4))
+    xs = jax.device_put(jnp.ones((2, 2, 4)), P(None, 'x', None))
+    stacked_ws = jnp.stack(ws, axis=0)
+    step(stacked_ws, xs)  # doesn't crash
+
+    compiled_text = step.lower(stacked_ws, xs).compile().as_text()
+    if compiled_text is not None:
+      if jtu.test_device_matches(['gpu']):
+        self.assertEqual(compiled_text.count('all-reduce-start('), 1)
+        self.assertEqual(compiled_text.count('all-reduce-done('), 1)
+      else:
+        self.assertEqual(compiled_text.count('all-reduce('), 1)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

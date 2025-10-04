@@ -531,6 +531,7 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
   # knows not to AR at the boundary of while. This is a no-op at the trace level
   # but during lowering time, it inserts an extra sharding constraint.
   carry = tree_map(_constrain_unreduced, carry)
+  ys = tree_map(_constrain_unreduced, ys)
   return [*carry, *ys]
 
 def _constrain_unreduced(val):
@@ -544,7 +545,8 @@ def _split_leading(sz, x):
 def _concat(a, b): return lax.concatenate([a, b], 0)
 
 def _empty_array(prefix, length_spec, aval):
-  sharding = aval.sharding.update(spec=(*length_spec, *aval.sharding.spec))
+  sharding = aval.sharding.update(spec=aval.sharding.spec.update(
+      partitions=(*length_spec, *aval.sharding.spec)))
   # TODO(yashkatariya): Replace `lax.empty2` with `lax.empty` once
   # AllocateBuffer issues are fixed. Also delete `empty2` after this usage is
   # removed. Basically uncomment the following 2 lines.

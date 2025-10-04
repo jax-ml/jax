@@ -6528,7 +6528,8 @@ def _broadcast_in_dim_sharding_rule(operand, *, shape, broadcast_dimensions,
   orig_spec = iter(operand.sharding.spec)
   new_spec = [next(orig_spec) if i in bds else None for i in range(len(shape))]
   assert next(orig_spec, None) is None
-  return operand.sharding.update(spec=new_spec)
+  return operand.sharding.update(
+      spec=operand.sharding.spec.update(partitions=new_spec))
 
 def _broadcast_in_dim_typecheck_rule(
     _, operand, *dyn_shape, shape, broadcast_dimensions, sharding):
