@@ -1487,6 +1487,7 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(some_src_layout, "missing vector layout");
     auto layout = *some_src_layout;
     const unsigned bitwidth = src_ty.getElementTypeBitWidth();
+    const int8_t packing = kNativeBitwidth / bitwidth;
     const std::array<int64_t, 2> native_tiling = nativeTiling(bitwidth);
     const std::array<int64_t, 2> src_tiled_ishape =
         layout.getImplicitTiledDims(src_shape, 1);
@@ -1615,16 +1616,21 @@ class VectorLayoutInferer {
     // a continuous slice of the flatten data.
     auto small_second_minor_tiling_layout =
         [&](ArrayRef<int64_t> shape) -> std::optional<VectorLayout> {
-      if (shape.size() < 2 ||
-          (target_shape_[0] * target_shape_[1]) % shape.back() != 0) {
+      const int64_t elements_per_vreg = native_tiling[0] * native_tiling[1];
+      if (shape.size() < 2 || elements_per_vreg % shape.back() != 0) {
         return std::nullopt;
       }
-      // TODO(b/440370770): Add support for other bitwidths.
-      if (bitwidth != kNativeBitwidth) {
+      // TODO(b/440370770): TPUv4- lowering is buggy. Fix it and benchmark.
+      if (bitwidth > 32 || bitwidth < 8 ||
+          (bitwidth == 8 && hardware_generation_ < 5)) {
         return std::nullopt;
       }
-      int64_t second_minor_tiling =
-          target_shape_[0] * target_shape_[1] / shape.back();
+      int64_t second_minor_tiling = elements_per_vreg / shape.back();
+      // Only accept valid 2D layouts.
+      if (second_minor_tiling % packing != 0 ||
+          second_minor_tiling > native_tiling[0]) {
+        return std::nullopt;
+      }
       // TODO(b/440370770): Preserve replicated offsets.
       auto layout = VectorLayout(bitwidth, {0, 0},
                                  {second_minor_tiling, target_shape_[1]},
@@ -1638,8 +1644,8 @@ class VectorLayoutInferer {
     };
 
     // Use the small tiling if there's no padding and each vreg holds a
-    // contiguous slice of the flattened data. It makes reshape a sublane
-    // shuffle within a vreg.
+    // contiguous slice of the flattened data. It makes reshape a row shuffle
+    // within a vreg.
     //
     // For example,
     // - (4, 256) with (4, 128) tiling to (1, 1024) with (1, 128) tiling is
