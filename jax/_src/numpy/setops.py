@@ -157,6 +157,9 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
     Array([1, 2, 0, 0], dtype=int32)
   """
   arr1, arr2 = ensure_arraylike("setdiff1d", ar1, ar2)
+  arr1 = arr1.ravel()
+  arr2 = arr2.ravel()
+
   if size is None:
     core.concrete_or_error(None, ar1, "The error arose in setdiff1d()")
   else:
