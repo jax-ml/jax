@@ -32,6 +32,45 @@ package(
 jax_generate_backend_suites()
 
 jax_multiplatform_test(
+    name = "run_repro_as_test",
+    srcs = ["run_repro_as_test.py"],
+    disable_configs = [
+        "cpu",  # Only x32 mode; use JAX_
+    ],
+    enable_backends = [
+        "cpu",
+    ],
+    shard_count = 1,
+    deps = [
+        "//third_party/py/jax/_src:core",
+        "//third_party/py/jax/_src:repro_runtime",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "repro_test",
+    srcs = ["repro_test.py"],
+    disable_configs = [
+        "cpu_x32",
+    ],
+    enable_backends = [
+        "cpu",
+    ],
+    shard_count = 1,
+    deps = [
+        "//third_party/py/jax/_src:core",
+        "//third_party/py/jax/_src:repro_runtime",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+
+jax_multiplatform_test(
     name = "api_test",
     srcs = ["api_test.py"],
     enable_configs = ["tpu_v3_x4"],
