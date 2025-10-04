@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import concurrent.futures
 from functools import partial
 import glob
 import os
@@ -28,6 +29,7 @@ import jax
 import jax.numpy as jnp
 import jax.profiler
 import jax._src.test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax._src import profiler
 from jax import jit
 
@@ -45,17 +47,21 @@ except ImportError:
 jax.config.parse_flags_with_absl()
 
 
-@jtu.thread_unsafe_test_class()  # profiler isn't thread-safe
+# We do not allow multiple concurrent profiler sessions.
+@jtu.thread_unsafe_test_class()
 class ProfilerTest(unittest.TestCase):
   # These tests simply test that the profiler API does not crash; they do not
   # check functional correctness.
 
   def setUp(self):
-    if sys.version_info >= (3, 14) and jtu.TEST_NUM_THREADS.value > 1:
-      # TODO(phawkins): try reenabling these after
-      # https://github.com/python/cpython/issues/132817 is fixed. Simply
-      # installing the profiler hook is unsafe if there are multiple threads.
-      self.skipTest("Profiler tests are not thread-safe under Python 3.14")
+    if (
+        sys.version_info < (3, 14)
+        and hasattr(sys, "_is_gil_enabled")
+        and not sys._is_gil_enabled()
+    ):
+      self.skipTest(
+          "Profiler tests are not thread-safe under Python 3.13 free threading"
+      )
 
     super().setUp()
     self.worker_start = threading.Event()
@@ -88,6 +94,35 @@ class ProfilerTest(unittest.TestCase):
         jax.profiler.start_trace(tmpdir)
         jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(
             jnp.ones(jax.local_device_count()))
+      finally:
+        jax.profiler.stop_trace()
+
+      proto_path = glob.glob(os.path.join(tmpdir, "**/*.xplane.pb"),
+                             recursive=True)
+      self.assertEqual(len(proto_path), 1)
+      with open(proto_path[0], "rb") as f:
+        proto = f.read()
+      # Sanity check that serialized proto contains host, device, and
+      # Python traces without deserializing.
+      self.assertIn(b"/host:CPU", proto)
+      if jtu.test_device_matches(["tpu"]):
+        self.assertIn(b"/device:TPU", proto)
+      self.assertIn(b"pxla.py", proto)
+
+  @unittest.skipIf(
+      jaxlib_extension_version < 379, "Requires jaxlib 0.8 or later."
+  )
+  def testProgrammaticProfilingConcurrency(self):
+    def work():
+      x = jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(
+          jnp.ones(jax.local_device_count()))
+      jax.block_until_ready(x)
+    with tempfile.TemporaryDirectory() as tmpdir:
+      try:
+        jax.profiler.start_trace(tmpdir)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+          for _ in range(10):
+            executor.submit(work)
       finally:
         jax.profiler.stop_trace()
 
