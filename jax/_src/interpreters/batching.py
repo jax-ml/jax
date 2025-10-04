@@ -721,38 +721,6 @@ def _batch_inner(f: Callable, axis_data, out_dim_dests, tag, in_dims, *in_vals):
                      range(len(outs)), outs, out_dim_dests)
   return out_vals, trace
 
-# NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
-def vtile(f_flat: lu.WrappedFun,
-          in_axes_flat: tuple[int | None, ...],
-          out_axes_flat: tuple[int | None, ...],
-          tile_size: int | None,
-          axis_name: AxisName):
-  @curry
-  def tile_axis(arg, axis: int | None, tile_size):
-    if axis is None:
-      return arg
-    shape = list(arg.shape)
-    shape[axis:axis+1] = [tile_size, shape[axis] // tile_size]
-    return arg.reshape(shape)
-
-  def untile_axis(out, axis: int | None):
-    if axis is None:
-      return out
-    shape = list(out.shape)
-    shape[axis:axis+2] = [shape[axis] * shape[axis+1]]
-    return out.reshape(shape)
-
-  @lu.transformation2
-  def _map_to_tile(f, *args_flat):
-    sizes = (x.shape[i] for x, i in safe_zip(args_flat, in_axes_flat) if i is not None)
-    tile_size_ = tile_size or next(sizes, None)
-    assert tile_size_ is not None, "No mapped arguments?"
-    outputs_flat = f(*map(tile_axis(tile_size=tile_size_), args_flat, in_axes_flat))
-    return map(untile_axis, outputs_flat, out_axes_flat)
-
-  axis_data = AxisData(axis_name, tile_size, None, None)
-  return _map_to_tile(batch(f_flat, axis_data, in_axes_flat, out_axes_flat))
-
 ### API for batching functions with jaxpr type inputs and outputs
 
 @lu.transformation_with_aux2
