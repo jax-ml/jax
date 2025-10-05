@@ -1372,7 +1372,8 @@ def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
               " argument of `jax.ShapeDtypeStruct` or set `check_vma=False` on"
               " `jax.shard_map`.")
         return jax_core.ShapedArray(
-            shape=out_shape.shape, dtype=out_shape.dtype, vma=out_shape.vma)
+            shape=out_shape.shape, dtype=out_shape.dtype,
+            sharding=jax_core.get_cur_mesh_sharding(), vma=out_shape.vma)
       return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype)
     case pallas_core.MemoryRef():
       return out_shape.get_array_aval()
