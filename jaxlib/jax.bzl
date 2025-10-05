@@ -21,7 +21,7 @@ load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "WHEEL_VERSION_SUFF
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
 load("@nvidia_wheel_versions//:versions.bzl", "NVIDIA_WHEEL_VERSIONS")
-load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
+# load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
 load("@rules_cc//cc:defs.bzl", _cc_proto_library = "cc_proto_library")
 load("@rules_python//python:defs.bzl", "py_library", "py_test")
 load("@test_shard_count//:test_shard_count.bzl", "USE_MINIMAL_SHARD_COUNT")
@@ -29,6 +29,7 @@ load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_
 load("@xla//xla/tsl:tsl.bzl", "transitive_hdrs", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
 load("@xla//xla/tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
 
+HERMETIC_PYTHON_VERSION = "3.11"
 # Explicitly re-exports names to avoid "unused variable" warnings from .bzl
 # lint tools.
 cc_proto_library = _cc_proto_library
