@@ -623,7 +623,7 @@ def _vector_load_equation_system(
         eqns.IsTransferable(
             source=source_var,
             target=dest_var,
-            shape=tuple(op.result.type.shape),
+            shape=tuple(ir.ShapedType(op.result.type).shape),
         ),
         _divides_constraint_from_indices(source_var, op.indices),
     ])
@@ -657,7 +657,7 @@ def _vector_store_equation_system(
         eqns.IsTransferable(
             source=value_var,
             target=dest_var,
-            shape=tuple(op.base.type.shape),
+            shape=tuple(ir.ShapedType(op.base.type).shape),
         ),
         _divides_constraint_from_indices(dest_var, op.indices),
     ]
