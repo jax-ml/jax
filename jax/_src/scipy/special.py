@@ -103,6 +103,8 @@ def gammasgn(x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.gammaln`: the natural log of the gamma function
   """
   x, = promote_args_inexact("gammasgn", x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    raise ValueError("gammasgn does not support complex-valued inputs.")
   typ = x.dtype.type
   floor_x = lax.floor(x)
   x_negative = x < 0
@@ -237,6 +239,8 @@ def beta(a: ArrayLike, b: ArrayLike) -> Array:
     - :func:`jax.scipy.special.betaln`
   """
   a, b = promote_args_inexact("beta", a, b)
+  if dtypes.issubdtype(a.dtype, np.complexfloating):
+    raise ValueError("beta does not support complex-valued inputs.")
   sign = gammasgn(a) * gammasgn(b) * gammasgn(a + b)
   return sign * lax.exp(betaln(a, b))
 
@@ -265,6 +269,8 @@ def betainc(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.betaln`
   """
   a, b, x = promote_args_inexact("betainc", a, b, x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    raise ValueError("betainc does not support complex-valued inputs.")
   return lax.betainc(a, b, x)
 
 
@@ -570,6 +576,8 @@ def entr(x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.rel_entr`
   """
   x, = promote_args_inexact("entr", x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    raise ValueError("entr does not support complex-valued inputs.")
   return lax.select(lax.lt(x, _lax_const(x, 0)),
                     lax.full_like(x, -np.inf),
                     lax.neg(_xlogx(x)))
@@ -643,6 +651,8 @@ def kl_div(
     - :func:`jax.scipy.special.rel_entr`
   """
   p, q = promote_args_inexact("kl_div", p, q)
+  if dtypes.issubdtype(p.dtype, np.complexfloating):
+    raise ValueError("kl_div does not support complex-valued inputs.")
   return rel_entr(p, q) - p + q
 
 
@@ -674,6 +684,8 @@ def rel_entr(
     - :func:`jax.scipy.special.kl_div`
   """
   p, q = promote_args_inexact("rel_entr", p, q)
+  if dtypes.issubdtype(p.dtype, np.complexfloating):
+    raise ValueError("rel_entr does not support complex-valued inputs.")
   zero = _lax_const(p, 0.0)
   both_gt_zero_mask = lax.bitwise_and(lax.gt(p, zero), lax.gt(q, zero))
   one_zero_mask = lax.bitwise_and(lax.eq(p, zero), lax.ge(q, zero))
@@ -795,6 +807,8 @@ def polygamma(n: ArrayLike, x: ArrayLike) -> Array:
         f"Argument `n` to polygamma must be of integer type. Got dtype {lax.dtype(n)}."
     )
   n_arr, x_arr = promote_args_inexact("polygamma", n, x)
+  if dtypes.issubdtype(x_arr.dtype, np.complexfloating):
+    raise ValueError("polygamma does not support complex-valued inputs.")
   return lax.polygamma(n_arr, x_arr)
 
 
@@ -2090,6 +2104,8 @@ def expi(x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.exp1`
   """
   x_arr, = promote_args_inexact("expi", x)
+  if dtypes.issubdtype(x_arr.dtype, np.complexfloating):
+    raise ValueError("expi does not support complex-valued inputs.")
   return jnp.piecewise(x_arr, [x_arr < 0], [_expi_neg, _expi_pos])
 
 @expi.defjvp
@@ -2238,7 +2254,7 @@ def _expn2(x: Array, n: Array) -> Array:
   # x > 1.
   _c = _lax_const
   BIG = _c(x, 1.44115188075855872e17)
-  MACHEP = dtypes.finfo(BIG.dtype).eps  # ?
+  MACHEP = dtypes.finfo(x.dtype).eps
   zero = _c(x, 0.0)
   one = _c(x, 1.0)
 
@@ -2322,6 +2338,8 @@ def expn(n: ArrayLike, x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.exp1`
   """
   n, x = promote_args_inexact("expn", n, x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    raise ValueError("expn does not support complex-valued inputs.")
   _c = _lax_const
   zero = _c(x, 0)
   one = _c(x, 1)
@@ -2377,6 +2395,8 @@ def exp1(x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.expn`
   """
   x, = promote_args_inexact("exp1", x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    raise ValueError("exp1 does not support complex-valued inputs.")
   # Casting because custom_jvp generic does not work correctly with mypy.
   return cast(Array, expn(1, x))
 
@@ -2530,6 +2550,8 @@ def poch(z: ArrayLike, m: ArrayLike) -> Array:
     The JAX version supports only real-valued inputs.
   """
   z, m = promote_args_inexact("poch", z, m)
+  if dtypes.issubdtype(z.dtype, np.complexfloating):
+    raise ValueError("jnp.poch does not support complex-valued inputs.")
 
   return jnp.where(m == 0., jnp.array(1, dtype=z.dtype), gamma(z + m) / gamma(z))
 
@@ -2710,6 +2732,9 @@ def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   # There is room for improvement in the implementation using recursion to
   # evaluate lower values of hyp1f1 when a or b or both are > 60-80
   a, b, x = promote_args_inexact('hyp1f1', a, b, x)
+
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    raise ValueError("hyp1f1 does not support complex-valued inputs.")
 
   result = lax.cond(lax.abs(x) < 100, _hyp1f1_serie, _hyp1f1_asymptotic, a, b, x)
   index = (a == 0) * 1 + ((a == b) & (a != 0)) * 2 + ((b == 0) & (a != 0)) * 3
