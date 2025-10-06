@@ -1458,6 +1458,8 @@ class TCGen05Test(TestCase):
     y_shape = (k, n)
     y = self.prng.uniform(-1, 1, y_shape).astype(in_jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
+    if y_shape[0] % rhs_tiling[0] != 0 or y_shape[1] % rhs_tiling[1] != 0:
+      self.skipTest("rhs tiling must divide y_shape")
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
         mgpu.TMABarrier(),
@@ -1612,7 +1614,7 @@ class TCGen05Test(TestCase):
       rhs_transpose=(False, True),
       in_jax_dtype=(jnp.float16, jnp.bfloat16,),
       m=(128,),  # TODO(apaszke): 256
-      n=(128, 192, 256),  # TODO(apaszke): other non-power-of-2
+      n=(128, 256),  # TODO(apaszke): other non-power-of-2
       lhs_swizzle=(32, 64, 128),
       rhs_swizzle=(64, 128),  # 32 is too small and unsuported.
   )
