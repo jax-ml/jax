@@ -515,12 +515,7 @@ jax_multiplatform_test(
     name = "tpu_pallas_distributed_test",
     srcs = ["tpu_pallas_distributed_test.py"],
     enable_backends = ["tpu"],
-    enable_configs = [
-        "tpu_v5e_x8",
-        "tpu_v5p_x4",
-        "tpu_v4_x4",
-        "tpu_v3_x4",
-    ],
+    tags = ["multiaccelerator"],
     deps = [
         "//jax:extend",
         "//jax:mesh_utils",
@@ -1203,22 +1198,8 @@ jax_multiplatform_test(
     disable_configs = [
         "tpu_v3",
         "tpu_pjrt_c_api",
-        "gpu_v100",
-        "gpu_v100_x32",
-        "gpu_a100",
-        "gpu_p100",
-        "gpu_p100_x32",
-        "gpu_h100",
-        "cpu",
-        "cpu_x32",
     ],
     enable_backends = ["tpu"],
-    enable_configs = [
-        "tpu_v4",
-        "tpu_v5e",
-        "tpu_v5p",
-        "tpu_v6e",
-    ],
     shard_count = 4,
     tags = [
         "noasan",
