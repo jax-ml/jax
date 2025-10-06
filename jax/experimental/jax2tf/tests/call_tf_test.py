@@ -1165,6 +1165,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     self.assertDictEqual(actual[0], {"y": x, "other": None})
 
 
+@jtu.thread_unsafe_test_class()
 class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
   """Reloading output of call_tf into TF with jax2tf."""
 
