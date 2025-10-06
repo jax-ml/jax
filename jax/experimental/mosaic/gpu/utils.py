@@ -1864,3 +1864,22 @@ def query_cluster_cancel(result_ref) -> tuple[
   cancelled_launch = llvm.extractvalue(i1, desc, [3])
 
   return (*cta_ids, cancelled_launch)
+
+
+@contextlib.contextmanager
+def no_wg_transform():
+  """Context manager that disables WG transforms.
+
+  I.e. dialect lowering and layout inference.
+  """
+  # Create dummy insertion point.
+  tmp = scf.IfOp(cond=llvm.mlir_undef(ir.IntegerType.get_signless(1)))
+  with ir.InsertionPoint(tmp.then_block):
+    yield
+
+  ip = ir.InsertionPoint.current
+  for op in tmp.then_block.operations:
+    op.detach_from_parent()
+    op.attributes["custom"] = ir.BoolAttr.get(True)
+    ip.insert(op)
+  tmp.erase()

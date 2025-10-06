@@ -596,9 +596,14 @@ def _launch(
           c(profiler_start, index),
           lowering_semantics,
       )
-      prof = profiler.OnDeviceProfiler(
-          profiler_spec, prof_smem, maybe_prof_buffer
-      )
+      if lowering_semantics == lowering_semantics.Warpgroup:
+        prof = profiler.DialectOnDeviceProfiler(
+            profiler_spec, prof_smem, maybe_prof_buffer
+        )
+      else:
+        prof = profiler.OnDeviceProfiler(
+            profiler_spec, prof_smem, maybe_prof_buffer
+        )
     else:
       prof = None
 
@@ -854,12 +859,13 @@ def as_gpu_kernel(
     out_shape,
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
     prof_spec: profiler.ProfilerSpec | None = None,
+    profiler_dump_path: str | None = None,
     cluster: tuple[int, int, int] = (1, 1, 1),
     module_name: str = "unknown",
     kernel_name: str | None = None,
     ir_version: int | None = None,
     thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
-    inout_shape = (),
+    inout_shape=(),
 ):
   module, in_shape, inout_shape, out_shape, unwrap_output_tuple, is_device_collective = _kernel_to_module(
       body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec,
@@ -901,10 +907,11 @@ def as_gpu_kernel(
       _check_args(*args)
       *results, prof_buffer = bind(*args)
       def dump_profile(prof_buffer):
-        out_file = os.path.join(
-            os.getenv("TEST_UNDECLARED_OUTPUTS_DIR", "/tmp"),
-            f"{time.time_ns()}-trace.json",
-        )
+        if profiler_dump_path is None:
+          dump_dir = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR", "/tmp")
+        else:
+          dump_dir = profiler_dump_path
+        out_file = os.path.join(dump_dir, f"{time.time_ns()}-trace.json")
         try:
           with open(out_file, "x") as f:
             prof_spec.dump(prof_buffer, f, grid=grid, block=block)

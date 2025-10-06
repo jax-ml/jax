@@ -324,6 +324,8 @@ def traverse_op(
   If do_not_recurse_into_ops is provided, the callback will be executed on these
   ops, but any regions they might have will not be traversed.
   """
+  if "custom" in op.attributes:
+    return
   if pre_order:
     callback(op)
   if not isinstance(op, do_not_recurse_into_ops):
