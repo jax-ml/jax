@@ -133,9 +133,8 @@ def _handle_array_process_allgather(inp, tiled):
     bufs = [jax.device_put(host_np_arr, d) for d in jax.local_devices()]
     global_arr = array.make_array_from_single_device_arrays(
         global_aval.shape, s, bufs)
-    out = jax.jit(_identity_fn,
-                  out_shardings=jax.NamedSharding(global_mesh, P()))(global_arr)
-
+    with jax.set_mesh(global_mesh):
+      out = jax.jit(_identity_fn, out_shardings=P())(global_arr)
   return np.asarray(out.addressable_data(0))
 
 
