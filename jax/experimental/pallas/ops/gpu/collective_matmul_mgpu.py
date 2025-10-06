@@ -15,12 +15,16 @@
 """A collective matmul kernel implemented using Mosaic GPU."""
 
 import functools
+import itertools
+
 import jax
 from jax import lax
+from jax.experimental import multihost_utils
 from jax.experimental import pallas as pl
+from jax.experimental.mosaic.gpu import profiler
 from jax.experimental.pallas import mosaic_gpu as plgpu
+from jax.experimental.pallas.ops.gpu import hopper_matmul_mgpu
 import jax.numpy as jnp
-from . import hopper_matmul_mgpu
 
 
 MatmulDimension = hopper_matmul_mgpu.MatmulDimension
@@ -178,3 +182,95 @@ def all_gather_lhs_matmul(
       cluster_names=("cluster",),
   )(lhs, rhs)
   return result
+
+
+def _run_example():
+  P = jax.sharding.PartitionSpec
+  m_shard = 1024
+  n_shard = 4096
+  k = 4096
+  dtype = jnp.bfloat16
+  shards = jax.device_count()
+  mesh = jax.make_mesh(
+      (shards,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
+  )
+  jax.set_mesh(mesh)
+
+  # We measure time per-shard and so we only need FLOPs per shard.
+  matmul_flops = 2 * (shards * m_shard) * n_shard * k
+  peak_flops = 990e12  # f16 TensorCore peak = 990 TFLOPS
+  optimal_time = matmul_flops / peak_flops * 1e6  # us
+  a = jax.random.normal(jax.random.key(1), (shards * m_shard, k), dtype)
+  b = jax.random.normal(jax.random.key(2), (k, shards * n_shard), dtype)
+  a = jax.sharding.reshard(a, P("x", None))
+  b = jax.sharding.reshard(b, P(None, "x"))
+  _, ref_kernels_ms = profiler.measure(jax.jit(
+      jax.shard_map(
+          lambda x, y: lax.all_gather(x, "x", axis=0, tiled=True) @ y,
+          out_specs=P(None, "x"),
+          check_vma=False,
+      )
+  ), aggregate=False)(a, b)
+  ref_time_us = sum(t * 1e3 for _, t in ref_kernels_ms)
+  # We choose the minimum across processes to choose the runtime that didn't
+  # include devices waiting for other devices.
+  ref_time_us = min(multihost_utils.process_allgather(ref_time_us).tolist())
+  ref_util = optimal_time / ref_time_us * 100
+
+  tuning_it = itertools.product(
+      (128, 256,),  # tile_m
+      (64, 128),  # tile_n
+      (64,),  # tile_k
+      (4,),  # max_concurrent_steps
+      (MatmulDimension.M, MatmulDimension.N),  # grid_minor_dim
+      (4, 8, 16),  # grid_tile_width
+      MatmulDimension,  # wg_dimension
+  )
+  best_util = 0.0
+  best_runtime = float("inf")
+  def build_kernel(**kwargs):
+    return jax.jit(
+        jax.shard_map(
+            functools.partial(all_gather_lhs_matmul, **kwargs),
+            out_specs=P(None, "x"),
+            check_vma=False,
+        )
+    )
+
+  for tile_m, tile_n, tile_k, max_concurrent_steps, grid_minor_dim, grid_tile_width, wg_dimension in tuning_it:
+    try:
+      config = TuningConfig(
+          tile_m=tile_m,
+          tile_n=tile_n,
+          tile_k=tile_k,
+          max_concurrent_steps=max_concurrent_steps,
+          grid_minor_dim=grid_minor_dim,
+          grid_tile_width=grid_tile_width,
+          wg_dimension=wg_dimension,
+      )
+      _, kernels_ms = profiler.measure(
+        build_kernel(axis_name="x", config=config, dtype=dtype),
+        aggregate=False,
+      )(a, b)
+    except ValueError as e:
+      if "exceeds available shared memory" in e.args[0]:  # Ignore SMEM OOMs.
+        continue
+      raise
+    runtime_us = sum(t * 1e3 for _, t in kernels_ms)
+    runtime_us = min(multihost_utils.process_allgather(runtime_us).tolist())
+    achieved_tc_util = optimal_time / runtime_us * 100
+    if achieved_tc_util > best_util:
+      best_runtime = runtime_us
+      best_util = achieved_tc_util
+    print(
+        f"{tile_m=} {tile_n=} {tile_k=} {max_concurrent_steps=} {grid_minor_dim=} {grid_tile_width=} {wg_dimension=}: "
+        f"{runtime_us:<7.1f}us"
+        f" = {achieved_tc_util:4.1f}% TC utilization"
+    )
+  print(f"\tBest: {best_runtime:<7.1f}us = {best_util:4.1f}% TC utilization")
+  print(f"\tRef: {ref_time_us:<7.1f}us = {ref_util:4.1f}% TC utilization")
+
+
+if __name__ == "__main__":
+  from jax._src import test_multiprocess as jt_multiprocess  # pytype: disable=import-error
+  jt_multiprocess.main(shard_main=_run_example)

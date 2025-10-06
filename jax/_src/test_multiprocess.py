@@ -14,6 +14,7 @@
 
 """Helper for running multi-process tests."""
 
+import functools
 import os
 import pathlib
 import re
@@ -67,9 +68,9 @@ _MULTIPROCESS_TEST_CONTROLLER_ADDRESS = absl.flags.DEFINE_string(
 expect_failures_with_regex = None
 
 
-def main():
+def main(shard_main=None):
   config.config_with_absl()
-  app.run(_main)
+  app.run(functools.partial(_main, shard_main=shard_main))
 
 
 class GracefulKiller:
@@ -87,7 +88,7 @@ class GracefulKiller:
     self.kill_now = True
 
 
-def _main(argv):
+def _main(argv, shard_main):
   if _MULTIPROCESS_TEST_WORKER_ID.value >= 0:
     distributed.initialize(
         _MULTIPROCESS_TEST_CONTROLLER_ADDRESS.value,
@@ -95,7 +96,9 @@ def _main(argv):
         process_id=_MULTIPROCESS_TEST_WORKER_ID.value,
         initialization_timeout=10,
     )
-    absltest.main(testLoader=jtu.JaxTestLoader())
+    if shard_main is not None:
+      return shard_main()
+    return absltest.main(testLoader=jtu.JaxTestLoader())
 
   if not argv[0].endswith(".py"):  # Skip the interpreter path if present.
     argv = argv[1:]
