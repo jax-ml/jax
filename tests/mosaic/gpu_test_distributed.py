@@ -197,7 +197,7 @@ class ProfilerTest(TestCase):
       out = multihost_utils.process_allgather(out, tiled=True)
       np.testing.assert_array_equal(out, np.ones_like(out))
 
-  def test_multimem_store(self):
+  def test_multimem_store_registers(self):
     i32 = ir.IntegerType.get_signless(32)
     def kernel(ctx, inp, sem, out, _):
       my_device = ctx.device_id()
@@ -221,6 +221,45 @@ class ProfilerTest(TestCase):
           jax.shard_map(
               mgpu.as_gpu_kernel(
                   kernel, (1, 1, 1), (128, 1, 1), x, x, (), inout_shape=sem
+              ),
+              out_specs=P("x"),
+              check_vma=False,
+          )
+      )(x, sem)
+      out_sems = multihost_utils.process_allgather(out_sem, tiled=True)
+      np.testing.assert_array_equal(out_sems, np.zeros_like(out_sems))
+      y = multihost_utils.process_allgather(y, tiled=True).reshape(2, *x.shape)
+      np.testing.assert_array_equal(y, jnp.stack([x, x]))
+
+  def test_multimem_store_tma(self):
+    i32 = ir.IntegerType.get_signless(32)
+    def kernel(ctx, inp, sem, out, scratch):
+      my_device = ctx.device_id()
+      other_device = arith.subi(arith.constant(i32, 1), my_device)
+      my_sem = mgpu.SemaphoreRef(mgpu.utils.memref_ptr(sem))
+      other_dst = ctx.to_remote(sem, other_device)
+      other_sem = mgpu.SemaphoreRef(mgpu.utils.memref_ptr(other_dst))
+      with mgpu.when(arith.cmpi(arith.CmpIPredicate.eq, my_device, arith.constant(i32, 0))):
+        arr = mgpu.FragmentedArray.load_strided(inp, is_signed=True)
+        arr.store_untiled(scratch)
+        mgpu.commit_shared()
+        ctx.async_copy(
+            src_ref=scratch, dst_ref=out, gmem_peer_id=mgpu.GLOBAL_BROADCAST
+        )
+        ctx.await_async_copy(0)
+      other_sem.signal(arith.constant(i32, 1))
+      my_sem.wait(1)
+
+    mesh = jax.make_mesh(
+        (2,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
+    )
+    with jax.set_mesh(mesh):
+      sem = jax.sharding.reshard(jnp.zeros((1,), dtype=jnp.int32), P())
+      x = jax.sharding.reshard(jnp.arange(2048, dtype=jnp.int32).reshape(64, 32), P())
+      y, out_sem = jax.jit(
+          jax.shard_map(
+              mgpu.as_gpu_kernel(
+                  kernel, (1, 1, 1), (128, 1, 1), x, x, x, inout_shape=sem
               ),
               out_specs=P("x"),
               check_vma=False,

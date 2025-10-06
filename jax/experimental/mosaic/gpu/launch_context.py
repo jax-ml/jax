@@ -42,6 +42,12 @@ TMAReductionOp = Literal["add", "min", "max", "inc", "dec", "and", "or", "xor"]
 
 c = utils.c  # This is too common to fully qualify.
 
+class GlobalBroadcast:
+  pass
+
+GLOBAL_BROADCAST = GlobalBroadcast()
+
+
 @dataclasses.dataclass(frozen=True)
 class MemRefTransform:
   def apply(self, ref: ir.Value) -> ir.Value:
@@ -497,9 +503,9 @@ class LaunchContext:
 
   def _get_tma_desc(
       self,
-      gmem_ref,
+      gmem_ref: ir.Value,
       gmem_transform: tuple[MemRefTransform, ...],
-      gmem_peer_id: int | ir.Value | None,
+      gmem_peer_id: int | ir.Value | GlobalBroadcast | None,
       transformed_slice_shape: tuple[int, ...],
       swizzle: int | None,
       reduction_op: TMAReductionOp | None,
@@ -535,7 +541,17 @@ class LaunchContext:
         base_ptr = llvm.getelementptr(
             ptr_ty, alloc_ptr, [as_i64(offset)], [llvm_dyn], ref_ty.element_type, llvm.GEPNoWrapFlags.none,
         )
-        if gmem_peer_id is not None:
+        if isinstance(gmem_peer_id, GlobalBroadcast):
+          self._ensure_nvshmem_decls()
+          world_team = arith.constant(i32, 0)
+          base_ptr = llvm.call(
+              base_ptr.type,
+              [world_team, base_ptr],
+              [],
+              [],
+              callee="nvshmemx_mc_ptr",
+          )
+        elif gmem_peer_id is not None:
           if not isinstance(gmem_peer_id, ir.Value):
             peer_id = c(gmem_peer_id, i32)
           else:
@@ -861,11 +877,11 @@ class LaunchContext:
   def async_copy(
       self,
       *,
-      src_ref,
-      dst_ref,
+      src_ref: ir.Value,
+      dst_ref: ir.Value,
       gmem_slice: Any = (),
       gmem_transform: MemRefTransform | tuple[MemRefTransform, ...] = (),
-      gmem_peer_id: int | ir.Value | None = None,
+      gmem_peer_id: int | ir.Value | GlobalBroadcast | None = None,
       barrier: utils.BarrierRef | None = None,
       swizzle: int | None = None,
       arrive: bool | None = None,
@@ -906,6 +922,7 @@ class LaunchContext:
     i8 = ir.IntegerType.get_signless(8)
     i16 = ir.IntegerType.get_signless(16)
     i32 = ir.IntegerType.get_signless(32)
+
     src_ref_ty = ir.MemRefType(src_ref.type)
     dst_ref_ty = ir.MemRefType(dst_ref.type)
     element_type = src_ref_ty.element_type
