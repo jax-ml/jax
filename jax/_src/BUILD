@@ -149,7 +149,7 @@ pytype_strict_library(
             "//jax/_src/lib",
         ],
         if_not_building = [],
-    ) + py_deps("absl-all"),
+    ) + py_deps("absl-all") + py_deps("portpicker"),
 )
 
 pytype_strict_library(
