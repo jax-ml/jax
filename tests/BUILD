@@ -373,15 +373,7 @@ jax_py_test(
 jax_multiplatform_test(
     name = "memories_test",
     srcs = ["memories_test.py"],
-    enable_configs = [
-        "cpu",
-        "gpu_h100x2",
-        "tpu_v3_x4",
-        "tpu_pjrt_c_api",
-        "tpu_v4_x4",
-        "tpu_v5p_x4",
-        "tpu_v5e_x8",
-    ],
+    tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
     ] + py_deps([
@@ -459,11 +451,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "shard_alike_test",
     srcs = ["shard_alike_test.py"],
-    enable_configs = [
-        "tpu_v3_x4",
-        "tpu_v5e_x8",
-        "tpu_v4_x4",
-    ],
+    tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
     ] + py_deps([
@@ -1767,17 +1755,7 @@ jax_py_test(
 jax_multiplatform_test(
     name = "jaxpr_effects_test",
     srcs = ["jaxpr_effects_test.py"],
-    backend_tags = {
-        "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
-    },
-    enable_configs = [
-        "cpu",
-        "gpu_h100",
-        "tpu_v2",
-        "tpu_v3_x4",
-        "tpu_v4_x4",
-    ],
-    tags = ["multiaccelerator"],
+    enable_backends = ["cpu"],
     deps = py_deps([
         "absl/testing",
         "numpy",
@@ -1787,13 +1765,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "debugging_primitives_test",
     srcs = ["debugging_primitives_test.py"],
-    enable_configs = [
-        "cpu",
-        "gpu_h100",
-        "tpu_v2",
-        "tpu_v3_x4",
-        "tpu_v4_x4",
-    ],
+    tags = ["multiaccelerator"],
     deps = py_deps([
         "absl/testing",
         "numpy",
@@ -1806,11 +1778,6 @@ jax_multiplatform_test(
     backend_tags = {
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
-    enable_configs = [
-        "tpu_v2",
-        "tpu_v3_x4",
-        "tpu_v4_x4",
-    ],
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
@@ -1823,13 +1790,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "debugger_test",
     srcs = ["debugger_test.py"],
-    enable_configs = [
-        "cpu",
-        "gpu_h100",
-        "tpu_v2",
-        "tpu_v3_x4",
-        "tpu_v4_x4",
-    ],
+    tags = ["multiaccelerator"],
     deps = py_deps([
         "absl/testing",
         "numpy",
@@ -2010,10 +1971,7 @@ jax_py_test(
 jax_multiplatform_test(
     name = "export_test",
     srcs = ["export_test.py"],
-    enable_configs = [
-        "tpu_v3_x4",
-    ],
-    tags = [],
+    tags = ["multiaccelerator"],
     deps = py_deps([
         "absl/testing",
         "numpy",
