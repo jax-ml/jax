@@ -72,17 +72,25 @@ def collect_profile(port: int, duration_in_ms: int, host: str,
       "device_tracer_level": device_tracer_level,
       "python_tracer_level": python_tracer_level,
   }
+  IS_GCS_PATH = str(log_dir).startswith("gs://")
   log_dir_ = pathlib.Path(log_dir if log_dir is not None else tempfile.mkdtemp())
+  str_log_dir = log_dir if IS_GCS_PATH else str(log_dir_)
   _pywrap_profiler_plugin.trace(
       _strip_addresses(f"{host}:{port}", _GRPC_PREFIX),
-      str(log_dir_),
+      str_log_dir,
       '',
       True,
       duration_in_ms,
       DEFAULT_NUM_TRACING_ATTEMPTS,
       options,
   )
-  print(f"Dumped profiling information in: {log_dir_}")
+  print(f"Dumped profiling information in: {str_log_dir}")
+  # Traces stored on GCS cannot be converted to a Perfetto trace, as JAX doesn't
+  # directly support GCS paths.
+  if IS_GCS_PATH:
+    if not no_perfetto_link:
+      print("Perfetto link is not supported for GCS paths, skipping creation.")
+    return
   # The profiler dumps `xplane.pb` to the logging directory. To upload it to
   # the Perfetto trace viewer, we need to convert it to a `trace.json` file.
   # We do this by first finding the `xplane.pb` file, then passing it into
