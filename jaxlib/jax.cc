@@ -19,6 +19,7 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -209,8 +210,9 @@ NB_MODULE(_jax, m) {
   nb::class_<xla::PjRtLayout>(m, "PjRtLayout")
       .def("__str__", &xla::PjRtLayout::ToString)
       .def("__eq__",
-           [](const xla::PjRtLayout& layout, const xla::PjRtLayout& other) {
-             return layout == other;
+           [](const xla::PjRtLayout& layout, nb::object other) {
+             return nb::isinstance<xla::PjRtLayout>(other) &&
+                    layout == nb::cast<const xla::PjRtLayout&>(other);
            })
       .def("__hash__",
            [](const xla::PjRtLayout& layout) { return absl::HashOf(layout); })
@@ -232,6 +234,14 @@ NB_MODULE(_jax, m) {
       });
 
   nb::class_<xla::cpu::CpuCollectives> cpu_collectives(m, "CpuCollectives");
+  cpu_collectives
+      .def("Init",
+           [](xla::cpu::CpuCollectives*) {
+             throw std::runtime_error("Init is not implemented");
+           })
+      .def("Finalize", [](xla::cpu::CpuCollectives*) {
+        throw std::runtime_error("Finalize is not implemented");
+      });
 
   m.def(
       "make_gloo_tcp_collectives",
@@ -575,7 +585,16 @@ NB_MODULE(_jax, m) {
         return xla::ValueOrThrow(DLPackManagedTensorToBuffer(
             tensor, device->device(), device->client(), stream));
       },
-      nb::arg("dlpack"), nb::arg("device"), nb::arg("stream").none());
+      nb::arg("dlpack"), nb::arg("device"), nb::arg("stream").none(),
+    nb::sig(
+      // clang-format off
+      "def dlpack_managed_tensor_to_buffer("
+      "dlpack: typing_extensions.CapsuleType, "
+      "device: Device, "
+      "stream: int | None"
+      ") -> ArrayImpl"
+      // clang-format on
+    ));
   m.def("cuda_array_interface_to_buffer",
         xla::ValueOrThrowWrapper(CudaArrayInterfaceToBuffer), nb::arg("cai"),
         nb::arg("gpu_backend").none() = nb::none(),
@@ -809,8 +828,7 @@ NB_MODULE(_jax, m) {
       [](std::string address, int node_id, std::optional<int> rpc_timeout,
          std::optional<int> init_timeout, std::optional<int> shutdown_timeout,
          std::optional<int> heartbeat_timeout,
-         std::optional<std::function<void(absl::Status)>>
-             missed_heartbeat_callback,
+         std::optional<nb::callable> missed_heartbeat_callback,
          std::optional<bool> shutdown_on_destruction,
          std::optional<bool> use_compression, std::optional<bool> recoverable)
           -> std::shared_ptr<xla::DistributedRuntimeClient> {
@@ -831,7 +849,8 @@ NB_MODULE(_jax, m) {
         }
         if (missed_heartbeat_callback.has_value()) {
           options.missed_heartbeat_callback =
-              std::move(*missed_heartbeat_callback);
+              nb::cast<std::function<void(absl::Status)>>(
+                  *missed_heartbeat_callback);
         }
         if (shutdown_on_destruction.has_value()) {
           options.shutdown_on_destruction = *shutdown_on_destruction;

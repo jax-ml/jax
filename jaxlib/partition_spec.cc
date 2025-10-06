@@ -185,52 +185,55 @@ void PartitionSpec::Register(nb::module_& m) {
     return CanonicalizePartition(*unconstrained_singleton_, partition);
   });
 
-  nb::class_<PartitionSpec>(m, "PartitionSpec")
-      .def(
-          "__init__",
-          [](PartitionSpec* self, nb::args partition_args,
-             nb::object unreduced_arg, nb::object reduced_arg) {
-            nb::tuple partitions =
-                nb::steal<nb::tuple>(PyTuple_New(partition_args.size()));
-            for (size_t i = 0; i < partition_args.size(); ++i) {
-              PyTuple_SET_ITEM(partitions.ptr(), i,
-                               CanonicalizePartition(
-                                   *PartitionSpec::unconstrained_singleton_,
-                                   partition_args[i])
-                                   .release()
-                                   .ptr());
-            }
-            nb::frozenset unreduced;
-            nb::frozenset reduced;
-            if (!PyAnySet_Check(unreduced_arg.ptr())) {
-              throw nb::type_error(
-                  absl::StrFormat(
-                      "unreduced argument of PartitionSpec should "
-                      "of type `frozenset` or `set`. Got type %s",
-                      nb::cast<std::string>(nb::repr(unreduced_arg.type())))
-                      .c_str());
-            }
-            if (!PyAnySet_Check(reduced_arg.ptr())) {
-              throw nb::type_error(
-                  absl::StrFormat(
-                      "reduced argument of PartitionSpec should "
-                      "of type `frozenset` or `set`. Got type %s",
-                      nb::cast<std::string>(nb::repr(reduced_arg.type())))
-                      .c_str());
-            }
-            unreduced = nb::frozenset(unreduced_arg);
-            reduced = nb::frozenset(reduced_arg);
-            CheckPartitionSpec(partitions, unreduced, reduced);
-            new (self) PartitionSpec(std::move(partitions),
-                                     std::move(unreduced), std::move(reduced));
-          },
-          nb::arg("partitions"), nb::arg("unreduced") = nb::frozenset(),
-          nb::arg("reduced") = nb::frozenset())
-      .def_prop_ro("_partitions", &PartitionSpec::partitions)
-      .def_prop_ro("unreduced", &PartitionSpec::unreduced)
-      .def_prop_ro("reduced", &PartitionSpec::reduced)
-      .def("__eq__", &PartitionSpec::Eq, nb::arg().none())
-      .def("__hash__", &PartitionSpec::Hash);
+  auto partition_spec =
+      nb::class_<PartitionSpec>(m, "PartitionSpec",
+                                nb::sig("class PartitionSpec(typing.Any)"))
+          .def(
+              "__init__",
+              [](PartitionSpec* self, nb::args partition_args,
+                 nb::object unreduced_arg, nb::object reduced_arg) {
+                nb::tuple partitions =
+                    nb::steal<nb::tuple>(PyTuple_New(partition_args.size()));
+                for (size_t i = 0; i < partition_args.size(); ++i) {
+                  PyTuple_SET_ITEM(partitions.ptr(), i,
+                                   CanonicalizePartition(
+                                       *PartitionSpec::unconstrained_singleton_,
+                                       partition_args[i])
+                                       .release()
+                                       .ptr());
+                }
+                nb::frozenset unreduced;
+                nb::frozenset reduced;
+                if (!PyAnySet_Check(unreduced_arg.ptr())) {
+                  throw nb::type_error(
+                      absl::StrFormat(
+                          "unreduced argument of PartitionSpec should "
+                          "of type `frozenset` or `set`. Got type %s",
+                          nb::cast<std::string>(nb::repr(unreduced_arg.type())))
+                          .c_str());
+                }
+                if (!PyAnySet_Check(reduced_arg.ptr())) {
+                  throw nb::type_error(
+                      absl::StrFormat(
+                          "reduced argument of PartitionSpec should "
+                          "of type `frozenset` or `set`. Got type %s",
+                          nb::cast<std::string>(nb::repr(reduced_arg.type())))
+                          .c_str());
+                }
+                unreduced = nb::frozenset(unreduced_arg);
+                reduced = nb::frozenset(reduced_arg);
+                CheckPartitionSpec(partitions, unreduced, reduced);
+                new (self)
+                    PartitionSpec(std::move(partitions), std::move(unreduced),
+                                  std::move(reduced));
+              },
+              nb::arg("partitions"), nb::arg("unreduced") = nb::frozenset(),
+              nb::arg("reduced") = nb::frozenset())
+          .def_prop_ro("_partitions", &PartitionSpec::partitions)
+          .def_prop_ro("unreduced", &PartitionSpec::unreduced)
+          .def_prop_ro("reduced", &PartitionSpec::reduced)
+          .def("__eq__", &PartitionSpec::Eq, nb::arg(), nb::is_operator())
+          .def("__hash__", &PartitionSpec::Hash);
 }
 
 }  // namespace jax

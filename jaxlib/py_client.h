@@ -153,7 +153,7 @@ class PyClient {
   // buffer.
   std::vector<nanobind::object> LiveBuffersOnDevice(xla::ifrt::Device* device);
 
-  nanobind::list LiveExecutables();
+  nanobind::typed<nanobind::list, PyLoadedExecutable> LiveExecutables();
 
   // TODO(zhangqiaorjc): Remove when we have transparent defragmentation.
   absl::Status Defragment();

@@ -138,7 +138,7 @@ absl::StatusOr<nb_class_ptr<PyMemorySpace>> PyDevice::DefaultMemory() const {
   return client_->GetPyMemorySpace(memory_space);
 }
 
-nb::list PyDevice::AddressableMemories() const {
+nb::typed<nb::list, PyMemorySpace> PyDevice::AddressableMemories() const {
   nb::list memory_spaces;
   for (auto* memory_space : device_->Memories()) {
     memory_spaces.append(client_->GetPyMemorySpace(memory_space));
@@ -146,7 +146,8 @@ nb::list PyDevice::AddressableMemories() const {
   return memory_spaces;
 }
 
-absl::StatusOr<std::optional<nb::dict>> PyDevice::MemoryStats() const {
+absl::StatusOr<std::optional<nb::typed<nb::dict, nb::str, int>>>
+PyDevice::MemoryStats() const {
   GlobalPyRefManager()->CollectGarbage();
   ifrt::PjRtDevice* device = llvm::dyn_cast<ifrt::PjRtDevice>(device_);
   if (device == nullptr || !device->IsAddressable()) {

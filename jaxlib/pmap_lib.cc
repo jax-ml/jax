@@ -889,6 +889,8 @@ nb::object MakePmapFunction(nb::callable fun, nb::callable cache_miss,
 // Increment these if changing them.
 const int kPmapFunctionPickleVersion = 1;
 
+struct Descriptor {};
+
 }  // namespace
 
 void BuildPmapSubmodule(nb::module_& m) {
@@ -925,10 +927,8 @@ void BuildPmapSubmodule(nb::module_& m) {
                                  ")");
            })
       .def("__eq__", [](const Chunked& self, nb::object other) {
-        if (!nb::isinstance<Chunked>(other)) {
-          return false;
-        }
-        return self == nb::cast<const Chunked&>(other);
+        return nb::isinstance<Chunked>(other) &&
+               self == nb::cast<const Chunked&>(other);
       });
 
   nb::class_<Unstacked> unstacked(pmap_lib, "Unstacked");
@@ -945,10 +945,8 @@ void BuildPmapSubmodule(nb::module_& m) {
              return absl::StrCat("Unstacked(", x.size, ")");
            })
       .def("__eq__", [](const Unstacked& self, nb::object other) {
-        if (!nb::isinstance<Unstacked>(other)) {
-          return false;
-        }
-        return self == nb::cast<const Unstacked&>(other);
+        return nb::isinstance<Unstacked>(other) &&
+               self == nb::cast<const Unstacked&>(other);
       });
 
   nb::class_<ShardedAxis> sharded_axis(pmap_lib, "ShardedAxis");
@@ -964,8 +962,9 @@ void BuildPmapSubmodule(nb::module_& m) {
            [](const ShardedAxis& x) {
              return absl::StrCat("ShardedAxis(axis=", x.axis, ")");
            })
-      .def("__eq__", [](const ShardedAxis& self, const ShardedAxis& other) {
-        return self == other;
+      .def("__eq__", [](const ShardedAxis& self, nb::object other) {
+        return nb::isinstance<ShardedAxis>(other) &&
+               self == nb::cast<const ShardedAxis&>(other);
       });
 
   nb::class_<Replicated> replicated(pmap_lib, "Replicated");
@@ -981,11 +980,13 @@ void BuildPmapSubmodule(nb::module_& m) {
            [](const Replicated& x) {
              return absl::StrCat("Replicated(replicas=", x.replicas, ")");
            })
-      .def("__eq__", [](const Replicated& self, const Replicated& other) {
-        return self == other;
+      .def("__eq__", [](const Replicated& self, nb::object other) {
+        return nb::isinstance<Replicated>(other) &&
+               self == nb::cast<const Replicated&>(other);
       });
 
-  nb::class_<ShardingSpec> sharding_spec(pmap_lib, "ShardingSpec");
+  nb::class_<ShardingSpec> sharding_spec(
+      pmap_lib, "ShardingSpec", nb::sig("class ShardingSpec(typing.Any)"));
   sharding_spec
       .def(nb::init<nb::iterable, nb::iterable>(), nb::arg("sharding"),
            nb::arg("mesh_mapping"))
@@ -1013,8 +1014,11 @@ void BuildPmapSubmodule(nb::module_& m) {
                      return xla::SpanToNbTuple(
                          absl::MakeConstSpan(self.GetMeshMapping()));
                    })
-      .def("__eq__", [](const ShardingSpec& self,
-                        const ShardingSpec& other) { return self == other; })
+      .def("__eq__",
+           [](const ShardingSpec& self, nb::object other) {
+             return nb::isinstance<ShardingSpec>(other) &&
+                    self == nb::cast<const ShardingSpec&>(other);
+           })
       .def("__hash__", [](const ShardingSpec& self) {
         const size_t hash = absl::HashOf(self);
         return nb::int_(hash);
@@ -1045,21 +1049,23 @@ void BuildPmapSubmodule(nb::module_& m) {
     throw nb::python_error();
   }
   nb::object cfun = nb::borrow<nb::object>(JaxPmapFunction_Type);
+  cfun.attr("__module__") = pmap_lib.attr("__name__");
+  pmap_lib.attr("PmapFunction") = cfun;
 
   // Add PmapFunction to the _jax module so it can be pickled.
   m.attr("PmapFunction") = cfun;
 
-  cfun.attr("__signature__") =
-      xla::nb_property_readonly([](nb::handle self) -> nb::object {
+  cfun.attr("__signature__") = xla::nb_property_readonly(
+      [](nb::handle self) -> nb::object {
         PmapFunction* fun = xla::ValueOrThrow(AsPmapFunction(self));
         return fun->PythonSignature();
-      });
+      },
+      nb::sig("def __signature__(self) -> inspect.Signature"));
   // Required by `post_hook`.
-  cfun.attr("_cache_miss") =
-      xla::nb_property_readonly([](nb::handle self) -> nb::object {
-        PmapFunction* fun = xla::ValueOrThrow(AsPmapFunction(self));
-        return fun->cache_miss();
-      });
+  cfun.attr("_cache_miss") = xla::nb_property_readonly([](nb::handle self) {
+    PmapFunction* fun = xla::ValueOrThrow(AsPmapFunction(self));
+    return fun->cache_miss();
+  });
   cfun.attr("__getstate__") = nb::cpp_function(
       [](const PmapFunction::object& self) {
         PmapFunction* fn = self.func();
@@ -1100,11 +1106,12 @@ void BuildPmapSubmodule(nb::module_& m) {
       nb::is_method());
 
   // This is only for testing/debugging purposes.
-  cfun.attr("_cache_size") =
-      xla::nb_property_readonly([](nb::handle self) -> nb::object {
+  cfun.attr("_cache_size") = xla::nb_property_readonly(
+      [](nb::handle self) {
         PmapFunction* fun = xla::ValueOrThrow(AsPmapFunction(self));
         return nb::cast<int>(fun->cache_size());
-      });
+      },
+      nb::sig("def _cache_size(self) -> int"));
 
   cfun.attr("_cache_clear") = nb::cpp_function(
       [](nb::handle self) {
@@ -1120,6 +1127,7 @@ void BuildPmapSubmodule(nb::module_& m) {
       },
       nb::is_method());
 
+  pmap_lib.attr("_PyTreeRegistry") = m.attr("pytree").attr("PyTreeRegistry");
   pmap_lib.def(
       "pmap",
       [](nb::callable fun, nb::callable cache_miss,
@@ -1132,7 +1140,18 @@ void BuildPmapSubmodule(nb::module_& m) {
             std::move(shard_arg_fallback), std::move(registry));
       },
       nb::arg("fun"), nb::arg("cache_miss"), nb::arg("static_argnums"),
-      nb::arg("shard_arg_fallback"), nb::arg("pytree_registry"));
+      nb::arg("shard_arg_fallback"), nb::arg("pytree_registry"),
+      nb::sig(
+          // clang-format off
+      "def pmap("
+      "fun: typing.Callable[..., typing.Any], "
+      "cache_miss: Callable[..., Any], "
+      "static_argnums: typing.Sequence[int], "
+      "shard_arg_fallback: Callable[..., Any], "
+      "pytree_registry: _PyTreeRegistry"
+      ") -> PmapFunction"
+          // clang-format on
+          ));
 }
 
 }  // namespace jax

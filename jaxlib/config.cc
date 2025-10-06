@@ -29,6 +29,7 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/typing.h"
 #include "jaxlib/python_ref_manager.h"
 #include "xla/tsl/platform/logging.h"
 
@@ -350,19 +351,39 @@ void BuildConfigSubmodule(nanobind::module_& m) {
 
   config_module.attr("unset") = GlobalConfigState::Instance().unset();
 
+  config_module.attr("_T") = nb::type_var("_T");
+
   nb::class_<Config> config(config_module, "Config",
-                            nb::type_slots(Config::slots_), nb::is_generic());
+                            nb::type_slots(Config::slots_), nb::is_generic(),
+                            nb::sig("class Config(typing.Generic[_T])"));
   config.def(nb::init<std::string, nb::object, bool, bool>(), nb::arg("name"),
              nb::arg("value").none(), nb::kw_only(),
              nb::arg("include_in_jit_key") = false,
-             nb::arg("include_in_trace_context") = false);
-  config.def_prop_ro("value", &Config::Get);
+             nb::arg("include_in_trace_context") = false,
+             nb::sig(
+                 // clang-format off
+        "def __init__("
+        "self, "
+        "name: str, "
+        "value: _T, *, "
+        "include_in_jit_key: bool = ..., "
+        "include_in_trace_context: bool = ..."
+        ") -> None"
+                 // clang-format on
+                 ));
+  config.def_prop_ro("value", &Config::Get, nb::sig("def value(self) -> _T"));
   config.def_prop_ro("name", &Config::Name);
-  config.def("get_local", &Config::GetLocal);
-  config.def("get_global", &Config::GetGlobal);
-  config.def("set_local", &Config::SetLocal, nb::arg("value").none());
-  config.def("swap_local", &Config::SwapLocal, nb::arg("value").none());
-  config.def("set_global", &Config::SetGlobal, nb::arg("value").none());
+  // TODO(slebedev): All getters and setters should be using _T.
+  config.def("get_local", &Config::GetLocal,
+             nb::sig("def get_local(self) -> typing.Any"));
+  config.def("get_global", &Config::GetGlobal,
+             nb::sig("def get_global(self) -> _T"));
+  config.def("set_local", &Config::SetLocal, nb::arg("value").none(),
+             nb::sig("def set_local(self, value: Any | None) -> None"));
+  config.def("swap_local", &Config::SwapLocal, nb::arg("value").none(),
+             nb::sig("def swap_local(self, value: Any | None) -> Any"));
+  config.def("set_global", &Config::SetGlobal, nb::arg("value").none(),
+             nb::sig("def set_global(self, value: Any | None) -> None"));
 
   config_module.def("trace_context", &TraceContext);
 }

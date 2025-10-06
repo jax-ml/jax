@@ -1271,6 +1271,8 @@ PyType_Slot PjitFunction_slots[] = {
 }  // namespace
 
 void BuildPjitSubmodule(nb::module_& m) {
+  m.attr("_PyTreeRegistry") = m.attr("pytree").attr("PyTreeRegistry");
+
   nb::class_<PjitFunctionCache> cache(m, "PjitFunctionCache");
   cache.def(nb::init<int>(),
             nb::arg("capacity") = PjitFunctionCache::kDefaultCapacity);
@@ -1382,12 +1384,13 @@ void BuildPjitSubmodule(nb::module_& m) {
             std::move(shard_arg_fallback), std::move(cache));
       },
       nb::is_method());
-  cfun.attr("__signature__") =
-      xla::nb_property_readonly([](nb::handle self) -> nb::object {
+  cfun.attr("__signature__") = xla::nb_property_readonly(
+      [](nb::handle self) {
         return AsPjitFunction(self)->PythonSignature();
-      });
+      },
+      nb::sig("def __signature__(self) -> inspect.Signature"));
   cfun.attr("_cache_miss") =
-      xla::nb_property_readonly([](nb::handle self) -> nb::object {
+      xla::nb_property_readonly([](nb::handle self) {
         return AsPjitFunction(self)->cache_miss();
       });
   // All private members are only for testing/debugging purposes
@@ -1419,7 +1422,22 @@ void BuildPjitSubmodule(nb::module_& m) {
       nb::arg("function_name"), nb::arg("fun").none(), nb::arg("cache_miss"),
       nb::arg("static_argnums"), nb::arg("static_argnames"),
       nb::arg("global_cache_key"), nb::arg("pytree_registry"),
-      nb::arg("shard_arg_fallback"), nb::arg("cache").none() = nb::none());
+      nb::arg("shard_arg_fallback"), nb::arg("cache").none() = nb::none(),
+    nb::sig(
+      // clang-format off
+      "def pjit("
+      "function_name: str, "
+      "fun: Callable[..., Any] | None, "
+      "cache_miss: Callable[..., Any], "
+      "static_argnums: Sequence[int], "
+      "static_argnames: Sequence[str], "
+      "global_cache_key: Any, "
+      "pytree_registry: _PyTreeRegistry, "
+      "shard_arg_fallback: Callable[..., Any], "
+      "cache: PjitFunctionCache | None = ..."
+      ") -> PjitFunction"
+      // clang-format on
+    ));
 }
 
 }  // namespace jax

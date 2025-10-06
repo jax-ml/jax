@@ -95,7 +95,7 @@ class NamedSharding : public Sharding {
   bool operator==(const NamedSharding& other) const;
 
   bool Eq(const nanobind::object& other) const;  // Python __eq__
-  nanobind::object Hash() const;                 // Python __hash__
+  nanobind::int_ Hash() const;                   // Python __hash__
 
  private:
   nanobind::object mesh_;

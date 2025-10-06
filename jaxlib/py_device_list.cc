@@ -430,8 +430,8 @@ void PyDeviceList::PopulateMemoryKindInfoForDuckTypedDevices() {
   }
 }
 
-/*static*/ absl::StatusOr<nb::tuple> PyDeviceList::MemoryKinds(
-    nb_class_ptr<PyDeviceList> self) {
+/*static*/ absl::StatusOr<nb::typed<nb::tuple, nb::str, nb::ellipsis>>
+PyDeviceList::MemoryKinds(nb_class_ptr<PyDeviceList> self) {
   nb::ft_object_guard lock(self);
   if (!self->memory_kind_info_.has_value()) {
     self->PopulateMemoryKindInfo();
@@ -456,13 +456,16 @@ void PyDeviceList::PopulateMemoryKindInfoForDuckTypedDevices() {
 
 /*static*/ void PyDeviceList::Register(nb::module_& m) {
   nb::class_<PyDeviceList>(m, "DeviceList")
-      .def(nb::init<nb::tuple>())
+      .def(nb::init<nb::typed<nb::tuple, PyDevice, nb::ellipsis>>())
       .def("__hash__", &PyDeviceList::Hash, nb::lock_self())
       .def("__eq__", &PyDeviceList::Equal)
       .def("__ne__", &PyDeviceList::NotEqual)
       .def("__len__", &PyDeviceList::Len)
-      .def("__getitem__", &PyDeviceList::GetItem)
-      .def("__getitem__", &PyDeviceList::GetSlice)
+      .def("__getitem__", &PyDeviceList::GetItem,
+           nb::sig("def __getitem__(self, index: int, /) -> Device"))
+      .def(
+          "__getitem__", &PyDeviceList::GetSlice,
+          nb::sig("def __getitem__(self, slice: slice, /) -> Sequence[Device]"))
       .def("__iter__", &PyDeviceList::Iter, nb::keep_alive<0, 1>())
       .def("__str__", &PyDeviceList::Str)
       .def("__repr__", &PyDeviceList::Str)
@@ -479,14 +482,16 @@ void PyDeviceList::PopulateMemoryKindInfoForDuckTypedDevices() {
                    nb::lock_self())
       // `xla::ValueOrThrowWrapper` does not work with
       // `def_prop_ro()`. Manually convert an error into an exception.
-      .def_prop_ro("default_memory_kind",
-                   [](nb_class_ptr<PyDeviceList> l) {
-                     auto kind = DefaultMemoryKind(l);
-                     if (!kind.ok()) {
-                       throw nb::value_error(kind.status().ToString().c_str());
-                     }
-                     return *kind;
-                   })
+      .def_prop_ro(
+          "default_memory_kind",
+          [](nb_class_ptr<PyDeviceList> l) {
+            auto kind = DefaultMemoryKind(l);
+            if (!kind.ok()) {
+              throw nb::value_error(kind.status().ToString().c_str());
+            }
+            return *kind;
+          },
+          nb::sig("def default_memory_kind(self) -> str | None"))
       .def_prop_ro("memory_kinds",
                    [](nb_class_ptr<PyDeviceList> l) {
                      auto kinds = MemoryKinds(l);

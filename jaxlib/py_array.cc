@@ -2223,11 +2223,24 @@ absl::Status PyArray::RegisterTypes(nb::module_& m) {
       nb::arg("_skip_checks") = false);
 
   nb::class_<PyArrayResultHandler>(m, "ResultHandler")
-      .def("__call__", [](const PyArrayResultHandler& self,
-                          PyArray arg) { return self.Call(arg); })
-      .def("__call__",
-           [](const PyArrayResultHandler& self,
-              std::vector<PyArray> py_arrays) { return self.Call(py_arrays); });
+      .def(
+          "__call__",
+          [](const PyArrayResultHandler& self, nb::object arg) {
+            if (PyArray py_array; nb::try_cast<PyArray>(arg, py_array)) {
+              return self.Call(py_array);
+            }
+            if (std::vector<PyArray> py_arrays;
+                nb::try_cast<std::vector<PyArray>>(arg, py_arrays)) {
+              return self.Call(py_arrays);
+            }
+            throw nb::type_error(
+                absl::StrCat(
+                    "Expected a single PyArray or a sequence of PyArrays, got ",
+                    nb::cast<std::string_view>(nb::str(arg.type())))
+                    .c_str());
+          },
+          nb::sig(
+              "def __call__(self, arg: Array | Sequence[Array], /) -> Array"));
 
   return absl::OkStatus();
 }

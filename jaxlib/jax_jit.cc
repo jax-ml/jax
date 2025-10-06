@@ -388,12 +388,12 @@ absl::Status ParseArguments(
     for (int i = 0; i < keyword_args.size(); ++i) {
       if (kwarg_is_static(kwargs[i].first)) {
         signature.static_arg_names.push_back(
-            nb::steal<nb::object>(kwargs[i].first));
+            nb::steal<nb::str>(kwargs[i].first));
         signature.static_args.push_back(
             nb::borrow<nb::object>(kwargs[i].second));
       } else {
         signature.dynamic_arg_names.push_back(
-            nb::steal<nb::object>(kwargs[i].first));
+            nb::steal<nb::str>(kwargs[i].first));
         signature.dynamic_arg_treedefs.emplace_back(pytree_registry);
         PyTreeDef& pytree_def = signature.dynamic_arg_treedefs.back();
         pytree_def.Flatten(nb::handle(kwargs[i].second.ptr()),
@@ -407,15 +407,28 @@ absl::Status ParseArguments(
 void BuildJaxjitSubmodule(nb::module_& m) {
   nb::module_ jitlib = m.def_submodule("jax_jit", "Jax C++ jit library");
 
-  jitlib.def("set_disable_jit_state",
-             [](nb_class_ptr<Config> config) { disable_jit_state = config; });
-  jitlib.def("set_enable_x64_state",
-             [](nb_class_ptr<Config> config) { enable_x64_state = config; });
-  jitlib.def("set_post_hook_state",
-             [](nb_class_ptr<Config> config) { post_hook_state = config; });
+  jitlib.attr("_Config") = m.attr("config").attr("Config");
+  jitlib.attr("_PyTreeDef") = m.attr("pytree").attr("PyTreeDef");
+  jitlib.attr("_PyTreeRegistry") = m.attr("pytree").attr("PyTreeRegistry");
 
-  jitlib.def("set_thread_local_state_initialization_callback",
-             [](nb::object f) { initialize_local_state = f; });
+  jitlib.def(
+      "set_disable_jit_state",
+      [](nb_class_ptr<Config> config) { disable_jit_state = config; },
+      nb::sig("def set_disable_jit_state(config: _Config) -> None"));
+  jitlib.def(
+      "set_enable_x64_state",
+      [](nb_class_ptr<Config> config) { enable_x64_state = config; },
+      nb::sig("def set_enable_x64_state(config: _Config) -> None"));
+  jitlib.def(
+      "set_post_hook_state",
+      [](nb_class_ptr<Config> config) { post_hook_state = config; },
+      nb::sig("def set_post_hook_state(config: _Config) -> None"));
+
+  jitlib.def(
+      "set_thread_local_state_initialization_callback",
+      [](nb::object f) { initialize_local_state = f; },
+      nb::sig("def set_thread_local_state_initialization_callback("
+              "f: typing.Callable[[], None]) -> None"));
 
   nb::class_<PyArgSignature> arg_signature(jitlib, "PyArgSignature");
   arg_signature
@@ -436,20 +449,34 @@ void BuildJaxjitSubmodule(nb::module_& m) {
   argument_signature.def_ro("static_args", &ArgumentSignature::static_args)
       .def_ro("static_arg_names", &ArgumentSignature::static_arg_names)
       .def_ro("dynamic_arg_names", &ArgumentSignature::dynamic_arg_names)
-      .def_ro("dynamic_arg_treedefs", &ArgumentSignature::dynamic_arg_treedefs)
+      .def_ro(
+          "dynamic_arg_treedefs", &ArgumentSignature::dynamic_arg_treedefs,
+          nb::sig(
+              "def dynamic_arg_treedefs(self) -> typing.Sequence[_PyTreeDef]"))
       .def("__repr__", &ArgumentSignature::DebugString)
       .def("__str__", &ArgumentSignature::DebugString)
       .def("__hash__",
            [](const ArgumentSignature& s) { return absl::HashOf(s); })
-      .def("__eq__", [](const ArgumentSignature& a,
-                        const ArgumentSignature& b) { return a == b; })
-      .def("__ne__", [](const ArgumentSignature& a,
-                        const ArgumentSignature& b) { return a != b; });
+      .def(
+          "__eq__",
+          [](const ArgumentSignature& a, nb::object b) {
+            return nb::isinstance<ArgumentSignature>(b) &&
+                   a == nb::cast<ArgumentSignature>(b);
+          },
+          nb::is_operator())
+      .def(
+          "__ne__",
+          [](const ArgumentSignature& a, nb::object b) {
+            return !nb::isinstance<ArgumentSignature>(b) ||
+                   a != nb::cast<ArgumentSignature>(b);
+          },
+          nb::is_operator());
 
   jitlib.def(
       "parse_arguments",
       [](nb::sequence positional_args, nb::sequence keyword_args,
-         nb::tuple kwnames, absl::Span<int const> static_argnums,
+         nb::typed<nb::tuple, nb::str, nb::ellipsis> kwnames,
+         absl::Span<int const> static_argnums,
          absl::Span<nb::str const> static_argnames,
          PyTreeRegistry* pytree_registry) {
         ArgumentSignature signature;
@@ -490,6 +517,18 @@ void BuildJaxjitSubmodule(nb::module_& m) {
       nb::arg("positional_args"), nb::arg("keyword_args"), nb::arg("kwnames"),
       nb::arg("static_argnums"), nb::arg("static_argnames"),
       nb::arg("pytree_registry"),
+      nb::sig(
+          // clang-format off
+        "def parse_arguments("
+        "positional_args: Sequence[object], "
+        "keyword_args: Sequence[object], "
+        "kwnames: tuple[str, ...], "
+        "static_argnums: Sequence[int], "
+        "static_argnames: Sequence[str], "
+        "pytree_registry: _PyTreeRegistry"
+        ") -> tuple[ArgumentSignature, list[object]]"
+          // clang-format on
+          ),
       R"doc(Parses the arguments to a function as jax.jit would.
 
 Returns a ArgumentSignature and the flattened dynamic arguments.

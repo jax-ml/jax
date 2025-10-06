@@ -59,7 +59,7 @@ struct ArgumentSignature {
 
   // Dynamic keyword argument names. Interned, and sorted by the keyword
   // name. Interned values are safe to compare by pointer.
-  std::vector<nanobind::object> dynamic_arg_names;
+  std::vector<nanobind::str> dynamic_arg_names;
 
   // Static arguments. Contains the positional arguments sorted in argument
   // order, followed by static keyword arguments in the order given by
@@ -67,7 +67,7 @@ struct ArgumentSignature {
   std::vector<nanobind::object> static_args;
 
   // Static keyword argument names. Interned, and sorted by keyword name.
-  std::vector<nanobind::object> static_arg_names;
+  std::vector<nanobind::str> static_arg_names;
 
   bool operator==(const ArgumentSignature& other) const;
   bool operator!=(const ArgumentSignature& other) const {

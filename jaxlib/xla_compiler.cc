@@ -366,7 +366,9 @@ void DefRepeatedEnumProperty(nb::class_<T>& cls, const char* name,
         std::copy(elems->begin(), elems->end(), std::back_inserter(result));
         return result;
       },
-      [getter](T& obj, nb::sequence new_elems) {
+      [getter](
+          T& obj,
+          nb::typed<nb::sequence, typename Container::value_type> new_elems) {
         Container* elems = (obj.*getter)();
         elems->Clear();
         for (nb::handle e : new_elems) {
@@ -434,6 +436,8 @@ nb::ndarray<> LiteralToNdarray(Literal& obj) {
                        nb::device::cpu::value, 0);
 }
 
+struct Descriptor {};
+
 }  // namespace
 
 void BuildXlaCompilerSubmodule(nb::module_& m) {
@@ -474,7 +478,9 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
   nb::class_<Layout> layout_class(m, "Layout");
   layout_class.def(nb::init<absl::Span<const int64_t>>())
       .def("__init__",
-           [](Layout* self, nb::sequence minor_to_major, nb::sequence tiling,
+           [](Layout* self, nb::typed<nb::sequence, int> minor_to_major,
+              nb::typed<nb::sequence, nb::typed<nb::tuple, int, nb::ellipsis>>
+                  tiling,
               int64_t element_size_in_bits) {
              std::vector<Tile> xla_tiles;
              xla_tiles.reserve(nb::len(tiling.ptr()));
@@ -492,17 +498,27 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def("element_size_in_bits", &Layout::element_size_in_bits)
       .def("tiling",
            [](Layout layout) {
-             std::vector<nb::tuple> result;
+             std::vector<nb::typed<nb::tuple, int, nb::ellipsis>> result;
              result.reserve(layout.tiles().size());
              for (auto& t : layout.tiles()) {
                result.push_back(SpanToNbTuple(t.dimensions()));
              }
              return result;
            })
-      .def("__eq__", [](const Layout& layout,
-                        const Layout& other) { return layout == other; })
-      .def("__ne__", [](const Layout& layout,
-                        const Layout& other) { return layout != other; })
+      .def(
+          "__eq__",
+          [](const Layout& layout, const Layout& other) {
+            return layout == other;
+          },
+          nb::is_operator(),
+          nb::sig("def __eq__(self, other: object, /) -> bool"))
+      .def(
+          "__ne__",
+          [](const Layout& layout, const Layout& other) {
+            return layout != other;
+          },
+          nb::is_operator(),
+          nb::sig("def __ne__(self, other: object, /) -> bool"))
       .def("__str__", &Layout::ToString)
       .def("__hash__",
            [](const Layout& layout) { return absl::HashOf(layout); })
@@ -538,32 +554,32 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
             return ShapeUtil::MakeTupleShape(shapes);
           },
           "Constructs a tuple shape.")
-      .def_static("array_shape",
-                  xla::ValueOrThrowWrapper(
-                      [](PrimitiveType type, nb::sequence dims_seq,
-                         std::optional<nb::sequence> layout_seq,
-                         std::optional<std::vector<bool>> dynamic_dimensions)
-                          -> absl::StatusOr<Shape> {
-                        std::vector<int64_t> dims =
-                            SequenceToVector<int64_t>(dims_seq);
-                        if (layout_seq) {
-                          std::vector<int64_t> layout =
-                              SequenceToVector<int64_t>(*layout_seq);
-                          return MakeShapeWithDenseLayout(type, dims, layout,
-                                                          dynamic_dimensions);
-                        } else {
-                          return MakeShapeWithDenseLayout(
-                              type, dims, std::nullopt, dynamic_dimensions);
-                        }
-                      }),
-                  "Constructs an array shape.", nb::arg("type"),
-                  nb::arg("dims"), nb::arg("layout").none() = std::nullopt,
-                  nb::arg("dynamic_dimensions").none() = std::nullopt)
       .def_static(
           "array_shape",
           xla::ValueOrThrowWrapper(
-              [](nb_dtype dtype, nb::sequence dims_seq,
-                 std::optional<nb::sequence> layout_seq,
+              [](PrimitiveType type, nb::typed<nb::sequence, int> dims_seq,
+                 std::optional<nb::typed<nb::sequence, int>> layout_seq,
+                 std::optional<std::vector<bool>> dynamic_dimensions)
+                  -> absl::StatusOr<Shape> {
+                std::vector<int64_t> dims = SequenceToVector<int64_t>(dims_seq);
+                if (layout_seq) {
+                  std::vector<int64_t> layout =
+                      SequenceToVector<int64_t>(*layout_seq);
+                  return MakeShapeWithDenseLayout(type, dims, layout,
+                                                  dynamic_dimensions);
+                } else {
+                  return MakeShapeWithDenseLayout(type, dims, std::nullopt,
+                                                  dynamic_dimensions);
+                }
+              }),
+          "Constructs an array shape.", nb::arg("type"), nb::arg("dims"),
+          nb::arg("layout").none() = std::nullopt,
+          nb::arg("dynamic_dimensions").none() = std::nullopt)
+      .def_static(
+          "array_shape",
+          xla::ValueOrThrowWrapper(
+              [](nb_dtype dtype, nb::typed<nb::sequence, int> dims_seq,
+                 std::optional<nb::typed<nb::sequence, int>> layout_seq,
                  std::optional<std::vector<bool>> dynamic_dimensions)
                   -> absl::StatusOr<Shape> {
                 PrimitiveType type = ValueOrThrow(DtypeToPrimitiveType(dtype));
@@ -596,9 +612,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
           },
           "Constructs a scalar shape.", nb::arg("type"))
       .def("dimensions",
-           [](const Shape& shape) -> nb::tuple {
-             return SpanToNbTuple(shape.dimensions());
-           })
+           [](const Shape& shape) { return SpanToNbTuple(shape.dimensions()); })
       .def("layout",
            [](const Shape& shape) -> Layout { return shape.layout(); })
       .def("xla_element_type", &Shape::element_type)
@@ -651,10 +665,16 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
           },
           "Returns a copy of a shape with missing layouts set to "
           "major-to-minor.")
-      .def("__eq__", [](const Shape& shape,
-                        const Shape& other) { return shape == other; })
-      .def("__ne__", [](const Shape& shape,
-                        const Shape& other) { return shape != other; })
+      .def(
+          "__eq__",
+          [](const Shape& shape, const Shape& other) { return shape == other; },
+          nb::is_operator(),
+          nb::sig("def __eq__(self, other: object, /) -> bool"))
+      .def(
+          "__ne__",
+          [](const Shape& shape, const Shape& other) { return shape != other; },
+          nb::is_operator(),
+          nb::sig("def __ne__(self, other: object, /) -> bool"))
       .def("__hash__", [](const Shape& shape) { return absl::HashOf(shape); })
       .def("__repr__", [](const Shape& shape) {
         return shape.ToString(/*print_layout=*/true);
@@ -1350,14 +1370,9 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .value("LIKE", OpSharding::LIKE);
 
   nb::class_<OpSharding> op_sharding(m, "OpSharding");
+  op_sharding.attr("Type") = op_sharding_type;
+  op_sharding.attr("ShardGroupType") = op_sharding_shard_group_type;
   op_sharding
-      .def_prop_ro_static(
-          "Type",
-          [op_sharding_type](const nb::object&) { return op_sharding_type; })
-      .def_prop_ro_static("ShardGroupType",
-                          [op_sharding_shard_group_type](const nb::object&) {
-                            return op_sharding_shard_group_type;
-                          })
       .def(nb::init<>())
       .def("__getstate__",
            [](const OpSharding& self) {
@@ -1434,8 +1449,20 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
           xla::ValueOrThrowWrapper(SubgroupWithTileAssignmentHelper),
           nb::arg("tile_assignment"),
           nb::arg("subgroup_types") = absl::Span<const xla::OpSharding::Type>())
-      .def("__eq__", [](const xla::HloSharding& a,
-                        const xla::HloSharding& b) { return a == b; })
+      .def(
+          "__eq__",
+          [](const xla::HloSharding& a, const xla::HloSharding& b) {
+            return a == b;
+          },
+          nb::is_operator(),
+          nb::sig("def __eq__(self, other: object, /) -> bool"))
+      .def(
+          "__ne__",
+          [](const xla::HloSharding& a, const xla::HloSharding& b) {
+            return a != b;
+          },
+          nb::is_operator(),
+          nb::sig("def __ne__(self, other: object, /) -> bool"))
       .def("__hash__",
            [](const xla::HloSharding& self) { return absl::HashOf(self); })
       .def("is_replicated", &xla::HloSharding::IsReplicated)
