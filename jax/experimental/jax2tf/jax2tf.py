@@ -140,7 +140,7 @@ def get_thread_local_state_call_tf_concrete_function_list() -> (
 @partial(api_util.api_hook, tag="jax2tf_convert")
 def convert(fun_jax: Callable,
             *,
-            polymorphic_shapes: str | None = None,
+            polymorphic_shapes: str | PolyShape | None | Sequence[str | PolyShape | None] = None,
             polymorphic_constraints: Sequence[str] = (),
             with_gradient: bool = True,
             enable_xla: bool = DEFAULT_NATIVE_SERIALIZATION,  # type: ignore
