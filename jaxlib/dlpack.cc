@@ -61,6 +61,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
+// todo: remove this
 namespace ifrt = xla::ifrt;
 namespace nb = nanobind;
 

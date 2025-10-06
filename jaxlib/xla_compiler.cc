@@ -83,6 +83,7 @@ limitations under the License.
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
+// todo: remove this
 namespace xla {
 namespace {
 
