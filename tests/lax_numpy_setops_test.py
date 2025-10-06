@@ -147,6 +147,18 @@ class LaxNumpySetopsTest(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
+      shape1=all_shapes,
+      shape2=all_shapes,
+  )
+  def testSetdiff1dAssumeUnique(self, shape1, shape2):
+    # regression test for https://github.com/jax-ml/jax/issues/32335
+    args_maker = lambda: (jnp.arange(math.prod(shape1), dtype='int32').reshape(shape1),
+                          jnp.arange(math.prod(shape2), dtype='int32').reshape(shape2))
+    np_op = partial(np.setdiff1d, assume_unique=True)
+    jnp_op = partial(jnp.setdiff1d, assume_unique=True)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+
+  @jtu.sample_product(
     dtype1=[s for s in default_dtypes if s != jnp.bfloat16],
     dtype2=[s for s in default_dtypes if s != jnp.bfloat16],
     shape1=all_shapes,
