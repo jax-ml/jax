@@ -4893,6 +4893,10 @@ def _convert_element_type_sharding_rule(operand, *, new_dtype, weak_type,
       return core.get_cur_mesh_sharding()
   return sharding
 
+def _convert_element_type_unreduced_rule(out_s, operand, *, new_dtype,
+                                         weak_type, sharding):
+  return out_s
+
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type,
                                      sharding):
   return new_dtype
@@ -4913,7 +4917,7 @@ def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type,
   else:
     out = convert_element_type_p.bind(
         ct, new_dtype=old_dtype, weak_type=old_weak_type,
-        sharding=operand.aval.sharding)
+        sharding=operand.aval.to_cotangent_aval().sharding)
     return [out]
 
 def _convert_element_type_jvp_rule(tangent, primal_result, operand, *,
@@ -4976,7 +4980,8 @@ convert_element_type_p = standard_primitive(
     _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
     'convert_element_type', weak_type_rule=_convert_element_type_weak_type_rule,
     sharding_rule=_convert_element_type_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'convert_element_type'))
+    vma_rule=partial(core.standard_vma_rule, 'convert_element_type'),
+    unreduced_rule=_convert_element_type_unreduced_rule)
 
 # TODO(dougalm): I'm overriding bind_with_trace here because that's the closest thing to
 # the old "custom bind" but it might not be the best way to do this.
