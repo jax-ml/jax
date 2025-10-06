@@ -105,11 +105,48 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     sharding = jax.sharding.SingleDeviceSharding(cpu_devices[0])
     sds = jax.ShapeDtypeStruct((), jnp.int32, sharding=sharding)
 
-    pickled_function = serialization._serialize(add_one)
+    fun_and_specialization = (
+        add_one,
+        None,  # dummy in_specs_treedef
+        None,  # dummy in_specs_leaves
+        None,  # dummy out_specs_treedef
+        None,  # dummy out_specs_leaves
+        None,  # dummy devices
+    )
+    pickled_function = serialization._serialize(fun_and_specialization)
     program = ifrt_programs.make_colocated_python_program(
         "add_one", pickled_function, [cpu_devices[0]], [sds], [sds]
     )
     del program
+
+  def test_serialize_with_shared_obj(self):
+    cpu_devices = colocated_python.colocated_cpu_devices(
+        jax.local_devices()[:1])
+    mesh = jax.sharding.Mesh(
+        np.array(cpu_devices).reshape((1, 1)),
+        ("long_axis_name_1", "long_axis_name_2"))
+    sharding1 = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec("long_axis_name_1"))
+    sharding2 = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec("long_axis_name_2"))
+
+    serialized1 = serialization._serialize([sharding1])
+    serialized2 = serialization._serialize([sharding1, sharding2])
+    serialized3 = serialization._serialize([sharding1, sharding1])
+
+    # The total serialized size of two shardings of a shared mesh should be less
+    # than twice the serialized size of a single sharding.
+    self.assertLess(len(serialized2), len(serialized1) * 2)
+
+    # The total serialized size of two identical shardings should be less than
+    # that of two shardings that only share the mesh.
+    self.assertLess(len(serialized3), len(serialized2))
+
+    self.assertEqual(serialization._deserialize(serialized1), [sharding1])
+    self.assertEqual(
+        serialization._deserialize(serialized2), [sharding1, sharding2])
+    self.assertEqual(
+        serialization._deserialize(serialized3), [sharding1, sharding1])
 
   def test_simple_function(self):
     @colocated_python.colocated_python
