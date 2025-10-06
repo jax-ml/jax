@@ -1,4 +1,3 @@
-import contextlib
 # Copyright 2023 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,10 @@ import contextlib
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
+import contextlib
+import dataclasses
 import functools
 import itertools
 import math
@@ -20,21 +22,23 @@ import os
 import re
 import sys
 
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
-
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
-import jax.export
 from jax import lax
 from jax import random
 from jax._src import checkify
 from jax._src import config
+from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src import hijax
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
+import jax.export
 import jax.numpy as jnp
 import numpy as np
+
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
 if sys.platform != "win32":
   from jax.experimental.pallas import tpu as pltpu
@@ -2697,6 +2701,176 @@ class SymbolicPallasTest(PallasBaseTest):
 
 class PallasCallNamedGridInterpretTest(PallasCallNamedGridTest):
   INTERPRET = True
+
+
+@dataclasses.dataclass(frozen=True)
+class WeirdTuple:
+  x0: jax.Array
+  x1: jax.Array
+
+
+@dataclasses.dataclass(frozen=True)
+class WeirdTupleTy(hijax.HiType):
+  x0_aval: jax_core.ShapedArray
+  x1_aval: jax_core.ShapedArray
+
+  @property
+  def shape(self) -> tuple[int, ...]:
+    return self.x0_aval.shape
+
+  @property
+  def dtype(self) -> jnp.dtype:
+    return self.x0_aval.dtype
+
+  def update(self, *, shape: tuple[int, ...]) -> WeirdTupleTy:
+    return dataclasses.replace(
+        self, x0_aval=self.x0_aval.update(shape=shape),
+        x1_aval=self.x1_aval.update(shape=shape[1:])
+    )
+
+  def lo_ty(self) -> list[jax_core.ShapedArray]:
+    return [self.x0_aval, self.x1_aval]
+
+  def lower_val(self, hi_val: WeirdTuple) -> list[jax.Array]:
+    return [hi_val.x0, hi_val.x1]
+
+  def raise_val(self, x0, x1) -> WeirdTuple:
+    return WeirdTuple(x0, x1)
+
+  def lower_block_spec(self, block_spec: pl.BlockSpec):
+    x1_block_spec = block_spec.replace(block_shape=block_spec.block_shape[1:],
+                                       index_map=lambda *args: (0,))
+    return [block_spec, x1_block_spec]
+
+hijax.register_hitype(
+    WeirdTuple, lambda t: WeirdTupleTy(jax.typeof(t.x0), jax.typeof(t.x1))
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class SlicedArray:
+  x: jax.Array  # any shape/dtype
+  s: jax.Array  # i32[]
+
+  @property
+  def shape(self) -> tuple[int, ...]:
+    return self.x.shape[1:]
+
+  @property
+  def dtype(self) -> jnp.dtype:
+    return self.x.dtype
+
+
+@dataclasses.dataclass(frozen=True)
+class SlicedArrayTy(hijax.HiType):
+  pre_sliced_aval: jax_core.ShapedArray
+
+  @property
+  def shape(self) -> tuple[int, ...]:
+    return self.pre_sliced_aval.shape[1:]
+
+  @property
+  def dtype(self) -> jnp.dtype:
+    return self.pre_sliced_aval.dtype
+
+  def update(self, *, shape: tuple[int, ...]) -> WeirdTupleTy:
+    return dataclasses.replace(
+        self,
+        pre_sliced_aval=self.pre_sliced_aval.update(
+            shape=(self.pre_sliced_aval.shape[0],) + shape
+        ),
+    )
+
+  def lo_ty(self) -> list[jax_core.ShapedArray]:
+    return [self.pre_sliced_aval, jax_core.ShapedArray((1,), jnp.int32)]
+
+  def lower_val(self, hi_val: SlicedArray) -> list[jax.Array]:
+    return [hi_val.x, hi_val.s]
+
+  def raise_val(self, x, s) -> WeirdTuple:
+    return SlicedArray(x, s)
+
+  def lower_block_spec(self, block_spec: pl.BlockSpec):
+    def index_map(*args):
+      idx = block_spec.index_map(*args)
+      return 0, *idx
+    new_block_shape = (pl.Blocked(self.pre_sliced_aval.shape[0]), *block_spec.block_shape)
+    x_block_spec = block_spec.replace(index_map=index_map, block_shape=new_block_shape)
+    return [x_block_spec, pl.BlockSpec(memory_space=pltpu.SMEM)]
+
+hijax.register_hitype(
+    SlicedArray, lambda t: SlicedArrayTy(jax.typeof(t.x))
+)
+
+index_p = jax_core.Primitive('index_p')
+index_p.is_high = lambda *_: True
+index_p.def_abstract_eval(lambda xt: jax_core.ShapedArray(xt.shape, xt.dtype))
+
+
+def index_to_lojax(xt: jax.Ref) -> jax.Array:
+  assert isinstance(xt, jax.Ref)
+  x_ref = xt._refs.x
+  s_ref = xt._refs.s
+  s = s_ref[0]
+  return x_ref[s]
+index_p.to_lojax = index_to_lojax
+
+
+class PallasHiJaxTest(PallasBaseTest):
+
+  def test_pass_weird_tuple_into_pallas_call(self):
+
+    xt = WeirdTuple(x0=jnp.ones((8, 8)), x1=jnp.zeros((8,)))
+
+    def kernel(xt_ref, ot_ref):
+      xt = xt_ref[...]
+      ot_ref[...] = xt
+
+    ot = self.pallas_call(kernel, out_shape=jax.typeof(xt))(xt)
+    self.assertArraysEqual(ot.x0, xt.x0)
+    self.assertArraysEqual(ot.x1, xt.x1)
+
+  def test_pass_sliced_array_into_pallas_call(self):
+
+    xs = SlicedArray(
+        x=jnp.arange(8 * 16 * 128).reshape(8, 16, 128),
+        s=jnp.array([2], jnp.int32),
+    )
+
+    def kernel(xs_ref, o_ref):
+      x = index_p.bind(xs_ref)
+      o_ref[...] = x
+
+    o = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(xs.shape, xs.dtype),
+        in_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
+        out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+        grid=(2,)
+    )(xs)
+    self.assertArraysEqual(o, xs.x[xs.s[0]])
+
+  def test_pass_hi_type_with_aliasing(self):
+
+    xs = SlicedArray(
+        x=jnp.arange(8 * 16 * 128).reshape(8, 16, 128),
+        s=jnp.array([2], jnp.int32),
+    )
+
+    def kernel(xs_ref, o_ref):
+      o_ref[...] = xs_ref[...]
+
+    @jax.jit
+    def f(xs):
+      return self.pallas_call(
+          kernel, out_shape=jax.typeof(xs),
+          in_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
+          out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+          grid=(2,),
+          input_output_aliases={0: 0}
+      )(xs)
+    os = f(xs)
+    self.assertArraysEqual(os.x, xs.x)
+    self.assertArraysEqual(os.s, xs.s)
 
 
 if __name__ == "__main__":

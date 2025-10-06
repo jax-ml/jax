@@ -29,6 +29,7 @@ from jax._src import checkify
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import effects
+from jax._src import hijax
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import tree_util
@@ -63,7 +64,7 @@ Backend = pallas_core.Backend
 CompilerParams = pallas_core.CompilerParams
 
 # See the docstring for GridMapping for the calling convention
-pallas_call_p = jax_core.Primitive('pallas_call')
+pallas_call_p = hijax.HiPrimitive('pallas_call')
 pallas_call_p.multiple_results = True
 
 
@@ -107,6 +108,110 @@ def _pallas_call_abstract_eval(
 
 
 pallas_call_p.def_effectful_abstract_eval(_pallas_call_abstract_eval)
+
+def _pallas_call_is_high(*_, jaxpr, **params):
+  del params
+  return jaxpr.is_high
+pallas_call_p.is_high = _pallas_call_is_high  # type: ignore
+
+
+def _get_index_mapping(avals) -> dict[int, tuple[int, ...]]:
+  indices = {}
+  counter = 0
+  for i, in_aval in enumerate(avals):
+    local_counter = []
+    for _ in range(len(in_aval.lo_ty())):
+      local_counter.append(counter)
+      counter += 1
+    indices[i] = tuple(local_counter)
+  return indices
+
+
+def _pallas_call_to_lojax(
+    *hi_args,
+    jaxpr: jax_core.Jaxpr,
+    input_output_aliases: tuple[tuple[int, int], ...],
+    grid_mapping: GridMapping,
+    mesh: pallas_core.Mesh | None,
+    debug: bool,
+    interpret: Any,
+    compiler_params: Any,
+    cost_estimate: CostEstimate | None,
+    out_avals: tuple[jax_core.AbstractValue, ...],
+    backend: Backend | None,
+    metadata: FrozenDict[str, str] | None,
+):
+  if any(jax_core.get_aval(x).has_qdd for x in hi_args):
+    raise NotImplementedError("pallas_call does not support QDD for inputs")
+  if any(aval.has_qdd for aval in out_avals):
+    raise NotImplementedError("pallas_call does not support QDD for outputs")
+  closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, ())
+  with grid_mapping.trace_env():
+    closed_lo_jaxpr = pe.lower_jaxpr(closed_jaxpr)
+  assert not closed_lo_jaxpr.consts
+  lo_jaxpr = closed_lo_jaxpr.jaxpr
+  for block_mapping in grid_mapping.block_mappings:
+    index_map_jaxpr = block_mapping.index_map_jaxpr
+    if index_map_jaxpr.jaxpr.is_high:
+      raise NotImplementedError(
+          "pallas_call does not support hijax for index_map"
+      )
+  avals = [jax_core.get_aval(a) for a in hi_args]
+  lo_args = [lo_val for aval, x in zip(avals, hi_args)
+             for lo_val in (aval.read_loval(x) if aval.has_qdd
+                            else aval.lower_val(x))]
+  lo_out_avals = [
+      lo_aval
+      for aval in out_avals
+      for lo_aval in (aval.lo_ty() if aval.is_high else [aval])
+  ]
+  lo_grid_mapping = grid_mapping.to_lojax()
+  in_avals = [v.aval for v in lo_jaxpr.invars]
+  scalar_prefetch_avals = in_avals[lo_grid_mapping.slice_index_ops]
+  operand_avals = in_avals[lo_grid_mapping.slice_block_ops]
+  scratch_avals = in_avals[lo_grid_mapping.slice_scratch_ops]
+  # Some basic checks
+  assert len(scalar_prefetch_avals) + len(operand_avals) + len(
+      scratch_avals
+  ) == len(in_avals)
+  assert len(lo_grid_mapping.block_mappings) + len(
+      lo_grid_mapping.scratch_avals
+  ) + lo_grid_mapping.num_index_operands == len(lo_jaxpr.invars), (
+      len(lo_grid_mapping.block_mappings),
+      len(lo_grid_mapping.scratch_avals),
+      lo_grid_mapping.num_index_operands,
+      len(lo_jaxpr.invars),
+  )
+
+  # We need to update the input/output aliases to be in terms of the
+  # flattened lo inputs/outputs.
+  # Get mappings from hi input/outputs to the tuple of lo inputs/outputs
+  input_index_mapping = _get_index_mapping(avals)
+  output_index_mapping = _get_index_mapping(out_avals)
+  new_input_output_aliases = []
+  # Alias lo inputs to lo outputs
+  for i, o in input_output_aliases:
+    assert i in input_index_mapping
+    assert o in output_index_mapping
+    for i_lo, o_lo in zip(input_index_mapping[i], output_index_mapping[o]):
+      new_input_output_aliases.append((i_lo, o_lo))
+
+  lo_outs = pallas_call_p.bind(
+      *lo_args,
+      jaxpr=lo_jaxpr,
+      grid_mapping=lo_grid_mapping,
+      mesh=mesh,
+      cost_estimate=cost_estimate,
+      backend=backend,
+      metadata=metadata,
+      compiler_params=compiler_params,
+      debug=debug,
+      interpret=interpret,
+      input_output_aliases=tuple(new_input_output_aliases),
+      out_avals=tuple(lo_out_avals),
+  )
+  return pe.raise_lo_outs(out_avals, lo_outs)
+pallas_call_p.to_lojax = _pallas_call_to_lojax  # type: ignore
 
 
 def _pallas_call_jvp_rule(
@@ -1377,6 +1482,8 @@ def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
       return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype)
     case pallas_core.MemoryRef():
       return out_shape.get_array_aval()
+    case hijax.HiType():
+      return out_shape
     case _:
       if type(out_shape) in pallas_core._out_shape_to_aval_mapping:
         return pallas_core._out_shape_to_aval_mapping[type(out_shape)](
