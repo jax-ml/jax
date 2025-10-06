@@ -792,8 +792,12 @@ def _batch_indexer(
                                       bcast_dims)
       new_indices.append(idx)
   if ref_dim is not batching.not_mapped:
-    iota = lax.broadcasted_iota(np.dtype('int32'), new_integer_indexer_shape, 0)
-    new_indices.insert(ref_dim, iota)
+    if indexer.int_indexer_shape:
+      batch_idx = lax.broadcasted_iota(
+          np.dtype('int32'), new_integer_indexer_shape, 0)
+    else:
+      batch_idx = indexing.Slice(0, axis_size)  # type: ignore
+    new_indices.insert(ref_dim, batch_idx)
   return indexing.NDIndexer(
       tuple(new_indices), ref_shape, new_integer_indexer_shape, validate=True
   )
@@ -832,7 +836,10 @@ def _get_vmap(batched_args, batched_dims, *, tree):
     out_bdim = 0
   else:  # originally not going to be moved to the front
     if new_int_indexers_contiguous:  # now not going to be moved to the front
-      out_bdim = is_new_int_indexing.index(True)
+      try:
+        out_bdim = is_new_int_indexing.index(True)
+      except ValueError:
+        out_bdim = 0
     else:  # now going to be moved to the front
       original_pos = is_int_indexing.index(True)
       array_indexer_shape = new_indexers[0].int_indexer_shape
@@ -891,7 +898,10 @@ def _swap_vmap(batched_args, batched_dims, *, tree):
   if not new_int_indexers_contiguous:  # will be moved to the front
     batched_dim_in_result = 0
   else:
-    batched_dim_in_result = is_new_int_indexing.index(True) + 0
+    try:
+      batched_dim_in_result = is_new_int_indexing.index(True) + 0
+    except ValueError:
+      batched_dim_in_result = ref_dim
 
   if not val_is_batched:
     if ref_is_batched or idx_is_batched:
@@ -961,7 +971,10 @@ def _addupdate_vmap(batched_args, batched_dims, *, tree):
   if not new_int_indexers_contiguous:  # will be moved to the front
     batched_dim_in_result = 0
   else:
-    batched_dim_in_result = is_new_int_indexing.index(True)
+    try:
+      batched_dim_in_result = is_new_int_indexing.index(True)
+    except ValueError:
+      batched_dim_in_result = ref_dim
 
   if not val_is_batched:
     if ref_is_batched or idx_is_batched:
