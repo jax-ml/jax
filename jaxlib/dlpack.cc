@@ -84,6 +84,8 @@ struct DLPackTensor {
 };
 
 DLPackTensor::~DLPackTensor() {
+  // We must release the external reference first before deleting the array.
+  external_reference.reset();
   if (buffer_reference) {
     GlobalPyRefManager()->AddGarbage(
         absl::MakeSpan(&buffer_reference, /*size=*/1));
