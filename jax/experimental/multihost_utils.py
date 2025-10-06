@@ -86,11 +86,6 @@ def broadcast_one_to_all(in_tree: Any, is_source: bool | None = None) -> Any:
 
   return jax.tree.map(post_jit, out_tree)
 
-def sync_global_devices(name: str):
-  """Creates a barrier across all hosts/devices."""
-  h = np.uint32(zlib.crc32(name.encode()))
-  assert_equal(h, f"sync_global_devices name mismatch ('{name}')")
-
 
 # Identity function is at the top level so that `process_allgather` doesn't
 # recompile on every invocation.
@@ -162,13 +157,29 @@ def process_allgather(in_tree: Any, tiled: bool = False) -> Any:
   return jax.tree.map(_pjit, in_tree)
 
 
+def sync_global_devices(name: str):
+  """Creates a barrier across all hosts/devices."""
+  h = np.uint32(zlib.crc32(name.encode()))
+  assert_equal(h, f"sync_global_devices name mismatch ('{name}')")
+
+
 def assert_equal(in_tree, fail_message: str = ''):
   """Verifies that all the hosts have the same tree of values."""
-  expected = broadcast_one_to_all(in_tree)
-  if not jax.tree_util.tree_all(
-      jax.tree_util.tree_map(lambda *x: np.all(np.equal(*x)), in_tree, expected)):
+  def concat_in_tree(x):
+    if isinstance(x, array.ArrayImpl) and not x.is_fully_addressable:
+      return np.asarray(x.addressable_data(0))
+    else:
+      x = np.asarray(x)
+      if x.ndim == 0:
+        x = np.expand_dims(x, axis=0)
+      return np.concat([x] * jax.process_count())
+
+  out = process_allgather(in_tree, tiled=True)
+  expected_in_tree = jax.tree.map(concat_in_tree, in_tree)
+  if not jax.tree.all(
+      jax.tree.map(lambda *x: np.all(np.equal(*x)), expected_in_tree, out)):
     raise AssertionError(
-        f'{fail_message} Expected: {expected}; got: {in_tree}.')
+        f'{fail_message}. Expected: {out}; got: {in_tree}.')
 
 
 def reached_preemption_sync_point(step_id: int) -> bool:
