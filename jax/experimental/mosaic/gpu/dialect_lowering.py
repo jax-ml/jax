@@ -265,7 +265,7 @@ def _initialize_barrier_op_lowering_rule(
     initialize_barrier_op: mgpu.InitializeBarrierOp,
 ) -> Sequence[ir.Value]:
 
-  shape = initialize_barrier_op.barriers_ref.type.shape
+  shape = ir.ShapedType(initialize_barrier_op.barriers_ref.type).shape
   num_barriers = math.prod(shape)
 
   i32 = ir.IntegerType.get_signless(32)
@@ -452,7 +452,7 @@ def _vector_load_op_lowering_rule(
           f"for {vector_load_op}"
       )
 
-  element_type = vector_load_op.result.type.element_type
+  element_type = ir.VectorType(vector_load_op.result.type).element_type
   is_signed = False if ir.IntegerType.isinstance(element_type) else None
 
   def _fragmented_array_to_ir(fragmented_array: fa.FragmentedArray) -> ir.Value:
@@ -1119,7 +1119,7 @@ def _cmpi_op_lowering_rule(
   [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
-  impl, is_signed = CMPI_IMPLS[op.predicate.value]
+  impl, is_signed = CMPI_IMPLS[op.predicate.value]  # pytype: disable=attribute-error
   lhs = _fragmented_array_from_ir(op.lhs, layout, is_signed)
   rhs = _fragmented_array_from_ir(op.rhs, layout, is_signed)
   return [fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
@@ -1143,7 +1143,7 @@ def _cmpf_op_lowering_rule(
   [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
-  impl = CMPF_IMPLS[op.predicate.value]
+  impl = CMPF_IMPLS[op.predicate.value]  # pytype: disable=attribute-error
   lhs = _fragmented_array_from_ir(op.lhs, layout)
   rhs = _fragmented_array_from_ir(op.rhs, layout)
   return [fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
@@ -1820,6 +1820,7 @@ def _mgpu_custom_primitive_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.CustomPrimitiveOp
 ) -> Sequence[ir.Value]:
   """Lowering rule for mgpu.CustomPrimitiveOp."""
+  del ctx
   # The block already contains unwrapping and wrapping conversion casts.
   return inline_block(
       op.body.blocks[0],
