@@ -29,7 +29,6 @@ from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import memref
-from jaxlib.mlir.dialects import scf
 import numpy as np
 
 from .utils import *  # noqa: F403
@@ -227,14 +226,15 @@ class ProfilerSpec:
     )
     start_times = entries[..., 0]
     sm_ids = entries[..., 1]
-    entries_used = entries[..., 2]
-    if np.any(entries_used > self.entries_per_warpgroup - 2):
+    traces_used = entries[..., 2]
+    entries_used = traces_used + 3
+    if np.any(entries_used > self.entries_per_warpgroup):
       raise RuntimeError("Insufficient space to capture a full trace")
     traces = entries[..., 3:]
 
     # Estimate the overhead of profiling.
     time_events = traces[:, :, 1::2]
-    valid_times_mask = np.arange(traces.shape[-1])[1::2] < (entries_used[..., None] - 3)
+    valid_times_mask = np.arange(traces.shape[-1])[1::2] < traces_used[..., None]
     # 12 cycles is a ballpark estimate for H100
     profiling_overhead = (time_events[:, :, 1:] - time_events[:, :, :-1]).min(
         where=valid_times_mask[:, :, 1:], initial=12
@@ -244,7 +244,7 @@ class ProfilerSpec:
     unintern = {v: k for k, v in self.interned_names.items()}
     events = []
     for block_idx, wg_idx in np.ndindex(num_blocks, warpgroups_per_block):
-      valid_entries = (entries_used[block_idx, wg_idx] - 3)
+      valid_entries = traces_used[block_idx, wg_idx]
       local_clock_offset = None
       assert valid_entries % 2 == 0, valid_entries
       start_time = start_times[block_idx, wg_idx]
@@ -323,11 +323,14 @@ class OnDeviceProfiler:
     i32 = ir.IntegerType.get_signless(32)
     name_id = self.spec.intern_name(name)
     def store(modifier):
-      cur = memref.load(self.offset, [])
+      # smem_buffer[offset] = modifier | name_id
+      # smem_buffer[offset + 1] = %clock
+      # offset += 2
+      offset = memref.load(self.offset, [])
       i64 = ir.IntegerType.get_signless(64)
       base_addr = arith.addi(
           llvm.ptrtoint(i64, self.smem_buffer_ptr),
-          arith.extui(i64, arith.muli(cur, c(4, i32))),
+          arith.extui(i64, arith.muli(offset, c(4, i32))),
       )
       llvm.inline_asm(
           ir.Type.parse("!llvm.void"),
@@ -338,11 +341,8 @@ class OnDeviceProfiler:
           "b,l,r",
           has_side_effects=True,
       )
-      memref.store(
-          arith.addi(cur, c(2, cur.type)),
-          self.offset,
-          [],
-      )
+      new_offset = arith.addi(offset, c(2, i32))
+      memref.store(new_offset, self.offset, [])
     store(ProfilerSpec.ENTER)
     yield
     store(ProfilerSpec.EXIT)
@@ -371,19 +371,14 @@ class OnDeviceProfiler:
             f"memref<{self.entries_per_wg}xi32, strided<[1], offset: ?>>"
         ),
     )
-    is_profiling_thread = scf.IfOp(self.is_profiling_thread)
-    with ir.InsertionPoint(is_profiling_thread.then_block):
+    with when(self.is_profiling_thread):
       memref.store(self.start, wg_gmem_buffer, [c(0, index)])
       memref.store(smid(), wg_gmem_buffer, [c(1, index)])
-      memref.store(
-          arith.addi(memref.load(self.offset, []), c(3, i32)),
-          wg_gmem_buffer,
-          [c(2, index)],
-      )
-      tmp = vector.load(
+      num_traces = memref.load(self.offset, [])
+      memref.store(num_traces, wg_gmem_buffer, [c(2, index)])
+      traces = vector.load(
           ir.VectorType.get((self.entries_per_wg - 3,), i32),
           self.smem_buffer,
           [c(0, index)],
       )
-      vector.store(tmp, wg_gmem_buffer, [c(3, index)])
-      scf.yield_([])
+      vector.store(traces, wg_gmem_buffer, [c(3, index)])
