@@ -535,7 +535,7 @@ def execution_stream_id(new_id: int):
     _xla.set_execution_stream_id(saved)
 
 
-XlaRuntimeError = _xla.JaxRuntimeError
+XlaRuntimeError = _xla.XlaRuntimeError
 
 # Perform one last garbage collection of deferred Python references. This is
 # mostly to keep ASAN happy.

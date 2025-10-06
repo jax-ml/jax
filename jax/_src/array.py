@@ -548,7 +548,7 @@ class ArrayImpl(basearray.Array):
     try:
       return Format(Layout.from_pjrt_layout(self._pjrt_layout),
                     self.sharding)
-    except _jax.JaxRuntimeError as e:
+    except _jax.XlaRuntimeError as e:
       msg, *_ = e.args
       if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
         return Format(None, self.sharding)

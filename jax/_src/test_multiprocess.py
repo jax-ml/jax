@@ -32,7 +32,7 @@ from jax._src import xla_bridge as xb
 from jax._src import test_util as jtu
 from jax._src.config import config
 from jax._src.lib import cuda_versions
-from jax._src.lib import _jax
+from jax._src.lib import xla_client as xc
 
 try:
   import portpicker  # pytype: disable=import-error
@@ -245,7 +245,7 @@ class MultiProcessTest(parameterized.TestCase):
     client = distributed.global_state.client
     try:
       client.wait_at_barrier(self._testMethodName + "_start", 10000)
-    except _jax.JaxRuntimeError as e:
+    except xc.XlaRuntimeError as e:
       msg, *_ = e.args
       if msg.startswith("DEADLINE_EXCEEDED"):
         raise RuntimeError(
@@ -263,7 +263,7 @@ class MultiProcessTest(parameterized.TestCase):
     # but the overall test should fail).
     try:
       client.wait_at_barrier(self._testMethodName + "_end", 10000)
-    except _jax.JaxRuntimeError as e:
+    except xc.XlaRuntimeError as e:
       msg, *_ = e.args
       if msg.startswith("DEADLINE_EXCEEDED"):
         raise RuntimeError(
