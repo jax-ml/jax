@@ -120,9 +120,9 @@ def mixed_matmul_kernel(
   cluster_tile_m = cta_tile_m * (1 + (config.cluster_dimension == MatmulDimension.M))
   cluster_tile_n = cta_tile_n * (1 + (config.cluster_dimension == MatmulDimension.N))
   if m % cluster_tile_m != 0:
-    raise ValueError(f"{m=} must be divisible by {tile_m} for the given config")
+    raise ValueError(f"{m=} must be divisible by {cluster_tile_m} for the given config")
   if n % cluster_tile_n != 0:
-    raise ValueError(f"{n=} must be divisible by {tile_n} for the given config")
+    raise ValueError(f"{n=} must be divisible by {cluster_tile_n} for the given config")
   if k % tile_k != 0:
     raise ValueError(f"{k=} must be divisible by {tile_k=}")
   m_iters = m // cluster_tile_m
