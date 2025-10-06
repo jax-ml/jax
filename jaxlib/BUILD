@@ -57,6 +57,7 @@ pytype_strict_library(
         ":_jax",
         ":_pathways",
         ":_pretty_printer",
+        ":_sdy_mpmd",
         ":cpu_feature_guard",
         ":jax",
         ":jaxlib_files",
@@ -158,6 +159,7 @@ pywrap_library(
         ":_jax",
         ":_pathways",
         ":_pretty_printer",
+        ":_sdy_mpmd",
         ":utils",
         ":weakref_lru_cache",
         "//jaxlib/mlir/_mlir_libs:_chlo",
@@ -1239,6 +1241,27 @@ cc_library(
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
         "@xla//xla/pjrt:exceptions",
         "@xla//xla/tsl/platform:logging",
+    ],
+)
+
+nanobind_pywrap_extension(
+    name = "_sdy_mpmd",
+    srcs = ["sdy_mpmd.cc"],
+    deps = [
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeaders",
+        "@nanobind",
+        "@shardy//shardy/dialect/mpmd/ir:dialect",
+        "@shardy//shardy/dialect/mpmd/ir:fragment_execution_rules",
+        "@shardy//shardy/dialect/mpmd/transforms/import:mesh_assignment_map",
+        "@shardy//shardy/integrations/python/jax/mpmd/jaxlib:mpmd_program",
     ],
 )
 
