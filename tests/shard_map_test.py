@@ -189,6 +189,23 @@ class ShardMapTest(jtu.JaxTestCase):
         self.assertAllClose(c.addressable_data(4 * i + 2 * j), block)
         self.assertAllClose(c.addressable_data(4 * i + 2 * j + 1), block)
 
+  def test_with_static_arg(self):
+    mesh, a, _ = create_inputs(P('x', 'y'), P(None, None))
+    assert a.addressable_data(0).shape == (4, 4)
+
+    def add_one(x, static_shape):
+      return x + jnp.ones(static_shape, dtype=x.dtype)
+
+    @partial(jax.jit, static_argnums=(1,))
+    def fun(a, static_shape):
+      return shard_map(
+          add_one,
+          mesh=mesh,
+          in_specs=(P('x', 'y'), None),
+          out_specs=P('x', 'y'))(a, static_shape)
+
+    self.assertAllClose(a + 1, fun(a, a.addressable_data(0).shape))
+
   def test_matmul_partial(self):
     raise unittest.SkipTest("invalid replication asserted by out_spec?")
 

@@ -113,7 +113,7 @@ class custom_fusion:
     args_flat, in_tree = tree_util.tree_flatten(args)
     in_avals = [core.get_aval(x) for x in args_flat]
     flat_fun, out_tree = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(self.fun, debug_info=debug_fun),
+        lu.wrap_init(self.fun, debug_info=debug_fun.with_unknown_names()),
         in_tree)
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
 

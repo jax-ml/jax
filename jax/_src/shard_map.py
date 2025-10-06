@@ -239,6 +239,9 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
 
     dyn_argnums, in_specs_flat = unzip2((i, s) for i, s in enumerate(in_specs_flat)
                                         if s is not None)
+    if (fun.debug_info.arg_names is not None and
+        len(dyn_argnums) != len(fun.debug_info.arg_names)):
+      fun = fun.with_unknown_names()
     fun, args_flat = api_util.argnums_partial(fun, dyn_argnums, args_flat, False)
     _check_specs_vs_args(f, mesh, in_tree, in_specs, dyn_argnums, in_specs_flat,
                          args_flat)
