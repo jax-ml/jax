@@ -358,7 +358,7 @@ class OpsTest(PallasBaseTest):
       msk_dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
       dtype=[jnp.float32, jnp.bfloat16],
   )
-  def test_i1_relayout_with_bitwidth_change(self, msk_dtype, dtype):
+  def test_i1_relayout_bw(self, msk_dtype, dtype):
     shape = (129, 129)
     msk_bitwidth = dtypes.bit_width(msk_dtype)
     bitwidth = dtypes.bit_width(dtype)
@@ -384,6 +384,57 @@ class OpsTest(PallasBaseTest):
     x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape) + 1
 
     out = kernel(x, mask)
+    expected = jnp.where(mask, x, jnp.zeros_like(x))
+    self.assertArraysEqual(out, expected)
+
+  @parameterized.product(
+      msk_dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
+      dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
+  )
+  def test_i1_relayout_bw_tiling(self, msk_dtype, dtype):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 7):
+      self.skipTest("Requires libtpu built after 2025-10-07")
+    shape = (256, 256)
+    bitwidth = dtypes.bit_width(dtype)
+    msk_bitwidth = dtypes.bit_width(msk_dtype)
+    msk_packing = 32 // msk_bitwidth
+    if jtu.get_tpu_version() < 5 and msk_bitwidth < 32:
+      self.skipTest(
+          "Not implemented: cast vector to mask with bitwidth =="
+          f" {msk_bitwidth}"
+      )
+    if jtu.get_tpu_version() < 5 and bitwidth < 32:
+      self.skipTest(f"Not implemented: comparison with bitwidth == {bitwidth}")
+
+    # Creating large tiling for masks by passing i32 vector first and
+    # then bitcast to msk_dtype so the tiling is also bitcasted from
+    #  T(8, 128) to T(8 * msk_packing, 128).
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )
+    def kernel(x_ref, msk_ref, o_ref):
+      zeros = jnp.zeros_like(x_ref)
+      msk = pltpu.bitcast(msk_ref[...], msk_dtype)
+      o_ref[...] = jnp.where(msk, x_ref[...], zeros)
+
+    mask = jax.random.bernoulli(jax.random.key(1234), 0.5, shape).astype(
+        msk_dtype
+    )
+    if msk_bitwidth < 32:
+      mask_for_bitcast = mask.reshape(
+          shape[0] // msk_packing, msk_packing, shape[1]
+      ).swapaxes(-1, -2)
+    else:
+      mask_for_bitcast = mask
+
+    mask_i32 = lax.bitcast_convert_type(
+        mask_for_bitcast,
+        jnp.int32,
+    )
+    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape) + 1
+
+    out = kernel(x, mask_i32)
     expected = jnp.where(mask, x, jnp.zeros_like(x))
     self.assertArraysEqual(out, expected)
 
