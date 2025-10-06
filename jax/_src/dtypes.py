@@ -32,7 +32,6 @@ import ml_dtypes
 import numpy as np
 
 from jax._src import config
-from jax._src import deprecations
 from jax._src import literals
 from jax._src.typing import Array, DType, DTypeLike
 from jax._src.util import set_module, StrictABC
@@ -375,17 +374,11 @@ def canonicalize_value(x):
     if handler:
       return handler(x)
   if hasattr(x, '__jax_array__'):
-    deprecations.warn(
-        'jax-abstract-dunder-array',
-        (
-            'Triggering of __jax_array__() during abstractification is'
-            ' deprecated. To avoid this error, either explicitly convert your'
-            ' object using jax.numpy.array(), or register your object as a'
-            ' pytree.'
-        ),
-        stacklevel=6,
+    raise ValueError(
+        'Triggering __jax_array__() during abstractification is no longer'
+        ' supported. To avoid this error, either explicitly convert your object'
+        ' using jax.numpy.array(), or register your object as a pytree.'
     )
-    return canonicalize_value(x.__jax_array__())
   raise InvalidInputException(
       f"Argument '{x}' of type {type(x)} is not a valid JAX type."
   )

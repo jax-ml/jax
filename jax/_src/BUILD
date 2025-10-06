@@ -513,7 +513,6 @@ pytype_strict_library(
     ],
     deps = [
         ":config",
-        ":deprecations",
         ":dtypes",
         ":effects",
         ":layout",
@@ -725,7 +724,6 @@ pytype_strict_library(
     ],
     deps = [
         ":config",
-        ":deprecations",
         ":literals",
         ":traceback_util",
         ":typing",

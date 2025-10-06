@@ -23,6 +23,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     and we encourage all new code to use `jax.shard_map` directly. See the
     [migration guide](https://docs.jax.dev/en/latest/deprecate_pmap.html) for
     more information.
+  * JAX no longer allows passing objects that support `__jax_array__` directly
+    to, e.g. `jit`-ed functions. Call `jax.numpy.asarray` on them first.
   * {func}`jax.numpy.cov` is now returns NaN for empty arrays ({jax-issue}`#32305`),
     and matches NumPy 2.2 behavior for single-row design matrices ({jax-issue}`#32308`).
   * JAX no longer accepts `Array` values where a `dtype` value is expected. Call

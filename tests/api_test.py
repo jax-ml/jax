@@ -4199,8 +4199,11 @@ class APITest(jtu.JaxTestCase):
 
     f = jax.jit(lambda x: x)
     a = AlexArray(jnp.arange(4))
-    msg = r"Triggering of __jax_array__\(\) during abstractification is deprecated."
-    with self.assertDeprecationWarnsOrRaises('jax-abstract-dunder-array', msg):
+    msg = (
+        r"Triggering __jax_array__\(\) during abstractification is no longer"
+        r" supported."
+    )
+    with self.assertRaisesRegex(ValueError, msg):
       f(a)
 
   @jtu.thread_unsafe_test()  # count_jit_tracing_cache_miss() isn't thread-safe
