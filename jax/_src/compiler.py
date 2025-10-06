@@ -308,7 +308,7 @@ def backend_compile(
 
   try:
     return backend.compile(built_c, executable_devices, options)
-  except xc.XlaRuntimeError as e:
+  except _jax.JaxRuntimeError as e:
     for error_handler in _XLA_RUNTIME_ERROR_HANDLERS:
       handler_result = error_handler(e)
       if handler_result is not None:
@@ -377,7 +377,7 @@ def backend_compile_and_load(
           executable_devices=executable_devices,
           compile_options=options,
       )
-  except xc.XlaRuntimeError as e:
+  except _jax.JaxRuntimeError as e:
     for error_handler in _XLA_RUNTIME_ERROR_HANDLERS:
       handler_result = error_handler(e)
       if handler_result is not None:
@@ -389,7 +389,7 @@ _XLA_RUNTIME_ERROR_HANDLERS = []
 
 
 def register_xla_runtime_error_handler(
-    handler_fn: Callable[[xc.XlaRuntimeError], Exception | None],
+    handler_fn: Callable[[_jax.JaxRuntimeError], Exception | None],
 ):
   """Registers a custom exception handler for XLA runtime errors.
 
@@ -623,7 +623,7 @@ def _get_cache_key(
         backend,
         ignore_callbacks,
     )
-  except xc._xla.XlaRuntimeError as ex:
+  except _jax.JaxRuntimeError as ex:
     logger.error("compile_or_get_cached: unable to generate cache key, "
                   "skipping the cache: %s", ex)
   return None
@@ -656,7 +656,7 @@ def _share_fdo_profiles(
         )
         + "_fdo_sync"
     )
-  except xc._xla.XlaRuntimeError as ex:
+  except _jax.JaxRuntimeError as ex:
     logger.error(
         "compile_or_get_cached: unable to generate cache key, "
         "skipping the fdo profile sharing: %s",

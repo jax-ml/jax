@@ -27,9 +27,10 @@ from jax._src.errors import (
   KeyReuseError as KeyReuseError,
 )
 
-from jax._src.lib import xla_client as _xc
-JaxRuntimeError = _xc.XlaRuntimeError
-del _xc
+from jax._src.lib import _jax
+JaxRuntimeError = _jax.JaxRuntimeError
+JaxRuntimeError.__module__ = "jax.errors"
+del _jax
 
 _deprecations = {
   "SimplifiedTraceback": (

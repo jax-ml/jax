@@ -21,7 +21,7 @@ from jax._src import dtypes
 from jax._src import xla_bridge
 from jax._src.api import device_put
 from jax._src.lax.lax import _array_copy
-from jax._src.lib import xla_client
+from jax._src.lib import _jax
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import scalar_types as jnp_types
 from jax._src.sharding import Sharding
@@ -59,8 +59,8 @@ def is_supported_dtype(dtype: DTypeLike) -> bool:
 
 
 def _to_dlpack(x: Array, stream: int | Any | None,
-               src_device: xla_client.Device | None = None,
-               device: xla_client.Device | None = None,
+               src_device: _jax.Device | None = None,
+               device: _jax.Device | None = None,
                copy: bool | None = None):
 
   if src_device is None:
@@ -76,7 +76,7 @@ def _to_dlpack(x: Array, stream: int | Any | None,
       arr = device_put(x, device)
   else:
     arr = _array_copy(x) if copy else x
-  return xla_client._xla.buffer_to_dlpack_managed_tensor(
+  return _jax.buffer_to_dlpack_managed_tensor(
     arr.addressable_data(0), stream=stream
   )
 
@@ -89,7 +89,7 @@ _DL_DEVICE_TO_PLATFORM = {
 
 
 def to_dlpack(x: Array, stream: int | Any | None = None,
-              src_device: xla_client.Device | None = None,
+              src_device: _jax.Device | None = None,
               dl_device: tuple[DLDeviceType, int] | None = None,
               max_version: tuple[int, int] | None = None,
               copy : bool | None = None):
@@ -192,7 +192,7 @@ def _is_tensorflow_tensor(external_array):
   )
 
 def from_dlpack(external_array,
-                device: xla_client.Device | Sharding | None = None,
+                device: _jax.Device | Sharding | None = None,
                 copy: bool | None = None):
   """Returns a :class:`~jax.Array` representation of a DLPack tensor.
 
@@ -254,14 +254,14 @@ def from_dlpack(external_array,
   else:
     try:
       stream = dlpack_device.get_stream_for_external_ready_events()
-    except xla_client.XlaRuntimeError as err:
+    except _jax.JaxRuntimeError as err:
       if "UNIMPLEMENTED" in str(err):
         stream = None
       else:
         raise
   dlpack = external_array.__dlpack__(stream=stream)
 
-  arr = xla_client._xla.dlpack_managed_tensor_to_buffer(
+  arr = _jax.dlpack_managed_tensor_to_buffer(
       dlpack, dlpack_device, stream)
   # TODO(phawkins): when we are ready to support x64 arrays in
   # non-x64 mode, change the semantics to not canonicalize here.

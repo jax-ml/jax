@@ -248,7 +248,7 @@ class AsyncManager:
       # Clears self._exception so it is only raised once.
       exception = self._exception
       self._exception = None
-      if (isinstance(exception, _jax.XlaRuntimeError) and
+      if (isinstance(exception, _jax.JaxRuntimeError) and
           'DEADLINE_EXCEEDED: Barrier timed out' in str(exception)):
         raise BarrierTimeoutError(
             '\n'.join([str(exception), _BARRIER_TIMED_OUT_MSG]))

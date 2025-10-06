@@ -187,7 +187,7 @@ NB_MODULE(_jax, m) {
   tsl::ImportNumpy();
 
   // Exceptions
-  nb::exception<xla::XlaRuntimeError> xla_runtime_error(m, "XlaRuntimeError",
+  nb::exception<xla::XlaRuntimeError> xla_runtime_error(m, "JaxRuntimeError",
                                                         PyExc_RuntimeError);
   xla_runtime_error.attr("__doc__") = nb::str(
       "Runtime errors thrown by the JAX runtime. While the JAX runtime may "

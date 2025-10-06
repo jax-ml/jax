@@ -46,7 +46,7 @@ ifrt_version_number: int
 
 _T = TypeVar("_T")
 
-class XlaRuntimeError(RuntimeError):
+class JaxRuntimeError(RuntimeError):
   pass
 
 class PrimitiveType(enum.IntEnum):

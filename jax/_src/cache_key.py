@@ -23,6 +23,7 @@ from typing import cast as type_cast
 
 from jax._src import config
 from jax._src.lib import version_str as jaxlib_version_str
+from jax._src.lib import _jax
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager as pm
@@ -232,7 +233,7 @@ def _hash_accelerator_config(hash_obj, accelerators: np.ndarray):
     hash_obj.update(
         xla_client.get_topology_for_devices(accelerator_devices).serialize()
     )
-  except xla_client._xla.XlaRuntimeError as ex:
+  except _jax.JaxRuntimeError as ex:
     # Fall back for those backends that do not support serialized
     # PjRtTopologyDescription as yet.
     logger.info("get (_hash_accelerator_config): unable to hash "
