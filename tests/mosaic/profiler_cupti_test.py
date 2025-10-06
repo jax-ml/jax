@@ -14,7 +14,6 @@
 # ==============================================================================
 
 from absl.testing import absltest, parameterized
-import jax
 from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp

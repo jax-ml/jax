@@ -36,7 +36,7 @@ except ModuleNotFoundError as err:
 import jax.version
 from jax.version import _minimum_jaxlib_version as _minimum_jaxlib_version_str
 try:
-  import jaxlib.version
+  import jaxlib.version  # noqa: F401
 except Exception as err:
   # jaxlib is too old to have version number.
   msg = f'This version of jax requires jaxlib version >= {_minimum_jaxlib_version_str}.'

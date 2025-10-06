@@ -20,7 +20,6 @@ from jax import lax
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
-import jax._src.lib
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
 from jax.experimental.pjit import pjit

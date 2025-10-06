@@ -415,7 +415,7 @@ async def main():
     # Do not add --repo_env=HERMETIC_PYTHON_VERSION with default args.python_version
     # if bazel_options override it
     python_version_opt = "--repo_env=HERMETIC_PYTHON_VERSION="
-    if any([python_version_opt in opt for opt in args.bazel_options]):
+    if any(python_version_opt in opt for opt in args.bazel_options):
       raise RuntimeError(
         "Please use python_version to set hermetic python version instead of "
         "setting --repo_env=HERMETIC_PYTHON_VERSION=<python version> bazel option"
@@ -653,7 +653,7 @@ async def main():
         # https://peps.python.org/pep-0440/
         wheel_git_hash = option.split("=")[-1].lstrip('0')[:9]
 
-  with open(".jax_configure.bazelrc", "w") as f:
+  with open(".jax_configure.bazelrc", "w") as f:  # noqa: ASYNC230
     jax_configure_options = utils.get_jax_configure_bazel_options(wheel_build_command_base.get_command_as_list())
     if not jax_configure_options:
       logging.error("Error retrieving the Bazel options to be written to .jax_configure.bazelrc, exiting.")
@@ -698,7 +698,7 @@ async def main():
         )
 
       # If we build jax wheel, we don't need to build jaxlib targets.
-      if wheel =="jax":
+      if wheel == "jax":
         wheel_build_command.append("--//jax:build_jaxlib=false")
 
       result = await executor.run(wheel_build_command.get_command_as_string(), args.dry_run, args.detailed_timestamped_log)

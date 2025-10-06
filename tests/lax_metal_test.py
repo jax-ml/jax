@@ -36,7 +36,6 @@ except ImportError:
   numpy_dispatch = None
 
 import jax
-import jax.ops
 from jax import lax
 from jax import numpy as jnp
 from jax.sharding import SingleDeviceSharding

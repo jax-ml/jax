@@ -21,7 +21,6 @@ from absl.testing import parameterized
 
 import numpy as np
 import scipy.linalg
-import scipy.special
 import scipy.stats
 
 import jax

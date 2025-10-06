@@ -27,7 +27,6 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-import jax.ops
 from jax import lax
 from jax import numpy as jnp
 
