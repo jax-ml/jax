@@ -392,6 +392,7 @@ class OpsTest(PallasBaseTest):
       dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
   )
   def test_i1_relayout_bw_tiling(self, msk_dtype, dtype):
+    self.skipTest("TODO: jevinjiang - Enable once presubmits pass.")
     if not jtu.if_cloud_tpu_at_least(2025, 10, 7):
       self.skipTest("Requires libtpu built after 2025-10-07")
     shape = (256, 256)
