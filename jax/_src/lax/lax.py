@@ -8619,7 +8619,7 @@ dce_sink_p.def_effectful_abstract_eval(lambda _: ([], {no_dce_effect}))
 mlir.register_lowering(dce_sink_p, lambda ctx, _: [])
 ad.deflinear(dce_sink_p, lambda _: [])
 pe.def_trivial_padding(dce_sink_p)
-batching.defvectorized(dce_sink_p)
+batching.primitive_batchers[dce_sink_p] = lambda x, bd: (x, bd)
 
 def rng_bit_generator(key, shape, dtype=np.uint32,
                       algorithm=RandomAlgorithm.RNG_DEFAULT,
