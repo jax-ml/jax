@@ -158,6 +158,10 @@ jax_multiplatform_test(
     srcs = [
         "ops_test.py",
     ],
+    config_tags_overrides = {
+        # TODO(b/448760413): Re-enable once llvm fixed.
+        "gpu_b200": {"notap": True},
+    },
     disable_configs = [
         "gpu_v100",
         "gpu_v100_x32",

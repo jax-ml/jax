@@ -32,6 +32,10 @@ jax_generate_backend_suites()
 jax_multiplatform_test(
     name = "gpu_test",
     srcs = ["gpu_test.py"],
+    config_tags_overrides = {
+        # TODO(b/448760413): Re-enable once llvm fixed.
+        "gpu_b200": {"notap": True},
+    },
     enable_backends = [],
     enable_configs = [
         "gpu_h100",
