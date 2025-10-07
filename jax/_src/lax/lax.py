@@ -4377,7 +4377,9 @@ mlir.register_lowering(asinh_p, partial(_nary_lower_hlo, chlo.asinh))
 
 acosh_p = standard_unop(_float | _complex, 'acosh')
 ad.defjvp(acosh_p,
-          lambda g, x: mul(g, rsqrt(mul(sub(x, _one(x)), add(x, _one(x))))))
+          # We use x^2-1 rather than (x+1)(x-1). The latter is more accurate
+          # for x near zero, but the function domain is x>=1.
+          lambda g, x: mul(g, rsqrt(sub(square(x), _one(x)))))
 mlir.register_lowering(acosh_p, partial(_nary_lower_hlo, chlo.acosh))
 
 atanh_p = standard_unop(_float | _complex, 'atanh')
