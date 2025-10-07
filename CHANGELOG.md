@@ -64,7 +64,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Changes
   * `jax.grad` and `jax.vjp` will now round always primals to float32 if float64
     mode is not enabled.
-
+  * {func}`jax.dlpack.from_dlpack` now accepts arrays with non-default layouts,
+    for example, transposed.
 
 ## JAX 0.7.2 (September 16, 2025)
 

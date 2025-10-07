@@ -15,6 +15,7 @@
 import unittest
 
 from absl.testing import absltest
+import numpy as np
 
 import jax
 import jax.dlpack
@@ -23,8 +24,7 @@ from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import dlpack as dlpack_src
 from jax._src import test_util as jtu
-
-import numpy as np
+from jax._src.lib import version as jaxlib_version
 
 config.parse_flags_with_absl()
 
@@ -173,6 +173,15 @@ class DLPackTest(jtu.JaxTestCase):
     dtype_expected = jnp.int64 if config.enable_x64.value else jnp.int32
     self.assertEqual(x.dtype, dtype_expected)
 
+  @unittest.skipIf(not tf, "Test requires TensorFlow")
+  def testTensorFlowToJaxNondefaultLayout(self):
+    if jaxlib_version < (0, 8, 0):
+      self.skipTest(
+          "Non-default layout support requires jaxlib 0.8.0 or newer"
+      )
+    x = tf.transpose(np.arange(4).reshape(2, 2))
+    self.assertAllClose(x.numpy(), jax.dlpack.from_dlpack(x))
+
   @jtu.sample_product(shape=all_shapes, dtype=numpy_dtypes, copy=[False, True])
   def testNumpyToJax(self, shape, dtype, copy):
     rng = jtu.rand_default(self.rng())
@@ -186,27 +195,21 @@ class DLPackTest(jtu.JaxTestCase):
     else:
       self.assertAllClose(x_np, _from_dlpack())
 
-  @jtu.sample_product(
-    shape=all_shapes,
-    dtype=numpy_dtypes,
-  )
-  @jtu.run_on_devices("cpu") # NumPy only accepts cpu DLPacks
+  def testNumpyToJaxNondefaultLayout(self):
+    if jaxlib_version < (0, 8, 0):
+      self.skipTest(
+          "Non-default layout support requires jaxlib 0.8.0 or newer"
+      )
+    x = np.arange(4).reshape(2, 2).T
+    self.assertAllClose(x, jax.dlpack.from_dlpack(x))
+
+  @jtu.sample_product(shape=all_shapes, dtype=numpy_dtypes)
+  @jtu.run_on_devices("cpu")  # NumPy only accepts cpu DLPacks
   def testJaxToNumpy(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     x_jax = jnp.array(rng(shape, dtype))
     x_np = np.from_dlpack(x_jax)
     self.assertAllClose(x_np, x_jax)
-
-  def testNondefaultLayout(self):
-    # Generate numpy array with nonstandard layout
-    a = np.arange(4).reshape(2, 2)
-    b = a.T
-    with self.assertRaisesRegex(
-        RuntimeError,
-        "from_dlpack got array with non-default layout with minor-to-major "
-        r"dimensions \(0,1\), expected \(1,0\)",
-    ):
-      jax.dlpack.from_dlpack(b)
 
 
 class CudaArrayInterfaceTest(jtu.JaxTestCase):

@@ -17,11 +17,12 @@ import unittest
 from absl.testing import absltest
 
 import jax
-import jax.dlpack
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client
+import jax.dlpack
 import jax.numpy as jnp
 
 config.parse_flags_with_absl()
@@ -114,6 +115,15 @@ class DLPackTest(jtu.JaxTestCase):
     dtype_expected = jnp.int64 if config.enable_x64.value else jnp.int32
     self.assertEqual(x.dtype, dtype_expected)
 
+  def testTorchToJaxNondefaultLayout(self):
+    if jaxlib_version < (0, 8, 0):
+      self.skipTest(
+          "Non-default layout support requires jaxlib 0.8.0 or newer"
+      )
+    x = torch.arange(4).reshape(2, 2).T
+    x = x.cuda() if jtu.test_device_matches(["gpu"]) else x
+    self.assertAllClose(x.cpu().numpy(), jax.dlpack.from_dlpack(x))
+
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
   def testTorchToJax(self, shape, dtype):
     if not config.enable_x64.value and dtype in [
@@ -130,7 +140,6 @@ class DLPackTest(jtu.JaxTestCase):
     else:
       x = torch.tensor(x_np)
     x = x.cuda() if jtu.test_device_matches(["gpu"]) else x
-    x = x.contiguous()
     y = jax.dlpack.from_dlpack(x)
     self.assertAllClose(x_np, y)
 
@@ -154,7 +163,6 @@ class DLPackTest(jtu.JaxTestCase):
     else:
       x = torch.tensor(x_np)
     x = x.cuda() if jtu.test_device_matches(["gpu"]) else x
-    x = x.contiguous()
     y = jax.dlpack.from_dlpack(x)
     self.assertAllClose(x_np, y)
 
