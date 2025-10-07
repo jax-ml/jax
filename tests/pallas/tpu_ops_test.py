@@ -392,8 +392,8 @@ class OpsTest(PallasBaseTest):
       dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
   )
   def test_i1_relayout_bw_tiling(self, msk_dtype, dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 10, 7):
-      self.skipTest("Requires libtpu built after 2025-10-07")
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 9):
+      self.skipTest("Requires libtpu built after 2025-10-09")
     shape = (256, 256)
     bitwidth = dtypes.bit_width(dtype)
     msk_bitwidth = dtypes.bit_width(msk_dtype)
