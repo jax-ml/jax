@@ -77,7 +77,8 @@ def call_unreduced_rule(prim, unreduced_rule, out_s, num_out, *avals, **kwargs):
     raise NotImplementedError(
         f'unreduced rule for {prim.name} is not implemented. Please file an'
         ' issue at https://github.com/jax-ml/jax/issues')
-  if any(s.spec.unreduced for s in ([out_s] if num_out is None else out_s)):
+  if any(s.spec.unreduced for s in ([out_s] if num_out is None else out_s)
+         if s is not None):
     raise NotImplementedError(
         f'unreduced rule for {prim.name} is not implemented. Please file an'
         ' issue at https://github.com/jax-ml/jax/issues')
