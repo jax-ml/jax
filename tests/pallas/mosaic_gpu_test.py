@@ -2119,6 +2119,8 @@ class PallasCallTest(PallasTest):
         to test that the cluster axes are used correctly.
     """
 
+    self.skip_if_wg_semantics()  # User transforms are not supported.
+
     dtype = jnp.float16
     cluster = [1, 1, 1]
     for d in collective_dims:
@@ -2167,7 +2169,7 @@ class PallasCallTest(PallasTest):
       plgpu.wait_smem_to_gmem(0)
 
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    kernel = plgpu.kernel(
+    kernel = self.kernel(
       body,
       grid=cluster,
       grid_names=("grid_x", "grid_y", "grid_z"),
@@ -2380,7 +2382,7 @@ class PallasCallTest(PallasTest):
     def body(out, sem):
       pl.semaphore_signal(sem, device_id=jnp.asarray(2, jnp.int32))
 
-    f = plgpu.kernel(
+    f = self.kernel(
         body,
         out_shape=jax.ShapeDtypeStruct((), jnp.int32),
         scratch_shapes=[plgpu.SemaphoreType.REGULAR],
@@ -2416,7 +2418,7 @@ class PallasCallTest(PallasTest):
       plgpu.barrier_arrive(collective_barrier)
       plgpu.barrier_wait(collective_barrier)
       dst[...] = jnp.ones_like(dst)
-    y = plgpu.kernel(
+    y = self.kernel(
       kernel,
       out_shape=jax.ShapeDtypeStruct((128,), jnp.int32),
       scratch_shapes=[plgpu.ClusterBarrier(collective_axes=("x",), num_arrivals=4)],
@@ -2434,7 +2436,7 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
 
   def test_axis_index(self):
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
-    @functools.partial(plgpu.kernel,
+    @functools.partial(self.kernel,
                        out_shape=jax.ShapeDtypeStruct((2, 128), jnp.int32))
     def kernel(y_ref):
       def scope(ones_smem_ref, threes_smem_ref):
@@ -2471,7 +2473,7 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   )
   def test_scalar_binary_op(self, op):
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
-    @functools.partial(plgpu.kernel,
+    @functools.partial(self.kernel,
                        out_shape=jax.ShapeDtypeStruct((), jnp.int32))
     def kernel(y_ref):
       @pl.core_map(warp_mesh)
@@ -2492,7 +2494,7 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
     # a mesh, since we would need to present a view of the array local
     # to each warp.
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
-    @functools.partial(plgpu.kernel,
+    @functools.partial(self.kernel,
                        out_shape=jax.ShapeDtypeStruct((32, 32), jnp.float32),
                        scratch_shapes=[plgpu.SMEM((32, 32), jnp.float32)])
     def kernel(out_ref, smem_ref):
@@ -2512,7 +2514,7 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   @parameterized.parameters(True, False)
   def test_single_warp_loop(self, force_while):
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
-    @functools.partial(plgpu.kernel,
+    @functools.partial(self.kernel,
                        out_shape=jax.ShapeDtypeStruct((10, 128), jnp.int32))
     def kernel(y_ref):
       def scope(smem_ref):
@@ -2539,7 +2541,7 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def test_debug_print(self):
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
     @functools.partial(
-        plgpu.kernel,
+        self.kernel,
         out_shape=jnp.zeros(128, np.int32),
     )
     def kernel(ref):
@@ -2566,7 +2568,7 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
                                                   wait_smem_to_gmem_in_warp):
     # In this test, we issue a copy from from warp 0 and await it in warp 1.
     warp_mesh = plgpu.WarpMesh(axis_name="warp")
-    @functools.partial(plgpu.kernel,
+    @functools.partial(self.kernel,
                        out_shape=jax.ShapeDtypeStruct((32, 32), jnp.float32))
     def kernel(x_ref, y_ref):
       def scope(smem_ref, tma_barrier):
@@ -3574,7 +3576,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.copy_smem_to_gmem(out_smem, out_gmem)
       plgpu.wait_smem_to_gmem(0)
 
-    f = plgpu.kernel(
+    f = self.kernel(
         kernel,
         out_shape=jax.ShapeDtypeStruct(shape, dtype),
         scratch_shapes=[
@@ -3787,7 +3789,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.copy_smem_to_gmem(out_smem, out_gmem64)
       plgpu.wait_smem_to_gmem(0)
 
-    f = plgpu.kernel(
+    f = self.kernel(
         kernel,
         out_shape=[jax.ShapeDtypeStruct(shape, dtype),
                    jax.ShapeDtypeStruct(shape, dtype)],
@@ -3867,7 +3869,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.copy_smem_to_gmem(out_smem, out_gmem64)
       plgpu.wait_smem_to_gmem(0)
 
-    f = plgpu.kernel(
+    f = self.kernel(
         kernel,
         out_shape=[jax.ShapeDtypeStruct(shape, dtype),
                    jax.ShapeDtypeStruct(shape, dtype)],
@@ -3939,6 +3941,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
       squeezed_index=(True, False),
   )
   def test_copy_gmem_to_smem_partitioned(self, warp_level, squeezed_index):
+    self.skip_if_wg_semantics()  # `pl.core_map` not implemented for warpgroup.
     block_size = (128, 128)
     partitioned_block_size = (block_size[0] // 2, block_size[1])
     a = jax.random.uniform(
@@ -4000,7 +4003,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
       out_smem[...] = a_smem[...] + b_smem[...]
       plgpu.copy_smem_to_gmem(out_smem, out_gmem.at[out_slice])
       plgpu.wait_smem_to_gmem(0)
-    f = plgpu.kernel(
+    f = self.kernel(
         kernel,
         out_shape=jax.ShapeDtypeStruct(block_size, jnp.float32),
         grid=(1,),
@@ -4028,7 +4031,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.barrier_wait(barrier)
       out_ref[...] = jnp.ones_like(out_ref)
 
-    f = plgpu.kernel(
+    f = self.kernel(
         kernel,
         out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
         scratch_shapes=(  # type: ignore
@@ -5615,7 +5618,7 @@ class SemaphoreTest(PallasTest):
       pl.semaphore_signal(sem_ref)
       o_ref[...] = jnp.ones_like(o_ref)
       pl.semaphore_wait(sem_ref)
-    kernel = plgpu.kernel(
+    kernel = self.kernel(
         body,
         out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
         scratch_shapes=[plgpu.SemaphoreType.REGULAR],
@@ -5638,7 +5641,7 @@ class SemaphoreTest(PallasTest):
       with jax.named_scope("output"):
         o_ref[...] = jnp.ones_like(o_ref)
     with tempfile.TemporaryDirectory() as tmp_dir:
-      kernel = plgpu.kernel(
+      kernel = self.kernel(
           body,
           out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
           scratch_shapes=[plgpu.SemaphoreType.REGULAR],
@@ -5670,7 +5673,7 @@ class SemaphoreTest(PallasTest):
         def _():
           pl.semaphore_wait(sem_ref)
           out_ref[...] = jnp.ones_like(out_ref)
-    kernel = plgpu.kernel(
+    kernel = self.kernel(
         body,
         out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
         grid=(10,),
@@ -5693,7 +5696,7 @@ class SemaphoreTest(PallasTest):
         def _():
           pl.semaphore_wait(sem_ref)
           out_ref[...] = jnp.ones_like(out_ref)
-    kernel = plgpu.kernel(
+    kernel = self.kernel(
         body,
         out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
         grid=(10,),
@@ -5725,7 +5728,7 @@ class SemaphoreTest(PallasTest):
             pl.semaphore_wait(global_sem)
             out_ref[...] = jnp.ones_like(out_ref)
           pl.semaphore_wait(block_sem)
-    kernel = plgpu.kernel(
+    kernel = self.kernel(
         body,
         out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
         grid=(10,),
@@ -5910,7 +5913,7 @@ class HelpersTest(PallasTest):
       def loop_body(loop_info: plgpu.NDLoopInfo):
         out_gmem[*loop_info.index, *cluster_idx] = sm_idx
     out_shape = (*grid, *cluster)
-    result = plgpu.kernel(body,
+    result = self.kernel(body,
                  out_shape=jax.ShapeDtypeStruct(out_shape, jnp.int32),
                  grid=grid,
                  grid_names=grid_names,
@@ -5958,7 +5961,7 @@ class HelpersTest(PallasTest):
         # All SMs wait until SM 0 has finished all blocks.
         pl.semaphore_wait(global_semaphore)
 
-    result = plgpu.kernel(body,
+    result = self.kernel(body,
                  out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
                  grid=(sm_count + blocks_to_steal,),
                  grid_names=("x",),
