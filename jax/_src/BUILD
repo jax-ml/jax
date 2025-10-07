@@ -976,6 +976,7 @@ pytype_strict_library(
         ":typing",
         ":util",
         ":xla_bridge",
+        ":xla_metadata_lib",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )

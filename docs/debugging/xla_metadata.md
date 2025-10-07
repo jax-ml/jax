@@ -4,10 +4,11 @@
 
 **Summary:** `set_xla_metadata` allows you to attach metadata to operations in your JAX code. This metadata is passed down to the XLA compiler as `frontend_attributes` and can be used to enable compiler-level debugging tools, such as the XLA-TPU debugger.
 
-You can use it in two ways:
+You can use it in three ways:
 
 1. Tag an individual operation by wrapping its output value
 2. Tag a block of operations using a context manager
+3. Tag all operations in a function using a decorator
 
 **Warning:** `set_xla_metadata` is an experimental feature and its API is subject to change.
 
@@ -42,7 +43,7 @@ ENTRY main.5 {
   ROOT mul.4 = f32[] multiply(sin.2, cos.3), frontend_attributes={breakpoint="true"}
 }
 ```
-## Tagging a Block of Code with a Context Manager
+## Tagging a Block of Code with a Context Manager or Decorator
 If you want to apply the same metadata to a larger section of code, you can use `set_xla_metadata` as a context manager. All JAX operations within the `with` block will have the specified metadata attached.
 
 ```python
@@ -68,6 +69,25 @@ ENTRY main.5 {
   ROOT mul.4 = f32[] multiply(sin.2, cos.3), frontend_attributes={_xla_log="true"}
 }
 ```
+
+If you want to tag all operations in a function, you can also use `set_xla_metadata` as a decorator:
+
+```python
+import jax
+import jax.numpy as jnp
+from jax.experimental.xla_metadata import set_xla_metadata
+
+# Tagging with a decorator
+@set_xla_metadata(_xla_log=True)
+@jax.jit
+def decorator_tagging(x):
+  y = jnp.sin(x)
+  z = jnp.cos(y)
+  return y * z
+
+print(decorator_tagging.lower(1.0).as_text("hlo"))
+```
+This will result in the same HLO as above.
 
 # Interaction with JAX Transformations
 `set_xla_metadata` utilizes either a `XlaMetadataContextManager` or JAX `primitive` depending on use-case and is compatible with JAX's transformations like `jit`, `vmap`, and `grad`.

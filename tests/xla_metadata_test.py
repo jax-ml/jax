@@ -88,15 +88,61 @@ class XlaMetadataTest(jtu.JaxTestCase):
     f_lowered_text = f.lower(1.0, 2.0).as_text()
     self.assertIn('mhlo.frontend_attributes = {a = "10"}', f_lowered_text)
 
+  def test_decorator(self):
+    @set_xla_metadata(a="b")
+    @jax.jit
+    def f(a, b):
+      return a + b
+
+    f_jaxpr = jax.make_jaxpr(f)(1, 2)
+    eqns = f_jaxpr.eqns
+    for eq in eqns[1:]:
+      self.assertDictEqual(eq.ctx.attributes, {"a": "b"})
+
+    f_lowered_text = f.lower(1.0, 2.0).as_text()
+    self.assertIn('mhlo.frontend_attributes = {a = "b"}', f_lowered_text)
+    self.assertRegex(
+        f_lowered_text, r'%arg0:.*mhlo\.frontend_attributes = \{.*a = "b".*\}'
+    )
+    self.assertRegex(
+        f_lowered_text, r'%arg1:.*mhlo\.frontend_attributes = \{.*a = "b".*\}'
+    )
+
+  def test_decorator_and_context_manager_nested(self):
+    @set_xla_metadata(a="b")
+    @jax.jit
+    def f(a, b):
+      with set_xla_metadata(c="d"):
+        return a + b
+
+    f_lowered_text = f.lower(1.0, 2.0).as_text()
+    self.assertIn(
+        'mhlo.frontend_attributes = {a = "b", c = "d"}',
+        f_lowered_text,
+    )
+    self.assertRegex(
+        f_lowered_text, r'%arg0:.*mhlo\.frontend_attributes = \{.*a = "b".*\}'
+    )
+    self.assertRegex(
+        f_lowered_text, r'%arg1:.*mhlo\.frontend_attributes = \{.*a = "b".*\}'
+    )
+
   def test_f_nonjitted(self):
     def f_add(a, b):
       return lax.add(a, b)
 
     arg1 = jnp.arange(2)
     with set_xla_metadata(a="b"):
+      f_lowered_text = jax.jit(f_add).lower(arg1, arg1).as_text()
       self.assertIn(
           'mhlo.frontend_attributes = {a = "b"}',
-          jax.jit(f_add).lower(arg1, arg1).as_text(),
+          f_lowered_text,
+      )
+      self.assertRegex(
+          f_lowered_text, r'%arg0:.*mhlo\.frontend_attributes = \{.*a = "b".*\}'
+      )
+      self.assertRegex(
+          f_lowered_text, r'%arg1:.*mhlo\.frontend_attributes = \{.*a = "b".*\}'
       )
 
   def test_f_attributes_overwrite(self):
@@ -130,6 +176,14 @@ class XlaMetadataTest(jtu.JaxTestCase):
       self.assertIn(
           'mhlo.frontend_attributes = {key1 = "val1", key2 = "val2"}',
           f_lowered_text,
+      )
+      self.assertRegex(
+          f_lowered_text,
+          r'%arg0:.*mhlo\.frontend_attributes = \{.*key1 = "val1".*\}',
+      )
+      self.assertRegex(
+          f_lowered_text,
+          r'%arg1:.*mhlo\.frontend_attributes = \{.*key1 = "val1".*\}',
       )
 
   def test_attr_caching_jit(self):
@@ -276,7 +330,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
     f_jaxpr = jax.make_jaxpr(f)(1.0, 2.0)
     eqns = f_jaxpr.eqns
     for eq in eqns[1:]:
-      self.assertDictEqual(eq.ctx.attributes, {"a": "b"})
+      self.assertDictEqual(eq.ctx.xla_metadata, {"a": "b"})
 
     self.assertIn(
         'mhlo.frontend_attributes = {a = "b"}', f.lower(1.0, 2.).as_text()
@@ -308,7 +362,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
       f_jaxpr = jax.make_jaxpr(f_vmap)(dct, 1.0)
       eqns = f_jaxpr.eqns
       for eq in eqns[1:]:
-        self.assertDictEqual(eq.ctx.attributes, {"a": "d"})
+        self.assertDictEqual(eq.ctx.xla_metadata, {"a": "d"})
     @jax.jit
     def f2(x, y):
       with set_xla_metadata(a="b"):
