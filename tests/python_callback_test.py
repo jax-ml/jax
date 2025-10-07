@@ -604,6 +604,17 @@ class PythonCallbackTest(jtu.JaxTestCase):
     x = np.arange(8, dtype=dtype)
     np.testing.assert_array_equal(jax.jit(f)(x), np.arange(8, dtype=dtype))
 
+  def test_pure_callback_sequential_vmap_method_eval_jaxpr(self):
+    def f(x):
+      return jax.pure_callback(
+          lambda x: x, jax.ShapeDtypeStruct(shape=(), dtype=jnp.float32),
+          x, vmap_method="sequential")
+
+    jaxpr = jax.make_jaxpr(lambda: jax.vmap(f)(
+        jnp.zeros(100, dtype=jnp.float32)))()
+    with jax.ensure_compile_time_eval():
+      jax.core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts)  # doesn't crash
+
   @parameterized.parameters("int2", "int4", "uint2", "uint4", "float4_e2m1fn")
   def test_subbyte_results(self, dtype: str):
     if "2" in dtype and jtu.test_device_matches(["tpu"]):

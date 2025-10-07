@@ -9090,6 +9090,7 @@ batching.fancy_primitive_batchers[empty_p] = _empty_batcher
 def empty2(dtype, *, memory_space):
   return empty2_p.bind(dtype=dtype, memory_space=memory_space)
 empty2_p = core.Primitive('empty2')
+dispatch.simple_impl(empty2_p)
 
 def _empty2_abstract_eval(*, dtype, memory_space):
   return core.ShapedArray((), dtype, memory_space=memory_space)
