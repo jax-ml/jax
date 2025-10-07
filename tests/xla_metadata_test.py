@@ -88,6 +88,33 @@ class XlaMetadataTest(jtu.JaxTestCase):
     f_lowered_text = f.lower(1.0, 2.0).as_text()
     self.assertIn('mhlo.frontend_attributes = {a = "10"}', f_lowered_text)
 
+  def test_decorator(self):
+    @set_xla_metadata(a="b")
+    @jax.jit
+    def f(a, b):
+      return a + b
+
+    f_jaxpr = jax.make_jaxpr(f)(1, 2)
+    eqns = f_jaxpr.eqns
+    for eq in eqns[1:]:
+      self.assertDictEqual(eq.ctx.attributes, {"a": "b"})
+
+    f_lowered_text = f.lower(1.0, 2.0).as_text()
+    self.assertIn('mhlo.frontend_attributes = {a = "b"}', f_lowered_text)
+
+  def test_decorator_and_context_manager_nested(self):
+    @set_xla_metadata(a="b")
+    @jax.jit
+    def f(a, b):
+      with set_xla_metadata(c="d"):
+        return a + b
+
+    f_lowered_text = f.lower(1.0, 2.0).as_text()
+    self.assertIn(
+        'mhlo.frontend_attributes = {a = "b", c = "d"}',
+        f_lowered_text,
+    )
+
   def test_f_nonjitted(self):
     def f_add(a, b):
       return lax.add(a, b)
