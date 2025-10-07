@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import abc
 import collections
-from collections.abc import Callable, Hashable, Iterable, Sequence
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 import dataclasses
 import enum
 import functools
@@ -235,9 +235,10 @@ def kernel(
       thread_name = mesh.thread_name if mesh.thread_name is not None else ()
       def cmap_body():
         pallas_primitives.run_scoped(
-            lambda *scratch_refs: body(*operand_refs, *out_refs, *scratch_refs),
-            *scratch_shapes,
+            functools.partial(body, *operand_refs, *out_refs),
+            *(scratch_shapes if isinstance(scratch_shapes, Sequence) else ()),
             collective_axes=thread_name,
+            **(scratch_shapes if isinstance(scratch_shapes, Mapping) else {}),
         )
       if mesh.kernel_name is not None:
         cmap_body.__name__ = mesh.kernel_name
@@ -1035,7 +1036,7 @@ class Barrier:
   orders_tensor_core: bool = False
 
   def get_array_aval(self) -> jax_core.ShapedArray:
-    raise ValueError("Barriers are not arrays.")
+    raise ValueError("Barriers are not arrays")
 
   def get_ref_aval(self) -> state.AbstractRef:
     aval = jax_core.ShapedArray(
@@ -1058,6 +1059,9 @@ class ClusterBarrier:
   num_barriers: int = 1
   num_arrivals: int = 1
   orders_tensor_core: bool = False
+
+  def get_array_aval(self) -> jax_core.ShapedArray:
+    raise ValueError("Cluster barriers are not arrays")
 
   def get_ref_aval(self) -> state.AbstractRef:
     aval = jax_core.ShapedArray(

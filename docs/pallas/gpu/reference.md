@@ -755,9 +755,14 @@ synchronizing through a barrier and even exchanging data through SMEM.
 x = jnp.arange(128, dtype=jnp.float32)
 
 @functools.partial(
-  plgpu.kernel, out_shape=x,
-  scratch_shapes=[plgpu.SMEM(x.shape, x.dtype), plgpu.Barrier()],
-  num_threads=2, thread_name="pallas_thread",
+    plgpu.kernel,
+    out_shape=x,
+    scratch_shapes=dict(
+        smem_ref=plgpu.SMEM(x.shape, x.dtype),
+        barrier_ref=plgpu.Barrier(),
+    ),
+    num_threads=2,
+    thread_name="pallas_thread",
 )
 def run_kernel(x_ref, y_ref, smem_ref, barrier_ref):
   thread_id = jax.lax.axis_index("pallas_thread")
@@ -798,11 +803,14 @@ same copy for the program to be valid.
 
 ```python
 @functools.partial(
-  plgpu.kernel,
-  out_shape=jax.ShapeDtypeStruct((2, 128), jnp.float32),
-  scratch_shapes=[plgpu.SMEM((128,), jnp.float32), plgpu.Barrier()],
-  cluster=(2,),
-  cluster_names=("cluster",),
+    plgpu.kernel,
+    out_shape=jax.ShapeDtypeStruct((2, 128), jnp.float32),
+    scratch_shapes=dict(
+        smem_ref=plgpu.SMEM((128,), jnp.float32),
+        barrier_ref=plgpu.Barrier(),
+    ),
+    cluster=(2,),
+    cluster_names=("cluster",),
 )
 def run_kernel(x_ref, y_ref, smem_ref, barrier_ref):
   # Specifying collective_axes will enable TMA multicast automatically.
@@ -1043,13 +1051,13 @@ same result from `query_cluster_cancel`.
 The following example demonstrates how to call these with a kernel:
 ```python
 @functools.partial(
-  plgpu.kernel,
-  grid=grid,
-  grid_names=grid_names,
-  scratch_shapes=(
-    plgpu.TryCancelResultRef(),
-    plgpu.Barrier()
-  )
+    plgpu.kernel,
+    grid=grid,
+    grid_names=grid_names,
+    scratch_shapes=dict(
+        result_ref=plgpu.TryCancelResultRef(),
+        barrier_ref=plgpu.Barrier()
+    )
 )
 def kernel(result_ref, barrier_ref):
   plgpu.try_cluster_cancel(result_ref, barrier_ref)

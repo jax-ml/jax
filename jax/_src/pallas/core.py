@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Hashable, Mapping
 import contextlib
 import copy
 import dataclasses
@@ -25,16 +26,15 @@ import functools
 import itertools
 import threading
 from typing import Any, ClassVar, Literal, Protocol, TypeAlias, Union, runtime_checkable
-from collections.abc import Hashable
 
 import jax
 from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src import effects
 from jax._src import frozen_dict
 from jax._src import linear_util as lu
-from jax._src import effects
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
@@ -1096,7 +1096,10 @@ class ScratchShape(Protocol):
     ...
 
 
-ScratchShapeTree = Sequence[Union[ScratchShape, "ScratchShapeTree"]]
+ScratchShapeTree = (
+    Sequence[Union[ScratchShape, "ScratchShapeTree"]]
+    | Mapping[str, Union[ScratchShape, "ScratchShapeTree"]]
+)
 
 
 @dataclasses.dataclass(init=False, kw_only=True)

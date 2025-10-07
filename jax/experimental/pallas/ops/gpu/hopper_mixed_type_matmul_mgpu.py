@@ -240,13 +240,6 @@ def mixed_matmul_kernel(
 
   # We don't need multiple slots if there's only one epilogue tile.
   num_out_slots = min(2, (tile_m * tile_n) // (epi_tile_m * epi_tile_n))
-  scratch_shapes = [
-      plgpu.SMEM(
-          (2, num_out_slots, epi_tile_m, epi_tile_n),
-          out_dtype,
-          transforms=out_transforms,
-      ),
-  ]
   num_sms = backend.get_default_device().core_count
   cluster_size = 1 + (config.cluster_dimension is not None)
   f = plgpu.kernel(
@@ -258,7 +251,13 @@ def mixed_matmul_kernel(
       cluster_names=("cluster",),
       num_threads=3,
       thread_name="wg",
-      scratch_shapes=scratch_shapes,
+      scratch_shapes=dict(
+          out_smem=plgpu.SMEM(
+              (2, num_out_slots, epi_tile_m, epi_tile_n),
+              out_dtype,
+              transforms=out_transforms,
+          )
+      ),
   )
   return f(a, b)
 

@@ -226,13 +226,6 @@ def matmul(a, b, config: TuningConfig):
       plgpu.TilingTransform((8, out_swizzle_elems)),
       plgpu.SwizzleTransform(out_swizzle),
   )
-  scratch_shapes = [
-      plgpu.SMEM(
-          (2, num_out_slots, epi_tile_m, epi_tile_n),
-          dtype,
-          transforms=out_transforms,
-      ),
-  ]
   num_sms = backend.get_default_device().core_count
   cluster_size = 1 + (config.cluster_dimension is not None)
   f = plgpu.kernel(
@@ -244,7 +237,13 @@ def matmul(a, b, config: TuningConfig):
       cluster_names=("cluster",),
       num_threads=3,
       thread_name="wg",
-      scratch_shapes=scratch_shapes,
+      scratch_shapes=dict(
+          out_smem=plgpu.SMEM(
+              (2, num_out_slots, epi_tile_m, epi_tile_n),
+              dtype,
+              transforms=out_transforms,
+          )
+      ),
   )
   return f(a, b)
 

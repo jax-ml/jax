@@ -211,38 +211,39 @@ def matmul_kernel(a, b, config: TuningConfig):
   f = plgpu.kernel(
       kernel,
       out_shape=jax.ShapeDtypeStruct((m, n), dtype),
-      grid=(m_iters* n_iters,),
+      grid=(m_iters * n_iters,),
       grid_names=("mn_linear",),
       num_threads=2,
       thread_name="wg",
       cluster_names=("x",),
       cluster=(1 + collective,),
-      scratch_shapes=(  # type: ignore
-          # LHS and RHS SMEM.
-          plgpu.SMEM(
+      scratch_shapes=dict(
+          a_smem=plgpu.SMEM(
               (max_concurrent_steps, block_tile_m, tile_k),
-              dtype, transforms=transforms
+              dtype,
+              transforms=transforms,
           ),
-          plgpu.SMEM(
+          b_smem=plgpu.SMEM(
               (max_concurrent_steps, tile_k, block_tile_n),
-              dtype, transforms=transforms
+              dtype,
+              transforms=transforms,
           ),
-          # Accumulator TMEM (double-buffered in the columns)
-          plgpu.TMEM(
-              (block_tile_m, tile_n * 2), jnp.float32, collective=collective),
-          # Temporary SMEM used for storing accumulator output to GMEM.
-          plgpu.SMEM(
-              (2, block_tile_m, epilogue_tile_n), dtype, transforms=out_transforms
+          acc_tmem=plgpu.TMEM(
+              (block_tile_m, tile_n * 2), jnp.float32, collective=collective
           ),
-          # ab_tma_barrier
-          plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
-          # store_done_barrier, double-buffered
-          store_done_barrier,
-          # mma_done_barrier, double-buffered
-          plgpu.Barrier(num_arrivals=1, num_barriers=2,
-                        orders_tensor_core=True),
-          # consumed_barrier
-          plgpu.Barrier(
+          acc_smem=plgpu.SMEM(
+              (2, block_tile_m, epilogue_tile_n),
+              dtype,
+              transforms=out_transforms,
+          ),
+          ab_tma_barrier=plgpu.Barrier(
+              num_arrivals=2, num_barriers=max_concurrent_steps
+          ),
+          store_done_barrier=store_done_barrier,
+          mma_done_barrier=plgpu.Barrier(
+              num_arrivals=1, num_barriers=2, orders_tensor_core=True
+          ),
+          consumed_barrier=plgpu.Barrier(
               num_arrivals=1,
               num_barriers=max_concurrent_steps,
               orders_tensor_core=True,

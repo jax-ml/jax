@@ -113,11 +113,13 @@ def matmul0(a, b, config: TuningConfig):
       out_shape=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(m_iters, n_iters),
       grid_names=("m", "n"),
-      scratch_shapes=(
-        plgpu.TMEM((tile_m, tile_n), jnp.float32),
-        plgpu.SMEM((tile_m, tile_n), dtype, transforms=transforms),
-        plgpu.Barrier(num_arrivals=1, num_barriers=2, orders_tensor_core=True),
-      )
+      scratch_shapes=dict(
+          acc_tmem=plgpu.TMEM((tile_m, tile_n), jnp.float32),
+          acc_smem=plgpu.SMEM((tile_m, tile_n), dtype, transforms=transforms),
+          consumed_barriers=plgpu.Barrier(
+              num_arrivals=1, num_barriers=2, orders_tensor_core=True
+          ),
+      ),
   )
   return f(a, b)
 
@@ -197,23 +199,31 @@ def matmul1(a, b, config: TuningConfig):
       out_shape=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(m_iters, n_iters),
       grid_names=("m", "n"),
-      scratch_shapes=(
-        plgpu.SMEM(
-            (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms
-        ),
-        plgpu.SMEM(
-            (max_concurrent_steps, tile_k, tile_n), dtype, transforms=transforms
-        ),
-        plgpu.TMEM((tile_m, tile_n), jnp.float32),
-        plgpu.SMEM((tile_m, tile_n), dtype, transforms=transforms),
-        plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
-        plgpu.Barrier(
-            num_arrivals=1,
-            num_barriers=max_concurrent_steps,
-            orders_tensor_core=True,
-        ),
-        plgpu.Barrier(num_arrivals=1, num_barriers=1, orders_tensor_core=True),
-      )
+      scratch_shapes=dict(
+          a_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_m, tile_k),
+              dtype,
+              transforms=transforms,
+          ),
+          b_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_k, tile_n),
+              dtype,
+              transforms=transforms,
+          ),
+          acc_tmem=plgpu.TMEM((tile_m, tile_n), jnp.float32),
+          out_smem=plgpu.SMEM((tile_m, tile_n), dtype, transforms=transforms),
+          load_barriers=plgpu.Barrier(
+              num_arrivals=2, num_barriers=max_concurrent_steps
+          ),
+          consumed_barriers=plgpu.Barrier(
+              num_arrivals=1,
+              num_barriers=max_concurrent_steps,
+              orders_tensor_core=True,
+          ),
+          mma_done_barrier=plgpu.Barrier(
+              num_arrivals=1, num_barriers=1, orders_tensor_core=True
+          ),
+      ),
   )
   return f(a, b)
 
@@ -299,22 +309,22 @@ def matmul2(a, b, config: TuningConfig):
       out_shape=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(m_iters, n_iters),
       grid_names=("m", "n"),
-      scratch_shapes=(
-        plgpu.SMEM(
-            (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms
-        ),
-        plgpu.SMEM(
-            (max_concurrent_steps, tile_k, tile_n), dtype, transforms=transforms
-        ),
-        plgpu.TMEM((tile_m, tile_n), jnp.float32),
-        plgpu.SMEM((2, tile_m, config.epilogue_tile_n), dtype, transforms=transforms),
-        plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
-        plgpu.Barrier(
-            num_arrivals=1,
-            num_barriers=max_concurrent_steps,
-            orders_tensor_core=True,
-        ),
-        plgpu.Barrier(num_arrivals=1, num_barriers=1, orders_tensor_core=True),
+      scratch_shapes=dict(
+          a_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms
+          ),
+          b_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_k, tile_n), dtype, transforms=transforms
+          ),
+          acc_tmem=plgpu.TMEM((tile_m, tile_n), jnp.float32),
+          acc_smem=plgpu.SMEM((2, tile_m, config.epilogue_tile_n), dtype, transforms=transforms),
+          load_barriers=plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
+          consumed_barriers=plgpu.Barrier(
+              num_arrivals=1,
+              num_barriers=max_concurrent_steps,
+              orders_tensor_core=True,
+          ),
+          mma_done_barrier=plgpu.Barrier(num_arrivals=1, num_barriers=1, orders_tensor_core=True),
       )
   )
   return f(a, b)
@@ -411,22 +421,22 @@ def matmul3(a, b, config: TuningConfig):
       grid_names=("m", "n"),
       cluster=(2,),
       cluster_names=("cluster",),
-      scratch_shapes=(
-        plgpu.SMEM(
-            (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms,
-        ),
-        plgpu.SMEM(
-            (max_concurrent_steps, tile_k, tile_n), dtype, transforms=transforms,
-        ),
-        plgpu.TMEM((tile_m, cluster_tile_n), jnp.float32, collective=True),
-        plgpu.SMEM((2, tile_m, config.epilogue_tile_n), dtype, transforms=transforms),
-        plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
-        plgpu.Barrier(
-            num_arrivals=1,
-            num_barriers=max_concurrent_steps,
-            orders_tensor_core=True,
-        ),
-        plgpu.Barrier(num_arrivals=1, num_barriers=1, orders_tensor_core=True),
+      scratch_shapes=dict(
+          a_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms,
+          ),
+          b_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_k, tile_n), dtype, transforms=transforms,
+          ),
+          acc_tmem=plgpu.TMEM((tile_m, cluster_tile_n), jnp.float32, collective=True),
+          acc_smem=plgpu.SMEM((2, tile_m, config.epilogue_tile_n), dtype, transforms=transforms),
+          load_barriers=plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
+          consumed_barriers=plgpu.Barrier(
+              num_arrivals=1,
+              num_barriers=max_concurrent_steps,
+              orders_tensor_core=True,
+          ),
+          mma_done_barrier=plgpu.Barrier(num_arrivals=1, num_barriers=1, orders_tensor_core=True),
       )
   )
   return f(a, b)
@@ -532,22 +542,22 @@ def matmul4(a, b, config: TuningConfig):
       grid_names=("cluster_grid",),
       cluster=(2,),
       cluster_names=("cluster",),
-      scratch_shapes=(
-        plgpu.SMEM(
-            (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms,
-        ),
-        plgpu.SMEM(
-            (max_concurrent_steps, tile_k, tile_n), dtype, transforms=transforms,
-        ),
-        plgpu.TMEM((tile_m, cluster_tile_n), jnp.float32, collective=True),
-        plgpu.SMEM((2, tile_m, config.epilogue_tile_n), dtype, transforms=transforms),
-        plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
-        plgpu.Barrier(
-            num_arrivals=1,
-            num_barriers=max_concurrent_steps,
-            orders_tensor_core=True,
-        ),
-        plgpu.Barrier(num_arrivals=1, num_barriers=1, orders_tensor_core=True),
+      scratch_shapes=dict(
+          a_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms,
+          ),
+          b_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_k, tile_n), dtype, transforms=transforms,
+          ),
+          acc_tmem=plgpu.TMEM((tile_m, cluster_tile_n), jnp.float32, collective=True),
+          acc_smem=plgpu.SMEM((2, tile_m, config.epilogue_tile_n), dtype, transforms=transforms),
+          load_barriers=plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
+          consumed_barriers=plgpu.Barrier(
+              num_arrivals=1,
+              num_barriers=max_concurrent_steps,
+              orders_tensor_core=True,
+          ),
+          mma_done_barrier=plgpu.Barrier(num_arrivals=1, num_barriers=1, orders_tensor_core=True),
       ),
   )
   return f(a, b)
@@ -668,28 +678,28 @@ def matmul5(a, b, config: TuningConfig):
       cluster_names=("cluster",),
       num_threads=2,
       thread_name="wg",
-      scratch_shapes=(
-        plgpu.SMEM(
-            (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms,
-        ),
-        plgpu.SMEM(
-            (max_concurrent_steps, tile_k, tile_n), dtype, transforms=transforms,
-        ),
-        plgpu.TMEM((tile_m, 2 * cluster_tile_n), jnp.float32, collective=True),
-        plgpu.SMEM((2, tile_m, config.epilogue_tile_n), dtype, transforms=transforms),
-        plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
-        plgpu.Barrier(
-            num_arrivals=1,
-            num_barriers=max_concurrent_steps,
-            orders_tensor_core=True,
-        ),
-        plgpu.Barrier(num_arrivals=1, num_barriers=2, orders_tensor_core=True),
-        plgpu.ClusterBarrier(
-            collective_axes=("cluster",),
-            num_arrivals=1,
-            num_barriers=2,
-            orders_tensor_core=True,
-        ),
+      scratch_shapes=dict(
+          a_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms,
+          ),
+          b_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_k, tile_n), dtype, transforms=transforms,
+          ),
+          acc_tmem=plgpu.TMEM((tile_m, 2 * cluster_tile_n), jnp.float32, collective=True),
+          acc_smem=plgpu.SMEM((2, tile_m, config.epilogue_tile_n), dtype, transforms=transforms),
+          load_barriers=plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
+          consumed_barriers=plgpu.Barrier(
+              num_arrivals=1,
+              num_barriers=max_concurrent_steps,
+              orders_tensor_core=True,
+          ),
+          mma_done_barrier=plgpu.Barrier(num_arrivals=1, num_barriers=2, orders_tensor_core=True),
+          store_done_barrier=plgpu.ClusterBarrier(
+              collective_axes=("cluster",),
+              num_arrivals=1,
+              num_barriers=2,
+              orders_tensor_core=True,
+          ),
       ),
   )
   return f(a, b)
@@ -816,28 +826,28 @@ def matmul6(a, b, config: TuningConfig):
       cluster_names=("cluster",),
       num_threads=2,
       thread_name="wg",
-      scratch_shapes=(
-        plgpu.SMEM(
-            (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms
-        ),
-        plgpu.SMEM(
-            (max_concurrent_steps, tile_k, tile_n), dtype, transforms=transforms
-        ),
-        plgpu.TMEM((tile_m, 2 * cluster_tile_n), jnp.float32, collective=True),
-        plgpu.SMEM((2, tile_m, config.epilogue_tile_n), dtype, transforms=transforms),
-        plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
-        plgpu.Barrier(
-            num_arrivals=1,
-            num_barriers=max_concurrent_steps,
-            orders_tensor_core=True,
-        ),
-        plgpu.Barrier(num_arrivals=1, num_barriers=2, orders_tensor_core=True),
-        plgpu.ClusterBarrier(
-            collective_axes=("cluster",),
-            num_arrivals=1,
-            num_barriers=2,
-            orders_tensor_core=True,
-        ),
+      scratch_shapes=dict(
+          a_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms
+          ),
+          b_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_k, tile_n), dtype, transforms=transforms
+          ),
+          acc_tmem=plgpu.TMEM((tile_m, 2 * cluster_tile_n), jnp.float32, collective=True),
+          acc_smem=plgpu.SMEM((2, tile_m, config.epilogue_tile_n), dtype, transforms=transforms),
+          load_barriers=plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
+          consumed_barriers=plgpu.Barrier(
+              num_arrivals=1,
+              num_barriers=max_concurrent_steps,
+              orders_tensor_core=True,
+          ),
+          mma_done_barrier=plgpu.Barrier(num_arrivals=1, num_barriers=2, orders_tensor_core=True),
+          store_done_barrier=plgpu.ClusterBarrier(
+              collective_axes=("cluster",),
+              num_arrivals=1,
+              num_barriers=2,
+              orders_tensor_core=True,
+          ),
       )
   )
   return f(a, b)
