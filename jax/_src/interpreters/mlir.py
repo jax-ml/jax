@@ -39,14 +39,15 @@ from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import frozen_dict
 from jax._src import hashable_array
-from jax._src import literals
 from jax._src import jaxpr_util
 from jax._src import linear_util as lu
+from jax._src import literals
 from jax._src import path
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
+from jax._src import xla_metadata_lib
 from jax._src.interpreters import partial_eval as pe
 from jax._src.layout import AutoLayout, Layout
 from jax._src.lib import _jax
@@ -1787,6 +1788,21 @@ def lower_jaxpr_to_fun(
                                   num_dim_vars + num_tokens + num_const_args]
       for attrs in const_arg_attrs:
         attrs["jax.const"] = ir.BoolAttr.get(True)
+
+    xla_metadata = xla_metadata_lib.current_xla_metadata()
+    if xla_metadata:
+      ctx_attributes = {
+          k: ir.StringAttr.get(str(v).lower()) for k, v in xla_metadata.items()
+      }
+      for i in range(num_dim_vars + num_tokens, len(flat_input_types)):
+        attrs = arg_attrs[i]
+        existing_attributes = {}
+        if "mhlo.frontend_attributes" in attrs:
+          for a in attrs["mhlo.frontend_attributes"].attr:
+            existing_attributes[a.name] = a.attr
+        attrs["mhlo.frontend_attributes"] = ir.DictAttr.get(
+            existing_attributes | ctx_attributes
+        )
 
     func_op.arg_attrs = ir.ArrayAttr.get(
         [ir.DictAttr.get(attrs) for attrs in arg_attrs])
