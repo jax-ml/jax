@@ -55,7 +55,6 @@ limitations under the License.
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
-#include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
@@ -295,8 +294,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
                    "_pull_flat only supported on pjrt-ifrt clients."));
              }
 
-             xla::ifrt::UserContextScope user_context_scope(
-                 jax::PyUserContext::Create());
+             jax::PyUserContextScope user_context_scope;
              std::vector<xla::ifrt::ArraySpec> avals;
              std::vector<nb::object> shardings;
              shardings.reserve(py_avals.size());
@@ -484,8 +482,7 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
       xla::ThrowIfError(absl::InvalidArgumentError(
           "_pull_flat only supported on pjrt-ifrt clients."));
     }
-    xla::ifrt::UserContextScope user_context_scope(
-        jax::PyUserContext::Create());
+    jax::PyUserContextScope user_context_scope;
     auto aval = xla::ValueOrThrow(ArraySpecFromShapeDtypeStruct(py_aval));
     xla::ifrt::PjRtArray::PjRtBuffers buffers;
     auto prim_type = xla::ValueOrThrow(xla::ifrt::ToPrimitiveType(aval.dtype));

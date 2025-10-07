@@ -517,7 +517,7 @@ void PyInit_helper(PyArray self, nb::object aval, nb::object sharding,
 void PyArray::PyInit(PyArray self, nb::object aval, nb::object sharding,
                      absl::Span<const PyArray> py_arrays, bool committed,
                      bool skip_checks) {
-  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
+  PyUserContextScope user_context_scope;
   if (skip_checks) {
     PyInit_helper(self, aval, sharding, py_arrays, committed);
   } else {
@@ -601,7 +601,7 @@ PyArray PyArrayResultHandler::Call(absl::Span<const PyArray> py_arrays) const {
                      py_device_list.status().ToString())
             .c_str());
   }
-  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
+  PyUserContextScope user_context_scope;
   return Call(py_device_list.value()->py_client(),
               CreateIfRtArrayFromSingleDeviceShardedPyArrays(
                   dtype_, shape_, py_arrays, sharding_),
@@ -810,7 +810,7 @@ absl::StatusOr<PyArray> PyArray::FullyReplicatedShard() {
 }
 
 absl::Status PyArray::BlockUntilReady() const {
-  xla::ifrt::UserContextScope user_context_scope(jax::PyUserContext::Create());
+  PyUserContextScope user_context_scope;
   absl::Status status;
   {
     nb::gil_scoped_release gil_release;
@@ -1119,7 +1119,7 @@ absl::StatusOr<nb::object> CudaArrayInterfaceToBuffer(
     throw xla::XlaRuntimeError(
         "This operation is implemented for a PjRt-compatible backend only.");
   }
-  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
+  PyUserContextScope user_context_scope;
   TF_ASSIGN_OR_RETURN(auto ifrt_array,
                       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer)));
   return PyArray::MakeFromSingleDeviceArray(std::move(client),
@@ -1224,7 +1224,7 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
   };
   absl::flat_hash_map<BatchedCopyToDeviceWithShardingKey, Batch> batches;
 
-  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
+  PyUserContextScope user_context_scope;
   {
     tsl::profiler::TraceMe results_traceme(
         "BatchedCopyToDeviceWithSharding create batch");
@@ -1343,7 +1343,7 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
 
   GlobalPyRefManager()->CollectGarbage();
 
-  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
+  PyUserContextScope user_context_scope;
   auto n_devices = dst_devices.size();
 
   DevicePutOptions options;
@@ -1526,7 +1526,7 @@ absl::Status PyArray::BatchedBlockUntilReady(std::vector<nb::object> objs) {
   }
 
   GlobalPyRefManager()->CollectGarbage();
-  xla::ifrt::UserContextScope user_context_scope(jax::PyUserContext::Create());
+  PyUserContextScope user_context_scope;
   absl::Status status;
   {
     nb::gil_scoped_release gil_release;
@@ -1840,7 +1840,7 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
     }
   }
 
-  xla::ifrt::UserContextScope user_context_scope(jax::PyUserContext::Create());
+  PyUserContextScope user_context_scope;
   TF_RETURN_IF_ERROR(CopyToHostAsync(dynamic_shape_holder, ifrt_array));
   absl::Status status;
   if (!ready_.IsReady()) {
@@ -1926,7 +1926,7 @@ absl::Status PyHostValue::CopyStringArrayToHostAsync(
   // of the `AsNumPyArray` call.
   string_array_contents_ =
       std::make_shared<std::vector<absl::Cord>>(shape.num_elements());
-  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
+  PyUserContextScope user_context_scope;
   ready_ = ifrt_array->CopyToHostBuffer(string_array_contents_->data(),
                                         /*byte_strides=*/std::nullopt,
                                         ifrt::ArrayCopySemantics::kAlwaysCopy);
@@ -1995,7 +1995,7 @@ absl::Status PyHostValue::CopyToHostAsync(
   // knows better about an efficient layout for the host buffer. It will be
   // useful to revisit the semantics of xla::PjRtBuffer::ToLiteral() to see if
   // it is desirable for the runtime to choose the layout.
-  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
+  PyUserContextScope user_context_scope;
   ready_ = ifrt_array->CopyToHostBuffer(value_.mutable_data(), strides,
                                         ifrt::ArrayCopySemantics::kReuseInput);
   // Make sure the destination of the copy remains alive until the copy is done.

@@ -414,7 +414,7 @@ absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
   if (options.execution_stream_id == 0) {
     options.execution_stream_id = tsl::Env::Default()->GetCurrentThreadId();
   }
-  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
+  PyUserContextScope user_context_scope;
   std::optional<std::vector<xla::PjRtFuture<>>> returned_futures;
   if (with_tokens) {
     returned_futures.emplace();
