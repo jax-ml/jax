@@ -36,20 +36,28 @@ from jax._src import core
 from jax._src import source_info_util
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax.experimental import jax2tf
-from jax.experimental.jax2tf.tests import tf_test_util
 from jax._src.shard_map import shard_map
 from jax.experimental import pjit
 from jax.sharding import PartitionSpec as P
 
 import numpy as np
-import tensorflow as tf
+try:
+  import tensorflow as tf
+  from jax.experimental import jax2tf
+  from jax.experimental.jax2tf.tests import tf_test_util
+  JaxToTfTestCase = tf_test_util.JaxToTfTestCase
+except ImportError:
+  tf = None
+  jax2tf = None  # type: ignore[assignment]
+  tf_test_util = None  # type: ignore[assignment]
+  JaxToTfTestCase = jtu.JaxTestCase  # type: ignore[misc]
 
 config.parse_flags_with_absl()
 
 
+@unittest.skipIf(tf is None, "Test requires tensorflow")
 @jtu.thread_unsafe_test_class()
-class Jax2TfTest(tf_test_util.JaxToTfTestCase):
+class Jax2TfTest(JaxToTfTestCase):
 
   def setUp(self):
     super().setUp()
@@ -1209,7 +1217,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         include_xla_op_metadata=False
     )
 
-  def assertAllOperationStartWith(self, g: tf.Graph, scope_name: str):
+  def assertAllOperationStartWith(self, g: "tf.Graph", scope_name: str):
     """Assert all operations name start with ```scope_name```.
 
     Also the scope_name only occur one time.
@@ -1631,8 +1639,9 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     )
 
 
+@unittest.skipIf(tf is None, "Test requires tensorflow")
 @jtu.with_config(jax_enable_custom_prng=True)
-class Jax2tfWithCustomPRNGTest(tf_test_util.JaxToTfTestCase):
+class Jax2tfWithCustomPRNGTest(JaxToTfTestCase):
 
   def test_key_argument(self):
     func = lambda key: jax.random.uniform(key, ())
@@ -1661,7 +1670,8 @@ class Jax2tfWithCustomPRNGTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual(tf_result, jax_result)
 
 
-class Jax2TfVersioningTest(tf_test_util.JaxToTfTestCase):
+@unittest.skipIf(tf is None, "Test requires tensorflow")
+class Jax2TfVersioningTest(JaxToTfTestCase):
   # Use a separate test case with the default jax_serialization_version
   def setUp(self):
     self.use_max_serialization_version = False

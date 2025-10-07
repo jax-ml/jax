@@ -21,7 +21,7 @@ load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "WHEEL_VERSION_SUFF
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
 load("@nvidia_wheel_versions//:versions.bzl", "NVIDIA_WHEEL_VERSIONS")
-load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
+load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION", "HERMETIC_PYTHON_VERSION_KIND")
 load("@rules_cc//cc:defs.bzl", _cc_proto_library = "cc_proto_library")
 load("@rules_python//python:defs.bzl", "py_library", "py_test")
 load("@test_shard_count//:test_shard_count.bzl", "USE_MINIMAL_SHARD_COUNT")
@@ -69,14 +69,11 @@ PLATFORM_TAGS_DICT = {
     ("Windows", "AMD64"): ("win", "amd64"),
 }
 
-# TODO(vam): remove this once zstandard builds against Python >3.13
-def get_zstandard():
-    if HERMETIC_PYTHON_VERSION in ("3.13", "3.13-ft", "3.14", "3.14-ft"):
-        return []
-    return ["@pypi//zstandard"]
-
 def get_optional_dep(package, excluded_py_versions = ["3.14", "3.14-ft"]):
-    if HERMETIC_PYTHON_VERSION in excluded_py_versions:
+    py_ver = HERMETIC_PYTHON_VERSION
+    if HERMETIC_PYTHON_VERSION_KIND == "ft":
+        py_ver += "-ft"
+    if py_ver in excluded_py_versions:
         return []
     return [package]
 
@@ -103,9 +100,10 @@ _py_deps = {
     "tensorflow_core": [],
     "tensorstore": get_optional_dep("@pypi//tensorstore"),
     "torch": [],
-    "tensorflow": ["@pypi//tensorflow"],
+    "tensorflow": get_optional_dep("@pypi//tensorflow", ["3.13-ft", "3.14", "3.14-ft"]),
     "tpu_ops": [],
-    "zstandard": get_zstandard(),
+    # TODO(vam): remove this once zstandard builds against Python >3.13
+    "zstandard": get_optional_dep("@pypi//zstandard", ["3.13", "3.13-ft", "3.14", "3.14-ft"]),
 }
 
 def all_py_deps(excluded = []):
