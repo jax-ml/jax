@@ -2552,7 +2552,7 @@ def _debug_print_lowering_rule_wg(
   if ordered:
     raise NotImplementedError("Ordered debug_print is not supported on Pallas.")
   if args or static_args:
-    raise NotImplementedError("debug_print only supports string messages in warpgroup semantics")
+    raise NotImplementedError("debug_print does not support format arguments in warpgroup semantics")
   mgpu.debug_print(fmt)
   return ()
 
