@@ -1280,6 +1280,12 @@ def pmap(
   ) -> Any:
   """Parallel map with support for collective operations.
 
+  .. note::
+    :py:func:`pmap` is now implemented in terms of :py:func:`jit` and
+    :py:func:`shard_map`. Please see the [migration
+    guide](https://docs.jax.dev/en/latest/deprecate_pmap.html) for
+    more information.
+
   The purpose of :py:func:`pmap` is to express single-program multiple-data
   (SPMD) programs. Applying :py:func:`pmap` to a function will compile the
   function with XLA (similarly to :py:func:`jit`), then execute it in parallel

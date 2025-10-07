@@ -2,7 +2,7 @@
 orphan: true
 ---
 (deprecate-pmap)=
-#`jax.pmap` deprecation
+# Migrating to the new `jax.pmap`
 
 ## What's going on?
 
@@ -31,8 +31,9 @@ of the following:
   jax.config.update("jax_pmap_shmap_merge", False)
   ```
 
-NOTE: Please file a [bug](https://github.com/jax-ml/jax/issues) with a
-reproducer so we can resolve it as quickly as possible under the new `jax.pmap`.
+**NOTE**: Please file a [bug](https://github.com/jax-ml/jax/issues) with a
+reproducer and tag [@danielsuo](https://github.com/danielsuo/) so we can resolve
+it as quickly as possible under the new `jax.pmap`.
 
 ## How can I fix my code for the new `jax.pmap`?
 
