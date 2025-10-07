@@ -1550,6 +1550,60 @@ std::optional<std::pair<nb::object, nb::object>> PyTreeDef::GetNodeData()
   }
 }
 
+nb_class_ptr<PyTreeDef> PyTreeDef::FromNodeDataAndChildren(
+    nb_class_ptr<PyTreeRegistry> registry,
+    std::optional<std::pair<nb::object, nb::object>> node_data,
+    nb::iterable children) {
+  nb_class_ptr<PyTreeDef> result =
+      make_nb_class<PyTreeDef>(std::move(registry));
+  int num_leaves = 0;
+  int arity = 0;
+  for (nb::handle pchild : children) {
+    const PyTreeDef& child = nb::cast<const PyTreeDef&>(pchild);
+    absl::c_copy(child.traversal_, std::back_inserter(result->traversal_));
+    num_leaves += child.num_leaves();
+    ++arity;
+  }
+  result->traversal_.emplace_back();
+  auto& node = result->traversal_.back();
+  node.arity = arity;
+  node.custom = nullptr;
+  node.num_leaves = num_leaves;
+  node.num_nodes = result->traversal_.size();
+  if (node_data == std::nullopt) {
+    node.kind = PyTreeKind::kLeaf;
+    ++node.num_leaves;
+    return result;
+  }
+  int is_nt = PyObject_IsSubclass(node_data->first.ptr(),
+                                  reinterpret_cast<PyObject*>(&PyTuple_Type));
+  if (is_nt == -1) {
+    throw nb::python_error();
+  }
+  if (is_nt != 0 && nb::hasattr(node_data->first, "_fields")) {
+    node.kind = PyTreeKind::kNamedTuple;
+    node.node_data = node_data->first;
+    return result;
+  }
+  auto* registration = result->registry()->Lookup(node_data->first);
+  if (registration == nullptr) {
+    throw std::logic_error(absl::StrFormat(
+        "Could not find type: %s.",
+        nb::cast<absl::string_view>(nb::repr(node_data->first))));
+  }
+  node.kind = registration->kind;
+  if (node.kind == PyTreeKind::kCustom || node.kind == PyTreeKind::kDataclass) {
+    node.custom = registration;
+    node.node_data = node_data->second;
+  } else if (node.kind == PyTreeKind::kNamedTuple) {
+    node.node_data = node_data->first;
+  } else if (node.kind == PyTreeKind::kDict) {
+    node.sorted_dict_keys =
+        nb::cast<std::vector<nb::object>>(node_data->second);
+  }
+  return result;
+}
+
 int PyTreeDef::Node::tp_traverse(visitproc visit, void* arg) const {
   Py_VISIT(node_data.ptr());
   for (const auto& key : sorted_dict_keys) {
@@ -1789,6 +1843,21 @@ void BuildPytreeSubmodule(nb::module_& m) {
   treedef.def("node_data", &PyTreeDef::GetNodeData,
               "Returns None if a leaf-pytree, else (type, node_data)",
               nb::sig("def node_data(self) -> tuple[type, Any] | None"));
+  treedef.def_static(
+      "from_node_data_and_children",
+      &PyTreeDef::FromNodeDataAndChildren, nb::arg("registry"),
+      nb::arg("node_data").none(), nb::arg("children"),
+      "Reconstructs a pytree from `node_data()` and `children()`.",
+      nb::sig(
+          // clang-format off
+        "def from_node_data_and_children("
+        "self, "
+        "registry: PyTreeRegistry, "
+        "node_data: tuple[type, Any] | None, "
+        "children: typing.Iterable[PyTreeDef]"
+        ") -> PyTreeDef"
+        // clang-format on
+      ));
   treedef.def("__getstate__", &PyTreeDef::ToPickle);
   treedef.def("__setstate__", [](PyTreeDef& t, nb::object o) {
     nb::tuple pickle = nb::cast<nb::tuple>(o);

@@ -37,6 +37,7 @@ class ExampleType2:
   def to_iterable(self):
     return [self.field0, self.field1], (None,)
 
+
 def from_iterable(state, values):
   del state
   return ExampleType2(field0=values[0], field1=values[1])
@@ -79,10 +80,37 @@ class PyTreeTest(absltest.TestCase):
     with self.assertRaises(ValueError):
       self.roundtrip_proto({"a": ExampleType2(field0=o, field1=o)})
 
+  def roundtrip_node_data(self, example):
+    original = registry.flatten(example)[1]
+    restored = pytree.PyTreeDef.from_node_data_and_children(
+        registry, original.node_data(), original.children()
+    )
+    self.assertEqual(restored, original)
+
+  def testRoundtripNodeData(self):
+    o = object()
+    self.roundtrip_node_data([o, o, o])
+    self.roundtrip_node_data((o, o, o))
+    self.roundtrip_node_data({"a": o, "b": o})
+    self.roundtrip_node_data({22: o, 88: o})
+    self.roundtrip_node_data(None)
+    self.roundtrip_node_data(o)
+    self.roundtrip_node_data(ExampleType(field0=o, field1=o))
+    self.roundtrip_node_data(ExampleType2(field0=o, field1=o))
+
   def testCompose(self):
     x = registry.flatten(0)[1]
     y = registry.flatten((0, 0))[1]
     self.assertEqual((x.compose(y)).num_leaves, 2)
+
+  def testDataclassMakeFromNodeData(self):
+    c = Custom(1, "a")
+    c_leafs, c_tree = registry.flatten(c)
+    c_tree2 = pytree.PyTreeDef.from_node_data_and_children(
+        registry, c_tree.node_data(), c_tree.children()
+    )
+    self.assertEqual(c_tree2.unflatten(c_leafs), c)
+    self.assertEqual(str(c_tree2), str(c_tree))
 
   def testTpTraverse(self):
     self.assertContainsSubset(

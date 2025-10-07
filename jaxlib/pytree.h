@@ -311,6 +311,11 @@ class PyTreeDef {
   std::optional<std::pair<nanobind::object, nanobind::object>> GetNodeData()
       const;
 
+  static nb_class_ptr<PyTreeDef> FromNodeDataAndChildren(
+      nb_class_ptr<PyTreeRegistry> registry,
+      std::optional<std::pair<nanobind::object, nanobind::object>> node_data,
+      nanobind::iterable children);
+
   static PyType_Slot slots_[];
 
  private:
