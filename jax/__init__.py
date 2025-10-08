@@ -140,6 +140,7 @@ from jax._src.shard_map import shard_map as shard_map
 from jax._src.shard_map import smap as smap
 
 from jax.ref import new_ref as new_ref
+from jax.ref import freeze as freeze
 from jax.ref import Ref as Ref
 
 # Force import, allowing jax.interpreters.* to be used after import jax.
