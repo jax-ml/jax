@@ -287,15 +287,24 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
   nb::capsule capsule = nb::steal<nb::capsule>(
       PyCapsule_New(&pack.release()->tensor, kDlTensorCapsuleName,
                     [](PyObject* obj) noexcept {
+#if PY_VERSION_HEX < 0x030C0000
+                      PyObject *type, *value, *traceback;
+                      PyErr_Fetch(&type, &value, &traceback);
+#else   // PY_VERSION_HEX < 0x030C0000
+                      PyObject* exc = PyErr_GetRaisedException();
+#endif  // PY_VERSION_HEX < 0x030C0000
                       DLManagedTensor* dlmt = static_cast<DLManagedTensor*>(
                           PyCapsule_GetPointer(obj, kDlTensorCapsuleName));
                       if (dlmt) {
                         DLPackTensorDeleter(dlmt);
-                      } else {
-                        // The tensor has been deleted. Clear any error from
-                        // PyCapsule_GetPointer.
-                        PyErr_Clear();
                       }
+    // PyCapsule_GetPointer may have raised. Restore the
+    // previous exception if there was one.
+#if PY_VERSION_HEX < 0x030C0000
+                      PyErr_Restore(type, value, traceback);
+#else   // PY_VERSION_HEX < 0x030C0000
+                      PyErr_SetRaisedException(exc);
+#endif  // PY_VERSION_HEX < 0x030C0000
                     }));
   if (!capsule.ptr()) {
     throw nb::python_error();
