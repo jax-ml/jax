@@ -51,8 +51,8 @@ jobs:
             enable-x64: 1
             prng-upgrade: 1
             num_generated_cases: 1
-          - name-prefix: "with 3.13"
-            python-version: "3.13"
+          - name-prefix: "with 3.14"
+            python-version: "3.14"
             enable-x64: 0
             prng-upgrade: 0
             num_generated_cases: 1

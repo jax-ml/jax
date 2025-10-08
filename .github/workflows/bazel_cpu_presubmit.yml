@@ -31,7 +31,7 @@ jobs:
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:
       matrix:
-        python: ["3.11", "3.13"]
+        python: ["3.11", "3.14"]
         runner: ["linux-x86-n4-16", "linux-arm64-c4a-16"]
         enable-x64: [1, 0]
         exclude:
@@ -39,7 +39,7 @@ jobs:
             # coverage for one of each, we don't need to run both.
             - python: "3.11"
               enable-x64: 1
-            - python: "3.13"
+            - python: "3.14"
               enable-x64: 0
             # Only test a single Python version on Arm64 as we don't run the tests.
             - python: "3.11"
