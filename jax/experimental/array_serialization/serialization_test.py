@@ -445,7 +445,7 @@ class CheckpointTest(jtu.JaxTestCase):
   @parameterized.product(input_dtype=[jnp.int4, jnp.int8])
   def test_checkpointing_with_int4(self, input_dtype):
     if config.use_shardy_partitioner.value:
-      self.skipTest('TODO(b/376077396): Fix JaxRuntimeError: INVALID_ARGUMENT')
+      self.skipTest('TODO(b/376077396): Fix XlaRuntimeError: INVALID_ARGUMENT')
     global_mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     global_input_shape = (8, 2)
     num = math.prod(global_input_shape)
@@ -650,7 +650,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
   def test_deserialization_with_int4(self):
     if config.use_shardy_partitioner.value:
-      self.skipTest('TODO(b/376077396): Fix JaxRuntimeError: INVALID_ARGUMENT')
+      self.skipTest('TODO(b/376077396): Fix XlaRuntimeError: INVALID_ARGUMENT')
     if jtu.test_device_matches(['gpu']):
       self.skipTest("Fails on GPU. Enable after it's fixed")
     dtype = jnp.int4

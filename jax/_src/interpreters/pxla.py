@@ -58,7 +58,6 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.layout import Layout, AutoLayout, Format
-from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
@@ -83,6 +82,8 @@ from jax._src.typing import ArrayLike
 class WeakRefList(list):
   pass
 
+
+xe = xc._xla
 
 unsafe_map, map = map, safe_map  # type: ignore
 zip, unsafe_zip = safe_zip, zip  # type: ignore
@@ -180,7 +181,7 @@ def is_default_layout(curr_layout, sharding, aval):
         curr_layout,
         Layout.from_pjrt_layout(
             d.client.get_default_layout(aval.dtype, shard_shape, d)))
-  except _jax.JaxRuntimeError as e:
+  except xe.XlaRuntimeError as e:
     msg, *_ = e.args
     if isinstance(msg, str) and msg.startswith("UNIMPLEMENTED"):
       return True
@@ -2557,7 +2558,7 @@ class MeshComputation(stages.Lowering):
           "Lowered.cost_analysis not implemented on platform "
           f"'{backend.platform}'. Use compile().cost_analysis() for "
           "post-compilation cost estimates.")
-    return _jax.hlo_module_cost_analysis(backend, self.hlo().as_hlo_module())
+    return xe.hlo_module_cost_analysis(backend, self.hlo().as_hlo_module())
 
 
 def get_op_sharding_from_executable(

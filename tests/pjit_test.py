@@ -61,6 +61,7 @@ from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
+from jax._src.lib import _jax
 from jax._src.lib import ifrt_version
 from jax._src.lib import xla_client as xc
 from jax._src.util import curry, unzip2
@@ -9907,12 +9908,12 @@ class UtilTest(jtu.JaxTestCase):
 
   def test_hlo_sharding_iota_tile_error(self):
     self.assertRaisesRegex(
-        jax.errors.JaxRuntimeError,
+        _jax.XlaRuntimeError,
         'INVALID_ARGUMENT: `dims` should not be empty.',
         lambda: xc.HloSharding.iota_tile(())
     )
     self.assertRaisesRegex(
-        jax.errors.JaxRuntimeError,
+        _jax.XlaRuntimeError,
         'INVALID_ARGUMENT: Cannot reshape from',
         lambda: xc.HloSharding.iota_tile(
             (2, 2),
@@ -9921,7 +9922,7 @@ class UtilTest(jtu.JaxTestCase):
         ),
     )
     self.assertRaisesRegex(
-        jax.errors.JaxRuntimeError,
+        _jax.XlaRuntimeError,
         'INVALID_ARGUMENT: `reshape_dims` and `transpose_perm` should have the'
         ' same size',
         lambda: xc.HloSharding.iota_tile(
@@ -9930,7 +9931,7 @@ class UtilTest(jtu.JaxTestCase):
         ),
     )
     self.assertRaisesRegex(
-        jax.errors.JaxRuntimeError,
+        _jax.XlaRuntimeError,
         r'INVALID_ARGUMENT: `subgroup_types`\(3\) should not have more dimensions '
         r'than `dims`\(2\).',
         lambda: xc.HloSharding.iota_tile(

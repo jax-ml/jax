@@ -124,7 +124,7 @@ class Executable:
       raise NotImplementedError(err_msg)
     try:
       return "\n\n".join([m.to_string() for m in xla_ext_exe.hlo_modules()])
-    except _jax.JaxRuntimeError as e:
+    except _jax.XlaRuntimeError as e:
       msg, *_ = e.args
       if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
         raise NotImplementedError(err_msg) from e
@@ -149,7 +149,7 @@ class Executable:
     if hasattr(xla_ext_exe, "cost_analysis"):
       try:
         return xla_ext_exe.cost_analysis()
-      except _jax.JaxRuntimeError as e:
+      except _jax.XlaRuntimeError as e:
         msg, *_ = e.args
         if not (type(msg) is str and msg.startswith("UNIMPLEMENTED")):
           raise
@@ -186,7 +186,7 @@ class Executable:
       raise NotImplementedError(err_msg)
     try:
       return xla_ext_exe.get_compiled_memory_stats()
-    except _jax.JaxRuntimeError as e:
+    except _jax.XlaRuntimeError as e:
       msg, *_ = e.args
       if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
         raise NotImplementedError(err_msg) from e
