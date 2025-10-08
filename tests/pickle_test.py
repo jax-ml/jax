@@ -149,11 +149,11 @@ class PickleTest(jtu.JaxTestCase):
     self.assertEqual(partition_spec, restored_partition_spec)
 
   def testPickleX64(self):
-    with jax.experimental.enable_x64():
+    with jax.enable_x64(True):
       x = jnp.array(4.0, dtype='float64')
       s = pickle.dumps(x)
 
-    with jax.experimental.disable_x64():
+    with jax.enable_x64(False):
       y = pickle.loads(s)
 
     self.assertEqual(x.dtype, jnp.float64)
