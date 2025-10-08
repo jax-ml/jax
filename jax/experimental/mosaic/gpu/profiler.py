@@ -373,11 +373,8 @@ class OnDeviceProfiler:
         arith.index_cast(index, wg_idx),
     )
     start_offset = arith.muli(global_wg_idx, c(self.entries_per_wg, index))
-    wg_gmem_buffer = memref.subview(
-        self.gmem_buffer, [start_offset], [self.entries_per_wg], [1],
-        result_type=ir.Type.parse(
-            f"memref<{self.entries_per_wg}xi32, strided<[1], offset: ?>>"
-        ),
+    wg_gmem_buffer = memref_slice(
+        self.gmem_buffer, ds(start_offset, self.entries_per_wg)
     )
     with when(self.is_profiling_thread):
       memref.store(self.start, wg_gmem_buffer, [c(0, index)])
