@@ -887,6 +887,20 @@ class MutableArrayTest(jtu.JaxTestCase):
     ans = jax.vmap(internally_pure)(jnp.arange(4.))
     self.assertAllClose(ans, jnp.array([1., 2., 3., 4.]))
 
+  def test_isinstance(self):
+    ref = jax.new_ref(1.)
+    self.assertIsInstance(ref, jax.Ref)
+
+    @jax.jit
+    def f(x_ref):
+      self.assertIsInstance(x_ref, jax.Ref)
+    f(ref)
+
+    self.assertNotIsInstance(ref, jax.Array)
+
+    arr = jnp.ones(3)
+    self.assertNotIsInstance(arr, jax.Ref)
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):

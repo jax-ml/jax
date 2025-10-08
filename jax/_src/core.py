@@ -894,6 +894,8 @@ def _aval_property(name):
   return property(lambda self: getattr(self.aval, name))
 
 
+# TODO(mattjj): it's a bug for Tracer to inherit from Array, because Tracers can
+# represent non-Array things like tokens, tuples, or refs. Remove!
 class Tracer(typing.Array, metaclass=StrictABCMeta):
   __array_priority__ = 1000
   __slots__ = ['_trace', '_line_info']
@@ -2566,7 +2568,13 @@ class bint(dtypes.ExtendedDType):
 AxisSize = Union[int, DArray, Tracer, Var, DBIdx, InDBIdx, OutDBIdx]
 
 
-class Ref:
+class RefMeta(type):
+  def __instancecheck__(self, inst):
+    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    return (super().__instancecheck__(inst) or
+            isinstance(inst, Tracer) and isinstance(inst.aval, AbstractRef))
+
+class Ref(metaclass=RefMeta):
   """Mutable array reference.
 
   In most cases this should not be constructed directly, but rather
