@@ -532,6 +532,9 @@ NB_MODULE(_jax, m) {
   nb::class_<PyLoadedExecutable>(m, "LoadedExecutable")
       .def_prop_ro("client", &PyLoadedExecutable::client)
       .def("local_devices", &PyLoadedExecutable::AddressableDevices)
+      .def("get_hlo_text",
+           xla::ValueOrThrowWrapper(
+               &PyLoadedExecutable::GetHumanReadableProgramText))
       .def("size_of_generated_code_in_bytes",
            &PyLoadedExecutable::SizeOfGeneratedCodeInBytes)
       .def(

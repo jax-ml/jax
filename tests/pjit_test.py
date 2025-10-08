@@ -5079,7 +5079,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.check_wsc_in_lowered(lowered.as_text())
 
     compiled_text = lowered.compile().as_text()
-    if collective_name is not None and compiled_text is not None:
+    if collective_name is not None:
       self.assertIn(collective_name, compiled_text)
 
     @jax.jit
@@ -5262,7 +5262,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.check_wsc_in_lowered(lowered.as_text())
 
     compiled_text = lowered.compile().as_text()
-    if reduce and compiled_text is not None:
+    if reduce:
       self.assertIn('all-reduce', compiled_text)
 
   @parameterized.named_parameters(
@@ -5293,7 +5293,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.check_wsc_in_lowered(lowered.as_text())
 
     compiled_text = lowered.compile().as_text()
-    if reduce and compiled_text is not None:
+    if reduce:
       self.assertIn('all-reduce', compiled_text)
 
     @jax.jit
@@ -9178,8 +9178,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return out
 
     compiled_text = f.lower(arr).compile().as_text()
-    if compiled_text is not None:
-      self.assertNotIn('all-reduce', compiled_text)
+    self.assertNotIn('all-reduce', compiled_text)
 
     out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
@@ -9350,12 +9349,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     step(ws, xs)  # doesn't crash
 
     compiled_text = step.lower(ws, xs).compile().as_text()
-    if compiled_text is not None:
-      if jtu.test_device_matches(['gpu']):
-        self.assertEqual(compiled_text.count('all-reduce-start('), 1)
-        self.assertEqual(compiled_text.count('all-reduce-done('), 1)
-      else:
-        self.assertEqual(compiled_text.count('all-reduce('), 1)
+    if jtu.test_device_matches(['gpu']):
+      self.assertEqual(compiled_text.count('all-reduce-start('), 1)
+      self.assertEqual(compiled_text.count('all-reduce-done('), 1)
+    else:
+      self.assertEqual(compiled_text.count('all-reduce('), 1)
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_vmap_mapped_input_sharding_error(self, mesh):
@@ -9449,12 +9447,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     step(stacked_ws, xs)  # doesn't crash
 
     compiled_text = step.lower(stacked_ws, xs).compile().as_text()
-    if compiled_text is not None:
-      if jtu.test_device_matches(['gpu']):
-        self.assertEqual(compiled_text.count('all-reduce-start('), 1)
-        self.assertEqual(compiled_text.count('all-reduce-done('), 1)
-      else:
-        self.assertEqual(compiled_text.count('all-reduce('), 1)
+    if jtu.test_device_matches(['gpu']):
+      self.assertEqual(compiled_text.count('all-reduce-start('), 1)
+      self.assertEqual(compiled_text.count('all-reduce-done('), 1)
+    else:
+      self.assertEqual(compiled_text.count('all-reduce('), 1)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_jacrev_sharded_broadcast(self, mesh):

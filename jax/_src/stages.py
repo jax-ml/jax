@@ -50,6 +50,8 @@ from jax._src.layout import Format, Layout, AutoLayout
 from jax._src.sharding_impls import UnspecifiedValue, AUTO
 from jax._src.lib.mlir import ir
 from jax._src.lib import _jax
+from jax._src.lib import ifrt_version
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.tree_util import tree_structure, tree_unflatten
 
@@ -120,16 +122,27 @@ class Executable:
     xla_ext_exe = self.xla_extension_executable()
     err_msg = ("text view unsupported on current XLA backend: "
                f"{type(xla_ext_exe)}")
-    if not hasattr(xla_ext_exe, "hlo_modules"):
-      raise NotImplementedError(err_msg)
-    try:
-      return "\n\n".join([m.to_string() for m in xla_ext_exe.hlo_modules()])
-    except _jax.JaxRuntimeError as e:
-      msg, *_ = e.args
-      if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
-        raise NotImplementedError(err_msg) from e
-      else:
-        raise
+
+    if jaxlib_extension_version >= 380 and ifrt_version >= 33:
+      try:
+        return xla_ext_exe.get_hlo_text()
+      except _jax.JaxRuntimeError as e:
+        msg, *_ = e.args
+        if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
+          raise NotImplementedError(err_msg) from e
+        else:
+          raise
+    else:
+      if not hasattr(xla_ext_exe, "hlo_modules"):
+        raise NotImplementedError(err_msg)
+      try:
+        return "\n\n".join([m.to_string() for m in xla_ext_exe.hlo_modules()])
+      except _jax.JaxRuntimeError as e:
+        msg, *_ = e.args
+        if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
+          raise NotImplementedError(err_msg) from e
+        else:
+          raise
 
   def cost_analysis(self) -> Any:
     """A summary of execution cost estimates.

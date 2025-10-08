@@ -193,6 +193,10 @@ class PyLoadedExecutable {
 
   std::vector<nb_class_ptr<PyDevice>> AddressableDevices() const;
 
+  absl::StatusOr<std::string> GetHumanReadableProgramText() const {
+    return ifrt_loaded_executable_->GetHumanReadableProgramText();
+  }
+
   int64_t SizeOfGeneratedCodeInBytes() const {
     return ifrt_loaded_executable_->SizeOfGeneratedCodeInBytes();
   }
