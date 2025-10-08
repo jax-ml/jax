@@ -1182,6 +1182,12 @@ def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
   except Exception as exc:
     warnings.warn(message + f" Exception raised while generating report: {exc}")
 
+# TODO(phawkins): it is my firm belief that:
+# a) channel IDs have only a vestigal function when applied to collectives, and
+# b) their identity does not matter. The presence or absence of a channel
+#    changes whether XLA considers collectives to be inter-replica or
+#    inter-partition, but beyond that we believe they have little effect.
+COLLECTIVE_CHANNEL_ID = 1
 
 def lower_jaxpr_to_module(
     module_name: str,
@@ -1274,8 +1280,8 @@ def lower_jaxpr_to_module(
   if unlowerable_effects:
     raise ValueError(f'Cannot lower jaxpr with effects: {jaxpr.effects}')
 
-  # HLO channels need to start at 1
-  channel_iter = itertools.count(1)
+  # HLO channels need to start at 1. We reserve 1 for collectives.
+  channel_iter = itertools.count(COLLECTIVE_CHANNEL_ID + 1)
   # Create a keepalives list that will be mutated during the lowering.
   keepalives: list[Any] = []
   host_callbacks: list[Any] = []
