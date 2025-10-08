@@ -21,6 +21,21 @@ cuda_version = 0  # placeholder
 project_name = f"mosaic_gpu-cuda{cuda_version}"
 package_name = f"mosaic_gpu.mosaic_gpu_cuda{cuda_version}"
 
+cuda_wheel_suffix = ''  # placeholder
+
+nvidia_cublas_version = ''  # placeholder
+nvidia_cuda_cupti_version = ''  # placeholder
+nvidia_cuda_nvcc_version = ''  # placeholder
+nvidia_cuda_runtime_version = ''  # placeholder
+nvidia_cudnn_version = ''  # placeholder
+nvidia_cufft_version = ''  # placeholder
+nvidia_cusolver_version = ''  # placeholder
+nvidia_cusparse_version = ''  # placeholder
+nvidia_nccl_version = ''  # placeholder
+nvidia_nvjitlink_version = ''  # placeholder
+nvidia_cuda_nvrtc_version = ''  # placeholder
+nvidia_nvshmem_version = ''  # placeholder
+
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
     'version', os.path.join(pkg_path, 'version.py'))
@@ -48,6 +63,23 @@ setup(
     author_email="jax-dev@google.com",
     packages=packages,
     install_requires=[],
+    extras_require={
+      'with-cuda': [
+          # Using the same deps as JAX for now - can likely be trimmed down.
+          f"nvidia-cublas{cuda_wheel_suffix}{nvidia_cublas_version}",
+          f"nvidia-cuda-cupti{cuda_wheel_suffix}{nvidia_cuda_cupti_version}",
+          f"nvidia-cuda-nvcc{cuda_wheel_suffix}{nvidia_cuda_nvcc_version}",
+          f"nvidia-cuda-runtime{cuda_wheel_suffix}{nvidia_cuda_runtime_version}",
+          f"nvidia-cudnn-cu{cuda_version}{nvidia_cudnn_version}",
+          f"nvidia-cufft{cuda_wheel_suffix}{nvidia_cufft_version}",
+          f"nvidia-cusolver{cuda_wheel_suffix}{nvidia_cusolver_version}",
+          f"nvidia-cusparse{cuda_wheel_suffix}{nvidia_cusparse_version}",
+          f"nvidia-nccl-cu{cuda_version}{nvidia_nccl_version}",
+          f"nvidia-nvjitlink{cuda_wheel_suffix}{nvidia_nvjitlink_version}",
+          f"nvidia-cuda-nvrtc{cuda_wheel_suffix}{nvidia_cuda_nvrtc_version}",
+          f"nvidia-nvshmem-cu{cuda_version}{nvidia_nvshmem_version}",
+      ] + (["nvidia-nvvm"] if cuda_version == 13 else []),
+    },
     url="https://github.com/jax-ml/jax",
     license="Apache-2.0",
     classifiers=[

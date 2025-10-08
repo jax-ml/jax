@@ -67,6 +67,7 @@ WHEEL_BUILD_TARGET_DICT = {
     "jax-cuda-pjrt_editable": "//jaxlib/tools:jax_cuda{cuda_major_version}_pjrt_wheel_editable",
     "jax-rocm-plugin": "//jaxlib/tools:jax_rocm_plugin_wheel",
     "jax-rocm-pjrt": "//jaxlib/tools:jax_rocm_pjrt_wheel",
+    "mosaic-gpu-cuda": "//jaxlib/tools:mosaic_gpu_wheel_cuda{cuda_major_version}",
 }
 
 def add_global_arguments(parser: argparse.ArgumentParser):
@@ -367,7 +368,7 @@ async def main():
 
   # Artifact build subcommand
   build_artifact_parser = subparsers.add_parser(
-      "build", help="Builds the jaxlib, plugin, and pjrt artifact"
+      "build", help="Builds the jaxlib, plugin, mosaic, and pjrt artifact"
   )
   add_artifact_subcommand_arguments(build_artifact_parser)
   add_global_arguments(build_artifact_parser)
@@ -484,7 +485,8 @@ async def main():
       logging.error(
           "Incorrect wheel name %s provided, valid choices are jaxlib,"
           " jax-cuda-plugin or cuda-plugin, jax-cuda-pjrt or cuda-pjrt,"
-          " jax-rocm-plugin or rocm-plugin, jax-rocm-pjrt or rocm-pjrt",
+          " jax-rocm-plugin or rocm-plugin, jax-rocm-pjrt or rocm-pjrt,"
+          " or mosaic-gpu",
           wheel,
       )
       sys.exit(1)

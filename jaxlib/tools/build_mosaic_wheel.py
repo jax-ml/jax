@@ -59,6 +59,13 @@ parser.add_argument(
 parser.add_argument(
     "--srcs", help="source files for the wheel", action="append"
 )
+parser.add_argument(
+    "--nvidia_wheel_versions_data",
+    default=None,
+    required=True,
+    help="NVIDIA wheel versions data",
+)
+
 # The jax_wheel target passes in some extra params, which we ignore
 args, _ = parser.parse_known_args()
 
@@ -71,6 +78,7 @@ def assemble_sources(
     cpu,
     cuda_version,
     wheel_sources,
+    nvidia_wheel_versions_data,
 ):
   """Assembles a source tree for the wheel in `wheel_sources_path`"""
   source_file_prefix = build_utils.get_source_file_prefix(wheel_sources)
@@ -104,7 +112,7 @@ def assemble_sources(
 
   # This sets the cuda version in setup.py
   build_utils.update_setup_with_cuda_and_nvidia_wheel_versions(
-      wheel_sources_path, cuda_version, None
+      wheel_sources_path, cuda_version, nvidia_wheel_versions_data
   )
 
   tag = build_utils.platform_tag(cpu)
@@ -135,6 +143,7 @@ try:
       cpu=args.cpu,
       cuda_version=args.platform_version,
       wheel_sources=args.srcs,
+      nvidia_wheel_versions_data=args.nvidia_wheel_versions_data,
   )
   if args.editable:
     build_utils.build_editable(sources_path, args.output_path, package_name)
