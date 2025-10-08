@@ -34,14 +34,15 @@ limitations under the License.
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "mlir/Support/WalkResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/infer_vector_layout_extensions.h"
@@ -87,11 +88,13 @@ class VectorLayoutInferer {
  public:
   explicit VectorLayoutInferer(int hardware_generation,
                                std::array<int64_t, 2> target_shape,
-                               const TpuTilingFlags &tpu_tiling_flags)
+                               const TpuTilingFlags& tpu_tiling_flags,
+                               bool shape_invariant_numerics)
       : hardware_generation_(hardware_generation),
         target_shape_({target_shape[0], target_shape[1]}),
         default_tiling_(target_shape),
-        tpu_tiling_flags_(tpu_tiling_flags) {}
+        tpu_tiling_flags_(tpu_tiling_flags),
+        shape_invariant_numerics_(shape_invariant_numerics) {}
 
 #define TPU_CHECK_OP(cond, msg) \
   if (!(cond)) {                \
@@ -1471,6 +1474,22 @@ class VectorLayoutInferer {
         out_offsets[i] = std::nullopt;
       }
     }
+    // When shape_invariant_numerics is enabled, the input type is a float type,
+    // and reduction is ADD or MUL, force zero offsets to the reduction
+    // dimensions, use native tiling and default implicit dim for the source
+    // layout. This is because we want to guarantee more stable numerics by
+    // disabling some optimizations in apply-vector-layout pass which may change
+    // the numerics.
+    if (shape_invariant_numerics_ && isa<FloatType>(src_ty.getElementType()) &&
+        (op.getKind() == vector::CombiningKind::ADD ||
+         op.getKind() == vector::CombiningKind::MUL)) {
+      src_layout = VectorLayout(
+          src_layout.bitwidth(),
+          {reduces[0] ? 0 : src_layout.offsets()[0],
+           reduces[1] ? 0 : src_layout.offsets()[1]},
+          nativeTiling(src_layout.bitwidth()),
+          src_rank > 1 ? ImplicitDim::kNone : ImplicitDim::kSecondMinor);
+    }
     setLayout(op, {src_layout, acc_layout},
               VectorLayout(src_layout.bitwidth(), out_offsets,
                            src_layout.tiling(), out_implicit_dim));
@@ -2265,6 +2284,7 @@ class VectorLayoutInferer {
   std::array<int64_t, 2> target_shape_;
   std::array<int64_t, 2> default_tiling_;
   TpuTilingFlags tpu_tiling_flags_;
+  bool shape_invariant_numerics_;
 
   // TODO(b/342235360): Deprecate force_first_tile_offsets_ once we fully
   // remove the restriction that offsets must fall within the first tile.
@@ -2279,22 +2299,25 @@ struct InferVectorLayoutPass
     : public impl::InferVectorLayoutPassBase<InferVectorLayoutPass> {
   InferVectorLayoutPass(int hardware_generation,
                         std::array<int64_t, 2> target_shape,
-                        TpuTilingFlags tpu_tiling_flags) {
+                        TpuTilingFlags tpu_tiling_flags,
+                        bool shape_invariant_numerics) {
     this->hardware_generation = hardware_generation;
     this->sublane_count = target_shape[0];
     this->lane_count = target_shape[1];
     this->tpu_tiling_flags = tpu_tiling_flags;
+    this->shape_invariant_numerics = shape_invariant_numerics;
   }
   void runOnOperation() override {
     // Fail if hardware_generation has not been set from the default value.
     if (hardware_generation < 0) {
-      getOperation().emitError("hardware_generation must be set") << hardware_generation;
+      getOperation().emitError("hardware_generation must be set")
+          << hardware_generation;
       signalPassFailure();
       return;
     }
     func::FuncOp func = getOperation();
     VectorLayoutInferer run(hardware_generation, {sublane_count, lane_count},
-                            tpu_tiling_flags);
+                            tpu_tiling_flags, shape_invariant_numerics);
     if (run.infer(func).failed()) {
       signalPassFailure();
     }
@@ -2307,9 +2330,10 @@ struct InferVectorLayoutPass
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferVectorLayoutPass(
     int hardware_generation, std::array<int64_t, 2> target_shape,
-    const TpuTilingFlags &tpu_tiling_flags) {
-  return std::make_unique<InferVectorLayoutPass>(
-      hardware_generation, target_shape, tpu_tiling_flags);
+    const TpuTilingFlags& tpu_tiling_flags, bool shape_invariant_numerics) {
+  return std::make_unique<InferVectorLayoutPass>(hardware_generation,
+                                                 target_shape, tpu_tiling_flags,
+                                                 shape_invariant_numerics);
 }
 
 }  // namespace mlir::tpu

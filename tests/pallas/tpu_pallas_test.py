@@ -1916,6 +1916,28 @@ class PallasCallTest(PallasBaseTest):
     reduce_value = jnp.sum(jnp.full(shape, x), dtype=dty)
     np.testing.assert_allclose(z, reduce_value)
 
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 12):
+      self.skipTest(
+          'New CompilerParams shape_invariant_numerics was added on Oct 12,'
+          ' 2025'
+      )
+
+    @jax.jit
+    def reduce_with_shape_invariant_numerics():
+      return self.pallas_call(
+          body,
+          out_shape=jax.ShapeDtypeStruct((data_size,), dty),
+          in_specs=[],
+          out_specs=pl.BlockSpec((block_size,), lambda i: i),
+          grid=data_size // block_size,
+          compiler_params=pltpu.CompilerParams(shape_invariant_numerics=True),
+      )()
+
+    np.testing.assert_allclose(
+        jax.block_until_ready(reduce_with_shape_invariant_numerics()),
+        reduce_value,
+    )
+
   def test_scalar_any_input(self):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Needs a newer TPU")
@@ -2005,6 +2027,27 @@ class PallasCallTest(PallasBaseTest):
     dilated_x = jnp.broadcast_to(x, (m, m))
     expected = reduce_func(dilated_x, axis=reduced_dims).reshape(red_shape)
     np.testing.assert_allclose(y, expected)
+
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 12):
+      self.skipTest(
+          'New CompilerParams shape_invariant_numerics was added on Oct 12,'
+          ' 2025'
+      )
+
+    @jax.jit
+    def reduce_with_shape_invariant_numerics(x):
+      return self.pallas_call(
+          body,
+          out_shape=jax.ShapeDtypeStruct(red_shape, dty),
+          in_specs=[pl.BlockSpec(in_shape)],
+          out_specs=pl.BlockSpec(red_shape),
+          grid=1,
+          compiler_params=pltpu.CompilerParams(shape_invariant_numerics=True),
+      )(x)
+
+    np.testing.assert_allclose(
+        jax.block_until_ready(reduce_with_shape_invariant_numerics(x)), expected
+    )
 
   def test_cost_analysis(self):
     def kernel(x, y):

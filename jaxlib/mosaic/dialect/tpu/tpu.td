@@ -1432,6 +1432,7 @@ def InferVectorLayoutPass : Pass<"tpu-infer-vector-layout", "::mlir::func::FuncO
     Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
     Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
     Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
+    Option<"shape_invariant_numerics", "shape-invariant-numerics", "bool", /*default=*/"false", "">
   ];
 }
 
@@ -1470,6 +1471,7 @@ def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncO
     Option<"max_sublanes_in_scratch", "max-sublanes-in-scratch", "int", /*default=*/"0", "">,
     Option<"vmem_banks", "vmem-banks", "int", /*default=*/"-1", "">,
     Option<"max_shuffle_sublane_offset", "max-shuffle-sublane-offset", "int", /*default=*/"-1", "Max sublane offset per shuffled load/store">,
+    Option<"shape_invariant_numerics", "shape-invariant-numerics", "bool", /*default=*/"false", "">
   ];
 }
 
