@@ -1505,8 +1505,9 @@ def _scan_state_partial_discharge_rule(
   dus = partial(slicing.dynamic_update_index_in_dim, axis=0, allow_negative_indices=False)
 
   def body(*consts_carry_xs):
-    pure_consts, [i], const_refvals, carry, xs_refvals_, pure_xs = split_list(
+    pure_consts, [i_], const_refvals, carry, xs_refvals_, pure_xs = split_list(
         consts_carry_xs, [num_pure_consts, 1, num_const_refs, num_carry, num_xs_refs])
+    i = length - i_ - 1 if reverse else i_
     xs_refvals = [ds(x, i) for x in xs_refvals_]
     consts = merge_lists(is_ref_const, pure_consts, const_refvals)
     xs = merge_lists(is_ref_xs, pure_xs, xs_refvals)
@@ -1514,7 +1515,7 @@ def _scan_state_partial_discharge_rule(
     carry, ys, const_refvals, xs_updates = split_list_checked(
         outs, [num_carry, num_ys, num_const_refs, num_xs_refs])
     xs_refvals = [dus(x, u, i) for x, u in zip(xs_refvals_, xs_updates)]
-    return [i + 1, *const_refvals, *carry, *xs_refvals, *ys]
+    return [i_ + 1, *const_refvals, *carry, *xs_refvals, *ys]
 
   def rearrange(lst):
     consts, carry, xs = split_list_checked(lst, [num_consts, num_carry, num_xs])
