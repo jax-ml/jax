@@ -1553,7 +1553,7 @@ FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
   auto i32_type = b.getI32Type();
 
   // Create a new memref view that matches the dimensions being collapsed.
-  mem_shape.push_back(sublane_prod);
+  mem_shape.back() *= sublane_prod;
   mem_shape.push_back(lane);
   auto mem_shape_prod = 1;
   for (int i = 0; i < mem_shape.size(); ++i) {
@@ -1573,22 +1573,21 @@ FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
       MemRefType::get(mem_shape, memref_ty.getElementType()), ref);
 
   // Bitcast this view to i32 for packed loading.
-  int64_t num_i32_rows = sublane_prod / packing;
-  *(mem_shape.end() - 2) = num_i32_rows;
+  *(mem_shape.end() - 2) /= packing;
   Value i32_view = b.create<tpu::MemRefBitcastOp>(
       MemRefType::get(mem_shape, i32_type), reshaped_ref);
 
   // Define the shape of the small i32 chunk we will load in each iteration.
   SmallVector<int64_t> chunk_shape = vec_shape;
-  chunk_shape.push_back(1);
   chunk_shape.push_back(lane);
   auto chunk_ty = VectorType::get(chunk_shape, i32_type);
 
   // Set up strides for tpu.StridedLoadOp. We only stride along the dimension
   // we're iterating over.
-  int stride_dim = split_point;
+  int stride_dim = split_point - 1;
   SmallVector<int32_t> strides(mem_shape.size(), 1);
-  strides[stride_dim] = num_i32_rows;
+  int64_t stride = sublane_prod / packing;
+  strides[stride_dim] = stride;
 
   // Loop to load, unpack, and collect all vector chunks.
   SmallVector<Value> unpacked_chunks;
@@ -1596,26 +1595,20 @@ FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
 
   // Reuse indices from the original load for the prefix.
   SmallVector<Value> idxs(indices.begin(), indices.begin() + split_point);
-  // Dummy
-  idxs.push_back(nullptr);
+  Value split_base_idx =
+      b.create<arith::MulIOp>(idxs.back(), IdxConst(stride, b, loc));
   idxs.push_back(IdxConst(0, b, loc));
 
-  // Collapse the '1' second minor dimension from the loaded chunk.
-  SmallVector<int64_t> collapsed_shape = vec_shape;
-  collapsed_shape.push_back(lane);
-  for (int i = 0; i < num_i32_rows; ++i) {
-    idxs[stride_dim] = IdxConst(i, b, loc);
-    Value slice =
+  for (int i = 0; i < stride; ++i) {
+    idxs[stride_dim] =
+        b.create<arith::AddIOp>(split_base_idx, IdxConst(i, b, loc));
+    Value chunk =
         b.create<tpu::StridedLoadOp>(chunk_ty, i32_view, idxs, strides);
-
-    Value collapsed = b.create<tpu::ReshapeOp>(
-        VectorType::get(collapsed_shape, i32_type), slice);
 
     // Unpack elements from i32 if necessary.
     for (int p = 0; p < packing; ++p) {
       unpacked_chunks.push_back(b.create<arith::ShRUIOp>(
-          collapsed.getType(), collapsed,
-          I32Const(p * bitwidth, collapsed_shape, b, loc)));
+          chunk.getType(), chunk, I32Const(p * bitwidth, chunk_shape, b, loc)));
     }
   }
 
