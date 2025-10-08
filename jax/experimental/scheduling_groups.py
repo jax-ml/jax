@@ -27,35 +27,38 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 def scheduling_group(name):
-  return xla_metadata(scheduling_group=name)
+  return xla_metadata_call(scheduling_group=name)
 
-def xla_metadata(**meta):
-  def wrap1(f):
-    def wrap2(*args, **kwargs):
-      args_flat, in_tree = tree_flatten((args, kwargs))
-      dbg = api_util.debug_info('scheduling_group', f, args, kwargs)
-      f_, out_tree = api_util.flatten_fun(lu.wrap_init(f, debug_info=dbg), in_tree)
-      out_flat = scheduling_group_p.bind(f_, *args_flat, meta=tuple(meta.items()))
-      return tree_unflatten(out_tree(), out_flat)
-    return wrap2
-  return wrap1
+def xla_metadata_call(f=None, **meta):
+  if f is None:
+    return lambda g: _xla_metadata_call(g, **meta)
+  return _xla_metadata_call(f, **meta)
 
-scheduling_group_p = core.ClosedCallPrimitive('scheduling_group')
-scheduling_group_p.def_impl(core.call_impl)
-scheduling_group_p.def_effectful_abstract_eval(
+def _xla_metadata_call(f, **meta):
+  def wrapped(*args, **kwargs):
+    args_flat, in_tree = tree_flatten((args, kwargs))
+    dbg = api_util.debug_info('xla_metadata_call', f, args, kwargs)
+    f_, out_tree = api_util.flatten_fun(lu.wrap_init(f, debug_info=dbg), in_tree)
+    out_flat = xla_metadata_call_p.bind(f_, *args_flat, meta=tuple(meta.items()))
+    return tree_unflatten(out_tree(), out_flat)
+  return wrapped
+
+xla_metadata_call_p = core.ClosedCallPrimitive('xla_metadata_call')
+xla_metadata_call_p.def_impl(core.call_impl)
+xla_metadata_call_p.def_effectful_abstract_eval(
     lambda *_, call_jaxpr: (call_jaxpr.out_avals, call_jaxpr.effects))
 
-def _scheduling_group_lowering(
+def _xla_metadata_call_lowering(
     ctx: mlir.LoweringRuleContext, *args, meta: tuple[tuple[str, Any], ...],
     call_jaxpr: core.ClosedJaxpr):
   out_nodes, tokens = mlir.call_lowering(
-      "scheduling_group_call", call_jaxpr, None, ctx.module_context,
+      "xla_metadata_call", call_jaxpr, None, ctx.module_context,
       ctx.avals_in, ctx.avals_out, ctx.tokens_in, *args,
       dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering,
       attributes={k: attr_get(v) for k, v in meta})
   ctx.set_tokens_out(tokens)
   return out_nodes
-mlir.register_lowering(scheduling_group_p, _scheduling_group_lowering)
+mlir.register_lowering(xla_metadata_call_p, _xla_metadata_call_lowering)
 
 def attr_get(x):
   if isinstance(x, str):
@@ -65,4 +68,4 @@ def attr_get(x):
   else:
     raise NotImplementedError(f'mlir attr handler for {type(x)=}')
 
-ad.primitive_transposes[scheduling_group_p] = ad.primitive_transposes[core.closed_call_p]
+ad.primitive_transposes[xla_metadata_call_p] = ad.primitive_transposes[core.closed_call_p]
