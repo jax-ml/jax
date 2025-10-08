@@ -101,6 +101,7 @@ class PallasBaseTest(jtu.JaxTestCase):
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
 
+
 class TPUPipelineModeTest(PallasBaseTest):
 
   @parameterized.parameters(
@@ -151,6 +152,7 @@ class TPUPipelineModeTest(PallasBaseTest):
     self.assertEqual(vmem_usage, expected_vmem_usage)
     z = vadd(x, y)
     np.testing.assert_allclose(z, x + y)
+
 
 class PallasCallScalarPrefetchTest(PallasBaseTest):
   def test_trivial_scalar_prefetch(self):
@@ -2417,6 +2419,38 @@ class PallasCallTest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct(x.shape, dtype),
     )(x)
     np.testing.assert_array_equal(y[0], jnp.minimum(x[0], x[1]))
+
+  @parameterized.parameters([
+      jnp.int32,
+      jnp.uint32,
+      jnp.int16,
+      jnp.uint16,
+      jnp.int8,
+      jnp.uint8,
+      jnp.int4,
+      jnp.uint4,
+      jnp.float32,
+      jnp.bfloat16,
+  ])
+  def test_bool_select_operation(self, dtype):
+    def kernel(condlist, choicelist, out_ref):
+      out_ref[...] = jnp.where(condlist[...], choicelist[...], 0)
+
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 15):
+      self.skipTest('Support added on Oct 15, 2025')
+
+    if dtype in [jnp.int4, jnp.uint4] and not jtu.is_device_tpu_at_least(4):
+      self.skipTest('i4 is not supported on TPU generations <= 3')
+
+    shape = (8, 128)
+    condlist = jax.random.bernoulli(jax.random.key(0), 0.5, shape)
+    choicelist = jnp.arange(shape[0]*shape[1], dtype=dtype).reshape(shape)
+
+    z = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((shape[0],shape[1]), dtype=dtype),
+    )(condlist, choicelist)
+    np.testing.assert_array_equal(z, jnp.where(condlist, choicelist, 0))
 
 
 class PallasScalarIOpsTest(PallasBaseTest):
