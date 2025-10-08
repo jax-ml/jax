@@ -3548,7 +3548,14 @@ def _check_call(ctx_factory, prim, in_atoms, params):
   out_type = [a.update(shape=tuple(in_map.get(d, out_map.get(d))
                                    if type(d) is Var else d for d in a.shape))
               if type(a) is DShapedArray else a for a in out_avals]
-  return out_type, call_jaxpr.effects
+
+  # jaxpr input effects are indexed to include jaxpr.constvars, but the eqn
+  # should have effects indexed only on its explicit arguments
+  effs = {e.replace(input_index=e.input_index - len(call_jaxpr.constvars))
+          if isinstance(e, effects.JaxprInputEffect)
+          else e for e in call_jaxpr.effects}
+
+  return out_type, effs
 
 def _check_map(ctx_factory, prim, in_avals, params):
   if "call_jaxpr" not in params:

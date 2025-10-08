@@ -1980,7 +1980,15 @@ core.custom_typechecks[jit_p] = _pjit_typecheck
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_shardings, **_):
-  return jaxpr.out_avals, jaxpr.effects
+  # jaxpr input effects are indexed to include jaxpr.constvars, but the pjit eqn
+  # should have effects indexed only on its explicit arguments
+  if jaxpr.constvars:
+    effs = {e.replace(input_index=e.input_index - len(jaxpr.constvars))
+            if isinstance(e, effects.JaxprInputEffect)
+            else e for e in jaxpr.effects}
+  else:
+    effs = jaxpr.effects
+  return jaxpr.out_avals, effs
 jit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 

@@ -257,6 +257,26 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       jaxpr = jax.make_jaxpr(f)(np.arange(jax.local_device_count()))
     self.assertSetEqual(jaxpr.effects, {foo_effect, bar_effect})
 
+  def test_pjit_const_input_effect_indexing(self):
+    # https://github.com/jax-ml/jax/issues/32399
+    @jax.jit
+    def bar(x, w):
+        def scan_fn(x, _):
+            c = jnp.array([])
+            o = w[...] @ x
+            x = jnp.concatenate([x, c], axis=-1)
+            return x, None
+
+        x, _ = jax.lax.scan(scan_fn, x, None, length=10)
+        return x
+
+
+    @jax.jit
+    def foo(w):
+        return bar(jnp.zeros((1,)), w)
+
+    foo(jax.new_ref(jnp.eye(1)))  # don't crash
+
 
 @jtu.thread_unsafe_test_class()  # because of mlir.register_lowering calls
 class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
