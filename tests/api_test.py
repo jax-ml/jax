@@ -5367,6 +5367,13 @@ class APITest(jtu.JaxTestCase):
   #     return x + x
   #   foo(1.0)
 
+  def test_dce_sink_vmap(self):
+    def f(x):
+      jax.lax.dce_sink(x)
+      return x
+
+    jax.vmap(f)(jnp.arange(3.))  # don't crash
+
 
 class RematTest(jtu.JaxTestCase):
 
