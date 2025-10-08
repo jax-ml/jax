@@ -24,13 +24,16 @@ import jax
 from jax import custom_jvp, custom_vjp, grad, jvp
 from jax import lax
 from jax import random
-from jax.experimental import enable_x64, disable_x64
 import jax.numpy as jnp
 from jax._src import config
 import jax._src.test_util as jtu
 from jax._src.lib import jaxlib_extension_version
 
 jax.config.parse_flags_with_absl()
+
+# TODO(jakevdp): rewrite these tests in terms of jax.enable_x64.
+with jtu.ignore_warning(message=".* is deprecated", category=DeprecationWarning):
+  from jax.experimental import enable_x64, disable_x64
 
 
 class X64ContextTests(jtu.JaxTestCase):

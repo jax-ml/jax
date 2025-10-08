@@ -52,6 +52,7 @@ Configuration
    enable_checks
    enable_custom_prng
    enable_custom_vjp_by_custom_transpose
+   enable_x64
    log_compiles
    no_tracing
    numpy_rank_promotion

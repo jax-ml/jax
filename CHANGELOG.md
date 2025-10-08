@@ -67,6 +67,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.dlpack.from_dlpack` now accepts arrays with non-default layouts,
     for example, transposed.
 
+* Deprecations
+  * {func}`jax.experimental.enable_x64` and {func}`jax.experimental.disable_x64`
+    are deprecated in favor of the new non-experimental context manager
+    {func}`jax.enable_x64`.
+
 ## JAX 0.7.2 (September 16, 2025)
 
 * Breaking changes:
