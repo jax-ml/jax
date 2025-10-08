@@ -9456,6 +9456,32 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       else:
         self.assertEqual(compiled_text.count('all-reduce('), 1)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_jacrev_sharded_broadcast(self, mesh):
+    np_inp = np.arange(16, dtype=np.float32)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('y')))
+
+    @jax.jit
+    def broadcast_sharded(x):
+      xs = jax.typeof(x).sharding.spec
+      return lax.broadcast(x, sizes=[2], out_sharding=P('x', *xs))
+
+    out = jax.jit(jax.jacrev(broadcast_sharded))(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, None, 'y')))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_jacfwd_sharded_broadcast(self, mesh):
+    np_inp = np.arange(16, dtype=np.float32)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('y')))
+
+    @jax.jit
+    def broadcast_sharded(x):
+      xs = jax.typeof(x).sharding.spec
+      return lax.broadcast(x, sizes=[2], out_sharding=P('x', *xs))
+
+    out = jax.jit(jax.jacfwd(broadcast_sharded))(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y', None)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

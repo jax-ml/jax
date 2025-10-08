@@ -890,28 +890,42 @@ def _std_basis(pytree):
   ndim = sum(map(np.size, leaves))
   dtype = dtypes.result_type(*leaves)
   flat_basis = jnp.eye(ndim, dtype=dtype)
-  out_pytree = _unravel_array_into_pytree(pytree, 1, None, flat_basis)
+  axis = 1
+  arr_s = [None] * flat_basis.ndim
+  specs = tree_map(lambda l: P(arr_s[:axis], *core.typeof(l).sharding.spec,
+                               arr_s[axis+1:]), pytree)
+  out_pytree = _unravel_array_into_pytree(pytree, axis, None, flat_basis, specs)
   out_pytree = tree_map(_insert_pvary, out_pytree, pytree)
   return out_pytree
 
 def _jacfwd_unravel(input_pytree, output_pytree_leaf, arr):
+  axis = -1 % arr.ndim
+  arr_s = core.typeof(arr).sharding.spec
+  specs = tree_map(
+      lambda l: P(*arr_s[:axis], *[None] * len(np.shape(l)), *arr_s[axis+1:]),
+      input_pytree)
   return _unravel_array_into_pytree(
-    input_pytree, -1, output_pytree_leaf, arr)
+    input_pytree, axis, output_pytree_leaf, arr, specs)
 
 def _jacrev_unravel(output_pytree, input_pytree_leaf, arr):
+  specs = tree_map(
+      lambda l: P(*[None] * len(np.shape(l)), *core.typeof(arr).sharding.spec[1:]),
+      output_pytree)
   return _unravel_array_into_pytree(
-    output_pytree, 0, input_pytree_leaf, arr)
+    output_pytree, 0, input_pytree_leaf, arr, specs)
 
-def _possible_downcast(x, example):
+def _possible_downcast(x, example, spec):
   from jax._src.lax import lax as lax_internal  # pytype: disable=import-error
   if (dtypes.issubdtype(x.dtype, np.complexfloating) and
       not dtypes.issubdtype(_dtype(example), np.complexfloating)):
     x = x.real
-  dtype = None if example is None else _dtype(example)
-  weak_type = None if example is None else dtypes.is_weakly_typed(example)
-  return lax_internal._convert_element_type(x, dtype, weak_type)
+  dtype = _dtype(example)
+  weak_type = dtypes.is_weakly_typed(example)
+  sharding = NamedSharding(core.typeof(example).sharding.mesh, spec)
+  return lax_internal._convert_element_type(
+      x, dtype, weak_type, sharding=sharding)
 
-def _unravel_array_into_pytree(pytree, axis, example, arr):
+def _unravel_array_into_pytree(pytree, axis, example, arr, specs):
   """Unravel an array into a PyTree with a given structure.
   Args:
       pytree: The pytree that provides the structure.
@@ -922,12 +936,14 @@ def _unravel_array_into_pytree(pytree, axis, example, arr):
       arr: The array to be unraveled.
   """
   leaves, treedef = tree_flatten(pytree)
-  axis = axis % arr.ndim
+  specs, _ = tree_flatten(specs)
   shapes = [arr.shape[:axis] + np.shape(l) + arr.shape[axis+1:] for l in leaves]
   parts = _split(arr, np.cumsum(map(np.size, leaves[:-1])), axis)
   reshaped_parts = [
-      _possible_downcast(np.reshape(x, shape), leaf if example is None else example)
-      for x, shape, leaf in zip(parts, shapes, leaves)]
+      _possible_downcast(np.reshape(x, shape),
+                         leaf if example is None else example,
+                         spec=spec)
+      for x, shape, leaf, spec in zip(parts, shapes, leaves, specs)]
   return tree_unflatten(treedef, reshaped_parts)
 
 def _split(x, indices, axis):
