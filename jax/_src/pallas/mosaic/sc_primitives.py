@@ -680,12 +680,18 @@ def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
         body(idx)
         return []
       return jax.tree.leaves(body(idx, carry_tree.unflatten(carries)))
+    flat_avals = [
+        pallas_core.index_map_grid_aval,
+        *(c.aval for c in flat_carries),
+    ]
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
         lu.wrap_init(
             wrapped,
-            debug_info=api_util.debug_info("parallel_loop", body, (), {}),
+            debug_info=api_util.debug_info(
+                "parallel_loop", body, flat_avals, {}
+            ),
         ),
-        [pallas_core.index_map_grid_aval, *(c.aval for c in flat_carries)],
+        flat_avals,
     )
     disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(
         jaxpr.effects

@@ -83,16 +83,19 @@ def lower_jaxpr_to_module(
     new_block_mappings = []
     for bm in grid_mapping.block_mappings:
 
-      def new_index_map(*args):  # Has a leading grid index
+      def new_index_map(*args, bm=bm):
         return jax_core.eval_jaxpr(
+            # Discard the leading grid index.
             bm.index_map_jaxpr.jaxpr, bm.index_map_jaxpr.consts, *args[1:]
         )
 
+      debug_info = bm.index_map_jaxpr.jaxpr.debug_info
+      if debug_info.arg_names is not None:
+        debug_info = debug_info._replace(
+            arg_names=("idx", *debug_info.arg_names)
+        )
       flat_fun, _ = api_util.flatten_fun(
-          lu.wrap_init(
-              new_index_map, debug_info=bm.index_map_jaxpr.jaxpr.debug_info
-          ),
-          index_map_tree,
+          lu.wrap_init(new_index_map, debug_info=debug_info), index_map_tree
       )
       with pallas_core.tracing_grid_env(new_grid, grid_mapping.vmapped_dims):
         index_map_jaxpr, _, index_map_jaxpr_consts = pe.trace_to_jaxpr_dynamic(
