@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -213,6 +214,10 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
   int64_t total_queries_ = 0;
   absl::Mutex mu_;
 
+  // The thread ID of the thread that currently holds mu_. This is used to
+  // detect reentrant calls.
+  std::atomic<std::thread::id> mu_holder_thread_id_;
+
   static int tp_traverse(PyObject* self, visitproc visit, void* arg);
   static int tp_clear(PyObject* self);
 };
@@ -265,19 +270,32 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
 
   bool inserted = false;
   std::shared_ptr<CacheEntry> entry;
+  if (mu_holder_thread_id_.load() == std::this_thread::get_id()) {
+    auto error_string = absl::StrCat(
+        "Reentrant call to weakref_lru_cache. Key: ",
+        nb::cast<std::string>(nb::repr(weakref_key)),
+        nb::cast<std::string>(nb::repr(args)));
+    PyErr_SetString(PyExc_RecursionError, error_string.c_str());
+    throw nb::python_error();
+  }
   {
     // Because the gil can be released during cache insertion, this forces
     // the lock order to be mu_ then gil so we must release the gil first.
     nb::gil_scoped_release release;
+
     // Acquire a mutex to avoid problems where the gil is released during
     // cache insertion and then a second thread invalidates the cache order.
     mu_.Lock();
+    mu_holder_thread_id_.store(std::this_thread::get_id());
   }
   {
     // GetOrCreateIfAbsent calls into Python hash and equality functions,
     // which may throw exceptions. The use of absl::Cleanup ensures mu_ is
     // released if that happens.
-    absl::Cleanup unlock = [this]() ABSL_UNLOCK_FUNCTION(mu_) { mu_.Unlock(); };
+    absl::Cleanup unlock = [this]() ABSL_UNLOCK_FUNCTION(mu_) {
+      mu_holder_thread_id_.store(std::thread::id());
+      mu_.Unlock();
+    };
     entry = cache.GetOrCreateIfAbsent(key, [&inserted](const Key& key) {
       inserted = true;
       return std::make_shared<CacheEntry>();
