@@ -355,6 +355,7 @@ The following options are available for GPU profiling:
     [NVIDIA's CUPTI documentation](https://docs.nvidia.com/cupti/main/main.html#metrics-table).
 *   `gpu_pm_sample_interval_us`: Sets the sampling interval in microseconds
     for CUPTI PM sampling. Defaults to `500`.
+*   `gpu_pm_sample_buffer_size_per_gpu_mb`: Sets the system memory buffer size per device in MB for CUPTI PM sampling. Defaults to 64MB. The maximum supported value is 4GB.
 *   `gpu_dump_graph_node_mapping`: If enabled, dumps CUDA graph node
     mapping information into the trace. Defaults to `False`.
 
