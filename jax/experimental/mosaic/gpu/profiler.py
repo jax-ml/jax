@@ -18,6 +18,8 @@ import contextlib
 import itertools
 import json
 import math
+import os
+import tempfile
 from typing import Literal, ParamSpec, TypeVar, overload
 import warnings
 
@@ -174,9 +176,15 @@ class ProfilerSpec:
   ENTER = 0
   EXIT = 1 << 31
 
-  def __init__(self, entries_per_warpgroup: int):
+  def __init__(self, entries_per_warpgroup: int, dump_path: str = "sponge"):
     self.entries_per_warpgroup = entries_per_warpgroup
     self.interned_names: dict[str, int] = {}
+    if dump_path == "sponge":
+      self.dump_path = os.getenv(
+          "TEST_UNDECLARED_OUTPUTS_DIR", tempfile.gettempdir()
+      )
+    else:
+      self.dump_path = dump_path
 
   def _num_warpgroups(
       self, grid: tuple[int, ...], block: tuple[int, ...]

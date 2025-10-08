@@ -579,14 +579,8 @@ class LoweringResult:
   grid: tuple[int, ...]
   block: tuple[int, ...]
   new_out_shapes: tuple[jax.ShapeDtypeStruct, ...]  # Does not include gmem scratch!
-  profiler_context: ProfilerContext | None
+  profiler_spec: mgpu_profiler.ProfilerSpec | None
   gmem_scratch_shapes: tuple[jax.ShapeDtypeStruct, ...]
-
-
-@dataclasses.dataclass(frozen=True)
-class ProfilerContext:
-  dump_path: str
-  spec: mgpu_profiler.ProfilerSpec
 
 
 class LoweringError(Exception):  # pylint: disable=g-bad-exception-name
@@ -981,11 +975,12 @@ def lower_jaxpr_to_module(
   else:
     scratch_buffers.append(None)
 
-  prof_ctx = prof_spec = None
+  prof_spec = None
   if params.profile_space:
     # Each range is 2 events, each event is 4 bytes.
-    prof_spec = mgpu_profiler.ProfilerSpec(params.profile_space * 2 * 4)
-    prof_ctx = ProfilerContext(params.profile_dir, prof_spec)
+    prof_spec = mgpu_profiler.ProfilerSpec(
+        params.profile_space * 2 * 4, dump_path=params.profile_dir
+    )
   cuda_grid = tuple(map(operator.mul, parallel_grid, cluster))
 
   scoped_semaphores_shape = []
@@ -1043,7 +1038,7 @@ def lower_jaxpr_to_module(
   launch_ctx.scratch.finalize_size()
 
   return LoweringResult(
-      module, cuda_grid, block, new_out_shapes, prof_ctx,
+      module, cuda_grid, block, new_out_shapes, prof_spec,
       scoped_semaphores_shape
   )
 

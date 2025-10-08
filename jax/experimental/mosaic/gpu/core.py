@@ -901,10 +901,7 @@ def as_gpu_kernel(
       _check_args(*args)
       *results, prof_buffer = bind(*args)
       def dump_profile(prof_buffer):
-        out_file = os.path.join(
-            os.getenv("TEST_UNDECLARED_OUTPUTS_DIR", "/tmp"),
-            f"{time.time_ns()}-trace.json",
-        )
+        out_file = os.path.join(prof_spec.dump_path, f"{time.time_ns()}-trace.json")
         try:
           with open(out_file, "x") as f:
             prof_spec.dump(prof_buffer, f, grid=grid, block=block)

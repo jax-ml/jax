@@ -116,17 +116,16 @@ def pallas_call_lowering(
       input_output_aliases=input_output_aliases,
       use_custom_barrier=False, # False until we add get_barrier_semaphore() feature
   )
-  if (prof_ctx := lowering_result.profiler_context) is not None:
+  if (prof_spec := lowering_result.profiler_spec) is not None:
     *outs, prof_buffer = outs
-    if (dump_path := prof_ctx.dump_path) == "sponge":
-      dump_path = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR")  # type: ignore
     out_file = os.path.join(
-        dump_path, f"{mlir.sanitize_name(debug_info.func_name)}-{time.time_ns()}-trace.json"
+        prof_spec.dump_path,
+        f"{mlir.sanitize_name(debug_info.func_name)}-{time.time_ns()}-trace.json",
     )
     def dump_profile(prof_buffer):
       try:
         with open(out_file, "x") as f:
-          prof_ctx.spec.dump(
+          prof_spec.dump(
               prof_buffer,
               f,
               grid=lowering_result.grid,
