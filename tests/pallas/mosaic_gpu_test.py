@@ -2329,7 +2329,13 @@ class PallasCallTest(PallasTest):
     )
 
     shape = (128, 128)
-    transforms = self.default_transforms(dtype=jnp.float32)
+    dtype = jnp.float32
+    swizzle = 128
+    if layout in (plgpu.Layout.WGMMA_UPCAST_4X, plgpu.Layout.WGMMA_UPCAST_2X):
+      dtype = jnp.float8_e5m2
+      swizzle = 64
+    transforms = self.default_transforms(dtype=dtype, swizzle=swizzle)
+
     if layout == plgpu.Layout.TCGEN05_M64_COLLECTIVE:
       layout = plgpu.Layout.TCGEN05_M64_COLLECTIVE(128)
     if layout == plgpu.Layout.WG_STRIDED:
@@ -2340,14 +2346,14 @@ class PallasCallTest(PallasTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
         in_specs=[plgpu.BlockSpec(transforms=transforms)],
         out_specs=plgpu.BlockSpec(transforms=transforms),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = plgpu.load(x_ref, (), layout=layout, optimized=optimized)
 
-    x = jnp.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
     np.testing.assert_array_equal(kernel(x), x)
 
   @parameterized.parameters(
