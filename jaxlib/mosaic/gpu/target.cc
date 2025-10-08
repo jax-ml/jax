@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/strings/strip.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/TargetParser/Triple.h"
 
 namespace mosaic::gpu {
 
@@ -51,7 +52,7 @@ absl::StatusOr<std::string> GetSmVersion(int major, int minor) {
   {
     // generic subtarget
     std::unique_ptr<const llvm::MCSubtargetInfo> subtarget_info{
-        target->createMCSubtargetInfo(triple, "", "")};
+        target->createMCSubtargetInfo(llvm::Triple(triple), "", "")};
     if (subtarget_info == nullptr) {
       return absl::InternalError(absl::StrFormat(
           "Failed to get generic LLVM subtarget info for triple %s", triple));
@@ -79,7 +80,7 @@ absl::StatusOr<int> GetLatestLlvmPtxIsaVersion() {
   }
   // generic subtarget
   std::unique_ptr<const llvm::MCSubtargetInfo> subtarget_info{
-      target->createMCSubtargetInfo(triple, "", "")};
+      target->createMCSubtargetInfo(llvm::Triple(triple), "", "")};
   if (subtarget_info == nullptr) {
     return absl::InternalError(absl::StrFormat(
         "Failed to get generic LLVM subtarget info for triple %s", triple));
