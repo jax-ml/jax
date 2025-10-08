@@ -55,6 +55,7 @@ limitations under the License.
 #include "jaxlib/py_values.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/cpu/cpu_client.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/distributed.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
@@ -332,7 +333,7 @@ NB_MODULE(_jax, m) {
           options.process_id = node_id;
           options.cpu_device_count = num_devices;
           std::unique_ptr<xla::PjRtClient> client =
-              xla::ValueOrThrow(xla::GetXlaPjrtCpuClient(std::move(options)));
+              xla::ValueOrThrow(xla::GetPjRtCpuClient(std::move(options)));
           xla::ifrt::PjRtClient::CreateOptions ifrt_options;
           ifrt_options.pjrt_client =
               std::shared_ptr<xla::PjRtClient>(std::move(client));
