@@ -1823,11 +1823,16 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
     for eff in eqn.effects:
       if isinstance(eff, effects.JaxprInputEffect):
         if eff.input_index >= len(eqn.invars):
+          # TODO(mattjj): ask for forgiveness
+          dbg = type('Fake', (), {'resolve_result_paths': lambda self_: self_,
+                                  'assert_arg_names': lambda _, __: None,
+                                  'assert_result_paths': lambda _, __: None,
+                                  })()
           raise ValueError(
               f"`JaxprInputEffect` {eff} is invalid."
               f"\n Equation: {eqn}\n"
               "\n Jaxpr: "
-              f"{core.Jaxpr(constvars, invars, outvars, eqns, set())}")
+              f"{core.Jaxpr(constvars, invars, outvars, eqns, set(), dbg)}")  # type: ignore
         eqn_invar = eqn.invars[eff.input_index]
         if type(eqn_invar) is core.Literal or eqn_invar in mut_arrays:
           continue
