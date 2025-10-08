@@ -1826,9 +1826,14 @@ class VectorLayoutInferer {
       }
     }
     Layout required_layout = some_layout;
+    // We have a special limited implementation for packed untiled/tiled swaps.
+    if (untiled_tiled_swap && layout.packing() > 1) {
+      required_layout = VectorLayout(layout.bitwidth(), LayoutOffsets{0, 0},
+                                     {layout.packing(), target_shape_[1]},
+                                     ImplicitDim::kNone);
     // Require native tiling if we're going to use the XLU, or doing a
-    // major/minor permute.
-    if (untiled_tiled_swap ||
+    // major/minor permute on 32-bit data.
+    } else if (untiled_tiled_swap ||
         permutation[permutation.size() - 1] == permutation.size() - 2) {
       auto native_tiling = nativeTiling(layout.bitwidth());
       required_layout = VectorLayout(layout.bitwidth(), LayoutOffsets{0, 0},

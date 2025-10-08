@@ -5935,9 +5935,83 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
   ArrayRef<int64_t> permutation = transpose_op.getPermutation();
   const auto tile_perm = permutation.take_back(2);
 
-  // Major minor pemute
-  if (permutation.take_back(3) ==
-      ArrayRef<int64_t>({rank - 2, rank - 3, rank - 1})) {
+  const bool untiled_tiled_swap =
+      permutation.take_back(3) ==
+      ArrayRef<int64_t>({rank - 2, rank - 3, rank - 1});
+
+  // Packed major minor pemute
+  // TODO(b/448865291): Merge this branch and the unpacked one into a single
+  // general algorithm.
+  if (untiled_tiled_swap && layout_in.packing() > 1) {
+    int packing = layout_in.packing();
+    int bitwidth = layout_in.bitwidth();
+    if (layout_in.offsets() != LayoutOffsets{0, 0}) {
+      return op.emitOpError("Not implemented: Layout with offset");
+    }
+    if (layout_in.tiling()[0] != layout_in.packing() ||
+        layout_in.tiling()[1] != ctx.target_shape[1]) {
+      return op.emitOpError("Not implemented: expected single-sublane tiling");
+    }
+    // TODO(b/448862637): Just use the reshape_to_4d from below.
+    if (src_ty.getRank() != 3) {
+      return op.emitOpError("Not implemented: only 3D values supported");
+    }
+    // TODO(b/448862637): We just need to step over in a loop.
+    if (*(src_ty.getShape().end() - 2) != packing) {
+      return op.emitOpError("Not implemented: second minor unequal to packing");
+    }
+    // TODO(b/448862637): We just need to pad below.
+    if (*(src_ty.getShape().end() - 3) % packing != 0) {
+      return op.emitOpError(
+          "Not implemented: third minor not divisible by packing");
+    }
+    xla::Array<Value> dst_vregs(
+        layout_out.tileArrayShape(dst_ty.getShape(), ctx.target_shape));
+    VectorType int_packed_ty = getNativeVregType(
+        builder.getIntegerType(layout_in.bitwidth()), ctx.target_shape);
+    VectorType int_32_ty =
+        getNativeVregType(builder.getI32Type(), ctx.target_shape);
+    VectorType vreg_ty =
+        getNativeVregType(src_ty.getElementType(), ctx.target_shape);
+    for (int64_t minor_idx = 0; minor_idx < src_vregs.dimensions().back();
+         ++minor_idx) {
+      for (int64_t third_minor_base_idx = 0;
+            third_minor_base_idx < *(src_vregs.dimensions().end() - 3);
+            third_minor_base_idx += packing) {
+        for (int64_t second_minor_idx = 0; second_minor_idx < packing;
+            ++second_minor_idx) {
+          SmallVector<Value> unpacked;
+          // We could have just interleaved unpacked the second_minor_idx part
+          // of the vreg in the loop below, but that ends up being more
+          // expensive than we need. Simple shifts do the trick. The high bits
+          // will be truncated by packing anyway.
+          for (int64_t third_minor_subidx = 0; third_minor_subidx < packing;
+               ++third_minor_subidx) {
+            Value vreg = src_vregs(third_minor_base_idx + third_minor_subidx, 0,
+                                   minor_idx);
+            vreg = tpu::BitcastVregOp::create(builder, int_32_ty, vreg);
+            vreg = arith::ShRUIOp::create(
+                builder, vreg,
+                getFullLikeVector(
+                    builder, cast<TypedValue<VectorType>>(vreg),
+                    builder.getI32IntegerAttr(second_minor_idx * bitwidth)));
+            unpacked.push_back(vreg);
+          }
+          Value repacked_i32 = tpu::PackSubelementsOp::create(
+              builder, int_packed_ty, unpacked, tpu::PackFormat::kInterleaved);
+          dst_vregs(second_minor_idx, third_minor_base_idx / packing,
+                    minor_idx) =
+              tpu::BitcastVregOp::create(builder, vreg_ty, repacked_i32);
+        }
+      }
+    }
+    auto assembled =
+        assemble(builder, dst_ty, layout_out, dst_vregs, ctx.target_shape);
+    transpose_op.getOperation()->replaceAllUsesWith(assembled);
+    transpose_op.erase();
+    return success();
+  // Major minor permute
+  } else if (untiled_tiled_swap) {
     // This is a 3 stage algorithm that uses combinations and shuffles
     // to do a transposition of an 8x8 block of sublanes.
     // In the following algorithm description, A, B, ..., H represent 8
