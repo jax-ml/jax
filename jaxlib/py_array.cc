@@ -626,6 +626,11 @@ PyArray::PyArray(nb::object aval, bool weak_type, xla::nb_dtype dtype,
                  nb_class_ptr<PyClient> py_client, ifrt::ArrayRef ifrt_array,
                  bool committed, bool skip_checks,
                  xla::PjRtFuture<> result_status) {
+  if (ifrt_array->user_context() == nullptr && IsIfrtUserContextRequired()) {
+    throw nb::value_error(
+        "Expecting an IFRT Array to have a user context, but got a null "
+        "user context.");
+  }
   auto* self =
       PyArray_tp_new(reinterpret_cast<PyTypeObject*>(type_), nullptr, nullptr);
   m_ptr = self;
@@ -655,6 +660,12 @@ nb::object PyArray::CheckAndRearrange(const absl::Span<const PyArray> py_arrays,
 }
 
 void PyArray::SetIfrtArray(ifrt::ArrayRef ifrt_array) {
+  if (ifrt_array != nullptr && ifrt_array->user_context() == nullptr &&
+      IsIfrtUserContextRequired()) {
+    throw nb::value_error(
+        "Expecting an IFRT Array to have a user context, but got a null "
+        "user context.");
+  }
   GetStorage().ifrt_array = std::move(ifrt_array);
 }
 

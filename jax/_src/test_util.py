@@ -1227,6 +1227,7 @@ class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
   _default_global_config: dict[str, Any] = {}
   _default_thread_local_config = {
+    'jax_check_ifrt_user_context': True,
     'jax_enable_checks': True,
     'jax_numpy_dtype_promotion': 'strict',
     'jax_numpy_rank_promotion': 'raise',

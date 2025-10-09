@@ -82,6 +82,10 @@ class Traceback : public nanobind::object {
   static bool Check(PyObject* o);
 };
 
+// Whether an IFRT user context must be present in IFRT values and executables
+// that are being wrapped as JAX objects.
+bool IsIfrtUserContextRequired();
+
 }  // namespace jax
 
 #endif  // JAXLIB_TRACEBACK_H_

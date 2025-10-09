@@ -1224,6 +1224,27 @@ check_tracer_leaks = bool_state(
 checking_leaks = functools.partial(check_tracer_leaks, True)
 
 
+def _check_ifrt_user_context_update_global_hook(value: bool):
+  if jaxlib_extension_version >= 381:
+    xla_client._xla.set_ifrt_user_context_required_global(value)
+
+def _check_ifrt_user_context_update_thread_local_hook(value: bool | None):
+  if jaxlib_extension_version >= 381:
+    xla_client._xla.set_ifrt_user_context_required_thread_local(value)
+
+check_ifrt_user_context = bool_state(
+    name='jax_check_ifrt_user_context',
+    default=False,
+    help=(
+        'Turn on checking for IFRT user contexts for IFRT values and'
+        ' executables that are wrapped as JAX objects so that they are'
+        ' associated with some traceback. Normally, only JAX tests set this to'
+        ' True for invariant checking.'
+    ),
+    update_global_hook=_check_ifrt_user_context_update_global_hook,
+    update_thread_local_hook=_check_ifrt_user_context_update_thread_local_hook,
+)
+
 captured_constants_warn_bytes = int_state(
     name='jax_captured_constants_warn_bytes',
     default=2 * 10 ** 9,

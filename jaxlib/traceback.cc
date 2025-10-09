@@ -57,6 +57,8 @@ namespace jax {
 namespace {
 
 std::atomic<bool> traceback_enabled_ = true;
+std::atomic<bool> ifrt_user_context_required_global_ = false;
+thread_local std::optional<bool> ifrt_user_context_required_thread_local_;
 
 static constexpr int kMaxFrames = 512;
 
@@ -277,6 +279,17 @@ absl::Span<const TracebackEntry> Traceback::RawFrames() const {
   return traceback;
 }
 
+bool IsIfrtUserContextRequired() {
+  // If tracebacks are disabled, it is expected that user contexts are nullptr.
+  if (!traceback_enabled_.load()) {
+    return false;
+  }
+  if (ifrt_user_context_required_thread_local_.has_value()) {
+    return *ifrt_user_context_required_thread_local_;
+  }
+  return ifrt_user_context_required_global_.load();
+}
+
 void Traceback::RegisterType(nb::module_& m) {
   nb::class_<Traceback::Frame>(m, "Frame")
       .def(nb::init<const nb::str&, const nb::str&, int, int>())
@@ -313,6 +326,16 @@ void Traceback::RegisterType(nb::module_& m) {
   m.def("tracebacks_enabled", []() { return traceback_enabled_.load(); });
   m.def("set_tracebacks_enabled",
         [](bool value) { traceback_enabled_.store(value); });
+
+  m.def("set_ifrt_user_context_required_global", [](bool required) {
+    return ifrt_user_context_required_global_.store(required);
+  });
+  m.def(
+      "set_ifrt_user_context_required_thread_local",
+      [](std::optional<bool> required) {
+        return ifrt_user_context_required_thread_local_ = required;
+      },
+      nb::arg("required").none());
 
   type.attr("get_traceback") = nb::cpp_function(Traceback::Get,
                                                 R"doc(
