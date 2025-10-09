@@ -31,6 +31,7 @@ from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import memref
+from jaxlib.mlir.dialects import scf
 import numpy as np
 
 from .utils import *  # noqa: F403
@@ -315,7 +316,6 @@ class OnDeviceProfiler:
             self.entries_per_wg,
         ),
     )
-    self.smem_buffer_ptr = memref_ptr(self.smem_buffer, memory_space=3)
     self.gmem_buffer = gmem_buffer
     self.is_profiling_thread = arith.cmpi(
         arith.CmpIPredicate.eq,
@@ -323,23 +323,23 @@ class OnDeviceProfiler:
         c(0, i32),
     )
     # Hopefully mem2reg will remove the allocation.
-    self.offset = memref.alloca(ir.MemRefType.get((), i32), [], [])
-    memref.store(c(0, i32), self.offset, [])
+    self.offset = memref.alloca(ir.MemRefType.get((), index), [], [])
+    memref.store(c(0, index), self.offset, [])
 
   @contextlib.contextmanager
   def record(self, name: str):
     i32 = ir.IntegerType.get_signless(32)
+    index = ir.IndexType.get()
     name_id = self.spec.intern_name(name)
     def store(modifier):
       # smem_buffer[offset] = modifier | name_id
       # smem_buffer[offset + 1] = %clock
       # offset += 2
       offset = memref.load(self.offset, [])
+      base_ref = memref_slice(self.smem_buffer, offset)
+      base_ptr = memref_ptr(base_ref, memory_space=3)
       i64 = ir.IntegerType.get_signless(64)
-      base_addr = arith.addi(
-          llvm.ptrtoint(i64, self.smem_buffer_ptr),
-          arith.extui(i64, arith.muli(offset, c(4, i32))),
-      )
+      base_addr = llvm.ptrtoint(i64, base_ptr)
       llvm.inline_asm(
           ir.Type.parse("!llvm.void"),
           [self.is_profiling_thread, base_addr, c(modifier | name_id, i32)],
@@ -349,7 +349,7 @@ class OnDeviceProfiler:
           "b,l,r",
           has_side_effects=True,
       )
-      new_offset = arith.addi(offset, c(2, i32))
+      new_offset = arith.addi(offset, c(2, index))
       memref.store(new_offset, self.offset, [])
     store(ProfilerSpec.ENTER)
     yield
@@ -379,11 +379,18 @@ class OnDeviceProfiler:
     with when(self.is_profiling_thread):
       memref.store(self.start, wg_gmem_buffer, [c(0, index)])
       memref.store(smid(), wg_gmem_buffer, [c(1, index)])
-      num_traces = memref.load(self.offset, [])
+      num_traces = arith.index_cast(i32, memref.load(self.offset, []))
       memref.store(num_traces, wg_gmem_buffer, [c(2, index)])
-      traces = vector.load(
-          ir.VectorType.get((self.entries_per_wg - 3,), i32),
-          self.smem_buffer,
-          [c(0, index)],
+      for_op = scf.ForOp(
+          c(0, index),
+          c(self.entries_per_wg - 3, index),
+          c(1, index),
       )
-      vector.store(traces, wg_gmem_buffer, [c(3, index)])
+      with ir.InsertionPoint(for_op.body):
+        x = memref.load(self.smem_buffer, [for_op.induction_variable])
+        memref.store(
+            x,
+            wg_gmem_buffer,
+            [arith.addi(for_op.induction_variable, c(3, index))],
+        )
+        scf.yield_([])

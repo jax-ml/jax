@@ -222,6 +222,7 @@ def is_transformable_smem_memref(v: ir.Value) -> bool:
       # barriers have no business being transformed
       and v.type.element_type != barrier_ty  # pylint: disable=attribute-error
       and utils.is_smem_ref(v)
+      and v.type.rank != 0
   )
 
 

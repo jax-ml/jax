@@ -21,7 +21,6 @@ annotated with layouts (see `layout_inference.py` for the relevant pass).
 from collections.abc import Callable
 from functools import partial
 import math
-from typing import cast
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
@@ -106,9 +105,11 @@ def _resolve_transforms(
 
 
 def _transforms_from_uses(op: ir.OpView) -> ir.ArrayAttr | None:
-  transforms = None
+  if not inference_utils.is_transformable_smem_memref(op.result):
+    return None
 
-  for result_use in cast(ir.OpResult, op.result).uses:
+  transforms = None
+  for result_use in ir.OpResult(op.result).uses:
     consumer = result_use.owner
     op_user = consumer.operands[result_use.operand_number]
     user_transforms = inference_utils.in_transforms_for_operand(
@@ -314,7 +315,7 @@ def _infer_memref_subview_transforms(
   in_transforms = inference_utils.value_transforms(op.source)
   transforms = _resolve_transforms(transforms, in_transforms)
 
-  if transforms is None:
+  if not transforms:
     return None
 
   # Here, we have some transforms to propagate one way or the other. For now,
@@ -407,14 +408,12 @@ def _infer_memref_transpose_transforms(
   return [ir.ArrayAttr.get(in_transforms)], [out_transforms]
 
 
-# `memref.load` is used to load barrier phases---the rule needn't do anything
-# interesting, but we need to have it in order to avoid crashing on it.
 @partial(_add_transform_inference_rule, memref.LoadOp)
 def _infer_memref_load_transforms(op: memref.LoadOp) -> OptionalTransforms:
-  if not ir.MemRefType(op.memref.type).shape:
-    # memref.load returns a scalar, so there is nothing interesting to do here.
+  in_transforms = inference_utils.value_transforms(op.memref)
+  if in_transforms is None:
     return None
-  raise NotImplementedError("Non-scalar memref.load transforms")
+  return [in_transforms], []
 
 
 @partial(_add_transform_inference_rule, memref.CastOp)
