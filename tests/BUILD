@@ -1804,9 +1804,6 @@ jax_multiplatform_test(
     args = [
         "--jax_num_generated_cases=5",
     ],
-    backend_variant_args = {
-        "tpu_pjrt_c_api": ["--jax_num_generated_cases=1"],
-    },
     enable_configs = [
         "gpu_h100",
         "cpu",
@@ -1833,9 +1830,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "ragged_collective_test",
     srcs = ["ragged_collective_test.py"],
-    disable_configs = [
-        "tpu_pjrt_c_api",
-    ],
     enable_backends = [
         "gpu",
         "tpu",
@@ -2059,9 +2053,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "unary_ops_accuracy_test",
     srcs = ["unary_ops_accuracy_test.py"],
-    disable_configs = [
-        "tpu_pjrt_c_api",
-    ],
     enable_backends = [
         "tpu",
     ],

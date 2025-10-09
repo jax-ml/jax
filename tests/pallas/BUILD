@@ -1216,7 +1216,6 @@ jax_multiplatform_test(
     srcs = ["tpu_fusible_matmul_test.py"],
     disable_configs = [
         "tpu_v3",
-        "tpu_pjrt_c_api",
     ],
     enable_backends = ["tpu"],
     shard_count = 4,
