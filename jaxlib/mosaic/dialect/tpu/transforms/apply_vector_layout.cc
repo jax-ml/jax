@@ -1349,8 +1349,52 @@ FailureOr<xla::Array<Value>> unpackVregs(RewriteContext &ctx,
     // The vreg_part is computed under the assumption that vregs are packed
     // across rows first and then columns.
     const int64_t vreg_part = col % vreg_cols * vreg_rows + row % vreg_rows;
-    *v = builder.create<UnpackSubelementsOp>(
-        loc, res_vreg_ty, input_vregs(input_idxs), vreg_part, pack_format);
+    if (pack_format == PackFormat::kCompressed) {
+      *v = builder.create<UnpackSubelementsOp>(
+          loc, res_vreg_ty, input_vregs(input_idxs), vreg_part, pack_format);
+    } else {
+      CHECK_EQ(pack_format, PackFormat::kInterleaved);
+      // What we really want to do here is to unpack "consecutive" subelements
+      // in a 32-bit word to desired bitwidth. For example, unpack 4 bit to 16
+      // bit with `vreg_part = 2`. "-" means bits to ignore.
+      //
+      //           bits to unpack
+      //
+      //   28  24  20  16  12   8   4   0   bit index
+      // --------yyyyxxxx----------------
+      //
+      //           result
+      //
+      //   28  24  20  16  12   8   4   0   bit index
+      // yyyyyyyyyyyyyyyyxxxxxxxxxxxxxxxx
+      if (res_vreg_ty.getElementTypeBitWidth() == 32) {
+        // If the result vreg is 32-bit, we can just interleaved unpack the
+        // input vreg, as there are no multiple subelements to unpack.
+        *v = builder.create<UnpackSubelementsOp>(
+            loc, res_vreg_ty, input_vregs(input_idxs), vreg_part, pack_format);
+      } else {
+        // Otherwise, unpack corresponding subelements to 32-bit, and then pack
+        // it to the result vreg.
+        VectorType unpacked_ty =
+            getNativeVregType(input_ty.getElementType().isSignlessInteger()
+                                  ? cast<Type>(builder.getI32Type())
+                                  : cast<Type>(builder.getF32Type()),
+                              ctx.target_shape);
+        const int dst_packing_factor =
+            32 / res_vreg_ty.getElementTypeBitWidth();
+        // `vreg_part` is with respect to result vreg bitwidth. Expand it to
+        // base on 32-bit.
+        const int vreg_part_unpacked_to_32b = vreg_part * dst_packing_factor;
+        SmallVector<Value> unpacked;
+        for (int i = 0; i < dst_packing_factor; ++i) {
+          unpacked.push_back(builder.create<UnpackSubelementsOp>(
+              loc, unpacked_ty, input_vregs(input_idxs),
+              vreg_part_unpacked_to_32b + i, pack_format));
+        }
+        *v = builder.create<PackSubelementsOp>(loc, res_vreg_ty, unpacked,
+                                               pack_format);
+      }
+    }
   });
   return output_vregs;
 }
@@ -1566,8 +1610,39 @@ FailureOr<xla::Array<Value>> packVregs(RewriteContext &ctx, OpBuilder &builder,
         }
       }
     }
-    *v =
-        builder.create<PackSubelementsOp>(loc, res_vreg_ty, parts, pack_format);
+    if (pack_format == PackFormat::kCompressed) {
+      *v = builder.create<PackSubelementsOp>(loc, res_vreg_ty, parts,
+                                             pack_format);
+    } else {
+      CHECK_EQ(pack_format, PackFormat::kInterleaved);
+      // What we really want to do here is to pack all subelements from one
+      // part, followed by all subelements from the next part, and so on. To
+      // achieve this, we can unpack all subelements in each part to 32-bit and
+      // then interleaved pack them into desired type.
+      SmallVector<Value> unpacks;
+      if (input_ty.getElementType().getIntOrFloatBitWidth() == 32) {
+        unpacks.append(parts.begin(), parts.end());
+      } else {
+        VectorType unpacked_vty =
+            getNativeVregType(input_ty.getElementType().isSignlessInteger()
+                                  ? cast<Type>(builder.getI32Type())
+                                  : cast<Type>(builder.getF32Type()),
+                              ctx.target_shape);
+        const int32_t packing_factor = 32 / input_ty.getElementTypeBitWidth();
+        for (Value part : parts) {
+          if (part) {
+            for (int i = 0; i < packing_factor; ++i) {
+              unpacks.push_back(builder.create<UnpackSubelementsOp>(
+                  loc, unpacked_vty, part, i, pack_format));
+            }
+          } else {
+            unpacks.append(packing_factor, nullptr);
+          }
+        }
+      }
+      *v = builder.create<PackSubelementsOp>(loc, res_vreg_ty, unpacks,
+                                             pack_format);
+    }
   });
   return output_vregs;
 }
