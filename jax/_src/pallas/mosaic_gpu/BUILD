@@ -154,6 +154,21 @@ pytype_strict_library(
         ":primitives",
         "//jax",
         "//jax/_src:dtypes",
+        "//jax/_src:util",
+        "//jax/_src/lib",
         "//jax/_src/pallas",
+        "//jax/experimental:mosaic_gpu",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "torch",
+    srcs = ["torch.py"],
+    deps = [
+        "//jax",
+        "//jax/_src:dtypes",
+        "//jax/_src:util",
+        "//jax/_src/lib",
+        "//jax/experimental:mosaic_gpu",
     ] + py_deps("numpy"),
 )

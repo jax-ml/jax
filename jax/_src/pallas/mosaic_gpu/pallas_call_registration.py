@@ -114,7 +114,9 @@ def pallas_call_lowering(
       out_types=lowering_result.new_out_shapes,
       inout_types=(),
       input_output_aliases=input_output_aliases,
-      use_custom_barrier=False, # False until we add get_barrier_semaphore() feature
+      is_device_collective=lowering_result.is_device_collective,
+      # False until we add get_barrier_semaphore() feature.
+      use_custom_barrier=False,
   )
   if (prof_spec := lowering_result.profiler_spec) is not None:
     *outs, prof_buffer = outs

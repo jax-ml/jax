@@ -1138,3 +1138,33 @@ generated low-level code:
   setting `MOSAIC_GPU_LLVM_DEBUG_ONLY=serialize-to-llvm`, and both environment
   variables compose. Like `MOSAIC_GPU_LLVM_DEBUG_ONLY`, this environment
   variable is only available in debug builds.
+
+## Calling kernels from PyTorch
+
+The {py:func}`plgpu.as_torch_kernel <jax.experimental.pallas.mosaic_gpu.as_torch_kernel>`
+decorator wraps a Pallas:MGPU kernel to allow invoking it with PyTorch tensors.
+It accepts CUDA tensors as inputs and returns newly allocated CUDA tensors
+on the same device.
+
+Example:
+
+```python
+import functools
+import jax
+import jax.numpy as jnp
+import torch
+
+@functools.partial(
+    pl.pallas_call, out_shape=jax.ShapeDtypeStruct([128], jnp.int32)
+)
+def add_kernel(x_ref, y_ref, o_ref):
+  o_ref[...] = x_ref[...] + y_ref[...]
+
+x = torch.arange(128, dtype=torch.int32, device="cuda")
+y = x * x
+out = plgpu.as_torch_kernel(add_kernel)(x, y)
+```
+
+`plgpu.as_torch_kernel` only supports functions that contain a single kernel
+invocation (e.g. via `pl.pallas_call` or `plgpu.kernel`), and no calls to
+other JAX operations, e.g. from {mod}`jax.numpy`.
