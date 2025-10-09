@@ -707,6 +707,8 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
   // Attempt to canonicalize matmul(x, transpose(y)) to a matmul with the
   // dimension numbers changed which will later be lowered into a more efficient
   // operation that fuses the transpose into the matmul.
+  // Note - this is being migrated and refactored into the pre canonicalization
+  // optimization pass.
   auto transpose_op =
       dyn_cast_if_present<tpu::TransposeOp>(rhs.getDefiningOp());
   if (!is_matrix_vector_dot && transpose_op && transpose_op->hasOneUse() &&

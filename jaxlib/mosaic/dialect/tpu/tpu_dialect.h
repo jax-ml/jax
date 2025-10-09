@@ -91,6 +91,9 @@ std::unique_ptr<OperationPass<func::FuncOp>> createApplyVectorLayoutPass(
     const ApplyVectorLayoutContext &ctx = ApplyVectorLayoutContext{});
 
 std::unique_ptr<OperationPass<func::FuncOp>>
+createPreCanonicalizationOptimizationPass();
+
+std::unique_ptr<OperationPass<func::FuncOp>>
 createLogicalToPhysicalDeviceIdPass(int64_t total_devices);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createLinalgVectorizationPass(

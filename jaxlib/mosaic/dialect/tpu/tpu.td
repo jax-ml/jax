@@ -1491,4 +1491,13 @@ def LinalgVectorizationPass : Pass<"linalg-vectorization", "::mlir::func::FuncOp
   ];
 }
 
+def PreCanonicalizationOptimizationPass : Pass<"pre-canonicalization-optimization", "::mlir::func::FuncOp"> {
+  let summary = "Fold matmul rhs tranpose into the op before layout inference";
+  let constructor = "::mlir::tpu::createPreCanonicalizationOptimizationPass()";
+  let dependentDialects = [
+    "::mlir::vector::VectorDialect",
+    "::mlir::tpu::TPUDialect",
+  ];
+}
+
 #endif  // TPU_ATTRS
