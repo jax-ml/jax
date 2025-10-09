@@ -1291,6 +1291,14 @@ class IndexingTest(jtu.JaxTestCase):
         "Too many indices: 1-dimensional array indexed with 2 regular indices."):
       jnp.zeros(3)[:, 5]
 
+  @jtu.sample_product(shape=[(), (1,)])
+  def testIndexDtypePromotion(self, shape):
+    # Regression test for https://github.com/jax-ml/jax/issues/31396
+    numbers = jnp.arange(1000)[:, None]
+    idx = jnp.int8(0).reshape(shape)
+    expected = np.array(999).reshape(shape)
+    self.assertArraysEqual(numbers[999, idx], expected)
+
 
 def _broadcastable_shapes(shape):
   """Returns all shapes that broadcast to `shape`."""
