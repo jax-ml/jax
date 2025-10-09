@@ -60,6 +60,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The deprecated functions in {mod} `jax.dlpack`, {mod} `jax.errors`, {mod}
     `jax.lib.xla_bridge`, {mod} `jax.lib.xla_client`, and {mod}
     `jax.lib.xla_extension` were removed.
+  * `jax.interpreters.mlir.dense_bool_array` was removed. Use MLIR APIs to
+    construct attributes instead.
 
 * Changes
   * `jax.grad` and `jax.vjp` will now round always primals to float32 if float64

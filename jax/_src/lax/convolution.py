@@ -30,6 +30,7 @@ from jax._src.interpreters import mlir
 from jax._src.sharding_impls import (
     NamedSharding, PartitionSpec as P, canonicalize_sharding)
 from jax._src.lax import lax
+from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.typing import Array, DTypeLike
 
@@ -765,7 +766,7 @@ def _conv_general_dilated_lower(
   num_spatial_dims = len(rhs_spec) - 2
   if len(padding) == 0:
     padding = np.zeros((0, 2), dtype=np.int64)
-  window_reversal = mlir.dense_bool_array([False] * num_spatial_dims)
+  window_reversal = ir.DenseBoolArrayAttr.get([False] * num_spatial_dims)
   if (not core.is_constant_shape(window_strides) or
       not core.is_constant_shape(lhs_dilation) or
       not core.is_constant_shape(rhs_dilation) or
