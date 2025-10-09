@@ -68,7 +68,7 @@ namespace mlir::tpu {
 namespace {
 
 struct CanonicalizeContext {
-  // see Note: Compatibility mode
+  // see compiler flag xla_mosaic_compat_mode
   bool compatibility_mode;
 
   int hardware_generation;
@@ -583,11 +583,29 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
     auto require_compatibility_mode = [&]() -> LogicalResult {
       if (!ctx.compatibility_mode) {
         return op->emitOpError(
-            "Automatic int->float conversion for matmuls requires "
+            "Automatic int->float or f4 -> f8 conversion for matmuls requires "
             "compatibility mode.");
       }
       return success();
     };
+    // Emulate 4E2M1FN with 8E4M3FN.
+    auto emulate_f4e2m1fn = [&](TypedValue<VectorType> operand, int operand_idx)
+        -> FailureOr<TypedValue<VectorType>> {
+      RETURN_IF_FAILED(require_compatibility_mode());
+      auto dest_type = Float8E4M3FNType::get(builder.getContext());
+      auto new_operand = builder.create<tpu::ExtFOp>(
+          VectorType::get(operand.getType().getShape(), dest_type), operand);
+      op->setOperand(operand_idx, new_operand);
+      return cast<TypedValue<VectorType>>(new_operand);
+    };
+    if (isa<Float4E2M1FNType>(lhs_element_type)) {
+      FAILUREOR_ASSIGN_OR_RETURN(lhs, emulate_f4e2m1fn(lhs, /*operand_idx=*/0));
+      lhs_element_type = lhs.getType().getElementType();
+    }
+    if (isa<Float4E2M1FNType>(rhs_element_type)) {
+      FAILUREOR_ASSIGN_OR_RETURN(rhs, emulate_f4e2m1fn(rhs, /*operand_idx=*/1));
+      rhs_element_type = rhs.getType().getElementType();
+    }
     auto get_dest_type =
         [&](::mlir::Type element_type) -> FailureOr<FloatType> {
       switch (element_type.getIntOrFloatBitWidth()) {
@@ -614,7 +632,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
       FAILUREOR_ASSIGN_OR_RETURN(FloatType dest_type,
                                  get_dest_type(lhs_element_type));
       lhs = extsi_sitofp(lhs, dest_type);
-      op->setOperand(0, lhs);
+      op->setOperand(/*idx=*/0, lhs);
       lhs_element_type = dest_type;
     }
     if (rhs_element_type.isInteger() &&
@@ -623,7 +641,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
       FAILUREOR_ASSIGN_OR_RETURN(FloatType dest_type,
                                  get_dest_type(rhs_element_type));
       rhs = extsi_sitofp(rhs, dest_type);
-      op->setOperand(1, rhs);
+      op->setOperand(/*idx=*/1, rhs);
       rhs_element_type = dest_type;
     }
     if (acc_element_type.isInteger()) {
@@ -631,7 +649,7 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
       FAILUREOR_ASSIGN_OR_RETURN(FloatType dest_type,
                                  get_dest_type(acc_element_type));
       acc = extsi_sitofp(acc, dest_type);
-      op->setOperand(2, acc);
+      op->setOperand(/*idx=*/2, acc);
       acc_element_type = acc.getType().getElementType();
     }
   }
@@ -654,13 +672,13 @@ FailureOr<Value> canonicalize_matmul(const CanonicalizeContext &ctx,
     }
     if (lhs_element_type.isInteger()) {
       auto float_lhs = extsi_sitofp(lhs);
-      op->setOperand(0, float_lhs);
+      op->setOperand(/*idx=*/0, float_lhs);
       lhs = cast<TypedValue<VectorType>>(float_lhs);
       lhs_element_type = builder.getF32Type();
     }
     if (rhs_element_type.isInteger()) {
       auto float_rhs = extsi_sitofp(rhs);
-      op->setOperand(1, float_rhs);
+      op->setOperand(/*idx=*/1, float_rhs);
       rhs = cast<TypedValue<VectorType>>(float_rhs);
       rhs_element_type = builder.getF32Type();
     }
