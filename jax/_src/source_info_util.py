@@ -48,9 +48,9 @@ _exclude_paths: list[str] = [
     # .../jax_triton and other packages that might have a jax prefix.
     os.path.dirname(os.path.dirname(__file__)) + os.sep,
     # Also exclude stdlib as user frames. In a non-standard Python runtime,
-    # the following two may be different.
+    # the following may be different.
     sysconfig.get_path('stdlib'),
-    os.path.dirname(sysconfig.__file__)
+    os.path.dirname(contextlib.__file__),
 ]
 
 @functools.cache
