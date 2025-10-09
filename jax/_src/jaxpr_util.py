@@ -276,6 +276,9 @@ def eqns_using_var(jaxpr: core.Jaxpr, invar: core.Var) -> Iterator[core.JaxprEqn
       # if the previous condition fails, there is no deeper jaxpr to explore =(
       yield eqn
 
+
+_jaxpr_id_counter = itertools.count()
+
 def maybe_dump_jaxpr_to_file(
     fun_name: str, jaxpr: core.Jaxpr
 ) -> str | None:
@@ -296,16 +299,17 @@ def maybe_dump_jaxpr_to_file(
   modes = config.jax_dump_ir_modes.value.split(",")
   if "jaxpr" not in modes and "eqn_count_pprof" not in modes:
     return None
+  id = next(_jaxpr_id_counter)
   if "jaxpr" in modes:
     logging.log(
         logging.INFO, "Dumping jaxpr for %s to %s.", fun_name, out_dir
     )
-    jaxpr_path = out_dir / f"{fun_name}.jaxpr.txt"
+    jaxpr_path = out_dir / f"jax_{id:06d}_{fun_name}.jaxpr.txt"
     jaxpr_path.write_text(jaxpr.pretty_print())
   if "eqn_count_pprof" in modes:
     logging.log(
         logging.INFO, "Dumping eqn count pprof for %s to %s.", fun_name, out_dir
     )
-    eqn_prof_path = out_dir / f"{fun_name}.eqn_count_pprof"
+    eqn_prof_path = out_dir / f"jax_{id:06d}_{fun_name}.eqn_count_pprof"
     eqn_prof_path.write_bytes(pprof_equation_profile(jaxpr))
   return fun_name
