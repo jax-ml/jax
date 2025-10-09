@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 from collections.abc import Callable, Sequence
 import numpy as np
+from absl import logging
 
 import jax.numpy as jnp
 from jax.sharding import NamedSharding
@@ -205,13 +206,13 @@ def _roofline_interpreter(
           pin_lhs_in_vmem=pin_lhs_in_vmem,
           pin_rhs_in_vmem=pin_rhs_in_vmem,
         )
+      elif eqn.primitive not in _rooflines:
+        msg = f"No roofline rule for {eqn.primitive}, skipping..."
+        for attr in dir(eqn):
+          if not attr.startswith("_"):
+            msg += f"\n{attr}: {getattr(eqn, attr)}"
+        logging.warning(msg)
       else:
-        if eqn.primitive not in _rooflines:
-          msg = f"No roofline rule for {eqn.primitive}."
-          for attr in dir(eqn):
-            if not attr.startswith("_"):
-              msg += f"\n{attr}: {getattr(eqn, attr)}"
-          raise NotImplementedError(msg)
         rule = _rooflines[eqn.primitive]
         result += rule(
           RooflineRuleContext(
