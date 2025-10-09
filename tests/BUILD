@@ -1706,7 +1706,10 @@ jax_multiplatform_test(
     name = "ann_test",
     srcs = ["ann_test.py"],
     backend_tags = {
-        "tpu": ["noasan"],  # Times out.
+        "tpu": [
+            "noasan",  # Times out.
+            "notsan",  # Times out.
+        ],
     },
     deps = py_deps([
         "numpy",
