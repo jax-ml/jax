@@ -150,7 +150,7 @@ class FfiTest(jtu.JaxTestCase):
     def fun(x):
       return jax.ffi.ffi_call("test_ffi", x)(x, non_hashable_arg={"a": 1})
 
-    self.assertIn("HashableDict", str(jax.make_jaxpr(fun)(jnp.ones(5))))
+    self.assertIn("FrozenDict", str(jax.make_jaxpr(fun)(jnp.ones(5))))
     hlo = jax.jit(fun).lower(jnp.ones(5)).as_text()
     self.assertIn("non_hashable_arg = {a = 1", hlo)
 

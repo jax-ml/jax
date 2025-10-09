@@ -29,6 +29,7 @@ from jax._src import effects
 from jax._src import util
 from jax._src import xla_bridge
 from jax._src.hashable_array import HashableArray
+from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -549,7 +550,7 @@ def _wrap_kwargs_hashable(kwargs: dict[str, Any]) -> Sequence[tuple[str, Any]]:
     if isinstance(v, np.ndarray):
       hashable_kwargs.append((k, HashableArray(v)))
     elif isinstance(v, dict):
-      hashable_kwargs.append((k, HashableDict(v)))
+      hashable_kwargs.append((k, FrozenDict(v)))
     else:
       try:
         hash(v)
@@ -566,28 +567,11 @@ def _unwrap_kwargs_hashable(kwargs: Sequence[tuple[str, Any]]) -> dict[str, Any]
   for k, v in kwargs:
     if isinstance(v, HashableArray):
       unwrapped_kwargs[k] = v.val
-    elif isinstance(v, HashableDict):
-      unwrapped_kwargs[k] = dict(v.val)
+    elif isinstance(v, FrozenDict):
+      unwrapped_kwargs[k] = v._d
     else:
       unwrapped_kwargs[k] = v
   return unwrapped_kwargs
-
-
-class HashableDict:
-  __slots__ = ["val"]
-
-  def __init__(self, val):
-    assert isinstance(val, dict)
-    self.val = tuple(sorted(val.items()))
-
-  def __repr__(self):
-    return f"HashableDict({dict(self.val)})"
-
-  def __hash__(self):
-    return hash(self.val)
-
-  def __eq__(self, other):
-    return isinstance(other, HashableDict) and self.val == other.val
 
 
 @dataclasses.dataclass(frozen=True)

@@ -816,6 +816,7 @@ pytype_strict_library(
         ":batching",
         ":core",
         ":effects",
+        ":frozen_dict",
         ":hashable_array",
         ":layout",
         ":mlir",
