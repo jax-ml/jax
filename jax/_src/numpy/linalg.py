@@ -107,7 +107,7 @@ def cholesky(a: ArrayLike, *, upper: bool = False, symmetrize_input: bool = True
 
   Returns:
     array of shape ``(..., N, N)`` representing the Cholesky decomposition
-    of the input. If the input is not Hermitian positive-definite, The result
+    of the input. If the input is not Hermitian positive-definite, the result
     will contain NaN entries.
 
 
