@@ -431,17 +431,16 @@ pytype_strict_library(
     ],
     deps = [
         ":pallas",  # build_cleaner: keep
-        "//jax/_src:deprecations",
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",
         "//jax/_src/pallas/mosaic:helpers",
-        "//jax/_src/pallas/mosaic:interpret",
         "//jax/_src/pallas/mosaic:lowering",
         "//jax/_src/pallas/mosaic:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic:pipeline",
         "//jax/_src/pallas/mosaic:primitives",
         "//jax/_src/pallas/mosaic:random",
         "//jax/_src/pallas/mosaic:verification",
+        "//jax/_src/pallas/mosaic/interpret:interpret_pallas_call",
     ],
 )
 
