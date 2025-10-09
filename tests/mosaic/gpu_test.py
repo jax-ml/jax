@@ -4566,6 +4566,36 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           x[slicing].reshape(sub_shape),
       )
 
+  def test_profiler(self):
+    def body(ctx, input, result, scratch):
+      del scratch
+      with ctx.named_region("load"):
+        reg = vector_load(input)
+      with ctx.named_region("store"):
+        vector_store(reg, result)
+
+    dtype = jnp.bfloat16
+    shape = (128, 128)
+    jax_shape = jax.ShapeDtypeStruct(shape, dtype)
+    with tempfile.TemporaryDirectory() as tmpdir:
+      kernel = mgpu.as_gpu_kernel(
+          body,
+          grid=(1, 1, 1),
+          block=(128, 1, 1),
+          in_shape=(jax_shape),
+          out_shape=jax_shape,
+          smem_scratch_shape=[],
+          prof_spec=profiler.ProfilerSpec(1024, dump_path=tmpdir),
+          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+      )
+      param = self.prng.uniform(-1, 1, shape).astype(dtype)
+      self.assertArraysEqual(kernel(param), param)
+      [name] = os.listdir(tmpdir)
+      with open(os.path.join(tmpdir, name)) as f:
+        data = f.read()
+        self.assertEqual(data.count('"name": "load"'), 2)
+        self.assertEqual(data.count('"name": "store"'), 2)
+
 
 class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
 

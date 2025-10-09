@@ -1274,7 +1274,6 @@ def _mgpu_slice_smem_op_lowering_rule(
 ) -> Sequence[ir.Value]:
   del ctx
   sliced_ref = _slice_smem(op.result.type, op.offset)
-
   memref_ty = ir.MemRefType(sliced_ref.type)
   if (
       memref_ty.element_type == ir.Type.parse("!mosaic_gpu.barrier")
@@ -1380,7 +1379,11 @@ def _memref_subview_op_lowering_rule(
   del ctx
 
   in_transforms = inference_utils.in_transforms(op)[0]
-  out_transforms = inference_utils.out_transforms(op)[0]
+  if inference_utils.is_transformable_smem_memref(op.result):
+    out_transforms = inference_utils.out_transforms(op)[0]
+  else:
+    # This can happen for e.g. memref of rank 0.
+    out_transforms = ir.ArrayAttr.get([])
 
   if in_transforms != out_transforms:
     raise NotImplementedError(

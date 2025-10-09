@@ -1719,8 +1719,6 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(), x)
 
   def test_profiler(self):
-    self.skip_if_wg_semantics()  # Transform inference not implemented.
-
     def kernel(x_ref, o_ref):
       with jax.named_scope("add"):
         with jax.named_scope("load"):
