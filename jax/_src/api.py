@@ -1299,7 +1299,7 @@ def pmap(
   .. note::
     :py:func:`pmap` is now implemented in terms of :py:func:`jit` and
     :py:func:`shard_map`. Please see the [migration
-    guide](https://docs.jax.dev/en/latest/deprecate_pmap.html) for
+    guide](https://docs.jax.dev/en/latest/migrate_pmap.html) for
     more information.
 
   The purpose of :py:func:`pmap` is to express single-program multiple-data

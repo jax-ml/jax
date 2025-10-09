@@ -1,7 +1,7 @@
 ---
 orphan: true
 ---
-(deprecate-pmap)=
+(migrate-pmap)=
 # Migrating to the new `jax.pmap`
 
 ## What's going on?

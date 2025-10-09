@@ -21,7 +21,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * JAX is changing the default `jax.pmap` implementation to one implemented in
     terms of `jax.jit` and `jax.shard_map`. `jax.pmap` is in maintenance mode
     and we encourage all new code to use `jax.shard_map` directly. See the
-    [migration guide](https://docs.jax.dev/en/latest/deprecate_pmap.html) for
+    [migration guide](https://docs.jax.dev/en/latest/migrate_pmap.html) for
     more information.
   * JAX no longer allows passing objects that support `__jax_array__` directly
     to, e.g. `jit`-ed functions. Call `jax.numpy.asarray` on them first.
