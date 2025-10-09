@@ -1164,6 +1164,7 @@ pytype_strict_library(
     deps = [
         ":ad",
         ":ad_util",
+        ":batching",
         ":core",
         ":effects",
         ":partial_eval",
