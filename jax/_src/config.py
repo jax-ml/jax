@@ -25,6 +25,7 @@ import sys
 from typing import Any, Generic, NoReturn, Optional, Protocol, Type, TypeVar, cast, TYPE_CHECKING
 
 from jax._src import deprecations
+from jax._src.lib import _jax
 from jax._src.lib import guard_lib
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import jax_jit
@@ -265,7 +266,8 @@ else:
           error_checking_behavior_divide.value,
           error_checking_behavior_oob.value,
           use_simplified_jaxpr_constants.value,
-          pallas_tpu_interpret_mode_context_manager.value)
+          pallas_tpu_interpret_mode_context_manager.value,
+          send_traceback_to_runtime.value)
     if register_trace_context_callback:
       out = out + tuple(r() for r in register_trace_context_callback)
     return out
@@ -2128,6 +2130,43 @@ array_garbage_collection_guard = optional_enum_state(
     update_thread_local_hook=lambda val: _update_garbage_collection_guard(
         guard_lib.thread_local_state(), 'garbage_collect_array', val
     ),
+)
+
+class RuntimeTracebackMode(enum.StrEnum):
+  OFF = 'off'
+  ON = 'on'
+  FULL = 'full'
+
+def _update_send_traceback_to_runtime_thread_local(val: RuntimeTracebackMode | None):
+  # TODO(nbasile): Remove hasattr checks after jaxlib 0.8 release
+  if hasattr(_jax, "set_send_traceback_to_runtime_thread_local") and \
+     hasattr(_jax, "RuntimeTracebackMode"):
+    if val is not None:
+      mode = getattr(_jax.RuntimeTracebackMode, val.name)
+    else:
+      mode = None
+    _jax.set_send_traceback_to_runtime_thread_local(mode)
+
+def _update_send_traceback_to_runtime_global(val: RuntimeTracebackMode):
+  # TODO(nbasile): Remove hasattr checks after jaxlib 0.8 release
+  if hasattr(_jax, "set_send_traceback_to_runtime_global") and \
+     hasattr(_jax, "RuntimeTracebackMode"):
+    _jax.set_send_traceback_to_runtime_global(
+        getattr(_jax.RuntimeTracebackMode, val.name))
+
+send_traceback_to_runtime = enum_class_state(
+    name='jax_send_traceback_to_runtime',
+    enum_class=RuntimeTracebackMode,
+    default=RuntimeTracebackMode.OFF,  # Default to off
+    help=(
+        'Controls the level of Python traceback information sent to the runtime at dispatch time:\n'
+        '- "off": (default) No Python traceback information is sent.\n'
+        '- "on": Only the most recent user frame call location is sent.\n'
+        '- "full": The full Python traceback of the call location is sent. '
+        'This has a high fixed cost on the dispatch path and should be used only for debugging.'
+    ),
+    update_global_hook=_update_send_traceback_to_runtime_global,
+    update_thread_local_hook=_update_send_traceback_to_runtime_thread_local,
 )
 
 # Don't define a context manager since this isn't threadsafe.
