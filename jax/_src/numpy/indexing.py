@@ -606,7 +606,8 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None,
     # We must be careful with dtypes because dynamic_slice requires all
     # start indices to have matching types.
     if len(start_indices) > 1:
-      start_indices = util.promote_dtypes(*start_indices)
+      index_dtype = lax_utils.int_dtype_for_shape(arr.shape, signed=True)
+      start_indices = [lax.convert_element_type(idx, index_dtype) for idx in start_indices]
     jnp_error._check_precondition_oob_dynamic_slice(
         arr.shape, start_indices, slice_sizes, allow_negative_indices
     )
