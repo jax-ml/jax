@@ -558,6 +558,7 @@ class BatchTrace(Trace):
     assert isinstance(axis_data, AxisData)
     self.axis_data = axis_data
     self.tag = tag
+    self.requires_low = False
 
   def to_batch_info(self, val):
     if isinstance(val, BatchTracer) and val._trace.tag is self.tag:

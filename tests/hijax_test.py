@@ -37,7 +37,8 @@ from jax._src.util import safe_zip, safe_map
 from jax._src.state.discharge import run_state
 
 from jax._src.hijax import (HiPrimitive, HiType, Box, new_box, box_set, box_get,
-                            box_effect, register_hitype, ShapedArray, Ty)
+                            box_effect, register_hitype, ShapedArray, Ty,
+                            NewstyleHiPrimitive)
 
 config.parse_flags_with_absl()
 
@@ -496,6 +497,43 @@ class HijaxTest(jtu.JaxTestCase):
       return inner(tup)
 
     self.assertEqual(f(), 2)
+
+  @parameterized.parameters([False, True])
+  def test_newstyle_hiprimitive(self, jit):
+
+    class RaiseToStaticPower(NewstyleHiPrimitive):
+      def __init__(self, in_aval, *, power):
+        super().__init__((in_aval,), in_aval, power=power)
+
+      def expand(self, x):
+        return x ** self.power
+
+      def vjp_fwd(self, x):
+        ans = self(x)
+        return (ans, x)
+
+      def vjp_bwd(self, res, t):
+        return (t * self.power * raise_to_static_power(res, self.power-1),)
+
+      def batch(self, _axis_data, args, in_dims):
+        in_dim, = in_dims
+        x, = args
+        return raise_to_static_power(x, self.power), in_dim
+
+    def raise_to_static_power(x, power):
+      x_aval = jax.typeof(x)
+      return RaiseToStaticPower(x_aval, power=power)(x)
+
+    def f(x):
+      return raise_to_static_power(x, power=3)
+
+    if jit:
+      f = jax.jit(f)
+
+    self.assertEqual(f(2.0), 8.0)
+    xs = jnp.arange(3.0)
+    self.assertAllClose(jax.vmap(f)(xs), xs**3)
+    self.assertEqual(jax.grad(f)(2.0), 12.0)
 
 
 class BoxTest(jtu.JaxTestCase):

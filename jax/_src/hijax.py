@@ -15,16 +15,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 import itertools as it
 from typing import Any
 
 from jax._src import core
 from jax._src import effects
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src import ad_util
-from jax._src.util import safe_zip, safe_map
+from jax._src.util import safe_zip, safe_map, split_list
 from jax._src.tree_util import tree_flatten, tree_unflatten, tree_leaves
-
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
@@ -317,3 +318,106 @@ class BoxGet(HiPrimitive):
   def transpose(_, *args):
     assert False  # TODO
 box_get_p = BoxGet('box_get')
+
+
+# === new-style hijax primitive implementation ===
+
+class NewstyleHiPrimitive:
+  # Operation implementation in terms of lojax primitives
+  def __init__(self, in_avals, out_aval, **params):
+    self.in_avals = tuple(in_avals)  # pytrees
+    self.in_avals_flat, self.in_tree = tree_flatten(in_avals)
+    self.out_aval = out_aval  # pytree of out avals
+    self.out_avals_flat, self.out_tree = tree_flatten(out_aval)
+    self.params = params
+    self.__dict__.update(params)
+
+  def expand(self, *args):
+    raise NotImplementedError("subclass {type(self)} should always implement this")
+
+  def vjp_fwd(self, *args):
+    raise NotImplementedError("for AD support, subclass {type(self)} should implement this")
+
+  def vjp_bwd(self, res, *args):
+    raise NotImplementedError("for AD support, subclass {type(self)} should implement this")
+
+  def batch(self, axis_data, args, dims):
+    raise NotImplementedError("for vmap support, subclass {type(self)} should implement this")
+
+  def __call__(self, *args):
+    args_flat = tree_leaves_checked(self.in_tree, args)
+    ans_flat = call_hi_primitive_p.bind(*args_flat, prim=self)
+    return tree_unflatten(self.out_tree, ans_flat)
+
+  def check(self, *arg_tys):
+    # subclass can optionally override this to add checking logic
+    return
+
+  def __repr__(self):
+    return f"{self.__class__.__name__}[{self.params}]"
+
+  def __hash__(self):
+    return hash((self.__class__.__name__, tuple(self.params.items())))
+
+  def __eq__(self, other):
+    return type(self) is type(other) and self.params == other.params
+
+def tree_leaves_checked(treedef_expected, tree):
+  flat_vals, treedef_actual = tree_flatten(tree)
+  assert treedef_actual == treedef_expected
+  return flat_vals
+
+call_hi_primitive_p = core.Primitive("call_hi_primitive")
+call_hi_primitive_p.multiple_results = True
+call_hi_primitive_p.is_high = lambda *args, prim: True  # type: ignore
+@call_hi_primitive_p.def_abstract_eval
+def _call_hi_primitive_abstract_eval(*_args, prim):
+  return prim.out_avals_flat
+
+def _call_hi_primitive_to_lojax(*args_flat, prim):
+  args = tree_unflatten(prim.in_tree, args_flat)
+  return tree_leaves_checked(prim.out_tree, prim.expand(*args))
+call_hi_primitive_p.to_lojax = _call_hi_primitive_to_lojax
+
+def _call_hi_primitive_batcher(axis_data, args_flat, dims_flat, prim):
+  args = tree_unflatten(prim.in_tree, args_flat)
+  dims = tree_unflatten(prim.in_tree, dims_flat)
+  ans, dims = prim.batch(axis_data, args, dims)
+  ans_flat, ans_tree = tree_flatten(ans)
+  dims_flat = ans_tree.flatten_up_to(dims)
+  return ans_flat, dims_flat
+batching.fancy_primitive_batchers[call_hi_primitive_p] = _call_hi_primitive_batcher
+
+def _call_hi_primitive_linearize(nz_in, *args_flat, prim):
+  assert all(nz_in)
+  args = tree_unflatten(prim.in_tree, args_flat)
+  ans, residuals = prim.vjp_fwd(*args)
+  # TODO(dougalm): does the fwd/bwd API force us to assume the nzs_out are all False
+  # (except in the case that all the nzs_in are True, which is handled in
+  # LinearizeTrace.ProcessPrimitive)?
+  ans_flat = tree_leaves_checked(prim.out_tree, ans)
+  nzs_out = [True for _ in ans_flat]
+  return (ans_flat, nzs_out, residuals, partial(fake_linear_op, prim))
+
+def fake_linear_op(prim, rs, *tangents):
+  residuals_flat, residuals_tree = tree_flatten(rs)
+  return call_hi_primitive_linearized_p.bind(*residuals_flat, *tangents,
+                                             residuals_tree=residuals_tree, prim=prim)
+
+ad.primitive_linearizations[call_hi_primitive_p] = _call_hi_primitive_linearize
+
+call_hi_primitive_linearized_p = core.Primitive("call_hi_primitive_linearized")
+call_hi_primitive_linearized_p.multiple_results = True
+call_hi_primitive_linearized_p.is_high = lambda *args, prim, residuals_tree: True  # type: ignore
+@call_hi_primitive_linearized_p.def_abstract_eval
+def _call_hi_primitive_linearized_abstract_eval(*_args, prim, residuals_tree):
+  return [t.to_tangent_aval() for t in prim.out_avals_flat]  # TODO(dougalm): handle nonzeros
+
+def _call_hi_primitive_linearized_transpose(cts_flat, *args, prim, residuals_tree):
+  residuals_flat, _ = split_list(args, [residuals_tree.num_leaves])
+  residuals = tree_unflatten(residuals_tree, residuals_flat)
+  cts = tree_unflatten(prim.out_tree, cts_flat)
+  cts_out = prim.vjp_bwd(residuals, cts)
+  assert isinstance(cts_out, tuple)
+  return [None for _ in residuals_flat] + tree_leaves_checked(prim.in_tree, cts_out)
+ad.primitive_transposes[call_hi_primitive_linearized_p] = _call_hi_primitive_linearized_transpose
