@@ -1263,6 +1263,9 @@ nanobind_pywrap_extension(
         "@shardy//shardy/dialect/mpmd/ir:fragment_execution_rules",
         "@shardy//shardy/dialect/mpmd/transforms/import:mesh_assignment_map",
         "@shardy//shardy/integrations/python/jax/mpmd/jaxlib:mpmd_program",
+        "@xla//xla/pjrt:status_casters",
+        "@xla//xla/python:nb_absl_flat_hash_map",
+        "@xla//xla/python/ifrt/ir/conversions/mpmd:lower_to_ifrt",
     ],
 )
 
