@@ -1133,7 +1133,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     g = jax.jit(jax.grad(lambda x: f(x).sum()))
 
     arr = jax.device_put(jnp.ones(4) * 4, s)
-    all_true = jnp.ones(4)
+    all_true = jnp.ones(4, dtype=jnp.float32)
     self.assertArraysEqual(g(arr), all_true)
 
   def test_scan_offload(self):
