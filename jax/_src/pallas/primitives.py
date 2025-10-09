@@ -701,6 +701,16 @@ def store(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None) -> None:
   _ = swap(x_ref_or_view, idx, val, mask=mask, eviction_policy=eviction_policy,
            _function_name="store")
 
+
+def _handle_small(dtype: jax.typing.DTypeLike):
+  """Ugly workaround to support types that don't allow automatic promotion."""
+  if dtype == jnp.int4:
+    return jnp.int8
+  if dtype == jnp.float8_e4m3b11fnuz:
+    return jnp.bfloat16
+  return dtype
+
+
 def dot(a, b, trans_a: bool = False, trans_b: bool = False,
         allow_tf32: bool | None = None, precision=None):
   if (a.ndim != 2) or (b.ndim != 2):
@@ -712,13 +722,7 @@ def dot(a, b, trans_a: bool = False, trans_b: bool = False,
       raise ValueError("Only one of allow_tf32 and precision can be specified")
     precision = lax.Precision.HIGH if allow_tf32 else lax.Precision.HIGHEST
 
-  def _handle_f8(dtype: jax.typing.DTypeLike):
-    """Ugly workaround to support float8_e4m3b11fnuz in dot."""
-    if dtype == jnp.float8_e4m3b11fnuz:
-      return jnp.bfloat16
-    return dtype
-
-  dtype = jnp.promote_types(_handle_f8(a.dtype), _handle_f8(b.dtype))
+  dtype = jnp.promote_types(_handle_small(a.dtype), _handle_small(b.dtype))
   out_dtype = jnp.int32 if jnp.issubdtype(dtype, jnp.integer) else jnp.float32
   return jax.lax.dot_general(
       a,
