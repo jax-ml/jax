@@ -1779,8 +1779,6 @@ void BuildPytreeSubmodule(nb::module_& m) {
       ") -> PyTreeDef"
                  // clang-format on
                  ));
-  // TODO(slebedev): Remove once we migrate JAX to use the new name.
-  pytree.attr("tuple") = pytree.attr("treedef_tuple");
   pytree.def("all_leaves", &PyTreeDef::AllLeaves);
 
   nb::class_<PyTreeDef> treedef(pytree, "PyTreeDef",

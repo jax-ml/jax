@@ -1,45 +1,52 @@
-# Copyright 2024 The JAX Authors
+# Copyright 2025 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#     https://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# ==============================================================================
 
-from typing import Any
 from collections.abc import Sequence
+from typing import Any, overload
 
-from jaxlib import _jax
+from .import (
+    CompileOptions as _CompileOptions,
+    DeviceList as _DeviceList,
+    Device as _Device,
+)
+import typing_extensions
 
-class Program:  ...
+class Program:
+  pass
 
-class CompileOptions:  ...
+class CompileOptions:
+  pass
 
-def make_hlo_program(mlir_module: str | bytes) -> Program: ...
-
+@overload
+def make_hlo_program(mlir_module: str) -> Program: ...
+@overload
+def make_hlo_program(mlir_module: bytes) -> Program: ...
 def make_colocated_python_program(
-    name : str,
+    name: str,
     picked_function: bytes,
-    devices: Sequence[_jax.Device] | _jax.DeviceList,
+    devices: Sequence[_Device] | _DeviceList,
     input_avals: Sequence[Any],
     output_avals: Sequence[Any],
 ) -> Program: ...
-
-def make_plugin_program(data: str | bytes) -> Program: ...
-
-def make_colocated_python_compile_options() -> CompileOptions: ...
-
+@overload
+def make_plugin_program(data: str) -> Program: ...
+@overload
+def make_plugin_program(data: bytes) -> Program: ...
 def make_xla_compile_options(
-    compile_options: _jax.CompileOptions,
-    executable_devices: _jax.DeviceList,
-    host_callbacks: Sequence[Any]
+    options: _CompileOptions,
+    executable_devices: Sequence[_Device],
+    host_callbacks: Sequence[typing_extensions.CapsuleType],
 ) -> CompileOptions: ...
-
+def make_colocated_python_compile_options() -> CompileOptions: ...
 def make_plugin_compile_options() -> CompileOptions: ...

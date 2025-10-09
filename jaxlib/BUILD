@@ -323,8 +323,17 @@ nanobind_pywrap_extension(
 nanobind_pywrap_extension(
     name = "_jax",
     srcs = ["jax.cc"],
+    additional_stubgen_deps = [
+        "//third_party/py/numpy",
+        "//jaxlib/mlir:ir",
+    ],
+    enable_stub_generation = True,
     pytype_deps = py_deps(["numpy"]),
     pytype_srcs = glob(["_jax/*.pyi"]),
+    stub_replacement_patterns = {
+        "jax.jaxlib._jax.Array$": "Array: Any",
+        "jax.jaxlib._jax.ArrayImpl$": "ArrayImpl: Any",
+    },
     visibility = jax_visibility("jaxlib/_jax"),
     deps = [
         ":config",
