@@ -66,13 +66,18 @@ class FusionTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(y_out, y * 2)
 
   def test_custom_fusion(self):
+    const = jnp.array(1.0, dtype=jnp.float32)
+    const2 = jnp.array(2.0, dtype=jnp.float32)
+    const3 = jnp.array(3.0, dtype=jnp.float32)
+
     @fuser.custom_fusion
     def c(x, y):
-      return x + y
+      return x + y + const
 
     c.def_pull_block_spec(lambda bss: (bss[0], bss[0]))
     c.def_push_block_spec(lambda bss: (bss[0],))
     c.def_eval_rule(lambda _, x, y: (c(x, y),))
+    c.def_pallas_impl(lambda x, y: x + y + const2 + const3)
 
     @fuser.fusible(output_fusion_prefix=(True, True))
     def f(x_fn, y_fn, z_fns):
@@ -91,13 +96,13 @@ class FusionTest(jtu.JaxTestCase):
     y = jax.random.normal(jax.random.key(1), (1, 4), dtype=jnp.float32)
     z = jax.random.normal(jax.random.key(2), (1, 4), dtype=jnp.float32)
     x_out, y_out = g(x, y, z)
-    np.testing.assert_array_equal(x_out, (x + z))
-    np.testing.assert_array_equal(y_out, (y + z) * 2)
+    np.testing.assert_array_equal(x_out, (x + z + 1.0))
+    np.testing.assert_array_equal(y_out, (y + z + 1.0) * 2)
 
     g_fused = jax.jit(fuser.fuse(g))
     x_out, y_out = g_fused(x, y, z)
-    np.testing.assert_array_equal(x_out, (x + z))
-    np.testing.assert_array_equal(y_out, (y + z) * 2)
+    np.testing.assert_allclose(x_out, (x + z + 1.0))
+    np.testing.assert_allclose(y_out, (y + z + 1.0) * 2)
 
   def test_separate_output_fusions_should_error_if_not_disjoint(self):
 

@@ -129,18 +129,22 @@ class custom_fusion:
       del pallas_out_tree
       pallas_jaxpr, _, pallas_consts = (
           pe.trace_to_jaxpr_dynamic(flat_pallas_impl, in_avals))
-      pallas_jaxpr = core.ClosedJaxpr(pallas_jaxpr, pallas_consts)
     else:
       pallas_jaxpr = None
+      pallas_consts = []
 
     # debug_info for rules
     out_flat = custom_fusion_p.bind(
+        *consts,
+        *pallas_consts,
         *args_flat,
-        jaxpr=core.ClosedJaxpr(jaxpr, consts),
+        jaxpr=jaxpr,
+        num_consts=len(consts),
         eval_rule=self.eval_rule,
         pull_block_spec_rule=self.pull_block_spec_rule,
         push_block_spec_rule=self.push_block_spec_rule,
         pallas_jaxpr=pallas_jaxpr,
+        pallas_num_consts=len(pallas_consts),
         in_tree=in_tree,
         out_tree=out_tree(),
         kernel_out_tree=out_tree())
@@ -149,8 +153,14 @@ class custom_fusion:
 
 
 @custom_fusion_p.def_impl
-def _custom_fusion_impl(*args, jaxpr: core.ClosedJaxpr, **_):
-  return core.jaxpr_as_fun(jaxpr)(*args)
+def _custom_fusion_impl(
+    *args,
+    jaxpr: core.Jaxpr,
+    num_consts: int,
+    pallas_num_consts: int,
+    **_):
+  consts, _, args = util.split_list(args, [num_consts, pallas_num_consts])  # type: ignore[assignment]
+  return core.eval_jaxpr(jaxpr, consts, *args)
 
 mlir.register_lowering(custom_fusion_p, mlir.lower_fun(
     _custom_fusion_impl, multiple_results=True))
@@ -159,8 +169,8 @@ mlir.register_lowering(custom_fusion_p, mlir.lower_fun(
 @custom_fusion_p.def_effectful_abstract_eval
 def _custom_fusion_effectful_abstract_eval(
     *args,
-    jaxpr: core.ClosedJaxpr,
-    pallas_jaxpr: core.ClosedJaxpr | None,
+    jaxpr: core.Jaxpr,
+    pallas_jaxpr: core.Jaxpr | None,
     **_):
   del args
   # TODO(jburnim): Error if pallas_jaxpr has different number of outputs, or
@@ -179,7 +189,13 @@ def _custom_fusion_effectful_abstract_eval(
 
 @block_spec_lib.register_eval_rule(custom_fusion_p)
 def _custom_fusion_eval_rule(
-    ctx: block_spec_lib.KernelEvalContext, *args, eval_rule, **_):
+    ctx: block_spec_lib.KernelEvalContext,
+    *args,
+    eval_rule: CustomEvalRuleFn,
+    num_consts: int,
+    pallas_num_consts: int,
+    **_):
+  args = args[num_consts + pallas_num_consts:]
   return eval_rule(CustomEvalContext(
       out_block_specs=ctx.out_block_specs,
       out_block_indices=ctx.get_out_block_indices(),
@@ -192,14 +208,19 @@ def _custom_fusion_eval_rule(
 def _custom_fusion_mosaic_lowering_rule(
     ctx: mosaic_lowering.LoweringRuleContext,
     *args,
-    jaxpr: core.ClosedJaxpr,
-    pallas_jaxpr: core.ClosedJaxpr | None,
+    jaxpr: core.Jaxpr,
+    num_consts: int,
+    pallas_jaxpr: core.Jaxpr | None,
+    pallas_num_consts: int,
     **_):
+  consts, pallas_consts, args = util.split_list(
+      args, [num_consts, pallas_num_consts])
   if pallas_jaxpr is None:
     pallas_jaxpr = jaxpr
+    pallas_consts = consts
   lowering_context = ctx.lowering_context.replace(block_shapes=ctx.block_shapes)
   return mosaic_lowering.jaxpr_subcomp(
-      lowering_context, pallas_jaxpr.jaxpr, *pallas_jaxpr.consts, *args)
+      lowering_context, pallas_jaxpr, *pallas_consts, *args)
 
 
 @block_spec_lib.register_pull_block_spec_rule(custom_fusion_p)  # type: ignore[arg-type]
@@ -231,10 +252,10 @@ def _custom_fusion_usage_rule(
     ctx : block_spec_lib.UsageRuleContext,
     used_out: Sequence[set[block_spec_lib.Usage]],
     *,
-    jaxpr: core.ClosedJaxpr,
+    jaxpr: core.Jaxpr,
     **_
 ) -> Sequence[set[block_spec_lib.Usage]]:
   del ctx
   # TODO(jburnim): Error if jaxpr.jaxpr gives different usage than pallas_jaxpr?
-  read_usage_env = block_spec_lib.compute_usage(jaxpr.jaxpr, used_out)
-  return util.safe_map(read_usage_env, jaxpr.jaxpr.invars)
+  read_usage_env = block_spec_lib.compute_usage(jaxpr, used_out)
+  return util.safe_map(read_usage_env, jaxpr.invars)
