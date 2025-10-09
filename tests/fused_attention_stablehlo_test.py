@@ -267,13 +267,6 @@ def sdpa_train_fp8(
 class DotProductAttentionTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
-    try:
-      cudnn_version = check_cudnn_version()
-    except RuntimeError as e:
-      self.skipTest(str(e))
-      return
-    if cudnn_version < 8904:
-      self.skipTest("Requires >= cuDNN 8.9.4")
     if not jtu.is_cuda_compute_capability_at_least("8.0"):
       self.skipTest("Requires at least Ampere arch")
     if jtu.is_cuda_version_at_least(13, 0):
@@ -466,13 +459,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   def test_sdpa_broadcast_bias_and_dbias(self, broadcast_dims):
     if jax.device_count() < 4:
       self.skipTest("Requires more than 4 devices.")
-    try:
-      cudnn_version = check_cudnn_version()
-    except RuntimeError as e:
-      self.skipTest(str(e))
-      return
-    if cudnn_version < 8906:
-      self.skipTest("Requires >= cuDNN 8.9.6")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Requires at least Hopper arch")
 
@@ -617,13 +603,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_large_head_size(self):
-    try:
-      cudnn_version = check_cudnn_version()
-    except RuntimeError as e:
-      self.skipTest(str(e))
-      return
-    if cudnn_version < 90500:
-      self.skipTest("Requires >= cuDNN 9.5.0")
     if not jtu.is_cuda_compute_capability_equal("9.0"):
       self.skipTest("Requires Hopper arch")
 
@@ -652,13 +631,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   def test_sdpa_packed_layout(self):
     if jax.device_count() < 4:
       self.skipTest("Requires more than 4 devices.")
-    try:
-      cudnn_version = check_cudnn_version()
-    except RuntimeError as e:
-      self.skipTest(str(e))
-      return
-    if cudnn_version < 90600:
-      self.skipTest("Requires >= cuDNN 9.6.0")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Requires at least Hopper arch")
     k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
@@ -841,13 +813,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cuda")
   def test_sdpa_paged_attention(self, batch_size, q_seq_len, kv_seq_len,
                                 num_heads, head_dim, block_size, dtype):
-    try:
-      cudnn_version = check_cudnn_version()
-    except RuntimeError as e:
-      self.skipTest(str(e))
-      return
-    if cudnn_version < 90500:
-      self.skipTest("Requires >= cuDNN 9.5.0")
 
     keys = jax.random.split(jax.random.key(0), 5)
     blocks_per_batch = kv_seq_len // block_size
@@ -901,7 +866,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       cudnn_version = check_cudnn_version()
     except RuntimeError as e:
       self.skipTest(str(e))
-      return
     if cudnn_version < 91000:
       self.skipTest("Requires >= cuDNN 9.10.0")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
@@ -956,8 +920,6 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
     except RuntimeError as e:
       self.skipTest(str(e))
       return
-    if cudnn_version < 90100:
-      self.skipTest("Requires >= cuDNN 9.1.0")
     if cudnn_version == 91000:
       self.skipTest("cuDNN 9.10.0 does not support SDPA FP8")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):

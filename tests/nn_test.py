@@ -27,7 +27,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes as _dtypes
 from jax._src import test_util as jtu
-from jax._src.lib import cuda_versions
 from jax._src.cudnn.scaled_matmul_stablehlo import (
     quantize,
     shape_normalization,
@@ -39,13 +38,6 @@ import jax
 import jax.numpy as jnp
 
 config.parse_flags_with_absl()
-
-def _is_required_cudnn_version_satisfied(min_cc, min_cudnn_version):
-  return (
-      jtu.is_cuda_compute_capability_at_least(min_cc) and
-      cuda_versions is not None and
-      cuda_versions.cudnn_get_version() >= min_cudnn_version
-  )
 
 def _check_cudnn_backend(fn, *args, **kwargs):
   lowered = jax.jit(fn).lower(*args, **kwargs)
@@ -121,8 +113,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
       dtype=[jnp.float16, jnp.bfloat16, jnp.float32],
   )
   def testScaledMatmul(self, contract, lhs_non_contract, dtype):
-    if not _is_required_cudnn_version_satisfied("10.0", 90700):
-      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible")
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
     # Check if float8_e8m0fnu is available
     configs = create_mxfp8_configs_if_available()
     batch, rhs_non_contract = 4, 256
@@ -144,8 +136,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
   )
   def testScaledDotGeneral(
       self, is_training, output_type):
-    if not _is_required_cudnn_version_satisfied("10.0", 90700):
-      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible")
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
 
     configs = create_mxfp8_configs_if_available()
     cast_to_representable = partial(
@@ -201,8 +193,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
       impl=['cudnn', 'xla'],
   )
   def testDotProductAttention(self, dtype, group_num, use_vmap, impl):
-    if impl == 'cudnn' and not _is_required_cudnn_version_satisfied("8.0", 8904):
-      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
+    if impl == 'cudnn' and not jtu.is_cuda_compute_capability_at_least("8.0"):
+      raise unittest.SkipTest("Needs compute capability 8.0 or higher.")
     if impl == 'cudnn' and dtype == jnp.float32:
       raise unittest.SkipTest("cuDNN only supports fp16 or bf16.")
     if impl == 'cudnn' and jtu.is_cuda_version_at_least(13, 0):
@@ -251,9 +243,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testDotProductAttentionMask(self, mask_mode):
     if isinstance(mask_mode, str):
       mask_mode = (mask_mode,)
-    min_cudnn_version = 90200 if 'sliding_window' in mask_mode else 8904
-    if not _is_required_cudnn_version_satisfied("8.0", min_cudnn_version):
-      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
+    if not jtu.is_cuda_compute_capability_at_least("8.0"):
+      raise unittest.SkipTest("Requires compute capability 8.0 or higher.")
     if jtu.is_cuda_version_at_least(13, 0):
       raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
@@ -317,8 +308,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
       use_vmap=[False, True],
   )
   def testDotProductAttentionBiasGradient(self, batch_size, use_vmap):
-    if not _is_required_cudnn_version_satisfied("8.0", 8904):
-      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
+    if not jtu.is_cuda_compute_capability_at_least("8.0"):
+      raise unittest.SkipTest("Requires compute capability 8.0 or higher.")
     if jtu.is_cuda_version_at_least(13, 0):
       raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
 

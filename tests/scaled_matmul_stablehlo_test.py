@@ -270,12 +270,9 @@ class ScaledMatmulTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
     try:
-      cudnn_version = check_cudnn_version()
+      check_cudnn_version()
     except RuntimeError as e:
       self.skipTest(str(e))
-      return
-    if cudnn_version < 90700:
-      self.skipTest("Requires >= cuDNN 9.7.0")
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Requires at least Blackwell arch")
 
@@ -459,12 +456,9 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
     try:
-      cudnn_version = check_cudnn_version()
+      check_cudnn_version()
     except RuntimeError as e:
       self.skipTest(str(e))
-      return
-    if cudnn_version < 90700:
-      self.skipTest("Requires >= cuDNN 9.7.0")
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Requires at least Blackwell arch")
 
