@@ -3446,6 +3446,9 @@ def round(a: ArrayLike, decimals: int = 0, out: None = None) -> Array:
                             lax.RoundingMethod.TO_NEAREST_EVEN), factor)
     return lax.convert_element_type(out, dtype) if dtype == np.float16 else out
 
+  if decimals > np.log10(dtypes.finfo(dtype).max):
+    # Rounding beyond the input precision is a no-op.
+    return lax.asarray(a)
   if issubdtype(dtype, np.complexfloating):
     return lax.complex(_round_float(lax.real(a)), _round_float(lax.imag(a)))
   else:

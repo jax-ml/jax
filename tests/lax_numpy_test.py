@@ -893,6 +893,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=check_dtypes,
                           atol=tol, rtol=tol)
 
+  @jtu.sample_product(
+    dtype=number_dtypes,
+    decimals=[1, 10, 100, 1000],
+  )
+  def testRoundLargeDecimals(self, dtype, decimals):
+    # Regression test for https://github.com/jax-ml/jax/issues/31689.
+    # Avoid testing against NumPy here because it returns NaN for large decimals.
+    rng = jtu.rand_default(self.rng())
+    x = rng((10,), dtype)
+    result = jnp.round(x, decimals)
+    self.assertArraysAllClose(x, result, atol=2 * 10. ** -decimals)
+
   @jtu.sample_product(jit=[False, True])
   def testOperatorRound(self, jit):
     jround = jax.jit(round, static_argnums=1) if jit else round
