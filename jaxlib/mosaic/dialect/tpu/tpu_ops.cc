@@ -1540,6 +1540,15 @@ LogicalResult EnqueueIndirectDMAOp::verify() {
                        /*operand_ty=*/target_ty);
 }
 
+// TODO(b/395630795): Remove after 2025-08-10.
+LogicalResult WaitDMAOp::verify() {
+  auto sem_type = getMemRefType(getSemaphore());
+  if (sem_type.getRank() != 0) {
+    return emitOpError("DMA wait semaphore must be rank 0");
+  }
+  return success();
+}
+
 void WaitDMA2Op::build(OpBuilder &builder, OperationState &state,
                        Value semaphore, Value src, Value dst) {
   build(builder, state, semaphore, src, dst, /*device_id=*/nullptr,

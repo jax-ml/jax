@@ -1185,6 +1185,15 @@ def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
   ];
 }
 
+// TODO(b/395630795): Remove after 2025-08-10.
+def TPU_WaitDMAOp : TPU_Op<"wait_dma"> {
+  let arguments = (ins
+    MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
+    AnyMemRef:$ref
+  );
+  let hasVerifier = 1;
+}
+
 // Like tpu.wait_dma2, but for indirect DMAs.
 //
 // The number of bytes to wait for is determined based on the size of the

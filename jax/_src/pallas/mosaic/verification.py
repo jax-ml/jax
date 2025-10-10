@@ -307,7 +307,7 @@ def _print_op(ctx, op):
           f" {src.length}, {dst_location[0]}, {dst_location[1]},"
           f" {dst_sem.base}, {dst.base}, {dst.length})",
       )
-    case "tpu.wait_dma2":
+    case "tpu.wait_dma":
       sem_model = ctx.get(op.semaphore)
       sem = sem_model.at(location=None)
       ctx.emit(None, f"atomic {{ {sem} >= 1; {sem} = {sem} - 1 }}")
