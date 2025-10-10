@@ -686,7 +686,7 @@ def _optimization_barrier_equation_system(
   return eqns.EquationSystem(), operand_or_results_for_variable, []
 
 
-@_add_equation_system_derivation_rule(vector.SplatOp)
+@_add_equation_system_derivation_rule(vector.BroadcastOp)
 def _vector_splat_equation_system(
     ctx: DerivationContext,
     op: ir.OpView,

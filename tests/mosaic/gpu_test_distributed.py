@@ -171,7 +171,7 @@ class ProfilerTest(TestCase):
       other_sem = mgpu.SemaphoreRef(mgpu.utils.memref_ptr(other_dst))
       with mgpu.when(arith.cmpi(arith.CmpIPredicate.eq, my_device, arith.constant(i32, 0))):
         c = arith.constant(i32, 1)
-        vc = vector.splat(ir.VectorType.get((vector_length,), i32), c)
+        vc = vector.broadcast(ir.VectorType.get((vector_length,), i32), c)
         multicast_ref = ctx.to_remote_multicast(out)
         multicast_ref.store(vc, [arith.constant(index, 0)])
       other_sem.signal(arith.constant(i32, 1))

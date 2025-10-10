@@ -592,9 +592,9 @@ def _vector_store_op_lowering_rule(
   return []
 
 
-@_register_lowering(vector.SplatOp)
+@_register_lowering(vector.BroadcastOp)
 def _vector_splat_op_lowering_rule(
-    _: LoweringContext, vector_splat_op: vector.SplatOp
+    _: LoweringContext, vector_splat_op: vector.BroadcastOp
 ) -> Sequence[ir.Value]:
 
   out_vec_ty = ir.VectorType(vector_splat_op.aggregate.type)
