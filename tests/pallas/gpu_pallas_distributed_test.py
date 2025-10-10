@@ -24,7 +24,6 @@ from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
 from jax.experimental import multihost_utils
 from jax.experimental import pallas as pl
-from jax.experimental import shard_map
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.pallas import mosaic_gpu as plgpu
 from jax.experimental.pallas.ops.gpu.reduce_scatter_mgpu import reduce_scatter
@@ -82,8 +81,8 @@ class PallasCallRemoteDMATest(TestCase):
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ['x'])
     y = jax.jit(
-        shard_map.shard_map(
-            body, mesh, in_specs=P('x'), out_specs=P('x'), check_rep=False,
+        jax.shard_map(
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False,
         )
     )(x)
 
@@ -116,8 +115,8 @@ class PallasCallRemoteDMATest(TestCase):
     devices = jax.devices()[:4]
     mesh = jax.sharding.Mesh(np.asarray(devices).reshape(2, 2), ['x', 'y'])
     y = jax.jit(
-        shard_map.shard_map(
-            body, mesh, in_specs=P(axis), out_specs=P(axis), check_rep=False,
+        jax.shard_map(
+            body, mesh=mesh, in_specs=P(axis), out_specs=P(axis), check_vma=False,
         )
     )(x)
 
@@ -145,8 +144,8 @@ class PallasCallRemoteDMATest(TestCase):
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ['x'])
     y = jax.jit(
-        shard_map.shard_map(
-            kernel_call, mesh, in_specs=(), out_specs=P(None), check_rep=False,
+        jax.shard_map(
+            kernel_call, mesh=mesh, in_specs=(), out_specs=P(None), check_vma=False,
         )
     )()
     np.testing.assert_allclose(y, jnp.ones_like(y))
@@ -173,8 +172,8 @@ class PallasCallRemoteDMATest(TestCase):
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ['x'])
     y = jax.jit(
-        shard_map.shard_map(
-            kernel_call, mesh, in_specs=(), out_specs=P(None), check_rep=False,
+        jax.shard_map(
+            kernel_call, mesh=mesh, in_specs=(), out_specs=P(None), check_vma=False,
         )
     )()
     np.testing.assert_allclose(y, jnp.ones_like(y))
@@ -203,8 +202,8 @@ class PallasCallRemoteDMATest(TestCase):
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ['x'])
     y = jax.jit(
-        shard_map.shard_map(
-            kernel_call, mesh, in_specs=(), out_specs=P(None), check_rep=False,
+        jax.shard_map(
+            kernel_call, mesh=mesh, in_specs=(), out_specs=P(None), check_vma=False,
         )
     )()
     np.testing.assert_allclose(y, jnp.ones_like(y))
@@ -223,8 +222,8 @@ class PallasCallRemoteDMATest(TestCase):
     )
     mesh = jax.sharding.Mesh(jax.devices()[::-1], ['x'])  # Reverse the devices.
     f = jax.jit(
-        shard_map.shard_map(
-            kernel_call, mesh, in_specs=(), out_specs=P(None), check_rep=False,
+        jax.shard_map(
+            kernel_call, mesh=mesh, in_specs=(), out_specs=P(None), check_vma=False,
         )
     )
     msg = (
@@ -275,8 +274,8 @@ class PallasCallMultimemTest(TestCase):
     )
     mesh = jax.sharding.Mesh(jax.devices(), ['x'])
     y = jax.jit(
-        shard_map.shard_map(
-            kernel_call, mesh, in_specs=(), out_specs=P("x"), check_rep=False,
+        jax.shard_map(
+            kernel_call, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False,
         )
     )()
     y = multihost_utils.process_allgather(y, tiled=True)
@@ -361,7 +360,7 @@ class PallasCallMultimemTest(TestCase):
     x_shard = jax.ShapeDtypeStruct((64 + 32, 32), dtype)
     y_shape = jax.ShapeDtypeStruct((64, 32), dtype)
     y, _ = jax.jit(
-        shard_map.shard_map(
+        jax.shard_map(
             pl.pallas_call(
                 kernel,
                 in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
@@ -379,7 +378,7 @@ class PallasCallMultimemTest(TestCase):
             mesh=mesh,
             in_specs=P("x"),
             out_specs=P("x"),  # Not really, but lets us test.
-            check_rep=False,
+            check_vma=False,
         )
     )(x_local)
     y = multihost_utils.process_allgather(y, tiled=True)
@@ -412,8 +411,8 @@ class PallasCallMultimemTest(TestCase):
       )
 
     y = jax.jit(
-        shard_map.shard_map(
-            body, mesh, in_specs=P("x"), out_specs=P("x"), check_rep=False
+        jax.shard_map(
+            body, mesh=mesh, in_specs=P("x"), out_specs=P("x"), check_vma=False
         )
     )(x)
 
