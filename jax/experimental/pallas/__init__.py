@@ -29,8 +29,8 @@ from jax._src.pallas.core import CostEstimate as CostEstimate
 from jax._src.pallas.core import Element as Element
 from jax._src.pallas.core import GridSpec as GridSpec
 from jax._src.pallas.core import lower_as_mlir as lower_as_mlir
-from jax._src.pallas.core import MemorySpace as MemorySpace
 from jax._src.pallas.core import MemoryRef as MemoryRef
+from jax._src.pallas.core import MemorySpace as MemorySpace
 from jax._src.pallas.core import no_block_spec as no_block_spec
 from jax._src.pallas.core import semaphore as semaphore
 from jax._src.pallas.core import Squeezed as Squeezed
@@ -57,6 +57,7 @@ from jax._src.pallas.primitives import atomic_xor as _deprecated_atomic_xor
 from jax._src.pallas.primitives import debug_print as debug_print
 from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
 from jax._src.pallas.primitives import dot as dot
+from jax._src.pallas.primitives import get_global as get_global
 from jax._src.pallas.primitives import load as _deprecated_load
 from jax._src.pallas.primitives import max_contiguous as max_contiguous
 from jax._src.pallas.primitives import multiple_of as multiple_of

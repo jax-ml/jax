@@ -5667,18 +5667,16 @@ class SemaphoreTest(PallasTest):
     # We signal from block 0 and wait on block 1 to test whether the semaphore
     # is globally shared.
     def body(out_ref):
-      @functools.partial(pl.run_scoped,
-                         sem_ref=plgpu.SemaphoreType.REGULAR,
-                         collective_axes="x")
-      def _scoped(sem_ref):
-        block_id = lax.axis_index("x")
-        @pl.when(block_id == 0)
-        def _():
-          pl.semaphore_signal(sem_ref)
-        @pl.when(block_id == 1)
-        def _():
-          pl.semaphore_wait(sem_ref)
-          out_ref[...] = jnp.ones_like(out_ref)
+      sem_ref = pl.get_global(plgpu.SemaphoreType.REGULAR)
+      block_id = lax.axis_index("x")
+      @pl.when(block_id == 0)
+      def _():
+        pl.semaphore_signal(sem_ref)
+      @pl.when(block_id == 1)
+      def _():
+        pl.semaphore_wait(sem_ref)
+        out_ref[...] = jnp.ones_like(out_ref)
+
     kernel = self.kernel(
         body,
         out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
@@ -5690,18 +5688,16 @@ class SemaphoreTest(PallasTest):
 
   def test_global_semaphore_with_multiple_threads(self):
     def body(out_ref):
-      @functools.partial(pl.run_scoped,
-                         sem_ref=plgpu.SemaphoreType.REGULAR,
-                         collective_axes=("x", "wg"))
-      def _scoped(sem_ref):
-        block_id = lax.axis_index("x")
-        @pl.when(block_id == 0)
-        def _():
-          pl.semaphore_signal(sem_ref)
-        @pl.when(block_id == 1)
-        def _():
-          pl.semaphore_wait(sem_ref)
-          out_ref[...] = jnp.ones_like(out_ref)
+      sem_ref = pl.get_global(plgpu.SemaphoreType.REGULAR)
+      block_id = lax.axis_index("x")
+      @pl.when(block_id == 0)
+      def _():
+        pl.semaphore_signal(sem_ref)
+      @pl.when(block_id == 1)
+      def _():
+        pl.semaphore_wait(sem_ref)
+        out_ref[...] = jnp.ones_like(out_ref)
+
     kernel = self.kernel(
         body,
         out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
@@ -5713,27 +5709,82 @@ class SemaphoreTest(PallasTest):
     result = kernel()
     np.testing.assert_array_equal(result, jnp.ones((128,), jnp.float32))
 
+  def test_multiple_get_global_semaphores(self):
+    def body(out_ref):
+      sem1 = pl.get_global(plgpu.SemaphoreType.REGULAR)
+      sem2 = pl.get_global(plgpu.SemaphoreType.REGULAR)
+      block_id = lax.axis_index("x")
+      @pl.when(block_id == 0)
+      def _():
+        pl.semaphore_signal(sem1, inc=5)
+        pl.semaphore_signal(sem2, inc=10)
+      @pl.when(block_id == 1)
+      def _():
+        pl.semaphore_wait(sem1, value=5, decrement=False)
+        pl.semaphore_wait(sem2, value=10, decrement=False)
+        val1 = pl.semaphore_read(sem1)
+        val2 = pl.semaphore_read(sem2)
+        out_ref[0] = val1
+        out_ref[1] = val2
+
+    kernel = self.kernel(
+        body,
+        out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
+        grid=(10,),
+        grid_names=("x",),
+    )
+    result = kernel()
+    np.testing.assert_array_equal(result, jnp.array([5, 10], jnp.int32))
+
+  def test_get_global_in_and_outside_control_flow(self):
+    def body(out_ref):
+      sem_before = pl.get_global(plgpu.SemaphoreType.REGULAR)
+      block_id = lax.axis_index("x")
+
+      @pl.when(block_id == 0)
+      def _():
+        sem_inside = pl.get_global(plgpu.SemaphoreType.REGULAR)
+        pl.semaphore_signal(sem_inside, 7)
+        pl.semaphore_signal(sem_before, 3)
+        val_inside = pl.semaphore_read(sem_inside)
+        out_ref[1] = val_inside
+
+      sem_after = pl.get_global(plgpu.SemaphoreType.REGULAR)
+      pl.semaphore_signal(sem_after, 11)
+      val_before = pl.semaphore_read(sem_before)
+      val_after = pl.semaphore_read(sem_after)
+      out_ref[0] = val_before
+      out_ref[2] = val_after
+
+    kernel = self.kernel(
+        body,
+        out_shape=jax.ShapeDtypeStruct((3,), jnp.int32),
+        grid=(1,),
+        grid_names=("x",),
+    )
+    result = kernel()
+    np.testing.assert_array_equal(result, jnp.array([3, 7, 11], jnp.int32))
+
   def test_multiple_semaphore_scopes(self):
     def body(out_ref):
-      # Allocate a global-scoped semaphore.
-      @functools.partial(pl.run_scoped,
-                         global_sem=plgpu.SemaphoreType.REGULAR,
-                         collective_axes="x")
-      def _scope1(global_sem):
-        # Allocate a block-scoped semaphore.
-        @functools.partial(pl.run_scoped,
-                          block_sem=plgpu.SemaphoreType.REGULAR)
-        def _scope2(block_sem):
-          block_id = lax.axis_index("x")
-          pl.semaphore_signal(block_sem)
-          @pl.when(block_id == 0)
-          def _():
-            pl.semaphore_signal(global_sem)
-          @pl.when(block_id == 1)
-          def _():
-            pl.semaphore_wait(global_sem)
-            out_ref[...] = jnp.ones_like(out_ref)
-          pl.semaphore_wait(block_sem)
+      global_sem = pl.get_global(plgpu.SemaphoreType.REGULAR)
+
+      @functools.partial(pl.run_scoped, block_sem=plgpu.SemaphoreType.REGULAR)
+      def _scope2(block_sem):
+        block_id = lax.axis_index("x")
+        pl.semaphore_signal(block_sem)
+
+        @pl.when(block_id == 0)
+        def _():
+          pl.semaphore_signal(global_sem)
+
+        @pl.when(block_id == 1)
+        def _():
+          pl.semaphore_wait(global_sem)
+          out_ref[...] = jnp.ones_like(out_ref)
+
+        pl.semaphore_wait(block_sem)
+
     kernel = self.kernel(
         body,
         out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
@@ -5950,22 +6001,22 @@ class HelpersTest(PallasTest):
     sm_count = jax.devices()[0].core_count
     def body(out_gmem, _):
       sm_idx = lax.axis_index("x")
+      global_semaphore = pl.get_global(plgpu.SemaphoreType.REGULAR)
 
-      @functools.partial(pl.run_scoped,
-                         global_semaphore=plgpu.SemaphoreType.REGULAR,
-                         collective_axes="x")
-      def _scoped(global_semaphore):
-        @pl.when(sm_idx == 0)
-        def _steal_loop():
-          def loop_body(loop_info: plgpu.NDLoopInfo, carry: jax.Array):
-            del loop_info
-            return carry + jnp.int32(1)
-          final_carry = plgpu.dynamic_scheduling_loop(
-              ("x",), init_carry=jnp.int32(0))(loop_body)
-          out_gmem[0] = final_carry
-          pl.semaphore_signal(global_semaphore, inc=sm_count)
-        # All SMs wait until SM 0 has finished all blocks.
-        pl.semaphore_wait(global_semaphore)
+      @pl.when(sm_idx == 0)
+      def _steal_loop():
+        def loop_body(loop_info: plgpu.NDLoopInfo, carry: jax.Array):
+          del loop_info
+          return carry + jnp.int32(1)
+
+        final_carry = plgpu.dynamic_scheduling_loop(
+            ("x",), init_carry=jnp.int32(0)
+        )(loop_body)
+        out_gmem[0] = final_carry
+        pl.semaphore_signal(global_semaphore, inc=sm_count)
+
+      # All SMs wait until SM 0 has finished all blocks.
+      pl.semaphore_wait(global_semaphore)
 
     result = self.kernel(body,
                  out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),

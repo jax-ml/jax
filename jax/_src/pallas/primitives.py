@@ -966,6 +966,47 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes):
   return mlir.lower_fun(_lower_fun, multiple_results=True)(ctx, *args)
 
 
+get_global_p = jax_core.Primitive("get_global")
+get_global_p.multiple_results = False
+
+
+def get_global(what: pallas_core.ScratchShape) -> jax.Array:
+  """Returns a global reference that persists across all kernel invocations.
+
+  Each call to get_global returns a different and unique reference, but one that
+  is stable across invocations of the kernel body.
+
+  Args:
+    what: The reference type to allocate. Each backend has its own set of
+      reference types (e.g., `plgpu.SemaphoreType.REGULAR` for GPU).
+
+  Example::
+
+    sem_ref = pl.get_global(plgpu.SemaphoreType.REGULAR)
+    pl.semaphore_signal(sem_ref)
+    pl.semaphore_wait(sem_ref)
+  """
+  ref_aval = what.get_ref_aval()
+  return get_global_p.bind(what=ref_aval)
+
+
+@get_global_p.def_abstract_eval
+def _get_global_abstract_eval(*, what):
+  return what
+
+
+def _get_global_discharge_rule(in_avals, out_avals, *, what):
+  del in_avals, out_avals, what
+  raise NotImplementedError(
+      "get_global discharge is not supported in interpret mode."
+  )
+
+
+state_discharge.register_discharge_rule(get_global_p)(
+    _get_global_discharge_rule
+)
+
+
 def _get_ref_and_transforms(ref):
   if isinstance(ref, state.TransformedRef):
     return ref.ref, ref.transforms
