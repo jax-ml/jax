@@ -135,10 +135,8 @@ mosaic_gpu_p.multiple_results = True
 
 
 @mosaic_gpu_p.def_abstract_eval
-def _mosaic_gpu_abstract_eval(
-    *_, module, out_types, inout_types, is_device_collective
-):
-  del module, is_device_collective  # Unused.
+def _mosaic_gpu_abstract_eval(*_, module, out_types, inout_types):
+  del module # Unused.
   return [
       jax_core.ShapedArray(t.shape, t.dtype)
       for t in itertools.chain(out_types, inout_types)
@@ -165,7 +163,6 @@ def _mosaic_gpu_lowering_rule(
     out_types,
     inout_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
-    is_device_collective: bool,
     use_custom_barrier: bool = False,
 ):
   axis_context = ctx.module_context.axis_context
@@ -228,9 +225,6 @@ def _mosaic_gpu_lowering_rule(
           kernel_hash=ir.StringAttr.get(kernel_id),
           module=ir.StringAttr.get(module_asm),
           use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
-      ),
-      extra_attributes=dict(
-          is_device_collective=ir.BoolAttr.get(is_device_collective)
       ),
       operand_output_aliases=dict(input_output_aliases),
       api_version=4,
@@ -912,7 +906,6 @@ def as_gpu_kernel(
         module=module,
         out_types=out_shape,
         inout_types=inout_shape,
-        is_device_collective=is_device_collective,
     )
 
   if prof_spec is not None:
@@ -980,7 +973,6 @@ def as_torch_gpu_kernel(
       in_shape,
       out_shape,
       inout_shape,
-      is_device_collective=is_device_collective,
       unwrap_output_tuple=unwrap_output_tuple,
   )
 
@@ -991,15 +983,8 @@ def _as_torch_gpu_kernel(
     out_shape: Iterable[object],
     inout_shape: Iterable[object] = (),
     *,
-    is_device_collective: bool,
     unwrap_output_tuple: bool = False,
 ):
-  if is_device_collective:
-    raise RuntimeError(
-        "Kernel is a cross-device collective but no support is available for"
-        " Torch."
-    )
-
   flat_arg_types, expected_arg_treedef = jax.tree.flatten((*in_shape, *inout_shape))
   flat_out_types, _ = jax.tree.flatten(out_shape)
   out_treedef = jax.tree.structure((*out_shape, *inout_shape))

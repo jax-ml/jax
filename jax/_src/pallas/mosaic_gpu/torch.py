@@ -141,6 +141,5 @@ def _compile_fn(fn, in_structs):
       backend_config["module"].value.encode(),
       in_structs,
       out_structs,
-      is_device_collective=mgpu_call.attributes["is_device_collective"].value,
       unwrap_output_tuple=unwrap_output_tuple,
   )
