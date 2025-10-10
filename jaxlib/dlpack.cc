@@ -49,7 +49,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
-#include "xla/python/ifrt/user_context.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
@@ -372,7 +371,7 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
     throw xla::XlaRuntimeError(
         "This operation is implemented for a PjRt-compatible backend only.");
   }
-  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
+  PyUserContextScope user_context_scope;
   TF_ASSIGN_OR_RETURN(auto ifrt_array,
                       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer)));
   return PyArray::MakeFromSingleDeviceArray(std::move(client),

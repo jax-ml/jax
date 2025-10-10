@@ -143,7 +143,7 @@ absl::StatusOr<nb::list> ExperimentalReshardArrays(nb::sequence py_arrays,
     return nb::list();
   }
 
-  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
+  PyUserContextScope user_context_scope;
   nb_class_ptr<PyClient> backend;
   std::vector<xla::ifrt::ArrayRef> ifrt_arrays;
   std::vector<xla::ifrt::ArraySpec> ifrt_specs;
@@ -228,7 +228,7 @@ ExperimentalSplitByMeshAxis(
         mesh_axis_sections.size(), " vs ", num_submeshes));
   }
 
-  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
+  PyUserContextScope user_context_scope;
   // All input arrays are expected to use the same mesh.
   TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
                       GetIfrtDeviceList(py_arrays[0].sharding()));
