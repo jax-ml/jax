@@ -3466,7 +3466,7 @@ def _semaphore_signal_lowering_rule(
   if device_id is not None:
     device_id, other_axes = primitives.device_id_to_logical(
         ctx.module_ctx.mesh_info,
-        device_id,
+        _ensure_ir_value(device_id, jnp.int32),
         device_id_type,
         lambda name: _axis_index_rule(ctx, axis_name=name),
     )

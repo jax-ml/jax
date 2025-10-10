@@ -20,13 +20,14 @@ import os
 from absl.testing import parameterized
 import jax
 from jax import lax
-from jax._src import test_util as jtu
 from jax._src import test_multiprocess as jt_multiprocess
+from jax._src import test_util as jtu
 from jax.experimental import multihost_utils
 from jax.experimental import pallas as pl
 from jax.experimental import shard_map
-from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.experimental.mosaic.gpu as mgpu
+from jax.experimental.pallas import mosaic_gpu as plgpu
+from jax.experimental.pallas.ops.gpu.reduce_scatter_mgpu import reduce_scatter
 import jax.numpy as jnp
 import numpy as np
 
@@ -35,7 +36,7 @@ P = jax.sharding.PartitionSpec
 partial = functools.partial
 
 
-class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
+class TestCase(jt_multiprocess.MultiProcessTest):
 
   def setUp(self):
     if (not jtu.test_device_matches(["cuda"]) or
@@ -48,6 +49,9 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
     if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
       self.skipTest("NVSHMEM doesn't work with the platform allocator.")
     super().setUp()
+
+
+class PallasCallRemoteDMATest(TestCase):
 
   def test_remote_dma_basic(self):
     if jax.process_index() > 2:
@@ -230,6 +234,26 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
     with self.assertRaisesRegex(NotImplementedError, msg):
       f()
 
+
+class PallasCallMultimemTest(TestCase):
+
+  def _get_reduction_impl(self, reduction):
+    match reduction:
+      case "add":
+        return jnp.add
+      case "min":
+        return jnp.minimum
+      case "max":
+        return jnp.maximum
+      case "and":
+        return jnp.bitwise_and
+      case "or":
+        return jnp.bitwise_or
+      case "xor":
+        return jnp.bitwise_xor
+      case _:
+        raise ValueError(reduction)
+
   def test_multimem_store(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
@@ -359,25 +383,45 @@ class PallasCallRemoteDMATest(jt_multiprocess.MultiProcessTest):
         )
     )(x_local)
     y = multihost_utils.process_allgather(y, tiled=True)
-    match reduction:
-      case "add":
-        np_reduction = jnp.add
-      case "min":
-        np_reduction = jnp.minimum
-      case "max":
-        np_reduction = jnp.maximum
-      case "and":
-        np_reduction = jnp.bitwise_and
-      case "or":
-        np_reduction = jnp.bitwise_or
-      case "xor":
-        np_reduction = jnp.bitwise_xor
-      case _:
-        raise ValueError(reduction)
+    np_reduction = self._get_reduction_impl(reduction)
     np.testing.assert_array_equal(
         y.astype(jnp.float32),
         np.tile(np_reduction(x_local[16:64+16], x_local[64+48:128+48]), (2, 1)),
     )
+
+  @parameterized.parameters(
+      (jnp.float32, "add", 1),
+      (jnp.float16, "add", 2),
+      (jnp.bfloat16, "add", 2),
+      (jnp.float16, "min", 4),
+      (jnp.float16, "max", 8),
+  )
+  def test_reduce_scatter(self, dtype, reduction, vec_size):
+    if jax.process_index() > 2:
+      return
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    x = jax.random.uniform(
+        jax.random.key(42), (128, 64), dtype=dtype, minval=-1.0, maxval=1.0
+    )
+
+    def body(x):
+      return reduce_scatter(
+          x, axis_name="x", reduction=reduction, vec_size=vec_size
+      )
+
+    y = jax.jit(
+        shard_map.shard_map(
+            body, mesh, in_specs=P("x"), out_specs=P("x"), check_rep=False
+        )
+    )(x)
+
+    y = multihost_utils.process_allgather(y, tiled=True)
+    np_reduction = self._get_reduction_impl(reduction)
+    expected = np_reduction(x[:64], x[64:])
+    tol = 1e-5 if reduction == "add" else 0
+    np.testing.assert_allclose(y, expected, rtol=tol, atol=tol)
 
 
 if __name__ == '__main__':
