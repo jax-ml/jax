@@ -17,6 +17,7 @@ from jax._src.lax.linalg import (
   cholesky_p as cholesky_p,
   cholesky_update as cholesky_update,
   cholesky_update_p as cholesky_update_p,
+  EigImplementation as EigImplementation,
   eig as eig,
   eig_p as eig_p,
   eigh as eigh,

@@ -68,6 +68,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     mode is not enabled.
   * {func}`jax.dlpack.from_dlpack` now accepts arrays with non-default layouts,
     for example, transposed.
+  * The default nonsymmetric eigendecomposition on NVIDIA GPUs now uses
+    cusolver. The magma and LAPACK implementations are still available via the
+    new `implementation` argument to {func}`jax.lax.linalg.eig`
+    ({jax-issue}`#27265`). The `use_magma` argument is now deprecated in favor
+    of `implementation`.
 
 * Deprecations
   * {func}`jax.experimental.enable_x64` and {func}`jax.experimental.disable_x64`

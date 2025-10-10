@@ -30,6 +30,8 @@ from jax import numpy as jnp
 from jax import scipy as jsp
 from jax._src import config
 from jax._src.lax import linalg as lax_linalg
+from jax._src.lib import cuda_versions
+from jax._src.lib import version as jaxlib_version
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.numpy.util import promote_dtypes_inexact
@@ -290,15 +292,29 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       check_right_eigenvectors(aH, wC, vl)
 
     a, = args_maker()
-    results = lax.linalg.eig(
-        a, compute_left_eigenvectors=compute_left_eigenvectors,
-        compute_right_eigenvectors=compute_right_eigenvectors)
-    w = results[0]
 
-    if compute_left_eigenvectors:
-      check_left_eigenvectors(a, w, results[1])
-    if compute_right_eigenvectors:
-      check_right_eigenvectors(a, w, results[1 + compute_left_eigenvectors])
+    implementations = [None]
+
+    if (
+        jtu.is_device_cuda()
+        and not compute_left_eigenvectors
+        and jaxlib_version >= (0, 8)
+        and cuda_versions
+        and cuda_versions.cusolver_get_version() >= 11701
+    ):
+      implementations.append(jax.lax.linalg.EigImplementation.CUSOLVER)
+
+    for implementation in implementations:
+      results = lax.linalg.eig(
+          a, compute_left_eigenvectors=compute_left_eigenvectors,
+          compute_right_eigenvectors=compute_right_eigenvectors,
+          implementation=implementation)
+      w = results[0]
+
+      if compute_left_eigenvectors:
+        check_left_eigenvectors(a, w, results[1])
+      if compute_right_eigenvectors:
+        check_right_eigenvectors(a, w, results[1 + compute_left_eigenvectors])
 
     self._CompileAndCheck(partial(jnp.linalg.eig), args_maker, rtol=1e-3)
 
@@ -312,10 +328,16 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testEigHandlesNanInputs(self, shape, dtype, compute_left_eigenvectors,
                               compute_right_eigenvectors):
     """Verifies that `eig` fails gracefully if given non-finite inputs."""
+    if jtu.is_device_cuda():
+      # TODO(phawkins): CUSOLVER's implementation does not pass this test.
+      implementation = jax.lax.linalg.EigImplementation.LAPACK
+    else:
+      implementation = None
     a = jnp.full(shape, jnp.nan, dtype)
     results = lax.linalg.eig(
         a, compute_left_eigenvectors=compute_left_eigenvectors,
-        compute_right_eigenvectors=compute_right_eigenvectors)
+        compute_right_eigenvectors=compute_right_eigenvectors,
+        implementation=implementation)
     for result in results:
       self.assertTrue(np.all(np.isnan(result)))
 
