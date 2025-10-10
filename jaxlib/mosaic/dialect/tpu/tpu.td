@@ -593,11 +593,35 @@ def TPU_BroadcastInSublanesOp : TPU_Op<"broadcast_in_sublanes", [Pure]> {
 }
 
 // Integer unpacks are always signed at the moment.
+//
+// When unpacking integers to integers, setting `sign_extended` to false will
+// leave bits higher than source bitwidth as undefined.
+//
+// Take int4 to int16 interleaved unpacking and `index = 1` as an example:
+//
+// Source:
+//
+// Bits    28  24  20  16  12   8   4   0
+//       --------abcd------------efgh----
+//
+// where "a" and "e" are the sign bits of the values to be unpacked, and "-" are
+// bits to be ignored.
+//
+// Unpacked, sign_extend = true:
+//
+// Bits    28  24  20  16  12   8   4   0
+//       aaaaaaaaaaaaabcdeeeeeeeeeeeeefgh
+//
+// Unpacked, sign_extend = false:
+//
+// Bits    28  24  20  16  12   8   4   0
+//       ------------abcd------------efgh
 def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
   let arguments = (ins
     AnyVectorOfNonZeroRank:$source,
     I32Attr:$index,
-    TPU_PackFormatEnum:$pack_format
+    TPU_PackFormatEnum:$pack_format,
+    DefaultValuedAttr<BoolAttr, "true">:$sign_extended
   );
   let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{ $source `,` $index attr-dict `:` type($source) `->` type($output) }];

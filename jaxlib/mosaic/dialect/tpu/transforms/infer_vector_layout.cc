@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
+#include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -1636,24 +1637,28 @@ class VectorLayoutInferer {
     auto small_second_minor_tiling_layout =
         [&](ArrayRef<int64_t> shape) -> std::optional<VectorLayout> {
       const int64_t elements_per_vreg = native_tiling[0] * native_tiling[1];
-      if (shape.size() < 2 || elements_per_vreg % shape.back() != 0) {
+      if (shape.size() < 2) {
         return std::nullopt;
       }
-      if (bitwidth > 32 || bitwidth < 8) {
+      if (!llvm::isPowerOf2_32(bitwidth)) {
         return std::nullopt;
       }
       int64_t second_minor_tiling = elements_per_vreg / shape.back();
-      // Only accept valid 2D layouts.
-      if (second_minor_tiling % packing != 0 ||
+      bool can_use_1d_tiling = shape.back() % elements_per_vreg == 0;
+      if (((elements_per_vreg % shape.back() != 0 ||
+            second_minor_tiling % packing != 0) &&
+           !can_use_1d_tiling) ||
           second_minor_tiling > native_tiling[0]) {
         return std::nullopt;
       }
+      std::array<int64_t, 2> tiling = {second_minor_tiling, target_shape_[1]};
+      if (can_use_1d_tiling) {
+        tiling = {1, target_shape_[1] * packing};
+      }
       // TODO(b/440370770): Preserve replicated offsets.
-      auto layout = VectorLayout(bitwidth, {0, 0},
-                                 {second_minor_tiling, target_shape_[1]},
-                                 ImplicitDim::kNone);
+      auto layout = VectorLayout(bitwidth, {0, 0}, tiling, ImplicitDim::kNone);
       auto vreg_slice = layout.vregSlice(target_shape_);
-      if (shape.back() != vreg_slice[1] ||
+      if ((shape.back() != vreg_slice[1] && !can_use_1d_tiling) ||
           shape[shape.size() - 2] % vreg_slice[0] != 0) {
         return std::nullopt;
       }
