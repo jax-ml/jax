@@ -676,6 +676,33 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
 
+  def test_collective_copy_gmem_to_smem(self):
+    self.skip_if_wg_semantics()  # Collective loads are not supported yet.
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((2, 128), jnp.float32),
+        scratch_shapes=dict(
+            smem_ref=plgpu.SMEM((128,), jnp.float32),
+            barrier_ref=plgpu.Barrier(),
+        ),
+        cluster=(2,),
+        cluster_names=("cluster",),
+    )
+    def kernel(x_ref, y_ref, smem_ref, barrier_ref):
+      # Specifying collective_axes will enable TMA multicast automatically.
+      plgpu.copy_gmem_to_smem(
+          x_ref, smem_ref, barrier_ref, collective_axes="cluster"
+      )
+      plgpu.barrier_wait(barrier_ref)
+      plgpu.copy_smem_to_gmem(smem_ref, y_ref.at[jax.lax.axis_index("cluster")])
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(128, dtype=jnp.float32)
+    y = kernel(x)
+    # Each block gets the same data and writes it out.
+    np.testing.assert_array_equal(y, jnp.stack([x, x], axis=0))
+
   @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
   def test_async_prefetch(self, indexer):
 
@@ -2225,7 +2252,7 @@ class PallasCallTest(PallasTest):
 
   def _test_broadcast_in_dim_base(self, shape, layout, *, axis, hint):
     if not hint:
-      # When the hint is not set, inference may choose incompatible layouts.
+      # When the hint is not set, inference may choose incompatible layouts.
       # TODO(bchetioui): investigate and fix.
       self.skip_if_wg_semantics()
     assert len(shape) == 2
@@ -5093,7 +5120,7 @@ class WarpSpecializedPipelineTest(PallasTest):
 
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_collective(self):
-    self.skip_if_wg_semantics()  # Doesn't lower to collective copies.
+    self.skip_if_wg_semantics()  # Collective loads are not supported yet.
     num_steps = 4
 
     def kernel(x_gmem, o_gmem):

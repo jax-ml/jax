@@ -829,7 +829,14 @@ class LaunchContext:
           )
       idx = self.cluster_idx(collective)
       rem_collective_size = collective_size
-      for dim, slice_size in enumerate(slice_shape[:-1]):
+      has_swizzle = (
+          swizzle is not None
+          and swizzle != mgpu_dialect.SwizzlingMode.kNoSwizzle
+      )
+      # We can partition the minormost dim if there's no swizzling.
+      for dim, slice_size in enumerate(
+          slice_shape[:-1] if has_swizzle else slice_shape
+      ):
         if slice_size % rem_collective_size == 0:
           partition_dim(dim, idx, rem_collective_size)
           rem_collective_size = 1

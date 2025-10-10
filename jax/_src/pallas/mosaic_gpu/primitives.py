@@ -550,9 +550,8 @@ def _copy_gmem_to_smem_lowering(
         **predicate_kwarg,
     )
     return ()
-
+  i32 = ir.IntegerType.get_signless(32)
   if "gmem_slice" not in copy_params:
-    i32 = ir.IntegerType.get_signless(32)
     slice_lengths = ir.MemRefType(src.type).shape
     indices = [mgpu.utils.c(0, i32)] * len(slice_lengths)
   else:
@@ -571,7 +570,9 @@ def _copy_gmem_to_smem_lowering(
       barrier_ref,
       indices,
       slice_lengths,
-      collective=ir.ArrayAttr.get([]),
+      collective=ir.ArrayAttr.get(
+          [ir.IntegerAttr.get(i32, axis) for axis in collective or []]
+      ),
   )
   return ()
 

@@ -2700,6 +2700,32 @@ class AsyncCopyTest(TestCase):
     y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
     np.testing.assert_array_equal(y, x)
 
+  def test_tma_collective_async_cp_with_no_swizzle(self):
+    def body(ctx, src, dst, scratch):
+      tmp, barrier = scratch
+      ctx.async_copy(
+          src_ref=src, dst_ref=tmp, collective=gpu.Dimension.x, barrier=barrier
+      )
+      barrier.wait()
+      block_id = gpu.cluster_block_id(gpu.Dimension.x)
+      ctx.async_copy(src_ref=tmp, dst_ref=dst, gmem_slice=block_id)
+
+    dtype = jnp.float32
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(2, 1, 1),
+        cluster=(2, 1, 1),
+        block=(128, 1, 1),
+        in_shape=jax.ShapeDtypeStruct((128,), dtype),
+        out_shape=jax.ShapeDtypeStruct((2, 128), dtype),
+        smem_scratch_shape=[
+            jax.ShapeDtypeStruct((128,), dtype),
+            mgpu.TMABarrier(),
+        ],
+    )
+    x = jnp.arange(128, dtype=jnp.float32)
+    np.testing.assert_array_equal(kernel(x), jnp.stack([x, x], axis=0))
+
 
 class FragmentedArrayTest(TestCase):
 
