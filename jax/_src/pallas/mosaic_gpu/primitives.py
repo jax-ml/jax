@@ -2491,6 +2491,52 @@ def _shape_dtype_struct_to_type_and_layout(
   return vector_type, layout
 
 
+# TODO(allanrenucci): This function is most likely broken. We need to review the
+# `inline_mgpu` lowering logic and clean it up.
+# It was moved from MGPU dialect lowering where it is not used anymore. The
+# rewrite in the dialect lowering addressed bugs in this code.
+def _inline_block(
+    block: ir.Block,
+    args: Sequence[ir.Value],
+    mapper: dict[ir.Value, ir.Value],
+) -> list[ir.Value]:
+  """Inlines the given block at the current insertion point.
+
+  The block args are replaced with the provided `args`. If the input mapper is
+  not empty, it could further be used to replace captured values with an
+  alternative.
+
+  The operands of the terminator are returned as results.
+  """
+  for arg, val in zip(block.arguments, args, strict=True):
+    mapper[arg] = val
+  return_op = None
+  for op in block.operations:
+    if isinstance(op.opview, mgpu.dialect.ReturnOp):
+      assert return_op is None
+      return_op = op.opview
+
+    # Operands not in the mapper are captured from the context.
+    new_operands = [mapper[o] if o in mapper else o for o in op.operands]
+    new_attributes = {
+        named_attr.name: named_attr.attr for named_attr in op.attributes
+    }
+    new_op = ir.Operation.create(
+        name=op.name,
+        results=[res.type for res in op.results],
+        operands=new_operands,
+        attributes=new_attributes,
+    )
+    for old_result, new_result in zip(op.results, new_op.results):
+      mapper[old_result] = new_result
+
+  if return_op is None:
+    raise ValueError("A custom return op must terminate the block.")
+
+  inlined_return_values = [mapper[o] for o in return_op.operands]
+  return inlined_return_values
+
+
 def _clone_custom_op_with_extra_args(
     custom_op: mgpu.dialect.CustomPrimitiveOp, extra_args: Sequence[ir.Value]
 ) -> mgpu.dialect.CustomPrimitiveOp:
@@ -2530,7 +2576,7 @@ def _clone_custom_op_with_extra_args(
   # Clone the old block, by inlining it into the new one.
   num_old_args = len(old_block.arguments)
   with ir.InsertionPoint.at_block_begin(new_block):
-    mgpu.dialect_lowering.inline_block(
+    _inline_block(
         old_block,
         list(new_block.arguments)[:num_old_args],
         mapper=dict(
@@ -2540,8 +2586,6 @@ def _clone_custom_op_with_extra_args(
                 strict=True,
             )
         ),
-        clone_terminator=True,
-        terminator_type=mgpu.dialect.ReturnOp,
     )
 
   return new_op

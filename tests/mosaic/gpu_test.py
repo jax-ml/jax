@@ -4566,6 +4566,42 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           x[slicing].reshape(sub_shape),
       )
 
+  def test_custom_primitive_op(self):
+    # This test exercises the following cases:
+    # - The lowering handles nested blocks and regions (e.g. `scf.IfOp`).
+    # - The lowering updates references to inlined operations.
+    def body(ctx, result, scratch):
+      del ctx, scratch
+      i64 = ir.IntegerType.get_signless(64)
+      index = ir.IndexType.get()
+      op = mgpu_dialect.CustomPrimitiveOp(
+          result=[],
+          operands_=[result],
+          in_layouts=[],
+          in_transforms=[],
+          out_layouts=[],
+      )
+      args_ty = [arg.type for arg in op.operands_]
+      block = op.body.blocks.append(*args_ty)
+      with ir.InsertionPoint(block):
+        is_leader_thread = single_thread_predicate()
+        with when(is_leader_thread):
+          c5 = arith.constant(i64, 5)
+          memref.store(c5, block.arguments[0], [c(0, index)])
+        mgpu_dialect.return_([])
+
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        cluster=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(),
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.int64),
+        smem_scratch_shape=(),
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+    self.assertArraysEqual(kernel(), [5])
+
 
 class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
 

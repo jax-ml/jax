@@ -1768,67 +1768,30 @@ def _async_store_tmem_op_lowering_rule(
   return []
 
 
-def inline_block(
-    block: ir.Block, args: Sequence[ir.Value], mapper: dict[ir.Value, ir.Value],
-    clone_terminator: bool, terminator_type: type[ir.OpView],
-) -> list[ir.Value]:
-  """
-  Inlines the given block at the current insertion point.
-
-  The block args are replaced with the provided `args`. If the input mapper is
-  not empty, it could further be used to replace captured values with an
-  alternative.
-
-  If `clone_terminator` is False, the terminator of the block is not cloned. If
-  `clone_terminator` is True, the terminator is cloned. This is useful when
-  inlining the block into another block. In both cases the operands of the
-  terminator are returned as results.
-  """
-  for arg, val in zip(block.arguments, args, strict=True):
-    mapper[arg] =  val
-  return_op = None
-  for op in block.operations:
-    if isinstance(op.opview, terminator_type):
-      assert return_op is None
-      return_op = op.opview
-      if not clone_terminator:
-        continue
-    # Operands not in the mapper are captured from the context.
-    new_operands = [mapper[o] if o in mapper else o for o in op.operands]
-    new_attributes = {
-        named_attr.name: named_attr.attr
-        for named_attr in op.attributes
-    }
-    new_op = ir.Operation.create(
-        name=op.name,
-        results=[res.type for res in op.results],
-        operands=new_operands,
-        attributes=new_attributes,
-    )
-    for old_result, new_result in zip(op.results, new_op.results):
-      mapper[old_result] = new_result
-
-  if return_op is None:
-    raise ValueError("A custom return op must terminate the block.")
-
-  inlined_return_values = [mapper[o] for o in return_op.operands]
-  return inlined_return_values
-
-
 @_register_lowering(mgpu.CustomPrimitiveOp)
 def _mgpu_custom_primitive_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.CustomPrimitiveOp
 ) -> Sequence[ir.Value]:
   """Lowering rule for mgpu.CustomPrimitiveOp."""
   del ctx
-  # The block already contains unwrapping and wrapping conversion casts.
-  return inline_block(
-      op.body.blocks[0],
-      op.operands,
-      mapper={},
-      clone_terminator=False,
-      terminator_type=mgpu.ReturnOp,
-  )
+  block = op.body.blocks[0]
+  for arg, op in zip(block.arguments, op.operands, strict=True):
+    arg.replace_all_uses_with(op)
+
+  return_op = None
+  ip = ir.InsertionPoint.current
+  for op in block.operations:
+    if isinstance(op.opview, mgpu.ReturnOp):
+      assert return_op is None
+      return_op = op.opview
+      continue
+    op.detach_from_parent()
+    ip.insert(op)
+
+  if return_op is None:
+    raise ValueError("A custom return op must terminate the block.")
+
+  return return_op.operands
 
 
 # The metadata needed to recostruct a vector from its flattened representation.
