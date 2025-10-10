@@ -9,6 +9,7 @@ Backend specific documentation for the Mosaic GPU backend.
    reference
    pipelining
    blackwell_matmul
+   collective_matmul
 
 .. toctree::
    :caption: Guides
