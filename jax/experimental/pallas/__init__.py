@@ -15,7 +15,7 @@
 """Module for Pallas, a JAX extension for custom kernels.
 
 See the Pallas documentation at
-https://docs.jax.dev/en/latest/pallas.html.
+https://docs.jax.dev/en/latest/pallas/index.html.
 """
 
 from jax._src.pallas.core import BlockDim as BlockDim
