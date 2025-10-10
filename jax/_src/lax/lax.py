@@ -2842,7 +2842,8 @@ def pad(operand: ArrayLike, padding_value: ArrayLike,
       as ``operand``.
     padding_config: a sequence of ``(low, high, interior)`` tuples of integers,
       giving the amount of low, high, and interior (dilation) padding to insert
-      in each dimension.
+      in each dimension. Negative values for ``low`` and ``high`` are allowed
+      and remove elements from the edges of the array.
 
   Returns:
     The ``operand`` array with padding value ``padding_value`` inserted in each
@@ -2877,6 +2878,12 @@ def pad(operand: ArrayLike, padding_value: ArrayLike,
            [-1, -1,  4,  5,  6, -1, -1],
            [-1, -1, -1, -1, -1, -1, -1],
            [-1, -1, -1, -1, -1, -1, -1]], dtype=int32)
+
+    Use negative padding to remove elements from the edges of an array:
+
+    >>> x = jnp.array([1, 2, 3, 4, 5], dtype=jnp.int32)
+    >>> lax.pad(x, 0, [(-1, -2, 0)])
+    Array([2, 3], dtype=int32)
   """
   operand, padding_value = core.standard_insert_pvary(operand, padding_value)
   return pad_p.bind(operand, padding_value, padding_config=tuple(padding_config))
