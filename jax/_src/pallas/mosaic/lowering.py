@@ -1463,7 +1463,13 @@ def _slice_memref(
     # verification logic in MLIR in ambiguous cases, e.g. when squeezing
     # from [1, 1, 128] to [1, 128].
     squeeze_dims = _compute_squeezed_dims(ref_ty.shape, target_sizes)
-    target_strides = [s for i, s in enumerate(ref_strides) if not squeeze_dims[i]]
+    target_strides = [
+        s
+        if ref_ty.shape[i] != ir_dynamic_size or len(ref_ty.shape) == 1
+        else ir_dynamic_size
+        for i, s in enumerate(ref_strides)
+        if not squeeze_dims[i]
+    ]
     out_layout = ir.StridedLayoutAttr.get(ref_offset, target_strides)
     out_ty = ir.MemRefType.get(
         target_sizes,
