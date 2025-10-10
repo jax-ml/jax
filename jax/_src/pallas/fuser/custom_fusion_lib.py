@@ -93,6 +93,8 @@ class custom_fusion:
     self.eval_rule = eval_rule
     return eval_rule
 
+  @functools.partial(core.repro_boundary,
+                     api_name="jax.pallas.custom_fusion.__call__")
   def __call__(self, *args, **kwargs):
     debug_fun = api_util.debug_info("custom_fusion fun", self.fun, args, kwargs)
 

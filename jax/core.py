@@ -58,6 +58,7 @@ from jax._src.core import (
   is_concrete as is_concrete,
   is_constant_dim as is_constant_dim,
   is_constant_shape as is_constant_shape,
+  repro_boundary as repro_boundary,
   jaxprs_in_params as jaxprs_in_params,
   literalable_types as literalable_types,
   mapped_aval as mapped_aval,

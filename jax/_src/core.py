@@ -45,6 +45,7 @@ from jax._src.errors import (
     TracerIntegerConversionError, UnexpectedTracerError)
 from jax._src import linear_util as lu
 from jax._src.tree_util import tree_flatten, tree_unflatten
+from jax._src import repro
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, cache,
@@ -80,6 +81,12 @@ _TRACER_ERROR_NUM_TRACEBACK_FRAMES = config.int_flag(
 )
 
 def identity(x): return x
+
+repro_enabled = repro.repro_enabled
+repro_boundary = repro.repro_boundary
+wrap_repro_boundary_callable = repro.wrap_callable
+register_repro_emitter = repro.register_emitter
+bypass_repro_wrapper = repro.bypass_repro_wrapper
 
 # -------------------- jaxprs --------------------
 
@@ -631,7 +638,14 @@ class Primitive:
     args = args if self.skip_canonicalization else map(canonicalize_value, args)
     return self._true_bind(*args, **params)
 
+  # Subclasses of Primitive have their own `bind`, which can call to `_true_bind`
   def _true_bind(self, *args, **params):
+    if repro_enabled():
+      return repro.true_bind_primitive(self, args, params)
+    else:
+      return self._true_bind_internal(*args, **params)
+
+  def _true_bind_internal(self, *args, **params):
     for arg in args:
       if isinstance(arg, Tracer) and not arg._trace.is_valid():
         raise escaped_tracer_error(arg)
