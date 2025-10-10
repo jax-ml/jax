@@ -316,6 +316,9 @@ def _infer_memref_subview_transforms(
 
   if transforms is None:
     return None
+  if not transforms:
+    empty = ir.ArrayAttr.get([])
+    return [empty], [empty]
 
   # Here, we have some transforms to propagate one way or the other. For now,
   # we implement only the following basic propagation rules:

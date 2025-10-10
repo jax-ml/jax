@@ -602,8 +602,16 @@ def _launch(
           c(profiler_start, index),
           lowering_semantics,
       )
+      if lowering_semantics == LoweringSemantics.Warpgroup:
+        prof_smem = dialect.with_transforms(prof_smem, ir.ArrayAttr.get([]))
+        wrap_in_custom_primitive = True
+      else:
+        wrap_in_custom_primitive = False
       prof = profiler.OnDeviceProfiler(
-          profiler_spec, prof_smem, maybe_prof_buffer
+          profiler_spec,
+          prof_smem,
+          maybe_prof_buffer,
+          wrap_in_custom_primitive,
       )
     else:
       prof = None
