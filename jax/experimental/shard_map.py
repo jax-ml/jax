@@ -28,9 +28,8 @@ def shard_map(
   """Map a function over shards of data.
 
   Note:
-    ``shard_map`` is an experimental API, and still subject to change. For an
-    introduction to sharded data, refer to :ref:`sharded-computation`. For a more
-    in-depth look at using ``shard_map``, refer to `SPMD multi-device parallelism with shard_map`_.
+    :func:`jax.experimental.shard_map.shard_map` is a legacy API; please use
+    :func:`jax.shard_map` instead.
 
   Args:
     f: callable to be mapped. Each application of ``f``, or "instance" of ``f``,
