@@ -667,39 +667,26 @@ def _dtype_and_weaktype(value: Any) -> tuple[DType, bool]:
   """Return a (dtype, weak_type) tuple for the given input."""
   return dtype(value), any(value is typ for typ in _weak_types) or is_weakly_typed(value)
 
-def _type_promotion_lattice(strict: bool, x64: bool) -> dict[JAXType, list[JAXType]]:
-  """
-  Return the type promotion lattice in the form of a DAG.
+
+def _type_promotion_lattice(
+    numpy_dtype_promotion: config.NumpyDtypePromotion,
+    x64: bool,
+) -> dict[JAXType, list[JAXType]]:
+  """Return the type promotion lattice in the form of a DAG.
+
   This DAG maps each type to its immediately higher types on the lattice.
 
   Args:
-    strict: use strict promotion lattice?
+    numpy_dtype_promotion: the numpy_dtype_promotion mode.
     x64: allow promotions that form x64 types from non-x64 inputs?
   """
   b1, = _bool_types
-  uint2, uint4, u1, u2, u4, u8, int2, int4, i1, i2, i4, i8 = _int_types
-  *f1_types, bf, f2, f4, f8 = _float_types
-  c4, c8 = _complex_types
+  u2, u4, u8, u16, u32, u64, i2, i4, i8, i16, i32, i64 = _int_types
+  *custom_float_types, bf16, f16, f32, f64 = _float_types
+  c64, c128 = _complex_types
   i_, f_, c_ = _weak_types
-  if not strict:
-    out: dict[JAXType, list[JAXType]]
-    out = {
-      b1: [i_],
-      i_: [u1, uint2, uint4, i1, int2, int4],
-      uint2: [], uint4: [], u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
-      int2: [], int4: [], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
-      f_: [*f1_types, bf, f2, c_],
-      **{t: [] for t in f1_types}, bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
-      c_: [c4], c4: [c8], c8: [],
-    }
-    # If x64 mode is not enabled, then we want to avoid any promotions that form
-    # 64-bit types from non-64-bit inputs. There's only one of these in the
-    # entire promotion lattice, namely u4xi4->i8, which we can avoid by
-    # replacing it with u4xi4->i4.
-    if not x64:
-      out[u4] = [i4, u8]
-    return out
-  else:
+
+  if numpy_dtype_promotion == config.NumpyDtypePromotion.STRICT:
     return {
       i_: [f_] + _int_types,
       f_: [c_] + _float_types,
@@ -707,8 +694,58 @@ def _type_promotion_lattice(strict: bool, x64: bool) -> dict[JAXType, list[JAXTy
       **{t: [] for t in _jax_types}
     }
 
-def _make_lattice_upper_bounds(strict: bool, x64: bool) -> dict[JAXType, set[JAXType]]:
-  lattice = _type_promotion_lattice(strict, x64)
+  out: dict[JAXType, list[JAXType]] = {
+      b1: [i_],
+      i_: [i2, i4, i8, u2, u4, u8],
+      u2: [],
+      u4: [],
+      u8: [i16, u16],
+      u16: [i32, u32],
+      u32: [i64, u64],
+      u64: [f_],
+      i2: [],
+      i4: [],
+      i8: [i16],
+      i16: [i32],
+      i32: [i64],
+      i64: [f_],
+      f_: [*custom_float_types, bf16, f16, c_],
+      **{t: [] for t in custom_float_types},
+      bf16: [f32],
+      f16: [f32],
+      f32: [f64, c64],
+      f64: [c128],
+      c_: [c64],
+      c64: [c128],
+      c128: [],
+  }
+  # If x64 mode is not enabled, then we want to avoid any promotions that form
+  # 64-bit types from non-64-bit inputs. There's only one of these in the
+  # entire promotion lattice, namely u32xi32->i64, which we can avoid by
+  # replacing it with u32xi32->i32.
+  if not x64:
+    out[u32] = [i32, u64]
+
+  if numpy_dtype_promotion == config.NumpyDtypePromotion.RELAXED:
+    out[i_] = [i2, u2]
+    out[f_] = [*custom_float_types, c_]
+    out[u2] = [i4, u4]
+    out[u4] = [i8, u8]
+    out[i2] = [i4]
+    out[i4] = [i8]
+    # TODO(cjfj): Add paths from f4 types to f8 types.
+    for t in custom_float_types:
+      out[t] = [f16, bf16]
+
+  return out
+
+
+@functools.cache
+def _get_lattice_upper_bounds(
+    numpy_dtype_promotion: config.NumpyDtypePromotion,
+    x64: bool,
+) -> dict[JAXType, set[JAXType]]:
+  lattice = _type_promotion_lattice(numpy_dtype_promotion, x64)
   upper_bounds = {node: {node} for node in lattice}
   for n in lattice:
     while True:
@@ -720,12 +757,10 @@ def _make_lattice_upper_bounds(strict: bool, x64: bool) -> dict[JAXType, set[JAX
       upper_bounds[n] |= new_upper_bounds
   return upper_bounds
 
-_standard_x64_lattice_ubs = _make_lattice_upper_bounds(strict=False, x64=True)
-_standard_x32_lattice_ubs = _make_lattice_upper_bounds(strict=False, x64=False)
-_strict_lattice_ubs = _make_lattice_upper_bounds(strict=True, x64=True)
 
 class TypePromotionError(ValueError):
   pass
+
 
 # We don't use util.memoize because there is no implicit X64 dependence.
 @functools.lru_cache(512)
@@ -757,16 +792,7 @@ def _least_upper_bound(jax_numpy_dtype_promotion: config.NumpyDtypePromotion,
   #   ∀ c ∈ N: CUB(N) ⊆ UB(c)
   # So if N ∩ CUB(N) is nonempty, if follows that LUB(N) = N ∩ CUB(N).
   N = set(nodes)
-  if jax_numpy_dtype_promotion == config.NumpyDtypePromotion.STRICT:
-    UB = _strict_lattice_ubs
-  elif jax_numpy_dtype_promotion == config.NumpyDtypePromotion.STANDARD:
-    if x64:
-      UB = _standard_x64_lattice_ubs
-    else:
-      UB = _standard_x32_lattice_ubs
-  else:
-    raise ValueError(
-      f"Unexpected value of jax_numpy_dtype_promotion={jax_numpy_dtype_promotion!r}")
+  UB = _get_lattice_upper_bounds(jax_numpy_dtype_promotion, x64)
   try:
     bounds = [UB[n] for n in N]
   except KeyError:
