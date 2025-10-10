@@ -5462,6 +5462,7 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
       layout_in.bitwidth(),
       layout_out.bitwidth());  // This should be guaranteed through MLIR
                                // verifier plus our layoutIsValidForValue check
+  const int8_t bitwidth = layout_in.bitwidth();
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
   const auto src_ty = cast<VectorType>(op.getOperand(0).getType());
   const ArrayRef<int64_t> src_shape = src_ty.getShape();
@@ -5545,82 +5546,187 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
           layout_out.tileArrayImplicitShape(dst_shape, ctx.target_shape));
       return dst_vregs_local;
     } else if (
-        // Sublane shuffle within a vreg if there is no padding and each vreg
-        // holds a contiguous slice of the flattened data.
+        // Row shuffle within a vreg if there is no padding and each vreg holds
+        // a contiguous slice of the flattened data.
         dst_shape.size() > 1 && src_shape.size() > 1 &&
         dst_shape.back() == dst_vreg_slice[1] &&
         dst_shape[dst_shape.size() - 2] % dst_vreg_slice[0] == 0 &&
         src_shape.back() == src_vreg_slice[1] &&
         src_shape[src_shape.size() - 2] % src_vreg_slice[0] == 0 &&
+        (bitwidth == 32 || bitwidth == 16 || bitwidth == 8) &&
         layout_in.offsets() == LayoutOffsets{0, 0} &&
-        layout_in.bitwidth() == 32 &&
         layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-        layout_in.tiling()[0] <= ctx.target_shape[0] &&
+        layout_in.tiling()[0] <= ctx.target_shape[0] * layout_in.packing() &&
         layout_in.tiling()[1] == ctx.target_shape[1] &&
         layout_out.offsets() == LayoutOffsets{0, 0} &&
-        layout_out.bitwidth() == 32 &&
         layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-        layout_out.tiling()[0] <= ctx.target_shape[0] &&
+        layout_out.tiling()[0] <= ctx.target_shape[0] * layout_out.packing() &&
         layout_out.tiling()[1] == ctx.target_shape[1]) {
       auto [sublane_count, lane_count] = ctx.target_shape;
       auto dst_vregs_shape =
           layout_out.tileArrayShape(false, false, dst_shape, ctx.target_shape);
       auto src_vregs_shape =
           layout_in.tileArrayShape(false, false, src_shape, ctx.target_shape);
-      std::array<int64_t, 2> src_sublane_slice = {
-          src_vreg_slice[0], src_vreg_slice[1] / lane_count};
-      std::array<int64_t, 2> dst_sublane_slice = {
-          dst_vreg_slice[0], dst_vreg_slice[1] / lane_count};
-      // Each vreg holds a contiguous slice of the flattened data and sublane
-      // indices are in "column-major order". For example, (4, 256) with (4,
-      // 128) tiling reshapes to (2, 512) with (2, 128) tiling:
-      //
-      //      src vreg           dst vreg indexed by src sublane
-      //
-      //   0     128    256       0     128    256    384    512
-      // 0 +------+------+      0 +------+------+------+------+
-      //   | SL 0 | SL 4 |        | SL 0 | SL 4 | SL 1 | SL 5 |
-      // 1 +------+------+      1 +------+------+------+------+
-      //   | SL 1 | SL 5 |        | SL 2 | SL 6 | SL 3 | SL 7 |
-      // 2 +------+------+      2 +------+------+------+------+
-      //   | SL 2 | SL 6 |
-      // 3 +------+------+
-      //   | SL 3 | SL 7 |
-      // 4 +------+------+
-      //
-      // The shuffle pattern is a sequence of the sublane index in the src vreg
-      // when traversing the dst tiles in column-major order.
-      SmallVector<int32_t> shuffle_pattern;
-      for (int32_t dst_col_index = 0;
-           dst_col_index < dst_sublane_slice[dst_sublane_slice.size() - 1];
-           ++dst_col_index) {
-        for (int32_t dst_row_index = 0;
-             dst_row_index < dst_sublane_slice[dst_sublane_slice.size() - 2];
-             ++dst_row_index) {
-          // Linear index in row-major order is the same in both src and dst
-          // because reshape traverses the data in row-major order.
-          int32_t linear_index_in_row_major =
-              dst_row_index * dst_sublane_slice[dst_sublane_slice.size() - 1] +
-              dst_col_index;
-          int32_t src_row_index =
-              linear_index_in_row_major /
-              src_sublane_slice[src_sublane_slice.size() - 1];
-          int32_t src_col_index =
-              linear_index_in_row_major %
-              src_sublane_slice[src_sublane_slice.size() - 1];
-          int32_t src_linear_index_in_col_major =
-              src_col_index * src_sublane_slice[src_sublane_slice.size() - 2] +
-              src_row_index;
-          shuffle_pattern.push_back(src_linear_index_in_col_major);
+      if (bitwidth == 32) {
+        // For 32 bit data, a sublane is effectively a physical row.
+        std::array<int64_t, 2> src_sublane_slice = {
+            src_vreg_slice[0], src_vreg_slice[1] / lane_count};
+        std::array<int64_t, 2> dst_sublane_slice = {
+            dst_vreg_slice[0], dst_vreg_slice[1] / lane_count};
+        // Each vreg holds a contiguous slice of the flattened data and sublane
+        // indices are in "column-major order". For example, (4, 256) with (4,
+        // 128) tiling reshapes to (2, 512) with (2, 128) tiling:
+        //
+        //      src vreg           dst vreg indexed by src sublane
+        //
+        //   0     128    256       0     128    256    384    512
+        // 0 +------+------+      0 +------+------+------+------+
+        //   | SL 0 | SL 4 |        | SL 0 | SL 4 | SL 1 | SL 5 |
+        // 1 +------+------+      1 +------+------+------+------+
+        //   | SL 1 | SL 5 |        | SL 2 | SL 6 | SL 3 | SL 7 |
+        // 2 +------+------+      2 +------+------+------+------+
+        //   | SL 2 | SL 6 |
+        // 3 +------+------+
+        //   | SL 3 | SL 7 |
+        // 4 +------+------+
+        //
+        // The shuffle pattern is a sequence of the sublane index in the src
+        // vreg when traversing the dst tiles in column-major order.
+        SmallVector<int32_t> shuffle_pattern;
+        for (int32_t dst_col_index = 0;
+             dst_col_index < dst_sublane_slice[dst_sublane_slice.size() - 1];
+             ++dst_col_index) {
+          for (int32_t dst_row_index = 0;
+               dst_row_index < dst_sublane_slice[dst_sublane_slice.size() - 2];
+               ++dst_row_index) {
+            // Linear index in row-major order is the same in both src and dst
+            // because reshape traverses the data in row-major order.
+            int32_t linear_index_in_row_major =
+                dst_row_index *
+                    dst_sublane_slice[dst_sublane_slice.size() - 1] +
+                dst_col_index;
+            int32_t src_row_index =
+                linear_index_in_row_major /
+                src_sublane_slice[src_sublane_slice.size() - 1];
+            int32_t src_col_index =
+                linear_index_in_row_major %
+                src_sublane_slice[src_sublane_slice.size() - 1];
+            int32_t src_linear_index_in_col_major =
+                src_col_index *
+                    src_sublane_slice[src_sublane_slice.size() - 2] +
+                src_row_index;
+            shuffle_pattern.push_back(src_linear_index_in_col_major);
+          }
         }
+        // Modify in place because vreg is one-to-one mapping between src and
+        // dst.
+        src_vregs.Each(
+            [&](absl::Span<const int64_t> src_vreg_indices, Value* src_vreg) {
+              *src_vreg = builder.create<tpu::SublaneShuffleOp>(
+                  src_vreg->getLoc(), src_vreg->getType(), *src_vreg, *src_vreg,
+                  builder.getDenseI32ArrayAttr(shuffle_pattern));
+            });
+      } else {
+        // TODO(twsung): Unify reshape as retiling. Question: `changeTiling` is
+        // one-to-many/many-to-one/many-to-many vreg mapping, while this kind of
+        // reshape is one-to-one mapping.
+        // For packed type, row shuffle within a vreg is implemented by
+        // packing/unpacking the data to/from interleaved/compressed format.
+        //
+        // Note that we can unpack to 32 bit and use sublane shuffle scheme
+        // above, but we lack of general support for SublaneShuffleOp. Even if
+        // we do, it doesn't seem to be faster than the following.
+        //
+        // For example, 16 bit data from (16, 128) with tiling (16, 128)
+        // reshapes to (8, 256) with tiling (8, 128). R{N} indicates a [1, 128]
+        // chunk. (R0, R1), e.t.c., forms a [1, 256] chunk, with
+        // R0 = (R0, R1)[:, 0:128] and R1 = (R0, R1)[:, 128:256]. Note that vreg
+        // is packed in compressed format so that every `packing_factor` logical
+        // rows form a sublane of vreg. The right handside of the example hence
+        // shows the first lane of vregs, with "|" indicating the concatenation
+        // of higher and lower bits in a 32-bit word.
+        //
+        //    logical rows of src               src vreg, first lane
+        //  R indicates a [1, 128] chunk
+        //
+        //          R0                            R1[0, 0] |  R0[0, 0]
+        //          R1                            R3[0, 0] |  R2[0, 0]
+        //          R2                            R5[0, 0] |  R4[0, 0]
+        //          R3                            R7[0, 0] |  R6[0, 0]
+        //          R4                            R9[0, 0] |  R8[0, 0]
+        //          R5                           R11[0, 0] | R10[0, 0]
+        //          R6                           R13[0, 0] | R12[0, 0]
+        //          R7                           R15[0, 0] | R14[0, 0]
+        //          R8
+        //          R9
+        //          R10
+        //          R11
+        //          R12
+        //          R13
+        //          R14
+        //          R15
+        //
+        //    logical rows of dst               dst vreg, first lane
+        //        (R0, R1)                        R2[0, 0] |  R0[0, 0]
+        //        (R2, R3)                        R6[0, 0] |  R4[0, 0]
+        //        (R4, R5)                       R10[0, 0] |  R8[0, 0]
+        //        (R6, R7)                       R14[0, 0] | R12[0, 0]
+        //        (R8, R9)                        R3[0, 0] |  R1[0, 0]
+        //        (R10, R11)                      R7[0, 0] |  R5[0, 0]
+        //        (R12, R13)                     R11[0, 0] |  R9[0, 0]
+        //        (R14, R15)                     R15[0, 0] | R13[0, 0]
+        //
+        // Then from src to dst, we can interleaved unpack `src_vreg` and
+        // compressed pack it to `dst_vreg`. On the other hand, from dst to src,
+        // we can compressed unpack `dst_vreg` and interleaved pack it to
+        // `src_vreg`.
+        //
+        // The pattern holds when we halve/double sublane tiling and
+        // double/halve last shape dimension. Therefore, we can keep applying
+        // the same algorithm until the sublane tilings match. Take 8-bit as an
+        // example, we can reshape (32, 128) with tiling (32, 128) to (16, 256)
+        // with tiling (16, 128) and then to (8, 512) with tiling (8, 128).
+        const int64_t src_sublane_tiling = layout_in.tiling()[0];
+        const int64_t dst_sublane_tiling = layout_out.tiling()[0];
+        CHECK(llvm::isPowerOf2_64(static_cast<uint64_t>(src_sublane_tiling)));
+        CHECK(llvm::isPowerOf2_64(static_cast<uint64_t>(dst_sublane_tiling)));
+        tpu::PackFormat unpack_format, pack_format;
+        if (src_sublane_tiling > dst_sublane_tiling) {
+          unpack_format = tpu::PackFormat::kInterleaved;
+          pack_format = tpu::PackFormat::kCompressed;
+        } else {
+          unpack_format = tpu::PackFormat::kCompressed;
+          pack_format = tpu::PackFormat::kInterleaved;
+        }
+        VectorType packed_vty = getNativeVregType(
+            builder.getIntegerType(src_ty.getElementTypeBitWidth()),
+            ctx.target_shape);
+        VectorType unpacked_vty = getNativeVregType(
+            builder.getIntegerType(src_ty.getElementTypeBitWidth() * 2),
+            ctx.target_shape);
+        src_vregs.Each([&](absl::Span<const int64_t> src_vreg_indices,
+                           Value* src_vreg) {
+          Value dst_vreg = builder.create<tpu::BitcastVregOp>(
+              src_vreg->getLoc(), packed_vty, *src_vreg);
+          int64_t from_sublane_tiling = src_sublane_tiling;
+          while (from_sublane_tiling != dst_sublane_tiling) {
+            std::array<Value, 2> src_parts;
+            for (int i = 0; i < src_parts.size(); ++i) {
+              src_parts[i] = builder.create<tpu::UnpackSubelementsOp>(
+                  src_vreg->getLoc(), unpacked_vty, dst_vreg, i, unpack_format);
+            }
+            dst_vreg = builder.create<tpu::PackSubelementsOp>(
+                src_vreg->getLoc(), packed_vty, src_parts, pack_format);
+            if (from_sublane_tiling > dst_sublane_tiling) {
+              from_sublane_tiling /= 2;
+            } else {
+              from_sublane_tiling *= 2;
+            }
+          }
+          *src_vreg = builder.create<tpu::BitcastVregOp>(
+              src_vreg->getLoc(), src_vreg->getType(), dst_vreg);
+        });
       }
-      // Modify in place because vreg is one-to-one mapping between src and dst.
-      src_vregs.Each(
-          [&](absl::Span<const int64_t> src_vreg_indices, Value* src_vreg) {
-            *src_vreg = builder.create<tpu::SublaneShuffleOp>(
-                src_vreg->getLoc(), src_vreg->getType(), *src_vreg, *src_vreg,
-                builder.getDenseI32ArrayAttr(shuffle_pattern));
-          });
       src_vregs.Reshape(dst_vregs_shape);
       return src_vregs;
     } else if (
