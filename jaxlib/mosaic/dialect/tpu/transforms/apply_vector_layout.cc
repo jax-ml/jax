@@ -6164,9 +6164,10 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
     if (src_ty.getRank() != 3) {
       return op.emitOpError("Not implemented: only 3D values supported");
     }
-    // TODO(b/448862637): We just need to step over in a loop.
-    if (*(src_ty.getShape().end() - 2) != packing) {
-      return op.emitOpError("Not implemented: second minor unequal to packing");
+    // TODO(b/448862637): We just need to pad.
+    if (*(src_ty.getShape().end() - 2) % packing != 0) {
+      return op.emitOpError(
+          "Not implemented: second minor not divisible by packing");
     }
     // TODO(b/448862637): We just need to pad below.
     if (*(src_ty.getShape().end() - 3) % packing != 0) {
@@ -6183,33 +6184,38 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
         getNativeVregType(src_ty.getElementType(), ctx.target_shape);
     for (int64_t minor_idx = 0; minor_idx < src_vregs.dimensions().back();
          ++minor_idx) {
-      for (int64_t third_minor_base_idx = 0;
-            third_minor_base_idx < *(src_vregs.dimensions().end() - 3);
-            third_minor_base_idx += packing) {
-        for (int64_t second_minor_idx = 0; second_minor_idx < packing;
-            ++second_minor_idx) {
-          SmallVector<Value> unpacked;
-          // We could have just interleaved unpacked the second_minor_idx part
-          // of the vreg in the loop below, but that ends up being more
-          // expensive than we need. Simple shifts do the trick. The high bits
-          // will be truncated by packing anyway.
-          for (int64_t third_minor_subidx = 0; third_minor_subidx < packing;
-               ++third_minor_subidx) {
-            Value vreg = src_vregs(third_minor_base_idx + third_minor_subidx, 0,
-                                   minor_idx);
-            vreg = tpu::BitcastVregOp::create(builder, int_32_ty, vreg);
-            vreg = arith::ShRUIOp::create(
-                builder, vreg,
-                getFullLikeVector(
-                    builder, cast<TypedValue<VectorType>>(vreg),
-                    builder.getI32IntegerAttr(second_minor_idx * bitwidth)));
-            unpacked.push_back(vreg);
+      for (int64_t second_minor_vreg_idx = 0;
+           second_minor_vreg_idx < *(src_vregs.dimensions().end() - 2);
+           ++second_minor_vreg_idx) {
+        for (int64_t third_minor_base_idx = 0;
+             third_minor_base_idx < *(src_vregs.dimensions().end() - 3);
+             third_minor_base_idx += packing) {
+          for (int64_t second_minor_subidx = 0; second_minor_subidx < packing;
+               ++second_minor_subidx) {
+            SmallVector<Value> unpacked;
+            // We could have just interleaved unpacked the second_minor_idx part
+            // of the vreg in the loop below, but that ends up being more
+            // expensive than we need. Simple shifts do the trick. The high bits
+            // will be truncated by packing anyway.
+            for (int64_t third_minor_subidx = 0; third_minor_subidx < packing;
+                 ++third_minor_subidx) {
+              Value vreg = src_vregs(third_minor_base_idx + third_minor_subidx,
+                                     second_minor_vreg_idx, minor_idx);
+              vreg = tpu::BitcastVregOp::create(builder, int_32_ty, vreg);
+              vreg = arith::ShRUIOp::create(
+                  builder, vreg,
+                  getFullLikeVector(builder, cast<TypedValue<VectorType>>(vreg),
+                                    builder.getI32IntegerAttr(
+                                        second_minor_subidx * bitwidth)));
+              unpacked.push_back(vreg);
+            }
+            Value repacked_i32 =
+                tpu::PackSubelementsOp::create(builder, int_packed_ty, unpacked,
+                                               tpu::PackFormat::kInterleaved);
+            dst_vregs(second_minor_vreg_idx * packing + second_minor_subidx,
+                      third_minor_base_idx / packing, minor_idx) =
+                tpu::BitcastVregOp::create(builder, vreg_ty, repacked_i32);
           }
-          Value repacked_i32 = tpu::PackSubelementsOp::create(
-              builder, int_packed_ty, unpacked, tpu::PackFormat::kInterleaved);
-          dst_vregs(second_minor_idx, third_minor_base_idx / packing,
-                    minor_idx) =
-              tpu::BitcastVregOp::create(builder, vreg_ty, repacked_i32);
         }
       }
     }
