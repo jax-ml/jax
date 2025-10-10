@@ -327,15 +327,10 @@ class OnDeviceProfiler:
     self.entries_per_wg = spec.entries_per_warpgroup
     self.wrap_in_custom_primitive = wrap_in_custom_primitive
     wg_idx = warpgroup_idx(sync=False)
-    smem_buffer = memref_slice(
-        smem_buffer,
-        ds(
-            arith.index_cast(
-                index, arith.muli(wg_idx, c(self.entries_per_wg, i32))
-            ),
-            self.entries_per_wg,
-        ),
+    wg_offset = arith.index_cast(
+        index, arith.muli(wg_idx, c(self.entries_per_wg, i32))
     )
+    smem_buffer = memref_slice(smem_buffer, ds(wg_offset, self.entries_per_wg))
     is_profiling_thread = arith.cmpi(
         arith.CmpIPredicate.eq,
         arith.remui(thread_idx(), c(WARPGROUP_SIZE, i32)),
