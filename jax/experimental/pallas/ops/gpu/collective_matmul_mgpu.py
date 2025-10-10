@@ -74,7 +74,7 @@ def all_gather_lhs_matmul(
 
   num_sms = jax.devices()[0].core_count  # 132 for H100 SXM GPUs.
 
-  def kernel_body(lhs_local_ref, rhs_ref, out_ref, scratch_ref, out_smem):
+  def kernel_body(lhs_local_ref, rhs_ref, out_ref, scratch_ref):
     received_sem = pl.get_global(plgpu.SemaphoreType.REGULAR)
     wg_idx = lax.axis_index("wg")
     dev_id = lax.axis_index(axis_name)
@@ -115,7 +115,6 @@ def all_gather_lhs_matmul(
           lhs_source_ref,  # Use the lhs from previous step.
           rhs_ref,  # Use the same rhs for all steps.
           out_ref.at[out_device_m_slice],  # Use a slice of the output.
-          out_smem,
           config=config,
           pipeline_callback=functools.partial(
               send_lhs,
@@ -146,13 +145,6 @@ def all_gather_lhs_matmul(
     # Make sure all copies are fully done.
     plgpu.wait_smem_to_gmem(0, wait_read_only=True)
 
-  num_out_slots = min(2, (tile_m * tile_n) // (epi_tile_m * epi_tile_n))
-  out_swizzle = plgpu.find_swizzle(epi_tile_n * jnp.dtype(dtype).itemsize * 8)
-  out_swizzle_elems = out_swizzle // jnp.dtype(dtype).itemsize
-  out_transforms = (
-      plgpu.TilingTransform((8, out_swizzle_elems)),
-      plgpu.SwizzleTransform(out_swizzle),
-  )
   result, _ = plgpu.kernel(
       kernel_body,
       out_shape=[
@@ -160,13 +152,6 @@ def all_gather_lhs_matmul(
           jax.ShapeDtypeStruct((axis_size * m_shard, n_shard), dtype),
           # The scratch buffer used for the all-gather.
           jax.ShapeDtypeStruct((num_devices - 1, m_shard, k), dtype),
-      ],
-      scratch_shapes=[
-          plgpu.SMEM(
-              (2, num_out_slots, epi_tile_m, epi_tile_n),
-              dtype,
-              transforms=out_transforms,
-          ),
       ],
       grid=(num_sms,),
       grid_names=("cluster_grid",),

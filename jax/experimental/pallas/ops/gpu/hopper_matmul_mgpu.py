@@ -55,7 +55,7 @@ class TuningConfig:
 
 
 # pipeline_callback and delay_release are only used for collective matmuls.
-def kernel(a_gmem, b_gmem, out_gmem, out_smem, config: TuningConfig,
+def kernel(a_gmem, b_gmem, out_gmem, config: TuningConfig,
            pipeline_callback=None, delay_release=0):
   dtype = a_gmem.dtype
   assert b_gmem.dtype == dtype
@@ -84,14 +84,16 @@ def kernel(a_gmem, b_gmem, out_gmem, out_smem, config: TuningConfig,
   n_iters = n // cluster_tile_n
   k_iters = k // tile_k
 
-  _2, out_slots, epi_tile_m, epi_tile_n = out_smem.shape
-  assert _2 == 2  # We have 2 compute warpgroups.
-  # Need 2 slots, unless there's only one epilogue tile.
-  assert out_slots == (1 + (epi_tile_m != tile_m or epi_tile_n != tile_n))
-  assert tile_n % epi_tile_n == 0
-  assert tile_m % epi_tile_m == 0
-  assert epi_tile_m == config.epi_tile_m
-  assert epi_tile_n == config.epi_tile_n
+  epi_tile_m = config.epi_tile_m or tile_m
+  epi_tile_n = config.epi_tile_n or tile_n
+  # We don't need multiple slots if there's only one epilogue tile.
+  num_out_slots = min(2, (tile_m * tile_n) // (epi_tile_m * epi_tile_n))
+  out_swizzle = plgpu.find_swizzle(epi_tile_n * jnp.dtype(dtype).itemsize * 8)
+  out_swizzle_elems = out_swizzle // jnp.dtype(dtype).itemsize
+  out_transforms = (
+      plgpu.TilingTransform((8, out_swizzle_elems)),
+      plgpu.SwizzleTransform(out_swizzle),
+  )
 
   def get_pipeline(pipeline_body, compute_context):
     return plgpu.emit_pipeline_warp_specialized(
@@ -131,9 +133,14 @@ def kernel(a_gmem, b_gmem, out_gmem, out_smem, config: TuningConfig,
   @functools.partial(
       pl.run_scoped,
       pipeline_allocs=get_pipeline(ignore, ignore).get_allocations(a_gmem, b_gmem),
+      out_smem=plgpu.SMEM(
+          (2, num_out_slots, epi_tile_m, epi_tile_n),
+          dtype,
+          transforms=out_transforms,
+      ),
       collective_axes="wg",
   )
-  def _pipeline_scope(pipeline_allocs):
+  def _pipeline_scope(pipeline_allocs, out_smem):
     wg_idx = lax.axis_index("wg")
     cta_idx = lax.axis_index("cluster")
     @plgpu.nd_loop((m_iters * n_iters,), collective_axes="cluster_grid")
@@ -218,14 +225,6 @@ def matmul(a, b, config: TuningConfig):
   epi_tile_m = config.epi_tile_m or tile_m
   config = dataclasses.replace(config, epi_tile_n=epi_tile_n, epi_tile_m=epi_tile_m)
 
-  # We don't need multiple slots if there's only one epilogue tile.
-  num_out_slots = min(2, (tile_m * tile_n) // (epi_tile_m * epi_tile_n))
-  out_swizzle = plgpu.find_swizzle(epi_tile_n * jnp.dtype(dtype).itemsize * 8)
-  out_swizzle_elems = out_swizzle // jnp.dtype(dtype).itemsize
-  out_transforms = (
-      plgpu.TilingTransform((8, out_swizzle_elems)),
-      plgpu.SwizzleTransform(out_swizzle),
-  )
   num_sms = backend.get_default_device().core_count
   cluster_size = 1 + (config.cluster_dimension is not None)
   f = plgpu.kernel(
@@ -237,13 +236,6 @@ def matmul(a, b, config: TuningConfig):
       cluster_names=("cluster",),
       num_threads=3,
       thread_name="wg",
-      scratch_shapes=dict(
-          out_smem=plgpu.SMEM(
-              (2, num_out_slots, epi_tile_m, epi_tile_n),
-              dtype,
-              transforms=out_transforms,
-          )
-      ),
   )
   return f(a, b)
 
