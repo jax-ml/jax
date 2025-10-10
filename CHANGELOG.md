@@ -84,6 +84,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.experimental.enable_x64` and {func}`jax.experimental.disable_x64`
     are deprecated in favor of the new non-experimental context manager
     {func}`jax.enable_x64`.
+  * {func}`jax.experimental.shard_map.shard_map` is deprecated; going forward use
+    {func}`jax.shard_map`.
 
 ## JAX 0.7.2 (September 16, 2025)
 
