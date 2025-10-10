@@ -323,12 +323,6 @@ def _load_lowering_rule(
   assert isinstance(ref_aval, state.AbstractRef)
   [out_aval] = ctx.avals_out
   assert isinstance(out_aval, jax_core.ShapedArray)
-  in_smem = ref_aval.memory_space is tpu_core.MemorySpace.SMEM
-  if in_smem:
-    if out_aval.ndim:
-      raise NotImplementedError("Get can only load scalars from SMEM")
-  else:
-    _check_aval_is_supported("Get", out_aval)
 
   transforms = list(jax.tree.unflatten(tree, flat_transforms))
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
@@ -350,10 +344,15 @@ def _load_lowering_rule(
         "Get only supports slices with stride 1, got {strides}"
     )
 
-  if in_smem:
+  if not out_aval.ndim:
     if mask is not None:
-      raise NotImplementedError("Get does not support masked loads from SMEM")
+      raise NotImplementedError("Get does not support masked scalar loads")
     return memref.load(ref, starts)
+
+  if ref_aval.memory_space is tpu_core.MemorySpace.SMEM:
+    raise NotImplementedError("Get can only load scalars from SMEM")
+  else:
+    _check_aval_is_supported("Get", out_aval)
 
   vec_type = ir.VectorType.get(
       out_aval.shape, _dtype_to_ir_type(ref_aval.dtype)
@@ -377,13 +376,6 @@ def _store_lowering_rule(
   assert isinstance(ref_aval, state.AbstractRef)
   [out_aval] = ctx.avals_out
   assert isinstance(out_aval, jax_core.ShapedArray)
-
-  in_smem = ref_aval.memory_space is tpu_core.MemorySpace.SMEM
-  if in_smem:
-    if out_aval.ndim:
-      raise NotImplementedError("Swap can only store scalars to SMEM")
-  else:
-    _check_aval_is_supported("Swap", out_aval)
 
   transforms = list(jax.tree.unflatten(tree, flat_transforms))
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
@@ -409,16 +401,21 @@ def _store_lowering_rule(
         "Swap only supports slices with stride 1, got {strides}"
     )
 
-  if in_smem:
+  if not out_aval.ndim:
     if mask is not None:
-      raise NotImplementedError("Swap does not support masked stores to SMEM")
+      raise NotImplementedError("Swap does not support masked scalar stores")
     if add:
       # TODO(slebedev): We can use memref.atomic_rmw here, but the SC compiler
       # doesn't support it yet.
-      raise NotImplementedError("Swap does not support atomic adds to SMEM")
+      raise NotImplementedError("Swap does not support atomic scalar adds")
     old_val = memref.load(ref, starts)
     memref.store(val, ref, starts)
     return old_val
+
+  if ref_aval.memory_space is tpu_core.MemorySpace.SMEM:
+    raise NotImplementedError("Swap can only store scalars to SMEM")
+  else:
+    _check_aval_is_supported("Swap", out_aval)
 
   vec_type = ir.VectorType.get(
       out_aval.shape, _dtype_to_ir_type(ref_aval.dtype)

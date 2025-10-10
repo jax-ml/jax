@@ -728,6 +728,22 @@ class VectorSubcoreTest(PallasSCTest):
           x_ref.at[pl.ds(2, 8)], mask=jnp.arange(8) % 2 == 0)
     np.testing.assert_array_equal(kernel(x)[5:13:2], x[2:6])
 
+  def test_scalar_load_store(self):
+
+    @vector_subcore_kernel(
+        in_specs=(pl.BlockSpec(memory_space=pltpu.HBM),),
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        out_shape=jax.ShapeDtypeStruct((8,), jnp.int32),
+        scratch_shapes=(pltpu.VMEM((1,), jnp.int32),),
+    )
+    def kernel(x_ref, o_ref, tmp_ref):
+      pltpu.sync_copy(x_ref, tmp_ref)
+      o_ref[...] = lax.broadcast(tmp_ref[0], o_ref.shape)
+
+    np.testing.assert_array_equal(
+        kernel(jnp.ones((1,), jnp.int32)), jnp.ones((8,), jnp.int32)
+    )
+
   @parameterized.named_parameters(
       ("mixed", [0, 0, 1, 0, 1, 0, 0, 0], 2),
       ("all_zero", [0, 0, 0, 0, 0, 0, 0, 0], 8),
