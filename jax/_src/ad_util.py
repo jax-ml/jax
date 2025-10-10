@@ -73,7 +73,10 @@ class Zero:
     return f'Zero({self.aval})'
   @staticmethod
   def from_primal_value(val: Any) -> Zero:
+    # TODO(mattjj,yashkatariya): sometimes we want to_cotangent_aval...
     return Zero(get_aval(val).to_tangent_aval())
+  def instantiate(self):
+    return zeros_like_aval(self.aval)
 
 register_pytree_node(Zero, lambda z: ((), z.aval), lambda aval, _: Zero(aval))
 

@@ -2968,6 +2968,7 @@ reshard_p = core.Primitive('reshard')
 reshard_p.skip_canonicalization = True
 
 def _reshard_abstract_eval(aval, dst_sharding):
+  assert isinstance(aval, core.ShapedArray)
   if aval.sharding == dst_sharding:
     return aval
   return aval.update(sharding=dst_sharding)

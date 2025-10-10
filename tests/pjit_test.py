@@ -5144,14 +5144,14 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertEqual(out[1].sharding, arr2.sharding)
 
       jaxpr = jitted_grad.trace(arr1, arr2).jaxpr
-      bwd_jaxpr = jaxpr.eqns[-1]
-      expected_spec = [('broadcast_in_dim', P('x', None)),
-                      ('dot_general', P('x', None)),
-                      ('transpose', P(None, 'x')),
-                      ('dot_general', P('x', None))]
-      for eqn, spec in zip(bwd_jaxpr.params['jaxpr'].eqns, expected_spec):
-        self.assertEqual(eqn.primitive.name, spec[0])
-        self.assertEqual(eqn.outvars[0].aval.sharding.spec, spec[1])
+      bwd_jaxpr = next(e for e in reversed(jaxpr.eqns) if 'jaxpr' in e.params)
+      expected_spec = {'broadcast_in_dim': P('x', None),
+                       'dot_general': P('x', None),
+                       'transpose': P(None, 'x')}
+      for eqn in bwd_jaxpr.params['jaxpr'].eqns:
+        spec = expected_spec.get(eqn.primitive.name)
+        if spec is not None:
+          self.assertEqual(eqn.outvars[0].aval.sharding.spec, spec)
 
   @parameterized.named_parameters(
       ('fail1', P('x', None), P(None, 'x'),

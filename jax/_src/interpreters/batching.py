@@ -1221,6 +1221,10 @@ def broadcast(x, sz, axis, mesh_axis):
         x = core.pvary(x, tuple(spmd_names))
     return x
 
+def matchaxis2(axis_data, src, dst, x, sum_match=False):
+  return matchaxis(axis_data.name, axis_data.size, axis_data.explicit_mesh_axis,
+                   src, dst, x, sum_match)
+
 def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
   if dst == jumble_axis:
     x = bdim_at_front(x, src, sz)
