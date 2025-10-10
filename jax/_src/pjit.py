@@ -1833,16 +1833,16 @@ core.custom_typechecks[jit_p] = _pjit_typecheck
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_shardings, **_):
-  # jaxpr input effects are indexed to include jaxpr.constvars, but the pjit eqn
-  # should have effects indexed only on its explicit arguments
-  if jaxpr.constvars:
-    effs = {e.replace(input_index=e.input_index - len(jaxpr.constvars))
-            if isinstance(e, effects.JaxprInputEffect)
-            else e for e in jaxpr.effects}
-  else:
-    effs = jaxpr.effects
+  effs = _pjit_eqn_effects(jaxpr) if jaxpr.constvars else jaxpr.effects
   return jaxpr.out_avals, effs
 jit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
+
+def _pjit_eqn_effects(jaxpr):
+  # jaxpr input effects are indexed to include jaxpr.constvars, but the pjit eqn
+  # should have effects indexed only on its explicit arguments
+  effs = jaxpr.effects
+  return {e.replace(input_index=e.input_index - len(jaxpr.constvars))
+          if isinstance(e, effects.JaxprInputEffect) else e for e in effs}
 
 
 def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
@@ -2512,10 +2512,11 @@ def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
   if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
     return used_inputs, None
   else:
+    new_effs = _pjit_eqn_effects(dced_jaxpr)
     new_eqn = core.new_jaxpr_eqn(
         [v for v, used in zip(eqn.invars, used_inputs) if used],
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, dced_jaxpr.effects, eqn.source_info, eqn.ctx)
+        eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
     return used_inputs, new_eqn
 
 pe.dce_rules[jit_p] = dce_jaxpr_pjit_rule
