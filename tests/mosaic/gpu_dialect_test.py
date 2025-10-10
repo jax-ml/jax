@@ -1395,9 +1395,14 @@ class DialectLoweringTest(MosaicGpuTest):
           (4, 32), ir.BF16Type.get(), memory_space=mgpu_utils.smem()
       )
       vec1, vec2, ref = undefs(vec_ty, vec_ty, ref_ty)
-      mgpu.dialect.custom_primitive(
+      op = mgpu.dialect.CustomPrimitiveOp(
           [vec_ty], [vec1, vec2, ref], in_layouts, in_transforms, out_layouts
       )
+      args_ty = [arg.type for arg in op.operands_]
+      block = op.body.blocks.append(*args_ty)
+      with ir.InsertionPoint(block):
+        out = undefs(vec_ty)
+        mgpu.dialect.ReturnOp(out)
 
     if omit_in_layouts:
       error = "layout for each vector operand"

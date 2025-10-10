@@ -639,7 +639,7 @@ def MosaicGPU_CustomPrimitiveOp : Op<MosaicGPU_Dialect, "custom_primitive",
   );
 
   let results = (outs Variadic<AnyVectorOfAnyRank>);
-  let regions = (region AnyRegion:$body);
+  let regions = (region SizedRegion<1>:$body);
 
   let hasVerifier = 1;
 }
