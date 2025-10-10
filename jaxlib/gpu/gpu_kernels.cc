@@ -44,6 +44,8 @@ XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_csrlsvqr_ffi", "CUDA",
                          CsrlsvqrFfi);
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_orgqr_ffi", "CUDA",
                          OrgqrFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_potrf_ffi", "CUDA",
+                         PotrfFfi);
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_syevd_ffi", "CUDA",
                          SyevdFfi);
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_sytrd_ffi", "CUDA",

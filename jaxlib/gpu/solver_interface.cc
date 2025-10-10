@@ -131,6 +131,46 @@ JAX_GPU_DEFINE_ORGQR(gpuComplex, gpusolverDnCungqr);
 JAX_GPU_DEFINE_ORGQR(gpuDoubleComplex, gpusolverDnZungqr);
 #undef JAX_GPU_DEFINE_ORGQR
 
+// Cholesky decomposition: potrf
+
+#define JAX_GPU_DEFINE_POTRF(Type, Name)                                       \
+  template <>                                                                  \
+  absl::StatusOr<int> PotrfBufferSize<Type>(gpusolverDnHandle_t handle,        \
+                                            gpusolverFillMode_t uplo, int n) { \
+    int lwork;                                                                 \
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(                                         \
+        Name##_bufferSize(handle, uplo, n, /*A=*/nullptr, n, &lwork)));        \
+    return lwork;                                                              \
+  }                                                                            \
+                                                                               \
+  template <>                                                                  \
+  absl::Status Potrf<Type>(gpusolverDnHandle_t handle,                         \
+                           gpusolverFillMode_t uplo, int n, Type *a,           \
+                           Type *workspace, int lwork, int *info) {            \
+    return JAX_AS_STATUS(                                                      \
+        Name(handle, uplo, n, a, n, workspace, lwork, info));                  \
+  }
+
+JAX_GPU_DEFINE_POTRF(float, gpusolverDnSpotrf);
+JAX_GPU_DEFINE_POTRF(double, gpusolverDnDpotrf);
+JAX_GPU_DEFINE_POTRF(gpuComplex, gpusolverDnCpotrf);
+JAX_GPU_DEFINE_POTRF(gpuDoubleComplex, gpusolverDnZpotrf);
+#undef JAX_GPU_DEFINE_POTRF
+
+#define JAX_GPU_DEFINE_POTRF_BATCHED(Type, Name)                               \
+  template <>                                                                  \
+  absl::Status PotrfBatched<Type>(gpusolverDnHandle_t handle,                  \
+                                  gpusolverFillMode_t uplo, int n, Type **a,   \
+                                  int lda, int *info, int batch) {             \
+    return JAX_AS_STATUS(Name(handle, uplo, n, a, lda, info, batch));         \
+  }
+
+JAX_GPU_DEFINE_POTRF_BATCHED(float, gpusolverDnSpotrfBatched);
+JAX_GPU_DEFINE_POTRF_BATCHED(double, gpusolverDnDpotrfBatched);
+JAX_GPU_DEFINE_POTRF_BATCHED(gpuComplex, gpusolverDnCpotrfBatched);
+JAX_GPU_DEFINE_POTRF_BATCHED(gpuDoubleComplex, gpusolverDnZpotrfBatched);
+#undef JAX_GPU_DEFINE_POTRF_BATCHED
+
 // Symmetric (Hermitian) eigendecomposition:
 // * Jacobi algorithm: syevj/heevj (batches of matrices up to 32)
 // * QR algorithm: syevd/heevd

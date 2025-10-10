@@ -45,8 +45,8 @@ from jax._src.lib import cuda_versions
 from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib import lapack
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -865,11 +865,31 @@ def _cholesky_cpu_lowering(ctx, operand):
   return [_replace_not_ok_with_nan(ctx, batch_dims, ok, result, out_aval)]
 
 
+def _cholesky_gpu_lowering(ctx, operand, *, target_name_prefix):
+  # TODO(phawkins): remove forward compat path after Nov 10, 2025.
+  if ctx.is_forward_compat():
+    return _cholesky_lowering(ctx, operand)
+  operand_aval, = ctx.avals_in
+  out_aval, = ctx.avals_out
+  batch_dims = operand_aval.shape[:-2]
+  info_aval = ShapedArray(batch_dims, np.int32)
+  rule = _linalg_ffi_lowering(f"{target_name_prefix}solver_potrf_ffi",
+                              avals_out=[operand_aval, info_aval],
+                              operand_output_aliases={0: 0})
+  result, info = rule(ctx, operand, lower=True)
+  ok = mlir.compare_hlo(info, mlir.full_like_aval(ctx, 0, info_aval), "EQ",
+                        "SIGNED")
+  return [_replace_not_ok_with_nan(ctx, batch_dims, ok, result, out_aval)]
+
+
 cholesky_p = standard_linalg_primitive(
     (_float | _complex,), (2,), _cholesky_shape_rule, "cholesky")
 ad.primitive_jvps[cholesky_p] = _cholesky_jvp_rule
 mlir.register_lowering(cholesky_p, _cholesky_lowering)
 mlir.register_lowering(cholesky_p, _cholesky_cpu_lowering, platform="cpu")
+if jaxlib_version >= (0, 8, 0):
+  register_cpu_gpu_lowering(cholesky_p, _cholesky_gpu_lowering,
+                            supported_platforms=("cuda", "rocm"))
 
 
 # Cholesky update
