@@ -1491,6 +1491,13 @@ def LinalgVectorizationPass : Pass<"linalg-vectorization", "::mlir::func::FuncOp
   ];
 }
 
+def BasicBlockTraceInsertionPass : Pass<"basic-block-trace-insertion", "::mlir::func::FuncOp"> {
+  let dependentDialects = [
+    "::mlir::tpu::TPUDialect",
+  ];
+  let constructor = "::mlir::tpu::createBasicBlockTraceInsertionPass()";
+}
+
 def PreCanonicalizationOptimizationPass : Pass<"pre-canonicalization-optimization", "::mlir::func::FuncOp"> {
   let summary = "Fold matmul rhs tranpose into the op before layout inference";
   let constructor = "::mlir::tpu::createPreCanonicalizationOptimizationPass()";
