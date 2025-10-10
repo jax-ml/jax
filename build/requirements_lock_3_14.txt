@@ -4,6 +4,8 @@
 #
 #    bazel run //build:requirements.update
 #
+--index-url https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple
+
 absl-py==2.3.1 \
     --hash=sha256:a97820526f7fbfd2ec1bce83f3f25e3a14840dac0d8e02a0b71cd75db3f77fc9 \
     --hash=sha256:eeecf07f0c2a93ace0772c92e596ace6d3d3996c042b2128459aaae2a76de11d
@@ -36,9 +38,9 @@ execnet==2.1.1 \
     --hash=sha256:26dee51f1b80cebd6d0ca8e74dd8745419761d3bef34163928cbebbdc4749fdc \
     --hash=sha256:5189b52c6121c24feae288166ab41b32549c7e2348652736540b9e6e7d4e72e3
     # via pytest-xdist
-filelock==3.19.1 \
-    --hash=sha256:66eda1888b0171c998b35be2bcc0f6d75c388a7ce20c3f3f37aa8e96c2dddf58 \
-    --hash=sha256:d38e30481def20772f5baf097c122c3babc4fcdb7e14e57049eb9d88c6dc017d
+filelock==3.20.0 \
+    --hash=sha256:339b4732ffda5cd79b13f4e2711a31b0365ce445d95d243bb996273d072546a2 \
+    --hash=sha256:711e943b4ec6be42e1d4e6690b48dc175c822967466bb31c0c293f34334c13f4
     # via -r build/test-requirements.txt
 flatbuffers==25.9.23 \
     --hash=sha256:255538574d6cb6d0a79a17ec8bc0d30985913b87513a01cce8bcdb6b4c44d0e2 \
@@ -253,10 +255,10 @@ numpy-typing-compat==20250818.2.3 \
     --hash=sha256:72e83d535b635d668ba7315e43ae80be1469a6faea6fc96d312516f39b3d8fa5 \
     --hash=sha256:930413d34dd9083c0bf418815576222f1c66ea2d68950f447fd27ea1a78b26b0
     # via optype
-nvidia-cublas==13.0.2.14 ; sys_platform == "linux" \
-    --hash=sha256:0cf238ffdbe46c00cb9aa98e7bca745c223a5ca5a53e686ac8b3e5a08fe80d6c \
-    --hash=sha256:17165c296de689662b96e0ef4f21dfbff3092ff00d0e3e59470f5acb08c0f87d \
-    --hash=sha256:5f7a90456b1392db60e28719547ba6e00696bfa81304b6887cf287f9edf2c1d7
+nvidia-cublas==13.1.0.3 ; sys_platform == "linux" \
+    --hash=sha256:2a3b94a37def342471c59fad7856caee4926809a72dd5270155d6a31b5b277be \
+    --hash=sha256:c86fc7f7ae36d7528288c5d88098edcb7b02c633d262e7ddbb86b0ad91be5df2 \
+    --hash=sha256:ee8722c1f0145ab246bccb9e452153b5e0515fd094c3678df50b2a0888b8b171
     # via
     #   -r build/nvidia-requirements.txt
     #   nvidia-cudnn-cu13
@@ -306,10 +308,10 @@ nvidia-cuda-nvrtc-cu12==12.9.86 ; sys_platform == "linux" \
     --hash=sha256:210cf05005a447e29214e9ce50851e83fc5f4358df8b453155d5e1918094dcb4 \
     --hash=sha256:72972ebdcf504d69462d3bcd67e7b81edd25d0fb85a2c46d3ea3517666636349
     # via -r build/nvidia-requirements.txt
-nvidia-cuda-runtime==13.0.88 ; sys_platform == "linux" \
-    --hash=sha256:0156cf8f3453025938aab80bcca909506f4e82f1584a17736df7edeba882cc02 \
-    --hash=sha256:422a38f7c739ecbdd3a4b6ec7ed0a1d74db43d8e9bc26685f3d845638922b178 \
-    --hash=sha256:8ba16a33998ee3ee2bf11c8f13e36e3ff86a1d6ad165ffeee863d6eabd0b5f67
+nvidia-cuda-runtime==13.0.96 ; sys_platform == "linux" \
+    --hash=sha256:7f82250d7782aa23b6cfe765ecc7db554bd3c2870c43f3d1821f1d18aebf0548 \
+    --hash=sha256:ef9bcbe90493a2b9d810e43d249adb3d02e98dd30200d86607d8d02687c43f55 \
+    --hash=sha256:f79298c8a098cec150a597c8eba58ecdab96e3bdc4b9bc4f9983635031740492
     # via
     #   -r build/nvidia-requirements.txt
     #   nvidia-cuda-nvcc
@@ -318,15 +320,15 @@ nvidia-cuda-runtime-cu12==12.9.79 ; sys_platform == "linux" \
     --hash=sha256:83469a846206f2a733db0c42e223589ab62fd2fabac4432d2f8802de4bded0a4 \
     --hash=sha256:8e018af8fa02363876860388bd10ccb89eb9ab8fb0aa749aaf58430a9f7c4891
     # via -r build/nvidia-requirements.txt
-nvidia-cudnn-cu12==9.13.1.26 ; sys_platform == "linux" \
-    --hash=sha256:6fcee1ce6f379f183e889dadfb0c0125c30b46ca29b25cc74ee42ddd8572aac7 \
-    --hash=sha256:f13b69ac0d703b5e39ba9b8492848779d94d2b4e1cee5d73f017768f41570ea8 \
-    --hash=sha256:f4782db28b67abb5e8f4cfd6c8f8c4af9364cfbba6ccdd642e279ef2dec6970b
+nvidia-cudnn-cu12==9.14.0.64 ; sys_platform == "linux" \
+    --hash=sha256:02a52983f2438a023bf8d491c0f904f2679d5ec9a436aad8222b9b228d2870e1 \
+    --hash=sha256:c06ac5ea9e199bcee41f27615d50110ab21fd5318f69770cc9ca40cf0a9528e8 \
+    --hash=sha256:f7c123b5b35afba2134ea25b8e89a902eb0b46fabad722c3cbe10ac1302afc9b
     # via -r build/nvidia-requirements.txt
-nvidia-cudnn-cu13==9.13.1.26 ; sys_platform == "linux" \
-    --hash=sha256:60689ff339611eb7e763a1eaeea81a2263071418bb49bcd080dddbf0ef9898d3 \
-    --hash=sha256:829ada5fd649e6ad81f5e3968d9ca03c73e90de3fa67295c5dbb13926d09852a \
-    --hash=sha256:a0f434a881ce8b35afe3a328634db1da4a3852fc6dfbe89577f3e78400ee10d0
+nvidia-cudnn-cu13==9.14.0.64 ; sys_platform == "linux" \
+    --hash=sha256:024ce8f7571d322991ecadbe82907df2e89b5f36597d03436413ec6dd7c9fe54 \
+    --hash=sha256:2ca0fb0f8e8c42f9d05ce5ba2bb1a1455b60f2478739363b6d899cc25f897602 \
+    --hash=sha256:32ccb3d596fa1246a9bced108eb178955fd0f35406245efff4663611c18317cd
     # via -r build/nvidia-requirements.txt
 nvidia-cufft==12.0.0.61 ; sys_platform == "linux" \
     --hash=sha256:2708c852ef8cd89d1d2068bdbece0aa188813a0c934db3779b9b1faa8442e5f5 \
@@ -407,9 +409,9 @@ opt-einsum==3.4.0 \
     --hash=sha256:69bb92469f86a1565195ece4ac0323943e83477171b91d24c35afe028a90d7cd \
     --hash=sha256:96ca72f1b886d148241348783498194c577fa30a8faac108586b14f1ba4473ac
     # via -r build/requirements.in
-optype[numpy]==0.13.4 \
-    --hash=sha256:131d8e0f1c12d8095d553e26b54598597133830983233a6a2208886e7a388432 \
-    --hash=sha256:500c89cfac82e2f9448a54ce0a5d5c415b6976b039c2494403cd6395bd531979
+optype[numpy]==0.14.0 \
+    --hash=sha256:50d02edafd04edf2e5e27d6249760a51b2198adb9f6ffd778030b3d2806b026b \
+    --hash=sha256:925cf060b7d1337647f880401f6094321e7d8e837533b8e159b9a92afa3157c6
     # via scipy-stubs
 packaging==25.0 \
     --hash=sha256:29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484 \
@@ -418,6 +420,7 @@ packaging==25.0 \
     #   auditwheel
     #   build
     #   pytest
+    #   wheel
 pillow==11.3.0 \
     --hash=sha256:023f6d2d11784a465f09fd09a34b150ea4672e85fb3d05931d89f373ab14abb2 \
     --hash=sha256:02a723e6bf909e7cea0dac1b0e0310be9d7650cd66222a5f1c571455c0a45214 \
@@ -552,9 +555,9 @@ pytest-xdist==3.8.0 \
     --hash=sha256:202ca578cfeb7370784a8c33d6d05bc6e13b4f25b5053c30a152269fd10f0b88 \
     --hash=sha256:7e578125ec9bc6050861aa93f2d59f1d8d085595d6551c2c90b6f4fad8d3a9f1
     # via -r build/test-requirements.txt
-rich==14.1.0 \
-    --hash=sha256:536f5f1785986d6dbdea3c75205c473f970777b4a0d6c6dd1b696aa05a3fa04f \
-    --hash=sha256:e497a48b844b0320d45007cdebfeaeed8db2a4f4bcf49f15e455cfc4af11eaa8
+rich==14.2.0 \
+    --hash=sha256:73ff50c7c0c1c77c8243079283f4edb376f0f6442433aecb8ce7e6d0b92d1fe4 \
+    --hash=sha256:76bc51fe2e57d2b1be1f96c524b890b816e334ab4c1e45888799bfaab0021edd
     # via -r build/test-requirements.txt
 scipy==1.16.2 ; python_version >= "3.13" \
     --hash=sha256:024dd4a118cccec09ca3209b7e8e614931a6ffb804b2a601839499cb88bdf925 \
@@ -621,9 +624,9 @@ scipy==1.16.2 ; python_version >= "3.13" \
     # via
     #   -r build/requirements.in
     #   jaxlib
-scipy-stubs==1.16.2.0 \
-    --hash=sha256:18c50d49e3c932033fdd4f7fa4fea9e45c8787f92bceaec9e86ccbd140e835d5 \
-    --hash=sha256:8fdd45155fca401bb755b1b63ac2f192f84f25c3be8da2c99d1cafb2708f3052
+scipy-stubs==1.16.2.3 \
+    --hash=sha256:05e93238bdaedb7fa1afedf9c3a2337f94fec3d8c33fb2d403c933e1bcc7412e \
+    --hash=sha256:b1afd21442699b8bdd399508187bddcedc6c29a34b188fd603396cb6754c2a91
     # via -r build/test-requirements.txt
 sortedcontainers==2.4.0 \
     --hash=sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88 \
@@ -633,9 +636,9 @@ typing-extensions==4.15.0 \
     --hash=sha256:0cea48d173cc12fa28ecabc3b837ea3cf6f38c6d1136f85cbaaf598984861466 \
     --hash=sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548
     # via etils
-wheel==0.45.1 \
-    --hash=sha256:661e1abd9198507b1409a20c02106d9670b2576e916d58f520316666abca6729 \
-    --hash=sha256:708e7481cc80179af0e556bbf0cc00b8444c7321e2700b8d8580231d13017248
+wheel==0.46.1 \
+    --hash=sha256:f796f65d72750ccde090663e466d0ca37cd72b62870f7520b96d34cdc07d86d8 \
+    --hash=sha256:fd477efb5da0f7df1d3c76c73c14394002c844451bd63229d8570f376f5e6a38
     # via -r build/requirements.in
 zipp==3.23.0 \
     --hash=sha256:071652d6115ed432f5ce1d34c336c0adfd6a884660d1e9712a256d3d3bd4b14e \

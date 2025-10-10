@@ -50,6 +50,7 @@ COMBOS = [
             "--allow-unsafe",
             "--build-isolation",
             "--rebuild",
+            "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
         ],
         generate_hashes = True,
         requirements_txt = REQUIREMENTS,
@@ -64,6 +65,7 @@ COMBOS = [
         extra_args = [
             "--allow-unsafe",
             "--build-isolation",
+            "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
             "--extra-index-url=https://pypi.anaconda.org/scientific-python-nightly-wheels/simple",
             "--pre",
             "--upgrade",
@@ -83,6 +85,7 @@ COMBOS = [
             "--build-isolation",
             "--upgrade",
             "--rebuild",
+            "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
         ],
         generate_hashes = False,
         requirements_txt = REQUIREMENTS,
