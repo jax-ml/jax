@@ -2102,6 +2102,118 @@ class PallasCallTest(PallasBaseTest):
         compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(2**18)),
     )(x)
 
+  @parameterized.parameters([
+      pl.Buffered(1),
+      pl.Buffered(2),
+  ])
+  def test_vmem_oom_error_message_basics(self, pmode):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
+      self.skipTest('Support added on Oct 14, 2025')
+
+    if jtu.is_device_tpu(version=5, variant='e') or jtu.is_device_tpu(
+        version=6, variant='e'
+    ):
+      block_shape = (4096, 8192)
+    elif jtu.is_device_tpu(version=5, variant='p'):
+      block_shape = (1024, 8192)
+    else:
+      block_shape = (512, 8192)
+    grid = (2, 2)
+    shape = (grid[0] * block_shape[0], grid[1] * block_shape[1])
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    x = jnp.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    out_shape = jax.ShapeDtypeStruct(shape, x.dtype)
+
+    def index_map(i, j):
+      return (i * block_shape[0], j * block_shape[1])
+
+    spec = pl.BlockSpec(
+        block_shape=block_shape, index_map=index_map, pipeline_mode=pmode
+    )
+
+    with self.assertRaises(jax.errors.JaxRuntimeError) as cm:
+      self.pallas_call(
+          kernel,
+          out_shape=out_shape,
+          grid=grid,
+          in_specs=[spec],
+          out_specs=spec,
+      )(x)
+
+    error_message = str(cm.exception)
+    self.assertIn(
+        'input window allocation for operator input 0',
+        error_message,
+    )
+    self.assertIn(
+        'output window allocation for operator output 0',
+        error_message,
+    )
+    self.assertIn(
+        f'The window shape is f32[{block_shape[0]},{block_shape[1]}], while the'
+        f' full shape is f32[{shape[0]},{shape[1]}].',
+        error_message,
+    )
+    # When VMEM is OOM, double buffering is disabled.
+    self.assertIn(
+        'This allocation is single buffered.',
+        error_message,
+    )
+
+  def test_vmem_oom_error_message_dynamic_grid_scalar_prefetch_and_vmem_scratch(
+      self,
+  ):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
+      self.skipTest('Support added on Oct 14, 2025')
+
+    def body(s_ref, x_hbm_ref, o_hbm_ref, vmem_scratch_ref):
+      del s_ref, vmem_scratch_ref
+      o_hbm_ref[...] = x_hbm_ref[...]
+
+    s = jnp.array([5.0], jnp.float32)
+    if jtu.is_device_tpu(version=5, variant='e') or jtu.is_device_tpu(
+        version=6, variant='e'
+    ):
+      x_shape = (4096, 8192)
+    elif jtu.is_device_tpu(version=5, variant='p'):
+      x_shape = (1024, 8192)
+    else:
+      x_shape = (512, 8192)
+    scratch_shape = (x_shape[0] // 4, 8192)
+    x = jnp.arange(x_shape[0] * x_shape[1], dtype=jnp.float32).reshape(x_shape)
+    out_shape = jax.ShapeDtypeStruct(x_shape, jnp.float32)
+
+    @jax.jit
+    def run(num_grid, s, x):
+      return pl.pallas_call(
+          body,
+          out_shape=out_shape,
+          # use dynamic grid, scalar prefetch, and scratch input.
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=1,
+              grid=(num_grid,),
+              in_specs=[pl.BlockSpec()],
+              out_specs=pl.BlockSpec(),
+              scratch_shapes=[pltpu.VMEM(scratch_shape, jnp.float32)],
+          ),
+      )(s, x)
+
+    with self.assertRaises(jax.errors.JaxRuntimeError) as cm:
+      run(4, s, x)
+
+    error_message = str(cm.exception)
+    self.assertIn(
+        'input window allocation for operator input 1',
+        error_message,
+    )
+    self.assertIn(
+        'output window allocation for operator output 0',
+        error_message,
+    )
+
   def test_allow_input_fusion(self):
     shape = (3, 128, 128)
 
