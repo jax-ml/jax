@@ -504,7 +504,7 @@ typedef hipsolverSyevjInfo_t gpuSyevjInfo_t;
 typedef hipsolverEigMode_t gpusolverEigMode_t;
 typedef hipsolverStatus_t gpusolverStatus_t;
 typedef hipsparseIndexType_t gpusparseIndexType_t;
-typedef hipsparseHandle_t gpusparseHandle_t;
+typedef struct hipsparseHandle_* gpusparseHandle_t;
 typedef hipsparseOperation_t gpusparseOperation_t;
 typedef hipsparseStatus_t gpusparseStatus_t;
 typedef hipsparseSpMatDescr_t gpusparseSpMatDescr_t;
@@ -518,8 +518,10 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPU_C_64F HIP_C_64F
 #define GPU_R_64F HIP_R_64F
 
-// Wrapper functions for BLAS handles to ensure unique types
-#define gpublasCreate(handle) hipblasCreate(reinterpret_cast<hipblasHandle_t*>(handle))
+
+inline hipblasStatus_t gpublasCreate(gpublasHandle_t* handle) {
+    return hipblasCreate(reinterpret_cast<hipblasHandle_t*>(handle));
+}
 #define gpublasSetStream hipblasSetStream
 #define gpublasSgeqrfBatched hipblasSgeqrfBatched
 #define gpublasDgeqrfBatched hipblasDgeqrfBatched
@@ -570,8 +572,10 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUDNN_LSTM miopenLSTM
 #define GPUDNN_BIDIRECTIONAL miopenRNNbidirection
 
-// Wrapper functions for SOLVER handles to ensure unique types
-#define gpusolverDnCreate(handle) hipsolverCreate(reinterpret_cast<hipsolverHandle_t*>(handle))
+
+inline hipsolverStatus_t gpusolverDnCreate(gpusolverDnHandle_t* handle) {
+    return hipsolverCreate(reinterpret_cast<hipsolverHandle_t*>(handle));
+}
 #define gpusolverDnSetStream hipsolverSetStream
 #define gpusolverDnCreateSyevjInfo hipsolverCreateSyevjInfo
 #define gpusolverDnDestroySyevjInfo hipsolverDestroySyevjInfo
@@ -671,7 +675,9 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUBLAS_OP_C HIPBLAS_OP_C
 
 #define gpusparseCooSetStridedBatch hipsparseCooSetStridedBatch
-#define gpusparseCreate hipsparseCreate
+inline hipsparseStatus_t gpusparseCreate(gpusparseHandle_t* handle) {
+    return hipsparseCreate(reinterpret_cast<hipsparseHandle_t*>(handle));
+}
 #define gpusparseSetStream hipsparseSetStream
 #define gpusparseCreateCoo hipsparseCreateCoo
 #define gpusparseCreateCsr hipsparseCreateCsr
