@@ -114,7 +114,6 @@ def pallas_call_lowering(
       out_types=lowering_result.new_out_shapes,
       inout_types=(),
       input_output_aliases=input_output_aliases,
-      is_device_collective=lowering_result.is_device_collective,
       # False until we add get_barrier_semaphore() feature.
       use_custom_barrier=False,
   )

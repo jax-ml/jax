@@ -597,7 +597,6 @@ class LoweringResult:
   new_out_shapes: tuple[jax.ShapeDtypeStruct, ...]  # Does not include gmem scratch!
   profiler_spec: mgpu_profiler.ProfilerSpec | None
   gmem_scratch_shapes: tuple[jax.ShapeDtypeStruct, ...]
-  is_device_collective: bool
 
 
 class LoweringError(Exception):  # pylint: disable=g-bad-exception-name
@@ -1057,7 +1056,6 @@ def lower_jaxpr_to_module(
   return LoweringResult(
       module, cuda_grid, block, new_out_shapes, prof_spec,
       scoped_semaphores_shape,
-      launch_ctx.is_device_collective,
   )
 
 
