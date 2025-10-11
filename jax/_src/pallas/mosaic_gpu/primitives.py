@@ -61,6 +61,7 @@ _Ref = state.AbstractRef | state_types.TransformedRef
 Layout = gpu_core.Layout
 ParameterizedLayout = gpu_core.ParameterizedLayout
 SomeLayout = gpu_core.SomeLayout
+ReducedLayout = gpu_core.ReducedLayout
 
 
 def _check_ref(
@@ -2217,10 +2218,10 @@ def inline_mgpu(*, arg_types=(), return_type=None):
     raise ValueError(
         "inline_mgpu_p only supports plgpu.ShapeDtypeStruct return types."
     )
-  if not all(isinstance(r, (Layout, ParameterizedLayout, RefType)) for r in flat_arg_types):
+  if not all(isinstance(r, (Layout, ParameterizedLayout, ReducedLayout, RefType)) for r in flat_arg_types):
     raise ValueError(
-        "inline_mgpu_p only supports only Layout, ParameterizedLayout and"
-        " RefType arg types."
+        "inline_mgpu_p only supports only Layout, ParameterizedLayout,"
+        " ReducedLayout and RefType arg types."
     )
 
   def inner(f):
@@ -2237,7 +2238,9 @@ def inline_mgpu(*, arg_types=(), return_type=None):
         if isinstance(a, state_types.TransformedRef) and isinstance(t, RefType):
           raw_flat_args.append(a.ref)
           ref_transforms.append(a.transforms)
-        elif isinstance(aval := jax_core.get_aval(a), jax_core.ShapedArray) and isinstance(t, (ParameterizedLayout, Layout)):
+        elif isinstance(
+            aval := jax_core.get_aval(a), jax_core.ShapedArray
+        ) and isinstance(t, (ParameterizedLayout, Layout, ReducedLayout)):
           raw_flat_args.append(a)
           ref_transforms.append(None)
         elif isinstance(aval, state.AbstractRef) and isinstance(t, RefType):
@@ -2314,7 +2317,11 @@ def _type_check_mgpu_lane_semantics(v, ty):
         raise ValueError(
             f"Array layout mismatch: expected {v.layout} got {ty.layout.to_mgpu()}."
         )
-    case (Layout() , mgpu.FragmentedArray()) | (ParameterizedLayout(), mgpu.FragmentedArray()):
+    case (
+        (Layout(), mgpu.FragmentedArray())
+        | (ParameterizedLayout(), mgpu.FragmentedArray())
+        | (ReducedLayout(), mgpu.FragmentedArray())
+    ):
       if ty.to_mgpu() != v.layout:
         raise ValueError(f"Unexpected layout for {v} (expected: {ty})")
     case _:
