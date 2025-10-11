@@ -79,6 +79,10 @@ on:
         default: 'false'
         type: string
 permissions: {}
+
+env:
+  PIP_INDEX_URL: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+
 jobs:
   run-bazel-tests:
     defaults:

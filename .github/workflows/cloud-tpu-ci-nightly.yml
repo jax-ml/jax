@@ -22,6 +22,10 @@ on:
 # document and enforce the permissions here.
 permissions:
   contents: read
+
+env:
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+
 jobs:
   cloud-tpu-test:
     strategy:

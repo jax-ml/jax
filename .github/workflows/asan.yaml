@@ -14,6 +14,11 @@ on:
     paths:
       - '**/workflows/asan.yaml'
 permissions: {}
+
+env:
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+  PIP_INDEX_URL: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+
 jobs:
   asan:
     # Don't execute in fork due to runner type
