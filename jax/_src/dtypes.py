@@ -297,6 +297,7 @@ _dtype_to_32bit_dtype: dict[DType, DType] = {
 _dtype_to_inexact: dict[DType, DType] = {
     np.dtype(k): np.dtype(v) for k, v in [
         ('bool', 'float32'),
+        ('uint4', 'float32'), ('int4', 'float32'),
         ('uint8', 'float32'), ('int8', 'float32'),
         ('uint16', 'float32'), ('int16', 'float32'),
         ('uint32', 'float32'), ('int32', 'float32'),
