@@ -238,7 +238,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
   @parameterized.product(
       mask_mode=['bias', 'causal', 'padding', 'custom', ('causal', 'padding'),
                  ('custom', 'padding'), ('bias', 'causal'),
-                 ('causal', 'sliding_window')],
+                 ('causal', 'sliding_window'), ('padding', 'segment_id')],
   )
   def testDotProductAttentionMask(self, mask_mode):
     if isinstance(mask_mode, str):
@@ -257,12 +257,16 @@ class NNFunctionsTest(jtu.JaxTestCase):
     grad = random.normal(keys[3], (B, T, N, H), dtype)
     bias, mask = None, None
     q_seqlen, kv_seqlen = None, None
+    q_seq_offsets, kv_seq_offsets = None, None
     window_size = None
 
     is_causal = 'causal' in mask_mode
     if 'padding' in mask_mode:
       q_seqlen = jnp.array([T // 2, T // 4], dtype=jnp.int32)
       kv_seqlen = jnp.array([S // 4, S // 2], dtype=jnp.int32)
+    if 'segment_id' in mask_mode:
+      q_seq_offsets = jnp.array([0, 0], dtype=jnp.int32)
+      kv_seq_offsets = jnp.array([0, 0], dtype=jnp.int32)
     if 'custom' in mask_mode:
       # Use a generated causal mask as the custom mask.
       custom_mask = jnp.tril(jnp.ones((T, S), dtype=jnp.bool_))
@@ -277,19 +281,27 @@ class NNFunctionsTest(jtu.JaxTestCase):
     sdpa_ans = partial(sdpa, is_causal=is_causal, implementation='cudnn')
 
     args = (Q, K, V, bias, mask)
-    kwargs = {'query_seq_lengths': q_seqlen, 'key_value_seq_lengths': kv_seqlen}
+    kwargs = {
+        'query_seq_lengths': q_seqlen,
+        'key_value_seq_lengths': kv_seqlen,
+        'query_seq_offsets': q_seq_offsets,
+        'key_value_seq_offsets': kv_seq_offsets,
+    }
 
     # Convert the kargs to positional args for the jax.vjp.
-    fn_ref = lambda q, k, v, b, m, qs, kvs: sdpa_ref(
+    fn_ref = lambda q, k, v, b, m, qs, kvs, qo, kvo: sdpa_ref(
         q, k, v, b, m, query_seq_lengths=qs, key_value_seq_lengths=kvs,
+        query_seq_offsets=qo, key_value_seq_offsets=kvo,
         local_window_size=window_size,
     )
-    fn_ans = lambda q, k, v, b, m, qs, kvs: sdpa_ans(
+    fn_ans = lambda q, k, v, b, m, qs, kvs, qo, kvo: sdpa_ans(
         q, k, v, b, m, query_seq_lengths=qs, key_value_seq_lengths=kvs,
+        query_seq_offsets=qo, key_value_seq_offsets=kvo,
         local_window_size=window_size,
     )
-    out_ref, sdpa_vjp_ref = jax.vjp(fn_ref, *args, q_seqlen, kv_seqlen)
-    out_ans, sdpa_vjp_ans = jax.vjp(fn_ans, *args, q_seqlen, kv_seqlen)
+
+    out_ref, sdpa_vjp_ref = jax.vjp(fn_ref, *args, q_seqlen, kv_seqlen, q_seq_offsets, kv_seq_offsets)
+    out_ans, sdpa_vjp_ans = jax.vjp(fn_ans, *args, q_seqlen, kv_seqlen, q_seq_offsets, kv_seq_offsets)
     dQ_ref, dK_ref, dV_ref, dbias_ref = sdpa_vjp_ref(grad)[:4]
     dQ_ans, dK_ans, dV_ans, dbias_ans = sdpa_vjp_ans(grad)[:4]
 
