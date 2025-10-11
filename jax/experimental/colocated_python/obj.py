@@ -184,7 +184,7 @@ def wrap_class(
             None,
         )
         destructor = destructor.specialize(  # type: ignore[attribute-error]
-            devices=devices
+            devices=sorted(devices, key=lambda device: device.id)
         )
         destructor()
 
