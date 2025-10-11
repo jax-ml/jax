@@ -1933,7 +1933,7 @@ except ImportError:
   mosaic_tpu_backend = None  # type: ignore
 
 try:
-  from jax._src.pallas.mosaic import interpret as mosaic_tpu_interpret
+  from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret
 except ImportError:
   mosaic_tpu_interpret = types.SimpleNamespace(  # type: ignore
       InterpretParams=types.new_class('_NoInstances', (enum.Enum,)),
