@@ -511,7 +511,7 @@ def _lax_cumsum_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axis,
     raise NotImplementedError("SC cumsum: reverse=True is not yet supported")
   i1t = ir.IntegerType.get_signless(1)
   c1 = arith.constant(i1t, ir.IntegerAttr.get(i1t, 1))
-  c1v = vector.splat(ir.VectorType.get(x.type.shape, c1.type), c1)
+  c1v = vector.broadcast(ir.VectorType.get(x.type.shape, c1.type), c1)
   return tpu.scan(
       x.type, x, ir.Attribute.parse("#tpu.reduction_kind<sum>"), mask=c1v)
 
