@@ -44,6 +44,7 @@ input_shardings = [
     ((None, "dp", "tp"), (None, "dp", "tp")),
     ((None, "tp", None), (None, "tp", None)),
     ((None, None, "tp"), (None, "tp", None)),
+    ((None, ("dp", "tp"), None), (None, ("dp"), None)),
 ]
 c_name = "__cudnn$blockScaledDot"
 expected_hlos = [
@@ -55,6 +56,7 @@ expected_hlos = [
     (c_name,),
     ("all-gather", "f8e4m3fn[2,512,1024]", "replica_groups=[2,2]<=[4]", c_name),
     ("all-gather", "f8e4m3fn[2,512,512]", "replica_groups=[2,2]<=[4]", c_name),
+    ("all-gather", "f8e4m3fn[2,256,1024]", "replica_groups=[2,2]<=[2,2]", c_name,),
 ]
 expected_output_spec = [
     PartitionSpec('dp',),
@@ -65,6 +67,7 @@ expected_output_spec = [
     PartitionSpec(None, 'dp'),
     PartitionSpec(None, 'tp', None),
     PartitionSpec(None, None, 'tp'),
+    PartitionSpec(None, ('dp', 'tp'), None),
 ]
 
 # The GSPMD sharding logic inserts additional reduce-scatters which don't exist
