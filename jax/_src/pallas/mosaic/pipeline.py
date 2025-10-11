@@ -38,7 +38,7 @@ import numpy as np
 
 SMEM = tpu_core.MemorySpace.SMEM
 VMEM = tpu_core.MemorySpace.VMEM
-ANY = tpu_core.MemorySpace.ANY
+ANY = pallas_core.MemorySpace.ANY
 REF = pallas_core.MemoryRef
 GridDimensionSemantics = tpu_core.GridDimensionSemantics
 PARALLEL = tpu_core.PARALLEL

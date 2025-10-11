@@ -159,7 +159,6 @@ class CompilerParams(pallas_core.CompilerParams):
   replace = dataclasses.replace
 
 class MemorySpace(enum.Enum):
-  ANY = "any"  # TODO(b/368401328): Remove this and just use pl.ANY.
   VMEM = "vmem"
   VMEM_SHARED = "vmem_shared"
   SMEM = "smem"
