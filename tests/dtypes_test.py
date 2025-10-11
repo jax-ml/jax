@@ -269,51 +269,134 @@ class DtypesTest(jtu.JaxTestCase):
 
   @jax.numpy_dtype_promotion('standard')
   def testPromoteDtypesStandard(self):
+    assertTypePromotionError = functools.partial(
+        self.assertRaisesRegex,
+        dtypes.TypePromotionError,
+        'Input dtypes .* have no available implicit dtype promotion path.',
+        dtypes.promote_types,
+    )
+
+    small_fp_dtypes = set(fp8_dtypes + fp4_dtypes)
+    implicit_int_dtypes = set(signed_dtypes + unsigned_dtypes) - set(intn_dtypes)
+
     for t1 in all_dtypes:
       self.assertEqual(t1, dtypes.promote_types(t1, t1))
-
       self.assertEqual(t1, dtypes.promote_types(t1, np.bool_))
       # TODO(zhangqiaorjc): Consider more dtype promotion rules for fp8.
-      if t1 in fp8_dtypes:
-        continue
-      if t1 in intn_dtypes:
-        continue
-      if t1 in fp4_dtypes:
-        continue
-      self.assertEqual(np.dtype(np.complex128),
-                       dtypes.promote_types(t1, np.complex128))
+      if t1 in small_fp_dtypes or t1 in intn_dtypes:
+        assertTypePromotionError(t1, np.complex128)
+      else:
+        self.assertEqual(
+            np.dtype(np.complex128), dtypes.promote_types(t1, np.complex128)
+        )
 
       for t2 in all_dtypes:
         # TODO(zhangqiaorjc): Consider more dtype promotion rules for fp8.
-        if t2 in fp8_dtypes:
-          continue
-        if t2 in intn_dtypes:
-          continue
-        if t2 in fp4_dtypes:
-          continue
-        # Symmetry
-        self.assertEqual(dtypes.promote_types(t1, t2),
-                         dtypes.promote_types(t2, t1))
+        if (
+            (t1 != t2)
+            and (t1 != np.bool_)
+            and (t2 != np.bool_)
+            and (
+                t1 in intn_dtypes or
+                t2 in intn_dtypes or
+                (t1 in small_fp_dtypes and t2 not in implicit_int_dtypes) or
+                (t2 in small_fp_dtypes and t1 not in implicit_int_dtypes)
+            )
+        ):
+          assertTypePromotionError(t1, t2)
+          assertTypePromotionError(t2, t1)
+        else:
+          self.assertEqual(
+              dtypes.promote_types(t1, t2), dtypes.promote_types(t2, t1)
+          )
 
     self.assertEqual(np.dtype(np.float32),
                      dtypes.promote_types(np.float16, dtypes.bfloat16))
 
-    # Promotions of non-inexact types against inexact types always prefer
-    # the inexact types.
+    # Promotions of exact types against inexact types always prefer the
+    # inexact types.
     for t in float_dtypes + complex_dtypes:
       for i in bool_dtypes + signed_dtypes + unsigned_dtypes:
-        # TODO(zhangqiaorjc): Consider more dtype promotion rules for fp8.
-        if t in fp8_dtypes:
-          continue
-        if t in fp4_dtypes:
-          continue
-        if t in intn_dtypes or i in intn_dtypes:
-          continue
+        if i in intn_dtypes:
+          assertTypePromotionError(t, i)
+        else:
+          self.assertEqual(t, dtypes.promote_types(t, i))
+
+    # Promotions between exact types, or between inexact types, match NumPy.
+    for groups in [
+        bool_dtypes + np_signed_dtypes + np_unsigned_dtypes,
+        np_float_dtypes + complex_dtypes,
+    ]:
+      for t1, t2 in itertools.combinations(groups, 2):
+        expected = np.promote_types(t1, t2)
+        if (
+            not config.enable_x64.value
+            and np.issubdtype(t1, np.signedinteger)
+            and t1 != np.int64
+            and t2 == np.uint32
+        ):
+          expected = np.dtype(np.int32)
+        self.assertEqual(expected, dtypes.promote_types(t1, t2))
+
+    # Promotion between weak types matches numpy promotion
+    for t1 in [int, float, complex]:
+      for t2 in [int, float, complex]:
+        py_result = type(t1(0) + t2(0))
+        # np.dtype(int) is int32 on Windows and int64 on Linux/Mac.
+        py_result_dtype = (
+            np.dtype(np.int64) if py_result is int else np.dtype(py_result)
+        )
+        lattice_dtype, lattice_weak_type = dtypes.lattice_result_type(t1, t2)
+        self.assertTrue(lattice_weak_type)
+        self.assertEqual(
+            lattice_dtype, dtypes.canonicalize_dtype(py_result_dtype)
+        )
+
+  @jax.numpy_dtype_promotion('relaxed')
+  def testPromoteDtypesRelaxed(self):
+    assertTypePromotionError = functools.partial(
+        self.assertRaisesRegex,
+        dtypes.TypePromotionError,
+        'Input dtypes .* have no available implicit dtype promotion path.',
+        dtypes.promote_types,
+    )
+
+    small_fp_dtypes = set(fp8_dtypes + fp4_dtypes)
+
+    for t1 in all_dtypes:
+      self.assertEqual(t1, dtypes.promote_types(t1, t1))
+      self.assertEqual(t1, dtypes.promote_types(t1, np.bool_))
+      self.assertEqual(
+          np.dtype(np.complex128), dtypes.promote_types(t1, np.complex128)
+      )
+
+      for t2 in all_dtypes:
+        # Small FP dtypes don't have a unique promotion path as all can be
+        # promoted to both f16 and bf16.
+        # TODO(cjfj): Consider adding a configurable promotion path for fp8.
+        if (t1 != t2) and t1 in small_fp_dtypes and t2 in small_fp_dtypes:
+          assertTypePromotionError(t1, t2)
+          assertTypePromotionError(t2, t1)
+        else:
+          self.assertEqual(
+              dtypes.promote_types(t1, t2), dtypes.promote_types(t2, t1)
+          )
+
+    self.assertEqual(
+        np.dtype(np.float32), dtypes.promote_types(np.float16, dtypes.bfloat16)
+    )
+
+    # Promotions of exact types against inexact types always prefer the
+    # inexact types.
+    for t in float_dtypes + complex_dtypes:
+      for i in bool_dtypes + signed_dtypes + unsigned_dtypes:
         self.assertEqual(t, dtypes.promote_types(t, i))
 
     # Promotions between exact types, or between inexact types, match NumPy.
-    for groups in [bool_dtypes + np_signed_dtypes + np_unsigned_dtypes,
-                   np_float_dtypes + complex_dtypes]:
+    for groups in [
+        bool_dtypes + np_signed_dtypes + np_unsigned_dtypes,
+        np_float_dtypes + complex_dtypes,
+    ]:
       for t1, t2 in itertools.combinations(groups, 2):
         expected = np.promote_types(t1, t2)
         if (
