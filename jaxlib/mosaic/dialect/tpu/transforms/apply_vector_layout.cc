@@ -1632,8 +1632,12 @@ FailureOr<xla::Array<Value>> packVregs(RewriteContext &ctx, OpBuilder &builder,
         for (Value part : parts) {
           if (part) {
             for (int i = 0; i < packing_factor; ++i) {
+              // Note that input bitwidth is larger than result bitwidth. We
+              // don't need sign extension here because the following packing
+              // ends up truncating sign-extended bits.
               unpacks.push_back(builder.create<UnpackSubelementsOp>(
-                  loc, unpacked_vty, part, i, pack_format));
+                  loc, unpacked_vty, part, i, pack_format,
+                  /*sign_extended=*/false));
             }
           } else {
             unpacks.append(packing_factor, nullptr);
@@ -5549,19 +5553,27 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
         // Row shuffle within a vreg if there is no padding and each vreg holds
         // a contiguous slice of the flattened data.
         dst_shape.size() > 1 && src_shape.size() > 1 &&
-        dst_shape.back() == dst_vreg_slice[1] &&
         dst_shape[dst_shape.size() - 2] % dst_vreg_slice[0] == 0 &&
-        src_shape.back() == src_vreg_slice[1] &&
         src_shape[src_shape.size() - 2] % src_vreg_slice[0] == 0 &&
-        (bitwidth == 32 || bitwidth == 16 || bitwidth == 8) &&
+        llvm::isPowerOf2_32(bitwidth) &&
         layout_in.offsets() == LayoutOffsets{0, 0} &&
         layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-        layout_in.tiling()[0] <= ctx.target_shape[0] * layout_in.packing() &&
-        layout_in.tiling()[1] == ctx.target_shape[1] &&
+        ((layout_in.tiling()[0] <= ctx.target_shape[0] * layout_in.packing() &&
+          layout_in.tiling()[1] == ctx.target_shape[1] &&
+          src_shape.back() == src_vreg_slice[1]) ||
+         (layout_in.tiling()[0] == 1 &&
+          layout_in.tiling()[1] == ctx.target_shape[1] * layout_in.packing() &&
+          src_shape.back() % layout_in.tiling()[1] == 0)) &&
         layout_out.offsets() == LayoutOffsets{0, 0} &&
         layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-        layout_out.tiling()[0] <= ctx.target_shape[0] * layout_out.packing() &&
-        layout_out.tiling()[1] == ctx.target_shape[1]) {
+        ((layout_out.tiling()[0] <=
+              ctx.target_shape[0] * layout_out.packing() &&
+          layout_out.tiling()[1] == ctx.target_shape[1] &&
+          dst_shape.back() == dst_vreg_slice[1]) ||
+         (layout_out.tiling()[0] == 1 &&
+          layout_out.tiling()[1] ==
+              ctx.target_shape[1] * layout_out.packing() &&
+          dst_shape.back() % layout_out.tiling()[1] == 0))) {
       auto [sublane_count, lane_count] = ctx.target_shape;
       auto dst_vregs_shape =
           layout_out.tileArrayShape(false, false, dst_shape, ctx.target_shape);
@@ -5704,28 +5716,31 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
         VectorType unpacked_vty = getNativeVregType(
             builder.getIntegerType(src_ty.getElementTypeBitWidth() * 2),
             ctx.target_shape);
-        src_vregs.Each([&](absl::Span<const int64_t> src_vreg_indices,
-                           Value* src_vreg) {
-          Value dst_vreg = builder.create<tpu::BitcastVregOp>(
-              src_vreg->getLoc(), packed_vty, *src_vreg);
-          int64_t from_sublane_tiling = src_sublane_tiling;
-          while (from_sublane_tiling != dst_sublane_tiling) {
-            std::array<Value, 2> src_parts;
-            for (int i = 0; i < src_parts.size(); ++i) {
-              src_parts[i] = builder.create<tpu::UnpackSubelementsOp>(
-                  src_vreg->getLoc(), unpacked_vty, dst_vreg, i, unpack_format);
-            }
-            dst_vreg = builder.create<tpu::PackSubelementsOp>(
-                src_vreg->getLoc(), packed_vty, src_parts, pack_format);
-            if (from_sublane_tiling > dst_sublane_tiling) {
-              from_sublane_tiling /= 2;
-            } else {
-              from_sublane_tiling *= 2;
-            }
-          }
-          *src_vreg = builder.create<tpu::BitcastVregOp>(
-              src_vreg->getLoc(), src_vreg->getType(), dst_vreg);
-        });
+        src_vregs.Each(
+            [&](absl::Span<const int64_t> src_vreg_indices, Value* src_vreg) {
+              Value dst_vreg = builder.create<tpu::BitcastVregOp>(
+                  src_vreg->getLoc(), packed_vty, *src_vreg);
+              int64_t from_sublane_tiling = src_sublane_tiling;
+              while (from_sublane_tiling != dst_sublane_tiling) {
+                std::array<Value, 2> src_parts;
+                for (int i = 0; i < src_parts.size(); ++i) {
+                  // We don't need sign extension here because the following
+                  // packing ends up truncating sign-extended bits.
+                  src_parts[i] = builder.create<tpu::UnpackSubelementsOp>(
+                      src_vreg->getLoc(), unpacked_vty, dst_vreg, i,
+                      unpack_format, /*sign_extended=*/false);
+                }
+                dst_vreg = builder.create<tpu::PackSubelementsOp>(
+                    src_vreg->getLoc(), packed_vty, src_parts, pack_format);
+                if (from_sublane_tiling > dst_sublane_tiling) {
+                  from_sublane_tiling /= 2;
+                } else {
+                  from_sublane_tiling *= 2;
+                }
+              }
+              *src_vreg = builder.create<tpu::BitcastVregOp>(
+                  src_vreg->getLoc(), src_vreg->getType(), dst_vreg);
+            });
       }
       src_vregs.Reshape(dst_vregs_shape);
       return src_vregs;
