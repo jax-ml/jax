@@ -85,6 +85,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "erfc", 1, float_dtypes, jtu.rand_small_positive, True
     ),
     op_record(
+        "erfcx", 1, float_dtypes, jtu.rand_small_positive, True
+    ),
+    op_record(
         "erfinv", 1, float_dtypes, jtu.rand_small_positive, True
     ),
     op_record(
