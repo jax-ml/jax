@@ -23,6 +23,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     and we encourage all new code to use `jax.shard_map` directly. See the
     [migration guide](https://docs.jax.dev/en/latest/migrate_pmap.html) for
     more information.
+  * The `auto=` parameter of `jax.experimental.shard_map.shard_map` has been
+    removed. This means that `jax.experimental.shard_map.shard_map` no longer
+    supports nesting. If you want to nest shard_map calls, please use
+    `jax.shard_map`.
   * JAX no longer allows passing objects that support `__jax_array__` directly
     to, e.g. `jit`-ed functions. Call `jax.numpy.asarray` on them first.
   * {func}`jax.numpy.cov` is now returns NaN for empty arrays ({jax-issue}`#32305`),

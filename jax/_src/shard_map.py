@@ -207,7 +207,7 @@ def _smap(f, *, in_axes, out_axes, axis_name: AxisName):
 def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
                in_specs: Specs, out_specs: Specs | Callable[[], Specs],
                axis_names: Set[AxisName], check_vma: bool,
-               _skip_mesh_check: bool = False, _smap: bool = False) -> Callable:
+               _smap: bool = False) -> Callable:
   if not callable(f):
     raise TypeError("shard_map requires a callable for its first argument, "
                     f"but got {f} of type {type(f)}.")
@@ -216,8 +216,8 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
   @traceback_util.api_boundary
   def wrapped(*args):
     nonlocal mesh, axis_names
-    mesh, axis_names = _shmap_checks(mesh, axis_names, in_specs, out_specs,
-                                     _skip_mesh_check, _smap)
+    mesh, axis_names = _shmap_checks(
+        mesh, axis_names, in_specs, out_specs, _smap)
     fun = lu.wrap_init(
         f, debug_info=api_util.debug_info("shard_map", f, args, {}))
     args_flat, in_tree = tree_flatten(args)
@@ -298,8 +298,7 @@ def _axes_to_pspec(axis_name, axis):
   return P(*[None] * axis + [axis_name])
 
 
-def _shmap_checks(mesh, axis_names, in_specs, out_specs, _skip_mesh_check,
-                  _smap):
+def _shmap_checks(mesh, axis_names, in_specs, out_specs, _smap):
   if mesh is None:
     mesh = get_abstract_mesh()
     if mesh.empty:
@@ -308,8 +307,7 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _skip_mesh_check,
           " `jax.set_mesh(mesh)` to enter into a mesh context")
   else:
     ctx_mesh = get_abstract_mesh()
-    if (not _skip_mesh_check and not ctx_mesh.empty and
-        mesh.abstract_mesh != ctx_mesh):
+    if not ctx_mesh.empty and mesh.abstract_mesh != ctx_mesh:
       raise ValueError(
           f"The context mesh {ctx_mesh} should match the mesh passed to"
           f" shard_map {mesh}")

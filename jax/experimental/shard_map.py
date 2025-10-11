@@ -16,10 +16,8 @@ from jax._src import traceback_util
 from jax._src import shard_map as jshmap
 
 @traceback_util.api_boundary
-def shard_map(f, mesh, in_specs, out_specs, check_rep=True, auto=frozenset()):
-  """Please use :func:`jax.shard_map`.
-  :func:`jax.experimental.shard_map.shard_map` is a legacy API"""
-  axis_names = frozenset(mesh.axis_names) - auto
-  return jshmap._shard_map(
-      f, mesh=mesh, in_specs=in_specs, out_specs=out_specs,
-      check_vma=check_rep, axis_names=axis_names, _skip_mesh_check=True)
+def shard_map(f, mesh, in_specs, out_specs, check_rep=True):
+  """Please use `jax.shard_map`. `jax.experimental.shard_map.shard_map`
+  has been deprecated."""
+  return jshmap._shard_map(f, mesh=mesh, in_specs=in_specs, out_specs=out_specs,
+                           axis_names=set(), check_vma=check_rep)
