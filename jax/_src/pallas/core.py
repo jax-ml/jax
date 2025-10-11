@@ -1202,7 +1202,7 @@ def get_grid_mapping(
   if grid_spec.scratch_shapes:
     flat_scratch_shapes, scratch_tree = tree_util.tree_flatten(
         grid_spec.scratch_shapes)
-    flat_scratch_avals = tuple(s.get_ref_aval() for s in  flat_scratch_shapes)
+    flat_scratch_avals = tuple(s.get_ref_aval() for s in flat_scratch_shapes)
     jaxpr_scratch_avals = tree_util.tree_unflatten(
         scratch_tree, flat_scratch_avals)
     if not isinstance(jaxpr_scratch_avals, (tuple, list)):
@@ -1359,10 +1359,10 @@ def _get_sds(aval: jax_core.AbstractValue):
 core_map_p = jax_core.Primitive("core_map")
 core_map_p.multiple_results = True
 
-
 def core_map(
     mesh,
     *,
+    scratch_shapes: ScratchShapeTree = (),
     compiler_params: Any | None = None,
     interpret: bool = False,
     debug: bool = False,
@@ -1377,6 +1377,7 @@ def core_map(
 
   Args:
     mesh: The mesh to run the function on.
+    scratch_shapes: Cross-core shared scratch shapes to pass to the kernel.
     compiler_params: The compiler parameters to pass to the backend.
     interpret: Whether to run the function in interpret mode.
     debug: Whether or not to out helpful debugging information.
@@ -1385,8 +1386,9 @@ def core_map(
       serialized as JSON in the HLO. Can be used for debugging and analysis.
   """
   def wrapped(f):
-    flat_args, in_tree = tree_util.tree_flatten(((), {}))
-    debug_info = api_util.debug_info("pallas_core_map", f, (), {})
+    args = tree_util.tree_map(lambda t: t.get_ref_aval(), scratch_shapes)
+    flat_args, in_tree = tree_util.tree_flatten((args, {}))
+    debug_info = api_util.debug_info("pallas_core_map", f, args, {})
     flat_fun, out_tree_thunk = api_util.flatten_fun(
         lu.wrap_init(f, debug_info=debug_info), in_tree
     )
@@ -1408,6 +1410,7 @@ def core_map(
         jaxpr=jaxpr,
         debug_info=debug_info,
         mesh=mesh,
+        scratch_shapes=scratch_shapes,
         compiler_params=compiler_params,
         interpret=(
             config.pallas_tpu_interpret_mode_context_manager.value or interpret
@@ -1436,7 +1439,6 @@ effects.custom_derivatives_allowed_effects.add_type(CommsEffect)
 
 @core_map_p.def_effectful_abstract_eval
 def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
-  del args
   if jaxpr.outvars:
     raise ValueError("core_map must not return any outputs.")
   interpret = kwargs.get('interpret', False)
@@ -1448,8 +1450,11 @@ def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
         effs = mosaic_tpu_interpret.get_interpret_effects()
     except ImportError:
       pass
+  scratch_start = len(args)  # scratch args are added implicitly by mosaic
   for eff in jaxpr.effects:
     if mesh.discharges_effect(eff) or isinstance(eff, CommsEffect):
+      continue
+    if isinstance(eff, effects.JaxprInputEffect) and eff.input_index >= scratch_start:
       continue
     if not isinstance(eff, jax_core.NamedAxisEffect):
       effs.add(eff)
@@ -1457,7 +1462,6 @@ def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
     if eff.name not in mesh.shape:
       effs.add(eff)
   return [], effs
-
 
 def core_map_lowering_rule(ctx: mlir.LoweringRuleContext,
     *args,
@@ -1517,6 +1521,7 @@ def default_mesh_discharge_rule(
     out_avals,
     *args,
     mesh,
+    scratch_shapes,
     compiler_params,
     jaxpr,
     debug,
@@ -1534,13 +1539,15 @@ def default_mesh_discharge_rule(
     # Due to aliasing, ``args`` contains aliased inputs and outputs so we
     # remove outputs.
     in_refs = args[:len(in_avals)]
-    jax_core.eval_jaxpr(jaxpr, in_refs)
+    scratch_refs = args[len(args) - len(scratch_shapes):]
+    jax_core.eval_jaxpr(jaxpr, in_refs, *scratch_refs)
 
   assert len(jaxpr.outvars) == 0
   modified_idxs = sorted(
       eff.input_index
       for eff in jaxpr.effects
-      if isinstance(eff, state_types.WriteEffect)
+      if (isinstance(eff, state_types.WriteEffect) and
+          eff.input_index < len(in_avals))  # ignore scratch writes
   )
   in_memory_spaces = [get_memory_space_aval(aval) for aval in in_avals]
   in_memory_spaces = [
@@ -1568,6 +1575,7 @@ def default_mesh_discharge_rule(
           grid=tuple(mesh.shape.items()),
           in_specs=in_specs,
           out_specs=out_specs,
+          scratch_shapes=scratch_shapes,
       ),
       mesh=mesh,
       compiler_params=compiler_params,
@@ -1612,7 +1620,6 @@ def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, debug_info,
 
 
 def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
-  del in_atoms
   with jax_core.extend_axis_env_nd(tuple(mesh.shape.items())):
     jax_core.check_jaxpr(jaxpr)
   interpret = kwargs.get('interpret', False)
@@ -1624,8 +1631,11 @@ def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
         effs = mosaic_tpu_interpret.get_interpret_effects()
     except ImportError:
       pass
+  scratch_start = len(in_atoms)  # scratch args are added implicitly by mosaic
   for eff in jaxpr.effects:
     if mesh.discharges_effect(eff) or isinstance(eff, CommsEffect):
+      continue
+    if isinstance(eff, effects.JaxprInputEffect) and eff.input_index >= scratch_start:
       continue
     if not isinstance(eff, jax_core.NamedAxisEffect):
       effs.add(eff)

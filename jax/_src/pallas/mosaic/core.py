@@ -293,6 +293,7 @@ def _tensorcore_mesh_discharge_rule(
     out_avals,
     *args,
     mesh,
+    scratch_shapes,
     jaxpr,
     compiler_params: Any | None,
     interpret: Any,
@@ -330,6 +331,7 @@ def _tensorcore_mesh_discharge_rule(
       *args,
       jaxpr=jaxpr,
       mesh=mesh,
+      scratch_shapes=scratch_shapes,
       compiler_params=compiler_params.replace(
           dimension_semantics=(PARALLEL,)
       ),

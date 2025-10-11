@@ -1013,6 +1013,29 @@ class VectorSubcoreTest(PallasSCTest):
         NotImplementedError, r"Unsupported block dimension type.*Squeezed"):
       kernel(x)
 
+  def test_shared_scratch(self):
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    shape = (mesh.num_subcores, 8, 8)
+    x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
+
+    @plsc.kernel(
+        out_shape=x,
+        mesh=mesh,
+        scratch_shapes=(
+            pltpu.VMEM_SHARED(shape[1:], jnp.int32),
+        ),
+    )
+    def kernel(x_ref, o_ref, shared_scratch_ref):
+      subcore_id = lax.axis_index("subcore")
+      @pl.when(subcore_id == 0)
+      def _():
+        pltpu.sync_copy(x_ref.at[subcore_id], shared_scratch_ref)
+        pltpu.sync_copy(shared_scratch_ref, o_ref.at[subcore_id])
+
+    np.testing.assert_array_equal(kernel(x)[0], x[0])
+
 
 class ScalarSubcoreTest(PallasSCTest):
 

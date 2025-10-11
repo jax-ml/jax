@@ -200,6 +200,7 @@ def _scalar_subcore_mesh_discharge_rule(
     out_avals,
     *args,
     mesh,
+    scratch_shapes,
     jaxpr,
     compiler_params,
     interpret,
@@ -225,6 +226,7 @@ def _scalar_subcore_mesh_discharge_rule(
       out_avals,
       *args,
       mesh=mesh,
+      scratch_shapes=scratch_shapes,
       jaxpr=jaxpr,
       compiler_params=dataclasses.replace(
           compiler_params,
@@ -271,6 +273,7 @@ def _vector_subcore_mesh_discharge_rule(
     out_avals,
     *args,
     mesh,
+    scratch_shapes,
     jaxpr,
     compiler_params,
     interpret,
@@ -296,6 +299,7 @@ def _vector_subcore_mesh_discharge_rule(
       out_avals,
       *args,
       mesh=mesh,
+      scratch_shapes=scratch_shapes,
       jaxpr=jaxpr,
       compiler_params=dataclasses.replace(
           compiler_params,
@@ -337,11 +341,46 @@ def kernel(
           out_shape,
       )
 
-      @pallas_core.core_map(mesh, **kwargs)
-      def _():
+      # Shared scratch spaces must be allocated as mosaic kernel entry args, so
+      # we separate them out. Once inside core_map, we can't allocate these any
+      # more using run_scoped. But we can allocate the per-subcore scratch
+      # spaces as usual with run_scoped.
+      def is_shared_mem(ref):
+        return getattr(ref, "memory_space", None) in (
+            tpu_core.MemorySpace.VMEM_SHARED,
+            tpu_core.MemorySpace.HBM,
+        )
+      shared_scratch_shapes, shared_tree = jax.tree.flatten(
+          jax.tree.map(
+              lambda scratch: scratch if is_shared_mem(scratch) else None,
+              scratch_shapes,
+          )
+      )
+      per_core_scratch_shapes, per_core_tree = jax.tree.flatten(
+          jax.tree.map(
+              lambda scratch: None if is_shared_mem(scratch) else scratch,
+              scratch_shapes,
+          )
+      )
+
+      @pallas_core.core_map(
+          mesh,
+          scratch_shapes=tuple(shared_scratch_shapes),
+          **kwargs)
+      def _(*shared_scratch_refs):
+        shared_scratch_refs = shared_tree.unflatten(shared_scratch_refs)
+        def joining_scratch_refs(*per_core_scratch_refs):
+          per_core_scratch_refs = per_core_tree.unflatten(per_core_scratch_refs)
+          scratch_refs = jax.tree.map(
+              lambda shared, per_core: per_core if shared is None else shared,
+              shared_scratch_refs,
+              per_core_scratch_refs,
+          )
+          return body(*arg_refs, *out_refs, *scratch_refs)
+
         return pallas_primitives.run_scoped(
-            lambda *scratch_refs: body(*arg_refs, *out_refs, *scratch_refs),
-            *scratch_shapes,
+            joining_scratch_refs,
+            *per_core_scratch_shapes,
         )
 
       outs = jax.tree.map(lambda ref: ref[...], out_refs)
