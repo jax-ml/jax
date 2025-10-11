@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "third_party/protobuf/util/json_util.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
 #include "tsl/platform/protobuf.h"
