@@ -266,6 +266,8 @@ common:ci_linux_x86_64 --config=avx_linux --config=avx_posix
 common:ci_linux_x86_64 --config=mkl_open_source_only
 common:ci_linux_x86_64 --config=clang --verbose_failures=true
 common:ci_linux_x86_64 --color=yes
+common:ci_linux_x86_64 --repo_env=LLVM_VERSION=18
+common:ci_linux_x86_64 --repo_env=SYSROOT_DIST=linux_glibc_2_27
 
 # Deprecated CI config with non-hermetic toolchains.
 # TODO(b/356695103): We do not have a CPU only toolchain so we use the CUDA
@@ -423,11 +425,15 @@ common:rbe_linux_x86_64_cuda_common --@cuda_driver//:enable_forward_compatibilit
 
 common:rbe_linux_x86_64_cuda12 --config=rbe_linux_x86_64_cuda_common
 common:rbe_linux_x86_64_cuda12 --config=ci_linux_x86_64_cuda12
+common:rbe_linux_x86_64_cuda12 --repo_env=LLVM_VERSION=18
+common:rbe_linux_x86_64_cuda12 --repo_env=SYSROOT_DIST=linux_glibc_2_27
 # Alias for backward compatibility.
 common:rbe_linux_x86_64_cuda --config=rbe_linux_x86_64_cuda12
 
 common:rbe_linux_x86_64_cuda13 --config=rbe_linux_x86_64_cuda_common
 common:rbe_linux_x86_64_cuda13 --config=ci_linux_x86_64_cuda13
+common:rbe_linux_x86_64_cuda13 --repo_env=LLVM_VERSION=18
+common:rbe_linux_x86_64_cuda13 --repo_env=SYSROOT_DIST=linux_glibc_2_27
 
 # RBE configs for Windows
 # Set the remote worker pool
