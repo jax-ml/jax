@@ -22,9 +22,13 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/status/statusor.h"
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep; Needed to allow MlirModule -> ModuleOp.
 #include "mlir/CAPI/IR.h"  // IWYU pragma: keep; Needed to allow MlirModule -> ModuleOp.
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/OperationSupport.h"
 #include "nanobind/nanobind.h"
 // IWYU pragma: begin_keep; Nanobind conversions for std types.
 #include "nanobind/stl/map.h"
@@ -38,6 +42,9 @@ limitations under the License.
 #include "shardy/dialect/mpmd/ir/fragment_execution_rules.h"
 #include "shardy/dialect/mpmd/ir/utils.h"
 #include "shardy/integrations/python/jax/mpmd/jaxlib/mpmd_program.h"
+#include "xla/pjrt/status_casters.h"  // IWYU pragma: keep; Needed for ValueOrThrow
+#include "xla/python/ifrt/ir/conversions/mpmd/lower_to_ifrt.h"
+#include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 
 namespace nb = nanobind;
 
@@ -61,6 +68,9 @@ using ::mlir::mpmd::PartitioningResult;
 using ::mlir::mpmd::SplitFragmentType;
 using ::mlir::mpmd::SpmdTensorPartitionSpec;
 using ::mlir::mpmd::UserAssignmentMap;
+using ::xla::ifrt::mpmd::EnvOptionsOverride;
+using ::xla::ifrt::mpmd::GetCompileOptions;
+using ::xla::ifrt::mpmd::LowerToIfrt;
 
 // Wrapper of PartitioningResult, which stores MlirModules instead of ModuleOps.
 struct PartitioningResultWrapper {
@@ -234,6 +244,28 @@ NB_MODULE(_sdy_mpmd, m) {
       },
       nb::arg("c_module"),
       nb::arg("unit_attributes") = std::vector<std::string>());
+
+  m.def(
+      "lower_to_ifrt",
+      [](MlirModule module) -> void {
+        return xla::ThrowIfError(LowerToIfrt(unwrap(module)));
+      },
+      nb::arg("module"));
+
+  m.def("get_compile_options",
+        [](MlirModule c_module,
+           const absl::flat_hash_map<std::string, const EnvOptionsOverride>&
+               compile_options_overrides) -> absl::StatusOr<nb::dict> {
+          auto module = unwrap(c_module);
+          auto compile_options_map = ValueOrThrow(
+              GetCompileOptions(module, compile_options_overrides));
+          nb::dict out;
+          for (const auto& [name, options] : compile_options_map) {
+            out[nb::cast(name)] =
+                nb::steal<nb::object>(nanobind::cast(options).release().ptr());
+          }
+          return out;
+        });
 }
 
 }  // namespace
