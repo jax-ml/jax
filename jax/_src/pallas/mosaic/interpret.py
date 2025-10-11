@@ -986,8 +986,6 @@ def _allocate_semaphores(
 
 TPU_MEMORY_SPACE_IDXS : dict[mosaic_core.MemorySpace | pallas_core.MemorySpace | None, int] = {
     v: i for i, v in enumerate(mosaic_core.MemorySpace)}
-TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY] = (
-    TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY])
 TPU_MEMORY_SPACE_NAMES = {
     i: v.value for i, v in enumerate(mosaic_core.MemorySpace)}
 
@@ -1580,8 +1578,7 @@ def _to_jaxpr(flat_fun, in_avals):
   return new_jaxpr
 
 def _is_any(memory_space):
-  return ((memory_space == mosaic_core.MemorySpace.ANY) or
-          (memory_space == pallas_core.MemorySpace.ANY))
+  return memory_space == pallas_core.MemorySpace.ANY
 
 def _is_float(dtype):
   return jnp.issubdtype(dtype, jnp.floating)
@@ -1883,10 +1880,10 @@ def _interpret_jaxpr(
         ) = jax.tree.unflatten(eqn.params['tree'], eqn.invars)
         src_memory_space = getattr(orig_src_ref.aval, 'memory_space', None)
         if src_memory_space is None:
-          src_memory_space = mosaic_core.MemorySpace.ANY
+          src_memory_space = pallas_core.MemorySpace.ANY
         dst_memory_space = getattr(orig_dst_ref.aval, 'memory_space', None)
         if dst_memory_space is None:
-          dst_memory_space = mosaic_core.MemorySpace.ANY
+          dst_memory_space = pallas_core.MemorySpace.ANY
         callback.io_callback(
             functools.partial(dma_start, source_info=eqn.source_info),
             (),
@@ -2373,7 +2370,7 @@ def interpret_pallas_call(
         jax.ShapeDtypeStruct((), jnp.int16),
         device_id,
         None,  # local_core_id
-        TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY],
+        TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY],
         input_args[i],
         ordered=True))
 
@@ -2406,7 +2403,7 @@ def interpret_pallas_call(
               jax.ShapeDtypeStruct((), jnp.int16),
               device_id,
               None,  # local_core_id
-              TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY],
+              TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY],
               padded_val,
               ordered=True,
           )
@@ -2646,7 +2643,7 @@ def interpret_pallas_call(
               jax.ShapeDtypeStruct(input_var.aval.shape, input_var.aval.dtype),
               device_id,
               core_index,
-              TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY],
+              TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY],
               input_buffer_ids[index],
               (transform,),
               cur_block_indices[index],
@@ -2715,7 +2712,7 @@ def interpret_pallas_call(
               (),
               device_id,
               core_index,
-              TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY],
+              TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY],
               output_buffer_ids[index],
               (transform,),
               kernel_output_val,
@@ -2832,7 +2829,7 @@ def interpret_pallas_call(
           val,
           device_id,
           0,  # local_core_id
-          TPU_MEMORY_SPACE_IDXS[mosaic_core.MemorySpace.ANY],
+          TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY],
           output_buffer_id,
           (indexing.NDIndexer.from_indices_shape(
               tuple(indexing.ds(0, s) for s in val.shape),

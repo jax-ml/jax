@@ -85,7 +85,7 @@ def _get_memory_space_from_aval(
   match out_aval.memory_space:
     case None:
       return None
-    case tpu_core.MemorySpace.ANY:
+    case pallas_core.MemorySpace.ANY:
       return None
     case tpu_core.MemorySpace.HBM:
       return tpu_custom_call.MemorySpace.HBM
