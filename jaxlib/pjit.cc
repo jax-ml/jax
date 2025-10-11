@@ -72,6 +72,7 @@ limitations under the License.
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/memory.h"
+#include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_helpers.h"
@@ -519,8 +520,19 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
            (!py_array.committed() && sharding_num_devices == 1));
 
     if (!in_device_local_layout.is_none()) {
-      TF_ASSIGN_OR_RETURN(auto arr_layout,
-                          py_array.ifrt_array()->pjrt_layout());
+      xla::ifrt::Array* ifrt_array = py_array.ifrt_array();
+      TF_ASSIGN_OR_RETURN(auto arr_layout, ifrt_array->pjrt_layout());
+      if (arr_layout == nullptr) {
+        TF_ASSIGN_OR_RETURN(
+            xla::ifrt::Shape shard_shape,
+            ifrt_array->sharding().GetShardShape(ifrt_array->shape()));
+        TF_ASSIGN_OR_RETURN(
+            arr_layout,
+            executable.ifrt_loaded_executable()->client()->GetDefaultPjRtLayout(
+                ifrt_array->dtype(), shard_shape.dims(),
+                ifrt_array->sharding().devices()->devices().front(),
+                ifrt_array->sharding().memory_kind()));
+      }
       xla::Layout in_xc_layout = nb::cast<xla::Layout>(
           in_device_local_layout.attr("_to_xla_layout")(py_array.dtype()));
       if (in_xc_layout != arr_layout->xla_layout()) {

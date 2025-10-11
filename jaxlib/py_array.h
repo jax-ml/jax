@@ -44,11 +44,13 @@ limitations under the License.
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device_list.h"
+#include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/future.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
 namespace jax {
@@ -188,7 +190,20 @@ class PyArray : public nanobind::object {
   const nanobind::object& sharding() const { return GetStorage().sharding; }
 
   absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> layout() {
-    return ifrt_array()->pjrt_layout();
+    xla::ifrt::Array* ifrt_array_ptr = ifrt_array();
+    TF_ASSIGN_OR_RETURN(std::shared_ptr<const xla::PjRtLayout> layout,
+                        ifrt_array_ptr->pjrt_layout());
+    if (layout == nullptr) {
+      TF_ASSIGN_OR_RETURN(
+          xla::ifrt::Shape shard_shape,
+          ifrt_array_ptr->sharding().GetShardShape(ifrt_array()->shape()));
+      TF_ASSIGN_OR_RETURN(
+          layout, ifrt_array_ptr->client()->GetDefaultPjRtLayout(
+                      ifrt_array_ptr->dtype(), shard_shape.dims(),
+                      ifrt_array_ptr->sharding().devices()->devices().front(),
+                      ifrt_array_ptr->sharding().memory_kind()));
+    }
+    return layout;
   }
 
   bool committed() const { return GetStorage().committed; }
