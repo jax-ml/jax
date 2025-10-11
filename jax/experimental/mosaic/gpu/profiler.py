@@ -353,15 +353,12 @@ class OnDeviceProfiler:
       yield self.ctx
       return
 
+    def fields(obj) -> list[ir.Value]:
+      return [getattr(obj, field.name) for field in dataclasses.fields(obj)]
+
     op = dialect.CustomPrimitiveOp(
         result=[],
-        operands_=[
-            self.ctx.start,
-            self.ctx.is_profiling_thread,
-            self.ctx.smem_buffer,
-            self.ctx.gmem_buffer,
-            self.ctx.offset,
-        ],
+        operands_=fields(self.ctx),
         in_layouts=[],
         in_transforms=[ir.ArrayAttr.get([])],
         out_layouts=[],
