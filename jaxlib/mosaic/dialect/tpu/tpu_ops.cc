@@ -324,9 +324,13 @@ LogicalResult MemRefSqueezeOp::verify() {
     }
     SmallVector<int64_t> target_strides;
     for (auto [i, stride] : llvm::enumerate(source_strides)) {
-      if (!llvm::is_contained(*squeezed_or, i)) {
-        target_strides.push_back(stride);
+      if (llvm::is_contained(*squeezed_or, i)) {
+        continue;
       }
+      target_strides.push_back(
+          (source_shape[i] == ShapedType::kDynamic && source_shape.size() > 1)
+              ? ShapedType::kDynamic
+              : stride);
     }
     auto expected_layout =
         StridedLayoutAttr::get(getContext(), source_offset, target_strides);

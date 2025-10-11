@@ -161,12 +161,12 @@ class NDIndexer:
   validate: bool = False
 
   def __post_init__(self):
-    if not self.validate:
-      return
     if len(self.indices) != len(self.shape):
       raise ValueError(
           f"`indices` must be the same length as `Ref` shape.: {self}."
       )
+    if not self.validate:
+      return
     # We validate integer indexing shapes here
     for idx, s in zip(self.indices, self.shape):
       if isinstance(idx, Slice):
@@ -216,11 +216,19 @@ class NDIndexer:
 
   def tree_flatten(self):
     flat_idx, idx_tree = tree_util.tree_flatten(self.indices)
-    return flat_idx, (idx_tree, self.shape, self.int_indexer_shape)
+    if not all(isinstance(i, int) for i in self.int_indexer_shape):
+      return (*flat_idx, self.int_indexer_shape), (idx_tree, self.shape)
+    else:
+      return flat_idx, (idx_tree, self.shape, self.int_indexer_shape)
 
   @classmethod
   def tree_unflatten(cls, data, flat_idx):
-    idx_tree, shape, int_indexer_shape = data
+    if len(data) == 3:
+      idx_tree, shape, int_indexer_shape = data
+    else:
+      # The ``int_indexer_shape`` is dynamic.
+      idx_tree, shape = data
+      *flat_idx, int_indexer_shape = flat_idx
     indices = tree_util.tree_unflatten(idx_tree, flat_idx)
     return cls(tuple(indices), shape, int_indexer_shape)
 

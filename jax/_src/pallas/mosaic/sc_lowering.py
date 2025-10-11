@@ -509,9 +509,9 @@ def _dma_start_lowering_rule(
       src_sem,
       src_sem_transforms,
       device_id,
-  ) = jax.tree.unflatten(tree, args)
+  ) = tpu_primitives._dma_unflatten(tree, args)
   src_aval, _, dst_aval, _, sem_aval, _, src_sem_aval, _, _ = (
-      jax.tree.unflatten(tree, ctx.avals_in)
+      tpu_primitives._dma_unflatten(tree, ctx.avals_in)
   )
 
   # If not ``None``, we lower to an indirect stream instead of a DMA.
@@ -588,9 +588,9 @@ def _dma_wait_lowering_rule(
       _,
       _,
       device_id,
-  ) = jax.tree.unflatten(tree, args)
-  src_aval, _, dst_aval, _, sem_aval, _, _, _, _ = jax.tree.unflatten(
-      tree, ctx.avals_in
+  ) = tpu_primitives._dma_unflatten(tree, args)
+  src_aval, _, dst_aval, _, sem_aval, _, _, _, _ = (
+      tpu_primitives._dma_unflatten(tree, ctx.avals_in)
   )
 
   # If not ``None``, we lower to an indirect stream instead of a DMA.
@@ -674,7 +674,7 @@ def _extract_indirect_offsets(
       offsets_ref, _ = _transform_ref(
           offsets_ref.ref,
           jnp.int32,  # Just a placeholder.
-          offsets_ref.shape,
+          offsets_type.shape,
           offsets_ref.transforms,
       )
       if not state_discharge._is_trivial_indexer(
