@@ -477,6 +477,7 @@ def _addupdate_abstract_eval(ref_aval: AbstractRef,
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
     out_shape = _shape_after_transforming(ref_aval.shape, transforms)
     out_dtype = _dtype_after_transforming(ref_aval.dtype, transforms)
+    out_sharding = _sharding_after_transforming(ref_aval.sharding, transforms)
     assert isinstance(val_aval, core.ShapedArray)
     if out_shape != val_aval.shape:
       raise ValueError(
@@ -490,6 +491,12 @@ def _addupdate_abstract_eval(ref_aval: AbstractRef,
       raise ValueError("Invalid dtype for `addupdate`. "
                        f"Ref dtype: {ref_aval.dtype}. "
                        f"Value shape: {val_aval.dtype}. ")
+    if ((out_sharding.mesh._any_axis_explicit or
+         val_aval.sharding.mesh._any_axis_explicit) and
+        out_sharding != val_aval.sharding):
+      raise ValueError("Invalid sharding for `addupdate`. "
+                       f"Ref sharding: {ref_aval.sharding}. "
+                       f"Value sharding: {val_aval.sharding}. ")
   else:
     # Check that the transforms are valid
     if transforms:

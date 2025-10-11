@@ -2981,6 +2981,13 @@ def _reshard_transpose_rule(ct, x, dst_sharding):
   return [reshard_p.bind(ct, dst_sharding=x.aval.to_cotangent_aval().sharding)]
 ad.deflinear2(reshard_p, _reshard_transpose_rule)
 
+def _reshard_transpose_fancy(ct, x, dst_sharding):
+  out_sharding = x.aval.to_cotangent_aval().sharding
+  with mesh_lib.use_abstract_mesh(out_sharding.mesh):
+    x_bar = reshard_p.bind(ct, dst_sharding=out_sharding)
+    x.accum(x_bar)
+ad.fancy_transposes[reshard_p] = _reshard_transpose_fancy
+
 def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding):
   aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
