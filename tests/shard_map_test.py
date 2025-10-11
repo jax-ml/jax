@@ -4164,6 +4164,17 @@ class ShardMapTest(jtu.JaxTestCase):
     out2 = jax.jit(f)(arr)
     self.assertEqual(out.sharding, out2.sharding)
 
+  @jtu.with_explicit_mesh((1, 2, 2), ('x', 'y', 'z'))
+  def test_axis_index_explicit_mesh_eager_shmap(self, mesh):
+    def f():
+      return jnp.array([jax.lax.axis_index(n) for n in mesh.axis_names])
+
+    jax.shard_map(f, out_specs=P(mesh.axis_names))()  # doesn't crash
+    jax.jit(jax.shard_map(f, out_specs=P(mesh.axis_names)))()  # doesn't crash
+
+    jax.shard_map(f, out_specs=P(), check_vma=False)()  # doesn't crash
+    jax.jit(jax.shard_map(f, out_specs=P(), check_vma=False))()  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str

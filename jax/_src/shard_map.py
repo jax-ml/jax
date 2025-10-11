@@ -1281,7 +1281,7 @@ class ShardMapTracer(core.Tracer):
     return out.update(sharding=new_sharding, vma=vma)
 
   def to_concrete_value(self):
-    if self.vma == frozenset():
+    if self._trace.check and self.vma == frozenset():
       with core.eval_context(), use_abstract_mesh(self._trace.amesh):
         return core.to_concrete_value(self.val[0])
     else:
