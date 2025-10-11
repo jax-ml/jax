@@ -42,7 +42,7 @@ limitations under the License.
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
-#include "jaxlib/dlpack.h"
+#include "xla/python/dlpack.h"
 #include "jaxlib/py_client.h"
 #include "xla/array.h"
 #include "xla/client/executable_build_options.h"
@@ -66,6 +66,7 @@ limitations under the License.
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/nb_numpy.h"
 #include "xla/python/types.h"
+#include "xla/python/xla_literal.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/hlo.pb.h"
@@ -425,7 +426,7 @@ nb::ndarray<> LiteralToNdarray(Literal& obj) {
 
   xla::PrimitiveType primitive_type = shape.element_type();
   nb::dlpack::dtype dtype =
-      ValueOrThrow(jax::PrimitiveTypeToNbDLDataType(primitive_type));
+      ValueOrThrow(xla::PrimitiveTypeToNbDLDataType(primitive_type));
 
   absl::Span<const int64_t> dimensions = shape.dimensions();
   std::vector<size_t> unsigned_dimensions(dimensions.begin(), dimensions.end());
