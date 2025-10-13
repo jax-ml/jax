@@ -19,7 +19,7 @@ import threading
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
-import jax._src.pallas.mosaic.interpret as mosaic_interpret
+from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_interpret
 
 
 jax.config.parse_flags_with_absl()
