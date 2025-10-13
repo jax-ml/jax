@@ -3615,7 +3615,7 @@ class ShapeDtypeStruct:
     dtype: a dtype-like object
     sharding: (optional) a :class:`jax.Sharding` object
   """
-  __slots__ = ["shape", "dtype", "sharding", "_dll", "weak_type", "vma",
+  __slots__ = ["shape", "dtype", "_sharding", "_dll", "weak_type", "vma",
                "is_ref"]
 
   def __init__(self, shape, dtype, *, sharding=None, weak_type=False,
@@ -3635,21 +3635,9 @@ class ShapeDtypeStruct:
       raise TypeError(
           "`Layout.AUTO` cannot be used in place of a device-local"
           f" layout in a `ShapeDtypeStruct`. Got {sharding}")
-    if isinstance(sharding, Format):
-      self.sharding = sharding.sharding
-    elif isinstance(sharding, P):
-      # TODO(yashkatariya): Should this be abstract mesh?
-      cur_mesh = get_concrete_mesh()
-      if cur_mesh.empty:
-        raise TypeError(
-            "When specifying PartitionSpec to `ShapeDtypeStruct`, the context"
-            " mesh cannot be empty. Please use `jax.set_mesh` to set"
-            " the mesh context.")
-      self.sharding = NamedSharding(cur_mesh, sharding)
-    else:
-      self.sharding = sharding
-    self._dll = (sharding.layout if isinstance(sharding, Format)
-                 else None)
+    self._sharding = (sharding.sharding if isinstance(sharding, Format)
+                      else sharding)
+    self._dll = sharding.layout if isinstance(sharding, Format) else None
     self.weak_type = weak_type
     if vma is not None and not isinstance(vma, (set, frozenset)):
       raise TypeError(
@@ -3660,6 +3648,20 @@ class ShapeDtypeStruct:
 
   size = property(lambda self: math.prod(self.shape))
   ndim = property(lambda self: len(self.shape))
+
+  @property
+  def sharding(self):
+    if isinstance(self._sharding, P):
+      # TODO(yashkatariya): Should this be abstract mesh?
+      cur_mesh = get_concrete_mesh()
+      if cur_mesh.empty:
+        raise TypeError(
+            "When specifying PartitionSpec to `ShapeDtypeStruct`, the context"
+            " mesh cannot be empty. Please use `jax.set_mesh` to set"
+            " the mesh context.")
+      return NamedSharding(cur_mesh, self._sharding)
+    else:
+      return self._sharding
 
   @property
   def format(self):

@@ -4829,11 +4829,24 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
   def test_sds_pspec_no_mesh_ctx_error(self):
+    sds = jax.ShapeDtypeStruct((2, 2), np.float32, sharding=P('x'))
+
+    mesh = jtu.create_mesh((2,), 'x')
+    with jax.set_mesh(mesh):
+      out_s = sds.sharding
+      self.assertEqual(out_s, NamedSharding(mesh, P('x')))
+
     with self.assertRaisesRegex(
         TypeError,
         'When specifying PartitionSpec to `ShapeDtypeStruct`, the context mesh'
         ' cannot be empty'):
-      jax.ShapeDtypeStruct((2, 2), np.float32, sharding=P('x'))
+      _ = sds.sharding
+
+    mesh = jtu.create_mesh((2,), 'y')
+    with jax.set_mesh(mesh):
+      with self.assertRaisesRegex(
+          ValueError, "Resource axis.*not found in mesh"):
+        _ = sds.sharding
 
   def test_set_mesh_none_out_sharding(self):
     mesh = jtu.create_mesh((2,), 'x')
