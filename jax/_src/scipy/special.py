@@ -252,7 +252,7 @@ def betainc(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{betainc}(a, b, x) = B(a, b)\int_0^x t^{a-1}(1-t^{b-1})\mathrm{d}t
+     \mathrm{betainc}(a, b, x) = \frac{1}{B(a, b)}\int_0^x t^{a-1}(1-t)^{b-1}\mathrm{d}t
 
   where :math:`B(a, b)` is the :func:`~jax.scipy.special.beta` function.
 
