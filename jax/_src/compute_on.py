@@ -53,11 +53,17 @@ def extend_compute_type(c_type: str | None):
 
 
 def _check_valid(c_type: str):
-  if (c_type not in {'device_host', 'device', 'tpu_sparsecore'}
-      and not c_type.startswith("gpu_stream:")):
+  if c_type not in {
+      'device_host',
+      'device',
+      'tpu_sparsecore',
+      'tpu_sparsecore_offload',
+  } and not c_type.startswith('gpu_stream:'):
     raise ValueError(
-        f'Invalid compute type {c_type}. Current supported values '
-        'are `device_host`, `device`, `tpu_sparsecore`, and `gpu_stream:#`.')
+        f'Invalid compute type {c_type}. Current supported values are'
+        ' `device_host`, `device`, `tpu_sparsecore`, `tpu_sparsecore_offload`'
+        ' and `gpu_stream:#`.'
+    )
 
 @contextmanager
 def compute_on(compute_type: str):
