@@ -1880,8 +1880,8 @@ def _move_scf_block_to_block_with_flattened_arguments(
       old_arg.replace_all_uses_with(new_arg)
     for op in [*old_block]:
       if not isinstance(op, last_op_type):
-        mgpu.private_operation_remove_from_parent(op)
-        mgpu.private_block_append_owned_operation(new_block, op)
+        # `append` moves the operation.
+        new_block.append(op)
         ctx.lower_op(op)
       else:
         assert out_template is None
