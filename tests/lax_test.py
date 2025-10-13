@@ -4904,7 +4904,6 @@ class CompositeTest(jtu.JaxTestCase):
       jax.jit(fun)(x, scale)
 
 
-@unittest.skip("TODO(pravnar): test crashes on TPU")
 class RaggedTest(jtu.JaxTestCase):
 
   def _test_ragged_dot(self, m, k, n, num_groups, dtype):
@@ -4966,11 +4965,14 @@ class RaggedTest(jtu.JaxTestCase):
         )
 
   @parameterized.parameters(
-        { "m": 5, "k": 4, "n": 3, "num_groups": 1},
-        { "m": 10, "k": 9, "n": 8, "num_groups": 2},
+      {"m": 5, "k": 4, "n": 3, "num_groups": 1},
+      {"m": 5, "k": 4, "n": 3, "num_groups": 2},
+      {"m": 9, "k": 4, "n": 3, "num_groups": 1},
+      {"m": 10, "k": 9, "n": 8, "num_groups": 2},
   )
-  def test_ragged_dot_unsupported(
-      self, m, k, n, num_groups):
+  def test_ragged_dot_small_m(self, m, k, n, num_groups):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
+      self.skipTest("Requires libtpu built after 2025-10-14")
     lhs_shape = (m, k)
     rhs_shape = (num_groups, k, n)
     group_sizes_shape = (num_groups,)
@@ -4980,9 +4982,7 @@ class RaggedTest(jtu.JaxTestCase):
         jnp.ones(rhs_shape, dtype=jnp.float32),
         jnp.ones(group_sizes_shape, dtype=jnp.int32),
     ]
-    if jtu.test_device_matches(["tpu"]):
-      with self.assertRaises(jax.errors.JaxRuntimeError):
-        self._CompileAndCheck(lax.ragged_dot, args_maker)
+    self._CompileAndCheck(lax.ragged_dot, args_maker)
 
   @parameterized.parameters(
       {
