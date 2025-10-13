@@ -1130,6 +1130,9 @@ jax_multiplatform_test(
         "gpu_h100_x32",
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    tags = [
+        "noasan",
+    ],
     deps = [
         "//jax:pallas",
         "//jax:pallas_experimental_gpu_ops",
