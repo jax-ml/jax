@@ -2286,8 +2286,7 @@ jax_dump_ir_modes = string_flag(
 
 jax_ragged_dot_use_ragged_dot_instruction = bool_state(
     name='jax_ragged_dot_use_ragged_dot_instruction',
-    default=False,
-    upgrade=True,
+    default=True if jaxlib_extension_version >= 381 else False,
     help=(
         '(TPU only) If True, use chlo.ragged_dot instruction for ragged_dot()'
         ' lowering. Otherwise, rely on the rollout logic in lowering rule for'
