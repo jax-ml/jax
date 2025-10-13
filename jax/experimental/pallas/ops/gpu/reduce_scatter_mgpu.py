@@ -30,9 +30,10 @@ def reduce_scatter(
     *,
     axis_name,
     reduction: Literal["add", "min", "max", "and", "or", "xor"] = "add",
-    vec_size: int = 2,
     num_blocks: int | None = None,
-    rows_per_transfer: int = 1,
+    tile_size: int | None = None,
+    # TODO(apaszke): Infer default from the dtype
+    vec_size: int = 2,
 ) -> jax.Array:
   """Performs a reduce-scatter operation across devices using multimem instructions.
 
@@ -43,7 +44,7 @@ def reduce_scatter(
       "and", "or", "xor".
     vec_size: Vector size for the layout (default: 2).
     num_blocks: Number of blocks to use. Defaults to the device core count.
-    rows_per_transfer: Number of rows to transfer per iteration (default: 1).
+    tile_size: Total tile size to split between row and minor dimensions.
   """
   num_devices = lax.axis_size(axis_name)
   input_shape = x.shape
@@ -66,44 +67,50 @@ def reduce_scatter(
         f" ({vec_size})"
     )
 
-  if output_shape[0] % rows_per_transfer != 0:
+  min_transfer_elems = 128 * vec_size
+  if tile_size is None:
+    # TODO(apaszke): 8 is just an arbitrary unrolling factor. Tune it!
+    unroll_factor = min(math.prod(output_shape) // min_transfer_elems, 8)
+    tile_size = unroll_factor * min_transfer_elems
+  if tile_size < min_transfer_elems:
     raise ValueError(
-        f"Rows per device ({output_shape[0]}) must be divisible by "
-        f"rows_per_transfer ({rows_per_transfer})"
+        f"{tile_size=} is smaller than minimum required"
+        f" {min_transfer_elems} for {vec_size=}"
     )
 
-  min_transfer_elems = 128 * vec_size
-  elems_per_row = math.prod(input_shape[1:])
-  elems_per_transfer = rows_per_transfer * elems_per_row
-  if elems_per_transfer < min_transfer_elems or elems_per_transfer % min_transfer_elems:
-    raise ValueError(
-        f"Transfer size ({elems_per_transfer} elements) is smaller or not"
-        f" divisible by the minimum required ({min_transfer_elems} elements)."
-        " Increase rows_per_transfer to at least"
-        f" {min_transfer_elems // elems_per_row} or decrease {vec_size=}."
+  minor_dims_size = math.prod(input_shape[1:])
+  minor_tile = math.gcd(tile_size, minor_dims_size)
+  major_tile = tile_size // minor_tile
+
+  # TODO(apaszke): Just peel the last step if non-divisible.
+  if output_shape[0] % major_tile != 0:
+    raise NotImplementedError(
+        f"Scattered output size ({output_shape[0]}) must be divisible by the"
+        f" inferred major tile size ({major_tile}). Consider adjusting"
+        " tile_size."
     )
 
   def kernel(x_ref, y_ref, done_barrier):
     dev_idx = lax.axis_index(axis_name)
-    rows_per_device = output_shape[0]
-    num_transfers = rows_per_device // rows_per_transfer
-    dev_base_idx = dev_idx * rows_per_device
+    x_ref = x_ref.at[pl.ds(dev_idx * output_shape[0], output_shape[0])]
 
-    # TODO(apaszke): Tile other dimensions if they are too big
-    @plgpu.nd_loop((num_transfers,), collective_axes="blocks")
+    x_ref_2d = x_ref.reshape((output_shape[0], minor_dims_size))
+    y_ref_2d = y_ref.reshape((output_shape[0], minor_dims_size))
+
+    minor_tiles = minor_dims_size // minor_tile
+    major_tiles = output_shape[0] // major_tile
+    @plgpu.nd_loop((major_tiles, minor_tiles), collective_axes="blocks")
     def _transfer_loop(loop_info: plgpu.NDLoopInfo):
-      (transfer_idx,) = loop_info.index
-      row_idx = transfer_idx * rows_per_transfer
-      start_row = dev_base_idx + row_idx
-      y_ref[pl.ds(row_idx, rows_per_transfer)] = plgpu.layout_cast(
+      major_tile_idx, minor_tile_idx = loop_info.index
+      major_idx = major_tile_idx * major_tile
+      minor_idx = minor_tile_idx * minor_tile
+      idxs = pl.ds(major_idx, major_tile), pl.ds(minor_idx, minor_tile)
+
+      y_ref_2d[idxs] = plgpu.layout_cast(
           plgpu.multimem_load_reduce(
-              x_ref.at[pl.ds(start_row, rows_per_transfer)],
-              collective_axes=axis_name,
-              reduction_op=reduction,
+              x_ref_2d.at[idxs], collective_axes=axis_name, reduction_op=reduction
           ),
-          plgpu.Layout.WG_STRIDED(
-              (rows_per_transfer, *output_shape[1:]), vec_size=vec_size
-          ),
+          plgpu.Layout.WG_STRIDED((major_tile, minor_tile), vec_size=vec_size)
       )
     plgpu.semaphore_signal_multicast(done_barrier, collective_axes=axis_name)
     pl.semaphore_wait(done_barrier, num_devices, decrement=False)

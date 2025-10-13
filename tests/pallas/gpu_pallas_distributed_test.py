@@ -437,7 +437,7 @@ class PallasCallMultimemTest(TestCase):
           axis_name="x",
           reduction=reduction,
           vec_size=vec_size,
-          rows_per_transfer=16,
+          tile_size=1024,  # 16 rows * 64 cols = 1024 elements = 8 elements per thread
           num_blocks=4,
       )
 
@@ -452,6 +452,36 @@ class PallasCallMultimemTest(TestCase):
     expected = np_reduction(x[:512], x[512:])
     tol = 1e-5 if reduction == "add" else 0
     np.testing.assert_allclose(y, expected, rtol=tol, atol=tol)
+
+  def test_reduce_scatter_large_minor_dims(self):
+    if jax.process_index() > 2:
+      return
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    x = jax.random.uniform(
+        jax.random.key(42), (512, 32768), dtype=jnp.float16, minval=-1.0, maxval=1.0
+    )
+
+    def body(x):
+      return reduce_scatter(
+          x,
+          axis_name="x",
+          reduction="add",
+          vec_size=4,
+          tile_size=8192,  # 8 rows * 1024 minor_tile = 8192 elements = 64 elements per thread
+          num_blocks=4,
+      )
+
+    y = jax.jit(
+        jax.shard_map(
+            body, mesh=mesh, in_specs=P("x"), out_specs=P("x"), check_vma=False
+        )
+    )(x)
+
+    y = multihost_utils.process_allgather(y, tiled=True)
+    expected = x[:256] + x[256:]
+    np.testing.assert_allclose(y, expected, rtol=1e-4, atol=1e-4)
 
 
 if __name__ == '__main__':
