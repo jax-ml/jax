@@ -7452,8 +7452,7 @@ def trim_zeros(filt: ArrayLike, trim: str ='fb') -> Array:
     >>> jnp.trim_zeros(x)
     Array([2, 0, 1, 4, 3], dtype=int32)
   """
-  # Non-array inputs are deprecated 2024-09-11
-  util.check_arraylike("trim_zeros", filt, emit_warning=True)
+  util.check_arraylike("trim_zeros", filt)
   core.concrete_or_error(None, filt,
                          "Error arose in the `filt` argument of trim_zeros()")
   filt_arr = asarray(filt)
