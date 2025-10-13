@@ -23,7 +23,6 @@ from jax import P
 from jax._src import test_util as jtu
 from jax._src import config
 from jax._src.named_sharding import NamedSharding
-from jax._src.pjit import pjit
 from jax.experimental.custom_partitioning import (
     custom_partitioning, SdyShardingRule, BATCHING)
 
@@ -39,7 +38,6 @@ class CustomPartitionerTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Custom partitioning is not supported on libtpu.")
 
   @jtu.skip_on_devices('cpu')  # Collectives don't seem to work on CPU.
-  @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_custom_partitioner(self):
     self.skip_if_custom_partitioning_not_supported()
 
@@ -83,16 +81,18 @@ class CustomPartitionerTest(jtu.JaxTestCase):
         partition=partition,
         sharding_rule=SdyShardingRule(operand_mappings=(('i', 'j'), ('j', 'k')), result_mappings=(('i', 'k'), ('i', 'k'))))
 
-    pjit_f = pjit(f, in_shardings=(P('x'), P('y')), out_shardings=P('x'))
-    x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
-    y = np.asarray(np.random.randint(0, 20, (16, 32)), dtype=np.float32)
-    result1 = jax.jit(f)(x, y)
-    result2 = f(x, y)
-    result0 = pjit_f(x, y)
-    self.assertArraysEqual(result0, result1)
-    self.assertArraysEqual(result1, result2)
+    with jax.set_mesh(jtu.create_mesh((4, 2), ('x', 'y'))):
+      jit_f = jax.jit(f, in_shardings=(P('x'), P('y')), out_shardings=P('x'))
+      x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
+      y = np.asarray(np.random.randint(0, 20, (16, 32)), dtype=np.float32)
+      x_sharded = jax.device_put(x, P('x'))
+      y_sharded = jax.device_put(y, P('y'))
+      result1 = jax.jit(f)(x_sharded, y_sharded)
+      result2 = f(x, y)
+      result0 = jit_f(x_sharded, y_sharded)
+      self.assertArraysEqual(result0, result1)
+      self.assertArraysEqual(result1, result2)
 
-  @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_custom_partitioner_propagate_user_sharding(self):
     self.skip_if_custom_partitioning_not_supported()
 
@@ -127,11 +127,11 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     def f2(a):
       return a + f(a)
 
-    pjit_f = pjit(f2, in_shardings=(P(None, 'x')), out_shardings=P('x'))
-    x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
-    self.assertArraysEqual(x + x, pjit_f(x))
+    with jax.set_mesh(jtu.create_mesh((4, 2), ('x', 'y'))):
+      jit_f = jax.jit(f2, in_shardings=(P(None, 'x')), out_shardings=P('x'))
+      x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
+      self.assertArraysEqual(x + x, jit_f(jax.device_put(x, P(None, 'x'))))
 
-  @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_custom_partitioner_sharding_override(self):
     self.skip_if_custom_partitioning_not_supported()
 
@@ -160,11 +160,11 @@ class CustomPartitionerTest(jtu.JaxTestCase):
         partition=partition,
         sharding_rule=SdyShardingRule(operand_mappings=((BATCHING, 'i'),), result_mappings=((BATCHING, 'i'),)))
 
-    pjit_f = pjit(f, in_shardings=(P(None, 'x')), out_shardings=P('x'))
-    x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
-    self.assertArraysEqual(x, pjit_f(x))
+    with jax.set_mesh(jtu.create_mesh((4, 2), ('x', 'y'))):
+      jit_f = jax.jit(f, in_shardings=(P(None, 'x')), out_shardings=P('x'))
+      x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
+      self.assertArraysEqual(x, jit_f(jax.device_put(x, P(None, 'x'))))
 
-  @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_custom_partitioner_invalid_sharding(self):
     self.skip_if_custom_partitioning_not_supported()
     def partition(mesh, arg_shapes, result_shape):
@@ -193,13 +193,13 @@ class CustomPartitionerTest(jtu.JaxTestCase):
         sharding_rule='i j -> i j',
     )
 
-    pjit_f = pjit(f, in_shardings=(P(None, 'x')), out_shardings=P('x'))
-    x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
+    with jax.set_mesh(jtu.create_mesh((4, 2), ('x', 'y'))):
+      jit_f = jax.jit(f, in_shardings=(P(None, 'x')), out_shardings=P('x'))
+      x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
 
-    with self.assertRaisesRegex(Exception, 'Mismatch in result shapes.'):
-      pjit_f(x).block_until_ready()
+      with self.assertRaisesRegex(Exception, 'Mismatch in result shapes.'):
+        jit_f(jax.device_put(x, P(None, 'x'))).block_until_ready()
 
-  @jtu.with_mesh([('x', 4)])
   def test_custom_partitioner_jit_annotated_function(self):
     """Test correct lowering of function with a @jax.jit annotated callee.
 
@@ -240,12 +240,12 @@ class CustomPartitionerTest(jtu.JaxTestCase):
         sharding_rule='i -> i',
     )
 
-    jit_f = jax.jit(f)
-    x = np.asarray(np.random.randint(0, 20, (32,)), dtype=np.float32)
-    pjit_f = pjit(jit_f, in_shardings=(P('x')), out_shardings=P('x'))
-    self.assertArraysEqual(x, pjit_f(x))
+    with jax.set_mesh(jtu.create_mesh((4,), ('x',))):
+      jit_f = jax.jit(f)
+      x = np.asarray(np.random.randint(0, 20, (32,)), dtype=np.float32)
+      jit_f = jax.jit(jit_f, in_shardings=(P('x')), out_shardings=P('x'))
+      self.assertArraysEqual(x, jit_f(jax.device_put(x, P('x'))))
 
-  @jtu.with_mesh([('x', 4)])
   def test_custom_partitioner_with_scan(self):
     self.skip_if_custom_partitioning_not_supported()
 
@@ -273,9 +273,10 @@ class CustomPartitionerTest(jtu.JaxTestCase):
         propagate_user_sharding=lambda _, user_shape: user_shape.sharding,
         sharding_rule='i j -> ')  # Result is a scalar.
 
-    pjit_f = pjit(f, in_shardings=P(None, 'x'))
-    xs = jnp.ones([32, 16])
-    self.assertEqual(pjit_f(xs), xs.sum())
+    with jax.set_mesh(jtu.create_mesh((4,), ('x',))):
+      jit_f = jax.jit(f, in_shardings=P(None, 'x'))
+      xs = jax.device_put(jnp.ones([32, 16]), P(None, 'x'))
+      self.assertEqual(jit_f(xs), xs.sum())
 
   def test_custom_partitioning_no_mesh_context(self):
     self.skip_if_custom_partitioning_not_supported()
@@ -317,7 +318,6 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     jit_f = jax.jit(f, in_shardings=s, out_shardings=s)
     self.assertArraysEqual(x, jit_f(x))
 
-  @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_custom_partitioner_pytree_inputs(self):
     self.skip_if_custom_partitioning_not_supported()
 
@@ -354,9 +354,10 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     def f2(a):
       return a + f((a, a, a))
 
-    pjit_f = pjit(f2, in_shardings=(P(None, 'x')), out_shardings=P('x'))
-    x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
-    self.assertArraysEqual(x * 4, pjit_f(x))
+    with jax.set_mesh(jtu.create_mesh((4, 2), ('x', 'y'))):
+      jit_f = jax.jit(f2, in_shardings=(P(None, 'x')), out_shardings=P('x'))
+      x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
+      self.assertArraysEqual(x * 4, jit_f(jax.device_put(x, P(None, 'x'))))
 
   @jtu.skip_on_devices('cpu')
   def test_custom_partition_with_sharding_rule_callback(self):
