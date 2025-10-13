@@ -3274,10 +3274,14 @@ class MeshExecutable(stages.Executable):
       # args do not include the const args.
       # See https://docs.jax.dev/en/latest/internals/constants.html.
       outs, out_flat, args_flat = stages.Compiled.call(params, *args, **kwargs)
-      out_flat, out_tree_dispatch = reflatten_outputs_for_dispatch(
-          params.out_tree, out_flat)
-      use_fastpath = (all(isinstance(x, xc.ArrayImpl) for x in out_flat)
-                      and not self._mut)
+
+      if not params.is_high:
+        out_flat, out_tree_dispatch = reflatten_outputs_for_dispatch(
+            params.out_tree, out_flat)
+        use_fastpath = (all(isinstance(x, xc.ArrayImpl) for x in out_flat)
+                        and not self._mut)
+      else:
+        use_fastpath = False
 
       if use_fastpath:
         out_avals = [o.aval for o in out_flat]

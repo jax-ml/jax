@@ -35,6 +35,7 @@ import enum
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
+import itertools as it
 from typing import Any, NamedTuple, Protocol, Union, runtime_checkable
 
 from jax._src import core
@@ -54,6 +55,7 @@ from jax._src.lib import ifrt_version
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.tree_util import tree_structure, tree_unflatten
+from jax._src.core import typeof
 
 
 source_info_util.register_exclusion(__file__)
@@ -360,10 +362,16 @@ def make_args_info(in_tree, in_avals, donate_argnums):
 class CompiledCallParams(NamedTuple):
   executable: Executable
   no_kwargs: bool
-  in_tree: tree_util.PyTreeDef
-  out_tree: tree_util.PyTreeDef
-  # See https://docs.jax.dev/en/latest/internals/constants.html
-  const_args: list[ArrayLike]
+  in_tree: tree_util.PyTreeDef  # lo tree
+  out_tree: tree_util.PyTreeDef  # lo tree
+  const_args: list[ArrayLike]  # https://docs.jax.dev/en/latest/internals/constants.html
+  in_types: tuple[tree_util.PyTreeDef, list[core.AbstractValue | core.AvalQDD]] | None
+  out_types: tuple[tree_util.PyTreeDef, list[core.AbstractValue]] | None
+
+  @property
+  def is_high(self):
+    return self.in_types and self.out_types and any(
+        a.is_high for a in it.chain(self.in_types[1], self.out_types[1]))
 
 
 def _traced_args_info(self):
@@ -416,6 +424,8 @@ class Traced(Stage):
   def fall(self):
     if not self.jaxpr.is_high:
       return Fallen(self._lfg, self._params, self._in_tree, self._out_tree,
+                    (self._in_tree, self.jaxpr.in_avals),
+                    (self._out_tree, self.jaxpr.out_avals),
                     self._num_consts)
 
     # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
@@ -432,7 +442,10 @@ class Traced(Stage):
                for lo_val in (aval.read_loval(x) if aval.has_qdd
                               else aval.lower_val(x))]
     lfg = partial(_resolve_and_lower, lo_args, pgle_profiler=None)
-    return Fallen(lfg, params, in_tree, out_tree, self._num_consts)
+    return Fallen(lfg, params, in_tree, out_tree,
+                  (self._in_tree, hi_jaxpr.final_aval_qdds),
+                  (self._out_tree, hi_jaxpr.out_avals),
+                  self._num_consts)
 
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
             _private_parameters: mlir.LoweringParameters | None = None):
@@ -446,24 +459,27 @@ def lojax_expand_params(jaxpr, params):
   lo_nums_out = [len(t.lo_ty()) for t in jaxpr.out_avals]
   lo_muts_out = sum(len(aval.lo_ty()) for aval in jaxpr.final_aval_qdds
                     if aval.has_qdd)
-  if lo_muts_out: raise NotImplementedError  # TODO(mattjj)
   return _lojax_expand_params(lo_nums_in, lo_nums_out, lo_muts_out,
                               **dict(params, jaxpr=jaxpr))
 
 def lojax_pytree(hi_avals, tree):
-  lo_avals = [t.lo_ty_qdd() if t.has_qdd else t.lo_ty() for t in hi_avals]
+  lo_avals = [t.lo_ty() for t in hi_avals]
   return tree_structure(tree_unflatten(tree, lo_avals))
 
 class Fallen(Stage):
   """True leader of the Decepticons."""
-  __slots__ = ['_lfg', '_params', '_in_tree', '_out_tree', '_num_consts']
+  __slots__ = ['_lfg', '_params', '_in_tree', '_out_tree',
+               '_num_consts', '_in_types', '_out_types']
 
-  def __init__(self, lfg, params, in_tree, out_tree, num_consts):
+  def __init__(self, lfg, params, in_tree, out_tree, in_types, out_types,
+               num_consts):
     self._lfg = lfg
     self._params = params
     self._in_tree = in_tree
     self._out_tree = out_tree
     self._num_consts = num_consts
+    self._in_types = in_types  # hi types
+    self._out_types = out_types
 
   jaxpr = property(lambda self: self._params['jaxpr'])
   fun_name = property(lambda self: self._params['name'])
@@ -486,7 +502,8 @@ class Fallen(Stage):
           self._params['name'], fails, self._args_flat, 'jit',
           self.jaxpr.debug_info.safe_arg_names(len(self.jaxpr.in_avals)))
       raise ValueError(msg) from None
-    return Lowered(lowering, self.args_info, self._out_tree)
+    return Lowered(lowering, self.args_info, self._out_tree,
+                   in_types=self._in_types, out_types=self._out_types)
 
 
 class Lowered(Stage):
@@ -498,46 +515,29 @@ class Lowered(Stage):
   querying properties of lowered computations across JAX's various
   lowering paths (:func:`~jax.jit`, :func:`~jax.pmap`, etc.).
   """
-  __slots__ = ["_lowering", "args_info", "out_tree", "_no_kwargs"]
+  __slots__ = ["_lowering", "args_info", "out_tree", "_no_kwargs",
+               "_in_types", "_out_types"]
   _lowering: Lowering
   args_info: Any  # PyTree of ArgInfo, not including the const_args
   out_tree: tree_util.PyTreeDef
   _no_kwargs: bool
+  in_types: list[tuple[core.AbstractValue, core.QuasiDynamicData]] | None
+  out_types: list[core.AbstractValue] | None
 
   def __init__(
       self,
       lowering: Lowering,
       args_info,
       out_tree: tree_util.PyTreeDef,
-      no_kwargs: bool = False):
+      no_kwargs: bool = False,
+      in_types=None, out_types=None):
 
     self._lowering = lowering
     self.args_info = args_info
     self.out_tree = out_tree
     self._no_kwargs = no_kwargs
-
-  @classmethod
-  def from_flat_info(cls,
-                     lowering: Lowering,
-                     in_tree: tree_util.PyTreeDef,
-                     in_avals,
-                     donate_argnums: tuple[int, ...],
-                     out_tree: tree_util.PyTreeDef,
-                     no_kwargs: bool = False):
-    """Initialize from flat info (``in_avals`` etc.) and an input PyTreeDef.
-
-    Args:
-      in_tree: The ``PyTreeDef`` of (args, kwargs).
-      out_tree: The ``PyTreeDef`` of the outputs.
-      no_kwargs: If ``True`` the transformation, and the
-        ``Compiled`` returned from this object will not support keyword
-        arguments (an error will be raised if some are provided).
-    """
-    return cls(
-        lowering,
-        make_args_info(in_tree, in_avals, donate_argnums),
-        out_tree,
-        no_kwargs=no_kwargs)
+    self.in_types = in_types  # type: ignore
+    self.out_types = out_types  # type: ignore
 
   @property
   def out_info(self):  # PyTree of OutInfo
@@ -566,7 +566,9 @@ class Lowered(Stage):
         self._lowering.const_args,
         self.args_info,
         self.out_tree,
-        no_kwargs=self._no_kwargs,
+        self._no_kwargs,
+        self.in_types,
+        self.out_types,
     )
 
   def as_text(self, dialect: str | None = None, *,
@@ -632,8 +634,7 @@ class Compiled(Stage):
   common API for querying properties of compiled computations across
   JAX's various compilation paths and backends.
   """
-  __slots__ = ["args_info", "out_tree", "_executable", "_no_kwargs",
-               "_params"]
+  __slots__ = ["args_info", "out_tree", "_executable", "_no_kwargs", "_params"]
 
   args_info: Any                # PyTree of ArgInfo, not including const_args
   out_tree: tree_util.PyTreeDef
@@ -642,13 +643,14 @@ class Compiled(Stage):
   _params: CompiledCallParams
 
   def __init__(self, executable, const_args: list[ArrayLike],
-               args_info, out_tree, no_kwargs=False):
+               args_info, out_tree, no_kwargs=False, in_types=None, out_types=None):
     self._executable = executable
     self._no_kwargs = no_kwargs
     self.args_info = args_info
     self.out_tree = out_tree
-    self._params = CompiledCallParams(self._executable, self._no_kwargs,
-                                      self.in_tree, self.out_tree, const_args)
+    self._params = CompiledCallParams(
+        self._executable, self._no_kwargs, self.in_tree, self.out_tree,
+        const_args, in_types, out_types)
     self._call = None
 
   def as_text(self) -> str | None:
@@ -784,7 +786,17 @@ class Compiled(Stage):
       raise NotImplementedError(
           "function was compiled by a transformation that does not support "
           f"keyword arguments, but called with keyword arguments: {kws}")
-    args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
+
+    if params.is_high:
+      hi_args_flat, in_hi_tree = tree_util.tree_flatten((args, kwargs))
+      in_hi_tree_, final_qdds = params.in_types
+      args_flat = [a.read_loval(core.cur_qdd(x), x) if (a := typeof(x)).has_qdd
+                  else a.lower_val(x) for x in hi_args_flat]
+      args_flat, in_tree = \
+          tree_util.tree_flatten(tree_util.tree_unflatten(in_hi_tree, args_flat))
+    else:
+      args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
+
     if in_tree != params.in_tree:
       errs = list(tree_util.equality_errors_pytreedef(in_tree, params.in_tree))
       msg = []
@@ -798,6 +810,7 @@ class Compiled(Stage):
             f"    * at {base}{tree_util.keystr(tuple(rest))}, seen {thing2} but now"
             f" given {thing1}, so {explanation}")
       raise TypeError('\n'.join(msg))
+
     if not core.trace_state_clean():
       # We check for tracers when we are under a transformation, and skip the
       # check in the common path. We can't transform ahead-of-time compiled
@@ -809,8 +822,18 @@ class Compiled(Stage):
               "Cannot apply JAX transformations to a function lowered and "
               "compiled for a particular signature. Detected argument of "
               f"Tracer type {type(arg)}.")
-    out_flat = params.executable.call(*params.const_args, *args_flat)
-    outs = tree_util.tree_unflatten(params.out_tree, out_flat)
+    lo_outs = params.executable.call(*params.const_args, *args_flat)
+
+    if params.is_high:
+      out_mut, lo_outs = util.split_list(lo_outs, [_num_himuts_out(final_qdds)])
+      _apply_himut(final_qdds, hi_args_flat, out_mut)
+      out_hi_tree, out_hi_types = params.out_types
+      out_flat = _raise_lo_outs(out_hi_types, lo_outs)
+      outs = tree_util.tree_unflatten(out_hi_tree, out_flat)
+    else:
+      out_flat = lo_outs
+      outs = tree_util.tree_unflatten(params.out_tree, out_flat)
+
     return outs, out_flat, args_flat
 
   def __call__(self, *args, **kwargs):
@@ -823,6 +846,23 @@ class Compiled(Stage):
           return outs
         self._call = cpp_call_fallback
     return self._call(*args, **kwargs)
+
+def _raise_lo_outs(avals, lo_outs):
+  from jax._src.interpreters import partial_eval as pe  # type: ignore
+  return pe.raise_lo_outs(avals, lo_outs)
+
+# TODO(mattjj): de-dup with partial_eval.py
+def _num_himuts_out(final_qdds):
+  return sum(len(a.lo_ty()) for a in final_qdds if a.has_qdd)
+
+# TODO(mattjj): de-dup with partial_eval.py
+def _apply_himut(final_qdds, hi_args, out_mut):
+  out_mut_ = iter(out_mut)
+  for i, a in enumerate(final_qdds):
+    if isinstance(a, core.AvalQDD):
+      lo_vals = it.islice(out_mut_, len(a.aval.lo_ty_qdd(a.qdd)))
+      a.aval.update_from_loval(a.qdd, hi_args[i], *lo_vals)  # type: ignore
+  assert next(out_mut_, None) is None
 
 
 @runtime_checkable

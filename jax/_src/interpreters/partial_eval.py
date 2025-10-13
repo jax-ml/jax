@@ -2959,12 +2959,11 @@ def num_himuts_out(jaxpr):
 
 def apply_himut(jaxpr: Jaxpr | ClosedJaxpr, hi_args, out_mut):
   out_mut_ = iter(out_mut)
-  in_idx = {v: i for i, v in enumerate(jaxpr.invars)}
-  for v in jaxpr.invars:
+  for i, v in enumerate(jaxpr.invars):
     if v.final_qdd is not None:
       qdd = v.final_qdd
       lo_vals = it.islice(out_mut_, len(v.aval.lo_ty_qdd(qdd)))
-      v.aval.update_from_loval(qdd, hi_args[in_idx[v]], *lo_vals)  # type: ignore
+      v.aval.update_from_loval(qdd, hi_args[i], *lo_vals)  # type: ignore
   assert next(out_mut_, None) is None
 
 def raise_lo_outs(avals, lo_outs):

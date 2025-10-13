@@ -1941,7 +1941,7 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
     args_info = stages.make_args_info(p.in_tree, abstract_args, donate_tuple)
     lowered = jitted_f.trace(*flat_global_args).lower()
     lowered = stages.Lowered(lowered._lowering, args_info, p.out_tree(),
-                             lowered._no_kwargs)
+                             no_kwargs=lowered._no_kwargs)
     return lowered
   wrapped.lower = lower
   return wrapped

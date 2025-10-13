@@ -410,6 +410,9 @@ class HijaxTest(jtu.JaxTestCase):
     q = ArrayTuple(jnp.zeros((4, 4), 'int8'), jnp.ones(4, 'float32'))
     jax.jit(lambda x: x).lower(q).as_text()  # don't crash
 
+    compiled = jax.jit(lambda x: x).lower(q).compile()
+    compiled(q)  # don't crash
+
   @parameterized.parameters([False, True])
   def test_while_loop(self, jit):
     q = to_qarray(jnp.ones((2, 2), 'float32'))
@@ -1122,6 +1125,21 @@ class BoxTest(jtu.JaxTestCase):
 
     out_type = jax.eval_shape(f)
     self.assertEqual(out_type, QArrayTy((2, 2)))
+
+  def test_stages_mutable(self):
+    box = Box(1.0)
+
+    @jax.jit
+    def f(box):
+      box.set(box.get() + 1.)
+
+    f.lower(box).as_text()  # don't crash
+    compiled = f.lower(box).compile()
+    compiled(box)
+    compiled(box)
+    compiled(box)
+    self.assertAllClose(box.get(), 4.)
+
 
 class RefTest(jtu.JaxTestCase):
 
