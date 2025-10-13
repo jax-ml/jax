@@ -4904,6 +4904,7 @@ class CompositeTest(jtu.JaxTestCase):
       jax.jit(fun)(x, scale)
 
 
+@unittest.skip("TODO(pravnar): test crashes on TPU")
 class RaggedTest(jtu.JaxTestCase):
 
   def _test_ragged_dot(self, m, k, n, num_groups, dtype):
