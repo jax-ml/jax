@@ -4988,7 +4988,6 @@ class WarpSpecializedPipelineTest(PallasTest):
 
   @parameterized.product(manual_consumed_barriers=[False, True])
   def test_pipelined_pipeline(self, manual_consumed_barriers):
-    self.skip_if_wg_semantics()  # Times out!
     m = n = 512
 
     x = jax.random.randint(jax.random.key(0), (m, n), -10, 15, dtype=jnp.int32)
