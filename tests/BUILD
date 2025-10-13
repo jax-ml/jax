@@ -123,6 +123,11 @@ jax_py_test(
 jax_multiplatform_test(
     name = "array_interoperability_test",
     srcs = ["array_interoperability_test.py"],
+    backend_tags = {
+        "gpu": [
+            "noasan",  # Forge OOM
+        ],
+    },
     enable_backends = [
         "cpu",
         "gpu",
