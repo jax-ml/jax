@@ -1201,9 +1201,11 @@ FailureOr<Value> canonicalize_select(const CanonicalizeContext& ctx,
   unsigned min_supported_bitwidth = 32;
   if (ctx.hardware_generation >= 5) {
     min_supported_bitwidth = 8;
-  } else if (ctx.hardware_generation >= 4) {
-    min_supported_bitwidth = 16;
   }
+  // TODO(pazz): This should work. Debug why it is not working.
+  // else if (ctx.hardware_generation >= 4) {
+  //   min_supported_bitwidth = 16;
+  // }
 
   if (bitwidth >= min_supported_bitwidth) {
     return op.getResult();
