@@ -367,7 +367,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()
-    w1, _ = jnp.linalg.eig(a)
+    result = jnp.linalg.eig(a)
+    # Check that eig returns a namedtuple with the right fields
+    self.assertTrue(hasattr(result, 'eigenvalues'))
+    self.assertTrue(hasattr(result, 'eigenvectors'))
+    self.assertIs(result.eigenvalues, result[0])
+    self.assertIs(result.eigenvectors, result[1])
+    w1 = result.eigenvalues
     w2 = jnp.linalg.eigvals(a)
     self.assertAllClose(w1, w2, rtol={np.complex64: 1e-5, np.complex128: 2e-14})
 

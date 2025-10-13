@@ -50,6 +50,11 @@ class EighResult(NamedTuple):
   eigenvectors: Array
 
 
+class EigResult(NamedTuple):
+  eigenvalues: Array
+  eigenvectors: Array
+
+
 class QRResult(NamedTuple):
   Q: Array
   R: Array
@@ -730,7 +735,7 @@ def det(a: ArrayLike) -> Array:
 
 
 @export
-def eig(a: ArrayLike) -> tuple[Array, Array]:
+def eig(a: ArrayLike) -> EigResult:
   """
   Compute the eigenvalues and eigenvectors of a square array.
 
@@ -740,7 +745,7 @@ def eig(a: ArrayLike) -> tuple[Array, Array]:
     a: array of shape ``(..., M, M)`` for which to compute the eigenvalues and vectors.
 
   Returns:
-    A tuple ``(eigenvalues, eigenvectors)`` with
+    A namedtuple ``(eigenvalues, eigenvectors)``. The namedtuple has fields:
 
     - ``eigenvalues``: an array of shape ``(..., M)`` containing the eigenvalues.
     - ``eigenvectors``: an array of shape ``(..., M, M)``, where column ``v[:, i]`` is the
@@ -772,7 +777,7 @@ def eig(a: ArrayLike) -> tuple[Array, Array]:
   a = ensure_arraylike("jnp.linalg.eig", a)
   a, = promote_dtypes_inexact(a)
   w, v = lax_linalg.eig(a, compute_left_eigenvectors=False)
-  return w, v
+  return EigResult(w, v)
 
 
 @export

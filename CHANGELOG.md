@@ -68,8 +68,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     construct attributes instead.
 
 * Changes
-  * `jax.grad` and `jax.vjp` will now round always primals to float32 if float64
-    mode is not enabled.
+  * {func}`jax.numpy.linalg.eig` now returns a namedtuple (with attributes
+    `eigenvalues` and `eigenvectors`) instead of a plain tuple.
+  * {func}`jax.grad` and {func}`jax.vjp` will now round always primals to
+    `float32` if `float64` mode is not enabled.
   * {func}`jax.dlpack.from_dlpack` now accepts arrays with non-default layouts,
     for example, transposed.
   * The default nonsymmetric eigendecomposition on NVIDIA GPUs now uses
