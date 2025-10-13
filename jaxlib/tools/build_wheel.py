@@ -311,6 +311,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/mlir/dialects/sdy.py",
           f"{source_file_prefix}jaxlib/mlir/dialects/sparse_tensor.py",
           f"{source_file_prefix}jaxlib/mlir/dialects/stablehlo.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/ub.py",
           f"{source_file_prefix}jaxlib/mlir/dialects/vector.py",
           f"{source_file_prefix}jaxlib/mlir/dialects/nvgpu.py",
           f"{source_file_prefix}jaxlib/mlir/dialects/nvvm.py",

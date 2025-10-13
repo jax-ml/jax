@@ -24,12 +24,12 @@ from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
-from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
+from jax._src.lib.mlir.dialects import ub
 from jax._src.lib.mlir.dialects import vector
 from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.mosaic.gpu import dialect_lowering as lowering
@@ -86,8 +86,7 @@ def workgroup_ptr_ty() -> ir.Type:
 
 def undefs(*tys: ir.Type) -> list[ir.Value]:
   """Returns a list of undefined values of the given types."""
-  # TODO(allanrenucci): Use `ub.poison` once Python bindings are available.
-  return [builtin.unrealized_conversion_cast([ty], []) for ty in tys]
+  return [ub.poison(ty) for ty in tys]
 
 
 class MosaicGpuTest(parameterized.TestCase):

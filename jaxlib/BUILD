@@ -86,6 +86,7 @@ pytype_strict_library(
         "//jaxlib/mlir:sdy_dialect",
         "//jaxlib/mlir:sparse_tensor_dialect",
         "//jaxlib/mlir:stablehlo_dialect",
+        "//jaxlib/mlir:ub_dialect",
         "//jaxlib/mlir:vector_dialect",
         "//jaxlib/mlir/_mlir_libs:_jax_mlir_ext",
         "//jaxlib/mosaic",
