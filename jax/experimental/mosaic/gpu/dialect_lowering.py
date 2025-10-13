@@ -1878,7 +1878,7 @@ def _move_scf_block_to_block_with_flattened_arguments(
     new_args = new_leading_args + tuple(new_carry)
     for old_arg, new_arg in zip(old_block.arguments, new_args, strict=True):
       old_arg.replace_all_uses_with(new_arg)
-    for op in [*old_block]:
+    for op in old_block.operations:
       if not isinstance(op, last_op_type):
         mgpu.private_operation_remove_from_parent(op)
         mgpu.private_block_append_owned_operation(new_block, op)
@@ -2070,7 +2070,7 @@ def _traverse_op_lowering_rule(
     )
   for region in op.operation.regions:
     for block in region:
-      for block_op in list(block):
+      for block_op in block.operations:
         with ir.InsertionPoint(block_op):
           ctx.lower_op(block_op)
   return RECURSED
@@ -2142,7 +2142,7 @@ def lower_mgpu_dialect(
   module.context.load_all_available_dialects()
   ctx = _lowering_context(module, launch_context, auto_barriers)
   with ir.InsertionPoint(module.body):
-    for op in list(module.body):
+    for op in module.body.operations:
       ctx.lower_op(op)
 
   for lowered_op in ctx.lowered_operations:
