@@ -402,12 +402,17 @@ class PallasCallMultimemTest(TestCase):
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ["x"])
     x = jax.random.uniform(
-        jax.random.key(42), (128, 64), dtype=dtype, minval=-1.0, maxval=1.0
+        jax.random.key(42), (1024, 64), dtype=dtype, minval=-1.0, maxval=1.0
     )
 
     def body(x):
       return reduce_scatter(
-          x, axis_name="x", reduction=reduction, vec_size=vec_size
+          x,
+          axis_name="x",
+          reduction=reduction,
+          vec_size=vec_size,
+          rows_per_transfer=16,
+          num_blocks=4,
       )
 
     y = jax.jit(
@@ -418,7 +423,7 @@ class PallasCallMultimemTest(TestCase):
 
     y = multihost_utils.process_allgather(y, tiled=True)
     np_reduction = self._get_reduction_impl(reduction)
-    expected = np_reduction(x[:64], x[64:])
+    expected = np_reduction(x[:512], x[512:])
     tol = 1e-5 if reduction == "add" else 0
     np.testing.assert_allclose(y, expected, rtol=tol, atol=tol)
 

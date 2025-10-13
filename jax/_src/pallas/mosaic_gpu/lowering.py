@@ -1620,8 +1620,7 @@ def _swap_lowering_rule(
     barrier = functools.partial(
         nvvm_dialect.bar_warp_sync, arith_dialect.constant(i32, -1)
     )
-  if not isinstance(value, mgpu.FragmentedArray):
-    raise TypeError(f"Can only store arrays (got {value}).")
+  value = _ensure_fa(value, ctx.avals_in[1].dtype)
 
   if not isinstance(x_ref, ir.Value) and ir.MemRefType.isinstance(x_ref):
     raise TypeError(f"Can only store to references (got {x_ref}).")
