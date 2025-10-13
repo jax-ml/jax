@@ -4670,8 +4670,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     abstract_sds = jax.ShapeDtypeStruct(
         (8, 2), jnp.float32, sharding=NamedSharding(mesh.abstract_mesh, P('x')))
-    abstract_sds2 = jax.ShapeDtypeStruct(
-        (8, 2), jnp.float32, sharding=NamedSharding(mesh2.abstract_mesh, P('x')))
 
     @jax.jit
     def f(x):
@@ -4690,6 +4688,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     concrete_s = NamedSharding(mesh, P('x'))
     concrete_sds = jax.ShapeDtypeStruct((8,), jnp.float32, sharding=concrete_s)
+    abstract_sds2 = jax.ShapeDtypeStruct(
+        (8, 2), jnp.float32, sharding=NamedSharding(mesh2.abstract_mesh, P('x')))
     with self.assertRaisesRegex(
         ValueError,
         'AbstractMesh size: 1 does not match the device assignment size: 2'):
@@ -4834,7 +4834,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2,), 'x')
     with jax.set_mesh(mesh):
       out_s = sds.sharding
-      self.assertEqual(out_s, NamedSharding(mesh, P('x')))
+      self.assertEqual(out_s, NamedSharding(mesh.abstract_mesh, P('x')))
 
     with self.assertRaisesRegex(
         TypeError,

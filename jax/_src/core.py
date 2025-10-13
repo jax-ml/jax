@@ -38,7 +38,7 @@ from jax._src import dtypes
 from jax._src import config
 from jax._src import effects
 from jax._src import mesh as mesh_lib
-from jax._src.mesh import AxisType, get_concrete_mesh
+from jax._src.mesh import AxisType
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
@@ -3652,8 +3652,7 @@ class ShapeDtypeStruct:
   @property
   def sharding(self):
     if isinstance(self._sharding, P):
-      # TODO(yashkatariya): Should this be abstract mesh?
-      cur_mesh = get_concrete_mesh()
+      cur_mesh = mesh_lib.get_abstract_mesh()
       if cur_mesh.empty:
         raise TypeError(
             "When specifying PartitionSpec to `ShapeDtypeStruct`, the context"

@@ -46,6 +46,11 @@ class AUTO:
     return SdyArray(mesh_shape=self.mesh.shape_tuple,
                     dim_shardings=dim_shardings)
 
+  @property
+  def _device_assignment(self):
+    return self.mesh._flat_devices_tuple
+
+
 class UnspecifiedValue:
   def __repr__(self):
     return "UnspecifiedValue"
