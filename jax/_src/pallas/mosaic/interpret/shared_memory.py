@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import collections
 from collections.abc import Callable, Sequence
 import contextlib
@@ -37,23 +39,19 @@ class Semaphore:
 
   def __init__(
       self,
-      *,
-      num_cores: int,
-      detect_races: bool,
-      semaphore_id: int | None = None,
+      shared_memory: SharedMemory,
+      semaphore_id: int,
   ):
-    self.num_cores = num_cores
-    self.detect_races = detect_races
-
-    self.id = semaphore_id
+    self.shared_memory = shared_memory
+    self.id: int = semaphore_id
 
     # TODO(jburnim): Use one Condition variable per device.  (Which will be
     # easier to do when we're using single integer device IDs.)
     self.cv = threading.Condition()
 
-    self.count_by_core = np.zeros(self.num_cores, dtype=np.int32)
+    self.count_by_core = np.zeros(self.shared_memory.num_cores, dtype=np.int32)
 
-    if self.detect_races:
+    if self.shared_memory.detect_races:
       # We associate a vector clock with each count in self.counts.  Whenever
       # self.count_by_core[i] is signaled, self.clocks[i] is updated with the
       # vector clock of the signaling core.  Whenever core i successfully waits
@@ -62,7 +60,47 @@ class Semaphore:
       #
       # TODO(jburnim): Model happens-before more precisely for the case where
       # semaphores are over-signaled.
-      self.clocks = [None] * num_cores
+      self.clocks: list[vc.VectorClock | None] = [
+          None
+      ] * self.shared_memory.num_cores
+
+  @property
+  def num_cores(self) -> int:
+    return self.shared_memory.num_cores
+
+  @property
+  def detect_races(self) -> bool:
+    return self.shared_memory.detect_races
+
+  @property
+  def dma_execution_mode(self) -> str:
+    return self.shared_memory.dma_execution_mode
+
+  def get_random_virtual_device_id(self) -> int:
+    # Virtual device IDs are needed for DMA semaphores. Conceptually, each DMA
+    # runs on its own, independent device. Representing this precisely would
+    # require vector clocks to have sizes linear in the number of DMAs.
+    #
+    # Instead, we use approximate vector clocks of fixed size. We assign each
+    # DMA a virtual core ID in the range
+    #
+    #   [num_devices*num_cores_per_device, shared_memory.vector_clock_size - 1],
+    #
+    # and each operation of a DMA increments the corresponding coordinate in its
+    # vector clock. (So the "virtual" part of a vector clock is effectively
+    # counting, for each virtual core, the number of DMAs that happened-before
+    # the vector clock and were assigned to that virtual core.)
+    #
+    # If two approximate clocks are unordered, then their corresponding events
+    # are not ordered by the happens-before relation. So this approximation will
+    # not introduce any false positives in detecting data races. But we may fail
+    # to detect some true data races because there can be cases where two
+    # approximate clocks are ordered, and we will treat the corresponding events
+    # as ordered by the happens-before relation, but the corresponding events
+    # are not actually ordered.
+    return np.random.randint(
+        self.num_cores, self.shared_memory.vector_clock_size
+    )
 
   def signal(self, inc, global_core_id, clock):
     """Signal the semaphore on `(device_id, core_id)` by `inc`.
@@ -76,7 +114,7 @@ class Semaphore:
     global_core_id = int(global_core_id)
     with self.cv:
       self.count_by_core[global_core_id] += inc
-      if self.detect_races:
+      if self.shared_memory.detect_races:
         if self.clocks[global_core_id] is None:
           self.clocks[global_core_id] = vc.copy_vector_clock(clock)
         else:
@@ -89,7 +127,6 @@ class Semaphore:
 
   def wait(self, value, global_core_id, *, is_dma=False):
     global_core_id = int(global_core_id)
-    shared_memory = get_shared_memory()
 
     # TODO(jburnim):
     #  - If the count is larger than value, raise an error?
@@ -98,7 +135,7 @@ class Semaphore:
 
     # Simple implementation for non-DMA semaphores.
     clock = None
-    if not is_dma or (shared_memory.dma_execution_mode == 'eager'):
+    if not is_dma or (self.dma_execution_mode == 'eager'):
       with self.cv:
         while self.count_by_core[global_core_id] < value:
           self.cv.wait()
@@ -107,9 +144,11 @@ class Semaphore:
           assert self.clocks[global_core_id] is not None
           clock = vc.copy_vector_clock(self.clocks[global_core_id])
       if self.detect_races:
-        with shared_memory.lock:
+        with self.shared_memory.lock:
           assert clock is not None
-          vc.update_vector_clock(shared_memory.clocks[global_core_id], clock)
+          vc.update_vector_clock(
+              self.shared_memory.clocks[global_core_id], clock
+          )
       return
 
     # For DMA semaphores (when shared_memory.dma_execution_mode=='on_wait'),
@@ -119,7 +158,6 @@ class Semaphore:
     # This approach will tend to run DMAs as late as possible, as well as
     # out-of-order.  This approach also lets us avoid the complexity of spinning
     # up separate threads to handle executing DMAs.
-    shared_memory = get_shared_memory()
     while True:
       clock = None
       with self.cv:
@@ -131,12 +169,14 @@ class Semaphore:
           else:
             return
       if clock is not None:
-        with shared_memory.lock:
-          vc.update_vector_clock(shared_memory.clocks[global_core_id], clock)
+        with self.shared_memory.lock:
+          vc.update_vector_clock(
+              self.shared_memory.clocks[global_core_id], clock
+          )
         return
 
-      with shared_memory.lock:
-        dma_queue = shared_memory.dmas_by_sem[self.id]
+      with self.shared_memory.lock:
+        dma_queue = self.shared_memory.dmas_by_sem[self.id]
         if len(dma_queue) > 0:
           dma = dma_queue.pop()
         else:
@@ -146,31 +186,7 @@ class Semaphore:
       assert (dma.src_sem is self) or (dma.dst_sem is self)
       with dma.lock:
         if dma.virtual_device_id is None:
-          # Conceptually, each DMA runs on its own, independent device.
-          # Representing this precisely would require vector clocks to have
-          # sizes linear in the number of DMAs.
-          #
-          # Instead, we use approximate vector clocks of fixed size. We assign
-          # each DMA a virtual core ID in the range
-          #
-          #   [num_devices*num_cores_per_device, shared_memory.vector_clock_size - 1],
-          #
-          # and each operation of a DMA increments the corresponding coordinate
-          # in its vector clock. (So the "virtual" part of a vector clock is
-          # effectively counting, for each virtual core, the number of DMAs that
-          # happened-before the vector clock and were assigned to that virtual
-          # core.)
-          #
-          # If two approximate clocks are unordered, then their corresponding
-          # events are not ordered by the happens-before relation. So this
-          # approximation will not introduce any false positives in detecting
-          # data races. But we may fail to detect some true data races because
-          # there can be cases where two approximate clocks are ordered, and we
-          # will treat the corresponding events as ordered by the happens-before
-          # relation, but the corresponding events are not actually ordered.
-          dma.virtual_device_id = np.random.randint(
-              shared_memory.num_cores, shared_memory.vector_clock_size
-          )
+          dma.virtual_device_id = self.get_random_virtual_device_id()
 
         if dma.state == DmaState.STARTED:
           # Do the read.
@@ -193,7 +209,7 @@ class Semaphore:
             data_size = dma.data.itemsize * dma.data.size
             dma.src_sem.signal(
                 data_size,
-                global_core_id=shared_memory.get_global_core_id(
+                global_core_id=self.shared_memory.get_global_core_id(
                     dma.src_device_id, dma.src_local_core_id
                 ),
                 clock=dma.clock,
@@ -228,7 +244,7 @@ class Semaphore:
         data_size = dma.data.itemsize * dma.data.size
         dma.dst_sem.signal(
             data_size,
-            global_core_id=shared_memory.get_global_core_id(
+            global_core_id=self.shared_memory.get_global_core_id(
                 dma.dst_device_id, dma.dst_local_core_id
             ),
             clock=dma.clock,
@@ -544,8 +560,7 @@ def _allocate_semaphores(
       for i in range(semaphore_id, semaphore_id + num_semaphores):
         if i not in shared_memory.sem:
           shared_memory.sem[i] = Semaphore(
-              num_cores=shared_memory.num_cores,
-              detect_races=shared_memory.detect_races,
+              shared_memory=shared_memory,
               semaphore_id=i,
           )
 
@@ -599,8 +614,7 @@ def get_barrier_semaphore(device_id, collective_id):
     semaphore_id = collective_id
     if semaphore_id not in shared_memory.sem:
       shared_memory.sem[semaphore_id] = Semaphore(
-          num_cores=shared_memory.num_cores,
-          detect_races=shared_memory.detect_races,
+          semaphore_id=semaphore_id, shared_memory=shared_memory
       )
 
   return np.int16(semaphore_id)
