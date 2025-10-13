@@ -125,7 +125,7 @@ def c(val: int | float, ty):
   elif ir.FloatType.isinstance(ty):
     attr = ir.FloatAttr.get(ty, val)
   elif ir.VectorType.isinstance(ty):
-    return vector.splat(ty, c(val, ir.VectorType(ty).element_type))
+    return vector.broadcast(ty, c(val, ir.VectorType(ty).element_type))
   else:
     raise NotImplementedError(ty)
   return arith.constant(ty, attr)
@@ -1690,7 +1690,9 @@ def bitcast(x: ir.Value, new_type: ir.Type):
     new_type = ir.VectorType(new_type)
     x_ty = ir.IntegerType(x.type)
     assert x_ty.width == bitwidth(new_type.element_type) * math.prod(new_type.shape)
-    return vector.bitcast(new_type, vector.splat(ir.VectorType.get((1,), x_ty), x))
+    return vector.bitcast(
+        new_type, vector.broadcast(ir.VectorType.get((1,), x_ty), x)
+    )
   if ir.VectorType.isinstance(x.type) and ir.VectorType.isinstance(new_type):
     x_ty = ir.VectorType(x.type)
     new_ty = ir.VectorType(new_type)

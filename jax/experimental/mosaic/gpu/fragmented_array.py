@@ -981,7 +981,9 @@ class FragmentedArray:
       case WGSplatFragLayout():
         pass
       case WGStridedFragLayout() | TiledLayout():
-        value = vector.splat(layout.registers_element_type(value.type), value)
+        value = vector.broadcast(
+            layout.registers_element_type(value.type), value
+        )
       case _:
         raise NotImplementedError(layout)
 
@@ -1847,7 +1849,7 @@ class FragmentedArray:
             for part in range(max(group_size // 4, 1))
         ]
         out_vec_int = utils.vector_concat([
-            vector.splat(ir.VectorType.get((1,), i32), out_i32_reg)
+            vector.broadcast(ir.VectorType.get((1,), i32), out_i32_reg)
             for out_i32_reg in out_i32_regs
         ])
         out_vector_len = len(out_i32_regs) * 4
@@ -1933,7 +1935,7 @@ class FragmentedArray:
             offset += group_size
         assert offset == vector_len
         out_vec_int = utils.vector_concat([
-            vector.splat(ir.VectorType.get((1,), i32), reg)
+            vector.broadcast(ir.VectorType.get((1,), i32), reg)
             for reg in out_int_regs
         ])
         new_registers[idx] = utils.bitcast(out_vec_int, out_vec_ty)
@@ -2262,7 +2264,7 @@ class FragmentedArray:
           scalar_out_reg = (
               scalar if scalar_out_reg is None else op(scalar_out_reg, scalar)
           )
-        out_reg = vector.splat(
+        out_reg = vector.broadcast(
             ir.VectorType.get((1,), out_reg.type.element_type), scalar_out_reg
         )
       # Reduce across warp lanes, if necessary (using warp shuffles).
@@ -2701,7 +2703,7 @@ class FragmentedArray:
     tiling = Tiling((tiled_shape[len(tiled_shape) // 2 :],))
     shape = tiling.untile_shape(tiled_shape)
     reg_ty = ir.VectorType.get((layout.vector_length,), dtype)
-    zero = vector.splat(reg_ty, c(0, dtype))
+    zero = vector.broadcast(reg_ty, c(0, dtype))
     registers = np.full(layout.registers_shape(shape), zero, dtype=object)
     is_f8 = ir.FloatType.isinstance(dtype) and utils.bitwidth(dtype) == 8
     i8 = ir.IntegerType.get_signless(8)

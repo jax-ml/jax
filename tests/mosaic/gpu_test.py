@@ -4290,7 +4290,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       f32 = ir.F32Type.get()
       x_type = ir.VectorType.get(input_shape, f32)
       c = arith.constant(f32, element_value)
-      x = vector.splat(x_type, c)
+      x = vector.broadcast(x_type, c)
 
       # Computation
       out_type = ir.VectorType.get(output_shape, f32)
@@ -4321,7 +4321,9 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     def body(ctx, out, _):
       del ctx, out
       f32 = ir.F32Type.get()
-      x = vector.splat(ir.VectorType.get(shape, f32), arith.constant(f32, 0.0))
+      x = vector.broadcast(
+          ir.VectorType.get(shape, f32), arith.constant(f32, 0.0)
+      )
       wgmma_layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
       wgmma_row_layout = layouts.to_layout_attr(fa.WGMMA_ROW_LAYOUT)
       lc1 = mgpu_dialect.layout_cast(x, wgmma_layout)
@@ -4372,12 +4374,12 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       # Create source in registers
       source_type = ir.VectorType.get(input_shape, el_type)
       c = arith.constant(el_type, input_value)
-      source = vector.splat(source_type, c)
+      source = vector.broadcast(source_type, c)
 
       # Create accumulator in registers
       acc_type = ir.VectorType.get(output_shape, el_type)
       c = arith.constant(el_type, init_value)
-      acc = vector.splat(acc_type, c)
+      acc = vector.broadcast(acc_type, c)
 
       # Cast inputs
       source = mgpu_dialect.layout_cast(
@@ -4425,7 +4427,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       f32 = ir.F32Type.get()
       x_type = ir.VectorType.get(shape, f32)
       c = arith.constant(f32, element_value)
-      x = vector.splat(x_type, c)
+      x = vector.broadcast(x_type, c)
       cast = mgpu_dialect.layout_cast(x, layouts.to_layout_attr(in_layout))
 
       # Registers -> SMEM
@@ -4736,7 +4738,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
       zero_acc = arith.constant(
           result_elt_type, ir.FloatAttr.get(acc_elt_type, 0.0)
       )
-      accumulator = vector.splat(acc_type, zero_acc)
+      accumulator = vector.broadcast(acc_type, zero_acc)
 
       if transpose_lhs:
         lhs_smem_ref = utils.memref_transpose(lhs_smem_ref, (1, 0))

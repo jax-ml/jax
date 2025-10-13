@@ -227,7 +227,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ty = ir.VectorType.get(shape, bf16)
       lhs, rhs = undefs(bf16, ty)
       rhs = layout_cast(rhs, splat_layout)
-      splat = vector.SplatOp(rhs.type, lhs)
+      splat = vector.BroadcastOp(rhs.type, lhs)
       add = arith.AddFOp(splat.result, rhs)
 
     mgpu.infer_layout(self.module)

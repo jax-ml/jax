@@ -1281,8 +1281,9 @@ class DialectLoweringTest(MosaicGpuTest):
     with ir.InsertionPoint(self.module.body):
       i1 = arith.constant(ir.IndexType.get(), 1)
       c1 = arith.constant(i32, 1)
-      splat = vector.SplatOp(
-          ir.VectorType.get(shape, i32), arith.constant(i32, 1234),
+      splat = vector.BroadcastOp(
+          ir.VectorType.get(shape, i32),
+          arith.constant(i32, 1234),
       )
       splat.attributes["out_layouts"] = ir.ArrayAttr.get([
           splat_layout_attr
