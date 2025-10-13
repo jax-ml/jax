@@ -28,7 +28,13 @@ from jax._src.pallas.fuser import fusion as fusion_lib
 from jax._src.pallas.fuser.fusible import fusible_p
 
 
-def fuse(f=None, *, resolve_fusion_dtypes: bool = True, debug: bool = False):
+def fuse(
+    f=None,
+    *,
+    resolve_fusion_dtypes: bool = True,
+    debug: bool = False,
+    input_output_aliases: tuple[tuple[int, int], ...] = ()
+):
   """Fuses a function into a single fusible.
 
   Args:
@@ -50,12 +56,14 @@ def fuse(f=None, *, resolve_fusion_dtypes: bool = True, debug: bool = False):
           lu.wrap_init(f, debug_info=debug_info), in_tree
       )
       flat_avals = [jax_core.get_aval(x) for x in flat_args]
+      # XXX: in input_output_aliases, the inputs index 'flat_avals'
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
-      if debug:
+      if debug or True:
         print("Jaxpr before fusion:")
         print(jaxpr)
       out_tree = out_tree_thunk()
-      out_flat = fuse_jaxpr(jaxpr, out_tree, consts, *flat_args)
+      out_flat = fuse_jaxpr(jaxpr, out_tree, consts, *flat_args,
+                            input_output_aliases=input_output_aliases)
       return tree_util.tree_unflatten(out_tree, out_flat)
 
     if resolve_fusion_dtypes:
@@ -98,6 +106,18 @@ def _construct_fusion_jaxpr(
       out_tree,
       [x.aval for x in flat_outvars],
   )
+  print('CONSTRUCT FUSION')
+  print('jaxpr:', jaxpr)
+  print('new_jaxpr:', new_jaxpr)
+  print('new_values:', new_values)
+  indices = []
+  for v in new_values:
+    for i, c in enumerate(candidate_values):
+      if v is c:
+        indices.append(i)
+        break
+    indices.append(None)
+  print('indices:', indices)
   return new_jaxpr, new_values, in_type, out_type, out_tree
 
 
@@ -108,11 +128,20 @@ def construct_fusion(
       candidate_values, jaxpr, outvars, *invars, **kwargs
   )
 
+  # new_values all become constants in `_fn`
+  #
+  # PROBLEM: when `_fn` is turned in to a jaxpr, the constants may appear in a
+  # different order than than in `new_values`.
+  #
+  # Why are we constructing this function instead of putting the jaxpr in the
+  # Fusion?
   def _fn(*args, **kwargs):
     flat_args, _ = tree_util.tree_flatten((args, kwargs))
     out_flat = jax_core.eval_jaxpr(new_jaxpr, new_values, *flat_args)
     return tree_util.tree_unflatten(out_tree, out_flat)
 
+  # inside the Fusion, we could store information about which `new_values`
+  # came from which `candidate_values`
   return fusion_lib.Fusion(_fn, in_type, out_type)
 
 
@@ -151,6 +180,7 @@ def _construct_output_fusions(
     fusion_eqn_outvars,  # Flat list of vars output by the fusible eqn
     fusion_eqn_out_tree,  # Tree structure of the fusible eqn outputs
     output_fusion_prefix,  # Pytree defining output groups
+    input_output_aliases,  # XXX: inputs index into `candidate_values`, what's going on with outputs?
 ):
   # 1. Create jaxpr_out: represents computation *after* the fusible
   #    Inputs: fusion_eqn_outvars
@@ -217,6 +247,8 @@ def _construct_output_fusions(
     jaxpr_out_for_group, used_consts, _ = pe.dce_jaxpr_consts(
         jaxpr_out, downstream_used_mask, instantiate=used_jaxpr_invars
     )
+    # TODO(jburnim): If an input aliases an output in this group, then keep
+    # the input.
     values_for_jaxpr = tuple(
         c for used, c in zip(used_consts, all_values, strict=True) if used
     )
@@ -226,6 +258,17 @@ def _construct_output_fusions(
       out_flat = jax_core.eval_jaxpr(jaxpr, vals, *flat_args)
       return tuple(out_flat)
 
+    print('CONSTRUCTING OUTPUT FUSION')
+    print('jaxpr_out_for_group:', jaxpr_out_for_group)
+    print('values_for_jaxpr:', values_for_jaxpr)
+    indices = []
+    for v in values_for_jaxpr:
+      for i, c in enumerate(candidate_values):
+        if v is c:
+          indices.append(i)
+          break
+      indices.append(None)
+    print('indices:', indices)
     fn = functools.partial(_fn, jaxpr_out_for_group, values_for_jaxpr)
     in_type = jax.tree.map(lambda x: x.aval, outvars_group)
     out_type = tuple(v.aval for v in jaxpr_out_for_group.outvars)
@@ -245,7 +288,8 @@ def _construct_output_fusions(
 
 
 def fuse_jaxpr(
-    jaxpr: jax_core.Jaxpr, out_tree: tree_util.PyTreeDef, consts, *args
+    jaxpr: jax_core.Jaxpr, out_tree: tree_util.PyTreeDef, consts, *args,
+    input_output_aliases: tuple[tuple[int, int], ...] = ()
 ):
   fusion_eqn_index = None
 
@@ -258,9 +302,12 @@ def fuse_jaxpr(
     raise ValueError("No fusible eqn found")
   fusion_eqn = jaxpr.eqns[fusion_eqn_index]
 
+  # XXX: in input_output_aliases, the inputs index `*args`
+  # (so we add `len(consts)` to get indices into `candidate_values`)
+  candidate_values = [*consts, *args]
+
   # Now let's check if we need to do any fusion at all, e.g. do the outputs of
   # the jaxpr have any dependence on the fusion at all?
-  candidate_values = [*consts, *args]
   independent_jaxpr, _, out_used, *_ = pe.partial_eval_jaxpr_custom(
       jaxpr.replace(
           eqns=(jaxpr.eqns[:fusion_eqn_index]
@@ -291,6 +338,9 @@ def fuse_jaxpr(
   in_fusions = tree_util.tree_unflatten(
       fusion_eqn.params["in_tree"], in_fusions_flat
   )
+  # TODO(jburnim): Pass input_output_aliases so that we can ensure that,
+  # if some input aliases an output, then that input is included as an input
+  # value for that output's fusion.
   output_fusions, output_permutation = _construct_output_fusions(
       candidate_values,
       jaxpr,
@@ -299,6 +349,7 @@ def fuse_jaxpr(
       fusion_eqn.outvars,
       fusion_eqn.params["out_tree"],
       fusion_eqn.params["output_fusion_prefix"],
+      input_output_aliases=input_output_aliases,
   )
   out = fusion_eqn.params["func"](*in_fusions, output_fusions)
   flat_out = jax.tree.leaves(out)

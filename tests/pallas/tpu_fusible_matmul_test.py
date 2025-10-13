@@ -157,6 +157,8 @@ def _fusible_matmul(
   # prefetch arguments directly to the kernel but don't have Mosaic support atm.
   scalar_prefetch = jax.tree.map(lambda x: x[None], scalar_prefetch)
 
+  # TODO(jburnim): Make input_output_aliases.
+
   return pl.pallas_call(
       functools.partial(
           matmul_kernel,
@@ -250,6 +252,24 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     np.testing.assert_allclose(
         matmul_relu(x, y), matmul_relu_ref(x, y), atol=5e-5
     )
+
+  def test_aliasing(self):
+    one = jnp.ones((1, 1), dtype=jnp.float32)
+    two = 2.0 * one
+
+    @jax.jit
+    @fuser.fuse
+    def matmul(x, y, a, b, c):
+      r = fusible_matmul(jnp.sin(x + a + one), y)
+      return jnp.cos(r + b) + two, r + c
+
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (512, 512), jnp.float32)
+    y = jax.random.normal(k1, (512, 512), jnp.float32)
+    a = jnp.ones((1, 512), jnp.float32)
+    b = 2.0 * jnp.ones((512, 1), jnp.float32)
+    c = 3.0 * jnp.ones((1, 1), jnp.float32)
+    _ = jax.tree.map(lambda t: t.block_until_ready(), matmul(x, y, a, b, c))
 
   @parameterized.parameters('float32', 'bfloat16')
   def test_matmul_plus_iota_custom_fusion(self, dtype):

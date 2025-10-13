@@ -569,6 +569,19 @@ def get_fusion_values(
     out_flat = core.eval_jaxpr(jaxpr, values, *flat_args)
     return tree_util.tree_unflatten(out_tree, out_flat)
 
+  print('GET FUSION VALUES')
+  print('jaxpr:', jaxpr)
+  print('args:', args)
+  print('kwargs:', kwargs)
+  print('fusion_values:', regular_values)
+  indices = []
+  for v in regular_values:
+    for i, c in enumerate(values):
+      if v is c:
+        indices.append(i)
+        break
+    indices.append(None)
+  print('indices:', indices)
   return new_kernel_fn, tuple(regular_values), tuple(scalar_prefetch_values)
 
 

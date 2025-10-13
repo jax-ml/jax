@@ -42,6 +42,40 @@ class FusionTest(jtu.JaxTestCase):
     x = jax.random.normal(jax.random.key(0), (128, 128), dtype=jnp.float32)
     np.testing.assert_array_equal(f(x), x)
 
+  def test_alias1(self):
+    @fuser.fusible
+    def add(x_fn, y_fn, z_fn):
+      if z_fn is None:
+        z_fn = lambda x: x
+      return z_fn(x_fn() + y_fn())
+
+    @jax.jit
+    @fuser.fuse
+    def f(x, a):
+      return add(jnp.sin(x), a) + 1.0
+
+    x = jax.random.normal(jax.random.key(0), (4,), dtype=jnp.float32)
+    a = jax.random.normal(jax.random.key(1), (4,), dtype=jnp.float32)
+    _ = f(x, a).block_until_ready()
+
+  def test_alias2(self):
+    @fuser.fusible
+    def add(x_fn, y_fn, z_fn):
+      if z_fn is None:
+        z_fn = lambda x: x
+      return z_fn(x_fn() + y_fn())
+
+    @jax.jit
+    @fuser.fuse
+    def f(x, a, out):
+      return add(jnp.sin(x), a) + 1.0
+
+    x = jax.random.normal(jax.random.key(0), (4,), dtype=jnp.float32)
+    a = jax.random.normal(jax.random.key(1), (4,), dtype=jnp.float32)
+    out = jax.random.normal(jax.random.key(1), (4,), dtype=jnp.float32)
+    _ = f(x, a, out).block_until_ready()
+
+
   def test_separate_output_fusions_trivial(self):
 
     @fuser.fusible(output_fusion_prefix=(True, True))
