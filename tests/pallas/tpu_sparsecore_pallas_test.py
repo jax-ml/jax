@@ -1036,22 +1036,65 @@ class ScalarSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x)
 
-  def test_sliced_copy(self):
+  def test_indexed_copy(self):
     x = jnp.arange(self.num_cores * 8).reshape(self.num_cores, -1)
 
     @plsc.kernel(
         out_shape=x,
         mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=self.num_cores),
+        scratch_shapes=(pltpu.SemaphoreType.DMA(self.num_cores),),
     )
-    def kernel(x_ref, o_ref):
-      @functools.partial(pl.run_scoped, sems=pltpu.SemaphoreType.DMA(4))
-      def _(sems):
-        core_id = lax.axis_index("core")
-        pltpu.async_copy(
-            x_ref.at[core_id], o_ref.at[core_id], sems.at[core_id]
-        ).wait()
+    def kernel(x_ref, o_ref, sems):
+      core_id = lax.axis_index("core")
+      pltpu.async_copy(
+          x_ref.at[core_id], o_ref.at[core_id], sems.at[core_id]
+      ).wait()
 
     np.testing.assert_array_equal(kernel(x), x)
+
+  @parameterized.parameters(False, True)
+  def test_sliced_copy(self, use_multiple_of):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 16):
+      self.skipTest("Test requires a newer libTPU")
+
+    x = jnp.arange(4 * 8).reshape(4, -1)
+    tile_dim = 4
+
+    @plsc.kernel(
+        out_shape=jax.ShapeDtypeStruct((4, 8), x.dtype),
+        mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=self.num_cores),
+        scratch_shapes=(pltpu.SemaphoreType.DMA,),
+    )
+    def kernel(x_ref, o_ref, sem):
+      core_id = lax.axis_index("core")
+
+      @pl.when(core_id == 0)
+      def _():
+        zero = core_id
+        if use_multiple_of:
+          zero = pl.multiple_of(zero, tile_dim)
+        else:
+          # The slice is dynamic and potentially not tile-aligned from the
+          # compiler perspective, so the compilation will fail.
+          pass
+        pltpu.async_copy(
+            x_ref.at[pl.ds(zero, tile_dim)],
+            o_ref.at[pl.ds(zero, tile_dim)],
+            sem,
+        ).wait()
+
+    compiled_kernel = jax.jit(
+        kernel, compiler_options={"xla_tpu_use_tc_device_shape_on_sc": "true"}
+    )
+
+    if use_multiple_of:
+      np.testing.assert_array_equal(compiled_kernel(x), x)
+    else:
+      with self.assertRaisesRegex(
+          jax.errors.JaxRuntimeError,
+          f"is not guaranteed to be divisible by the tile dimension {tile_dim}",
+      ):
+        compiled_kernel(x)
 
   def test_scalar_load_store(self):
     x = jnp.arange(8)

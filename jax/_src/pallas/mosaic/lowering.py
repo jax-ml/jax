@@ -1926,7 +1926,9 @@ def _masked_swap_lowering_rule(
   return result
 
 
-@register_lowering_rule(primitives.multiple_of_p)
+@register_lowering_rule(
+    primitives.multiple_of_p, kernel_types=[*tpu_core.KernelType]
+)
 def _multiple_of_lowering_rule(ctx: LoweringRuleContext, val, *, values):
   del ctx
   for multiple in values:
