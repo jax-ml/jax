@@ -112,7 +112,8 @@ def _check_precondition_oob_gather(
   if not np.size(gather_indices):
     return
 
-  shape = array_constructors.array(shape, dtype='int32')
+  gather_indices = array_constructors.array(gather_indices)
+  shape = array_constructors.array(shape, dtype=gather_indices.dtype)
   error_check_lib.set_error_if(
       ufuncs.logical_or(
           reductions.min(gather_indices) < -shape,
@@ -132,9 +133,9 @@ def _check_precondition_oob_dynamic_slice(
   if config.error_checking_behavior_oob.value == "ignore":
     return
 
-  shape = array_constructors.array(shape, dtype='int32')
-  start_indices = array_constructors.array(start_indices, dtype='int32')
-  slice_sizes = array_constructors.array(slice_sizes, dtype='int32')
+  start_indices = array_constructors.array(start_indices)
+  shape = array_constructors.array(shape, dtype=start_indices.dtype)
+  slice_sizes = array_constructors.array(slice_sizes, dtype=start_indices.dtype)
   allow_negative_indices = array_constructors.array(allow_negative_indices, dtype='bool')
 
   lower_bound = lax_numpy.where(allow_negative_indices, -shape, 0)
