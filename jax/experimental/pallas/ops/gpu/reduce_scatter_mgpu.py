@@ -32,8 +32,7 @@ def reduce_scatter(
     reduction: Literal["add", "min", "max", "and", "or", "xor"] = "add",
     num_blocks: int | None = None,
     tile_size: int | None = None,
-    # TODO(apaszke): Infer default from the dtype
-    vec_size: int = 2,
+    vec_size: int | None = None,
 ) -> jax.Array:
   """Performs a reduce-scatter operation across devices using multimem instructions.
 
@@ -42,7 +41,7 @@ def reduce_scatter(
     axis_name: Name of the mesh axis to reduce-scatter across.
     reduction: Reduction operation to perform. Supported: "add", "min", "max",
       "and", "or", "xor".
-    vec_size: Vector size for the layout (default: 2).
+    vec_size: Vector size for the layout. If None, automatically inferred from dtype.
     num_blocks: Number of blocks to use. Defaults to the device core count.
     tile_size: Total tile size to split between row and minor dimensions.
   """
@@ -60,6 +59,21 @@ def reduce_scatter(
         f"number of devices ({num_devices})"
     )
   output_shape = (input_shape[0] // num_devices, *input_shape[1:])
+
+  if vec_size is None:
+    if (output_size := math.prod(output_shape)) % 128:
+      raise ValueError("Output size must be divisible by 128")
+    if jnp.issubdtype(dtype, jnp.floating):
+      dtype_bits = jnp.finfo(dtype).bits
+    else:
+      dtype_bits = jnp.iinfo(dtype).bits
+    max_vec_size = min(128 // dtype_bits, output_size // 128)
+    if tile_size is not None:
+      max_vec_size_for_tile = tile_size // 128
+      max_vec_size = min(max_vec_size, max_vec_size_for_tile)
+    vec_size = 32 // dtype_bits  # We don't support ld_reduce below 32-bit
+    while vec_size * 2 <= max_vec_size:
+      vec_size *= 2
   if math.prod(output_shape) % vec_size:
     raise ValueError(
         "The total number of elements in the output"
@@ -93,7 +107,6 @@ def reduce_scatter(
   def kernel(x_ref, y_ref, done_barrier):
     dev_idx = lax.axis_index(axis_name)
     x_ref = x_ref.at[pl.ds(dev_idx * output_shape[0], output_shape[0])]
-
     x_ref_2d = x_ref.reshape((output_shape[0], minor_dims_size))
     y_ref_2d = y_ref.reshape((output_shape[0], minor_dims_size))
 
@@ -112,6 +125,8 @@ def reduce_scatter(
           ),
           plgpu.Layout.WG_STRIDED((major_tile, minor_tile), vec_size=vec_size)
       )
+
+    # Wait for everyone to finish reading the operands before we exit and potentially free them
     plgpu.semaphore_signal_multicast(done_barrier, collective_axes=axis_name)
     pl.semaphore_wait(done_barrier, num_devices, decrement=False)
 

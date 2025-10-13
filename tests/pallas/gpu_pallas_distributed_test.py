@@ -414,22 +414,21 @@ class PallasCallMultimemTest(TestCase):
         np.tile(np_reduction(x_local[16:64+16], x_local[64+48:128+48]), (2, 1)),
     )
 
-  @parameterized.parameters(
-      (jnp.float32, "add", 1),
-      (jnp.float16, "add", 2),
-      (jnp.bfloat16, "add", 2),
-      (jnp.float16, "min", 4),
-      (jnp.float16, "max", 8),
-  )
-  def test_reduce_scatter(self, dtype, reduction, vec_size):
+  def _test_reduce_scatter(
+      self,
+      shape,
+      dtype,
+      reduction,
+      tile_size=None,
+      vec_size=None,
+      num_blocks=None,
+  ):
     if jax.process_index() > 2:
       return
 
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ["x"])
-    x = jax.random.uniform(
-        jax.random.key(42), (1024, 64), dtype=dtype, minval=-1.0, maxval=1.0
-    )
+    x = jax.random.uniform(jax.random.key(42), shape, dtype=dtype, minval=-1.0, maxval=1.0)
 
     def body(x):
       return reduce_scatter(
@@ -437,8 +436,8 @@ class PallasCallMultimemTest(TestCase):
           axis_name="x",
           reduction=reduction,
           vec_size=vec_size,
-          tile_size=1024,  # 16 rows * 64 cols = 1024 elements = 8 elements per thread
-          num_blocks=4,
+          tile_size=tile_size,
+          num_blocks=num_blocks,
       )
 
     y = jax.jit(
@@ -449,39 +448,33 @@ class PallasCallMultimemTest(TestCase):
 
     y = multihost_utils.process_allgather(y, tiled=True)
     np_reduction = self._get_reduction_impl(reduction)
-    expected = np_reduction(x[:512], x[512:])
+    expected = np_reduction(x[:x.shape[0] // 2], x[x.shape[0] // 2:])
     tol = 1e-5 if reduction == "add" else 0
     np.testing.assert_allclose(y, expected, rtol=tol, atol=tol)
 
-  def test_reduce_scatter_large_minor_dims(self):
-    if jax.process_index() > 2:
-      return
-
-    devices = jax.devices()[:2]
-    mesh = jax.sharding.Mesh(devices, ["x"])
-    x = jax.random.uniform(
-        jax.random.key(42), (512, 32768), dtype=jnp.float16, minval=-1.0, maxval=1.0
+  @parameterized.parameters(
+      (jnp.float32, "add", 1),
+      (jnp.float16, "add", 2),
+      (jnp.bfloat16, "add", 2),
+      (jnp.float16, "min", 4),
+      (jnp.float16, "max", 8),
+  )
+  def test_reduce_scatter(self, dtype, reduction, vec_size):
+    # 16 rows * 64 cols = 1024 elements = 8 elements per thread
+    self._test_reduce_scatter(
+        (1024, 64), dtype, reduction, tile_size=1024, vec_size=vec_size, num_blocks=4
     )
 
-    def body(x):
-      return reduce_scatter(
-          x,
-          axis_name="x",
-          reduction="add",
-          vec_size=4,
-          tile_size=8192,  # 8 rows * 1024 minor_tile = 8192 elements = 64 elements per thread
-          num_blocks=4,
-      )
+  def test_reduce_scatter_large_minor_dims(self):
+    self._test_reduce_scatter(
+        (512, 32768), jnp.float16, "add", tile_size=8192, vec_size=4, num_blocks=4
+    )
 
-    y = jax.jit(
-        jax.shard_map(
-            body, mesh=mesh, in_specs=P("x"), out_specs=P("x"), check_vma=False
-        )
-    )(x)
-
-    y = multihost_utils.process_allgather(y, tiled=True)
-    expected = x[:256] + x[256:]
-    np.testing.assert_allclose(y, expected, rtol=1e-4, atol=1e-4)
+  @parameterized.parameters(2048, 256, None)
+  def test_reduce_scatter_auto_vec_size(self, tile_size):
+    self._test_reduce_scatter(
+        (1024, 64), jnp.float16, "add", tile_size=tile_size, vec_size=None, num_blocks=4
+    )
 
 
 if __name__ == '__main__':
