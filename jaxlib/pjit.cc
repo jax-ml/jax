@@ -784,7 +784,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     dynamic_arg_signatures.push_back(std::move(arg));
   }
 
-  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
+  PyUserContextScope user_context_scope;
   // A vector of [num_inputs].
   auto num_args_arrays = PrepareIfrtInputs(
       *cache_entry->executable, flat_dynamic_args, dynamic_arg_signatures,

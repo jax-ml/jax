@@ -92,6 +92,15 @@ class PyUserContext
 std::optional<Traceback> GetTraceback(
     const xla::ifrt::UserContext* user_context);
 
+// Shorthand for `xla::ifrt::UserContextScope(PyUserContext::Create())`.
+class PyUserContextScope {
+ public:
+  PyUserContextScope() : user_context_scope_(PyUserContext::Create()) {}
+
+ private:
+  xla::ifrt::UserContextScope user_context_scope_;
+};
+
 }  // namespace jax
 
 #endif  // JAXLIB_PY_USER_CONTEXT_H_

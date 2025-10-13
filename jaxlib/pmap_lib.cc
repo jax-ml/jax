@@ -612,7 +612,7 @@ absl::StatusOr<nb::object> PmapFunction::Call(nb::handle callable,
     return fallback_to_cache_miss();
   }
 
-  xla::ifrt::UserContextScope user_context_scope(PyUserContext::Create());
+  PyUserContextScope user_context_scope;
 
   // 1. Parse arguments.
   std::vector<xla::ifrt::Device*>& input_devices = cache_entry.devices;
