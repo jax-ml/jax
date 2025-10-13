@@ -9264,7 +9264,8 @@ def corrcoef(x: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True) -> A
 
 
 @partial(vectorize, excluded={0, 1, 3, 4})
-def _searchsorted_via_scan(unrolled: bool, sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
+def _searchsorted_via_scan(unrolled: bool, sorted_arr: Array, query: Array,
+                           side: str, dtype: type) -> Array:
   op = lax._sort_le_comparator if side == 'left' else lax._sort_lt_comparator
   unsigned_dtype = np.uint32 if dtype == np.int32 else np.uint64
   def body_fun(state, _):
@@ -9389,6 +9390,7 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
       'sort': _searchsorted_via_sort,
       'compare_all': _searchsorted_via_compare_all,
   }[method]
+  a, v = core.standard_insert_pvary(a, v)
   return impl(a, v, side, dtype)  # type: ignore
 
 

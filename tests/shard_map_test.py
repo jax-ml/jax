@@ -3835,6 +3835,19 @@ class ShardMapTest(jtu.JaxTestCase):
     jax.shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P('x')
                   )(jnp.ones(2,))  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), ('data',))
+  def test_jnp_histogram(self, mesh):
+    x = jnp.arange(8 * 4 * 2).reshape(8, 4, 2)
+
+    def f(x, bin_edges):
+      hist, _ = jax.vmap(lambda q: jnp.histogram(q, bins=bin_edges))(x)
+      return hist
+
+    bin_edges = jnp.histogram_bin_edges(x, bins=100)
+    g = jax.shard_map(f, in_specs=(P('data'), P()), out_specs=P('data'))
+    g(x, bin_edges)  # doesn't crash
+    jax.jit(g)(x, bin_edges)  # doesn't crash
+
   def test_shmap_linearize_and_linearize_transpose_error(self):
     mesh = jtu.create_mesh((2,), ('x',))
 
