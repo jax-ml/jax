@@ -21,3 +21,21 @@ def shard_map(f, mesh, in_specs, out_specs, check_rep=True):
   has been deprecated."""
   return jshmap._shard_map(f, mesh=mesh, in_specs=in_specs, out_specs=out_specs,
                            axis_names=set(), check_vma=check_rep)
+
+_deprecations = {
+    # Deprecated in v0.8.0; we plan to keep this as a deprecated legacy API.
+    "shard_map": (
+      "jax.experimental.shard_map is deprecated in v0.8.0. Used jax.shard_map instead.",
+      shard_map
+    )
+}
+
+import typing
+if typing.TYPE_CHECKING:
+  pass
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+  del shard_map
+del typing
