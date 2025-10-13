@@ -2294,3 +2294,9 @@ jax_ragged_dot_use_ragged_dot_instruction = bool_state(
         ' ragged_dot_general_p.'
     ),
 )
+
+jax_collectives_common_channel_id = bool_flag(
+    name='jax_collectives_common_channel_id',
+    default=True,
+    help="Should collectives use a common channel ID? Temporary feature flag.",
+)
