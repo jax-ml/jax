@@ -518,9 +518,10 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPU_C_64F HIP_C_64F
 #define GPU_R_64F HIP_R_64F
 
-
+namespace{
 inline hipblasStatus_t gpublasCreate(gpublasHandle_t* handle) {
     return hipblasCreate(reinterpret_cast<hipblasHandle_t*>(handle));
+}
 }
 #define gpublasSetStream hipblasSetStream
 #define gpublasSgeqrfBatched hipblasSgeqrfBatched
@@ -572,9 +573,10 @@ inline hipblasStatus_t gpublasCreate(gpublasHandle_t* handle) {
 #define GPUDNN_LSTM miopenLSTM
 #define GPUDNN_BIDIRECTIONAL miopenRNNbidirection
 
-
+namespace{
 inline hipsolverStatus_t gpusolverDnCreate(gpusolverDnHandle_t* handle) {
     return hipsolverCreate(reinterpret_cast<hipsolverHandle_t*>(handle));
+}
 }
 #define gpusolverDnSetStream hipsolverSetStream
 #define gpusolverDnCreateSyevjInfo hipsolverCreateSyevjInfo
@@ -675,8 +677,10 @@ inline hipsolverStatus_t gpusolverDnCreate(gpusolverDnHandle_t* handle) {
 #define GPUBLAS_OP_C HIPBLAS_OP_C
 
 #define gpusparseCooSetStridedBatch hipsparseCooSetStridedBatch
+namespace{
 inline hipsparseStatus_t gpusparseCreate(gpusparseHandle_t* handle) {
     return hipsparseCreate(reinterpret_cast<hipsparseHandle_t*>(handle));
+}
 }
 #define gpusparseSetStream hipsparseSetStream
 #define gpusparseCreateCoo hipsparseCreateCoo
