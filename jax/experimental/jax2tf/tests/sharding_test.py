@@ -184,6 +184,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       for in_shardings in ("missing", None, "P")
       for out_shardings in ("missing", None, "P")
   ])
+  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
+                      category=DeprecationWarning)
   @jtu.with_mesh([("x", 2)])
   def test_pjit_basic(self, in_shardings="P", out_shardings="P"):
     # Ensure that we can distinguish the inputs and outputs by shape
@@ -332,6 +334,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       for constraint in (None, "P")
       for poly in (None, "2*b1,_", "_,b2", "2*b1,b2")
   ])
+  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
+                      category=DeprecationWarning)
   @jtu.with_mesh([("x", 2)])
   def test_pjit_sharding_constraint(self, nested_pjit=True, constraint="P", poly="2*b1,b2"):
     constraint_sharding = P("x", None) if constraint == "P" else None
@@ -378,6 +382,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       for in_shardings in ("missing", None, "P")
       for out_shardings in ("missing", None, "P")
   ])
+  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
+                      category=DeprecationWarning)
   def test_grad_pjit(self, in_shardings="P", out_shardings=None):
     local_devices = list(jax.local_devices())
     size = 2
@@ -434,6 +440,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
             (r"f32\[20,10\].*custom_call_target.*\"Sharding.*sharding.*devices=\[2,1\]", count_out_P),
         ])
 
+  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
+                      category=DeprecationWarning)
   def test_grad_sharding_different_mesh(self):
     # Convert with two similar meshes, the only difference being
     # the order of the devices. grad should not fail.

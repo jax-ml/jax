@@ -1269,6 +1269,8 @@ class IOCallbackTest(jtu.JaxTestCase):
       for ordered in [True, False]
       for with_sharding in [True, False]
   )
+  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
+                      category=DeprecationWarning)
   def test_can_use_io_callback_in_pjit(
       self, *, ordered: bool, with_sharding: bool
   ):
@@ -1329,6 +1331,8 @@ class IOCallbackTest(jtu.JaxTestCase):
     else:
       self.assertIn(f"{{maximal device={callback_device_index}}}", stablehlo_ir)
 
+  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
+                      category=DeprecationWarning)
   def test_sequence_pjit_io_callback_ordered(self):
     # A sequence of pairs of calls to pjit(io_callback(ordered=True)) with each
     # pair on a different device assignment.

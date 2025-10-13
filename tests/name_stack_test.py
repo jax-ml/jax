@@ -20,7 +20,6 @@ from jax import lax
 import jax.numpy as jnp
 from jax._src import config
 from jax._src import core
-from jax._src.pjit import pjit
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import ad_checkpoint
@@ -253,20 +252,6 @@ class NameStackTransformationTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       @jax.jit
-      def g(y):
-        return jnp.sin(y)
-      return g(x)
-
-    hlo_text = _get_hlo(f)(2.)
-    self.assertIn('jvp(jit(f))', hlo_text)
-    self.assertIn('jit(g)', hlo_text)
-    self.assertIn('transpose(jvp(jit(f)))', hlo_text)
-
-  def test_nested_pjit_stack(self):
-    @jax.value_and_grad
-    @pjit
-    def f(x):
-      @pjit
       def g(y):
         return jnp.sin(y)
       return g(x)

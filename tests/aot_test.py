@@ -22,7 +22,6 @@ from jax._src import core
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
-from jax.experimental.pjit import pjit
 from jax.experimental.serialize_executable import (
     deserialize_and_load,
     serialize,
@@ -43,12 +42,12 @@ with contextlib.suppress(ImportError):
 class JaxAotTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices('tpu', 'gpu')
-  def test_pickle_pjit_lower(self):
+  def test_pickle_jit_lower(self):
     def fun(x):
       return x * x
 
-    with jax.sharding.Mesh(np.array(jax.devices()), ('data',)):
-      lowered = pjit(
+    with jax.set_mesh(jax.sharding.Mesh(np.array(jax.devices()), ('data',))):
+      lowered = jax.jit(
           fun, in_shardings=P('data'), out_shardings=P(None, 'data')
       ).lower(core.ShapedArray(shape=(8, 8), dtype=np.float32))
 
@@ -64,7 +63,7 @@ class JaxAotTest(jtu.JaxTestCase):
             np.zeros((len(jax.devices()), 4), dtype=np.float32)))
 
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): This test is segfaulting on TPU
-  def test_topology_pjit_serialize(self):
+  def test_topology_jit_serialize(self):
     try:
       aot_topo = topologies.get_topology_desc(
           platform=jax.devices()[0].platform
@@ -151,7 +150,7 @@ class JaxAotTest(jtu.JaxTestCase):
   def test_with_constants(self):
     const = jnp.arange(16.) + 42.  # A distinctive shape and value
 
-    @pjit
+    @jax.jit
     def f(x):
       return const[0:8] + x
 
@@ -186,7 +185,7 @@ class JaxAotTest(jtu.JaxTestCase):
       arange = np.arange if use_np else jnp.arange
       const = arange(8, dtype=np.int64) + 42
 
-      @pjit
+      @jax.jit
       def f(x):
         return lax.convert_element_type(const, np.float32) + x
 

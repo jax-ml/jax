@@ -1287,14 +1287,14 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "Memory kinds passed to jax.jit does not match memory kind on the"
-        " respective arg. Got pjit memory kind: pinned_host, arg memory kind:"
+        " respective arg. Got jit memory kind: pinned_host, arg memory kind:"
         " device for arg shape.*"):
       f(jnp.arange(16).reshape(8, 2))  # uncommitted inp also raises error
 
     with self.assertRaisesRegex(
         ValueError,
         "Memory kinds passed to jax.jit does not match memory kind on the"
-        " respective arg. Got pjit memory kind: pinned_host, arg memory kind:"
+        " respective arg. Got jit memory kind: pinned_host, arg memory kind:"
         " device for arg shape.*"):
       f(inp)  # committed inp raises error.
 

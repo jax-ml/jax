@@ -20,7 +20,6 @@ import jax
 from jax import api_util
 import jax.numpy as jnp
 from jax import lax
-from jax.experimental import pjit
 from jax._src import ad_checkpoint
 from jax._src import callback as cb
 from jax._src import dispatch
@@ -245,15 +244,15 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
         r"Ordered effects not supported for map primitives: \[.*\]"):
       jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
 
-  def test_pjit_inherits_effects(self):
+  def test_jit_inherits_effects(self):
     def f(x):
       effect_p.bind(effect=foo_effect)
       effect_p.bind(effect=bar_effect)
       return x
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['x'])
     spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
-    f = pjit.pjit(f, in_shardings=spec, out_shardings=spec)
-    with mesh:
+    f = jax.jit(f, in_shardings=spec, out_shardings=spec)
+    with jax.set_mesh(mesh):
       jaxpr = jax.make_jaxpr(f)(np.arange(jax.local_device_count()))
     self.assertSetEqual(jaxpr.effects, {foo_effect, bar_effect})
 

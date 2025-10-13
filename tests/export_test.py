@@ -1281,7 +1281,7 @@ class JaxExportTest(jtu.JaxTestCase):
       self.skipTest("Need at least 2 devices")
 
     mesh_1 = Mesh(jax.local_devices()[:1], "i")
-    @functools.partial(pjit.pjit,
+    @functools.partial(jax.jit,
                        in_shardings=NamedSharding(mesh_1, P("i")))
     def f_with_sharding(x):
       return jnp.sum(x ** 2, axis=0)
@@ -1305,7 +1305,7 @@ class JaxExportTest(jtu.JaxTestCase):
       self.skipTest("Need at least 3 devices")
 
     mesh_1 = Mesh(jax.local_devices()[:2], "i")
-    @functools.partial(pjit.pjit,
+    @functools.partial(jax.jit,
                        in_shardings=NamedSharding(mesh_1, P("i")))
     def f_with_sharding(x):
       return jnp.sum(x ** 2, axis=0)
@@ -1409,7 +1409,7 @@ class JaxExportTest(jtu.JaxTestCase):
     a = np.arange(4 * 4, dtype=np.float32).reshape((4, 4))
 
     @functools.partial(
-      pjit.pjit,
+      jax.jit,
       in_shardings=NamedSharding(mesh, P("x", None),),
       out_shardings=NamedSharding(mesh, P("x", None)))
     @functools.partial(
@@ -1461,6 +1461,8 @@ class JaxExportTest(jtu.JaxTestCase):
       for out_shardings in ("missing", None, "P")
       for with_mesh_context in (True, False)
   ])
+  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
+                      category=DeprecationWarning)
   def test_grad_with_sharding(self, in_shardings="P", out_shardings=None,
                               with_mesh_context=False):
     if len(jax.devices()) < 2:
@@ -1620,8 +1622,8 @@ class JaxExportTest(jtu.JaxTestCase):
     input = jnp.ones(shape=(jax.local_device_count(),), device=shardings)
     input_rev = jnp.ones(shape=(jax.local_device_count(),), device=shardings_rev)
 
-    exp = export.export(pjit.pjit(f, in_shardings=shardings))(input)
-    exp_rev = export.export(pjit.pjit(f, in_shardings=shardings_rev))(input_no_shards)
+    exp = export.export(jax.jit(f, in_shardings=shardings))(input)
+    exp_rev = export.export(jax.jit(f, in_shardings=shardings_rev))(input_no_shards)
 
     if CAN_SERIALIZE:
       _ = exp.serialize(vjp_order=1)

@@ -34,7 +34,6 @@ from jax._src.mesh import AxisType, AbstractMesh
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
     pmap_sharding_devices_indices_map, NamedSharding, GSPMDSharding)
-from jax.experimental.pjit import pjit
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
 from jax._src import array
@@ -662,29 +661,6 @@ class JaxArrayTest(jtu.JaxTestCase):
             output_shardings._to_xla_hlo_sharding(x_dummy.ndim),
             s._to_xla_hlo_sharding(x_dummy.ndim)))
 
-  def test_shape_dtype_struct_sharding_pjit(self):
-    mesh = jtu.create_mesh((4, 2), ('x', 'y'))
-    s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
-
-    def f(x):
-      return x * 2.
-
-    x_dummy = jax.ShapeDtypeStruct(
-        shape=(8, 2),
-        dtype=jnp.dtype('float32'),
-        sharding=s)
-
-    c = pjit(f).lower(x_dummy).compile()
-    input_shardings, output_shardings = c.input_shardings, c.output_shardings
-    self.assertTrue(
-        op_shardings.are_hlo_shardings_equal(
-            input_shardings[0][0]._to_xla_hlo_sharding(x_dummy.ndim),
-            s._to_xla_hlo_sharding(x_dummy.ndim)))
-    self.assertTrue(
-        op_shardings.are_hlo_shardings_equal(
-            output_shardings._to_xla_hlo_sharding(x_dummy.ndim),
-            s._to_xla_hlo_sharding(x_dummy.ndim)))
-
   # TODO(b/399879011): GPU is the only platform that has an implementation for
   # this, which exists in py_client.cc. Ideally, this would be replaced with
   # some kind of auto-defrag-on-OOM.
@@ -787,8 +763,8 @@ class JaxArrayTest(jtu.JaxTestCase):
 
   def test_array_copy_to_host_async(self):
     global_mesh = jtu.create_mesh((2, 2), ('x', 'y'))
-    x = pjit(lambda: jnp.arange(8.),
-             out_shardings=jax.sharding.NamedSharding(global_mesh, P(None)))()
+    x = jax.jit(lambda: jnp.arange(8.),
+                out_shardings=jax.NamedSharding(global_mesh, P(None)))()
     self.assertLen(x.sharding.device_set, 4)
     x.copy_to_host_async()  # doesn't crash
     self.assertArraysEqual(np.arange(8.), x)

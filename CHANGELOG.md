@@ -86,6 +86,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.enable_x64`.
   * {func}`jax.experimental.shard_map.shard_map` is deprecated; going forward use
     {func}`jax.shard_map`.
+  * {func}`jax.experimental.pjit.pjit` is deprecated; going forward use
+    {func}`jax.jit`.
 
 ## JAX 0.7.2 (September 16, 2025)
 

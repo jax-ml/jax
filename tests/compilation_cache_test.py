@@ -43,7 +43,6 @@ from jax._src import test_warning_util
 from jax._src import xla_bridge
 from jax._src.compilation_cache_interface import CacheInterface
 from jax._src.lib import xla_client as xc
-from jax.experimental.pjit import pjit
 from jax.sharding import PartitionSpec as P
 import numpy as np
 
@@ -227,6 +226,21 @@ class CompilationCacheTest(CompilationCacheTestCase):
     f(1.0)
     self.assertEqual(count_cache_items(), 2)
 
+  def test_jit_sharded(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    with jax.set_mesh(mesh):
+      @partial(jax.jit, in_shardings=(P("x"), P("x")), out_shardings=None)
+      def f(x, y):
+        return x + y
+
+      shape = (8, 8)
+      x = np.arange(math.prod(shape), dtype=np.int64).reshape(shape)
+      f(x, x + 1)
+      self.assertEqual(count_cache_items(), 1)
+      x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+      f(x, x + 1)
+      self.assertEqual(count_cache_items(), 2)
+
   def test_jit_with_constants(self):
     const = jnp.array([42, 43])  #  A distinctive shape
     clear_cache()
@@ -297,20 +311,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
         f(1)
         self.assertEqual(count_cache_items(), 1)
 
-  @jtu.with_mesh([("x", 2)])
-  def test_pjit(self):
-    @partial(pjit, in_shardings=(P("x"), P("x")), out_shardings=None)
-    def f(x, y):
-      return x + y
-
-    shape = (8, 8)
-    x = np.arange(math.prod(shape), dtype=np.int64).reshape(shape)
-    f(x, x + 1)
-    self.assertEqual(count_cache_items(), 1)
-    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
-    f(x, x + 1)
-    self.assertEqual(count_cache_items(), 2)
-
   def test_cache_write_warning(self):
     f = jit(lambda x: x * x)
 
@@ -343,7 +343,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
       test_warning_util.record_warnings() as w,
     ):
       mock_get.side_effect = RuntimeError("test error")
-      # Calling assertEqual with the jitted f will generate two PJIT
+      # Calling assertEqual with the jitted f will generate two JIT
       # executables: Equal and the lambda function itself.
       self.assertEqual(f(2).item(), 4)
     if len(w) != 1:

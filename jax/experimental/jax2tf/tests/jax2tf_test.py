@@ -1348,6 +1348,8 @@ class Jax2TfTest(JaxToTfTestCase):
                      transform2 != "none") else
           [False, True])
   )
+  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
+                      category=DeprecationWarning)
   def test_cross_platform(self, with_mesh=True, transform1="pjit_in_shardings_P",
                           transform2="pjit_in_shardings_P", nullary=False):
     # Tests cross-lowering for

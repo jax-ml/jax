@@ -33,7 +33,6 @@ from absl.testing import absltest
 
 import jax
 from jax import export
-from jax.experimental import pjit
 from jax import lax
 import jax.numpy as jnp
 from jax import ops
@@ -1969,7 +1968,7 @@ class ShapePolyTest(jtu.JaxTestCase):
 
       setattr(shape_poly._DimExpr, "__hash__", collision_hash)
       xs = [np.ones((3, 5, 6), dtype=np.float32)]
-      f_toconvert = jax.vmap(pjit.pjit(f_jax))
+      f_toconvert = jax.vmap(jax.jit(f_jax))
       res_1 = check_shape_poly(self, f_toconvert, arg_descriptors=xs,
                                polymorphic_shapes=["..."])
       res_2 = check_shape_poly(self, f_toconvert, arg_descriptors=xs,
