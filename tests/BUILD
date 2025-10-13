@@ -137,6 +137,7 @@ jax_multiplatform_test(
     ],
     tags = [
         "multiaccelerator",
+        "notsan",  # Times out
     ],
     deps = py_deps([
         "absl/testing",
