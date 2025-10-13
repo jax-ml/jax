@@ -1213,11 +1213,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # TODO(phawkins): 6e-2 seems like a very loose tolerance.
     jtu.check_grads(jnp_fn, args_maker(), 1, rtol=6e-2, atol=1e-3)
 
-  def testPinvDeprecatedArgs(self):
+  def testPinvRcond(self):
     x = jnp.ones((3, 3))
-    with self.assertDeprecationWarnsOrRaises("jax-numpy-linalg-pinv-rcond",
-                                             "The rcond argument for linalg.pinv is deprecated."):
-      jnp.linalg.pinv(x, rcond=1E-2)
+    with self.assertRaisesWithLiteralMatch(
+        ValueError, "pinv: only one of rtol and rcond may be specified."):
+      jnp.linalg.pinv(x, rcond=1E-2, rtol=1E-2)
+    self.assertArraysEqual(
+        jnp.linalg.pinv(x, rcond=1E-2),
+        jnp.linalg.pinv(x, rtol=1E-2)
+    )
 
   def testPinvGradIssue2792(self):
     def f(p):
@@ -1268,11 +1272,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp.linalg.matrix_rank, args_maker,
                           check_dtypes=False, rtol=1e-3)
 
-  def testMatrixRankDeprecatedArgs(self):
+  def testMatrixRankTol(self):
     x = jnp.ones((3, 3))
-    with self.assertDeprecationWarnsOrRaises("jax-numpy-linalg-matrix_rank-tol",
-                                             "The tol argument for linalg.matrix_rank is deprecated."):
-      jnp.linalg.matrix_rank(x, tol=1E-2)
+    with self.assertRaisesWithLiteralMatch(
+        ValueError, "matrix_rank: only one of tol or rtol may be specified."):
+      jnp.linalg.matrix_rank(x, rtol=1E-2, tol=1E-2)
+    self.assertArraysEqual(
+        jnp.linalg.matrix_rank(x, rtol=1E-2),
+        jnp.linalg.matrix_rank(x, tol=1E-2)
+    )
 
   @jtu.sample_product(
     shapes=[
