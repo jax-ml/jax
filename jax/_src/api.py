@@ -2288,6 +2288,8 @@ def vjp3(f, *primals, has_aux=False):
 
 def _vjp3(fun, *primals, has_aux=False):
   primals_flat, in_tree = tree_flatten(primals)
+  primals_flat = [dtypes.canonicalize_value(v) if not isinstance(v, core.Tracer)
+                  else v for v in primals_flat]
   for arg in primals_flat: dispatch.check_arg(arg)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)

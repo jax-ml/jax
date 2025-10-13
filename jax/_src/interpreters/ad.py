@@ -528,13 +528,13 @@ def backward_pass3(
       acc.accum(ct)  # jaxpr.outvars can have Literals, env can have inst zeros
   with ctx:
     for eqn in lin_eqns[::-1]:
-      if eqn.primitive.ref_primitive:
-        ct = env.pop(eqn.outvars[0]).freeze()
-        acc = read(eqn.invars[0])
-        if isinstance(acc, GradAccum):
-          acc.accum(ct)
-      else:
-        with eqn.ctx.manager, _name_stack_ctx(eqn.source_info):
+      with eqn.ctx.manager, _name_stack_ctx(eqn.source_info):
+        if eqn.primitive.ref_primitive:
+          ct = env.pop(eqn.outvars[0]).freeze()
+          acc = read(eqn.invars[0])
+          if isinstance(acc, GradAccum):
+            acc.accum(ct)
+        else:
           cts_in = [env.pop(v).freeze() for v in eqn.outvars]
           if not eqn.primitive.multiple_results:
             cts_in, = cts_in

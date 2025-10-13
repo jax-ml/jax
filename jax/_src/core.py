@@ -2622,7 +2622,6 @@ class ArrayRefImpl:
   def __init__(self, aval, buf):
     from jax._src.state.types import AbstractRef  # pytype: disable=import-error
     assert isinstance(aval, AbstractRef) and isinstance(aval.inner_aval, ShapedArray)
-    assert isinstance(buf, Array)
     self._aval = aval
     self._buf = buf
 

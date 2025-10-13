@@ -1395,7 +1395,8 @@ class ExecuteReplicated:
       out_ = []
       for i, o in zip(self.mut.out_mut, out):
         if i is not None:
-          args[i]._refs._buf._replace_with(o)  # type: ignore
+          try: args[i]._refs._buf._replace_with(o)  # type: ignore
+          except AttributeError: pass  # TODO(mattjj): remove float0
         else:
           out_.append(o)
       return out_

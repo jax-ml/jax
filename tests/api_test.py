@@ -3129,10 +3129,11 @@ class APITest(jtu.JaxTestCase):
   def test_float0_error(self):
     # float0 is incompatible with other dtypes
     float0_array = jax.grad(lambda x: x+0., allow_int=True)(1)
+    self.assertEqual(float0_array.dtype, dtypes.float0)
     error_text = "float0s do not support any operations by design"
 
     with self.assertRaisesRegex(TypeError, error_text):
-      # dispatch via Array
+      # dispatch via Array.__add__ and hence jax.numpy
       _ = float0_array + jnp.zeros(())
 
     with self.assertRaisesRegex(TypeError, error_text):
