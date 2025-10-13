@@ -2656,6 +2656,7 @@ class PallasCallWGTest(
         mgpu_primitives.wait_load_tmem_p,
         mgpu_primitives.commit_tmem_p,
         mgpu_primitives.semaphore_signal_parallel_p,
+        mgpu_primitives.semaphore_signal_multicast_p,
         mgpu_primitives.try_cluster_cancel_p,
         mgpu_primitives.query_cluster_cancel_p,
         mgpu_primitives.multimem_store_p,

@@ -3649,3 +3649,69 @@ def multimem_load_reduce(
       collective_axes=collective_axes,
       reduction_op=reduction_op,
   )
+
+semaphore_signal_multicast_p = jax_core.Primitive("semaphore_signal_multicast")
+semaphore_signal_multicast_p.multiple_results = True
+
+def semaphore_signal_multicast(
+    semaphore,
+    value: int | jax.Array = 1,
+    *,
+    collective_axes: Hashable | tuple[Hashable, ...],
+):
+  """Signals a semaphore on all devices along collective_axes.
+
+  At the moment only signals to all devices are supported.
+
+  Args:
+    semaphore: The semaphore reference to signal.
+    value: The increment value for the semaphore.
+    collective_axes: The mesh axes to multicast the signal across.
+      Must contain all mesh axes.
+  """
+  if not isinstance(collective_axes, tuple):
+    collective_axes = (collective_axes,)
+  ref, transforms = pallas_primitives._get_ref_and_transforms(semaphore)
+  value = jnp.asarray(value, dtype=jnp.int32)
+  args = [ref, transforms, value]
+  flat_args, args_tree = tree_util.tree_flatten(args)
+  return semaphore_signal_multicast_p.bind(
+      *flat_args,
+      args_tree=args_tree,
+      collective_axes=collective_axes,
+  )
+
+
+@semaphore_signal_multicast_p.def_effectful_abstract_eval
+def _semaphore_signal_multicast_abstract_eval(*avals, args_tree, collective_axes):
+  del collective_axes  # Unused.
+  sem, _, _ = tree_util.tree_unflatten(args_tree, avals)
+  pallas_primitives.check_sem_avals(sem, None, "semaphore_signal_multicast")
+  return (), {pallas_core.comms_effect}
+
+
+@lowering.register_lowering_rule(semaphore_signal_multicast_p, mgpu.LoweringSemantics.Lane)
+def _semaphore_signal_multicast_lowering(
+    ctx: lowering.LoweringRuleContext, *args, args_tree, collective_axes
+):
+  i32 = ir.IntegerType.get_signless(32)
+  sem, transforms, value = tree_util.tree_unflatten(args_tree, args)
+  sem, sem_transforms = lowering._handle_transforms(ctx, sem, transforms)
+  if sem_transforms:
+    raise NotImplementedError(
+        f"Unhandled transforms for semaphore_signal_multicast: {sem_transforms}"
+    )
+  if not isinstance(collective_axes, (tuple, list)):
+    collective_axes = (collective_axes,)
+  if (mesh_info := ctx.module_ctx.mesh_info) is None:
+    raise ValueError("collective_axes requires a mesh context")
+  if set(collective_axes) != set(mesh_info.axis_names):
+    raise ValueError(
+        f"collective_axes {collective_axes} must equal entire mesh axes {mesh_info.axis_names}"
+    )
+  multi_ref = ctx.launch_ctx.to_remote_multicast(sem)
+  if ctx.module_ctx.auto_barriers:
+    mgpu_utils.warpgroup_barrier()
+  val = lowering._ir_constant(value, i32)
+  mgpu_utils.SemaphoreRef.signal_multimem(mgpu_utils.memref_ptr(multi_ref.ref), val)
+  return ()

@@ -1242,6 +1242,27 @@ class SemaphoreRef:
       has_side_effects=True,
     )
 
+  @staticmethod
+  def signal_multimem(ptr, value, predicate: ir.Value | None = None):
+    i32 = ir.IntegerType.get_signless(32)
+    if not isinstance(value, ir.Value):
+      value = c(value, i32)
+    elif value.type != i32:
+      raise ValueError(f"Expected a i32 value, got {value.type}")
+    if predicate is None:
+      predicate = single_thread_predicate(ThreadSubset.WARPGROUP)
+    llvm.inline_asm(
+        ir.Type.parse("!llvm.void"),
+        [ptr, value, predicate],
+        """{
+            @$2 multimem.red.release.sys.global.add.u32 [$0], $1;
+            fence.proxy.alias;
+        }
+        """,
+        "l,r,b",
+        has_side_effects=True,
+    )
+
   def wait(
       self,
       value: ir.Value | int = 1,

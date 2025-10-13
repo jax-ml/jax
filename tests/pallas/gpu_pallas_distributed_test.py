@@ -208,6 +208,32 @@ class PallasCallRemoteDMATest(TestCase):
     )()
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
+  def test_semaphore_signal_collective_axes(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    def kernel(y_ref, sem):
+      plgpu.semaphore_signal_multicast(sem, collective_axes='x')
+      # Wait for the multicast signal (each device gets signaled by all devices)
+      pl.semaphore_wait(sem, 2)  # Wait for signals from both devices
+      y_ref[...] = jnp.ones_like(y_ref)
+
+    kernel_call = pl.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+    )
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ['x'])
+    y = jax.jit(
+        jax.shard_map(
+            kernel_call, mesh=mesh, in_specs=(), out_specs=P(None), check_vma=False,
+        )
+    )()
+    np.testing.assert_allclose(y, jnp.ones_like(y))
+
   def test_permuted_mesh(self):
     def kernel(y_ref, sem):
       other_dev_id = 1 - lax.axis_index('x')

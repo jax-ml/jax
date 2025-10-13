@@ -83,7 +83,7 @@ def reduce_scatter(
         f" {min_transfer_elems // elems_per_row} or decrease {vec_size=}."
     )
 
-  def kernel(x_ref, y_ref, scratch_ref):
+  def kernel(x_ref, y_ref, done_barrier):
     dev_idx = lax.axis_index(axis_name)
     rows_per_device = output_shape[0]
     num_transfers = rows_per_device // rows_per_transfer
@@ -105,10 +105,8 @@ def reduce_scatter(
               (rows_per_transfer, *output_shape[1:]), vec_size=vec_size
           ),
       )
-    # TODO(apaszke): Use multimem.red to increment the semaphore
-    for d in range(num_devices):
-      pl.semaphore_signal(scratch_ref, device_id=d)
-    pl.semaphore_wait(scratch_ref, num_devices)
+    plgpu.semaphore_signal_multicast(done_barrier, collective_axes=axis_name)
+    pl.semaphore_wait(done_barrier, num_devices, decrement=False)
 
     # TODO(b/448323639): We fake modify the input to ensure that XLA:GPU copies
     # the operand into symmetric memory.
