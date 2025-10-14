@@ -186,6 +186,7 @@ def _get_vector_clock_size(
 _shared_memory_init_lock = threading.Lock()
 races: RaceDetectionState | None = None
 
+
 def _initialize_shared_memory(
     device_id, num_devices, num_cores_per_device, *, interpret_params
 ):
@@ -197,33 +198,33 @@ def _initialize_shared_memory(
   with _shared_memory_init_lock:
     if not memory.is_shared_memory_initialized():
       vector_clock_size = _get_vector_clock_size(
-          num_devices, num_cores_per_device, interpret_params=interpret_params
+            num_devices, num_cores_per_device, interpret_params=interpret_params
+        )
+      races = RaceDetectionState(num_cores=num_cores)
+      memory.set_shared_memory(
+          memory.SharedMemory(
+              num_devices=num_devices,
+              num_cores_per_device=num_cores_per_device,
+              out_of_bounds_reads=interpret_params.out_of_bounds_reads,
+              dma_execution_mode=interpret_params.dma_execution_mode,
+              detect_races=interpret_params.detect_races,
+              races=races,
+              vector_clock_size=vector_clock_size,
+              clocks=[
+                  vc.make_vector_clock(vector_clock_size)
+                  for _ in range(num_cores)
+              ],
+              barrier=threading.Barrier(
+                  num_devices, action=_update_clocks_for_global_barrier
+              ),
+              clean_up_barrier=threading.Barrier(
+                  num_devices, action=_clear_shared_memory
+              ),
+              uninitialized_value_callback=lambda dtype: _uninitialized_value(
+                  dtype, interpret_params
+              ),
+          )
       )
-      memory.set_shared_memory(memory.SharedMemory(
-          num_devices=num_devices,
-          num_cores_per_device=num_cores_per_device,
-          out_of_bounds_reads=interpret_params.out_of_bounds_reads,
-          dma_execution_mode=interpret_params.dma_execution_mode,
-          detect_races=interpret_params.detect_races,
-          races=RaceDetectionState(num_cores=num_cores),
-          vector_clock_size=vector_clock_size,
-          clocks=[vc.make_vector_clock(vector_clock_size) for _ in range(num_cores)],
-          barrier=threading.Barrier(
-              num_devices, action=_update_clocks_for_global_barrier
-          ),
-          clean_up_barrier=threading.Barrier(
-              num_devices, action=_clear_shared_memory
-          ),
-          uninitialized_value_callback=lambda dtype: _uninitialized_value(
-              dtype, interpret_params
-          ),
-      ))
-      # TODO(nrink): Find a better way to expose the presence of races from the
-      # `memory` module. Keeping `races` as a reference to
-      # `memory.get_shared_memory().races` is a workaround that makes the
-      # `RaceDetectionState` accessible from the current module after the shared
-      # memory as been cleared.
-      races = memory.get_shared_memory().races
   assert memory.get_shared_memory().num_cores == num_cores
 
 

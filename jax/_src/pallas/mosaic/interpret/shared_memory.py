@@ -311,10 +311,9 @@ class SharedMemory:
   num_cores_per_device: int
   out_of_bounds_reads: str
   dma_execution_mode: str
-  # TODO(nrink): Remove `detect_races` and use `races is not None` instead.
   detect_races: bool
-  vector_clock_size: int | None
   races: RaceDetectionState | None
+  vector_clock_size: int | None
 
   clocks: list[vc.VectorClock]
   barrier: threading.Barrier
