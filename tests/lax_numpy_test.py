@@ -1345,19 +1345,30 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=default_dtypes,
-    a_shape=one_dim_array_shapes,
+    shape=one_dim_array_shapes if jtu.numpy_version() < (2, 2, 0) else all_shapes,
     trim=["f", "b", "fb"],
   )
-  def testTrimZeros(self, a_shape, dtype, trim):
+  def testTrimZeros(self, shape, dtype, trim):
     rng = jtu.rand_some_zero(self.rng())
-    args_maker = lambda: [rng(a_shape, dtype)]
-    np_fun = lambda arg1: np.trim_zeros(arg1, trim)
+    args_maker = lambda: [rng(shape, dtype)]
+    np_fun = lambda arg1: np.trim_zeros(np.asarray(arg1), trim)
     jnp_fun = lambda arg1: jnp.trim_zeros(arg1, trim)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
 
-  def testTrimZerosNotOneDArray(self):
-    with self.assertRaisesRegex(TypeError, "'filt' must be 1-D array"):
-      jnp.trim_zeros(jnp.array([[0.0, 1.0, 0.0],[2.0, 4.5, 0.0]]))
+  @jtu.sample_product(
+    dtype=default_dtypes,
+    shape=[(2, 3), (3, 4)],
+    trim=["f", "b", "fb"],
+    axis=[None, 0, -1]  # note: contrary to its docs, NumPy errors for multiple axes.
+  )
+  @unittest.skipIf(jtu.numpy_version() < (2, 2, 0), "n-dimensional trim_zeros requires NumPy 2.2")
+  def testTrimZerosAxis(self, shape, dtype, trim, axis):
+    print(shape, trim, axis)
+    rng = jtu.rand_some_zero(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    np_fun = lambda arg1: np.trim_zeros(arg1, trim, axis=axis)
+    jnp_fun = lambda arg1: jnp.trim_zeros(arg1, trim, axis=axis)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
 
   @jtu.sample_product(
     rank=(1, 2),
@@ -6271,7 +6282,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'stack': ['casting'],
       'std': ['mean'],
       'tri': ['like'],
-      'trim_zeros': ['axis'],
       'var': ['mean'],
       'vstack': ['casting'],
       'zeros_like': ['subok', 'order']

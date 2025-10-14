@@ -64,6 +64,7 @@ from jax._src.typing import (
 )
 from jax._src.util import (
     canonicalize_axis as _canonicalize_axis,
+    canonicalize_axis_tuple as _canonicalize_axis_tuple,
     ceil_of_ratio, safe_zip, set_module, unzip2)
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
@@ -7430,13 +7431,14 @@ def diagflat(v: ArrayLike, k: int = 0) -> Array:
 
 # TODO(jakevdp): add support for N-dimensional inputs as in NumPy v2.2
 @export
-def trim_zeros(filt: ArrayLike, trim: str ='fb') -> Array:
+def trim_zeros(filt: ArrayLike, trim: str ='fb',
+               axis: int | Sequence[int] | None = None) -> Array:
   """Trim leading and/or trailing zeros of the input array.
 
   JAX implementation of :func:`numpy.trim_zeros`.
 
   Args:
-    filt: input array. Must have ``filt.ndim == 1``.
+    filt: N-dimensional input array.
     trim: string, optional, default = ``fb``. Specifies from which end the input
       is trimmed.
 
@@ -7444,28 +7446,63 @@ def trim_zeros(filt: ArrayLike, trim: str ='fb') -> Array:
       - ``b`` - trims only the trailing zeros.
       - ``fb`` - trims both leading and trailing zeros.
 
+    axis: optional axis or axes along which to trim. If not specified, trim along
+      all axes of the array.
+
   Returns:
     An array containing the trimmed input with same dtype as ``filt``.
 
   Examples:
+    One-dimensional input:
+
     >>> x = jnp.array([0, 0, 2, 0, 1, 4, 3, 0, 0, 0])
     >>> jnp.trim_zeros(x)
     Array([2, 0, 1, 4, 3], dtype=int32)
+    >>> jnp.trim_zeros(x, trim='f')
+    Array([2, 0, 1, 4, 3, 0, 0, 0], dtype=int32)
+    >>> jnp.trim_zeros(x, trim='b')
+    Array([0, 0, 2, 0, 1, 4, 3], dtype=int32)
+
+    Two-dimensional input:
+
+    >>> x = jnp.zeros((4, 5)).at[1:3, 1:4].set(1)
+    >>> x
+    Array([[0., 0., 0., 0., 0.],
+           [0., 1., 1., 1., 0.],
+           [0., 1., 1., 1., 0.],
+           [0., 0., 0., 0., 0.]], dtype=float32)
+    >>> jnp.trim_zeros(x)
+    Array([[1., 1., 1.],
+           [1., 1., 1.]], dtype=float32)
+    >>> jnp.trim_zeros(x, trim='f')
+    Array([[1., 1., 1., 0.],
+           [1., 1., 1., 0.],
+           [0., 0., 0., 0.]], dtype=float32)
+    >>> jnp.trim_zeros(x, axis=0)
+    Array([[0., 1., 1., 1., 0.],
+           [0., 1., 1., 1., 0.]], dtype=float32)
+    >>> jnp.trim_zeros(x, axis=1)
+    Array([[0., 0., 0.],
+           [1., 1., 1.],
+           [1., 1., 1.],
+           [0., 0., 0.]], dtype=float32)
   """
-  # Non-array inputs are deprecated 2024-09-11
-  util.check_arraylike("trim_zeros", filt, emit_warning=True)
+  filt = util.ensure_arraylike("trim_zeros", filt)
   core.concrete_or_error(None, filt,
                          "Error arose in the `filt` argument of trim_zeros()")
-  filt_arr = asarray(filt)
-  del filt
-  if filt_arr.ndim != 1:
-    raise TypeError(f"'filt' must be 1-D array, but received {filt_arr.ndim}-D array.")
-  nz = (filt_arr == 0)
-  if reductions.all(nz):
-    return array_creation.empty(0, filt_arr.dtype)
-  start: Array | int = argmin(nz) if 'f' in trim.lower() else 0
-  end: Array | int = argmin(nz[::-1]) if 'b' in trim.lower() else 0
-  return filt_arr[start:len(filt_arr) - end]
+  axis_set = set(_canonicalize_axis_tuple(axis, filt.ndim))
+  if not axis_set or ('f' not in trim.lower() and 'b' not in trim.lower()):
+    return filt
+  def _get_slice(x: Array, ax: int) -> slice:
+    if ax not in axis_set:
+      return slice(None)
+    mask = x.any(axis=[i for i in range(x.ndim) if i != ax])
+    if not mask.any():
+      return slice(0, 0)
+    start = int(mask.argmax()) if 'f' in trim.lower() else None
+    stop = x.shape[ax] - int(mask[::-1].argmax()) if 'b' in trim.lower() else None
+    return slice(start, stop)
+  return filt[*(_get_slice(filt, ax) for ax in range(filt.ndim))]
 
 
 def trim_zeros_tol(filt, tol, trim='fb'):
