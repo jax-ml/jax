@@ -345,10 +345,10 @@ def initialize():
       xla_client.register_custom_call_target(
           _name, _value, platform='CUDA', api_version=1
       )
-    xla_client.register_custom_type_id_handler(
+    xla_client.register_custom_type_handler(
         "CUDA",
         functools.partial(
-            cuda_plugin_extension.register_custom_type_id, c_api
+            cuda_plugin_extension.register_custom_type, c_api
         ),
     )
     triton.register_compilation_handler(

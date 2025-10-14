@@ -318,18 +318,41 @@ absl::Status PyRegisterCustomCallTarget(const std::string& fn_name,
       api_version));
 }
 
-absl::Status PyRegisterCustomTypeId(std::string_view type_name,
-                                    nb::object type_id) {
-  nb::capsule capsule;
-  if (!nb::try_cast<nb::capsule>(type_id, capsule)) {
+absl::Status PyRegisterCustomType(std::string_view type_name, nb::object type) {
+  XLA_FFI_TypeId* type_id = nullptr;
+  XLA_FFI_TypeInfo* type_info = nullptr;
+
+  auto as_capsule = [](nb::object obj) -> absl::StatusOr<nb::capsule> {
+    nb::capsule capsule;
+    if (!nb::try_cast<nb::capsule>(obj, capsule)) {
+      return absl::InvalidArgumentError(
+          "Custom type registration requires handlers as PyCapsules");
+    }
+    return capsule;
+  };
+
+  // Extract XLA_FFI_TypeId and optional XLA_FFI_TypeInfo from the type dict.
+  nb::dict type_dict;
+  if (!nb::try_cast<nb::dict>(type, type_dict) ||
+      !type_dict.contains("type_id")) {
     return absl::InvalidArgumentError(
-        "The type_id argument to register_custom_call_type_id must be a "
-        "PyCapsule object holding a pointer to a XLA_FFI_TypeId.");
+        "The type_id argument to register_custom_call_type must be a "
+        "dictionary holding a pointer to a XLA_FFI_TypeId in `type_id` and "
+        "optional pointer to a XLA_FFI_TypeInfo in `type_info` fields.");
   }
-  XLA_FFI_TypeId* type_id_ptr =
-      reinterpret_cast<XLA_FFI_TypeId*>(static_cast<void*>(capsule.data()));
-  return ffi::TakeStatus(ffi::Ffi::RegisterTypeId(xla::ffi::GetXlaFfiApi(),
-                                                  type_name, type_id_ptr));
+
+  TF_ASSIGN_OR_RETURN(auto type_id_capsule, as_capsule(type_dict["type_id"]));
+  type_id = static_cast<XLA_FFI_TypeId*>(type_id_capsule.data());
+
+  if (type_dict.contains("type_info")) {
+    TF_ASSIGN_OR_RETURN(auto type_info_capsule,
+                        as_capsule(type_dict["type_info"]));
+    type_info = static_cast<XLA_FFI_TypeInfo*>(type_info_capsule.data());
+  }
+
+  return ffi::TakeStatus(
+      ffi::Ffi::RegisterTypeId(xla::ffi::GetXlaFfiApi(), type_name, type_id,
+                               type_info ? *type_info : XLA_FFI_TypeInfo{}));
 }
 
 template <typename T, typename Container>
@@ -1086,9 +1109,9 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .value("READ", DebugOptions::AUTOTUNE_CACHE_MODE_READ);
 
   m.def(
-      "register_custom_type_id",
-      [](std::string_view type_name, nb::object type_id) {
-        xla::ThrowIfError(PyRegisterCustomTypeId(type_name, type_id));
+      "register_custom_type",
+      [](std::string_view type_name, nb::object type) {
+        xla::ThrowIfError(PyRegisterCustomType(type_name, type));
       },
       nb::arg("type_name"), nb::arg("type_id"));
 
@@ -1372,8 +1395,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
   nb::class_<OpSharding> op_sharding(m, "OpSharding");
   op_sharding.attr("Type") = op_sharding_type;
   op_sharding.attr("ShardGroupType") = op_sharding_shard_group_type;
-  op_sharding
-      .def(nb::init<>())
+  op_sharding.def(nb::init<>())
       .def("__getstate__",
            [](const OpSharding& self) {
              std::string serialized = self.SerializeAsString();

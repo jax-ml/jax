@@ -47,7 +47,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 380  # Fixed thread safety issue in profiler.
+_version = 381  # Update XLA FFI API for external type registration.
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -77,7 +77,7 @@ def make_cpu_client(
     transfer_server_factory=None,
 ) -> Client:
   register_custom_call_handler('cpu', _xla.register_custom_call_target)
-  register_custom_type_id_handler('cpu', _xla.register_custom_type_id)
+  register_custom_type_handler('cpu', _xla.register_custom_type)
   return _xla.get_tfrt_cpu_client(
       asynchronous=asynchronous,
       distributed_client=distributed_client,
@@ -462,7 +462,7 @@ _custom_type_id: dict[str, Any] = {}
 _custom_type_id_lock = threading.Lock()
 
 
-def register_custom_type_id(
+def register_custom_type(
     type_name: str,
     type_id: Any,
     platform: str = 'cpu',
@@ -484,7 +484,7 @@ def register_custom_type_id(
       )
 
 
-def register_custom_type_id_handler(
+def register_custom_type_handler(
     platform: str, handler: CustomTypeIdHandler
 ) -> None:
   """Register a custom type id handler and use it to register existing type ids.
