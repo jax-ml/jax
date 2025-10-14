@@ -727,7 +727,7 @@ def _one_hot(x: Array, num_classes: int, *,
       raise ValueError(f"Expected num_classes to match the size of axis {axis}, "
                        f"but {num_classes} != {axis_size}") from None
     axis_idx = lax.axis_index(axis)
-    return jnp.asarray(_dot_product_attention_xla == axis_idx, dtype=dtype)
+    return jnp.asarray(x == axis_idx, dtype=dtype)
   axis = operator.index(axis)  # type: ignore[arg-type]
   lhs = lax.expand_dims(x, (axis,))
   rhs_shape = [1] * x.ndim
