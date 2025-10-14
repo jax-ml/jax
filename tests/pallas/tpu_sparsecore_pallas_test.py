@@ -1013,6 +1013,18 @@ class VectorSubcoreTest(PallasSCTest):
         NotImplementedError, r"Unsupported block dimension type.*Squeezed"):
       kernel(x)
 
+  def test_multiple_of(self):
+    x = jnp.arange(16)
+
+    @vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, o_ref):
+      @pl.loop(0, 16, step=8)
+      def _(i):
+        i = pl.multiple_of(i, 8)
+        o_ref[pl.ds(i, 8)] = x_ref[pl.ds(i, 8)] + 1
+
+    np.testing.assert_array_equal(kernel(x), x + 1)
+
 
 class ScalarSubcoreTest(PallasSCTest):
 
