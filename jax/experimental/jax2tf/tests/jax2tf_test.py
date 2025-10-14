@@ -15,7 +15,6 @@
 
 Specific JAX primitive conversion tests are in primitives_test."""
 import collections
-import contextlib
 import math
 import os
 import re
@@ -37,7 +36,6 @@ from jax._src import source_info_util
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.shard_map import shard_map
-from jax.experimental import pjit
 from jax.sharding import PartitionSpec as P
 
 import numpy as np
@@ -1321,44 +1319,33 @@ class Jax2TfTest(JaxToTfTestCase):
 
   @parameterized.named_parameters(
       dict(testcase_name=(
-          f"{'with_mesh_' if with_mesh else ''}"
           f"2={transform2 if transform2 != 'none' else ''}"
           f"_1={transform1 if transform1 != 'none' else ''}"
           f"{'_nullary' if nullary else ''}"),
-          with_mesh=with_mesh, transform1=transform1,
-          transform2=transform2, nullary=nullary)
+          transform1=transform1, transform2=transform2, nullary=nullary)
       # Test transform2(transform1(func)
       for transform1 in [
           "none",
-          "jit",
-          "pjit", "pjit_in_shardings_None", "pjit_in_shardings_P",
-          "pjit_in_shardings_Sharding", "shard_map", "pmap"]
+          "jit", "jit_in_shardings_None",
+          "jit_in_shardings_Sharding", "shard_map", "pmap"]
       for transform2 in (
-          ["none", "pjit_in_shardings_None", "pjit_in_shardings_P",
-           "pjit_in_shardings_Sharding"]
+          ["none", "jit_in_shardings_None",
+           "jit_in_shardings_Sharding"]
       )
       # Whether the function can be nullary
       for nullary in (
           # To reduce the number of tests
           [True, False] if transform2 == "none" else
           [False])
-      # Whether we use a "with mesh"
-      for with_mesh in (
-          [True] if (transform1 not in ["base", "jit", "pjit"] or
-                     transform2 != "none") else
-          [False, True])
   )
-  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
-                      category=DeprecationWarning)
-  def test_cross_platform(self, with_mesh=True, transform1="pjit_in_shardings_P",
-                          transform2="pjit_in_shardings_P", nullary=False):
-    # Tests cross-lowering for
-    #  with mesh:
-    #   transform2(transform1(func))
+  def test_cross_platform(self,
+                          transform1="jit_in_shardings_P",
+                          transform2="jit_in_shardings_P", nullary=False):
+    # Tests cross-lowering for transform2(transform1(func))
     if transform2 == "none" and (
         transform1 == "shard_map" or
-        transform1 in ["pjit_in_shardings_P", "pjit_in_shardings_Sharding"] and nullary):
-      raise unittest.SkipTest("Skip because must have pjit at top level")
+        transform1 in ["jit_in_shardings_P", "jit_in_shardings_Sharding"] and nullary):
+      raise unittest.SkipTest("Skip because must have jit at top level")
 
     x = np.ones((4, 6), dtype=np.float32)
     mesh = sharding.Mesh(jax.devices()[:1], ("a",))
@@ -1367,22 +1354,14 @@ class Jax2TfTest(JaxToTfTestCase):
     # For shard_map we cannot use cummax :-( because it does not have a
     # replication rule. But we use lax.all_gather which on TPU is lowered with
     # an all-gather op
-    func_shard_map = lambda x: lax.all_gather(x, 'a', axis=1, tiled=True)
+    func_shard_map = lambda x: lax.all_gather(x, "a", axis=1, tiled=True)
 
     def apply_transform(func, transform: str):
       transformed_func = dict(
           none=func,
           jit=jax.jit(func),
           jit_in_shardings_None=jax.jit(func, in_shardings=None),
-          jit_in_shardings_P=jax.jit(func, in_shardings=(P("a"),)),
           jit_in_shardings_Sharding=jax.jit(
-              func, in_shardings=(sharding.NamedSharding(mesh, P("a")),)),
-          pjit=pjit.pjit(func),
-          pjit_in_shardings_None=pjit.pjit(func, in_shardings=None,
-                                           out_shardings=None),
-          pjit_in_shardings_P=pjit.pjit(func, in_shardings=(P("a"),),
-                                        out_shardings=P("a")),
-          pjit_in_shardings_Sharding=pjit.pjit(
               func,
               in_shardings=(sharding.NamedSharding(mesh, P("a")),),
               out_shardings=sharding.NamedSharding(mesh, P("a"))),
@@ -1414,15 +1393,12 @@ class Jax2TfTest(JaxToTfTestCase):
         raise unittest.SkipTest("Cannot lower nested pmap: jit-of-pmap warning")
       raise unittest.SkipTest("TODO: figure out how to invoke pmap from TF")
 
-    with contextlib.ExitStack() as stack:
-      if with_mesh:
-        stack.enter_context(mesh)
-      # Run the JAX native version, to check it works, and to fill caches.
-      _ = func_to_convert(*args)
-      exported = export.export(
-          (jax.jit(func_to_convert) if not hasattr(func_to_convert, "trace") else func_to_convert),
-          platforms=("tpu",)
-      )(*(core.ShapedArray(a.shape, a.dtype) for a in args))
+    # Run the JAX native version, to check it works, and to fill caches.
+    _ = func_to_convert(*args)
+    exported = export.export(
+        (jax.jit(func_to_convert) if not hasattr(func_to_convert, "trace") else func_to_convert),
+        platforms=("tpu",)
+    )(*(core.ShapedArray(a.shape, a.dtype) for a in args))
 
     if transform1 == "shard_map":
       self.assertIn("stablehlo.all_gather", str(exported.mlir_module()))
