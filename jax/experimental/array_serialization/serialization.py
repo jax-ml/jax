@@ -43,6 +43,7 @@ from jax.experimental.array_serialization.tensorstore_impl import (
     _run_serialization as run_serialization,
     async_serialize, async_deserialize, _TS_CONTEXT as TS_CONTEXT,
     _DEFAULT_BASE_DRIVER as _DEFAULT_DRIVER, _LimitInFlightBytes)
+import tensorstore as ts
 
 # for compatibility with older zarr format
 _get_metadata = functools.partial(ts_impl._get_tensorstore_metadata,
@@ -272,7 +273,7 @@ class AsyncManager:
       logger.info('blocking_key_value_get on key %s was successfully '
                   'completed.', get_key)
 
-  def _add_futures(self, futures: Sequence[asyncio.Future]):
+  def _add_futures(self, futures: Sequence[ts.Future]):
     self._commit_futures = futures
 
 
