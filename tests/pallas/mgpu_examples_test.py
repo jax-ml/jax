@@ -211,7 +211,7 @@ def matmul1(a, b, config: TuningConfig):
               transforms=transforms,
           ),
           acc_tmem=plgpu.TMEM((tile_m, tile_n), jnp.float32),
-          out_smem=plgpu.SMEM((tile_m, tile_n), dtype, transforms=transforms),
+          acc_smem=plgpu.SMEM((tile_m, tile_n), dtype, transforms=transforms),
           load_barriers=plgpu.Barrier(
               num_arrivals=2, num_barriers=max_concurrent_steps
           ),
