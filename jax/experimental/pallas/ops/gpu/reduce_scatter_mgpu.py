@@ -14,12 +14,16 @@
 
 """Reduce scatter kernel implemented using Mosaic GPU."""
 
+import functools
+import itertools
 import math
 from typing import Literal
 
 import jax
 from jax import lax
+from jax.experimental import multihost_utils
 from jax.experimental import pallas as pl
+from jax.experimental.mosaic.gpu import profiler
 from jax.experimental.pallas import mosaic_gpu as plgpu
 from jax.extend import backend
 import jax.numpy as jnp
@@ -143,3 +147,72 @@ def reduce_scatter(
       grid_names=("blocks",),
       scratch_shapes=[plgpu.SemaphoreType.REGULAR],
   )(x)
+
+
+def _run_example():
+  P = jax.sharding.PartitionSpec
+  shape = (4 * 4096, 4 * 4096)  # This shape is global!
+  dtype = jnp.bfloat16
+  shards = jax.device_count()
+  mesh = jax.make_mesh(
+      (shards,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
+  )
+  jax.set_mesh(mesh)
+
+  # We measure time per-shard and so we only need bytes per shard.
+  local_in_bytes = math.prod(shape) / shards * jnp.dtype(dtype).itemsize
+  # In reduce-scatter, we send (shards - 1) / shards worth of input data to the
+  # switch and receive as much data as in the whole output, which is 1 / shards.
+  total_bytes = local_in_bytes
+
+  a = jax.random.normal(jax.random.key(1), shape, dtype)
+  a = jax.sharding.reshard(a, P("x"))
+
+  @jax.jit
+  @functools.partial(jax.shard_map, mesh=mesh, in_specs=P("x"), out_specs=P("x"))
+  def ref_fn(x):
+    return lax.psum_scatter(x, "x", scatter_dimension=0, tiled=True)
+  ref_fn(a).block_until_ready()  # Warmup.
+  _, ref_kernels_ms = profiler.measure(ref_fn, aggregate=False)(a)
+  ref_time_us = sum(t * 1e3 for _, t in ref_kernels_ms)
+  # We choose the minimum across processes to choose the runtime that didn't
+  # include devices waiting for other devices.
+  ref_time_us = min(multihost_utils.process_allgather(ref_time_us).tolist())
+  ref_bw = total_bytes / (ref_time_us * 1e-6) / 1e9  # GB/s
+
+  tuning_it = itertools.product(
+      (4, 8, 16, 32, 64, 132),  # num_blocks
+      (1024, 2048, 4096, 8192),  # tile_size
+  )
+  best_bw = 0.0
+  best_runtime = float("inf")
+  for num_blocks, tile_size in tuning_it:
+    try:
+      @jax.jit
+      @functools.partial(
+          jax.shard_map, mesh=mesh, in_specs=P("x"), out_specs=P("x"), check_vma=False
+      )
+      def kernel_fn(x):
+        return reduce_scatter(x, axis_name="x", num_blocks=num_blocks, tile_size=tile_size)
+      kernel_fn(a).block_until_ready()  # Warmup.
+      _, kernels_ms = profiler.measure(kernel_fn, aggregate=False)(a)
+    except ValueError as e:
+      if "exceeds available shared memory" in e.args[0]:  # Ignore SMEM OOMs.
+        continue
+      raise
+    runtime_us = sum(t * 1e3 for _, t in kernels_ms)
+    runtime_us = min(multihost_utils.process_allgather(runtime_us).tolist())
+    achieved_bw = total_bytes / (runtime_us * 1e-6) / 1e9  # GB/s
+    if achieved_bw > best_bw:
+      best_runtime = runtime_us
+      best_bw = achieved_bw
+    print(f"{num_blocks=}, {tile_size=}: {runtime_us:<7.1f}us = {achieved_bw:4.1f} GB/s")
+
+  print(f"Total bytes transferred: {total_bytes / 1e9:.2f} GB")
+  print(f"\tBest: {best_runtime:<7.1f}us = {best_bw:4.1f} GB/s")
+  print(f"\tRef: {ref_time_us:<7.1f}us = {ref_bw:4.1f} GB/s")
+
+
+if __name__ == "__main__":
+  from jax._src import test_multiprocess as jt_multiprocess  # pytype: disable=import-error
+  jt_multiprocess.main(shard_main=_run_example)
