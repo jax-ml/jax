@@ -1349,6 +1349,34 @@ def _memref_cast_op_equation_system(
   )
 
 
+@_add_equation_system_derivation_rule(memref.TransposeOp)
+def _memref_transpose_op_equation_system(
+    ctx: DerivationContext,
+    op: memref.TransposeOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  in_ty = ir.MemRefType(op.in_.type)
+  if len(in_ty.shape) != 2:
+    raise NotImplementedError(f"Only 2D memrefs are supported, got {in_ty}")
+  in_strides, _ = in_ty.get_strides_and_offset()
+  out_strides, _ = ir.MemRefType(op.result.type).get_strides_and_offset()
+  transpose = in_strides != out_strides
+
+  source = OperandOrResult(op, VariableType.OPERAND, 0)
+  dest = OperandOrResult(op, VariableType.RESULT, 0)
+  source_var = ctx.producer_ref(source)
+
+  if not transpose:
+    return (eqns.EquationSystem(), {source_var: [source, dest]}, [])
+
+  dest_var = eqns.Variable(dest)
+  equations = [
+      eqns.Equation(source_var, eqns.Transpose(dest_var)),
+      eqns.Equation(eqns.Transpose(source_var), dest_var),
+  ]
+  system = eqns.EquationSystem(equations=equations)
+  return system, {source_var: [source], dest_var: [dest]}, []
+
+
 # `memref.load` and `memref.store` are used to load barrier phases which are
 # scalars---the rule needn't do anything interesting, but we need to have it.
 @_add_equation_system_derivation_rule(memref.LoadOp)
