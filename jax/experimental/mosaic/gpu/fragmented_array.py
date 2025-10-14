@@ -36,6 +36,7 @@ import numpy as np
 
 from . import utils
 
+
 T = TypeVar("T")
 WARPGROUP_SIZE = utils.WARPGROUP_SIZE
 WARP_SIZE = 32
@@ -2730,12 +2731,19 @@ class FragmentedArray:
       # flattening won't work.
       ref = mgpu.memref_fold(ref, 0, len(ref_ty.shape))
     except ValueError:
-      strides, _ = ref_ty.get_strides_and_offset()
       if vec_size > 1:
-        # TODO(apaszke): We could fold all the pairs of dims that are contiguous
-        # This check is a too strict if we don't do that.
+        ref_ty = ir.MemRefType(ref.type)
+        shape = ref_ty.shape
+        strides, _ = ref_ty.get_strides_and_offset()
+        # Try to fold contiguous dimension pairs.
+        for i in reversed(range(len(shape) - 1)):
+          if strides[i] == shape[i+1] * strides[i+1]:
+            ref = mgpu.memref_fold(ref, i, 2)
+        ref_ty = ir.MemRefType(ref.type)
+        shape = ref_ty.shape
+        strides, _ = ref_ty.get_strides_and_offset()
         has_contiguous_dim = False
-        for size, stride in zip(ref_ty.shape, strides):
+        for size, stride in zip(shape, strides):
           if stride == 1:
             has_contiguous_dim = True
             if size % vec_size != 0:
@@ -2755,6 +2763,7 @@ class FragmentedArray:
           raise ValueError(
               "The reference must have a contiguous dimension when vec_size > 1"
           )
+      layout = WGStridedFragLayout(shape=tuple(ref_ty.shape), vec_size=vec_size)
       idx_gen = layout.thread_idxs(tuple(ref_ty.shape))
     else:
       idx_gen = map(lambda x: [x], layout.linear_thread_idxs())

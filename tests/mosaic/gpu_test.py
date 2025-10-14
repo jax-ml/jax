@@ -3046,6 +3046,20 @@ class FragmentedArrayTest(TestCase):
     x = np.arange(m * n, dtype=dtype).reshape(m, n)
     np.testing.assert_array_equal(kernel_fn(x), jnp.full((m,), x.sum()))
 
+  def test_dimension_compression_for_vec_size(self):
+    def body(ctx, src, dst, _):
+      src_arr = mgpu.FragmentedArray.load_strided(
+        mgpu.memref_slice(src, (slice(None), slice(4, None))), vec_size=4
+      )
+      src_arr.store_untiled(dst, optimized=False)
+    in_shape = jax.ShapeDtypeStruct((8, 20, 4, 3, 1), jnp.float32)
+    out_shape = jax.ShapeDtypeStruct((8, 16, 4, 3, 1), jnp.float32)
+    kernel = mgpu.as_gpu_kernel(
+        body, (1, 1, 1), (128, 1, 1), in_shape, out_shape, ()
+    )
+    x = np.arange(math.prod(in_shape.shape), dtype=np.float32).reshape(in_shape.shape)
+    np.testing.assert_array_equal(kernel(x), x[:, 4:])
+
   @parameterized.product(
       dtype=[jnp.float32, jnp.int32],
       m=[128],
