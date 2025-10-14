@@ -429,7 +429,10 @@ class PallasCallMultimemTest(TestCase):
 
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ["x"])
-    x = jax.random.uniform(jax.random.key(42), shape, dtype=dtype, minval=-1.0, maxval=1.0)
+    if jnp.issubdtype(dtype, jnp.floating):
+      x = jax.random.uniform(jax.random.key(42), shape, dtype=dtype, minval=-1.0, maxval=1.0)
+    else:
+      x = jax.random.randint(jax.random.key(42), shape, dtype=dtype, minval=-1000, maxval=1000)
 
     def body(x):
       return reduce_scatter(
@@ -467,6 +470,7 @@ class PallasCallMultimemTest(TestCase):
       (jnp.bfloat16, "add", 2),
       (jnp.float16, "min", 4),
       (jnp.float16, "max", 8),
+      (jnp.int32, "add", 1),
   )
   def test_reduce_scatter(self, dtype, reduction, vec_size):
     # 16 rows * 64 cols = 1024 elements = 8 elements per thread
@@ -483,6 +487,12 @@ class PallasCallMultimemTest(TestCase):
   def test_reduce_scatter_auto_vec_size(self, tile_size):
     self._test_reduce_scatter(
         (1024, 64), jnp.float16, "add", tile_size=tile_size, vec_size=None, num_blocks=4
+    )
+
+  @parameterized.parameters(2048, 256, None)
+  def test_reduce_scatter_auto_vec_size_int(self, tile_size):
+    self._test_reduce_scatter(
+        (1024, 64), jnp.int32, "add", tile_size=tile_size, vec_size=None, num_blocks=4
     )
 
   @parameterized.parameters(1, 2)

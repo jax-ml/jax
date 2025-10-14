@@ -87,13 +87,15 @@ def reduce_scatter(
         *input_shape[:scatter_dimension], output_scatter_dim, *input_shape[scatter_dimension + 1 :],
     )
 
-  if vec_size is None:
-    if (output_size := math.prod(output_shape)) % 128:
-      raise ValueError("Output size must be divisible by 128")
-    if jnp.issubdtype(dtype, jnp.floating):
-      dtype_bits = jnp.finfo(dtype).bits
-    else:
-      dtype_bits = jnp.iinfo(dtype).bits
+  if (output_size := math.prod(output_shape)) % 128:
+    raise ValueError("Output size must be divisible by 128")
+  if jnp.issubdtype(dtype, jnp.integer):
+    if vec_size is None:
+      vec_size = 1  # Integer types only support unvectorized reductions
+    elif vec_size != 1:
+      raise ValueError("Integer types only support vec_size=1")
+  elif vec_size is None:  # vec_size inference for floating point types
+    dtype_bits = jnp.finfo(dtype).bits
     max_vec_size = min(128 // dtype_bits, output_size // 128)
     if tile_size is not None:
       max_vec_size_for_tile = tile_size // 128
