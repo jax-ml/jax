@@ -79,6 +79,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     new `implementation` argument to {func}`jax.lax.linalg.eig`
     ({jax-issue}`#27265`). The `use_magma` argument is now deprecated in favor
     of `implementation`.
+  * {func}`jax.numpy.trim_zeros` now follows NumPy 2.2 in supporting
+    multi-dimensional inputs.
 
 * Deprecations
   * {func}`jax.experimental.enable_x64` and {func}`jax.experimental.disable_x64`
