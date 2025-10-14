@@ -367,8 +367,7 @@ def ndim(a: ArrayLike | SupportsNdim) -> int:
   """
   if hasattr(a, "ndim"):
     return a.ndim
-  # Deprecation warning added 2025-2-20.
-  check_arraylike("ndim", a, emit_warning=True)
+  check_arraylike("ndim", a)
   if hasattr(a, "__jax_array__"):
     a = a.__jax_array__()
   # NumPy dispatches to a.ndim if available.
@@ -411,8 +410,7 @@ def shape(a: ArrayLike | SupportsShape) -> tuple[int, ...]:
   """
   if hasattr(a, "shape"):
     return a.shape
-  # Deprecation warning added 2025-2-20.
-  check_arraylike("shape", a, emit_warning=True)
+  check_arraylike("shape", a)
   if hasattr(a, "__jax_array__"):
     a = a.__jax_array__()
   # NumPy dispatches to a.shape if available.
@@ -462,9 +460,9 @@ def size(a: ArrayLike | SupportsSize | SupportsShape, axis: int | Sequence[int] 
     >>> y.size
     6
   """
-  check_arraylike("size", a, emit_warning=True)
   if axis is None and hasattr(a, "size"):
     return a.size
+  check_arraylike("size", a)
   _shape = shape(a)  # type: ignore[arg-type]
   axis = canonicalize_axis_tuple(axis, len(_shape), allow_duplicate=False)
   return math.prod(_shape[i] for i in axis)
