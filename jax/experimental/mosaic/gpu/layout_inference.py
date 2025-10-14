@@ -1086,17 +1086,37 @@ def _custom_primitive_equation_system(
     ctx: DerivationContext,
     op: mgpu.CustomPrimitiveOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
-  del ctx
   assignments: dict[eqns.Variable, eqns.Constant] = {}
+  equations: list[eqns.Equation] = []
   in_layouts = iter(op.in_layouts)
+  in_transforms = iter(op.in_transforms)
   variables: list[eqns.Variable] = []
   for i, operand in enumerate(op.operands):
-    if ir.VectorType.isinstance(operand.type):
+    if is_vector(operand):
       v = eqns.Variable(OperandOrResult(op, VariableType.OPERAND, i))
       variables.append(v)
       assignments[v] = eqns.RegisterLayout(
           layouts_lib.from_layout_attr(next(in_layouts))
       )
+    elif ctx.enable_smem_inference and _is_smem_ref(operand):
+      # Here we need to create a new variable, even though it is equal to the
+      # source operand. This is because we directly assign the new variable and
+      # if we did that to the source there could be conflicting assignments.
+      # For example, the same ref could be passed into the custom op twice with
+      # different transforms, which needs to yield an unsatisfiable system.
+      #
+      # TODO(b/447079781): Consider creating the final Equation system using
+      # __and__ and potentially returning Unsatisfiable() directly if there is
+      # a conflict between the assignments.
+      operand_or_result = OperandOrResult(op, VariableType.OPERAND, i)
+      source_var = ctx.producer_ref(operand_or_result)
+      v = eqns.Variable(operand_or_result)
+      equations.append(eqns.Equation(lhs=source_var, rhs=v))
+      variables.append(v)
+      transforms = next(in_transforms)
+      ref_ty = operand_or_result.value.type
+      tiling = _extract_smem_tiling_from_custom_transform_attrs(ref_ty, transforms)
+      assignments[v] = tiling
 
   out_layouts = iter(op.out_layouts)
   for i, result in enumerate(op.results):
@@ -1107,7 +1127,7 @@ def _custom_primitive_equation_system(
           layouts_lib.from_layout_attr(next(out_layouts))
       )
   return (
-      eqns.EquationSystem(assignments=assignments),
+      eqns.EquationSystem(equations=equations, assignments=assignments),
       {v: [v.key] for v in variables},
       [],
   )
@@ -1352,16 +1372,11 @@ def _memref_load_store_op_equation_system(
   return eqns.EquationSystem(assignments=assignments), {var: [ref]}, []
 
 
-@_add_equation_system_derivation_rule(mgpu.WithTransformsOp)
-def _with_transforms_equation_system(
-    ctx: DerivationContext,
-    op: mgpu.WithTransformsOp,
-) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
-  source = OperandOrResult(op, VariableType.OPERAND, 0)
-  dest = OperandOrResult(op, VariableType.RESULT, 0)
-  var = ctx.producer_ref(source)
-
-  transforms = [layouts_lib.from_transform_attr(x) for x in op.transforms]
+def _extract_smem_tiling_from_custom_transform_attrs(
+    ref_type: ir.MemRefType,
+    transform_attrs: ir.ArrayAttr,
+) -> eqns.SMEMTiling:
+  transforms = [layouts_lib.from_transform_attr(x) for x in transform_attrs]
   match transforms:
     case []:
       tile_transform = None
@@ -1376,16 +1391,26 @@ def _with_transforms_equation_system(
       raise NotImplementedError(f"Unsupported transforms {transforms}")
 
   if swizzle is not None:
-    computed_swizzle = _compute_swizzle(op.ref.type, tile_transform)
+    computed_swizzle = _compute_swizzle(ref_type, tile_transform)
     if computed_swizzle != swizzle:
       raise NotImplementedError(
           f"Cannot honor caller-provided swizzle {swizzle} that is different "
           f"from the computed swizle {computed_swizzle} on op {op}."
       )
 
-  assignments: dict[eqns.Variable, eqns.Constant] = {
-      var: eqns.SMEMTiling(tile_transform)
-  }
+  return eqns.SMEMTiling(tile_transform)
+
+
+@_add_equation_system_derivation_rule(mgpu.WithTransformsOp)
+def _with_transforms_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.WithTransformsOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  source = OperandOrResult(op, VariableType.OPERAND, 0)
+  dest = OperandOrResult(op, VariableType.RESULT, 0)
+  var = ctx.producer_ref(source)
+  tiling = _extract_smem_tiling_from_custom_transform_attrs(op.ref.type, op.transforms)
+  assignments: dict[eqns.Variable, eqns.Constant] = {var: tiling}
   return eqns.EquationSystem(assignments=assignments), {var: [source, dest]}, []
 
 

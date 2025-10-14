@@ -1600,6 +1600,50 @@ class LayoutInferenceTest(parameterized.TestCase):
           inference_utils.out_transforms(cast.owner), [transforms]
       )
 
+  def test_custom_primitive_op_retains_transforms(self):
+    with ir.InsertionPoint(self.module.body):
+      transforms = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((64, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+      ref_ty = ir.MemRefType.get(
+          (128, 128), ir.BF16Type.get(), memory_space=mgpu.utils.smem()
+      )
+      [ref] = undefs(ref_ty)
+      op = mgpu.dialect.custom_primitive(
+          result=[],
+          operands_=[ref],
+          in_layouts=[],
+          in_transforms=[transforms],
+          out_layouts=[],
+      )
+
+    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    self.assertSequenceEqual(inference_utils.in_transforms(op), [transforms])
+
+  def test_custom_primitive_op_with_conflicting_transforms_is_unsat(self):
+    with ir.InsertionPoint(self.module.body):
+      transforms_a = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((64, 64)),
+      ])
+      transforms_b = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((32, 32)),
+      ])
+      ref_ty = ir.MemRefType.get(
+          (128, 128), ir.BF16Type.get(), memory_space=mgpu.utils.smem()
+      )
+      [ref] = undefs(ref_ty)
+      mgpu.dialect.custom_primitive(
+          result=[],
+          operands_=[ref, ref],
+          in_layouts=[],
+          in_transforms=[transforms_a, transforms_b],
+          out_layouts=[],
+      )
+
+    with self.assertRaisesRegex(ValueError, "Failed to infer"):
+      mgpu.infer_layout(self.module, enable_smem_inference=True)
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
