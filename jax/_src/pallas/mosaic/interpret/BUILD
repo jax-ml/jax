@@ -26,7 +26,10 @@ package(
 
 py_library(
     name = "interpret_pallas_call",
-    srcs = ["interpret_pallas_call.py"],
+    srcs = [
+        "__init__.py",
+        "interpret_pallas_call.py",
+    ],
     deps = [
         ":race_detection_state",
         ":shared_memory",
