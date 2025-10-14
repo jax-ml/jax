@@ -4660,6 +4660,54 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         self.assertEqual(data.count('"name": "load"'), 2)
         self.assertEqual(data.count('"name": "store"'), 2)
 
+  @parameterized.parameters(((128,),), ((128, 128),))
+  def test_tma_collective_async_cp(self, in_shape):
+    def body(ctx, src, dst, scratch):
+      del ctx
+      tmp, barrier = scratch
+      i32 = ir.IntegerType.get_signless(32)
+      zero_i32 = arith.constant(i32, 0)
+      src_type = ir.MemRefType(src.type)
+      barrier.arrive_expect_tx(
+          utils.bytewidth(src_type.element_type) * math.prod(src_type.shape)
+      )
+      mgpu_dialect.async_load(
+          source=src,
+          destination=tmp,
+          indices=[zero_i32] * src_type.rank,
+          slice_lengths=src_type.shape,
+          collective=ir.ArrayAttr.get([
+              ir.IntegerAttr.get(i32, mgpu_dialect.Dimension.x),
+          ]),
+          barrier=barrier.as_barrier_memref(),
+      )
+      barrier.wait()
+      block_id = gpu.cluster_block_id(gpu.Dimension.x)
+      block_id = arith.index_cast(i32, block_id)
+      mgpu_dialect.async_store(
+          source=tmp,
+          destination=dst,
+          indices=[block_id] + [zero_i32] * src_type.rank,
+          slice_lengths=[-1, *src_type.shape],
+      )
+
+    dtype = jnp.float32
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(2, 1, 1),
+        cluster=(2, 1, 1),
+        block=(128, 1, 1),
+        in_shape=jax.ShapeDtypeStruct(in_shape, dtype),
+        out_shape=jax.ShapeDtypeStruct((2, *in_shape), dtype),
+        smem_scratch_shape=[
+            jax.ShapeDtypeStruct(in_shape, dtype),
+            mgpu.TMABarrier(),
+        ],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+    x = self.prng.uniform(-1, 1, in_shape).astype(dtype)
+    self.assertArraysEqual(kernel(x), jnp.stack([x, x], axis=0))
+
 
 class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
 

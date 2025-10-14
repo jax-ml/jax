@@ -677,8 +677,6 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
 
   def test_collective_copy_gmem_to_smem(self):
-    self.skip_if_wg_semantics()  # Collective loads are not supported yet.
-
     @functools.partial(
         self.kernel,
         out_shape=jax.ShapeDtypeStruct((2, 128), jnp.float32),
@@ -5120,7 +5118,6 @@ class WarpSpecializedPipelineTest(PallasTest):
 
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_collective(self):
-    self.skip_if_wg_semantics()  # Collective loads are not supported yet.
     num_steps = 4
 
     def kernel(x_gmem, o_gmem):

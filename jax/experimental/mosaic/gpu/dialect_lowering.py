@@ -880,13 +880,15 @@ def _mgpu_async_load_op_lowering_rule(
   )
 
   gmem_slice = []
-  for idx_i32, size in zip(load_op.indices, load_op.slice_lengths):
+  for idx_i32, size in zip(load_op.indices, load_op.slice_lengths, strict=True):
     idx = arith.index_cast(ir.IndexType.get(), idx_i32)
     v = idx if size < 0 else utils.DynamicSlice(idx, size)
     gmem_slice.append(v)
 
-  if load_op.collective:
-    raise NotImplementedError("Collective loads are not supported yet.")
+  collective = [
+      gpu.Dimension(ir.IntegerAttr(axis).value)
+      for axis in load_op.collective or []
+  ]
 
   # TODO(dasenov): async_copy requires all GMEM strides except the last one
   # to be a multiple of 16 bytes. This restriction could be loosned with
@@ -902,6 +904,7 @@ def _mgpu_async_load_op_lowering_rule(
       dst_ref=unwrapped_destination,
       gmem_slice=tuple(gmem_slice),
       barrier=barrier.barrier_ref,
+      collective=collective,
       arrive=False,
       swizzle=swizzle,
       gmem_transform=transforms,
@@ -917,7 +920,7 @@ def _mgpu_async_prefetch_op_lowering_rule(
   assert ctx.launch_context is not None
 
   gmem_slice = []
-  for idx_i32, size in zip(load_op.indices, load_op.slice_lengths):
+  for idx_i32, size in zip(load_op.indices, load_op.slice_lengths, strict=True):
     idx = arith.index_cast(ir.IndexType.get(), idx_i32)
     v = idx if size < 0 else utils.DynamicSlice(idx, size)
     gmem_slice.append(v)
