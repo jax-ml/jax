@@ -472,6 +472,7 @@ class ProfilerTest(unittest.TestCase):
     thread_profiler.join()
     self._check_xspace_pb_exist(logdir)
 
+  @unittest.skip("Profiler takes >30s on Cloud TPUs")
   @unittest.skipIf(
       not (portpicker and _pywrap_profiler_plugin),
     "Test requires xprof and portpicker")
