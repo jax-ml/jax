@@ -43,8 +43,6 @@ constexpr llvm::StringRef kVersionAttrName = "stable_mosaic_gpu.version";
 // When this is bumped, we should file a TODO to update the forward-compatible
 // version in Mosaic GPU lowering in a month!
 //
-// TODO(bchetioui): Update the forward-compatible version to 2 in Mosaic GPU
-// lowering after 2025-09-08.
 // TODO(apaszke): Update the forward-compatible version to 3 in Mosaic GPU
 // lowering after 2025-10-08.
 // TODO(apaszke): Update the forward-compatible version to 4 in Mosaic GPU

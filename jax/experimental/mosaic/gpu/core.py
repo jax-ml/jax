@@ -61,7 +61,7 @@ os.environ["CUDA_ROOT"] = cuda_root
 PYTHON_RUNFILES = os.environ.get("PYTHON_RUNFILES")
 
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
-FWD_COMPAT_IR_VERSION = 1
+FWD_COMPAT_IR_VERSION = 2
 
 c = utils.c  # This is too common to fully qualify.
 
