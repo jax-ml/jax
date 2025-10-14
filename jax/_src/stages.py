@@ -123,7 +123,8 @@ class Executable:
     err_msg = ("text view unsupported on current XLA backend: "
                f"{type(xla_ext_exe)}")
 
-    if jaxlib_extension_version >= 380 and ifrt_version >= 33:
+    if (jaxlib_extension_version >= 380 and ifrt_version >= 33 and
+        hasattr(xla_ext_exe, "get_hlo_text")):
       try:
         return xla_ext_exe.get_hlo_text()
       except _jax.JaxRuntimeError as e:
