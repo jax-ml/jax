@@ -33,18 +33,19 @@ def reduce_scatter(
     x: jax.Array,
     *,
     axis_name,
-    scatter_dimension: int = 0,
+    scatter_dimension: int | None = 0,
     reduction: Literal["add", "min", "max", "and", "or", "xor"] = "add",
     num_blocks: int | None = None,
     tile_size: int | None = None,
     vec_size: int | None = None,
 ) -> jax.Array:
-  """Performs a reduce-scatter operation across devices using multimem instructions.
+  """Performs a reduce-scatter or all-reduce operation across devices using multimem instructions.
 
   Args:
     x: Input array. Should be sharded across the specified axis.
     axis_name: Name of the mesh axis to reduce-scatter across.
-    scatter_dimension: Axis along which to reduce-scatter. Defaults to 0.
+    scatter_dimension: Axis along which to reduce-scatter. If None, performs
+      all-reduce instead. Defaults to 0.
     reduction: Reduction operation to perform. Supported: "add", "min", "max",
       "and", "or", "xor".
     vec_size: Vector size for the layout. If None, automatically inferred from dtype.
@@ -56,24 +57,35 @@ def reduce_scatter(
   dtype = x.dtype
   ndim = len(input_shape)
 
-  if scatter_dimension < -ndim or scatter_dimension >= ndim:
-    raise ValueError(f"scatter_dimension {scatter_dimension} out of bounds for array of dimension {ndim}")
-  scatter_dimension = scatter_dimension if scatter_dimension >= 0 else ndim + scatter_dimension
-
   if num_blocks is None:
     num_blocks = backend.get_default_device().core_count
 
-  scatter_dim = input_shape[scatter_dimension]
-  if scatter_dim % num_devices != 0:
-    raise ValueError(
-        f"Scattered dimension {scatter_dimension} of input ({scatter_dim}) must be divisible by "
-        f"number of devices ({num_devices})"
-    )
+  if scatter_dimension is None:
+    major_dims, scatter_dim, minor_dims = 1, math.prod(input_shape), 1
+    output_scatter_dim = scatter_dim
+    output_shape = input_shape
+  else:
+    if scatter_dimension < -ndim or scatter_dimension >= ndim:
+      raise ValueError(
+          f"scatter_dimension {scatter_dimension} out of bounds for array of"
+          f" dimension {ndim}"
+      )
+    if scatter_dimension < 0:
+      scatter_dimension += ndim
 
-  major_dims = math.prod(input_shape[:scatter_dimension])
-  minor_dims = math.prod(input_shape[scatter_dimension+1:])
-  output_scatter_dim = scatter_dim // num_devices
-  output_shape = (*input_shape[:scatter_dimension], output_scatter_dim, *input_shape[scatter_dimension+1:])
+    scatter_dim = input_shape[scatter_dimension]
+    if scatter_dim % num_devices != 0:
+      raise ValueError(
+          f"Scattered dimension {scatter_dimension} of input ({scatter_dim})"
+          f" must be divisible by number of devices ({num_devices})"
+      )
+
+    major_dims = math.prod(input_shape[:scatter_dimension])
+    minor_dims = math.prod(input_shape[scatter_dimension+1:])
+    output_scatter_dim = scatter_dim // num_devices
+    output_shape = (
+        *input_shape[:scatter_dimension], output_scatter_dim, *input_shape[scatter_dimension + 1 :],
+    )
 
   if vec_size is None:
     if (output_size := math.prod(output_shape)) % 128:
@@ -120,9 +132,12 @@ def reduce_scatter(
 
   def kernel(x_ref, y_ref, done_barrier):
     dev_idx = lax.axis_index(axis_name)
-    dev_slice = pl.ds(dev_idx * output_scatter_dim, output_scatter_dim)
-    x_ref_3d = x_ref.reshape((major_dims, scatter_dim, minor_dims)).at[:, dev_slice, :]
+    x_ref_3d = x_ref.reshape((major_dims, scatter_dim, minor_dims))
     y_ref_3d = y_ref.reshape((major_dims, output_scatter_dim, minor_dims))
+
+    if scatter_dimension is not None:
+      dev_slice = pl.ds(dev_idx * output_scatter_dim, output_scatter_dim)
+      x_ref_3d = x_ref_3d.at[:, dev_slice, :]
 
     major_tiles = major_dims // major_tile
     scatter_tiles = output_scatter_dim // scatter_tile

@@ -497,6 +497,58 @@ class PallasCallMultimemTest(TestCase):
         shape, jnp.float16, "add", scatter_dimension=axis, tile_size=tile_size, vec_size=None, num_blocks=4
     )
 
+  @parameterized.parameters(
+      (jnp.float16, "add"),
+      (jnp.float32, "add"),
+      (jnp.bfloat16, "max"),
+  )
+  def test_all_reduce(self, dtype, reduction):
+    """Test all-reduce functionality when scatter_dimension=None."""
+    self._test_all_reduce(
+        (1024, 1024), dtype, reduction, tile_size=512, vec_size=None, num_blocks=4
+    )
+
+  def _test_all_reduce(
+      self,
+      shape,
+      dtype,
+      reduction,
+      tile_size=None,
+      vec_size=None,
+      num_blocks=None,
+  ):
+    """Helper function to test all-reduce functionality."""
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ['x'])
+    x = jax.random.normal(jax.random.key(42), (2, *shape), dtype)
+
+    def body(x):
+      return reduce_scatter(
+          x,
+          axis_name="x",
+          scatter_dimension=None,  # All-reduce mode
+          reduction=reduction,
+          vec_size=vec_size,
+          tile_size=tile_size,
+          num_blocks=num_blocks,
+      )
+
+    spec = P("x")
+    y = jax.jit(
+        jax.shard_map(
+            body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
+        )
+    )(x)
+    y = multihost_utils.process_allgather(y, tiled=True)
+    np_reduction = self._get_reduction_impl(reduction)
+    expected = np_reduction(x[0], x[1])
+    tol = 1e-5 if reduction == "add" else 0
+    for ys in y:
+      # It seems that the rounding used by the switch is different from what
+      # XLA uses.
+      y_rounded = np.nextafter(ys, expected)
+      np.testing.assert_allclose(y_rounded, expected, rtol=tol, atol=tol)
+
 
 if __name__ == '__main__':
   # This test doesn't work with the platform allocator, so we override it
