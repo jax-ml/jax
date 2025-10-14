@@ -40,7 +40,8 @@ from jax._src.interpreters import pxla
 from jax._src.layout import AutoLayout, Format, Layout
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
-from jax._src.mesh import empty_concrete_mesh
+from jax._src.mesh import (empty_concrete_mesh, empty_abstract_mesh,
+                           use_abstract_mesh)
 from jax._src.sharding import Sharding
 from jax._src.tree_util import broadcast_prefix, tree_flatten, tree_unflatten
 from jax._src.sharding_impls import (
@@ -1176,7 +1177,8 @@ def shard_device_array(x, devices, indices, sharding):
   else:
     # TODO(yashkatariya): Maybe this should be set when we call the handler in
     # InputsHandler.__call__?
-    with _internal_use_concrete_mesh(empty_concrete_mesh):
+    with (_internal_use_concrete_mesh(empty_concrete_mesh),
+          use_abstract_mesh(empty_abstract_mesh)):
       shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   aval = core.shaped_abstractify(x)
   return pxla.batched_device_put(aval, sharding, shards, devices)
