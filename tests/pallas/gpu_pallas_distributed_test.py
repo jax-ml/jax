@@ -419,6 +419,7 @@ class PallasCallMultimemTest(TestCase):
       shape,
       dtype,
       reduction,
+      scatter_dimension=0,
       tile_size=None,
       vec_size=None,
       num_blocks=None,
@@ -434,21 +435,29 @@ class PallasCallMultimemTest(TestCase):
       return reduce_scatter(
           x,
           axis_name="x",
+          scatter_dimension=scatter_dimension,
           reduction=reduction,
           vec_size=vec_size,
           tile_size=tile_size,
           num_blocks=num_blocks,
       )
 
+    spec = P(*([None] * scatter_dimension), "x")
     y = jax.jit(
         jax.shard_map(
-            body, mesh=mesh, in_specs=P("x"), out_specs=P("x"), check_vma=False
+            body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
         )
     )(x)
 
     y = multihost_utils.process_allgather(y, tiled=True)
     np_reduction = self._get_reduction_impl(reduction)
-    expected = np_reduction(x[:x.shape[0] // 2], x[x.shape[0] // 2:])
+
+    split_idx = x.shape[scatter_dimension] // 2
+    slices_first = [slice(None)] * len(shape)
+    slices_first[scatter_dimension] = slice(None, split_idx)
+    slices_second = [slice(None)] * len(shape)
+    slices_second[scatter_dimension] = slice(split_idx, None)
+    expected = np_reduction(x[tuple(slices_first)], x[tuple(slices_second)])
     tol = 1e-5 if reduction == "add" else 0
     np.testing.assert_allclose(y, expected, rtol=tol, atol=tol)
 
@@ -474,6 +483,18 @@ class PallasCallMultimemTest(TestCase):
   def test_reduce_scatter_auto_vec_size(self, tile_size):
     self._test_reduce_scatter(
         (1024, 64), jnp.float16, "add", tile_size=tile_size, vec_size=None, num_blocks=4
+    )
+
+  @parameterized.parameters(1, 2)
+  def test_reduce_scatter_different_axes(self, axis):
+    if axis == 1:
+      shape = (64, 1024, 32)
+      tile_size = 2048
+    else:  # axis == 2
+      shape = (32, 64, 1024)
+      tile_size = 2048
+    self._test_reduce_scatter(
+        shape, jnp.float16, "add", scatter_dimension=axis, tile_size=tile_size, vec_size=None, num_blocks=4
     )
 
 

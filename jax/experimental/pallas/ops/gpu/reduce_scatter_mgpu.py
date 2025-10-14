@@ -33,6 +33,7 @@ def reduce_scatter(
     x: jax.Array,
     *,
     axis_name,
+    scatter_dimension: int = 0,
     reduction: Literal["add", "min", "max", "and", "or", "xor"] = "add",
     num_blocks: int | None = None,
     tile_size: int | None = None,
@@ -43,26 +44,36 @@ def reduce_scatter(
   Args:
     x: Input array. Should be sharded across the specified axis.
     axis_name: Name of the mesh axis to reduce-scatter across.
+    scatter_dimension: Axis along which to reduce-scatter. Defaults to 0.
     reduction: Reduction operation to perform. Supported: "add", "min", "max",
       "and", "or", "xor".
     vec_size: Vector size for the layout. If None, automatically inferred from dtype.
     num_blocks: Number of blocks to use. Defaults to the device core count.
-    tile_size: Total tile size to split between row and minor dimensions.
+    tile_size: Total tile size to split across major, scatter, and minor dimensions.
   """
   num_devices = lax.axis_size(axis_name)
   input_shape = x.shape
   dtype = x.dtype
+  ndim = len(input_shape)
+
+  if scatter_dimension < -ndim or scatter_dimension >= ndim:
+    raise ValueError(f"scatter_dimension {scatter_dimension} out of bounds for array of dimension {ndim}")
+  scatter_dimension = scatter_dimension if scatter_dimension >= 0 else ndim + scatter_dimension
 
   if num_blocks is None:
     num_blocks = backend.get_default_device().core_count
 
-  # TODO(apaszke): Support other axes
-  if input_shape[0] % num_devices != 0:
+  scatter_dim = input_shape[scatter_dimension]
+  if scatter_dim % num_devices != 0:
     raise ValueError(
-        f"First dimension of input ({input_shape[0]}) must be divisible by "
+        f"Scattered dimension {scatter_dimension} of input ({scatter_dim}) must be divisible by "
         f"number of devices ({num_devices})"
     )
-  output_shape = (input_shape[0] // num_devices, *input_shape[1:])
+
+  major_dims = math.prod(input_shape[:scatter_dimension])
+  minor_dims = math.prod(input_shape[scatter_dimension+1:])
+  output_scatter_dim = scatter_dim // num_devices
+  output_shape = (*input_shape[:scatter_dimension], output_scatter_dim, *input_shape[scatter_dimension+1:])
 
   if vec_size is None:
     if (output_size := math.prod(output_shape)) % 128:
@@ -96,38 +107,40 @@ def reduce_scatter(
         f" {min_transfer_elems} for {vec_size=}"
     )
 
-  minor_dims_size = math.prod(input_shape[1:])
-  minor_tile = math.gcd(tile_size, minor_dims_size)
-  major_tile = tile_size // minor_tile
+  minor_tile = math.gcd(tile_size, minor_dims)
+  remaining_tile = tile_size // minor_tile
+  scatter_tile = math.gcd(remaining_tile, output_scatter_dim)
+  major_tile = remaining_tile // scatter_tile
 
-  # TODO(apaszke): Just peel the last step if non-divisible.
-  if output_shape[0] % major_tile != 0:
+  if major_dims % major_tile != 0:
     raise NotImplementedError(
-        f"Scattered output size ({output_shape[0]}) must be divisible by the"
-        f" inferred major tile size ({major_tile}). Consider adjusting"
-        " tile_size."
+        f"Major dimension size ({major_dims}) must be divisible by the"
+        f" inferred major tile size ({major_tile}). Consider adjusting tile_size."
     )
 
   def kernel(x_ref, y_ref, done_barrier):
     dev_idx = lax.axis_index(axis_name)
-    x_ref = x_ref.at[pl.ds(dev_idx * output_shape[0], output_shape[0])]
-    x_ref_2d = x_ref.reshape((output_shape[0], minor_dims_size))
-    y_ref_2d = y_ref.reshape((output_shape[0], minor_dims_size))
+    dev_slice = pl.ds(dev_idx * output_scatter_dim, output_scatter_dim)
+    x_ref_3d = x_ref.reshape((major_dims, scatter_dim, minor_dims)).at[:, dev_slice, :]
+    y_ref_3d = y_ref.reshape((major_dims, output_scatter_dim, minor_dims))
 
-    minor_tiles = minor_dims_size // minor_tile
-    major_tiles = output_shape[0] // major_tile
-    @plgpu.nd_loop((major_tiles, minor_tiles), collective_axes="blocks")
+    major_tiles = major_dims // major_tile
+    scatter_tiles = output_scatter_dim // scatter_tile
+    minor_tiles = minor_dims // minor_tile
+    @plgpu.nd_loop((major_tiles, scatter_tiles, minor_tiles), collective_axes="blocks")
     def _transfer_loop(loop_info: plgpu.NDLoopInfo):
-      major_tile_idx, minor_tile_idx = loop_info.index
-      major_idx = major_tile_idx * major_tile
-      minor_idx = minor_tile_idx * minor_tile
-      idxs = pl.ds(major_idx, major_tile), pl.ds(minor_idx, minor_tile)
+      major_tile_idx, scatter_tile_idx, minor_tile_idx = loop_info.index
+      idxs = (
+          pl.ds(major_tile_idx * major_tile, major_tile),
+          pl.ds(scatter_tile_idx * scatter_tile, scatter_tile),
+          pl.ds(minor_tile_idx * minor_tile, minor_tile)
+      )
 
-      y_ref_2d[idxs] = plgpu.layout_cast(
+      y_ref_3d[idxs] = plgpu.layout_cast(
           plgpu.multimem_load_reduce(
-              x_ref_2d.at[idxs], collective_axes=axis_name, reduction_op=reduction
+              x_ref_3d.at[idxs], collective_axes=axis_name, reduction_op=reduction
           ),
-          plgpu.Layout.WG_STRIDED((major_tile, minor_tile), vec_size=vec_size)
+          plgpu.Layout.WG_STRIDED((major_tile, scatter_tile, minor_tile), vec_size=vec_size)
       )
 
     # Wait for everyone to finish reading the operands before we exit and potentially free them
@@ -166,12 +179,12 @@ def _run_example():
   total_bytes = local_in_bytes
 
   a = jax.random.normal(jax.random.key(1), shape, dtype)
-  a = jax.sharding.reshard(a, P("x"))
+  a = jax.sharding.reshard(a, P(None, "x"))
 
   @jax.jit
-  @functools.partial(jax.shard_map, mesh=mesh, in_specs=P("x"), out_specs=P("x"))
+  @functools.partial(jax.shard_map, mesh=mesh, in_specs=P(None, "x"), out_specs=P(None, "x"))
   def ref_fn(x):
-    return lax.psum_scatter(x, "x", scatter_dimension=0, tiled=True)
+    return lax.psum_scatter(x, "x", scatter_dimension=1, tiled=True)
   ref_fn(a).block_until_ready()  # Warmup.
   _, ref_kernels_ms = profiler.measure(ref_fn, aggregate=False)(a)
   ref_time_us = sum(t * 1e3 for _, t in ref_kernels_ms)
@@ -190,10 +203,10 @@ def _run_example():
     try:
       @jax.jit
       @functools.partial(
-          jax.shard_map, mesh=mesh, in_specs=P("x"), out_specs=P("x"), check_vma=False
+          jax.shard_map, mesh=mesh, in_specs=P(None, "x"), out_specs=P(None, "x"), check_vma=False
       )
       def kernel_fn(x):
-        return reduce_scatter(x, axis_name="x", num_blocks=num_blocks, tile_size=tile_size)
+        return reduce_scatter(x, axis_name="x", scatter_dimension=1, num_blocks=num_blocks, tile_size=tile_size)
       kernel_fn(a).block_until_ready()  # Warmup.
       _, kernels_ms = profiler.measure(kernel_fn, aggregate=False)(a)
     except ValueError as e:
