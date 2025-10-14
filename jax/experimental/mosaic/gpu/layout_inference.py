@@ -1395,7 +1395,7 @@ def _extract_smem_tiling_from_custom_transform_attrs(
     if computed_swizzle != swizzle:
       raise NotImplementedError(
           f"Cannot honor caller-provided swizzle {swizzle} that is different "
-          f"from the computed swizle {computed_swizzle} on op {op}."
+          f"from the computed swizle {computed_swizzle} for type {ref_type}."
       )
 
   return eqns.SMEMTiling(tile_transform)
