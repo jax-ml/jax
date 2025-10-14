@@ -172,6 +172,23 @@ class PRNGTest(jtu.JaxTestCase):
     )(key)
     self.assertArraysEqual(result, expected_key_data)
 
+  def test_squeezed_blockspec(self):
+    @functools.partial(
+        pl.pallas_call,
+        grid=(),
+        in_specs=[
+            pl.BlockSpec((pl.squeezed,), lambda: (0,), memory_space=pltpu.SMEM)
+        ],
+        out_specs=pl.BlockSpec((8, 128)),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(key_ref, o_ref):
+      o_ref[...] = jax_random.uniform(key_ref[...], shape=o_ref.shape)
+
+    # Just make sure this does not crash.
+    k = pltpu.to_pallas_key(jax_random.key(0, impl="rbg"))
+    kernel(k[None])
+
   def test_fold_in(self):
     # Test that folding in a value results in different random numbers.
     def body(key_ref, o_ref):
