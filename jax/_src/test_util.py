@@ -1877,8 +1877,8 @@ class vectorize_with_mpmath(np.vectorize):
     self.extra_prec_multiplier = kwargs.pop('extra_prec_multiplier', 0)
     self.extra_prec = kwargs.pop('extra_prec', 0)
     self.mpmath = mpmath
-    self.contexts = dict()
-    self.contexts_inv = dict()
+    self.contexts = {}
+    self.contexts_inv = {}
     for fp_format, prec in self.float_prec.items():
       ctx = self.mpmath.mp.clone()
       ctx.prec = prec

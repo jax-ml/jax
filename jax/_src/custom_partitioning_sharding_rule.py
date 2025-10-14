@@ -131,7 +131,7 @@ class SdyShardingRule:
                permutation_factors: tuple[str, ...] = (),
                **factor_sizes: int):
     # Find all factors and mark whether their size can be inferred.
-    factors_inferrable = dict()
+    factors_inferrable = {}
     for value in operand_mappings + result_mappings:
       for dim in value:
         if isinstance(dim, str):

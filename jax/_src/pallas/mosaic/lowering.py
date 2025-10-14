@@ -1745,7 +1745,7 @@ def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree
   for i in range(key_shape[1]):
     scalar_idx = NDIndexer(indices=(*idx.indices, 0, i),
                            shape=ref_block_shape,
-                           int_indexer_shape=tuple())
+                           int_indexer_shape=())
     starts, _, _, _, _ = _indexer_to_start_size_stride(
         scalar_idx,
         ref_block_shape,

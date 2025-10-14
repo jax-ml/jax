@@ -1004,7 +1004,7 @@ def _reduce_system_once(
       reduced.
   """
   changed = False
-  assignments: dict[Variable, Constant] = dict()
+  assignments: dict[Variable, Constant] = {}
   equations: list[Equation] = []
   for equation in equation_system.equations:
     match reduce_equation(equation, equation_system.assignments):

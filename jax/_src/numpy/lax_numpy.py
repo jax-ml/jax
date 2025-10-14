@@ -447,7 +447,7 @@ def isscalar(element: Any) -> bool:
     False
     >>> jnp.isscalar([1])
     False
-    >>> jnp.isscalar(tuple())
+    >>> jnp.isscalar(())
     False
     >>> jnp.isscalar(slice(10))
     False

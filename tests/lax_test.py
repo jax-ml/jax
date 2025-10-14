@@ -4508,7 +4508,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     # return values) to (i) workaround numpy 1.x assert_allclose bug
     # in comparing complex infinities, and (ii) expose more details
     # about failing cases:
-    s_dict_parts = dict()
+    s_dict_parts = {}
     for k, v in s_dict.items():
       s_dict_parts[k + '.real'] = v
       s_dict_parts[k + '.imag'] = v
