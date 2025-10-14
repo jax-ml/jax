@@ -3991,6 +3991,28 @@ class MiscellaneousTest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(out, x.reshape([q1, m1, n1]))
 
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.bfloat16, jnp.float8_e4m3fn],
+  )
+  def test_reshape_fold_minormost_dim(self, dtype):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 18):
+      self.skipTest('Needs a newer libTPU')
+
+    packing = 32 // (8 * np.dtype(dtype).itemsize)
+    in_shape = (8 * packing, 128)
+    out_shape = (1, math.prod(in_shape))
+
+    def kernel(x_ref, y_ref):
+      x = x_ref[...]
+      y_ref[...] = x.reshape(out_shape)
+
+    x = np.random.randn(*in_shape).astype(dtype)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x.reshape(out_shape))
+
 
 class MiscellaneousInterpretTest(MiscellaneousTest):
   INTERPRET: bool = True
