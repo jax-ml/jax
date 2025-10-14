@@ -877,6 +877,28 @@ def TPU_ReciprocalOp : TPU_Op<"reciprocal", [Pure, SameOperandsAndResultType, El
   let hasVerifier = 1;
 }
 
+def TPU_StochasticConvertOp : TPU_Op<"stochastic_convert", [Pure, SameOperandsAndResultShape]> {
+  let arguments = (ins
+    VectorOfNonZeroRankOf<[F32]>:$input,
+    VectorOfNonZeroRankOf<[I32]>:$random
+  );
+  let results = (outs AnyVectorOfNonZeroRank:$output);
+  let assemblyFormat = [{ $input `,` $random attr-dict `:` type($input) `,` type($random) `->` type($output) }];
+}
+
+def TPU_StochasticConvertElementwiseOp : TPU_Op<"stochastic_convert_elementwise", [Pure, ElementwiseMappable]> {
+  // Stochastically converts the input to the target dtype based on the mode.
+  // When the target dtype is less than 32 bits, the result occupies the lowest {bitwidth} bits in the I32 output.
+  let arguments = (ins
+    VectorOfNonZeroRankOf<[F32]>:$input,
+    VectorOfNonZeroRankOf<[I32]>:$random,
+    TypeAttr:$dst_type
+  );
+  let results = (outs VectorOfNonZeroRankOf<[I32]>:$output);
+  let assemblyFormat = [{ $input `,` $random attr-dict `:` type($input) `,` type($random) `->` type($output) }];
+  let hasVerifier = 1;
+}
+
 def TPU_RollVectorsOp : TPU_Op<"roll_vectors", [Pure]> {
   let arguments = (ins Variadic<AnyVectorOfAnyRank>:$input);
   let results = (outs AnyVectorOfAnyRank:$output);

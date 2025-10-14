@@ -1949,6 +1949,40 @@ FailureOr<Value> canonicalize_tpu_extf(const CanonicalizeContext &ctx,
   return new_result;
 }
 
+FailureOr<Value> canonicalize_stochastic_convert(const CanonicalizeContext &ctx,
+                                                 Operation &raw_op) {
+  auto op = cast<tpu::StochasticConvertOp>(raw_op);
+  auto out_vty = cast<VectorType>(op.getType());
+  auto out_ety = out_vty.getElementType();
+  auto out_bitwidth = out_vty.getElementTypeBitWidth();
+
+  if (ctx.hardware_generation < 5) {
+    op.emitOpError("Stochastic convert not supported on TPU generations < 5.");
+    return failure();
+  } else if (ctx.hardware_generation < 7) {
+    // TODO(yixiuliu): Add support for stochastic convert on TPU v5 and v6.
+    op.emitOpError(
+        "Not implemented: Stochastic convert on TPU generations 5 and 6.");
+    return failure();
+  }
+
+  if (!out_ety.isBF16() && !isa<Float8E5M2Type, Float8E4M3FNType>(out_ety)) {
+      return op.emitOpError("Unsupported dtype for stochastic convert: ")
+      << out_ety;
+  }
+  CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
+  Value result = builder.create<tpu::StochasticConvertElementwiseOp>(
+      VectorType::get(out_vty.getShape(), builder.getI32Type()),
+      op.getOperand(0), op.getOperand(1), out_ety);
+  result = builder.create<arith::TruncIOp>(
+      VectorType::get(out_vty.getShape(), builder.getIntegerType(out_bitwidth)),
+      result);
+  result = builder.create<tpu::BitcastOp>(out_vty, result);
+  op.replaceAllUsesWith(result);
+  op.erase();
+  return raw_op.getResult(0);
+}
+
 FailureOr<Value> canonicalize_arith_truncf(const CanonicalizeContext &ctx,
                                            Operation &raw_op) {
   auto op = cast<arith::TruncFOp>(raw_op);
@@ -2019,6 +2053,8 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {arith::ExtFOp::getOperationName(), canonicalize_arith_extf},
       {tpu::TruncFOp::getOperationName(), canonicalize_tpu_truncf},
       {tpu::ExtFOp::getOperationName(), canonicalize_tpu_extf},
+      {tpu::StochasticConvertOp::getOperationName(),
+       canonicalize_stochastic_convert},
       {tpu::TransposeOp::getOperationName(), canonicalize_transpose},
       {tpu::RepeatOp::getOperationName(), canonicalize_repeat},
       {tpu::ReshapeOp::getOperationName(), canonicalize_reshape}};
