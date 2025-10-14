@@ -47,7 +47,9 @@ constexpr llvm::StringRef kVersionAttrName = "stable_mosaic_gpu.version";
 // lowering after 2025-09-08.
 // TODO(apaszke): Update the forward-compatible version to 3 in Mosaic GPU
 // lowering after 2025-10-08.
-constexpr int kVersion = 3;
+// TODO(apaszke): Update the forward-compatible version to 4 in Mosaic GPU
+// lowering after 2025-11-13.
+constexpr int kVersion = 4;
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
 
@@ -140,6 +142,22 @@ LogicalResult nvvm_cp_async_bulk_tensor_global_shared_cta_downgrade(
   return success();
 }
 
+LogicalResult vector_splat_upgrade(Operation* op, int version, bool& erased) {
+  if (version < 4) {
+    // vector.splat was removed in
+    // https://github.com/llvm/llvm-project/commit/ea291d0e8c93d47d7953eff5ca1048891a5fcc55.
+    // We replace it with a vector.broadcast.
+    mlir::OpBuilder b(op->getParentRegion());
+    b.setInsertionPointAfter(op);
+    Value inserted_value = mlir::vector::BroadcastOp::create(
+        b, op->getLoc(), op->getResult(0).getType(), op->getOperand(0));
+    op->replaceAllUsesWith(llvm::SmallVector<Value>{inserted_value});
+    op->erase();
+    erased = true;
+  }
+  return success();
+}
+
 const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
   static auto rules = new llvm::StringMap<SerdeRuleType>{
       {::llvm::StringLiteral("vector.extractelement"),
@@ -147,7 +165,8 @@ const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
       {::llvm::StringLiteral("vector.insertelement"),
        vector_insertelement_upgrade},
       {::llvm::StringLiteral("nvvm.cp.async.bulk.tensor.global.shared.cta"),
-       nvvm_cp_async_bulk_tensor_global_shared_cta_upgrade}};
+       nvvm_cp_async_bulk_tensor_global_shared_cta_upgrade},
+      {::llvm::StringLiteral("vector.splat"), vector_splat_upgrade}};
   return *rules;
 }
 
@@ -168,7 +187,7 @@ void SerdePass::runOnOperation() {
   }
   int serialize_version = -1;
   if (serialize) {
-     serialize_version = target_version.hasValue() ? target_version : kVersion;
+    serialize_version = target_version.hasValue() ? target_version : kVersion;
   }
   if (mlir::failed(jaxlib::mosaic::RunSerde(
           module, upgrade_rules(), downgrade_rules(), serialize,
