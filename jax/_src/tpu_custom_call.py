@@ -122,6 +122,15 @@ class CostEstimate(TypedDict):
   flops: int
   transcendentals: int
   bytes_accessed: int
+  remote_bytes_transferred: int = 0
+
+  def to_json(self) -> bytes:
+    return (
+        f'{{"flops": {self["flops"]}, "transcendentals":'
+        f' {self["transcendentals"]}, "bytes_accessed":'
+        f' {self["bytes_accessed"]}, "remote_bytes_transferred":'
+        f' {self["remote_bytes_transferred"]}}}'
+    ).encode("ascii")
 
 
 @dataclasses.dataclass(frozen=True)
