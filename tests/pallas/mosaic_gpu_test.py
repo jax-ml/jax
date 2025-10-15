@@ -560,6 +560,68 @@ class PallasCallTest(PallasTest):
 
     np.testing.assert_array_equal(kernel(x), x[0] + x[0] + 1)
 
+  @parameterized.parameters(
+      plgpu.Layout.WGMMA,
+      plgpu.Layout.WGMMA_UPCAST_2X,
+      plgpu.Layout.WGMMA_UPCAST_4X,
+      plgpu.Layout.TCGEN05,
+  )
+  def test_inline_mgpu_layout_args(self, layout: gpu_core.SomeLayout):
+    self.skip_if_wg_semantics()  # Layout inference is not fully working here.
+
+    quant_dtype = jnp.int8
+    dtype = jnp.bfloat16
+    mgpu_layout = layout.to_mgpu()
+    shape = (128, 128)
+
+    rngs = list(jax.random.split(jax.random.key(0)))
+    x = jax.random.randint(rngs.pop(), shape, minval=-10, maxval=10).astype(
+        quant_dtype
+    )
+    x_s = jax.random.uniform(
+        rngs.pop(), shape[0], minval=-100, maxval=100
+    ).astype(dtype)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),
+                  pl.BlockSpec(memory_space=plgpu.GMEM)),
+        scratch_shapes=[
+            plgpu.SMEM(
+                x.shape,
+                dtype,
+            ),
+        ],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+    )
+    def kernel(
+        x_ref, x_scale_ref, o_ref, o_smem_ref,
+    ):
+      x = plgpu.load(x_ref, (), layout=layout, optimized=False).astype(x_scale_ref.dtype)
+      x_s = plgpu.load(x_scale_ref, (), layout=layout.reduce(1), optimized=False)
+
+      @plgpu.inline_mgpu(
+          arg_types=(layout,layout.reduce(1)),
+          return_type=plgpu.ShapeDtypeStruct(
+              shape, dtype, layout=layout
+          ),
+      )
+      def custom_broadcast(ctx, x_fa, xs_fa):
+        del ctx
+        return xs_fa.broadcast_in_dim(shape, [0], layout=mgpu_layout) * x_fa
+
+      arr = custom_broadcast(x, x_s)
+      o_smem_ref[...] = arr
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(o_smem_ref, o_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    np.testing.assert_array_equal(
+        kernel(x, x_s),
+        x.astype(dtype) * jnp.broadcast_to(x_s[:, None], x.shape),
+    )
+
   def test_sync_copy(self):
     shape = (128, 128)
     transforms = self.default_transforms(dtype=jnp.float32)

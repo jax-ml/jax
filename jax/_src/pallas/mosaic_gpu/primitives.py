@@ -58,10 +58,7 @@ WARPGROUP_SIZE = 128
 
 
 _Ref = state.AbstractRef | state_types.TransformedRef
-Layout = gpu_core.Layout
-ParameterizedLayout = gpu_core.ParameterizedLayout
 SomeLayout = gpu_core.SomeLayout
-
 
 def _check_ref(
     aval: object, name: str, memory_space: gpu_core.MemorySpace
@@ -2217,10 +2214,9 @@ def inline_mgpu(*, arg_types=(), return_type=None):
     raise ValueError(
         "inline_mgpu_p only supports plgpu.ShapeDtypeStruct return types."
     )
-  if not all(isinstance(r, (Layout, ParameterizedLayout, RefType)) for r in flat_arg_types):
+  if not all(isinstance(r, (SomeLayout, RefType)) for r in flat_arg_types):
     raise ValueError(
-        "inline_mgpu_p only supports only Layout, ParameterizedLayout and"
-        " RefType arg types."
+        "inline_mgpu_p only supports only SomeLayout and RefType arg types."
     )
 
   def inner(f):
@@ -2237,7 +2233,7 @@ def inline_mgpu(*, arg_types=(), return_type=None):
         if isinstance(a, state_types.TransformedRef) and isinstance(t, RefType):
           raw_flat_args.append(a.ref)
           ref_transforms.append(a.transforms)
-        elif isinstance(aval := jax_core.get_aval(a), jax_core.ShapedArray) and isinstance(t, (ParameterizedLayout, Layout)):
+        elif isinstance(aval := jax_core.get_aval(a), jax_core.ShapedArray) and isinstance(t, SomeLayout):
           raw_flat_args.append(a)
           ref_transforms.append(None)
         elif isinstance(aval, state.AbstractRef) and isinstance(t, RefType):
@@ -2314,7 +2310,7 @@ def _type_check_mgpu_lane_semantics(v, ty):
         raise ValueError(
             f"Array layout mismatch: expected {v.layout} got {ty.layout.to_mgpu()}."
         )
-    case (Layout() , mgpu.FragmentedArray()) | (ParameterizedLayout(), mgpu.FragmentedArray()):
+    case (SomeLayout(), mgpu.FragmentedArray()):
       if ty.to_mgpu() != v.layout:
         raise ValueError(f"Unexpected layout for {v} (expected: {ty})")
     case _:
@@ -2346,9 +2342,7 @@ def _type_check_mgpu_warpgroup_semantics(v: ir.Value, ty : Any):
       )
     return
 
-  if ir.VectorType.isinstance(v.type) and isinstance(
-      ty, (Layout, ParameterizedLayout)
-  ):
+  if ir.VectorType.isinstance(v.type) and isinstance(ty, SomeLayout):
     layout_attr = mgpu_inference_utils.value_layout(v)
     value_layout = mgpu_layouts.from_layout_attr(layout_attr)
     if ty.to_mgpu() != value_layout:
@@ -2613,7 +2607,7 @@ def _custom_primitive_in_specs(
         in_types.append(initial_ty)
         if mgpu_utils.is_smem_ref(initial_ty):
           in_transforms.append(_ref_type_to_transforms(t))
-      case jax_core.ShapedArray() if isinstance(t, Layout):
+      case jax_core.ShapedArray() if isinstance(t, SomeLayout):
         el_type = mgpu_utils.dtype_to_ir_type(aval.dtype)
         if len(aval.shape) == 0:
           in_types.append(el_type)
