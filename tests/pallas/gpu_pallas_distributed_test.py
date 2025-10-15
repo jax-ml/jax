@@ -280,7 +280,7 @@ class PallasCallMultimemTest(TestCase):
       case _:
         raise ValueError(reduction)
 
-  def test_multimem_store(self):
+  def test_multimem_store_regs(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
@@ -298,6 +298,41 @@ class PallasCallMultimemTest(TestCase):
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
         scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+    )
+    mesh = jax.sharding.Mesh(jax.devices(), ['x'])
+    y = jax.jit(
+        jax.shard_map(
+            kernel_call, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False,
+        )
+    )()
+    y = multihost_utils.process_allgather(y, tiled=True)
+    ref = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
+    np.testing.assert_array_equal(y, np.concat([ref, ref], axis=0))
+
+  def test_multimem_store_tma(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+
+    def kernel(y_ref, smem_ref, sem):
+      @pl.when(lax.axis_index('x') == 0)
+      def _store():
+        output = plgpu.layout_cast(lax.broadcasted_iota(jnp.int32, (128, 128), 1), plgpu.Layout.WGMMA)
+        smem_ref[...] = output
+        plgpu.copy_smem_to_gmem(smem_ref, plgpu.multicast_ref(y_ref, 'x'))
+        plgpu.wait_smem_to_gmem(0)
+      other_dev_id = 1 - lax.axis_index('x')
+      pl.semaphore_signal(sem, 1, device_id=other_dev_id)
+      pl.semaphore_wait(sem)
+
+    transforms = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
+    kernel_call = pl.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
+        scratch_shapes=[
+            plgpu.SMEM((128, 128), jnp.int32, transforms=transforms),
+            plgpu.SemaphoreType.REGULAR,
+        ],
     )
     mesh = jax.sharding.Mesh(jax.devices(), ['x'])
     y = jax.jit(

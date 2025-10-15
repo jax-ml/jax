@@ -214,7 +214,9 @@ def _copy_smem_to_gmem_lowering(
   src, src_transforms = lowering._handle_transforms(
       ctx, src, src_transforms, handle_transposes=False
   )
-  copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
+  copy_params = _extract_gmem_copy_params(
+      ctx, dst_transforms, supports_multicast=True
+  ) | _extract_smem_copy_params(src_transforms)
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     ctx.launch_ctx.async_copy(
         src_ref=src,
@@ -269,7 +271,7 @@ def _split_gmem_slice(gmem_slice):
   return indices, slice_lengths
 
 
-def _extract_gmem_copy_params(transforms):
+def _extract_gmem_copy_params(ctx, transforms, supports_multicast=False):
   if not transforms:
     return {}
   peer_id = None
@@ -282,14 +284,36 @@ def _extract_gmem_copy_params(transforms):
         )
       peer_id = lowering._ensure_ir_value(transform.device_id, jnp.int32)
       continue
+    elif isinstance(transform, gpu_core.MulticastRef):
+      if not supports_multicast:
+        raise ValueError(
+            "Multicast refs are not supported by this primitive."
+        )
+      if (mesh_info := ctx.module_ctx.mesh_info) is None:
+        raise ValueError(
+            "JAX device mesh is required by multicast copies, but not defined."
+            " Use jax.set_mesh."
+        )
+      if set(transform.collective_axes) != set(mesh_info.axis_names):
+        raise NotImplementedError(
+            "Only collective_axes that include all JAX device mesh  axes are"
+            f" supported, but got {transform.collective_axes}. Make sure to"
+            f" pass collective_axes={mesh_info.axis_names}"
+        )
+      peer_id = mgpu.GLOBAL_BROADCAST
+      continue
     elif isinstance(transform, indexing.NDIndexer):
       indexers.append(transform)
     else:
       raise NotImplementedError(
           "Non-indexing transforms on GMEM refs are not implemented.")
-  indexer = lowering.merge_indexers(indexers)
+  if indexers:
+    indexer = lowering.merge_indexers(indexers)
+    gmem_slice = lowering._ndindexer_indices(indexer, allow_arrays=True)
+  else:
+    gmem_slice = ()
   return dict(
-      gmem_slice=lowering._ndindexer_indices(indexer, allow_arrays=True),
+      gmem_slice=gmem_slice,
       gmem_peer_id=peer_id,
   )
 
@@ -449,7 +473,7 @@ def _copy_gmem_to_smem_lowering(
   dst, dst_transforms = lowering._handle_transforms(
       ctx, dst, dst_transforms, handle_transposes=False
   )
-  copy_params = _extract_smem_copy_params(dst_transforms) | _extract_gmem_copy_params(src_transforms)
+  copy_params = _extract_smem_copy_params(dst_transforms) | _extract_gmem_copy_params(ctx, src_transforms)
   barrier_indexer = _extract_barrier_indexer(
       barrier_transforms_treedef.unflatten(flat_barrier_transforms)
   )
@@ -681,7 +705,7 @@ def _async_prefetch_lowering(
     partitioned_axis,
 ):
   ref_transforms = ref_transforms_treedef.unflatten(flat_ref_transforms)
-  copy_params = _extract_gmem_copy_params(ref_transforms)
+  copy_params = _extract_gmem_copy_params(ctx, ref_transforms)
   collective = None
   if collective_axes is not None:
     collective = tuple(

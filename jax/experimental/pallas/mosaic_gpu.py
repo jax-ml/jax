@@ -27,6 +27,7 @@ from jax._src.pallas.mosaic_gpu.core import layout_cast as layout_cast
 from jax._src.pallas.mosaic_gpu.core import MemoryRefTransform as MemoryRefTransform
 from jax._src.pallas.mosaic_gpu.core import MemorySpace as MemorySpace
 from jax._src.pallas.mosaic_gpu.core import Mesh as Mesh
+from jax._src.pallas.mosaic_gpu.core import multicast_ref as multicast_ref
 from jax._src.pallas.mosaic_gpu.core import PeerMemRef as PeerMemRef
 from jax._src.pallas.mosaic_gpu.core import RefUnion as RefUnion
 from jax._src.pallas.mosaic_gpu.core import remote_ref as remote_ref

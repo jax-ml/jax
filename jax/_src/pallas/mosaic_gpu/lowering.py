@@ -1398,6 +1398,7 @@ def _handle_transforms(
     handle_transposes=True,
     handle_reshapes=True,
     allow_peer_refs=False,
+    allow_multicast_refs=False,
 ) -> tuple[RefOrTmemType, Sequence[state_types.Transform]]:
   # Before we handle other transforms, we resolve any possible leading
   # aliasing transform.
@@ -1419,6 +1420,7 @@ def _handle_transforms(
     return data
 
   peer_device_id = None
+  is_multicast = False
   for t in transforms:
     match t:
       case indexing.NDIndexer():
@@ -1462,9 +1464,17 @@ def _handle_transforms(
               "Only JAX mesh axes can be used to obtain peer references, but"
               f" got {other_axes}"
           )
+      case gpu_core.MulticastRef(_, _, _):
+        if not allow_multicast_refs:
+          raise NotImplementedError(
+              "Multicast references are not allowed in the lowering of this"
+              " primitive."
+          )
+        is_multicast = True
       case _:
         new_transforms.append(t)
   if peer_device_id is not None:
+    assert not is_multicast
     if not allow_peer_refs:
       raise NotImplementedError(
           "Peer device references are not allowed in the lowering of this"
@@ -1473,6 +1483,8 @@ def _handle_transforms(
     transformed_ref = ctx.launch_ctx.to_remote(
         transformed_ref, _ensure_ir_value(peer_device_id, jnp.int32)
     )
+  if is_multicast:
+    transformed_ref = ctx.launch_ctx.to_remote_multicast(transformed_ref)
   return transformed_ref, new_transforms
 
 

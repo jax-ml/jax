@@ -757,6 +757,30 @@ class PeerMemRef(state_types.Transform):
     return cls(arrays[0], metadata[0])
 
 
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass
+class MulticastRef(state_types.Transform):
+  collective_axes: tuple[Hashable, ...]
+
+  def transform_shape(self, shape):
+    return shape
+
+  def transform_dtype(self, dtype):
+    return dtype
+
+  def untransform_index(
+      self, idxs: tuple[Index, ...]
+  ) -> tuple[tuple[Index, ...], state_types.Transform]:
+    return idxs, self
+
+  def tree_flatten(self):
+    return (), self.collective_axes
+
+  @classmethod
+  def tree_unflatten(cls, metadata, arrays):
+    return cls(metadata[0])
+
+
 def remote_ref(
     ref: _Ref,
     device_id: jax.typing.ArrayLike,
@@ -767,8 +791,33 @@ def remote_ref(
     if not isinstance(jax_core.get_aval(ref), state_types.AbstractRef):
       raise TypeError("ref must be a reference")
     ref = pallas_core.TransformedRef(ref, transforms=())
+  if any(isinstance(t, MulticastRef) for t in ref.transforms):
+    raise ValueError("Can't make a multicast reference into a peer reference.")
   return pallas_core.TransformedRef(
       ref.ref, (*ref.transforms, PeerMemRef(device_id, device_id_type)),
+  )
+
+
+def multicast_ref(
+    ref: _Ref,
+    collective_axes: Hashable | tuple[Hashable, ...],
+) -> pallas_core.TransformedRef:
+  """Return a multicast reference for cross-device operations.
+
+  Args:
+    ref: The reference to transform.
+    collective_axes: The JAX mesh axes indicating the devices to operate on.
+  """
+  if not isinstance(collective_axes, tuple):
+    collective_axes = (collective_axes,)
+  if not isinstance(ref, pallas_core.TransformedRef):
+    if not isinstance(jax_core.get_aval(ref), state_types.AbstractRef):
+      raise TypeError("ref must be a reference")
+    ref = pallas_core.TransformedRef(ref, transforms=())
+  if any(isinstance(t, PeerMemRef) for t in ref.transforms):
+    raise ValueError("Can't make a peer reference into a multicast reference.")
+  return pallas_core.TransformedRef(
+      ref.ref, (*ref.transforms, MulticastRef(collective_axes)),
   )
 
 
