@@ -260,6 +260,37 @@ class PallasCallRemoteDMATest(TestCase):
     with self.assertRaisesRegex(NotImplementedError, msg):
       f()
 
+  def test_subset_of_devices(self):
+    if jax.process_count() < 3:
+      self.skipTest("Test requires at least 4 processes.")
+    if not (1 <= jax.process_id() <= 2):
+      return  # Nothing to do.
+
+    def kernel(y_ref, sem):
+      other_dev_id = 1 - lax.axis_index('x')
+      pl.semaphore_signal(sem, device_id=other_dev_id,
+                          device_id_type=pl.DeviceIdType.LOGICAL)
+      pl.semaphore_wait(sem)
+      y_ref[...] = jnp.ones_like(y_ref)
+
+    kernel_call = pl.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+    )
+
+    devices = jax.devices()
+    mesh = jax.sharding.Mesh(devices[1:3], ['x'])
+    y = jax.jit(
+        shard_map.shard_map(
+            kernel_call, mesh, in_specs=(), out_specs=P('x'), check_rep=False,
+        )
+    )()
+
+    self.assertLen(y.addressable_shards, 1)
+    np.testing.assert_allclose(y.addressable_shards[0].data, jnp.ones((128,), dtype=jnp.float32))
+
 
 class PallasCallMultimemTest(TestCase):
 
