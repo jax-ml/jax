@@ -376,6 +376,19 @@ class PhiloxTest(parameterized.TestCase):
       self.skipTest("Need TPU devices")
     super().setUp()
 
+  @parameterized.product(
+      x=[0x1, 0x10000, 0xabcdef],
+      y=[0x1, 0x10000, 0xabcdef],
+  )
+  def test_mul_hi_lo(self, x, y):
+    x = jnp.uint32(x)
+    y = jnp.uint32(y)
+    hi, lo = philox.mul32_hi_lo(x, y)
+    with jax.enable_x64():
+      result = (hi.astype(jnp.uint64) << 32) + lo.astype(jnp.uint64)
+      ref = x.astype(jnp.uint64) * y.astype(jnp.uint64)
+      self.assertEqual(result, ref)
+
   @parameterized.parameters(
       ((512, 512),),
       ((137, 275),),  # Non block-aligned shape
