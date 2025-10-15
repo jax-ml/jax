@@ -1,3 +1,4 @@
+(faq-donation)=
 # Buffer donation
 
 When JAX executes a computation it uses buffers on the device for all inputs and outputs.
