@@ -3520,7 +3520,7 @@ def _multimem_store_abstract_eval(source, ref, *transforms_leaves, transforms_tr
     raise ValueError(f"Value dtype {source.dtype} does not match ref dtype {dtype}")
   if source.shape != shape:
     raise ValueError(f"Value shape {source.shape} does not match ref shape {shape}")
-  return [], {pallas_core.comms_effect}
+  return [], {pallas_core.comms_effect, state.WriteEffect(1)}
 
 
 @lowering.register_lowering_rule(multimem_store_p, mgpu.LoweringSemantics.Lane)

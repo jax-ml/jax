@@ -27,6 +27,7 @@ from jax.experimental import pallas as pl
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.pallas import mosaic_gpu as plgpu
 from jax.experimental.pallas.ops.gpu.reduce_scatter_mgpu import reduce_scatter
+from jax.experimental.pallas.ops.gpu.all_gather_mgpu import all_gather
 import jax.numpy as jnp
 import numpy as np
 
@@ -558,6 +559,89 @@ class PallasCallMultimemTest(TestCase):
       # XLA uses.
       y_rounded = np.nextafter(ys, expected)
       np.testing.assert_allclose(y_rounded, expected, rtol=tol, atol=tol)
+
+  def _test_all_gather(
+      self,
+      shape,
+      dtype,
+      gather_dimension=0,
+      tile_size=None,
+      vec_size=None,
+      num_blocks=None,
+  ):
+    if jax.process_index() > 2:
+      return
+
+    if jnp.issubdtype(dtype, jnp.floating):
+      x = jax.random.uniform(jax.random.key(42), shape, dtype=dtype, minval=-1.0, maxval=1.0)
+    else:
+      x = jax.random.randint(jax.random.key(42), shape, dtype=dtype, minval=-1000, maxval=1000)
+
+    def body(x):
+      return all_gather(
+          x,
+          axis_name="x",
+          gather_dimension=gather_dimension,
+          vec_size=vec_size,
+          tile_size=tile_size,
+          num_blocks=num_blocks,
+      )
+
+    spec = P(*([None] * gather_dimension), "x")
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    y = jax.jit(
+        jax.shard_map(
+            body, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False
+        )
+    )(x)
+    y = multihost_utils.process_allgather(y, tiled=True)
+    repeats = [1] * len(x.shape)
+    repeats[gather_dimension] = 2
+    np.testing.assert_array_equal(y, np.tile(x, repeats))
+
+  @parameterized.parameters(
+      (jnp.float32, 1),
+      (jnp.float16, 2),
+      (jnp.bfloat16, 2),
+      (jnp.float16, 4),
+      (jnp.float16, 8),
+      (jnp.int32, 1),
+  )
+  def test_all_gather(self, dtype, vec_size):
+    # 16 rows * 64 cols = 1024 elements = 8 elements per thread
+    self._test_all_gather(
+        (1024, 64), dtype, tile_size=1024, vec_size=vec_size, num_blocks=4
+    )
+
+  def test_all_gather_large_minor_dims(self):
+    self._test_all_gather(
+        (512, 32768), jnp.float16, tile_size=8192, vec_size=4, num_blocks=4
+    )
+
+  @parameterized.parameters(2048, 256, None)
+  def test_all_gather_auto_vec_size(self, tile_size):
+    self._test_all_gather(
+        (1024, 64), jnp.float16, tile_size=tile_size, vec_size=None, num_blocks=4
+    )
+
+  @parameterized.parameters(2048, 256, None)
+  def test_all_gather_auto_vec_size_int(self, tile_size):
+    self._test_all_gather(
+        (1024, 64), jnp.int32, tile_size=tile_size, vec_size=None, num_blocks=4
+    )
+
+  @parameterized.parameters(1, 2)
+  def test_all_gather_different_axes(self, axis):
+    if axis == 1:
+      shape = (64, 1024, 32)
+      tile_size = 2048
+    else:  # axis == 2
+      shape = (32, 64, 1024)
+      tile_size = 2048
+    self._test_all_gather(
+        shape, jnp.float16, gather_dimension=axis, tile_size=tile_size, vec_size=None, num_blocks=4
+    )
 
 
 if __name__ == '__main__':
