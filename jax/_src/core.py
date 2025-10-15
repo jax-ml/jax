@@ -3652,7 +3652,9 @@ class ShapeDtypeStruct:
   @property
   def sharding(self):
     if isinstance(self._sharding, P):
-      cur_mesh = mesh_lib.get_abstract_mesh()
+      # TODO(yashkatariya): Maybe use `get_abstract_mesh()` here but switch
+      # on `core.trace_state_clean()`?
+      cur_mesh = mesh_lib.get_concrete_mesh()
       if cur_mesh.empty:
         raise TypeError(
             "When specifying PartitionSpec to `ShapeDtypeStruct`, the context"

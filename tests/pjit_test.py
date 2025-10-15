@@ -4834,7 +4834,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2,), 'x')
     with jax.set_mesh(mesh):
       out_s = sds.sharding
-      self.assertEqual(out_s, NamedSharding(mesh.abstract_mesh, P('x')))
+      self.assertEqual(out_s, NamedSharding(mesh, P('x')))
 
     with self.assertRaisesRegex(
         TypeError,
