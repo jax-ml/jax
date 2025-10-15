@@ -1291,8 +1291,8 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "tpu_pallas_sparsecore_debug_check_test",
-    srcs = ["tpu_pallas_sparsecore_debug_check_test.py"],
+    name = "tpu_sparsecore_pallas_debug_check_test",
+    srcs = ["tpu_sparsecore_pallas_debug_check_test.py"],
     config_tags_overrides = {
         # TODO(slebedev): Flip to False once we have more v6e capacity.
         "tpu_v6e": {"ondemand": True},
