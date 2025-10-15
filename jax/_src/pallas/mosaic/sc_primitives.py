@@ -439,6 +439,43 @@ def bitcast(x: jax.Array, dtype: jax.typing.DTypeLike) -> jax.Array:
   return bitcast_p.bind(x, dtype=jnp.dtype(dtype))
 
 
+class MemoryEffect(jax_core.Effect):
+  pass
+
+
+effects.control_flow_allowed_effects.add_type(MemoryEffect)
+_memory_effect = MemoryEffect()
+
+barrier_p = jax_core.Primitive("barrier")
+barrier_p.multiple_results = True
+
+@barrier_p.def_effectful_abstract_eval
+def _barrier_abstract_eval():
+  return (), {_memory_effect}
+
+
+@sc_lowering.register_lowering_rule(barrier_p)
+def _barrier_lowering_rule(ctx: sc_lowering.LoweringRuleContext):
+  ix = ir.IndexType.get()
+  tpu.barrier(arith.constant(ix, ir.IntegerAttr.get(ix, 0)))
+  return ()
+
+
+def subcore_barrier():
+  """Blocks until all subcores on the same core reach this instruction.
+
+  The barrier must be used with the vector subcore, either via
+  :class:jax.experimental.pallas.tpu_sc.VectorSubcoreMesh or by specifying
+  ```
+  pltpu.CompilerParams(
+      kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE,
+      dimension_semantics[..., "subcore_parallel", ...])
+  ```
+  to ``pallas_call``.
+  """
+  barrier_p.bind()
+
+
 scan_count_p = jax_core.Primitive("unique")
 scan_count_p.multiple_results = True
 

@@ -1028,6 +1028,66 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x + 1)
 
+  def test_barrier_via_mesh(self):
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    vec_dim = sc_core._vector_dimension()
+    @plsc.kernel(
+        out_shape=jax.ShapeDtypeStruct(
+            shape=(mesh.num_subcores, vec_dim), dtype=jnp.uint32
+        ),
+        mesh=mesh,
+        scratch_shapes=[pltpu.VMEM((mesh.num_subcores, vec_dim), jnp.uint32)],
+    )
+    def kernel(o_ref, vmem_ref):
+      subcore_id = lax.axis_index("subcore")
+      @pl.loop(0, 2 * subcore_id + 1)
+      def _(i):
+        vmem_ref[subcore_id] = jnp.full(vec_dim, i, dtype=jnp.uint32)
+        pltpu.sync_copy(vmem_ref.at[subcore_id], o_ref.at[subcore_id])
+      plsc.subcore_barrier()
+      pltpu.sync_copy(o_ref.at[(subcore_id + 1) % mesh.num_subcores],
+                      vmem_ref.at[subcore_id])
+      pltpu.sync_copy(vmem_ref.at[subcore_id], o_ref.at[subcore_id])
+    expected = 2 * jnp.roll(jnp.arange(mesh.num_subcores), -1)
+    expected = jnp.broadcast_to(expected[:, None], (mesh.num_subcores, vec_dim))
+    np.testing.assert_array_equal(kernel(), expected)
+
+  def test_barrier_via_pallas_call(self):
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    vec_dim = sc_core._vector_dimension()
+    @functools.partial(
+        pl.pallas_call,
+        grid=16,
+        compiler_params=pltpu.CompilerParams(
+            kernel_type=pltpu.KernelType.SC_VECTOR_SUBCORE,
+            dimension_semantics=["subcore_parallel"],
+        ),
+        out_shape=jax.ShapeDtypeStruct(
+            shape=(mesh.num_subcores, vec_dim), dtype=jnp.uint32
+        ),
+        out_specs=pl.BlockSpec((1, vec_dim), lambda i: (i, 0)),
+        scratch_shapes=[
+            pltpu.VMEM_SHARED((mesh.num_subcores, vec_dim), jnp.uint32),
+            pltpu.VMEM((vec_dim,), jnp.uint32),
+        ],
+    )
+    def kernel(o_ref, shared_ref, vmem_ref):
+      subcore_id = pl.program_id(0)
+      @pl.loop(0, 10 * subcore_id + 1)
+      def _(i):
+        vmem_ref[:] = jnp.full(vec_dim, i, dtype=jnp.uint32)
+        pltpu.sync_copy(vmem_ref, shared_ref.at[subcore_id])
+      plsc.subcore_barrier()
+      pltpu.sync_copy(shared_ref.at[(subcore_id + 1) % mesh.num_subcores],
+                      o_ref.at[0])
+    expected = 10 * jnp.roll(jnp.arange(mesh.num_subcores), -1)
+    expected = jnp.broadcast_to(expected[:, None], (mesh.num_subcores, vec_dim))
+    np.testing.assert_array_equal(kernel(), expected)
+
 
 class ScalarSubcoreTest(PallasSCTest):
 
