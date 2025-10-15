@@ -43,18 +43,27 @@ Add the following code to your test file, e.g., `export_back_compat_test.py`.
 
     def test_foo_call(self):
       def func(...): ...
-      inputs = (...,)  # Tuple of nd.array, keep it small, perhaps generate the
-                      # inputs in `func`.
+      inputs = (...,)  # Tuple of nd.array, keep it small, perhaps have it
+                       # empty and generate the inputs in `func`.
       data = self.starter_data(inputs)  # This is temporary, just for starting.
       self.run_one_test(func, data)
 
 The test will fail, but will save to a file the test data you will need. The
-file name will be printed in the logs. Create a new
-file jax/_src/internal_test_util/export_back_compat_test_data/foo_call.py
+file name will be printed in the logs.
+For Google internal tests, the file will be saved in the Test Artifacts.
+Check the file to see if it contains the custom call that you expect.
+
+Often when we change a lowering, we keep the old one for 30 days for
+forward compatibility. If you see the old custom call, you can add
+`with config.export_ignore_forward_compatibility(True):` around the
+`self.run_one_test` method call to make it generate the new lowering.
+
+Now create a new file
+jax/_src/internal_test_util/export_back_compat_test_data/foo_call.py
 and paste the test data that you will see printed in the logs.
 
 Name the literal `data_YYYYY_MM_DD` to include the date of serialization
-(for readability only). Then add to this file:
+(used for readability only). Then add to this file:
 
   from jax._src.internal_test_util.export_back_compat_test_data import foo_call
 
