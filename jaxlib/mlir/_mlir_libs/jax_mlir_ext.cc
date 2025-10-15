@@ -46,6 +46,8 @@ limitations under the License.
 #include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
 #include "mlir/CAPI/IR.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Shape/IR/Shape.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Location.h"
@@ -59,6 +61,7 @@ limitations under the License.
 #include "shardy/integrations/c/passes.h"
 #include "jaxlib/mlir/_mlir_libs/traceback_to_location.h"
 #include "jaxlib/mosaic/gpu/integrations/c/passes.h"
+#include "stablehlo/dialect/VhloOps.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/service/spmd/shardy/integrations/c/passes.h"
@@ -197,6 +200,11 @@ NB_MODULE(_jax_mlir_ext, m) {
     REGISTER_DIALECT(memref);
     REGISTER_DIALECT(scf);
     REGISTER_DIALECT(vector);
+    // TODO(jpienaar): these don't seem to have C API targets known to Bazel
+    unwrap(registry)->insert<mlir::shape::ShapeDialect>();
+    unwrap(registry)->insert<mlir::tensor::TensorDialect>();
+    unwrap(registry)->insert<mlir::vhlo::VhloDialect>();
+
     // For Mosaic GPU
     REGISTER_DIALECT(cf);
     REGISTER_DIALECT(gpu);
@@ -212,6 +220,13 @@ NB_MODULE(_jax_mlir_ext, m) {
     mlirRegisterAllXlaSdyPassesAndPipelines();
     // Transforms used by JAX.
     mlirRegisterTransformsStripDebugInfo();
+  });
+
+  m.def("enter_multi_threaded_execution", [](MlirContext context) {
+    unwrap(context)->enterMultiThreadedExecution();
+  });
+  m.def("exit_multi_threaded_execution", [](MlirContext context) {
+    unwrap(context)->exitMultiThreadedExecution();
   });
 
   m.def("inlined_func_call", xla::ValueOrThrowWrapper(InlinedCall),
