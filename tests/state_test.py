@@ -1374,6 +1374,15 @@ class GeneralRefTest(jtu.JaxTestCase):
         wrap_init(f, 1), [AbstractRef(core.AbstractToken())])
     self.assertIs(type(jaxpr.outvars[0].aval), core.AbstractToken)
 
+  def test_reshape(self):
+    def f(x_ref):
+      x_ref = x_ref.reshape(4, -1)
+      x_ref.reshape(-1)[...] = jnp.arange(36)
+      return [x_ref[...]]
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+        wrap_init(f, 1), [AbstractRef(core.ShapedArray((12, 3), jnp.int32))])
+    self.assertEqual(jaxpr.outvars[0].aval.shape, (4, 9))
+
   # NOTE(mattjj): disabled because it's extremely illegal
   # def test_ref_of_ref(self):
   #   def f(x_ref_ref):

@@ -146,6 +146,18 @@ class RefReshaper:
       shape = shape[0]
     if not shape:
       raise ValueError("Cannot reshape ref to empty shape")
+    if any(s == -1 for s in shape):
+      num_elements = math.prod(ref_or_view.shape)
+      defined_dims = [d for d in shape if d != -1]
+      if len(defined_dims) != len(shape) - 1:
+        raise ValueError(f"At most one dimension can be -1, but got {shape}")
+      if num_elements % math.prod(defined_dims):
+        raise ValueError(
+            f"Specified dims {shape} do not evenly divide the size of the "
+            f"ref ({num_elements})."
+        )
+      remaining_dim = num_elements // math.prod(defined_dims)
+      shape = tuple(d if d != -1 else remaining_dim for d in shape)
     if np.prod(shape) != np.prod(ref_or_view.shape):
       raise TypeError(
           f"cannot reshape ref of shape {ref_or_view.shape} into shape {shape}"
