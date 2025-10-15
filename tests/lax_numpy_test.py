@@ -4952,6 +4952,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testCorrCoefDtype(self):
+    x = jnp.arange(5)
+    result_bf16 = jnp.corrcoef(x, x, dtype='bfloat16')
+    self.assertEqual(result_bf16.dtype, np.dtype('bfloat16'))
+
+    with self.assertRaisesRegex(ValueError, "corrcoef: dtype must be a subclass of float or complex"):
+      jnp.corrcoef(x, x, dtype=int)
+
   @jtu.sample_product(
     [dict(dtype=dtype, end_dtype=end_dtype, begin_dtype=begin_dtype,
           shape=shape, begin_shape=begin_shape, end_shape=end_shape)
@@ -6254,8 +6262,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'broadcast_to': ['subok'],
       'clip': ['kwargs', 'out'],
       'copy': ['subok'],
-      'corrcoef': ['ddof', 'bias', 'dtype'],
-      'cov': ['dtype'],
+      'corrcoef': ['ddof', 'bias'],
       'cumulative_prod': ['out'],
       'cumulative_sum': ['out'],
       'empty_like': ['subok', 'order'],

@@ -744,6 +744,13 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testCovDtype(self):
+    x = jnp.arange(5)
+    result_bf16 = jnp.cov(x, dtype='bfloat16')
+    self.assertEqual(result_bf16.dtype, np.dtype('bfloat16'))
+
+    with self.assertRaisesRegex(ValueError, "cov: dtype must be a subclass of float or complex"):
+      jnp.cov(x, dtype=int)
 
 
   @jtu.sample_product(
