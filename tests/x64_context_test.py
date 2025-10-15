@@ -31,9 +31,13 @@ from jax._src.lib import jaxlib_extension_version
 
 jax.config.parse_flags_with_absl()
 
-# TODO(jakevdp): rewrite these tests in terms of jax.enable_x64.
+# TODO(jakevdp): remove this check for JAX v0.9.0 and test jax.enable_x64 directly.
 with jtu.ignore_warning(message=".* is deprecated", category=DeprecationWarning):
-  from jax.experimental import enable_x64, disable_x64
+  if hasattr(jax.experimental, "enable_x64"):
+    from jax.experimental import enable_x64, disable_x64
+  else:
+    enable_x64 = jax.enable_x64
+    disable_x64 = lambda: jax.enable_x64(False)
 
 
 class X64ContextTests(jtu.JaxTestCase):
