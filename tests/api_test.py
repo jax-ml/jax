@@ -5268,7 +5268,12 @@ class APITest(jtu.JaxTestCase):
               yield inv.val
 
     def uniq(lst):
-      return {id(v): v for v in lst}.values()
+      def key(a):
+        if isinstance(a, literals.TypedNdArray):
+          return np.asarray(a)
+        else:
+          return a
+      return {id(key(v)): v for v in lst}.values()
 
     @jax.make_jaxpr
     def f():

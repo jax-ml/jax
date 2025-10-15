@@ -1393,7 +1393,6 @@ class DebugInfoTest(jtu.JaxTestCase):
     ]
     if config.use_simplified_jaxpr_constants.value:
       expected_jaxpr_debug_infos.extend([
-          "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=result[0],result[1]",
           "traced_for=jit, fun=my_f, arg_names=None, result_paths=None",
       ])
 
