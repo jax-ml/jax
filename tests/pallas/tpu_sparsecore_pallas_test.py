@@ -1014,6 +1014,9 @@ class VectorSubcoreTest(PallasSCTest):
       kernel(x)
 
   def test_multiple_of(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 16):
+      self.skipTest("Test requires a newer libtpu")
+
     x = jnp.arange(16)
 
     @vector_subcore_kernel(out_shape=x)
