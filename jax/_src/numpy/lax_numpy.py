@@ -9044,11 +9044,12 @@ def compress(condition: ArrayLike, a: ArrayLike, axis: int | None = None,
 
 
 @export
-@partial(api.jit, static_argnames=('rowvar', 'bias', 'ddof'))
+@partial(api.jit, static_argnames=('rowvar', 'bias', 'ddof', 'dtype'))
 def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
         bias: bool = False, ddof: int | None = None,
         fweights: ArrayLike | None = None,
-        aweights: ArrayLike | None = None) -> Array:
+        aweights: ArrayLike | None = None,
+        dtype: DTypeLike | None = None) -> Array:
   r"""Estimate the weighted sample covariance.
 
   JAX implementation of :func:`numpy.cov`.
@@ -9091,6 +9092,8 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
       a relative weight specifying the "importance" of each observation. In the
       ``ddof=0`` case, it is equivalent to assigning probabilities to each
       observation.
+    dtype: optional data type of the result. Must be a float or complex type;
+      if not specified, it will be determined based on the dtype of the input.
 
   Returns:
     A covariance matrix of shape ``(M, M)``, or a scalar with shape ``()`` if ``M = 1``.
@@ -9150,6 +9153,9 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
   if m.ndim > 2:
     raise ValueError("m has more than 2 dimensions")  # same as numpy error
 
+  if dtype is not None and not dtypes.issubdtype(dtype, np.inexact):
+    raise ValueError(f"cov: dtype must be a subclass of float or complex; got {dtype=}")
+
   X = atleast_2d(m)
   if not rowvar and m.ndim != 1:
     X = X.T
@@ -9189,6 +9195,10 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
     aweights = abs(aweights)
     w = aweights if w is None else w * aweights
 
+  if dtype is not None:
+    X = X.astype(dtype)
+    w = w.astype(dtype) if w is not None else w
+
   avg, w_sum = reductions.average(X, axis=1, weights=w, returned=True)
   w_sum = w_sum[0]
 
@@ -9207,8 +9217,9 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
 
 
 @export
-@partial(api.jit, static_argnames=('rowvar',))
-def corrcoef(x: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True) -> Array:
+@partial(api.jit, static_argnames=('rowvar', 'dtype'))
+def corrcoef(x: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
+             dtype: DTypeLike | None = None) -> Array:
   r"""Compute the Pearson correlation coefficients.
 
   JAX implementation of :func:`numpy.corrcoef`.
@@ -9232,6 +9243,8 @@ def corrcoef(x: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True) -> A
       ``rowvar = True`` case, ``m`` becomes ``jnp.vstack([m, y])``.
     rowvar: if True (default) then each row of ``m`` represents a variable. If
       False, then each column represents a variable.
+    dtype: optional data type of the result. Must be a float or complex type;
+      if not specified, it will be determined based on the dtype of the input.
 
   Returns:
     A covariance matrix of shape ``(M, M)``.
@@ -9283,7 +9296,9 @@ def corrcoef(x: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True) -> A
      [0.12 0.01 1.  ]]
   """
   util.check_arraylike("corrcoef", x)
-  c = cov(x, y, rowvar)
+  if dtype is not None and not dtypes.issubdtype(dtype, np.inexact):
+    raise ValueError(f"corrcoef: dtype must be a subclass of float or complex; got {dtype=}")
+  c = cov(x, y, rowvar, dtype=dtype)
   if len(np.shape(c)) == 0:
     # scalar - this should yield nan for values (nan/nan, inf/inf, 0/0), 1 otherwise
     return ufuncs.divide(c, c)
