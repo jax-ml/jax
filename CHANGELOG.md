@@ -16,6 +16,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.8.0
 * Breaking changes:
 
   * JAX is changing the default `jax.pmap` implementation to one implemented in
