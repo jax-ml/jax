@@ -37,6 +37,24 @@ from jax import random
 import jax
 import jax.numpy as jnp
 
+def test_standardize_nan_protection():
+    # Test case from issue: near-constant input with tiny noise
+    x = -11. * jnp.ones((3,))
+    noise = jax.random.normal(jax.random.key(0)) * 2e-6
+    result = jax.nn.standardize(x + noise)
+    assert not jnp.isnan(result).any(), "standardize should not return NaNs for near-constant input"
+
+    # Additional test cases
+    # Test with exactly constant input
+    x_const = jnp.ones((3,))
+    result_const = jax.nn.standardize(x_const)
+    assert not jnp.isnan(result_const).any(), "standardize should not return NaNs for constant input"
+    
+    # Test with very small variance
+    x_small = jnp.array([1.0, 1.0 + 1e-10, 1.0 - 1e-10])
+    result_small = jax.nn.standardize(x_small)
+    assert not jnp.isnan(result_small).any(), "standardize should not return NaNs for input with very small variance"
+
 config.parse_flags_with_absl()
 
 def _check_cudnn_backend(fn, *args, **kwargs):
