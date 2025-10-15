@@ -16,6 +16,7 @@ import functools
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
+from jax._src.state.primitives import pin, unpin
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
@@ -189,6 +190,48 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
     if jtu.is_device_tpu(6):
       atol = 2e-5
     np.testing.assert_allclose(o, x @ y, atol=atol)
+
+
+class PinnedBufferTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Only supported on TPU v4+")
+
+  def test_basic(self):
+
+    @jax.jit
+    def f(x):
+      x_pinned = pin(x)
+      x_pinned = pl.pallas_call(
+          lambda *_: None, out_shape=x_pinned,
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+          input_output_aliases={0: 0}
+          )(x_pinned)
+      return unpin(x_pinned)
+
+    x = jnp.arange(3.)
+    y = f(x)
+    self.assertAllClose(y, x, check_dtypes=False)
+
+  def test_error_if_not_aliased(self):
+
+    @jax.jit
+    def f(x):
+      x_pinned = pin(x)
+      x_pinned = pl.pallas_call(
+          lambda *_: None, out_shape=x_pinned,
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+          # input_output_aliases={0: 0}  # no aliasing!
+          )(x_pinned)
+      return unpin(x_pinned)
+
+    x = jnp.arange(3.)
+    with self.assertRaisesRegex(ValueError, r"pinned buffers without"):
+      f(x)
 
 
 class CoreMapTest(jtu.JaxTestCase):
