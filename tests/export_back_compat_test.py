@@ -28,11 +28,13 @@ import numpy as np
 import jax
 from jax import lax
 from jax._src.export import _export
+from jax._src.lib import version as jaxlib_version
 
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
 from jax._src.internal_test_util.export_back_compat_test_data import annotate_data_placement
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_cholesky_lapack_potrf
+from jax._src.internal_test_util.export_back_compat_test_data import cuda_cholesky_solver_potrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eig_lapack_geev
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_eigh_cusolver_syev
 from jax._src.internal_test_util.export_back_compat_test_data import rocm_eigh_hipsolver_syev
@@ -63,7 +65,6 @@ from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_d
 from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_top_k
 from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_approx_top_k
 
-from jax.experimental import pjit
 from jax._src.shard_map import shard_map
 import jax.numpy as jnp
 
@@ -128,6 +129,7 @@ class CompatTest(bctu.CompatTestBase):
     # stable
     covering_testdatas = [
         *cpu_ffi_testdatas,
+        cuda_cholesky_solver_potrf.data_2025_10_15,
         cuda_threefry2x32.data_2024_07_30,
         cuda_lu_pivots_to_permutation.data_2025_04_01,
         cuda_lu_cusolver_getrf.data_2024_08_19,
@@ -158,6 +160,9 @@ class CompatTest(bctu.CompatTestBase):
       self.assertIsInstance(data, bctu.CompatTestData)
       covered_targets = covered_targets.union(data.custom_call_targets)
 
+    # Note: add names of custom calls here only if you are sure that they are
+    # covered by tests that are somewhere else, or if have a good reason
+    # to believe that they are not going to be broken by JAX changes.
     covered_targets = covered_targets.union({
       "tf.call_tf_function",  # tested in jax2tf/tests/back_compat_tf_test.py
       "tpu_custom_call",  # tested separately
@@ -168,7 +173,7 @@ class CompatTest(bctu.CompatTestBase):
       "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",
       "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi", "hipsolver_syevd_ffi",
       "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
-      "cusolver_potrf_ffi", "hipsolver_potrf_ffi",
+      "hipsolver_potrf_ffi",
     })
     not_covered = targets_to_cover.difference(covered_targets)
     self.assertEmpty(not_covered,
@@ -200,6 +205,32 @@ class CompatTest(bctu.CompatTestBase):
     info = cpu_cholesky_lapack_potrf.data_2024_05_31[dtype_name]
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128"))
+  def test_gpu_cholesky_solver_potrf(self, dtype_name="f32"):
+    if jaxlib_version < (0, 8, 0):
+      self.skipTest("Test disabled for jaxlib version < 0.8.0")
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+
+    dtype = dict(f32=np.float32, f64=np.float64,
+                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    shape = (4, 4)
+    input = self.cholesky_input(shape, dtype)
+    del input  # Input is in the testdata, here for readability
+    func = lax.linalg.cholesky
+
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
+    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+
+    info = cuda_cholesky_solver_potrf.data_2025_10_15[dtype_name]
+    data = self.load_testdata(info)
+    # TODO(necula): remove after Nov 10, 2025, when the forward compatibility
+    # window closes for the cholesky solver_potrf_ffi custom call.
+    with config.export_ignore_forward_compatibility(True):
+      self.run_one_test(func, data, rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -766,16 +797,18 @@ class CompatTest(bctu.CompatTestBase):
 
     # Must use exactly 2 devices for expected outputs from ppermute
     devices = jax.devices()[:2]
-    mesh = Mesh(devices, axis_names=('a'))
+    mesh = Mesh(devices, axis_names=("a"))
 
-    @partial(pjit.pjit,
-             in_shardings=(P('a', None),), out_shardings=P('a', None))
+    @partial(jax.jit,
+            in_shardings=(NS(mesh, P("a", None)),),
+            out_shardings=NS(mesh, P("a", None)))
     @partial(shard_map, mesh=mesh,
-             in_specs=(P('a', None),), out_specs=P('a', None))
+             in_specs=(P("a", None),),
+             out_specs=P("a", None))
     def func(x):  # b: f32[2, 4]
-      axis_size = lax.axis_size('a')
+      axis_size = lax.axis_size("a")
       perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
-      return lax.ppermute(x, 'a', perm=perm)
+      return lax.ppermute(x, "a", perm=perm)
 
     data = [
         (tpu_Sharding.data_2023_03_16, []),
