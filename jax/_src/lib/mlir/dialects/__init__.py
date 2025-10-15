@@ -56,10 +56,8 @@ else:
 # TODO(joelwee): Remove this once jaxlib 0.8 is the minimum.
 try:
   from jaxlib.mlir.dialects import mpmd
-  from jaxlib.mlir.dialects import ub
 except ImportError:
   mpmd: Any = None  # type: ignore[no-redef]
-  ub: Any = None  # type: ignore[no-redef]
 from jaxlib.mlir.dialects import sdy
 
 # Alias that is set up to abstract away the transition from MHLO to StableHLO.
