@@ -1853,6 +1853,7 @@ class QuasiDynamicData:
 
 @dataclass(frozen=True)
 class AvalQDD:
+  is_high = True
   aval: AbstractValue
   qdd: QuasiDynamicData | None # immutable
 
