@@ -49,7 +49,6 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
 from jax._src.layout import AutoLayout, Layout
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib import _jax
 from jax._src.lib import jax_mlir_ext
 from jax._src.lib import xla_client as xc
@@ -568,12 +567,6 @@ def make_ir_context() -> ir.Context:
   dialects.mhlo.register_mhlo_dialect(context)
   dialects.chlo.register_dialect(context)
   dialects.hlo.register_dialect(context)
-  # If built in debug mode, and MLIR is in a multithreaded context, enabling
-  # multi threaded execution aborts the process if we try to register a new
-  # dialect after this point. The dialect registry in a context is not thread
-  # safe, and a fatal error is much better than a data race.
-  if jaxlib_version >= (0, 8):
-    jax_mlir_ext.enter_multi_threaded_execution(context)
   return context
 
 
