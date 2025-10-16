@@ -1577,6 +1577,202 @@ class LayoutInferenceTest(parameterized.TestCase):
           inference_utils.out_transforms(cast.owner), [transforms]
       )
 
+  @parameterized.parameters([False, True])
+  def test_infer_transforms_for_subview_raises_on_slice_incompatible_with_tile(
+      self, annotate_input
+  ):
+    shape = (2, 64, 64)
+    elt_ty = ir.BF16Type.get()
+
+    in_ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+    out_ref_ty = ir.MemRefType.get((2, 64, 32), elt_ty, memory_space=mgpu.utils.smem())
+
+    with ir.InsertionPoint(self.module.body):
+      [in_ref] = undefs(in_ref_ty)
+
+      transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((32, 16)),
+        mgpu.dialect.SwizzleTransformAttr.get(32),
+      ])
+
+      if annotate_input:
+        in_ref = mgpu.dialect.with_transforms(in_ref, transforms)
+
+      subview_op = memref.SubViewOp(
+          out_ref_ty,
+          in_ref,
+          [],
+          [],
+          [],
+          static_offsets = [1, 0, 0],
+          static_sizes = [2, 64, 8],
+          static_strides = [1, 1, 1]
+      )
+
+      if not annotate_input:
+        mgpu.dialect.with_transforms(subview_op.result, transforms)
+
+    with self.assertRaisesRegex(ValueError, "Failed to infer"):
+      mgpu.infer_layout(self.module, enable_smem_inference=True)
+
+  @parameterized.parameters([False, True])
+  def test_infer_transforms_for_sibling_subviews_and_distant_op(
+      self, even_offsets
+  ):
+    # This test uses the following op tree extracted from this ragged dot
+    # kernel:
+    # https://github.com/jax-ml/jax/blob/main/jax/experimental/pallas/ops/gpu/ragged_dot_mgpu.py
+    #
+    #   subview_op0   (slice = 64, 64)
+    #   - subview_op1 (slice = 2, 64)
+    #   - subview_op2 (slice = 4, 64, either at an even or odd offset)
+    #   - subview_op3 (slice = 8, 64)
+    #   - user_op0    (in_transforms = [tile(64, 64), swizzle(32)])
+    #
+    # First the in_transforms of user_op0 have to be propagated up to
+    # subview_op0. Then they have to be propagated down and resolved. Finally
+    # all subview ops need to have the same transforms.
+
+    source_shape = (64, 64)
+    elt_ty = ir.BF16Type.get()
+    source_ref_ty = ir.MemRefType.get(source_shape, elt_ty, memory_space=mgpu.utils.smem())
+
+    slice1_shape = (2, 64)
+    slice2_shape = (4, 64)
+    slice3_shape = (8, 64)
+
+    slice0_ref_ty = ir.MemRefType.get(source_shape, elt_ty, memory_space=mgpu.utils.smem())
+    slice1_ref_ty = ir.MemRefType.get(slice1_shape, elt_ty, memory_space=mgpu.utils.smem())
+    slice2_ref_ty = ir.MemRefType.get(slice2_shape, elt_ty, memory_space=mgpu.utils.smem())
+    slice3_ref_ty = ir.MemRefType.get(slice3_shape, elt_ty, memory_space=mgpu.utils.smem())
+
+    want_tt = mgpu.dialect.TileTransformAttr.get((2 if even_offsets else 1, 64))
+
+    with ir.InsertionPoint(self.module.body):
+      [source_ref] = undefs(source_ref_ty)
+      subview_op0 = memref.SubViewOp(
+          slice0_ref_ty,
+          source_ref,
+          [],  # dynamic offsets
+          [],  # dynamic sizes
+          [],  # dynamic strides
+          static_offsets=[0, 0],
+          static_sizes=source_shape,
+          static_strides=[1, 1],
+      )
+
+      transforms_0 = ir.ArrayAttr.get([want_tt])
+      mgpu.dialect.WithTransformsOp(subview_op0.result, transforms_0)
+
+      subview_op1 = memref.SubViewOp(
+          slice1_ref_ty,
+          subview_op0,
+          [],  # dynamic offsets
+          [],  # dynamic sizes
+          [],  # dynamic strides
+          static_offsets=[0, 0],
+          static_sizes=slice1_shape,
+          static_strides=[1, 1],
+      )
+
+      subview_op2 = memref.SubViewOp(
+          slice2_ref_ty,
+          subview_op0,
+          [],  # dynamic offsets
+          [],  # dynamic sizes
+          [],  # dynamic strides
+          static_offsets=[16 if even_offsets else 15, 0],
+          static_sizes=slice2_shape,
+          static_strides=[1, 1],
+      )
+
+      # The following ops are just to test the dynamic offsets support.
+      c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
+      c64 = c(64)
+      c32 = c(32)
+      c16 = c(16)
+      subi = arith.subi(c64, c32)
+      maxsi = arith.maxsi(c16, subi)
+      addi = arith.addi(maxsi, subi)
+      andi = arith.andi(addi, maxsi)
+      idx = arith.index_cast(ir.IndexType.get(), andi)
+      subview_op3 = memref.SubViewOp(
+          slice3_ref_ty,
+          subview_op0,
+          [idx],  # dynamic offsets
+          [],  # dynamic sizes
+          [],  # dynamic strides
+          static_offsets=[ir.ShapedType.get_dynamic_size(), 0],
+          static_sizes=slice3_shape,
+          static_strides=[1, 1],
+      )
+
+    mgpu.infer_layout(self.module, enable_smem_inference=True)
+
+    want = ir.ArrayAttr.get([
+        want_tt,
+        mgpu.dialect.SwizzleTransformAttr.get(128),
+    ])
+
+    self.assertSequenceEqual(inference_utils.out_transforms(source_ref.owner), [want])
+    self.assertSequenceEqual(inference_utils.in_transforms(subview_op0), [want])
+    self.assertSequenceEqual(inference_utils.out_transforms(subview_op0), [want])
+    self.assertSequenceEqual(inference_utils.in_transforms(subview_op1), [want])
+    self.assertSequenceEqual(inference_utils.out_transforms(subview_op1), [want])
+    self.assertSequenceEqual(inference_utils.in_transforms(subview_op2), [want])
+    self.assertSequenceEqual(inference_utils.out_transforms(subview_op2), [want])
+    self.assertSequenceEqual(inference_utils.in_transforms(subview_op3), [want])
+    self.assertSequenceEqual(inference_utils.out_transforms(subview_op3), [want])
+
+  @parameterized.parameters([False, True])
+  def test_infer_transforms_for_subview_handles_dynamic_offsets(
+      self, annotate_input
+  ):
+    shape = (32, 32, 32)
+    elt_ty = ir.BF16Type.get()
+
+    in_ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
+    out_ref_ty = ir.MemRefType.get((16, 16, 32), elt_ty, memory_space=mgpu.utils.smem())
+
+    with ir.InsertionPoint(self.module.body):
+      [in_ref] = undefs(in_ref_ty)
+
+      transforms = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((1, 16)),
+          mgpu.dialect.SwizzleTransformAttr.get(32),
+      ])
+
+      if annotate_input:
+        in_ref = mgpu.dialect.with_transforms(in_ref, transforms)
+
+      c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
+      subview_op = memref.SubViewOp(
+          out_ref_ty,
+          in_ref,
+          [c(16), c(4)],
+          [],
+          [],
+          static_offsets=[
+              ir.ShapedType.get_dynamic_size(),
+              ir.ShapedType.get_dynamic_size(),
+              0,
+          ],
+          static_sizes=[16, 16, 32],
+          static_strides=[1, 1, 1],
+      )
+
+      if not annotate_input:
+        mgpu.dialect.with_transforms(subview_op.result, transforms)
+
+    mgpu.infer_layout(self.module, enable_smem_inference=True)
+
+    self.assertSequenceEqual(
+        inference_utils.in_transforms(subview_op), [transforms]
+    )
+    self.assertSequenceEqual(
+        inference_utils.out_transforms(subview_op), [transforms]
+    )
+
   def test_custom_primitive_op_retains_transforms(self):
     with ir.InsertionPoint(self.module.body):
       transforms = ir.ArrayAttr.get([

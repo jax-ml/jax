@@ -1300,6 +1300,46 @@ def _slice_smem_equation_system(
   return (eqns.EquationSystem(), {res_var: [res]}, [])
 
 
+@_add_equation_system_derivation_rule(memref.SubViewOp)
+def _memref_subview_equation_system(
+    ctx: DerivationContext,
+    op: memref.SubViewOp,
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  source = OperandOrResult(op, VariableType.OPERAND, 0)
+  dest = OperandOrResult(op, VariableType.RESULT, 0)
+  source_dest_var = ctx.producer_ref(source)
+
+  if any(map(lambda s: s != 1, op.static_strides)):
+    raise NotImplementedError(
+        f"Only unit strides are supported but got {op.static_strides}."
+    )
+
+  # Collect all the constraints from all dimensions.
+  dimensions_to_tile = []
+  dynamic_offset_index = 0
+  for i, size in enumerate(op.static_sizes):
+    offset = op.static_offsets[i]
+    if offset == ir.ShapedType.get_dynamic_size():
+      offset = op.offsets[dynamic_offset_index]
+      dynamic_offset_index += 1
+
+    # Drop all dimensions up to and including the last dynamic size. Dynamic
+    # sizes are not supported yet.
+    #
+    # Supporting dynamic sizes here can be done analogously to how dynamic
+    # offsets are supported. The reason we don't support dynamic sizes now is
+    # because the lowering does not yet support them.
+    if ir.ShapedType.is_dynamic_size(size):
+      dimensions_to_tile = []
+    else:
+      dims = (size, op.source.type.shape[i], offset)
+      dimensions_to_tile.append(dims)
+
+  constraints = [eqns.Divides(source_dest_var, tuple(dimensions_to_tile))]
+  system = eqns.EquationSystem(constraints=constraints)
+  return system, {source_dest_var: [source, dest]}, []
+
+
 @_add_equation_system_derivation_rule(memref.CastOp)
 def _memref_cast_op_equation_system(
     ctx: DerivationContext,
