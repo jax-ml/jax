@@ -993,6 +993,7 @@ class VectorSubcoreTest(PallasSCTest):
         @plsc.parallel_loop(0, 1, carry=carry_fn(x_ref))
         def for_each_chunk(i, carry):
           x_ref[...] = o_ref[...]
+          return carry
 
       kernel(x)
 
