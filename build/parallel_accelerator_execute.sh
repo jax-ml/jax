@@ -30,7 +30,7 @@
 JAX_ACCELERATOR_COUNT=${JAX_ACCELERATOR_COUNT:-4}
 JAX_TESTS_PER_ACCELERATOR=${JAX_TESTS_PER_ACCELERATOR:-8}
 
-export TF_PER_DEVICE_MEMORY_LIMIT_MB=${TF_PER_DEVICE_MEMORY_LIMIT_MB:-2048}
+export TF_PER_DEVICE_MEMORY_LIMIT_MB=${TF_PER_DEVICE_MEMORY_LIMIT_MB:-8192}
 
 # This function is used below in rlocation to check that a path is absolute
 function is_absolute {
@@ -65,12 +65,19 @@ mkdir -p /var/lock
 #
 # Prefer to allocate 1 test per accelerator over 4 tests on 1 accelerator
 # So, we iterate over JAX_TESTS_PER_ACCELERATOR first.
+echo "Tests per accelerator: $JAX_TESTS_PER_ACCELERATOR"
+echo "Accelerators: $JAX_ACCELERATOR_COUNT"
+
+START_MS=$(date +%s%3N)
 for j in `seq 0 $((JAX_TESTS_PER_ACCELERATOR-1))`; do
   for i in `seq 0 $((JAX_ACCELERATOR_COUNT-1))`; do
     exec {lock_fd}>/var/lock/jax_accelerator_lock_${i}_${j} || exit 1
     if flock -n "$lock_fd";
     then
       (
+        END_MS=$(date +%s%3N)
+        DURATION_MS=$((END_MS - START_MS))
+        echo "Lock took: $DURATION_MS milliseconds to acquire"
         # This export only works within the brackets, so it is isolated to one
         # single command.
         export TPU_VISIBLE_CHIPS=$i
