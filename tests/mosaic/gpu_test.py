@@ -4530,8 +4530,9 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       tma_barrier.wait()
 
       # SubView
-      dynamic_offsets = [
-          arith.constant(ir.IndexType.get(), -o) for o in offsets if o < 0
+      mixed_offsets = [
+          o if o >= 0 else arith.constant(ir.IndexType.get(), -o)
+          for o in offsets
       ]
 
       full_ref_type = ir.MemRefType(full_smem_ref.type)
@@ -4544,16 +4545,13 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           ),
           memory_space=full_ref_type.memory_space,
       )
-      sub_smem_ref = memref.SubViewOp(
-          result=rhs_subview_ref_type,
-          source=full_smem_ref,
-          offsets=dynamic_offsets,
-          sizes=None,
-          strides=None,
-          static_offsets=[(dynamic if o < 0 else o) for o in offsets],
-          static_sizes=sizes,
-          static_strides=[1] * len(sizes),
-      ).result
+      sub_smem_ref = memref.subview(
+          full_smem_ref,
+          mixed_offsets,
+          sizes,
+          strides=[1] * len(sizes),
+          result_type=rhs_subview_ref_type,
+      )
 
       transforms = []
       if tiling is not None:
