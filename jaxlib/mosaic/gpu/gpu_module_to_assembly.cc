@@ -28,6 +28,7 @@ limitations under the License.
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/TargetSelect.h"
@@ -83,6 +84,10 @@ class ModuleToAssembly : public mlir::LLVM::ModuleToObject {
 
 std::optional<SmallVector<char, 0>> ModuleToAssembly::moduleToObject(
     llvm::Module& llvm_module) {
+  // Use a debug type compatible with upstream.
+#define DEBUG_TYPE "serialize-to-llvm"
+  LLVM_DEBUG({ llvm::dbgs() << llvm_module; });
+#undef DEBUG_TYPE
   std::optional<llvm::TargetMachine*> machine = getOrCreateTargetMachine();
   if (!machine) {
     getOperation().emitError() << "Target Machine unavailable for triple "
