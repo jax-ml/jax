@@ -149,19 +149,6 @@ jax_py_test(
     ] + py_deps("absl/testing"),
 )
 
-jax_py_test(
-    name = "gpu_transform_inference_test",
-    srcs = ["gpu_transform_inference_test.py"],
-    deps = [
-        "//jax",
-        "//jax:mosaic_gpu",
-        "//jax/_src:test_util",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
 jax_multiplatform_test(
     name = "matmul_test",
     srcs = ["matmul_test.py"],

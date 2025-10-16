@@ -54,10 +54,6 @@ from .layouts import (
     to_layout_attr as to_layout_attr,
 )
 
-from .transform_inference import (
-    infer_transforms as infer_transforms,
-)
-
 from .fragmented_array import (
     FragmentedArray as FragmentedArray,
     FragmentedLayout as FragmentedLayout,

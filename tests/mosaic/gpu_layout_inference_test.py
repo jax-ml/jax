@@ -415,7 +415,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
         yield_op = scf.YieldOp([add, add, loop_ref])
 
-    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    mgpu.infer_layout(self.module)
 
     carry_layouts = [layouts.to_layout_attr(layout)] * 2
     self.assertNotIn("out_layouts", yield_op.attributes)
@@ -442,7 +442,7 @@ class LayoutInferenceTest(parameterized.TestCase):
         new_loop_c = mgpu.dialect.wgmma(loop_c, loop_a, loop_b)
         yield_op = scf.YieldOp([loop_a, loop_b, new_loop_c])
 
-    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    mgpu.infer_layout(self.module)
 
     wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
     self.checkInLayouts(yield_op, [wgmma_layout])
@@ -1231,7 +1231,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       load_op = memref.LoadOp(load_ref, [])
       store_op = memref.StoreOp(val, store_ref, [])
 
-      mgpu.infer_layout(self.module, enable_smem_inference=True)
+      mgpu.infer_layout(self.module)
 
       want = ir.ArrayAttr.get([ir.ArrayAttr.get([])])
       self.assertEqual(inference_utils.in_transforms(load_op), want)
@@ -1263,7 +1263,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       [acc, lhs, rhs] = undefs(acc_ty, lhs_ty, rhs_ty)
       wgmma_op = mgpu.dialect.WGMMAOp(acc, lhs, rhs)
 
-    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    mgpu.infer_layout(self.module)
 
     wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
     arg_transforms = ir.ArrayAttr.get([
@@ -1315,7 +1315,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       accumulate = arith.constant(ir.IntegerType.get_signless(1), 1)
       tcgen05_mma_op = mgpu.dialect.TcGen05MMAOp(acc, lhs, rhs, accumulate)
 
-    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    mgpu.infer_layout(self.module)
 
     self.assertNotIn("out_tmem_layouts", tcgen05_mma_op.attributes)
     acc_layout = tcgen05._infer_tmem_layout(out_shape, collective=False, packing=1)
@@ -1375,7 +1375,7 @@ class LayoutInferenceTest(parameterized.TestCase):
             slice_lengths=shape,
         )
 
-    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    mgpu.infer_layout(self.module)
 
     self.assertSequenceEqual(
         inference_utils.in_transforms(op), [transforms]
@@ -1421,7 +1421,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     else:
       expected_transforms = ir.ArrayAttr.get([])
 
-    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    mgpu.infer_layout(self.module)
     self.assertSequenceEqual(
         inference_utils.in_transforms(vector_op), [expected_transforms]
     )
@@ -1465,7 +1465,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     else:
       expected_transforms = ir.ArrayAttr.get([])
 
-    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    mgpu.infer_layout(self.module)
     self.assertSequenceEqual(
         inference_utils.in_transforms(vector_op), [expected_transforms]
     )
@@ -1480,7 +1480,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       slice_smem_op = mgpu.dialect.SliceSMEMOp(ref_ty, offset)
 
       transforms = ir.ArrayAttr.get([])
-      mgpu.infer_layout(self.module, enable_smem_inference=True)
+      mgpu.infer_layout(self.module)
       self.assertSequenceEqual(
           inference_utils.out_transforms(slice_smem_op), [transforms]
       )
@@ -1499,7 +1499,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ])
       mgpu.dialect.with_transforms(ref, transforms)
 
-    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    mgpu.infer_layout(self.module)
     self.assertSequenceEqual(
         inference_utils.out_transforms(ref.owner), [transforms]
     )
@@ -1524,7 +1524,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       mgpu.dialect.with_transforms(ref, transforms2)
 
     with self.assertRaisesRegex(ValueError, "Failed to infer"):
-      mgpu.infer_layout(self.module, enable_smem_inference=True)
+      mgpu.infer_layout(self.module)
 
   def test_infer_transforms_sets_default_empty_transforms_on_async_load(self):
     shape = (64, 64)
@@ -1546,7 +1546,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           collective=ir.ArrayAttr.get([]),
       )
 
-    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    mgpu.infer_layout(self.module)
     [in_transform] = inference_utils.in_transforms(async_load_op)
     self.assertSequenceEqual(in_transform, ir.ArrayAttr.get([]))
 
@@ -1569,7 +1569,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       if not annotate_producer:
         mgpu.dialect.with_transforms(cast, transforms)
 
-      mgpu.infer_layout(self.module, enable_smem_inference=True)
+      mgpu.infer_layout(self.module)
       self.assertSequenceEqual(
           inference_utils.in_transforms(cast.owner), [transforms]
       )
@@ -1613,7 +1613,7 @@ class LayoutInferenceTest(parameterized.TestCase):
         mgpu.dialect.with_transforms(subview_op.result, transforms)
 
     with self.assertRaisesRegex(ValueError, "Failed to infer"):
-      mgpu.infer_layout(self.module, enable_smem_inference=True)
+      mgpu.infer_layout(self.module)
 
   @parameterized.parameters([False, True])
   def test_infer_transforms_for_sibling_subviews_and_distant_op(
@@ -1707,7 +1707,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           static_strides=[1, 1],
       )
 
-    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    mgpu.infer_layout(self.module)
 
     want = ir.ArrayAttr.get([
         want_tt,
@@ -1764,7 +1764,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       if not annotate_input:
         mgpu.dialect.with_transforms(subview_op.result, transforms)
 
-    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    mgpu.infer_layout(self.module)
 
     self.assertSequenceEqual(
         inference_utils.in_transforms(subview_op), [transforms]
@@ -1791,7 +1791,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           out_layouts=[],
       )
 
-    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    mgpu.infer_layout(self.module)
     self.assertSequenceEqual(inference_utils.in_transforms(op), [transforms])
 
   def test_custom_primitive_op_with_conflicting_transforms_is_unsat(self):
@@ -1815,7 +1815,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       )
 
     with self.assertRaisesRegex(ValueError, "Failed to infer"):
-      mgpu.infer_layout(self.module, enable_smem_inference=True)
+      mgpu.infer_layout(self.module)
 
   @parameterized.parameters([False, True])
   def test_infer_transforms_for_memref_transpose(self, annotate_input):
@@ -1853,7 +1853,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       if not annotate_input:
         mgpu.dialect.with_transforms(transpose_op.result, out_transforms)
 
-    mgpu.infer_layout(self.module, enable_smem_inference=True)
+    mgpu.infer_layout(self.module)
 
     self.assertSequenceEqual(
         inference_utils.in_transforms(transpose_op), [in_transforms]

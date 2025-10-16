@@ -23,7 +23,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Sequence
 import dataclasses
 import enum
-from functools import partial
 import itertools
 import re
 from typing import Any, assert_never, cast
@@ -457,8 +456,6 @@ def find_assignments_for(
 @dataclasses.dataclass()
 class DerivationContext:
   """Holds context information used for deriving an equation system."""
-  # TODO(b/447079781): Remove once SMEM transform inference is implemented.
-  enable_smem_inference : bool = False
   # A map of `OperandOrResult` to the variable that it is associated with.
   variable_for_operand_or_result: dict[OperandOrResult, eqns.Variable] = (
       dataclasses.field(default_factory=dict, init=False)
@@ -618,7 +615,7 @@ def _vector_load_equation_system(
   ]
 
   # SMEM
-  if ctx.enable_smem_inference and utils.is_smem_ref(op.base):
+  if utils.is_smem_ref(op.base):
     source = OperandOrResult(op, VariableType.OPERAND, 0)
     source_var = ctx.producer_ref(source)
     operand_or_results_for_variable[source_var] = [source]
@@ -652,7 +649,7 @@ def _vector_store_equation_system(
 
   # SMEM
   constraints = []
-  if ctx.enable_smem_inference and utils.is_smem_ref(op.base):
+  if utils.is_smem_ref(op.base):
     dest = OperandOrResult(op, VariableType.OPERAND, 1)
     dest_var = ctx.producer_ref(dest)
     operand_or_results_for_variable[dest_var] = [dest]
@@ -757,7 +754,7 @@ def _for_equation_system(
   # in the operands but not in the results.
   num_leading_args = 3
   for index, o in enumerate(op.operands):
-    if not is_vector(o) and not (ctx.enable_smem_inference and _is_smem_ref(o)):
+    if not is_vector(o) and not _is_smem_ref(o):
       continue
     result_index = index - num_leading_args
     operand = OperandOrResult(op, VariableType.OPERAND, index)
@@ -923,20 +920,19 @@ def _wgmma_equation_system(
   operands_or_results_for_variable = {vec_variable: vector_operands_or_results}
 
   # SMEM
-  if ctx.enable_smem_inference:
-    a_tiling, b_tiling = _infer_wgmma_tiling(op.a.type, op.b.type)
-    b = OperandOrResult(op, VariableType.OPERAND, 2)
-    b_var = ctx.producer_ref(b)
+  a_tiling, b_tiling = _infer_wgmma_tiling(op.a.type, op.b.type)
+  b = OperandOrResult(op, VariableType.OPERAND, 2)
+  b_var = ctx.producer_ref(b)
 
-    assignments[b_var] = eqns.SMEMTiling(lc.TileTransform(b_tiling))
-    operands_or_results_for_variable[b_var] = [b]
+  assignments[b_var] = eqns.SMEMTiling(lc.TileTransform(b_tiling))
+  operands_or_results_for_variable[b_var] = [b]
 
-    if a_tiling is not None:
-      # a is in SMEM
-      a = OperandOrResult(op, VariableType.OPERAND, 1)
-      a_var = ctx.producer_ref(a)
-      assignments[a_var] = eqns.SMEMTiling(lc.TileTransform(a_tiling))
-      operands_or_results_for_variable[a_var] = [a]
+  if a_tiling is not None:
+    # a is in SMEM
+    a = OperandOrResult(op, VariableType.OPERAND, 1)
+    a_var = ctx.producer_ref(a)
+    assignments[a_var] = eqns.SMEMTiling(lc.TileTransform(a_tiling))
+    operands_or_results_for_variable[a_var] = [a]
 
   system = eqns.EquationSystem(
       assignments=assignments,
@@ -1101,7 +1097,7 @@ def _custom_primitive_equation_system(
       assignments[v] = eqns.RegisterLayout(
           layouts_lib.from_layout_attr(next(in_layouts))
       )
-    elif ctx.enable_smem_inference and _is_smem_ref(operand):
+    elif _is_smem_ref(operand):
       # Here we need to create a new variable, even though it is equal to the
       # source operand. This is because we directly assign the new variable and
       # if we did that to the source there could be conflicting assignments.
@@ -1228,25 +1224,24 @@ def _tcgen05_mma_equation_system(
     operands_for_variable[a_var] = [a]
 
   # SMEM
-  if ctx.enable_smem_inference:
-    b_tiling = _infer_tiling_for_mma_ref(
-        ir.MemRefType(op.b.type),
+  b_tiling = _infer_tiling_for_mma_ref(
+      ir.MemRefType(op.b.type),
+      max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle,
+  )
+  b = OperandOrResult(op, VariableType.OPERAND, 2)
+  b_var = ctx.producer_ref(b)
+  assignments[b_var] = eqns.SMEMTiling(lc.TileTransform(b_tiling))
+  operands_for_variable[b_var] = [b]
+
+  if _is_smem_ref(op.a):
+    a_tiling = _infer_tiling_for_mma_ref(
+        ir.MemRefType(op.a.type),
         max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle,
     )
-    b = OperandOrResult(op, VariableType.OPERAND, 2)
-    b_var = ctx.producer_ref(b)
-    assignments[b_var] = eqns.SMEMTiling(lc.TileTransform(b_tiling))
-    operands_for_variable[b_var] = [b]
-
-    if _is_smem_ref(op.a):
-      a_tiling = _infer_tiling_for_mma_ref(
-          ir.MemRefType(op.a.type),
-          max_swizzle=mgpu.SwizzlingMode.k128ByteSwizzle,
-      )
-      a = OperandOrResult(op, VariableType.OPERAND, 1)
-      a_var = ctx.producer_ref(a)
-      assignments[a_var] = eqns.SMEMTiling(lc.TileTransform(a_tiling))
-      operands_for_variable[a_var] = [a]
+    a = OperandOrResult(op, VariableType.OPERAND, 1)
+    a_var = ctx.producer_ref(a)
+    assignments[a_var] = eqns.SMEMTiling(lc.TileTransform(a_tiling))
+    operands_for_variable[a_var] = [a]
 
   return eqns.EquationSystem(assignments=assignments), operands_for_variable, []
 
@@ -1460,9 +1455,7 @@ def _async_load_store_equation_system(
   return eqns.EquationSystem(), {var: [operand]}, []
 
 
-def _ensure_all_layouts_are_set(
-    op: ir.OpView, enable_smem_inference: bool
-) -> None:
+def _ensure_all_layouts_are_set(op: ir.OpView) -> None:
   if inference_utils.should_have_layout(op):
     _ensure_right_number_of_layouts(
         op,
@@ -1483,7 +1476,7 @@ def _ensure_all_layouts_are_set(
         if inference_utils.has_out_tmem_layouts_set(op)
         else [],
     )
-  if enable_smem_inference and inference_utils.should_have_transforms(op):
+  if inference_utils.should_have_transforms(op):
     _ensure_right_number_of_transforms(
         op,
         inference_utils.in_transforms(op)
@@ -1584,10 +1577,7 @@ class _TypeAndLayout:
   layout: eqns.Constant
 
 
-def assign_layouts(
-    solution: dict[OperandOrResult, eqns.Constant],
-    enable_smem_inference: bool,
-) -> None:
+def assign_layouts(solution: dict[OperandOrResult, eqns.Constant]) -> None:
   """Assigns the layouts in `solution` to the MLIR ops they belong to.
 
   This function requires that, for each MLIR op that appears in `solution`,
@@ -1640,8 +1630,7 @@ def assign_layouts(
 
     _ensure_right_number_of_layouts(op, in_layouts, out_layouts)
     _ensure_right_number_of_tmem_layouts(op, in_tmem_layouts, out_tmem_layouts)
-    if enable_smem_inference:
-      _ensure_right_number_of_transforms(op, in_transforms, out_transforms)
+    _ensure_right_number_of_transforms(op, in_transforms, out_transforms)
 
     if inference_utils.should_have_in_layout(op):
       attrs = [layouts_lib.to_layout_attr(l) for l in in_layouts]
@@ -1656,28 +1645,26 @@ def assign_layouts(
       attrs = [layouts_lib.to_layout_attr(l) for l in out_tmem_layouts]
       op.attributes["out_tmem_layouts"] = ir.ArrayAttr.get(attrs)
 
-    if enable_smem_inference:
+    def _to_transform_attrs(
+        transforms: list[_TypeAndLayout],
+    ) -> list[ir.ArrayAttr]:
+      all_attrs: list[ir.ArrayAttr] = []
+      for tl in transforms:
+        assert isinstance(tl.layout, eqns.SMEMTiling)  # make pytype happy
+        attrs = []
+        if tl.layout.value is not None:
+          attrs.append(layouts_lib.to_transform_attr(tl.layout.value))
+          swizzle = _compute_swizzle(tl.type, tl.layout.value)
+          attrs.append(layouts_lib.to_transform_attr(swizzle))
+        all_attrs.append(ir.ArrayAttr.get(attrs))
+      return all_attrs
 
-      def _to_transform_attrs(
-          transforms: list[_TypeAndLayout],
-      ) -> list[ir.ArrayAttr]:
-        all_attrs: list[ir.ArrayAttr] = []
-        for tl in transforms:
-          assert isinstance(tl.layout, eqns.SMEMTiling)  # make pytype happy
-          attrs = []
-          if tl.layout.value is not None:
-            attrs.append(layouts_lib.to_transform_attr(tl.layout.value))
-            swizzle = _compute_swizzle(tl.type, tl.layout.value)
-            attrs.append(layouts_lib.to_transform_attr(swizzle))
-          all_attrs.append(ir.ArrayAttr.get(attrs))
-        return all_attrs
-
-      if inference_utils.should_have_in_transforms(op):
-        attrs = _to_transform_attrs(in_transforms)
-        op.attributes["in_transforms"] = ir.ArrayAttr.get(attrs)
-      if inference_utils.should_have_out_transforms(op):
-        attrs = _to_transform_attrs(out_transforms)
-        op.attributes["out_transforms"] = ir.ArrayAttr.get(attrs)
+    if inference_utils.should_have_in_transforms(op):
+      attrs = _to_transform_attrs(in_transforms)
+      op.attributes["in_transforms"] = ir.ArrayAttr.get(attrs)
+    if inference_utils.should_have_out_transforms(op):
+      attrs = _to_transform_attrs(out_transforms)
+      op.attributes["out_transforms"] = ir.ArrayAttr.get(attrs)
 
 
 def vector_operands_and_results(op: ir.OpView) -> list[OperandOrResult]:
@@ -1812,60 +1799,7 @@ def is_terminator(op: ir.OpView) -> bool:
   return isinstance(op, (scf.YieldOp, scf.ConditionOp))
 
 
-def _drop_smem(
-    system: eqns.EquationSystem, ctx: DerivationContext
-) -> tuple[eqns.EquationSystem, DerivationContext]:
-  """Drops SMEM related variables constraints and hints.
-
-  This is only needed to enable the gradual implementation and testing of
-  SMEM inference.
-  TODO(b/447079781): Remove this function once SMEM inference is fully
-  implemented.
-  """
-  def is_smem(
-      x: (
-          OperandOrResult
-          | eqns.Constraint
-          | eqns.Expression
-          | eqns.Equation
-      ),
-  ) -> bool:
-    match x:
-      case OperandOrResult(memory_space=MemorySpace.SMEM):
-        return True
-      case eqns.Transpose():
-        return True
-      case eqns.IsTransferable(source=source, target=target):
-        return is_smem(source) or is_smem(target)
-      case eqns.Divides():
-        return True
-      case eqns.Variable(key=key):
-        return is_smem(key)
-      case eqns.SMEMTiling():
-        return True
-      case eqns.Equation(lhs=lhs, rhs=rhs):
-        return is_smem(lhs) or is_smem(rhs)
-      case _:
-        return False
-
-  assign = {k: v for k, v in system.assignments.items() if not is_smem(v)}
-  equations = [e for e in system.equations if not is_smem(e)]
-  const = [c for c in system.constraints if not is_smem(c)]
-
-  new_ctx = DerivationContext()
-
-  new_ctx.operand_and_results_for_variable = {
-      k: v for k, v in ctx.operand_and_results_for_variable.items() if not is_smem(k)
-  }
-
-  new_ctx.variable_for_operand_or_result = {
-      k: v for k, v in ctx.variable_for_operand_or_result.items() if not is_smem(k)
-  }
-
-  return eqns.EquationSystem(assign, equations, const), new_ctx
-
-
-def infer_layout(module: ir.Module, enable_smem_inference: bool = True):
+def infer_layout(module: ir.Module):
   """Infers layouts for the given module.
 
   * If there are vector (respectively SMEM refs, TMEM refs) operands,
@@ -1876,16 +1810,11 @@ def infer_layout(module: ir.Module, enable_smem_inference: bool = True):
   and contain one element per relevant argument in the memory space.
   * Any of these attributes is guaranteed to not be set if there is no relevant
   input/output in the corresponding memory space.
-
-  If `enable_smem_inference` is False, SMEM transforms are not inferred. This
-  is only a temporary flag to allow for an incremental rollout of SMEM
-  inference.
-  TODO(b/447079781): Remove this flag once SMEM inference is fully implemented.
   """
   global_equation_system: eqns.EquationSystem | eqns.Unsatisfiable
   global_equation_system = eqns.EquationSystem()
   hints: list[Hint] = []
-  ctx = DerivationContext(enable_smem_inference=enable_smem_inference)
+  ctx = DerivationContext()
 
   def gather_equations(op: ir.Operation):
     # Terminator ops are handled directly by the op whose region they belong to.
@@ -1897,7 +1826,7 @@ def infer_layout(module: ir.Module, enable_smem_inference: bool = True):
     should_have_layout = (
         inference_utils.should_have_layout(op)
         or inference_utils.should_have_tmem_layout(op)
-        or (inference_utils.should_have_transforms(op) and enable_smem_inference)
+        or inference_utils.should_have_transforms(op)
     )
     if not should_have_layout:
       return
@@ -1918,9 +1847,6 @@ def infer_layout(module: ir.Module, enable_smem_inference: bool = True):
         "Failed to infer a possible set of layouts. This should only happen if "
         "user-provided layout casts are unsatisfiable."
     )
-
-  if not enable_smem_inference:
-    global_equation_system, ctx = _drop_smem(global_equation_system, ctx)
 
   propagation_hints, constraints = derive_hints_and_constraints(ctx.operand_and_results_for_variable)
   hints = reduce_hints(hints + propagation_hints, global_equation_system.assignments)  # pytype: disable=attribute-error
@@ -1952,14 +1878,8 @@ def infer_layout(module: ir.Module, enable_smem_inference: bool = True):
   }
 
   # Assigns the layouts that we found to the ops.
-  assign_layouts(layout_for_operand_or_result, enable_smem_inference)
+  assign_layouts(layout_for_operand_or_result)
 
   # Sanity check: ensure that all ops have the right number of in/out layouts.
   for op in module.body:
-    inference_utils.traverse_op(
-        op,
-        partial(
-            _ensure_all_layouts_are_set,
-            enable_smem_inference=enable_smem_inference,
-        ),
-    )
+    inference_utils.traverse_op(op, _ensure_all_layouts_are_set)
