@@ -79,9 +79,7 @@ def all_gather_lhs_matmul(
     wg_idx = lax.axis_index("wg")
     dev_id = lax.axis_index(axis_name)
     send_dev_id = lax.rem(dev_id + axis_size - 1, axis_size)
-    send_scratch_ref = plgpu.remote_ref(
-        scratch_ref, send_dev_id, device_id_type=pl.DeviceIdType.LOGICAL
-    )
+    send_scratch_ref = plgpu.remote_ref(scratch_ref, send_dev_id)
 
     def send_lhs(m_idx, n_idx, k_idx, a_smem, b_smem, send_ref, should_send):
       del b_smem  # Unused.

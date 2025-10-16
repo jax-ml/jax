@@ -278,11 +278,17 @@ def _extract_gmem_copy_params(ctx, transforms, supports_multicast=False):
   indexers = []
   for transform in transforms:
     if isinstance(transform, gpu_core.PeerMemRef):
-      if transform.device_id_type != pallas_primitives.DeviceIdType.LOGICAL:
-        raise NotImplementedError(
-            "Only logical device ids are supported for GMEM refs."
+      peer_id, other_axes = pallas_primitives.device_id_to_logical(
+          ctx.module_ctx.mesh_info,
+          lowering._ensure_ir_value_device_id(transform.device_id),
+          transform.device_id_type,
+          lambda name: lowering._axis_index_rule(ctx, axis_name=name),
+      )
+      if other_axes:
+        raise ValueError(
+            "Only JAX mesh axes can be used to obtain peer references, but"
+            f" got {other_axes}"
         )
-      peer_id = lowering._ensure_ir_value(transform.device_id, jnp.int32)
       continue
     elif isinstance(transform, gpu_core.MulticastRef):
       if not supports_multicast:

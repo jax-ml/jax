@@ -1327,6 +1327,11 @@ def device_id_to_logical(
     # Mesh means we are passed the mesh coordinates for the device
     device_ids = tree_util.tree_leaves(device_id)
     mesh_strides = mesh_context.mesh_strides
+    if len(device_ids) != len(mesh_strides):
+      raise ValueError(
+          "Number of device ids must match the number of mesh axes, but got"
+          f" {len(device_ids)} ids for a {len(mesh_strides)}D mesh."
+      )
 
     i32 = ir.IntegerType.get_signless(32)
     if len(device_ids) == 0:

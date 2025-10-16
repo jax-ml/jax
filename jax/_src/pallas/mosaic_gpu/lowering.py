@@ -1455,7 +1455,7 @@ def _handle_transforms(
       case gpu_core.PeerMemRef(device_id, device_id_type):
         peer_device_id, other_axes = primitives.device_id_to_logical(
             ctx.module_ctx.mesh_info,
-            device_id,
+            _ensure_ir_value_device_id(device_id),
             device_id_type,
             lambda name: _axis_index_rule(ctx, axis_name=name),
         )
@@ -3318,6 +3318,15 @@ def _ensure_ir_value(x: Any, dtype: jnp.dtype) -> ir.Value:
   return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
 
 
+def _ensure_ir_value_device_id(device_id: Any) -> ir.Value:
+  ensure_i32 = functools.partial(_ensure_ir_value, dtype=jnp.int32)
+  if isinstance(device_id, tuple):
+    return tuple(map(ensure_i32, device_id))
+  if isinstance(device_id, dict):
+    return {k: ensure_i32(v) for k, v in device_id.items()}
+  return ensure_i32(device_id)
+
+
 def _ir_constant(v: object, t: ir.Type) -> ir.Value:
   if isinstance(
       v, (np.number, np.ndarray, int, float, literals.TypedNdArray)
@@ -3475,7 +3484,7 @@ def _semaphore_signal_lowering_rule(
   if device_id is not None:
     device_id, other_axes = primitives.device_id_to_logical(
         ctx.module_ctx.mesh_info,
-        _ensure_ir_value(device_id, jnp.int32),
+        _ensure_ir_value_device_id(device_id),
         device_id_type,
         lambda name: _axis_index_rule(ctx, axis_name=name),
     )
@@ -3483,9 +3492,7 @@ def _semaphore_signal_lowering_rule(
       raise NotImplementedError(
           f"Only JAX mesh axes can be used in device_id, but found {other_axes}"
       )
-    sem_ptr = ctx.launch_ctx.to_remote(
-        sem_ptr, _ensure_ir_value(device_id, jnp.int32)
-    )
+    sem_ptr = ctx.launch_ctx.to_remote(sem_ptr, device_id)
   # TODO(apaszke): Narrow the scope from .sys to .gpu when the semaphore is local.
   val = _ir_constant(value, i32)
   # We only signal the semaphore from a single lane, which does not guarantee
