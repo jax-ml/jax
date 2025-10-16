@@ -508,8 +508,9 @@ class Divides:
 
   `dimensions_to_tile` is a tuple of dimensions tuples, ordered from major to
   minor. Each dimension tuple may contain ints and ir.Values that need to be
-  evenly divided by the corresponding tile size. Only the tiled dimensions
-  require checking.
+  evenly divided by the corresponding tile size. A valid tiling's rank must be
+  less than or equal to the number of dimensions in `dimensions_to_tile`. Only
+  the tiled dimensions require checking.
 
   Example:
 
@@ -954,21 +955,16 @@ def _merge_divides_dimensions(
   Each element of the outer tuple is a sequence of values that must divide
   the corresponding dimension in the original Divides constraints.
 
-  If the two outer tuples are of different lengths, the smaller tuple will be
-  merged with the tail of the longer one. This is the correct behavior for
-  tiling-related Divides constraints.
+  If the two outer tuples are of different lengths, the large tuple will be
+  truncated (removing initial dimensions) to the length of the smaller tuple.
+  This preserves the semantics of the Divides constraints where a tiling's rank
+  cannot exceed the size of dimensions_to_tile.
   """
-  if len(a) >= len(b):
-    long = a
-    short = b
-  else:
-    long = b
-    short = a
-
-  len_diff = len(long) - len(short)
-  result = list(long[:len_diff])
-  for long_dims, short_dims in zip(long[len_diff:], short, strict=True):
-    result.append(long_dims + short_dims)
+  min_len = min(len(a), len(b))
+  result = []
+  if min_len > 0:
+    for a_dims, b_dims in zip(a[-min_len:], b[-min_len:], strict=True):
+      result.append(a_dims + b_dims)
   return tuple(result)
 
 

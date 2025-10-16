@@ -263,7 +263,7 @@ def _extract_tiling_candidate(
   if not isinstance(divides.expr, eqns.Variable):
     return
   if num_tiled_dims > len(divides.dimensions_to_tile):
-    # TODO(b/447079781): Support this case, by just assuming 0 (no constraints).
+    # The tiling's rank cannot be larger than the size of `dimensions_to_tile`.
     return
 
   if num_tiled_dims == 0:

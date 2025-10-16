@@ -541,7 +541,12 @@ class EquationSystemTest(parameterized.TestCase):
     self.assertEqual(reduce([
         divides(v0, [[16, 10]]),
         divides(v0, [[5],[8]]),
-    ]), [divides(v0, [[5], [2]])])
+    ]), [divides(v0, [[2]])])
+
+    self.assertEqual(reduce([
+        divides(v0, [[16, 10]]),
+        divides(v0, []),
+    ]), [divides(v0, [])])
 
     # Merging of constraints - multiple vars.
     self.assertEqual(reduce([
@@ -550,8 +555,8 @@ class EquationSystemTest(parameterized.TestCase):
         divides(v1, [[1], [2, 4], [5, 10]]),
         divides(v1, [[9], [20]]),
     ]), [
-        divides(v0, [[5], [2]]),
-        divides(v1, [[1], [1], [5]]),
+        divides(v0, [[2]]),
+        divides(v1, [[1], [5]]),
     ])
 
   def test_canonicalize_dimensions_to_tile(self):
