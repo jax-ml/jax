@@ -133,14 +133,13 @@ ffi::Error XlaBufferCallback(int32_t device_ordinal, const XLA_FFI_Api* api,
                      nb::cast(py_buffer).release().ptr());
   }
 
-  xla::EnterHostCallback();
+  xla::HostCallbackScope cleanup;
   try {
     callback(*nb::borrow<nb::args>(nb_args));
   } catch (nb::python_error& e) {
     return ffi::Error::Internal(
         absl::StrFormat("Error when calling buffer callback: %s", e.what()));
   }
-  xla::LeaveHostCallback();
 
   return ffi::Error::Success();
 }

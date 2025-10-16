@@ -78,9 +78,11 @@ absl::Status CpuCallback::PrepareAndCall(void* result, void** arg_ptrs) {
     }
   }
 
-  xla::EnterHostCallback();
-  absl::StatusOr<nb::tuple> maybe_result_tuple = Call(std::move(args));
-  xla::LeaveHostCallback();
+  absl::StatusOr<nb::tuple> maybe_result_tuple;
+  {
+    xla::HostCallbackScope scope;
+    maybe_result_tuple = Call(std::move(args));
+  }
   TF_ASSIGN_OR_RETURN(auto result_tuple, maybe_result_tuple);
 
   for (size_t i = 0; i < results_.size(); ++i) {

@@ -115,18 +115,19 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
     PyTuple_SET_ITEM(nb_args.ptr(), i, array.release().ptr());
   }
 
-  xla::EnterHostCallback();
   // TODO(dsuo): Change this to use the Python vectorcall protocol, which allows
   // you to avoid constructing a tuple for the arguments.
   nb::tuple result_tuple;
-  try {
-    auto result_object = callback(*nb::borrow<nb::args>(nb_args));
-    result_tuple = nb::cast<nb::tuple>(result_object);
-  } catch (nb::python_error& e) {
-    return ffi::Error::Internal(
-        absl::StrFormat("CpuCallback error calling callback: %s", e.what()));
+  {
+    xla::HostCallbackScope scope;
+    try {
+      auto result_object = callback(*nb::borrow<nb::args>(nb_args));
+      result_tuple = nb::cast<nb::tuple>(result_object);
+    } catch (nb::python_error& e) {
+      return ffi::Error::Internal(
+          absl::StrFormat("CpuCallback error calling callback: %s", e.what()));
+    }
   }
-  xla::LeaveHostCallback();
 
   for (size_t i = 0; i < rets.size(); ++i) {
     auto ret = rets.get<ffi::AnyBuffer>(i).value();

@@ -152,18 +152,19 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
     PyTuple_SET_ITEM(host_input_arrays.ptr(), i, array.inc_ref().ptr());
   }
 
-  xla::EnterHostCallback();
   // TODO(dsuo): Change this to use the Python vectorcall protocol, which allows
   // you to avoid constructing a tuple for the arguments.
   nb::tuple result_tuple;
-  try {
-    auto result_object = callback(*nb::borrow<nb::args>(host_input_arrays));
-    result_tuple = nb::cast<nb::tuple>(result_object);
-  } catch (nb::python_error& e) {
-    return xla::ffi::Error::Internal(
-        absl::StrFormat("CpuCallback error calling callback: %s", e.what()));
+  {
+    xla::HostCallbackScope scope;
+    try {
+      auto result_object = callback(*nb::borrow<nb::args>(host_input_arrays));
+      result_tuple = nb::cast<nb::tuple>(result_object);
+    } catch (nb::python_error& e) {
+      return xla::ffi::Error::Internal(
+          absl::StrFormat("CpuCallback error calling callback: %s", e.what()));
+    }
   }
-  xla::LeaveHostCallback();
 
   std::vector<void*> temp_buffers;
   for (size_t i = 0; i < rets.size(); ++i) {
