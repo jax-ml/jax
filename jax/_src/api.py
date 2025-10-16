@@ -51,6 +51,7 @@ from jax._src import array
 from jax._src import basearray
 from jax._src import distributed
 from jax._src import dtypes
+from jax._src.dtypes import canonicalize_value
 from jax._src import sharding_impls
 from jax._src import sharding_specs
 from jax._src import source_info_util
@@ -2180,10 +2181,8 @@ def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
   if config.vjp3.value:
     return _vjp3(fun, *primals, has_aux=has_aux)
   primals_flat, in_tree = tree_flatten(primals)
-  primals_flat = [
-      dtypes.canonicalize_value(v) if not isinstance(v, core.Tracer) else v
-      for v in primals_flat
-  ]
+  primals_flat = [canonicalize_value(v) if not isinstance(v, core.Tracer) else v
+                  for v in primals_flat]
   for arg in primals_flat: dispatch.check_arg(arg)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
@@ -2287,9 +2286,9 @@ def vjp3(f, *primals, has_aux=False):
   return _vjp3(fun, *primals, has_aux=has_aux)
 
 def _vjp3(fun, *primals, has_aux=False):
+  canon = lambda x: x if isinstance(x, core.Tracer) else canonicalize_value(x)
+  primals = tree_map(canon, primals)
   primals_flat, in_tree = tree_flatten(primals)
-  primals_flat = [dtypes.canonicalize_value(v) if not isinstance(v, core.Tracer)
-                  else v for v in primals_flat]
   for arg in primals_flat: dispatch.check_arg(arg)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
