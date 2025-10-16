@@ -92,7 +92,8 @@ intersphinx_mapping = {
     'array_api': ('https://data-apis.org/array-api/2023.12/', None),
     'python': ('https://docs.python.org/3/', None),
     'numpy': ('https://numpy.org/doc/stable/', None),
-    'scipy': ('https://docs.scipy.org/doc/scipy/reference/', None),
+    # TODO(phawkins,jakevdp): readd scipy when it is up again.
+    # 'scipy': ('https://docs.scipy.org/doc/scipy/reference/', None),
 }
 
 suppress_warnings = [
