@@ -607,12 +607,12 @@ absl::StatusOr<CompiledKernel*> CachedCompileAndInit(CacheKey key,
 
   {
     // Fast path uses reader lock (as hash map look-up is relatively slow).
-    absl::ReaderMutexLock lock(mutex);
+    absl::ReaderMutexLock lock(*mutex);
     auto it = cache->find(key);
     if (ABSL_PREDICT_TRUE(it != cache->end())) return &it->second;
   }
 
-  absl::MutexLock lock(mutex);
+  absl::MutexLock lock(*mutex);
   // We released the reader lock, another thread might have initialized it.
   if (cache->find(key) == cache->end()) {
     tsl::profiler::TraceMe trace("Compilation cache miss");
