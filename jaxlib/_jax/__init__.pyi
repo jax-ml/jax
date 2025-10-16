@@ -1557,7 +1557,7 @@ def check_and_canonicalize_memory_kind(
     memory_kind: object | None, device_list: DeviceList
 ) -> object: ...
 
-ifrt_version_number: int = 33
+ifrt_version_number: int = 34
 
 def approx_top_k_reduction_output_size(
     input_size: int,

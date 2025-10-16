@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
@@ -342,6 +343,7 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
   TF_ASSIGN_OR_RETURN(xla::PrimitiveType element_type,
                       xla::DLDataTypeToPrimitiveType(dlmt->dl_tensor.dtype));
 
+  bool has_custom_layout = dlmt->dl_tensor.strides != nullptr;
   std::vector<int64_t> minor_to_major;
   if (dlmt->dl_tensor.strides &&
       absl::c_find(dimensions, 0) == dimensions.end()) {
@@ -372,8 +374,15 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
         "This operation is implemented for a PjRt-compatible backend only.");
   }
   PyUserContextScope user_context_scope;
+#if JAX_IFRT_VERSION_NUMBER >= 34
+  TF_ASSIGN_OR_RETURN(
+      auto ifrt_array,
+      ifrt_client->CreatePjRtArray(std::move(pjrt_buffer), has_custom_layout));
+#else
+  (void)has_custom_layout;
   TF_ASSIGN_OR_RETURN(auto ifrt_array,
                       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer)));
+#endif
   return PyArray::MakeFromSingleDeviceArray(std::move(client),
                                             std::move(ifrt_array), false, true);
 }

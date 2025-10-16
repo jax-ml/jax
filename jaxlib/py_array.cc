@@ -99,6 +99,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -1067,6 +1068,7 @@ absl::StatusOr<nb::object> CudaArrayInterfaceToBuffer(
         }
       }()));
 
+  bool has_custom_layout;
   std::vector<int64_t> minor_to_major(ndim);
   if (cai.contains("strides") && !cai["strides"].is_none() && data_value != 0) {
     std::iota(minor_to_major.begin(), minor_to_major.end(), 0);
@@ -1076,6 +1078,7 @@ absl::StatusOr<nb::object> CudaArrayInterfaceToBuffer(
           "CUDA Array Interface `shape` and `strides` dimensionalities are "
           "inconsistent");
     }
+    has_custom_layout = true;
     absl::c_sort(minor_to_major, [&](int a, int b) {
       // If two dimensions have the same stride, prefer the major-to-minor
       // interpretation of the ordering, since that's what JAX wants.
@@ -1094,6 +1097,7 @@ absl::StatusOr<nb::object> CudaArrayInterfaceToBuffer(
       stride *= dimensions[d];
     }
   } else {
+    has_custom_layout = false;
     std::iota(minor_to_major.rbegin(), minor_to_major.rend(), 0);
   }
   xla::Shape shape = xla::ShapeUtil::MakeShapeWithDenseLayout(
@@ -1120,8 +1124,15 @@ absl::StatusOr<nb::object> CudaArrayInterfaceToBuffer(
         "This operation is implemented for a PjRt-compatible backend only.");
   }
   PyUserContextScope user_context_scope;
+#if JAX_IFRT_VERSION_NUMBER >= 34
+  TF_ASSIGN_OR_RETURN(
+      auto ifrt_array,
+      ifrt_client->CreatePjRtArray(std::move(pjrt_buffer), has_custom_layout));
+#else
+  (void)has_custom_layout;
   TF_ASSIGN_OR_RETURN(auto ifrt_array,
                       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer)));
+#endif
   return PyArray::MakeFromSingleDeviceArray(std::move(client),
                                             std::move(ifrt_array), false, true);
 }

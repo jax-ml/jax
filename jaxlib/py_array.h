@@ -156,8 +156,8 @@ class PyArray : public nanobind::object {
   // checked.
   PyArray(nanobind::object aval, bool weak_type, xla::nb_dtype dtype,
           std::vector<int64_t> shape, nanobind::object sharding,
-          nb_class_ptr<PyClient> py_client,
-          xla::ifrt::ArrayRef ifrt_array, bool committed, bool skip_checks,
+          nb_class_ptr<PyClient> py_client, xla::ifrt::ArrayRef ifrt_array,
+          bool committed, bool skip_checks,
           xla::PjRtFuture<> result_status = xla::PjRtFuture<>());
 
   static PyArray MakeFromSingleDeviceArray(
@@ -196,7 +196,7 @@ class PyArray : public nanobind::object {
     if (layout == nullptr) {
       TF_ASSIGN_OR_RETURN(
           xla::ifrt::Shape shard_shape,
-          ifrt_array_ptr->sharding().GetShardShape(ifrt_array()->shape()));
+          ifrt_array_ptr->sharding().GetShardShape(ifrt_array_ptr->shape()));
       TF_ASSIGN_OR_RETURN(
           layout, ifrt_array_ptr->client()->GetDefaultPjRtLayout(
                       ifrt_array_ptr->dtype(), shard_shape.dims(),
