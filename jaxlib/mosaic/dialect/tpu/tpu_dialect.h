@@ -21,6 +21,7 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include "llvm/ADT/Hashing.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -30,6 +31,12 @@ limitations under the License.
 #include "jaxlib/mosaic/dialect/tpu/layout.h"  // IWYU pragma: keep
 #include "jaxlib/mosaic/dialect/tpu/tpu_enums.h.inc"
 #include "xla/layout.h"  // IWYU pragma: keep
+
+// This is a bit unclean, but we need to squat the xla namespace to make sure
+// that this overload is found via argument-dependent lookup.
+namespace xla {
+llvm::hash_code hash_value(const xla::Tile& tile);
+}
 
 namespace mlir::tpu {
 class TPUDialect;
