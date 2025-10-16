@@ -653,7 +653,8 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(out_a, a)
     np.testing.assert_array_equal(out_b, b)
 
-  def test_scan_count(self):
+  @parameterized.parameters(jnp.int32, jnp.float32)
+  def test_scan_count(self, dtype):
     shape = [8]
 
     @vector_subcore_kernel(
@@ -667,7 +668,7 @@ class VectorSubcoreTest(PallasSCTest):
       mask_ref[...] = mask.astype(jnp.int32)
 
     key = jax.random.key(42)
-    x = jax.random.randint(key, shape, 0, 10, dtype=jnp.int32)
+    x = jax.random.randint(key, shape, 0, 10, dtype=jnp.int32).astype(dtype)
     counts, mask = kernel(x)
     expected_counts = []
     expected_mask = []
@@ -992,6 +993,20 @@ class VectorSubcoreTest(PallasSCTest):
         @plsc.parallel_loop(0, 1, carry=carry_fn(x_ref))
         def for_each_chunk(i, carry):
           x_ref[...] = o_ref[...]
+
+      kernel(x)
+
+  def test_parallel_loop_wrong_carry_return(self):
+    x = jnp.arange(64, dtype=jnp.int32)
+
+    with self.assertRaisesRegex(ValueError, "should have same structure"):
+      @vector_subcore_kernel(out_shape=x)
+      def kernel(x_ref, o_ref):
+        init = dict(x=jnp.zeros([]), y=jnp.ones([8]))
+        @plsc.parallel_loop(0, 1, carry=init)
+        def for_each_chunk(i, carry):
+          x_ref[...] = o_ref[...]
+          return carry["x"]
 
       kernel(x)
 
