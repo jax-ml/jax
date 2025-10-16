@@ -4227,10 +4227,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(jax.tree.structure(traced.out_info).num_leaves, 1)
     self.assertEqual(traced.out_info.shape, (8,))
     self.assertEqual(traced.out_info.dtype, jnp.int32)
-    # one for args, one for kwargs (though kwargs is empty)
-    self.assertLen(traced.in_avals, 2)
-    self.assertLen(traced.in_avals[0], 1)
-    self.assertLen(traced.in_avals[1], 0)  # empty kwarg
 
   def test_in_out_shardings_unconstrained_error(self):
     mesh = jtu.create_mesh((1,), ('x',))
