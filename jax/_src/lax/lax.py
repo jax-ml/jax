@@ -4720,24 +4720,14 @@ mlir.register_lowering(sub_p, partial(_nary_lower_hlo, hlo.subtract))
 batching.ragged_prop_rules[sub_p] = batching.ragged_mask_elementwise_rule
 
 
-def _mul_transpose(ct, x, y):
-  assert ad.is_undefined_primal(x) ^ ad.is_undefined_primal(y)
-  if ad.is_undefined_primal(x):
-    if type(ct) is ad_util.Zero:
-      return [ad_util.Zero(x.aval), None]
-    else:
-      return [_unbroadcast(x.aval, mul(ct, y)), None]
-  else:
-    if type(ct) is ad_util.Zero:
-      return [None, ad_util.Zero(y.aval)]
-    else:
-      return [None, _unbroadcast(y.aval, mul(x, ct))]
-
 mul_p = standard_naryop([_num, _num], 'mul')
 ad.defjvp(mul_p,
           lambda xdot, x, y: mul(xdot, y),
           lambda ydot, x, y: mul(x, ydot))
-ad.primitive_transposes[mul_p] = _mul_transpose
+
+ad.defbilinear(mul_p, lambda ct, x, y: _unbroadcast(x.aval, mul(ct, y)),
+               lambda ct, x, y: _unbroadcast(y.aval, mul(x, ct)))
+
 mlir.register_lowering(mul_p, partial(_nary_lower_hlo, hlo.multiply))
 batching.ragged_prop_rules[mul_p] = batching.ragged_mask_elementwise_rule
 

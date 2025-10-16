@@ -1324,15 +1324,18 @@ def defbilinear(prim, lhs_rule, rhs_rule):
 
 def bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
   assert is_undefined_primal(x) ^ is_undefined_primal(y)
-  if type(cotangent) is Zero:
-    return Zero
   if is_undefined_primal(x):
-    out = lhs_rule(cotangent, x, y, **kwargs)
-    return Zero if out is Zero else (out, None)
+    if type(cotangent) is Zero:
+      return Zero(x.aval), None
+    else:
+      out = lhs_rule(cotangent, x, y, **kwargs)
+      return out, None
   else:
-    out = rhs_rule(cotangent, x, y, **kwargs)
-    return Zero if out is Zero else (None, out)
-
+    if type(cotangent) is Zero:
+      return None, Zero(y.aval)
+    else:
+      out = rhs_rule(cotangent, x, y, **kwargs)
+      return None, out
 
 def defjvp_zero(primitive):
   assert isinstance(primitive, Primitive)
