@@ -6154,7 +6154,21 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
       permutation.take_back(3) ==
       ArrayRef<int64_t>({rank - 2, rank - 3, rank - 1});
 
-  // Packed major minor pemute
+  auto reshape_to_4d = [&](xla::Array<Value>& arr) {
+    auto dims = arr.dimensions();
+    // Keep the last 3 dims, and flatten the rest to the first dim or expand it.
+    auto last_3_dims = dims.last(3);
+    const int64_t num_elements_in_last_3_dims =
+        std::accumulate(last_3_dims.begin(), last_3_dims.end(),
+                        static_cast<int64_t>(1), std::multiplies<int64_t>());
+    llvm::SmallVector<int64_t, 4> new_dims = {
+        arr.num_elements() / num_elements_in_last_3_dims,
+    };
+    new_dims.append(last_3_dims.begin(), last_3_dims.end());
+    arr.Reshape(new_dims);
+  };
+
+  // Packed major minor permute
   // TODO(b/448865291): Merge this branch and the unpacked one into a single
   // general algorithm.
   if (untiled_tiled_swap && layout_in.packing() > 1) {
@@ -6167,65 +6181,92 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
         layout_in.tiling()[1] != ctx.target_shape[1]) {
       return op.emitOpError("Not implemented: expected single-sublane tiling");
     }
-    // TODO(b/448862637): Just use the reshape_to_4d from below.
-    if (src_ty.getRank() != 3) {
-      return op.emitOpError("Not implemented: only 3D values supported");
-    }
-    // TODO(b/448862637): We just need to pad.
-    if (*(src_ty.getShape().end() - 2) % packing != 0) {
-      return op.emitOpError(
-          "Not implemented: second minor not divisible by packing");
-    }
-    // TODO(b/448862637): We just need to pad below.
-    if (*(src_ty.getShape().end() - 3) % packing != 0) {
-      return op.emitOpError(
-          "Not implemented: third minor not divisible by packing");
-    }
-    xla::Array<Value> dst_vregs(
-        layout_out.tileArrayShape(dst_ty.getShape(), ctx.target_shape));
+
+    const int64_t rank = src_ty.getRank();
+    const auto& src_shape = src_ty.getShape();
+    int64_t src_3rd_minor_shape_padded =
+        llvm::alignTo(src_shape[rank - 3], packing);
+    int64_t src_2nd_minor_shape_padded =
+        llvm::alignTo(src_shape[rank - 2], packing);
+
+    reshape_to_4d(src_vregs);
+
+    // Zero-initialize and pad the src_vregs to have correct 3rd minor and 2nd
+    // minor dimensions.
+    SmallVector<int64_t> padded_src_vreg_dims = {
+        src_vregs.dim(0), src_3rd_minor_shape_padded,
+        src_2nd_minor_shape_padded / packing, src_vregs.dim(3)};
+    auto temp_src_vregs = xla::Array<Value>(
+        padded_src_vreg_dims,
+        getZerosVector(builder, getNativeVregType(src_ty.getElementType(),
+                                                  ctx.target_shape)));
+    temp_src_vregs.UpdateSlice(src_vregs, {0, 0, 0, 0});
+    src_vregs = std::move(temp_src_vregs);
+    // Since this is a major-minor permute, we can use information about
+    // src_vregs to determine the dimensions of dst_vregs.
+    SmallVector<int64_t> temp_dst_vreg_dims = {
+        src_vregs.dim(0), src_2nd_minor_shape_padded,
+        src_3rd_minor_shape_padded / packing, src_vregs.dim(3)};
+    xla::Array<Value> temp_dst_vregs(temp_dst_vreg_dims);
+
     VectorType int_packed_ty = getNativeVregType(
         builder.getIntegerType(layout_in.bitwidth()), ctx.target_shape);
     VectorType int_32_ty =
         getNativeVregType(builder.getI32Type(), ctx.target_shape);
     VectorType vreg_ty =
         getNativeVregType(src_ty.getElementType(), ctx.target_shape);
-    for (int64_t minor_idx = 0; minor_idx < src_vregs.dimensions().back();
-         ++minor_idx) {
-      for (int64_t second_minor_vreg_idx = 0;
-           second_minor_vreg_idx < *(src_vregs.dimensions().end() - 2);
-           ++second_minor_vreg_idx) {
-        for (int64_t third_minor_base_idx = 0;
-             third_minor_base_idx < *(src_vregs.dimensions().end() - 3);
-             third_minor_base_idx += packing) {
-          for (int64_t second_minor_subidx = 0; second_minor_subidx < packing;
-               ++second_minor_subidx) {
-            SmallVector<Value> unpacked;
-            // We could have just interleaved unpacked the second_minor_idx part
-            // of the vreg in the loop below, but that ends up being more
-            // expensive than we need. Simple shifts do the trick. The high bits
-            // will be truncated by packing anyway.
-            for (int64_t third_minor_subidx = 0; third_minor_subidx < packing;
-                 ++third_minor_subidx) {
-              Value vreg = src_vregs(third_minor_base_idx + third_minor_subidx,
-                                     second_minor_vreg_idx, minor_idx);
-              vreg = tpu::BitcastVregOp::create(builder, int_32_ty, vreg);
-              vreg = arith::ShRUIOp::create(
-                  builder, vreg,
-                  getFullLikeVector(builder, cast<TypedValue<VectorType>>(vreg),
-                                    builder.getI32IntegerAttr(
-                                        second_minor_subidx * bitwidth)));
-              unpacked.push_back(vreg);
+    // Iterate over the first dim. The algorithm operates on the last 3 dims.
+    for (int64_t outer_idx = 0; outer_idx < src_vregs.dim(0); ++outer_idx) {
+      for (int64_t minor_idx = 0; minor_idx < src_vregs.dim(3); ++minor_idx) {
+        for (int64_t second_minor_vreg_idx = 0;
+             second_minor_vreg_idx < src_vregs.dim(2);
+             ++second_minor_vreg_idx) {
+          for (int64_t third_minor_base_idx = 0;
+               third_minor_base_idx < src_vregs.dim(1);
+               third_minor_base_idx += packing) {
+            for (int64_t second_minor_subidx = 0; second_minor_subidx < packing;
+                 ++second_minor_subidx) {
+              SmallVector<Value> unpacked;
+              // We could have just interleaved unpacked the second_minor_idx
+              // part of the vreg in the loop below, but that ends up being more
+              // expensive than we need. Simple shifts do the trick. The high
+              // bits will be truncated by packing anyway.
+              for (int64_t third_minor_subidx = 0; third_minor_subidx < packing;
+                   ++third_minor_subidx) {
+                Value vreg = src_vregs(
+                    outer_idx, third_minor_base_idx + third_minor_subidx,
+                    second_minor_vreg_idx, minor_idx);
+                vreg = tpu::BitcastVregOp::create(builder, int_32_ty, vreg);
+                vreg = arith::ShRUIOp::create(
+                    builder, vreg,
+                    getFullLikeVector(builder,
+                                      cast<TypedValue<VectorType>>(vreg),
+                                      builder.getI32IntegerAttr(
+                                          second_minor_subidx * bitwidth)));
+                unpacked.push_back(vreg);
+              }
+              Value repacked_i32 = tpu::PackSubelementsOp::create(
+                  builder, int_packed_ty, unpacked,
+                  tpu::PackFormat::kInterleaved);
+              temp_dst_vregs(
+                  outer_idx,
+                  second_minor_vreg_idx * packing + second_minor_subidx,
+                  third_minor_base_idx / packing, minor_idx) =
+                  tpu::BitcastVregOp::create(builder, vreg_ty, repacked_i32);
             }
-            Value repacked_i32 =
-                tpu::PackSubelementsOp::create(builder, int_packed_ty, unpacked,
-                                               tpu::PackFormat::kInterleaved);
-            dst_vregs(second_minor_vreg_idx * packing + second_minor_subidx,
-                      third_minor_base_idx / packing, minor_idx) =
-                tpu::BitcastVregOp::create(builder, vreg_ty, repacked_i32);
           }
         }
       }
     }
+
+    // Prepare the final dst_vregs.
+    SmallVector<int64_t> dst_vreg_dims =
+        layout_out.tileArrayShape(dst_ty.getShape(), ctx.target_shape);
+    xla::Array<Value> dst_vregs(dst_vreg_dims);
+    reshape_to_4d(dst_vregs);
+    dst_vregs = temp_dst_vregs.Slice({0, 0, 0, 0}, dst_vregs.dimensions());
+    dst_vregs.Reshape(dst_vreg_dims);
+
     auto assembled =
         assemble(builder, dst_ty, layout_out, dst_vregs, ctx.target_shape);
     transpose_op.getOperation()->replaceAllUsesWith(assembled);
@@ -6461,21 +6502,6 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
     static constexpr std::array<int, 8> permute_pattern_stage2_high_arr = {
         8,  9,  12, 13,
         10, 11, 14, 15};  // Selects from CH_XY to make A2B2C2D2A3B3C3D3
-
-    auto reshape_to_4d = [&](xla::Array<Value>& arr) {
-      auto dims = arr.dimensions();
-      // Keep the last 3 dims, and flatten the rest to the first dim or expand
-      // it.
-      auto last_3_dims = dims.last(3);
-      const int64_t num_elements_in_last_3_dims =
-          std::accumulate(last_3_dims.begin(), last_3_dims.end(),
-                          static_cast<int64_t>(1), std::multiplies<int64_t>());
-      llvm::SmallVector<int64_t, 4> new_dims = {
-          arr.num_elements() / num_elements_in_last_3_dims,
-      };
-      new_dims.append(last_3_dims.begin(), last_3_dims.end());
-      arr.Reshape(new_dims);
-    };
 
     llvm::SmallVector<int64_t, 4> original_dst_vregs_dims(
         dst_vregs.dimensions().begin(), dst_vregs.dimensions().end());
