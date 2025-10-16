@@ -27,7 +27,6 @@ from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_interpret
-from jax._src.pallas.mosaic.interpret import shared_memory as memory
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
@@ -43,19 +42,19 @@ class CountStoreCallbacksContext:
 
   def __init__(self):
     self._num_stores = 0
-    self._saved = memory.store
+    self._saved = mosaic_interpret.store
 
   def __enter__(self):
     def _store_callback(self, *args, **kwargs):
       self._num_stores += 1
       return self._saved(*args, **kwargs)
 
-    memory.store = functools.partial(_store_callback, self)
+    mosaic_interpret.store = functools.partial(_store_callback, self)
     return self
 
   def __exit__(self, ty, value, traceback):
     del ty, value, traceback
-    memory.store = self._saved
+    mosaic_interpret.store = self._saved
 
   @property
   def num_stores(self):
