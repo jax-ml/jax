@@ -1300,28 +1300,15 @@ def _slice_smem_equation_system(
   return (eqns.EquationSystem(), {res_var: [res]}, [])
 
 
-# TODO(b/447079781): Check whether we should create new variables or use
-# variables from the producer_ref in all memref rules. Ideally all of those
-# rules should handles references the same way. If there is a reason for
-# handling them differently, document in each rule.
-#
-# E.g. here, using the producer_ref variable would work for all existing tests,
-# but we create a new variable + an equation in order to be consistent with the
-# other memref rules.
 @_add_equation_system_derivation_rule(memref.CastOp)
 def _memref_cast_op_equation_system(
     ctx: DerivationContext,
     op: memref.CastOp,
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   source = OperandOrResult(op, VariableType.OPERAND, 0)
-  var_source = ctx.producer_ref(source)
+  var_source_dest = ctx.producer_ref(source)
   dest = OperandOrResult(op, VariableType.RESULT, 0)
-  var_dest = eqns.Variable(dest)
-  return (
-      eqns.EquationSystem(equations=[eqns.Equation(var_source, var_dest)]),
-      {var_source: [source], var_dest: [dest]},
-      [],
-  )
+  return eqns.EquationSystem(), {var_source_dest: [source, dest]}, []
 
 
 @_add_equation_system_derivation_rule(memref.TransposeOp)
