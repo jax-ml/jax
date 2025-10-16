@@ -9492,6 +9492,26 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jax.jit(jax.jacfwd(broadcast_sharded))(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y', None)))
 
+  @jtu.with_explicit_mesh((2, 4), ('x', 'y'))
+  def test_vmap_grad_sharded_gather(self, mesh):
+    tokens = jax.device_put(
+        np.arange(32 * 256, dtype=np.float32).reshape(32, 256), P('x', None))
+    ids = jax.device_put(
+        np.arange(32 * 16, dtype=np.int32).reshape(32, 16), P('x', None))
+
+    def sum_gather(t, i):
+      return jnp.mean(t.at[i].get(out_sharding=P('y')))
+
+    @jax.jit
+    def f(t, i):
+      return jax.vmap(jax.value_and_grad(sum_gather))(t, i)
+
+    value, grad = f(tokens, ids)
+    self.assertEqual(value.shape, (32,))
+    self.assertEqual(value.sharding, NamedSharding(mesh, P('x')))
+    self.assertEqual(grad.shape, tokens.shape)
+    self.assertEqual(grad.sharding, tokens.sharding)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

@@ -2812,10 +2812,15 @@ def _reshard_impl(x, dst_sharding):
 reshard_p.def_impl(_reshard_impl)
 
 def _reshard_transpose_rule(ct, x, dst_sharding):
-  return [reshard_p.bind(ct, dst_sharding=x.aval.to_cotangent_aval().sharding)]
+  assert ad.is_undefined_primal(x)
+  out_sharding = x.aval.to_cotangent_aval().sharding
+  with mesh_lib.use_abstract_mesh(out_sharding.mesh):
+    x_bar = reshard_p.bind(ct, dst_sharding=out_sharding)
+    return [x_bar]
 ad.deflinear2(reshard_p, _reshard_transpose_rule)
 
 def _reshard_transpose_fancy(ct, x, dst_sharding):
+  assert isinstance(x, ad.GradAccum)
   out_sharding = x.aval.to_cotangent_aval().sharding
   with mesh_lib.use_abstract_mesh(out_sharding.mesh):
     x_bar = reshard_p.bind(ct, dst_sharding=out_sharding)
