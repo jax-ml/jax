@@ -3005,8 +3005,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
     np.testing.assert_allclose(res, i + a @ b, rtol=2e-3)
 
   def test_wgmma_sliced_ref(self):
-    self.skip_if_wg_semantics()  # Needs WGMMA to support slices.
-
     def kernel(a_ref, b_ref, o_ref):
       def scope(acc_ref):
         plgpu.wgmma(acc_ref, a_ref.at[0], b_ref.at[0])
@@ -4542,8 +4540,6 @@ class PipelineWGTest(
 class PipelineSm90ATest(PallasSm90ATest):
 
   def test_realistic_matmul(self):
-    self.skip_if_wg_semantics()  # Needs WGMMA to support slices.
-
     dtype = jnp.float16
     swizzle = 128
     elems_128b = swizzle // jnp.dtype(dtype).itemsize
@@ -5360,7 +5356,6 @@ class CoreMapTest(PallasTest, jtu.CudaArchSpecificTest):
     )
 
   def test_realistic_matmul_with_cluster(self):
-    self.skip_if_wg_semantics()  # Needs WGMMA to support slices.
     self.skip_unless_sm90a()  # Requires WGMMA.
 
     dtype = jnp.float16
