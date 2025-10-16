@@ -680,6 +680,26 @@ class OpsTest(PallasBaseTest):
     )()[0]
     self.assertEqual(output, 0)
 
+  def test_retiling_with_replicated_lane(self):
+    self.skipTest("TODO(b/452689987)")
+    shape = (32, 1)
+    broadcast_shape = (32, 256)
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 4, 256), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.broadcast_to(
+          x_ref[...], broadcast_shape
+      ).reshape(o_ref.shape)
+
+    x = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
+    out = kernel(x).reshape(broadcast_shape)
+    expected = jnp.broadcast_to(x, broadcast_shape)
+    np.testing.assert_array_equal(out, expected)
+
+
 
 if __name__ == "__main__":
   absltest.main()
