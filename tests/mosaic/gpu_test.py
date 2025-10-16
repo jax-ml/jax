@@ -4490,7 +4490,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           [-1, 64],
           [64],
           mgpu_dialect.SwizzlingMode.k128ByteSwizzle,
-          "Swizzle transforms .* if the minor dimension is unchanged.",
+          "Slicing a swizzled dimension is unsupported.",
       ),
   )
   def test_subview(

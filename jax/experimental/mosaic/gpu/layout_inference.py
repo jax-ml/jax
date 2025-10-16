@@ -1865,7 +1865,7 @@ def _drop_smem(
   return eqns.EquationSystem(assign, equations, const), new_ctx
 
 
-def infer_layout(module: ir.Module, enable_smem_inference: bool = False):
+def infer_layout(module: ir.Module, enable_smem_inference: bool = True):
   """Infers layouts for the given module.
 
   * If there are vector (respectively SMEM refs, TMEM refs) operands,
