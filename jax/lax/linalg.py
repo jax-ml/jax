@@ -21,6 +21,7 @@ from jax._src.lax.linalg import (
   eig as eig,
   eig_p as eig_p,
   eigh as eigh,
+  EighImplementation as EighImplementation,
   eigh_p as eigh_p,
   hessenberg as hessenberg,
   hessenberg_p as hessenberg_p,

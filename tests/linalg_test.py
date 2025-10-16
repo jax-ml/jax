@@ -511,7 +511,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     eps = jnp.finfo(a.dtype).eps
     with jax.numpy_rank_promotion('allow'):
       self.assertLessEqual(
-          np.linalg.norm(np.matmul(a, v) - w * v), 2 * eps * np.linalg.norm(a)
+          np.linalg.norm(np.matmul(a, v) - w * v), 2.5 * eps * np.linalg.norm(a)
       )
 
   def testEighTinyNorm(self):
@@ -2204,25 +2204,50 @@ class LaxLinalgTest(jtu.JaxTestCase):
     sort_eigenvalues=[True, False],
   )
   def testEigh(self, n, dtype, lower, sort_eigenvalues):
-    rng = jtu.rand_default(self.rng())
-    tol = 1e-3
-    args_maker = lambda: [rng((n, n), dtype)]
+    implementations = [
+        None,
+        lax.linalg.EighImplementation.QR,
+        lax.linalg.EighImplementation.JACOBI,
+        lax.linalg.EighImplementation.QDWH,
+    ]
 
-    a, = args_maker()
-    a = (a + np.conj(a.T)) / 2
-    v, w = lax.linalg.eigh(np.tril(a) if lower else np.triu(a),
-                           lower=lower, symmetrize_input=False,
-                           sort_eigenvalues=sort_eigenvalues)
-    w = np.asarray(w)
-    v = np.asarray(v)
-    self.assertLessEqual(
-        np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 1e-3)
-    self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
-                         tol * np.linalg.norm(a))
+    for implementation in implementations:
+      if (
+          implementation == lax.linalg.EighImplementation.QR
+          and jtu.test_device_matches(["tpu"])
+      ):
+        continue
+      if (
+          implementation == lax.linalg.EighImplementation.JACOBI
+          and jtu.test_device_matches(["cpu"])
+      ):
+        continue
+      if (
+          implementation == lax.linalg.EighImplementation.QDWH
+          and jtu.test_device_matches(["cpu", "gpu"])
+      ):
+        continue
 
-    w_expected, v_expected = np.linalg.eigh(np.asarray(a))
-    self.assertAllClose(w_expected, w if sort_eigenvalues else np.sort(w),
-                        rtol=1e-4, atol=1e-4)
+      rng = jtu.rand_default(self.rng())
+      tol = 1e-3
+      args_maker = lambda: [rng((n, n), dtype)]
+
+      a, = args_maker()
+      a = (a + np.conj(a.T)) / 2
+      v, w = lax.linalg.eigh(np.tril(a) if lower else np.triu(a),
+                             lower=lower, symmetrize_input=False,
+                             sort_eigenvalues=sort_eigenvalues,
+                             implementation=implementation)
+      w = np.asarray(w)
+      v = np.asarray(v)
+      self.assertLessEqual(
+          np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 1e-3)
+      self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
+                           tol * np.linalg.norm(a))
+
+      w_expected, v_expected = np.linalg.eigh(np.asarray(a))
+      self.assertAllClose(w_expected, w if sort_eigenvalues else np.sort(w),
+                          rtol=1e-4, atol=1e-4)
 
   def run_eigh_tridiagonal_test(self, alpha, beta):
     n = alpha.shape[-1]

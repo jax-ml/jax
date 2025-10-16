@@ -26,8 +26,8 @@ namespace JAX_GPU_NAMESPACE {
 
 enum class SyevdAlgorithm : uint8_t {
   kDefault = 0,
-  kDivideAndConquer,
-  kJacobi,
+  kDivideAndConquer = 1,
+  kJacobi = 2,
 };
 
 XLA_FFI_DECLARE_HANDLER_SYMBOL(GetrfFfi);

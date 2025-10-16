@@ -122,6 +122,7 @@ def cholesky_update(r_matrix: ArrayLike, w_vector: ArrayLike) -> Array:
   r_matrix, w_vector = core.standard_insert_pvary(r_matrix, w_vector)
   return cholesky_update_p.bind(r_matrix, w_vector)
 
+
 class EigImplementation(enum.Enum):
   """Enum for SVD algorithm."""
   CUSOLVER = "cusolver"
@@ -211,6 +212,13 @@ def eig(
                     implementation=implementation)
 
 
+class EighImplementation(enum.Enum):
+  """Implementation for symmetric/Hermitian eigendecomposition."""
+  QR = "qr"
+  JACOBI = "jacobi"
+  QDWH = "qdwh"
+
+
 def eigh(
     x: Array,
     *,
@@ -218,6 +226,7 @@ def eigh(
     symmetrize_input: bool = True,
     sort_eigenvalues: bool = True,
     subset_by_index: tuple[int, int] | None = None,
+    implementation: EighImplementation | None = None,
 ) -> tuple[Array, Array]:
   r"""Eigendecomposition of a Hermitian matrix.
 
@@ -240,6 +249,10 @@ def eigh(
       indices of eigenvalues to compute. For example, is ``range_select`` =
       [n-2,n], then ``eigh`` computes the two largest eigenvalues and their
       eigenvectors.
+    implementation: Optional implementation selection. ``QR`` uses QR-based
+      decomposition (default for CPU/GPU). ``JACOBI`` uses Jacobi iteration
+      (GPU/TPU only). ``QDWH`` uses QDWH spectral divide-and-conquer
+      (default on TPU, TPU only).
 
   Returns:
     A tuple ``(v, w)``.
@@ -260,6 +273,7 @@ def eigh(
       lower=lower,
       sort_eigenvalues=sort_eigenvalues,
       subset_by_index=subset_by_index,
+      algorithm=implementation,
   )
   return v, w
 
@@ -1184,66 +1198,6 @@ register_cpu_gpu_lowering(eig_p, _eig_gpu_lowering, ("cuda", "rocm"))
 
 # Symmetric/Hermitian eigendecomposition
 
-def eigh_jacobi(x: ArrayLike, *, lower: bool = True,
-                sort_eigenvalues: bool = True) -> tuple[Array, Array]:
-  """Helper Jacobi eigendecomposition implemented by XLA.
-
-  Used as a subroutine of QDWH-eig on TPU.
-  """
-  return eigh_jacobi_p.bind(x, lower=lower, sort_eigenvalues=sort_eigenvalues)
-
-def _eigh_jacobi_shape_rule(shape, **_):
-  if shape[0] != shape[-1]:
-    raise ValueError(
-        "Argument to symmetric eigendecomposition must have shape [..., n, n], "
-        f"got shape {shape}"
-    )
-  n = shape[0]
-  return (n,), (n, n)
-
-def _eigh_jacobi_dtype_rule(dtype, **_):
-  return lax._complex_basetype(dtype), dtype
-
-def _eigh_jacobi_lowering_rule(ctx, operand, lower, sort_eigenvalues):
-  operand_aval, = ctx.avals_in
-  if operand_aval.shape[-1] == 0:
-    reshape_aval = operand_aval.update(shape=operand_aval.shape[:-1])
-    return [
-        hlo.real(mlir.reshape(ctx, operand, reshape_aval)),
-        operand,
-    ]
-
-  eigvals_type = mlir.aval_to_ir_type(ctx.avals_out[0])
-  eigvecs_type = mlir.aval_to_ir_type(ctx.avals_out[1])
-  result_types = [eigvecs_type, eigvals_type]
-
-  backend_config = f"{int(lower)},{int(sort_eigenvalues)},100,1e-6"
-
-  if any(not is_constant_shape(aval_out.shape)
-         for aval_out in ctx.avals_out):
-    result_shapes = [
-        mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
-        # The custom call returns the results swapped
-        for aval_out in list(reversed(ctx.avals_out))
-    ]
-  else:
-    result_shapes = None
-  op = mlir.custom_call(
-      "Eigh",
-      result_types=result_types,
-      operands=[operand],
-      backend_config=backend_config,
-      api_version=1,
-      result_shapes=result_shapes,
-  )
-  return op.results[1], op.results[0]
-
-eigh_jacobi_p = linalg_primitive(
-    _eigh_jacobi_dtype_rule, (_float | _complex,), (2,),
-    _eigh_jacobi_shape_rule, "eigh_jacobi", multiple_results=True)
-mlir.register_lowering(eigh_jacobi_p, _eigh_jacobi_lowering_rule)
-
-
 def _eigh_shape_rule(shape, *, subset_by_index, **_):
   if shape[0] != shape[-1]:
     raise ValueError(
@@ -1259,7 +1213,7 @@ def _eigh_dtype_rule(dtype, **_):
   return dtype, lax._complex_basetype(dtype)
 
 def _eigh_cpu_gpu_lowering(
-    ctx, operand, *, lower, sort_eigenvalues, subset_by_index,
+    ctx, operand, *, lower, sort_eigenvalues, subset_by_index, algorithm,
     target_name_prefix: str
 ):
   del sort_eigenvalues  # The CPU/GPU implementations always sort.
@@ -1269,6 +1223,12 @@ def _eigh_cpu_gpu_lowering(
   if not (subset_by_index is None or subset_by_index == (0, n)):
     raise NotImplementedError("subset_by_index not supported on CPU and GPU")
   batch_dims = operand_aval.shape[:-2]
+
+  if algorithm == EighImplementation.QDWH:
+    raise NotImplementedError("QDWH implementation is only supported on TPU")
+  if algorithm == EighImplementation.JACOBI and target_name_prefix == "cpu":
+    raise NotImplementedError("Jacobi implementation is not supported on CPU")
+
   if target_name_prefix == "cpu":
     dtype = operand_aval.dtype
     prefix = "he" if dtypes.issubdtype(dtype, np.complexfloating) else "sy"
@@ -1280,7 +1240,12 @@ def _eigh_cpu_gpu_lowering(
     }
   else:
     target_name = f"{target_name_prefix}solver_syevd_ffi"
-    kwargs = {"lower": lower, "algorithm": np.uint8(0)}
+    # Use Jacobi (algorithm=2) if requested, otherwise use QR (algorithm=1)
+    if algorithm is None:
+      algo_int = 0
+    else:
+      algo_int = 2 if algorithm == EighImplementation.JACOBI else 1
+    kwargs = {"lower": lower, "algorithm": np.uint8(algo_int)}
 
   info_aval = ShapedArray(batch_dims, np.int32)
   avals_out = [v_aval, w_aval, info_aval]
@@ -1296,7 +1261,7 @@ def _eigh_cpu_gpu_lowering(
 
 
 def _eigh_jvp_rule(
-    primals, tangents, *, lower, sort_eigenvalues, subset_by_index
+    primals, tangents, *, lower, sort_eigenvalues, subset_by_index, algorithm
 ):
   (a,) = primals
   n = a.shape[-1]
@@ -1319,6 +1284,7 @@ def _eigh_jvp_rule(
       lower=lower,
       sort_eigenvalues=sort_eigenvalues,
       subset_by_index=subset_by_index,
+      algorithm=algorithm,
   )
 
   # for complex numbers we need eigenvalues to be full dtype of v, a:

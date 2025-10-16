@@ -1404,6 +1404,7 @@ pytype_strict_library(
         ":traceback_util",
         ":tree_util",
         ":typing",
+        "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
 

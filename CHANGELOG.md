@@ -16,6 +16,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Changes:
+
+  * {func}`jax.lax.linalg.eigh` now accepts an `implementation` argument to
+    select between QR (CPU/GPU), Jacobi (GPU/TPU), and QDWH (TPU)
+    implementations. The `EighImplementation` enum is publicly exported from
+    {mod}`jax.lax.linalg`.
+
+
 ## JAX 0.8.0 (October 15, 2025)
 
 * Breaking changes:
