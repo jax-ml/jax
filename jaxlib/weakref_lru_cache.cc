@@ -285,7 +285,7 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
 
     // Acquire a mutex to avoid problems where the gil is released during
     // cache insertion and then a second thread invalidates the cache order.
-    mu_.Lock();
+    mu_.lock();
     mu_holder_thread_id_.store(std::this_thread::get_id());
   }
   {
@@ -294,7 +294,7 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
     // released if that happens.
     absl::Cleanup unlock = [this]() ABSL_UNLOCK_FUNCTION(mu_) {
       mu_holder_thread_id_.store(std::thread::id());
-      mu_.Unlock();
+      mu_.unlock();
     };
     entry = cache.GetOrCreateIfAbsent(key, [&inserted](const Key& key) {
       inserted = true;
@@ -331,7 +331,7 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
 
 std::vector<nb::object> WeakrefLRUCache::GetKeys() {
   std::vector<nb::object> results;
-  mu_.Lock();
+  mu_.lock();
   for (const auto& [wr_key, wr_value] : entries_) {
     wr_value.cache->ForEach([&results, &wr_key](
                                 const Key& key,
@@ -341,7 +341,7 @@ std::vector<nb::object> WeakrefLRUCache::GetKeys() {
       results.push_back(std::move(result));
     });
   }
-  mu_.Unlock();
+  mu_.unlock();
   return results;
 }
 

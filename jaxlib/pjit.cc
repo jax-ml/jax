@@ -237,10 +237,10 @@ std::shared_ptr<PjitFunctionCache::Cache> PjitFunctionCache::DefaultCache() {
     nb::gil_scoped_release release;
     // Acquire a mutex to avoid problems where the gil is released during
     // cache insertion and then a second thread invalidates the cache order.
-    self->mu_.Lock();
+    self->mu_.lock();
   }
   absl::Cleanup unlock = [&self]() ABSL_UNLOCK_FUNCTION(self->mu_) {
-    self->mu_.Unlock();
+    self->mu_.unlock();
   };
   Key key;
   key.function = function;
