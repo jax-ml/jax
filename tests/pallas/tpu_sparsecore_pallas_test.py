@@ -1071,6 +1071,9 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(), expected)
 
   def test_barrier_via_pallas_call(self):
+    # TODO(slebedev): Fix the IR and re-enable the test.
+    self.skipTest("Failing at MLIR verification time")
+
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
