@@ -572,7 +572,7 @@ async def async_deserialize(
 
 # TODO(rdyro): Remove this function.
 def _run_deserialization(shardings: Sequence[jax.sharding.Sharding | Format],
-                        tensorstore_specs: Sequence[dict[str, Any]],
+                        tensorstore_specs: Sequence[dict[str, Any] | ts.Spec],
                         global_shapes: Sequence[array.Shape] | None = None,
                         dtypes: Sequence[typing.DTypeLike] | None = None,
                         concurrent_gb: int = 32):
