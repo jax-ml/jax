@@ -14,7 +14,7 @@
 
 import contextlib
 import unittest
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 import jax
 from jax import lax
 from jax._src import config
@@ -164,20 +164,16 @@ class JaxAotTest(jtu.JaxTestCase):
     else:
       self.assertLen(compiled._params.const_args, 0)
     self.assertArraysEqual(compiled(inp), const[0:8] + inp)
-    # Trigger cache hit
-    expected_aot_calls = 0
-    if config.use_simplified_jaxpr_constants.value:
-      expected_aot_calls = 1
-    self.assertCacheMisses(lambda: compiled(inp), cpp=0, aot_call=expected_aot_calls)
+    self.assertCacheMisses(lambda: compiled(inp), cpp=0, aot_call=0)
 
-  @parameterized.named_parameters(
-      dict(testcase_name=f"{use_np=}_{lower=}_{compile=}_{exec=}",
-           use_np=use_np,
-           lower=lower, compile=compile, exec=exec)
-      for use_np in (False, True)
-      for lower in (False, True)
-      for compile in (False, True)
-      for exec in (False, True))
+  @jtu.parameterized_filterable(
+      kwargs=[
+          dict(use_np=use_np, lower=lower, compile=compile, exec=exec)
+            for use_np in (False, True)
+            for lower in (False, True)
+            for compile in (False, True)
+            for exec in (False, True)
+  ])
   def test_with_constants_enable_x64(self, *, use_np, lower, compile, exec):
     # Closed-over constant is 64-bit. Each of lowering, compilation, and
     # execution can be run in 64-bit or 32-bit mode.
@@ -208,28 +204,31 @@ class JaxAotTest(jtu.JaxTestCase):
       if not config.enable_x64.value and use_np and not lower:
         expected_dtype = np.int32
       self.assertEqual(compiled._executable.in_avals[0].dtype, expected_dtype)
-      self.assertIs(compiled._params.const_args[0], const)
+
+      if expected_dtype is np.int64:  # Otherwise, we made a copy of the const
+        if use_np:
+          self.assertIs(np.asarray(compiled._params.const_args[0]), const)
+        else:
+          self.assertIs(compiled._params.const_args[0], const)
     else:
       self.assertLen(compiled._params.const_args, 0)
       self.assertLen(compiled._executable.in_avals, 1)
 
-    # In some cases we expect errors
+    # In some cases we expect errors: in 32-bit mode, lowered with 64-bit mode
+    # and execute in 32-bit mode.
     if (config.use_simplified_jaxpr_constants.value and
         not config.enable_x64.value and
-        use_np and lower != exec):
+        use_np and lower and not exec):
       with self.assertRaisesRegex(
-          TypeError,
-          "Perhaps you are calling the compiled executable with a different enable_x64"):
+          xc.XlaRuntimeError,
+          "got buffer with incompatible size"):
         run()
       return
 
     self.assertArraysEqual(run(),
                            lax.convert_element_type(const, inp.dtype) + inp)
     # Trigger cache hit
-    expected_aot_calls = 0
-    if config.use_simplified_jaxpr_constants.value:
-      expected_aot_calls = 1
-    self.assertCacheMisses(run, cpp=0, aot_call=expected_aot_calls)
+    self.assertCacheMisses(run, cpp=0, aot_call=0)
 
   def test_with_ref_constants(self):
     x_ref = core.new_ref(0)

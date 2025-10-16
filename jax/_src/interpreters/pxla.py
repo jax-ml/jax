@@ -850,7 +850,7 @@ def lower_parallel_callable(
     num_const_args = len(const_arg_avals)
     in_axes = (None,) * num_const_args + in_axes  # type: ignore
     donated_invars = (False,) * num_const_args + donated_invars  # type: ignore
-    jaxpr_avals = const_arg_avals + closed_jaxpr.in_avals  # type: ignore
+    jaxpr_avals = list(const_arg_avals) + closed_jaxpr.in_avals  # type: ignore
     shards = ShardInfo(
         tuple(const_arg_avals) + shards.sharded_avals,  # type: ignore
         shards.out_sharded_avals,
@@ -2160,7 +2160,7 @@ def hoist_constants_as_args(
   )
   num_const_args = len(const_args)
   if num_const_args:
-    global_in_avals = const_arg_avals + global_in_avals  # type: ignore
+    global_in_avals = list(const_arg_avals) + global_in_avals  # type: ignore
     ca_shardings = pjit.const_args_shardings(const_args)
     in_shardings = ca_shardings + in_shardings  # type: ignore
     ca_layouts = pjit.const_args_layouts(const_args, const_arg_avals,
@@ -2182,7 +2182,7 @@ def hoist_constants_as_args(
     else:
       arg_names = (("",) * num_const_args + all_args_info.debug_info.arg_names)
     all_args_info = AllArgsInfo(
-        const_arg_avals + all_args_info.in_avals,  # type: ignore
+        list(const_arg_avals) + all_args_info.in_avals,  # type: ignore
         all_args_info.debug_info._replace(arg_names=arg_names))
 
   return (const_args, global_in_avals, in_shardings, in_layouts, donated_invars,
