@@ -158,10 +158,6 @@ jax_multiplatform_test(
     srcs = [
         "ops_test.py",
     ],
-    config_tags_overrides = {
-        # TODO(b/450285488): Re-enable once test fixed.
-        "gpu_b200": {"notap": True},
-    },
     disable_configs = [
         "gpu_v100",
         "gpu_v100_x32",
