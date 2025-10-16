@@ -1862,6 +1862,33 @@ class LayoutInferenceTest(parameterized.TestCase):
         inference_utils.out_transforms(transpose_op), [out_transforms]
     )
 
+  def test_default_strided_layout_assignment_is_deterministic(self):
+    with ir.InsertionPoint(self.module.body):
+      shape = (8, 128)
+      src_elt_ty = ir.IntegerType.get_signless(32)
+      dst_elt_ty = ir.IntegerType.get_signless(16)
+      src_ref_ty = ir.MemRefType.get(shape, src_elt_ty)
+      dst_ref_ty = ir.MemRefType.get(shape, dst_elt_ty)
+      zero = mgpu.utils.c(0, ir.IntegerType.get_signless(32))
+      src_ref, dst_ref = undefs(src_ref_ty, dst_ref_ty)
+
+      # Make sure to have at least three ops such that the default assignment
+      # can pick a vector size from data types of various lengths.
+      src = vector.load(ir.VectorType.get(shape, src_elt_ty), src_ref, [zero])
+      conversion = arith.TruncIOp(ir.VectorType.get(shape, dst_elt_ty), src)
+      vector.store(conversion.result, dst_ref, [zero])
+
+    mgpu.infer_layout(self.module)
+
+    # The default assignment should yield a strided layout here. The specific
+    # vector size does not matter to the test, but it is important that it is
+    # consistent between several runs of the test. If the logic changes such
+    # that another vector size is deterministically chosen, it is likely fine to
+    # edit this.
+    layout = fa.WGStridedFragLayout(shape, vec_size=2)
+    self.checkInLayouts(conversion, [layout])
+    self.checkOutLayouts(conversion, [layout])
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

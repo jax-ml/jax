@@ -20,7 +20,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Sequence, Set
+from collections.abc import Callable, Iterator, Sequence
 import dataclasses
 import enum
 from functools import partial
@@ -364,7 +364,7 @@ def _extract_variable_assignments_from_constraints(
 
 
 def conjure_assignment(
-    unknowns: Set[eqns.Variable],
+    unknowns: Sequence[eqns.Variable],
     equation_system: eqns.EquationSystem,
     hints: Sequence[Hint],
 ) -> Iterator[tuple[eqns.Variable, eqns.Constant]]:
@@ -397,14 +397,15 @@ def conjure_assignment(
 
 
 def find_assignments_for(
-    unknowns: Set[eqns.Variable],
+    unknowns: Sequence[eqns.Variable],
     equation_system: eqns.EquationSystem,
     hints: Sequence[Hint],
 ) -> dict[eqns.Variable, eqns.Constant] | eqns.Unsatisfiable:
   """Attempts to find assignments that satisfy `equation_system` for `unknowns`.
 
   Args:
-    unknowns: the set of variables that are unknown.
+    unknowns: the set of variables that are unknown. Represented as a sequence
+      of `Variable`s for determinism purposes.
     equation_system: the equation system to satisfy.
     hints: a list of hints that may be used to introduce new assignments.
 
@@ -417,7 +418,10 @@ def find_assignments_for(
   if isinstance(equation_system, eqns.Unsatisfiable):
     return eqns.Unsatisfiable()
 
-  remaining_unknowns = unknowns - equation_system.assignments.keys()
+  remaining_unknowns = [
+      u for u in unknowns if u not in equation_system.assignments.keys()
+  ]
+
   # In this case, we have determined an assignment for all the unknown
   # variables. Return their respective assignment.
   if not remaining_unknowns:
@@ -1931,7 +1935,8 @@ def infer_layout(module: ir.Module, enable_smem_inference: bool = False):
 
   # Attempt to find assignments that satisfy the equation system.
   solution = find_assignments_for(
-      ctx.operand_and_results_for_variable.keys(), global_equation_system, hints
+      list(ctx.operand_and_results_for_variable.keys()), global_equation_system,
+      hints
   )
 
   if isinstance(solution, eqns.Unsatisfiable):
