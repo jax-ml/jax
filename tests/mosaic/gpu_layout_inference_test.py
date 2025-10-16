@@ -27,7 +27,6 @@ from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import builtin
-from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import math as math_dialect
 from jax._src.lib.mlir.dialects import memref
@@ -1550,28 +1549,6 @@ class LayoutInferenceTest(parameterized.TestCase):
     mgpu.infer_layout(self.module, enable_smem_inference=True)
     [in_transform] = inference_utils.in_transforms(async_load_op)
     self.assertSequenceEqual(in_transform, ir.ArrayAttr.get([]))
-
-  def test_infer_transforms_for_memref_view_op(self):
-    with ir.InsertionPoint(self.module.body):
-      i8 = ir.IntegerType.get_signless(8)
-      dsm = gpu.dynamic_shared_memory(ir.MemRefType.get((128 * 128,), i8))
-
-      shape = (64, 64)
-      elt_ty = ir.BF16Type.get()
-      ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
-      c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
-      view = memref.view(ref_ty, dsm, c(0), [c(64), c(64)])
-
-      transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((8, 64)),
-        mgpu.dialect.SwizzleTransformAttr.get(128),
-      ])
-      mgpu.dialect.with_transforms(view, transforms)
-
-      mgpu.infer_layout(self.module, enable_smem_inference=True)
-      self.assertSequenceEqual(
-          inference_utils.out_transforms(view.owner), [transforms]
-      )
 
   @parameterized.parameters([False, True])
   def test_infer_transforms_for_memref_cast_op(self, annotate_producer):

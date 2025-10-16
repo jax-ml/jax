@@ -31,7 +31,6 @@ from typing import Any, assert_never, cast
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
-from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
@@ -1299,30 +1298,6 @@ def _slice_smem_equation_system(
   res = OperandOrResult(op, VariableType.RESULT, 0)
   res_var = eqns.Variable(res)
   return (eqns.EquationSystem(), {res_var: [res]}, [])
-
-
-# TODO(b/447079781): Check whether we still need this rule. Normally,
-# DynamicSharedMemory is only generated in the lowering pass. If there is
-# another case where a ViewOp is generated beforehand, and this rule cannot be
-# removed, document here what that case is.
-@_add_equation_system_derivation_rule(memref.ViewOp)
-def _memref_view_op_equation_system(
-    ctx: DerivationContext,
-    op: memref.ViewOp,
-) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
-  del ctx
-
-  # The source is expected to come from a DynamicSharedMemoryOp which does not
-  # participate in layout inference and no variable exists for it.
-  if not isinstance(op.source.owner.opview, gpu.DynamicSharedMemoryOp):
-    raise NotImplementedError(
-        "Memref view transforms are only inferred when the op is a direct user "
-        f"of a DynamicSharedMemoryOp but got {op}."
-    )
-
-  res = OperandOrResult(op, VariableType.RESULT, 0)
-  res_var = eqns.Variable(res)
-  return eqns.EquationSystem(), {res_var: [res]}, []
 
 
 # TODO(b/447079781): Check whether we should create new variables or use
