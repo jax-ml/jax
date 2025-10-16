@@ -397,7 +397,7 @@ def _traced_out_info(self):
               vma=(a.vma if config._check_vma.value else None)))
     else:
       out.append(a)
-  return tree_util.tree_unflatten(self._out_tree, out)
+  return tree_util.tree_unflatten(self.out_tree, out)
 
 
 class Traced(Stage):
@@ -407,13 +407,13 @@ class Traced(Stage):
   traced representation with the remaining information needed to later
   lower, compile, and execute it.
   """
-  __slots__ = ['_lfg', '_params', '_in_tree', '_out_tree', '_num_consts']
+  __slots__ = ['_lfg', '_params', '_in_tree', 'out_tree', '_num_consts']
 
   def __init__(self, lfg, params, in_tree, out_tree, num_consts):
     self._lfg = lfg
     self._params = params
     self._in_tree = in_tree
-    self._out_tree = out_tree
+    self.out_tree = out_tree
     self._num_consts = num_consts
 
   jaxpr = property(lambda self: self._params['jaxpr'])
@@ -422,11 +422,15 @@ class Traced(Stage):
   out_info = property(_traced_out_info)
   _args_flat = property(lambda self: self._lfg.args[0])
 
+  @property
+  def out_avals(self):
+    return tree_unflatten(self.out_tree, self.jaxpr.out_avals)
+
   def fall(self):
     if not self.jaxpr.is_high:
-      return Fallen(self._lfg, self._params, self._in_tree, self._out_tree,
+      return Fallen(self._lfg, self._params, self._in_tree, self.out_tree,
                     (self._in_tree, self.jaxpr.in_avals),
-                    (self._out_tree, self.jaxpr.out_avals),
+                    (self.out_tree, self.jaxpr.out_avals),
                     self._num_consts)
 
     # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
@@ -437,7 +441,7 @@ class Traced(Stage):
     if closed_over_himutables: raise NotImplementedError  # TODO(mattjj)
     lo_jaxpr = pe.lower_jaxpr(hi_jaxpr)
     in_tree = lojax_pytree(hi_jaxpr.in_aval_qdds, self._in_tree)
-    out_tree = lojax_pytree(hi_jaxpr.out_avals, self._out_tree)
+    out_tree = lojax_pytree(hi_jaxpr.out_avals, self.out_tree)
     params = dict(lojax_expand_params(hi_jaxpr, self._params), jaxpr=lo_jaxpr)
     lo_args = [lo_val for aval, x in zip(hi_jaxpr.in_aval_qdds, self._args_flat)
                for lo_val in (aval.read_loval(x) if aval.has_qdd
@@ -445,7 +449,7 @@ class Traced(Stage):
     lfg = partial(_resolve_and_lower, lo_args, pgle_profiler=None)
     return Fallen(lfg, params, in_tree, out_tree,
                   (self._in_tree, hi_jaxpr.final_aval_qdds),
-                  (self._out_tree, hi_jaxpr.out_avals),
+                  (self.out_tree, hi_jaxpr.out_avals),
                   self._num_consts)
 
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
@@ -453,6 +457,7 @@ class Traced(Stage):
     """Lower to compiler input, returning a ``Lowered`` instance."""
     return self.fall().lower(lowering_platforms=lowering_platforms,
                              _private_parameters=_private_parameters)
+
 
 def lojax_expand_params(jaxpr, params):
   from jax._src.pjit import _lojax_expand_params  # type: ignore
@@ -467,9 +472,10 @@ def lojax_pytree(hi_avals, tree):
   lo_avals = [t.lo_ty() for t in hi_avals]
   return tree_structure(tree_unflatten(tree, lo_avals))
 
+
 class Fallen(Stage):
   """True leader of the Decepticons."""
-  __slots__ = ['_lfg', '_params', '_in_tree', '_out_tree',
+  __slots__ = ['_lfg', '_params', '_in_tree', 'out_tree',
                '_num_consts', '_in_types', '_out_types']
 
   def __init__(self, lfg, params, in_tree, out_tree, in_types, out_types,
@@ -477,7 +483,7 @@ class Fallen(Stage):
     self._lfg = lfg
     self._params = params
     self._in_tree = in_tree
-    self._out_tree = out_tree
+    self.out_tree = out_tree
     self._num_consts = num_consts
     self._in_types = in_types  # hi types
     self._out_types = out_types
@@ -487,6 +493,10 @@ class Fallen(Stage):
   args_info = property(_traced_args_info)
   out_info = property(_traced_out_info)
   _args_flat = property(lambda self: self._lfg.args[0])
+
+  @property
+  def out_avals(self):
+    return tree_unflatten(self.out_tree, self.jaxpr.out_avals)
 
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
             _private_parameters: mlir.LoweringParameters | None = None):
@@ -503,7 +513,7 @@ class Fallen(Stage):
           self._params['name'], fails, self._args_flat, 'jit',
           self.jaxpr.debug_info.safe_arg_names(len(self.jaxpr.in_avals)))
       raise ValueError(msg) from None
-    return Lowered(lowering, self.args_info, self._out_tree,
+    return Lowered(lowering, self.args_info, self.out_tree,
                    in_types=self._in_types, out_types=self._out_types)
 
 
@@ -518,27 +528,24 @@ class Lowered(Stage):
   """
   __slots__ = ["_lowering", "args_info", "out_tree", "_no_kwargs",
                "_in_types", "_out_types"]
+
   _lowering: Lowering
   args_info: Any  # PyTree of ArgInfo, not including the const_args
   out_tree: tree_util.PyTreeDef
   _no_kwargs: bool
-  in_types: list[tuple[core.AbstractValue, core.QuasiDynamicData]] | None
-  out_types: list[core.AbstractValue] | None
+  _in_types: list[tuple[core.AbstractValue, core.QuasiDynamicData]] | None
+  _out_types: list[core.AbstractValue] | None
 
-  def __init__(
-      self,
-      lowering: Lowering,
-      args_info,
-      out_tree: tree_util.PyTreeDef,
-      no_kwargs: bool = False,
-      in_types=None, out_types=None):
+  def __init__(self, lowering: Lowering, args_info,
+               out_tree: tree_util.PyTreeDef, no_kwargs: bool = False,
+               in_types=None, out_types=None):
 
     self._lowering = lowering
     self.args_info = args_info
     self.out_tree = out_tree
     self._no_kwargs = no_kwargs
-    self.in_types = in_types  # type: ignore
-    self.out_types = out_types  # type: ignore
+    self._in_types = in_types  # type: ignore
+    self._out_types = out_types  # type: ignore
 
   @property
   def out_info(self):  # PyTree of OutInfo
@@ -568,8 +575,8 @@ class Lowered(Stage):
         self.args_info,
         self.out_tree,
         self._no_kwargs,
-        self.in_types,
-        self.out_types,
+        self._in_types,
+        self._out_types,
     )
 
   def as_text(self, dialect: str | None = None, *,
