@@ -2303,7 +2303,10 @@ def _platforms_for_eqn_ctx(eqn_ctx: core.JaxprEqnContext | None
     return ()
   if eqn_ctx.compute_type == 'device_host':
     return ('cpu',)
-  if eqn_ctx.compute_type == 'tpu_sparsecore':
+  if (
+      eqn_ctx.compute_type == "tpu_sparsecore"
+      or eqn_ctx.compute_type == "tpu_sparsecore_offload"
+  ):
     return ('tpu',)
   return ()
 
@@ -2656,6 +2659,8 @@ def map_compute_type(c_type: str) -> str:
     return "dense"
   elif c_type == "tpu_sparsecore":
     return "sparse"
+  elif c_type == "tpu_sparsecore_offload":
+    return "sparseoffload"
   raise ValueError(f"Invalid compute type {c_type}. Current supported values "
                    "are `device_host`, `device` and `tpu_sparsecore`")
 
