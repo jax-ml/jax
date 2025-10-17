@@ -20,6 +20,7 @@ import itertools as it
 from typing import Any
 
 from jax._src import core
+from jax._src import dtypes
 from jax._src import effects
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -127,6 +128,7 @@ class MutableHiType(core.AbstractValue):
 
 def register_hitype(val_cls, typeof_fn) -> None:
   core.pytype_aval_mappings[val_cls] = typeof_fn
+  dtypes.canonicalize_value_handlers[val_cls] = lambda x: x
 
 def hijax_method(f):
   return core.aval_method(f)
