@@ -136,6 +136,7 @@ def _main(argv, shard_main):
         f"--multiprocess_test_worker_id={i}",
         f"--multiprocess_test_controller_address=localhost:{jax_port}",
         "--logtostderr",
+        "--minloglevel=4",
     ]
 
     if gpus_per_process > 0:
