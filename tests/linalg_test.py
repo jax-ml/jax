@@ -1334,6 +1334,16 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # TODO:
     # jtu.check_grads(lambda *args: jnp_fun(*args)[0], args_maker(), order=2, atol=1e-2, rtol=1e-2)
 
+  @jtu.sample_product(
+      shape=[(2, 1), (2, 2), (1, 2)]
+  )
+  def testLstsqZeroMatrix(self, shape):
+    # Regression test for https://github.com/jax-ml/jax/issues/32666
+    args_maker = lambda: [np.zeros(shape), np.ones((shape))]
+    np_fun = np.linalg.lstsq
+    jnp_fun = partial(jnp.linalg.lstsq, numpy_resid=True)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+
   # Regression test for incorrect type for eigenvalues of a complex matrix.
   def testIssue669(self):
     def test(x):
