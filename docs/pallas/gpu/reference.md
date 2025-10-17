@@ -217,7 +217,7 @@ associated transforms.
 def body(..., scratch_ref):
   # Asynchronous copy will reformat the GMEM data to match the SMEM transforms
   plgpu.copy_gmem_to_smem(..., scratch_ref, barrier)
-  barrier.wait()
+  plgpu.barrier_wait(barrier)
   plgpu.wgmma(..., scratch_ref)  # wgmma only accepts properly transformed refs
   ...
 ```
@@ -838,6 +838,29 @@ If collective_axes is not specified or does not include the Pallas thread axis,
 each thread would get its own private copy of the scratch variable. This is
 usually undesired and not supported at the moment.
 
+### Global (grid-wide) allocations using `pl.get_global`
+
+Sometimes, it is useful to allocate [semaphores](#semaphore) in a way that enables them to be
+shared by all the parallel program instances. For example, when the number of
+parallel instances is small enough that the kernel is persistent. Such allocations
+are possible using `pl.get_global`:
+
+```python
+def body(out_ref):
+  sem_ref = pl.get_global(plgpu.SemaphoreType.REGULAR)
+  block_id = lax.axis_index("x")
+  @pl.when(block_id == 0)
+  def _():
+    pl.semaphore_signal(sem_ref)  # Block 0 signals
+  @pl.when(block_id == 1)
+  def _():
+    pl.semaphore_wait(sem_ref)  # Block 1 waits
+    out_ref[...] = jnp.ones_like(out_ref)
+
+out_shape = jax.ShapeDtypeStruct((128,), jnp.float32)
+plgpu.kernel(body, out_shape=out_shape, grid=(2,), grid_names=("x",))()
+```
+
 ## Synchronization structures and primitives
 
 In this section, we go over the most important functions and data structures
@@ -1012,11 +1035,102 @@ def barrier_scope(barrier_ref):
 
 ### `ClusterBarrier`
 
-TODO
+`ClusterBarrier` is very similar to `Barrier`, only used to synchronize across
+block clusters, instead of threads within a single block. This is always
+necessary when the blocks in the cluster collaborate on shared resources.
+Below we outline some of the more common cases when `ClusterBarrier` is necessary
+to ensure correctness.
+
+#### Reusing SMEM for collective async copies
+
+In the following example, `ClusterBarrier` ensures that both blocks are done
+using `x_smem` before it is overwritten. Without the barrier, one of the blocks
+would be able to run ahead and start overwriting `x_smem` by entering the
+collective copy before the other block is done reading from it.
+
+```python
+def collective_smem_reuse(x_gmem, x_gmem2, y_gmem, x_smem, local_barrier, cluster_barrier):
+  plgpu.copy_gmem_to_smem(x_gmem, x_smem, local_barrier, collective_axes="cluster")
+  plgpu.barrier_wait(local_barrier)  # x_smem is ready to be used once the local wait completes
+  y_gmem[0] = x_smem[...]
+  plgpu.barrier_arrive(cluster_barrier)
+  plgpu.barrier_wait(cluster_barrier)  # x_smem can only be reused once the cluster barrier completes
+  plgpu.copy_gmem_to_smem(x_gmem2, x_smem, local_barrier, collective_axes="cluster")
+  plgpu.barrier_wait(local_barrier)  # x_smem is ready to be used once the local wait completes
+  y_gmem[1] = x_smem[...]
+```
+
+#### Reusing TMEM for collective MMAs on Blackwell
+
+This example works very similarly to the one before, only this time TMEM is the
+shared resource. One block issues collective MMAs for both of them, but they both
+need to safely complete a read from TMEM before it can be reused for another
+collective MMA.
+
+```python
+def collective_tmem_reuse(acc_tmem, lhs_ref, rhs_ref, mma_barrier, cluster_barrier):
+  leader_block = lax.axis_index("cluster") == 0
+  @pl.when(leader_block)
+  def _do_mma():
+    plgpu.tcgen05_mma(
+        acc_tmem, lhs_ref.at[0], rhs_ref.at[0], mma_barrier,
+        accumulate=False, collective_axis="x",
+    )
+  plgpu.barrier_wait(mma_barrier)
+  do_something(plgpu.async_load_tmem(acc_tmem))
+  plgpu.wait_load_tmem()  # Ensure the load is complete.
+  plgpu.barrier_arrive(cluster_barrier)
+  plgpu.barrier_wait(cluster_barrier)  # acc_tmem can only be reused once the cluster barrier completes
+  @pl.when(leader_block)
+  def _do_mma():
+    plgpu.tcgen05_mma(
+        acc_tmem, lhs_ref.at[1], rhs_ref.at[1], mma_barrier,
+        accumulate=False, collective_axis="x",
+    )
+  ...
+```
 
 ### `Semaphore`
 
-TODO
+Semaphores are powerful synchronization structures, primarily used to
+synchronize across different blocks, potentially running on different devices.
+For synchronization between threads within a single block, it is preferable to
+use `Barrier`s, while for cluster synchronization it is preferable to use
+`ClusterBarrier`s. Semaphores are implemented as 32-bit atomic counters located in
+GMEM that support the following operations:
+
+* {py:func}`pl.semaphore_signal <jax.experimental.pallas.semaphore_signal>`,
+  which atomically increments the semaphore. Any effects performed by the thread
+  before the signal (including reads or writes to remote memory over NVLINK) are
+  guaranteed to complete before the signal is visible on the target device.
+* {py:func}`pl.semaphore_wait <jax.experimental.pallas.semaphore_wait>`, which
+  blocks the thread until the semaphore reaches _at least_ the desired value, at
+  which point the value is atomically decreased and the thread is awoken. The
+  function can be optionally called with `decrement=False`, which will wake the
+  thread as soon as the value is at least the requested value, but the value of
+  the semaphore will not be decreased. The non-decrementing version is a bit
+  more efficient.
+
+Here we present a small example kernel that exchanges two small shards between
+two devices:
+
+```python
+def exchange_shards(x_ref, y_ref, done_sem):
+  other_dev_id = 1 - lax.axis_index("x")  # We assume two devices
+  neighbor_ref = plgpu.remote_ref(y_ref, other_dev_id)
+  neighbor_ref[...] = x_ref[...]  # This will write over NVLINK
+  pl.semaphore_signal(done_sem, device_id=other_dev_id)  # Signal that the write is complete
+  pl.semaphore_wait(done_sem)  # Wait for the other device to write to our memory
+
+mesh = jax.make_mesh((2,), ("x",))
+y = jax.jit(
+    jax.shard_map(
+      lambda x: plgpu.kernel(exchange_shards, out_shape=x,
+                             scratch_shapes=[plgpu.Semaphore.REGULAR])(x),
+      mesh=mesh, in_specs=P("x"), out_specs=P("x"), check_vma=False,
+    )
+)(x)
+```
 
 ## Cluster launch control
 
