@@ -110,7 +110,7 @@ def get_ref_and_transforms(
   nd_indexer = indexing.NDIndexer.from_indices_shape(idx, ref_or_view.shape)
   return ref, (*transforms, nd_indexer)
 
-
+@partial(traceback_util.api_boundary, repro_api_name="jax.ref.get")
 def ref_get(
     ref: Any, idx: Indexer | tuple[Indexer, ...] | None = None
 ) -> Array:
@@ -197,6 +197,7 @@ def swap_ragged_prop_rule(eqn_params, invar_raggedness, outvars):
 
 batching.ragged_prop_rules[swap_p] = swap_ragged_prop_rule
 
+@partial(traceback_util.api_boundary, repro_api_name="jax.ref.swap")
 def ref_swap(
     ref: AbstractRef | TransformedRef,
     idx: Indexer | tuple[Indexer, ...] | None,
@@ -268,6 +269,7 @@ def _maybe_implicit_cast(dtype, value):
   return value
 
 
+@partial(traceback_util.api_boundary, repro_api_name="jax.ref.set")
 def ref_set(
     ref: AbstractRef | TransformedRef,
     idx: Indexer | tuple[Indexer, ...] | None,

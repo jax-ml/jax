@@ -15,8 +15,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import contextlib
 import functools
 import os
+import threading
 import traceback
 import types
 from typing import Any, TypeVar, cast
@@ -150,7 +152,10 @@ def _filtering_mode() -> str:
       mode = "quiet_remove_frames"
   return mode
 
-def api_boundary(fun: C) -> C:
+def api_boundary(
+    fun: C, *,
+    repro_api_name: str="",
+    repro_map_user_funcs: Callable[[Callable, tuple[Any, ...], dict[str, Any]], str] | None = None) -> C:
   '''Wraps ``fun`` to form a boundary for filtering exception tracebacks.
 
   When an exception occurs below ``fun``, this appends to it a custom
@@ -171,6 +176,8 @@ def api_boundary(fun: C) -> C:
   ``g``. Because the function returned by :func:`~jax.jit` is annotated as an
   :func:`~api_boundary`, such an exception is accompanied by an additional
   traceback that excludes the frames specific to JAX's implementation.
+
+  For the "repro" kwargs, see the comments for `repro.tracker.repro_boundary`.
   '''
 
   @functools.wraps(fun)
@@ -211,4 +218,55 @@ def api_boundary(fun: C) -> C:
         del filtered_tb
         del unfiltered
         del mode
+  if repro_api_name:
+    if repro_enabled():
+      from jax._src.repro import tracker  # type: ignore
+      reraise_with_filtered_traceback = tracker.repro_boundary(
+          reraise_with_filtered_traceback, api_name=repro_api_name,
+          map_user_funcs=repro_map_user_funcs)
   return cast(C, reraise_with_filtered_traceback)
+
+
+def bypass_repro_wrapper(f: Callable) -> Callable:
+  """Bypasses the repro wrappers.
+
+  WARNING: This is part of the highly experimental repro feature. Subject to changes
+  and removal.
+
+  Usage: `bypass_repro_wrapper(jax.jit)(f)` in order to use the real `jax.jit`,
+  i.e., the one without the repro api_boundary wrapper.
+  """
+  return getattr(f, "real_boundary_fun", f)
+
+
+class _ReproThreadLocalState(threading.local):
+  """
+  WARNING: This is part of the highly experimental repro feature.
+  Subject to changes and removal.
+  """
+  def __init__(self):
+    # The repros are enabled if `collect_repro_enabled` is True and if
+    # JAX_REPRO_DIR is set.
+    self.collect_repro_enabled = True
+
+_repro_thread_local_state = _ReproThreadLocalState()
+
+def repro_enabled() -> bool:
+  """
+  WARNING: This is part of the highly experimental repro feature.
+  Subject to changes and removal.
+  """
+  return bool(config.repro_dir.value) and _repro_thread_local_state.collect_repro_enabled
+
+@contextlib.contextmanager
+def enable_repro(value: bool):
+  """
+  WARNING: This is part of the highly experimental repro feature.
+  Subject to changes and removal.
+  """
+  prev = _repro_thread_local_state.collect_repro_enabled
+  _repro_thread_local_state.collect_repro_enabled = value
+  try:
+    yield
+  finally:
+    _repro_thread_local_state.collect_repro_enabled = prev

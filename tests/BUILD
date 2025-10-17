@@ -32,6 +32,32 @@ package(
 jax_generate_backend_suites()
 
 jax_multiplatform_test(
+    name = "repro_test",
+    srcs = ["repro_test.py"],
+    enable_backends = [
+        "cpu",
+    ],
+    env = {
+        "JAX_REPRO_DIR": "sponge",
+        "JAX_REPRO_FLAGS": "enable_checks=0,enable_checks_with_tracebacks=0",
+    },
+    shard_count = 1,
+    deps = [
+        "//jax:experimental",
+        "//jax:pallas",
+        "//jax:pallas_fuser",
+        "//jax:pallas_gpu",
+        "//jax:pallas_gpu_ops",
+        "//jax:pallas_tpu",
+        "//jax:pallas_tpu_ops",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+
+jax_multiplatform_test(
     name = "api_test",
     srcs = ["api_test.py"],
     enable_configs = ["tpu_v3_x4"],

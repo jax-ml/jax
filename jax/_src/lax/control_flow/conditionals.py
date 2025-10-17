@@ -183,7 +183,7 @@ def _switch_internal(
   assert next(out_, None) is None
   return tree_unflatten(out_trees[0], out)
 
-
+@partial(api_boundary, repro_api_name="jax_cond")
 def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
           operand=_no_operand_sentinel):
   """Conditionally apply ``true_fun`` or ``false_fun``.
@@ -418,6 +418,7 @@ def cond(*args, **kwargs):
 
   return _cond(*args, **kwargs)
 
+@partial(api_boundary, repro_api_name="jax_cond_with_per_branch_args")
 def _cond_with_per_branch_args(pred,
                                true_operand, true_fun: Callable,
                                false_operand, false_fun: Callable):

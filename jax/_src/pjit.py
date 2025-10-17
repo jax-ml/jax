@@ -739,6 +739,7 @@ class JitWrapped(stages.Wrapped):
 
 # in_shardings and out_shardings can't be None as the default value
 # because `None` means that the input is fully replicated.
+@partial(api_boundary, repro_api_name="pjit.pjit")
 def pjit(
     fun: Callable,
     in_shardings: Any = UNSPECIFIED,
