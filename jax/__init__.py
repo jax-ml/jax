@@ -180,6 +180,7 @@ from jax import sharding as sharding
 from jax import memory as memory
 from jax import stages as stages
 from jax import tree_util as tree_util
+from jax import extend as extend
 
 # Also circular dependency.
 from jax._src.array import Shard as Shard
