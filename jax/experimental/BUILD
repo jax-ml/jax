@@ -261,6 +261,7 @@ py_library_providing_imports_info(
         "//jax/_src:config",
         "//jax/_src:core",
         "//jax/_src:dtypes",
+        "//jax/_src:mesh",
         "//jax/_src:mlir",
         "//jax/_src:sharding_impls",
         "//jax/_src:stages",

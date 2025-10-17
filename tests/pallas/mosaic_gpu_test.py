@@ -2176,6 +2176,25 @@ class PallasCallTest(PallasTest):
     else:
       self.fail("Should have raised an exception")
 
+  def test_lower_with_abstract_mesh(self):
+    def kernel(y_ref, sem):
+      plgpu.semaphore_signal_multicast(sem, collective_axes='x')
+      # Wait for the multicast signal (each device gets signaled by all devices)
+      pl.semaphore_wait(sem, 2)  # Wait for signals from both devices
+      y_ref[...] = jnp.ones_like(y_ref)
+
+    kernel_jax = pl.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+    )
+    abstract_mesh = jax.sharding.AbstractMesh((2,), ('x',))
+    jax.jit(jax.shard_map(
+        kernel_jax, mesh=abstract_mesh, in_specs=(),
+        out_specs=jax.P(), check_vma=False)).trace().lower(
+            lowering_platforms=('gpu',))  # doesn't crash
+
   @parameterized.named_parameters(
     (
         f"_{''.join(map(str, collective_dims))}={collective_size}{'_' + ''.join(map(str, noncollective_dims)) if noncollective_dims else ''}",

@@ -32,6 +32,7 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import lib
 from jax._src import sharding_impls
+from jax._src import mesh as mesh_lib
 from jax._src import util as jax_util
 from jax._src.interpreters import mlir
 from jax._src.lib import mosaic_gpu_dialect as dialect
@@ -172,7 +173,9 @@ def _mosaic_gpu_lowering_rule(
     # to physical translation, which is currently not implemented.
     if isinstance(axis_context, sharding_impls.SPMDAxisContext):
       mesh = axis_context.mesh
-      if not np.array_equal(mesh.device_ids.ravel(), np.arange(mesh.size)):
+      # Skip the check for AbstractMesh
+      if (isinstance(mesh, mesh_lib.Mesh) and
+          not np.array_equal(mesh.device_ids.ravel(), np.arange(mesh.size))):
         raise NotImplementedError(
             "Mosaic GPU only supports meshes with device ordering that follows"
             " row-major device ids."
