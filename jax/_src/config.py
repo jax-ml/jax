@@ -1654,6 +1654,7 @@ explicit_x64_dtypes = enum_class_state(
 )
 
 class NumpyDtypePromotion(enum.StrEnum):
+  RELAXED = 'relaxed'
   STANDARD = 'standard'
   STRICT = 'strict'
 
@@ -1661,12 +1662,16 @@ numpy_dtype_promotion = enum_class_state(
     name='jax_numpy_dtype_promotion',
     enum_class=NumpyDtypePromotion,
     default=NumpyDtypePromotion.STANDARD,
-    help=('Specify the rules used for implicit type promotion in operations '
-          'between arrays. Options are "standard" or "strict"; in strict-mode, '
-          'binary operations between arrays of differing strongly-specified '
-          'dtypes will result in an error.'),
+    help=(
+        'Specify the rules used for implicit type promotion in operations '
+        'between arrays. Options are "relaxed", "standard" or "strict"; in '
+        'strict-mode, binary operations between arrays of differing '
+        'strongly-specified dtypes will result in an error; in relaxed-mode, '
+        'promotion of sub-byte (e.g. int4) and float8 types is permitted.'
+    ),
     include_in_jit_key=True,
-    include_in_trace_context=True)
+    include_in_trace_context=True,
+)
 
 disallow_mesh_context_manager = bool_state(
     name='jax_disallow_mesh_context_manager',
