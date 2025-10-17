@@ -40,8 +40,8 @@ _deprecations = {
     # Finalized for v0.8.0; remove in v0.9.0
     "custom_jvp_call_jaxpr_p": (
       ("jax.custom_derivatives.custom_jvp_call_jaxpr_p was deprecated in v0.7.0"
-       " and removed in v0.8.0."
-       "use jax.extend.core.primitives.custom_jvp_call_p instead."),
+       " and removed in v0.8.0. use jax.extend.core.primitives.custom_jvp_call_p"
+       " instead, and please note that you must `import jax.extend` explicitly."),
       None,
     ),
 }

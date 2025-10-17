@@ -75,7 +75,11 @@ _deprecations = {
     _pe_src.FreeVar,
   ),
   "Jaxpr": (
-    "jax.interpreters.partial_eval.Jaxpr is deprecated. Use jax.extend.core.Jaxpr.",
+    (
+        "jax.interpreters.partial_eval.Jaxpr is deprecated. Use"
+        " jax.extend.core.Jaxpr, and please note that you must"
+        " `import jax.extend` explicitly."
+    ),
     _core_src.Jaxpr,
   ),
   "JaxprEqnRecipe": (
