@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for the jax2tf conversion of pjit.
+"""Tests for handling of sharding in the jax2tf conversion of jit.
 
  To verify that the tests do run indeed on multiple devices you can run
 
@@ -41,6 +41,7 @@ from jax._src.shard_map import shard_map
 from jax.sharding import NamedSharding
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
+from jax.sharding import AxisType
 import jax.numpy as jnp
 
 import numpy as np
@@ -184,20 +185,18 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       for in_shardings in ("missing", None, "P")
       for out_shardings in ("missing", None, "P")
   ])
-  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
-                      category=DeprecationWarning)
-  @jtu.with_mesh([("x", 2)])
-  def test_pjit_basic(self, in_shardings="P", out_shardings="P"):
+  @jtu.with_explicit_mesh((2,), ("x",), axis_types=(AxisType.Auto,))
+  def test_jit_basic(self, *, mesh, in_shardings="P", out_shardings="P"):
     # Ensure that we can distinguish the inputs and outputs by shape
     def f_jax(x):  # f32[10,20] -> f32[20,10]
       return jnp.sin(x.T)
 
-    pjit_kwargs = {}
+    jit_kwargs = {}
     if in_shardings != "missing":
-      pjit_kwargs["in_shardings"] = (P(None, "x") if in_shardings == "P" else None)
+      jit_kwargs["in_shardings"] = (P(None, "x") if in_shardings == "P" else None)
     if out_shardings != "missing":
-      pjit_kwargs["out_shardings"] = (P("x", None) if out_shardings == "P" else None)
-    f_jax = pjit.pjit(f_jax, **pjit_kwargs)
+      jit_kwargs["out_shardings"] = (P("x", None) if out_shardings == "P" else None)
+    f_jax = jax.jit(f_jax, **jit_kwargs)
 
     x_shape = (10, 20)
     x = np.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
@@ -255,10 +254,10 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     res_tf = f_tf(x)
     self.assertAllClose(res_tf.numpy(), res_jax)
 
-  @jtu.with_mesh([("x", 2)])
-  def test_pjit_variable_arg(self):
+  @jtu.with_explicit_mesh((2,), ("x",), axis_types=(AxisType.Auto,))
+  def test_jit_variable_arg(self, mesh):
     # The first argument is a tf.Variable
-    @partial(pjit.pjit, in_shardings=(P(None, "x"), P("x", None)),
+    @partial(jax.jit, in_shardings=(P(None, "x"), P("x", None)),
              out_shardings=None)
     def f_jax(x, y):  # f32[10,20] , f32[20,30] -> f32[10,30]
       return x @ y
@@ -280,18 +279,16 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
             (r"f32\[10,20\].*custom_call_target.*\"Sharding.*sharding.*devices=\[1,2\]", 1),
             # The y argument
             (r"f32\[20,30\].*custom_call_target.*\"Sharding.*sharding.*devices=\[2,1\]", 1),
-            # The output sharding
-            (r"f32\[10,30\].*custom_call_target.*\"Sharding.*sharding.*replicated", 1),
             # No other annotations
-            (r"custom_call_target.*\"Sharding", 3)
+            (r"custom_call_target.*\"Sharding", 2)
         ])
 
-  @jtu.with_mesh([("x", 2)])
-  def test_pjit_closed_over_const(self):
+  @jtu.with_explicit_mesh((2,), ("x",), axis_types=(AxisType.Auto,))
+  def test_jit_closed_over_const(self, mesh):
     x = np.ones((10, 20), dtype=np.float32)
     const = jnp.full((10, 20), 7, dtype=np.float32)
 
-    @partial(pjit.pjit, in_shardings=(P("x"),), out_shardings=None)
+    @partial(jax.jit, in_shardings=(P("x"),), out_shardings=None)
     def f_jax(x):  # f32[10,20] -> f32[20,10]
       return (x * const).T
 
@@ -316,9 +313,6 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
             # x
             (r"f32\[10,20\].*custom_call_target.*\"Sharding.*sharding.*devices=\[2,1\]",
              1),
-            # The result
-            (r"f32\[20,10\].*custom_call_target.*\"Sharding.*sharding.*replicated",
-             self.GEQ(1)),
         ])
 
     res_jax = f_jax(x)
@@ -327,23 +321,29 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"_nested_pjit={nested_pjit}_constraint={constraint}_poly={poly}",
-           nested_pjit=nested_pjit, constraint=constraint, poly=poly)
-      # We add a constraint either with a nested pjit or with a sharding_constraint
-      for nested_pjit in (True, False)
+      dict(testcase_name=f"_nested_jit={nested_jit}_constraint={constraint}_poly={poly}",
+           nested_jit=nested_jit, constraint=constraint, poly=poly)
+      # We add a constraint either with a nested jit or with a sharding_constraint
+      for nested_jit in (True, False)
       for constraint in (None, "P")
       for poly in (None, "2*b1,_", "_,b2", "2*b1,b2")
   ])
   @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
                       category=DeprecationWarning)
   @jtu.with_mesh([("x", 2)])
-  def test_pjit_sharding_constraint(self, nested_pjit=True, constraint="P", poly="2*b1,b2"):
+  #@jtu.with_explicit_mesh((2,), ("x",), axis_types=(AxisType.Auto,))
+  def test_jit_sharding_constraint(self, *, nested_jit=True, constraint="P", poly="2*b1,b2"):
+    # TODO(necula): move this test also to use jit. Currently, if we replace
+    # `with mesh` with `with set_mesh` (jtu.with_explicit_mesh above), and
+    # we keep using pjit, we get an error that the sharding constraint cannot
+    # be None. But if we also replace pjit with jit, there is no such error,
+    # and instead we see that the replicated shardings are silently dropped.
     constraint_sharding = P("x", None) if constraint == "P" else None
     @partial(pjit.pjit, in_shardings=None,
              out_shardings=None)
-    def f_jax(x):  # x: f32[10, 20], optionally some axes as polymorphic
+    def f_jax(x):  # x: f32[10, 20], optionally some axes are polymorphic
       y = jnp.concatenate([x, x], axis=1)  # y: f32[10, 40]
-      if nested_pjit:
+      if nested_jit:
         y = pjit.pjit(lambda y: y, in_shardings=constraint_sharding,
                       out_shardings=constraint_sharding)(y)
       else:
@@ -357,8 +357,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(f_jax, polymorphic_shapes=poly)
 
     # If we use a pjit then we see two constraints, otherwise only 1
-    count_inner_sharding = (2 if nested_pjit else 1) if constraint == "P" else 0
-    count_inner_replicated = (2 if nested_pjit else 1) if constraint != "P" else 0
+    count_inner_sharding = (2 if nested_jit else 1) if constraint == "P" else 0
+    count_inner_replicated = (2 if nested_jit else 1) if constraint != "P" else 0
     self.check_sharding(
         f_tf, [x],
         checks=[
@@ -382,9 +382,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       for in_shardings in ("missing", None, "P")
       for out_shardings in ("missing", None, "P")
   ])
-  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
-                      category=DeprecationWarning)
-  def test_grad_pjit(self, in_shardings="P", out_shardings=None):
+  def test_grad_jit(self, in_shardings="P", out_shardings=None):
     local_devices = list(jax.local_devices())
     size = 2
     if len(local_devices) < size:
@@ -394,14 +392,14 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     def f_jax(x):  # x: f32[10,20] -> f32[20,10]
       return jnp.sin(x.T)
 
-    pjit_kwargs = {}
+    jit_kwargs = {}
     if in_shardings != "missing":
-      pjit_kwargs["in_shardings"] = (
+      jit_kwargs["in_shardings"] = (
         NamedSharding(mesh, P(None, "x")) if in_shardings == "P" else None)
     if out_shardings != "missing":
-      pjit_kwargs["out_shardings"] = (
+      jit_kwargs["out_shardings"] = (
         NamedSharding(mesh, P("x", None)) if out_shardings == "P" else None)
-    f_jax = pjit.pjit(f_jax, **pjit_kwargs)
+    f_jax = jax.jit(f_jax, **jit_kwargs)
     x_shape = (10, 20)
     x = np.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
 
@@ -440,8 +438,6 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
             (r"f32\[20,10\].*custom_call_target.*\"Sharding.*sharding.*devices=\[2,1\]", count_out_P),
         ])
 
-  @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
-                      category=DeprecationWarning)
   def test_grad_sharding_different_mesh(self):
     # Convert with two similar meshes, the only difference being
     # the order of the devices. grad should not fail.
@@ -458,9 +454,9 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     shardings = NamedSharding(mesh, jax.sharding.PartitionSpec(("i",)))
     shardings_rev = NamedSharding(mesh_rev, jax.sharding.PartitionSpec(("i",)))
 
-    f_tf = tf.function(jax2tf.convert(pjit.pjit(f_jax, in_shardings=shardings)),
+    f_tf = tf.function(jax2tf.convert(jax.jit(f_jax, in_shardings=shardings)),
                        autograph=False)
-    f_tf_rev = tf.function(jax2tf.convert(pjit.pjit(f_jax, in_shardings=shardings_rev)),
+    f_tf_rev = tf.function(jax2tf.convert(jax.jit(f_jax, in_shardings=shardings_rev)),
                            autograph=False)
     inp = np.ones((2, 4), dtype=np.float32)
 
@@ -485,12 +481,13 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     mesh = Mesh(self.devices, axis_names=('x'))
     a = np.arange(4 * 4, dtype=np.float32).reshape((4, 4))
 
-    @partial(pjit.pjit,
-             in_shardings=(P('x', None),), out_shardings=P(None, 'x'))
+    @partial(jax.jit,
+             in_shardings=(NamedSharding(mesh, P("x", None)),),
+             out_shardings=NamedSharding(mesh, P(None, "x")))
     @partial(shard_map, mesh=mesh,
-             in_specs=(P('x', None),), out_specs=P(None, 'x'))
+             in_specs=(P("x", None),), out_specs=P(None, "x"))
     def f_jax(b):  # b: f32[2, 4]
-      return lax.all_to_all(b, 'x', split_axis=1, concat_axis=1, tiled=True)
+      return lax.all_to_all(b, "x", split_axis=1, concat_axis=1, tiled=True)
 
     @tf.function(autograph=False, jit_compile=True)
     def f_tf(a):
@@ -523,7 +520,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
   def test_repro_xla_bug_shmap_collective_permute(self):
     mesh = Mesh(self.devices, axis_names=('x'))
 
-    @partial(pjit.pjit,
+    @partial(jax.jit,
              in_shardings=(P('x', None),), out_shardings=P('x', None))
     @partial(shard_map, mesh=mesh,
              in_specs=(P('x', None),), out_specs=P('x', None))
@@ -556,17 +553,18 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
   def test_shmap_collective_permute(self, poly=None):
     if jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("TODO(b/268295912): ShardingRemover crash")
-    mesh = Mesh(self.devices, axis_names=('x'))
+    mesh = Mesh(self.devices, axis_names=("x"))
     a = np.arange(4 * 4, dtype=np.float32).reshape((4, 4))
 
-    @partial(pjit.pjit,
-             in_shardings=(P('x', None),), out_shardings=P('x', None))
+    @partial(jax.jit,
+             in_shardings=(NamedSharding(mesh, P("x", None)),),
+                           out_shardings=NamedSharding(mesh, P("x", None)))
     @partial(shard_map, mesh=mesh,
-             in_specs=(P('x', None),), out_specs=P('x', None))
+             in_specs=(P("x", None),), out_specs=P("x", None))
     def f_jax(b):  # b: f32[2, 4]
-      axis_size = lax.axis_size('x')
+      axis_size = lax.axis_size("x")
       perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
-      return lax.ppermute(b, 'x', perm=perm)
+      return lax.ppermute(b, "x", perm=perm)
 
     @tf.function(autograph=False, jit_compile=True)
     def f_tf(a):
