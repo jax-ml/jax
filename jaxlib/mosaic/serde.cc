@@ -55,7 +55,7 @@ std::optional<llvm::StringRef> demangle(llvm::StringRef name,
 mlir::LogicalResult RunSerde(
     mlir::ModuleOp module, const llvm::StringMap<SerdeRuleType>& upgrade_rules,
     const llvm::StringMap<SerdeRuleType>& downgrade_rules, bool serialize,
-    SerdeOptions options) {
+    SerdeOptions options, bool keep_version_attr) {
   int version = options.highest_version;
   int serialize_version = options.serialize_version;
   if (!serialize && serialize_version != -1) {
@@ -91,7 +91,9 @@ mlir::LogicalResult RunSerde(
       return mlir::failure();
     }
     version = version_attr.getInt();
-    module->removeAttr(options.version_attr_name);
+    if (!keep_version_attr) {
+      module->removeAttr(options.version_attr_name);
+    }
   }
   std::string storage;
   // Explicitly use a post-order walk to allow for deleting operations on the

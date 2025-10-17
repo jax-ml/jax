@@ -62,6 +62,8 @@ struct MosaicSerdePass : public jaxlib::mlir::Pass<MosaicSerdePass, ModuleOp> {
 
  protected:
   ::mlir::Pass::Option<bool> serialize{*this, "serialize", llvm::cl::desc("")};
+  ::mlir::Pass::Option<bool> keep_version_attr{
+      *this, "keep-version-attr", llvm::cl::desc(""), llvm::cl::init(true)};
   ::mlir::Pass::Option<int> target_version{*this, "target-version",
                                            llvm::cl::desc("")};
 };

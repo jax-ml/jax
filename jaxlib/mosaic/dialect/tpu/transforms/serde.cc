@@ -40,7 +40,7 @@ constexpr StringRef kMangledDialect = "stable_mosaic.";
 constexpr StringRef kVersionAttrName = "stable_mosaic.version";
 // When this is bumped, we should file a TODO to update the forward-compatible
 // version in tpu_custom_call.py in a month!
-constexpr int kVersion = 8;
+constexpr int kVersion = 9;
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
 
@@ -311,7 +311,8 @@ void MosaicSerdePass::runOnOperation() {
           {.dialect_prefix = kMangledDialect,
            .highest_version = kVersion,
            .version_attr_name = kVersionAttrName,
-           .serialize_version = serialize_version}))) {
+           .serialize_version = serialize_version},
+          /*keep_version_attr=*/keep_version_attr))) {
     signalPassFailure();
   }
 }

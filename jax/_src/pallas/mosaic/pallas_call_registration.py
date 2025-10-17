@@ -353,6 +353,7 @@ def _sc_lowering_rule(
         input_output_aliases=input_output_aliases,
         metadata=metadata,
         collective_id=mosaic_params.collective_id,
+        _ir_version=tpu_custom_call.get_ir_version(ctx),
     )(*args)
     return out
 
