@@ -495,14 +495,14 @@ def pattern_search(patterns: str | Sequence[str], string: str):
     patterns = (patterns,)  # type: ignore
 
   for pattern in patterns:
-    if pattern in string:
+    if re.search(pattern, string):
       return pattern
   return None
 
-def device_kind_matches(device_patterns: str | Sequence[str]):
+def device_kind_match(device_patterns: str | Sequence[str]):
   device_kind = xla_bridge.devices()[0].device_kind
   matching_pattern = pattern_search(device_patterns, device_kind)
-  return matching_pattern is not None
+  return matching_pattern
 
 def skip_if_errors(
     *,
@@ -541,6 +541,16 @@ skip_if_triton_exceeds_shared_memory = functools.partial(
   error_patterns="Shared memory size limit exceeded",
   reason=lambda err, dev: f"Triton kernel exceeds shared memory on {dev}",
 )
+
+def get_cuda_nonportable_max_cluster_size():
+  if device_kind_match("GB10$"):
+    # 12 is the nonportable maximum cluster size on DGX Spark,
+    # determined by querying cuOccupancyMaxPotentialClusterSize.
+    return 12
+  # 16 is the nonportable maximum cluster size on:
+  # - Hopper: https://docs.nvidia.com/cuda/hopper-tuning-guide/index.html#:~:text=cluster%20size%20of-,16,-by%20opting%20in
+  # - Blackwell: https://docs.nvidia.com/cuda/blackwell-tuning-guide/index.html#:~:text=cluster%20size%20of-,16,-by%20opting%20in
+  return 16
 
 def is_cuda_compute_capability_at_least(capability: str) -> bool:
   if not is_device_cuda():
