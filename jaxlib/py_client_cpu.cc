@@ -57,7 +57,8 @@ struct CpuTransposePlanCache {
 ffi::TypeId CpuTransposePlanCache::id = {};
 
 XLA_FFI_REGISTER_TYPE(ffi::GetXlaFfiApi(), "CpuTransposePlanCache",
-                      &CpuTransposePlanCache::id);
+                      &CpuTransposePlanCache::id,
+                      ffi::TypeInfo<CpuTransposePlanCache>());
 
 static ffi::ErrorOr<std::unique_ptr<CpuTransposePlanCache>>
 CpuTransposePlanCacheInstantiate(uint64_t index) {

@@ -61,7 +61,8 @@ struct GpuTransposePlanCache {
 xla::ffi::TypeId GpuTransposePlanCache::id = {};
 
 XLA_FFI_REGISTER_TYPE(xla::ffi::GetXlaFfiApi(), "GpuTransposePlanCache",
-                      &GpuTransposePlanCache::id);
+                      &GpuTransposePlanCache::id,
+                      xla::ffi::TypeInfo<GpuTransposePlanCache>());
 
 static xla::ffi::ErrorOr<std::unique_ptr<GpuTransposePlanCache>>
 GpuTransposePlanCacheInstantiate(uint64_t index) {
