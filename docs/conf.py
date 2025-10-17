@@ -92,8 +92,8 @@ intersphinx_mapping = {
     'array_api': ('https://data-apis.org/array-api/2023.12/', None),
     'python': ('https://docs.python.org/3/', None),
     'numpy': ('https://numpy.org/doc/stable/', None),
-    # TODO(phawkins,jakevdp): readd scipy when it is up again.
-    # 'scipy': ('https://docs.scipy.org/doc/scipy/reference/', None),
+    # TODO(phawkins,jakevdp): revert to stable scipy docs when it is up again.
+    'scipy': ('https://scipy.github.io/devdocs/', None),
 }
 
 suppress_warnings = [
