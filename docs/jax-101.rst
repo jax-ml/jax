@@ -14,7 +14,7 @@ implementation, in no particular order, see the :doc:`advanced guides <advanced_
    jit-compilation
    automatic-vectorization
    automatic-differentiation
-   working-with-pytrees
+   pytrees
    random-numbers
    sharded-computation
    control-flow
