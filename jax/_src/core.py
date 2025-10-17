@@ -3317,6 +3317,10 @@ class MutableTypecheckVal:
   aval : AbstractValue
   mutable_qdd : MutableQuasiDynamicData
 
+
+_ref_allocating_primitives = {ref_p}
+
+
 def _check_jaxpr(
     ctx_factory: Callable[[], tuple[JaxprPpContext, JaxprPpSettings]],
     jaxpr: Jaxpr
@@ -3406,7 +3410,7 @@ def _check_jaxpr(
       # Check the computed effect type matches the eqn's annotation, and is
       # included in the jaxpr's annotation.
       if prim.ref_primitive:
-        if prim is ref_p:
+        if prim in _ref_allocating_primitives:
           outvar, = eqn.outvars
           in_idx[outvar] = None  # type: ignore
           mut_arrays.add(outvar)

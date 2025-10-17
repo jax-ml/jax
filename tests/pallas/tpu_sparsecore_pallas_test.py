@@ -1137,6 +1137,25 @@ class VectorSubcoreTest(PallasSCTest):
     expected = jnp.broadcast_to(expected[:, None], (mesh.num_subcores, vec_dim))
     np.testing.assert_array_equal(kernel(), expected)
 
+  def test_shared_scratch(self):
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+    )
+    shape = (mesh.num_subcores, 8, 8)
+    x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
+
+    @plsc.kernel(out_shape=x, mesh=mesh)
+    def kernel(x_ref, o_ref):
+      subcore_id = lax.axis_index("subcore")
+      shared_scratch_ref = pl.get_global(
+          pltpu.VMEM_SHARED(shape[1:], jnp.int32))
+      @pl.when(subcore_id == 0)
+      def _():
+        pltpu.sync_copy(x_ref.at[subcore_id], shared_scratch_ref)
+        pltpu.sync_copy(shared_scratch_ref, o_ref.at[subcore_id])
+
+    np.testing.assert_array_equal(kernel(x)[0], x[0])
+
 
 class ScalarSubcoreTest(PallasSCTest):
 
