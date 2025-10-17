@@ -383,13 +383,13 @@ alias(
 alias(
     name = "pallas_tpu",
     actual = "//jax/experimental:pallas_tpu",
-    visibility = ["//jax/experimental:pallas_tpu_users"],
+    visibility = ["//visibility:public"],
 )
 
 alias(
     name = "pallas_tpu_ops",
     actual = "//jax/experimental:pallas_tpu_ops",
-    visibility = ["//jax/experimental:pallas_tpu_users"],
+    visibility = ["//visibility:public"],
 )
 
 alias(

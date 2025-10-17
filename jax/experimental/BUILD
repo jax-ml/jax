@@ -22,7 +22,6 @@ load(
     "pallas_fuser_users",
     "pallas_gpu_internal_users",
     "pallas_sc_internal_users",
-    "pallas_tpu_internal_users",
     "py_deps",
     "py_library_providing_imports_info",
     "pytype_strict_library",
@@ -70,12 +69,6 @@ package_group(
     name = "pallas_sc_users",
     includes = ["//jax:internal"],
     packages = pallas_sc_internal_users,
-)
-
-package_group(
-    name = "pallas_tpu_users",
-    includes = ["//jax:internal"],
-    packages = pallas_tpu_internal_users,
 )
 
 package_group(
@@ -332,9 +325,7 @@ pytype_strict_library(
             "pallas/triton.py",
         ],
     ),
-    visibility = [
-        "//visibility:public",
-    ],
+    visibility = ["//visibility:public"],
     deps = [
         "//jax",
         "//jax/_src:deprecations",
@@ -427,9 +418,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_tpu",
     srcs = ["pallas/tpu.py"],
-    visibility = [
-        ":pallas_tpu_users",
-    ],
+    visibility = ["//visibility:public"],
     deps = [
         ":pallas",  # build_cleaner: keep
         "//jax/_src/pallas",
@@ -461,9 +450,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_tpu_ops",
     srcs = glob(["pallas/ops/tpu/**/*.py"]),
-    visibility = [
-        ":pallas_tpu_users",
-    ],
+    visibility = ["//visibility:public"],
     deps = [
         ":pallas",
         ":pallas_tpu",
@@ -595,9 +582,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "source_mapper",
     srcs = glob(include = ["source_mapper/**/*.py"]),
-    visibility = [
-        "//visibility:public",
-    ],
+    visibility = ["//visibility:public"],
     deps = [
         "//jax",
         "//jax/_src:config",
