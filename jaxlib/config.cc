@@ -96,11 +96,11 @@ class GlobalConfigState {
 
   // Adds or removes a thread-local state from the set of thread-local states.
   void AddThreadLocalState(ThreadLocalConfigState* state) {
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(mu_);
     thread_local_states_.insert(state);
   }
   void RemoveThreadLocalState(ThreadLocalConfigState* state) {
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(mu_);
     thread_local_states_.erase(state);
   }
 
@@ -180,7 +180,7 @@ int GlobalConfigState::tp_traverse(int key, PyObject* self, visitproc visit,
     PyObject* value = entries_[key].ptr();
     Py_VISIT(value);
   }
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   for (const auto* state : thread_local_states_) {
     if (key < state->entries_.size()) {
       PyObject* value = state->entries_[key].ptr();
@@ -198,7 +198,7 @@ int GlobalConfigState::tp_clear(int key, PyObject* self) {
   // We destroy the python objects outside of the lock out of an abundance of
   // caution.
   std::vector<nb::object> to_destroy;
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   to_destroy.reserve(thread_local_states_.size());
   for (auto* state : thread_local_states_) {
     if (key < state->entries_.size()) {
