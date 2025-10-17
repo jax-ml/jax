@@ -22,6 +22,6 @@ from jax._src.ffi import (
     include_dir as include_dir,
     pycapsule as pycapsule,
     register_ffi_target as register_ffi_target,
-    register_ffi_type_id as register_ffi_type_id,
+    register_ffi_type as register_ffi_type,
     register_ffi_target_as_batch_partitionable as register_ffi_target_as_batch_partitionable,
 )
