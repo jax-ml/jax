@@ -1925,6 +1925,7 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
       flat_global_args = p.flat_args
     return jitted_f, flat_global_args, p, mesh, out_specs, donate_tuple
 
+  @util.wraps(f)
   def wrapped(*args, **kwargs):
     jitted_f, flat_global_args, p, mesh, out_specs, _ = infer_params(
         *args, **kwargs)

@@ -2325,6 +2325,13 @@ class PmapShmapMergeTest(jtu.JaxTestCase):
     expected_args_info = (((stages.ArgInfo(aval, donated=False), (),),),{},)
     self.assertEqual(shmap_lowered.args_info, expected_args_info)  # doesn't crash
 
+  @config.pmap_shmap_merge(True)
+  def test_wrapped(self):
+    f = lambda x: x
+    g = jax.pmap(f)
+    self.assertTrue(hasattr(g, '__wrapped__'))
+    self.assertEqual(g.__wrapped__, f)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class CppPmapTest(PythonPmapTest):
