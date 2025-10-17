@@ -166,6 +166,7 @@ from jax import dlpack as dlpack
 from jax import dtypes as dtypes
 from jax import errors as errors
 from jax import export as export
+from jax import extend as extend
 from jax import ffi as ffi
 from jax import image as image
 from jax import lax as lax
@@ -180,7 +181,6 @@ from jax import sharding as sharding
 from jax import memory as memory
 from jax import stages as stages
 from jax import tree_util as tree_util
-from jax import extend as extend
 
 # Also circular dependency.
 from jax._src.array import Shard as Shard
