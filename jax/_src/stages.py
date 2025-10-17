@@ -340,11 +340,6 @@ class Stage:
     return tree_structure(self.args_info)
 
   @property
-  def in_avals(self):
-    """Tree of input avals."""
-    return tree_util.tree_map(lambda x: x._aval, self.args_info)
-
-  @property
   def donate_argnums(self):
     """Flat tuple of donated argument indices."""
     return tuple(
