@@ -17,12 +17,10 @@ from __future__ import annotations
 import collections
 from collections.abc import Sequence
 import dataclasses
-import enum
 import gc
 import threading
 from typing import Any, Callable, Literal
 
-from jax._src import source_info_util
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
 import numpy as np
 
@@ -68,6 +66,9 @@ class Semaphore:
   def dma_execution_mode(self) -> str:
     return self.shared_memory.dma_execution_mode
 
+  def get_global_core_id(self, device_id: int, local_core_id: int) -> int:
+    return self.shared_memory.get_global_core_id(device_id, local_core_id)
+
   def signal(self, inc, global_core_id, clock):
     """Signal the semaphore on `(device_id, core_id)` by `inc`.
 
@@ -91,7 +92,7 @@ class Semaphore:
     with self.cv:
       return self.count_by_core[global_core_id]
 
-  def wait(self, value, global_core_id, *, is_dma=False):
+  def wait(self, value, global_core_id, *, has_tasks=False):
     global_core_id = int(global_core_id)
 
     # TODO(jburnim):
@@ -99,9 +100,10 @@ class Semaphore:
     #  - If the count is equal to value, but there DMAs waiting to signal us,
     #    raise an error?
 
-    # Simple implementation for non-DMA semaphores.
+    # Simple implementation for semaphores that have no tasks that can signal
+    # them.
     clock = None
-    if not is_dma or (self.dma_execution_mode == 'eager'):
+    if not has_tasks:
       with self.cv:
         while self.count_by_core[global_core_id] < value:
           self.cv.wait()
@@ -117,6 +119,13 @@ class Semaphore:
           )
       return
 
+    # TODO(nrink): Update the comment below to generalize from DMAs and DMA
+    # semaphores. We now have the concept of 'tasks' that can signal a
+    # semaphore. At the moment, DMAs are the only tasks that occur; and what is
+    # allowed to be a task may still change (because it should probably be more
+    # restricted than allowing tasks to be arbitrary callables, as is currently
+    # done).
+    #
     # For DMA semaphores (when shared_memory.dma_execution_mode=='on_wait'),
     # while our count is not large enough we will select and partially execute
     # pending DMAs until our count is large enough.
@@ -142,61 +151,24 @@ class Semaphore:
         return
 
       with self.shared_memory.lock:
-        dma_queue = self.shared_memory.dmas_by_sem[self.id]
-        if len(dma_queue) > 0:
-          dma = dma_queue.pop()
+        task_queue = self.shared_memory.tasks_by_sem[(self.id, global_core_id)]
+        if len(task_queue) > 0:
+          task = task_queue.pop()
         else:
           continue
 
-      assert (dma.src_sem is self) or (dma.dst_sem is self)
-
-      # Only execute the DMA as far as necessary to signal us.
-      self.shared_memory.dma_read(dma)
-      if dma.src_sem is self:
-        # We were only waiting for the DMA read (i.e., we're the send
-        # semaphore), so leave the DMA write for later.
-        continue
-      self.shared_memory.dma_write(dma)
+      task()
 
 
-class DmaState(enum.Enum):
-  STARTED = 0
-  READ = 1
-  COMPLETED = 2
-
-# TODO(nrink): Consider moving `DMA` (and hence also `DmaState`) out of this
-# module. This may require making `SharedMemory` more configurable with how
-# DMAs should be handled and executed.
-@dataclasses.dataclass
-class DMA:
-  id: int
-
-  src_device_id: int
-  src_local_core_id: int
-  src_memory_space: int
-  src_buffer_id: int
-  src_transforms: tuple[Any, ...]
-  dst_device_id: int
-  dst_local_core_id: int
-  dst_memory_space: int
-  dst_buffer_id: int
-  dst_transforms: tuple[Any, ...]
-  src_sem: Semaphore
-  dst_sem: Semaphore
-
-  clock: vc.VectorClock
-
-  source_info: source_info_util.SourceInfo | None = None
-
-  state: DmaState = DmaState.STARTED
-  data: np.ndarray | None = None
-  virtual_device_id: int | None = None
-  lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
-
-  @property
-  def data_size(self) -> int:
-    assert self.data is not None
-    return self.data.itemsize * self.data.size
+# A `SemaphoreTask` is called when a semaphore is waiting to be signalled on a
+# specific core. A `SemaphoreTask` will typically capture the `Semaphore` object
+# that is waiting, so that when the task is called, it can signal the semaphore
+# (by calling `Semaphore.signal` from within the task). When a `SemaphoreTask`
+# object is called, it can be assumed that the call stack of the task will
+# *not* hold the lock on the shared memory in the captured `Semaphore` object.
+# This allows the task to use methods from `SharedMemory` to access and modify
+# the global shared memory object.
+SemaphoreTask = Callable[[], None]
 
 
 @dataclasses.dataclass
@@ -240,9 +212,6 @@ class SharedMemory:
   barrier: threading.Barrier
   clean_up_barrier: threading.Barrier
 
-  dma_read_callback: Callable[[SharedMemory, DMA], None]
-  dma_write_callback: Callable[[SharedMemory, DMA], None]
-
   # (memory_space, buffer_id, device_id, local_core_id) -> NumPy array
   mem: dict[tuple[str, int, int, int], Buffer] = dataclasses.field(
       default_factory=dict
@@ -251,12 +220,11 @@ class SharedMemory:
   # semaphore_id -> Semaphore
   sem: dict[int, Semaphore] = dataclasses.field(default_factory=dict)
 
-  # (semaphore_id, device_id)
-  #   -> list of DMAs that will signal the semaphore on the given device
-  # TODO(jburnim): Fix uses of `dmas_by_sem` to align with the two lines of
-  # documentation above, i.e. index `dmas_by_sem` with
-  # `(semaphore_id, device_id)` (currently indexed with `semaphore_id only).
-  dmas_by_sem: dict[int, list[DMA]] = dataclasses.field(
+  # (semaphore_id, global_core_id)
+  #   -> tasks that will signal the semaphore on the core with the given ID and
+  #      that should therefore be considered for execution when the semaphore is
+  #      waiting (to be signalled).
+  tasks_by_sem: dict[tuple[int, int], list[SemaphoreTask]] = dataclasses.field(
       default_factory=lambda: collections.defaultdict(list)
   )
 
@@ -271,8 +239,6 @@ class SharedMemory:
       default_factory=lambda: collections.defaultdict(lambda: 2000)
   )
 
-  next_dma_id: int = 100
-
   deallocated_bytes: int = 0
 
   # (device_id, local_core_id) -> [(grid_index, [range])]
@@ -284,12 +250,6 @@ class SharedMemory:
   fixed_id_sem: dict[int, Semaphore] = dataclasses.field(
       default_factory=dict
   )
-
-  def dma_read(self, dma: DMA):
-    self.dma_read_callback(self, dma)
-
-  def dma_write(self, dma: DMA):
-    self.dma_write_callback(self, dma)
 
   @property
   def num_cores(self) -> int:
@@ -305,6 +265,16 @@ class SharedMemory:
         self.get_global_core_id(device_id, core_id)
         for core_id in range(self.num_cores_per_device)
     )
+
+  def append_semaphore_task(
+      self,
+      semaphore_id: int,
+      global_core_id: int,
+      task: SemaphoreTask,
+  ):
+    """Appends a task to be executed if the semaphore with the given sempahore ID is waiting to be signalled on the core with the given global core ID."""
+    with self.lock:
+      self.tasks_by_sem[(semaphore_id, global_core_id)].append(task)
 
   def get_random_virtual_device_id(self) -> int:
     # Virtual device IDs are needed for DMAs. Conceptually, each DMA runs on its
@@ -336,28 +306,29 @@ class SharedMemory:
       with self.lock:
         print(self.mem)
 
-  def get_semaphore_and_increment_clock(
-      self, sem_id: int, global_core_id: int
-  ) -> tuple[Semaphore, vc.VectorClock | None]:
-    """Returns the semaphore with the given `sem_id` and increments the vector clock for the core with `global_core_id`.
+  def get_semaphores_and_increment_clock(
+      self, sem_ids: Sequence[int | None], global_core_id: int
+  ) -> tuple[list[Semaphore | None], vc.VectorClock | None]:
+    """Returns the semaphores with the given `sem_ids` and increments the vector clock for the core with `global_core_id`.
 
     If race detection is enabled, this method increments the vector clock for
     the core with the given `global_core_id` (while holding the lock on `self`).
     We do this so that we can associate a (vector clock) time with the shared
-    memory operation of looking up the semaphore, which in turn can be used as a
-    proxy for the time when the returned semaphore is used by the client of the
-    `SharedMemory` class without acquiring the lock on `self`. (For the purpose
-    of encapsulation, we prefer to think of `self.lock` as a private attribute
-    of the `SharedMemory` class; hence clients of the class should not attempt
-    to acquire this lock explicitly.)
+    memory operation of looking up the semaphores, which in turn can be used as
+    a proxy for the time when the returned semaphores are used by the client of
+    the `SharedMemory` class without acquiring the lock on `self`. (For the
+    purpose of encapsulation, we prefer to think of `self.lock` as a private
+    attribute of the `SharedMemory` class; hence clients of the class should not
+    attempt to acquire this lock explicitly.)
 
     Args:
-      sem_id: The ID of the semaphore to return.
+      sem_ids: The IDs of the semaphores to return or None.
       global_core_id: The ID of the core whose vector clock should be
         incremented (if race detection is enabled).
 
     Returns:
-      - The semaphore with the given `sem_id`.
+      - The semaphores with the given `sem_ids` or None if the corresponding
+        entry in `sem_ids` is None.
       - The incremented vector clock for the core with the given
         `global_core_id`, or None if race detection is not enabled.
     """
@@ -367,18 +338,24 @@ class SharedMemory:
         vc.inc_vector_clock(self.clocks[global_core_id], global_core_id)
         clock = vc.copy_vector_clock(self.clocks[global_core_id])
 
-      if sem_id in self.fixed_id_sem:
-        if sem_id in self.sem:
-          # TODO(nrink): For now we make it the responsibility of the client to
-          # ensure that fixed-ID semaphores do not collide with internal
-          # semaphore IDs.
-          raise ValueError(
-              f'Semaphore {sem_id} occurs as both user-specified and internal.'
-          )
-        sem = self.fixed_id_sem[sem_id]
-      else:
-        sem = self.sem[sem_id]
-    return sem, clock
+      sems = []
+      for sem_id in sem_ids:
+        if sem_id is None:
+          sem = None
+        elif sem_id in self.fixed_id_sem:
+          if sem_id in self.sem:
+            # TODO(nrink): For now we make it the responsibility of the client to
+            # ensure that fixed-ID semaphores do not collide with internal
+            # semaphore IDs.
+            raise ValueError(
+                f'Semaphore {sem_id} occurs as both fixed-id and internal.'
+            )
+          sem = self.fixed_id_sem[sem_id]
+        else:
+          sem = self.sem[sem_id]
+        sems.append(sem)
+
+    return sems, clock
 
   def get_sempahores_with_nonzero_count(
       self, device_id: int

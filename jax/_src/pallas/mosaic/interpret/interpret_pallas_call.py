@@ -15,6 +15,7 @@
 from collections.abc import Callable
 import contextlib
 import dataclasses
+import enum
 import functools
 import itertools
 import math
@@ -167,12 +168,26 @@ def set_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
   config.pallas_tpu_interpret_mode_context_manager.set_global(params)  # type: ignore[arg-type]
 
 
+class Counter:
+  """A simple counter that is thread-safe."""
+
+  def __init__(self, initial_value: int):
+    self.value = initial_value
+    self.lock = threading.Lock()
+
+  def get_next(self):
+    with self.lock:
+      result = self.value
+      self.value += 1
+    return result
+
+
 # TODO(jburnim): Do we want to support multiple instances of SharedMemory?
 # Maybe for running multiple distinct interpreted computations in parallel?
 _shared_memory: memory.SharedMemory | None = None
 _shared_memory_init_lock = threading.Lock()
 races: RaceDetectionState | None = None
-
+dma_id_counter: Counter | None = None
 
 def reset_tpu_interpret_mode_state():
   """Resets all global, shared state used by TPU interpret mode.
@@ -186,10 +201,11 @@ def reset_tpu_interpret_mode_state():
   debugging purposes.  In this case, the shared state must be reset before
   any further kernels are interpreted.
   """
-  global _shared_memory, races
+  global _shared_memory, races, dma_id_counter
   with _shared_memory_init_lock:
     _shared_memory = None
     races = None
+    dma_id_counter = None
 
 
 def _get_shared_memory() -> memory.SharedMemory:
@@ -223,7 +239,7 @@ def _get_vector_clock_size(
 def _initialize_shared_memory(
     device_id, num_devices, num_cores_per_device, *, interpret_params
 ):
-  global _shared_memory, races
+  global _shared_memory, races, dma_id_counter
   del device_id
 
   num_devices = int(num_devices)
@@ -236,6 +252,7 @@ def _initialize_shared_memory(
           num_devices, num_cores_per_device, interpret_params=interpret_params
       )
       races = RaceDetectionState(num_cores=num_cores)
+      dma_id_counter = Counter(100)
       _shared_memory = memory.SharedMemory(
           num_devices=num_devices,
           num_cores_per_device=num_cores_per_device,
@@ -253,8 +270,6 @@ def _initialize_shared_memory(
           clean_up_barrier=threading.Barrier(
               num_devices, action=_clear_shared_memory
           ),
-          dma_read_callback=execute_dma_read,
-          dma_write_callback=execute_dma_write,
       )
   assert _shared_memory.num_cores == num_cores
 
@@ -863,78 +878,145 @@ def swap(
   return ret
 
 
-def execute_dma_read(shared_memory: memory.SharedMemory, dma: memory.DMA):
-  with dma.lock:
-    if dma.state != memory.DmaState.STARTED:
-      return
+class DmaState(enum.Enum):
+  STARTED = 0
+  READ = 1
+  COMPLETED = 2
 
-    if dma.virtual_device_id is None:
-      dma.virtual_device_id = shared_memory.get_random_virtual_device_id()
 
-    if shared_memory.detect_races:
-      vc.inc_vector_clock(dma.clock, dma.virtual_device_id)
+@dataclasses.dataclass
+class DMA:
+  id: int
 
-    dma.data = get(
-        dma.src_device_id,
-        dma.src_local_core_id,
-        dma.src_memory_space,
-        dma.src_buffer_id,
-        dma.src_transforms,
-        clock=vc.copy_vector_clock(dma.clock),
-        src_device_id=dma.id,
-        src_local_core_id=0,
-        source_info=dma.source_info,
+  src_device_id: int
+  src_local_core_id: int
+  src_memory_space: int
+  src_buffer_id: int
+  src_transforms: tuple[Any, ...]
+  dst_device_id: int
+  dst_local_core_id: int
+  dst_memory_space: int
+  dst_buffer_id: int
+  dst_transforms: tuple[Any, ...]
+  src_sem: memory.Semaphore | None
+  dst_sem: memory.Semaphore
+  virtual_device_id: int
+  clock: vc.VectorClock
+
+  source_info: source_info_util.SourceInfo | None = None
+
+  state: DmaState = DmaState.STARTED
+  data: np.ndarray | None = None
+  lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
+
+  @property
+  def data_size(self) -> int:
+    assert self.data is not None
+    return self.data.itemsize * self.data.size
+
+  @property
+  def detect_races(self) -> bool:
+    return self.dst_sem.detect_races
+
+  @property
+  def src_global_core_id(self) -> int:
+    return self.dst_sem.get_global_core_id(
+        self.src_device_id, self.src_local_core_id
     )
 
-    if shared_memory.detect_races:
-      vc.inc_vector_clock(dma.clock, dma.virtual_device_id)
-
-    # Signal the send semaphore.
-    if dma.src_sem is not None:
-      global_core_id = shared_memory.get_global_core_id(
-          dma.src_device_id, dma.src_local_core_id
-      )
-      dma.src_sem.signal(dma.data_size, global_core_id, clock=dma.clock)
-
-    dma.state = memory.DmaState.READ
-
-
-def execute_dma_write(shared_memory: memory.SharedMemory, dma: memory.DMA):
-  with dma.lock:
-    assert dma.virtual_device_id is not None
-    assert dma.state in (memory.DmaState.READ, memory.DmaState.COMPLETED)
-    if dma.state == memory.DmaState.COMPLETED:
-      return
-    assert dma.data is not None
-
-    if shared_memory.detect_races:
-      vc.inc_vector_clock(dma.clock, dma.virtual_device_id)
-
-    store(
-        dma.dst_device_id,
-        dma.dst_local_core_id,
-        dma.dst_memory_space,
-        dma.dst_buffer_id,
-        dma.dst_transforms,
-        dma.data,
-        clock=vc.copy_vector_clock(dma.clock),
-        src_device_id=dma.id,
-        src_local_core_id=0,
-        source_info=dma.source_info,
+  @property
+  def dst_global_core_id(self) -> int:
+    return self.dst_sem.get_global_core_id(
+        self.dst_device_id, self.dst_local_core_id
     )
 
-    if shared_memory.detect_races:
-      vc.inc_vector_clock(dma.clock, dma.virtual_device_id)
+  def execute_read(self):
+    """Executes the reading part of this DMA.
 
-    # Signal the receive semaphore.
-    if dma.dst_sem is not None:
-      global_core_id = shared_memory.get_global_core_id(
-          dma.dst_device_id, dma.dst_local_core_id
+    Note that the caller must not hold the lock on the shared memory (because
+    `get` is called in this method).
+    """
+    # Must acquire the lock on `self` because:
+    #   - `self.state` is inspected and modified in this method.
+    #   - `self.data` is assigned in this method.
+    with self.lock:
+      if self.state != DmaState.STARTED:
+        return
+
+      if self.detect_races:
+        vc.inc_vector_clock(self.clock, self.virtual_device_id)
+
+      self.data = get(
+          self.src_device_id,
+          self.src_local_core_id,
+          self.src_memory_space,
+          self.src_buffer_id,
+          self.src_transforms,
+          clock=vc.copy_vector_clock(self.clock),
+          src_device_id=self.id,
+          src_local_core_id=0,
+          source_info=self.source_info,
       )
-      dma.dst_sem.signal(dma.data_size, global_core_id, clock=dma.clock)
 
-    dma.data = None
-    dma.state = memory.DmaState.COMPLETED
+      if self.detect_races:
+        vc.inc_vector_clock(self.clock, self.virtual_device_id)
+
+      # Signal the send semaphore.
+      if self.src_sem is not None:
+        self.src_sem.signal(
+            self.data_size, self.src_global_core_id, clock=self.clock
+        )
+
+      self.state = DmaState.READ
+
+  def execute_write(self):
+    """Executes the writing part of this DMA.
+
+    Note that the caller must not hold the lock on the shared memory (because
+    `store` is called in this method).
+    """
+    # Must acquire the lock on `self` because:
+    #   - `self.state` is inspected and modified in this method.
+    #   - `self.data` is assigned in this method.
+    with self.lock:
+      assert self.state in (DmaState.READ, DmaState.COMPLETED)
+      if self.state == DmaState.COMPLETED:
+        return
+      assert self.data is not None
+
+      if self.detect_races:
+        vc.inc_vector_clock(self.clock, self.virtual_device_id)
+
+      store(
+          self.dst_device_id,
+          self.dst_local_core_id,
+          self.dst_memory_space,
+          self.dst_buffer_id,
+          self.dst_transforms,
+          self.data,
+          clock=vc.copy_vector_clock(self.clock),
+          src_device_id=self.id,
+          src_local_core_id=0,
+          source_info=self.source_info,
+      )
+
+      if self.detect_races:
+        vc.inc_vector_clock(self.clock, self.virtual_device_id)
+
+      self.dst_sem.signal(
+          self.data_size, self.dst_global_core_id, clock=self.clock
+      )
+
+      self.data = None
+      self.state = DmaState.COMPLETED
+
+  def execute_read_and_write(self):
+    """Executes this DMA, bot the reading and writing parts.
+
+    Note that the caller must not hold the lock on the shared memory.
+    """
+    self.execute_read()
+    self.execute_write()
 
 
 def dma_start(
@@ -967,47 +1049,64 @@ def dma_start(
     dst_device_id = int(dst_device_id)
   else:
     dst_device_id = device_id
+  dst_global_core_id = shared_memory.get_global_core_id(
+      dst_device_id, src_local_core_id  # Same core on destination device as on source.
+  )
 
-  with shared_memory.lock:
-    dst_sem = shared_memory.sem[dst_sem_id]
-    src_sem = shared_memory.sem[src_sem_id] if src_sem_id is not None else None
+  (src_sem, dst_sem), clock = shared_memory.get_semaphores_and_increment_clock(
+      (src_sem_id, dst_sem_id), src_global_core_id
+  )
 
-    clock = None
-    if shared_memory.detect_races:
-      vc.inc_vector_clock(
-          shared_memory.clocks[src_global_core_id], src_global_core_id
+  assert dma_id_counter is not None
+  id = dma_id_counter.get_next()
+
+  dma = DMA(
+      id,
+      device_id,
+      src_local_core_id,
+      src_memory_space,
+      src_id,
+      src_transforms,
+      dst_device_id,
+      src_local_core_id,  # Same core on destination device as on source.
+      dst_memory_space,
+      dst_id,
+      dst_transforms,
+      src_sem,
+      dst_sem,
+      virtual_device_id = shared_memory.get_random_virtual_device_id(),
+      clock=clock,
+      source_info=source_info,
+  )
+
+  if shared_memory.dma_execution_mode == 'on_wait':
+    if src_sem_id is None:
+      shared_memory.append_semaphore_task(
+          dst_sem_id, dst_global_core_id, dma.execute_read_and_write
       )
-      clock = vc.copy_vector_clock(shared_memory.clocks[src_global_core_id])
-    dma_id = shared_memory.next_dma_id
-    shared_memory.next_dma_id += 1
-
-    dma = memory.DMA(
-        dma_id,
-        device_id,
-        src_local_core_id,
-        src_memory_space,
-        src_id,
-        src_transforms,
-        dst_device_id,
-        src_local_core_id,  # Same core on destination device as on source.
-        dst_memory_space,
-        dst_id,
-        dst_transforms,
-        src_sem,
-        dst_sem,
-        clock=clock,
-        source_info=source_info,
-    )
-
-    if shared_memory.dma_execution_mode == 'on_wait':
-      shared_memory.dmas_by_sem[dst_sem_id].append(dma)
-      if src_sem_id is not None:
-        shared_memory.dmas_by_sem[src_sem_id].append(dma)
-      return
+    else:
+      shared_memory.append_semaphore_task(
+          src_sem_id, src_global_core_id, dma.execute_read
+      )
+      shared_memory.append_semaphore_task(
+          dst_sem_id,
+          dst_global_core_id,
+          # This task for the waiting semaphore with ID `dst_sem_id` may be
+          # executed before the corresponding DMA task for the sending semaphore
+          # that does the DMA read. We therefore have to append a read-and-write
+          # task here, instead of just a write task. If the reading for the DMA
+          # has already been executed, the DMA's state will indicate this and
+          # the read-write-task appended here will do the write only.
+          # (Alternatively, we could have the DMA write task wait on the
+          # `send_semphore`. This issue with this approach is that we do not
+          # know the number of bytes transferred that `send_semaphore` should be
+          # waiting for until after the reader task is done.)
+          dma.execute_read_and_write,
+      )
+    return
 
   assert shared_memory.dma_execution_mode == 'eager'
-  execute_dma_read(shared_memory, dma)
-  execute_dma_write(shared_memory, dma)
+  dma.execute_read_and_write()
 
 
 def dma_wait(device_id, local_core_id, sem_id, size):
@@ -1020,10 +1119,11 @@ def dma_wait(device_id, local_core_id, sem_id, size):
 
   global_core_id = shared_memory.get_global_core_id(device_id, local_core_id)
 
-  sem, _ = shared_memory.get_semaphore_and_increment_clock(
-      sem_id, global_core_id
+  (sem,), _ = shared_memory.get_semaphores_and_increment_clock(
+      {sem_id}, global_core_id
   )
-  sem.wait(size, global_core_id, is_dma=True)
+  assert sem is not None
+  sem.wait(size, global_core_id, has_tasks=True)
 
 
 def semaphore_signal(
@@ -1050,9 +1150,10 @@ def semaphore_signal(
   if target_local_core_id is None:
     target_local_core_id = 0
 
-  sem, clock = shared_memory.get_semaphore_and_increment_clock(
-      sem_id, src_global_core_id
+  (sem,), clock = shared_memory.get_semaphores_and_increment_clock(
+      {sem_id}, src_global_core_id
   )
+  assert sem is not None
   sem.signal(
       inc,
       shared_memory.get_global_core_id(target_device_id, target_local_core_id),
@@ -1069,9 +1170,10 @@ def semaphore_wait(device_id, local_core_id, sem_id, value):
   value = int(value)
   global_core_id = shared_memory.get_global_core_id(device_id, local_core_id)
 
-  sem, _ = shared_memory.get_semaphore_and_increment_clock(
-      sem_id, global_core_id
+  (sem,), _ = shared_memory.get_semaphores_and_increment_clock(
+      {sem_id}, global_core_id
   )
+  assert sem is not None
   sem.wait(value, global_core_id)
 
 
