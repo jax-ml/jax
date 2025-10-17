@@ -64,8 +64,8 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding as JSharding
-from jax._src.mesh import (AbstractMesh, Mesh, get_abstract_mesh,
-                           get_concrete_mesh)
+from jax._src.mesh import (
+    AbstractMesh, Mesh, get_abstract_mesh, get_concrete_mesh)
 from jax._src.sharding_impls import (
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, AUTO, UnspecifiedValue,
     get_array_mapping as _get_array_mapping, array_mapping_to_axis_resources,
@@ -1750,12 +1750,14 @@ def get_default_device() -> xc.Device:
 
 def _get_and_check_device_assignment(
     shardings: Iterable[ShardingInfo],
-    context_devices: Sequence[xc.Device] | None,
+    ctx_mesh: Mesh | AbstractMesh,
 ) -> tuple[xc.Client, tuple[xc.Device, ...] | None, int]:
   first_sharding_info = None
-  context_devices = () if context_devices is None else tuple(context_devices)
-  abstract_mesh = None
-  any_concrete_sharding = True if context_devices else False
+  abstract_mesh = (
+      ctx_mesh if not ctx_mesh.empty and isinstance(ctx_mesh, AbstractMesh)
+      else None)
+  any_concrete_sharding = (
+      True if not ctx_mesh.empty and isinstance(ctx_mesh, Mesh) else False)
 
   for sh, s_type, source_info in shardings:
     if isinstance(sh, UnspecifiedValue):
@@ -1771,22 +1773,31 @@ def _get_and_check_device_assignment(
       arr_device_assignment = sh._device_assignment
       if first_sharding_info is None:
         first_sharding_info = (arr_device_assignment, s_type, source_info)
-      if not context_devices:
+      if ctx_mesh.empty:
         if first_sharding_info[0] != arr_device_assignment:
           raise stages.DeviceAssignmentMismatchError([
               stages.DeviceAssignmentMismatch(*first_sharding_info),
               stages.DeviceAssignmentMismatch(
                   arr_device_assignment, s_type, source_info)])
-      else:
-        if context_devices != arr_device_assignment:
+      elif isinstance(ctx_mesh, AbstractMesh):
+        if ctx_mesh.size != len(arr_device_assignment):
           raise stages.DeviceAssignmentMismatchError([
               stages.DeviceAssignmentMismatch(
-                  context_devices, stages.MismatchType.CONTEXT_DEVICES, None),
+                  ctx_mesh.size, stages.MismatchType.CONTEXT_DEVICES, None),
+              stages.DeviceAssignmentMismatch(
+                  arr_device_assignment, s_type, source_info)])
+      else:
+        if ctx_mesh._flat_devices_tuple != arr_device_assignment:
+          raise stages.DeviceAssignmentMismatchError([
+              stages.DeviceAssignmentMismatch(
+                  ctx_mesh._flat_devices_tuple,
+                  stages.MismatchType.CONTEXT_DEVICES, None),
               stages.DeviceAssignmentMismatch(
                   arr_device_assignment, s_type, source_info)])
 
-  if first_sharding_info is None and context_devices:
-    device_assignment = context_devices
+  if (first_sharding_info is None and not ctx_mesh.empty and
+      isinstance(ctx_mesh, Mesh)):
+    device_assignment = ctx_mesh._flat_devices_tuple  # type: ignore
   elif first_sharding_info is None:
     device_assignment = (get_default_device(),)
   else:
@@ -2220,7 +2231,9 @@ def _concretize_abstract_out_shardings(shardings, avals, device_assignment,
   return tuple(out)
 
 
-def _get_context_mesh(context_mesh: Mesh) -> Mesh:
+def _get_context_mesh(context_mesh: Mesh | AbstractMesh) -> Mesh | AbstractMesh:
+  if isinstance(context_mesh, AbstractMesh):
+    return context_mesh
   # Don't update the mesh because the old `with mesh` ctx mgr is set.
   if get_concrete_mesh().empty:
     return context_mesh
@@ -2246,7 +2259,7 @@ def lower_sharding_computation(
     donated_invars: Sequence[bool],
     *,
     keep_unused: bool,
-    context_mesh: Mesh,
+    context_mesh: Mesh | AbstractMesh,
     compiler_options_kvs: tuple[tuple[str, Any], ...],
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
@@ -2297,8 +2310,6 @@ def lower_sharding_computation(
 
   context_mesh = _get_context_mesh(context_mesh)
 
-  devices_from_context = (None if context_mesh.empty else
-                          context_mesh._flat_devices_tuple)
   # Device assignment across all inputs, outputs and shardings inside jaxpr
   # should be the same.
   unique_intermediate_shardings = util.stable_unique(
@@ -2314,7 +2325,7 @@ def lower_sharding_computation(
           ((o, stages.MismatchType.OUT_SHARDING, None) for o in unique_out_shardings),
           ((js, stages.MismatchType.SHARDING_INSIDE_COMPUTATION, source_info)
            for js, source_info in unique_intermediate_shardings)),
-      devices_from_context)
+      context_mesh)
   unique_intermediate_shardings = [js for js, _ in unique_intermediate_shardings]
   unique_in_shardings = unique_in_shardings | unique_const_shardings  # type: ignore
   del unique_const_shardings
@@ -2324,9 +2335,10 @@ def lower_sharding_computation(
   if device_assignment is None:
     if lowering_platforms is None:
       raise ValueError(
-          "Passing lowering_platforms via jax.export or "
+          "Passing lowering_platforms via jax.export or"
           " jit(f).trace(*args).lower(lowering_platforms=...) is required when"
-          " only AbstractMesh exists in a jitted computation.")
+          " only AbstractMesh exists in a jitted computation. Got context"
+          f" mesh: {context_mesh}")
     if prim_requires_devices:
       raise ValueError(
           "AbstractMesh cannot be used when jaxpr contains primitives that"
@@ -2360,7 +2372,7 @@ def lower_sharding_computation(
   transfer_mem_kind_in_jaxpr = jaxpr_transfer_mem_kinds(jaxpr)
 
   committed = bool(
-      devices_from_context
+      not context_mesh.empty
       or num_devices > 1
       or any(not isinstance(s, UnspecifiedValue) for s in it.chain(
           unique_in_shardings, unique_out_shardings,

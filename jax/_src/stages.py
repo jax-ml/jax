@@ -47,6 +47,7 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src.typing import ArrayLike
 from jax._src.interpreters import mlir
+from jax._src.mesh import Mesh, AbstractMesh
 from jax._src.layout import Format, Layout, AutoLayout
 from jax._src.sharding_impls import UnspecifiedValue, AUTO
 from jax._src.lib.mlir import ir
@@ -453,10 +454,12 @@ class Traced(Stage):
                   self._num_consts)
 
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
-            _private_parameters: mlir.LoweringParameters | None = None):
+            _private_parameters: mlir.LoweringParameters | None = None,
+            _context_mesh: Mesh | AbstractMesh | None = None):
     """Lower to compiler input, returning a ``Lowered`` instance."""
     return self.fall().lower(lowering_platforms=lowering_platforms,
-                             _private_parameters=_private_parameters)
+                             _private_parameters=_private_parameters,
+                             _context_mesh=_context_mesh)
 
 
 def lojax_expand_params(jaxpr, params):
@@ -499,13 +502,17 @@ class Fallen(Stage):
     return tree_unflatten(self.out_tree, self.jaxpr.out_avals)
 
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
-            _private_parameters: mlir.LoweringParameters | None = None):
+            _private_parameters: mlir.LoweringParameters | None = None,
+            _context_mesh: Mesh | AbstractMesh | None = None):
     """Lower to compiler input, returning a ``Lowered`` instance."""
     if _private_parameters is None:
       _private_parameters = mlir.LoweringParameters()
     try:
-      lowering = self._lfg(**self._params,
-                           lowering_platforms=lowering_platforms,
+      kwargs_to_update = {}  # type: ignore
+      if _context_mesh is not None:
+        kwargs_to_update.update(ctx_mesh=_context_mesh)
+      self._params.update(kwargs_to_update)
+      lowering = self._lfg(**self._params, lowering_platforms=lowering_platforms,
                            lowering_parameters=_private_parameters)
     except DeviceAssignmentMismatchError as e:
       fails, = e.args
@@ -940,17 +947,17 @@ class SourceInfo(NamedTuple):
 
 @dataclasses.dataclass
 class DeviceAssignmentMismatch:
-  da: Sequence[xc.Device]
+  da: Sequence[xc.Device] | int
   m_type: MismatchType
   source_info: SourceInfo | None
 
   @property
   def device_ids(self) -> Sequence[int]:
-    return [d.id for d in self.da]
+    return [d.id for d in self.da]  # type: ignore
 
   @property
   def platform(self) -> str:
-    return self.da[0].platform.upper()
+    return self.da[0].platform.upper()  # type: ignore
 
   def _maybe_api_name(self, api_name) -> str:
     return f" {api_name}'s" if self.m_type == MismatchType.CONTEXT_DEVICES else ""
@@ -964,14 +971,17 @@ class DeviceAssignmentMismatch:
 
   @property
   def _dev_ids_plat_str(self):
-    return f"device ids {self.device_ids} on platform {self.platform}"
+    if isinstance(self.da, int):
+      return f"as AbstractMesh of size {self.da}"
+    else:
+      return f"with device ids {self.device_ids} on platform {self.platform}"
 
   def m_type_str(self, api_name):
     return (f'{self.source_info and self.source_info.eqn_name} inside {api_name}'
             if self.m_type == MismatchType.SHARDING_INSIDE_COMPUTATION else self.m_type)
 
   def _str(self, api_name):
-    return (f"{self._maybe_api_name(api_name)} {self.m_type_str(api_name)} with "
+    return (f"{self._maybe_api_name(api_name)} {self.m_type_str(api_name)} "
             f"{self._dev_ids_plat_str}{self.source_info_str}")
 
 
