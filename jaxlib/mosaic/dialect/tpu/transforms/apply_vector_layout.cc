@@ -5520,6 +5520,42 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
              dst_tiled_dims[1] % dst_vreg_slice[1] == 0) {
     no_op = true;
   }
+
+  auto can_use_row_shuffle = [&ctx](ArrayRef<int64_t> shape,
+                                    VectorLayout layout,
+                                    std::array<int64_t, 2> vreg_slice) {
+    if (shape.size() < 2) {
+      return false;
+    }
+    // vreg must not be padded.
+    if (shape.back() % vreg_slice[1] != 0 ||
+        shape[shape.size() - 2] % vreg_slice[0] != 0) {
+      return false;
+    }
+    if (!llvm::isPowerOf2_32(layout.bitwidth())) {
+      return false;
+    }
+    if (layout.offsets() != LayoutOffsets{0, 0}) {
+      return false;
+    }
+    if (layout.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
+      return false;
+    }
+    // 2d tiling.
+    if (layout.tiling()[0] <= ctx.target_shape[0] * layout.packing() &&
+        layout.tiling()[1] == ctx.target_shape[1] &&
+        shape.back() == vreg_slice[1]) {
+      return true;
+    }
+    // 1d tiling.
+    if (layout.tiling() ==
+            std::array<int64_t, 2>{1, ctx.target_shape[1] * layout.packing()} &&
+        shape.back() % vreg_slice[1] == 0) {
+      return true;
+    }
+    return false;
+  };
+
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> src_vregs,
       disassemble(builder, layout_in,
@@ -5552,20 +5588,8 @@ LogicalResult reshape_rule(RewriteContext& ctx, Operation& op,
     } else if (
         // Row shuffle within a vreg if there is no padding and each vreg holds
         // a contiguous slice of the flattened data.
-        dst_shape.size() > 1 && src_shape.size() > 1 &&
-        dst_shape.back() == dst_vreg_slice[1] &&
-        dst_shape[dst_shape.size() - 2] % dst_vreg_slice[0] == 0 &&
-        src_shape.back() == src_vreg_slice[1] &&
-        src_shape[src_shape.size() - 2] % src_vreg_slice[0] == 0 &&
-        (bitwidth == 32 || bitwidth == 16 || bitwidth == 8) &&
-        layout_in.offsets() == LayoutOffsets{0, 0} &&
-        layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-        layout_in.tiling()[0] <= ctx.target_shape[0] * layout_in.packing() &&
-        layout_in.tiling()[1] == ctx.target_shape[1] &&
-        layout_out.offsets() == LayoutOffsets{0, 0} &&
-        layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-        layout_out.tiling()[0] <= ctx.target_shape[0] * layout_out.packing() &&
-        layout_out.tiling()[1] == ctx.target_shape[1]) {
+        can_use_row_shuffle(src_shape, layout_in, src_vreg_slice) &&
+        can_use_row_shuffle(dst_shape, layout_out, dst_vreg_slice)) {
       auto [sublane_count, lane_count] = ctx.target_shape;
       auto dst_vregs_shape =
           layout_out.tileArrayShape(false, false, dst_shape, ctx.target_shape);
