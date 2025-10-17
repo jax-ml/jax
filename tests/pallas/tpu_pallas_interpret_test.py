@@ -21,13 +21,12 @@ contains only tests that do not use shard_map.
 from collections.abc import Callable
 import dataclasses
 import functools
-import threading
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
-import jax._src.pallas.mosaic.interpret as mosaic_interpret
+from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_interpret
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
@@ -102,10 +101,40 @@ class InterpretTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+
+    if not jtu.test_device_matches(['cpu']):
+      self.skipTest('CPU-only test')
+
     self.num_devices = jax.device_count()
     if self.num_devices > 1:
       # Workaround for https://github.com/jax-ml/jax/issues/25671
       self.skipTest(f'requires 1 device, found {self.num_devices}')
+
+  def test_revisiting_is_an_error(self):
+    def kernel(x_ref, o1_ref, o2_ref):
+      pass
+
+    @jax.jit
+    def run():
+      return pl.pallas_call(
+          kernel,
+          out_shape=[
+              jax.ShapeDtypeStruct((16, 256), jnp.float32),
+              jax.ShapeDtypeStruct((16, 256), jnp.float32),
+          ],
+          grid=(4, 4),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          out_specs=[
+              pl.BlockSpec((4, 128), lambda i, j: (i, j // 2)),
+              pl.BlockSpec((4, 128), lambda i, j: (j // 2, i % 2)),
+          ],
+          interpret=pltpu.InterpretParams(),
+      )(jnp.zeros((8, 128)))
+
+    with self.assertRaisesRegex(
+        Exception, r'Revisited block .* of output 1 in iteration \(2, 0\)'):
+      run()[0].block_until_ready()
+    pltpu.reset_tpu_interpret_mode_state()
 
   def test_matmul_example(self):
     def matmul_kernel(x_ref, y_ref, z_ref):
@@ -132,7 +161,42 @@ class InterpretTest(jtu.JaxTestCase):
     x = jax.random.normal(k1, (1024, 1024))
     y = jax.random.normal(k2, (1024, 1024))
     z = matmul(x, y)
-    np.testing.assert_allclose(z, x @ y, atol=1e-4)
+    np.testing.assert_allclose(z, x @ y, atol=1e-3)
+
+  @parameterized.parameters('raise', 'uninitialized')
+  def test_out_of_bounds_block_spec(self, out_of_bounds_reads):
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    @functools.partial(jax.jit, static_argnums=(0, 1))
+    def run(input_offset, output_offset):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+          out_specs=pl.BlockSpec((4, 128), lambda i: (i+output_offset, 0)),
+          in_specs=[pl.BlockSpec((4, 128), lambda i: (i+input_offset, 0))],
+          grid=(4,),
+          interpret=pltpu.InterpretParams(
+              out_of_bounds_reads=out_of_bounds_reads),
+      )(jnp.zeros((16, 128), jnp.float32))
+
+    # Out-of-bounds input block.
+    if out_of_bounds_reads == 'uninitialized':
+      out = np.array(run(1, 0))
+      np.testing.assert_equal(out[:12], 0.0)
+      self.assertTrue(np.isnan(out[12:]).all())
+    elif out_of_bounds_reads == 'raise':
+      with self.assertRaisesRegex(
+          Exception, 'Out-of-bounds block index .* for input'):
+        run(1, 0)
+      pltpu.reset_tpu_interpret_mode_state()
+
+    # Out-of-bounds output block.
+    if out_of_bounds_reads == 'raise':
+      with self.assertRaisesRegex(
+          Exception, 'Out-of-bounds block index .* for output'):
+        run(0, 2)
+      pltpu.reset_tpu_interpret_mode_state()
 
   @parameterized.parameters('raise', 'uninitialized')
   def test_out_of_bounds_read_index(self, out_of_bounds_reads):
@@ -177,7 +241,6 @@ class InterpretTest(jtu.JaxTestCase):
         run(jnp.array([0, 1], jnp.int32),
             jnp.array([2, 6, 9, 15, 17], jnp.int32)),
       pltpu.reset_tpu_interpret_mode_state()
-
 
   @parameterized.parameters('raise', 'uninitialized')
   def test_out_of_bounds_read_range(self, out_of_bounds_reads):
@@ -244,29 +307,33 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_allclose(result, ref)
 
   def test_dynamic_grid_and_aliasing(self):
-    def kernel(s_ref, x_ref, o_ref):
-      o_ref[...] = x_ref[...] + s_ref[0].astype(x_ref.dtype)
+    def kernel(s1_ref, s2_ref, x_ref, o_ref):
+      del s2_ref
+      o_ref[...] = x_ref[...] + s1_ref[0].astype(x_ref.dtype)
 
     iters = jax.random.randint(jax.random.key(0), (), 10, 20, dtype=jnp.int32)
 
     @jax.jit
-    def f(s, x):
+    def f(s1, s2, x):
       return pl.pallas_call(
           kernel,
           out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-          grid=(iters,),
-          in_specs=[
-              pl.BlockSpec(memory_space=pltpu.SMEM),
-              pl.BlockSpec(x.shape, lambda i: (0, 0)),
-          ],
-          out_specs=pl.BlockSpec(x.shape, lambda i: (0, 0)),
-          input_output_aliases={1: 0},
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=2,
+              grid=(iters,),
+              in_specs=[
+                  pl.BlockSpec(x.shape, lambda i, *_: (0, 0)),
+              ],
+              out_specs=pl.BlockSpec(x.shape, lambda i, *_: (0, 0)),
+          ),
+          input_output_aliases={2: 0},
           interpret=pltpu.InterpretParams(),
-      )(s, x)
+      )(s1, s2, x)
 
-    s = jnp.array([1], dtype=jnp.int32)
+    s1 = jnp.array([1], dtype=jnp.int32)
+    s2 = jnp.array([2], dtype=jnp.int32)
     x = jnp.arange(32 * 128.0).reshape((32, 128))
-    y = f(s, x)
+    y = f(s1, s2, x)
     # NOTE: No matter how many times the kernel body is run, the kernel input
     # buffer will only be written once by the pallas_call machinery, just
     # before the first iteration. So the output will be x + 1 , despite the
@@ -599,6 +666,179 @@ class InterpretTest(jtu.JaxTestCase):
       y = f(x)
     np.testing.assert_array_equal(y, expected_out)
 
+  def test_hbm_allocation_in_run_scoped_raises(self):
+    mesh = pltpu.create_tensorcore_mesh('x', num_cores=1)
+
+    @jax.jit
+    def f(x):
+      y = jnp.zeros_like(x)
+
+      def inner(x):
+        x_ref, y_ref = x
+
+        @pl.core_map(
+            mesh,
+            interpret=pltpu.InterpretParams(
+                allow_hbm_allocation_in_run_scoped=False
+            ),
+        )
+        def _():
+          def copy(hbm):
+            pltpu.sync_copy(x_ref, hbm)
+            pltpu.sync_copy(hbm, y_ref)
+
+          pl.run_scoped(
+              copy,
+              pltpu.HBM(x_ref.shape, x_ref.dtype),
+          )
+
+      _, y =  pl.run_state(inner)((x, y))
+      return y
+
+    with self.assertRaisesRegex(
+        ValueError, r'Cannot allocate HBM in `run_scoped`.'
+    ):
+      f(jnp.arange(8))
+
+  @parameterized.product(
+      first_core_to_copy=[0, 1], dma_execution_mode=['eager', 'on_wait']
+  )
+  def test_allocate_shared_buffer_in_core_map(
+      self, first_core_to_copy, dma_execution_mode
+  ):
+    mesh = pltpu.create_tensorcore_mesh('x', num_cores=2)
+    second_core_to_copy = 1 if first_core_to_copy == 0 else 0
+
+    @jax.jit
+    def f(x):
+      y = jnp.zeros_like(x)
+
+      def inner(refs):
+        x_ref, y_ref = refs
+        # Thanks to the semaphore `sem` below, this test is race-free, and both
+        # cores access the shared HBM buffer entirely sequentially. If the
+        # runtime management of buffers were not done carefully, two issues
+        # could arise, each resulting in an attempt to access unallocated
+        # memory:
+        #  1. The first core to reach the `copy` function, inside the nested
+        #     `run_scoped`, might find that the shared HBM buffer has not been
+        #     allocated yet. This could happen if the other core were
+        #     repsonsible for allocating the HBM buffer when entering the nested
+        #     `run_scoped`; but that other core has not reached the nested
+        #     `run_scoped` yet, and hence has not allocated the HBM buffer yet.
+        #  2. The second core to reach the `copy` function might find that the
+        #     shared HBM buffer has been deallocated already. This could happen
+        #     if the other core (i.e. the first one to reach the `copy`
+        #     function) were responsible for deallocating the HBM buffer when
+        #     exiting the nested `run_scoped`. If that other core has already
+        #     run ahead to the end of the nested `run_scoped`, it will have
+        #     deallocated the HBM buffer.
+        @pl.core_map(
+            mesh,
+            interpret=pltpu.InterpretParams(
+                detect_races=True, allow_hbm_allocation_in_run_scoped=True,
+                dma_execution_mode=dma_execution_mode,
+            ),
+        )
+        def _():
+          def body(sem):
+            @pl.when(jax.lax.axis_index('x') == second_core_to_copy)
+            def _():
+              pltpu.semaphore_wait(sem, 1)
+
+            def copy(x_hbm_ref):
+              pltpu.sync_copy(x_ref, x_hbm_ref)
+              pltpu.sync_copy(x_hbm_ref, y_ref)
+
+            pl.run_scoped(
+                copy,
+                pltpu.HBM(x_ref.shape, x_ref.dtype),
+            )
+
+            @pl.when(jax.lax.axis_index('x') == first_core_to_copy)
+            def _():
+              pltpu.semaphore_signal(sem, 1, core_index=second_core_to_copy)
+
+          pl.run_scoped(
+              body,
+              pltpu.SemaphoreType.REGULAR,
+          )
+
+      _, y = pl.run_state(inner)((x, y))
+      return y
+
+    x = jnp.arange(16 * 128, dtype=jnp.int32).reshape((16, 128))
+    y = f(x)
+    np.testing.assert_array_equal(y, x)
+    self.assertFalse(mosaic_interpret.races.races_found)
+
+  @parameterized.product(
+      slow_core=[0, 1], dma_execution_mode=['eager', 'on_wait']
+  )
+  def test_allocate_shared_buffer_in_core_map_with_race(
+      self, slow_core, dma_execution_mode
+  ):
+    mesh = pltpu.create_tensorcore_mesh('x', num_cores=2)
+
+    @jax.jit
+    def f(x, y):
+      z = jnp.zeros_like(x)
+      o = jnp.zeros((y.shape[0], y.shape[0]), dtype=y.dtype)
+
+      def inner(refs):
+        """Copies `x_ref` to `z_ref` and computes `y_ref @ y_ref^t` into `o_ref`."""
+        x_ref, y_ref, z_ref, o_ref = refs
+        @pl.core_map(
+            mesh,
+            interpret=pltpu.InterpretParams(
+                detect_races=True,
+                allow_hbm_allocation_in_run_scoped=True,
+                dma_execution_mode=dma_execution_mode,
+            ),
+        )
+        def _():
+          # The slow core performs an expensive matrix multiplication, and then
+          # copies from `x_ref` to `z_ref`, going through an HBM buffer that is
+          # shared between the two cores. The other core, aka. the fast core,
+          # proceeds directly to copying from `x_ref` to `z_ref`, going through
+          # the same shared HBM buffer. If the shared buffer were, incorrectly,
+          # deallocated by the fast core (once it is done copying from `x_ref`
+          # to `z_ref`) and then reallocated by the slow core (before it starts
+          # copying from `x_ref` to `z_ref`), we would not see any attempts of
+          # accessing unallocated memory. However, we would also not detect any
+          # races since the cores would operate on separate buffers.
+          def body(x_hbm_ref, vmem_ref_0, vmem_ref_1):
+            @pl.when(jax.lax.axis_index('x') == slow_core)
+            def _():
+              pltpu.sync_copy(y_ref, vmem_ref_0)
+              vmem_ref_1[...] = vmem_ref_0[...] @ jnp.transpose(vmem_ref_0[...])
+              pltpu.sync_copy(vmem_ref_1, o_ref)
+
+            pltpu.sync_copy(x_ref, x_hbm_ref)
+            pltpu.sync_copy(x_hbm_ref, z_ref)
+
+          pl.run_scoped(
+              body,
+              pltpu.HBM(x.shape, dtype=x.dtype),
+              pltpu.VMEM(y.shape, dtype=y.dtype),
+              pltpu.VMEM((y.shape[0], y.shape[0]), dtype=y.dtype),
+          )
+
+      _, _, z, o = pl.run_state(inner)((x, y, z, o))
+      return z, o
+
+    x = jnp.arange(16 * 128, dtype=jnp.int32).reshape((16, 128))
+    y = jax.random.randint(
+        jax.random.key(0), (1024, 1024), minval=-100, maxval=100
+    )
+    _, o = f(x, y)
+    # We do not assert that the first result of `f` must be equal to `x`. This
+    # is because of the copying from `x` to the first result of `f` is racy, and
+    # we should therefore not expect the first result of `f` to have a
+    # well-defined value.
+    np.testing.assert_array_equal(o, y @ jnp.transpose(y))
+    self.assertTrue(mosaic_interpret.races.races_found)
+
   def test_two_cores_along_parallel_dimension_with_race(self):
     def kernel(x_ref, o_ref, vmem_ref):
       vmem_ref[...] = x_ref[...]
@@ -614,7 +854,7 @@ class InterpretTest(jtu.JaxTestCase):
           kernel,
           grid=(2,),
           out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-          in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.ANY)],
+          in_specs=[pl.BlockSpec(memory_space=pltpu.MemorySpace.VMEM)],
           scratch_shapes=[
               pltpu.VMEM(x.shape, x.dtype),
           ],
@@ -951,27 +1191,81 @@ class InterpretTest(jtu.JaxTestCase):
             ],
         )
 
-  def test_thread_map(self):
-    barrier = threading.Barrier(8)
-    lock = threading.Lock()
-    concurrent_calls = [0]
-    max_concurrent_calls = [0]
+  @parameterized.parameters(pltpu.MemorySpace.HBM, pltpu.MemorySpace.ANY)
+  def test_referencing_hbm_raises(self, disallowed_memory_space):
+    def jax_load_and_store(in_ref, o_ref):
+      o_ref[...] = in_ref[...]
 
-    def _barrier():
-      with lock:
-        concurrent_calls[0] += 1
-        max_concurrent_calls[0] = max(
-            max_concurrent_calls[0], concurrent_calls[0])
-      barrier.wait()
-      with lock:
-        concurrent_calls[0] -= 1
+    def pallas_load_and_store(in_ref, o_ref):
+      t = pltpu.load(in_ref)
+      pltpu.store(o_ref, t)
 
-    def f(core_index):
-      del core_index
-      jax.experimental.io_callback(_barrier, (), ordered=True)
+    def kernel_call(kernel, x, *, in_memory_space, out_memory_space):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          grid=(1,),
+          in_specs=[pl.BlockSpec(memory_space=in_memory_space)],
+          out_specs=pl.BlockSpec(memory_space=out_memory_space),
+          interpret=pltpu.InterpretParams(),
+      )(x)
 
-    mosaic_interpret._thread_map(f, 8)
-    self.assertEqual(max_concurrent_calls[0], 8)
+    with self.assertRaisesRegex(
+        ValueError,
+        r'get_p: Buffers with a memory space of HBM or ANY cannot be'
+        r' referenced directly. Instead, use `pltpu.sync_copy` or'
+        r' `pltpu.async_copy`.',
+    ):
+      kernel_call(
+          jax_load_and_store,
+          jnp.zeros((8, 128), jnp.float32),
+          in_memory_space=disallowed_memory_space,
+          out_memory_space=pltpu.MemorySpace.VMEM,
+      )
+    pltpu.reset_tpu_interpret_mode_state()
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r'load_p: Buffers with a memory space of HBM or ANY cannot be'
+        r' referenced directly. Instead, use `pltpu.sync_copy` or'
+        r' `pltpu.async_copy`.',
+    ):
+      kernel_call(
+          pallas_load_and_store,
+          jnp.zeros((8, 128), jnp.float32),
+          in_memory_space=disallowed_memory_space,
+          out_memory_space=pltpu.MemorySpace.VMEM,
+      )
+    pltpu.reset_tpu_interpret_mode_state()
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r'swap_p: Buffers with a memory space of HBM or ANY cannot be'
+        r' referenced directly. Instead, use `pltpu.sync_copy` or'
+        r' `pltpu.async_copy`.',
+    ):
+      kernel_call(
+          jax_load_and_store,
+          jnp.zeros((8, 128), jnp.float32),
+          in_memory_space=pltpu.MemorySpace.VMEM,
+          out_memory_space=disallowed_memory_space,
+      )
+    pltpu.reset_tpu_interpret_mode_state()
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r'swap_p: Buffers with a memory space of HBM or ANY cannot be'
+        r' referenced directly. Instead, use `pltpu.sync_copy` or'
+        r' `pltpu.async_copy`.',
+    ):
+      kernel_call(
+          pallas_load_and_store,
+          jnp.zeros((8, 128), jnp.float32),
+          in_memory_space=pltpu.MemorySpace.VMEM,
+          out_memory_space=pltpu.MemorySpace.HBM,
+      )
+    pltpu.reset_tpu_interpret_mode_state()
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

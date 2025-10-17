@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import pickle
 import unittest
 
@@ -26,6 +27,8 @@ except ImportError:
 import jax
 from jax import numpy as jnp
 from jax.interpreters import pxla
+from jax._src import config
+from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import GSPMDSharding
@@ -77,6 +80,13 @@ class CloudpickleTest(jtu.JaxTestCase):
 
   @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")
   def testPickleOfPmappedFunctions(self):
+    if config.pmap_shmap_merge.value:
+      self.skipTest(
+          'Nested pmaps are not relevant for `pmap_shmap_merge=True` and'
+          ' `pmap`s pickled prior to `pmap_shmap_merge=True` may not work, but'
+          " perhaps it's worth making sure that freshly pickled `pmap`s still"
+          ' work?'
+      )
 
     @jax.pmap
     def f(x, y):
@@ -139,11 +149,11 @@ class PickleTest(jtu.JaxTestCase):
     self.assertEqual(partition_spec, restored_partition_spec)
 
   def testPickleX64(self):
-    with jax.experimental.enable_x64():
+    with jax.enable_x64(True):
       x = jnp.array(4.0, dtype='float64')
       s = pickle.dumps(x)
 
-    with jax.experimental.disable_x64():
+    with jax.enable_x64(False):
       y = pickle.loads(s)
 
     self.assertEqual(x.dtype, jnp.float64)
@@ -228,6 +238,21 @@ class PickleTest(jtu.JaxTestCase):
         )
         self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
+  def test_pickle_typed_scalar(self):
+    for l in [
+        literals.TypedInt(3, np.dtype(np.int32)),
+        literals.TypedFloat(2.0, np.dtype(np.float32)),
+        literals.TypedComplex(1j, np.dtype(np.complex64)),
+    ]:
+      m = pickle.loads(pickle.dumps(l))
+      self.assertEqual(type(l), type(m))
+      self.assertEqual(l, m)
+      self.assertEqual(l.dtype, m.dtype)
+
+      n = copy.deepcopy(l)
+      self.assertEqual(type(l), type(n))
+      self.assertEqual(l, n)
+      self.assertEqual(l.dtype, n.dtype)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

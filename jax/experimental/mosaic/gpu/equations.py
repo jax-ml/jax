@@ -14,13 +14,26 @@
 
 """Defines expressions and equations over layouts."""
 
+# mypy has been causing more problems than it solves here. Disable it for these
+# files. We have pytype checks anyway.
+# mypy: ignore-errors
+
 from __future__ import annotations
 
+import abc
+from collections.abc import Sequence
 import dataclasses
-from typing import assert_never, Any, Callable
+import math
+from typing import Any, Callable, assert_never, final
+
+from jax._src.lib.mlir import ir
 
 from . import fragmented_array as fa
+from . import launch_context as lc
 from . import layouts as layouts_lib
+from . import inference_utils
+from . import tcgen05
+from . import utils
 
 
 VariableKey = Any
@@ -34,11 +47,46 @@ class Variable:
   """
   key: VariableKey
 
+  def __str__(self):
+    return f"V({self.key})"
+
+
+class Constant(abc.ABC):
+  """A constant is a known layout."""
+
 
 @dataclasses.dataclass(frozen=True)
-class Constant:
-  """Wraps a known layout."""
+class RegisterLayout(Constant):
+  """Wraps a known register layout."""
+
   value: fa.FragmentedLayout
+
+  def __str__(self):
+    return f"C({self.value})"
+
+
+@dataclasses.dataclass(frozen=True)
+class TMEMLayout(Constant):
+  """Wraps a known TMEM layout."""
+
+  value: tcgen05.TMEMLayout
+
+  def __str__(self):
+    return f"C({self.value})"
+
+
+@dataclasses.dataclass(frozen=True)
+class SMEMTiling(Constant):
+  """Wraps a known SMEM Tile Transform.
+
+  If an SMEM reference may, in principle, have transforms but should not be
+  tiled, then `value` is `None`.
+  """
+
+  value: lc.TileTransform | None
+
+  def __str__(self):
+    return f"C({self.value})"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -62,8 +110,42 @@ class Reduce:
   expression: Expression
   axes: tuple[int, ...]
 
+  def __str__(self):
+    return f"Reduce([{self.axes}], {self.expression})"
 
-Expression = Variable | Constant | LeastReplicated | MostReplicated | Reduce
+
+@dataclasses.dataclass(frozen=True)
+class BroadcastInDim:
+  expression: Expression
+  axes: tuple[int, ...]
+  shape: tuple[int, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class Reshape:
+  expression: Expression
+  source_shape: tuple[int, ...]
+  target_shape: tuple[int, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class Transpose:
+  expression: Expression
+
+  def __str__(self):
+    return f"T({self.expression})"
+
+
+Expression = (
+    Variable
+    | Constant
+    | LeastReplicated
+    | MostReplicated
+    | Reduce
+    | BroadcastInDim
+    | Reshape
+    | Transpose
+)
 
 
 def reduce_replicated_expression(
@@ -88,8 +170,17 @@ def reduce_replicated_expression(
   if len(new_expressions) == 1:
     return new_expressions[0]
 
-  consts = [e for e in new_expressions if isinstance(e, Constant)]
-  unknowns = [e for e in new_expressions if not isinstance(e, Constant)]
+  consts = []
+  unknowns = []
+  for e in new_expressions:
+    if not isinstance(e, Constant):
+      unknowns.append(e)
+      continue
+    if not isinstance(e, RegisterLayout):
+      raise ValueError(
+          f"Reduction of non-register layout constant is not supported: {e}"
+      )
+    consts.append(e)
 
   if consts:
     const_red, *consts = consts
@@ -100,7 +191,7 @@ def reduce_replicated_expression(
         # The layouts are not compatible up to replication, this expression
         # cannot be simplified.
         return Unsatisfiable()
-      red = Constant(red_value)
+      red = RegisterLayout(red_value)
   else:
     red = None
 
@@ -111,6 +202,110 @@ def reduce_replicated_expression(
     return red
 
   return constructor(tuple(unknowns))
+
+
+def reduce_broadcast_expression(
+    broadcast: BroadcastInDim, assignments: dict[Variable, Constant]
+) -> Expression | Unsatisfiable:
+  def _check_shape_broadcast(shape: tuple[int, ...]) -> bool:
+    for axis, s in zip(broadcast.axes, shape, strict=True):
+      if broadcast.shape[axis] != s:
+        return False
+    return True
+
+  reduced_expr = reduce_expression(broadcast.expression, assignments)
+  match reduced_expr:
+    case Unsatisfiable():
+      return Unsatisfiable()
+    case RegisterLayout(value=layout):
+      match layout:
+        case fa.WGSplatFragLayout(shape=shape):
+          if not _check_shape_broadcast(shape):
+            return Unsatisfiable()
+          return RegisterLayout(fa.WGSplatFragLayout(shape=broadcast.shape))
+        case _:
+          return BroadcastInDim(
+              expression=reduced_expr,
+              axes=broadcast.axes,
+              shape=broadcast.shape,
+          )
+    case _:
+      return BroadcastInDim(
+          expression=reduced_expr, axes=broadcast.axes, shape=broadcast.shape
+      )
+
+
+def reduce_reshape_expression(
+    reshape: Reshape, assignments: dict[Variable, Constant]
+) -> Expression | Unsatisfiable:
+  reduced_expr = reduce_expression(reshape.expression, assignments)
+  match reduced_expr:
+    case Unsatisfiable():
+      return Unsatisfiable()
+    case RegisterLayout(value=layout):
+      match layout:
+        case fa.WGSplatFragLayout(shape=shape):
+          assert math.prod(shape) == math.prod(reshape.target_shape)
+          return RegisterLayout(
+              fa.WGSplatFragLayout(shape=reshape.target_shape)
+          )
+        case fa.WGStridedFragLayout(shape=shape, vec_size=vec_size):
+          assert math.prod(shape) == math.prod(reshape.target_shape)
+          return RegisterLayout(
+              fa.WGStridedFragLayout(
+                  shape=reshape.target_shape, vec_size=vec_size
+              )
+          )
+        case fa.TiledLayout() as tiled_layout:
+          tile_shape = tiled_layout.base_tile_shape
+          if len(reshape.target_shape) < len(tile_shape):
+            return dataclasses.replace(reshape, expression=reduced_expr)
+          # Even if the new shape is not perfectly tilable, it is possible that
+          # we may be able to reshape the tiling itself in a way that is
+          # compatible with the new shape. We do not handle this case at the
+          # moment.
+          for ts, s in zip(tile_shape, reshape.source_shape[-len(tile_shape):], strict=True):
+            if s % ts != 0:
+              return dataclasses.replace(reshape, expression=reduced_expr)
+
+          # If minor tiled dimensions are modified, then reshaping is likely to
+          # not be a no-op since the strides between tiles will change,
+          # potentially mapping different elements to lanes and warps. We don't
+          # attempt to handle this case at the moment.
+          num_minor_tiled_dims = len(tile_shape) - 1
+          source_minor_tiled_dims = reshape.source_shape[-num_minor_tiled_dims:]
+          target_minor_tiled_dims = reshape.target_shape[-num_minor_tiled_dims:]
+          major_tiled_dim = tile_shape[0]
+          if (source_minor_tiled_dims != target_minor_tiled_dims or
+              reshape.target_shape[-len(tile_shape)] % major_tiled_dim != 0):
+            return dataclasses.replace(reshape, expression=reduced_expr)
+          # At this point, we now that only non-tiled dimensions and/or the
+          # majormost tiled dimensions may have changed. We also know that the
+          # majormost tiled dimension is still tilable in the new shape.
+          # Therefore, we can return the tiled layout as is.
+          return RegisterLayout(tiled_layout)
+    case _:
+      return dataclasses.replace(reshape, expression=reduced_expr)  # pytype: disable=bad-return-type
+
+
+def reduce_transpose_expression(
+    transpose: Transpose, assignments: dict[Variable, Constant]
+) -> Expression | Unsatisfiable:
+  reduced_expr = reduce_expression(transpose.expression, assignments)
+  match reduced_expr:
+    case Unsatisfiable():
+      return Unsatisfiable()
+    case SMEMTiling(value=tile_transform):
+      if tile_transform is None:
+        return SMEMTiling(None)
+      tiling = tile_transform.tiling
+      if len(tiling) != 2:
+        raise NotImplementedError(
+            f"Only 2D tilings are supported, got {len(tiling)}"
+        )
+      return SMEMTiling(lc.TileTransform(tiling[::-1]))
+    case _:
+      return Transpose(expression=reduced_expr)
 
 
 def reduce_expression(
@@ -135,17 +330,16 @@ def reduce_expression(
       match reduced_expr:
         case Unsatisfiable():
           return Unsatisfiable()
-        case Constant(value=layout) if isinstance(layout, fa.TiledLayout):
-          return Constant(layout.reduce(axes))
-        case Constant():
-          # Explicitly raise an error here as opposed to simply failing to
-          # simplify, so that we get a clear signal if we ever need to implement
-          # this.
-          raise NotImplementedError(
-              "Reduction of non-tiled layouts is not implemented yet."
-          )
+        case RegisterLayout(value=layout) if isinstance(layout, fa.TiledLayout):
+          return RegisterLayout(layout.reduce(axes))
         case _:
           return Reduce(expression=reduced_expr, axes=axes)
+    case BroadcastInDim():
+      return reduce_broadcast_expression(expr, assignments)
+    case Reshape():
+      return reduce_reshape_expression(expr, assignments)
+    case Transpose():
+      return reduce_transpose_expression(expr, assignments)
     case _:
       assert_never(expr)
 
@@ -189,13 +383,15 @@ class Relayout:
     if source == target:
       return True
 
-    if not isinstance(source, Constant) or not isinstance(target, Constant):
+    if not isinstance(source, RegisterLayout) or not isinstance(
+        target, RegisterLayout
+    ):
       return None
 
     source_layout, target_layout = source.value, target.value
     match source_layout, target_layout:
-      case fa.WGSplatFragLayout(), fa.WGStridedFragLayout():
-        return source_layout.shape == target_layout.shape
+      case fa.WGSplatFragLayout() as splat, fa.WGStridedFragLayout() as strided:
+        return splat.shape == strided.shape
       case fa.WGSplatFragLayout(), fa.TiledLayout():
         return layouts_lib.splat_is_compatible_with_tiled(
             source_layout, target_layout
@@ -204,6 +400,85 @@ class Relayout:
         return (source_layout, target_layout) in _SUPPORTED_TILED_RELAYOUTS
       case _:
         return False
+
+  def __str__(self):
+    return f"Relayout({self.source}  ⟶ {self.target})"
+
+
+@dataclasses.dataclass(frozen=True)
+class IsTransferable:
+  """States that `source` layout must be transferable across memory spaces to `target` layout."""
+
+  source: Expression
+  target: Expression
+  # TODO(allanrenucci): Can this be derived from the layouts?
+  shape: tuple[int, ...]
+
+  def supported_tmem_transfers(
+      self, packing: int
+  ) -> set[tuple[tcgen05.TMEMLayout, fa.FragmentedLayout]]:
+    """Returns the set of supported TMEM <-> Register transfers."""
+    assert len(self.shape) == 2
+    columns = self.shape[1]
+    tmem_default_layout = tcgen05.tmem_default_layout(packing)
+    return {
+        (tmem_default_layout, fa.TCGEN05_LAYOUT),
+        (tmem_default_layout, fa.TMEM_NATIVE_LAYOUT),
+        (tcgen05.tmem_half_lane_layout(columns, packing), fa.WGMMA_LAYOUT),
+        (
+            tcgen05.tmem_m64_collective_layout(columns, packing),
+            tcgen05.fa_m64_collective_layout(columns),
+        ),
+    }
+
+  def _is_valid_tmem_transfer(
+      self, tmem_layout: tcgen05.TMEMLayout, reg_layout: fa.FragmentedLayout
+  ) -> bool:
+    packing = tmem_layout.vector_length
+    return (tmem_layout, reg_layout) in self.supported_tmem_transfers(packing)
+
+  def _is_valid_smem_transfer(
+      self,
+      smem_layout: lc.TileTransform | None,
+      reg_layout: fa.FragmentedLayout,
+  ) -> bool:
+    # TODO(b/447079781): This is way too restrictive. We need to make it more
+    # precise by:
+    # - Consider whether the op is annotated with optimized copies or not.
+    # - If copies do not have to be optimized, always return True.
+    # - If copies have to be optimized, determine if the transfer is optimal by
+    #   calling fragmented_array.plan_tiled_transfer.
+    if inference_utils.is_mma_layout(reg_layout):
+      return smem_layout is not None and len(smem_layout.tiling) == 2
+    return smem_layout is None
+
+  def holds(self) -> bool | None:
+    """Returns whether the constraint holds.
+
+    Returns `None` if the constraint can't be checked.
+    """
+    source = self.source
+    target = self.target
+
+    if isinstance(source, TMEMLayout) and isinstance(target, RegisterLayout):
+      return self._is_valid_tmem_transfer(source.value, target.value)
+    if isinstance(target, TMEMLayout) and isinstance(source, RegisterLayout):
+      return self._is_valid_tmem_transfer(target.value, source.value)
+    if isinstance(source, TMEMLayout) and isinstance(target, TMEMLayout):
+      return source == target
+    if isinstance(source, SMEMTiling) and isinstance(target, RegisterLayout):
+      return self._is_valid_smem_transfer(source.value, target.value)
+    if isinstance(target, SMEMTiling) and isinstance(source, RegisterLayout):
+      return self._is_valid_smem_transfer(target.value, source.value)
+    if isinstance(target, Constant) and isinstance(source, Constant):
+      source_type = type(source).__name__
+      target_type = type(target).__name__
+      raise NotImplementedError(f"Unsupported transfer: {source_type} -> {target_type}")
+
+    return None
+
+  def __str__(self):
+    return f"IsTransferable({self.source}  ⟶ {self.target})"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -223,29 +498,136 @@ class Distinct:
       return True
     return None
 
+  def __str__(self):
+    return f"{self.lhs} ≠ {self.rhs}"
 
-Constraint = Relayout | Distinct
+
+@dataclasses.dataclass(frozen=True)
+class Divides:
+  """States that the `expr` tile divides the tail-end of the given dimensions.
+
+  `dimensions_to_tile` is a tuple of dimensions tuples, ordered from major to
+  minor. Each dimension tuple may contain ints and ir.Values that need to be
+  evenly divided by the corresponding tile size. A valid tiling's rank must be
+  less than or equal to the number of dimensions in `dimensions_to_tile`. Only
+  the tiled dimensions require checking.
+
+  Example:
+
+  expr: SMEMTiling(lc.TileTransform(tiling=(4, 8)))
+    => tiling[0] == 4 and tiling[1] == 8
+  dimensions_to_tile: (
+      (5, 15, ir_const(16),),  # Ignored, because the tile only has 2 dimensions
+      (4, 4, 8),               # Holds, because tiling[0] divides all elements
+      (16, ir_const(8), 4),    # Does not hold, because 4 % tiling[1] != 0
+  )
+
+  """
+  expr: Expression
+  dimensions_to_tile: tuple[tuple[int | ir.Value, ...], ...]
+
+  def __post_init__(self):
+    object.__setattr__(
+        self,
+        "dimensions_to_tile",
+        _canonicalize_dimensions_to_tile(self.dimensions_to_tile),
+    )
+
+  def holds(self) -> bool | None:
+    """Whether the divisibility constraint holds.
+
+    Returns `None` if the constraint can't be checked.
+    """
+    if not isinstance(self.expr, SMEMTiling):
+      return None
+    if self.expr.value is None:
+      # If there is no tiling, then it trivially holds.
+      return True
+
+    tiling = self.expr.value.tiling
+    num_tiled_axes = len(tiling)
+
+    if num_tiled_axes > len(self.dimensions_to_tile):
+      # The tiling's size must be smaller or equal to the number of dimensions.
+      return False
+
+    last_n_dims = self.dimensions_to_tile[-num_tiled_axes:]
+
+    for tile, sizes in zip(tiling, last_n_dims, strict=True):
+      if tile == 1:
+        continue
+
+      for size in sizes:
+        if isinstance(size, ir.Value):
+          if not utils.is_known_divisible(size, tile):
+            return False
+        else:
+          if size % tile != 0:
+            return False
+    return True
+
+  def __str__(self):
+    return f"{self.dimensions_to_tile} % {self.expr} == 0"
+
+
+Constraint = Relayout | Distinct | IsTransferable | Divides
+
+
+def _canonicalize_dimensions_to_tile(
+    dimensions_to_tile: tuple[tuple[int | ir.Value, ...], ...]
+) -> tuple[tuple[int | ir.Value, ...], ...]:
+  """Canonicalizes the dimensions to tile.
+
+  Int dimension values are merged into a single one by computing their greatest
+  common divisor. This works because any valid tiling must evenly divide all
+  dimensions, so it is a common divisor. Thus proving that it divides the gcd of
+  the dimensions proves that it divides all of them.
+
+  ir.Values are deduplicated and sorted at the end based on their string
+  representation.
+  """
+  def _canonicalize(vals: tuple[int | ir.Value, ...]) -> tuple[int | ir.Value, ...]:
+    static_val = math.gcd(*[x if isinstance(x, int) else 0 for x in vals])
+    dyn_vals = {x for x in vals if isinstance(x, ir.Value)}
+    dyn_vals = sorted(dyn_vals, key=str)
+    return (static_val,) + tuple(x for x in dyn_vals)
+
+  return tuple(_canonicalize(x) for x in dimensions_to_tile)
 
 
 def reduce_constraint(
     constraint: Constraint, assignments: dict[Variable, Constant]
 ) -> Constraint | Tautological | Unsatisfiable:
   """Reduces a constraint."""
+
+  new_constraint: Constraint
   match constraint:
-    case Relayout(source=lhs, target=rhs):
-      ...
+    case Relayout(source=source, target=target):
+      source_red = reduce_expression(source, assignments)
+      target_red = reduce_expression(target, assignments)
+      if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = Relayout(source_red, target_red)
     case Distinct(lhs=lhs, rhs=rhs):
-      ...
+      lhs_red = reduce_expression(lhs, assignments)
+      rhs_red = reduce_expression(rhs, assignments)
+      if isinstance(lhs_red, Unsatisfiable) or isinstance(rhs_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = Distinct(lhs_red, rhs_red)
+    case IsTransferable(source=source, target=target, shape=shape):
+      source_red = reduce_expression(source, assignments)
+      target_red = reduce_expression(target, assignments)
+      if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = IsTransferable(source_red, target_red, shape)
+    case Divides(expr=expr, dimensions_to_tile=dimensions_to_tile):
+      expr_red = reduce_expression(expr, assignments)
+      if isinstance(expr_red, Unsatisfiable):
+        return Unsatisfiable()
+      new_constraint = Divides(expr_red, dimensions_to_tile)
     case _ as never:
       assert_never(never)
 
-  lhs_red = reduce_expression(lhs, assignments)
-  rhs_red = reduce_expression(rhs, assignments)
-
-  if isinstance(lhs_red, Unsatisfiable) or isinstance(rhs_red, Unsatisfiable):
-    return Unsatisfiable()
-
-  new_constraint = type(constraint)(lhs_red, rhs_red)
   constraint_holds = new_constraint.holds()
   if constraint_holds is None:
     return new_constraint
@@ -312,7 +694,7 @@ class EquationSystem:
       default_factory=dict
   )
   equations: list[Equation] = dataclasses.field(default_factory=list)
-  constraints: list[Constraint] = dataclasses.field(default_factory=list)
+  constraints: Sequence[Constraint] = dataclasses.field(default_factory=list)
 
   def unknowns(self) -> list[Variable]:
     """Returns the list of free variables in the system."""
@@ -334,6 +716,12 @@ class EquationSystem:
             extract_variables(e)
         case Reduce(expression=e):
           extract_variables(e)
+        case BroadcastInDim(expression=e):
+          extract_variables(e)
+        case Reshape(expression=e):
+          extract_variables(e)
+        case Transpose(expression=e):
+          extract_variables(e)
         case _:
           assert_never(expr)
     for equation in self.equations:
@@ -347,6 +735,11 @@ class EquationSystem:
         case Distinct(lhs=lhs, rhs=rhs):
           extract_variables(lhs)
           extract_variables(rhs)
+        case IsTransferable(source=source, target=target, shape=_):
+          extract_variables(source)
+          extract_variables(target)
+        case Divides(expr=expr):
+          extract_variables(expr)
         case _ as never:
           assert_never(never)
     return free_variables
@@ -358,12 +751,26 @@ class EquationSystem:
     return EquationSystem(
         assignments=self.assignments | other.assignments,
         equations=self.equations + other.equations,
-        constraints=self.constraints + other.constraints,
+        constraints=[*self.constraints, *other.constraints],
     )
 
+  def __str__(self):
+    r = "EquationSystem\n"
+    r += "  assignments:\n"
+    for assignment, constant in self.assignments.items():
+      r += f"    {assignment} ⟵ {constant}\n"
+    r += "  equations:\n"
+    for equation in self.equations:
+      r += f"    {equation}\n"
+    r += "  constraints:\n"
+    for constraint in self.constraints:
+      r += f"    {constraint}\n"
+    return r
 
+@final
 class Unsatisfiable:
-  ...
+  def __and__(self, other: EquationSystem | Unsatisfiable) -> Unsatisfiable:
+    return self
 
 
 @dataclasses.dataclass(frozen=True)
@@ -380,12 +787,205 @@ class Tautological:
   ...
 
 
+def non_splat_variables(
+    constraints: Sequence[Constraint],
+) -> dict[Variable, Constant]:
+  """Returns a map var->splat_layout for all vars distinct from a splat."""
+  result: dict[Variable, Constant] = {}
+  for constraint in constraints:
+    match constraint:
+      case Distinct(lhs=lhs, rhs=rhs):
+        if (
+            isinstance(lhs, Variable)
+            and isinstance(rhs, RegisterLayout)
+            and isinstance(rhs.value, fa.WGSplatFragLayout)
+        ):
+          result[lhs] = rhs
+        if (
+            isinstance(rhs, Variable)
+            and isinstance(lhs, RegisterLayout)
+            and isinstance(lhs.value, fa.WGSplatFragLayout)
+        ):
+          result[rhs] = lhs
+  return result
+
+
 # The result of reducing an equation---and by extension, a system of
 # equations. An equation can either be unsatisfiable (i.e. there exists no
 # assignment for which it holds), satisfied by an assignment, unknown (i.e.
 # still undetermined), or tautological (i.e. the equation is guaranteed to
 # hold for any assignment).
 Solution = Unsatisfiable | SatisfiedBy | Unknown | Tautological
+
+
+def _has_relayout_of_non_splat_to_splat(constraints: Sequence[Constraint]) -> bool:
+  """Returns whether the constraints imply a non-splat to splat relayout.
+
+  Such relayouts are impossible and this helps shortcut the search.
+
+  If this function returns False, this doesn't necessarily mean that there are
+  no non-splat to splat relayouts, just that this is not known yet.
+  """
+  non_splat = non_splat_variables(constraints)
+  if not non_splat:
+    return False
+
+  def is_constant_splat(e) -> bool:
+    return isinstance(e, RegisterLayout) and isinstance(
+        e.value, fa.WGSplatFragLayout
+    )
+
+  for constraint in constraints:
+    match constraint:
+      case Relayout(source=source, target=target):
+        if source in non_splat and is_constant_splat(target):
+          return True
+      case _:
+        pass
+  return False
+
+
+def saturate_distinct_from_splat(
+    equation_system: EquationSystem,
+) -> EquationSystem | Unsatisfiable:
+  """Adds transitive Distinct constraints for all non-splat variables.
+
+  Given `n` variables `l0`, ... `l{n-1}`, and a set of relayouts
+  `{ Relayout(l{i}, l{i+1}) : 0 <= i < n }`, if we also know that
+  `l{0}` is not splat, then we can automatically deduce that none of
+  `l0`, ..., `l{n-1}` are splat either.
+
+  This helps us quickly conclude that a system is unsatisfiable in cases where
+  a non-splat variable is transitively relaid out into a splat layout.
+  """
+  non_splat = non_splat_variables(equation_system.constraints)
+  new_constraints: list[Constraint] = []
+  new_non_splat_found = len(non_splat) > 0
+
+  while new_non_splat_found:
+    new_non_splat_found = False
+    for constraint in equation_system.constraints:
+      match constraint:
+        case Relayout(source=source, target=target):
+          if isinstance(target, Variable) and source in non_splat and target not in non_splat:
+            new_non_splat_found = True
+            assert isinstance(source, Variable)
+            splat_layout = non_splat[source]
+            non_splat[target] = splat_layout
+            new_constraints.append(Distinct(lhs=target, rhs=splat_layout))
+        case _:
+          pass
+  return equation_system & EquationSystem(constraints=new_constraints)
+
+
+def compute_transitively_equal_vars(
+    system: EquationSystem,
+) -> dict[Variable, list[Variable]]:
+  """Computes all transitively equal variables in an equation system.
+
+  The output dictionary maps each variable that appears in equations in the
+  equation system to all the variables it is transitively equal to.
+  """
+  # The equality relations between variables form a graph where variables are
+  # nodes and an equation `v1 == v2` forms an edge. All variables in a
+  # connected component are transitively equal. We use a Union-Find data
+  # structure with path compression to efficiently find these connected
+  # components (i.e., equivalence classes).
+  parent: dict[Variable, Variable] = {}
+  def find(v: Variable) -> Variable:
+    if v not in parent:
+      parent[v] = v
+    if parent[v] != v:
+      parent[v] = find(parent[v])
+    return parent[v]
+
+  def union(v1: Variable, v2: Variable):
+    root1 = find(v1)
+    root2 = find(v2)
+    if root1 != root2:
+      parent[root2] = root1
+
+  all_vars: set[Variable] = set()
+  for eq in system.equations:
+    if isinstance(eq.lhs, Variable) and isinstance(eq.rhs, Variable):
+      all_vars.add(eq.lhs)
+      all_vars.add(eq.rhs)
+      union(eq.lhs, eq.rhs)
+
+  # Group variables by their component representative.
+  components: dict[Variable, list[Variable]] = {}
+  for v in sorted(all_vars, key=str):
+    root = find(v)
+    components.setdefault(root, []).append(v)
+
+  equal_vars: dict[Variable, list[Variable]] = {}
+  for component_vars in components.values():
+    for v in component_vars:
+      equal_vars[v] = [other for other in component_vars if other != v]
+
+  return equal_vars
+
+
+def saturate_divides_constraints_for_equal_vars(
+    system: EquationSystem,
+) -> EquationSystem:
+  """Saturates Divides constraints between all transitively equal vars.
+  """
+  equal_vars = compute_transitively_equal_vars(system)
+  new_constraints: list[Constraint] = []
+  for constraint in system.constraints:
+    new_constraints.append(constraint)
+    match constraint:
+      case Divides(expr=expr, dimensions_to_tile=dimensions_to_tile):
+        if isinstance(expr, Variable):
+          for equal_var in equal_vars.get(expr, []):
+            new_constraints.append(Divides(equal_var, dimensions_to_tile))
+      case _:
+        pass
+  new_constraints = merge_divides_constraints(new_constraints)
+  return dataclasses.replace(system, constraints=new_constraints)
+
+
+def _merge_divides_dimensions(
+    a: tuple[tuple[int | ir.Value, ...], ...],
+    b: tuple[tuple[int | ir.Value, ...], ...],
+) -> tuple[tuple[int | ir.Value, ...], ...]:
+  """Merges two tuples of dimensions_to_tile into a single tuple.
+
+  Each element of the outer tuple is a sequence of values that must divide
+  the corresponding dimension in the original Divides constraints.
+
+  If the two outer tuples are of different lengths, the large tuple will be
+  truncated (removing initial dimensions) to the length of the smaller tuple.
+  This preserves the semantics of the Divides constraints where a tiling's rank
+  cannot exceed the size of dimensions_to_tile.
+  """
+  min_len = min(len(a), len(b))
+  result = []
+  if min_len > 0:
+    for a_dims, b_dims in zip(a[-min_len:], b[-min_len:], strict=True):
+      result.append(a_dims + b_dims)
+  return tuple(result)
+
+
+def merge_divides_constraints(constraints: Sequence[Constraint]) -> list[Constraint]:
+  """Merges Divides constraints that can be merged."""
+  result: list[Constraint] = []
+  var_to_dims : dict[Variable, tuple[tuple[int | ir.Value, ...], ...]] = {}
+  for constraint in constraints:
+    match constraint:
+      case Divides(expr=Variable() as expr, dimensions_to_tile=dimensions_to_tile):
+        assert isinstance(expr, Variable)  # make pytype happy
+        prev = var_to_dims.get(expr)
+        if prev is None:
+          var_to_dims[expr] = dimensions_to_tile
+        else:
+          var_to_dims[expr] = _merge_divides_dimensions(prev, dimensions_to_tile)
+      case _:
+        result.append(constraint)
+  for expr, dimensions_to_tile in var_to_dims.items():
+    result.append(Divides(expr, dimensions_to_tile))
+  return result
 
 
 def _reduce_system_once(
@@ -400,7 +1000,7 @@ def _reduce_system_once(
       reduced.
   """
   changed = False
-  assignments: dict[Variable, Constant] = dict()
+  assignments: dict[Variable, Constant] = {}
   equations: list[Equation] = []
   for equation in equation_system.equations:
     match reduce_equation(equation, equation_system.assignments):
@@ -431,6 +1031,15 @@ def _reduce_system_once(
       case _ as new_constraint:
         changed |= new_constraint != constraint
         constraints.append(new_constraint)
+
+  new_constraints = merge_divides_constraints(constraints)
+  changed |= len(new_constraints) != len(constraints)
+  constraints = new_constraints
+
+  # Shortcut for a specific case of unsatisfiability. This shortcut
+  # drastically reduces the size of the search space.
+  if _has_relayout_of_non_splat_to_splat(constraints):
+    return Unsatisfiable()
 
   if changed:
     return EquationSystem(

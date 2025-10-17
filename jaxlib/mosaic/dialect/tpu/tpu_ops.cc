@@ -24,7 +24,6 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/string_view.h"
 #include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -33,6 +32,7 @@ limitations under the License.
 #include "mlir/Dialect/CommonFolders.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
@@ -41,6 +41,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Region.h"
@@ -212,24 +213,79 @@ LogicalResult MemRefSliceOp::verify() {
   return success();
 }
 
-LogicalResult MemRefSliceOp::canonicalize(MemRefSliceOp op,
-                                          PatternRewriter &rewriter) {
-  auto erase_layout = op.getMemRef().getDefiningOp<tpu::EraseLayoutOp>();
-  if (!erase_layout) {
-    return failure();
+struct MemRefSliceFoldConstantDynamicDim
+    : public OpRewritePattern<MemRefSliceOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MemRefSliceOp op,
+                                PatternRewriter& rewriter) const override {
+    if (llvm::none_of(op.getDynamicSizes(), [](Value dynamic_size) {
+          APInt constant_value;  // Would be nice if we could pass nullptr below
+          return matchPattern(dynamic_size, m_ConstantInt(&constant_value));
+        })) {
+      return failure();
+    }
+    SmallVector<int64_t> new_shape(op.getType().getShape());
+    SmallVector<Value> new_dynamic_sizes;
+    int64_t dynamic_dim_index = 0;
+    for (Value dynamic_size : op.getDynamicSizes()) {
+      // Find the index of the corresponding dynamic dimension in the shape
+      while (new_shape[dynamic_dim_index] != ShapedType::kDynamic) {
+        ++dynamic_dim_index;
+        CHECK(dynamic_dim_index < new_shape.size());
+      }
+      APInt constant_value;
+      if (matchPattern(dynamic_size, m_ConstantInt(&constant_value))) {
+        if (constant_value.getSExtValue() <= 0) {
+          return op.emitWarning() << "Non-positive constant for dynamic size";
+        }
+        new_shape[dynamic_dim_index] = constant_value.getSExtValue();
+      } else {
+        new_dynamic_sizes.push_back(dynamic_size);
+      }
+    }
+    // Update the memref_slice op and create a cast op to convert to the old
+    // type.
+    MemRefType old_type = op.getType();
+    MemRefType new_type = MemRefType::Builder(old_type).setShape(new_shape);
+    rewriter.modifyOpInPlace(op, [&]() {
+      op.getResult().setType(new_type);
+      op.getDynamicSizesMutable().assign(new_dynamic_sizes);
+    });
+    auto cast_op = memref::CastOp::create(rewriter, op.getLoc(), old_type, op);
+    rewriter.replaceAllUsesExcept(op, cast_op, cast_op);
+    return success();
   }
-  // Push layout erasure through slicing. It is important we see the layout
-  // for lowering and don't make it hard for other ops to query it.
-  auto layout_ref = erase_layout.getOperand();
-  MemRefType layout_ty = layout_ref.getType();
-  auto new_result_type = MemRefType::get(
-      op.getResult().getType().getShape(), layout_ty.getElementType(),
-      layout_ty.getLayout(), layout_ty.getMemorySpace());
-  auto slice =
-      rewriter.create<MemRefSliceOp>(op.getLoc(), new_result_type, layout_ref,
-                                     op.getBaseIdx(), op.getDynamicSizes());
-  rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), slice);
-  return success();
+};
+
+struct MemRefSliceEraseLayout : public OpRewritePattern<MemRefSliceOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MemRefSliceOp op,
+                                PatternRewriter& rewriter) const override {
+    auto erase_layout = op.getMemRef().getDefiningOp<tpu::EraseLayoutOp>();
+    if (!erase_layout) {
+      return failure();
+    }
+    // Push layout erasure through slicing. It is important we see the layout
+    // for lowering and don't make it hard for other ops to query it.
+    auto layout_ref = erase_layout.getOperand();
+    MemRefType layout_ty = layout_ref.getType();
+    auto new_result_type = MemRefType::get(
+        op.getResult().getType().getShape(), layout_ty.getElementType(),
+        layout_ty.getLayout(), layout_ty.getMemorySpace());
+    auto slice = MemRefSliceOp::create(rewriter, op.getLoc(), new_result_type,
+                                       layout_ref, op.getBaseIdx(),
+                                       op.getDynamicSizes());
+    rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), slice);
+    return success();
+  }
+};
+
+void MemRefSliceOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                                MLIRContext* context) {
+  results.add<MemRefSliceFoldConstantDynamicDim, MemRefSliceEraseLayout>(
+      context);
 }
 
 LogicalResult MemRefSqueezeOp::verify() {
@@ -388,7 +444,7 @@ LogicalResult MemRefSqueezeOp::canonicalize(MemRefSqueezeOp op,
                                 new_layout, layout_ty.getMemorySpace());
 
   auto new_squeeze =
-      rewriter.create<MemRefSqueezeOp>(op.getLoc(), new_ty, layout_ref);
+      MemRefSqueezeOp::create(rewriter, op.getLoc(), new_ty, layout_ref);
   rewriter.replaceOpWithNewOp<tpu::EraseLayoutOp>(op, target_type, new_squeeze);
   return success();
 }
@@ -396,47 +452,30 @@ LogicalResult MemRefSqueezeOp::canonicalize(MemRefSqueezeOp op,
 LogicalResult RelayoutOp::verify() {
   auto in_layout_array_attr =
       getOperation()->getAttrOfType<ArrayAttr>("in_layout");
-  if (!in_layout_array_attr || in_layout_array_attr.empty()) {
-    return emitOpError("missing or empty 'in_layout' attribute");
+  if (!in_layout_array_attr) {
+    return emitOpError("missing 'in_layout' attribute");
   }
   if (in_layout_array_attr.size() != 1) {
     return emitOpError(
         "'in_layout' attribute must be an array containing a single "
         "VectorLayoutAttr");
   }
-  auto src_vla = dyn_cast<tpu::VectorLayoutAttr>(in_layout_array_attr[0]);
-  if (!src_vla) {
+  if (!isa<tpu::VectorLayoutAttr>(in_layout_array_attr[0])) {
     return emitOpError("'in_layout' attribute is not a VectorLayoutAttr");
   }
 
   auto out_layout_array_attr =
       getOperation()->getAttrOfType<ArrayAttr>("out_layout");
-  if (!out_layout_array_attr || out_layout_array_attr.empty()) {
-    return emitOpError("missing or empty 'out_layout' attribute");
+  if (!out_layout_array_attr) {
+    return emitOpError("missing 'out_layout' attribute");
   }
   if (out_layout_array_attr.size() != 1) {
     return emitOpError(
         "'out_layout' attribute must be an array containing a single "
         "VectorLayoutAttr");
   }
-  auto dst_vla = dyn_cast<tpu::VectorLayoutAttr>(out_layout_array_attr[0]);
-  if (!dst_vla) {
+  if (!isa<tpu::VectorLayoutAttr>(out_layout_array_attr[0])) {
     return emitOpError("'out_layout' attribute is not a VectorLayoutAttr");
-  }
-
-  VectorType input_type = cast<VectorType>(getInput().getType());
-  VectorType output_type = cast<VectorType>(getOutput().getType());
-
-  if (input_type.getShape() != output_type.getShape()) {
-    return emitOpError("input and output shapes must match");
-  }
-  if (input_type.getElementType() != output_type.getElementType()) {
-    // Allow i1 to i1 even if bitwidth in layout changes.
-    if (!(input_type.getElementType().isInteger(1) &&
-          output_type.getElementType().isInteger(1))) {
-      return emitOpError(
-          "input and output element types must match for non-mask relayouts");
-    }
   }
   return success();
 }
@@ -559,7 +598,7 @@ LogicalResult MemRefReshapeOp::canonicalize(MemRefReshapeOp op,
       MemRefType::get(dst_ty.getShape(), dst_ty.getElementType(), new_layout,
                       layout_ty.getMemorySpace());
   auto reshape =
-      rewriter.create<MemRefReshapeOp>(op.getLoc(), new_result_ty, layout_ref);
+      MemRefReshapeOp::create(rewriter, op.getLoc(), new_result_ty, layout_ref);
   rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), reshape);
   return success();
 }
@@ -654,7 +693,7 @@ LogicalResult MemRefBitcastOp::canonicalize(MemRefBitcastOp op,
       MemRefType::get(dst_ty.getShape(), dst_ty.getElementType(), new_layout,
                       layout_ty.getMemorySpace());
   auto bitcast =
-      rewriter.create<MemRefBitcastOp>(op.getLoc(), new_result_ty, layout_ref);
+      MemRefBitcastOp::create(rewriter, op.getLoc(), new_result_ty, layout_ref);
   rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), bitcast);
   return success();
 }
@@ -698,59 +737,124 @@ LogicalResult StridedStoreOp::verify() {
                                          getValueToStore().getType());
 }
 
+template <typename Op>
+LogicalResult verifyStoreOp(Op op) {
+  MemRefType ref_ty = op.getBase().getType();
+  if (!HasMemorySpace(ref_ty, MemorySpace::kVmem)) {
+    return op.emitOpError("Expected base memref to be in VMEM.");
+  }
+  VectorType value_ty = op.getValueToStore().getType();
+  if (value_ty.getElementType() != ref_ty.getElementType()) {
+    return op.emitOpError(
+        "Expected base and valueToStore element type to match");
+  }
+  if (op.getMask()) {
+    if (value_ty.getElementTypeBitWidth() != 32) {
+      return op.emitError(
+          "Not implemented: masked store with non-32-bit element type");
+    }
+    if (value_ty.getShape() != op.getMask().getType().getShape())
+      return op.emitOpError("Expected mask shape to match result shape: (")
+             << value_ty.getShape() << "). Got: ("
+             << op.getMask().getType().getShape() << ").";
+  }
+  return success();
+}
+
 LogicalResult VectorStoreOp::verify() {
   if (!getStrides().empty()) {
     return emitError("Not implemented: general vector store with strides.");
   }
-  VectorType value_ty = getValueToStore().getType();
   MemRefType ref_ty = getBase().getType();
-
-  if (value_ty.getElementType() != ref_ty.getElementType()) {
-    return emitOpError(
-        "Expected base and valueToStore element type should match");
-  }
   if (llvm::size(getIndices()) != ref_ty.getRank()) {
-    return emitOpError("Expected ") << ref_ty.getRank() << " indices";
+    return emitOpError("Expected ") << ref_ty.getRank() << " indices.";
   }
-  if (getMask()) {
+  return verifyStoreOp(*this);
+}
+
+template <typename Op>
+LogicalResult verifyLoadOp(Op op) {
+  MemRefType ref_ty = op.getBase().getType();
+  if (!HasMemorySpace(ref_ty, MemorySpace::kVmem)) {
+    return op.emitOpError("Expected base memref to be in VMEM.");
+  }
+  VectorType value_ty = op.getResult().getType();
+  if (value_ty.getElementType() != ref_ty.getElementType()) {
+    return op.emitOpError("Expected base and result element type to match.");
+  }
+  if (op.getMask()) {
     if (value_ty.getElementTypeBitWidth() != 32) {
-      return emitError(
-          "Not implemented: masked store with non-32-bit element type");
+      return op.emitError(
+          "Not implemented: masked load with non-32-bit element type");
     }
-    if (value_ty.getShape() != getMask().getType().getShape())
-      return emitOpError("Expected valueToStore shape to match mask shape");
+    if (vector::isBroadcastableTo(op.getMask().getType(), value_ty) !=
+        vector::BroadcastableToResult::Success) {
+      return op.emitOpError(
+          "Expected mask shape to be broadcastable to result shape.");
+    }
   }
   return success();
 }
 
 LogicalResult VectorLoadOp::verify() {
   const MemRefType ref_ty = getBase().getType();
+  if (llvm::size(getIndices()) != ref_ty.getRank()) {
+    return emitOpError("Expected ") << ref_ty.getRank() << " indices.";
+  }
   if (!getStrides().empty()) {
     if (llvm::size(getStrides()) != ref_ty.getRank()) {
       return emitOpError("Expected ") << ref_ty.getRank() << " strides.";
     }
     return emitError("Not implemented: general vector load with strides.");
   }
-  const VectorType value_ty = getResult().getType();
+  return verifyLoadOp(*this);
+}
 
-  if (value_ty.getElementType() != ref_ty.getElementType()) {
-    return emitOpError("Expected base and result element type to match.");
-  }
+LogicalResult VectorLoadIdxOp::verify() {
+  VectorType value_ty = getResult().getType();
+  MemRefType ref_ty = getBase().getType();
   if (llvm::size(getIndices()) != ref_ty.getRank()) {
-    return emitOpError("Expected ") << ref_ty.getRank() << " indices.";
+    return emitOpError(
+               "Expected one index vector for each dimension of the base "
+               "memref with dimension: ")
+           << ref_ty.getRank() << ". Got: " << llvm::size(getIndices()) << ".";
   }
-  if (getMask()) {
-    if (value_ty.getElementTypeBitWidth() != 32) {
-      return emitError(
-          "Not implemented: masked load with non-32-bit element type");
-    }
-    if (vector::isBroadcastableTo(getMask().getType(), value_ty) !=
-        vector::BroadcastableToResult::Success) {
-      return emitOpError(
-          "Expected mask shape to be broadcastable to result shape.");
+  for (const auto [i, index] : llvm::enumerate(getIndices())) {
+    VectorType index_ty = llvm::cast<VectorType>(index.getType());
+    if (index_ty.getShape() != value_ty.getShape()) {
+      return emitOpError("Expected ")
+             << value_ty.getShape() << " elements in indices. Got "
+             << index_ty.getShape() << " in index #" << i << ".";
     }
   }
-  return success();
+  return verifyLoadOp(*this);
+}
+
+LogicalResult VectorStoreIdxOp::verify() {
+  VectorType value_ty = getValueToStore().getType();
+  MemRefType ref_ty = getBase().getType();
+  if (llvm::size(getIndices()) != ref_ty.getRank()) {
+    return emitOpError(
+               "Expected one index vector for each dimension of the base "
+               "memref with dimension: ")
+           << ref_ty.getRank() << ". Got: " << llvm::size(getIndices()) << ".";
+  }
+  if (llvm::size(getIndices()) != value_ty.getRank()) {
+    return emitOpError(
+               "Expected one index vector for each dimension of the value "
+               "to store with dimension: ")
+           << value_ty.getRank() << ". Got: " << llvm::size(getIndices())
+           << ".";
+  }
+  for (const auto [i, index] : llvm::enumerate(getIndices())) {
+    VectorType index_ty = llvm::cast<VectorType>(index.getType());
+    if (index_ty.getShape() != value_ty.getShape()) {
+      return emitOpError("Expected ")
+             << value_ty.getShape() << " elements in indices. Got "
+             << index_ty.getShape() << " in index #" << i << ".";
+    }
+  }
+  return verifyStoreOp(*this);
 }
 
 LogicalResult ReinterpretCastOp::verify() {
@@ -793,6 +897,17 @@ LogicalResult RotateOp::verify() { return verifyRotateOp<RotateOp>(*this); }
 
 LogicalResult DynamicRotateOp::verify() {
   return verifyRotateOp<DynamicRotateOp>(*this);
+}
+
+LogicalResult ScanCountOp::inferReturnTypes(
+    MLIRContext *context, std::optional<Location> location,
+    ScanCountOp::Adaptor adaptor,
+    ::llvm::SmallVectorImpl<Type> &inferredReturnTypes) {
+  inferredReturnTypes.push_back(adaptor.getInMask().getType());
+  inferredReturnTypes.push_back(VectorType::get(
+      cast<VectorType>(adaptor.getValues().getType()).getShape(),
+      IntegerType::get(context, 32)));
+  return success();
 }
 
 LogicalResult IotaOp::verify() {
@@ -884,6 +999,15 @@ LogicalResult MatmulOp::verify() {
         dimension_numbers.getLhsNonContractingDims();
     auto rhs_non_contracting_dims =
         dimension_numbers.getRhsNonContractingDims();
+
+    if (!llvm::is_sorted(lhs_non_contracting_dims)) {
+      emitOpError("Not implemented: lhs non contracting dims must be sorted");
+      return failure();
+    }
+    if (!llvm::is_sorted(rhs_non_contracting_dims)) {
+      emitOpError("Not implemented: rhs non contracting dims must be sorted");
+      return failure();
+    }
 
     if (lhs_contracting_dims.size() + lhs_non_contracting_dims.size() +
             lhs_batch_dims.size() !=
@@ -1019,93 +1143,30 @@ LogicalResult MatmulOp::verify() {
     // 1. Support multiple batch dims
     // 2. Support batch dims in any position in the output dim order
 
-    // A bit long winded, but the invariants we enforce below are:
-    // 1. The output order idx is 0 (lhs) or 1 (rhs)
-    // 2. The output dim order is in valid bounds
-    // 3. We saw the rhs and lhs non contracting dims in the output dim order
-    // 4. We never see the contracting dims in the output dim order
-    // 5. We only see each of the non contracting dim once
-    std::vector<bool> lhs_dims_seen_in_output(lhs_rank, false);
-    std::vector<bool> rhs_dims_seen_in_output(rhs_rank, false);
-
-    // Iterate over the output dimension order
-    for (int dim_pos = 0; dim_pos < output_dim_order.size(); dim_pos += 2) {
-      auto idx = output_dim_order[dim_pos];
-      auto dim = output_dim_order[dim_pos + 1];
-
-      if (idx != 0 && idx != 1) {
-        emitOpError("Illegal: output dim order index must be 0 or 1");
-        return failure();
-      }
-      auto is_lhs = (idx == 0);
-
-      if (is_lhs) {
-        if (dim < 0 || dim >= lhs_rank) {
-          emitOpError("Illegal: lhs dimension index out of bounds");
-          return failure();
-        }
-        if (lhs_dims_seen_in_output[dim]) {
-          emitOpError("Illegal: lhs dimension ")
-              << dim << " appears more than once in output dim order";
-          return failure();
-        }
-        if (dim == lhs_contracting_dim) {
-          emitOpError("Illegal: contracting dimension ")
-              << dim << " appears in lhs output dim order";
-          return failure();
-        }
-        // batch_dim_lhs is either 0 or nullopt
-        if (dim == batch_dim_lhs) {
-          // Upstream invariants enforce that batch dim is in position 0
-          // of the output dim order.
-          rhs_dims_seen_in_output[dim] = true;
-        }
-        lhs_dims_seen_in_output[dim] = true;
-      } else {
-        if (dim < 0 || dim >= rhs_rank) {
-          emitOpError("Illegal: rhs dimension index out of bounds");
-          return failure();
-        }
-        if (rhs_dims_seen_in_output[dim]) {
-          emitOpError("Illegal: rhs dimension ")
-              << dim << " appears more than once in output dim order";
-          return failure();
-        }
-        if (dim == rhs_contracting_dim) {
-          emitOpError("Illegal: contracting dimension ")
-              << dim << " appears in rhs output dim order";
-          return failure();
-        }
-        if (dim == batch_dim_rhs) {
-          // Upstream invariants enforce that batch dim is in position 0
-          // of the output dim order.
-          lhs_dims_seen_in_output[dim] = true;
-        }
-        rhs_dims_seen_in_output[dim] = true;
-      }
+    // Verify that the output dim order is always in the form of [0, batch_dims,
+    // 0, lhs_non_contracting_dims, 1, rhs_non_contracting_dims].
+    llvm::SmallVector<int64_t> expected_output_dim_order;
+    expected_output_dim_order.reserve(2 * (lhs_batch_dims.size() +
+                                           lhs_non_contracting_dims.size() +
+                                           rhs_non_contracting_dims.size()));
+    for (int64_t dim : lhs_batch_dims) {
+      expected_output_dim_order.push_back(0);
+      expected_output_dim_order.push_back(dim);
     }
-
-    // Check that all dims have been seen (except contracting dims)
-    for (int i = 0; i < lhs_rank; ++i) {
-      if (i == lhs_contracting_dim) {
-        continue;
-      }
-      if (!lhs_dims_seen_in_output[i]) {
-        emitOpError("Illegal: lhs non-contracting dimension ")
-            << i << " is not seen in output dim order";
-        return failure();
-      }
+    for (int64_t dim : lhs_non_contracting_dims) {
+      expected_output_dim_order.push_back(0);
+      expected_output_dim_order.push_back(dim);
     }
-
-    for (int i = 0; i < rhs_rank; ++i) {
-      if (i == rhs_contracting_dim) {
-        continue;
-      }
-      if (!rhs_dims_seen_in_output[i]) {
-        emitOpError("Illegal: rhs non-contracting dimension ")
-            << i << " is not seen in output dim order";
-        return failure();
-      }
+    for (int64_t dim : rhs_non_contracting_dims) {
+      expected_output_dim_order.push_back(1);
+      expected_output_dim_order.push_back(dim);
+    }
+    if (!absl::c_equal(output_dim_order, expected_output_dim_order)) {
+      emitOpError(
+          "Illegal: output dim order must be in the form of [0, "
+          "batch_dims, 0, lhs_non_contracting_dims, 1, "
+          "rhs_non_contracting_dims]");
+      return failure();
     }
   }
   return success();
@@ -1120,13 +1181,68 @@ void MatmulOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
 LogicalResult MaskCastOp::verify() {
   auto input_ty = getInput().getType();
   auto output_ty = getResult().getType();
-  return success(input_ty.getElementType() == output_ty.getElementType() &&
-                 output_ty.getRank() == 3 &&
-                 (input_ty.getRank() == 2 ||
-                  (input_ty.getRank() == 3 &&
-                   input_ty.getDimSize(2) < output_ty.getDimSize(2))) &&
-                 input_ty.getShape().take_front(2) ==
-                     output_ty.getShape().take_front(2));
+  return success(input_ty.getShape().take_front(2) ==
+                 output_ty.getShape().take_front(2));
+}
+
+LogicalResult ScanOp::verify() {
+  FailureOr<CoreType> issuing_core = GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core)) {
+    return issuing_core;
+  }
+  if (issuing_core != CoreType::kScVectorSubcore) {
+    return emitOpError("Scan is supported only on the SC vector subcore");
+  }
+
+  VectorType input_ty = getInput().getType();
+  VectorType output_ty = getOutput().getType();
+
+  if (input_ty.getElementType().isInteger(1)) {
+    if (!output_ty.getElementType().isInteger(32)) {
+      return emitOpError(
+          "Output element type must be i32 vector for i1 vector inputs.");
+    }
+  } else {
+    if (input_ty.getElementType() != output_ty.getElementType()) {
+      return emitOpError("Input and output element type mismatch.");
+    }
+  }
+
+  if (input_ty.getShape() != output_ty.getShape()) {
+    return emitOpError("Input and output shape mismatch. Input shape: (")
+           << input_ty.getShape() << "). Output shape: ("
+           << output_ty.getShape() << ").";
+  }
+
+  if (input_ty.getRank() > 2) {
+    return emitOpError("Input must be a rank 1 or 2 vector.");
+  }
+
+  if (input_ty.getElementType().isInteger(1) &&
+      getKind() != ReductionKind::kSum) {
+    return emitOpError("Only sum reduction is supported for i1 vector inputs.");
+  } else if (getKind() != ReductionKind::kSum &&
+             getKind() != ReductionKind::kMax &&
+             getKind() != ReductionKind::kMin) {
+    return emitOpError("Only sum, max and min reductions are supported.");
+  }
+
+  if (getMask() == nullptr) {
+    return success();
+  } else if (input_ty.getElementType().isInteger(1)) {
+    return emitOpError("Mask is not supported for i1 vector inputs.");
+  }
+
+  VectorType mask_ty = getMask().getType();
+  if (mask_ty.getRank() != 1) {
+    return emitOpError("Mask must be a rank 1 vector.");
+  }
+  if (mask_ty.getShape()[0] != input_ty.getShape()[input_ty.getRank() - 1]) {
+    return emitOpError("Mask and input mismatch. Expected mask of length: ")
+           << input_ty.getShape()[input_ty.getRank() - 1] << ", but got "
+           << mask_ty.getShape()[0] << ".";
+  }
+
   return success();
 }
 
@@ -1231,6 +1347,16 @@ LogicalResult EnqueueDMAOp::verify() {
   if (priority != 0 && is_remote) {
     return emitOpError(
         "Not implemented: non-zero priority is not supported for remote DMA");
+  }
+  FailureOr<CoreType> issuing_core = GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core)) {
+    return issuing_core;
+  }
+  if (getStrictOrdering() && *issuing_core != CoreType::kScScalarSubcore &&
+      *issuing_core != CoreType::kScVectorSubcore) {
+    return emitOpError(
+        "Strict ordering is only supported on the SC scalar and vector "
+        "subcores");
   }
   return success();
 }
@@ -1344,7 +1470,7 @@ bool hasHbmOrVmemSharedMemorySpace(MemRefType ty) {
          HasMemorySpace(ty, MemorySpace::kVmemShared);
 }
 
-FailureOr<bool> isGather(Operation& op, Value source, Value target) {
+FailureOr<bool> isGather(Operation &op, Value source, Value target) {
   const MemRefType source_ty = getMemRefType(source);
   const MemRefType target_ty = getMemRefType(target);
   if (hasHbmOrVmemSharedMemorySpace(source_ty) &&
@@ -1584,6 +1710,30 @@ LogicalResult ConcatenateOp::verify() {
   return success();
 }
 
+/*static*/ LogicalResult ConcatenateOp::inferReturnTypes(
+    MLIRContext* context, std::optional<Location> location, ValueRange operands,
+    DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
+    SmallVectorImpl<Type>& inferredReturnTypes) {
+  ConcatenateOpAdaptor adaptor(operands, attributes, properties, regions);
+  auto dimension = adaptor.getDimension();
+  for (auto [i, operand] : llvm::enumerate(operands)) {
+    if (auto operand_ty = dyn_cast<VectorType>(operand.getType());
+        !operand_ty || operand_ty.getRank() <= dimension) {
+      return failure();
+    }
+  }
+  auto first_type = cast<VectorType>(operands[0].getType());
+  llvm::SmallVector<int64_t> result_shape =
+      llvm::to_vector(first_type.getShape());
+  Type result_dtype = first_type.getElementType();
+  for (int i = 1; i < operands.size(); ++i) {
+    result_shape[dimension] +=
+        cast<VectorType>(operands[i].getType()).getDimSize(dimension);
+  }
+  inferredReturnTypes.push_back(VectorType::get(result_shape, result_dtype));
+  return success();
+}
+
 LogicalResult LogOp::verify() {
   FailureOr<CoreType> logging_core = GetCoreTypeOfParentFunc(**this);
   if (failed(logging_core)) {
@@ -1651,6 +1801,16 @@ LogicalResult ReciprocalOp::verify() {
   return success();
 }
 
+LogicalResult UnpackSubelementsOp::verify() {
+  const int packing_factor = getType().getElementTypeBitWidth() /
+                             getSource().getType().getElementTypeBitWidth();
+  if (auto index = getIndex(); index < 0 || index >= packing_factor) {
+    return emitOpError("Index must be between 0 and the packing factor (")
+           << packing_factor << "), got " << index;
+  }
+  return success();
+}
+
 void PackSubelementsOp::build(OpBuilder &builder, OperationState &state,
                               const VectorType output_type,
                               const ArrayRef<Value> padded_sources,
@@ -1689,7 +1849,8 @@ LogicalResult PackSubelementsOp::verify() {
   SmallVector<bool> seen_positions(packing_factor, false);
   for (const int32_t position : getPositions()) {
     if (position < 0 || packing_factor <= position) {
-      return emitOpError("Positions must be between 0 and the packing factor");
+      return emitOpError("Positions must be between 0 and the packing factor (")
+             << packing_factor << "), got " << position;
     }
     if (seen_positions[position]) {
       return emitOpError("Positions must be unique");
@@ -1733,6 +1894,111 @@ LogicalResult DynamicGatherOp::verify() {
   VectorType indices_vty = cast<VectorType>(operands[1].getType());
   inferredReturnTypes.push_back(
       VectorType::get(indices_vty.getShape(), source_vty.getElementType()));
+  return success();
+}
+
+LogicalResult AllReduceOp::verify() {
+  auto in_ty = getInput().getType();
+  auto in_bitwidth = in_ty.getElementTypeBitWidth();
+  auto out_ty = getOutput().getType();
+  auto out_bitwidth = out_ty.getElementTypeBitWidth();
+  auto kind = getKind();
+
+  if (in_bitwidth == 1) {
+    // For mask vectors, the single (semantically scalar) result is broadcast
+    // into a vector of 32-bit ints of whatever shape the target supports (not
+    // necessarily the same as the input).
+    if (out_bitwidth != 32) {
+      return emitOpError("Vector mask all-reduce must have i32 output");
+    }
+    switch (kind) {
+      case ReductionKind::kSum:
+      case ReductionKind::kFindFirstSet:
+        break;
+      default:
+        return emitOpError(
+            "Mask all-reduce only supports sum and find_first_set kinds");
+    }
+    return success();
+  }
+
+  switch (kind) {
+    case ReductionKind::kSum:
+    case ReductionKind::kMax:
+    case ReductionKind::kMin:
+      if (in_ty != out_ty) {
+        return emitOpError(
+            "Sum, max, and min reductions must have the same "
+            "input and output type");
+      }
+      break;
+    case ReductionKind::kArgMax:
+    case ReductionKind::kArgMin:
+      if (in_ty.getShape() != out_ty.getShape()) {
+        return emitOpError("Arg_max and arg_min "
+                           "must have the same input and output shape");
+      }
+      if (!in_ty.getElementType().isF32()) {
+        return emitOpError("Not Implemented: Only f32 input is supported for "
+                           "arg_max and arg_min");
+      }
+      if (!out_ty.getElementType().isSignlessInteger(in_bitwidth)) {
+        return emitOpError(absl::StrFormat(
+            "Arg_max and arg_min must have i%d output", in_bitwidth));
+      }
+      break;
+    case ReductionKind::kFindFirstSet:
+      return emitOpError("Only i1 input is supported for find_first_set");
+      break;
+  }
+  return success();
+}
+
+LogicalResult ReduceIndexOp::verify() {
+  auto in_ty = getInput().getType();
+  auto out_ty = getOutput().getType();
+  auto bitwidth = in_ty.getElementTypeBitWidth();
+  auto axis = getAxis();
+  auto kind = getKind();
+  if (kind != ReductionKind::kArgMax &&
+      kind != ReductionKind::kArgMin) {
+    return emitOpError("Reduction kind must be arg_max or arg_min");
+  }
+  if (!in_ty.getElementType().isF32()) {
+    return emitOpError("Not Implemented: Only f32 input is supported for "
+                       "arg_max and arg_min");
+  }
+  if (!out_ty.getElementType().isSignlessInteger(bitwidth)) {
+    return emitOpError(absl::StrFormat(
+        "Arg_max and arg_min must have i%d output", bitwidth));
+  }
+
+  auto in_shape = in_ty.getShape();
+  auto out_shape = out_ty.getShape();
+  if (axis < 0 || axis >= in_shape.size()) {
+    return emitOpError("Axis must be in [0, ")
+           << in_shape.size() << "), but got " << axis;
+  }
+
+  if (in_shape.size() < 2) {
+    return emitOpError("Not Implemented: Only input rank > 1 is supported.");
+  }
+  if (out_shape.size() != in_shape.size() - 1) {
+    return emitOpError("Output rank must be one less than input rank");
+  }
+  int out_dim = 0;
+  for (int i = 0; i < in_shape.size(); ++i) {
+    if (i == axis) {
+      continue;
+    }
+    if (in_shape[i] != out_shape[out_dim]) {
+      return emitOpError(
+          "Output shape must match input shape on non-reduction dimensions. ")
+          << "Output shape (" << out_shape << ") does not match input shape ("
+          << in_shape << ") at input dimension " << i;
+    }
+    out_dim++;
+  }
   return success();
 }
 
@@ -1834,6 +2100,45 @@ OpFoldResult ExtFOp::fold(FoldAdaptor adaptor) {
         }
         return *result;
       });
+}
+
+LogicalResult ReshapeOp::verify() {
+  auto src_ty = getSource().getType();
+  auto dst_ty = getResult().getType();
+  if (src_ty.getElementType() != dst_ty.getElementType()) {
+    return emitOpError("element type must match");
+  }
+  if (src_ty.getNumElements() != dst_ty.getNumElements()) {
+    return emitOpError() << "element count must match";
+  }
+  return success();
+}
+
+OpFoldResult ReshapeOp::fold(FoldAdaptor adaptor) {
+  // No-op reshape.
+  if (getSource().getType() == getType()) {
+    return getSource();
+  }
+  // Reshape of a reshape is a reshape.
+  if (auto source_reshape = getSource().getDefiningOp<ReshapeOp>()) {
+    setOperand(source_reshape.getSource());
+    return getResult();
+  }
+  // Reshape of a constant is a constant.
+  if (auto cst = dyn_cast_if_present<DenseElementsAttr>(adaptor.getSource())) {
+    return cst.reshape(getType());
+  }
+  return nullptr;
+}
+
+LogicalResult StochasticConvertElementwiseOp::verify() {
+  auto dst_ty = getDstType();
+  if (!dst_ty.isBF16() &&
+      !llvm::isa<mlir::Float8E5M2Type, mlir::Float8E4M3FNType>(dst_ty)) {
+    return emitOpError(
+        "Only bf16, f8e5m2, and f8e4m3fn are supported as destination types.");
+  }
+  return success();
 }
 
 }  // namespace tpu

@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.interpreters.xla import (
-  canonicalize_dtype as _deprecated_canonicalize_dtype,
-  canonicalize_dtype_handlers as canonicalize_dtype_handlers,
+from jax._src.dtypes import (
+  canonicalize_value_handlers as _canonicalize_value_handlers,
 )
+
+canonicalize_dtype_handlers = _canonicalize_value_handlers
 
 from jax._src.dispatch import (
   apply_primitive as apply_primitive,
@@ -27,38 +28,21 @@ del _xc
 
 # Deprecations
 _deprecations = {
-    # Finalized in JAX v0.7.0
-    "abstractify": (
-        (
-            "jax.interpreters.xla.abstractify was deprecated in JAX v0.5.0"
-            " and removed in JAX v0.7.0. jax.core.get_aval can be used as"
-            " a replacement in most cases."
-        ),
-        None,
-    ),
-    "pytype_aval_mappings": (
-        (
-            "jax.interpreters.xla.pytype_aval_mappings was deprecated in JAX"
-            " v0.5.0 and removed in JAX v0.7.0. jax.core.pytype_aval_mappings"
-            " can be used as a replacement in most cases."
-        ),
-        None,
-    ),
-    # Added in JAX v0.7.0
+    # Finalized in JAX v0.8.0; remove in v0.9.0
     "canonicalize_dtype": (
         (
             "jax.interpreters.xla.canonicalize_dtype was deprecated in JAX"
-            " v0.7.0 and will be removed in JAX v0.8.0. For canonicalizing"
-            " dtypes, prefer jax.dtypes.canonicalize_dtype. For checking whether"
-            " an object is a valid jax input, prefer jax.core.valid_jaxtype."
+            " v0.7.0 and removed in JAX v0.8.0. For canonicalizing dtypes,"
+            " prefer jax.dtypes.canonicalize_dtype. For checking whether an"
+            " object is a valid jax input, prefer jax.core.valid_jaxtype."
         ),
-        _deprecated_canonicalize_dtype,
+        None,
     )
 }
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  canonicalize_dtype = _deprecated_canonicalize_dtype
+  pass
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

@@ -27,6 +27,7 @@ from jax._src import core
 from jax._src import config
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import effects as effects_lib
 from jax._src import tree_util
 from jax._src.sharding_impls import (SPMDAxisContext, ShardingContext,
                                      NamedSharding, PartitionSpec as P)
@@ -280,7 +281,7 @@ def _axis_index_of_val(x, val, axis_name):
   mask = (val == x)
   validx = lax.select(mask,
                       lax.full(mask.shape, idx),
-                      lax.full(mask.shape, dtypes.iinfo(dtypes.dtype(idx)).max, dtypes.dtype(idx)))
+                      lax.full(mask.shape, dtypes.iinfo(idx.dtype).max, idx.dtype))
   return pmin(validx, axis_name)
 
 def _validate_reduce_axis_index_groups(axis_index_groups):
@@ -726,31 +727,24 @@ def axis_index(axis_name: AxisName) -> Array:
 
   For example, with 8 XLA devices available:
 
-  >>> from functools import partial
-  >>> @partial(jax.pmap, axis_name='i')
-  ... def f(_):
-  ...   return lax.axis_index('i')
+  >>> mesh = jax.make_mesh((8,), 'i')
+  >>> @jax.shard_map(mesh=mesh, in_specs=(), out_specs=jax.P('i'))
+  ... def f():
+  ...   return lax.axis_index('i')[None]
   ...
-  >>> f(jnp.zeros(4))
-  Array([0, 1, 2, 3], dtype=int32)
-  >>> f(jnp.zeros(8))
+  >>> f()
   Array([0, 1, 2, 3, 4, 5, 6, 7], dtype=int32)
-  >>> @partial(jax.pmap, axis_name='i')
-  ... @partial(jax.pmap, axis_name='j')
-  ... def f(_):
-  ...   return lax.axis_index('i'), lax.axis_index('j')
+
+  >>> mesh = jax.make_mesh((4, 2), ('i', 'j'))
+  >>> @jax.shard_map(mesh=mesh, in_specs=(), out_specs=jax.P('i', 'j'))
+  ... def f():
+  ...   return lax.axis_index(('i', 'j'))[None, None]
   ...
-  >>> x, y = f(jnp.zeros((4, 2)))
-  >>> print(x)
-  [[0 0]
-  [1 1]
-  [2 2]
-  [3 3]]
-  >>> print(y)
-  [[0 1]
-  [0 1]
-  [0 1]
-  [0 1]]
+  >>> f()
+  Array([[0, 1],
+         [2, 3],
+         [4, 5],
+         [6, 7]], dtype=int32)
   """
   if not isinstance(axis_name, (tuple, list)):
     return axis_index_p.bind(axis_name=axis_name)
@@ -774,17 +768,16 @@ def axis_size(axis_name: AxisName) -> int:
 
   For example, with 8 XLA devices available:
 
-  >>> from functools import partial
-  >>> from jax.sharding import PartitionSpec as P
   >>> mesh = jax.make_mesh((8,), 'i')
-  >>> @partial(jax.shard_map, mesh=mesh, in_specs=P('i'), out_specs=P())
+  >>> @jax.shard_map(mesh=mesh, in_specs=jax.P('i'), out_specs=jax.P())
   ... def f(_):
   ...   return lax.axis_size('i')
   ...
   >>> f(jnp.zeros(16))
   Array(8, dtype=int32, weak_type=True)
+
   >>> mesh = jax.make_mesh((4, 2), ('i', 'j'))
-  >>> @partial(jax.shard_map, mesh=mesh, in_specs=P('i', 'j'), out_specs=P())
+  >>> @jax.shard_map(mesh=mesh, in_specs=jax.P('i', 'j'), out_specs=jax.P())
   ... def f(_):
   ...   return lax.axis_size(('i', 'j'))
   ...
@@ -994,6 +987,13 @@ def _check_axis_names(axes, api_name):
           f"Found an unbound axis name: {name}. To fix this, please call"
           f" {api_name} under `jax.shard_map`.")
 
+# TODO(phawkins): remove this function and flag if this doesn't break anyone.
+def _get_channel(ctx):
+  if config.jax_collectives_common_channel_id.value:
+    return mlir.COLLECTIVE_CHANNEL_ID
+  else:
+    return ctx.module_context.new_channel_id()
+
 def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
   if axis_index_groups is not None and ("tpu" in ctx.module_context.platforms):
     len_0 = len(axis_index_groups[0])
@@ -1024,20 +1024,15 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
 
   def all_reduce(aval, x):
     if is_spmd:
-      channel = ctx.module_context.new_channel()
       other_args = dict(
           channel_handle=hlo.ChannelHandle.get(
-              channel, mlir.DEVICE_TO_DEVICE_TYPE),
+              _get_channel(ctx), mlir.DEVICE_TO_DEVICE_TYPE),
           use_global_device_ids=ir.BoolAttr.get(True))
     else:
       other_args = {}
 
-    if hlo.get_api_version() < 8:
-      op = hlo.AllReduceOp(
-          x.type, x, replica_groups=replica_groups, **other_args)
-    else:
-      op = hlo.AllReduceOp(
-          [x.type], [x], replica_groups=replica_groups, **other_args)
+    op = hlo.AllReduceOp(
+        [x.type], [x], replica_groups=replica_groups, **other_args)
     scalar_aval = core.ShapedArray(
         (), aval.dtype, sharding=NamedSharding(aval.sharding.mesh, P()))
     scalar_type = mlir.aval_to_ir_type(scalar_aval)
@@ -1062,7 +1057,8 @@ def _psum_transpose_rule(cts, *args, axes, axis_index_groups):
     def broadcast_positional(ct, arg):
       assert ad.is_undefined_primal(arg)
       if type(ct) is ad.Zero: return ad.Zero(arg.aval)
-      return lax._reduce_sum_transpose_rule(ct, arg, axes=pos_axes)[0]
+      return lax._reduce_sum_transpose_rule(ct, arg, axes=pos_axes,
+                                            out_sharding=None)[0]
     cts = map(broadcast_positional, cts, args)
 
   # We treat psum as psum + pbroadcast, which is why the transpose reduces
@@ -1127,9 +1123,11 @@ def _pcollectives_lowering_common(ctx, *, axis_name, perm, op_name):
       and axis_context.manual_axes
   )
   if is_manual:
-    channel = ctx.module_context.new_channel()
     other_args = dict(
-        channel_handle=hlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE))
+        channel_handle=hlo.ChannelHandle.get(
+            _get_channel(ctx), mlir.DEVICE_TO_DEVICE_TYPE
+        )
+    )
   else:
     other_args = {}
   return full_perm, other_args
@@ -1216,7 +1214,7 @@ def _psend_lowering_gpu(ctx, x, *, axis_name, perm):
   return send_op.results
 
 
-mlir.lowerable_effects.add_type(SingleSideCollectiveEffect)
+effects_lib.lowerable_effects.add_type(SingleSideCollectiveEffect)
 
 
 def _psend_abstract_eval(x, *, axis_name, **params):
@@ -1315,11 +1313,11 @@ def _pbroadcast_lowering(ctx, x, *, axis_name, source):
       (SPMDAxisContext, ShardingContext),
   )
   if is_spmd:
-    # We want to emit the collective-broadcast with global device IDs and a unique
+    # We want to emit the collective-broadcast with global device IDs and a
     # channel ID, as otherwise it interprets the devices as replicas instead
     # of partitions - and XLA is configured with only a single replica.
-    channel = ctx.module_context.new_channel()
-    channel_handle = hlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE)
+    channel_handle = hlo.ChannelHandle.get(_get_channel(ctx),
+                                           mlir.DEVICE_TO_DEVICE_TYPE)
     other_args = dict(channel_handle=channel_handle)
   else:
     other_args = {}
@@ -1368,22 +1366,14 @@ def _all_to_all_lowering(
       (SPMDAxisContext, ShardingContext),
   )
   if is_spmd:
-    # We want to emit the all-gather with global device IDs and a unique
+    # We want to emit the all-gather with global device IDs and a
     # channel ID, as otherwise it interprets the devices as replicas instead
     # of partitions - and XLA is configured with only a single replica.
-    channel = ctx.module_context.new_channel()
-    channel_handle = hlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE)
+    channel_handle = hlo.ChannelHandle.get(_get_channel(ctx),
+                                           mlir.DEVICE_TO_DEVICE_TYPE)
     other_args = dict(channel_handle=channel_handle)
   else:
     other_args = {}
-  if hlo.get_api_version() < 8:
-    return hlo.AllToAllOp(
-        x,
-        split_dimension=mlir.i64_attr(split_axis),
-        concat_dimension=mlir.i64_attr(concat_axis),
-        split_count=mlir.i64_attr(split_count),
-        replica_groups=_replica_groups_hlo(replica_groups),
-        **other_args).results
   return hlo.AllToAllOp(
     [x],
     split_dimension=mlir.i64_attr(split_axis),
@@ -1537,7 +1527,7 @@ def _ragged_all_to_all_lowering(
       ctx.module_context.axis_context, (SPMDAxisContext, ShardingContext))
   if is_spmd:
     ragged_all_to_all_attrs['channel_id'] = ir.IntegerAttr.get(
-        ir.IntegerType.get_signless(64), ctx.module_context.new_channel()
+        ir.IntegerType.get_signless(64), _get_channel(ctx)
     )
 
   return hlo.CustomCallOp(
@@ -1633,7 +1623,8 @@ def _ragged_all_to_all_batched_collective(axis_data, vals_in, dims_in,
 
   def bdim_at_second(x, d):
     assert x.ndim == 2
-    return batching.broadcast(x, size, 1) if d is None else x if d == 1 else x.T
+    return (batching.broadcast(x, size, 1, None) if d is None else
+            x if d == 1 else x.T)
   def merge(x): return x.reshape(-1, *x.shape[2:])
   def split(x): return x.reshape(size, -1, *x.shape[1:])
 
@@ -1763,23 +1754,16 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
   replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
                                     axis_index_groups)
   if is_spmd:
-    # We want to emit the all-gather with global device IDs and a unique
+    # We want to emit the all-gather with global device IDs and a
     # channel ID, as otherwise it interprets the devices as replicas instead
     # of partitions - and XLA is configured with only a single replica.
-    channel = ctx.module_context.new_channel()
     other_args = dict(
         channel_handle=hlo.ChannelHandle.get(
-            channel, mlir.DEVICE_TO_DEVICE_TYPE),
+            _get_channel(ctx), mlir.DEVICE_TO_DEVICE_TYPE),
         use_global_device_ids=ir.BoolAttr.get(True))
   else:
     other_args = {}
 
-  if hlo.get_api_version() < 8:
-    return hlo.AllGatherOp(
-        mlir.aval_to_ir_type(out_aval),
-        x, all_gather_dim=mlir.i64_attr(all_gather_dimension),
-        replica_groups=_replica_groups_hlo(replica_groups),
-        **other_args).results
   return hlo.AllGatherOp(
       [mlir.aval_to_ir_type(out_aval)],
       [x], all_gather_dim=mlir.i64_attr(all_gather_dimension),
@@ -1992,13 +1976,12 @@ def _reduce_scatter_lowering(
       (SPMDAxisContext, ShardingContext),
   )
   if is_spmd:
-    # We want to emit the all-gather with global device IDs and a unique
+    # We want to emit the all-gather with global device IDs and a
     # channel ID, as otherwise it interprets the devices as replicas instead
     # of partitions - and XLA is configured with only a single replica.
-    channel = ctx.module_context.new_channel()
     other_args = dict(
         channel_handle=hlo.ChannelHandle.get(
-            channel, mlir.DEVICE_TO_DEVICE_TYPE),
+            _get_channel(ctx), mlir.DEVICE_TO_DEVICE_TYPE),
         use_global_device_ids=ir.BoolAttr.get(True))
   else:
     other_args = {}

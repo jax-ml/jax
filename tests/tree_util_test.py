@@ -25,7 +25,8 @@ import jax
 from jax import flatten_util
 from jax import tree_util
 from jax._src import test_util as jtu
-from jax._src.tree_util import flatten_one_level, prefix_errors
+from jax._src.tree_util import (
+    flatten_one_level, prefix_errors, broadcast_flattened_prefix_with_treedef)
 import jax.numpy as jnp
 
 # Easier to read.
@@ -394,14 +395,12 @@ class TreeTest(jtu.JaxTestCase):
       (
           {"a": 1},
           {"a": 7, "b": 8},
-          re.escape(
-              "Dict key mismatch; expected keys: ['a']; dict: {'a': 7, 'b': 8}."
-          ),
+          re.escape("Dict key mismatch; expected keys: ['a'];"),
       ),
       (
           {"a": 1},
           {"b": 7},
-          re.escape("Dict key mismatch; expected keys: ['a']; dict: {'b': 7}."),
+          re.escape("Dict key mismatch; expected keys: ['a'];"),
       ),
       ([1], {"a": 7}, re.escape("Expected list, got {'a': 7}.")),
       ([1], (7,), re.escape("Expected list, got (7,).")),
@@ -421,7 +420,7 @@ class TreeTest(jtu.JaxTestCase):
       (
           [{"a": 1}],
           [{"b": 7}],
-          re.escape("Dict key mismatch; expected keys: ['a']; dict: {'b': 7}."),
+          re.escape("Dict key mismatch; expected keys: ['a'];"),
       ),
       (([1],), (7,), re.escape("Expected list, got 7.")),
       (([1],), ((7,),), re.escape("Expected list, got (7,).")),
@@ -435,7 +434,7 @@ class TreeTest(jtu.JaxTestCase):
       (
           ({"a": 1},),
           ({"b": 7},),
-          re.escape("Dict key mismatch; expected keys: ['a']; dict: {'b': 7}."),
+          re.escape("Dict key mismatch; expected keys: ['a'];"),
       ),
       ({"a": [1]}, {"a": 7}, re.escape("Expected list, got 7.")),
       ({"a": [1]}, {"a": (7,)}, re.escape("Expected list, got (7,).")),
@@ -453,7 +452,7 @@ class TreeTest(jtu.JaxTestCase):
       (
           {"a": {"a": 1}},
           {"a": {"b": 7}},
-          re.escape("Dict key mismatch; expected keys: ['a']; dict: {'b': 7}."),
+          re.escape("Dict key mismatch; expected keys: ['a'];"),
       ),
       (
           [ATuple(foo=1, bar=2)],
@@ -470,9 +469,7 @@ class TreeTest(jtu.JaxTestCase):
           [([1], (2,), {"a": [1]})],
           re.escape("Custom node type mismatch"),
       ),
-      (
-          (None, [2], re.escape("Expected None, got [2]."))
-      ),
+      ((None, [2], re.escape("Expected None, got [2]."))),
   )
   def testFlattenUpToErrors(self, tree, xs, error):
     _, tree_def = tree_util.tree_flatten(tree)
@@ -646,6 +643,11 @@ class TreeTest(jtu.JaxTestCase):
     actual = tree_util.tree_broadcast(tree, nested)
     self.assertEqual(actual, nested)
 
+    actual_flat = broadcast_flattened_prefix_with_treedef(
+        *tree_util.tree_flatten(tree), tree_util.tree_structure(nested))
+    actual = tree_util.tree_structure(nested).unflatten(actual_flat)
+    self.assertEqual(actual, nested)
+
   def testBroadcastSimple(self):
     prefix = (1, 2, 3)
     full = (0, {'a': 0, 'b': 0}, (0, 0))
@@ -658,14 +660,23 @@ class TreeTest(jtu.JaxTestCase):
     full = (0, {'a': 0, 'b': 0})
     with self.assertRaisesRegex(ValueError, "pytree structure error"):
       tree_util.tree_broadcast(prefix, full)
+    with self.assertRaises(Exception):
+      broadcast_flattened_prefix_with_treedef(
+          *tree_util.tree_flatten(prefix), tree_util.tree_structure(full))
     prefix = (1, 2)
     full = (0, {'a': 0, 'b': 0}, (0, 0))
     with self.assertRaisesRegex(ValueError, "pytree structure error"):
       tree_util.tree_broadcast(prefix, full)
+    with self.assertRaises(Exception):
+      broadcast_flattened_prefix_with_treedef(
+          *tree_util.tree_flatten(prefix), tree_util.tree_structure(full))
     prefix = (1, {'a': 0})
     full = (0, {'a': 0, 'b': 0})
     with self.assertRaisesRegex(ValueError, "pytree structure error"):
       tree_util.tree_broadcast(prefix, full)
+    with self.assertRaises(Exception):
+      broadcast_flattened_prefix_with_treedef(
+          *tree_util.tree_flatten(prefix), tree_util.tree_structure(full))
 
   @parameterized.parameters([(*t, s) for t, s in zip(TREES, TREE_STRINGS)])
   def testStringRepresentation(self, tree, correct_string):

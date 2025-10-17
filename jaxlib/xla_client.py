@@ -43,7 +43,11 @@ ifrt_programs = _xla.ifrt_programs
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes. In JAX, reference this via jax._src.lib.jaxlib_extension_version.
-_version = 363
+#
+# Please suffix the version number with a brief description of your change
+# in a comment. The goal here is to force a merge conflict if two changes
+# attempt to grab the same version number.
+_version = 380  # Fixed thread safety issue in profiler.
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -114,7 +118,7 @@ def load_pjrt_plugin_dynamically(plugin_name: str, library_path: str) -> Any:
 
 
 def load_pjrt_plugin_with_c_api(plugin_name: str, c_api: Any) -> None:
-  return _xla.load_pjrt_plugin(plugin_name, None, c_api)
+  _xla.load_pjrt_plugin(plugin_name, None, c_api)
 
 
 def pjrt_plugin_initialized(plugin_name: str) -> bool:
@@ -168,7 +172,7 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
     A dictionary of plugin options.
   """
 
-  options = {}
+  options: dict[str, Any] = {}
   options['platform_name'] = 'cuda'
   allocator = os.getenv('XLA_PYTHON_CLIENT_ALLOCATOR', 'default').lower()
   memory_fraction = os.getenv('XLA_CLIENT_MEM_FRACTION', '')
@@ -200,6 +204,8 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
     options['collective_memory_size'] = int(collective_memory_size) * (1 << 20)
   abort = os.getenv('XLA_PYTHON_CLIENT_ABORT_COLLECTIVES_ON_FAILURE', '0')
   options['abort_collectives_on_failure'] = bool(int(abort))
+  use_trft_gpu_client = os.getenv('XLA_PYTHON_CLIENT_USE_TFRT_GPU_CLIENT', '0')
+  options['use_tfrt_gpu_client'] = bool(int(use_trft_gpu_client))
   return options
 
 
@@ -350,8 +356,8 @@ def LoadedExecutable_execute_with_token(self, arguments, device=None):
   )
 
 
-LoadedExecutable.execute = LoadedExecutable_execute
-LoadedExecutable.execute_with_token = LoadedExecutable_execute_with_token
+LoadedExecutable.execute = LoadedExecutable_execute  # type: ignore[method-assign]
+LoadedExecutable.execute_with_token = LoadedExecutable_execute_with_token  # type: ignore[method-assign]
 
 
 class CustomCallTargetTraits(enum.IntFlag):
@@ -447,7 +453,7 @@ def register_custom_call_handler(
 
 class CustomTypeIdHandler(Protocol):
 
-  def __call__(self, name: str, capsule: Any) -> None:
+  def __call__(self, type_name: str, type_id: Any, /) -> None:
     ...
 
 
@@ -529,7 +535,7 @@ def execution_stream_id(new_id: int):
     _xla.set_execution_stream_id(saved)
 
 
-XlaRuntimeError = _xla.XlaRuntimeError
+XlaRuntimeError = _xla.JaxRuntimeError
 
 # Perform one last garbage collection of deferred Python references. This is
 # mostly to keep ASAN happy.

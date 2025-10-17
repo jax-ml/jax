@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import concurrent.futures
 from functools import partial
 import glob
 import os
@@ -21,6 +22,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from absl.testing import absltest
 import pathlib
 
@@ -28,6 +30,7 @@ import jax
 import jax.numpy as jnp
 import jax.profiler
 import jax._src.test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax._src import profiler
 from jax import jit
 
@@ -39,23 +42,28 @@ except ImportError:
 
 try:
   from xprof.convert import _pywrap_profiler_plugin
+  import jax.collect_profile
 except ImportError:
   _pywrap_profiler_plugin = None
 
 jax.config.parse_flags_with_absl()
 
 
-@jtu.thread_unsafe_test_class()  # profiler isn't thread-safe
+# We do not allow multiple concurrent profiler sessions.
+@jtu.thread_unsafe_test_class()
 class ProfilerTest(unittest.TestCase):
   # These tests simply test that the profiler API does not crash; they do not
   # check functional correctness.
 
   def setUp(self):
-    if sys.version_info >= (3, 14) and jtu.TEST_NUM_THREADS.value > 1:
-      # TODO(phawkins): try reenabling these after
-      # https://github.com/python/cpython/issues/132817 is fixed. Simply
-      # installing the profiler hook is unsafe if there are multiple threads.
-      self.skipTest("Profiler tests are not thread-safe under Python 3.14")
+    if (
+        sys.version_info < (3, 14)
+        and hasattr(sys, "_is_gil_enabled")
+        and not sys._is_gil_enabled()
+    ):
+      self.skipTest(
+          "Profiler tests are not thread-safe under Python 3.13 free threading"
+      )
 
     super().setUp()
     self.worker_start = threading.Event()
@@ -88,6 +96,35 @@ class ProfilerTest(unittest.TestCase):
         jax.profiler.start_trace(tmpdir)
         jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(
             jnp.ones(jax.local_device_count()))
+      finally:
+        jax.profiler.stop_trace()
+
+      proto_path = glob.glob(os.path.join(tmpdir, "**/*.xplane.pb"),
+                             recursive=True)
+      self.assertEqual(len(proto_path), 1)
+      with open(proto_path[0], "rb") as f:
+        proto = f.read()
+      # Sanity check that serialized proto contains host, device, and
+      # Python traces without deserializing.
+      self.assertIn(b"/host:CPU", proto)
+      if jtu.test_device_matches(["tpu"]):
+        self.assertIn(b"/device:TPU", proto)
+      self.assertIn(b"pxla.py", proto)
+
+  @unittest.skipIf(
+      jaxlib_extension_version < 379, "Requires jaxlib 0.8 or later."
+  )
+  def testProgrammaticProfilingConcurrency(self):
+    def work():
+      x = jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(
+          jnp.ones(jax.local_device_count()))
+      jax.block_until_ready(x)
+    with tempfile.TemporaryDirectory() as tmpdir:
+      try:
+        jax.profiler.start_trace(tmpdir)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+          for _ in range(10):
+            executor.submit(work)
       finally:
         jax.profiler.stop_trace()
 
@@ -234,8 +271,71 @@ class ProfilerTest(unittest.TestCase):
 
       proto_path = tuple(tmpdir.rglob("*.xplane.pb"))
       proto_bytes = proto_path[0].read_bytes()
-      if jtu.test_device_matches(["gpu"]):
-        self.assertIn(b"/device:GPU", proto_bytes)
+      self.assertIn(b"/device:GPU", proto_bytes)
+
+  @jtu.run_on_devices("gpu")
+  @jtu.thread_unsafe_test()
+  def testProgrammaticGpuCuptiTracingWithOptions(self):
+    @jit
+    def xy_plus_z(x, y, z):
+      return jnp.float32(jax.lax.batch_matmul(jnp.bfloat16(x), y)) + z
+
+    k = jax.random.key(0)
+    s = 1, 16, 16
+    jax.devices()
+    x = jnp.int8(jax.random.normal(k, shape=s))
+    y = jnp.bfloat16(jax.random.normal(k, shape=s))
+    z = jnp.float32(jax.random.normal(k, shape=s))
+    with tempfile.TemporaryDirectory() as tmpdir_string:
+      tmpdir = pathlib.Path(tmpdir_string)
+      options = jax.profiler.ProfileOptions()
+      options.advanced_configuration = {
+          "gpu_max_callback_api_events": 1000000,
+          "gpu_enable_nvtx_tracking": True,
+      }
+      with jax.profiler.trace(tmpdir):
+        xy_plus_z(x, y, z).block_until_ready()
+
+      proto_path = tuple(tmpdir.rglob("*.xplane.pb"))
+      proto_bytes = proto_path[0].read_bytes()
+      self.assertIn(b"/device:GPU", proto_bytes)
+
+  # TODO: b/443121646 - Enable PM sampling test on JAX OSS once the Github CI
+  # host machine has privileged access.
+  # @jtu.run_on_devices("gpu")
+  # @jtu.thread_unsafe_test()
+  # def testProgrammaticGpuCuptiTracingWithPmSampling(self):
+  #   if not (jtu.is_cuda_compute_capability_equal("9.0")):
+  #     self.skipTest("Only works on GPU with capability sm90")
+
+  #   @jit
+  #   def xy_plus_z(x, y, z):
+  #     return jnp.float32(jax.lax.batch_matmul(jnp.bfloat16(x), y)) + z
+
+  #   k = jax.random.key(0)
+  #   s = 1, 16, 16
+  #   jax.devices()
+  #   x = jnp.int8(jax.random.normal(k, shape=s))
+  #   y = jnp.bfloat16(jax.random.normal(k, shape=s))
+  #   z = jnp.float32(jax.random.normal(k, shape=s))
+  #   with tempfile.TemporaryDirectory() as tmpdir_string:
+  #     tmpdir = pathlib.Path(tmpdir_string)
+  #     options = jax.profiler.ProfileOptions()
+  #     options.advanced_configuration = {
+  #         "gpu_pm_sample_counters": (
+  #             "sm__cycles_active.sum"
+  #         ),
+  #         "gpu_pm_sample_interval_us": 500,
+  #     }
+  #     with jax.profiler.trace(tmpdir, profiler_options=options):
+  #       xy_plus_z(x, y, z).block_until_ready()
+
+  #     proto_path = tuple(tmpdir.rglob("*.xplane.pb"))
+  #     proto_bytes = proto_path[0].read_bytes()
+  #     self.assertIn(b"/device:GPU", proto_bytes)
+  #     self.assertIn(
+  #         b"sm__cycles_active.sum", proto_bytes
+  #     )
 
   def testProgrammaticProfilingContextManagerPathlib(self):
     with tempfile.TemporaryDirectory() as tmpdir_string:
@@ -371,6 +471,45 @@ class ProfilerTest(unittest.TestCase):
     jax.profiler.stop_server()
     thread_profiler.join()
     self._check_xspace_pb_exist(logdir)
+
+  @unittest.skip("Profiler takes >30s on Cloud TPUs")
+  @unittest.skipIf(
+      not (portpicker and _pywrap_profiler_plugin),
+    "Test requires xprof and portpicker")
+  def test_remote_profiler_gcs_path(self):
+    port = portpicker.pick_unused_port()
+    jax.profiler.start_server(port)
+
+    profile_done = threading.Event()
+    logdir = "gs://mock-test-bucket/test-dir"
+    # Mock XProf call in collect_profile.
+    _pywrap_profiler_plugin.trace = unittest.mock.MagicMock()
+    def on_profile():
+      jax.collect_profile(port, 500, logdir, no_perfetto_link=True)
+      profile_done.set()
+
+    thread_profiler = threading.Thread(
+        target=on_profile, args=())
+    thread_profiler.start()
+    start_time = time.time()
+    y = jnp.zeros((5, 5))
+    while not profile_done.is_set():
+      # The timeout here must be relatively high. The profiler takes a while to
+      # start up on Cloud TPUs.
+      if time.time() - start_time > 30:
+        raise RuntimeError("Profile did not complete in 30s")
+      y = jnp.dot(y, y)
+    jax.profiler.stop_server()
+    thread_profiler.join()
+    _pywrap_profiler_plugin.trace.assert_called_once_with(
+        unittest.mock.ANY,
+        logdir,
+        unittest.mock.ANY,
+        unittest.mock.ANY,
+        unittest.mock.ANY,
+        unittest.mock.ANY,
+        unittest.mock.ANY,
+    )
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

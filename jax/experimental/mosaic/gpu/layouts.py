@@ -17,8 +17,11 @@
 import re
 from typing import assert_never
 
+from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
+
 from . import fragmented_array as fa
+from . import launch_context
 
 
 _splat_fragmented_layout_attr_pattern = re.compile(
@@ -182,13 +185,7 @@ def is_tiled_layout(attr: ir.Attribute) -> bool:
   return bool(_tiled_layout_attr_pattern.search(str(attr)))
 
 
-def to_layout_attr(
-    layout: (
-        fa.WGSplatFragLayout
-        | fa.WGStridedFragLayout
-        | fa.TiledLayout
-    ),
-) -> ir.Attribute:
+def to_layout_attr(layout: fa.FragmentedLayout) -> ir.Attribute:
   """Constructs an MLIR attribute that corresponds to the given layout."""
   match layout:
     case fa.WGSplatFragLayout():
@@ -203,13 +200,7 @@ def to_layout_attr(
       )
 
 
-def from_layout_attr(
-    attr: ir.Attribute,
-) -> (
-    fa.WGSplatFragLayout
-    | fa.WGStridedFragLayout
-    | fa.TiledLayout
-):
+def from_layout_attr(attr: ir.Attribute) -> fa.FragmentedLayout:
   """Constructs a layout from an MLIR attribute."""
   if is_splat_fragmented_layout(attr):
     return from_splat_fragmented_layout_attr(attr)
@@ -343,3 +334,59 @@ def has_any_replication(layout: fa.FragmentedLayout) -> bool:
       return is_warp_replicated or is_lane_replicated
     case _ as unreachable:
       return assert_never(unreachable)  # pytype: disable=wrong-arg-types
+
+
+_tile_transform_attr_pattern = re.compile(
+    r"^#mosaic_gpu.tile<[^>]+>$"
+)
+
+
+def is_tile_transform(attr: ir.Attribute) -> bool:
+  return bool(_tile_transform_attr_pattern.search(str(attr)))
+
+
+_transpose_transform_attr_pattern = re.compile(
+    r"^#mosaic_gpu.transpose<[^>]+>$"
+)
+
+
+def is_transpose_transform(attr: ir.Attribute) -> bool:
+  return bool(_transpose_transform_attr_pattern.search(str(attr)))
+
+
+_swizzle_transform_attr_pattern = re.compile(
+    r"^#mosaic_gpu.swizzle<[^>]+>$"
+)
+
+def is_swizzle_transform(attr: ir.Attribute) -> bool:
+  return bool(_swizzle_transform_attr_pattern.search(str(attr)))
+
+
+def to_transform_attr(
+    transform: launch_context.MemRefTransform | mgpu.SwizzlingMode,
+) -> ir.Attribute:
+  if isinstance(transform, launch_context.TileTransform):
+    return mgpu.TileTransformAttr.get(transform.tiling)
+  elif isinstance(transform, launch_context.TransposeTransform):
+    return mgpu.TransposeTransformAttr.get(transform.permutation)
+  elif isinstance(transform, mgpu.SwizzlingMode):
+    return mgpu.SwizzleTransformAttr.get(transform)
+  else:
+    raise NotImplementedError(f"Unsupported transform {transform}")
+
+
+def from_transform_attr(
+    transform: ir.Attribute,
+) -> launch_context.MemRefTransform | mgpu.SwizzlingMode:
+  if is_tile_transform(transform):
+    return launch_context.TileTransform(
+        mgpu.TileTransformAttr(transform).tiling
+    )
+  elif is_transpose_transform(transform):
+    return launch_context.TransposeTransform(
+        mgpu.TransposeTransformAttr(transform).permutation
+    )
+  elif is_swizzle_transform(transform):
+    return mgpu.SwizzlingMode(mgpu.SwizzleTransformAttr(transform).swizzle)
+  else:
+    raise NotImplementedError(f"Unsupported transform {transform}")

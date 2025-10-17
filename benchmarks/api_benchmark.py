@@ -209,7 +209,7 @@ def jit_big_matmul(state):
 @google_benchmark.option.args([2000])
 def jit_simple_many_args_dispatch(state):
   args = [jax.device_put(i) for i in range(state.range(0))]
-  f = jax.jit(lambda xs: functools.reduce(operator.add, xs))
+  f = jax.jit(sum)
   x = f(args)
   x.block_until_ready()
 
@@ -229,7 +229,7 @@ def jit_simple_many_args_dispatch(state):
 @google_benchmark.option.args([2000])
 def jit_simple_many_args(state):
   args = [jax.device_put(i) for i in range(state.range(0))]
-  f = jax.jit(lambda xs: functools.reduce(operator.add, xs))
+  f = jax.jit(sum)
   f(args).block_until_ready()
 
   while state:
@@ -461,7 +461,7 @@ bench_xla_abstractify()
 
 @google_benchmark.register
 @google_benchmark.option.unit(google_benchmark.kMicrosecond)
-def bench_are_op_shardings_equal(state):
+def bench_are_hlo_shardings_equal(state):
   op1 = xc.OpSharding()
   op1.type = xc.OpSharding.Type.OTHER
   op1.tile_assignment_dimensions = [4, 192, 16]
@@ -472,8 +472,11 @@ def bench_are_op_shardings_equal(state):
   op2.tile_assignment_dimensions = [4, 192, 16]
   op2.tile_assignment_devices = list(range(12288))
 
+  hs1 = xc.HloSharding.from_proto(op1)
+  hs2 = xc.HloSharding.from_proto(op2)
+
   while state:
-    op_shardings.are_op_shardings_equal(op1, op2)
+    op_shardings.are_hlo_shardings_equal(hs1, hs2)
 
 
 @google_benchmark.register
@@ -701,9 +704,8 @@ def device_put_from_numpy_array(state):
 @google_benchmark.option.args([10])
 @google_benchmark.option.args([100])
 @google_benchmark.option.args([1000])
+@required_devices(2)
 def device_put_from_jax_array(state):
-  if len(jax.devices()) < 2:
-    state.skip_with_error('requires 2 devices')
   x = [np.array(1, np.int32)] * state.range(0)
   x = jax.block_until_ready(jax.device_put(x, device=jax.devices()[0]))
   d = jax.devices()[1]

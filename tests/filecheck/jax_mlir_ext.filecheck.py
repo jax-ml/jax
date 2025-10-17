@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# RUN: %PYTHON %s | FileCheck %s
+# RUN: %PYTHON %s | FileCheck %s -dump-input=always
 
 from absl import app
 import jax
@@ -28,7 +28,7 @@ import numpy as np
 jax.config.parse_flags_with_absl()
 
 
-def main(_):
+def test_inlined_func_call():
   # CHECK: #loc = loc(unknown)
   # CHECK: module {
   # CHECK-NEXT:   func.func public @caller(%arg0: tensor<2x3xf32> loc(unknown), %arg1: tensor<2x3xf32> loc(unknown)) -> (tensor<2x3xf32>, tensor<2x3xf32>) {
@@ -92,6 +92,47 @@ def main(_):
     pipeline = passmanager.PassManager.parse("builtin.module(symbol-dce)")
     pipeline.run(module.operation)
     print(module.operation.print(enable_debug_info=True))
+
+
+def test_traceback_to_location():
+  def f():
+    return g()
+
+  def g():
+    return h()
+
+  def h():
+    return jax._src.lib._jax.Traceback.get_traceback()
+
+  tb = f()
+
+  def _code_to_filename(code):
+    return (
+        "jax_mlir_ext_test.filecheck.py"
+        if "jax_mlir_ext.filecheck" in code.co_filename
+        else None
+    )
+
+  # CHECK: --- test_traceback_to_location
+  print("--- test_traceback_to_location")
+  ctx = mlir.make_ir_context()
+  with ctx:
+    # CHECK: loc(callsite("test_traceback_to_location.<locals>.h"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at callsite("test_traceback_to_location.<locals>.g"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at callsite("test_traceback_to_location.<locals>.f"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at callsite("test_traceback_to_location"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at callsite("main"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at "<module>"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}})))))))
+    cache = _jax_mlir_ext.TracebackToLocationCache(
+        code_to_filename=_code_to_filename, frame_limit=1000)
+    loc = cache.get(tb)
+    print(loc)
+
+    # CHECK: loc(callsite("test_traceback_to_location.<locals>.h"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}}) at "test_traceback_to_location.<locals>.g"("jax_mlir_ext_test.filecheck.py":{{[0-9]+}}:{{[0-9]+}} to :{{[0-9]+}})))
+    cache = _jax_mlir_ext.TracebackToLocationCache(
+        code_to_filename=_code_to_filename, frame_limit=2)
+    loc = cache.get(tb)
+    print(loc)
+
+
+def main(_):
+  test_inlined_func_call()
+  test_traceback_to_location()
 
 
 if __name__ == "__main__":

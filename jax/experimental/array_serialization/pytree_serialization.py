@@ -33,6 +33,7 @@ import logging
 import jax
 from jax._src import distributed
 from jax._src.api_util import flatten_axes
+from jax._src.layout import Format
 
 from jax.experimental import multihost_utils
 from jax.experimental.array_serialization import tensorstore_impl as ts_impl
@@ -346,7 +347,8 @@ def _save(data: PyTreeT, directory: str | PathLike[str], *,
 
   # 4. finalize the array writing ###########################
   if len(arr_leaf_ids) > 0 and _USE_OCDBT:
-    _finalize_array_store(array_store_path, distinct_locations)
+    _serialization_executor.submit(  # call from a thread to not nest asyncio
+        _finalize_array_store, array_store_path, distinct_locations).result()
   # we are done with all async ops here, we can block ####
   _sync_on_key(sync_key, "end")
 
@@ -410,8 +412,8 @@ def load(directory: str | PathLike[str], shardings: PyTreeT, *,
 
   Args:
     directory: Directory path where the data is stored.
-    shardings: Sharding strategy for array objects. If None, defaults to
-      single device sharding on the default device.
+    shardings: Sharding strategy for array objects, either a Sharding or a
+      ShapeDtypeStruct with a Sharding/Format.
     mask: boolean prefix tree for partial loading, will return None for False
       leaves.
     ts_specs: Optional tensorstore specs to use for deserialization. If None,
@@ -444,6 +446,11 @@ def load(directory: str | PathLike[str], shardings: PyTreeT, *,
   pytreedef = jax.tree.structure(pytree, is_leaf=is_leaf)
   leaf_ids_flat = jax.tree.leaves(pytree, is_leaf=is_leaf)
   shardings_flat = jax.tree.leaves(shardings, is_leaf=is_leaf)
+  if any(isinstance(shardings, Format) for shardings in shardings_flat):
+    raise NotImplementedError(
+        "Deserialization with `Format` instead of `Sharding` is not currently"
+        " supported. Pass ShapeDtypeStruct(shape, dtype, sharding=format)"
+        " instead.")
   ts_specs_flat = jax.tree.leaves(ts_specs,
                                   is_leaf=ts_impl.is_tensorstore_spec_leaf)
 

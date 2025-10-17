@@ -73,23 +73,3 @@ from jax._src.tree_util import (
     treedef_is_leaf as treedef_is_leaf,
     treedef_tuple as treedef_tuple,
 )
-
-_deprecations = {
-    # Added March 21, 2025:
-    "build_tree": (
-        (
-            "jax.tree_util.build_tree was deprecated in JAX v0.6.0 and removed in"
-            " JAX v0.7.0. Use jax.tree.unflatten instead."
-        ),
-        None
-    ),
-}
-
-import typing as _typing
-if _typing.TYPE_CHECKING:
-  pass
-else:
-  from jax._src.deprecations import deprecation_getattr
-  __getattr__ = deprecation_getattr(__name__, _deprecations)
-  del deprecation_getattr
-del _typing

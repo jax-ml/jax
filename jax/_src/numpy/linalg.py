@@ -26,10 +26,10 @@ import numpy as np
 from jax._src import api
 from jax._src import core
 from jax._src import config
-from jax._src import deprecations
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax
 from jax._src.lax import linalg as lax_linalg
+from jax._src.lax import utils as lax_utils
 from jax._src.numpy import array_creation
 from jax._src.numpy import einsum
 from jax._src.numpy import indexing
@@ -38,13 +38,18 @@ from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.numpy import reductions, tensor_contractions, ufuncs
 from jax._src.numpy.util import promote_dtypes_inexact, ensure_arraylike
 from jax._src.util import canonicalize_axis, set_module
-from jax._src.typing import ArrayLike, Array, DTypeLike, DeprecatedArg
+from jax._src.typing import ArrayLike, Array, DTypeLike
 
 
 export = set_module('jax.numpy.linalg')
 
 
 class EighResult(NamedTuple):
+  eigenvalues: Array
+  eigenvectors: Array
+
+
+class EigResult(NamedTuple):
   eigenvalues: Array
   eigenvectors: Array
 
@@ -106,7 +111,7 @@ def cholesky(a: ArrayLike, *, upper: bool = False, symmetrize_input: bool = True
 
   Returns:
     array of shape ``(..., N, N)`` representing the Cholesky decomposition
-    of the input. If the input is not Hermitian positive-definite, The result
+    of the input. If the input is not Hermitian positive-definite, the result
     will contain NaN entries.
 
 
@@ -294,7 +299,9 @@ def svd(
     s = lax.abs(v)
     if compute_uv:
       sign = lax.sign(v)
-      idxs = lax.broadcasted_iota(np.int64, s.shape, dimension=s.ndim - 1)
+      idx_dtype = lax_utils.int_dtype_for_dim(
+          s.shape[s.ndim - 1], signed=False)
+      idxs = lax.broadcasted_iota(idx_dtype, s.shape, dimension=s.ndim - 1)
       s, idxs, sign = lax.sort((s, idxs, sign), dimension=-1, num_keys=1)
       s = lax.rev(s, dimensions=[s.ndim - 1])
       idxs = lax.rev(idxs, dimensions=[s.ndim - 1])
@@ -406,8 +413,7 @@ def matrix_power(a: ArrayLike, n: int) -> Array:
 @export
 @api.jit
 def matrix_rank(
-  M: ArrayLike, rtol: ArrayLike | None = None, *,
-  tol: ArrayLike | DeprecatedArg | None = DeprecatedArg()) -> Array:
+  M: ArrayLike, rtol: ArrayLike | None = None, *, tol: ArrayLike | None = None) -> Array:
   """Compute the rank of a matrix.
 
   JAX implementation of :func:`numpy.linalg.matrix_rank`.
@@ -421,8 +427,8 @@ def matrix_rank(
       smaller than `rtol * largest_singular_value` are considered to be zero. If
       ``rtol`` is None (the default), a reasonable default is chosen based the
       floating point precision of the input.
-    tol: deprecated alias of the ``rtol`` argument. Will result in a
-      :class:`DeprecationWarning` if used.
+    tol: alias of the ``rtol`` argument present for backward compatibility.
+      Only one of `rtol` or `tol` may be specified.
 
   Returns:
     array of shape ``a.shape[-2]`` giving the matrix rank.
@@ -444,16 +450,11 @@ def matrix_rank(
     Array(1, dtype=int32)
   """
   M = ensure_arraylike("jnp.linalg.matrix_rank", M)
-  # TODO(micky774): deprecated 2024-5-14, remove after deprecation expires.
-  if not isinstance(tol, DeprecatedArg):
+  if tol is not None:
+    if rtol is not None:
+      raise ValueError("matrix_rank: only one of tol or rtol may be specified.")
     rtol = tol
-    del tol
-    deprecations.warn(
-      "jax-numpy-linalg-matrix_rank-tol",
-      ("The tol argument for linalg.matrix_rank is deprecated. "
-       "Please use rtol instead."),
-      stacklevel=2
-    )
+  del tol
   M, = promote_dtypes_inexact(M)
   if M.ndim < 2:
     return (M != 0).any().astype(np.int32)
@@ -727,7 +728,7 @@ def det(a: ArrayLike) -> Array:
 
 
 @export
-def eig(a: ArrayLike) -> tuple[Array, Array]:
+def eig(a: ArrayLike) -> EigResult:
   """
   Compute the eigenvalues and eigenvectors of a square array.
 
@@ -737,7 +738,7 @@ def eig(a: ArrayLike) -> tuple[Array, Array]:
     a: array of shape ``(..., M, M)`` for which to compute the eigenvalues and vectors.
 
   Returns:
-    A tuple ``(eigenvalues, eigenvectors)`` with
+    A namedtuple ``(eigenvalues, eigenvectors)``. The namedtuple has fields:
 
     - ``eigenvalues``: an array of shape ``(..., M)`` containing the eigenvalues.
     - ``eigenvectors``: an array of shape ``(..., M, M)``, where column ``v[:, i]`` is the
@@ -769,7 +770,7 @@ def eig(a: ArrayLike) -> tuple[Array, Array]:
   a = ensure_arraylike("jnp.linalg.eig", a)
   a, = promote_dtypes_inexact(a)
   w, v = lax_linalg.eig(a, compute_left_eigenvectors=False)
-  return w, v
+  return EigResult(w, v)
 
 
 @export
@@ -912,8 +913,7 @@ def eigvalsh(a: ArrayLike, UPLO: str | None = 'L', *,
 # TODO(micky774): deprecated 2024-5-14, remove wrapper after deprecation expires.
 @export
 def pinv(a: ArrayLike, rtol: ArrayLike | None = None,
-         hermitian: bool = False, *,
-         rcond: ArrayLike | DeprecatedArg | None = DeprecatedArg()) -> Array:
+         hermitian: bool = False, *, rcond: ArrayLike | None = None) -> Array:
   """Compute the (Moore-Penrose) pseudo-inverse of a matrix.
 
   JAX implementation of :func:`numpy.linalg.pinv`.
@@ -927,8 +927,8 @@ def pinv(a: ArrayLike, rtol: ArrayLike | None = None,
       determined based on the floating point precision of the dtype.
     hermitian: if True, then the input is assumed to be Hermitian, and a more
       efficient algorithm is used (default: False)
-    rcond: deprecated alias of the ``rtol`` argument. Will result in a
-      :class:`DeprecationWarning` if used.
+    rcond: alias of the `rtol` argument, present for backward compatibility.
+      Only one of `rtol` and `rcond` may be specified.
 
   Returns:
     An array of shape ``(..., N, M)`` containing the pseudo-inverse of ``a``.
@@ -956,16 +956,11 @@ def pinv(a: ArrayLike, rtol: ArrayLike | None = None,
     >>> jnp.allclose(a_pinv @ a, jnp.eye(2), atol=1E-4)
     Array(True, dtype=bool)
   """
-  if not isinstance(rcond, DeprecatedArg):
+  if rcond is not None:
+    if rtol is not None:
+      raise ValueError("pinv: only one of rtol and rcond may be specified.")
     rtol = rcond
-    del rcond
-    deprecations.warn(
-      "jax-numpy-linalg-pinv-rcond",
-      ("The rcond argument for linalg.pinv is deprecated. "
-       "Please use rtol instead."),
-       stacklevel=2
-    )
-
+  del rcond
   return _pinv(a, rtol, hermitian)
 
 
@@ -1400,7 +1395,7 @@ def _lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None, *,
     else:
       rcond = jnp.where(rcond < 0, jnp.finfo(dtype).eps, rcond)
     u, s, vt = svd(a, full_matrices=False)
-    mask = s >= jnp.array(rcond, dtype=s.dtype) * s[0]
+    mask = (s > 0) & (s >= jnp.array(rcond, dtype=s.dtype) * s[0])
     rank = mask.sum()
     safe_s = jnp.where(mask, s, 1).astype(a.dtype)
     s_inv = jnp.where(mask, 1 / safe_s, 0)[:, np.newaxis]

@@ -14,6 +14,7 @@
 
 """Helper for running multi-process tests."""
 
+import functools
 import os
 import pathlib
 import re
@@ -23,16 +24,21 @@ import time
 
 from absl import app
 import absl.flags
-import jax
-from jax import config
+from absl.testing import absltest
+from absl.testing import parameterized
+
 from jax._src import distributed
+from jax._src import xla_bridge as xb
+from jax._src import test_util as jtu
+from jax._src.config import config
+from jax._src.lib import cuda_versions
+from jax._src.lib import _jax
+
 try:
   import portpicker  # pytype: disable=import-error
 except ImportError:
   portpicker = None
 
-from absl.testing import absltest
-from jax._src import test_util as jtu
 
 
 _NUM_PROCESSES = absl.flags.DEFINE_integer(
@@ -62,9 +68,9 @@ _MULTIPROCESS_TEST_CONTROLLER_ADDRESS = absl.flags.DEFINE_string(
 expect_failures_with_regex = None
 
 
-def main():
+def main(shard_main=None):
   config.config_with_absl()
-  app.run(_main)
+  app.run(functools.partial(_main, shard_main=shard_main))
 
 
 class GracefulKiller:
@@ -82,15 +88,17 @@ class GracefulKiller:
     self.kill_now = True
 
 
-def _main(argv):
+def _main(argv, shard_main):
   if _MULTIPROCESS_TEST_WORKER_ID.value >= 0:
-    jax.distributed.initialize(
+    distributed.initialize(
         _MULTIPROCESS_TEST_CONTROLLER_ADDRESS.value,
         num_processes=_NUM_PROCESSES.value,
         process_id=_MULTIPROCESS_TEST_WORKER_ID.value,
         initialization_timeout=10,
     )
-    absltest.main(testLoader=jtu.JaxTestLoader())
+    if shard_main is not None:
+      return shard_main()
+    return absltest.main(testLoader=jtu.JaxTestLoader())
 
   if not argv[0].endswith(".py"):  # Skip the interpreter path if present.
     argv = argv[1:]
@@ -99,6 +107,18 @@ def _main(argv):
   if num_processes is None:
     raise ValueError("num_processes must be set")
   gpus_per_process = _GPUS_PER_PROCESS.value
+  # Get the number of GPUs visible to this process without initializing the runtime
+  if cuda_versions is not None:
+    local_device_count = cuda_versions.cuda_device_count()
+    if num_processes * gpus_per_process > local_device_count:
+      print(
+        f"Cannot run {num_processes} processes with {gpus_per_process} GPU(s) "
+        f"each on a system with only {local_device_count} local GPU(s), "
+        f"starting {local_device_count // gpus_per_process} instead - test "
+        "cases will likely be skipped!"
+      )
+      num_processes = local_device_count // gpus_per_process
+
   if portpicker is None:
     jax_port = 9876
   else:
@@ -212,20 +232,20 @@ def _main(argv):
         assert retval == 0, f"process {i} failed, return value: {retval}"
 
 
-class MultiProcessTest(absltest.TestCase):
+class MultiProcessTest(parameterized.TestCase):
 
   def setUp(self):
     """Start tests together."""
     super().setUp()
-    assert jax.process_count() == _NUM_PROCESSES.value, (
-        jax.process_count(),
+    assert xb.process_count() == _NUM_PROCESSES.value, (
+        xb.process_count(),
         _NUM_PROCESSES.value,
     )
     # Make sure all processes are at the same test case.
     client = distributed.global_state.client
     try:
       client.wait_at_barrier(self._testMethodName + "_start", 10000)
-    except jax.errors.JaxRuntimeError as e:
+    except _jax.JaxRuntimeError as e:
       msg, *_ = e.args
       if msg.startswith("DEADLINE_EXCEEDED"):
         raise RuntimeError(
@@ -243,7 +263,7 @@ class MultiProcessTest(absltest.TestCase):
     # but the overall test should fail).
     try:
       client.wait_at_barrier(self._testMethodName + "_end", 10000)
-    except jax.errors.JaxRuntimeError as e:
+    except _jax.JaxRuntimeError as e:
       msg, *_ = e.args
       if msg.startswith("DEADLINE_EXCEEDED"):
         raise RuntimeError(

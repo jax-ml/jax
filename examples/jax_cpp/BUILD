@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-package(default_applicable_licenses = ["//jax:license"])
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+
+package(default_applicable_licenses = [])
 
 licenses(["notice"])
 

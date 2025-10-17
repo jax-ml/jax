@@ -299,8 +299,8 @@ LogicalResult inferOp(Operation &op, const int hardware_generation,
       builder.setInsertionPointAfter(alloca_op);
       // TODO(b/376130272): add a canonicalizer for EraseLayoutOp so that if we
       // have erase(erase(x)) then we rewrite it to erase(x).
-      auto erase_op = builder.create<tpu::EraseLayoutOp>(
-          arg.getLoc(),
+      auto erase_op = tpu::EraseLayoutOp::create(
+          builder, arg.getLoc(),
           MemRefType::get(new_memref_ty.getShape(), memref_ty.getElementType(),
                           /*layout=*/nullptr, new_memref_ty.getMemorySpace()),
           arg);
@@ -317,8 +317,8 @@ LogicalResult inferOp(Operation &op, const int hardware_generation,
     if (memref_ty != new_memref_ty) {
       OpBuilder builder(alloca_op->getContext());
       builder.setInsertionPointAfter(alloca_op);
-      auto erase_op = builder.create<tpu::EraseLayoutOp>(
-          arg.getLoc(),
+      auto erase_op = tpu::EraseLayoutOp::create(
+          builder, arg.getLoc(),
           MemRefType::get(new_memref_ty.getShape(), memref_ty.getElementType(),
                           /*layout=*/nullptr, new_memref_ty.getMemorySpace()),
           arg);
@@ -397,16 +397,16 @@ LogicalResult inferFunc(func::FuncOp f, const int hardware_generation,
             TiledLayoutAttr::get(new_memref_ty.getContext(), tiles,
                                  new_tile_strides),
             new_memref_ty.getMemorySpace());
-        arg_use_op = builder.create<tpu::ReinterpretCastOp>(val.getLoc(),
-                                                            new_memref_ty, val);
+        arg_use_op = tpu::ReinterpretCastOp::create(builder, val.getLoc(),
+                                                    new_memref_ty, val);
         val = arg_use_op->getResult(0);
       }
       // Some standard MLIR ops have static checks that seems unreasonable,
       // and we know they hold in the way they are used in Mosaic. Still,
       // verification with layouts likes to fail, because it can't statically
       // prove the properties.
-      auto erase_op = builder.create<tpu::EraseLayoutOp>(
-          val.getLoc(),
+      auto erase_op = tpu::EraseLayoutOp::create(
+          builder, val.getLoc(),
           MemRefType::get(new_memref_ty.getShape(), memref_ty.getElementType(),
                           /*layout=*/nullptr, new_memref_ty.getMemorySpace()),
           val);

@@ -49,7 +49,7 @@ def unravel_pytree(treedef, unravel_list, flat):
   return tree_unflatten(treedef, unravel_list(flat))
 
 def _ravel_list(lst):
-  if not lst: return lax.full([], 0, 'float32'), lambda _: []
+  if not lst: return lax.full([0], 0, 'float32'), lambda _: []
   from_dtypes = tuple(dtypes.dtype(l) for l in lst)
   to_dtype = dtypes.result_type(*from_dtypes)
   sizes, shapes = unzip2((np.size(x), np.shape(x)) for x in lst)

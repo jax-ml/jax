@@ -19,10 +19,6 @@ from .plugin_support import import_from_plugin
 _cusparse = import_from_plugin("cuda", "_sparse")
 _hipsparse = import_from_plugin("rocm", "_sparse")
 
-cuda_is_supported = bool(_cusparse and _cusparse.sparse_supported)
-rocm_is_supported = bool(_hipsparse and _hipsparse.sparse_supported)
-
-
 def registrations() -> dict[str, list[tuple[str, Any, int]]]:
   registrations: dict[str, list[tuple[str, Any, int]]] = {
       "CUDA": [],

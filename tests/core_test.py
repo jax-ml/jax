@@ -361,6 +361,15 @@ class CoreTest(jtu.JaxTestCase):
           'This BatchTracer with object id'):
       g_vmap(jnp.ones((1, )))
 
+  def test_aval_str_short_mem_space(self):
+    aval = core.ShapedArray((8,), jnp.float32,
+                            memory_space=jax.memory.Space.Host)
+    self.assertEqual(aval.str_short(True), "f32<host>[8]")
+
+    aval = core.ShapedArray((8,), jnp.float32,
+                            memory_space=jax.memory.Space.Device)
+    self.assertEqual(aval.str_short(True), "f32[8]")
+
   def test_dropvar_avals(self):
     def f(x):
       def body(c, _):

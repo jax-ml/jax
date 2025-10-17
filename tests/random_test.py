@@ -33,10 +33,10 @@ from jax import numpy as jnp
 from jax import random
 from jax._src import config
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax import vmap
-from jax.interpreters import xla
 
 from jax._src import random as jax_random
 from jax._src import prng as prng_internal
@@ -243,13 +243,14 @@ class PrngTest(jtu.JaxTestCase):
         jnp.ones((10, 0,), jnp.uint32))
     np.testing.assert_equal(result, np.zeros((10, 0,), dtype=np.uint32))
 
+  @jtu.thread_unsafe_test()
   def testNoOpByOpUnderHash(self):
     def fail(*args, **kwargs): assert False
-    apply_primitive, xla.apply_primitive = xla.apply_primitive, fail
+    apply_primitive, dispatch.apply_primitive = dispatch.apply_primitive, fail
     try:
       _ = prng_internal.threefry_2x32(np.zeros(2, np.uint32), np.arange(10, dtype=np.uint32))
     finally:
-      xla.apply_primitive = apply_primitive
+      dispatch.apply_primitive = apply_primitive
 
   @skipIf(config.threefry_partitionable.value, 'changed random bit values')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
@@ -278,13 +279,18 @@ class PrngTest(jtu.JaxTestCase):
       expected64 = np.array([56197195, 4200222568, 961309823], dtype=np.uint32)
     self.assertArraysEqual(bits64, expected64)
 
-  @jtu.sample_product(prng_name=[name for name, _ in PRNG_IMPLS],
-                      make_key=KEY_CTORS)
-  def testRngRandomBitsShapeDtype(self, prng_name, make_key):
+  @jtu.sample_product(
+      prng_name=[name for name, _ in PRNG_IMPLS],
+      make_key=KEY_CTORS,
+      explicit_x64_dtypes=config.ExplicitX64Mode.__members__.values(),
+  )
+  def testRngRandomBitsShapeDtype(self, prng_name, make_key,
+                                  explicit_x64_dtypes):
     # Like testRngRandomBits, but only meant to exercise random_bits
     # on every PRNG implementation. Instead of values, only checks
     # that shapes/dtypes are as expected.
 
+    @config.explicit_x64_dtypes(explicit_x64_dtypes)
     def random_bits(key, width, shape):
       dtype = jnp.dtype(f'uint{width}')
       return jax.random.bits(key, shape, dtype)
@@ -304,11 +310,20 @@ class PrngTest(jtu.JaxTestCase):
       self.assertEqual(bits32.shape, (3,))
       self.assertEqual(bits32.dtype, np.dtype('uint32'))
 
-      with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
-        bits64 = random_bits(make_key(seed), 64, (3,))
-      expected_dtype = np.dtype('uint64' if config.enable_x64.value else 'uint32')
-      self.assertEqual(bits64.shape, (3,))
-      self.assertEqual(bits64.dtype, expected_dtype)
+      if explicit_x64_dtypes == config.ExplicitX64Mode.ERROR and not config.enable_x64.value:
+        with self.assertRaisesRegex(ValueError, "Explicitly requested dtype.*"):
+          bits64 = random_bits(make_key(seed), 64, (3,))
+      else:
+        with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
+          bits64 = random_bits(make_key(seed), 64, (3,))
+        expected_dtype = np.dtype(
+            "uint64"
+            if config.enable_x64.value
+            or explicit_x64_dtypes == config.ExplicitX64Mode.ALLOW
+            else "uint32"
+        )
+        self.assertEqual(bits64.shape, (3,))
+        self.assertEqual(bits64.dtype, expected_dtype)
 
   @skipIf(config.threefry_partitionable.value, 'changed random bit values')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
@@ -325,7 +340,6 @@ class PrngTest(jtu.JaxTestCase):
     rand_bits = [random_bits(make_key(1701), n, (N * 64 // n,)) for n in nbits]
     rand_bits_32 = np.array([np.array(r).view(np.uint32) for r in rand_bits])
     assert np.all(rand_bits_32 == rand_bits_32[0])
-
 
   @jtu.sample_product(case=_RANDOM_VALUES_CASES, make_key=KEY_CTORS)
   @skipIf(config.threefry_partitionable.value, 'changed random bit values')
@@ -364,9 +378,9 @@ class PrngTest(jtu.JaxTestCase):
     # Test to ensure consistent random values between JAX versions
     seed = 0
     self.assertEqual(random.randint(make_key(seed), (3, 3), 0, 8).dtype,
-                     dtypes.canonicalize_dtype(jnp.int_))
+                     dtypes.default_int_dtype())
     if config.enable_x64.value:
-        self.assertAllClose(
+      self.assertAllClose(
             random.randint(make_key(seed), (3, 3), 0, 8, dtype='int64'),
             np.array([[7, 2, 6],
                        [2, 1, 0],

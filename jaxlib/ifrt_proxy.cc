@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "jaxlib/ifrt_proxy.h"
-
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -28,7 +27,6 @@
 #include "absl/log/log_entry.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/function.h"  // IWYU pragma: keep
@@ -61,7 +59,7 @@ struct PyClientConnectionOptions {
       initialization_data;
 };
 
-absl::StatusOr<nb_class_ptr<PyClient>> GetClient(
+absl::StatusOr<jax::nb_class_ptr<jax::PyClient>> GetClient(
     std::string proxy_server_address,
     const PyClientConnectionOptions& py_options) {
   DCHECK(PyGILState_Check());
@@ -93,7 +91,7 @@ absl::StatusOr<nb_class_ptr<PyClient>> GetClient(
   if (py_options.on_connection_update) {
     auto fn = std::make_shared<std::function<void(std::string)>>(
         std::move(*py_options.on_connection_update));
-    options.on_connection_update = [fn](absl::string_view log_line) -> void {
+    options.on_connection_update = [fn](std::string_view log_line) -> void {
       tsl::Env::Default()->SchedClosure([fn, str = std::string(log_line)] {
         nb::gil_scoped_acquire gil_acquire;
         (*fn)(std::string(str));
@@ -130,16 +128,14 @@ absl::StatusOr<nb_class_ptr<PyClient>> GetClient(
     TF_ASSIGN_OR_RETURN(client, CreateClient(proxy_server_address, options));
   }
 
-  // Constructing `xla::PyClient` requires GIL as it may dec-ref Python objects.
-  return xla::PyClient::Make(std::move(client));
+  // Constructing `jax::PyClient` requires GIL as it may dec-ref Python objects.
+  return jax::PyClient::Make(std::move(client));
 }
 
 }  // namespace
 
-void BuildIfrtProxySubmodule(nb::module_& m) {
-  nb::module_ sub_module = m.def_submodule("ifrt_proxy", "IFRT proxy");
-
-  nb::class_<PyClientConnectionOptions>(sub_module, "ClientConnectionOptions")
+NB_MODULE(_ifrt_proxy, m) {
+  nb::class_<PyClientConnectionOptions>(m, "ClientConnectionOptions")
       .def(nb::init<>())
       .def_rw("on_disconnect", &PyClientConnectionOptions::on_disconnect,
               nb::arg().none())
@@ -153,8 +149,8 @@ void BuildIfrtProxySubmodule(nb::module_& m) {
               &PyClientConnectionOptions::initialization_data,
               nb::arg().none());
 
-  sub_module.def("get_client", xla::ValueOrThrowWrapper(GetClient),
-                 nb::arg("proxy_server_address"), nb::arg("options"));
+  m.def("get_client", xla::ValueOrThrowWrapper(GetClient),
+        nb::arg("proxy_server_address"), nb::arg("options"));
 }
 
 }  // namespace proxy

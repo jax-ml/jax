@@ -52,10 +52,7 @@ class SvdTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     jnp_fun = jax.numpy.linalg.svdvals
-    if jtu.numpy_version() < (2, 0, 0):
-      np_fun = lambda x: np.linalg.svd(x, compute_uv=False)
-    else:
-      np_fun = np.linalg.svdvals
+    np_fun = np.linalg.svdvals
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=_SVD_RTOL, atol=1E-5)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=_SVD_RTOL)
 

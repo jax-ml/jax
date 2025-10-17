@@ -39,13 +39,15 @@ from jax._src import dtypes
 from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.interpreters import mlir
+from jax._src.lax import control_flow
+from jax._src.lax import lax as lax_internal
+from jax._src.lax import linalg as lax_linalg
+from jax._src.lax.linalg import is_constant_shape
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy import linalg as jnp_linalg
 from jax._src.numpy import tensor_contractions
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
-from jax._src.lax import control_flow
-from jax._src.lax import lax as lax_internal
-from jax._src.lax import linalg as lax_linalg
 from jax._src.tpu.linalg import qdwh
 from jax._src.tpu.linalg.stack import Stack
 from jax._src.typing import Array
@@ -558,8 +560,10 @@ def eigh(
   if N <= termination_size:
     if n is not None:
       H = _mask(H, (n, n))
-    eig_vals, eig_vecs = lax_linalg.eigh_jacobi(
-        H, sort_eigenvalues=(sort_eigenvalues or compute_slice)
+    eig_vecs, eig_vals = lax_linalg.eigh(
+        H, lower=True, sort_eigenvalues=(sort_eigenvalues or compute_slice),
+        subset_by_index=None, symmetrize_input=False,
+        implementation=lax_linalg.EighImplementation.JACOBI,
     )
     if compute_slice:
       eig_vals = eig_vals[subset_by_index[0] : subset_by_index[1]]
@@ -586,7 +590,8 @@ def _T(x: Array) -> Array:
   return lax.transpose(x, (*range(x.ndim - 2), x.ndim - 1, x.ndim - 2))
 
 
-def _eigh_tpu_impl(x, *, lower, sort_eigenvalues, subset_by_index):
+def _eigh_qdwh_impl(x, *, lower, sort_eigenvalues, subset_by_index):
+  """QDWH-based eigendecomposition for TPU."""
   *_, m, n = x.shape
   assert m == n, (m, n)
 
@@ -596,12 +601,15 @@ def _eigh_tpu_impl(x, *, lower, sort_eigenvalues, subset_by_index):
     raise NotImplementedError(
         "Shape polymorphism for native lowering for eigh is implemented "
         f"only for the batch dimensions: {x.shape}")
+
   if m <= termination_size and (
       subset_by_index is None or subset_by_index == (0, n)
   ):
-    eig_vals, eig_vecs = lax_linalg.eigh_jacobi(x, lower=lower,
-                                                sort_eigenvalues=sort_eigenvalues)
-    return eig_vecs, eig_vals
+    return lax_linalg.eigh(
+        x, lower=lower, sort_eigenvalues=sort_eigenvalues,
+        symmetrize_input=False,
+        implementation=lax_linalg.EighImplementation.JACOBI
+    )
 
   def eigh_qdwh(x):
     if len(x.shape) > 2:
@@ -637,6 +645,55 @@ def _eigh_tpu_impl(x, *, lower, sort_eigenvalues, subset_by_index):
   return eig_vecs, eig_vals
 
 
-mlir.register_lowering(
-    lax_linalg.eigh_p, mlir.lower_fun(_eigh_tpu_impl, multiple_results=True),
-    platform='tpu')
+def _eigh_tpu_lowering(
+    ctx, operand, *, lower, sort_eigenvalues, subset_by_index, algorithm
+):
+  if algorithm is None:
+    algorithm = lax_linalg.EighImplementation.QDWH
+
+  if algorithm == lax_linalg.EighImplementation.QR:
+    raise NotImplementedError("QR algorithm is not supported on TPU")
+
+  elif algorithm == lax_linalg.EighImplementation.JACOBI:
+    operand_aval, = ctx.avals_in
+    if operand_aval.shape[-1] == 0:
+      reshape_aval = operand_aval.update(shape=operand_aval.shape[:-1])
+      return [
+          operand,
+          hlo.real(mlir.reshape(ctx, operand, reshape_aval)),
+      ]
+
+    v_aval, w_aval = ctx.avals_out
+    eigvecs_type = mlir.aval_to_ir_type(v_aval)
+    eigvals_type = mlir.aval_to_ir_type(w_aval)
+    result_types = [eigvecs_type, eigvals_type]
+
+    backend_config = f"{int(lower)},{int(sort_eigenvalues)},100,1e-6"
+
+    if any(not is_constant_shape(aval_out.shape)
+           for aval_out in ctx.avals_out):
+      result_shapes = [
+          mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
+          for aval_out in ctx.avals_out
+      ]
+    else:
+      result_shapes = None
+    op = mlir.custom_call(
+        "Eigh",
+        result_types=result_types,
+        operands=[operand],
+        backend_config=backend_config,
+        api_version=1,
+        result_shapes=result_shapes,
+    )
+    return op.results
+  elif algorithm == lax_linalg.EighImplementation.QDWH:
+    return mlir.lower_fun(_eigh_qdwh_impl, multiple_results=True)(
+        ctx, operand, lower=lower, sort_eigenvalues=sort_eigenvalues,
+        subset_by_index=subset_by_index)
+
+  else:
+    raise ValueError(f"Unknown algorithm: {algorithm}")
+
+
+mlir.register_lowering(lax_linalg.eigh_p, _eigh_tpu_lowering, platform='tpu')

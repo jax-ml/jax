@@ -18,6 +18,7 @@ from collections.abc import Sequence
 
 from absl.testing import absltest
 import jax
+from jax._src import core
 from jax._src import test_util as jtu
 from jax.experimental import roofline
 import jax.lax as lax
@@ -69,6 +70,24 @@ def example_custom_function_jvp(primals, tangents):
   definition has 0 effect on the roofline result, so we keep it very simple.
   """
   return example_custom_function(primals), tangents
+
+# A fake primitive without a roofline rule. This is used to test that roofline
+# can handle primitives without a roofline rule.
+fake_jax_primitive_p = core.Primitive("fake_jax_primitive")
+
+
+@fake_jax_primitive_p.def_impl
+def _fake_jax_primitive_impl(x):
+  return x
+
+
+@fake_jax_primitive_p.def_abstract_eval
+def _fake_jax_primitive_abstract_eval(x):
+  return core.ShapedArray(x.shape, x.dtype)
+
+
+def fake_jax_primitive_function(x):
+  return fake_jax_primitive_p.bind(x)
 
 
 class RooflineTest(jtu.JaxTestCase):
@@ -1121,6 +1140,60 @@ class RooflineTest(jtu.JaxTestCase):
 
     self.assertEqual(result.unfused_flops, 0)
     self.assertEqual(result.unfused_hbm_bytes, 0)
+
+  @jtu.parameterized.named_parameters(
+      dict(
+          testcase_name="pure_callback",
+          callback_fn=jax.pure_callback,
+      ),
+      dict(
+          testcase_name="io_callback",
+          callback_fn=jax._src.callback.io_callback,
+      ),
+  )
+  def test_callback_with_output_roofline(self, callback_fn):
+    def _example_callback_function(x):
+      result_shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
+      return callback_fn(example_function, result_shape, x)
+
+    x = jnp.zeros((3, 8), dtype=jnp.float32)
+    out, result = roofline.roofline(_example_callback_function)(x)
+
+    # Bytes accessed is sum of inputs and output.
+    expected_hbm_bytes = (
+        x.dtype.itemsize * x.size + out.dtype.itemsize * out.size
+    )
+    self.assertEqual(result.unfused_hbm_bytes, expected_hbm_bytes)
+    self.assertEqual(result.unfused_flops, 0)
+
+  def test_debug_callback_roofline(self):
+    def _example_debug_callback_function(x):
+      jax.debug.callback(example_function, x)
+      return x
+
+    x = jnp.zeros((3, 8), dtype=jnp.float32)
+    _, result = roofline.roofline(_example_debug_callback_function)(x)
+
+    # Bytes accessed is only the input, as debug.callback does not return a
+    # value.
+    self.assertEqual(result.unfused_hbm_bytes, x.dtype.itemsize * x.size)
+    self.assertEqual(result.unfused_flops, 0)
+
+  def test_primitive_with_no_roofline_rule_contributes_nothing(self):
+    x = jnp.zeros((3, 8), dtype=jnp.float32)
+    _, result = roofline.roofline(fake_jax_primitive_function)(x)
+    self.assertEqual(result.flops, 0)
+    self.assertEqual(result.unfused_flops, 0)
+    self.assertEqual(result.hbm_bytes, 0)
+    self.assertEqual(result.unfused_hbm_bytes, 0)
+
+  def test_primitive_with_no_roofline_rule_contributes_nothing_with_abs(self):
+    x = jnp.zeros((3, 8), dtype=jnp.float32)
+    f = lambda x: lax.abs(fake_jax_primitive_function(x))
+    _, result = roofline.roofline(f)(x)
+
+    _, expected_result = roofline.roofline(lax.abs)(x)
+    self.assertDataclassEqual(result, expected_result)
 
 
 if __name__ == "__main__":

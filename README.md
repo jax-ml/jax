@@ -62,7 +62,6 @@ perex_grads = jax.jit(jax.vmap(grad_loss, in_axes=(None, 0, 0)))  # fast per-exa
 * [Scaling](#scaling)
 * [Current gotchas](#gotchas-and-sharp-bits)
 * [Installation](#installation)
-* [Neural net libraries](#neural-network-libraries)
 * [Citing JAX](#citing-jax)
 * [Reference documentation](#reference-documentation)
 
@@ -230,7 +229,7 @@ Notebook](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 | CPU        | yes          | yes           | yes          | yes            | yes                 |
 | NVIDIA GPU | yes          | yes           | n/a          | no             | experimental        |
 | Google TPU | yes          | n/a           | n/a          | n/a            | n/a                 |
-| AMD GPU    | yes          | no            | n/a          | no             | no                  |
+| AMD GPU    | yes          | no            | n/a          | no             | experimental        |
 | Apple GPU  | n/a          | no            | experimental | n/a            | n/a                 |
 | Intel GPU  | experimental | n/a           | n/a          | no             | no                  |
 
@@ -240,7 +239,7 @@ Notebook](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 | Platform        | Instructions                                                                                                    |
 |-----------------|-----------------------------------------------------------------------------------------------------------------|
 | CPU             | `pip install -U jax`                                                                                            |
-| NVIDIA GPU      | `pip install -U "jax[cuda12]"`                                                                                  |
+| NVIDIA GPU      | `pip install -U "jax[cuda13]"`                                                                                  |
 | Google TPU      | `pip install -U "jax[tpu]"`                                                                                     |
 | AMD GPU (Linux) | Follow [AMD's instructions](https://github.com/jax-ml/jax/blob/main/build/rocm/README.md).                      |
 | Mac GPU         | Follow [Apple's instructions](https://developer.apple.com/metal/jax/).                                          |

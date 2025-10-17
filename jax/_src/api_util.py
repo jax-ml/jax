@@ -26,9 +26,9 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src.state.types import AbstractRef
 from jax._src.tree_util import (
-    PyTreeDef, tree_flatten, tree_unflatten, tree_map,
-    treedef_children, generate_key_paths, broadcast_prefix,
-    prefix_errors, _replace_nones)
+    PyTreeDef, tree_flatten, tree_unflatten, treedef_children,
+    generate_key_paths, broadcast_prefix, prefix_errors, none_leaf_registry,
+    broadcast_flattened_prefix_with_treedef)
 from jax._src import linear_util as lu
 from jax._src.util import (safe_map, WrapKwArgs, Hashable, HashableFunction,
                            Unhashable, safe_zip as zip)
@@ -248,15 +248,19 @@ def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
     result.append(i % num_args)  # Resolve negative
   return tuple(result)
 
+def _split_args(static_argnums, args, allow_invalid):
+  static_argnums = _ensure_inbounds(allow_invalid, len(args), static_argnums)
+  dyn_argnums = tuple(i for i in range(len(args)) if i not in static_argnums)
+  dyn_args = tuple(args[i] for i in dyn_argnums)
+  return static_argnums, dyn_argnums, dyn_args
 
 def argnums_partial_except(f: lu.WrappedFun, static_argnums: tuple[int, ...],
                            args: tuple[Any, ...], *, allow_invalid: bool):
   "Version of ``argnums_partial`` that checks hashability of static_argnums."
   if not static_argnums:
     return f, args
-  static_argnums = _ensure_inbounds(allow_invalid, len(args), static_argnums)
-  dyn_argnums = tuple(i for i in range(len(args)) if i not in static_argnums)
-  dyn_args = tuple(args[i] for i in dyn_argnums)
+  static_argnums, dyn_argnums, dyn_args = _split_args(
+      static_argnums, args, allow_invalid)
 
   fixed_args = []
   for i in sorted(static_argnums):
@@ -394,13 +398,10 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
   # leaves, i.e. the Nones are to be considered leaves) that is a tree prefix of
   # the given treedef, build a complete axis spec tree with the same structure
   # and return the flattened result
-  # TODO(mattjj,phawkins): improve this implementation
-  proxy = object()
-  dummy = tree_unflatten(treedef, [SENTINEL] * treedef.num_leaves)
-  axes = []
-  add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
+  axis_tree_leaves, axis_treedef = none_leaf_registry.flatten(axis_tree)
   try:
-    tree_map(add_leaves, _replace_nones(proxy, axis_tree), dummy)
+    axes = broadcast_flattened_prefix_with_treedef(
+        axis_tree_leaves, axis_treedef, treedef)
   except ValueError:
     if kws:
       # if keyword arguments are included in the tree, we make adapt the error
@@ -423,7 +424,6 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
     raise ValueError(f"{name} specification must be a tree prefix of the "
                      f"corresponding value, got specification {axis_tree} "
                      f"for value tree {treedef}.{hint}") from None
-  axes = [None if a is proxy else a for a in axes]
   assert len(axes) == treedef.num_leaves
   return axes
 
@@ -598,14 +598,14 @@ def debug_info(
     *,
     static_argnums: Sequence[int] = (),
     static_argnames: Sequence[str] = (),
-    result_paths_thunk: Callable[[], tuple[str, ...]] | None = None,
+    result_paths_thunk: Callable[[], tuple[str, ...]] | core.InitialResultPaths = core.initial_result_paths,
     # TODO(necula): check if we really need this, e.g., to speed up tracing?
     sourceinfo: str | None = None,
     signature: inspect.Signature | None = None,
 ) -> core.DebugInfo:
-  """Constructd core.DebugInfo for a function given example args and kwargs.
+  """Construct core.DebugInfo for a function given example args and kwargs.
 
-  `args` and `kwargs` are example positional and keyword arguments, users with
+  `args` and `kwargs` are example positional and keyword arguments, used with
   `inspect.Signature` to get the names of arguments. The arguments that are
   considered static for tracing purposes should be included, and designated
   using `static_argnums` and `static_argnames`.
@@ -720,17 +720,20 @@ class _HashableByObjectId:
     return self.val is other.val
 
 # TODO(mattjj): make this function faster
-def _check_no_aliased_ref_args(dbg: core.DebugInfo, avals, args):
+def check_no_aliased_ref_args(dbg_fn: Callable[[], core.DebugInfo],
+                              maybe_avals, args) -> None:
   assert config.mutable_array_checks.value
   refs: dict[int, int] = {}
-  for i, (a, x) in enumerate(zip(avals, args)):
+  for i, (a, x) in enumerate(zip(maybe_avals, args)):
     if (isinstance(a, AbstractRef) and
         (dup_idx := refs.setdefault(id(core.get_referent(x)), i)) != i):
+      dbg = dbg_fn()
       raise ValueError(
         "only one reference to a mutable array may be passed as an argument "
         f"to a function, but when tracing {dbg.func_src_info} for {dbg.traced_for} "
         f"the mutable array reference of type {a.str_short()} appeared at both "
-        f"{dbg.arg_names[dup_idx]} and {dbg.arg_names[i]}."
+        f"{dbg.arg_names[dup_idx] if dbg.arg_names is not None else 'unknown'} "
+        f"and {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'}."
         if dbg else
         f"at both flat index {dup_idx} and flat index {i}") from None
 

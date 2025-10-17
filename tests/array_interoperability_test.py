@@ -15,6 +15,7 @@
 import unittest
 
 from absl.testing import absltest
+import numpy as np
 
 import jax
 import jax.dlpack
@@ -24,8 +25,6 @@ from jax._src import config
 from jax._src import dlpack as dlpack_src
 from jax._src import test_util as jtu
 from jax._src.lib import version as jaxlib_version
-
-import numpy as np
 
 config.parse_flags_with_absl()
 
@@ -47,24 +46,22 @@ dlpack_dtypes = sorted([dt.type for dt in  dlpack_src.SUPPORTED_DTYPES_SET],
 
 # These dtypes are not supported by neither NumPy nor TensorFlow, therefore
 # we list them separately from ``jax.dlpack.SUPPORTED_DTYPES``.
-extra_dlpack_dtypes = []
-if jaxlib_version >= (0, 5, 3):
-  extra_dlpack_dtypes = [
-      jnp.float8_e4m3b11fnuz,
-      jnp.float8_e4m3fn,
-      jnp.float8_e4m3fnuz,
-      jnp.float8_e5m2,
-      jnp.float8_e5m2fnuz,
-  ] + [
-      dtype
-      for name in [
-          "float4_e2m1fn",
-          "float8_e3m4",
-          "float8_e4m3",
-          "float8_e8m0fnu",
-      ]
-      if (dtype := getattr(jnp, name, None))
-  ]
+extra_dlpack_dtypes = [
+    jnp.float8_e4m3b11fnuz,
+    jnp.float8_e4m3fn,
+    jnp.float8_e4m3fnuz,
+    jnp.float8_e5m2,
+    jnp.float8_e5m2fnuz,
+] + [
+    dtype
+    for name in [
+        "float4_e2m1fn",
+        "float8_e3m4",
+        "float8_e4m3",
+        "float8_e8m0fnu",
+    ]
+    if (dtype := getattr(jnp, name, None))
+]
 
 numpy_dtypes = [dt for dt in dlpack_dtypes if dt != jnp.bfloat16]
 cuda_array_interface_dtypes = [dt for dt in dlpack_dtypes if dt != jnp.bfloat16]
@@ -89,21 +86,9 @@ class DLPackTest(jtu.JaxTestCase):
       use_stream=[False, True],
   )
   @jtu.run_on_devices("gpu")
-  @jtu.ignore_warning(
-      message="Calling from_dlpack with a DLPack tensor",
-      category=DeprecationWarning,
-  )
-  @jtu.ignore_warning(
-      message="jax.dlpack.to_dlpack was deprecated.*",
-      category=DeprecationWarning,
-  )
   def testJaxRoundTrip(self, shape, dtype, copy, use_stream):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
-
-    def _check_copy(x: jax.Array, y: jax.Array, expect_copy):
-      copied = x.unsafe_buffer_pointer() != y.unsafe_buffer_pointer()
-      assert copied == expect_copy, f"Expected {'a' if expect_copy else 'no'} copy"
 
     # Check if the source device is preserved
     x = jax.device_put(np, jax.devices("cpu")[0])
@@ -115,7 +100,6 @@ class DLPackTest(jtu.JaxTestCase):
 
     self.assertEqual(z.devices(), {device})
     self.assertAllClose(np.astype(x.dtype), z)
-
 
   @jtu.sample_product(
     shape=all_shapes,
@@ -139,13 +123,8 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertEqual(z.devices(), {device})
     self.assertAllClose(np.astype(x.dtype), z)
 
-  @jtu.sample_product(
-    shape=all_shapes,
-    dtype=dlpack_dtypes,
-  )
+  @jtu.sample_product(shape=all_shapes, dtype=dlpack_dtypes)
   @unittest.skipIf(not tf, "Test requires TensorFlow")
-  @jtu.ignore_warning(message="Calling from_dlpack with a DLPack tensor",
-                      category=DeprecationWarning)
   def testTensorFlowToJax(self, shape, dtype):
     if (not config.enable_x64.value and
         dtype in [jnp.int64, jnp.uint64, jnp.float64]):
@@ -161,19 +140,14 @@ class DLPackTest(jtu.JaxTestCase):
     np = rng(shape, dtype)
     with tf.device("/GPU:0" if jtu.test_device_matches(["gpu"]) else "/CPU:0"):
       x = tf.identity(tf.constant(np))
-    dlpack = tf.experimental.dlpack.to_dlpack(x)
-    y = jax.dlpack.from_dlpack(dlpack)
+    y = jax.dlpack.from_dlpack(x)
     self.assertAllClose(np, y)
 
   @jtu.sample_product(
-    shape=all_shapes,
-    dtype=dlpack_dtypes,
+      shape=all_shapes,
+      dtype=dlpack_dtypes,
   )
   @unittest.skipIf(not tf, "Test requires TensorFlow")
-  @jtu.ignore_warning(
-      message="jax.dlpack.to_dlpack was deprecated.*",
-      category=DeprecationWarning,
-  )
   def testJaxToTensorFlow(self, shape, dtype):
     if (not config.enable_x64.value and
         dtype in [jnp.int64, jnp.uint64, jnp.float64]):
@@ -193,20 +167,22 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertAllClose(np, y.numpy())
 
   @unittest.skipIf(not tf, "Test requires TensorFlow")
-  @jtu.ignore_warning(message="Calling from_dlpack with a DLPack tensor",
-                      category=DeprecationWarning)
   def testTensorFlowToJaxInt64(self):
     # See https://github.com/jax-ml/jax/issues/11895
-    x = jax.dlpack.from_dlpack(
-        tf.experimental.dlpack.to_dlpack(tf.ones((2, 3), tf.int64)))
+    x = jax.dlpack.from_dlpack(tf.ones((2, 3), tf.int64))
     dtype_expected = jnp.int64 if config.enable_x64.value else jnp.int32
     self.assertEqual(x.dtype, dtype_expected)
 
-  @jtu.sample_product(
-    shape=all_shapes,
-    dtype=numpy_dtypes,
-    copy=[False, True],
-  )
+  @unittest.skipIf(not tf, "Test requires TensorFlow")
+  def testTensorFlowToJaxNondefaultLayout(self):
+    if jaxlib_version < (0, 8, 0):
+      self.skipTest(
+          "Non-default layout support requires jaxlib 0.8.0 or newer"
+      )
+    x = tf.transpose(np.arange(4).reshape(2, 2))
+    self.assertAllClose(x.numpy(), jax.dlpack.from_dlpack(x))
+
+  @jtu.sample_product(shape=all_shapes, dtype=numpy_dtypes, copy=[False, True])
   def testNumpyToJax(self, shape, dtype, copy):
     rng = jtu.rand_default(self.rng())
     x_np = rng(shape, dtype)
@@ -214,35 +190,26 @@ class DLPackTest(jtu.JaxTestCase):
     _from_dlpack = lambda: jnp.from_dlpack(x_np, device=device, copy=copy)
     if jax.default_backend() == 'gpu' and not copy:
       self.assertRaisesRegex(
-        ValueError,
-        r"Specified .* which requires a copy",
-        _from_dlpack
+          ValueError, "Specified .* which requires a copy", _from_dlpack
       )
     else:
       self.assertAllClose(x_np, _from_dlpack())
 
-  @jtu.sample_product(
-    shape=all_shapes,
-    dtype=numpy_dtypes,
-  )
-  @jtu.run_on_devices("cpu") # NumPy only accepts cpu DLPacks
+  def testNumpyToJaxNondefaultLayout(self):
+    if jaxlib_version < (0, 8, 0):
+      self.skipTest(
+          "Non-default layout support requires jaxlib 0.8.0 or newer"
+      )
+    x = np.arange(4).reshape(2, 2).T
+    self.assertAllClose(x, jax.dlpack.from_dlpack(x))
+
+  @jtu.sample_product(shape=all_shapes, dtype=numpy_dtypes)
+  @jtu.run_on_devices("cpu")  # NumPy only accepts cpu DLPacks
   def testJaxToNumpy(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     x_jax = jnp.array(rng(shape, dtype))
     x_np = np.from_dlpack(x_jax)
     self.assertAllClose(x_np, x_jax)
-
-  @jtu.ignore_warning(message="Calling from_dlpack.*",
-                      category=DeprecationWarning)
-  def testNondefaultLayout(self):
-    # Generate numpy array with nonstandard layout
-    a = np.arange(4).reshape(2, 2)
-    b = a.T
-    with self.assertRaisesRegex(
-        RuntimeError,
-        r"from_dlpack got array with non-default layout with minor-to-major "
-        r"dimensions \(0,1\), expected \(1,0\)"):
-      b_jax = jax.dlpack.from_dlpack(b.__dlpack__())
 
 
 class CudaArrayInterfaceTest(jtu.JaxTestCase):

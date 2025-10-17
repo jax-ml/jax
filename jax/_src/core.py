@@ -34,11 +34,9 @@ import weakref
 
 import numpy as np
 
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import config
 from jax._src import effects
-from jax._src import compute_on
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.partition_spec import PartitionSpec as P
@@ -51,13 +49,17 @@ from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, cache,
                            HashableFunction, HashableWrapper, weakref_lru_cache,
-                           partition_list, StrictABCMeta, foreach)
+                           partition_list, StrictABCMeta, foreach,
+                           weakref_cache_key_types)
 import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding
+from jax._src.sharding import Sharding
+from jax._src.layout import Format, AutoLayout
+from jax._src.memory import Space as MemorySpace
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
 from jax._src import traceback_util
-from jax._src.typing import Array, DimSize, Shape
+from jax._src.typing import Array, ArrayLike, DimSize, Shape
 from jax._src import typing
 from jax._src import xla_metadata_lib
 
@@ -68,6 +70,8 @@ map, unsafe_map = safe_map, map
 
 config_ext = xla_client._xla.config
 
+PyTree = Any
+
 
 _TRACER_ERROR_NUM_TRACEBACK_FRAMES = config.int_flag(
     'jax_tracer_error_num_traceback_frames',
@@ -75,6 +79,7 @@ _TRACER_ERROR_NUM_TRACEBACK_FRAMES = config.int_flag(
     help='Set the number of stack frames in JAX tracer error messages.'
 )
 
+def identity(x): return x
 
 # -------------------- jaxprs --------------------
 
@@ -85,6 +90,8 @@ no_effects: Effects = effects.no_effects
 
 
 DebugInfo = lu.DebugInfo
+InitialResultPaths = lu.InitialResultPaths
+initial_result_paths = lu.initial_result_paths
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
@@ -126,6 +133,24 @@ class Jaxpr:
   def is_high(self) -> bool:
     return self._is_high
 
+  @property
+  def in_avals(self):
+    return [v.aval for v in self.invars]
+
+  @property
+  def in_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
+    return [v.aval if v.initial_qdd is None else AvalQDD(v.aval, v.initial_qdd)
+            for v in self.invars]
+
+  @property
+  def final_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
+    return [v.aval if v.final_qdd is None else AvalQDD(v.aval, v.final_qdd)
+            for v in self.invars]
+
+  @property
+  def out_avals(self):
+    return [v.aval for v in self.outvars]
+
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
                effects: Effects = no_effects,
@@ -155,11 +180,9 @@ class Jaxpr:
     # TODO(https://github.com/jax-ml/jax/issues/26480)
     debug_info = debug_info or lu._missing_debug_info("core.Jaxpr")
     self._debug_info = debug_info.resolve_result_paths()
-    # TODO(necula): re-enable these safety checks
-    # assert (len(debug_info.arg_names) == len(invars)), (debug_info, invars)
-    # assert (len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
+    config.enable_checks.value and self._debug_info.assert_arg_names(len(invars))
+    config.enable_checks.value and self._debug_info.assert_result_paths(len(outvars))
     self._is_high = is_high
-    num_vars = len(constvars) + len(invars)
 
   def __str__(self):
     return str(self.pretty_print())
@@ -179,23 +202,24 @@ class Jaxpr:
     return p.text(self.pretty_print(use_color=True))
 
   def replace(self, **kwargs):
-    # TODO(mattjj,necula): enable to find places we mess up debug_info
-    # if "debug_info" not in kwargs:
-    #   if "invars" in kwargs or "outvars" in kwargs:
-    #     raise ValueError("must update debug info")
+    debug_default = self.debug_info
+    if (kwargs.get('invars', self.invars) != self.invars or
+        kwargs.get('outvars', self.outvars) != self.outvars):
+      debug_default = debug_default.with_unknown_names()
     jaxpr = Jaxpr(
         constvars=kwargs.pop("constvars", self.constvars),
         invars=kwargs.pop("invars", self.invars),
         outvars=kwargs.pop("outvars", self.outvars),
         eqns=kwargs.pop("eqns", self.eqns),
         effects=kwargs.pop("effects", self.effects),
-        debug_info=kwargs.pop("debug_info", self.debug_info),
+        debug_info=kwargs.pop("debug_info", debug_default),
         is_high=kwargs.pop("is_high", self.is_high),
     )
     if kwargs:
       raise ValueError(f"Unknown keyword arguments: {kwargs}")
     return jaxpr
 
+weakref_cache_key_types.add(Jaxpr)
 
 def join_effects(*effects: Effects) -> Effects:
   return set().union(*effects) if effects else no_effects
@@ -226,6 +250,15 @@ class ClosedJaxpr:
 
   jaxpr = property(lambda self: self._jaxpr)
   consts = property(lambda self: self._consts)
+  literals = consts
+
+  constvars = property(lambda self: self._jaxpr.constvars)
+  invars = property(lambda self: self._jaxpr.invars)
+  outvars = property(lambda self: self._jaxpr.outvars)
+  eqns = property(lambda self: self._jaxpr.eqns)
+  effects = property(lambda self: self._jaxpr.effects)
+  debug_info = property(lambda self: self._jaxpr.debug_info)
+  is_high = property(lambda self: self._jaxpr.is_high)
 
   def __init__(self, jaxpr: Jaxpr, consts: Sequence):
     assert len(consts) == len(jaxpr.constvars)
@@ -235,33 +268,21 @@ class ClosedJaxpr:
 
   @property
   def in_avals(self):
-    return [v.aval for v in self.jaxpr.invars]
+    return [v.aval for v in self.invars]
 
   @property
   def in_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
     return [v.aval if v.initial_qdd is None else AvalQDD(v.aval, v.initial_qdd)
-            for v in self.jaxpr.invars]
+            for v in self.invars]
 
   @property
   def final_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
     return [v.aval if v.final_qdd is None else AvalQDD(v.aval, v.final_qdd)
-            for v in self.jaxpr.invars]
+            for v in self.invars]
 
   @property
   def out_avals(self):
-    return [v.aval for v in self.jaxpr.outvars]
-
-  @property
-  def literals(self):
-    return self.consts  # backwards compatible alias
-
-  @property
-  def eqns(self):
-    return self.jaxpr.eqns
-
-  @property
-  def effects(self) -> Effects:
-    return self.jaxpr.effects
+    return [v.aval for v in self.outvars]
 
   def map_jaxpr(self, f):
     return ClosedJaxpr(f(self.jaxpr), self.consts)
@@ -287,6 +308,9 @@ class ClosedJaxpr:
 
   def _repr_pretty_(self, p, cycle):
     return p.text(self.pretty_print(use_color=True))
+
+weakref_cache_key_types.add(ClosedJaxpr)
+
 
 @curry
 def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
@@ -452,7 +476,7 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
                   ctx=None) -> JaxprEqn:
   source_info = source_info or source_info_util.new_source_info()
   ctx = ctx or JaxprEqnContext(
-      compute_on.current_compute_type(),
+      config.compute_on_context_manager.value,
       config.threefry_partitionable.value,
       xla_metadata_lib.current_xla_metadata())
   if config.enable_checks.value:
@@ -472,8 +496,8 @@ class Var:
   initial_qdd : QuasiDynamicData | None
   final_qdd : QuasiDynamicData | None
 
-  def __init__(self, aval: AbstractValue, initial_qdd = None, final_qdd = None):
-    assert isinstance(aval, AbstractValue)
+  def __init__(self, aval: AbstractValue, initial_qdd=None, final_qdd=None):
+    assert isinstance(aval, AbstractValue), aval
     self.count = next(_var_counter)
     self.aval = aval
     self.initial_qdd = initial_qdd
@@ -502,6 +526,7 @@ class DropVar(Var):
     return '_'
 
 class Literal:
+  # See https://docs.jax.dev/en/latest/internals/constants.html
   __slots__ = ["val", "aval"]
 
   val: Any
@@ -527,11 +552,14 @@ class Literal:
   def pretty_print(self, context: JaxprPpContext, *, print_dtype: bool = True):
     del context  # unused
     dtype = getattr(self.aval, 'dtype', None)
-    val_str = str(self.val) if not np.shape(self.val) else "[...]"
+    if not np.shape(self.val):
+      val_str = str(np.asarray(self.val).item())
+    else:
+      val_str = "[...]"
     if print_dtype and dtype:
       return f'{val_str}:{self.aval.str_short(short_dtypes=True)}'
     else:
-      return f'{val_str}'
+      return val_str
 
   def __repr__(self):
     return f'Literal({self.val})'
@@ -541,10 +569,40 @@ class Literal:
 literalable_types: set[type] = set()
 
 def is_literalable(x: Any) -> bool:
+  # See https://docs.jax.dev/en/latest/internals/constants.html
   for t in type(x).__mro__:
     if t in literalable_types:
       return (not np.shape(x) or config.use_simplified_jaxpr_constants.value)
   return False
+
+@partial(weakref_lru_cache, trace_context_in_key=False)
+def jaxpr_const_args(jaxpr: Jaxpr) -> list[tuple[ArrayLike, AbstractValue]]:
+  # The non-scalar constants in core.Literal, in the entire Jaxpr,
+  # uniquified by id. These will be hoisted as const arguments to the functions
+  # in which they appear.
+  # See https://docs.jax.dev/en/latest/internals/constants.html
+  if not config.use_simplified_jaxpr_constants.value:
+    return []
+  consts_by_id: dict[int, tuple[ArrayLike, AbstractValue]] = {}
+  for v in jaxpr.outvars:
+    if type(v) is Literal and np.shape(v.val):  # type: ignore
+      consts_by_id[id(v)] = (v.val, v.aval)  # type: ignore
+
+  for eqn in jaxpr.eqns:
+    for v in eqn.invars:
+      if type(v) is Literal and np.shape(v.val):  # type: ignore
+        consts_by_id[id(v)] = (v.val, v.aval)  # type: ignore
+    consts_by_id.update({id(v_aval[0]): v_aval
+                         for v_aval in eqn_params_const_args(eqn.params)})
+  return list(consts_by_id.values())
+
+def eqn_params_const_args(params) -> list[tuple[ArrayLike, AbstractValue]]:
+  consts_by_id: dict[int, tuple[ArrayLike, AbstractValue]] = {}
+  for j in jaxprs_in_params(params):
+    consts_by_id.update(
+        {id(v_aval[0]): v_aval for v_aval in jaxpr_const_args(j)}
+    )
+  return list(consts_by_id.values())
 
 Atom = Union[Var, Literal]
 
@@ -593,11 +651,16 @@ class Primitive:
 
   def bind_with_trace(self, trace, args, params):
     # TODO(mattjj,dougalm): remove this block?
-    if self.is_high(**params) and trace.requires_low:
-      with set_current_trace(trace):
-        return self.to_lojax(*args, **params)  # type: ignore
+    try: in_type = map(typeof, args)
+    except: pass  # try lojax error message
+    else:
+      if self.is_high(*in_type, **params) and trace.requires_low:
+        with set_current_trace(trace):
+          return self.to_lojax(*args, **params)  # type: ignore
+      return trace.process_primitive(self, args, params)
+    trace.process_primitive(self, args, params)  # may raise lojax error
+    raise Exception(f"couldn't apply typeof to args: {args}")
 
-    return trace.process_primitive(self, args, params)
 
   def def_impl(self, impl):
     self.impl = impl
@@ -630,7 +693,7 @@ class Primitive:
   def get_bind_params(self, params):
     return [], params
 
-  def is_high(self, **params) -> bool:
+  def is_high(self, *avals, **params) -> bool:
     return False
 
 
@@ -668,7 +731,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
 
   def write(v: Var, val: Any) -> None:
     if config.enable_checks.value and not config.dynamic_shapes.value:
-      assert typecheck(v.aval, val), (v.aval, get_aval(val))
+      assert typecheck(v.aval, val), (v.aval, get_aval(val), val)
     env[v] = val
 
   env: dict[Var, Any] = {}
@@ -697,7 +760,7 @@ def check_avals_context_mesh(avals, prim_name):
       continue
     # avals can have meshes with different axis_names so allow that in
     # full auto mode.
-    if a.sharding.mesh._are_all_axes_auto and cur_mesh._are_all_axes_auto:
+    if a.sharding.mesh.are_all_axes_auto and cur_mesh.are_all_axes_auto:
       continue
     if a.sharding.mesh != cur_mesh:
       raise ValueError(
@@ -831,6 +894,8 @@ def _aval_property(name):
   return property(lambda self: getattr(self.aval, name))
 
 
+# TODO(mattjj): it's a bug for Tracer to inherit from Array, because Tracers can
+# represent non-Array things like tokens, tuples, or refs. Remove!
 class Tracer(typing.Array, metaclass=StrictABCMeta):
   __array_priority__ = 1000
   __slots__ = ['_trace', '_line_info']
@@ -1569,7 +1634,7 @@ class AbstractValue:
     raise NotImplementedError("must override")
 
   def lo_ty(self):
-    raise NotImplementedError("must override")
+    return [self]
 
   def lo_ty_qdd(self, qdd):
     raise NotImplementedError("avals with qdd must override")
@@ -1629,12 +1694,33 @@ def check_valid_jaxtype(x):
     raise TypeError(
       f"Value {x!r} of type {type(x)} is not a valid JAX type")
 
-def update_aval_with_sharding(aval, sharding):
+
+def mem_kind_to_space(mem_kind: str) -> MemorySpace:
+  if mem_kind == 'pinned_host':
+    return MemorySpace.Host
+  return MemorySpace.Device
+
+def mem_space_to_kind(mem_space: MemorySpace) -> str:
+  if mem_space == MemorySpace.Device:
+    return 'device'
+  elif mem_space == MemorySpace.Host:
+    return 'pinned_host'
+  else:
+    assert False, "unreachable"
+
+
+@cache(max_size=4096,
+       trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
+def update_aval_with_sharding(aval, sharding, vma=None):
+  if vma is None:
+    vma = aval.vma
   if isinstance(sharding, NamedSharding):
-    return aval.update(sharding=NamedSharding(
-        sharding.mesh.abstract_mesh,
-        sharding.spec._normalized_spec_for_aval(aval.ndim)))
-  return aval
+    return aval.update(
+        sharding=NamedSharding(
+            sharding.mesh.abstract_mesh,
+            sharding.spec._normalized_spec_for_aval(aval.ndim)),
+        vma=vma, memory_space=mem_kind_to_space(sharding.memory_kind))
+  return aval.update(vma=vma)
 
 
 # We have three flavors of abstractification APIs here which each used to have
@@ -1657,16 +1743,17 @@ def shaped_abstractify(x):
   if isinstance(x, AbstractValue):
     return x
   if hasattr(x, '__jax_array__'):
-    deprecations.warn(
-      'jax-abstract-dunder-array',
-      ('Triggering of __jax_array__() during abstractification is deprecated.'
-       ' To avoid this error, either explicitly convert your object using'
-       ' jax.numpy.array(), or register your object as a pytree.'),
-      stacklevel=6)
-    return shaped_abstractify(x.__jax_array__())
+    raise ValueError(
+        'Triggering __jax_array__() during abstractification is no longer'
+        ' supported. To avoid this error, either explicitly convert your object'
+        ' using jax.numpy.array(), or register your object as a pytree.'
+    )
   if hasattr(x, 'dtype'):
-    aval = ShapedArray(np.shape(x), x.dtype,
-                       weak_type=getattr(x, 'weak_type', False))
+    aval = ShapedArray(
+        np.shape(x),
+        dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
+        weak_type=getattr(x, "weak_type", False),
+    )
     return update_aval_with_sharding(aval, getattr(x, 'sharding', None))
   raise TypeError(
       f"Cannot interpret value of type {typ} as an abstract array; it "
@@ -1679,7 +1766,8 @@ def abstractify(x):
   return get_aval(x)
 
 
-def get_aval(x):
+# TODO(phawkins): the return type should be AbstractValue.
+def get_aval(x: Any) -> Any:
   typ = type(x)
   if (aval_fn := pytype_aval_mappings.get(typ)):  # fast path
     return aval_fn(x)
@@ -1687,13 +1775,11 @@ def get_aval(x):
     if (aval_fn := pytype_aval_mappings.get(t)):
       return aval_fn(x)
   if hasattr(x, '__jax_array__'):
-    deprecations.warn(
-      'jax-abstract-dunder-array',
-      ('Triggering of __jax_array__() during abstractification is deprecated.'
-       ' To avoid this error, either explicitly convert your object using'
-       ' jax.numpy.array(), or register your object as a pytree.'),
-      stacklevel=6)
-    return get_aval(x.__jax_array__())
+    raise ValueError(
+        'Triggering __jax_array__() during abstractification is no longer'
+        ' supported. To avoid this error, either explicitly convert your object'
+        ' using jax.numpy.array(), or register your object as a pytree.'
+    )
   raise TypeError(f"Argument '{x}' of type '{typ}' is not a valid JAX type")
 
 typeof = get_aval
@@ -1759,11 +1845,15 @@ class MutableQuasiDynamicData:
   def update(self, val):
     self.cur_val = val
 
+  def __repr__(self):
+    return f'MutableQuasiDynamicData(init_val={self.init_val}, cur_val={self.cur_val})'
+
 class QuasiDynamicData:
   pass
 
 @dataclass(frozen=True)
 class AvalQDD:
+  is_high = True
   aval: AbstractValue
   qdd: QuasiDynamicData | None # immutable
 
@@ -1792,6 +1882,11 @@ def cur_qdd(x):
     return prev_trace.cur_qdd(x)
   finally:
     trace_ctx.set_trace(prev_trace)
+
+def cur_aval_qdd(x):
+  aval = typeof(x)
+  qdd = cur_qdd(x) if aval.has_qdd else None
+  return AvalQDD(aval, qdd)
 
 ### Extended dtypes
 #
@@ -1977,9 +2072,9 @@ def canonicalize_value(val):
   # Atleast 1 mesh axis should be Manual and all other axes should be
   # Manual or Auto to allow casting.
   if cur_mesh._any_axis_manual and cur_mesh._are_all_axes_auto_or_manual:
-    if aval.sharding.mesh._are_all_axes_auto:
-      from jax._src.pjit import mesh_cast  # pytype: disable=import-error
-      return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
+    if aval.sharding.mesh.are_all_axes_auto:
+      from jax._src.pjit import reshard  # pytype: disable=import-error
+      return reshard(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
     elif aval.sharding.mesh._any_axis_explicit:
       raise NotImplementedError(
           "Closing over inputs to shard_map where the input is sharded on"
@@ -1999,7 +2094,8 @@ def _make_lengths_same(sharding, ndim):
     return sharding.update(spec=pspec._normalized_spec_for_aval(ndim))
   if ndim < len(pspec):
     assert all(s is None for s in pspec[ndim:]), (ndim, pspec)
-    return sharding.update(spec=P(*pspec[:ndim], unreduced=pspec.unreduced))
+    return sharding.update(spec=P(*pspec[:ndim], unreduced=pspec.unreduced,
+                                  reduced=pspec.reduced))
   assert False, "unreachable"
 
 def modify_spec_for_auto_manual(spec, mesh) -> P:
@@ -2018,14 +2114,27 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
                  if mesh._name_to_type[u] == AxisType.Explicit}
   return P(*new_spec, unreduced=new_unreduced, reduced=new_reduced)
 
+def remove_size_one_mesh_axis(spec, mesh) -> P:
+  new_spec = []  # type: ignore
+  for s in spec:
+    if s is None:
+      new_spec.append(s)  # type: ignore
+    elif isinstance(s, tuple):
+      new_spec.append(tuple(i for i in s if mesh.shape[i] != 1))
+    else:
+      new_spec.append(None if mesh.shape[s] == 1 else s)  # type: ignore
+  return P(*new_spec, unreduced=spec.unreduced, reduced=spec.reduced)
+
 def _maybe_modify_sharding(sharding, ndim):
   if len(sharding.spec) == 0 or all(s is None for s in sharding.spec):
     out = sharding
-  elif sharding.mesh._are_all_axes_explicit:
+  elif sharding.mesh.are_all_axes_explicit:
     out = sharding
   else:
     out = sharding.update(spec=modify_spec_for_auto_manual(
         sharding.spec, sharding.mesh))
+  if config.remove_size_one_mesh_axis_from_type.value:
+    out = out.update(spec=remove_size_one_mesh_axis(out.spec, out.mesh))
   if len(out.spec) != ndim:
     out = _make_lengths_same(out, ndim)
   return out
@@ -2044,7 +2153,8 @@ def _check_divisibility(sharding, shape):
           f" {size} times, but does not evenly divide the dimension size {sh}."
           f" Got shape: {shape} and sharding {sharding}")
 
-@cache(max_size=4096, trace_context_in_key=False)
+@cache(max_size=4096,
+       trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
 def get_sharding(sharding, shape):
   """Modifies and checks the sharding.
 
@@ -2070,18 +2180,11 @@ def get_sharding(sharding, shape):
   assert out_s.memory_kind is None
   return out_s
 
-def str_short_aval(shape, dtype, mesh, spec, vma,
-                   short_dtypes=False, mesh_axis_types=False) -> str:
-  dt_str = dtypes.short_dtype_name(dtype) if short_dtypes else dtype.name
-  dt_str = dt_str.replace('void', 'float0')
-  shapestr = _get_shape_sharding_str(shape, spec)
-  mesh_axes = f'({mesh._axis_types_dict})' if mesh_axis_types else ''
-  vma_ur = _vma_ur_str(vma, spec.unreduced, spec.reduced)
-  return f'{dt_str}[{shapestr}]{vma_ur}{mesh_axes}'
 
 @cache(max_size=4096, trace_context_in_key=False)
 def get_vma(vma, mesh):
   if mesh.empty:
+    assert not vma, vma
     return vma
   axis_env = get_axis_env()
   for i in vma:
@@ -2095,12 +2198,19 @@ def get_vma(vma, mesh):
   return vma
 
 
+def get_memory_space(memory_space):
+  assert isinstance(memory_space, MemorySpace)
+  return memory_space
+
+
 class ShapedArray(UnshapedArray):
-  __slots__ = ['shape', 'sharding', 'vma']  # inherits slots from parent
+  # inherits slots from parent
+  __slots__ = ['shape', 'sharding', 'vma', 'memory_space']
   array_abstraction_level = 2
 
   def __init__(self, shape, dtype, weak_type=False, *, sharding=None,
-               vma: frozenset[AxisName] = frozenset()):
+               vma: frozenset[AxisName] = frozenset(),
+               memory_space: MemorySpace = MemorySpace.Device):
     self.shape = canonicalize_shape(shape)
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
@@ -2108,6 +2218,8 @@ class ShapedArray(UnshapedArray):
     # short for varying_manual_axes. See docs at
     # https://docs.jax.dev/en/latest/notebooks/shard_map.html#tracking-how-values-vary-over-manual-mesh-axes-and-check-vma-true
     self.vma = get_vma(vma, self.sharding.mesh)
+    # See description of https://github.com/jax-ml/jax/pull/30556
+    self.memory_space = get_memory_space(memory_space)
 
   def lower_val(self, val): return [val]
   def raise_val(self, val): return val
@@ -2124,6 +2236,8 @@ class ShapedArray(UnshapedArray):
       kwargs['sharding'] = self.sharding
     if 'vma' not in kwargs:
       kwargs['vma'] = self.vma
+    if 'memory_space' not in kwargs:
+      kwargs['memory_space'] = self.memory_space
     return ShapedArray(shape, dtype, weak_type, **kwargs)
 
   ndim = property(lambda self: len(self.shape))
@@ -2141,30 +2255,33 @@ class ShapedArray(UnshapedArray):
             and self.dtype == other.dtype and self.shape == other.shape
             and self.weak_type == other.weak_type
             and self.sharding == other.sharding
-            and self.vma == other.vma)
+            and self.vma == other.vma
+            and self.memory_space == other.memory_space)
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
     return hash((self.shape, self.dtype, self.weak_type, self.sharding,
-                 self.vma))
+                 self.vma, self.memory_space))
 
   def to_tangent_aval(self):
     return ShapedArray(
         self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-        self.weak_type, sharding=self.sharding, vma=self.vma)
+        self.weak_type, sharding=self.sharding, vma=self.vma,
+        memory_space=self.memory_space)
 
   def to_cotangent_aval(self):
     dtype = primal_dtype_to_tangent_dtype(self.dtype)
     sharding = primal_sharding_to_cotangent_sharding(self.sharding)
     return ShapedArray(
-        self.shape, dtype, self.weak_type, sharding=sharding, vma=self.vma)
+        self.shape, dtype, self.weak_type, sharding=sharding, vma=self.vma,
+        memory_space=self.memory_space)
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str_short_aval(
         self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,
-        self.vma, short_dtypes, mesh_axis_types)
+        self.vma, self.memory_space, short_dtypes, mesh_axis_types)
 
   def _len(self, ignored_tracer):
     try:
@@ -2188,19 +2305,45 @@ def _get_shape_sharding_str(shape, spec):
       out.append(f"{s1}@{s2}")
   return ','.join(out)
 
-def _create_str(x, prefix):
+@cache(max_size=1024, trace_context_in_key=False)
+def _axis_types_dict(mesh):
+  if not mesh.axis_names:
+    return {}
+  d = defaultdict(list)
+  for n, t in safe_zip(mesh.axis_names, mesh.axis_types):
+    d[t].append(n)
+  return {t: tuple(n) for t, n in d.items()}
+
+def str_short_aval(shape, dtype, mesh, spec, vma, memory_space,
+                   short_dtypes=False, mesh_axis_types=False) -> str:
+  dt_str = dtypes.short_dtype_name(dtype) if short_dtypes else dtype.name
+  dt_str = dt_str.replace('void', 'float0')
+  shapestr = _get_shape_sharding_str(shape, spec)
+  mesh_axes = f'({_axis_types_dict(mesh)})' if mesh_axis_types else ''
+  vma_ur = _vma_ur_str(vma, spec.unreduced, spec.reduced, mesh)
+  ms_str = ("" if memory_space == MemorySpace.Device else
+            f"<{memory_space.name.lower()}>")
+  return f'{dt_str}{ms_str}[{shapestr}]{vma_ur}{mesh_axes}'
+
+def _create_str(x, prefix=None):
   x_str = f"{','.join(i for i in x)}"
+  if prefix is None:
+    return x_str
   x_str = x_str if len(x) == 1 else f"({x_str})"
   return f"{prefix}:{x_str}, "
 
-def _vma_ur_str(vma, unreduced, reduced):
+def order_wrt_mesh(mesh, x):
+  return tuple(a for a in mesh.axis_names if a in x)
+
+def _vma_ur_str(vma, unreduced, reduced, mesh):
   if not vma and not unreduced and not reduced:
     return ''
-  vma_str = _create_str(vma, 'V') if vma else ''
+  vma_str = f"{{{_create_str(order_wrt_mesh(mesh, vma), None)}}}" if vma else ''
   ur_str = _create_str(unreduced, 'U') if unreduced else ''
   red_str = _create_str(reduced, 'R') if reduced else ''
-  m_str = f"{vma_str}{ur_str}{red_str}".rstrip(', ')
-  return f"{{{m_str}}}"
+  m_str = f"{ur_str}{red_str}".rstrip(', ')
+  m_str = f"{{{m_str}}}" if m_str else ''
+  return f"{m_str}{vma_str}"
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
   if isinstance(primal_dtype, dtypes.ExtendedDType):
@@ -2243,8 +2386,8 @@ def _pvary_abstract_eval(*args, axes, axis_index_groups):
         f"over axis name {axes}. Please open an issue at "
         "https://github.com/jax-ml/jax/issues, and as a temporary "
         "workaround pass the check_vma=False argument to `jax.shard_map`")
-  sharding = NamedSharding(mesh_lib.get_abstract_mesh(), P())
-  return [a.update(sharding=sharding, vma=a.vma.union(frozenset(axes)))
+  return [a.update(sharding=a.sharding.update(mesh=mesh_lib.get_abstract_mesh()),
+                   vma=a.vma.union(frozenset(axes)))
           for a in args]
 pvary_p.def_abstract_eval(_pvary_abstract_eval)
 
@@ -2405,6 +2548,7 @@ def _darray_aval(x):
   return DShapedArray(x._aval.shape, x._aval.dtype, x._aval.weak_type)
 
 pytype_aval_mappings[DArray] = _darray_aval
+dtypes.canonicalize_value_handlers[DArray] = lambda x: x
 
 
 @dataclass(frozen=True)
@@ -2425,52 +2569,143 @@ class bint(dtypes.ExtendedDType):
 AxisSize = Union[int, DArray, Tracer, Var, DBIdx, InDBIdx, OutDBIdx]
 
 
-class MutableArray:
-  _aval: ShapedArray
-  _buf: Array
-  def __init__(self, aval, buf):
+class RefMeta(type):
+  def __instancecheck__(self, inst):
+    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    return (super().__instancecheck__(inst) or
+            isinstance(inst, Tracer) and isinstance(inst.aval, AbstractRef))
+
+class Ref(metaclass=RefMeta):
+  """Mutable array reference.
+
+  In most cases this should not be constructed directly, but rather
+  via :func:`jax.ref.new_ref`. For examples of how this can be
+  used, refer to the `Ref guide`_.
+
+  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  """
+  _aval: AbstractValue
+  _refs: PyTree  # list of ArrayRefImpl
+
+  def __init__(self, aval, refs):
+    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    assert isinstance(aval, AbstractRef)
     self._aval = aval
-    self._buf = buf
+    self._refs = refs
+
+  # TODO(mattjj): update repr to handle non-lojax refs
+  def __repr__(self) -> str: return 'Ref' + repr(self._refs._buf)[5:]
+
+  # forward type-level info to aval
   aval = property(lambda self: self._aval)
   shape = property(lambda self: self._aval.shape)
   dtype = property(lambda self: self._aval.dtype)
-  sharding = property(lambda self: self._buf.sharding)
-  format = property(lambda self: self._buf.format)
-  committed = _committed = property(lambda self: self._buf._committed)
+
+  # get operations from aval, munging the name
   def __getitem__(self, idx): return self._aval._getitem(self, idx)
   def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)
-  def __repr__(self) -> str: return 'Mutable' + repr(self._buf)
   def __len__(self) -> int: return self._aval._len(self)
-pytype_aval_mappings[MutableArray] = lambda x: x._aval
+  def addupdate(self, x, idx=()): return self._aval._addupdate(self, idx, x)
 
-def mutable_array(init_val, *, memory_space: Any = None):
-  return mutable_array_p.bind(init_val, memory_space=memory_space)
-mutable_array_p = Primitive('mutable_array')
-mutable_array_p.is_effectful = lambda params: True  # type: ignore
-mutable_array_p.ref_primitive = True
+  # some attributes/methods only work for lojax refs
+  sharding = property(lambda self: self._refs._buf.sharding)
+  format = property(lambda self: self._refs._buf.format)
+  committed = _committed = property(lambda self: self._refs._buf._committed)
+  def unsafe_buffer_pointer(self): return self._refs._buf.unsafe_buffer_pointer()
+
+  @property
+  def at(self): raise NotImplementedError()  # TODO(mattjj)
+
+class ArrayRefImpl:
+  _aval: ShapedArray
+  _buf: Array  # mutable field
+
+  def __init__(self, aval, buf):
+    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    assert isinstance(aval, AbstractRef) and isinstance(aval.inner_aval, ShapedArray)
+    self._aval = aval
+    self._buf = buf
+
+pytype_aval_mappings[Ref] = lambda x: x._aval
+dtypes.canonicalize_value_handlers[Ref] = lambda x: x
+
+def new_ref(init_val, *, memory_space: Any = None):
+  """Create a mutable array reference with initial value ``init_val``.
+
+  For more discussion, see the `Ref guide`_.
+
+  Args:
+    init_val: A :class:`jax.Array` representing the initial state
+      of the buffer.
+    memory_space: An optional memory space attribute for the Ref.
+
+  Returns:
+    A :class:`jax.ref.Ref` containing a reference to a mutable buffer.
+
+  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  """
+  return ref_p.bind(init_val, memory_space=memory_space)
+ref_p = Primitive('new_ref')
+ref_p.is_effectful = lambda params: True  # type: ignore
+ref_p.ref_primitive = True
+
+ref_p.is_high = lambda aval, *, memory_space: aval.is_high  # type: ignore
+def _ref_to_lojax(init_val, *, memory_space):
+  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+  val_ty = typeof(init_val)
+  hival_of_refs = val_ty.raise_val(*map(new_ref, val_ty.lower_val(init_val)))  # type: ignore
+  aval = AbstractRef(typeof(init_val))
+  return Ref(AbstractRef(val_ty), hival_of_refs)
+  # return Ref(
+ref_p.to_lojax = _ref_to_lojax  # type: ignore
+
 
 class InternalMutableArrayEffect(effects.Effect):
   pass
-internal_mutable_array_effect = InternalMutableArrayEffect()
+array_ref_effect = internal_mutable_array_effect = InternalMutableArrayEffect()
 effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
+effects.remat_allowed_effects.add_type(InternalMutableArrayEffect)
 
-@mutable_array_p.def_effectful_abstract_eval
-def mutable_array_abstract_eval(init_aval, *, memory_space: Any):
+@ref_p.def_effectful_abstract_eval
+def array_ref_abstract_eval(init_aval, *, memory_space: Any):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   return (AbstractRef(init_aval, memory_space=memory_space),
           {internal_mutable_array_effect})
 
-@mutable_array_p.def_impl
-def _mutable_array_impl(init_val, *, memory_space: Any):
+@ref_p.def_impl
+def _array_ref_impl(init_val, *, memory_space: Any):
   if memory_space is not None:
     raise NotImplementedError(
-        "mutable_array with memory space only works inside of a `jit`."
-    )
+        "array ref with memory space only works inside of a `jit`.")
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
-  return MutableArray(AbstractRef(get_aval(init_val)), _array_copy(init_val))
+  aval = AbstractRef(typeof(init_val))
+  return Ref(aval, ArrayRefImpl(aval, _array_copy(init_val)))
 
-def freeze(ref):
+def freeze(ref: Ref) -> Array:
+  """Invalidate a given reference and return its final value.
+
+  For more information about mutable array references, refer to the
+  `Ref guide`_.
+
+  Args:
+    ref: A :class:`jax.ref.Ref` object.
+
+  Returns:
+    A :class:`jax.Array` containing the contents of ``ref``.
+
+  Examples:
+    >>> import jax
+    >>> ref = jax.new_ref(jax.numpy.arange(5))
+    >>> ref[3] = 100
+    >>> ref
+    Ref([  0,   1,   2, 100,   4], dtype=int32)
+
+    >>> jax.ref.freeze(ref)
+    Array([  0,   1,   2, 100,   4], dtype=int32)
+
+  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  """
   return freeze_p.bind(ref)
 freeze_p = Primitive('freeze')
 freeze_p.is_effectful = lambda params: True  # type: ignore
@@ -2483,6 +2718,16 @@ def freeze_abstract_eval(ref_aval):
 @freeze_p.def_impl
 def _freeze_impl(ref):
   return ref[()]
+
+def accum_grad_in_ref(x):
+  return accum_grad_in_ref_p.bind(x)
+
+accum_grad_in_ref_p = Primitive('accum_grad_in_ref')
+accum_grad_in_ref_p.is_high = lambda *_: True  # type: ignore
+accum_grad_in_ref_p.to_lojax = lambda x: x  # type: ignore
+accum_grad_in_ref_p.def_abstract_eval(lambda x: x)  # type: ignore
+accum_grad_in_ref_p.def_impl(lambda x: x)  # type: ignore
+
 
 class AbstractToken(AbstractValue):
   def str_short(self, short_dtypes=False, mesh_axis_types=False): return 'Tok'
@@ -2503,6 +2748,7 @@ class Token:
   def block_until_ready(self):
     self._buf.block_until_ready()
 pytype_aval_mappings[Token] = lambda _: abstract_token
+dtypes.canonicalize_value_handlers[Token] = lambda x: x
 
 
 ### Operations on shapes and dimension sizes.
@@ -2742,7 +2988,7 @@ def evaluate_shape(shape: Shape, dim_vars: Sequence[str],
 
 def dim_value_dtype():
   """The dtype to be used for dimension values."""
-  return dtypes.canonicalize_dtype(np.int64)
+  return dtypes.default_int_dtype()
 
 def dim_constant(ct: int):
   dtype = dim_value_dtype()
@@ -2765,8 +3011,7 @@ class CallPrimitive(Primitive):
     return self._true_bind(*args, **params)
 
   def bind_with_trace(self, trace, fun_and_args, params):
-    fun = fun_and_args[0]
-    args = fun_and_args[1:]
+    fun, *args = fun_and_args
     return trace.process_call(self, fun, args, params)
 
   def get_bind_params(self, params):
@@ -2849,21 +3094,27 @@ def _map_shaped_array(
   assert axis is None or aval.shape[axis] == size
   if axis is None:
     return aval
-  sharding = aval.sharding.update(spec=tuple_delete(aval.sharding.spec, axis))
+  aval_s = aval.sharding
+  sharding = aval_s.update(
+      spec=aval_s.spec.update(partitions=tuple_delete(aval_s.spec, axis)))
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
-                     weak_type=aval.weak_type, sharding=sharding, vma=aval.vma)
+                     weak_type=aval.weak_type, sharding=sharding, vma=aval.vma,
+                     memory_space=aval.memory_space)
 
 def _unmap_shaped_array(
     size: int, axis: int | None, explicit_mesh_axis, aval: ShapedArray
     ) -> ShapedArray:
-  if axis is None: return aval
+  if axis is None:
+    return aval
   elif type(axis) is int:
-    sharding = aval.sharding.update(spec=tuple_insert(
-        aval.sharding.spec, axis, explicit_mesh_axis))
+    aval_s = aval.sharding
+    sharding = aval_s.update(spec=aval_s.spec.update(partitions=tuple_insert(
+        aval_s.spec, axis, explicit_mesh_axis)))
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
                        weak_type=aval.weak_type, sharding=sharding,
-                       vma=aval.vma)
-  else: raise TypeError(axis)
+                       vma=aval.vma, memory_space=aval.memory_space)
+  else:
+    raise TypeError(axis)
 
 def _map_dshaped_array(
     size: AxisSize, axis: int | None, aval: DShapedArray) -> DShapedArray:
@@ -2971,15 +3222,22 @@ def typematch(t1: AbstractValue, t2: AbstractValue) -> bool:
         isinstance(t2, (ShapedArray, DShapedArray))):
     # This case handles DShapedArray and shape polynomials. Alternatively we
     # could try normalizing first and then doing simple equality.
-    # TODO(yashkatariya): Also check `sharding` here.
+    cmp = (t1.dtype == t2.dtype and definitely_equal_shape(t1.shape, t2.shape)
+           and t1.vma == t2.vma and t1.memory_space == t2.memory_space)  # type: ignore
+    # TODO(yashkatariya): Expand this to Manual and Auto mode.
     # See https://github.com/jax-ml/jax/issues/26474
-    return (t1.dtype == t2.dtype and definitely_equal_shape(t1.shape, t2.shape)
-            and t1.vma == t2.vma)  # type: ignore
+    if (not t1.sharding.mesh.empty and not t2.sharding.mesh.empty and
+        (t1.sharding.mesh._any_axis_explicit or
+         t2.sharding.mesh._any_axis_explicit)):
+      sh_eq = t1.sharding == t2.sharding
+    else:
+      sh_eq = True
+    return cmp and sh_eq
   elif isinstance(t1, AbstractRef) and isinstance(t2, AbstractRef):
     # We want to use the regular typecheck for ShapedArray here.
-    return ((t1.memory_space is None or t2.memory_space is None  # type: ignore
-            or t1.memory_space == t2.memory_space)  # type: ignore
-            and typematch(t1.inner_aval, t2.inner_aval))  # type: ignore
+    return (typematch(t1.inner_aval, t2.inner_aval) and  # type: ignore
+            (t1.memory_space is None or t2.memory_space is None or  # type: ignore
+             t1.memory_space == t2.memory_space))  # type: ignore
   else:
     return False
 
@@ -3148,7 +3406,7 @@ def _check_jaxpr(
       # Check the computed effect type matches the eqn's annotation, and is
       # included in the jaxpr's annotation.
       if prim.ref_primitive:
-        if prim is mutable_array_p:
+        if prim is ref_p:
           outvar, = eqn.outvars
           in_idx[outvar] = None  # type: ignore
           mut_arrays.add(outvar)
@@ -3189,6 +3447,13 @@ def _check_jaxpr(
       msg = "\n\n".join([msg, "in equation:", str(pp.nest(2, pp_eqn(eqn, ctx, settings))),
                          f"from source: {src}"])
       raise JaxprTypeError(msg, eqn_idx) from None
+
+  # Check there are no output refs
+  # TODO(mattjj): improve this error message
+  if config.mutable_array_checks.value:
+    from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+    for v in jaxpr.outvars:
+      if isinstance(v.aval, AbstractRef): raise TypeError("returned ref")
 
   # TODO(mattjj): include output type annotation on jaxpr and check it here
   foreach(read, jaxpr.outvars)
@@ -3257,7 +3522,10 @@ def _check_call(ctx_factory, prim, in_atoms, params):
   if "call_jaxpr" not in params:
     raise JaxprTypeError(
         f"Call primitive {prim} missing 'call_jaxpr' parameter")
-  call_jaxpr = params["call_jaxpr"]
+  if isinstance(prim, ClosedCallPrimitive):
+    call_jaxpr = params["call_jaxpr"].jaxpr
+  else:
+    call_jaxpr = params["call_jaxpr"]
 
   if len(in_atoms) != len(call_jaxpr.invars):
     raise JaxprTypeError(f"Call primitive {prim} with {len(in_atoms)} "
@@ -3288,7 +3556,14 @@ def _check_call(ctx_factory, prim, in_atoms, params):
   out_type = [a.update(shape=tuple(in_map.get(d, out_map.get(d))
                                    if type(d) is Var else d for d in a.shape))
               if type(a) is DShapedArray else a for a in out_avals]
-  return out_type, call_jaxpr.effects
+
+  # jaxpr input effects are indexed to include jaxpr.constvars, but the eqn
+  # should have effects indexed only on its explicit arguments
+  effs = {e.replace(input_index=e.input_index - len(call_jaxpr.constvars))
+          if isinstance(e, effects.JaxprInputEffect)
+          else e for e in call_jaxpr.effects}
+
+  return out_type, effs
 
 def _check_map(ctx_factory, prim, in_avals, params):
   if "call_jaxpr" not in params:
@@ -3327,6 +3602,147 @@ def _check_map(ctx_factory, prim, in_avals, params):
                if out_axis is not None else aval
                for aval, out_axis in zip(mapped_out_avals, out_axes)]
   return out_avals, filter_named_axis_effects(call_jaxpr.effects, {axis_name})
+
+# ------------------- ShapeDtypeStruct -------------------
+
+class ShapeDtypeStruct:
+  """A container for the shape, dtype, and other static attributes of an array.
+
+  ``ShapeDtypeStruct`` is often used in conjunction with :func:`jax.eval_shape`.
+
+  Args:
+    shape: a sequence of integers representing an array shape
+    dtype: a dtype-like object
+    sharding: (optional) a :class:`jax.Sharding` object
+  """
+  __slots__ = ["shape", "dtype", "_sharding", "_dll", "weak_type", "vma",
+               "is_ref"]
+
+  def __init__(self, shape, dtype, *, sharding=None, weak_type=False,
+               vma=None, is_ref=False):
+    self.shape = tuple(shape)
+    if dtype is None:
+      raise ValueError("ShapeDtypeStruct: dtype must be specified.")
+    self.dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
+    if sharding is not None and not isinstance(sharding, (Sharding, Format, P)):
+      raise ValueError(
+          "sharding should be an instance of `jax.sharding.Sharding`, "
+          "`jax.sharding.PartitionSpec` or"
+          f" `jax.experimental.layout.Format`. Got {sharding} of type"
+          f" {type(sharding)}.")
+    if (isinstance(sharding, Format) and
+        isinstance(sharding.layout, AutoLayout)):
+      raise TypeError(
+          "`Layout.AUTO` cannot be used in place of a device-local"
+          f" layout in a `ShapeDtypeStruct`. Got {sharding}")
+    self._sharding = (sharding.sharding if isinstance(sharding, Format)
+                      else sharding)
+    self._dll = sharding.layout if isinstance(sharding, Format) else None
+    self.weak_type = weak_type
+    if vma is not None and not isinstance(vma, (set, frozenset)):
+      raise TypeError(
+          "`vma` argument passed to ShapeDtypeStruct should be of type `set`"
+          f" or `frozenset`. Got type {type(vma)}")
+    self.vma = None if vma is None else frozenset(vma)
+    self.is_ref = is_ref
+
+  size = property(lambda self: math.prod(self.shape))
+  ndim = property(lambda self: len(self.shape))
+
+  @property
+  def sharding(self):
+    if isinstance(self._sharding, P):
+      # TODO(yashkatariya): Maybe use `get_abstract_mesh()` here but switch
+      # on `core.trace_state_clean()`?
+      cur_mesh = mesh_lib.get_concrete_mesh()
+      if cur_mesh.empty:
+        raise TypeError(
+            "When specifying PartitionSpec to `ShapeDtypeStruct`, the context"
+            " mesh cannot be empty. Please use `jax.set_mesh` to set"
+            " the mesh context.")
+      return NamedSharding(cur_mesh, self._sharding)
+    else:
+      return self._sharding
+
+  @property
+  def format(self):
+    return Format(self._dll, self.sharding)
+
+  def __len__(self):
+    try:
+      return self.shape[0]
+    except IndexError as e:
+      raise TypeError("len() of unsized object") from e  # same as numpy error
+
+  def __repr__(self):
+    sh = f", sharding={self.sharding}" if self.sharding is not None else ""
+    l = f", format={self._dll}" if self._dll is not None else ""
+    wt = f", weak_type={self.weak_type}" if self.weak_type else ""
+    vma = f", vma={self.vma}" if self.vma else ""
+    is_ref = f", is_ref={self.is_ref}" if self.is_ref else ""
+    return (f"{type(self).__name__}(shape={self.shape}, "
+            f"dtype={self.dtype.name}{sh}{l}{wt}{vma}{is_ref})")
+
+  __str__ = __repr__
+
+  def __eq__(self, other):
+    if not isinstance(other, ShapeDtypeStruct):
+      return False
+    else:
+      return ((self.shape, self.dtype, self.sharding, self._dll,
+               self.weak_type, self.vma, self.is_ref) ==
+              (other.shape, other.dtype, other.sharding, other._dll,
+               other.weak_type, other.vma, other.is_ref))
+
+  def __hash__(self):
+    # TODO(frostig): avoid the conversion from dict by addressing
+    # https://github.com/jax-ml/jax/issues/8182
+    return hash((self.shape, self.dtype, self.sharding, self._dll,
+                 self.weak_type, self.vma, self.is_ref))
+
+  def __setattr__(self, name, value):
+    if hasattr(self, name):
+      if getattr(self, name) == value:
+        # This can happen if two threads race, for example if two threads
+        # are trying to hash the same SDS instance.
+        return
+      raise RuntimeError(
+          f"Cannot reassign attributes ({name}) of immutable ShapeDtypeStruct"
+          " objects")
+    super().__setattr__(name, value)
+
+  def update(self, **kwargs):
+    if 'sharding' in kwargs:
+      s = kwargs['sharding']
+      if self._dll is not None and isinstance(s, Sharding):
+        raise ValueError(
+            f"You are updating ShapeDtypeStruct with a {type(s)} when the"
+            f" original ShapeDtypeStruct had a concrete layout {self.format}."
+            " This might lead to bugs. If you want to do this, create a new"
+            " ShapeDtypeStruct via the constructor.")
+      sharding = s
+    else:
+      sharding = self.format
+    return ShapeDtypeStruct(
+        shape=kwargs.pop('shape', self.shape),
+        dtype=kwargs.pop('dtype', self.dtype),
+        sharding=sharding,
+        weak_type=kwargs.pop('weak_type', self.weak_type),
+        vma=kwargs.pop('vma', self.vma),
+        is_ref=kwargs.pop('is_ref', self.is_ref))
+
+
+def _sds_aval_mapping(x):
+  aval = ShapedArray(
+      x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
+      weak_type=x.weak_type)
+  aval = update_aval_with_sharding(
+      aval, x.sharding, vma=(frozenset() if x.vma is None else x.vma))
+  if x.is_ref:
+    from jax._src.state.types import AbstractRef  # type: ignore
+    return AbstractRef(aval)
+  return aval
+pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
 
 
 # ------------------- Jaxpr printed representation -------------------
@@ -3657,6 +4073,21 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
 # Used in shard_map for converting avals
 shard_aval_handlers = {}  # type: ignore
 unshard_aval_handlers = {}  # type: ignore
+
+def shard_aval(mesh, manual_axes, check_vma, spec, aval: AbstractValue
+               ) -> AbstractValue:
+  if type(aval) in shard_aval_handlers:
+    return shard_aval_handlers[type(aval)](mesh, manual_axes, check_vma,
+                                                spec, aval)
+  raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
+
+def unshard_aval(mesh, check_vma, spec, aval: AbstractValue
+                 ) -> AbstractValue:
+  if type(aval) in unshard_aval_handlers:
+    return unshard_aval_handlers[type(aval)](mesh, check_vma, spec, aval)
+  else:
+    raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
+
 
 # ----------------- external APIs for querying tracing context -----------------
 

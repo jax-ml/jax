@@ -14,7 +14,6 @@
 
 """Test exporting Pallas kernels."""
 
-import contextlib
 import sys
 
 from absl.testing import absltest
@@ -94,9 +93,12 @@ class ExportTestWithTriton(jtu.JaxTestCase):
 class ExportTestWithMosaicGpu(ExportTestWithTriton):
 
   def setUp(self):
-    context_stack = contextlib.ExitStack()
-    context_stack.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(True))
-    self.addCleanup(context_stack.close)
+    # TODO(b/432678342): remove once this is fixed.
+    if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest(
+          "LLVM seems to care about the compute capability if a GPU is present"
+      )
+    self.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(True))
     super().setUp()
 
   def _check_cuda_export(self, exp):

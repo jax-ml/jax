@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Hashable, Mapping
 import contextlib
 import copy
 import dataclasses
@@ -25,13 +26,14 @@ import functools
 import itertools
 import threading
 from typing import Any, ClassVar, Literal, Protocol, TypeAlias, Union, runtime_checkable
-from collections.abc import Hashable
 
 import jax
 from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src import effects
+from jax._src import frozen_dict
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import tree_util
@@ -132,7 +134,17 @@ class CompilerParams(Protocol):
 
 @dataclasses.dataclass(frozen=True)
 class Buffered:
+  """Specifies how a block should be buffered for a pipeline.
+
+  Attributes:
+    buffer_count: The number of buffers to use for multiple buffering.
+    use_lookahead: optional bool, indicates whether to use lookahead on the
+      buffer. Enabling lookahead allows the pipeline to begin fetching the next
+      changed block as soon as a slot is available, no matter how many
+      iterations ahead that block is.
+  """
   buffer_count: int
+  use_lookahead: bool = False
 
 split_list = util.split_list
 
@@ -156,16 +168,17 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
     return hash((self.shape, self.dtype, self.weak_type, self.sharding,
                  self.vma, self.memory_space))
 
-  def str_short(self, short_dtypes=False):
-    dt_str = (dtypes.short_dtype_name(self.dtype) if short_dtypes else
-              self.dtype.name)
-    dt_str = dt_str.replace("void", "float0")
-    shapestr = ",".join(map(str, self.shape))
-    sharding_str = (f"{dt_str}[{shapestr}]({self.sharding})"
-                    if self.sharding else "")
-    memoryspace_str = ("" if self.memory_space is None
-                       else f"<{self.memory_space}>")
-    return f"{dt_str}{memoryspace_str}[{shapestr}]{sharding_str}"
+  def str_short(self, short_dtypes=False, mesh_axis_types=False):
+    return jax_core.str_short_aval(
+        self.shape,
+        self.dtype,
+        self.sharding.mesh,
+        self.sharding.spec,
+        self.vma,
+        self.memory_space,
+        short_dtypes,
+        mesh_axis_types,
+    )
 
   def update(
       self,
@@ -198,24 +211,34 @@ mlir.ir_type_handlers[ShapedArrayWithMemorySpace] = mlir._array_ir_types
 @dataclasses.dataclass(frozen=True)
 class MemoryRef:
   """Like jax.ShapeDtypeStruct but with memory spaces."""
-  shape: tuple[int, ...]
-  dtype: jnp.dtype | dtypes.ExtendedDType
+  inner_aval: jax_core.AbstractValue
   # TODO(b/368122763): Unify memory space types across backends
   memory_space: Any
 
   def get_array_aval(self) -> jax_core.ShapedArray:
-    dtype = self.dtype
+    if not isinstance(self.inner_aval, jax_core.ShapedArray):
+      raise ValueError(
+          f"MemoryRef type must be a ShapedArray, got {type(self.inner_aval)}"
+      )
+    dtype = self.inner_aval.dtype
     if not isinstance(dtype, (jnp.dtype, dtypes.ExtendedDType)):
       dtype = jnp.dtype(dtype)
     return ShapedArrayWithMemorySpace(
-        self.shape, dtype, memory_space=self.memory_space
+        self.inner_aval.shape, dtype, memory_space=self.memory_space
     )
 
   def get_ref_aval(self) -> TransformedRef | state.AbstractRef:
     # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
     # try to apply JAX ops to it.
-    return state.AbstractRef(
-        jax_core.ShapedArray(self.shape, self.dtype), self.memory_space)
+    return state.AbstractRef(self.inner_aval, self.memory_space)
+
+  @property
+  def dtype(self):
+    return self.inner_aval.dtype
+
+  @property
+  def shape(self):
+    return self.inner_aval.shape
 
 
 class MemorySpace(enum.Enum):
@@ -229,6 +252,14 @@ class MemorySpace(enum.Enum):
   INDEX = "index"  # Memory space for scalar prefetch arguments.
   KEY = "key"  # Memory space for PRNG keys.
   HOST = "host"  # Host memory space.
+
+  def from_type(self, type: jax_core.AbstractValue) -> MemoryRef:
+    return MemoryRef(type, memory_space=self)
+
+  def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
+    # A convenience function for constructing MemoryRef types of ShapedArrays.
+    return self.from_type(jax_core.ShapedArray(shape, dtype))
+
 
   def __str__(self) -> str:
     return self.value
@@ -377,6 +408,19 @@ def _get_block_dim_size(dim: BlockDim) -> int:
     case _:
       raise ValueError(f"Unsupported block shape type: {type(dim)}")
 
+def get_block_size(dim: BlockDim | int | None) -> int:
+  match dim:
+    case int():
+      return dim
+    case Squeezed() | None:
+      return 1
+    case (
+        Blocked(block_size) | Element(block_size, _) | BoundedSlice(block_size)
+    ):
+      return block_size
+    case _:
+      raise ValueError(f"Unsupported block shape type: {type(dim)}")
+
 
 def _get_block_shape(block_shape: tuple[BlockDim, ...]) -> tuple[int, ...]:
   return tuple(_get_block_dim_size(dim) for dim in block_shape)
@@ -431,17 +475,9 @@ class BlockSpec:
   block_shape: Sequence[BlockDim | int | None] | None = None
   index_map: Callable[..., Any] | None = None
   memory_space: Any | None = dataclasses.field(kw_only=True, default=None)
-  indexing_mode: Any | None = None
   pipeline_mode: Buffered | None = None
 
   def __post_init__(self):
-    # TODO(sharadmv): Remove this check.
-    if self.indexing_mode is not None:
-      raise ValueError(
-          "indexing_mode has been removed. Please pass in `pl.Element` for each"
-          " block dimension in `block_shape` instead to enable 'Unblocked'"
-          " indexing."
-      )
     if self.index_map is not None:
       self.index_map = _IndexMapFunc(self.index_map)
 
@@ -454,9 +490,15 @@ class BlockSpec:
       index_map_avals: Sequence[jax_core.AbstractValue],
       index_map_tree: tree_util.PyTreeDef,
       grid: GridMappingGrid,
-      mapped_dims: tuple[int, ...],
+      vmapped_dims: tuple[int, ...],
       debug: bool = False,
   ) -> BlockMapping:
+    if self.block_shape is not None:
+      if not hasattr(array_aval, "shape"):
+        raise ValueError(
+            "Array type must have a `shape` attribute, but got"
+            f" {type(array_aval)}"
+        )
     if self.index_map is None:
       index_map_func = default_index_map(len(array_aval.shape))
       index_map_dbg = api_util.debug_info("pallas_call index_map",
@@ -489,6 +531,10 @@ class BlockSpec:
       block_array_aval = jax_core.ShapedArray(
           ref_block_shape, array_aval.dtype, array_aval.weak_type
       )
+    elif isinstance(array_aval, state_types.AbstractLinVal):
+      if not isinstance(array_aval.inner_aval, jax_core.ShapedArray):
+        raise NotImplementedError  # TODO(mattjj,sharadmv)
+      block_array_aval = array_aval.inner_aval.update(shape=ref_block_shape)
     else:
       block_array_aval = array_aval.update(shape=ref_block_shape)
     block_aval = state.AbstractRef(block_array_aval, self.memory_space)
@@ -514,7 +560,7 @@ class BlockSpec:
     flat_index_map_fun, index_map_out_tree_thunk = api_util.flatten_fun(
         lu.wrap_init(index_map_func, debug_info=debug_info), index_map_tree
     )
-    with tracing_grid_env(grid, mapped_dims):
+    with tracing_grid_env(grid, vmapped_dims):
       jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(
           flat_index_map_fun, index_map_avals
       )
@@ -562,16 +608,16 @@ class BlockSpec:
           f"{origin} must not capture constants: {consts}"
       )
 
-    array_aval_shape = _max_shape_from_aval(array_aval)
+    if isinstance(array_aval, (jax_core.ShapedArray, jax_core.DShapedArray)):
+      array_aval_shape = _max_shape_from_aval(array_aval)
+      array_aval = array_aval.update(shape=array_aval_shape)
 
     mapping = BlockMapping(
         block_shape=block_shape,
         transformed_block_aval=block_aval,  # There are no transforms by default
         index_map_jaxpr=jax_core.ClosedJaxpr(jaxpr, consts),
         index_map_out_tree=index_map_out_tree,
-        array_shape_dtype=jax.ShapeDtypeStruct(
-            array_aval_shape, array_aval.dtype
-        ),
+        array_aval=array_aval,
         origin=origin,
         pipeline_mode=self.pipeline_mode,
         debug=debug,
@@ -612,7 +658,7 @@ class BlockMapping:
   transformed_block_aval: state.AbstractRef
   index_map_jaxpr: jax_core.ClosedJaxpr
   index_map_out_tree: tree_util.PyTreeDef
-  array_shape_dtype: jax.ShapeDtypeStruct  # The whole array
+  array_aval: jax_core.ShapedArray  # The whole array
   origin: OriginStr
   transforms: Sequence[MemoryRefTransform] = ()
   pipeline_mode: Buffered | None = None
@@ -624,8 +670,8 @@ class BlockMapping:
     ref_block_shape = _get_ref_block_shape(self.block_shape)
     assert ref_block_shape == self.ref_aval.shape, (
         self.block_shape, self.ref_aval.shape)
-    assert len(self.block_shape) == len(self.array_shape_dtype.shape), (
-        self.block_shape, self.array_shape_dtype
+    assert len(self.block_shape) == len(self.array_aval.shape), (
+        self.block_shape, self.array_aval
     )
 
     assert not self.index_map_jaxpr.consts
@@ -680,13 +726,53 @@ class BlockMapping:
 
   def has_trivial_window(self):
     """If block shape is same as the array shape and index_map returns 0s."""
-    for b, s in zip(self.block_shape, self.array_shape_dtype.shape):
+    for b, s in zip(self.block_shape, self.array_aval.shape):
       if _get_block_dim_size(b) != s:
         return False
     for atom in self.index_map_jaxpr.jaxpr.outvars:
       if not (isinstance(atom, jax_core.Literal) and atom.val == 0):
         return False
     return True
+
+  def to_block_spec(self) -> BlockSpec:
+    def index_map(*args):
+      flat_args = tree_util.tree_leaves(args)
+      return jax_core.jaxpr_as_fun(self.index_map_jaxpr)(*flat_args)
+    return BlockSpec(
+        self.block_shape,
+        index_map,
+        memory_space=self.block_aval.memory_space,
+        pipeline_mode=self.pipeline_mode,
+    )
+
+  def to_lojax(
+      self, index_map_avals, index_map_tree, grid, vmapped_dims
+  ) -> list[BlockMapping]:
+    block_aval = self.transformed_block_aval
+    if not block_aval.inner_aval.is_high:
+      return [self]
+    assert self.array_aval.is_high
+    lo_array_avals = self.array_aval.lo_ty()
+    block_spec = self.to_block_spec()
+    if not hasattr(block_aval.inner_aval, "lower_block_spec"):
+      raise ValueError(
+          f"Cannot lower block spec {block_spec} on {block_aval.inner_aval}."
+          " Need to define lower_block_spec method on the type."
+      )
+    lo_block_specs = block_aval.inner_aval.lower_block_spec(block_spec)
+    return [
+        _convert_block_spec_to_block_mapping(
+            bs,
+            self.origin,
+            lo_array_aval,
+            index_map_avals=index_map_avals,
+            index_map_tree=index_map_tree,
+            grid=grid,
+            vmapped_dims=vmapped_dims,
+            debug=self.debug,
+        )
+        for bs, lo_array_aval in zip(lo_block_specs, lo_array_avals)
+    ]
 
   def __repr__(self):
     if self.debug:
@@ -695,7 +781,7 @@ class BlockMapping:
           f"transformed_block_aval={self.transformed_block_aval}, "
           f"index_map_jaxpr={self.index_map_jaxpr}, "
           f"index_map_out_tree={self.index_map_out_tree}, "
-          f"array_shape_dtype={self.array_shape_dtype}, "
+          f"array_aval={self.array_aval}, "
           f"origin={self.origin}, "
           f"transforms={self.transforms}, "
           f"pipeline_mode={self.pipeline_mode}, "
@@ -760,14 +846,14 @@ class GridMapping:
   block_mappings: tuple[BlockMapping, ...]
   # The inputs for tracing the index map: the tree and the flat avals
   index_map_tree: tree_util.PyTreeDef
-  index_map_avals: tuple[jax_core.AbstractValue]
+  index_map_avals: tuple[jax_core.AbstractValue, ...]
   # Which dimensions in `grid` are vmapped.
   vmapped_dims: tuple[int, ...]
+  scratch_avals: tuple[jax_core.AbstractValue, ...]
 
   num_index_operands: int
   num_inputs: int
   num_outputs: int
-  num_scratch_operands: int
   get_grid_indices: Callable | None = None
   local_grid_env: Callable | None = None
   # Primarily dictates how much debugging information is printed.
@@ -818,13 +904,12 @@ class GridMapping:
     return new_self
 
   @property
-  # TODO(necula): deprecate and then remove this property.
-  def mapped_dims(self) -> tuple[int, ...]:
-    return self.vmapped_dims
-
-  @property
   def num_dynamic_grid_bounds(self):
     return sum(b is dynamic_grid_dim for b in self.grid)
+
+  @property
+  def num_scratch_operands(self):
+    return len(self.scratch_avals)
 
   @property
   def static_grid(self) -> StaticGrid:
@@ -879,7 +964,7 @@ class GridMapping:
         for ia in self.index_map_avals[len(self.grid) :]
     )
     inputs_shapes = (
-        bm.array_shape_dtype
+        jax.ShapeDtypeStruct(bm.array_aval.shape, bm.array_aval.dtype)
         for bm in self.block_mappings[:self.num_inputs])
     return itertools.chain(index_shapes, inputs_shapes)
 
@@ -893,7 +978,46 @@ class GridMapping:
   @property
   def out_shapes(self) -> Iterable[jax.ShapeDtypeStruct]:
     return tuple(
-        bm.array_shape_dtype for bm in self.block_mappings_output)
+        jax.ShapeDtypeStruct(bm.array_aval.shape, bm.array_aval.dtype)
+        for bm in self.block_mappings_output)
+
+  def to_lojax(self):
+    input_block_mappings, output_block_mappings, () = split_list(
+        self.block_mappings,
+        [self.num_inputs, self.num_inputs + self.num_outputs],
+    )
+    updated_input_block_mappings = [
+        lo_mapping
+        for bm in input_block_mappings
+        for lo_mapping in bm.to_lojax(
+            self.index_map_avals,
+            self.index_map_tree,
+            self.grid,
+            self.vmapped_dims,
+        )
+    ]
+    updated_output_block_mappings = [
+        lo_mapping
+        for bm in output_block_mappings
+        for lo_mapping in bm.to_lojax(
+            self.index_map_avals,
+            self.index_map_tree,
+            self.grid,
+            self.vmapped_dims,
+        )
+    ]
+    new_num_inputs = len(updated_input_block_mappings)
+    new_num_outputs = len(updated_output_block_mappings)
+    updated_scratch_avals = [
+        lo_aval
+        for aval in self.scratch_avals
+        for lo_aval in (aval.lo_ty() if aval.is_high else [aval])
+    ]
+    updated_block_mappings = updated_input_block_mappings + updated_output_block_mappings
+    return self.replace(block_mappings=tuple(updated_block_mappings),
+                        num_inputs=new_num_inputs,
+                        num_outputs=new_num_outputs,
+                        scratch_avals=tuple(updated_scratch_avals))
 
   def __repr__(self):
     if self.debug:
@@ -952,7 +1076,7 @@ def _convert_block_spec_to_block_mapping(
     index_map_avals: Sequence[jax_core.AbstractValue],
     index_map_tree: tree_util.PyTreeDef,
     grid: GridMappingGrid,
-    mapped_dims: tuple[int, ...],
+    vmapped_dims: tuple[int, ...],
     debug: bool = False,
 ) -> BlockMapping:
   if block_spec is no_block_spec:
@@ -963,7 +1087,7 @@ def _convert_block_spec_to_block_mapping(
       index_map_avals=index_map_avals,
       index_map_tree=index_map_tree,
       grid=grid,
-      mapped_dims=mapped_dims,
+      vmapped_dims=vmapped_dims,
       debug=debug,
   )
 
@@ -978,7 +1102,10 @@ class ScratchShape(Protocol):
     ...
 
 
-ScratchShapeTree = Sequence[Union[ScratchShape, "ScratchShapeTree"]]
+ScratchShapeTree = (
+    Sequence[Union[ScratchShape, "ScratchShapeTree"]]
+    | Mapping[str, Union[ScratchShape, "ScratchShapeTree"]]
+)
 
 
 @dataclasses.dataclass(init=False, kw_only=True)
@@ -1081,15 +1208,14 @@ def get_grid_mapping(
   if grid_spec.scratch_shapes:
     flat_scratch_shapes, scratch_tree = tree_util.tree_flatten(
         grid_spec.scratch_shapes)
-    flat_scratch_avals = map(lambda s: s.get_ref_aval(), flat_scratch_shapes)
-    num_flat_scratch_operands = len(flat_scratch_avals)
+    flat_scratch_avals = tuple(s.get_ref_aval() for s in  flat_scratch_shapes)
     jaxpr_scratch_avals = tree_util.tree_unflatten(
         scratch_tree, flat_scratch_avals)
     if not isinstance(jaxpr_scratch_avals, (tuple, list)):
       jaxpr_scratch_avals = (jaxpr_scratch_avals,)
-    del flat_scratch_avals, flat_scratch_shapes, scratch_tree
+    del flat_scratch_shapes, scratch_tree
   else:
-    num_flat_scratch_operands = 0
+    flat_scratch_avals = ()
     jaxpr_scratch_avals = ()
 
   if grid_spec.in_specs is not no_block_spec:
@@ -1107,7 +1233,7 @@ def get_grid_mapping(
           index_map_avals=index_map_avals,
           index_map_tree=index_map_tree,
           grid=grid_mapping_grid,  # type: ignore[arg-type]
-          mapped_dims=(),
+          vmapped_dims=(),
           debug=debug,
       ),
       flat_in_specs,
@@ -1130,7 +1256,7 @@ def get_grid_mapping(
           index_map_avals=index_map_avals,
           index_map_tree=index_map_tree,
           grid=grid_mapping_grid,  # type: ignore[arg-type]
-          mapped_dims=(),
+          vmapped_dims=(),
           debug=debug,
       ),
       flat_out_specs,
@@ -1147,7 +1273,7 @@ def get_grid_mapping(
       num_index_operands=num_flat_scalar_prefetch,
       num_inputs=len(flat_in_specs),
       num_outputs=len(flat_out_specs),
-      num_scratch_operands=num_flat_scratch_operands,
+      scratch_avals=flat_scratch_avals,
       debug=debug,
   )
   grid_mapping.check_invariants()
@@ -1198,17 +1324,21 @@ class CostEstimate:
   flops: int
   transcendentals: int
   bytes_accessed: int
+  remote_bytes_transferred: int = 0
 
   def __post_init__(self):
     for k, v in dataclasses.asdict(self).items():
       if not isinstance(v, int):
-        raise ValueError("All fields in CostEstimate must be ints. "
-                         f"{k} is not an int: {type(v)}({v})")
+        raise ValueError(
+            "All fields in CostEstimate must be ints. "
+            f"{k} is not an int: {type(v)}({v})"
+        )
 
   def to_json(self) -> bytes:
     return (
         f'{{"flops": {self.flops}, "transcendentals": {self.transcendentals},'
-        f' "bytes_accessed": {self.bytes_accessed}}}'
+        f' "bytes_accessed": {self.bytes_accessed},'
+        f' "remote_bytes_transferred": {self.remote_bytes_transferred}}}'
     ).encode("ascii")
 
 
@@ -1248,6 +1378,7 @@ def core_map(
     debug: bool = False,
     cost_estimate: CostEstimate | None = None,
     name: str | None = None,
+    metadata: dict[str, str] | None = None,
 ):
   """Runs a function on a mesh, mapping it over the devices in the mesh.
 
@@ -1260,22 +1391,32 @@ def core_map(
     interpret: Whether to run the function in interpret mode.
     debug: Whether or not to out helpful debugging information.
     cost_estimate: The cost estimate of the function.
+    metadata: Optional dictionary of information about the kernel that will be
+      serialized as JSON in the HLO. Can be used for debugging and analysis.
   """
   def wrapped(f):
     flat_args, in_tree = tree_util.tree_flatten(((), {}))
+    debug_info = api_util.debug_info("pallas_core_map", f, (), {})
     flat_fun, out_tree_thunk = api_util.flatten_fun(
-        lu.wrap_init(f,
-                     debug_info=api_util.debug_info("pallas_core_map", f,
-                                                    (), {})),
-        in_tree)
+        lu.wrap_init(f, debug_info=debug_info), in_tree
+    )
     with (
         tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
         jax_core.extend_axis_env_nd(mesh.shape.items()),
     ):
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_args)
+
+    out_tree = out_tree_thunk()
+    if out_tree != tree_util.tree_structure(None):
+      raise ValueError(
+          f"The kernel function in core_map {debug_info.func_src_info} should"
+          f" return None. It returns a PyTree: {out_tree}."
+      )
+
     out = core_map_p.bind(
         *consts,
         jaxpr=jaxpr,
+        debug_info=debug_info,
         mesh=mesh,
         compiler_params=compiler_params,
         interpret=(
@@ -1284,12 +1425,23 @@ def core_map(
         debug=debug,
         cost_estimate=cost_estimate,
         name=name or util.fun_name(f),
+        metadata=frozen_dict.FrozenDict(metadata)
+        if metadata is not None
+        else None,
     )
-    if out:
-      raise ValueError("core_map-ped functions must not return any outputs.")
-    return tree_util.tree_unflatten(out_tree_thunk(), out)
+    return tree_util.tree_unflatten(out_tree, out)
 
   return wrapped
+
+# TODO(sharadmv,ivyzheng): remove this once we use axis dicts primarily
+class CommsEffect(effects.Effect):
+  pass
+
+comms_effect = CommsEffect()
+effects.lowerable_effects.add_type(CommsEffect)
+effects.control_flow_allowed_effects.add_type(CommsEffect)
+effects.remat_allowed_effects.add_type(CommsEffect)
+effects.custom_derivatives_allowed_effects.add_type(CommsEffect)
 
 
 @core_map_p.def_effectful_abstract_eval
@@ -1301,13 +1453,13 @@ def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
   effs = set()
   if interpret:
     try:
-      from jax._src.pallas.mosaic import interpret as mosaic_tpu_interpret  # Avoid circular dependency.
+      from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret  # Avoid circular dependency.
       if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
         effs = mosaic_tpu_interpret.get_interpret_effects()
     except ImportError:
       pass
   for eff in jaxpr.effects:
-    if mesh.discharges_effect(eff):
+    if mesh.discharges_effect(eff) or isinstance(eff, CommsEffect):
       continue
     if not isinstance(eff, jax_core.NamedAxisEffect):
       effs.add(eff)
@@ -1315,6 +1467,19 @@ def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
     if eff.name not in mesh.shape:
       effs.add(eff)
   return [], effs
+
+
+def core_map_lowering_rule(ctx: mlir.LoweringRuleContext,
+    *args,
+    jaxpr,
+    **kwargs
+  ):
+  del ctx, args, kwargs
+  raise ValueError(
+      "Attempted to lower core_map without discharging. This can happen if "
+      "the core_map body does not modify any Refs or have other observable "
+      f"side-effects.\n Jaxpr of the body: {jaxpr}")
+mlir.register_lowering(core_map_p, core_map_lowering_rule)
 
 
 class Mesh(Protocol):
@@ -1369,9 +1534,11 @@ def default_mesh_discharge_rule(
     cost_estimate,
     name,
     memory_space=MemorySpace.ANY,
+    metadata,
 ):
   """Discharges a ``core_map`` over a mesh to a ``pallas_call``."""
   del out_avals  # Unused.
+  default_memory_space = memory_space
 
   def body(*args):
     # Due to aliasing, ``args`` contains aliased inputs and outputs so we
@@ -1389,51 +1556,66 @@ def default_mesh_discharge_rule(
   in_memory_spaces = [
       memory_space if m is None else m for m in in_memory_spaces
   ]
-  @jax.jit
-  def jitted(*args):
-    args = [
-        with_memory_space_constraint_p.bind(arg, memory_space=memory_space)
-        if memory_space is not None else arg
-        for arg, memory_space in zip(args, in_memory_spaces)
-    ]
-    in_specs = [
-        BlockSpec(memory_space=memory_space) for memory_space in in_memory_spaces
-    ]
-    out_specs = [in_specs[idx] for idx in modified_idxs]
-    out_shapes = [_get_sds(in_avals[idx]) for idx in modified_idxs]
-    from jax._src.pallas import pallas_call  # Avoid circular dependency.
-
-    outs = pallas_call._pallas_call(
-        body,
-        name=name,
-        out_shape=out_shapes,
-        input_output_aliases={
-            in_idx: out_idx for out_idx, in_idx in enumerate(modified_idxs)
-        },
-        grid_spec=GridSpec(
-            grid=tuple(mesh.shape.items()),
-            in_specs=in_specs,
-            out_specs=out_specs,
-        ),
-        mesh=mesh,
-        compiler_params=compiler_params,
-        interpret=interpret,
-        debug=debug,
-        cost_estimate=cost_estimate,
-    )(*args)
+  args = [
+      with_memory_space_constraint_p.bind(arg, memory_space=memory_space)
+      if memory_space is not None and memory_space is not default_memory_space else arg
+      for arg, memory_space in zip(args, in_memory_spaces)
+  ]
+  in_specs = [
+      BlockSpec(memory_space=memory_space) for memory_space in in_memory_spaces
+  ]
+  out_specs = [in_specs[idx] for idx in modified_idxs]
+  out_shapes = [_get_sds(in_avals[idx]) for idx in modified_idxs]
+  from jax._src.pallas import pallas_call  # Avoid circular dependency.
+  outs = pallas_call._pallas_call(
+      body,
+      name=name,
+      out_shape=out_shapes,
+      input_output_aliases={
+          in_idx: out_idx for out_idx, in_idx in enumerate(modified_idxs)
+      },
+      grid_spec=GridSpec(
+          grid=tuple(mesh.shape.items()),
+          in_specs=in_specs,
+          out_specs=out_specs,
+      ),
+      mesh=mesh,
+      compiler_params=compiler_params,
+      interpret=interpret,
+      debug=debug,
+      cost_estimate=cost_estimate,
+      metadata=metadata,
+  )(*args)
   # ``outs`` lacks the unmodified inputs. Add them back in.
-    all_outs = [None] * len(args)
-    for out_idx, in_idx in enumerate(modified_idxs):
-      all_outs[in_idx] = outs[out_idx]
-    return all_outs
-  out = jitted(*args)
-  return out, ()
+  all_outs = [None] * len(args)
+  for out_idx, in_idx in enumerate(modified_idxs):
+    all_outs[in_idx] = outs[out_idx]
+  return all_outs, ()
 
 
 @state_discharge.register_discharge_rule(core_map_p)
-def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, mesh, **kwargs):
+def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, debug_info, mesh, **kwargs):
   if type(mesh) not in _core_map_mesh_rules:
     raise NotImplementedError(f"Mesh type {type(mesh)} not supported.")
+  if jaxpr.constvars:
+    # The mapped jaxpr can only close over refs. Closing over anything else,
+    # including arrays, is not allowed -- these must be passed into the jaxpr
+    # as inputs.
+    consts_avals = [
+        aval
+        for var in jaxpr.constvars
+        if not isinstance(aval := var.aval, state.AbstractRef)
+    ]
+    if consts_avals:
+      ctx = jax_core.JaxprPpContext()
+      pp_const_avals = ", ".join(
+          jax_core.pp_aval(aval, ctx) for aval in consts_avals
+      )
+      raise ValueError(
+          "The kernel function in core_map"
+          f" {debug_info.func_src_info} captures constants"
+          f" [{pp_const_avals}]. You should pass them as inputs."
+      )
   return _core_map_mesh_rules[type(mesh)](
       in_avals, out_avals, *args_flat, jaxpr=jaxpr, mesh=mesh, **kwargs
   )
@@ -1447,13 +1629,13 @@ def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
   effs = set()
   if interpret:
     try:
-      from jax._src.pallas.mosaic import interpret as mosaic_tpu_interpret  # Avoid circular dependency.
+      from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret  # Avoid circular dependency.
       if isinstance(interpret, mosaic_tpu_interpret.InterpretParams):
         effs = mosaic_tpu_interpret.get_interpret_effects()
     except ImportError:
       pass
   for eff in jaxpr.effects:
-    if mesh.discharges_effect(eff):
+    if mesh.discharges_effect(eff) or isinstance(eff, CommsEffect):
       continue
     if not isinstance(eff, jax_core.NamedAxisEffect):
       effs.add(eff)
@@ -1486,3 +1668,18 @@ def lower_as_mlir(
 _out_shape_to_aval_mapping: dict[
     type[Any], Callable[[Any], jax_core.AbstractValue]
 ] = {}
+
+
+def _core_map_partial_eval_custom(saveable, unks_in, inst_in, eqn):
+  assert all(inst_in)
+  if all(unks_in):
+    return None, eqn, [], [], []  # purely unknown
+  elif not any(unks_in):
+    return eqn, eqn, [], [], []  # full remat
+  else:
+    # Some values, e.g. empty refs or refs initialized to constant zero, can be
+    # 'known', but really they belong in the staged/tangent computation. We
+    # encounter them here as known inputs mixed in with unknown/tangent inputs,
+    # which tells us that this core_map is really a purely tangent computation.
+    return None, eqn, [], [], []
+pe.partial_eval_jaxpr_custom_rules[core_map_p] = _core_map_partial_eval_custom

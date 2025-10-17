@@ -14,6 +14,7 @@
 
 import math
 from functools import partial
+
 from absl.testing import absltest
 import numpy as np
 
@@ -250,9 +251,8 @@ class LayoutTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        r'Compiled object called with input layout\(s\) does'
-        r' not match the layout\(s\) the computation was'
-        ' compiled with'):
+        r'Computation was compiled for input layouts that disagree with the '
+        r'layouts of arguments passed to it.'):
       compiled(arr)
 
   @jtu.ignore_warning(category=DeprecationWarning,
@@ -419,7 +419,7 @@ class LayoutTest(jtu.JaxTestCase):
     custom_format = Format(Layout(major_to_minor=(0, 1)), s)
     out1 = jax.device_put(arr, custom_format)
 
-    with jax.sharding.use_mesh(mesh):
+    with jax.set_mesh(mesh):
       out2 = jax.device_put(arr, custom_format)
       out3 = jax.device_put(jnp_inp, custom_format)
       out4 = jax.device_put(np_inp, custom_format)
@@ -580,7 +580,7 @@ class LayoutTest(jtu.JaxTestCase):
     shape = (16*2, 32016*2)
     np_inp = np.arange(math.prod(shape), dtype=jnp.bfloat16).reshape(shape)
 
-    custom_dll1 = Layout(major_to_minor=(1, 0), _tiling=((8,128), (2,1)))
+    custom_dll1 = Layout(major_to_minor=(1, 0), tiling=((8,128), (2,1)))
     l1 = Format(custom_dll1, s)
     arr = jax.device_put(np_inp, s)
 
@@ -610,13 +610,15 @@ class LayoutTest(jtu.JaxTestCase):
       g(jnp.arange(8))
 
   def test_sparsecore_compute(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
+      self.skipTest("disabled on cloud tpu until 2025-10-14")
     if not (jax.devices()[0].device_kind == 'TPU v5' or
             jtu.is_device_tpu_at_least(6)):
       self.skipTest('Does not have a sparsecore present')
     shape = (128, 128)
     inp = jnp.arange(math.prod(shape)).reshape(shape)
 
-    dll = Layout(major_to_minor=(0, 1), _tiling=((8,),))
+    dll = Layout(major_to_minor=(0, 1), tiling=((8,),))
     s = SingleDeviceSharding(jax.devices()[0])
     sparse_format = Format(dll, s)
     sparecore_arr = jax.device_put(inp, sparse_format)
@@ -634,6 +636,8 @@ class LayoutTest(jtu.JaxTestCase):
     f(inp, sparecore_arr)
 
   def test_sparsecore_compute_twice(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
+      self.skipTest("disabled on cloud tpu until 2025-10-14")
     if not (
         jax.devices()[0].device_kind == 'TPU v5'
         or jtu.is_device_tpu_at_least(6)
@@ -642,7 +646,7 @@ class LayoutTest(jtu.JaxTestCase):
     shape = (4096, 8)
     inp = jnp.arange(math.prod(shape)).reshape(shape)
 
-    dll = Layout(major_to_minor=(0, 1), _tiling=((8,),))
+    dll = Layout(major_to_minor=(0, 1), tiling=((8,),))
     s = SingleDeviceSharding(jax.devices()[0])
     sparse_format = Format(dll, s)
     sparecore_arr = jax.device_put(inp, sparse_format)
@@ -664,6 +668,8 @@ class LayoutTest(jtu.JaxTestCase):
     f(sparecore_arr)
 
   def test_sparsecore_and_host_compute(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
+      self.skipTest("disabled on cloud tpu until 2025-10-14")
     if not (
         jax.devices()[0].device_kind == 'TPU v5'
         or jtu.is_device_tpu_at_least(6)
@@ -673,11 +679,11 @@ class LayoutTest(jtu.JaxTestCase):
     inp = jnp.arange(math.prod(shape)).reshape(shape)
     s = SingleDeviceSharding(jax.devices()[0])
 
-    sparse_dll = Layout(major_to_minor=(0, 1), _tiling=((8,),))
+    sparse_dll = Layout(major_to_minor=(0, 1), tiling=((8,),))
     sparse_format = Format(sparse_dll, s)
     sparecore_arr = jax.device_put(inp, sparse_format)
 
-    host_dll = Layout(major_to_minor=(0, 1), _tiling=((1,),))
+    host_dll = Layout(major_to_minor=(0, 1), tiling=((1,),))
     host_format = Format(host_dll, s)
     host_arr = jax.device_put(inp, host_format)
 
@@ -773,6 +779,43 @@ class LayoutTest(jtu.JaxTestCase):
 
     lowered_text = f.lower(arr).as_text()
     self.assertIn('LayoutConstraint', lowered_text)
+
+  def test_with_layout_constraint_vmap(self):
+    if not jtu.test_device_matches(['tpu']):
+      self.skipTest('Only works for TPU')
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    shape = (16, 128)
+    s = NamedSharding(mesh, P('x'))
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+
+    def f(x):
+      y = x.T
+      # Constrain `y` to the original layout of `arr` because without it,
+      # the layout of `y` would be the transpose of `arr`.
+      y = with_layout_constraint(y, Layout(major_to_minor=(0,)))
+      return y * 2
+
+    out = jax.jit(jax.vmap(f))(arr)
+    self.assertEqual(out.format.layout.major_to_minor, (0, 1))
+
+  def test_eval_shape_format(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (128, 16)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+
+    custom_dll = Layout(major_to_minor=(0, 1))
+    l = Format(custom_dll, s)
+    arr = jax.device_put(np_inp, l)
+
+    @partial(jax.jit, in_shardings=l, out_shardings=l)
+    def f(x):
+      return x * x
+
+    out = jax.eval_shape(f, arr)
+    self.assertEqual(out.format, l)
+    self.assertEqual(out.sharding, s)
 
 
 if __name__ == '__main__':

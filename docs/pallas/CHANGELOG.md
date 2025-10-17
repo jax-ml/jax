@@ -13,6 +13,33 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* Removals
+
+  * Removed the previously deprecated
+    {class}`jax.experimental.pallas.tpu.TPUCompilerParams`,
+    {class}`jax.experimental.pallas.tpu.TPUMemorySpace`,
+    {class}`jax.experimental.pallas.tpu.TritonCompilerParams`.
+
+## Released with jax 0.7.1
+
+* New features:
+
+  * `pltpu.make_async_remote_copy` and `pltpu.semaphore_signal`'s `device_id`
+    argument now allows user to pass in a dictionary that only specifies the
+    device index along the communication axis, instead of the full coordinates.
+    It also supports TPU core id index.
+  * `jax.debug.print` now works in Pallas kernels and is the recommended way to
+    print.
+
+* Deprecations
+
+  * `pl.atomic_*` APIs have been moved to {mod}`jax.experimental.pallas.triton`.
+    Accessing them via {mod}`jax.experimental.pallas` is deprecated.
+  * `pl.load` and `pl.store` are deprecated. Use indexing or backend-specific
+    loading/storing APIs instead.
+
+## Released with jax 0.7.0
+
 * New functionality
 
   * Added a new decorator {func}`jax.experimental.pallas.loop` which allows

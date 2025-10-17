@@ -24,7 +24,7 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 
-namespace xla {
+namespace jax {
 
 // This is a workaround for AOT compilation until topologies and device
 // descriptions are better integrated into jax's Python code. It returns a
@@ -36,10 +36,10 @@ namespace xla {
 // (except it will raise errors if you try to run it, which is what we want for
 // AOT environments).
 nb_class_ptr<PyClient> MakeCompileOnlyClient(
-    std::shared_ptr<ifrt::PjRtTopology>);
+    std::shared_ptr<xla::ifrt::PjRtTopology>);
 
 void RegisterCompileOnlyClient(nanobind::module_& m);
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_PY_COMPILE_ONLY_CLIENT_H_

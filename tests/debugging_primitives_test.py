@@ -19,9 +19,9 @@ import unittest
 from absl.testing import absltest, parameterized
 import jax
 from jax import lax
-from jax.experimental import pjit
 from jax.interpreters import pxla
 from jax._src import ad_checkpoint
+from jax._src import config
 from jax._src import debugging
 from jax._src import dispatch
 from jax._src import test_util as jtu
@@ -90,9 +90,7 @@ class DebugCallbackTest(jtu.JaxTestCase):
 
     def mean(forest):
       norm = 1.0 / len(forest)
-      add = lambda a, b: a + b
-      m = norm * functools.reduce(add, forest)
-      return m
+      return norm * sum(forest)
 
     post_mean = mean(tuple(run(x) for x in inputs))
     jax.block_until_ready(post_mean)  # This shouldn't deadlock.
@@ -784,6 +782,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       b3: 2
       """))
 
+
 @jtu.thread_unsafe_test_class()  # printing isn't thread-safe
 class DebugPrintParallelTest(jtu.JaxTestCase):
 
@@ -795,12 +794,20 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     self.assertDictEqual(_count(text1.split("\n")), _count(text2.split("\n")))
 
   def test_ordered_print_not_supported_in_pmap(self):
-
     @jax.pmap
     def f(x):
       debug_print("{}", x, ordered=True)
-    with self.assertRaisesRegex(
-        ValueError, "Ordered effects not supported in `pmap`."):
+    if config.pmap_shmap_merge.value:
+      if jax.device_count() == 1:
+        self.skipTest("This test won't raise with 1 device.")
+      if jtu.device_under_test() == "gpu":
+        self.skipTest("Test does not raise under GPU.")
+      if jtu.device_under_test() == "tpu" and jtu.get_tpu_version() > 3:
+        self.skipTest("Test does not raise under TPU v4+.")
+      regex = "The following ordered effects are not supported for more than 1 device:*"
+    else:
+      regex = "Ordered effects not supported in `pmap`."
+    with self.assertRaisesRegex(ValueError, regex):
       f(jnp.arange(jax.local_device_count()))
 
   def test_unordered_print_works_in_pmap(self):
@@ -825,15 +832,15 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self._assertLinesEqual(output(), "hello: 0\nhello: 1\nhello: 2\nhello: 3\n")
 
-  def test_unordered_print_with_pjit(self):
+  def test_unordered_print_with_jit(self):
     def f(x):
       debug_print("{}", x, ordered=False)
       return x
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
     spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
     out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-    f = pjit.pjit(f, in_shardings=spec, out_shardings=out_spec)
-    with mesh:
+    f = jax.jit(f, in_shardings=spec, out_shardings=out_spec)
+    with jax.set_mesh(mesh):
       with jtu.capture_stdout() as output:
         f(np.arange(8, dtype=jnp.int32))
         jax.effects_barrier()
@@ -843,24 +850,24 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       y = x.dot(x)
       debug_print("{}", y, ordered=False)
       return y
-    f2 = pjit.pjit(f2, in_shardings=spec, out_shardings=out_spec)
-    with jax.sharding.Mesh(np.array(jax.devices()), ['dev']):
+    f2 = jax.jit(f2, in_shardings=spec, out_shardings=out_spec)
+    with jax.set_mesh(mesh):
       with jtu.capture_stdout() as output:
         f2(np.arange(8, dtype=jnp.int32))
         jax.effects_barrier()
       self.assertEqual(output(), "140\n")
 
-  def test_nested_pjit_debug_print(self):
+  def test_nested_jit_debug_print(self):
     def f(x):
       debug_print("{}", x)
       return x
 
     with jtu.capture_stdout() as output:
-      pjit.pjit(pjit.pjit(f))(jnp.arange(8))
+      jax.jit(jax.jit(f))(jnp.arange(8))
       jax.effects_barrier()
     self.assertEqual(output(), "[0 1 2 3 4 5 6 7]\n")
 
-  def test_unordered_print_of_pjit_of_while(self):
+  def test_unordered_print_of_jit_of_while(self):
     def f(x):
       def cond(carry):
         i, *_ = carry
@@ -874,8 +881,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
     spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
-    f = pjit.pjit(f, in_shardings=spec, out_shardings=spec)
-    with mesh:
+    f = jax.jit(f, in_shardings=spec, out_shardings=spec)
+    with jax.set_mesh(mesh):
       with jtu.capture_stdout() as output:
         f(np.arange(8, dtype=jnp.int32))
         jax.effects_barrier()
@@ -1165,7 +1172,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
 
 class InspectShardingTest(jtu.JaxTestCase):
 
-  def test_inspect_sharding_is_called_in_pjit(self):
+  def test_inspect_sharding_is_called_in_jit_sharded(self):
 
     if jtu.is_cloud_tpu():
       raise unittest.SkipTest("Inspect sharding is not supported on libtpu.")
@@ -1184,8 +1191,8 @@ class InspectShardingTest(jtu.JaxTestCase):
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
     spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
     out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-    f = pjit.pjit(f, in_shardings=spec, out_shardings=out_spec)
-    with mesh:
+    f = jax.jit(f, in_shardings=spec, out_shardings=out_spec)
+    with jax.set_mesh(mesh):
       f(np.arange(8, dtype=jnp.int32))
     self.assertTrue(is_called)
 
@@ -1228,23 +1235,6 @@ class InspectShardingTest(jtu.JaxTestCase):
 
     f(arr)
 
-  def test_inspect_sharding_3d_pjit(self):
-    def _cb(sd):
-      self.assertIsInstance(sd, jax.sharding.NamedSharding)
-      self.assertLen(sd.device_set, 2)
-
-    def f_(x):
-      debugging.inspect_array_sharding(x, callback=_cb)
-      return jnp.square(x)
-
-    f = pjit.pjit(f_)
-    mesh = jtu.create_mesh((2,), ('x'))
-    s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
-    arr = jax.device_put(np.arange(8).reshape(2, 2, 2), s)
-
-    with mesh:
-      f(arr)
-
 
 def _get_output_set(output, num_lines):
   """Return a set of strings where each string is num_lines."""
@@ -1275,13 +1265,13 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     def f_(x):
       debug_print("hello: {x}", x=x, partitioned=True)
 
-    f = pjit.pjit(f_)
+    f = jax.jit(f_)
     mesh = jtu.create_mesh((1, 1, 2,), ("x", "y", "z"))
     s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x", "y", "z"))
     arr = jax.device_put(np.arange(24).reshape(2, 3, 4), s)
 
     with jtu.capture_stdout() as output:
-      with mesh:
+      with jax.set_mesh(mesh):
         f(arr)
       jax.effects_barrier()
 
@@ -1310,14 +1300,14 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     def f_(x):
       debug_print("hello: {}", x, partitioned=True)
 
-    f = pjit.pjit(f_)
+    f = jax.jit(f_)
     mesh = jtu.create_mesh((1, 1, 2), ("x", "y", "z"))
     s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x", "y", "z"))
     arr = np.arange(24).reshape(2, 3, 4)
     arr = jax.device_put(arr, s)
 
     with jtu.capture_stdout() as output:
-      with mesh:
+      with jax.set_mesh(mesh):
         f(arr)
       jax.effects_barrier()
 
@@ -1347,7 +1337,7 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     def f_(x, y):
       debug_print("hello: {} {}", x, y, partitioned=True)
 
-    f = pjit.pjit(f_)
+    f = jax.jit(f_)
     mesh = jtu.create_mesh((2,), ("x"))
     s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
     x = np.arange(4).reshape(2, 2)
@@ -1356,7 +1346,7 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     y = jax.device_put(y, s)
 
     with jtu.capture_stdout() as output:
-      with mesh:
+      with jax.set_mesh(mesh):
         f(x, y)
       jax.effects_barrier()
 
@@ -1375,14 +1365,14 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     def f_(x):
       debug_print("hello: {}", x, partitioned=True)
 
-    f = pjit.pjit(f_)
+    f = jax.jit(f_)
     mesh = jtu.create_mesh((1, 1, 2), ("x", "y", "z"))
     s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x", "y", "z"))
     arr = np.arange(24).reshape(2, 3, 4)
     arr = jax.device_put(arr, s)
 
     with jtu.capture_stdout() as output:
-      with mesh:
+      with jax.set_mesh(mesh):
         f(arr)
       jax.effects_barrier()
 

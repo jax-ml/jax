@@ -33,7 +33,6 @@ from jax._src import source_info_util
 from jax._src import xla_bridge as xb
 from jax._src import mesh_utils
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
     SdyArray, SdyDim, UnspecifiedValue, AUTO,
@@ -42,7 +41,8 @@ from jax._src.named_sharding import (  # noqa: F401
     array_mapping_to_axis_resources, named_sharding_to_xla_hlo_sharding,
     modify_sdy_sharding_wrt_axis_types)
 from jax._src.op_shardings import (
-    are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
+    are_hlo_shardings_equal, get_num_ways_dim_sharded,
+    is_hlo_sharding_replicated)
 from jax._src.partition_spec import PartitionSpec
 from jax._src.util import safe_zip, use_cpp_class, use_cpp_method
 import numpy as np
@@ -55,10 +55,6 @@ Index = tuple[slice, ...]
 XLADeviceAssignment = tuple[Device, ...]
 # TODO(yashkatariya): Remove this after 3 months of deprecation.
 XLACompatibleSharding = jsharding.Sharding
-
-@dataclasses.dataclass(frozen=True)
-class TransferToMemoryKind:
-  memory_kind: str
 
 
 def hashed_index(x) -> int:
@@ -181,9 +177,7 @@ class SingleDeviceSharding(jsharding.Sharding):
 
   @property
   def is_fully_addressable(self) -> bool:
-    if config.enable_empty_arrays.value:
-      return xb.process_index(self._device.client) == self._device.process_index
-    return True
+    return xb.process_index(self._device.client) == self._device.process_index
 
 SingleDeviceSharding.__module__ = 'jax.sharding'
 
@@ -392,7 +386,7 @@ class GSPMDSharding(jsharding.Sharding):
       return False
     if self is other:
       return True
-    return (are_op_shardings_equal(self._hlo_sharding, other._hlo_sharding)
+    return (are_hlo_shardings_equal(self._hlo_sharding, other._hlo_sharding)
             and self.memory_kind == other.memory_kind
             and self._internal_device_list == other._internal_device_list)
 
@@ -459,7 +453,7 @@ class GSPMDSharding(jsharding.Sharding):
 
   @functools.cached_property
   def is_fully_replicated(self) -> bool:
-    return is_op_sharding_replicated(self._hlo_sharding)
+    return is_hlo_sharding_replicated(self._hlo_sharding)
 
   @functools.cached_property
   def is_fully_addressable(self) -> bool:
@@ -733,6 +727,7 @@ class NonUniformShardingError(ValueError):
   """Raised when sharding is not uniform across processes."""
 
 
+@util.cache(max_size=4096, trace_context_in_key=False)
 def get_process_index_and_count(
     tensor_sharding: jsharding.Sharding, dim: int, ndims: int) -> tuple[int, int]:
   """Get current process index and number of unique processes for given dimension.
@@ -981,12 +976,8 @@ def make_key_array_phys_sharding(aval, sharding):
     return sharding.update(spec=PartitionSpec(*sharding.spec, *trailing_spec))
   else:
     hlos = sharding._to_xla_hlo_sharding(aval.ndim)
-    if jaxlib_extension_version >= 360:
-      return GSPMDSharding(
-          sharding._internal_device_list, physical_hlo_sharding(aval, hlos))
-    else:
-      return GSPMDSharding(
-          sharding._device_assignment, physical_hlo_sharding(aval, hlos))
+    return GSPMDSharding(
+        sharding._internal_device_list, physical_hlo_sharding(aval, hlos))
 
 
 def physical_sharding(aval, sharding: jsharding.Sharding) -> jsharding.Sharding:
@@ -1003,12 +994,8 @@ def get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding):
   logical_op_sharding = phys_hlo_sharding.to_proto().clone()
   tad = partitions[:-elt_aval.ndim] + suffix
   logical_op_sharding.tile_assignment_dimensions = tad
-  if jaxlib_extension_version >= 360:
-    return GSPMDSharding(phys_sharding._internal_device_list,
-                         xc.HloSharding.from_proto(logical_op_sharding))
-  else:
-    return GSPMDSharding(phys_sharding._device_assignment,
-                         xc.HloSharding.from_proto(logical_op_sharding))
+  return GSPMDSharding(phys_sharding._internal_device_list,
+                       xc.HloSharding.from_proto(logical_op_sharding))
 
 def check_replicated_trailing_dims(sharding: jsharding.Sharding,
                                    logical_shape, dtype):
@@ -1076,6 +1063,8 @@ def flatten_spec(spec):
       out.append(s)
   return out
 
+
+@util.cache()
 def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
                           api_name: str, check_mesh_consistency: bool = True
                           ) -> NamedSharding | None:
@@ -1095,15 +1084,15 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
       raise ValueError(
           'Using PartitionSpec when you are not under a mesh context is not'
           ' allowed. Please pass a NamedSharding instance or enter into a mesh'
-          f' context via `jax.sharding.use_mesh`. Got {sharding}')
+          f' context via `jax.set_mesh`. Got {sharding}')
     sharding = NamedSharding(cur_mesh, sharding)
   else:
     # There are cases when you have multiple meshes set. Allow that for full
     # auto mode because of existing use cases.
     # TODO(yashkatariya): Remove this once we disallow different meshes and
     # fix the existing use cases.
-    if (sharding.mesh.abstract_mesh._are_all_axes_auto and
-        cur_mesh._are_all_axes_auto):
+    if (sharding.mesh.abstract_mesh.are_all_axes_auto and
+        cur_mesh.are_all_axes_auto):
       check_mesh_consistency = False
     if (check_mesh_consistency and not cur_mesh.empty and
         sharding.mesh.abstract_mesh != cur_mesh):
@@ -1202,48 +1191,36 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
       allow_split_physical_axes=allow_split_physical_axes)
   return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)
 
+class set_mesh:
+  __slots__ = ["prev_abstract_mesh", "prev_mesh"]
+
+  def __init__(self, mesh: mesh_lib.Mesh):
+    if not isinstance(mesh, mesh_lib.Mesh):
+      raise ValueError(
+          f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
+    if not core.trace_state_clean():
+      raise ValueError('`set_mesh` can only be used outside of `jax.jit`.')
+    if mesh._any_axis_manual:
+      raise ValueError(
+          f'mesh {mesh} contains manual axes which is not allowed when using'
+          ' `jax.set_mesh`. Please use `jax.shard_map` to enter into `Manual`'
+          ' mode instead.')
+
+    self.prev_abstract_mesh = config.abstract_mesh_context_manager.swap_local(
+        mesh.abstract_mesh)
+    self.prev_mesh = config.device_context.swap_local(mesh)
+
+  def __enter__(self):
+    pass
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    config.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
+    config.device_context.set_local(self.prev_mesh)
+
 
 @contextlib.contextmanager
-def use_mesh(mesh: mesh_lib.Mesh):
-  if not isinstance(mesh, mesh_lib.Mesh):
-    raise ValueError(
-        f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
-  if not core.trace_state_clean():
-    raise ValueError('`use_mesh` can only be used outside of `jax.jit`')
-
-  with mesh_lib.use_abstract_mesh(mesh.abstract_mesh), use_concrete_mesh(mesh):
-    yield
-
-def set_mesh(mesh: mesh_lib.Mesh | None) -> mesh_lib.Mesh | None:
-  """Sets the given concrete mesh globally and returns the previous concrete
-     mesh."""
-  if mesh is not None and not isinstance(mesh, mesh_lib.Mesh):
-    raise ValueError(
-        f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
-  assert mesh is None or isinstance(mesh, mesh_lib.Mesh)
-  if not core.trace_state_clean():
-    raise ValueError('`set_mesh` can only be used outside of `jax.jit`.')
-
-  if mesh is None:
-    config.abstract_mesh_context_manager.set_local(mesh_lib.empty_abstract_mesh)  # type: ignore
-  else:
-    config.abstract_mesh_context_manager.set_local(mesh.abstract_mesh)  # type: ignore
-
-  prev_mesh = config.device_context.swap_local(mesh)
-  return None if prev_mesh is config_ext.unset else prev_mesh
-
-@contextlib.contextmanager
-def use_concrete_mesh(mesh: mesh_lib.Mesh | None):
-  if not core.trace_state_clean():
-    raise ValueError('`use_concrete_mesh` can only be used outside of `jax.jit`.')
-  with _internal_use_concrete_mesh(mesh):
-    yield
-
-@contextlib.contextmanager
-def _internal_use_concrete_mesh(mesh: mesh_lib.Mesh | None):
-  if mesh is not None and not isinstance(mesh, mesh_lib.Mesh):
-    raise ValueError(
-        f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
+def _internal_use_concrete_mesh(mesh: mesh_lib.Mesh):
+  assert isinstance(mesh, mesh_lib.Mesh)
   prev_val = config.device_context.swap_local(mesh)
   try:
     yield

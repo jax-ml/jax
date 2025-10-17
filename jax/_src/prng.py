@@ -27,6 +27,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import ffi
+from jax._src import literals
 from jax._src import numpy as jnp
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
@@ -38,7 +39,6 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-from jax._src.interpreters import xla
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
@@ -168,11 +168,12 @@ class PRNGKeyArray(Array):
     _check_prng_key_data(impl, key_data)
     self._impl = impl
     self._consumed = False  # TODO(jakevdp): default to True here?
-    if isinstance(key_data, np.ndarray):
+    if isinstance(key_data, (np.ndarray, literals.TypedNdArray)):
       aval = core.get_aval(key_data)
       device = pxla.get_default_device()
-      key_data = pxla.batched_device_put(aval, SingleDeviceSharding(device),
-                                         [key_data], [device], committed=False)
+      key_data = pxla.batched_device_put(
+          aval, SingleDeviceSharding(device), [np.asarray(key_data)], [device],
+          committed=False)
     self._base_array = key_data
 
   def _replace_with(self, value: PRNGKeyArray):
@@ -344,8 +345,8 @@ def seed_with_impl(impl: PRNGImpl, seed: int | typing.ArrayLike) -> PRNGKeyArray
 
 
 def keys_shaped_array(impl, shape, sharding, vma):
-  aval = core.ShapedArray(shape, KeyTy(impl), vma=vma)
-  return core.update_aval_with_sharding(aval, sharding)
+  aval = core.ShapedArray(shape, KeyTy(impl))
+  return core.update_aval_with_sharding(aval, sharding, vma=vma)
 
 def base_arr_shape_to_keys_shape(impl, base_arr_shape):
   base_ndim = len(impl.key_shape)
@@ -482,7 +483,7 @@ class KeyTy(dtypes.ExtendedDType):
 
 
 core.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
-xla.canonicalize_dtype_handlers[PRNGKeyArray] = lambda x: x
+dtypes.canonicalize_value_handlers[PRNGKeyArray] = lambda x: x
 
 
 def key_array_shard_arg_handler(xs: Sequence[PRNGKeyArray], shardings, layouts,
@@ -497,9 +498,9 @@ def key_array_shard_arg_handler(xs: Sequence[PRNGKeyArray], shardings, layouts,
 pxla.shard_arg_handlers[PRNGKeyArray] = key_array_shard_arg_handler
 
 
-def key_array_constant_handler(x):
+def key_array_constant_handler(x, aval):
   arr = x._base_array
-  return mlir.get_constant_handler(type(arr))(arr)
+  return mlir.get_constant_handler(type(arr))(arr, aval)
 mlir.register_constant_handler(PRNGKeyArray, key_array_constant_handler)
 
 
@@ -597,9 +598,13 @@ batching.defvectorized(random_split_p)
 def random_split_abstract_eval(keys_aval, *, shape):
   # TODO(yashkatariya): random_split should take sharding as an arg too so we
   # don't choose None here?
-  new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
+  if keys_aval.sharding.mesh.empty:
+    out_sharding = core.get_cur_mesh_sharding()
+  else:
+    new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
+    out_sharding = keys_aval.sharding.update(spec=new_spec)
   return keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape),
-                           keys_aval.sharding.update(spec=new_spec), keys_aval.vma)
+                           out_sharding, keys_aval.vma)
 
 @random_split_p.def_impl
 def random_split_impl(keys, *, shape):
@@ -678,7 +683,14 @@ batching.defvectorized(random_bits_p)
 def random_bits_abstract_eval(keys_aval, *, bit_width, shape):
   out_shape = (*keys_aval.shape, *shape)
   out_dtype = dtypes.dtype(f'uint{bit_width}')
-  return core.ShapedArray(out_shape, out_dtype, vma=keys_aval.vma)
+  # TODO(yashkatariya): random_bits should take an out_sharding argument.
+  if keys_aval.sharding.mesh.empty:
+    out_sharding = core.get_cur_mesh_sharding()
+  else:
+    new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
+    out_sharding = keys_aval.sharding.update(spec=new_spec)
+  return core.ShapedArray(out_shape, out_dtype, sharding=out_sharding,
+                          vma=keys_aval.vma)
 
 @random_bits_p.def_impl
 def random_bits_impl(keys, *, bit_width, shape):

@@ -16,61 +16,24 @@
 from collections.abc import Callable
 
 import jax
-from jax._src import core as jax_core
+from jax import lax
 from jax._src import checkify
 from jax._src import config
+from jax._src import core as jax_core
 from jax._src.pallas import core as pl_core
-from jax._src.pallas import pallas_call
+from jax._src.pallas import utils as pl_utils
+import jax.numpy as jnp
+
+
+empty = jax.named_call(lax.empty)
 
 
 @jax.named_call
-def empty(
-    shape: tuple[int, ...],
-    dtype: jax.typing.DTypeLike,
-    *,
-    memory_space: object | None = None,
-    interpret: bool = False,
-    backend: pl_core.Backend | None = None,
-):
-  return empty_like(
-      jax.ShapeDtypeStruct(shape, dtype),
-      memory_space=memory_space,
-      interpret=interpret,
-      backend=backend,
-  )
+def empty_like(x: object):
+  return jax.tree.map(lambda leaf: empty(leaf.shape, leaf.dtype), x)
 
 
-@jax.named_call
-def empty_like(
-    x: object,
-    *,
-    memory_space: object | None = None,
-    interpret: bool = False,
-    backend: pl_core.Backend | None = None,
-):
-  if hasattr(x, 'memory_space'):
-    if memory_space is not None:
-      raise ValueError(
-          'memory_space cannot be specified for a MemoryRef object.'
-      )
-    memory_space = x.memory_space
-  if memory_space is None:
-    memory_space = pl_core.MemorySpace.ANY
-  return pallas_call.pallas_call(
-      # No-op to leave the out_ref uninitialized
-      lambda *_: None,
-      out_specs=jax.tree.map(
-          lambda _: pl_core.BlockSpec(memory_space=memory_space), x
-      ),
-      out_shape=x,
-      interpret=interpret,
-      backend=backend,
-  )()
-
-
-def empty_ref_like(
-    x: object, *, backend: pl_core.Backend | None = None
-) -> jax.Array:
+def empty_ref_like(x: object) -> jax.Array:
   """Returns an empty array Ref with same shape/dtype/memory space as x."""
   match x:
     case pl_core.MemoryRef():
@@ -78,12 +41,23 @@ def empty_ref_like(
     case jax.ShapeDtypeStruct():
       memory_space = pl_core.MemorySpace.ANY
     case _:
-      raise ValueError(f'alloc_ref does not support {type(x)}')
-  out = empty_like(x, backend=backend)
-  return jax_core.mutable_array(out, memory_space=memory_space)
+      raise ValueError(f'empty_ref_like does not support {type(x)}')
+  return jax_core.new_ref(empty_like(x), memory_space=memory_space)
 
 
-def when(condition):
+def when(
+    condition: bool | jax.typing.ArrayLike, /
+) -> Callable[[Callable[[], None]], Callable[[], None]]:
+  """Calls the decorated function when the condition is met.
+
+  Args:
+    condition: If a boolean, this is equivalent to ``if condition: f()``. If an
+      array, ``when`` produces a :func:`jax.lax.cond` with the decorated
+      function as the true branch.
+
+  Returns:
+    A decorator.
+  """
   def _wrapped(f):
     if isinstance(condition, bool):
       if condition:
@@ -97,11 +71,27 @@ def loop(
     lower: jax.typing.ArrayLike,
     upper: jax.typing.ArrayLike,
     *,
+    step: jax.typing.ArrayLike = 1,
     unroll: int | bool | None = None,
 ) -> Callable[[Callable[[jax.Array], None]], None]:
+  """Returns a decorator that calls the decorated function in a loop."""
+  zero: jax.typing.ArrayLike
+  if not all(map(jax_core.is_concrete, (lower, upper, step))):
+    idx_type = jnp.result_type(lower, upper, step)
+    lower = jax.lax.convert_element_type(lower, idx_type)
+    upper = jax.lax.convert_element_type(upper, idx_type)
+    step = jax.lax.convert_element_type(step, idx_type)
+    zero = jnp.array(0, dtype=idx_type)
+  else:
+    zero = 0
+
   def decorator(body):
     jax.lax.fori_loop(
-        lower, upper, lambda idx, _: body(idx), init_val=None, unroll=unroll
+        zero,
+        pl_utils.cdiv(upper - lower, step),
+        lambda idx, _: body(lower + idx * step),
+        init_val=None,
+        unroll=unroll,
     )
 
   return decorator

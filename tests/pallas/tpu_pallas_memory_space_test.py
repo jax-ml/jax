@@ -68,9 +68,7 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       x = pltpu.with_memory_space_constraint(x, memory_space=memory_space)
-      if color is None:
-        assert not hasattr(jax.typeof(x), 'memory_space')
-      else:
+      if color is not None:
         self.assertEqual(jax.typeof(x).memory_space, memory_space)
       x = g(x)
       return x
@@ -92,6 +90,7 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
       (pltpu.SMEM, 4),
       (pltpu.HBM, 0),
       (pltpu.ANY, None),
+      (pltpu.HOST, 5),
   )
   def test_basic_output_memory_space_constraint(self, memory_space, color):
     if not jtu.if_cloud_tpu_at_least(2025, 7, 10):
@@ -99,6 +98,11 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
     if (
         not jtu.if_cloud_tpu_at_least(2025, 7, 17)
         and memory_space == pltpu.SMEM
+    ):
+      self.skipTest('Needs a newer libTPU')
+    if (
+        not jtu.if_cloud_tpu_at_least(2025, 8, 14)
+        and memory_space == pltpu.HOST
     ):
       self.skipTest('Needs a newer libTPU')
 
@@ -117,7 +121,16 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
           out_specs=pl.BlockSpec(memory_space=memory_space),
       )(x)
 
-    @jax.jit
+    if memory_space == pltpu.HOST:
+      out_sharding = jax.sharding.NamedSharding(
+          jax.sharding.Mesh(jax.devices(), 'x'),
+          jax.sharding.PartitionSpec(),
+          memory_kind='pinned_host',
+      )
+    else:
+      out_sharding = None
+
+    @functools.partial(jax.jit, out_shardings=out_sharding)
     def f(x):
       x = g(x)
       return x
@@ -125,7 +138,7 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
     x = jnp.ones((8, 128), dtype=jnp.float32)
     y = f(x)
     np.testing.assert_array_equal(y, x)
-    hlo = jax.jit(f).lower(x).compile().as_text()
+    hlo = jax.jit(f, out_shardings=out_sharding).lower(x).compile().as_text()
     if color is None:
       self.assertIn('"output_memory_colors":[]', hlo)
     else:
@@ -158,10 +171,8 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
       self.skipTest('Needs a newer libTPU')
     @jax.jit
     def f(x):
-      x_ref = jax.experimental.mutable_array(x, memory_space=memory_space)
-      y_ref = jax.experimental.mutable_array(
-          pl.empty_like(x), memory_space=memory_space
-      )
+      x_ref = jax.new_ref(x, memory_space=memory_space)
+      y_ref = jax.new_ref(pl.empty_like(x), memory_space=memory_space)
 
       self.assertEqual(jax.typeof(x_ref).memory_space, memory_space)
       self.assertEqual(jax.typeof(y_ref).memory_space, memory_space)

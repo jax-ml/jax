@@ -21,8 +21,8 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
-from jax._src.pallas import fuser
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import fuser
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
@@ -250,6 +250,42 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     np.testing.assert_allclose(
         matmul_relu(x, y), matmul_relu_ref(x, y), atol=5e-5
     )
+
+  @parameterized.parameters('float32', 'bfloat16')
+  def test_matmul_plus_iota_custom_fusion(self, dtype):
+    def make_iota_custom_fusion(shape, dtype):
+      @fuser.custom_fusion
+      def iota(start=0):
+        return jnp.broadcast_to(
+            jnp.astype(jnp.arange(shape[-1]) + start, dtype),
+            shape)
+
+      iota.def_pull_block_spec(lambda bss: (None,))
+
+      @iota.def_eval_rule
+      def iota_eval_rule(ctx, _):
+        shape = ctx.out_block_specs[0].block_shape
+        i = ctx.out_block_indices[0][-1]
+        return (make_iota_custom_fusion(shape, dtype)(shape[-1] * i),)
+
+      return iota
+
+    iota_custom_fusion = make_iota_custom_fusion((512, 512), dtype)
+
+    @jax.jit
+    @fuser.fuse
+    def matmul_plus_iota(x, y):
+      return fusible_matmul(x, y).astype(dtype) + iota_custom_fusion()
+
+    @jit_no_excess_precision
+    def matmul_plus_iota_ref(x, y):
+      return mm_ref(x, y).astype(dtype) + iota_custom_fusion()
+
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (512, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+    np.testing.assert_allclose(
+        matmul_plus_iota(x, y), matmul_plus_iota_ref(x, y), atol=5e-5)
 
   @parameterized.parameters('float32', 'bfloat16')
   def test_matmul_with_bias(self, dtype):

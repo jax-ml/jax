@@ -71,6 +71,32 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     )
     self.assertEqual(cpu_mesh1, cpu_mesh2)
 
+  def test_serialization_roundtrip(self):
+    cpu_devices = colocated_python.colocated_cpu_devices(
+        jax.local_devices()[:1])
+
+    mesh = jax.sharding.Mesh(np.array(cpu_devices).reshape((1, 1)), ("x", "y"))
+    self.assertEqual(
+        serialization._deserialize(serialization._serialize(mesh)), mesh)
+
+    sharding1 = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec("x"))
+    self.assertEqual(
+        serialization._deserialize(serialization._serialize([sharding1])),
+        [sharding1])
+
+    sharding2 = jax.sharding.SingleDeviceSharding(
+        cpu_devices[0], memory_kind="pinned_host")
+    self.assertEqual(
+        serialization._deserialize(serialization._serialize((sharding2,))),
+        (sharding2,))
+
+    def func(x):
+      return x + 1
+
+    self.assertEqual(
+        serialization._deserialize(serialization._serialize(func))(1), func(1))
+
   def test_make_colocated_python_program(self):
     def add_one(x):
       return x + 1
@@ -79,11 +105,48 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     sharding = jax.sharding.SingleDeviceSharding(cpu_devices[0])
     sds = jax.ShapeDtypeStruct((), jnp.int32, sharding=sharding)
 
-    pickled_function = serialization._serialize(add_one)
+    fun_and_specialization = (
+        add_one,
+        None,  # dummy in_specs_treedef
+        None,  # dummy in_specs_leaves
+        None,  # dummy out_specs_treedef
+        None,  # dummy out_specs_leaves
+        None,  # dummy devices
+    )
+    pickled_function = serialization._serialize(fun_and_specialization)
     program = ifrt_programs.make_colocated_python_program(
         "add_one", pickled_function, [cpu_devices[0]], [sds], [sds]
     )
     del program
+
+  def test_serialize_with_shared_obj(self):
+    cpu_devices = colocated_python.colocated_cpu_devices(
+        jax.local_devices()[:1])
+    mesh = jax.sharding.Mesh(
+        np.array(cpu_devices).reshape((1, 1)),
+        ("long_axis_name_1", "long_axis_name_2"))
+    sharding1 = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec("long_axis_name_1"))
+    sharding2 = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec("long_axis_name_2"))
+
+    serialized1 = serialization._serialize([sharding1])
+    serialized2 = serialization._serialize([sharding1, sharding2])
+    serialized3 = serialization._serialize([sharding1, sharding1])
+
+    # The total serialized size of two shardings of a shared mesh should be less
+    # than twice the serialized size of a single sharding.
+    self.assertLess(len(serialized2), len(serialized1) * 2)
+
+    # The total serialized size of two identical shardings should be less than
+    # that of two shardings that only share the mesh.
+    self.assertLess(len(serialized3), len(serialized2))
+
+    self.assertEqual(serialization._deserialize(serialized1), [sharding1])
+    self.assertEqual(
+        serialization._deserialize(serialized2), [sharding1, sharding2])
+    self.assertEqual(
+        serialization._deserialize(serialized3), [sharding1, sharding1])
 
   def test_simple_function(self):
     @colocated_python.colocated_python
@@ -133,8 +196,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "No devices found. colocated_python function without input arguments"
-        " must be first specialized with devices.",
-    ):
+        " must be first specialized with devices."):
       _ = make_zero()
 
   def test_empty_input_with_devices_specialization(self):
@@ -532,8 +594,6 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       def __del__(self) -> None:
         colocated_python._testing_destroyed = True
 
-      # TODO(hyeontaek): Support method calls with no arguments and remove
-      # `x` parameter.
       def echo(self, x: jax.Array) -> jax.Array:
         return x
 
@@ -581,7 +641,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       # The first method call on a process triggers object initialization there.
       x = np.array(1)
       x = jax.device_put(x, sharding)
-      obj.echo(x)
+      jax.block_until_ready(obj.echo(x))
       self.assertEqual(jax.device_get(check_initialized()), True)
       self.assertEqual(jax.device_get(check_destroyed()), False)
 
@@ -604,9 +664,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
         self.value += np.asarray(x)
         return jax.device_put(self.value, x.sharding)
 
-      # TODO(hyeontaek): Support method calls with no arguments and remove
-      # `x` parameter.
-      def fetch(self, x: jax.Array) -> jax.Array:
+      def fetch_like(self, x: jax.Array) -> jax.Array:
         return jax.device_put(self.value, x.sharding)
 
     value = Value(np.array(5))
@@ -620,7 +678,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     out = jax.device_get(value.add(x))
     self.assertEqual(out, np.array(7))
 
-    out = jax.device_get(value.fetch(x))
+    out = jax.device_get(value.fetch_like(x))
     self.assertEqual(out, np.array(7))
 
   def test_object_with_captured_sharding(self):
@@ -667,6 +725,51 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, sharding2)
     out = jax.device_get(out)
     self.assertArraysEqual(out, np.array([7, 17]))
+
+  def test_object_method_specialization(self):
+    cpu_devices = colocated_python.colocated_cpu_devices(jax.local_devices())
+    cpu_devices = cpu_devices[:1]
+    sharding = jax.sharding.SingleDeviceSharding(cpu_devices[0])
+
+    @colocated_python.colocated_python_class
+    class Object:
+
+      def __init__(self, sharding: jax.sharding.Sharding) -> None:
+        self.sharding = sharding
+
+      def fetch_with_devices(self) -> jax.Array:
+        return jax.device_put(np.array(1, dtype=np.int32), self.sharding)
+
+      def fetch_with_output_spec(self) -> np.ndarray:
+        return jax.device_put(np.array(1, dtype=np.int32), self.sharding)
+
+    obj = Object(sharding)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "No devices found. colocated_python function without input arguments"
+        " must be first specialized with devices."):
+      jax.block_until_ready(obj.fetch_with_devices())
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "No devices found. colocated_python function without input arguments"
+        " must be first specialized with devices."):
+      jax.block_until_ready(obj.fetch_with_output_spec())
+
+    obj.fetch_with_devices = (
+        obj.fetch_with_devices.specialize(devices=cpu_devices))
+    out = obj.fetch_with_devices()
+    self.assertArraysEqual(out, np.array(1, dtype=np.int32))
+
+    # TODO(hyeontaek): Infer `devices` from the output spec computed using the
+    # output spec function.
+    obj.fetch_with_output_spec = obj.fetch_with_output_spec.specialize(
+        devices=cpu_devices,
+        out_specs_fn=lambda: jax.ShapeDtypeStruct(
+            shape=(), dtype=np.int32, sharding=sharding))
+    out = obj.fetch_with_output_spec()
+    self.assertArraysEqual(out, np.array(1, dtype=np.int32))
 
 
 if __name__ == "__main__":

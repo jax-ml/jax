@@ -32,7 +32,6 @@ from jax._src import test_util as jtu
 
 config.parse_flags_with_absl()
 
-numpy_version = jtu.numpy_version()
 
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
 nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
@@ -168,8 +167,11 @@ def _reducer_output_dtype(name: str, input_dtype: np.dtype, promote_integers: bo
       input_dtype = dtypes.to_numeric_dtype(input_dtype)
     if promote_integers:
       if dtypes.issubdtype(input_dtype, np.integer):
-        default_int = dtypes.canonicalize_dtype(
-            dtypes.uint if dtypes.issubdtype(input_dtype, np.unsignedinteger) else dtypes.int_)
+        default_int = (
+          dtypes.default_uint_dtype()
+          if dtypes.issubdtype(input_dtype, np.unsignedinteger)
+          else dtypes.default_int_dtype()
+        )
         if np.iinfo(input_dtype).bits < np.iinfo(default_int).bits:
           return default_int
   return input_dtype
@@ -457,8 +459,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     x = jnp.zeros((10,), dtype)
     where = jnp.ones(10, dtype=int)
     func = getattr(jnp, rec.name)
-    with self.assertDeprecationWarnsOrRaises("jax-numpy-reduction-non-boolean-where",
-                                             f"jnp.{rec.name}: where must be None or a boolean array"):
+    with self.assertRaisesRegex(
+        ValueError, f"jnp.{rec.name}: where must be None or a boolean array"):
       func(x, where=where, initial=jnp.array(0, dtype=dtype))
 
   @jtu.sample_product(rec=JAX_REDUCER_WHERE_NO_INITIAL_RECORDS)
@@ -467,8 +469,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     x = jnp.zeros((10,), dtype)
     where = jnp.ones(10, dtype=int)
     func = getattr(jnp, rec.name)
-    with self.assertDeprecationWarnsOrRaises("jax-numpy-reduction-non-boolean-where",
-                                             f"jnp.{rec.name}: where must be None or a boolean array"):
+    with self.assertRaisesRegex(
+        ValueError, f"jnp.{rec.name}: where must be None or a boolean array"):
       func(x, where=where)
 
   @parameterized.parameters(itertools.chain.from_iterable(
@@ -557,6 +559,26 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=check_dtypes,
                           rtol=tol, atol=tol)
 
+  @parameterized.parameters(
+      dict(shape=(2, 3, 4), axis=(1, 2)),
+      dict(shape=(2, 3, 4), axis=(2, 0)),
+      dict(shape=(2, 3, 4), axis=(0, 1, 2)),
+      dict(shape=(2, 3, 4), axis=(2, 0, 1)),
+      dict(shape=(2, 3, 4), axis=(2, 1, 0)),
+      dict(shape=(2, 3, 4, 5), axis=(3, 0)),
+      dict(shape=(2, 3, 4, 5), axis=(3, 0, 2, 1)),
+  )
+  def testAverageNDWeights(self, shape, axis):
+    weights_shape = tuple(shape[ax] for ax in axis)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, np.float32), rng(weights_shape, np.float32)]
+    np_fun = lambda x, weights: np.average(x, axis, weights)
+    jnp_fun = lambda x, weights: jnp.average(x, axis, weights)
+    tol = {dtypes.bfloat16: 2e-1, np.float16: 1e-2, np.float32: 1e-5,
+           np.float64: 1e-12, np.complex64: 1e-5}
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   @jtu.sample_product(
     test_fns=[(np.var, jnp.var), (np.std, jnp.std)],
     shape=[(5,), (10, 5)],
@@ -578,8 +600,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       # setup ddof and correction kwargs excluding case when correction is not specified
       ddof_correction_kwargs = {"ddof": ddof}
       if correction is not None:
-        key = "correction" if numpy_version >= (2, 0) else "ddof"
-        ddof_correction_kwargs[key] = correction
+        ddof_correction_kwargs["correction"] = correction
       # Numpy fails with bfloat16 inputs
       out = np_fn(x.astype(np.float32 if dtype == dtypes.bfloat16 else dtype),
                    dtype=np.float32 if out_dtype == dtypes.bfloat16 else out_dtype,
@@ -691,6 +712,48 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
                           rtol=tol)
 
   @jtu.sample_product(
+    shape=[(0,), (3, 0), (0, 5)],
+    dtype=jtu.dtypes.floating,
+    rowvar=[True, False],
+  )
+  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
+  @jax.default_matmul_precision('float32')
+  def testEmptyCov(self, shape, dtype, rowvar):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    ignore_warning = jtu.ignore_warning(
+      category=RuntimeWarning,
+      message="(Mean of empty slice|[Ii]nvalid value|Degrees of freedom|divide by zero)")
+    np_fun = ignore_warning(partial(np.cov, rowvar=rowvar))
+    jnp_fun = partial(jnp.cov, rowvar=rowvar)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @unittest.skipIf(jtu.numpy_version() < (2, 2, 0), "test covers NumPy 2.2+ behavior.")
+  @jtu.sample_product(
+      shape=[(1, 3), (3, 1)],
+      rowvar=[True, False]
+  )
+  def testCovTransposeBehavior(self, shape, rowvar):
+    # Tests compatibility with NumPy 2.2 API change:
+    # https://github.com/numpy/numpy/pull/27661
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, np.float32)]
+    np_fun = partial(np.cov, rowvar=rowvar, ddof=0)
+    jnp_fun = partial(jnp.cov, rowvar=rowvar, ddof=0)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  def testCovDtype(self):
+    x = jnp.arange(5)
+    result_bf16 = jnp.cov(x, dtype='bfloat16')
+    self.assertEqual(result_bf16.dtype, np.dtype('bfloat16'))
+
+    with self.assertRaisesRegex(ValueError, "cov: dtype must be a subclass of float or complex"):
+      jnp.cov(x, dtype=int)
+
+
+  @jtu.sample_product(
     [dict(op=op, q_rng=q_rng)
       for (op, q_rng) in (
         ("percentile", partial(jtu.rand_uniform, low=0., high=100.)),
@@ -751,8 +814,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   )
   def testQuantileDeprecatedArgs(self, op):
     func = getattr(jnp, op)
-    with self.assertDeprecationWarnsOrRaises("jax-numpy-quantile-interpolation",
-                                             f"The interpolation= argument to '{op}' is deprecated. "):
+    with self.assertRaisesRegex(TypeError, rf"{op}\(\) argument interpolation"):
       func(jnp.arange(4), 0.5, interpolation='linear')
 
   @unittest.skipIf(not config.enable_x64.value, "test requires X64")
@@ -801,6 +863,11 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     x = jnp.ones((16, 32, 1280, 4096), dtype='int8')
     self.assertEqual(1.0, jnp.mean(x))
     self.assertEqual(1.0, jnp.mean(x, where=True))
+
+  def testMeanVeryLargeArray(self):
+    # https://github.com/jax-ml/jax/pull/30769
+    x = jax.ShapeDtypeStruct((1 << 32,), jnp.dtype('float32'))
+    jax.eval_shape(jnp.mean, x)
 
   def testStdLargeArray(self):
     # https://github.com/jax-ml/jax/issues/15068

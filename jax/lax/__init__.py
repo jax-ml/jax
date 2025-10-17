@@ -18,6 +18,8 @@
 from jax._src.lax.lax import (
   DotDimensionNumbers as DotDimensionNumbers,
   RaggedDotDimensionNumbers as RaggedDotDimensionNumbers,
+  AccuracyMode as AccuracyMode,
+  Tolerance as Tolerance,
   Precision as Precision,
   PrecisionLike as PrecisionLike,
   DotAlgorithm as DotAlgorithm,
@@ -232,7 +234,8 @@ from jax._src.lax.lax import (
   transpose as transpose,
   transpose_p as transpose_p,
   xor_p as xor_p,
-  zeros_like_array as zeros_like_array,
+  empty as empty,
+  zeros_like_array as _deprecated_zeros_like_array,
 )
 from jax._src.lax.special import (
   bessel_i0e as bessel_i0e,
@@ -397,3 +400,23 @@ from jax.lax import linalg as linalg
 from jax._src.pjit import with_sharding_constraint as with_sharding_constraint
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
+
+_deprecations = {
+    # Added on July 24th 2025.
+    "zeros_like_array": (
+        (
+            "jax.lax.zeros_like_array is deprecated. Use jax.numpy.zeros_like instead."
+        ),
+        _deprecated_zeros_like_array,
+    ),
+}
+
+import typing as _typing
+if _typing.TYPE_CHECKING:
+  zeros_like_array = _deprecated_zeros_like_array
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _deprecated_zeros_like_array
+del _typing

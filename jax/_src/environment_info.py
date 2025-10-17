@@ -20,7 +20,6 @@ import subprocess
 import sys
 import textwrap
 
-from jax import version
 from jax._src import lib
 from jax._src import xla_bridge as xb
 import numpy as np
@@ -40,6 +39,8 @@ def print_environment_info(return_string: bool = False) -> str | None:
   Args: return_string (bool) : if True, return the string rather than printing
   to stdout.
   """
+  from jax import version  # pytype: disable=import-error
+
   # TODO(jakevdp): should we include other info, e.g. jax.config.values?
   python_version = sys.version.replace('\n', ' ')
   info = textwrap.dedent(f"""\

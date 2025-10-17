@@ -33,6 +33,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import traceback
 import types
 from typing import NamedTuple
@@ -49,7 +50,9 @@ from jax._src import api, api_util, dtypes, lib
 from jax._src import array
 from jax._src import config
 from jax._src import core
+from jax._src import dispatch
 from jax._src import linear_util as lu
+from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src import debugging
@@ -60,15 +63,13 @@ from jax._src.interpreters import ad as ad_internal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
-from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 from jax.errors import (UnexpectedTracerError, TracerIntegerConversionError,
                         ConcretizationTypeError, TracerBoolConversionError)
-from jax.experimental import pjit
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import xla
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 import numpy as np
@@ -266,12 +267,8 @@ class JitTest(jtu.BufferDonationTestCase):
     _check_instance(self, x)
     self.assertEqual(x.devices(), {device})
 
-  @parameterized.named_parameters(
-      ('jit', jax.jit),
-      ('pjit', pjit.pjit),
-  )
   @jtu.skip_on_devices("cpu")
-  def test_jit_default_device(self, module):
+  def test_jit_default_device(self):
     if jax.device_count() == 1:
       raise unittest.SkipTest("Test requires multiple devices")
 
@@ -281,7 +278,7 @@ class JitTest(jtu.BufferDonationTestCase):
     test_device = jax.devices()[-1]
     self.assertNotEqual(system_default_device, test_device)
 
-    f = module(lambda x: x + 1)
+    f = jax.jit(lambda x: x + 1)
     self.assertEqual(f(1).devices(), system_default_devices)
 
     with jax.default_device(test_device):
@@ -296,9 +293,9 @@ class JitTest(jtu.BufferDonationTestCase):
       with jtu.ignore_warning(category=DeprecationWarning,
                               message="backend and device argument"):
         self.assertEqual(
-            module(f, device=system_default_device)(1).devices(),
+            jax.jit(f, device=system_default_device)(1).devices(),
             system_default_devices)
-        out = module(f, backend="cpu")(1)
+        out = jax.jit(f, backend="cpu")(1)
       self.assertEqual(next(iter(out.devices())).platform, "cpu")
 
       # Sticky input device overrides default_device
@@ -698,8 +695,12 @@ class JitTest(jtu.BufferDonationTestCase):
     f.clear_cache()
     gc.collect()
     num_live = len(client.live_executables())
-    self.assertEqual(num_live_initial, num_live)
+    # You would hope that these would be equal, but in practice we sometimes
+    # observe *fewer* live executables after this code runs in threaded tests.
+    # I suspect this is an artifact of other caches and garbage collection.
+    self.assertGreaterEqual(num_live_initial, num_live)
 
+  @jtu.thread_unsafe_test()  # close_jaxpr cache is shared across threads
   def test_pe_close_jaxpr_cache_leak(self):
     @jax.jit
     def f(x):
@@ -945,35 +946,27 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertIsInstance(out.sharding, jax.sharding.SingleDeviceSharding)
     self.assertIsInstance(out, array.ArrayImpl)
 
-  @parameterized.named_parameters(
-      ('jit', jax.jit),
-      ('pjit', pjit.pjit)
-  )
   @jtu.skip_on_devices("cpu")
-  def test_explicit_backend(self, module):
+  def test_explicit_backend(self):
     f = lambda x: x + 1
     with jtu.ignore_warning(category=DeprecationWarning,
                             message="backend and device argument"):
-      jitted_f = module(f, backend=jtu.device_under_test())
-      jitted_f_cpu = module(f, backend="cpu")
+      jitted_f = jax.jit(f, backend=jtu.device_under_test())
+      jitted_f_cpu = jax.jit(f, backend="cpu")
 
     result = jitted_f(1.)
     result_cpu = jitted_f_cpu(1.)
     self.assertEqual(list(result.devices())[0].platform, jtu.device_under_test())
     self.assertEqual(list(result_cpu.devices())[0].platform, "cpu")
 
-  @parameterized.named_parameters(
-      ('jit', jax.jit),
-      ('pjit', pjit.pjit)
-  )
   @jtu.skip_on_devices("cpu")
-  def test_device_to_device_copy_between_backends(self, module):
+  def test_device_to_device_copy_between_backends(self):
     # b/186624243
     f = lambda x: x + 1
     with jtu.ignore_warning(category=DeprecationWarning,
                             message="backend and device argument"):
-      jitted_f = module(f, backend=jtu.device_under_test())
-      jitted_f_cpu = module(f, backend="cpu")
+      jitted_f = jax.jit(f, backend=jtu.device_under_test())
+      jitted_f_cpu = jax.jit(f, backend="cpu")
 
     x = np.arange(30).reshape(1, 10, 3)
     result = jitted_f(x)
@@ -1393,7 +1386,7 @@ class JitTest(jtu.BufferDonationTestCase):
             "exec_time_optimization_effort": 0.0,
         })(1.0)  # doesn't crash.
 
-    with self.assertRaisesRegex(_jax.XlaRuntimeError, "No such"):
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, "No such"):
       f_jit = jit(
           f,
           compiler_options={
@@ -1434,12 +1427,12 @@ class JitTest(jtu.BufferDonationTestCase):
     lowered = f_jit.lower(1.)
 
     self.assertRaisesRegex(
-        _jax.XlaRuntimeError, "No such compile option: 'invalid_key'",
+        jax.errors.JaxRuntimeError, "No such compile option: 'invalid_key'",
         lambda: lowered.compile(
             compiler_options={"invalid_key": "invalid_value"}))
 
     self.assertRaisesRegex(
-        _jax.XlaRuntimeError, "is not a valid bool value.",
+        jax.errors.JaxRuntimeError, "is not a valid bool value.",
         lambda: lowered.compile(
             compiler_options={"xla_embed_ir_in_executable": "invalid_value"}))
 
@@ -1454,7 +1447,7 @@ class JitTest(jtu.BufferDonationTestCase):
 
     # We should still error on invalid options after some valid compiles
     with self.assertRaisesRegex(
-        _jax.XlaRuntimeError, "No such compile option: 'invalid_key'"):
+        jax.errors.JaxRuntimeError, "No such compile option: 'invalid_key'"):
       jit(f, compiler_options={"invalid_key": "invalid_value"})(1.)
 
   def test_lower_compile_with_compiler_options_multiple(self):
@@ -1479,7 +1472,7 @@ class JitTest(jtu.BufferDonationTestCase):
 
     # We should still error on invalid options after some valid compiles
     self.assertRaisesRegex(
-        _jax.XlaRuntimeError, "No such compile option: 'invalid_key'",
+        jax.errors.JaxRuntimeError, "No such compile option: 'invalid_key'",
         lambda: lowered.compile(
             compiler_options={"invalid_key": "invalid_value"}))
 
@@ -1565,6 +1558,17 @@ class JitTest(jtu.BufferDonationTestCase):
     with self.assertRaisesRegex(RuntimeError, 'no_tracing'):
       with jax.no_tracing():
         _ = f(y)  # crash!
+
+  def test_no_execution(self):
+    @jax.jit
+    def f():
+      return jnp.ones(3)
+
+    f()  # no crash
+    with self.assertRaisesRegex(RuntimeError, 'no_execution'):
+      with jax.no_execution():
+        f()  # crash
+    f()  # no crash
 
 
 class APITest(jtu.JaxTestCase):
@@ -2071,6 +2075,39 @@ class APITest(jtu.JaxTestCase):
     tree_util.register_pytree_node(CustomNode, lambda x: (x, None), unflatten)
     jax.device_put(CustomNode([0.1]))
 
+  def test_device_put_literals(self):
+    self.assertEqual(
+        np.dtype(np.int32),
+        jax.device_put(literals.TypedInt(1, np.dtype(np.int32))).dtype)
+    self.assertEqual(
+        np.dtype(np.int64),
+        jax.device_put(literals.TypedInt(1, np.dtype(np.int64))).dtype)
+    self.assertEqual(
+        np.dtype(np.float32),
+        jax.device_put(literals.TypedFloat(1, np.dtype(np.float32))).dtype)
+    self.assertEqual(
+        np.dtype(np.float64),
+        jax.device_put(literals.TypedFloat(1, np.dtype(np.float64))).dtype)
+    self.assertEqual(
+        np.dtype(np.complex64),
+        jax.device_put(literals.TypedComplex(
+            1,np.dtype(np.complex64))).dtype)
+    if jtu.device_under_test() != "tpu":
+      # The TPU compiler does not support complex128.
+      self.assertEqual(
+          np.dtype(np.complex128),
+          jax.device_put(literals.TypedComplex(
+              1, np.dtype(np.complex128))).dtype)
+    self.assertEqual(
+        np.dtype(np.int32),
+        jax.device_put(literals.TypedNdArray(np.array([1], dtype=np.int32),
+                                             weak_type=False)).dtype)
+    self.assertEqual(
+        np.dtype(np.int64),
+        jax.device_put(literals.TypedNdArray(np.array([1], dtype=np.int64),
+                                             weak_type=False)).dtype)
+
+
   def test_vmap_inconsistent_sizes_constructs_proper_error_message(self):
     def f(x1, x2, g):
       return g(x1, x2)
@@ -2101,44 +2138,13 @@ class APITest(jtu.JaxTestCase):
   def test_vmap_inconsistent_sizes_constructs_proper_error_message_starargs(self):
     # regression test for https://github.com/jax-ml/jax/issues/26908
     def f(x, *args):
-      return x - functools.reduce(jnp.add, args)
+      return x - sum(args)
 
     with self.assertRaisesRegex(
       ValueError,
       "vmap got inconsistent sizes for array axes to be mapped:"
     ):
       jax.vmap(f)(jnp.ones(4), jnp.ones(2), jnp.ones(2))
-
-  def test_vmap_sentinel(self):
-
-    @jax.tree_util.register_dataclass
-    @dataclasses.dataclass
-    class Foo:
-      x: jax.Array
-
-      def __init__(self, x):
-        nonlocal saw_sentinel
-        if x is jax._src.api_util.SENTINEL:
-          saw_sentinel += 1
-        self.x = x
-
-    x = jnp.arange(10)
-
-    # assert that sentinel is seen once for vmap in_axes
-    saw_sentinel = 0
-    jax.vmap(lambda f: f.x)(Foo(x))
-    self.assertEqual(saw_sentinel, 1)
-
-    # assert that sentinel is seen once for vmap out_axes
-    saw_sentinel = 0
-    jax.vmap(Foo)(x)
-    self.assertEqual(saw_sentinel, 1)
-
-    # assert that sentinel is seen twice with vmap in_axes and out_axes
-    saw_sentinel = 0
-    jax.vmap(lambda f: Foo(f.x + 1))(Foo(x))
-    self.assertEqual(saw_sentinel, 2)
-
 
   def test_device_get_scalar(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
@@ -3077,6 +3083,14 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(value, 1.)
     self.assertEqual(grd, np.zeros(shape=(), dtype=float0))
 
+  def test_grad_of_bool_vjp3(self):
+    def cond(pred):
+      return lax.cond(pred, lambda _: 1., lambda _: 2., 1.)
+    value, f_vjp = api.vjp3(cond, True)
+    grd, = f_vjp(1.)
+    self.assertEqual(value, 1.)
+    self.assertEqual(grd, np.zeros(shape=(), dtype=float0))
+
   def test_grad_of_int_index(self):
     grad_x, grad_i = api.grad(lambda x, i: x[i], argnums=(0, 1),
                               allow_int=True)(np.ones(2), 1)
@@ -3102,10 +3116,11 @@ class APITest(jtu.JaxTestCase):
   def test_float0_error(self):
     # float0 is incompatible with other dtypes
     float0_array = jax.grad(lambda x: x+0., allow_int=True)(1)
+    self.assertEqual(float0_array.dtype, dtypes.float0)
     error_text = "float0s do not support any operations by design"
 
     with self.assertRaisesRegex(TypeError, error_text):
-      # dispatch via Array
+      # dispatch via Array.__add__ and hence jax.numpy
       _ = float0_array + jnp.zeros(())
 
     with self.assertRaisesRegex(TypeError, error_text):
@@ -3163,6 +3178,69 @@ class APITest(jtu.JaxTestCase):
     self.assertIn("stablehlo.cosine", stablehlo)
     self.assertIn("stablehlo.sine", stablehlo)
 
+  def test_constants_not_in_lowering_jit(self):
+    if not config.use_simplified_jaxpr_constants.value:
+      self.skipTest("Works only with simplified Jaxpr consts")
+    const_size = 100
+    const = jax.random.uniform(jax.random.key(0), (const_size,),
+                               dtype=np.float32)
+
+    @jax.jit
+    def f():
+      return jax.jit(lambda: const + 1.)()
+
+    with jtu.collect_lowered_jaxprs() as collection:
+      res = f()
+      res = f()
+    self.assertAllClose(const + 1., res)
+
+    for j, j_module in collection:
+      self.assertNotRegex(str(j_module),
+       f"stablehlo.constant dense.*tensor<{const_size}x")
+
+  def test_constants_not_in_lowering_scan(self):
+    if not config.use_simplified_jaxpr_constants.value:
+      self.skipTest("Works only with simplified Jaxpr consts")
+    const_size = 100
+    const = jax.random.uniform(jax.random.key(0), (const_size,),
+                               dtype=np.float32)
+    def f():
+      def scan_body(carry, x):
+        return const, None  # Closed over and return
+      return lax.scan(jax.jit(scan_body),
+                      jnp.zeros((const_size,), dtype=np.float32),  # ignored
+                      jnp.zeros((8, const_size), dtype=np.float32))
+
+    with jtu.collect_lowered_jaxprs() as collection:
+      res, _ = f()
+      res, _ = f()
+    self.assertAllClose(const, res)
+
+    for j, j_module in collection:
+      self.assertNotRegex(str(j_module),
+          f"stablehlo.constant dense.*tensor<{const_size}x")
+
+  def test_constants_not_in_lowering_cond(self):
+    if not config.use_simplified_jaxpr_constants.value:
+      self.skipTest("Works only with simplified Jaxpr consts")
+    const_size = 100
+    const = jax.random.uniform(jax.random.key(0), (const_size,),
+                               dtype=np.float32)
+
+    def f(x):
+      return lax.cond(x >= 0., jax.jit(lambda: const),
+                      lambda: const)
+
+    with jtu.collect_lowered_jaxprs() as collection:
+      res = f(42.)
+      f(43.)
+    self.assertAllClose(const, res)
+
+    for j, j_module in collection:
+      self.assertNotRegex(str(j_module),
+          f"stablehlo.constant dense.*tensor<{const_size}x")
+
+
   def test_concurrent_device_get_and_put(self):
     def f(x):
       for _ in range(100):
@@ -3186,47 +3264,66 @@ class APITest(jtu.JaxTestCase):
         x = jnp.array(0, dtype=dtype)
       self.assertEqual(x.dtype, dtypes.canonicalize_dtype(dtype))
 
-  def test_dtype_warning(self):
+  @jtu.sample_product(
+      explicit_x64_dtypes=[
+          config.ExplicitX64Mode.WARN,
+          config.ExplicitX64Mode.ERROR,
+          config.ExplicitX64Mode.ALLOW,
+      ],
+      enable_x64=[True, False],
+  )
+  def test_dtype_warning(self, explicit_x64_dtypes, enable_x64):
     # cf. issue #1230
-    if config.enable_x64.value:
-      raise unittest.SkipTest("test only applies when x64 is disabled")
+    @config.explicit_x64_dtypes(explicit_x64_dtypes)
+    @config.enable_x64(enable_x64)
+    def check(warn, nowarn):
+      if (
+          config.enable_x64.value
+          or config.explicit_x64_dtypes.value == config.ExplicitX64Mode.ALLOW
+      ):
+        if config.enable_x64.value or jaxlib_extension_version >= 377:
+          with self.assertNoWarnings():
+            warn()
+      elif config.explicit_x64_dtypes.value == config.ExplicitX64Mode.WARN:
+        with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype"):
+          warn()
+      else:
+        with self.assertRaisesRegex(ValueError, "Explicitly requested dtype"):
+          warn()
 
-    def check_warning(warn, nowarn):
-      with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype"):
-        warn()
       with self.assertNoWarnings():
         nowarn()
 
-    check_warning(lambda: jnp.array([1, 2, 3], dtype="float64"),
-                  lambda: jnp.array([1, 2, 3], dtype="float32"))
-    check_warning(lambda: jnp.array([1, 2, 3], dtype="float64"),
-                  lambda: jnp.array([1, 2, 3], dtype=float))
-    check_warning(lambda: jnp.ones(3, dtype=np.float64),
-                  lambda: jnp.ones(3))
-    check_warning(lambda: jnp.ones(3, dtype=np.float64),
-                  lambda: jnp.ones(3, dtype=float))
-    check_warning(lambda: jnp.ones_like(3, dtype=np.int64),
-                  lambda: jnp.ones_like(3, dtype=np.int32))
-    check_warning(lambda: jnp.zeros(3, dtype="int64"),
-                  lambda: jnp.zeros(3, dtype="int32"))
-    check_warning(lambda: jnp.zeros_like(3, dtype="float64"),
-                  lambda: jnp.zeros_like(3, dtype="float32"))
-    check_warning(lambda: jnp.full((2, 3), 1, dtype="int64"),
-                  lambda: jnp.full((2, 3), 1))
-    check_warning(lambda: jnp.ones(3).astype("float64"),
-                  lambda: jnp.ones(3).astype("float32"))
-    check_warning(lambda: jnp.eye(3, dtype=np.float64),
-                  lambda: jnp.eye(3))
-    check_warning(lambda: jnp.arange(3, dtype=np.float64),
-                  lambda: jnp.arange(3, dtype=np.float32))
-    check_warning(lambda: jnp.linspace(0, 3, dtype=np.float64),
-                  lambda: jnp.linspace(0, 3, dtype=np.float32))
-    check_warning(lambda: jnp.tri(2, dtype="float64"),
-                  lambda: jnp.tri(2, dtype="float32"))
-    check_warning(lambda: jnp.arange(1).astype("float64"),
-                  lambda: jnp.arange(1).astype(float))
-    check_warning(lambda: jnp.arange(1.0).astype("int64"),
-                  lambda: jnp.arange(1.0).astype(int))
+    check(lambda: jnp.array([1, 2, 3], dtype="float64"),
+          lambda: jnp.array([1, 2, 3], dtype="float32"))
+    check(lambda: jnp.array([1, 2, 3], dtype="float64"),
+          lambda: jnp.array([1, 2, 3], dtype=float))
+    check(lambda: jnp.ones(3, dtype=np.float64),
+          lambda: jnp.ones(3))
+    check(lambda: jnp.ones(3, dtype=np.float64),
+          lambda: jnp.ones(3, dtype=float))
+    check(lambda: jnp.ones_like(3, dtype=np.int64),
+          lambda: jnp.ones_like(3, dtype=np.int32))
+    check(lambda: jnp.zeros(3, dtype="int64"),
+          lambda: jnp.zeros(3, dtype="int32"))
+    check(lambda: jnp.zeros_like(3, dtype="float64"),
+          lambda: jnp.zeros_like(3, dtype="float32"))
+    check(lambda: jnp.full((2, 3), 1, dtype="int64"),
+          lambda: jnp.full((2, 3), 1))
+    check(lambda: jnp.ones(3).astype("float64"),
+          lambda: jnp.ones(3).astype("float32"))
+    check(lambda: jnp.eye(3, dtype=np.float64),
+          lambda: jnp.eye(3))
+    check(lambda: jnp.arange(3, dtype=np.float64),
+          lambda: jnp.arange(3, dtype=np.float32))
+    check(lambda: jnp.linspace(0, 3, dtype=np.float64),
+          lambda: jnp.linspace(0, 3, dtype=np.float32))
+    check(lambda: jnp.tri(2, dtype="float64"),
+          lambda: jnp.tri(2, dtype="float32"))
+    check(lambda: jnp.arange(1).astype("float64"),
+          lambda: jnp.arange(1).astype(float))
+    check(lambda: jnp.arange(1.0).astype("int64"),
+          lambda: jnp.arange(1.0).astype(int))
 
   def test_error_for_invalid_dtype(self):
     err_str = ("Error interpreting argument to .* as an abstract array. The problematic "
@@ -3457,7 +3554,7 @@ class APITest(jtu.JaxTestCase):
     def f(x, y):
       return x, y
 
-    x = np.ones((1, 1, 1))
+    x = np.ones((1, 1, 1), dtype=np.float32)
 
     # All defaults
     with jtu.assert_num_jit_and_pmap_compilations(1):
@@ -3825,7 +3922,7 @@ class APITest(jtu.JaxTestCase):
   def test_grad_of_token_consuming_primitive(self):
     # https://github.com/jax-ml/jax/issues/5463
     tokentest_p = core.Primitive("tokentest")
-    tokentest_p.def_impl(partial(xla.apply_primitive, tokentest_p))
+    tokentest_p.def_impl(partial(dispatch.apply_primitive, tokentest_p))
     tokentest_p.def_abstract_eval(lambda x, y: x)
     mlir.register_lowering(tokentest_p, lambda ctx, x, y: [x])
     ad.defjvp(tokentest_p, (lambda g, x, token: x), None)
@@ -4089,8 +4186,11 @@ class APITest(jtu.JaxTestCase):
 
     f = jax.jit(lambda x: x)
     a = AlexArray(jnp.arange(4))
-    msg = r"Triggering of __jax_array__\(\) during abstractification is deprecated."
-    with self.assertDeprecationWarnsOrRaises('jax-abstract-dunder-array', msg):
+    msg = (
+        r"Triggering __jax_array__\(\) during abstractification is no longer"
+        r" supported."
+    )
+    with self.assertRaisesRegex(ValueError, msg):
       f(a)
 
   @jtu.thread_unsafe_test()  # count_jit_tracing_cache_miss() isn't thread-safe
@@ -4352,6 +4452,23 @@ class APITest(jtu.JaxTestCase):
     expected = (6.,)
     self.assertEqual(actual, expected)
 
+  def test_lax_real_empty(self):
+    out = jax.lax.empty((2, 2), dtype=jnp.float32)
+    self.assertEqual(out.shape, (2, 2))
+    self.assertEqual(out.dtype, jnp.float32)
+
+  @jtu.run_on_devices('gpu', 'tpu')
+  def test_lax_empty_vmap(self):
+    inp = np.arange(8, dtype=jnp.int32).reshape(4, 2)
+
+    def f(x):
+      return jax.lax.empty(x.shape, x.dtype)
+
+    f = jax.jit(jax.vmap(f))
+    f(inp)  # doesn't crash
+    lowered_text = f.lower(inp).as_text()
+    self.assertIn('@AllocateBuffer() : () -> tensor<4x2xi32>', lowered_text)
+
   def test_leaked_tracer_issue_7613(self):
     # from https://github.com/jax-ml/jax/issues/7613
     import numpy.random as npr
@@ -4438,6 +4555,11 @@ class APITest(jtu.JaxTestCase):
         self.assertEqual(num_traces, nt)
       finally:
         config.update("jax_numpy_rank_promotion", allow_promotion)
+
+  def test_frexp_sharded(self):
+    mesh = jtu.create_mesh((1,), 'x')
+    x = jax.device_put(np.ones(8), jax.NamedSharding(mesh, jax.P('x')))
+    jax.jacrev(lambda x: jnp.frexp(x)[0])(x)  # doesn't crash
 
   def test_grad_negative_argnums(self):
     def f(x, y):
@@ -4580,6 +4702,9 @@ class APITest(jtu.JaxTestCase):
 
   @jtu.thread_unsafe_test()
   def test_cache_clear_pmap(self):
+    if config.pmap_shmap_merge.value:
+      self.skipTest("Already tested by pjit tests under pmap_shmap_merge=True.")
+
     @jax.pmap
     def f(i):
       return i * 2
@@ -4857,6 +4982,32 @@ class APITest(jtu.JaxTestCase):
     with config.explain_cache_misses(True):
       jax.jit(operator.add)(42, 24)
 
+  def test_cache_miss_explanations_are_thread_safe(self):
+    @jax.jit
+    def f(i):
+      return jnp.sum(i)
+
+    saw_exception = False
+
+    def thread(i0):
+      nonlocal saw_exception
+      try:
+        for i in range(i0, 100, 10):
+          if saw_exception:
+            break
+          with config.explain_cache_misses(True):
+            f(jnp.zeros(i))
+      except Exception:
+        saw_exception = True
+        raise
+
+    t = [threading.Thread(target=thread, args=(i,)) for i in range(10)]
+    for i in t:
+      i.start()
+    for i in t:
+      i.join()
+    self.assertFalse(saw_exception)
+
   @parameterized.named_parameters([
       {"testcase_name": f"{np.dtype(dtype)}", "dtype": dtype}
       for dtype in jtu.dtypes.custom_floats])
@@ -5104,7 +5255,10 @@ class APITest(jtu.JaxTestCase):
   def test_make_jaxpr_deduplicates_consts(self):
     # We don't promise this behavior in the public API, but we've had it for a
     # long time. This test checks we don't *unintentionally* break it.
-    c = np.ones(3)
+
+    # We are careful to choose a type that would not be canonicalized here,
+    # otherwise the jnp.array(...) calls will induce constant duplication.
+    c = np.ones(3).astype(np.float32)
 
     def find_constants(jaxpr: core.ClosedJaxpr):
       for j in it.chain([jaxpr], core.subjaxprs(jaxpr)):
@@ -5114,11 +5268,16 @@ class APITest(jtu.JaxTestCase):
               yield inv.val
 
     def uniq(lst):
-      return {id(v): v for v in lst}.values()
+      def key(a):
+        if isinstance(a, literals.TypedNdArray):
+          return np.asarray(a)
+        else:
+          return a
+      return {id(key(v)): v for v in lst}.values()
 
     @jax.make_jaxpr
     def f():
-      return c, jnp.sum(c), c, jnp.sum(c)
+      return jnp.array(c), jnp.sum(c), c, jnp.array(c), jnp.sum(c), c
 
     if config.use_simplified_jaxpr_constants.value:
       consts = uniq(find_constants(f()))
@@ -5129,16 +5288,19 @@ class APITest(jtu.JaxTestCase):
 
     d = np.zeros(3)
 
-    @jax.make_jaxpr
-    def g():
-      return jax.lax.cond(True,
-                          lambda: (c, jnp.sum(c), c),
-                          lambda: (c, jnp.sum(d), d))
-    if config.use_simplified_jaxpr_constants.value:
-      consts = uniq(find_constants(g()))
-    else:
-      consts = g().consts
-    self.assertLen(consts, 2)
+    # TODO(mattjj,phawkins): we broke this on purpose, as it probably isn't
+    # load-bearing (see above comment). If we wanted to fix it, we might share
+    # the constid cache across jaxpr traces, or we might hash on const value.
+    # @jax.make_jaxpr
+    # def g():
+    #   return jax.lax.cond(True,
+    #                       lambda: (c, jnp.sum(c), c),
+    #                       lambda: (c, jnp.sum(d), d))
+    # if config.use_simplified_jaxpr_constants.value:
+    #   consts = uniq(find_constants(g()))
+    # else:
+    #   consts = g().consts
+    # self.assertLen(consts, 2)
 
   # TODO(mattjj,dougalm): this test was flakey on CI; figure out how to enable?
   # @jtu.run_on_devices('cpu')
@@ -5167,7 +5329,25 @@ class APITest(jtu.JaxTestCase):
 
     self.assertNotIn('mul', str(f_vjp))
 
-  # TODO(mattjj,dougalm): re-enable when we set auto_dce=True by default
+  @jtu.thread_unsafe_test()  # make_user_context() is not thread-safe at the moment
+  def test_user_trace_context_hooks(self):
+    my_config = jax.make_user_context()
+
+    @jax.jit
+    def f(x):
+      return x
+
+    with jtu.count_jit_tracing_cache_miss() as tracing_count:
+      f(1.)
+      with my_config(2):
+        f(1.)
+      with my_config(3):
+        f(1.)
+        with my_config(4):
+          f(1.)
+    self.assertEqual(tracing_count(), 4)
+
+  # TODO(mattjj,dougalm): re-enable if we set auto_dce=True by default
   # @jtu.run_on_devices('cpu')
   # def test_implicit_dce(self):
   #   @api.jit
@@ -5179,6 +5359,14 @@ class APITest(jtu.JaxTestCase):
   #     assert r() is None, "oops, the constant wasn't DCE'd"
   #     return x + x
   #   foo(1.0)
+
+  def test_dce_sink_vmap(self):
+    def f(x):
+      jax.lax.dce_sink(x)
+      return x
+
+    jax.vmap(f)(jnp.arange(3.))  # don't crash
+
 
 class RematTest(jtu.JaxTestCase):
 
@@ -5684,7 +5872,7 @@ class RematTest(jtu.JaxTestCase):
       def named_f(*args):
         my_f = lambda: (f(*args),)
         f_ = lu.wrap_init(
-            my_f, debug_info=api_util.debug_info("test_remat", my_f, args, {}))
+            my_f, debug_info=api_util.debug_info("test_remat", my_f, (), {}))
         out, = core.call_p.bind(f_)
         return out
       return named_f
@@ -5982,7 +6170,10 @@ class RematTest(jtu.JaxTestCase):
       return lax.scan(body, x, None, length=2)[0]
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
-    jaxpr_text = str(f_vjp.args[0].func.args[1])
+    if config.vjp3.value:
+      jaxpr_text = str(f_vjp.jaxpr)
+    else:
+      jaxpr_text = str(f_vjp.args[0].func.args[1])
 
     # Two sine calls in the backward pass because while we don't save sines
     # within the (rematted) body function, we can save the scan carry, which
@@ -6125,6 +6316,16 @@ class RematTest(jtu.JaxTestCase):
     res = saved_residuals(f, 3.)
     self.assertStartsWith(res[1][1], "named 'foo'")
 
+  def test_name_pytree(self):
+    @partial(jax.remat, policy=lambda p, *_, **__: 'mul' in str(p))
+    def f(x):
+      x = checkpoint_name({'a': x * x}, 'foo')['a']
+      x = x * x
+      return x
+
+    res = saved_residuals(f, 3.)
+    self.assertStartsWith(res[1][1], "named 'foo'")
+
   def test_name_denylist(self):
     def f(x):
       y = checkpoint_name(jnp.multiply(2., 2.), 'y')
@@ -6180,21 +6381,24 @@ class RematTest(jtu.JaxTestCase):
       return z * ((x1 * x2) * y) * np.array([3.])
 
     res = saved_residuals(f, (2., 3.), y=4.)
-    self.assertLen(res, 6)
-    self.assertEqual(res[0][0].shape, (1,))
     if config.use_simplified_jaxpr_constants.value:
-      self.assertEqual(res[0][1], "from a literal")
+      self.assertLen(res, 5)
+      start_idx = 0
     else:
+      self.assertLen(res, 6)
+      self.assertEqual(res[0][0].shape, (1,))
       self.assertEqual(res[0][1], "from a constant")
-    self.assertEqual(res[1][0].shape, ())
-    self.assertEqual(res[1][1], "from the argument x[0]")
-    self.assertEqual(res[2][0].shape, ())
-    self.assertEqual(res[2][1], "from the argument x[1]")
-    self.assertEqual(res[3][0].shape, ())
-    self.assertEqual(res[3][1], "from the argument y")
-    self.assertEqual(res[4][0].shape, ())
-    self.assertStartsWith(res[4][1], "named 'z'")
-    self.assertEqual(res[5][0].shape, ())
+      start_idx = 1
+
+    self.assertEqual(res[start_idx][0].shape, ())
+    self.assertEqual(res[start_idx][1], "from the argument x[0]")
+    self.assertEqual(res[start_idx + 1][0].shape, ())
+    self.assertEqual(res[start_idx + 1][1], "from the argument x[1]")
+    self.assertEqual(res[start_idx + 2][0].shape, ())
+    self.assertEqual(res[start_idx + 2][1], "from the argument y")
+    self.assertEqual(res[start_idx + 3][0].shape, ())
+    self.assertStartsWith(res[start_idx + 3][1], "named 'z'")
+    self.assertEqual(res[start_idx + 4][0].shape, ())
 
   def test_saved_residuals_utility_jit(self):
     @jax.jit
@@ -6345,7 +6549,10 @@ class RematTest(jtu.JaxTestCase):
       return lax.scan(body, x, None, length=2)[0]
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
-    jaxpr = f_vjp.args[0].func.args[1]
+    if config.vjp3.value:
+      jaxpr = f_vjp.jaxpr
+    else:
+      jaxpr = f_vjp.args[0].func.args[1]
     jaxpr_text = str(jaxpr)
 
     self.assertEqual(jaxpr_text.count(' sin '), 3)
@@ -6544,7 +6751,10 @@ class RematTest(jtu.JaxTestCase):
       return lax.cond(x.sum() > 0, f, lambda x: x, x)
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
-    jaxpr_text = str(f_vjp.args[0].func.args[1])
+    if config.vjp3.value:
+      jaxpr_text = str(f_vjp.jaxpr)
+    else:
+      jaxpr_text = str(f_vjp.args[0].func.args[1])
 
     self.assertEqual(jaxpr_text.count(' sin '), 2)
     self.assertEqual(jaxpr_text.count(' cos '), 3)
@@ -6574,7 +6784,10 @@ class RematTest(jtu.JaxTestCase):
       return lax.cond(x.sum() > 0, f, lambda x: x, x)
 
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
-    jaxpr = f_vjp.args[0].func.args[1]
+    if config.vjp3.value:
+      jaxpr = f_vjp.jaxpr
+    else:
+      jaxpr = f_vjp.args[0].func.args[1]
     jaxpr_text = str(jaxpr)
 
     self.assertEqual(jaxpr_text.count(' sin '), 2)
@@ -6903,6 +7116,59 @@ class RematTest(jtu.JaxTestCase):
     s = vjp.jaxpr.pretty_print(name_stack=True)
     self.assertEqual(s.count('rematted_computation'), 1)
 
+  def test_remat_partial_cse_prevention(self):
+    @partial(jax.remat, prevent_cse=(False, True))
+    def layer(W, x):
+      return x @ W
+
+    def net(Ws, x):
+      for W in Ws:
+        x = layer(W, x)
+      return x
+
+    def loss(Ws, x):
+      return jnp.sum(net(Ws, x)**2)
+
+    Ws = [jnp.ones((3, 3)) for _ in range(2)]
+    x = jnp.ones(3)
+    txt = jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()
+    self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+ :')
+
+  def test_remat_partial_cse_prevention_all_false(self):
+    @partial(jax.remat, prevent_cse=(False, False))
+    def layer(W, x):
+      return x @ W
+
+    def net(Ws, x):
+      for W in Ws:
+        x = layer(W, x)
+      return x
+
+    def loss(Ws, x):
+      return jnp.sum(net(Ws, x)**2)
+
+    Ws = [jnp.ones((3, 3)) for _ in range(2)]
+    x = jnp.ones(3)
+    txt = jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()  # don't crash
+
+  def test_remat_partial_cse_prevention_pytree(self):
+    @partial(jax.remat, prevent_cse=({'W': False, 'x': True},))
+    def layer(dct):
+      return dct['x'] @ dct['W']
+
+    def net(Ws, x):
+      for W in Ws:
+        x = layer(dict(W=W, x=x))
+      return x
+
+    def loss(Ws, x):
+      return jnp.sum(net(Ws, x)**2)
+
+    Ws = [jnp.ones((3, 3)) for _ in range(2)]
+    x = jnp.ones(3)
+    txt = jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()
+    self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+ :')
+
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTest(jtu.JaxTestCase):
@@ -6923,7 +7189,7 @@ class JaxprTest(jtu.JaxTestCase):
 
     dtype = "f64" if config.enable_x64.value else "f32"
     if config.use_simplified_jaxpr_constants.value:
-      expected = f"{{ lambda ; a:f32[]. let  in (a, 1.0:{dtype}[], [0.]:f32[1]) }}"
+      expected = f"{{ lambda ; a:f32[]. let  in (a, 1.0:{dtype}[], [...]:f32[1]) }}"
     else:
       expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}[], a) }}"
     jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
@@ -7019,8 +7285,8 @@ class JaxprTest(jtu.JaxTestCase):
       jax.debug.print("{}", x)
       return x
     jaxpr = jax.make_jaxpr(f)(np.int32(0))
-    self.assertEqual(jaxpr.eqns[0].primitive, debugging.debug_callback_p)
-    self.assertStartsWith(str(jaxpr.eqns[0]), "debug_callback[", )
+    self.assertEqual(jaxpr.eqns[0].primitive, debugging.debug_print_p)
+    self.assertStartsWith(str(jaxpr.eqns[0]), "debug_print[")
 
 
 class DCETest(jtu.JaxTestCase):
@@ -7397,7 +7663,7 @@ class NamedCallTest(jtu.JaxTestCase):
 
     f = jit(funcdict[func])
 
-    int_dtype = dtypes.canonicalize_dtype(jnp.int64)
+    int_dtype = dtypes.default_int_dtype()
     int_max = np.iinfo(int_dtype).max
     int_min = np.iinfo(int_dtype).min
 

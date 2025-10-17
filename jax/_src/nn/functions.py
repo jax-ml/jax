@@ -44,6 +44,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import util as numpy_util
+from jax._src.numpy.reductions import _count
 from jax._src.numpy.reductions import Axis
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
@@ -518,6 +519,35 @@ def glu(x: ArrayLike, axis: int = -1) -> Array:
 logsumexp = _logsumexp
 
 
+@partial(api.jit, static_argnames=("axis", "keepdims"))
+def logmeanexp(
+    x: ArrayLike,
+    axis: Axis = None,
+    where: ArrayLike | None = None,
+    keepdims: bool = False,
+) -> Array:
+  r"""Log mean exp.
+
+  Computes the function:
+
+  .. math::
+    \text{logmeanexp}(x) = \log \frac{1}{n} \sum_{i=1}^n \exp x_i = \text{logsumexp}(x) - \log n
+
+  Args:
+    x: Input array.
+    axis: Axis or axes along which to reduce.
+    where: Elements to include in the reduction. Optional.
+    keepdims: Preserve the dimensions of the input.
+  Returns:
+    An array.
+  See also:
+    :func:`jax.nn.logsumexp`
+  """
+  lse = _logsumexp(x, axis=axis, where=where, keepdims=keepdims)
+  count = _count(x, axis=axis, where=where, keepdims=keepdims, dtype=lse.dtype)
+  return lse - jnp.log(count)
+
+
 @partial(api.jit, static_argnames=("axis",))
 def log_softmax(x: ArrayLike,
                 axis: Axis = -1,
@@ -606,7 +636,7 @@ def _softmax(
     x: ArrayLike,
     axis: Axis = -1,
     where: ArrayLike | None = None,
-    initial: ArrayLike | None = -np.inf) -> Array:
+    initial: ArrayLike = -np.inf) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   x_safe = x if where is None else jnp.where(where, x, initial)
   unnormalized = jnp.exp(x_safe - x_max)
@@ -625,7 +655,7 @@ def _softmax_deprecated(
     x: ArrayLike,
     axis: Axis = -1,
     where: ArrayLike | None = None,
-    initial: ArrayLike | None = -np.inf) -> Array:
+    initial: ArrayLike = -np.inf) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   x_safe = x if where is None else jnp.where(where, x, initial)
   unnormalized = jnp.exp(x_safe - lax.stop_gradient(x_max))
@@ -685,11 +715,10 @@ def standardize(x: ArrayLike,
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
 @partial(api.jit, static_argnames=("num_classes", "dtype", "axis"))
 def _one_hot(x: Array, num_classes: int, *,
-             dtype: Any, axis: int | AxisName) -> Array:
+             dtype: DTypeLike, axis: int | AxisName) -> Array:
   num_classes = core.concrete_dim_or_error(
       num_classes,
       "The error arose in jax.nn.one_hot argument `num_classes`.")
-  dtype = dtypes.canonicalize_dtype(dtype)
   try:
     output_pos_axis = util.canonicalize_axis(axis, x.ndim + 1)  # type: ignore[arg-type]
   except TypeError:
@@ -698,7 +727,7 @@ def _one_hot(x: Array, num_classes: int, *,
       raise ValueError(f"Expected num_classes to match the size of axis {axis}, "
                        f"but {num_classes} != {axis_size}") from None
     axis_idx = lax.axis_index(axis)
-    return jnp.asarray(_dot_product_attention_xla == axis_idx, dtype=dtype)
+    return jnp.asarray(x == axis_idx, dtype=dtype)
   axis = operator.index(axis)  # type: ignore[arg-type]
   lhs = lax.expand_dims(x, (axis,))
   rhs_shape = [1] * x.ndim
@@ -711,7 +740,7 @@ def _one_hot(x: Array, num_classes: int, *,
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
 def one_hot(x: Any, num_classes: int, *,
-            dtype: Any = dtypes.float_, axis: int | AxisName = -1) -> Array:
+            dtype: Any | None = None, axis: int | AxisName = -1) -> Array:
   """One-hot encodes the given indices.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length
@@ -745,6 +774,7 @@ def one_hot(x: Any, num_classes: int, *,
       'jax-nn-one-hot-float-input',
       f"jax.nn.one_hot input should be integer-typed; got dtype={x_arr.dtype}",
       stacklevel=1)
+  dtype = dtypes.default_float_dtype() if dtype is None else dtype
   return _one_hot(x_arr, num_classes, dtype=dtype, axis=axis)
 
 
@@ -937,7 +967,7 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
   probs = softmax(padded_logits, axis=-1).astype(key.dtype)
 
   encoded = jnp_einsum.einsum('BNTS,BSNH->BTNH', probs, value)
-  if q_seqlen is not None and kv_seqlen is not None:
+  if q_seqlen is not None:
     mask = _get_padding_mask_encoded(encoded.shape[1], q_seqlen)
     encoded *= mask.astype(encoded.dtype)
   return encoded
@@ -1111,7 +1141,7 @@ def dot_product_attention(
       a symmetric window (window_size, window_size).
     implementation: A string to control which implementation backend to use.
       Supported strings are `xla`, `cudnn` (cuDNN flash attention). It defaults
-      to `None`, which will automatically select the best available backend.
+      to `None`, which currently falls back to `xla`.
       Note, `cudnn` supports only a subset of shapes/dtypes, and an exception
       will be thrown if its not supported.
 
@@ -1174,9 +1204,6 @@ def dot_product_attention(
           local_window_size=local_window_size,
       )
     case 'cudnn':
-      if bias is not None:
-        bias = check_valid_bias_batch(bias, query_arr.shape[-2])
-        bias = jnp.asarray(bias)
       use_padding = (
            query_seq_lengths is not None or key_value_seq_lengths is not None
       )
@@ -1211,8 +1238,7 @@ def dot_product_attention(
           sliding_window_length=sliding_window,
       )
     case None:
-      # TODO(kaixih@nvidia) Defaults to XLA for now. Will automatically select
-      # best backend.
+      # TODO(kaixih@nvidia) Automatically select the best backend (defaults to XLA for now).
       out = _dot_product_attention_xla(
           query_arr, key_arr, value_arr, bias, mask, is_causal=is_causal,
           scale=scale_val, q_seqlen=query_seq_lengths,
@@ -1320,8 +1346,8 @@ def scaled_matmul(
             f"{a_scales.shape}, b_scales: {b_scales.shape}"
         )
 
-    preferred_element_type = dtypes.canonicalize_dtype(
-        np.dtype(preferred_element_type)
+    preferred_element_type = dtypes.check_and_canonicalize_user_dtype(
+        preferred_element_type, "scaled_matmul"
     )
     out = cudnn_scaled_matmul(
         a,
@@ -1447,3 +1473,27 @@ def scaled_dot_general(
   )
 
   return out
+
+@custom_derivatives.custom_jvp
+@api.jit
+def log1mexp(x: ArrayLike) -> Array:
+  r"""Numerically stable calculation of :math:`\log(1 - \exp(-x))`.
+
+  This function is undefined for :math:`x < 0`.
+
+  Based on `TensorFlow's implementation <https://www.tensorflow.org/probability/api_docs/python/tfp/math/log1mexp>`_.
+
+  References:
+    .. [1] Martin Mächler. `Accurately Computing log(1 − exp(−|a|)) Assessed by the Rmpfr package.
+      <https://cran.r-project.org/web/packages/Rmpfr/vignettes/log1mexp-note.pdf>`_.
+  """
+  numpy_util.check_arraylike("log1mexp", x)
+  x = jnp.asarray(x)
+  c = jnp.log(2.0)
+  return jnp.where(
+      x < c,
+      jnp.log(-jnp.expm1(-x)),
+      jnp.log1p(-jnp.exp(-x)),
+  )
+
+log1mexp.defjvps(lambda g, ans, x: g / jnp.expm1(x))

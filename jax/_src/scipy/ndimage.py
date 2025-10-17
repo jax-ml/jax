@@ -32,7 +32,7 @@ def _nonempty_prod(arrs: Sequence[Array]) -> Array:
   return functools.reduce(operator.mul, arrs)
 
 def _nonempty_sum(arrs: Sequence[Array]) -> Array:
-  return functools.reduce(operator.add, arrs)
+  return sum(arrs[1:], arrs[0])
 
 def _mirror_index_fixer(index: Array, size: int) -> Array:
     s = size - 1 # Half-wavelength of triangular wave
@@ -124,12 +124,6 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
     result = _round_half_away_from_zero(result)
   return result.astype(input_arr.dtype)
 
-
-"""
-    Only nearest neighbor (``order=0``), linear interpolation (``order=1``) and
-    modes ``'constant'``, ``'nearest'``, ``'wrap'`` ``'mirror'`` and ``'reflect'`` are currently supported.
-
-    """
 
 def map_coordinates(
     input: ArrayLike, coordinates: Sequence[ArrayLike], order: int,

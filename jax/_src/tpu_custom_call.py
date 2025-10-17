@@ -22,19 +22,20 @@ import collections.abc
 from collections.abc import Callable, Sequence
 import dataclasses
 import enum
-import functools
 import io
 import json
-from typing import Any
+from typing import Any, TypedDict
 
-import jax
+from jax._src import api
 from jax._src import config
 from jax._src import core
+from jax._src import dispatch
 from jax._src import sharding_impls
 from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
+from jax._src.frozen_dict import FrozenDict
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.lib import tpu
-from jax.interpreters import xla
 from jaxlib.mlir import ir
 from jaxlib.mlir.passmanager import PassManager
 
@@ -63,22 +64,35 @@ _MOSAIC_ALLOW_HLO = config.bool_state(
 #
 # We should also add a TODO to remove the conditional one month later.
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
-  # TODO: b/423649694 - remove the forward compatibility check after 2025-07-18.
-  if ctx.is_forward_compat() or is_cloud_tpu_older_than(2025, 6, 19):
-    return 4
-  # TODO: b/425259894 - remove the forward compatibility check after 2025-07-24
-  if ctx.is_forward_compat() or is_cloud_tpu_older_than(2025, 7, 25):
-    return 5
-  # TODO: b/427422863 - remove the forward compatibility check after 2025-07-26.
-  if ctx.is_forward_compat() or is_cloud_tpu_older_than(2025, 7, 27):
-    return 6
+  backend = ctx.module_context.get_backend(optional=True)
+  # TODO(naumsmogers): remove the forward compatibility check after 2025-09-14.
+  if (
+      ctx.is_forward_compat()
+      or backend is None
+      or is_cloud_tpu_older_than(2025, 8, 14, backend)
+  ):
+    return 7
   return None
 
 
 tpu_custom_call_p = core.Primitive("tpu_custom_call")
-tpu_custom_call_p.def_impl(
-    functools.partial(xla.apply_primitive, tpu_custom_call_p))
 tpu_custom_call_p.multiple_results = True
+dispatch.simple_impl(tpu_custom_call_p)
+
+
+def tpu_custom_call_batcher(axis_data, args, dims, **kwargs):
+  if axis_data.size != 1:
+    raise NotImplementedError(
+        "tpu_custom_call does not support non-trivial batching."
+    )
+  unbatched_args = tuple(
+      a if (d is batching.not_mapped or d is None) else a[d]
+      for a, d in zip(args, dims, strict=True)
+  )
+  out_unbatched = tpu_custom_call_p.bind(*unbatched_args, **kwargs)
+  out = tuple(o[None] for o in out_unbatched)
+  return out, (0,) * len(out)
+batching.fancy_primitive_batchers[tpu_custom_call_p] = tpu_custom_call_batcher
 
 
 class MemorySpace(enum.Enum):
@@ -86,6 +100,7 @@ class MemorySpace(enum.Enum):
   VMEM = enum.auto()
   SEMAPHORE_MEM = enum.auto()
   SMEM = enum.auto()
+  HOST = enum.auto()
 
   @property
   def color(self) -> int:
@@ -97,21 +112,25 @@ class MemorySpace(enum.Enum):
       return 2
     elif self == MemorySpace.SMEM:
       return 4
+    elif self == MemorySpace.HOST:
+      return 5
     else:
       raise ValueError("invalid memory space: " + str(self))
 
 
-@dataclasses.dataclass(frozen=True)
-class CostEstimate:
+class CostEstimate(TypedDict):
   flops: int
   transcendentals: int
   bytes_accessed: int
+  remote_bytes_transferred: int = 0
 
   def to_json(self) -> bytes:
     return (
-        f'{{"flops": {self.flops}, "transcendentals": {self.transcendentals},'
-        f' "bytes_accessed": {self.bytes_accessed}}}'
-    ).encode('ascii')
+        f'{{"flops": {self["flops"]}, "transcendentals":'
+        f' {self["transcendentals"]}, "bytes_accessed":'
+        f' {self["bytes_accessed"]}, "remote_bytes_transferred":'
+        f' {self["remote_bytes_transferred"]}}}'
+    ).encode("ascii")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -133,11 +152,16 @@ class CustomCallBackendConfig:
   disable_bounds_checks: bool
   active_core_count: int | None
   input_memory_spaces: tuple[MemorySpace | None, ...] | None
+  skip_device_barrier: bool
+  shape_invariant_numerics: bool
 
   def __post_init__(self):
     if self.allow_input_fusion is not None:
       object.__setattr__(self, "allow_input_fusion",
                          tuple(self.allow_input_fusion))
+    if self.cost_estimate is not None:
+      object.__setattr__(self, "cost_estimate",
+                         FrozenDict(self.cost_estimate))
 
   # We omit the body while printing, because primitive params get embedded
   # in HLO metadata, and the body blows up its size.
@@ -159,7 +183,9 @@ class CustomCallBackendConfig:
       config.write(str(self.collective_id).encode("ascii"))
     if self.cost_estimate is not None:
       config.write(b', "cost_estimate": ')
-      config.write(self.cost_estimate.to_json())
+      config.write(
+          json.dumps(dict(self.cost_estimate), sort_keys=True).encode("ascii")
+      )
     if self.needs_hlo_passes:
       config.write(b', "needs_hlo_passes": ')
       config.write(str(self.needs_hlo_passes).lower().encode("ascii"))
@@ -169,6 +195,9 @@ class CustomCallBackendConfig:
     if self.needs_layout_passes:
       config.write(b', "needs_layout_passes": ')
       config.write(str(self.needs_layout_passes).lower().encode("ascii"))
+    if self.shape_invariant_numerics:
+      config.write(b', "shape_invariant_numerics": ')
+      config.write(str(self.shape_invariant_numerics).lower().encode("ascii"))
     if self.allow_input_fusion is not None:
       config.write(b', "allow_input_fusion": [')
       for i, value in enumerate(self.allow_input_fusion):
@@ -219,6 +248,9 @@ class CustomCallBackendConfig:
     if self.disable_bounds_checks:
       config.write(b', "disable_bounds_checks": ')
       config.write(str(self.disable_bounds_checks).lower().encode("ascii"))
+    if self.skip_device_barrier:
+      config.write(b', "skip_device_barrier": ')
+      config.write(str(self.skip_device_barrier).lower().encode("ascii"))
     config.write(b"}")  # End of custom_call_config.
     if self.device_type is not None:
       config.write(b', "device_type": ')
@@ -497,6 +529,9 @@ def _lower_to_custom_call_config(
     ir_version: int | None = None,
     disable_bounds_checks: bool = False,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
+    skip_device_barrier: bool = False,
+    allow_collective_id_without_custom_barrier: bool = False,
+    shape_invariant_numerics: bool = False,
 ) -> CustomCallBackendConfig:
   device_type = _get_device_type(module)
   lowered_module_asm, (
@@ -528,6 +563,9 @@ def _lower_to_custom_call_config(
       disable_bounds_checks=disable_bounds_checks,
       active_core_count=active_core_count,
       input_memory_spaces=input_memory_spaces,
+      skip_device_barrier=skip_device_barrier,
+      allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
+      shape_invariant_numerics=shape_invariant_numerics,
   )
 
 
@@ -550,13 +588,16 @@ def _lowered_to_custom_call_config(
     disable_bounds_checks: bool = False,
     active_core_count: int | None = None,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
+    skip_device_barrier: bool = False,
+    allow_collective_id_without_custom_barrier: bool = False,
+    shape_invariant_numerics: bool = False,
 ):
   if has_custom_barrier:
     if collective_id is None:
       raise ValueError(
           "collective_id has to be specified when using a custom barrier"
       )
-  elif collective_id is not None:
+  elif collective_id is not None and not allow_collective_id_without_custom_barrier:
     raise ValueError(
         "collective_id has to be unspecified or None when not using a custom"
         " barrier"
@@ -583,6 +624,8 @@ def _lowered_to_custom_call_config(
       disable_bounds_checks,
       active_core_count=active_core_count,
       input_memory_spaces=input_memory_spaces,
+      skip_device_barrier=skip_device_barrier,
+      shape_invariant_numerics=shape_invariant_numerics,
   )
   return config
 
@@ -606,6 +649,9 @@ def lower_module_to_custom_call(
     disable_bounds_checks: bool = False,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None,
     metadata: Any | None = None,
+    skip_device_barrier: bool = False,
+    allow_collective_id_without_custom_barrier: bool = False,
+    shape_invariant_numerics: bool = False,
 ) -> Sequence[ir.Value]:
   config = _lower_to_custom_call_config(
       module,
@@ -620,6 +666,9 @@ def lower_module_to_custom_call(
       ir_version=get_ir_version(ctx),
       disable_bounds_checks=disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
+      skip_device_barrier=skip_device_barrier,
+      allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
+      shape_invariant_numerics=shape_invariant_numerics,
   )
   return _tpu_custom_call_lowering(
       ctx,
@@ -650,6 +699,7 @@ def as_tpu_kernel(
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     disable_bounds_checks: bool = False,
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
+    shape_invariant_numerics: bool = False,
     metadata: Any | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
@@ -665,6 +715,7 @@ def as_tpu_kernel(
       output_memory_spaces=output_memory_spaces,
       disable_bounds_checks=disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
+      shape_invariant_numerics=shape_invariant_numerics,
   )
   return _as_jax_callable(
       config,
@@ -696,6 +747,7 @@ def lowered_as_tpu_kernel(
     internal_scratch_in_bytes: int | None = None,
     disable_bounds_checks: bool = False,
     metadata: Any | None = None,
+    allow_collective_id_without_custom_barrier: bool = False,
 ) -> Callable[..., Any]:
   device_type = _get_device_type(lowered_module)
   lowered_module_asm = lowered_module.operation.get_asm(
@@ -716,6 +768,7 @@ def lowered_as_tpu_kernel(
       needs_hlo_passes=needs_hlo_passes,
       needs_layout_passes=needs_layout_passes,
       disable_bounds_checks=disable_bounds_checks,
+      allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
   )
   return _as_jax_callable(
       config,
@@ -755,4 +808,4 @@ def _as_jax_callable(
     )
     return result[0] if unpack else result
 
-  return jax.jit(apply_kernel)
+  return api.jit(apply_kernel)

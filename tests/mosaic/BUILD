@@ -32,8 +32,15 @@ jax_generate_backend_suites()
 jax_multiplatform_test(
     name = "gpu_test",
     srcs = ["gpu_test.py"],
+    config_tags_overrides = {
+        # TODO(b/448760413): Re-enable once llvm fixed.
+        "gpu_b200": {"notap": True},
+    },
     enable_backends = [],
-    enable_configs = ["gpu_h100"],
+    enable_configs = [
+        "gpu_h100",
+        "gpu_b200",
+    ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     shard_count = 8,
     tags = [
@@ -49,10 +56,34 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "gpu_torch_test",
+    srcs = ["gpu_torch_test.py"],
+    enable_backends = [],
+    enable_configs = [
+        "gpu_h100",
+        "gpu_b200",
+    ],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    tags = [
+        "noasan",  # ASAN is unsupported.
+    ],
+    deps = [
+        "//jax:mosaic_gpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+        "torch",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "gpu_test_multidevice",
     srcs = ["gpu_test_multidevice.py"],
     enable_backends = [],
-    enable_configs = ["gpu_h100x2"],
+    enable_configs = [
+        "gpu_h100x2",
+        "gpu_b200x2",
+    ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     tags = ["multiaccelerator"],
     deps = [
@@ -71,13 +102,16 @@ jax_multiplatform_test(
         "--gpus_per_process=1",
     ],
     enable_backends = [],
-    enable_configs = ["gpu_h100x2"],
+    enable_configs = [
+        "gpu_h100x2",
+        "gpu_b200x2",
+    ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_experimental_enable_nvshmem=true"},
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
         "//jax:mosaic_gpu",
-        "//jax:test_multiprocess",
+        "//jax/_src:test_multiprocess",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -90,7 +124,7 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:mosaic_gpu",
-        "//jax:test_util",
+        "//jax/_src:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -100,39 +134,33 @@ jax_py_test(
     deps = [
         "//jax",
         "//jax:mosaic_gpu",
-        "//jax:test_util",
+        "//jax/_src:test_util",
     ] + py_deps("absl/testing"),
 )
 
 jax_py_test(
     name = "gpu_layout_inference_test",
+    size = "small",
     srcs = ["gpu_layout_inference_test.py"],
     deps = [
         "//jax",
         "//jax:mosaic_gpu",
-        "//jax:test_util",
+        "//jax/_src:test_util",
     ] + py_deps("absl/testing"),
-)
-
-jax_py_test(
-    name = "gpu_transform_inference_test",
-    srcs = ["gpu_transform_inference_test.py"],
-    deps = [
-        "//jax",
-        "//jax:mosaic_gpu",
-        "//jax:test_util",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
 )
 
 jax_multiplatform_test(
     name = "matmul_test",
     srcs = ["matmul_test.py"],
     enable_backends = [],
-    enable_configs = ["gpu_h100"],
+    enable_configs = [
+        "gpu_h100",
+        "gpu_b200",
+    ],
     shard_count = 5,
+    tags = [
+        "noasan",
+    ],
     deps = [
         "//jax:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:matmul",
@@ -148,10 +176,14 @@ jax_multiplatform_test(
     name = "flash_attention",
     srcs = ["//jax/experimental/mosaic/gpu/examples:flash_attention.py"],
     enable_backends = [],
-    enable_configs = ["gpu_h100"],
+    enable_configs = [
+        "gpu_h100",
+        "gpu_b200",
+    ],
     main = "//jax/experimental/mosaic/gpu/examples:flash_attention.py",
     tags = [
         "manual",
+        "noasan",
         "notap",
     ],
     deps = [
@@ -166,8 +198,14 @@ jax_multiplatform_test(
     name = "flash_attention_test",
     srcs = ["flash_attention_test.py"],
     enable_backends = [],
-    enable_configs = ["gpu_h100"],
+    enable_configs = [
+        "gpu_h100",
+        "gpu_b200",
+    ],
     shard_count = 8,
+    tags = [
+        "noasan",  # Remove the tag once the CUPTI issue is fixed.
+    ],
     deps = [
         "//jax:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:flash_attention",
@@ -178,7 +216,10 @@ jax_multiplatform_test(
     name = "profiler_cupti_test",
     srcs = ["profiler_cupti_test.py"],
     enable_backends = [],
-    enable_configs = ["gpu_h100"],
+    enable_configs = [
+        "gpu_h100",
+        "gpu_b200",
+    ],
     tags = [
         "noasan",  # CUPTI leaks memory
         "nomsan",

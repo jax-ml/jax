@@ -54,8 +54,8 @@ def _fft_core(func_name: str, fft_type: lax_fft.FftType, a: ArrayLike,
 
   if s is not None:
     s = tuple(map(operator.index, s))
-    if np.any(np.less(s, 0)):
-      raise ValueError("Shape should be non-negative.")
+    if np.any(np.less_equal(s, 0)):
+      raise ValueError("Shape should be positive.")
 
   if s is not None and axes is not None and len(s) != len(axes):
     # Same error as numpy.
@@ -1176,7 +1176,8 @@ def fftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
     - :func:`jax.numpy.fft.rfftfreq`: frequencies for use with
       :func:`~jax.numpy.fft.rfft` and :func:`~jax.numpy.fft.irfft`.
   """
-  dtype = dtype or dtypes.canonicalize_dtype(dtypes.float_)
+  dtype = dtype or dtypes.default_float_dtype()
+
   if isinstance(n, (list, tuple)):
     raise ValueError(
           "The n argument of jax.numpy.fft.fftfreq only takes an int. "
@@ -1187,9 +1188,13 @@ def fftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
           "The d argument of jax.numpy.fft.fftfreq only takes a single value. "
           "Got d = %s." % list(d))
 
+  out_dtype = dtype
+  dtype = dtypes.finfo(dtypes.to_inexact_dtype(dtype)).dtype
+
   i = jnp.arange(n, dtype=dtype, device=device)
   k = ((i + n//2) % n - n//2)
-  return k / jnp.array(d * n, dtype=dtype, device=device)
+  result = k.astype(dtype) / jnp.array(d * n, dtype=dtype, device=device)
+  return result.astype(out_dtype)
 
 
 def rfftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
@@ -1215,7 +1220,7 @@ def rfftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
     - :func:`jax.numpy.fft.fftfreq`: frequencies for use with
       :func:`~jax.numpy.fft.fft` and :func:`~jax.numpy.fft.ifft`.
   """
-  dtype = dtype or dtypes.canonicalize_dtype(dtypes.float_)
+  dtype = dtype or dtypes.default_float_dtype()
   if isinstance(n, (list, tuple)):
     raise ValueError(
           "The n argument of jax.numpy.fft.rfftfreq only takes an int. "

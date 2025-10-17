@@ -36,7 +36,11 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
   CUtensorMapDataType data_type;
   int64_t elem_bitwidth;
   // types are defined in: LaunchContext._get_tma_desc()
-  if (elem_type == 0){
+  if (elem_type == 8){
+    // this is for int2s
+    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
+    elem_bitwidth = 2;
+  } else if (elem_type == 0){
     // this is for int4s
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
     elem_bitwidth = 4;
@@ -66,7 +70,7 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
     abort();
   }
 
-  // Pack 4 bit types in 8 bit pairs.
+  // Pack sub byte types in 8 bit pairs.
   int64_t elem_bytewidth;
   if (elem_bitwidth < 8) {
     // Check that it's a power of 2.

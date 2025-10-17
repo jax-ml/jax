@@ -37,8 +37,8 @@ import numpy as np
 config.parse_flags_with_absl()
 
 
-intx = dtypes.canonicalize_dtype(jnp.int64)
-floatx = dtypes.canonicalize_dtype(jnp.float64)
+intx = dtypes.default_int_dtype()
+floatx = dtypes.default_float_dtype()
 
 
 def _assert_ragged_equal_with_elementwise_mask(

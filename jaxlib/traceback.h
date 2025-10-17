@@ -20,13 +20,36 @@ limitations under the License.
 
 #include <optional>
 #include <string>
-#include <utility>
+#include <type_traits>
 #include <vector>
 
 // placeholder for index annotation headers
+#include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 
-namespace xla {
+namespace jax {
+
+// Entry in a traceback. Must be POD.
+struct TracebackEntry {
+  TracebackEntry() = default;
+  TracebackEntry(PyCodeObject* code, int lasti) : code(code), lasti(lasti) {}
+  PyCodeObject* code;
+  int lasti;
+
+  bool operator==(const TracebackEntry& other) const {
+    return code == other.code && lasti == other.lasti;
+  }
+  bool operator!=(const TracebackEntry& other) const {
+    return !operator==(other);
+  }
+};
+static_assert(std::is_trivial_v<TracebackEntry> == true);
+
+template <typename H>
+H AbslHashValue(H h, const TracebackEntry& entry) {
+  h = H::combine(std::move(h), entry.code, entry.lasti);
+  return h;
+}
 
 class Traceback : public nanobind::object {
  public:
@@ -39,7 +62,8 @@ class Traceback : public nanobind::object {
   std::string ToString() const;
 
   // Returns a list of (code, lasti) pairs for each frame in the traceback.
-  std::vector<std::pair<PyCodeObject*, int>> RawFrames() const;
+  // Frames are from innermost to outermost.
+  absl::Span<TracebackEntry const> RawFrames() const;
 
   struct Frame {
     nanobind::str file_name;
@@ -52,12 +76,12 @@ class Traceback : public nanobind::object {
   // Returns a list of Frames for the traceback.
   std::vector<Frame> Frames() const;
 
+  static void RegisterType(nanobind::module_& m);
+
  private:
   static bool Check(PyObject* o);
 };
 
-void BuildTracebackSubmodule(nanobind::module_& m);
-
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_TRACEBACK_H_

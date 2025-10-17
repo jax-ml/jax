@@ -46,7 +46,7 @@ class GroupInfo:
     """Get the group info for the current block."""
 
     tile = jnp.int32(tile)
-    group_boundaries = [group_lengths[i] for i in range(group_lengths.shape[0])]
+    group_boundaries = [group_lengths[i] for i in range(len(group_lengths))]
 
     # We usually only have very few groups, so we unroll the loop processing
     # them. Normally we'd break out of the loop early, once we'd have found our
@@ -89,16 +89,6 @@ class GroupInfo:
     )
 
 
-def _find_swizzle(dim_size_bits: int, what: str):
-  for swizzle_bytes in (128, 64, 32, 16):
-    if dim_size_bits % (swizzle_bytes * 8) == 0:
-      return swizzle_bytes
-  raise ValueError(
-      f"No valid out swizzle for {what}: its minor dimension has"
-      f" {dim_size_bits} bits, which is not a multiple of 128"
-  )
-
-
 def ragged_dot(
     lhs,  # (M, K)
     rhs,  # (G, K, N)
@@ -136,21 +126,30 @@ def ragged_dot(
     )
 
     @plgpu.nd_loop(grid, collective_axes="sm")
-    def mn_loop(idx):  # pylint: disable=unused-variable
-      block_ni, mi, remainder_ni = idx
+    def mn_loop(loop_info: plgpu.NDLoopInfo):  # pylint: disable=unused-variable
+      block_ni, mi, remainder_ni = loop_info.index
       ni = block_ni * pl.cdiv(n, block_n * grid_block_n) + remainder_ni
       group_info = GroupInfo.create(rows_per_expert_gmem, block_m, mi)
 
       def acc_scope(acc_ref):
         plgpu.emit_pipeline(
-            lambda _, lhs_smem, rhs_smem: plgpu.wgmma(acc_ref, lhs_smem, rhs_smem),
+            lambda _, lhs_smem, rhs_smem: plgpu.wgmma(
+                acc_ref, lhs_smem, rhs_smem
+            ),
             grid=(k // block_k,),
             in_specs=[
-                plgpu.BlockSpec((block_m, block_k), lambda k: (group_info.block, k)),
-                plgpu.BlockSpec((block_k, block_n), lambda k: (k, ni)),
+                plgpu.BlockSpec(
+                    (block_m, block_k),
+                    lambda k: (group_info.block, k),
+                    delay_release=1,
+                ),
+                plgpu.BlockSpec(
+                    (block_k, block_n),
+                    lambda k: (k, ni),
+                    delay_release=1,
+                ),
             ],
             max_concurrent_steps=max_concurrent_steps,
-            delay_release=1,
         )(lhs_gmem, rhs_gmem.at[group_info.group_id])
         return acc_ref[...]
 
@@ -269,7 +268,7 @@ def main(unused_argv):
       continue
     try:
       f = functools.partial(ragged_dot, group_sizes=group_sizes, **kwargs)
-      _, runtime = profiler.measure(f, mode="cupti")(lhs, rhs)
+      _, runtime = profiler.measure(f)(lhs, rhs)
     except ValueError as e:
       if "Mosaic GPU kernel exceeds available shared memory" not in str(e):
         raise

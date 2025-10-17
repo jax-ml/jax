@@ -106,14 +106,14 @@ def pallas_call_lowering(
 
   serialized_metadata = None
   if metadata is not None:
-    serialized_metadata = json.dumps(metadata)
+    serialized_metadata = json.dumps(dict(metadata))
 
   # TODO(b/394629193): Remove True once the bug is fixed.
   if True:
     # AOT Triton compilation is only available on jaxlib 0.5.1+.
     out_types = [
-      ir.RankedTensorType.get(bm.array_shape_dtype.shape,
-                              mlir.dtype_to_ir_type(bm.array_shape_dtype.dtype))
+      ir.RankedTensorType.get(bm.array_aval.shape,
+                              mlir.dtype_to_ir_type(bm.array_aval.dtype))
       for bm in grid_mapping.block_mappings_output
     ]
     backend_config = dict(

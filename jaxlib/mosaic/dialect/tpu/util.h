@@ -25,6 +25,7 @@ limitations under the License.
 #include <type_traits>
 #include <utility>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Compiler.h"
@@ -172,7 +173,7 @@ FailureOr<int8_t> getTypeBitwidth(Type ty) {
     }
   }
   if (isa<IntegerType, Float32Type, BFloat16Type, Float8E5M2Type,
-          Float8E4M3FNType, Float8E4M3B11FNUZType>(ty)) {
+          Float8E4M3FNType, Float8E4M3B11FNUZType, Float4E2M1FNType>(ty)) {
     return ty.getIntOrFloatBitWidth();
   }
   return emitError(UnknownLoc::get(ty.getContext()),
@@ -297,6 +298,15 @@ std::optional<int64_t> getIntConst(Value v);
 // `tpu.bitcast` and unary element-wise operations are excluded from the
 // results.
 SmallVector<Operation *> getNontrivialTransitiveUsers(Value v);
+
+// Return a mod b for a, b > 0, but adjusted to return b when a mod b == 0 such
+// that the result is strictly positive.
+template <typename U, typename V>
+auto positiveMod(U a, V b) {
+  DCHECK_GT(a, 0);
+  DCHECK_GT(b, 0);
+  return (a - 1) % b + 1;
+}
 
 }  // namespace mlir::tpu
 

@@ -27,7 +27,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes as _dtypes
 from jax._src import test_util as jtu
-from jax._src.lib import cuda_versions
 from jax._src.cudnn.scaled_matmul_stablehlo import (
     quantize,
     shape_normalization,
@@ -39,13 +38,6 @@ import jax
 import jax.numpy as jnp
 
 config.parse_flags_with_absl()
-
-def _is_required_cudnn_version_satisfied(min_cc, min_cudnn_version):
-  return (
-      jtu.is_cuda_compute_capability_at_least(min_cc) and
-      cuda_versions is not None and
-      cuda_versions.cudnn_get_version() >= min_cudnn_version
-  )
 
 def _check_cudnn_backend(fn, *args, **kwargs):
   lowered = jax.jit(fn).lower(*args, **kwargs)
@@ -121,8 +113,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
       dtype=[jnp.float16, jnp.bfloat16, jnp.float32],
   )
   def testScaledMatmul(self, contract, lhs_non_contract, dtype):
-    if not _is_required_cudnn_version_satisfied("10.0", 90700):
-      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible")
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
     # Check if float8_e8m0fnu is available
     configs = create_mxfp8_configs_if_available()
     batch, rhs_non_contract = 4, 256
@@ -144,8 +136,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
   )
   def testScaledDotGeneral(
       self, is_training, output_type):
-    if not _is_required_cudnn_version_satisfied("10.0", 90700):
-      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible")
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
 
     configs = create_mxfp8_configs_if_available()
     cast_to_representable = partial(
@@ -201,10 +193,12 @@ class NNFunctionsTest(jtu.JaxTestCase):
       impl=['cudnn', 'xla'],
   )
   def testDotProductAttention(self, dtype, group_num, use_vmap, impl):
-    if impl == 'cudnn' and not _is_required_cudnn_version_satisfied("8.0", 8904):
-      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
+    if impl == 'cudnn' and not jtu.is_cuda_compute_capability_at_least("8.0"):
+      raise unittest.SkipTest("Needs compute capability 8.0 or higher.")
     if impl == 'cudnn' and dtype == jnp.float32:
       raise unittest.SkipTest("cuDNN only supports fp16 or bf16.")
+    if impl == 'cudnn' and jtu.is_cuda_version_at_least(13, 0):
+      raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
     B, S, T, N, H, G = 2, 128, 128, 4, 32, group_num
     keys = random.split(random.PRNGKey(0), 5)
@@ -249,9 +243,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testDotProductAttentionMask(self, mask_mode):
     if isinstance(mask_mode, str):
       mask_mode = (mask_mode,)
-    min_cudnn_version = 90200 if 'sliding_window' in mask_mode else 8904
-    if not _is_required_cudnn_version_satisfied("8.0", min_cudnn_version):
-      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
+    if not jtu.is_cuda_compute_capability_at_least("8.0"):
+      raise unittest.SkipTest("Requires compute capability 8.0 or higher.")
+    if jtu.is_cuda_version_at_least(13, 0):
+      raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
     dtype = jnp.bfloat16
     B, S, T, N, H = 2, 128, 128, 4, 32
@@ -313,8 +308,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
       use_vmap=[False, True],
   )
   def testDotProductAttentionBiasGradient(self, batch_size, use_vmap):
-    if not _is_required_cudnn_version_satisfied("8.0", 8904):
-      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
+    if not jtu.is_cuda_compute_capability_at_least("8.0"):
+      raise unittest.SkipTest("Requires compute capability 8.0 or higher.")
+    if jtu.is_cuda_version_at_least(13, 0):
+      raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
     dtype = jnp.bfloat16
     B, S, N, H = batch_size, 128, 4, 32
@@ -357,13 +354,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
       _, f_vjp = jax.vjp(attn_ans, x, bias, mask)
       return f_vjp(x)
 
-    if batch_size != 1:
-      with self.assertRaisesRegex(ValueError, _cudnn_dbias_error):
-        _, dbias_ans, _ = bwd_ans(x, bias, mask)
-    else:
-      _, dbias_ref, _ = bwd_ref(x, bias, mask)
-      _, dbias_ans, _ = bwd_ans(x, bias, mask)
-      self.assertAllClose(dbias_ans, dbias_ref, rtol=0.1, atol=0.1)
+    _, dbias_ref, _ = bwd_ref(x, bias, mask)
+    _, dbias_ans, _ = bwd_ans(x, bias, mask)
+    self.assertAllClose(dbias_ans, dbias_ref, rtol=0.1, atol=0.1)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
@@ -719,6 +712,47 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
     with jax.checking_leaks():
       fwd()  # doesn't crash
+
+  @parameterized.product(
+      shape=[(5,), (3, 5), (2, 3, 5)],
+      use_where=[True, False],
+      keepdims=[True, False],
+  )
+  def testLogMeanExp(self, shape, use_where, keepdims):
+    x = self.rng().rand(*shape) * 2 - 1
+    axis = self.rng().randint(0, x.ndim)
+    if use_where:
+      where = self.rng().randint(0, 2, size=shape).astype(bool)
+    else:
+      where = None
+    got = nn.logmeanexp(x, axis=axis, where=where, keepdims=keepdims)
+    expected = jnp.log(jnp.mean(jnp.exp(x), axis=axis, where=where, keepdims=keepdims))
+    self.assertAllClose(got, expected, atol=1e-3)
+
+  def testLog1mExp(self):
+    x, expected = jnp.array([
+        [0.1, jnp.log(1 - jnp.exp(-0.1))],
+        [1.1, jnp.log(1 - jnp.exp(-1.1))],
+        [0, -jnp.inf],
+        [1, -0.45867515],
+        [1e2, 0.0],
+        [1e-5, jnp.log(1e-5)],
+        [-1, jnp.nan],
+        [-1e-2, jnp.nan],
+        [-1e2, jnp.nan],
+        [jnp.inf, 0.0],
+    ]).T
+    got = nn.log1mexp(x)
+    self.assertAllClose(got, expected, rtol=1e-3, atol=1e-3)
+
+  def testLog1mExpGrad(self):
+    check_grads(
+        nn.log1mexp,
+        (jnp.array([1e-2, 1e-1, 1e0, 1e1, 1e2]),),
+        order=1,
+        rtol=1e-2 if jtu.test_device_matches(["tpu"]) else 1e-3,
+        atol=1e-3,
+    )
 
 
 InitializerRecord = collections.namedtuple(

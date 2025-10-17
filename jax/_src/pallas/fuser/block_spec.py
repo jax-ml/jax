@@ -147,8 +147,8 @@ class KernelEvalContext:
   program_ids: tuple[int | jax.Array, ...] | None
   avals_in: tuple[core.AbstractValue, ...] | None
   avals_out: tuple[core.AbstractValue, ...] | None
-  in_block_specs: tuple[pallas_core.BlockSpec, ...] | None
-  out_block_specs: tuple[pallas_core.BlockSpec, ...] | None
+  in_block_specs: tuple[pallas_core.BlockSpec, ...]
+  out_block_specs: tuple[pallas_core.BlockSpec, ...]
   grid: tuple[int | jax.Array, ...] | None
   scalar_prefetch_handler: Any | None
   out_usages: tuple[set[Usage], ...] | None
@@ -358,7 +358,7 @@ def _pull_block_spec(
           jaxpr.invars,
           needed_invars,
           jaxpr.eqns[: jaxpr.eqns.index(eqn)],
-          debug_info=jaxpr.debug_info,
+          debug_info=jaxpr.debug_info._replace(result_paths=None),
       )
       scalar_prefetch_jaxpr, used_consts, used_invars = pe.dce_jaxpr_consts(
           scalar_prefetch_jaxpr_no_dce,
@@ -368,6 +368,7 @@ def _pull_block_spec(
       scalar_prefetch_jaxpr = scalar_prefetch_jaxpr.replace(
           constvars=[],
           invars=jaxpr.constvars,
+          debug_info=scalar_prefetch_jaxpr.debug_info.with_unknown_names()
       )
 
       def _scalar_prefetch_fn(jaxpr):
@@ -452,9 +453,6 @@ def make_kernel_function(
   unflat_in_block_arg_avals, unflat_in_block_kwarg_avals = (
       tree_util.tree_unflatten(in_tree, in_block_avals)
   )
-  unflat_arg_usages, unflat_kwarg_usages = tree_util.tree_unflatten(
-      in_tree, invar_usages
-  )
 
   def sds_like(x):
     if x is _no_aval:
@@ -471,39 +469,6 @@ def make_kernel_function(
     return bs_env.get(atom, pallas_core.no_block_spec)
 
   def kernel_fn(program_ids, scalar_prefetch, *args, **kwargs):
-    def _check_args(prefix, path, x, y, usage):
-      if usage == {Usage.SCALAR_PREFETCH}:
-        return
-      if y is _no_aval:
-        return
-      x_aval, y_aval = core.get_aval(x), core.get_aval(y)
-      if x_aval.shape != y_aval.shape:
-        raise ValueError(
-            f'Shapes do not match: actual={x_aval.shape} !='
-            f' expected={y_aval.shape}. Path:'
-            f' {prefix}{jax.tree_util.keystr(path)}. Expected type:'
-            f' {kernel_in_type}. Actual args: {(args, kwargs)}'
-        )
-      if x_aval.dtype != y_aval.dtype:
-        raise ValueError(
-            f'DTypes do not match: actual={x_aval.dtype} !='
-            f' expected={y_aval.dtype}. Path:'
-            f' {prefix}{jax.tree_util.keystr(path)}. Expected type:'
-            f' {kernel_in_type}. Actual args: {(args, kwargs)}'
-        )
-
-    jax.tree_util.tree_map_with_path(
-        functools.partial(_check_args, 'args'),
-        args,
-        kernel_in_type[0],
-        unflat_arg_usages,
-    )
-    jax.tree_util.tree_map_with_path(
-        functools.partial(_check_args, 'kwargs'),
-        kwargs,
-        kernel_in_type[1],
-        unflat_kwarg_usages,
-    )
     flat_args, in_tree_ = tree_util.tree_flatten((args, kwargs))
     if in_tree_ != tree_util.tree_structure(kernel_in_type):
       raise ValueError(f'Expected {kernel_in_type} PyTree, got {in_tree_}')
@@ -958,7 +923,7 @@ def _slice_rule(
     strides: tuple[int, ...] | None,
 ):
   del ctx
-  if strides is not None:
+  if strides is not None and not all(stride == 1 for stride in strides):
     raise NotImplementedError('strides are not supported yet')
   slice_sizes = tuple(
       int(end - start) for start, end in zip(start_indices, limit_indices)
@@ -1083,7 +1048,10 @@ def _swap_eval_rule(ctx: KernelEvalContext, ref, val, *idx, tree):
   assert hasattr(ref_aval, 'shape')
   if len(indexers) > 1:
     raise NotImplementedError('swap not supported yet')
-  indexer_aval = indexers_avals[0]
+  if not indexers_avals:
+    indexer_aval = indexing.NDIndexer.make_trivial_indexer(ref_aval.shape)
+  else:
+    indexer_aval = indexers_avals[0]
   for idx_aval, size in zip(indexer_aval.indices, ref_aval.shape, strict=True):
     if not isinstance(idx_aval, indexing.Slice):
       raise NotImplementedError('swap not supported yet')
@@ -1123,11 +1091,15 @@ def _get_pull_rule(
   indexers_avals = tree_util.tree_unflatten(tree, ctx.avals_in[1:])
   if len(indexers_avals) > 1:
     raise NotImplementedError('get not supported yet')
-  indexer_aval = indexers_avals[0]
+  if not indexers_avals:
+    indexer_aval = indexing.NDIndexer.make_trivial_indexer(ref_aval.shape)
+  else:
+    indexer_aval = indexers_avals[0]
   block_shape_iter = iter(block_spec.block_shape)
   block_shape = []
   if not all(
-      isinstance(bd, (int, pallas_core.Blocked, pallas_core.Squeezed, None))
+      bd is None
+      or isinstance(bd, (int, pallas_core.Blocked, pallas_core.Squeezed))
       for bd in block_spec.block_shape
   ):
     raise NotImplementedError('get not supported yet')
@@ -1175,8 +1147,12 @@ def _get_eval_rule(ctx: KernelEvalContext, ref, *idx, tree):
   assert hasattr(ref_aval, 'shape')
   if len(indexers) > 1:
     raise NotImplementedError('get not supported yet')
-  indexer = indexers[0]
-  indexer_aval = indexers_avals[0]
+  if not indexers:
+    indexer = indexing.NDIndexer.make_trivial_indexer(ref_aval.shape)
+    indexer_aval = indexer
+  else:
+    indexer = indexers[0]
+    indexer_aval = indexers_avals[0]
   block_indexer = []
 
   def _slice(i, b):
@@ -1534,10 +1510,16 @@ def _iota_eval_rule(
   block_spec = eval_ctx.out_block_specs[0]
   block_idx = eval_ctx.get_out_block_indices()[0]
   assert len(block_idx) == len(shape)
-  iota_shape = tuple(s for s in block_spec.block_shape if s is not None)
-  dim_ = dimension - sum(s is None for s in block_spec.block_shape[:dimension])
+  iota_shape = tuple(
+      _block_size(s) for s in block_spec.block_shape if s is not None
+  )
+  dim_ = dimension - sum(
+      _block_size(s) is None for s in block_spec.block_shape[:dimension]
+  )
   local_iota = jax.lax.broadcasted_iota(dtype, iota_shape, dim_)
-  return local_iota + block_idx[dimension] * block_spec.block_shape[dimension]
+  return local_iota + block_idx[dimension] * _block_size(
+      block_spec.block_shape[dimension]
+  )
 
 
 @register_pull_block_spec_rule(lax.iota_p)
@@ -1620,6 +1602,9 @@ def _reshape_pull_rule(
     new_grids = []
 
     for d, bd, merged in zip(shape_out, block_shape, merged_dims):
+      if bd is None:
+        bd = 1
+
       if not isinstance(bd, (int, pallas_core.Blocked)):
         raise NotImplementedError('reshape merge must use `Blocked` block size')
 
@@ -1705,6 +1690,60 @@ def _reshape_eval_rule(
   # basic reshape here.
   x = x.reshape(out_shape)
   return x
+
+
+@register_pull_block_spec_rule(lax.reduce_sum_p)
+def _reduce_sum_pull_rule(
+    ctx: PullRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    *,
+    axes: tuple[int, ...],
+    out_sharding,
+):
+  aval_in = ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  new_block_shape = []
+  block_shape = iter(block_spec.block_shape)
+  for i, d in enumerate(aval_in.shape):
+    if i in axes:
+      new_block_shape.append(pallas_core.Blocked(d))
+    else:
+      new_block_shape.append(next(block_shape))
+  assert next(block_shape, None) is None
+  def new_index_map(*args):
+    idx = block_spec.index_map(*args)
+    new_idx = []
+    idx_iter = iter(idx)
+    for i in range(len(aval_in.shape)):
+      if i in axes:
+        new_idx.append(0)
+      else:
+        new_idx.append(next(idx_iter))
+    assert next(idx_iter, None) is None
+    return tuple(new_idx)
+  new_block_spec = block_spec.replace(block_shape=tuple(new_block_shape),
+                                      index_map=new_index_map)
+  return [new_block_spec]
+
+
+@register_eval_rule(lax.reduce_sum_p)
+def _reduce_sum_eval_rule(
+    ctx: KernelEvalContext,
+    x,
+    *,
+    axes: tuple[int, ...],
+    out_sharding,
+):
+  aval_in = ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  block_shape = tuple(ctx.in_block_specs[0].block_shape)
+  for i in axes:
+    if _block_size(block_shape[i]) != aval_in.shape[i]:
+      raise NotImplementedError(
+          f'reduce_sum on partial blocks not supported: {aval_in=},'
+          f' {block_shape=}'
+      )
+  return jax.lax.reduce_sum(x, axes=axes)
 
 
 # Higher order primitives
@@ -2199,3 +2238,16 @@ def _reshape_push_rule(
 
     return pallas_core.BlockSpec(new_block_shape, new_index_map)
   raise NotImplementedError(f'reshape not supported yet: {aval_in}, {aval_out}')
+
+
+@register_push_block_spec_rule(lax.reduce_sum_p)
+def _reduce_sum_push_rule(
+    ctx: PushRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    *,
+    axes: tuple[int, ...],
+):
+  del ctx
+  if axes:
+   raise NotImplementedError('reduce_sum with no axes not supported yet')
+  return block_spec

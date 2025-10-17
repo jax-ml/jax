@@ -149,10 +149,10 @@ def matmul(a, b, tile_m=128, tile_n=128, swizzle=128):
   return plgpu.kernel(
       kernel,
       out_shape=jax.ShapeDtypeStruct((m, n), jnp.float16),
-      scratch_shapes=[
-          plgpu.SMEM((tile_m, tile_n), jnp.float16),
-          plgpu.ACC((tile_m, tile_n), jnp.float32)
-          ],
+      scratch_shapes=dict(
+          o_smem=plgpu.SMEM((tile_m, tile_n), jnp.float16),
+          acc=plgpu.ACC((tile_m, tile_n), jnp.float32)
+      ),
       # grid specifies the CUDA grid.
       # Instances of `kernel` will be executed in parallel over this grid.
       grid=(grid_m, grid_n),
@@ -310,9 +310,9 @@ def matmul_warp_specialized(a, b, tile_m=128, tile_n=128, swizzle=128,
   return plgpu.kernel(
       kernel,
       out_shape=jax.ShapeDtypeStruct((m, n), jnp.float16),
-      scratch_shapes=[
-          plgpu.SMEM((tile_m, tile_n * 2), jnp.float16)
-          ],
+      scratch_shapes=dict(
+          o_smem=plgpu.SMEM((tile_m, tile_n * 2), jnp.float16)
+      ),
       grid=(grid_m, grid_n // 2),
       grid_names=("m", "n"),
       num_threads=3,  # 2 compute, 1 memory.

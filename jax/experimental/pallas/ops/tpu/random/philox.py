@@ -46,7 +46,9 @@ def mul32_hi_lo(x: jax.Array, y: jax.Array) -> tuple[jax.Array, jax.Array]:
   cross_xy = xhi * ylo
   cross_yx = xlo * yhi
   carry = (cross_xy & 0xffff) + (cross_yx & 0xffff) + (xy_lo >> 16)
-  return xy_hi + (cross_xy >> 16) + (cross_yx >> 16) + (carry >> 16), xy_lo
+  result_hi = xy_hi + (cross_xy >> 16) + (cross_yx >> 16) + (carry >> 16)
+  result_lo = (carry << 16) + (xy_lo & 0xffff)
+  return result_hi, result_lo
 
 
 def philox_4x32(hi0, lo0, hi1, lo1, k_hi, k_lo, rounds = 10):

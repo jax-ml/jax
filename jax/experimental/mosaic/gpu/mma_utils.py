@@ -23,7 +23,6 @@ from jaxlib.mlir.dialects import llvm
 
 from . import utils
 
-# mypy: ignore-errors
 
 def tiled_memref_shape(ref: ir.Value):
   """Returns the 2D untiled shape and element type of a tiled 4D memref."""
@@ -48,6 +47,7 @@ def create_descriptor(
     logical_k_major: bool,  # False for LHS, True for RHS.
     # Soft deprecated. Use small tiling instead.
     large_tile: tuple[int, int] | None = None,
+    mma_bytewidth_k: int = 32,
 ):
   ref_ty = ir.MemRefType(ref.type)
   element_bitwidth = utils.bitwidth(ref_ty.element_type)
@@ -81,8 +81,9 @@ def create_descriptor(
 
   IGNORED = 0
   MMA_ATOM_ROWS = 8
-  MMA_BYTEWIDTH_K = 32
-  mma_width_k = 8 * MMA_BYTEWIDTH_K // element_bitwidth
+  mma_width_k = 8 * mma_bytewidth_k // element_bitwidth
+  desc_k_tiling: tuple[int, ...] = ()
+  desc_k_strides: tuple[int, ...]
   # As far as I can tell (which does not seem to fully align with the way MMA is
   # documented in PTX docs), MMA expects the data to be tiled into matrices
   # of shape 8 x swizzle_elems, with swizzle_elems dim being the fastest
@@ -100,10 +101,12 @@ def create_descriptor(
       # There are configurations where large tiles are same size as small ones.
       # We use the small path since it has fewer restrictions.
       and set(large_tile) != {MMA_ATOM_ROWS, swizzle_elems}
+      and mma_bytewidth_k == 32
   ):  # Large tiles.
     if k_tiling_stride == 1 and mn_tiling_stride == k_tiling:
       fastest_dim = Dim.K
       leading_byte_offset = IGNORED  # TC assumes K to be contiguous here.
+      assert k_tiling == k_group_size  # Else we need multi-level striding.
       # MMA atoms in a group are contiguous, so we increment by the MMA atom
       # size. However, we only have one level of striding, and so if the group
       # size exceeds a single large tile (and there is more than one tile) then
@@ -121,7 +124,7 @@ def create_descriptor(
             f"({mn_tiles}, {mn_tile_stride} != {math.prod(large_tile)})"
         )
       stride_byte_offset = MMA_ATOM_ROWS * swizzle
-      desc_k_stride = MMA_BYTEWIDTH_K  # K is contiguous.
+      desc_k_strides = (mma_bytewidth_k,)  # K is contiguous.
     elif k_tiling_stride == k_tiling and mn_tiling_stride == 1:
       if k_large_tile != mn_large_tile:
         raise ValueError(
@@ -136,7 +139,7 @@ def create_descriptor(
       stride_byte_offset = MMA_ATOM_ROWS * swizzle
       # Each row is swizzle bytes wide, and we read mma_width_k rows at a time.
       assert mn_large_tile == 8 * swizzle // element_bitwidth
-      desc_k_stride = mma_width_k * swizzle
+      desc_k_strides = (mma_width_k * swizzle,)
     else:
       raise ValueError("MMA tiles must be contiguous")
   else:  # Small tiles.
@@ -151,17 +154,28 @@ def create_descriptor(
           f" {element_bitwidth} = {swizzle_elems}), but got ({slower_tiling},"
           f" {faster_tiling})"
       )
-    if k_tiling_stride == 1 and mn_tiling_stride * element_bitwidth == 8 * swizzle:
+    if k_tiling_stride == 1 and mn_tiling_stride * element_bitwidth == MMA_ATOM_ROWS * swizzle:
       fastest_dim = Dim.K
       leading_byte_offset = IGNORED  # TC assumes K to be contiguous here.
       stride_byte_offset = to_byte_stride(mn_tile_stride)
-      desc_k_stride = MMA_BYTEWIDTH_K  # K is contiguous.
-    elif k_tiling_stride * element_bitwidth == 8 * swizzle and mn_tiling_stride == 1:
+      if k_tiling == k_group_size:
+        desc_k_strides = (mma_bytewidth_k,)  # K is contiguous.
+      elif k_group_size % k_tiling == 0:
+        desc_k_tiling = (k_tiling // mma_width_k,)
+        desc_k_strides = (MMA_ATOM_ROWS * swizzle, mma_bytewidth_k)
+      else:
+        if k_tiling < mma_width_k:
+          raise ValueError(
+              "K dimension tiling is smaller than the width of a single MMA"
+              " instruction. Increase swizzle."
+          )
+        raise NotImplementedError(f"{k_group_size=} must be larger than {k_tiling=}")
+    elif k_tiling_stride * element_bitwidth == MMA_ATOM_ROWS * swizzle and mn_tiling_stride == 1:
       fastest_dim = Dim.MN
       leading_byte_offset = to_byte_stride(mn_tile_stride)
       stride_byte_offset = to_byte_stride(k_tile_stride)
       k_tiles_per_mma = mma_width_k // MMA_ATOM_ROWS
-      desc_k_stride = to_byte_stride(k_tile_stride) * k_tiles_per_mma
+      desc_k_strides = (to_byte_stride(k_tile_stride) * k_tiles_per_mma,)
     else:
       raise ValueError("MMA tiles must be contiguous")
   desc_base = encode_descriptor(
@@ -172,14 +186,23 @@ def create_descriptor(
   )
 
   mn_tiles_per_group, rem = divmod(mn_group_size, mn_tiling)
-  assert not rem
+  if rem:
+    raise ValueError(
+        f"The M or N MMA instruction size was chosen to be {mn_group_size},"
+        " which is not a multiple of the tiling of the non-contracting"
+        f" dimension {mn_tiling}"
+    )
   mn_group_stride = to_byte_stride(mn_tile_stride) * mn_tiles_per_group
   k_tiles_per_group, rem = divmod(k_group_size, k_tiling)
-  assert not rem
+  if rem:
+    raise ValueError(
+        f"The K MMA instruction size was chosen to be {k_group_size}, which is"
+        f" not a multiple of the tiling of the contracting dimension {k_tiling}"
+    )
   k_group_stride = to_byte_stride(k_tile_stride) * k_tiles_per_group
 
   return (
-      (desc_base, desc_k_stride),
+      (desc_base, (desc_k_tiling, desc_k_strides)),
       (mn_group_stride, k_group_stride),
       fastest_dim,
   )

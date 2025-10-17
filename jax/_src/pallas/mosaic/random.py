@@ -156,9 +156,10 @@ def _make_stateful_sampler(sampler: SampleFnType) -> KeylessSampleFnType:
     new_sampler.__doc__ = "\n".join(doc_lines)
   return new_sampler
 
-bits = _make_stateful_sampler(jax_api_random.bits)  # type: ignore
-uniform = _make_stateful_sampler(jax_api_random.uniform)  # type: ignore
-bernoulli = _make_stateful_sampler(jax_api_random.bernoulli)  # type: ignore
+stateful_bits = _make_stateful_sampler(jax_api_random.bits)  # type: ignore
+stateful_uniform = _make_stateful_sampler(jax_api_random.uniform)  # type: ignore
+stateful_bernoulli = _make_stateful_sampler(jax_api_random.bernoulli)  # type: ignore
+stateful_normal = _make_stateful_sampler(jax_api_random.normal)  # type: ignore
 
 
 def sample_block(sampler_fn: SampleFnType,

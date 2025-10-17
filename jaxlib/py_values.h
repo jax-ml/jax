@@ -35,10 +35,10 @@ limitations under the License.
 #include "xla/python/nb_numpy.h"
 #include "xla/xla_data.pb.h"
 
-namespace xla {
+namespace jax {
 
 struct DevicePutResult {
-  DevicePutResult(ifrt::ArrayRef ifrt_array, bool weak_type)
+  DevicePutResult(xla::ifrt::ArrayRef ifrt_array, bool weak_type)
       : ifrt_array(std::move(ifrt_array)), weak_type(weak_type) {}
 
   // Disallow copy. `DevicePutResult` is expected to be consumed by one user.
@@ -48,7 +48,7 @@ struct DevicePutResult {
   DevicePutResult& operator=(DevicePutResult&&) noexcept = default;
 
   // Points to the on-device array.
-  ifrt::ArrayRef ifrt_array;
+  xla::ifrt::ArrayRef ifrt_array;
   bool weak_type;
 };
 
@@ -73,8 +73,8 @@ struct DevicePutOptions {
 // May throw exceptions from nanobind in addition to failing via an error
 // absl::Status. (We could catch these if needed, but there seems little point.)
 absl::StatusOr<DevicePutResult> DevicePutWithDevice(
-    nanobind::handle addressable_shard, ifrt::Client* ifrt_client,
-    ifrt::Device* ifrt_device, ifrt::MemoryKind ifrt_memory_kind,
+    nanobind::handle addressable_shard, xla::ifrt::Client* ifrt_client,
+    xla::ifrt::Device* ifrt_device, xla::ifrt::MemoryKind ifrt_memory_kind,
     const DevicePutOptions& options);
 
 // Copies a buffer-like object to be on device. This version is optimized for
@@ -96,20 +96,17 @@ absl::StatusOr<DevicePutResult> DevicePutWithDevice(
 // See the above `DevicePutWithDevice` for other details.
 absl::StatusOr<DevicePutResult> DevicePutWithSharding(
     absl::Span<const nanobind::handle> addressable_shards,
-    ifrt::Client* ifrt_client, const nb_dtype& dtype,
+    xla::ifrt::Client* ifrt_client, const xla::nb_dtype& dtype,
     absl::Span<const int64_t> shape, nanobind::handle sharding,
     const DevicePutOptions& options);
 
-// Returns `true` if `arg` is a JAX float0 array.
-bool IsFloat0(xla::nb_numpy_ndarray arg);
-
 // Describes the abstract shape and dtype of an argument.
 struct PyArgSignature {
-  PyArgSignature(PrimitiveType dtype, absl::Span<const int64_t> shape,
+  PyArgSignature(xla::PrimitiveType dtype, absl::Span<const int64_t> shape,
                  bool weak_type)
       : dtype(dtype), shape(shape.begin(), shape.end()), weak_type(weak_type) {}
   // This is the XLA dtype of the object.
-  const PrimitiveType dtype;
+  const xla::PrimitiveType dtype;
   const absl::InlinedVector<int64_t, 4> shape;
   // JAX arguments can be of weak type, if and only if they are Python scalars
   // or `DeviceArray` values such that `aval.weak_type` is true.
@@ -130,7 +127,7 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nanobind::handle arg,
                                                      bool jax_enable_x64);
 
 template <typename H>
-H AbslHashValue(H h, const xla::PyArgSignature& s) {
+H AbslHashValue(H h, const PyArgSignature& s) {
   h = H::combine(std::move(h), s.dtype);
   h = H::combine_contiguous(std::move(h), s.shape.data(), s.shape.size());
   return h;
@@ -156,6 +153,13 @@ struct DevicePutInfo {
   static std::unordered_map<std::string, int64_t> GetInfo();
 };
 
-}  // namespace xla
+// Tells the C++ code about the Python types TypedInt, TypedFloat,
+// TypedComplex, and TypedNdArray.
+void SetTypedIntType(nanobind::object t);
+void SetTypedFloatType(nanobind::object t);
+void SetTypedComplexType(nanobind::object t);
+void SetTypedNdArrayType(nanobind::object t);
+
+}  // namespace jax
 
 #endif  // JAXLIB_PY_VALUES_H_

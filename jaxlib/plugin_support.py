@@ -21,9 +21,9 @@ import warnings
 from .version import __version__ as jaxlib_version
 
 
-_PLUGIN_MODULE_NAME = {
-    "cuda": "jax_cuda12_plugin",
-    "rocm": "jax_rocm60_plugin",
+_PLUGIN_MODULE_NAMES = {
+    "cuda": ["jax_cuda13_plugin", "jax_cuda12_plugin"],
+    "rocm": ["jax_rocm7_plugin", "jax_rocm60_plugin"],
 }
 
 
@@ -44,10 +44,10 @@ def import_from_plugin(
     The imported submodule, or None if the plugin is not installed or if the
     versions are incompatible.
   """
-  if plugin_name not in _PLUGIN_MODULE_NAME:
+  if plugin_name not in _PLUGIN_MODULE_NAMES:
     raise ValueError(f"Unknown plugin: {plugin_name}")
   return maybe_import_plugin_submodule(
-      [f".{plugin_name}", _PLUGIN_MODULE_NAME[plugin_name]],
+      [f".{plugin_name}"] + _PLUGIN_MODULE_NAMES[plugin_name],
       submodule_name,
       check_version=check_version,
   )

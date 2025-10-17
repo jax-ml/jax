@@ -27,10 +27,10 @@ limitations under the License.
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
-#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/ValueRange.h"
@@ -66,7 +66,7 @@ class TpuOpsVerificationTest : public ::testing::Test {
 
   template <typename OpTy, typename... Args>
   OpTy Create(Args&&... args) {
-    OpTy op = builder_.create<OpTy>(std::forward<Args>(args)...);
+    OpTy op = OpTy::create(builder_, std::forward<Args>(args)...);
     ops_.push_back(op.getOperation());
     return op;
   }
@@ -105,11 +105,43 @@ class TpuOpsVerificationTest : public ::testing::Test {
         .getResult();
   }
 
+  Value ConstantI1Vector(ArrayRef<int64_t> shape, ArrayRef<bool> values) {
+    return Create<arith::ConstantOp>(
+               /*result=*/VectorType::get(shape, builder().getI1Type()),
+               /*value=*/builder().getBoolVectorAttr(values))
+        .getResult();
+  }
+
+  Value ConstantI8Vector(ArrayRef<int64_t> shape, ArrayRef<int8_t> values) {
+    return Create<arith::ConstantOp>(
+               /*result=*/VectorType::get(shape, builder().getI8Type()),
+               /*value=*/dyn_cast<TypedAttr>(
+                   builder().getDenseI8ArrayAttr(values)))
+        .getResult();
+  }
+
+  Value ConstantIndexVector(ArrayRef<int64_t> shape, ArrayRef<int64_t> values) {
+    return Create<arith::ConstantOp>(
+               /*result=*/VectorType::get(shape, builder().getIndexType()),
+               /*value=*/builder().getIndexVectorAttr(values))
+        .getResult();
+  }
+
   Value ConstantI32Vector(ArrayRef<int64_t> shape, ArrayRef<int32_t> values) {
     return Create<arith::ConstantOp>(
                /*result=*/VectorType::get(shape, i32()),
-               /*value=*/dyn_cast<TypedAttr>(
-                   builder().getDenseI32ArrayAttr(values)))
+               /*value=*/builder().getI32VectorAttr(values))
+        .getResult();
+  }
+
+  Value ConstantBF16Vector(ArrayRef<int64_t> shape, float value) {
+    VectorType bf16_vector_type =
+        VectorType::get(shape, builder().getBF16Type());
+    return Create<arith::ConstantOp>(
+               /*result=*/bf16_vector_type,
+               /*value=*/SplatElementsAttr::get(
+                   bf16_vector_type,
+                   builder().getFloatAttr(builder().getBF16Type(), value)))
         .getResult();
   }
 
@@ -135,7 +167,7 @@ class TpuOpsVectorSubcoreVerificationTest : public TpuOpsVerificationTest {
 
 TEST_F(TpuOpsVerificationTest, VectorLoadVerificationWorks) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8});
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
   auto vl = Create<VectorLoadOp>(
       /*result=*/VectorType::get({8}, i32()),
       /*base=*/memref,
@@ -149,7 +181,7 @@ TEST_F(TpuOpsVerificationTest, VectorLoadVerificationWorks) {
 TEST_F(TpuOpsVerificationTest,
        VectorLoadRankOfStridesDoesNotMatchBaseMemrefRank) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8});
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
   auto vl = Create<VectorLoadOp>(
       /*result=*/VectorType::get({8}, i32()),
       /*base=*/memref,
@@ -161,7 +193,7 @@ TEST_F(TpuOpsVerificationTest,
 
 TEST_F(TpuOpsVerificationTest, VectorLoadStridesFeatureNotImplemented) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8});
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
   auto vl = Create<VectorLoadOp>(
       /*result=*/VectorType::get({8}, i32()),
       /*base=*/memref,
@@ -176,7 +208,7 @@ TEST_F(TpuOpsVerificationTest, VectorLoadStridesFeatureNotImplemented) {
 
 TEST_F(TpuOpsVerificationTest, VectorLoadBaseAndResultTypesDoNotMatch) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8});
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
   auto vl = Create<VectorLoadOp>(
       /*result=*/VectorType::get({8}, builder().getF32Type()),
       /*base=*/memref,
@@ -193,7 +225,7 @@ TEST_F(TpuOpsVerificationTest, VectorLoadBaseAndResultTypesDoNotMatch) {
 TEST_F(TpuOpsVerificationTest,
        VectorLoadRankOfIndicesDoesNotMatchBaseMemrefRank) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8});
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
   auto vl = Create<VectorLoadOp>(
       /*result=*/VectorType::get({8}, i32()),
       /*base=*/memref,
@@ -206,7 +238,7 @@ TEST_F(TpuOpsVerificationTest,
 
 TEST_F(TpuOpsVerificationTest, VectorLoadValidMaskSucceeds) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8, 128});
+  Value memref = AllocaI32({8, 128}, MemorySpace::kVmem);
   Value mask = ConstantI32Vector(/*shape=*/{8, 1},
                                  /*values=*/{1, 1, 1, 1, 1, 1, 1, 1});
   auto vl = Create<VectorLoadOp>(
@@ -222,7 +254,7 @@ TEST_F(TpuOpsVerificationTest, VectorLoadValidMaskSucceeds) {
 TEST_F(TpuOpsVerificationTest, VectorLoadMaskInvalidResultBitWidth) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
   auto memref = Create<memref::AllocaOp>(
-      MemRefType::get({8, 128}, builder().getI64Type()));
+      GetMemRefType({8, 128}, builder().getI64Type(), MemorySpace::kVmem));
   Value mask = ConstantI32Vector(/*shape=*/{8, 1},
                                  /*values=*/{1, 1, 1, 1, 1, 1, 1, 1});
   auto vl = Create<VectorLoadOp>(
@@ -242,7 +274,7 @@ TEST_F(TpuOpsVerificationTest, VectorLoadMaskInvalidResultBitWidth) {
 TEST_F(TpuOpsVerificationTest,
        VectorLoadMaskNotBroadcastableToResultShapeInvalidMinor) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8, 128});
+  Value memref = AllocaI32({8, 128}, MemorySpace::kVmem);
   Value mask = ConstantI32Vector(/*shape=*/{8, 2},
                                  /*values=*/{1});
   auto vl = Create<VectorLoadOp>(
@@ -262,7 +294,7 @@ TEST_F(TpuOpsVerificationTest,
 TEST_F(TpuOpsVerificationTest,
        VectorLoadMaskNotBroadcastableToResultShapeInvalidMajor) {
   auto c0 = Create<arith::ConstantIndexOp>(0);
-  Value memref = AllocaI32({8, 128});
+  Value memref = AllocaI32({8, 128}, MemorySpace::kVmem);
   Value mask = ConstantI32Vector(/*shape=*/{5, 1},
                                  /*values=*/{1});
   auto vl = Create<VectorLoadOp>(
@@ -277,6 +309,435 @@ TEST_F(TpuOpsVerificationTest,
       StatusIs(
           _, HasSubstr(
                  "Expected mask shape to be broadcastable to result shape.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorLoadInvalidMemorySpace) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8}, MemorySpace::kHbm);
+  auto vl = Create<VectorLoadOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*strides=*/builder().getDenseI32ArrayAttr({}),
+      /*mask=*/nullptr);
+
+  ASSERT_THAT(VerifyOp(vl),
+              StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreInvalidMemorySpace) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8}, MemorySpace::kHbm);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  auto vs = Create<VectorStoreOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*strides=*/builder().getDenseI32ArrayAttr({}),
+      /*mask=*/nullptr);
+
+  ASSERT_THAT(VerifyOp(vs),
+              StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
+}
+
+TEST_F(TpuOpsVerificationTest, UnpackSubelementsValidIndex) {
+  Value source = ConstantI8Vector(/*shape=*/{4, 8}, /*values=*/{1});
+  auto unpack = Create<UnpackSubelementsOp>(
+      /*output=*/VectorType::get({16}, builder().getI16Type()), source,
+      /*index=*/builder().getI32IntegerAttr(1),
+      /*pack_format=*/
+      PackFormatAttr::get(builder().getContext(), PackFormat::kInterleaved));
+  ASSERT_OK(VerifyOp(unpack));
+}
+
+TEST_F(TpuOpsVerificationTest, UnpackSubelementsInvalidIndex) {
+  Value source = ConstantI8Vector(/*shape=*/{4, 8}, /*values=*/{1});
+  auto unpack = Create<UnpackSubelementsOp>(
+      /*output=*/VectorType::get({16}, builder().getI16Type()), source,
+      /*index=*/builder().getI32IntegerAttr(4),
+      /*pack_format=*/
+      PackFormatAttr::get(builder().getContext(), PackFormat::kInterleaved));
+  ASSERT_THAT(
+      VerifyOp(unpack),
+      StatusIs(
+          _, HasSubstr("Index must be between 0 and the packing factor (2)")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorLoadIdxVerificationWorks) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0, 1, 2, 3, 4, 5, 6, 7});
+  auto vl = Create<VectorLoadIdxOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/nullptr);
+
+  ASSERT_OK(VerifyOp(vl));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorLoadIdxInvalidMemorySpace) {
+  Value memref = AllocaI32({8}, MemorySpace::kHbm);
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0, 1, 2, 3, 4, 5, 6, 7});
+  auto vl = Create<VectorLoadIdxOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/nullptr);
+
+  ASSERT_THAT(VerifyOp(vl),
+              StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorLoadIdxInvalidElementType) {
+  Value memref =
+      Create<memref::AllocaOp>(
+          GetMemRefType({8}, builder().getF32Type(), MemorySpace::kVmem))
+          .getMemref();
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0});
+  auto vl = Create<VectorLoadIdxOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(_,
+               HasSubstr("Expected base and result element type to match.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorLoadIdxInvalidIndicesDimension) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value indices = ConstantIndexVector(/*shape=*/{4, 1},
+                                      /*values=*/{0});
+  auto vl = Create<VectorLoadIdxOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices, indices},
+      /*mask=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(_, HasSubstr("Expected one index vector for each dimension of "
+                            "the base memref with dimension: 1. Got: 2.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorLoadIdxValidMask) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0});
+  Value mask = ConstantI32Vector(/*shape=*/{8},
+                                 /*values=*/{1});
+  auto vl = Create<VectorLoadIdxOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/mask);
+
+  ASSERT_OK(VerifyOp(vl));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorLoadIdxInvalidMaskShape) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0});
+  Value mask = ConstantI32Vector(/*shape=*/{4, 2},
+                                 /*values=*/{1});
+  auto vl = Create<VectorLoadIdxOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/mask);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(
+          _, HasSubstr(
+                 "Expected mask shape to be broadcastable to result shape.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreIdxVerificationWorks) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value vector_to_store =
+      ConstantI32Vector(/*shape=*/{8},
+                        /*values=*/{1, 1, 1, 1, 1, 1, 1, 1});
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0, 1, 2, 3, 4, 5, 6, 7});
+  auto vl = Create<VectorStoreIdxOp>(
+      /*vectorToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/nullptr,
+      /*add=*/builder().getBoolAttr(true));
+
+  ASSERT_OK(VerifyOp(vl));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreIdxInvalidMemorySpace) {
+  Value memref = AllocaI32({8}, MemorySpace::kHbm);
+  Value vector_to_store =
+      ConstantI32Vector(/*shape=*/{8},
+                        /*values=*/{1, 1, 1, 1, 1, 1, 1, 1});
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0, 1, 2, 3, 4, 5, 6, 7});
+  auto vl = Create<VectorStoreIdxOp>(
+      /*vectorToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/nullptr,
+      /*add=*/nullptr);
+
+  ASSERT_THAT(VerifyOp(vl),
+              StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreIdxInvalidElementType) {
+  Value memref =
+      Create<memref::AllocaOp>(
+          GetMemRefType({8}, builder().getF32Type(), MemorySpace::kVmem))
+          .getMemref();
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8},
+                                            /*values=*/{1});
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0});
+  auto vl = Create<VectorStoreIdxOp>(
+      /*vectorToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/nullptr,
+      /*add=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(_, HasSubstr(
+                      "Expected base and valueToStore element type to match")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreIdxInvalidIndicesDimension) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8},
+                                            /*values=*/{1});
+  Value indices = ConstantIndexVector(/*shape=*/{4, 1},
+                                      /*values=*/{0});
+  auto vl = Create<VectorStoreIdxOp>(
+      /*vectorToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices, indices},
+      /*mask=*/nullptr,
+      /*add=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(_, HasSubstr("Expected one index vector for each dimension of "
+                            "the base memref with dimension: 1. Got: 2.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreIdxInvalidValueToStoreDimension) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{4, 2},
+                                            /*values=*/{1});
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0});
+  auto vl = Create<VectorStoreIdxOp>(
+      /*vectorToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/nullptr,
+      /*add=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(_, HasSubstr("Expected one index vector for each dimension of "
+                            "the value to store with dimension: 2. Got: 1.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreIdxValidMask) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8},
+                                            /*values=*/{1});
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0});
+  Value mask = ConstantI32Vector(/*shape=*/{8},
+                                 /*values=*/{1});
+  auto vl = Create<VectorStoreIdxOp>(
+      /*vectorToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/mask,
+      /*add=*/nullptr);
+
+  ASSERT_OK(VerifyOp(vl));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorStoreIdxInvalidMaskShape) {
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8},
+                                            /*values=*/{1});
+  Value indices = ConstantIndexVector(/*shape=*/{8},
+                                      /*values=*/{0});
+  Value mask = ConstantI32Vector(/*shape=*/{4, 2},
+                                 /*values=*/{1});
+  auto vl = Create<VectorStoreIdxOp>(
+      /*vectorToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{indices},
+      /*mask=*/mask,
+      /*add=*/nullptr);
+
+  ASSERT_THAT(
+      VerifyOp(vl),
+      StatusIs(
+          _,
+          HasSubstr(
+              "Expected mask shape to match result shape: (8). Got: (4, 2).")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationWorksI32) {
+  Value src = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI32Type());
+  Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{1});
+
+  ASSERT_OK(VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask)));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationWorksBF16) {
+  Value src = ConstantBF16Vector(/*shape=*/{2, 8}, /*value=*/1);
+  Type dst =
+      VectorType::get(/*shape=*/{2, 8}, /*type=*/builder().getBF16Type());
+  Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{1});
+
+  ASSERT_OK(VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask)));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationWorksI1) {
+  Value src = ConstantI1Vector(/*shape=*/{8}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI32Type());
+
+  ASSERT_OK(VerifyOp(
+      Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, /*mask=*/nullptr)));
+}
+
+TEST_F(TpuOpsVerificationTest, ScanOnUnsupportedCore) {
+  auto func_op =
+      Create<func::FuncOp>("scalar_kernel", builder().getFunctionType({}, {}));
+  func_op->setAttr(TPUDialect::GetCoreTypeKey(),
+                   CoreTypeAttr::get(builder().getContext(), CoreType::kTc));
+  builder().setInsertionPointToStart(func_op.addEntryBlock());
+  Value src = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI32Type());
+  Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{1});
+
+  ASSERT_THAT(
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask)),
+      StatusIs(_,
+               HasSubstr("Scan is supported only on the SC vector subcore")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       ScanVerificationInvalidOutputTypeWithI1Input) {
+  Value src = ConstantI1Vector(/*shape=*/{8}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI1Type());
+  Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{1});
+
+  ASSERT_THAT(
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMin, mask)),
+      StatusIs(
+          _,
+          HasSubstr(
+              "Output element type must be i32 vector for i1 vector inputs.")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       ScanVerificationMismatchElementType) {
+  Value src = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getF32Type());
+  Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{1});
+
+  ASSERT_THAT(
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask)),
+      StatusIs(_, HasSubstr("Input and output element type mismatch.")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationMismatchShape) {
+  Value src = ConstantI32Vector(/*shape=*/{16}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI32Type());
+  Value mask = ConstantI1Vector(/*shape=*/{16}, /*values=*/{1});
+
+  ASSERT_THAT(
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask)),
+      StatusIs(_, HasSubstr("Input and output shape mismatch. Input "
+                            "shape: (16). Output shape: (8).")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidInputRank) {
+  Value src = ConstantI32Vector(/*shape=*/{8, 1, 1}, /*values=*/{1});
+  Type dst =
+      VectorType::get(/*shape=*/{8, 1, 1}, /*type=*/builder().getI32Type());
+  Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{1});
+
+  ASSERT_THAT(
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask)),
+      StatusIs(_, HasSubstr("Input must be a rank 1 or 2 vector.")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       ScanVerificationInvalidReductionKind) {
+  Value src = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI32Type());
+  Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{1});
+
+  ASSERT_THAT(
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kArgMax, mask)),
+      StatusIs(_,
+               HasSubstr("Only sum, max and min reductions are supported.")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       ScanVerificationInvalidReductionKindWithI1Input) {
+  Value src = ConstantI1Vector(/*shape=*/{8}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI32Type());
+  Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{1});
+
+  ASSERT_THAT(
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMin, mask)),
+      StatusIs(
+          _,
+          HasSubstr("Only sum reduction is supported for i1 vector inputs.")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       ScanVerificationInvalidMaskWithI1Input) {
+  Value src = ConstantI1Vector(/*shape=*/{8}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI32Type());
+  Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{1});
+
+  ASSERT_THAT(
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask)),
+      StatusIs(_, HasSubstr("Mask is not supported for i1 vector inputs.")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidMaskRank) {
+  Value src = ConstantI32Vector(/*shape=*/{1, 8}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{1, 8}, /*type=*/builder().getI32Type());
+  Value mask = ConstantI1Vector(/*shape=*/{1, 8}, /*values=*/{1});
+
+  ASSERT_THAT(
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMax, mask)),
+      StatusIs(_, HasSubstr("Mask must be a rank 1 vector.")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidMaskShape) {
+  Value src = ConstantI32Vector(/*shape=*/{1, 8}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{1, 8}, /*type=*/builder().getI32Type());
+  Value mask = ConstantI1Vector(/*shape=*/{16}, /*values=*/{1});
+
+  ASSERT_THAT(
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMax, mask)),
+      StatusIs(_, HasSubstr("Mask and input mismatch. Expected mask of "
+                            "length: 8, but got 16.")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaElementTypeMismatch) {
@@ -310,6 +771,42 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaDynamicRankMismatch) {
 
   ASSERT_THAT(VerifyOp(dma),
               StatusIs(_, HasSubstr("DMA source and target shape mismatch.")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaStrictOrderingSupported) {
+  auto dma = Create<EnqueueDMAOp>(
+      /*source=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
+      /*source_semaphore=*/nullptr,
+      /*target=*/AllocaI32({1024, 256, 128}, MemorySpace::kVmem),
+      /*target_semaphore=*/AllocaSemaphore(),
+      /*device_id=*/nullptr,
+      /*core_id=*/nullptr,
+      /*priority=*/0,
+      /*strict_ordering=*/true);
+
+  ASSERT_OK(VerifyOp(dma));
+}
+
+TEST_F(TpuOpsVerificationTest, DmaStrictOrderingNotSupportedOnTc) {
+  auto func_op =
+      Create<func::FuncOp>("tc_kernel", builder().getFunctionType({}, {}));
+  func_op->setAttr(TPUDialect::GetCoreTypeKey(),
+                   CoreTypeAttr::get(builder().getContext(), CoreType::kTc));
+  builder().setInsertionPointToStart(func_op.addEntryBlock());
+
+  auto dma = Create<EnqueueDMAOp>(
+      /*source=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
+      /*source_semaphore=*/nullptr,
+      /*target=*/AllocaI32({1024, 256, 128}, MemorySpace::kVmem),
+      /*target_semaphore=*/AllocaSemaphore(),
+      /*device_id=*/nullptr,
+      /*core_id=*/nullptr,
+      /*priority=*/0,
+      /*strict_ordering=*/true);
+
+  ASSERT_THAT(VerifyOp(dma),
+              StatusIs(_, HasSubstr("Strict ordering is only supported on the "
+                                    "SC scalar and vector subcores")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,

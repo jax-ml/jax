@@ -17,18 +17,21 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Conversion/GPUCommon/GPUCommonPass.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Location.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Visitors.h"
@@ -74,7 +77,7 @@ struct ConvertExtractStridedSlicePattern final
       result = rewriter.create<mlir::LLVM::InsertElementOp>(
           op.getLoc(), result,
           rewriter.create<mlir::LLVM::ExtractElementOp>(
-              op.getLoc(), subst.getVector(),
+              op.getLoc(), subst.getSource(),
               rewriter.create<mlir::LLVM::ConstantOp>(
                   op.getLoc(), rewriter.getI32IntegerAttr(i + start))),
           rewriter.create<mlir::LLVM::ConstantOp>(
@@ -169,12 +172,12 @@ class ByvalInsertionPass
 
 // Insert the nvvm.minctasm attribute, which is sometimes required for ptxas
 // to recognize setmaxnreg instructions.
-class NvvmAttrInsertionPass
-    : public jaxlib::mlir::Pass<NvvmAttrInsertionPass, mlir::gpu::GPUModuleOp> {
+class LLVMAttrInsertionPass
+    : public jaxlib::mlir::Pass<LLVMAttrInsertionPass, mlir::gpu::GPUModuleOp> {
  public:
-  using jaxlib::mlir::Pass<NvvmAttrInsertionPass, mlir::gpu::GPUModuleOp>::Pass;
-  static constexpr llvm::StringLiteral kArgumentName = "mosaic-nvvm-attr-insertion";
-  static constexpr llvm::StringLiteral kPassName = "NvvmAttrInsertionPass";
+  using jaxlib::mlir::Pass<LLVMAttrInsertionPass, mlir::gpu::GPUModuleOp>::Pass;
+  static constexpr llvm::StringLiteral kArgumentName = "mosaic-llvm-attr-insertion";
+  static constexpr llvm::StringLiteral kPassName = "LLVMAttrInsertionPass";
 
   void runOnOperation() override {
     auto result = getOperation().walk([](mlir::LLVM::LLVMFuncOp op) {
@@ -185,11 +188,70 @@ class NvvmAttrInsertionPass
       op.getOperation()->setAttr(
           "nvvm.minctasm", mlir::IntegerAttr::get(
                                mlir::IntegerType::get(op.getContext(), 32), 1));
+      for (unsigned i = 0; i < op.getNumArguments(); ++i) {
+        mlir::BlockArgument arg = op.getArgument(i);
+        if (!mlir::isa<mlir::LLVM::LLVMPointerType>(arg.getType())) {
+          continue;
+        }
+        if (!op.getArgAttr(i, "llvm.align")) {
+          op.setArgAttr(i, "llvm.align",
+                        mlir::IntegerAttr::get(
+                            mlir::IntegerType::get(op.getContext(), 32),
+                            kExpectedHbmAlignment));
+        }
+      }
       return mlir::WalkResult::advance();
     });
     if (result.wasInterrupted()) {
       signalPassFailure();
     }
+  }
+};
+
+// Replaces all "pallas_call" locations within a FuncOp with the location
+// of the first operation in the function that has a different location.
+// This provides more specific source information for debugging.
+class ResolveTrivialLocationsPass
+    : public jaxlib::mlir::Pass<ResolveTrivialLocationsPass, mlir::ModuleOp> {
+ public:
+  using jaxlib::mlir::Pass<ResolveTrivialLocationsPass, mlir::ModuleOp>::Pass;
+  static constexpr llvm::StringLiteral kArgumentName =
+      "mosaic-gpu-resolve-trivial-locations";
+  static constexpr llvm::StringLiteral kPassName =
+      "ResolveTrivialLocationsPass";
+
+  void runOnOperation() override {
+    const auto trivial_loc =
+        mlir::NameLoc::get(mlir::StringAttr::get(&getContext(), "pallas_call"));
+    getOperation()->walk([&](mlir::func::FuncOp func_op) {
+      if (func_op->getLoc() != trivial_loc) {
+        return mlir::WalkResult::advance();
+      }
+      std::optional<mlir::Location> replacement_loc;
+      func_op.getBody().walk([&](mlir::Operation* op) {
+        if (op->getLoc() == trivial_loc) {
+          return mlir::WalkResult::advance();
+        }
+        auto candidate_loc = op->getLoc();
+        while (mlir::isa<mlir::NameLoc>(candidate_loc)) {
+          candidate_loc =
+              mlir::cast<mlir::NameLoc>(candidate_loc).getChildLoc();
+        }
+        replacement_loc = candidate_loc;
+        return mlir::WalkResult::interrupt();
+      });
+      if (!replacement_loc) {
+        return mlir::WalkResult::advance();
+      }
+      func_op.walk([&](mlir::Operation* op) {
+        // We use the same replacement for all ops with the trivial location,
+        // because that what the lowering of pallas_call would have done.
+        if (op->getLoc() == trivial_loc) {
+          op->setLoc(*replacement_loc);
+        }
+      });
+      return mlir::WalkResult::advance();
+    });
   }
 };
 
@@ -207,9 +269,15 @@ void registerByvalInsertionPass() {
   });
 }
 
-void registerNvvmAttrInsertionPass() {
+void registerLLVMAttrInsertionPass() {
   ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
-    return std::make_unique<NvvmAttrInsertionPass>();
+    return std::make_unique<LLVMAttrInsertionPass>();
+  });
+}
+
+void registerResolveTrivialLocationsPass() {
+  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
+    return std::make_unique<ResolveTrivialLocationsPass>();
   });
 }
 

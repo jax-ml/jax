@@ -105,6 +105,18 @@ class ConfigOptionDirective(SphinxDirective):
           type_para += nodes.literal(text=repr(value))
           if i < len(enum_values) - 1:
             type_para += nodes.Text(", ")
+      elif opt_type == "enum_class":
+        type_para = nodes.paragraph()
+        emphasis_node = nodes.emphasis()
+        emphasis_node += nodes.Text("Enum values: ")
+        type_para += emphasis_node
+
+        enum_class = meta_kwargs.get('enum_class')
+        members = enum_class.__members__
+        for i, value in enumerate(members.keys()):
+          type_para += nodes.literal(text=value)
+          if i < len(members) - 1:
+            type_para += nodes.Text(", ")
       else:
         type_para = nodes.paragraph()
         type_para += nodes.literal(text=opt_type.__name__)

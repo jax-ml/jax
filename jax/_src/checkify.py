@@ -123,8 +123,10 @@ class ErrorEffect(effects.Effect):
     unpack = lambda x: (str(x.error_type), shape_dtypes(x))
     return (unpack(self) < unpack(other))
 
-effects.control_flow_allowed_effects.add_type(ErrorEffect)
 effects.lowerable_effects.add_type(ErrorEffect)
+effects.control_flow_allowed_effects.add_type(ErrorEffect)
+effects.custom_derivatives_allowed_effects.add_type(ErrorEffect)
+effects.remat_allowed_effects.add_type(ErrorEffect)
 
 class DivisionByZeroError(JaxException):
 
@@ -625,9 +627,9 @@ def dynamic_slice_error_check(error, enabled_errors, operand, *start_indices, sl
   if OOBError not in enabled_errors:
     return error, out
 
-  operand_dims = np.array(operand.shape)
-  slice_sizes = np.array(slice_sizes)
   start_indices = jnp.array(start_indices)
+  operand_dims = np.array(operand.shape, dtype=start_indices.dtype)
+  slice_sizes = np.array(slice_sizes, dtype=start_indices.dtype)
   oob_mask = (start_indices < 0) | (start_indices + slice_sizes > operand_dims)
 
   payload = oob_payload(oob_mask, start_indices, range(operand.ndim), operand.shape)
@@ -722,14 +724,13 @@ def scatter_oob(operand, indices, updates, dnums):
 
 def scatter_error_check(prim, error, enabled_errors, operand, indices, updates,
                         *, update_jaxpr, update_consts, dimension_numbers,
-                        indices_are_sorted, unique_indices, mode,
-                        **kwargs):
+                        indices_are_sorted, unique_indices, mode):
   """Checks if indices are within bounds and update does not generate NaN."""
   out = prim.bind(
       operand, indices, updates, update_jaxpr=update_jaxpr,
       update_consts=update_consts, dimension_numbers=dimension_numbers,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-      mode=mode, **kwargs)
+      mode=mode)
 
   if OOBError not in enabled_errors:
     return error, out
@@ -758,7 +759,8 @@ def jaxpr_to_checkify_jaxpr(
   checkify_jaxpr_partial = functools.partial(checkify_jaxpr_flat, jaxpr.jaxpr,
                                              jaxpr.consts, enabled_errors,
                                              err_tree)
-  fun = lu.wrap_init(checkify_jaxpr_partial, debug_info=jaxpr.jaxpr.debug_info)
+  fun = lu.wrap_init(checkify_jaxpr_partial,
+                     debug_info=jaxpr.jaxpr.debug_info.with_unknown_names())
   fun, metadata = _flatten_and_get_error_metadata_thunk(fun)
 
   new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, flat_err_and_in_vals)
@@ -845,7 +847,9 @@ def checkify_while_body_jaxpr(
     # This checks if the next cond application will error
     lax.dce_sink(cond_f(*c_consts, *out))
     return out
-  new_body_f_ = lu.wrap_init(new_body_f, debug_info=body_jaxpr.jaxpr.debug_info)
+  new_body_f_ = lu.wrap_init(
+      new_body_f,
+      debug_info=body_jaxpr.jaxpr.debug_info.with_unknown_names())
   c_consts_avals = cond_jaxpr.in_avals[:c_consts_num]
   jaxpr, _, () = pe.trace_to_jaxpr_dynamic(
       new_body_f_, [*c_consts_avals, *body_jaxpr.in_avals])
@@ -1235,7 +1239,7 @@ def checkify(f: Callable[..., Out],
     # stage:
     debug = api_util.debug_info("checkify", f, args, kwargs)
     fun_, out_tree = api_util.flatten_fun(
-        lu.wrap_init(closed_f, debug_info=debug), in_tree)
+        lu.wrap_init(closed_f, debug_info=debug.with_unknown_names()), in_tree)
     jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(fun_, ())
     jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr_))
     # checkify:

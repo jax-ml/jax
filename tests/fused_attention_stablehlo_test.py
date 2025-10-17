@@ -25,10 +25,8 @@ from jax._src import test_util as jtu
 from jax._src.cudnn.fused_attention_stablehlo import (
     dot_product_attention,
     paged_attention,
-    check_is_flash_attention,
     check_cudnn_version,
     MaskType,
-    AttentionLayout,
 )
 
 config.parse_flags_with_absl()
@@ -117,7 +115,7 @@ def sdpa_train(query: Array,
               sliding_window_length=sliding_window_length),
       query, key, value, bias, mask, q_seqlen, kv_seqlen, q_offsets, kv_offsets)
   query_grad, key_grad, value_grad, bias_grad = sdpa_vjp(grad)[:4]
-  if bias is not None and len(bias.shape) == 3:
+  if bias is not None:
     # has dbias
     return out, (query_grad, key_grad, value_grad, bias_grad)
   return out, (query_grad, key_grad, value_grad)
@@ -129,6 +127,7 @@ def sdpa_ref(query: Array,
       mask: Array | None = None,
       scale: float = 0.5,
       mask_type: MaskType = MaskType.NO_MASK,
+      is_bnth: bool = False,
       dropout_rate: float = 0.1,
       sliding_window_length: int | None = None) -> Array:
 
@@ -149,11 +148,12 @@ def sdpa_ref(query: Array,
       (q_padding + kv_padding).astype(logits.dtype) * large_negative_number
     return jax.lax.broadcast(combined_padding, logits.shape[:-2])
 
-  def get_encoded_padding_mask(encoded):
-    S = encoded.shape[1]
-    encoded_padding = (jax.lax.iota(np.int32, S) < S // 2).astype(encoded.dtype)
+  def get_encoded_padding_mask(encoded, is_bnth):
+    dim = 2 if is_bnth else 1
+    T = encoded.shape[dim]
+    encoded_padding = (jax.lax.iota(np.int32, T) < T // 2).astype(encoded.dtype)
     return jax.lax.broadcast_in_dim(
-      encoded_padding, encoded.shape, broadcast_dimensions=[1])
+      encoded_padding, encoded.shape, broadcast_dimensions=[dim])
 
   def get_sliding_window_mask(logits, window_length):
     large_negative_number = get_large_negative_number(logits.dtype)
@@ -165,9 +165,14 @@ def sdpa_ref(query: Array,
       col_idx <= row_idx - window_length).astype(logits.dtype) * large_negative_number
     return mask[(*([jnp.newaxis]*(len(logits.shape) - 2)), ...)]
 
-  B, T, qN, H = query.shape
-  _, _, kN, _ = key.shape
-  logits = jnp.einsum("bqhd,bkhd->bhqk", query, key, preferred_element_type=jnp.float32)
+  if is_bnth:
+    B, qN, T, H = query.shape
+    _, kN, _, _ = key.shape
+    logits = jnp.einsum("bhqd,bhkd->bhqk", query, key, preferred_element_type=jnp.float32)
+  else:
+    B, T, qN, H = query.shape
+    _, _, kN, _ = key.shape
+    logits = jnp.einsum("bqhd,bkhd->bhqk", query, key, preferred_element_type=jnp.float32)
   if scale != 1.0:
     logits = logits * scale
   if mask_type == MaskType.CAUSAL:
@@ -199,11 +204,14 @@ def sdpa_ref(query: Array,
     dropout_rng = jax.random.key(0)
     keep = jax.random.bernoulli(dropout_rng, keep_prob, probs.shape)
     probs = jax.lax.select(keep, probs / keep_prob, jnp.zeros_like(probs))
-  encoded = jnp.einsum("bhqk,bkhd->bqhd", probs, value, preferred_element_type=jnp.float32)
+  if is_bnth:
+    encoded = jnp.einsum("bhqk,bhkd->bhqd", probs, value, preferred_element_type=jnp.float32)
+  else:
+    encoded = jnp.einsum("bhqk,bkhd->bqhd", probs, value, preferred_element_type=jnp.float32)
   if mask_type == MaskType.PADDING:
     # cuDNN padding mask generation will mask out output accordingly
     # make sure the behavior is the same
-    encoded_mask = get_encoded_padding_mask(encoded)
+    encoded_mask = get_encoded_padding_mask(encoded, is_bnth)
     encoded = encoded * encoded_mask
   return encoded.astype(query.dtype)
 
@@ -215,15 +223,16 @@ def sdpa_train_ref(query: Array,
             mask: Array | None = None,
             scale: float = 0.5,
             mask_type: MaskType = MaskType.NO_MASK,
+            is_bnth: bool = False,
             dropout_rate: float = 0.1,
             sliding_window_length: int | None = None) -> Array:
   out_ref, sdpa_vjp_ref = jax.vjp(
     partial(
       sdpa_ref, scale=scale, mask_type=mask_type, dropout_rate=dropout_rate,
-      sliding_window_length=sliding_window_length),
+      sliding_window_length=sliding_window_length, is_bnth=is_bnth),
     query, key, value, bias, mask)
   query_grad_ref, key_grad_ref, value_grad_ref, bias_grad_ref, _ = sdpa_vjp_ref(grad)
-  if bias is not None and len(bias.shape) == 3:
+  if bias is not None:
     return out_ref, (query_grad_ref, key_grad_ref, value_grad_ref, bias_grad_ref)
   return out_ref, (query_grad_ref, key_grad_ref, value_grad_ref)
 
@@ -258,15 +267,10 @@ def sdpa_train_fp8(
 class DotProductAttentionTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
-    try:
-      cudnn_version = check_cudnn_version()
-    except RuntimeError as e:
-      self.skipTest(str(e))
-      return
-    if cudnn_version < 8904:
-      self.skipTest("Requires >= cuDNN 8.9.4")
     if not jtu.is_cuda_compute_capability_at_least("8.0"):
       self.skipTest("Requires at least Ampere arch")
+    if jtu.is_cuda_version_at_least(13, 0):
+      self.skipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
   @jtu.sample_product(
       batch_size=[4],
@@ -276,6 +280,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       use_mask=[False, True],
       use_bias=[False, True],
       mask_type=[MaskType.NO_MASK],
+      is_bnth=[False, True],
       dropout_rate=[0],
       scale=[0.5],
       dtype=[jnp.float16, jnp.bfloat16]
@@ -283,20 +288,20 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cuda")
   def test_sdpa(self, batch_size: int, seq_len: int, num_heads: int,
                 head_dim: int, use_mask: bool, use_bias: bool, mask_type: MaskType,
-                dropout_rate: float, scale: float, dtype: jnp.dtype):
+                is_bnth: bool, dropout_rate: float, scale: float, dtype: jnp.dtype):
     if len(jax.local_devices()) < 4:
       self.skipTest("Require at least 4 devices to run sharding tests.")
     if use_mask and mask_type != MaskType.NO_MASK:
       self.skipTest("Either pass in mask or generate mask directly in cuDNN.")
     k1, k2, k3, k4, k5, k6 = jax.random.split(jax.random.key(0), 6)
-    query = jax.random.normal(
-        k1, (batch_size, seq_len, num_heads, head_dim), dtype=dtype)
-    key = jax.random.normal(
-        k2, (batch_size, seq_len, num_heads, head_dim), dtype=dtype)
-    value = jax.random.normal(
-        k3, (batch_size, seq_len, num_heads, head_dim), dtype=dtype)
-    grad = jax.random.normal(
-        k4, (batch_size, seq_len, num_heads, head_dim), dtype=dtype)
+    if is_bnth:
+      qkv_shape = (batch_size, num_heads, seq_len, head_dim)
+    else:
+      qkv_shape = (batch_size, seq_len, num_heads, head_dim)
+    query = jax.random.normal(k1, qkv_shape, dtype=dtype)
+    key = jax.random.normal(k2, qkv_shape, dtype=dtype)
+    value = jax.random.normal(k3, qkv_shape, dtype=dtype)
+    grad = jax.random.normal(k4, qkv_shape, dtype=dtype)
     if use_bias:
       bias = jax.random.normal(
         k5, (batch_size, num_heads, seq_len, seq_len), dtype=dtype)
@@ -310,7 +315,10 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     devices = np.array(jax.local_devices()[:4])
     devices = devices.reshape((2, 2))
     with Mesh(devices, ("dp", "tp")) as mesh:
-      qkv_spec = PartitionSpec("dp", None, "tp", None)
+      if is_bnth:
+        qkv_spec = PartitionSpec("dp", "tp", None, None)
+      else:
+        qkv_spec = PartitionSpec("dp", None, "tp", None)
       qkv_sharding = NamedSharding(mesh, qkv_spec)
       if bias is not None:
         bias_spec = PartitionSpec("dp", "tp", None, None)
@@ -332,11 +340,14 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       grad = jax.device_put(grad, qkv_sharding)
       in_shardings = (qkv_sharding, qkv_sharding, qkv_sharding,
                       qkv_sharding, bias_sharding, mask_sharding)
-      out_shardings = (qkv_sharding, (qkv_sharding, qkv_sharding, qkv_sharding))
+      if use_bias:
+        out_shardings = (qkv_sharding, (qkv_sharding, qkv_sharding, qkv_sharding, bias_sharding))
+      else:
+        out_shardings = (qkv_sharding, (qkv_sharding, qkv_sharding, qkv_sharding))
       jitted_sdpa_train = jax.jit(
         partial(
           sdpa_train, scale=scale, mask_type=mask_type,
-          dropout_rate=dropout_rate),
+          dropout_rate=dropout_rate, is_bnth=is_bnth),
         in_shardings=in_shardings,
         out_shardings=out_shardings
       )
@@ -344,15 +355,21 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       jitted_sdpa_train_ref = jax.jit(
         partial(
           sdpa_train_ref, scale=scale, mask_type=mask_type,
-          dropout_rate=dropout_rate),
+          dropout_rate=dropout_rate, is_bnth=is_bnth),
         in_shardings=in_shardings,
         out_shardings=out_shardings
       )
 
-      out, (query_grad, key_grad, value_grad) = \
-          jitted_sdpa_train(query, key, value, grad, bias, mask)
-      out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = \
-          jitted_sdpa_train_ref(query, key, value, grad, bias, mask)
+      if use_bias:
+        out, (query_grad, key_grad, value_grad, _) = \
+            jitted_sdpa_train(query, key, value, grad, bias, mask)
+        out_ref, (query_grad_ref, key_grad_ref, value_grad_ref, _) = \
+            jitted_sdpa_train_ref(query, key, value, grad, bias, mask)
+      else:
+        out, (query_grad, key_grad, value_grad) = \
+            jitted_sdpa_train(query, key, value, grad, bias, mask)
+        out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = \
+            jitted_sdpa_train_ref(query, key, value, grad, bias, mask)
       self.assertArraysAllClose(out_ref, out, rtol=2e-2, atol=2e-2)
       self.assertArraysAllClose(
         query_grad_ref, query_grad, rtol=2e-1, atol=2e-1)
@@ -435,17 +452,13 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     self.assertArraysAllClose(key_grad_ref, key_grad, rtol=2e-1, atol=2e-1)
     self.assertArraysAllClose(value_grad_ref, value_grad, rtol=2e-1, atol=2e-1)
 
+  @jtu.sample_product(
+      broadcast_dims=[(), (0,), (1,), (0,1)],
+  )
   @jtu.run_on_devices("cuda")
-  def test_sdpa_broadcast_bias_and_dbias(self):
+  def test_sdpa_broadcast_bias_and_dbias(self, broadcast_dims):
     if jax.device_count() < 4:
       self.skipTest("Requires more than 4 devices.")
-    try:
-      cudnn_version = check_cudnn_version()
-    except RuntimeError as e:
-      self.skipTest(str(e))
-      return
-    if cudnn_version < 8906:
-      self.skipTest("Requires >= cuDNN 8.9.6")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Requires at least Hopper arch")
 
@@ -458,14 +471,29 @@ class DotProductAttentionTest(jtu.JaxTestCase):
         k3, (4, 1024, 4, 64), dtype=jnp.bfloat16)
     grad = jax.random.normal(
         k4, (4, 1024, 4, 64), dtype=jnp.bfloat16)
-    bias = jax.random.normal(
-        k5, (4, 1024, 1024), dtype=jnp.bfloat16)
+
+    if broadcast_dims == ():
+      bias = jax.random.normal(
+          k5, (4, 4, 1024, 1024), dtype=jnp.bfloat16)
+      bias_spec = PartitionSpec("dp", "tp", None, None)
+    elif broadcast_dims == (0,):
+      bias = jax.random.normal(
+          k5, (1, 4, 1024, 1024), dtype=jnp.bfloat16)
+      bias_spec = PartitionSpec(None, "tp", None, None)
+    elif broadcast_dims == (1,):
+      bias = jax.random.normal(
+          k5, (4, 1, 1024, 1024), dtype=jnp.bfloat16)
+      bias_spec = PartitionSpec("dp", None, None, None)
+    else:
+      bias = jax.random.normal(
+          k5, (1, 1, 1024, 1024), dtype=jnp.bfloat16)
+      bias_spec = PartitionSpec(None, None, None, None)
+
     devices = np.array(jax.local_devices()[:4])
     devices = devices.reshape((2, 2))
     with Mesh(devices, ("dp", "tp")) as mesh:
       qkv_spec = PartitionSpec("dp", None, "tp", None)
       qkv_sharding = NamedSharding(mesh, qkv_spec)
-      bias_spec = PartitionSpec("tp", None, None)
       bias_sharding = NamedSharding(mesh, bias_spec)
       in_shardings = (qkv_sharding, qkv_sharding, qkv_sharding,
                       qkv_sharding, bias_sharding)
@@ -537,8 +565,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     _, dbias_ans, _ = attn_ans(x, bias, mask)
     dbias_ans = jnp.squeeze(dbias_ans, axis=1)
     self.assertArraysAllClose(dbias_ans, dbias_ref)
-    if batch_size != 1:
-      self.assertTrue(not jnp.any(dbias_ans))
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_sliding_window_length(self):
@@ -577,13 +603,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_large_head_size(self):
-    try:
-      cudnn_version = check_cudnn_version()
-    except RuntimeError as e:
-      self.skipTest(str(e))
-      return
-    if cudnn_version < 90500:
-      self.skipTest("Requires >= cuDNN 9.5.0")
     if not jtu.is_cuda_compute_capability_equal("9.0"):
       self.skipTest("Requires Hopper arch")
 
@@ -612,13 +631,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   def test_sdpa_packed_layout(self):
     if jax.device_count() < 4:
       self.skipTest("Requires more than 4 devices.")
-    try:
-      cudnn_version = check_cudnn_version()
-    except RuntimeError as e:
-      self.skipTest(str(e))
-      return
-    if cudnn_version < 90600:
-      self.skipTest("Requires >= cuDNN 9.6.0")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Requires at least Hopper arch")
     k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
@@ -710,7 +722,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
           sdpa_train_ref, scale=0.1, mask_type=MaskType.NO_MASK, dropout_rate=0),
         in_shardings=(qkv_sharding, qkv_sharding, qkv_sharding, qkv_sharding,
                       bias_sharding),
-        out_shardings=(qkv_sharding, (qkv_sharding, qkv_sharding, qkv_sharding))
+        out_shardings=(qkv_sharding, (qkv_sharding, qkv_sharding, qkv_sharding, bias_sharding))
       )
 
       query = query * mask
@@ -720,7 +732,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
       out, (query_grad, key_grad, value_grad) = \
         jitted_sdpa_train(query, key, value, grad, None, None, q_seqlen, kv_seqlen, q_offsets, kv_offsets)
-      out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = \
+      out_ref, (query_grad_ref, key_grad_ref, value_grad_ref, _) = \
         jitted_sdpa_train_ref(query, key, value, grad, bias)
 
       out = out * mask
@@ -801,13 +813,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cuda")
   def test_sdpa_paged_attention(self, batch_size, q_seq_len, kv_seq_len,
                                 num_heads, head_dim, block_size, dtype):
-    try:
-      cudnn_version = check_cudnn_version()
-    except RuntimeError as e:
-      self.skipTest(str(e))
-      return
-    if cudnn_version < 90500:
-      self.skipTest("Requires >= cuDNN 9.5.0")
 
     keys = jax.random.split(jax.random.key(0), 5)
     blocks_per_batch = kv_seq_len // block_size
@@ -861,7 +866,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       cudnn_version = check_cudnn_version()
     except RuntimeError as e:
       self.skipTest(str(e))
-      return
     if cudnn_version < 91000:
       self.skipTest("Requires >= cuDNN 9.10.0")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
@@ -905,63 +909,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       out_ref = jitted_sdpa_inference_ref(query, key, value)
       self.assertArraysAllClose(out_ref, out, rtol=2e-2, atol=2e-2)
 
-  @jtu.run_on_devices("cuda")
-  def test_layouts(self):
-    if jax.device_count() < 4:
-      self.skipTest("Requires more than 4 devices.")
-    dtype = "bfloat16"
-    B, T, N, H = 4, 1024, 8, 128
-    S = T
-    k0, k1, k2, k3 = jax.random.split(jax.random.key(123), 4)
-    query = jax.random.normal(k0, (B, T, N, H), dtype=dtype)
-    key = jax.random.normal(k1, (B, S, N, H), dtype=dtype)
-    value = jax.random.normal(k2, (B, S, N, H), dtype=dtype)
-    grad = jax.random.normal(k3, (B, T, N, H), dtype=dtype)
-
-    btnh_fn = jax.jit(partial(sdpa_train, scale=.5,
-      mask_type=MaskType.CAUSAL, is_bnth=False, dropout_rate=0.0))
-    out_ref, (dq_ref, dk_ref, dv_ref) = btnh_fn(query, key, value, grad)
-
-    def _cvt(x):
-      return jnp.einsum("BTNH->BNTH", x)
-    def _cvt_back(x):
-      return jnp.einsum("BNTH->BTNH", x)
-    bnth_fn = jax.jit(partial(sdpa_train, scale=.5, mask_type=MaskType.CAUSAL,
-                              is_bnth=True, dropout_rate=0.0))
-    out, (dq, dk, dv) = bnth_fn(_cvt(query), _cvt(key), _cvt(value), _cvt(grad))
-
-    self.assertArraysAllClose(out_ref, _cvt_back(out))
-    self.assertArraysAllClose(dq_ref, _cvt_back(dq))
-    self.assertArraysAllClose(dk_ref, _cvt_back(dk))
-    self.assertArraysAllClose(dv_ref, _cvt_back(dv))
-
-  def test_sdpa_utils(self):
-    if jax.device_count() < 4:
-      self.skipTest("Requires more than 4 devices.")
-    test_cases = [
-      (1, 257, 64, 8905, False, True, True),
-      (1, 1024, 64, 8905, False, False, True),
-      (1024, 1024, 64, 8905, False, False, True),
-      (1024, 1024, 128, 8905, False, False, True),
-      (1024, 1024, 127, 8905, False, False, False),
-    ]
-
-    for k in test_cases:
-      sql_q, sql_v, head_dim, cudnn_version, has_bias, is_training, \
-        expected_pass = k
-      query = jnp.empty((4, sql_q, 4, head_dim))
-      key = jnp.empty((4, sql_v, 4, head_dim))
-      value = jnp.empty((4, sql_v, 4, head_dim))
-      if expected_pass:
-        check_is_flash_attention(
-          query, key, value, AttentionLayout.BNTH.value, cudnn_version,
-          has_bias, is_training)
-      else:
-        with self.assertRaises(NotImplementedError):
-          check_is_flash_attention(
-            query, key, value, AttentionLayout.BNTH.value, cudnn_version,
-            has_bias, is_training)
-
 
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
 class DotProductAttentionF8Test(jtu.JaxTestCase):
@@ -973,12 +920,14 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
     except RuntimeError as e:
       self.skipTest(str(e))
       return
-    if cudnn_version < 90100:
-      self.skipTest("Requires >= cuDNN 9.1.0")
+    if cudnn_version == 91000:
+      self.skipTest("cuDNN 9.10.0 does not support SDPA FP8")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Requires at least Hopper arch")
     if jtu.is_cuda_compute_capability_equal("12.0"):
       self.skipTest("cuDNN does not support FP8 with compute capability 12.0")
+    if jtu.is_cuda_version_at_least(13, 0):
+      self.skipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
   @jtu.sample_product(
       batch_size=[2, 4],

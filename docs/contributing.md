@@ -81,6 +81,12 @@ Follow these steps to contribute code:
    pytest -n auto tests/
    ```
 
+   Run them in 64-bit mode as well, by setting the environment variable `JAX_ENABLE_X64=True`:
+
+   ```bash
+   JAX_ENABLE_X64=True pytest -n auto tests/
+   ```
+
    JAX's test suite is quite large, so if you know the specific test file that covers your
    changes, you can limit the tests to that; for example:
 

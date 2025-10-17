@@ -75,6 +75,7 @@ jax.scipy.linalg
    rsf2csf
    schur
    solve
+   solve_sylvester
    solve_triangular
    sqrtm
    svd
@@ -172,6 +173,7 @@ jax.scipy.special
    gammaln
    gammasgn
    hyp1f1
+   hyp2f1
    i0
    i0e
    i1
@@ -189,6 +191,7 @@ jax.scipy.special
    poch
    polygamma
    rel_entr
+   sici
    softmax
    spence
    sph_harm
@@ -322,6 +325,34 @@ jax.scipy.stats.gamma
    logcdf
    sf
    logsf
+
+jax.scipy.stats.gumbel_l
+~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.gumbel_l
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
+   cdf
+   logcdf
+   sf
+   logsf
+   ppf
+
+jax.scipy.stats.gumbel_r
+~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.gumbel_r
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
+   cdf
+   logcdf
+   sf
+   logsf
+   ppf
 
 jax.scipy.stats.gennorm
 ~~~~~~~~~~~~~~~~~~~~~~~

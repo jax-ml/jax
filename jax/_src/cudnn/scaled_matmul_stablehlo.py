@@ -105,7 +105,6 @@ def _scaled_matmul_cuda_lowering(
 
 
 def _scaled_matmul_abstract(a, b, a_scale, b_scale, *, preferred_element_type):
-  a_dtype = dtypes.canonicalize_dtype(a.dtype)
   batch, non_contracting_lhs, contracting_lhs = a.shape
   _, non_contracting_rhs, _ = b.shape
   output_shape = (batch, non_contracting_lhs, non_contracting_rhs)
@@ -299,7 +298,7 @@ _scaled_matmul_lower = custom_partitioning(
 _scaled_matmul_lower.def_partition(
     infer_sharding_from_operands=_scaled_matmul_infer_sharding_from_operands,
     partition=_scaled_matmul_partition,
-    sharding_rule='b m k, b n k, b m x, b n y -> b m n',
+    sharding_rule='b m k, b n k, b m k, b n k -> b m n',
 )
 
 
@@ -405,9 +404,8 @@ def scaled_matmul_wrapper(
     assert lhs_K == rhs_K
     _, _, K_block = lhs_scales.shape
 
-    preferred_element_type = dtypes.canonicalize_dtype(
-        np.dtype(preferred_element_type)
-    )
+    preferred_element_type = dtypes.check_and_canonicalize_user_dtype(
+        preferred_element_type, "scaled_matmul_wrapper")
 
     out = _scaled_matmul(
         lhs,
@@ -521,21 +519,26 @@ def quantize(x, config):
   assert contract_dim >= block_size and contract_dim % block_size == 0
   x_new_shape = x_shape[:-1] + (x_shape[-1] // block_size, block_size)
   x = x.reshape(x_new_shape)  # shape = (B, M, K / block_size, block_size)
-
-  amax = jnp.max(jnp.abs(x), axis=-1, keepdims=True)
   MAX = dtypes.finfo(config.data_type).max.astype(x.dtype)
-  scales = amax / MAX  # shape = (B, M, K / block_size, 1)
+
+  def get_scales_per_block(values):
+    # shape = (B, M, K / block_size, 1)
+    return jnp.max(jnp.abs(values), axis=-1, keepdims=True) / MAX
 
   if config.mode == "mxfp8":
+    assert config.global_scale is None
     assert config.scale_type == dtypes.float8_e8m0fnu
-    scales_q = cast_to_e8m0_with_rounding_up(scales)
-    scaled_x = x / e8m0_to_dtype(scales_q, scales.dtype)
+
+    scales_q = cast_to_e8m0_with_rounding_up(get_scales_per_block(x))
+    scaled_x = x / e8m0_to_dtype(scales_q, x.dtype)
   elif config.mode == "nvfp4":
     assert config.scale_type == dtypes.float8_e4m3fn
     assert config.global_scale.dtype == np.float32
+
     SCALE_MAX = dtypes.finfo(config.scale_type).max.astype(x.dtype)
 
-    scales_q = jnp.clip(scales / config.global_scale, 0, SCALE_MAX)
+    x /= config.global_scale
+    scales_q = jnp.clip(get_scales_per_block(x), 0, SCALE_MAX)
     scales_q = lax.optimization_barrier(scales_q.astype(config.scale_type))
     scaled_x = x / scales_q.astype(np.float32)
   else:
@@ -557,9 +560,8 @@ def scaled_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type,
         lhs, rhs, return_weak_type_flag=False
     )
   else:
-    preferred_element_type = dtypes.canonicalize_dtype(
-        np.dtype(preferred_element_type)
-    )
+    preferred_element_type = dtypes.check_and_canonicalize_user_dtype(
+        preferred_element_type, "scaled_dot_impl")
 
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_dn = (lhs_contract, lhs_batch)

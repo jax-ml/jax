@@ -18,17 +18,17 @@ limitations under the License.
 #include <zlib.h>
 
 #include <string>
+#include <string_view>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/triton.pb.h"
 #include "jaxlib/gpu/vendor.h"
 
 namespace jax::JAX_GPU_NAMESPACE {
 
-absl::StatusOr<std::string> ZlibUncompress(absl::string_view compressed) {
+absl::StatusOr<std::string> ZlibUncompress(std::string_view compressed) {
   std::string data;
   uLongf dest_len = 5 * compressed.size();
   while (true) {
@@ -49,7 +49,7 @@ absl::StatusOr<std::string> ZlibUncompress(absl::string_view compressed) {
   return data;
 }
 
-absl::StatusOr<std::string> GetTritonKernelCallName(absl::string_view opaque) {
+absl::StatusOr<std::string> GetTritonKernelCallName(std::string_view opaque) {
   JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
   jax_triton::TritonAnyKernelCall proto;
   if (!proto.ParseFromString(serialized)) {
@@ -59,7 +59,7 @@ absl::StatusOr<std::string> GetTritonKernelCallName(absl::string_view opaque) {
 }
 
 absl::StatusOr<std::string> GetTritonKernelCallSerializedMetadata(
-    absl::string_view opaque) {
+    std::string_view opaque) {
   JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
   jax_triton::TritonAnyKernelCall proto;
   if (!proto.ParseFromString(serialized)) {

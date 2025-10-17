@@ -84,10 +84,10 @@ void logicalToPhysicalDeviceIds(Op op, Value device_assignment) {
   }
   CHECK_EQ(device_id.size(), 1);
   mlir::OpBuilder builder(op);
-  auto logical_id = builder.create<arith::IndexCastOp>(
-      op.getLoc(), builder.getIndexType(), op.getDeviceId());
-  auto physical_id = builder.create<memref::LoadOp>(
-      op.getLoc(), device_assignment, ValueRange{logical_id});
+  auto logical_id = arith::IndexCastOp::create(
+      builder, op.getLoc(), builder.getIndexType(), op.getDeviceId());
+  auto physical_id = memref::LoadOp::create(
+      builder, op.getLoc(), device_assignment, ValueRange{logical_id});
   device_id.assign(physical_id);
 }
 

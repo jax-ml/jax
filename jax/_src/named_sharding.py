@@ -20,7 +20,6 @@ import dataclasses
 import functools
 from typing import Any, Union
 
-from jax._src import config
 from jax._src.util import use_cpp_class, cache, use_cpp_method
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
@@ -46,6 +45,11 @@ class AUTO:
                      for _ in range(ndim)]
     return SdyArray(mesh_shape=self.mesh.shape_tuple,
                     dim_shardings=dim_shardings)
+
+  @property
+  def _device_assignment(self):
+    return self.mesh._flat_devices_tuple
+
 
 class UnspecifiedValue:
   def __repr__(self):
@@ -198,10 +202,8 @@ class NamedSharding(JSharding.Sharding):
     if isinstance(self.mesh, mesh_lib.AbstractMesh):
       raise ValueError('is_fully_addressable is not implemented for '
                        '`jax.sharding.AbstractMesh`.')
-    if config.enable_empty_arrays.value:
-      # return False if addressable_device_list is empty.
-      return self._internal_device_list.is_fully_addressable  # type: ignore
-    return not self.mesh.is_multi_process
+    # return False if addressable_device_list is empty.
+    return self._internal_device_list.is_fully_addressable  # type: ignore
 
   @property
   def _is_concrete(self) -> bool:
@@ -364,11 +366,6 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArray, mesh):
 @cache(max_size=4096, trace_context_in_key=False)
 def named_sharding_to_xla_hlo_sharding(
     self, num_dimensions: int) -> xc.HloSharding:
-  if self.spec.unreduced or self.spec.reduced:
-    raise ValueError(
-        'unreduced/reduced only works with the shardy partitioner. Please use'
-        " `jax.config.update('jax_use_shardy_partitioner', True)` to switch"
-        ' shardy on.')
   mesh_shape = self.mesh.shape
   array_mapping = get_array_mapping(self.spec)
   mesh_axis_pos = {name: i for i, name in enumerate(self.mesh.axis_names)}
@@ -379,6 +376,12 @@ def named_sharding_to_xla_hlo_sharding(
     axis_names = self.mesh.axis_names
     for manual_axis in manual_axes:
       special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
+
+  unreduced_axes = self.spec.unreduced
+  if unreduced_axes:
+    axis_names = self.mesh.axis_names
+    for u in unreduced_axes:
+      special_axes[axis_names.index(u)] = xc.OpSharding.Type.UNREDUCED
 
   replicated_mesh_axes = []
   for i, (axis_name, axis_val) in enumerate(mesh_shape.items()):
@@ -518,12 +521,12 @@ def _check_mesh_resource_axis(mesh, pspec):
             f"Resource axis: {r} of {pspec} "
             f"is not found in mesh: {tuple(mesh.shape.keys())}.")
   check_pspec_mix_axis_type(mesh, pspec)
-  if (AxisType.Auto not in mesh._axis_types_dict and
+  if (AxisType.Auto not in mesh.axis_types and
       PartitionSpec.UNCONSTRAINED in pspec):
     raise ValueError(
         f'{pspec} cannot contain'
         ' `P.UNCONSTRAINED` when no mesh axis_types are `Auto`. Got mesh'
-        f' axis_types: {mesh._axis_types_dict}')
+        f' axis_types: {mesh.axis_types}')
 
 def _check_mesh_unreduced(mesh, pspec):
   for u in pspec.unreduced:

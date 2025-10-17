@@ -1,4 +1,6 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_python//python:defs.bzl", "py_library")
 
 # Copyright 2023 The JAX Authors.
@@ -21,7 +23,7 @@ licenses(["notice"])
 package(
     default_applicable_licenses = [],
     default_visibility = [
-        "//jax:mosaic_users",
+        "//jax/experimental:mosaic_users",
     ],
 )
 
@@ -71,7 +73,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",

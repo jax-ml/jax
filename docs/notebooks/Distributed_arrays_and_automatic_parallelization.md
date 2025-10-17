@@ -21,7 +21,7 @@ kernelspec:
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/notebooks/Distributed_arrays_and_automatic_parallelization.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/jax-ml/jax/blob/main/docs/notebooks/Distributed_arrays_and_automatic_parallelization.ipynb)
 
-This tutorial discusses parallelism via `jax.Array`, the unified array object model available in JAX v0.4.1 and newer.
+This tutorial discusses parallelism via `jax.Array`, the unified array object model available in JAX v0.4.1 and newer. See {doc}`../the-training-cookbook` for a real-world machine learning training example that uses this API.
 
 ```{code-cell}
 :id: FNxScTfq3vGF
@@ -49,7 +49,7 @@ if len(jax.local_devices()) < 8:
 
 ## Intro and a quick example
 
-By reading this tutorial notebook, you'll learn about `jax.Array`, a unified 
+By reading this tutorial notebook, you'll learn about `jax.Array`, a unified
 datatype for representing arrays, even with physical storage spanning multiple
 devices. You'll also learn about how using `jax.Array`s together with `jax.jit`
 can provide automatic compiler-based parallelization.

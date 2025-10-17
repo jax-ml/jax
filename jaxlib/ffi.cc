@@ -361,8 +361,7 @@ void BuildFfiSubmodule(nb::module_& m) {
       .value("INSTANTIATE", PyFfiContext::Stage::kInstantiate)
       .value("PREPARE", PyFfiContext::Stage::kPrepare)
       .value("INITIALIZE", PyFfiContext::Stage::kInitialize)
-      .value("EXECUTE", PyFfiContext::Stage::kExecute)
-      .export_values();
+      .value("EXECUTE", PyFfiContext::Stage::kExecute);
 
   nb::class_<PyFfiContext> context(ffi_module, "ExecutionContext");
   context.def_prop_ro("stage", &PyFfiContext::stage);

@@ -25,8 +25,6 @@ import jax.numpy as jnp
 from jax import lax
 from jax.interpreters import batching
 
-import jax._src.lib
-import jax._src.util
 from jax._src import core
 from jax._src import test_util as jtu
 

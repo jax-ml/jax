@@ -33,12 +33,9 @@ from jax.experimental.sparse import bcsr as sparse_bcsr
 from jax.experimental.sparse import util as sparse_util
 from jax.experimental.sparse import test_util as sptu
 from jax.experimental.sparse import _lowerings
-from jax._src import xla_bridge
-from jax._src.lib import gpu_sparse
 from jax import jit
 from jax import vmap
 from jax._src import test_util as jtu
-from jax.interpreters import mlir
 import jax.numpy as jnp
 from jax._src.util import split_list
 import numpy as np
@@ -437,25 +434,6 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(matmat_expected, matmat_cols_sorted)
     self.assertArraysEqual(matmat_expected, matmat_unsorted)
     self.assertArraysEqual(matmat_expected, matmat_unsorted_fallback)
-
-  @jtu.run_on_devices("gpu")
-  def test_gpu_translation_rule(self):
-    version = xla_bridge.get_backend().platform_version
-    if "rocm" not in version.split():
-      cuda_version = None if version == "<unknown>" else int(
-          version.split()[-1])
-      if cuda_version is None or cuda_version < 11000:
-        self.assertFalse(gpu_sparse and gpu_sparse.cuda_is_supported)
-        self.assertNotIn(sparse.csr_todense_p,
-                         mlir._platform_specific_lowerings["cuda"])
-      else:
-        self.assertTrue(gpu_sparse and gpu_sparse.cuda_is_supported)
-        self.assertIn(sparse.csr_todense_p,
-                      mlir._platform_specific_lowerings["cuda"])
-    else:
-      self.assertTrue(gpu_sparse and gpu_sparse.rocm_is_supported)
-      self.assertIn(sparse.csr_todense_p,
-                    mlir._platform_specific_lowerings["rocm"])
 
   @jtu.sample_product(
     shape=[(5, 8), (8, 5), (5, 5), (8, 8)],

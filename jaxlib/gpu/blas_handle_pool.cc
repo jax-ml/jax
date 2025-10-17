@@ -27,7 +27,7 @@ template <>
 /*static*/ absl::StatusOr<BlasHandlePool::Handle> BlasHandlePool::Borrow(
     gpuStream_t stream) {
   BlasHandlePool* pool = Instance();
-  absl::MutexLock lock(&pool->mu_);
+  absl::MutexLock lock(pool->mu_);
   gpublasHandle_t handle;
   if (pool->handles_[stream].empty()) {
     JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpublasCreate(&handle)));

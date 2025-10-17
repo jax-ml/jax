@@ -46,16 +46,22 @@ limitations under the License.
 #include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
 #include "mlir/CAPI/IR.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Shape/IR/Shape.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
+#include "mlir/IR/Visitors.h"
 #include "mlir/Support/LLVM.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "shardy/dialect/sdy/ir/dialect.h"
 #include "shardy/integrations/c/passes.h"
+#include "jaxlib/mlir/_mlir_libs/traceback_to_location.h"
 #include "jaxlib/mosaic/gpu/integrations/c/passes.h"
+#include "stablehlo/dialect/VhloOps.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/service/spmd/shardy/integrations/c/passes.h"
@@ -69,8 +75,9 @@ namespace {
 // Returns true if a location is a NameLoc with a FileLineColLoc child. We
 // assume the NameLoc names a function name in a frame in this case.
 bool IsFrameNameLocation(mlir::Location location) {
-  return isa<mlir::NameLoc>(location) &&
-         isa<mlir::FileLineColLoc>(cast<mlir::NameLoc>(location).getChildLoc());
+  return mlir::isa<mlir::NameLoc>(location) &&
+         mlir::isa<mlir::FileLineColLoc>(
+             mlir::cast<mlir::NameLoc>(location).getChildLoc());
 }
 
 // Split a location into an operation type and an operation name, and a tail
@@ -87,7 +94,7 @@ void ParseLocation(mlir::Location& location, llvm::StringRef& op_type,
     } else {
       op_name = name;
     }
-    location = cast<mlir::NameLoc>(location).getChildLoc();
+    location = mlir::cast<mlir::NameLoc>(location).getChildLoc();
   }
 }
 
@@ -134,7 +141,7 @@ absl::StatusOr<std::vector<MlirValue>> InlinedCall(
       }
     } else {
       mlir::Operation* cloned_op = op_builder.clone(op, mapping);
-      cloned_op->walk([&](mlir::Operation* op) {
+      cloned_op->walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation* op) {
         // Compute a new location for the cloned op.
         // * The name should be "parent_op_name/child_op_name" (assuming both
         //   are present).
@@ -164,6 +171,12 @@ absl::StatusOr<std::vector<MlirValue>> InlinedCall(
               op_builder.getStringAttr(parent_op_type), child_loc);
         }
         op->setLoc(child_loc);
+        if (mlir::isa<mlir::sdy::ManualComputationOp>(op)) {
+          // Skip `ManualComputationOp`s and their nested operations, they will
+          // be handled separately.
+          return mlir::WalkResult::skip();
+        }
+        return mlir::WalkResult::advance();
       });
     }
   }
@@ -187,6 +200,11 @@ NB_MODULE(_jax_mlir_ext, m) {
     REGISTER_DIALECT(memref);
     REGISTER_DIALECT(scf);
     REGISTER_DIALECT(vector);
+    // TODO(jpienaar): these don't seem to have C API targets known to Bazel
+    unwrap(registry)->insert<mlir::shape::ShapeDialect>();
+    unwrap(registry)->insert<mlir::tensor::TensorDialect>();
+    unwrap(registry)->insert<mlir::vhlo::VhloDialect>();
+
     // For Mosaic GPU
     REGISTER_DIALECT(cf);
     REGISTER_DIALECT(gpu);
@@ -195,7 +213,7 @@ NB_MODULE(_jax_mlir_ext, m) {
     REGISTER_DIALECT(llvm);
 #undef REGISTER_DIALECT
 
-    mlirMosaicGpuRegisterPasses();
+    mlirMosaicGpuRegisterSerdePass();
     mlirRegisterTransformsPasses();
     // For Shardy
     mlirRegisterAllSdyPassesAndPipelines();
@@ -204,11 +222,30 @@ NB_MODULE(_jax_mlir_ext, m) {
     mlirRegisterTransformsStripDebugInfo();
   });
 
+  m.def("enter_multi_threaded_execution", [](MlirContext context) {
+    unwrap(context)->enterMultiThreadedExecution();
+  });
+  m.def("exit_multi_threaded_execution", [](MlirContext context) {
+    unwrap(context)->exitMultiThreadedExecution();
+  });
+
   m.def("inlined_func_call", xla::ValueOrThrowWrapper(InlinedCall),
         nb::arg("callee"), nb::arg("args"), nb::arg("block"),
         nb::arg("loc").none() = nb::none(),
         "Makes an inlined call to a function containing a single block with a "
         "single return op.");
+
+  nb::class_<TracebackToLocationCache>(m, "TracebackToLocationCache")
+      .def(
+          "__init__",
+          [](TracebackToLocationCache* self, nb::callable code_to_filename,
+             int frame_limit, MlirContext context) {
+            new (self) TracebackToLocationCache(code_to_filename, frame_limit,
+                                                unwrap(context));
+          },
+          nb::arg("code_to_filename"), nb::arg("frame_limit"),
+          nb::arg("context").none() = nb::none())
+      .def("get", &TracebackToLocationCache::Get);
 }
 
 }  // namespace jax

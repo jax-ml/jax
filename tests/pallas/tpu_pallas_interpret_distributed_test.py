@@ -20,16 +20,14 @@ contains only tests that use shard_map.
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
 import jax
 from jax import lax
-from jax._src import test_util as jtu
-import jax._src.pallas.mosaic.interpret as mosaic_interpret
-from jax.experimental import pallas as pl
 from jax._src import shard_map
+from jax._src import test_util as jtu
+from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_interpret
+from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
-
 import numpy as np
 
 jax.config.parse_flags_with_absl()
@@ -44,6 +42,10 @@ P = jax.sharding.PartitionSpec
 class InterpretDistributedTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
+
+    if not jtu.test_device_matches(['cpu']):
+      self.skipTest('CPU-only test')
+
     if jax.device_count() < 4:
       self.skipTest(f'requires at least 4 devices, found {jax.device_count()}')
 

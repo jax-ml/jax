@@ -89,12 +89,7 @@ def has_padding(mask_type: MaskType) -> bool:
   return mask_type == MaskType.PADDING or mask_type == MaskType.PADDING_CAUSAL
 
 def should_export_dbias(bias_shape, query_shape, layout) -> bool:
-  b_B, b_N, _, _ = bias_shape
-  if layout == AttentionLayout.BNTH.value:
-    _, q_N, _, _ = query_shape
-  else:
-    _, _, q_N, _ = query_shape
-  return b_B == 1 and b_N == q_N
+  return True
 
 def get_large_negative_number(dtype):
   # temp WAR as cuDNN has a bug for subtraction between two large negative value
@@ -385,7 +380,7 @@ def check_is_flash_attention(
         # bf16/fp16 attention conditions
         # Check the head dim.
         is_on_hopper = is_cuda_compute_capability_equal("9.0")
-        H_max = 256 if cudnn_version >= 90500 and is_on_hopper else 128
+        H_max = 256 if is_on_hopper else 128
         # check if multi-head latent attention is needed
         is_mla = qH != vH
         if not (qH <= H_max and qH % 8 == 0):
@@ -400,11 +395,9 @@ def check_is_flash_attention(
               f"Unsupported sequence length Q {T}, KV {S}."
           )
 
-        if is_packed and (cudnn_version < 90600 or not check_compute_capability("9.0")):
+        if is_packed and  not check_compute_capability("9.0"):
           raise NotImplementedError(
-            "Packed layout requires cudnn version >= 9.6 and at least hopper arch.")
-        if is_paged_attention and cudnn_version < 90500:
-          raise NotImplementedError("Page attention requires cudnn version >= 9.5.")
+            "Packed layout requires a GPU with at least Hopper architecture.")
         if is_mla and (cudnn_version < 91000 or not check_compute_capability("9.0")):
           raise NotImplementedError(
             "mla requires cudnn version >= 9.10 and at least hopper arch.")
@@ -575,7 +568,6 @@ def _dot_product_attention_fwd_abstract(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
     page_table_k, page_table_v, *, scale, seed, dropout_rate, variadic_args,
     mask_type, layout, sliding_window_length, is_training):
-  query_dtype = dtypes.canonicalize_dtype(query.dtype)
   if layout == AttentionLayout.BNTH.value:
     B, N, T, _ = query.shape
     _, _, S, H = value.shape
@@ -590,50 +582,45 @@ def _dot_product_attention_fwd_abstract(
 
   if is_training:
     return (
-      core.ShapedArray(output_shape, query_dtype),  # output
+      core.ShapedArray(output_shape, query.dtype),  # output
       core.ShapedArray(softmax_stat_shape, np.float32),  # softmax_stat
     )
   else:
     return (
-      core.ShapedArray(output_shape, query_dtype),  # output
+      core.ShapedArray(output_shape, query.dtype),  # output
     )
 
 def _dot_product_attention_bwd_abstract(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
     page_table_k, page_table_v, activation, fwd_output, grad_output, *,
     scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length):
-  query_dtype = dtypes.canonicalize_dtype(query.dtype)
-  key_dtype = dtypes.canonicalize_dtype(key.dtype)
-  value_dtype = dtypes.canonicalize_dtype(value.dtype)
-
   _, has_dbias = variadic_args
   if has_dbias:
     # cuDNN supports bias for this case
-    bias_dtype = dtypes.canonicalize_dtype(bias.dtype)
     return (
       core.ShapedArray(
-          query.shape, query_dtype
+          query.shape, query.dtype
       ),  # grad query
       core.ShapedArray(
-          key.shape, key_dtype
+          key.shape, key.dtype
       ),  # grad key
       core.ShapedArray(
-          value.shape, value_dtype
+          value.shape, value.dtype
       ),  # grad value
       core.ShapedArray(
-          bias.shape, bias_dtype
+          bias.shape, bias.dtype
       ),  # grad bias
     )
   else:
     return (
       core.ShapedArray(
-          query.shape, query_dtype
+          query.shape, query.dtype
       ),  # grad query
       core.ShapedArray(
-          key.shape, key_dtype
+          key.shape, key.dtype
       ),  # grad key
       core.ShapedArray(
-          value.shape, value_dtype
+          value.shape, value.dtype
       ),  # grad value
     )
 
@@ -878,11 +865,6 @@ def _dot_product_attention_bwd_batcher(
     *_, S, _, _ = key.shape
   B = math.prod(Bs)
   has_bias, has_dbias = variadic_args
-  # Reset the has_dbias if the combined batch size is not 1, because cuDNN only
-  # supports dbias with a single batch. In this case, an all-zero dbias will be
-  # appended instead.
-  if B > 1:
-    variadic_args = (has_bias, False)
   original_query_shape = query.shape
   original_key_shape = key.shape
   original_value_shape = value.shape
@@ -972,36 +954,40 @@ def _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args, is_training, lay
   out_sharding = NamedSharding(mesh, PartitionSpec(*query_spec))
   if is_training:
     # activation sharding
-    *batch_spec, q_seq_spec, num_head_spec, _ = query_spec
+    if layout == AttentionLayout.BNTH.value:
+      *batch_spec, num_head_spec, q_seq_spec, _ = query_spec
+    else:
+      *batch_spec, q_seq_spec, num_head_spec, _ = query_spec
     activation_sharding = NamedSharding(
       mesh, PartitionSpec(*batch_spec, num_head_spec, q_seq_spec, None))
     return [out_sharding, activation_sharding]
   return [out_sharding]
 
-def _fwd_shardy_rule(value_types, result_types, is_training, is_fp8):
+def _fwd_shardy_rule(value_types, result_types, layout, is_training, is_fp8):
   num_args = len(value_types)
   # We only need the query and value sharding, so use placeholders for the remaining args.
-  input_sharding = [(f'{BATCHING}{n}',) for n in range(num_args)]
-  input_sharding[0] = ('batch', 'qseq', 'nhead', 'head',)
+  input_sharding = [ArrayMapping(f'{BATCHING}{n}') for n in range(num_args)]
+  if layout == AttentionLayout.BNTH.value:
+    input_sharding[0] = ArrayMapping('batch', 'nhead', 'qseq', 'head')
+  else:
+    input_sharding[0] = ArrayMapping('batch', 'qseq', 'nhead', 'head')
   input_sharding[2] += ('v',)
 
   # The major dimensions are sharded like the query, the minor like the value.
-  output_sharding = (input_sharding[0][:-1] + ('v',),)
+  output_sharding = (ArrayMapping(*input_sharding[0][:-1], 'v'),)
   if is_fp8:
     # `amax` is a scalar.
-    amax = (f'{BATCHING}{num_args}',)
+    amax = ArrayMapping(f'{BATCHING}{num_args}')
     output_sharding += (amax, amax)
   factor_sizes = {}
   if is_training:
     # Activation sharding.
     if result_types[-1].shape[0] == value_types[0].shape[0]:
-      output_sharding += (('batch', 'nhead', 'qseq'),)
+      output_sharding += (ArrayMapping('batch', 'nhead', 'qseq'),)
     else:
       factor_sizes['n'] = result_types[-1].shape[0] // value_types[0].shape[0]
-      output_sharding += ((CompoundFactor('batch', 'n'), 'nhead', 'qseq'),)
-  return SdyShardingRule(
-      ArrayMapping(input_sharding), ArrayMapping(output_sharding),
-      **factor_sizes)
+      output_sharding += (ArrayMapping(CompoundFactor('batch', 'n'), 'nhead', 'qseq'),)
+  return SdyShardingRule(tuple(input_sharding), output_sharding, **factor_sizes)
 
 _dot_product_attention_fwd_lower = custom_partitioning(
     _dot_product_attention_fwd_impl, static_argnums=(10, 11, 12, 13, 14, 15, 16, 17))
@@ -1014,7 +1000,7 @@ def _dot_product_attention_fwd_infer_sharding_from_operands(
 def _dot_product_attention_fwd_shardy_rule(
     scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
     is_training, mesh, value_types, result_types):
-  return _fwd_shardy_rule(value_types, result_types, is_training, is_fp8=False)
+  return _fwd_shardy_rule(value_types, result_types, layout, is_training, is_fp8=False)
 
 def _dot_product_attention_fwd_partition(
     scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
@@ -1058,17 +1044,16 @@ def _infer_bwd_output_sharding(mesh, arg_shapes, layout, variadic_args):
   return out_shardings
 
 def _bwd_shardy_rule(num_args, has_dbias, is_fp8):
-  input_sharding = tuple((f'…{n}',) for n in range(num_args))
+  input_sharding = tuple(ArrayMapping(f'{BATCHING}{n}') for n in range(num_args))
 
   if has_dbias:
     output_sharding = input_sharding[0:4]
   else:
     output_sharding = input_sharding[0:3]
   if is_fp8:
-    amax = (f'{BATCHING}{num_args}',)
+    amax = ArrayMapping(f'{BATCHING}{num_args}')
     output_sharding += (amax, amax, amax, amax)
-  return SdyShardingRule(
-      ArrayMapping(input_sharding), ArrayMapping(output_sharding))
+  return SdyShardingRule(input_sharding, output_sharding)
 
 _dot_product_attention_bwd_lower = custom_partitioning(
     _dot_product_attention_bwd_impl, static_argnums=(13, 14, 15, 16, 17, 18, 19)
@@ -1106,10 +1091,21 @@ def _dot_product_attention_bwd_partition(
     _, has_dbias = variadic_args
     if has_dbias:
       query_spec = arg_shardings[0].spec
-      batch_spec = query_spec[0]
-      local_dbias = grads[3]
-      global_dbias = lax_parallel.psum(local_dbias, batch_spec)
-      grads = grads[:3] + [global_dbias]
+      bias_spec = arg_shardings[3].spec
+      if layout == AttentionLayout.BNTH.value:
+        q_batch_spec, q_num_head_spec, _, _ = query_spec
+      else:
+        q_batch_spec, _, q_num_head_spec, _ = query_spec
+      b_batch_spec, b_num_head_spec, _, _ = bias_spec
+
+      dbias = grads[3]
+      if q_batch_spec is not None and b_batch_spec is None:
+        # bias is replicated alone batch dim
+        dbias = lax_parallel.psum(dbias, q_batch_spec)
+      if q_num_head_spec is not None and b_num_head_spec is None:
+        # bias is replicated alone num_head dim
+        dbias = lax_parallel.psum(dbias, q_num_head_spec)
+      grads = grads[:3] + [dbias]
     return grads
   return mesh, sharded_impl, out_shardings, arg_shardings
 
@@ -1350,7 +1346,6 @@ def _dot_product_attention_fp8_fwd_abstract(
     query, key, value,
     descale_q, descale_k, descale_v, descale_s, scale_s, scale_o,
     scale, use_causal_mask, layout, is_training):
-  query_dtype = dtypes.canonicalize_dtype(query.dtype)
   if layout == AttentionLayout.BNTH.value:
     B, N, T, _ = query.shape
     _, _, S, _ = key.shape
@@ -1363,14 +1358,14 @@ def _dot_product_attention_fp8_fwd_abstract(
   # output, amax_s, amax_o[, softmax_stat]
   if is_training:
     return (
-      core.ShapedArray(output_shape, query_dtype),
+      core.ShapedArray(output_shape, query.dtype),
       core.ShapedArray((1,1,1,1), np.float32),
       core.ShapedArray((1,1,1,1), np.float32),
       core.ShapedArray(softmax_stat_shape, np.float32),
     )
   else:
     return (
-      core.ShapedArray(output_shape, query_dtype),
+      core.ShapedArray(output_shape, query.dtype),
       core.ShapedArray((1,1,1,1), np.float32),
       core.ShapedArray((1,1,1,1), np.float32),
     )
@@ -1380,16 +1375,11 @@ def _dot_product_attention_fp8_bwd_abstract(
     descale_q, descale_k, descale_v, descale_o, descale_dO, descale_s,
     descale_dP, scale_s, scale_dQ, scale_dK, scale_dV, scale_dP,
     scale, use_causal_mask, layout):
-  query_dtype = dtypes.canonicalize_dtype(query.dtype)
-  key_dtype = dtypes.canonicalize_dtype(key.dtype)
-  value_dtype = dtypes.canonicalize_dtype(value.dtype)
-
   amax_shape = (1,1,1,1)
-
   return (
-    core.ShapedArray(query.shape, query_dtype),
-    core.ShapedArray(key.shape, key_dtype),
-    core.ShapedArray(value.shape, value_dtype),
+    core.ShapedArray(query.shape, query.dtype),
+    core.ShapedArray(key.shape, key.dtype),
+    core.ShapedArray(value.shape, value.dtype),
     core.ShapedArray(amax_shape, np.float32),
     core.ShapedArray(amax_shape, np.float32),
     core.ShapedArray(amax_shape, np.float32),
@@ -1669,7 +1659,7 @@ def _dot_product_attention_fp8_fwd_partition(
 def _dot_product_attention_fp8_fwd_shardy_rule(
     scale, use_causal_mask, layout, is_training,
     mesh, value_types, result_types):
-  return _fwd_shardy_rule(value_types, result_types, is_training, is_fp8=True)
+  return _fwd_shardy_rule(value_types, result_types, layout, is_training, is_fp8=True)
 
 def _infer_fp8_bwd_output_sharding(mesh, arg_shapes, layout):
   # Prepare variadic_args for the original function

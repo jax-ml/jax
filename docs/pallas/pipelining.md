@@ -263,7 +263,7 @@ for i in range(N):
   cur_slot = i % 2
   next_slot = (i + 1) % 2
 
-  if i < N:
+  if i+1 < N:
     copy_in_start(A[i+1], X[next_slot])
   
   copy_in_wait(X[cur_slot])

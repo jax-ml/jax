@@ -33,6 +33,7 @@ py_library(
     deps = [
         "//jax",
         "//jax/_src/pallas",
+        "//jax/extend:backend",
     ],
 )
 
@@ -41,7 +42,7 @@ py_library(
     srcs = ["verification.py"],
     deps = [
         "//jax",
-        "//jax:mlir",
+        "//jax/_src:mlir",
         "//jax/_src/lib",
     ],
 )
@@ -50,8 +51,8 @@ py_library(
     name = "error_handling",
     srcs = ["error_handling.py"],
     deps = [
-        "//jax:compiler",
-        "//jax:traceback_util",
+        "//jax/_src:compiler",
+        "//jax/_src:traceback_util",
         "//jax/_src/lib",
     ],
 )
@@ -62,13 +63,13 @@ py_library(
     deps = [
         ":core",
         "//jax",
-        "//jax:core",
-        "//jax:dtypes",
-        "//jax:mlir",
-        "//jax:pretty_printer",
-        "//jax:tree_util",
-        "//jax:typing",
-        "//jax:util",
+        "//jax/_src:core",
+        "//jax/_src:dtypes",
+        "//jax/_src:mlir",
+        "//jax/_src:pretty_printer",
+        "//jax/_src:tree_util",
+        "//jax/_src:typing",
+        "//jax/_src:util",
         "//jax/_src/pallas",
     ],
 )
@@ -79,17 +80,18 @@ py_library(
     deps = [
         ":core",
         ":lowering",
+        ":sc_lowering",
         ":verification",
         "//jax",
-        "//jax:config",
-        "//jax:core",
-        "//jax:mlir",
-        "//jax:mosaic",
-        "//jax:sharding_impls",
-        "//jax:source_info_util",
-        "//jax:tpu_custom_call",
+        "//jax/_src:config",
+        "//jax/_src:core",
+        "//jax/_src:mlir",
+        "//jax/_src:sharding_impls",
+        "//jax/_src:source_info_util",
+        "//jax/_src:tpu_custom_call",
         "//jax/_src/lib",
         "//jax/_src/pallas",
+        "//jax/experimental:mosaic",
     ] + py_deps("numpy"),
 )
 
@@ -102,30 +104,94 @@ pytype_strict_library(
         ":primitives",
         ":random",
         "//jax",
-        "//jax:ad_util",
-        "//jax:api",
-        "//jax:checkify",
-        "//jax:cloud_tpu_init",
-        "//jax:core",
-        "//jax:custom_derivatives",
-        "//jax:debugging",
-        "//jax:dtypes",
-        "//jax:export",
-        "//jax:lax",
-        "//jax:mesh",
-        "//jax:mlir",
-        "//jax:mosaic",
-        "//jax:partial_eval",
-        "//jax:random",
-        "//jax:source_info_util",
-        "//jax:traceback_util",
-        "//jax:typing",
-        "//jax:util",
-        "//jax:xla",
-        "//jax:xla_bridge",
+        "//jax/_src:ad_util",
+        "//jax/_src:api",
+        "//jax/_src:checkify",
+        "//jax/_src:cloud_tpu_init",
+        "//jax/_src:core",
+        "//jax/_src:custom_derivatives",
+        "//jax/_src:debugging",
+        "//jax/_src:dtypes",
+        "//jax/_src:export",
+        "//jax/_src:lax",
+        "//jax/_src:literals",
+        "//jax/_src:mesh",
+        "//jax/_src:mlir",
+        "//jax/_src:partial_eval",
+        "//jax/_src:random",
+        "//jax/_src:source_info_util",
+        "//jax/_src:traceback_util",
+        "//jax/_src:typing",
+        "//jax/_src:util",
+        "//jax/_src:xla_bridge",
         "//jax/_src/lib",
         "//jax/_src/pallas",
+        "//jax/experimental:mosaic",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "sc_lowering",
+    srcs = [
+        "sc_lowering.py",
+    ],
+    visibility = ["//jax/experimental:pallas_sc_users"],
+    deps = [
+        ":core",
+        ":lowering",
+        ":primitives",
+        ":sc_core",
+        "//jax",
+        "//jax/_src:api_util",
+        "//jax/_src:core",
+        "//jax/_src:debugging",
+        "//jax/_src:lax",
+        "//jax/_src:mesh",
+        "//jax/_src:mlir",
+        "//jax/_src:partial_eval",
+        "//jax/_src:source_info_util",
+        "//jax/_src:util",
+        "//jax/_src/lib",
+        "//jax/_src/pallas",
+        "//jax/experimental:mosaic",
+    ],
+)
+
+pytype_strict_library(
+    name = "sc_core",
+    srcs = [
+        "sc_core.py",
+    ],
+    visibility = ["//jax/experimental:pallas_sc_users"],
+    deps = [
+        ":core",
+        "//jax",
+        "//jax/_src:core",
+        "//jax/_src:lax",
+        "//jax/_src:tree_util",
+        "//jax/_src/pallas",
+    ],
+)
+
+pytype_strict_library(
+    name = "sc_primitives",
+    srcs = [
+        "sc_primitives.py",
+    ],
+    deps = [
+        ":core",
+        ":lowering",
+        ":sc_lowering",
+        "//jax",
+        "//jax/_src:core",
+        "//jax/_src:dtypes",
+        "//jax/_src:effects",
+        "//jax/_src:lax",
+        "//jax/_src:partial_eval",
+        "//jax/_src/lib",
+        "//jax/_src/pallas",
+        "//jax/experimental:mosaic",
+    ],
 )
 
 py_library(
@@ -135,10 +201,10 @@ py_library(
         ":core",
         ":primitives",
         "//jax",
-        "//jax:api_util",
-        "//jax:pallas",
-        "//jax:util",
+        "//jax/_src:api_util",
+        "//jax/_src:util",
         "//jax/_src/pallas",
+        "//jax/experimental:pallas",
         "//jax/extend:backend",
     ] + py_deps("numpy"),
 )
@@ -149,8 +215,8 @@ py_library(
     deps = [
         ":primitives",
         "//jax",
-        "//jax:blocked_sampler",
-        "//jax:typing",
+        "//jax/_src:blocked_sampler",
+        "//jax/_src:typing",
     ] + py_deps("numpy"),
 )
 
@@ -163,20 +229,4 @@ py_library(
         "//jax",
         "//jax/_src/pallas",
     ],
-)
-
-py_library(
-    name = "interpret",
-    srcs = ["interpret.py"],
-    deps = [
-        ":core",
-        ":primitives",
-        ":verification",
-        "//jax",
-        "//jax:core",
-        "//jax:source_info_util",
-        "//jax:util",
-        "//jax/_src/lib",
-        "//jax/_src/pallas",
-    ] + py_deps("numpy"),
 )

@@ -20,7 +20,6 @@ from jax._src.sharding_impls import (
     NamedSharding as NamedSharding,
     SingleDeviceSharding as SingleDeviceSharding,
     PmapSharding as PmapSharding,
-    use_mesh as use_mesh,
     set_mesh as set_mesh,
 )
 from jax._src.partition_spec import (
@@ -28,9 +27,11 @@ from jax._src.partition_spec import (
 )
 from jax._src.mesh import (
     Mesh as Mesh,
+    AbstractDevice as AbstractDevice,
     AbstractMesh as AbstractMesh,
     AxisType as AxisType,
     get_abstract_mesh as get_abstract_mesh,
+    use_abstract_mesh as use_abstract_mesh,
 )
 
 from jax._src.pjit import (
@@ -38,27 +39,3 @@ from jax._src.pjit import (
     auto_axes as auto_axes,
     explicit_axes as explicit_axes,
 )
-
-
-_deprecations = {
-    # Added April 11, 2025.
-    "PositionalSharding": (
-        (
-            "jax.sharding.PositionalSharding was deprecated in JAX v0.6.0 and"
-            " removed in JAX v0.7.0"
-        ),
-        None,
-    ),
-    "GSPMDSharding": (
-        (
-            "jax.sharding.GSPMDSharding was deprecated in JAX v0.6.0 and"
-            " removed in JAX v0.7.0"
-        ),
-        None,
-    ),
-}
-
-
-from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-__getattr__ = _deprecation_getattr(__name__, _deprecations)
-del _deprecation_getattr

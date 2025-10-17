@@ -19,6 +19,7 @@ from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas.fuser import block_spec as block_spec_lib
+from jax._src.pallas.fuser import custom_fusion_lib
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -168,6 +169,53 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(
         kernel_fn((0, 0, 0), scalar_prefetch_values, (b,), x),
         fn(x) + b,
+    )
+
+  def test_custom_fusion(self):
+    @custom_fusion_lib.custom_fusion
+    def fn(x, y):
+      return x + y
+
+    fn.def_pull_block_spec(lambda bss: (bss[0], bss[0]))
+    fn.def_push_block_spec(lambda bss: (bss[0],))
+    fn.def_eval_rule(lambda _, x, y: (fn(x, y),))
+
+    in_type = (
+        jax.ShapeDtypeStruct((512, 512), jnp.float32),
+        jax.ShapeDtypeStruct((512, 512), jnp.float32),
+    )
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        fn, *in_type
+    )
+    self.assertEmpty(new_values)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec((128, 128), lambda i, j, k: (i, j))
+    kernel_fn, (value_block_specs, *in_block_specs), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid=(1, 1, 1),
+            scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+        )(new_values, *in_type)
+    )
+    self.assertEmpty(value_block_specs)
+    self.assertLen(in_block_specs, 2)
+    x_block_spec, y_block_spec = in_block_specs
+    self.assertEqual(x_block_spec.block_shape, (128, 128))
+    self.assertEqual(
+        x_block_spec.index_map(0, 1, 2), block_spec.index_map(0, 1, 2)
+    )
+    self.assertEqual(y_block_spec.block_shape, (128, 128))
+    self.assertEqual(
+        y_block_spec.index_map(0, 1, 2), block_spec.index_map(0, 1, 2)
+    )
+
+    x = np.ones((128, 128), dtype=np.float32)
+    y = np.ones((128, 128), dtype=np.float32)
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0, 0), scalar_prefetch_values, new_values, x, y),
+        x + y
     )
 
   @parameterized.product(
@@ -805,6 +853,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
       ((8, 8, 128), (1, 2, 128), (1, 1, 2, 128), (0, 2, 3, 5)),
       ((2, 32, 128), (2, 4, 128), (2, 1, 4, 128), (2, 1, 1, 5)),
       ((2, 4, 1024), (2, 1, 128), (2, 1, 1, 128), (2, 3, 5, 0)),
+      ((2, 4, 1024), (2, None, 128), (2, 1, 1, 128), (2, 3, 5, 0)),
       # Merge three dimensions.
       ((64, 128), (4, 128), (1, 1, 4, 128), (0, 1, 0, 3)),
       ((2, 4096), (1, 64), (1, 1, 1, 64), (2, 0, 1, 1)),
@@ -838,6 +887,7 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     self.assertEqual(x_block_spec.block_shape, expected_x_block_shape)
     self.assertEqual(x_block_spec.index_map(*pids), expected_x_index)
 
+    block_shape = [bd for bd in block_shape if bd is not None]
     x = jnp.arange(np.prod(block_shape), dtype=jnp.float32)
     x = x.reshape(expected_x_block_shape)
     y = kernel_fn((0, 1, 2), scalar_prefetch_values, (), x)
@@ -1058,6 +1108,30 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         out = kernel_fn((i, j), scalar_prefetch_values, (), key)
         out_ref = gen((i, j))
         np.testing.assert_array_equal(out, out_ref)
+
+  def test_reduce_sum(self):
+
+    x = jnp.arange(1024 * 256, dtype=jnp.float32).reshape((1024, 256))
+    def f():
+      return x.sum(axis=1)
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(f)
+    self.assertLen(new_values, 1)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec((128,), lambda i: (i,))
+    kernel_fn, (value_block_specs,), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid=(8,),
+            scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+        )(new_values)
+    )
+    self.assertLen(value_block_specs, 1)
+    y = x[128:256]
+    out = kernel_fn((1,), scalar_prefetch_values, (y,))
+    np.testing.assert_array_equal(out, y.sum(axis=1))
 
 
 class PullBlockSpecHOPTest(jtu.JaxTestCase):

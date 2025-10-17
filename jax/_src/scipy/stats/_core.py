@@ -120,8 +120,8 @@ def mode(a: ArrayLike, axis: int | None = 0, nan_policy: str = "propagate", keep
   def _mode_helper(x: Array) -> tuple[Array, Array]:
     """Helper function to return mode and count of a given array."""
     if x.size == 0:
-      return (jnp.array(np.nan, dtype=dtypes.canonicalize_dtype(dtypes.float_)),
-              jnp.array(0, dtype=dtypes.canonicalize_dtype(dtypes.float_)))
+      return (jnp.array(np.nan, dtype=dtypes.default_float_dtype()),
+              jnp.array(0, dtype=dtypes.default_float_dtype()))
     else:
       vals, counts = jnp.unique(x, return_counts=True, size=x.size)
       return vals[jnp.argmax(counts)], counts.max()
@@ -214,7 +214,7 @@ def rankdata(
   if method == "min":
     return count[dense - 1] + 1
   if method == "average":
-    return .5 * (count[dense] + count[dense - 1] + 1).astype(dtypes.canonicalize_dtype(dtypes.float_))
+    return .5 * (count[dense] + count[dense - 1] + 1).astype(dtypes.default_float_dtype())
   raise ValueError(f"unknown method '{method}'")
 
 

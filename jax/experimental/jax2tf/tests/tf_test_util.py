@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-import contextlib
 import dataclasses
 import re
 import os
@@ -195,9 +194,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       export.maximum_supported_calling_convention_version,
       tfxla.call_module_maximum_supported_version())
 
-    with contextlib.ExitStack() as stack:
-      stack.enter_context(tf.device(self.tf_default_device))
-      self.addCleanup(stack.pop_all().close)
+    self.enter_context(tf.device(self.tf_default_device))
 
   def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
     """Compares dtypes across JAX and TF dtypes. Overrides super method."""
@@ -216,7 +213,6 @@ class JaxToTfTestCase(jtu.JaxTestCase):
   def ConvertAndCompare(self,
                         func_jax: Callable,
                         *args,
-                        enable_xla: bool = True,
                         limitations: Sequence = ()):
     """Compares jax_func(*args) with convert(jax_func)(*args).
 
@@ -229,8 +225,6 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     Args:
       func_jax: the function to invoke (``func_jax(*args)``)
       args: the arguments.
-      enable_xla: if True, allows the use of XLA ops in jax2tf.convert
-        (default: True).
       limitations: the set of limitations for this harness (not yet filtered
         by mode).
     """
@@ -239,7 +233,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     result_jax = func_jax(*args)  # JAX
     result_tf = None
 
-    func_tf = jax2tf.convert(func_jax, enable_xla=enable_xla)
+    func_tf = jax2tf.convert(func_jax)
 
     unexpected_successes: list[str] = []
     # Run the "compiled" mode first, it is most important
@@ -249,7 +243,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       def log_message(extra):
         return f"[{self._testMethodName}] {mode=}: {extra}"
 
-      jax2tf_limits = tuple(filter(lambda l: l.filter(mode=mode), limitations))
+      jax2tf_limits = tuple(filter(lambda l: l.filter(), limitations))
 
       skip_tf_run = [l for l in jax2tf_limits if l.skip_tf_run]
       if skip_tf_run:
@@ -414,14 +408,9 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     # graph. We count the number of characters in the textual representation
     # of the constant.
     f_tf_graph = tf.function(tf_fun, autograph=False).get_concrete_function(*args).graph.as_graph_def()
-    if config.jax2tf_default_native_serialization.value:
-      # This way of finding constants may be brittle, if the constant representation
-      # contains >. It seems tobe hex-encoded, so this may be safe.
-      large_consts = [m for m in re.findall(r"dense<([^>]+)>", str(f_tf_graph)) if len(m) >= at_least]
-    else:
-      # We cannot find the constants just with string matching because their
-      # representation may contain escaped "
-      large_consts = [str(n) for n in f_tf_graph.node if n.op == "Const" and len(str(n)) >= at_least]
+    # This way of finding constants may be brittle, if the constant representation
+    # contains >. It seems tobe hex-encoded, so this may be safe.
+    large_consts = [m for m in re.findall(r"dense<([^>]+)>", str(f_tf_graph)) if len(m) >= at_least]
     return large_consts
 
   def CheckOpMetadata(self, jax_fun, x,

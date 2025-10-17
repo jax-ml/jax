@@ -50,6 +50,7 @@ typedef enum MlirTpuImplicitDim {
   MlirTpuImplicitDimNone = 0,
   MlirTpuImplicitDimMinor = 1,
   MlirTpuImplicitDimSecondMinor = 2,
+  MlirTpuImplicitDimMinorAndSecondMinor = 3,
 } MlirTpuImplicitDim;
 
 typedef enum MlirTpuDirection {
@@ -115,6 +116,7 @@ typedef struct MlirTpuApplyVectorLayoutContext {
   MlirTpuI64TargetTuple target_shape = {8, 128};
   MlirTpuMxuShape mxu_shape = {128, 128};
   int64_t max_sublanes_in_scratch = 0;
+  bool shape_invariant_numerics = false;
 } MlirTpuApplyVectorLayoutContext;
 
 // Caller owns the returned object and is responsible for calling

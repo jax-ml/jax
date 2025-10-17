@@ -74,7 +74,8 @@ def hoist_consts_to_refs(
     return core.eval_jaxpr(jaxpr, all_consts, *args0, *args1)
 
   hoisted_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(_hoist, debug_info=jaxpr.debug_info), in_avals)
+      lu.wrap_init(_hoist, debug_info=jaxpr.debug_info.with_unknown_names()),
+      in_avals)
   assert not consts, "All consts should have been converted to refs"
   return hoisted_jaxpr
 
@@ -86,15 +87,9 @@ def val_to_ref_aval(x) -> AbstractRef:
   return AbstractRef(aval)
 
 
-def dtype_bitwidth(dtype: DTypeLike) -> int:
-  if dtypes.isdtype(dtype, "integral"):
-    return dtypes.iinfo(dtype).bits
-  return dtypes.dtype(dtype).itemsize * 8
-
-
 def bitcast(x, dtype: DTypeLike):
-  x_bitwidth = dtype_bitwidth(x.dtype)
-  y_bitwidth = dtype_bitwidth(dtype)
+  x_bitwidth = dtypes.bit_width(x.dtype)
+  y_bitwidth = dtypes.bit_width(dtype)
   shape = list(x.shape)
   if x_bitwidth != y_bitwidth:
     if len(shape) < 2:

@@ -470,7 +470,7 @@ batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
 
 
 def _generic_reduce_window_lower(
-    ctx,
+    ctx: mlir.LoweringRuleContext,
     *args,
     jaxpr,
     consts,
@@ -488,7 +488,7 @@ def _generic_reduce_window_lower(
       raise NotImplementedError('Cannot lower effectful `reduce_window`.')
     out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, jaxpr, ctx.name_stack,
         mlir.TokenSet(), consts, *reducer.arguments,  # type: ignore[misc]
-        dim_var_values=ctx.dim_var_values)
+        dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering)
     return mlir.flatten_ir_values(out_nodes)
 
   return mlir.reduce_window(
@@ -565,7 +565,7 @@ def reduce_window_sharding_rule(operand, window_dimensions, window_strides,
       out_shape, operand, 'reduce_window')
 
 reduce_window_sum_p = lax.standard_primitive(
-    _reduce_window_sum_shape_rule, lax._input_dtype, 'reduce_window_sum',
+    _reduce_window_sum_shape_rule, lax.input_dtype, 'reduce_window_sum',
     sharding_rule=reduce_window_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_window_sum'))
 ad.deflinear2(reduce_window_sum_p, _reduce_window_sum_transpose_rule)
@@ -632,7 +632,7 @@ def reduce_window_shape_tuple(operand_shape, window_dimensions, window_strides,
 
 
 reduce_window_max_p = lax.standard_primitive(
-    _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_max',
+    _common_reduce_window_shape_rule, lax.input_dtype, 'reduce_window_max',
     sharding_rule=reduce_window_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_window_max'))
 ad.defjvp(reduce_window_max_p, partial(_reduce_window_chooser_jvp_rule,
@@ -641,7 +641,7 @@ batching.primitive_batchers[reduce_window_max_p] = partial(
   _reduce_window_batch_rule, _reduce_window_max)
 
 reduce_window_min_p = lax.standard_primitive(
-    _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_min',
+    _common_reduce_window_shape_rule, lax.input_dtype, 'reduce_window_min',
     sharding_rule=reduce_window_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_window_min'))
 ad.defjvp(reduce_window_min_p, partial(_reduce_window_chooser_jvp_rule,
@@ -714,13 +714,14 @@ def _select_and_scatter_sharding_rule(
   return operand.sharding
 
 select_and_scatter_p = lax.standard_primitive(
-    _select_and_scatter_shape_rule, lax._input_dtype, 'select_and_scatter',
+    _select_and_scatter_shape_rule, lax.input_dtype, 'select_and_scatter',
     sharding_rule=_select_and_scatter_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'select_and_scatter'))
 
 def _select_and_scatter_lower(
-    ctx, operand, source, init_value, *, select_jaxpr,
-    select_consts, scatter_jaxpr, scatter_consts, window_dimensions,
+    ctx: mlir.LoweringRuleContext, operand, source, init_value, *,
+    select_jaxpr: core.Jaxpr, select_consts,
+    scatter_jaxpr: core.Jaxpr, scatter_consts, window_dimensions,
     window_strides, padding):
   operand_aval, source_aval, init_value_aval = ctx.avals_in
   aval_out, = ctx.avals_out
@@ -744,7 +745,8 @@ def _select_and_scatter_lower(
                                       ctx.name_stack,
                                       mlir.TokenSet(), select_consts,
                                       *select.arguments,
-                                      dim_var_values=ctx.dim_var_values)
+                                      dim_var_values=ctx.dim_var_values,
+                                      const_lowering=ctx.const_lowering)
     hlo.return_(mlir.flatten_ir_values(out_nodes))
   scatter = op.scatter.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(scatter):
@@ -754,7 +756,8 @@ def _select_and_scatter_lower(
                                       ctx.name_stack,
                                       mlir.TokenSet(), scatter_consts,
                                       *scatter.arguments,
-                                      dim_var_values=ctx.dim_var_values)
+                                      dim_var_values=ctx.dim_var_values,
+                                      const_lowering=ctx.const_lowering)
     hlo.return_(mlir.flatten_ir_values(out_nodes))
   return [mlir.lower_with_sharding_in_types(ctx, r, aval)
           for r, aval in zip(op.results, ctx.avals_out)]
@@ -817,7 +820,7 @@ def _select_and_scatter_add_batch_rule(
   return out, 0
 
 select_and_scatter_add_p = lax.standard_primitive(
-    _select_and_scatter_add_shape_rule, lax._input_dtype,
+    _select_and_scatter_add_shape_rule, lax.input_dtype,
     'select_and_scatter_add',
     sharding_rule=_select_and_scatter_add_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'select_and_scatter_add'))
@@ -1092,7 +1095,7 @@ def _select_and_gather_add_batching_rule(
 
 
 select_and_gather_add_p = lax.standard_primitive(
-    _select_and_gather_add_shape_rule, lax._input_dtype,
+    _select_and_gather_add_shape_rule, lax.input_dtype,
     'select_and_gather_add', sharding_rule=_select_and_gather_add_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'select_and_gather_add'))
 ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp

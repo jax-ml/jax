@@ -32,6 +32,7 @@ from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosa
 from jax._src.internal_test_util.export_back_compat_test_data.pallas import triton_add_one
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
+from jax.experimental.pallas import mosaic_gpu as plgpu
 from jax.experimental.pallas.ops.tpu import matmul
 import jax.numpy as jnp
 
@@ -81,13 +82,26 @@ class CompatTest(bctu.CompatTestBase):
       o_ref[...] = x_ref[...] + 1
 
     data = self.load_testdata(mosaic_gpu_add_one.data_2025_04_22)
+    self.run_one_test(add_one, data, expect_current_custom_calls=["mosaic_gpu_v2"])
+
+  def test_mosaic_gpu_kernel_add_one(self):
+    if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest("Only works on GPUs with capability >= sm90")
+
+    @functools.partial(
+        plgpu.kernel,
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+        grid=(2,),
+        grid_names=("x",),
+    )
+    def add_one(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1
+
+    data = self.load_testdata(mosaic_gpu_add_one.kernel_data_2025_09_07)
     self.run_one_test(add_one, data)
 
   @jax.default_matmul_precision("bfloat16")
   def test_mosaic_matmul(self):
-    # TODO(apaszke): Remove after 12 weeks have passed.
-    if not jtu.if_cloud_tpu_at_least(2024, 9, 30):
-      self.skipTest("Requires libtpu built after 2024-09-30")
     dtype = jnp.float32
     def func():
       # Build the inputs here, to reduce the size of the golden inputs.

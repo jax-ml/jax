@@ -21,6 +21,7 @@ load(
     _pywrap_binaries = "pywrap_binaries",
     _pywrap_library = "pywrap_library",
 )
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 pywrap_library = _pywrap_library
 pywrap_binaries = _pywrap_binaries
@@ -33,7 +34,8 @@ def nanobind_pywrap_extension(
         pytype_deps = [],
         copts = [],
         linkopts = [],
-        visibility = None):
+        visibility = None,
+        **kwargs):  # @unused
     # buildifier: disable=function-docstring-args
     "Python extension rule using nanobind and the pywrap rules."
     module_name = name
@@ -43,7 +45,7 @@ def nanobind_pywrap_extension(
     # We put the entire contents of the extension in a single cc_library, which will become part of
     # the common pywrap library. All the contents of all extensions will end up in the common
     # library.
-    native.cc_library(
+    cc_library(
         name = lib_name,
         srcs = srcs,
         copts = copts,

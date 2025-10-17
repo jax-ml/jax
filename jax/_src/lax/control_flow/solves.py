@@ -27,7 +27,7 @@ from jax._src import linear_util as lu
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.interpreters import xla
+from jax._src.interpreters import pxla
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (tree_flatten, treedef_children, tree_leaves,
                                 tree_unflatten, treedef_tuple)
@@ -112,13 +112,11 @@ def custom_root(f: Callable,
     unchecked_zeros, f_jvp = api.linearize(f, x)
     return tangent_solve(f_jvp, b)
 
-  tangent_solve_debug = api_util.debug_info("custom_root tangent_solve",
-                                            tangent_solve,
-                                            (f, initial_guess), {},
-                                            static_argnums=(0,))
+  linearize_and_solve_dbg = api_util.debug_info("custom_root tangent_solve",
+      tangent_solve, (initial_guess, initial_guess), {})
   l_and_s_jaxpr, l_and_s_consts, out_tree = _initial_style_jaxpr(
       linearize_and_solve, treedef_tuple((in_tree,) * 2), guess_avals * 2,
-      tangent_solve_debug)
+      linearize_and_solve_dbg)
   _check_tree("tangent_solve", "x", out_tree, in_tree, False)
 
   all_consts = [f_consts, solve_consts, l_and_s_consts]
@@ -493,7 +491,7 @@ linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
 linear_solve_p.def_effectful_abstract_eval(_linear_solve_abstract_eval)
 ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp
-xla.register_initial_style_primitive(linear_solve_p)
+pxla.register_initial_style_primitive(linear_solve_p)
 mlir.register_lowering(
     linear_solve_p, mlir.lower_fun(_custom_linear_solve_impl,
                                    multiple_results=True))

@@ -153,8 +153,8 @@ colab:
 id: FjZzkxI8ky4r
 outputId: 2a1b6e7a-1c29-4347-c020-7b47c27a5cc3
 ---
-f = jax.jit(lambda x: x, out_shardings=s_dev)
-out_host = f(arr_host)      # Input arrays in the device memory while output arrays in the host memory
+f = jax.jit(lambda x: x, out_shardings=s_host)
+out_host = f(arr_dev)      # Input arrays in the device memory while output arrays in the host memory
 print("Result value of D2H: \n", out_host)
 ```
 
@@ -174,7 +174,7 @@ Key components:
 - Memory usage analysis
 - Gradient computation with JIT compilation
 
-To analyze memory usage in JAX, the :func:`jax.stages.Compiled.memory_analysis` method can be used on a compiled function. This provides detailed statistics about memory consumption during computation. The key metrics include temporary memory size, argument size, output size, and alias size. To calculate the total memory usage, sum the temporary, argument, and output sizes, then subtract the alias size to avoid double-counting the same memory multiple times. This provides a summarized view of how the device memory is utilized across different aspects of the computation.
+To analyze memory usage in JAX, the {func}`jax.stages.Compiled.memory_analysis` method can be used on a compiled function. This provides detailed statistics about memory consumption during computation. The key metrics include temporary memory size, argument size, output size, and alias size. To calculate the total memory usage, sum the temporary, argument, and output sizes, then subtract the alias size to avoid double-counting the same memory multiple times. This provides a summarized view of how the device memory is utilized across different aspects of the computation.
 
 ```{code-cell} ipython3
 ---
@@ -369,7 +369,7 @@ outputId: 48c09658-f8b6-4be3-ef0e-02e0e2566e10
 ---
 # Hybrid version: Both activation and parameter offloading
 def hybrid_layer(x, w):
-  # Move model parameters w1 and w2 to host memory via device_put
+  # Move model parameters w1 and w2 to device memory via device_put
   w1, w2 = jax.tree.map(lambda x: jax.device_put(x, s_dev), w)
   x = checkpoint_name(x, "x")  # Offload activation x to host memory
   y = x @ w1
@@ -637,4 +637,4 @@ Note: The optimizer states can be compared for numerical equivalence using `jax.
 
 ## Tools for Host Offloading
 
-:func:`jax.stages.Compiled.memory_analysis` API is utilized above to get memory usage information. For device memory analysis, refer to :doc:`device_memory_profiling`. The profiling tools described in {ref}`profiling` can help measure memory savings and performance impact from host offloading.
+{func}`jax.stages.Compiled.memory_analysis` API is utilized above to get memory usage information. For device memory analysis, refer to :doc:`device_memory_profiling`. The profiling tools described in {ref}`profiling` can help measure memory savings and performance impact from host offloading.

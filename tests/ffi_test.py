@@ -22,13 +22,11 @@ from absl.testing import parameterized
 
 import jax
 from jax import lax
-import jax.extend as jex
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
@@ -152,7 +150,7 @@ class FfiTest(jtu.JaxTestCase):
     def fun(x):
       return jax.ffi.ffi_call("test_ffi", x)(x, non_hashable_arg={"a": 1})
 
-    self.assertIn("HashableDict", str(jax.make_jaxpr(fun)(jnp.ones(5))))
+    self.assertIn("FrozenDict", str(jax.make_jaxpr(fun)(jnp.ones(5))))
     hlo = jax.jit(fun).lower(jnp.ones(5)).as_text()
     self.assertIn("non_hashable_arg = {a = 1", hlo)
 
@@ -282,20 +280,13 @@ class FfiTest(jtu.JaxTestCase):
     jax.jit(f)(x)  # neither does JIT
     self.assertNotIn("all-gather", jax.jit(f).lower(x).compile().as_text())
 
-  @jtu.run_on_devices("gpu", "cpu")
-  @jtu.ignore_warning(category=DeprecationWarning)
-  def test_extend_import_shim(self):
-    if deprecations.is_accelerated_attribute(jex.ffi, "ffi_call"):
-      self.skipTest("FFI call deprecation is accelerated.")
-    ffi_call_geqrf(jnp.ones((4, 5), dtype=np.float32), _use_extend=True)
-
   def test_extended_dtype_lowering(self):
     def f(x):
       return jax.ffi.ffi_call("edtype", (), has_side_effect=True)(x)
     jax.jit(f).lower(jax.random.key(0))   # doesn't crash
 
 
-def ffi_call_geqrf(x, _use_extend=False, **kwargs):
+def ffi_call_geqrf(x, **kwargs):
   if jtu.test_device_matches(["cpu"]):
     lapack._lapack.initialize()
 
@@ -311,8 +302,7 @@ def ffi_call_geqrf(x, _use_extend=False, **kwargs):
         rocm="hipsolver_geqrf_ffi",
         cuda="cusolver_geqrf_ffi",
     )[platform]
-    f = jex.ffi.ffi_call if _use_extend else jax.ffi.ffi_call
-    return f(
+    return jax.ffi.ffi_call(
         target_name, output_types, input_output_aliases={0: 0},
         input_layouts=[x_major_to_minor],
         output_layouts=[x_major_to_minor, None],

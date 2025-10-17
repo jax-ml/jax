@@ -62,9 +62,8 @@ class PyTreeFuture(Future[Any]):
       yield
     return self.result()
 
-
-def _cls2typerepr(cls):
-  return f"{cls.__module__}.{cls.__name__}"
+  def __repr__(self):
+    return f"PyTreeFuture(done={self.done()}, pytree={self.pytree})"
 
 
 def serialize_pytreedef(node) -> dict[str, Any]:

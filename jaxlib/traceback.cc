@@ -23,6 +23,7 @@ limitations under the License.
 #include <cstring>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -33,7 +34,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
@@ -51,7 +52,7 @@ limitations under the License.
 
 namespace nb = nanobind;
 
-namespace xla {
+namespace jax {
 
 namespace {
 
@@ -61,27 +62,7 @@ static constexpr int kMaxFrames = 512;
 
 PyTypeObject* traceback_type_ = nullptr;
 
-// Entry in a traceback. Must be POD.
-struct TracebackEntry {
-  TracebackEntry() = default;
-  TracebackEntry(PyCodeObject* code, int lasti) : code(code), lasti(lasti) {}
-  PyCodeObject* code;
-  int lasti;
-
-  bool operator==(const TracebackEntry& other) const {
-    return code == other.code && lasti == other.lasti;
-  }
-  bool operator!=(const TracebackEntry& other) const {
-    return !operator==(other);
-  }
-};
 static_assert(std::is_trivial_v<TracebackEntry> == true);
-
-template <typename H>
-H AbslHashValue(H h, const TracebackEntry& entry) {
-  h = H::combine(std::move(h), entry.code, entry.lasti);
-  return h;
-}
 
 struct TracebackObject {
   PyObject_VAR_HEAD;
@@ -221,22 +202,17 @@ std::vector<Traceback::Frame> Traceback::Frames() const {
 }
 
 std::string Traceback::Frame::ToString() const {
-  return absl::StrFormat("%s:%d (%s)", nb::cast<absl::string_view>(file_name),
-                         line_num, nb::cast<absl::string_view>(function_name));
+  return absl::StrFormat("%s:%d (%s)", nb::cast<std::string_view>(file_name),
+                         line_num, nb::cast<std::string_view>(function_name));
 }
 
 std::string Traceback::ToString() const {
   return traceback_to_string(reinterpret_cast<const TracebackObject*>(ptr()));
 }
 
-std::vector<std::pair<PyCodeObject*, int>> Traceback::RawFrames() const {
+absl::Span<const TracebackEntry> Traceback::RawFrames() const {
   const TracebackObject* tb = reinterpret_cast<const TracebackObject*>(ptr());
-  std::vector<std::pair<PyCodeObject*, int>> frames;
-  frames.reserve(Py_SIZE(tb));
-  for (Py_ssize_t i = 0; i < Py_SIZE(tb); ++i) {
-    frames.push_back(std::make_pair(tb->frames[i].code, tb->frames[i].lasti));
-  }
-  return frames;
+  return absl::MakeConstSpan(tb->frames, Py_SIZE(tb));
 }
 
 /*static*/ bool Traceback::Check(PyObject* o) { return traceback_check(o); }
@@ -255,7 +231,7 @@ std::vector<std::pair<PyCodeObject*, int>> Traceback::RawFrames() const {
 
   PyThreadState* thread_state = PyThreadState_GET();
 
-#ifdef PLATFORM_GOOGLE
+#if defined(PLATFORM_GOOGLE) && PY_VERSION_HEX < 0x030e0000
 // This code is equivalent to the version using public APIs, but it saves us
 // an allocation of one object per stack frame. However, this is definitely
 // violating the API contract of CPython, so we only use this where we can be
@@ -283,14 +259,15 @@ std::vector<std::pair<PyCodeObject*, int>> Traceback::RawFrames() const {
 #endif  // PY_VERSION_HEX < 0x030d0000
 
 #else   // PLATFORM_GOOGLE
-  PyFrameObject* next;
-  for (PyFrameObject* py_frame = PyThreadState_GetFrame(thread_state);
-       py_frame != nullptr && count < kMaxFrames; py_frame = next) {
+  PyFrameObject* py_frame = PyThreadState_GetFrame(thread_state);
+  while (py_frame != nullptr && count < kMaxFrames) {
     frames[count] = {PyFrame_GetCode(py_frame), PyFrame_GetLasti(py_frame)};
     ++count;
-    next = PyFrame_GetBack(py_frame);
-    Py_XDECREF(py_frame);
+    PyFrameObject* next = PyFrame_GetBack(py_frame);
+    Py_DECREF(py_frame);
+    py_frame = next;
   }
+  Py_XDECREF(py_frame);
 #endif  // PLATFORM_GOOGLE
 
   Traceback traceback =
@@ -300,7 +277,7 @@ std::vector<std::pair<PyCodeObject*, int>> Traceback::RawFrames() const {
   return traceback;
 }
 
-void BuildTracebackSubmodule(nb::module_& m) {
+void Traceback::RegisterType(nb::module_& m) {
   nb::class_<Traceback::Frame>(m, "Frame")
       .def(nb::init<const nb::str&, const nb::str&, int, int>())
       .def_ro("file_name", &Traceback::Frame::file_name)
@@ -309,8 +286,8 @@ void BuildTracebackSubmodule(nb::module_& m) {
       .def_ro("line_num", &Traceback::Frame::line_num)
       .def("__repr__", [](const Traceback::Frame& frame) {
         return absl::StrFormat(
-            "%s;%s:%d", nb::cast<absl::string_view>(frame.function_name),
-            nb::cast<absl::string_view>(frame.file_name), frame.line_num);
+            "%s;%s:%d", nb::cast<std::string_view>(frame.function_name),
+            nb::cast<std::string_view>(frame.file_name), frame.line_num);
       });
 
   std::string name =
@@ -345,28 +322,31 @@ void BuildTracebackSubmodule(nb::module_& m) {
       object that describes the Python stack of the calling thread. Stack
       trace collection has a small overhead, so it is disabled by default. If
       traceback collection is disabled, returns ``None``. )doc");
-  type.attr("frames") = nb_property_readonly(&Traceback::Frames);
+  type.attr("frames") = xla::nb_property_readonly(&Traceback::Frames);
   type.attr("raw_frames") = nb::cpp_function(
       [](const Traceback& tb) -> nb::tuple {
         // We return a tuple of lists, rather than a list of tuples, because it
         // is cheaper to allocate only three Python objects for everything
         // rather than one per frame.
-        std::vector<std::pair<PyCodeObject*, int>> frames = tb.RawFrames();
+        absl::Span<const TracebackEntry> frames = tb.RawFrames();
         nb::list out_code = nb::steal<nb::list>(PyList_New(frames.size()));
         nb::list out_lasti = nb::steal<nb::list>(PyList_New(frames.size()));
         for (size_t i = 0; i < frames.size(); ++i) {
           const auto& frame = frames[i];
-          PyObject* code = reinterpret_cast<PyObject*>(frame.first);
+          PyObject* code = reinterpret_cast<PyObject*>(frame.code);
           Py_INCREF(code);
           PyList_SET_ITEM(out_code.ptr(), i, code);
           PyList_SET_ITEM(out_lasti.ptr(), i,
-                          nb::int_(frame.second).release().ptr());
+                          nb::int_(frame.lasti).release().ptr());
         }
         return nb::make_tuple(out_code, out_lasti);
       },
-      nb::is_method());
-  type.attr("as_python_traceback") =
-      nb::cpp_function(AsPythonTraceback, nb::is_method());
+      nb::is_method(),
+      nb::sig(
+          "def raw_frames(self) -> tuple[list[types.CodeType], list[int]]"));
+  type.attr("as_python_traceback") = nb::cpp_function(
+      AsPythonTraceback, nb::is_method(),
+      nb::sig("def as_python_traceback(self) -> traceback.TracebackType"));
 
   type.attr("traceback_from_frames") = nb::cpp_function(
       [](std::vector<Traceback::Frame> frames) {
@@ -392,7 +372,12 @@ void BuildTracebackSubmodule(nb::module_& m) {
         }
         return traceback;
       },
-      "Creates a traceback from a list of frames.");
+      "Creates a traceback from a list of frames.",
+      nb::sig(
+          // clang-format off
+          "def traceback_from_frames(frames: list[Frame]) -> traceback.TracebackType"
+          // clang-format on
+          ));
 
   type.attr("code_addr2line") = nb::cpp_function(
       [](nb::handle code, int lasti) {
@@ -402,7 +387,8 @@ void BuildTracebackSubmodule(nb::module_& m) {
         return PyCode_Addr2Line(reinterpret_cast<PyCodeObject*>(code.ptr()),
                                 lasti);
       },
-      "Python wrapper around the Python C API function PyCode_Addr2Line");
+      "Python wrapper around the Python C API function PyCode_Addr2Line",
+      nb::sig("def code_addr2line(code: types.CodeType, lasti: int) -> int"));
 
   type.attr("code_addr2location") = nb::cpp_function(
       [](nb::handle code, int lasti) {
@@ -417,6 +403,9 @@ void BuildTracebackSubmodule(nb::module_& m) {
         }
         return nb::make_tuple(start_line, start_column, end_line, end_column);
       },
-      "Python wrapper around the Python C API function PyCode_Addr2Location");
+      "Python wrapper around the Python C API function PyCode_Addr2Location",
+      nb::sig("def code_addr2location(code: types.CodeType, lasti: int) -> "
+              "tuple[int, int, int, int]"));
 }
-}  // namespace xla
+
+}  // namespace jax

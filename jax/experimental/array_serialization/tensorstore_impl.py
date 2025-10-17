@@ -139,8 +139,8 @@ def _get_tensorstore_metadata(arr, is_remote: bool = False,
                               file_size_target: int = _FILE_SIZE_TARGET,
                               driver: str = _TS_ARRAY_DRIVER) -> dict[str, Any]:
   global_shape, dtype = arr.shape, arr.dtype
-  if hasattr(arr, 'addressable_data'):  # jax.Array
-    local_shape = arr.addressable_data(0).shape
+  if isinstance(arr, jax.Array):
+    local_shape = arr.sharding.shard_shape(global_shape)
   else:  # np.ndarray
     local_shape = global_shape
   return _get_tensorstore_metadata_cached(global_shape, dtype, local_shape,
@@ -199,10 +199,10 @@ def verify_tensorstore_spec(spec: dict[str, Any], arr: jax.Array | None,
       if metadata['shape'] != arr.shape:
         raise ValueError(f"Provided shape ({metadata['shape']=}) doesn't match"
                          f" ({arr.shape=})")
-    if hasattr(arr, 'addressable_data'):
-      local_shape = arr.addressable_data(0).shape
+    if isinstance(arr, jax.Array):
+      local_shape = arr.sharding.shard_shape(arr.shape)
     else:  # np.ndarray
-      local_shape = arr.shape
+      local_shape = arr.shape  # pytype: disable=attribute-error
     if spec.get("driver", "") == "zarr3":
       chunk_shape = metadata['chunk_grid']['configuration']['chunk_shape']
       if not _divides(local_shape, chunk_shape):
@@ -303,6 +303,7 @@ def get_tensorstore_spec(
 
 async def _create_async_array_from_callback(
     global_shape: array.Shape,
+    dtype: str | jnp.dtype | None,
     inp_sharding: jax.sharding.Sharding,
     data_callback: Callable[[array.Index, jax.Device], Awaitable[jax.Array]],
 ):
@@ -312,7 +313,7 @@ async def _create_async_array_from_callback(
                    for d in addressable_da]
   dbs = await asyncio.gather(*future_arrays)
   return array.make_array_from_single_device_arrays(
-      global_shape, inp_sharding, dbs)
+      global_shape, inp_sharding, dbs, dtype=dtype)
 
 async def _transfer_shard_to_host(shard: array.Shard) -> np.ndarray:
   data = shard.data
@@ -493,7 +494,7 @@ def estimate_read_memory_footprint(t: ts.TensorStore,
 
 
 async def async_deserialize(
-    user_in_sharding: jax.sharding.Sharding | Format,
+    user_in_sharding: jax.sharding.Sharding | Format | jax.ShapeDtypeStruct,
     tensorstore_spec: ts.Spec | dict[str, Any],
     global_shape: Sequence[int] | None = None,
     dtype=None,
@@ -505,6 +506,9 @@ async def async_deserialize(
   """Main performant deserialization routine for arrays using tensorstore."""
   in_sharding = (user_in_sharding.sharding
                  if isinstance(user_in_sharding, Format) else user_in_sharding)
+  if isinstance(user_in_sharding, jax.ShapeDtypeStruct):
+    dtype = dtype if dtype is not None else user_in_sharding.dtype
+    in_sharding = user_in_sharding.sharding
   if not isinstance(in_sharding, jax.sharding.Sharding):
     raise ValueError(
         'sharding passed to deserialization should be specified, concrete and'
@@ -519,6 +523,7 @@ async def async_deserialize(
       chunk_layout=chunk_layout,
   )
   shape = t.shape if global_shape is None else global_shape
+  dtype = dtype if dtype is not None else t.dtype.numpy_dtype
   new_shard_shape = in_sharding.shard_shape(tuple(shape))
 
   async def cb(index: array.Index, device: jax.Device):
@@ -560,12 +565,14 @@ async def async_deserialize(
       await byte_limiter.release_bytes(requested_bytes)
     return result
 
-  return await _create_async_array_from_callback(tuple(shape), in_sharding, cb)
+  # for deserialization canonicalize dtype to a dtype representable in jax
+  return await _create_async_array_from_callback(
+      tuple(shape), jax.dtypes.canonicalize_dtype(dtype), in_sharding, cb)
 
 
 # TODO(rdyro): Remove this function.
 def _run_deserialization(shardings: Sequence[jax.sharding.Sharding | Format],
-                        tensorstore_specs: Sequence[dict[str, Any]],
+                        tensorstore_specs: Sequence[dict[str, Any] | ts.Spec],
                         global_shapes: Sequence[array.Shape] | None = None,
                         dtypes: Sequence[typing.DTypeLike] | None = None,
                         concurrent_gb: int = 32):

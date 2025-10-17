@@ -30,15 +30,17 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
+from jax._src import literals
 from jax._src.lax import lax
 from jax._src.lax import slicing
+from jax._src.lax import utils as lax_utils
 from jax._src.numpy import einsum
 from jax._src.numpy import error as jnp_error
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.pjit import auto_axes
-from jax._src.sharding_impls import canonicalize_sharding
+from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.tree_util import tree_flatten
 from jax._src.typing import Array, ArrayLike, StaticScalar
 from jax._src.util import canonicalize_axis, safe_zip, set_module, tuple_update
@@ -189,13 +191,13 @@ def _take(a, indices, axis: int | None = None, out=None, mode=None,
 
 def _normalize_index(index, axis_size):
   """Normalizes an index value in the range [-N, N) to the range [0, N)."""
-  if dtypes.issubdtype(dtypes.dtype(index, canonicalize=True), np.unsignedinteger):
+  if dtypes.issubdtype(dtypes.dtype(index), np.unsignedinteger):
     return index
   if core.is_constant_dim(axis_size):
     axis_size_val = lax._const(index, axis_size)
   else:
     axis_size_val = lax.convert_element_type(core.dimension_as_value(axis_size),
-                                             dtypes.dtype(index, canonicalize=True))
+                                             dtypes.dtype(index))
   if isinstance(index, (int, np.integer)):
     return lax.add(index, axis_size_val) if index < 0 else index
   else:
@@ -207,7 +209,7 @@ def _normalize_index(index, axis_size):
 def take_along_axis(
     arr: ArrayLike,
     indices: ArrayLike,
-    axis: int | None,
+    axis: int | None = -1,
     mode: str | slicing.GatherScatterMode | None = None,
     fill_value: StaticScalar | None = None,
 ) -> Array:
@@ -283,7 +285,7 @@ def take_along_axis(
            [2]], dtype=int32)
   """
   a, indices = util.ensure_arraylike("take_along_axis", arr, indices)
-  index_dtype = dtypes.dtype(indices)
+  index_dtype = indices.dtype
   idx_shape = np.shape(indices)
   if not dtypes.issubdtype(index_dtype, np.integer):
     raise TypeError("take_along_axis indices must be of integer type, got "
@@ -305,8 +307,7 @@ def take_along_axis(
     lst[axis_int] = val
     return tuple(lst)
 
-  use_64bit_index = any(not core.is_constant_dim(d) or d >= (1 << 31) for d in a.shape)
-  index_dtype = np.dtype('int64' if use_64bit_index else 'int32')
+  index_dtype = lax_utils.int_dtype_for_dim(a.shape, signed=True)
   indices = lax.convert_element_type(indices, index_dtype)
 
   axis_size = a.shape[axis_int]
@@ -511,7 +512,7 @@ def _is_valid_integer_index_for_slice(idx, size, mode):
   if _is_integer_index(idx):
     return -size <= idx < size
   try:
-    shape, dtype = np.shape(idx), dtypes.dtype(idx, canonicalize=True)
+    shape, dtype = np.shape(idx), dtypes.dtype(idx)
   except:
     return False
   if shape == () and np.issubdtype(dtype, np.integer):
@@ -605,7 +606,8 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None,
     # We must be careful with dtypes because dynamic_slice requires all
     # start indices to have matching types.
     if len(start_indices) > 1:
-      start_indices = util.promote_dtypes(*start_indices)
+      index_dtype = lax_utils.int_dtype_for_shape(arr.shape, signed=True)
+      start_indices = [lax.convert_element_type(idx, index_dtype) for idx in start_indices]
     jnp_error._check_precondition_oob_dynamic_slice(
         arr.shape, start_indices, slice_sizes, allow_negative_indices
     )
@@ -670,7 +672,9 @@ def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
 def _gather(arr, dynamic_idx, *, treedef, static_idx, indices_are_sorted,
             unique_indices, mode, fill_value, normalize_indices):
   idx = merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = index_to_gather(np.shape(arr), idx, normalize_indices=normalize_indices)  # shared with _scatter_update
+  indexer = index_to_gather(
+      np.shape(arr), idx, core.typeof(arr).sharding,
+      normalize_indices=normalize_indices)  # shared with _scatter_update
   jnp_error._check_precondition_oob_gather(arr.shape, indexer.gather_indices)
   y = arr
 
@@ -679,7 +683,7 @@ def _gather(arr, dynamic_idx, *, treedef, static_idx, indices_are_sorted,
                            "fill_value argument to indexed get()")
     if np.ndim(fill_value) != 0:
       raise ValueError("fill_value argument to indexed get() must be a scalar")
-    if isinstance(fill_value, np.ndarray):
+    if isinstance(fill_value, (np.ndarray, literals.TypedNdArray)):
       fill_value = fill_value.item()
 
   if indexer.scalar_bool_dims:
@@ -733,6 +737,9 @@ class _Indexer(NamedTuple):
   # for gathers before performing other index operations.
   scalar_bool_dims: Sequence[int]
 
+  # The expected sharding of the slice output.
+  slice_sharding: NamedSharding | None = None
+
 
 def split_index_for_jit(idx, shape):
   """Splits indices into necessarily-static and dynamic parts.
@@ -783,7 +790,7 @@ def _aval_or_none(x):
     return None
 
 def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
-                    normalize_indices: bool = True) -> _Indexer:
+                    x_sharding, normalize_indices: bool = True) -> _Indexer:
   # Convert sequences to arrays
   idx = tuple(lax_numpy.asarray(i, dtype=None if i else int)
               if isinstance(i, Sequence) else i for i in idx)
@@ -802,12 +809,18 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
   # removing ellipses (https://github.com/jax-ml/jax/issues/25109)
   # If advanced idexing axes do not appear contiguously, NumPy semantics
   # move the advanced axes to the front.
-  is_advanced, = np.nonzero([isinstance(e, (int, np.integer, Array, np.ndarray))
-                             or lax_numpy.isscalar(e) for e in idx])
+  (is_advanced,) = np.nonzero([
+      isinstance(e, (int, np.integer, Array, np.ndarray,
+                     literals.TypedNdArray))
+      or lax_numpy.isscalar(e)
+      for e in idx
+  ])
   advanced_axes_are_contiguous = np.all(np.diff(is_advanced) == 1)
 
   # Remove ellipses and add trailing slice(None)s.
   idx = _canonicalize_tuple_index(len(x_shape), idx)
+
+  x_spec = x_sharding.spec
 
   # Check for scalar boolean indexing: this requires inserting extra dimensions
   # before performing the rest of the logic.
@@ -815,9 +828,12 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
   if scalar_bool_dims:
     idx = tuple(np.arange(int(i)) if isinstance(i, bool) else i for i in idx)
     x_shape = list(x_shape)
+    x_spec = list(x_spec)
     for i in sorted(scalar_bool_dims):
       x_shape.insert(i, 1)
+      x_spec.insert(i, None)
     x_shape = tuple(x_shape)
+    x_spec = tuple(x_spec)
 
   # Check for advanced indexing:
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
@@ -835,7 +851,9 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
     idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
     advanced_pairs = (
       (lax_numpy.asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
-      if lax_numpy.isscalar(e) or isinstance(e, (Sequence, Array, np.ndarray)))
+      if lax_numpy.isscalar(e)
+      or isinstance(e, (Sequence, Array, np.ndarray,
+                        literals.TypedNdArray)))
     if normalize_indices:
       advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
                         for e, i, j in advanced_pairs)
@@ -850,10 +868,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
   collapsed_slice_dims: list[int] = []
   start_index_map: list[int] = []
 
-  use_64bit_index = (
-    any(not core.is_constant_dim(d) or d >= (1 << 31) for d in x_shape) and
-    config.enable_x64.value)
-  index_dtype = np.dtype('int64') if use_64bit_index else np.dtype('int32')
+  index_dtype = lax_utils.int_dtype_for_shape(x_shape, signed=True)
 
   # Gather indices.
   # Pairs of (array, start_dim) values. These will be broadcast into
@@ -866,15 +881,14 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
   # First, y is broadcast to slice_shape. In general `y` only need broadcast to
   # the right shape.
   slice_shape: list[int] = []
-
   # Next, y is squeezed to remove newaxis_dims. This removes np.newaxis/`None`
   # indices, which the scatter cannot remove itself.
   newaxis_dims: list[int] = []
-
   # Finally, we reverse reversed_y_dims to handle slices with negative strides.
   reversed_y_dims: list[int] = []
 
   gather_slice_shape: list[int] = []
+  slice_spec = []
 
   for idx_pos, i in enumerate(idx):
     # Handle the advanced indices here if:
@@ -885,6 +899,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
          not advanced_axes_are_contiguous and idx_pos == 0)):
       advanced_index_arrs = util._broadcast_arrays(*advanced_indexes)
       shape = advanced_index_arrs[0].shape
+      aia_spec = core.typeof(advanced_index_arrs[0]).sharding.spec
       ndim = len(shape)
 
       start_dim = len(gather_indices_shape)
@@ -898,6 +913,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
       start_index_map.extend(x_advanced_axes)
       collapsed_slice_dims.extend(x_advanced_axes)
       slice_shape.extend(shape)
+      slice_spec.extend(aia_spec)
       y_axis += ndim
       collapsed_y_axis += ndim
 
@@ -923,6 +939,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
     # Handle np.newaxis (None)
     elif i is None:
       slice_shape.append(1)
+      slice_spec.append(None)
       newaxis_dims.append(y_axis)
       y_axis += 1
 
@@ -941,6 +958,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
 
       start, step, slice_size = core.canonicalize_slice(i, x_shape[x_axis])
       slice_shape.append(slice_size)
+      slice_spec.append(x_spec[x_axis])
 
       if core.definitely_equal(step, 1):
         # Avoid generating trivial gather (an optimization)
@@ -994,6 +1012,7 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
     collapsed_slice_dims = tuple(sorted(collapsed_slice_dims)),
     start_index_map = tuple(start_index_map)
   )
+  slice_sharding = x_sharding.update(spec=slice_spec)
   return _Indexer(
     slice_shape=slice_shape,
     newaxis_dims=tuple(newaxis_dims),
@@ -1003,11 +1022,13 @@ def index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
     gather_indices=gather_indices_array,
     unique_indices=advanced_indexes is None,
     indices_are_sorted=advanced_indexes is None,
-    scalar_bool_dims=scalar_bool_dims)
+    scalar_bool_dims=scalar_bool_dims,
+    slice_sharding=slice_sharding)
 
 def _should_unpack_list_index(x):
   """Helper for eliminate_deprecated_list_indexing."""
-  return (isinstance(x, (np.ndarray, Array)) and np.ndim(x) != 0
+  return (isinstance(x, (np.ndarray, Array, literals.TypedNdArray))
+          and np.ndim(x) != 0
           or isinstance(x, (Sequence, slice))
           or x is Ellipsis or x is None)
 
@@ -1016,7 +1037,9 @@ def eliminate_deprecated_list_indexing(idx):
   # non-tuple sequence containing slice objects, [Ellipses, or newaxis
   # objects]". Detects this and raises a TypeError.
   if not isinstance(idx, tuple):
-    if isinstance(idx, Sequence) and not isinstance(idx, (Array, np.ndarray, str)):
+    if isinstance(idx, Sequence) and not isinstance(
+        idx, (Array, np.ndarray, literals.TypedNdArray, str)
+    ):
       # As of numpy 1.16, some non-tuple sequences of indices result in a warning, while
       # others are converted to arrays, based on a set of somewhat convoluted heuristics
       # (See https://github.com/numpy/numpy/blob/v1.19.2/numpy/core/src/multiarray/mapping.c#L179-L343)
@@ -1118,8 +1141,10 @@ def _is_int_arraylike(x):
 
 def _is_scalar(x):
   """Checks if a Python or NumPy scalar."""
-  return  np.isscalar(x) or (isinstance(x, (np.ndarray, Array))
-                             and np.ndim(x) == 0)
+  return np.isscalar(x) or (
+      isinstance(x, (np.ndarray, literals.TypedNdArray, Array))
+      and np.ndim(x) == 0
+  )
 
 def _canonicalize_tuple_index(arr_ndim, idx):
   """Helper to remove Ellipsis and add in the implicit trailing slice(None)."""

@@ -26,6 +26,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
+from jax._src.lax import utils as lax_utils
 from jax._src.numpy.array_creation import empty, full, full_like, ones, zeros
 from jax._src.numpy.lax_numpy import (
     append, arange, concatenate, diff,
@@ -156,6 +157,9 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
     Array([1, 2, 0, 0], dtype=int32)
   """
   arr1, arr2 = ensure_arraylike("setdiff1d", ar1, ar2)
+  arr1 = arr1.ravel()
+  arr2 = arr2.ravel()
+
   if size is None:
     core.concrete_or_error(None, ar1, "The error arose in setdiff1d()")
   else:
@@ -344,7 +348,8 @@ def _intersect1d_sorted_mask(arr1: Array, arr2: Array,
   assert arr1.ndim == arr2.ndim == 1
   arr = concatenate((arr1, arr2))
   if return_indices:
-    iota = lax.broadcasted_iota(np.int64, np.shape(arr), dimension=0)
+    idx_dtype = lax_utils.int_dtype_for_dim(arr.shape[0], signed=True)
+    iota = lax.broadcasted_iota(idx_dtype, np.shape(arr), dimension=0)
     aux, indices = lax.sort_key_val(arr, iota)
   else:
     aux = sort(arr)
@@ -635,7 +640,7 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
   if return_inverse:
     if aux.size:
       imask = cumsum(mask) - 1
-      inv_idx = zeros(mask.shape, dtype=dtypes.canonicalize_dtype(dtypes.int_))
+      inv_idx = zeros(mask.shape, dtype=int)
       inv_idx = inv_idx.at[perm].set(imask)
     else:
       inv_idx = zeros(ar.shape[axis], dtype=int)
@@ -649,7 +654,7 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
         idx = idx.at[1:].set(where(idx[1:], idx[1:], mask.size))
       ret += (diff(idx),)
     elif ar.shape[axis]:
-      ret += (full((1,), ar.shape[axis], dtype=dtypes.canonicalize_dtype(dtypes.int_)),)
+      ret += (full((1,), ar.shape[axis], dtype=int),)
     else:
       ret += (empty(0, dtype=int),)
   if return_true_size:

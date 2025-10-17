@@ -257,8 +257,8 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
   }];
 
   let arguments = (ins
-    MemRefOf<[AnyType]>:$source,
-    MemRefOf<[AnyType]>:$destination,
+    AnyMemRef:$source,
+    AnyMemRef:$destination,
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
     Variadic<I32>:$indices,
     PtxPredicate:$predicate,
@@ -272,6 +272,46 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     `source` `(` $source `:` type($source) `)`
     `destination` `(` $destination `:` type($destination) `)`
     `barrier` `(` $barrier `:` type($barrier) `)`
+    `indices` `(` $indices `)`
+    `predicate` `(` $predicate `)`
+    attr-dict
+  }];
+
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_AsyncPrefetchOp : Op<MosaicGPU_Dialect, "async_prefetch",
+      [AttrSizedOperandSegments]> {
+  let summary = "Schedules an async prefetch of a MemRef from GMEM to L2";
+  let description = [{
+    Schedules an async prefetch of the contents of the `source` MemRef in GMEM
+    to the L2 cache, making subsequent loads of the same data from GMEM faster.
+
+    The `indices` and `slice_lengths` inputs define what slice of the GMEM
+    `source` is going to be prefetched. Both `indices` and `slice_lengths` must
+    have a length equal to the rank of the `source`. The values in `indices` are
+    the starting indices of each dimension and the values in `slice_lengths` are
+    the lengths. Providing -1 in `slice_lengths` indicates that the slice length
+    is 1.
+
+    The `collective` attribute can be provided to partition the prefetch over
+    multiple blocks in a cluster.
+
+    The `predicate` allows scheduling the prefetch conditionally.
+  }];
+
+  let arguments = (ins
+    AnyMemRef:$source,
+    Variadic<I32>:$indices,
+    PtxPredicate:$predicate,
+
+    // Attributes
+    DenseI64ArrayAttr:$slice_lengths,
+    TypedArrayAttrBase<MosaicGPU_Dimension, "dimensions">:$collective
+  );
+
+  let assemblyFormat = [{
+    `source` `(` $source `:` type($source) `)`
     `indices` `(` $indices `)`
     `predicate` `(` $predicate `)`
     attr-dict
@@ -305,8 +345,8 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
   }];
 
   let arguments = (ins
-    MemRefOf<[AnyType]>:$source,
-    MemRefOf<[AnyType]>:$destination,
+    AnyMemRef:$source,
+    AnyMemRef:$destination,
     Variadic<I32>:$indices,
     PtxPredicate:$predicate,
 
@@ -330,7 +370,7 @@ def MosaicGPU_WGMMASupportedType : AnyTypeOf<[F16, BF16, F32],
     "A type supported by the WGMMA operation">;
 
 def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
-    [InferTypeOpInterface]> {
+    [SameOperandsAndResultType]> {
   let summary = "Casts a vector to a new layout.";
   let description = [{Casts a vector value to a new strided or tiled layout.}];
   let arguments = (ins
@@ -346,24 +386,21 @@ def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
   let results = (outs AnyVectorOfAnyRank);
 
   let assemblyFormat = "`x` `(` $x `:` type($x) `)` attr-dict";
+}
 
-  let extraClassDeclaration = [{
-    static llvm::LogicalResult inferReturnTypes(
-        mlir::MLIRContext *,
-        std::optional<mlir::Location> location,
-        mlir::ValueRange operands,
-        mlir::DictionaryAttr attributes,
-        mlir::OpaqueProperties properties,
-        mlir::RegionRange regions,
-        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
-      if (operands.empty()) {
-        return ::mlir::emitOptionalError(
-          location, "expected non-empty operands");
-      }
-      inferredReturnTypes.assign({operands[0].getType()});
-      return ::mlir::success();
-    }
-  }];
+def MosaicGPU_TmemLayoutCastOp : Op<MosaicGPU_Dialect, "tmem_layout_cast",
+    [SameOperandsAndResultType]> {
+  let summary = "Casts a TMEM ref to a new TMEM layout.";
+  let arguments = (ins
+    MemRefRankOf<[AnyType], [2]>:$ref,
+
+    // Attributes
+    MosaicGPU_TiledLayout:$new_layout
+  );
+
+  let results = (outs MemRefRankOf<[AnyType], [2]>);
+
+  let hasVerifier = 1;
 }
 
 
@@ -394,8 +431,15 @@ def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", []> {
   let summary = "Constructs an SMEM MemRef with the requested type that begins at the specified SMEM offset address.";
 
   let arguments = (ins I32:$offset);
-  let results = (outs MemRefOf<[AnyType]>);
+  let results = (outs AnyMemRef);
 }
+
+def MosaicGPU_WGMMASupportedABType : AnyTypeOf<[F16, BF16, TF32, F32, F8E4M3FN, F8E5M2, I8],
+    "A type supported by the `a` and `b` operands of the `wgmma.mma_async` instruction">;
+
+def MosaicGPU_WGMMASupportedAccumulatorType : AnyTypeOf<[F16, F32, I32],
+    "A type supported by the accumulator `wgmma.mma_async` instruction">;
+
 
 def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   let summary = "Multiply two matrices asynchronously using warpgroup level matrix multiply operations.";
@@ -433,13 +477,13 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   }];
 
   let arguments = (ins
-    VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>:$accumulator,
+    VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedAccumulatorType]>:$accumulator,
     AnyTypeOf<[
-      MemRefOf<[MosaicGPU_WGMMASupportedType]>,
-      VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>]>:$a,
-    MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b
+      MemRefRankOf<[MosaicGPU_WGMMASupportedABType], [2]>,
+      VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedABType]>]>:$a,
+    MemRefRankOf<[MosaicGPU_WGMMASupportedABType], [2]>:$b
   );
-  let results = (outs VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>);
+  let results = (outs VectorOfRankAndType<[2], [MosaicGPU_WGMMASupportedAccumulatorType]>);
 
   let assemblyFormat = [{
     `accumulator` `(` $accumulator `:` type($accumulator) `)`
@@ -477,13 +521,13 @@ def MosaicGPU_TmemAttr : MosaicGPU_Attr<"Tmem", "tmem"> {
 def MosaicGPU_TcGen05MMASupportedABType : AnyTypeOf<[F16, F32, BF16, TF32, F8E4M3FN, F8E5M2, F6E2M3FN, F6E3M2FN, F4E2M1FN, I8],
     "A type supported by the `a` and `b` operands of the `tcgen05.mma` instruction">;
 
-def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [InferTypeOpInterface, AttrSizedOperandSegments]> {
+def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [AttrSizedOperandSegments]> {
   let summary = "Perform a matrix multiply-accumulate operation using the `tcgen05.mma` instruction.";
   let description = [{
     Schedules `tcgen05.mma` instructions that perform the following matrix
     multiply and accumulate:
 
-      accumulator = a * b + accumulator
+      accumulator += a * b
 
     This operation supports larger inputs than the PTX-level MMA instruction
     and will schedule as many PTX-level MMA instructions as needed to
@@ -496,8 +540,6 @@ def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [InferTypeOpIn
     where `s == swizzle / element_bytewidth` and `m` is specified according to
     https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-matrix-shape.
 
-    The output has an identical shape and type as the input accumulator.
-
     The `accumulator`, `a` and `b` matrices need to be provided as 2-dimensional
     memrefs. The `accumulator` is always in TMEM and `b` is always in SMEM.
     `a` can be in TMEM or SMEM. `a` and `b` must have the same element
@@ -506,41 +548,22 @@ def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [InferTypeOpIn
     `a_scale` and `b_scale` are optional scaling matrices that reside in TMEM.
     When set the operation is defined as:
 
-      accumulator = (a * a_scale) * (b * b_scale) + accumulator
+      accumulator += (a * a_scale) * (b * b_scale)
 
     `accumulate` is a boolean that indicates whether to perform the accumulate
     step.
   }];
 
   let arguments = (ins
-    MemRefOf<[AnyTypeOf<[F16, F32, I32]>]>:$accumulator,
-    MemRefOf<[MosaicGPU_TcGen05MMASupportedABType]>:$a,
-    MemRefOf<[MosaicGPU_TcGen05MMASupportedABType]>:$b,
+    MemRefRankOf<[F16, F32, I32], [2]>:$accumulator,
+    MemRefRankOf<[MosaicGPU_TcGen05MMASupportedABType], [2]>:$a,
+    MemRefRankOf<[MosaicGPU_TcGen05MMASupportedABType], [2]>:$b,
     I1:$accumulate,
     // TODO: allanrenucci - F8E4M3FNU (ue4m3) does not exist in MLIR. We use F8E4M3FN (e4m3) instead.
-    Optional<MemRefOf<[AnyTypeOf<[F8E8M0FNU, F8E4M3FN]>]>>:$a_scaled,
-    Optional<MemRefOf<[AnyTypeOf<[F8E8M0FNU, F8E4M3FN]>]>>:$b_scaled,
+    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$a_scale,
+    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$b_scale,
     DefaultValuedAttr<BoolAttr, "false">:$collective
   );
-  let results = (outs MemRefOf<[AnyTypeOf<[F16, F32, I32]>]>);
-
-  let extraClassDeclaration = [{
-    static llvm::LogicalResult inferReturnTypes(
-        mlir::MLIRContext *,
-        std::optional<mlir::Location> location,
-        mlir::ValueRange operands,
-        mlir::DictionaryAttr attributes,
-        mlir::OpaqueProperties properties,
-        mlir::RegionRange regions,
-        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
-      if (operands.empty()) {
-        return ::mlir::emitOptionalError(
-          location, "expected non-empty operands");
-      }
-      inferredReturnTypes.assign({operands[0].getType()});
-      return ::mlir::success();
-    }
-  }];
 
   let hasVerifier = 1;
 }
@@ -588,7 +611,7 @@ def MosaicGPU_ReturnOp : Op<MosaicGPU_Dialect, "return",
   }];
 
   // The operand's type must match the parent CustomPrimitiveOp's result type.
-  let arguments = (ins Variadic<VectorOfAnyRankOf<[AnyType]>>:$operands);
+  let arguments = (ins Variadic<AnyVectorOfAnyRank>:$operands);
   let assemblyFormat = [{ attr-dict ($operands^ `:` type($operands))? }];
   let hasVerifier = 1;
 }
@@ -615,8 +638,8 @@ def MosaicGPU_CustomPrimitiveOp : Op<MosaicGPU_Dialect, "custom_primitive",
     ArrayAttr:$out_layouts
   );
 
-  let results = (outs Variadic<VectorOfAnyRankOf<[AnyType]>>);
-  let regions = (region AnyRegion:$body);
+  let results = (outs Variadic<AnyVectorOfAnyRank>);
+  let regions = (region SizedRegion<1>:$body);
 
   let hasVerifier = 1;
 }
@@ -629,12 +652,12 @@ def MosaicGPU_WithTransformsOp : Op<MosaicGPU_Dialect, "with_transforms",
   }];
 
   let arguments = (
-    ins MemRefOf<[AnyType]>:$ref,
+    ins AnyMemRef:$ref,
     // Attributes
     ArrayAttr:$transforms
   );
 
-  let results = (outs MemRefOf<[AnyType]>);
+  let results = (outs AnyMemRef);
 }
 
 def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
@@ -654,11 +677,9 @@ def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
         unpacked_columns = allocated_columns * packing
 
     The number of allocated columns in TMEM can be any power of two in the
-    range [32, 512]. If `exact` is `true`, then the calculated
-    number of allocated columns must match that restriction. If `exact` is
-    `false` and the calculated number of allocated columns is less than 32 or
-    not a power of two, then it will be rounded up to the nearest power of two
-    larger or equal to 32.
+    range [32, 512]. If the calculated number of allocated columns is less than
+    32 or not a power of two, then it will be rounded up to the nearest power of
+    two larger or equal to 32.
 
     If `collective` is `true` 2 CTAs will perform the allocation collectively,
     otherwise, only one CTA will perform the allocation.
@@ -669,7 +690,6 @@ def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
 
     // Attributes
     DefaultValuedAttr<BoolAttr, "false">:$collective,
-    DefaultValuedAttr<BoolAttr, "true">:$exact,
     DefaultValuedAttr<ConfinedAttr<I32Attr, [IntPositive]>, "1">:$packing
   );
 
@@ -683,6 +703,22 @@ def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
   let hasVerifier = 1;
 }
 
+def MosaicGPU_TmemRelinquishAllocPermitOp: Op<MosaicGPU_Dialect, "tmem_relinquish_alloc_permit", []> {
+  let summary = "Relinquishing the right to allocate TMEM.";
+  let description = [{
+    The instruction specifies that the CTA of the executing thread is
+    relinquishing the right to allocate Tensor Memory. So, it is illegal for a
+    CTA to perform `tmem_alloc` after any of its constituent threads execute
+    `tmem_relinquish_alloc_permit`.
+
+    If `collective` is `true`, applies to collective TMEM allocations.
+  }];
+
+  let arguments = (ins
+    DefaultValuedAttr<BoolAttr, "false">:$collective
+  );
+}
+
 def MosaicGPU_TmemDeallocOp : Op<MosaicGPU_Dialect, "tmem_dealloc", []> {
   let summary = "Deallocates a chunk of TMEM.";
 
@@ -692,6 +728,45 @@ def MosaicGPU_TmemDeallocOp : Op<MosaicGPU_Dialect, "tmem_dealloc", []> {
     `tmem_ref` `(` $tmem_ref `:` type($tmem_ref) `)`
     attr-dict
   }];
+
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_AsyncLoadTmemOp : Op<MosaicGPU_Dialect, "async_load_tmem",
+    [InferTypeOpInterface]> {
+  let summary = "Copies TMEM to registers asynchronously.";
+
+  let arguments = (ins MemRefRankOf<[AnyType], [2]>:$source);
+  let results = (outs VectorOfRank<[2]>);
+
+  let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    static llvm::LogicalResult inferReturnTypes(
+        mlir::MLIRContext *,
+        std::optional<mlir::Location> location,
+        mlir::ValueRange operands,
+        mlir::DictionaryAttr attributes,
+        mlir::OpaqueProperties properties,
+        mlir::RegionRange regions,
+        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
+      mlir::MemRefType memref_type =
+          mlir::cast<mlir::MemRefType>(operands[0].getType());
+      auto vector_type = mlir::VectorType::get(
+          memref_type.getShape(), memref_type.getElementType());
+      inferredReturnTypes.assign({vector_type});
+      return ::mlir::success();
+    }
+  }];
+}
+
+def MosaicGPU_AsyncStoreTmemOp : Op<MosaicGPU_Dialect, "async_store_tmem", []> {
+  let summary = "Copies registers to TMEM asynchronously.";
+
+  let arguments = (ins
+    VectorOfRank<[2]>: $source,
+    MemRefRankOf<[AnyType], [2]>:$destination
+  );
 
   let hasVerifier = 1;
 }

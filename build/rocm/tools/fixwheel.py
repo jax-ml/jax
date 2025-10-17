@@ -23,7 +23,6 @@
 import argparse
 import logging
 import os
-from pprint import pprint
 import subprocess
 
 from auditwheel.lddtree import lddtree

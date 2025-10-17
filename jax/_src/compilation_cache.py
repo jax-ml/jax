@@ -23,8 +23,18 @@ import numpy as np
 
 # If zstandard is installed, we use zstd compression, otherwise we use zlib.
 try:
-  import zstandard  # pytype: disable=import-error
+  # compression.zstd should be present in Python 3.14+
+  from compression import zstd  # pytype: disable=import-error
 except ImportError:
+  zstd = None
+
+if zstd is None:
+  # TODO(phawkins): remove this case when we drop support for Python 3.13.
+  try:
+    import zstandard  # pytype: disable=import-error
+  except ImportError:
+    zstandard = None
+else:
   zstandard = None
 
 from jax._src import cache_key
@@ -111,8 +121,6 @@ def initialize_cache(path) -> None:
   Set the path. To take effect, should be called prior to any calls to
   get_executable_and_time() and put_executable_and_time().
   """
-  warnings.warn("initialize_cache is deprecated; use set_cache_dir instead",
-                DeprecationWarning, stacklevel=2)
   config.config.update("jax_compilation_cache_dir", path)
 
 
@@ -181,14 +189,18 @@ def _get_cache(backend) -> CacheInterface | None:
 
 
 def compress_executable(executable: bytes) -> bytes:
-  if zstandard:
+  if zstd:
+    return zstd.compress(executable)
+  elif zstandard:
     compressor = zstandard.ZstdCompressor()
     return compressor.compress(executable)
   else:
     return zlib.compress(executable)
 
 def decompress_executable(executable: bytes) -> bytes:
-  if zstandard:
+  if zstd:
+    return zstd.decompress(executable)
+  elif zstandard:
     decompressor = zstandard.ZstdDecompressor()
     return decompressor.decompress(executable)
   else:
@@ -306,8 +318,6 @@ def is_initialized() -> bool:
   initialized status is not checked. The name is retained for backwards
   compatibility.
   """
-  warnings.warn("is_initialized is deprecated; do not use",
-                DeprecationWarning, stacklevel=2)
   return _is_cache_enabled()
 
 

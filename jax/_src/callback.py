@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import logging
-from typing import Any
+from typing import Any, cast
 
 from jax._src import api
 from jax._src import config
@@ -35,7 +35,6 @@ from jax._src import xla_bridge as xb
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
@@ -135,6 +134,17 @@ batching.primitive_batchers[pure_callback_p] = functools.partial(
     ffi.ffi_batching_rule, pure_callback_p
 )
 
+def _get_sdy_array_list_for_callbacks(avals: Sequence[core.ShapedArray]) -> SdyArrayList:
+  """Returns an SdyArrayList with `max(1, len(avals))` replicated shardings."""
+  ndims = [0]
+  if avals:
+    ndims = [x.ndim for x in avals if isinstance(x, core.ShapedArray)]
+  return SdyArrayList([
+      SdyArray(
+          mesh_shape=(),
+          dim_shardings=[SdyDim(axes=[], is_open=False)] * ndim,
+          logical_device_ids=()) for ndim in ndims])
+
 
 def _callback_op_sharding(
     axis_context, sharding: SingleDeviceSharding | None, avals_out
@@ -153,16 +163,7 @@ def _callback_op_sharding(
           " computations"
       )
     if config.use_shardy_partitioner.value:
-      ndim = 0
-      if avals_out and isinstance(avals_out[0], core.ShapedArray):
-        ndim = avals_out[0].ndim
-      op_sharding = SdyArrayList([
-          SdyArray(
-              mesh_shape=(),
-              dim_shardings=[
-                  SdyDim(axes=[], is_open=False)
-              ] * ndim,
-              logical_device_ids=())])
+      op_sharding = _get_sdy_array_list_for_callbacks(avals_out)
     else:
       op_sharding = xc.OpSharding()  # type: ignore[assignment]
       op_sharding.type = xc.OpSharding.Type.MANUAL
@@ -640,7 +641,7 @@ def receive_from_host(
     if config.use_shardy_partitioner.value:
       assert isinstance(sharding, SdyArrayList)
       assert len(sharding.shardings) >= 1
-       # `RecvOp`'s last argument is a `TokenType`. Since Shardy requires the
+      # `RecvOp`'s last argument is a `TokenType`. Since Shardy requires the
       # number of shardings to match the number of results, but JAX only sees
       # the array result, we need to add an equivalent sharding for the token.
       # Note that even if a function returns N results, we will end up with N
@@ -655,7 +656,6 @@ def receive_from_host(
   # Token should be at the end of the results
   result, token = recv_op.results
   return token, result
-
 
 
 def _aval_to_xla_shape(aval: core.AbstractValue) -> xc.Shape:
@@ -774,7 +774,7 @@ def emit_python_callback(
           f"Partitioned callback not implemented on {platform} backend.")
     if result_avals:
       raise ValueError("Partitioned callback not supported with return values.")
-  backend = ctx.module_context.get_backend()
+  backend: xb.XlaBackend = cast(xb.XlaBackend, ctx.module_context.get_backend())
   result_shapes = [_aval_to_xla_shape(aval) for aval in result_avals]
   operand_shapes = [_aval_to_xla_shape(aval) for aval in operand_avals]
 
@@ -787,7 +787,7 @@ def emit_python_callback(
           "Mismatched number of outputs from callback. "
           "Expected: {}, Actual: {}".format(len(result_avals), len(out_vals)))
     # Handle Python literals, and custom arrays, e.g., tf.Tensor.
-    out_vals = tuple(xla.canonicalize_dtype(np.asarray(a)) for a in out_vals)
+    out_vals = tuple(dtypes.canonicalize_value(np.asarray(a)) for a in out_vals)
     for i, (out_val, out_aval) in enumerate(zip(out_vals, result_avals)):
       if out_val.shape != out_aval.shape:
         raise RuntimeError(

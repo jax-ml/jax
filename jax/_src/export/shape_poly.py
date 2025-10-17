@@ -1225,7 +1225,8 @@ def is_symbolic_dim(p: DimSize) -> bool:
   """
   return isinstance(p, _DimExpr)
 
-dtypes.python_scalar_dtypes[_DimExpr] = dtypes.python_scalar_dtypes[int]
+dtypes.python_scalar_types.add(_DimExpr)
+dtypes.python_scalar_types_to_dtypes[_DimExpr] = dtypes.python_scalar_types_to_dtypes[int]
 
 def _einsum_contract_path(*operands, **kwargs):
   """Like opt_einsum.contract_path, with support for DimExpr shapes.

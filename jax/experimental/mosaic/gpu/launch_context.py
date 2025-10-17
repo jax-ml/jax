@@ -34,12 +34,19 @@ import numpy as np
 
 from . import profiler
 from . import utils
-# mypy: ignore-errors
+from . import fragmented_array as fa
 
 TMA_DESCRIPTOR_BYTES = 128
 TMA_DESCRIPTOR_ALIGNMENT = 64
+TMAReductionOp = Literal["add", "min", "max", "inc", "dec", "and", "or", "xor"]
 
 c = utils.c  # This is too common to fully qualify.
+
+class GlobalBroadcast:
+  pass
+
+GLOBAL_BROADCAST = GlobalBroadcast()
+
 
 @dataclasses.dataclass(frozen=True)
 class MemRefTransform:
@@ -50,6 +57,9 @@ class MemRefTransform:
     raise NotImplementedError("Subclasses should override this method")
 
   def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    raise NotImplementedError("Subclasses should override this method")
+
+  def transform_strides(self, shape: Sequence[int]) -> tuple[int, ...]:
     raise NotImplementedError("Subclasses should override this method")
 
   def batch(self, leading_rank: int) -> 'MemRefTransform':
@@ -148,6 +158,14 @@ class TileTransform(MemRefTransform):
         *self.tiling,
     )
 
+  def transform_strides(self, strides: Sequence[int]) -> tuple[int, ...]:
+    tiling_rank = len(self.tiling)
+    return (
+        *strides[:-tiling_rank],
+        *(s * t for s, t in zip(strides[-tiling_rank:], self.tiling)),
+        *strides[-tiling_rank:],
+    )
+
   def batch(self, leading_rank: int) -> MemRefTransform:
     return self
 
@@ -169,6 +187,9 @@ class TransposeTransform(MemRefTransform):
 
   def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
     return tuple(shape[p] for p in self.permutation)
+
+  def transform_strides(self, strides: Sequence[int]) -> tuple[int, ...]:
+    return tuple(strides[p] for p in self.permutation)
 
   def batch(self, leading_rank: int) -> MemRefTransform:
     return TransposeTransform(
@@ -228,8 +249,6 @@ class CollapseLeadingIndicesTransform(MemRefTransform):
 
 
 OnDeviceProfiler = profiler.OnDeviceProfiler
-
-ReductionOp = Literal["add", "min", "max", "inc", "dec", "and", "or", "xor"]
 
 MOSAIC_GPU_SMEM_ALLOC_ATTR = "mosaic_gpu_smem_alloc"
 
@@ -350,10 +369,10 @@ class Scratch:
     assert alloc_op is not None
     [alloc_user] = alloc_op.result.uses
     load_op = alloc_user.owner
-    assert isinstance(load_op, llvm.LoadOp)
+    assert load_op.operation.name == "llvm.load"
     [load_op_user] = load_op.result.uses
     device_ptr = load_op_user.owner
-    assert isinstance(device_ptr, builtin.UnrealizedConversionCastOp)
+    assert device_ptr.operation.name == "builtin.unrealized_conversion_cast"
     return alloc_op, load_op, device_ptr.result
 
   def device_ptr(self) -> ir.Value:
@@ -404,6 +423,11 @@ def _find_kernel_argument_for_gmem_ref(
         " corresponding to a GMEM kernel argument."
     )
   return gmem_ref
+
+
+class AsyncCopyImplementation(enum.Enum):
+  TMA = enum.auto()
+  CP_ASYNC = enum.auto()
 
 
 @dataclasses.dataclass()
@@ -479,14 +503,12 @@ class LaunchContext:
 
   def _get_tma_desc(
       self,
-      gmem_ref,
+      gmem_ref: ir.Value,
       gmem_transform: tuple[MemRefTransform, ...],
-      gmem_peer_id: int | ir.Value | None,
+      gmem_peer_id: int | ir.Value | GlobalBroadcast | None,
       transformed_slice_shape: tuple[int, ...],
       swizzle: int | None,
-      reduction_op: Literal[
-        "add","min","max","inc","dec","and","or","xor"
-      ] | None,
+      reduction_op: TMAReductionOp | None,
   ):
     gmem_ref = _find_kernel_argument_for_gmem_ref(gmem_ref)
     # Using ir.Values in cache keys is a little sketchy, but I think it should
@@ -519,7 +541,17 @@ class LaunchContext:
         base_ptr = llvm.getelementptr(
             ptr_ty, alloc_ptr, [as_i64(offset)], [llvm_dyn], ref_ty.element_type, llvm.GEPNoWrapFlags.none,
         )
-        if gmem_peer_id is not None:
+        if isinstance(gmem_peer_id, GlobalBroadcast):
+          self._ensure_nvshmem_decls()
+          world_team = arith.constant(i32, 0)
+          base_ptr = llvm.call(
+              base_ptr.type,
+              [world_team, base_ptr],
+              [],
+              [],
+              callee="nvshmemx_mc_ptr",
+          )
+        elif gmem_peer_id is not None:
           if not isinstance(gmem_peer_id, ir.Value):
             peer_id = c(gmem_peer_id, i32)
           else:
@@ -553,7 +585,9 @@ class LaunchContext:
                 f"TMA with reduction_op={reduction_op} is not supported with Integers"
             )
           bitwidth = utils.bitwidth_impl(ref_ty.element_type)
-          if bitwidth == 4:
+          if bitwidth == 2:
+            tma_dtype = 8
+          elif bitwidth == 4:
             tma_dtype = 0
           elif bitwidth == 8:
             tma_dtype = 1
@@ -607,14 +641,254 @@ class LaunchContext:
       self.tma_descriptors[tma_desc_key] = tma_desc
     return tma_desc
 
+  def _prepare_async_copy(
+      self,
+      gmem_ref: ir.Value,
+      gmem_slice: Any,
+      gmem_transform: tuple[MemRefTransform, ...],
+      collective: Sequence[gpu.Dimension] | None,
+      partitioned: int | None,
+      implementation: AsyncCopyImplementation,
+  ):
+    """Performs setup common to TMA and CP_ASYNC implementations."""
+    index = ir.IndexType.get()
+
+    gmem_ref_ty = ir.MemRefType(gmem_ref.type)
+    gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
+    if gmem_strides != utils.get_contiguous_strides(gmem_ref_ty.shape):
+      raise NotImplementedError(
+          "async_copy assumes the GMEM reference is contiguous"
+      )
+
+    # Look for and verify gather indices in gmem_slice.
+    is_gathered_dim = [isinstance(s, fa.FragmentedArray) for s in gmem_slice]
+    gather_indices: fa.FragmentedArray | None = None
+    if any(is_gathered_dim):
+      if is_gathered_dim != [True, False]:
+        raise NotImplementedError(
+            "Gathers/scatters only supported along the first dimension of 2D"
+            " arrays"
+        )
+      gather_indices = gmem_slice[0]
+      if not isinstance(gather_indices, fa.FragmentedArray):
+        raise ValueError("Gather/scatter indices must be a FragmentedArray")
+      if len(gather_indices.shape) != 1:
+        raise ValueError("Gather/scatter indices must be 1D")
+      idx_dtype = gather_indices.mlir_dtype
+      if not ir.IntegerType.isinstance(idx_dtype) or utils.bitwidth(idx_dtype) > 32:
+        raise ValueError("Gather/scatter indices must be integers that are at most 32-bit wide")
+      if gather_indices.is_signed:
+        raise ValueError("Gather/scatter indices must be unsigned")
+      gmem_slice = (slice(None), *gmem_slice[1:])
+
+    # Analyze the slice (taking gathers into account).
+    base_indices, slice_shape, is_squeezed = utils.parse_indices(
+        gmem_slice,
+        ir.MemRefType(gmem_ref.type).shape,
+        # NOTE: TMA supports OOB indices, so we skip the check.
+        check_oob=implementation != AsyncCopyImplementation.TMA,
+    )
+    if gather_indices is not None:
+      slice_shape = [gather_indices.shape[0], *slice_shape[1:]]
+    del gmem_slice  # Use slice_shape, base_indices and is_squeezed from now on!
+    dyn_base_indices = tuple(
+        c(i, index) if not isinstance(i, ir.Value) else i for i in base_indices
+    )
+    del base_indices  # Use the dynamic indices from now on!
+
+    # Deal with collective and partitioned loads.
+    if collective:
+      if implementation != AsyncCopyImplementation.TMA:
+        raise ValueError("Only the TMA implementation supports collective copies")
+      if gather_indices is not None:
+        raise NotImplementedError("Collective copies with gather/scatter unsupported")
+    if partitioned is not None:
+      # Increment partitioned by the number of preceding squeezed dimensions.
+      partitioned = np.where(
+          np.cumsum(~np.array(is_squeezed)) == partitioned+1)[0][0]
+      # Partitioning happens on the logical slice we extract from GMEM, so we do
+      # it before we apply transforms.
+      if not collective:  # This implies non-gather TMA already.
+        raise ValueError("Only collective loads can be partitioned")
+      collective_size = math.prod(self.cluster_size[d] for d in collective)
+      if collective_size > 1:
+        if math.prod(self.cluster_size) != 2:
+          raise NotImplementedError(
+              "Partitioned loads only supported for clusters of size 2"
+          )
+        if slice_shape[partitioned] % collective_size != 0:
+          raise ValueError(
+              f"The collective size ({collective_size}) must divide the slice"
+              " shape along the partitioned dimension, but it has size"
+              f" {slice_shape[partitioned]}"
+          )
+        slice_shape[partitioned] //= collective_size
+        dyn_base_indices = list(dyn_base_indices)  # type: ignore[assignment]
+        dyn_base_indices[partitioned] = arith.addi(  # type: ignore[index]
+            dyn_base_indices[partitioned],
+            arith.muli(
+                self.cluster_idx(collective), c(slice_shape[partitioned], index)
+            ),
+        )
+        dyn_base_indices = tuple(dyn_base_indices)
+
+    squeezed_dims = tuple(
+        i for i, squeezed in enumerate(is_squeezed) if squeezed
+    )
+    # Indexing is really slicing + squeezing, and user transforms are meant to
+    # apply after that. However, we actually have to apply the indexing last
+    # (it's fused into the TMA) and so we need to commute it with all the user
+    # transforms. For slicing this is done using transform_index and
+    # transform_shape. For squeezing we actually move all the squeezed dims to
+    # the front, and then batch each transform, making it ignore the extra dims.
+    if squeezed_dims and implementation != AsyncCopyImplementation.CP_ASYNC:
+      sliced_dims = [i for i, squeezed in enumerate(is_squeezed) if not squeezed]
+      gmem_transform = (TransposeTransform((*squeezed_dims, *sliced_dims)),
+                        *(t.batch(len(squeezed_dims)) for t in gmem_transform))
+
+    slice_shape = tuple(slice_shape)
+    for t in gmem_transform:
+      dyn_base_indices = t.transform_index(dyn_base_indices)
+      slice_shape = t.transform_shape(slice_shape)
+
+    return (
+        list(slice_shape),
+        dyn_base_indices,
+        squeezed_dims,
+        gather_indices,
+        gmem_transform,
+    )
+
+  def _prepare_tma(
+      self,
+      gmem_ref: ir.Value,
+      smem_ref: ir.Value | None,
+      swizzle: int | None,
+      slice_shape: list[int],
+      dyn_base_indices: tuple[ir.Value, ...],
+      gather_indices,
+      squeezed_dims: tuple[int, ...],
+      gmem_transform: tuple[MemRefTransform, ...],
+      collective: Sequence[gpu.Dimension],
+      partitioned: int | None,
+  ):
+    """Finalizes setup specific to the TMA implementation of async_copy."""
+    index = ir.IndexType.get()
+    # The function below is called only to verify the GMEM ref. The output
+    # is meant to be ignored.
+    _find_kernel_argument_for_gmem_ref(gmem_ref)
+    gmem_ref_ty = ir.MemRefType(gmem_ref.type)
+    element_bitwidth = utils.bitwidth(gmem_ref_ty.element_type)
+    gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
+    if any(s * element_bitwidth % 128 != 0 for s in gmem_strides[:-1]):
+      raise ValueError(
+          "async_copy requires all GMEM strides except the last one to be a"
+          " multiple of 16 bytes"
+      )
+    # We don't need to do this for gather TMAs, because we'll unroll the
+    # transfers ourselves anyway.
+    num_squeezed_dims = len(squeezed_dims)
+    if len(slice_shape) > 5 and gather_indices is None:
+      # We can try to collapse all squeezed dims into one.
+      if len(slice_shape) - num_squeezed_dims + 1 > 5:
+        raise ValueError(
+            "Async copies only support striding up to 5 dimensions"
+        )
+      squeezed_dim_strides = tuple(gmem_strides[d] for d in squeezed_dims)
+      collapse = CollapseLeadingIndicesTransform(squeezed_dim_strides)
+      gmem_transform = (*gmem_transform, collapse)
+      dyn_base_indices = collapse.transform_index(dyn_base_indices)
+      slice_shape = list(collapse.transform_shape(tuple(slice_shape)))
+      num_squeezed_dims = 1
+
+    dyn_base_indices = list(dyn_base_indices)
+    slice_shape = list(slice_shape)
+    assert all(d == 1 for d in slice_shape[:num_squeezed_dims])
+
+    # Partitioned loads have already been processed (before transforms).
+    # We process non-partitioned collective loads here, because only here are we
+    # able to know in what order the data will be written to SMEM. Transposes
+    # and tiling change that order and if we picked a partition based on the
+    # untransformed slice shape, we might have ended up with a non-contiguous
+    # SMEM window, which would no longer be realizable in a single TMA transfer.
+    collective_size = math.prod(self.cluster_size[d] for d in collective)  # type: ignore
+    if collective_size > 1 and partitioned is None:
+      assert gather_indices is None  # Checked above.
+      def partition_dim(dim: int, idx: ir.Value, num_chunks: int):
+        # No need to partition squeezed dims. They don't even exist in smem_ref.
+        assert dim >= num_squeezed_dims
+        nonlocal smem_ref
+        slice_shape[dim] //= num_chunks
+        block_offset = arith.muli(idx, c(slice_shape[dim], index))
+        dyn_base_indices[dim] = arith.addi(dyn_base_indices[dim], block_offset)  # type: ignore[index]
+        if smem_ref is not None:
+          smem_ref = utils.memref_slice(
+              smem_ref,
+              (slice(None),) * (dim - num_squeezed_dims)
+              + (utils.ds(block_offset, slice_shape[dim]),),
+          )
+      idx = self.cluster_idx(collective)
+      rem_collective_size = collective_size
+      has_swizzle = (
+          swizzle is not None
+          and swizzle != mgpu_dialect.SwizzlingMode.kNoSwizzle
+      )
+      # We can partition the minormost dim if there's no swizzling.
+      for dim, slice_size in enumerate(
+          slice_shape[:-1] if has_swizzle else slice_shape
+      ):
+        if slice_size % rem_collective_size == 0:
+          partition_dim(dim, idx, rem_collective_size)
+          rem_collective_size = 1
+          break
+        elif rem_collective_size % slice_size == 0:
+          # This is an optimization and it lets us skip squeezed dims.
+          if slice_size > 1:
+            dim_idx = arith.remui(idx, c(slice_size, index))
+            partition_dim(dim, dim_idx, slice_size)
+            idx = arith.divui(idx, c(slice_size, index))
+            rem_collective_size //= slice_size
+        else:
+          break  # We failed to partition the leading dimensions.
+      del idx  # We overwrote the block index in the loop.
+      if rem_collective_size > 1:
+        raise ValueError(
+            "None of the leading dimensions in the transformed slice shape"
+            f" {slice_shape} is divisible by the collective size"
+            f" {collective_size}"
+        )
+
+    if max(slice_shape) > 256:
+      raise ValueError(
+          "Async copies only support copying <=256 elements along each"
+          " dimension"
+      )
+    if (zeroth_bw := slice_shape[-1] * element_bitwidth) % 128 != 0:
+      raise ValueError(
+          "Async copies require the number of bits copied along the last"
+          f" dimension to be divisible by 128, but got {zeroth_bw}"
+      )
+    if (
+        swizzle is not None
+        and swizzle != mgpu_dialect.SwizzlingMode.kNoSwizzle
+        and slice_shape[-1] != (swizzle * 8) // element_bitwidth
+    ):
+      raise ValueError(
+          f"Async copies with {swizzle=} require the last dimension of the"
+          f" slice to be exactly {swizzle} bytes i.e. "
+          f" {(swizzle * 8) // element_bitwidth} elements, but got"
+          f" {slice_shape[-1]} elements."
+      )
+    return (smem_ref, slice_shape, dyn_base_indices, gmem_transform)
+
   def async_copy(
       self,
       *,
-      src_ref,
-      dst_ref,
+      src_ref: ir.Value,
+      dst_ref: ir.Value,
       gmem_slice: Any = (),
       gmem_transform: MemRefTransform | tuple[MemRefTransform, ...] = (),
-      gmem_peer_id: int | ir.Value | None = None,
+      gmem_peer_id: int | ir.Value | GlobalBroadcast | None = None,
       barrier: utils.BarrierRef | None = None,
       swizzle: int | None = None,
       arrive: bool | None = None,
@@ -622,7 +896,8 @@ class LaunchContext:
       partitioned: int | None = None,
       # Should select 0 or 1 threads from the WG.
       predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
-      reduction_op: ReductionOp | None = None,
+      reduction_op: TMAReductionOp | None = None,
+      implementation: AsyncCopyImplementation = AsyncCopyImplementation.TMA,
   ):
     """Initiates an async copy between GMEM and SMEM.
 
@@ -651,8 +926,10 @@ class LaunchContext:
       by other blocks will be ignored (even if `arrive` is True).
     """
     index = ir.IndexType.get()
+    i8 = ir.IntegerType.get_signless(8)
     i16 = ir.IntegerType.get_signless(16)
     i32 = ir.IntegerType.get_signless(32)
+
     src_ref_ty = ir.MemRefType(src_ref.type)
     dst_ref_ty = ir.MemRefType(dst_ref.type)
     element_type = src_ref_ty.element_type
@@ -662,15 +939,42 @@ class LaunchContext:
           f"Expected same element type, got {element_type} and"
           f" {dst_ref_ty.element_type}"
       )
-    if isinstance(predicate, _DefaultPredicate):
-      predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
+
+    if isinstance(collective, gpu.Dimension):
+      collective = (collective,)
+    elif collective is None:
+      collective = ()
     if not isinstance(gmem_transform, tuple):
       gmem_transform = (gmem_transform,)
+    if not isinstance(gmem_slice, tuple):
+      gmem_slice = (gmem_slice,)
+
+    if reduction_op is not None:
+      if implementation != AsyncCopyImplementation.TMA:
+        raise ValueError("Only the TMA implementation supports reductions")
+      if not any(
+          t.isinstance(element_type)
+          for t in (ir.F32Type, ir.BF16Type, ir.F16Type)
+      ):
+        raise ValueError(
+            "TMA with reduction is only supported with f32, f16 and bf16"
+        )
+      if reduction_op != "add":
+        raise ValueError(
+            "TMA with reduction is only supported with add operation"
+        )
 
     if src_ref_ty.memory_space is None and utils.is_smem_ref(dst_ref_ty):
       gmem_ref, smem_ref = src_ref, dst_ref
-      if barrier is None:
-        raise ValueError("Barriers are required for GMEM -> SMEM copies")
+      if implementation == AsyncCopyImplementation.TMA:
+        if barrier is None:
+          raise ValueError("Barriers are required for TMA GMEM -> SMEM copies")
+      else:
+        assert implementation == AsyncCopyImplementation.CP_ASYNC
+        if barrier is not None:
+          raise NotImplementedError(
+              "Barriers are unsupported for CP_ASYNC GMEM -> SMEM copies"
+          )
       if arrive is None:
         arrive = True  # Arrive by default
     elif utils.is_smem_ref(src_ref_ty) and dst_ref_ty.memory_space is None:
@@ -682,115 +986,122 @@ class LaunchContext:
     else:
       raise ValueError("Only SMEM <-> GMEM copies supported")
 
-    # The function below is called only to verify the GMEM ref. The output
-    # is meant to be ignored.
-    _find_kernel_argument_for_gmem_ref(gmem_ref)
+    if collective and gmem_ref is dst_ref:
+      raise ValueError("Only GMEM -> SMEM copies can be collective")
+
+    (
+        slice_shape,
+        dyn_base_indices,
+        squeezed_dims,
+        gather_indices,
+        gmem_transform,
+    ) = self._prepare_async_copy(
+        gmem_ref,
+        gmem_slice,
+        gmem_transform,
+        collective,
+        partitioned,
+        implementation,
+    )
+    del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
+
     gmem_ref_ty = ir.MemRefType(gmem_ref.type)
-    gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
-    if gmem_strides != utils.get_contiguous_strides(gmem_ref_ty.shape):
-      raise NotImplementedError(
-          "async_copy assumes the GMEM reference is contiguous"
-      )
-    if any(s * element_bitwidth % 128 != 0 for s in gmem_strides[:-1]):
-      raise ValueError(
-          "async_copy requires all GMEM strides except the last one to be a"
-          " multiple of 16 bytes"
-      )
-
-    if reduction_op is not None:
-      if not any(
-          t.isinstance(gmem_ref_ty.element_type)
-          for t in (ir.F32Type, ir.BF16Type, ir.F16Type)
-      ):
-        raise ValueError(
-            "TMA with reduction is only supported with f32, f16 and bf16"
-        )
-      if reduction_op != "add":
-        raise ValueError(
-            "TMA with reduction is only supported with add operation"
-        )
-
-    # NOTE: TMA supports OOB indices, so we skip the check.
-    base_indices, slice_shape, is_squeezed = utils.parse_indices(
-        gmem_slice, ir.MemRefType(gmem_ref.type).shape, check_oob=False
-    )
-    dyn_base_indices = tuple(
-        c(i, index) if not isinstance(i, ir.Value) else i for i in base_indices
-    )
-    del base_indices  # Use the dynamic indices from now on!
-
-    collective_size = 1
-    if collective is not None:
-      if isinstance(collective, gpu.Dimension):
-        collective = (collective,)
-      collective_size = math.prod(self.cluster_size[d] for d in collective)
-      if gmem_ref is dst_ref:
-        raise ValueError("Only GMEM -> SMEM copies can be collective")
-    if partitioned is not None:
-      if collective is None:
-        raise ValueError("Only collective loads can be partitioned")
-      if collective_size > 1 and partitioned is not None:
-        if math.prod(self.cluster_size) != 2:
-          raise NotImplementedError(
-              "Partitioned loads only supported for clusters of size 2"
-          )
-        if slice_shape[partitioned] % collective_size != 0:
-          raise ValueError(
-              f"The collective size ({collective_size}) must divide the slice"
-              " shape along the partitioned dimension, but it has size"
-              f" {slice_shape[partitioned]}"
-          )
-        slice_shape[partitioned] //= collective_size
-        dyn_base_indices = list(dyn_base_indices)
-        dyn_base_indices[partitioned] = arith.addi(
-            dyn_base_indices[partitioned],
-            arith.muli(
-                self.cluster_idx(collective), c(slice_shape[partitioned], index)
-            ),
-        )
-        dyn_base_indices = tuple(dyn_base_indices)
-
-    squeezed_dims = [i for i, squeezed in enumerate(is_squeezed) if squeezed]
-    sliced_dims = [i for i, squeezed in enumerate(is_squeezed) if not squeezed]
-    # Indexing is really slicing + squeezing, and user transforms are meant to
-    # apply after that. However, we actually have to apply the indexing last
-    # (it's fused into the TMA) and so we need to commute it with all the user
-    # transforms. For slicing this is done using transform_index and
-    # transform_shape. For squeezing we actually move all the squeezed dims to
-    # the front, and then batch each transform, making it ignore the extra dims.
-    if squeezed_dims:
-      gmem_transform = (TransposeTransform((*squeezed_dims, *sliced_dims)),
-                        *(t.batch(len(squeezed_dims)) for t in gmem_transform))
-
-    slice_shape = tuple(slice_shape)
-    for t in gmem_transform:
-      dyn_base_indices = t.transform_index(dyn_base_indices)
-      slice_shape = t.transform_shape(slice_shape)
-
-    num_squeezed_dims = len(squeezed_dims)
-    if len(slice_shape) > 5:
-      # We can try to collapse all squeezed dims into one.
-      if len(slice_shape) - num_squeezed_dims + 1 > 5:
-        raise ValueError(
-            "Async copies only support striding up to 5 dimensions"
-        )
-      collapse = CollapseLeadingIndicesTransform(
-          tuple(gmem_strides[d] for d in squeezed_dims)
-      )
-      gmem_transform = (*gmem_transform, collapse)
-      dyn_base_indices = collapse.transform_index(dyn_base_indices)
-      slice_shape = collapse.transform_shape(slice_shape)
-      num_squeezed_dims = 1
-    del squeezed_dims, sliced_dims  # Those no longer make sense.
-
     smem_ref_ty = ir.MemRefType(smem_ref.type)
-    # We moved all squeezed dims to the front.
-    if slice_shape[num_squeezed_dims:] != tuple(smem_ref_ty.shape):
+    # TODO(apaszke): Support squeezed dims for CP_ASYNC.
+    if implementation == AsyncCopyImplementation.CP_ASYNC and squeezed_dims:
+      raise NotImplementedError(
+          "Integer indexing in gmem_slice not supported for CP_ASYNC"
+      )
+    # We moved all squeezed dims to the front in _prepare_async_copy.
+    assert all(d == 1 for d in slice_shape[:len(squeezed_dims)])
+    if slice_shape[len(squeezed_dims):] != smem_ref_ty.shape:
       raise ValueError(
           "Expected the SMEM reference to have the same shape as the"
-          f" transformed slice: {tuple(smem_ref_ty.shape)} != {slice_shape}"
+          f" transformed slice: {tuple(smem_ref_ty.shape)} !="
+          f" {slice_shape[len(squeezed_dims):]}"
       )
-    smem_strides, _ = smem_ref_ty.get_strides_and_offset()
+
+    if implementation == AsyncCopyImplementation.CP_ASYNC:
+      assert not collective
+      assert partitioned is None
+      if not isinstance(predicate, _DefaultPredicate):
+        raise NotImplementedError(
+            "CP_ASYNC needs to be performed by the whole warpgroup and does not"
+            " support the predicate argument"
+        )
+      # TODO(apaszke): This should be quite easy? The only complication is that
+      # the indices array needs to have a layout compatible with the way we
+      # assign lanes to rows/cols.
+      if gather_indices is not None:
+        raise NotImplementedError("Gather/scatter unsupported for the CP_ASYNC implementation")
+      if smem_ref is src_ref:
+        raise ValueError("CP_ASYNC implementation only supports GMEM -> SMEM copies")
+      assert swizzle is not None
+      swizzle_elems = 8 * swizzle // element_bitwidth
+      if gmem_transform != (TileTransform((8, swizzle_elems)),):
+        raise NotImplementedError(gmem_transform)
+      layout = fa.tiled_copy_smem_gmem_layout(
+          *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth  # type: ignore[call-arg]
+      )
+      gmem_strides = gmem_ref_ty.get_strides_and_offset()[0]
+      dst_tiled_strides = [
+          arith.constant(i32, s)
+          for s in layout.tiling.tile_strides(gmem_strides)[gmem_ref_ty.rank :]
+      ]
+      lane_offset = utils.dyn_dot(layout.lane_indices(), dst_tiled_strides)
+      warp_offset = utils.dyn_dot(layout.warp_indices(), dst_tiled_strides)
+      dyn_offset = arith.addi(lane_offset, warp_offset)
+      offset_scale = 1 if element_bitwidth >= 8 else 8 // element_bitwidth
+      if element_bitwidth < 8:
+        gep_type = i8
+      elif ir.FloatType.isinstance(element_type) and ir.FloatType(element_type).width == 8:
+        gep_type = i8  # LLVM has no support for f8.
+      else:
+        gep_type = element_type
+      dyn_offset = arith.divui(dyn_offset, c(offset_scale, i32))
+      if gmem_ref_ty.rank != 2:
+        raise NotImplementedError("Only 2D copies implemented")
+      transfers = fa.FragmentedArray.transfer_tiled(
+          smem_ref, swizzle, layout, tuple(gmem_ref_ty.shape), optimized=False
+      )
+      gmem_base_ptr = utils.getelementptr(utils.memref_ptr(gmem_ref), [dyn_offset], gep_type)
+      gmem_base_ptr = llvm.addrspacecast(ir.Type.parse("!llvm.ptr<1>"), gmem_base_ptr)
+      bytes_per_transfer = layout.vector_length * element_bitwidth // 8
+      # Only 16-byte transfers can skip the L1 cache (this is what CG means).
+      cache_modifier = (
+          nvvm.LoadCacheModifierKind.CG
+          if bytes_per_transfer == 16
+          else nvvm.LoadCacheModifierKind.CA
+      )
+      for _get, _update, get_base_idx, smem_ptr in transfers:
+        constant_offset = sum(i * s for i, s in zip(get_base_idx(), gmem_strides, strict=True))
+        gmem_ptr = utils.getelementptr(gmem_base_ptr, [constant_offset // offset_scale], gep_type)
+        nvvm.cp_async_shared_global(smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier)
+      if barrier is None:
+        nvvm.cp_async_commit_group()
+      else:
+        raise NotImplementedError
+      return
+
+    assert implementation == AsyncCopyImplementation.TMA
+
+    (smem_ref, slice_shape, dyn_base_indices, gmem_transform) = (
+        self._prepare_tma(
+            gmem_ref,
+            smem_ref,
+            swizzle,
+            slice_shape,
+            dyn_base_indices,
+            gather_indices,
+            squeezed_dims,
+            gmem_transform,
+            collective,
+            partitioned,
+        )
+    )
+    assert smem_ref is not None  # For type checkers.
+
+    smem_strides, _ = ir.MemRefType(smem_ref.type).get_strides_and_offset()
     if any(
         s != cs and d != 1  # Strides don't matter for dims of size 1.
         for s, cs, d in zip(
@@ -804,98 +1115,171 @@ class LaunchContext:
           f" strides {smem_strides} for shape {smem_ref_ty.shape}"
       )
 
-    dyn_base_indices = list(dyn_base_indices)
-    slice_shape = list(slice_shape)
-    assert all(d == 1 for d in slice_shape[:num_squeezed_dims])
+    collective_size = math.prod(self.cluster_size[d] for d in collective)
+    assert math.prod(slice_shape) * element_bitwidth * collective_size % 8 == 0
+    transfer_bytes = c(
+        math.prod(slice_shape) * element_bitwidth * collective_size // 8, i32
+    )
 
-    # Partitioned loads have already been processed (before transforms).
-    if collective_size > 1 and partitioned is None:
-      def partition_dim(dim: int, idx: ir.Value, num_chunks: int):
-        # No need to partition squeezed dims. They don't even exist in smem_ref.
-        assert dim >= num_squeezed_dims
-        nonlocal smem_ref
-        slice_shape[dim] //= num_chunks
-        block_offset = arith.muli(idx, c(slice_shape[dim], index))
-        dyn_base_indices[dim] = arith.addi(dyn_base_indices[dim], block_offset)
-        smem_ref = utils.memref_slice(
-            smem_ref,
-            (slice(None),) * (dim - num_squeezed_dims)
-            + (utils.ds(block_offset, slice_shape[dim]),),
-        )
-      idx = self.cluster_idx(collective)
-      rem_collective_size = collective_size
-      for dim, slice_size in enumerate(slice_shape[:-1]):
-        if slice_size % rem_collective_size == 0:
-          partition_dim(dim, idx, rem_collective_size)
-          rem_collective_size = 1
-          break
-        elif rem_collective_size % slice_size == 0:
-          # This is an optimization and it lets us skip squeezed dims.
-          if slice_size > 1:
-            dim_idx = arith.remui(idx, c(slice_size, index))
-            partition_dim(dim, dim_idx, slice_size)
-            idx = arith.divui(idx, c(slice_size, index))
-            rem_collective_size //= slice_size
-        else:
-          break  # We failed to partition the leading dimensions.
-      del idx  # We overwrote the block index in the loop.
-      if rem_collective_size > 1:
+    if gather_indices is not None:
+      import builtins
+      zips = functools.partial(builtins.zip, strict=True)
+      # The gather TMA instruction is limited to 2D GMEM references. That means
+      # that we can't apply the transforms to the GMEM reference and have the
+      # TMA engine deal with permuting the data, like we do for non-gather TMA.
+      # Instead, we have to break up the transfer into multiple 2D gathers
+      # ourselves, which requires us to do more complicated stride math etc.
+      #
+      # The minor transformed dim should be a contiguous transfer dim.
+      # The second minor should be a gather dim of size divisible by 4.
+      # The rest can be anything, and we will unroll the transfers over them.
+      if smem_ref is src_ref:
+        raise NotImplementedError("Scatter unsupported for the TMA implementation")
+      assert barrier is not None  # for pytype
+      barrier_ptr = barrier.get_ptr()
+      if squeezed_dims:
+        raise NotImplementedError("Gather/scatter unsupported when using integer indexing")
+      if reduction_op is not None:
+        raise ValueError("Gather/scatter TMA can't perform reductions")
+      if not isinstance(predicate, _DefaultPredicate):
+        raise ValueError("Gather/scatter TMA can't use a predicate")
+      if gather_indices.layout != fa.TMA_GATHER_INDICES_LAYOUT:
+        raise ValueError(f"Unsupported gather indices layout: {gather_indices.layout}")
+      ROWS_PER_INSTR = 4
+      # Make sure we'll always be accessing SMEM with sufficient alignment.
+      single_tma_bits = ROWS_PER_INSTR * slice_shape[-1] * element_bitwidth
+      if single_tma_bits % 1024:
         raise ValueError(
-            "None of the leading dimensions in the transformed slice shape"
-            f" {slice_shape} is divisible by the collective size"
-            f" {collective_size}"
+            "Gather/scatter TMA would require breaking it up into transfers of"
+            f" {single_tma_bits // 8} bytes, but need a multiple of 128 bytes"
         )
-      # Make each block load a smaller slice, adjust the GMEM indices and slice
-      # the SMEM reference accordingly.
-      multicast_mask = arith.trunci(
-          i16, utils.cluster_collective_mask(self.cluster_size, collective)
-      )
-    else:
-      multicast_mask = None
 
+      if arrive:
+        arrive_predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
+        nvvm.mbarrier_arrive_expect_tx_shared(
+            barrier_ptr, transfer_bytes, predicate=arrive_predicate,
+        )
+
+      gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
+      assert len(gmem_strides) == 2
+      _, gmem_cols = gmem_ref_ty.shape
+      slice_gather_strides: tuple[int, ...] = (1, 0)  # Each row gets a new index, column has no effect.
+      for t in gmem_transform:
+        gmem_strides = t.transform_strides(gmem_strides)
+        slice_gather_strides = t.transform_strides(slice_gather_strides)
+      is_gather_dim = [bool(s) for s in slice_gather_strides]
+
+      tma_desc = self._get_tma_desc(
+          gmem_ref, (), gmem_peer_id, (1, slice_shape[-1]), swizzle, reduction_op,
+      )
+
+      # Indices are split over 4 warps, and replicated within each warp.
+      assert fa.TMA_GATHER_INDICES_LAYOUT.vector_length == ROWS_PER_INSTR
+      # Index 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 ...
+      # Warp  <--- 0 ---> <--- 1 ---> <--- 2 ---> <--- 3 ---> <--- 0 --
+      warp_idx = arith.remui(
+          utils.warp_idx(sync=True),
+          arith.constant(i32, utils.WARPS_IN_WARPGROUP),
+      )
+      gather_linear_idx_warp = arith.muli(warp_idx, c(ROWS_PER_INSTR, i32))
+
+      # Since the TMA instruction is limited to 2D gathers, we flatten all
+      # non-gather dims into the column index.
+      max_non_gather_linear_index = sum(
+          (d - 1) * s
+          for g, d, s in zip(is_gather_dim[:-1], slice_shape[:-1], gmem_strides[:-1])
+          if not g
+      )
+      # If we ever exceed this then we need to change the size of the GMEM ref,
+      # to prevent the TMA engine from clipping our indices.
+      if max_non_gather_linear_index > gmem_cols:
+        raise NotImplementedError("Non-gather dims don't fit into the columns")
+      col_base_offset = functools.reduce(
+          arith.addi,
+          (
+              arith.muli(idx, arith.constant(index, stride))
+              for g, idx, stride in zips(
+                  is_gather_dim, dyn_base_indices, gmem_strides
+              )
+              if not g
+          ),
+          arith.constant(index, 0),
+      )
+      col_base_offset = arith.index_cast(i32, col_base_offset)
+      # TMA instructions are uniform, so we can't use multiple lanes.
+      predicate = utils.single_thread_predicate(utils.ThreadSubset.WARP)
+      # We need to unroll over all non-gather dimensions other than the last one
+      non_gather_slice_shape = tuple(
+          1 if g else d for d, g in zips(slice_shape[:-1], is_gather_dim[:-1])
+      )
+      # First, iterate over gather index registers we have available.
+      for i, reg in enumerate(gather_indices.registers.flat):
+        if utils.bitwidth(gather_indices.mlir_dtype) != 32:
+          reg = arith.extui(ir.VectorType.get((4,), i32), reg)
+        # Compute which rows within the 2D slice we'll be gathering.
+        gather_linear_idx_reg = i * ROWS_PER_INSTR * utils.WARPS_IN_WARPGROUP
+        gather_linear_idx = arith.addi(
+            gather_linear_idx_warp, arith.constant(i32, gather_linear_idx_reg)
+        )
+        # Transform row indices to align with the transformed SMEM shape.
+        gather_slice_idx = [
+            arith.remui(arith.divui(gather_linear_idx, c(s, i32)), c(d, i32))
+            for g, d, s in zip(is_gather_dim, slice_shape, slice_gather_strides)
+            if g
+        ]
+        gather_slice_idx = [arith.index_cast(index, i) for i in gather_slice_idx]
+        gather_rows = [
+            llvm.extractelement(reg, c(i, i32)) for i in range(ROWS_PER_INSTR)
+        ]
+        # Second, step over non-gather slice indices.
+        for non_gather_idxs in np.ndindex(non_gather_slice_shape):
+          gather_slice_idx_it = iter(gather_slice_idx)
+          smem_indices = tuple(
+              next(gather_slice_idx_it) if g else i
+              for g, i in zip(is_gather_dim[:-1], non_gather_idxs)
+          )
+          # We should really take a slice here, but it doesn't matter. We're
+          # just going to take the base pointer anyway.
+          transfer_smem_ref = utils.memref_slice(smem_ref, smem_indices)
+          smem_ptr = utils.memref_ptr(transfer_smem_ref, memory_space=3)
+          # The slice index needs to be folded into the gather col index.
+          col_slice_offset = sum(
+              idx * stride
+              for g, idx, stride in zips(
+                  is_gather_dim[:-1], non_gather_idxs, gmem_strides[:-1]
+              )
+              if not g
+          )
+          col_offset = arith.addi(col_base_offset, arith.constant(i32, col_slice_offset))
+          llvm.inline_asm(
+              ir.Type.parse("!llvm.void"),
+              [predicate, smem_ptr, tma_desc, barrier_ptr, col_offset, *gather_rows],
+              "@$0 cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4.mbarrier::complete_tx::bytes [$1], [$2, {$4, $5, $6, $7, $8}], [$3];",
+              "b,r,l,r" + ",r" * (ROWS_PER_INSTR + 1),
+              has_side_effects=True,
+          )
+      return
+
+    assert gather_indices is None  # Only tiled TMA handled below.
     tma_desc = self._get_tma_desc(
         gmem_ref, gmem_transform, gmem_peer_id,
         tuple(slice_shape), swizzle, reduction_op,
     )
-
     # We construct TMA descriptors in column-major order.
     rev_dyn_base_indices = [
         arith.index_cast(i32, idx) for idx in reversed(dyn_base_indices)
     ]
-
-    if max(slice_shape) > 256:
-      raise ValueError(
-          "Async copies only support copying <=256 elements along each"
-          " dimension"
-      )
-    if (zeroth_bw := slice_shape[-1] * element_bitwidth) % 128 != 0:
-      raise ValueError(
-          "Async copies require the number of bits copied along the last"
-          f" dimension to be divisible by 128, but got {zeroth_bw}"
-      )
-    if (
-        swizzle is not None
-        and swizzle != mgpu_dialect.SwizzlingMode.kNoSwizzle
-        and slice_shape[-1] != (swizzle * 8) // element_bitwidth
-    ):
-      raise ValueError(
-          f"Async copies with {swizzle=} require the last dimension of the"
-          f" slice to be exactly {swizzle} bytes i.e. "
-          f" {(swizzle * 8) // element_bitwidth} elements, but got"
-          f" {slice_shape[-1]} elements."
-      )
+    if isinstance(predicate, _DefaultPredicate):
+      predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
+    if predicate is None:
+      predicate = c(1, ir.IntegerType.get_signless(1))
     smem_ptr = utils.memref_ptr(smem_ref, memory_space=3)
     if gmem_ref is src_ref:
       assert barrier is not None  # for pytype
-      assert np.prod(slice_shape) * element_bitwidth * collective_size % 8 == 0
-      transfer_bytes = c(
-          np.prod(slice_shape) * element_bitwidth * collective_size // 8, i32
-      )
       barrier_ptr = barrier.get_ptr()
       assert reduction_op is None
       if collective_size > 1 and partitioned is not None:
-        if predicate is None:
-          predicate = c(1, ir.IntegerType.get_signless(1))
+        assert collective_size == 2
         if arrive:
           first_block = arith.cmpi(
               arith.CmpIPredicate.eq, self.cluster_idx(collective), c(0, index),
@@ -925,15 +1309,18 @@ class LaunchContext:
           nvvm.mbarrier_arrive_expect_tx_shared(
               barrier_ptr, transfer_bytes, predicate=predicate
           )
+        if collective_size > 1:
+          multicast_mask = arith.trunci(
+              i16, utils.cluster_collective_mask(self.cluster_size, collective)
+          )
+        else:
+          multicast_mask = None
         nvvm.cp_async_bulk_tensor_shared_cluster_global(
             smem_ptr, tma_desc, rev_dyn_base_indices, barrier_ptr, [],
             multicast_mask=multicast_mask, predicate=predicate
         )
     else:
-      assert multicast_mask is None
       if reduction_op is not None:
-        if predicate is None:
-          predicate = c(1, ir.IntegerType.get_signless(1))
         rank = len(slice_shape)
         idx_operands = ",".join(f"${i}" for i in range(3, 3 + rank))
         llvm.inline_asm(
@@ -952,10 +1339,96 @@ class LaunchContext:
         if arrive:
           nvvm.cp_async_bulk_commit_group()
 
+  def async_prefetch(
+    self,
+    *,
+    gmem_ref: ir.Value,
+    gmem_slice: Any = (),
+    gmem_transform: MemRefTransform | tuple[MemRefTransform, ...] = (),
+    gmem_peer_id: int | ir.Value | None = None,
+    swizzle: int | None = None,
+    collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
+    partitioned: int | None = None,
+    # Should select 0 or 1 threads from the WG.
+    predicate: ir.Value | None | _DefaultPredicate = _DefaultPredicate(),
+  ):
+    i32 = ir.IntegerType.get_signless(32)
+
+    if isinstance(collective, gpu.Dimension):
+      collective = (collective,)
+    elif collective is None:
+      collective = ()
+    if not isinstance(gmem_transform, tuple):
+      gmem_transform = (gmem_transform,)
+    if not isinstance(gmem_slice, tuple):
+      gmem_slice = (gmem_slice,)
+
+    impl =  AsyncCopyImplementation.TMA
+    (
+        slice_shape,
+        dyn_base_indices,
+        squeezed_dims,
+        gather_indices,
+        gmem_transform,
+    ) = self._prepare_async_copy(
+        gmem_ref, gmem_slice, gmem_transform, collective, partitioned, impl
+    )
+    del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
+
+    (_, slice_shape, dyn_base_indices, gmem_transform) = (
+        self._prepare_tma(
+            gmem_ref,
+            None,
+            swizzle,
+            slice_shape,
+            dyn_base_indices,
+            gather_indices,
+            squeezed_dims,
+            gmem_transform,
+            collective,
+            partitioned,
+        )
+    )
+
+    if gather_indices is not None:
+      raise NotImplementedError("Gather/scatter prefetch not implemented yet")
+
+    tma_desc = self._get_tma_desc(
+        gmem_ref, gmem_transform, gmem_peer_id,
+        tuple(slice_shape), swizzle, reduction_op=None,
+    )
+    # We construct TMA descriptors in column-major order.
+    rev_dyn_base_indices = [
+        arith.index_cast(i32, idx) for idx in reversed(dyn_base_indices)
+    ]
+    if isinstance(predicate, _DefaultPredicate):
+      predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
+    if predicate is None:
+      predicate = c(1, ir.IntegerType.get_signless(1))
+    rank = len(slice_shape)
+    idx_operands = ",".join(f"${i}" for i in range(2, 2 + rank))
+    llvm.inline_asm(
+        ir.Type.parse("!llvm.void"),
+        [predicate, tma_desc, *rev_dyn_base_indices],
+        f"@$0 cp.async.bulk.prefetch.tensor.{rank}d.L2.global.tile [$1, {{{idx_operands}}}];",
+        "b,l" + ",r" * rank,
+        has_side_effects=True,
+    )
+
   def await_async_copy(
-      self, allow_groups: int, await_read_only: bool = False
+      self, allow_groups: int, await_read_only: bool = False,
+      scope: utils.ThreadSubset = utils.ThreadSubset.WARPGROUP,
   ):
     nvvm.cp_async_bulk_wait_group(allow_groups, read=await_read_only)
+    if scope == utils.ThreadSubset.WARPGROUP:
+      utils.warpgroup_barrier()
+    elif scope == utils.ThreadSubset.WARP:
+      utils.warp_barrier()
+    else:
+      raise ValueError(f"Unsupported scope: {scope}")
+
+  def await_cp_async_copy(self, allow_groups: int):
+    nvvm.cp_async_wait_group(allow_groups)
     utils.warpgroup_barrier()
 
   def _ensure_nvshmem_decls(self):
@@ -971,6 +1444,12 @@ class LaunchContext:
           ir.Type.parse("!llvm.func<!llvm.ptr(!llvm.ptr,i32)>")
       )
       llvm.LLVMFuncOp("nvshmem_ptr", nvshmem_ptr_type, sym_visibility="private")
+      nvshmemx_mc_ptr_type = ir.TypeAttr.get(
+          ir.Type.parse("!llvm.func<!llvm.ptr(i32,!llvm.ptr)>")
+      )
+      llvm.LLVMFuncOp(
+          "nvshmemx_mc_ptr", nvshmemx_mc_ptr_type, sym_visibility="private"
+      )
 
   def to_remote(self, ref: ir.Value, peer: ir.Value):
     self._ensure_nvshmem_decls()
@@ -993,6 +1472,28 @@ class LaunchContext:
     if peer.type != ir.IntegerType.get_signless(32):
       raise ValueError(f"peer index must be an i32, got {peer.type}")
     return llvm.call(ref.type, [ref, peer], [], [], callee="nvshmem_ptr")
+
+  def to_remote_multicast(self, ref: ir.Value):
+    i32 = ir.IntegerType.get_signless(32)
+    self._ensure_nvshmem_decls()
+    if not ir.MemRefType.isinstance(ref.type):
+      raise ValueError(f"Unsupported type for to_remote_multicast: {ref.type}")
+      # We replace the offset in the ref type by 0, because memref_ptr always
+      # folds the offset into the pointer.
+    ref_ty = ir.MemRefType(ref.type)
+    strides, _ = ref_ty.get_strides_and_offset()
+    result_type = ir.MemRefType.get(
+        ref_ty.shape,
+        ref_ty.element_type,
+        ir.StridedLayoutAttr.get(0, strides),
+        ref_ty.memory_space,
+    )
+    world_team = arith.constant(i32, 0)
+    ptr = utils.memref_ptr(ref)
+    mc_ptr = llvm.call(
+        ptr.type, [world_team, ptr], [], [], callee="nvshmemx_mc_ptr",
+    )
+    return utils.MultimemRef(utils.ptr_as_memref(mc_ptr, result_type))
 
   def device_id(self) -> ir.Value:
     self._ensure_nvshmem_decls()

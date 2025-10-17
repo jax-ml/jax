@@ -35,8 +35,8 @@ import numpy as np
 config.parse_flags_with_absl()
 
 
-intx = dtypes.canonicalize_dtype(jnp.int64)
-floatx = dtypes.canonicalize_dtype(jnp.float64)
+intx = dtypes.default_int_dtype()
+floatx = dtypes.default_float_dtype()
 
 
 @jtu.with_config(jax_traceback_filtering="off")
@@ -130,7 +130,7 @@ class PallasCallVmapTest(PallasBaseTest):
     out_ref = jnp.arange(1, 9).reshape((4, 2))
     np.testing.assert_allclose(out, out_ref)
 
-  def test_vmap_with_hoisted_consts(self):
+  def test_vmap_with_const_args(self):
     if config.use_simplified_jaxpr_constants.value:
       self.skipTest("TODO: decide if we want to keep these errors")
     to_store = np.arange(128, dtype=np.float32).reshape((1, 128))

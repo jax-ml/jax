@@ -17,7 +17,6 @@ from absl.testing import absltest
 from absl.testing import parameterized
 from jax import numpy as jnp
 from jax._src import test_util as jtu
-from jax._src.lib import ifrt_version
 from jax.experimental import source_mapper
 
 
@@ -63,8 +62,6 @@ class SourceMapperTest(jtu.JaxTestCase):
       # ("hlo:optimized", "add", 0),
   )
   def test_hlo_passes(self, pass_name, expected_hlo_op, expected_col):
-    if pass_name == "hlo:original" and ifrt_version < 12:
-      self.skipTest("Test requires newer jaxlib")
     del expected_col
     def jax_fn(x, y):
       return x + y

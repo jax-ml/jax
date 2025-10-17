@@ -213,7 +213,7 @@ def add_arrays(x, y):
   print(f"ans sharding: {jax.typeof(ans)}")
   return ans
 
-with jax.sharding.use_mesh(mesh):
+with jax.set_mesh(mesh):
   add_arrays(arg0, arg1)
 ```
 
@@ -349,7 +349,7 @@ def layer_auto(x, weights, bias):
   print(f"out sharding: {jax.typeof(out)}")
   return out
 
-with jax.sharding.use_mesh(explicit_mesh):
+with jax.set_mesh(explicit_mesh):
   layer_auto(x_sharded, weights_sharded, bias)
 ```
 
@@ -377,4 +377,4 @@ This tutorial serves as a brief introduction of sharded and parallel computation
 To learn about each SPMD method in-depth, check out these docs:
 - {doc}`../notebooks/Distributed_arrays_and_automatic_parallelization`
 - {doc}`../notebooks/explicit-sharding`
-- {doc}`../notebooks/shard_map`
+- {doc}`../notebooks/shard_map`- {doc}`../the-training-cookbook`

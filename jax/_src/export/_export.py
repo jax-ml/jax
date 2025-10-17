@@ -39,10 +39,8 @@ from jax._src import effects
 from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-from jax._src.lib import ifrt_version
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir, passmanager
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect, sdy
@@ -80,11 +78,11 @@ class DisabledSafetyCheck:
 
   Most of these checks are performed on serialization, but some are deferred to
   deserialization. The list of disabled checks is attached to the serialization,
-  e.g., as a sequence of string attributes to `jax.export.Exported` or of
-  `tf.XlaCallModuleOp`.
+  e.g., as a sequence of string attributes to :class:`jax.export.Exported` or of
+  ``tf.XlaCallModuleOp``.
 
   When using jax2tf, you can disable more deserialization safety checks
-  by passing `TF_XLA_FLAGS=--tf_xla_call_module_disabled_checks=platform`.
+  by passing ``TF_XLA_FLAGS=--tf_xla_call_module_disabled_checks=platform``.
   """
   _impl: str
 
@@ -133,7 +131,7 @@ class Exported:
   Attributes:
     fun_name: the name of the exported function, for error messages.
     in_tree: a PyTreeDef describing the tuple (args, kwargs) of the lowered JAX
-        function. The actual lowering does not depend on the `in_tree`, but this
+        function. The actual lowering does not depend on the ``in_tree``, but this
         can be used to invoke the exported function using the same argument
         structure.
     in_avals: the flat tuple of input abstract values. May contain dimension
@@ -141,16 +139,16 @@ class Exported:
     out_tree: a PyTreeDef describing the result of the lowered JAX function.
     out_avals: the flat tuple of output abstract values. May contain dimension
         expressions in the shapes, with dimension variables among those in
-        `in_avals`.
+        ``in_avals``.
     in_shardings_hlo: the flattened input shardings, a sequence as long
-        as `in_avals`. `None` means unspecified sharding.
+        as ``in_avals``. ``None`` means unspecified sharding.
         Note that these do not include the mesh or the actual devices used in
-        the mesh. See `in_shardings_jax` for a way to turn these
+        the mesh. See ``in_shardings_jax`` for a way to turn these
         into sharding specification that can be used with JAX APIs.
     out_shardings_hlo: the flattened output shardings, a sequence as long
-        as `out_avals`. `None` means unspecified sharding.
+        as ``out_avals``. ``None`` means unspecified sharding.
         Note that these do not include the mesh or the actual devices used in
-        the mesh. See `out_shardings_jax` for a way to turn these
+        the mesh. See ``out_shardings_jax`` for a way to turn these
         into sharding specification that can be used with JAX APIs.
     nr_devices: the number of devices that the module has been lowered for.
     platforms: a tuple containing the platforms for which the function should
@@ -169,14 +167,14 @@ class Exported:
     module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
         must be passed to the module. The other arguments have been dropped
         because they are not used.
-    uses_global_constants: whether the `mlir_module_serialized` uses shape
+    uses_global_constants: whether the ``mlir_module_serialized`` uses shape
         polymorphism or multi-platform export.
-        This may be because `in_avals` contains dimension
+        This may be because ``in_avals`` contains dimension
         variables, or due to inner calls of Exported modules that have
         dimension variables or platform index arguments. Such modules need
         shape refinement before XLA compilation.
     disabled_safety_checks: a list of descriptors of safety checks that have been
-        disabled at export time. See docstring for `DisabledSafetyCheck`.
+        disabled at export time. See docstring for ``DisabledSafetyCheck``.
     _get_vjp: an optional function that takes the current exported function and
         returns the exported VJP function.
         The VJP function takes a flat list of arguments,
@@ -184,7 +182,8 @@ class Exported:
         for each primal output. It returns a tuple with the cotangents
         corresponding to the flattened primal inputs.
 
-  See a [description of the calling convention for the `mlir_module`](https://docs.jax.dev/en/latest/export/export.html#module-calling-convention).
+  See a description of the calling convention for the :meth:`~jax.export.Exported.mlir_module`
+  method at https://docs.jax.dev/en/latest/export/export.html#module-calling-convention.
   """
   fun_name: str
   in_tree: tree_util.PyTreeDef
@@ -208,7 +207,7 @@ class Exported:
   _get_vjp: Callable[[Exported], Exported] | None
 
   def mlir_module(self) -> str:
-    """A string representation of the `mlir_module_serialized`."""
+    """A string representation of the ``mlir_module_serialized``."""
     return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
 
   def __str__(self):
@@ -219,12 +218,12 @@ class Exported:
   def in_shardings_jax(
     self,
     mesh: mesh_lib.Mesh) -> Sequence[sharding.Sharding | None]:
-    """Creates Shardings corresponding to self.in_shardings_hlo.
+    """Creates Shardings corresponding to ``self.in_shardings_hlo``.
 
-    The Exported object stores `in_shardings_hlo` as HloShardings, which are
+    The Exported object stores ``in_shardings_hlo`` as HloShardings, which are
     independent of a mesh or set of devices. This method constructs
-    Sharding that can be used in JAX APIs such as `jax.jit` or
-    `jax.device_put`.
+    Sharding that can be used in JAX APIs such as :func:`jax.jit` or
+    :func:`jax.device_put`.
 
     Example usage:
 
@@ -259,7 +258,7 @@ class Exported:
   def out_shardings_jax(
       self,
       mesh: mesh_lib.Mesh) -> Sequence[sharding.Sharding | None]:
-    """Creates Shardings corresponding to `self.out_shardings_hlo`.
+    """Creates Shardings corresponding to ``self.out_shardings_hlo``.
 
     See documentation for in_shardings_jax.
     """
@@ -286,9 +285,9 @@ class Exported:
 
     Args:
       vjp_order: The maximum vjp order to include. E.g., the value 2 means that we
-        serialize the primal functions and two orders of the `vjp` function. This
+        serialize the primal functions and two orders of the ``vjp`` function. This
         should allow 2nd order reverse mode differentiation of the deserialized
-        function. i.e., `jax.grad(jax.grad(f)).`
+        function. i.e., ``jax.grad(jax.grad(f))``.
     """
     # Lazy load the serialization module, since flatbuffers is an optional
     # dependency.
@@ -318,7 +317,7 @@ def deserialize(blob: bytearray) -> Exported:
   """Deserializes an Exported.
 
   Args:
-    blob: a bytearray obtained from `Exported.serialize`.
+    blob: a bytearray obtained from :meth:`jax.export.Exported.serialize`.
   """
   # Lazy load the serialization module, since flatbuffers is an optional
   # dependency.
@@ -334,8 +333,8 @@ class _SerializeAuxData(Protocol):
   def __call__(self, aux_data: PyTreeAuxData) -> bytes:
     """Serializes the PyTree node AuxData.
 
-    The AuxData is returned by the `flatten_func` registered by
-    `tree_util.register_pytree_node`).
+    The AuxData is returned by the ``flatten_func`` registered by
+    :func:`jax.tree_util.register_pytree_node`).
     """
 
 
@@ -343,7 +342,7 @@ class _DeserializeAuxData(Protocol):
   def __call__(self, serialized_aux_data: bytes) -> PyTreeAuxData:
     """Deserializes the PyTree node AuxData.
 
-    The result will be passed to `_BuildFromChildren`.
+    The result will be passed to ``_BuildFromChildren``.
     """
 
 
@@ -351,7 +350,7 @@ class _BuildFromChildren(Protocol):
   def __call__(self, aux_data: PyTreeAuxData, children: Sequence[Any]) -> Any:
     """Materializes a T given a deserialized AuxData and children.
 
-    This is similar in scope with the `unflatten_func`.
+    This is similar in scope with the ``unflatten_func``.
     """
 
 
@@ -381,37 +380,37 @@ def register_pytree_node_serialization(
 
   You must use this function before you can serialize and deserialize PyTree
   nodes for the types not supported natively. We serialize PyTree nodes for
-  the `in_tree` and `out_tree` fields of `Exported`, which are part of the
+  the ``in_tree`` and ``out_tree`` fields of ``Exported``, which are part of the
   exported function's calling convention.
 
   This function must be called after calling
-  `jax.tree_util.register_pytree_node` (except for `collections.namedtuple`,
-  which do not require a call to `register_pytree_node`).
+  :func:`jax.tree_util.register_pytree_node` (except for ``collections.namedtuple``,
+  which do not require a call to ``register_pytree_node``).
 
   Args:
     nodetype: the type whose PyTree nodes we want to serialize. It is an
-      error to attempt to register multiple serializations for a `nodetype`.
+      error to attempt to register multiple serializations for a ``nodetype``.
     serialized_name: a string that will be present in the serialization and
       will be used to look up the registration during deserialization. It is an
       error to attempt to register multiple serializations for a
-      `serialized_name`.
+      ``serialized_name``.
     serialize_auxdata: serialize the PyTree auxdata (returned by the
-      `flatten_func` argument to `jax.tree_util.register_pytree_node`.).
+      ``flatten_func`` argument to :func:`jax.tree_util.register_pytree_node`.).
     deserialize_auxdata: deserialize the auxdata that was serialized by the
-      `serialize_auxdata`.
+      ``serialize_auxdata``.
     from_children: if present, this is a function that takes that result of
-      `deserialize_auxdata` along with some children and creates an instance
-      of `nodetype`. This is similar to the `unflatten_func` passed to
-      `jax.tree_util.register_pytree_node`. If not present, we look up
-      and use the `unflatten_func`. This is needed for `collections.namedtuple`,
-      which does not have a `register_pytree_node`, but it can be useful to
-      override that function. Note that the result of `from_children` is
-      only used with `jax.tree_util.tree_structure` to construct a proper
+      ``deserialize_auxdata`` along with some children and creates an instance
+      of ``nodetype``. This is similar to the ``unflatten_func`` passed to
+      :func:`jax.tree_util.register_pytree_node`. If not present, we look up
+      and use the ``unflatten_func``. This is needed for ``collections.namedtuple``,
+      which does not have a ``register_pytree_node``, but it can be useful to
+      override that function. Note that the result of ``from_children`` is
+      only used with :func:`jax.tree_util.tree_structure` to construct a proper
       PyTree node, it is not used to construct the outputs of the serialized
       function.
 
   Returns:
-    the same type passed as `nodetype`, so that this function can
+    the same type passed as ``nodetype``, so that this function can
     be used as a class decorator.
   """
   if nodetype in serialization_registry:
@@ -445,23 +444,23 @@ def register_namedtuple_serialization(
     serialized_name: str) -> type[T]:
   """Registers a namedtuple for serialization and deserialization.
 
-  JAX has native PyTree support for `collections.namedtuple`, and does not
-  require a call to `jax.tree_util.register_pytree_node`. However, if you
+  JAX has native PyTree support for ``collections.namedtuple``, and does not
+  require a call to :func:`jax.tree_util.register_pytree_node`. However, if you
   want to serialize functions that have inputs of outputs of a
   namedtuple type, you must register that type for serialization.
 
   Args:
     nodetype: the type whose PyTree nodes we want to serialize. It is an
-      error to attempt to register multiple serializations for a `nodetype`.
+      error to attempt to register multiple serializations for a ``nodetype``.
       On deserialization, this type must have the same set of keys that
       were present during serialization.
     serialized_name: a string that will be present in the serialization and
       will be used to look up the registration during deserialization. It is an
       error to attempt to register multiple serializations for
-      a `serialized_name`.
+      a ``serialized_name``.
 
   Returns:
-    the same type passed as `nodetype`, so that this function can
+    the same type passed as ``nodetype``, so that this function can
     be used as a class decorator.
 """
   if not _is_namedtuple(nodetype):
@@ -512,7 +511,7 @@ register_pytree_node_serialization(
 def default_export_platform() -> str:
   """Retrieves the default export platform.
 
-  One of: `tpu`, `cpu`, `cuda`, `rocm`.
+  One of: ``'tpu'``, ``'cpu'``, ``'cuda'``, ``'rocm'``.
   """
   # Canonicalize to turn 'gpu' into 'cuda' or 'rocm'
   return xb.canonicalize_platform(xb.default_backend())
@@ -537,7 +536,7 @@ def export(
   """Exports a JAX function for persistent serialization.
 
   Args:
-    fun_jit: the function to export. Should be the result of `jax.jit`.
+    fun_jit: the function to export. Should be the result of :func:`jax.jit`.
     platforms:
         Optional sequence containing a subset of 'tpu', 'cpu',
         'cuda', 'rocm'. If more than one platform is specified, then
@@ -553,12 +552,12 @@ def export(
         MLIR emitted through these custom lowering rules, rests with the user
         of these rules.
     disabled_checks: the safety checks to disable. See documentation for
-        of `jax.export.DisabledSafetyCheck`.
+        of :class:`jax.export.DisabledSafetyCheck`.
 
   Returns:
-    a function that takes args and kwargs pytrees of {class}`jax.ShapeDtypeStruct`,
-    or values with `.shape` and `.dtype` attributes, and returns an
-    `Exported`.
+    a function that takes args and kwargs pytrees of :class:`jax.ShapeDtypeStruct`,
+    or values with ``.shape`` and ``.dtype`` attributes, and returns an
+    :class:`~jax.export.Exported`.
 
   Usage:
 
@@ -595,10 +594,10 @@ def _export_internal(
   """Exports native serialization for a JAX function.
 
   Note: this function exists only for internal usage by jax2tf. Use
-    `jax.export` instead.
+    :mod:`jax.export` instead.
     See https://docs.jax.dev/en/latest/export/export.html
 
-  See docstring of `export` for more details.
+  See docstring of ``export`` for more details.
   """
   if not isinstance(fun_jit, stages.Wrapped):
     raise ValueError(
@@ -619,6 +618,7 @@ def _export_internal(
         _private_parameters=mlir.LoweringParameters(
             override_lowering_rules=override_lowering_rules,
             for_export=True,
+            hoist_constants_as_args=False,
             export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value))
     return _export_lowered(
         lowered, traced.jaxpr, traced.fun_name,
@@ -747,27 +747,13 @@ def _export_lowered(
   if _device_assignment_for_internal_jax2tf_use_only is not None:
     _device_assignment_for_internal_jax2tf_use_only[0] = device_assignment
 
-  cur_mesh = cur_arg = cur_k_path = None
-  # lowered.args_info is a tree of the args, but we need the out avals too to
-  # get the key paths for.
-  out_avals_tree = tree_util.tree_unflatten(lowered.out_tree, out_avals_flat)
+  cur_mesh = None
   if config.use_shardy_partitioner.value:
-    for sharding, (k_path, arg) in zip(
-        itertools.chain.from_iterable([
-            all_in_shardings, lowering.compile_args["out_shardings"]]),
-        itertools.chain.from_iterable([
-            tree_util.tree_flatten_with_path(lowered.args_info)[0],
-            tree_util.tree_flatten_with_path(out_avals_tree)[0]])):
+    for sharding in itertools.chain.from_iterable([
+        all_in_shardings, lowering.compile_args["out_shardings"]]):
       if isinstance(sharding, sharding_impls.NamedSharding):
-        if cur_mesh is None:
-          cur_mesh, cur_arg, cur_k_path = sharding.mesh, arg, k_path
-        elif cur_mesh.shape_tuple != sharding.mesh.shape_tuple:
-          raise ValueError(
-              "Mesh for all inputs/outputs should be equal. Got one mesh "
-              f"{cur_mesh} on an array {cur_arg._aval} at "  # type: ignore[union-attr]
-              f"{shape_poly.args_kwargs_path_to_str(cur_k_path)} and another mesh: "  # type: ignore[arg-type]
-              f"{sharding.mesh}' on a tensor {arg._aval} at "
-              f"{shape_poly.args_kwargs_path_to_str(k_path)}")
+        cur_mesh = sharding.mesh
+        break
     if cur_mesh and isinstance(cur_mesh, mesh_lib.Mesh):
       cur_mesh = cur_mesh.abstract_mesh
 
@@ -831,20 +817,10 @@ def _module_to_bytecode(module: ir.Module) -> bytes:
   # Note that this does not verify any JAX custom calls, which are only
   # guaranteed 3w of forward compatibility, and only prevents use of new
   # StableHLO features from failing on older hardware.
-  if hlo.get_api_version() < 9:
-    target_version = hlo.get_minimum_version()
-  else:
-    target_version = hlo.get_version_from_compatibility_requirement(
-      hlo.StablehloCompatibilityRequirement.WEEK_4)
-  if jaxlib_extension_version >= 357 and ifrt_version >= 14:
-    module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
-        mlir_str, target_version, xb.get_backend().serialize_with_sdy)
-  else:
-    # pylint: disable=no-value-for-parameter
-    module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
-        mlir_str, target_version)
-    # pylint: disable=no-value-for-parameter
-
+  target_version = hlo.get_version_from_compatibility_requirement(
+    hlo.StablehloCompatibilityRequirement.WEEK_4)
+  module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
+      mlir_str, target_version, xb.get_backend().serialize_with_sdy)
   return module_serialized
 
 
@@ -864,13 +840,13 @@ def _wrap_main_func(
   Args:
     module: a copy of HLO module as obtained from lowering.
     args_avals_flat: the avals for all the arguments of the lowered function,
-      which correspond to the array arguments of the `module`.
-    args_kwargs_tree: the PyTreeDef corresponding to `(args, kwargs)`, for error
+      which correspond to the array arguments of the ``module``.
+    args_kwargs_tree: the PyTreeDef corresponding to ``(args, kwargs)``, for error
       messages.
-    has_platform_index_argument: whether the `module` has a first platform
+    has_platform_index_argument: whether the ``module`` has a first platform
       index argument
     module_kept_var_idx: a sorted tuple of integers with the indices of arguments
-      in `args_avals_flat` that are kept as `module` arguments.
+      in ``args_avals_flat`` that are kept as ``module`` arguments.
     serialization_version: the target serialization version
 
   Returns the wrapped module, without dimension and token arguments.
@@ -963,7 +939,7 @@ def _wrap_main_func(
           host_callbacks=[], module=wrapped_module, context=context,
           lowering_parameters=mlir.LoweringParameters(
               global_constant_computation=True,
-              for_export=True,
+              for_export=True, hoist_constants_as_args=False,
               export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value,
           ))
       ctx = mlir.LoweringRuleContext(
@@ -971,7 +947,8 @@ def _wrap_main_func(
         name_stack=source_info_util.new_name_stack(), traceback=None,
         primitive=None,
         avals_in=args_avals_flat, avals_out=None,
-        tokens_in=mlir.TokenSet(), tokens_out=None)
+        tokens_in=mlir.TokenSet(), tokens_out=None,
+        const_lowering={})
       # We compute dim_values from the array arguments.
       new_main_op_array_args = new_main_op.arguments[-nr_array_args:]
       if shape_poly.all_dim_vars(args_avals_flat):
@@ -1093,6 +1070,8 @@ _GPU_FFI_KERNELS = [
     # qr on GPU
     "cusolver_geqrf_ffi", "cusolver_orgqr_ffi",
     "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi",
+    # cholesky on GPU
+    "cusolver_potrf_ffi", "hipsolver_potrf_ffi",
     # eigh on GPU
     "cusolver_syevd_ffi", "hipsolver_syevd_ffi",
     # svd on GPU
@@ -1123,7 +1102,8 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "ApproxTopK", "stablehlo.dynamic_approx_top_k",
     "tf.call_tf_function",  # From jax2tf.call_tf(func, call_tf_graph=True)
     "tpu_custom_call",  # Pallas/TPU kernels
-    "mosaic_gpu",  # Pallas Mosaic GPU kernels
+    "AllocateBuffer",  # lax.empty implementation
+    "mosaic_gpu_v2",  # Pallas Mosaic GPU kernels
     # TODO(burmako): maintain backwards compatibility for these, until they
     # are upstreamed to StableHLO.
     # See https://github.com/openxla/stablehlo/issues/8.
@@ -1477,15 +1457,10 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     # TODO(b/422690222): remove this pass once we don't need to support 6m
     # old exported modules.
     if has_sdy_meshes_in_frontend_attributes(submodule):
-      if jaxlib_extension_version < 356:
-        submodule = ir.Module.parse(
-            _jax.sdy.sdy_round_trip_import_shardings(
-                mlir.module_to_bytecode(submodule)))  # type: ignore[module-attr]
-      else:
-        with submodule.context:
-          pipeline = passmanager.PassManager.parse(
-              'builtin.module(xla-sdy-round-trip-import-shardy-attrs)')
-          pipeline.run(submodule.operation)
+      with submodule.context:
+        pipeline = passmanager.PassManager.parse(
+            'builtin.module(xla-sdy-round-trip-import-shardy-attrs)')
+        pipeline.run(submodule.operation)
 
   with submodule.context:
     pipeline = passmanager.PassManager.parse(
@@ -1512,15 +1487,19 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     )
 
   # Apply in_shardings
-  if shardy_enabled:
+  if mesh:
+    # A mesh only exists if Shardy is enabled.
     args = tuple(
         wrap_with_sharding(
             ctx, x, x_aval,
-            _hlo_sharding_to_named_sharding(x_sharding, mesh))  # type: ignore[arg-type]
+            _hlo_sharding_to_named_sharding(x_sharding, mesh), use_shardy=True)  # type: ignore[arg-type]
         for x, x_aval, x_sharding in zip(args, ctx.avals_in, exported.in_shardings_hlo))
   else:
+    # Since there is no mesh - either due to shardy being disabled or the loaded
+    # function being lowered for GSPMD (so no shardy mesh) - need to create a
+    # GSPMD sharding from the HLO sharding (can't use shardy lowering).
     args = tuple(
-        wrap_with_sharding(ctx, x, x_aval, x_sharding)
+        wrap_with_sharding(ctx, x, x_aval, x_sharding, use_shardy=False)
         for x, x_aval, x_sharding in zip(args, ctx.avals_in, exported.in_shardings_hlo))
 
   # The called function may have been exported with polymorphic shapes and called
@@ -1608,14 +1587,19 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
       for out, out_aval, refined_out_aval in zip(call.results[len(ordered_effects):],
                                                  exported.out_avals, ctx.avals_out))
   # Apply out_shardings
-  if shardy_enabled:
+  if mesh:
+    # A mesh only exists if Shardy is enabled.
     results = tuple(
         wrap_with_sharding(
-            ctx, x, x_aval, _hlo_sharding_to_named_sharding(x_sharding, mesh))  # type: ignore[arg-type]
+            ctx, x, x_aval, _hlo_sharding_to_named_sharding(x_sharding, mesh),
+            use_shardy=True)  # type: ignore[arg-type]
         for x, x_aval, x_sharding in zip(results, ctx.avals_out, exported.out_shardings_hlo))
   else:
+    # Since there is no mesh - either due to shardy being disabled or the loaded
+    # function being lowered for GSPMD (so no shardy mesh) - need to create a
+    # GSPMD sharding from the HLO sharding (can't use shardy lowering).
     results = tuple(
-        wrap_with_sharding(ctx, x, x_aval, x_sharding)
+        wrap_with_sharding(ctx, x, x_aval, x_sharding, use_shardy=False)
         for x, x_aval, x_sharding in zip(results, ctx.avals_out, exported.out_shardings_hlo))
   return results
 
@@ -1626,12 +1610,14 @@ def wrap_with_sharding(
     ctx: mlir.LoweringRuleContext,
     x: ir.Value,
     x_aval: core.AbstractValue,
-    x_sharding: sharding_impls.NamedSharding | HloSharding | None,
+    x_sharding: sharding_impls.NamedSharding | sharding_impls.GSPMDSharding | HloSharding | None,
+    use_shardy: bool,
 ) -> ir.Value:
   if x_sharding is None:
     return x
-  if config.use_shardy_partitioner.value:
+  if use_shardy:
     x_sharding = x_sharding._to_sdy_sharding(x_aval.ndim)  # type: ignore
   else:
     x_sharding = x_sharding.to_proto()  # type: ignore
-  return mlir.wrap_with_sharding_op(ctx, x, x_aval, x_sharding)  # type: ignore[arg-type]
+  return mlir.wrap_with_sharding_op(ctx, x, x_aval, x_sharding,  # type: ignore[arg-type]
+                                    allow_shardy_lowering=use_shardy)

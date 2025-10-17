@@ -54,7 +54,7 @@ if __name__ == '__main__':
   proc.wait()
 
   thunk_re = re.compile("hlo_op=(.*)#")
-  cost_dictionary: dict[str, list] = dict()
+  cost_dictionary: dict[str, list] = {}
   with open(f"{args.pgle_output_path}", 'w', newline='') as protofile:
     with open(f"{pgle_folder}{pgle_filename}.pbtxt_{report_name}.csv", newline='') as csvfile:
       reader = csv.DictReader(csvfile)
