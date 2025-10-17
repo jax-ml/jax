@@ -25,6 +25,7 @@ import sys
 from typing import Any, Generic, NoReturn, Optional, Protocol, Type, TypeVar, cast, TYPE_CHECKING
 
 from jax._src import deprecations
+from jax._src.lib import _jax
 from jax._src.lib import guard_lib
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import jax_jit
@@ -265,7 +266,8 @@ else:
           error_checking_behavior_divide.value,
           error_checking_behavior_oob.value,
           use_simplified_jaxpr_constants.value,
-          pallas_tpu_interpret_mode_context_manager.value)
+          pallas_tpu_interpret_mode_context_manager.value,
+          send_traceback_to_runtime.value)
     if register_trace_context_callback:
       out = out + tuple(r() for r in register_trace_context_callback)
     return out
@@ -2129,6 +2131,55 @@ array_garbage_collection_guard = optional_enum_state(
         guard_lib.thread_local_state(), 'garbage_collect_array', val
     ),
 )
+
+if TYPE_CHECKING or jaxlib_extension_version >= 381:
+  class RuntimeTracebackMode(enum.Enum):
+    OFF = _jax.RuntimeTracebackMode.OFF
+    ON = _jax.RuntimeTracebackMode.ON
+    FULL = _jax.RuntimeTracebackMode.FULL
+
+    @classmethod
+    def _missing_(cls, value):
+      if isinstance(value, str):
+        try:
+          return cls[value.upper()]
+        except KeyError:
+          pass
+      return None
+
+  def _update_send_traceback_to_runtime_thread_local(val: RuntimeTracebackMode | None):
+    cpp_enum_val = val.value if val is not None else None
+    _jax.set_send_traceback_to_runtime_thread_local(cpp_enum_val)
+
+  def _update_send_traceback_to_runtime_global(val: RuntimeTracebackMode | None):
+    cpp_enum_val = val.value if val is not None else _jax.RuntimeTracebackMode.OFF
+    _jax.set_send_traceback_to_runtime_global(cpp_enum_val)
+
+  send_traceback_to_runtime = enum_class_state(
+      name='jax_send_traceback_to_runtime',
+      enum_class=RuntimeTracebackMode,
+      default=RuntimeTracebackMode.OFF,
+      help=(
+          'Controls the level of Python traceback information sent to the runtime at dispatch time:\n'
+          '- "OFF": (default) No Python traceback information is sent.\n'
+          '- "ON": Only the most recent user frame call location is sent.\n'
+          '- "FULL": The full Python traceback of the call location is sent. '
+          'This has a high fixed cost on the dispatch path and should be used only for debugging.'
+      ),
+      update_global_hook=_update_send_traceback_to_runtime_global,
+      update_thread_local_hook=_update_send_traceback_to_runtime_thread_local,
+  )
+else:
+  # Option is not available in older jaxlib versions
+  # Create a placeholder that errors out if used.
+  class _RuntimeTracebackModeUnavailable:
+    def __getattr__(self, name):
+      raise AttributeError(
+        "The 'jax_send_traceback_to_runtime' config option "
+        f"requires jaxlib version >= 381. Current version: {jaxlib_extension_version}."
+      )
+  send_traceback_to_runtime = _RuntimeTracebackModeUnavailable()
+  RuntimeTracebackMode = None
 
 # Don't define a context manager since this isn't threadsafe.
 string_state(

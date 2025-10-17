@@ -1251,6 +1251,23 @@ def cuda_array_interface_to_buffer(
     cai: dict, gpu_backend: Client | None = None, device_id: int | None = None
 ) -> object: ...
 
+class RuntimeTracebackMode(enum.Enum):
+  OFF = 0
+
+  ON = 1
+
+  FULL = 2
+
+def add_exclude_path(arg: str, /) -> None:
+  """Adds a path to exclude from tracebacks."""
+
+def set_send_traceback_to_runtime_global(
+    arg: RuntimeTracebackMode, /
+) -> None: ...
+def set_send_traceback_to_runtime_thread_local(
+    mode: RuntimeTracebackMode | None,
+) -> None: ...
+
 class PjitFunctionCache:
   def __init__(self, capacity: int = 4096) -> None: ...
   def size(self) -> int: ...
