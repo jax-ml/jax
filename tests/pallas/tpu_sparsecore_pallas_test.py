@@ -293,12 +293,24 @@ class VectorSubcoreTest(PallasSCTest):
         out_shape=x, out_specs=pl.BlockSpec(memory_space=pltpu.HBM)
     )
     def kernel(x_ref, indices_ref, o_hbm_ref):
-      @functools.partial(pl.run_scoped, sem=pltpu.SemaphoreType.DMA)
-      def _(sem):
-        pltpu.async_copy(x_ref, o_hbm_ref.at[indices_ref[...]], sem).wait()
+      pltpu.sync_copy(x_ref, o_hbm_ref.at[indices_ref[...]])
 
     np.testing.assert_array_equal(
         kernel(x, indices), jnp.empty_like(x).at[indices].set(x)
+    )
+
+  def test_scatter_1d_array_from_transformed_src(self):
+    x = jnp.arange(16).reshape(2, -1)
+    indices = jax.random.permutation(jax.random.key(42), jnp.arange(8))
+
+    @vector_subcore_kernel(
+        out_shape=x[0], out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_ref, indices_ref, o_hbm_ref):
+      pltpu.sync_copy(x_ref.at[0], o_hbm_ref.at[indices_ref[...]])
+
+    np.testing.assert_array_equal(
+        kernel(x, indices), jnp.empty_like(x[0]).at[indices].set(x[0])
     )
 
   @parameterized.product(kind=["ref", "array"])
@@ -318,6 +330,24 @@ class VectorSubcoreTest(PallasSCTest):
       pltpu.sync_copy(x_hbm_ref.at[indices], o_ref)
 
     np.testing.assert_array_equal(kernel(x, indices), x[indices])
+
+  @parameterized.product(kind=["ref", "array"])
+  def test_gather_1d_to_transformed_dst(self, kind):
+    x = jnp.arange(8)
+    indices = jax.random.permutation(jax.random.key(42), x)
+
+    @vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=(2, 8,), dtype=jnp.int32),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+    )
+    def kernel(x_hbm_ref, indices_ref, o_ref):
+      indices = indices_ref if kind == "ref" else indices_ref[...]
+      pltpu.sync_copy(x_hbm_ref.at[indices], o_ref.at[0])
+
+    np.testing.assert_array_equal(kernel(x, indices)[0], x[indices])
 
   def test_large_gather_1d(self):
     x = jnp.arange(1024)

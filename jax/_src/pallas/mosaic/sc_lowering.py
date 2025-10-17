@@ -489,6 +489,55 @@ def _debug_print_lowering_rule(
   return []
 
 
+def _prepare_dma_refs(
+    src_ref,
+    src_transforms,
+    dst_ref,
+    dst_transforms,
+    src_aval,
+    dst_aval,
+):
+  """Prepares the DMA source and destination references."""
+  match src_aval.memory_space, dst_aval.memory_space:
+    case (
+        tpu_core.MemorySpace.HBM | tpu_core.MemorySpace.VMEM_SHARED,
+        tpu_core.MemorySpace.VMEM | None,
+    ):
+      dst_ref, _ = _transform_ref(
+          dst_ref, dst_aval.dtype, dst_aval.shape, dst_transforms
+      )
+      dst_ref_shape = ir.MemRefType(dst_ref.type).shape
+      indirect_offsets, src_transforms = _extract_indirect_offsets(
+          src_transforms, tuple(dst_ref_shape)
+      )
+      src_ref, _ = _transform_ref(
+          src_ref, src_aval.dtype, src_aval.shape, src_transforms
+      )
+    case (
+        tpu_core.MemorySpace.VMEM | None,
+        tpu_core.MemorySpace.HBM | tpu_core.MemorySpace.VMEM_SHARED,
+    ):
+      src_ref, _ = _transform_ref(
+          src_ref, src_aval.dtype, src_aval.shape, src_transforms
+      )
+      src_ref_shape = ir.MemRefType(src_ref.type).shape
+      indirect_offsets, dst_transforms = _extract_indirect_offsets(
+          dst_transforms, tuple(src_ref_shape)
+      )
+      dst_ref, _ = _transform_ref(
+          dst_ref, dst_aval.dtype, dst_aval.shape, dst_transforms
+      )
+    case _:  # Indirect DMA is not supported.
+      src_ref, _ = _transform_ref(
+          src_ref, src_aval.dtype, src_aval.shape, src_transforms
+      )
+      dst_ref, _ = _transform_ref(
+          dst_ref, dst_aval.dtype, dst_aval.shape, dst_transforms
+      )
+      indirect_offsets = None
+  return src_ref, dst_ref, indirect_offsets
+
+
 # TODO(slebedev): Use the TC rule once we align the ``LoweringRuleContext``
 # with the TC lowering.
 @register_lowering_rule(tpu_primitives.dma_start_p)
@@ -514,30 +563,8 @@ def _dma_start_lowering_rule(
       tpu_primitives._dma_unflatten(tree, ctx.avals_in)
   )
 
-  # If not ``None``, we lower to an indirect stream instead of a DMA.
-  indirect_offsets: ir.Value | None = None
-  # The number of elements moved by each scatter/gather operation.
-  match src_aval.memory_space, dst_aval.memory_space:
-    case (
-        tpu_core.MemorySpace.HBM | tpu_core.MemorySpace.VMEM_SHARED,
-        tpu_core.MemorySpace.VMEM | None,
-    ):
-      indirect_offsets, src_transforms = _extract_indirect_offsets(
-          src_transforms, dst_aval.shape
-      )
-    case (
-        tpu_core.MemorySpace.VMEM | None,
-        tpu_core.MemorySpace.HBM | tpu_core.MemorySpace.VMEM_SHARED,
-    ):
-      indirect_offsets, dst_transforms = _extract_indirect_offsets(
-          dst_transforms, src_aval.shape
-      )
-
-  src_ref, _ = _transform_ref(
-      src_ref, src_aval.dtype, src_aval.shape, src_transforms
-  )
-  dst_ref, _ = _transform_ref(
-      dst_ref, dst_aval.dtype, dst_aval.shape, dst_transforms
+  src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
+      src_ref, src_transforms, dst_ref, dst_transforms, src_aval, dst_aval,
   )
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
   if src_sem is not None:
@@ -545,6 +572,7 @@ def _dma_start_lowering_rule(
         src_sem, src_sem_aval.dtype, src_sem_aval.shape, src_sem_transforms
     )
 
+  # If not ``None``, we lower to an indirect DMA instead.
   if indirect_offsets is None:
     if device_id is not None:
       device_id, _ = tc_lowering._device_id_to_logical(
@@ -593,32 +621,12 @@ def _dma_wait_lowering_rule(
       tpu_primitives._dma_unflatten(tree, ctx.avals_in)
   )
 
-  # If not ``None``, we lower to an indirect stream instead of a DMA.
-  indirect_offsets: ir.Value | None = None
-  match src_aval.memory_space, dst_aval.memory_space:
-    case (
-        tpu_core.MemorySpace.HBM | tpu_core.MemorySpace.VMEM_SHARED,
-        tpu_core.MemorySpace.VMEM | None,
-    ):
-      indirect_offsets, src_transforms = _extract_indirect_offsets(
-          src_transforms, dst_aval.shape
-      )
-    case (
-        tpu_core.MemorySpace.VMEM | None,
-        tpu_core.MemorySpace.HBM | tpu_core.MemorySpace.VMEM_SHARED,
-    ):
-      indirect_offsets, dst_transforms = _extract_indirect_offsets(
-          dst_transforms, src_aval.shape
-      )
-
-  src_ref, _ = _transform_ref(
-      src_ref, src_aval.dtype, src_aval.shape, src_transforms
-  )
-  dst_ref, _ = _transform_ref(
-      dst_ref, dst_aval.dtype, dst_aval.shape, dst_transforms
+  src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
+      src_ref, src_transforms, dst_ref, dst_transforms, src_aval, dst_aval,
   )
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
 
+  # If not ``None``, we lower to an indirect DMA instead of a regular DMA.
   if indirect_offsets is None:
     if device_id is not None:
       device_id, _ = tc_lowering._device_id_to_logical(
