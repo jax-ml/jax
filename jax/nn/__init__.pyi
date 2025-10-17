@@ -25,6 +25,7 @@ Axis = int | Sequence[int] | None
 
 
 def celu(x: ArrayLike, alpha: ArrayLike = ...) -> Array: ...
+@overload
 def dot_product_attention(
     query: ArrayLike,
     key: ArrayLike,
@@ -38,7 +39,24 @@ def dot_product_attention(
     key_value_seq_lengths: ArrayLike | None = ...,
     local_window_size: int | tuple[int, int] | None = ...,
     implementation: Literal['xla', 'cudnn'] | None = ...,
+    return_residual: Literal[False] = ...,
   ) -> Array: ...
+@overload
+def dot_product_attention(
+    query: ArrayLike,
+    key: ArrayLike,
+    value: ArrayLike,
+    bias: ArrayLike | None = ...,
+    mask: ArrayLike | None = ...,
+    *,
+    scale: float | None = ...,
+    is_causal: bool = ...,
+    query_seq_lengths: ArrayLike | None = ...,
+    key_value_seq_lengths: ArrayLike | None = ...,
+    local_window_size: int | tuple[int, int] | None = ...,
+    implementation: Literal['xla', 'cudnn'] | None = ...,
+    return_residual: Literal[True] = ...,
+  ) -> tuple[Array, Array]: ...
 def elu(x: ArrayLike, alpha: ArrayLike = ...) -> Array: ...
 def gelu(x: ArrayLike, approximate: bool = ...) -> Array: ...
 def get_scaled_dot_general_config(

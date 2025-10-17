@@ -21,7 +21,7 @@ from functools import partial
 import operator
 import math
 import numpy as np
-from typing import Any, Literal
+from typing import Any, Literal, overload
 import warnings
 
 from jax._src import api
@@ -920,7 +920,8 @@ def _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen,
   return padded_logits
 
 def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
-                                scale, q_seqlen, kv_seqlen, local_window_size):
+                                scale, q_seqlen, kv_seqlen, local_window_size,
+                                return_residual):
   logits_dtype = jnp.promote_types(query.dtype, np.float32)
 
   # If the query and logits dtypes are different, then the default precision
@@ -970,6 +971,12 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
   if q_seqlen is not None:
     mask = _get_padding_mask_encoded(encoded.shape[1], q_seqlen)
     encoded *= mask.astype(encoded.dtype)
+
+  if return_residual:
+    lse_residual = logsumexp(padded_logits, axis=-1).astype(key.dtype)
+    lse_residual = jnp.transpose(lse_residual, (0, 2, 1))  # B N T -> B T N
+    return encoded, lse_residual
+
   return encoded
 
 def _dot_product_attention_xla(
@@ -982,7 +989,8 @@ def _dot_product_attention_xla(
     scale: float,
     q_seqlen: Array | None,
     kv_seqlen: Array | None,
-    local_window_size: tuple[int, int] | None):
+    local_window_size: tuple[int, int] | None,
+    return_residual: bool = False):
 
   B, T, N, H = query.shape
   _, S, K, _ = key.shape
@@ -1002,12 +1010,19 @@ def _dot_product_attention_xla(
   mask = _reshape_to_grouped(mask)
   vmapped_fn = api.vmap(
       _dot_product_attention_core,
-      in_axes=(3, None, None, 2, 2, None, None, None, None, None),
+      in_axes=(3, None, None, 2, 2, None, None, None, None, None, None),
       out_axes=3,
   )
-  encoded = vmapped_fn(query, key, value, bias, mask, is_causal, scale,
-                       q_seqlen, kv_seqlen, local_window_size)
-  encoded = jnp.reshape(encoded, (B, T, N, H))
+  output = vmapped_fn(query, key, value, bias, mask, is_causal, scale,
+                       q_seqlen, kv_seqlen, local_window_size, return_residual)
+
+  if return_residual:
+    encoded, lse_residual = output
+    encoded = jnp.reshape(encoded, (B, T, N, H))
+    lse_residual = jnp.reshape(lse_residual, (B, T, N))
+    return encoded, lse_residual
+
+  encoded = jnp.reshape(output, (B, T, N, H))
   return encoded
 
 def bias_fwd_rule(a, query_head_num):
@@ -1072,6 +1087,7 @@ def bias_bwd_batch_rule(batched_args, batch_dims):
 batching.primitive_batchers[bias_fwd_p] = bias_fwd_batch_rule
 batching.primitive_batchers[bias_bwd_p] = bias_bwd_batch_rule
 
+@overload
 def dot_product_attention(
     query: ArrayLike,
     key: ArrayLike,
@@ -1084,7 +1100,42 @@ def dot_product_attention(
     query_seq_lengths: ArrayLike | None = None,
     key_value_seq_lengths: ArrayLike | None = None,
     local_window_size: int | tuple[int, int] | None = None,
-    implementation: Literal['xla', 'cudnn'] | None = None) -> Array:
+    implementation: Literal['xla', 'cudnn'] | None = None,
+    return_residual: Literal[False] = ...,
+) -> Array: ...
+
+@overload
+def dot_product_attention(
+    query: ArrayLike,
+    key: ArrayLike,
+    value: ArrayLike,
+    bias: ArrayLike | None = None,
+    mask: ArrayLike | None = None,
+    *,
+    scale: float | None = None,
+    is_causal: bool = False,
+    query_seq_lengths: ArrayLike | None = None,
+    key_value_seq_lengths: ArrayLike | None = None,
+    local_window_size: int | tuple[int, int] | None = None,
+    implementation: Literal['xla', 'cudnn'] | None = None,
+    return_residual: Literal[True] = ...,
+) -> tuple[Array, Array]: ...
+
+def dot_product_attention(
+    query: ArrayLike,
+    key: ArrayLike,
+    value: ArrayLike,
+    bias: ArrayLike | None = None,
+    mask: ArrayLike | None = None,
+    *,
+    scale: float | None = None,
+    is_causal: bool = False,
+    query_seq_lengths: ArrayLike | None = None,
+    key_value_seq_lengths: ArrayLike | None = None,
+    local_window_size: int | tuple[int, int] | None = None,
+    implementation: Literal['xla', 'cudnn'] | None = None,
+    return_residual: bool = False,
+):
   r"""Scaled dot product attention function.
 
   Computes the attention function on Query, Key, and Value tensors:
@@ -1139,6 +1190,9 @@ def dot_product_attention(
       and the sequence is [0, 1, 2, 3, 4, 5, c, 7, 8, 9], token `c` can attend
       to [3, 4, 5, c, 7, 8]. If a single int is given, it will be interpreted as
       a symmetric window (window_size, window_size).
+    return_residual: Whether to return the logsumexp tensor of shape BTN
+      or BNT to users. See section 3.1.1 in the FlashAttention-2 paper:
+      https://arxiv.org/pdf/2307.08691 to find the definition of logsumexp.
     implementation: A string to control which implementation backend to use.
       Supported strings are `xla`, `cudnn` (cuDNN flash attention). It defaults
       to `None`, which currently falls back to `xla`.
@@ -1146,9 +1200,12 @@ def dot_product_attention(
       will be thrown if its not supported.
 
   Returns:
-    An array of the attention output with the same shape as :code:`query`.
+    If return_residual is False, returns an array of the attention output with
+    the same shape as :code:`query`. If return_residual is True, returns a tuple
+    of (output, residual). The residual is the shape of BTN|TN.
   """
   output_shape = jnp.asarray(query).shape
+  residual_shape = output_shape[:-1]
   def _ensure_4d(t):
     t = jnp.asarray(t)
     dims_to_add = 4 - t.ndim
@@ -1202,6 +1259,7 @@ def dot_product_attention(
           scale=scale_val, q_seqlen=query_seq_lengths,
           kv_seqlen=key_value_seq_lengths,
           local_window_size=local_window_size,
+          return_residual=return_residual,
       )
     case 'cudnn':
       use_padding = (
@@ -1235,8 +1293,14 @@ def dot_product_attention(
       out = cudnn_dot_product_attention(
           query_arr, key_arr, value_arr, bias, mask, query_seq_lengths,
           key_value_seq_lengths, scale=scale_val, mask_type=mask_type,
-          sliding_window_length=sliding_window,
+          sliding_window_length=sliding_window, return_residual=return_residual,
       )
+      if return_residual:
+        # Regardless of input layout, cudnn always returns residual with
+        # (B N T) layout.
+        out, residual = out
+        residual = jnp.transpose(residual, (0, 2, 1))
+        out = (out, residual)
     case None:
       # TODO(kaixih@nvidia) Automatically select the best backend (defaults to XLA for now).
       out = _dot_product_attention_xla(
@@ -1244,9 +1308,14 @@ def dot_product_attention(
           scale=scale_val, q_seqlen=query_seq_lengths,
           kv_seqlen=key_value_seq_lengths,
           local_window_size=local_window_size,
+          return_residual=return_residual,
       )
     case _:
       raise ValueError(f"Unsupported implementation option: {implementation}")
+
+  if return_residual:
+    out, residual = out
+    return jnp.reshape(out, output_shape), jnp.reshape(residual, residual_shape)
 
   return jnp.reshape(out, output_shape)
 

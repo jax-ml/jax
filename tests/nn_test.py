@@ -206,13 +206,19 @@ class NNFunctionsTest(jtu.JaxTestCase):
     K = random.normal(keys[1], (B, S, N // G, H), dtype)
     V = random.normal(keys[2], (B, S, N // G, H), dtype)
     grad = random.normal(keys[3], (B, T, N, H), dtype)
+    lse_grad = random.normal(keys[4], (B, T, N), dtype)
     bias, mask = None, None
 
     sdpa = nn.dot_product_attention
     sdpa_ref = partial(sdpa, implementation=None)
     sdpa_ans = partial(sdpa, implementation=impl)
+    sdpa_ref_lse = partial(sdpa, implementation=None, return_residual=True)
+    sdpa_ans_lse = partial(sdpa, implementation=impl, return_residual=True)
     if use_vmap:
       sdpa_ans = jax.vmap(sdpa_ans, in_axes=(0, 0, 0, None, None), out_axes=0)
+      spda_ans_lse = jax.vmap(
+          sdpa_ans_lse, in_axes=(0, 0, 0, None, None), out_axes=0
+      )
 
     # For testing purposes, we call the non-GQA version without vmap in the
     # reference code
@@ -221,19 +227,35 @@ class NNFunctionsTest(jtu.JaxTestCase):
     out_ref, sdpa_vjp_ref = jax.vjp(sdpa_ref, Q, K_ref, V_ref, bias, mask)
     out_ans, sdpa_vjp_ans = jax.vjp(sdpa_ans, Q, K, V, bias, mask)
 
+    out_ref_lse, sdpa_vjp_ref_lse = jax.vjp(sdpa_ref_lse, Q, K_ref, V_ref, bias, mask)
+    out_ans_lse, sdpa_vjp_ans_lse = jax.vjp(sdpa_ans_lse, Q, K, V, bias, mask)
+
     dQ_ref, dK_ref, dV_ref = sdpa_vjp_ref(grad)[:3]
     dQ_ans, dK_ans, dV_ans = sdpa_vjp_ans(grad)[:3]
     dK_ref = dK_ref.reshape(B, S, N // G, G, H).sum(axis=3)
     dV_ref = dV_ref.reshape(B, S, N // G, G, H).sum(axis=3)
 
+    dQ_ref_lse, dK_ref_lse, dV_ref_lse = sdpa_vjp_ref_lse((grad, lse_grad))[:3]
+    dQ_ans_lse, dK_ans_lse, dV_ans_lse = sdpa_vjp_ans_lse((grad, lse_grad))[:3]
+    dK_ref_lse = dK_ref_lse.reshape(B, S, N // G, G, H).sum(axis=3)
+    dV_ref_lse = dV_ref_lse.reshape(B, S, N // G, G, H).sum(axis=3)
+
     if impl == 'cudnn':
       self.assertTrue(_check_cudnn_backend(sdpa_ans, Q, K, V, bias, mask))
       self.assertTrue(_check_cudnn_backend(sdpa_vjp_ans, grad))
+      self.assertTrue(_check_cudnn_backend(sdpa_ans_lse, Q, K, V, bias, mask))
+      self.assertTrue(_check_cudnn_backend(sdpa_vjp_ans_lse, (grad, lse_grad)))
 
     self.assertAllClose(out_ref, out_ans, atol=.01, rtol=.01)
     self.assertAllClose(dQ_ref, dQ_ans, rtol=.01, atol=.01)
     self.assertAllClose(dK_ref, dK_ans, rtol=.01, atol=.01)
     self.assertAllClose(dV_ref, dV_ans, rtol=.01, atol=.01)
+
+    self.assertAllClose(out_ref_lse[0], out_ans_lse[0], atol=.01, rtol=.01)
+    self.assertAllClose(out_ref_lse[1], out_ans_lse[1], atol=.01, rtol=.01)
+    self.assertAllClose(dQ_ref_lse, dQ_ans_lse, rtol=.01, atol=.01)
+    self.assertAllClose(dK_ref_lse, dK_ans_lse, rtol=.01, atol=.01)
+    self.assertAllClose(dV_ref_lse, dV_ans_lse, rtol=.01, atol=.01)
 
   @parameterized.product(
       mask_mode=['bias', 'causal', 'padding', 'custom', ('causal', 'padding'),
