@@ -16,6 +16,7 @@ on:
         options:
         - "linux-x86-n4-16"
         - "linux-arm64-t2a-48"
+        - "linux-arm64-c4a-16"
         - "windows-x86-n2-16"
       artifact:
         description: "Which JAX artifact to build?"
@@ -124,8 +125,8 @@ jobs:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: false
-      - name: Enable RBE if building on Linux x86 or Windows x86
-        if: contains(inputs.runner, 'linux-x86') || contains(inputs.runner, 'windows-x86')
+      - name: Enable RBE if building on Linux or Windows x86
+        if: contains(inputs.runner, 'linux-x86') || contains(inputs.runner, 'windows-x86') || (contains(inputs.runner, 'linux-arm64') && inputs.artifact == 'jaxlib')
         run: echo "JAXCI_BUILD_ARTIFACT_WITH_RBE=1" >> $GITHUB_ENV
       - name: Set bazel output base on Windows runner machine
         if: contains(inputs.runner, 'windows-x86')
