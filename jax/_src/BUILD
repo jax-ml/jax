@@ -1166,6 +1166,7 @@ pytype_strict_library(
         ":ad_util",
         ":batching",
         ":core",
+        ":dtypes",
         ":effects",
         ":partial_eval",
         ":tree_util",
