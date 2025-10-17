@@ -1087,6 +1087,23 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "pmap",
+    srcs = ["pmap.py"],
+    deps = [
+        ":api",
+        ":core",
+        ":lax",
+        ":mesh",
+        ":shard_map",
+        ":stages",
+        ":traceback_util",
+        ":tree_util",
+        ":util",
+        ":xla_bridge",
+    ],
+)
+
+pytype_strict_library(
     name = "public_test_util",
     srcs = [
         "public_test_util.py",

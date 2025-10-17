@@ -1524,7 +1524,7 @@ def pmap(
         " from pmap.")
 
   if config.pmap_shmap_merge.value:
-    from jax._src.shard_map import pmap  # pytype: disable=import-error
+    from jax._src.pmap import pmap  # pytype: disable=import-error
     return pmap(fun, axis_name, in_axes=in_axes, out_axes=out_axes,
                 static_broadcasted_argnums=static_broadcasted_argnums,
                 devices=devices, backend=backend,

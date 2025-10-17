@@ -220,6 +220,7 @@ py_library_providing_imports_info(
         "//jax/_src:partition_spec",
         "//jax/_src:path",
         "//jax/_src:pickle_util",
+        "//jax/_src:pmap",
         "//jax/_src:pretty_printer",
         "//jax/_src:profiler",
         "//jax/_src:public_test_util",
