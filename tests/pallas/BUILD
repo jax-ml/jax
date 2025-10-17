@@ -52,7 +52,7 @@ jax_multiplatform_test(
     ],
     shard_count = {
         "cpu": 8,
-        "gpu": 4,
+        "gpu": 8,
         "tpu": 4,
     },
     deps = [
