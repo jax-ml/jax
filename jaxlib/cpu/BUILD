@@ -33,6 +33,7 @@ cc_library(
     name = "lapack_kernels",
     srcs = ["lapack_kernels.cc"],
     hdrs = ["lapack_kernels.h"],
+    # compatible with libtpu
     copts = ["-fexceptions"],
     features = ["-use_header_modules"],
     deps = [
@@ -49,6 +50,7 @@ cc_library(
 cc_library(
     name = "lapack_kernels_using_lapack",
     srcs = ["lapack_kernels_using_lapack.cc"],
+    # compatible with libtpu
     deps = [":lapack_kernels"],
     alwayslink = 1,
 )
@@ -81,6 +83,7 @@ nanobind_extension(
 cc_library(
     name = "cpu_kernels",
     srcs = ["cpu_kernels.cc"],
+    # compatible with libtpu
     visibility = ["//visibility:public"],
     deps = [
         ":lapack_kernels",
@@ -96,6 +99,7 @@ cc_library(
     name = "sparse_kernels",
     srcs = ["sparse_kernels.cc"],
     hdrs = ["sparse_kernels.h"],
+    # compatible with libtpu
     deps = [
         "@eigen_archive//:eigen3",
         "@xla//xla/ffi/api:ffi",

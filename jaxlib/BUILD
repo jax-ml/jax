@@ -205,6 +205,7 @@ cc_library(
 cc_library(
     name = "ffi_helpers",
     hdrs = ["ffi_helpers.h"],
+    # compatible with libtpu
     features = ["-use_header_modules"],
     deps = [
         "@com_google_absl//absl/algorithm:container",
