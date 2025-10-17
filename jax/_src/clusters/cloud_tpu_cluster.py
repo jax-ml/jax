@@ -210,14 +210,15 @@ class GkeTpuCluster(BaseTpuCluster):
 
   @classmethod
   def is_env_present(cls) -> bool:
-    if running_in_cloud_tpu_vm and os.environ.get("TPU_WORKER_HOSTNAMES") is not None:
+    if running_in_cloud_tpu_vm and cls._get_worker_host_names_env_var() is not None:
       logger.debug("Gke Tpu Cluster detected for Jax Distributed System")
       return True
     else:
       if not running_in_cloud_tpu_vm:
         logger.debug("Did not detect cloud TPU VM")
       else:
-        logger.debug("Did not detect TPU GKE cluster since TPU_WORKER_HOSTNAMES is not set")
+        logger.debug("Did not detect TPU GKE cluster since neither "
+                     "TPU_PROCESS_ADDRESSES nor TPU_WORKER_HOSTNAMES is set.")
       return False
 
   @staticmethod
@@ -225,5 +226,22 @@ class GkeTpuCluster(BaseTpuCluster):
     return int(str(os.environ.get('TPU_WORKER_ID')))
 
   @staticmethod
+  def _get_worker_host_names_env_var() -> str | None:
+    """
+    Retrieves the list of worker hostnames from environment variables.
+
+    Checks 'TPU_PROCESS_ADDRESSES' first, then 'TPU_WORKER_HOSTNAMES'.
+    Returns None if neither environment variable is set.
+    """
+    worker_hostnames = os.environ.get('TPU_PROCESS_ADDRESSES', None)
+    if worker_hostnames is not None:
+      return worker_hostnames
+    return os.environ.get('TPU_WORKER_HOSTNAMES', None)
+
+  @staticmethod
   def _get_worker_list_in_slice() -> list[str]:
-    return str(os.environ.get('TPU_WORKER_HOSTNAMES', None)).split(',')
+    """
+    Returns a list of worker endpoints/hostnames within slice.
+    """
+    worker_hostnames_str = str(GkeTpuCluster._get_worker_host_names_env_var())
+    return worker_hostnames_str.split(',')
