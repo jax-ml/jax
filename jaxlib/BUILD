@@ -94,6 +94,7 @@ pytype_strict_library(
         "//jaxlib/triton",
         "@xla//xla/python:_profile_data",
         "@xla//xla/python:_profiler",
+        "@xla//xla/python:_xla",
     ],
 )
 
@@ -180,6 +181,7 @@ pywrap_library(
         "//jaxlib/mlir/_mlir_libs:_triton_ext",
         "@xla//xla/python:_profile_data",
         "@xla//xla/python:_profiler",
+        "@xla//xla/python:_xla",
     ],
 )
 
@@ -552,24 +554,6 @@ cc_library(
 )
 
 cc_library(
-    name = "dlpack_support",
-    srcs = ["dlpack_support.cc"],
-    hdrs = ["dlpack_support.h"],
-    compatible_with = [],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    deps = [
-        "@com_google_absl//absl/status:statusor",
-        "@dlpack",
-        "@xla//xla:util",
-        "@xla//xla:xla_data_proto_cc",
-    ],
-)
-
-cc_library(
     name = "dlpack",
     srcs = ["dlpack.cc"],
     hdrs = ["dlpack.h"],
@@ -580,7 +564,6 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        ":dlpack_support",
         ":nb_class_ptr",
         ":py_client",
         ":py_user_context",
@@ -602,6 +585,7 @@ cc_library(
         "@xla//xla/pjrt:pjrt_client",
         "@xla//xla/pjrt:pjrt_common",
         "@xla//xla/pjrt:pjrt_compiler",
+        "@xla//xla/python:dlpack_types",
         "@xla//xla/python:types",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/pjrt_ifrt",
@@ -622,7 +606,6 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        ":dlpack_support",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -637,6 +620,7 @@ cc_library(
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/pjrt:host_callback",
         "@xla//xla/pjrt:status_casters",
+        "@xla//xla/python:dlpack_types",
         "@xla//xla/python:nb_numpy",
         "@xla//xla/python:types",
         "@xla//xla/tsl/platform:statusor",
@@ -1343,7 +1327,6 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        ":dlpack",
         ":py_client",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
@@ -1355,7 +1338,6 @@ cc_library(
         "@nanobind",
         "@xla//xla:array",
         "@xla//xla:debug_options_flags",
-        "@xla//xla:literal",
         "@xla//xla:shape_util",
         "@xla//xla:util",
         "@xla//xla:xla_data_proto_cc",

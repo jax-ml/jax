@@ -214,6 +214,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/_sdy_mpmd.{pyext}",
           f"{source_file_prefix}jaxlib/_pathways.{pyext}",
           f"{source_file_prefix}jaxlib/_profiler.{pyext}",
+          f"{source_file_prefix}jaxlib/_xla.{pyext}",
           f"{source_file_prefix}jaxlib/_profile_data.{pyext}",
       ],
   )
