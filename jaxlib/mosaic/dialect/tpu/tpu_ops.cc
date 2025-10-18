@@ -2141,6 +2141,32 @@ LogicalResult StochasticConvertElementwiseOp::verify() {
   return success();
 }
 
+LogicalResult UnpackSubelementsOp::canonicalize(UnpackSubelementsOp op,
+                                                PatternRewriter& rewriter) {
+  // Set `sign_extended` to false if it's int unpack, and it's used by pack that
+  // reduces the source bitwidth.
+  auto src_elem_ty = op.getSource().getType().getElementType();
+  auto dst_elem_ty = op.getType().getElementType();
+  if (!src_elem_ty.isSignlessInteger() || !dst_elem_ty.isSignlessInteger() ||
+      !op.getSignExtended()) {
+    return failure();
+  }
+  for (auto user : op->getUsers()) {
+    auto pack = dyn_cast<PackSubelementsOp>(user);
+    if (!pack) {
+      return failure();
+    }
+    auto packed_elem_ty = pack.getType().getElementType();
+    if (!packed_elem_ty.isSignlessInteger() ||
+        packed_elem_ty.getIntOrFloatBitWidth() >
+            src_elem_ty.getIntOrFloatBitWidth()) {
+      return failure();
+    }
+  }
+  rewriter.modifyOpInPlace(op, [&]() { op.setSignExtended(false); });
+  return success();
+}
+
 }  // namespace tpu
 }  // namespace mlir
 
