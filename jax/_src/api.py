@@ -2292,7 +2292,8 @@ def _vjp3(fun, *primals, has_aux=False):
   spec = [used.add(id(r)) or RSpec(id_map[id(r)], True) if id(r) in id_map else  # type: ignore
           RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
           for r in residuals]
-  args_res = tree_map(lambda x: x if id(x) in used else NotNeeded(), primals)
+  args_res = tuptree_map(lambda x: x if id(x) in used else NotNeeded(),
+                         in_tree, primals)
   out_primal_avals = [typeof(x) for x in out_primals_flat]
   f_vjp = VJP(partial(_vjp3_callable, spec, out_known, jaxpr, out_primal_avals),
               in_tree, out_tree, list(args_res), opaque_residuals)
@@ -2301,6 +2302,9 @@ def _vjp3(fun, *primals, has_aux=False):
     return out_primals, f_vjp
   else:
     return out_primals, f_vjp, tree_unflatten(aux_tree, aux)
+
+def tuptree_map(f, treedef, x):
+  return treedef.walk(lambda xs, _: tuple(xs), f, x)
 
 def _is_ref(x):
   from jax._src.state.types import AbstractRef
@@ -2311,10 +2315,8 @@ def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
                    args_res, opaque_res, *maybe_ct_refs):
   maybe_ct_refs_flat, in_tree_ = tree_flatten(maybe_ct_refs)
   if in_tree != in_tree_: raise Exception
-  args_res_flat, in_tree_ = tree_flatten(
-      tuple(args_res), is_leaf=lambda x: isinstance(x, NotNeeded))
-  if in_tree != in_tree_: raise Exception
-  residuals = [args_res_flat[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
+  args_res_ = tree_leaves(args_res, is_leaf=lambda x: isinstance(x, NotNeeded))
+  residuals = [args_res_[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
   maybe_refs = [ad.RefAccum(v.aval, x) if _is_ref(x) else ad.ValAccum(v.aval)
                 for v, x in zip(jaxpr.invars, maybe_ct_refs_flat)]
   return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr,
