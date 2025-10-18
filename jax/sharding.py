@@ -15,6 +15,7 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
+from jax._src.sharding import Index as Index
 from jax._src.sharding import Sharding as Sharding
 from jax._src.sharding_impls import (
     NamedSharding as NamedSharding,
