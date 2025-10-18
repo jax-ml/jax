@@ -35,7 +35,6 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/ndarray.h"
-#include "jaxlib/dlpack_support.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
@@ -47,6 +46,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
+#include "xla/python/dlpack_types.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
@@ -385,18 +385,6 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
 #endif
   return PyArray::MakeFromSingleDeviceArray(std::move(client),
                                             std::move(ifrt_array), false, true);
-}
-
-absl::StatusOr<nanobind::dlpack::dtype> PrimitiveTypeToNbDLDataType(
-    xla::PrimitiveType type) {
-  TF_ASSIGN_OR_RETURN(DLDataType dl_type, PrimitiveTypeToDLDataType(type));
-
-  nanobind::dlpack::dtype nb_type;
-  nb_type.lanes = dl_type.lanes;
-  nb_type.bits = dl_type.bits;
-  nb_type.code = dl_type.code;
-
-  return nb_type;
 }
 
 }  // namespace jax
