@@ -17,16 +17,16 @@ load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 load("//third_party/xla:revision.bzl", "XLA_COMMIT", "XLA_SHA256")
 
 def repo():
-    tf_http_archive(
-        name = "xla",
-        sha256 = XLA_SHA256,
-        type = "tar.gz",
-        strip_prefix = "openxla-xla-{commit}".format(commit = XLA_COMMIT[:7]),
-        # We use an automated tool to update the revision.bzl file. GitHub prohibits the crawling of
-        # web links (`/archive/`) links so we use the GitHub API endpoint to get the tarball
-        # instead.
-        urls = tf_mirror_urls("https://api.github.com/repos/openxla/xla/tarball/{commit}".format(commit = XLA_COMMIT)),
-    )
+    # tf_http_archive(
+    #     name = "xla",
+    #     sha256 = XLA_SHA256,
+    #     type = "tar.gz",
+    #     strip_prefix = "openxla-xla-{commit}".format(commit = XLA_COMMIT[:7]),
+    #     # We use an automated tool to update the revision.bzl file. GitHub prohibits the crawling of
+    #     # web links (`/archive/`) links so we use the GitHub API endpoint to get the tarball
+    #     # instead.
+    #     urls = tf_mirror_urls("https://api.github.com/repos/openxla/xla/tarball/{commit}".format(commit = XLA_COMMIT)),
+    # )
 
     # For development, one often wants to make changes to the TF repository as well
     # as the JAX repository. You can override the pinned repository above with a
@@ -36,7 +36,7 @@ def repo():
     #    python build/build.py build --local_xla_path=/path/to/xla
     #    or
     # b) by commenting out the http_archive above and uncommenting the following:
-    # local_repository(
-    #    name = "xla",
-    #    path = "/path/to/xla",
-    # )
+    local_repository(
+        name = "xla",
+        path = "/path/to/xla",
+    )
