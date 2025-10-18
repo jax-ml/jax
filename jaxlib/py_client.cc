@@ -515,8 +515,9 @@ PyClient::CompileAndLoad(nb_class_ptr<PyClient> client, mlir::ModuleOp module,
       TF_RETURN_IF_ERROR(xla::ExportShardyForGSPMD(module));
     }
   }
+  options.allow_in_place_mlir_modification = true;  // We just cloned the module
   return CompileAndLoadIfrtProgram(
-      client, std::make_unique<xla::ifrt::HloProgram>(module),
+      client, std::make_unique<xla::ifrt::HloProgram>(std::move(module)),
       MakeIfrtCompileOptions(std::move(options), std::move(executable_devices),
                              std::move(host_callbacks)));
 }
