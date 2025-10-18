@@ -305,13 +305,6 @@ class OpsTest(PallasBaseTest):
       reduce_func = [jnp.sum, jnp.max, jnp.min]
   )
   def test_reduction(self, dtype, axis, reduce_func):
-    # TODO(b/395579834): Remove this skip later.
-    if (
-        dtype == jnp.int32
-        and axis == 2
-        and not jtu.if_cloud_tpu_at_least(2025, 9, 1)
-    ):
-      self.skipTest("Requires libtpu built after 2025-09-01")
     in_shape = (2, 16, 128)
     out_shape = list(in_shape)
     out_shape[axis] = 1
@@ -332,8 +325,6 @@ class OpsTest(PallasBaseTest):
       reduce_func = [jnp.argmax, jnp.argmin]
   )
   def test_reduce_index(self, axis, reduce_func):
-    if not jtu.if_cloud_tpu_at_least(2025, 9, 8):
-      self.skipTest("Requires libtpu built after 2025-09-08")
     dtype = jnp.float32
     in_shape = (2, 32, 256)
     rank = len(in_shape)
@@ -583,8 +574,6 @@ class OpsTest(PallasBaseTest):
     )
 
   def test_while_loop_arg_num_change(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 7, 17):
-      self.skipTest("Requires libtpu built after 2025-07-17")
     # This kernel will generate a while loop that will be CSEd by MLIR to have
     # the different number of argments in before region and after region.
     def kernel(
@@ -633,8 +622,6 @@ class OpsTest(PallasBaseTest):
     self.assertEqual(output, 0)
 
   def test_produce_predicate_phi(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 7, 18):
-      self.skipTest("Requires libtpu built after 2025-07-18")
     def kernel(
         out_ref,
         a,

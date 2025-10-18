@@ -20,7 +20,6 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client
 import jax.dlpack
 import jax.numpy as jnp
@@ -116,10 +115,6 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertEqual(x.dtype, dtype_expected)
 
   def testTorchToJaxNondefaultLayout(self):
-    if jaxlib_version < (0, 8, 0):
-      self.skipTest(
-          "Non-default layout support requires jaxlib 0.8.0 or newer"
-      )
     x = torch.arange(4).reshape(2, 2).T
     x = x.cuda() if jtu.test_device_matches(["gpu"]) else x
     self.assertAllClose(x.cpu().numpy(), jax.dlpack.from_dlpack(x))

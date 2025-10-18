@@ -38,7 +38,6 @@ from jax._src.xla_metadata import set_xla_metadata
 from jax.experimental.compute_on import compute_on
 from jax._src.compute_on import compute_on2
 from jax._src.shard_map import shard_map
-from jax._src.lib import ifrt_version
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -748,12 +747,8 @@ class DevicePutTest(jtu.JaxTestCase):
 class ComputeOffload(jtu.BufferDonationTestCase):
 
   def setUp(self):
-    if ifrt_version >= 31:
-      if not jtu.test_device_matches(["tpu", "gpu"]):
-        self.skipTest("Memories do not work on CPU backends yet.")
-    else:
-      if not jtu.test_device_matches(["tpu"]):
-        self.skipTest("Memories do not work on CPU or GPU backends yet.")
+    if not jtu.test_device_matches(["tpu", "gpu"]):
+      self.skipTest("Memories do not work on CPU backends yet.")
     super().setUp()
 
   def _check_mem_kind(self, executable_kind, out_sharding, expected_kind):

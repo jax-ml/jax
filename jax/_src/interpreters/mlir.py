@@ -561,9 +561,7 @@ def make_ir_context() -> ir.Context:
 
   context.set_thread_pool(global_thread_pool)
   dialects.sdy.register_dialect(context)
-  # TODO(joelwee): Remove this once jaxlib 0.8 is the minimum.
-  if dialects.mpmd:
-    dialects.mpmd.register_dialect(context)
+  dialects.mpmd.register_dialect(context)
   dialects.mhlo.register_mhlo_dialect(context)
   dialects.chlo.register_dialect(context)
   dialects.hlo.register_dialect(context)
@@ -571,8 +569,7 @@ def make_ir_context() -> ir.Context:
   # multi threaded execution aborts the process if we try to register a new
   # dialect after this point. The dialect registry in a context is not thread
   # safe, and a fatal error is much better than a data race.
-  # if jaxlib_version >= (0, 8):
-  #  jax_mlir_ext.enter_multi_threaded_execution(context)
+  # jax_mlir_ext.enter_multi_threaded_execution(context)
   # TODO(phawkins): clean up users who add their own dialects to JAX's contexts
   # and enable this.
   return context

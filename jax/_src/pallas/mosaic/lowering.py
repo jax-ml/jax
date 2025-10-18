@@ -50,7 +50,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
-from jax._src.lib import version as jaxlib_version
+
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import cf
@@ -3779,9 +3779,6 @@ def _dma_start_lowering_rule(
   core_id = None
   if device_id is not None:
     device_id, core_id = _device_id_to_logical(ctx, device_id, device_id_type)
-  priority_kwarg = {"priority": priority}
-  if jaxlib_version < (0, 5, 4):
-    priority_kwarg = {}
   tpu.enqueue_dma(
       src_ref,
       dst_ref,
@@ -3789,7 +3786,7 @@ def _dma_start_lowering_rule(
       source_semaphore=src_sem,
       device_id=device_id,
       core_id=core_id,
-      **priority_kwarg,
+      priority=priority,
   )
   return []
 

@@ -51,8 +51,6 @@ from jax._src.layout import Format, Layout, AutoLayout
 from jax._src.sharding_impls import UnspecifiedValue, AUTO
 from jax._src.lib.mlir import ir
 from jax._src.lib import _jax
-from jax._src.lib import ifrt_version
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.tree_util import tree_structure, tree_unflatten
 from jax._src.core import typeof
@@ -125,8 +123,7 @@ class Executable:
     err_msg = ("text view unsupported on current XLA backend: "
                f"{type(xla_ext_exe)}")
 
-    if (jaxlib_extension_version >= 380 and ifrt_version >= 33 and
-        hasattr(xla_ext_exe, "get_hlo_text")):
+    if hasattr(xla_ext_exe, "get_hlo_text"):
       try:
         return xla_ext_exe.get_hlo_text()
       except _jax.JaxRuntimeError as e:

@@ -69,7 +69,6 @@ limitations under the License.
 #include "xla/python/transfer/streaming_ifrt.h"
 #include "xla/python/transfer/transfer_socket.pb.h"
 #include "xla/python/types.h"
-#include "xla/python/version.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -238,9 +237,7 @@ class PyTransferServer {
                                                 xfer_size_, use_raw_buffers_)));
   }
 
-#if JAX_IFRT_VERSION_NUMBER >= 32
   void Reset() { server_->Reset(); }
-#endif
 
   size_t xfer_size() { return xfer_size_; }
 
@@ -467,10 +464,8 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
              }
              self.AwaitPull(uuid_cpp, arrs);
            })
-#if JAX_IFRT_VERSION_NUMBER >= 32
       .def("_reset_rendevous_table",
            [](PyTransferServer& self) { self.Reset(); })
-#endif
       .def("connect", [](PyTransferServer& self, const std::string& address) {
         return self.Connect(address);
       });

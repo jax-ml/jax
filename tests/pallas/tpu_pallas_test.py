@@ -196,9 +196,6 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     def body(s_ref, o_ref):
       o_ref[...] = jnp.broadcast_to(s_ref[index], o_ref.shape)
 
-    if not jtu.if_cloud_tpu_at_least(2025, 8, 21):
-      self.skipTest("Feature will land by 2025-08-21")
-
     s = jnp.arange(16 * 128, dtype=dtype)
     out = self.pallas_call(
         body,
@@ -1249,8 +1246,6 @@ class PallasCallDMATest(PallasBaseTest):
   def test_host_input_host_to_hbm_dma(self):
     if self.INTERPRET:
       self.skipTest('Interpret mode does not support host memory.')
-    if not jtu.if_cloud_tpu_at_least(2025, 7, 12):
-      self.skipTest("Requires libtpu built after 2025-07-12")
     def kernel(x_host_ref, y_hbm_ref):
       def body(sem):
         pltpu.async_copy(x_host_ref, y_hbm_ref, sem).wait()
@@ -1278,9 +1273,6 @@ class PallasCallDMATest(PallasBaseTest):
     np.testing.assert_array_equal(y, x)
 
   def test_hbm_to_host_host_output_dma(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 8, 14):
-      self.skipTest('Requires libtpu built after 2025-08-14')
-
     def kernel(y_hbm_ref, x_host_ref):
       def body(sem):
         pltpu.async_copy(y_hbm_ref, x_host_ref, sem).wait()
@@ -1993,7 +1985,6 @@ class PallasCallTest(PallasBaseTest):
     if (
         dty == jnp.int32
         and 1 in reduced_dims
-        and not jtu.if_cloud_tpu_at_least(2025, 9, 1)
     ):
       self.skipTest('Requires libtpu built after 2025-09-01')
     if not jtu.is_device_tpu_at_least(4) and len(replicated) == 2:
@@ -2331,23 +2322,6 @@ class PallasCallTest(PallasBaseTest):
   def test_scalar_casting(self, in_dtype, out_dtype):
     def kernel(x_ref, o_ref):
       o_ref[0] = x_ref[0].astype(out_dtype)
-
-    if jnp.issubdtype(in_dtype, jnp.floating) and not jtu.if_cloud_tpu_at_least(
-        2025, 9, 13
-    ):
-      self.skipTest('bf16 -> f32 casting support was added on Sep 13, 2025')
-    elif (
-        in_dtype == jnp.int8
-        and out_dtype == jnp.int16
-        and not jtu.if_cloud_tpu_at_least(2025, 9, 10)
-    ):
-      self.skipTest('i8 -> i16 casting support was added on Sep 10, 2025')
-    elif (
-        in_dtype == jnp.int16
-        and out_dtype == jnp.int8
-        and not jtu.if_cloud_tpu_at_least(2025, 9, 14)
-    ):
-      self.skipTest('i16 -> i8 casting support was added on Sep 14, 2025')
 
     x = jnp.asarray([7], dtype=in_dtype)
     if jnp.issubdtype(in_dtype, jnp.signedinteger):

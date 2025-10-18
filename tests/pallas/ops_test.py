@@ -537,9 +537,6 @@ class OpsTest(PallasBaseTest):
   def test_reduce_int32(self, reduction_op, input_shape):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("TODO: error on GPU")
-    # TODO(b/395579834): Remove this skip later.
-    if not jtu.if_cloud_tpu_at_least(2025, 9, 1):
-      self.skipTest("Requires libtpu built after 2025-09-01")
 
     def kernel(x_ref, o_ref):
       o_ref[0, 0] = reduction_op(x_ref[...])
@@ -740,14 +737,6 @@ class OpsTest(PallasBaseTest):
     } or to_dtype in {"float8_e4m3b11fnuz", "float8_e5m2", "float8_e4m3fn"}:
       if not jtu.test_device_matches(["tpu"]):
         self.skipTest("Not supported on this hardware")
-      if jtu.get_tpu_version() >= 5 and not jtu.if_cloud_tpu_at_least(
-          2025, 3, 9
-      ):
-        self.skipTest("Test requires libtpu from 2025/3/9 or later")
-      if jtu.get_tpu_version() < 5 and not jtu.if_cloud_tpu_at_least(
-          2025, 5, 15
-      ):
-        self.skipTest("Test requires libtpu from 2025/5/15 or later")
     if from_dtype in ("uint2", "int2") and to_dtype == "bool":
       self.skipTest(
           "TODO(b/343490729): XLA compare(s2, s2) yields wrong results"
@@ -1400,8 +1389,6 @@ class OpsTest(PallasBaseTest):
 
     if jtu.test_device_matches(["tpu"]):
       if dtype == jnp.bfloat16:
-        if not jtu.if_cloud_tpu_at_least(2025, 7, 25):
-          self.skipTest("Requires libtpu built after 2025-07-25")
         if not jtu.is_device_tpu_at_least(version=4):
           self.skipTest("Requires TPUv4+")
 
@@ -1653,8 +1640,6 @@ class OpsTest(PallasBaseTest):
       self.skipTest("TPU only test")
 
     if jtu.test_device_matches(["tpu"]):
-      if not jtu.if_cloud_tpu_at_least(2025, 8, 10):
-        self.skipTest("Requires libtpu built after 2025-07-24")
       if not jtu.is_device_tpu_at_least(5) and rhs_is_vector:
         self.skipTest("Requires TPUv5+ for sublane gather")
 
@@ -1703,8 +1688,6 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]):
       if out_dtype == "bfloat16" and not jtu.is_device_tpu_at_least(6):
         self.skipTest("bfloat16 is not supported on older TPU generations")
-      if not jtu.if_cloud_tpu_at_least(2025, 1, 9):
-        self.skipTest("Requires libtpu built after 2025-01-09")
     elif jtu.test_device_matches(["gpu"]):
       if dtype == "bfloat16":
         self.skipTest("bfloat16 not supported")
@@ -2112,8 +2095,6 @@ class OpsTest(PallasBaseTest):
             "The Pallas TPU lowering currently supports only blocks of rank"
             " >= 1"
         )
-      if dtype is jnp.bool_ and not jtu.if_cloud_tpu_at_least(2025, 6, 5):
-        self.skipTest("Requires libtpu built after 2025-06-05")
       if (
           len(in_shape) == 1
           and len(out_shape) == 1
@@ -2174,9 +2155,6 @@ class OpsTest(PallasBaseTest):
   def test_dot(self, lhs_and_rhs_shape, dtype, trans_x, trans_y):
     self.skip_if_mosaic_gpu()
 
-    # TODO(apaszke): Remove after 12 weeks have passed.
-    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
-      self.skipTest("Requires libtpu built after 2024-12-19")
     lhs_shape, rhs_shape = lhs_and_rhs_shape
 
     final_lhs_shape = lhs_shape[::-1] if trans_x else lhs_shape
@@ -2665,9 +2643,6 @@ class OpsTest(PallasBaseTest):
   ):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("Not implemented on GPU")
-    # TODO(apaszke): Remove after 12 weeks have passed.
-    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
-      self.skipTest("Requires libtpu built after 2024-12-19")
 
     x = jnp.arange(np.prod(array_shapes), dtype=dtype).reshape(array_shapes)
 
@@ -2742,8 +2717,6 @@ class OpsTest(PallasBaseTest):
             f" smem_bytes={x_dim_size * y_dim_size * z_dim_size * 4} > 32768"
         )
     self.skip_if_mosaic_gpu()
-    if not jtu.if_cloud_tpu_at_least(2025, 5, 22):
-      self.skipTest("Requires libtpu built after 2025-5-22")
 
     x = jnp.arange(x_dim_size * y_dim_size * z_dim_size, dtype=dtype).reshape(
         (x_dim_size, y_dim_size, z_dim_size)
@@ -2782,29 +2755,6 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("Not implemented on GPU")
     in_shape, transpose_axes = shape_and_axes
-
-    if transpose_axes in (
-        (1, 2, 0),
-        (2, 0, 1),
-        (2, 1, 0),
-    ) and not jtu.if_cloud_tpu_at_least(2025, 8, 16):
-      self.skipTest("Requires libtpu built after 2025-8-16")
-
-    rank = len(in_shape)
-    if (
-        rank > 3
-        and transpose_axes[-3:] == (rank - 2, rank - 3, rank - 1)
-        and not jtu.if_cloud_tpu_at_least(2025, 8, 29)
-    ):
-      self.skipTest("Requires libtpu built after 2025-8-29")
-
-    if (
-        rank == 5
-        and in_shape == (1, 2, 9, 3, 4)
-        and not jtu.if_cloud_tpu_at_least(2025, 9, 19)
-    ):
-      self.skipTest("Requires libtpu built after 2025-9-19")
-
     x = jnp.arange(math.prod(in_shape), dtype=jnp.float32).reshape(in_shape)
     expected = jnp.transpose(x, axes=transpose_axes)
 
@@ -2826,8 +2776,6 @@ class OpsTest(PallasBaseTest):
       self.skipTest("Not supported on this hardware")
     if jtu.get_tpu_version() < 6:
       self.skipTest("Requires TPUv6 or newer")
-    if not jtu.if_cloud_tpu_at_least(2025, 9, 22):
-      self.skipTest("Requires libtpu built after 2025-9-22")
 
     dtype = jnp.int8
     xspec = pl.BlockSpec((32, 128), lambda i: (i, 0))
@@ -2965,8 +2913,6 @@ class PallasPrimitivesTest(PallasBaseTest):
   def test_reciprocal(self, approx):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Not implemented on non-TPU devices")
-    if not jtu.if_cloud_tpu_at_least(2025, 3, 8):
-      self.skipTest("Test requires libtpu from 2025/3/8 or later")
     shape = (32, 256)
     x = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
 

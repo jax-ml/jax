@@ -46,7 +46,6 @@ from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -903,9 +902,8 @@ cholesky_p = standard_linalg_primitive(
 ad.primitive_jvps[cholesky_p] = _cholesky_jvp_rule
 mlir.register_lowering(cholesky_p, _cholesky_lowering)
 mlir.register_lowering(cholesky_p, _cholesky_cpu_lowering, platform="cpu")
-if jaxlib_version >= (0, 8, 0):
-  register_cpu_gpu_lowering(cholesky_p, _cholesky_gpu_lowering,
-                            supported_platforms=("cuda", "rocm"))
+register_cpu_gpu_lowering(cholesky_p, _cholesky_gpu_lowering,
+                          supported_platforms=("cuda", "rocm"))
 
 
 # Cholesky update
@@ -1077,7 +1075,6 @@ def _eig_gpu_lowering(ctx, operand, *,
 
   have_cusolver_geev = (
       target_name_prefix == "cu"
-      and jaxlib_version >= (0, 8)
       and cuda_versions
       and cuda_versions.cusolver_get_version() >= 11701
   )
@@ -1088,8 +1085,7 @@ def _eig_gpu_lowering(ctx, operand, *,
   ) or implementation == EigImplementation.CUSOLVER:
     if not have_cusolver_geev:
       raise RuntimeError(
-          "Nonsymmetric eigendecomposition requires jaxlib 0.8 and cusolver"
-          " 11.7.1 or newer"
+          "Nonsymmetric eigendecomposition requires cusolver 11.7.1 or newer"
       )
     if compute_left_eigenvectors:
       raise NotImplementedError(

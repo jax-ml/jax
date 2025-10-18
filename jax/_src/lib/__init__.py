@@ -23,7 +23,7 @@ import os
 import pathlib
 import re
 from types import ModuleType
-import typing
+
 
 try:
   import jaxlib as jaxlib
@@ -99,9 +99,7 @@ import jaxlib.lapack as lapack  # noqa: F401
 import jaxlib.utils as utils  # noqa: F401
 import jaxlib._jax as _jax  # noqa: F401
 
-# TODO(phawkins): Remove after jaxlib 0.8.0 is the minimum supported version.
-if not hasattr(_jax, 'JaxRuntimeError'):
-  _jax.JaxRuntimeError = getattr(_jax, 'XlaRuntimeError')  # type: ignore
+
 
 import jaxlib.mlir._mlir_libs._jax_mlir_ext as jax_mlir_ext  # noqa: F401
 from jaxlib._jax import guard_lib as guard_lib  # noqa: F401
@@ -119,10 +117,7 @@ has_cpu_sparse = True
 import jaxlib.weakref_lru_cache as weakref_lru_cache  # noqa: F401
 import jaxlib._pretty_printer as _pretty_printer  # noqa: F401
 
-if jaxlib_extension_version >= 365 or typing.TYPE_CHECKING:
-  import jaxlib._ifrt_proxy as ifrt_proxy  # noqa: F401
-else:
-  ifrt_proxy = _jax.ifrt_proxy
+import jaxlib._ifrt_proxy as ifrt_proxy  # noqa: F401
 
 
 # XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882

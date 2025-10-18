@@ -61,7 +61,6 @@ from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
-from jax._src.lib import ifrt_version
 from jax._src.lib import xla_client as xc
 from jax._src.util import curry, unzip2
 
@@ -9203,11 +9202,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_sum_unreduced(self, mesh):
-    if ifrt_version < 29:
-      self.skipTest('Requires ifrt_version >= 29')
-    if not jtu.if_cloud_tpu_at_least(2025, 9, 20):
-      self.skipTest("Requires libtpu built after 2025-09-20")
-
     np_inp = np.arange(16).reshape(4, 2, 2)
     arr = jax.device_put(np_inp, P('x', 'y', None))
 
@@ -9302,11 +9296,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2,), 'x')
   def test_minibatch_scan_unreduced(self, use_custom_vjp, mesh):
-    if ifrt_version < 30:
-      self.skipTest('Requires ifrt_version >= 30')
-    if not jtu.if_cloud_tpu_at_least(2025, 9, 21):
-      self.skipTest("Requires libtpu built after 2025-09-21")
-
     def assert_unreduced(tup):
       for val in tup:
         self.assertEqual(val.aval.sharding.spec.unreduced, {'x'})
@@ -9392,11 +9381,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @config.numpy_dtype_promotion('standard')
   @jtu.with_explicit_mesh((2,), 'x')
   def test_scan_over_layers_minibatch_unreduced(self, use_custom_vjp, mesh):
-    if ifrt_version < 30:
-      self.skipTest('Requires ifrt_version >= 30')
-    if not jtu.if_cloud_tpu_at_least(2025, 9, 21):
-      self.skipTest("Requires libtpu built after 2025-09-21")
-
     def assert_unreduced(val):
       self.assertEqual(val.aval.sharding.spec.unreduced, {'x'})
 

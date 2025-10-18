@@ -30,7 +30,7 @@ import jax
 import jax.numpy as jnp
 import jax.profiler
 import jax._src.test_util as jtu
-from jax._src.lib import jaxlib_extension_version
+
 from jax._src import profiler
 from jax import jit
 
@@ -111,9 +111,6 @@ class ProfilerTest(unittest.TestCase):
         self.assertIn(b"/device:TPU", proto)
       self.assertIn(b"pxla.py", proto)
 
-  @unittest.skipIf(
-      jaxlib_extension_version < 379, "Requires jaxlib 0.8 or later."
-  )
   def testProgrammaticProfilingConcurrency(self):
     def work():
       x = jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(

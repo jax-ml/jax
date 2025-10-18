@@ -31,7 +31,6 @@ from jax import scipy as jsp
 from jax._src import config
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lib import cuda_versions
-from jax._src.lib import version as jaxlib_version
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.numpy.util import promote_dtypes_inexact
@@ -298,7 +297,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if (
         jtu.is_device_cuda()
         and not compute_left_eigenvectors
-        and jaxlib_version >= (0, 8)
         and cuda_versions
         and cuda_versions.cusolver_get_version() >= 11701
     ):

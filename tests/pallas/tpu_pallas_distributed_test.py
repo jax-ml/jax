@@ -421,8 +421,6 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     np.testing.assert_array_equal(masked_in, masked_out)
 
   def test_no_barrier_semaphore(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 8, 8):
-      self.skipTest('Needs a newer libTPU')
     def alloc_sem(_):
       num_devices = lax.axis_size('x')
       barrier_sem = pltpu.get_barrier_semaphore()

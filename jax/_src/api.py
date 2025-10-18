@@ -30,7 +30,7 @@ from functools import partial
 import inspect
 import typing
 from typing import (Any, Literal, NamedTuple, Optional, TypeVar, overload,
-                    cast, TYPE_CHECKING)
+                    cast)
 import weakref
 
 import numpy as np
@@ -64,7 +64,6 @@ from jax._src.api_util import (
   flatten_axes, donation_vector, rebase_donate_argnums,
   _ensure_index, _ensure_index_tuple, apply_flat_fun_nokwargs, check_callable,
   debug_info, flat_out_axes)
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
@@ -129,37 +128,23 @@ def _nan_check_posthook(fun, args, kwargs, output):
       # TODO(emilyaf): Shouldn't need this fallback.
       raise
 
-if TYPE_CHECKING or jaxlib_extension_version >= 376:
-  _post_hook_state = config_ext.Config[Optional[Callable]](
-      "post_hook", None, include_in_jit_key=False
-  )
-  jax_jit.set_post_hook_state(_post_hook_state)
+_post_hook_state = config_ext.Config[Optional[Callable]](
+    "post_hook", None, include_in_jit_key=False
+)
+jax_jit.set_post_hook_state(_post_hook_state)
 
-  def _update_debug_special_global(_):
-    if config._read("jax_debug_nans") or config._read("jax_debug_infs"):
-      _post_hook_state.set_global(_nan_check_posthook)
-    else:
-      _post_hook_state.set_global(None)
+def _update_debug_special_global(_):
+  if config._read("jax_debug_nans") or config._read("jax_debug_infs"):
+    _post_hook_state.set_global(_nan_check_posthook)
+  else:
+    _post_hook_state.set_global(None)
 
-  def _update_debug_special_thread_local(_):
-    if (config.debug_nans.get_local() == True or
-        config.debug_infs.get_local() == True):
-      _post_hook_state.set_local(_nan_check_posthook)
-    else:
-      _post_hook_state.set_local(None)
-else:
-  def _update_debug_special_global(_):
-    if config._read("jax_debug_nans") or config._read("jax_debug_infs"):
-      jax_jit.global_state().post_hook = _nan_check_posthook
-    else:
-      jax_jit.global_state().post_hook = None
-
-  def _update_debug_special_thread_local(_):
-    if (config.debug_nans.get_local() == True or
-        config.debug_infs.get_local() == True):
-      jax_jit.thread_local_state().post_hook = _nan_check_posthook
-    else:
-      jax_jit.thread_local_state().post_hook = None
+def _update_debug_special_thread_local(_):
+  if (config.debug_nans.get_local() == True or
+      config.debug_infs.get_local() == True):
+    _post_hook_state.set_local(_nan_check_posthook)
+  else:
+    _post_hook_state.set_local(None)
 
 config.debug_nans._add_hooks(_update_debug_special_global,
                              _update_debug_special_thread_local)

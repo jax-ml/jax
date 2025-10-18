@@ -53,11 +53,7 @@ else:
   ])
   del _lazy
 
-# TODO(joelwee): Remove this once jaxlib 0.8 is the minimum.
-try:
-  from jaxlib.mlir.dialects import mpmd
-except ImportError:
-  mpmd: Any = None  # type: ignore[no-redef]
+from jaxlib.mlir.dialects import mpmd
 from jaxlib.mlir.dialects import sdy
 
 # Alias that is set up to abstract away the transition from MHLO to StableHLO.

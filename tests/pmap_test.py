@@ -559,9 +559,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     assert_allclose(jax_f(lax.pmean)(x), np_f(np.mean)(x))
 
   def testComplexPsum(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 9, 19):
-      raise SkipTest("Test requires cloud TPU fix from 2025-09-18.")
-
     f = self.pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
 
     shape = (jax.device_count(), 4 * 2)

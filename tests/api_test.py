@@ -63,7 +63,6 @@ from jax._src.interpreters import ad as ad_internal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
-from jax._src.lib import jaxlib_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 from jax.errors import (UnexpectedTracerError, TracerIntegerConversionError,
@@ -3281,7 +3280,7 @@ class APITest(jtu.JaxTestCase):
           config.enable_x64.value
           or config.explicit_x64_dtypes.value == config.ExplicitX64Mode.ALLOW
       ):
-        if config.enable_x64.value or jaxlib_extension_version >= 377:
+        if config.enable_x64.value:
           with self.assertNoWarnings():
             warn()
       elif config.explicit_x64_dtypes.value == config.ExplicitX64Mode.WARN:

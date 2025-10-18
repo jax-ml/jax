@@ -613,9 +613,6 @@ class VectorSubcoreTest(PallasSCTest):
       dtype=[jnp.int32], new_dtype=[jnp.int8, jnp.int16, jnp.float32]
   )
   def test_bitcast(self, dtype, new_dtype):
-    if not jtu.if_cloud_tpu_at_least(2025, 9, 23):
-      self.skipTest("Test requires a newer libTPU")
-
     new_shape = (
         8 * jnp.dtype(dtype).itemsize // jnp.dtype(new_dtype).itemsize,
     )
@@ -856,8 +853,6 @@ class VectorSubcoreTest(PallasSCTest):
       kernel(x)
 
   def test_subcore_parallel(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 9, 10):
-      self.skipTest("Test requires a newer libTPU")
     num_subcores = 16
 
     @plsc.kernel(

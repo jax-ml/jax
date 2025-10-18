@@ -24,7 +24,6 @@ from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import dlpack as dlpack_src
 from jax._src import test_util as jtu
-from jax._src.lib import version as jaxlib_version
 
 config.parse_flags_with_absl()
 
@@ -175,10 +174,6 @@ class DLPackTest(jtu.JaxTestCase):
 
   @unittest.skipIf(not tf, "Test requires TensorFlow")
   def testTensorFlowToJaxNondefaultLayout(self):
-    if jaxlib_version < (0, 8, 0):
-      self.skipTest(
-          "Non-default layout support requires jaxlib 0.8.0 or newer"
-      )
     x = tf.transpose(np.arange(4).reshape(2, 2))
     self.assertAllClose(x.numpy(), jax.dlpack.from_dlpack(x))
 
@@ -196,10 +191,6 @@ class DLPackTest(jtu.JaxTestCase):
       self.assertAllClose(x_np, _from_dlpack())
 
   def testNumpyToJaxNondefaultLayout(self):
-    if jaxlib_version < (0, 8, 0):
-      self.skipTest(
-          "Non-default layout support requires jaxlib 0.8.0 or newer"
-      )
     x = np.arange(4).reshape(2, 2).T
     self.assertAllClose(x, jax.dlpack.from_dlpack(x))
 

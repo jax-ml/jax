@@ -14,7 +14,7 @@
 
 from typing import Sequence
 from jax._src.lib import _jax
-from jax._src.lib import jaxlib_extension_version
+
 import numpy as np
 
 # TypedInt, TypedFloat, and TypedComplex are subclasses of int, float, and
@@ -71,14 +71,9 @@ class TypedComplex(complex):
     return (complex(self), self.dtype)
 
 
-if jaxlib_extension_version >= 375:
-  _jax.set_typed_int_type(TypedInt)
-  _jax.set_typed_float_type(TypedFloat)
-  _jax.set_typed_complex_type(TypedComplex)
-elif jaxlib_extension_version >= 374:
-  _jax.set_literal_int_type(TypedInt)  # pytype: disable=module-attr
-  _jax.set_literal_float_type(TypedFloat)  # pytype: disable=module-attr
-  _jax.set_literal_complex_type(TypedComplex)  # pytype: disable=module-attr
+_jax.set_typed_int_type(TypedInt)
+_jax.set_typed_float_type(TypedFloat)
+_jax.set_typed_complex_type(TypedComplex)
 
 
 typed_scalar_types: set[type] = {TypedInt, TypedFloat, TypedComplex}
@@ -263,7 +258,4 @@ class TypedNdArray:
         dtype, order=order, casting=casting, subok=subok, copy=copy
     )
 
-if jaxlib_extension_version >= 375:
-  _jax.set_typed_ndarray_type(TypedNdArray)
-else:
-  _jax.set_literal_array_type(TypedNdArray)  # pytype: disable=module-attr
+_jax.set_typed_ndarray_type(TypedNdArray)

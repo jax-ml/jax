@@ -28,7 +28,6 @@ import numpy as np
 import jax
 from jax import lax
 from jax._src.export import _export
-from jax._src.lib import version as jaxlib_version
 
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
@@ -210,8 +209,6 @@ class CompatTest(bctu.CompatTestBase):
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_gpu_cholesky_solver_potrf(self, dtype_name="f32"):
-    if jaxlib_version < (0, 8, 0):
-      self.skipTest("Test disabled for jaxlib version < 0.8.0")
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 

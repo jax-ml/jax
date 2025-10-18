@@ -34,8 +34,6 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if not jtu.if_cloud_tpu_at_least(2025, 6, 10):
-      self.skipTest('Needs a newer libTPU')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('Needs a newer TPU')
 
@@ -46,14 +44,6 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
       (pltpu.ANY, None),
   )
   def test_basic_input_memory_space_constraint(self, memory_space, color):
-    if not jtu.if_cloud_tpu_at_least(2025, 7, 10):
-      self.skipTest('Needs a newer libTPU')
-    if (
-        not jtu.if_cloud_tpu_at_least(2025, 7, 17)
-        and memory_space == pltpu.SMEM
-    ):
-      self.skipTest('Needs a newer libTPU')
-
     def kernel(x_ref, y_ref):
       pltpu.sync_copy(x_ref, y_ref)
 
@@ -93,19 +83,6 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
       (pltpu.HOST, 5),
   )
   def test_basic_output_memory_space_constraint(self, memory_space, color):
-    if not jtu.if_cloud_tpu_at_least(2025, 7, 10):
-      self.skipTest('Needs a newer libTPU')
-    if (
-        not jtu.if_cloud_tpu_at_least(2025, 7, 17)
-        and memory_space == pltpu.SMEM
-    ):
-      self.skipTest('Needs a newer libTPU')
-    if (
-        not jtu.if_cloud_tpu_at_least(2025, 8, 14)
-        and memory_space == pltpu.HOST
-    ):
-      self.skipTest('Needs a newer libTPU')
-
     out_shape_ctor = memory_space
     if color is None:
       out_shape_ctor = jax.ShapeDtypeStruct
@@ -152,8 +129,6 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if not jtu.if_cloud_tpu_at_least(2025, 6, 10):
-      self.skipTest('Needs a newer libTPU')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('Needs a newer TPU')
 
@@ -164,11 +139,6 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
       (pltpu.ANY, None),
   )
   def test_basic_ref_memory_space_constraint(self, memory_space, color):
-    if (
-        not jtu.if_cloud_tpu_at_least(2025, 7, 17)
-        and memory_space == pltpu.SMEM
-    ):
-      self.skipTest('Needs a newer libTPU')
     @jax.jit
     def f(x):
       x_ref = jax.new_ref(x, memory_space=memory_space)
@@ -212,9 +182,6 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(y, x)
 
   def test_smem_copy(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 7, 17):
-      self.skipTest('Needs a newer libTPU')
-
     mesh = pltpu.create_tensorcore_mesh('core')
     if len(mesh.devices) > 1:
       self.skipTest('Only one core is supported for this test.')
@@ -240,9 +207,6 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(f(), np.arange(8) + 1)
 
   def test_smem_async_copy(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 7, 17):
-      self.skipTest('Needs a newer libTPU')
-
     mesh = pltpu.create_tensorcore_mesh('core')
     if len(mesh.devices) > 1:
       self.skipTest('Only one core is supported for this test.')

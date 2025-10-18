@@ -36,7 +36,6 @@ from jax._src import profiler
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.interpreters import mlir
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
@@ -292,12 +291,6 @@ def backend_compile(
 ) -> xc.Executable:
   sym_name = module.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
-  built_c: Any
-  if jaxlib_extension_version < 378:
-    built_c = mlir.module_to_bytecode(module)
-  else:
-    built_c = module
-
   if (options.executable_build_options.fdo_profile is not None
       and len(options.executable_build_options.fdo_profile)):
     logger.debug(
@@ -307,7 +300,7 @@ def backend_compile(
     )
 
   try:
-    return backend.compile(built_c, executable_devices, options)
+    return backend.compile(module, executable_devices, options)
   except _jax.JaxRuntimeError as e:
     for error_handler in _XLA_RUNTIME_ERROR_HANDLERS:
       handler_result = error_handler(e)
@@ -326,15 +319,6 @@ def backend_compile_and_load(
 ) -> xc.LoadedExecutable:
   sym_name = module.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
-  # Convert ir.Module to a string representation, unless the backend
-  # explicitly flags the ability to handle a module directly (avoiding the
-  # overhead of back and forth conversions).
-  # TODO(slebedev): Change the backend.compile() to accept ir.Module.
-  built_c: Any
-  if jaxlib_extension_version < 378:
-    built_c = mlir.module_to_bytecode(module)
-  else:
-    built_c = module
 
   if (options.executable_build_options.fdo_profile is not None
       and len(options.executable_build_options.fdo_profile)):
@@ -351,7 +335,7 @@ def backend_compile_and_load(
     if isinstance(backend, _jax.CompileOnlyPyClient):
       if host_callbacks:
         return backend.compile(
-            built_c,
+            module,
             executable_devices=executable_devices,  # type: ignore
             compile_options=options,
             host_callbacks=host_callbacks,  # type: ignore
@@ -359,12 +343,15 @@ def backend_compile_and_load(
       # Some backends don't have `host_callbacks` option yet
       # TODO(sharadmv): remove this fallback when all backends allow `compile`
       # to take in `host_callbacks`
-      return backend.compile(
-          built_c, executable_devices=executable_devices, compile_options=options)  # type: ignore
+      return backend.compile(  # type: ignore
+          module,
+          executable_devices=executable_devices,
+          compile_options=options,
+      )
     else:
       if host_callbacks:
         return backend.compile_and_load(
-            built_c,
+            module,
             executable_devices=executable_devices,
             compile_options=options,
             host_callbacks=host_callbacks,
@@ -373,7 +360,7 @@ def backend_compile_and_load(
       # TODO(sharadmv): remove this fallback when all backends allow `compile`
       # to take in `host_callbacks`
       return backend.compile_and_load(
-          built_c,
+          module,
           executable_devices=executable_devices,
           compile_options=options,
       )

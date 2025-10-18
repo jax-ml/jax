@@ -66,8 +66,6 @@ class PallasCallPrintTest(PallasBaseTest):
     self.assertIn('It works!', get_output())
 
   def test_debug_print_in_index_map(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 8, 18):
-      self.skipTest('Needs a newer libtpu.')
     def index_map(i):
       pl.debug_print('It works!')
       return (i, 0)

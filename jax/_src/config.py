@@ -22,11 +22,10 @@ import itertools
 import logging
 import os
 import sys
-from typing import Any, Generic, NoReturn, Optional, Protocol, Type, TypeVar, cast, TYPE_CHECKING
+from typing import Any, Generic, NoReturn, Optional, Protocol, Type, TypeVar, cast
 
 from jax._src import deprecations
 from jax._src.lib import guard_lib
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
 from jax._src import logging_config
@@ -221,54 +220,7 @@ class Config:
 
 register_trace_context_callback = []  # type: ignore
 
-if jaxlib_extension_version >= 377:
-  trace_context = config_ext.trace_context
-else:
-  def trace_context():
-    """Returns a tuple of configuration values that affect tracing.
-
-    These values are included in the cache key for linear_util.cache.
-
-    Values included in this set should also most likely be included in
-    the C++ JIT state, which is handled separately.
-    """
-    out = (axis_env_state.value, mesh_context_manager.value,
-          xla_metadata_context_manager.value,
-          abstract_mesh_context_manager.value,
-          compute_on_context_manager.value,
-          enable_x64.value,
-          numpy_rank_promotion.value,
-          default_matmul_precision.value,
-          dynamic_shapes.value,
-          eager_constant_folding.value,
-          numpy_dtype_promotion.value,
-          default_device.value,
-          random_seed_offset.value,
-          remove_size_one_mesh_axis_from_type.value,
-          threefry_partitionable.value,
-          threefry_gpu_kernel_lowering.value,
-          use_direct_linearize.value,
-          softmax_custom_jvp.value,
-          disable_jit.value,
-          debug_key_reuse.value,
-          jax_xla_profile_version.value,
-          _check_vma.value,
-          mutable_array_checks.value,  # pallas may need to disable locally
-          no_execution.value,
-            # Technically this affects jaxpr->stablehlo lowering, not tracing.
-          hlo_source_file_canonicalization_regex.value,
-          pgle_profiling_runs.value,
-          enable_pgle.value,
-          use_shardy_partitioner.value,
-          use_high_dynamic_range_gumbel.value,
-          error_checking_behavior_nan.value,
-          error_checking_behavior_divide.value,
-          error_checking_behavior_oob.value,
-          use_simplified_jaxpr_constants.value,
-          pallas_tpu_interpret_mode_context_manager.value)
-    if register_trace_context_callback:
-      out = out + tuple(r() for r in register_trace_context_callback)
-    return out
+trace_context = config_ext.trace_context
 
 config = Config()
 
@@ -304,11 +256,8 @@ class State(config_ext.Config[_T]):
   ):
     if parser is not None:
       default = parser(default)
-    if TYPE_CHECKING or jaxlib_extension_version >= 377:
-      super().__init__(name, default, include_in_jit_key=include_in_jit_key,
-                       include_in_trace_context=include_in_trace_context)
-    else:
-      super().__init__(default, include_in_jit_key)
+    super().__init__(name, default, include_in_jit_key=include_in_jit_key,
+                     include_in_trace_context=include_in_trace_context)
     self._name = name
     self.__name__ = name[4:] if name.startswith('jax_') else name
     self.__doc__ = (f"Context manager for `{name}` config option"
@@ -1001,65 +950,51 @@ def enum_flag(name, default, *args, **kwargs) -> Flag[str]:
 already_configured_with_absl = False
 
 
-if TYPE_CHECKING or jaxlib_extension_version >= 376:
-  trace_state = config_ext.Config('trace_state', None, include_in_jit_key=True)
-  axis_env_state = config_ext.Config(
-      'axis_env_state',
-      (),
-      include_in_jit_key=True,
-      include_in_trace_context=True,
-  )
-  mesh_context_manager = config_ext.Config(
-      'mesh_context_manager',
-      (),
-      include_in_jit_key=True,
-      include_in_trace_context=True,
-  )
-  abstract_mesh_context_manager = config_ext.Config(
-      'abstract_mesh_context_manager',
-      None,
-      include_in_jit_key=True,
-      include_in_trace_context=True,
-  )
-  device_context = config_ext.Config(
-      'device_context', None, include_in_jit_key=True
-  )
-  compute_on_context_manager = config_ext.Config(
-      'compute_on_context_manager',
-      None,
-      include_in_jit_key=True,
-      include_in_trace_context=True,
-  )
-  xla_metadata_context_manager = config_ext.Config(
-      'xla_metadata_context_manager',
-      None,
-      include_in_jit_key=True,
-      include_in_trace_context=True,
-  )
-  pallas_tpu_interpret_mode_context_manager = config_ext.Config(
-      'pallas_tpu_interpret_mode_context_manager',
-      None,
-      include_in_jit_key=True,
-      include_in_trace_context=True,
-  )
-else:
-  trace_state = config_ext.Config(None, include_in_jit_key=True)
-  axis_env_state = config_ext.Config((), include_in_jit_key=True)
-  mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
-  abstract_mesh_context_manager = config_ext.Config(None, include_in_jit_key=True)
-  device_context = config_ext.Config(None, include_in_jit_key=True)
-  compute_on_context_manager = config_ext.Config(None, include_in_jit_key=True)
-  xla_metadata_context_manager = config_ext.Config(None, include_in_jit_key=True)
-  pallas_tpu_interpret_mode_context_manager = config_ext.Config(
-      None, include_in_jit_key=True)
+trace_state = config_ext.Config('trace_state', None, include_in_jit_key=True)
+axis_env_state = config_ext.Config(
+    'axis_env_state',
+    (),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+mesh_context_manager = config_ext.Config(
+    'mesh_context_manager',
+    (),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+abstract_mesh_context_manager = config_ext.Config(
+    'abstract_mesh_context_manager',
+    None,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+device_context = config_ext.Config(
+    'device_context', None, include_in_jit_key=True
+)
+compute_on_context_manager = config_ext.Config(
+    'compute_on_context_manager',
+    None,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+xla_metadata_context_manager = config_ext.Config(
+    'xla_metadata_context_manager',
+    None,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+pallas_tpu_interpret_mode_context_manager = config_ext.Config(
+    'pallas_tpu_interpret_mode_context_manager',
+    None,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
 
 class UserConfig:
   def __init__(self, default_value):
-    if TYPE_CHECKING or jaxlib_extension_version >= 376:
-      self._obj = config_ext.Config("user_context", default_value, include_in_jit_key=True,
-                                    include_in_trace_context=True)
-    else:
-      self._obj = config_ext.Config(default_value, include_in_jit_key=True)
+    self._obj = config_ext.Config("user_context", default_value, include_in_jit_key=True,
+                                  include_in_trace_context=True)
 
   @property
   def value(self):
@@ -1106,8 +1041,6 @@ def make_user_context(default_value=None):
   ```
   """
   obj = UserConfig(default_value)
-  if jaxlib_extension_version < 377:
-    register_trace_context_callback.append(lambda: obj.value)
   return obj
 
 
@@ -1715,28 +1648,14 @@ error_checking_behavior_oob = enum_state(
     include_in_trace_context=True,
 )
 
-if TYPE_CHECKING or jaxlib_extension_version >= 375:
-  enable_x64 = bool_state(
-      name='jax_enable_x64',
-      default=False,
-      help='Enable 64-bit types to be used',
-      include_in_jit_key=True,
-      include_in_trace_context=True)
+enable_x64 = bool_state(
+    name='jax_enable_x64',
+    default=False,
+    help='Enable 64-bit types to be used',
+    include_in_jit_key=True,
+    include_in_trace_context=True)
 
-  jax_jit.set_enable_x64_state(enable_x64)
-else:
-  def _update_x64_global(val):
-    jax_jit.global_state().enable_x64 = val
-
-  def _update_x64_thread_local(val):
-    jax_jit.thread_local_state().enable_x64 = val
-
-  enable_x64 = bool_state(
-      name='jax_enable_x64',
-      default=False,
-      help='Enable 64-bit types to be used',
-      update_global_hook=_update_x64_global,
-      update_thread_local_hook=_update_x64_thread_local)
+jax_jit.set_enable_x64_state(enable_x64)
 
 # TODO(phawkins): remove after fixing users of FLAGS.x64_enabled.
 config._contextmanager_flags.remove('jax_enable_x64')
@@ -1773,27 +1692,13 @@ default_device = string_or_object_state(
     include_in_jit_key=True,
     include_in_trace_context=True)
 
-if TYPE_CHECKING or jaxlib_extension_version >= 377:
-  disable_jit = bool_state(
-      name='jax_disable_jit',
-      default=False,
-      help=('Disable JIT compilation and just call original Python.'),
-      include_in_trace_context=True)
+disable_jit = bool_state(
+    name='jax_disable_jit',
+    default=False,
+    help=('Disable JIT compilation and just call original Python.'),
+    include_in_trace_context=True)
 
-  jax_jit.set_disable_jit_state(disable_jit)
-else:
-  def _update_disable_jit_global(val):
-    jax_jit.global_state().disable_jit = val
-
-  def _update_disable_jit_thread_local(val):
-    jax_jit.thread_local_state().disable_jit = val
-
-  disable_jit = bool_state(
-      name='jax_disable_jit',
-      default=False,
-      help=('Disable JIT compilation and just call original Python.'),
-      update_global_hook=_update_disable_jit_global,
-      update_thread_local_hook=_update_disable_jit_thread_local)
+jax_jit.set_disable_jit_state(disable_jit)
 
 numpy_rank_promotion = enum_state(
     name='jax_numpy_rank_promotion',
