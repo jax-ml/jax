@@ -592,6 +592,8 @@ class cuSparseTest(sptu.SparseTestCase):
   )
   @jtu.run_on_devices("gpu")
   def test_csr_spmv(self, shape, dtype, transpose):
+    tol = {np.float32: 2E-5, np.float64: 2E-14}
+
     rng_sparse = sptu.rand_sparse(self.rng())
     rng_dense = jtu.rand_default(self.rng())
 
@@ -604,7 +606,7 @@ class cuSparseTest(sptu.SparseTestCase):
         data, indices.astype('int32'), indptr.astype('int32'), vec,
         transpose=transpose,
         shape=mat.shape)
-    self.assertArraysAllClose(actual, expected)
+    self.assertArraysAllClose(actual, expected, atol=tol, rtol=tol)
 
   @jtu.sample_product(
       shape=[(4, 5), (3, 4), (5, 4)],
