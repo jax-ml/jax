@@ -52,12 +52,16 @@ from jax._src.pallas.mosaic.primitives import roll as roll
 from jax._src.pallas.mosaic.primitives import store as store
 from jax._src.pallas.mosaic.primitives import touch as touch
 from jax._src.pallas.mosaic.primitives import with_memory_space_constraint as with_memory_space_constraint
+from jax._src.pallas.mosaic.random import sample_block as sample_block
 from jax._src.pallas.mosaic.random import stateful_bernoulli as stateful_bernoulli
 from jax._src.pallas.mosaic.random import stateful_bits as stateful_bits
 from jax._src.pallas.mosaic.random import stateful_normal as stateful_normal
 from jax._src.pallas.mosaic.random import stateful_uniform as stateful_uniform
-from jax._src.pallas.mosaic.random import sample_block as sample_block
 from jax._src.pallas.mosaic.random import to_pallas_key as to_pallas_key
+from jax._src.pallas.mosaic.tpu_info import ChipVersion as ChipVersion
+from jax._src.pallas.mosaic.tpu_info import get_tpu_info as get_tpu_info
+from jax._src.pallas.mosaic.tpu_info import is_tpu_device as is_tpu_device
+from jax._src.pallas.mosaic.tpu_info import TpuInfo as TpuInfo
 
 # Those primitives got moved to Pallas core. Keeping the updated imports
 # here for backward compatibility.

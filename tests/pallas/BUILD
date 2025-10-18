@@ -1365,3 +1365,15 @@ jax_multiplatform_test(
         "absl/testing",
     ]),
 )
+
+jax_multiplatform_test(
+    name = "tpu_info_test",
+    srcs = ["tpu_info_test.py"],
+    enable_backends = ["tpu"],
+    enable_configs = [
+        "tpu_7x",
+    ],
+    deps = [
+        "//jax/experimental:pallas_tpu",
+    ] + py_deps("absl/testing"),
+)

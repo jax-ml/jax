@@ -13,6 +13,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* New features:
+
+  * Added {func}`jax.experimental.pallas.tpu.get_tpu_info` to get TPU hardware information.
+
 * Removals
 
   * Removed the previously deprecated

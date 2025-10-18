@@ -360,3 +360,8 @@ def get_device_kind() -> str:
   if abstract_device := jax.sharding.get_abstract_mesh().abstract_device:
     return abstract_device.device_kind
   return jex_backend.get_default_device().device_kind
+
+def get_num_device_cores() -> int:
+  if abstract_device := jax.sharding.get_abstract_mesh().abstract_device:
+    return abstract_device.num_cores
+  return jex_backend.get_default_device().num_cores

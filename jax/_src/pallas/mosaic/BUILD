@@ -230,3 +230,13 @@ py_library(
         "//jax/_src/pallas",
     ],
 )
+
+pytype_strict_library(
+    name = "tpu_info",
+    srcs = ["tpu_info.py"],
+    deps = [
+        ":core",
+        "//jax",
+        "//jax/_src:dtypes",
+    ],
+)
