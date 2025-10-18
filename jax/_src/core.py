@@ -2610,7 +2610,7 @@ class Ref(metaclass=RefMeta):
   # some attributes/methods only work for lojax refs
   sharding = property(lambda self: self._refs._buf.sharding)
   format = property(lambda self: self._refs._buf.format)
-  committed = _committed = property(lambda self: self._refs._buf._committed)
+  committed = _committed = property(lambda self: True)
   def unsafe_buffer_pointer(self): return self._refs._buf.unsafe_buffer_pointer()
 
   @property

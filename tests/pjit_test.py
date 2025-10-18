@@ -3419,11 +3419,11 @@ class ArrayPjitTest(jtu.JaxTestCase):
   @config.numpy_dtype_promotion('standard')
   def test_mutable_array_closed_over_multi_device(self):
     mesh = jtu.create_mesh((2,), ('x',))
-    key_data = jax.random.key_data(jax.random.key(42))
+    key_data = jax.device_put(jax.random.key_data(jax.random.key(42)),
+                              NamedSharding(mesh, P()))
     key_data_ref = core.new_ref(key_data)
-    output_sharding = NamedSharding(mesh, P('x'))
 
-    @partial(jax.jit, out_shardings=output_sharding)
+    @partial(jax.jit, out_shardings= NamedSharding(mesh, P('x')))
     def generate_random_numbers():
       key_val = key_data_ref[...]
       outputs = jnp.arange(8, dtype=jnp.float32) + key_val[0]
