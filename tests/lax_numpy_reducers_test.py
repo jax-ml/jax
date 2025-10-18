@@ -675,6 +675,103 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self.assertEqual(jnp.isnan(z).sum(), 0)
 
   @jtu.sample_product(
+  [
+    dict(shape=(5,), axis=None),
+    dict(shape=(5,), axis=0),
+    dict(shape=(5,), axis=-1),
+    dict(shape=(10, 5), axis=None),
+    dict(shape=(10, 5), axis=0),
+    dict(shape=(10, 5), axis=1),
+    dict(shape=(10, 5), axis=-1),
+    dict(shape=(10, 5), axis=(0, 1)),
+    dict(shape=(5, 4, 3), axis=(0, 2)),
+    dict(shape=(5, 4, 3), axis=(1, -1)),
+  ],
+  jnp_fn_name=["var", "std", "nanvar", "nanstd"],
+  dtype=inexact_dtypes + int_dtypes,
+  ddof=[0, 1],
+  keepdims=[False, True],
+  scramblemean=[False, True],
+  )
+  def testReducerWithMean(self, jnp_fn_name, shape, dtype, axis, ddof, keepdims, scramblemean):
+    """Tests variance and standard deviation functions with a pre-supplied mean."""
+    jnp_fn = getattr(jnp, jnp_fn_name)
+    np_fn = getattr(np, jnp_fn_name)
+    is_nan_test = "nan" in jnp_fn_name
+
+    def jnp_wrapper(x):
+      # This wrapper receives a NumPy array `x`, converts it to a JAX array, computes its
+      # mean, and passes both to the target JAX function.
+      x_jax = jnp.asarray(x)
+      mean_dtype = dtypes.to_inexact_dtype(x_jax.dtype)
+      if is_nan_test:
+        mean_val = jnp.nanmean(x_jax, axis=axis, keepdims=True, dtype=mean_dtype)
+      else:
+        mean_val = jnp.mean(x_jax, axis=axis, keepdims=True, dtype=mean_dtype)
+      if scramblemean:
+        # Scramble the mean values with the tanh function
+        mean_val = jnp.tanh(mean_val)
+      return jnp_fn(x_jax, axis=axis, ddof=ddof, keepdims=keepdims, mean=mean_val)
+
+    @jtu.ignore_warning(category=RuntimeWarning, message="Degrees of freedom <= 0 for slice.")
+    @jtu.ignore_warning(category=np.exceptions.ComplexWarning)
+    def np_wrapper(x):
+      # This wrapper receives a NumPy array `x`, computes its mean, and passes both to
+      # the target NumPy function.
+      x_cast = x.astype(np.float32) if x.dtype == dtypes.bfloat16 else np.asarray(x)
+      if is_nan_test:
+        mean_val = np.nanmean(x_cast, axis=axis, keepdims=True)
+      else:
+        mean_val = np.mean(x_cast, axis=axis, keepdims=True)
+      if scramblemean:
+        # Scramble the mean values with the tanh function
+        mean_val = np.tanh(mean_val)
+      return np_fn(x_cast, axis=axis, ddof=ddof, keepdims=keepdims, mean=mean_val)
+
+    rng = jtu.rand_some_nan(self.rng()) if is_nan_test else jtu.rand_default(self.rng())
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    tol_spec = {np.float16: 1e-1, np.float32: 1e-3, np.float64: 1e-5, np.complex128: 1e-6,
+                np.int8: 1e-4, np.int16: 1e-4, np.int32: 1e-4, np.int64: 1e-5}
+    self._CheckAgainstNumpy(np_wrapper, jnp_wrapper, args_maker,
+                            check_dtypes=dtype != jnp.bfloat16,
+                            tol=tol_spec)
+    self._CompileAndCheck(jnp_wrapper, args_maker, rtol=tol_spec, atol=tol_spec)
+
+  @jtu.sample_product(
+    [
+      dict(shape=(5,), axis=None, correct_mean_shape=(1,),
+          invalid_mean_shape=(), description="scalar instead of (1,)"),
+      dict(shape=(3, 4), axis=1, correct_mean_shape=(3, 1),
+          invalid_mean_shape=(3,), description="missing second dimension"),
+      dict(shape=(3, 4), axis=(0, 1), correct_mean_shape=(1, 1),
+          invalid_mean_shape=(1, 4), description="only one axis reduced"),
+      dict(shape=(2, 3, 4), axis=(0, 2), correct_mean_shape=(1, 3, 1),
+          invalid_mean_shape=(1, 3), description="missing last dimension"),
+      dict(shape=(3, 4), axis=-1, correct_mean_shape=(3, 1),
+          invalid_mean_shape=(1, 4), description="wrong axis with negative index"),
+    ],
+    jnp_fn_name=["var", "std", "nanvar", "nanstd"],
+  )
+  def testReducerWithInvalidMeanShape(self, shape, axis, correct_mean_shape,
+                                      invalid_mean_shape, description, jnp_fn_name):
+    """Tests that variance/std functions reject means with incorrect shapes."""
+    jnp_fn = getattr(jnp, jnp_fn_name)
+    x = jnp.ones(shape, dtype=jnp.float32)
+
+    # Verify that the correct shape works
+    correct_mean = jnp.ones(correct_mean_shape, dtype=jnp.float32)
+    result = jnp_fn(x, axis=axis, mean=correct_mean)
+    self.assertIsInstance(result, jnp.ndarray)
+
+    # Test that invalid shape is rejected
+    invalid_mean = jnp.ones(invalid_mean_shape, dtype=jnp.float32)
+    with self.assertRaisesRegex(
+        ValueError,
+        f"mean must have shape.*{str(correct_mean_shape)}.*"
+        f"but got shape.*{str(invalid_mean_shape)}"):
+      jnp_fn(x, axis=axis, mean=invalid_mean)
+
+  @jtu.sample_product(
     [dict(shape=shape, dtype=dtype, y_dtype=y_dtype, rowvar=rowvar,
           y_shape=y_shape)
       for shape in [(5,), (10, 5), (5, 10)]

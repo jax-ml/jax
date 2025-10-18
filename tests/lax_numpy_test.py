@@ -6278,8 +6278,8 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'load': ['mmap_mode', 'allow_pickle', 'fix_imports', 'encoding', 'max_header_size'],
       'nanpercentile': ['weights'],
       'nanquantile': ['weights'],
-      'nanstd': ['correction', 'mean'],
-      'nanvar': ['correction', 'mean'],
+      'nanstd': ['correction'],
+      'nanvar': ['correction'],
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
       'partition': ['kind', 'order'],
@@ -6287,9 +6287,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'quantile': ['weights'],
       'row_stack': ['casting'],
       'stack': ['casting'],
-      'std': ['mean'],
       'tri': ['like'],
-      'var': ['mean'],
       'vstack': ['casting'],
       'zeros_like': ['subok', 'order']
     }
