@@ -195,7 +195,8 @@ else
     //tests/pallas:tpu_fusible_matmul_test_tpu \
     //tests/pallas:tpu_pallas_distributed_test_tpu \
     //tests/pallas:tpu_pallas_memory_space_test_tpu \
-    //tests/pallas:tpu_splash_attention_kernel_sharded_test_tpu
+    //tests/pallas:tpu_splash_attention_kernel_sharded_test_tpu \
+    //tests/pallas:tpu_sparsecore_pallas_test_tpu
 
   # Store the return value of the first bazel command.
   first_bazel_cmd_retval=$?
