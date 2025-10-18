@@ -675,6 +675,53 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self.assertEqual(jnp.isnan(z).sum(), 0)
 
   @jtu.sample_product(
+    jnp_fn_name=["var", "std", "nanvar", "nanstd"],
+    shape=[(5,), (10, 5)],
+    dtype=inexact_dtypes + int_dtypes,
+    axis=[None, 0, -1],
+    ddof=[0, 1],
+    keepdims=[False, True],
+  )
+  def testReducerWithMean(self, jnp_fn_name, shape, dtype, axis, ddof, keepdims):
+    """Tests variance and standard deviation functions with a pre-supplied mean."""
+    jnp_fn = getattr(jnp, jnp_fn_name)
+    np_fn = getattr(np, jnp_fn_name)
+    is_nan_test = "nan" in jnp_fn_name
+
+    def jnp_wrapper(x):
+      # This wrapper receives a NumPy array `x`, converts it to a JAX array, computes its
+      # mean, and passes both to the target JAX function.
+      x_jax = jnp.asarray(x)
+      mean_dtype = dtypes.to_inexact_dtype(x_jax.dtype)
+      if is_nan_test:
+        mean_val = jnp.nanmean(x_jax, axis=axis, keepdims=True, dtype=mean_dtype)
+      else:
+        mean_val = jnp.mean(x_jax, axis=axis, keepdims=True, dtype=mean_dtype)
+      return jnp_fn(x_jax, axis=axis, ddof=ddof, keepdims=keepdims, mean=mean_val)
+
+    @jtu.ignore_warning(category=RuntimeWarning, message="Degrees of freedom <= 0 for slice.")
+    @jtu.ignore_warning(category=np.exceptions.ComplexWarning)
+    def np_fun(x):
+      x_cast = x.astype(np.float32) if x.dtype == dtypes.bfloat16 else np.asarray(x)
+      result = np_fn(x_cast, axis=axis, ddof=ddof, keepdims=keepdims)
+
+      # Cast the numpy result to the expected JAX dtype for a correct comparison.
+      if jnp.issubdtype(x.dtype, np.complexfloating):
+        expected_dtype = jnp.real(jnp.zeros((), dtype=x.dtype)).dtype
+      else:
+        expected_dtype = dtypes.to_inexact_dtype(x.dtype)
+      return result.astype(np.dtype(expected_dtype))
+
+    rng = jtu.rand_some_nan(self.rng()) if is_nan_test else jtu.rand_default(self.rng())
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    tol_spec = {np.float16: 1e-1, np.float32: 1e-3, np.float64: 1e-5, np.complex128: 1e-6,
+                np.int8: 1e-4, np.int16: 1e-4, np.int32: 1e-4, np.int64: 1e-5}
+    tol = jtu.tolerance(dtype, tol_spec)
+
+    self._CheckAgainstNumpy(np_fun, jnp_wrapper, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_wrapper, args_maker, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
     [dict(shape=shape, dtype=dtype, y_dtype=y_dtype, rowvar=rowvar,
           y_shape=y_shape)
       for shape in [(5,), (10, 5), (5, 10)]
