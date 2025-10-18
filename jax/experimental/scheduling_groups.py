@@ -19,8 +19,7 @@ from jax._src import linear_util as lu
 from jax._src import api_util
 from jax._src.util import safe_map, safe_zip
 from jax._src.tree_util import tree_flatten, tree_unflatten
-from jax._src.interpreters import ad
-from jax._src.interpreters import mlir
+from jax._src.interpreters import ad, mlir, partial_eval as pe
 from jax._src.lib.mlir import ir
 
 map, unsafe_map = safe_map, map
@@ -63,9 +62,14 @@ mlir.register_lowering(xla_metadata_call_p, _xla_metadata_call_lowering)
 def attr_get(x):
   if isinstance(x, str):
     return ir.StringAttr.get(x)
-  elif isinstance(x, int):
-    return ir.IntAttr.get(x)
   else:
     raise NotImplementedError(f'mlir attr handler for {type(x)=}')
 
-ad.primitive_transposes[xla_metadata_call_p] = ad.primitive_transposes[core.closed_call_p]
+
+def _xla_metadata_call_transpose(params, jaxpr, args, ct, cts_in_avals):
+  jaxpr_, consts = jaxpr.jaxpr, jaxpr.consts
+  jaxpr_ = pe.convert_constvars_jaxpr(jaxpr_)
+  return ad.call_transpose(
+      xla_metadata_call_p, params, jaxpr_, (*consts, *args),
+      ct, cts_in_avals)
+ad.primitive_transposes[xla_metadata_call_p] = _xla_metadata_call_transpose

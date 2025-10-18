@@ -18,9 +18,11 @@ import jax
 import jax.numpy as jnp
 from jax._src import test_util as jtu
 
-from jax.experimental.scheduling_groups import scheduling_group
+from jax.experimental.scheduling_groups import (
+    scheduling_group, xla_metadata_call)
 
 jax.config.parse_flags_with_absl()
+
 
 class SchedulingGroupsTest(jtu.JaxTestCase):
 
@@ -59,6 +61,29 @@ class SchedulingGroupsTest(jtu.JaxTestCase):
 
     ans = jax.grad(f)(3.)
     self.assertAllClose(ans, 2., check_dtypes=False)
+
+  # TODO(yashkatariya): Enable this on TPU once XLA:TPU knows about inlineable
+  @jtu.run_on_devices('cpu')
+  def test_xla_metadata_call_inlineable(self):
+    inp = jnp.arange(8.)
+
+    @xla_metadata_call(inlineable="false")
+    def g(x):
+      return x * 2
+
+    @jax.jit
+    def f(x):
+      y = g(x)
+      return jnp.sin(y).sum()
+
+    f(inp)  # doesn't crash
+
+    lowered = jax.jit(jax.grad(f)).lower(inp)
+    self.assertIn('inlineable = "false"', lowered.as_text())
+    compiled = lowered.compile()
+    self.assertIn('inlineable="false"', compiled.as_text())
+    compiled(inp)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
