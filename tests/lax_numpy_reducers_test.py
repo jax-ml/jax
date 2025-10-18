@@ -28,6 +28,7 @@ from jax import numpy as jnp
 
 from jax._src import config
 from jax._src import dtypes
+from jax._src.numpy.reductions import quantile
 from jax._src import test_util as jtu
 from jax._src.util import NumpyComplexWarning
 
@@ -762,6 +763,14 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     # Regression test for https://github.com/jax-ml/jax/issues/8513
     x = jnp.float64([1, 2, 3, 4, 7, 10])
     self.assertEqual(jnp.percentile(x, 50), 3.5)
+
+  def test_weighted_quantile_linear(self):
+    a = jnp.array([1, 2, 3, 4, 5], dtype=float)
+    weights = jnp.array([1, 2, 1, 1, 1], dtype=float)
+    q = jnp.array([0.5])
+    expected = np.quantile(a, q, weights=weights)
+    result = quantile(a, q, weights=weights, method="linear")
+    np.testing.assert_allclose(result, expected, rtol=1e-6)
 
   @jtu.sample_product(
     [dict(a_shape=a_shape, axis=axis)
