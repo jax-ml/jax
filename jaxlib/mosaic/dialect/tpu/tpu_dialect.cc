@@ -41,8 +41,6 @@ limitations under the License.
 #include "jaxlib/mosaic/dialect/tpu/tpu_enums.cc.inc"
 #include "xla/layout.h"
 
-// This is a bit unclean, but we need to squat the xla namespace to make sure
-// that this overload is found via argument-dependent lookup.
 namespace xla {
 
 llvm::hash_code hash_value(const ::xla::Tile &p) { return absl::HashOf(p); }
