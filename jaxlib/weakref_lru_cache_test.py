@@ -280,6 +280,64 @@ class WeakrefLRUCacheTest(absltest.TestCase):
       for _ in range(100):
         cache(wrkey, ReentrantKey())
 
+  def testMultipleWeakrefs(self):
+    call_count = [0]
+
+    class WRKey:
+      def __init__(self, value):
+        self.value = value
+
+    def CacheFn(obj_tuple, extra_arg):
+      call_count[0] += 1
+      return sum(obj.value for obj in obj_tuple) + extra_arg
+
+    cache = weakref_lru_cache.weakref_lru_cache(lambda: None, CacheFn, 10)
+
+    obj1 = WRKey(5)
+    obj2 = WRKey(10)
+    obj3 = WRKey(15)
+
+    result1 = cache((obj1, obj2, obj3), 100)
+    self.assertEqual(result1, 130)
+    self.assertEqual(call_count[0], 1)
+
+    result2 = cache((obj1, obj2, obj3), 100)
+    self.assertEqual(result2, 130)
+    self.assertEqual(call_count[0], 1)
+
+    result3 = cache((obj1, obj2), 100)
+    self.assertEqual(result3, 115)
+    self.assertEqual(call_count[0], 2)
+
+  def testMultipleWeakrefsGC(self):
+    call_count = [0]
+
+    class WRKey:
+      def __init__(self, value):
+        self.value = value
+
+    def CacheFn(obj_tuple):
+      call_count[0] += 1
+      return sum(obj.value for obj in obj_tuple)
+
+    cache = weakref_lru_cache.weakref_lru_cache(lambda: None, CacheFn, 10)
+
+    obj1 = WRKey(5)
+    obj2 = WRKey(10)
+
+    result1 = cache((obj1, obj2))
+    self.assertEqual(result1, 15)
+    self.assertEqual(call_count[0], 1)
+
+    del obj2
+    gc.collect()
+
+    obj2_new = WRKey(10)
+
+    result2 = cache((obj1, obj2_new))
+    self.assertEqual(result2, 15)
+    self.assertEqual(call_count[0], 2)
+
 
 if __name__ == "__main__":
   absltest.main()
