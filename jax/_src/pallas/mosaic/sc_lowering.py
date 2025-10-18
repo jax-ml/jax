@@ -681,8 +681,8 @@ def _extract_indirect_offsets(
         )
       offsets_ref, _ = _transform_ref(
           offsets_ref.ref,
-          jnp.int32,  # Just a placeholder.
-          offsets_ref.shape,
+          jnp.int32,
+          offsets_type.shape,  # The shape before the indexing.
           offsets_ref.transforms,
       )
       if not state_discharge._is_trivial_indexer(

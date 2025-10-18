@@ -420,7 +420,38 @@ class VectorSubcoreTest(PallasSCTest):
       )
 
     np.testing.assert_array_equal(
-        kernel(x, indices), x[indices[:indices.size // 2]]
+        kernel(x, indices), x[indices[: indices.size // 2]]
+    )
+
+  def test_gather_1d_with_dynamically_sized_2d_ref(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 12):
+      self.skipTest("Needs a newer libtpu")
+
+    x = jnp.arange(16)
+    indices = jax.random.permutation(
+        jax.random.key(42), jnp.arange(2 * 16).reshape(2, -1), axis=1
+    )
+
+    @vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(
+            shape=(indices.size // 4,), dtype=jnp.int32
+        ),
+        grid=(1,),
+        in_specs=(
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ),
+    )
+    def kernel(x_hbm_ref, indices_ref, o_ref):
+      pid = pl.program_id(0)  # Always zero.
+      num_indices = pid + indices_ref.size // 4
+      pltpu.sync_copy(
+          x_hbm_ref.at[indices_ref.at[pid, pl.ds(0, num_indices)]],
+          o_ref.at[pl.ds(0, num_indices)],
+      )
+
+    np.testing.assert_array_equal(
+        kernel(x, indices), x[indices[0, : indices.size // 4]]
     )
 
   def test_implicit_gather_1d(self):
