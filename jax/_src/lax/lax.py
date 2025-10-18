@@ -4491,24 +4491,13 @@ core.pp_eqn_rules[cbrt_p] = _unary_with_accuracy_pp_rule
 
 square_p = standard_unop(_int | _float | _complex, 'square')
 
-def _square_complex(x):
-  a, b = real(x), imag(x)
-  # zero square(x).real is handled explicitly for abs(a)==abs(b) cases
-  # where for finite a, 2 * a is non-finite:
-  zero_re = is_finite(a) & (eq(a, b) | eq(a, neg(b)))
-  # equivalent to a**2 - b**2 but avoids overflow errors for large a
-  # and large b cases:
-  re = mul(sub(a, b), add(a, b))
-  im = mul(mul(a, b), _const(a, 2))
-  return select(zero_re, complex(_const(a, 0), im), complex(re, im))
-
 def _square_lower_hlo(ctx, x):
-  if dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
-    return mlir.lower_fun(_square_complex, multiple_results=False)(ctx, x)
-  return [hlo.multiply(x, x)]
+  if dtypes.issubdtype(ctx.avals_in[0].dtype, np.integer):
+    return [hlo.multiply(x, x)]
+  return [chlo.square(x)]
 
 ad.defjvp2(square_p, lambda g, ans, x: mul(g, mul(_const(x, 2), x)))
-mlir.register_lowering(square_p, _square_lower_hlo)  # TODO(pearu): use chlo.square
+mlir.register_lowering(square_p, _square_lower_hlo)
 
 def _pow_dtype_rule(x, y):
   if (dtypes.issubdtype(x.dtype, np.inexact) and
