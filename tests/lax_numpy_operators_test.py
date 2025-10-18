@@ -27,7 +27,6 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-import jax.ops
 from jax import lax
 from jax import numpy as jnp
 
@@ -275,9 +274,8 @@ JAX_COMPOUND_OP_RECORDS = [
               []),
     op_record("rint", 1, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_default, [], check_dtypes=False),
-    # numpy < 2.0.0 has a different convention for complex sign.
-    op_record("sign", 1, real_dtypes if jtu.numpy_version() < (2, 0, 0) else number_dtypes,
-              all_shapes, jtu.rand_some_inf_and_nan, []),
+    op_record("sign", 1, number_dtypes, all_shapes, jtu.rand_some_inf_and_nan,
+              []),
     # numpy 1.16 has trouble mixing uint and bfloat16, so we test these separately.
     op_record("copysign", 2, default_dtypes + unsigned_dtypes,
               all_shapes, jtu.rand_some_inf_and_nan, [], check_dtypes=False),
@@ -325,11 +323,8 @@ JAX_BITWISE_OP_RECORDS = [
               jtu.rand_fullrange, []),
     op_record("bitwise_xor", 2, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_fullrange, []),
+    op_record("bitwise_count", 1, int_dtypes, all_shapes, jtu.rand_fullrange, []),
 ]
-if hasattr(np, "bitwise_count"):
-  # Numpy versions after 1.26
-  JAX_BITWISE_OP_RECORDS.append(
-    op_record("bitwise_count", 1, int_dtypes, all_shapes, jtu.rand_fullrange, []))
 
 JAX_OPERATOR_OVERLOADS = [
     op_record("__add__", 2, number_dtypes, all_shapes, jtu.rand_default, []),
@@ -618,14 +613,9 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     dtype=int_dtypes + unsigned_dtypes,
   )
   def testBitwiseCount(self, shape, dtype):
-    # np.bitwise_count added after numpy 1.26, but
-    # np_scalar.bit_count() is available before that.
-    np_fun = getattr(
-      np, "bitwise_count",
-      np.vectorize(lambda x: np.ravel(x)[0].bit_count(), otypes=['uint8']))
     rng = jtu.rand_fullrange(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(np_fun, jnp.bitwise_count, args_maker)
+    self._CheckAgainstNumpy(np.bitwise_count, jnp.bitwise_count, args_maker)
     self._CompileAndCheck(jnp.bitwise_count, args_maker)
 
   @jtu.sample_product(
@@ -655,14 +645,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     # NumPy requires shifts to be non-negative and below the bit width:
     shift_rng = jtu.rand_int(self.rng(), high=max(info.bits, shift_info.bits))
     args_maker = lambda: (x_rng(shapes[0], dtype), shift_rng(shapes[1], shift_dtype))
-
-    if jtu.numpy_version() < (2, 0, 0) and op.__name__ in ("bitwise_left_shift", "bitwise_right_shift"):
-      # numpy < 2.0.0 does not have bitwise shift functions.
-      op_name = op.__name__.removeprefix("bitwise_")
-    else:
-      op_name = op.__name__
-
-    np_op = getattr(np, op_name)
+    np_op = getattr(np, op.__name__)
 
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CompileAndCheck(op, args_maker)
@@ -675,10 +658,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
   )
   def testSignComplex(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
-    if jtu.numpy_version() >= (2, 0, 0):
-      np_fun = np.sign
-    else:
-      np_fun = lambda x: (x / np.where(x == 0, 1, abs(x))).astype(np.result_type(x))
+    np_fun = np.sign
     jnp_fun = jnp.sign
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)

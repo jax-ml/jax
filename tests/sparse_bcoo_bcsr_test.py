@@ -35,8 +35,7 @@ from jax.experimental.sparse import bcsr as sparse_bcsr
 from jax.experimental.sparse import test_util as sptu
 from jax.experimental.sparse import util as sparse_util
 import jax.numpy as jnp
-import jax.random
-from jax.util import split_list
+from jax._src.util import split_list
 import numpy as np
 
 jax.config.parse_flags_with_absl()
@@ -603,7 +602,7 @@ class BCOOTest(sptu.SparseTestCase):
     # with self.gpu_matmul_warning_context(
     #     "bcoo_dot_general GPU lowering currently does not support this batch-mode computation.*"):
     matmat_default_lowering_fallback = sp_matmat(lhs_bcoo, rhs)
-    self.assertArraysEqual(matmat_expected, matmat_default_lowering_fallback)
+    self.assertArraysAllClose(matmat_expected, matmat_default_lowering_fallback)
 
   @jtu.run_on_devices("gpu")
   def test_bcoo_dot_general_oob_and_unsorted_indices_cusparse(self):
@@ -974,6 +973,7 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertEqual(out.nse, expected_nse)
 
   @jtu.ignore_warning(message="bcoo_dot_general cusparse/hipsparse lowering not available")
+  @jtu.ignore_warning(category=sparse.CuSparseEfficiencyWarning)
   def test_bcoo_spdot_general_ad_bug(self):
     # Regression test for https://github.com/jax-ml/jax/issues/10163
     A_indices = jnp.array([[0, 1], [0, 2], [1, 1], [1, 2], [1, 0]])

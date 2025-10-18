@@ -6,7 +6,7 @@ Everyone can contribute to JAX, and we value everyone's contributions. There are
 ways to contribute, including:
 
 - Answering questions on JAX's [discussions page](https://github.com/jax-ml/jax/discussions)
-- Improving or expanding JAX's [documentation](http://jax.readthedocs.io/)
+- Improving or expanding JAX's [documentation](http://docs.jax.dev/)
 - Contributing to JAX's [code-base](http://github.com/jax-ml/jax/)
 - Contributing in any of the above ways to the broader ecosystem of [libraries built on JAX](https://github.com/jax-ml/jax#neural-network-libraries)
 
@@ -30,13 +30,13 @@ We do all of our development using git, so basic knowledge is assumed.
 Follow these steps to contribute code:
 
 1. Sign the [Google Contributor License Agreement (CLA)](https://cla.developers.google.com/).
-   For more information, see the Pull Request Checklist below.
+   For more information, see the {ref}`pr-checklist` below.
 
 2. Fork the JAX repository by clicking the **Fork** button on the
    [repository page](http://www.github.com/jax-ml/jax). This creates
    a copy of the JAX repository in your own account.
 
-3. Install Python >= 3.10 locally in order to run tests.
+3. Install Python >= 3.11 locally in order to run tests.
 
 4. `pip` installing your fork from source. This allows you to modify the code
    and immediately test it out:
@@ -79,6 +79,12 @@ Follow these steps to contribute code:
 
    ```bash
    pytest -n auto tests/
+   ```
+
+   Run them in 64-bit mode as well, by setting the environment variable `JAX_ENABLE_X64=True`:
+
+   ```bash
+   JAX_ENABLE_X64=True pytest -n auto tests/
    ```
 
    JAX's test suite is quite large, so if you know the specific test file that covers your

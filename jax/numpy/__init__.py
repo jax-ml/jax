@@ -24,6 +24,11 @@ from jax._src.dtypes import (
     isdtype as isdtype,
 )
 
+from jax._src.numpy.array_constructors import (
+    array as array,
+    asarray as asarray,
+)
+
 from jax._src.numpy.lax_numpy import (
     ComplexWarning as ComplexWarning,
     allclose as allclose,
@@ -36,12 +41,10 @@ from jax._src.numpy.lax_numpy import (
     argmin as argmin,
     argwhere as argwhere,
     around as around,
-    array as array,
     array_equal as array_equal,
     array_equiv as array_equiv,
     array_split as array_split,
     astype as astype,
-    asarray as asarray,
     atleast_1d as atleast_1d,
     atleast_2d as atleast_2d,
     atleast_3d as atleast_3d,
@@ -93,7 +96,6 @@ from jax._src.numpy.lax_numpy import (
     fromstring as fromstring,
     from_dlpack as from_dlpack,
     gcd as gcd,
-    geomspace as geomspace,
     get_printoptions as get_printoptions,
     gradient as gradient,
     histogram as histogram,
@@ -118,9 +120,7 @@ from jax._src.numpy.lax_numpy import (
     ix_ as ix_,
     kron as kron,
     lcm as lcm,
-    linspace as linspace,
     load as load,
-    logspace as logspace,
     mask_indices as mask_indices,
     matrix_transpose as matrix_transpose,
     meshgrid as meshgrid,
@@ -180,6 +180,9 @@ from jax._src.numpy.array_creation import (
     empty_like as empty_like,
     full as full,
     full_like as full_like,
+    geomspace as geomspace,
+    linspace as linspace,
+    logspace as logspace,
     ones as ones,
     ones_like as ones_like,
     zeros as zeros,

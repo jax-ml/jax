@@ -15,10 +15,10 @@
 
 import numpy as np
 
-from jax import lax
+from jax._src import lax
 from jax._src.lax.lax import _const as _lax_const
+from jax._src.numpy.ufuncs import arctan
 from jax._src.numpy.util import promote_args_inexact
-from jax.numpy import arctan
 from jax._src.typing import Array, ArrayLike
 
 

@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax import lax
-import jax.numpy as jnp
+import numpy as np
+
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
+from jax._src.scipy.special import xlogy, xlog1py
 from jax._src.typing import Array, ArrayLike
-from jax.scipy.special import xlogy, xlog1py
 
 
 def logpmf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
@@ -54,7 +56,7 @@ def logpmf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
   x = lax.sub(k, loc)
   log_probs = xlogy(x, p) + xlog1py(lax.sub(one, x), -p)
   return jnp.where(jnp.logical_or(lax.lt(x, zero), lax.gt(x, one)),
-                  -jnp.inf, log_probs)
+                  -np.inf, log_probs)
 
 
 def pmf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
@@ -123,7 +125,7 @@ def cdf(k: ArrayLike, p: ArrayLike) -> Array:
     jnp.logical_and(lax.ge(k, zero), lax.lt(k, one)),
     lax.ge(k, one)
     ]
-  vals = [jnp.nan, zero, one - p, one]
+  vals = [np.nan, zero, one - p, one]
   return jnp.select(conds, vals)
 
 
@@ -152,6 +154,6 @@ def ppf(q: ArrayLike, p: ArrayLike) -> Array:
   zero, one = _lax_const(q, 0), _lax_const(q, 1)
   return jnp.where(
     jnp.isnan(q) | jnp.isnan(p) | (p < zero) | (p > one) | (q < zero) | (q > one),
-    jnp.nan,
+    np.nan,
     jnp.where(lax.le(q, one - p), zero, one)
   )

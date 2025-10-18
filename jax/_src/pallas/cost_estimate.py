@@ -15,7 +15,8 @@
 import dataclasses
 import functools
 import math
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 import jax
 from jax._src import api_util
@@ -64,12 +65,11 @@ def cost_estimate_jaxpr(
   total_cost = CostEstimate(flops=0, transcendentals=0, bytes_accessed=0)
 
   for eqn in jaxpr.eqns:
-    _, bind_params = eqn.primitive.get_bind_params(eqn.params)
     rule = _cost_rules.get(eqn.primitive, None)
     if rule is not None:
       context = Context(avals_in=[v.aval for v in eqn.invars],
                         avals_out=[v.aval for v in eqn.outvars])
-      op_cost = rule(context, **bind_params)
+      op_cost = rule(context, **eqn.params)
       total_cost = total_cost + op_cost
   return pallas_core.CostEstimate(
       flops=total_cost.flops,
@@ -94,10 +94,10 @@ def estimate_cost(fun, *args, **kwargs) -> pallas_core.CostEstimate:
   wrapped_fun, _ = api_util.flatten_fun_nokwargs(
       lu.wrap_init(partial_fun,
                    debug_info=api_util.debug_info("cost_estimate", fun,
-                                                  args, kwargs)),
+                                                  args, {})),
       treedef)
   avals = [jax_core.ShapedArray(a.shape, a.dtype) for a in flattened_args]
-  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
   estimate = cost_estimate_jaxpr(jax_core.ClosedJaxpr(jaxpr, consts))
   input_bytes = sum(
       math.prod(a.shape) * a.dtype.itemsize for a in flattened_args)
@@ -237,17 +237,17 @@ def _pjit_cost_rule(ctx, *, jaxpr: jax_core.ClosedJaxpr, **_):
       transcendentals=inner_cost.transcendentals,
       bytes_accessed=inner_cost.bytes_accessed,
   )
-register_cost_rule(pjit.pjit_p, _pjit_cost_rule)
+register_cost_rule(pjit.jit_p, _pjit_cost_rule)
 
-def _custom_vjp_rule(ctx, *, fun_jaxpr: jax_core.ClosedJaxpr, **_):
+def _custom_vjp_rule(ctx, *, call_jaxpr: jax_core.ClosedJaxpr, **_):
   del ctx
-  inner_cost = cost_estimate_jaxpr(fun_jaxpr)
+  inner_cost = cost_estimate_jaxpr(call_jaxpr)
   return CostEstimate(
       flops=inner_cost.flops,
       transcendentals=inner_cost.transcendentals,
       bytes_accessed=inner_cost.bytes_accessed,
   )
-register_cost_rule(custom_derivatives.custom_vjp_call_jaxpr_p, _custom_vjp_rule)
+register_cost_rule(custom_derivatives.custom_vjp_call_p, _custom_vjp_rule)
 
 def _run_state_rule(*_, jaxpr: jax_core.Jaxpr, **_2):
   inner_cost = cost_estimate_jaxpr(pe.close_jaxpr(jaxpr))

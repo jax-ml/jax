@@ -62,17 +62,17 @@ from jax._src.custom_derivatives import lift_jvp
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import sharding_impls
-from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_sparse
+from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_sparse, BCOO
+from jax.experimental.sparse.bcsr import BCSR
 import jax.numpy as jnp
 from jax._src.api_util import flatten_fun_nokwargs
 from jax._src.lib import pytree
 from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten, tree_map, tree_unflatten
-from jax.util import safe_map, safe_zip, split_list
+from jax._src.util import safe_map, safe_zip, split_list
 from jax._src.lax.control_flow import _check_tree_and_avals
 from jax._src.numpy import indexing as jnp_indexing
 from jax.experimental import sparse
-from jax.experimental.sparse import BCOO, BCSR
 
 sparse_rules_bcoo : dict[core.Primitive, Callable] = {}
 sparse_rules_bcsr : dict[core.Primitive, Callable] = {}
@@ -448,9 +448,10 @@ def sparsify_raw(f):
         lu.wrap_init(
             f, params,
             debug_info=api_util.debug_info("sparsify", f,
-                                           spvalues_to_arrays(spenv, spvalues), {})),
+                                           in_tree.unflatten([True] * len(in_avals_flat)),
+                                           {})),
         in_tree)
-    jaxpr, out_avals_flat, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
+    jaxpr, out_avals_flat, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
     result = eval_sparse(jaxpr, consts, spvalues_flat, spenv)
     if len(out_avals_flat) != len(result):
       raise Exception("Internal: eval_sparse does not return expected number of arguments. "
@@ -701,7 +702,7 @@ def _div_sparse(spenv, *spvalues):
 
 sparse_rules_bcoo[lax.div_p] = _div_sparse
 
-def _reduce_sum_sparse(spenv, *spvalues, axes):
+def _reduce_sum_sparse(spenv, *spvalues, axes, out_sharding):
   X, = spvalues
   X_promoted = spvalues_to_arrays(spenv, X)
   mat = sparse.bcoo_reduce_sum(X_promoted, axes=axes)
@@ -750,8 +751,8 @@ def _sparsify_jaxpr(spenv: SparsifyEnv,
   args = spvalues_to_arrays(spenv, spvalues)
   args_flat, in_tree = tree_flatten(args)
   avals_flat = [core.get_aval(arg) for arg in args_flat]
-  sp_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(wrapped, debug_info=jaxpr.jaxpr.debug_info), avals_flat)
+  sp_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+      lu.wrap_init(wrapped, debug_info=jaxpr.jaxpr.debug_info.with_unknown_names()), avals_flat)
   sp_jaxpr = pe.ClosedJaxpr(sp_jaxpr, consts)
   assert out_tree is not None
   return sp_jaxpr, out_tree
@@ -802,7 +803,7 @@ def _pjit_sparse(spenv, *spvalues, jaxpr, in_shardings, out_shardings,
       None for _ in range(len(sp_call_jaxpr.out_avals) - len(out_layouts))
   )
 
-  out_flat = pjit.pjit_p.bind(
+  out_flat = pjit.jit_p.bind(
       *args_flat,
       jaxpr=sp_call_jaxpr,
       in_shardings=in_shardings,
@@ -817,7 +818,7 @@ def _pjit_sparse(spenv, *spvalues, jaxpr, in_shardings, out_shardings,
       compiler_options_kvs=compiler_options_kvs)
   return arrays_to_spvalues(spenv, tree_unflatten(out_tree, out_flat))
 
-sparse_rules_bcoo[pjit.pjit_p] = _pjit_sparse
+sparse_rules_bcoo[pjit.jit_p] = _pjit_sparse
 
 
 def _duplicate_for_sparse_spvalues(spvalues, params):
@@ -861,7 +862,7 @@ def _cond_sparse(spenv, pred, *operands, branches, **params):
                         "sparsified false_fun output",
                         treedefs[1], sp_branches[1].out_avals)
   args, _ = tree_flatten(spvalues_to_arrays(spenv, (pred, *operands)))
-  out_flat = lax.cond_p.bind(*args, branches=sp_branches, **params)
+  out_flat = lax.cond_p.bind(*args, branches=tuple(sp_branches), **params)
   out = tree_unflatten(treedefs[0], out_flat)
   return arrays_to_spvalues(spenv, out)
 

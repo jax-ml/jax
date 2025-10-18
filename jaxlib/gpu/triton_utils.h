@@ -17,17 +17,17 @@ limitations under the License.
 #define JAXLIB_GPU_TRITON_UTILS_H_
 
 #include <string>
+#include <string_view>
 
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "jaxlib/gpu/vendor.h"
 
 namespace jax::JAX_GPU_NAMESPACE {
 
-absl::StatusOr<std::string> ZlibUncompress(absl::string_view compressed);
-absl::StatusOr<std::string> GetTritonKernelCallName(absl::string_view opaque);
+absl::StatusOr<std::string> ZlibUncompress(std::string_view compressed);
+absl::StatusOr<std::string> GetTritonKernelCallName(std::string_view opaque);
 absl::StatusOr<std::string> GetTritonKernelCallSerializedMetadata(
-    absl::string_view opaque);
+    std::string_view opaque);
 
 }  // namespace jax::JAX_GPU_NAMESPACE
 

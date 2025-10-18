@@ -16,11 +16,11 @@ import numpy as np
 
 from jax._src import core
 from jax._src import dtypes
+from jax._src.lax import lax
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import ufuncs
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import set_module
-from jax import lax
 
 export = set_module('jax.numpy')
 
@@ -49,7 +49,7 @@ def blackman(M: int) -> Array:
     - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
   """
   M = core.concrete_or_error(int, M, "M argument of jnp.blackman")
-  dtype = dtypes.canonicalize_dtype(dtypes.float_)
+  dtype = dtypes.default_float_dtype()
   if M <= 1:
     return lax.full((M,), 1, dtype)
   n = lax.iota(dtype, M)
@@ -80,7 +80,7 @@ def bartlett(M: int) -> Array:
     - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
   """
   M = core.concrete_or_error(int, M, "M argument of jnp.bartlett")
-  dtype = dtypes.canonicalize_dtype(dtypes.float_)
+  dtype = dtypes.default_float_dtype()
   if M <= 1:
     return lax.full((M,), 1, dtype)
   n = lax.iota(dtype, M)
@@ -111,7 +111,7 @@ def hamming(M: int) -> Array:
     - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
   """
   M = core.concrete_or_error(int, M, "M argument of jnp.hamming")
-  dtype = dtypes.canonicalize_dtype(dtypes.float_)
+  dtype = dtypes.default_float_dtype()
   if M <= 1:
     return lax.full((M,), 1, dtype)
   n = lax.iota(dtype, M)
@@ -142,7 +142,7 @@ def hanning(M: int) -> Array:
     - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
   """
   M = core.concrete_or_error(int, M, "M argument of jnp.hanning")
-  dtype = dtypes.canonicalize_dtype(dtypes.float_)
+  dtype = dtypes.default_float_dtype()
   if M <= 1:
     return lax.full((M,), 1, dtype)
   n = lax.iota(dtype, M)
@@ -174,7 +174,7 @@ def kaiser(M: int, beta: ArrayLike) -> Array:
     - :func:`jax.numpy.hanning`: return a Hanning window of size M.
   """
   M = core.concrete_or_error(int, M, "M argument of jnp.kaiser")
-  dtype = dtypes.canonicalize_dtype(dtypes.float_)
+  dtype = dtypes.default_float_dtype()
   if M <= 1:
     return lax.full((M,), 1, dtype)
   n = lax.iota(dtype, M)

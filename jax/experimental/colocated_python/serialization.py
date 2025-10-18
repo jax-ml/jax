@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import base64
 import collections
+from collections.abc import Callable, Sequence
 import functools
 import io
-from typing import Any, Callable, Sequence
+import threading
+from typing import Any
 
 try:
   import cloudpickle  # type: ignore[import-not-found]
@@ -35,7 +37,74 @@ import numpy as np
 
 DeviceList = xc.DeviceList
 
-@jax.util.cache(max_size=None)
+
+class _CommonObjectState(threading.local):
+  """Tracks repeated objects within a single `_serialize()` or `_deserialize()`.
+
+  It is common for `_serialize(x)` to be called with `x` being a nested
+  container or capturing other objects in a closure, with many references
+  pointing to only a few unique objects. The logic below
+  (`_make_reduce_func_with_common_obj`) avoids duplicating object serialization
+  by reducing a reference handle instead of the full object when an equal object
+  is repeatedly seen.
+  """
+
+  def __init__(self):
+    # Map from a common object key to its ID. Any objects with a matching key
+    # will use the common object ID instead of the full object during
+    # serialization.
+    self.common_obj_index: dict[Any, int] | None = None
+
+    # Common object that has been reconstructed when their key was seen for the
+    # first time during deserialization.
+    self.common_obj: list[Any] | None = None
+
+
+_common_obj_state = _CommonObjectState()
+
+
+def _wrapped_unreduce_func_with_new_common_obj(
+    common_obj_id, unreduce_func, unreduce_args):
+  """Unreduces a new common object."""
+  assert _common_obj_state.common_obj is not None
+  obj = unreduce_func(*unreduce_args)
+  assert len(_common_obj_state.common_obj) == common_obj_id, (
+      f"Expected {common_obj_id} common objects, but got"
+      f" {len(_common_obj_state.common_obj)}. This can happen if serialization"
+      " and deserialization of objects happened in different orders."
+  )
+  _common_obj_state.common_obj.append(obj)
+  return obj
+
+
+def _wrapped_unreduce_func_with_existing_common_obj(common_obj_id):
+  """Unreduces a common object that has already appeared."""
+  assert _common_obj_state.common_obj is not None
+  return _common_obj_state.common_obj[common_obj_id]
+
+
+def _make_reduce_func_with_common_obj(
+    reduce_func: Callable[[Any], tuple[Any, Any]],
+) -> Callable[[Any], tuple[Any, Any]]:
+  """Wraps a reduce function to serialize a common object once."""
+
+  @functools.wraps(reduce_func)
+  def wrapped_reduce_func(obj):
+    assert _common_obj_state.common_obj_index is not None
+    common_obj_id = _common_obj_state.common_obj_index.get(obj)
+    if common_obj_id is None:
+      unreduced_func, unreduced_args = reduce_func(obj)
+      common_obj_id = len(_common_obj_state.common_obj_index)
+      _common_obj_state.common_obj_index[obj] = common_obj_id
+      return _wrapped_unreduce_func_with_new_common_obj, (
+          common_obj_id, unreduced_func, unreduced_args)
+    else:
+      return _wrapped_unreduce_func_with_existing_common_obj, (common_obj_id,)
+
+  return wrapped_reduce_func
+
+
+@jax._src.util.cache(max_size=None)
 def _get_cpu_device_map() -> dict[int, jax.Device]:
   """Returns a map from a device id to a matching device."""
   cpu_device_map: dict[int, jax.Device] = {}
@@ -83,46 +152,69 @@ def _lookup_cpu_device(
   return d
 
 
+@_make_reduce_func_with_common_obj
 def _reduce_mesh(
     mesh: jax.sharding.Mesh,
 ) -> tuple[Callable[..., jax.sharding.Mesh], Any]:
-  def make_mesh(
-      mesh_device_ids: np.ndarray, axis_names: Any
-  ) -> jax.sharding.Mesh:
-    cpu_device_map = _get_cpu_device_map()
-    mesh_devices = np.vectorize(
-        functools.partial(_lookup_cpu_device, cpu_device_map)
-    )(mesh_device_ids)
-    return jax.sharding.Mesh(mesh_devices, axis_names)
-
   mesh_device_ids = np.vectorize(lambda d: d.id, otypes=[int])(mesh.devices)
-  return make_mesh, (mesh_device_ids, mesh.axis_names)
+  return _unreduce_mesh, (mesh_device_ids, mesh.axis_names, mesh.axis_types)
 
 
+def _unreduce_mesh(
+    mesh_device_ids: np.ndarray, axis_names: Any, axis_types: Any
+) -> jax.sharding.Mesh:
+  cpu_device_map = _get_cpu_device_map()
+  mesh_devices = np.vectorize(
+      functools.partial(_lookup_cpu_device, cpu_device_map)
+  )(mesh_device_ids)
+  return jax.sharding.Mesh(mesh_devices, axis_names, axis_types)
+
+
+@_make_reduce_func_with_common_obj
+def _reduce_named_sharding(
+    sharding: jax.sharding.NamedSharding,
+) -> tuple[Callable[..., jax.sharding.NamedSharding], Any]:
+  assert isinstance(sharding.mesh, jax.sharding.Mesh), "Only Mesh is supported"
+  reduced_mesh = _reduce_mesh(sharding.mesh)
+  return _unreduce_named_sharding, (
+      reduced_mesh, sharding.spec, sharding.memory_kind)
+
+
+def _unreduce_named_sharding(reduced_mesh, spec, memory_kind):
+  mesh = reduced_mesh[0](*reduced_mesh[1])
+  return jax.NamedSharding(mesh, spec, memory_kind=memory_kind)
+
+
+@_make_reduce_func_with_common_obj
 def _reduce_device_list(
     device_list: DeviceList,
 ) -> tuple[Callable[..., DeviceList], Any]:
-  def make_device_list(device_ids: Sequence[int]) -> DeviceList:
-    cpu_device_map = _get_cpu_device_map()
-    devices = np.vectorize(
-        functools.partial(_lookup_cpu_device, cpu_device_map)
-    )(device_ids)
-    return DeviceList(tuple(devices))
-
   device_ids = [d.id for d in device_list]
-  return make_device_list, (device_ids,)
+  return _unreduce_device_list, (device_ids,)
 
 
+def _unreduce_device_list(device_ids: Sequence[int]) -> DeviceList:
+  cpu_device_map = _get_cpu_device_map()
+  devices = np.vectorize(functools.partial(_lookup_cpu_device, cpu_device_map))(
+      device_ids)
+  return DeviceList(tuple(devices))
+
+
+@_make_reduce_func_with_common_obj
 def _reduce_single_device_sharding(
     sharding: jax.sharding.SingleDeviceSharding,
 ) -> tuple[Callable[..., jax.sharding.SingleDeviceSharding], Any]:
+  return _unreduce_single_device_sharding, (
+      sharding.device_set.pop().id,
+      sharding.memory_kind)
 
-  def make_single_device_sharding(device_id: int):
-    cpu_device_map = _get_cpu_device_map()
-    device = _lookup_cpu_device(cpu_device_map, device_id)
-    return jax.sharding.SingleDeviceSharding(device)
 
-  return make_single_device_sharding, (sharding.device_set.pop().id,)
+def _unreduce_single_device_sharding(
+    device_id: int, memory_kind: str | None
+) -> jax.sharding.SingleDeviceSharding:
+  cpu_device_map = _get_cpu_device_map()
+  device = _lookup_cpu_device(cpu_device_map, device_id)
+  return jax.sharding.SingleDeviceSharding(device, memory_kind=memory_kind)
 
 
 def _serialize(obj: Any) -> bytes:
@@ -149,15 +241,22 @@ def _serialize(obj: Any) -> bytes:
   class _CustomPickler(cloudpickle.Pickler):
     dispatch_table = collections.ChainMap(
         {jax.sharding.Mesh: _reduce_mesh},
+        {jax.sharding.NamedSharding: _reduce_named_sharding},
         {DeviceList: _reduce_device_list},
         {jax.sharding.SingleDeviceSharding: _reduce_single_device_sharding},
         cloudpickle.CloudPickler.dispatch_table,  # pylint: disable=attribute-error
     )
     dispatch = dispatch_table
 
-  with io.BytesIO() as file:
-    _CustomPickler(file).dump(obj)
-    return file.getvalue()
+  assert _common_obj_state.common_obj_index is None, (
+      "_serialize() expects no recursive calls")
+  _common_obj_state.common_obj_index = {}
+  try:
+    with io.BytesIO() as file:
+      _CustomPickler(file).dump(obj)
+      return file.getvalue()
+  finally:
+    _common_obj_state.common_obj_index = None
 
 
 def _deserialize(serialized: bytes) -> Any:
@@ -172,7 +271,13 @@ def _deserialize(serialized: bytes) -> Any:
   if cloudpickle is None:
     raise ModuleNotFoundError('No module named "cloudpickle"')
 
-  return cloudpickle.loads(serialized)
+  assert _common_obj_state.common_obj is None, (
+      "_deserialize() expects no recursive calls")
+  _common_obj_state.common_obj = []
+  try:
+    return cloudpickle.loads(serialized)
+  finally:
+    _common_obj_state.common_obj = None
 
 
 def _make_specs_for_serialized_specs(
@@ -201,7 +306,7 @@ def _serialize_specs(
   if not hasattr(np.dtypes, "StringDType"):
     raise TypeError(
         "Serializing Colocated Python requires StringDType. Please use"
-        " numpy to 2.0.0 or later, or explicityly provide an output spec"
+        " numpy to 2.0.0 or later, or explicitly provide an output spec"
         " function."
     )
 
@@ -223,7 +328,9 @@ def _serialize_specs(
       jax.device_put(s_np_array, device) for device in addressable_devices
   ]
   return jax.make_array_from_single_device_arrays(
-      arrays=out_arrays, sharding=replicated_sharding, shape=(),
+      arrays=out_arrays,
+      sharding=replicated_sharding,
+      shape=(),
   )
 
 

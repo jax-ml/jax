@@ -17,10 +17,13 @@
 
 from __future__ import annotations
 
+import importlib
 import gc
 import os
 import pathlib
 import re
+from types import ModuleType
+
 
 try:
   import jaxlib as jaxlib
@@ -33,7 +36,7 @@ except ModuleNotFoundError as err:
 import jax.version
 from jax.version import _minimum_jaxlib_version as _minimum_jaxlib_version_str
 try:
-  import jaxlib.version
+  import jaxlib.version  # noqa: F401
 except Exception as err:
   # jaxlib is too old to have version number.
   msg = f'This version of jax requires jaxlib version >= {_minimum_jaxlib_version_str}.'
@@ -83,16 +86,38 @@ version = check_jaxlib_version(
 import jaxlib.cpu_feature_guard as cpu_feature_guard
 cpu_feature_guard.check_cpu_features()
 
-import jaxlib.lapack as lapack  # noqa: F401
-import jaxlib.utils as utils  # noqa: F401
-import jaxlib.xla_extension as xla_extension  # noqa: F401
-from jaxlib.xla_extension import guard_lib as guard_lib  # noqa: F401
-from jaxlib.xla_extension import jax_jit as jax_jit  # noqa: F401
-from jaxlib.xla_extension import pmap_lib as pmap_lib  # noqa: F401
-from jaxlib.xla_extension import pytree as pytree  # noqa: F401
 import jaxlib.xla_client as xla_client  # noqa: F401
 
-from jaxlib.xla_extension import Device as Device  # noqa: F401
+# Jaxlib code is split between the Jax and the XLA repositories.
+# Only for the internal usage of the JAX developers, we expose a version
+# number that can be used to perform changes without breaking the main
+# branch on the Jax github.
+jaxlib_extension_version: int = getattr(xla_client, '_version', 0)
+ifrt_version: int = getattr(xla_client, '_ifrt_version', 0)
+
+import jaxlib.lapack as lapack  # noqa: F401
+import jaxlib.utils as utils  # noqa: F401
+import jaxlib._jax as _jax  # noqa: F401
+
+
+
+import jaxlib.mlir._mlir_libs._jax_mlir_ext as jax_mlir_ext  # noqa: F401
+from jaxlib._jax import guard_lib as guard_lib  # noqa: F401
+from jaxlib._jax import jax_jit as jax_jit  # noqa: F401
+from jaxlib._jax import pmap_lib as pmap_lib  # noqa: F401
+from jaxlib._jax import pytree as pytree  # noqa: F401
+from jaxlib._jax import Device as Device  # noqa: F401
+from jaxlib import _profiler as _profiler  # noqa: F401
+from jaxlib import _profile_data as _profile_data  # noqa: F401
+
+from jaxlib._jax import ffi as ffi  # noqa: F401
+import jaxlib.cpu_sparse as cpu_sparse  # noqa: F401
+has_cpu_sparse = True
+
+import jaxlib.weakref_lru_cache as weakref_lru_cache  # noqa: F401
+import jaxlib._pretty_printer as _pretty_printer  # noqa: F401
+
+import jaxlib._ifrt_proxy as ifrt_proxy  # noqa: F401
 
 
 # XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882
@@ -100,34 +125,27 @@ def _xla_gc_callback(*args):
   xla_client._xla.collect_garbage()
 gc.callbacks.append(_xla_gc_callback)
 
-try:
-  import jaxlib.cuda._versions as cuda_versions  # pytype: disable=import-error  # noqa: F401
-except ImportError:
+cuda_versions: ModuleType | None
+for pkg_name in ['jax_cuda13_plugin', 'jax_cuda12_plugin', 'jaxlib.cuda']:
   try:
-    import jax_cuda12_plugin._versions as cuda_versions  # pytype: disable=import-error  # noqa: F401
+    cuda_versions = importlib.import_module(
+        f'{pkg_name}._versions'
+    )
   except ImportError:
     cuda_versions = None
+  else:
+    break
 
 import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error  # noqa: F401
 import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error  # noqa: F401
 import jaxlib.gpu_prng as gpu_prng  # pytype: disable=import-error  # noqa: F401
 import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error  # noqa: F401
 
-# Jaxlib code is split between the Jax and the Tensorflow repositories.
-# Only for the internal usage of the JAX developers, we expose a version
-# number that can be used to perform changes without breaking the main
-# branch on the Jax github.
-jaxlib_extension_version: int = getattr(xla_client, '_version', 0)
-ifrt_version: int = getattr(xla_client, '_ifrt_version', 0)
-
 import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error  # noqa: F401
 import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error  # noqa: F401
 
 import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # pytype: disable=import-error  # noqa: F401
 import jaxlib.mosaic.python.tpu as tpu  # pytype: disable=import-error  # noqa: F401
-
-# Version number for MLIR:Python APIs, provided by jaxlib.
-mlir_api_version = xla_client.mlir_api_version
 
 # TODO(rocm): check if we need the same for rocm.
 
@@ -144,17 +162,18 @@ def _cuda_path() -> str | None:
     `nvvm/libdevice/libdevice.10.bc`.
     """
     try:
-      from nvidia import cuda_nvcc  # pytype: disable=import-error
+      nvcc_module = importlib.import_module('nvidia.cu13')
     except ImportError:
-      return None
+      try:
+        nvcc_module = importlib.import_module('nvidia.cuda_nvcc')
+      except ImportError:
+        return None
 
-    if hasattr(cuda_nvcc, '__file__') and cuda_nvcc.__file__ is not None:
-      # `cuda_nvcc` is a regular package.
-      cuda_nvcc_path = pathlib.Path(cuda_nvcc.__file__).parent
-    elif hasattr(cuda_nvcc, '__path__') and cuda_nvcc.__path__ is not None:
-      # `cuda_nvcc` is a namespace package, which might have multiple paths.
-      cuda_nvcc_path = None
-      for path in cuda_nvcc.__path__:
+    cuda_nvcc_path = None
+    if hasattr(nvcc_module, '__file__') and nvcc_module.__file__ is not None:
+      cuda_nvcc_path = pathlib.Path(nvcc_module.__file__).parent
+    elif hasattr(nvcc_module, '__path__') and nvcc_module.__path__ is not None:
+      for path in nvcc_module.__path__:
         if (pathlib.Path(path) / 'bin' / 'ptxas').exists():
           cuda_nvcc_path = pathlib.Path(path)
           break
@@ -163,9 +182,21 @@ def _cuda_path() -> str | None:
 
     return str(cuda_nvcc_path)
 
+  def _try_bazel_runfiles() -> str | None:
+    """Try to get the path to the cuda installation in bazel runfiles."""
+    python_runfiles = os.environ.get('PYTHON_RUNFILES')
+    if not python_runfiles:
+      return None
+    cuda_nvcc_root = os.path.join(python_runfiles, 'cuda_nvcc')
+    if os.path.exists(cuda_nvcc_root):
+      return cuda_nvcc_root
+    return None
+
   if (path := _try_cuda_root_environment_variable()) is not None:
     return path
   elif (path := _try_cuda_nvcc_import()) is not None:
+    return path
+  elif (path := _try_bazel_runfiles()) is not None:
     return path
 
   return None

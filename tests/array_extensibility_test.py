@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import functools
-from typing import Any, Callable, NamedTuple
+from typing import Any, NamedTuple
+from collections.abc import Callable
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -29,6 +30,9 @@ from jax._src import test_util as jtu
 config.parse_flags_with_absl()
 
 
+@functools.partial(jax.tree_util.register_dataclass,
+                   data_fields=['x'],
+                   meta_fields=[])
 class JaxArrayWrapper:
   """Class that provides a __jax_array__ method."""
   x: ArrayLike
@@ -81,6 +85,7 @@ class ShapeDtype:
 
 Bool = ShapeDtype(bool)
 Int = ShapeDtype(int)
+UInt = ShapeDtype('uint32')
 Uint8 = ShapeDtype('uint8')
 Float = ShapeDtype(float)
 Complex = ShapeDtype(complex)
@@ -92,6 +97,8 @@ SKIPPED_APIS = [
  'apply_along_axis',
  'apply_over_axes',
  'arange',
+ 'array_str',
+ 'array_repr',
  'astype',
  'bartlett',
  'bfloat16',
@@ -101,6 +108,7 @@ SKIPPED_APIS = [
  'bool_',
  'broadcast_shapes',
  'c_',
+ 'can_cast',
  'cdouble',
  'character',
  'complex128',
@@ -233,14 +241,12 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.argmin, Float[10]),
   NumPyAPI.sig(jnp.argpartition, Float[10], kth=5),
   NumPyAPI.sig(jnp.argsort, Float[10]),
-  # NumPyAPI.sig(jnp.argwhere, [float], [(10,)]),
+  NumPyAPI.sig(jnp.argwhere, Float[10]),
   NumPyAPI.sig(jnp.around, Float[5]),
   NumPyAPI.sig(jnp.array, Float[5]),
   NumPyAPI.sig(jnp.array_equal, Float[5], Float[5]),
   NumPyAPI.sig(jnp.array_equiv, Float[5], Float[5]),
-  # NumPyAPI.sig(jnp.array_repr, Float[5]),
   NumPyAPI.sig(jnp.array_split, Float[9], indices_or_sections=3),
-  # NumPyAPI.sig(jnp.array_str, Float[5]),
   NumPyAPI.sig(jnp.asarray, Float[5]),
   NumPyAPI.sig(jnp.asin, Float[5]),
   NumPyAPI.sig(jnp.asinh, Float[5]),
@@ -251,7 +257,7 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.atleast_2d, Float[5]),
   NumPyAPI.sig(jnp.atleast_3d, Float[5]),
   NumPyAPI.sig(jnp.average, Float[10]),
-  # NumPyAPI.sig(jnp.bincount, int[10]),
+  NumPyAPI.sig(jnp.bincount, Int[10]),
   NumPyAPI.sig(jnp.bitwise_and, Int[5], Int[5]),
   NumPyAPI.sig(jnp.bitwise_count, Int[5]),
   NumPyAPI.sig(jnp.bitwise_invert, Int[5]),
@@ -261,16 +267,15 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.bitwise_right_shift, Int[5], Int[5]),
   NumPyAPI.sig(jnp.bitwise_xor, Int[5], Int[5]),
   NumPyAPI.sig(jnp.broadcast_arrays, Float[5]),
-  # NumPyAPI.sig(jnp.broadcast_to, Float[()], shape=(10,)),
-  # NumPyAPI.sig(jnp.can_cast, Float[()], to='int32'),
+  NumPyAPI.sig(jnp.broadcast_to, Float[()], shape=(10,)),
   NumPyAPI.sig(jnp.cbrt, Float[5]),
   NumPyAPI.sig(jnp.ceil, Float[5]),
-  # NumPyAPI.sig(jnp.choose, [int, float], [(3,), (10,)]),
+  NumPyAPI.sig(jnp.choose, Int[3], [Float[3], Float[3], Float[3]], mode='clip'),
   NumPyAPI.sig(jnp.clip, Float[5]),
-  # NumPyAPI.sig(jnp.column_stack, [float], [(3, 10)]),
+  NumPyAPI.sig(jnp.column_stack, [Float[5], Float[5], Float[5]]),
   NumPyAPI.sig(jnp.compress, Float[10], Bool[10]),
-  # NumPyAPI.sig(jnp.concat, [Float[5], Float[5]]),
-  # NumPyAPI.sig(jnp.concatenate, [Float[5], Float[5]]),
+  NumPyAPI.sig(jnp.concat, [Float[5], Float[5]]),
+  NumPyAPI.sig(jnp.concatenate, [Float[5], Float[5]]),
   NumPyAPI.sig(jnp.conj, Float[5]),
   NumPyAPI.sig(jnp.conjugate, Float[5]),
   NumPyAPI.sig(jnp.convolve, Float[7], Float[3]),
@@ -280,18 +285,18 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.correlate, Float[7], Float[3]),
   NumPyAPI.sig(jnp.cos, Float[5]),
   NumPyAPI.sig(jnp.cosh, Float[5]),
-  # NumPyAPI.sig(np.count_nonzero, [float], [(10,)]),
-  # NumPyAPI.sig(np.cov, [float], [(10,)]),
-  # NumPyAPI.sig(np.cross, [float, float], [(3,), (3,)]),
-  # NumPyAPI.sig(np.cumprod, [float], [(10,)]),
-  # NumPyAPI.sig(np.cumsum, [float], [(10,)]),
-  # NumPyAPI.sig(np.cumulative_prod, [float], [(10,)]),
-  # NumPyAPI.sig(np.cumulative_sum, [float], [(10,)]),
+  NumPyAPI.sig(jnp.count_nonzero, Float[10]),
+  NumPyAPI.sig(jnp.cov, Float[10]),
+  NumPyAPI.sig(jnp.cross, Float[3], Float[3]),
+  NumPyAPI.sig(jnp.cumprod, Float[5]),
+  NumPyAPI.sig(jnp.cumsum, Float[5]),
+  NumPyAPI.sig(jnp.cumulative_prod, Float[5]),
+  NumPyAPI.sig(jnp.cumulative_sum, Float[5]),
   NumPyAPI.sig(jnp.deg2rad, Float[5]),
   NumPyAPI.sig(jnp.degrees, Float[5]),
-  # NumPyAPI.sig(jnp.delete, Float[5], Int[()]),
+  NumPyAPI.sig(jnp.delete, Float[5], Int[()]),
   NumPyAPI.sig(jnp.diag, Float[5]),
-  # NumPyAPI.sig(jnp.diag_indices_from, Float[5, 5]),
+  NumPyAPI.sig(jnp.diag_indices_from, Float[5, 5]),
   NumPyAPI.sig(jnp.diagflat, Float[5]),
   NumPyAPI.sig(jnp.diagonal, Float[5, 5]),
   NumPyAPI.sig(jnp.diff, Float[5]),
@@ -300,13 +305,13 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.divmod, Float[5], Float[5]),
   NumPyAPI.sig(jnp.dot, Float[5], Float[5]),
   NumPyAPI.sig(jnp.dsplit, Float[3, 5, 6], indices_or_sections=2),
-  # NumPyAPI.sig(jnp.dstack, Float[3, 5]),
+  NumPyAPI.sig(jnp.dstack, [Float[3, 5, 1], Float[3, 5, 3]]),
   NumPyAPI.sig(jnp.ediff1d, Float[5]),
   NumPyAPI.sig(jnp.empty_like, Float[5]),
   NumPyAPI.sig(jnp.equal, Float[5], Float[5]),
   NumPyAPI.sig(jnp.exp, Float[5]),
   NumPyAPI.sig(jnp.exp2, Float[5]),
-  # NumPyAPI.sig(jnp.expand_dims, Float[5], axis=0),
+  NumPyAPI.sig(jnp.expand_dims, Float[5], axis=0),
   NumPyAPI.sig(jnp.expm1, Float[5]),
   NumPyAPI.sig(jnp.extract, Bool[5], Float[5]),
   NumPyAPI.sig(jnp.fabs, Float[5]),
@@ -332,11 +337,11 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.greater, Float[5], Float[5]),
   NumPyAPI.sig(jnp.greater_equal, Float[5], Float[5]),
   NumPyAPI.sig(jnp.heaviside, Float[5], Float[5]),
-  # NumPyAPI.sig(jnp.histogram, Float[5]),
+  NumPyAPI.sig(jnp.histogram, Float[5]),
   NumPyAPI.sig(jnp.histogram2d, Float[5], Float[5]),
   NumPyAPI.sig(jnp.histogram_bin_edges, Float[5]),
-  # NumPyAPI.sig(jnp.histogramdd, Float[5, 3]),
-  # NumPyAPI.sig(jnp.hsplit, Float[3, 5], Int[1]),
+  NumPyAPI.sig(jnp.histogramdd, Float[5, 3]),
+  NumPyAPI.sig(jnp.hsplit, Float[3, 6], indices_or_sections=2),
   NumPyAPI.sig(jnp.hstack, (Float[5], Float[5])),
   NumPyAPI.sig(jnp.hypot, Float[5], Float[5]),
   NumPyAPI.sig(jnp.i0, Float[5]),
@@ -353,8 +358,8 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.isin, Int[5], Int[10]),
   NumPyAPI.sig(jnp.isinf, Float[5]),
   NumPyAPI.sig(jnp.isnan, Float[5]),
-  # NumPyAPI.sig(jnp.isneginf, Float[5]),
-  # NumPyAPI.sig(jnp.isposinf, Float[5]),
+  NumPyAPI.sig(jnp.isneginf, Float[5]),
+  NumPyAPI.sig(jnp.isposinf, Float[5]),
   NumPyAPI.sig(jnp.isreal, Float[5]),
   NumPyAPI.sig(jnp.isrealobj, Float[5]),
   NumPyAPI.sig(jnp.isscalar, Float[()]),
@@ -375,7 +380,7 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.logical_or, Int[5], Int[5]),
   NumPyAPI.sig(jnp.logical_xor, Int[5], Int[5]),
   NumPyAPI.sig(jnp.matmul, Float[5, 5], Float[5]),
-  # NumPyAPI.sig(jnp.matrix_transpose, Float[5, 6]),
+  NumPyAPI.sig(jnp.matrix_transpose, Float[5, 6]),
   NumPyAPI.sig(jnp.matvec, Float[5, 5], Float[5]),
   NumPyAPI.sig(jnp.max, Float[5]),
   NumPyAPI.sig(jnp.maximum, Float[5], Float[5]),
@@ -411,7 +416,7 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.ones_like, Float[5]),
   NumPyAPI.sig(jnp.outer, Float[5], Float[5]),
   NumPyAPI.sig(jnp.packbits, Int[5]),
-  # NumPyAPI.sig(jnp.pad, Float[5], pad_width=2),
+  NumPyAPI.sig(jnp.pad, Float[5], pad_width=2),
   NumPyAPI.sig(jnp.partition, Float[5], kth=3),
   NumPyAPI.sig(jnp.percentile, Float[5], q=75),
   NumPyAPI.sig(jnp.permute_dims, Float[3, 5], axes=(1, 0)),
@@ -427,8 +432,8 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.polysub, Float[5], Float[5]),
   NumPyAPI.sig(jnp.polyval, Float[5], Float[10]),
   NumPyAPI.sig(jnp.positive, Float[5]),
-  # NumPyAPI.sig(jnp.pow, Float[5], Float[5]),
-  # NumPyAPI.sig(jnp.power, Float[5], Float[5]),
+  NumPyAPI.sig(jnp.pow, Float[5], Float[5]),
+  NumPyAPI.sig(jnp.power, Float[5], Float[5]),
   NumPyAPI.sig(jnp.prod, Float[5]),
   NumPyAPI.sig(jnp.ptp, Float[5]),
   NumPyAPI.sig(jnp.put, Float[5], Int[()], Float[()], inplace=False),
@@ -437,12 +442,12 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.rad2deg, Float[5]),
   NumPyAPI.sig(jnp.radians, Float[5]),
   NumPyAPI.sig(jnp.ravel, Float[5]),
-  # NumPyAPI.sig(jnp.ravel_multi_index, Int[2, 5], dims=(2, 3)),
+  NumPyAPI.sig(jnp.ravel_multi_index, [Uint8[5], Uint8[5]], dims=(8, 9)),
   NumPyAPI.sig(jnp.real, Complex[5]),
   NumPyAPI.sig(jnp.reciprocal, Float[5]),
   NumPyAPI.sig(jnp.remainder, Float[5], Float[5]),
-  # NumPyAPI.sig(jnp.repeat, Float[5], Int[5]),
-  # NumPyAPI.sig(jnp.reshape, Float[6], (2, 3)),
+  NumPyAPI.sig(jnp.repeat, Float[5], repeats=np.array([2, 3, 1, 5, 4])),
+  NumPyAPI.sig(jnp.reshape, Float[6], shape=(2, 3)),
   NumPyAPI.sig(jnp.resize, Float[6], new_shape=(2, 3)),
   NumPyAPI.sig(jnp.right_shift, Int[5], Int[5]),
   NumPyAPI.sig(jnp.rint, Float[5]),
@@ -452,7 +457,7 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.rot90, Float[5, 3]),
   NumPyAPI.sig(jnp.round, Float[5]),
   NumPyAPI.sig(jnp.searchsorted, Float[5], Float[5]),
-  # NumPyAPI.sig(jnp.select, [Bool[5], Bool[5]], [Float[5], Float[5]], Float[5]),
+  NumPyAPI.sig(jnp.select, [Bool[5], Bool[5]], [Float[5], Float[5]], Float[()]),
   NumPyAPI.sig(jnp.setdiff1d, Int[5], Int[5]),
   NumPyAPI.sig(jnp.setxor1d, Int[5], Int[5]),
   NumPyAPI.sig(jnp.shape, Float[5, 3]),
@@ -469,7 +474,7 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.sqrt, Float[5]),
   NumPyAPI.sig(jnp.square, Float[5]),
   NumPyAPI.sig(jnp.squeeze, Float[5]),
-  # NumPyAPI.sig(jnp.stack, [Float[2, 3], Float[2, 3]], axis=1),
+  NumPyAPI.sig(jnp.stack, [Float[2, 3], Float[2, 3]], axis=1),
   NumPyAPI.sig(jnp.std, Float[5]),
   NumPyAPI.sig(jnp.subtract, Float[5], Float[5]),
   NumPyAPI.sig(jnp.sum, Float[5]),
@@ -479,9 +484,9 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.tan, Float[5]),
   NumPyAPI.sig(jnp.tanh, Float[5]),
   NumPyAPI.sig(jnp.tensordot, Float[2, 3, 4], Float[3, 4, 5]),
-  # NumPyAPI.sig(jnp.tile, Float[5], reps=(2,)),
+  NumPyAPI.sig(jnp.tile, Float[5], reps=(2,)),
   NumPyAPI.sig(jnp.trace, Float[5, 5]),
-  # NumPyAPI.sig(jnp.transpose, Float[5, 6]),
+  NumPyAPI.sig(jnp.transpose, Float[5, 6]),
   NumPyAPI.sig(jnp.trapezoid, Float[5]),
   NumPyAPI.sig(jnp.tril, Float[5, 6]),
   NumPyAPI.sig(jnp.tril_indices_from, Float[5, 6]),
@@ -547,6 +552,34 @@ class JaxArrayTests(jtu.JaxTestCase):
     self.assertIsInstance(result, jax.Array)
     self.assertEqual(result.shape, obj.shape)
     self.assertEqual(result.dtype, obj.dtype)
+
+  @parameterized.named_parameters(
+      {"testcase_name": "subscript-form", "args": ("jk,k->j", Float[5, 3], Float[3])},
+      {"testcase_name": "index-form", "args": (Float[5, 3], (0, 1), Float[3], (1,), (0,))},
+  )
+  def test_einsum(self, args):
+    rng = jtu.rand_default(self.rng())
+    def make_arg(arg):
+      if isinstance(arg, jax.ShapeDtypeStruct):
+        return rng(arg.shape, arg.dtype)
+      return arg
+    args = jax.tree.map(make_arg, args)
+
+    def wrap_array(arg):
+      if isinstance(arg, (jax.Array, np.ndarray)):
+        return JaxArrayWrapper(arg)
+      return arg
+    wrapped_args = jax.tree.map(wrap_array, args)
+
+    expected = jnp.einsum(*args)
+    actual = jnp.einsum(*wrapped_args)
+
+    self.assertAllClose(actual, expected, atol=0, rtol=0)
+
+
+@jtu.with_config(jax_disable_jit=True)
+class JaxArrayTestsNoJit(JaxArrayTests):
+  pass
 
 
 if __name__ == "__main__":

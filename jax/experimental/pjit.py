@@ -15,10 +15,28 @@
 # ruff: noqa
 
 from jax._src.pjit import (
-  pjit as pjit,
-  pjit_p as pjit_p,
+  pjit as _deprecated_pjit,
 )
 from jax._src.sharding_impls import (
   AUTO as AUTO,
-  UNSPECIFIED as _UNSPECIFIED,
 )
+
+_deprecations = {
+    # Added Oct 13, 2025
+    "pjit": (
+        (
+            "jax.experimental.pjit.pjit has been deprecated. Please use"
+            " `jax.jit` instead."
+        ),
+        _deprecated_pjit,
+    )
+}
+
+import typing as _typing
+if _typing.TYPE_CHECKING:
+  pjit = _deprecated_pjit
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing

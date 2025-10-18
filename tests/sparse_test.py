@@ -16,6 +16,8 @@ import contextlib
 from functools import partial
 import itertools
 import math
+import os
+from pathlib import Path
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -31,16 +33,22 @@ from jax.experimental.sparse import bcsr as sparse_bcsr
 from jax.experimental.sparse import util as sparse_util
 from jax.experimental.sparse import test_util as sptu
 from jax.experimental.sparse import _lowerings
-from jax._src import xla_bridge
-from jax._src.lib import gpu_sparse
 from jax import jit
 from jax import vmap
 from jax._src import test_util as jtu
-from jax.interpreters import mlir
 import jax.numpy as jnp
-from jax.util import split_list
+from jax._src.util import split_list
 import numpy as np
 import scipy.sparse
+
+def get_rocm_version():
+  rocm_path = os.environ.get("ROCM_PATH", "/opt/rocm")
+  version_path = Path(rocm_path) / ".info" / "version"
+  if not version_path.exists():
+    raise FileNotFoundError(f"Expected ROCm version file at {version_path}")
+  version_str = version_path.read_text().strip()
+  major, minor, *_ = version_str.split(".")
+  return int(major), int(minor)
 
 jax.config.parse_flags_with_absl()
 
@@ -208,6 +216,14 @@ class cuSparseTest(sptu.SparseTestCase):
     transpose=[True, False],
   )
   def test_csr_matvec(self, shape, dtype, transpose):
+    if (
+        jtu.is_device_rocm() and
+        get_rocm_version() < (6, 4) and
+        dtype in (jtu.dtypes.floating + jtu.dtypes.complex)
+    ):
+      # TODO: Remove this check when ROCm 6.4+ is the minimum supported version
+      self.skipTest("ROCm <6.4 bug: NaN propagation when beta==0 (fixed in ROCm 6.4.0)")
+
     op = lambda M: M.T if transpose else M
 
     v_rng = jtu.rand_default(self.rng())
@@ -228,6 +244,14 @@ class cuSparseTest(sptu.SparseTestCase):
       transpose=[True, False],
   )
   def test_csr_matmat(self, shape, dtype, transpose):
+    if (
+        jtu.is_device_rocm() and
+        get_rocm_version() < (6, 4) and
+        dtype in (jtu.dtypes.floating + jtu.dtypes.complex)
+    ):
+      # TODO: Remove this check when ROCm 6.4+ is the minimum supported version
+      self.skipTest("ROCm <6.4 bug: NaN propagation when beta==0 (fixed in ROCm 6.4.0)")
+
     op = lambda M: M.T if transpose else M
 
     B_rng = jtu.rand_default(self.rng())
@@ -411,25 +435,6 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(matmat_expected, matmat_unsorted)
     self.assertArraysEqual(matmat_expected, matmat_unsorted_fallback)
 
-  @jtu.run_on_devices("gpu")
-  def test_gpu_translation_rule(self):
-    version = xla_bridge.get_backend().platform_version
-    if "rocm" not in version.split():
-      cuda_version = None if version == "<unknown>" else int(
-          version.split()[-1])
-      if cuda_version is None or cuda_version < 11000:
-        self.assertFalse(gpu_sparse and gpu_sparse.cuda_is_supported)
-        self.assertNotIn(sparse.csr_todense_p,
-                         mlir._platform_specific_lowerings["cuda"])
-      else:
-        self.assertTrue(gpu_sparse and gpu_sparse.cuda_is_supported)
-        self.assertIn(sparse.csr_todense_p,
-                      mlir._platform_specific_lowerings["cuda"])
-    else:
-      self.assertTrue(gpu_sparse and gpu_sparse.rocm_is_supported)
-      self.assertIn(sparse.csr_todense_p,
-                    mlir._platform_specific_lowerings["rocm"])
-
   @jtu.sample_product(
     shape=[(5, 8), (8, 5), (5, 5), (8, 8)],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
@@ -587,6 +592,8 @@ class cuSparseTest(sptu.SparseTestCase):
   )
   @jtu.run_on_devices("gpu")
   def test_csr_spmv(self, shape, dtype, transpose):
+    tol = {np.float32: 2E-5, np.float64: 2E-14}
+
     rng_sparse = sptu.rand_sparse(self.rng())
     rng_dense = jtu.rand_default(self.rng())
 
@@ -599,7 +606,7 @@ class cuSparseTest(sptu.SparseTestCase):
         data, indices.astype('int32'), indptr.astype('int32'), vec,
         transpose=transpose,
         shape=mat.shape)
-    self.assertArraysAllClose(actual, expected)
+    self.assertArraysAllClose(actual, expected, atol=tol, rtol=tol)
 
   @jtu.sample_product(
       shape=[(4, 5), (3, 4), (5, 4)],
@@ -1102,7 +1109,9 @@ class SparseObjectTest(sptu.SparseTestCase):
     _, bcoo_indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch,
                                                   n_dense=n_dense)
 
-    bcoo_to_bcsr = partial(sparse_bcsr._bcoo_to_bcsr, shape=shape)
+    bcoo_to_bcsr = partial(
+        sparse_bcsr._bcoo_to_bcsr, shape=shape, index_dtype=bcoo_indices.dtype
+    )
 
     args_maker_bcoo_to_bcsr = lambda: [bcoo_indices]
     self._CompileAndCheck(bcoo_to_bcsr, args_maker_bcoo_to_bcsr)
@@ -1177,7 +1186,12 @@ class SparseSolverTest(sptu.SparseTestCase):
       return sparse.linalg.spsolve(data, indices, indptr, b, tol, reorder)
     x = sparse_solve(data, indices, indptr, b)
 
-    self.assertAllClose(a @ x, b, rtol=1e-2, atol=1e-3)
+    self.assertAllClose(
+        jnp.matmul(a, x, precision=jax.lax.Precision.HIGHEST),
+        b,
+        rtol=1e-2,
+        atol=1e-3,
+    )
     self._CompileAndCheck(sparse_solve, args_maker)
 
   @jtu.sample_product(

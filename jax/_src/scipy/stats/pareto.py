@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax import lax
-import jax.numpy as jnp
+import numpy as np
+
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
@@ -52,7 +54,7 @@ def logpdf(x: ArrayLike, b: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1)
   scaled_x = lax.div(lax.sub(x, loc), scale)
   normalize_term = lax.log(lax.div(scale, b))
   log_probs = lax.neg(lax.add(normalize_term, lax.mul(lax.add(b, one), lax.log(scaled_x))))
-  return jnp.where(lax.lt(x, lax.add(loc, scale)), -jnp.inf, log_probs)
+  return jnp.where(lax.lt(x, lax.add(loc, scale)), -np.inf, log_probs)
 
 
 def pdf(x: ArrayLike, b: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:

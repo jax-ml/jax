@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
+import functools
 import os
 import shutil
 import subprocess
 import sys
 import unittest
-import functools
 
 from absl.testing import absltest
 import numpy as np
@@ -53,41 +52,47 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
     num_gpus_per_task = 1
     num_tasks = num_gpus // num_gpus_per_task
 
-    with contextlib.ExitStack() as exit_stack:
-      subprocesses = []
-      for task in range(num_tasks):
-        env = os.environ.copy()
-        env["JAX_PORT"] = str(port)
-        env["NUM_TASKS"] = str(num_tasks)
-        env["TASK"] = str(task)
-        if jtu.is_device_rocm():
-          env["HIP_VISIBLE_DEVICES"] = ",".join(
-              str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
-        else:
-          env["CUDA_VISIBLE_DEVICES"] = ",".join(
-              str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
-        args = [
-            sys.executable,
-            "-c",
-            ('import jax, os; '
-            'jax.distributed.initialize('
-                'f\'localhost:{os.environ["JAX_PORT"]}\', '
-                'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
-            'print(f\'{jax.local_device_count()},{jax.device_count()}\', end="")'
-            )
-        ]
-        proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, universal_newlines=True)
-        subprocesses.append(exit_stack.enter_context(proc))
+    if jax.device_count() < num_gpus:
+      raise unittest.SkipTest(
+          f"Test requires >={num_gpus} GPUs; got {jax.device_count()}."
+      )
 
-      try:
-        for proc in subprocesses:
-          out, _ = proc.communicate()
-          self.assertEqual(proc.returncode, 0)
-          self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
-      finally:
-        for proc in subprocesses:
-          proc.kill()
+    subprocesses = []
+    for task in range(num_tasks):
+      env = os.environ.copy()
+      env["JAX_PORT"] = str(port)
+      env["NUM_TASKS"] = str(num_tasks)
+      env["TASK"] = str(task)
+      if jtu.is_device_rocm():
+        env["HIP_VISIBLE_DEVICES"] = ",".join(
+            str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
+      else:
+        env["CUDA_VISIBLE_DEVICES"] = ",".join(
+            str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
+      args = [
+          sys.executable,
+          "-c",
+          ('import jax, os; '
+          'jax.distributed.initialize('
+              'f\'localhost:{os.environ["JAX_PORT"]}\', '
+              'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
+          'print(f\'{jax.local_device_count()},{jax.device_count()}\', end="")'
+          )
+      ]
+      proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, universal_newlines=True)
+      subprocesses.append(self.enter_context(proc))
+
+    try:
+      for proc in subprocesses:
+        out, err = proc.communicate()
+        self.assertEqual(proc.returncode, 0, msg=f"Process failed:\n\n{out}\n\n{err}")
+        self.assertEqual(
+            out, f"{num_gpus_per_task},{num_gpus}", msg=f"Process failed:\n\n{out}\n\n{err}",
+        )
+    finally:
+      for proc in subprocesses:
+        proc.kill()
 
   def test_distributed_jax_visible_devices(self):
     """Test jax_visible_devices works in distributed settings."""
@@ -99,49 +104,36 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
     num_gpus_per_task = 1
     num_tasks = num_gpus // num_gpus_per_task
 
-    with contextlib.ExitStack() as exit_stack:
-      subprocesses = []
-      for task in range(num_tasks):
-        env = os.environ.copy()
-        env["JAX_PORT"] = str(port)
-        env["NUM_TASKS"] = str(num_tasks)
-        env["TASK"] = str(task)
-        visible_devices = ",".join(
-            str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
+    subprocesses = []
+    for task in range(num_tasks):
+      env = os.environ.copy()
+      env["JAX_PORT"] = str(port)
+      env["NUM_TASKS"] = str(num_tasks)
+      env["TASK"] = str(task)
+      visible_devices = [
+          (task * num_gpus_per_task) + i for i in range(num_gpus_per_task)
+      ]
+      program = (
+        'import jax, os; '
+        'jax.distributed.initialize('
+        'f\'localhost:{os.environ["JAX_PORT"]}\', '
+        f'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"]), {visible_devices}); '
+        's = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(jax.numpy.ones(jax.local_device_count())); '
+        'print(f\'{jax.local_device_count()},{jax.device_count()},{s}\', end=""); '
+      )
+      args = [sys.executable, "-c", program]
+      proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, universal_newlines=True)
+      subprocesses.append(self.enter_context(proc))
 
-        if jtu.is_device_rocm():
-          program = (
-            'import jax, os; '
-            f'jax.config.update("jax_rocm_visible_devices", "{visible_devices}"); '
-            'jax.distributed.initialize('
-            'f\'localhost:{os.environ["JAX_PORT"]}\', '
-            'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
-            's = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(jax.numpy.ones(jax.local_device_count())); '
-            'print(f\'{jax.local_device_count()},{jax.device_count()},{s}\', end=""); '
-          )
-        else:
-          program = (
-            'import jax, os; '
-            f'jax.config.update("jax_cuda_visible_devices", "{visible_devices}"); '
-            'jax.distributed.initialize('
-            'f\'localhost:{os.environ["JAX_PORT"]}\', '
-            'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
-            's = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(jax.numpy.ones(jax.local_device_count())); '
-            'print(f\'{jax.local_device_count()},{jax.device_count()},{s}\', end=""); '
-          )
-        args = [sys.executable, "-c", program]
-        proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, universal_newlines=True)
-        subprocesses.append(exit_stack.enter_context(proc))
-
-      try:
-        for proc in subprocesses:
-          out, err = proc.communicate()
-          self.assertEqual(proc.returncode, 0, msg=f"Process failed:\n\n{err}")
-          self.assertRegex(out, f'{num_gpus_per_task},{num_gpus},\\[{num_gpus}.\\]$')
-      finally:
-        for proc in subprocesses:
-          proc.kill()
+    try:
+      for proc in subprocesses:
+        out, err = proc.communicate()
+        self.assertEqual(proc.returncode, 0, msg=f"Process failed:\n\n{err}")
+        self.assertRegex(out, f'{num_gpus_per_task},{num_gpus},\\[{num_gpus}.\\]$')
+    finally:
+      for proc in subprocesses:
+        proc.kill()
 
   def test_gpu_ompi_distributed_initialize(self):
     if not jtu.test_device_matches(['gpu']):
@@ -152,34 +144,33 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
     num_gpus = 4
     num_gpus_per_task = 1
 
-    with contextlib.ExitStack() as exit_stack:
-      args = [
-          'mpirun',
-          '--oversubscribe',
-          '--allow-run-as-root',
-          '-n',
-          str(num_gpus),
-          sys.executable,
-          '-c',
-          ('import jax, os; '
-          'jax.distributed.initialize(); '
-          'print(f\'{jax.local_device_count()},{jax.device_count()}\' if jax.process_index() == 0 else \'\', end="")'
-          )
-      ]
-      env = os.environ.copy()
-      # In case the job was launched via Slurm,
-      # prevent OpenMPI from detecting Slurm environment
-      env.pop('SLURM_JOBID', None)
-      proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, universal_newlines=True)
-      proc = exit_stack.enter_context(proc)
+    args = [
+        'mpirun',
+        '--oversubscribe',
+        '--allow-run-as-root',
+        '-n',
+        str(num_gpus),
+        sys.executable,
+        '-c',
+        ('import jax, os; '
+        'jax.distributed.initialize(); '
+        'print(f\'{jax.local_device_count()},{jax.device_count()}\' if jax.process_index() == 0 else \'\', end="")'
+        )
+    ]
+    env = os.environ.copy()
+    # In case the job was launched via Slurm,
+    # prevent OpenMPI from detecting Slurm environment
+    env.pop('SLURM_JOBID', None)
+    proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, universal_newlines=True)
+    proc = self.enter_context(proc)
 
-      try:
-        out, _ = proc.communicate()
-        self.assertEqual(proc.returncode, 0)
-        self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
-      finally:
-        proc.kill()
+    try:
+      out, _ = proc.communicate()
+      self.assertEqual(proc.returncode, 0)
+      self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
+    finally:
+      proc.kill()
 
   def test_gpu_mpi4py_distributed_initialize(self):
     if not jtu.test_device_matches(['gpu']):
@@ -192,34 +183,33 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
     num_gpus = 4
     num_gpus_per_task = 1
 
-    with contextlib.ExitStack() as exit_stack:
-      args = [
-          'mpirun',
-          '--oversubscribe',
-          '--allow-run-as-root',
-          '-n',
-          str(num_gpus),
-          sys.executable,
-          '-c',
-          ('import jax, os; '
-          'jax.distributed.initialize(spec_detection_method="mpi4py"); '
-          'print(f\'{jax.local_device_count()},{jax.device_count()}\' if jax.process_index() == 0 else \'\', end="")'
-          )
-      ]
-      env = os.environ.copy()
-      # In case the job was launched via Slurm,
-      # prevent OpenMPI from detecting Slurm environment
-      env.pop('SLURM_JOBID', None)
-      proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, universal_newlines=True)
-      proc = exit_stack.enter_context(proc)
+    args = [
+        'mpirun',
+        '--oversubscribe',
+        '--allow-run-as-root',
+        '-n',
+        str(num_gpus),
+        sys.executable,
+        '-c',
+        ('import jax, os; '
+        'jax.distributed.initialize(spec_detection_method="mpi4py"); '
+        'print(f\'{jax.local_device_count()},{jax.device_count()}\' if jax.process_index() == 0 else \'\', end="")'
+        )
+    ]
+    env = os.environ.copy()
+    # In case the job was launched via Slurm,
+    # prevent OpenMPI from detecting Slurm environment
+    env.pop('SLURM_JOBID', None)
+    proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, universal_newlines=True)
+    proc = self.enter_context(proc)
 
-      try:
-        out, _ = proc.communicate()
-        self.assertEqual(proc.returncode, 0)
-        self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
-      finally:
-        proc.kill()
+    try:
+      out, _ = proc.communicate()
+      self.assertEqual(proc.returncode, 0)
+      self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
+    finally:
+      proc.kill()
 
 
 @unittest.skipIf(

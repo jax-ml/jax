@@ -64,12 +64,12 @@ Common causes of OOM failures
 **Disabling rematerialization HLO pass**
   Sometimes disabling the automatic rematerialization HLO pass is favorable to avoid 
   poor remat choices by the compiler. The pass can be enable/disable by setting
-  :code:`jax.config.update('enable_remat_opt_pass', True)` or 
-  :code:`jax.config.update('enable_remat_opt_pass', False)` respectively. Enabling or
+  :code:`jax.config.update('jax_compiler_enable_remat_pass', True)` or 
+  :code:`jax.config.update('jax_compiler_enable_remat_pass', False)` respectively. Enabling or
   disabling the automatic remat pass produces different trade-offs between compute and 
   memory. Note however, that the algorithm is basic and you can often get better 
   trade-off between compute and memory by disabling the automatic remat pass and doing
-  it manually with `the jax.remat API <https://jax.readthedocs.io/en/latest/jep/11830-new-remat-checkpoint.html>`_
+  it manually with `the jax.remat API <https://docs.jax.dev/en/latest/jep/11830-new-remat-checkpoint.html>`_
 
 
 Experimental features

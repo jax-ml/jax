@@ -22,7 +22,6 @@ from absl.testing import parameterized
 
 import jax
 from jax import lax
-import jax.extend as jex
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 
@@ -31,11 +30,11 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
-from jax._src.layout import DeviceLocalLayout
+from jax._src.layout import Layout
 from jax._src.lib import lapack
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lax import linalg as lax_linalg_internal
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 
 jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -59,7 +58,7 @@ class FfiTest(jtu.JaxTestCase):
   @parameterized.parameters([
     (tuple(range(3)), tuple(range(3))),
     (None, tuple(reversed(range(3)))),
-    (DeviceLocalLayout(tuple(range(3))), tuple(reversed(range(3)))),
+    (Layout(tuple(range(3))), tuple(reversed(range(3)))),
   ])
   def test_lowering_layouts(self, layout_spec, expected_layout):
     # Regression test to ensure that the lowering rule properly captures
@@ -151,7 +150,7 @@ class FfiTest(jtu.JaxTestCase):
     def fun(x):
       return jax.ffi.ffi_call("test_ffi", x)(x, non_hashable_arg={"a": 1})
 
-    self.assertIn("HashableDict", str(jax.make_jaxpr(fun)(jnp.ones(5))))
+    self.assertIn("FrozenDict", str(jax.make_jaxpr(fun)(jnp.ones(5))))
     hlo = jax.jit(fun).lower(jnp.ones(5)).as_text()
     self.assertIn("non_hashable_arg = {a = 1", hlo)
 
@@ -199,21 +198,6 @@ class FfiTest(jtu.JaxTestCase):
         self.assertArraysAllClose(a, b)
       else:
         self.assertArraysEqual(a, b)
-
-  @jtu.run_on_devices("gpu", "cpu")
-  def test_vectorized_deprecation(self):
-    x = self.rng().randn(3, 5, 4).astype(np.float32)
-    with self.assertWarns(DeprecationWarning):
-      ffi_call_geqrf(x, vectorized=True)
-    with self.assertWarns(DeprecationWarning):
-      jax.vmap(ffi_call_geqrf)(x)
-
-  def test_backward_compat_syntax(self):
-    def fun(x):
-      return jax.ffi.ffi_call("test_ffi", x, x, param=0.5)
-    msg = "Calling ffi_call directly with input arguments is deprecated"
-    with self.assertDeprecationWarnsOrRaises("jax-ffi-call-args", msg):
-      jax.jit(fun).lower(jnp.ones(5))
 
   def test_input_output_aliases(self):
     def fun(x):
@@ -296,13 +280,13 @@ class FfiTest(jtu.JaxTestCase):
     jax.jit(f)(x)  # neither does JIT
     self.assertNotIn("all-gather", jax.jit(f).lower(x).compile().as_text())
 
-  @jtu.run_on_devices("gpu", "cpu")
-  @jtu.ignore_warning(category=DeprecationWarning)
-  def test_extend_import_shim(self):
-    ffi_call_geqrf(jnp.ones((4, 5), dtype=np.float32), _use_extend=True)
+  def test_extended_dtype_lowering(self):
+    def f(x):
+      return jax.ffi.ffi_call("edtype", (), has_side_effect=True)(x)
+    jax.jit(f).lower(jax.random.key(0))   # doesn't crash
 
 
-def ffi_call_geqrf(x, _use_extend=False, **kwargs):
+def ffi_call_geqrf(x, **kwargs):
   if jtu.test_device_matches(["cpu"]):
     lapack._lapack.initialize()
 
@@ -318,8 +302,7 @@ def ffi_call_geqrf(x, _use_extend=False, **kwargs):
         rocm="hipsolver_geqrf_ffi",
         cuda="cusolver_geqrf_ffi",
     )[platform]
-    f = jex.ffi.ffi_call if _use_extend else jax.ffi.ffi_call
-    return f(
+    return jax.ffi.ffi_call(
         target_name, output_types, input_output_aliases={0: 0},
         input_layouts=[x_major_to_minor],
         output_layouts=[x_major_to_minor, None],
@@ -349,7 +332,7 @@ class BatchPartitioningTest(jtu.JaxTestCase):
     x = self.rng().randn(8, 4, 5).astype(np.float32)
 
     @partial(shard_map, mesh=mesh, in_specs=P("i"), out_specs=P("i"),
-             check_rep=False)
+             check_vma=False)
     def f(x):
       return batch_partitionable_ffi_call(x)
 

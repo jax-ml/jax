@@ -16,7 +16,7 @@
 from dataclasses import dataclass
 from functools import cached_property, lru_cache, partial, wraps
 
-from typing import Callable
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp

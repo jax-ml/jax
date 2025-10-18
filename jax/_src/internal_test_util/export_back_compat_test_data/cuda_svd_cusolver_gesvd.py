@@ -16,7 +16,11 @@
 # ruff: noqa
 
 import datetime
-from numpy import array, float32, complex64
+import numpy as np
+
+array = np.array
+float32 = np.float32
+complex64 = np.complex64
 
 data_2024_10_08 = {"jacobi": {}, "qr": {}}
 

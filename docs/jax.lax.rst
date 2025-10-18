@@ -9,7 +9,7 @@ are typically defined as transformations on :mod:`jax.lax` primitives.
 
 Many of the primitives are thin wrappers around equivalent XLA operations,
 described by the `XLA operation semantics
-<https://www.tensorflow.org/xla/operation_semantics>`_ documentation. In a few
+<https://www.openxla.org/xla/operation_semantics>`_ documentation. In a few
 cases JAX diverges from XLA, usually to ensure that the set of operations is
 closed under the operation of JVP and transpose rules.
 
@@ -222,6 +222,9 @@ Parallel operators
     pshuffle
     pswapaxes
     axis_index
+    axis_size
+    psend
+    precv
 
 Sharding-related operators
 --------------------------

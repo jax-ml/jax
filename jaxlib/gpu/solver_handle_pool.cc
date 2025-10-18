@@ -31,7 +31,7 @@ template <>
 /*static*/ absl::StatusOr<SolverHandlePool::Handle> SolverHandlePool::Borrow(
     gpuStream_t stream) {
   SolverHandlePool* pool = Instance();
-  absl::MutexLock lock(&pool->mu_);
+  absl::MutexLock lock(pool->mu_);
   gpusolverDnHandle_t handle;
   if (pool->handles_[stream].empty()) {
     JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnCreate(&handle)));
@@ -51,7 +51,7 @@ template <>
 /*static*/ absl::StatusOr<SpSolverHandlePool::Handle>
 SpSolverHandlePool::Borrow(gpuStream_t stream) {
   SpSolverHandlePool* pool = Instance();
-  absl::MutexLock lock(&pool->mu_);
+  absl::MutexLock lock(pool->mu_);
   cusolverSpHandle_t handle;
   if (pool->handles_[stream].empty()) {
     JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverSpCreate(&handle)));

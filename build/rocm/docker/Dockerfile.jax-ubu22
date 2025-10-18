@@ -60,7 +60,7 @@ ARG JAX_COMMIT
 ARG XLA_COMMIT
 
 LABEL com.amdgpu.rocm_version="$ROCM_VERSION" \
-      com.amdgpu.python_version="3.10" \
+      com.amdgpu.python_version="3.11" \
       com.amdgpu.jax_version="$JAX_VERSION" \
       com.amdgpu.jax_commit="$JAX_COMMIT" \
       com.amdgpu.xla_commit="$XLA_COMMIT"

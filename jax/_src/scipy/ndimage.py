@@ -17,10 +17,13 @@ import functools
 import itertools
 import operator
 
+import numpy as np
+
 from jax._src import api
+from jax._src import dtypes
+from jax._src import numpy as jnp
 from jax._src import util
-from jax import lax
-import jax.numpy as jnp
+from jax._src.lax import lax
 from jax._src.typing import ArrayLike, Array
 from jax._src.util import safe_zip as zip
 
@@ -29,7 +32,7 @@ def _nonempty_prod(arrs: Sequence[Array]) -> Array:
   return functools.reduce(operator.mul, arrs)
 
 def _nonempty_sum(arrs: Sequence[Array]) -> Array:
-  return functools.reduce(operator.add, arrs)
+  return sum(arrs[1:], arrs[0])
 
 def _mirror_index_fixer(index: Array, size: int) -> Array:
     s = size - 1 # Half-wavelength of triangular wave
@@ -49,11 +52,11 @@ _INDEX_FIXERS: dict[str, Callable[[Array, int], Array]] = {
 
 
 def _round_half_away_from_zero(a: Array) -> Array:
-  return a if jnp.issubdtype(a.dtype, jnp.integer) else lax.round(a)
+  return a if dtypes.issubdtype(a.dtype, np.integer) else lax.round(a)
 
 
 def _nearest_indices_and_weights(coordinate: Array) -> list[tuple[Array, ArrayLike]]:
-  index = _round_half_away_from_zero(coordinate).astype(jnp.int32)
+  index = _round_half_away_from_zero(coordinate).astype(np.int32)
   weight = coordinate.dtype.type(1)
   return [(index, weight)]
 
@@ -62,7 +65,7 @@ def _linear_indices_and_weights(coordinate: Array) -> list[tuple[Array, ArrayLik
   lower = jnp.floor(coordinate)
   upper_weight = coordinate - lower
   lower_weight = 1 - upper_weight
-  index = lower.astype(jnp.int32)
+  index = lower.astype(np.int32)
   return [(index, lower_weight), (index + 1, upper_weight)]
 
 
@@ -117,16 +120,10 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
       contribution = jnp.where(all_valid, input_arr[indices], cval)
     outputs.append(_nonempty_prod(weights) * contribution)  # type: ignore
   result = _nonempty_sum(outputs)
-  if jnp.issubdtype(input_arr.dtype, jnp.integer):
+  if dtypes.issubdtype(input_arr.dtype, np.integer):
     result = _round_half_away_from_zero(result)
   return result.astype(input_arr.dtype)
 
-
-"""
-    Only nearest neighbor (``order=0``), linear interpolation (``order=1``) and
-    modes ``'constant'``, ``'nearest'``, ``'wrap'`` ``'mirror'`` and ``'reflect'`` are currently supported.
-
-    """
 
 def map_coordinates(
     input: ArrayLike, coordinates: Sequence[ArrayLike], order: int,

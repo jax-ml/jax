@@ -50,6 +50,15 @@ TypedValue<VectorType> getFullLikeVector(ImplicitLocOpBuilder &builder,
                                          TypedValue<VectorType> vec,
                                          Attribute value);
 
+// Same as above, but takes a `loc` as input, in case of an OpBuilder.
+TypedValue<VectorType> getFullVector(OpBuilder &builder, Location loc,
+                                     VectorType vty, Attribute value);
+
+// Same as above, but takes a `vec` as input.
+TypedValue<VectorType> getFullLikeVector(OpBuilder &builder, Location loc,
+                                         TypedValue<VectorType> vec,
+                                         Attribute value);
+
 // Creates a vmask with false flags to bottom (dim = 0)
 // or right (dim = 1) where the flag count corresponds to the (dim_size -
 // padding).
@@ -81,8 +90,7 @@ LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder &builder,
 // subelement_idx must be between 0 and packing.
 FailureOr<TypedValue<VectorType>> broadcastSubelements(
     ImplicitLocOpBuilder &builder, TypedValue<VectorType> vec,
-    int subelement_idx, std::array<int64_t, 2> target_shape,
-    int hardware_generation);
+    int subelement_idx, std::array<int64_t, 2> target_shape);
 
 }  // namespace mlir::tpu
 

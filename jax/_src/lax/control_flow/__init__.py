@@ -34,6 +34,7 @@ from jax._src.lax.control_flow.loops import (
     while_p as while_p,
 )
 from jax._src.lax.control_flow.conditionals import (
+    BranchesPlatforms as BranchesPlatforms,
     cond as cond,
     cond_p as cond_p,
     switch as switch,

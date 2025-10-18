@@ -17,7 +17,6 @@ import contextlib
 import dataclasses
 import enum
 import itertools
-import warnings
 
 import jax
 from jax import random
@@ -244,8 +243,8 @@ def build_kernel(
 
         perform_schedule_barrier()
 
-        # This is quite suprising, but it seems like warp shuffles cannot
-        # run simutaneously with the WGMMA. For that reason we include it as
+        # This is quite surprising, but it seems like warp shuffles cannot
+        # run simultaneously with the WGMMA. For that reason we include it as
         # part of the TensorCore critical section and not the ALU section.
         with ctx.named_region("Softmax reduction"):
           l_i += p.reduce(arith.addf, axis=1)
@@ -299,7 +298,7 @@ def build_kernel(
       scf.yield_([])
     with ir.InsertionPoint(if_compute.else_block):
       nvvm.setmaxregister(40, nvvm.SetMaxRegisterAction.decrease)
-      with single_thread(per_block=False):
+      with single_thread(scope=ThreadSubset.WARPGROUP):
         k_tr = (TileTransform(tiling), TransposeTransform((1, 0, 2, 3)))
         v_tr = TileTransform(tiling)
         kv_head_idx = arith.divui(q_head_idx, c(q_heads_per_kv_head))
@@ -310,7 +309,7 @@ def build_kernel(
                 gmem_slice=(kv_head_idx, ds(kv_seq_base, blocks.kv)),
                 gmem_transform=transform,
                 barrier=barrier,
-                uniform=False,
+                predicate=None,
                 swizzle=128,
             )
         def start_k_copy(slot, kv_seq_base):
@@ -391,7 +390,7 @@ def build_kernel(
     kv_head_idx = arith.divui(q_head_idx, c(q_heads_per_kv_head))
 
     def kv_copy_init(slot, kv_seq_base):
-      with single_thread(per_block=False):
+      with single_thread(ThreadSubset.WARPGROUP):
         txcount = 2 * blocks.kv * head_dim * bytewidth(f16)
         barriers[slot].arrive_expect_tx(txcount)
         k_tr = (TileTransform(tiling), TransposeTransform((1, 0, 2, 3)))
@@ -404,7 +403,7 @@ def build_kernel(
               gmem_transform=t,
               barrier=barriers[slot],
               arrive=False,
-              uniform=False,
+              predicate=None,
               swizzle=128,
           )
 
@@ -601,7 +600,7 @@ def benchmark_and_verify(
 if __name__ == "__main__":
   if (not jtu.test_device_matches(["cuda"]) or
       not jtu.is_cuda_compute_capability_equal("9.0")):
-    warnings.warn(
+    print(
       "Mosaic GPU Flash Attention requires compute capability 9.0a to run, "
       "skipping.")
     exit(0)

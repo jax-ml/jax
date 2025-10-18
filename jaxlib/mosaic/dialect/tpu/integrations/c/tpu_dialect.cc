@@ -64,6 +64,8 @@ MlirTpuImplicitDim wrap(mlir::tpu::VectorLayout::ImplicitDim implicit_dim) {
       return MlirTpuImplicitDimMinor;
     case mlir::tpu::VectorLayout::ImplicitDim::kSecondMinor:
       return MlirTpuImplicitDimSecondMinor;
+    case mlir::tpu::VectorLayout::ImplicitDim::kMinorAndSecondMinor:
+      return MlirTpuImplicitDimMinorAndSecondMinor;
   }
   LOG(FATAL) << "Invalid implicit dim (C++)";
 }
@@ -75,6 +77,8 @@ mlir::tpu::VectorLayout::ImplicitDim unwrap(MlirTpuImplicitDim implicit_dim) {
       return mlir::tpu::VectorLayout::ImplicitDim::kMinor;
     case MlirTpuImplicitDimSecondMinor:
       return mlir::tpu::VectorLayout::ImplicitDim::kSecondMinor;
+    case MlirTpuImplicitDimMinorAndSecondMinor:
+      return mlir::tpu::VectorLayout::ImplicitDim::kMinorAndSecondMinor;
   }
   LOG(FATAL) << "Invalid implicit dim (C)";
 }
@@ -313,7 +317,7 @@ bool mlirTpuVectorLayoutEquivalentTo(MlirTpuVectorLayout layout,
 void mlirTpuVectorLayoutPrint(
     MlirTpuVectorLayout layout, MlirStringCallback callback, void *userData) {
   mlir::detail::CallbackOstream stream(callback, userData);
-  unwrap(layout)->print<llvm::raw_ostream>(stream);
+  unwrap(layout)->print(stream);
 }
 
 bool mlirTpuVectorLayoutIsValid(MlirTpuVectorLayout layout,

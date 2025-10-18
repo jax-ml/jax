@@ -38,7 +38,7 @@ from jax.experimental.sparse.util import (
 from jax.experimental.sparse._lowerings import coo_spmv_p, coo_spmm_p
 from jax._src.interpreters import mlir
 import jax.numpy as jnp
-from jax.util import safe_zip, unzip2, split_list
+from jax._src.util import safe_zip, unzip2, split_list
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
@@ -49,7 +49,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.lax import (
   _const, ranges_like, remaining, _dot_general_batch_dim_nums, DotDimensionNumbers)
 from jax._src.lax.slicing import GatherDimensionNumbers, GatherScatterMode
-from jax._src.lib import gpu_sparse
 from jax._src.numpy.setops import _unique
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.util import canonicalize_axis
@@ -923,12 +922,10 @@ batching.primitive_batchers[bcoo_dot_general_p] = _bcoo_dot_general_batch_rule
 mlir.register_lowering(bcoo_dot_general_p, _bcoo_dot_general_default_lowering)
 dispatch.simple_impl(bcoo_dot_general_p)
 
-if gpu_sparse.cuda_is_supported:
-  mlir.register_lowering(
-      bcoo_dot_general_p, _bcoo_dot_general_gpu_lowering, platform='cuda')
-if gpu_sparse.rocm_is_supported:
-  mlir.register_lowering(
-      bcoo_dot_general_p, _bcoo_dot_general_gpu_lowering, platform='rocm')
+mlir.register_lowering(
+    bcoo_dot_general_p, _bcoo_dot_general_gpu_lowering, platform='cuda')
+mlir.register_lowering(
+    bcoo_dot_general_p, _bcoo_dot_general_gpu_lowering, platform='rocm')
 
 
 #----------------------------------------------------------------------
@@ -1043,7 +1040,7 @@ def _bcoo_dot_general_sampled_impl(A, B, indices, *, dimension_numbers):
 @bcoo_dot_general_sampled_p.def_abstract_eval
 def _bcoo_dot_general_sampled_abstract_eval(A, B, indices, *, dimension_numbers):
   dbg = api_util.debug_info("bcoo_dot_general_sampled_abstract_eval",
-                            lax.dot_general, (A, B), dict(dimension_numbers=dimension_numbers))
+                            lax.dot_general, (A, B), {})
   dense_result, = pe.abstract_eval_fun(lambda *args: [lax.dot_general(*args, dimension_numbers=dimension_numbers)], A, B,
                                        debug_info=dbg)
   dbg = api_util.debug_info("bcoo_dot_general_sampled_abstract_eval",
@@ -1561,7 +1558,9 @@ _bcoo_sum_duplicates_hlo = mlir.lower_fun(
 
 ad.primitive_jvps[bcoo_sum_duplicates_p] = _bcoo_sum_duplicates_jvp
 batching.primitive_batchers[bcoo_sum_duplicates_p] = _bcoo_sum_duplicates_batching_rule
-mlir.register_lowering(bcoo_sum_duplicates_p, _bcoo_sum_duplicates_hlo)
+# TODO(phawkins): caching this primitive seems to cause x64 context problems.
+mlir.register_lowering(bcoo_sum_duplicates_p, _bcoo_sum_duplicates_hlo,
+                       cacheable=False)
 
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
@@ -1835,7 +1834,7 @@ def bcoo_concatenate(operands: Sequence[BCOO], *, dimension: int) -> BCOO:
 def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int],
                  dimensions: Sequence[int] | None = None,
                  sharding=None) -> BCOO:
-  """Sparse implementation of {func}`jax.lax.reshape`.
+  """Sparse implementation of :func:`jax.lax.reshape`.
 
   Args:
     operand: BCOO array to be reshaped.
@@ -1898,7 +1897,7 @@ def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int],
 
 
 def bcoo_rev(operand, dimensions):
-  """Sparse implementation of {func}`jax.lax.rev`"""
+  """Sparse implementation of :func:`jax.lax.rev`"""
   # Check validity of dimensions via original implementation.
   _ = jax.jit(lax.rev, static_argnames=("dimensions",)).eval_shape(
           jax.ShapeDtypeStruct(operand.shape, operand.dtype),
@@ -1926,7 +1925,7 @@ def bcoo_rev(operand, dimensions):
 
 
 def bcoo_squeeze(arr: BCOO, *, dimensions: Sequence[int]) -> BCOO:
-  """Sparse implementation of {func}`jax.lax.squeeze`.
+  """Sparse implementation of :func:`jax.lax.squeeze`.
 
   Squeeze any number of size 1 dimensions from an array.
 
@@ -1955,7 +1954,7 @@ def bcoo_squeeze(arr: BCOO, *, dimensions: Sequence[int]) -> BCOO:
 
 def bcoo_slice(mat: BCOO, *, start_indices: Sequence[int], limit_indices: Sequence[int],
                strides: Sequence[int] | None = None) -> BCOO:
-  """Sparse implementation of {func}`jax.lax.slice`.
+  """Sparse implementation of :func:`jax.lax.slice`.
 
   Args:
     mat: BCOO array to be reshaped.
@@ -2031,7 +2030,7 @@ def bcoo_slice(mat: BCOO, *, start_indices: Sequence[int], limit_indices: Sequen
   return BCOO((new_data, new_indices), shape=new_shape)
 
 def bcoo_dynamic_slice(mat: BCOO, start_indices: Sequence[Any], slice_sizes: Sequence[int]) -> BCOO:
-  """Sparse implementation of {func}`jax.lax.dynamic_slice`.
+  """Sparse implementation of :func:`jax.lax.dynamic_slice`.
 
   Args:
     mat: BCOO array to slice.
@@ -2358,14 +2357,16 @@ def bcoo_gather(operand: BCOO, start_indices: Array,
 def bcoo_conv_general_dilated(lhs, rhs, *, window_strides, padding,
                               lhs_dilation=None, rhs_dilation=None, dimension_numbers=None,
                               feature_group_count=1, batch_group_count=1, precision=None,
-                              preferred_element_type=None) -> BCOO:
+                              preferred_element_type=None,
+                              out_sharding=None) -> BCOO:
   # Validate and process parameters using lax.conv_general_dilated abstract evaluation.
   func = functools.partial(
       lax.conv_general_dilated,
       window_strides=window_strides, padding=padding,
       lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation, dimension_numbers=dimension_numbers,
       feature_group_count=feature_group_count, batch_group_count=batch_group_count,
-      precision=precision, preferred_element_type=preferred_element_type)
+      precision=precision, preferred_element_type=preferred_element_type,
+      out_sharding=out_sharding)
   jaxpr = jax.make_jaxpr(func)(jax.ShapeDtypeStruct(lhs.shape, lhs.dtype),
                                jax.ShapeDtypeStruct(rhs.shape, rhs.dtype))
   assert isinstance(jaxpr, core.ClosedJaxpr) and len(jaxpr.eqns) == 1

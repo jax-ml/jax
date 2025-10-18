@@ -1,6 +1,7 @@
 absl-py
 ipython>=8.8.0  # 8.7.0 has ipython3 lexer error
 pydata-sphinx-theme==0.14.4  # v0.15 breaks sidebar toggling
+snowballstemmer<3.0.0  # v3.0.0 incompatible with older sphinx; missing stemmer
 sphinx>=7.3.2,<8.0  # 7.3.0 breaks sphinx-book-theme; 8.0 breaks myst-nb 1.1
 sphinx-book-theme==1.1.1  # v1.1.2 requires pydata-sphinx-theme v0.15
 sphinx-copybutton>=0.5.0
@@ -8,6 +9,7 @@ sphinx-remove-toctrees
 sphinx-design
 sphinxext-rediraffe
 myst-nb>=1.0.0
+sphinxcontrib-mermaid
 
 # Packages used for CI tests.
 flatbuffers
@@ -21,4 +23,5 @@ pooch
 numpy
 rich[jupyter]
 cmake
+cloudpickle
 .[ci]  # Install jax from the current directory; jaxlib from pypi.

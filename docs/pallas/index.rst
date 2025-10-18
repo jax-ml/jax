@@ -22,14 +22,21 @@ See also the :class:`jax.experimental.pallas` module API documentation.
    :maxdepth: 2
 
    quickstart
+   pipelining
    grid_blockspec
 
 
 .. toctree::
-   :caption: Platform Features
+   :caption: TPU backend guide
    :maxdepth: 2
 
    tpu/index
+
+.. toctree::
+   :caption: Mosaic GPU backend guide
+   :maxdepth: 2
+
+   gpu/index
 
 .. toctree::
    :caption: Design Notes

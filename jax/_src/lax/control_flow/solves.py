@@ -15,10 +15,9 @@
 import collections
 from functools import partial
 import operator
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
-from jax.tree_util import (tree_flatten, treedef_children, tree_leaves,
-                           tree_unflatten, treedef_tuple)
 from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
@@ -28,8 +27,10 @@ from jax._src import linear_util as lu
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.interpreters import xla
+from jax._src.interpreters import pxla
 from jax._src.traceback_util import api_boundary
+from jax._src.tree_util import (tree_flatten, treedef_children, tree_leaves,
+                                tree_unflatten, treedef_tuple)
 from jax._src.util import split_list, safe_map
 import numpy as np
 
@@ -111,13 +112,11 @@ def custom_root(f: Callable,
     unchecked_zeros, f_jvp = api.linearize(f, x)
     return tangent_solve(f_jvp, b)
 
-  tangent_solve_debug = api_util.debug_info("custom_root tangent_solve",
-                                            tangent_solve,
-                                            (f, initial_guess), {},
-                                            static_argnums=(0,))
+  linearize_and_solve_dbg = api_util.debug_info("custom_root tangent_solve",
+      tangent_solve, (initial_guess, initial_guess), {})
   l_and_s_jaxpr, l_and_s_consts, out_tree = _initial_style_jaxpr(
       linearize_and_solve, treedef_tuple((in_tree,) * 2), guess_avals * 2,
-      tangent_solve_debug)
+      linearize_and_solve_dbg)
   _check_tree("tangent_solve", "x", out_tree, in_tree, False)
 
   all_consts = [f_consts, solve_consts, l_and_s_consts]
@@ -310,7 +309,7 @@ def custom_linear_solve(
       matvec_jaxpr, vecmat_jaxpr, solve_jaxpr, tr_solve_jaxpr)
 
   args = _flatten(all_consts) + b_flat
-  args = core.standard_insert_pbroadcast(*args)
+  args = core.standard_insert_pvary(*args)
   out_flat = linear_solve_p.bind(*args, const_lengths=const_lengths, jaxprs=jaxprs)
 
   return tree_unflatten(out_tree, out_flat)
@@ -394,13 +393,17 @@ def _linear_solve_transpose_rule(cotangent, *primals, const_lengths, jaxprs):
                     'differentiation of custom_linear_solve')
 
   params, b = _split_linear_solve_args(primals, const_lengths)
-  # split off symbolic zeros in the cotangent if present
-  x_cotangent, _ = split_list(cotangent, [len(b)])
-  assert all(ad.is_undefined_primal(x) for x in b)
+  if any(ad.is_undefined_primal(x) for xs in params for x in xs):
+    raise NotImplementedError("open an issue at https://github.com/google/jax !!")
+  assert all(ad.is_undefined_primal(x) for x in b)  # TODO(mattjj): why?
+  x_cotangent, other_cotangents = split_list(cotangent, [len(b)])
+  if any(type(ct) is not ad_util.Zero for ct in other_cotangents):
+    raise NotImplementedError("open an issue at https://github.com/google/jax !!")
+  del other_cotangents
+  x_cotangent_ = _map(ad_util.instantiate, x_cotangent)
   cotangent_b_full = linear_solve_p.bind(
-      *(_flatten(params.transpose()) + x_cotangent),
+      *_flatten(params.transpose()), *x_cotangent_,
       const_lengths=const_lengths.transpose(), jaxprs=jaxprs.transpose())
-  # drop aux values in cotangent computation
   cotangent_b, _ = split_list(cotangent_b_full, [len(b)])
   return [None] * sum(const_lengths) + cotangent_b
 
@@ -488,7 +491,7 @@ linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
 linear_solve_p.def_effectful_abstract_eval(_linear_solve_abstract_eval)
 ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp
-xla.register_initial_style_primitive(linear_solve_p)
+pxla.register_initial_style_primitive(linear_solve_p)
 mlir.register_lowering(
     linear_solve_p, mlir.lower_fun(_custom_linear_solve_impl,
                                    multiple_results=True))

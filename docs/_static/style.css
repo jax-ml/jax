@@ -81,7 +81,7 @@ body:has(.hero) .bd-container {
 }
 
 .getting-started,
-.user-guides,
+.jax-101,
 .installation {
   background: #3C4043;
   color: white;
@@ -91,7 +91,7 @@ body:has(.hero) .bd-container {
 }
 
 .getting-started:hover,
-.user-guides:hover,
+.jax-101:hover,
 .installation:hover {
   background: #AECBFA;
   color: #202124;
@@ -99,7 +99,7 @@ body:has(.hero) .bd-container {
 }
 
 .getting-started .sd-card-body,
-.user-guides .sd-card-body,
+.jax-101 .sd-card-body,
 .installation .sd-card-body {
   display: flex;
   align-items: center;
@@ -108,7 +108,7 @@ body:has(.hero) .bd-container {
 }
 
 .getting-started .sd-card-title,
-.user-guides .sd-card-title,
+.jax-101 .sd-card-title,
 .installation .sd-card-title {
   display: flex;
   flex-direction: column;
@@ -117,13 +117,13 @@ body:has(.hero) .bd-container {
 }
 
 .getting-started svg,
-.user-guides svg,
+.jax-101 svg,
 .installation svg {
   color: #8AB4F8;
 }
 
 .getting-started:hover svg,
-.user-guides:hover svg,
+.jax-101:hover svg,
 .installation:hover svg {
   color: #3C4043;
 }
@@ -218,7 +218,8 @@ body:has(.hero) .bd-container {
 
 .color-cards + p {
   background: #E8EAED;
-  padding: 24px 12px 48px 12px;
+  padding: 24px 12px 25px 12px;
+  text-align: center;
   font-weight: 600;
   color: #222832;
   border-radius: 0 0 24px 24px;

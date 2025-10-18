@@ -54,7 +54,7 @@ if __name__ == '__main__':
   proc.wait()
 
   thunk_re = re.compile("hlo_op=(.*)#")
-  cost_dictionary: dict[str, list] = dict()
+  cost_dictionary: dict[str, list] = {}
   with open(f"{args.pgle_output_path}", 'w', newline='') as protofile:
     with open(f"{pgle_folder}{pgle_filename}.pbtxt_{report_name}.csv", newline='') as csvfile:
       reader = csv.DictReader(csvfile)
@@ -64,7 +64,7 @@ if __name__ == '__main__':
         m = thunk_re.search(name)
         if m is not None:
           if args.post_process:
-            cost_dictionary.setdefault(m.group(1), []).append((time_ns/1000.0))
+            cost_dictionary.setdefault(m.group(1), []).append(time_ns/1000.0)
           else:
             protofile.write(f'costs {{ name: "{m.group(1)}" cost_us: {time_ns / 1000.0} }}\n')
     if args.post_process:

@@ -30,7 +30,7 @@ jax.config.update("jax_enable_x64", True)
 
 def main(_):
 
-  # The lowering of cumsum is annotated with @cache_lowering, which means we
+  # The lowering of cumsum is annotated with inline=False, which means we
   # should lower it as an out-of-line function once for any given shape.
 
   # CHECK-LABEL: TEST: cumsum_only_once int32[2,7] int32[2,7]

@@ -15,10 +15,10 @@
 import math
 import operator
 
-from jax import dtypes
 from jax import vmap
 from jax import random
-from jax.util import split_list
+from jax._src import dtypes
+from jax._src.util import split_list
 import jax.numpy as jnp
 from jax.experimental import sparse
 
@@ -69,7 +69,7 @@ def random_bcoo(key, shape, *, dtype=jnp.float_, indices_dtype=None,
   data_shape = batch_shape + (nse,) + dense_shape
   indices_shape = batch_shape + (nse, n_sparse)
   if indices_dtype is None:
-    indices_dtype = dtypes.canonicalize_dtype(jnp.int_)
+    indices_dtype = dtypes.default_int_dtype()
   if sparse_size > jnp.iinfo(indices_dtype).max:
     raise ValueError(f"{indices_dtype=} does not have enough range to generate "
                      f"sparse indices of size {sparse_size}.")

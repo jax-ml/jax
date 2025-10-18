@@ -4,7 +4,7 @@ Frequently asked questions (FAQ)
 .. comment RST primer for Sphinx: https://thomas-cokelaer.info/tutorials/sphinx/rest_syntax.html
 .. comment Some links referenced here. Use `JAX - The Sharp Bits`_ (underscore at the end) to reference
 
-.. _JAX - The Sharp Bits: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html
+.. _JAX - The Sharp Bits: https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html
 
 We are collecting answers to frequently asked questions here.
 Contributions welcome!
@@ -116,7 +116,7 @@ code in JAX's internal representation, typically because it makes heavy use of
 Python control flow such as ``for`` loops. For a handful of loop iterations,
 Python is OK, but if you need *many* loop iterations, you should rewrite your
 code to make use of JAX's
-`structured control flow primitives <https://jax.readthedocs.io/en/latest/control-flow.html#Structured-control-flow-primitives>`_
+`structured control flow primitives <https://docs.jax.dev/en/latest/control-flow.html#Structured-control-flow-primitives>`_
 (such as :func:`lax.scan`) or avoid wrapping the loop with ``jit`` (you can
 still use ``jit`` decorated functions *inside* the loop).
 
@@ -422,7 +422,6 @@ for comparing JAX versus NumPy, making using of IPython's convenient
 `%time and %timeit magics`_::
 
     import numpy as np
-    import jax.numpy as jnp
     import jax
 
     def f(x):  # function we're benchmarking (works in both NumPy & JAX)
@@ -431,7 +430,9 @@ for comparing JAX versus NumPy, making using of IPython's convenient
     x_np = np.ones((1000, 1000), dtype=np.float32)  # same as JAX default dtype
     %timeit f(x_np)  # measure NumPy runtime
 
-    %time x_jax = jax.device_put(x_np)  # measure JAX device transfer time
+    # measure JAX device transfer time
+    %time x_jax = jax.device_put(x_np).block_until_ready()
+
     f_jit = jax.jit(f)
     %time f_jit(x_jax).block_until_ready()  # measure JAX compilation time
     %timeit f_jit(x_jax).block_until_ready()  # measure JAX runtime
@@ -454,8 +455,8 @@ performing matrix-matrix multiplication) to amortize the increased overhead of
 JAX/accelerators vs NumPy/CPU. For example, if we switch this example to use
 10x10 input instead, JAX/GPU runs 10x slower than NumPy/CPU (100 µs vs 10 µs).
 
-.. _To JIT or not to JIT: https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html#to-jit-or-not-to-jit
-.. _Double (64 bit) precision: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
+.. _To JIT or not to JIT: https://docs.jax.dev/en/latest/notebooks/thinking_in_jax.html#to-jit-or-not-to-jit
+.. _Double (64 bit) precision: https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
 .. _`%time and %timeit magics`: https://ipython.readthedocs.io/en/stable/interactive/magics.html#magic-time
 .. _Colab: https://colab.research.google.com/
 
@@ -491,95 +492,6 @@ array operations on CPU, you can generally expect NumPy to outperform JAX due to
 lower per-operation dispatch overhead. If you're running your code on GPU or TPU,
 or are benchmarking more complicated JIT-compiled sequences of operations on CPU, you
 can generally expect JAX to outperform NumPy.
-
-.. _faq-different-kinds-of-jax-values:
-
-Different kinds of JAX values
------------------------------
-
-In the process of transforming functions, JAX replaces some function
-arguments with special tracer values.
-
-You could see this if you use a ``print`` statement::
-
-  def func(x):
-    print(x)
-    return jnp.cos(x)
-
-  res = jax.jit(func)(0.)
-
-The above code does return the correct value ``1.`` but it also prints
-``Traced<ShapedArray(float32[])>`` for the value of ``x``. Normally, JAX
-handles these tracer values internally in a transparent way, e.g.,
-in the numeric JAX primitives that are used to implement the
-``jax.numpy`` functions. This is why ``jnp.cos`` works in the example above.
-
-More precisely, a **tracer** value is introduced for the argument of
-a JAX-transformed function, except the arguments identified by special
-parameters such as ``static_argnums`` for :func:`jax.jit` or
-``static_broadcasted_argnums`` for :func:`jax.pmap`. Typically, computations
-that involve at least a tracer value will produce a tracer value. Besides tracer
-values, there are **regular** Python values: values that are computed outside JAX
-transformations, or arise from above-mentioned static arguments of certain JAX
-transformations, or computed solely from other regular Python values.
-These are the values that are used everywhere in absence of JAX transformations.
-
-A tracer value carries an **abstract** value, e.g., ``ShapedArray`` with information
-about the shape and dtype of an array. We will refer here to such tracers as
-**abstract tracers**. Some tracers, e.g., those that are
-introduced for arguments of autodiff transformations, carry ``ConcreteArray``
-abstract values that actually include the regular array data, and are used,
-e.g., for resolving conditionals. We will refer here to such tracers
-as **concrete tracers**. Tracer values computed from these concrete tracers,
-perhaps in combination with regular values, result in concrete tracers.
-A **concrete value** is either a regular value or a concrete tracer.
-
-Most often values computed from tracer values are themselves tracer values.
-There are very few exceptions, when a computation can be entirely done
-using the abstract value carried by a tracer, in which case the result
-can be a regular value. For example, getting the shape of a tracer
-with ``ShapedArray`` abstract value. Another example is when explicitly
-casting a concrete tracer value to a regular type, e.g., ``int(x)`` or
-``x.astype(float)``.
-Another such situation is for ``bool(x)``, which produces a Python bool when
-concreteness makes it possible. That case is especially salient because
-of how often it arises in control flow.
-
-Here is how the transformations introduce abstract or concrete tracers:
-
-* :func:`jax.jit`: introduces **abstract tracers** for all positional arguments
-  except those denoted by ``static_argnums``, which remain regular
-  values.
-* :func:`jax.pmap`: introduces **abstract tracers** for all positional arguments
-  except those denoted by ``static_broadcasted_argnums``.
-* :func:`jax.vmap`, :func:`jax.make_jaxpr`, :func:`xla_computation`:
-  introduce **abstract tracers** for all positional arguments.
-* :func:`jax.jvp` and :func:`jax.grad` introduce **concrete tracers**
-  for all positional arguments. An exception is when these transformations
-  are within an outer transformation and the actual arguments are
-  themselves abstract tracers; in that case, the tracers introduced
-  by the autodiff transformations are also abstract tracers.
-* All higher-order control-flow primitives (:func:`lax.cond`, :func:`lax.while_loop`,
-  :func:`lax.fori_loop`, :func:`lax.scan`) when they process the functionals
-  introduce **abstract tracers**, whether or not there is a JAX transformation
-  in progress.
-
-All of this is relevant when you have code that can operate
-only on regular Python values, such as code that has conditional
-control-flow based on data::
-
-    def divide(x, y):
-      return x / y if y >= 1. else 0.
-
-If we want to apply :func:`jax.jit`, we must ensure to specify ``static_argnums=1``
-to ensure ``y`` stays a regular value. This is due to the boolean expression
-``y >= 1.``, which requires concrete values (regular or tracers). The
-same would happen if we write explicitly ``bool(y >= 1.)``, or ``int(y)``,
-or ``float(y)``.
-
-Interestingly, ``jax.grad(divide)(3., 2.)``, works because :func:`jax.grad`
-uses concrete tracers, and resolves the conditional using the concrete
-value of ``y``.
 
 .. _faq-donation:
 
@@ -777,7 +689,7 @@ can replace uses of :func:`jax.nn.relu`, etc.
 How can I convert a JAX Tracer to a NumPy array?
 ------------------------------------------------
 When inspecting a transformed JAX function at runtime, you'll find that array
-values are replaced by :class:`~jax.core.Tracer` objects::
+values are replaced by `jax.core.Tracer` objects::
 
   @jax.jit
   def f(x):
@@ -841,12 +753,12 @@ reducing :code:`XLA_PYTHON_CLIENT_MEM_FRACTION` from the default of :code:`.75`,
 or setting :code:`XLA_PYTHON_CLIENT_PREALLOCATE=false`. For more details, please
 see the page on `JAX GPU memory allocation`_.
 
-.. _JIT mechanics: https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html#jit-mechanics-tracing-and-static-variables
-.. _External callbacks in JAX: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
-.. _Pure callback example: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html#example-pure-callback-with-custom-jvp
-.. _IO callback example: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html#exploring-jax-experimental-io-callback
+.. _JIT mechanics: https://docs.jax.dev/en/latest/notebooks/thinking_in_jax.html#jit-mechanics-tracing-and-static-variables
+.. _External callbacks in JAX: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html
+.. _Pure callback example: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html#example-pure-callback-with-custom-jvp
+.. _IO callback example: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html#exploring-jax-experimental-io-callback
 .. _Heaviside Step Function: https://en.wikipedia.org/wiki/Heaviside_step_function
 .. _Sigmoid Function: https://en.wikipedia.org/wiki/Sigmoid_function
 .. _algebraic_simplifier.cc: https://github.com/openxla/xla/blob/33f815e190982dac4f20d1f35adb98497a382377/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc#L4851
-.. _JAX GPU memory allocation: https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html
+.. _JAX GPU memory allocation: https://docs.jax.dev/en/latest/gpu_memory_allocation.html
 .. _dynamic linker search pattern: https://man7.org/linux/man-pages/man8/ld.so.8.html

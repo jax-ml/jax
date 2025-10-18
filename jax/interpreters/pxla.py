@@ -31,8 +31,8 @@ from jax._src.mesh import (
 )
 
 from jax._src.op_shardings import (
-  are_op_shardings_equal as are_op_shardings_equal,
-  is_op_sharding_replicated as is_op_sharding_replicated,
+  are_hlo_shardings_equal as are_hlo_shardings_equal,
+  is_hlo_sharding_replicated as is_hlo_sharding_replicated,
   op_sharding_to_indices as op_sharding_to_indices,
 )
 

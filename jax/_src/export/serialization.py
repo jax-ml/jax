@@ -19,7 +19,7 @@ from __future__ import annotations
 import types
 from collections.abc import Callable, Sequence
 from functools import partial
-from typing import TypeVar
+from typing import Any, TypeVar
 
 try:
   import flatbuffers
@@ -48,6 +48,8 @@ SerT = TypeVar("SerT")
 # Version 2, Dec 16th, 2023, adds the f0 dtype.
 # Version 3, October 16th, 2024, adds serialization for namedtuple and custom types
 #   This version is backwards compatible with Version 2.
+# Version 4, April 7th, 2025, adds serialization for PRNGs key types.
+#   This version is backwards compatible with Version 2 and 3.
 _SERIALIZATION_VERSION = 2
 
 def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
@@ -366,6 +368,11 @@ _dtype_to_dtype_kind = {
 _dtype_kind_to_dtype = {
     kind: dtype for dtype, kind in _dtype_to_dtype_kind.items()
 }
+
+
+def register_dtype_kind(dtype: Any, kind: int):
+  _dtype_to_dtype_kind[dtype] = kind
+  _dtype_kind_to_dtype[kind] = dtype
 
 
 def _serialize_aval(

@@ -14,45 +14,50 @@
 
 """Context managers for toggling X64 mode.
 
-**Experimental: please give feedback, and expect changes.**
+**Deprecated: use :func:`jax.enable_x64` instead.**
 """
-
-# This file provides
-#  1. a jax.experimental API endpoint;
-#  2. the `disable_x64` wrapper.
-# TODO(jakevdp): remove this file, and consider removing `disable_x64` for
-# uniformity
 
 from contextlib import contextmanager
 from jax._src import config
 
 @contextmanager
-def enable_x64(new_val: bool = True):
+def _enable_x64(new_val: bool = True):
   """Experimental context manager to temporarily enable X64 mode.
+
+  .. warning::
+
+    This context manager is deprecated as of JAX v0.8.0, and will be removed in
+    JAX v0.9.0. Use :func:`jax.enable_x64` instead.
 
   Usage::
 
+    >>> import jax
     >>> x = np.arange(5, dtype='float64')
-    >>> with enable_x64():
+    >>> with _enable_x64(True):
     ...   print(jnp.asarray(x).dtype)
     ...
     float64
 
   See Also
   --------
-  jax.experimental.enable_x64 : temporarily enable X64 mode.
+  jax.experimental.disable_x64 : temporarily disable X64 mode.
   """
   with config.enable_x64(new_val):
     yield
 
 @contextmanager
-def disable_x64():
+def _disable_x64():
   """Experimental context manager to temporarily disable X64 mode.
+
+  .. warning::
+
+    This context manager is deprecated as of JAX v0.8.0, and will be removed in
+    JAX v0.9.0. Use :func:`jax.enable_x64` instead.
 
   Usage::
 
     >>> x = np.arange(5, dtype='float64')
-    >>> with disable_x64():
+    >>> with _disable_x64():
     ...   print(jnp.asarray(x).dtype)
     ...
     float32
@@ -63,3 +68,27 @@ def disable_x64():
   """
   with config.enable_x64(False):
     yield
+
+_deprecations = {
+  # Added for v0.8.0
+  "disable_x64": (
+    ("jax.experimental.x64_context.disable_x64 is deprecated in JAX v0.8.0 and will be removed"
+     " in JAX v0.9.0; use jax.enable_x64(False) instead."),
+    _disable_x64
+  ),
+  "enable_x64": (
+    ("jax.experimental.x64_context.enable_x64 is deprecated in JAX v0.8.0 and will be removed"
+     " in JAX v0.9.0; use jax.enable_x64(True) instead."),
+    _enable_x64
+  ),
+}
+
+import typing as _typing
+if _typing.TYPE_CHECKING:
+  enable_x64 = _enable_x64
+  disable_x64 = _disable_x64
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing

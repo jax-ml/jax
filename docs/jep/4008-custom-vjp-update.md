@@ -4,7 +4,7 @@ _Oct 14 2020_
 
 This doc assumes familiarity with `jax.custom_vjp`, as described in the [Custom
 derivative rules for JAX-transformable Python
-functions](https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html)
+functions](https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html)
 notebook.
 
 ## What to update

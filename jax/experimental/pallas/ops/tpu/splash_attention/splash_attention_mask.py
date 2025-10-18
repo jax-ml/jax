@@ -92,6 +92,35 @@ def make_local_attention_mask(
   return mask.astype(np.bool_)
 
 
+def make_chunk_attention_mask(
+    shape: tuple[int, int], chunk_size: int
+) -> np.ndarray:
+  """Makes a chunked causal attention mask.
+
+  Args:
+    shape: The desired shape of the mask (q_seq_len, kv_seq_len).
+    chunk_size: The size of the attention chunks.
+
+  Returns:
+    A boolean mask of shape `mask_shape` where True indicates attention is
+    allowed according to chunked causal rules, and False otherwise.
+
+  Raises:
+    ValueError: If chunk_window_size is None or not positive.
+  """
+  if chunk_size <= 0:
+    raise ValueError('chunk_size must be positive')
+
+  q_seq_len, kv_seq_len = shape
+  q_idx = np.arange(q_seq_len, dtype=np.int32)
+  kv_idx = np.arange(kv_seq_len, dtype=np.int32)
+
+  # chunk mask calculation
+  same_chunk = (q_idx[:, None] // chunk_size) == (kv_idx[None, :] // chunk_size)
+  mask = same_chunk & (q_idx[:, None] >= kv_idx[None, :])
+  return mask
+
+
 def make_random_mask(
     shape: tuple[int, int], sparsity: float, seed: int
 ) -> np.ndarray:
@@ -196,15 +225,20 @@ class MultiHeadMask(Mask):
 class _ComputableMask(Mask):
   """Superclass for all masks that can be computed inside the kernel using a callable object.
 
+  This subclass is designed to be used with Splash Attention.
+  It allows the mask logic to be computed on-the-fly or fused into the attention
+  kernel, avoiding the memory cost of materializing the full
+  (sequence_length, sequence_length) boolean mask array, which can be excessive
+  for long sequences.
+
   Attributes:
     _shape: Shape of the 2-dim mask: (q_seq_len, kv_seq_len).
     offset: Offset of q start wrt kv. A positive offset shifts the bottom
       triangle upward, a negative one shifts it downward. A negative offset
       makes the first 'offset' rows of the attention matrix all 0s which leads
       to undefined softmax.
-    q_sequence: Indices of Q sequence.
-      q_sequence is reused across __getitem__ calls which is important for
-      compile-time performance.
+    q_sequence: Indices of Q sequence. q_sequence is reused across __getitem__
+      calls which is important for compile-time performance.
     mask_function: Function used by the SplashAttention kernel to compute the
       mask rather than loading it.
   """
@@ -314,26 +348,80 @@ class CausalMask(_ComputableMask):
     ))
 
 
-class LocalMask(Mask):
+class ChunkedCausalMask(_ComputableMask):
+  """Lazy chunked causal mask.
+
+  Attention is causal within each chunk (0, K), (K, 2K), (2K, 3K), ... tokens
+  attend to each other but not across chunks.
+  Llama4 models use interleaved chunk attention along with global attention.
+
+
+  Attributes:
+    chunk_size: The size of each attention chunk.
+  """
+
+  chunk_size: int
+
+  def __init__(
+      self,
+      shape: tuple[int, int],
+      chunk_size: int,
+      shard_count: int = 1,
+  ):
+    if chunk_size <= 0:
+      raise ValueError('chunk_size must be positive')
+    self.chunk_size = chunk_size
+
+    # Define the mask function for chunk attention
+    def chunked_causal_mask_function(q_ids, kv_ids):
+      """Computes the mask logic for the given slice indices."""
+      # Condition 1: Same chunk
+      same_chunk = (q_ids // self.chunk_size) == (kv_ids // self.chunk_size)
+
+      # Condition 2: Causal
+      causal = q_ids >= kv_ids
+
+      return same_chunk & causal
+
+    super().__init__(
+        shape=shape,
+        mask_function=chunked_causal_mask_function,
+        shard_count=shard_count,
+    )
+
+  def __eq__(self, other: object):
+    if not isinstance(other, type(self)):
+      return NotImplemented
+
+    return (
+        self.shape == other.shape
+        and self.chunk_size == other.chunk_size
+        and np.array_equal(self.q_sequence, other.q_sequence)
+    )
+
+  def __hash__(self):
+    return hash((
+        type(self),
+        self.shape,
+        self.chunk_size,
+        self.q_sequence.tobytes() if self.q_sequence is not None else None,
+    ))
+
+
+class LocalMask(_ComputableMask):
   """Lazy local mask, prevents model from attending to tokens outside window.
 
   Attributes:
-    _shape: Shape of the 2-dim mask: (q_seq_len, kv_seq_len).
-    window_size: Size of the two sides of the local window (None identifes no
+    window_size: Size of the two sides of the local window (None identifies no
       limit for the given side).
     offset: Offset of q start wrt kv. A positive offset shifts the bottom
       triangle upward, a negative one shifts it downward. A negative offset
       makes the first 'offset' rows of the attention matrix all 0s which leads
       to undefined softmax.
-    _q_sequence: Important for performance.
   """
 
-  # TODO(amagni): Transform LocalMask into a _ComputableMask.
-
-  _shape: tuple[int, int]
   window_size: tuple[int | None, int | None]
   offset: int
-  _q_sequence: np.ndarray | None = None
 
   def __init__(
       self,
@@ -342,68 +430,50 @@ class LocalMask(Mask):
       offset: int,
       shard_count: int = 1,
   ):
-    self._shape = shape
     self.window_size = window_size
     self.offset = offset
 
-    if self.shape[0] % (shard_count * shard_count) != 0:
-      raise ValueError(
-          f'Shard count squared ({shard_count * shard_count}) must'
-          f' divide Q seq_len ({self.shape[0]}) evenly.'
-      )
+    def local_mask_function(q_ids, kv_ids):
+      """Computes the local attention mask for the given slice indices."""
+      left_size, right_size = self.window_size
 
-  @property
-  def shape(self) -> tuple[int, int]:
-    return self._shape
+      assert q_ids.ndim == 2
+      assert kv_ids.ndim == 2
 
-  def __getitem__(self, idx) -> np.ndarray:
-    if len(idx) != 2:
-      raise NotImplementedError(f'Unsupported slice: {idx}')
-    q_slice, kv_slice = idx
-    if not isinstance(q_slice, slice) or not isinstance(kv_slice, slice):
-      raise NotImplementedError(f'Unsupported slice: {idx}')
+      if left_size is None and right_size is None:
+        return np.ones((q_ids.shape[0], kv_ids.shape[1]), dtype=np.bool_)
 
-    q_slice = _fill_slice(q_slice, self.shape[0])
-    kv_slice = _fill_slice(kv_slice, self.shape[1])
-
-    if self._q_sequence is None:
-      rows = np.arange(q_slice.start, q_slice.stop)
-    else:
-      rows = self._q_sequence[q_slice]
-
-    cols = np.arange(kv_slice.start, kv_slice.stop)
-
-    left_size, right_size = self.window_size
-
-    if left_size is None and right_size is None:
-      return np.ones((rows.shape[0], cols.shape[0]), dtype=np.bool_)
-    else:
-      expanded_cols = cols[None, :]
-      if self.offset != 0:
-        expanded_rows = rows[:, None] + self.offset
+      # Avoid the addition when possible to avoid instantiating an actual array.
+      if offset != 0:
+        shifted_q_ids = q_ids + self.offset
       else:
-        expanded_rows = rows[:, None]
-      if left_size is not None and right_size is not None:
-        return (expanded_rows <= expanded_cols + left_size) & (
-            expanded_cols - right_size <= expanded_rows
-        )
+        shifted_q_ids = q_ids
 
-      elif left_size is not None and right_size is None:
-        return expanded_rows <= expanded_cols + left_size
-      else:
-        assert left_size is None and right_size is not None
-        return expanded_cols - right_size <= expanded_rows
+      mask = None
+      if left_size is not None:
+        mask = shifted_q_ids - left_size <= kv_ids
+      if right_size is not None:
+        if mask is None:
+          mask = shifted_q_ids + right_size >= kv_ids
+        else:
+          mask &= shifted_q_ids + right_size >= kv_ids
+      return mask
+
+    super().__init__(
+        shape=shape,
+        mask_function=local_mask_function,
+        shard_count=shard_count,
+    )
 
   def __eq__(self, other: object):
     if not isinstance(other, type(self)):
-      return NotImplemented
+      return False
 
     return (
         self.shape == other.shape
         and self.window_size == other.window_size
         and self.offset == other.offset
-        and (True if self._q_sequence is None else
-             np.array_equal(self._q_sequence, other._q_sequence))
+        and np.array_equal(self.q_sequence, other.q_sequence)
     )
 
   def __hash__(self):
@@ -412,7 +482,7 @@ class LocalMask(Mask):
         self.shape,
         self.window_size,
         self.offset,
-        self._q_sequence.tobytes() if self._q_sequence is not None else None,
+        self.q_sequence.tobytes() if self.q_sequence is not None else None,
     ))
 
 

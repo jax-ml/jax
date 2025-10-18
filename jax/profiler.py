@@ -14,16 +14,19 @@
 
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
-
 from jax._src.profiler import (
-  StepTraceAnnotation as StepTraceAnnotation,
-  TraceAnnotation as TraceAnnotation,
-  device_memory_profile as device_memory_profile,
-  save_device_memory_profile as save_device_memory_profile,
-  start_server as start_server,
-  stop_server as stop_server,
-  start_trace as start_trace,
-  stop_trace as stop_trace,
-  trace as trace,
-  annotate_function as annotate_function,
+    ProfileData as ProfileData,
+    ProfileEvent as ProfileEvent,
+    ProfileOptions as ProfileOptions,
+    ProfilePlane as ProfilePlane,
+    StepTraceAnnotation as StepTraceAnnotation,
+    TraceAnnotation as TraceAnnotation,
+    annotate_function as annotate_function,
+    device_memory_profile as device_memory_profile,
+    save_device_memory_profile as save_device_memory_profile,
+    start_server as start_server,
+    start_trace as start_trace,
+    stop_server as stop_server,
+    stop_trace as stop_trace,
+    trace as trace,
 )

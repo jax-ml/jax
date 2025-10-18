@@ -9,14 +9,14 @@ surprising bugs where a silent rank promotion masks an underlying shape error.
 
 Here's an example of rank promotion:
 
->>> import numpy as np
->>> x = np.arange(12).reshape(4, 3)
->>> y = np.array([0, 1, 0])
+>>> from jax import numpy as jnp
+>>> x = jnp.arange(12).reshape(4, 3)
+>>> y = jnp.array([0, 1, 0])
 >>> x + y
-array([[ 0,  2,  2],
+Array([[ 0,  2,  2],
        [ 3,  5,  5],
        [ 6,  8,  8],
-       [ 9, 11, 11]])
+       [ 9, 11, 11]], dtype=int32)
 
 To avoid potential surprises, :code:`jax.numpy` is configurable so that
 expressions requiring rank promotion can lead to a warning, error, or can be

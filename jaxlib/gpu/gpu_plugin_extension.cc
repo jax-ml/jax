@@ -18,12 +18,12 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/string_view.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
@@ -41,7 +41,7 @@ limitations under the License.
 
 namespace nb = nanobind;
 
-namespace xla {
+namespace jax {
 
 namespace {
 
@@ -54,13 +54,13 @@ struct TritonCompilationResult {
 };
 
 absl::StatusOr<TritonCompilationResult> CompileTritonToASM(
-    const PJRT_Api* c_api, absl::string_view module,
-    absl::string_view arch_name, int num_warps, int num_ctas, int num_stages) {
+    const PJRT_Api* c_api, std::string_view module, std::string_view arch_name,
+    int num_warps, int num_ctas, int num_stages) {
   const PJRT_Triton_Extension* triton_ext =
       pjrt::FindExtension<PJRT_Triton_Extension>(
           c_api, PJRT_Extension_Type::PJRT_Extension_Type_Triton);
   if (triton_ext == nullptr) {
-    return Unimplemented("The plugin does not have a Triton extension.");
+    return xla::Unimplemented("The plugin does not have a Triton extension.");
   }
   PJRT_Triton_Compile_Args args;
   args.struct_size = PJRT_Triton_Compile_Args_STRUCT_SIZE;
@@ -92,13 +92,15 @@ absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
       pjrt::FindExtension<PJRT_Gpu_Custom_Call>(
           c_api, PJRT_Extension_Type::PJRT_Extension_Type_Gpu_Custom_Call);
   if (custom_call_ext == nullptr) {
-    return Unimplemented("The plugin does not have a custom call extension.");
+    return xla::Unimplemented(
+        "The plugin does not have a custom call extension.");
   }
   PJRT_Gpu_Register_Custom_Call* register_custom_call =
       custom_call_ext->custom_call;
 
   if (traits != 0) {
-    return Unimplemented("The plugin does not support custom call traits.");
+    return xla::Unimplemented(
+        "The plugin does not support custom call traits.");
   }
 
   PJRT_Gpu_Register_Custom_Call_Args args;
@@ -180,7 +182,7 @@ absl::Status RegisterCustomTypeId(const PJRT_Api* c_api,
   const PJRT_FFI_Extension* ffi_ext = pjrt::FindExtension<PJRT_FFI_Extension>(
       c_api, PJRT_Extension_Type::PJRT_Extension_Type_FFI);
   if (ffi_ext == nullptr) {
-    return Unimplemented("The plugin does not have the FFI extension.");
+    return xla::Unimplemented("The plugin does not have the FFI extension.");
   }
 
   PJRT_FFI_TypeID_Register_Args args;
@@ -215,12 +217,12 @@ void BuildGpuPluginExtension(nanobind::module_& m) {
       .def_ro("cluster_dim_z", &TritonCompilationResult::cluster_dim_z);
 
   m.def("compile_triton_to_asm",
-        [](nb::capsule c_api, nb::bytes module, absl::string_view arch_name,
+        [](nb::capsule c_api, nb::bytes module, std::string_view arch_name,
            int num_warps, int num_ctas, int num_stages) {
           return xla::ValueOrThrow(CompileTritonToASM(
               static_cast<const PJRT_Api*>(c_api.data()),
-              absl::string_view(static_cast<const char*>(module.data()),
-                                module.size()),
+              std::string_view(static_cast<const char*>(module.data()),
+                               module.size()),
               arch_name, num_warps, num_ctas, num_stages));
         });
 
@@ -259,4 +261,4 @@ void BuildGpuPluginExtension(nanobind::module_& m) {
       nb::arg("c_api"), nb::arg("type_name"), nb::arg("type_id"));
 }
 
-}  // namespace xla
+}  // namespace jax

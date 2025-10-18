@@ -19,12 +19,13 @@ import inspect
 import threading
 from typing import Any, Protocol
 
-import jax
-from jax import tree_util
+from jax._src import callback
 from jax._src import core
 from jax._src import debugging
 from jax._src import traceback_util
+from jax._src import tree_util
 from jax._src import util
+from jax._src.lax import lax
 
 
 @tree_util.register_pytree_node_class
@@ -120,7 +121,7 @@ class DebuggerFrame:
     except OSError:
       source = []
       offset = None
-    return DebuggerFrame(
+    return DebuggerFrame(  # pytype: disable=wrong-arg-types
         filename=frame_info.filename,
         locals=frame_info.frame.f_locals,
         globals={},
@@ -225,5 +226,5 @@ def breakpoint(*, backend: str | None = None, filter_frames: bool = True,
     def _breakpoint_callback_wrapper(x, *flat_args):
       _breakpoint_callback(*flat_args)
       return x
-    token, flat_args = jax.lax.stop_gradient((token, flat_args))
-    return jax.pure_callback(_breakpoint_callback_wrapper, token, token, *flat_args)
+    token, flat_args = lax.stop_gradient((token, flat_args))
+    return callback.pure_callback(_breakpoint_callback_wrapper, token, token, *flat_args)

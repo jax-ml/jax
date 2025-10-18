@@ -72,9 +72,10 @@ class AnEnum(enum.IntEnum):
 @google_benchmark.register
 def eager_unary_dispatch(state):
   a = jax.device_put(1)
-  lax.neg(a)
+  x = lax.neg(a)
   while state:
-    lax.neg(a)
+    x = lax.neg(a)
+  x.block_until_ready()
 
 
 @google_benchmark.register
@@ -98,9 +99,10 @@ def eager_binary_dispatch(state):
 def eager_binary(state):
   a = jax.device_put(1)
   b = jax.device_put(2)
-  lax.add(a, b).block_until_ready()
+  x = lax.add(a, b).block_until_ready()
   while state:
-    lax.add(a, b).block_until_ready()
+    x = lax.add(a, b).block_until_ready()
+  x.block_until_ready()
 
 
 @google_benchmark.register
@@ -131,10 +133,11 @@ def jit_simple_dispatch(state):
   a = jax.device_put(1)
   b = jax.device_put(2)
   f = jax.jit(operator.add)
-  f(a, b)
+  x = f(a, b)
 
   while state:
-    f(a, b)
+    x = f(a, b)
+  x.block_until_ready()
 
 
 @google_benchmark.register
@@ -152,10 +155,11 @@ def jit_simple_dispatch_array(state):
   a = jax.device_put(1)
   b = jax.device_put(2)
   f = jax.jit(operator.add)
-  f(a, b)
+  x = f(a, b)
 
   while state:
-    f(a, b)
+    x = f(a, b)
+  x.block_until_ready()
 
 
 @google_benchmark.register
@@ -205,7 +209,7 @@ def jit_big_matmul(state):
 @google_benchmark.option.args([2000])
 def jit_simple_many_args_dispatch(state):
   args = [jax.device_put(i) for i in range(state.range(0))]
-  f = jax.jit(lambda xs: functools.reduce(operator.add, xs))
+  f = jax.jit(sum)
   x = f(args)
   x.block_until_ready()
 
@@ -225,7 +229,7 @@ def jit_simple_many_args_dispatch(state):
 @google_benchmark.option.args([2000])
 def jit_simple_many_args(state):
   args = [jax.device_put(i) for i in range(state.range(0))]
-  f = jax.jit(lambda xs: functools.reduce(operator.add, xs))
+  f = jax.jit(sum)
   f(args).block_until_ready()
 
   while state:
@@ -269,10 +273,11 @@ def jit_dispatch_without_transfer(state):
   imgs = jax.device_put(imgs)
 
   f = jax.jit(lambda x: x+1)
-  f(imgs)
+  x = f(imgs)
 
   while state:
-    f(imgs)
+    x = f(imgs)
+  x.block_until_ready()
 
 
 @google_benchmark.register
@@ -280,7 +285,7 @@ def jit_dispatch_with_transfer(state):
   imgs = np.ones((128, 224, 224), np.float32)
 
   f = jax.jit(lambda x: x+1)
-  f(imgs).block_until_ready()
+  x = f(imgs).block_until_ready()
 
   while state:
     x = f(imgs)
@@ -308,6 +313,8 @@ def pmap_trivial_dispatch_8_devices(state):
 
   while state:
     a, b = f(a, b)
+  a.block_until_ready()
+  b.block_until_ready()
 
 
 @google_benchmark.register
@@ -344,6 +351,8 @@ def pmap_simple_dispatch_8_devices(state):
 
   while state:
     a, b = f(a, b)
+  a.block_until_ready()
+  b.block_until_ready()
 
 
 @google_benchmark.register
@@ -371,6 +380,7 @@ def pmap_simple_dispatch_8_devices_100_args(state):
 
   while state:
     args = f(*args)
+  args[0].block_until_ready()
 
 
 @google_benchmark.register
@@ -395,6 +405,7 @@ def _run_sda_index_bench(state, num_devices):
   while state:
     for i in range(num_devices):
       _ = x[i]
+  x.block_until_ready()
 
 
 @google_benchmark.register
@@ -450,7 +461,7 @@ bench_xla_abstractify()
 
 @google_benchmark.register
 @google_benchmark.option.unit(google_benchmark.kMicrosecond)
-def bench_are_op_shardings_equal(state):
+def bench_are_hlo_shardings_equal(state):
   op1 = xc.OpSharding()
   op1.type = xc.OpSharding.Type.OTHER
   op1.tile_assignment_dimensions = [4, 192, 16]
@@ -461,8 +472,11 @@ def bench_are_op_shardings_equal(state):
   op2.tile_assignment_dimensions = [4, 192, 16]
   op2.tile_assignment_devices = list(range(12288))
 
+  hs1 = xc.HloSharding.from_proto(op1)
+  hs2 = xc.HloSharding.from_proto(op2)
+
   while state:
-    op_shardings.are_op_shardings_equal(op1, op2)
+    op_shardings.are_hlo_shardings_equal(hs1, hs2)
 
 
 @google_benchmark.register
@@ -592,6 +606,7 @@ def pjit_simple_benchmark(state, num_devices, num_args, use_aot=False):
 
   while state:
     x = f(x)
+  x[0].block_until_ready()
 
 
 @google_benchmark.register
@@ -689,9 +704,8 @@ def device_put_from_numpy_array(state):
 @google_benchmark.option.args([10])
 @google_benchmark.option.args([100])
 @google_benchmark.option.args([1000])
+@required_devices(2)
 def device_put_from_jax_array(state):
-  if len(jax.devices()) < 2:
-    state.skip_with_error('requires 2 devices')
   x = [np.array(1, np.int32)] * state.range(0)
   x = jax.block_until_ready(jax.device_put(x, device=jax.devices()[0]))
   d = jax.devices()[1]
@@ -847,7 +861,7 @@ def safe_map(state):
   args = tuple(list(range(state.range(0))) for _ in range(state.range(1)))
   def f(*args): return tuple(args)
   while state:
-    jax.util.safe_map(f, *args)
+    jax._src.util.safe_map(f, *args)
 
 @google_benchmark.register
 @google_benchmark.option.arg_names(['arg_lengths', 'num_args'])
@@ -855,7 +869,7 @@ def safe_map(state):
 def safe_zip(state):
   args = tuple(list(range(state.range(0))) for _ in range(state.range(1)))
   while state:
-    jax.util.safe_zip(*args)
+    jax._src.util.safe_zip(*args)
 
 
 @google_benchmark.register

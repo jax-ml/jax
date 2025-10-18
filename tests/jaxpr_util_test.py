@@ -38,8 +38,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
 
     hist = jaxpr_util.primitives(make_jaxpr(f)(1., 1.).jaxpr)
 
-    primitives = ['add', 'sin', 'cos']
-    primitives.append('pjit')
+    primitives = ['add', 'sin', 'cos', 'jit']
     for k in primitives:
       assert k in hist, k
     self.assertEqual(hist['sin'], 2)
@@ -74,7 +73,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
         f'cos :: float{t}[]',
         f'reduce_sum :: float{t}[]',
         f'concatenate :: float{t}[2]',
-        f'pjit :: float{t}[]',
+        f'jit :: float{t}[]',
     ]
     for k in shapes:
       self.assertEqual(hist[k], 1)

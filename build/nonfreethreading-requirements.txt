@@ -1,0 +1,18 @@
+numpy~=2.0.0; python_version<="3.12"
+numpy~=2.1.0; python_version=="3.13"
+numpy>=2.3.2; python_version>="3.14"
+
+# These packages have not released free-threaded wheels.
+
+# zstandard is available in the Python 3.14 standard library as
+# compression.zstd, and we'll use that if available.
+zstandard; python_version<"3.14"
+
+# TODO(phawkins): enable tensorstore once it ships a 3.14 wheel.
+tensorstore; python_version<"3.14"
+
+# For jax2tf_test
+tensorflow; python_version<"3.14"
+
+# For multiprocess tests.
+portpicker

@@ -12,128 +12,49 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.lib import xla_extension as _xe
+from jax._src import deprecations as _deps
+
+_deps.warn(
+    'jax-lib-module',
+    (
+        'jax.lib.xla_extension module will be removed in JAX v0.9.0;'
+        ' all its APIs were deprecated and removed by JAX v0.8.0.'
+    ),
+    stacklevel=4
+)
 
 _deprecations = {
-    "ArrayImpl": (
-        (
-            "jax.lib.xla_extension.ArrayImpl has been removed; use jax.Array"
-            " instead."
-        ),
-        None,
-    ),
-    "XlaRuntimeError": (
-        (
-            "jax.lib.xla_extension.XlaRuntimeError has been removed; use"
-            " jax.errors.JaxRuntimeError instead."
-        ),
-        None,
-    ),
-    # Deprecated March 26 2025.
-    "DistributedRuntimeClient": (
-        (
-            "jax.lib.xla_extension.DistributedRuntimeClient is"
-            " deprecated; use jax.distributed instead."
-        ),
-        _xe.DistributedRuntimeClient,
-    ),
-    "get_distributed_runtime_client": (
-        (
-            "jax.lib.xla_extension.get_distributed_runtime_client is"
-            " deprecated; use jax.distributed instead."
-        ),
-        _xe.get_distributed_runtime_client,
-    ),
-    "get_distributed_runtime_service": (
-        (
-            "jax.lib.xla_extension.get_distributed_runtime_service is"
-            " deprecated; use jax.distributed instead."
-        ),
-        _xe.get_distributed_runtime_service,
-    ),
-    "Device": (
-        "jax.lib.xla_extension.Device is deprecated; use jax.Device instead.",
-        _xe.Device,
-    ),
-    "PjitFunctionCache": (
-        "jax.lib.xla_extension.PjitFunctionCache is deprecated.",
-        _xe.PjitFunctionCache,
-    ),
+    # Finalized in JAX v0.8.0; remove these messages in v0.9.0.
     "ifrt_proxy": (
         "jax.lib.xla_extension.ifrt_proxy is deprecated.",
-        _xe.ifrt_proxy,
+        None,
     ),
-    "jax_jit": (
-        "jax.lib.xla_extension.jax_jit is deprecated.",
-        _xe.jax_jit,
-    ),
-    "mlir": ("jax.lib.xla_extension.mlir is deprecated.", _xe.mlir),
-    "pmap_lib": ("jax.lib.xla_extension.pmap_lib is deprecated.", _xe.pmap_lib),
+    "mlir": ("jax.lib.xla_extension.mlir is deprecated.", None),
     "profiler": (
         "jax.lib.xla_extension.profiler is deprecated.",
-        _xe.profiler,
-    ),
-    "pytree": (
-        "jax.lib.xla_extension.pytree is deprecated.",
-        _xe.pytree,
+        None,
     ),
     "hlo_module_cost_analysis": (
         "jax.lib.xla_extension.hlo_module_cost_analysis is deprecated.",
-        _xe.hlo_module_cost_analysis,
+        None,
     ),
     "hlo_module_to_dot_graph": (
         "jax.lib.xla_extension.hlo_module_to_dot_graph is deprecated.",
-        _xe.hlo_module_to_dot_graph,
-    ),
-    "HloModule": (
-        "jax.lib.xla_extension.HloModule is deprecated.",
-        _xe.HloModule,
+        None,
     ),
     "HloPrintOptions": (
         "jax.lib.xla_extension.HloPrintOptions is deprecated.",
-        _xe.HloPrintOptions,
-    ),
-    "OpSharding": (
-        "jax.lib.xla_extension.OpSharding is deprecated.",
-        _xe.OpSharding,
+        None,
     ),
     "PjitFunction": (
         "jax.lib.xla_extension.PjitFunction is deprecated.",
-        _xe.PjitFunction,
+        None,
     ),
     "PmapFunction": (
         "jax.lib.xla_extension.PmapFunction is deprecated.",
-        _xe.PmapFunction,
+        None,
     ),
 }
 
-import typing as _typing
-
-if _typing.TYPE_CHECKING:
-  Device = _xe.Device
-  DistributedRuntimeClient = _xe.DistributedRuntimeClient
-  HloModule = _xe.HloModule
-  HloPrintOptions = _xe.HloPrintOptions
-  OpSharding = _xe.OpSharding
-  PjitFunction = _xe.PjitFunction
-  PjitFunctionCache = _xe.PjitFunctionCache
-  PmapFunction = _xe.PmapFunction
-
-  get_distributed_runtime_client = _xe.get_distributed_runtime_client
-  get_distributed_runtime_service = _xe.get_distributed_runtime_service
-  hlo_module_cost_analysis = _xe.hlo_module_cost_analysis
-  hlo_module_to_dot_graph = _xe.hlo_module_to_dot_graph
-  ifrt_proxy = _xe.ifrt_proxy
-  jax_jit = _xe.jax_jit
-  mlir = _xe.mlir
-  pmap_lib = _xe.pmap_lib
-  profiler = _xe.profiler
-  pytree = _xe.pytree
-
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing
-del _xe
+__getattr__ = _deps.deprecation_getattr(__name__, _deprecations)
+del _deps

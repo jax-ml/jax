@@ -15,7 +15,7 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
-from typing import Callable
+from collections.abc import Callable
 
 from jax._src.linear_util import (
   StoreException as StoreException,

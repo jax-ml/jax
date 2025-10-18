@@ -16,12 +16,12 @@ import contextlib
 import unittest
 from absl.testing import absltest
 import jax
+from jax import lax
+from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
-import jax._src.lib
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
-from jax.experimental.pjit import pjit
 from jax.experimental.serialize_executable import (
     deserialize_and_load,
     serialize,
@@ -42,12 +42,12 @@ with contextlib.suppress(ImportError):
 class JaxAotTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices('tpu', 'gpu')
-  def test_pickle_pjit_lower(self):
+  def test_pickle_jit_lower(self):
     def fun(x):
       return x * x
 
-    with jax.sharding.Mesh(np.array(jax.devices()), ('data',)):
-      lowered = pjit(
+    with jax.set_mesh(jax.sharding.Mesh(np.array(jax.devices()), ('data',))):
+      lowered = jax.jit(
           fun, in_shardings=P('data'), out_shardings=P(None, 'data')
       ).lower(core.ShapedArray(shape=(8, 8), dtype=np.float32))
 
@@ -62,7 +62,8 @@ class JaxAotTest(jtu.JaxTestCase):
         jax.pmap(lambda x: x * x).lower(
             np.zeros((len(jax.devices()), 4), dtype=np.float32)))
 
-  def test_topology_pjit_serialize(self):
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): This test is segfaulting on TPU
+  def test_topology_jit_serialize(self):
     try:
       aot_topo = topologies.get_topology_desc(
           platform=jax.devices()[0].platform
@@ -72,6 +73,8 @@ class JaxAotTest(jtu.JaxTestCase):
 
     if jtu.TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       raise unittest.SkipTest('Compilation caching not yet supported.')
+    if jtu.is_device_cuda():
+      raise unittest.SkipTest('Broken on GPU: b/442353988')
 
     @jax.jit
     def fn(x):
@@ -126,6 +129,132 @@ class JaxAotTest(jtu.JaxTestCase):
     hlo = lowered.as_text("hlo")
     self.assertNotRegex(hlo, r"sine.*metadata=.*source_file=.*")
 
+  def test_constants_in_lowering_in_aot(self):
+    const_size = 100
+    const = jax.random.uniform(jax.random.key(0), (const_size,),
+                               dtype=np.float32)
+
+    def my_function(x):
+      return jnp.sin(x) + const
+
+    lowered = jax.jit(my_function).lower(np.full_like(const, 42., dtype=const.dtype))
+    stablehlo = lowered.as_text("stablehlo")
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertNotRegex(stablehlo, rf"stablehlo.constant dense.*tensor<{const_size}x")
+      self.assertLen(lowered._lowering.const_args, 1)
+      self.assertIs(lowered._lowering.const_args[0], const)
+    else:
+      self.assertRegex(stablehlo, rf"stablehlo.constant dense.*tensor<{const_size}x")
+      self.assertLen(lowered._lowering.const_args, 0)
+
+  def test_with_constants(self):
+    const = jnp.arange(16.) + 42.  # A distinctive shape and value
+
+    @jax.jit
+    def f(x):
+      return const[0:8] + x
+
+    inp = jnp.arange(8.)
+    compiled = f.lower(inp).compile()
+    self.assertLen(compiled.args_info[0], 1)  # Not including const_args
+    self.assertLen(compiled.in_avals[0], 1)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertLen(compiled._params.const_args, 1)
+      self.assertIs(compiled._params.const_args[0], const)
+    else:
+      self.assertLen(compiled._params.const_args, 0)
+    self.assertArraysEqual(compiled(inp), const[0:8] + inp)
+    self.assertCacheMisses(lambda: compiled(inp), cpp=0, aot_call=0)
+
+  @jtu.parameterized_filterable(
+      kwargs=[
+          dict(use_np=use_np, lower=lower, compile=compile, exec=exec)
+            for use_np in (False, True)
+            for lower in (False, True)
+            for compile in (False, True)
+            for exec in (False, True)
+  ])
+  def test_with_constants_enable_x64(self, *, use_np, lower, compile, exec):
+    # Closed-over constant is 64-bit. Each of lowering, compilation, and
+    # execution can be run in 64-bit or 32-bit mode.
+    with config.enable_x64(True):
+      arange = np.arange if use_np else jnp.arange
+      const = arange(8, dtype=np.int64) + 42
+
+      @jax.jit
+      def f(x):
+        return lax.convert_element_type(const, np.float32) + x
+
+    inp = np.arange(8., dtype=np.float32)
+    with config.enable_x64(True) if lower else contextlib.nullcontext():
+      lowered = f.lower(inp)
+    with config.enable_x64(True) if compile else contextlib.nullcontext():
+      compiled = lowered.compile()
+
+    def run():
+      with config.enable_x64(True) if exec else contextlib.nullcontext():
+        return compiled(inp)
+
+    self.assertLen(compiled.args_info[0], 1)  # Not including const_args
+    self.assertLen(compiled.in_avals[0], 1)
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertLen(compiled._params.const_args, 1)
+      self.assertLen(compiled._executable.in_avals, 2)
+      expected_dtype = np.int64
+      if not config.enable_x64.value and use_np and not lower:
+        expected_dtype = np.int32
+      self.assertEqual(compiled._executable.in_avals[0].dtype, expected_dtype)
+
+      if expected_dtype is np.int64:  # Otherwise, we made a copy of the const
+        if use_np:
+          self.assertIs(np.asarray(compiled._params.const_args[0]), const)
+        else:
+          self.assertIs(compiled._params.const_args[0], const)
+    else:
+      self.assertLen(compiled._params.const_args, 0)
+      self.assertLen(compiled._executable.in_avals, 1)
+
+    # In some cases we expect errors: in 32-bit mode, lowered with 64-bit mode
+    # and execute in 32-bit mode.
+    if (config.use_simplified_jaxpr_constants.value and
+        not config.enable_x64.value and
+        use_np and lower and not exec):
+      with self.assertRaisesRegex(
+          xc.XlaRuntimeError,
+          "got buffer with incompatible size"):
+        run()
+      return
+
+    self.assertArraysEqual(run(),
+                           lax.convert_element_type(const, inp.dtype) + inp)
+    # Trigger cache hit
+    self.assertCacheMisses(run, cpp=0, aot_call=0)
+
+  def test_with_ref_constants(self):
+    x_ref = core.new_ref(0)
+
+    @jax.jit
+    def f(x):
+      x_ref[...] += x
+
+    f_lowered = f.lower(1)
+    with self.assertRaisesRegex(ValueError, 'serialize with a closed-over'):
+      serialized, in_tree, out_tree = serialize(f_lowered.compile())
+
+  @jtu.run_on_devices('gpu', 'tpu')
+  def test_mismatched_backends_raises(self):
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    x = jnp.arange(1)
+    f_lowered = f.lower(x)
+    serialized, in_tree, out_tree = serialize(f_lowered.compile())
+    with self.assertRaisesRegex(
+        ValueError,
+        'Execution devices belong to a client other than `backend`'):
+      deserialize_and_load(serialized, in_tree, out_tree, backend='cpu',
+                           execution_devices=jax.devices()[:1])
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

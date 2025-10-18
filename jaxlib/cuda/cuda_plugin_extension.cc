@@ -27,7 +27,7 @@ limitations under the License.
 
 namespace nb = nanobind;
 
-namespace xla {
+namespace jax {
 namespace {
 
 static std::string ToString(CUresult result) {
@@ -46,10 +46,15 @@ nb::dict FfiRegistrations() {
   nb::dict dict;
   nb::dict gpu_callback_dict;
   gpu_callback_dict["instantiate"] =
-      jax::EncapsulateFfiHandler(jax::cuda::kGpuTransposePlanCacheInstantiate);
+      EncapsulateFfiHandler(cuda::kGpuTransposePlanCacheInstantiate);
   gpu_callback_dict["execute"] =
-      jax::EncapsulateFfiHandler(jax::cuda::kXlaFfiPythonGpuCallback);
+      EncapsulateFfiHandler(cuda::kXlaFfiPythonGpuCallback);
   dict["xla_ffi_python_gpu_callback"] = gpu_callback_dict;
+  dict["xla_ffi_partitioned_python_gpu_callback"] = gpu_callback_dict;
+  dict["xla_buffer_python_gpu_callback"] =
+      EncapsulateFfiHandler(cuda::kXlaBufferPythonGpuCallback);
+  dict["xla_buffer_python_gpu_callback_cmd_buffer"] =
+      EncapsulateFfiHandler(cuda::kXlaBufferPythonGpuCallbackCmdBuffer);
   return dict;
 }
 
@@ -79,4 +84,4 @@ NB_MODULE(cuda_plugin_extension, m) {
       },
       nb::arg("data_value"));
 }
-}  // namespace xla
+}  // namespace jax

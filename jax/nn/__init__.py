@@ -31,6 +31,7 @@ from jax._src.nn.functions import (
   leaky_relu as leaky_relu,
   log_sigmoid as log_sigmoid,
   log_softmax as log_softmax,
+  logmeanexp as logmeanexp,
   logsumexp as logsumexp,
   standardize as standardize,
   one_hot as one_hot,
@@ -38,6 +39,7 @@ from jax._src.nn.functions import (
   identity as identity,
   relu6 as relu6,
   dot_product_attention as dot_product_attention,
+  get_scaled_dot_general_config as get_scaled_dot_general_config,
   scaled_dot_general as scaled_dot_general,
   scaled_matmul as scaled_matmul,
   selu as selu,
@@ -51,4 +53,5 @@ from jax._src.nn.functions import (
   swish as swish,
   squareplus as squareplus,
   mish as mish,
+  log1mexp as log1mexp,
 )
