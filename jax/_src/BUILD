@@ -1309,7 +1309,6 @@ pytype_strict_library(
     ]),
     deps = [
         ":api",
-        ":batching",
         ":config",
         ":core",
         ":cudnn",
@@ -1317,7 +1316,6 @@ pytype_strict_library(
         ":deprecations",
         ":dtypes",
         ":lax",
-        ":mlir",
         ":named_sharding",
         ":numpy",
         ":partition_spec",
