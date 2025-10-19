@@ -336,16 +336,34 @@ referred to as being *sticky* to the device).
 
 By default, JAX arrays are placed uncommitted on the default device
 (``jax.devices()[0]``), which is the first GPU or TPU by default. If no GPU or
-TPU is present, ``jax.devices()[0]`` is the CPU. The default device can
-be temporarily overridden with the :func:`jax.default_device` context manager, or
-set for the whole process by setting the environment variable ``JAX_PLATFORMS``
-or the absl flag ``--jax_platforms`` to "cpu", "gpu", or "tpu"
-(``JAX_PLATFORMS`` can also be a list of platforms, which determines which
-platforms are available in priority order).
+TPU is present, ``jax.devices()[0]`` is the CPU.
 
 >>> from jax import numpy as jnp
 >>> print(jnp.ones(3).devices())  # doctest: +SKIP
 {CudaDevice(id=0)}
+
+The default device can be changed for the whole process using
+``jax.config.update('jax_default_device', jax.devices()[1])`` at the beginning
+of the script (after importing jax) or temporarily overridden with the
+:func:`jax.default_device` context manager, or set for the whole process by
+setting the environment variable ``JAX_PLATFORMS`` or the absl flag
+``--jax_platforms`` to "cpu", "gpu", or "tpu" (``JAX_PLATFORMS`` can also be a
+list of platforms, which determines which platforms are available in priority
+order).
+
+>>> import jax, jax.numpy as jnp
+>>> jax.config.update('jax_default_device', jax.devices()[2])
+>>> arr1 = jnp.array([1, 2, 3])
+>>> arr1.devices()
+{CudaDevice(id=2)}
+>>> with jax.default_device(jax.devices()[3]):
+...     arr2 = jnp.ones((1, 3))
+... 
+>>> arr2.devices()
+{CudaDevice(id=3)}
+>>> arr3 = arr1 + arr2
+>>> arr3.devices()
+{CudaDevice(id=2)}
 
 Computations involving uncommitted data are performed on the default
 device and the results are uncommitted on the default device.
