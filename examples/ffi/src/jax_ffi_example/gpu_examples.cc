@@ -53,6 +53,13 @@ XLA_FFI_DEFINE_HANDLER(kStateExecute, StateExecute,
 NB_MODULE(_gpu_examples, m) {
   m.def("type_id",
         []() { return nb::capsule(reinterpret_cast<void*>(&State::id)); });
+  m.def("state_type", []() {
+    static auto kStateTypeInfo = ffi::TypeInfo<State>();
+    nb::dict d;
+    d["type_id"] = nb::capsule(reinterpret_cast<void*>(&State::id));
+    d["type_info"] = nb::capsule(reinterpret_cast<void*>(&kStateTypeInfo));
+    return d;
+  });
   m.def("handler", []() {
     nb::dict d;
     d["instantiate"] = nb::capsule(reinterpret_cast<void*>(kStateInstantiate));
