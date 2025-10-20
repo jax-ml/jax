@@ -376,7 +376,7 @@ class LayoutTest(jtu.JaxTestCase):
 
   def test_wsc_bfloat16_concrete_layout(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
-    shape = (16, 128)
+    shape = (64, 128)
     s = NamedSharding(mesh, P('x'))
     inp = jnp.arange(math.prod(shape), dtype=jnp.bfloat16).reshape(shape)
     arr = jax.device_put(inp, s)
