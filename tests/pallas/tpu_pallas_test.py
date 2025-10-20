@@ -3318,26 +3318,32 @@ class PrettyPrintingTest(PallasBaseTest):
 
   @parameterized.parameters(
       (
-          lambda i: (i, pl.ds(0, 8), pl.ds(0, 128)),
+          lambda i: (i, pl.ds(0, 8), pl.ds(0, 128)), 0, False,
           'dma_start(p0) c[d,:,:] -> e[...] f',
       ),
       (
-          lambda i: (0, pl.ds(i, 8), pl.ds(0, 128)),
+          lambda i: (0, pl.ds(i, 8), pl.ds(0, 128)), 0, False,
           'dma_start(p0) c[0,d:d+8,:] -> e[...] f',
       ),
       (
-          lambda i: (i, pl.ds(2, 4), pl.ds(0, 100)),
+          lambda i: (i, pl.ds(2, 4), pl.ds(0, 100)), 0, False,
           'dma_start(p0) c[d,2:6,:100] -> e[...] f',
       ),
       (
-          lambda i: (i, pl.ds(2, 6), pl.ds(4, 100)),
-          'dma_start(p0) c[d,2:,4:104] -> e[...] f',
+          lambda i: (i, pl.ds(2, 6), pl.ds(4, 100)), 1, False,
+          'dma_start(p1) c[d,2:,4:104] -> e[...] f',
+      ),
+      (
+          lambda i: (i, pl.ds(2, 6), pl.ds(4, 100)), 0, True,
+          'dma_start(p0, add) c[d,2:,4:104] -> e[...] f',
       ),
   )
-  def test_dma_custom_pretty_print(self, indexer, expected):
+  def test_dma_custom_pretty_print(self, indexer, priority, add, expected):
     def body(x_hbm_ref, i):
       def inner(x_ref, sem):
-        pltpu.async_copy(x_hbm_ref.at[indexer(i)], x_ref, sem).wait()
+        pltpu.async_copy(x_hbm_ref.at[indexer(i)], x_ref, sem,
+                         priority=priority,
+                         add=add).wait()
 
       pl.run_scoped(
           inner, pltpu.VMEM((8, 128), jnp.float32), pltpu.SemaphoreType.DMA
