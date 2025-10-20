@@ -1,0 +1,25 @@
+--- BUILD.bazel
++++ BUILD.bazel
+@@ -279,9 +279,9 @@
+         "lib/**/*.h",
+     ]),
+     hdrs = glob(["include/curl/*.h"]),
+-    additional_linker_inputs = [
+-        ":symbol_versioning_map",
+-    ],
++    # additional_linker_inputs = [
++    #     ":symbol_versioning_map",
++    # ],
+     copts = select({
+         "@platforms//os:windows": [
+             "/DWIN32",
+@@ -308,7 +308,7 @@
+         "include/",
+         "lib/",
+     ],
+-    linkopts = ["-Wl,--version-script=$(location :symbol_versioning_map)"] +
++    linkopts = # ["-Wl,--version-script=$(location :symbol_versioning_map)"] +
+                select({
+                    ":use_sectransport": [
+                        "-Wl,-framework,CoreFoundation",
+
