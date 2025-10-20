@@ -380,7 +380,7 @@ rediraffe_redirects = {
   "jax-101/03-vectorization.md": "automatic-vectorization.md",
   "jax-101/04-advanced-autodiff.md": "automatic-differentiation.md",
   "jax-101/05-random-numbers.md": "random-numbers.md",
-  "jax-101/05.1-pytrees.md": "working-with-pytrees.md",
+  "jax-101/05.1-pytrees.md": "pytrees.md",
   "jax-101/06-parallelism.md": "sharded-computation.md",
   "jax-101/07-state.md": "stateful-computations.md",
   "jax-101/08-pjit.rst": "sharded-computation.md",
@@ -394,4 +394,5 @@ rediraffe_redirects = {
   "quickstart.md": "notebooks/thinking_in_jax.md",
   "advanced_guide.rst": "advanced_guides.rst",
   "user_guides.rst": "advanced_guides.rst",
+  "working_with_pytrees.md": "pytrees.md",
 }
