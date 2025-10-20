@@ -532,7 +532,6 @@ def _prepare_dma_refs(
       )
       indirect_offsets_ref_str = "dst_ref"
     case _:  # Indirect DMA is not supported.
-      print('no indirect offsets')
       if is_add:
         raise ValueError(
             "DMAs with `add=True` are only supported between VMEM and "
