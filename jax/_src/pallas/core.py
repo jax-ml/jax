@@ -1208,7 +1208,7 @@ def get_grid_mapping(
   if grid_spec.scratch_shapes:
     flat_scratch_shapes, scratch_tree = tree_util.tree_flatten(
         grid_spec.scratch_shapes)
-    flat_scratch_avals = tuple(s.get_ref_aval() for s in  flat_scratch_shapes)
+    flat_scratch_avals = tuple(s.get_ref_aval() for s in flat_scratch_shapes)
     jaxpr_scratch_avals = tree_util.tree_unflatten(
         scratch_tree, flat_scratch_avals)
     if not isinstance(jaxpr_scratch_avals, (tuple, list)):
@@ -1535,6 +1535,7 @@ def default_mesh_discharge_rule(
     name,
     memory_space=MemorySpace.ANY,
     metadata,
+    scratch_shapes,
 ):
   """Discharges a ``core_map`` over a mesh to a ``pallas_call``."""
   del out_avals  # Unused.
@@ -1578,6 +1579,7 @@ def default_mesh_discharge_rule(
           grid=tuple(mesh.shape.items()),
           in_specs=in_specs,
           out_specs=out_specs,
+          scratch_shapes=scratch_shapes,
       ),
       mesh=mesh,
       compiler_params=compiler_params,

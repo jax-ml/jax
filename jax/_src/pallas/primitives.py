@@ -968,7 +968,8 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes):
 
 get_global_p = jax_core.Primitive("get_global")
 get_global_p.multiple_results = False
-
+get_global_p.ref_primitive = True
+jax_core._ref_allocating_primitives.add(get_global_p)
 
 def get_global(what: pallas_core.ScratchShape) -> jax.Array:
   """Returns a global reference that persists across all kernel invocations.

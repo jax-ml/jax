@@ -1816,7 +1816,7 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
   all_vars = {v: i for i, v in enumerate(it.chain(constvars, invars))}
   mut_arrays = set()
   for eqn in eqns:
-    if eqn.primitive is core.ref_p:
+    if eqn.primitive in core._ref_allocating_primitives:
       outvar, = eqn.outvars
       all_vars[outvar] = None  # type: ignore
       mut_arrays.add(outvar)

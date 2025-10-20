@@ -195,6 +195,25 @@ def _vector_dimension():
       )
 
 
+def gather_global_allocations(jaxpr):
+
+  def _gather_from_eqns(*, eqn=None, jaxpr=None):
+    if eqn is not None:
+      if eqn.primitive is pallas_primitives.get_global_p:
+        what = eqn.params["what"]
+        yield pallas_core.MemoryRef(what.inner_aval, what.memory_space)
+      for subjaxpr in jax_core.jaxprs_in_params(eqn.params):
+        yield from _gather_from_eqns(jaxpr=subjaxpr)
+    else:
+      for eqn in jaxpr.eqns:
+        yield from _gather_from_eqns(eqn=eqn)
+
+  allocations = collections.defaultdict(list)
+  for memref in _gather_from_eqns(jaxpr=jaxpr):
+    allocations[memref].append(memref)
+  return allocations
+
+
 def _scalar_subcore_mesh_discharge_rule(
     in_avals,
     out_avals,
@@ -237,6 +256,7 @@ def _scalar_subcore_mesh_discharge_rule(
       name=name,
       memory_space=tpu_core.MemorySpace.HBM,
       metadata=metadata,
+      scratch_shapes=tree_util.tree_leaves(gather_global_allocations(jaxpr)),
   )
 
 
@@ -308,6 +328,7 @@ def _vector_subcore_mesh_discharge_rule(
       name=name,
       memory_space=tpu_core.MemorySpace.HBM,
       metadata=metadata,
+      scratch_shapes=tree_util.tree_leaves(gather_global_allocations(jaxpr)),
   )
 
 
