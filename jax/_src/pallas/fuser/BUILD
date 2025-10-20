@@ -91,6 +91,7 @@ pytype_strict_library(
         ":fusion",
         "//jax",
         "//jax/_src:api_util",
+        "//jax/_src:batching",
         "//jax/_src:core",
         "//jax/_src:mlir",
         "//jax/_src:partial_eval",
