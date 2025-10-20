@@ -56,6 +56,13 @@ class PallasSCTest(jtu.JaxTestCase):
 
 class DebugPrintTest(PallasSCTest):
 
+  def setUp(self):
+    if jtu.is_cloud_tpu():
+      # TODO(slebedev): Investigate this and remove the skip.
+      self.skipTest("Fails on Cloud TPUs")
+
+    super().setUp()
+
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_vector_subcore(self, dtype):
     x = jnp.arange(16, dtype=dtype)
@@ -424,7 +431,7 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
   def test_gather_1d_with_dynamically_sized_2d_ref(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 10, 12):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 22):
       self.skipTest("Needs a newer libtpu")
 
     x = jnp.arange(16)

@@ -7,7 +7,7 @@
 # run-tests:
 #    - Downloads the jaxlib wheel from a GCS bucket if build_jaxlib is false.
 #    - Downloads the libtpu wheels.
-#    - Executes the `run_bazel_test_cpu.sh` script, which performs the following actions:
+#    - Executes the `run_bazel_test_tpu.sh` script, which performs the following actions:
 #      - Runs the TPU tests with Bazel.
 name: CI - Bazel test TPU
 on:
