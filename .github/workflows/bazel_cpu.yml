@@ -30,6 +30,10 @@ on:
         description: "Should x64 mode be enabled?"
         type: string
         default: "0"
+      enable-bzlmod:
+        description: "Should Bzlmod be enabled?"
+        type: string
+        default: "0"
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -65,6 +69,7 @@ jobs:
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
       JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
+      JAXCI_ENABLE_BZLMOD: ${{ inputs.enable-bzlmod }}
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_BAZEL_CPU_RBE_MODE: "${{ inputs.bazel_command }}"
@@ -72,7 +77,7 @@ jobs:
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
         (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||
-        (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, Python=${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
+        (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, Python=${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, bzlmod=${{ inputs.enable-bzlmod }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
 # End Presubmit Naming Check github-cpu-presubmits
 
     steps:
