@@ -546,6 +546,8 @@ jax_multiplatform_test(
         "//jax:experimental_pjit",
         "//jax:experimental_serialize_executable",
         "//jax:experimental_topologies",
+        "//jax/_src:aot",
+        "//jax/_src:aot_util",
     ] + py_deps([
         "numpy",
         "absl/testing",

@@ -1194,6 +1194,34 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "aot",
+    srcs = ["aot.py"],
+    visibility = ["//jax:internal"] + jax_visibility("aot"),
+    deps = [
+        ":aot_util",
+        ":api",
+        ":core",
+        ":mlir",
+        ":traceback_util",
+        ":tree_util",
+        ":util",
+        "//third_party/py/absl/logging",
+    ],
+)
+
+pytype_strict_library(
+    name = "aot_util",
+    srcs = ["aot_util.py"],
+    visibility = ["//jax:internal"] + jax_visibility("aot"),
+    deps = [
+        ":config",
+        ":path",
+        "//third_party/py/absl/logging",
+        "//third_party/py/dill",
+    ],
+)
+
+pytype_strict_library(
     name = "stages",
     srcs = ["stages.py"],
     visibility = ["//jax:internal"] + jax_visibility("stages"),

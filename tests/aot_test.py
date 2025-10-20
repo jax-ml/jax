@@ -17,6 +17,8 @@ import unittest
 from absl.testing import absltest
 import jax
 from jax import lax
+from jax._src import aot
+from jax._src import aot_util
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
@@ -255,6 +257,55 @@ class JaxAotTest(jtu.JaxTestCase):
         'Execution devices belong to a client other than `backend`'):
       deserialize_and_load(serialized, in_tree, out_tree, backend='cpu',
                            execution_devices=jax.devices()[:1])
+
+
+class ComponentTest(jtu.JaxTestCase):
+  def make_temp_file_system_cache(self):
+    self.cache_dir = self.create_tempdir().full_path
+    cache = aot_util.make_file_system_cache(self.cache_dir)
+    return aot_util.component_cache(cache)
+
+  def make_in_memory_cache(self):
+    cache = aot_util.make_in_memory_cache()
+    return aot_util.component_cache(cache)
+
+  def test_component(self):
+    with self.make_in_memory_cache():
+      @aot.component(component_key='f')
+      def f(x):
+        return x * x
+
+      self.assertEqual(f(2.0), 4.0)
+
+  def test_component_jit(self):
+    with self.make_in_memory_cache():
+      @jax.jit
+      @aot.component(component_key='f')
+      def f(x):
+        return x * x
+
+      self.assertEqual(f(2.0), 4.0)
+
+  def test_component_cache_hit(self):
+    with self.make_in_memory_cache():
+      # cache = config.config.jax_component_cache
+      @jax.jit
+      @aot.component(component_key='f')
+      def f(x):
+        return x * x
+
+      self.assertEqual(f(2.0), 4.0)
+      # self.assertEqual(cache.keys(), ['f.abstract_eval', 'f.lowering'])
+
+      @jax.jit
+      @aot.component(component_key='f')
+      def g(x):
+        raise NotImplementedError
+
+      self.assertEqual(g(2.0), 4.0)
+      # self.assertEqual(cache.keys(), ['f.abstract_eval', 'f.lowering'])
+
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
