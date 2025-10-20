@@ -3743,6 +3743,7 @@ def _sds_aval_mapping(x):
     return AbstractRef(aval)
   return aval
 pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
+dtypes.canonicalize_value_handlers[ShapeDtypeStruct] = lambda x: x
 
 
 # ------------------- Jaxpr printed representation -------------------

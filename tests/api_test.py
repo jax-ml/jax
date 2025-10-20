@@ -4025,6 +4025,14 @@ class APITest(jtu.JaxTestCase):
         lax.scan(to_scan, x, None, length=1)
       f(np.arange(5.))  # doesn't crash
 
+  def test_vjp_with_shape_dtype_struct(self):
+    def _ravel_list(*lst):
+      return jnp.concatenate(
+          [jnp.ravel(elt) for elt in lst]) if lst else jnp.array([])
+
+    x = jax.ShapeDtypeStruct(shape=(5,), dtype=jnp.float32)
+    jax.vjp(_ravel_list, x)  # doesn't crash
+
   def test_leak_checker_avoids_false_positives_scan_vmap_2(self):
     with jax.checking_leaks():
       to_scan = lambda c, _: (c, None)
