@@ -2544,7 +2544,7 @@ def _inline_block(
     # Operands not in the mapper are captured from the context.
     new_operands = [mapper[o] if o in mapper else o for o in op.operands]
     new_attributes = {
-        named_attr.name: named_attr.attr for named_attr in op.attributes
+        named_attr: op.attributes[named_attr] for named_attr in op.attributes
     }
     new_op = ir.Operation.create(
         name=op.name,

@@ -1516,7 +1516,7 @@ def _recompute_peer_id(peer_id: ir.Value, fuel=8) -> ir.Value:
   if op.OPERATION_NAME.startswith("arith."):
     new_operands = [_recompute_peer_id(x, fuel - 1) for x in op.operands]
     result_types = [r.type for r in op.results]
-    new_attributes = {na.name: na.attr for na in op.attributes}
+    new_attributes = {na: op.attributes[na] for na in op.attributes}
     new_op = ir.Operation.create(
         op.OPERATION_NAME, result_types, new_operands, new_attributes
     )

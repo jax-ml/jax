@@ -2679,8 +2679,8 @@ def wrap_xla_metadata_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> No
     if isinstance(op, ir.Operation):
       # combine with existing mhlo.frontend_attributes
       for attr in op.attributes:
-        if attr.name == "mhlo.frontend_attributes":
-          for a in attr.attr:
+        if attr == "mhlo.frontend_attributes":
+          for a in op.attributes[attr]:
             existing_attributes[a.name] = a.attr
       op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
           ctx_attributes | existing_attributes

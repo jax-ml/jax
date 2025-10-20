@@ -193,8 +193,7 @@ def _fragmented_array_from_ir(
 
   reverse_conversion_cast = converted_outputs[0].owner.opview
   for attribute in conversion_cast.attributes:
-    attribute = cast(ir.NamedAttribute, attribute)
-    reverse_conversion_cast.attributes[attribute.name] = attribute.attr
+    reverse_conversion_cast.attributes[attribute] = conversion_cast.attributes[attribute]
 
   registers = np.array(list(converted_outputs)).reshape(
     [attr.value for attr in conversion_cast.attributes["registers_shape"]]
