@@ -107,7 +107,7 @@ xla_metadata_value_p.def_impl(
 xla_metadata_value_p.def_abstract_eval(lambda aval, *, xla_metadata_kvs: aval)
 batching.defvectorized(xla_metadata_value_p)
 # TODO(nbasile): Implement tagging gradient ops with metadata.
-ad.deflinear2(xla_metadata_value_p, lambda ct, _: (ct,))
+ad.deflinear2(xla_metadata_value_p, lambda ct, _, **kwargs: (ct,))
 
 
 def _xla_metadata_value_lowering_rule(
