@@ -683,6 +683,7 @@ def jax_multiprocess_test(
         ],
     }
     tags = tags + ["multiaccelerator"]
+    deps = deps + py_deps(["absl-all", "portpicker"])
     return jax_multiplatform_test(
         name = name,
         srcs = srcs,
