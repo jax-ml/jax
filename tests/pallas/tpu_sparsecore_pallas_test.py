@@ -1145,10 +1145,12 @@ class VectorSubcoreTest(PallasSCTest):
             shape=(mesh.num_subcores, vec_dim), dtype=jnp.uint32
         ),
         out_specs=pl.BlockSpec((1, vec_dim), lambda i: (i, 0)),
-        scratch_shapes=[
-            pltpu.VMEM_SHARED((mesh.num_subcores, vec_dim), jnp.uint32),
-            pltpu.VMEM((vec_dim,), jnp.uint32),
-        ],
+        scratch_shapes=dict(
+            shared_ref=pltpu.VMEM_SHARED(
+                (mesh.num_subcores, vec_dim), jnp.uint32
+            ),
+            vmem_ref=pltpu.VMEM((vec_dim,), jnp.uint32),
+        ),
     )
     def kernel(o_ref, shared_ref, vmem_ref):
       subcore_id = pl.program_id(0)
