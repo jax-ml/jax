@@ -62,6 +62,11 @@ else
   FREETHREADED_FLAG_VALUE="no"
 fi
 
+BZLMOD_CONFIG=""
+if [[ "${JAXCI_ENABLE_BZLMOD:-0}" == "1" ]]; then
+  BZLMOD_CONFIG="--config=bzlmod"
+fi
+
 # When running on Mac or Linux Aarch64, we only build the test targets and
 # not run them. These platforms do not have native RBE support so we
 # RBE cross-compile them on remote Linux x86 machines. As the tests still
@@ -71,7 +76,7 @@ fi
 if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] ); then
       if [[ "$JAXCI_BUILD_JAXLIB" == 'true' ]]; then
           echo "Building RBE CPU tests..."
-          bazel build --config=rbe_cross_compile_${os}_${arch} \
+          bazel build ${BZLMOD_CONFIG} --config=rbe_cross_compile_${os}_${arch} \
               --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
               --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
               --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
@@ -89,7 +94,7 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
               //jax/experimental/jax2tf/tests/multiprocess:cpu_tests
       else
           echo "Running RBE CPU tests..."
-          bazel test --config=rbe_cross_compile_${os}_${arch} \
+          bazel test ${BZLMOD_CONFIG} --config=rbe_cross_compile_${os}_${arch} \
               --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
               --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
               --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
@@ -108,7 +113,7 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
       fi
 else
       echo "Running RBE CPU tests..."
-      bazel $bazel_output_base test --config=rbe_${os}_${arch} \
+      bazel $bazel_output_base test ${BZLMOD_CONFIG} --config=rbe_${os}_${arch} \
             --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
             --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
             --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
