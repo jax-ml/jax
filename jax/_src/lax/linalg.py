@@ -123,7 +123,7 @@ def cholesky_update(r_matrix: ArrayLike, w_vector: ArrayLike) -> Array:
 
 
 class EigImplementation(enum.Enum):
-  """Enum for SVD algorithm."""
+  """Enum for eigendecomposition algorithm."""
   CUSOLVER = "cusolver"
   MAGMA = "magma"
   LAPACK = "lapack"
