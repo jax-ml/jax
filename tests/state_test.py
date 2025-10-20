@@ -956,7 +956,7 @@ def _pack_idx(non_slice_idx: Sequence[int | np.ndarray],
   assert next(idx_, None) is None
   return idx
 
-@jtu.thread_unsafe_test_class()  # hypothesis isn't thread-safe
+@jtu.thread_unsafe_test_class(condition=not jtu.hypothesis_is_thread_safe())
 class StateHypothesisTest(jtu.JaxTestCase):
 
   @hp.given(get_vmap_params())
@@ -1628,7 +1628,7 @@ def add_spec(draw, depth):
                   min_dim=max(f1.min_dim, f2.min_dim),
                   max_dim=min(f1.max_dim, f2.max_dim))
 
-@jtu.thread_unsafe_test_class()  # because of hypothesis
+@jtu.thread_unsafe_test_class(condition=not jtu.hypothesis_is_thread_safe())
 class RunStateHypothesisTest(jtu.JaxTestCase):
 
   @jax.legacy_prng_key('allow')

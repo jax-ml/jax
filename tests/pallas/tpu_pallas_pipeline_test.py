@@ -2002,7 +2002,7 @@ def matmul(x: jax.Array, y: jax.Array, *, bm: int, bk: int, bn: int):
       grid=(num_cores,),
   )(x, y)
 
-@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
+@jtu.thread_unsafe_test_class(condition=not jtu.hypothesis_is_thread_safe())
 class PaddedPipelineEmitterTest(parameterized.TestCase):
 
   def setUp(self):
