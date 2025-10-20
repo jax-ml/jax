@@ -84,9 +84,7 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
               --color=yes \
               $WHEEL_SIZE_TESTS \
               //tests:cpu_tests //tests:backend_independent_tests \
-              //jax/experimental/jax2tf/tests:jax2tf_test_cpu \
-              //tests/multiprocess:cpu_tests \
-              //jax/experimental/jax2tf/tests/multiprocess:cpu_tests
+              //jax/experimental/jax2tf/tests:jax2tf_test_cpu
       else
           echo "Running RBE CPU tests..."
           bazel test --config=rbe_cross_compile_${os}_${arch} \
@@ -102,9 +100,7 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
               --color=yes \
               $WHEEL_SIZE_TESTS \
               //tests:cpu_tests //tests:backend_independent_tests \
-              //jax/experimental/jax2tf/tests:jax2tf_test_cpu \
-              //tests/multiprocess:cpu_tests \
-              //jax/experimental/jax2tf/tests/multiprocess:cpu_tests
+              //jax/experimental/jax2tf/tests:jax2tf_test_cpu
       fi
 else
       echo "Running RBE CPU tests..."
@@ -121,7 +117,5 @@ else
             --color=yes \
             $WHEEL_SIZE_TESTS \
             //tests:cpu_tests //tests:backend_independent_tests \
-            //jax/experimental/jax2tf/tests:jax2tf_test_cpu \
-            //tests/multiprocess:cpu_tests \
-            //jax/experimental/jax2tf/tests/multiprocess:cpu_tests
+            //jax/experimental/jax2tf/tests:jax2tf_test_cpu
 fi

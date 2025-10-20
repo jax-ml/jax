@@ -222,6 +222,7 @@ jobs:
           ./bazel cquery @pypi_numpy//:* | grep whl
 
           # Build JAX and run tests
+          # DO NOT SUBMIT, adding this to trigger tsan
           ./bazel test \
               --test_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
               --test_env=JAX_ENABLE_X64=$JAX_ENABLE_X64 \

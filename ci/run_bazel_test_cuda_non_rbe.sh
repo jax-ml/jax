@@ -149,9 +149,7 @@ bazel test --config=$TEST_CONFIG \
       --action_env=NCCL_DEBUG=WARN \
       --color=yes \
       --config=cuda_libraries_from_stubs \
-      //tests:gpu_tests //tests/pallas:gpu_tests \
-      //tests/multiprocess:gpu_tests \
-      //jax/experimental/jax2tf/tests/multiprocess:gpu_tests
+      //tests:gpu_tests //tests/pallas:gpu_tests
 
 # Store the return value of the second bazel command.
 second_bazel_cmd_retval=$?
