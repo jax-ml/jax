@@ -18,6 +18,7 @@ from typing import Any
 import jax
 from jax._src import api_util
 from jax._src import core as jax_core
+from jax._src.interpreters import batching
 from jax._src import linear_util as lu
 from jax._src import tree_util
 from jax._src import util
