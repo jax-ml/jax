@@ -62,6 +62,11 @@ else
   FREETHREADED_FLAG_VALUE="no"
 fi
 
+BZLMOD_CONFIG=""
+if [[ "${JAXCI_ENABLE_BZLMOD:-0}" == "1" ]]; then
+  BZLMOD_CONFIG="--config=bzlmod"
+fi
+
  # TODO(b/446172564): Remove this condition when the test is fixed on all
  # platforms.
 if [[ $os == "linux" ]] && [[ $arch == "x86_64" ]]; then
