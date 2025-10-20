@@ -42,9 +42,25 @@ def create_wheel_sources_map(wheel_sources, root_packages):
     return wheel_sources_map
   for source in wheel_sources:
     for package in root_packages:
+      # Dealing with source files from the main repo
       if source.startswith("{}/".format(package)):
         wheel_sources_map[source] = source
         continue
+      # Dealing with source files from external repos
+      # e.g. external/xla/xla/ffi/api/c_api.h
+      # which should map to xla/ffi/api/c_api.h
+      if source.startswith("external/"):
+        parts = source.split("/", 2)
+        if len(parts) == 3:
+          wheel_sources_map[parts[2]] = source
+          continue
+        else:
+          raise RuntimeError(
+              "Unexpected external source format: {}".format(source)
+          )
+      # Dealing with generated source
+      # e.g. bazel-out/k8-opt/bin/jaxlib/mlir/_mlir_libs/_jax_mlir_ext.py
+      # which should map to jaxlib/mlir/_mlir_libs/_jax_mlir_ext.py
       root_package_ind = source.find("/{}/".format(package))
       if root_package_ind >= 0:
         wheel_sources_map[source[root_package_ind + 1:]] = source
