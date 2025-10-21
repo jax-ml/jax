@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
 import logging
 from typing import Any
 
@@ -63,10 +64,17 @@ def _repeat_abstract_eval(x, *, repeats, axis):
   return jax_core.ShapedArray(shape, x.dtype)
 
 
+@repeat_p.def_impl
+def repeat_impl(x: jax.Array, *, repeats: int, axis: int):
+  reps = [repeats if i == axis else 1 for i in range(x.ndim)]
+  return jnp.tile(x, reps)
+
+
 def _repeat_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, repeats, axis):
-  def _repeat(x):
-    return jnp.repeat(x, repeats, axis)
-  return mlir.lower_fun(_repeat, multiple_results=False)(ctx, x)
+  return mlir.lower_fun(
+      functools.partial(repeat_impl, repeats=repeats, axis=axis),
+      multiple_results=False,
+  )(ctx, x)
 mlir.register_lowering(repeat_p, _repeat_lowering_rule)
 
 bitcast_p = jax_core.Primitive("bitcast")
