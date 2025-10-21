@@ -24,6 +24,7 @@ from collections.abc import Callable, Iterator, Sequence
 import dataclasses
 import enum
 import itertools
+import math
 import re
 from typing import Any, assert_never, cast
 
@@ -576,21 +577,6 @@ for op in [
   _add_equation_system_derivation_rule(op)(_pointwise_op_equation_system)
 
 
-def _divides_constraint_from_indices(
-    var: eqns.Variable,
-    indices: Sequence[ir.Value],
-) -> eqns.Divides:
-  """Returns a Divides constraint from the given load/store indices."""
-  dimensions_to_tile : list[tuple[int | ir.Value, ...]] = []
-  for i in indices:
-    index_defining_op = i.owner.opview
-    if isinstance(index_defining_op, arith.ConstantOp):
-      dimensions_to_tile.append((index_defining_op.literal_value,))
-    else:
-      dimensions_to_tile.append((i,))
-  return eqns.Divides(var, tuple(dimensions_to_tile))
-
-
 @_add_equation_system_derivation_rule(vector.LoadOp)
 def _vector_load_equation_system(
     ctx: DerivationContext,
@@ -616,6 +602,10 @@ def _vector_load_equation_system(
 
   # SMEM
   if utils.is_smem_ref(op.base):
+    base_shape = ir.ShapedType(op.base.type).shape
+    divisibility_constraints = []
+    for axis_size, index in zip(base_shape, op.indices, strict=True):
+      divisibility_constraints.append((dynamic_gcd(axis_size, index),))
     source = OperandOrResult(op, VariableType.OPERAND, 0)
     source_var = ctx.producer_ref(source)
     operand_or_results_for_variable[source_var] = [source]
@@ -625,7 +615,10 @@ def _vector_load_equation_system(
             target=dest_var,
             shape=tuple(ir.ShapedType(op.result.type).shape),
         ),
-        _divides_constraint_from_indices(source_var, op.indices),
+        eqns.Divides(
+            expr=source_var,
+            dimensions_to_tile=tuple(divisibility_constraints),
+        ),
     ])
 
   system = eqns.EquationSystem(constraints=constraints)
@@ -650,6 +643,10 @@ def _vector_store_equation_system(
   # SMEM
   constraints = []
   if utils.is_smem_ref(op.base):
+    dest_shape = ir.ShapedType(op.base.type).shape
+    divisibility_constraints = []
+    for axis_size, index in zip(dest_shape, op.indices, strict=True):
+      divisibility_constraints.append((dynamic_gcd(axis_size, index),))
     dest = OperandOrResult(op, VariableType.OPERAND, 1)
     dest_var = ctx.producer_ref(dest)
     operand_or_results_for_variable[dest_var] = [dest]
@@ -659,7 +656,10 @@ def _vector_store_equation_system(
             target=dest_var,
             shape=tuple(ir.ShapedType(op.base.type).shape),
         ),
-        _divides_constraint_from_indices(dest_var, op.indices),
+        eqns.Divides(
+            expr=dest_var,
+            dimensions_to_tile=tuple(divisibility_constraints),
+        ),
     ]
 
   system = eqns.EquationSystem(constraints=constraints)
@@ -766,6 +766,43 @@ def _for_equation_system(
     operand_or_results_for_variable[var] = [operand, result, yield_operand]
 
   return eqns.EquationSystem(), operand_or_results_for_variable, []
+
+
+def prime_decomposition(n: int) -> list[int]:
+  """Returns the prime decomposition of the given number `n` as a list of ints.
+
+  A factor appears as many times in the list as the power up to which it divides
+  `n`.
+  """
+  # This implementation should be sufficiently efficient for small `n`, which
+  # should always be the case for us.
+  prime_factors = []
+  divisor = 2
+  while divisor * divisor <= n:
+    while n % divisor == 0:
+      n //= divisor
+      prime_factors.append(divisor)
+    divisor += 1
+  if n != 1:
+    prime_factors.append(n)
+  return prime_factors
+
+
+# TODO(bchetioui): let's see if we need to parametrize this by depth.
+def dynamic_gcd(a: int, b: ir.Value) -> int:
+  if a <= 0:
+    raise ValueError("a must be strictly positive")
+  if not ir.IntegerType.isinstance(b.type) and not ir.IndexType.isinstance(b.type):
+    raise ValueError(f"Expected an integer dynamic value, got a {b.type}")
+  if isinstance(b.owner.opview, arith.ConstantOp):
+    return math.gcd(a, b.owner.opview.literal_value)
+  # TODO(bchetioui): add a fast path if `b`'s value can be obtained statically.
+  # E.g., if `b` is a constant.
+  running_gcd = 1
+  for factor in prime_decomposition(a):
+    if utils.is_known_divisible(b, running_gcd * factor):
+      running_gcd *= factor
+  return running_gcd
 
 
 @_add_equation_system_derivation_rule(scf.WhileOp)
@@ -1331,7 +1368,13 @@ def _memref_subview_equation_system(
     if ir.ShapedType.is_dynamic_size(size):
       dimensions_to_tile = []
     else:
-      dims = (size, op.source.type.shape[i], offset)
+      src_type = ir.ShapedType(op.source.type)
+      divisibility_constraint = math.gcd(size, src_type.shape[i])
+      if isinstance(offset, int):
+        divisibility_constraint = math.gcd(divisibility_constraint, offset)
+      else:
+        divisibility_constraint = dynamic_gcd(divisibility_constraint, offset)
+      dims = (divisibility_constraint,)
       dimensions_to_tile.append(dims)
 
   constraints = [eqns.Divides(source_dest_var, tuple(dimensions_to_tile))]
