@@ -964,11 +964,26 @@ def TPU_CreateSubelementMaskOp : TPU_Op<"create_subelement_mask", [Pure]> {
 }
 
 def TPU_AssumeMultipleOp : TPU_Op<"assume_multiple", [Pure, SameOperandsAndResultType]> {
+  let summary = "Assumes that a value is a multiple of a given integer.";
+  let description = [{
+    This operation is a hint to the compiler that the input `value` is guaranteed
+    to be a multiple of `multiple`. This can be used to satisfy divisibility checks
+    in some compiler passes.
+
+    The result is the same as the input `value`.
+
+    Example:
+
+    ```mlir
+    %val = tpu.assume_multiple %arg0, 16 : index
+    ```
+  }];
   let arguments = (ins
     AnyTypeOf<[Index, AnyInteger]>:$value,
     I32Attr:$multiple
   );
   let results = (outs AnyTypeOf<[Index, AnyInteger]>:$result);
+  let assemblyFormat = [{$value `,` $multiple attr-dict `:` type($result)}];
   let hasVerifier = 1;
 }
 
