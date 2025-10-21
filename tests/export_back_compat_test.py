@@ -119,7 +119,7 @@ class CompatTest(bctu.CompatTestBase):
         cpu_eigh_lapack_syev.data_2024_08_19,
         cpu_lu_lapack_getrf.data_2024_05_31,
         cpu_schur_lapack_gees.data_2024_11_29,
-        cpu_triangular_solve_blas_trsm.data_2024_12_02,
+        cpu_triangular_solve_blas_trsm.data_2025_10_20,
         cpu_svd_lapack_gesdd.data_2024_08_13,
         cpu_hessenberg_lapack_gehrd.data_2024_08_31,
         cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_12_01,
@@ -665,7 +665,7 @@ class CompatTest(bctu.CompatTestBase):
       y = matmul(a, x) if left_side else matmul(x, a)
       self.assertArraysAllClose(y, jnp.broadcast_to(b, y.shape), rtol=rtol, atol=atol)
 
-    info = cpu_triangular_solve_blas_trsm.data_2024_12_02[dtype_name]
+    info = cpu_triangular_solve_blas_trsm.data_2025_10_20[dtype_name]
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_triangular_solve_results)

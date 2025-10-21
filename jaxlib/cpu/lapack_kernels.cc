@@ -69,12 +69,9 @@ void CopyIfDiffBuffer(ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out) {
 
 template <ffi::DataType dtype>
 ffi::Error TriMatrixEquationSolver<dtype>::Kernel(
-    ffi::Buffer<dtype> x, ffi::Buffer<dtype> y,
-    // TODO(b/397715595): Remove RemainingArgs no earlier than 180 days after
-    // the release of JAX 0.5.2.
-    ffi::RemainingArgs, ffi::ResultBuffer<dtype> y_out, MatrixParams::Side side,
-    MatrixParams::UpLo uplo, MatrixParams::Transpose trans_x,
-    MatrixParams::Diag diag) {
+    ffi::Buffer<dtype> x, ffi::Buffer<dtype> y, ffi::ResultBuffer<dtype> y_out,
+    MatrixParams::Side side, MatrixParams::UpLo uplo,
+    MatrixParams::Transpose trans_x, MatrixParams::Diag diag) {
   CopyIfDiffBuffer(y, y_out);
   FFI_ASSIGN_OR_RETURN((auto [batch_count, y_rows, y_cols]),
                        SplitBatch2D(y.dimensions()));
@@ -1348,7 +1345,6 @@ template struct TridiagonalSolver<ffi::DataType::C128>;
       ::xla::ffi::Ffi::Bind()                            \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)     \
           .Arg<::xla::ffi::Buffer<data_type>>(/*y*/)     \
-          .RemainingArgs()                               \
           .Ret<::xla::ffi::Buffer<data_type>>(/*y_out*/) \
           .Attr<MatrixParams::Side>("side")              \
           .Attr<MatrixParams::UpLo>("uplo")              \

@@ -108,11 +108,13 @@ struct TriMatrixEquationSolver {
                       lapack_int* ldb);
 
   inline static FnType* fn = nullptr;
-  static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, ::xla::ffi::Buffer<dtype> y,
-      ::xla::ffi::RemainingArgs, ::xla::ffi::ResultBuffer<dtype> y_out,
-      MatrixParams::Side side, MatrixParams::UpLo uplo,
-      MatrixParams::Transpose trans_x, MatrixParams::Diag diag);
+  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
+                                  ::xla::ffi::Buffer<dtype> y,
+                                  ::xla::ffi::ResultBuffer<dtype> y_out,
+                                  MatrixParams::Side side,
+                                  MatrixParams::UpLo uplo,
+                                  MatrixParams::Transpose trans_x,
+                                  MatrixParams::Diag diag);
 };
 
 //== LU Decomposition ==//
