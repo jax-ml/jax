@@ -1189,33 +1189,13 @@ class LayoutInferenceTest(parameterized.TestCase):
     with self.subTest("divides_constraints_yield_valid_tiling"):
       constraints = [
           eqns.IsTransferable(wgmma_layout, var, (128, 128)),
-          eqns.Divides(var, ((64,), (64,))),
-          eqns.Divides(var, ((32,), (16,))),
+          eqns.Divides(var, (32, 16)),
       ]
       conjured = conjure(constraints)
       if transposed:
         expected_tiling = (32, 8)
       else:
         expected_tiling = (8, 16)
-      self.assertEqual(conjured, [
-              (var, eqns.SMEMTiling(lc.TileTransform(expected_tiling))),
-              (var, eqns.SMEMTiling(None)),
-          ]
-      )
-
-    # Do not yield 1-tiling with Divides constraints with ir.Value.
-    with self.subTest("dynamic_ir_values_in_divides_do_not_changes_constraints"):
-      i32 = ir.IntegerType.get_signless(32)
-      ir_value = arith.constant(i32, 0)
-      constraints = [
-          eqns.IsTransferable(wgmma_layout, var, (128, 128)),
-          eqns.Divides(var, ((32, ir_value), (32,))),
-      ]
-      conjured = conjure(constraints)
-      if transposed:
-        expected_tiling = (32, 8)
-      else:
-        expected_tiling = (8, 32)
       self.assertEqual(conjured, [
               (var, eqns.SMEMTiling(lc.TileTransform(expected_tiling))),
               (var, eqns.SMEMTiling(None)),

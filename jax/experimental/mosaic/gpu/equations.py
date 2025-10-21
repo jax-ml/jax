@@ -33,7 +33,6 @@ from . import launch_context as lc
 from . import layouts as layouts_lib
 from . import inference_utils
 from . import tcgen05
-from . import utils
 
 
 VariableKey = Any
@@ -504,70 +503,42 @@ class Distinct:
 
 @dataclasses.dataclass(frozen=True)
 class Divides:
-  """States that the `expr` tile divides the tail-end of the given dimensions.
+  """States that the `expr` tiling is a divisor of `tiling_multiple`.
 
-  `dimensions_to_tile` is a tuple of dimensions tuples, ordered from major to
-  minor. Each dimension tuple may contain ints and ir.Values that need to be
-  evenly divided by the corresponding tile size. A valid tiling's rank must be
-  less than or equal to the number of dimensions in `dimensions_to_tile`. Only
-  the tiled dimensions require checking.
+  That is to say that, for each tiled dimension in `expr`, the dimension must
+  divide its corresponding dimension in `tiling_multiple` starting from the
+  tail.
 
-  Example:
+  If `tiling_multiple` contains more dimensions than `expr`, then
+  the extra dimensions in `tiling_multiple` are ignored for the purposes of the
+  check.
 
-  expr: SMEMTiling(lc.TileTransform(tiling=(4, 8)))
-    => tiling[0] == 4 and tiling[1] == 8
-  dimensions_to_tile: (
-      (5, 15, ir_const(16),),  # Ignored, because the tile only has 2 dimensions
-      (4, 4, 8),               # Holds, because tiling[0] divides all elements
-      (16, ir_const(8), 4),    # Does not hold, because 4 % tiling[1] != 0
-  )
-
+  `expr` is not allowed to contain more dimensions than `tiling_multiple`, and
+  this constraint therefore also constrains the rank of `expr`.
   """
   expr: Expression
-  dimensions_to_tile: tuple[tuple[int | ir.Value, ...], ...]
-
-  def __post_init__(self):
-    object.__setattr__(
-        self,
-        "dimensions_to_tile",
-        _canonicalize_dimensions_to_tile(self.dimensions_to_tile),
-    )
+  tiling_multiple: tuple[int, ...]
 
   def holds(self) -> bool | None:
-    """Whether the divisibility constraint holds.
-
-    Returns `None` if the constraint can't be checked.
-    """
     if not isinstance(self.expr, SMEMTiling):
       return None
     if self.expr.value is None:
-      # If there is no tiling, then it trivially holds.
+      # If there is no tiling, then this holds trivially.
       return True
 
-    tiling = self.expr.value.tiling
-    num_tiled_axes = len(tiling)
-
-    if num_tiled_axes > len(self.dimensions_to_tile):
-      # The tiling's size must be smaller or equal to the number of dimensions.
+    if len(self.expr.value.tiling) > len(self.tiling_multiple):
+      # The rank of the tiling is larger than the rank of the constraint. This
+      # is not allowed.
       return False
 
-    last_n_dims = self.dimensions_to_tile[-num_tiled_axes:]
-
-    for tile, sizes in zip(tiling, last_n_dims, strict=True):
-      if tile == 1:
-        continue
-
-      for size in sizes:
-        if isinstance(size, ir.Value):
-          if not utils.is_known_divisible(size, tile):
-            return False
-        else:
-          if size % tile != 0:
-            return False
+    tiling = self.expr.value.tiling
+    for size, multiple in zip(reversed(tiling), reversed(self.tiling_multiple)):
+      if multiple % size:
+        return False
     return True
 
   def __str__(self):
-    return f"{self.dimensions_to_tile} % {self.expr} == 0"
+    return f"{self.tiling_multiple} % {self.expr} == 0"
 
 
 Constraint = Relayout | Distinct | IsTransferable | Divides
@@ -620,11 +591,11 @@ def reduce_constraint(
       if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
         return Unsatisfiable()
       new_constraint = IsTransferable(source_red, target_red, shape)
-    case Divides(expr=expr, dimensions_to_tile=dimensions_to_tile):
+    case Divides(expr=expr, tiling_multiple=tiling_multiple):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
-      new_constraint = Divides(expr_red, dimensions_to_tile)
+      new_constraint = Divides(expr_red, tiling_multiple)
     case _ as never:
       assert_never(never)
 
@@ -936,55 +907,40 @@ def saturate_divides_constraints_for_equal_vars(
   for constraint in system.constraints:
     new_constraints.append(constraint)
     match constraint:
-      case Divides(expr=expr, dimensions_to_tile=dimensions_to_tile):
+      case Divides(expr=expr, tiling_multiple=tiling_multiple):
         if isinstance(expr, Variable):
           for equal_var in equal_vars.get(expr, []):
-            new_constraints.append(Divides(equal_var, dimensions_to_tile))
+            new_constraints.append(Divides(equal_var, tiling_multiple))
       case _:
         pass
   new_constraints = merge_divides_constraints(new_constraints)
   return dataclasses.replace(system, constraints=new_constraints)
 
 
-def _merge_divides_dimensions(
-    a: tuple[tuple[int | ir.Value, ...], ...],
-    b: tuple[tuple[int | ir.Value, ...], ...],
-) -> tuple[tuple[int | ir.Value, ...], ...]:
-  """Merges two tuples of dimensions_to_tile into a single tuple.
-
-  Each element of the outer tuple is a sequence of values that must divide
-  the corresponding dimension in the original Divides constraints.
-
-  If the two outer tuples are of different lengths, the large tuple will be
-  truncated (removing initial dimensions) to the length of the smaller tuple.
-  This preserves the semantics of the Divides constraints where a tiling's rank
-  cannot exceed the size of dimensions_to_tile.
-  """
-  min_len = min(len(a), len(b))
-  result = []
-  if min_len > 0:
-    for a_dims, b_dims in zip(a[-min_len:], b[-min_len:], strict=True):
-      result.append(a_dims + b_dims)
-  return tuple(result)
-
-
+# TODO(bchetioui): clean up API.
 def merge_divides_constraints(constraints: Sequence[Constraint]) -> list[Constraint]:
   """Merges Divides constraints that can be merged."""
   result: list[Constraint] = []
-  var_to_dims : dict[Variable, tuple[tuple[int | ir.Value, ...], ...]] = {}
+  var_to_tiling_multiples : dict[Variable, tuple[int, ...]] = {}
   for constraint in constraints:
     match constraint:
-      case Divides(expr=Variable() as expr, dimensions_to_tile=dimensions_to_tile):
-        assert isinstance(expr, Variable)  # make pytype happy
-        prev = var_to_dims.get(expr)
-        if prev is None:
-          var_to_dims[expr] = dimensions_to_tile
+      case Divides(expr=Variable() as v, tiling_multiple=tiling_multiple):
+        assert isinstance(v, Variable)  # make pytype happy
+        if (previous_tiling_multiple := var_to_tiling_multiples.get(v)) is None:
+          var_to_tiling_multiples[v] = tiling_multiple
+          continue
+        if len(tiling_multiple) > len(previous_tiling_multiple):
+          long, short = tiling_multiple, previous_tiling_multiple
         else:
-          var_to_dims[expr] = _merge_divides_dimensions(prev, dimensions_to_tile)
+          long, short = previous_tiling_multiple, tiling_multiple
+        new_tiling_multiple = list(long[:len(long) - len(short)])
+        for multiple1, multiple2 in zip(long[-len(short):], short, strict=True):
+          new_tiling_multiple.append(math.gcd(multiple1, multiple2))
+        var_to_tiling_multiples[v] = tuple(new_tiling_multiple)
       case _:
         result.append(constraint)
-  for expr, dimensions_to_tile in var_to_dims.items():
-    result.append(Divides(expr, dimensions_to_tile))
+  for expr, tiling_multiple in var_to_tiling_multiples.items():
+    result.append(Divides(expr, tiling_multiple))
   return result
 
 
