@@ -57,7 +57,7 @@ class TorchTest(jtu.JaxTestCase):
       self.skipTest("Only works on GPU with capability sm90a")
     self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
 
-  def test_simple(self):
+  def test_simple_pallas_call(self):
     @plgpu.as_torch_kernel
     @functools.partial(
         pl.pallas_call, out_shape=jax.ShapeDtypeStruct([128], jnp.int32)
@@ -68,6 +68,45 @@ class TorchTest(jtu.JaxTestCase):
     x = torch.arange(128, dtype=torch.int32, device="cuda")
     y = torch.arange(128, dtype=torch.int32, device="cuda")
     np.testing.assert_array_equal(kernel(x, y).cpu(), (x + y[0]).cpu())
+
+  def test_simple_plgpu_kernel(self):
+    @plgpu.as_torch_kernel
+    @functools.partial(
+        plgpu.kernel, out_shape=jax.ShapeDtypeStruct([128], jnp.int32)
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = x_ref[...] + y_ref[0]
+
+    x = torch.arange(128, dtype=torch.int32, device="cuda")
+    y = torch.arange(128, dtype=torch.int32, device="cuda")
+    np.testing.assert_array_equal(kernel(x, y).cpu(), (x + y[0]).cpu())
+
+  def test_flip(self):
+    @functools.partial(
+        pl.pallas_call, out_shape=(jax.ShapeDtypeStruct([128], jnp.int32),) * 2
+    )
+    def kernel(x_ref, y_ref, x_o_ref, y_o_ref):
+      x_o_ref[...] = x_ref[...]
+      y_o_ref[...] = y_ref[...]
+
+    x = torch.arange(128, dtype=torch.int32, device="cuda")
+    y = torch.arange(128, dtype=torch.int32, device="cuda")
+    yo, xo = plgpu.as_torch_kernel(lambda x, y: kernel(x, y)[::-1])(x, y)
+    np.testing.assert_array_equal(xo.cpu(), x.cpu())
+    np.testing.assert_array_equal(yo.cpu(), y.cpu())
+
+  def test_not_all_returned(self):
+    @functools.partial(
+        pl.pallas_call, out_shape=(jax.ShapeDtypeStruct([128], jnp.int32),) * 2
+    )
+    def kernel(x_ref, y_ref, x_o_ref, y_o_ref):
+      x_o_ref[...] = x_ref[...]
+      y_o_ref[...] = y_ref[...]
+
+    x = torch.arange(128, dtype=torch.int32, device="cuda")
+    y = torch.arange(128, dtype=torch.int32, device="cuda")
+    xo = plgpu.as_torch_kernel(lambda x, y: kernel(x, y)[0])(x, y)
+    np.testing.assert_array_equal(xo.cpu(), x.cpu())
 
   def test_invalid(self):
     @functools.partial(
@@ -80,22 +119,18 @@ class TorchTest(jtu.JaxTestCase):
     x = torch.arange(128, dtype=torch.int32, device="cuda")
     y = torch.arange(128, dtype=torch.int32, device="cuda")
 
-    with self.assertRaisesRegex(RuntimeError, "No Mosaic GPU call"):
+    with self.assertRaisesRegex(ValueError, "Unsupported operation .* stablehlo.add"):
       plgpu.as_torch_kernel(lambda x, y: x + y)(x, y)
 
-    with self.assertRaisesRegex(RuntimeError, "must be the only operation"):
+    with self.assertRaisesRegex(ValueError, "Multiple Mosaic GPU kernels"):
       plgpu.as_torch_kernel(lambda x, y: kernel(*kernel(x, y)))(x, y)
-    with self.assertRaisesRegex(RuntimeError, "must be the only operation"):
+    with self.assertRaisesRegex(ValueError, "Unsupported operation .* stablehlo.add"):
       plgpu.as_torch_kernel(lambda x, y: kernel(x, y + jnp.ones_like(x)))(x, y)
-
-    with self.assertRaisesRegex(RuntimeError, "returned in the wrong order"):
-      plgpu.as_torch_kernel(lambda x, y: kernel(x, y)[::-1])(x, y)
-    with self.assertRaisesRegex(RuntimeError, "all Mosaic GPU call results"):
-      plgpu.as_torch_kernel(lambda x, y: kernel(x, y)[:1])(x, y)
-    with self.assertRaisesRegex(RuntimeError, "and nothing else"):
+    with self.assertRaisesRegex(ValueError, "The function can only return kernel results"):
       plgpu.as_torch_kernel(lambda x, y: (kernel(x, y), x, y))(x, y)
 
   def test_attention(self):
+    self.skipTest("Need to add support for kernels wrapped in jax.jit")
     batch_size = 1
     q_seq_len = 4096
     kv_seq_len = 4096

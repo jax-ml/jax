@@ -18,6 +18,7 @@ import contextlib
 import ctypes
 import dataclasses
 import enum
+import functools
 import hashlib
 import itertools
 import math
@@ -978,22 +979,11 @@ def as_torch_gpu_kernel(
   )
 
 
-def _as_torch_gpu_kernel(
-    module_asm: bytes,
-    in_shape: Iterable[object],
-    out_shape: Iterable[object],
-    inout_shape: Iterable[object] = (),
-    *,
-    unwrap_output_tuple: bool = False,
-):
-  flat_arg_types, expected_arg_treedef = jax.tree.flatten((*in_shape, *inout_shape))
-  flat_out_types, _ = jax.tree.flatten(out_shape)
-  out_treedef = jax.tree.structure((*out_shape, *inout_shape))
-
+def _compile_as_torch_gpu_kernel(module_asm: bytes):
   try:
     import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
   except ImportError:
-    raise RuntimeError("_as_torch_gpu_kernel requires PyTorch")
+    raise RuntimeError("Can't compile for PyTorch: import torch failed") from None
 
   torch.cuda.init()  # Make sure CUDA context is set up.
 
@@ -1019,7 +1009,42 @@ def _as_torch_gpu_kernel(
     raise RuntimeError("Failed to compile the module")
   ctx, launch_ptr = compiled[0], compiled[1]
   ctx_ptr_ptr = ctypes.pointer(ctypes.c_void_p(ctx))
-  launch = ctypes.CFUNCTYPE(None, ctypes.c_void_p)(launch_ptr)
+  launch_c = ctypes.CFUNCTYPE(None, ctypes.c_void_p)(launch_ptr)
+
+  def launch(arg_ptrs, device):
+    # Allocate another buffer for args of the host-side program. This is sadly
+    # the default MLIR calling convention.
+    launch_args_ptr = (ctypes.POINTER(ctypes.c_void_p) * 3)()
+    launch_args_ptr[0] = ctx_ptr_ptr
+    launch_args_ptr[1] = ctypes.pointer(
+        torch.cuda.default_stream(device)._as_parameter_
+    )
+    launch_args_ptr[2] = ctypes.cast(
+        ctypes.pointer(ctypes.pointer(arg_ptrs)),
+        ctypes.POINTER(ctypes.c_void_p),
+    )
+    launch_c(launch_args_ptr)
+
+  return launch, functools.partial(unload_func, compiled)
+
+
+def _as_torch_gpu_kernel(
+    module_asm: bytes,
+    in_shape: Iterable[object],
+    out_shape: Iterable[object],
+    inout_shape: Iterable[object] = (),
+    *,
+    unwrap_output_tuple: bool = False,
+    _prepare_args = None,
+    _prepare_results = None,
+):
+  flat_arg_types, expected_arg_treedef = jax.tree.flatten((*in_shape, *inout_shape))
+  flat_out_types, _ = jax.tree.flatten(out_shape)
+  out_treedef = jax.tree.structure((*out_shape, *inout_shape))
+
+  launch, unload = _compile_as_torch_gpu_kernel(module_asm)
+  # _compile_as_torch_gpu_kernel checks that this succeeds
+  import torch  # type: ignore[import-not-found]  # pytype: disable=import-error
 
   def as_torch_dtype(dtype):
     # torch contains NumPy-compatible dtypes in its top namespace
@@ -1058,22 +1083,11 @@ def _as_torch_gpu_kernel(
       buffers[i] = out.data_ptr()
     if num_inout_args := jax.tree.structure(inout_shape).num_leaves:
       flat_outs += flat_args[-num_inout_args:]
-    # Allocate another buffer for args of the host-side program. This is sadly
-    # the default MLIR calling convention.
-    args_ptr = (ctypes.POINTER(ctypes.c_void_p) * 3)()
-    args_ptr[0] = ctx_ptr_ptr
-    args_ptr[1] = ctypes.pointer(torch.cuda.default_stream(device)._as_parameter_)
-    args_ptr[2] = ctypes.cast(ctypes.pointer(ctypes.pointer(buffers)),
-                              ctypes.POINTER(ctypes.c_void_p))
-    launch(args_ptr)
+    launch(buffers, device)
     out = jax.tree.unflatten(out_treedef, flat_outs)
-    if unwrap_output_tuple:
-      return out[0]
-    return out
+    return out[0] if unwrap_output_tuple else out
 
   # Unload the compiled code when the Python function is destroyed.
-  def unload(_):
-    unload_func(compiled)
-  apply.destructor = weakref.ref(apply, unload)
+  apply.destructor = weakref.ref(apply, lambda _weak_ref: unload)
 
   return apply
