@@ -144,8 +144,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     //tests:tpu_tests \
     //tests/pallas:tpu_tests \
     //tests/pallas:tpu_pallas_test_tpu \
-    //tests/multiprocess:tpu_tests \
-    //jax/experimental/jax2tf/tests/multiprocess:tpu_tests \
+    //tests/multiprocess:tpu_tests
 
   # Store the return value of the second bazel command.
   second_bazel_cmd_retval=$?
