@@ -51,5 +51,7 @@ jobs:
       python: ${{ matrix.python }}
       halt-for-connection: ${{ inputs.halt-for-connection }}
       enable-x64:  ${{ matrix.enable-x64 }}
-      build_jaxlib: 'true'
-      build_jax: 'true'
+      build_jaxlib: 'wheel'
+      build_jax: 'wheel'
+      bazel_command: ${{ (contains(matrix.runner, 'linux-arm64') && 'build') || 'test' }}
+      clone_main_xla: 1

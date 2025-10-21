@@ -92,6 +92,11 @@ if [[ "$driver_major_version" -lt "580" ]]; then
   TEST_CONFIG="$TEST_CONFIG --@cuda_driver//:enable_forward_compatibility=true"
 fi
 
+if [[ "$JAXCI_BUILD_JAXLIB" != "true" ]]; then
+  cuda_libs_flag="--config=cuda_libraries_from_stubs"
+else
+  cuda_libs_flag="--@local_config_cuda//cuda:override_include_cuda_libs=true"
+fi
 
 # Don't abort the script if one command fails to ensure we run both test
 # commands below.
@@ -106,6 +111,7 @@ bazel test --config=$TEST_CONFIG \
       --config=use_tar_archive_files \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
+      --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
       --//jax:build_jax=$JAXCI_BUILD_JAX \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
@@ -122,7 +128,7 @@ bazel test --config=$TEST_CONFIG \
       --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
       --action_env=NCCL_DEBUG=WARN \
       --color=yes \
-      --config=cuda_libraries_from_stubs \
+      $cuda_libs_flag \
       //tests:gpu_tests //tests:backend_independent_tests \
       //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests
 
@@ -142,6 +148,7 @@ bazel test --config=$TEST_CONFIG \
       --config=use_tar_archive_files \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
+      --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
       --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
       --//jax:build_jax=$JAXCI_BUILD_JAX \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
@@ -154,7 +161,7 @@ bazel test --config=$TEST_CONFIG \
       --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
       --action_env=NCCL_DEBUG=WARN \
       --color=yes \
-      --config=cuda_libraries_from_stubs \
+      $cuda_libs_flag \
       -- \
       //tests:gpu_tests //tests/pallas:gpu_tests \
       //tests/multiprocess:gpu_tests \
