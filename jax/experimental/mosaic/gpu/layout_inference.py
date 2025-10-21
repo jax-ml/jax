@@ -263,7 +263,7 @@ def _extract_tiling_candidate(
   if not isinstance(divide_constraint.expr, eqns.Variable):
     return
   if num_tiled_dims > len(divide_constraint.tiling_multiple):
-    # TODO(b/447079781): Support this case, by just assuming 0 (no constraints).
+    # The tiling's rank cannot be larger than the size of `tiling_multiple`.
     return
   tiling = divide_constraint.tiling_multiple[-num_tiled_dims:]
   yield divide_constraint.expr, eqns.SMEMTiling(lc.TileTransform(tiling))
@@ -286,7 +286,6 @@ def _extract_layout_candidates_from_memory_space_transfer(
     case _:
       return
 
-  assert isinstance(variable, eqns.Variable)  # Satisfy type checkers.
   assert isinstance(variable, eqns.Variable)  # Satisfy type checkers.
   if isinstance(constant, eqns.RegisterLayout):
     layout = constant.value
@@ -780,8 +779,6 @@ def dynamic_gcd(a: int, b: ir.Value) -> int:
     raise ValueError(f"Expected an integer dynamic value, got a {b.type}")
   if isinstance(b.owner.opview, arith.ConstantOp):
     return math.gcd(a, b.owner.opview.literal_value)
-  # TODO(bchetioui): add a fast path if `b`'s value can be obtained statically.
-  # E.g., if `b` is a constant.
   running_gcd = 1
   for factor in prime_decomposition(a):
     if utils.is_known_divisible(b, running_gcd * factor):

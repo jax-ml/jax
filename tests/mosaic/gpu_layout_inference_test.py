@@ -1708,17 +1708,17 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_transforms_for_subview_handles_dynamic_offsets(
       self, annotate_input
   ):
-    shape = (32, 32, 32)
+    shape = (32, 32, 32, 32)
     elt_ty = ir.BF16Type.get()
 
     in_ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu.utils.smem())
-    out_ref_ty = ir.MemRefType.get((16, 16, 32), elt_ty, memory_space=mgpu.utils.smem())
+    out_ref_ty = ir.MemRefType.get((16, 16, 32, 32), elt_ty, memory_space=mgpu.utils.smem())
 
     with ir.InsertionPoint(self.module.body):
       [in_ref] = undefs(in_ref_ty)
 
       transforms = ir.ArrayAttr.get([
-          mgpu.dialect.TileTransformAttr.get((1, 16)),
+          mgpu.dialect.TileTransformAttr.get((4, 8, 16)),
           mgpu.dialect.SwizzleTransformAttr.get(32),
       ])
 
@@ -1729,16 +1729,17 @@ class LayoutInferenceTest(parameterized.TestCase):
       subview_op = memref.SubViewOp(
           out_ref_ty,
           in_ref,
-          [c(16), c(4)],
+          [c(16), c(4), arith.muli(c(8), c(3))],
           [],
           [],
           static_offsets=[
               ir.ShapedType.get_dynamic_size(),
               ir.ShapedType.get_dynamic_size(),
+              ir.ShapedType.get_dynamic_size(),
               0,
           ],
-          static_sizes=[16, 16, 32],
-          static_strides=[1, 1, 1],
+          static_sizes=[16, 16, 32, 32],
+          static_strides=[1, 1, 1, 1],
       )
 
       if not annotate_input:

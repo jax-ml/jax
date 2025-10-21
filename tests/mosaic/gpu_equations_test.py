@@ -483,6 +483,19 @@ class EquationSystemTest(parameterized.TestCase):
         ],
     )
 
+    # Check that merging constraints with different lenghts yields a constraint
+    # whose length matches the one of the shorter tiling_multiple.
+    constraints = [
+        equations.Divides(v0, (16, 10)),
+        equations.Divides(v0, (8,)),
+    ]
+    self.assertEqual(
+        equations.reduce(equations.EquationSystem(constraints=constraints)).constraints,
+        [
+            equations.Divides(v0, (2,)),
+        ],
+    )
+
   def test_saturate_divides_constraints_for_equal_vars(self):
     def divides(var, dims):
       return equations.Divides(equations.Variable(var), dims)
