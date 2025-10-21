@@ -1592,6 +1592,7 @@ pytype_strict_library(
         ":api_util",
         ":core",
         ":dtypes",
+        ":lax",
         ":numpy",
         ":random",
         ":ref",

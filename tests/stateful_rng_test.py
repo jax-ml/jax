@@ -19,16 +19,19 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax._src import config
-from jax._src import core
-from jax._src import stateful_rng
 from jax._src import test_util as jtu
 
 
 config.parse_flags_with_absl()
 
 class StatefulRNGTest(jtu.JaxTestCase):
+  def test_numpy_alias(self):
+    self.assertIs(jax.random.stateful_rng, jnp.random.default_rng)
+    self.assertIs(jax.random.StatefulPRNG, jnp.random.Generator)
+
+
   def test_stateful_rng_instantiation(self, seed=547389):
-    rng = jnp.random.default_rng(seed)
+    rng = jax.random.stateful_rng(seed)
     key = jax.random.key(seed)
 
     self.assertEqual(key, rng.base_key)
@@ -42,20 +45,20 @@ class StatefulRNGTest(jtu.JaxTestCase):
 
   def test_stateful_rng_invalid_instantiation(self):
     valid_key = jax.random.key(0)
-    valid_counter = core.array_ref(0)
+    valid_counter = jax.new_ref(0)
     invalid_key = jax.numpy.array([0, 1], dtype='uint32')
     invalid_counter = 0
     with self.assertRaisesRegex(ValueError, "Expected base_key to be a typed PRNG key"):
-      stateful_rng.StatefulPRNG(invalid_key, valid_counter)
+      jax.random.StatefulPRNG(invalid_key, valid_counter)
     with self.assertRaisesRegex(ValueError, "Expected counter to be a mutable scalar integer"):
-      stateful_rng.StatefulPRNG(valid_key, invalid_counter)
+      jax.random.StatefulPRNG(valid_key, invalid_counter)
 
   def testRepeatedKeys(self, seed=578543):
-    prng = jnp.random.default_rng(seed)
+    prng = jax.random.stateful_rng(seed)
     self.assertNotEqual(prng.key(), prng.key())
 
   def testShapedKeys(self, seed=7589432):
-    prng = jnp.random.default_rng(seed)
+    prng = jax.random.stateful_rng(seed)
 
     keys1 = prng.key(10)
     self.assertEqual(keys1.shape, (10,))
@@ -68,13 +71,13 @@ class StatefulRNGTest(jtu.JaxTestCase):
     self.assertFalse((keys1 == keys2).any())
 
   def testRepeatedDraws(self, seed=328090):
-    prng = jnp.random.default_rng(seed)
+    prng = jax.random.stateful_rng(seed)
     vals1 = prng.uniform(size=10)
     vals2 = prng.uniform(size=10)
     self.assertTrue((vals1 != vals2).all())
 
   def testRepeatedDrawsJIT(self, seed=328090):
-    prng = jnp.random.default_rng(seed)
+    prng = jax.random.stateful_rng(seed)
     @jax.jit
     def get_values(prng):
       return prng.uniform(size=10)
@@ -87,7 +90,7 @@ class StatefulRNGTest(jtu.JaxTestCase):
       dtype=jtu.dtypes.floating,
   )
   def testRandom(self, size, dtype):
-    rng = jnp.random.default_rng(578943)
+    rng = jax.random.stateful_rng(578943)
     vals = rng.random(size, dtype)
     shape = np.broadcast_shapes(size or ())
 
@@ -105,7 +108,7 @@ class StatefulRNGTest(jtu.JaxTestCase):
   @jax.numpy_dtype_promotion('standard')
   @jax.numpy_rank_promotion('allow')
   def testUniform(self, low, high, size, dtype):
-    rng = jnp.random.default_rng(473289)
+    rng = jax.random.stateful_rng(473289)
     vals = rng.uniform(low, high, size, dtype=dtype)
     shape = np.broadcast_shapes(np.shape(low), np.shape(high), size or ())
 
@@ -123,7 +126,7 @@ class StatefulRNGTest(jtu.JaxTestCase):
   @jax.numpy_dtype_promotion('standard')
   @jax.numpy_rank_promotion('allow')
   def testNormal(self, loc, scale, size, dtype):
-    rng = jnp.random.default_rng(473289)
+    rng = jax.random.stateful_rng(473289)
     vals = rng.normal(loc, scale, size, dtype=dtype)
     shape = np.broadcast_shapes(np.shape(loc), np.shape(scale), size or ())
 
@@ -139,7 +142,7 @@ class StatefulRNGTest(jtu.JaxTestCase):
   @jax.numpy_dtype_promotion('standard')
   @jax.numpy_rank_promotion('allow')
   def testIntegers(self, low, high, size, dtype):
-    rng = jnp.random.default_rng(473289)
+    rng = jax.random.stateful_rng(473289)
     vals = rng.integers(low, high, size, dtype=dtype)
     shape = np.broadcast_shapes(np.shape(low), np.shape(high), size or ())
 
@@ -149,7 +152,7 @@ class StatefulRNGTest(jtu.JaxTestCase):
     self.assertTrue((vals >= low).all())
 
   def testSpawn(self):
-    rng = jnp.random.default_rng(758943)
+    rng = jax.random.stateful_rng(758943)
     rngs = rng.spawn(4)
 
     for child_rng in rngs:
@@ -158,47 +161,48 @@ class StatefulRNGTest(jtu.JaxTestCase):
 
   def testVmap(self):
     seed = 758943
+    rng = jax.random.stateful_rng(seed)
     x = np.arange(4.0)
     def f(rng, x):
       return x + rng.uniform()
-    expected = f(jnp.random.default_rng(seed), x)
-    actual = jax.vmap(f, in_axes=(None, 0))(jnp.random.default_rng(seed), x)
+    expected = f(jax.random.stateful_rng(seed), x)
+    actual = jax.vmap(f)(jax.random.stateful_rng(seed), x)
     self.assertArraysEqual(actual, expected)
 
   def testScanClosure(self):
     seed = 432932
     def f1(seed):
-      rng = jnp.random.default_rng(seed)
+      rng = jax.random.stateful_rng(seed)
       def scan_f(_, __):
         return None, rng.uniform()
       return jax.lax.scan(scan_f, None, length=10)[1]
 
     def f2(seed):
-      rng = jnp.random.default_rng(seed)
+      rng = jax.random.stateful_rng(seed)
       return jax.numpy.array([rng.uniform() for i in range(10)])
 
     self.assertArraysAllClose(f1(seed), f2(seed))
 
   def testDefaultSeed(self):
-    rng = jnp.random.default_rng()
+    rng = jax.random.stateful_rng()
     x = rng.uniform(size=10)
     self.assertEqual(x.shape, (10,))
 
   def testDefaultSeedErrorUnderJIT(self):
     def f():
-      return jnp.random.default_rng().uniform(size=10)
+      return jax.random.stateful_rng().uniform(size=10)
     with self.assertRaisesRegex(TypeError, "When used within transformed code"):
       jax.jit(f)()
 
   def testDefaultSeedErrorUnderGrad(self):
     def f(x):
-      return x + jnp.random.default_rng().uniform()
+      return x + jax.random.stateful_rng().uniform()
     with self.assertRaisesRegex(TypeError, "When used within transformed code"):
       jax.grad(f)(1.0)
 
   def testDefaultSeedErrorUnderVmap(self):
     def f(x):
-      return x + jnp.random.default_rng().uniform()
+      return x + jax.random.stateful_rng().uniform()
     with self.assertRaisesRegex(TypeError, "When used within transformed code"):
       jax.vmap(f)(jnp.arange(5.0))
 

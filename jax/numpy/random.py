@@ -15,4 +15,9 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
-from jax._src.stateful_rng import default_rng as default_rng
+__all__ = ["default_rng", "Generator"]
+
+from jax._src.stateful_rng import (
+    stateful_rng as default_rng,
+    StatefulPRNG as Generator,
+)

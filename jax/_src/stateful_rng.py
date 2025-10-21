@@ -15,6 +15,7 @@
 """
 Stateful, implicitly-updated PRNG implementation based on mutable refs.
 """
+from __future__ import annotations
 
 import dataclasses
 import operator
@@ -28,6 +29,7 @@ from jax._src import random
 from jax._src import ref
 from jax._src import tree_util
 from jax._src import typing
+from jax._src.state import primitives as ref_primitives
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
 import numpy as np
@@ -70,7 +72,6 @@ class StatefulPRNG:
       raise ValueError(f"Expected base_key to be a typed PRNG key; got {self.base_key}")
     # TODO(jakevdp): how to validate a traced mutable array?
     if not (isinstance(self.counter, (core.Ref, core.Tracer))
-            and self.counter.shape == ()
             and dtypes.issubdtype(self.counter.dtype, np.integer)):
       raise ValueError(f"Expected counter to be a mutable scalar integer; got {self.counter}")
 
@@ -94,8 +95,12 @@ class StatefulPRNG:
       Array((), dtype=key<fry>) overlaying:
       [ 928981903 3453687069]
     """
-    key = random.fold_in(self.base_key, self.counter[...])
-    self.counter[...] += 1
+    if self.base_key.shape:
+      # TODO(jakevdp): better error message.
+      raise ValueError("cannot operate on split stateful generator")
+
+    key = random.fold_in(self.base_key, ref_primitives.ref_get(self.counter))
+    ref_primitives.ref_addupdate(self.counter, ..., 1)
     shape_tuple = _canonicalize_size(shape)
     return random.split(key, shape_tuple) if shape_tuple else key
 
@@ -149,6 +154,12 @@ class StatefulPRNG:
       low, high = 0, low
     return random.randint(self.key(), _canonicalize_size(size, low, high),
                           minval=low, maxval=high, dtype=dtype)
+  
+  def split(self, num: int) -> StatefulPRNG:
+    return StatefulPRNG(
+      base_key=self.key(num),
+      counter=ref.new_ref(jnp.zeros(num, dtype=int))
+    )
 
   def spawn(self, n_children: int) -> list['StatefulPRNG']:
     """Create new independent child generators.
@@ -170,8 +181,8 @@ class StatefulPRNG:
     return [self.__class__(self.key(), ref.new_ref(0)) for _ in range(n_children)]
 
 
-def default_rng(seed: typing.ArrayLike | None = None, *,
-                impl: random.PRNGSpecDesc | None = None) -> StatefulPRNG:
+def stateful_rng(seed: typing.ArrayLike | None = None, *,
+                 impl: random.PRNGSpecDesc | None = None) -> StatefulPRNG:
   """
   Implicitly updated PRNG API.
 
