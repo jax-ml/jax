@@ -82,17 +82,13 @@ def _run_one_test(test: unittest.TestCase, result: ThreadSafeTestResult):
 
 
 @contextmanager
-def thread_unsafe_test(condition: bool = True):
+def thread_unsafe_test():
   """Decorator for tests that are not thread-safe.
-
-  Args:
-    condition: If True, mark the test as thread-unsafe. If False, the test
-      runs normally without acquiring the write lock. Defaults to True.
 
   Note: this decorator (naturally) only applies to what it wraps, not to, say,
   code in separate setUp() or tearDown() methods.
   """
-  if TEST_NUM_THREADS.value <= 0 or not condition:
+  if TEST_NUM_THREADS.value <= 0:
     yield
     return
 
@@ -106,16 +102,11 @@ def thread_unsafe_test(condition: bool = True):
     _test_rwlock.reader_lock()
 
 
-def thread_unsafe_test_class(condition: bool = True):
-  """Decorator that marks a TestCase class as thread-hostile.
-
-  Args:
-    condition: If True, mark the test class as thread-hostile. If False, the
-      test class runs normally. Defaults to True.
-  """
+def thread_unsafe_test_class():
+  """Decorator that marks a TestCase class as thread-hostile."""
   def f(klass):
     assert issubclass(klass, unittest.TestCase), type(klass)
-    klass.thread_hostile = condition
+    klass.thread_hostile = True
     return klass
   return f
 

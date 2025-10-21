@@ -16,9 +16,8 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 import dataclasses
-import functools
 import math
 from typing import Any, TypeAlias
 
@@ -341,9 +340,8 @@ def kernel(
       @pallas_core.core_map(mesh, **kwargs)
       def _():
         return pallas_primitives.run_scoped(
-            functools.partial(body, *arg_refs, *out_refs),
-            *scratch_shapes if isinstance(scratch_shapes, Sequence) else (),
-            **scratch_shapes if isinstance(scratch_shapes, Mapping) else {},
+            lambda *scratch_refs: body(*arg_refs, *out_refs, *scratch_refs),
+            *scratch_shapes,
         )
 
       outs = jax.tree.map(lambda ref: ref[...], out_refs)

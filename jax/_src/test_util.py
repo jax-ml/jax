@@ -488,8 +488,6 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
     return "v6 lite" in device_kind
   elif expected_version == "v5p":
     return device_kind.endswith("v5")
-  elif expected_version == "v7x":
-    return "TPU7x" in device_kind
   return expected_version in device_kind
 
 def pattern_search(patterns: str | Sequence[str], string: str):
@@ -2343,17 +2341,6 @@ class numpy_with_mpmath:
       assert 0  # unreachable
 
 # Hypothesis testing support
-def hypothesis_is_thread_safe() -> bool:
-  """Returns True if the installed hypothesis version is thread-safe.
-
-  Hypothesis versions >= 6.136.9 are thread-safe.
-  """
-  try:
-    import hypothesis as hp  # pytype: disable=import-error
-    return tuple(int(x) for x in hp.__version__.split('.')) >= (6, 136, 9)
-  except (ModuleNotFoundError, ImportError):
-    return True
-
 def setup_hypothesis(max_examples=30) -> None:
   """Sets up the hypothesis profiles.
 

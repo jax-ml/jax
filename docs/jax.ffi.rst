@@ -10,4 +10,4 @@
   ffi_lowering
   pycapsule
   register_ffi_target
-  register_ffi_type
+  register_ffi_type_id

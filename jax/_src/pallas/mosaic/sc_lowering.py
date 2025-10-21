@@ -496,14 +496,12 @@ def _prepare_dma_refs(
     dst_transforms,
     src_aval,
     dst_aval,
-    is_add: bool = False,
 ):
   """Prepares the DMA source and destination references."""
-  match (str(ir.MemRefType(src_ref.type).memory_space),
-         str(ir.MemRefType(dst_ref.type).memory_space)):
+  match src_aval.memory_space, dst_aval.memory_space:
     case (
-        "#tpu.memory_space<hbm>" | "#tpu.memory_space<vmem_shared>",
-        "#tpu.memory_space<vmem>",
+        tpu_core.MemorySpace.HBM | tpu_core.MemorySpace.VMEM_SHARED,
+        tpu_core.MemorySpace.VMEM | None,
     ):
       dst_ref, _ = _transform_ref(
           dst_ref, dst_aval.dtype, dst_aval.shape, dst_transforms
@@ -515,10 +513,9 @@ def _prepare_dma_refs(
       src_ref, _ = _transform_ref(
           src_ref, src_aval.dtype, src_aval.shape, src_transforms
       )
-      indirect_offsets_ref_str = "src_ref"
     case (
-        "#tpu.memory_space<vmem>",
-        "#tpu.memory_space<hbm>" | "#tpu.memory_space<vmem_shared>",
+        tpu_core.MemorySpace.VMEM | None,
+        tpu_core.MemorySpace.HBM | tpu_core.MemorySpace.VMEM_SHARED,
     ):
       src_ref, _ = _transform_ref(
           src_ref, src_aval.dtype, src_aval.shape, src_transforms
@@ -530,14 +527,7 @@ def _prepare_dma_refs(
       dst_ref, _ = _transform_ref(
           dst_ref, dst_aval.dtype, dst_aval.shape, dst_transforms
       )
-      indirect_offsets_ref_str = "dst_ref"
     case _:  # Indirect DMA is not supported.
-      if is_add:
-        raise ValueError(
-            "DMAs with `add=True` are only supported between VMEM and "
-            f"HBM/VMEM_SHARED. "
-            f"Got (src, dst)={(src_aval.memory_space, dst_aval.memory_space)}"
-        )
       src_ref, _ = _transform_ref(
           src_ref, src_aval.dtype, src_aval.shape, src_transforms
       )
@@ -545,15 +535,6 @@ def _prepare_dma_refs(
           dst_ref, dst_aval.dtype, dst_aval.shape, dst_transforms
       )
       indirect_offsets = None
-      indirect_offsets_ref_str = ""
-  if is_add and indirect_offsets is None:
-    raise NotImplementedError(
-        "DMAs with `add=True` must (for now) specify offsets of the"
-        " majormost dimension. You can do this by writing"
-        " `pltpu.async_copy(..., {ref}={ref}.at[jnp.arange(vec_dim)], ...)`"
-        " or `pltpu.async_copy(..., {ref}={ref}.at[indices_ref],"
-        " ...)`.".format(ref=indirect_offsets_ref_str)
-    )
   return src_ref, dst_ref, indirect_offsets
 
 
@@ -566,7 +547,6 @@ def _dma_start_lowering_rule(
     tree,
     device_id_type: pallas_primitives.DeviceIdType,
     priority: int,
-    add: bool,
 ):
   (
       src_ref,
@@ -584,16 +564,8 @@ def _dma_start_lowering_rule(
   )
 
   src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
-      src_ref, src_transforms, dst_ref, dst_transforms, src_aval, dst_aval, add
+      src_ref, src_transforms, dst_ref, dst_transforms, src_aval, dst_aval,
   )
-  if add and indirect_offsets is None:
-    # TODO: Support regular DMA with add=True.
-    raise NotImplementedError(
-        "DMAs with `add=True` must (for now) specify offsets of the majormost "
-        "dimension. You can do this by writing "
-        "`pltpu.async_copy(..., dst_ref=ref.at[jnp.arange(vec_dim)], ...)` or "
-        "`pltpu.async_copy(..., dst_ref=ref.at[iota_ref], ...)`."
-    )
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
   if src_sem is not None:
     src_sem, _ = _transform_ref(
@@ -621,7 +593,7 @@ def _dma_start_lowering_rule(
         "Indirect DMAs to or from a remote device are not supported"
     )
   del priority  # Unused by indirect DMAs.
-  tpu.enqueue_indirect_dma(src_ref, dst_ref, indirect_offsets, sem, add=add)
+  tpu.enqueue_indirect_dma(src_ref, dst_ref, indirect_offsets, sem)
   return []
 
 
@@ -709,8 +681,8 @@ def _extract_indirect_offsets(
         )
       offsets_ref, _ = _transform_ref(
           offsets_ref.ref,
-          jnp.int32,
-          offsets_type.shape,  # The shape before the indexing.
+          jnp.int32,  # Just a placeholder.
+          offsets_ref.shape,
           offsets_ref.transforms,
       )
       if not state_discharge._is_trivial_indexer(
