@@ -45,11 +45,10 @@ from jax._src.core import (
 from jax._src.source_info_util import SourceInfo
 from jax._src.state.types import AbstractRef, ReadEffect
 from jax._src.tree_util import PyTreeDef, treedef_tuple, register_static
-from jax._src import multi_weakref_lru_cache
 from jax._src.util import (
     unzip2, safe_zip, safe_map, toposort, split_list, merge_lists,
     partition_list, OrderedSet, as_hashable_function, weakref_lru_cache,
-    subs_list, HashableFunction, foreach)
+    multi_weakref_lru_cache, subs_list, HashableFunction, foreach)
 
 
 map, unsafe_map = safe_map, map
@@ -2000,7 +1999,7 @@ def _drop_unused_vars(constvars, constvals, eqns, outvars
   return constvars, constvals
 
 
-@multi_weakref_lru_cache.multi_weakref_lru_cache
+@multi_weakref_lru_cache
 def _cached_abstract_eval(primitive: core.Primitive, *aval_qdds, **params):
   return primitive.abstract_eval(*aval_qdds, **params)
 

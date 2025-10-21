@@ -24,7 +24,7 @@ Mostly finalized at :ref:`jax-101`!
    ../automatic-differentiation
    ../debugging
    ../random-numbers
-   ../pytrees
+   ../working-with-pytrees
    ../sharded-computation
    ../stateful-computations
    simple-neural-network

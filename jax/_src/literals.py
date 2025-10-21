@@ -258,7 +258,4 @@ class TypedNdArray:
         dtype, order=order, casting=casting, subok=subok, copy=copy
     )
 
-  def tobytes(self, order='C'):
-    return self.val.tobytes(order=order)
-
 _jax.set_typed_ndarray_type(TypedNdArray)

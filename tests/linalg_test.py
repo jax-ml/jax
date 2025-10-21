@@ -1050,8 +1050,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       phases = np.divide(sum_of_ratios, np.abs(sum_of_ratios))
       q1 *= phases
       nm = norm(q1 - q2)
-      max_norm = 220 if jtu.is_device_tpu(7, 'x') else 160
-      self.assertTrue(np.all(nm < max_norm), msg=f"norm={np.amax(nm)}")
+      self.assertTrue(np.all(nm < 160), msg=f"norm={np.amax(nm)}")
 
     # Check a ~= qr
     norm_error = norm(a - np.matmul(lq, lr))

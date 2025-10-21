@@ -518,7 +518,6 @@ pytype_strict_library(
         ":layout",
         ":memory",
         ":mesh",
-        ":multi_weakref_lru_cache",
         ":named_sharding",
         ":partition_spec",
         ":pretty_printer",
@@ -1036,7 +1035,6 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
-        ":multi_weakref_lru_cache",
         ":profiler",
         ":source_info_util",
         ":state_types",
@@ -1311,6 +1309,7 @@ pytype_strict_library(
     ]),
     deps = [
         ":api",
+        ":batching",
         ":config",
         ":core",
         ":cudnn",
@@ -1318,6 +1317,7 @@ pytype_strict_library(
         ":deprecations",
         ":dtypes",
         ":lax",
+        ":mlir",
         ":named_sharding",
         ":numpy",
         ":partition_spec",
@@ -1482,17 +1482,6 @@ pytype_strict_library(
         "//jaxlib/mlir:pass_manager",
         "//jaxlib/mlir:stablehlo_dialect",
     ]) + py_deps("numpy") + py_deps("absl/flags"),
-)
-
-pytype_strict_library(
-    name = "multi_weakref_lru_cache",
-    srcs = ["multi_weakref_lru_cache.py"],
-    deps = [
-        ":config",
-        ":tree_util",
-        ":util",
-        "//jax/_src/lib",
-    ],
 )
 
 pytype_strict_library(
