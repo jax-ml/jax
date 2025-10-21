@@ -668,7 +668,7 @@ def _non_static_arg_names(fn_signature: inspect.Signature | None,
 
   If the `fn_signature` is given then we get from it the names of the
   top-level arguments. In other cases, including when the `args` and `kwargs`
-  do not match the signature, we use names like `args[0[]`, `args[1]`, etc.
+  do not match the signature, we use names like `args[0]`, `args[1]`, etc.
   """
   # Use the same argument parsing as jit: positional followed by kwargs
   # sorted by keys.
