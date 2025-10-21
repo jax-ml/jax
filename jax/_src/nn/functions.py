@@ -972,7 +972,7 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
   if return_residual:
     lse_residual = logsumexp(padded_logits, axis=-1).astype(key.dtype)
     lse_residual = jnp.transpose(lse_residual, (0, 2, 1))  # B N T -> B T N
-    return encoded, lse_residual
+    return encoded, lax.stop_gradient(lse_residual)
 
   return encoded
 
@@ -1235,7 +1235,7 @@ def dot_product_attention(
         # Regardless of input layout, cudnn always returns residual with
         # (B N T) layout.
         out, residual = out
-        residual = jnp.transpose(residual, (0, 2, 1))
+        residual = jnp.transpose(residual, (0, 2, 1)).astype(out.dtype)
         out = (out, residual)
     case None:
       # TODO(kaixih@nvidia) Automatically select the best backend (defaults to XLA for now).
