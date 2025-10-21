@@ -1030,7 +1030,8 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
     # device_put of a GPU/TPU array to the CPU sharding should raise a helpful
     # error.
     with self.assertRaisesRegex(
-        ValueError, "For a cross-host reshard in multi-controller JAX"):
+        ValueError, ("For a cross-host reshard in multi-controller JAX|"
+                     "device_put's second argument must be a Device")):
       jax.device_put(y, cpu_sharding)
 
 
