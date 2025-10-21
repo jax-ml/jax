@@ -97,7 +97,7 @@ class ShapePolyTest(jtu.JaxTestCase,
     # The blocks are static, but the input and the grid are of polymorphic
     # dimensions.
     block_shape = (8, 128)
-    def f(x, *, eager=False):  # x: i32[w, h]
+    def f(x, *, eager=False, backend=None):  # x: i32[w, h]
       def copy_kernel(x_ref, o_ref):
         o_ref[...] = x_ref[...]
       # Use both pl.cdiv and // for specifying the grid
@@ -109,6 +109,7 @@ class ShapePolyTest(jtu.JaxTestCase,
           in_specs=[pl.BlockSpec(block_shape, lambda i, j: (i, j))],
           out_specs=pl.BlockSpec(block_shape, lambda i, j: (i, j)),
           grid=grid,
+          backend=backend,
           interpret=eager and jtu.test_device_matches(["cpu"]))(x)
 
     shape1 = (128, 256)
@@ -135,7 +136,7 @@ class ShapePolyTest(jtu.JaxTestCase,
         NotImplementedError,
         "dynamic grid bounds not supported in the Triton backend"):
       export.export(
-          jax.jit(f),
+          jax.jit(functools.partial(f, backend="triton")),
           platforms=["cuda"])(jax.ShapeDtypeStruct((w, h), jnp.int32))
 
   def test_block_sizes_must_be_static_no_grid(self):

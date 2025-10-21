@@ -38,7 +38,7 @@ class ExportTestWithTriton(jtu.JaxTestCase):
   def setUp(self):
     if sys.platform == "win32":
       self.skipTest("Only works on non-Windows platforms")
-
+    self.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(False))
     super().setUp()
 
   def _check_cuda_export(self, exp):
@@ -98,8 +98,8 @@ class ExportTestWithMosaicGpu(ExportTestWithTriton):
       self.skipTest(
           "LLVM seems to care about the compute capability if a GPU is present"
       )
-    self.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(True))
     super().setUp()
+    self.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(True))
 
   def _check_cuda_export(self, exp):
     self.assertRegex(
