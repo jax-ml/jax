@@ -26,6 +26,9 @@ archive_override(
   module_name = "xla",
   urls = ["https://github.com/openxla/xla/archive/fdd293ad7aaafe15a60380611168e2754e55d07a.tar.gz"],
   strip_prefix = "xla-fdd293ad7aaafe15a60380611168e2754e55d07a",
+  patches = [
+    "//third_party:xla.patch",
+  ]
 )
 
 # TODO: upstream, otherwise we have to duplicate the patches in jax
