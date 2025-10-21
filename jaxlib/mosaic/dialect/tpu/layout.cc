@@ -121,10 +121,10 @@ class SingleRowVRegBounds : public VRegDataBounds {
         tpu::IotaOp::create(builder, loc, i32_vreg, ArrayRef<int32_t>{0, 1});
     return cast<TypedValue<VectorType>>(
         arith::AndIOp::create(builder, loc,
-                              builder.create<arith::CmpIOp>(
-                                  loc, arith::CmpIPredicate::sge, iota, start),
-                              builder.create<arith::CmpIOp>(
-                                  loc, arith::CmpIPredicate::slt, iota, end))
+                              builder.create<tpu::CmpIOp>(
+                                  loc, tpu::CmpIPredicate::sge, iota, start),
+                              builder.create<tpu::CmpIOp>(
+                                  loc, tpu::CmpIPredicate::slt, iota, end))
             .getResult());
   }
 
