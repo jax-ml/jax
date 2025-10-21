@@ -1139,12 +1139,6 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
                  xla::CompilationEnvironments::CreateFromProto(env_proto));
              *options.mutable_comp_envs() = std::move(*comp_envs);
            })
-      .def_prop_rw("exec_time_optimization_effort",
-                   &ExecutableBuildOptions::exec_time_optimization_effort,
-                   &ExecutableBuildOptions::set_exec_time_optimization_effort)
-      .def_prop_rw("memory_fitting_effort",
-                   &ExecutableBuildOptions::memory_fitting_effort,
-                   &ExecutableBuildOptions::set_memory_fitting_effort)
       .def_prop_rw(
           "optimization_level",
           [](ExecutableBuildOptions& options) {
