@@ -7085,6 +7085,7 @@ def fill_diagonal(a: ArrayLike, val: ArrayLike, wrap: bool = False, *,
       dimensions must be the same size.
     val: scalar or array with which to fill the diagonal. If an array, it will
       be flattened and repeated to fill the diagonal entries.
+    wrap: Not implemented by JAX. Only the default value of ``False`` is supported.
     inplace: must be set to False to indicate that the input is not modified
       in-place, but rather a modified copy is returned.
 
