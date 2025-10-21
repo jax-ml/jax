@@ -193,8 +193,7 @@ def jit(
     out_shardings: optional, a :py:class:`Sharding` or pytree with
       :py:class:`Sharding` leaves and structure that is a tree prefix of the
       output of ``fun``. If provided, it has the same effect as applying
-      corresponding :py:func:`jax.lax.with_sharding_constraint`s to the output
-      of ``fun``.
+      :py:func:`jax.lax.with_sharding_constraint` to the output of ``fun``.
     static_argnums: optional, an int or collection of ints that specify which
       positional arguments to treat as static (trace- and compile-time
       constant).
