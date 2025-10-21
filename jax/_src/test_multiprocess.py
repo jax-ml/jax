@@ -249,6 +249,7 @@ def _main(argv, shard_main):
         f"--multiprocess_test_controller_address=localhost:{jax_port}",
         f"--barrier_timeout={_BARRIER_TIMEOUT.value}",
         "--logtostderr",
+        "--minloglevel=4",
     ]
 
     if num_tpu_chips > 0:
