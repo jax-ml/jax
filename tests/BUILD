@@ -1443,6 +1443,7 @@ jax_multiplatform_test(
     },
     disable_configs = [
         "gpu_b200",  # Times out
+        "tpu_7x",  # Times out
     ],
     minimal_shard_count = {
         "tpu": 8,
