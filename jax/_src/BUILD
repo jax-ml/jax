@@ -1073,7 +1073,6 @@ pytype_strict_library(
     visibility = ["//jax:internal"] + jax_visibility("pretty_printer"),
     deps = [
         ":config",
-        ":util",
         "//jax/_src/lib",
     ],
 )
@@ -1187,7 +1186,6 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
-        ":partial_eval",
         ":tree_util",
         ":util",
     ],
@@ -1594,8 +1592,5 @@ pytype_strict_library(
 pytype_strict_library(
     name = "ref",
     srcs = ["ref.py"],
-    deps = [
-        ":core",
-        ":typing",
-    ],
+    deps = [":core"],
 )
