@@ -288,22 +288,29 @@ jax.profiler.stop_trace()
 
     `0`: Disables host (CPU) tracing entirely.
 
-    `1`: Enables tracing of only user-instrumented TraceMe events (this is the
-    default).
+    `1`: Enables tracing of only user-instrumented TraceMe events.
 
     `2`: Includes level 1 traces plus high-level program execution details like
-    expensive XLA operations.
+    expensive XLA operations (default).
 
     `3`: Includes level 2 traces plus more verbose, low-level program execution
     details such as cheap XLA operations.
 
-2.  `python_tracer_level`: Controls whether Python tracing is enabled.
+2. `device_tracer_level`: Controls whether device tracing is enabled.
 
     Supported Values:
 
-    `0`: Disables Python function call tracing.
+    `0`: Disables device tracing.
 
-    `1`: Enables Python tracing (this is the default).
+    `1`: Enables device tracing (default).
+
+3.  `python_tracer_level`: Controls whether Python tracing is enabled.
+
+    Supported Values:
+
+    `0`: Disables Python function call tracing (default).
+
+    `1`: Enables Python tracing.
 
 #### Advanced configuration options
 
