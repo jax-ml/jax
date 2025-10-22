@@ -266,8 +266,14 @@ def _serialize_pytreedef(
   elif node_type is dict:
     kind = ser_flatbuf.PyTreeDefKind.dict
     assert len(node_data[1]) == len(children)
+    def serialize_key(builder, k):
+      if not isinstance(k, str):
+        raise TypeError(
+            "Serialization is supported only for dictionaries with string keys."
+            f" Found key {k} of type {type(k)}.")
+      return builder.CreateString(k)
     children_names_vector_offset = _serialize_array(
-        builder, lambda b, s: b.CreateString(s), node_data[1]
+        builder, serialize_key, node_data[1]
     )
   elif node_type in _export.serialization_registry:
     kind = ser_flatbuf.PyTreeDefKind.custom

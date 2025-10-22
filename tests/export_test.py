@@ -288,6 +288,16 @@ class JaxExportTest(jtu.JaxTestCase):
 
     self.assertAllClose(f(x, y), exp_f.call(x, y))
 
+  def test_dict_non_string_key(self):
+    @jax.jit
+    def f(x_dict):
+      return x_dict[(0, 1)] + x_dict[(1, 2)]
+
+    x_dict = {(0, 1): np.float32(42.), (1, 2): np.float32(43.)}
+    with self.assertRaisesRegex(
+        TypeError, "Serialization is supported only for dictionaries with string keys"):
+      get_exported(f)(x_dict)
+
   def test_closed_over_constant(self):
     const_size = 100
     const = jax.random.uniform(jax.random.key(0), (const_size,),
