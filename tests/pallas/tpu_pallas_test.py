@@ -2581,6 +2581,35 @@ class PallasCallTest(PallasBaseTest):
     )(condlist, choicelist)
     np.testing.assert_array_equal(z, jnp.where(condlist, choicelist, 0))
 
+  @parameterized.parameters([
+      jnp.int32,
+      jnp.uint32,
+      jnp.int16,
+      jnp.uint16,
+      jnp.int8,
+      jnp.uint8,
+      jnp.int4,
+      jnp.uint4,
+  ])
+  def test_vector_cmpi_operation(self, dtype):
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = x_ref[...] != y_ref[...]
+
+    shape = (8, 128)
+    x_arr = jnp.ones(shape, dtype=dtype)
+    y_arr = jnp.zeros(shape, dtype=dtype)
+
+    z_arr = self.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.bool_),
+    )(x_arr, y_arr)
+    np.testing.assert_array_equal(z_arr, x_arr != y_arr)
+
 
 class PallasScalarIOpsTest(PallasBaseTest):
 

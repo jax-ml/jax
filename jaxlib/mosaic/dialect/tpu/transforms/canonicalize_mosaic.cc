@@ -1097,7 +1097,7 @@ FailureOr<Value> canonicalize_broadcast(const CanonicalizeContext &ctx,
         SplatElementsAttr::get(i32_res_vty,
                                builder.getOneAttr(builder.getI32Type())));
     Value cmp =
-        builder.create<arith::CmpIOp>(arith::CmpIPredicate::eq, bcast, ones);
+        builder.create<tpu::CmpIOp>(tpu::CmpIPredicate::eq, bcast, ones);
     op.replaceAllUsesWith(cmp);
     op.erase();
     return cmp;
@@ -1891,6 +1891,69 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
   return res;
 }
 
+tpu::CmpIPredicate convert_arith_predicate_to_tpu_predicate(
+    arith::CmpIPredicate predicate) {
+  switch (predicate) {
+    case arith::CmpIPredicate::eq:
+      return tpu::CmpIPredicate::eq;
+    case arith::CmpIPredicate::ne:
+      return tpu::CmpIPredicate::ne;
+    case arith::CmpIPredicate::slt:
+      return tpu::CmpIPredicate::slt;
+    case arith::CmpIPredicate::sle:
+      return tpu::CmpIPredicate::sle;
+    case arith::CmpIPredicate::sgt:
+      return tpu::CmpIPredicate::sgt;
+    case arith::CmpIPredicate::sge:
+      return tpu::CmpIPredicate::sge;
+    case arith::CmpIPredicate::ult:
+      return tpu::CmpIPredicate::ult;
+    case arith::CmpIPredicate::ule:
+      return tpu::CmpIPredicate::ule;
+    case arith::CmpIPredicate::ugt:
+      return tpu::CmpIPredicate::ugt;
+    case arith::CmpIPredicate::uge:
+      return tpu::CmpIPredicate::uge;
+  }
+}
+
+FailureOr<Value> canonicalize_arith_cmpi(const CanonicalizeContext& ctx,
+                                         Operation& raw_op) {
+  auto op = cast<arith::CmpIOp>(raw_op);
+  CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
+  auto pred = convert_arith_predicate_to_tpu_predicate(op.getPredicate());
+  Value new_op = builder.create<tpu::CmpIOp>(pred, op.getLhs(), op.getRhs());
+  op.replaceAllUsesWith(new_op);
+  op.erase();
+  return new_op;
+}
+
+FailureOr<Value> canonicalize_tpu_cmpi(const CanonicalizeContext& ctx,
+                                       Operation& raw_op) {
+  auto op = cast<tpu::CmpIOp>(raw_op);
+  if (!isa<VectorType>(op.getType())) {
+    return op.getResult();
+  }
+
+  VectorType operand_type = cast<VectorType>(op.getLhs().getType());
+  auto shape = operand_type.getShape();
+  unsigned bitwidth = operand_type.getElementTypeBitWidth();
+  unsigned min_supported_bitwidth = (ctx.hardware_generation >= 6) ? 16 : 32;
+  if (bitwidth >= min_supported_bitwidth) {
+    return op.getResult();
+  }
+
+  CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
+  VectorType extended_shape =
+      VectorType::get(shape, builder.getIntegerType(min_supported_bitwidth));
+  Value rhs = builder.create<arith::ExtSIOp>(extended_shape, op.getRhs());
+  Value lhs = builder.create<arith::ExtSIOp>(extended_shape, op.getLhs());
+  Value new_op = builder.create<tpu::CmpIOp>(op.getPredicate(), lhs, rhs);
+  op.replaceAllUsesWith(new_op);
+  op.erase();
+  return new_op;
+}
+
 FailureOr<Value> canonicalize_arith_extf(const CanonicalizeContext &ctx,
                                          Operation &raw_op) {
   auto op = cast<arith::ExtFOp>(raw_op);
@@ -2049,8 +2112,10 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {arith::SelectOp::getOperationName(), canonicalize_select},
       {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
       {arith::SIToFPOp::getOperationName(), canonicalize_sitofp},
+      {arith::CmpIOp::getOperationName(), canonicalize_arith_cmpi},
       {arith::TruncFOp::getOperationName(), canonicalize_arith_truncf},
       {arith::ExtFOp::getOperationName(), canonicalize_arith_extf},
+      {tpu::CmpIOp::getOperationName(), canonicalize_tpu_cmpi},
       {tpu::TruncFOp::getOperationName(), canonicalize_tpu_truncf},
       {tpu::ExtFOp::getOperationName(), canonicalize_tpu_extf},
       {tpu::StochasticConvertOp::getOperationName(),

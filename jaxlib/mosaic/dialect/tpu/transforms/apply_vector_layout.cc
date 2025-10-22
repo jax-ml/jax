@@ -3052,8 +3052,8 @@ LogicalResult rotate_rule_impl(RewriteContext &ctx, OpTy op, Value amount,
       padding_vreg =
           builder.create<arith::AddIOp>(i32_vreg, padding_vreg, offset);
     }
-    return builder.create<arith::CmpIOp>(
-        arith::CmpIPredicate::slt,
+    return builder.create<tpu::CmpIOp>(
+        tpu::CmpIPredicate::slt,
         builder.create<tpu::IotaOp>(i32_vreg, ArrayRef<int32_t>{dim}),
         padding_vreg);
   };
@@ -3266,8 +3266,8 @@ LogicalResult rotate_rule_impl(RewriteContext &ctx, OpTy op, Value amount,
           mlirI32Const(tiling_dim >= 0 ? roll_by * ctx.target_shape[tiling_dim]
                                        : roll_by),
           axis, /*stride=*/0);
-      auto mask = builder.create<arith::CmpIOp>(
-          arith::CmpIPredicate::ne,
+      auto mask = builder.create<tpu::CmpIOp>(
+          tpu::CmpIPredicate::ne,
           builder.create<vector::BroadcastOp>(
               i32_vreg,
               builder.create<arith::AndIOp>(vreg_shift, mlirI32Const(roll_by))),
@@ -4456,7 +4456,7 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
         builder.create<vector::BroadcastOp>(native_vreg_ty, src_i32);
     Value zeros = getZerosVector(builder, tile_i32.getType());
     auto tile =
-        builder.create<arith::CmpIOp>(arith::CmpIPredicate::ne, tile_i32, zeros)
+        builder.create<tpu::CmpIOp>(tpu::CmpIPredicate::ne, tile_i32, zeros)
             .getResult();
     const xla::Array<Value> dst_tiles(dst_tiles_shape, tile);
     broadcast_op.replaceAllUsesWith(
@@ -8988,7 +8988,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> relayoutMasks(
                vreg_ty,
                builder.getIntegerAttr(builder.getIntegerType(bitwidth), 0)));
   src_regs.Each([&](const absl::Span<const int64_t> idx, Value* reg) {
-    *reg = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, *reg,
+    *reg = builder.create<tpu::CmpIOp>(loc, tpu::CmpIPredicate::ne, *reg,
                                          zeros_vreg);
   });
   return std::make_pair(dst, std::move(src_regs));

@@ -105,8 +105,8 @@ FailureOr<TypedValue<VectorType>> changeBitwidth(
           : builder.create<arith::TruncIOp>(v.getLoc(), dst_int_vty, ext_op);
   setLayout(cast_op, src, dst);
 
-  auto cmp_op = builder.create<arith::CmpIOp>(
-      v.getLoc(), v.getType(), arith::CmpIPredicate::ne, cast_op->getResult(0),
+  auto cmp_op = builder.create<tpu::CmpIOp>(
+      v.getLoc(), v.getType(), tpu::CmpIPredicate::ne, cast_op->getResult(0),
       make_constant(0, dst));
   setLayout(cmp_op, {dst, dst}, dst);
   return cast<TypedValue<VectorType>>(cmp_op.getResult());
