@@ -1959,16 +1959,11 @@ FailureOr<Value> canonicalize_stochastic_convert(const CanonicalizeContext &ctx,
   if (ctx.hardware_generation < 5) {
     op.emitOpError("Stochastic convert not supported on TPU generations < 5.");
     return failure();
-  } else if (ctx.hardware_generation < 7) {
-    // TODO(yixiuliu): Add support for stochastic convert on TPU v5 and v6.
-    op.emitOpError(
-        "Not implemented: Stochastic convert on TPU generations 5 and 6.");
-    return failure();
   }
-
-  if (!out_ety.isBF16() && !isa<Float8E5M2Type, Float8E4M3FNType>(out_ety)) {
-      return op.emitOpError("Unsupported dtype for stochastic convert: ")
-      << out_ety;
+  if (!out_ety.isBF16() &&
+      !isa<Float8E5M2Type, Float8E4M3FNType, Float8E4M3B11FNUZType>(out_ety)) {
+    return op.emitOpError("Unsupported dtype for stochastic convert: ")
+           << out_ety;
   }
   CanonicalBuilder builder(ctx, op->getLoc(), op.getOperation());
   Value result = builder.create<tpu::StochasticConvertElementwiseOp>(
