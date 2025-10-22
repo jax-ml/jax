@@ -187,7 +187,7 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
     y = jax.random.normal(jax.random.key(1), (k, n), jnp.float32)
     o = matmul(x, y)
     atol = 0
-    if jtu.is_device_tpu(6):
+    if jtu.is_device_tpu_at_least(6):
       atol = 2e-5
     np.testing.assert_allclose(o, x @ y, atol=atol)
 

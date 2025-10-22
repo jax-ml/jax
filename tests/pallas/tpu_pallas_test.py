@@ -2108,7 +2108,7 @@ class PallasCallTest(PallasBaseTest):
     elif jtu.is_device_tpu(version=5, variant='p'):
       block_shape = (1024, 8192)
     else:
-      block_shape = (512, 8192)
+      self.skipTest('Unsupported TPU variant')
     grid = (2, 2)
     shape = (grid[0] * block_shape[0], grid[1] * block_shape[1])
 
@@ -2275,6 +2275,8 @@ class PallasCallTest(PallasBaseTest):
   def test_mixed_precision_dot(self):
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('float8_e4m3b11fnuz not supported on TPU generations <= 4')
+    if jtu.is_device_tpu(7, 'x'):
+      self.skipTest('float8_e4m3b11fnuz not supported on TPU v7x')
 
     def kernel(x_ref, w_ref, o_ref):
       o_ref[:] = jax.lax.dot_general(

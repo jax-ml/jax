@@ -782,6 +782,8 @@ class PallasCallTest(PallasBaseTest):
   def test_float8_e4m3b11fnuz_dot(self, transpose):
     if not jtu.test_device_matches(["tpu"]) or not jtu.is_device_tpu_at_least(5):
       self.skipTest("`float8_e4m3b11fnuz` dot only supported on TPU.")
+    if jtu.is_device_tpu(7, "x"):
+      self.skipTest("Unsupported type for matmul.")
 
     dtype = jnp.float8_e4m3b11fnuz
     x = jax.random.normal(jax.random.key(0), (2048, 1024), dtype=jnp.bfloat16)

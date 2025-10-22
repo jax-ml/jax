@@ -29,13 +29,15 @@ def tpu_kind() -> str:
   return jax.devices()[0].device_kind
 
 
-_TPU_KIND_PATTERN = re.compile(r"TPU v(\d+)")
+# Most TPU devices follow the pattern "TPU v{version}{variant}", e.g. "TPU v5p"
+# TPU v7 has a different pattern (i.e. "TPU7x")
+_TPU_KIND_PATTERN = re.compile(r"TPU( v)?(\d+)")
 
 
 def tpu_generation() -> int:
   """Generation number of the currently attached TPU."""
   if version := _TPU_KIND_PATTERN.match(tpu_kind()):
-    return int(version[1])
+    return int(version[2])
   raise NotImplementedError("only TPU devices are supported")
 
 
