@@ -5477,13 +5477,10 @@ def _dot_general_transpose_rhs(g, x, y, *, dimension_numbers, precision,
                                out_sharding):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
-  y_bar = _dot_general_transpose_lhs(
+  return _dot_general_transpose_lhs(
     g, y, x, dimension_numbers=swapped_dimension_numbers, precision=precision,
     preferred_element_type=preferred_element_type, out_sharding=out_sharding,
     swap_ans=True)
-  if y_bar.dtype != y.aval.dtype:
-    y_bar = _convert_element_type(y_bar, y.aval.dtype, y.aval.weak_type)
-  return y_bar
 
 
 def _dot_batch_rule(
