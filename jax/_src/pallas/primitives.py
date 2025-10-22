@@ -1133,13 +1133,15 @@ def _semaphore_signal_abstract_eval(
   ) = tree_util.tree_unflatten(args_tree, avals)
   check_sem_avals(sem_aval, sem_transforms_avals, "signal")
   if value_aval.dtype != jnp.dtype("int32"):
-    raise ValueError("Must signal an int32 value.")
+    raise ValueError(f"Must signal an int32 value, but got {value_aval.dtype}")
   effs : set[effects.Effect] = set()
   if device_id_avals is not None:
     device_id_flat_avals = tree_util.tree_leaves(device_id_avals)
     for aval in device_id_flat_avals:
       if aval.dtype != jnp.dtype("int32"):
-        raise ValueError("`device_id`s must be an int32 value.")
+        raise ValueError(
+            f"`device_id`s must be an int32 value, but got {aval.dtype}"
+        )
     effs.add(pallas_core.comms_effect)
   return [], effs
 

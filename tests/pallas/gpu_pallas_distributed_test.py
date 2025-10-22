@@ -272,14 +272,18 @@ class PallasCallRemoteDMATest(TestCase):
         ids = lambda x, y: dict(x=x, y=y)
       else:
         ids = lambda x, y: (x, y)
-      @pl.when(dev_id == 0)
+
+      # Device ID must be an int32.
+      zero = jnp.int32(0)
+
+      @pl.when(dev_id == zero)
       def _store():
         output = plgpu.layout_cast(lax.broadcasted_iota(jnp.int32, (128, 128), 1), plgpu.Layout.WGMMA)
         smem_ref[...] = output
-        plgpu.copy_smem_to_gmem(smem_ref, plgpu.remote_ref(y_ref, ids(0, dev_id)))
-        plgpu.copy_smem_to_gmem(smem_ref, plgpu.remote_ref(y_ref, ids(0, other_dev_id)))
+        plgpu.copy_smem_to_gmem(smem_ref, plgpu.remote_ref(y_ref, ids(zero, dev_id)))
+        plgpu.copy_smem_to_gmem(smem_ref, plgpu.remote_ref(y_ref, ids(zero, other_dev_id)))
         plgpu.wait_smem_to_gmem(0)
-      pl.semaphore_signal(sem, 1, device_id=ids(0, other_dev_id))
+      pl.semaphore_signal(sem, 1, device_id=ids(zero, other_dev_id))
       pl.semaphore_wait(sem)
 
     transforms = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
