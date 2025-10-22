@@ -781,7 +781,7 @@ InitializerRecord = collections.namedtuple(
   "InitializerRecord",
   ["name", "initializer", "shapes", "dtypes"])
 
-ALL_SHAPES = [(2,), (2, 2), (2, 3), (3, 2), (2, 3, 4), (4, 3, 2), (2, 3, 4, 5)]
+ALL_SHAPES = [(), (2,), (2, 2), (2, 3), (3, 2), (2, 3, 4), (4, 3, 2), (2, 3, 4, 5)]
 
 def initializer_record(name, initializer, dtypes, min_dims=2, max_dims=4):
   shapes = [shape for shape in ALL_SHAPES
@@ -804,6 +804,24 @@ INITIALIZER_RECS = [
         "variance_scaling_fan_geo_avg",
         partial(nn.initializers.variance_scaling, 1, "fan_geo_avg", "normal"),
         jtu.dtypes.floating,
+    ),
+    initializer_record(
+        "variance_scaling_fan_in",
+        partial(nn.initializers.variance_scaling, 1, "fan_in", "normal", in_axis=[0], out_axis=[]),
+        jtu.dtypes.floating,
+        min_dims=1,
+    ),
+    initializer_record(
+        "variance_scaling_fan_in",
+        partial(nn.initializers.variance_scaling, 1, "fan_in", "normal", in_axis=[], out_axis=[0]),
+        jtu.dtypes.floating,
+        min_dims=1,
+    ),
+    initializer_record(
+        "variance_scaling_fan_in",
+        partial(nn.initializers.variance_scaling, 1, "fan_in", "normal", in_axis=[], out_axis=[]),
+        jtu.dtypes.floating,
+        min_dims=0,
     ),
 ]
 
@@ -869,8 +887,9 @@ class NNInitializersTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
       ValueError,
-      "Can't compute input and output sizes of a 1"
-      "-dimensional weights tensor. Must be at least 2D."
+      "Can't compute input and output sizes of a 1-dimensional"
+      " weights tensor with default in_axis. Must be at least 2D or specify"
+      " in_axis explicitly.",
     ):
       initializer(rng, shape)
 
