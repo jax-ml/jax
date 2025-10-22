@@ -2207,7 +2207,8 @@ def get_sharding(sharding, shape):
   return out_s
 
 
-@cache(max_size=4096, trace_context_in_key=False)
+@cache(max_size=4096,
+       trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
 def get_vma(vma, mesh):
   if mesh.empty:
     assert not vma, vma
@@ -2220,6 +2221,8 @@ def get_vma(vma, mesh):
       raise ValueError(
           "Axes mentioned in `vma` field of ShapedArray should"
           f" be of type `Manual`. Got axis: {i} of type {mesh._name_to_type[i]}")
+  if config.remove_size_one_mesh_axis_from_type.value:
+    vma = frozenset(i for i in vma if mesh.shape[i] != 1)
   assert isinstance(vma, frozenset)
   return vma
 

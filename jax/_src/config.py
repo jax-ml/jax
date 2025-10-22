@@ -1327,11 +1327,14 @@ use_simplified_jaxpr_constants = bool_state(
     include_in_jit_key=True,
     include_in_trace_context=True)
 
+# This config is temporary and should go away since this is a user problem.
+# If they don't want 1 sized mesh axis names to show up in sharding and vma
+# bits on ShapedArray, then their mesh (which they pass to set_mesh) should not
+# contain those axes at all.
 remove_size_one_mesh_axis_from_type = bool_state(
     name='jax_remove_size_one_mesh_axis_from_type',
     default=False,
-    upgrade=True,
-    help="Removes mesh axes of size 1 from ShapedArray.sharding",
+    help="Removes mesh axes of size 1 from ShapedArray.sharding and vma",
     include_in_jit_key=True,
     include_in_trace_context=True)
 

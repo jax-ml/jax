@@ -4211,6 +4211,25 @@ class ShardMapTest(jtu.JaxTestCase):
     jax.shard_map(f, out_specs=P(), check_vma=False)()  # doesn't crash
     jax.jit(jax.shard_map(f, out_specs=P(), check_vma=False))()  # doesn't crash
 
+  @config.remove_size_one_mesh_axis_from_type(True)
+  @jtu.with_explicit_mesh((2, 1), ('x', 'y'))
+  def test_remove_one_sized_mesh_axis_from_vma(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+
+    @jax.jit
+    @jax.shard_map(in_specs=P('x', 'y'), out_specs=P())
+    def f(x):
+      self.assertEqual(x.aval.vma, {'x'})
+      out = jax.lax.psum(x, 'x')
+      self.assertEqual(out.aval.vma, frozenset())
+      return out
+
+    out = f(arr)
+    self.assertEqual(out.shape, (4, 2))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, None)))
+    self.assertArraysEqual(out, np_inp[:4, :] + np_inp[4:, :])
+
 
 class FunSpec(NamedTuple):
   name: str
