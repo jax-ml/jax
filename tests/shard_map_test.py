@@ -1154,7 +1154,8 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'),
                            axis_types=(AxisType.Explicit,) * 2)
 
-    @shard_map(mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    @shard_map(mesh=mesh, in_specs=P('x'), out_specs=P('x'),
+               axis_names={'x', 'y'})
     def f(x):
       return x
 
@@ -1164,7 +1165,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     f = jax.jit(jax.vmap(f))
     with self.assertRaisesRegex(
-        ValueError, "vmapped away explicit mesh axis cannot appear"):
+        ValueError, "jax.shard_map requires axis_names.*subset of"):
       f(x)
 
     f = jax.jit(jax.vmap(f, spmd_axis_name='y'))
@@ -3510,6 +3511,28 @@ class ShardMapTest(jtu.JaxTestCase):
       return ()
 
     f(A())  # don't crash
+
+  @parameterized.named_parameters(
+      ('axis_name', True),
+      ('no_axis_name', False),
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_explicit_vmap_grad_shmap(self, use_axis_name, mesh):
+    np_inp = np.arange(6 * 24, dtype=np.float32).reshape(6, 24)
+    arr = jax.device_put(np_inp, P('x', None))
+
+    def g(x):
+      self.assertEqual(x.aval.vma, frozenset())
+      if use_axis_name:
+        out = jax.shard_map(jnp.cos, in_specs=P('y'), out_specs=P('y'),
+                            axis_names={'y'})(x)
+      else:
+        out = jax.shard_map(jnp.cos, in_specs=P('y'), out_specs=P('y'))(x)
+      self.assertEqual(out.aval.sharding.spec, P('y'))
+      return out.sum()
+
+    out = jax.jit(jax.vmap(jax.grad(g)))(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
   def test_get_check_rep(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))

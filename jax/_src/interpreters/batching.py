@@ -713,9 +713,12 @@ def _batch_inner(f: Callable, axis_data, out_dim_dests, tag, in_dims, *in_vals):
                                       source_info_util.current()))
     with core.set_current_trace(parent_trace):
       in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)
+    # TODO(yashkatariya): Instead of `add_explicit_mesh_axis_names`, we should
+    # create a new mesh by removing the axis_data.explicit_mesh_axis from it.
     with (core.set_current_trace(trace),
           core.extend_axis_env_nd([(axis_data.name, axis_data.size)]),
-          core.add_spmd_axis_names(axis_data.spmd_name)):
+          core.add_spmd_axis_names(axis_data.spmd_name),
+          core.add_explicit_mesh_axis_names(axis_data.explicit_mesh_axis)):
       outs = f(*in_tracers)
       out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
       out_vals = map(partial(from_elt, trace, axis_data.size, axis_data.explicit_mesh_axis),
@@ -921,9 +924,12 @@ def _batch_jaxpr_inner(f, store, axis_data, tag, in_axes, *in_vals):
     _, in_axes = resolve_ragged_axes(in_vals, in_axes)
     in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
                   for val, dim in zip(in_vals, in_axes)]
+    # TODO(yashkatariya): Instead of `add_explicit_mesh_axis_names`, we should
+    # create a new mesh by removing the axis_data.explicit_mesh_axis from it.
     with (core.set_current_trace(trace),
           core.extend_axis_env_nd([(axis_data.name, axis_data.size)]),
-          core.add_spmd_axis_names(axis_data.spmd_name)):
+          core.add_spmd_axis_names(axis_data.spmd_name),
+          core.add_explicit_mesh_axis_names(axis_data.explicit_mesh_axis)):
       outs = f(*in_tracers)
     out_vals, out_axes = unzip2(map(trace.to_batch_info, outs))
     new_out_axes = indirectify_ragged_axes_against_inputs_outputs(

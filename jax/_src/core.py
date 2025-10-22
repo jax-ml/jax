@@ -1236,6 +1236,7 @@ no_axis_name = object()
 class AxisEnv:
   axis_sizes : dict[AxisName, int]
   spmd_axis_names : set[AxisName]
+  explicit_mesh_axis_names: frozenset[AxisName]
 
   def axis_size(self, axis_name):
     if axis_name not in self.axis_sizes:
@@ -1252,24 +1253,31 @@ class AxisEnv:
   def pop_pure(self, axis_name):
     new_sizes = self.axis_sizes.copy()
     new_sizes.pop(axis_name)
-    return AxisEnv(new_sizes, self.spmd_axis_names)
+    return AxisEnv(new_sizes, self.spmd_axis_names,
+                   self.explicit_mesh_axis_names)
 
   def extend_pure(self, name_size_pairs):
     new_sizes = self.axis_sizes.copy()
     new_sizes.update((name, size) for name, size in name_size_pairs
                     if name is not no_axis_name)
-    return AxisEnv(new_sizes, self.spmd_axis_names)
+    return AxisEnv(new_sizes, self.spmd_axis_names,
+                   self.explicit_mesh_axis_names)
 
   def add_spmd_axis_names(self, axis_names):
     new_spmd_axis_names = self.spmd_axis_names | set(axis_names)
-    return AxisEnv(self.axis_sizes, new_spmd_axis_names)
+    return AxisEnv(self.axis_sizes, new_spmd_axis_names,
+                   self.explicit_mesh_axis_names)
+
+  def add_explicit_mesh_axis_names(self, axis_names):
+    new_ema = self.explicit_mesh_axis_names | frozenset(axis_names)
+    return AxisEnv(self.axis_sizes, self.spmd_axis_names, new_ema)
 
   def as_hashable_key(self):
     return tuple((name, size) for (name, size) in self.axis_sizes.items()
                  if name is not no_axis_name)
 
 eval_trace = EvalTrace()
-top_axis_env = AxisEnv({}, set())
+top_axis_env = AxisEnv({}, set(), frozenset())
 
 class TracingContext(threading.local):
   trace: Trace | None
@@ -1373,6 +1381,24 @@ class AddSpmdAxisNamesContextManager:
     trace_ctx.set_axis_env(self.prev)
 
 add_spmd_axis_names = AddSpmdAxisNamesContextManager
+
+
+class AddExplicitMeshAxisNamesContextManager:
+  __slots__ = ['prev', 'axis_names']
+
+  def __init__(self, axis_names: AxisName | None):
+    self.axis_names = axis_names
+
+  def __enter__(self):
+    self.prev = trace_ctx.axis_env
+    if self.axis_names is not None:
+      trace_ctx.set_axis_env(self.prev.add_explicit_mesh_axis_names(
+          self.axis_names))
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    trace_ctx.set_axis_env(self.prev)
+
+add_explicit_mesh_axis_names = AddExplicitMeshAxisNamesContextManager
 
 
 def get_axis_env():
@@ -2067,7 +2093,7 @@ def canonicalize_value(val):
   cur_mesh = mesh_lib.get_abstract_mesh()
   if cur_mesh == aval.sharding.mesh:
     return val
-  # TODO(yashkatariy): Casting to Explicit is not yet allowed. Maybe we need
+  # TODO(yashkatariya): Casting to Explicit is not yet allowed. Maybe we need
   # cast_and_slice_p for it since shape might change?
   # Atleast 1 mesh axis should be Manual and all other axes should be
   # Manual or Auto to allow casting.

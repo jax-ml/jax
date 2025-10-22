@@ -2293,7 +2293,8 @@ class DynamicJaxprTrace(core.Trace):
     in_avals_ = [mapped_aval(axis_data.size, in_axis, a)
                  for a, in_axis in zip(in_avals, in_axes)]
     with (core.extend_axis_env_nd([(axis_data.name, axis_data.size)]),
-          core.add_spmd_axis_names(axis_data.spmd_name)):
+          core.add_spmd_axis_names(axis_data.spmd_name),
+          core.add_explicit_mesh_axis_names(axis_data.explicit_mesh_axis)):
       jaxpr, out_avals_, consts = trace_to_jaxpr_dynamic(fun, in_avals_)
       jaxpr = convert_constvars_jaxpr(jaxpr)
     # TODO(mattjj,dougalm): if jaxpr is not high, can batch & inline it
