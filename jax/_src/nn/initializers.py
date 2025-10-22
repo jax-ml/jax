@@ -222,7 +222,7 @@ def _compute_fans(shape: Sequence[int],
   Axes not in in_axis, out_axis, or batch_axis are assumed to constitute the
   "receptive field" of a convolution (kernel spatial dimensions).
   """
-  if in_axis == -2 and len(shape) <= 1:
+  if isinstance(in_axis, int) and in_axis == -2 and len(shape) <= 1:
     raise ValueError(
         f"Can't compute input and output sizes of a {len(shape)}-dimensional"
         " weights tensor with default in_axis. Must be at least 2D or specify"
