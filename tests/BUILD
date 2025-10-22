@@ -1607,15 +1607,6 @@ jax_py_test(
 )
 
 jax_py_test(
-    name = "multi_weakref_lru_cache_test",
-    srcs = ["multi_weakref_lru_cache_test.py"],
-    deps = [
-        "//jax",
-        "//jax/_src:test_util",
-    ] + py_deps("absl/testing"),
-)
-
-jax_py_test(
     name = "version_test",
     srcs = ["version_test.py"],
     deps = [

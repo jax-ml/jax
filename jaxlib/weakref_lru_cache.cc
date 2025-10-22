@@ -28,9 +28,6 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/cleanup/cleanup.h"
-#include "absl/container/flat_hash_map.h"
-#include "absl/container/flat_hash_set.h"
-#include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
@@ -90,9 +87,10 @@ struct HashableKey {
 
   template <typename H>
   friend H AbslHashValue(H h, const HashableKey& key) {
-    // Note: Despite the fact this is an ABSL hash function that might throw
-    // exceptions, we are careful to only call it via an explicit absl::HashOf()
-    // call, not from a container.
+    // Note: Despite the fact this is an ABSL hash function, it's safe to call
+    // functions that may throw exceptions such as nb::hash(), because it is
+    // used by an LRUCache, which uses a std::unordered_map, which is
+    // exception-safe.
     h = H::combine(std::move(h), nb::hash(key.context), nb::hash(key.args));
     nb::detail::dict_iterator begin = key.kwargs.begin();
     nb::detail::dict_iterator end = key.kwargs.end();
@@ -177,17 +175,8 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
   };
 
   struct WeakrefCacheKey {
-    absl::InlinedVector<nb::weakref, 1> refs;
+    nb::weakref ref;
     size_t cached_hash;
-
-    bool operator==(const WeakrefCacheKey& other) const {
-      if (refs.size() != other.refs.size()) return false;
-      if (cached_hash != other.cached_hash) return false;
-      for (size_t i = 0; i < refs.size(); ++i) {
-        if (!refs[i].equal(other.refs[i])) return false;
-      }
-      return true;
-    }
   };
 
   using Cache = xla::LRUCache<Key, std::shared_ptr<CacheEntry>>;
@@ -203,52 +192,17 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
   struct WeakrefKeyEq {
     bool operator()(const WeakrefCacheKey& lhs,
                     const WeakrefCacheKey& rhs) const {
-      if (lhs.refs.size() != rhs.refs.size()) return false;
-      for (size_t i = 0; i < lhs.refs.size(); ++i) {
-        if (!lhs.refs[i].equal(rhs.refs[i])) return false;
-      }
-      return true;
+      return lhs.ref.equal(rhs.ref);
     }
   };
 
-  // Pointer-based hash and equality for reverse index
-  struct WeakrefPtrHash {
-    size_t operator()(const nb::weakref& v) const {
-      return std::hash<PyObject*>{}(v.ptr());
+  std::shared_ptr<Cache> GetCache(WeakrefCacheKey key) {
+    WeakrefCacheValue& value = entries_[key];
+    if (!value.cache) {
+      value.cache = std::make_shared<Cache>(&lru_list_);
     }
-  };
-
-  struct WeakrefPtrEq {
-    bool operator()(const nb::weakref& lhs, const nb::weakref& rhs) const {
-      return lhs.ptr() == rhs.ptr();
-    }
-  };
-
-  // Pointer-based hash and equality for WeakrefCacheKey (for the reverse index
-  // set)
-  struct WeakrefCacheKeyPtrHash {
-    size_t operator()(const WeakrefCacheKey& key) const {
-      // Hash based on pointer values of the weakrefs
-      size_t h = key.refs.size();
-      for (const auto& wr : key.refs) {
-        h = absl::HashOf(h, wr.ptr());
-      }
-      return h;
-    }
-  };
-
-  struct WeakrefCacheKeyPtrEq {
-    bool operator()(const WeakrefCacheKey& lhs,
-                    const WeakrefCacheKey& rhs) const {
-      if (lhs.refs.size() != rhs.refs.size()) return false;
-      for (size_t i = 0; i < lhs.refs.size(); ++i) {
-        if (lhs.refs[i].ptr() != rhs.refs[i].ptr()) return false;
-      }
-      return true;
-    }
-  };
-
-  std::shared_ptr<Cache> GetCache(const WeakrefCacheKey& key);
+    return value.cache;
+  }
 
   nb::callable cache_context_fn_;
   nb::callable fn_;
@@ -256,15 +210,6 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
   std::unordered_map<WeakrefCacheKey, WeakrefCacheValue, WeakrefKeyHash,
                      WeakrefKeyEq>
       entries_;
-  // Reverse index: for each weakref, track which WeakrefCacheKeys contain it
-  // Uses pointer-based hash/equality for both the weakref keys and the set
-  // values.
-  absl::flat_hash_map<
-      nb::weakref,
-      absl::flat_hash_set<WeakrefCacheKey, WeakrefCacheKeyPtrHash,
-                          WeakrefCacheKeyPtrEq>,
-      WeakrefPtrHash, WeakrefPtrEq>
-      weakref_to_keys_;
   int64_t misses_ = 0;
   int64_t total_queries_ = 0;
   absl::Mutex mu_;
@@ -277,18 +222,6 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
   static int tp_clear(PyObject* self);
 };
 
-std::shared_ptr<WeakrefLRUCache::Cache> WeakrefLRUCache::GetCache(
-    const WeakrefCacheKey& key) {
-  WeakrefCacheValue& value = entries_[key];
-  if (!value.cache) {
-    value.cache = std::make_shared<Cache>(&lru_list_);
-    for (const auto& wr : key.refs) {
-      weakref_to_keys_[wr].insert(key);
-    }
-  }
-  return value.cache;
-}
-
 nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
                                  nb::kwargs kwargs)
     ABSL_NO_THREAD_SAFETY_ANALYSIS {
@@ -300,86 +233,37 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
   // function throws an exception
   // (https://learn.microsoft.com/en-us/cpp/standard-library/unordered-map-class?view=msvc-170#emplace).
   Key key(context, args, kwargs);
+  size_t wrcache_hash = static_cast<size_t>(nb::hash(weakref_key));
 
-  // Check if weakref_key is a tuple and extract multiple keys
-  absl::InlinedVector<nb::object, 1> key_objects;
-  if (nb::isinstance<nb::tuple>(weakref_key)) {
-    nb::tuple key_tuple = nb::cast<nb::tuple>(weakref_key);
-    for (size_t i = 0; i < key_tuple.size(); ++i) {
-      key_objects.push_back(nb::borrow<nb::object>(key_tuple[i]));
-    }
-  } else {
-    key_objects.push_back(weakref_key);
-  }
+  // No hash computations after this point.
 
-  // Precompute combined hash (before any map operations)
-  size_t wrcache_hash = 0;
-  for (const auto& obj : key_objects) {
-    size_t obj_hash = static_cast<size_t>(nb::hash(obj));
-    wrcache_hash = absl::HashOf(wrcache_hash, obj_hash);
-  }
+  auto weakref_gc_callback = nb::cpp_function(
+      [this_weak = weak_from_this(), wrcache_hash](nb::handle weakref) {
+        auto cache = this_weak.lock();
+        if (cache == nullptr) {
+          return;
+        }
+        // Set up PyCriticalSection for cache python associated object;
+        auto py_cache = nb::find(cache);
+        // This should never happen as python cache should always be found
+        CHECK(py_cache.ptr() != nullptr);
+        nb::ft_object_guard lock(py_cache);
 
-  // No Python hash computations after this point.
-
-  // Create weakrefs with GC callbacks
-  absl::InlinedVector<nb::weakref, 1> weakrefs;
-  weakrefs.reserve(key_objects.size());
-  for (const auto& obj : key_objects) {
-    auto weakref_gc_callback =
-        nb::cpp_function([this_weak = weak_from_this()](nb::handle weakref) {
-          auto cache = this_weak.lock();
-          if (cache == nullptr) {
-            return;
-          }
-          std::vector<WeakrefCacheValue> removed_values;
-          {
-            auto py_cache = nb::find(cache);
-            // This should never happen as python cache should always be found
-            CHECK(py_cache.ptr() != nullptr);
-            nb::ft_object_guard lock(py_cache);
-
-            // Use reverse index to find entries containing this weakref
-            nb::weakref wr = nb::borrow<nb::weakref>(weakref);
-            auto weakref_it = cache->weakref_to_keys_.find(wr);
-            if (weakref_it == cache->weakref_to_keys_.end()) {
-              return;
-            }
-            absl::flat_hash_set<WeakrefCacheKey, WeakrefCacheKeyPtrHash,
-                                WeakrefCacheKeyPtrEq>
-                keys_to_erase = std::move(weakref_it->second);
-            cache->weakref_to_keys_.erase(weakref_it);
-            // Erase entries and update reverse index
-            for (const auto& key : keys_to_erase) {
-              // The object the reference referred to is now in the process of
-              // being destroyed, so we cannot refer to its contents. Python
-              // weakref objects compare based on identity if the object they
-              // refer to is gone, so the hash lookup will work fine.
-              auto entry_it = cache->entries_.find(key);
-              if (entry_it != cache->entries_.end()) {
-                removed_values.push_back(std::move(entry_it->second));
-                cache->entries_.erase(entry_it);
-              }
-              // Remove key from all other weakrefs' reverse mappings
-              for (const auto& key_wr : key.refs) {
-                if (key_wr.ptr() != wr.ptr()) {
-                  auto wr_it = cache->weakref_to_keys_.find(key_wr);
-                  if (wr_it != cache->weakref_to_keys_.end()) {
-                    wr_it->second.erase(key);
-                    if (wr_it->second.empty()) {
-                      cache->weakref_to_keys_.erase(wr_it);
-                    }
-                  }
-                }
-              }
-            }
-          }
-          // removed_values will be destroyed here, after lock is released.
-          // This avoids reentrant calls into the cache while the lock is held.
-        });
-    weakrefs.push_back(nb::weakref(obj, weakref_gc_callback));
-  }
-
-  WeakrefCacheKey wrcache_key{weakrefs, wrcache_hash};
+        // The object the reference referred to is now in the process of being
+        // destroyed, so we cannot refer to its contents. Python weakref
+        // objects compare based on identity if the object they refer to is
+        // gone, so the hash lookup will work fine.
+        auto it = cache->entries_.find(
+            WeakrefCacheKey{nb::borrow<nb::weakref>(weakref), wrcache_hash});
+        if (it == cache->entries_.end()) {
+          return;
+        }
+        // Create temp-var to avoid re-entrant erase.
+        auto tmp = std::move(it->second);
+        cache->entries_.erase(it);
+      });
+  nb::weakref weakref = nb::weakref(weakref_key, weakref_gc_callback);
+  WeakrefCacheKey wrcache_key{weakref, wrcache_hash};
   std::shared_ptr<Cache> cache_ptr = GetCache(wrcache_key);
   Cache& cache = *cache_ptr;
   ++total_queries_;
@@ -387,10 +271,10 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
   bool inserted = false;
   std::shared_ptr<CacheEntry> entry;
   if (mu_holder_thread_id_.load() == std::this_thread::get_id()) {
-    auto error_string =
-        absl::StrCat("Reentrant call to weakref_lru_cache. Key: ",
-                     nb::cast<std::string>(nb::repr(weakref_key)),
-                     nb::cast<std::string>(nb::repr(args)));
+    auto error_string = absl::StrCat(
+        "Reentrant call to weakref_lru_cache. Key: ",
+        nb::cast<std::string>(nb::repr(weakref_key)),
+        nb::cast<std::string>(nb::repr(args)));
     PyErr_SetString(PyExc_RecursionError, error_string.c_str());
     throw nb::python_error();
   }
@@ -452,18 +336,8 @@ std::vector<nb::object> WeakrefLRUCache::GetKeys() {
     wr_value.cache->ForEach([&results, &wr_key](
                                 const Key& key,
                                 const std::shared_ptr<CacheEntry>& value) {
-      nb::object weakref_keys;
-      if (wr_key.refs.size() == 1) {
-        weakref_keys = nb::borrow<nb::object>(*wr_key.refs[0]);
-      } else {
-        nb::list refs_list;
-        for (const auto& wr : wr_key.refs) {
-          refs_list.append(*wr);
-        }
-        weakref_keys = nb::borrow<nb::object>(nb::cast<nb::tuple>(refs_list));
-      }
       nb::tuple result =
-          nb::make_tuple(weakref_keys, key.context(), key.args(), key.kwargs());
+          nb::make_tuple(*wr_key.ref, key.context(), key.args(), key.kwargs());
       results.push_back(std::move(result));
     });
   }
@@ -488,7 +362,6 @@ void WeakrefLRUCache::Clear() {
     deferred_deletes.emplace_back(entry.first, std::move(entry.second));
   }
   entries_.clear();
-  weakref_to_keys_.clear();
   deferred_deletes.clear();
 }
 
@@ -502,9 +375,7 @@ void WeakrefLRUCache::Clear() {
   Py_VISIT(cache->cache_context_fn_.ptr());
   Py_VISIT(cache->fn_.ptr());
   for (const auto& [wr_key, wr_value] : cache->entries_) {
-    for (const auto& wr : wr_key.refs) {
-      Py_VISIT(wr.ptr());
-    }
+    Py_VISIT(wr_key.ref.ptr());
     int rval = 0;
     wr_value.cache->ForEach(
         [&visit, &arg, &rval](const Key& key,
