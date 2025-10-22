@@ -224,6 +224,7 @@ absl::Status RegisterCustomType(const PJRT_Api* c_api,
   args.struct_size = PJRT_FFI_Type_Register_Args_STRUCT_SIZE;
   args.type_name = type_name_c_str;
   args.type_name_size = type_name_size;
+  args.type_id = type_id->type_id;
   args.type_info = &pjrt_type_info;
   RETURN_STATUS_IF_PJRT_ERROR(ffi_ext->type_register(&args), c_api);
 
