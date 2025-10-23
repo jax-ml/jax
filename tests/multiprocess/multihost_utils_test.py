@@ -503,8 +503,8 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
       multihost_utils.global_array_to_host_local_array(data, global_mesh, None)
 
   def test_live_devices(self):
-    live = multihost_utils.live_devices(jax.devices())
-    self.assertEqual(set(live), set(jax.devices()))
+    with multihost_utils.live_devices(jax.devices()) as live:
+      self.assertEqual(set(live), set(jax.devices()))
 
 
 if __name__ == '__main__':
