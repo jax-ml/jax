@@ -245,11 +245,11 @@ bool IsContiguous(mlir::MemRefType type) {
 
 namespace {
 llvm::LogicalResult VerifyCommonLoadStoreOp(
-    mlir::Location loc, mlir::MemRefType gmem_type, std::string_view gmem_name,
+    mlir::Operation* op, mlir::MemRefType gmem_type, std::string_view gmem_name,
     mlir::MemRefType smem_type, std::string_view smem_name,
     mlir::ArrayRef<int64_t> slice_lengths, int num_indices) {
-  auto error = [loc](auto... params) {
-    return emitError(loc, llvm::formatv(params...));
+  auto error = [op](auto... params) {
+    return op->emitError(llvm::formatv(params...));
   };
 
   if (!IsContiguous(smem_type)) {
@@ -286,9 +286,10 @@ llvm::LogicalResult VerifyCommonLoadStoreOp(
 }  // namespace
 
 llvm::LogicalResult AsyncLoadOp::verify() {
-  auto r = VerifyCommonLoadStoreOp(getLoc(), getSource().getType(), "source",
-                                   getDestination().getType(), "destination",
-                                   getSliceLengths(), getIndices().size());
+  auto r =
+      VerifyCommonLoadStoreOp(getOperation(), getSource().getType(), "source",
+                              getDestination().getType(), "destination",
+                              getSliceLengths(), getIndices().size());
   if (failed(r)) {
     return r;
   }
@@ -328,7 +329,7 @@ llvm::LogicalResult AsyncPrefetchOp::verify() {
 }
 
 llvm::LogicalResult AsyncStoreOp::verify() {
-  return VerifyCommonLoadStoreOp(getLoc(), getDestination().getType(),
+  return VerifyCommonLoadStoreOp(getOperation(), getDestination().getType(),
                                  "destination", getSource().getType(), "source",
                                  getSliceLengths(), getIndices().size());
 }
