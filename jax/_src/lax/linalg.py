@@ -1174,8 +1174,8 @@ def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
                  compute_right_eigenvectors, implementation):
   if compute_left_eigenvectors or compute_right_eigenvectors:
     raise NotImplementedError(
-        'The derivatives of eigenvectors are not implemented, only '
-        'eigenvalues. See '
+        'The derivatives of non-symmetric eigenvectors are not supported. '
+        'Only first-order derivatives of eigenvalues are supported. See '
         'https://github.com/jax-ml/jax/issues/2748 for discussion.')
   # Formula for derivative of eigenvalues w.r.t. a is eqn 4.60 in
   # https://arxiv.org/abs/1701.00392
