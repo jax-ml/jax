@@ -90,6 +90,7 @@ limitations under the License.
 #include "xla/backends/cpu/collectives/mpi_collectives.h"
 #endif  // !_WIN32 && !PLATFORM_GOOGLE
 
+#include "jaxlib/call_location.h"
 #include "jaxlib/config.h"
 #include "jaxlib/custom_call_sharding.h"
 #include "jaxlib/dlpack.h"
@@ -603,6 +604,17 @@ NB_MODULE(_jax, m) {
         xla::ValueOrThrowWrapper(CudaArrayInterfaceToBuffer), nb::arg("cai"),
         nb::arg("gpu_backend").none() = nb::none(),
         nb::arg("device_id").none() = nb::none());
+
+  nb::enum_<jax::RuntimeTracebackMode>(m, "RuntimeTracebackMode")
+      .value("OFF", jax::RuntimeTracebackMode::kOff)
+      .value("ON", jax::RuntimeTracebackMode::kOn)
+      .value("FULL", jax::RuntimeTracebackMode::kFull);
+  m.def("add_exclude_path", &jax::AddExcludePath,
+        "Adds a path to exclude from tracebacks.");
+  m.def("set_send_traceback_to_runtime_global",
+        &jax::SetSendTracebackToRuntimeGlobal);
+  m.def("set_send_traceback_to_runtime_thread_local",
+        &jax::SetSendTracebackToRuntimeThreadLocal, nb::arg("mode").none());
 
   BuildConfigSubmodule(m);
   BuildIfrtProgramsSubmodule(m);

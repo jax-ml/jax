@@ -44,6 +44,7 @@ limitations under the License.
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/call_location.h"
 #include "jaxlib/config.h"
 #include "jaxlib/jax_jit.h"
 #include "jaxlib/nb_class_ptr.h"
@@ -640,6 +641,8 @@ absl::StatusOr<nb::object> PmapFunction::Call(nb::handle callable,
     execute_options.execution_stream_id =
         tsl::Env::Default()->GetCurrentThreadId();
   }
+  PopulateCallLocation(execute_options,
+                       xla::ifrt::UserContextScope::current().get());
 
   // A vector of [num_outputs].
   std::vector<xla::ifrt::ArrayRef> output_arrays;

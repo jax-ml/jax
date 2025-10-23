@@ -25,6 +25,7 @@ import sys
 from typing import Any, Generic, NoReturn, Optional, Protocol, Type, TypeVar, cast
 
 from jax._src import deprecations
+from jax._src.lib import _jax
 from jax._src.lib import guard_lib
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
@@ -2037,6 +2038,40 @@ array_garbage_collection_guard = optional_enum_state(
         guard_lib.thread_local_state(), 'garbage_collect_array', val
     ),
 )
+
+# TODO(nbasile): Remove hasattr checks after jaxlib 0.8.1 release
+if hasattr(_jax, 'RuntimeTracebackMode'):
+  class RuntimeTracebackMode(enum.Enum):
+    OFF = _jax.RuntimeTracebackMode.OFF
+    ON = _jax.RuntimeTracebackMode.ON
+    FULL = _jax.RuntimeTracebackMode.FULL
+
+    @classmethod
+    def _missing_(cls, value):
+      if isinstance(value, str):
+        try:
+          return cls[value.upper()]
+        except KeyError:
+          pass
+      return None
+
+  send_traceback_to_runtime = enum_class_state(
+      name='jax_send_traceback_to_runtime',
+      enum_class=RuntimeTracebackMode,
+      default=RuntimeTracebackMode.OFF,
+      help=(
+          'Controls the level of Python traceback information sent to the'
+          ' runtime at dispatch time:\n- "OFF": (default) No Python traceback'
+          ' information is sent.\n- "ON": Only the most recent user frame call'
+          ' location is sent.\n- "FULL": The full Python traceback of the call'
+          ' location is sent. This has a high fixed cost on the dispatch path'
+          ' and should be used only for debugging.'
+      ),
+      update_global_hook=lambda val: _jax.set_send_traceback_to_runtime_global(
+          val.value if val is not None else _jax.RuntimeTracebackMode.OFF),
+      update_thread_local_hook=lambda val: _jax.set_send_traceback_to_runtime_thread_local(
+          val.value if val is not None else None),
+  )
 
 # Don't define a context manager since this isn't threadsafe.
 string_state(

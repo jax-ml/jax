@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
+#include "jaxlib/call_location.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
@@ -415,6 +416,7 @@ absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
     options.execution_stream_id = tsl::Env::Default()->GetCurrentThreadId();
   }
   PyUserContextScope user_context_scope;
+  PopulateCallLocation(options, xla::ifrt::UserContextScope::current().get());
   std::optional<std::vector<xla::PjRtFuture<>>> returned_futures;
   if (with_tokens) {
     returned_futures.emplace();
