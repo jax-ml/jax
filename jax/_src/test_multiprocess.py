@@ -97,6 +97,13 @@ _HEARTBEAT_TIMEOUT = absl.flags.DEFINE_integer(
     " running under sanitizers.",
 )
 
+_SHUTDOWN_TIMEOUT = absl.flags.DEFINE_integer(
+    "shutdown_timeout",
+    15,
+    "JAX shutdown timeout duration in seconds for each subprocess worker. If "
+    "your test is timing out, try increasing this value.",
+)
+
 _BARRIER_TIMEOUT = absl.flags.DEFINE_integer(
     "barrier_timeout",
     10,
@@ -146,6 +153,7 @@ def _main(argv, shard_main):
         process_id=MULTIPROCESS_TEST_WORKER_ID.value,
         local_device_ids=local_device_ids,
         heartbeat_timeout_seconds=_HEARTBEAT_TIMEOUT.value,
+        shutdown_timeout_seconds=_SHUTDOWN_TIMEOUT.value,
         initialization_timeout=10,
     )
     if shard_main is not None:
@@ -247,6 +255,8 @@ def _main(argv, shard_main):
         f"--num_processes={num_processes}",
         f"--multiprocess_test_worker_id={i}",
         f"--multiprocess_test_controller_address=localhost:{jax_port}",
+        f"--heartbeat_timeout={_HEARTBEAT_TIMEOUT.value}",
+        f"--shutdown_timeout={_SHUTDOWN_TIMEOUT.value}",
         f"--barrier_timeout={_BARRIER_TIMEOUT.value}",
         "--logtostderr",
     ]

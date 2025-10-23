@@ -62,6 +62,7 @@ class State:
                  initialization_timeout: int = 300,
                  coordinator_bind_address: str | None = None,
                  heartbeat_timeout_seconds: int = 100,
+                 shutdown_timeout_seconds: int = 300,
                  partition_index: int | None = None):
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS'))
@@ -141,7 +142,8 @@ class State:
       )
       self.service = _jax.get_distributed_runtime_service(
           coordinator_bind_address, num_processes,
-          heartbeat_timeout=heartbeat_timeout_seconds)
+          heartbeat_timeout=heartbeat_timeout_seconds,
+          shutdown_timeout=shutdown_timeout_seconds)
 
     self.num_processes = num_processes
 
@@ -202,6 +204,7 @@ def initialize(coordinator_address: str | None = None,
                cluster_detection_method: str | None = None,
                initialization_timeout: int = 300,
                heartbeat_timeout_seconds: int = 100,
+               shutdown_timeout_seconds: int = 300,
                coordinator_bind_address: str | None = None,
                slice_index: int | None = None,
                partition_index: int | None = None):
@@ -263,6 +266,8 @@ def initialize(coordinator_address: str | None = None,
     heartbeat_timeout_seconds: The time (in seconds) after which a process is
       considered dead if it hasn't successfully sent any heartbeats. Defaults
       to 100 seconds.
+    shutdown_timeout_seconds: The time (in seconds) a terminating process will
+      wait for all other processes to also terminate. Defaults to 300 seconds.
     coordinator_bind_address: the address and port to which the coordinator service
       on process `0` should bind. If this is not specified, the default is to bind to
       all available addresses on the same port as ``coordinator_address``. On systems
@@ -306,6 +311,7 @@ def initialize(coordinator_address: str | None = None,
                           local_device_ids, cluster_detection_method,
                           initialization_timeout, coordinator_bind_address,
                           heartbeat_timeout_seconds=heartbeat_timeout_seconds,
+                          shutdown_timeout_seconds=shutdown_timeout_seconds,
                           partition_index=partition_index)
 
 
