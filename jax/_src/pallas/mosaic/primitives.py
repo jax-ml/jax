@@ -51,7 +51,7 @@ Ref = state.AbstractRef | state.TransformedRef
 
 repeat_p = jax_core.Primitive('repeat')
 
-def repeat(x, repeats, axis):
+def repeat(x: jax.Array, repeats: int, axis: int) -> jax.Array:
   axis = util.canonicalize_axis(axis, x.ndim)
   return repeat_p.bind(x, repeats=repeats, axis=axis)
 
@@ -80,7 +80,7 @@ mlir.register_lowering(repeat_p, _repeat_lowering_rule)
 bitcast_p = jax_core.Primitive("bitcast")
 
 
-def bitcast(x, ty: DTypeLike):
+def bitcast(x: jax.Array, ty: DTypeLike) -> jax.Array:
   ty = dtypes.check_and_canonicalize_user_dtype(ty)
   if len(x.shape) < 2:
     raise ValueError("Not implemented: bitcast 1D")
@@ -128,13 +128,13 @@ roll_p = jax_core.Primitive("roll")
 
 
 def roll(
-    x,
-    shift,
+    x: jax.Array,
+    shift: jax.Array | int,
     axis: int,
     *,
     stride: int | None = None,
     stride_axis: int | None = None,
-):
+) -> jax.Array:
   if isinstance(shift, int) and shift < 0:
     raise ValueError("shift must be non-negative.")
   if axis < 0 or axis >= len(x.shape):
