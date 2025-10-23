@@ -149,10 +149,10 @@ maintains an up-to-date list.
 
    key-concepts
    advanced_guides
+   jax
    contributor_guide
    extensions
    notes
-   jax
    about
 
 
