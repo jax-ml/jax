@@ -856,16 +856,20 @@ class VectorSubcoreTest(PallasSCTest):
     # does not yet handle tiled layouts properly, so the result is wrong.
     _ = kernel(x)
 
-  def test_concatenate(self):
-    x = jnp.arange(2 * 8).reshape(-1, 8)
+  @parameterized.product(sizes=[[1, 1], [2, 2], [1, 1, 1, 1]])
+  def test_split_concatenate(self, sizes):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 26):
+      self.skipTest("Test requires a newer libtpu")
 
-    @vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct([2 * x.shape[0], x.shape[1]], x.dtype)
-    )
+    shape = (sum(sizes), 8)
+    x = jnp.arange(math.prod(shape)).reshape(-1, 8)
+
+    @vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
-      o_ref[...] = lax.concatenate([x_ref[...], x_ref[...]], 0)
+      chunks = lax.split(x_ref[...], sizes, 0)
+      o_ref[...] = lax.concatenate(chunks, 0)
 
-    np.testing.assert_array_equal(kernel(x), np.concatenate([x, x], 0))
+    np.testing.assert_array_equal(kernel(x), x)
 
   def test_scratch(self):
     x = jnp.arange(8)

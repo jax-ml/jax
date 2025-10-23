@@ -2453,7 +2453,7 @@ def _concatenate_lowering_rule(ctx: LoweringRuleContext, *xs, dimension):
   return tpu.concatenate(xs, dimension=dimension)
 
 
-@register_lowering_rule(lax.split_p)
+@register_lowering_rule(lax.split_p, kernel_types=[*tpu_core.KernelType])
 def _split_lowering_rule(
     ctx: LoweringRuleContext, x, *, sizes, axis
 ):
