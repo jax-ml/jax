@@ -36,6 +36,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
+from jax._src.core import check_unreduced_args
 from jax._src.mesh import get_abstract_mesh
 from jax._src.core import abstract_token, pvary
 from jax._src.lax import control_flow
@@ -928,7 +929,8 @@ def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
     if len(pos_axes) != 0:
       raise ValueError(f"axis_index_groups can only be used with reductions over "
                        f"named axes, but got: {axes}")
-  core.check_avals_context_mesh(args, 'all_reduce')
+  core.check_avals_context_mesh(args, 'psum')
+  check_unreduced_args(args, 'psum')
   out_avals = [
       ShapedArray(lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype,
                   sharding=lax._reduce_op_sharding_rule(arg, axes=pos_axes))
@@ -960,7 +962,8 @@ def _psum_invariant_abstract_eval(name, *args, axes, axis_index_groups):
       raise ValueError(
           "axis_index_groups can only be used with reductions over "
           f"named axes, but got: {axes}")
-  core.check_avals_context_mesh(args, 'all_reduce')
+  core.check_avals_context_mesh(args, name)
+  check_unreduced_args(args, name)
   out_avals = [
       core.ShapedArray(
           lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype,
@@ -1168,6 +1171,7 @@ def _ppermute_batcher(axis_data, vals_in, dims_in, axis_name, perm):
 def _raise_to_shaped_abstract_eval(x, *, axis_name, **params):
   _check_axis_names(axis_name, 'ppermute')
   collective_vma_rule('ppermute', axis_name, x)
+  check_unreduced_args([x], 'ppermute')
   return x
 
 ppermute_p = core.Primitive('ppermute')
@@ -1485,6 +1489,7 @@ def _all_to_all_effectful_abstract_eval(
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   _check_axis_names(axis_name, 'all_to_all')
+  check_unreduced_args([input_aval], 'all_to_all')
   shape = list(input_aval.shape)
   axis_size = (
       _axis_size(axis_name)
@@ -1646,6 +1651,7 @@ mlir.register_lowering(ragged_all_to_all_p, _ragged_all_to_all_lowering)
 batching.fancy_primitive_batchers[ragged_all_to_all_p] = _ragged_all_to_all_batched_collective
 batching.skippable_batchers[ragged_all_to_all_p] = partial(_names_in_param, 'axis_name')
 
+
 def insert_collective_pvary(axis_name, x):
   if not config._check_vma.value:
     return x
@@ -1790,6 +1796,7 @@ def _all_gather_effectful_abstract_eval(
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   _check_axis_names(axis_name, 'all_gather')
+  check_unreduced_args([x_aval], 'all_gather')
   new_shape = list(x_aval.shape)
   if tiled:
     new_shape[all_gather_dimension] *= axis_size
@@ -1908,6 +1915,7 @@ def _all_gather_invariant_effectful_abstract_eval(
     x_aval, *, all_gather_dimension, axis_name, axis_size, tiled
 ):
   _check_axis_names(axis_name, 'all_gather_invariant')
+  check_unreduced_args([x_aval], 'all_gather_invariant')
   new_shape = list(x_aval.shape)
   if tiled:
     new_shape[all_gather_dimension] *= axis_size
@@ -2013,6 +2021,7 @@ def _reduce_scatter_effectful_abstract_eval(
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   _check_axis_names(axis_name, 'reduce_scatter')
+  check_unreduced_args([x_aval], 'reduce_scatter')
   new_shape = list(x_aval.shape)
   scatter_dim_input_size = x_aval.shape[scatter_dimension]
   if tiled:

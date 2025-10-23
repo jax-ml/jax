@@ -2403,8 +2403,7 @@ pvary_p.def_impl(lambda *args, axes, axis_index_groups: args)
 def _pvary_abstract_eval(*args, axes, axis_index_groups):
   if not config._check_vma.value:
     return args
-  if any(a.sharding.spec.unreduced for a in args):
-    raise NotImplementedError('unreduced rule for pvary is not implemented.')
+  check_unreduced_args(args, 'pvary')
   assert isinstance(axes, tuple)
   arg_vma = [a.vma for a in args]
   for a in arg_vma:
@@ -2420,6 +2419,16 @@ def _pvary_abstract_eval(*args, axes, axis_index_groups):
           for a in args]
 pvary_p.def_abstract_eval(_pvary_abstract_eval)
 
+def check_unreduced_args(args, name):
+  for a in args:
+    if a.sharding.spec.unreduced:
+      raise ValueError(
+          f"{name} cannot accept args which are unreduced. Got"
+          f" {a.str_short(True)}")
+    if a.sharding.spec.reduced:
+      raise ValueError(
+          f"{name} cannot accept args which are reduced. Got"
+          f" {a.str_short(True)}")
 
 def standard_insert_pvary(*args):
   if not config._check_vma.value:
