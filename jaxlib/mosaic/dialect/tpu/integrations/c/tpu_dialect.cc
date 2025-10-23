@@ -119,7 +119,8 @@ mlir::tpu::ApplyVectorLayoutContext unwrap(
       .target_shape = unwrap(ctx.target_shape),
       .mxu_shape = {ctx.mxu_shape.contracting_size,
                     ctx.mxu_shape.non_contracting_size},
-      .max_sublanes_in_scratch = ctx.max_sublanes_in_scratch};
+      .max_sublanes_in_scratch = ctx.max_sublanes_in_scratch,
+      .shape_invariant_numerics = ctx.shape_invariant_numerics};
 }
 
 mlir::OpBuilder mlirTpuInsertionPointToOpBuilder(

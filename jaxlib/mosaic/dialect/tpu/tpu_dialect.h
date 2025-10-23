@@ -63,7 +63,7 @@ struct ApplyVectorLayoutContext {
   int64_t max_sublanes_in_scratch = 0;
   int64_t vmem_banks = -1;                  // -1 means "unspecified".
   int32_t max_shuffle_sublane_offset = -1;  // -1 means "unspecified".
-  bool shape_invariant_numerics = false;
+  bool shape_invariant_numerics = true;
 };
 
 std::pair<bool, bool> mightCommunicateBetweenChips(Operation *op);
@@ -81,7 +81,7 @@ std::unique_ptr<OperationPass<func::FuncOp>> createInferVectorLayoutPass(
     int hardware_generation = -1,
     std::array<int64_t, 2> target_shape = {8, 128},
     const TpuTilingFlags& tpu_tiling_flags = {},
-    bool shape_invariant_numerics = false);
+    bool shape_invariant_numerics = true);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createRelayoutInsertionPass(
     int hardware_generation = -1,
