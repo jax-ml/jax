@@ -107,7 +107,9 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
  public:
   WeakrefLRUCache(nb::callable cache_context_fn, nb::callable fn,
                   int64_t maxsize)
-      : cache_context_fn_(cache_context_fn), fn_(fn), lru_list_(maxsize) {}
+      : cache_context_fn_(cache_context_fn),
+        fn_(fn),
+        lru_list_(std::make_shared<Cache::LRUList>(maxsize)) {}
 
   nb::object Call(nb::object weakref_key, nb::args args, nb::kwargs kwargs);
 
@@ -182,6 +184,7 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
   using Cache = xla::LRUCache<Key, std::shared_ptr<CacheEntry>>;
 
   struct WeakrefCacheValue {
+    std::shared_ptr<Cache::LRUList> lru_list;
     std::shared_ptr<Cache> cache;
   };
 
@@ -199,14 +202,15 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
   std::shared_ptr<Cache> GetCache(WeakrefCacheKey key) {
     WeakrefCacheValue& value = entries_[key];
     if (!value.cache) {
-      value.cache = std::make_shared<Cache>(&lru_list_);
+      value.lru_list = lru_list_;
+      value.cache = std::make_shared<Cache>(lru_list_.get());
     }
     return value.cache;
   }
 
   nb::callable cache_context_fn_;
   nb::callable fn_;
-  Cache::LRUList lru_list_;
+  std::shared_ptr<Cache::LRUList> lru_list_;
   std::unordered_map<WeakrefCacheKey, WeakrefCacheValue, WeakrefKeyHash,
                      WeakrefKeyEq>
       entries_;
@@ -271,10 +275,10 @@ nb::object WeakrefLRUCache::Call(nb::object weakref_key, nb::args args,
   bool inserted = false;
   std::shared_ptr<CacheEntry> entry;
   if (mu_holder_thread_id_.load() == std::this_thread::get_id()) {
-    auto error_string = absl::StrCat(
-        "Reentrant call to weakref_lru_cache. Key: ",
-        nb::cast<std::string>(nb::repr(weakref_key)),
-        nb::cast<std::string>(nb::repr(args)));
+    auto error_string =
+        absl::StrCat("Reentrant call to weakref_lru_cache. Key: ",
+                     nb::cast<std::string>(nb::repr(weakref_key)),
+                     nb::cast<std::string>(nb::repr(args)));
     PyErr_SetString(PyExc_RecursionError, error_string.c_str());
     throw nb::python_error();
   }
@@ -349,8 +353,8 @@ WeakrefLRUCache::CacheInfo WeakrefLRUCache::GetCacheInfo() const {
   CacheInfo result;
   result.hits = total_queries_ - misses_;
   result.misses = misses_;
-  result.maxsize = lru_list_.Capacity();
-  result.currsize = lru_list_.Size();
+  result.maxsize = lru_list_->Capacity();
+  result.currsize = lru_list_->Size();
   return result;
 }
 
