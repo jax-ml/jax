@@ -111,6 +111,9 @@ jax_py_test(
 jax_py_test(
     name = "array_extensibility_test",
     srcs = ["array_extensibility_test.py"],
+    tags = [
+        "notsan",  # Times out
+    ],
     deps = [
         "//jax",
         "//jax/_src:test_util",
