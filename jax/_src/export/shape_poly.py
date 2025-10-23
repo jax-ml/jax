@@ -1434,13 +1434,13 @@ def symbolic_args_specs(
     constraints: Sequence[str] = (),
     scope: SymbolicScope | None = None,
 ):
-  """Constructs a pytree of jax.ShapeDtypeSpec arguments specs for `export`.
+  """Constructs a pytree of jax.ShapeDtypeStruct arguments specs for `export`.
 
   See the documentation of :func:`jax.export.symbolic_shape` and
   the [shape polymorphism documentation](https://docs.jax.dev/en/latest/export/shape_poly.html) for details.
 
   Args:
-    args: a pytree of arguments. These can be jax.Array, or jax.ShapeDTypeSpec.
+    args: a pytree of arguments. These can be jax.Array, or jax.ShapeDtypeStruct.
       They are used to learn the pytree structure of the arguments, their dtypes,
       and to fill-in the actual shapes where the `shapes_specs` contains
       placeholders. Note that only the shape dimensions for which
@@ -1454,7 +1454,7 @@ def symbolic_args_specs(
     constraints: as for :func:`jax.export.symbolic_shape`.
     scope: as for :func:`jax.export.symbolic_shape`.
 
-  Returns: a pytree of jax.ShapeDTypeStruct matching the `args` with the shapes
+  Returns: a pytree of jax.ShapeDtypeStruct matching the `args` with the shapes
     replaced with symbolic dimensions as specified by `shapes_specs`.
   """
   polymorphic_shapes = shapes_specs
