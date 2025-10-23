@@ -260,7 +260,8 @@ def custom_vmap_batching(args_flat, dims, *, call, rule, in_tree, out_tree):
 
 
 def custom_vmap_abstract_eval(*in_avals, call, **_):
-  return call.out_avals
+  del in_avals
+  return call.out_avals, call.effects
 
 
 def custom_vmap_jvp(primals, tangents, *,
@@ -347,7 +348,7 @@ def custom_vmap_jvp(primals, tangents, *,
 custom_vmap_p = core.Primitive('custom_vmap_call')
 custom_vmap_p.multiple_results = True
 custom_vmap_p.def_impl(custom_vmap_impl)
-custom_vmap_p.def_abstract_eval(custom_vmap_abstract_eval)
+custom_vmap_p.def_effectful_abstract_eval(custom_vmap_abstract_eval)
 batching.primitive_batchers[custom_vmap_p] = custom_vmap_batching
 ad.primitive_jvps[custom_vmap_p] = custom_vmap_jvp
 pxla.register_initial_style_primitive(custom_vmap_p)
