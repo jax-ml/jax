@@ -4725,26 +4725,19 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
 class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
 
-  @parameterized.named_parameters(
-      (
-          f"swizzle={int(swizzle)}_{transpose_lhs=}_{transpose_rhs=}_{lhs_in_registers=}",
-          swizzle,
-          transpose_lhs,
-          transpose_rhs,
-          lhs_in_registers,
-      )
-      for swizzle in mgpu_dialect.SwizzlingMode
-      for transpose_lhs in [False, True]
-      for transpose_rhs in [False, True]
-      for lhs_in_registers in [False, True]
+  @parameterized.product(
+      swizzle=tuple(mgpu_dialect.SwizzlingMode),
+      transpose_lhs=(False, True),
+      transpose_rhs=(False, True),
+      lhs_in_registers=(False, True),
   )
   def test_wgmma_kernel_with_tma(
-      self, swizzle, transpose_lhs, transpose_rhs, load_a_in_registers
+      self, swizzle, transpose_lhs, transpose_rhs, lhs_in_registers
   ):
     if swizzle == mgpu_dialect.SwizzlingMode.kNoSwizzle:
       self.skipTest("No swizzle is not supported by wgmma")
 
-    if transpose_lhs and load_a_in_registers:
+    if transpose_lhs and lhs_in_registers:
       self.skipTest("The A operand can only be transposed if it is in SMEM.")
 
     swizzle_elems = swizzle // np.dtype(jnp.bfloat16).itemsize
@@ -4807,7 +4800,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
       if transpose_rhs:
         rhs_smem_ref = utils.memref_transpose(rhs_smem_ref, (1, 0))
 
-      if load_a_in_registers:
+      if lhs_in_registers:
         # SMEM -> Registers
         lhs_operand = vector_load(lhs_smem_ref)
       else:
