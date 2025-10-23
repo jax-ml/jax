@@ -96,7 +96,8 @@ class PallasCallPrintTest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )
     def kernel(x_ref, o_ref):
-      pl.debug_print('x[0] == {}', x_ref[0])
+      pl.debug_print('BEGIN1 x[0] == {}', x_ref[0])
+      pl.debug_print('BEGIN2 x[0] == {} ; x[1] == {} ; END', x_ref[0], x_ref[1])
 
     x = jnp.array([42, 24]).astype(jnp.int32)
     compiled_kernel = (
@@ -106,7 +107,9 @@ class PallasCallPrintTest(PallasBaseTest):
     )
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(x))
-    self.assertIn('x[0] == 42', get_output())
+    output = get_output()
+    self.assertIn('BEGIN1 x[0] == 42', output)
+    self.assertIn('BEGIN2 x[0] == 42 ; x[1] == 24 ; END', output)
 
   @parameterized.named_parameters(
       (f"{'_'.join(map(str, shape))}_{dtype.__name__}", shape, dtype)

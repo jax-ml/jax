@@ -3911,8 +3911,10 @@ def _debug_print_rule(
 
       # TPU expects $0, $1 etc as placeholders.
       fmt = "".join(
-          f"{text}${idx}"
-          for idx, (text, _, _, _) in enumerate(string.Formatter().parse(fmt))
+          f"{text}${spec}{idx}" if field is not None else text
+          for idx, (text, field, spec, _) in enumerate(
+              string.Formatter().parse(fmt)
+          )
       )
 
     tpu.log(args, fmt, formatted=has_placeholders)
