@@ -2407,14 +2407,14 @@ def _pvary_abstract_eval(*args, axes, axis_index_groups):
     raise NotImplementedError('unreduced rule for pvary is not implemented.')
   assert isinstance(axes, tuple)
   arg_vma = [a.vma for a in args]
-  # If there is intersection between arg_vma and axes, error
-  if any(set(axes) & a for a in arg_vma):
-    raise ValueError(
-        "Collective pvary must be applied to a "
-        f"non-device-varying type, but got {arg_vma} for collective acting "
-        f"over axis name {axes}. Please open an issue at "
-        "https://github.com/jax-ml/jax/issues, and as a temporary "
-        "workaround pass the check_vma=False argument to `jax.shard_map`")
+  for a in arg_vma:
+    # If there is intersection between arg_vma and axes, error
+    if set(axes) & a:
+      raise ValueError(
+          "pvary is a invariant->variant collective. This means that the axis"
+          " names mentioned in `axes` passed to `pvary` must not be present in"
+          f" `jax.typeof(inp).vma`. Got axes={axes} and"
+          f" jax.typeof(inp).vma={a}")
   return [a.update(sharding=a.sharding.update(mesh=mesh_lib.get_abstract_mesh()),
                    vma=a.vma.union(frozenset(axes)))
           for a in args]

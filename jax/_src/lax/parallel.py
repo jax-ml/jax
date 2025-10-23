@@ -944,14 +944,14 @@ def _psum_invariant_abstract_eval(name, *args, axes, axis_index_groups):
   assert isinstance(axes, tuple)
   _check_axis_names(axes, 'psum')
   arg_vma = [a.vma for a in args]
-  # If intersection between arg_vma and axes is empty, error
-  if any(not set(axes) & a for a in arg_vma):
-    raise ValueError(
-        f"Collective {name} must be applied to a device-varying "
-        f"type, but got {arg_vma} for collective acting "
-        f"over axis name {axes}. Please open an issue at "
-        "https://github.com/jax-ml/jax/issues, and as a temporary "
-        "workaround pass the check_vma=False argument to `jax.shard_map`")
+  for a in arg_vma:
+    # If intersection between arg_vma and axes is empty, error
+    if not set(axes) & a:
+      raise ValueError(
+          "psum is a variant->invariant collective. This means that the axis"
+          " names mentioned in `axes` passed to `psum` must be present in"
+          f" `jax.typeof(inp).vma`. Got axes={axes} and"
+          f" jax.typeof(inp).vma={a}")
 
   named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
   pos_axes = tuple(axis for axis in axes if isinstance(axis, int))
