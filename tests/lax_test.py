@@ -2748,7 +2748,12 @@ class LaxTest(jtu.JaxTestCase):
                offset_dims=(2,), collapsed_slice_dims=(),
                start_index_map=(2,), operand_batching_dims=(0, 1),
                start_indices_batching_dims=(1, 0)),
-           (1, 1, 3))
+           (1, 1, 3)),
+          # This test verifies that we allow slice sizes that would not fit in
+          # the operand if indices were empty. This is a useful base case.
+          ((0,), np.zeros((0, 1), dtype=np.int32), lax.GatherDimensionNumbers(
+            offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
+            (1,)),
     ]],
     dtype=lax_test_util.all_dtypes,
   )

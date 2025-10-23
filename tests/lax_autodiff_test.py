@@ -853,7 +853,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   # TODO(b/205052657): enable more tests when supported
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
-      for shape in [(5,), (5, 7), (4, 9, 3)]
+      for shape in [(0,), (5,), (5, 7), (4, 9, 3)]
       for axis in [len(shape) - 1]
     ],
     dtype=[np.float32],

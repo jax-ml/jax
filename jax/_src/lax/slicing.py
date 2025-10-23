@@ -1937,8 +1937,9 @@ def _gather_shape_rule(operand, indices, *, dimension_numbers,
     slice_size = slice_sizes[i]
     corresponding_input_size = operand.shape[i]
 
-    if not (slice_size >= 0 and
-            corresponding_input_size >= slice_size):
+    if not core.is_empty_shape(indices.shape) and not (
+        slice_size >= 0 and corresponding_input_size >= slice_size
+    ):
       raise TypeError(f"Slice size at index {i} in gather op is out of range, "
                       f"must be within [0, {corresponding_input_size} + 1), "
                       f"got {slice_size}.")
@@ -2333,6 +2334,7 @@ def _gather_lower_opaque(ctx, operand, indices, *,
 def _gather_lower(ctx, operand, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
                   indices_are_sorted, mode, fill_value):
+  _, indices_aval = ctx.avals_in
   aval_out, = ctx.avals_out
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     return [_gather_lower_opaque(
@@ -2357,7 +2359,7 @@ def _gather_lower(ctx, operand, indices, *,
       start_indices_batching_dims=list(
           dimension_numbers.start_indices_batching_dims
       ),
-      index_vector_dim=len(ctx.avals_in[1].shape) - 1,
+      index_vector_dim=len(indices_aval.shape) - 1,
       offset_dims=list(dimension_numbers.offset_dims),
       start_index_map=list(dimension_numbers.start_index_map),
   )
@@ -2376,6 +2378,9 @@ def _gather_lower(ctx, operand, indices, *,
     }
     return hlo.DynamicGatherOp.build_generic(
         results=results, operands=operands, attributes=attributes).results
+  elif core.is_empty_shape(aval_out.shape):
+    out = mlir.full_like_aval(ctx, 0, aval_out)
+    return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
   else:
     out = hlo.gather(operand, indices, dnums, mlir.dense_int_array(slice_sizes),
                      indices_are_sorted=ir.BoolAttr.get(indices_are_sorted))
