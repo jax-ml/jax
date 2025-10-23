@@ -260,7 +260,7 @@ class MyTree:
 def tree_unflatten(aux_data, children):
   del aux_data  # Unused in this class.
   obj = object.__new__(MyTree)
-  obj.a = a
+  obj.a = children[0]
   return obj
 ```
 
