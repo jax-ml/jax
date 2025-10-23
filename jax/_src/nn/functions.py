@@ -1074,14 +1074,18 @@ def dot_product_attention(
 ):
   r"""Scaled dot product attention function.
 
-  Computes the attention function on Query, Key, and Value tensors:
+  Computes the following for each head:
 
   .. math::
 
-    \mathrm{Attention}(Q, K, V)=\mathrm{softmax}(\frac{QK^T}{\sqrt{d_k}})V
+    \mathrm{Attention}(Q, K, V) = \mathrm{softmax}\left( \frac{QK^T}{\sqrt{d}} + B \right) V
 
-  If we define :code:`logits` as the output of :math:`QK^T` and the
-  :code:`probs` as the output of :math:`softmax`.
+  where
+  :math:`Q` is the query matrix,
+  :math:`K` is the key matrix,
+  :math:`V` is the value matrix,
+  :math:`d` is the dimension of each individual query and key,
+  and :math:`B` is the bias matrix (optional).
 
   Throughout this function, we utilize the following uppercase letters to
   represent the shape of array::
