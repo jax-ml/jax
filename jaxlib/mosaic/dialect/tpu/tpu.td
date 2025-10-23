@@ -858,6 +858,7 @@ def TPU_BitcastVregOp : TPU_Op<"bitcast_vreg", [Pure]> {
   let arguments = (ins TPU_Vreg:$input);
   let results = (outs TPU_Vreg:$output);
   let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+  let hasFolder = 1;
 }
 
 def TPU_WeirdOp : TPU_Op<"weird", [Pure, ElementwiseMappable]> {
