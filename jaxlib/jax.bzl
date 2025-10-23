@@ -83,6 +83,7 @@ _py_deps = {
     "absl/testing:flagsaver": ["@pypi//absl_py"],
     "absl/flags": ["@pypi//absl_py"],
     "cloudpickle": get_optional_dep("@pypi//cloudpickle"),
+    "disable_pmap_shmap_merge": [],
     "epath": get_optional_dep("@pypi//etils"),  # etils.epath
     "filelock": get_optional_dep("@pypi//filelock"),
     "flatbuffers": ["@pypi//flatbuffers"],

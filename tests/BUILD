@@ -1104,6 +1104,44 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "pmap_without_shmap_test",
+    srcs = ["pmap_test.py"],
+    args = ["--jax_pmap_shmap_merge=false"],
+    backend_tags = {
+        "tpu": [
+            "noasan",  # Times out under asan.
+            "requires-mem:16g",  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
+        ],
+        "gpu": [
+            "noasan",  # Times out under asan.
+        ],
+    },
+    disable_configs = [
+        "tpu_v6e",  # Forge OOM.
+    ],
+    enable_configs = [
+        "gpu_v100",
+        "tpu_v3_x4",
+    ],
+    minimal_shard_count = {
+        "tpu": 8,
+    },
+    shard_count = {
+        "cpu": 20,
+        "gpu": 10,
+        "tpu": 20,
+    },
+    tags = ["multiaccelerator"],
+    deps = [
+        "//jax/_src:internal_test_util",
+    ] + py_deps([
+        "absl/testing",
+        "disable_pmap_shmap_merge",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "pmap_test",
     srcs = ["pmap_test.py"],
     backend_tags = {
