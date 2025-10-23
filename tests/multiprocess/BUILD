@@ -146,6 +146,9 @@ jax_multiprocess_test(
 jax_multiprocess_test(
     name = "pgle_test",
     srcs = ["pgle_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Memory leaks in NCCL.
+    },
     enable_backends = ["gpu"],
     main = "pgle_test.py",
     deps = [
