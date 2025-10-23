@@ -778,6 +778,7 @@ cc_library(
         "@llvm-project//mlir:ReconcileUnrealizedCasts",
         "@llvm-project//mlir:Support",
         "@nanobind",
+        "@shardy//shardy/dialect/mpmd/ir:dialect",
         "@shardy//shardy/dialect/sdy/ir:dialect",
         "@stablehlo//:stablehlo_serialization",
         "@xla//xla/hlo/builder:xla_computation",

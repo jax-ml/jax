@@ -35,6 +35,7 @@ limitations under the License.
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "shardy/dialect/mpmd/ir/dialect.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "stablehlo/dialect/Serialization.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -143,6 +144,7 @@ absl::StatusOr<nb::bytes> PySerializePortableArtifact(
     std::string_view mlir_module, std::string_view target,
     bool use_mixed_serialization) {
   mlir::MLIRContext context;
+  context.loadDialect<mlir::mpmd::MpmdDialect>();
   if (VLOG_IS_ON(3)) context.disableMultithreading();
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                       xla::ParseMlirModuleString(mlir_module, context));
@@ -159,7 +161,7 @@ absl::StatusOr<nb::bytes> PySerializePortableArtifact(
 absl::StatusOr<std::string> PyDeserializePortableArtifact(
     const nb::bytes& bytecode_str) {
   mlir::MLIRContext context;
-  context.loadDialect<mlir::sdy::SdyDialect>();
+  context.loadDialect<mlir::sdy::SdyDialect, mlir::mpmd::MpmdDialect>();
   mlir::OwningOpRef<mlir::ModuleOp> module =
       mlir::stablehlo::deserializePortableArtifact(
           std::string_view(bytecode_str.c_str(), bytecode_str.size()),
