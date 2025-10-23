@@ -319,7 +319,7 @@ class Limitation:
       description: str,
       *,
       enabled: bool = True,
-      devices: str | Sequence[str] = ("cpu", "gpu", "tpu"),
+      devices: str | Sequence[str] = ("cpu", "cuda", "rocm", "tpu"),
       dtypes: Sequence[DType] = (),
       skip_run: bool = False,
   ):
@@ -385,6 +385,7 @@ def parameterized(harnesses: Iterable[Harness],
   """
   one_containing = one_containing or os.environ.get(
       "JAX_TEST_HARNESS_ONE_CONTAINING")
+  dut = jtu.device_under_test()
   cases = tuple(
       # Change the testcase name to include the harness name.
       dict(
@@ -402,7 +403,7 @@ def parameterized(harnesses: Iterable[Harness],
     cases = cases[0:1]
   if not cases:
     # We filtered out all the harnesses.
-    return jtu.skip_on_devices(jtu.device_under_test())
+    return jtu.skip_on_devices(dut)
   return absl_parameterized.named_parameters(*cases)
 
 
@@ -1753,7 +1754,8 @@ for dtype in jtu.dtypes.all_inexact:
         [CustomArg(partial(_make_cholesky_arg, shape, dtype))],
         jax_unimplemented=[
             Limitation(
-                "unimplemented", dtypes=[np.float16], devices=("cpu", "gpu"))
+                "unimplemented", dtypes=[np.float16],
+                devices=("cpu", "cuda", "rocm"))
         ],
         shape=shape,
         dtype=dtype)
@@ -1770,7 +1772,7 @@ for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
           jax_unimplemented=[
               Limitation(
                   "unimplemented",
-                  devices=("cpu", "gpu"),
+                  devices=("cpu", "cuda", "rocm"),
                   dtypes=[np.float16, dtypes.bfloat16]),
           ],
           shape=shape,
@@ -1896,7 +1898,7 @@ for dtype in jtu.dtypes.all_inexact:
             ],
             jax_unimplemented=[
                 Limitation(
-                    "only supported on CPU in JAX", devices=("tpu", "gpu")),
+                    "only supported on CPU in JAX", devices=("tpu", "cuda", "rocm")),
                 Limitation(
                     "unimplemented",
                     devices="cpu",
@@ -1940,7 +1942,7 @@ for dtype in jtu.dtypes.all_inexact:
           jax_unimplemented=[
               Limitation(
                   "unimplemented",
-                  devices=("cpu", "gpu"),
+                  devices=("cpu", "cuda", "rocm"),
                   dtypes=[np.float16, dtypes.bfloat16]),
           ],
           shape=shape,
@@ -1990,7 +1992,7 @@ def _make_triangular_solve_harness(name,
       f_lax, [RandArg(a_shape, dtype),
               RandArg(b_shape, dtype)],
       jax_unimplemented=[
-          Limitation("unimplemented", devices="gpu", dtypes=[np.float16]),
+          Limitation("unimplemented", devices=["cuda", "rocm"], dtypes=[np.float16]),
       ],
       dtype=dtype,
       a_shape=a_shape,
@@ -2874,11 +2876,11 @@ def _make_dot_general_harness(name,
       enable_xla=enable_xla,
       jax_unimplemented=[
           Limitation("preferred_element_type must match dtype for floating point",
-                     devices="gpu",
+                     devices=["cuda", "rocm"],
                      dtypes=[np.float16, dtypes.bfloat16, np.float32, np.float64, np.complex64, np.complex128],
                      enabled=(preferred_element_type is not None and preferred_element_type != lhs_dtype)),
           Limitation("preferred_element_type must be floating for integer dtype",
-                     devices="gpu",
+                     devices=["cuda", "rocm"],
                      dtypes=[np.int8, np.uint8, np.int16, np.uint16,
                              np.int32, np.uint32, np.int64, np.uint64],
                      enabled=(preferred_element_type is not None
@@ -3082,7 +3084,7 @@ def _make_conv_harness(name,
             # b/183565702 - no integer convolutions for GPU
             Limitation(
                 "preferred_element_type not implemented for integers",
-                devices="gpu",
+                devices=["cuda", "rocm"],
                 dtypes=(np.int8, np.int16, np.int32, np.int64),
                 enabled=(preferred_element_type in [np.int16, np.int32,
                                                     np.int64])),
