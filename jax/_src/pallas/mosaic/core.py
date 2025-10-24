@@ -105,7 +105,7 @@ class CompilerParams(pallas_core.CompilerParams):
   disable_bounds_checks: bool = False
   skip_device_barrier: bool = False
   allow_collective_id_without_custom_barrier: bool = False
-  shape_invariant_numerics: bool = True
+  shape_invariant_numerics: bool = False
 
   def __init__(
       self,
@@ -121,7 +121,7 @@ class CompilerParams(pallas_core.CompilerParams):
       disable_bounds_checks: bool = False,
       skip_device_barrier: bool = False,
       allow_collective_id_without_custom_barrier: bool = False,
-      shape_invariant_numerics: bool = True,
+      shape_invariant_numerics: bool = False,
   ):
     object.__setattr__(
         self,
