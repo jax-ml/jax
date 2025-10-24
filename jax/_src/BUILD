@@ -836,6 +836,7 @@ pytype_strict_library(
         ":dtypes",
         ":lax",
         ":tree_util",
+        ":typing",
         ":util",
     ] + py_deps("numpy"),
 )
