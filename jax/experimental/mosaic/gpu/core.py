@@ -32,13 +32,14 @@ import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import lib
-from jax._src import sharding_impls
 from jax._src import mesh as mesh_lib
+from jax._src import sharding_impls
 from jax._src import util as jax_util
 from jax._src.interpreters import mlir
 from jax._src.lib import mosaic_gpu_dialect as dialect
 from jaxlib.mlir import ir
 from jaxlib.mlir import passmanager
+from jaxlib.mlir.dialects import _gpu_ops_gen
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import builtin
 from jaxlib.mlir.dialects import func
@@ -579,9 +580,14 @@ def _launch(
         )
   else:
     cluster_kwargs = {}
-  launch_op = gpu.LaunchOp(
-      token.type, [token], *grid_vals, *block_vals,
-      dynamicSharedMemorySize=c(smem_bytes, i32), **cluster_kwargs)
+  launch_op = _gpu_ops_gen.LaunchOp(
+      token.type,
+      [token],
+      *grid_vals,
+      *block_vals,
+      dynamicSharedMemorySize=c(smem_bytes, i32),
+      **cluster_kwargs,
+  )
   launch_op.body.blocks.append(*([index] * (12 + 2 * len(cluster_kwargs))))  # Append an empty block
   with ir.InsertionPoint(launch_op.body.blocks[0]):
     dynamic_smem = gpu.dynamic_shared_memory(
