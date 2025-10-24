@@ -23,14 +23,12 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import numpy as np
-from jax._src.numpy.reductions import _quantile
 
 import jax
 from jax import numpy as jnp
 
 from jax._src import config
 from jax._src import dtypes
-from jax._src.numpy.reductions import quantile
 from jax._src import test_util as jtu
 from jax._src.util import NumpyComplexWarning
 
@@ -770,7 +768,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     a = jnp.array([1, 2, 3, 4, 5], dtype=float)
     weights = jnp.ones_like(a)
     q = jnp.array([0.25, 0.5, 0.75])
-    result = _quantile(a, q, axis=0, method="inverted_cdf", keepdims=False, squash_nans=False, weights=weights)
+    result = jnp.quantile(a, q, axis=0, method="inverted_cdf", keepdims=False, squash_nans=False, weights=weights)
     expected = np.quantile(np.array(a), np.array(q), axis=0, weights=np.array(weights), method="inverted_cdf")
     np.testing.assert_allclose(np.array(result), expected, rtol=1e-6)
 
@@ -778,7 +776,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     a = jnp.arange(10, dtype=float)
     weights = jnp.ones_like(a)
     q = jnp.array([0.25, 0.5, 0.75])
-    result = _quantile(a, q, axis=0, method="inverted_cdf", keepdims=False, squash_nans=False, weights=weights)
+    result = jnp.quantile(a, q, axis=0, method="inverted_cdf", keepdims=False, squash_nans=False, weights=weights)
     expected = np.quantile(np.array(a), np.array(q), axis=0, weights=np.array(weights), method="inverted_cdf")
     np.testing.assert_allclose(np.array(result), expected, rtol=1e-6)
 
@@ -786,7 +784,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     a = jnp.array([1, 2, 3, 4], dtype=float)
     weights = jnp.array([1, 1, 1, 1], dtype=float)
     q = 0.5
-    result = _quantile(a, q, axis=0, method="inverted_cdf", keepdims=True, squash_nans=False, weights=weights)
+    result = jnp.quantile(a, q, axis=0, method="inverted_cdf", keepdims=True, squash_nans=False, weights=weights)
     expected = np.quantile(np.array(a), np.array(q), axis=0, keepdims=True, weights=np.array(weights), method="inverted_cdf")
     np.testing.assert_allclose(np.array(result), expected, rtol=1e-6)
 
@@ -794,7 +792,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     a = jnp.array([1, 2, 3, 4, 5], dtype=float)
     weights = jnp.array([1, 2, 1, 1, 1], dtype=float)
     q = jnp.array([0.5])
-    result = _quantile(a, q, axis=0, method="inverted_cdf", keepdims=False, squash_nans=False, weights=weights)
+    result = jnp.quantile(a, q, axis=0, method="inverted_cdf", keepdims=False, squash_nans=False, weights=weights)
     expected = np.quantile(np.array(a), np.array(q), axis=0, weights=np.array(weights), method="inverted_cdf")
     np.testing.assert_allclose(np.array(result), expected, rtol=1e-6)
 
@@ -803,27 +801,27 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     weights = jnp.array([1, -1, 1, 1, 1], dtype=float)
     q = jnp.array([0.5])
     with pytest.raises(ValueError):
-        _quantile(a, q, axis=0, method="linear", keepdims=False, squash_nans=False, weights=weights)
+        jnp.quantile(a, q, axis=0, method="linear", keepdims=False, squash_nans=False, weights=weights)
 
   def test_weighted_quantile_all_weights_zero(self):
     a = jnp.array([1, 2, 3, 4, 5], dtype=float)
     weights = jnp.zeros_like(a)
     q = jnp.array([0.5])
     with pytest.raises(ValueError):
-        _quantile(a, q, axis=0, method="linear", keepdims=False, squash_nans=False, weights=weights)
+        jnp.quantile(a, q, axis=0, method="linear", keepdims=False, squash_nans=False, weights=weights)
 
   def test_weighted_quantile_weights_with_nan(self):
     a = jnp.array([1, 2, 3, 4, 5], dtype=float)
     weights = jnp.array([1, np.nan, 1, 1, 1], dtype=float)
     q = jnp.array([0.5])
-    result = _quantile(a, q, axis=0, method="linear", keepdims=False, squash_nans=False, weights=weights)
+    result = jnp.quantile(a, q, axis=0, method="linear", keepdims=False, squash_nans=False, weights=weights)
     assert np.isnan(np.array(result)).all()
 
   def test_weighted_quantile_scalar_q(self):
     a = jnp.array([1, 2, 3, 4, 5], dtype=float)
     weights = jnp.array([1, 2, 1, 1, 1], dtype=float)
     q = 0.5
-    result = _quantile(a, q, axis=0, method="inverted_cdf", keepdims=False, squash_nans=False, weights=weights)
+    result = jnp.quantile(a, q, axis=0, method="inverted_cdf", keepdims=False, squash_nans=False, weights=weights)
     assert jnp.issubdtype(result.dtype, jnp.floating)
     assert result.shape == ()
 
@@ -831,7 +829,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     a = jnp.array([1, 2, 3, 4, 5], dtype=float)
     weights = jnp.array([1, 2, 1, 1, 1], dtype=float)
     q = jnp.array([0.25, 0.5, 0.75])
-    quantile_jit = jax.jit(lambda a, q, weights: _quantile(a, q, axis=0, method="inverted_cdf", keepdims=False, squash_nans=False, weights=weights))
+    quantile_jit = jax.jit(lambda a, q, weights: jnp.quantile(a, q, axis=0, method="inverted_cdf", keepdims=False, squash_nans=False, weights=weights))
     result = quantile_jit(a, q, weights)
     expected = np.quantile(np.array(a), np.array(q), axis=0, weights=np.array(weights), method="inverted_cdf")
     np.testing.assert_allclose(np.array(result), expected, rtol=1e-6)
