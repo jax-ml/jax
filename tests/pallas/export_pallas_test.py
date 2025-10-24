@@ -76,7 +76,7 @@ class ExportTestWithTriton(jtu.JaxTestCase):
     )(a, a)
 
     if (jtu.device_under_test() == "tpu" or
-        (jtu.device_under_test() == "gpu" and
+        (jtu.test_device_matches(["gpu"]) and
          jtu.is_cuda_compute_capability_at_least("8.0"))):
       res = exp.call(a, a)
       self.assertAllClose(res, a + a)
