@@ -2337,7 +2337,7 @@ def cumulative_prod(
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation', 'keepdims', 'method'))
 def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
              out: None = None, overwrite_input: bool = False, method: str = "linear",
-             keepdims: bool = False, weights: ArrayLike | None = None, *,
+             keepdims: bool = False, *, weights: ArrayLike | None = None,
              interpolation: DeprecatedArg | str = DeprecatedArg()) -> Array:
   """Compute the quantile of the data along the specified axis.
 
@@ -2395,7 +2395,8 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation', 'keepdims', 'method'))
 def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
                 out: None = None, overwrite_input: bool = False, method: str = "linear",
-                keepdims: bool = False, *, interpolation: DeprecatedArg | str = DeprecatedArg()) -> Array:
+                keepdims: bool = False, *, weights: ArrayLike | None = None,
+                interpolation: DeprecatedArg | str = DeprecatedArg()) -> Array:
   """Compute the quantile of the data along the specified axis, ignoring NaNs.
 
   JAX implementation of :func:`numpy.nanquantile`.
@@ -2447,12 +2448,12 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
       ("The interpolation= argument to 'nanquantile' is deprecated. "
        "Use 'method=' instead."), stacklevel=2)
     method = interpolation
-  return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, method, keepdims, True)
+  return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, method, keepdims, True, weights)
 
 def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
               method: str, keepdims: bool, squash_nans: bool, weights: ArrayLike | None = None) -> Array:
-  if method not in ["linear", "lower", "higher", "midpoint", "nearest"]:
-    raise ValueError("method can only be 'linear', 'lower', 'higher', 'midpoint', or 'nearest'")
+  if method not in ["linear", "lower", "higher", "midpoint", "nearest", "inverted_cdf"]:
+    raise ValueError("method can only be 'linear', 'lower', 'higher', 'midpoint', 'nearest', or 'inverted_cdf'")
   a, = promote_dtypes_inexact(a)
   keepdim = []
   if dtypes.issubdtype(a.dtype, np.complexfloating):
@@ -2482,6 +2483,10 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     axis = _canonicalize_axis(-1, a.ndim)
   else:
     axis = _canonicalize_axis(axis, a.ndim)
+  
+  # Ensure q is an array and inexact
+  q = lax_internal.asarray(q)
+  q, = promote_dtypes_inexact(q)
 
   q_shape = q.shape
   q_ndim = q.ndim
@@ -2492,63 +2497,103 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   # Handle weights
   if weights is not None:
     a, weights = promote_dtypes_inexact(a, weights)
-    if axis is None:
-      a = a.ravel()
-      weights = weights.ravel()
-      axis = 0
+    a_shape = a.shape
+    w_shape = np.shape(weights)
+    if w_shape != a_shape:
+      if len(w_shape) != 1:
+        raise ValueError("1D weights expected when shapes of a and weights differ.")
+      if axis is None:
+        raise TypeError("Axis must be specified when shapes of a and weights differ.")
+      if w_shape[0] != a_shape[axis]:
+        raise ValueError("Length of weights not compatible with specified axis.")
+      resh = [1] * a.ndim
+      resh[axis] = w_shape[0]
+      weights = lax.reshape(lax_internal.asarray(weights), tuple(resh))
+    weights = _broadcast_to(weights, a.shape)
+
+    if isinstance(weights, core.Tracer):
+      weights_arr = None
     else:
-      weights = _broadcast_to(weights, a.shape)
+      try:
+        weights_arr = np.asarray(weights)
+      except Exception:
+        weights_arr = None
+
+    if weights_arr is not None:
+      if np.any(weights_arr < 0):
+        raise ValueError("Weights must be non-negative.")
+      if np.all(weights_arr == 0):
+        raise ValueError("Sum of weights must not be zero.")
+      if np.any(np.isnan(weights_arr)):
+        out_shape = q.shape if hasattr(q, "shape") and getattr(q, "ndim", 0) > 0 else ()
+        return lax.full(out_shape, np.nan, dtype=a.dtype)
+      weights_have_nan = np.any(np.isnan(weights_arr))
+    else:
+      weights_have_nan = False
+
     if squash_nans:
       nan_mask = ~lax_internal._isnan(a)
-      if axis is None:
-        a = a[nan_mask]
-        weights = weights[nan_mask]
-      else:
-        weights = _where(nan_mask, weights, 0)
-    a_sorted, weights_sorted = lax.sort_key_val(a, weights, dimension=axis)
-
-    cum_weights = lax.cumsum(weights_sorted, axis=axis)
-    total_weight = lax.sum(weights_sorted, axis=axis, keepdims=True)
-    if lax_internal._all(total_weight == 0):
-      raise ValueError("Sum of weights must not be zero.")
-    cum_weights_norm = cum_weights / total_weight
-    quantile_pos = q
-    mask = cum_weights_norm >= quantile_pos[..., None]
-    idx = lax.argmin(mask.astype(int), axis=axis)
-    idx_prev = lax.max(idx - 1, _lax_const(idx, 0))
-    idx_next = idx
-    gather_shape = list(a_sorted.shape)
-    gather_shape[axis] = 1
-    dnums = lax.GatherDimensionNumbers(
-      offset_dims=tuple(range(len(a_sorted.shape))),
-      collapsed_slice_dims=(axis,),
-      start_index_map=(axis,))
-    prev_value = lax.gather(a_sorted, idx_prev[..., None], dimension_numbers=dnums, slice_sizes=gather_shape)
-    next_value = lax.gather(a_sorted, idx_next[..., None], dimension_numbers=dnums, slice_sizes=gather_shape)
-    prev_cumw = lax.gather(cum_weights_norm, idx_prev[..., None], dimension_numbers=dnums, slice_sizes=gather_shape)
-    next_cumw = lax.gather(cum_weights_norm, idx_next[..., None], dimension_numbers=dnums, slice_sizes=gather_shape)
-
-    if method == "linear":
-      denom = next_cumw - prev_cumw
-      denom = lax.select(denom == 0, _lax_const(denom, 1), denom)
-      weight = (quantile_pos - prev_cumw) / denom
-      result = prev_value * (1 - weight) + next_value * weight
-    elif method == "lower":
-      result = prev_value
-    elif method == "higher":
-      result = next_value
-    elif method == "nearest":
-      use_prev = (quantile_pos - prev_cumw) < (next_cumw - quantile_pos)
-      result = lax.select(use_prev, prev_value, next_value)
-    elif method == "midpoint":
-      result = (prev_value + next_value) / 2
+      weights = _where(nan_mask, weights, 0)
     else:
-      raise ValueError(f"{method=!r} not recognized")
+      with jax.debug_nans(False):
+        a = _where(any(lax_internal._isnan(a), axis=axis, keepdims=True), np.nan, a)
 
-    if not keepdims:
-      result = lax.squeeze(result, axis)
-    return lax.convert_element_type(result, a.dtype)
+    total_weight = sum(weights, axis=axis, keepdims=True)
+    a_sorted, weights_sorted = lax.sort_key_val(a, weights, dimension=axis)
+    cum_weights = lax.cumsum(weights_sorted, axis=axis)
+    cum_weights_norm = lax.div(cum_weights, total_weight)
 
+    slice_sizes = list(a_sorted.shape)
+    slice_sizes[axis] = 1
+    dnums = lax.GatherDimensionNumbers(
+      offset_dims=tuple(range(
+        0,
+        len(a_sorted.shape) if keepdims else len(a_sorted.shape) - 1)),
+      collapsed_slice_dims=() if keepdims else (axis,),
+      start_index_map=(axis,))
+
+    def _weighted_quantile(qi, weights_have_nan=weights_have_nan):
+      index_dtype = dtypes.canonicalize_dtype(int)
+      idx = sum(lax.lt(cum_weights_norm, qi), axis=axis, dtype=index_dtype)
+      idx = lax.clamp(0, idx, a_sorted.shape[axis] - 1)
+      slicer = [slice(None)] * a_sorted.ndim
+      slicer[axis] = idx
+      val = a_sorted[tuple(slicer)]
+
+      idx_prev = lax.clamp(idx - 1, 0, a_sorted.shape[axis] - 1)
+      slicer_prev = slicer.copy()
+      slicer_prev[axis] = idx_prev
+      val_prev = a_sorted[tuple(slicer_prev)]
+      cw_prev = cum_weights_norm[tuple(slicer_prev)]
+      cw_next = cum_weights_norm[tuple(slicer)]
+
+      if method == "linear":
+        denom = cw_next - cw_prev
+        denom = _where(denom == 0, 1, denom)
+        weight = (qi - cw_prev) / denom
+        out = val_prev * (1 - weight) + val * weight
+      elif method == "lower":
+        out = val_prev
+      elif method == "higher":
+        out = val
+      elif method == "nearest":
+        out = _where(lax.abs(qi - cw_prev) < lax.abs(qi - cw_next), val_prev, val)
+      elif method == "midpoint":
+        out = (val_prev + val) / 2
+      elif method == "inverted_cdf":
+        out = val
+      else:
+        raise ValueError(f"{method=!r} not recognized")
+      if weights_have_nan:
+        out = lax.full_like(out, np.nan)
+        out = lax.squeeze(out, axis=axis)
+      return out
+
+    if q.ndim == 0:
+      result = _weighted_quantile(q)
+    else:
+      result = jax.vmap(_weighted_quantile)(q)
+    return result
 
   if squash_nans:
     a = _where(lax_internal._isnan(a), np.nan, a) # Ensure nans are positive so they sort to the end.
@@ -2566,10 +2611,10 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
 
     low = lax.max(_lax_const(low, 0), lax.min(low, counts - 1))
     high = lax.max(_lax_const(high, 0), lax.min(high, counts - 1))
-    low = lax.convert_element_type(low, int)
-    high = lax.convert_element_type(high, int)
+    low = lax.convert_element_type(low, dtypes.canonicalize_dtype(int))
+    high = lax.convert_element_type(high, dtypes.canonicalize_dtype(int))
     out_shape = q_shape + shape_after_reduction
-    index = [lax.broadcasted_iota(int, out_shape, dim + q_ndim)
+    index = [lax.broadcasted_iota(dtypes.canonicalize_dtype(int), out_shape, dim + q_ndim)
              for dim in range(len(shape_after_reduction))]
     if keepdims:
       index[axis] = low
@@ -2591,8 +2636,8 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
 
     low = lax.clamp(_lax_const(low, 0), low, n - 1)
     high = lax.clamp(_lax_const(high, 0), high, n - 1)
-    low = lax.convert_element_type(low, int)
-    high = lax.convert_element_type(high, int)
+    low = lax.convert_element_type(low, dtypes.int_)
+    high = lax.convert_element_type(high, dtypes.int_)
 
     slice_sizes = list(a_shape)
     slice_sizes[axis] = 1
@@ -2624,6 +2669,8 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     result = lax.select(pred, low_value, high_value)
   elif method == "midpoint":
     result = lax.mul(lax.add(low_value, high_value), _lax_const(low_value, 0.5))
+  elif method == "inverted_cdf":
+    result = high_value
   else:
     raise ValueError(f"{method=!r} not recognized")
   if keepdims and keepdim:
@@ -2639,7 +2686,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
 def percentile(a: ArrayLike, q: ArrayLike,
                axis: int | tuple[int, ...] | None = None,
                out: None = None, overwrite_input: bool = False, method: str = "linear",
-               keepdims: bool = False, weights: ArrayLike | None = None, *, interpolation: str | DeprecatedArg = DeprecatedArg()) -> Array:
+               keepdims: bool = False, *, weights: ArrayLike | None = None, interpolation: str | DeprecatedArg = DeprecatedArg()) -> Array:
   """Compute the percentile of the data along the specified axis.
 
   JAX implementation of :func:`numpy.percentile`.
@@ -2697,7 +2744,7 @@ def percentile(a: ArrayLike, q: ArrayLike,
 def nanpercentile(a: ArrayLike, q: ArrayLike,
                   axis: int | tuple[int, ...] | None = None,
                   out: None = None, overwrite_input: bool = False, method: str = "linear",
-                  keepdims: bool = False, weights: ArrayLike | None = None, *, interpolation: str | DeprecatedArg = DeprecatedArg()) -> Array:
+                  keepdims: bool = False, *, weights: ArrayLike | None = None, interpolation: str | DeprecatedArg = DeprecatedArg()) -> Array:
   """Compute the percentile of the data along the specified axis, ignoring NaN values.
 
   JAX implementation of :func:`numpy.nanpercentile`.
