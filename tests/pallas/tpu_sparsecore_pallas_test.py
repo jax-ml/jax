@@ -810,6 +810,21 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(jnp.ones((1,), jnp.int32)), jnp.ones((8,), jnp.int32)
     )
 
+  def test_scalar_load_hbm(self):
+
+    @vector_subcore_kernel(
+        in_specs=(pl.BlockSpec(memory_space=pltpu.HBM),),
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        out_shape=jax.ShapeDtypeStruct((8,), jnp.int32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = lax.broadcast(x_ref[0], o_ref.shape)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "Get does not support loading from HBM"
+    ):
+      _ = kernel(jnp.ones((1,), jnp.int32))
+
   @parameterized.named_parameters(
       ("mixed", [0, 0, 1, 0, 1, 0, 0, 0], 2),
       ("all_zero", [0, 0, 0, 0, 0, 0, 0, 0], 8),

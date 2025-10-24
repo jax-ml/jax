@@ -198,8 +198,8 @@ class MosaicGridMapping(tc_lowering.MosaicGridMapping):
     ):
       # TODO(slebedev): Support tiling annotations for kernel operands.
       raise NotImplementedError(
-          "``plsc.MemoryRef``s are not supported as scratch operands to the"
-          " kernel. Allocate them in the kernel body via ``pl.run_scoped``."
+          "`plsc.MemoryRef`s are not supported as scratch operands to the"
+          " kernel. Allocate them in the kernel body via `pl.run_scoped`."
       )
     super().__init__(
         jaxpr,
@@ -324,6 +324,16 @@ def _load_lowering_rule(
   [out_aval] = ctx.avals_out
   assert isinstance(out_aval, jax_core.ShapedArray)
 
+  if (
+      (ref_memory_space := ref_aval.memory_space) is tpu_core.MemorySpace.HBM
+      or ref_memory_space is tpu_core.MemorySpace.VMEM_SHARED
+  ):
+    raise NotImplementedError(
+        f"Get does not support loading from {ref_memory_space.name}."
+        " Copy the data to a core-local memory space, e.g. VMEM,"
+        " via `pltpu.async_copy`."
+    )
+
   transforms = list(jax.tree.unflatten(tree, flat_transforms))
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
     ref_shape = state.get_transforms_shape(transforms, ref_aval.shape)
@@ -347,7 +357,7 @@ def _load_lowering_rule(
       raise NotImplementedError("Get does not support masked scalar loads")
     return memref.load(ref, starts)
 
-  if ref_aval.memory_space is tpu_core.MemorySpace.SMEM:
+  if ref_memory_space is tpu_core.MemorySpace.SMEM:
     raise NotImplementedError("Get can only load scalars from SMEM")
   else:
     _check_aval_is_supported("Get", out_aval)
@@ -374,6 +384,16 @@ def _store_lowering_rule(
   assert isinstance(ref_aval, state.AbstractRef)
   [out_aval] = ctx.avals_out
   assert isinstance(out_aval, jax_core.ShapedArray)
+
+  if (
+      (ref_memory_space := ref_aval.memory_space) is tpu_core.MemorySpace.HBM
+      or ref_memory_space is tpu_core.MemorySpace.VMEM_SHARED
+  ):
+    raise NotImplementedError(
+        f"Swap does not support storing to {ref_memory_space.name}."
+        " Copy the data to a core-local memory space, e.g. VMEM,"
+        " via `pltpu.async_copy`."
+    )
 
   transforms = list(jax.tree.unflatten(tree, flat_transforms))
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
@@ -404,7 +424,7 @@ def _store_lowering_rule(
     memref.store(val, ref, starts)
     return old_val
 
-  if ref_aval.memory_space is tpu_core.MemorySpace.SMEM:
+  if ref_memory_space is tpu_core.MemorySpace.SMEM:
     raise NotImplementedError("Swap can only store scalars to SMEM")
   else:
     _check_aval_is_supported("Swap", out_aval)
@@ -687,7 +707,7 @@ def _extract_indirect_offsets(
         # TODO(slebedev): Consider lifting this restriction.
         raise NotImplementedError(
             "Only indexing along the major dimension is supported in"
-            " async_copy()"
+            " `pltpu.async_copy`"
         )
       return offsets, transforms[:-1]
     case [
@@ -696,7 +716,7 @@ def _extract_indirect_offsets(
       offsets_type = ir.MemRefType(offsets_ref.ref.type)
       if offsets_type.element_type != ir.IntegerType.get_signless(32):
         raise NotImplementedError(
-            "Only int32 indices are supported in async_copy() with a"
+            "Only int32 indices are supported in `pltpu.async_copy` with a"
             " dynamically-shaped indexer"
         )
       offsets_ref, _ = _transform_ref(
@@ -711,7 +731,7 @@ def _extract_indirect_offsets(
         # TODO(slebedev): Consider lifting this restriction.
         raise NotImplementedError(
             "Only indexing along the major dimension is supported in"
-            " async_copy()"
+            " `pltpu.async_copy`"
         )
       return offsets_ref, transforms[:-1]
     case _:
