@@ -2292,7 +2292,7 @@ def _vjp3(fun, *primals, has_aux=False):
           RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
           for r in residuals]
   args_res = tuptree_map(lambda x: x if id(x) in used else NotNeeded(),
-                         in_tree, primals)
+                         in_tree, primals_flat)
   out_primal_avals = [typeof(x) for x in out_primals_flat]
   f_vjp = VJP(partial(_vjp3_callable, spec, out_known, jaxpr, out_primal_avals),
               in_tree, out_tree, list(args_res), opaque_residuals)
@@ -2305,6 +2305,7 @@ def _vjp3(fun, *primals, has_aux=False):
 def tuptree_map(f, treedef, x):
   return treedef.walk(lambda xs, _: tuple(xs), f, x)
 
+
 def _is_ref(x):
   from jax._src.state.types import AbstractRef
   try: return isinstance(typeof(x), AbstractRef)
@@ -2312,8 +2313,11 @@ def _is_ref(x):
 
 def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
                    args_res, opaque_res, *maybe_ct_refs):
-  maybe_ct_refs_flat, in_tree_ = tree_flatten(maybe_ct_refs)
-  if in_tree != in_tree_: raise Exception
+  if not maybe_ct_refs:
+    maybe_ct_refs_flat = [GradValue()] * in_tree.num_leaves
+  else:
+    maybe_ct_refs_flat, in_tree_ = tree_flatten(maybe_ct_refs)
+    if in_tree != in_tree_: raise Exception  # TODO accept isomorph tuple tree
   args_res_ = tree_leaves(args_res, is_leaf=lambda x: isinstance(x, NotNeeded))
   residuals = [args_res_[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
   maybe_refs = [ad.RefAccum(v.aval, x) if _is_ref(x) else ad.ValAccum(v.aval)
@@ -2407,9 +2411,8 @@ class VJP:
     if extra_args:
       name, *_ = self.jaxpr.debug_info.func_src_info.split(' ')
       raise TypeError(_vjp_too_many_args(name, len(extra_args)))
-    dums = tree_unflatten(self.in_tree, [GradValue()] * self.in_tree.num_leaves)
     return self.fun(self.in_tree, self.out_tree, self.args_res,
-                    self.opaque_residuals, *dums)(out_ct)
+                    self.opaque_residuals)(out_ct)
 
   def with_refs(self, *maybe_ct_refs):
     return self.fun(self.in_tree, self.out_tree, self.args_res,
