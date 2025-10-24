@@ -4477,22 +4477,26 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
   @parameterized.parameters(
       # Positive offsets will be passsed as static offsets.
       # Negative offsets will be converted to positive dynamic offsets.
-      ((2, 3, 128, 64), (32, 64), [-1, 0, -96, 0], None, None, None),
-      (
-          (3, 128, 64),
-          (32, 64),
-          [-2, -96, 0],
-          [32, 64],
-          mgpu_dialect.SwizzlingMode.k128ByteSwizzle,
-          None,
+      dict(
+          full_shape=(2, 3, 128, 64),
+          sub_shape=(32, 64),
+          offsets=[-1, 0, -96, 0],
+          tiling=None,
+          swizzle=None,
       ),
-      (
-          (128, 128),
-          (64,),
-          [-1, 64],
-          [64],
-          mgpu_dialect.SwizzlingMode.k128ByteSwizzle,
-          "Slicing a swizzled dimension is unsupported.",
+      dict(
+          full_shape=(3, 128, 64),
+          sub_shape=(32, 64),
+          offsets=[-2, -96, 0],
+          tiling=[32, 64],
+          swizzle=mgpu_dialect.SwizzlingMode.k128ByteSwizzle,
+      ),
+      dict(
+          full_shape=(128, 128),
+          sub_shape=(64,),
+          offsets=[-1, 64],
+          tiling=[64],
+          swizzle=mgpu_dialect.SwizzlingMode.k128ByteSwizzle,
       ),
   )
   def test_subview(
@@ -4502,7 +4506,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       offsets,
       tiling,
       swizzle,
-      error_regex,
   ):
     assert len(sub_shape) <= 2
     sizes = [1] * (len(full_shape) - len(sub_shape)) + list(sub_shape)
@@ -4580,33 +4583,18 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     full_jax_shape = jax.ShapeDtypeStruct(full_shape, el_type)
     result_jax_shape = jax.ShapeDtypeStruct(sub_shape, el_type)
 
-    def create_kernel():
-      return mgpu.as_gpu_kernel(
-          body,
-          grid=(1, 1, 1),
-          block=(128, 1, 1),
-          in_shape=(full_jax_shape),
-          out_shape=result_jax_shape,
-          smem_scratch_shape=[full_jax_shape, core.TMABarrier(1)],
-          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
-      )
-
-    if error_regex:
-      with self.assertRaisesRegex(NotImplementedError, error_regex):
-        # While we expect NotImplementedError here, the test is actually
-        # checking a restricted behaviour that should be a ValueError. However,
-        # our code cannot yet figure out the difference and raise the correct
-        # type.
-        create_kernel()
-    else:
-      prng_key = jax.random.key(1234)
-      x = jax.random.randint(prng_key, full_shape, 0, 10).astype(el_type)
-
-      slicing = tuple(slice(abs(o), abs(o) + s) for o, s in zip(offsets, sizes))
-      self.assertArraysEqual(
-          create_kernel()(x),
-          x[slicing].reshape(sub_shape),
-      )
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(full_jax_shape),
+        out_shape=result_jax_shape,
+        smem_scratch_shape=[full_jax_shape, core.TMABarrier(1)],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+    x = self.prng.uniform(0, 10, full_shape).astype(el_type)
+    slicing = tuple(slice(abs(o), abs(o) + s) for o, s in zip(offsets, sizes))
+    self.assertArraysEqual(kernel(x), x[slicing].reshape(sub_shape))
 
   def test_custom_primitive_op(self):
     # This test exercises the following cases:
