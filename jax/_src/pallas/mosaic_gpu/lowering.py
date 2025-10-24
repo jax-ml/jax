@@ -1769,6 +1769,23 @@ def _slice_lowering_rule(
   return x[tuple(slice(b, e) for b, e in zip(start_indices, limit_indices))]
 
 
+@register_lowering_rule(lax.slice_p, mgpu.LoweringSemantics.Warpgroup)
+def _slice_lowering_rule_wg(
+    ctx: LoweringRuleContext, x, limit_indices, start_indices, strides
+):
+  assert ir.VectorType.isinstance(x.type)
+  if strides is not None:
+    raise NotImplementedError("Strides are not supported.")
+  out_ty = ir.VectorType.get(
+      ctx.avals_out[0].shape, ir.VectorType(x.type).element_type
+  )
+  sizes = [l - s for s, l in zip(start_indices, limit_indices)]
+  strides = [1] * len(start_indices)
+  return vector_dialect.extract_strided_slice(
+      out_ty, x, start_indices, sizes, strides
+  )
+
+
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Lane,
                         gpu_core.PrimitiveSemantics.Warp)

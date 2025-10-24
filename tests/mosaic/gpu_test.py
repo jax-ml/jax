@@ -4722,6 +4722,38 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     x = self.prng.uniform(-1, 1, in_shape).astype(dtype)
     self.assertArraysEqual(kernel(x), jnp.stack([x, x], axis=0))
 
+  def test_vector_extract_strided_slice(self):
+    def body(ctx, src, dst, scratch):
+      del ctx, scratch
+      src_vec = vector_load(src)
+      src_vec = mgpu_dialect.layout_cast(
+          src_vec, layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+      )
+      dst_type = ir.MemRefType(dst.type)
+      dest_vec_type = ir.VectorType.get(dst_type.shape, dst_type.element_type)
+      sliced_vec = vector.extract_strided_slice(
+          dest_vec_type,
+          src_vec,
+          offsets=[0, 64],
+          sizes=[64, 64],
+          strides=[1, 1],
+      )
+      vector_store(sliced_vec, dst)
+
+    dtype = jnp.float32
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=jax.ShapeDtypeStruct((128, 128), dtype),
+        out_shape=jax.ShapeDtypeStruct((64, 64), dtype),
+        smem_scratch_shape=[],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    x = self.prng.uniform(-1, 1, (128, 128)).astype(dtype)
+    self.assertArraysEqual(kernel(x), x[0:64, 64:128])
+
 
 class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
 

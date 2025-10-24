@@ -1098,6 +1098,17 @@ def _shape_cast_equation_system(
   )
 
 
+@_add_equation_system_derivation_rule(vector.ExtractStridedSliceOp)
+def _extract_strided_slice_equation_system(
+    ctx: DerivationContext, op: vector.ExtractStridedSliceOp
+) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
+  del ctx
+  operand = OperandOrResult(op, VariableType.OPERAND, 0)
+  result = OperandOrResult(op, VariableType.RESULT, 0)
+  variable = eqns.Variable(operand)
+  return eqns.EquationSystem(), {variable: [operand, result]}, []
+
+
 @_add_equation_system_derivation_rule(mgpu.CustomPrimitiveOp)
 def _custom_primitive_equation_system(
     ctx: DerivationContext,

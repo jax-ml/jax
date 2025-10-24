@@ -644,6 +644,28 @@ def _vector_shape_cast_op_lowering_rule(
   return [fragmented_array_to_ir(a.reshape(out_vec_ty.shape), out_vec_ty)]
 
 
+@_register_lowering(vector.ExtractStridedSliceOp)
+def _vector_extract_strided_slice_op_lowering_rule(
+    ctx: LoweringContext, op: vector.ExtractStridedSliceOp
+) -> Sequence[ir.Value]:
+  del ctx
+  [layout] = inference_utils.in_layouts(op)
+  out_vec_ty = ir.VectorType(op.result.type)
+  is_signed = (
+      False if ir.IntegerType.isinstance(out_vec_ty.element_type) else None
+  )
+  fa = _fragmented_array_from_ir(op.source, layout, is_signed)
+
+  def attr_value(attr: ir.Attribute) -> int:
+    return ir.IntegerAttr(attr).value
+
+  indices = tuple(
+      utils.DynamicSlice(attr_value(offset), attr_value(length))
+      for offset, length in zip(op.offsets, op.sizes, strict=True)
+  )
+  return [fragmented_array_to_ir(fa[indices], out_vec_ty)]
+
+
 @_register_lowering(vector.ReductionOp)
 def _vector_reduction_op_lowering_rule(
     ctx: LoweringContext, op: vector.ReductionOp

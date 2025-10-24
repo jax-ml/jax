@@ -2737,7 +2737,6 @@ class PallasCallWGTest(
         mgpu_primitives.query_cluster_cancel_p,
         mgpu_primitives.multimem_store_p,
         mgpu_primitives.multimem_load_reduce_p,
-        lax.slice_p,
         lax.iota_p,
         pallas_core.core_map_p,
         pallas_primitives.semaphore_signal_p,
@@ -3044,7 +3043,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     np.testing.assert_allclose(res, a[0] @ b[0], rtol=1e-3)
 
   def test_wgmma_sliced_acc_read(self):
-    self.skip_if_wg_semantics()  # Needs WGMMA to support slices.
+    self.skip_if_wg_semantics()  # Slicing a swizzled dimension is unsupported.
 
     def kernel(a_ref, b_ref, o_ref):
       def scope(acc_ref):
