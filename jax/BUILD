@@ -165,6 +165,7 @@ py_library_providing_imports_info(
         "//jax/_src:abstract_arrays",
         "//jax/_src:ad",
         "//jax/_src:ad_util",
+        "//jax/_src:aot",
         "//jax/_src:api",
         "//jax/_src:api_util",
         "//jax/_src:basearray",
