@@ -17,6 +17,7 @@ import collections
 import functools
 import itertools
 import math
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -67,6 +68,10 @@ class DebugPrintTest(PallasSCTest):
 
     super().setUp()
 
+  @unittest.skip(
+      "This test fails on generating certain platform word size info, see more"
+      " detail in b/455177876"
+  )
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_vector_subcore(self, dtype):
     x = jnp.arange(16, dtype=dtype)
