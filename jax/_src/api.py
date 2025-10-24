@@ -154,9 +154,50 @@ config.debug_infs._add_hooks(_update_debug_special_global,
 
 float0 = dtypes.float0
 
+class NotSpecified:
+  """Sentinel for use in jax.jit"""
+  def __repr__(self):
+    return "<not-specified>"
+
+@overload
+def jit(
+  fun: Callable, /,
+  *,
+  in_shardings: Any = ...,
+  out_shardings: Any = ...,
+  static_argnums: int | Sequence[int] | None = ...,
+  static_argnames: str | Iterable[str] | None = ...,
+  donate_argnums: int | Sequence[int] | None = ...,
+  donate_argnames: str | Iterable[str] | None = ...,
+  keep_unused: bool = ...,
+  device: xc.Device | None = ...,
+  backend: str | None = ...,
+  inline: bool = ...,
+  abstracted_axes: Any | None = ...,
+  compiler_options: dict[str, Any] | None = ...,
+) -> pjit.JitWrapped: ...
+
+@overload
+def jit(
+  *,
+  in_shardings: Any = ...,
+  out_shardings: Any = ...,
+  static_argnums: int | Sequence[int] | None = ...,
+  static_argnames: str | Iterable[str] | None = ...,
+  donate_argnums: int | Sequence[int] | None = ...,
+  donate_argnames: str | Iterable[str] | None = ...,
+  keep_unused: bool = ...,
+  device: xc.Device | None = ...,
+  backend: str | None = ...,
+  inline: bool = ...,
+  abstracted_axes: Any | None = ...,
+  compiler_options: dict[str, Any] | None = ...,
+) -> Callable[[Callable], pjit.JitWrapped]: ...
 
 def jit(
-  fun: Callable, /, *,
+  fun: Callable | NotSpecified = NotSpecified(),
+  /,
+  *,
   in_shardings: Any = sharding_impls.UNSPECIFIED,
   out_shardings: Any = sharding_impls.UNSPECIFIED,
   static_argnums: int | Sequence[int] | None = None,
@@ -169,19 +210,20 @@ def jit(
   inline: bool = False,
   abstracted_axes: Any | None = None,
   compiler_options: dict[str, Any] | None = None,
-) -> pjit.JitWrapped:
+) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
     fun: Function to be jitted. ``fun`` should be a pure function.
-
       The arguments and return value of ``fun`` should be arrays, scalar, or
       (nested) standard Python containers (tuple/list/dict) thereof. Positional
       arguments indicated by ``static_argnums`` can be any hashable type. Static
       arguments are included as part of a compilation cache key, which is why
       hash and equality operators must be defined. JAX keeps a weak reference to
       ``fun`` for use as a compilation cache key, so the object ``fun`` must be
-      weakly-referenceable.
+      weakly-referenceable. Starting in JAX v0.8.1, when ``fun`` is omitted,
+      the return value will be a partially-evaluated function to allow the
+      decorator factory pattern (see Examples below).
     in_shardings: optional, a :py:class:`Sharding` or pytree with
       :py:class:`Sharding` leaves and structure that is a tree prefix of the
       positional arguments tuple to ``fun``. If provided, the positional
@@ -280,8 +322,20 @@ def jit(
     [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
     -0.85743 -0.78232  0.76827  0.59566 ]
 
-    To pass arguments such as ``static_argnames`` when decorating a function, a
-    common pattern is to use :func:`functools.partial`:
+    Starting in JAX v0.8.1, :func:`jit` supports the decorator factory pattern
+    for specifying optional keywords:
+
+    >>> @jax.jit(static_argnames=['n'])
+    ... def g(x, n):
+    ...   for i in range(n):
+    ...     x = x ** 2
+    ...   return x
+    >>>
+    >>> g(jnp.arange(4), 3)
+    Array([   0,    1,  256, 6561], dtype=int32)
+
+    For compatiblity with older JAX versions, a common pattern is to use
+    :func:`functools.partial`:
 
     >>> from functools import partial
     >>>
@@ -294,13 +348,17 @@ def jit(
     >>> g(jnp.arange(4), 3)
     Array([   0,    1,  256, 6561], dtype=int32)
   """
-  return pjit.make_jit(
-      fun, in_shardings=in_shardings, out_shardings=out_shardings,
+  kwds = dict(
+      in_shardings=in_shardings, out_shardings=out_shardings,
       static_argnums=static_argnums, static_argnames=static_argnames,
       donate_argnums=donate_argnums, donate_argnames=donate_argnames,
       keep_unused=keep_unused, device=device, backend=backend, inline=inline,
       abstracted_axes=abstracted_axes, compiler_options=compiler_options,
       use_resource_env=False)
+  if isinstance(fun, NotSpecified):
+    return lambda fun: pjit.make_jit(fun, **kwds)
+  else:
+    return pjit.make_jit(fun, **kwds)
 
 
 @contextmanager
