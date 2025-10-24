@@ -2383,11 +2383,8 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
     raise ValueError("jax.numpy.quantile does not support overwrite_input=True "
                      "or out != None")
   if not isinstance(interpolation, DeprecatedArg):
-    deprecations.warn(
-      "jax-numpy-quantile-interpolation",
-      ("The interpolation= argument to 'quantile' is deprecated. "
-       "Use 'method=' instead."), stacklevel=2)
-    method = interpolation
+    raise TypeError("nanquantile() argument interpolation was removed in JAX"
+                    " v0.8.0. Use method instead.")
   return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, method, keepdims, False, weights)
 
 # TODO(jakevdp): interpolation argument deprecated 2024-05-16
@@ -2443,11 +2440,8 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
            "out != None")
     raise ValueError(msg)
   if not isinstance(interpolation, DeprecatedArg):
-    deprecations.warn(
-      "jax-numpy-quantile-interpolation",
-      ("The interpolation= argument to 'nanquantile' is deprecated. "
-       "Use 'method=' instead."), stacklevel=2)
-    method = interpolation
+    raise TypeError("nanquantile() argument interpolation was removed in JAX"
+                    " v0.8.0. Use method instead.")
   return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, method, keepdims, True, weights)
 
 def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
@@ -2485,7 +2479,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     axis = _canonicalize_axis(axis, a.ndim)
   
   # Ensure q is an array and inexact
-  q = lax_internal.asarray(q)
+  q = lax.asarray(q)
   q, = promote_dtypes_inexact(q)
 
   q_shape = q.shape
