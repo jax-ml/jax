@@ -26,6 +26,7 @@ Name                                        | Default Value                     
 `JAXCI_BUILD_JAXLIB` | true                                    | Used to control the value of [build_jaxlib](https://github.com/jax-ml/jax/blob/338b4ebc8a5478e3d22efc9530be71d69c3bb993/jax/BUILD#L55-L63) flag.                                                                                                                 | [Usage](https://github.com/search?q=repo%3Ajax-ml%2Fjax%20JAXCI_BUILD_JAXLIB&type=code)
 `JAXCI_BUILD_JAX` | true                                    | Used to control the value of [build_jax](https://github.com/jax-ml/jax/blob/338b4ebc8a5478e3d22efc9530be71d69c3bb993/jax/BUILD#L92-L100) flag.                                                                                                                 | [Usage](https://github.com/search?q=repo%3Ajax-ml%2Fjax%20JAXCI_BUILD_JAX&type=code)
 `JAXCI_BAZEL_OUTPUT_BASE` | Unset | Used to control the output base for Bazel builds. | [Usage](https://github.com/search?q=repo%3Ajax-ml%2Fjax%20JAXCI_BAZEL_OUTPUT_BASE&type=code)
+`JAXCI_BAZEL_CPU_RBE_MODE` | test | Used to control whether to run or build the MacOS and Linux aarch64 CPU test targets. | [Usage](https://github.com/search?q=repo%3Ajax-ml%2Fjax%20JAXCI_BAZEL_CPU_RBE_MODE&type=code)
 
 ## Docker Specific Environment Variables
 
