@@ -17,6 +17,7 @@ limitations under the License.
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <tuple>
@@ -408,6 +409,133 @@ tryFuseRhsTranspose(tpu::MatmulOp op, ImplicitLocOpBuilder& builder) {
   return std::make_tuple(new_rhs, new_dimension_numbers);
 }
 
+// Given a value computed in higher precision, checks if it can be computed
+// losslessly in low precision. For now, only match graphs where intermediate
+// nodes have only a single use, though this restriction can be removed by
+// checking for truncf ops in the descendants of additional uses. We assume that
+// the hardware supports low precision ops that will always make this a net win.
+std::optional<Value> maybeComputeInLowPrecision(
+    Value value, mlir::Type low_precision_type) {
+  // Construct a parallel graph of low precision ops. We won't know until the
+  // end of the traversal of the new ops can be used, so store both the old and
+  // new ops so we can erase the unused ones later.
+  SmallVector<Operation*> old_ops;
+  SmallVector<Operation*> new_ops;
+  std::function<std::optional<Value>(Operation*)> visit =
+      [&old_ops, &new_ops, &low_precision_type, &visit](
+          Operation* op) -> std::optional<Value> {
+    // if (auto extf_op = dyn_cast<arith::ExtFOp>(op)) {
+    if (isa<arith::ExtFOp, arith::ExtSIOp>(op)) {
+      auto vector_type =
+          dyn_cast<mlir::VectorType>(op->getOperand(0).getType());
+      if (!vector_type) {
+        return std::nullopt;
+      }
+      auto type_in = vector_type.getElementType();
+      int src_bitwidth = type_in.getIntOrFloatBitWidth();
+      int dst_bitwidth = low_precision_type.getIntOrFloatBitWidth();
+      if (!op->hasOneUse() || src_bitwidth > dst_bitwidth) {
+        return std::nullopt;
+      }
+      old_ops.push_back(op);
+      if (src_bitwidth == dst_bitwidth) {
+        return op->getOperand(0);
+      } else {
+        ImplicitLocOpBuilder builder(op->getLoc(), op);
+        Operation* new_op;
+        if (isa<arith::ExtFOp>(op)) {
+          new_op = builder.create<arith::ExtFOp>(
+              VectorType::get(vector_type.getShape(), low_precision_type),
+              op->getOperand(0));
+        } else {
+          new_op = builder.create<arith::ExtSIOp>(
+              VectorType::get(vector_type.getShape(), low_precision_type),
+              op->getOperand(0));
+        }
+        new_ops.push_back(new_op);
+        return new_op->getResult(0);
+      }
+    } else if (auto broadcast_op = dyn_cast<vector::BroadcastOp>(op)) {
+      if (!broadcast_op->hasOneUse()) {
+        return std::nullopt;
+      }
+      auto newInput = visit(broadcast_op.getSource().getDefiningOp());
+      if (!newInput.has_value()) {
+        return std::nullopt;
+      }
+      ImplicitLocOpBuilder builder(broadcast_op.getLoc(),
+                                   broadcast_op.getOperation());
+      vector::BroadcastOp newOp = builder.create<vector::BroadcastOp>(
+          VectorType::get(broadcast_op.getType().getShape(),
+                          low_precision_type),
+          *newInput);
+      old_ops.push_back(broadcast_op.getOperation());
+      new_ops.push_back(newOp.getOperation());
+      return newOp.getResult();
+    } else if (auto shape_cast_op = dyn_cast<vector::ShapeCastOp>(op)) {
+      if (!shape_cast_op->hasOneUse()) {
+        return std::nullopt;
+      }
+      auto newInput = visit(shape_cast_op.getSource().getDefiningOp());
+      if (!newInput.has_value()) {
+        return std::nullopt;
+      }
+      ImplicitLocOpBuilder builder(shape_cast_op.getLoc(),
+                                   shape_cast_op.getOperation());
+      vector::ShapeCastOp newOp = builder.create<vector::ShapeCastOp>(
+          VectorType::get(shape_cast_op.getType().getShape(),
+                          low_precision_type),
+          *newInput);
+      old_ops.push_back(shape_cast_op.getOperation());
+      new_ops.push_back(newOp.getOperation());
+      return newOp.getResult();
+    } else if (auto transpose_op = dyn_cast<tpu::TransposeOp>(op)) {
+      if (!transpose_op->hasOneUse()) {
+        return std::nullopt;
+      }
+      auto newInput = visit(transpose_op.getVector().getDefiningOp());
+      if (!newInput.has_value()) {
+        return std::nullopt;
+      }
+      ImplicitLocOpBuilder builder(transpose_op.getLoc(),
+                                   transpose_op.getOperation());
+      tpu::TransposeOp newOp = builder.create<tpu::TransposeOp>(
+          VectorType::get(transpose_op.getType().getShape(),
+                          low_precision_type),
+          *newInput, transpose_op.getPermutation());
+      old_ops.push_back(transpose_op.getOperation());
+      new_ops.push_back(newOp.getOperation());
+      return newOp.getResult();
+    } else if (auto select_op = dyn_cast<arith::SelectOp>(op)) {
+      if (!select_op->hasOneUse()) {
+        return std::nullopt;
+      }
+      auto newTrue = visit(select_op.getTrueValue().getDefiningOp());
+      auto newFalse = visit(select_op.getFalseValue().getDefiningOp());
+      if (!newTrue.has_value() || !newFalse.has_value()) {
+        return std::nullopt;
+      }
+      ImplicitLocOpBuilder builder(select_op.getLoc(),
+                                   select_op.getOperation());
+      arith::SelectOp newOp = builder.create<arith::SelectOp>(
+          select_op.getCondition(), *newTrue, *newFalse);
+      old_ops.push_back(select_op.getOperation());
+      new_ops.push_back(newOp.getOperation());
+      return newOp.getResult();
+    } else {
+      return std::nullopt;
+    }
+  };
+  auto new_result = visit(value.getDefiningOp());
+  SmallVector<Operation*> ops_to_erase =
+      new_result.has_value() ? old_ops : new_ops;
+  for (auto op : ops_to_erase) {
+    op->dropAllUses();
+    op->erase();
+  }
+  return new_result;
+}
+
 struct PreCanonicalizationOptimizationPass
     : impl::PreCanonicalizationOptimizationPassBase<
           PreCanonicalizationOptimizationPass> {
@@ -435,6 +563,28 @@ struct PreCanonicalizationOptimizationPass
         }
       } else if (isa<vector::StoreOp, tpu::VectorStoreOp>(op)) {
         optimizeStore(hardware_generation_, target_shape_, *op);
+      } else if (isa<arith::TruncFOp, arith::TruncIOp>(op)) {
+        auto out_type = dyn_cast<VectorType>(op->getResult(0).getType());
+        // Only apply to vector types.
+        if (!out_type) {
+          return;
+        }
+        Value input = op->getOperand(0);
+        auto low_precision_type = out_type.getElementType();
+
+        unsigned bitwidth = low_precision_type.getIntOrFloatBitWidth();
+        // Only apply to bit widths 16 and 8 on TPUs that support relevant low
+        // precision ops for those bit widths.
+        if (!(bitwidth == 16 && hardware_generation >= 4) &&
+            !(bitwidth == 8 && hardware_generation >= 5)) {
+          return;
+        }
+
+        auto new_result = maybeComputeInLowPrecision(input, low_precision_type);
+        if (new_result.has_value()) {
+          op->getResult(0).replaceAllUsesWith(*new_result);
+          op->erase();
+        }
       }
     });
   }
