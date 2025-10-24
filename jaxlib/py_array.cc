@@ -69,13 +69,13 @@ limitations under the License.
 #include "jaxlib/to_ifrt_sharding.h"
 #include "jaxlib/traceback.h"
 #include "jaxlib/util.h"
+#include "xla/future.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/lru_cache.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/primitive_util.h"
@@ -475,7 +475,7 @@ PyArray_Storage::PyArray_Storage(nb::object aval, bool weak_type,
                                  nb::object sharding, bool committed,
                                  nb_class_ptr<PyClient> py_client,
                                  ifrt::ArrayRef ifrt_array,
-                                 xla::PjRtFuture<> result_status)
+                                 xla::Future<> result_status)
     : aval(std::move(aval)),
       weak_type(weak_type),
       dtype(std::move(dtype)),
@@ -512,7 +512,7 @@ void PyInit_helper(PyArray self, nb::object aval, nb::object sharding,
   Construct(reinterpret_cast<PyArrayObject*>(self.ptr()), aval,
             nb::cast<bool>(aval.attr("weak_type")), std::move(dtype),
             std::move(shape), std::move(sharding), committed, py_client,
-            std::move(ifrt_array), xla::PjRtFuture<>());
+            std::move(ifrt_array), xla::Future<>());
 }
 
 void PyArray::PyInit(PyArray self, nb::object aval, nb::object sharding,
@@ -533,7 +533,7 @@ void PyArray::PyInit(PyArray self, nb::object aval, nb::object sharding,
 PyArray PyArray::MakeFromSingleDeviceArray(nb_class_ptr<PyClient> py_client,
                                            ifrt::ArrayRef ifrt_array,
                                            bool weak_type, bool committed,
-                                           xla::PjRtFuture<> result_status) {
+                                           xla::Future<> result_status) {
   if (!llvm::isa<ifrt::SingleDeviceSharding>(ifrt_array->sharding())) {
     throw xla::XlaRuntimeError(xla::InvalidArgument(
         "Constructing single device jax.Array from non-single "
@@ -606,12 +606,12 @@ PyArray PyArrayResultHandler::Call(absl::Span<const PyArray> py_arrays) const {
   return Call(py_device_list.value()->py_client(),
               CreateIfRtArrayFromSingleDeviceShardedPyArrays(
                   dtype_, shape_, py_arrays, sharding_),
-              xla::PjRtFuture<>());
+              xla::Future<>());
 }
 
 PyArray PyArrayResultHandler::Call(nb_class_ptr<PyClient> py_client,
                                    ifrt::ArrayRef ifrt_array,
-                                   xla::PjRtFuture<> result_status) const {
+                                   xla::Future<> result_status) const {
   return PyArray(aval_, weak_type_, dtype_, shape_, sharding_,
                  std::move(py_client), std::move(ifrt_array), committed_,
                  skip_checks_, std::move(result_status));
@@ -619,14 +619,14 @@ PyArray PyArrayResultHandler::Call(nb_class_ptr<PyClient> py_client,
 
 PyArray PyArrayResultHandler::Call(PyArray py_array) const {
   return Call(py_array.py_client(), tsl::FormRef(py_array.ifrt_array()),
-              xla::PjRtFuture<>());
+              xla::Future<>());
 }
 
 PyArray::PyArray(nb::object aval, bool weak_type, xla::nb_dtype dtype,
                  std::vector<int64_t> shape, nb::object sharding,
                  nb_class_ptr<PyClient> py_client, ifrt::ArrayRef ifrt_array,
                  bool committed, bool skip_checks,
-                 xla::PjRtFuture<> result_status) {
+                 xla::Future<> result_status) {
   auto* self =
       PyArray_tp_new(reinterpret_cast<PyTypeObject*>(type_), nullptr, nullptr);
   m_ptr = self;
