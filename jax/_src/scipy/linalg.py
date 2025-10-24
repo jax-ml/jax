@@ -866,6 +866,11 @@ def _qr(a: ArrayLike, mode: str, pivoting: bool
   else:
     raise ValueError(f"Unsupported QR decomposition mode '{mode}'")
   a, = promote_dtypes_inexact(jnp.asarray(a))
+  if dtypes.issubdtype(a.dtype, np.floating) and a.dtype not in (
+    np.float32, np.float64
+  ):
+    a = a.astype(np.float32)
+
   q, r, *p = lax_linalg.qr(a, pivoting=pivoting, full_matrices=full_matrices)
   if mode == "r":
     if pivoting:
@@ -1228,6 +1233,10 @@ def expm(A: ArrayLike, *, upper_triangular: bool = False, max_squarings: int = 1
     Array(True, dtype=bool)
   """
   A, = promote_dtypes_inexact(A)
+  if dtypes.issubdtype(A.dtype, np.floating) and A.dtype not in (
+    np.float32, np.float64
+  ):
+    A = A.astype(np.float32)
 
   if A.ndim < 2 or A.shape[-1] != A.shape[-2]:
     raise ValueError(f"Expected A to be a (batched) square matrix, got {A.shape=}.")
