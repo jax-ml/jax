@@ -668,6 +668,7 @@ jax_multiplatform_test(
     },
     tags = [
         "noasan",  # Test times out on all backends
+        "notap",  # TODO(b/454937865): Re-enable once the test is fixed.
         "test_cpu_thunks",
     ],
     deps = py_deps([

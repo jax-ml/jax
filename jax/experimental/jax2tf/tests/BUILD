@@ -163,6 +163,7 @@ jax_multiplatform_test(
     tags = [
         "jax2tf",
         "nodebug",  # Times out.
+        "notap",  # TODO(b/454937865): Re-enable once the test is fixed.
     ],
     deps = [
         ":tf_test_util",
