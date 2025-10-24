@@ -2417,8 +2417,10 @@ def _pjit_transpose_fancy(
       [l for x, l in zip(args, in_layouts) if not isinstance(x, ad.ValAccum)] +
       [l for x, l in zip(cts_in, out_layouts) if not isinstance(x, ad.Zero)])
   cts_out_ = tree_unflatten(out_tree, trans_jaxpr.out_avals)
-  trans_out_shardings = tuple(s for x, s in zip(cts_out_, in_shardings) if x)
-  trans_out_layouts   = tuple(l for x, l in zip(cts_out_, in_layouts  ) if x)
+  trans_out_shardings = tuple(s for x, s in zip(cts_out_, in_shardings)
+                              if isinstance(x, core.AbstractValue))
+  trans_out_layouts   = tuple(l for x, l in zip(cts_out_, in_layouts  )
+                              if isinstance(x, core.AbstractValue))
 
   try:
     cts_out = jit_p.bind(
