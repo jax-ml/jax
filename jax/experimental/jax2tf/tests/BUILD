@@ -218,8 +218,6 @@ jax_multiplatform_test(
     enable_configs = [
         "tpu_v3_x4",
     ],
-    env = {
-    },
     tags = [
         "jax2tf",
         "requires-net:external",  # For running with xprof
