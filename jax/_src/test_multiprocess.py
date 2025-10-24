@@ -259,6 +259,7 @@ def _main(argv, shard_main):
         f"--shutdown_timeout={_SHUTDOWN_TIMEOUT.value}",
         f"--barrier_timeout={_BARRIER_TIMEOUT.value}",
         "--logtostderr",
+        "--minloglevel=4",
     ]
 
     if num_tpu_chips > 0:

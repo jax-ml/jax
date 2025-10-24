@@ -724,6 +724,34 @@ class PallasCallMultimemTest(TestCase):
         shape, jnp.float16, gather_dimension=axis, tile_size=tile_size, vec_size=None, num_blocks=4
     )
 
+  def test_torch(self):
+    def kernel(y_ref, sem):
+      plgpu.semaphore_signal_multicast(sem, collective_axes='x')
+      # Wait for the multicast signal (each device gets signaled by all devices)
+      pl.semaphore_wait(sem, 2)  # Wait for signals from both devices
+      y_ref[...] = jnp.ones_like(y_ref)
+
+    kernel_jax = pl.pallas_call(
+        kernel,
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+    )
+    abstract_mesh = jax.sharding.AbstractMesh((2,), ("x",))
+    plgpu.as_torch_kernel(kernel_jax, mesh=abstract_mesh)()
+    return
+    jax.jit(
+        jax.shard_map(
+            kernel_jax,
+            mesh=abstract_mesh,
+            in_specs=(),
+            out_specs=jax.P(),
+            check_vma=False,
+        )
+    ).trace().lower(
+        lowering_platforms=("gpu",)
+    )  # doesn't crash
+
 
 if __name__ == '__main__':
   # This test doesn't work with the platform allocator, so we override it
