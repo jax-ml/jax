@@ -177,6 +177,28 @@ def TPU_MemorySpaceEnum
     let assemblyFormat = "`<` $value `>`";
 }
 
+def TPU_CmpIPredicate : I32EnumAttr<
+    "CmpIPredicate", "",
+    [
+      I32EnumAttrCase<"eq", 0>,
+      I32EnumAttrCase<"ne", 1>,
+      I32EnumAttrCase<"slt", 2>,
+      I32EnumAttrCase<"sle", 3>,
+      I32EnumAttrCase<"sgt", 4>,
+      I32EnumAttrCase<"sge", 5>,
+      I32EnumAttrCase<"ult", 6>,
+      I32EnumAttrCase<"ule", 7>,
+      I32EnumAttrCase<"ugt", 8>,
+      I32EnumAttrCase<"uge", 9>,
+    ]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::tpu";
+}
+
+def TPU_CmpIPredicateEnum
+    : EnumAttr<TPU_Dialect, TPU_CmpIPredicate, "cmpi_predicate"> {
+}
+
 class TPU_Op<string mnemonic, list<Trait> traits = []> :
     Op<TPU_Dialect, mnemonic, traits> {
 }
@@ -790,6 +812,25 @@ def TPU_TruncFOp : TPU_Op<"truncf", [Pure, ElementwiseMappable]> {
   let results = (outs AnyType:$out);
   let assemblyFormat = [{ $in attr-dict `:` type($in) `->` type($out) }];
   let hasFolder = 1;
+}
+
+// Internal operation.
+def TPU_CmpIOp : TPU_Op<"cmpi", [Pure, ElementwiseMappable, SameTypeOperands] #
+  [TypesMatchWith<"result type has i1 element type and same shape as operands",
+                  "lhs", "result", "getI1SameShape($_self)">]> {
+  let summary = "TPU-specific integer comparison operation";
+  let description = [{
+      TPUv5- only support 32-bit comparison operations, and TPUv6+ also support
+      16-bit comparison operations). When we canonicalize the comparison operations
+      we legalize the types to i32 or i16, but the simplifer can remove the type
+      extension. To avoid that, we convert the operation to a TPU custom op.
+  }];
+
+  let arguments = (ins TPU_CmpIPredicateEnum:$predicate,
+                       SignlessIntegerOrIndexLike:$lhs,
+                       SignlessIntegerOrIndexLike:$rhs);
+  let results = (outs BoolLike:$result);
+  let assemblyFormat = "$predicate `,` $lhs `,` $rhs attr-dict `:` type($lhs)";
 }
 
 def TPU_DotDimensionNumbersAttr : TPU_Attr<"DotDimensionNumbers", "dot_dimension_numbers"> {
