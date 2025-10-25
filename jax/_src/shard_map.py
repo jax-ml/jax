@@ -83,7 +83,7 @@ def _get_default_infer():
 
 # See https://github.com/jax-ml/jax/pull/30753 to understand why `in_specs`
 # defaults to `Infer`.
-def shard_map(f=None, /, *, out_specs: Specs,
+def shard_map(f: Callable | None = None, /, *, out_specs: Specs,
               in_specs: Specs | None | InferFromArgs = Infer,
               mesh: Mesh | AbstractMesh | None = None,
               axis_names: Set[AxisName] = frozenset(),
@@ -173,7 +173,7 @@ def smap(f=None, /, *, in_axes=Infer, out_axes, axis_name: AxisName):
     return lambda g: _smap(g, **kwargs)
   return _smap(f, **kwargs)
 
-def _smap(f, *, in_axes, out_axes, axis_name: AxisName):
+def _smap(f: Callable, *, in_axes, out_axes, axis_name: AxisName):
   if isinstance(axis_name, (list, tuple)):
     raise TypeError(
         f"smap axis_name should be a `str` or a `Hashable`, but got {axis_name}")
@@ -201,6 +201,7 @@ def _smap(f, *, in_axes, out_axes, axis_name: AxisName):
                     axis_names={axis_name}, check_vma=True, _smap=True)
 
 
+@partial(traceback_util.api_boundary, repro_api_name="jax.shard_map")
 def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
                in_specs: Specs, out_specs: Specs | Callable[[], Specs],
                axis_names: Set[AxisName], check_vma: bool,

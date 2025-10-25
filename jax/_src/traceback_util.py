@@ -157,7 +157,10 @@ def _filtering_mode() -> str:
       mode = "quiet_remove_frames"
   return mode
 
-def api_boundary(fun: C) -> C:
+def api_boundary(
+    fun: C, *,
+    repro_api_name: str | None = None,
+    repro_map_user_funcs: Callable[[Callable, tuple[Any, ...], dict[str, Any]], str] | None = None) -> C:
   '''Wraps ``fun`` to form a boundary for filtering exception tracebacks.
 
   When an exception occurs below ``fun``, this appends to it a custom
@@ -178,6 +181,8 @@ def api_boundary(fun: C) -> C:
   ``g``. Because the function returned by :func:`~jax.jit` is annotated as an
   :func:`~api_boundary`, such an exception is accompanied by an additional
   traceback that excludes the frames specific to JAX's implementation.
+
+  For the "repro" kwargs, see the comments for `repro.repro_boundary`.
   '''
 
   @functools.wraps(fun)
@@ -218,4 +223,21 @@ def api_boundary(fun: C) -> C:
         del filtered_tb
         del unfiltered
         del mode
+  if repro_api_name and repro:
+    reraise_with_filtered_traceback = repro.repro_boundary(
+        reraise_with_filtered_traceback, api_name=repro_api_name,
+        map_user_funcs=repro_map_user_funcs)
   return cast(C, reraise_with_filtered_traceback)
+
+
+try:
+  # TODO: import from the final location
+  from jax._src import repro
+  bypass_repro_wrapper = repro.bypass_repro_wrapper
+  true_bind_wrapper = repro.true_bind_wrapper
+  repro_enabled = repro.repro_enabled
+except ImportError:
+  repro = None  # type: ignore
+  def bypass_repro_wrapper(f: Callable): return f
+  def true_bind_wrapper(f: Callable): return f
+  def repro_enabled(): return False

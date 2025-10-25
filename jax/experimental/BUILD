@@ -500,6 +500,32 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "repro_runtime",
+    srcs = [
+        "repro_runtime.py",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":api",
+        ":core",
+        ":custom_derivatives",
+        ":dtypes",
+        ":lax",
+        ":literals",
+        ":mlir",
+        ":path",
+        ":random",
+        ":repro",
+        ":shard_map",
+        ":sharding",
+        ":source_info_util",
+        ":traceback_util",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
     name = "rnn",
     srcs = ["rnn.py"],
     visibility = ["//visibility:public"],
