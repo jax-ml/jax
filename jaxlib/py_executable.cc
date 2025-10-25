@@ -43,8 +43,8 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"
 #include "jaxlib/py_user_context.h"
+#include "xla/future.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
@@ -220,7 +220,7 @@ static ifrt::ArrayRef GetIfRtArray(const ExecuteShardedArg& arg) {
 
 void PopulateExecuteShardedResults(const nb_class_ptr<PyClient>& client,
                                    std::vector<ifrt::ArrayRef> ifrt_arrays,
-                                   const xla::PjRtFuture<>& result_status,
+                                   const xla::Future<>& result_status,
                                    int num_computations,
                                    std::vector<std::vector<PyArray>>& outputs) {
   DCHECK_GT(num_computations, 0);
@@ -246,11 +246,11 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
     const ifrt::ExecuteOptions& options, const nb_class_ptr<PyClient>& client,
     ifrt::LoadedExecutable* ifrt_loaded_executable,
     absl::Span<const ExecuteShardedArg> args,
-    std::optional<std::vector<xla::PjRtFuture<>>>& returned_futures) {
+    std::optional<std::vector<xla::Future<>>>& returned_futures) {
   std::vector<ifrt::ArrayRef> output_arrays;
   std::unique_ptr<tsl::Future<>> returned_future;
   int num_computations = ifrt_loaded_executable->addressable_devices().size();
-  xla::PjRtFuture<> result_status;
+  xla::Future<> result_status;
   {
     nb::gil_scoped_release gil_release;
     for (const auto& arg : args) {
@@ -301,7 +301,7 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
 PyExecuteResults::PyExecuteResults(const nb_class_ptr<PyClient>& client,
                                    std::vector<ifrt::ArrayRef> ifrt_arrays,
                                    int num_computations, PyShardedToken token,
-                                   xla::PjRtFuture<> result_status)
+                                   xla::Future<> result_status)
     : client_(client),
       ifrt_arrays_(std::move(ifrt_arrays)),
       num_computations_(num_computations),
@@ -333,7 +333,7 @@ PyExecuteResults::DisassembleIntoSingleDeviceArrays() {
   std::vector<std::vector<PyArray>> outputs;
   PopulateExecuteShardedResults(
       client_, Consume(),
-      result_status_.IsValid() ? result_status_ : xla::PjRtFuture<>(),
+      result_status_.IsValid() ? result_status_ : xla::Future<>(),
       num_computations_, outputs);
   return outputs;
 }
@@ -357,7 +357,7 @@ PyExecuteResults::DisassemblePrefixIntoSingleDeviceArrays(size_t n) {
   std::vector<std::vector<PyArray>> outputs;
   PopulateExecuteShardedResults(
       client_, std::move(ifrt_arrays),
-      result_status_.IsValid() ? result_status_ : xla::PjRtFuture<>(),
+      result_status_.IsValid() ? result_status_ : xla::Future<>(),
       num_computations_, outputs);
   return outputs;
 }
@@ -382,7 +382,7 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
     if (std::holds_alternative<const PyArrayResultHandler*>(handler)) {
       outputs.push_back(std::get<const PyArrayResultHandler*>(handler)->Call(
           client_, std::move(ifrt_arrays[buffer_id]),
-          result_status_.IsValid() ? result_status_ : xla::PjRtFuture<>()));
+          result_status_.IsValid() ? result_status_ : xla::Future<>()));
     } else {
       tsl::profiler::TraceMe traceme("ConsumeWithHandlers fallback.");
       auto disassembled_arrays =
@@ -396,7 +396,7 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
       for (auto& disassembled_array : *disassembled_arrays) {
         nb::object array = PyArray::MakeFromSingleDeviceArray(
             client_, std::move(disassembled_array), false, true,
-            result_status_.IsValid() ? result_status_ : xla::PjRtFuture<>());
+            result_status_.IsValid() ? result_status_ : xla::Future<>());
         PyList_SET_ITEM(bufs.ptr(), i, array.release().ptr());
         ++i;
       }
@@ -417,7 +417,7 @@ absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
   }
   PyUserContextScope user_context_scope;
   PopulateCallLocation(options, xla::ifrt::UserContextScope::current().get());
-  std::optional<std::vector<xla::PjRtFuture<>>> returned_futures;
+  std::optional<std::vector<xla::Future<>>> returned_futures;
   if (with_tokens) {
     returned_futures.emplace();
   }
