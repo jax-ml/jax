@@ -84,10 +84,10 @@ void logicalToPhysicalDeviceIds(Op op, Value device_assignment) {
   }
   CHECK_EQ(device_id.size(), 1);
   mlir::OpBuilder builder(op);
-  auto logical_id = builder.create<arith::IndexCastOp>(
-      op.getLoc(), builder.getIndexType(), op.getDeviceId());
-  auto physical_id = builder.create<memref::LoadOp>(
-      op.getLoc(), device_assignment, ValueRange{logical_id});
+  auto logical_id = arith::IndexCastOp::create(
+      builder, op.getLoc(), builder.getIndexType(), op.getDeviceId());
+  auto physical_id = memref::LoadOp::create(
+      builder, op.getLoc(), device_assignment, ValueRange{logical_id});
   device_id.assign(physical_id);
 }
 
@@ -110,9 +110,13 @@ struct LogicalToPhysicalDeviceIdPass
       auto device_assignment_type = MemRefType::get(
           {total_devices}, IntegerType::get(func.getContext(), 32),
           TiledLayoutAttr::get(func.getContext(), {xla::Tile({128})}, {1}),
-          MemorySpaceAttr::get(func.getContext(), MemorySpace::smem));
-      func.insertArgument(func.getNumArguments(), device_assignment_type,
-                          nullptr, UnknownLoc::get(func.getContext()));
+          MemorySpaceAttr::get(func.getContext(), MemorySpace::kSmem));
+
+      if (failed(func.insertArgument(func.getNumArguments(),
+                                     device_assignment_type, nullptr,
+                                     UnknownLoc::get(func.getContext())))) {
+        return signalPassFailure();
+      }
       auto device_assignment_arg = func.getArgument(func.getNumArguments() - 1);
       func.walk([device_assignment_arg](Operation *some_op) {
         if (auto op = dyn_cast<tpu::EnqueueDMAOp>(some_op)) {

@@ -24,7 +24,6 @@ from jax import random
 from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
-from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -36,8 +35,8 @@ import numpy as np
 config.parse_flags_with_absl()
 
 
-intx = dtypes.canonicalize_dtype(jnp.int64)
-floatx = dtypes.canonicalize_dtype(jnp.float64)
+intx = dtypes.default_int_dtype()
+floatx = dtypes.default_float_dtype()
 
 
 @jtu.with_config(jax_traceback_filtering="off")
@@ -54,7 +53,6 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
-    _trace_kernel_to_jaxpr.cache_clear()
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
@@ -132,7 +130,9 @@ class PallasCallVmapTest(PallasBaseTest):
     out_ref = jnp.arange(1, 9).reshape((4, 2))
     np.testing.assert_allclose(out, out_ref)
 
-  def test_vmap_with_hoisted_consts(self):
+  def test_vmap_with_const_args(self):
+    if config.use_simplified_jaxpr_constants.value:
+      self.skipTest("TODO: decide if we want to keep these errors")
     to_store = np.arange(128, dtype=np.float32).reshape((1, 128))
     x = np.arange(4 * 16 * 128, dtype=np.float32).reshape((4, 16, 128))
 

@@ -15,13 +15,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, NamedTuple
 
-import jax
+from jax._src import numpy as jnp
 from jax._src.scipy.optimize.bfgs import minimize_bfgs
 from jax._src.scipy.optimize._lbfgs import _minimize_lbfgs
-from typing import NamedTuple
-import jax.numpy as jnp
+from jax._src.typing import Array
 
 
 class OptimizeResults(NamedTuple):
@@ -40,20 +39,20 @@ class OptimizeResults(NamedTuple):
     njev: integer number of gradient evaluations.
     nit: integer number of iterations of the optimization algorithm.
   """
-  x: jax.Array
-  success: bool | jax.Array
-  status: int | jax.Array
-  fun: jax.Array
-  jac: jax.Array
-  hess_inv: jax.Array | None
-  nfev: int | jax.Array
-  njev: int | jax.Array
-  nit: int | jax.Array
+  x: Array
+  success: bool | Array
+  status: int | Array
+  fun: Array
+  jac: Array
+  hess_inv: Array | None
+  nfev: int | Array
+  njev: int | Array
+  nit: int | Array
 
 
 def minimize(
     fun: Callable,
-    x0: jax.Array,
+    x0: Array,
     args: tuple = (),
     *,
     method: str,

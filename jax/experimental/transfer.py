@@ -70,3 +70,8 @@ if not TYPE_CHECKING:
   TransferServer = use_cpp_class(_xc._xla.TransferServer)(TransferServer)
 
 start_transfer_server = _xc._xla.start_transfer_server
+if hasattr(_xc._xla, "_make_error_array"):
+
+  def make_error_array(aval, message):
+    backend = next(iter(aval.sharding.device_set)).client
+    return _xc._xla._make_error_array(backend, aval, str(message))

@@ -18,10 +18,12 @@ load(
     "gentbl_filegroup",
     "td_library",
 )
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//jax:mosaic_gpu_users"],
+    default_visibility = ["//jax/experimental:mosaic_gpu_users"],
 )
 
 td_library(
@@ -31,6 +33,7 @@ td_library(
     deps = [
         "@llvm-project//mlir:BasicPtxBuilderIntTdFiles",
         "@llvm-project//mlir:BuiltinDialectTdFiles",
+        "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
         "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
         "@llvm-project//mlir:LLVMOpsTdFiles",
         "@llvm-project//mlir:OpBaseTdFiles",
@@ -39,66 +42,36 @@ td_library(
 
 gentbl_cc_library(
     name = "mosaic_gpu_inc_gen",
-    tbl_outs = [
-        (
-            [
-                "-gen-dialect-decls",
-                "-dialect=mosaic_gpu",
-            ],
-            "mosaic_gpu_dialect.h.inc",
-        ),
-        (
-            [
-                "-gen-dialect-defs",
-                "-dialect=mosaic_gpu",
-            ],
-            "mosaic_gpu_dialect.cc.inc",
-        ),
-        (
-            ["-gen-op-decls"],
-            "mosaic_gpu_ops.h.inc",
-        ),
-        (
-            ["-gen-op-defs"],
-            "mosaic_gpu_ops.cc.inc",
-        ),
-        (
-            [
-                "-gen-typedef-decls",
-                "--typedefs-dialect=mosaic_gpu",
-            ],
-            "mosaic_gpu_types.h.inc",
-        ),
-        (
-            [
-                "-gen-typedef-defs",
-                "--typedefs-dialect=mosaic_gpu",
-            ],
-            "mosaic_gpu_types.cc.inc",
-        ),
-        (
-            ["-gen-enum-decls"],
-            "mosaic_gpu_enums.h.inc",
-        ),
-        (
-            ["-gen-enum-defs"],
-            "mosaic_gpu_enums.cc.inc",
-        ),
-        (
-            [
-                "-gen-attrdef-decls",
-                "--attrdefs-dialect=mosaic_gpu",
-            ],
-            "mosaic_gpu_attrdefs.h.inc",
-        ),
-        (
-            [
-                "-gen-attrdef-defs",
-                "--attrdefs-dialect=mosaic_gpu",
-            ],
-            "mosaic_gpu_attrdefs.cc.inc",
-        ),
-    ],
+    tbl_outs = {
+        "mosaic_gpu_dialect.h.inc": [
+            "-gen-dialect-decls",
+            "-dialect=mosaic_gpu",
+        ],
+        "mosaic_gpu_dialect.cc.inc": [
+            "-gen-dialect-defs",
+            "-dialect=mosaic_gpu",
+        ],
+        "mosaic_gpu_ops.h.inc": ["-gen-op-decls"],
+        "mosaic_gpu_ops.cc.inc": ["-gen-op-defs"],
+        "mosaic_gpu_types.h.inc": [
+            "-gen-typedef-decls",
+            "--typedefs-dialect=mosaic_gpu",
+        ],
+        "mosaic_gpu_types.cc.inc": [
+            "-gen-typedef-defs",
+            "--typedefs-dialect=mosaic_gpu",
+        ],
+        "mosaic_gpu_enums.h.inc": ["-gen-enum-decls"],
+        "mosaic_gpu_enums.cc.inc": ["-gen-enum-defs"],
+        "mosaic_gpu_attrdefs.h.inc": [
+            "-gen-attrdef-decls",
+            "--attrdefs-dialect=mosaic_gpu",
+        ],
+        "mosaic_gpu_attrdefs.cc.inc": [
+            "-gen-attrdef-defs",
+            "--attrdefs-dialect=mosaic_gpu",
+        ],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "mosaic_gpu.td",
     deps = [
@@ -118,7 +91,9 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:ControlFlowInterfaces",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:InferTypeOpInterface",
         "@llvm-project//mlir:LLVMCommonConversion",
@@ -140,7 +115,6 @@ cc_test(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:BufferizationInterfaces",
         "@llvm-project//mlir:DataLayoutInterfaces",

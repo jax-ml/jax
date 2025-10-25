@@ -18,22 +18,22 @@ import operator
 
 import numpy as np
 
-import jax
-import jax.numpy as jnp
-from jax import device_put
-from jax import lax
-from jax import scipy as jsp
-from jax.tree_util import (tree_leaves, tree_map, tree_structure,
-                           tree_reduce, Partial)
-
+from jax._src import api
 from jax._src import dtypes
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax import lax as lax_internal
+from jax._src.numpy import einsum as jnp_einsum
+from jax._src.scipy import linalg as jsp_linalg
+from jax._src.tree_util import (tree_leaves, tree_map, tree_structure,
+                                tree_reduce, Partial)
+from jax._src.typing import Array
 from jax._src.util import safe_map as map
 
 
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
 _vdot = partial(jnp.vdot, precision=lax.Precision.HIGHEST)
-_einsum = partial(jnp.einsum, precision=lax.Precision.HIGHEST)
+_einsum = partial(jnp_einsum.einsum, precision=lax.Precision.HIGHEST)
 
 
 # aliases for working with pytrees
@@ -85,7 +85,7 @@ def _normalize_matvec(f):
   """Normalize an argument for computing matrix-vector products."""
   if callable(f):
     return f
-  elif isinstance(f, (np.ndarray, jax.Array)):
+  elif isinstance(f, (np.ndarray, Array)):
     if f.ndim != 2 or f.shape[0] != f.shape[1]:
       raise ValueError(
           f'linear operator must be a square matrix, but has shape: {f.shape}')
@@ -127,7 +127,7 @@ def _cg_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 
   r0 = _sub(b, A(x0))
   p0 = z0 = M(r0)
-  dtype = jnp.result_type(*tree_leaves(p0))
+  dtype = dtypes.result_type(*tree_leaves(p0))
   gamma0 = _vdot_real_tree(r0, z0).astype(dtype)
   initial_value = (x0, r0, gamma0, p0, 0)
 
@@ -177,7 +177,7 @@ def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 
   r0 = _sub(b, A(x0))
   rho0 = alpha0 = omega0 = lax_internal._convert_element_type(
-      1, *dtypes._lattice_result_type(*tree_leaves(b)))
+      1, *dtypes.lattice_result_type(*tree_leaves(b)))
   initial_value = (x0, r0, r0, alpha0, omega0, rho0, r0, r0, 0)
 
   x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
@@ -186,7 +186,7 @@ def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 
 
 def _shapes(pytree):
-  return map(jnp.shape, tree_leaves(pytree))
+  return map(np.shape, tree_leaves(pytree))
 
 
 def _isolve(_isolve_solve, A, b, x0=None, *, tol=1e-5, atol=0.0,
@@ -194,7 +194,7 @@ def _isolve(_isolve_solve, A, b, x0=None, *, tol=1e-5, atol=0.0,
   if x0 is None:
     x0 = tree_map(jnp.zeros_like, b)
 
-  b, x0 = device_put((b, x0))
+  b, x0 = api.device_put((b, x0))
 
   if maxiter is None:
     size = sum(bi.size for bi in tree_leaves(b))
@@ -296,10 +296,9 @@ def _safe_normalize(x, thresh=None):
   taken to be 0, and the normalized x to be the zero vector.
   """
   norm = _norm(x)
-  dtype, weak_type = dtypes._lattice_result_type(*tree_leaves(x))
-  dtype = dtypes.canonicalize_dtype(dtype)
+  dtype, weak_type = dtypes.lattice_result_type(*tree_leaves(x))
   if thresh is None:
-    thresh = jnp.finfo(norm.dtype).eps
+    thresh = dtypes.finfo(norm.dtype).eps
   thresh = thresh.astype(dtype).real
 
   use_norm = norm > thresh
@@ -398,9 +397,8 @@ def _kth_arnoldi_iteration(k, A, M, V, H):
   subspace is declared to have been found, in which case in which case the new
   vector is taken to be the zero vector.
   """
-  dtype, _ = dtypes._lattice_result_type(*tree_leaves(V))
-  dtype = dtypes.canonicalize_dtype(dtype)
-  eps = jnp.finfo(dtype).eps
+  dtype, _ = dtypes.lattice_result_type(*tree_leaves(V))
+  eps = dtypes.finfo(dtype).eps
 
   v = tree_map(lambda x: x[..., k], V)  # Gets V[:, k]
   v = M(A(v))
@@ -470,7 +468,7 @@ def _gmres_incremental(A, b, x0, unit_residual, residual_norm, ptol, restart, M)
       lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
       unit_residual,
   )
-  dtype = jnp.result_type(*tree_leaves(b))
+  dtype = dtypes.result_type(*tree_leaves(b))
   # use eye() to avoid constructing a singular matrix in case of early
   # termination
   R = jnp.eye(restart, restart + 1, dtype=dtype)
@@ -497,7 +495,7 @@ def _gmres_incremental(A, b, x0, unit_residual, residual_norm, ptol, restart, M)
   k, residual_norm, V, R, beta_vec, _ = carry
   del k  # Until we figure out how to pass this to the user.
 
-  y = jsp.linalg.solve_triangular(R[:, :-1].T, beta_vec[:-1])
+  y = jsp_linalg.solve_triangular(R[:, :-1].T, beta_vec[:-1])
   dx = tree_map(lambda X: _dot(X[..., :-1], y), V)
 
   x = _add(x0, dx)
@@ -508,10 +506,10 @@ def _gmres_incremental(A, b, x0, unit_residual, residual_norm, ptol, restart, M)
 
 
 def _lstsq(a, b):
-  # faster than jsp.linalg.lstsq
+  # faster than jsp_linalg.lstsq
   a2 = _dot(a.T.conj(), a)
   b2 = _dot(a.T.conj(), b)
-  return jsp.linalg.solve(a2, b2, assume_a='pos')
+  return jsp_linalg.solve(a2, b2, assume_a='pos')
 
 
 def _gmres_batched(A, b, x0, unit_residual, residual_norm, ptol, restart, M):
@@ -530,8 +528,7 @@ def _gmres_batched(A, b, x0, unit_residual, residual_norm, ptol, restart, M):
       lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
       unit_residual,
   )
-  dtype, weak_type = dtypes._lattice_result_type(*tree_leaves(b))
-  dtype = dtypes.canonicalize_dtype(dtype)
+  dtype, weak_type = dtypes.lattice_result_type(*tree_leaves(b))
   H = lax_internal._convert_element_type(
       jnp.eye(restart, restart + 1, dtype=dtype), weak_type=weak_type)
 
@@ -668,7 +665,7 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   A = _normalize_matvec(A)
   M = _normalize_matvec(M)
 
-  b, x0 = device_put((b, x0))
+  b, x0 = api.device_put((b, x0))
   size = sum(bi.size for bi in tree_leaves(b))
 
   if maxiter is None:

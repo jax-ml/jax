@@ -43,18 +43,27 @@ Add the following code to your test file, e.g., `export_back_compat_test.py`.
 
     def test_foo_call(self):
       def func(...): ...
-      inputs = (...,)  # Tuple of nd.array, keep it small, perhaps generate the
-                      # inputs in `func`.
+      inputs = (...,)  # Tuple of nd.array, keep it small, perhaps have it
+                       # empty and generate the inputs in `func`.
       data = self.starter_data(inputs)  # This is temporary, just for starting.
       self.run_one_test(func, data)
 
 The test will fail, but will save to a file the test data you will need. The
-file name will be printed in the logs. Create a new
-file jax/_src/internal_test_util/export_back_compat_test_data/foo_call.py
+file name will be printed in the logs.
+For Google internal tests, the file will be saved in the Test Artifacts.
+Check the file to see if it contains the custom call that you expect.
+
+Often when we change a lowering, we keep the old one for 30 days for
+forward compatibility. If you see the old custom call, you can add
+`with config.export_ignore_forward_compatibility(True):` around the
+`self.run_one_test` method call to make it generate the new lowering.
+
+Now create a new file
+jax/_src/internal_test_util/export_back_compat_test_data/foo_call.py
 and paste the test data that you will see printed in the logs.
 
 Name the literal `data_YYYYY_MM_DD` to include the date of serialization
-(for readability only). Then add to this file:
+(used for readability only). Then add to this file:
 
   from jax._src.internal_test_util.export_back_compat_test_data import foo_call
 
@@ -80,19 +89,24 @@ from typing import Any
 from absl import logging
 
 import numpy as np
-# Import some NumPy symbols so that we can parse repr(ndarray).
-from numpy import array, float32
 
-import jax
-from jax import tree_util
-from jax import export
-
-from jax.experimental import pjit
-
+from jax._src import api
 from jax._src import core
+from jax._src import pjit
+from jax._src import stages
 from jax._src import test_util as jtu
+from jax._src import tree_util
 from jax._src import xla_bridge as xb
+from jax._src.export import _export
+from jax._src.export import shape_poly
+from jax._src.export import shape_poly_decision
+from jax._src.typing import Array
 
+del shape_poly_decision  # Imported for its side-effect only.
+
+# Alias some NumPy symbols so that we can parse repr(ndarray).
+array = np.array
+float32 = np.float32
 
 CURRENT_TESTDATA_VERSION = 1
 
@@ -136,7 +150,7 @@ class CompatTestBase(jtu.JaxTestCase):
   """Base class with helper functions for backward compatibility tests."""
   def default_jax_backend(self) -> str:
     # Canonicalize to turn into "cuda" or "rocm"
-    return xb.canonicalize_platform(jax.default_backend())
+    return xb.canonicalize_platform(xb.default_backend())
 
   def starter_data(self, inputs: Sequence[np.ndarray]) -> CompatTestData:
     # Helper for starting a test, see module docstring.
@@ -165,7 +179,8 @@ class CompatTestBase(jtu.JaxTestCase):
     else:
       assert False, testdata_nest
 
-  def run_one_test(self, func: Callable[..., jax.Array],
+  def run_one_test(self,
+                   func: Callable[..., Array] | stages.Wrapped,
                    data: CompatTestData,
                    polymorphic_shapes: Sequence[str] | None = None,
                    rtol: float | None = None,
@@ -176,7 +191,8 @@ class CompatTestBase(jtu.JaxTestCase):
     """Run one compatibility test.
 
     Args:
-      func: the JAX function to serialize and run
+      func: the JAX function to serialize and run, either as a Python Callable
+        or as a `jax.jit(callable)`.
       data: the test data
       polymorphic_shapes: when using shape polymorphism, the specification for
         each argument of `func`.
@@ -269,19 +285,22 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       expect_current_custom_calls = data.custom_call_targets
     self.assertItemsEqual(expect_current_custom_calls, current_custom_call_targets)
 
-  def run_current(self, func: Callable, data: CompatTestData):
+  def run_current(self,
+                  func: Callable | stages.Wrapped,
+                  data: CompatTestData):
     """Lowers and runs the test function at the current JAX version."""
-    return jax.jit(func)(*data.inputs)
+    jit_func = func if isinstance(func, stages.Wrapped) else api.jit(func)
+    return jit_func(*data.inputs)
 
   def serialize(self,
-                func: Callable, data: CompatTestData, *,
+                func: Callable | stages.Wrapped, data: CompatTestData, *,
                 polymorphic_shapes: Sequence[str] | None = None,
                 allow_unstable_custom_call_targets: Sequence[str] = ()
                 ) -> tuple[bytes, str, int, int]:
     """Serializes the test function.
 
     Args:
-      func: the function to serialize
+      func: the function to serialize.
       polymorphic_shapes: the polymorphic_shapes to use for serialization
       allow_unstable_custom_call_targets: whether to allow additional
         custom call targets besides those known as stable.
@@ -291,12 +310,13 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       (d) the number of devices for which the module was serialized.
     """
     # Use the native exporter, to make sure we get the proper serialization.
-    args_specs = export.symbolic_args_specs(data.inputs, polymorphic_shapes)
-    exported = export.export(
-      jax.jit(func),
+    args_specs = shape_poly.symbolic_args_specs(data.inputs, polymorphic_shapes)
+    jit_func = func if isinstance(func, stages.Wrapped) else api.jit(func)
+    exported = _export.export(
+      jit_func,
       platforms=(self.default_jax_backend(),),
       disabled_checks=tuple(
-        export.DisabledSafetyCheck.custom_call(target)
+        _export.DisabledSafetyCheck.custom_call(target)
         for target in allow_unstable_custom_call_targets)
     )(*args_specs)
 
@@ -308,13 +328,13 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
 
   def run_serialized(self, data: CompatTestData,
                      polymorphic_shapes: Sequence[str] | None = None):
-    args_specs = export.symbolic_args_specs(data.inputs, polymorphic_shapes)
+    args_specs = shape_poly.symbolic_args_specs(data.inputs, polymorphic_shapes)
     def ndarray_to_aval(a: np.ndarray) -> core.ShapedArray:
       return core.ShapedArray(a.shape, a.dtype)
     in_avals_tree = tree_util.tree_map(ndarray_to_aval, args_specs)
     # TODO: we ought to ensure that out_avals are polymorphic if need be. We
     # could either save the in/out_avals (but we need to first implement that
-    # support in export), or we can just re-use them from the current
+    # support in export), or we can just reuse them from the current
     # exported.
     out_avals_tree = tree_util.tree_map(ndarray_to_aval, data.expected_outputs)
     # in_tree must be for (args, kwargs)
@@ -323,7 +343,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     def _get_vjp(_):
       assert False  # We do not have and do not need VJP
 
-    exported = export.Exported(
+    exported = _export.Exported(
         fun_name="run_serialized",
         in_tree=in_tree,
         in_avals=tuple(in_avals),

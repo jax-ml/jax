@@ -69,7 +69,7 @@ Serialization is broken down into two stages:
      call it from another JAX function. We have plans to add code to generate
      `Exported` objects from TensorFlow, and to use `Exported` objects from
      TensorFlow and PyTorch.
-   2. the actual serialization to a byte array using the flatbuffers format. 
+   2. the actual serialization to a byte array using the flatbuffers format.
      See {ref}`jax2tf` for
      an alternative serialization to TensorFlow graph that can be used
      for interoperation with TensorFlow.
@@ -161,7 +161,7 @@ e.g., the inference system.)
 What **matters is when the exporting and consuming components were built**,
 not the time when the exporting and the compilation happen.
 For external JAX users, it is
-[possible to run JAX and jaxlib at different versions](https://jax.readthedocs.io/en/latest/jep/9419-jax-versioning.html#how-are-jax-and-jaxlib-versioned);
+[possible to run JAX and jaxlib at different versions](https://docs.jax.dev/en/latest/jep/9419-jax-versioning.html#how-are-jax-and-jaxlib-versioned);
 what matters is when the jaxlib release was built.
 
 To reduce chances of incompatibility, internal JAX users should:
@@ -501,7 +501,7 @@ As of June 2024, all function exported with version 9
 >>> from jax import export
 >>> exp: export.Exported = export.export(jnp.cos)(1.)
 >>> exp.calling_convention_version
-9
+10
 
 ```
 
@@ -513,13 +513,13 @@ or the `JAX_EXPORT_CALLING_CONVENTION_VERSION` environment variable:
 ```python
 >>> from jax import export
 >>> (export.minimum_supported_calling_convention_version, export.maximum_supported_calling_convention_version)
-(9, 9)
+(9, 10)
 
 >>> from jax._src import config
->>> with config.jax_export_calling_convention_version(9):
+>>> with config.jax_export_calling_convention_version(10):
 ...  exp = export.export(jnp.cos)(1.)
 ...  exp.calling_convention_version
-9
+10
 
 ```
 
@@ -668,6 +668,9 @@ We list here a history of the calling convention version numbers:
     available in JAX since October 20th, 2023 (JAX 0.4.20),
     and the default since February 1st, 2024 (JAX 0.4.24).
     This is the only supported version as of 27th of March, 2024.
+  * Version 10 propagate the `jax.config.use_shardy_partitioner` value to
+    XlaCallModule. Supported by XlaCallModule since May 20th, 2025, and
+    the default in JAX since July 14th, 2025 (JAX 0.7.0).
 
 ## Developer documentation
 
@@ -710,10 +713,7 @@ total 32
 -rw-rw-r--@ 1 necula  wheel  2333 Jun 19 11:04 jax_ir3_jit_my_fun_export.mlir
 ```
 
-Inside Google, you can turn on logging by using the `--vmodule` argument to
-specify the logging levels for different modules,
-e.g., `--vmodule=_export=3`.
-
+Set [`JAX_DEBUG_LOG_MODULES=jax._src.export`](https://docs.jax.dev/en/latest/config_options.html#jax_debug_log_modules) to enable extra debugging logging.
 
 (export_ensuring_compat)=
 ### Ensuring forward and backward compatibility
@@ -771,14 +771,23 @@ that live in jaxlib):
         ```
        * Note that the forward compatibility mode is always false in JIT mode
          or if the user passes `--jax_export_ignore_forward_compatibility=true`
-       * We add `T_NEW` to the list of
-         [`_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE`](https://github.com/search?q=repo%3Ajax-ml%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code)
-         in `_export.py`.
-  3. Day “D + 21” (end of forward compatibility window; can be even later than 21 days):
+       * Note that at this point the exports will still not use `T_NEW`.
+  3. This can be done at any time after the previous step, and before 
+     the next step: Add a backward compatibility test for `T_NEW`,
+     and add `T_NEW` to the list of
+     [`_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE`](https://github.com/search?q=repo%3Ajax-ml%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code) in `_export.py`.
+       * Instructions for adding backwards compatibility tests are at the top of
+         [export_back_compat_test_util.py](https://github.com/search?q=repo%3Ajax-ml%2Fjax+++path%3Aexport_back_compat_test_util.py&amp%3Btype=code&type=code).
+       * An example is in [PR #29488](https://github.com/jax-ml/jax/pull/29488).
+       * Note that if you do this before the next step, the exporting will still not
+         use the `T_NEW` lowering, and you have to add
+         `with config.export_ignore_forward_compatibility(True):` around the call to
+         `self.run_one_test`. This can be removed when you actually get to step 4.
+       * You may also need to enable the test only for new versions of jaxlib.
+  4. Day “D + 21” (end of forward compatibility window; can be even later than 21 days):
     We remove the `forward_compat_mode` in the lowering code, so now exporting
     will start using the new custom call target `T_NEW` as long as we are using a new `jaxlib`.
-       * We add a backwards compatibility test for `T_NEW`.
-  4. Day "RELEASE > D" (the first JAX release date after `D`, when we release version `0.4.31`):
+  5. Day "RELEASE > D" (the first JAX release date after `D`, when we release version `0.4.31`):
     we start the clock for the 6 months backwards compatibility.
     Note that this is relevant only if `T` is among the custom call targets for which
     we already guarantee stability, i.e., are listed in
@@ -787,7 +796,7 @@ that live in jaxlib):
         we make `RELEASE` the minimum allowed jaxlib version then we can
         remove the `jaxlib_version < (0, 4, 31)` conditional in the
         JIT branch.
-  5. Day “RELEASE + 180” (end of backward compatibility window,
+  6. Day “RELEASE + 180” (end of backward compatibility window,
     can be even later than 180 days): By now, we must have bumped
     the minimum jaxlib so that the lowering conditional `jaxlib_version < (0, 4, 31)`
     was already removed and JAX lowering cannot generate custom calls to `T`.

@@ -60,7 +60,7 @@ def sync_copy(src_ref, dst_ref):
 
 def run_on_first_core(core_axis_name: str):
   """Runs a function on the first core in a given axis."""
-  num_cores = jax.lax.psum(1, core_axis_name)
+  num_cores = jax.lax.axis_size(core_axis_name)
   if num_cores == 1:
     return lambda f: f()
 
@@ -77,7 +77,7 @@ def run_on_first_core(core_axis_name: str):
 
 def core_barrier(sem, *, core_axis_name: str):
   """Synchronizes all cores in a given axis."""
-  num_cores = jax.lax.psum(1, core_axis_name)
+  num_cores = jax.lax.axis_size(core_axis_name)
   core_id = jax.lax.axis_index(core_axis_name)
 
   @pl_helpers.when(num_cores > 1)

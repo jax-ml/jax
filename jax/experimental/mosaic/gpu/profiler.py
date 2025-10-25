@@ -13,22 +13,24 @@
 # limitations under the License.
 # ==============================================================================
 
+from collections.abc import Callable
 import contextlib
 import itertools
 import json
 import math
-from typing import Callable, ParamSpec, TypeAlias, TypeVar
+import os
+import tempfile
+from typing import Literal, ParamSpec, TypeVar, overload
 import warnings
 
 import jax
 from jax._src import stages
-from jax._src.lib import xla_client
+from jax._src import util
 import jax.numpy as jnp
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import memref
-from jaxlib.mlir.dialects import scf
 import numpy as np
 
 from .utils import *  # noqa: F403
@@ -36,69 +38,12 @@ from .utils import *  # noqa: F403
 try:
   from jax._src.lib import mosaic_gpu as mosaic_gpu_lib
 except ImportError:
-  has_registrations = False
-else:
-  # TODO(slebedev): Remove the if once the minimum jaxlib is 0.4.36.
-  has_registrations = hasattr(mosaic_gpu_lib._mosaic_gpu_ext, "registrations")
-  if has_registrations:
-    for name, handler in mosaic_gpu_lib._mosaic_gpu_ext.registrations():
-      xla_client.register_custom_call_target(
-          name, handler, platform="CUDA", api_version=1
-      )
+  mosaic_gpu_lib = None  # type: ignore[assignment]
 
 # ruff: noqa: F405
-# mypy: ignore-errors
 
 T = TypeVar("T")
 P = ParamSpec("P")
-
-def _event_record(args, *, copy_before):
-  flat_args, treedef = jax.tree.flatten(args)
-  event, *flat_outs = jax.ffi.ffi_call(
-      "mgpu_event_record",
-      result_shape_dtypes=(jax.core.ShapedArray((), jnp.uint64), *flat_args),
-      input_output_aliases={i: i + 1 for i in range(len(flat_args))},
-  )(*flat_args, copy_before=copy_before)
-  return event, treedef.unflatten(flat_outs)
-
-
-def _event_elapsed(start_event, end_event):
-  return jax.ffi.ffi_call(
-      "mgpu_event_elapsed",
-      result_shape_dtypes=jax.core.ShapedArray((), jnp.float32),
-  )(start_event, end_event)
-
-
-def _measure_events(
-    f: Callable[P, T], *args: P.args, **kwargs: P.kwargs
-) -> tuple[T, float]:
-  if not has_registrations:
-    raise RuntimeError(
-        "This function requires jaxlib >=0.4.36 with CUDA support."
-    )
-
-  if not (args or kwargs):
-    # We require at least one argument and at least one output to ensure
-    # that there is a data dependency between `_event_record` calls in
-    # the resulting HLO program.
-    raise ValueError("Can only measure functions with arguments")
-
-  @jax.jit
-  def run(*args, **kwargs):
-    start_event, (args, kwargs) = _event_record(
-        (args, kwargs), copy_before=True
-    )
-    end_event, outs = _event_record(f(*args, **kwargs), copy_before=False)
-    if jax.tree.structure(outs).num_leaves == 0:
-      raise ValueError("Can only measure functions with at least one output")
-    return outs, _event_elapsed(start_event, end_event)
-
-  jax.block_until_ready(run(*args, **kwargs))  # Warmup.
-  outs, elapsed = run(*args, **kwargs)
-  return outs, float(elapsed)
-
-
-Timings: TypeAlias = list[tuple[str, float]] | float | None
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -109,107 +54,137 @@ class Cupti:
   finalize: bool = True
 
   def measure(
-      self, f: Callable[P, T], *, aggregate: bool = True
-  ) -> Callable[P, tuple[T, Timings]]:
+      self, f, *, aggregate: bool = True, iterations: int = 1,
+  ):
     if not isinstance(f, (stages.Wrapped, stages.Compiled)):
       f = jax.jit(f)
 
-    def wrapper(*args: P.args, **kwargs: P.kwargs):
+    def wrapper(*args, **kwargs):
+      if mosaic_gpu_lib is None:
+        raise RuntimeError("CUPTI profiling is not supported on this platform")
+
       jax.block_until_ready(f(*args, **kwargs))  # Warmup.
       ext = mosaic_gpu_lib._mosaic_gpu_ext
       ext._cupti_init()
       try:
-        results = jax.block_until_ready(f(*args, **kwargs))
+        all_results = [f(*args, **kwargs) for _ in range(iterations)]
+        for r in all_results:
+          jax.block_until_ready(r)
+        results = all_results[0]
       finally:
         timings = ext._cupti_get_timings(self.finalize)
-
       if not timings:
         return results, None
-      elif aggregate:
-        return results, sum(item[1] for item in timings)
-      else:
-        return results, timings
+
+      if len(timings) % iterations != 0:
+        raise RuntimeError(
+            "The number of kernel launches is not divisible by the number of"
+            " iterations"
+        )
+      kernels_per_iter = len(timings) // iterations
+      iter_timings = util.split_list(
+          timings, [kernels_per_iter] * (iterations - 1)
+      )
+      for kernel_idx, (kernel_name, _) in enumerate(iter_timings[0]):
+        for i in range(1, iterations):
+          if iter_timings[i][kernel_idx][0] != kernel_name:
+            raise RuntimeError("Kernel names are not consistent across iterations")
+
+      if aggregate:
+        iter_timings = [
+            sum(item[1] for item in timings) for timings in iter_timings
+        ]
+
+      return results, iter_timings[0] if len(iter_timings) == 1 else iter_timings
 
     return wrapper
 
+@overload
+def measure(
+    f: Callable[P, T],
+    *,
+    aggregate: Literal[True] = ...,
+    iterations: Literal[1] = ...,
+) -> Callable[P, tuple[T, float | None]]:
+  ...
+
+@overload
+def measure(
+    f: Callable[P, T],
+    *,
+    aggregate: Literal[False] = ...,
+    iterations: Literal[1] = ...,
+) -> Callable[P, tuple[T, list[tuple[str, float]] | None]]:
+  ...
+
+@overload
+def measure(
+    f: Callable[P, T],
+    *,
+    aggregate: Literal[True] = ...,
+    iterations: int = ...,
+) -> Callable[P, tuple[T, list[float] | None]]:
+  ...
+
+@overload
+def measure(
+    f: Callable[P, T],
+    *,
+    aggregate: Literal[False] = ...,
+    iterations: int = ...,
+) -> Callable[P, tuple[T, list[list[tuple[str, float]]] | None]]:
+  ...
+
 
 def measure(
-    f: Callable[P, T], *, mode: str = "events", aggregate: bool = True
-) -> Callable[P, tuple[T, Timings]]:
-  """Sets up a function ``f`` for profiling on GPU.
+    f, *, aggregate: bool = True, iterations: int = 1,
+):
+  """Measures the GPU runtime of a function using CUPTI.
 
-  ``measure`` is a higher-order function that augments the argument ``f`` to
-  return GPU runtime in milliseconds, in addition to its proper outputs.
+  ``measure`` is a higher-order function that wraps a function ``f`` to
+  return GPU runtime in milliseconds, in addition to its regular outputs.
 
   Args:
-    f: The function to measure. It must accept at least one argument and return
-      at least one output to be measurable.
-    mode: The mode of operation. Possible values are:
-
-      - "cupti", for CUPTI-based profiling.
-      - "events", for CUDA events-based profiling.
-
-      The two modes use different measurement methodologies and should not be
-      treated as interchangeable backends. See the Notes section for important
-      discussion.
+    f: The function to measure.
     aggregate: Whether to report an aggregate runtime. When ``False`` (only
       supported by ``mode="cupti"``), the per-kernel timings are returned as a
       list of tuples ``(<kernel name>, <runtime in ms>)``.
+    iterations: How many times to run the function. Only supported by
+      ``mode="cupti"``. When greater than 1, the return type will become a list
+      of measurements.
 
   Returns:
-    A new function ``g`` that returns the measured GPU runtime as its last
-    additional output. Otherwise ``g`` accepts the same inputs and returns the
-    same outputs as ``f``.
+    A function that accepts the same inputs as ``f`` and returns
+    ``(f_outputs, timings)``, where ``f_outputs`` are the outputs of ``f``,
+    and ``timings`` is either a float or a list of tuples, depending on
+    ``aggregate``. If no kernels are launched, ``timings`` is ``None``.
 
   Notes:
     `CUPTI (CUDA Profiling Tools Interface)
-    <https://docs.nvidia.com/cupti/index.html>`_ is a high-accuracy,
-    high-precision profiling and tracing API, used in particular by Nsight
-    Systems and Nsight Compute. When using ``measure`` with ``mode="cupti"``,
-    device (GPU) execution runtimes are recorded for each kernel launched
-    during the execution of the function. In that mode, setting
-    ``aggregate=True`` will sum the individual kernel runtimes to arrive at an
-    aggregate measurement. The "gaps" between the kernels when the device is
-    idle are not included in the aggregate.
-
-    The CUPTI API only allows a single "subscriber". This means that the
-    CUPTI-based profiler will fail when the program is run using tools that
-    make use of CUPTI, such as CUDA-GDB, Compute Sanitizer, Nsight Systems, or
-    Nsight Compute.
-
-    ``mode="events"`` uses a different approach: a CUDA event is recorded
-    before and after the function ``f`` is executed. The reported runtime is
-    the time elapsed between the two events. In particular, included in the
-    measurement are:
-
-    - any potential "gaps" between the kernels when the device is idle
-    - any potential "gaps" between the "before" event and the start of the
-      first kernel, or between the end of the last kernel and the "after" event
-
-    In an attempt to minimize the second effect, internally the events-based
-    implementation may execute ``f`` more than once to "warm up" and exclude
-    compilation time from the measurement.
+    <https://docs.nvidia.com/cupti/index.html>`_ is a high-accuracy profiling
+    API used by Nsight Systems and Nsight Compute. The CUPTI API only allows a
+    single subscriber, so ``measure`` cannot be used with other CUPTI-based
+    tools like CUDA-GDB, Compute Sanitizer, Nsight Systems, or Nsight
+    Compute.
   """  # fmt: skip
-  match mode:
-    case "cupti":
-      return Cupti().measure(f, aggregate=aggregate)
-    case "events":
-      if not aggregate:
-        raise ValueError(f"{aggregate=} is not supported with {mode=}")
-      def measure_events_wrapper(*args, **kwargs):
-        return _measure_events(f, *args, **kwargs)
-      return measure_events_wrapper
-    case _:
-      raise ValueError(f"Unrecognized profiler mode {mode}")
+  if iterations < 1:
+    raise ValueError(f"{iterations=} must be positive")
+  return Cupti().measure(f, aggregate=aggregate, iterations=iterations)
 
 
 class ProfilerSpec:
   ENTER = 0
   EXIT = 1 << 31
 
-  def __init__(self, entries_per_warpgroup: int):
+  def __init__(self, entries_per_warpgroup: int, dump_path: str = "sponge"):
     self.entries_per_warpgroup = entries_per_warpgroup
-    self.interned_names = {}
+    self.interned_names: dict[str, int] = {}
+    if dump_path == "sponge":
+      self.dump_path = os.getenv(
+          "TEST_UNDECLARED_OUTPUTS_DIR", tempfile.gettempdir()
+      )
+    else:
+      self.dump_path = dump_path
 
   def _num_warpgroups(
       self, grid: tuple[int, ...], block: tuple[int, ...]
@@ -259,14 +234,25 @@ class ProfilerSpec:
     )
     start_times = entries[..., 0]
     sm_ids = entries[..., 1]
-    entries_used = entries[..., 2]
-    if np.any(entries_used > self.entries_per_warpgroup - 2):
+    traces_used = entries[..., 2]
+    entries_used = traces_used + 3
+    if np.any(entries_used > self.entries_per_warpgroup):
       raise RuntimeError("Insufficient space to capture a full trace")
     traces = entries[..., 3:]
+
+    # Estimate the overhead of profiling.
+    time_events = traces[:, :, 1::2]
+    valid_times_mask = np.arange(traces.shape[-1])[1::2] < traces_used[..., None]
+    # 12 cycles is a ballpark estimate for H100
+    profiling_overhead = (time_events[:, :, 1:] - time_events[:, :, :-1]).min(
+        where=valid_times_mask[:, :, 1:], initial=12
+    )
+    profiling_overhead = max(0, profiling_overhead - 1)
+
     unintern = {v: k for k, v in self.interned_names.items()}
     events = []
     for block_idx, wg_idx in np.ndindex(num_blocks, warpgroups_per_block):
-      valid_entries = entries_used[block_idx, wg_idx] - 3
+      valid_entries = traces_used[block_idx, wg_idx]
       local_clock_offset = None
       assert valid_entries % 2 == 0, valid_entries
       start_time = start_times[block_idx, wg_idx]
@@ -278,7 +264,7 @@ class ProfilerSpec:
         if local_clock_offset is None:
           local_clock_offset = time
         time -= local_clock_offset
-        time -= i * 6  # Account for the overhead of profiling.
+        time -= (i // 2) * profiling_overhead  # Account for the overhead of profiling.
         if time < 0:
           break  # Detect a timer wraparound
         name_id = tag
@@ -311,60 +297,105 @@ class ProfilerSpec:
     return json.dump({"displayTimeUnit": "ns", "traceEvents": flat_events}, f)
 
 
+@dataclasses.dataclass(frozen=True)
+class _ProfilerCtx:
+  """Set of IR values referenced by the profiler logic.
+
+  The profiler logic is implemented using `CustomPrimitiveOp` which requires
+  that all IR values referenced in its body be passed as operands to the op.
+  """
+
+  start: ir.Value
+  is_profiling_thread: ir.Value
+  smem_buffer: ir.Value
+  gmem_buffer: ir.Value
+  offset: ir.Value
+
+
 class OnDeviceProfiler:
 
-  def __init__(self, spec: ProfilerSpec, smem_buffer: ir.Value, gmem_buffer: ir.Value):
-    self.spec = spec
-    self.start = globaltimer("low")
+  def __init__(
+      self,
+      spec: ProfilerSpec,
+      smem_buffer: ir.Value,
+      gmem_buffer: ir.Value,
+      wrap_in_custom_primitive: bool,
+  ):
     i32 = ir.IntegerType.get_signless(32)
     index = ir.IndexType.get()
+    self.spec = spec
     self.entries_per_wg = spec.entries_per_warpgroup
+    self.wrap_in_custom_primitive = wrap_in_custom_primitive
     wg_idx = warpgroup_idx(sync=False)
-    self.smem_buffer = memref_slice(
-        smem_buffer,
-        ds(
-            arith.index_cast(
-                index, arith.muli(wg_idx, c(self.entries_per_wg, i32))
-            ),
-            self.entries_per_wg,
-        ),
+    wg_offset = arith.index_cast(
+        index, arith.muli(wg_idx, c(self.entries_per_wg, i32))
     )
-    self.smem_buffer_ptr = memref_ptr(self.smem_buffer, memory_space=3)
-    self.gmem_buffer = gmem_buffer
-    self.is_profiling_thread = arith.cmpi(
+    smem_buffer = memref_slice(smem_buffer, ds(wg_offset, self.entries_per_wg))
+    is_profiling_thread = arith.cmpi(
         arith.CmpIPredicate.eq,
         arith.remui(thread_idx(), c(WARPGROUP_SIZE, i32)),
         c(0, i32),
     )
     # Hopefully mem2reg will remove the allocation.
-    self.offset = memref.alloca(ir.MemRefType.get((), i32), [], [])
-    memref.store(c(0, i32), self.offset, [])
+    offset = memref.alloca(ir.MemRefType.get((), index), [], [])
+    memref.store(c(0, index), offset, [])
+    self.ctx = _ProfilerCtx(
+        start=globaltimer("low"),
+        is_profiling_thread=is_profiling_thread,
+        smem_buffer=smem_buffer,
+        gmem_buffer=gmem_buffer,
+        offset=offset,
+    )
+
+  @contextlib.contextmanager
+  def _profiler_ctx(self):
+    if not self.wrap_in_custom_primitive:
+      yield self.ctx
+      return
+
+    def fields(obj) -> list[ir.Value]:
+      return [getattr(obj, field.name) for field in dataclasses.fields(obj)]
+
+    op = dialect.CustomPrimitiveOp(
+        result=[],
+        operands_=fields(self.ctx),
+        in_layouts=[],
+        in_transforms=[ir.ArrayAttr.get([])],
+        out_layouts=[],
+    )
+    args_ty = [arg.type for arg in op.operands_]
+    block = op.body.blocks.append(*args_ty)
+    with ir.InsertionPoint(block):
+      yield _ProfilerCtx(*block.arguments)
+      dialect.return_([])
 
   @contextlib.contextmanager
   def record(self, name: str):
     i32 = ir.IntegerType.get_signless(32)
+    index = ir.IndexType.get()
     name_id = self.spec.intern_name(name)
     def store(modifier):
-      cur = memref.load(self.offset, [])
-      i64 = ir.IntegerType.get_signless(64)
-      base_addr = arith.addi(
-          llvm.ptrtoint(i64, self.smem_buffer_ptr),
-          arith.extui(i64, arith.muli(cur, c(4, i32))),
-      )
-      llvm.inline_asm(
-          ir.Type.parse("!llvm.void"),
-          [self.is_profiling_thread, base_addr, c(modifier | name_id, i32)],
-          """
-          @$0 st.shared.v2.u32 [$1], {$2, %clock};
-          """,
-          "b,l,r",
-          has_side_effects=True,
-      )
-      memref.store(
-          arith.addi(cur, c(2, cur.type)),
-          self.offset,
-          [],
-      )
+      with self._profiler_ctx() as ctx:
+        # smem_buffer[offset] = modifier | name_id
+        # smem_buffer[offset + 1] = %clock
+        # offset += 2
+        offset = memref.load(ctx.offset, [])
+        base_ref = memref_slice(ctx.smem_buffer, offset)
+        base_ptr = memref_ptr(base_ref, memory_space=3)
+        i64 = ir.IntegerType.get_signless(64)
+        base_addr = llvm.ptrtoint(i64, base_ptr)
+        llvm.inline_asm(
+            ir.Type.parse("!llvm.void"),
+            [ctx.is_profiling_thread, base_addr, c(modifier | name_id, i32)],
+            """
+            @$0 st.shared.v2.u32 [$1], {$2, %clock};
+            """,
+            "b,l,r",
+            has_side_effects=True,
+        )
+        new_offset = arith.addi(offset, c(2, index))
+        memref.store(new_offset, ctx.offset, [])
+
     store(ProfilerSpec.ENTER)
     yield
     store(ProfilerSpec.EXIT)
@@ -373,50 +404,32 @@ class OnDeviceProfiler:
     index = ir.IndexType.get()
     i32 = ir.IntegerType.get_signless(32)
 
-    gpu.barrier()   # Make sure all warpgroups are done.
+    with self._profiler_ctx() as ctx:
+      gpu.barrier()  # Make sure all warpgroups are done.
 
-    block_idx = c(0, index)
-    for dim in gpu.Dimension:  # pytype: disable=wrong-arg-types
-      block_idx = arith.addi(
-          arith.muli(block_idx, gpu.grid_dim(dim)), gpu.block_id(dim)
-      )
-    wg_idx = warpgroup_idx(sync=False)
-    wg_per_block = math.prod(block) // WARPGROUP_SIZE
-    global_wg_idx = arith.addi(
-        arith.muli(block_idx, c(wg_per_block, index)),
-        arith.index_cast(index, wg_idx),
-    )
-    start_offset = arith.muli(global_wg_idx, c(self.entries_per_wg, index))
-    wg_gmem_buffer = memref.subview(
-        self.gmem_buffer, [start_offset], [self.entries_per_wg], [1],
-        result_type=ir.Type.parse(
-            f"memref<{self.entries_per_wg}xi32, strided<[1], offset: ?>>"
-        ),
-    )
-    thread_in_wg = arith.remui(thread_idx(), c(128, i32))
-    if_first = scf.IfOp(
-        arith.cmpi(arith.CmpIPredicate.eq, thread_in_wg, c(0, i32))
-    )
-    with ir.InsertionPoint(if_first.then_block):
-      memref.store(self.start, wg_gmem_buffer, [c(0, index)])
-      memref.store(smid(), wg_gmem_buffer, [c(1, index)])
-      memref.store(
-          arith.addi(memref.load(self.offset, []), c(3, i32)),
-          wg_gmem_buffer,
-          [c(2, index)],
-      )
-
-      for_op = scf.ForOp(
-          c(0, index),
-          c(self.entries_per_wg - 3, index),
-          c(1, index),
-      )
-      with ir.InsertionPoint(for_op.body):
-        x = memref.load(self.smem_buffer, [for_op.induction_variable])
-        memref.store(
-            x,
-            wg_gmem_buffer,
-            [arith.addi(for_op.induction_variable, c(3, index))],
+      block_idx = c(0, index)
+      for dim in gpu.Dimension:  # pytype: disable=wrong-arg-types
+        block_idx = arith.addi(
+            arith.muli(block_idx, gpu.grid_dim(dim)), gpu.block_id(dim)
         )
-        scf.yield_([])
-      scf.yield_([])
+      wg_idx = warpgroup_idx(sync=False)
+      wg_per_block = math.prod(block) // WARPGROUP_SIZE
+      global_wg_idx = arith.addi(
+          arith.muli(block_idx, c(wg_per_block, index)),
+          arith.index_cast(index, wg_idx),
+      )
+      start_offset = arith.muli(global_wg_idx, c(self.entries_per_wg, index))
+      wg_gmem_buffer = memref_slice(
+          ctx.gmem_buffer, ds(start_offset, self.entries_per_wg)
+      )
+      with when(ctx.is_profiling_thread):
+        memref.store(ctx.start, wg_gmem_buffer, [c(0, index)])
+        memref.store(smid(), wg_gmem_buffer, [c(1, index)])
+        num_traces = arith.index_cast(i32, memref.load(ctx.offset, []))
+        memref.store(num_traces, wg_gmem_buffer, [c(2, index)])
+        traces = vector.load(
+            ir.VectorType.get((self.entries_per_wg - 3,), i32),
+            ctx.smem_buffer,
+            [c(0, index)],
+        )
+        vector.store(traces, wg_gmem_buffer, [c(3, index)])

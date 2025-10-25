@@ -27,7 +27,6 @@ import unittest
 import jax
 import jax._src.test_util as jtu
 from jax._src import xla_bridge
-from jax._src.logging_config import _default_TF_CPP_MIN_LOG_LEVEL
 
 # Note: importing absltest causes an extra absl root log handler to be
 # registered, which causes extra debug log messages. We don't expect users to
@@ -150,7 +149,7 @@ class LoggingTest(jtu.JaxTestCase):
       with capture_jax_logs() as log_output:
         jax.jit(lambda x: x + 1)(1)
       self.assertIn("Finished tracing + transforming", log_output.getvalue())
-      self.assertIn("Compiling <lambda>", log_output.getvalue())
+      self.assertIn("Compiling jit(<lambda>)", log_output.getvalue())
 
     # Turn off all debug logging.
     with jax_debug_log_modules(""):
@@ -163,7 +162,7 @@ class LoggingTest(jtu.JaxTestCase):
       with capture_jax_logs() as log_output:
         jax.jit(lambda x: x + 1)(1)
       self.assertIn("Finished tracing + transforming", log_output.getvalue())
-      self.assertNotIn("Compiling <lambda>", log_output.getvalue())
+      self.assertNotIn("Compiling jit(<lambda>)", log_output.getvalue())
 
     # Turn everything off again.
     with jax_debug_log_modules(""):
@@ -282,8 +281,11 @@ class LoggingTest(jtu.JaxTestCase):
     self.assertNotIn("Initializing CoordinationService", o.stderr)
 
     o = _run(program)
-    if int(_default_TF_CPP_MIN_LOG_LEVEL) >= 1:
+    default_cpp_log_level = os.environ.get("TF_CPP_MIN_LOG_LEVEL")
+    if default_cpp_log_level is not None and int(default_cpp_log_level) >= 1:
       self.assertNotIn("Initializing CoordinationService", o.stderr)
+    else:
+      self.assertIn("Initializing CoordinationService", o.stderr)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -58,10 +58,12 @@ namespace mlir::tpu {
 //     enabled by XLA for memrefs.
 //   bitwidth: The bitwidth of the element type of the operand.
 //   is_kernel_argument: Whether the operand is a kernel argument.
+//   is_1d: Whether the operand is 1D.
 int getTilingFactor(const int src_sublane, const int hardware_generation,
                     const int64_t target_sublane_count,
                     const TpuTilingFlags &tpu_tiling_flags,
-                    const int8_t bitwidth, const bool is_kernel_argument) {
+                    const int8_t bitwidth, const bool is_kernel_argument,
+                    const bool is_1d) {
   CHECK(llvm::isPowerOf2_32(bitwidth));
   CHECK_LE(2, bitwidth);
   CHECK_LE(bitwidth, 32);
@@ -76,6 +78,10 @@ int getTilingFactor(const int src_sublane, const int hardware_generation,
   const int max_normal_tiling = tiling_sublane;
 
   int large_tiling = [&] {
+    if (is_1d) {
+      // 1D tiling is always compact.
+      return tiling_sublane;
+    }
     if (bitwidth == 2) {
       return target_sublane_count * 16;
     }
@@ -132,65 +138,66 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
     return tiled_layout_attr;
   }
   if (auto affine_map_attr = dyn_cast<AffineMapAttr>(memref_ty.getLayout())) {
-    if (memref_ty.getRank() == 0) {
-      return emitError(UnknownLoc::get(memref_ty.getContext()),
-                       "0-rank memref not supported");
-    }
     if (!affine_map_attr.isIdentity()) {
       return emitError(UnknownLoc::get(memref_ty.getContext()),
                        "Non-identity affine layout");
     }
-    if (!memref_ty.getElementType().isIntOrFloat()) {
-      return emitError(UnknownLoc::get(memref_ty.getContext()),
-                       "Invalid element type for memref");
-    }
-    const int8_t bitwidth = memref_ty.getElementTypeBitWidth();
-    const auto [sublane_count, lane_count] = target_shape;
-    // Infer the layout
-    if (memref_ty.getRank() == 1) {
-      auto src_sublane =
-          llvm::divideCeil(memref_ty.getShape().back(), lane_count);
-      const int64_t leading_tile =
-          getTilingFactor(src_sublane, hardware_generation,
-                          sublane_count, tpu_tiling_flags, bitwidth,
-                          is_kernel_argument) *
-          lane_count;
-      SmallVector<xla::Tile> tiles{xla::Tile({leading_tile})};
-      if (bitwidth != 32) {
-        if (!llvm::has_single_bit<unsigned>(bitwidth) || bitwidth > 32) {
-          return emitError(UnknownLoc::get(memref_ty.getContext()),
-                           "Unsupported bitwidth: ")
-                 << bitwidth;
-        }
-        tiles.append({xla::Tile({lane_count}), xla::Tile({32 / bitwidth, 1})});
-      }
-      return TiledLayoutAttr::get(memref_ty.getContext(), tiles, {1});
-    }
-
-    // memref.getRank() > 1
-    const ArrayRef<int64_t> shape = memref_ty.getShape();
-
-    const int64_t src_sublane = shape[shape.size() - 2];
-    if (leading_tile_rows == 0) {
-      leading_tile_rows = getTilingFactor(
-          src_sublane, hardware_generation, sublane_count,
-          tpu_tiling_flags, bitwidth, is_kernel_argument);
-    }
-    SmallVector<xla::Tile> tiles{xla::Tile({leading_tile_rows, lane_count})};
+  } else if (!isa<StridedLayoutAttr>(memref_ty.getLayout())) {
+    return emitError(UnknownLoc::get(memref_ty.getContext()),
+                     "Unrecognized layout annotation");
+  }
+  if (memref_ty.getRank() == 0) {
+    return emitError(UnknownLoc::get(memref_ty.getContext()),
+                     "0-rank memref not supported");
+  }
+  if (!memref_ty.getElementType().isIntOrFloat()) {
+    return emitError(UnknownLoc::get(memref_ty.getContext()),
+                     "Invalid element type for memref");
+  }
+  const int8_t bitwidth = memref_ty.getElementTypeBitWidth();
+  const auto [sublane_count, lane_count] = target_shape;
+  // Infer the layout
+  if (memref_ty.getRank() == 1) {
+    auto src_sublane =
+        llvm::divideCeil(memref_ty.getShape().back(), lane_count);
+    const int64_t leading_tile =
+        getTilingFactor(src_sublane, hardware_generation, sublane_count,
+                        tpu_tiling_flags, bitwidth, is_kernel_argument,
+                        /*is_1d=*/true) *
+        lane_count;
+    SmallVector<xla::Tile> tiles{xla::Tile({leading_tile})};
     if (bitwidth != 32) {
       if (!llvm::has_single_bit<unsigned>(bitwidth) || bitwidth > 32) {
         return emitError(UnknownLoc::get(memref_ty.getContext()),
                          "Unsupported bitwidth: ")
                << bitwidth;
       }
-      tiles.push_back(xla::Tile({32 / bitwidth, 1}));
+      tiles.append({xla::Tile({lane_count}), xla::Tile({32 / bitwidth, 1})});
     }
-    auto tile_strides =
-        ComputeTileStrides(memref_ty, {leading_tile_rows, lane_count});
-    return TiledLayoutAttr::get(memref_ty.getContext(), tiles, tile_strides);
+    return TiledLayoutAttr::get(memref_ty.getContext(), tiles, {1});
   }
-  return emitError(UnknownLoc::get(memref_ty.getContext()),
-                   "Unrecognized layout annotation");
+
+  // memref.getRank() > 1
+  const ArrayRef<int64_t> shape = memref_ty.getShape();
+
+  const int64_t src_sublane = shape[shape.size() - 2];
+  if (leading_tile_rows == 0) {
+    leading_tile_rows = getTilingFactor(
+        src_sublane, hardware_generation, sublane_count, tpu_tiling_flags,
+        bitwidth, is_kernel_argument, /*is_1d=*/false);
+  }
+  SmallVector<xla::Tile> tiles{xla::Tile({leading_tile_rows, lane_count})};
+  if (bitwidth != 32) {
+    if (!llvm::has_single_bit<unsigned>(bitwidth) || bitwidth > 32) {
+      return emitError(UnknownLoc::get(memref_ty.getContext()),
+                       "Unsupported bitwidth: ")
+             << bitwidth;
+    }
+    tiles.push_back(xla::Tile({32 / bitwidth, 1}));
+  }
+  auto tile_strides =
+      ComputeTileStrides(memref_ty, {leading_tile_rows, lane_count});
+  return TiledLayoutAttr::get(memref_ty.getContext(), tiles, tile_strides);
 }
 
 // Make sure only the first tile might introduce padding.
@@ -239,7 +246,7 @@ FailureOr<MemRefType> inferMemref(MemRefType memref,
                            semaphore_mem);
   }
   const Attribute vmem =
-      tpu::MemorySpaceAttr::get(memref.getContext(), MemorySpace::vmem);
+      tpu::MemorySpaceAttr::get(memref.getContext(), MemorySpace::kVmem);
   const Attribute memory_space =
       memref.getMemorySpace() == nullptr ? vmem : memref.getMemorySpace();
   FAILUREOR_ASSIGN_OR_RETURN(
@@ -292,8 +299,8 @@ LogicalResult inferOp(Operation &op, const int hardware_generation,
       builder.setInsertionPointAfter(alloca_op);
       // TODO(b/376130272): add a canonicalizer for EraseLayoutOp so that if we
       // have erase(erase(x)) then we rewrite it to erase(x).
-      auto erase_op = builder.create<tpu::EraseLayoutOp>(
-          arg.getLoc(),
+      auto erase_op = tpu::EraseLayoutOp::create(
+          builder, arg.getLoc(),
           MemRefType::get(new_memref_ty.getShape(), memref_ty.getElementType(),
                           /*layout=*/nullptr, new_memref_ty.getMemorySpace()),
           arg);
@@ -310,8 +317,8 @@ LogicalResult inferOp(Operation &op, const int hardware_generation,
     if (memref_ty != new_memref_ty) {
       OpBuilder builder(alloca_op->getContext());
       builder.setInsertionPointAfter(alloca_op);
-      auto erase_op = builder.create<tpu::EraseLayoutOp>(
-          arg.getLoc(),
+      auto erase_op = tpu::EraseLayoutOp::create(
+          builder, arg.getLoc(),
           MemRefType::get(new_memref_ty.getShape(), memref_ty.getElementType(),
                           /*layout=*/nullptr, new_memref_ty.getMemorySpace()),
           arg);
@@ -390,16 +397,16 @@ LogicalResult inferFunc(func::FuncOp f, const int hardware_generation,
             TiledLayoutAttr::get(new_memref_ty.getContext(), tiles,
                                  new_tile_strides),
             new_memref_ty.getMemorySpace());
-        arg_use_op = builder.create<tpu::ReinterpretCastOp>(val.getLoc(),
-                                                            new_memref_ty, val);
+        arg_use_op = tpu::ReinterpretCastOp::create(builder, val.getLoc(),
+                                                    new_memref_ty, val);
         val = arg_use_op->getResult(0);
       }
       // Some standard MLIR ops have static checks that seems unreasonable,
       // and we know they hold in the way they are used in Mosaic. Still,
       // verification with layouts likes to fail, because it can't statically
       // prove the properties.
-      auto erase_op = builder.create<tpu::EraseLayoutOp>(
-          val.getLoc(),
+      auto erase_op = tpu::EraseLayoutOp::create(
+          builder, val.getLoc(),
           MemRefType::get(new_memref_ty.getShape(), memref_ty.getElementType(),
                           /*layout=*/nullptr, new_memref_ty.getMemorySpace()),
           val);

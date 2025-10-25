@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-package(default_applicable_licenses = ["//jax:license"])
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+
+package(default_applicable_licenses = [])
 
 licenses(["notice"])
 
@@ -21,6 +23,7 @@ cc_binary(
     srcs = ["main.cc"],
     tags = ["manual"],
     deps = [
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
@@ -33,6 +36,7 @@ cc_binary(
         "@xla//xla/pjrt/plugin/xla_cpu:cpu_client_options",
         "@xla//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
         "@xla//xla/service:hlo_module_config",
+        "@xla//xla/service:hlo_proto_cc",
         "@xla//xla/tools:hlo_module_loader",
     ],
 )

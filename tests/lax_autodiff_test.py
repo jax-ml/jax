@@ -28,7 +28,6 @@ import jax
 from jax import dtypes
 from jax import lax
 from jax._src import test_util as jtu
-from jax._src.util import NumpyComplexWarning
 from jax.test_util import check_grads
 
 jax.config.parse_flags_with_absl()
@@ -244,7 +243,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
               jtu.tolerance(from_dtype, jtu.default_gradient_tolerance))
     args = (rng((2, 3), from_dtype),)
     convert_element_type = lambda x: lax.convert_element_type(x, to_dtype)
-    convert_element_type = jtu.ignore_warning(category=NumpyComplexWarning)(
+    convert_element_type = jtu.ignore_warning(category=np.exceptions.ComplexWarning)(
       convert_element_type)
     check_grads(convert_element_type, args, 2, ["fwd", "rev"], tol, tol, eps=1.)
 
@@ -854,7 +853,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   # TODO(b/205052657): enable more tests when supported
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
-      for shape in [(5,), (5, 7), (4, 9, 3)]
+      for shape in [(0,), (5,), (5, 7), (4, 9, 3)]
       for axis in [len(shape) - 1]
     ],
     dtype=[np.float32],

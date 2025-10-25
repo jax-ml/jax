@@ -19,7 +19,7 @@ licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//jax:mosaic_gpu_users"],
+    default_visibility = ["//jax/experimental:mosaic_gpu_users"],
 )
 
 exports_files(
@@ -33,6 +33,15 @@ exports_files(
 py_library(
     name = "matmul",
     srcs = ["matmul.py"],
+    deps = [
+        "//jax",
+        "//jax:mosaic_gpu",
+    ],
+)
+
+py_library(
+    name = "matmul_blackwell",
+    srcs = ["matmul_blackwell.py"],
     deps = [
         "//jax",
         "//jax:mosaic_gpu",

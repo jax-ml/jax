@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import sys
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -42,6 +44,15 @@ def _make_lazy_local_attention_mask(*args, **kwargs):
 
 def _make_local_attention_mask(*args, **kwargs):
   return mask_lib.make_local_attention_mask(*args, **kwargs)
+
+
+def _make_lazy_chunked_causal_mask(shape, chunk_size):
+  mask = mask_lib.ChunkedCausalMask(shape=shape, chunk_size=chunk_size)
+  return mask[:, :]
+
+
+def _make_chunked_causal_mask(shape, chunk_size):
+  return mask_lib.make_chunk_attention_mask(shape=shape, chunk_size=chunk_size)
 
 
 class SplashAttentionMaskTest(jtu.JaxTestCase):
@@ -412,7 +423,186 @@ class SplashAttentionMaskTest(jtu.JaxTestCase):
         block_size,
     )
 
+  @parameterized.parameters(
+      [_make_lazy_chunked_causal_mask, _make_chunked_causal_mask]
+  )
+  def test_chunked_causal_mask(self, make_chunked_mask):
+    """Tests the chunked causal mask logic for various shapes and chunk sizes."""
+    with self.subTest("unit"):
+      expected = np.array([[1]], dtype=np.bool_)
+      actual = make_chunked_mask(shape=(1, 1), chunk_size=1)
+      self.assertArraysEqual(actual, expected)
+      actual = make_chunked_mask(shape=(1, 1), chunk_size=2)
+      self.assertArraysEqual(actual, expected)
+
+    with self.subTest("square_exact_chunks"):
+      # Chunk 0: [0, 1], Chunk 1: [2, 3]
+      expected = np.array(
+          [
+              [1, 0, 0, 0],
+              [1, 1, 0, 0],
+              [0, 0, 1, 0],
+              [0, 0, 1, 1],
+          ],
+          dtype=np.bool_,
+      )
+      actual = make_chunked_mask(shape=(4, 4), chunk_size=2)
+      self.assertArraysEqual(actual, expected)
+
+    with self.subTest("square_uneven_chunks"):
+      expected = np.array(
+          [
+              [1, 0, 0, 0, 0],
+              [1, 1, 0, 0, 0],
+              [1, 1, 1, 0, 0],
+              [0, 0, 0, 1, 0],
+              [0, 0, 0, 1, 1],
+          ],
+          dtype=np.bool_,
+      )
+      actual = make_chunked_mask(shape=(5, 5), chunk_size=3)
+      self.assertArraysEqual(actual, expected)
+
+    with self.subTest("wide_rectangle"):
+      expected = np.array(
+          [
+              [1, 0, 0, 0, 0, 0],
+              [1, 1, 0, 0, 0, 0],
+              [1, 1, 1, 0, 0, 0],
+              [0, 0, 0, 1, 0, 0],
+          ],
+          dtype=np.bool_,
+      )
+      actual = make_chunked_mask(shape=(4, 6), chunk_size=3)
+      self.assertArraysEqual(actual, expected)
+
+    with self.subTest("tall_rectangle"):
+      expected = np.array(
+          [
+              [1, 0, 0, 0],
+              [1, 1, 0, 0],
+              [1, 1, 1, 0],
+              [0, 0, 0, 1],
+              [0, 0, 0, 1],
+              [0, 0, 0, 1],
+          ],
+          dtype=np.bool_,
+      )
+      actual = make_chunked_mask(shape=(6, 4), chunk_size=3)
+      self.assertArraysEqual(actual, expected)
+
+    with self.subTest("chunk_size_1"):
+      # Should only allow self-attention q==k and chunk_size == 1
+      expected = np.array(
+          [
+              [1, 0, 0, 0],
+              [0, 1, 0, 0],
+              [0, 0, 1, 0],
+              [0, 0, 0, 1],
+          ],
+          dtype=np.bool_,
+      )
+      actual = make_chunked_mask(shape=(4, 4), chunk_size=1)
+      self.assertArraysEqual(actual, expected)
+
+    with self.subTest("chunk_size_greater_equal_seqlen"):
+      # Should behave like a normal causal mask
+      expected = np.array(
+          [
+              [1, 0, 0, 0],
+              [1, 1, 0, 0],
+              [1, 1, 1, 0],
+              [1, 1, 1, 1],
+          ],
+          dtype=np.bool_,
+      )
+      # Test chunk_size == seqlen
+      actual_eq = make_chunked_mask(shape=(4, 4), chunk_size=4)
+      self.assertArraysEqual(actual_eq, expected)
+      # Test chunk_size > seqlen
+      actual_gt = make_chunked_mask(shape=(4, 4), chunk_size=5)
+      self.assertArraysEqual(actual_gt, expected)
+
+  @parameterized.product(
+      block_size=[(128, 128), (256, 128), (128, 256)],
+      shape=[(512, 512), (512, 1024), (1024, 512)],
+      chunk_size=[64, 128, 256, 512, 1024],
+  )
+  def test_lazy_chunked_causal_mask_chunking(
+      self,
+      block_size: tuple[int, int],
+      shape: tuple[int, int],
+      chunk_size: int,
+  ):
+    """Compares lazy chunked mask evaluation against the dense version block-by-block."""
+    q_len, kv_len = shape
+    # Adjust block size if it exceeds shape dimensions
+    adjusted_block_size = (
+        min(block_size[0], q_len),
+        min(block_size[1], kv_len),
+    )
+
+    if (
+        q_len % adjusted_block_size[0] != 0
+        or kv_len % adjusted_block_size[1] != 0
+    ):
+      self.skipTest(
+          f"Shape {shape} not divisible by block_size {adjusted_block_size}"
+      )
+
+    dense_mask = _make_chunked_causal_mask(shape=shape, chunk_size=chunk_size)
+    lazy_mask = mask_lib.ChunkedCausalMask(shape=shape, chunk_size=chunk_size)
+    self._compare_masks(
+        dense_mask,
+        lazy_mask,
+        adjusted_block_size,
+    )
+
+  def test_chunked_causal_mask_invalid_chunk_size(self):
+    """Tests that invalid chunk_size raises ValueError."""
+    with self.assertRaises(ValueError):
+      mask_lib.ChunkedCausalMask(shape=(10, 10), chunk_size=0)
+    with self.assertRaises(ValueError):
+      mask_lib.ChunkedCausalMask(shape=(10, 10), chunk_size=-1)
+    with self.assertRaises(ValueError):
+      mask_lib.make_chunk_attention_mask(shape=(10, 10), chunk_size=0)
+
+  def test_chunked_causal_mask_minimal_equality_hash(self):
+    """Tests for __eq__ and __hash__ of ChunkedCausalMask."""
+    shape1, chunk_size1 = (128, 256), 16
+    shape2, chunk_size2 = (128, 128), 32  # Different shape/chunk_size
+
+    # Create three masks: two identical, one with different shape/chunk_size.
+    mask1 = mask_lib.ChunkedCausalMask(shape=shape1, chunk_size=chunk_size1)
+    mask2 = mask_lib.ChunkedCausalMask(shape=shape1, chunk_size=chunk_size1)
+    mask_diff_shape = mask_lib.ChunkedCausalMask(
+        shape=shape2, chunk_size=chunk_size1
+    )
+    mask_diff_chunk = mask_lib.ChunkedCausalMask(
+        shape=shape1, chunk_size=chunk_size2
+    )
+    other_obj = object()
+
+    # Test __eq__
+    self.assertEqual(mask1, mask2)
+    self.assertNotEqual(mask1, mask_diff_shape)
+    self.assertNotEqual(mask1, mask_diff_chunk)
+    self.assertNotEqual(mask1, other_obj)
+
+    # Test __hash__ of identical masks
+    self.assertEqual(hash(mask1), hash(mask2))
+
+    mask_set = {mask1, mask2, mask_diff_chunk}
+    self.assertLen(mask_set, 2)  # mask1 and mask2 are duplicates
+    self.assertIn(mask1, mask_set)
+    self.assertIn(mask_diff_chunk, mask_set)
+    self.assertNotIn(mask_diff_shape, mask_set)
+
   def test_using_logical_operators_raises_exception(self):
+    if sys.version_info == (3, 14, 0, "candidate", 1):
+      # Fails due to Python bug on 3.14.0rc1
+      # https://github.com/python/cpython/issues/137288
+      self.skipTest("Expected failure.")
     mask_1 = mask_lib.NumpyMask(
         mask_lib.make_random_mask((256, 256), 0.5, seed=1)
     )
@@ -1064,7 +1254,8 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     mask_info, mask_info_dkv, mask_function = self._process_mask(
         multi_head, block_shape
     )
-    self.assertIsNone(mask_function)
+    if is_lazy_mask:
+      self.assertIsNotNone(mask_function)
 
     expected_partial_mask_blocks = self._stack(
         [
@@ -1108,10 +1299,12 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
 
     expected_mask_info = mask_info_lib.MaskInfo(
         expected_local_data_next,
-        expected_local_mask_next,
+        expected_local_mask_next if not is_lazy_mask else None,
         expected_local_block_mask,
-        expected_partial_mask_blocks,
-        None,
+        expected_partial_mask_blocks if not is_lazy_mask else None,
+        np.arange(sequence_lengths[0], dtype=np.int32)
+        if is_lazy_mask
+        else None,
     )
 
     expected_local_data_next_dkv = np.array(
@@ -1143,10 +1336,14 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
 
     expected_mask_info_dkv = mask_info_lib.MaskInfo(
         expected_local_data_next_dkv,
-        expected_local_mask_next_dkv,
+        expected_local_mask_next_dkv if not is_lazy_mask else None,
         expected_local_block_mask_dkv,
-        expected_partial_mask_blocks.swapaxes(-1, -2),
-        None,
+        expected_partial_mask_blocks.swapaxes(-1, -2)
+        if not is_lazy_mask
+        else None,
+        np.arange(sequence_lengths[0], dtype=np.int32)
+        if is_lazy_mask
+        else None,
     )
 
     self._assert_mask_info_match(mask_info, expected_mask_info)
@@ -1175,7 +1372,9 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     mask_info, mask_info_dkv, mask_function = self._process_mask(
         multi_head, block_shape
     )
-    self.assertIsNone(mask_function)
+
+    if is_lazy_mask:
+      self.assertIsNotNone(mask_function)
 
     expected_partial_mask_blocks = self._stack(
         [
@@ -1216,10 +1415,12 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
 
     expected_mask_info = mask_info_lib.MaskInfo(
         expected_local_data_next,
-        expected_local_mask_next,
+        expected_local_mask_next if not is_lazy_mask else None,
         expected_local_block_mask,
-        expected_partial_mask_blocks,
-        None,
+        expected_partial_mask_blocks if not is_lazy_mask else None,
+        np.arange(sequence_lengths[0], dtype=np.int32)
+        if is_lazy_mask
+        else None,
     )
 
     expected_local_data_next_dkv = np.array(
@@ -1248,10 +1449,14 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
 
     expected_mask_info_dkv = mask_info_lib.MaskInfo(
         expected_local_data_next_dkv,
-        expected_local_mask_next_dkv,
+        expected_local_mask_next_dkv if not is_lazy_mask else None,
         expected_local_block_mask_dkv,
-        expected_partial_mask_blocks.swapaxes(-1, -2),
-        None,
+        expected_partial_mask_blocks.swapaxes(-1, -2)
+        if not is_lazy_mask
+        else None,
+        np.arange(sequence_lengths[0], dtype=np.int32)
+        if is_lazy_mask
+        else None,
     )
 
     self._assert_mask_info_match(mask_info, expected_mask_info)
@@ -2066,11 +2271,12 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
         multi_head, block_shape
     )
 
-    self.assertIsNone(mask_function)
+    self.assertIsNotNone(mask_function)
     self.assertIsNotNone(mask_info.block_mask)
     self.assertIsNotNone(mask_info.data_next)
-    self.assertIsNotNone(mask_info.mask_next)
-    self.assertIsNotNone(mask_info.partial_mask_blocks)
+    self.assertIsNone(mask_info.mask_next)
+    self.assertIsNone(mask_info.partial_mask_blocks)
+    self.assertIsNotNone(mask_info.q_sequence)
 
   def test_process_invalid_mask(self):
     """Masks with of an all-0 row causes undefined softmax, reject them."""

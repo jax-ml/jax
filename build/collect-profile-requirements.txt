@@ -1,4 +1,5 @@
-tensorflow
-tensorboard-plugin-profile
-# Needed for the profile plugin to work without error
+# TF hasn't released 3.13 wheels yet (b/402590302)
+tensorflow; python_version<"3.13"
+xprof>=2.19.0
+# Needed for XProf to work without error
 protobuf

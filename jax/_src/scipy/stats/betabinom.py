@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 
-from jax import lax
-import jax.numpy as jnp
+import numpy as np
+
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.scipy.special import betaln
@@ -58,9 +60,9 @@ def logpmf(k: ArrayLike, n: ArrayLike, a: ArrayLike, b: ArrayLike,
   log_probs = jnp.where(jnp.logical_and(lax.eq(y, zero), lax.eq(n, zero)), 0., log_probs)
   y_cond = jnp.logical_or(jnp.logical_or(lax.lt(y, lax.neg(loc)), lax.gt(y, n)),
                           lax.le(lax.add(y, a), zero))
-  log_probs = jnp.where(y_cond, -jnp.inf, log_probs)
+  log_probs = jnp.where(y_cond, -np.inf, log_probs)
   n_a_b_cond = jnp.logical_or(jnp.logical_or(lax.lt(n, zero), lax.le(a, zero)), lax.le(b, zero))
-  return jnp.where(n_a_b_cond, jnp.nan, log_probs)
+  return jnp.where(n_a_b_cond, np.nan, log_probs)
 
 
 def pmf(k: ArrayLike, n: ArrayLike, a: ArrayLike, b: ArrayLike,

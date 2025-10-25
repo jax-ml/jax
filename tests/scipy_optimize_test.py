@@ -14,7 +14,6 @@
 
 from absl.testing import absltest
 import numpy as np
-import scipy
 import scipy.optimize
 
 import jax

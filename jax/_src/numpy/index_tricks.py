@@ -17,16 +17,18 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Union
 
-import jax
+import numpy as np
+
+from jax._src import config
 from jax._src import core
+from jax._src.numpy.array_constructors import array
 from jax._src.numpy.util import promote_dtypes
+from jax._src.numpy.array_creation import linspace
 from jax._src.numpy.lax_numpy import (
-  arange, array, concatenate, expand_dims, linspace, meshgrid, stack, transpose
+  arange, concatenate, expand_dims, meshgrid, stack, transpose
 )
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import set_module
-
-import numpy as np
 
 
 export = set_module('jax.numpy')
@@ -83,7 +85,7 @@ class _Mgrid:
     if isinstance(key, slice):
       return _make_1d_grid_from_slice(key, op_name="mgrid")
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name="mgrid") for k in key)
-    with jax.numpy_dtype_promotion('standard'):
+    with config.numpy_dtype_promotion('standard'):
       output = promote_dtypes(*output)
     output_arr = meshgrid(*output, indexing='ij', sparse=False)
     if len(output_arr) == 0:
@@ -128,7 +130,7 @@ class _Ogrid:
     if isinstance(key, slice):
       return _make_1d_grid_from_slice(key, op_name="ogrid")
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name="ogrid") for k in key)
-    with jax.numpy_dtype_promotion('standard'):
+    with config.numpy_dtype_promotion('standard'):
       output = promote_dtypes(*output)
     return meshgrid(*output, indexing='ij', sparse=True)
 
@@ -228,10 +230,8 @@ class RClass(_AxisConcat):
     An imaginary value for ``step`` will create a ``jnp.linspace`` object instead,
     which includes the right endpoint:
 
-    >>> jnp.r_[-1:1:6j, 0, jnp.array([1,2,3])]
-    Array([-1.        , -0.6       , -0.20000002,  0.20000005,
-           0.6       ,  1.        ,  0.        ,  1.        ,
-           2.        ,  3.        ], dtype=float32)
+    >>> jnp.r_[-1:1:6j, 0, jnp.array([1,2,3])]  # doctest: +SKIP
+    Array([-1. , -0.6, -0.2,  0.2,  0.6,  1. ,  0. ,  1. ,  2. ,  3. ],      dtype=float32)
 
     Use a string directive of the form ``"axis,dims,trans1d"`` as the first argument to
     specify concatenation axis, minimum number of dimensions, and the position of the

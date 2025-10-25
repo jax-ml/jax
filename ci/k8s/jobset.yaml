@@ -1,0 +1,34 @@
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+metadata:
+  name: jaxjob
+spec:
+  replicatedJobs:
+  - name: workers
+    template:
+      spec:
+        parallelism: 8
+        completions: 8
+        backoffLimit: 0
+        template:
+          spec:
+            serviceAccountName: jax-job-sa
+            restartPolicy: Never
+            containers:
+            - name: main
+              image: local/jax:latest
+              imagePullPolicy: Never
+              resources:
+                limits:
+                  cpu: 100m
+              command:
+                - python
+              args:
+                - -c
+                - |
+                  import jax
+                  jax.distributed.initialize()
+                  print(jax.devices())
+                  print(jax.local_devices())
+                  assert jax.process_count() > 1
+                  assert len(jax.devices()) > len(jax.local_devices())

@@ -18,13 +18,10 @@ limitations under the License.
 
 #include <complex>
 #include <cstdint>
-#include <optional>
 #include <type_traits>
 
 #include "absl/status/statusor.h"
-#include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
-#include "xla/service/custom_call_status.h"
 
 // Underlying function pointers (i.e., KERNEL_CLASS::Fn) are initialized either
 // by the nanobind wrapper that links them to an existing SciPy lapack instance,
@@ -93,26 +90,6 @@ void AssignKernelFn(typename KernelType::FnType* func) {
 
 }  // namespace jax
 
-#define DEFINE_CHAR_ENUM_ATTR_DECODING(ATTR)                             \
-  template <>                                                            \
-  struct xla::ffi::AttrDecoding<ATTR> {                                  \
-    using Type = ATTR;                                                   \
-    static std::optional<Type> Decode(XLA_FFI_AttrType type, void* attr, \
-                                      DiagnosticEngine& diagnostic);     \
-  }
-
-// XLA needs attributes to have deserialization method specified
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::MatrixParams::Side);
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::MatrixParams::UpLo);
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::MatrixParams::Transpose);
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::MatrixParams::Diag);
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::svd::ComputationMode);
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::eig::ComputationMode);
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::schur::ComputationMode);
-DEFINE_CHAR_ENUM_ATTR_DECODING(jax::schur::Sort);
-
-#undef DEFINE_CHAR_ENUM_ATTR_DECODING
-
 namespace jax {
 
 using lapack_int = int;
@@ -121,20 +98,6 @@ static_assert(
     std::is_same_v<::xla::ffi::NativeType<LapackIntDtype>, lapack_int>);
 
 //== Triangular System Solver ==//
-
-// lapack trsm
-
-template <typename T>
-struct Trsm {
-  using FnType = void(char* side, char* uplo, char* transa, char* diag,
-                      lapack_int* m, lapack_int* n, T* alpha, T* a,
-                      lapack_int* lda, T* b, lapack_int* ldb);
-
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-};
-
-// FFI Kernel
 
 template <::xla::ffi::DataType dtype>
 struct TriMatrixEquationSolver {
@@ -145,27 +108,16 @@ struct TriMatrixEquationSolver {
                       lapack_int* ldb);
 
   inline static FnType* fn = nullptr;
-  static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, ::xla::ffi::Buffer<dtype> y,
-      ::xla::ffi::RemainingArgs, ::xla::ffi::ResultBuffer<dtype> y_out,
-      MatrixParams::Side side, MatrixParams::UpLo uplo,
-      MatrixParams::Transpose trans_x, MatrixParams::Diag diag);
+  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
+                                  ::xla::ffi::Buffer<dtype> y,
+                                  ::xla::ffi::ResultBuffer<dtype> y_out,
+                                  MatrixParams::Side side,
+                                  MatrixParams::UpLo uplo,
+                                  MatrixParams::Transpose trans_x,
+                                  MatrixParams::Diag diag);
 };
 
 //== LU Decomposition ==//
-
-// lapack getrf
-
-template <typename T>
-struct Getrf {
-  using FnType = void(lapack_int* m, lapack_int* n, T* a, lapack_int* lda,
-                      lapack_int* ipiv, lapack_int* info);
-
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-};
-
-// FFI Kernel
 
 template <::xla::ffi::DataType dtype>
 struct LuDecomposition {
@@ -181,21 +133,6 @@ struct LuDecomposition {
 };
 
 //== QR Factorization ==//
-
-// lapack geqrf
-
-template <typename T>
-struct Geqrf {
-  using FnType = void(lapack_int* m, lapack_int* n, T* a, lapack_int* lda,
-                      T* tau, T* work, lapack_int* lwork, lapack_int* info);
-
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-
-  static int64_t Workspace(lapack_int m, lapack_int n);
-};
-
-// FFI Kernel
 
 template <::xla::ffi::DataType dtype>
 struct QrFactorization {
@@ -240,22 +177,7 @@ struct PivotingQrFactorization {
   static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols);
 };
 
-
 //== Orthogonal QR ==//
-
-// lapack orgqr
-
-template <typename T>
-struct Orgqr {
-  using FnType = void(lapack_int* m, lapack_int* n, lapack_int* k, T* a,
-                      lapack_int* lda, T* tau, T* work, lapack_int* lwork,
-                      lapack_int* info);
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-  static int64_t Workspace(lapack_int m, lapack_int n, lapack_int k);
-};
-
-// FFI Kernel
 
 template <::xla::ffi::DataType dtype>
 struct OrthogonalQr {
@@ -276,16 +198,6 @@ struct OrthogonalQr {
 
 //== Cholesky Factorization ==//
 
-// lapack potrf
-
-template <typename T>
-struct Potrf {
-  using FnType = void(char* uplo, lapack_int* n, T* a, lapack_int* lda,
-                      lapack_int* info);
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-};
-
 template <::xla::ffi::DataType dtype>
 struct CholeskyFactorization {
   using ValueType = ::xla::ffi::NativeType<dtype>;
@@ -301,41 +213,6 @@ struct CholeskyFactorization {
 };
 
 //== Singular Value Decomposition (SVD) ==//
-
-// lapack gesdd
-
-lapack_int GesddIworkSize(int64_t m, int64_t n);
-
-template <typename T>
-struct RealGesdd {
-  using FnType = void(char* jobz, lapack_int* m, lapack_int* n, T* a,
-                      lapack_int* lda, T* s, T* u, lapack_int* ldu, T* vt,
-                      lapack_int* ldvt, T* work, lapack_int* lwork,
-                      lapack_int* iwork, lapack_int* info);
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-
-  static int64_t Workspace(lapack_int m, lapack_int n, bool job_opt_compute_uv,
-                           bool job_opt_full_matrices);
-};
-
-lapack_int ComplexGesddRworkSize(int64_t m, int64_t n, int compute_uv);
-
-template <typename T>
-struct ComplexGesdd {
-  using FnType = void(char* jobz, lapack_int* m, lapack_int* n, T* a,
-                      lapack_int* lda, typename T::value_type* s, T* u,
-                      lapack_int* ldu, T* vt, lapack_int* ldvt, T* work,
-                      lapack_int* lwork, typename T::value_type* rwork,
-                      lapack_int* iwork, lapack_int* info);
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-
-  static int64_t Workspace(lapack_int m, lapack_int n, bool job_opt_compute_uv,
-                           bool job_opt_full_matrices);
-};
-
-// FFI Kernel
 
 template <::xla::ffi::DataType dtype>
 struct SingularValueDecomposition {
@@ -407,8 +284,8 @@ struct SingularValueDecompositionQR {
       ::xla::ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode);
 
   static absl::StatusOr<lapack_int> GetWorkspaceSize(lapack_int x_rows,
-                                                  lapack_int x_cols,
-                                                  svd::ComputationMode mode);
+                                                     lapack_int x_cols,
+                                                     svd::ComputationMode mode);
 };
 
 template <::xla::ffi::DataType dtype>
@@ -432,8 +309,8 @@ struct SingularValueDecompositionQRComplex {
       ::xla::ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode);
 
   static absl::StatusOr<lapack_int> GetWorkspaceSize(lapack_int x_rows,
-                                                  lapack_int x_cols,
-                                                  svd::ComputationMode mode);
+                                                     lapack_int x_cols,
+                                                     svd::ComputationMode mode);
 };
 
 namespace svd {
@@ -451,41 +328,12 @@ using SVDQRType = std::conditional_t<::xla::ffi::IsComplexType<dtype>(),
 absl::StatusOr<lapack_int> GetIntWorkspaceSize(int64_t x_rows, int64_t x_cols);
 absl::StatusOr<lapack_int> GetRealWorkspaceSize(int64_t x_rows, int64_t x_cols,
                                                 ComputationMode mode);
-absl::StatusOr<lapack_int> GetRealWorkspaceSizeQR(int64_t x_rows, int64_t x_cols);
+absl::StatusOr<lapack_int> GetRealWorkspaceSizeQR(int64_t x_rows,
+                                                  int64_t x_cols);
 
 }  // namespace svd
 
 //== Eigenvalues and eigenvectors ==//
-
-// lapack syevd/heevd
-
-lapack_int SyevdWorkSize(int64_t n);
-lapack_int SyevdIworkSize(int64_t n);
-
-template <typename T>
-struct RealSyevd {
-  using FnType = void(char* jobz, char* uplo, lapack_int* n, T* a,
-                      lapack_int* lda, T* w, T* work, lapack_int* lwork,
-                      lapack_int* iwork, lapack_int* liwork, lapack_int* info);
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-};
-
-lapack_int HeevdWorkSize(int64_t n);
-lapack_int HeevdRworkSize(int64_t n);
-
-template <typename T>
-struct ComplexHeevd {
-  using FnType = void(char* jobz, char* uplo, lapack_int* n, T* a,
-                      lapack_int* lda, typename T::value_type* w, T* work,
-                      lapack_int* lwork, typename T::value_type* rwork,
-                      lapack_int* lrwork, lapack_int* iwork, lapack_int* liwork,
-                      lapack_int* info);
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-};
-
-// FFI Kernel
 
 namespace eig {
 
@@ -544,8 +392,6 @@ struct EigenvalueDecompositionHermitian {
       ::xla::ffi::ResultBuffer<LapackIntDtype> info, eig::ComputationMode mode);
 };
 
-// lapack geev
-
 // LAPACK uses a packed representation to represent a mixture of real
 // eigenvectors and complex conjugate pairs. This helper unpacks the
 // representation into regular complex matrices.
@@ -573,28 +419,6 @@ static void UnpackEigenvectors(Int n, const T* eigenvals_imag, const T* packed,
     }
   }
 }
-
-template <typename T>
-struct RealGeev {
-  using FnType = void(char* jobvl, char* jobvr, lapack_int* n, T* a,
-                      lapack_int* lda, T* wr, T* wi, T* vl, lapack_int* ldvl,
-                      T* vr, lapack_int* ldvr, T* work, lapack_int* lwork,
-                      lapack_int* info);
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-};
-
-template <typename T>
-struct ComplexGeev {
-  using FnType = void(char* jobvl, char* jobvr, lapack_int* n, T* a,
-                      lapack_int* lda, T* w, T* vl, lapack_int* ldvl, T* vr,
-                      lapack_int* ldvr, T* work, lapack_int* lwork,
-                      typename T::value_type* rwork, lapack_int* info);
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-};
-
-// FFI Kernel
 
 template <::xla::ffi::DataType dtype>
 struct EigenvalueDecomposition {
@@ -652,31 +476,6 @@ struct EigenvalueDecompositionComplex {
 };
 
 //== Schur Decomposition ==//
-
-// lapack gees
-
-template <typename T>
-struct RealGees {
-  using FnType = void(char* jobvs, char* sort, bool (*select)(T, T),
-                      lapack_int* n, T* a, lapack_int* lda, lapack_int* sdim,
-                      T* wr, T* wi, T* vs, lapack_int* ldvs, T* work,
-                      lapack_int* lwork, bool* bwork, lapack_int* info);
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-};
-
-template <typename T>
-struct ComplexGees {
-  using FnType = void(char* jobvs, char* sort, bool (*select)(T), lapack_int* n,
-                      T* a, lapack_int* lda, lapack_int* sdim, T* w, T* vs,
-                      lapack_int* ldvs, T* work, lapack_int* lwork,
-                      typename T::value_type* rwork, bool* bwork,
-                      lapack_int* info);
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-};
-
-// FFI Kernel
 
 template <::xla::ffi::DataType dtype>
 struct SchurDecomposition {
@@ -737,32 +536,6 @@ struct SchurDecompositionComplex {
 //== Hessenberg Decomposition                                       ==//
 //== Reduces a non-symmetric square matrix to upper Hessenberg form ==//
 
-// lapack gehrd
-
-template <typename T>
-struct Gehrd {
-  using FnType = void(lapack_int* n, lapack_int* ilo, lapack_int* ihi, T* a,
-                      lapack_int* lda, T* tau, T* work, lapack_int* lwork,
-                      lapack_int* info);
-
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-
-  static int64_t Workspace(lapack_int lda, lapack_int n, lapack_int ilo,
-                           lapack_int ihi);
-};
-
-template <typename T>
-struct real_type {
-  typedef T type;
-};
-template <typename T>
-struct real_type<std::complex<T>> {
-  typedef T type;
-};
-
-// FFI Kernel
-
 template <::xla::ffi::DataType dtype>
 struct HessenbergDecomposition {
   using ValueType = ::xla::ffi::NativeType<dtype>;
@@ -784,23 +557,6 @@ struct HessenbergDecomposition {
 
 //== Tridiagonal Reduction                                           ==//
 //== Reduces a Symmetric/Hermitian square matrix to tridiagonal form ==//
-
-// lapack sytrd/hetrd
-
-template <typename T>
-struct Sytrd {
-  using FnType = void(char* uplo, lapack_int* n, T* a, lapack_int* lda,
-                      typename real_type<T>::type* d,
-                      typename real_type<T>::type* e, T* tau, T* work,
-                      lapack_int* lwork, lapack_int* info);
-
-  static FnType* fn;
-  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
-
-  static int64_t Workspace(lapack_int lda, lapack_int n);
-};
-
-// FFI Kernel
 
 template <::xla::ffi::DataType dtype>
 struct TridiagonalReduction {

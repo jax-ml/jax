@@ -25,6 +25,7 @@ limitations under the License.
 #include <type_traits>
 #include <utility>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Compiler.h"
@@ -172,7 +173,7 @@ FailureOr<int8_t> getTypeBitwidth(Type ty) {
     }
   }
   if (isa<IntegerType, Float32Type, BFloat16Type, Float8E5M2Type,
-          Float8E4M3FNType, Float8E4M3B11FNUZType>(ty)) {
+          Float8E4M3FNType, Float8E4M3B11FNUZType, Float4E2M1FNType>(ty)) {
     return ty.getIntOrFloatBitWidth();
   }
   return emitError(UnknownLoc::get(ty.getContext()),
@@ -180,16 +181,21 @@ FailureOr<int8_t> getTypeBitwidth(Type ty) {
          << ty;
 }
 
+// Returns the bitwidth of the element type. The function works for both
+// scalar and vector types.
+template <bool adjust_bool = false>
+inline FailureOr<int8_t> getElementTypeBitwidth(Type ty) {
+  if (auto vty = dyn_cast<VectorType>(ty)) {
+    return getTypeBitwidth<adjust_bool>(vty.getElementType());
+  }
+  return getTypeBitwidth<adjust_bool>(ty);
+}
+
 template <typename T>
 ArrayRef<std::remove_const_t<T>> toArrayRef(absl::Span<T> span) {
   return ArrayRef<std::remove_const_t<T>>(span.data(), span.size());
 }
 
-inline arith::ConstantOp IdxConst(int64_t idx, OpBuilder &builder,
-                                  Location loc) {
-  return builder.create<arith::ConstantOp>(loc, builder.getIndexType(),
-                                           builder.getIndexAttr(idx));
-}
 
 // Debug only util.
 template <typename T>
@@ -215,6 +221,13 @@ inline SmallVector<int64_t> ComputeTileStrides(
                                   memref_ty.getShape().size());
   return ComputeTileStrides(shape, tiling);
 }
+
+// Computes the dimensions that were squeezed from the source shape to match the
+// target shape. Returns the dimensions in increasing order.
+FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
+    Operation *op, ArrayRef<int64_t> source_shape,
+    ArrayRef<int64_t> target_shape);
+
 // Assuming MKN matmul - This function must only be called after
 // canonicalization passes.
 //
@@ -231,6 +244,8 @@ std::optional<std::pair<bool, bool>> isTransposedMatmul(
 bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
                                    const std::array<int64_t, 2> &target_shape,
                                    bool allow_minormost_padding = false);
+
+bool isContiguousMemref(TypedValue<MemRefType> memref);
 
 // Determines whether the given MemRefType has the given memory space.
 bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space);
@@ -254,6 +269,45 @@ void setLayout(Operation *op, Layout in, Layout out);
 void setLayout(Operation *op, ArrayRef<Layout> in, Layout out);
 void setLayout(Operation *op, Layout in, ArrayRef<Layout> out);
 void setLayout(Operation *op, ArrayRef<Layout> in, ArrayRef<Layout> out);
+
+// Helper functions to create constants.
+inline arith::ConstantOp IdxConst(int64_t idx, OpBuilder &builder,
+                                  Location loc) {
+  return builder.create<arith::ConstantOp>(loc, builder.getIndexType(),
+                                           builder.getIndexAttr(idx));
+}
+
+inline arith::ConstantOp I32Const(int32_t value, OpBuilder &builder,
+                                  Location loc) {
+  return builder.create<arith::ConstantOp>(loc, builder.getI32Type(),
+                                           builder.getI32IntegerAttr(value));
+}
+
+inline arith::ConstantOp I32Const(int32_t value, ArrayRef<int64_t> shape,
+                                  OpBuilder &builder, Location loc) {
+  return builder.create<arith::ConstantOp>(
+      loc, DenseElementsAttr::get(
+               VectorType::get(shape, builder.getI32Type()),
+               builder.getIntegerAttr(builder.getI32Type(), value)));
+}
+
+std::optional<int64_t> getIntConst(Value v);
+
+// Recursively finds all non-trivial users of a given value, including those
+// accessed via `tpu.bitcast` or unary elementwise operations. However,
+// `tpu.bitcast` and unary element-wise operations are excluded from the
+// results.
+SmallVector<Operation *> getNontrivialTransitiveUsers(Value v);
+
+// Return a mod b for a, b > 0, but adjusted to return b when a mod b == 0 such
+// that the result is strictly positive.
+template <typename U, typename V>
+auto positiveMod(U a, V b) {
+  DCHECK_GT(a, 0);
+  DCHECK_GT(b, 0);
+  return (a - 1) % b + 1;
+}
+
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_

@@ -14,10 +14,9 @@
 
 from collections.abc import Callable, Hashable
 
-from jax import Array
-
 from jax._src import prng
 from jax._src import random
+from jax._src.typing import Array
 
 Shape = tuple[int, ...]
 

@@ -29,7 +29,7 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import xla
+from jax._src.interpreters import pxla
 from jax._src.tree_util import (tree_flatten, tree_leaves, tree_map,
                                 tree_structure, treedef_tuple, tree_unflatten,
                                 PyTreeDef)
@@ -105,7 +105,7 @@ class custom_transpose:
                                        (res_arg, out_types), {})                             )
     out_flat = custom_transpose_p.bind(flat_fun, *args_flat,
                                        transpose=transpose_wrapped,
-                                       out_types=out_types_flat,
+                                       out_types=tuple(out_types_flat),
                                        lin_tree=lin_tree,
                                        res_tree=res_tree,
                                        out_tree=out_tree)
@@ -177,15 +177,19 @@ class CustomTransposePrimitive(core.Primitive):
   # TODO(frostig,mattjj): consider keeping `call` as a named parameter
   # instead of following this "call primitive" convention.
   def get_bind_params(self, params):
-    assert 'call_jaxpr' in params
-    assert 'transpose_jaxpr_thunk' in params
-    new_params: dict[str, Any] = dict(params)
-    new_params['transpose'] = make_transpose_from_thunk(
-        new_params.pop('transpose_jaxpr_thunk'),
-        new_params['lin_tree'])
-    call_jaxpr: core.ClosedJaxpr = new_params.pop('call_jaxpr')
-    call = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
-                        debug_info=call_jaxpr.jaxpr.debug_info)
+    if 'call_jaxpr' in params:
+      assert 'transpose_jaxpr_thunk' in params
+      new_params: dict[str, Any] = dict(params)
+      new_params['transpose'] = make_transpose_from_thunk(
+          new_params.pop('transpose_jaxpr_thunk'),
+          new_params['lin_tree'])
+      call_jaxpr: core.ClosedJaxpr = new_params.pop('call_jaxpr')
+      call = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
+                          debug_info=call_jaxpr.jaxpr.debug_info)
+    else:
+      assert 'transpose' in params
+      new_params: dict[str, Any] = dict(params)
+      call = new_params.pop("call")
     return [call], new_params
 
 
@@ -213,7 +217,6 @@ def custom_transpose_transpose_rule(
   # Consider passing this information to the custom transpose rule?
 
   res_arg, lin_arg = tree_unflatten(call_in_tree, args)
-  del lin_arg
   assert all(not ad.is_undefined_primal(x) for x in tree_leaves(res_arg))
 
   cts = [ad_util.zeros_like_aval(ct.aval) if type(ct) is ad_util.Zero else ct
@@ -221,10 +224,17 @@ def custom_transpose_transpose_rule(
   ct_out = tree_unflatten(out_tree, cts)
   ct_lin = transpose.call_wrapped(res_arg, ct_out)
   check_transpose_rule_trees(transpose, lin_tree, tree_structure(ct_lin))
-  ct_lin_flat, _ = tree_flatten(
-      tree_broadcast(lin_tree, ct_lin, is_leaf=lambda x: x is None),
-      is_leaf=lambda x: x is None)
-  return [None] * len(tree_leaves(res_arg)) + ct_lin_flat
+  ct_lin = tree_broadcast(lin_tree, ct_lin, is_leaf=lambda x: x is None)
+
+  # When the transpose returns None, we treat that as a Zero, except when the
+  # input is also None. In that case, the cotangent corresponding to that input
+  # should be dropped.
+  zero = object()
+  ct_lin = tree_map(lambda l, ct: zero if ct is None and l is not None else ct,
+                    lin_arg, ct_lin, is_leaf=ad.is_undefined_primal)
+
+  ct_lin_flat, _ = tree_flatten(ct_lin)
+  return [None] * res_tree.num_leaves + [None if ct is zero else ct for ct in ct_lin_flat]
 
 
 def custom_transpose_lowering(*args, call_jaxpr, **params):
@@ -237,4 +247,4 @@ ad.primitive_transposes[custom_transpose_p] = custom_transpose_transpose_rule
 mlir.register_lowering(
     custom_transpose_p,
     mlir.lower_fun(custom_transpose_lowering, multiple_results=True))
-xla.register_initial_style_primitive(custom_transpose_p)
+pxla.register_initial_style_primitive(custom_transpose_p)

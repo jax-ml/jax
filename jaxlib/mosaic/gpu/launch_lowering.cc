@@ -54,6 +54,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Support/TypeID.h"
+#include "jaxlib/mosaic/pass_boilerplate.h"
 
 namespace mosaic {
 namespace gpu {
@@ -238,7 +239,7 @@ mlir::LogicalResult launchPreloadedKernel(mlir::func::FuncOp func,
     cluster = as_32bit(launch.getClusterSizeOperandValues());
   } else {
     cluster.x = cluster.y = cluster.z = builder.create<mlir::LLVM::ConstantOp>(
-      launch.getLoc(), builder.getI32Type(), builder.getI32IntegerAttr(0));
+        launch.getLoc(), builder.getI32Type(), builder.getI32IntegerAttr(0));
   }
   mlir::Value stream = launch.getAsyncObject();
   builder.create<mlir::func::CallOp>(
@@ -249,37 +250,13 @@ mlir::LogicalResult launchPreloadedKernel(mlir::func::FuncOp func,
   return mlir::success();
 }
 
-class GpuLaunchLoweringPass : public ::mlir::OperationPass<mlir::ModuleOp> {
+class GpuLaunchLoweringPass
+    : public jaxlib::mlir::Pass<GpuLaunchLoweringPass, mlir::ModuleOp> {
  public:
-  GpuLaunchLoweringPass()
-      : ::mlir::OperationPass<mlir::ModuleOp>(
-            ::mlir::TypeID::get<GpuLaunchLoweringPass>()) {}
-  GpuLaunchLoweringPass(const GpuLaunchLoweringPass &other)
-      : ::mlir::OperationPass<mlir::ModuleOp>(other) {}
-  GpuLaunchLoweringPass &operator=(const GpuLaunchLoweringPass &) = delete;
-  GpuLaunchLoweringPass(GpuLaunchLoweringPass &&) = delete;
-  GpuLaunchLoweringPass &operator=(GpuLaunchLoweringPass &&) = delete;
-  ~GpuLaunchLoweringPass() = default;
+  using jaxlib::mlir::Pass<GpuLaunchLoweringPass, mlir::ModuleOp>::Pass;
 
-  // Pass boilerplate...
-  static constexpr ::llvm::StringLiteral getArgumentName() {
-    return ::llvm::StringLiteral("gpu-launch-lowering");
-  }
-  ::llvm::StringRef getArgument() const override { return getArgumentName(); }
-  ::llvm::StringRef getDescription() const override { return ""; }
-  static constexpr ::llvm::StringLiteral getPassName() {
-    return ::llvm::StringLiteral("GpuLaunchLoweringPass");
-  }
-  ::llvm::StringRef getName() const override { return getPassName(); }
-  static bool classof(const ::mlir::Pass *pass) {
-    return pass->getTypeID() == ::mlir::TypeID::get<GpuLaunchLoweringPass>();
-  }
-  std::unique_ptr<::mlir::Pass> clonePass() const override {
-    return std::make_unique<GpuLaunchLoweringPass>(
-        *static_cast<const GpuLaunchLoweringPass *>(this));
-  }
-  void getDependentDialects(::mlir::DialectRegistry &registry) const override {}
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(GpuLaunchLoweringPass)
+  static constexpr ::llvm::StringLiteral kArgumentName = "gpu-launch-lowering";
+  static constexpr ::llvm::StringLiteral kPassName = "GpuLaunchLoweringPass";
 
   void runOnOperation() override {
     mlir::ModuleOp module = getOperation();
@@ -299,6 +276,7 @@ class GpuLaunchLoweringPass : public ::mlir::OperationPass<mlir::ModuleOp> {
         init_func->setAttr(mlir::LLVM::LLVMDialect::getEmitCWrapperAttrName(),
                            mlir::UnitAttr::get(func->getContext()));
         bool had_launch = false;
+        mlir::Operation *gpu_binary = nullptr;
         auto result = getOperation()->walk([&](mlir::gpu::LaunchFuncOp launch)
                                                -> mlir::WalkResult {
           if (had_launch) {
@@ -314,6 +292,7 @@ class GpuLaunchLoweringPass : public ::mlir::OperationPass<mlir::ModuleOp> {
                 << launch.getKernelModuleName();
             return mlir::WalkResult::interrupt();
           }
+          gpu_binary = binary.getOperation();
           if (binary.getObjects().size() != 1) {
             binary.emitOpError("Expected exactly one object in the binary.");
             return mlir::WalkResult::interrupt();
@@ -335,15 +314,16 @@ class GpuLaunchLoweringPass : public ::mlir::OperationPass<mlir::ModuleOp> {
                             launch.getDynamicSharedMemorySize(), cluster_shape);
 
           // Add a new function argument for the kernel handle.
-          func.insertArgument(0, ptr_ty,
-                              mlir::DictionaryAttr::get(func.getContext()),
-                              mlir::UnknownLoc::get(func.getContext()));
+          if (failed(func.insertArgument(
+                  0, ptr_ty, mlir::DictionaryAttr::get(func.getContext()),
+                  mlir::UnknownLoc::get(func.getContext())))) {
+            return mlir::WalkResult::interrupt();
+          }
           mlir::Value kernel_handle = func.getArgument(0);
           if (launchPreloadedKernel(func, launch, kernel_handle).failed()) {
             return mlir::WalkResult::interrupt();
           }
           launch.erase();
-
           // TODO(apaszke): Generate a destructor function.
           // builder.CreateCall(getModuleUnloadFn(), {moduleObject});
 
@@ -351,6 +331,13 @@ class GpuLaunchLoweringPass : public ::mlir::OperationPass<mlir::ModuleOp> {
         });
         if (!had_launch) {
           init_func.erase();
+        }
+        if (gpu_binary) {
+          // This deletion is load-bearing: the conversion of `gpu.binary` to
+          // LLVM is side-effecting, as it creates module constructors and
+          // destructors which create an assumption that symbols from the MLIR
+          // runtime are available.
+          gpu_binary->erase();
         }
         if (result == mlir::WalkResult::interrupt()) {
           signalPassFailure();

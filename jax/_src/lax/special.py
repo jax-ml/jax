@@ -19,7 +19,7 @@ LAX decompositions for special functions into their StableHLO counterparts.
 
 from enum import Enum
 import numpy as np
-from functools import partial
+from functools import partial, reduce as _reduce
 
 from jax._src import core
 from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
@@ -29,8 +29,8 @@ from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
                               reduce, select, sign, sqrt, square,
                               standard_naryop, standard_unop, sub,
                               _const, _dtype,
-                              _float, _nary_lower_hlo, _ones, _isnan, _reduce)
-from jax._src.lax.control_flow import while_loop
+                              _float, _nary_lower_hlo, _ones, _isnan)
+from jax._src.lax.control_flow.loops import while_loop
 
 from jax._src import dtypes
 from jax._src.interpreters import ad
@@ -38,9 +38,28 @@ from jax._src.interpreters import mlir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.typing import Array, ArrayLike
 
+# TODO(mattjj): this function sucks, delete it
+def _up_and_broadcast(doit):
+  def up_and_broadcast(*args):
+    broadcasted_shape = broadcast_shapes(*(a.shape for a in args))
+    args = [broadcast_in_dim(a, broadcasted_shape, list(range(a.ndim))) for a in args]
+
+    a_dtype = args[0].dtype
+    needs_upcast = a_dtype == dtypes.bfloat16 or a_dtype == np.float16
+    if needs_upcast:
+      args = [convert_element_type(a, np.float32) for a in args]
+      a_x_type = np.float32
+    else:
+      a_x_type = a_dtype
+    result = doit(*args, dtype=a_x_type)
+    if needs_upcast:
+      result = convert_element_type(result, a_dtype)
+    return result
+  return up_and_broadcast
+
 def betainc(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise regularized incomplete beta integral."""
-  a, b, x = core.standard_insert_pbroadcast(a, b, x)
+  a, b, x = core.standard_insert_pvary(a, b, x)
   return regularized_incomplete_beta_p.bind(a, b, x)
 
 def lgamma(x: ArrayLike) -> Array:
@@ -53,32 +72,33 @@ def digamma(x: ArrayLike) -> Array:
 
 def polygamma(m: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise polygamma: :math:`\psi^{(m)}(x)`."""
-  m, x = core.standard_insert_pbroadcast(m, x)
+  m, x = core.standard_insert_pvary(m, x)
   return polygamma_p.bind(m, x)
 
 def igamma(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise regularized incomplete gamma function."""
-  a, x = core.standard_insert_pbroadcast(a, x)
+  a, x = core.standard_insert_pvary(a, x)
   return igamma_p.bind(a, x)
 
 def igammac(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise complementary regularized incomplete gamma function."""
-  a, x = core.standard_insert_pbroadcast(a, x)
+  a, x = core.standard_insert_pvary(a, x)
   return igammac_p.bind(a, x)
 
 def igamma_grad_a(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise derivative of the regularized incomplete gamma function."""
-  a, x = core.standard_insert_pbroadcast(a, x)
+  a, x = core.standard_insert_pvary(a, x)
   return igamma_grad_a_p.bind(a, x)
 
-def random_gamma_grad(a: ArrayLike, x: ArrayLike) -> Array:
+@_up_and_broadcast
+def random_gamma_grad(a: ArrayLike, x: ArrayLike, *, dtype) -> Array:
   r"""Elementwise derivative of samples from `Gamma(a, 1)`."""
-  a, x = core.standard_insert_pbroadcast(a, x)
-  return random_gamma_grad_p.bind(a, x)
+  a, x = core.standard_insert_pvary(a, x)
+  return random_gamma_grad_impl(a, x, dtype=dtype)
 
 def zeta(x: ArrayLike, q: ArrayLike) -> Array:
   r"""Elementwise Hurwitz zeta function: :math:`\zeta(x, q)`"""
-  x, q = core.standard_insert_pbroadcast(x, q)
+  x, q = core.standard_insert_pvary(x, q)
   return zeta_p.bind(x, q)
 
 def bessel_i0e(x: ArrayLike) -> Array:
@@ -531,24 +551,6 @@ def random_gamma_grad_impl(a, x, *, dtype):
                   full_like(a, float('nan')), output)
   return output
 
-def _up_and_broadcast(doit):
-  def up_and_broadcast(*args):
-    broadcasted_shape = broadcast_shapes(*(a.shape for a in args))
-    args = [broadcast_in_dim(a, broadcasted_shape, list(range(a.ndim))) for a in args]
-
-    a_dtype = args[0].dtype
-    needs_upcast = a_dtype == dtypes.bfloat16 or a_dtype == np.float16
-    if needs_upcast:
-      args = [convert_element_type(a, np.float32) for a in args]
-      a_x_type = np.float32
-    else:
-      a_x_type = a_dtype
-    result = doit(*args, dtype=a_x_type)
-    if needs_upcast:
-      result = convert_element_type(result, a_dtype)
-    return result
-  return up_and_broadcast
-
 
 def evaluate_chebyshev_polynomial(x, coefficients):
   b0 = full_like(x,0)
@@ -693,11 +695,6 @@ mlir.register_lowering(igammac_p,
                                       multiple_results=False))
 
 ad.defjvp(igammac_p, igammac_grada, igammac_gradx)
-
-random_gamma_grad_p = standard_naryop([_float, _float], 'random_gamma_grad')
-mlir.register_lowering(random_gamma_grad_p,
-                       mlir.lower_fun(_up_and_broadcast(random_gamma_grad_impl),
-                                      multiple_results=False))
 
 zeta_p = standard_naryop([_float, _float], 'zeta')
 mlir.register_lowering(zeta_p, partial(_nary_lower_hlo, chlo.zeta))

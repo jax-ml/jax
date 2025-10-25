@@ -21,7 +21,7 @@ kernelspec:
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/notebooks/Distributed_arrays_and_automatic_parallelization.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/jax-ml/jax/blob/main/docs/notebooks/Distributed_arrays_and_automatic_parallelization.ipynb)
 
-This tutorial discusses parallelism via `jax.Array`, the unified array object model available in JAX v0.4.1 and newer.
+This tutorial discusses parallelism via `jax.Array`, the unified array object model available in JAX v0.4.1 and newer. See {doc}`../the-training-cookbook` for a real-world machine learning training example that uses this API.
 
 ```{code-cell}
 :id: FNxScTfq3vGF
@@ -49,7 +49,7 @@ if len(jax.local_devices()) < 8:
 
 ## Intro and a quick example
 
-By reading this tutorial notebook, you'll learn about `jax.Array`, a unified 
+By reading this tutorial notebook, you'll learn about `jax.Array`, a unified
 datatype for representing arrays, even with physical storage spanning multiple
 devices. You'll also learn about how using `jax.Array`s together with `jax.jit`
 can provide automatic compiler-based parallelization.
@@ -427,7 +427,7 @@ jax.debug.visualize_array_sharding(w_copy)
 
 +++ {"id": "3qfPjJdhgerc"}
 
-So computation follows data placement: when we explicitly shard data with `jax.device_put`, and apply functions to that data, the compiler attempts to parallelize the computation and decide the output sharding. This policy for sharded data is a generalization of [JAX's policy of following explicit device placement](https://jax.readthedocs.io/en/latest/faq.html#controlling-data-and-computation-placement-on-devices).
+So computation follows data placement: when we explicitly shard data with `jax.device_put`, and apply functions to that data, the compiler attempts to parallelize the computation and decide the output sharding. This policy for sharded data is a generalization of [JAX's policy of following explicit device placement](https://docs.jax.dev/en/latest/faq.html#controlling-data-and-computation-placement-on-devices).
 
 +++ {"id": "QRB95LaWuT80"}
 
@@ -484,7 +484,7 @@ except ValueError as e: print_exception(e)
 
 +++ {"id": "6ZYcK8eXrn0p"}
 
-We say arrays that have been explicitly placed or sharded with `jax.device_put` are _committed_ to their device(s), and so won't be automatically moved. See the [device placement FAQ](https://jax.readthedocs.io/en/latest/faq.html#controlling-data-and-computation-placement-on-devices) for more information.
+We say arrays that have been explicitly placed or sharded with `jax.device_put` are _committed_ to their device(s), and so won't be automatically moved. See the [device placement FAQ](https://docs.jax.dev/en/latest/faq.html#controlling-data-and-computation-placement-on-devices) for more information.
 
 When arrays are _not_ explicitly placed or sharded with `jax.device_put`, they are placed _uncommitted_ on the default device.
 Unlike committed arrays, uncommitted arrays can be moved and resharded automatically: that is, uncommitted arrays can be arguments to a computation even if other arguments are explicitly placed on different devices.
@@ -845,121 +845,3 @@ outputId: 479c4d81-cb0b-40a5-89ba-394c10dc3297
 ---
 %timeit -n 10 -r 10 gradfun(params, batch)[0][0].block_until_ready()
 ```
-
-+++ {"id": "3diqi5VRBy6S"}
-
-## Sharp bits
-
-+++ {"id": "OTfoXNnxFYDJ"}
-
-### Generating random numbers
-
-JAX comes with a functional, deterministic [random number generator](https://jax.readthedocs.io/en/latest/jep/263-prng.html). It underlies the various sampling functions in the [`jax.random` module](https://jax.readthedocs.io/en/latest/jax.random.html), such as `jax.random.uniform`.
-
-JAX's random numbers are produced by a counter-based PRNG, so in principle, random number generation should be a pure map over counter values. A pure map is a trivially partitionable operation in principle. It should require no cross-device communication, nor any redundant computation across devices.
-
-However, the existing stable RNG implementation is not automatically partitionable, for historical reasons.
-
-+++ {"id": "ht_zYFVXNrjN"}
-
-Consider the following example, where a function draws random uniform numbers and adds them to the input, elementwise:
-
-```{code-cell}
-:id: kwS-aQE_3vGX
-
-@jax.jit
-def f(key, x):
-  numbers = jax.random.uniform(key, x.shape)
-  return x + numbers
-
-key = jax.random.key(42)
-mesh = Mesh(jax.devices(), 'x')
-x_sharding = NamedSharding(mesh, P('x'))
-x = jax.device_put(jnp.arange(24), x_sharding)
-```
-
-+++ {"id": "ZgSA9x9NLMaP"}
-
-On a partitioned input, the function `f` produces output that is also partitioned:
-
-```{code-cell}
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 67
-id: Oi97rpLz3vGY
-outputId: 9dd63254-a483-4847-c0f5-5a4367bf08e9
----
-jax.debug.visualize_array_sharding(f(key, x))
-```
-
-+++ {"id": "WnjlWDUYLkp6"}
-
-But if we inspect the compiled computation for `f` on this partitioned input, we see that it does involve some communication:
-
-```{code-cell}
----
-colab:
-  base_uri: https://localhost:8080/
-id: 64wIZuSJ3vGY
-outputId: fa166d45-ca9c-457a-be84-bcc9236d0730
----
-f_exe = f.lower(key, x).compile()
-print('Communicating?', 'collective-permute' in f_exe.as_text())
-```
-
-+++ {"id": "AXp9i8fbL8DD"}
-
-One way to work around this is to configure JAX with the experimental upgrade flag `jax_threefry_partitionable`. With the flag on, the "collective permute" operation is now gone from the compiled computation:
-
-```{code-cell}
----
-colab:
-  base_uri: https://localhost:8080/
-id: 1I7bqxA63vGY
-outputId: 756e0a36-ff14-438f-bbd4-3ef03f97a47b
----
-jax.config.update('jax_threefry_partitionable', True)
-f_exe = f.lower(key, x).compile()
-print('Communicating?', 'collective-permute' in f_exe.as_text())
-```
-
-+++ {"id": "WV8ZccM5SXOU"}
-
-The output is still partitioned:
-
-```{code-cell}
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 67
-id: zHPJzdn23vGY
-outputId: 3332de0f-4827-4f0b-b9ef-69249b7c6bc6
----
-jax.debug.visualize_array_sharding(f(key, x))
-```
-
-+++ {"id": "kaK--hPmSPpV"}
-
-One caveat to the `jax_threefry_partitionable` option, however, is that _the random values produced may be different than without the flag set_, even though they were generated by the same random key:
-
-```{code-cell}
----
-colab:
-  base_uri: https://localhost:8080/
-id: nBUHBBal3vGY
-outputId: 4b9be948-ccab-4a31-a06f-37ec9c7b5235
----
-jax.config.update('jax_threefry_partitionable', False)
-print('Stable:')
-print(f(key, x))
-print()
-
-jax.config.update('jax_threefry_partitionable', True)
-print('Partitionable:')
-print(f(key, x))
-```
-
-+++ {"id": "8BDPqgOrTMfK"}
-
-In `jax_threefry_partitionable` mode, the JAX PRNG remains deterministic, but its implementation is new (and under development). The random values generated for a given key will be the same at a given JAX version (or a given commit on the `main` branch), but may vary across releases.

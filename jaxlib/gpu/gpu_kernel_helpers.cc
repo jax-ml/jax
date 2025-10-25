@@ -144,18 +144,12 @@ std::string ErrorString(cufftResult status) {
       return "cuFFT invalid size";
     case CUFFT_UNALIGNED_DATA:
       return "cuFFT unaligned data";
-    case CUFFT_INCOMPLETE_PARAMETER_LIST:
-      return "cuFFT incomplete parameter list";
     case CUFFT_INVALID_DEVICE:
       return "cuFFT invalid device";
-    case CUFFT_PARSE_ERROR:
-      return "cuFFT parse error";
     case CUFFT_NO_WORKSPACE:
       return "cuFFT no workspace";
     case CUFFT_NOT_IMPLEMENTED:
       return "cuFFT not implemented";
-    case CUFFT_LICENSE_ERROR:
-      return "cuFFT license error";
     case CUFFT_NOT_SUPPORTED:
       return "cuFFT not supported";
     default:

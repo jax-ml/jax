@@ -432,6 +432,13 @@ class EinsumTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=1E-4)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=1E-4)
 
+  def test_einsum_unsupported_optimization(self):
+    rng = jtu.rand_default(self.rng())
+    arrs = (rng(shape, 'float32') for shape in [(2, 3), (2, 4), (2, 5)])
+    msg = "jax.numpy.einsum does not support simultaneous contraction of 3 or more operands"
+    with self.assertRaisesRegex(NotImplementedError, msg):
+      jnp.einsum('ij,ik,il->jkl', *arrs, optimize=[(0, 1, 2)])
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

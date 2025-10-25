@@ -18,10 +18,10 @@ limitations under the License.
 
 #include "nanobind/nanobind.h"
 
-namespace xla {
+namespace jax {
 
 void BuildGpuPluginExtension(nanobind::module_& m);
 
-}  // namespace xla
+}  // namespace jax
 
 #endif  // JAXLIB_GPU_GPU_PLUGIN_EXTENSION_H_

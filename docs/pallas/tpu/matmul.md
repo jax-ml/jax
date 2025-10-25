@@ -167,7 +167,7 @@ def matmul(
                 pl.BlockSpec((bk, bn), lambda i, j, k: (k, j))],
       out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
       grid=(m // bm, n // bn, k // bk),
-      compiler_params=pltpu.TPUCompilerParams(
+      compiler_params=pltpu.CompilerParams(
           dimension_semantics=("parallel", "parallel", "arbitrary")),
   )(x, y)
 ```
@@ -321,7 +321,7 @@ def matmul(
         grid=(m // bm, n // bn, k // bk),
       ),
       out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
-      compiler_params=pltpu.TPUCompilerParams(
+      compiler_params=pltpu.CompilerParams(
           dimension_semantics=("parallel", "parallel", "arbitrary")),
   )(x, y)
 ```
@@ -342,7 +342,14 @@ np.testing.assert_array_equal(x @ y, matmul(x, y))
 
 Our above analysis about FLOPs vs memory usage applies at a coarse scale i.e. when we are looking at the the size of a the total matrix multiplication. However, remember that in practice, we are pipelining the execution of a blocked matrix multiplication, meaning we have a loop in which we are doing matrix multiplication with smaller blocks.
 
-This means that we actually care about the FLOPs vs memory bandwidth usage of each individual instance of the kernel, not the global FLOPs vs memory bandwidth usage. Therefore, the block sizes `bm`, `bk`, `bn` are extremely important for performance. Even if we have the largest matrices in the world, if we pick very small `bm`, `bk`, and `bn`, we will be memory bound because each time we invoke the kernel we will have too few FLOPs to hide the memory transfers happening in the background.
+This means that we actually care about the FLOPs vs memory bandwidth usage of each individual instance of the kernel, not the global FLOPs vs memory bandwidth usage.
+
+In addition, when tiling the matmul operation, the same values could be read multiple times from memory.
+Specifically the memory bandwidth for the first operand of the kernel is `(bm * bk)`, which needs to be multiplied by the grid dimensions, that is `(bm * bk) * m // bm * n // bn * k // bk = m * k * n // bn`.
+Similarly for the second operand, yielding a total bandwidth usage `(m * k * n // bn + k * n * m // bm + m * n) * element_size`.
+
+Therefore, the block sizes `bm`, `bk`, `bn` are extremely important for performance.
+ Even if we have the largest matrices in the world, if we pick very small `bm`, `bk`, and `bn`, we will be memory bound because each time we invoke the kernel we will have too few FLOPs to hide the memory transfers happening in the background.
 
 The intuition should therefore be: to be compute bound, make the blocks as big as possible! There are two main constraints:
 
@@ -489,7 +496,7 @@ def matmul(
         grid=(m // bm, n // bn, k // bk),
       ),
       out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
-      compiler_params=pltpu.TPUCompilerParams(
+      compiler_params=pltpu.CompilerParams(
           dimension_semantics=("parallel", "parallel", "arbitrary")),
   )(x, y)
 ```
@@ -613,7 +620,7 @@ def matmul(
           grid=(m // bm, n // bn, k // bk),
       ),
       out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
-      compiler_params=pltpu.TPUCompilerParams(
+      compiler_params=pltpu.CompilerParams(
           dimension_semantics=("parallel", "parallel", "arbitrary")),
   )(x, y)
 ```

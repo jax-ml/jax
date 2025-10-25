@@ -13,6 +13,7 @@
 # limitations under the License.
 
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//jaxlib:jax.bzl", "if_windows", "pytype_strict_library")
 
 licenses(["notice"])
@@ -35,7 +36,9 @@ pytype_strict_library(
         "//jaxlib/mlir:ir",
     ] + if_windows(
         [],
-        ["//jaxlib/mlir/_mlir_libs:_triton_ext"],
+        [
+            "//jaxlib/mlir/_mlir_libs:_triton_ext",
+        ],
     ),
 )
 

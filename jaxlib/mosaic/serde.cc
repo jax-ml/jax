@@ -27,6 +27,7 @@ limitations under the License.
 #include "mlir/IR/Visitors.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Support/WalkResult.h"
 
 namespace jaxlib::mosaic {
 
@@ -93,11 +94,15 @@ mlir::LogicalResult RunSerde(
     module->removeAttr(options.version_attr_name);
   }
   std::string storage;
-  auto result = module.walk([&](mlir::Operation* op) {
+  // Explicitly use a post-order walk to allow for deleting operations on the
+  // fly.
+  auto result = module.walk<mlir::WalkOrder::PostOrder>([&](mlir::Operation*
+                                                                op) {
     if (mlir::isa<mlir::ModuleOp>(op)) {  // Don't mangle the ModuleOp itself.
       return mlir::WalkResult::advance();
     }
     std::optional<mlir::OperationName> new_name;
+    bool was_erased = false;
     if (serialize) {
       auto new_name_str = mangle(op->getName().getStringRef(),
                                  options.dialect_prefix, &storage);
@@ -119,28 +124,39 @@ mlir::LogicalResult RunSerde(
       // Upgrade the op to the current version, if needed.
       if (const auto rule = upgrade_rules.find(new_name->getStringRef());
           rule != upgrade_rules.end()) {
-        if (rule->second(op, version).failed()) {
+        if (rule->second(op, version, was_erased).failed()) {
           return mlir::WalkResult::interrupt();
         }
       }
     }
+
+    // In this case, the op is no longer accessible, and can't be processed
+    // further.
+    if (was_erased) {
+      return mlir::WalkResult::advance();
+    }
+
     auto new_op = mlir::Operation::create(
         op->getLoc(), *new_name, op->getResultTypes(), op->getOperands(),
         op->getAttrs(), nullptr, op->getSuccessors(), op->getRegions());
+    op->getBlock()->getOperations().insertAfter(mlir::Block::iterator(op),
+                                                new_op);
     // Downgrade the op to the target version, if needed.
+    bool downgrade_failed = false;
     if (serialize && version != serialize_version) {
       if (const auto rule = downgrade_rules.find(op->getName().getStringRef());
           rule != downgrade_rules.end()) {
-        if (rule->second(new_op, serialize_version).failed()) {
-          return mlir::WalkResult::interrupt();
-        }
+        downgrade_failed =
+            rule->second(new_op, serialize_version, was_erased).failed();
       }
     }
-    op->getBlock()->getOperations().insertAfter(mlir::Block::iterator(op),
-                                                new_op);
+    if (was_erased) {
+      return mlir::WalkResult::advance();
+    }
     op->replaceAllUsesWith(new_op->getResults());
     op->erase();
-    return mlir::WalkResult::advance();
+    return downgrade_failed ? mlir::WalkResult::interrupt()
+                            : mlir::WalkResult::advance();
   });
   return result.wasInterrupted() ? mlir::failure() : mlir::success();
 }

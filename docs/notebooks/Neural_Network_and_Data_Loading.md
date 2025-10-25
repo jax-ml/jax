@@ -7,7 +7,7 @@ jupytext:
     format_version: 0.13
     jupytext_version: 1.16.4
 kernelspec:
-  display_name: Python 3
+  display_name: Python 3 (ipykernel)
   language: python
   name: python3
 ---
@@ -192,41 +192,28 @@ JAX is laser-focused on program transformations and accelerator-backed NumPy, so
 
 import numpy as np
 from jax.tree_util import tree_map
-from torch.utils import data
+from torch.utils.data import DataLoader, default_collate
 from torchvision.datasets import MNIST
 
 def numpy_collate(batch):
-  return tree_map(np.asarray, data.default_collate(batch))
+  """
+  Collate function specifies how to combine a list of data samples into a batch.
+  default_collate creates pytorch tensors, then tree_map converts them into numpy arrays.
+  """
+  return tree_map(np.asarray, default_collate(batch))
 
-class NumpyLoader(data.DataLoader):
-  def __init__(self, dataset, batch_size=1,
-                shuffle=False, sampler=None,
-                batch_sampler=None, num_workers=0,
-                pin_memory=False, drop_last=False,
-                timeout=0, worker_init_fn=None):
-    super(self.__class__, self).__init__(dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        sampler=sampler,
-        batch_sampler=batch_sampler,
-        num_workers=num_workers,
-        collate_fn=numpy_collate,
-        pin_memory=pin_memory,
-        drop_last=drop_last,
-        timeout=timeout,
-        worker_init_fn=worker_init_fn)
-
-class FlattenAndCast(object):
-  def __call__(self, pic):
-    return np.ravel(np.array(pic, dtype=jnp.float32))
+def flatten_and_cast(pic):
+  """Convert PIL image to flat (1-dimensional) numpy array."""
+  return np.ravel(np.array(pic, dtype=jnp.float32))
 ```
 
 ```{code-cell} ipython3
 :id: l314jsfP4TN4
 
 # Define our dataset, using torch datasets
-mnist_dataset = MNIST('/tmp/mnist/', download=True, transform=FlattenAndCast())
-training_generator = NumpyLoader(mnist_dataset, batch_size=batch_size, num_workers=0)
+mnist_dataset = MNIST('/tmp/mnist/', download=True, transform=flatten_and_cast)
+# Create pytorch data loader with custom collate function
+training_generator = DataLoader(mnist_dataset, batch_size=batch_size, collate_fn=numpy_collate)
 ```
 
 ```{code-cell} ipython3

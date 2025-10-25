@@ -12,28 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa: F401
-from jax._src.xla_bridge import (
-  get_backend as _deprecated_get_backend,
-)
+from jax._src import deprecations as _deps
 
-from jax._src.compiler import (
-  get_compile_options as get_compile_options,
+_deps.warn(
+    'jax-lib-module',
+    (
+        'jax.lib.xla_bridge module will be removed in JAX v0.9.0;'
+        ' all its APIs were deprecated and removed by JAX v0.8.0.'
+    ),
+    stacklevel=4
 )
 
 _deprecations = {
-  # Added July 31, 2024
-  "get_backend": (
-    "jax.lib.xla_bridge.get_backend is deprecated; use jax.extend.backend.get_backend.",
-    _deprecated_get_backend
-  ),
+    # Finalized in JAX v0.8.0; remove these messages in v0.9.0.
+    "get_backend": (
+        (
+            "jax.lib.xla_bridge.get_backend is deprecated and will be removed"
+            " in JAX v0.8.0; use jax.extend.backend.get_backend, and please"
+            " note that you must `import jax.extend` explicitly."
+        ),
+        None,
+    ),
+    "get_compile_options": (
+        (
+            "jax.lib.xla_bridge.get_compile_options is deprecated in JAX v0.7.0"
+            " and will be removed in JAX v0.8.0. Use"
+            " jax.extend.backend.get_compile_options, and please note that you"
+            " must `import jax.extend` explicitly."
+        ),
+        None,
+    ),
 }
 
-import typing as _typing
-if _typing.TYPE_CHECKING:
-  from jax._src.xla_bridge import get_backend as get_backend
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing
+__getattr__ = _deps.deprecation_getattr(__name__, _deprecations)
+del _deps

@@ -20,7 +20,7 @@ kernelspec:
 JAX transformations like {func}`~jax.jit`, {func}`~jax.vmap`, {func}`~jax.grad`, require the functions
 they wrap to be pure: that is, functions whose outputs depend *solely* on the inputs, and which have
 no side effects such as updating of global state.
-You can find a discussion of this in [JAX sharp bits: Pure functions](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions).
+You can find a discussion of this in [JAX sharp bits: Pure functions](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions).
 
 This constraint can pose some challenges in the context of machine learning, where state may exist in
 many forms. For example:
@@ -235,4 +235,4 @@ Handling parameters manually seems fine if you're dealing with two parameters, b
 
 2) Are we supposed to pipe all these things around manually?
 
-The details can be tricky to handle, but there are examples of libraries that take care of this for you. See [JAX Neural Network Libraries](https://github.com/jax-ml/jax#neural-network-libraries) for some examples.
+The details can be tricky to handle, but there are examples of libraries that take care of this for you. See [JAX Ecosystem Libraries](https://docs.jax.dev/en/latest/#ecosystem) for some examples.

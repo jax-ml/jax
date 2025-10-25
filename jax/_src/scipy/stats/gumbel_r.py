@@ -1,0 +1,257 @@
+# Copyright 2025 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import numpy as np
+
+from jax._src import lax
+from jax._src import numpy as jnp
+from jax._src.lax.lax import _const as _lax_const
+from jax._src.numpy.util import promote_args_inexact
+from jax._src.typing import Array, ArrayLike
+from jax._src.scipy.special import xlogy
+from jax._src.nn.functions import log1mexp
+
+
+def logpdf(x: ArrayLike,
+           loc: ArrayLike = 0,
+           scale: ArrayLike = 1) -> Array:
+  r"""
+  Gumbel Distribution (Right Skewed) log probability distribution function.
+
+  JAX implementation of :obj:`scipy.stats.gumbel_l` ``logpdf``.
+
+  .. math::
+
+      f_{pdf}(x; \mu, \beta) = \frac{1}{\beta} \exp\left( -\frac{x - \mu}{\beta} - \exp\left( -\frac{x - \mu}{\beta} \right) \right)
+
+  Args:
+    x: ArrayLike, value at which to evaluate log(pdf)
+    loc: ArrayLike, distribution offset (:math:`\mu`) (defaulted to 0)
+    scale: ArrayLike, distribution scaling (:math:`\beta`) (defaulted to 1)
+
+  Returns:
+    array of logpdf values
+
+  See Also:
+    - :func:`jax.scipy.stats.gumbel_r.pdf`
+    - :func:`jax.scipy.stats.gumbel_r.logcdf`
+    - :func:`jax.scipy.stats.gumbel_r.cdf`
+    - :func:`jax.scipy.stats.gumbel_r.ppf`
+    - :func:`jax.scipy.stats.gumbel_r.sf`
+    - :func:`jax.scipy.stats.gumbel_r.logsf`
+  """
+
+  x, loc, scale = promote_args_inexact("gumbel_r.logpdf", x, loc, scale)
+  ok = lax.gt(scale, _lax_const(scale, 0))
+  z = lax.div(lax.sub(x, loc), scale)
+  # logpdf = -log(beta) - (z + exp(-z))
+  neg_log_scale = xlogy(-1, scale)
+  t2 = lax.neg(lax.add(z, lax.exp(lax.neg(z))))
+  log_pdf = lax.add(neg_log_scale, t2)
+  return jnp.where(ok, log_pdf, np.nan)
+
+
+def pdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  r"""
+  Gumbel Distribution (Right Skewed) probability distribution function.
+
+  JAX implementation of :obj:`scipy.stats.gumbel_r` ``pdf``.
+
+  .. math::
+
+      f_{pdf}(x; \mu, \beta) = \frac{1}{\beta} \exp\left( -\frac{x - \mu}{\beta} - \exp\left( -\frac{x - \mu}{\beta} \right) \right)
+
+  Args:
+    x: ArrayLike, value at which to evaluate pdf
+    loc: ArrayLike, distribution offset (:math:`\mu`) (defaulted to 0)
+    scale: ArrayLike, distribution scaling (:math:`\beta`) (defaulted to 1)
+
+  Returns:
+    array of pdf values
+
+  See Also:
+    - :func:`jax.scipy.stats.gumbel_r.logpdf`
+    - :func:`jax.scipy.stats.gumbel_r.logcdf`
+    - :func:`jax.scipy.stats.gumbel_r.cdf`
+    - :func:`jax.scipy.stats.gumbel_r.ppf`
+    - :func:`jax.scipy.stats.gumbel_r.sf`
+    - :func:`jax.scipy.stats.gumbel_r.logsf`
+  """
+  return lax.exp(logpdf(x, loc, scale))
+
+
+def logcdf(x: ArrayLike,
+           loc: ArrayLike = 0,
+           scale: ArrayLike = 1) -> Array:
+  r"""
+  Gumbel Distribution (Right Skewed) log cumulative density function.
+
+  JAX implementation of :obj:`scipy.stats.gumbel_r` ``logcdf``.
+
+  .. math::
+
+      f_{cdf}(x; \mu, \beta) = \exp\left( -\exp\left( -\frac{x - \mu}{\beta} \right) \right)
+
+  Args:
+    x: ArrayLike, value at which to evaluate log(cdf)
+    loc: ArrayLike, distribution offset (:math:`\mu`) (defaulted to 0)
+    scale: ArrayLike, distribution scaling (:math:`\beta`) (defaulted to 1)
+
+  Returns:
+    array of logcdf values
+
+  See Also:
+    - :func:`jax.scipy.stats.gumbel_r.logpdf`
+    - :func:`jax.scipy.stats.gumbel_r.pdf`
+    - :func:`jax.scipy.stats.gumbel_r.cdf`
+    - :func:`jax.scipy.stats.gumbel_r.ppf`
+    - :func:`jax.scipy.stats.gumbel_r.sf`
+    - :func:`jax.scipy.stats.gumbel_r.logsf`
+  """
+  x, loc, scale = promote_args_inexact("gumbel_r.logcdf", x, loc, scale)
+  ok = lax.gt(scale, _lax_const(scale, 0))
+  z = lax.div(lax.sub(x, loc), scale)
+  # log cdf = -exp(-z)
+  log_cdf = lax.neg(lax.exp(lax.neg(z)))
+  return jnp.where(ok, log_cdf, np.nan)
+
+
+def cdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  r"""
+  Gumbel Distribution (Right Skewed) cumulative density function.
+
+  JAX implementation of :obj:`scipy.stats.gumbel_r` ``cdf``.
+
+  .. math::
+
+      f_{cdf}(x; \mu, \beta) = \exp\left( -\exp\left( -\frac{x - \mu}{\beta} \right) \right)
+
+  Args:
+    x: ArrayLike, value at which to evaluate cdf
+    loc: ArrayLike, distribution offset (:math:`\mu`) (defaulted to 0)
+    scale: ArrayLike, distribution scaling (:math:`\beta`) (defaulted to 1)
+
+  Returns:
+    array of cdf values
+
+  See Also:
+    - :func:`jax.scipy.stats.gumbel_r.logpdf`
+    - :func:`jax.scipy.stats.gumbel_r.pdf`
+    - :func:`jax.scipy.stats.gumbel_r.logcdf`
+    - :func:`jax.scipy.stats.gumbel_r.ppf`
+    - :func:`jax.scipy.stats.gumbel_r.sf`
+    - :func:`jax.scipy.stats.gumbel_r.logsf`
+  """
+  return lax.exp(logcdf(x, loc, scale))
+
+
+def ppf(p: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  r"""
+  Gumbel Distribution (Right Skewed) percent point function.
+
+  JAX implementation of :obj:`scipy.stats.gumbel_r` ``ppf``.
+
+  .. math::
+
+      F(p; \mu, \beta) = \mu - \beta \log\left( -\log(p) \right)
+
+  Args:
+    p: ArrayLike, probability value (quantile) at which to evaluate ppf
+    loc: ArrayLike, distribution offset (:math:`\mu`) (defaulted to 0)
+    scale: ArrayLike, distribution scaling (:math:`\beta`) (defaulted to 1)
+
+  Returns:
+    array of ppf values
+
+  See Also:
+    - :func:`jax.scipy.stats.gumbel_r.logpdf`
+    - :func:`jax.scipy.stats.gumbel_r.pdf`
+    - :func:`jax.scipy.stats.gumbel_r.logcdf`
+    - :func:`jax.scipy.stats.gumbel_r.cdf`
+    - :func:`jax.scipy.stats.gumbel_r.sf`
+    - :func:`jax.scipy.stats.gumbel_r.logsf`
+  """
+  p, loc, scale = promote_args_inexact("gumbel_r.ppf", p, loc, scale)
+  # 0 < p < 1
+  ok = lax.bitwise_and(lax.gt(p, _lax_const(p, 0)),
+                       lax.lt(p, _lax_const(p, 1)))
+
+  # quantile = loc - (scale)*log(-log(p))
+  t1 = xlogy(-1, p)
+  t = lax.mul(scale, lax.log(t1))
+  quantile = lax.sub(loc, t)
+  return jnp.where(ok, quantile, np.nan)
+
+
+def sf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  r"""
+  Gumbel Distribution (Right Skewed) survival function.
+
+  JAX implementation of :obj:`scipy.stats.gumbel_r` ``sf``.
+
+  .. math::
+
+      f_{sf}(x; \mu, \beta) = 1 - F_{cdf}(x; \mu, \beta)
+
+  Args:
+    x: ArrayLike, value at which to evaluate survival function
+    loc: ArrayLike, distribution offset (:math:`\mu`) (defaulted to 0)
+    scale: ArrayLike, distribution scaling (:math:`\beta`) (defaulted to 1)
+
+  Returns:
+    array of sf values (1 - cdf)
+
+  See Also:
+    - :func:`jax.scipy.stats.gumbel_r.logpdf`
+    - :func:`jax.scipy.stats.gumbel_r.pdf`
+    - :func:`jax.scipy.stats.gumbel_r.logcdf`
+    - :func:`jax.scipy.stats.gumbel_r.cdf`
+    - :func:`jax.scipy.stats.gumbel_r.logsf`
+  """
+  x, loc, scale = promote_args_inexact("gumbel_r.sf", x, loc, scale)
+  ok = lax.gt(scale, _lax_const(scale, 0))
+  # sf = 1 - exp(-exp(-z))
+  neg_z = lax.div(lax.sub(loc, x), scale)
+  t1 = lax.exp(lax.neg(lax.exp(neg_z)))
+  _sf = lax.sub(_lax_const(x, 1), t1)
+  return jnp.where(ok, _sf, np.nan)
+
+
+def logsf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  r"""
+  Gumbel Distribution (Right Skewed) log survival function.
+
+  JAX implementation of :obj:`scipy.stats.gumbel_r` ``logsf``.
+
+  Args:
+    x: ArrayLike, value at which to evaluate log survival function
+    loc: ArrayLike, distribution offset (:math:`\mu`) (defaulted to 0)
+    scale: ArrayLike, distribution scaling (:math:`\beta`) (defaulted to 1)
+
+  Returns:
+    array of logsf values
+
+  See Also:
+    - :func:`jax.scipy.stats.gumbel_r.logpdf`
+    - :func:`jax.scipy.stats.gumbel_r.pdf`
+    - :func:`jax.scipy.stats.gumbel_r.logcdf`
+    - :func:`jax.scipy.stats.gumbel_r.cdf`
+    - :func:`jax.scipy.stats.gumbel_r.sf`
+  """
+  x, loc, scale = promote_args_inexact("gumbel_r.logsf", x, loc, scale)
+  ok = lax.gt(scale, _lax_const(scale, 0))
+  # logsf = log(1 - exp(-exp(-z)))
+  neg_z = lax.div(lax.sub(loc, x), scale)
+  log_sf = log1mexp(lax.exp(neg_z))
+  return jnp.where(ok, log_sf, np.nan)

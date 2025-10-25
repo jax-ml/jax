@@ -23,15 +23,11 @@ import tempfile
 # pytype: disable=import-error
 from jax._src import profiler as jax_profiler
 try:
-  from tensorflow.python.profiler import profiler_v2 as profiler
-  from tensorflow.python.profiler import profiler_client
-except ImportError:
-  raise ImportError("This script requires `tensorflow` to be installed.")
-try:
-  from tensorboard_plugin_profile.convert import raw_to_tool_data as convert
+  from xprof.convert import _pywrap_profiler_plugin
+  from xprof.convert import raw_to_tool_data as convert
 except ImportError:
   raise ImportError(
-      "This script requires `tensorboard_plugin_profile` to be installed.")
+      "This script requires `xprof` to be installed.")
 # pytype: enable=import-error
 
 
@@ -44,6 +40,8 @@ for a provided duration. The trace file will be dumped into a directory
 (determined by `--log_dir`) and by default, a Perfetto UI link will be generated
 to view the resulting trace.
 """
+_GRPC_PREFIX = 'grpc://'
+DEFAULT_NUM_TRACING_ATTEMPTS = 3
 parser = argparse.ArgumentParser(description=_DESCRIPTION)
 parser.add_argument("--log_dir", default=None,
                     help=("Directory to store log files. "
@@ -69,18 +67,30 @@ def collect_profile(port: int, duration_in_ms: int, host: str,
                     log_dir: os.PathLike | str | None, host_tracer_level: int,
                     device_tracer_level: int, python_tracer_level: int,
                     no_perfetto_link: bool):
-  options = profiler.ProfilerOptions(
-      host_tracer_level=host_tracer_level,
-      device_tracer_level=device_tracer_level,
-      python_tracer_level=python_tracer_level,
-  )
+  options = {
+      "host_tracer_level": host_tracer_level,
+      "device_tracer_level": device_tracer_level,
+      "python_tracer_level": python_tracer_level,
+  }
+  IS_GCS_PATH = str(log_dir).startswith("gs://")
   log_dir_ = pathlib.Path(log_dir if log_dir is not None else tempfile.mkdtemp())
-  profiler_client.trace(
-      f"{host}:{port}",
-      str(log_dir_),
+  str_log_dir = log_dir if IS_GCS_PATH else str(log_dir_)
+  _pywrap_profiler_plugin.trace(
+      _strip_addresses(f"{host}:{port}", _GRPC_PREFIX),
+      str_log_dir,
+      '',
+      True,
       duration_in_ms,
-      options=options)
-  print(f"Dumped profiling information in: {log_dir_}")
+      DEFAULT_NUM_TRACING_ATTEMPTS,
+      options,
+  )
+  print(f"Dumped profiling information in: {str_log_dir}")
+  # Traces stored on GCS cannot be converted to a Perfetto trace, as JAX doesn't
+  # directly support GCS paths.
+  if IS_GCS_PATH:
+    if not no_perfetto_link:
+      print("Perfetto link is not supported for GCS paths, skipping creation.")
+    return
   # The profiler dumps `xplane.pb` to the logging directory. To upload it to
   # the Perfetto trace viewer, we need to convert it to a `trace.json` file.
   # We do this by first finding the `xplane.pb` file, then passing it into
@@ -99,6 +109,12 @@ def collect_profile(port: int, duration_in_ms: int, host: str,
   if not no_perfetto_link:
     path = jax_profiler._write_perfetto_trace_file(log_dir_)
     jax_profiler._host_perfetto_trace_file(path)
+
+def _strip_prefix(s, prefix):
+  return s[len(prefix):] if s.startswith(prefix) else s
+
+def _strip_addresses(addresses, prefix):
+  return ','.join([_strip_prefix(s, prefix) for s in addresses.split(',')])
 
 def main(args):
   collect_profile(args.port, args.duration_in_ms, args.host, args.log_dir,

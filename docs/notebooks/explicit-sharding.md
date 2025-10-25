@@ -31,7 +31,7 @@ constraints? You could put them on every single intermediate but that's a lot
 of work and it's also easy to make mistakes that way because there's no way to
 check that the shardings make sense together. More commonly, people add just
 enough sharding annotations to constrain the compiler. But this is a slow
-iterative process. It's hard to know ahead of time what XLA's gSPMD pass will
+iterative process. It's hard to know ahead of time what XLA's GSPMD pass will
 do (it's a whole-program optimization) so all you can do is add annotations,
 inspect XLA's sharding choices to see what happened, and repeat.
 
@@ -47,7 +47,8 @@ error otherwise. Since the shardings are propagated at trace time they can
 also be _queried_ at trace time too. In the rest of this doc we'll describe
 how to use explicit sharding mode. Note that this is a new feature so we
 expect there to be bugs and unimplemented cases. Please let us know when you
-find something that doesn't work!
+find something that doesn't work! Also see {doc}`../the-training-cookbook`
+for a real-world machine learning training example that uses explicit sharding.
 
 ```{code-cell} ipython3
 :id: hVi6mApuVw3r
@@ -55,8 +56,7 @@ find something that doesn't work!
 import jax
 import numpy as np
 import jax.numpy as jnp
-from jax.sharding import PartitionSpec as P, AxisType, set_mesh, get_abstract_mesh
-from jax.experimental.shard import reshard, auto_axes
+from jax.sharding import PartitionSpec as P, AxisType, get_abstract_mesh, reshard
 
 jax.config.update('jax_num_cpu_devices', 8)
 ```
@@ -107,10 +107,11 @@ foo(some_array)
 These types show the shape and dtype of array but they don't appear to
 show sharding. (Actually, they _did_ show sharding, but the shardings were
 trivial. See "Concrete array shardings", below.) To start seeing some
-interesting shardings we need to set up an explicit-sharding mesh. We use
-`set_mesh` to set it as the current mesh for the remainder of this notebook.
-(If you only want to set the mesh for some particular scope and return to the previous
-mesh afterwards then you can use the context manager `jax.sharding.use_mesh` instead.)
+interesting shardings we need to set up an explicit-sharding mesh.
+
+`jax.set_mesh` can be used as a global setter or a context manager. We use
+`jax.set_mesh` in this notebook as a global setter. You can use it as a scoped
+context manager via `with jax.set_mesh(mesh)`.
 
 ```{code-cell} ipython3
 ---
@@ -121,7 +122,7 @@ outputId: d888371b-080e-4bff-be5d-ea56beda3aac
 ---
 mesh = jax.make_mesh((2, 4), ("X", "Y"),
                      axis_types=(AxisType.Explicit, AxisType.Explicit))
-set_mesh(mesh)
+jax.set_mesh(mesh)
 
 print(f"Current mesh is: {get_abstract_mesh()}")
 ```
@@ -239,7 +240,7 @@ Here are some example sharding rules:
      which the split/merged axes are sharded as None then we shard the
      resulting split/merged axes as None and the other axes according to their
      corresponding input axis shardings. In all other cases we throw an error
-     and require the user to provide an `out_shardings` argument.
+     and require the user to provide an `out_sharding` argument.
 
 +++ {"id": "jZMp6w48Xmd7"}
 
@@ -251,7 +252,7 @@ sharding is part of that type. This means that shardings need to match
 wherever types need to match. For example, the two sides of a `lax.cond` need to
 have results with matching shardings. And the carry of `lax.scan` needs to have the
 same sharding at the input and the output of the scan body. And when you
-contruct a jaxpr without concrete arguments using `make_jaxpr` you need to
+construct a jaxpr without concrete arguments using `make_jaxpr` you need to
 provide shardings too. Certain JAX transformations perform type-level
 operations. Automatic differentation constructs a tangent type for each primal
 type in the original computation (e.g. `TangentOf(float) == float`,
@@ -265,7 +266,7 @@ argument.
 
 +++ {"id": "ERJx4p0tXoS3"}
 
-## Working around unimplemented sharding rules using `auto_sharding`
+## Working around unimplemented sharding rules using `auto_axes`
 
 The implementation of explicit sharding is still a work-in-progress and there
 are plenty of ops that are missing sharding rules. For example, `scatter` and
@@ -292,6 +293,8 @@ colab:
 id: fpFEaMBcXsJG
 outputId: 5b84b1d1-d7b2-4e9a-ba98-3dd34a5465ef
 ---
+from jax.sharding import auto_axes, explicit_axes
+
 some_x = reshard(np.arange(16).reshape(4, 4), P("X", None))
 some_y = reshard(np.arange(16).reshape(4, 4), P(None, "X"))
 
@@ -308,7 +311,7 @@ def add_with_out_sharding_kwarg(x, y):
   print(f"We're in auto-sharding mode here. This is the current mesh: {get_abstract_mesh()}")
   return x + y
 
-result = add_with_out_sharding_kwarg(some_x, some_y, out_shardings=P("X", None))
+result = add_with_out_sharding_kwarg(some_x, some_y, out_sharding=P("X", None))
 print(f"Result type: {jax.typeof(result)}")
 ```
 
@@ -337,11 +340,11 @@ JAX now has three styles of parallelism:
 
 A summary table:
 
-| Mode | Explicit sharding? | Explicit Collectives? |
-|---|---|---|
-| Auto | No | No |
-| Explicit (new) | Yes | No |
-| Manual | Yes | Yes |
+| Mode | View? | Explicit sharding? | Explicit Collectives? |
+|---|---|---|---|
+| Auto | Global | ❌ | ❌ |
+| Explicit | Global | ✅ | ❌ |
+| Manual | Per-device | ✅ | ✅ |
 
 The current mesh tells us which sharding mode we're in. We can query it with
 `get_abstract_mesh`:
@@ -390,7 +393,7 @@ def f(arr1):
   x = jnp.sin(arr1)
   print(f'x.sharding: {jax.typeof(x)}', end='\n\n')
 
-  z = g(x, out_shardings=P("X", "Y"))
+  z = g(x, out_sharding=P("X", "Y"))
 
   print(f'z.sharding: {jax.typeof(z)}', end="\n\n")
   return z + 1
@@ -402,6 +405,38 @@ f(some_x)
 +++ {"id": "_3sfJjRq8w9f"}
 
 As you can see, inside `g`, the type of `arr1` is `ShapedArray(float32[4,4@Y])` which indicates it's Explicit over `Y` mesh axis while auto over `X`.
+
+
+You can also use the `explicit_axes` API to drop into `Explicit` mode over some or all mesh axes.
+
+```{code-cell} ipython3
+auto_mesh = jax.make_mesh((2, 4), ("X", "Y"),
+                           axis_types=(AxisType.Auto, AxisType.Auto))
+
+@functools.partial(explicit_axes, axes=('X', 'Y'))
+def explicit_g(y):
+  print(f'mesh inside g: {get_abstract_mesh()}')
+  print(f'y.sharding inside g: {jax.typeof(y) = }')
+  z = y * 2
+  print(f'z.sharding inside g: {jax.typeof(z) = }', end='\n\n')
+  return z
+
+@jax.jit
+def f(arr1):
+  print(f'mesh inside f: {get_abstract_mesh()}', end='\n\n')
+  x = jnp.sin(arr1)
+
+  z = explicit_g(x, in_sharding=P("X", "Y"))
+
+  return z + 1
+
+with jax.set_mesh(auto_mesh):
+  some_x = jax.device_put(np.arange(16).reshape(4, 4), P("X", "Y"))
+  f(some_x)
+```
+
+As you can see, all axes of mesh inside `f` are of type `Auto` while inside `g`, they are of type `Explicit`.
+Because of that, sharding is visible on the type of arrays inside `g`.
 
 +++ {"id": "sJcWbfAh7UcO"}
 
@@ -437,7 +472,7 @@ def check_in_auto_context(x):
   compare_shardings(x)
   return x
 
-check_in_auto_context(my_array, out_shardings=P("X"))
+check_in_auto_context(my_array, out_sharding=P("X"))
 ```
 
 +++ {"id": "MRFccsi5X8so"}

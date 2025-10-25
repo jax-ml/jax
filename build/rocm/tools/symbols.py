@@ -19,8 +19,6 @@
 # needs be compatible with Python 3.6. Please do not include these
 # in any "upgrade" scripts
 
-
-import pprint
 import re
 import sys
 import subprocess

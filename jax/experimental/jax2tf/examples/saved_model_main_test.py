@@ -27,6 +27,7 @@ config.parse_flags_with_absl()
 FLAGS = flags.FLAGS
 
 
+@jtu.thread_unsafe_test_class()
 class SavedModelMainTest(tf_test_util.JaxToTfTestCase):
 
   def setUp(self):

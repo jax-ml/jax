@@ -16,15 +16,17 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from functools import partial
+from typing import Any
 import warnings
 
-from jax import tree_util
+from jax._src import ad_util
 from jax._src import api_util
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import tree_util
 from jax._src import util
-from jax._src.core import ShapedArray
+from jax._src.core import ClosedJaxpr, ShapedArray, jaxpr_as_fun
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -35,11 +37,8 @@ from jax._src.lax.other import logaddexp
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.typing import Array
+
 import numpy as np
-from jax._src.core import ClosedJaxpr
-from jax._src.core import jaxpr_as_fun
-from jax._src.interpreters.ad import jvp_jaxpr
-from jax._src import ad_util
 
 map = util.safe_map
 zip = util.safe_zip
@@ -50,7 +49,7 @@ def _reduce_window(
     init_value,
     computation,
     window_dimensions: core.Shape,
-    window_strides: Sequence[int],
+    window_strides: Sequence[int] | None,
     padding: str | Sequence[tuple[int, int]],
     base_dilation: Sequence[int] | None = None,
     window_dilation: Sequence[int] | None = None,
@@ -79,7 +78,9 @@ def _reduce_window(
     padding = tuple(lax.padtype_to_pads(
         flat_operands[0].shape, dilated_window_dims, window_strides, padding))
   else:
-    padding = tuple(padding)
+    padding = tuple((x, y) for x, y in padding)
+  if window_strides is None:
+    window_strides = (1,) * len(window_dimensions)
   if base_dilation is None:
     base_dilation = (1,) * len(window_dimensions)
   if window_dilation is None:
@@ -97,7 +98,7 @@ def _reduce_window(
       raise ValueError(
         'reduce_window output must have the same tree structure as the operands'
         f' {operand_tree} vs. {out_tree}')
-    flat_operands = core.standard_insert_pbroadcast(*flat_operands)
+    flat_operands = core.standard_insert_pvary(*flat_operands)
     out_flat = reduce_window_p.bind(
         *flat_operands,
         *flat_init_values,
@@ -113,18 +114,55 @@ def _reduce_window(
 
 
 def reduce_window(
-    operand,
-    init_value,
+    operand: Any,
+    init_value: Any,
     computation: Callable,
     window_dimensions: core.Shape,
-    window_strides: Sequence[int],
-    padding: str | Sequence[tuple[int, int]],
+    window_strides: Sequence[int] | None = None,
+    padding: str | Sequence[tuple[int, int]] = "VALID",
     base_dilation: Sequence[int] | None = None,
     window_dilation: Sequence[int] | None = None,
-) -> Array:
-  """Wraps XLA's `ReduceWindowWithGeneralPadding
-  <https://www.tensorflow.org/xla/operation_semantics#reducewindow>`_
-  operator.
+) -> Any:
+  """Reduction over padded windows.
+
+  Wraps XLA's ReduceWindowWithGeneralPadding_ operator.
+
+  Args:
+    operand: input array or tree of arrays.
+    init_value: value or tree of values. Tree structure must match that
+      of ``operand``.
+    computation: callable function over which to reduce. Input and output must be
+      a tree of the same structure as ``operand``.
+    window_dimensions: sequence of integers specifying the window size.
+    window_strides: optional sequence of integers specifying the strides, of
+      the same length as ``window_dimensions``.  Default (``None``) indicates
+      a unit stride in each window dimension.
+    padding: string or sequence of integer tuples specifying the type of padding
+      to use (default: "VALID"). If a string, must be one of "VALID", "SAME", or
+      "SAME_LOWER". See the :func:`jax.lax.padtype_to_pads` utility.
+    base_dilation: optional sequence of integers for base dilation values, of
+      the same length as ``window_dimensions``. Default (``None``) indicates unit
+      dilation in each window dimension.
+    window_dilation: optional sequence of integers for window dilation values, of
+      the same length as ``window_dimensions``. Default (``None``) indicates unit
+      dilation in each window dimension.
+
+  Returns:
+    A tree of arrays with the same structure as ``operand``.
+
+  Example:
+    Here is a simple example of a windowed product over pairs in a 1-dimensional array:
+
+    >>> import jax
+    >>> x = jax.numpy.arange(10, dtype='float32')
+    >>> x
+    Array([0., 1., 2., 3., 4., 5., 6., 7., 8., 9.], dtype=float32)
+
+    >>> initial = jax.numpy.float32(1)
+    >>> jax.lax.reduce_window(x, initial, jax.lax.mul, window_dimensions=(2,))
+    Array([ 0.,  2.,  6., 12., 20., 30., 42., 56., 72.], dtype=float32)
+
+  .. _ReduceWindowWithGeneralPadding: https://www.openxla.org/xla/operation_semantics#reducewindow
   """
   return _reduce_window(
       operand,
@@ -251,7 +289,7 @@ def _select_and_scatter(operand: Array, select: Callable,
     select, core.get_aval(init_value))
   scatter_jaxpr, scatter_consts = lax._reduction_jaxpr(
     scatter, core.get_aval(init_value))
-  operand, source, init_value = core.standard_insert_pbroadcast(
+  operand, source, init_value = core.standard_insert_pvary(
       operand, source, init_value)
   return select_and_scatter_p.bind(
       operand, source, init_value, select_jaxpr=select_jaxpr,
@@ -264,7 +302,7 @@ def _select_and_scatter_add(source: Array, operand: Array,
                             window_dimensions: core.Shape,
                             window_strides: Sequence[int],
                             padding: Sequence[tuple[int, int]]) -> Array:
-  source, operand = core.standard_insert_pbroadcast(source, operand)
+  source, operand = core.standard_insert_pvary(source, operand)
   return select_and_scatter_add_p.bind(
       source, operand, select_prim=select_prim,
       window_dimensions=tuple(window_dimensions),
@@ -281,7 +319,7 @@ def _select_and_gather_add(tangents: Array, operand: Array,
   each window of the `operand` array.
 
   Wraps XLA's `ReduceWindow
-  <https://www.tensorflow.org/xla/operation_semantics#reducewindow>`_
+  <https://www.openxla.org/xla/operation_semantics#reducewindow>`_
   operator, which applies a reduction function to all elements in each window of
   the input multi-dimensional array. In this case, the input multi-dimensional
   array is built by packing each element in the `operand` array with its
@@ -300,7 +338,7 @@ def _select_and_gather_add(tangents: Array, operand: Array,
     An array containing the elements in `tangents` corresponding to the output
     of the reduction of `operand` fin each window.
   """
-  tangents, operand = core.standard_insert_pbroadcast(tangents, operand)
+  tangents, operand = core.standard_insert_pvary(tangents, operand)
   return select_and_gather_add_p.bind(
       tangents, operand, select_prim=select_prim,
       window_dimensions=tuple(window_dimensions),
@@ -404,7 +442,7 @@ def reduce_window_jvp(
 
   init_value_tangent = map(ad_util.instantiate, init_value_tangent)
   c_reduction_jaxpr = ClosedJaxpr(reduction_jaxpr, consts)
-  jvp_reduction = jvp_jaxpr(c_reduction_jaxpr, (True,) * len(tangents), [False] * len(init_value_tangent))[0]
+  jvp_reduction = ad.jvp_jaxpr(c_reduction_jaxpr, (True,) * len(tangents), [False] * len(init_value_tangent))[0]
 
   def wrapper(left, right):
     pl, tl = util.split_list(left, [n])
@@ -432,7 +470,7 @@ batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
 
 
 def _generic_reduce_window_lower(
-    ctx,
+    ctx: mlir.LoweringRuleContext,
     *args,
     jaxpr,
     consts,
@@ -450,7 +488,7 @@ def _generic_reduce_window_lower(
       raise NotImplementedError('Cannot lower effectful `reduce_window`.')
     out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, jaxpr, ctx.name_stack,
         mlir.TokenSet(), consts, *reducer.arguments,  # type: ignore[misc]
-        dim_var_values=ctx.dim_var_values)
+        dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering)
     return mlir.flatten_ir_values(out_nodes)
 
   return mlir.reduce_window(
@@ -520,24 +558,14 @@ def _reduce_window_batch_rule(reduce_window, batched_args, bdims, *,
 
 def reduce_window_sharding_rule(operand, window_dimensions, window_strides,
                                 padding, base_dilation, window_dilation):
-  if base_dilation is None:
-    base_dilation = [1] * operand.ndim
-  if window_dilation is None:
-    window_dilation = [1] * operand.ndim
-
-  for spec, wdim, ws, pd, bd, wdil in zip(
-      operand.sharding.spec, window_dimensions, window_strides, padding,
-      base_dilation, window_dilation):
-    if spec is None:
-      continue
-    if not (wdim == 1 and ws == 1 and pd == 1 and bd == 1 and wdil == 1):
-      raise core.ShardingTypeError(
-          "Only trivial windowing is supported along non-replicated"
-          f" dimensions. Got {operand.sharding.spec=}")
-  return operand.sharding
+  out_shape = reduce_window_shape_tuple(
+      operand.shape, window_dimensions, window_strides, padding, base_dilation,
+      window_dilation)
+  return lax.slicing._get_sharding_for_varying_out_shape(
+      out_shape, operand, 'reduce_window')
 
 reduce_window_sum_p = lax.standard_primitive(
-    _reduce_window_sum_shape_rule, lax._input_dtype, 'reduce_window_sum',
+    _reduce_window_sum_shape_rule, lax.input_dtype, 'reduce_window_sum',
     sharding_rule=reduce_window_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_window_sum'))
 ad.deflinear2(reduce_window_sum_p, _reduce_window_sum_transpose_rule)
@@ -604,7 +632,7 @@ def reduce_window_shape_tuple(operand_shape, window_dimensions, window_strides,
 
 
 reduce_window_max_p = lax.standard_primitive(
-    _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_max',
+    _common_reduce_window_shape_rule, lax.input_dtype, 'reduce_window_max',
     sharding_rule=reduce_window_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_window_max'))
 ad.defjvp(reduce_window_max_p, partial(_reduce_window_chooser_jvp_rule,
@@ -613,7 +641,7 @@ batching.primitive_batchers[reduce_window_max_p] = partial(
   _reduce_window_batch_rule, _reduce_window_max)
 
 reduce_window_min_p = lax.standard_primitive(
-    _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_min',
+    _common_reduce_window_shape_rule, lax.input_dtype, 'reduce_window_min',
     sharding_rule=reduce_window_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_window_min'))
 ad.defjvp(reduce_window_min_p, partial(_reduce_window_chooser_jvp_rule,
@@ -639,7 +667,8 @@ def _reduce_window_lower(
 ):
 
   operand_aval, = ctx.avals_in
-  scalar_aval = operand_aval.update(shape=())
+  scalar_aval = operand_aval.update(
+      shape=(), sharding=operand_aval.sharding.update(spec=()))
 
   return mlir.reduce_window(
       ctx,
@@ -679,17 +708,25 @@ def _select_and_scatter_shape_rule(
     raise TypeError(msg.format(window_strides, window_dimensions))
   return operand.shape
 
+def _select_and_scatter_sharding_rule(
+    operand, source, init_value, *, select_jaxpr, select_consts, scatter_jaxpr,
+    scatter_consts, window_dimensions, window_strides, padding):
+  return operand.sharding
+
 select_and_scatter_p = lax.standard_primitive(
-    _select_and_scatter_shape_rule, lax._input_dtype, 'select_and_scatter',
+    _select_and_scatter_shape_rule, lax.input_dtype, 'select_and_scatter',
+    sharding_rule=_select_and_scatter_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'select_and_scatter'))
 
 def _select_and_scatter_lower(
-    ctx, operand, source, init_value, *, select_jaxpr,
-    select_consts, scatter_jaxpr, scatter_consts, window_dimensions,
+    ctx: mlir.LoweringRuleContext, operand, source, init_value, *,
+    select_jaxpr: core.Jaxpr, select_consts,
+    scatter_jaxpr: core.Jaxpr, scatter_consts, window_dimensions,
     window_strides, padding):
   operand_aval, source_aval, init_value_aval = ctx.avals_in
   aval_out, = ctx.avals_out
-  scalar_aval = operand_aval.update(shape=())
+  scalar_aval = operand_aval.update(
+      shape=(), sharding=operand_aval.sharding.update(spec=()))
   scalar_type = mlir.aval_to_ir_type(scalar_aval)
   op = hlo.SelectAndScatterOp(
       mlir.aval_to_ir_type(aval_out),
@@ -708,7 +745,8 @@ def _select_and_scatter_lower(
                                       ctx.name_stack,
                                       mlir.TokenSet(), select_consts,
                                       *select.arguments,
-                                      dim_var_values=ctx.dim_var_values)
+                                      dim_var_values=ctx.dim_var_values,
+                                      const_lowering=ctx.const_lowering)
     hlo.return_(mlir.flatten_ir_values(out_nodes))
   scatter = op.scatter.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(scatter):
@@ -718,9 +756,11 @@ def _select_and_scatter_lower(
                                       ctx.name_stack,
                                       mlir.TokenSet(), scatter_consts,
                                       *scatter.arguments,
-                                      dim_var_values=ctx.dim_var_values)
+                                      dim_var_values=ctx.dim_var_values,
+                                      const_lowering=ctx.const_lowering)
     hlo.return_(mlir.flatten_ir_values(out_nodes))
-  return op.results
+  return [mlir.lower_with_sharding_in_types(ctx, r, aval)
+          for r, aval in zip(op.results, ctx.avals_out)]
 
 mlir.register_lowering(select_and_scatter_p, _select_and_scatter_lower)
 
@@ -728,6 +768,11 @@ def _select_and_scatter_add_shape_rule(
     source, operand, *, select_prim, window_dimensions, window_strides,
     padding):
   return operand.shape
+
+def _select_and_scatter_add_sharding_rule(
+    source, operand, *, select_prim, window_dimensions, window_strides,
+    padding):
+  return operand.sharding
 
 def _select_and_scatter_add_jvp(
     primals, tangents, *, select_prim, window_dimensions, window_strides,
@@ -775,8 +820,9 @@ def _select_and_scatter_add_batch_rule(
   return out, 0
 
 select_and_scatter_add_p = lax.standard_primitive(
-    _select_and_scatter_add_shape_rule, lax._input_dtype,
+    _select_and_scatter_add_shape_rule, lax.input_dtype,
     'select_and_scatter_add',
+    sharding_rule=_select_and_scatter_add_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'select_and_scatter_add'))
 
 ad.primitive_transposes[select_and_scatter_add_p] = \
@@ -1049,7 +1095,7 @@ def _select_and_gather_add_batching_rule(
 
 
 select_and_gather_add_p = lax.standard_primitive(
-    _select_and_gather_add_shape_rule, lax._input_dtype,
+    _select_and_gather_add_shape_rule, lax.input_dtype,
     'select_and_gather_add', sharding_rule=_select_and_gather_add_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'select_and_gather_add'))
 ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp

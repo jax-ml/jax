@@ -52,6 +52,7 @@ class ImageTest(jtu.JaxTestCase):
     antialias=[False, True],
   )
   @unittest.skipIf(not tf, "Test requires TensorFlow")
+  @jtu.thread_unsafe_test()  # TensorFlow isn't thread-safe without the GIL.
   def testResizeAgainstTensorFlow(self, dtype, image_shape, target_shape, method,
                                   antialias):
     # TODO(phawkins): debug this. There is a small mismatch between TF and JAX

@@ -218,7 +218,7 @@ def check_all_close(xs, ys, tol=1e-3):
 
 def check_close(x, y, tol=1e-3):
   assert jnp.shape(x) == jnp.shape(y)
-  # TODO(dougalm): re-enable once we've tackled the less pendantic bugs
+  # TODO(dougalm): re-enable once we've tackled the less pedantic bugs
   # assert x.dtype == y.dtype
   assert jnp.allclose(x, y, rtol=tol, atol=tol), \
      f"Value mismatch:\n{x}\n  vs\n{y}\n"

@@ -29,7 +29,7 @@ from jax._src.lax.lax import DotDimensionNumbers
 from jax._src.typing import DTypeLike
 from jax.experimental import sparse
 import jax.numpy as jnp
-from jax.util import safe_zip, split_list
+from jax._src.util import safe_zip, split_list
 import numpy as np
 
 MATMUL_TOL = {

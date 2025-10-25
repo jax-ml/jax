@@ -54,7 +54,7 @@ def conv_general_dilated_patches(
   Docstring below adapted from `jax.lax.conv_general_dilated`.
 
   See Also:
-    https://www.tensorflow.org/xla/operation_semantics#conv_convolution
+    https://www.openxla.org/xla/operation_semantics#conv_convolution
 
   Args:
     lhs: a rank `n+2` dimensional input array.
@@ -141,7 +141,7 @@ def conv_general_dilated_local(
   spatial location. Docstring below adapted from `jax.lax.conv_general_dilated`.
 
   See Also:
-    https://www.tensorflow.org/xla/operation_semantics#conv_convolution
+    https://www.openxla.org/xla/operation_semantics#conv_convolution
 
   Args:
     lhs: a rank `n+2` dimensional input array.
@@ -286,4 +286,36 @@ def _logaddexp_jvp(primals, tangents):
   primal_out = logaddexp(x1, x2)
   tangent_out = lax.add(lax.mul(t1, lax.exp(lax.sub(_replace_inf(x1), _replace_inf(primal_out)))),
                         lax.mul(t2, lax.exp(lax.sub(_replace_inf(x2), _replace_inf(primal_out)))))
+  return primal_out, tangent_out
+
+
+@custom_jvp
+def logaddexp2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  """Compute log2(exp2(x1) + exp2(x2)) avoiding overflow."""
+  x1_arr = lax.asarray(x1)
+  x2_arr = lax.asarray(x2)
+  assert x1_arr.dtype == x2_arr.dtype
+
+  amax = lax.max(x1_arr, x2_arr)
+  invln2 = lax._const(amax, 1/np.log(2))
+  if dtypes.isdtype(x1_arr.dtype, "real floating"):
+    delta = lax.sub(x1_arr, x2_arr)
+    return lax.select(lax._isnan(delta),
+                      lax.add(x1_arr, x2_arr),  # NaNs or infinities of the same sign.
+                      lax.add(amax, lax.mul(invln2, lax.log1p(lax.exp2(lax.neg(lax.abs(delta)))))))
+  elif dtypes.isdtype(x1_arr.dtype, "complex floating"):
+    delta = lax.sub(lax.add(x1_arr, x2_arr), lax.mul(amax, lax._const(amax, 2)))
+    out = lax.add(amax, lax.mul(invln2, lax.log1p(lax.exp2(delta))))
+    return lax.complex(lax.real(out), _wrap_between(lax.imag(out), np.pi / np.log(2)))
+  else:
+    raise ValueError(f"logaddexp2 requires floating-point or complex inputs; got {x1_arr.dtype}")
+
+
+@logaddexp2.defjvp
+def _logaddexp2_jvp(primals, tangents):
+  x1, x2 = primals
+  t1, t2 = tangents
+  primal_out = logaddexp2(x1, x2)
+  tangent_out = lax.add(lax.mul(t1, lax.exp2(lax.sub(_replace_inf(x1), _replace_inf(primal_out)))),
+                        lax.mul(t2, lax.exp2(lax.sub(_replace_inf(x2), _replace_inf(primal_out)))))
   return primal_out, tangent_out

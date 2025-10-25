@@ -27,8 +27,18 @@ from jax._src.errors import (
   KeyReuseError as KeyReuseError,
 )
 
-from jax._src.lib import xla_client as _xc
-JaxRuntimeError = _xc.XlaRuntimeError
-del _xc
+from jax._src.lib import _jax
+JaxRuntimeError = _jax.JaxRuntimeError
+JaxRuntimeError.__module__ = "jax.errors"
+del _jax
 
-from jax._src.traceback_util import SimplifiedTraceback as SimplifiedTraceback
+_deprecations = {
+  "SimplifiedTraceback": (
+    "jax.errors.SimplifiedTraceback is deprecated and will be removed in JAX v0.8.",
+    None,
+  ),
+}
+
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

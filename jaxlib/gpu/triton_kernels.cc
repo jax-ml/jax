@@ -40,7 +40,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/triton.pb.h"
@@ -50,6 +49,7 @@ limitations under the License.
 
 #ifdef JAX_GPU_CUDA
 #include "xla/stream_executor/cuda/cuda_asm_compiler.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #endif  // JAX_GPU_CUDA
 
 #ifdef JAX_GPU_HIP
@@ -111,7 +111,7 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
       *new absl::flat_hash_map<decltype(key), std::unique_ptr<ModuleImage>>
           ABSL_GUARDED_BY(mutex);
 
-  absl::MutexLock lock(&mutex);
+  absl::MutexLock lock(mutex);
   auto it = module_images.find(key);
   if (it != module_images.end()) return it->second.get();
 
@@ -125,9 +125,17 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
   // TODO(cjfj): Support `TRITON_PTXAS_PATH` environment variable?
   int cc_major = compute_capability / 10;
   int cc_minor = compute_capability % 10;
+
+  bool has_accelerated_features = cc_major >= 9;
+  using FeatureExtension =
+      stream_executor::CudaComputeCapability::FeatureExtension;
+  const stream_executor::CudaComputeCapability cc(
+      cc_major, cc_minor,
+      has_accelerated_features ? FeatureExtension::kAcceleratedFeatures
+                               : FeatureExtension::kNone);
   JAX_ASSIGN_OR_RETURN(
       std::vector<uint8_t> module_image,
-      stream_executor::CompileGpuAsm(cc_major, cc_minor, ptx.data(),
+      stream_executor::CompileGpuAsm(cc, std::string(ptx),
                                      stream_executor::GpuAsmOpts{}));
 #endif
 
@@ -158,7 +166,7 @@ absl::StatusOr<float> Benchmark(gpuStream_t stream, KernelCall& kernel_call,
   return elapsed_ms;
 }
 
-absl::StatusOr<KernelCall*> GetKernelCall(absl::string_view opaque,
+absl::StatusOr<KernelCall*> GetKernelCall(std::string_view opaque,
                                           gpuStream_t stream, void** buffers) {
   static absl::Mutex mutex;
   static auto& kernel_calls =
@@ -168,7 +176,7 @@ absl::StatusOr<KernelCall*> GetKernelCall(absl::string_view opaque,
 
   {
     // Fast path uses reader lock (as hash map look-up is relatively slow).
-    absl::ReaderMutexLock lock(&mutex);
+    absl::ReaderMutexLock lock(mutex);
     auto it = kernel_calls.find(opaque);
     if (ABSL_PREDICT_TRUE(it != kernel_calls.end())) {
       JAX_RETURN_IF_ERROR(it->second.status());
@@ -180,7 +188,7 @@ absl::StatusOr<KernelCall*> GetKernelCall(absl::string_view opaque,
     return absl::InvalidArgumentError("Opaque data is empty.");
   }
 
-  absl::MutexLock lock(&mutex);
+  absl::MutexLock lock(mutex);
 
   auto get_kernel_call = [&]() -> absl::StatusOr<std::unique_ptr<KernelCall>> {
     // The opaque data is a zlib compressed protobuf.
@@ -229,7 +237,7 @@ class ModuleImage {
         shared_mem_bytes_(shared_mem_bytes) {}
 
   absl::StatusOr<gpuFunction_t> GetFunctionForContext(gpuContext_t context) {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     auto it = functions_.find(context);
     if (ABSL_PREDICT_TRUE(it != functions_.end())) {
       return it->second;
@@ -516,8 +524,10 @@ absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
   // pointer.
   // TODO: b/381242007 - Allocate a proper buffer if we want to use
   // device-side TMA APIs.
-  void* scratch_ptr = nullptr;  // Alive until kernel_.Launch returns.
-  params.push_back(&scratch_ptr);
+  void* tma_descriptor_buffer = nullptr;  // Alive until kernel_.Launch returns.
+  params.push_back(&tma_descriptor_buffer);
+  void* profiling_buffer = nullptr;  // Alive until kernel_.Launch returns.
+  params.push_back(&profiling_buffer);
 
   return kernel_.Launch(stream, grid_, params.data());
 }
@@ -705,11 +715,11 @@ void TritonKernelCall(gpuStream_t stream, void** buffers, const char* opaque,
   absl::Status result = [=] {
     JAX_ASSIGN_OR_RETURN(
         KernelCall * kernel_call,
-        GetKernelCall(absl::string_view(opaque, opaque_len), stream, buffers));
+        GetKernelCall(std::string_view(opaque, opaque_len), stream, buffers));
     return kernel_call->Launch(stream, buffers);
   }();
   if (!result.ok()) {
-    absl::string_view msg = result.message();
+    std::string_view msg = result.message();
     XlaCustomCallStatusSetFailure(status, msg.data(), msg.length());
   }
 }

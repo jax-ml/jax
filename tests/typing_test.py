@@ -24,6 +24,7 @@ from typing import Any, TYPE_CHECKING
 
 import jax
 from jax._src import core
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import typing
 from jax import lax
@@ -45,7 +46,7 @@ def dtypelike_to_dtype(x: typing.DTypeLike) -> typing.DType:
 # inputs to jax primitive functions; use convert_element_type here
 # for simplicity.
 def arraylike_to_array(x: typing.ArrayLike) -> typing.Array:
-  return lax.convert_element_type(x, np.result_type(x))
+  return lax.convert_element_type(x, dtypes.dtype(np.result_type(x)))
 
 
 class HasDType:
@@ -74,6 +75,8 @@ class TypingTest(jtu.JaxTestCase):
     out5: typing.DType = dtypelike_to_dtype(HasDType("float32"))
     self.assertEqual(out5, float32_dtype)
 
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype.*")
   def testArrayLike(self) -> None:
     out1: typing.Array = arraylike_to_array(jnp.arange(4))
     self.assertArraysEqual(out1, jnp.arange(4))
@@ -81,8 +84,8 @@ class TypingTest(jtu.JaxTestCase):
     out2: typing.Array = jax.jit(arraylike_to_array)(jnp.arange(4))
     self.assertArraysEqual(out2, jnp.arange(4))
 
-    out3: typing.Array = arraylike_to_array(np.arange(4))
-    self.assertArraysEqual(out3, jnp.arange(4), check_dtypes=False)
+    out3: typing.Array = arraylike_to_array(np.arange(4, dtype=np.int32))
+    self.assertArraysEqual(out3, jnp.arange(4, dtype=np.int32))
 
     out4: typing.Array = arraylike_to_array(True)
     self.assertArraysEqual(out4, jnp.array(True))
@@ -143,11 +146,7 @@ if TYPE_CHECKING:
   # - Confirm that types from *.pyi files are correctly pulled-in
   # - Confirm that non-trivial overloads are behaving as expected.
   #
-  import sys
-  if sys.version_info >= (3, 11):
-    from typing import assert_type  # pytype: disable=not-supported-yet  # py311-upgrade
-  else:
-    from typing_extensions import assert_type  # pytype: disable=not-supported-yet
+  from typing import assert_type  # pytype: disable=not-supported-yet  # py311-upgrade
 
   mat = jnp.zeros((2, 5))
   vals = jnp.arange(5)

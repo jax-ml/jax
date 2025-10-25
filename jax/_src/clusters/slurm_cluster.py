@@ -30,7 +30,8 @@ class SlurmCluster(clusters.ClusterEnv):
 
   @classmethod
   def is_env_present(cls) -> bool:
-    return _JOBID_PARAM in os.environ
+    return all(var in os.environ for var in
+               (_JOBID_PARAM, _NODE_LIST, _PROCESS_COUNT, _PROCESS_ID, _LOCAL_PROCESS_ID))
 
   @classmethod
   def get_coordinator_address(cls, timeout_secs: int | None) -> str:

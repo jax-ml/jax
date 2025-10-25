@@ -30,7 +30,7 @@ from collections.abc import Sequence
 import jax
 from jax import lax
 from jax.experimental import pallas as pl
-from jax.experimental import shard_map
+from jax._src import shard_map
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 
@@ -48,7 +48,7 @@ def get_neighbor(
       idx if i == which_axis else lax.axis_index(a)
       for i, a in enumerate(axis_names)
   ]
-  axis_size = lax.psum(1, axis_name)
+  axis_size = lax.axis_size(axis_name)
   if direction == "right":
     next_idx = lax.rem(idx + 1, axis_size)
   else:
@@ -67,7 +67,7 @@ def ag_kernel(x_ref, o_ref, send_sem, recv_sem, *, axis_name: str,
     pltpu.async_copy(x_ref, o_ref.at[my_id], recv_sem[0]).wait()
 
   with jax.named_scope("neighbour_lookup"):
-    axis_size = lax.psum(1, axis_name)
+    axis_size = lax.axis_size(axis_name)
     left_neighbor = get_neighbor(my_id, mesh, axis_name, direction="left")
     right_neighbor = get_neighbor(my_id, mesh, axis_name, direction="right")
 
@@ -120,7 +120,7 @@ def ag_kernel(x_ref, o_ref, send_sem, recv_sem, *, axis_name: str,
     jax.jit, static_argnames=["mesh", "axis_name", "memory_space"]
 )
 def all_gather(x, *, mesh: jax.sharding.Mesh, axis_name: str | Sequence[str],
-               memory_space: pltpu.TPUMemorySpace = pltpu.VMEM):
+               memory_space: pltpu.MemorySpace = pltpu.VMEM):
   if isinstance(axis_name, str):
     axis_name = (axis_name,)
   # TODO(sharadmv): enable all gather over multiple axes
@@ -131,12 +131,12 @@ def all_gather(x, *, mesh: jax.sharding.Mesh, axis_name: str | Sequence[str],
     # We can short-circuit here if our axis size is 1
     return x
   def ag_local(x_shard):
-    axis_size = lax.psum(1, axis_name)
+    axis_size = lax.axis_size(axis_name)
     out_shape = jax.ShapeDtypeStruct((axis_size, *x_shard.shape), x_shard.dtype)
     out = pl.pallas_call(
         functools.partial(ag_kernel, axis_name=axis_name, mesh=mesh),
         out_shape=out_shape,
-        compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+        compiler_params=pltpu.CompilerParams(collective_id=0),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             scratch_shapes=(
@@ -151,5 +151,5 @@ def all_gather(x, *, mesh: jax.sharding.Mesh, axis_name: str | Sequence[str],
 
   return shard_map.shard_map(
       ag_local, mesh=mesh, in_specs=P(axis_name), out_specs=P(None),
-      check_rep=False
+      check_vma=False
   )(x)
