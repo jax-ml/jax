@@ -24,6 +24,8 @@ from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import dlpack as dlpack_src
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
+from jax._src.util import cache
 
 config.parse_flags_with_absl()
 
@@ -71,6 +73,37 @@ nonempty_nonscalar_array_shapes += [(3, 1), (1, 4), (2, 1, 4)]
 
 nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
 all_shapes = nonempty_array_shapes + empty_array_shapes
+
+
+def _ensure_alignment(arr, desired_alignment):
+  """Return a copy of numpy array such that its data pointer has the
+  desired alignment exactly. The desired alignment must be power of
+  two.
+  """
+
+  def get_alignment(value):
+    a = 1
+    while (value & (a * 2 - 1)) == 0:
+      a = a * 2
+    return a
+
+  assert desired_alignment > 1, desired_alignment
+  buf = np.empty(2 * desired_alignment + arr.nbytes, dtype=np.int8)
+  ptr = buf.__array_interface__['data'][0]
+  start = 0
+  while get_alignment(ptr + start) != desired_alignment:
+    start += 2
+  assert start <= 2 * desired_alignment
+  # if arr.nbytes == 0 and start > 0 then buf[start:start+arr.nbytes]
+  # incorrectly returns the original buffer, so we must use
+  # buf[start:][:arr.nbytes]:
+  new = buf[start:][:arr.nbytes].view(arr.dtype).reshape(arr.shape)
+  np.copyto(new, arr, casting='unsafe')
+  new_ptr = new.__array_interface__['data'][0]
+  assert new_ptr & (desired_alignment - 1) == 0  # sanity check
+  assert new_ptr & (desired_alignment * 2 - 1) != 0  # sanity check
+  return new
+
 
 class DLPackTest(jtu.JaxTestCase):
   def setUp(self):
@@ -177,13 +210,49 @@ class DLPackTest(jtu.JaxTestCase):
     x = tf.transpose(np.arange(4).reshape(2, 2))
     self.assertAllClose(x.numpy(), jax.dlpack.from_dlpack(x))
 
-  @jtu.sample_product(shape=all_shapes, dtype=numpy_dtypes, copy=[False, True])
-  def testNumpyToJax(self, shape, dtype, copy):
+  @cache()
+  def _get_max_align_bits(self, dtype, device):
+    max_align_bits = 64
+    if device.platform == "cpu" and jaxlib_extension_version >= 383:
+      from jax._src.lib import _jax
+
+      # we detemine the max_align_bits by probing
+      # dlpack_managed_tensor_to_buffer with a buffer with a very
+      # small data alignment value and then extract the max_align_bits
+      # value from the error message:
+      x_np = _ensure_alignment(np.zeros(5, dtype=dtype), desired_alignment=2)
+      try:
+        _jax.dlpack_managed_tensor_to_buffer(x_np.__dlpack__(), device, None, False)
+        raise RuntimeError("unexpected success")
+      except Exception as e:
+        msg = str(e)
+        m = "is not aligned to"
+        if m in msg:
+          i = msg.index(m) + len(m)
+          max_align_bits = int(msg[i:].split(None, 1)[0])
+        else:
+          raise
+    return max_align_bits
+
+  @jtu.sample_product(
+    shape=all_shapes,
+    dtype=numpy_dtypes,
+    copy=[False, True, None] if jaxlib_extension_version >= 383 else [False, True],
+    aligned=[False, True] if jaxlib_extension_version >= 383 else [True],
+  )
+  def testNumpyToJax(self, shape, dtype, copy, aligned):
     rng = jtu.rand_default(self.rng())
     x_np = rng(shape, dtype)
     device = jax.devices()[0]
+    if not aligned:
+      x_np = _ensure_alignment(x_np, 2)
+    else:
+      max_align_bits = self._get_max_align_bits(dtype, device)
+      x_np = _ensure_alignment(x_np, max_align_bits)
+
     _from_dlpack = lambda: jnp.from_dlpack(x_np, device=device, copy=copy)
-    if jax.default_backend() == 'gpu' and not copy:
+    if copy is not None and not copy and (jax.default_backend() != "cpu"
+                                          or not aligned):
       self.assertRaisesRegex(
           ValueError, "Specified .* which requires a copy", _from_dlpack
       )
