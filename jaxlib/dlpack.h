@@ -43,11 +43,6 @@ absl::StatusOr<nanobind::object> DLPackManagedTensorToBuffer(
     const nanobind::capsule& tensor, xla::ifrt::Device* device,
     nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream);
 
-// Converts a PrimitiveType to the nanobind specific implementation of
-// DLDataType.
-absl::StatusOr<nanobind::dlpack::dtype> PrimitiveTypeToNbDLDataType(
-    xla::PrimitiveType type);
-
 }  // namespace jax
 
 #endif  // JAXLIB_DLPACK_H_
