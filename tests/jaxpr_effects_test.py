@@ -276,6 +276,42 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
 
     foo(jax.new_ref(jnp.eye(1)))  # don't crash
 
+  def test_cond_const_input_effect_indexing(self):
+    @jax.custom_jvp
+    def weird(x):
+      return x
+
+    @weird.defjvp
+    def weird_jvp(primals, tangents):
+      (x,), (xdot,) = primals, tangents
+      return jnp.sum(np.ones(3)) * x, xdot
+
+    @jax.jit
+    def f(x):
+      x_ref = jax.new_ref(0.)
+      return jax.lax.cond(x < 0, lambda: x_ref[...], lambda: weird(x[...]))
+
+    jax.jvp(f, (1.,), (1.,))
+
+  def test_scan_const_input_effect_indexing(self):
+    @jax.custom_jvp
+    def weird(x):
+      return x
+
+    @weird.defjvp
+    def weird_jvp(primals, tangents):
+      (x,), (xdot,) = primals, tangents
+      return jnp.sum(np.ones(3)) * x, xdot
+
+    @jax.jit
+    def f(x):
+      x_ref = jax.new_ref(0.)
+      y, () = jax.lax.scan(lambda _, __: (weird(x_ref[...]), ()),
+                           x_ref[...], length=1)
+      return y
+
+    jax.jvp(f, (1.,), (1.,))
+
 
 @jtu.thread_unsafe_test_class()  # because of mlir.register_lowering calls
 class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
