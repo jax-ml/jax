@@ -1424,66 +1424,6 @@ FailureOr<Value> canonicalize_vector_transpose(const CanonicalizeContext &ctx,
   return new_op;
 }
 
-// Finds the split point for a reshape between a multi-dimensional shape and a
-// shape where a suffix has been collapsed into a single dimension.
-//
-// This function checks if `src_shape` and `tgt_shape` follow the pattern:
-//   src_shape: (P..., S_1, S_2, ..., S_N)
-//   tgt_shape: (P..., T_collapsed)
-// where `P` is a common prefix and `product(S_1..S_N) == T_collapsed`.
-//
-// It handles a differing number of leading 1s in the prefix by stripping them
-// from both shapes before comparison.
-//
-// This utility is used for two inverse patterns:
-// 1. Collapse (e.g., `load` -> `reshape`): The function is called directly,
-//    where `src_shape` is the multi-dimensional pre-reshape vector shape.
-// 2. Expand (e.g., `reshape` -> `store`): The function is called with swapped
-//    arguments, where `src_shape` is the multi-dimensional *post-reshape*
-//    vector shape.
-//
-// Returns:
-//   - A pair containing:
-//     1. The index in `src_shape` where the collapsing suffix begins.
-//     2. The product of the collapsed dimensions excluding the innermost one
-//        (i.e., product(S_1..S_{N-1})), used as the "sublane product".
-//   - `std::nullopt` if the shapes do not match the pattern.
-std::optional<std::pair<int, int>> findSplitPoint(ArrayRef<int64_t> src_shape,
-                                                  ArrayRef<int64_t> tgt_shape) {
-  int s = 0, t = 0;
-  // drop leading 1s
-  while (s < src_shape.size() && src_shape[s] == 1) {
-    ++s;
-  }
-  while (t < tgt_shape.size() && tgt_shape[t] == 1) {
-    ++t;
-  }
-
-  // Find the end of the common prefix between the shapes (ignoring leading 1s).
-  int s_prefix_end = s, t_prefix_end = t;
-  while (s_prefix_end < src_shape.size() && t_prefix_end < tgt_shape.size() &&
-         src_shape[s_prefix_end] == tgt_shape[t_prefix_end]) {
-    ++s_prefix_end;
-    ++t_prefix_end;
-  }
-
-  // After the common prefix, the rest of the target shape must consist of just
-  // one dimension (the collapsed one).
-  if (t_prefix_end != tgt_shape.size() - 1) {
-    return std::nullopt;
-  }
-  int64_t src_prod = 1;
-  for (int i = s_prefix_end; i < src_shape.size(); ++i) {
-    src_prod *= src_shape[i];
-  }
-
-  if (tgt_shape.back() != src_prod) {
-    return std::nullopt;
-  }
-  src_prod /= src_shape.back();
-  return std::make_pair(s_prefix_end, src_prod);
-}
-
 FailureOr<Value> canonicalize_shape_cast(const CanonicalizeContext& ctx,
                                          Operation& raw_op) {
   CanonicalBuilder builder(ctx, raw_op.getLoc(), &raw_op);

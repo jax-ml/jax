@@ -228,6 +228,9 @@ FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
     Operation *op, ArrayRef<int64_t> source_shape,
     ArrayRef<int64_t> target_shape);
 
+std::optional<std::pair<int64_t, int64_t>> findSplitPoint(
+    ArrayRef<int64_t> src_shape, ArrayRef<int64_t> tgt_shape);
+
 // Assuming MKN matmul - This function must only be called after
 // canonicalization passes.
 //

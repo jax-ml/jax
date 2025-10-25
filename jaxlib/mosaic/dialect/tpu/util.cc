@@ -109,6 +109,38 @@ FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
   return squeezed;
 }
 
+std::optional<std::pair<int64_t, int64_t>> findSplitPoint(
+    ArrayRef<int64_t> src_shape, ArrayRef<int64_t> tgt_shape) {
+  int64_t s = 0, t = 0;
+  while (s < src_shape.size() && src_shape[s] == 1) {
+    ++s;
+  }
+  while (t < tgt_shape.size() && tgt_shape[t] == 1) {
+    ++t;
+  }
+
+  int64_t s_prefix_end = s, t_prefix_end = t;
+  while (s_prefix_end < src_shape.size() && t_prefix_end < tgt_shape.size() &&
+         src_shape[s_prefix_end] == tgt_shape[t_prefix_end]) {
+    ++s_prefix_end;
+    ++t_prefix_end;
+  }
+
+  if (t_prefix_end != tgt_shape.size() - 1) {
+    return std::nullopt;
+  }
+  int64_t src_prod = 1;
+  for (int64_t i = s_prefix_end; i < src_shape.size(); ++i) {
+    src_prod *= src_shape[i];
+  }
+
+  if (tgt_shape.back() != src_prod) {
+    return std::nullopt;
+  }
+  src_prod /= src_shape.back();
+  return std::make_pair(s_prefix_end, src_prod);
+}
+
 std::optional<std::pair<bool, bool>> isTransposedMatmul(
     DotDimensionNumbersAttr dim_numbers) {
   auto lhs_contracting_dims = dim_numbers.getLhsContractingDims();
