@@ -141,6 +141,7 @@ pytype_strict_library(
         ":lowering",
         ":primitives",
         ":sc_core",
+        ":tpu_info",
         "//jax",
         "//jax/_src:api_util",
         "//jax/_src:core",
@@ -165,6 +166,7 @@ pytype_strict_library(
     visibility = ["//jax/experimental:pallas_sc_users"],
     deps = [
         ":core",
+        ":tpu_info",
         "//jax",
         "//jax/_src:core",
         "//jax/_src:lax",

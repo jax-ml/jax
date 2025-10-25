@@ -30,6 +30,7 @@ from jax._src.lax import lax
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic import core as tpu_core
+from jax._src.pallas.mosaic import tpu_info
 import jax.numpy as jnp
 
 
@@ -168,34 +169,6 @@ class ScalarSubcoreMesh:
     return False
 
 
-def _num_available_cores():
-  """Returns the number of SparseCores on the current device."""
-  device_kind = tpu_core.get_device_kind()
-  match device_kind:
-    case "TPU v5" | "TPU v5p":
-      return 4
-    case "TPU v6 lite" | "TPU v6" | "TPU7x":
-      return 2
-    case _:
-      raise NotImplementedError(
-          f"Unsupported device kind: {device_kind}"
-      )
-
-
-def _vector_dimension():
-  """Returns the supported vector dimension for the current device."""
-  device_kind = tpu_core.get_device_kind()
-  match device_kind:
-    case "TPU v5" | "TPU v5p" | "TPU v6" | "TPU v6 lite":
-      return 8
-    case "TPU7x":
-      return 16
-    case _:
-      raise NotImplementedError(
-          f"Unsupported device kind: {device_kind}"
-      )
-
-
 def _scalar_subcore_mesh_discharge_rule(
     in_avals,
     out_avals,
@@ -212,7 +185,8 @@ def _scalar_subcore_mesh_discharge_rule(
   if not isinstance(mesh, ScalarSubcoreMesh):
     raise TypeError(f"Mesh must be a ScalarSubcoreMesh, got {type(mesh)}")
   assert len(mesh.shape) == 1
-  if mesh.num_cores > (num_expected := _num_available_cores()):
+  sc_info = tpu_info.get_tpu_info().sc
+  if mesh.num_cores > (num_expected := sc_info.num_cores):
     raise ValueError(
         f"Mesh has {mesh.num_cores} cores, but the current TPU chip has only"
         f" {num_expected} SparseCores"
@@ -253,6 +227,19 @@ class VectorSubcoreMesh:
   num_cores: int
   num_subcores: int = dataclasses.field(default=16, init=False)
 
+  def __post_init__(self):
+    sc_info = tpu_info.get_tpu_info().sc
+    if self.num_cores > (num_expected := sc_info.num_cores):
+      raise ValueError(
+          f"Mesh has {self.num_cores} cores, but the current TPU chip has only"
+          f" {num_expected} SparseCores"
+      )
+    if self.num_subcores != sc_info.num_lanes:
+      raise ValueError(
+          f"Mesh has {self.num_subcores} subcores, but the current TPU chip has"
+          f" only {num_expected} subcores"
+      )
+
   @property
   def backend(self) -> str:
     return "mosaic_tpu"
@@ -283,7 +270,7 @@ def _vector_subcore_mesh_discharge_rule(
   if not isinstance(mesh, VectorSubcoreMesh):
     raise TypeError(f"Mesh must be a VectorSubcoreMesh, got {type(mesh)}")
   assert len(mesh.shape) == 2
-  if mesh.num_cores > (num_expected := _num_available_cores()):
+  if mesh.num_cores > (num_expected := tpu_info.get_tpu_info().sc.num_cores):
     raise ValueError(
         f"Mesh has {mesh.num_cores} cores, but the current TPU chip has only"
         f" {num_expected} SparseCores"

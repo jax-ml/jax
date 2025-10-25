@@ -40,8 +40,18 @@ class ChipVersion(ChipVersionBase, enum.Enum):
   def __str__(self) -> str:
     return self.value
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class SparseCoreInfo:
+  """SparseCore-specific information."""
+  num_cores: int
+  num_subcores: int
+  num_lanes: int
 
-@dataclasses.dataclass(frozen=True)
+
+_NO_SPARSE_CORE = SparseCoreInfo(num_cores=0, num_subcores=0, num_lanes=0)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class TpuInfo:
   """TPU hardware information.
 
@@ -64,6 +74,8 @@ class TpuInfo:
   int8_ops_per_second: int
   fp8_ops_per_second: int
   int4_ops_per_second: int
+
+  sc: SparseCoreInfo
 
   @property
   def is_lite(self) -> bool:
@@ -198,6 +210,7 @@ def get_tpu_info() -> TpuInfo:
           int8_ops_per_second=0,  # Not Available
           fp8_ops_per_second=0,  # Not Available
           int4_ops_per_second=0,  # Not Available
+          sc=_NO_SPARSE_CORE,
       )
     case "TPU v3":  # 2 TensorCores per chip
       num_chip_cores = 2
@@ -217,6 +230,7 @@ def get_tpu_info() -> TpuInfo:
           int8_ops_per_second=0,  # Not Available
           fp8_ops_per_second=0,  # Not Available
           int4_ops_per_second=0,  # Not Available
+          sc=_NO_SPARSE_CORE,
       )
     case "TPU v4 lite":  # 1 TensorCore per chip
       return TpuInfo(
@@ -235,6 +249,7 @@ def get_tpu_info() -> TpuInfo:
           int8_ops_per_second=0,  # Not Available
           fp8_ops_per_second=0,  # Not Available
           int4_ops_per_second=0,  # Not Available
+          sc=_NO_SPARSE_CORE,
       )
     case "TPU v4":  # 2 TensorCores per chip
       num_chip_cores = 2
@@ -254,6 +269,7 @@ def get_tpu_info() -> TpuInfo:
           int8_ops_per_second=0,  # Not Available
           fp8_ops_per_second=0,  # Not Available
           int4_ops_per_second=0,  # Not Available
+          sc=_NO_SPARSE_CORE,
       )
     case "TPU v5 lite" | "TPU v5e":  # 1 TensorCore per chip
       return TpuInfo(
@@ -272,6 +288,7 @@ def get_tpu_info() -> TpuInfo:
           int8_ops_per_second=int(3.94e14),
           fp8_ops_per_second=0,  # Not Available
           int4_ops_per_second=int(7.88e14),
+          sc=_NO_SPARSE_CORE,
       )
     case "TPU v5" | "TPU v5p":  # 2 TensorCores per chip
       num_chip_cores = 2
@@ -291,6 +308,7 @@ def get_tpu_info() -> TpuInfo:
           int8_ops_per_second=int(9.18e14 // num_chip_cores),
           fp8_ops_per_second=0,  # Not Available
           int4_ops_per_second=int(1.84e15 // num_chip_cores),
+          sc=SparseCoreInfo(num_cores=4, num_subcores=16, num_lanes=8),
       )
     case "TPU v6 lite" | "TPU v6e":  # 1 TensorCore per chip
       return TpuInfo(
@@ -309,6 +327,7 @@ def get_tpu_info() -> TpuInfo:
           int8_ops_per_second=int(1.84e15),
           fp8_ops_per_second=int(9.20e14),
           int4_ops_per_second=int(3.68e15),
+          sc=SparseCoreInfo(num_cores=2, num_subcores=16, num_lanes=8),
       )
     case _ as d:
       if d in registry:

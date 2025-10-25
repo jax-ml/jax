@@ -38,6 +38,7 @@ from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering as tc_lowering
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import sc_core
+from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
@@ -441,13 +442,13 @@ def _store_lowering_rule(
                         kernel_types=[tpu_core.KernelType.SC_VECTOR_SUBCORE])
 def _iota_lowering_rule_sc(ctx: LoweringRuleContext, dtype, shape, dimension,
                            sharding):
-  if shape != (sc_core._vector_dimension(),):
+  if shape != (tpu_info.get_tpu_info().sc.num_lanes,):
     raise ValueError(
         f"Unsupported iota shape for SC vector subcore. Got {shape}, supported "
-        f"shape is {(sc_core._vector_dimension(),)}.")
+        f"shape is {(tpu_info.get_tpu_info().sc.num_lanes,)}.")
   [out_aval] = ctx.avals_out
   out_type = ir.VectorType.get(
-      [sc_core._vector_dimension()], _dtype_to_ir_type(out_aval.dtype))
+      [tpu_info.get_tpu_info().sc.num_lanes], _dtype_to_ir_type(out_aval.dtype))
   return tpu.iota(out_type, dimensions=[dimension])
 
 

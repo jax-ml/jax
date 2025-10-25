@@ -24,6 +24,7 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic import sc_core
+from jax._src.pallas.mosaic import tpu_info
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import tpu_sc as plsc
@@ -111,7 +112,7 @@ class DebugPrintTest(PallasSCTest):
     @plsc.kernel(
         out_shape=int32s,
         mesh=plsc.ScalarSubcoreMesh(
-            axis_name="core", num_cores=sc_core._num_available_cores()
+            axis_name="core", num_cores=tpu_info.get_tpu_info().sc.num_cores
         ),
     )
     def kernel(int32s_hbm_ref, int16s_hbm_ref, int8s_hbm_ref, o_hbm_ref):
@@ -991,7 +992,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_cumsum(self, dtype):
-    x = jnp.arange(sc_core._vector_dimension(), dtype=dtype)
+    x = jnp.arange(tpu_info.get_tpu_info().sc.num_lanes, dtype=dtype)
 
     @vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
@@ -1001,7 +1002,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_cumsum_2d_not_supported(self, dtype):
-    x = jnp.arange(sc_core._vector_dimension(), dtype=dtype)
+    x = jnp.arange(tpu_info.get_tpu_info().sc.num_lanes, dtype=dtype)
 
     with self.assertRaisesRegex(NotImplementedError, r"must be rank 1"):
       @vector_subcore_kernel(out_shape=x)
@@ -1012,7 +1013,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_masked_cumsum(self, dtype):
-    x = jnp.arange(sc_core._vector_dimension(), dtype=dtype)
+    x = jnp.arange(tpu_info.get_tpu_info().sc.num_lanes, dtype=dtype)
 
     @vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
@@ -1021,7 +1022,7 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), np.cumsum(x * (x % 2)))
 
   def test_parallel_loop_with_carry(self):
-    chunk_size = sc_core._vector_dimension()
+    chunk_size = tpu_info.get_tpu_info().sc.num_lanes
     nchunks = 4
     per_step_increment = 10
     sentinel_multiplier = 1000
@@ -1130,7 +1131,7 @@ class VectorSubcoreTest(PallasSCTest):
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
-    vec_dim = sc_core._vector_dimension()
+    vec_dim = tpu_info.get_tpu_info().sc.num_lanes
     @plsc.kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(mesh.num_subcores, vec_dim), dtype=jnp.uint32
@@ -1159,7 +1160,7 @@ class VectorSubcoreTest(PallasSCTest):
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
-    vec_dim = sc_core._vector_dimension()
+    vec_dim = tpu_info.get_tpu_info().sc.num_lanes
     @functools.partial(
         pl.pallas_call,
         grid=16,
@@ -1286,7 +1287,7 @@ class ScalarSubcoreTest(PallasSCTest):
 
   @property
   def num_cores(self):
-    return sc_core._num_available_cores()
+    return tpu_info.get_tpu_info().sc.num_cores
 
   def test_copy(self):
     x = jnp.arange(16)
