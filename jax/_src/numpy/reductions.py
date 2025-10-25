@@ -2379,7 +2379,6 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
     >>> jnp.quantile(x, q, method='nearest')
     Array([2., 4., 7.], dtype=float32)
   """
-  check_arraylike("quantile", a, q)
   if weights is None:
     a, q = ensure_arraylike("quantile", a, q)
   else:
@@ -2390,7 +2389,7 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
   if not isinstance(interpolation, DeprecatedArg):
     raise TypeError("quantile() argument interpolation was removed in JAX"
                     " v0.8.0. Use method instead.")
-  return _quantile(lax.asarray(a), lax.asarray(q), axis, method, keepdims, False, weights)
+  return _quantile(a, q, axis, method, keepdims, False, weights)
 
 # TODO(jakevdp): interpolation argument deprecated 2024-05-16
 @export
@@ -2439,7 +2438,6 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
     >>> jnp.nanquantile(x, q)
     Array([1.5, 3. , 4.5], dtype=float32)
   """
-  check_arraylike("nanquantile", a, q)
   if weights is None:
     a, q = ensure_arraylike("nanquantile", a, q)
   else:
@@ -2451,7 +2449,7 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
   if not isinstance(interpolation, DeprecatedArg):
     raise TypeError("nanquantile() argument interpolation was removed in JAX"
                     " v0.8.0. Use method instead.")
-  return _quantile(lax.asarray(a), lax.asarray(q), axis, method, keepdims, True, weights)
+  return _quantile(a, q, axis, method, keepdims, True, weights)
 
 def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
               method: str, keepdims: bool, squash_nans: bool, weights: Array | None = None) -> Array:
@@ -2498,7 +2496,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   if weights is None:
     a, = promote_dtypes_inexact(a)
   else:
-    a, q = promote_dtypes_inexact(a, q)
+    a, weights = promote_dtypes_inexact(a, weights)
     a_shape = a.shape
     w_shape = np.shape(weights)
     if w_shape != a_shape:
@@ -2513,11 +2511,6 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
       weights = lax.expand_dims(weights, axis)
     weights = _broadcast_to(weights, a.shape)
 
-    weights_have_nan = jnp.any(jnp.isnan(weights))
-    if weights_have_nan:
-      out_shape = q.shape if hasattr(q, "shape") and getattr(q, "ndim", 0) > 0 else ()
-      return lax.full(out_shape, np.nan, dtype=a.dtype)
-
     if squash_nans:
       nan_mask = ~lax_internal._isnan(a)
       weights = _where(nan_mask, weights, 0)
@@ -2530,7 +2523,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     cum_weights = lax.cumsum(weights_sorted, axis=axis)
     cum_weights_norm = lax.div(cum_weights, total_weight)
 
-    def _weighted_quantile(qi, weights_have_nan=weights_have_nan):
+    def _weighted_quantile(qi):
       index_dtype = dtypes.default_int_dtype()
       idx = sum(lax.lt(cum_weights_norm, qi), axis=axis, dtype=index_dtype)
       idx = lax.clamp(0, idx, a_sorted.shape[axis] - 1)
@@ -2558,9 +2551,6 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
         out = val
       else:
         raise ValueError(f"{method=!r} not recognized")
-      if weights_have_nan:
-        out = lax.full_like(out, np.nan)
-        out = lax.squeeze(out, axis=axis)
       return out
 
     if q.ndim == 0:
@@ -2700,7 +2690,6 @@ def percentile(a: ArrayLike, q: ArrayLike,
     >>> jnp.percentile(x, q, method='nearest')
     Array([1., 3., 4.], dtype=float32)
   """
-  check_arraylike("percentile", a, q)
   if weights is None:
     a, q = ensure_arraylike("percentile", a, q)
   else:
@@ -2764,7 +2753,6 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
     >>> jnp.nanpercentile(x, q)
     Array([1.5, 3. , 4.5], dtype=float32)
   """
-  check_arraylike("nanpercentile", a, q)
   if weights is None:
     a, q = ensure_arraylike("nanpercentile", a, q)
   else:
