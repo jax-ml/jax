@@ -6729,6 +6729,77 @@ batching.ragged_prop_rules[broadcast_in_dim_p] = (
 )
 
 
+def tile(operand: ArrayLike, reps: Sequence[int]) -> Array:
+  """Tiles an array.
+
+  Args:
+    operand: an array to tile.
+    reps: a sequence of integers representing the number of repeats for each
+      dimension.
+
+  Returns:
+    A tiled array.
+  """
+  return tile_p.bind(operand, reps=tuple(reps))
+
+
+def _tile_abstract_eval(operand, *, reps):
+  if len(reps) != operand.ndim:
+    raise ValueError(
+        'tile reps must have length equal to operand.ndim, '
+        f'got reps={reps} for operand.ndim={operand.ndim}'
+    )
+  out_shape = tuple(d * r for d, r in zip(operand.shape, reps))
+  return operand.update(shape=out_shape)
+
+
+def _tile_impl(operand, *, reps):
+  out_shape = tuple(d * r for d, r in zip(operand.shape, reps))
+  # Reshape [N1, N2, ...] to [1, N1, 1, N2, ...]
+  shape = [d for s in operand.shape for d in (1, s)]
+  bcast_reps = [d for r in reps for d in (r, 1)]
+  # Broadcast to [R1, N1, R2, N2, ...]
+  bcast = broadcast_in_dim(
+      reshape(operand, shape),
+      tuple(s * r for s, r in zip(shape, bcast_reps)),
+      list(range(len(shape))),
+  )
+  return reshape(bcast, out_shape)
+
+
+def _tile_transpose(ct, operand, *, reps):
+  assert ad.is_undefined_primal(operand)
+  if type(ct) is ad_util.Zero:
+    return ad_util.Zero(operand.aval)
+  # Reshape cotangent to [N1, R1, N2, R2, ...]
+  reshape_shape = [d for tup in zip(operand.aval.shape, reps) for d in tup]
+  reshaped_ct = reshape(ct, reshape_shape)
+  # Sum over R1, R2, ... axes
+  reduce_dims = [2 * i + 1 for i, r in enumerate(reps) if r > 1]
+  reduced_ct = reduce_sum(reshaped_ct, reduce_dims)
+  # Remove extra dims introduced by extra reps
+  return reshape(reduced_ct, operand.aval.shape)
+
+
+def _tile_batching_rule(batched_args, batch_dims, *, reps):
+  (operand,) = batched_args
+  (bdim,) = batch_dims
+  if bdim is None:
+    return tile(operand, reps), None
+  reps = list(reps)
+  reps.insert(bdim, 1)
+  return tile(operand, reps), bdim
+
+
+tile_p = core.Primitive('tile')
+tile_p.def_impl(_tile_impl)
+tile_p.def_abstract_eval(_tile_abstract_eval)
+ad.deflinear2(tile_p, _tile_transpose)
+batching.primitive_batchers[tile_p] = _tile_batching_rule
+mlir.register_lowering(
+    tile_p, mlir.lower_fun(_tile_impl, multiple_results=False))
+
+
 def _clamp_shape_rule(min, operand, max):
   if min.shape and min.shape != operand.shape:
     raise TypeError("clamp requires min.shape == operand.shape or min.shape == "
