@@ -23,12 +23,15 @@ from typing import overload, Any, Literal, Protocol, Union
 
 import numpy as np
 
+import jax
+from jax import lax
+from jax import numpy as jnp
 from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src.numpy.util import (
-    _broadcast_to, ensure_arraylike,
+    _broadcast_to, check_arraylike, ensure_arraylike, _complex_elem_type,
     promote_dtypes_inexact, promote_dtypes_numeric, _where)
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax
@@ -2345,7 +2348,8 @@ def cumulative_prod(
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation', 'keepdims', 'method'))
 def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
              out: None = None, overwrite_input: bool = False, method: str = "linear",
-             keepdims: bool = False, *, interpolation: DeprecatedArg = DeprecatedArg()) -> Array:
+             keepdims: bool = False, *, weights: ArrayLike | None = None,
+             interpolation: DeprecatedArg | str = DeprecatedArg()) -> Array:
   """Compute the quantile of the data along the specified axis.
 
   JAX implementation of :func:`numpy.quantile`.
@@ -2383,7 +2387,10 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
     >>> jnp.quantile(x, q, method='nearest')
     Array([2., 4., 7.], dtype=float32)
   """
-  a, q = ensure_arraylike("quantile", a, q)
+  if weights is None:
+    a, q = ensure_arraylike("quantile", a, q)
+  else:
+    a, q, weights = ensure_arraylike("quantile", a, q, weights)
   if overwrite_input or out is not None:
     raise ValueError("jax.numpy.quantile does not support overwrite_input=True "
                      "or out != None")
@@ -2391,14 +2398,15 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
   if not isinstance(interpolation, DeprecatedArg):
     raise TypeError("quantile() argument interpolation was removed in JAX"
                     " v0.8.0. Use method instead.")
-  return _quantile(lax.asarray(a), lax.asarray(q), axis, method, keepdims, False)
+  return _quantile(a, q, axis, method, keepdims, False, weights)
 
 # TODO(jakevdp): interpolation argument deprecated 2024-05-16
 @export
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation', 'keepdims', 'method'))
 def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
                 out: None = None, overwrite_input: bool = False, method: str = "linear",
-                keepdims: bool = False, *, interpolation: DeprecatedArg = DeprecatedArg()) -> Array:
+                keepdims: bool = False, *, weights: ArrayLike | None = None,
+                interpolation: DeprecatedArg | str = DeprecatedArg()) -> Array:
   """Compute the quantile of the data along the specified axis, ignoring NaNs.
 
   JAX implementation of :func:`numpy.nanquantile`.
@@ -2437,7 +2445,10 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
     >>> jnp.nanquantile(x, q)
     Array([1.5, 3. , 4.5], dtype=float32)
   """
-  a, q = ensure_arraylike("nanquantile", a, q)
+  if weights is None:
+    a, q = ensure_arraylike("nanquantile", a, q)
+  else:
+    a, q, weights = ensure_arraylike("nanquantile", a, q, weights)
   if overwrite_input or out is not None:
     msg = ("jax.numpy.nanquantile does not support overwrite_input=True or "
            "out != None")
@@ -2446,13 +2457,12 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
   if not isinstance(interpolation, DeprecatedArg):
     raise TypeError("nanquantile() argument interpolation was removed in JAX"
                     " v0.8.0. Use method instead.")
-  return _quantile(lax.asarray(a), lax.asarray(q), axis, method, keepdims, True)
+  return _quantile(a, q, axis, method, keepdims, True, weights)
 
 def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
-              method: str, keepdims: bool, squash_nans: bool) -> Array:
-  if method not in ["linear", "lower", "higher", "midpoint", "nearest"]:
-    raise ValueError("method can only be 'linear', 'lower', 'higher', 'midpoint', or 'nearest'")
-  a, = promote_dtypes_inexact(a)
+              method: str, keepdims: bool, squash_nans: bool, weights: Array | None = None) -> Array:
+  if method not in ["linear", "lower", "higher", "midpoint", "nearest", "inverted_cdf"]:
+    raise ValueError("method can only be 'linear', 'lower', 'higher', 'midpoint', 'nearest', or 'inverted_cdf'")
   keepdim = []
   if dtypes.issubdtype(a.dtype, np.complexfloating):
     raise ValueError("quantile does not support complex input, as the operation is poorly defined.")
@@ -2482,12 +2492,80 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   else:
     axis = canonicalize_axis(axis, a.ndim)
 
+  q, = promote_dtypes_inexact(q)
+
   q_shape = q.shape
   q_ndim = q.ndim
   if q_ndim > 1:
     raise ValueError(f"q must be have rank <= 1, got shape {q.shape}")
 
   a_shape = a.shape
+  # Handle weights
+  if weights is None:
+    a, = promote_dtypes_inexact(a)
+  else:
+    a, weights = promote_dtypes_inexact(a, weights)
+    a_shape = a.shape
+    w_shape = np.shape(weights)
+    if w_shape != a_shape:
+      if len(w_shape) != 1:
+        raise ValueError("1D weights expected when shapes of a and weights differ.")
+      if axis is None:
+        raise TypeError("Axis must be specified when shapes of a and weights differ.")
+      if w_shape[0] != a_shape[axis]:
+        raise ValueError("Length of weights not compatible with specified axis.")
+      resh = [1] * a.ndim
+      resh[axis] = w_shape[0]
+      weights = lax.expand_dims(weights, axis)
+    weights = _broadcast_to(weights, a.shape)
+
+    if squash_nans:
+      nan_mask = ~lax_internal._isnan(a)
+      weights = _where(nan_mask, weights, 0)
+    else:
+      with jax.debug_nans(False):
+        a = _where(any(lax_internal._isnan(a), axis=axis, keepdims=True), np.nan, a)
+
+    total_weight = sum(weights, axis=axis, keepdims=True)
+    a_sorted, weights_sorted = lax.sort_key_val(a, weights, dimension=axis)
+    cum_weights = lax.cumsum(weights_sorted, axis=axis)
+    cum_weights_norm = lax.div(cum_weights, total_weight)
+
+    def _weighted_quantile(qi):
+      index_dtype = dtypes.default_int_dtype()
+      idx = sum(lax.lt(cum_weights_norm, qi), axis=axis, dtype=index_dtype)
+      idx = lax.clamp(0, idx, a_sorted.shape[axis] - 1)
+      val = jnp.take_along_axis(a_sorted, jnp.expand_dims(idx, axis), axis)
+
+      idx_prev = lax.clamp(idx - 1, 0, a_sorted.shape[axis] - 1)
+      val_prev = jnp.take_along_axis(a_sorted, jnp.expand_dims(idx_prev, axis), axis)
+      cw_prev = jnp.take_along_axis(cum_weights_norm, jnp.expand_dims(idx_prev, axis), axis)
+      cw_next = jnp.take_along_axis(cum_weights_norm, jnp.expand_dims(idx, axis), axis)
+
+      if method == "linear":
+        denom = cw_next - cw_prev
+        denom = _where(denom == 0, 1, denom)
+        weight = (qi - cw_prev) / denom
+        out = val_prev * (1 - weight) + val * weight
+      elif method == "lower":
+        out = val_prev
+      elif method == "higher":
+        out = val
+      elif method == "nearest":
+        out = _where(lax.abs(qi - cw_prev) < lax.abs(qi - cw_next), val_prev, val)
+      elif method == "midpoint":
+        out = (val_prev + val) / 2
+      elif method == "inverted_cdf":
+        out = val
+      else:
+        raise ValueError(f"{method=!r} not recognized")
+      return out
+
+    if q.ndim == 0:
+      result = _weighted_quantile(q)
+    else:
+      result = jax.vmap(_weighted_quantile)(q)
+    return result
 
   if squash_nans:
     a = _where(lax._isnan(a), np.nan, a) # Ensure nans are positive so they sort to the end.
@@ -2563,6 +2641,8 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     result = lax.select(pred, low_value, high_value)
   elif method == "midpoint":
     result = lax.mul(lax.add(low_value, high_value), lax._const(low_value, 0.5))
+  elif method == "inverted_cdf":
+    result = high_value
   else:
     raise ValueError(f"{method=!r} not recognized")
   if keepdims and keepdim:
@@ -2578,7 +2658,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
 def percentile(a: ArrayLike, q: ArrayLike,
                axis: int | tuple[int, ...] | None = None,
                out: None = None, overwrite_input: bool = False, method: str = "linear",
-               keepdims: bool = False, *, interpolation: DeprecatedArg = DeprecatedArg()) -> Array:
+               keepdims: bool = False, *, weights: ArrayLike | None = None, interpolation: str | DeprecatedArg = DeprecatedArg()) -> Array:
   """Compute the percentile of the data along the specified axis.
 
   JAX implementation of :func:`numpy.percentile`.
@@ -2616,14 +2696,17 @@ def percentile(a: ArrayLike, q: ArrayLike,
     >>> jnp.percentile(x, q, method='nearest')
     Array([1., 3., 4.], dtype=float32)
   """
-  a, q = ensure_arraylike("percentile", a, q)
+  if weights is None:
+    a, q = ensure_arraylike("percentile", a, q)
+  else:
+    a, q, weights = ensure_arraylike("percentile", a, q, weights)
   q, = promote_dtypes_inexact(q)
   # TODO(jakevdp): remove the interpolation argument in JAX v0.9.0
   if not isinstance(interpolation, DeprecatedArg):
     raise TypeError("percentile() argument interpolation was removed in JAX"
                     " v0.8.0. Use method instead.")
   return quantile(a, q / 100, axis=axis, out=out, overwrite_input=overwrite_input,
-                  method=method, keepdims=keepdims)
+                  method=method, keepdims=keepdims, weights=weights)
 
 
 # TODO(jakevdp): interpolation argument deprecated 2024-05-16
@@ -2632,7 +2715,7 @@ def percentile(a: ArrayLike, q: ArrayLike,
 def nanpercentile(a: ArrayLike, q: ArrayLike,
                   axis: int | tuple[int, ...] | None = None,
                   out: None = None, overwrite_input: bool = False, method: str = "linear",
-                  keepdims: bool = False, *, interpolation: DeprecatedArg = DeprecatedArg()) -> Array:
+                  keepdims: bool = False, *, weights: ArrayLike | None = None, interpolation: str | DeprecatedArg = DeprecatedArg()) -> Array:
   """Compute the percentile of the data along the specified axis, ignoring NaN values.
 
   JAX implementation of :func:`numpy.nanpercentile`.
@@ -2672,7 +2755,10 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
     >>> jnp.nanpercentile(x, q)
     Array([1.5, 3. , 4.5], dtype=float32)
   """
-  a, q = ensure_arraylike("nanpercentile", a, q)
+  if weights is None:
+    a, q = ensure_arraylike("nanpercentile", a, q)
+  else:
+    a, q, weights = ensure_arraylike("nanpercentile", a, q, weights)
   q, = promote_dtypes_inexact(q)
   q = q / 100
   # TODO(jakevdp): remove the interpolation argument in JAX v0.9.0
@@ -2680,7 +2766,7 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
     raise TypeError("nanpercentile() argument interpolation was removed in JAX"
                     " v0.8.0. Use method instead.")
   return nanquantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
-                     method=method, keepdims=keepdims)
+                     method=method, keepdims=keepdims, weights=weights)
 
 
 @export
