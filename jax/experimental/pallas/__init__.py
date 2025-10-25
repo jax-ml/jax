@@ -59,7 +59,7 @@ from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
 from jax._src.pallas.primitives import dot as dot
 from jax._src.pallas.primitives import get_global as get_global
 from jax._src.pallas.primitives import load as _deprecated_load
-from jax._src.pallas.primitives import max_contiguous as max_contiguous
+from jax._src.pallas.primitives import max_contiguous as _deprecated_max_contiguous
 from jax._src.pallas.primitives import multiple_of as multiple_of
 from jax._src.pallas.primitives import num_programs as num_programs
 from jax._src.pallas.primitives import program_id as program_id
@@ -96,6 +96,7 @@ if _typing.TYPE_CHECKING:
   atomic_xor = _deprecated_atomic_xor
   load = _deprecated_load
   store = _deprecated_store
+  max_contiguous = _deprecated_max_contiguous
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   _deprecations = {
@@ -140,6 +141,11 @@ else:
       "atomic_xor": (
           "pl.atomic_xor is deprecated, access it through jax.experimental.pallas.triton.",
           _deprecated_atomic_xor,
+      ),
+      # Deprecated on October 23rd  2025.
+      "max_contiguous": (
+          "pl.max_contiguous is deprecated, access it through jax.experimental.pallas.triton.",
+          _deprecated_max_contiguous,
       ),
   }
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
