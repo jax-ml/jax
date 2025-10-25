@@ -1836,7 +1836,7 @@ mutable_array_checks = bool_state(
 
 vjp3 = bool_state(
     name='jax_vjp3',
-    default=True,
+    default=False,
     upgrade=True,
     help='Use new backward-pass code in jax.vjp')
 
