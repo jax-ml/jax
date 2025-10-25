@@ -1368,6 +1368,64 @@ class PushBlockSpecTest(parameterized.TestCase):
     out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
     self.assertEqual(out_block_spec.block_shape, block_spec.block_shape)
 
+  def test_reduce_sum_push(self):
+    def f(x):
+      return x.sum(axis=0)
+
+    x_type = jax.ShapeDtypeStruct((256, 512), jnp.float32)
+    block_spec = pl.BlockSpec((256, 256), lambda i, j: (i, j))
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
+    self.assertEqual(out_block_spec.block_shape, (256,))
+    self.assertEqual(out_block_spec.index_map(2, 3), (3,))
+
+    def f(x):
+      return x.sum(axis=1)
+
+    x_type = jax.ShapeDtypeStruct((128, 512), jnp.float32)
+    block_spec = pl.BlockSpec((64, 512), lambda i, j: (i, j))
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
+    self.assertEqual(out_block_spec.block_shape, (64,))
+    self.assertEqual(out_block_spec.index_map(2, 3), (2,))
+
+  def test_broadcast_in_dim_push(self):
+    def f(x):
+      return jnp.broadcast_to(x, (128, 512))
+
+    x_type = jax.ShapeDtypeStruct((512,), jnp.float32)
+    block_spec = pl.BlockSpec((128,), lambda i: (i,))
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
+    self.assertEqual(out_block_spec.block_shape, (128, 128))
+    self.assertEqual(out_block_spec.index_map(3), (0, 3))
+
+    def f(x):
+      return jnp.broadcast_to(x, (128, 512))
+
+    x_type = jax.ShapeDtypeStruct((1, 512), jnp.float32)
+    block_spec = pl.BlockSpec((1, 128), lambda i, j: (i, j))
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
+    self.assertEqual(out_block_spec.block_shape, (128, 128))
+    self.assertEqual(out_block_spec.index_map(0, 3), (0, 3))
+
+    def f(x):
+      x = jnp.expand_dims(x, axis=1)
+      return jnp.broadcast_to(x, (128, 512))
+
+    x_type = jax.ShapeDtypeStruct((128,), jnp.float32)
+    block_spec = pl.BlockSpec((64,), lambda i: (i,))
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
+    self.assertEqual(out_block_spec.block_shape, (64, 512))
+    self.assertEqual(out_block_spec.index_map(1), (1, 0))
+
+    def f(x):
+      x = jnp.expand_dims(x, axis=0)
+      return jnp.broadcast_to(x, (128, 512))
+
+    x_type = jax.ShapeDtypeStruct((512,), jnp.float32)
+    block_spec = pl.BlockSpec((256,), lambda i: (i,))
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
+    self.assertEqual(out_block_spec.block_shape, (128, 256))
+    self.assertEqual(out_block_spec.index_map(1), (0, 1))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

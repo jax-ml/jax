@@ -368,7 +368,7 @@ def _pull_block_spec(
       scalar_prefetch_jaxpr = scalar_prefetch_jaxpr.replace(
           constvars=[],
           invars=jaxpr.constvars,
-          debug_info=scalar_prefetch_jaxpr.debug_info.with_unknown_names()
+          debug_info=scalar_prefetch_jaxpr.debug_info.with_unknown_names(),
       )
 
       def _scalar_prefetch_fn(jaxpr):
@@ -1664,6 +1664,7 @@ def _reshape_pull_rule(
           f' {block_shape}'
       )
     new_block_shape = block_shape[:-2] + (total_block_size,)
+
     def new_index_map(*args):  # pylint: disable=function-redefined
       *idx, second_to_last, last = block_spec.index_map(*args)
       # last should always be 0
@@ -1672,6 +1673,7 @@ def _reshape_pull_rule(
             'Must select entire block on last dimension for reshape'
         )
       return *idx, second_to_last
+
     return [pallas_core.BlockSpec(new_block_shape, new_index_map)]
 
   raise NotImplementedError(f'reshape not supported yet: {aval_in}, {aval_out}')
@@ -1710,6 +1712,7 @@ def _reduce_sum_pull_rule(
     else:
       new_block_shape.append(next(block_shape))
   assert next(block_shape, None) is None
+
   def new_index_map(*args):
     idx = block_spec.index_map(*args)
     new_idx = []
@@ -1721,8 +1724,10 @@ def _reduce_sum_pull_rule(
         new_idx.append(next(idx_iter))
     assert next(idx_iter, None) is None
     return tuple(new_idx)
-  new_block_spec = block_spec.replace(block_shape=tuple(new_block_shape),
-                                      index_map=new_index_map)
+
+  new_block_spec = block_spec.replace(
+      block_shape=tuple(new_block_shape), index_map=new_index_map
+  )
   return [new_block_spec]
 
 
@@ -2197,6 +2202,7 @@ register_eltwise_rule(lax.rsqrt_p)
 register_eltwise_rule(lax.log_p)
 register_eltwise_rule(lax.integer_pow_p)
 
+
 @register_push_block_spec_rule(lax.reshape_p)
 def _reshape_push_rule(
     ctx: PullRuleContext,
@@ -2246,8 +2252,67 @@ def _reduce_sum_push_rule(
     block_spec: pallas_core.BlockSpec,
     *,
     axes: tuple[int, ...],
+    out_sharding,
 ):
-  del ctx
-  if axes:
-   raise NotImplementedError('reduce_sum with no axes not supported yet')
-  return block_spec
+  del out_sharding
+  aval_in = ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  if not all(
+      aval_in.shape[i] == pallas_core.get_block_size(block_spec.block_shape[i])
+      for i in axes
+  ):
+    raise NotImplementedError(
+        f'reduce_sum over partial blocks not supported yet: {aval_in.shape=},'
+        f' {block_spec.block_shape=}, {axes=}'
+    )
+  new_block_shape = tuple(
+      bd for i, bd in enumerate(block_spec.block_shape) if i not in axes
+  )
+
+  def new_index_map(*args):
+    idx = block_spec.index_map(*args)
+    return tuple(idx[i] for i in range(len(idx)) if i not in axes)
+
+  return block_spec.replace(
+      block_shape=tuple(new_block_shape), index_map=new_index_map
+  )
+
+
+@register_push_block_spec_rule(lax.broadcast_in_dim_p)
+def _broadcast_in_dim_push_rule(
+    ctx: PushRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    *,
+    shape: tuple[int, ...],
+    broadcast_dimensions: tuple[int, ...],
+    sharding: jax.sharding.Sharding,
+):
+  del sharding
+  in_aval = ctx.avals_in[0]
+  assert isinstance(in_aval, core.ShapedArray)
+  in_shape = in_aval.shape
+
+  dim_map = {
+      out_dim: in_dim
+      for in_dim, out_dim in enumerate(broadcast_dimensions)
+  }
+
+  new_block_shape = []
+  for i, s in enumerate(shape):
+    if i in dim_map:
+      in_dim = dim_map[i]
+      if in_shape[in_dim] != s:
+        assert pallas_core.get_block_size(block_spec.block_shape[in_dim]) == 1
+        new_block_shape.append(s)
+      else:
+        new_block_shape.append(block_spec.block_shape[in_dim])
+    else:
+      new_block_shape.append(s)
+
+  def new_index_map(*args):
+    idx = block_spec.index_map(*args)
+    return tuple(
+        idx[dim_map[i]] if i in dim_map else 0 for i in range(len(shape))
+    )
+
+  return pallas_core.BlockSpec(tuple(new_block_shape), new_index_map)
