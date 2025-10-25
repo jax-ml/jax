@@ -23,6 +23,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     implementations. The `EighImplementation` enum is publicly exported from
     {mod}`jax.lax.linalg`.
 
+  * {func}`jax.lax.linalg.svd` now implements an `algorithm` that uses the polar
+    decomposition on CUDA GPUs. This is also an alias for the existing algorithm
+    on TPUs.
 
 ## JAX 0.8.0 (October 15, 2025)
 

@@ -473,6 +473,7 @@ class SvdAlgorithm(enum.Enum):
   DEFAULT = "default"
   QR = "QR"
   JACOBI = "Jacobi"
+  POLAR = "polar"
 
 
 @overload
@@ -2124,7 +2125,7 @@ def _svd_cpu_gpu_lowering(
       target_name = lapack.prepare_lapack_call("gesvd_ffi", operand_aval.dtype)
     else:
       raise NotImplementedError(
-          "The SVD Jacobi algorithm is not implemented on CPU.")
+          "The SVD Jacobi and Polar algorithms are not implemented on CPU.")
     mode = _svd_computation_attr(compute_uv, full_matrices)
     info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
     if compute_uv:
@@ -2193,13 +2194,19 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
   # TODO(danfm): Since this was originally implemented, hipSolver appears to
   # have added support for the Jacobi algorithm, so we should investigate
   # removing this condition.
+  # TODO(phawkins): Consider making polar decomposition the default.
+  use_jacobi = False
+  use_polar = False
   if algorithm is None or algorithm == SvdAlgorithm.DEFAULT:
     try:
       use_jacobi = target_name_prefix == "cu" and m <= 1024 and n <= 1024
     except core.InconclusiveDimensionOperation:
       use_jacobi = False
-  else:
-    use_jacobi = algorithm == SvdAlgorithm.JACOBI
+  elif algorithm == SvdAlgorithm.JACOBI:
+    use_jacobi = True
+  elif algorithm == SvdAlgorithm.POLAR:
+    use_polar = True
+
   column_major = True
   if use_jacobi:
     target_name = f"{target_name_prefix}solver_gesvdj_ffi"
@@ -2210,18 +2217,22 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
       econ = not full_matrices and m > 32 and n > 32
     except core.InconclusiveDimensionOperation:
       econ = False
+  elif use_polar:
+    target_name = f"{target_name_prefix}solver_gesvdp_ffi"
+    econ = not full_matrices
   else:
     target_name = f"{target_name_prefix}solver_gesvd_ffi"
     econ = not full_matrices
-    # Because the base gesvd kernel only supports matrices where m >= n, we.
+    # Because the base gesvd kernel only supports matrices where m >= n, we
+    # conceptually transpose the matrix if m < n.
     transposed = m < n
     kwargs = {"transposed": transposed}
     if transposed:
       column_major = False
 
-  if use_jacobi:
-    # When using the Jacobi algorithm, the U and V matrices must always be
-    # allocated even if compute_uv is False.
+  if use_jacobi or use_polar:
+    # When using the Jacobi or polar algorithms, the U and V matrices must
+    # always be allocated even if compute_uv is False.
     u_aval = ShapedArray((*batch_dims, m, k if econ else m), u_aval.dtype)
     v_aval = ShapedArray((*batch_dims, n, k if econ else n), vt_aval.dtype)
     avals_out = [operand_aval, s_aval, u_aval, v_aval, info_aval]
@@ -2229,12 +2240,13 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
     avals_out = [operand_aval, s_aval, vt_aval, u_aval, info_aval]
   else:
     avals_out = [operand_aval, s_aval, u_aval, vt_aval, info_aval]
+
   rule = _linalg_ffi_lowering(target_name, avals_out=avals_out,
                               operand_output_aliases={0: 0},
                               column_major=column_major)
   _, s, u, vt, info = rule(ctx, operand, full_matrices=not econ,
                            compute_uv=compute_uv, **kwargs)
-  if use_jacobi and compute_uv:
+  if (use_jacobi or use_polar) and compute_uv:
     vt = hlo.transpose(
         vt,
         mlir.dense_int_array(np.array(tuple(range(nb)) + (nb + 1, nb))))
