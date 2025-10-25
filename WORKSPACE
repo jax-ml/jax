@@ -46,6 +46,7 @@ python_init_rules()
 
 load("@xla//third_party/py:python_init_repositories.bzl", "python_init_repositories")
 
+# remove this
 python_init_repositories(
     default_python_version = "system",
     local_wheel_dist_folder = "../dist",
