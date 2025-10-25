@@ -25,7 +25,6 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax import numpy as jnp
 from jax._src import api
 from jax._src import core
 from jax._src import deprecations
@@ -2453,6 +2452,7 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
 
 def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
               method: str, keepdims: bool, squash_nans: bool, weights: Array | None = None) -> Array:
+  from jax import numpy as jnp
   if method not in ["linear", "lower", "higher", "midpoint", "nearest", "inverted_cdf"]:
     raise ValueError("method can only be 'linear', 'lower', 'higher', 'midpoint', 'nearest', or 'inverted_cdf'")
   keepdim = []
@@ -2485,7 +2485,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     axis = _canonicalize_axis(axis, a.ndim)
 
   q, = promote_dtypes_inexact(q)
-
+  q = jnp.atleast_1d(q)
   q_shape = q.shape
   q_ndim = q.ndim
   if q_ndim > 1:
@@ -2500,16 +2500,22 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     a_shape = a.shape
     w_shape = np.shape(weights)
     if w_shape != a_shape:
-      if len(w_shape) != 1:
-        raise ValueError("1D weights expected when shapes of a and weights differ.")
       if axis is None:
         raise TypeError("Axis must be specified when shapes of a and weights differ.")
-      if w_shape[0] != a_shape[axis]:
-        raise ValueError("Length of weights not compatible with specified axis.")
-      resh = [1] * a.ndim
-      resh[axis] = w_shape[0]
-      weights = lax.expand_dims(weights, axis)
-    weights = _broadcast_to(weights, a.shape)
+      if isinstance(axis, tuple):
+        if w_shape != tuple(a_shape[i] for i in axis):
+            raise ValueError("Shape of weights must match the shape of the axes being reduced.")
+        weights = lax.broadcast_in_dim(
+            weights,
+            shape=a_shape,
+            broadcast_dimensions=axis
+        )
+    else:
+        if len(w_shape) != 1 or w_shape[0] != a_shape[axis]:
+            raise ValueError("Length of weights not compatible with specified axis.")
+        weights = lax.expand_dims(weights, axis)
+        weights = _broadcast_to(weights, a.shape)
+     
 
     if squash_nans:
       nan_mask = ~lax_internal._isnan(a)
@@ -2525,14 +2531,14 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
 
     def _weighted_quantile(qi):
       index_dtype = dtypes.default_int_dtype()
-      idx = sum(lax.lt(cum_weights_norm, qi), axis=axis, dtype=index_dtype)
+      idx = sum(lax.lt(cum_weights_norm, qi), axis=axis, dtype=index_dtype, keepdims=keepdims)
       idx = lax.clamp(0, idx, a_sorted.shape[axis] - 1)
-      val = jnp.take_along_axis(a_sorted, jnp.expand_dims(idx, axis), axis)
+      val = jnp.take_along_axis(a_sorted, idx, axis)
 
       idx_prev = lax.clamp(idx - 1, 0, a_sorted.shape[axis] - 1)
-      val_prev = jnp.take_along_axis(a_sorted, jnp.expand_dims(idx_prev, axis), axis)
-      cw_prev = jnp.take_along_axis(cum_weights_norm, jnp.expand_dims(idx_prev, axis), axis)
-      cw_next = jnp.take_along_axis(cum_weights_norm, jnp.expand_dims(idx, axis), axis)
+      val_prev = jnp.take_along_axis(a_sorted, idx_prev, axis)
+      cw_prev = jnp.take_along_axis(cum_weights_norm, idx_prev, axis)
+      cw_next = jnp.take_along_axis(cum_weights_norm, idx, axis)
 
       if method == "linear":
         denom = cw_next - cw_prev
@@ -2552,11 +2558,10 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
       else:
         raise ValueError(f"{method=!r} not recognized")
       return out
-
-    if q.ndim == 0:
-      result = _weighted_quantile(q)
-    else:
-      result = jax.vmap(_weighted_quantile)(q)
+    
+    result = jax.vmap(_weighted_quantile)(q)
+    if q.shape == (1,):
+        result = result[0]
     return result
 
   if squash_nans:

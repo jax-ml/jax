@@ -787,18 +787,22 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     a = rng(a_shape, a_dtype)
     q = rng(q_shape, q_dtype)
     if axis is None:
-        weights_shape = a_shape
+      weights_shape = a_shape
     elif isinstance(axis, tuple):
-        weights_shape = tuple(a_shape[i] for i in axis)
+      weights_shape = tuple(a_shape[i] for i in axis)
     else:
-        weights_shape = (a_shape[axis],)
+      weights_shape = (a_shape[axis],)
     weights = np.abs(rng(weights_shape, a_dtype)) + 1e-3
 
     def np_fun(a, q, weights):
-        return np.quantile(np.array(a), np.array(q), axis=axis, weights=np.array(weights), method=method, keepdims=keepdims)
+      return np.quantile(np.array(a), np.array(q), axis=axis, weights=np.array(weights), method=method, keepdims=keepdims)
     def jnp_fun(a, q, weights):
-        return jnp.quantile(a, q, axis=axis, weights=weights, method=method, keepdims=keepdims)
-    args_maker = lambda: [a, q, weights]
+      return jnp.quantile(a, q, axis=axis, weights=weights, method=method, keepdims=keepdims)
+    args_maker = lambda: [
+      rng(a_shape, a_dtype),
+      rng(q_shape, q_dtype),
+      np.abs(rng(weights_shape, a_dtype)) + 1e-3
+    ]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=1e-6)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=1e-6)
 
@@ -807,27 +811,27 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     weights = jnp.array([1, -1, 1, 1, 1], dtype=float)
     q = jnp.array([0.5])
     with self.assertRaisesRegex(ValueError, "Weights must be non-negative"):
-      jnp.quantile(a, q, axis=0, method="linear", keepdims=False, squash_nans=False, weights=weights)
+      jnp.quantile(a, q, axis=0, method="linear", keepdims=False, weights=weights)
 
   def test_weighted_quantile_all_weights_zero(self):
     a = jnp.array([1, 2, 3, 4, 5], dtype=float)
     weights = jnp.zeros_like(a)
     q = jnp.array([0.5])
     with self.assertRaisesRegex(ValueError, "Sum of weights must not be zero"):
-      jnp.quantile(a, q, axis=0, method="linear", keepdims=False, squash_nans=False, weights=weights)
+      jnp.quantile(a, q, axis=0, method="linear", keepdims=False, weights=weights)
 
   def test_weighted_quantile_weights_with_nan(self):
     a = jnp.array([1, 2, 3, 4, 5], dtype=float)
     weights = jnp.array([1, np.nan, 1, 1, 1], dtype=float)
     q = jnp.array([0.5])
-    result = jnp.quantile(a, q, axis=0, method="linear", keepdims=False, squash_nans=False, weights=weights)
+    result = jnp.quantile(a, q, axis=0, method="linear", keepdims=False, weights=weights)
     assert np.isnan(np.array(result)).all()
 
   def test_weighted_quantile_scalar_q(self):
     a = jnp.array([1, 2, 3, 4, 5], dtype=float)
     weights = jnp.array([1, 2, 1, 1, 1], dtype=float)
     q = 0.5
-    result = jnp.quantile(a, q, axis=0, method="inverted_cdf", keepdims=False, squash_nans=False, weights=weights)
+    result = jnp.quantile(a, q, axis=0, method="inverted_cdf", keepdims=False, weights=weights)
     assert jnp.issubdtype(result.dtype, jnp.floating)
     assert result.shape == ()
 
