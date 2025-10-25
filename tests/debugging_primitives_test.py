@@ -1295,6 +1295,18 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     }
     self.assertEqual(_get_output_set(output, 7), expected)
 
+  def test_partitioned_debug_callback_compute(self):
+    def f(x):
+      debug_print("hello: {x}", x=x.sum(), partitioned=True)
+
+    mesh = jtu.create_mesh((2,), ("x",))
+    arr = jax.device_put(np.arange(8), jax.NamedSharding(mesh, jax.P("x")))
+
+    with jtu.capture_stdout() as output:
+      with jax.set_mesh(mesh):
+        f(arr)
+      jax.effects_barrier()
+
   def test_debug_print_batching(self):
     @jax.vmap
     def f_(x):
