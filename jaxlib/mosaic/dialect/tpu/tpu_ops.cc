@@ -131,6 +131,22 @@ LogicalResult BitcastOp::verify() {
   return success();
 }
 
+OpFoldResult BitcastVregOp::fold(FoldAdaptor adaptor) {
+  // Bitcast from X -> X is a no-op.
+  if (getType() == getInput().getType()) {
+    return getInput();
+  }
+  // Bitcast from X -> Y -> ... -> Z -> X is a no-op.
+  Value input = getInput();
+  while (auto op = dyn_cast<BitcastVregOp>(input.getDefiningOp())) {
+    input = op.getInput();
+    if (getType() == input.getType()) {
+      return input;
+    }
+  }
+  return nullptr;
+}
+
 LogicalResult MemRefSliceOp::verify() {
   auto source_type = getMemRefType(getMemRef());
   auto target_type = getType();
