@@ -686,7 +686,65 @@ class OpsTest(PallasBaseTest):
     expected = jnp.broadcast_to(x, broadcast_shape)
     np.testing.assert_array_equal(out, expected)
 
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="bf16",
+          target_dtype=jnp.bfloat16,
+          expected=[
+              -15.125, -15.1875, jnp.nan, jnp.nan,
+              jnp.inf, jnp.inf, -jnp.inf, -jnp.inf,
+          ],
+      ),
+      dict(
+          testcase_name="e5m2",
+          target_dtype=jnp.float8_e5m2,
+          expected=[
+              -14, -16, jnp.nan, jnp.nan,
+              jnp.inf, jnp.inf, -jnp.inf, -jnp.inf,
+          ],
+      ),
+      dict(
+          testcase_name="e4m3fn",
+          target_dtype=jnp.float8_e4m3fn,
+          expected=[
+              -15, -16, jnp.nan, jnp.nan,
+              jnp.nan, jnp.nan, -jnp.nan, -jnp.nan,
+          ],
+      ),
+      dict(
+          testcase_name="e4m3b11fnuz",
+          target_dtype=jnp.float8_e4m3b11fnuz,
+          expected=[
+              -15, -16, jnp.nan, jnp.nan,
+              30, 30, -30, -30,  # the largest representable value
+          ],
+      ),
+  )
+  def test_stochastic_round(self, target_dtype, expected):
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 24):
+      self.skipTest("Test requires libtpu from 2025/10/24 or later")
 
+    def kernel(x_ref, b_ref, o_ref):
+      o_ref[...] = pl.stochastic_round(
+          x_ref[...], b_ref[...], target_dtype=target_dtype
+      )
+
+    shape = (8, 128)
+    x = jnp.array([-15.1255, -15.1255, jnp.nan, jnp.nan,
+                   jnp.inf, jnp.inf, -jnp.inf, -jnp.inf], dtype=jnp.float32)
+    x = jnp.broadcast_to(x.reshape((8, 1)), shape)
+    bits = jnp.array([0xFFFFFFFF, 0x00000000] * 4, dtype=jnp.uint32)
+    bits = jnp.broadcast_to(bits.reshape((8, 1)), shape)
+    expected = jnp.array(expected, dtype=target_dtype)
+    expected = jnp.broadcast_to(expected.reshape((8, 1)), shape)
+    result = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(), pl.BlockSpec()],
+        out_shape=jax.ShapeDtypeStruct(x.shape, target_dtype),
+    )(x, bits)
+    self.assertArraysAllClose(result, expected, atol=1e-3, rtol=1e-3)
 
 if __name__ == "__main__":
   absltest.main()

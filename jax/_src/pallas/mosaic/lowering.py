@@ -3556,6 +3556,29 @@ def _reciprocal_lowering_rule(ctx: LoweringRuleContext, x, *, approx):
   return tpu.reciprocal(x, approx=approx)
 
 
+@register_lowering_rule(primitives.stochastic_round_p)
+def _stochastic_round_lowering_rule(
+    ctx: LoweringRuleContext, x, random_bits, *, target_dtype
+):
+  if not isinstance(x.type.element_type, ir.F32Type):
+    raise ValueError("Only float32 input is supported.")
+  if target_dtype not in [
+      jnp.bfloat16,
+      jnp.float8_e5m2,
+      jnp.float8_e4m3fn,
+      jnp.float8_e4m3b11fnuz,
+  ]:
+    raise ValueError(
+        "Only bfloat16, float8_e5m2, float8_e4m3fn, and float8_e4m3b11fnuz "
+        "are supported as target dtypes."
+    )
+  (_, in_aval,) = ctx.avals_in
+  out_type = ir.VectorType.get(
+      in_aval.shape, mlir.dtype_to_ir_type(jnp.dtype(target_dtype))
+  )
+  return tpu.stochastic_convert(out_type, x, random_bits)
+
+
 @register_lowering_rule(tpu_primitives.bitcast_p)
 def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
   del ty

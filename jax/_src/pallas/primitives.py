@@ -761,6 +761,19 @@ def _reciprocal_lowering_rule(
 mlir.register_lowering(reciprocal_p, _reciprocal_lowering_rule)
 
 
+stochastic_round_p = jax_core.Primitive("stochastic_round")
+
+
+def stochastic_round(x, random_bits, *, target_dtype):
+  return stochastic_round_p.bind(x, random_bits, target_dtype=target_dtype)
+
+
+@stochastic_round_p.def_abstract_eval
+def _stochastic_round_abstract_eval(x, random_bits, *, target_dtype):
+  del random_bits
+  return jax_core.ShapedArray(x.shape, target_dtype)
+
+
 def debug_print(fmt: str, *args: jax.typing.ArrayLike):
   """Prints values from inside a Pallas kernel.
 

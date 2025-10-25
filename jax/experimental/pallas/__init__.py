@@ -68,6 +68,7 @@ from jax._src.pallas.primitives import run_scoped as run_scoped
 from jax._src.pallas.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
 from jax._src.pallas.primitives import semaphore_wait as semaphore_wait
+from jax._src.pallas.primitives import stochastic_round as stochastic_round
 from jax._src.pallas.primitives import store as _deprecated_store
 from jax._src.pallas.primitives import swap as swap
 from jax._src.pallas.utils import cdiv as cdiv
