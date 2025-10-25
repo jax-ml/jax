@@ -1,0 +1,19 @@
+diff --git a/bazel/cc_grpc_library.bzl b/bazel/cc_grpc_library.bzl
+--- a/bazel/cc_grpc_library.bzl
++++ b/bazel/cc_grpc_library.bzl
+@@ -28,6 +28,7 @@ def cc_grpc_library(
+         allow_deprecated = False,
+         use_external = False,  # @unused
+         grpc_only = False,
++        plugin_flags = [],
+         **kwargs):
+     """Generates C++ grpc classes for services defined in a proto file.
+
+@@ -109,6 +110,7 @@ def cc_grpc_library(
+             well_known_protos = well_known_protos,
+             generate_mocks = generate_mocks,
+             allow_deprecated = allow_deprecated,
++            flags = plugin_flags,
+             **kwargs
+         )
+
