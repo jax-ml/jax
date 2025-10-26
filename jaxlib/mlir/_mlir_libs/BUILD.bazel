@@ -95,6 +95,7 @@ nanobind_pywrap_extension(
     deps = [
         "@llvm-project//mlir:CAPIIR",
         "@llvm-project//mlir:CAPILLVM",
+        "@llvm-project//mlir:CAPITarget",
         "@llvm-project//mlir:MLIRBindingsPythonNanobindHeaders",
         "@nanobind",
     ],
