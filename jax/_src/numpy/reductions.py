@@ -25,6 +25,7 @@ import numpy as np
 
 import jax
 from jax import lax
+import jax._src.numpy as jnp
 from jax._src import api
 from jax._src import core
 from jax._src import deprecations
@@ -2452,7 +2453,6 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
 
 def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
               method: str, keepdims: bool, squash_nans: bool, weights: Array | None = None) -> Array:
-  from jax import numpy as jnp
   if method not in ["linear", "lower", "higher", "midpoint", "nearest", "inverted_cdf"]:
     raise ValueError("method can only be 'linear', 'lower', 'higher', 'midpoint', 'nearest', or 'inverted_cdf'")
   keepdim = []
@@ -2515,7 +2515,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
             raise ValueError("Length of weights not compatible with specified axis.")
         weights = lax.expand_dims(weights, axis)
         weights = _broadcast_to(weights, a.shape)
-     
+
 
     if squash_nans:
       nan_mask = ~lax_internal._isnan(a)
@@ -2558,10 +2558,8 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
       else:
         raise ValueError(f"{method=!r} not recognized")
       return out
-    
+
     result = jax.vmap(_weighted_quantile)(q)
-    if q.shape == (1,):
-        result = result[0]
     return result
 
   if squash_nans:
