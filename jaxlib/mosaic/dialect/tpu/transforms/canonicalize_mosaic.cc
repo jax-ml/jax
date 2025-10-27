@@ -1202,10 +1202,11 @@ FailureOr<Value> canonicalize_select(const CanonicalizeContext& ctx,
   if (ctx.hardware_generation >= 5) {
     min_supported_bitwidth = 8;
   }
-  // TODO(pazz): This should work. Debug why it is not working.
-  // else if (ctx.hardware_generation >= 4) {
-  //   min_supported_bitwidth = 16;
-  // }
+  // In theory, TPUv4 supports 16-bit select operations because the vector mask
+  // registers (Vmsk) are of size 2 bits. However, the logic to retile the Vmsk
+  // is not supported for TPUv4. There is no trivial way to know at this point
+  // if Vmsk retiling will be needed, so to be safe and consistent, we always
+  // extend 16 bit types to 32 bits.
 
   if (bitwidth >= min_supported_bitwidth) {
     return op.getResult();
