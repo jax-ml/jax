@@ -513,7 +513,7 @@ def _pointwise_op_equation_system(
 ) -> tuple[eqns.EquationSystem, OperandOrResultsForVariable, list[Hint]]:
   del ctx
   all_operands_and_results = vector_operands_and_results(op)
-  variable = eqns.Variable(all_operands_and_results[0])
+  variable = eqns.Variable(all_operands_and_results[-1])
   return eqns.EquationSystem(), {variable: all_operands_and_results}, []
 
 
