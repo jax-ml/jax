@@ -98,6 +98,7 @@ def linearize_subtrace(_f: Callable, _store: lu.Store, _tag: core.TraceTag,
   with core.take_current_trace() as parent_trace:
     tangent_trace = pe.DynamicJaxprTrace(debug_info, auto_dce=True)
     tangent_trace.tag = _tag
+    breakpoint()
     linearize_trace = LinearizeTrace(parent_trace, tangent_trace, tag=_tag)
     tracers = [LinearizeTracer(linearize_trace, p,
                                tangent_trace.new_arg(get_aval(p).to_tangent_aval(),
@@ -178,6 +179,7 @@ def _linearize_jaxpr(
   config.enable_checks.value and dbg.assert_arg_names(len(nonzeros))
   primal_trace = pe.DynamicJaxprTrace(dbg)
   tangent_trace = pe.DynamicJaxprTrace(dbg, auto_dce=True)
+  breakpoint()
   lin_trace = LinearizeTrace(primal_trace, tangent_trace)
   tangent_trace.tag = lin_trace.tag
 
@@ -245,9 +247,9 @@ def direct_linearize(traceable: lu.WrappedFun, primals, kwargs, *,
     tangents = [Zero.from_primal_value(t) if not isinstance(t, Zero)
                 and isinstance(core.typeof(t), core.ShapedArray)
                 and dtype(t) == float0 else t for t in tangents]
-    linearize_trace = LinearizeTrace(parent_trace, tangent_trace, tag=tag)
+    linearize_trace = LinearizeTrace([parent_trace], tangent_trace, tag=tag)
     tangent_trace.tag = linearize_trace.tag
-    tracers = [LinearizeTracer(linearize_trace, p, t) for p, t in zip(primals, tangents)]
+    tracers = [LinearizeTracer(linearize_trace, [p], t) for p, t in zip(primals, tangents)]
     tracers = [t.full_lower() for t in tracers]
     with (core.set_current_trace(linearize_trace),
           source_info_util.transform_name_stack('jvp')):
@@ -869,10 +871,10 @@ call_transpose_param_updaters: dict[core.Primitive, Callable] = {}
 
 class LinearizeTrace(Trace):
 
-  def __init__(self, parent_trace, tangent_trace, tag=None):
+  def __init__(self, parent_traces, tangent_trace, tag=None):
     super().__init__()
     self.tag = core.TraceTag() if tag is None else tag
-    self.parent_trace = parent_trace
+    self.parent_traces = parent_traces
     self.tangent_trace = tangent_trace
     self._name_stack_prefix_len = len(source_info_util.current_name_stack())
     self.requires_low = False
@@ -882,40 +884,63 @@ class LinearizeTrace(Trace):
 
   def to_primal_tangent_pair(self, val):
     if isinstance(val, LinearizeTracer) and val._trace.tag is self.tag:
-      return (val.primal, val.tangent)
+      primal, = val.primals
+      return (primal, val.tangent)
     else:
       tangent_zero = Zero.from_primal_value(val)
       return (val, tangent_zero)
 
+  def to_primals_tangent_list(self, val):
+    if isinstance(val, LinearizeTracer) and val._trace.tag is self.tag:
+      return (val.primals, val.tangent)
+    else:
+      tangent_zero = Zero.from_primal_value(val)
+      primals = (val,) * len(self.parent_traces)
+      return primals, tangent_zero
+
   def process_primitive(self, primitive, args, params):
-    primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, args))
+    fancy_rule = fancy_linearizations.get(primitive)
+    if fancy_rule:
+      return fancy_rule(self, *args, **params)
+    return self.default_process_primitive(primitive, args, params)
+
+  def default_process_primitive(self, primitive, args, params):
+    primals_in_, tangents_in = unzip2(map(self.to_primals_tangent_list, args))
+    primals_in = zip(*primals_in_)
     tangent_nzs = [type(t) is not Zero for t in tangents_in]
     if (all(type(t) is Zero for t in tangents_in) and
         primitive is not core.ref_p and
-        not any(isinstance(core.typeof(x), AbstractRef) for x in primals_in)):
-      return primitive.bind_with_trace(self.parent_trace, primals_in, params)
+        not any(isinstance(core.typeof(x), AbstractRef) for x in primals_in[0])):
+      return primitive.bind_with_trace(self.parent_traces[0], primals_in[0], params)
+
+    remat_outs = [primitive.bind_with_trace(t, xs, params)
+                  for t, xs in zip(self.parent_traces[:-1], primals_in[:-1])]
+
     fallback = partial(fallback_linearize_rule, primitive)
     lin = primitive_linearizations.get(primitive, fallback)
-    with core.set_current_trace(self.parent_trace):
+    with core.set_current_trace(self.parent_traces[-1]):
       primal_out, tangent_nzs_out, residuals, linearized = lin(
-          tangent_nzs, *primals_in, **params)
+          tangent_nzs, *primals_in[-1], **params)
     with (core.set_current_trace(self.tangent_trace),
           source_info_util.set_name_stack(self._name_stack_suffix())):
       tangent_out = linearized(residuals, *tangents_in)
     if primitive.multiple_results:
-      return [maybe_linearize_tracer(self, x, nz, t)
-              for x, nz, t in zip(primal_out, tangent_nzs_out, tangent_out)]
+      remat_outs = zip(*remat_outs)
+      return [maybe_linearize_tracer(self, [*xs, x], nz, t) for xs, x, nz, t
+              in zip(remat_outs, primal_out, tangent_nzs_out, tangent_out)]
     else:
-      return maybe_linearize_tracer(self, primal_out, tangent_nzs_out, tangent_out)
+      return maybe_linearize_tracer(self, [*remat_outs, primal_out],
+                                    tangent_nzs_out, tangent_out)
 
   def cur_qdd(self, x):
     p, _ = self.to_primal_tangent_pair(x)
-    with core.set_current_trace(self.parent_trace):
+    with core.set_current_trace(self.parent_traces[0]):
       return core.cur_qdd(p)
 
   def process_custom_jvp_call(self, prim, fun: lu.WrappedFun,
                               f_jvp: lu.WrappedFun, tracers, *,
                               symbolic_zeros: bool):
+    breakpoint()
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if all(type(t) is Zero for t in tangents_in):
       return prim.bind_with_trace(self.parent_trace, (fun, f_jvp, *primals_in),
@@ -945,6 +970,7 @@ class LinearizeTrace(Trace):
                               out_trees: Callable[[], tuple[PyTreeDef, PyTreeDef, list[int | None]]],
                               symbolic_zeros: bool):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
+    breakpoint()
     if all(type(t) is Zero for t in tangents_in):
       return prim.bind_with_trace(self.parent_trace,
                                   (fun, fwd, bwd, *primals_in),
@@ -972,6 +998,7 @@ class LinearizeTrace(Trace):
     return map(partial(maybe_linearize_tracer, self), primals_out, tangent_nzs_out, tangents_out)
 
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
+    breakpoint()
     assert call_primitive.multiple_results
     primals, tangents = unzip2(map(self.to_primal_tangent_pair, tracers))
     nzs_in = tuple(type(t) is not Zero for t in tangents)
@@ -1043,13 +1070,13 @@ class LinearizeTrace(Trace):
   # that's handled in process_call.
   process_map = process_call
 
-def maybe_linearize_tracer(trace, primal, is_nonzero, tangent):
+def maybe_linearize_tracer(trace, primals, is_nonzero, tangent):
   if is_nonzero:
     assert not type(tangent) is Zero
-    return LinearizeTracer(trace, primal, tangent)
+    return LinearizeTracer(trace, primals, tangent)
   else:
     assert type(tangent) is Zero
-    return primal
+    return primals[0]
 
 def fallback_linearize_rule(_prim: core.Primitive,
                             _nonzeros: Sequence[bool], *primals, **params):
@@ -1140,33 +1167,34 @@ def linearize_from_jvp(jvp: lu.WrappedFun,
     return out_primal, out_nz, out_consts, linearized
 
 class LinearizeTracer(Tracer):
-  __slots__ = ['primal', 'tangent']
+  __slots__ = ['primals', 'tangent']
 
-  def __init__(self, trace, primal, tangent):
-    if config.enable_checks.value:
-      _primal_tangent_shapes_match(primal, tangent)
+  def __init__(self, trace, primals, tangent):
+    # TODO check all primals have same aval
+    # if config.enable_checks.value:  # TODO DO NOT SUBMIT
+    #   _primal_tangent_shapes_match(primal, tangent)
     self._trace = trace
-    self.primal = primal
+    self.primals = primals
     self.tangent = tangent
 
   @property
   def aval(self):
-    return get_aval(self.primal)
+    return get_aval(self.primals[0])
 
   def full_lower(self):
     if type(self.tangent) is Zero:
-      return core.full_lower(self.primal)
+      return core.full_lower(self.primals[0])
     else:
       return self
 
   def to_concrete_value(self):
-    return core.to_concrete_value(self.primal)
+    return core.to_concrete_value(self.primals[0])
 
   def get_referent(self):
-    return core.get_referent(self.primal)
+    return core.get_referent(self.primals[0])
 
   def cur_qdd(self):
-    return core.cur_qdd(self.primal)
+    return core.cur_qdd(self.primals[0])
 
 
 # -------------------- Primitives --------------------
@@ -1174,6 +1202,7 @@ class LinearizeTracer(Tracer):
 primitive_jvps : dict[core.Primitive, Callable] = {}
 primitive_transposes: dict[core.Primitive, Callable] = {}
 primitive_linearizations : dict[core.Primitive, Callable]  = {}
+fancy_linearizations : dict[core.Primitive, Callable]  = {}
 
 def deflinear(primitive, transpose_rule):
   primitive_jvps[primitive] = partial(linear_jvp, primitive)
