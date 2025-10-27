@@ -88,6 +88,11 @@ jax::SchurHessenbergDecomposition<ffi::DataType::F64>::FnType dhseqr_;
 jax::SchurHessenbergDecompositionComplex<ffi::DataType::C64>::FnType chseqr_;
 jax::SchurHessenbergDecompositionComplex<ffi::DataType::C128>::FnType zhseqr_;
 
+jax::SchurEigenvectors<ffi::DataType::F32>::FnType strevc_;
+jax::SchurEigenvectors<ffi::DataType::F64>::FnType dtrevc_;
+jax::SchurEigenvectorsComplex<ffi::DataType::C64>::FnType ctrevc_;
+jax::SchurEigenvectorsComplex<ffi::DataType::C128>::FnType ztrevc_;
+
 jax::TridiagonalReduction<ffi::DataType::F32>::FnType ssytrd_;
 jax::TridiagonalReduction<ffi::DataType::F64>::FnType dsytrd_;
 jax::TridiagonalReduction<ffi::DataType::C64>::FnType chetrd_;
@@ -177,6 +182,11 @@ static auto init = []() -> int {
   AssignKernelFn<SchurHessenbergDecomposition<ffi::DataType::F64>>(dhseqr_);
   AssignKernelFn<SchurHessenbergDecompositionComplex<ffi::DataType::C64>>(chseqr_);
   AssignKernelFn<SchurHessenbergDecompositionComplex<ffi::DataType::C128>>(zhseqr_);
+
+  AssignKernelFn<SchurEigenvectors<ffi::DataType::F32>>(strevc_);
+  AssignKernelFn<SchurEigenvectors<ffi::DataType::F64>>(dtrevc_);
+  AssignKernelFn<SchurEigenvectorsComplex<ffi::DataType::C64>>(ctrevc_);
+  AssignKernelFn<SchurEigenvectorsComplex<ffi::DataType::C128>>(ztrevc_);
 
   AssignKernelFn<TridiagonalSolver<ffi::DataType::F32>>(sgtsv_);
   AssignKernelFn<TridiagonalSolver<ffi::DataType::F64>>(dgtsv_);

@@ -613,6 +613,49 @@ struct SchurHessenbergDecompositionComplex {
                                   schur::ComputationModeHessenberg mode);
 };
 
+//== Eigenvectors of Schur decomposition ==//
+
+template <::xla::ffi::DataType dtype>
+struct SchurEigenvectors {
+  static_assert(!::xla::ffi::IsComplexType<dtype>(),
+                "There exists a separate implementation for Complex types");
+
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using ComplexType = ::xla::ffi::NativeType<::xla::ffi::ToComplex(dtype)>;
+  using FnType = void(char* side, char* howmny, bool* select,
+                      lapack_int* n, ValueType* t, lapack_int* ldt,
+                      ValueType* vl, lapack_int* ldvl, ValueType* vr, lapack_int* ldvr,
+                      lapack_int* mm, lapack_int* m, ValueType* work, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> x,
+      ::xla::ffi::Buffer<dtype> eigen_vals_imag,
+      ::xla::ffi::ResultBuffer<::xla::ffi::ToComplex(dtype)> eigen_vectors,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> info);
+};
+
+template <::xla::ffi::DataType dtype>
+struct SchurEigenvectorsComplex {
+  static_assert(::xla::ffi::IsComplexType<dtype>());
+
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using RealType = ::xla::ffi::NativeType<::xla::ffi::ToReal(dtype)>;
+  using FnType = void(char* side, char* howmny, bool* select,
+                      lapack_int* n, ValueType* t, lapack_int* ldt,
+                      ValueType* vl, lapack_int* ldvl, ValueType* vr, lapack_int* ldvr,
+                      lapack_int* mm, lapack_int* m,
+                      ValueType* work, RealType* rwork, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> x,
+      ::xla::ffi::ResultBuffer<dtype> eigen_vectors,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> info);
+};
+
 //== Tridiagonal Reduction                                           ==//
 //== Reduces a Symmetric/Hermitian square matrix to tridiagonal form ==//
 
@@ -714,6 +757,10 @@ XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_shseqr_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dhseqr_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_chseqr_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zhseqr_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_strevc_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dtrevc_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_ctrevc_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_ztrevc_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgtsv_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgtsv_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgtsv_ffi);

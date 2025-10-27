@@ -1371,6 +1371,106 @@ template struct SchurHessenbergDecomposition<ffi::DataType::F64>;
 template struct SchurHessenbergDecompositionComplex<ffi::DataType::C64>;
 template struct SchurHessenbergDecompositionComplex<ffi::DataType::C128>;
 
+//== Eigenvectors of Schur decomposition ==//
+
+template <ffi::DataType dtype>
+ffi::Error SchurEigenvectors<dtype>::Kernel(
+    ffi::Buffer<dtype> x,
+    ffi::Buffer<dtype> eigen_vals_imag,
+    ffi::ResultBuffer<ffi::ToComplex(dtype)> eigen_vectors,
+    ffi::ResultBuffer<LapackIntDtype> info) {
+  FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
+                       SplitBatch2D(x.dimensions()));
+
+  ValueType* x_data = x.typed_data();
+  ValueType* eigvals_imag_data = eigen_vals_imag.typed_data();
+  ComplexType* eigen_vectors_data = eigen_vectors->typed_data();
+  lapack_int* info_data = info->typed_data();
+
+  const int64_t x_size{x_cols * x_cols};
+
+  FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<lapack_int>(x_cols));
+  char side = 'R';
+  char howmny = 'A';
+  lapack_int onei = 1;
+
+  // Prepare LAPACK workspaces.
+  auto work_size = 3 * x_rows;
+  auto work_data = AllocateScratchMemory<dtype>(work_size);
+  auto work_eigvecs_right = AllocateScratchMemory<dtype>(x_size);
+
+  lapack_int m;
+
+  [[maybe_unused]] const auto x_size_bytes =
+      static_cast<unsigned long>(x_size) * sizeof(ValueType);
+  for (int64_t i = 0; i < batch_count; ++i) {
+    fn(&side, &howmny, nullptr, &x_cols_v, x_data, &x_cols_v, nullptr, &onei,
+       work_eigvecs_right.get(), &x_cols_v, &x_cols_v, &m, work_data.get(), info_data);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(work_eigvecs_right.get(), x_size_bytes);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_data, sizeof(lapack_int));
+
+    if (info_data[0] == 0) {
+      UnpackEigenvectors(x_cols_v, eigvals_imag_data,
+                         work_eigvecs_right.get(), eigen_vectors_data);
+    }
+
+    x_data += x_size;
+    eigvals_imag_data += x_cols;
+    eigen_vectors_data += x_size;
+    ++info_data;
+  }
+
+  return ffi::Error::Success();
+}
+
+template <ffi::DataType dtype>
+ffi::Error SchurEigenvectorsComplex<dtype>::Kernel(
+    ffi::Buffer<dtype> x,
+    ffi::ResultBuffer<dtype> eigen_vectors,
+    ffi::ResultBuffer<LapackIntDtype> info) {
+  FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
+                       SplitBatch2D(x.dimensions()));
+
+  ValueType* x_data = x.typed_data();
+  ValueType* eigen_vectors_data = eigen_vectors->typed_data();
+  lapack_int* info_data = info->typed_data();
+
+  FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<lapack_int>(x_cols));
+  char side = 'R';
+  char howmny = 'A';
+  lapack_int onei = 1;
+
+  // Prepare LAPACK workspaces.
+  auto work_size = 2 * x_rows;
+  auto work_data = AllocateScratchMemory<dtype>(work_size);
+  auto rwork_size = x_rows;
+  auto rwork_data = AllocateScratchMemory<ffi::ToReal(dtype)>(rwork_size);
+
+  lapack_int m;
+
+  const int64_t x_size{x_cols * x_cols};
+  [[maybe_unused]] const auto x_size_bytes =
+      static_cast<unsigned long>(x_size) * sizeof(ValueType);
+  for (int64_t i = 0; i < batch_count; ++i) {
+    fn(&side, &howmny, nullptr, &x_cols_v, x_data, &x_cols_v, nullptr, &onei,
+       eigen_vectors_data, &x_cols_v, &x_cols_v, &m,
+       work_data.get(), rwork_data.get(), info_data);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigen_vectors_data, x_size_bytes);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_data, sizeof(lapack_int));
+
+    x_data += x_size;
+    eigen_vectors_data += x_size;
+    ++info_data;
+  }
+
+  return ffi::Error::Success();
+}
+
+template struct SchurEigenvectors<ffi::DataType::F32>;
+template struct SchurEigenvectors<ffi::DataType::F64>;
+template struct SchurEigenvectorsComplex<ffi::DataType::C64>;
+template struct SchurEigenvectorsComplex<ffi::DataType::C128>;
+
 //== Tridiagonal Reduction ==//
 
 template <ffi::DataType dtype>
@@ -1710,6 +1810,24 @@ template struct TridiagonalSolver<ffi::DataType::C128>;
           .Ret<::xla::ffi::Buffer<data_type>>(/*eigvals*/)          \
           .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/))
 
+#define JAX_CPU_DEFINE_TRECV(name, data_type)                         \
+  XLA_FFI_DEFINE_HANDLER_SYMBOL(                                      \
+      name, SchurEigenvectors<data_type>::Kernel,                     \
+      ::xla::ffi::Ffi::Bind()                                         \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)                  \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*eigen_vals_imag*/)    \
+          .Ret<::xla::ffi::Buffer<::xla::ffi::ToComplex(data_type)>>( \
+               /*eigen_vectors*/)                                     \
+          .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/))
+
+#define JAX_CPU_DEFINE_TRECV_COMPLEX(name, data_type)            \
+  XLA_FFI_DEFINE_HANDLER_SYMBOL(                                 \
+      name, SchurEigenvectorsComplex<data_type>::Kernel,         \
+      ::xla::ffi::Ffi::Bind()                                    \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)             \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*eigen_vectors*/) \
+          .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/))
+
 #define JAX_CPU_DEFINE_GTSV(name, data_type)              \
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                          \
       name, TridiagonalSolver<data_type>::Kernel,         \
@@ -1796,6 +1914,11 @@ JAX_CPU_DEFINE_HSEQR(lapack_dhseqr_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_HSEQR_COMPLEX(lapack_chseqr_ffi, ::xla::ffi::DataType::C64);
 JAX_CPU_DEFINE_HSEQR_COMPLEX(lapack_zhseqr_ffi, ::xla::ffi::DataType::C128);
 
+JAX_CPU_DEFINE_TRECV(lapack_strevc_ffi, ::xla::ffi::DataType::F32);
+JAX_CPU_DEFINE_TRECV(lapack_dtrevc_ffi, ::xla::ffi::DataType::F64);
+JAX_CPU_DEFINE_TRECV_COMPLEX(lapack_ctrevc_ffi, ::xla::ffi::DataType::C64);
+JAX_CPU_DEFINE_TRECV_COMPLEX(lapack_ztrevc_ffi, ::xla::ffi::DataType::C128);
+
 JAX_CPU_DEFINE_GTSV(lapack_sgtsv_ffi, ::xla::ffi::DataType::F32);
 JAX_CPU_DEFINE_GTSV(lapack_dgtsv_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_GTSV(lapack_cgtsv_ffi, ::xla::ffi::DataType::C64);
@@ -1821,6 +1944,8 @@ JAX_CPU_DEFINE_GTSV(lapack_zgtsv_ffi, ::xla::ffi::DataType::C128);
 #undef JAX_CPU_DEFINE_GEHRD
 #undef JAX_CPU_DEFINE_HSEQR
 #undef JAX_CPU_DEFINE_HSEQR_COMPLEX
+#undef JAX_CPU_DEFINE_TRECV
+#undef JAX_CPU_DEFINE_TRECV_COMPLEX
 #undef JAX_CPU_DEFINE_GTSV
 
 }  // namespace jax
