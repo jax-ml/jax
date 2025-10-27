@@ -18,13 +18,13 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/types/span.h"
-#include "xla/pjrt/pjrt_future.h"
+#include "xla/future.h"
 #include "xla/python/ifrt/array.h"
 
 namespace jax {
 
 // Waits until future is ready but will cancel if ctrl-c is pressed.
-void BlockUntilReadyWithCancel(xla::PjRtFuture<>& future);
+void BlockUntilReadyWithCancel(xla::Future<>& future);
 
 // Requests if given buffers are ready, awaits for results and returns OK if
 // all of the buffers are ready or the last non-ok status.

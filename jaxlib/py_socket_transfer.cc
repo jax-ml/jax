@@ -44,10 +44,10 @@ limitations under the License.
 #include "jaxlib/py_executable.h"
 #include "jaxlib/py_user_context.h"
 #include "jaxlib/to_ifrt_sharding.h"
+#include "xla/future.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/pjrt_client.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/array_spec.h"
@@ -424,12 +424,12 @@ void RegisterTransferServerTypes(nanobind::module_& m) {
                                 nb::repr(slice).c_str(), device_size)
                     .c_str());
           }
-          std::vector<xla::PjRtFuture<>> futures_per_array;
+          std::vector<xla::Future<>> futures_per_array;
           for (auto& buffer : arrs[i]->pjrt_buffers()) {
             auto raw_buffer = xla::ValueOrThrow(
                 xla::PjRtRawBuffer::CreateRawAliasOfBuffer(buffer.get()));
             tsl::RCReference<ChunkDestination> dest;
-            xla::PjRtFuture<> future;
+            xla::Future<> future;
             std::tie(dest, future) = xla::ValueOrThrow(
                 CreateSlicedRawBufferDest(raw_buffer, start, total_size));
             futures_per_array.push_back(std::move(future));

@@ -36,11 +36,11 @@ limitations under the License.
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/traceback.h"
+#include "xla/future.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/attribute_map.h"
@@ -53,16 +53,16 @@ namespace jax {
 class PyToken {
  public:
   PyToken() = default;
-  explicit PyToken(xla::PjRtFuture<> future) : future_(std::move(future)) {}
+  explicit PyToken(xla::Future<> future) : future_(std::move(future)) {}
 
   static PyToken ReadyPyToken() {
-    return PyToken(xla::PjRtFuture<>(absl::OkStatus()));
+    return PyToken(xla::Future<>(absl::OkStatus()));
   }
 
   absl::Status Await();
 
  private:
-  xla::PjRtFuture<> future_;
+  xla::Future<> future_;
 };
 
 // PyShardedToken contains a PyToken for each device's execution.
@@ -70,7 +70,7 @@ class PyShardedToken {
  public:
   // Default construction creates a always-ready token.
   PyShardedToken() = default;
-  explicit PyShardedToken(std::vector<xla::PjRtFuture<>> futures)
+  explicit PyShardedToken(std::vector<xla::Future<>> futures)
       : futures_(std::move(futures)) {}
 
   PyToken GetPyToken(int device_id) const {
@@ -81,7 +81,7 @@ class PyShardedToken {
   absl::Status Await();
 
  private:
-  std::vector<xla::PjRtFuture<>> futures_;
+  std::vector<xla::Future<>> futures_;
 };
 
 class PyExecuteResults {
@@ -89,7 +89,7 @@ class PyExecuteResults {
   PyExecuteResults(const nb_class_ptr<PyClient>& client,
                    std::vector<xla::ifrt::ArrayRef> ifrt_arrays,
                    int num_computations, PyShardedToken token,
-                   xla::PjRtFuture<> result_status = xla::PjRtFuture<>());
+                   xla::Future<> result_status = xla::Future<>());
 
   std::vector<std::vector<PyArray>> DisassembleIntoSingleDeviceArrays();
 
@@ -119,7 +119,7 @@ class PyExecuteResults {
   int num_computations_;
   PyShardedToken token_;
   // Only set if the computation has tokens.
-  xla::PjRtFuture<> result_status_;
+  xla::Future<> result_status_;
 };
 
 using ExecuteShardedArg = std::variant<PyArray, std::vector<PyArray>>;

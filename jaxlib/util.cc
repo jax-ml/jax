@@ -23,7 +23,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
-#include "xla/pjrt/pjrt_future.h"
+#include "xla/future.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/value.h"
@@ -37,7 +37,7 @@ namespace ifrt = xla::ifrt;
 
 namespace jax {
 
-void BlockUntilReadyWithCancel(xla::PjRtFuture<>& future) {
+void BlockUntilReadyWithCancel(xla::Future<>& future) {
   future.BlockUntilReady([](tsl::AsyncValue* value) {
     auto state = std::make_shared<absl::Notification>();
     value->AndThen([state]() { state->Notify(); });
