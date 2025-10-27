@@ -477,7 +477,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2,), ('x',))
 
     @checkify.checkify
-    @partial(jax.jit, donate_argnums=(0,))
+    @jax.jit(donate_argnums=(0,))
     def f(x: jax.Array) -> jax.Array:
       checkify.check(jnp.all(x > 0), "a")
       return x

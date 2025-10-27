@@ -24,7 +24,7 @@ from __future__ import annotations
 __all__ = ['register_jax_array_methods']
 
 import abc
-from functools import partial, wraps
+from functools import wraps
 import math
 from typing import Any
 from collections.abc import Callable, Sequence
@@ -639,7 +639,7 @@ def __array_module__(self, types):
     return NotImplemented
 
 
-@partial(api.jit, static_argnums=(1,2,3))
+@api.jit(static_argnums=(1,2,3))
 def _multi_slice(self: Array,
                  start_indices: tuple[tuple[int, ...]],
                  limit_indices: tuple[tuple[int, ...]],

@@ -247,7 +247,7 @@ def _gaussian_kernel_convolve(chol, norm, target, weights, mean):
   return norm * jnp.sum(jnp.exp(-arg) * weights)
 
 
-@partial(api.jit, static_argnums=0)
+@api.jit(static_argnums=0)
 def _gaussian_kernel_eval(in_log, points, values, xi, precision):
   points, values, xi, precision = promote_dtypes_inexact(
       points, values, xi, precision)

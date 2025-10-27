@@ -136,7 +136,7 @@ def take(
                fill_value=fill_value)
 
 
-@partial(api.jit, static_argnames=('axis', 'mode', 'unique_indices', 'indices_are_sorted', 'fill_value'))
+@api.jit(static_argnames=('axis', 'mode', 'unique_indices', 'indices_are_sorted', 'fill_value'))
 def _take(a, indices, axis: int | None = None, out=None, mode=None,
           unique_indices=False, indices_are_sorted=False, fill_value=None):
   if out is not None:
@@ -205,7 +205,7 @@ def _normalize_index(index, axis_size):
 
 
 @export
-@partial(api.jit, static_argnames=('axis', 'mode', 'fill_value'))
+@api.jit(static_argnames=('axis', 'mode', 'fill_value'))
 def take_along_axis(
     arr: ArrayLike,
     indices: ArrayLike,
@@ -407,7 +407,7 @@ def _make_along_axis_idx(shape, indices, axis):
 
 
 @export
-@partial(api.jit, static_argnames=('axis', 'inplace', 'mode'))
+@api.jit(static_argnames=('axis', 'inplace', 'mode'))
 def put_along_axis(
   arr: ArrayLike,
   indices: ArrayLike,
@@ -668,7 +668,7 @@ def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
-# @partial(api.jit, static_argnums=(1, 2))
+# @api.jit(static_argnums=(1, 2))
 def _gather(arr, dynamic_idx, *, treedef, static_idx, indices_are_sorted,
             unique_indices, mode, fill_value, normalize_indices):
   idx = merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)

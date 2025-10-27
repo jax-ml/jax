@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections import namedtuple
-from functools import partial
 import math
 
 import numpy as np
@@ -31,7 +30,7 @@ from jax._src.util import canonicalize_axis
 
 ModeResult = namedtuple('ModeResult', ('mode', 'count'))
 
-@partial(api.jit, static_argnames=['axis', 'nan_policy', 'keepdims'])
+@api.jit(static_argnames=['axis', 'nan_policy', 'keepdims'])
 def mode(a: ArrayLike, axis: int | None = 0, nan_policy: str = "propagate", keepdims: bool = False) -> ModeResult:
   """Compute the mode (most common value) along an axis of an array.
 
@@ -137,7 +136,7 @@ def invert_permutation(i: Array) -> Array:
   return jnp.empty_like(i).at[i].set(jnp.arange(i.size, dtype=i.dtype))
 
 
-@partial(api.jit, static_argnames=["method", "axis", "nan_policy"])
+@api.jit(static_argnames=["method", "axis", "nan_policy"])
 def rankdata(
   a: ArrayLike,
   method: str = "average",
@@ -218,7 +217,7 @@ def rankdata(
   raise ValueError(f"unknown method '{method}'")
 
 
-@partial(api.jit, static_argnames=['axis', 'nan_policy', 'keepdims'])
+@api.jit(static_argnames=['axis', 'nan_policy', 'keepdims'])
 def sem(a: ArrayLike, axis: int | None = 0, ddof: int = 1, nan_policy: str = "propagate", *, keepdims: bool = False) -> Array:
   """Compute the standard error of the mean.
 

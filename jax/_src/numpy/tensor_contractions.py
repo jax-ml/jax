@@ -34,7 +34,7 @@ from jax._src.util import canonicalize_axis, set_module
 export = set_module('jax.numpy')
 
 @export
-@partial(api.jit, static_argnames=('precision', 'preferred_element_type', 'out_sharding'),
+@api.jit(static_argnames=('precision', 'preferred_element_type', 'out_sharding'),
          inline=True)
 def dot(a: ArrayLike, b: ArrayLike, *,
         precision: lax.PrecisionLike = None,
@@ -343,7 +343,7 @@ def vecmat(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @export
-@partial(api.jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
+@api.jit(static_argnames=('precision', 'preferred_element_type'), inline=True)
 def vdot(
     a: ArrayLike, b: ArrayLike, *,
     precision: lax.PrecisionLike = None,
@@ -570,7 +570,7 @@ def tensordot(a: ArrayLike, b: ArrayLike,
 
 
 @export
-@partial(api.jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
+@api.jit(static_argnames=('precision', 'preferred_element_type'), inline=True)
 def inner(
     a: ArrayLike, b: ArrayLike, *, precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
@@ -628,7 +628,7 @@ def inner(
 
 
 @export
-@partial(api.jit, inline=True)
+@api.jit(inline=True)
 def outer(a: ArrayLike, b: ArrayLike, out: None = None) -> Array:
   """Compute the outer product of two arrays.
 
