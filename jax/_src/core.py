@@ -2134,11 +2134,7 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
           p for p in s if mesh._name_to_type[p] == AxisType.Explicit))
     else:
       new_spec.append(s if mesh._name_to_type[s] == AxisType.Explicit else None)  # type: ignore
-  new_unreduced = {u for u in spec.unreduced
-                   if mesh._name_to_type[u] == AxisType.Explicit}
-  new_reduced = {u for u in spec.reduced
-                 if mesh._name_to_type[u] == AxisType.Explicit}
-  return P(*new_spec, unreduced=new_unreduced, reduced=new_reduced)
+  return P(*new_spec, unreduced=spec.unreduced, reduced=spec.reduced)
 
 def remove_size_one_mesh_axis(spec, mesh) -> P:
   new_spec = []  # type: ignore
@@ -2209,10 +2205,13 @@ def get_sharding(sharding, shape):
 
 @cache(max_size=4096,
        trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
-def get_vma(vma, mesh):
+def get_vma(vma, sharding):
+  mesh = sharding.mesh
+  spec = sharding.spec
   if mesh.empty:
     assert not vma, vma
     return vma
+
   axis_env = get_axis_env()
   for i in vma:
     if axis_env.axis_exists(i) and i not in mesh._name_to_type:
@@ -2223,6 +2222,15 @@ def get_vma(vma, mesh):
           f" be of type `Manual`. Got axis: {i} of type {mesh._name_to_type[i]}")
   if config.remove_size_one_mesh_axis_from_type.value:
     vma = frozenset(i for i in vma if mesh.shape[i] != 1)
+
+  if vma & spec.unreduced:
+    raise ValueError(
+        f"vma and unreduced cannot have common mesh axes. Got {vma=} and"
+        f" unreduced={spec.unreduced}")
+  if vma & spec.reduced:
+    raise ValueError(
+        f"vma and reduced cannot have common mesh axes. Got {vma=} and"
+        f" reduced={spec.reduced}")
   assert isinstance(vma, frozenset)
   return vma
 
@@ -2246,7 +2254,7 @@ class ShapedArray(UnshapedArray):
     self.sharding = get_sharding(sharding, self.shape)
     # short for varying_manual_axes. See docs at
     # https://docs.jax.dev/en/latest/notebooks/shard_map.html#tracking-how-values-vary-over-manual-mesh-axes-and-check-vma-true
-    self.vma = get_vma(vma, self.sharding.mesh)
+    self.vma = get_vma(vma, self.sharding)
     # See description of https://github.com/jax-ml/jax/pull/30556
     self.memory_space = get_memory_space(memory_space)
 
@@ -2354,10 +2362,8 @@ def str_short_aval(shape, dtype, mesh, spec, vma, memory_space,
             f"<{memory_space.name.lower()}>")
   return f'{dt_str}{ms_str}[{shapestr}]{vma_ur}{mesh_axes}'
 
-def _create_str(x, prefix=None):
+def _create_str(x, prefix):
   x_str = f"{','.join(i for i in x)}"
-  if prefix is None:
-    return x_str
   x_str = x_str if len(x) == 1 else f"({x_str})"
   return f"{prefix}:{x_str}, "
 
@@ -2367,12 +2373,11 @@ def order_wrt_mesh(mesh, x):
 def _vma_ur_str(vma, unreduced, reduced, mesh):
   if not vma and not unreduced and not reduced:
     return ''
-  vma_str = f"{{{_create_str(order_wrt_mesh(mesh, vma), None)}}}" if vma else ''
+  vma_str = _create_str(order_wrt_mesh(mesh, vma), 'V') if vma else ''
   ur_str = _create_str(unreduced, 'U') if unreduced else ''
   red_str = _create_str(reduced, 'R') if reduced else ''
-  m_str = f"{ur_str}{red_str}".rstrip(', ')
-  m_str = f"{{{m_str}}}" if m_str else ''
-  return f"{m_str}{vma_str}"
+  m_str = f"{vma_str}{ur_str}{red_str}".rstrip(', ')
+  return f"{{{m_str}}}"
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
   if isinstance(primal_dtype, dtypes.ExtendedDType):

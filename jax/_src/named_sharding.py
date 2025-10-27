@@ -534,10 +534,10 @@ def _check_mesh_unreduced(mesh, pspec):
       raise ValueError(
           f'Unreduced axes {u} is not found in {mesh.axis_names=}. '
           f'Got {pspec=}')
-    if mesh._name_to_type[u] in (AxisType.Auto, AxisType.Manual):
+    if mesh._name_to_type[u] == AxisType.Auto:
       raise ValueError(
-          'Unreduced axes can only refer to mesh axes that is of type'
-          f' `Explicit`. Got unreduced axes: {pspec.unreduced} and'
+          'Unreduced axes can only refer to mesh axes that are of type'
+          f' `Explicit` or `Manual`. Got unreduced axes: {pspec.unreduced} and'
           f' mesh: {mesh}')
 
   for u in pspec.reduced:
@@ -545,8 +545,8 @@ def _check_mesh_unreduced(mesh, pspec):
       raise ValueError(
           f'Reduced axes {u} is not found in {mesh.axis_names=}. '
           f'Got {pspec=}')
-    if mesh._name_to_type[u] in (AxisType.Auto, AxisType.Manual):
+    if mesh._name_to_type[u] == AxisType.Auto:
       raise ValueError(
-          'Reduced axes can only refer to mesh axes that is of type'
-          f' `Explicit`. Got reduced axes: {pspec.reduced} and'
+          'Reduced axes can only refer to mesh axes that are of type'
+          f' `Explicit` or `Manual`. Got reduced axes: {pspec.reduced} and'
           f' mesh: {mesh}')
