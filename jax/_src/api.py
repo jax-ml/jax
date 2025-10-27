@@ -170,8 +170,13 @@ def jit(
   abstracted_axes: Any | None = None,
   compiler_options: dict[str, Any] | None = None,
 ) -> pjit.JitWrapped:
-  """Sets up ``fun`` for just-in-time compilation with XLA.
-
+  """A JAX transformation that sets up ``fun`` for just-in-time compilation with XLA.
+  
+  Learn more in the Just-in-time compilation tutorial `[1]`_ and the Quickstart `[2]`_.
+  
+  .. _[1] https://jax.readthedocs.io/en/latest/jit-compilation.html
+  .. _[2] https://jax.readthedocs.io/en/latest/quickstart.html#just-in-time-compilation-with-jax-jit
+  
   Args:
     fun: Function to be jitted. ``fun`` should be a pure function.
 
