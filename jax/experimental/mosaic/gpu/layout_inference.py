@@ -358,8 +358,22 @@ def conjure_assignment(
       equation_system.constraints
   )
 
-  for hint in hints:
-    if (assignment := extract_variable_assignment_from_hint(hint)) is not None:
+  def assignment_order(
+      assignment: tuple[eqns.Variable, eqns.Constant],
+  ) -> int:
+    match assignment:
+      # Trying TiledLayout first, before other hints, has been empirically shown
+      # to improve the performance of the layout inference.
+      case (_, eqns.RegisterLayout(fa.TiledLayout())):
+        return 0
+      case _:
+        return 1
+
+  assignments = [extract_variable_assignment_from_hint(h) for h in hints]
+  assignments = sorted(assignments, key=assignment_order)
+
+  for assignment in assignments:
+    if assignment is not None:
       yield assignment
 
   # Here, we have not managed to find an assignment for all the unknown
@@ -1749,13 +1763,38 @@ def producer_result(operand: OperandOrResult) -> OperandOrResult:
   )
 
 
-def consumer_operands(result: OperandOrResult) -> Sequence[OperandOrResult]:
-  """Given a result, returns the corresponding operands in its consumers."""
-  assert result.type == VariableType.RESULT
+def consumer_operands(oor: OperandOrResult) -> Sequence[OperandOrResult]:
+  """Given an operand or result, returns the corresponding operands in its consumers."""
   consumer_operands: list[OperandOrResult] = []
   # The layout can also be chosen from the layout of the consumers of the
-  # results.
-  for use in cast(ir.OpResult, result.operation.results[result.index]).uses:
+  # result or operand (in case the operand is a block argument).
+
+  uses = []
+  if oor.type == VariableType.RESULT:
+    uses.extend(cast(ir.OpResult, oor.operation.results[oor.index]).uses)
+    if isinstance(oor.operation, (scf.WhileOp)):
+      # In this case, the while results correspond to the after-block arguments.
+      [after_block] = oor.operation.after.blocks
+      arg = after_block.arguments[oor.index]
+      uses.extend(cast(ir.BlockArgument, arg).uses)
+  else:
+    assert oor.type == VariableType.OPERAND
+    if isinstance(oor.operation, (scf.ForOp)):
+      # In this case, the block arguments are offset compared to the loop
+      # operands. The loop operands have the lower bound, upper bound, and step
+      # as their leading arguments. The block arguments omit these parameters,
+      # but start with the iteration variable.
+      num_leading_args = 3
+      index_in_block_args = oor.index - num_leading_args + 1
+      arg = oor.operation.body.arguments[index_in_block_args]
+      uses.extend(cast(ir.BlockArgument, arg).uses)
+    if isinstance(oor.operation, scf.WhileOp):
+      # In this case, the while operands correspond to the before-block arguments.
+      [before_block] = oor.operation.before.blocks
+      arg = before_block.arguments[oor.index]
+      uses.extend(cast(ir.BlockArgument, arg).uses)
+
+  for use in uses:
     consumer = use.owner.opview  # pytype: disable=attribute-error
     index = use.operand_number
     consumer_operands.append(OperandOrResult(consumer, VariableType.OPERAND, index))
@@ -1796,15 +1835,14 @@ def derive_hints_and_constraints(
         if producer_variable not in visited:
           # The producer of a variable must be relayout-able to the variable.
           constraints.append(eqns.Relayout(producer_variable, variable))
-      elif operand_or_result.type == VariableType.RESULT:
-        for co in consumer_operands(operand_or_result):
-          consumer_variable = variable_for_operand_or_result[co]
-          consumers.append(consumer_variable)
-          # Only add the constraint if we haven't already created that
-          # constraint when processing this variable as the consumer's producer.
-          if consumer_variable not in visited:
-            # A variable must be relayout-able to its consumers.
-            constraints.append(eqns.Relayout(variable, consumer_variable))
+      for co in consumer_operands(operand_or_result):
+        consumer_variable = variable_for_operand_or_result[co]
+        consumers.append(consumer_variable)
+        # Only add the constraint if we haven't already created that
+        # constraint when processing this variable as the consumer's producer.
+        if consumer_variable not in visited:
+          # A variable must be relayout-able to its consumers.
+          constraints.append(eqns.Relayout(variable, consumer_variable))
     visited.add(variable)
 
     if producers:
