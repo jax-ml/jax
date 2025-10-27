@@ -231,9 +231,8 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(),
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kXlaBufferPythonCpuCallback, (XlaBufferCallback<kDLCPU>),
     ffi::Ffi::Bind()
+        .Ctx<ffi::Context>()
         .Ctx<ffi::DeviceOrdinal>()
-        .Ctx<ffi::FfiApi>()
-        .Ctx<ffi::FfiExecutionContext>()
         .Ctx<ffi::UserData<xla::FfiLoadedHostCallbacks>>()
         .Attr<uint64_t>("index")
         .RemainingArgs()

@@ -274,9 +274,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     (jax::XlaBufferCallback<kDLROCM>),
 #endif
     xla::ffi::Ffi::Bind()
+        .Ctx<xla::ffi::Context>()
         .Ctx<xla::ffi::DeviceOrdinal>()
-        .Ctx<xla::ffi::FfiApi>()
-        .Ctx<xla::ffi::FfiExecutionContext>()
         .Ctx<xla::ffi::UserData<xla::FfiLoadedHostCallbacks>>()
         .Attr<uint64_t>("index")
         .RemainingArgs()
@@ -290,9 +289,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     (jax::XlaBufferCallback<kDLROCM>),
 #endif
     xla::ffi::Ffi::Bind()
+        .Ctx<xla::ffi::Context>()
         .Ctx<xla::ffi::DeviceOrdinal>()
-        .Ctx<xla::ffi::FfiApi>()
-        .Ctx<xla::ffi::FfiExecutionContext>()
         .Ctx<xla::ffi::UserData<xla::FfiLoadedHostCallbacks>>()
         .Attr<uint64_t>("index")
         .RemainingArgs()
