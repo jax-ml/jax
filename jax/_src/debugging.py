@@ -93,7 +93,9 @@ def debug_callback_impl(*args, callback: Callable[..., Any],
         " JAX_PLATFORMS environment variable."
     ) from e
   args = api.device_put(args, cpu_device)
-  with config.default_device(cpu_device):
+  with (config.default_device(cpu_device),
+        sharding_impls._internal_use_concrete_mesh(mesh_lib.empty_concrete_mesh),
+        mesh_lib.use_abstract_mesh(mesh_lib.empty_abstract_mesh)):
     try:
       callback(*args)
     except BaseException:
