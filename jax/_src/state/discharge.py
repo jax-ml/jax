@@ -56,15 +56,29 @@ PyTreeDef = tree_util.PyTreeDef
 
 ## Discharging state
 
-# Let's say we have a jaxpr that takes in `Ref`s and outputs regular JAX values
-# (`Ref`s should never be outputs from jaxprs). We'd like to convert that jaxpr
-# into a "pure" jaxpr that takes in and outputs values and no longer has the
-# `Read/Write/Accum` effects.
 
-def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any], * ,
-                    should_discharge: bool | Sequence[bool] = True,
-                    ) -> tuple[core.Jaxpr, list[Any]]:
-  """Converts a jaxpr that takes in `Ref`s into one that doesn't."""
+def discharge_state(
+    jaxpr: core.Jaxpr,
+    consts: Sequence[Any],
+    *,
+    should_discharge: bool | Sequence[bool] = True,
+) -> tuple[core.Jaxpr, Sequence[Any]]:
+  """Converts a stateful jaxpr into a pure one.
+
+  Discharging replaces ``Ref`` inputs with regular values, threads updates
+  through the computation, and returns updated ``Ref``s as additional outputs.
+
+  Args:
+    jaxpr: A stateful jaxpr with ``Ref`` inputs.
+    consts: Constants for the jaxpr.
+    should_discharge: Whether to discharge each ``Ref`` input. If a single bool,
+      applies to all inputs.
+
+  Returns:
+    A tuple of ``(new_jaxpr, new_consts)`` where ``new_jaxpr`` is a jaxpr with
+    no ``Read``/``Write``/``Accum`` effects. Discharged ``Ref`` inputs become
+    regular value inputs, and their updated values are appended to the outputs.
+  """
   if isinstance(should_discharge, bool):
     should_discharge = [should_discharge] * len(jaxpr.invars)
   in_avals = [v.aval.inner_aval
@@ -105,37 +119,68 @@ class Environment:
   def write(self, v: core.Var, val: Any) -> None:
     self.env[v] = val
 
+
 class DischargeRule(Protocol):
 
-  def __call__(self, in_avals: Sequence[core.AbstractValue],
-      out_avals: Sequence[core.AbstractValue], *args: Any,
-      **params: Any) -> tuple[Sequence[Any | None], Sequence[Any]]:
-    ...
+  def __call__(
+      self,
+      in_avals: Sequence[core.AbstractValue],
+      out_avals: Sequence[core.AbstractValue],
+      *args: Any,
+      **params: Any,
+  ) -> tuple[Sequence[Any | None], Any | Sequence[Any]]:
+    """Discharge rule for a primitive.
+
+    See :func:`discharge_state` for an explanation of what discharge means.
+
+    Args:
+      in_avals: Input abstract values.
+      out_avals: Output abstract values.
+      *args: Input values.
+      **params: Primitive parameters.
+
+    Returns:
+      A tuple of ``(new_invals, new_outvals)`` where:
+
+      * ``new_invals`` contains updated values for discharged ``Ref`` inputs,
+        or ``None`` if the input is not a ``Ref`` or was not updated.
+      * ``new_outvals`` is the primitive's output. A sequence if the primitive
+        has multiple results, otherwise a single value.
+    """
+
 
 _discharge_rules: dict[core.Primitive, DischargeRule] = {}
 
-class PartialDischargeRule(Protocol):
-  """A partial discharge rule.
-
-  Exactly like a discharge rule only it accepts a `should_discharge`
-  argument that indicates which inputs should be discharged and the
-  return value returns a tuple of which the first element is the new
-  inputs or none but only the ones that correspond to `True` entries
-  in `should_charge`.
-  """
-
-  def __call__(self, should_discharge: Sequence[bool],
-      in_avals: Sequence[core.AbstractValue],
-      out_avals: Sequence[core.AbstractValue], *args: Any,
-      **params: Any) -> tuple[Sequence[Any | None], Sequence[Any]]:
-    ...
-
-_partial_discharge_rules: dict[core.Primitive, PartialDischargeRule] = {}
 
 def register_discharge_rule(prim: core.Primitive):
   def register(f: DischargeRule):
     _discharge_rules[prim] = f
+
   return register
+
+
+class PartialDischargeRule(Protocol):
+  """Discharge rule that supports selective discharging of ``Ref`` inputs.
+
+  Generalizes :class:`DischargeRule` by accepting a ``should_discharge``
+  argument that specifies which ``Ref`` inputs to discharge. The returned
+  ``new_invals`` must contain a non-``None`` value if and only if the
+  corresponding ``Ref`` was discharged.
+  """
+
+  def __call__(
+      self,
+      should_discharge: Sequence[bool],
+      in_avals: Sequence[core.AbstractValue],
+      out_avals: Sequence[core.AbstractValue],
+      *args: Any,
+      **params: Any,
+  ) -> tuple[Sequence[Any | None], Any | Sequence[Any]]:
+    ...
+
+
+_partial_discharge_rules: dict[core.Primitive, PartialDischargeRule] = {}
+
 
 def register_partial_discharge_rule(prim: core.Primitive):
   def register(f: PartialDischargeRule):
