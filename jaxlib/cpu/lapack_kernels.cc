@@ -1471,6 +1471,168 @@ template struct SchurEigenvectors<ffi::DataType::F64>;
 template struct SchurEigenvectorsComplex<ffi::DataType::C64>;
 template struct SchurEigenvectorsComplex<ffi::DataType::C128>;
 
+//== Reorder Schur Decomposition ==//
+
+template <ffi::DataType dtype>
+ffi::Error SchurReorder<dtype>::Kernel(
+    ffi::Buffer<dtype> x,
+    ffi::Buffer<dtype> schur_vectors,
+    ffi::Buffer<ffi::DataType::S64> order,
+    ffi::ResultBuffer<dtype> x_out,
+    ffi::ResultBuffer<dtype> schur_vectors_out,
+    ffi::ResultBuffer<LapackIntDtype> info) {
+  FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
+                       SplitBatch2D(x.dimensions()));
+
+  CopyIfDiffBuffer(x, x_out);
+  CopyIfDiffBuffer(schur_vectors, schur_vectors_out);
+
+  ValueType* x_out_data = x_out->typed_data();
+  ValueType* schur_vectors_data = schur_vectors_out->typed_data();
+  int64_t* order_data = order.typed_data();
+  lapack_int* info_data = info->typed_data();
+
+  FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<lapack_int>(x_cols));
+  char compq = 'V';
+
+  // Prepare LAPACK workspaces.
+  auto work_size = x_cols;
+  FFI_ASSIGN_OR_RETURN(auto work_size_v,
+                       MaybeCastNoOverflow<lapack_int>(work_size));
+  auto work_data = AllocateScratchMemory<dtype>(work_size);
+
+  auto order_work = AllocateScratchMemory<ffi::DataType::S64>(x_cols);
+  int64_t* order_work_data = order_work.get();
+  std::copy_n(order_data, batch_count * x_cols, order_work_data);
+
+  lapack_int ifst;
+  lapack_int ilst;
+
+  const int64_t x_size{x_cols * x_cols};
+  [[maybe_unused]] const auto x_size_bytes =
+      static_cast<unsigned long>(x_size) * sizeof(ValueType);
+  [[maybe_unused]] const auto x_cols_bytes =
+      static_cast<unsigned long>(x_cols) * sizeof(ValueType);
+  for (int64_t i = 0; i < batch_count; ++i) {
+    for (int64_t j = 0; j < x_cols;) {
+      if (order_work_data[j] == 0 or order_work_data[j] > x_cols) {
+        return ffi::Error::InvalidArgument("Expect order in Fortran-style with values 1 to N.");
+      }
+      FFI_ASSIGN_OR_RETURN(ifst, MaybeCastNoOverflow<lapack_int>(order_work_data[j]));
+      FFI_ASSIGN_OR_RETURN(ilst, MaybeCastNoOverflow<lapack_int>(j + 1));
+
+      if (order_work_data[j] == x_cols ||
+          x_out_data[(order_work_data[j] - 1) * x_cols + order_work_data[j]] == 0.
+          ) { // 1x1 block
+        fn(&compq, &x_cols_v, x_out_data, &x_cols_v, schur_vectors_data,
+           &x_cols_v, &ifst, &ilst, work_data.get(), info_data);
+
+        for (int64_t k = j + 1; k < x_cols; ++k) {
+          if (order_work_data[k] < order_work_data[j]) {
+            order_work_data[k] += 1;
+          }
+        }
+        j += 1;
+      } else { // 2x2 block
+        if ((order_work_data[j] + 1) != (order_work_data[j + 1])) {
+          return ffi::Error::InvalidArgument("Cannot split up 2x2 block in real Schur form.");
+        }
+
+        fn(&compq, &x_cols_v, x_out_data, &x_cols_v, schur_vectors_data,
+           &x_cols_v, &ifst, &ilst, work_data.get(), info_data);
+
+        for (int64_t k = j + 2; k < x_cols; ++k) {
+          if (order_work_data[k] < order_work_data[j]) {
+            order_work_data[k] += 2;
+          }
+        }
+        j += 2;
+      }
+    }
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_out_data, x_size_bytes);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(schur_vectors_data, x_size_bytes);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_data, sizeof(lapack_int));
+
+    x_out_data += x_size;
+    schur_vectors_data += x_size;
+    order_work_data += x_cols;
+    ++info_data;
+  }
+
+  return ffi::Error::Success();
+}
+
+template <ffi::DataType dtype>
+ffi::Error SchurReorderComplex<dtype>::Kernel(
+    ffi::Buffer<dtype> x,
+    ffi::Buffer<dtype> schur_vectors,
+    ffi::Buffer<ffi::DataType::S64> order,
+    ffi::ResultBuffer<dtype> x_out,
+    ffi::ResultBuffer<dtype> schur_vectors_out,
+    ffi::ResultBuffer<LapackIntDtype> info) {
+  FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
+                       SplitBatch2D(x.dimensions()));
+
+  CopyIfDiffBuffer(x, x_out);
+  CopyIfDiffBuffer(schur_vectors, schur_vectors_out);
+
+  ValueType* x_out_data = x_out->typed_data();
+  ValueType* schur_vectors_data = schur_vectors_out->typed_data();
+  int64_t* order_data = order.typed_data();
+  lapack_int* info_data = info->typed_data();
+
+  FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<lapack_int>(x_cols));
+  char compq = 'V';
+
+  // Prepare LAPACK workspaces.
+  auto order_work = AllocateScratchMemory<ffi::DataType::S64>(x_cols);
+  int64_t* order_work_data = order_work.get();
+  std::copy_n(order_data, batch_count * x_cols, order_work_data);
+
+  lapack_int ifst;
+  lapack_int ilst;
+
+  const int64_t x_size{x_cols * x_cols};
+  [[maybe_unused]] const auto x_size_bytes =
+      static_cast<unsigned long>(x_size) * sizeof(ValueType);
+  [[maybe_unused]] const auto x_cols_bytes =
+      static_cast<unsigned long>(x_cols) * sizeof(ValueType);
+  for (int64_t i = 0; i < batch_count; ++i) {
+    for (int64_t j = 0; j < x_cols;) {
+      if (order_work_data[j] == 0 or order_work_data[j] > x_cols) {
+        return ffi::Error::InvalidArgument("Expect order in Fortran-style with values 1 to N.");
+      }
+      FFI_ASSIGN_OR_RETURN(ifst, MaybeCastNoOverflow<lapack_int>(order_work_data[j]));
+      FFI_ASSIGN_OR_RETURN(ilst, MaybeCastNoOverflow<lapack_int>(j + 1));
+
+      fn(&compq, &x_cols_v, x_out_data, &x_cols_v, schur_vectors_data,
+         &x_cols_v, &ifst, &ilst, info_data);
+
+      for (int64_t k = j + 1; k < x_cols; ++k) {
+        if (order_work_data[k] < order_work_data[j]) {
+          order_work_data[k] += 1;
+        }
+      }
+      j += 1;
+    }
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_out_data, x_size_bytes);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(schur_vectors_data, x_size_bytes);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_data, sizeof(lapack_int));
+
+    x_out_data += x_size;
+    schur_vectors_data += x_size;
+    order_work_data += x_cols;
+    ++info_data;
+  }
+
+  return ffi::Error::Success();
+}
+
+template struct SchurReorder<ffi::DataType::F32>;
+template struct SchurReorder<ffi::DataType::F64>;
+template struct SchurReorderComplex<ffi::DataType::C64>;
+template struct SchurReorderComplex<ffi::DataType::C128>;
+
 //== Tridiagonal Reduction ==//
 
 template <ffi::DataType dtype>
@@ -1828,6 +1990,28 @@ template struct TridiagonalSolver<ffi::DataType::C128>;
           .Ret<::xla::ffi::Buffer<data_type>>(/*eigen_vectors*/) \
           .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/))
 
+#define JAX_CPU_DEFINE_TREXC(name, data_type)                              \
+  XLA_FFI_DEFINE_HANDLER_SYMBOL(                                           \
+      name, SchurReorder<data_type>::Kernel,                               \
+      ::xla::ffi::Ffi::Bind()                                              \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)                       \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*schur_vectors*/)           \
+          .Arg<::xla::ffi::Buffer<::xla::ffi::DataType::S64>>(/*order*/)   \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)                   \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*schur_vectors_out*/)       \
+          .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/))
+
+#define JAX_CPU_DEFINE_TREXC_COMPLEX(name, data_type)                      \
+  XLA_FFI_DEFINE_HANDLER_SYMBOL(                                           \
+      name, SchurReorderComplex<data_type>::Kernel,                        \
+      ::xla::ffi::Ffi::Bind()                                              \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)                       \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*schur_vectors*/)           \
+          .Arg<::xla::ffi::Buffer<::xla::ffi::DataType::S64>>(/*order*/)   \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)                   \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*schur_vectors_out*/)       \
+          .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/))
+
 #define JAX_CPU_DEFINE_GTSV(name, data_type)              \
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                          \
       name, TridiagonalSolver<data_type>::Kernel,         \
@@ -1919,6 +2103,11 @@ JAX_CPU_DEFINE_TRECV(lapack_dtrevc_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_TRECV_COMPLEX(lapack_ctrevc_ffi, ::xla::ffi::DataType::C64);
 JAX_CPU_DEFINE_TRECV_COMPLEX(lapack_ztrevc_ffi, ::xla::ffi::DataType::C128);
 
+JAX_CPU_DEFINE_TREXC(lapack_strexc_ffi, ::xla::ffi::DataType::F32);
+JAX_CPU_DEFINE_TREXC(lapack_dtrexc_ffi, ::xla::ffi::DataType::F64);
+JAX_CPU_DEFINE_TREXC_COMPLEX(lapack_ctrexc_ffi, ::xla::ffi::DataType::C64);
+JAX_CPU_DEFINE_TREXC_COMPLEX(lapack_ztrexc_ffi, ::xla::ffi::DataType::C128);
+
 JAX_CPU_DEFINE_GTSV(lapack_sgtsv_ffi, ::xla::ffi::DataType::F32);
 JAX_CPU_DEFINE_GTSV(lapack_dgtsv_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_GTSV(lapack_cgtsv_ffi, ::xla::ffi::DataType::C64);
@@ -1946,6 +2135,8 @@ JAX_CPU_DEFINE_GTSV(lapack_zgtsv_ffi, ::xla::ffi::DataType::C128);
 #undef JAX_CPU_DEFINE_HSEQR_COMPLEX
 #undef JAX_CPU_DEFINE_TRECV
 #undef JAX_CPU_DEFINE_TRECV_COMPLEX
+#undef JAX_CPU_DEFINE_TREXC
+#undef JAX_CPU_DEFINE_TREXC_COMPLEX
 #undef JAX_CPU_DEFINE_GTSV
 
 }  // namespace jax

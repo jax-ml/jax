@@ -512,6 +512,38 @@ def schur_eigenvectors(x, eigvals=None):
   return schur_eigenvectors_complex_p.bind(x)[0]
 
 
+def schur_reorder(schur_form, schur_vectors, order):
+  r"""Reorder (Permute) a Schur decomposition.
+
+  Only implemented on CPU.
+
+  Permute a matrix Schur such that the diagonal blocks selected by
+  the ``order`` parameter are sorted in the specified order.
+
+  For real Schur matrices the order must ensure that 2x2 diagonal blocks
+  encoding a complex conjugate pair of eigenvalues have to be successive in
+  the ``order`` parameter. Otherwise, the code will return an exception.
+
+  Args:
+    schur_form: A batch of square matrices in Schur form with
+      shape ``[..., m, m]``.
+    schur_vectors: A batch of square matrices with the vectors that
+      transformed a matrix in the Schur form with shape ``[..., m, m]``.
+    order: A batch of vectors containing the new order of the diagonal blocks
+      with shape ``[..., m]``. Indices can be either supplied in C-style
+      starting at zero and running to ``m-1`` or in Fortran-style starting
+      at one and running to ``m``.
+
+  Returns:
+    A pair of array ``S, V`` with shape ``[..., m, m]`` containing the
+    reordered Schur form and Schur vector.
+  """
+  order = order.astype(np.int64)
+  order = control_flow.cond(order.all(), lambda x: x, lambda x: x+1, order)
+
+  return schur_reorder_p.bind(schur_form, schur_vectors, order)
+
+
 class SvdAlgorithm(enum.Enum):
   """Enum for SVD algorithm."""
   DEFAULT = "default"
@@ -2163,6 +2195,47 @@ mlir.register_lowering(schur_eigenvectors_complex_p,
                        partial(_schur_eigenvectors_cpu_lowering, real=False,
                                eigvals_imag_operand=None),
                        platform="cpu")
+
+# Reorder of Schur Decomposition
+
+def _schur_reorder_shape_rule(x_shape, vec_shape, order_shape):
+  if x_shape[0] != x_shape[1]:
+    raise ValueError(
+        f"The input to schur reordering must be a square matrix. Got shape {x_shape}.")
+  return (x_shape, vec_shape)
+
+def _schur_reorder_dtype_rule(x_dtype, vec_dtype, order_dtype):
+  return (x_dtype, vec_dtype)
+
+def _schur_reorder_cpu_lowering(ctx, x_operand, vec_operand, order_operand):
+  operand_aval, vec_aval, order_aval = ctx.avals_in
+  batch_dims = operand_aval.shape[:-2]
+  target_name = lapack.prepare_lapack_call("trexc_ffi", operand_aval.dtype)
+
+  info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
+  avals_out = [operand_aval, vec_aval, info_aval]
+
+  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out,
+                              operand_output_aliases={0: 0, 1: 1})
+  schur_form, schur_vectors, info = rule(ctx, x_operand, vec_operand, order_operand)
+
+  ok = mlir.compare_hlo(
+      info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      "EQ", "SIGNED")
+
+  schur_form = _replace_not_ok_with_nan(ctx, batch_dims, ok, schur_form,
+                                        ctx.avals_out[0])
+  schur_vectors = _replace_not_ok_with_nan(ctx, batch_dims, ok, schur_vectors,
+                                           ctx.avals_out[1])
+
+  output = [schur_form, schur_vectors]
+  return output
+
+schur_reorder_p = linalg_primitive(
+    _schur_reorder_dtype_rule, (_float | _complex, _float | _complex, _int), (2, 2, 1),
+    _schur_reorder_shape_rule, "schur_reorder",
+    multiple_results=True, require_same=False)
+mlir.register_lowering(schur_reorder_p, _schur_reorder_cpu_lowering, platform="cpu")
 
 # Singular value decomposition
 

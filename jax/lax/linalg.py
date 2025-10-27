@@ -38,6 +38,8 @@ from jax._src.lax.linalg import (
   schur_eigenvectors as schur_eigenvectors,
   schur_eigenvectors_real_p as schur_eigenvectors_real_p,
   schur_eigenvectors_complex_p as schur_eigenvectors_complex_p,
+  schur_reorder as schur_reorder,
+  schur_reorder_p as schur_reorder_p,
   svd as svd,
   svd_p as svd_p,
   SvdAlgorithm as SvdAlgorithm,
