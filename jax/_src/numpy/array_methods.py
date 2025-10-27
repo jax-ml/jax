@@ -318,6 +318,10 @@ def _reshape(self: Array, *args: Any, order: str = "C", out_sharding=None
     return lax.reshape(self, newshape, None, out_sharding=out_sharding)
   elif order == "F":
     dims = list(range(self.ndim)[::-1])
+    out_sharding = canonicalize_sharding(out_sharding, "jnp.reshape")
+    out_sharding = (
+        None if out_sharding is None else out_sharding.update(
+            spec=out_sharding.spec.update(partitions=out_sharding.spec[::-1])))
     return lax.reshape(self, newshape[::-1], dims, out_sharding=out_sharding).T
   elif order == "A":
     raise NotImplementedError("np.reshape order=A is not implemented.")

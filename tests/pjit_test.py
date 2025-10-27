@@ -5611,6 +5611,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jax.jit(jax.grad(g))(arr)
     self.assertEqual(out.sharding, arr.sharding)
 
+  @jtu.with_explicit_mesh((2,), "x")
+  def test_jnp_reshape_order_F(self, mesh):
+    value = jnp.ones(16, out_sharding=P('x'))
+    out = jnp.reshape(value, (-1, 4), order='F', out_sharding=P(None, 'x'))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'x')))
+
   @parameterized.named_parameters(
       ('split_1', (4, 6, 8), (4, 2, 3, 8),
        P('x', None, 'y'), P('x', None, None, 'y'), ''
