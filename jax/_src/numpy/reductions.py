@@ -2485,7 +2485,9 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     axis = _canonicalize_axis(axis, a.ndim)
 
   q, = promote_dtypes_inexact(q)
-  q = jnp.atleast_1d(q)
+  q = lax_internal.asarray(q)
+  if getattr(q, "ndim", 0) == 0:
+    q = lax.expand_dims(q, (0,))
   q_shape = q.shape
   q_ndim = q.ndim
   if q_ndim > 1:
@@ -2497,8 +2499,14 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     a, = promote_dtypes_inexact(a)
   else:
     a, weights = promote_dtypes_inexact(a, weights)
+    weights = lax.convert_element_type(weights, a.dtype)
     a_shape = a.shape
     w_shape = np.shape(weights)
+    if np.ndim(weights) == 0:
+      weights = lax.broadcast_in_dim(weights, a_shape, ())
+      w_shape = a_shape
+    else:
+      w_shape = np.shape(weights)
     if w_shape != a_shape:
       if axis is None:
         raise TypeError("Axis must be specified when shapes of a and weights differ.")
@@ -2510,12 +2518,13 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
             shape=a_shape,
             broadcast_dimensions=axis
         )
-    else:
+        w_shape = a_shape
+      else:
         if len(w_shape) != 1 or w_shape[0] != a_shape[axis]:
             raise ValueError("Length of weights not compatible with specified axis.")
-        weights = lax.expand_dims(weights, axis)
+        weights = lax.expand_dims(weights, (axis,))
         weights = _broadcast_to(weights, a.shape)
-
+        w_shape = a_shape
 
     if squash_nans:
       nan_mask = ~lax_internal._isnan(a)
@@ -2526,20 +2535,29 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
 
     total_weight = sum(weights, axis=axis, keepdims=True)
     a_sorted, weights_sorted = lax.sort_key_val(a, weights, dimension=axis)
-    cum_weights = lax.cumsum(weights_sorted, axis=axis)
+    cum_weights = cumsum(weights_sorted, axis=axis)
     cum_weights_norm = lax.div(cum_weights, total_weight)
 
     def _weighted_quantile(qi):
-      index_dtype = dtypes.default_int_dtype()
+      qi = lax.convert_element_type(qi, cum_weights_norm.dtype)
+      index_dtype = dtypes.canonicalize_dtype(dtypes.int_)
       idx = sum(lax.lt(cum_weights_norm, qi), axis=axis, dtype=index_dtype, keepdims=keepdims)
-      idx = lax.clamp(0, idx, a_sorted.shape[axis] - 1)
-      val = jnp.take_along_axis(a_sorted, idx, axis)
-
-      idx_prev = lax.clamp(idx - 1, 0, a_sorted.shape[axis] - 1)
-      val_prev = jnp.take_along_axis(a_sorted, idx_prev, axis)
-      cw_prev = jnp.take_along_axis(cum_weights_norm, idx_prev, axis)
-      cw_next = jnp.take_along_axis(cum_weights_norm, idx, axis)
-
+      idx = lax.clamp(_lax_const(idx, 0), idx, _lax_const(idx, a_sorted.shape[axis] - 1))
+      idx_prev = lax.clamp(idx - 1, _lax_const(idx, 0), _lax_const(idx, a_sorted.shape[axis] - 1))
+      
+      slice_sizes = list(a_shape)
+      slice_sizes[axis] = 1
+      offset_start = q_ndim
+      total_offset_dims = len(a_shape) + q_ndim if keepdims else len(a_shape) + q_ndim - 1
+      dnums = lax.GatherDimensionNumbers(
+        offset_dims=tuple(range(offset_start, total_offset_dims)),
+        collapsed_slice_dims=(axis,),
+        start_index_map=(axis,)
+     )
+      val = lax.gather(a_sorted, idx[..., None], dimension_numbers=dnums, slice_sizes=slice_sizes)
+      val_prev = lax.gather(a_sorted, idx_prev[..., None], dimension_numbers=dnums, slice_sizes=slice_sizes)
+      cw_prev = lax.gather(cum_weights_norm, idx_prev[..., None], dimension_numbers=dnums, slice_sizes=slice_sizes)
+      cw_next = lax.gather(cum_weights_norm, idx[..., None], dimension_numbers=dnums, slice_sizes=slice_sizes)
       if method == "linear":
         denom = cw_next - cw_prev
         denom = _where(denom == 0, 1, denom)
@@ -2560,7 +2578,15 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
       return out
 
     result = jax.vmap(_weighted_quantile)(q)
-    return result
+    if keepdims and keepdim:
+      if q_ndim > 0:
+        keepdim = [q_shape[0], *keepdim]
+      result = result.reshape(tuple(keepdim))
+    else:
+      if q_ndim == 0 or (q_ndim == 1 and q_shape[0] == 1):
+        if result.ndim > 0 and result.shape[0] == 1:
+          result = lax.squeeze(result, (0,))
+    return lax.convert_element_type(result, a.dtype)
 
   if squash_nans:
     a = _where(lax_internal._isnan(a), np.nan, a) # Ensure nans are positive so they sort to the end.
@@ -2576,8 +2602,8 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     high_weight = lax.sub(q, low)
     low_weight = lax.sub(_lax_const(high_weight, 1), high_weight)
 
-    low = lax.max(lax._const(low, 0), lax.min(low, counts - 1))
-    high = lax.max(lax._const(high, 0), lax.min(high, counts - 1))
+    low = lax.max(_lax_const(low, 0), lax.min(low, counts - 1))
+    high = lax.max(_lax_const(high, 0), lax.min(high, counts - 1))
     low = lax.convert_element_type(low, int)
     high = lax.convert_element_type(high, int)
     out_shape = q_shape + shape_after_reduction
@@ -2601,8 +2627,8 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     high_weight = lax.sub(q, low)
     low_weight = lax.sub(_lax_const(high_weight, 1), high_weight)
 
-    low = lax.clamp(lax._const(low, 0), low, n - 1)
-    high = lax.clamp(lax._const(high, 0), high, n - 1)
+    low = lax.clamp(_lax_const(low, 0), low, n - 1)
+    high = lax.clamp(_lax_const(high, 0), high, n - 1)
     low = lax.convert_element_type(low, int)
     high = lax.convert_element_type(high, int)
 
@@ -2635,7 +2661,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     pred = lax.le(high_weight, _lax_const(high_weight, 0.5))
     result = lax.select(pred, low_value, high_value)
   elif method == "midpoint":
-    result = lax.mul(lax.add(low_value, high_value), lax._const(low_value, 0.5))
+    result = lax.mul(lax.add(low_value, high_value), _lax_const(low_value, 0.5))
   elif method == "inverted_cdf":
     result = high_value
   else:
@@ -2644,6 +2670,10 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     if q_ndim > 0:
       keepdim = [np.shape(q)[0], *keepdim]
     result = result.reshape(keepdim)
+  else:
+    if q_ndim == 0 or (q_ndim == 1 and q_shape[0] == 1):
+      if result.ndim > 0 and result.shape[0] == 1:
+        result = lax.squeeze(result, (0,))
   return lax.convert_element_type(result, a.dtype)
 
 
