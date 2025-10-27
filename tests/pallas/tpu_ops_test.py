@@ -686,7 +686,46 @@ class OpsTest(PallasBaseTest):
     expected = jnp.broadcast_to(x, broadcast_shape)
     np.testing.assert_array_equal(out, expected)
 
+  @parameterized.parameters(
+      [jnp.bfloat16, jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e4m3b11fnuz]
+  )
+  def test_stochastic_round(self, target_dtype):
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 29):
+      self.skipTest("Test requires libtpu from 2025/10/29 or later")
 
+    def kernel(x_ref, b_ref, o_ref):
+      o_ref[...] = pltpu.stochastic_round(
+          x_ref[...], b_ref[...], target_dtype=target_dtype
+      )
+
+    shape = (8, 128)
+    k1, k2 = jax.random.split(jax.random.key(4242), 2)
+    x = jax.random.normal(k1, shape, dtype=jnp.float32)
+    bits = jax.random.bits(k2, shape, dtype=jnp.uint32)
+    x_cast = x.astype(target_dtype)
+    x_cast_as_f32 = x_cast.astype(jnp.float32)
+    max_val = jnp.finfo(target_dtype).max
+    min_val = jnp.finfo(target_dtype).min
+    lower = jnp.where(x_cast_as_f32 > x, jnp.nextafter(x_cast, min_val), x_cast)
+    upper = jnp.where(x_cast_as_f32 < x, jnp.nextafter(x_cast, max_val), x_cast)
+
+    result = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(), pl.BlockSpec()],
+        out_shape=jax.ShapeDtypeStruct(x.shape, target_dtype),
+    )(x, bits)
+
+    int_dtype = getattr(jnp, f"uint{dtypes.bit_width(target_dtype)}")
+    is_correct_bitwise = (
+        (result.view(int_dtype) == lower.view(int_dtype)) |
+        (result.view(int_dtype) == upper.view(int_dtype))
+    )
+    is_correct = jnp.where(
+        jnp.isnan(x_cast), jnp.isnan(result), is_correct_bitwise
+    )
+    self.assertTrue(jnp.all(is_correct))
 
 if __name__ == "__main__":
   absltest.main()

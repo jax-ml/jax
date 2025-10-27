@@ -962,6 +962,28 @@ def wrap_pallas_seed(*seeds, impl):
   return join_key_p.bind(*seeds, impl=impl)
 
 
+stochastic_round_p = jax_core.Primitive("stochastic_round")
+
+
+def stochastic_round(x, random_bits, *, target_dtype):
+  return stochastic_round_p.bind(x, random_bits, target_dtype=target_dtype)
+
+
+@stochastic_round_p.def_abstract_eval
+def _stochastic_round_abstract_eval(x, random_bits, *, target_dtype):
+  if random_bits.shape != x.shape:
+    raise ValueError(
+        "The shape of `random_bits` must match the shape of `x` for "
+        f"stochastic_round, but got {random_bits.shape} and {x.shape}"
+    )
+  if random_bits.dtype != jnp.dtype("uint32"):
+    raise ValueError(
+        "The dtype of `random_bits` must be uint32 for stochastic_round, "
+        f"but got {random_bits.dtype}"
+    )
+  return jax_core.ShapedArray(x.shape, target_dtype)
+
+
 def with_memory_space_constraint(
     x: jax.Array, memory_space: Any
 ) -> jax.Array:
