@@ -354,37 +354,26 @@ def _iterative_classical_gram_schmidt(Q, x, xnorm, max_iterations=2):
   Q0 = tree_leaves(Q)[0]
   r = jnp.zeros(Q0.shape[-1], dtype=Q0.dtype)
   q = x
-  xnorm_scaled = xnorm / jnp.sqrt(2.0)
 
   def body_function(carry):
-    k, q, r, qnorm_scaled = carry
+    k, q, r, _, qnorm_scaled_old = carry
     h = _project_on_columns(Q, q)
     Qh = tree_map(lambda X: _dot(X, h), Q)
     q = _sub(q, Qh)
     r = _add(r, h)
 
-    def qnorm_cond(carry):
-      k, not_done, _, _ = carry
-      return jnp.logical_and(not_done, k < (max_iterations - 1))
+    qnorm_scaled_old = qnorm_scaled_old / 2
+    _, qnorm = _safe_normalize(q)
 
-    def qnorm(carry):
-      k, _, q, qnorm_scaled = carry
-      _, qnorm = _safe_normalize(q)
-      qnorm_scaled = qnorm / jnp.sqrt(2.0)
-      return (k, False, q, qnorm_scaled)
-
-    init = (k, True, q, qnorm_scaled)
-    _, _, q, qnorm_scaled = lax.while_loop(qnorm_cond, qnorm, init)
-    return (k + 1, q, r, qnorm_scaled)
+    return (k + 1, q, r, qnorm_scaled_old, qnorm)
 
   def cond_function(carry):
-    k, _, r, qnorm_scaled = carry
-    _, rnorm = _safe_normalize(r)
-    return jnp.logical_and(k < (max_iterations - 1), rnorm < qnorm_scaled)
+    k, _, r, qnorm_scaled_old, qnorm = carry
+    return jnp.logical_and(k < max_iterations, qnorm_scaled_old > qnorm)
 
-  k, q, r, qnorm_scaled = body_function((0, q, r, xnorm_scaled))
-  k, q, r, _ = lax.while_loop(cond_function, body_function,
-                              (k, q, r, qnorm_scaled))
+  k, q, r, qnorm_scaled_old, qnorm = body_function((0, q, r, xnorm + 1, xnorm))
+  k, q, r, _, _ = lax.while_loop(cond_function, body_function,
+                                 (k, q, r, qnorm_scaled_old, qnorm))
   return q, r
 
 
