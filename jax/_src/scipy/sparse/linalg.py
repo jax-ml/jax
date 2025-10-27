@@ -748,3 +748,332 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   return _isolve(_bicgstab_solve,
                  A=A, b=b, x0=x0, tol=tol, atol=atol,
                  maxiter=maxiter, M=M)
+
+def _eigs_krylov_schur(A, H, eigvals, eigvecs, residual_norms, howmany,
+                       restart, rdtype, cdtype, real, kouter, which, rtol):
+  """
+  This function implements the inner part of the Krylov-Schur algorithm
+  where a Krylov decomposition using the Arnoldi iteration is constructed.
+  This decomposition is transformed into a Schur form which is used to
+  select the wanted eigenvalues.
+
+  Returns the eigenvalues and eigenvectors as well the convergence and the
+  Schur form.
+  """
+
+  def prepare_restart(H, eigvals, eigvecs, residual_norms):
+    converged = howmany - jnp.sum(jnp.where(
+      residual_norms[:howmany] > rtol * jnp.abs(eigvals[:howmany]), 0, 1
+    ))
+    keep = (3 * restart + 2 * converged) // 5  # Copied from KrylovKit.jl
+
+    keep = lax.cond(H[keep, keep-1] != 0,
+                    lambda k: lax.cond(k > 1, lambda x: (x-1), lambda x: (x+1), k),
+                    lambda k: k,
+                    keep)
+
+    H = H.at[keep, :].set(H[restart, :])
+    H = H.at[:, keep].set(0)
+    H = H.at[restart, :].set(0)
+    H = H.at[keep, keep].set(1)
+    eigvecs = tree_map(lambda X: X.at[..., keep].set(X[..., restart]), eigvecs)
+    eigvecs = tree_map(lambda X: X.at[..., restart].set(0), eigvecs)
+
+    def update_tensors(i, carry):
+      H, v = carry
+      H = H.at[i, :].set(0)
+      H = H.at[:, i].set(0)
+      H = H.at[i, i].set(1)
+      v = tree_map(lambda X: X.at[..., i].set(0), v)
+      return H, v
+
+    H, eigvecs = lax.fori_loop(keep+1, restart, update_tensors, (H, eigvecs))
+
+    return H, eigvecs, keep
+
+  H, eigvecs, start = lax.cond(kouter > 0,
+                               prepare_restart,
+                               lambda H, _, eigvecs, __: (H, eigvecs, 0),
+                               H, eigvals, eigvecs, residual_norms)
+
+  H = H.T
+
+  def loop_cond(carry):
+    _, _, breakdown, k = carry
+    return jnp.logical_and(k < restart, jnp.logical_not(breakdown))
+
+  def arnoldi_process(carry):
+    eigvecs, H, _, k = carry
+    eigvecs, H, breakdown = _kth_arnoldi_iteration(k, A, _identity, eigvecs, H)
+    return eigvecs, H, breakdown, k + 1
+
+  carry = (eigvecs, H, False, start)
+  eigvecs, H, breakdown, _ = lax.while_loop(loop_cond, arnoldi_process, carry)
+
+  H = H.T
+
+  T, U, sigma = lax.linalg.schur(
+    H[:restart, :],
+    compute_schur_vectors=True,
+    compute_eig_vals=True,
+  )
+
+  if which == "LM":
+    eigval_sort = jnp.argsort(jnp.abs(sigma), descending=True, stable=True)
+  elif which == "SM":
+    eigval_sort = jnp.argsort(jnp.abs(sigma), descending=False, stable=True)
+  elif which == "LR":
+    eigval_sort = jnp.argsort(jnp.real(sigma), descending=True, stable=True)
+  elif which == "SR":
+    eigval_sort = jnp.argsort(jnp.real(sigma), descending=False, stable=True)
+  elif real and (which == "LI" or which == "SI"):
+    eigval_sort = jnp.argsort(jnp.abs(jnp.imag(sigma)), descending=True, stable=True)
+  elif which == "LI":
+    eigval_sort = jnp.argsort(jnp.imag(sigma), descending=True, stable=True)
+  elif which == "SI":
+    eigval_sort = jnp.argsort(jnp.imag(sigma), descending=False, stable=True)
+  else:
+    raise ValueError(f"Unknown parameter which, got '{which}'.")
+
+  sigma = sigma[eigval_sort]
+
+  T, U = lax.linalg.schur_reorder(T, U, eigval_sort)
+
+  H = H.at[:restart, :].set(T)
+  H = H.at[restart, :].set(H[restart, :] @ U)
+
+  residual_norms = jnp.abs(H[restart, :])
+
+  eigvecs = tree_map(
+    lambda X: X.at[..., :restart].set(X[..., :restart] @ U), eigvecs
+  )
+
+  return sigma, eigvecs, residual_norms, H
+
+def _eigs_krylov_schur_outer(A, howmany, v0, restart, maxiter, which, rtol):
+  """
+  In this function the outer loop of the Krylov-Schur algorithm is implemented,
+  which checks the convergence of the eigenvalues.
+  After convergence or reaching the maximal number of restarts of the algorithm
+  the eigenvectors are calculated.
+
+  Implementation follows the description in
+  https://slepc.upv.es/release/_downloads/5229480744b7c2533563dee75c16dfde/str7.pdf .
+
+  Returns the solution for the eigenvalues and eigenvectors.
+  """
+  dtype, weak_type = dtypes.lattice_result_type(*tree_leaves(v0))
+  if dtype == np.float32:
+    rdtype = np.float32
+    cdtype = np.complex64
+    real = True
+  elif dtype == np.float64:
+    rdtype = np.float64
+    cdtype = np.complex128
+    real = True
+  elif dtype == np.complex64:
+    rdtype = np.float32
+    cdtype = np.complex64
+    real = False
+  elif dtype == np.complex128:
+    rdtype = np.float64
+    cdtype = np.complex128
+    real = False
+  else:
+    raise ValueError("Unsupported dtype.")
+
+  eigvals = jnp.ones(restart, dtype=cdtype)
+  eigvecs = tree_map(
+    lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
+    v0,
+  )
+  residual_norms = jnp.ones(restart, dtype=rdtype) * rtol + 1
+
+  H = jnp.eye(restart + 1, restart, dtype=dtype)
+
+  def cond_fun(value):
+    eigvals, _, k, residual_norms, _ = value
+
+    if real and (which == "LI" or which == "SI"):
+      def imag_converged_cond(carry):
+        _, _, converged, k = carry
+        return jnp.logical_and(k < restart, converged < howmany)
+
+      def imag_converged_body(carry):
+        residual_norms, eigvals, converged, k = carry
+        val = jnp.where(
+          jnp.abs(eigvals[k]) != 0,
+          residual_norms[k] / jnp.abs(eigvals[k]),
+          0
+        )
+        converged = lax.cond(
+          val <= rtol,
+          lambda x: x+1,
+          lambda x: x,
+          converged)
+        k = lax.cond(
+          jnp.imag(eigvals[k]) != 0,
+          lambda x: x+2,
+          lambda x: x+1,
+          k
+        )
+        return residual_norms, eigvals, converged, k
+
+      _, _, converged, _ = lax.while_loop(
+        imag_converged_cond,
+        imag_converged_body,
+        (residual_norms, eigvals, 0, 0)
+      )
+
+      return jnp.logical_and(k < maxiter, converged < howmany)
+
+    eigval_compare_part = jnp.abs(eigvals[:howmany])
+    return jnp.logical_and(
+      k < maxiter,
+      jnp.any(
+        jnp.where(
+          jnp.abs(eigval_compare_part) != 0,
+          residual_norms[:howmany] / eigval_compare_part,
+          0
+        ) > rtol
+      )
+    )
+
+  def body_fun(value):
+    eigvals, eigvecs, k, residual_norms, H = value
+    eigvals, eigvecs, residual_norms, H = _eigs_krylov_schur(
+        A, H, eigvals, eigvecs, residual_norms, howmany, restart,
+        rdtype, cdtype, real, k, which, rtol
+    )
+    return eigvals, eigvecs, k+1, residual_norms, H
+
+  initialization = (eigvals, eigvecs, 0, residual_norms, H)
+  eigvals, eigvecs, _, residual_norms, H = lax.while_loop(cond_fun, body_fun,
+                                                          initialization)
+
+  V = lax.linalg.schur_eigenvectors(H[:restart, :], eigvals)
+
+  if real and (which == "LI" or which == "SI"):
+    if which == "LI":
+      eigval_sort = jnp.argsort(jnp.imag(eigvals), descending=True, stable=True)
+    elif which == "SI":
+      eigval_sort = jnp.argsort(jnp.imag(eigvals), descending=False, stable=True)
+    eigvals = eigvals[eigval_sort[:howmany]]
+    eigvecs = tree_map(
+      lambda X: X[..., :restart] @ V[:, eigval_sort[:howmany]], eigvecs
+    )
+  else:
+    eigvals = eigvals[:howmany]
+    eigvecs = tree_map(
+      lambda X: X[..., :restart] @ V[:, :howmany], eigvecs
+    )
+
+  return eigvals, eigvecs
+
+
+def eigs(A, k, v0, *, M=None, sigma=None, which="LM", ncv=None, maxiter=None,
+         tol=0, return_eigenvectors=True, Minv=None, OPinv=None, OPpart=None):
+  """
+  Calculate a subset of the eigenvalues/(right) eigenvectors of a linear operator.
+
+  In difference to SciPy's ``eigs`` method, this function implements the
+  Krylov-Schur method which is another variant of the family of Arnoldi-based
+  algorithms.
+
+  Parameters
+  ----------
+  A: ndarray, function, or matmul-compatible object
+      2D array or function that calculates the linear map (matrix-vector
+      product) ``Ax`` when called like ``A(x)`` or ``A @ x``. ``A`` can represent
+      any general (nonsymmetric) linear operator, and function must return array(s)
+      with the same structure and shape as its argument.
+  k : int
+      Number of eigenvalues and eigenvectors which should be calculated. Which
+      eigenvalues are calculated is selected by the ``which`` parameter.
+  v0 : array or tree of arrays
+      Initial guess for the starting vector of algorithm. Can be
+      stored as an array or Python container of array(s) with any shape.
+
+  Returns
+  -------
+  eigvals : array
+      The ``k`` eigenvalues sorted in the order defined by ``which``.
+  eigvecs : array or tree of arrays
+      The ``k`` eigenvectors. Has similar structure to ``v0`` with additional
+      new axis indexing the ``i``th eigenvectors corresponding to the ``i``th
+      eigenvalue. Not returned if ``return_eigenvectors = False``.
+
+  Other Parameters
+  ----------------
+  which : str
+      Select which kind of eigenvalues should be calculated:
+      - ``LM``: Eigenvalues with largest magnitude (euclidean norm)
+      - ``SM``: Eigenvalues with smallest magnitude (euclidean norm)
+      - ``LR``: Eigenvalues with largest real part
+      - ``SR``: Eigenvalues with smallest real part
+      - ``LI``: Eigenvalues with largest imaginary part
+      - ``SI``: Eigenvalues with smallest imaginary part
+  ncv : int
+      Number of Lanczos vectors generated. It is recommended to be at least
+      :math:`ncv > 2*k`. Default: `min(n, max(2*k + 1, 20))`.
+  maxiter : int
+      Number of maximal restarts of the algorithm. Default: `10 * n`.
+  tol : float
+      Relative accuracy required before stopping the algorithm. If set
+      to ``None`` or ``0``, machine precision is implied.
+  return_eigenvectors : bool
+      Flag if the eigenvectors should be returned.
+  M : None
+      Not implemented.
+  sigma : None
+      Not implemented.
+  Minv : None
+      Not implemented.
+  OPinv : None
+      Not implemented.
+  OPpart : None
+      Not implemented.
+
+  See also
+  --------
+  scipy.sparse.linalg.eigs
+  """
+
+  if (M is not None
+      or sigma is not None
+      or Minv is not None
+      or OPinv is not None
+      or OPpart is not None):
+    raise NotImplementedError
+
+  A = _normalize_matvec(A)
+
+  v0 = api.device_put(v0)
+  size = sum(bi.size for bi in tree_leaves(v0))
+  dtype = dtypes.result_type(*tree_leaves(v0))
+
+  if not (dtypes.issubdtype(dtype, np.floating)
+          or dtypes.issubdtype(dtype, np.complexfloating)):
+    raise ValueError("Only (complex) floating point dtype supported.")
+
+  A_dtype = api.eval_shape(A, v0)
+  if dtypes.result_type(*tree_leaves(A_dtype)) != dtype:
+    raise ValueError("The dtype of v0 and A @ v0 has to be the same.")
+
+  if maxiter is None:
+    maxiter = 10 * size  # copied from scipy
+
+  if ncv is None:
+    ncv = min(size, max(2*k + 1, 20)) # copied from scipy
+
+  if tol is None or tol == 0:
+    tol = dtypes.finfo(dtype).eps
+
+  v0, _ = _safe_normalize(v0)
+
+  eigvals, eigvecs = _eigs_krylov_schur_outer(A, k, v0, ncv, maxiter, which, tol)
+
+  if return_eigenvectors:
+    return eigvals, eigvecs
+
+  return eigvals
