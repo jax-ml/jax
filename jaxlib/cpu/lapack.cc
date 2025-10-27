@@ -122,6 +122,13 @@ void GetLapackKernelsFromScipy() {
     AssignKernelFn<HessenbergDecomposition<DataType::C128>>(
         lapack_ptr("zgehrd"));
 
+    AssignKernelFn<SchurHessenbergDecomposition<DataType::F32>>(lapack_ptr("shseqr"));
+    AssignKernelFn<SchurHessenbergDecomposition<DataType::F64>>(lapack_ptr("dhseqr"));
+    AssignKernelFn<SchurHessenbergDecompositionComplex<DataType::C64>>(
+        lapack_ptr("chseqr"));
+    AssignKernelFn<SchurHessenbergDecompositionComplex<DataType::C128>>(
+        lapack_ptr("zhseqr"));
+
     AssignKernelFn<TridiagonalReduction<DataType::F32>>(lapack_ptr("ssytrd"));
     AssignKernelFn<TridiagonalReduction<DataType::F64>>(lapack_ptr("dsytrd"));
     AssignKernelFn<TridiagonalReduction<DataType::C64>>(lapack_ptr("chetrd"));
@@ -188,6 +195,10 @@ nb::dict Registrations() {
   dict["lapack_dgehrd_ffi"] = EncapsulateFunction(lapack_dgehrd_ffi);
   dict["lapack_cgehrd_ffi"] = EncapsulateFunction(lapack_cgehrd_ffi);
   dict["lapack_zgehrd_ffi"] = EncapsulateFunction(lapack_zgehrd_ffi);
+  dict["lapack_shseqr_ffi"] = EncapsulateFunction(lapack_shseqr_ffi);
+  dict["lapack_dhseqr_ffi"] = EncapsulateFunction(lapack_dhseqr_ffi);
+  dict["lapack_chseqr_ffi"] = EncapsulateFunction(lapack_chseqr_ffi);
+  dict["lapack_zhseqr_ffi"] = EncapsulateFunction(lapack_zhseqr_ffi);
   dict["lapack_sgtsv_ffi"] = EncapsulateFunction(lapack_sgtsv_ffi);
   dict["lapack_dgtsv_ffi"] = EncapsulateFunction(lapack_dgtsv_ffi);
   dict["lapack_cgtsv_ffi"] = EncapsulateFunction(lapack_cgtsv_ffi);
@@ -218,6 +229,11 @@ NB_MODULE(_lapack, m) {
              schur::ComputationMode::kNoComputeSchurVectors)
       .value("kComputeSchurVectors",
              schur::ComputationMode::kComputeSchurVectors);
+  nb::enum_<schur::ComputationModeHessenberg>(schur, "ComputationModeHessenberg")
+      .value("kNoComputeSchurVectors",
+             schur::ComputationModeHessenberg::kNoComputeSchurVectors)
+      .value("kComputeSchurVectors",
+             schur::ComputationModeHessenberg::kComputeSchurVectors);
   nb::enum_<schur::Sort>(schur, "Sort")
       .value("kNoSortEigenvalues", schur::Sort::kNoSortEigenvalues)
       .value("kSortEigenvalues", schur::Sort::kSortEigenvalues);
