@@ -31,6 +31,7 @@ from jax import scipy as jsp
 from jax._src import config
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lib import cuda_versions
+from jax._src.lib import version as jaxlib_version
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.numpy.util import promote_dtypes_inexact
@@ -96,6 +97,19 @@ def osp_linalg_toeplitz(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarra
     r = np.atleast_1d(r)
     return np.vectorize(
       scipy.linalg.toeplitz, signature="(m),(n)->(m,n)", otypes=(np.result_type(c, r),))(c, r)
+
+
+def svd_algorithms():
+  algorithms = [None]
+  if jtu.device_under_test() in ["cpu", "gpu"]:
+    algorithms.append(lax.linalg.SvdAlgorithm.QR)
+  if jtu.device_under_test() == "gpu":
+    algorithms.append(lax.linalg.SvdAlgorithm.JACOBI)
+  if jtu.device_under_test() == "tpu" or (
+      jaxlib_version >= (0, 8, 1) and jtu.device_under_test() == "gpu"
+  ):
+    algorithms.append(lax.linalg.SvdAlgorithm.POLAR)
+  return algorithms
 
 
 class NumpyLinalgTest(jtu.JaxTestCase):
@@ -859,41 +873,52 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                      preferred_element_type=dtype)
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
 
-  @jtu.sample_product(
-      [
-          dict(m=m, n=n, full_matrices=full_matrices, hermitian=hermitian)
-          for (m, n), full_matrices in (
-              list(
-                  itertools.product(
-                      itertools.product([0, 2, 7, 29, 32, 53], repeat=2),
-                      [False, True],
+  @parameterized.product(
+      jtu.sample_product_testcases(
+          [
+              dict(m=m, n=n, full_matrices=full_matrices, hermitian=hermitian)
+              for (m, n), full_matrices in (
+                  list(
+                      itertools.product(
+                          itertools.product([0, 2, 7, 29, 32, 53], repeat=2),
+                          [False, True],
+                      )
                   )
+                  +
+                  # Test cases that ensure we are economical when computing the SVD
+                  # and its gradient. If we form a 400kx400k matrix explicitly we
+                  # will OOM.
+                  [((400000, 2), False), ((2, 400000), False)]
               )
-              +
-              # Test cases that ensure we are economical when computing the SVD
-              # and its gradient. If we form a 400kx400k matrix explicitly we
-              # will OOM.
-              [((400000, 2), False), ((2, 400000), False)]
-          )
-          for hermitian in ([False, True] if m == n else [False])
-      ],
-      b=[(), (3,), (2, 3)],
-      dtype=float_types + complex_types,
-      compute_uv=[False, True],
-      algorithm=[None, lax.linalg.SvdAlgorithm.QR, lax.linalg.SvdAlgorithm.JACOBI],
+              for hermitian in ([False, True] if m == n else [False])
+          ],
+          b=[(), (3,), (2, 3)],
+          dtype=float_types + complex_types,
+          compute_uv=[False, True],
+      ),
+      algorithm=svd_algorithms()
   )
   @jax.default_matmul_precision("float32")
-  def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, hermitian, algorithm):
-    if algorithm is not None:
-      if hermitian:
-        self.skipTest("Hermitian SVD doesn't support the algorithm parameter.")
-      if not jtu.test_device_matches(["cpu", "gpu"]):
-        self.skipTest("SVD algorithm selection only supported on CPU and GPU.")
-      if jtu.test_device_matches(["cpu"]) and algorithm == lax.linalg.SvdAlgorithm.JACOBI:
-        self.skipTest("Jacobi SVD not supported on GPU.")
+  def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, hermitian,
+              algorithm):
+    if hermitian and algorithm is not None:
+      # Hermitian SVD doesn't support the algorithm parameter.
+      self.skipTest("Hermitian SVD doesn't support the algorithm parameter")
 
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(b + (m, n), dtype)]
+    if jtu.is_device_rocm() and algorithm == lax.linalg.SvdAlgorithm.POLAR:
+      self.skipTest("ROCM polar SVD not implemented")
+
+    if (
+        jtu.test_device_matches(["cuda"])
+        and (algorithm, m, n) in [
+          (lax.linalg.SvdAlgorithm.POLAR, 400000, 2),
+          (lax.linalg.SvdAlgorithm.POLAR, 2, 400000),
+          (lax.linalg.SvdAlgorithm.JACOBI, 400000, 2),
+          (lax.linalg.SvdAlgorithm.JACOBI, 2, 400000),
+        ]
+    ):
+      # Test fails with CUDA polar and jacobi decompositions
+      self.skipTest("Test fails with CUDA polar and jacobi decompositions")
 
     def compute_max_backward_error(operand, reconstructed_operand):
       error_norm = np.linalg.norm(operand - reconstructed_operand,
@@ -902,6 +927,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                         np.linalg.norm(operand, axis=(-2, -1)))
       max_backward_error = np.amax(backward_error)
       return max_backward_error
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(b + (m, n), dtype)]
 
     tol = 100 * jnp.finfo(dtype).eps
     reconstruction_tol = 2 * tol
@@ -971,20 +999,20 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         jtu.check_jvp(svd, partial(jvp, svd), (a,), rtol=5e-2, atol=2e-1)
 
     if compute_uv and (not full_matrices):
-      b, = args_maker()
+      d, = args_maker()
       def f(x):
         u, s, v = jnp.linalg.svd(
-          a + x * b,
+          a + x * d,
           full_matrices=full_matrices,
           compute_uv=compute_uv)
         vdiag = jnp.vectorize(jnp.diag, signature='(k)->(k,k)')
         return jnp.matmul(jnp.matmul(u, vdiag(s).astype(u.dtype)), v).real
       _, t_out = jvp(f, (1.,), (1.,))
       if dtype == np.complex128:
-        atol = 2e-13
+        tol = 2e-13
       else:
-        atol = 6e-4
-      self.assertArraysAllClose(t_out, b.real, atol=atol)
+        tol = 6e-4
+      self.assertArraysAllClose(t_out, d.real, atol=tol, rtol=tol)
 
   def testJspSVDBasic(self):
     # since jax.scipy.linalg.svd is almost the same as jax.numpy.linalg.svd

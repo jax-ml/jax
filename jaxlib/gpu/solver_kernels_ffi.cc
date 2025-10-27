@@ -417,9 +417,8 @@ ffi::Error PotrfImpl(int64_t batch, int64_t size, gpuStream_t stream,
 
   int out_step = n * n;
   for (auto i = 0; i < batch; ++i) {
-    FFI_RETURN_IF_ERROR_STATUS(solver::Potrf<T>(handle.get(), uplo, n,
-                                                out_data, workspace, lwork,
-                                                info_data));
+    FFI_RETURN_IF_ERROR_STATUS(solver::Potrf<T>(handle.get(), uplo, n, out_data,
+                                                workspace, lwork, info_data));
     out_data += out_step;
     ++info_data;
   }
@@ -479,8 +478,8 @@ ffi::Error PotrfDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
     SOLVER_DISPATCH_IMPL(PotrfBatchedImpl, batch, rows, stream, scratch, lower,
                          a, out, info);
   } else {
-    SOLVER_DISPATCH_IMPL(PotrfImpl, batch, rows, stream, scratch, lower, a,
-                         out, info);
+    SOLVER_DISPATCH_IMPL(PotrfImpl, batch, rows, stream, scratch, lower, a, out,
+                         info);
   }
   return ffi::Error::InvalidArgument(absl::StrFormat(
       "Unsupported dtype %s in potrf", absl::FormatStreamed(dataType)));
@@ -1147,6 +1146,139 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdjFfi, GesvdjDispatch,
                                   .Ret<ffi::AnyBuffer>()         // v
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
+
+// Singular Value Decomposition: gesvdp (Polar decomposition)
+
+#ifdef JAX_GPU_CUDA
+
+ffi::Error GesvdpImpl(int64_t batch, int64_t m, int64_t n, gpuStream_t stream,
+                      ffi::ScratchAllocator& scratch, bool compute_uv,
+                      bool econ, ffi::AnyBuffer a,
+                      ffi::Result<ffi::AnyBuffer> out,
+                      ffi::Result<ffi::AnyBuffer> s,
+                      ffi::Result<ffi::AnyBuffer> u,
+                      ffi::Result<ffi::AnyBuffer> v,
+                      ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
+  gpusolverEigMode_t job =
+      compute_uv ? GPUSOLVER_EIG_MODE_VECTOR : GPUSOLVER_EIG_MODE_NOVECTOR;
+  auto dataType = a.element_type();
+  FFI_ASSIGN_OR_RETURN(auto aType, SolverDataType(dataType, "gesvdp"));
+  FFI_ASSIGN_OR_RETURN(auto sType, SolverDataType(s->element_type(), "gesvdp"));
+
+  gpusolverDnParams_t params;
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnCreateParams(&params));
+  std::unique_ptr<gpusolverDnParams, void (*)(gpusolverDnParams_t)>
+      params_cleanup(
+          params, [](gpusolverDnParams_t p) { gpusolverDnDestroyParams(p); });
+
+  size_t workspaceInBytesOnDevice, workspaceInBytesOnHost;
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnXgesvdp_bufferSize(
+      handle.get(), params, job, econ ? 1 : 0, m, n, aType,
+      /*a=*/nullptr, m, sType, /*s=*/nullptr, aType, /*u=*/nullptr, m, aType,
+      /*v=*/nullptr, n, aType, &workspaceInBytesOnDevice,
+      &workspaceInBytesOnHost));
+
+  auto maybe_workspace = scratch.Allocate(workspaceInBytesOnDevice);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error(ffi::ErrorCode::kResourceExhausted,
+                      "Unable to allocate device workspace for gesvd");
+  }
+  auto workspaceOnDevice = maybe_workspace.value();
+  auto workspaceOnHost =
+      std::unique_ptr<char[]>(new char[workspaceInBytesOnHost]);
+
+  const char* a_data = static_cast<const char*>(a.untyped_data());
+  char* out_data = static_cast<char*>(out->untyped_data());
+  char* s_data = static_cast<char*>(s->untyped_data());
+  char* u_data = static_cast<char*>(u->untyped_data());
+  char* v_data = static_cast<char*>(v->untyped_data());
+  int* info_data = info->typed_data();
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  size_t out_step = m * n * ffi::ByteWidth(dataType);
+  size_t s_step = std::min(m, n) * ffi::ByteWidth(ffi::ToReal(dataType));
+  size_t u_step = 0;
+  size_t v_step = 0;
+  if (compute_uv) {
+    u_step = m * (econ ? std::min(m, n) : m) * ffi::ByteWidth(dataType);
+    v_step = n * (econ ? std::min(m, n) : n) * ffi::ByteWidth(dataType);
+  }
+
+  // TODO(phawkins): figure out a useful way to plumb out h_err.
+  double h_err;
+  for (auto i = 0; i < batch; ++i) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpusolverDnXgesvdp(
+        handle.get(), params, job, econ ? 1 : 0, m, n, aType, out_data, m,
+        sType, s_data, aType, u_data, m, aType, v_data, n, aType,
+        workspaceOnDevice, workspaceInBytesOnDevice, workspaceOnHost.get(),
+        workspaceInBytesOnHost, info_data, &h_err));
+    out_data += out_step;
+    s_data += s_step;
+    u_data += u_step;
+    v_data += v_step;
+    ++info_data;
+  }
+
+  return ffi::Error::Success();
+}
+
+ffi::Error GesvdpDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
+                          bool full_matrices, bool compute_uv, ffi::AnyBuffer a,
+                          ffi::Result<ffi::AnyBuffer> out,
+                          ffi::Result<ffi::AnyBuffer> s,
+                          ffi::Result<ffi::AnyBuffer> u,
+                          ffi::Result<ffi::AnyBuffer> v,
+                          ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  auto dataType = a.element_type();
+  if (out->element_type() != dataType ||
+      s->element_type() != ffi::ToReal(dataType) ||
+      u->element_type() != dataType || v->element_type() != dataType) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to gesvdp must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, m, n]), SplitBatch2D(a.dimensions()));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, m, n}, "out", "gesvdp"));
+  int64_t k = std::min(m, n);
+  FFI_RETURN_IF_ERROR(CheckShape(s->dimensions(), {batch, k}, "s", "gesvdp"));
+  if (compute_uv) {
+    if (full_matrices) {
+      FFI_RETURN_IF_ERROR(
+          CheckShape(u->dimensions(), {batch, m, m}, "u", "gesvdp"));
+      FFI_RETURN_IF_ERROR(
+          CheckShape(v->dimensions(), {batch, n, n}, "v", "gesvdp"));
+    } else {
+      FFI_RETURN_IF_ERROR(
+          CheckShape(u->dimensions(), {batch, m, k}, "u", "gesvdp"));
+      FFI_RETURN_IF_ERROR(
+          CheckShape(v->dimensions(), {batch, n, k}, "v", "gesvdp"));
+    }
+  }
+  FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "gesvdp"));
+
+  return GesvdpImpl(batch, m, n, stream, scratch, compute_uv, !full_matrices, a,
+                    out, s, u, v, info);
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdpFfi, GesvdpDispatch,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Attr<bool>("full_matrices")
+                                  .Attr<bool>("compute_uv")
+                                  .Arg<ffi::AnyBuffer>()         // a
+                                  .Ret<ffi::AnyBuffer>()         // out
+                                  .Ret<ffi::AnyBuffer>()         // s
+                                  .Ret<ffi::AnyBuffer>()         // u
+                                  .Ret<ffi::AnyBuffer>()         // v
+                                  .Ret<ffi::Buffer<ffi::S32>>()  // info
+);
+
+#endif  // JAX_GPU_CUDA
 
 // csrlsvqr: Linear system solve via Sparse QR
 

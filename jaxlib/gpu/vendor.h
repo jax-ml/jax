@@ -429,6 +429,9 @@ typedef cusolverDnParams_t gpusolverDnParams_t;
 #define gpusolverDnXgesvd_bufferSize cusolverDnXgesvd_bufferSize
 #define gpusolverDnXgesvd cusolverDnXgesvd
 
+#define gpusolverDnXgesvdp_bufferSize cusolverDnXgesvdp_bufferSize
+#define gpusolverDnXgesvdp cusolverDnXgesvdp
+
 #if CUDA_VERSION >= 12060
 #define JAX_GPU_HAVE_SOLVER_GEEV 1
 #define gpusolverDnXgeev_bufferSize cusolverDnXgeev_bufferSize
