@@ -1619,6 +1619,7 @@ class Jax2TfTest(JaxToTfTestCase):
 
 @unittest.skipIf(tf is None, "Test requires tensorflow")
 @jtu.with_config(jax_enable_custom_prng=True)
+@jtu.thread_unsafe_test_class()
 class Jax2tfWithCustomPRNGTest(JaxToTfTestCase):
 
   def test_key_argument(self):
@@ -1649,6 +1650,7 @@ class Jax2tfWithCustomPRNGTest(JaxToTfTestCase):
 
 
 @unittest.skipIf(tf is None, "Test requires tensorflow")
+@jtu.thread_unsafe_test_class()
 class Jax2TfVersioningTest(JaxToTfTestCase):
   # Use a separate test case with the default jax_serialization_version
   def setUp(self):

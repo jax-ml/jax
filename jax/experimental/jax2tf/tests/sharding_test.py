@@ -71,6 +71,7 @@ def initialize_tf_tpu():
 app.call_after_init(initialize_tf_tpu)
 
 
+@jtu.thread_unsafe_test_class()
 class ShardingTest(tf_test_util.JaxToTfTestCase):
   """Tests that inspect the HLO for the sharding annotations.
   """
