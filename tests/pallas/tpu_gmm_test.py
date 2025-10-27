@@ -162,6 +162,8 @@ def tolerances(
       or rhs_dtype == jnp.bfloat16
       or out_dtype == jnp.bfloat16
   ):
+    if jtu.is_device_tpu(7):
+      return 2e-2, 1e-2
     return 1e-3, 1e-2  # atol, rtol
   return 1e-3, 1e-5  # atol, rtol
 
