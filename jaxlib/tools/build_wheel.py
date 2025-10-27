@@ -321,6 +321,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
       dst_dir=jaxlib_dir / "mlir" / "extras",
       src_files=[
           f"{source_file_prefix}jaxlib/mlir/extras/meta.py",
+          f"{source_file_prefix}jaxlib/mlir/extras/types.py",
       ],
   )
   copy_files(
