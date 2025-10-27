@@ -93,6 +93,11 @@ jax::SchurEigenvectors<ffi::DataType::F64>::FnType dtrevc_;
 jax::SchurEigenvectorsComplex<ffi::DataType::C64>::FnType ctrevc_;
 jax::SchurEigenvectorsComplex<ffi::DataType::C128>::FnType ztrevc_;
 
+jax::SchurReorder<ffi::DataType::F32>::FnType strexc_;
+jax::SchurReorder<ffi::DataType::F64>::FnType dtrexc_;
+jax::SchurReorderComplex<ffi::DataType::C64>::FnType ctrexc_;
+jax::SchurReorderComplex<ffi::DataType::C128>::FnType ztrexc_;
+
 jax::TridiagonalReduction<ffi::DataType::F32>::FnType ssytrd_;
 jax::TridiagonalReduction<ffi::DataType::F64>::FnType dsytrd_;
 jax::TridiagonalReduction<ffi::DataType::C64>::FnType chetrd_;
@@ -187,6 +192,11 @@ static auto init = []() -> int {
   AssignKernelFn<SchurEigenvectors<ffi::DataType::F64>>(dtrevc_);
   AssignKernelFn<SchurEigenvectorsComplex<ffi::DataType::C64>>(ctrevc_);
   AssignKernelFn<SchurEigenvectorsComplex<ffi::DataType::C128>>(ztrevc_);
+
+  AssignKernelFn<SchurReorder<ffi::DataType::F32>>(strexc_);
+  AssignKernelFn<SchurReorder<ffi::DataType::F64>>(dtrexc_);
+  AssignKernelFn<SchurReorderComplex<ffi::DataType::C64>>(ctrexc_);
+  AssignKernelFn<SchurReorderComplex<ffi::DataType::C128>>(ztrexc_);
 
   AssignKernelFn<TridiagonalSolver<ffi::DataType::F32>>(sgtsv_);
   AssignKernelFn<TridiagonalSolver<ffi::DataType::F64>>(dgtsv_);

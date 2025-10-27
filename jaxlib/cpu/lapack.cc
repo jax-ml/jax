@@ -136,6 +136,13 @@ void GetLapackKernelsFromScipy() {
     AssignKernelFn<SchurEigenvectorsComplex<DataType::C128>>(
         lapack_ptr("ztrevc"));
 
+    AssignKernelFn<SchurReorder<DataType::F32>>(lapack_ptr("strexc"));
+    AssignKernelFn<SchurReorder<DataType::F64>>(lapack_ptr("dtrexc"));
+    AssignKernelFn<SchurReorderComplex<DataType::C64>>(
+        lapack_ptr("ctrexc"));
+    AssignKernelFn<SchurReorderComplex<DataType::C128>>(
+        lapack_ptr("ztrexc"));
+
     AssignKernelFn<TridiagonalReduction<DataType::F32>>(lapack_ptr("ssytrd"));
     AssignKernelFn<TridiagonalReduction<DataType::F64>>(lapack_ptr("dsytrd"));
     AssignKernelFn<TridiagonalReduction<DataType::C64>>(lapack_ptr("chetrd"));
@@ -210,6 +217,10 @@ nb::dict Registrations() {
   dict["lapack_dtrevc_ffi"] = EncapsulateFunction(lapack_dtrevc_ffi);
   dict["lapack_ctrevc_ffi"] = EncapsulateFunction(lapack_ctrevc_ffi);
   dict["lapack_ztrevc_ffi"] = EncapsulateFunction(lapack_ztrevc_ffi);
+  dict["lapack_strexc_ffi"] = EncapsulateFunction(lapack_strexc_ffi);
+  dict["lapack_dtrexc_ffi"] = EncapsulateFunction(lapack_dtrexc_ffi);
+  dict["lapack_ctrexc_ffi"] = EncapsulateFunction(lapack_ctrexc_ffi);
+  dict["lapack_ztrexc_ffi"] = EncapsulateFunction(lapack_ztrexc_ffi);
   dict["lapack_sgtsv_ffi"] = EncapsulateFunction(lapack_sgtsv_ffi);
   dict["lapack_dgtsv_ffi"] = EncapsulateFunction(lapack_dgtsv_ffi);
   dict["lapack_cgtsv_ffi"] = EncapsulateFunction(lapack_cgtsv_ffi);
