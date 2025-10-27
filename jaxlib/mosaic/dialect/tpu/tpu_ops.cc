@@ -1827,6 +1827,45 @@ LogicalResult UnpackSubelementsOp::verify() {
   return success();
 }
 
+LogicalResult UnpackSubelementsOp::canonicalize(UnpackSubelementsOp op,
+                                                PatternRewriter& rewriter) {
+  auto src_elem_ty = op.getSource().getType().getElementType();
+  auto dst_elem_ty = op.getType().getElementType();
+  if (!src_elem_ty.isSignlessInteger() || !dst_elem_ty.isSignlessInteger()) {
+    return failure();
+  }
+  if (!op.getSignExtended()) {
+    // Unpack of pack with the same format is reversible if not sign extended.
+    if (auto pack = dyn_cast<PackSubelementsOp>(op.getSource().getDefiningOp());
+        pack && pack.getPackFormat() == op.getPackFormat() &&
+        pack.getSources().front().getType() == op.getType()) {
+      rewriter.replaceAllOpUsesWith(
+          op, pack.getPaddedSources(
+                  pack.getSources(), pack.getPositions(),
+                  pack.getType().getElementTypeBitWidth() /
+                      op.getType().getElementTypeBitWidth())[op.getIndex()]);
+      return success();
+    }
+    return failure();
+  }
+  // Set `sign_extended` to false if it's used by pack that reduces the source
+  // bitwidth.
+  for (auto user : op->getUsers()) {
+    auto pack = dyn_cast<PackSubelementsOp>(user);
+    if (!pack) {
+      return failure();
+    }
+    auto packed_elem_ty = pack.getType().getElementType();
+    if (!packed_elem_ty.isSignlessInteger() ||
+        packed_elem_ty.getIntOrFloatBitWidth() >
+            src_elem_ty.getIntOrFloatBitWidth()) {
+      return failure();
+    }
+  }
+  rewriter.modifyOpInPlace(op, [&]() { op.setSignExtended(false); });
+  return success();
+}
+
 void PackSubelementsOp::build(OpBuilder &builder, OperationState &state,
                               const VectorType output_type,
                               const ArrayRef<Value> padded_sources,
