@@ -222,8 +222,45 @@ def kernel(
     *,
     scratch_shapes: pallas_core.ScratchShapeTree = (),
     compiler_params: pallas_core.CompilerParams | None = None,
+    # Mesh kwargs
+    grid: tuple[int, ...] = (),
+    grid_names: tuple[str, ...] = (),
+    cluster: tuple[int, ...] = (),
+    cluster_names: tuple[str, ...] = (),
+    num_threads: int | None = None,
+    thread_name: str | None = None,
     **mesh_kwargs: object,
 ):
+  """Entry point for defining a Mosaic GPU kernel.
+
+  Args:
+    body: The kernel body, which should take as arguments the input, output,
+      and scratch Refs. The number of input Refs is determined by the number
+      of arguments passed into kernel returned by this function. The number of
+      output and scratch Refs are determined by `out_shape` and `scratch_shapes`
+      respectively.
+    out_shape: a PyTree of :class:`jax.ShapeDtypeStruct` describing the shape
+      and dtypes of the outputs.
+    scratch_shapes: an iterable (may be nested) of GPUMemoryRef describing
+      scratch Refs to allocate for this kernel.
+    compiler_params: Additional compiler options. See the `CompilerParams`
+      dataclass for more details.
+    grid: A tuple of integers specifying the size of the kernel grid.
+    grid_names: The axis names of the grid. Must be the same length as `grid`.
+    cluster: A tuple of integers specifying the size of the kernel cluster.
+    cluster_names: The axis names of the grid. Must be the same length as
+      `cluster`.
+    num_threads: The number of threads to launch per block. Note that these
+      do not correspond to CUDA threads, but rather to warpgroups on Hopper
+      and Blackwell GPUs.
+    thread_name: The axis name used to query the thread index.
+    **mesh_kwargs: Additional mesh kwargs. See `Mesh` for more details.
+
+  Returns:
+    A function that runs the kernel. It should take any number of input
+    operands and returns an output with the same PyTree structure as
+    `out_shape`.
+  """
   if unwrap_out := not isinstance(out_shape, (tuple, list)):
     out_shape = (out_shape,)
 
@@ -231,13 +268,20 @@ def kernel(
   def wrapper(*operands):
     def stateful(operand_and_out_refs):
       operand_refs, out_refs = operand_and_out_refs
-      mesh = Mesh(**mesh_kwargs)
-      thread_name = mesh.thread_name if mesh.thread_name is not None else ()
+      mesh = Mesh(
+          grid=grid,
+          grid_names=grid_names,
+          cluster=cluster,
+          cluster_names=cluster_names,
+          num_threads=num_threads,
+          thread_name=thread_name,
+          **mesh_kwargs)
+      _thread_name = mesh.thread_name if mesh.thread_name is not None else ()
       def cmap_body():
         pallas_primitives.run_scoped(
             functools.partial(body, *operand_refs, *out_refs),
             *(scratch_shapes if isinstance(scratch_shapes, Sequence) else ()),
-            collective_axes=thread_name,
+            collective_axes=_thread_name,
             **(scratch_shapes if isinstance(scratch_shapes, Mapping) else {}),
         )
       if mesh.kernel_name is not None:
@@ -274,8 +318,12 @@ def kernel(
         out_shape=tree_util.tree_map(add_batch_dim, out_shape_),
         scratch_shapes=scratch_shapes,
         compiler_params=compiler_params,
-        grid=(axis_size, *mesh_kwargs_.pop("grid", ())),
-        grid_names=(axis_name, *mesh_kwargs_.pop("grid_names", ())),
+        grid=(axis_size,) + grid,
+        grid_names=(axis_name,) + grid_names,
+        cluster=cluster,
+        cluster_names=cluster_names,
+        num_threads=num_threads,
+        thread_name=thread_name,
         **mesh_kwargs_,
     )(*args)
     out_batched = tree_util.tree_map(lambda _: True, out_shape_)
