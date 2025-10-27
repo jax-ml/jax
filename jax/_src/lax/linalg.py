@@ -478,6 +478,40 @@ def schur(
       is_hessenberg=is_hessenberg)
 
 
+def schur_eigenvectors(x, eigvals=None):
+  r"""Eigenvectors of Schur decomposition.
+
+  Only implemented on CPU.
+
+  Computes the right eigenvectors :math:`v` of a Schur decomposition :math:`T`
+  with eigenvalues :math:`w`:
+
+  .. math::
+    T \, v = v \, w .
+
+  Args:
+    x: A batch of square matrices in Schur form with shape ``[..., m, m]``.
+    eigvals: For a real input `x` the eigenvalues of Schur matrix are needed.
+      The eigenvalues are returned by :func:`jax.lax.linalg.schur` if
+      ``compute_eig_vals=True``.
+
+  Returns:
+    A complex array ``V`` with shape ``[..., m, m]`` containing the
+    right eigenvectors as columns of the batched matrices.
+  """
+  if not dtypes.issubdtype(lax.dtype(x), np.complexfloating):
+    if eigvals is None:
+      raise ValueError("Eigenvalues have to be supplied for real input matrix.")
+    if not dtypes.issubdtype(lax.dtype(eigvals), np.complexfloating):
+      raise ValueError("Expect complex array with eigenvalues.")
+
+    eigvals_imag = lax.imag(eigvals)
+
+    return schur_eigenvectors_real_p.bind(x, eigvals_imag)[0]
+
+  return schur_eigenvectors_complex_p.bind(x)[0]
+
+
 class SvdAlgorithm(enum.Enum):
   """Enum for SVD algorithm."""
   DEFAULT = "default"
@@ -2062,6 +2096,73 @@ schur_p = linalg_primitive(
     multiple_results=True)
 mlir.register_lowering(schur_p, _schur_cpu_lowering, platform="cpu")
 
+
+# Eigenvectors of Schur Decomposition
+
+def _schur_eigenvectors_real_shape_rule(x_shape, eigvals_imag_shape):
+  if x_shape[0] != x_shape[1]:
+    raise ValueError(
+        f"The input to schur eigenvectors must be a square matrix. Got shape {x_shape}.")
+  return (x_shape,)
+
+def _schur_eigenvectors_real_dtype_rule(x_dtype, eigvals_imag_dtype):
+  if x_dtype.dtype == np.float32:
+    cdtype = np.complex64
+  elif x_dtype.dtype == np.float64:
+    cdtype = np.complex128
+  return (cdtype,)
+
+def _schur_eigenvectors_complex_shape_rule(shape):
+  if shape[0] != shape[1]:
+    raise ValueError(
+        f"The input to schur eigenvectors must be a square matrix. Got shape {shape}.")
+  return (shape,)
+
+def _schur_eigenvectors_complex_dtype_rule(dtype):
+  return (dtype,)
+
+def _schur_eigenvectors_cpu_lowering(ctx, x_operand, eigvals_imag_operand, real):
+  if real:
+    operand_aval, eigvals_aval = ctx.avals_in
+  else:
+    operand_aval, = ctx.avals_in
+  batch_dims = operand_aval.shape[:-2]
+  target_name = lapack.prepare_lapack_call("trevc_ffi", operand_aval.dtype)
+
+  info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
+  avals_out = [ctx.avals_out[0], info_aval]
+
+  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out)
+  if real:
+    eigen_vectors, info = rule(ctx, x_operand, eigvals_imag_operand)
+  else:
+    eigen_vectors, info = rule(ctx, x_operand)
+
+  ok = mlir.compare_hlo(
+      info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      "EQ", "SIGNED")
+
+  eigen_vectors = _replace_not_ok_with_nan(ctx, batch_dims, ok, eigen_vectors,
+                                           ctx.avals_out[0])
+  output = [eigen_vectors]
+  return output
+
+schur_eigenvectors_real_p = linalg_primitive(
+    _schur_eigenvectors_real_dtype_rule, (_float, _float), (2, 1),
+    _schur_eigenvectors_real_shape_rule, "schur_eigenvectors_real",
+    multiple_results=True)
+mlir.register_lowering(schur_eigenvectors_real_p,
+                       partial(_schur_eigenvectors_cpu_lowering, real=True),
+                       platform="cpu")
+
+schur_eigenvectors_complex_p = linalg_primitive(
+    _schur_eigenvectors_complex_dtype_rule, (_complex,), (2,),
+    _schur_eigenvectors_complex_shape_rule, "schur_eigenvectors_complex",
+    multiple_results=True)
+mlir.register_lowering(schur_eigenvectors_complex_p,
+                       partial(_schur_eigenvectors_cpu_lowering, real=False,
+                               eigvals_imag_operand=None),
+                       platform="cpu")
 
 # Singular value decomposition
 
