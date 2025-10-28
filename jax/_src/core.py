@@ -2394,9 +2394,9 @@ def primal_sharding_to_cotangent_sharding(sharding):
   return sharding.update(spec=primal_spec_to_cotangent_spec(sharding.spec))
 
 def pvary(x, axis_name):
+  axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name:
     return x
-  axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   xs, treedef = tree_flatten(x)
   ys = pvary_p.bind(*xs, axes=axes, axis_index_groups=None)
   return tree_unflatten(treedef, ys)

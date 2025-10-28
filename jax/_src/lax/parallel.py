@@ -1726,7 +1726,9 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
     [ 4  5  6  7]]]
   """
   if not isinstance(axis_name, tuple):
-    axis_name = axis_name,
+    axis_name = (axis_name,)
+  if not axis_name:
+    return x
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   axis_size = _axis_size(axis_name, axis_index_groups)
   def bind(leaf):
@@ -1894,7 +1896,9 @@ def all_gather_invariant(x, axis_name, *, axis: int = 0, tiled: bool = False):
     which is Varying -> Varying.
   """
   if not isinstance(axis_name, tuple):
-    axis_name = axis_name,
+    axis_name = (axis_name,)
+  if not axis_name:
+    return x
   axis_size = _axis_size(axis_name, None)
   axes_ = frozenset(axis_name)
   def bind(leaf):
@@ -2178,7 +2182,9 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
    [16 18]]
   """
   if not isinstance(axis_name, tuple):
-    axis_name = axis_name,
+    axis_name = (axis_name,)
+  if not axis_name:
+    return x
   axis_size = _axis_size(axis_name, axis_index_groups)
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   def bind(leaf):
@@ -2360,6 +2366,8 @@ ad.deflinear2(core.pvary_p, _pvary_transpose_rule)
 def all_gather_reduced(x, axis_name, *, axis: int = 0, tiled: bool = False):
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
+  if not axis_name:
+    return x
   axis_size = _axis_size(axis_name, None)
   def bind(leaf):
     return all_gather_reduced_p.bind(
@@ -2447,6 +2455,8 @@ batching.skippable_batchers[all_gather_reduced_p] = partial(_names_in_param, 'ax
 def unreduced_psum_scatter(x, axis_name, *, scatter_dimension=0, tiled=False):
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
+  if not axis_name:
+    return x
   axis_size = _axis_size(axis_name, None)
   def bind(leaf):
     return unreduced_reduce_scatter_p.bind(
@@ -2532,10 +2542,10 @@ mlir.register_lowering(unreduced_reduce_scatter_p,
 
 # Unreduced -> Invariant collective
 def unreduced_psum(x, axis_name):
-  if not axis_name:
-    return x
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
+  if not axis_name:
+    return x
   leaves, treedef = tree_util.tree_flatten(x)
   out_flat = unreduced_psum_p.bind(*leaves, axes=tuple(axis_name))
   return tree_util.tree_unflatten(treedef, out_flat)
@@ -2599,9 +2609,9 @@ ad.deflinear2(unreduced_psum_p, _unreduced_psum_transpose_rule)
 
 # Invariant -> Reduced no-op cast. It's the transpose of unreduced_psum.
 def preduced(x, axis_name):
-  if not axis_name:
-    return x
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  if not axes:
+    return x
   x_flat, treedef = tree_util.tree_flatten(x)
   out_flat = preduced_p.bind(*x_flat, axes=axes)
   return tree_util.tree_unflatten(treedef, out_flat)
