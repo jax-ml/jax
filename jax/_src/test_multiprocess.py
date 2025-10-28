@@ -143,6 +143,10 @@ class GracefulKiller:
 
 
 def _main(argv, shard_main):
+  # TODO(emilyaf): Enable multiprocess tests on Windows.
+  if sys.platform == "win32":
+    print("Multiprocess tests are not supported on Windows.")
+    return
   num_processes = NUM_PROCESSES.value
   if MULTIPROCESS_TEST_WORKER_ID.value >= 0:
     local_device_ids = _DEVICE_IDS.value
@@ -401,8 +405,6 @@ class MultiProcessTest(parameterized.TestCase):
   def setUp(self):
     """Start tests together."""
     super().setUp()
-    if sys.platform == "win32":
-      self.skipTest("TODO(emilyaf): Enable multiprocess tests on Windows.")
     if xb.process_count() == 1:
       self.skipTest("Test requires multiple processes.")
     assert xb.process_count() == NUM_PROCESSES.value, (
