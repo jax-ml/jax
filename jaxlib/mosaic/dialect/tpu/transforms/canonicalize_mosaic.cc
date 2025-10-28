@@ -1217,6 +1217,23 @@ FailureOr<Value> canonicalize_select(const CanonicalizeContext& ctx,
            << result_type << " is not supported on this target.";
   }
 
+  // On TPUv4, bf16 float extension and truncation
+  // operations are faster than those for integers.
+  if (result_type.getElementType().isBF16()) {
+    auto extended_shape =
+    VectorType::get(result_type.getShape(), builder.getF32Type());
+    Value true_val =
+        builder.create<arith::ExtFOp>(extended_shape, op.getTrueValue());
+    Value false_val =
+        builder.create<arith::ExtFOp>(extended_shape, op.getFalseValue());
+    Value new_op =
+        builder.create<arith::SelectOp>(op.getCondition(), true_val, false_val);
+    new_op = builder.create<arith::TruncFOp>(result_type, new_op);
+    op.replaceAllUsesWith(new_op);
+    op.erase();
+    return new_op;
+  }
+
   VectorType itype =
       VectorType::get(result_type.getShape(), builder.getIntegerType(bitwidth));
   Value true_val = builder.create<arith::BitcastOp>(itype, op.getTrueValue());
