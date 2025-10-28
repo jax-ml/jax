@@ -1871,9 +1871,8 @@ FailureOr<Value> canonicalize_transpose(const CanonicalizeContext &ctx,
 
   bool uses_xlu = !op.getPermutation().empty() &&
                   op.getPermutation().back() != op.getPermutation().size() - 1;
-  // TODO(b/448848595): Enable 8-bit transposes on generation 7.
   if (element_type.getIntOrFloatBitWidth() == 8 && ctx.compatibility_mode &&
-      ctx.hardware_generation > 3 && uses_xlu) {
+      ctx.hardware_generation > 3 && ctx.hardware_generation < 6 && uses_xlu) {
     VectorType input_vty_int = VectorType::get(
         input_vty.getShape(),
         builder.getIntegerType(input_vty.getElementTypeBitWidth()));
