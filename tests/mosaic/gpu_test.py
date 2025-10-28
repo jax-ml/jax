@@ -4910,7 +4910,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
         ptx(),
     )
     [dealloc] = re.findall(
-        r"tcgen05.dealloc.cta_group::([12]).sync.aligned.b32",
+        r"tcgen05.dealloc.cta_group::([12]).sync.aligned.b32\s+([%\w]+),",
         ptx(),
     )
     self.assertEqual(dealloc[0], '2' if collective else '1')
