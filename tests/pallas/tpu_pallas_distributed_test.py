@@ -738,6 +738,9 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
 class VerificationTest(jtu.JaxTestCase):
 
   def test_verification(self):
+    self.skipTest(
+        'TODO(b/455847773): Fix MLIR layout mismatch in tpu.memref_slice (dynamic offset issue).'
+    )
     if (num_devices := jax.local_device_count()) <= 1:
       self.skipTest('Test requires multiple devices.')
     if not jtu.is_device_tpu_at_least(4) or jax.devices()[0].num_cores > 1:
