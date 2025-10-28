@@ -43,11 +43,9 @@ if sys.platform != "win32":
     from jax.experimental.pallas import mosaic_gpu as plgpu_mgpu
   except ImportError:
     plgpu_mgpu = None
-  from jax.experimental.pallas import triton as plgpu_triton
   from jax.experimental.pallas import tpu as pltpu
 else:
   plgpu_mgpu = None
-  plgpu_triton = None
   pltpu = None
 
 import hypothesis as hp
@@ -1820,143 +1818,6 @@ class OpsTest(PallasBaseTest):
       o_ref[...] = f()
 
     np.testing.assert_allclose(f(), kernel())
-
-  @parameterized.parameters("float16", "bfloat16", "float32")
-  def test_approx_tanh(self, dtype):
-    self.skip_if_mosaic_gpu()
-
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not implemented on TPU")
-
-    if self.INTERPRET:
-      self.skipTest("approx_tanh is not supported in interpret mode")
-
-    if (dtype == "bfloat16" and
-        not jtu.is_cuda_compute_capability_at_least("9.0")):
-      self.skipTest("tanh.approx.bf16 requires a GPU with capability >= sm90")
-
-    @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), dtype),
-    )
-    def kernel(x_ref, o_ref):
-      o_ref[...] = plgpu_triton.approx_tanh(x_ref[...])
-
-    x = jnp.asarray([-1, 0.42, 0.24, 1]).astype(dtype)
-    # We upcast to float32 because NumPy <2.0 does not handle custom dtypes
-    # properly. See https://github.com/jax-ml/jax/issues/11014.
-    np.testing.assert_allclose(
-        kernel(x).astype(jnp.float32),
-        jnp.tanh(x).astype(jnp.float32),
-        atol=5e-3,
-        rtol=5e-3,
-    )
-
-  def test_elementwise_inline_asm(self):
-    self.skip_if_mosaic_gpu()
-
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not implemented: elementwise_inline_asm_p")
-
-    if self.INTERPRET:
-      self.skipTest(
-          "elementwise_inline_asm is not supported in interpret mode"
-      )
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((256,), jnp.float16),
-    )
-    def kernel(x_ref, o_ref):
-      [o_ref[...]] = plgpu_triton.elementwise_inline_asm(
-          "tanh.approx.f16x2 $0, $1;",
-          args=[x_ref[...]],
-          constraints="=r,r",
-          pack=2,
-          result_shape_dtypes=[jax.ShapeDtypeStruct(x_ref.shape, x_ref.dtype)],
-      )
-
-    x = jnp.arange(256).astype(jnp.float16)
-    np.testing.assert_allclose(kernel(x), jnp.tanh(x), atol=5e-3, rtol=5e-3)
-
-  def test_debug_barrier(self):
-    self.skip_if_mosaic_gpu()
-
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not implemented: debug_barrier_p")
-
-    if self.INTERPRET:
-      self.skipTest("debug_barrier is not supported in interpret mode")
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
-    )
-    def kernel(x_ref, o_ref):
-      o_ref[...] = x_ref[...]
-      plgpu_triton.debug_barrier()
-
-    x = jnp.array([4.2, 2.4]).astype(jnp.float32)
-    np.testing.assert_array_equal(kernel(x), x)
-
-  @unittest.skipIf(
-      sys.platform == "win32",
-      "plgpu_triton.CompilerParams unavailable on Windows",
-  )
-  def test_debug_print(self):
-    self.skip_if_mosaic_gpu()
-
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Test for TPU is covered in tpu_pallas_test.py")
-
-    # TODO: this test flakes on gpu
-    if jtu.test_device_matches(["gpu"]):
-      self.skipTest("This test flakes on gpu")
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
-        compiler_params=plgpu_triton.CompilerParams(
-            num_warps=1, num_stages=1
-        ),
-    )
-    def kernel(x_ref, o_ref):
-      pl.debug_print("It works!")
-
-    x = jnp.array([4.2, 2.4]).astype(jnp.float32)
-    with jtu.capture_stdout() as output:
-      jax.block_until_ready(kernel(x))
-      jax.effects_barrier()
-
-    self.assertIn("It works!", output())
-
-  @unittest.skipIf(
-      sys.platform == "win32",
-      "plgpu_triton.CompilerParams unavailable on Windows",
-  )
-  def test_debug_print_with_values(self):
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Test for TPU is covered in tpu_pallas_test.py")
-
-    # TODO: this test flakes on gpu
-    if jtu.test_device_matches(["gpu"]):
-      self.skipTest("This test flakes on gpu")
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
-        compiler_params=plgpu_triton.CompilerParams(
-            num_warps=1, num_stages=1
-        ),
-    )
-    def kernel(x_ref, o_ref):
-      pl.debug_print("x[0] =", x_ref[0])
-
-    x = jnp.array([4.2, 2.4]).astype(jnp.float32)
-    with jtu.capture_stdout() as output:
-      jax.block_until_ready(kernel(x))
-      jax.effects_barrier()
-
-    self.assertIn("x[0] = 4.2", output())
 
   @parameterized.parameters(
       ((2, 4), (8,)),
