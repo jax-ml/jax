@@ -16,6 +16,22 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New features:
+
+  * {func}`jax.jit` now supports the decorator factory pattern; i.e instead of
+    writing
+    ```
+    @functools.partial(jax.jit, static_argnames=['n'])
+    def f(x, n):
+      ...
+    ```
+    you may write
+    ```
+    @jax.jit(static_argnames=['n'])
+    def f(x, n):
+      ...
+    ```
+
 * Changes:
 
   * {func}`jax.lax.linalg.eigh` now accepts an `implementation` argument to
