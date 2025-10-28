@@ -81,6 +81,28 @@ static FailureOr<APFloat> convertFloatValue(
   return sourceValue;
 }
 
+FailureOr<StridedLayoutAttr> getExpectedStridedLayout(MemRefSliceOp op) {
+  auto source_type = getMemRefType(op.getMemRef());
+  SmallVector<int64_t> source_strides;
+  int64_t source_offset;
+  if (failed(source_type.getStridesAndOffset(source_strides, source_offset))) {
+    return failure();
+  }
+  int64_t target_offset = source_offset;
+  if (target_offset != ShapedType::kDynamic) {
+    for (auto [base_idx, source_stride] :
+         llvm::zip(op.getBaseIdx(), source_strides)) {
+      if (auto idx = getConstantIntValue(base_idx)) {
+        target_offset += *idx * source_stride;
+      } else {
+        target_offset = ShapedType::kDynamic;
+        break;
+      }
+    }
+  }
+  return StridedLayoutAttr::get(op.getContext(), target_offset, source_strides);
+}
+
 }  // namespace
 
 LogicalResult UnrollVectorsOp::canonicalize(UnrollVectorsOp op,
@@ -189,26 +211,8 @@ LogicalResult MemRefSliceOp::verify() {
     // TODO(slebedev): Remove this special-case once we move layout propagation
     // to the infer-memref-layout pass.
   } else if (isa<StridedLayoutAttr>(target_layout)) {
-    SmallVector<int64_t> source_strides;
-    int64_t source_offset;
-    if (failed(
-            source_type.getStridesAndOffset(source_strides, source_offset))) {
-      return failure();
-    }
-    int64_t target_offset = source_offset;
-    if (target_offset != ShapedType::kDynamic) {
-      for (auto [base_idx, source_stride] :
-           llvm::zip(getBaseIdx(), source_strides)) {
-        if (auto idx = getConstantIntValue(base_idx)) {
-          target_offset += *idx * source_stride;
-        } else {
-          target_offset = ShapedType::kDynamic;
-          break;
-        }
-      }
-    }
-    auto expected_layout =
-        StridedLayoutAttr::get(getContext(), target_offset, source_strides);
+    FAILUREOR_ASSIGN_OR_RETURN(StridedLayoutAttr expected_layout,
+                               getExpectedStridedLayout(*this));
     if (target_layout != expected_layout) {
       return emitOpError("Layout mismatch: got ")
              << target_layout << ", expected " << expected_layout << ".";
@@ -228,6 +232,34 @@ LogicalResult MemRefSliceOp::verify() {
   }
   return success();
 }
+
+struct MemRefSliceUpdateStridedLayout : public OpRewritePattern<MemRefSliceOp> {
+  using OpRewritePattern<MemRefSliceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MemRefSliceOp op,
+                                PatternRewriter& rewriter) const override {
+    auto target_type = op.getType();
+    auto target_layout = target_type.getLayout();
+    if (!isa<StridedLayoutAttr>(target_layout)) {
+      return failure();
+    }
+    FAILUREOR_ASSIGN_OR_RETURN(StridedLayoutAttr expected_layout,
+                               getExpectedStridedLayout(op));
+    if (target_layout == expected_layout) {
+      return failure();
+    }
+    MemRefType old_type = op.getType();
+    MemRefType new_result_type =
+        MemRefType::get(target_type.getShape(), target_type.getElementType(),
+                        expected_layout, target_type.getMemorySpace());
+    rewriter.modifyOpInPlace(
+        op, [&]() { op.getResult().setType(new_result_type); });
+    rewriter.setInsertionPointAfter(op);
+    auto cast_op = memref::CastOp::create(rewriter, op.getLoc(), old_type, op);
+    rewriter.replaceAllUsesExcept(op, cast_op, cast_op);
+    return success();
+  }
+};
 
 struct MemRefSliceFoldConstantDynamicDim
     : public OpRewritePattern<MemRefSliceOp> {
@@ -300,8 +332,8 @@ struct MemRefSliceEraseLayout : public OpRewritePattern<MemRefSliceOp> {
 
 void MemRefSliceOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                                 MLIRContext* context) {
-  results.add<MemRefSliceFoldConstantDynamicDim, MemRefSliceEraseLayout>(
-      context);
+  results.add<MemRefSliceFoldConstantDynamicDim, MemRefSliceEraseLayout,
+              MemRefSliceUpdateStridedLayout>(context);
 }
 
 LogicalResult MemRefSqueezeOp::verify() {
