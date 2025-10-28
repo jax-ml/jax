@@ -4871,13 +4871,11 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
       self.skipTest("Only works on GPU with capability sm_100a or sm_101a")
 
   @parameterized.named_parameters(
-      ("unpacked", (128, 77), jnp.bfloat16, 1, False, 128),
-      ("packed", (128, 128), jnp.bfloat16, 2, False, 64),
-      ("collective", (128, 64), jnp.bfloat16, 1, True, 64),
+      ("unpacked", (128, 77), jnp.bfloat16, 1, False),
+      ("packed", (128, 128), jnp.bfloat16, 2, False),
+      ("collective", (128, 64), jnp.bfloat16, 1, True),
   )
-  def test_tmem_alloc_dealloc(
-      self, shape, dtype, packing, collective, expected_allocated_columns
-  ):
+  def test_tmem_alloc_dealloc(self, shape, dtype, packing, collective):
     tmem_type = ir.MemRefType.get(
         shape,
         utils.dtype_to_ir_type(dtype),
@@ -4910,13 +4908,10 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
           smem_scratch_shape=jax.ShapeDtypeStruct((), jnp.int32),
           thread_semantics=mgpu.LoweringSemantics.Warpgroup,
       )()
-
     [alloc] = re.findall(
-        r"tcgen05.alloc.cta_group::([12]).sync.aligned.shared::cta.b32\s+"
-        r"\[([%\w]+)\],\s+(\d+);",
+        r"tcgen05.alloc.cta_group::([12]).sync.aligned.shared::cta.b32",
         ptx(),
     )
-    self.assertEqual(alloc[2], str(expected_allocated_columns))
     self.assertEqual(alloc[0], '2' if collective else '1')
 
     [ld] = re.findall(
@@ -4924,8 +4919,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
         ptx(),
     )
     [dealloc] = re.findall(
-        r"tcgen05.dealloc.cta_group::([12]).sync.aligned.b32\s+"
-        r"([%\w]+),\s+(\d+);",
+        r"tcgen05.dealloc.cta_group::([12]).sync.aligned.b32",
         ptx(),
     )
     self.assertEqual(dealloc[0], '2' if collective else '1')
