@@ -1842,8 +1842,8 @@ LogicalResult UnpackSubelementsOp::canonicalize(UnpackSubelementsOp op,
       rewriter.replaceAllOpUsesWith(
           op, pack.getPaddedSources(
                   pack.getSources(), pack.getPositions(),
-                  pack.getType().getElementTypeBitWidth() /
-                      op.getType().getElementTypeBitWidth())[op.getIndex()]);
+                  op.getType().getElementTypeBitWidth() /
+                      pack.getType().getElementTypeBitWidth())[op.getIndex()]);
       return success();
     }
     return failure();
