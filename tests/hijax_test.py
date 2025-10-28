@@ -37,8 +37,8 @@ from jax._src.util import safe_zip, safe_map
 from jax._src.state.discharge import run_state
 
 from jax._src.hijax import (HiPrimitive, HiType, Box, new_box, box_set, box_get,
-                            box_effect, register_hitype, ShapedArray, Ty,
-                            NewstyleHiPrimitive)
+                            box_effect, register_hitype, ShapedArray, Ty)
+from jax.experimental.hijax import VJPHiPrimitive
 
 config.parse_flags_with_absl()
 
@@ -483,9 +483,12 @@ class HijaxTest(jtu.JaxTestCase):
   @parameterized.parameters([False, True])
   def test_newstyle_hiprimitive(self, jit):
 
-    class RaiseToStaticPower(NewstyleHiPrimitive):
+    class RaiseToStaticPower(VJPHiPrimitive):
       def __init__(self, in_aval, *, power):
-        super().__init__((in_aval,), in_aval, power=power)
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = dict(power=power)
+        super().__init__()
 
       def expand(self, x):
         return x ** self.power
@@ -540,11 +543,14 @@ class HijaxTest(jtu.JaxTestCase):
     def dq(qx):
       return DQ(jax.typeof(qx))(qx)
 
-    class Q(NewstyleHiPrimitive):
+    class Q(VJPHiPrimitive):
       def __init__(self, unquantized_aval):
         if unquantized_aval.dtype != jnp.dtype('float32'): raise TypeError
         quantized_aval = QArrayTy(unquantized_aval.shape)
-        super().__init__((unquantized_aval,), quantized_aval)
+        self.in_avals = (unquantized_aval,)
+        self.out_aval = quantized_aval
+        self.params = {}
+        super().__init__()
 
       def expand(self, x):
         scale = jnp.max(jnp.abs(x)) / 127
@@ -557,10 +563,13 @@ class HijaxTest(jtu.JaxTestCase):
       def vjp_bwd(self, _, g):
         return g,
 
-    class DQ(NewstyleHiPrimitive):
+    class DQ(VJPHiPrimitive):
       def __init__(self, quantized_aval):
         unquantized_aval = ShapedArray(quantized_aval.shape, jnp.dtype('float32'))
-        super().__init__((quantized_aval,), unquantized_aval)
+        self.in_avals = (quantized_aval,)
+        self.out_aval = unquantized_aval
+        self.params = {}
+        super().__init__()
 
       def expand(self, qx):
         return qx.qvalue * qx.scale
