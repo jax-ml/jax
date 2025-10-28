@@ -203,7 +203,7 @@ def _check_shapes(func_name, expected_name, actual, expected):
         f"got {actual_shapes} and {expected_shapes}")
 
 
-@api_boundary
+@partial(api_boundary, repro_api_name="jax.custom_linear_solve")
 def custom_linear_solve(
     matvec: Callable,
     b: Any,
