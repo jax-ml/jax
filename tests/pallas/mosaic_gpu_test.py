@@ -2422,8 +2422,6 @@ class PallasCallTest(PallasTest):
 
     # We don't infer optimized transfer-compatible transforms for load to
     # registers with TCGEN05_TMEM_NATIVE layout.
-    # TODO(allanrenucci): Manually specify transforms when supported for WG
-    # lowering semantic.
     optimized = (
         self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane
         or layout != plgpu.Layout.TCGEN05_TMEM_NATIVE
