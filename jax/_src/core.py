@@ -3054,7 +3054,8 @@ class CallPrimitive(Primitive):
     return self._true_bind(*args, **params)
 
   def bind_with_trace(self, trace, fun_and_args, params):
-    fun, *args = fun_and_args
+    fun = fun_and_args[0]
+    args = fun_and_args[1:]
     return trace.process_call(self, fun, args, params)
 
   def get_bind_params(self, params):

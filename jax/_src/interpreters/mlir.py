@@ -1228,7 +1228,6 @@ def lower_jaxpr_to_module(
   See https://docs.jax.dev/en/latest/internals/constants.html
   """
   util.test_event("lower_jaxpr_to_module")
-  assert not jaxpr.is_high
   platforms = tuple(map(xb.canonicalize_platform, platforms))
 
   sharded_in_avals = (in_avals if arg_shardings is None else
@@ -1575,7 +1574,6 @@ def lower_jaxpr_to_fun(
     MLIR func op
   """
   util.test_event("lower_jaxpr_to_fun", name)
-  assert not jaxpr.is_high
   if not config.use_simplified_jaxpr_constants.value:
     check_jaxpr_constants(jaxpr)
 
@@ -2014,7 +2012,6 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     See https://docs.jax.dev/en/latest/internals/constants.html
   """
   assert "gpu" not in ctx.platforms
-  assert not jaxpr.is_high
 
   def read(v: core.Atom) -> IrValues:
     if type(v) is core.Literal:
@@ -2489,15 +2486,14 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
         wrapped_fun = lu.annotate(wrapped_fun, (*implicit_args, *explicit_args))
         jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic2(wrapped_fun)
       else:
-        jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic(
-            wrapped_fun, ctx.avals_in, lower=True)
+        jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic(wrapped_fun,
+                                                                   ctx.avals_in)
         # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
 
       if ctx.platforms is not None:
         sub_context = ctx.module_context.replace(platforms=ctx.platforms)
       else:
         sub_context = ctx.module_context
-      assert not jaxpr.is_high
       out, tokens = jaxpr_subcomp(
           sub_context, jaxpr, ctx.name_stack, ctx.tokens_in,
           ir_consts(consts_for_constvars, [v.aval for v in jaxpr.constvars]),
