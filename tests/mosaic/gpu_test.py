@@ -3933,7 +3933,10 @@ class RegisterLayout(enum.Enum):
       case RegisterLayout.WGMMA:
         return fa.WGMMA_LAYOUT
       case RegisterLayout.WG_STRIDED:
-        return fa.WGStridedFragLayout(shape, vec_size=1)
+        ty = ir.VectorType.get(shape, utils.dtype_to_ir_type(dtype))
+        layout = fa.WGStridedFragLayout.from_shaped_type(ty)
+        assert layout is not None
+        return layout
       case RegisterLayout.TCGEN05:
         return fa.TCGEN05_LAYOUT
       case RegisterLayout.TCGEN05_M64_COLLECTIVE:
