@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from functools import partial
 import math
 import operator
 from typing import Any
@@ -182,11 +181,11 @@ class ufunc:
     call = self.__static_props['call'] or self._call_vectorized
     return call(*args)
 
-  @partial(api.jit, static_argnames=['self'])
+  @api.jit(static_argnames=['self'])
   def _call_vectorized(self, *args):
     return vectorize(self._func)(*args)
 
-  @partial(api.jit, static_argnames=['self', 'axis', 'dtype', 'out', 'keepdims'])
+  @api.jit(static_argnames=['self', 'axis', 'dtype', 'out', 'keepdims'])
   def reduce(self, a: ArrayLike, axis: int | None = 0,
              dtype: DTypeLike | None = None,
              out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
@@ -319,7 +318,7 @@ class ufunc:
       result = result.reshape(final_shape)
     return result
 
-  @partial(api.jit, static_argnames=['self', 'axis', 'dtype'])
+  @api.jit(static_argnames=['self', 'axis', 'dtype'])
   def accumulate(self, a: ArrayLike, axis: int = 0, dtype: DTypeLike | None = None,
                  out: None = None) -> Array:
     """Accumulate operation derived from binary ufunc.
@@ -400,7 +399,7 @@ class ufunc:
     _, result = control_flow.scan(scan_fun, (0, arr[0].astype(dtype)), None, length=arr.shape[0])
     return _moveaxis(result, 0, axis)
 
-  @partial(api.jit, static_argnums=[0], static_argnames=['inplace'])
+  @api.jit(static_argnums=[0], static_argnames=['inplace'])
   def at(self, a: ArrayLike, indices: Any, b: ArrayLike | None = None, /, *,
          inplace: bool = True) -> Array:
     """Update elements of an array via the specified unary or binary ufunc.
@@ -472,7 +471,7 @@ class ufunc:
     carry, _ = control_flow.scan(scan_fun, (0, a), None, len(indices[0]))  # type: ignore[arg-type]
     return carry[1]
 
-  @partial(api.jit, static_argnames=['self', 'axis', 'dtype'])
+  @api.jit(static_argnames=['self', 'axis', 'dtype'])
   def reduceat(self, a: ArrayLike, indices: Any, axis: int = 0,
                dtype: DTypeLike | None = None, out: None = None) -> Array:
     """Reduce an array between specified indices via a binary ufunc.
@@ -548,7 +547,7 @@ class ufunc:
                     out)
     return control_flow.fori_loop(0, a.shape[axis], loop_body, out)
 
-  @partial(api.jit, static_argnums=[0])
+  @api.jit(static_argnums=[0])
   def outer(self, A: ArrayLike, B: ArrayLike, /) -> Array:
     """Apply the function to all pairs of values in ``A`` and ``B``.
 

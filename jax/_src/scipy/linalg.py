@@ -41,7 +41,7 @@ because compiled JAX code cannot perform checks of array values at runtime.
 """)
 _no_overwrite_and_chkfinite_doc = _no_chkfinite_doc + "\nDoes not support the Scipy argument ``overwrite_*=True``."
 
-@partial(jit, static_argnames=('lower',))
+@jit(static_argnames=('lower',))
 def _cholesky(a: ArrayLike, lower: bool) -> Array:
   a, = promote_dtypes_inexact(jnp.asarray(a))
   l = lax_linalg.cholesky(a if lower else jnp.conj(a.mT), symmetrize_input=False)
@@ -155,7 +155,7 @@ def cho_factor(a: ArrayLike, lower: bool = False, overwrite_a: bool = False,
   del overwrite_a, check_finite  # Unused
   return (cholesky(a, lower=lower), lower)
 
-@partial(jit, static_argnames=('lower',))
+@jit(static_argnames=('lower',))
 def _cho_solve(c: ArrayLike, b: ArrayLike, lower: bool) -> Array:
   c, b = promote_dtypes_inexact(jnp.asarray(c), jnp.asarray(b))
   lax_linalg._check_solve_shapes(c, b)
@@ -221,7 +221,7 @@ def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: Literal[False]) -> Ar
 @overload
 def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: bool) -> Array | tuple[Array, Array, Array]: ...
 
-@partial(jit, static_argnames=('full_matrices', 'compute_uv'))
+@jit(static_argnames=('full_matrices', 'compute_uv'))
 def _svd(a: ArrayLike, *, full_matrices: bool, compute_uv: bool) -> Array | tuple[Array, Array, Array]:
   a, = promote_dtypes_inexact(jnp.asarray(a))
   return lax_linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
@@ -369,7 +369,7 @@ def _eigh(a: ArrayLike, b: ArrayLike | None, lower: bool, eigvals_only: Literal[
 def _eigh(a: ArrayLike, b: ArrayLike | None, lower: bool, eigvals_only: bool,
           eigvals: None, type: int) -> Array | tuple[Array, Array]: ...
 
-@partial(jit, static_argnames=('lower', 'eigvals_only', 'eigvals', 'type'))
+@jit(static_argnames=('lower', 'eigvals_only', 'eigvals', 'type'))
 def _eigh(a: ArrayLike, b: ArrayLike | None, lower: bool, eigvals_only: bool,
           eigvals: None, type: int) -> Array | tuple[Array, Array]:
   if b is not None:
@@ -480,7 +480,7 @@ def eigh(a: ArrayLike, b: ArrayLike | None = None, lower: bool = True,
   del overwrite_a, overwrite_b, turbo, check_finite  # unused
   return _eigh(a, b, lower, eigvals_only, eigvals, type)
 
-@partial(jit, static_argnames=('output',))
+@jit(static_argnames=('output',))
 def _schur(a: Array, output: str) -> tuple[Array, Array]:
   if output == "complex":
     a = a.astype(dtypes.to_complex_dtype(a.dtype))
@@ -610,7 +610,7 @@ def inv(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> A
   return jnp_linalg.inv(a)
 
 
-@partial(jit, static_argnames=('overwrite_a', 'check_finite'))
+@jit(static_argnames=('overwrite_a', 'check_finite'))
 def lu_factor(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> tuple[Array, Array]:
   """Factorization for LU-based linear solves
 
@@ -662,7 +662,7 @@ def lu_factor(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True
   return lu, pivots
 
 
-@partial(jit, static_argnames=('trans', 'overwrite_b', 'check_finite'))
+@jit(static_argnames=('trans', 'overwrite_b', 'check_finite'))
 def lu_solve(lu_and_piv: tuple[Array, ArrayLike], b: ArrayLike, trans: int = 0,
              overwrite_b: bool = False, check_finite: bool = True) -> Array:
   """Solve a linear system using an LU factorization
@@ -727,7 +727,7 @@ def _lu(a: ArrayLike, permute_l: Literal[False]) -> tuple[Array, Array, Array]: 
 @overload
 def _lu(a: ArrayLike, permute_l: bool) -> tuple[Array, Array] | tuple[Array, Array, Array]: ...
 
-@partial(jit, static_argnums=(1,))
+@jit(static_argnums=(1,))
 def _lu(a: ArrayLike, permute_l: bool) -> tuple[Array, Array] | tuple[Array, Array, Array]:
   a, = promote_dtypes_inexact(jnp.asarray(a))
   lu, _, permutation = lax_linalg.lu(a)
@@ -755,7 +755,7 @@ def lu(a: ArrayLike, permute_l: bool = False, overwrite_a: bool = False,
        check_finite: bool = True) -> tuple[Array, Array] | tuple[Array, Array, Array]: ...
 
 
-@partial(jit, static_argnames=('permute_l', 'overwrite_a', 'check_finite'))
+@jit(static_argnames=('permute_l', 'overwrite_a', 'check_finite'))
 def lu(a: ArrayLike, permute_l: bool = False, overwrite_a: bool = False,
        check_finite: bool = True) -> tuple[Array, Array] | tuple[Array, Array, Array]:
   """Compute the LU decomposition
@@ -856,7 +856,7 @@ def _qr(a: ArrayLike, mode: str, pivoting: bool
        ) -> tuple[Array] | tuple[Array, Array] | tuple[Array, Array, Array]: ...
 
 
-@partial(jit, static_argnames=('mode', 'pivoting'))
+@jit(static_argnames=('mode', 'pivoting'))
 def _qr(a: ArrayLike, mode: str, pivoting: bool
        ) -> tuple[Array] | tuple[Array, Array] | tuple[Array, Array, Array]:
   if mode in ("full", "r"):
@@ -997,7 +997,7 @@ def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "
   return _qr(a, mode, pivoting)
 
 
-@partial(jit, static_argnames=('assume_a', 'lower'))
+@jit(static_argnames=('assume_a', 'lower'))
 def _solve(a: ArrayLike, b: ArrayLike, assume_a: str, lower: bool) -> Array:
   if assume_a != 'pos':
     return jnp_linalg.solve(a, b)
@@ -1084,7 +1084,7 @@ def solve(a: ArrayLike, b: ArrayLike, lower: bool = False,
     raise ValueError(f"Expected assume_a to be one of {valid_assume_a}; got {assume_a!r}")
   return _solve(a, b, assume_a, lower)
 
-@partial(jit, static_argnames=('trans', 'lower', 'unit_diagonal'))
+@jit(static_argnames=('trans', 'lower', 'unit_diagonal'))
 def _solve_triangular(a: ArrayLike, b: ArrayLike, trans: int | str,
                       lower: bool, unit_diagonal: bool) -> Array:
   if trans == 0 or trans == "N":
@@ -1177,7 +1177,7 @@ def solve_triangular(a: ArrayLike, b: ArrayLike, trans: int | str = 0, lower: bo
   return _solve_triangular(a, b, trans, lower, unit_diagonal)
 
 
-@partial(jit, static_argnames=('upper_triangular', 'max_squarings'))
+@jit(static_argnames=('upper_triangular', 'max_squarings'))
 def expm(A: ArrayLike, *, upper_triangular: bool = False, max_squarings: int = 16) -> Array:
   """Compute the matrix exponential
 
@@ -1292,7 +1292,7 @@ def _solve_P_Q(P: ArrayLike, Q: ArrayLike, upper_triangular: bool = False) -> Ar
 def _precise_dot(A: ArrayLike, B: ArrayLike) -> Array:
   return jnp.dot(A, B, precision=lax.Precision.HIGHEST)
 
-@partial(jit, static_argnums=2)
+@jit(static_argnums=2)
 def _squaring(R: Array, n_squarings: Array, max_squarings: int) -> Array:
   # squaring step to undo scaling
   def _squaring_precise(x):
@@ -1377,7 +1377,7 @@ def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: str | None = None,
                  compute_expm: bool = True) -> Array | tuple[Array, Array]: ...
 
 
-@partial(jit, static_argnames=('method', 'compute_expm'))
+@jit(static_argnames=('method', 'compute_expm'))
 def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: str | None = None,
                  compute_expm: bool = True) -> Array | tuple[Array, Array]:
   """Compute the Frechet derivative of the matrix exponential.
@@ -1481,7 +1481,7 @@ def block_diag(*arrs: ArrayLike) -> Array:
   return jnp.concatenate(padded_arrs, axis=0)
 
 
-@partial(jit, static_argnames=("eigvals_only", "select", "select_range"))
+@jit(static_argnames=("eigvals_only", "select", "select_range"))
 def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
                      select: str = 'a', select_range: tuple[float, float] | None = None,
                      tol: float | None = None) -> Array:
@@ -1680,7 +1680,7 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
   _, _, mid, _ = lax.while_loop(cond, body, (0, lower, mid, upper))
   return mid
 
-@partial(jit, static_argnames=('side', 'method'))
+@jit(static_argnames=('side', 'method'))
 @config.default_matmul_precision("float32")
 def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: float | None = None,
           max_iterations: int | None = None) -> tuple[Array, Array]:
@@ -1886,7 +1886,7 @@ def sqrtm(A: ArrayLike, blocksize: int = 1) -> Array:
   return _sqrtm(A)
 
 
-@partial(jit, static_argnames=('check_finite',))
+@jit(static_argnames=('check_finite',))
 def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> tuple[Array, Array]:
   """Convert real Schur form to complex Schur form.
 
@@ -2003,7 +2003,7 @@ def hessenberg(a: ArrayLike, *, calc_q: Literal[True], overwrite_a: bool = False
                check_finite: bool = True) -> tuple[Array, Array]: ...
 
 
-@partial(jit, static_argnames=('calc_q', 'check_finite', 'overwrite_a'))
+@jit(static_argnames=('calc_q', 'check_finite', 'overwrite_a'))
 def hessenberg(a: ArrayLike, *, calc_q: bool = False, overwrite_a: bool = False,
                check_finite: bool = True) -> Array | tuple[Array, Array]:
   """Compute the Hessenberg form of the matrix
@@ -2162,7 +2162,7 @@ def _toeplitz(c: Array, r: Array) -> Array:
       precision=lax.Precision.HIGHEST)[0]
   return jnp.flip(patches, axis=0)
 
-@partial(jit, static_argnames=("n",))
+@jit(static_argnames=("n",))
 def hilbert(n: int) -> Array:
   r"""Create a Hilbert matrix of order n.
 
@@ -2194,7 +2194,7 @@ def hilbert(n: int) -> Array:
   a = lax.broadcasted_iota(float, (n, 1), 0)
   return 1/(a + a.T + 1)
 
-@partial(jit, static_argnames=("n", "kind",))
+@jit(static_argnames=("n", "kind",))
 def pascal(n: int, kind: str | None = None) -> Array:
   r"""Create a Pascal matrix approximation of order n.
 
@@ -2312,7 +2312,7 @@ def _solve_sylvester_triangular_scan(R: Array, S: Array, F: Array) -> Array:
   return Y_flat_final.reshape((m, n))
 
 
-@partial(jit, static_argnames=["method", "tol"])
+@jit(static_argnames=["method", "tol"])
 def solve_sylvester(A: ArrayLike, B: ArrayLike, C: ArrayLike, *, method: str = "schur", tol: float = 1e-8) -> Array:
   """
   Solves the Sylvester equation

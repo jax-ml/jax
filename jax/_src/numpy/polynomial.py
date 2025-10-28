@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from functools import partial
 import operator
 
 import numpy as np
@@ -124,7 +123,7 @@ def roots(p: ArrayLike, *, strip_zeros: bool = True) -> Array:
 
 
 @export
-@partial(api.jit, static_argnames=('deg', 'rcond', 'full', 'cov'))
+@api.jit(static_argnames=('deg', 'rcond', 'full', 'cov'))
 def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
             full: bool = False, w: ArrayLike | None = None, cov: bool = False
             ) -> Array | tuple[Array, ...]:
@@ -387,7 +386,7 @@ def poly(seq_of_zeros: ArrayLike) -> Array:
 
 
 @export
-@partial(api.jit, static_argnames=['unroll'])
+@api.jit(static_argnames=['unroll'])
 def polyval(p: ArrayLike, x: ArrayLike, *, unroll: int = 16) -> Array:
   r"""Evaluates the polynomial at specific values.
 
@@ -509,7 +508,7 @@ def polyadd(a1: ArrayLike, a2: ArrayLike) -> Array:
 
 
 @export
-@partial(api.jit, static_argnames=('m',))
+@api.jit(static_argnames=('m',))
 def polyint(p: ArrayLike, m: int = 1, k: int | ArrayLike | None = None) -> Array:
   r"""Returns the coefficients of the integration of specified order of a polynomial.
 
@@ -578,7 +577,7 @@ def polyint(p: ArrayLike, m: int = 1, k: int | ArrayLike | None = None) -> Array
 
 
 @export
-@partial(api.jit, static_argnames=('m',))
+@api.jit(static_argnames=('m',))
 def polyder(p: ArrayLike, m: int = 1) -> Array:
   r"""Returns the coefficients of the derivative of specified order of a polynomial.
 

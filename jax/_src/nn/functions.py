@@ -184,7 +184,7 @@ def soft_sign(x: ArrayLike) -> Array:
   x_arr = jnp.asarray(x)
   return x_arr / (jnp.abs(x_arr) + 1)
 
-@partial(api.jit, inline=True)
+@api.jit(inline=True)
 def sigmoid(x: ArrayLike) -> Array:
   r"""Sigmoid activation function.
 
@@ -445,7 +445,7 @@ def selu(x: ArrayLike) -> Array:
   return scale * elu(x, alpha)
 
 # TODO(phawkins): this jit was found to change numerics in a test. Debug this.
-# @partial(api.jit, static_argnames=("approximate",))
+# @api.jit(static_argnames=("approximate",))
 def gelu(x: ArrayLike, approximate: bool = True) -> Array:
   r"""Gaussian error linear unit activation function.
 
@@ -480,7 +480,7 @@ def gelu(x: ArrayLike, approximate: bool = True) -> Array:
         0.5 * x_arr * (lax.erfc(-x_arr * sqrt_half)), dtype=x_arr.dtype
     )
 
-@partial(api.jit, static_argnames=("axis",))
+@api.jit(static_argnames=("axis",))
 def glu(x: ArrayLike, axis: int = -1) -> Array:
   r"""Gated linear unit activation function.
 
@@ -516,7 +516,7 @@ def glu(x: ArrayLike, axis: int = -1) -> Array:
 logsumexp = _logsumexp
 
 
-@partial(api.jit, static_argnames=("axis", "keepdims"))
+@api.jit(static_argnames=("axis", "keepdims"))
 def logmeanexp(
     x: ArrayLike,
     axis: Axis = None,
@@ -545,7 +545,7 @@ def logmeanexp(
   return lse - jnp.log(count)
 
 
-@partial(api.jit, static_argnames=("axis",))
+@api.jit(static_argnames=("axis",))
 def log_softmax(x: ArrayLike,
                 axis: Axis = -1,
                 where: ArrayLike | None = None) -> Array:
@@ -589,7 +589,7 @@ def log_softmax(x: ArrayLike,
 
 
 # TODO(phawkins): this jit was found to change numerics in a test. Debug this.
-# @partial(api.jit, static_argnames=("axis",))
+# @api.jit(static_argnames=("axis",))
 def softmax(x: ArrayLike,
             axis: Axis = -1,
             where: ArrayLike | None = None) -> Array:
@@ -662,7 +662,7 @@ def _softmax_deprecated(
   return result
 
 
-@partial(api.jit, static_argnames=("axis",))
+@api.jit(static_argnames=("axis",))
 def standardize(x: ArrayLike,
                 axis: Axis = -1,
                 mean: ArrayLike | None = None,
@@ -710,7 +710,7 @@ def standardize(x: ArrayLike,
   return jnp.subtract(x, jnp.asarray(mean)) * lax.rsqrt(jnp.asarray(variance) + epsilon)
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
-@partial(api.jit, static_argnames=("num_classes", "dtype", "axis"))
+@api.jit(static_argnames=("num_classes", "dtype", "axis"))
 def _one_hot(x: Array, num_classes: int, *,
              dtype: DTypeLike, axis: int | AxisName) -> Array:
   num_classes = core.concrete_dim_or_error(

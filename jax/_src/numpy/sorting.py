@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 from collections.abc import Sequence
 
 import numpy as np
@@ -28,7 +27,7 @@ from jax._src.typing import Array, ArrayLike
 export = set_module('jax.numpy')
 
 @export
-@partial(api.jit, static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
+@api.jit(static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
 def sort(
     a: ArrayLike,
     axis: int | None = -1,
@@ -89,7 +88,7 @@ def sort(
   return lax.rev(result, dimensions=[dimension]) if descending else result
 
 @export
-@partial(api.jit, static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
+@api.jit(static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
 def argsort(
     a: ArrayLike,
     axis: int | None = -1,
@@ -171,7 +170,7 @@ def argsort(
 
 
 @export
-@partial(api.jit, static_argnames=['kth', 'axis'])
+@api.jit(static_argnames=['kth', 'axis'])
 def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   """Returns a partially-sorted copy of an array.
 
@@ -241,7 +240,7 @@ def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
 
 
 @export
-@partial(api.jit, static_argnames=['kth', 'axis'])
+@api.jit(static_argnames=['kth', 'axis'])
 def argpartition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   """Returns indices that partially sort an array.
 
@@ -356,7 +355,7 @@ def sort_complex(a: ArrayLike) -> Array:
 
 
 @export
-@partial(api.jit, static_argnames=('axis',))
+@api.jit(static_argnames=('axis',))
 def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> Array:
   """Sort a sequence of keys in lexicographic order.
 

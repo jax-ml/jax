@@ -13,8 +13,6 @@
 # limitations under the License.
 
 
-from functools import partial
-
 from absl.testing import absltest
 
 import numpy as np
@@ -39,7 +37,7 @@ class MultiBackendTest(jtu.JaxTestCase):
   def testMultiBackend(self, backend):
     if backend not in ('cpu', jtu.device_under_test(), None):
       raise SkipTest("Backend is not CPU or the device under test")
-    @partial(jax.jit, backend=backend)
+    @jax.jit(backend=backend)
     def fun(x, y):
       return jnp.matmul(x, y)
 
@@ -60,10 +58,10 @@ class MultiBackendTest(jtu.JaxTestCase):
     outer, inner = ordering
     if outer not in ('cpu', jtu.device_under_test(), None):
       raise SkipTest("Backend is not CPU or the device under test")
-    @partial(jax.jit, backend=outer)
+    @jax.jit(backend=outer)
     def fun(x, y):
 
-      @partial(jax.jit, backend=inner)
+      @jax.jit(backend=inner)
       def infun(x, y):
         return jnp.matmul(x, y)
 
@@ -97,10 +95,10 @@ class MultiBackendTest(jtu.JaxTestCase):
                      "the entire computation. So if inner is CPU and outer is "
                      "None, then the computation will be execute on CPU.")
 
-    @partial(jax.jit, backend=outer)
+    @jax.jit(backend=outer)
     def fun(x, y):
 
-      @partial(jax.jit, backend=inner)
+      @jax.jit(backend=inner)
       def infun(x, y):
         return jnp.matmul(x, y)
 
@@ -116,7 +114,7 @@ class MultiBackendTest(jtu.JaxTestCase):
   def testGpuMultiBackendOpByOpReturn(self, backend):
     if backend not in ('cpu', jtu.device_under_test()):
       raise SkipTest("Backend is not CPU or the device under test")
-    @partial(jax.jit, backend=backend)
+    @jax.jit(backend=backend)
     def fun(x, y):
       return jnp.matmul(x, y)
     x = npr.uniform(size=(10,10))
@@ -130,7 +128,7 @@ class MultiBackendTest(jtu.JaxTestCase):
   @jtu.ignore_warning(category=DeprecationWarning,
                       message="backend and device argument")
   def testJitCpu(self):
-    @partial(jax.jit, backend='cpu')
+    @jax.jit(backend='cpu')
     def get_arr(scale):
       return scale + jnp.ones((2, 2))
 

@@ -1621,7 +1621,7 @@ def _lu_solve_core(lu: Array, permutation: Array, b: Array, trans: int) -> Array
   return lax.reshape(x, b.shape)
 
 
-@partial(api.jit, static_argnums=(3,))
+@api.jit(static_argnums=(3,))
 def _lu_solve(lu: Array, permutation: Array, b: Array, trans: int) -> Array:
   if len(lu.shape) < 2 or lu.shape[-1] != lu.shape[-2]:
     raise ValueError("last two dimensions of LU decomposition must be equal, "

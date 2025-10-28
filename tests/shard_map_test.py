@@ -196,7 +196,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def add_one(x, static_shape):
       return x + jnp.ones(static_shape, dtype=x.dtype)
 
-    @partial(jax.jit, static_argnums=(1,))
+    @jax.jit(static_argnums=(1,))
     def fun(a, static_shape):
       return shard_map(
           add_one,
@@ -2204,7 +2204,7 @@ class ShardMapTest(jtu.JaxTestCase):
       x, y = jax.lax.map(lambda xs: f_shmapped2(xs[0], xs[1]), (x, y))
       return jax.lax.map(lambda xs: f_shmapped(xs[0], xs[1]), (x, y)).sum()
 
-    @partial(jax.jit, in_shardings=s,
+    @jax.jit(in_shardings=s,
              out_shardings=jax.sharding.NamedSharding(mesh, P()))
     def example(x, y):
       return jax.grad(f_wrapper, allow_int=True, argnums=(0, 1))(x, y)
@@ -3324,7 +3324,7 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))
     out_sharding = NamedSharding(mesh, P('i', None))
 
-    @partial(jax.jit, out_shardings=out_sharding)
+    @jax.jit(out_shardings=out_sharding)
     def f():
       return shard_map(lambda: jax.lax.axis_index('i').reshape(1,1),
                        in_specs=P('i', None), out_specs=P('i', None),
@@ -3337,7 +3337,7 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((1, 2), ('i', 'j'))
     out_sharding = NamedSharding(mesh, P('i', None))
 
-    @partial(jax.jit, out_shardings=out_sharding)
+    @jax.jit(out_shardings=out_sharding)
     def f():
       return shard_map(lambda: jax.lax.axis_index('i').reshape(1, 1),
                        mesh=mesh, in_specs=P('i', None), out_specs=P('i', None),

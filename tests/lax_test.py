@@ -4733,7 +4733,7 @@ class CompositeTest(jtu.JaxTestCase):
   def test_composite_with_attributes(self):
     # The static_argnames is required here since k is a constant that should
     # come out of a larger context, but we unit test one op (composite) here.
-    @partial(jax.jit, static_argnames=['k'])
+    @jax.jit(static_argnames=['k'])
     @partial(lax.composite, name="my.top_k")
     def my_top_k(x, *, k):
       return lax.top_k(x, k)
