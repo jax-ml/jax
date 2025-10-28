@@ -23,6 +23,7 @@ from jax._src import api_util
 from jax._src import core
 from jax._src import custom_api_util
 from jax._src import linear_util as lu
+from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import mlir
@@ -93,6 +94,8 @@ class custom_fusion:
     self.eval_rule = eval_rule
     return eval_rule
 
+  @functools.partial(api_boundary,
+                     repro_api_name="jax.pallas.custom_fusion.__call__")
   def __call__(self, *args, **kwargs):
     debug_fun = api_util.debug_info("custom_fusion fun", self.fun, args, kwargs)
 

@@ -201,6 +201,7 @@ def _smap(f, *, in_axes, out_axes, axis_name: AxisName):
                     axis_names={axis_name}, check_vma=True, _smap=True)
 
 
+@partial(traceback_util.api_boundary, repro_api_name="jax.shard_map")
 def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
                in_specs: Specs, out_specs: Specs | Callable[[], Specs],
                axis_names: Set[AxisName], check_vma: bool,
