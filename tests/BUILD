@@ -111,6 +111,7 @@ jax_py_test(
 jax_py_test(
     name = "array_extensibility_test",
     srcs = ["array_extensibility_test.py"],
+    shard_count = 3,
     tags = [
         "notsan",  # Times out
     ],
