@@ -1202,6 +1202,43 @@ class LayoutInferenceTest(parameterized.TestCase):
           ]
       )
 
+  def test_conjure_orders_hints_correctly(self):
+    # Create a var to use in the equation system.
+    shape = (128, 128)
+    f32 = ir.F32Type.get()
+    [val] = undefs(ir.VectorType.get(shape, f32))
+    op_or_result = layout_inference.OperandOrResult(
+        operation=val.owner,
+        type=layout_inference.VariableType.RESULT,
+        index=0,
+    )
+    var = eqns.Variable(op_or_result)
+
+    hints = [
+        layout_inference.Hint(
+            var,
+            eqns.RegisterLayout(fa.WGSplatFragLayout((128, 128))),
+        ),
+        layout_inference.Hint(
+            var,
+            eqns.RegisterLayout(fa.WGMMA_LAYOUT),
+        ),
+        layout_inference.Hint(
+            var,
+            eqns.RegisterLayout(fa.WGStridedFragLayout(shape, vec_size=4)),
+        ),
+    ]
+
+    system = eqns.EquationSystem()
+    ordered = list(layout_inference.conjure_assignment({var}, system, hints))
+    expected = [
+        (var, eqns.RegisterLayout(fa.WGMMA_LAYOUT)),
+        (var, eqns.RegisterLayout(fa.WGSplatFragLayout((128, 128)))),
+        (var, eqns.RegisterLayout(fa.WGStridedFragLayout(shape, vec_size=4))),
+        (var, eqns.RegisterLayout(fa.WGStridedFragLayout(shape, vec_size=2))),
+    ]
+    self.assertEqual(ordered, expected)
+
   def test_memref_load_store_op_transforms_are_empty(self):
     with ir.InsertionPoint(self.module.body):
       i32 = ir.IntegerType.get_signless(32)

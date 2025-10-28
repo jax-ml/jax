@@ -358,9 +358,22 @@ def conjure_assignment(
       equation_system.constraints
   )
 
-  for hint in hints:
-    if (assignment := extract_variable_assignment_from_hint(hint)) is not None:
-      yield assignment
+  def assignment_order(
+      assignment: tuple[eqns.Variable, eqns.Constant],
+  ) -> int:
+    match assignment:
+      # Try TiledLayout first, before other hints, because TiledLayout` are
+      # usually more useful to propagate than `WGSplat`. Also this often
+      # improves the performance of the layout inference.
+      case (_, eqns.RegisterLayout(fa.TiledLayout())):
+        return 0
+      case _:
+        return 1
+
+  assignments = [extract_variable_assignment_from_hint(h) for h in hints]
+  assignments = [a for a in assignments if a is not None]
+  assignments = sorted(assignments, key=assignment_order)
+  yield from assignments
 
   # Here, we have not managed to find an assignment for all the unknown
   # variables, and our hints have not proven sufficient to unblock us. We now
