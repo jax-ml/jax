@@ -1404,13 +1404,29 @@ def _memref_subview_op_lowering_rule(
   swizzle, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
   if swizzle != mgpu.SwizzlingMode.kNoSwizzle:
     source_ty = ir.MemRefType(op.source.type)
+    swizzle_elems = swizzle * 8 // utils.bitwidth(source_ty.element_type)
     source_strides, _ = source_ty.get_strides_and_offset()
-    for stride, slice, size in zip(source_strides, op.static_sizes, source_ty.shape, strict=True):
+    for stride, offset, size in zip(
+        source_strides, op.static_offsets, op.static_sizes, strict=True
+    ):
       if stride != 1:
         continue
       # A dimension with stride 1 is a minor dimension and is swizzled.
-      if slice != size:
-        raise NotImplementedError("Slicing a swizzled dimension is unsupported.")
+      if size % swizzle_elems != 0:
+        raise ValueError(
+            f"Swizzled dimension of {size=} is not a multiple of"
+            f" {swizzle_elems=}."
+        )
+      # TODO(allanrenucci): Support dynamic offsets that are divisible by
+      # `swizzle_elems`. E.g. using `utils.is_known_divisible`.
+      if ir.ShapedType.is_dynamic_size(offset):
+        raise NotImplementedError(
+            "Slicing a swizzled dynamic dimension is not supported."
+        )
+      if offset % swizzle_elems != 0:
+        raise ValueError(
+            f"subview {offset=} is not a multiple of {swizzle_elems=}."
+        )
 
   match transforms:
     case ():
