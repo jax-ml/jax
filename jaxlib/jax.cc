@@ -586,20 +586,22 @@ NB_MODULE(_jax, m) {
   m.def(
       "dlpack_managed_tensor_to_buffer",
       [](const nb::capsule& tensor, nb_class_ptr<PyDevice> device,
-         std::optional<std::intptr_t> stream) {
+         std::optional<std::intptr_t> stream, std::optional<bool> copy) {
         return xla::ValueOrThrow(DLPackManagedTensorToBuffer(
-            tensor, device->device(), device->client(), stream));
+            tensor, device->device(), device->client(), stream, copy));
       },
       nb::arg("dlpack"), nb::arg("device"), nb::arg("stream").none(),
-    nb::sig(
-      // clang-format off
+      nb::arg("copy").none() = nb::none(),
+      nb::sig(
+          // clang-format off
       "def dlpack_managed_tensor_to_buffer("
       "dlpack: typing_extensions.CapsuleType, "
       "device: Device, "
-      "stream: int | None"
+      "stream: int | None, "
+      "copy: bool | None = ..."
       ") -> ArrayImpl"
-      // clang-format on
-    ));
+          // clang-format on
+          ));
   m.def("cuda_array_interface_to_buffer",
         xla::ValueOrThrowWrapper(CudaArrayInterfaceToBuffer), nb::arg("cai"),
         nb::arg("gpu_backend").none() = nb::none(),
