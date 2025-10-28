@@ -74,7 +74,7 @@ def _ignore_known_hidden_frame(f: types.FrameType) -> bool:
 
 def _add_tracebackhide_to_hidden_frames(tb: types.TracebackType):
   for f, _lineno in traceback.walk_tb(tb):
-    if not include_frame(f):
+    if not include_frame(f) and not _is_reraiser_frame(f):
       f.f_locals["__tracebackhide__"] = True
 
 def filter_traceback(tb: types.TracebackType) -> types.TracebackType | None:
@@ -110,9 +110,12 @@ def _add_call_stack_frames(tb: types.TracebackType) -> types.TracebackType:
       reached_module_level = True
   return out
 
-def _is_reraiser_frame(f: traceback.FrameSummary) -> bool:
-  return (f.filename == __file__ and
-          f.name == 'reraise_with_filtered_traceback')
+def _is_reraiser_frame(f: traceback.FrameSummary | types.FrameType) -> bool:
+  if isinstance(f, traceback.FrameSummary):
+    filename, name = f.filename, f.name
+  else:
+    filename, name = f.f_code.co_filename, f.f_code.co_name
+  return filename == __file__ and name == 'reraise_with_filtered_traceback'
 
 def _is_under_reraiser(e: BaseException) -> bool:
   if e.__traceback__ is None:
@@ -193,11 +196,9 @@ def api_boundary(fun: C) -> C:
         _add_tracebackhide_to_hidden_frames(e.__traceback__)
         raise
 
-      filtered_tb, unfiltered = None, None
+      tb = e.__traceback__
       try:
-        tb = e.__traceback__
-        filtered_tb = filter_traceback(tb)
-        e.with_traceback(filtered_tb)
+        e.with_traceback(filter_traceback(tb))
         if mode == "quiet_remove_frames":
           e.add_note("--------------------\n" + _simplified_tb_msg)
         else:
@@ -213,9 +214,8 @@ def api_boundary(fun: C) -> C:
           jax_error.__suppress_context__ = e.__suppress_context__
           e.__cause__ = jax_error
           e.__context__ = None
+          del jax_error
         raise
       finally:
-        del filtered_tb
-        del unfiltered
-        del mode
+        del mode, tb
   return cast(C, reraise_with_filtered_traceback)
