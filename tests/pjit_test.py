@@ -7751,6 +7751,22 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     else:
       self.assertIn('mhlo.sharding = "{devices=[2,2]<=[4]}"}', lowered_text)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_random_bernoulli(self, mesh):
+    @jax.jit
+    def f(key):
+      out = jax.random.bernoulli(key, shape=(8, 12), out_sharding=P('x', 'y'))
+      self.assertEqual(out.aval.sharding.spec, P('x', 'y'))
+      return out
+
+    key = jax.random.key(1)
+    out = f(key)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+    lowered_text = f.lower(key).as_text()
+    self.assertIn('sdy.sharding_constraint', lowered_text)
+    self.assertIn('<@mesh, [{"x"}, {"y"}]>', lowered_text)
+
   def test_random_normal_wo_mesh_context_error(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'),
                            axis_types=(AxisType.Explicit,) * 2)

@@ -1032,7 +1032,8 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> Array:
 def bernoulli(key: ArrayLike,
               p: RealArray = 0.5,
               shape: Shape | None = None,
-              mode: str = 'low') -> Array:
+              mode: str = 'low',
+              *, out_sharding=None) -> Array:
   r"""Sample Bernoulli random values with given shape and mean.
 
   The values are distributed according to the probability mass function:
@@ -1064,12 +1065,14 @@ def bernoulli(key: ArrayLike,
   if mode not in ['high', 'low']:
     raise ValueError(f"got {mode=}, expected 'high' or 'low'")
   key, _ = _check_prng_key("bernoulli", key)
+  out_sharding = canonicalize_sharding(out_sharding, "bernoulli")
   dtype = lax.dtype(p)
   if not dtypes.issubdtype(dtype, np.floating):
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
   p = lax.convert_element_type(p, dtype)
-  return _bernoulli(key, p, shape, mode=mode)
+  return maybe_auto_axes(_bernoulli, out_sharding,
+                         shape=shape, mode=mode)(key, p)
 
 
 @jit(static_argnames=['shape', 'mode'])
