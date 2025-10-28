@@ -1246,6 +1246,8 @@ class PallasCallDMATest(PallasBaseTest):
   def test_host_input_host_to_hbm_dma(self):
     if self.INTERPRET:
       self.skipTest('Interpret mode does not support host memory.')
+    if jax.device_count() > 1:
+      self.skipTest("Test only works with a single device.")
     def kernel(x_host_ref, y_hbm_ref):
       def body(sem):
         pltpu.async_copy(x_host_ref, y_hbm_ref, sem).wait()
@@ -1273,6 +1275,8 @@ class PallasCallDMATest(PallasBaseTest):
     np.testing.assert_array_equal(y, x)
 
   def test_hbm_to_host_host_output_dma(self):
+    if jax.device_count() > 1:
+      self.skipTest("Test only works with a single device.")
     def kernel(y_hbm_ref, x_host_ref):
       def body(sem):
         pltpu.async_copy(y_hbm_ref, x_host_ref, sem).wait()
