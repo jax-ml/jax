@@ -552,7 +552,7 @@ absl::StatusOr<std::pair<std::string, std::string>> GetHostAndInitFuncNames(
   return std::make_pair(host_func_name, init_func_name);
 }
 
-absl::StatusOr<CompiledKernel> CompileAndInit(const char* module) {
+absl::StatusOr<CompiledKernel> CompileAndInit(llvm::StringRef module) {
   mlir::MLIRContext context(mlir::MLIRContext::Threading::DISABLED);
   context.allowUnregisteredDialects(true);
   InitContext(&context);
@@ -600,7 +600,7 @@ absl::StatusOr<CompiledKernel> CompileAndInit(const char* module) {
 // a single HLO module. So it should be safe to not include the CUDA context
 // in the key.
 absl::StatusOr<CompiledKernel*> CachedCompileAndInit(CacheKey key,
-                                                     const char* module) {
+                                                     llvm::StringRef module) {
   auto cache_and_mutex = GetKernelCache();
   auto* cache = cache_and_mutex.first;
   auto* mutex = cache_and_mutex.second;
@@ -684,7 +684,7 @@ absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
   }
   CacheKey key(hash, reinterpret_cast<uintptr_t>(ctx));
   TF_ASSIGN_OR_RETURN(auto compiled_kernel,
-                      CachedCompileAndInit(key, module.data()));
+                      CachedCompileAndInit(key, module));
   auto ctx_kernel_comm = compiled_kernel->GetHostLaunch();
   bool is_comm_used = std::get<2>(ctx_kernel_comm);
 
@@ -743,8 +743,9 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "mosaic_gpu_v2", "CUDA",
 extern "C" {
 
 __attribute__((visibility("default"))) void** MosaicGpuCompile(
-    const char* module) {
-  auto compiled = CompileAndInit(module);
+    const char* module, int num_module_bytes) {
+  std::string module_str(module, num_module_bytes);
+  auto compiled = CompileAndInit(module_str);
   if (!compiled.ok()) {
     return nullptr;
   }

@@ -5350,6 +5350,18 @@ class ApiTest(TestCase):
     np.testing.assert_array_equal(xo, x + 2.0)
     np.testing.assert_array_equal(yo, jnp.asarray(42, dtype=jnp.int32))
 
+  def test_serialize_uses_bytecode_format(self):
+    def kernel(ctx, src, dst, smem):
+      del ctx, smem
+      x = mgpu.FragmentedArray.load_strided(src, is_signed=True)
+      (x + 1).store_untiled(dst)
+    x = jnp.arange(128, dtype=jnp.int32)
+    with self.subTest("bytecode"):
+      f = mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x, x, (),
+      )
+      bytecode_stablehlo = jax.jit(f).lower(x).as_text()
+      module_prefix = "module = \"ML\\EFR"
 
 if hp is not None:
   @hps.composite
