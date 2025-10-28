@@ -20,6 +20,7 @@ import pathlib
 import re
 import signal
 import subprocess
+import sys
 import time
 
 from absl import app
@@ -400,6 +401,8 @@ class MultiProcessTest(parameterized.TestCase):
   def setUp(self):
     """Start tests together."""
     super().setUp()
+    if sys.platform == "win32":
+      self.skipTest("TODO(emilyaf): Enable multiprocess tests on Windows.")
     if xb.process_count() == 1:
       self.skipTest("Test requires multiple processes.")
     assert xb.process_count() == NUM_PROCESSES.value, (
