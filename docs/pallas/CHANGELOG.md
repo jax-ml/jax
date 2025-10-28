@@ -17,6 +17,11 @@ Remember to align the itemized text with the first line of an item within a list
 
   * Added {func}`jax.experimental.pallas.tpu.get_tpu_info` to get TPU hardware information.
 
+* Deprecations
+
+  * `pl.max_contiguous` has been moved to {mod}`jax.experimental.pallas.triton`.
+    Accessing it via {mod}`jax.experimental.pallas` is deprecated.
+
 * Removals
 
   * Removed the previously deprecated
