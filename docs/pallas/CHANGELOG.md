@@ -23,6 +23,9 @@ Remember to align the itemized text with the first line of an item within a list
     {class}`jax.experimental.pallas.tpu.TPUCompilerParams`,
     {class}`jax.experimental.pallas.tpu.TPUMemorySpace`,
     {class}`jax.experimental.pallas.tpu.TritonCompilerParams`.
+  * Removed previously deprecated `pl.atomic_*` aliases from the
+    {mod}`jax.experimental.pallas` package. Use them via
+    {mod}`jax.experimental.pallas.triton`.
 
 ## Released with jax 0.7.1
 
