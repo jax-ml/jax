@@ -21,6 +21,7 @@ import jax
 from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import linear_util as lu
+from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas.fuser import fusible_dtype
@@ -28,6 +29,7 @@ from jax._src.pallas.fuser import fusion as fusion_lib
 from jax._src.pallas.fuser.fusible import fusible_p
 
 
+@functools.partial(api_boundary, repro_api_name="fuser.fuse")
 def fuse(f=None, *, resolve_fusion_dtypes: bool = True, debug: bool = False):
   """Fuses a function into a single fusible.
 

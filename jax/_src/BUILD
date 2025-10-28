@@ -799,6 +799,7 @@ pytype_strict_library(
         ":sharding_impls",
         ":source_info_util",
         ":stages",
+        ":traceback_util",
         ":tree_util",
         ":typing",
         ":util",
