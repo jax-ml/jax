@@ -333,7 +333,14 @@ def kernel(
       out_refs = jax.tree.map(
           lambda out: jax_core.new_ref(
               lax.empty(out.shape, out.dtype),
-              memory_space=getattr(out, "memory_space", None),
+              memory_space=(
+                  ms
+                  if hasattr(out, "memory_space")
+                  and not isinstance(
+                      ms := out.memory_space, jax_core.MemorySpace
+                  )
+                  else None
+              ),
           ),
           out_shape,
       )

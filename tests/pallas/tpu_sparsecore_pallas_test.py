@@ -1281,6 +1281,41 @@ class VectorSubcoreTest(PallasSCTest):
     indices = 31 - jnp.arange(32)
     np.testing.assert_array_equal(kernel(x, indices), x[0] + x.sum(0)[::-1])
 
+  def test_copy_in_shard_map(self):
+    num_devices = len(jax.devices())
+    mesh = jax.make_mesh((num_devices,), ("x",))
+
+    rng = np.random.default_rng(0)
+    x = rng.integers(512, size=(num_devices * 1024, 16), dtype=np.int32)
+
+    # The test ensures that JAX-level memory space for ``x`` is not propagated
+    # into Pallas, since Pallas cannot use it.
+    x = jax.device_put(x, jax.sharding.NamedSharding(mesh, jax.P("x", None)))
+    self.assertEqual(jax.typeof(x).memory_space, jax.memory.Space.Device)
+
+    @functools.partial(
+        jax.shard_map,
+        in_specs=(jax.P("x", None),),
+        out_specs=jax.P("x", None),
+        mesh=mesh,
+        check_vma=False,
+    )
+    def f(x):
+      @plsc.kernel(
+          out_shape=x,
+          mesh=plsc.VectorSubcoreMesh(
+              core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+          ),
+          scratch_shapes=(pltpu.VMEM(x.shape, x.dtype),),
+      )
+      def kernel(in_ref, o_ref, scratch_ref):
+        pltpu.sync_copy(in_ref, scratch_ref)
+        pltpu.sync_copy(scratch_ref, o_ref)
+
+      return kernel(x)
+
+    np.testing.assert_array_equal(f(x), x)
+
 
 class ScalarSubcoreTest(PallasSCTest):
 
