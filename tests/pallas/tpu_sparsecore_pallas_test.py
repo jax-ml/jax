@@ -53,6 +53,10 @@ class PallasSCTest(jtu.JaxTestCase):
 
     super().setUp()
 
+  @property
+  def sc_info(self):
+    return plsc.get_sparse_core_info()
+
 
 class DebugPrintTest(PallasSCTest):
 
@@ -111,7 +115,7 @@ class DebugPrintTest(PallasSCTest):
     @plsc.kernel(
         out_shape=int32s,
         mesh=plsc.ScalarSubcoreMesh(
-            axis_name="core", num_cores=sc_core._num_available_cores()
+            axis_name="core", num_cores=self.sc_info.num_cores
         ),
     )
     def kernel(int32s_hbm_ref, int16s_hbm_ref, int8s_hbm_ref, o_hbm_ref):
@@ -991,7 +995,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_cumsum(self, dtype):
-    x = jnp.arange(sc_core._vector_dimension(), dtype=dtype)
+    x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
 
     @vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
@@ -1001,7 +1005,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_cumsum_2d_not_supported(self, dtype):
-    x = jnp.arange(sc_core._vector_dimension(), dtype=dtype)
+    sc_info = plsc.get_sparse_core_info()
+    x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
 
     with self.assertRaisesRegex(NotImplementedError, r"must be rank 1"):
       @vector_subcore_kernel(out_shape=x)
@@ -1012,7 +1017,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_masked_cumsum(self, dtype):
-    x = jnp.arange(sc_core._vector_dimension(), dtype=dtype)
+    x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
 
     @vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
@@ -1021,7 +1026,7 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), np.cumsum(x * (x % 2)))
 
   def test_parallel_loop_with_carry(self):
-    chunk_size = sc_core._vector_dimension()
+    chunk_size = self.sc_info.num_lanes
     nchunks = 4
     per_step_increment = 10
     sentinel_multiplier = 1000
@@ -1130,7 +1135,7 @@ class VectorSubcoreTest(PallasSCTest):
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
-    vec_dim = sc_core._vector_dimension()
+    vec_dim = self.sc_info.num_lanes
     @plsc.kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(mesh.num_subcores, vec_dim), dtype=jnp.uint32
@@ -1159,7 +1164,7 @@ class VectorSubcoreTest(PallasSCTest):
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
-    vec_dim = sc_core._vector_dimension()
+    vec_dim = self.sc_info.num_lanes
     @functools.partial(
         pl.pallas_call,
         grid=16,
@@ -1319,16 +1324,14 @@ class VectorSubcoreTest(PallasSCTest):
 
 class ScalarSubcoreTest(PallasSCTest):
 
-  @property
-  def num_cores(self):
-    return sc_core._num_available_cores()
-
   def test_copy(self):
     x = jnp.arange(16)
 
     @plsc.kernel(
         out_shape=x,
-        mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=self.num_cores),
+        mesh=plsc.ScalarSubcoreMesh(
+            axis_name="core", num_cores=self.sc_info.num_cores
+        ),
     )
     def kernel(x_ref, o_ref):
       lax.cond(
@@ -1340,11 +1343,15 @@ class ScalarSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x), x)
 
   def test_sliced_copy(self):
-    x = jnp.arange(self.num_cores * 8).reshape(self.num_cores, -1)
+    x = jnp.arange(self.sc_info.num_cores * 8).reshape(
+        self.sc_info.num_cores, -1
+    )
 
     @plsc.kernel(
         out_shape=x,
-        mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=self.num_cores),
+        mesh=plsc.ScalarSubcoreMesh(
+            axis_name="core", num_cores=self.sc_info.num_cores
+        ),
     )
     def kernel(x_ref, o_ref):
       @functools.partial(pl.run_scoped, sems=pltpu.SemaphoreType.DMA(4))
