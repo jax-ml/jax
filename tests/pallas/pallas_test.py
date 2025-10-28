@@ -674,6 +674,12 @@ class PallasCallTest(PallasBaseTest):
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("`DotAlgorithmPreset` only supported on GPU.")
 
+    if precision in (
+        jax.lax.DotAlgorithmPreset.TF32_TF32_F32,
+        jax.lax.DotAlgorithmPreset.TF32_TF32_F32_X3,
+      ) and any(gfx.compute_capability.startswith(("gfx11", "gfx12")) for gfx in jax.devices()):
+      self.skipTest("Navi3x and Navi4x doesn't have hardware support for TF32")
+
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((32, 64), jnp.float32),
