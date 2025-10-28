@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import functools
 import itertools
 import math
@@ -33,6 +32,7 @@ from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
+from jax._src.pallas import primitives as pallas_primitives
 from jax.experimental import pallas as pl
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
@@ -2859,10 +2859,7 @@ class PallasPrimitivesTest(PallasBaseTest):
   ])
   def test_load_pretty_print(self, expr, expected):
     def body(x_ref):
-      with jtu.ignore_warning(
-          category=DeprecationWarning, message="pl.load is deprecated"
-      ):
-        x = pl.load(x_ref, expr())
+      x = pallas_primitives.load(x_ref, expr())
       return [x]
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
         wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
@@ -2877,10 +2874,9 @@ class PallasPrimitivesTest(PallasBaseTest):
   ])
   def test_store_pretty_print(self, expr, expected):
     def body(x_ref):
-      with jtu.ignore_warning(
-          category=DeprecationWarning, message="pl.(load|store) is deprecated"
-      ):
-        pl.store(x_ref, expr(), pl.load(x_ref, expr()))
+      pallas_primitives.store(
+          x_ref, expr(), pallas_primitives.load(x_ref, expr())
+      )
       return []
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
         wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
@@ -2900,10 +2896,9 @@ class PallasPrimitivesTest(PallasBaseTest):
   ])
   def test_swap_pretty_print(self, expr, expected):
     def body(x_ref):
-      with jtu.ignore_warning(
-          category=DeprecationWarning, message="pl.(load|swap) is deprecated"
-      ):
-        x = pl.swap(x_ref, expr(), pl.load(x_ref, expr()))
+      x = pallas_primitives.swap(
+          x_ref, expr(), pallas_primitives.load(x_ref, expr())
+      )
       return [x]
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
         wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
