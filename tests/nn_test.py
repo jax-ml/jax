@@ -380,10 +380,13 @@ class NNFunctionsTest(jtu.JaxTestCase):
     _, dbias_ans, _ = bwd_ans(x, bias, mask)
     self.assertAllClose(dbias_ans, dbias_ref, rtol=0.1, atol=0.1)
 
-  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), order=4,
-                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None,
+                modes=["fwd"])
+    check_grads(nn.softplus, (1e-8,), order=4,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None,
+                modes=["rev"])
 
   def testSoftplusGradZero(self):
     check_grads(nn.softplus, (0.,), order=1,
@@ -424,10 +427,13 @@ class NNFunctionsTest(jtu.JaxTestCase):
         jax.grad(nn.sparse_plus)(-2.), nn.sparse_sigmoid(-2.),
         check_dtypes=False)
 
-  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSquareplusGrad(self):
     check_grads(nn.squareplus, (1e-8,), order=4,
-                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None,
+                modes=["fwd"])
+    check_grads(nn.squareplus, (1e-8,), order=4,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None,
+                modes=["rev"])
 
   def testSquareplusGradZero(self):
     check_grads(nn.squareplus, (0.,), order=1,
@@ -445,10 +451,13 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testSquareplusZero(self, dtype):
     self.assertEqual(dtype(1), nn.squareplus(dtype(0), dtype(4)))
 
-  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testMishGrad(self):
     check_grads(nn.mish, (1e-8,), order=4,
-                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None,
+                modes=["fwd"])
+    check_grads(nn.mish, (1e-8,), order=4,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None,
+                modes=["rev"])
 
   def testMishGradZero(self):
     check_grads(nn.mish, (0.,), order=1,
@@ -506,9 +515,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.mish(1e3)
     self.assertAllClose(val, 1e3, check_dtypes=False, atol=1e-3)
 
-  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testEluGrad(self):
-    check_grads(nn.elu, (1e4,), order=4, eps=1.)
+    check_grads(nn.elu, (1e4,), order=4, eps=1., modes=["fwd"])
+    check_grads(nn.elu, (1e4,), order=4, eps=1., modes=["rev"])
 
   def testEluValue(self):
     val = nn.elu(1e4)
