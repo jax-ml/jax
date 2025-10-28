@@ -587,14 +587,7 @@ def _vector_load_equation_system(
   dest = OperandOrResult(op, VariableType.RESULT, 0)
   dest_var = eqns.Variable(dest)
   operand_or_results_for_variable = {dest_var: [dest]}
-  constraints = [
-      eqns.Distinct(
-          dest_var,
-          eqns.RegisterLayout(
-              fa.WGSplatFragLayout(shape=tuple(ir.ShapedType(op.result.type).shape))
-          ),
-      ),
-  ]
+  constraints = [eqns.NotOfType(dest_var, fa.WGSplatFragLayout)]
 
   # SMEM
   if utils.is_smem_ref(op.base):
@@ -716,10 +709,7 @@ def _constant_equation_system(
         assignments={variable: eqns.RegisterLayout(layout)}
     )
   else:
-    constant_is_not_splat = eqns.Distinct(
-        variable,
-        eqns.RegisterLayout(fa.WGSplatFragLayout(shape=shape)),
-    )
+    constant_is_not_splat = eqns.NotOfType(variable, fa.WGSplatFragLayout)
     system = eqns.EquationSystem(constraints=[constant_is_not_splat])
 
   return system, {variable: [result]}, []
