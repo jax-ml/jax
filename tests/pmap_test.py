@@ -2201,10 +2201,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     save_cos = lambda prim, *_, **__: str(prim) == 'cos'
     f = remat(g, policy=save_cos)
     _, f_vjp = jax.vjp(f, x)
-    if config.vjp3.value:
-      jaxpr = f_vjp.jaxpr
-    else:
-      jaxpr = f_vjp.args[0].func.args[1]
+    jaxpr = f_vjp.jaxpr
     jaxpr_text = str(jaxpr)
     self.assertEqual(jaxpr_text.count(' sin '), 0)
     self.assertEqual(jaxpr_text.count(' cos '), 0)
@@ -2212,10 +2209,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     save_sin = lambda prim, *_, **__: str(prim) == 'sin'
     f = remat(g, policy=save_sin)
     _, f_vjp = jax.vjp(f, x)
-    if config.vjp3.value:
-      jaxpr = f_vjp.jaxpr
-    else:
-      jaxpr = f_vjp.args[0].func.args[1]
+    jaxpr = f_vjp.jaxpr
     jaxpr_text = str(jaxpr)
     self.assertEqual(jaxpr_text.count(' sin '), 0)
     self.assertEqual(jaxpr_text.count(' cos '), 2)
@@ -2223,10 +2217,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     save_nothing = lambda prim, *_, **__: False
     f = remat(g, policy=save_nothing)
     _, f_vjp = jax.vjp(f, x)
-    if config.vjp3.value:
-      jaxpr = f_vjp.jaxpr
-    else:
-      jaxpr = f_vjp.args[0].func.args[1]
+    jaxpr = f_vjp.jaxpr
     jaxpr_text = str(jaxpr)
     self.assertEqual(jaxpr_text.count(' sin '), 1)
     self.assertEqual(jaxpr_text.count(' cos '), 2)
