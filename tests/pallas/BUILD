@@ -399,6 +399,7 @@ jax_multiplatform_test(
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
+        "notap",  # TODO(b/455849275): Timing out.
         "notsan",  # Times out.
     ],
     deps = [
