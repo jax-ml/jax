@@ -2161,6 +2161,8 @@ class PallasCallTest(PallasBaseTest):
   def test_vmem_oom_error_message_dynamic_grid_scalar_prefetch_and_vmem_scratch(
       self,
   ):
+    if jax.device_count() > 1:
+      self.skipTest("Test only works with a single device.")
     if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
       self.skipTest('Support added on Oct 14, 2025')
 
