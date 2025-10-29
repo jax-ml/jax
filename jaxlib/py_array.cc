@@ -2021,7 +2021,7 @@ absl::Status PyHostValue::CopyToHostAsync(
   // it is desirable for the runtime to choose the layout.
   PyUserContextScope user_context_scope;
   ready_ = ifrt_array->CopyToHostBuffer(value_.mutable_data(), strides,
-                                        ifrt::ArrayCopySemantics::kReuseInput);
+                                        ifrt::ArrayCopySemantics::kAlwaysCopy);
   // Make sure the destination of the copy remains alive until the copy is done.
   value_.inc_ref();
   ready_.OnReady([array{value_.ptr()}](absl::Status status) {
