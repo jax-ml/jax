@@ -182,12 +182,7 @@ def _fusible_matmul(
       out_shape=[z_out_type],
       interpret=interpret,
       debug=debug,
-  )(
-      *scalar_prefetch,
-      x_values,
-      y_values,
-      z_values,
-  )[0]
+  )(*scalar_prefetch, x_values, y_values, z_values,)[0]
 
 
 def fusible_matmul(
@@ -251,14 +246,65 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         matmul_relu(x, y), matmul_relu_ref(x, y), atol=5e-5
     )
 
+  def test_matmul_reduce_sum(self):
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Only works with TPU v5+')
+    dtype = jnp.float32
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (512, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+
+    @jax.jit
+    @fuser.fuse
+    def matmul_relu(x, y):
+      x = fusible_matmul(x, y, bm=512, bn=512)
+      x = jnp.sum(x, axis=1)
+      return x
+
+    @jit_no_excess_precision
+    def matmul_relu_ref(x, y):
+      return mm_ref(x, y).sum(axis=1)
+
+    np.testing.assert_allclose(
+        matmul_relu(x, y), matmul_relu_ref(x, y), atol=1e-3
+    )
+
+  def test_matmul_reduce_sum_broadcast(self):
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Only works with TPU v5+')
+    dtype = jnp.float32
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (512, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+
+    @jax.jit
+    @fuser.fuse
+    def matmul_sum_bcast(x, y):
+      x = fusible_matmul(x, y, bm=512, bn=512)
+      x = jnp.sum(x, axis=1, keepdims=True)
+      x = jnp.broadcast_to(x, (x.shape[0], 128))
+      return x
+
+    @jit_no_excess_precision
+    def matmul_sum_bcast_ref(x, y):
+      return jnp.broadcast_to(
+          mm_ref(x, y).sum(axis=1, keepdims=True), (x.shape[0], 128)
+      )
+
+    np.testing.assert_allclose(
+        matmul_sum_bcast(x, y),
+        matmul_sum_bcast_ref(x, y),
+        atol=1e-3,
+    )
+
   @parameterized.parameters('float32', 'bfloat16')
   def test_matmul_plus_iota_custom_fusion(self, dtype):
     def make_iota_custom_fusion(shape, dtype):
       @fuser.custom_fusion
       def iota(start=0):
         return jnp.broadcast_to(
-            jnp.astype(jnp.arange(shape[-1]) + start, dtype),
-            shape)
+            jnp.astype(jnp.arange(shape[-1]) + start, dtype), shape
+        )
 
       iota.def_pull_block_spec(lambda bss: (None,))
 
@@ -285,7 +331,8 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     x = jax.random.normal(k0, (512, 512), dtype)
     y = jax.random.normal(k1, (512, 512), dtype)
     np.testing.assert_allclose(
-        matmul_plus_iota(x, y), matmul_plus_iota_ref(x, y), atol=5e-5)
+        matmul_plus_iota(x, y), matmul_plus_iota_ref(x, y), atol=5e-5
+    )
 
   @parameterized.parameters('float32', 'bfloat16')
   def test_matmul_with_bias(self, dtype):
@@ -884,11 +931,13 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     def act_bwd(res, dy):
       del res, dy
       assert False, 'unreachable'
+
     act.defvjp(act_fwd, act_bwd)
 
     def matmul(impl, x, y):
       z = impl(x, y)
       return act(z)
+
     impl = fuser.fuse(
         functools.partial(matmul, functools.partial(fusible_matmul, bn=256))
     )
@@ -914,14 +963,16 @@ class FusibleMatmulTest(jtu.JaxTestCase):
       return jax.nn.relu(x) * x, (x,)
 
     def act_bwd(res, dy):
-      x, = res
+      (x,) = res
       return (dy * x * 2.34,)
+
     act.defvjp(act_fwd, act_bwd)
 
     def matmul(impl, x, y, dz):
       z = impl(x, y)
       dz = dz.astype(z.dtype)
       return jax.vjp(act, z)[1](dz)[0].astype(dtype)
+
     impl = fuser.fuse(
         functools.partial(matmul, functools.partial(fusible_matmul, bn=256))
     )
