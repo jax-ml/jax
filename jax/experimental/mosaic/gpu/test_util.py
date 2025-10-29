@@ -26,6 +26,7 @@ class RegisterLayout(enum.Enum):
   """The list of supported register layouts."""
 
   WGMMA = enum.auto()
+  WG_SPLAT = enum.auto()
   WG_STRIDED = enum.auto()
   TCGEN05 = enum.auto()
   TCGEN05_M64_COLLECTIVE = enum.auto()
@@ -41,6 +42,8 @@ class RegisterLayout(enum.Enum):
     match self:
       case RegisterLayout.WGMMA:
         return fa.WGMMA_LAYOUT
+      case RegisterLayout.WG_SPLAT:
+        return fa.WGSplatFragLayout(shape)
       case RegisterLayout.WG_STRIDED:
         ty = ir.VectorType.get(shape, dtype)
         layout = fa.WGStridedFragLayout.from_shaped_type(ty)

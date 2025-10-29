@@ -3930,6 +3930,8 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       optimized=(True, False, None),
   )
   def test_smem_gmem_registers_load_store(self, layout, dtype, optimized):
+    if layout == mtu.RegisterLayout.WG_SPLAT:
+      self.skipTest("WG_SPLAT is not supported for `vector.load`.")
     # We don't infer optimized transfer-compatible transforms for load/store to
     # registers with TCGEN05_TMEM_NATIVE layout.
     if optimized and layout == mtu.RegisterLayout.TCGEN05_TMEM_NATIVE:

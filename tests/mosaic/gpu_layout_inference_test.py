@@ -1406,6 +1406,9 @@ class LayoutInferenceTest(parameterized.TestCase):
   def test_infer_transforms_for_vector_load_op(
       self, layout, major_dim_index
   ):
+    if layout == mtu.RegisterLayout.WG_SPLAT:
+      self.skipTest("WG_SPLAT is not supported for `vector.load`.")
+
     big_shape = (128, 128)
     small_shape = (64, 64)
     elt_ty = ir.BF16Type.get()
