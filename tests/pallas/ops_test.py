@@ -2213,7 +2213,7 @@ class OpsTest(PallasBaseTest):
     )
     def swap(_, _2, x_ref, y_ref):
       x = x_ref[:]
-      y = pl.swap(y_ref, (slice(None),), x)
+      y = pallas_primitives.swap(y_ref, (slice(None),), x)
       x_ref[:] = y
 
     x = random.normal(random.key(0), (m, n))
@@ -2237,7 +2237,7 @@ class OpsTest(PallasBaseTest):
     )
     def masked_swap(_, _2, mask_ref, x_ref, y_ref):
       x = x_ref[:]
-      y = pl.swap(y_ref, (slice(None),), x, mask=mask_ref[:])
+      y = pallas_primitives.swap(y_ref, (slice(None),), x, mask=mask_ref[:])
       x_ref[:] = y
 
     x = random.normal(random.key(0), (m, n))
@@ -2264,7 +2264,9 @@ class OpsTest(PallasBaseTest):
     )
     def masked_oob_swap_slice(_, _2, mask_ref, start_idx_ref, x_ref, y_ref):
       x, mask = x_ref[:], mask_ref[:]
-      y = pl.swap(y_ref, (pl.dslice(start_idx_ref[()], n)), x, mask=mask)
+      y = pallas_primitives.swap(
+          y_ref, (pl.dslice(start_idx_ref[()], n)), x, mask=mask
+      )
       x_ref[:] = y
 
     x = random.normal(random.key(0), (n,))

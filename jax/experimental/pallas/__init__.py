@@ -69,7 +69,7 @@ from jax._src.pallas.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
 from jax._src.pallas.primitives import semaphore_wait as semaphore_wait
 from jax._src.pallas.primitives import store as _deprecated_store
-from jax._src.pallas.primitives import swap as swap
+from jax._src.pallas.primitives import swap as _deprecated_swap
 from jax._src.pallas.utils import cdiv as cdiv
 from jax._src.pallas.utils import next_power_of_2 as next_power_of_2
 from jax._src.pallas.utils import strides_from_shape as strides_from_shape
@@ -96,6 +96,7 @@ if _typing.TYPE_CHECKING:
   atomic_xor = _deprecated_atomic_xor
   load = _deprecated_load
   store = _deprecated_store
+  swap = _deprecated_swap
   max_contiguous = _deprecated_max_contiguous
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
@@ -104,6 +105,10 @@ else:
       "max_contiguous": (
           "pl.max_contiguous is deprecated, access it through jax.experimental.pallas.triton.",
           _deprecated_max_contiguous,
+      ),
+      "swap": (
+          "pl.swap is deprecated, use ``ref[idx]``/``ref[idx] = value`` or a backend-specific loading/storing API instead.",
+          _deprecated_swap,
       ),
       # Deprecated on July 25th 2025.
       "load": (

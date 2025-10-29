@@ -21,6 +21,8 @@ Remember to align the itemized text with the first line of an item within a list
 
   * `pl.max_contiguous` has been moved to {mod}`jax.experimental.pallas.triton`.
     Accessing it via {mod}`jax.experimental.pallas` is deprecated.
+  * `pl.swap` is deprecated and will be removed in a future release. Use
+    indexing or backend-specific loading/storing APIs instead.
 
 * Removals
 
