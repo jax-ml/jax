@@ -245,6 +245,7 @@ def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
 
     if check_vma:
       fun = _implicit_pvary_on_output(fun, out_specs_thunk)
+      fun = _implicit_unreduced_on_output(fun, out_specs_thunk)
 
     try:
       out_flat = shard_map_p.bind(
@@ -632,6 +633,21 @@ def _implicit_pvary_on_output(f, out_specs_thunk, *args, **kwargs):
   out_flat = f(*args, **kwargs)
   return [pvary(o, tuple(_spec_to_vma(sp) - typeof(o).vma))
           for o, sp in zip(out_flat, out_specs_thunk())]
+
+
+@lu.transformation2
+def _implicit_unreduced_on_output(f, out_specs_thunk, *args, **kwargs):
+  out_flat = f(*args, **kwargs)
+  new_out_flat = []
+  for o, sp in zip(out_flat, out_specs_thunk()):
+    o_aval = typeof(o)
+    if unreduced := (sp.unreduced - o_aval.sharding.spec.unreduced):
+      axes = order_wrt_mesh(o_aval.sharding.mesh, unreduced)
+      new_out_flat.append(lax_parallel.vary_unreduced_cast(o, axes))
+    else:
+      new_out_flat.append(o)
+  return new_out_flat
+
 
 JaxType = Any
 MaybeTracer = Union[JaxType, Tracer]

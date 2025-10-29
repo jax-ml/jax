@@ -2619,11 +2619,11 @@ def preduced(x, axis_name):
 preduced_p = core.Primitive('preduced')
 preduced_p.multiple_results = True
 preduced_p.def_impl(lambda *args, axes: args)
+mlir.register_lowering(preduced_p, lambda ctx, *x, axes: x)
 
 def _preduced_abstract_eval(*avals, axes):
-  if not config._check_vma.value:
-    return avals
   assert isinstance(axes, tuple)
+  _check_axis_names(axes, 'preduced')
   check_unreduced_args(avals, 'preduced')
   for a in avals:
     # If there is intersection between arg_vma and axes, error
@@ -2648,8 +2648,6 @@ def _preduced_abstract_eval(*avals, axes):
   return out_avals
 preduced_p.def_abstract_eval(_preduced_abstract_eval)
 
-mlir.register_lowering(preduced_p, lambda ctx, *x, axes: x)
-
 def _preduced_transpose_rule(cts, *args, axes):
   def f(ct, arg):
     assert ad.is_undefined_primal(arg)
@@ -2663,3 +2661,104 @@ ad.deflinear2(preduced_p, _preduced_transpose_rule)
 def _preduced_batcher(vals_in, dims_in, *, axes):
   raise NotImplementedError
 batching.primitive_batchers[preduced_p] = _preduced_batcher
+
+######################## vary_unreduced_cast #######################
+
+# Varying -> Unreduced cast
+def vary_unreduced_cast(x, axis_name):
+  axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  if not axis_name:
+    return x
+  return tree_util.tree_map(
+      lambda leaf: vary_unreduced_cast_p.bind(leaf, axes=axes), x)
+
+vary_unreduced_cast_p = core.Primitive('vary_unreduced_cast_p')
+vary_unreduced_cast_p.def_impl(lambda arg, *, axes: arg)
+mlir.register_lowering(vary_unreduced_cast_p, lambda ctx, x, *, axes: [x])
+
+def _vary_unreduced_cast_abstract_eval(aval, *, axes):
+  assert isinstance(axes, tuple)
+  _check_axis_names(axes, 'vary_unreduced_cast')
+  check_unreduced_args([aval], 'vary_unreduced_cast')
+  if not aval.vma:
+    raise ValueError('vary_unreduced_cast only accepts inputs that are'
+                     f' varying. Got {aval.str_short(True)}')
+  # If the intersection between aval.vma and axes is empty, error
+  if not (aval.vma & set(axes)):
+    raise ValueError(
+        "vary_unreduced_cast is a Varying->Unreduced collective. This"
+        " means that the axis names mentioned in `axes` passed to"
+        " `vary_unreduced_cast` must be present in"
+        f" `jax.typeof(x).vma`. Got axes={axes} and"
+        f" jax.typeof(x).vma={aval.vma}")
+  if aval.sharding.spec.unreduced & set(axes):
+    raise ValueError(
+        "vary_unreduced_cast input cannot be unreduced across the axis_name"
+        f" provided. Got x={aval.str_short(True)} and axis_name={axes}")
+
+  aval_s = aval.sharding
+  new_unreduced = aval_s.spec.unreduced | frozenset(axes)
+  out_sharding = aval_s.update(mesh=get_abstract_mesh(),
+                               spec=aval_s.spec.update(unreduced=new_unreduced))
+  out_vma = frozenset(i for i in aval.vma if i not in axes)
+  return aval.update(sharding=out_sharding, vma=out_vma)
+vary_unreduced_cast_p.def_abstract_eval(_vary_unreduced_cast_abstract_eval)
+
+def _vary_unreduced_cast_transpose_rule(cts, x, *, axes):
+  assert ad.is_undefined_primal(x)
+  return (reduced_vary_cast(cts, axis_name=axes),)
+ad.deflinear2(vary_unreduced_cast_p, _vary_unreduced_cast_transpose_rule)
+
+def _vary_unreduced_cast_batcher(vals_in, dims_in, *, axes):
+  raise NotImplementedError
+batching.primitive_batchers[vary_unreduced_cast_p] = _vary_unreduced_cast_batcher
+
+####################### reduced_vary_cast #############################
+
+# Reduced -> Varying cast
+def reduced_vary_cast(x, axis_name):
+  axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  if not axis_name:
+    return x
+  return tree_util.tree_map(
+      lambda leaf: reduced_vary_cast_p.bind(leaf, axes=axes), x)
+
+reduced_vary_cast_p = core.Primitive('reduced_vary_cast_p')
+reduced_vary_cast_p.def_impl(lambda arg, *, axes: arg)
+mlir.register_lowering(reduced_vary_cast_p, lambda ctx, x, *, axes: [x])
+
+def _reduced_vary_cast_abstract_eval(aval, *, axes):
+  assert isinstance(axes, tuple)
+  _check_axis_names(axes, 'reduced_vary_cast')
+  if not aval.sharding.spec.reduced:
+    raise ValueError('reduced_vary_cast only accepts inputs that are'
+                     f' reduced. Got {aval.str_short(True)}')
+  # If the intersection between aval.spec.reduced and axes is empty, error
+  if not (aval.sharding.spec.reduced & set(axes)):
+    raise ValueError(
+        "reduced_vary_cast is a Reduced->Varying collective. This"
+        " means that the axis names mentioned in `axes` passed to"
+        " `reduced_vary_cast` must be present in"
+        f" `jax.typeof(x).sharding.spec.reduced`. Got axes={axes} and"
+        f" jax.typeof(x).sharding.spec.reduced={aval.sharding.spec.reduced}")
+  if aval.vma & set(axes):
+    raise ValueError(
+        "reduced_vary_cast input cannot be varying across the axis_name"
+        f" provided. Got x={aval.str_short(True)} and axis_name={axes}")
+
+  aval_s = aval.sharding
+  new_reduced = frozenset(i for i in aval_s.spec.reduced if i not in axes)
+  out_sharding = aval_s.update(mesh=get_abstract_mesh(),
+                               spec=aval_s.spec.update(reduced=new_reduced))
+  out_vma = aval.vma | frozenset(axes)
+  return aval.update(sharding=out_sharding, vma=out_vma)
+reduced_vary_cast_p.def_abstract_eval(_reduced_vary_cast_abstract_eval)
+
+def _reduced_vary_cast_transpose_rule(cts, x, *, axes):
+  assert ad.is_undefined_primal(x)
+  return (vary_unreduced_cast(cts, axis_name=axes),)
+ad.deflinear2(reduced_vary_cast_p, _reduced_vary_cast_transpose_rule)
+
+def _reduced_vary_cast_batcher(vals_in, dims_in, *, axes):
+  raise NotImplementedError
+batching.primitive_batchers[reduced_vary_cast_p] = _reduced_vary_cast_batcher

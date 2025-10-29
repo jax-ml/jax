@@ -206,21 +206,68 @@ class ShardMapTest(jtu.JaxTestCase):
 
     self.assertAllClose(a + 1, fun(a, a.addressable_data(0).shape))
 
-  def test_matmul_partial(self):
-    raise unittest.SkipTest("invalid replication asserted by out_spec?")
-
-    mesh, a, b = create_inputs(P('z', 'y'), P('y', None))
-    assert a.addressable_data(0).shape == (4, 4)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_matmul_unreduced(self, mesh):
+    np_inp1 = np.arange(8.).reshape(2, 4)
+    np_inp2 = np.arange(8.).reshape(4, 2)
+    arr1 = jax.device_put(np_inp1, P('x', 'y'))
+    arr2 = jax.device_put(np_inp2, P('y', None))
 
     @jax.jit
-    @partial(shard_map, mesh=mesh,
-             in_specs=(P('z', 'y'), P('y', None)), out_specs=P('z', None))
-    def fwd(a):
-      c = jnp.matmul(a, b)  # [B.z, F] {y.unreduced}
+    @shard_map(in_specs=(P('x', 'y'), P('y', None)),
+               out_specs=P('x', None, unreduced={'y'}))
+    def f(a, b):
+      c = jnp.einsum('ab,bc->ac', a, b)
+      self.assertEqual(c.aval.vma, {'x', 'y'})
       return c
 
-    c = fwd(a)
-    self.assertEqual(c.addressable_data(0).shape, (4, 8))
+    out = f(arr1, arr2)
+    self.assertEqual(out.shape, (2, 2))
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P('x', None, unreduced={'y'})))
+
+    expected_shards = [np.array([[2., 3.]]), np.array([[26., 31.]]),
+                       np.array([[10., 19.]]), np.array([[66., 79.]])]
+    for s, es in zip(out.addressable_shards, expected_shards):
+      self.assertEqual(s.data.shape, (1, 2))
+      self.assertArraysEqual(s.data, es)
+
+    resharded_out = jax.sharding.reshard(out, P('x', None))
+    self.assertArraysEqual(resharded_out, np_inp1 @ np_inp2)
+
+    def g(x, y):
+      out = f(x, y)
+      return jax.sharding.reshard(out, P('x', None)).sum()
+
+    out1, out2 = jax.jit(jax.grad(g, argnums=(0, 1)))(arr1, arr2)
+    self.assertEqual(out1.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertEqual(out2.sharding, NamedSharding(mesh, P('y', None)))
+
+    with jax.set_mesh(jtu.create_mesh((1,), 'x')):
+      ex_out1, ex_out2 = jax.jit(jax.grad(lambda x, y: (x @ y).sum(),
+                                          argnums=(0, 1)))(np_inp1, np_inp2)
+    self.assertArraysAllClose(ex_out1, out1, rtol=2e-4)
+    self.assertArraysAllClose(ex_out2, out2, rtol=2e-4)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_matmul_unreduced_error(self, mesh):
+    np_inp1 = np.arange(8.).reshape(2, 4)
+    np_inp2 = np.arange(8.).reshape(4, 2)
+    arr1 = jax.device_put(np_inp1, P('x', 'y'))
+    arr2 = jax.device_put(np_inp2, P('y', None))
+
+    @jax.jit
+    @shard_map(in_specs=(P('x', None), P(None, None)),
+               out_specs=P('x', None, unreduced={'y'}))
+    def f(a, b):
+      c = jnp.einsum('ab,bc->ac', a, b)
+      self.assertEqual(c.aval.vma, {'x'})
+      return c
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "vary_unreduced_cast is a Varying->Unreduced collective"):
+      f(arr1, arr2)
 
   def test_matmul_reduce_scatter(self):
     mesh, a, b = create_inputs(P('z', 'y'), P('y', None))
