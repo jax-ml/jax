@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import contextlib
+import logging
 import unittest
+
 from absl.testing import absltest
 import jax
 from jax import lax
@@ -22,6 +24,7 @@ from jax._src import api
 from jax._src import aot_util
 from jax._src import config
 from jax._src import core
+from jax._src import pjit
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
@@ -269,23 +272,27 @@ class ComponentTest(jtu.JaxTestCase):
     with aot_util.component_cache(cache):
       yield
       aot_util.component_cache.value.clear()
+      jax.clear_caches()
 
   def test_component_lowering_cache_hit(self):
     with self.make_in_memory_cache():
       cache = aot_util.component_cache.value
-      @aot.component(component_key='f')
+      @jax.jit
       def f(x):
         return x + 1.0
 
-      self.assertEqual(f(1.0), 2.0)
+      component_f = aot.component(component_key='f')(f)
+      self.assertEqual(component_f(1.0), 2.0)
       self.assertEqual(cache.keys(), ['f.abstract_eval', 'f.lowering'])
 
-      @aot.component(component_key='f')
-      def g(x):
-        raise NotImplementedError
+      logging.info(pjit._infer_params_cached.cache_info())
 
-      self.assertEqual(g(1.0), 2.0)
-      # TODO(dsuo): Why is abstract_eval rule called so many times?
+      logging.info("GGGGGG")
+      component_g = aot.component(component_key='f')(f)
+
+      self.assertNotEqual(component_f, component_g)
+      self.assertEqual(component_g(1.0), 2.0)
+      logging.info(pjit._infer_params_cached.cache_info())
       self.assertEqual(cache.get('f.lowering', update_hits=False).hits, 1)
 
   def test_component_call_in_function(self):
@@ -306,20 +313,27 @@ class ComponentTest(jtu.JaxTestCase):
   def test_explicit_cached_lowering(self):
     with self.make_in_memory_cache():
       cache = aot_util.component_cache.value
-      @aot.component(component_key='f')
       def f(x):
         return x + 1.0
 
-      lowered = f.lower(jax.ShapeDtypeStruct((), 'float32'))
+      component_f = aot.component(component_key='f')(f)
+      lowered = component_f.lower(jax.ShapeDtypeStruct((), 'float32'))
       self.assertEqual(cache.keys(), ['f.abstract_eval', 'f.lowering'])
 
-      @aot.component(component_key='f')
-      def g(x):
-        raise NotImplementedError
-
-      lowered = g.lower(jax.ShapeDtypeStruct((), 'float32'))
+      component_g = aot.component(component_key='f')(f)
+      lowered = component_g.lower(jax.ShapeDtypeStruct((), 'float32'))
       self.assertEqual(cache.get('f.lowering', update_hits=False).hits, 1)
 
+  def test_vmap_of_component(self):
+      with self.make_in_memory_cache():
+        cache = aot_util.component_cache.value
+        @aot.component(component_key='f')
+        def f(x):
+            return x + 1.0
+
+        vmapped_f = jax.vmap(f)
+
+        self.assertArraysEqual(vmapped_f(jax.numpy.ones(8,)), jax.numpy.ones(8,) + 1.0)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

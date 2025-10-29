@@ -14,17 +14,20 @@
 """JAX AOT API utilities."""
 
 from collections.abc import Hashable
-import dataclasses
 import functools
 import pickle
 from typing import Any, Callable, NamedTuple
 
 from absl import logging
 from jax._src import api
+from jax._src import api_util
 from jax._src import config
-from jax._src import stages
+from jax._src import mesh as mesh_lib
+from jax._src import pjit
+from jax._src import tree_util
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
+from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 
 
@@ -44,23 +47,11 @@ component_cache = config.string_or_object_state(
 )
 
 
-traced_cache: dict[Hashable, stages.Traced] = {}
-
-
-def trace(f: Callable[..., Any], *args, **kwargs):
-  if type(f) is xc._xla.PjitFunction:
-    return f.trace(*args, **kwargs)
-  try:
-    hash(f)
-  except TypeError:
-    fun = functools.partial(f)
-  return api.jit(f).trace(*args, **kwargs)
-
-
 class CacheEntry:
   def __init__(self, blob: SerializedType, hits: int = 0):
     self.blob = blob
     self.hits = hits
+
 
 class Cache(NamedTuple):
   get: Callable[[Hashable, bool], bytes | None]
@@ -112,13 +103,13 @@ def get_cached_or_put(key, make, serialize, deserialize):
     return make()
 
   if blob := cache.get(key):  # pytype: disable=attribute-error
-    logging.info("Key %s found with blob %s.", key, blob)
+    logging.info("Key %s found.", key)
     return deserialize(blob)
 
   logging.info("Key %s missing.", key)
   obj = make()
   blob = serialize(obj)
-  logging.info("Putting key %s with blob %s.", key, blob)
+  logging.info("Putting key %s.", key)
   cache.put(key, blob)  # pytype: disable=attribute-error
   logging.info("Cache keys: %s", cache.keys())
   return obj
