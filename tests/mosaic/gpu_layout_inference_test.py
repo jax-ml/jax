@@ -1900,6 +1900,44 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInLayouts(conversion, [layout])
     self.checkOutLayouts(conversion, [layout])
 
+  def test_infer_layout_for_vector_extract_strided_slice(self):
+    layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+    with ir.InsertionPoint(self.module.body):
+      i16 = ir.IntegerType.get_signless(16)
+      src_ty = ir.VectorType.get([128, 128], i16)
+      [src] = undefs(src_ty)
+      src = mgpu.dialect.layout_cast(src, layout)
+      dest_ty = ir.VectorType.get([64, 64], i16)
+      op = vector.ExtractStridedSliceOp(dest_ty, src, [0, 64], [64, 64], [1, 1])
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(op, [layout])
+    self.checkOutLayouts(op, [layout])
+
+  @parameterized.named_parameters(
+      (
+          "tiled_layout_non_divisible_by_offset",
+          mtu.RegisterLayout.WGMMA,
+          [3, 64],
+      ),
+      ("strided_layout", mtu.RegisterLayout.WG_STRIDED, [0, 64]),
+      ("splat_layout", mtu.RegisterLayout.WG_SPLAT, [0, 64]),
+  )
+  def test_infer_layout_for_vector_extract_strided_slice_fails(
+      self, layout, offsets
+  ):
+    with ir.InsertionPoint(self.module.body):
+      i16 = ir.IntegerType.get_signless(16)
+      src_ty = ir.VectorType.get([128, 128], i16)
+      [src] = undefs(src_ty)
+      layout_attr = layout.to_layout_attr(src_ty.shape, src_ty.element_type)
+      src = mgpu.dialect.layout_cast(src, layout_attr)
+      dest_ty = ir.VectorType.get([64, 64], i16)
+      vector.extract_strided_slice(dest_ty, src, offsets, [64, 64], [1, 1])
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts."
+    ):
+      mgpu.infer_layout(self.module)
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

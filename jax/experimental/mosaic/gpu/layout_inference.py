@@ -1120,6 +1120,33 @@ def _shape_cast_equation_system(
   )
 
 
+@_add_equation_system_derivation_rule(vector.ExtractStridedSliceOp)
+def _extract_strided_slice_equation_system(
+    ctx: DerivationContext, op: vector.ExtractStridedSliceOp
+) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
+  del ctx
+  if any(ir.IntegerAttr(s).value != 1 for s in op.strides):
+    raise NotImplementedError("`strides` must contain only 1s.")
+  operand = ValueSite(op, VariableType.OPERAND, 0)
+  result = ValueSite(op, VariableType.RESULT, 0)
+  variable = eqns.Variable(operand)
+  offsets = tuple(ir.IntegerAttr(o).value for o in op.offsets)
+  constraints = [
+      eqns.Divides(variable, offsets),
+      # TODO(allanrenucci): Remove once vectors with splat and strided layouts
+      # can be sliced.
+      eqns.NotOfType(variable, fa.WGSplatFragLayout),
+      eqns.NotOfType(variable, fa.WGStridedFragLayout),
+  ]
+  return (
+      eqns.EquationSystem(constraints=constraints),
+      # We use a single variable because lowering does not support two different
+      # layouts for `source` and `result`.
+      {variable: [operand, result]},
+      [],
+  )
+
+
 @_add_equation_system_derivation_rule(mgpu.CustomPrimitiveOp)
 def _custom_primitive_equation_system(
     ctx: DerivationContext,
