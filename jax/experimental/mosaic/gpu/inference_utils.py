@@ -337,7 +337,7 @@ def traverse_op(
           ops_to_traverse = reversed(list(block))  # type: ignore
         for block_op in ops_to_traverse:
           traverse_op(
-              block_op, callback, traversal_order, do_not_recurse_into_ops
+              block_op, callback, traversal_order, do_not_recurse_into_ops, pre_order
           )
   if not pre_order:
     callback(op)
