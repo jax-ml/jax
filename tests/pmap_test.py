@@ -593,6 +593,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
        "split_axis": split_axis, "concat_axis": concat_axis}
       for split_axis, concat_axis in it.product(range(2), range(2)))
+  @jtu.thread_unsafe_test()
   def testAllToAllSplitAxis(self, split_axis, concat_axis):
     if jax.device_count() < 4:
       raise SkipTest("test requires at least four devices")
