@@ -40,6 +40,7 @@ from jax.experimental.mosaic.gpu import launch_context as lc
 from jax.experimental.mosaic.gpu import layout_inference
 from jax.experimental.mosaic.gpu import layouts
 from jax.experimental.mosaic.gpu import tcgen05
+from jax.experimental.mosaic.gpu import test_util as mtu
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -1399,13 +1400,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
 
   @parameterized.product(
-      layout=(
-          fa.WGMMA_LAYOUT,
-          fa.WGMMA_ROW_LAYOUT,
-          fa.WGMMA_COL_LAYOUT,
-          tcgen05.TMEM_NATIVE_LAYOUT,
-          fa.WGStridedFragLayout((64, 64), vec_size=4),
-      ),
+      layout=tuple(mtu.RegisterLayout),
       major_dim_index=(0, 3, 4),
   )
   def test_infer_transforms_for_vector_load_op(
@@ -1414,6 +1409,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     big_shape = (128, 128)
     small_shape = (64, 64)
     elt_ty = ir.BF16Type.get()
+    layout = layout.to_mgpu(small_shape, elt_ty)
 
     with ir.InsertionPoint(self.module.body):
       smem_ty = ir.MemRefType.get(big_shape, elt_ty, memory_space=mgpu.utils.smem())
@@ -1444,14 +1440,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
 
   @parameterized.product(
-      layout=(
-          fa.WGMMA_LAYOUT,
-          fa.WGMMA_ROW_LAYOUT,
-          fa.WGMMA_COL_LAYOUT,
-          tcgen05.TMEM_NATIVE_LAYOUT,
-          fa.WGStridedFragLayout((64, 64), vec_size=4),
-          fa.WGSplatFragLayout((64, 64)),
-      ),
+      layout=tuple(mtu.RegisterLayout),
       major_dim_index=(0, 3, 4),
   )
   def test_infer_transforms_for_vector_store_op(
@@ -1460,6 +1449,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     big_shape = (128, 128)
     small_shape = (64, 64)
     elt_ty = ir.BF16Type.get()
+    layout = layout.to_mgpu(small_shape, elt_ty)
 
     with ir.InsertionPoint(self.module.body):
       smem_ty = ir.MemRefType.get(big_shape, elt_ty, memory_space=mgpu.utils.smem())
