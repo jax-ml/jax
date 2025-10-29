@@ -855,12 +855,9 @@ LogicalResult VectorStoreIdxOp::verify() {
                "memref with dimension: ")
            << ref_ty.getRank() << ". Got: " << llvm::size(getIndices()) << ".";
   }
-  if (llvm::size(getIndices()) != value_ty.getRank()) {
-    return emitOpError(
-               "Expected one index vector for each dimension of the value "
-               "to store with dimension: ")
-           << value_ty.getRank() << ". Got: " << llvm::size(getIndices())
-           << ".";
+  if (value_ty.getRank() != 1) {
+    return emitOpError("Expected value to have rank 1. Got: ")
+           << value_ty.getRank() << ".";
   }
   for (const auto [i, index] : llvm::enumerate(getIndices())) {
     VectorType index_ty = llvm::cast<VectorType>(index.getType());

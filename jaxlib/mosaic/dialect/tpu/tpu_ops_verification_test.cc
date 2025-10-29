@@ -548,10 +548,8 @@ TEST_F(TpuOpsVerificationTest, VectorStoreIdxInvalidValueToStoreDimension) {
       /*mask=*/nullptr,
       /*add=*/nullptr);
 
-  ASSERT_THAT(
-      VerifyOp(vl),
-      StatusIs(_, HasSubstr("Expected one index vector for each dimension of "
-                            "the value to store with dimension: 2. Got: 1.")));
+  ASSERT_THAT(VerifyOp(vl),
+              StatusIs(_, HasSubstr("Expected value to have rank 1. Got: 2.")));
 }
 
 TEST_F(TpuOpsVerificationTest, VectorStoreIdxValidMask) {
