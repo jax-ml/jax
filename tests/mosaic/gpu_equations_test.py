@@ -19,6 +19,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import equations
+from jax.experimental.mosaic.gpu import fragmented_array as fa
 from jax.experimental.mosaic.gpu import launch_context as lc
 
 config.parse_flags_with_absl()
@@ -462,12 +463,20 @@ class EquationSystemTest(parameterized.TestCase):
     self.assertTrue(equations.Divides(equations.SMEMTiling(None), (1, 2)).holds())
 
   def test_divides_constraints_are_satisfied_by_divisor_tiling(self):
-    tiling = equations.SMEMTiling(lc.TileTransform((2, 2)))
-    self.assertTrue(equations.Divides(tiling, (4, 6)).holds())
+    with self.subTest("SMEMTiling"):
+      tiling = equations.SMEMTiling(lc.TileTransform((2, 2)))
+      self.assertTrue(equations.Divides(tiling, (4, 6)).holds())
+    with self.subTest("RegisterLayout"):
+      tiling = equations.RegisterLayout(fa.WGMMA_LAYOUT)
+      self.assertTrue(equations.Divides(tiling, (0, 64)).holds())
 
   def test_divides_constraints_are_not_satisfied_by_non_divisor_tiling(self):
-    tiling = equations.SMEMTiling(lc.TileTransform((2, 2)))
-    self.assertFalse(equations.Divides(tiling, (4, 3)).holds())
+    with self.subTest("SMEMTiling"):
+      tiling = equations.SMEMTiling(lc.TileTransform((2, 2)))
+      self.assertFalse(equations.Divides(tiling, (4, 3)).holds())
+    with self.subTest("RegisterLayout"):
+      tiling = equations.RegisterLayout(fa.WGMMA_LAYOUT)
+      self.assertFalse(equations.Divides(tiling, (3, 64)).holds())
 
   def test_reduce_merges_divides_constraints_on_same_variable(self):
     v0, v1 = equations.Variable(0), equations.Variable(1)

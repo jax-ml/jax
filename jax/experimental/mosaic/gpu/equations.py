@@ -521,18 +521,22 @@ class Divides:
   tiling_multiple: tuple[int, ...]
 
   def holds(self) -> bool | None:
-    if not isinstance(self.expr, SMEMTiling):
-      return None
-    if self.expr.value is None:
-      # If there is no tiling, then this holds trivially.
-      return True
+    match self.expr:
+      case SMEMTiling(value=None):
+        # If there is no tiling, then this holds trivially.
+        return True
+      case SMEMTiling(value=lc.TileTransform(tiling=t)):
+        tiling = t
+      case RegisterLayout(value=fa.TiledLayout() as layout):
+        tiling = layout.base_tile_shape
+      case _:
+        return None
 
-    if len(self.expr.value.tiling) > len(self.tiling_multiple):
+    if len(tiling) > len(self.tiling_multiple):
       # The rank of the tiling is larger than the rank of the constraint. This
       # is not allowed.
       return False
 
-    tiling = self.expr.value.tiling
     for size, multiple in zip(reversed(tiling), reversed(self.tiling_multiple)):
       if multiple % size:
         return False
