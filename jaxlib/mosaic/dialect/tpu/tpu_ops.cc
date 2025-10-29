@@ -1817,7 +1817,7 @@ LogicalResult ReciprocalOp::verify() {
 LogicalResult UnpackSubelementsOp::verify() {
   const int packing_factor = getType().getElementTypeBitWidth() /
                              getSource().getType().getElementTypeBitWidth();
-  if (auto index = getIndex(); index < 0 || index >= packing_factor) {
+  if (auto index = getIndex(); index >= packing_factor) {
     return emitOpError("Index must be between 0 and the packing factor (")
            << packing_factor << "), got " << index;
   }
@@ -1908,6 +1908,57 @@ LogicalResult PackSubelementsOp::verify() {
       return emitOpError("Positions must be unique");
     }
     seen_positions[position] = true;
+  }
+  return success();
+}
+
+namespace {
+LogicalResult verifyElementwisePacking(Operation *op, Type unpacked_ty,
+                                       Type packed_ty) {
+  if (unpacked_ty.isF32() && !packed_ty.isBF16()) {
+    return op->emitOpError(
+        "Only packing/unpacking between f32 and bf16 is supported for floats");
+  }
+  if (unpacked_ty.isSignlessInteger(32) &&
+      !packed_ty.isSignlessInteger(16) &&
+      !packed_ty.isSignlessInteger(8) &&
+      !packed_ty.isSignlessInteger(4)) {
+    return op->emitOpError(
+        "Only packing/unpacking between i32 and i16/i8/i4 is supported for "
+        "integers");
+  }
+  return success();
+}
+}  // namespace
+
+LogicalResult PackElementwiseOp::verify() {
+  if (getSources().empty()) {
+    return emitOpError("At least one source is required");
+  }
+  const auto src_vty = cast<VectorType>(getSources().front().getType());
+  if (failed(verifyElementwisePacking(*this, src_vty.getElementType(),
+                                      getTargetType()))) {
+    return failure();
+  }
+  const int packing_factor =
+      src_vty.getElementTypeBitWidth() /
+          getTargetType().getIntOrFloatBitWidth();
+  if (packing_factor != getSources().size()) {
+    return emitOpError("The number of sources must match the packing factor (")
+           << packing_factor << "), got " << getSources().size();
+  }
+  return success();
+}
+
+LogicalResult UnpackElementwiseOp::verify() {
+  if (failed(verifyElementwisePacking(*this, getType(), getSourceType()))) {
+    return failure();
+  }
+  const int packing_factor = getType().getElementTypeBitWidth() /
+                             getSourceType().getIntOrFloatBitWidth();
+  if (auto index = getIndex(); index >= packing_factor) {
+    return emitOpError("Index must be between 0 and the packing factor (")
+           << packing_factor << "), got " << index;
   }
   return success();
 }
