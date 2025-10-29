@@ -77,13 +77,13 @@ def _undef_equation_system(
     op: llvm.UndefOp,
 ) -> tuple[
     eqns.EquationSystem,
-    layout_inference.OperandOrResultsForVariable,
+    layout_inference.ValueSitesForVariable,
     list[layout_inference.Hint],
 ]:
   del ctx
   # This rule is only called if the single output of the undef op is a vector or
   # TMEM reference, so we can just return a trivial mapping.
-  result = layout_inference.OperandOrResult(
+  result = layout_inference.ValueSite(
       op, layout_inference.VariableType.RESULT, 0
   )
   return eqns.EquationSystem(), {eqns.Variable(result): [result]}, []
@@ -693,17 +693,17 @@ class LayoutInferenceTest(parameterized.TestCase):
       [producer] = undefs(ty)
       consumer = builtin.unrealized_conversion_cast([ty], [producer])
 
-      r = layout_inference.OperandOrResult(
+      r = layout_inference.ValueSite(
           producer.owner, layout_inference.VariableType.RESULT, 0
       )
       r_var = eqns.Variable(r)
-      o = layout_inference.OperandOrResult(
+      o = layout_inference.ValueSite(
           consumer.owner, layout_inference.VariableType.OPERAND, 0
       )
       o_var = eqns.Variable(o)
 
       hints, relayouts = layout_inference.derive_hints_and_constraints(
-          layout_inference.OperandOrResultsForVariable({r_var: [r], o_var: [o]})
+          layout_inference.ValueSitesForVariable({r_var: [r], o_var: [o]})
       )
 
       if memory_space == layout_inference.MemorySpace.REG:
@@ -734,7 +734,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
 
-    [key] = layout_inference.vector_operands_and_results(x)
+    [key] = layout_inference.vector_value_sites(x)
     variable = eqns.Variable(key)
     assignments = layout_inference.find_assignments_for(
         {variable},
@@ -752,8 +752,8 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       ty = ir.VectorType.get((32, 4), ir.BF16Type.get())
       op0, op1 = [llvm.mlir_undef(ty).owner.opview for _ in range(2)]
-    [kv0] = layout_inference.vector_operands_and_results(op0)
-    [kv1] = layout_inference.vector_operands_and_results(op1)
+    [kv0] = layout_inference.vector_value_sites(op0)
+    [kv1] = layout_inference.vector_value_sites(op1)
     v0, v1 = eqns.Variable(kv0), eqns.Variable(kv1)
     splat_layout = RL(mgpu.WGSplatFragLayout((3, 128)))
     assignments = layout_inference.find_assignments_for(
@@ -1148,12 +1148,12 @@ class LayoutInferenceTest(parameterized.TestCase):
     layout = ir.StridedLayoutAttr.get(0, [1, 128]) if transposed else None
     ref_ty = ir.MemRefType.get(shape, f32, layout=layout, memory_space=mgpu.utils.smem())
     [ref] = undefs(ref_ty)
-    op_or_result = layout_inference.OperandOrResult(
+    value_site = layout_inference.ValueSite(
         operation=ref.owner,
         type=layout_inference.VariableType.RESULT,
         index=0,
     )
-    var = eqns.Variable(op_or_result)
+    var = eqns.Variable(value_site)
 
     def conjure(constraints) -> list[tuple[eqns.Variable, eqns.Constant]]:
       system = eqns.EquationSystem(constraints=constraints)
@@ -1208,12 +1208,12 @@ class LayoutInferenceTest(parameterized.TestCase):
     shape = (128, 128)
     f32 = ir.F32Type.get()
     [val] = undefs(ir.VectorType.get(shape, f32))
-    op_or_result = layout_inference.OperandOrResult(
+    value_site = layout_inference.ValueSite(
         operation=val.owner,
         type=layout_inference.VariableType.RESULT,
         index=0,
     )
-    var = eqns.Variable(op_or_result)
+    var = eqns.Variable(value_site)
 
     hints = [
         layout_inference.Hint(
