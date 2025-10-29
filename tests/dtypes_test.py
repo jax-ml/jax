@@ -277,13 +277,13 @@ class DtypesTest(jtu.JaxTestCase):
     )
 
     small_fp_dtypes = set(fp8_dtypes + fp4_dtypes)
-    implicit_int_dtypes = set(signed_dtypes + unsigned_dtypes) - set(intn_dtypes)
+    int_dtypes = set(signed_dtypes + unsigned_dtypes)
 
     for t1 in all_dtypes:
       self.assertEqual(t1, dtypes.promote_types(t1, t1))
       self.assertEqual(t1, dtypes.promote_types(t1, np.bool_))
       # TODO(zhangqiaorjc): Consider more dtype promotion rules for fp8.
-      if t1 in small_fp_dtypes or t1 in intn_dtypes:
+      if t1 in small_fp_dtypes:
         assertTypePromotionError(t1, np.complex128)
       else:
         self.assertEqual(
@@ -297,10 +297,8 @@ class DtypesTest(jtu.JaxTestCase):
             and (t1 != np.bool_)
             and (t2 != np.bool_)
             and (
-                t1 in intn_dtypes or
-                t2 in intn_dtypes or
-                (t1 in small_fp_dtypes and t2 not in implicit_int_dtypes) or
-                (t2 in small_fp_dtypes and t1 not in implicit_int_dtypes)
+                (t1 in small_fp_dtypes and t2 not in int_dtypes)
+                or (t2 in small_fp_dtypes and t1 not in int_dtypes)
             )
         ):
           assertTypePromotionError(t1, t2)
@@ -317,10 +315,7 @@ class DtypesTest(jtu.JaxTestCase):
     # inexact types.
     for t in float_dtypes + complex_dtypes:
       for i in bool_dtypes + signed_dtypes + unsigned_dtypes:
-        if i in intn_dtypes:
-          assertTypePromotionError(t, i)
-        else:
-          self.assertEqual(t, dtypes.promote_types(t, i))
+        self.assertEqual(t, dtypes.promote_types(t, i))
 
     # Promotions between exact types, or between inexact types, match NumPy.
     for groups in [bool_dtypes + np_signed_dtypes + np_unsigned_dtypes,
@@ -1124,22 +1119,6 @@ class TestPromotionTables(jtu.JaxTestCase):
       y = jnp.array(1, dtype='float32')
       with self.assertRaisesRegex(dtypes.TypePromotionError,
                                   ".*4-bit floats do not support implicit promotion"):
-        x + y
-
-  @jax.numpy_dtype_promotion('standard')
-  @jtu.run_on_devices('tpu')
-  def testInt2PromotionError(self):
-    for dtype in intn_dtypes:
-      if dtype.name == 'int2' or dtype.name == 'uint2':
-        # TODO(b/343490729): Remove continue once the bug is fixed.
-        continue
-
-      x = jnp.array(1, dtype=dtype)
-      y = jnp.array(1, dtype='int32')
-      with self.assertRaisesRegex(
-          dtypes.TypePromotionError,
-          '.*[24]-bit integers do not support implicit promotion',
-      ):
         x + y
 
   @jtu.sample_product(
