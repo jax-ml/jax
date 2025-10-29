@@ -1476,20 +1476,6 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
   if pxla.check_device_backend_on_shardings(pjit_in_shardings):
     return pjit_in_shardings
 
-  committed_arg_shardings = []
-  for a in args:
-    arg_s = getattr(a, 'sharding', None)
-    # arg sharding can be None in case of ShapeDtypeStruct. jax.Array does
-    # not allow None as the sharding.
-    if arg_s is None:
-      continue
-    # Don't consider PmapSharding inputs as committed. They will get resharded
-    # unconditionally.
-    if isinstance(arg_s, PmapSharding):
-      continue
-    if getattr(a, '_committed', True):
-      committed_arg_shardings.append((arg_s, stages.MismatchType.ARG_SHARDING, None))
-
   resolved_in_shardings: list[PjitSharding] = []
   for arg, pjit_in_s in zip(args, pjit_in_shardings):
     # arg sharding can be None in case of ShapeDtypeStruct. jax.Array does
