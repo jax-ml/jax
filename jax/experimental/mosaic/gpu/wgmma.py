@@ -295,13 +295,26 @@ def wgmma(
 ):
   """Perform acc += a @ b using the WGMMA instruction.
 
-  The expected memref shapes are:
-    a: (m, k, 64, S)
-    b: (k, n,  S, S)
+  The expected logical memref shapes are:
+    a: (m, k, tile_m,  tile_k)
+    b: (k, n, tile_k2, tile_n).
+
+  We may use either a small tile or a large tile for `a` and `b`. Assuming the
+  refs are both contiguous, then `tile_m`, `tile_k`, `tile_n` and `tile_k2` must
+  be as follows:
+
+                      ----------------------------
+                      | large tile  | small tile |
+  ------------------------------------------------
+  | (tile_m,  tile_k) |   (64, S)   |   (8, S)   |
+  ------------------------------------------------
+  | (tile_k2, tile_n) |   (S,  S)   |   (8, S)   |
+  ------------------------------------------------
+
   where S = swizzle // bytewidth(element_type).
 
-  The refs must be contiguous or be contiguous except for having their two minor
-  dimensions swapped.
+  It is also allowed for the refs to have their two minor dimensions swapped.
+  In that case, the tile sizes above must also be swapped.
   """
   if swizzle == 16:
     raise NotImplementedError("No swizzle is not supported")
