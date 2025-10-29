@@ -152,8 +152,6 @@ def iscomplexobj(x: Any) -> bool:
   return issubdtype(typ, np.complexfloating)
 
 
-_dtype = dtypes.dtype
-
 # Dtype-related functions
 iinfo = dtypes.iinfo
 finfo = dtypes.finfo
@@ -2096,7 +2094,7 @@ def ravel_multi_index(multi_index: Sequence[ArrayLike], dims: Sequence[int],
       core.concrete_or_error(array, index,
         "The error occurred because ravel_multi_index was jit-compiled"
         " with mode='raise'. Use mode='wrap' or mode='clip' instead.")
-    if not issubdtype(_dtype(index), np.integer):
+    if not issubdtype(dtypes.user_dtype_like_to_dtype(index), np.integer):
       raise TypeError("only int indices permitted")
   if mode == "raise":
     if any(reductions.any((i < 0) | (i >= d)) for i, d in zip(multi_index_arr, dims)):
@@ -2940,7 +2938,11 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     weights = np.array(1, dtype=dtypes.int_)
   elif np.shape(x) != np.shape(weights):
     raise ValueError("shape of weights must match shape of x.")
-  return array_creation.zeros(length, _dtype(weights)).at[clip(x, 0)].add(weights, mode='drop')
+  return (
+      array_creation.zeros(length, dtypes.user_dtype_like_to_dtype(weights))
+      .at[clip(x, 0)]
+      .add(weights, mode="drop")
+  )
 
 @overload
 def broadcast_shapes(*shapes: Sequence[int]) -> tuple[int, ...]: ...
@@ -5981,7 +5983,7 @@ def _arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
     dtype = result_type(start, *(x for x in [stop, step] if x is not None))
   dtype = dtypes.jax_dtype(dtype)
   if stop is None and step is None:
-    start_dtype = _dtype(start)
+    start_dtype = dtypes.user_dtype_like_to_dtype(start)
     if (not dtypes.issubdtype(start_dtype, np.integer) and
         not dtypes.issubdtype(start_dtype, dtypes.extended)):
       ceil_ = ufuncs.ceil if isinstance(start, core.Tracer) else np.ceil
@@ -7511,7 +7513,7 @@ def trim_zeros_tol(filt, tol, trim='fb'):
     "Error arose in the `filt` argument of trim_zeros_tol()")
   nz = (ufuncs.abs(filt) < tol)
   if reductions.all(nz):
-    return array_creation.empty(0, _dtype(filt))
+    return array_creation.empty(0, filt.dtype)
   start = argmin(nz) if 'f' in trim.lower() else 0
   end = argmin(nz[::-1]) if 'b' in trim.lower() else 0
   return filt[start:len(filt) - end]
@@ -7673,7 +7675,10 @@ def delete(
     obj = obj.__jax_array__()
 
   # Case 3a: unique integer indices; delete in a JIT-compatible way
-  if issubdtype(_dtype(obj), np.integer) and assume_unique_indices:
+  if (
+      issubdtype(dtypes.user_dtype_like_to_dtype(obj), np.integer)
+      and assume_unique_indices
+  ):
     obj = asarray(obj).ravel()
     obj = clip(where(obj < 0, obj + a.shape[axis], obj), 0, a.shape[axis])
     obj = sort(obj)

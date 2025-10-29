@@ -1671,7 +1671,7 @@ def _shard_map_transpose(out_cts, *args,
   mb_div = lambda x, y: x / y if y != 1 else x
   out_cts = [
       ad.Zero(shard_aval(mesh, manual_axes, check_vma, sp, x.aval))
-      if type(x) is ad.Zero else x if check_vma or dtypes.dtype(x) == dtypes.float0
+      if type(x) is ad.Zero else x if check_vma or dtypes.user_dtype_like_to_dtype(x) == dtypes.float0
       else mb_div(x, prod(map(mesh.shape.get, _unmentioned2(mesh, sp, manual_axes))))
       for sp, x in zip(out_specs, out_cts)
   ]

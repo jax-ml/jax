@@ -731,7 +731,7 @@ def _lu(a: ArrayLike, permute_l: bool) -> tuple[Array, Array] | tuple[Array, Arr
 def _lu(a: ArrayLike, permute_l: bool) -> tuple[Array, Array] | tuple[Array, Array, Array]:
   a, = promote_dtypes_inexact(jnp.asarray(a))
   lu, _, permutation = lax_linalg.lu(a)
-  dtype = lax.dtype(a)
+  dtype = a.dtype
   m, n = np.shape(a)
   p = jnp.real(jnp.array(permutation[None, :] == jnp.arange(m, dtype=permutation.dtype)[:, None], dtype=dtype))
   k = min(m, n)
@@ -1468,7 +1468,7 @@ def block_diag(*arrs: ArrayLike) -> Array:
                      "most 2 dimensions, got {} at argument {}."
                      .format(arrs[bad_shapes[0]], bad_shapes[0]))
   converted_arrs = [jnp.atleast_2d(a) for a in arrs]
-  dtype = lax.dtype(converted_arrs[0])
+  dtype = converted_arrs[0].dtype
   total_cols = sum(a.shape[1] for a in converted_arrs)
 
   padded_arrs = []

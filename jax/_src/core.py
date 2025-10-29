@@ -1955,7 +1955,7 @@ def physical_shape(logical_shape, dtype):
 
 def physical_element_aval(edtype: dtypes.ExtendedDType) -> ShapedArray:
   duck = edtype._rules.physical_element_aval(edtype)  # type: ignore
-  return ShapedArray(duck.shape, dtypes.dtype(duck.dtype))
+  return ShapedArray(duck.shape, dtypes.user_dtype_like_to_dtype(duck.dtype))
 
 
 def _dtype_object(dtype):

@@ -76,9 +76,9 @@ def fft(x, fft_type: FftType | str, fft_lengths: Sequence[int]):
   if typ == FftType.RFFT:
     if np.iscomplexobj(x):
       raise ValueError("only real valued inputs supported for rfft")
-    x = lax.convert_element_type(x, dtypes.to_inexact_dtype(dtypes.dtype(x)))
+    x = lax.convert_element_type(x, dtypes.to_inexact_dtype(x.dtype))
   else:
-    x = lax.convert_element_type(x, dtypes.to_complex_dtype(dtypes.dtype(x)))
+    x = lax.convert_element_type(x, dtypes.to_complex_dtype(x.dtype))
   if len(fft_lengths) == 0:
     # XLA FFT doesn't support 0-rank.
     return x

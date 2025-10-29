@@ -54,7 +54,8 @@ _INT_DTYPES = {
 }
 
 def _constant_like(x, const):
-  return array_constructors.array(const, dtype=dtypes.dtype(x))
+  return array_constructors.array(
+    const, dtype=dtypes.user_dtype_like_to_dtype(x))
 
 def _replace_inf(x: ArrayLike) -> Array:
   return lax.select(isposinf(real(x)), lax._zeros(x), x)
@@ -2947,8 +2948,8 @@ def signbit(x: ArrayLike, /) -> Array:
   return lax.convert_element_type(x >> (info.nexp + info.nmant), np.bool_)
 
 
-def _normalize_float(x):
-  info = dtypes.finfo(dtypes.dtype(x))
+def _normalize_float(x: Array) -> tuple[Array, Array]:
+  info = dtypes.finfo(x.dtype)
   int_type = _INT_DTYPES[info.bits]
   cond = lax.abs(x) < info.tiny
   x1 = _where(cond, x * _lax_const(x, 1 << info.nmant), x)
@@ -3055,9 +3056,8 @@ def frexp(x: ArrayLike, /) -> tuple[Array, Array]:
   return _frexp(x)
 
 @custom_jvp
-def _frexp(x):
-  dtype = dtypes.dtype(x)
-  info = dtypes.finfo(dtype)
+def _frexp(x: Array) -> tuple[Array, Array]:
+  info = dtypes.finfo(x.dtype)
   mask = (1 << info.nexp) - 1
   bias = 1 - info.minexp
 
@@ -3065,7 +3065,7 @@ def _frexp(x):
   x2 += ((x1 >> info.nmant) & mask) - bias + 1
   x1 &= ~(mask << info.nmant)
   x1 |= (bias - 1) << info.nmant
-  x1 = lax.bitcast_convert_type(x1, dtype)
+  x1 = lax.bitcast_convert_type(x1, x.dtype)
 
   cond = isinf(x) | isnan(x) | (x == 0)
   x2 = _where(cond, lax._zeros(x2), x2)

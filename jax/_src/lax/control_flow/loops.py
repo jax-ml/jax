@@ -2598,8 +2598,8 @@ def fori_loop(lower, upper, body_fun, init_val,
     raise TypeError("lax.fori_loop: body_fun argument should be callable.")
 
   # TODO(phawkins): perhaps do more type checking here, better error messages.
-  lower_dtype = lax.dtype(lower)
-  upper_dtype = lax.dtype(upper)
+  lower_dtype = dtypes.user_dtype_like_to_dtype(lower)
+  upper_dtype = dtypes.user_dtype_like_to_dtype(upper)
   if lower_dtype == upper_dtype:
     dtype = lower_dtype
   else:

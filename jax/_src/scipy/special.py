@@ -34,7 +34,7 @@ from jax._src.api import jit, jvp, vmap
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import vectorize as jnp_vectorize
-from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact
+from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact, ensure_arraylike
 from jax._src.ops import special as ops_special
 from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
 from jax._src.typing import Array, ArrayLike
@@ -757,10 +757,10 @@ def _zeta_series_expansion(x: ArrayLike, q: ArrayLike | None = None) -> Array:
   # https://arxiv.org/abs/1309.2877 - formula (5)
   # here we keep the same notation as in reference
   s, a = promote_args_inexact("zeta", x, q)
-  dtype = lax.dtype(a).type
+  dtype = a.dtype.type
   s_, a_ = jnp.expand_dims(s, -1), jnp.expand_dims(a, -1)
   # precision ~ N, M
-  N = M = dtype(8) if lax.dtype(a) == np.float32 else dtype(16)
+  N = M = dtype(8) if a.dtype == np.float32 else dtype(16)
   assert M <= len(_BERNOULLI_COEFS)
   k = jnp.expand_dims(np.arange(N, dtype=N.dtype), tuple(range(a.ndim)))
   S = jnp.sum((a_ + k) ** -s_, -1)
@@ -802,9 +802,10 @@ def polygamma(n: ArrayLike, x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.gamma`
     - :func:`jax.scipy.special.digamma`
   """
-  if not dtypes.issubdtype(lax.dtype(n), np.integer):
+  n, x = ensure_arraylike("polygamma", n, x)
+  if not dtypes.issubdtype(n.dtype, np.integer):
     raise ValueError(
-        f"Argument `n` to polygamma must be of integer type. Got dtype {lax.dtype(n)}."
+        f"Argument `n` to polygamma must be of integer type. Got dtype {n.dtype}."
     )
   n_arr, x_arr = promote_args_inexact("polygamma", n, x)
   if dtypes.issubdtype(x_arr.dtype, np.complexfloating):
@@ -914,18 +915,17 @@ def ndtr(x: ArrayLike) -> Array:
   Raises:
     TypeError: if `x` is not floating-type.
   """
-  x = jnp.asarray(x)
-  dtype = lax.dtype(x)
-  if dtype not in (np.float32, np.float64):
+  x = ensure_arraylike("ndtr", x)
+  if x.dtype not in (np.float32, np.float64):
     raise TypeError(
         "x.dtype={} is not supported, see docstring for supported types."
-        .format(dtype))
+        .format(x.dtype))
   return _ndtr(x)
 
 
-def _ndtr(x: ArrayLike) -> Array:
+def _ndtr(x: Array) -> Array:
   """Implements ndtr core logic."""
-  dtype = lax.dtype(x).type
+  dtype = x.dtype.type
   half_sqrt_2 = dtype(0.5) * np.sqrt(2., dtype=dtype)
   w = x * half_sqrt_2
   z = lax.abs(w)
@@ -957,7 +957,8 @@ def ndtri(p: ArrayLike) -> Array:
   Raises:
     TypeError: if `p` is not floating-type.
   """
-  dtype = lax.dtype(p)
+  p = ensure_arraylike("ndtri", p)
+  dtype = p.dtype
   if dtype not in (np.float32, np.float64):
     raise TypeError(
         "x.dtype={} is not supported, see docstring for supported types."
@@ -965,9 +966,9 @@ def ndtri(p: ArrayLike) -> Array:
   return _ndtri(p)
 
 
-def _ndtri(p: ArrayLike) -> Array:
+def _ndtri(p: Array) -> Array:
   """Implements ndtri core logic."""
-  dtype = lax.dtype(p).type
+  dtype = p.dtype.type
   shape = np.shape(p)
 
   # Constants used in piece-wise rational approximations. Taken from the cephes
@@ -1137,8 +1138,8 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
   if series_order > 30:
     raise ValueError("series_order must be <= 30.")
 
-  x_arr = jnp.asarray(x)
-  dtype = lax.dtype(x_arr)
+  x_arr = ensure_arraylike("log_ndtr", x)
+  dtype = x_arr.dtype
 
   if dtype == np.float64:
     lower_segment: np.ndarray = _LOGNDTR_FLOAT64_LOWER
@@ -1180,7 +1181,7 @@ log_ndtr.defjvp(_log_ndtr_jvp)
 
 def _log_ndtr_lower(x, series_order):
   """Asymptotic expansion version of `Log[cdf(x)]`, appropriate for `x<<-1`."""
-  dtype = lax.dtype(x).type
+  dtype = x.dtype.type
   x_2 = lax.square(x)
   # Log of the term multiplying (1 + sum)
   log_scale = -dtype(0.5) * x_2 - lax.log(-x) - dtype(0.5 * np.log(2. * np.pi))
@@ -1189,7 +1190,7 @@ def _log_ndtr_lower(x, series_order):
 
 def _log_ndtr_asymptotic_series(x, series_order):
   """Calculates the asymptotic series used in log_ndtr."""
-  dtype = lax.dtype(x).type
+  dtype = x.dtype.type
   if series_order <= 0:
     return np.array(1, dtype)
   x_2 = lax.square(x)
@@ -1346,7 +1347,7 @@ def _bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
 
   (_, _, bs, _), j_vals = lax.scan(
       f=_bessel_jn_scan_body_fun, init=(f0, f1, bs, z),
-      xs=lax.iota(lax.dtype(z), n_iter+1), reverse=True)
+      xs=lax.iota(z.dtype, n_iter+1), reverse=True)
 
   f = j_vals[0]  # Use the value at the last iteration.
   j_vals = j_vals[:v+1]
@@ -1381,9 +1382,9 @@ def bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
     TypeError if `v` is not integer.
     ValueError if elements of array `z` are not float.
   """
-  z = jnp.asarray(z)
+  z = ensure_arraylike("bessel_jn", z)
   z, = promote_dtypes_inexact(z)
-  z_dtype = lax.dtype(z)
+  z_dtype = z.dtype
   if dtypes.issubdtype(z_dtype, complex):
     raise ValueError("complex input not supported.")
 
@@ -1666,7 +1667,8 @@ def lpmn(m: int, n: int, z: Array) -> tuple[Array, Array]:
     ValueError if array `z` is not 1D.
     NotImplementedError if `m!=n`.
   """
-  dtype = lax.dtype(z)
+  z = ensure_arraylike("lpmn", z)
+  dtype = z.dtype
   if dtype not in (np.float32, np.float64):
     raise TypeError(
         'z.dtype={} is not supported, see docstring for supported types.'
@@ -1723,7 +1725,8 @@ def lpmn_values(m: int, n: int, z: Array, is_normalized: bool) -> Array:
     ValueError if array `z` is not 1D.
     NotImplementedError if `m!=n`.
   """
-  dtype = lax.dtype(z)
+  z = ensure_arraylike("lpmn_values", z)
+  dtype = z.dtype
   if dtype not in (np.float32, np.float64):
     raise TypeError(
         'z.dtype={} is not supported, see docstring for supported types.'
@@ -2489,8 +2492,8 @@ def spence(x: Array) -> Array:
 
   This is our spence(1 - z).
   """
-  x = jnp.asarray(x)
-  dtype = lax.dtype(x)
+  x = ensure_arraylike("spence", x)
+  dtype = x.dtype
   if dtype not in (np.float32, np.float64):
     raise TypeError(
       f"x.dtype={dtype} is not supported, see docstring for supported types.")

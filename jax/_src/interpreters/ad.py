@@ -37,7 +37,7 @@ from jax._src.ad_util import add_jaxvals_p
 from jax._src.api_util import flatten_fun, flatten_fun_nokwargs, debug_info
 from jax._src.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
                            typeof)
-from jax._src.dtypes import dtype, float0
+from jax._src.dtypes import user_dtype_like_to_dtype, float0
 from jax._src.state.types import AbstractRef
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list, wrap_name,
                            as_hashable_function, weakref_lru_cache,
@@ -78,7 +78,7 @@ def jvpfun(f: Callable, instantiate, transform_stack, primals, tangents):
   tag = core.TraceTag()
   tangents = [Zero.from_primal_value(t) if not isinstance(t, Zero)
               and isinstance(core.typeof(t), core.ShapedArray)
-              and dtype(t) == float0 else t for t in tangents]
+              and user_dtype_like_to_dtype(t) == float0 else t for t in tangents]
   ctx = (source_info_util.transform_name_stack('jvp') if transform_stack
          else contextlib.nullcontext())
   with ctx:
@@ -244,7 +244,7 @@ def direct_linearize(traceable: lu.WrappedFun, primals, kwargs, *,
     tangents = [tangent_trace.new_arg(get_aval(p).to_tangent_aval(), source_info) for p in primals]
     tangents = [Zero.from_primal_value(t) if not isinstance(t, Zero)
                 and isinstance(core.typeof(t), core.ShapedArray)
-                and dtype(t) == float0 else t for t in tangents]
+                and user_dtype_like_to_dtype(t) == float0 else t for t in tangents]
     linearize_trace = LinearizeTrace(parent_trace, tangent_trace, tag=tag)
     tangent_trace.tag = linearize_trace.tag
     tracers = [LinearizeTracer(linearize_trace, p, t) for p, t in zip(primals, tangents)]
@@ -812,7 +812,7 @@ class JVPTrace(Trace):
 def maybe_jvp_tracer(trace, primal, tangent):
   if (type(tangent) is Zero or
       isinstance(core.typeof(tangent), core.ShapedArray)
-      and dtype(tangent) == float0):
+      and user_dtype_like_to_dtype(tangent) == float0):
     return primal
   else:
     return JVPTracer(trace, primal, tangent)

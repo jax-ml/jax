@@ -2033,10 +2033,12 @@ class LaxTest(jtu.JaxTestCase):
   )
   def testReduceWeakType(self, op_namespace, op, arr_weak_type, init_weak_type):
     op = getattr(op_namespace, op)
-    arr = lax_internal._convert_element_type(np.arange(10), dtypes.dtype(int),
-                                             weak_type=arr_weak_type)
-    init = lax_internal._convert_element_type(1, dtypes.dtype(int),
-                                              weak_type=init_weak_type)
+    arr = lax_internal._convert_element_type(
+        np.arange(10), dtypes.default_int_dtype(), weak_type=arr_weak_type
+    )
+    init = lax_internal._convert_element_type(
+        1, dtypes.default_int_dtype(), weak_type=init_weak_type
+    )
     fun = lambda arr, init: lax.reduce(arr, init, op, (0,))
     out = fun(arr, init)
     self.assertEqual(dtypes.is_weakly_typed(out), arr_weak_type and init_weak_type)
@@ -3575,7 +3577,7 @@ class LaxTest(jtu.JaxTestCase):
                                                weak_type=weak_type)
 
     const = lax_internal._const(val, 0)
-    self.assertEqual(dtypes.dtype(val), dtypes.dtype(const))
+    self.assertEqual(dtypes.user_dtype_like_to_dtype(val), dtypes.user_dtype_like_to_dtype(const))
 
   def testIgammaSpecial(self):
     self.assertEqual(lax.igamma(1., np.inf), 1.)
@@ -3770,7 +3772,7 @@ class LazyConstantTest(jtu.JaxTestCase):
   def testFilledConstant(self, shape, fill_value, dtype):
     make_const = lambda: lax.full(shape, fill_value, dtype)
     expected = np.full(shape, fill_value,
-                        dtype or dtypes.dtype(fill_value))
+                        dtype or dtypes.user_dtype_like_to_dtype(fill_value))
     self._Check(make_const, expected)
 
   @jtu.sample_product(

@@ -22,14 +22,14 @@ import numpy as np
 from functools import partial, reduce as _reduce
 
 from jax._src import core
+from jax._src import dtypes
 from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
                               broadcast_in_dim, broadcast_shapes,
                               convert_element_type, div, eq, exp, full_like, ge,
                               gt, le, log, log1p, lt, mul, ne, neg, reciprocal,
                               reduce, select, sign, sqrt, square,
                               standard_naryop, standard_unop, sub,
-                              _const, _dtype,
-                              _float, _nary_lower_hlo, _ones, _isnan)
+                              _const, _float, _nary_lower_hlo, _ones, _isnan)
 from jax._src.lax.control_flow.loops import while_loop
 
 from jax._src import dtypes
@@ -710,7 +710,7 @@ mlir.register_lowering(bessel_i1e_p,
                         partial(_nary_lower_hlo, chlo.bessel_i1e))
 
 def _bessel_i1e_jvp(g, y, x):
-  eps = dtypes.finfo(_dtype(x)).eps
+  eps = dtypes.finfo(dtypes.user_dtype_like_to_dtype(x)).eps
   x_is_not_tiny = abs(x) > eps
   safe_x = select(x_is_not_tiny, x, full_like(x, eps))
   dy_dx = bessel_i0e(safe_x) - y * (sign(safe_x) + reciprocal(safe_x))

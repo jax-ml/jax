@@ -438,40 +438,40 @@ class DtypesTest(jtu.JaxTestCase):
                      jax.jit(lambda x: jnp.int32(x))(jnp.float32(101.4)))
 
   def testDtypeFromScalarType(self):
-    self.assertEqual(dtypes.dtype(bool), np.dtype(np.bool_))
+    self.assertEqual(dtypes.user_dtype_like_to_dtype(bool), np.dtype(np.bool_))
     if config.enable_x64.value:
-      self.assertEqual(dtypes.dtype(int), np.dtype(np.int64))
-      self.assertEqual(dtypes.dtype(float), np.dtype(np.float64))
-      self.assertEqual(dtypes.dtype(complex), np.dtype(np.complex128))
+      self.assertEqual(dtypes.user_dtype_like_to_dtype(int), np.dtype(np.int64))
+      self.assertEqual(dtypes.user_dtype_like_to_dtype(float), np.dtype(np.float64))
+      self.assertEqual(dtypes.user_dtype_like_to_dtype(complex), np.dtype(np.complex128))
     else:
-      self.assertEqual(dtypes.dtype(int), np.dtype(np.int32))
-      self.assertEqual(dtypes.dtype(float), np.dtype(np.float32))
-      self.assertEqual(dtypes.dtype(complex), np.dtype(np.complex64))
+      self.assertEqual(dtypes.user_dtype_like_to_dtype(int), np.dtype(np.int32))
+      self.assertEqual(dtypes.user_dtype_like_to_dtype(float), np.dtype(np.float32))
+      self.assertEqual(dtypes.user_dtype_like_to_dtype(complex), np.dtype(np.complex64))
 
   def testDtypeFromScalarValue(self):
-    self.assertEqual(dtypes.dtype(bool(0)), np.dtype(np.bool_))
+    self.assertEqual(dtypes.user_dtype_like_to_dtype(bool(0)), np.dtype(np.bool_))
     if config.enable_x64.value:
-      self.assertEqual(dtypes.dtype(int(0)), np.dtype(np.int64))
-      self.assertEqual(dtypes.dtype(float(0)), np.dtype(np.float64))
-      self.assertEqual(dtypes.dtype(complex(0)), np.dtype(np.complex128))
+      self.assertEqual(dtypes.user_dtype_like_to_dtype(int(0)), np.dtype(np.int64))
+      self.assertEqual(dtypes.user_dtype_like_to_dtype(float(0)), np.dtype(np.float64))
+      self.assertEqual(dtypes.user_dtype_like_to_dtype(complex(0)), np.dtype(np.complex128))
     else:
-      self.assertEqual(dtypes.dtype(int(0)), np.dtype(np.int32))
-      self.assertEqual(dtypes.dtype(float(0)), np.dtype(np.float32))
-      self.assertEqual(dtypes.dtype(complex(0)), np.dtype(np.complex64))
+      self.assertEqual(dtypes.user_dtype_like_to_dtype(int(0)), np.dtype(np.int32))
+      self.assertEqual(dtypes.user_dtype_like_to_dtype(float(0)), np.dtype(np.float32))
+      self.assertEqual(dtypes.user_dtype_like_to_dtype(complex(0)), np.dtype(np.complex64))
 
   def testDtypeFromLiteralValue(self):
-    self.assertEqual(dtypes.dtype(TypedInt(0, np.dtype(np.int64))), np.dtype(np.int64))
-    self.assertEqual(dtypes.dtype(TypedFloat(0, np.dtype(np.float64))), np.dtype(np.float64))
-    self.assertEqual(dtypes.dtype(TypedComplex(0, np.dtype(np.complex128))), np.dtype(np.complex128))
-    self.assertEqual(dtypes.dtype(TypedInt(0, np.dtype(np.int32))), np.dtype(np.int32))
-    self.assertEqual(dtypes.dtype(TypedFloat(0, np.dtype(np.float32))), np.dtype(np.float32))
-    self.assertEqual(dtypes.dtype(TypedComplex(0, np.dtype(np.complex64))), np.dtype(np.complex64))
-    self.assertEqual(dtypes.dtype(TypedNdArray(np.array([0], dtype=np.int32), weak_type=False)), np.dtype(np.int32))
-    self.assertEqual(dtypes.dtype(TypedNdArray(np.array([0], dtype=np.int64), weak_type=False)), np.dtype(np.int64))
+    self.assertEqual(dtypes.user_dtype_like_to_dtype(TypedInt(0, np.dtype(np.int64))), np.dtype(np.int64))
+    self.assertEqual(dtypes.user_dtype_like_to_dtype(TypedFloat(0, np.dtype(np.float64))), np.dtype(np.float64))
+    self.assertEqual(dtypes.user_dtype_like_to_dtype(TypedComplex(0, np.dtype(np.complex128))), np.dtype(np.complex128))
+    self.assertEqual(dtypes.user_dtype_like_to_dtype(TypedInt(0, np.dtype(np.int32))), np.dtype(np.int32))
+    self.assertEqual(dtypes.user_dtype_like_to_dtype(TypedFloat(0, np.dtype(np.float32))), np.dtype(np.float32))
+    self.assertEqual(dtypes.user_dtype_like_to_dtype(TypedComplex(0, np.dtype(np.complex64))), np.dtype(np.complex64))
+    self.assertEqual(dtypes.user_dtype_like_to_dtype(TypedNdArray(np.array([0], dtype=np.int32), weak_type=False)), np.dtype(np.int32))
+    self.assertEqual(dtypes.user_dtype_like_to_dtype(TypedNdArray(np.array([0], dtype=np.int64), weak_type=False)), np.dtype(np.int64))
 
   @parameterized.parameters(all_dtypes)
   def testDtypeFromValue(self, dtype):
-    self.assertEqual(dtypes.dtype(dtype.type(0)),
+    self.assertEqual(dtypes.user_dtype_like_to_dtype(dtype.type(0)),
                      dtypes.canonicalize_dtype(dtype))
 
   @parameterized.product(
@@ -481,26 +481,26 @@ class DtypesTest(jtu.JaxTestCase):
   def testDtypeFromDtype(self, dtype, explicit_x64_dtypes):
     with config.explicit_x64_dtypes(explicit_x64_dtypes):
       if explicit_x64_dtypes == config.ExplicitX64Mode.ALLOW:
-        self.assertEqual(dtypes.dtype(dtype), dtype)
+        self.assertEqual(dtypes.user_dtype_like_to_dtype(dtype), dtype)
       elif explicit_x64_dtypes == config.ExplicitX64Mode.WARN:
         with jtu.ignore_warning(category=UserWarning,
                                 message="Explicitly requested dtype.*"):
-          self.assertEqual(dtypes.dtype(dtype), dtypes.canonicalize_dtype(dtype))
+          self.assertEqual(dtypes.user_dtype_like_to_dtype(dtype), dtypes.canonicalize_dtype(dtype))
       else:
         if config.enable_x64.value or dtype not in x64_dtypes:
-          self.assertEqual(dtypes.dtype(dtype), dtypes.canonicalize_dtype(dtype))
+          self.assertEqual(dtypes.user_dtype_like_to_dtype(dtype), dtypes.canonicalize_dtype(dtype))
         else:
           with self.assertRaisesRegex(ValueError, "Explicitly requested dtype"):
-            dtypes.dtype(dtype)
+            dtypes.user_dtype_like_to_dtype(dtype)
 
   @parameterized.parameters(all_dtypes)
   def testDtypeFromString(self, dtype):
     if config.explicit_x64_dtypes.value != config.ExplicitX64Mode.ERROR and dtype not in x64_dtypes:
-      self.assertEqual(dtypes.dtype(str(dtype)), dtypes.canonicalize_dtype(dtype))
+      self.assertEqual(dtypes.user_dtype_like_to_dtype(str(dtype)), dtypes.canonicalize_dtype(dtype))
 
   def testDtypeFromNone(self):
     with self.assertRaisesRegex(ValueError, "Invalid argument to dtype"):
-      dtypes.dtype(None)
+      dtypes.user_dtype_like_to_dtype(None)
 
   def testDefaultDtypes(self):
     precision = config.default_dtype_bits.value
@@ -845,7 +845,7 @@ class EArrayTest(jtu.JaxTestCase):
 
       @staticmethod
       def physical_element_aval(foo_dtype):
-        return core.ShapedArray((), dtypes.dtype('float32'))
+        return core.ShapedArray((), dtypes.user_dtype_like_to_dtype('float32'))
 
       @staticmethod
       def global_sharded_result_handler(aval, out_sharding, committed):

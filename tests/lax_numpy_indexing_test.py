@@ -1205,8 +1205,9 @@ class IndexingTest(jtu.JaxTestCase):
       jnp.array([7, 7, 1, 2, 1, 4, 5, 7, 7, 7], jnp.int32))
 
   def testIndexingWeakTypes(self):
-    x = lax_internal._convert_element_type(jnp.arange(5), dtypes.dtype(float),
-                                           weak_type=True)
+    x = lax_internal._convert_element_type(
+        jnp.arange(5), dtypes.default_float_dtype(), weak_type=True
+    )
 
     a = x.at[0].set(1.0)
     self.assertEqual(a.dtype, x.dtype)
@@ -1317,7 +1318,7 @@ def _broadcastable_shapes(shape):
 # TODO(jakevdp): move this implementation to jax.dtypes & use in scatter?
 def _can_cast(from_, to):
   with jax.numpy_dtype_promotion('standard'):
-    return lax.dtype(to) == dtypes.result_type(from_, to)
+    return dtypes.user_dtype_like_to_dtype(to) == dtypes.result_type(from_, to)
 
 
 def _compatible_dtypes(op, dtype, inexact=False):

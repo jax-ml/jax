@@ -54,8 +54,6 @@ from jax._src.util import safe_map, safe_zip
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
-_dtype = dtypes.dtype
-
 
 def slice(operand: ArrayLike, start_indices: Sequence[int],
           limit_indices: Sequence[int],
@@ -410,7 +408,7 @@ def gather(operand: ArrayLike, start_indices: ArrayLike,
   parsed_mode = GatherScatterMode.from_any(mode)
   if parsed_mode == GatherScatterMode.FILL_OR_DROP:
     if fill_value is None:
-      dtype = _dtype(operand)
+      dtype = dtypes.user_dtype_like_to_dtype(operand)
       if dtypes.issubdtype(dtype, np.inexact):
         fill_value = np.nan
       elif dtypes.issubdtype(dtype, np.signedinteger):
@@ -3441,23 +3439,24 @@ def _dynamic_slice_indices(
       start_indices, operand.shape, allow_negative_indices
   ):
     # If i is unsigned, then it cannot be negative.
-    if dtypes.issubdtype(_dtype(i), np.unsignedinteger):
+    i_dtype = dtypes.user_dtype_like_to_dtype(i)
+    if dtypes.issubdtype(i_dtype, np.unsignedinteger):
       result.append(i)
       continue
     # Test whether i and d are static to avoid unnecessary staging.
     if isinstance(i, (int, np.integer)) and core.is_constant_dim(d):
       if allow_negative_index:
-        result.append(lax.convert_element_type(i + d if i < 0 else i, _dtype(i)))
+        result.append(lax.convert_element_type(i + d if i < 0 else i, i_dtype))
       elif i < 0:
         raise ValueError(f"Index {i} is out of bounds for dimension {d} if "
                           "allow_negative_indices=False")
       else:
-        result.append(lax.convert_element_type(i, _dtype(i)))
+        result.append(lax.convert_element_type(i, i_dtype))
       continue
     d = core.dimension_as_value(d)
     if isinstance(i, (int, np.integer)):
       if allow_negative_index:
-        result.append(i + lax.convert_element_type(d, _dtype(i)) if i < 0 else i)
+        result.append(i + lax.convert_element_type(d, i_dtype) if i < 0 else i)
       elif i < 0:
         raise ValueError(f"Index {i} is out of bounds for dimension {d} if "
                           "allow_negative_indices=False")
@@ -3465,7 +3464,7 @@ def _dynamic_slice_indices(
         result.append(i)
       continue
     if allow_negative_index:
-      d_arr = lax.convert_element_type(d, _dtype(i))
+      d_arr = lax.convert_element_type(d, i_dtype)
       result.append(lax.select(i < 0, i + d_arr, i))
     else:
       result.append(i)
