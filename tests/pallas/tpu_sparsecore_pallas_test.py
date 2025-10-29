@@ -577,6 +577,28 @@ class VectorSubcoreTest(PallasSCTest):
         jnp.zeros_like(x).at[indices[mask]].set(x[mask]),
     )
 
+  def test_store_scatter_2d(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 10, 31):
+      self.skipTest("Needs a newer libtpu")
+
+    num_steps = 4
+    x = jnp.arange(num_steps * 8).reshape(num_steps, 8)
+    indices = jax.random.permutation(jax.random.key(42), jnp.arange(8))
+
+    @vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, indices_ref, o_ref):
+      indices = indices_ref[...]
+      o_ref[...] = jnp.zeros_like(o_ref)
+      for i in range(num_steps):
+        plsc.store_scatter(
+            o_ref, [jnp.full(indices.shape, i), indices], x_ref[i])
+
+    out = kernel(x, indices)
+    for i in range(num_steps):
+      np.testing.assert_array_equal(
+          out[i], jnp.zeros_like(x[i]).at[indices].set(x[i])
+      )
+
   @parameterized.parameters(*MASK_FNS)
   def test_addupdate_scatter(self, mask_fn):
     x = jnp.arange(8)
