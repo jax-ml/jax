@@ -49,6 +49,7 @@ from jax.experimental.mosaic.gpu import launch_context
 from jax.experimental.mosaic.gpu import layouts
 from jax.experimental.mosaic.gpu import profiler
 from jax.experimental.mosaic.gpu import tcgen05
+from jax.experimental.mosaic.gpu import test_util as mtu
 from jax.experimental.mosaic.gpu import utils
 from jax.experimental.mosaic.gpu.utils import *  # noqa: F403
 import jax.numpy as jnp
@@ -3915,51 +3916,6 @@ def vector_store(
     op.attributes["optimized"] = ir.BoolAttr.get(optimized)
 
 
-class RegisterLayout(enum.Enum):
-  """The list of supported register layouts."""
-
-  WGMMA = enum.auto()
-  WG_STRIDED = enum.auto()
-  TCGEN05 = enum.auto()
-  TCGEN05_M64_COLLECTIVE = enum.auto()
-  TCGEN05_TMEM_NATIVE = enum.auto()
-  SMEM_GMEM_COPY = enum.auto()
-  TMA_GATHER_INDICES = enum.auto()
-
-  def to_mgpu(
-      self, shape: tuple[int, int], dtype: jnp.dtype
-  ) -> fa.FragmentedLayout:
-    match self:
-      case RegisterLayout.WGMMA:
-        return fa.WGMMA_LAYOUT
-      case RegisterLayout.WG_STRIDED:
-        ty = ir.VectorType.get(shape, utils.dtype_to_ir_type(dtype))
-        layout = fa.WGStridedFragLayout.from_shaped_type(ty)
-        assert layout is not None
-        return layout
-      case RegisterLayout.TCGEN05:
-        return fa.TCGEN05_LAYOUT
-      case RegisterLayout.TCGEN05_M64_COLLECTIVE:
-        return tcgen05.fa_m64_collective_layout(shape[1])
-      case RegisterLayout.TCGEN05_TMEM_NATIVE:
-        return fa.TMEM_NATIVE_LAYOUT
-      case RegisterLayout.SMEM_GMEM_COPY:
-        swizzle = 128
-        bitwidth = dtypes.bit_width(dtype)
-        tiling = (8, 8 * swizzle // bitwidth)
-        row_tiles, col_tiles = tile_shape(shape, tiling)[-4:-2]
-        return fa.tiled_copy_smem_gmem_layout(
-            row_tiles, col_tiles, swizzle, bitwidth
-        )
-      case RegisterLayout.TMA_GATHER_INDICES:
-        return fa.TMA_GATHER_INDICES_LAYOUT
-
-  def to_layout_attr(
-      self, shape: tuple[int, int], dtype: jnp.dtype
-  ) -> ir.Attribute:
-    return layouts.to_layout_attr(self.to_mgpu(shape, dtype))
-
-
 class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
   """Device tests with lowering from the MLIR dialect and layout inference."""
 
@@ -3969,14 +3925,14 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     super().setUp()
 
   @parameterized.product(
-      layout=tuple(RegisterLayout),
+      layout=tuple(mtu.RegisterLayout),
       dtype=(jnp.bfloat16, jnp.int8),
       optimized=(True, False, None),
   )
   def test_smem_gmem_registers_load_store(self, layout, dtype, optimized):
     # We don't infer optimized transfer-compatible transforms for load/store to
     # registers with TCGEN05_TMEM_NATIVE layout.
-    if optimized and layout == RegisterLayout.TCGEN05_TMEM_NATIVE:
+    if optimized and layout == mtu.RegisterLayout.TCGEN05_TMEM_NATIVE:
       self.skipTest(
           "Optimized loads not supported for TCGEN05_TMEM_NATIVE layout"
       )

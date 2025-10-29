@@ -48,6 +48,7 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:mosaic_gpu",
+        "//jax/experimental:mosaic_gpu_test_util",
     ] + py_deps([
         "absl/testing",
         "numpy",

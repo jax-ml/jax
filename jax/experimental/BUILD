@@ -237,7 +237,10 @@ pytype_strict_library(
 # This target only supports sm_90 GPUs.
 py_library_providing_imports_info(
     name = "mosaic_gpu",
-    srcs = glob(["mosaic/gpu/*.py"]),
+    srcs = glob(
+        include = ["mosaic/gpu/*.py"],
+        exclude = ["mosaic/gpu/test_util.py"],
+    ),
     data = if_cuda_is_configured([
         "@local_config_cuda//cuda:runtime_nvdisasm",
         "@nvidia_nvshmem//:libnvshmem_device",
@@ -276,6 +279,17 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:vector_dialect",
         "//jaxlib/mosaic/python:gpu_dialect",
     ] + py_deps("absl/flags") + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "mosaic_gpu_test_util",
+    testonly = True,
+    srcs = ["mosaic/gpu/test_util.py"],
+    deps = [
+        ":mosaic_gpu",
+        "//jax",
+        "//jax/_src/lib",
+    ],
 )
 
 pytype_strict_library(
