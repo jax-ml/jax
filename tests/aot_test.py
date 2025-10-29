@@ -17,6 +17,9 @@ import unittest
 from absl.testing import absltest
 import jax
 from jax import lax
+from jax._src import aot
+from jax._src import api
+from jax._src import aot_util
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
@@ -255,6 +258,68 @@ class JaxAotTest(jtu.JaxTestCase):
         'Execution devices belong to a client other than `backend`'):
       deserialize_and_load(serialized, in_tree, out_tree, backend='cpu',
                            execution_devices=jax.devices()[:1])
+
+
+@jtu.thread_unsafe_test_class()
+class ComponentTest(jtu.JaxTestCase):
+
+  @contextlib.contextmanager
+  def make_in_memory_cache(self):
+    cache = aot_util.make_in_memory_cache()
+    with aot_util.component_cache(cache):
+      yield
+      aot_util.component_cache.value.clear()
+
+  def test_component_lowering_cache_hit(self):
+    with self.make_in_memory_cache():
+      cache = aot_util.component_cache.value
+      @aot.component(component_key='f')
+      def f(x):
+        return x + 1.0
+
+      self.assertEqual(f(1.0), 2.0)
+      self.assertEqual(cache.keys(), ['f.abstract_eval', 'f.lowering'])
+
+      @aot.component(component_key='f')
+      def g(x):
+        raise NotImplementedError
+
+      self.assertEqual(g(1.0), 2.0)
+      # TODO(dsuo): Why is abstract_eval rule called so many times?
+      self.assertEqual(cache.get('f.lowering', update_hits=False).hits, 1)
+
+  def test_component_call_in_function(self):
+    with self.make_in_memory_cache():
+      cache = aot_util.component_cache.value
+      @aot.component(component_key='f')
+      def f(x):
+        return x + 1.0
+
+      @jax.jit
+      def g(x):
+        return f(x) + 1.0
+
+      self.assertEqual(g(1.0), 3.0)
+      self.assertEqual(f(1.0), 2.0)
+      self.assertEqual(cache.get('f.lowering', update_hits=False).hits, 1)
+
+  def test_explicit_cached_lowering(self):
+    with self.make_in_memory_cache():
+      cache = aot_util.component_cache.value
+      @aot.component(component_key='f')
+      def f(x):
+        return x + 1.0
+
+      lowered = f.lower(jax.ShapeDtypeStruct((), 'float32'))
+      self.assertEqual(cache.keys(), ['f.abstract_eval', 'f.lowering'])
+
+      @aot.component(component_key='f')
+      def g(x):
+        raise NotImplementedError
+
+      lowered = g.lower(jax.ShapeDtypeStruct((), 'float32'))
+      self.assertEqual(cache.get('f.lowering', update_hits=False).hits, 1)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
