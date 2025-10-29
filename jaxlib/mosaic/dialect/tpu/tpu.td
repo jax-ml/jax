@@ -1561,6 +1561,11 @@ def PreCanonicalizationOptimizationPass : Pass<"pre-canonicalization-optimizatio
     "::mlir::vector::VectorDialect",
     "::mlir::tpu::TPUDialect",
   ];
+  let options = [
+    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"6", "">,
+    Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
+    Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
+  ];
 }
 
 #endif  // TPU_ATTRS
