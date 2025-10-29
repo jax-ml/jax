@@ -2119,11 +2119,15 @@ class DynamicJaxprTrace(core.Trace):
 
   def default_process_primitive(self, primitive, tracers, params,
                                 source_info=None):
+    from jax._src.hijax import call_hi_primitive_p
     aval_qdds = [t.aval_mutable_qdd for t in tracers]
     # TODO(mattjj): make custom_lin have hashable params.
     # TODO(dougalm): add an attribute to primitives to mark primitives with
     # effectful abstract_eval rules.
-    if (primitive.name == "custom_lin" or config.dynamic_shapes.value or
+    # TODO(mattjj,dougalm): clean up how we check for new-style hi primitives
+    if primitive is call_hi_primitive_p:
+      out_avals, effs = params['prim'].out_avals_flat, set()  # TODO effs
+    elif (primitive.name == "custom_lin" or config.dynamic_shapes.value or
         primitive.is_effectful and primitive.is_effectful(params)):
       out_avals, effs = primitive.abstract_eval(*aval_qdds, **params)
     else:
