@@ -53,6 +53,7 @@ class VariableType(enum.IntEnum):
   """
   OPERAND = 0
   RESULT = 1
+  ARGUMENT = 2
 
 
 class MemorySpace(enum.Enum):
@@ -67,20 +68,29 @@ _op_name_regex = re.compile(r"^(%\d+ = )?\S+")
 @dataclasses.dataclass(frozen=True)
 class OperandOrResult:
   """A unique identifier for a variable."""
-  # A MLIR operation.
+  # A MLIR operation. If the type is `ARGUMENT`, this is the owner of the block
+  # and region_index is the region that contains the block with the argument.
+  # The block is always the first block of the region.
   operation: ir.OpView
   # Whether this represents an operand or a result.
   type: VariableType
   # The index of the operand/result within the op's operands/results.
   index: int
+  # The index of the region that contains the block with the argument.
+  region_index: int | None = None
+
+  def __post_init__(self):
+    assert (self.type != VariableType.ARGUMENT) == (self.region_index is None)
 
   @property
   def value(self) -> ir.Value:
     """Returns the IR value corresponding to this operand or result."""
     if self.type == VariableType.OPERAND:
       return self.operation.operands[self.index]
-    else:
+    elif self.type == VariableType.RESULT:
       return self.operation.results[self.index]
+    else:
+      return self.operation.regions[self.region_index].blocks[0].arguments[self.index]
 
   @property
   def memory_space(self) -> MemorySpace:
@@ -100,8 +110,10 @@ class OperandOrResult:
     assert match is not None
     if self.type == VariableType.OPERAND:
       return f"{match.group(0)}:o-{self.index}"
-    else:
+    elif self.type == VariableType.RESULT:
       return f"{match.group(0)}:r-{self.index}"
+    else:
+      return f"{match.group(0)}:a-{self.index}"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -743,13 +755,15 @@ def _for_equation_system(
     if not is_vector(o) and not _is_smem_ref(o):
       continue
     result_index = index - num_leading_args
+    arg_index = index - num_leading_args + 1  # Account for the induction var.
     operand = OperandOrResult(op, VariableType.OPERAND, index)
+    arg = OperandOrResult(op, VariableType.ARGUMENT, arg_index, region_index=0)
     result = OperandOrResult(op, VariableType.RESULT, result_index)
     yield_operand = OperandOrResult(
         yield_op, VariableType.OPERAND, result_index
     )
     var = eqns.Variable(operand) if is_vector(o) else ctx.producer_ref(operand)
-    operand_or_results_for_variable[var] = [operand, result, yield_operand]
+    operand_or_results_for_variable[var] = [operand, arg, result, yield_operand]
 
   return eqns.EquationSystem(), operand_or_results_for_variable, []
 
@@ -803,26 +817,29 @@ def _while_equation_system(
   operand_or_results_for_variable: OperandOrResultsForVariable = {}
 
   for operand_or_result in vector_operands_and_results(op):
+    idx = operand_or_result.index
     match operand_or_result.type:
       case VariableType.OPERAND:
-        yield_operand = OperandOrResult(
-            yield_op, VariableType.OPERAND, operand_or_result.index
-        )
+        arg = OperandOrResult(op, VariableType.ARGUMENT, idx, region_index=0)
+        yield_operand = OperandOrResult(yield_op, VariableType.OPERAND, idx)
         operand_or_results_for_variable[eqns.Variable(operand_or_result)] = [
             operand_or_result,
+            arg,
             yield_operand,
         ]
       case VariableType.RESULT:
         # Increment by 1 to account for the conditional.
         cond_operand = OperandOrResult(
-            cond_op, VariableType.OPERAND, operand_or_result.index + 1
+            cond_op, VariableType.OPERAND, idx + 1
         )
+        arg = OperandOrResult(op, VariableType.ARGUMENT, idx, region_index=1)
         operand_or_results_for_variable[eqns.Variable(operand_or_result)] = [
             operand_or_result,
+            arg,
             cond_operand,
         ]
       case _ as never:
-        assert_never(never)
+        assert_never(never)  # pytype: disable=wrong-arg-types
 
   return eqns.EquationSystem(), operand_or_results_for_variable, []
 
@@ -1715,37 +1732,16 @@ def producer_result(operand: OperandOrResult) -> OperandOrResult:
   operation that owns the block.
   """
   assert operand.type == VariableType.OPERAND
-  value = operand.operation.operands[operand.index]
+  value = operand.value
   producer = value.owner
   if isinstance(producer, ir.Operation):
     index = list(producer.results).index(value)
     return OperandOrResult(producer.opview, VariableType.RESULT, index)
 
-  # Block case, useful for deriving layouts for ops
-  # depending on function parameters, or loop block arguments.
   if isinstance(producer, ir.Block):
-    index = list(cast(ir.Block, producer).arguments).index(value)
-    if isinstance(producer.owner, scf.ForOp):
-      # In this case, the block arguments are offset compared to the loop
-      # operands. The loop operands have the lower bound, upper bound, and step
-      # as their leading arguments. The block arguments omit these parameters,
-      # but start with the iteration variable.
-      num_leading_args = 3
-      index += num_leading_args - 1
-      return OperandOrResult(producer.owner.opview, VariableType.OPERAND, index)
-    if isinstance(producer.owner, scf.WhileOp):
-      [before_block] = producer.owner.before.blocks
-      [after_block] = producer.owner.after.blocks
-      if producer == before_block:
-        # In this case, the block arguments correspond to the while operands.
-        return OperandOrResult(producer.owner.opview, VariableType.OPERAND, index)
-      else:
-        assert producer == after_block
-        # In this case, the block arguments correspond to the while results.
-        return OperandOrResult(producer.owner.opview, VariableType.RESULT, index)
-    raise NotImplementedError(
-        f"Producer {producer} is not a ForOp, a WhileOp: {type(producer)}."
-    )
+    index = list(producer.arguments).index(value)
+    region_index = list(producer.owner.regions).index(producer.region)
+    return OperandOrResult(producer.owner, VariableType.ARGUMENT, index, region_index)
 
   raise TypeError(
       f"Producer {producer} is not an operation nor a block: {type(producer)}."
@@ -1753,12 +1749,12 @@ def producer_result(operand: OperandOrResult) -> OperandOrResult:
 
 
 def consumer_operands(result: OperandOrResult) -> Sequence[OperandOrResult]:
-  """Given a result, returns the corresponding operands in its consumers."""
-  assert result.type == VariableType.RESULT
+  """Given a result or an argument, returns the corresponding operands in its consumers."""
+  assert result.type in (VariableType.RESULT, VariableType.ARGUMENT)
   consumer_operands: list[OperandOrResult] = []
   # The layout can also be chosen from the layout of the consumers of the
   # results.
-  for use in cast(ir.OpResult, result.operation.results[result.index]).uses:
+  for use in result.value.uses:
     consumer = use.owner.opview  # pytype: disable=attribute-error
     index = use.operand_number
     consumer_operands.append(OperandOrResult(consumer, VariableType.OPERAND, index))
@@ -1799,7 +1795,7 @@ def derive_hints_and_constraints(
         if producer_variable not in visited:
           # The producer of a variable must be relayout-able to the variable.
           constraints.append(eqns.Relayout(producer_variable, variable))
-      elif operand_or_result.type == VariableType.RESULT:
+      elif operand_or_result.type in (VariableType.RESULT, VariableType.ARGUMENT):
         for co in consumer_operands(operand_or_result):
           consumer_variable = variable_for_operand_or_result[co]
           consumers.append(consumer_variable)
