@@ -43,6 +43,7 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"
 #include "jaxlib/py_user_context.h"
+#include "jaxlib/traceback.h"
 #include "xla/future.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/pjrt_layout.h"
@@ -133,6 +134,13 @@ PyLoadedExecutable::PyLoadedExecutable(
       fingerprint_(std::move(fingerprint)),
       next_launch_id_(GetBaseLaunchId(fingerprint_, ifrt_loaded_executable_)) {
   CHECK(PyGILState_Check());
+  if (ifrt_loaded_executable_->user_context() == nullptr &&
+      Traceback::IsEnabled()) {
+    throw nb::value_error(
+        "Expecting an IFRT `LoadedExecutable` to have a user context, but got "
+        "a null user context. Use `jax::PyUserContextScope` to set a user "
+        "context for operations producing IFRT `LoadedExecutable`s.");
+  }
   if (fingerprint_) {
     VLOG(1) << "Fingerprint for executable " << ifrt_loaded_executable_->name()
             << ": " << *fingerprint_;

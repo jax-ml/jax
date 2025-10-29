@@ -58,6 +58,9 @@ class Traceback : public nanobind::object {
   // Returns a traceback if it is enabled, otherwise returns nullopt.
   static std::optional<Traceback> Get();
 
+  // Returns true if traceback collection is enabled.
+  static bool IsEnabled();
+
   // Returns a string representation of the traceback.
   std::string ToString() const;
 
