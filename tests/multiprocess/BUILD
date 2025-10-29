@@ -57,7 +57,6 @@ jax_multiprocess_test(
     },
     enable_configs = ["cpu_megascale"],
     main = "all_to_all_test.py",
-    tags = ["notsan"],  # Flaky timeouts.
     deps = ["//jax/_src:test_multiprocess"],
 )
 
@@ -81,7 +80,6 @@ jax_multiprocess_test(
         None,
     ),  # TODO(b/446172564): Remove enable_backends once the CPU test is fixed.
     main = "array_test.py",
-    tags = ["notsan"],  # Flaky timeouts.
     deps = [
         "//jax/_src:test_multiprocess",
     ],
