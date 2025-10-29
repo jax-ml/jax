@@ -55,18 +55,18 @@ namespace JAX_GPU_NAMESPACE {
 
 struct GpuTransposePlanCache {
   static xla::ffi::TypeId id;
+  static xla::ffi::TypeInfo info;
+
   explicit GpuTransposePlanCache(int capacity) : cache(capacity) {}
   xla::TransposePlanCache cache;
 };
 
 xla::ffi::TypeId GpuTransposePlanCache::id = {};
-
-static constexpr auto kGpuTransposePlanCacheTypeInfo =
+xla::ffi::TypeInfo GpuTransposePlanCache::info =
     xla::ffi::MakeTypeInfo<GpuTransposePlanCache>();
 
 XLA_FFI_REGISTER_TYPE(xla::ffi::GetXlaFfiApi(), "GpuTransposePlanCache",
-                      &GpuTransposePlanCache::id,
-                      &kGpuTransposePlanCacheTypeInfo);
+                      &GpuTransposePlanCache::id, &GpuTransposePlanCache::info);
 
 static xla::ffi::ErrorOr<std::unique_ptr<GpuTransposePlanCache>>
 GpuTransposePlanCacheInstantiate(uint64_t index) {
