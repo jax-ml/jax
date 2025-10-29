@@ -836,8 +836,8 @@ class WGMMATest(TestCase):
           ir.Float8E5M2Type,
       ),
       swizzle=(32, 64, 128),
-      rhs_tiling_kind=("large", "small", "small+no_transpose"),
-      lhs_tiling_kind=("large", "small", "small+no_transpose"),
+      rhs_tiling_kind=("small", "small+no_transpose"),
+      lhs_tiling_kind=("small", "small+no_transpose"),
   )
   def test_wgmma_transposes(
       self,
@@ -880,8 +880,6 @@ class WGMMATest(TestCase):
       self.skipTest("s8 inputs only supported with s32 accumulator")
     if jax_out_dtype == jnp.float16 and in_mlir_dtype_cls in {ir.F32Type, ir.BF16Type}:
       self.skipTest(f"{in_mlir_dtype_cls.get()} does not support f16 output.")
-    if swizzle != 128 and lhs_transpose and lhs_tiling_kind == "large":
-      self.skipTest("Transpose only supported in 128B swizzled WGMMA")
     if rhs_tiling_kind == "small+no_transpose" and not rhs_transpose:
       self.skipTest("No transpose happening anyway")
     if lhs_tiling_kind == "small+no_transpose" and not lhs_transpose:
@@ -922,12 +920,10 @@ class WGMMATest(TestCase):
       self.skipTest("tiling does not divide N")
     assert m % 64 == 0 and n % nk_tile == 0
 
-    small_rhs_tile = rhs_tiling_kind != "large"
     transpose_rhs_tiles = rhs_tiling_kind != "small+no_transpose"
-    rhs_tiling = (8, nk_tile) if small_rhs_tile else (nk_tile, nk_tile)
-    small_lhs_tile = lhs_tiling_kind != "large"
+    rhs_tiling = (8, nk_tile)
     transpose_lhs_tiles = lhs_tiling_kind != "small+no_transpose"
-    lhs_tiling = (8, nk_tile) if small_lhs_tile else (64, nk_tile)
+    lhs_tiling = (8, nk_tile)
 
     def kernel(ctx, lhs, rhs, out, scratch):
       lhs_smem, rhs_smem, barriers = scratch
