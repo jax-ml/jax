@@ -1134,8 +1134,9 @@ def _get_pull_rule(
     assert next(idx_iter, None) is None
     return indices
 
-  block_spec = pallas_core.BlockSpec(block_shape, new_index_map)
-  return [block_spec] + [pallas_core.no_block_spec] * (len(ctx.avals_in) - 1)
+  new_block_spec = pallas_core.BlockSpec(block_shape, new_index_map)
+  return ([new_block_spec]
+          + [pallas_core.no_block_spec] * (len(ctx.avals_in) - 1))
 
 
 @register_eval_rule(state_primitives.get_p)
