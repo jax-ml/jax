@@ -1357,6 +1357,7 @@ def _gpu_mesh_discharge_rule(
       name=name,
       memory_space=GMEM,
       metadata=metadata,
+      scratch_shapes=[],
   )
 
 
