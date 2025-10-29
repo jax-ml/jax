@@ -269,7 +269,7 @@ class CustomCallBackendConfig:
       for i, (flag, value) in enumerate(self.flags.items()):
         config.write(b'{"flag_type": "')
         config.write(flag.encode("ascii"))
-        config.write(b'", value: {')
+        config.write(b'", "value": {')
         if isinstance(value, bool):
           config.write(b'"boolean_value": ')
           config.write(b"true" if value else b"false")
