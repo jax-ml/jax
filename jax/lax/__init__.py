@@ -229,6 +229,8 @@ from jax._src.lax.lax import (
   tan_p as tan_p,
   tanh as tanh,
   tanh_p as tanh_p,
+  tile as tile,
+  tile_p as tile_p,
   top_k as top_k,
   top_k_p as top_k_p,
   transpose as transpose,

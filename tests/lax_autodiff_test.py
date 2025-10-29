@@ -1180,5 +1180,21 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     self.assertArraysEqual(actual, expected)
 
 
+  @jtu.sample_product(
+      [
+          dict(arg_shape=arg_shape, reps=reps)
+          for arg_shape, reps in [
+              [(3,), (2,)],
+              [(2, 3), (1, 2)],
+          ]
+      ],
+      dtype=grad_float_dtypes,
+  )
+  def testTileAutodiff(self, arg_shape, reps, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(arg_shape, dtype)]
+    op = lambda x: lax.tile(x, reps)
+    check_grads(op, args_maker(), order=3, modes=["fwd", "rev"], eps=1.)
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

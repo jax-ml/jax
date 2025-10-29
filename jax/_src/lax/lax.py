@@ -6729,6 +6729,101 @@ batching.ragged_prop_rules[broadcast_in_dim_p] = (
 )
 
 
+def tile(operand: ArrayLike, reps: Sequence[int]) -> Array:
+  """Tiles an array by repeating it along each dimension.
+
+  Args:
+    operand: an array to tile.
+    reps: a sequence of integers representing the number of repeats for each
+      dimension. Must have the same length as ``operand.ndim``.
+
+  Returns:
+    A tiled array with shape ``(operand.shape[0] * reps[0], ...,
+    operand.shape[-1] * reps[-1])``.
+
+  Examples:
+    >>> x = jnp.array([[1, 2], [3, 4]])
+    >>> lax.tile(x, (2, 3))
+    Array([[1, 2, 1, 2, 1, 2],
+           [3, 4, 3, 4, 3, 4],
+           [1, 2, 1, 2, 1, 2],
+           [3, 4, 3, 4, 3, 4]], dtype=int32)
+
+    >>> y = jnp.array([1, 2, 3])
+    >>> lax.tile(y, (2,))
+    Array([1, 2, 3, 1, 2, 3], dtype=int32)
+
+    >>> z = jnp.array([[1], [2]])
+    >>> lax.tile(z, (1, 3))
+    Array([[1, 1, 1],
+           [2, 2, 2]], dtype=int32)
+  """
+  return tile_p.bind(operand, reps=tuple(reps))
+
+
+def _tile_abstract_eval(operand, *, reps):
+  if len(reps) != operand.ndim:
+    raise ValueError(
+        'tile reps must have length equal to operand.ndim, '
+        f'got reps={reps} for operand.ndim={operand.ndim}'
+    )
+  out_shape = tuple(d * r for d, r in zip(operand.shape, reps))
+  return operand.update(shape=out_shape)
+
+
+def _tile_impl(operand, *, reps):
+  out_shape = tuple(d * r for d, r in zip(operand.shape, reps))
+  bcast_shape = []
+  bcast_dims = []
+  for d, r in zip(operand.shape, reps):
+    if d == 1 or r == 1:
+      bcast_dims.append(len(bcast_shape))
+      bcast_shape.append(d * r)
+    else:
+      bcast_dims.append(len(bcast_shape) + 1)
+      bcast_shape.extend((r, d))
+  bcast = broadcast_in_dim(operand, tuple(bcast_shape), tuple(bcast_dims))
+  return reshape(bcast, out_shape)
+
+
+def _tile_transpose(ct, operand, *, reps):
+  assert ad.is_undefined_primal(operand)
+  if type(ct) is ad_util.Zero:
+    return ad_util.Zero(operand.aval)
+  reshape_shape = []
+  reduce_dims = []
+  for d, r in zip(operand.aval.shape, reps):
+    if r == 1:
+      reshape_shape.append(d)
+    elif d == 1:
+      reduce_dims.append(len(reshape_shape))
+      reshape_shape.append(r)
+    else:
+      reduce_dims.append(len(reshape_shape))
+      reshape_shape.extend((r, d))
+  reshaped_ct = reshape(ct, tuple(reshape_shape))
+  return [reduce_sum(reshaped_ct, tuple(reduce_dims))]
+
+
+def _tile_batching_rule(batched_args, batch_dims, *, reps):
+  (operand,) = batched_args
+  (bdim,) = batch_dims
+  if bdim is None:
+    return tile(operand, reps), None
+  reps = list(reps)
+  reps.insert(bdim, 1)
+  return tile(operand, reps), bdim
+
+
+tile_p = core.Primitive('tile')
+tile_p.def_impl(_tile_impl)
+tile_p.def_abstract_eval(_tile_abstract_eval)
+ad.deflinear2(tile_p, _tile_transpose)
+batching.primitive_batchers[tile_p] = _tile_batching_rule
+mlir.register_lowering(
+    tile_p, mlir.lower_fun(_tile_impl, multiple_results=False))
+
+
 def _clamp_shape_rule(min, operand, max):
   if min.shape and min.shape != operand.shape:
     raise TypeError("clamp requires min.shape == operand.shape or min.shape == "
