@@ -26,16 +26,16 @@ class Buffer:
   @property
   def writeable(self) -> bool: ...
   def __array__(
-      self, dtype: object | None = None, copy: object | None = None
+      self, dtype: object | None = ..., copy: object | None = ...
   ) -> numpy.ndarray: ...
   @property
   def __cuda_array_interface__(self) -> dict: ...
   def __dlpack__(
       self,
-      stream: object | None = None,
-      max_version: object | None = None,
-      dl_device: object | None = None,
-      copy: object | None = None,
+      stream: object | None = ...,
+      max_version: object | None = ...,
+      dl_device: object | None = ...,
+      copy: object | None = ...,
   ) -> typing_extensions.CapsuleType: ...
   def __dlpack_device__(self) -> tuple: ...
 
