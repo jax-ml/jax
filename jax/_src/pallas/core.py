@@ -1391,6 +1391,7 @@ def core_map(
     interpret: Whether to run the function in interpret mode.
     debug: Whether or not to out helpful debugging information.
     cost_estimate: The cost estimate of the function.
+    name: The (optional) name of the kernel.
     metadata: Optional dictionary of information about the kernel that will be
       serialized as JSON in the HLO. Can be used for debugging and analysis.
   """

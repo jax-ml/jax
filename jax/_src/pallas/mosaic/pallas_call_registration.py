@@ -372,9 +372,10 @@ def pallas_call_tpu_lowering_rule(
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
     metadata: frozen_dict.FrozenDict[str, str] | None,
+    name: str | None,
 ):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
-  del interpret  # Unused.
+  del interpret, name  # Unused.
 
   debug_info = jaxpr.debug_info
   if debug:
