@@ -746,6 +746,7 @@ class TransposeTransform(MemoryRefTransform):
 
 
 @tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
 class TransposeRef(state_types.RefTransposer):
 
   def untransform_transpose(
