@@ -970,6 +970,11 @@ class MutableArrayTest(jtu.JaxTestCase):
     self.assertIn('+=', str(jaxpr))
     self.assertNotIn('0.0', str(jaxpr))
 
+  @absltest.skip("Not yet implemented")
+  def test_none_index(self):
+    ref = jax.new_ref(jnp.array([1, 2, 3]))
+    y = ref[None]
+    self.assertEqual(y.shape, (1, 3))
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):

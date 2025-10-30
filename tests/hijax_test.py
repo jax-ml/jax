@@ -186,6 +186,9 @@ class TupTy(HiType):
     return HiTup(tuple(ty.raise_val(*it.islice(elts_iter, len(ty.lo_ty())))
                        for ty in self.tys))
 
+  def to_tangent_aval(self):
+    return TupTy(tuple(ty.to_tangent_aval() for ty in self.tys))
+
 register_hitype(HiTup, lambda t: TupTy(tuple(map(typeof, t.elts))))
 
 class MakeTup(HiPrimitive):
@@ -202,6 +205,22 @@ class GetTupElt(HiPrimitive):
 
   def to_lojax(self, tup, *, idx):
     return tup.elts[idx]
+
+  def jvp(self, primals, tangents, *, idx):
+    (tup,), (tup_dot,) = primals, tangents
+    return tup.elts[idx], get_tuple_element(tup_dot, idx)
+
+  def transpose(self, out_bar, tup, *, idx):
+    if ad.is_undefined_primal(tup):
+      tup_ty = tup.aval
+    else:
+      tup_ty = tup
+    out_elts = [
+      jnp.zeros(elt_ty.shape, elt_ty.dtype) for elt_ty in tup_ty.tys
+    ]
+    out_elts[idx] = out_bar
+    return [make_tup(*out_elts)]
+
 get_tup_elt_p = GetTupElt('get_tup_elt')
 
 def make_tup(*elts):
@@ -1235,6 +1254,79 @@ class RefTest(jtu.JaxTestCase):
     o = f(q1, q2)
     self.assertArraysEqual(o.arr, q2.arr)
     self.assertArraysEqual(o.scale, q2.scale)
+
+class HijaxTransformCoverageTest(jtu.JaxTestCase):
+
+  # with differentiable hijax arguments
+  def test_hitypes_as_grad_args(self):
+    tup = make_tup(jnp.array(2.0), jnp.array(3.0))
+
+    def loss_fn(tup):
+      x = get_tuple_element(tup, 0)
+      return x ** 2
+
+    grads = jax.grad(loss_fn)(tup)
+    self.assertAllClose(get_tuple_element(grads, 0), 4.0)
+
+  # with non-differentiable hijax arguments
+  def test_hitypes_as_nondiff_grad_args(self):
+    tup = make_tup(jnp.array(2.0), jnp.array(3.0))
+    x = jnp.array(3.0)
+
+    def loss_fn(x, tup):
+      y = get_tuple_element(tup, 1)
+      return x ** 2 + y
+
+    grad = jax.grad(loss_fn)(x, tup)
+    self.assertAllClose(grad, 6.0, check_dtypes=False)
+
+  # with hijax captured arguments
+  def test_hitypes_as_captured_args(self):
+    tup = make_tup(jnp.array(2.0), jnp.array(3.0))
+
+    def loss_fn(x):
+      y = get_tuple_element(tup, 1)
+      return x ** 2 + y
+
+    grad = jax.grad(loss_fn)(jnp.array(4.0))
+    self.assertAllClose(grad, 8.0, check_dtypes=False)
+
+  # with differentiable mutable hijax arguments
+  @absltest.skip("Not yet implemented")
+  def test_mutable_hitypes_as_grad_args(self):
+    box = Box(jnp.array(2.0))
+
+    def loss_fn(box):
+      return box.get() ** 2
+
+    grads = jax.grad(loss_fn)(box)
+    # NOTE: unclear what the tangent type will be here
+
+  # with non-differentiable mutable hijax arguments
+  def test_mutable_hitypes_as_nondiff_grad_args(self):
+    box = Box(jnp.array(2.0))
+    x = jnp.array(3.0)
+
+    def loss_fn(x, box):
+      box.set(jax.lax.stop_gradient(x * 2))
+      return x ** 2 + box.get()
+
+    grad = jax.grad(loss_fn)(x, box)
+    self.assertAllClose(box.get(), 6.0, check_dtypes=False)
+    self.assertAllClose(grad, 6.0, check_dtypes=False)
+
+  # with mutable hijax captured arguments
+  def test_mutable_hitypes_as_captured_args(self):
+    box = Box(jnp.array(2.0))
+
+    def loss_fn(x):
+      box.set(jax.lax.stop_gradient(x * 3))
+      return x ** 2 + box.get()
+
+    grad = jax.grad(loss_fn)(jnp.array(4.0))
+    self.assertAllClose(box.get(), 12.0, check_dtypes=False)
+    self.assertAllClose(grad, 8.0, check_dtypes=False)
+
 
 
 if __name__ == '__main__':
