@@ -364,11 +364,11 @@ def _numpy_scalar_attribute(val: Any) -> ir.Attribute:
     raise TypeError(f"Unsupported scalar attribute type: {type(val)}")
 
 def _numpy_array_attribute(x: np.ndarray | np.generic) -> ir.Attribute:
+  element_type = dtype_to_ir_type(x.dtype)
   shape = x.shape
   if x.dtype == np.bool_:
     x = np.packbits(x, bitorder='little')  # type: ignore
   x = np.ascontiguousarray(x)
-  element_type = dtype_to_ir_type(x.dtype)
   return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
 
 def _numpy_array_attribute_handler(val: np.ndarray | np.generic) -> ir.Attribute:
