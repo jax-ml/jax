@@ -194,8 +194,7 @@ def physicalize_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
   const_avals = [_physical_aval(v.aval) for v in jaxpr.constvars]
   flat_avals, treedef = jax.tree.flatten((const_avals, in_avals))
   debug_info = api_util.debug_info(
-      "physicalize_jaxpr", _flat_jaxpr_eval, (), {}
-  )
+      "physicalize_jaxpr", _flat_jaxpr_eval, (const_avals, in_avals), {})
   wrapped_fun, _ = api_util.flatten_fun_nokwargs(
       lu.wrap_init(_flat_jaxpr_eval, debug_info=debug_info), treedef
   )
