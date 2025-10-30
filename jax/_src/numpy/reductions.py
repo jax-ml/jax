@@ -23,9 +23,7 @@ from typing import overload, Any, Literal, Protocol, Union
 
 import numpy as np
 
-import jax
-from jax import lax
-import jax._src.numpy as jnp
+from jax._src.lax import lax
 from jax._src import api
 from jax._src import core
 from jax._src import deprecations
@@ -2486,7 +2484,8 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
 
   q, = promote_dtypes_inexact(q)
   q = lax_internal.asarray(q)
-  if getattr(q, "ndim", 0) == 0:
+  q_was_scalar = getattr(q, "ndim", 0) == 0
+  if q_was_scalar:
     q = lax.expand_dims(q, (0,))
   q_shape = q.shape
   q_ndim = q.ndim
@@ -2534,7 +2533,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
         a = _where(any(lax_internal._isnan(a), axis=axis, keepdims=True), np.nan, a)
 
     total_weight = sum(weights, axis=axis, keepdims=True)
-    a_sorted, weights_sorted = lax.sort_key_val(a, weights, dimension=axis)
+    a_sorted, weights_sorted = lax_internal.sort_key_val(a, weights, dimension=axis)
     cum_weights = cumsum(weights_sorted, axis=axis)
     cum_weights_norm = lax.div(cum_weights, total_weight)
 
@@ -2576,17 +2575,16 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
       else:
         raise ValueError(f"{method=!r} not recognized")
       return out
+    result = api.vmap(_weighted_quantile)(q)
+    keepdim_out = list(keepdim)
+    if not q_was_scalar:
+      keepdim_out = [q_shape[0], *keepdim_out]
+      result = result.reshape(tuple(keepdim_out))
+    elif q_was_scalar and result.ndim > 0 and result.shape[0] == 1:
+      result = result.squeeze(axis=0)
+    return result
+    return result
 
-    result = jax.vmap(_weighted_quantile)(q)
-    if keepdims and keepdim:
-      if q_ndim > 0:
-        keepdim = [q_shape[0], *keepdim]
-      result = result.reshape(tuple(keepdim))
-    else:
-      if q_ndim == 0 or (q_ndim == 1 and q_shape[0] == 1):
-        if result.ndim > 0 and result.shape[0] == 1:
-          result = lax.squeeze(result, (0,))
-    return lax.convert_element_type(result, a.dtype)
 
   if squash_nans:
     a = _where(lax_internal._isnan(a), np.nan, a) # Ensure nans are positive so they sort to the end.
@@ -2666,15 +2664,13 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     result = high_value
   else:
     raise ValueError(f"{method=!r} not recognized")
-  if keepdims and keepdim:
-    if q_ndim > 0:
-      keepdim = [np.shape(q)[0], *keepdim]
-    result = result.reshape(keepdim)
-  else:
-    if q_ndim == 0 or (q_ndim == 1 and q_shape[0] == 1):
-      if result.ndim > 0 and result.shape[0] == 1:
-        result = lax.squeeze(result, (0,))
-  return lax.convert_element_type(result, a.dtype)
+  keepdim_out = list(keepdim)
+  if not q_was_scalar:
+    keepdim_out = [q_shape[0], *keepdim_out]
+    result = result.reshape(tuple(keepdim_out))
+  elif q_was_scalar and result.ndim > 0 and result.shape[0] == 1:
+    result = result.squeeze(axis=0)
+  return result
 
 
 # TODO(jakevdp): interpolation argument deprecated 2024-05-16
