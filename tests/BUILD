@@ -1023,6 +1023,18 @@ jax_multiplatform_test(
     ]),
 )
 
+jax_py_test(
+    name = "mlir_test",
+    srcs = ["mlir_test.py"],
+    deps = [
+        "//jax",
+        "//jax/_src:test_util",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
 jax_multiplatform_test(
     name = "metadata_test",
     srcs = ["metadata_test.py"],
