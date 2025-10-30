@@ -4442,6 +4442,15 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None, None)))
     self.assertArraysEqual(out, np_inp[:4, :] + np_inp[4:, :])
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_varargs_error(self, mesh):
+    @jax.shard_map(in_specs=jax.P('x'), out_specs=())
+    def f(*foos, **kwargs):
+      return ()
+
+    with self.assertRaises(ValueError):  # not AssertionError
+      f(jnp.arange(3.), jnp.arange(3.), jnp.arange(3.))
+
 
 class FunSpec(NamedTuple):
   name: str

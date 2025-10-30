@@ -480,7 +480,7 @@ def _spec_rank_error(
     fails: list[core.ShapedArray | NoFail]) -> str:
   fun_name = util_fun_name(f)
   if error_type == SpecErrorType.input:
-    prefix, base = 'in', 'args'
+    prefix, base = 'in', 'the passed args'
     ba = _try_infer_args(f, tree)
   else:
     prefix, base = 'out', f'{fun_name}(*args)'
@@ -489,16 +489,19 @@ def _spec_rank_error(
     extra = ""
     if error_type == SpecErrorType.input and ba is not None:
       arg_key, *_ = fail_key
-      if arg_key.idx < len(ba.arguments):
-        param_name = list(ba.arguments.keys())[arg_key.idx]
-        extra = (f", where {base}{arg_key} is bound to {fun_name}'s "
-                 f"parameter '{param_name}',")
+      param_names, params = unzip2(
+          (name, param) for name, param in ba.signature.parameters.items()
+          if param.kind not in (inspect.Parameter.KEYWORD_ONLY,
+                                inspect.Parameter.VAR_KEYWORD))
+      if (arg_key.idx >= len(params) or
+          params[arg_key.idx].kind == inspect.Parameter.VAR_POSITIONAL):
+        extra = (f", where args{arg_key} is the index "
+                 f"{arg_key.idx - len(params) + 1} component "
+                 f"of {fun_name}'s varargs parameter '{param_names[-1]}',")
       else:
-        param = list(ba.signature.parameters.values())[-1]
-        assert param.kind == inspect.Parameter.VAR_POSITIONAL
-        extra = (f", where {base}{arg_key} is the index "
-                 f"{arg_key.idx - len(ba.signature.parameters) + 1} component "
-                 f"of {fun_name}'s varargs parameter '{param.name}',")
+        param_name = params[arg_key.idx]
+        extra = (f", where args{arg_key} is bound to {fun_name}'s "
+                 f"parameter '{param_name}',")
     msgs.append(
         f"* {prefix}_specs{keystr(spec_key)} is {spec} which has length "
         f"{len(spec)}, but "
@@ -529,16 +532,19 @@ def _spec_divisibility_error(
     extra = ""
     if ba is not None:
       arg_key, *_ = fail_key
-      if arg_key.idx < len(ba.arguments):
-        param_name = list(ba.arguments.keys())[arg_key.idx]
+      param_names, params = unzip2(
+          (name, param) for name, param in ba.signature.parameters.items()
+          if param.kind not in (inspect.Parameter.KEYWORD_ONLY,
+                                inspect.Parameter.VAR_KEYWORD))
+      if (arg_key.idx >= len(params) or
+          params[arg_key.idx].kind == inspect.Parameter.VAR_POSITIONAL):
+        extra = (f", where args{arg_key} is the index "
+                 f"{arg_key.idx - len(params) + 1} component "
+                 f"of {fun_name}'s varargs parameter '{param_names[-1]}',")
+      else:
+        param_name = params[arg_key.idx]
         extra = (f", where args{arg_key} is bound to {fun_name}'s "
                  f"parameter '{param_name}',")
-      else:
-        param = list(ba.signature.parameters.values())[-1]
-        assert param.kind == inspect.Parameter.VAR_POSITIONAL
-        extra = (f", where args{arg_key} is the index "
-                 f"{arg_key.idx - len(ba.signature.parameters) + 1} component "
-                 f"of {fun_name}'s varargs parameter '{param.name}',")
     names = _spec_to_names(spec)
     for d, ns in names.items():
       if aval.shape[d] % prod(mesh.shape[n] for n in ns):
@@ -546,7 +552,7 @@ def _spec_divisibility_error(
         total = 'total ' if len(ns) > 1 else ''
         sz = prod(mesh.shape[n] for n in ns)
         msgs.append(
-            f"* args{keystr(fail_key)} of shape {aval.str_short()}{extra} "
+            f"* the passed args{keystr(fail_key)} of shape {aval.str_short()}{extra} "
             f"corresponds to in_specs{keystr(spec_key)} of value {spec}, "
             f"which maps array axis {d} (of size {aval.shape[d]}) to mesh "
             f"{axis} (of {total}size {sz}), but {sz} does not evenly divide "
