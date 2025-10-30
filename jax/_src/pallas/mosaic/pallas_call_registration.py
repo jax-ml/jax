@@ -375,7 +375,10 @@ def pallas_call_tpu_lowering_rule(
     name: str | None,
 ):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
-  del interpret, name  # Unused.
+  del interpret  # Unused.
+  if name is not None:
+    # XLA TPU will use the final name in the stack for the op name.
+    ctx = ctx.replace(name_stack=ctx.name_stack.extend(name))
 
   debug_info = jaxpr.debug_info
   if debug:
