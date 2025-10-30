@@ -2088,14 +2088,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     k=range(-4, 4),
   )
   def testTri(self, m, n, k, dtype):
-    np_fun = lambda: np.tri(n, M=m, k=k, dtype=dtype)
-    jnp_fun = lambda: jnp.tri(n, M=m, k=k, dtype=dtype)
-    args_maker = lambda: []
+    np_fun = lambda k: np.tri(n, M=m, dtype=dtype)
+    jnp_fun = lambda k: jnp.tri(n, M=m, dtype=dtype)
+    args_maker = lambda: [k]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   def test_tri_bug_22751(self):
-    with self.assertRaisesRegex(core.ConcretizationTypeError, "jax.numpy.tri"):
+    with self.assertRaisesRegex(
+        TypeError,
+        'Shapes must be 1D sequences of concrete values of integer type',
+    ):
       jax.jit(jnp.tri)(3, M=3, k=0)
 
   @jtu.sample_product(

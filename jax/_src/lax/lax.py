@@ -3480,8 +3480,6 @@ def _delta(dtype: DTypeLike, shape: Shape, axes: Sequence[int]) -> Array:
 
 def _tri(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
-  offset = _clip_int_to_valid_range(offset, np.int32,
-                                    "argument `offset` of jax.numpy.tri")
   dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "tri")
   bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0),
                     asarray(core.dimension_as_value(offset)).astype(np.int32)),
