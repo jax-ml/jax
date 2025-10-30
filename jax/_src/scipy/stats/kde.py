@@ -20,12 +20,12 @@ import numpy as np
 
 from jax._src import api
 from jax._src import dtypes
-from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src import random
-from jax._src.numpy.util import check_arraylike, promote_dtypes_inexact
+from jax._src.numpy.util import check_arraylike, promote_dtypes_inexact, ensure_arraylike
 from jax._src.scipy import linalg, special
 from jax._src.tree_util import register_pytree_node_class
+from jax._src.typing import Array
 
 
 @register_pytree_node_class
@@ -49,9 +49,9 @@ class gaussian_kde:
   inv_cov: Any
 
   def __init__(self, dataset, bw_method=None, weights=None):
-    check_arraylike("gaussian_kde", dataset)
+    dataset = ensure_arraylike("gaussian_kde", dataset)
     dataset = jnp.atleast_2d(dataset)
-    if dtypes.issubdtype(lax.dtype(dataset), np.complexfloating):
+    if dtypes.issubdtype(dataset.dtype, np.complexfloating):
       raise NotImplementedError("gaussian_kde does not support complex data")
     if not dataset.size > 1:
       raise ValueError("`dataset` input should have multiple elements.")
@@ -206,7 +206,7 @@ class gaussian_kde:
 
   def logpdf(self, x):
     """Log probability density function"""
-    check_arraylike("logpdf", x)
+    x = ensure_arraylike("logpdf", x)
     x = self._reshape_points(x)
     result = _gaussian_kernel_eval(True, self.dataset.T, self.weights[:, None],
                                    x.T, self.inv_cov)
@@ -224,8 +224,8 @@ class gaussian_kde:
     raise NotImplementedError(
         "dynamically changing the bandwidth method is not supported")
 
-  def _reshape_points(self, points):
-    if dtypes.issubdtype(lax.dtype(points), np.complexfloating):
+  def _reshape_points(self, points: Array):
+    if dtypes.issubdtype(points.dtype, np.complexfloating):
       raise NotImplementedError(
           "gaussian_kde does not support complex coordinates")
     points = jnp.atleast_2d(points)

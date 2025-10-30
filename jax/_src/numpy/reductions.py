@@ -2552,7 +2552,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     with config.debug_nans(False):
       a = _where(any(lax._isnan(a), axis=axis, keepdims=True), np.nan, a)
     a = lax.sort(a, dimension=axis)
-    n = lax.convert_element_type(a_shape[axis], lax._dtype(q))
+    n = lax.convert_element_type(a_shape[axis], q.dtype)
     q = lax.mul(q, n - 1)
     low = lax.floor(q)
     high = lax.ceil(q)

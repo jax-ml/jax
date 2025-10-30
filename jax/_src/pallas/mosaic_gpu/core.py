@@ -912,7 +912,7 @@ class ExtractAliasedRef(state_types.Transform):
       byte_offset: int,
       layout: tcgen05.TMEMLayout | None = None,
   ):
-    return cls(dtypes.dtype(ref.dtype), ref.ref.shape, byte_offset, layout)
+    return cls(dtypes.user_dtype_like_to_dtype(ref.dtype), ref.ref.shape, byte_offset, layout)
 
   def transform_shape(self, shape):
     if shape is None:

@@ -682,7 +682,7 @@ batching.defvectorized(random_bits_p)
 @random_bits_p.def_abstract_eval
 def random_bits_abstract_eval(keys_aval, *, bit_width, shape):
   out_shape = (*keys_aval.shape, *shape)
-  out_dtype = dtypes.dtype(f'uint{bit_width}')
+  out_dtype = dtypes.user_dtype_like_to_dtype(f'uint{bit_width}')
   # TODO(yashkatariya): random_bits should take an out_sharding argument.
   if keys_aval.sharding.mesh.empty:
     out_sharding = core.get_cur_mesh_sharding()
@@ -835,9 +835,9 @@ def _make_rotate_left(dtype):
   nbits = np.array(dtypes.iinfo(dtype).bits, dtype)
 
   def _rotate_left(x, d):
-    if lax.dtype(d) != dtype:
+    if dtypes.user_dtype_like_to_dtype(d) != dtype:
       d = lax.convert_element_type(d, dtype)
-    if lax.dtype(x) != dtype:
+    if dtypes.user_dtype_like_to_dtype(x) != dtype:
       x = lax.convert_element_type(x, dtype)
     return lax.shift_left(x, d) | lax.shift_right_logical(x, nbits - d)
   return _rotate_left
@@ -1100,9 +1100,18 @@ def threefry_2x32(keypair, count):
     An array of dtype uint32 with the same shape as `count`.
   """
   key1, key2 = keypair
-  if not lax.dtype(key1) == lax.dtype(key2) == lax.dtype(count) == np.uint32:
-    msg = "threefry_2x32 requires uint32 arguments, got {}"
-    raise TypeError(msg.format([lax.dtype(x) for x in [key1, key2, count]]))
+  if (
+      not dtypes.user_dtype_like_to_dtype(key1)
+      == dtypes.user_dtype_like_to_dtype(key2)
+      == dtypes.user_dtype_like_to_dtype(count)
+      == np.uint32
+  ):
+    msg = 'threefry_2x32 requires uint32 arguments, got {}'
+    raise TypeError(
+        msg.format(
+            [dtypes.user_dtype_like_to_dtype(x) for x in [key1, key2, count]]
+        )
+    )
 
   flat_count = count.ravel()
   odd_size = flat_count.shape[0] % 2

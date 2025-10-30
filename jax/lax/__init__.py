@@ -96,7 +96,6 @@ from jax._src.lax.lax import (
   dot as dot,
   dot_general as dot_general,
   dot_general_p as dot_general_p,
-  dtype as dtype,
   eq as eq,
   eq_p as eq_p,
   eq_to_p as eq_to_p,
@@ -404,6 +403,7 @@ from jax.lax import linalg as linalg
 from jax._src.pjit import with_sharding_constraint as with_sharding_constraint
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
+from jax._src.dtypes import user_dtype_like_to_dtype as dtype
 
 _deprecations = {
     # Added on July 24th 2025.

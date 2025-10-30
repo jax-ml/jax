@@ -31,7 +31,7 @@ from jax._src.lax import lax
 from jax._src.numpy import indexing
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.reductions import _moveaxis
-from jax._src.numpy.util import check_arraylike, _broadcast_to, _where
+from jax._src.numpy.util import check_arraylike, ensure_arraylike, _broadcast_to, _where
 from jax._src.numpy.vectorize import vectorize
 from jax._src.util import canonicalize_axis, set_module
 
@@ -247,12 +247,12 @@ class ufunc:
     if initial is not None:
       check_arraylike(f"{self.__name__}.reduce", initial)
     if where is not None:
-      check_arraylike(f"{self.__name__}.reduce", where)
+      where = ensure_arraylike(f"{self.__name__}.reduce", where)
       if self.identity is None and initial is None:
         raise ValueError(f"reduction operation {self.__name__!r} does not have an identity, "
                          "so to use a where mask one has to specify 'initial'.")
-      if lax._dtype(where) != bool:
-        raise ValueError(f"where argument must have dtype=bool; got dtype={lax._dtype(where)}")
+      if where.dtype != bool:
+        raise ValueError(f"where argument must have dtype=bool; got dtype={where.dtype}")
     reduce = self.__static_props['reduce'] or self._reduce_via_scan
     return reduce(a, axis=axis, dtype=dtype, keepdims=keepdims, initial=initial, where=where)
 

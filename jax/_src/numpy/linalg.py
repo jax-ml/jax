@@ -467,7 +467,7 @@ def matrix_rank(
 
 @custom_jvp
 def _slogdet_lu(a: Array) -> tuple[Array, Array]:
-  dtype = lax.dtype(a)
+  dtype = a.dtype
   lu, pivot, _ = lax_linalg.lu(a)
   diag = jnp.diagonal(lu, axis1=-2, axis2=-1)
   is_zero = reductions.any(diag == jnp.array(0, dtype=dtype), axis=-1)
@@ -492,7 +492,7 @@ def _slogdet_qr(a: Array) -> tuple[Array, Array]:
   # Implementation of slogdet using QR decomposition. One reason we might prefer
   # QR decomposition is that it is more amenable to a fast batched
   # implementation on TPU because of the lack of row pivoting.
-  if jnp.issubdtype(lax.dtype(a), np.complexfloating):
+  if jnp.issubdtype(a.dtype, np.complexfloating):
     raise NotImplementedError("slogdet method='qr' not implemented for complex "
                               "inputs")
   n = a.shape[-1]
@@ -560,7 +560,7 @@ def _slogdet_jvp(primals, tangents):
   g, = tangents
   sign, ans = slogdet(x)
   ans_dot = jnp.trace(solve(x, g), axis1=-1, axis2=-2)
-  if jnp.issubdtype(jnp._dtype(x), np.complexfloating):
+  if jnp.issubdtype(x.dtype, np.complexfloating):
     sign_dot = (ans_dot - ufuncs.real(ans_dot).astype(ans_dot.dtype)) * sign
     ans_dot = ufuncs.real(ans_dot)
   else:
@@ -629,7 +629,7 @@ def _cofactor_solve(a: ArrayLike, b: ArrayLike) -> tuple[Array, Array]:
   # triangular matrix.
   # The diagonal of l is set to ones without loss of generality.
   lu, pivots, permutation = lax_linalg.lu(a)
-  dtype = lax.dtype(a)
+  dtype = a.dtype
   batch_dims = lax.broadcast_shapes(lu.shape[:-2], b.shape[:-2])
   x = jnp.broadcast_to(b, batch_dims + b.shape[-2:])
   lu = jnp.broadcast_to(lu, batch_dims + lu.shape[-2:])
@@ -1666,7 +1666,7 @@ def vector_norm(x: ArrayLike, /, *, axis: int | tuple[int, ...] | None = None, k
   elif ord == -np.inf:
     return reductions.amin(ufuncs.abs(x), axis=axis, keepdims=keepdims)
   elif ord == 0:
-    return reductions.sum(x != 0, dtype=jnp.finfo(lax.dtype(x)).dtype,
+    return reductions.sum(x != 0, dtype=jnp.finfo(x.dtype).dtype,
                           axis=axis, keepdims=keepdims)
   elif ord == 1:
     # Numpy has a special case for ord == 1 as an optimization. We don't

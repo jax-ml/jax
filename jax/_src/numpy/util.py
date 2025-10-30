@@ -40,8 +40,6 @@ map, unsafe_map = safe_map, map
 
 export = set_module('jax.numpy')
 
-_dtype = dtypes.dtype
-
 
 def promote_shapes(fun_name: str, *args: ArrayLike) -> list[Array]:
   """Apply NumPy-style broadcasting, making args shape-compatible for lax.py."""
@@ -193,7 +191,7 @@ def check_arraylike_or_none(fun_name: str, *args: Any):
 
 def check_no_float0s(fun_name: str, *args: Any):
   """Check if none of the args have dtype float0."""
-  if any(dtypes.dtype(arg) == dtypes.float0 for arg in args):
+  if any(dtypes.user_dtype_like_to_dtype(arg) == dtypes.float0 for arg in args):
     raise TypeError(
         f"Called {fun_name} with a float0 array. "
         "float0s do not support any operations by design because they "
@@ -207,7 +205,7 @@ _check_no_float0s = check_no_float0s
 
 def check_for_prngkeys(fun_name: str, *args: Any):
   """Check if args don't match and none of the args have typed prng dtype"""
-  arg_dtypes = [dtypes.dtype(arg) for arg in args]
+  arg_dtypes = [dtypes.user_dtype_like_to_dtype(arg) for arg in args]
   if len(set(arg_dtypes)) < 2:
     return  # Will be caught by extended dtype impl rules.
   if any(dtypes.issubdtype(dt, dtypes.prng_key) for dt in arg_dtypes):
@@ -290,13 +288,12 @@ def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
 # `np.where(np.zeros(1000), 7, 4)`. In op-by-op mode, we don't want to
 # materialize the broadcast forms of scalar arguments.
 @api.jit
-def _where(condition: ArrayLike, x: ArrayLike, y: ArrayLike) -> Array:
-  condition, x, y = ensure_arraylike("where", condition, x, y)
+def _where(condition: Array, x: Array | None, y: Array | None) -> Array:
   if x is None or y is None:
     raise ValueError("Either both or neither of the x and y arguments should "
                      "be provided to jax.numpy.where, got {} and {}."
                      .format(x, y))
-  if not np.issubdtype(_dtype(condition), np.bool_):
+  if not np.issubdtype(condition.dtype, np.bool_):
     condition = lax.ne(condition, lax._zero(condition))
   x, y = promote_dtypes(x, y)
   if np.ndim(condition) == 0:

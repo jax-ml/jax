@@ -87,8 +87,6 @@ config_ext = xc._xla.config
 
 traceback_util.register_exclusion(__file__)
 
-_dtype = dtypes.dtype
-
 AxisName = Hashable
 
 Device = xc.Device
@@ -956,10 +954,10 @@ def _jacrev_unravel(output_pytree, input_pytree_leaf, arr):
 
 def _possible_downcast(x, example, spec):
   from jax._src.lax import lax as lax_internal  # pytype: disable=import-error
+  dtype = dtypes.user_dtype_like_to_dtype(example)
   if (dtypes.issubdtype(x.dtype, np.complexfloating) and
-      not dtypes.issubdtype(_dtype(example), np.complexfloating)):
+      not dtypes.issubdtype(dtype, np.complexfloating)):
     x = x.real
-  dtype = _dtype(example)
   weak_type = dtypes.is_weakly_typed(example)
   sharding = NamedSharding(core.typeof(example).sharding.mesh, spec)
   return lax_internal._convert_element_type(
@@ -1933,13 +1931,15 @@ def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
                     f"tree structure {tree_def_2}.")
   for p, t in zip(ps_flat, ts_flat):
     if not isinstance(core.typeof(p), ShapedArray): continue
-    if core.primal_dtype_to_tangent_dtype(_dtype(p)) != _dtype(t):
+    p_dtype = dtypes.user_dtype_like_to_dtype(p)
+    t_dtype = dtypes.user_dtype_like_to_dtype(t)
+    if core.primal_dtype_to_tangent_dtype(p_dtype) != t_dtype:
       raise TypeError("primal and tangent arguments to jax.jvp do not match; "
                       "dtypes must be equal, or in case of int/bool primal dtype "
                       "the tangent dtype must be float0."
-                      f"Got primal dtype {_dtype(p)} and so expected tangent dtype "
-                      f"{core.primal_dtype_to_tangent_dtype(_dtype(p))}, but got "
-                      f"tangent dtype {_dtype(t)} instead.")
+                      f"Got primal dtype {p_dtype} and so expected tangent dtype "
+                      f"{core.primal_dtype_to_tangent_dtype(p_dtype)}, but got "
+                      f"tangent dtype {t_dtype} instead.")
     if np.shape(p) != np.shape(t):
       raise ValueError("jvp called with different primal and tangent shapes;"
                        f"Got primal shape {np.shape(p)} and tangent shape as {np.shape(t)}")

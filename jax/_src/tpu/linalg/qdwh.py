@@ -79,7 +79,7 @@ def _use_qr(u, m, n, params):
   a_minus_e_by_sqrt_c, sqrt_c, e = params
   M, N = u.shape
 
-  y = _dynamic_concat(sqrt_c * u, jnp.eye(N, dtype=dtypes.dtype(u)), m)
+  y = _dynamic_concat(sqrt_c * u, jnp.eye(N, dtype=u.dtype), m)
   q, _ = lax_linalg.qr(y, full_matrices=False)
   # q1 = q[:m, :]
   q1 = _mask(lax.slice(q, (0, 0), (M, N)), (m, n))
@@ -99,7 +99,7 @@ def _use_cholesky(u, m, n, params):
   """
   a_minus_e, c, e = params
   _, N = u.shape
-  x = c * (u.T.conj() @ u) + jnp.eye(N, dtype=dtypes.dtype(u))
+  x = c * (u.T.conj() @ u) + jnp.eye(N, dtype=u.dtype)
   # Pads the lower-right corner with the identity matrix to prevent the Cholesky
   # decomposition from failing due to the matrix not being PSD if padded with
   # zeros.

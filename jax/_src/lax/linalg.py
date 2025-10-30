@@ -642,7 +642,9 @@ def triangular_solve(
   Returns:
     A batch of matrices the same shape and dtype as ``b``.
   """
-  conjugate_a = conjugate_a and dtypes.issubdtype(lax.dtype(a), np.complexfloating)
+  conjugate_a = conjugate_a and dtypes.issubdtype(
+      dtypes.user_dtype_like_to_dtype(a), np.complexfloating
+  )
   singleton = np.ndim(b) == np.ndim(a) - 1
   if singleton:
     b = lax.expand_dims(b, (-1 if left_side else -2,))
@@ -1484,7 +1486,7 @@ def _lu_shape_rule(shape):
 
 
 def _lu_dtype_rule(dtype, **_):
-  return dtype, dtypes.dtype(np.int32), dtypes.dtype(np.int32)
+  return dtype, np.dtype(np.int32), np.dtype(np.int32)
 
 
 def _lu_jvp_inner(lu, a_dot, permutation):
@@ -1500,7 +1502,7 @@ def _lu_jvp_inner(lu, a_dot, permutation):
   a_shape = np.shape(a_dot)
   assert len(a_shape) == 2
   m, n = a_shape
-  dtype = lax.dtype(a_dot)
+  dtype = a_dot.dtype
   k = min(m, n)
 
   l_padding = [(0, 0, 0)] * 2
@@ -1862,7 +1864,7 @@ def _qr_shape_rule(shape, *, pivoting, full_matrices, **_):
   return ((m, k), (k, n), (n,)) if pivoting else ((m, k), (k, n))
 
 def _qr_dtype_rule(dtype, *, pivoting, **_):
-  return (dtype, dtype, dtypes.dtype(np.int32)) if pivoting else (dtype, dtype)
+  return (dtype, dtype, np.dtype(np.int32)) if pivoting else (dtype, dtype)
 
 def qr_jvp_rule(primals, tangents, *, pivoting, full_matrices, use_magma):
   # See j-towns.github.io/papers/qr-derivative.pdf for a terse derivation.

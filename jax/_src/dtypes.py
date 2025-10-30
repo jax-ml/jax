@@ -399,7 +399,7 @@ python_scalar_types_to_dtypes: dict[type, DType] = {
 @export
 def scalar_type_of(x: Any) -> type:
   """Return the scalar type associated with a JAX value."""
-  typ = dtype(x)
+  typ = user_dtype_like_to_dtype(x)
   if typ in _custom_float_dtypes:
     return float
   elif typ in _intn_dtypes:
@@ -664,9 +664,13 @@ def _jax_type(dtype: DType, weak_type: bool) -> JAXType:
     return type(dtype.type(0).item())
   return dtype
 
+
 def _dtype_and_weaktype(value: Any) -> tuple[DType, bool]:
   """Return a (dtype, weak_type) tuple for the given input."""
-  return dtype(value), any(value is typ for typ in _weak_types) or is_weakly_typed(value)
+  return user_dtype_like_to_dtype(value), any(
+      value is typ for typ in _weak_types
+  ) or is_weakly_typed(value)
+
 
 def _type_promotion_lattice(strict: bool, x64: bool) -> dict[JAXType, list[JAXType]]:
   """
@@ -947,11 +951,14 @@ _types_whose_dtype_should_not_be_canonicalized = (
     literals.TypedComplex,
 )
 
-def dtype(x: Any) -> DType:
-  """Return the dtype object for a value or type.
+def user_dtype_like_to_dtype(x: Any) -> DType:
+  """Return the dtype object for a user-provided value or type.
 
   Python scalars, Python scalar types, NumPy scalar type, NumPy dtypes, and
   non-JAX arrays will have their dtypes canonicalized.
+
+  This is the wrong thing to call if you are not attempting to derive a dtype
+  directly from a user-provided object.
 
   Note: this is not the same function as jax.numpy.dtype, which simply aliases
   numpy.dtype."""
@@ -1019,13 +1026,13 @@ def lattice_result_type(*args: Any) -> tuple[DType, bool]:
     result_type = _least_upper_bound(
         config.numpy_dtype_promotion.value, config.enable_x64.value,
         *{_jax_type(dtype, False) for dtype in dtypes})
-    out_dtype = dtype(result_type)
+    out_dtype = user_dtype_like_to_dtype(result_type)
     out_weak_type = True
   else:
     result_type = _least_upper_bound(
         config.numpy_dtype_promotion.value, config.enable_x64.value,
         *{_jax_type(d, w) for d, w in zip(dtypes, weak_types)})
-    out_dtype = dtype(result_type)
+    out_dtype = user_dtype_like_to_dtype(result_type)
     out_weak_type = any(result_type is t for t in _weak_types)
   return out_dtype, (out_dtype != bool_) and out_weak_type
 
@@ -1111,8 +1118,8 @@ def safe_to_cast(input_dtype_or_value: Any,
     >>> safe_to_cast('complex64', 'float32')
     False
   """
-  input_dtype = dtype(input_dtype_or_value)
-  output_dtype = dtype(output_dtype_or_value)
+  input_dtype = user_dtype_like_to_dtype(input_dtype_or_value)
+  output_dtype = user_dtype_like_to_dtype(output_dtype_or_value)
   if input_dtype == output_dtype:
     return True
   # We deliberately use output_dtype rather than output_dtype_or_value here:
@@ -1121,7 +1128,7 @@ def safe_to_cast(input_dtype_or_value: Any,
 
 def primal_tangent_dtype(primal_dtype, tangent_dtype,
                          name: str | None = None) -> ExtendedDType:
-  primal_dtype, tangent_dtype = map(dtype, (primal_dtype, tangent_dtype))
+  primal_dtype, tangent_dtype = map(user_dtype_like_to_dtype, (primal_dtype, tangent_dtype))
   name_ = name or (f'PrimalTangentDType{{{short_dtype_name(primal_dtype)}'
                    f'/{short_dtype_name(tangent_dtype)}}}')
   rules = types.SimpleNamespace(

@@ -1083,7 +1083,7 @@ def _cond_lowering(ctx, index, *args, branches,
         assert False, p
 
     # Compute the new index into branches_keep
-    i32_type = ir.RankedTensorType.get([], mlir.dtype_to_ir_type(dtypes.dtype(np.int32)))
+    i32_type = ir.RankedTensorType.get([], mlir.dtype_to_ir_type(np.dtype(np.int32)))
     kept_index_case_op = hlo.CaseOp([i32_type],
                                     index=index,
                                     num_branches=len(branches))

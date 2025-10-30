@@ -98,7 +98,7 @@ class RefBitcaster:
             "Bitcast ref with dynamic size is not supported."
         )
     from jax._src.state.utils import eval_bitcast_shape  # pytype: disable=import-error
-    dtype = dtypes.dtype(dtype)
+    dtype = dtypes.user_dtype_like_to_dtype(dtype)
     return cls(dtype, eval_bitcast_shape(ref_or_view, dtype))
 
   @property
@@ -167,7 +167,7 @@ class RefReshaper:
         raise NotImplementedError(
             "Reshape ref with dynamic size is not supported."
         )
-    dtype = dtypes.dtype(ref_or_view.dtype)
+    dtype = dtypes.user_dtype_like_to_dtype(ref_or_view.dtype)
     return cls(dtype, shape)
 
   @property

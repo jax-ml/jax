@@ -876,7 +876,7 @@ def conj(x: ArrayLike) -> Array:
   .. _stablehlo.complex: https://openxla.org/stablehlo/spec#complex
   """
   # TODO(mattjj): remove input_dtype, not needed anymore
-  return conj_p.bind(x, input_dtype=_dtype(x))
+  return conj_p.bind(x, input_dtype=dtypes.user_dtype_like_to_dtype(x))
 
 @export
 def abs(x: ArrayLike) -> Array:
@@ -1668,7 +1668,7 @@ def _convert_element_type(
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()
 
-  old_dtype = dtypes.dtype(operand)
+  old_dtype = dtypes.user_dtype_like_to_dtype(operand)
 
   if (isinstance(new_dtype, dtypes.ExtendedDType) or
       isinstance(old_dtype, dtypes.ExtendedDType)):
@@ -2169,9 +2169,9 @@ class DotAlgorithm(NamedTuple):
                            rhs_dtype: DTypeLike) -> hlo.DotAlgorithm:
     del lhs_dtype, rhs_dtype  # unused
     return hlo.DotAlgorithm.get(
-        mlir.dtype_to_ir_type(dtypes.dtype(self.lhs_precision_type)),
-        mlir.dtype_to_ir_type(dtypes.dtype(self.rhs_precision_type)),
-        mlir.dtype_to_ir_type(dtypes.dtype(self.accumulation_type)),
+        mlir.dtype_to_ir_type(dtypes.user_dtype_like_to_dtype(self.lhs_precision_type)),
+        mlir.dtype_to_ir_type(dtypes.user_dtype_like_to_dtype(self.rhs_precision_type)),
+        mlir.dtype_to_ir_type(dtypes.user_dtype_like_to_dtype(self.accumulation_type)),
         self.lhs_component_count,
         self.rhs_component_count,
         self.num_primitive_operations,
@@ -2373,8 +2373,8 @@ class DotAlgorithmPreset(enum.Enum):
               f"The dot algorithm '{self}' requires both inputs to have float8 "
               f'dtypes. Got {lhs_dtype} and {rhs_dtype} instead.'
           )
-        lhs = mlir.dtype_to_ir_type(dtypes.dtype(lhs_dtype))
-        rhs = mlir.dtype_to_ir_type(dtypes.dtype(rhs_dtype))
+        lhs = mlir.dtype_to_ir_type(dtypes.user_dtype_like_to_dtype(lhs_dtype))
+        rhs = mlir.dtype_to_ir_type(dtypes.user_dtype_like_to_dtype(rhs_dtype))
         acc = ir.F32Type.get()
         return hlo.DotAlgorithm.get(
             lhs,
@@ -3064,7 +3064,7 @@ def _get_monoid_reducer(monoid_op: Callable,
     return None
   x, = xs
   aval = core.get_aval(x)
-  dtype = _dtype(x)
+  dtype = aval.dtype
   if core.is_concrete(x) and aval.shape == ():
     val = core.to_concrete_value(x)
     # allow bitwise reductions for boolean and integer types
@@ -3394,7 +3394,7 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     raise TypeError(msg.format(np.shape(fill_value)))
   if dtype is None:
     weak_type = dtypes.is_weakly_typed(fill_value)
-    fill_dtype = _dtype(fill_value)
+    fill_dtype = dtypes.user_dtype_like_to_dtype(fill_value)
   else:
     if dtypes.issubdtype(dtype, dtypes.extended):
       return dtype._rules.full(shape, fill_value, dtype)  # type: ignore[union-attr]
@@ -3536,8 +3536,8 @@ def stop_gradient(x: T) -> T:
     # only bind primitive on inexact dtypes, to avoid some staging
     if dtypes.issubdtype(core.get_aval(x).dtype, dtypes.extended):
       return x
-    elif (dtypes.issubdtype(_dtype(x), np.floating) or
-        dtypes.issubdtype(_dtype(x), np.complexfloating)):
+    elif (dtypes.issubdtype(dtypes.user_dtype_like_to_dtype(x), np.floating) or
+        dtypes.issubdtype(dtypes.user_dtype_like_to_dtype(x), np.complexfloating)):
       # break abstractions to support legacy leaked tracer use cases
       if isinstance(x, ad.JVPTracer):
         return stop(x.primal)
@@ -3609,7 +3609,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
   """
   fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)  # type: ignore[arg-type]
   weak_type = dtype is None and dtypes.is_weakly_typed(x)
-  dtype = _dtype(dtype) if dtype is not None else _dtype(x)
+  dtype = dtypes.user_dtype_like_to_dtype(dtype if dtype is not None else x)
   if dtypes.issubdtype(dtype, dtypes.extended):
     return dtype._rules.full(fill_shape, fill_value, dtype)  # type: ignore[union-attr]
 
@@ -4393,11 +4393,11 @@ ad.defjvp(atanh_p,
 mlir.register_lowering(atanh_p, partial(_nary_lower_hlo, chlo.atanh))
 
 real_p = unop(_complex_basetype, _complex, 'real')
-ad.deflinear2(real_p, lambda t, _: [complex(t, np.zeros((), _dtype(t)))])
+ad.deflinear2(real_p, lambda t, _: [complex(t, np.zeros((), dtypes.user_dtype_like_to_dtype(t)))])
 mlir.register_lowering(real_p, partial(_nary_lower_hlo, hlo.real))
 
 imag_p = unop(_complex_basetype, _complex, 'imag')
-ad.deflinear2(imag_p, lambda t, _: [complex(np.zeros((), _dtype(t)), neg(t))])
+ad.deflinear2(imag_p, lambda t, _: [complex(np.zeros((), dtypes.user_dtype_like_to_dtype(t)), neg(t))])
 mlir.register_lowering(imag_p, partial(_nary_lower_hlo, hlo.imag))
 
 
@@ -4457,7 +4457,7 @@ mlir.register_lowering(abs_p, partial(_nary_lower_hlo, hlo.abs))
 def _abs_jvp_rule(g, ans, x):
   if _iscomplex(x):
     return _maybe_real(mul(g, div(_maybe_conj(x),
-           _replace_zero(convert_element_type(ans, _dtype(x))))))
+           _replace_zero(convert_element_type(ans, dtypes.user_dtype_like_to_dtype(x))))))
   else:
     return select(ge(x, _zero(x)), g, neg(g))
 ad.defjvp2(abs_p, _abs_jvp_rule)
@@ -4511,7 +4511,7 @@ pow_p = naryop(_pow_dtype_rule, [_float | _complex, _int | _float | _complex],
                'pow', require_same_dtypes=False)
 
 def _pow_jvp_lhs(g, ans, x, y):
-  y_dtype = dtypes.dtype(y)
+  y_dtype = dtypes.user_dtype_like_to_dtype(y)
   result_dtype = dtypes.result_type(x, y)
   if result_dtype == bool:
     result_dtype = 'int32'
@@ -4529,7 +4529,7 @@ def _pow_jvp_lhs(g, ans, x, y):
   return mul(g, jac)
 
 def _pow_jvp_rhs(g, ans, x, y):
-  y_dtype = dtypes.dtype(y)
+  y_dtype = dtypes.user_dtype_like_to_dtype(y)
   assert dtypes.issubdtype(y_dtype, np.inexact)
   return convert_element_type(mul(g, mul(log(_replace_zero(x)), ans)), y_dtype)
 ad.defjvp2(pow_p, _pow_jvp_lhs, _pow_jvp_rhs)
@@ -7496,7 +7496,7 @@ def _select_transpose_rule(t, which, *cases):
                      for c in cases]
   else:
     zeros = full_like(t, 0)
-    if dtypes.dtype(which) == np.dtype(np.bool_):
+    if dtypes.user_dtype_like_to_dtype(which) == np.dtype(np.bool_):
       ct0 = select(which, zeros, t) if ad.is_undefined_primal(cases[0]) else None
       ct1 = select(which, t, zeros) if ad.is_undefined_primal(cases[1]) else None
       return (None, ct0, ct1)
@@ -8890,10 +8890,10 @@ def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
 
 
 def _const(example, val):
-  dtype = _dtype(example)
+  dtype = dtypes.user_dtype_like_to_dtype(example)
   if dtypes.is_python_scalar(example):
     val = dtypes.scalar_type_of(example)(val)
-    return val if dtype == _dtype(val) else np.array(val, dtype)
+    return val if dtype == dtypes.user_dtype_like_to_dtype(val) else np.array(val, dtype)
   return literals.TypedNdArray(np.array(val, dtype), weak_type=False)
 
 _zeros: Callable = partial(full_like, fill_value=0)
@@ -8915,14 +8915,11 @@ def _one(x):
 _twos: Callable = partial(full_like, fill_value=2)
 _two: Callable = partial(full_like, shape=(), fill_value=2)
 
-dtype: Callable = dtypes.dtype
-_dtype: Callable = dtypes.dtype
-
 def _isnan(x: ArrayLike) -> Array:
   return ne(x, x)
 
 def _iscomplex(x) -> bool:
-  return dtypes.issubdtype(_dtype(x), np.complexfloating)
+  return dtypes.issubdtype(dtypes.user_dtype_like_to_dtype(x), np.complexfloating)
 
 
 def ranges_like(*xs):
@@ -8993,7 +8990,8 @@ def _balanced_eq(x, z, y):
 
 
 def _eq_meet(a, b):
-  a_dtype, b_dtype = _dtype(a), _dtype(b)
+  a_dtype = dtypes.user_dtype_like_to_dtype(a)
+  b_dtype = dtypes.user_dtype_like_to_dtype(b)
   if a_dtype != b_dtype:
     higher_dtype = dtypes.promote_types(a_dtype, b_dtype)
     if higher_dtype == a_dtype:

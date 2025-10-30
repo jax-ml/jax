@@ -100,14 +100,15 @@ def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
                   treedef: tree_util.PyTreeDef, static_idx: tuple[Any, ...],
                   indices_are_sorted: bool, unique_indices: bool,
                   mode: slicing.GatherScatterMode | str | None, normalize_indices: bool):
-  dtype = lax.dtype(x)
+  dtype = dtypes.user_dtype_like_to_dtype(x)
   weak_type = dtypes.is_weakly_typed(x)
 
   if not dtypes.safe_to_cast(y, x):
     # TODO(jakevdp): change this to an error after the deprecation period.
     warnings.warn(
       "scatter inputs have incompatible types: cannot safely cast value "
-      f"from dtype={lax.dtype(y)} to dtype={lax.dtype(x)} with "
+      f"from dtype={dtypes.user_dtype_like_to_dtype(y)} to "
+      f"dtype={dtype} with "
       f"jax_numpy_dtype_promotion={config.numpy_dtype_promotion.value}. "
       "In future JAX releases this will result in an error.",
       FutureWarning)

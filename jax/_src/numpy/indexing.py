@@ -191,13 +191,13 @@ def _take(a, indices, axis: int | None = None, out=None, mode=None,
 
 def _normalize_index(index, axis_size):
   """Normalizes an index value in the range [-N, N) to the range [0, N)."""
-  if dtypes.issubdtype(dtypes.dtype(index), np.unsignedinteger):
+  if dtypes.issubdtype(dtypes.user_dtype_like_to_dtype(index), np.unsignedinteger):
     return index
   if core.is_constant_dim(axis_size):
     axis_size_val = lax._const(index, axis_size)
   else:
     axis_size_val = lax.convert_element_type(core.dimension_as_value(axis_size),
-                                             dtypes.dtype(index))
+                                             dtypes.user_dtype_like_to_dtype(index))
   if isinstance(index, (int, np.integer)):
     return lax.add(index, axis_size_val) if index < 0 else index
   else:
@@ -512,7 +512,7 @@ def _is_valid_integer_index_for_slice(idx, size, mode):
   if _is_integer_index(idx):
     return -size <= idx < size
   try:
-    shape, dtype = np.shape(idx), dtypes.dtype(idx)
+    shape, dtype = np.shape(idx), dtypes.user_dtype_like_to_dtype(idx)
   except:
     return False
   if shape == () and np.issubdtype(dtype, np.integer):
@@ -589,7 +589,7 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None,
       slice_sizes.append(max(0, stop - start))
       allow_negative_indices.append(start < 0 or stop < 0)
     else:
-      assert np.issubdtype(dtypes.dtype(ind), np.integer)  # checked above
+      assert np.issubdtype(dtypes.user_dtype_like_to_dtype(ind), np.integer)  # checked above
       assert np.shape(ind) == ()  # checked above
       start_indices.append(ind)
       slice_sizes.append(1)
@@ -1064,7 +1064,7 @@ def _is_boolean_index(i):
     abstract_i = None
   return (isinstance(abstract_i, core.ShapedArray) and dtypes.issubdtype(abstract_i.dtype, np.bool_)
           or isinstance(i, list) and i and all(_is_scalar(e)
-          and dtypes.issubdtype(dtypes.dtype(e), np.bool_) for e in i))
+          and dtypes.issubdtype(dtypes.user_dtype_like_to_dtype(e), np.bool_) for e in i))
 
 def _expand_bool_indices(idx, shape):
   """Converts concrete bool indexes into advanced integer indexes."""
@@ -1128,7 +1128,7 @@ def _is_advanced_int_indexer(idx):
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
   assert isinstance(idx, tuple)
   if all(e is None or e is Ellipsis or isinstance(e, slice)
-         or _is_scalar(e) and dtypes.issubdtype(dtypes.dtype(e), np.integer) for e in idx):
+         or _is_scalar(e) and dtypes.issubdtype(dtypes.user_dtype_like_to_dtype(e), np.integer) for e in idx):
     return False
   return all(e is None or e is Ellipsis or isinstance(e, slice)
              or _is_int_arraylike(e) for e in idx)

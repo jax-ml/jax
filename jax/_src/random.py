@@ -42,7 +42,7 @@ from jax._src.lax import lax
 from jax._src.lax import special as lax_special
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import linalg as jnp_linalg
-from jax._src.numpy.util import _arraylike, check_arraylike, promote_dtypes_inexact
+from jax._src.numpy.util import _arraylike, check_arraylike, ensure_arraylike, promote_dtypes_inexact
 from jax._src.pjit import auto_axes
 from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
@@ -685,7 +685,7 @@ def permutation(key: ArrayLike,
   axis = canonicalize_axis(axis, np.ndim(x) or 1)
   out_sharding = canonicalize_sharding(out_sharding, "permutation")
   if not np.ndim(x):
-    if not np.issubdtype(lax.dtype(x), np.integer):
+    if not np.issubdtype(dtypes.user_dtype_like_to_dtype(x), np.integer):
       raise TypeError("x must be an integer or at least 1-dimensional")
     r = core.concrete_or_error(int, x, "argument x of jax.random.permutation()")
     return maybe_auto_axes(lambda key: _shuffle(key, jnp.arange(r), axis),
@@ -1066,7 +1066,7 @@ def bernoulli(key: ArrayLike,
     raise ValueError(f"got {mode=}, expected 'high' or 'low'")
   key, _ = _check_prng_key("bernoulli", key)
   out_sharding = canonicalize_sharding(out_sharding, "bernoulli")
-  dtype = lax.dtype(p)
+  dtype = dtypes.user_dtype_like_to_dtype(p)
   if not dtypes.issubdtype(dtype, np.floating):
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
@@ -1082,7 +1082,7 @@ def _bernoulli(key: Array, p: Array, shape: Shape | None, mode: str) -> Array:
     shape = np.shape(p)
   else:
     _check_shape("bernoulli", shape, np.shape(p))
-  dtype = lax.dtype(p)
+  dtype = dtypes.user_dtype_like_to_dtype(p)
 
   if mode == 'high':
     u1, u2 = uniform(key, (2, *shape), dtype)
@@ -1090,7 +1090,7 @@ def _bernoulli(key: Array, p: Array, shape: Shape | None, mode: str) -> Array:
     u2 *= 2 ** -dtypes.finfo(dtype).nmant
     return u2 < p - u1
   else:
-    return uniform(key, shape, lax.dtype(p)) < p
+    return uniform(key, shape, dtypes.user_dtype_like_to_dtype(p)) < p
 
 
 def beta(key: ArrayLike,
@@ -1310,7 +1310,7 @@ def _gamma_one(key: Array, alpha, log_space) -> Array:
   one_over_two = lax._const(alpha, 0.5)
   one_over_three = lax._const(alpha, 1. / 3.)
   squeeze_const = lax._const(alpha, 0.0331)
-  dtype = lax.dtype(alpha)
+  dtype = dtypes.user_dtype_like_to_dtype(alpha)
 
   zero = core.pvary(zero, tuple(core.typeof(alpha).vma))
   one = core.pvary(one, tuple(core.typeof(alpha).vma))

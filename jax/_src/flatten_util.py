@@ -61,7 +61,7 @@ def unravel_pytree(
 def _ravel_list(lst: list[Any], /) -> tuple[Array, Callable[[Array], list[Any]]]:
   if not lst:
     return lax.full([0], 0, "float32"), lambda _: []
-  from_dtypes = tuple(dtypes.dtype(l) for l in lst)
+  from_dtypes = tuple(dtypes.user_dtype_like_to_dtype(l) for l in lst)
   to_dtype = dtypes.result_type(*from_dtypes)
   sizes, shapes = unzip2((np.size(x), np.shape(x)) for x in lst)
 
@@ -93,7 +93,7 @@ def _unravel_list(
   to_dtype: np.dtype,
   arr: Array,
 ) -> list[Array]:
-  arr_dtype = dtypes.dtype(arr)
+  arr_dtype = dtypes.user_dtype_like_to_dtype(arr)
   if arr_dtype != to_dtype:
     raise TypeError(
       f"unravel function given array of dtype {arr_dtype}, "

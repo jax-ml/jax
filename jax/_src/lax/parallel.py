@@ -130,7 +130,7 @@ def psum(x, axis_name, *, axis_index_groups=None):
   _validate_reduce_axis_index_groups(axis_index_groups)
   leaves, treedef = tree_util.tree_flatten(x)
   leaves = [lax.convert_element_type(l, np.int32)
-            if dtypes.dtype(l) == np.bool_ else l for l in leaves]
+            if dtypes.user_dtype_like_to_dtype(l) == np.bool_ else l for l in leaves]
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   # handle the constant case specially
   if all(not isinstance(leaf, core.Tracer) for leaf in leaves):
