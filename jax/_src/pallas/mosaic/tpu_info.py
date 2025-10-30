@@ -87,13 +87,6 @@ class TpuInfo:
     # Is this a multi-core chip being used in single-core mode?
     return self.num_cores == 1 and not self.is_lite
 
-  @property
-  def supports_sparse_core(self) -> bool:
-    # TODO(slebedev): Migrate the callers to use ``sparse_core`` directly.
-    return (
-        self.chip_version == ChipVersion.TPU_V5P and not self.is_split_chip
-    ) or self.chip_version in {ChipVersion.TPU_7X, ChipVersion.TPU_V6E}
-
   def is_matmul_supported(
       self,
       lhs_dtype: jnp.dtype | str,
