@@ -950,6 +950,26 @@ class MutableArrayTest(jtu.JaxTestCase):
     issue_vmap1_minimized()
     issue_vmap2()
 
+  def test_slicing_with_vjp3(self):
+    @jax.jit
+    def f(x, i):
+      return x[i] ** 2
+
+    x = jnp.arange(10.)
+
+    grad_accum = jax.new_ref(jnp.zeros(10))
+    not_needed = object()
+
+    @jax.make_jaxpr
+    def run():
+      _, f_vjp = jax.vjp(f, x, 5)
+      f_vjp = f_vjp.with_refs(grad_accum, not_needed)
+      f_vjp(1.)
+
+    jaxpr = run()
+    self.assertIn('+=', str(jaxpr))
+    self.assertNotIn('0.0', str(jaxpr))
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
