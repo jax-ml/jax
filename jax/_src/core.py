@@ -50,7 +50,7 @@ from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, cache,
                            HashableFunction, HashableWrapper, weakref_lru_cache,
                            partition_list, StrictABCMeta, foreach,
-                           weakref_cache_key_types)
+                           weakref_cache_key_types, set_module)
 import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding
 from jax._src.sharding import Sharding
@@ -3653,6 +3653,7 @@ def _check_map(ctx_factory, prim, in_avals, params):
 
 # ------------------- ShapeDtypeStruct -------------------
 
+@set_module("jax")
 class ShapeDtypeStruct:
   """A container for the shape, dtype, and other static attributes of an array.
 
