@@ -3453,7 +3453,8 @@ def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int,
 def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize = 0) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
   dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "eye")
-  bool_eye = eq(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
+  bool_eye = eq(add(broadcasted_iota(np.int32, shape, 0),
+                    asarray(core.dimension_as_value(offset)).astype(np.int32)),
                 broadcasted_iota(np.int32, shape, 1))
   return convert_element_type_p.bind(bool_eye, new_dtype=dtype, weak_type=False,
                                      sharding=None)
