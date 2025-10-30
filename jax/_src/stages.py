@@ -34,7 +34,6 @@ import dataclasses
 import enum
 from collections.abc import Sequence
 from dataclasses import dataclass
-from functools import partial
 import itertools as it
 from typing import Any, NamedTuple, Protocol, Union, runtime_checkable
 
@@ -404,10 +403,10 @@ class Traced(Stage):
   traced representation with the remaining information needed to later
   lower, compile, and execute it.
   """
-  __slots__ = ['_args_flat', '_params', '_in_tree', 'out_tree', '_consts']
+  __slots__ = ['_meta_tys_flat', '_params', '_in_tree', 'out_tree', '_consts']
 
-  def __init__(self, args_flat, params, in_tree, out_tree, consts):
-    self._args_flat = args_flat
+  def __init__(self, meta_tys_flat, params, in_tree, out_tree, consts):
+    self._meta_tys_flat = meta_tys_flat
     self._params = params
     self._in_tree = in_tree
     self.out_tree = out_tree
@@ -425,13 +424,12 @@ class Traced(Stage):
 
   def fall(self):
     if not self.jaxpr.is_high:
-      return Fallen(self._args_flat, self._params, self._in_tree, self.out_tree,
-                    (self._in_tree, self.jaxpr.in_avals),
+      return Fallen(self._meta_tys_flat, self._params, self._in_tree,
+                    self.out_tree, (self._in_tree, self.jaxpr.in_avals),
                     (self.out_tree, self.jaxpr.out_avals),
                     self._consts)
 
     # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
-    from jax._src.pjit import convert_to_lower_type  # type: ignore
     from jax._src.interpreters import partial_eval as pe  # type:ignore
     hi_jaxpr = self.jaxpr
     _, closed_over_himutables = pe.convert_const_himutables(hi_jaxpr)
@@ -440,11 +438,11 @@ class Traced(Stage):
     in_tree = lojax_pytree(hi_jaxpr.in_aval_qdds, self._in_tree)
     out_tree = lojax_pytree(hi_jaxpr.out_avals, self.out_tree)
     params = dict(lojax_expand_params(hi_jaxpr, self._params), jaxpr=lo_jaxpr)
-    lo_args = [lo_val for aval, x in zip(hi_jaxpr.in_aval_qdds, self._args_flat)
-               for lo_val in (aval.read_loval(x) if aval.has_qdd
-                              else aval.lower_val(x))]
-    lo_arg_types = map(partial(convert_to_lower_type, False), lo_args)
-    return Fallen(lo_arg_types, params, in_tree, out_tree,
+    lo_meta_tys = [mty.replace(aval=lo_ty)
+                   for mty, aq in zip(self._meta_tys_flat, hi_jaxpr.in_aval_qdds)
+                   for lo_ty in (mty.aval.lo_ty_qdd(aq.qdd)
+                                 if mty.aval.has_qdd else mty.aval.lo_ty())]
+    return Fallen(lo_meta_tys, params, in_tree, out_tree,
                   (self._in_tree, hi_jaxpr.final_aval_qdds),
                   (self.out_tree, hi_jaxpr.out_avals),
                   self._consts)
@@ -472,12 +470,12 @@ def lojax_pytree(hi_avals, tree):
 
 class Fallen(Stage):
   """True leader of the Decepticons."""
-  __slots__ = ['_args_flat', '_params', '_in_tree', 'out_tree',
+  __slots__ = ['_meta_tys_flat', '_params', '_in_tree', 'out_tree',
                '_consts', '_in_types', '_out_types']
 
-  def __init__(self, args_flat, params, in_tree, out_tree, in_types, out_types,
+  def __init__(self, meta_tys_flat, params, in_tree, out_tree, in_types, out_types,
                consts):
-    self._args_flat = args_flat
+    self._meta_tys_flat = meta_tys_flat
     self._params = params
     self._in_tree = in_tree
     self.out_tree = out_tree
@@ -503,12 +501,12 @@ class Fallen(Stage):
     try:
       from jax._src.pjit import _resolve_and_lower  # type: ignore
       lowering = _resolve_and_lower(
-          self._args_flat, **self._params, lowering_platforms=lowering_platforms,
+          self._meta_tys_flat, **self._params, lowering_platforms=lowering_platforms,
           lowering_parameters=_private_parameters, pgle_profiler=None)
     except DeviceAssignmentMismatchError as e:
       fails, = e.args
       msg = _device_assignment_mismatch_error(
-          self._params['name'], fails, self._args_flat, 'jit',
+          self._params['name'], fails, self._meta_tys_flat, 'jit',
           self.jaxpr.debug_info.safe_arg_names(len(self.jaxpr.in_avals)))
       raise ValueError(msg) from None
     return Lowered(lowering, self.args_info, self.out_tree,
