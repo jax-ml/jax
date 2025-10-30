@@ -38,6 +38,11 @@ on:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
         default: 'no'
+      max-processes:
+        description: 'The value to set for `--maxprocesses` when running pytest. Leave empty to use max processes.'
+        type: string
+        default: ''
+
 permissions: {}
 
 env:
@@ -63,6 +68,7 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_ENABLE_X64: "${{ inputs.enable-x64 }}"
+      MAX_PROCESSES: ${{ inputs.max-processes }}
 
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0

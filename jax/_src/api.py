@@ -74,7 +74,7 @@ from jax._src.sharding_impls import (PmapSharding, PartitionSpec as P,
 from jax._src.layout import Format
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
-from jax._src.util import unzip2, safe_map, safe_zip, wraps, split_list
+from jax._src.util import unzip2, safe_map, safe_zip, wraps
 from jax._src import util
 
 from jax._src.interpreters import ad
@@ -2664,9 +2664,8 @@ def make_jaxpr(
     # consts not to be converted.
     num_consts = traced._num_consts
     if num_consts:
-      consts, _ = split_list(traced._args_flat, [num_consts])
       jaxpr_ = pe.convert_invars_to_constvars(traced.jaxpr.jaxpr, num_consts)
-      jaxpr = core.ClosedJaxpr(jaxpr_, consts)
+      jaxpr = core.ClosedJaxpr(jaxpr_, traced._consts)
     else:
       jaxpr = traced.jaxpr
     if return_shape:

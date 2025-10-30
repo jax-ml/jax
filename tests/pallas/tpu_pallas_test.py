@@ -4001,6 +4001,32 @@ class MiscellaneousTest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(out, x.reshape(out_shape))
 
+  def test_dynamic_grid_with_smem_output(self):
+    if self.INTERPRET:
+      self.skipTest('Fail on interpreter.')
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 3):
+      self.skipTest('Needs a newer libTPU')
+
+    def body(_, o_ref):
+      o_ref[0] = lax.cond(
+          pl.program_id(0) == 0, lambda: 1, lambda: o_ref[0] + 1
+      )
+
+    def wrapper_dynamic(n):
+      return self.pallas_call(
+          body,
+          out_shape=pltpu.SMEM((1,), dtype=jnp.int32),
+          grid_spec=pl.GridSpec(
+              grid=(n,),
+              in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+              out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+          ),
+      )(n)
+
+    n = jax.random.randint(jax.random.key(0), (1,), 1, 10, dtype=jnp.int32)
+    compiled_kernel = jax.jit(wrapper_dynamic).lower(n).compile()
+    np.testing.assert_array_equal(compiled_kernel(n), n)
+
 
 class MiscellaneousInterpretTest(MiscellaneousTest):
   INTERPRET: bool = True
