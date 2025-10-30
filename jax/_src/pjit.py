@@ -153,8 +153,9 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
   except stages.DeviceAssignmentMismatchError as e:
     fails, = e.args
     fun_name = getattr(fun, '__qualname__', getattr(fun, '__name__', str(fun)))
+    arg_types = map(partial(convert_to_lower_type, False), args_flat)
     msg = stages._device_assignment_mismatch_error(
-        fun_name, fails, args_flat, 'jit', p.arg_names)
+        fun_name, fails, arg_types, 'jit', p.arg_names)
     raise ValueError(msg) from None
   except dtypes.InvalidInputException as e:
     arg_names = [''] * len(args_flat) if p.arg_names is None else p.arg_names
@@ -303,9 +304,9 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 @api_boundary
 def jit_trace(jit_func, *args, **kwargs) -> stages.Traced:
   p, args_flat = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs)
-  lower_callable = partial(_resolve_and_lower, args_flat, pgle_profiler=None)
-  return stages.Traced(lower_callable, p.params, p.in_tree, p.out_tree,
-                       len(p.consts))
+  arg_types = map(partial(convert_to_lower_type, p.params['jaxpr'].is_high),
+                  args_flat)
+  return stages.Traced(arg_types, p.params, p.in_tree, p.out_tree, p.consts)
 
 @api_boundary
 def jit_lower(jit_func, *args, **kwargs):
@@ -1378,6 +1379,7 @@ def _lojax_expand_params(
                     out_shardings=out_shardings, out_layouts=out_layouts)
   return new_params
 
+
 def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings,
                         in_avals) -> Sequence[Layout | AutoLayout | None]:
   # If device or backend is set, return the default layout. This is because you
@@ -1390,12 +1392,12 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings,
   resolved_in_layouts: list[Layout | AutoLayout | None] = []
   for arg, jit_in_l, rs, aval in safe_zip(
       args, jit_in_layouts, resolved_in_shardings, in_avals):
-    committed = getattr(arg, '_committed', True)
+    committed = arg.committed
     # `arg_layout` is only used for checking purposes in the `else` branch
     # below. We cannot replace default layout with None to raise nicer errors.
     # `dispatch_arg_layout` replaces default layouts with `None` to simplify
     # dispatch and lowering logic downstream.
-    if hasattr(arg, 'format'):
+    if arg.format is not None:
       arg_layout = arg.format.layout
       dispatch_arg_layout = (None if pxla.is_default_layout(arg_layout, rs, aval)
                              else arg_layout)
@@ -1403,7 +1405,7 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings,
       arg_layout, dispatch_arg_layout = None, None
     # Sharding can be unspecified when array is committed if it's a PmapSharding.
     is_pmap_sharding = (isinstance(rs, UnspecifiedValue) or
-                        isinstance(getattr(arg, 'sharding', None), PmapSharding))
+                        isinstance(arg.sharding, PmapSharding))
     if jit_in_l is None:
       if committed:
         if is_pmap_sharding:
@@ -1432,8 +1434,7 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings,
         raise ValueError('Layout passed to jit does not match the layout '
                           'on the respective arg. '
                           f'Got jit layout: {jit_in_l},\n'
-                          f'arg layout: {arg_layout} for '
-                          f'arg shape: {core.shaped_abstractify(arg).str_short()}.'
+                          f'arg layout: {arg_layout} for arg type: {arg.aval}.'
                           f'{extra_msg}')
       jit_in_l = (None if isinstance(jit_in_l, Layout) and
                   pxla.is_default_layout(jit_in_l, rs, aval) else jit_in_l)
@@ -1480,16 +1481,14 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
   for arg, pjit_in_s in zip(args, pjit_in_shardings):
     # arg sharding can be None in case of ShapeDtypeStruct. jax.Array does
     # not allow None as the sharding.
-    arg_s, committed = ((arg.sharding, getattr(arg, '_committed', True))
-                        if hasattr(arg, 'sharding') and arg.sharding is not None
+    arg_s, committed = ((arg.sharding, arg.committed) if arg.sharding is not None
                         else (UNSPECIFIED, False))
     if isinstance(arg_s, NamedSharding) and arg_s.mesh.empty:
       arg_s, committed = UNSPECIFIED, False
     if isinstance(pjit_in_s, UnspecifiedValue):
       resolved_in_shardings.append(finalize_arg_sharding(arg_s, committed))
     else:
-      if (isinstance(arg, np.ndarray) and
-          not pjit_in_s.is_fully_replicated and  # type: ignore[union-attr]
+      if (arg.is_nd_array and not pjit_in_s.is_fully_replicated and  # type: ignore[union-attr]
           xb.process_count() > 1):
         raise ValueError(
             'Passing non-trivial shardings for numpy '
@@ -1500,8 +1499,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
             'can pass to jit. '
             'If the numpy input is the same on each process, then you can use '
             '`jax.make_array_from_callback(...) to create a `jax.Array` which '
-            'you can pass to jit. '
-            f'Got arg shape: {arg.shape}, arg value: {arg}')
+            f'you can pass to jit. Got arg type: {arg.aval}')
       if not isinstance(arg_s, UnspecifiedValue) and arg_s._is_concrete:
         # jax.jit does not allow resharding across different memory kinds even
         # if the argument is uncommitted. Use jax.device_put for those cases,
@@ -1510,8 +1508,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
           raise ValueError(
               'Memory kinds passed to jax.jit does not match memory kind on the'
               f' respective arg. Got jit memory kind: {pjit_in_s.memory_kind}, '  # type: ignore[union-attr]
-              f'arg memory kind: {arg_s.memory_kind} for '
-              f'arg shape: {core.shaped_abstractify(arg).str_short()}')
+              f'arg memory kind: {arg_s.memory_kind} for arg type: {arg.aval}')
         if (committed and
             not isinstance(arg_s, PmapSharding) and
             not op_shardings.are_hlo_shardings_equal(
@@ -1520,8 +1517,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
           raise ValueError('Sharding passed to jit does not match the sharding '
                            'on the respective arg. '
                            f'Got jit sharding: {pjit_in_s},\n'
-                           f'arg sharding: {arg_s} for '
-                           f'arg shape: {core.shaped_abstractify(arg).str_short()}')
+                           f'arg sharding: {arg_s} for arg type: {arg.aval}')
       resolved_in_shardings.append(pjit_in_s)
 
   return tuple(resolved_in_shardings)
@@ -1544,6 +1540,35 @@ def _resolve_and_lower(
       pgle_profiler=pgle_profiler)
 
 _pgle_profiler_dict = weakref.WeakKeyDictionary()  # type: ignore
+
+
+@dataclasses.dataclass(frozen=True)
+class LowerType:
+  sharding: Any
+  format: Any
+  committed: bool
+  aval: Any
+  is_nd_array: bool
+
+  @property
+  def shape(self):
+    return self.aval.shape
+
+  @property
+  def ndim(self):
+    return self.aval.ndim
+
+
+def convert_to_lower_type(is_high, arg):
+  if is_high:
+    return arg
+  arg_sharding = getattr(arg, 'sharding', None)
+  arg_format = getattr(arg, 'format', None)
+  arg_committed = getattr(arg, '_committed', True)
+  aval = core.shaped_abstractify(arg)
+  is_nd_array = isinstance(arg, np.ndarray)
+  return LowerType(arg_sharding, arg_format, arg_committed, aval, is_nd_array)
+
 
 def _pjit_call_impl_python(
     *args,
@@ -1572,8 +1597,9 @@ def _pjit_call_impl_python(
   compiler_options_kvs = compiler_options_kvs + tuple(pgle_compile_options.items())
   # Passing mutable PGLE profile here since it should be extracted by JAXPR to
   # initialize the fdo_profile compile option.
+  arg_types = map(partial(convert_to_lower_type, jaxpr.is_high), args)
   computation = _resolve_and_lower(
-      args, jaxpr=jaxpr, in_shardings=in_shardings,
+      arg_types, jaxpr=jaxpr, in_shardings=in_shardings,
       out_shardings=out_shardings, in_layouts=in_layouts,
       out_layouts=out_layouts, donated_invars=donated_invars,
       ctx_mesh=ctx_mesh, name=name, keep_unused=keep_unused,
