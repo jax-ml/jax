@@ -789,7 +789,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     if axis is None:
       weights_shape = a_shape
     elif isinstance(axis, tuple):
-      weights_shape = tuple(a_shape[i] for i in axis)
+      weights_shape = a_shape
     else:
       weights_shape = (a_shape[axis],)
     weights = np.abs(rng(weights_shape, a_dtype)) + 1e-3

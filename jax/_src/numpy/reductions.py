@@ -2497,8 +2497,8 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   if weights is None:
     a, = promote_dtypes_inexact(a)
   else:
-    a, weights = promote_dtypes_inexact(a, weights)
-    weights = lax.convert_element_type(weights, a.dtype)
+    a, q, weights = promote_dtypes_inexact(a, q, weights)
+    #weights = lax.convert_element_type(weights, a.dtype)
     a_shape = a.shape
     w_shape = np.shape(weights)
     if np.ndim(weights) == 0:
@@ -2583,8 +2583,6 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     elif q_was_scalar and result.ndim > 0 and result.shape[0] == 1:
       result = result.squeeze(axis=0)
     return result
-    return result
-
 
   if squash_nans:
     a = _where(lax_internal._isnan(a), np.nan, a) # Ensure nans are positive so they sort to the end.
