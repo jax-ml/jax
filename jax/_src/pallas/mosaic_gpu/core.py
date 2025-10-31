@@ -1437,6 +1437,7 @@ class ReducedLayout(SomeLayout):
 class Layout(SomeLayout, enum.Enum):
   #: [m, n] matrix, where m % 64 == 0 == n % 8.
   WGMMA = enum.auto()
+  WGMMA_8BIT = enum.auto()
   WGMMA_UPCAST_2X = enum.auto()
   WGMMA_UPCAST_4X = enum.auto()
   WGMMA_TRANSPOSED = enum.auto()
@@ -1472,6 +1473,9 @@ class Layout(SomeLayout, enum.Enum):
       case Layout.WGMMA:
         check_no_args()
         return mgpu.WGMMA_LAYOUT
+      case Layout.WGMMA_8BIT:
+        check_no_args()
+        return mgpu.WGMMA_LAYOUT_8BIT
       case Layout.WGMMA_UPCAST_2X:
         check_no_args()
         return mgpu.WGMMA_LAYOUT_UPCAST_2X
