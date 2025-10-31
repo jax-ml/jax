@@ -484,6 +484,7 @@ jax_multiplatform_test(
         "//jax:pallas_mosaic_gpu",
         "//jax/_src:test_multiprocess",
         "//jax/experimental:pallas_experimental_gpu_ops",
+        "//third_party/py/torch:pytorch",
     ] + py_deps([
         "portpicker",
         "absl/testing",
