@@ -1559,14 +1559,22 @@ class MetaTy:
   def ndim(self):
     return self.aval.ndim
 
+@util.cache(max_size=4096, trace_context_in_key=False)
+def create_meta_ty(aval, arg_sharding, arg_format, arg_committed, is_np_array):
+  return MetaTy(aval, arg_sharding, arg_format, arg_committed, is_np_array)
 
 def convert_to_metaty(arg):
+  # TODO(yashkatariya): Remove this Tracer special case after
+  # getattr(Tracer, 'sharding') is fast.
+  if isinstance(arg, core.Tracer):
+    return create_meta_ty(arg.aval, None, None, True, False)
+  aval = core.shaped_abstractify(arg)
   arg_sharding = getattr(arg, 'sharding', None)
   arg_format = getattr(arg, 'format', None)
   arg_committed = getattr(arg, '_committed', True)
-  aval = core.shaped_abstractify(arg)
   is_np_array = isinstance(arg, np.ndarray)
-  return MetaTy(aval, arg_sharding, arg_format, arg_committed, is_np_array)
+  return create_meta_ty(aval, arg_sharding, arg_format, arg_committed,
+                        is_np_array)
 
 
 def _pjit_call_impl_python(
