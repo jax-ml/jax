@@ -8434,7 +8434,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
     retiled.Each([&](absl::Span<const int64_t> dst_idx, Value* const vreg) {
       // Recall that this is a one-to-many vregs relayout. Each destination vreg
       // will hold a different part of the source data.
-      // For example, a (8, 128) -> (4, 128) retiling with replicated 2nd minor:
+      // For example, a (8, 128) -> (4, 128) retiling with replicated minor:
       // - Destination vreg 0 comes from the first 4 sublanes of source vreg 0,
       //   with gather pattern [0, 1, 2, 3, 0, 1, 2, 3]
       // - Destination vreg 1 comes from the last 4 sublanes of source vreg 0,
