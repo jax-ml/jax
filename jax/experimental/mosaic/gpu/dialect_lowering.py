@@ -2233,6 +2233,26 @@ def _async_store_tmem_op_lowering_rule(
   return []
 
 
+if hasattr(mgpu, "TcGen05CommitArriveOp"):
+
+  @_register_lowering(mgpu.TcGen05CommitArriveOp, support_warp_semantics=True)
+  def _tcgen05_commit_arrive_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.TcGen05CommitArriveOp
+  ) -> Sequence[ir.Value]:
+    """Lowering rule for mgpu.TcGen05CommitArriveOp."""
+    ctx.check_collective(op)
+    barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
+    # In Warp-level lowering, we arrive on each CUDA thread in a warp, but the
+    # barrier still expects a full 128 arrivals so we arrive 4 times on each
+    # CUDA thread instead.
+    if ctx.thread_semantics == utils.ThreadSubset.WARP:
+      barrier.barrier_ref.arrive(arrival_count=3, can_complete=False)
+    tcgen05.commit_arrive(
+        barrier.barrier_ref, op.collective.value, ctx.launch_context
+    )
+    return []
+
+
 @_register_lowering(mgpu.CustomPrimitiveOp, support_warp_semantics=True)
 def _mgpu_custom_primitive_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.CustomPrimitiveOp

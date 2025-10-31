@@ -6704,6 +6704,21 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
     )
 
 
+def _dialect_tcgen05_commit_arrive(
+    barrier: DialectBarrierRef,
+    collective: bool = False,
+    ctx: launch_context.LaunchContext | None = None,
+):
+  # TODO(b/491036599): Remove this check once minimum jaxlib version is 0.10.0
+  # and inline this function.
+  if hasattr(mgpu_dialect, "tcgen05_commit_arrive"):
+    mgpu_dialect.tcgen05_commit_arrive(
+        barrier.as_barrier_memref(), collective=collective
+    )
+  else:
+    tcgen05.commit_arrive(barrier.barrier_ref, collective=collective, ctx=ctx)
+
+
 class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecificTest):
 
   def setUp(self):
@@ -6835,7 +6850,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       mgpu_dialect.vector_store(reg_in, smem, optimized=False)
 
       mgpu_dialect.async_store_smem_to_tmem(smem, tmem)
-      tcgen05.commit_arrive(copy_barrier.barrier_ref)
+      _dialect_tcgen05_commit_arrive(copy_barrier)
       copy_barrier.wait(orders_tensor_core=True)
 
       reg_out = mgpu_dialect.async_load_tmem(tmem)
@@ -6888,7 +6903,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
 
       with when(is_first_block):
         mgpu_dialect.async_store_smem_to_tmem(smem, tmem, collective=True)
-        tcgen05.commit_arrive(copy_barrier.barrier_ref, collective=True, ctx=ctx)
+        _dialect_tcgen05_commit_arrive(copy_barrier, collective=True, ctx=ctx)
       copy_barrier.wait(orders_tensor_core=True)
 
       reg_out = mgpu_dialect.async_load_tmem(tmem)
@@ -6993,8 +7008,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
           b=b_smem,
           accumulate=arith.constant(ir.IntegerType.get_signless(1), False),
       )
-      tcgen05.commit_arrive(mma_barrier.barrier_ref)
-
+      _dialect_tcgen05_commit_arrive(mma_barrier)
       mma_barrier.wait(orders_tensor_core=True)
 
       # TMEM -> Registers -> GMEM
@@ -7094,7 +7108,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
           a_sparse_metadata=meta_tmem,
           accumulate=arith.constant(ir.IntegerType.get_signless(1), False),
       )
-      tcgen05.commit_arrive(mma_barrier.barrier_ref)
+      _dialect_tcgen05_commit_arrive(mma_barrier)
       mma_barrier.wait(orders_tensor_core=True)
 
       # TMEM -> Registers -> GMEM
@@ -7244,7 +7258,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
             accumulate=arith.constant(ir.IntegerType.get_signless(1), False),
             collective=True,
         )
-        tcgen05.commit_arrive(mma_barrier.barrier_ref, collective=True, ctx=ctx)
+        _dialect_tcgen05_commit_arrive(mma_barrier, collective=True, ctx=ctx)
 
       mma_barrier.wait(orders_tensor_core=True)
 
@@ -7404,7 +7418,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
             accumulate=arith.constant(ir.IntegerType.get_signless(1), False),
             collective=True,
         )
-        tcgen05.commit_arrive(mma_barrier.barrier_ref, collective=True, ctx=ctx)
+        _dialect_tcgen05_commit_arrive(mma_barrier, collective=True, ctx=ctx)
 
       mma_barrier.wait(orders_tensor_core=True)
 
@@ -7521,7 +7535,7 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
           b_scale=b_scale_tmem,
           accumulate=arith.constant(ir.IntegerType.get_signless(1), False),
       )
-      tcgen05.commit_arrive(mma_barrier.barrier_ref)
+      _dialect_tcgen05_commit_arrive(mma_barrier)
       mma_barrier.wait(orders_tensor_core=True)
 
       # TMEM -> Registers -> GMEM

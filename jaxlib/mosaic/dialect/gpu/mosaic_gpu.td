@@ -960,6 +960,15 @@ def MosaicGPU_SliceTmemOp : Op<MosaicGPU_Dialect, "slice_tmem", []> {
   let hasVerifier = 1;
 }
 
+def MosaicGPU_TcGen05CommitArriveOp : Op<MosaicGPU_Dialect, "tcgen05_commit_arrive", []> {
+  let summary = "Makes the `barrier` object track the completion of all prior async tcgen05 operations.";
+
+  let arguments = (ins
+    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
+    DefaultValuedAttr<BoolAttr, "false">:$collective
+  );
+}
+
 def MosaicGPU_DebugPrintOp : Op<MosaicGPU_Dialect, "debug_print", []> {
   let summary = "Prints value from inside a MGPU kernel";
 

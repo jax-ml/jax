@@ -2234,7 +2234,13 @@ def _tcgen05_mma_lowering_wg(
     )
     if arrive:
       assert isinstance(barrier_ref, mgpu.DialectBarrierRef)
-      tcgen05.commit_arrive(barrier_ref.get_ptr(), collective, ctx.launch_ctx)
+      # TODO(b/491036599): Remove this check once minimum jaxlib version is 0.10.0.
+      if hasattr(mgpu.dialect, "tcgen05_commit_arrive"):
+        mgpu.dialect.tcgen05_commit_arrive(
+            barrier_ref.as_barrier_memref(), collective=collective
+        )
+      else:
+        tcgen05.commit_arrive(barrier_ref.get_ptr(), collective, ctx.launch_ctx)
   return []
 
 
@@ -2322,6 +2328,9 @@ def _tcgen05_commit_arrive_lowering(
 @lowering.register_lowering_rule(
     tcgen05_commit_arrive_p, mgpu.LoweringSemantics.Warpgroup
 )
+@lowering.register_lowering_rule(
+    tcgen05_commit_arrive_p, *gpu_core.WGxWARP_SEMANTICS
+)
 def _tcgen05_commit_arrive_lowering_wg(
     ctx: lowering.LoweringRuleContext,
     barrier_ref: mgpu.DialectBarrierRef,
@@ -2348,7 +2357,13 @@ def _tcgen05_commit_arrive_lowering_wg(
     collective = False
 
   with predicate_ctx:
-    tcgen05.commit_arrive(barrier_ref.get_ptr(), collective, ctx.launch_ctx)
+    # TODO(b/491036599): Remove this check once minimum jaxlib version is 0.10.0.
+    if hasattr(mgpu.dialect, "tcgen05_commit_arrive"):
+      mgpu.dialect.tcgen05_commit_arrive(
+          barrier_ref.as_barrier_memref(), collective=collective
+      )
+    else:
+      tcgen05.commit_arrive(barrier_ref.get_ptr(), collective, ctx.launch_ctx)
   return []
 
 

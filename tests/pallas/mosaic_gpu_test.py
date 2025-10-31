@@ -4685,6 +4685,28 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     result = f(x, y)
     np.testing.assert_allclose(result, x @ y, rtol=1e-3)
 
+  def test_commit_arrive_warp_semantics(self):
+    if not hasattr(mgpu.dialect, "tcgen05_commit_arrive"):
+      self.skip_if_wg_semantics()
+    warp_mesh = plgpu.WarpMesh(axis_name="warp")
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_shapes=[plgpu.Barrier(orders_tensor_core=True)],
+    )
+    def kernel(o_ref, barrier):
+      @pl.core_map(warp_mesh)
+      def _():
+        warp_id = lax.axis_index("warp")
+        @pl.when(warp_id == 0)
+        def _():
+          plgpu.tcgen05_commit_arrive(barrier)
+        @pl.when(warp_id == 1)
+        def _():
+          plgpu.barrier_wait(barrier)
+          o_ref[...] = jnp.array(42, dtype=np.int32)
+    self.assertArraysEqual(kernel(), np.array(42, dtype=np.int32))
+
   @parameterized.parameters(128, None)
   def test_async_copy_smem_to_tmem(self, swizzle):
     dtype = jnp.float16
