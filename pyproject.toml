@@ -1,6 +1,85 @@
+# Copyright 2018 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "jax"
+dynamic = ["version"]
+description = "Differentiate, compile, and transform Numpy code."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [{ name = "JAX team", email = "jax-dev@google.com" }]
+classifiers = [
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "jaxlib >=0.8.0, <=0.8.1",
+    "ml_dtypes>=0.5.0",
+    "numpy>=1.25",
+    "numpy>=1.26.0; python_version>='3.12'",
+    "opt_einsum",
+    "scipy>=1.11.1",
+]
+
+[project.optional-dependencies]
+# Used only for CI builds that install JAX from github HEAD.
+ci = ["jaxlib==0.5.3"]
+# A CPU-only jax doesn't require any extras, but we keep this extra around for compatibility.
+cpu = []
+cuda = ["jax[cuda12]"]
+cuda12 = ["jaxlib==0.5.3", "jax-cuda12-plugin[with_cuda]>=0.5.3,<=0.8.1"]
+# Target that does not depend on the CUDA pip wheels, for those who want to use a preinstalled CUDA.
+cuda12_local = ["jaxlib==0.5.3", "jax-cuda12-plugin==0.5.3"]
+# Deprecated alias for cuda12, kept to avoid breaking users who wrote cuda12_pip in their CI.
+cuda12_pip = ["jax[cuda12]"]
+dev = [
+    "mypy>=1.15",
+    "pre-commit>=4.1",
+    "pytest>=8.3",
+    "ruff>=0.9.7",
+    "setuptools>=75.8",
+    "tomlkit>=0.13.2",
+]
+# For automatic bootstrapping distributed jobs in Kubernetes
+k8s = ["kubernetes"]
+# Minimum jaxlib version; used in testing.
+minimum-jaxlib = ["jaxlib==0.8.0"]
+# ROCm support for ROCm 6.0 and above.
+rocm = ["jaxlib==0.5.3", "jax-rocm60-plugin>=0.5.3,<=0.8.1"]
+# Cloud TPU VM jaxlib can be installed via:
+# $ pip install "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+tpu = ["jaxlib>=0.5.3,<=0.8.1", "libtpu==0.0.11.*", "requests"]
+
+[project.urls]
+homepage = "https://github.com/jax-ml/jax"
+repository = "https://github.com/jax-ml/jax"
+
+[tool.setuptools.dynamic]
+version = {attr = "jax.version.__version__"}
+
+[tool.setuptools.packages.find]
+exclude = ["examples", "jax/src/internal_test_util"]
+
+[tool.setuptools.package-data]
+jax = ['py.typed', "*.pyi", "**/*.pyi"]
 
 [tool.mypy]
 show_error_codes = true
