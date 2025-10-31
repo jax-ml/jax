@@ -42,7 +42,6 @@ single_version_override(
 single_version_override(
   module_name = "abseil-cpp",
   patches = [
-      "//third_party/absl:endian.patch", # Only for @xla//xla/hlo/evaluator:hlo_evaluator
       "//third_party/absl:check_op.patch", # upstreamed, waiting for new release
       "//third_party/absl:check_op_2.patch", # upstreamed, waiting for new release
   ],
