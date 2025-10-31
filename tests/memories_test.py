@@ -27,6 +27,7 @@ from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.layout import Layout as DLL, Format
+from jax._src.lib import jaxlib_extension_version
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
@@ -1776,6 +1777,7 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     self.assertIn('wrapped_add', compiled_text)
     self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 2)
 
+  @unittest.skipIf(jaxlib_extension_version < 385, "Test needs jaxlib > 0.8.0")
   def test_streamed_gemm_overlap(self):
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Stream annotation is only supported on GPU.")
