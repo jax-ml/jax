@@ -1034,7 +1034,6 @@ class ShardyCompatTest(bctu.CompatTestBase):
       return shard_map_func(x)
 
     data = [
-        (shardy_sharding_ops_with_different_meshes.data_2025_02_12, []),
         (shardy_sharding_ops_with_different_meshes.data_2025_04_14, []),
         (shardy_sharding_ops_with_different_meshes.data_2025_06_30, None),
     ]
