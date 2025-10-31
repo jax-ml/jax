@@ -150,8 +150,6 @@ OpFoldResult BitcastVregOp::fold(FoldAdaptor adaptor) {
 LogicalResult MemRefSliceOp::verify() {
   auto source_type = getMemRefType(getMemRef());
   auto target_type = getType();
-  auto source_layout = source_type.getLayout();
-  auto target_layout = target_type.getLayout();
   auto target_memory_space = target_type.getMemorySpace();
   auto indices = getBaseIdx();
   auto slice_shape = getResult().getType().getShape();
@@ -183,43 +181,6 @@ LogicalResult MemRefSliceOp::verify() {
       target_memory_space != source_type.getMemorySpace()) {
     return emitOpError(
         "Memory spaces must match if the target memory space is provided.");
-  }
-  if (isa<TiledLayoutAttr>(source_layout) &&
-      !isa<TiledLayoutAttr>(target_layout)) {
-    // TODO(slebedev): Remove this special-case once we move layout propagation
-    // to the infer-memref-layout pass.
-  } else if (isa<StridedLayoutAttr>(target_layout)) {
-    SmallVector<int64_t> source_strides;
-    int64_t source_offset;
-    if (failed(
-            source_type.getStridesAndOffset(source_strides, source_offset))) {
-      return failure();
-    }
-    int64_t target_offset = source_offset;
-    if (target_offset != ShapedType::kDynamic) {
-      for (auto [base_idx, source_stride] :
-           llvm::zip(getBaseIdx(), source_strides)) {
-        if (auto idx = getConstantIntValue(base_idx)) {
-          target_offset += *idx * source_stride;
-        } else {
-          target_offset = ShapedType::kDynamic;
-          break;
-        }
-      }
-    }
-    auto expected_layout =
-        StridedLayoutAttr::get(getContext(), target_offset, source_strides);
-    if (target_layout != expected_layout) {
-      return emitOpError("Layout mismatch: got ")
-             << target_layout << ", expected " << expected_layout << ".";
-    }
-  } else {
-    bool is_target_layout_identity_map =
-        isa<AffineMapAttr>(target_layout) && target_layout.isIdentity();
-    if (!is_target_layout_identity_map && target_layout != source_layout) {
-      return emitOpError(
-          "Layouts must match if the target layout is not an identity map.");
-    }
   }
   if (getDynamicSizes().size() != target_type.getNumDynamicDims()) {
     return emitOpError(
@@ -323,33 +284,6 @@ LogicalResult MemRefSqueezeOp::verify() {
       computeSqueezedDimsChecked(*this, source_shape, target_shape);
   if (failed(squeezed_or)) {
     return failure();
-  }
-
-  auto source_layout = source_type.getLayout();
-  auto target_layout = target_type.getLayout();
-  if (isa<TiledLayoutAttr>(source_layout) &&
-      !isa<TiledLayoutAttr>(target_layout)) {
-    // TODO(slebedev): Remove this special-case once we move layout propagation
-    // to the infer-memref-layout pass.
-  } else if (isa<StridedLayoutAttr>(target_layout)) {
-    SmallVector<int64_t> source_strides;
-    int64_t source_offset;
-    if (failed(
-            source_type.getStridesAndOffset(source_strides, source_offset))) {
-      return failure();
-    }
-    SmallVector<int64_t> target_strides;
-    for (auto [i, stride] : llvm::enumerate(source_strides)) {
-      if (!llvm::is_contained(*squeezed_or, i)) {
-        target_strides.push_back(stride);
-      }
-    }
-    auto expected_layout =
-        StridedLayoutAttr::get(getContext(), source_offset, target_strides);
-    if (target_layout != expected_layout) {
-      return emitOpError("Layout mismatch: got ")
-             << target_layout << ", expected " << expected_layout << ".";
-    }
   }
 
   auto erase_layout_op = getInput().getDefiningOp<tpu::EraseLayoutOp>();

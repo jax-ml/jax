@@ -17,6 +17,7 @@ from collections.abc import Sequence
 import contextlib
 import dataclasses
 import functools
+import operator
 from typing import Any, NoReturn, cast
 
 import jax
@@ -82,7 +83,6 @@ class ScLoweringContext(tc_lowering.LoweringContext):
 
 LoweringRuleContext = tc_lowering.LoweringRuleContext
 
-_transform_ref = tc_lowering._transform_ref
 _dtype_to_ir_type = tc_lowering._dtype_to_ir_type
 
 # pylint: disable=protected-access
@@ -836,3 +836,87 @@ def _alloc_value(
     )
     return memref.alloca(out_type, [], [])
   return tc_lowering._alloc_value(aval, ctx=ctx)
+
+
+def _split_static_and_dynamic_values(
+    values: Sequence[ir.Value | Any],
+) -> tuple[Sequence[Any], Sequence[ir.Value]]:
+  static_values = []
+  dynamic_values = []
+  for v in values:
+    if not isinstance(v, ir.Value):
+      static_values.append(v)
+    elif (c := tc_lowering._fold_and_get_constant_value(v)) is not None:
+      static_values.append(c)
+    else:
+      static_values.append(ir.ShapedType.get_dynamic_size())
+      dynamic_values.append(v)
+  return static_values, dynamic_values
+
+
+def _slice_memref(
+    ref: ir.Value,
+    indexer: indexing.NDIndexer,
+    ref_dtype: jax.typing.DTypeLike,
+    ref_block_shape: tuple[int | pallas_core.Squeezed, ...] | None,
+) -> tuple[ir.Value, tuple[int | pallas_core.Squeezed, ...]]:
+  assert ref_block_shape is not None
+  starts, sizes, strides, squeeze_dims, ref_block_shape = (
+      tc_lowering._indexer_to_start_size_stride(
+          indexer, ref_block_shape, cast_to_index=True
+      )
+  )
+  if not all((s is None or s == 1) for s in strides):
+    raise NotImplementedError("Strided slices of references are unsupported.")
+
+  static_starts, dynamic_starts = _split_static_and_dynamic_values(starts)
+  static_sizes, dynamic_sizes = _split_static_and_dynamic_values(sizes)
+
+  ref_ty = ir.MemRefType(ref.type)
+  ref_strides, ref_offset = ref_ty.get_strides_and_offset()
+
+  ir_dynamic_size = ir.ShapedType.get_dynamic_size()
+  if ref_offset == ir_dynamic_size or ir_dynamic_size in static_starts:
+    out_offset = ir_dynamic_size
+  else:
+    out_offset = sum(
+        map(operator.mul, static_starts, ref_strides), ref_offset
+    )
+  out_sizes = [s for i, s in enumerate(static_sizes) if not squeeze_dims[i]]
+  out_strides = [s for i, s in enumerate(ref_strides) if not squeeze_dims[i]]
+  out_layout = ir.StridedLayoutAttr.get(out_offset, out_strides)
+  out_ty = ir.MemRefType.get(
+      out_sizes, ref_ty.element_type, out_layout, ref_ty.memory_space
+  )
+
+  # We bypass ``memref.subview``, because we want to precisely control how the
+  # static/dynamic split is performed, since it affects the result layout.
+  out = memref.SubViewOp(
+      out_ty,
+      ref,
+      dynamic_starts,
+      dynamic_sizes,
+      [],
+      static_starts,
+      static_sizes,
+      static_strides=[1] * len(ref_strides),
+  ).result
+  return out, ref_block_shape
+
+
+def _transform_ref(
+    ref: ir.Value,
+    ref_dtype: jax.typing.DTypeLike,
+    ref_block_shape: tuple[int | pallas_core.Squeezed, ...] | None,
+    transforms: Sequence[pallas_core.MemoryRefTransform],
+) -> tuple[ir.Value, tuple[int | pallas_core.Squeezed, ...] | None]:
+  for transform in transforms:
+    if isinstance(transform, indexing.NDIndexer):
+      ref, ref_block_shape = _slice_memref(
+          ref, transform, ref_dtype, ref_block_shape
+      )
+    else:
+      ref, ref_block_shape = tc_lowering._transform_ref(
+          ref, ref_dtype, ref_block_shape, [transform]
+      )
+  return ref, ref_block_shape
