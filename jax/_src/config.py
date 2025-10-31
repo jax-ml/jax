@@ -2236,3 +2236,8 @@ jax_collectives_common_channel_id = bool_flag(
     default=True,
     help="Should collectives use a common channel ID? Temporary feature flag.",
 )
+
+rbg_remat_unsafe = define_bool_state(
+    name='jax_rbg_remat_unsafe',
+    default=False,
+    help=('Allows unsafe combination of jax.remat and rbg / unsafe_rbg PRNGs.'))
