@@ -681,6 +681,15 @@ llvm::LogicalResult TmemLayoutCastOp::verify() {
   return VerifyTmemRefType(getContext(), getOperation(), getRef().getType());
 }
 
+llvm::LogicalResult SliceTmemOp::verify() {
+  llvm::LogicalResult result =
+      VerifyTmemRefType(getContext(), getOperation(), getSource().getType());
+  if (result.failed()) {
+    return result;
+  }
+  return VerifyTmemRefType(getContext(), getOperation(), getResult().getType());
+}
+
 void MosaicGPUDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST

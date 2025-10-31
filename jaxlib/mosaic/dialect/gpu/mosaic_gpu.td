@@ -771,4 +771,17 @@ def MosaicGPU_AsyncStoreTmemOp : Op<MosaicGPU_Dialect, "async_store_tmem", []> {
   let hasVerifier = 1;
 }
 
+def MosaicGPU_SliceTmemOp : Op<MosaicGPU_Dialect, "slice_tmem", []> {
+  let summary = "Constructs a TMEM MemRef with the requested type that begins at the specified TMEM offset address.";
+
+  let arguments = (ins
+    MemRefRankOf<[AnyType], [2]>:$source,
+    ConfinedAttr<I32Attr, [IntNonNegative]>:$offset
+  );
+
+  let results = (outs MemRefRankOf<[AnyType], [2]>);
+
+  let hasVerifier = 1;
+}
+
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_
