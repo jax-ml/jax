@@ -9,7 +9,7 @@
 #                           that was built in the previous step and runs CPU tests.
 # 3. build-cuda-artifacts:  Calls the `build_artifacts.yml` workflow to build CUDA artifacts and
 #                           uploads them to a GCS bucket.
-# 4. run-bazel-test-cpu-py-import: Calls the `bazel_cpu_rbe.yml` workflow which
+# 4. run-bazel-test-cpu-py-import: Calls the `bazel_cpu.yml` workflow which
 #                           runs Bazel CPU tests with py_import on RBE.
 # 5. run-bazel-test-cuda-py-import: Calls the `bazel_cuda.yml` workflow which
 #                           runs Bazel CUDA tests with py_import on non-RBE.
@@ -102,7 +102,7 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy in the
           # build_jaxlib_artifact job above
           runner: ["linux-x86-n4-64", "linux-arm64-t2a-48", "windows-x86-n2-64"]
-          python: ["3.11",]
+          python: ["3.11"]
           enable-x64: [1, 0]
     name: "Pytest CPU (JAX artifacts version =  ${{ format('{0}', 'head') }})"
     with:
@@ -124,7 +124,7 @@ jobs:
           # Python values need to match the matrix stategy in the artifact build jobs above
           # See exlusions for what is fully tested
           runner: ["linux-x86-g2-48-l4-4gpu", "linux-x86-a3-8g-h100-8gpu", "linux-x86-a4-224-b200-1gpu"]
-          python: ["3.11",]
+          python: ["3.11"]
           cuda: [
             {version: "12.1", use-nvidia-pip-wheels: false},
             {version: "12.9", use-nvidia-pip-wheels: true},
@@ -161,7 +161,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           runner: ["linux-x86-n4-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
-          python: ["3.11",]
+          python: ["3.11"]
           enable-x64: [1, 0]
     name: "Bazel CPU tests with ${{ format('{0}', 'build_jaxlib=wheel') }}"
     with:
@@ -170,6 +170,7 @@ jobs:
       enable-x64:  ${{ matrix.enable-x64 }}
       build_jaxlib: "wheel"
       build_jax: "wheel"
+      clone_main_xla: 1
 
   run-bazel-test-cuda:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
@@ -200,6 +201,7 @@ jobs:
       build_jax: "false"
       write_to_bazel_remote_cache: 1
       run_multiaccelerator_tests: "true"
+      clone_main_xla: 1
 
   run-bazel-test-cuda-py-import:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
@@ -211,7 +213,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           # Python values need to match the matrix stategy in the build artifacts job above
-          runner: ["linux-x86-g2-48-l4-4gpu",]
+          runner: ["linux-x86-g2-48-l4-4gpu"]
           python: ["3.11"]
           cuda-version: ["12", "13"]
           enable-x64: [1]
@@ -224,6 +226,7 @@ jobs:
       build_jaxlib: "wheel"
       build_jax: "wheel"
       jaxlib-version: "head"
+      clone_main_xla: 1
       write_to_bazel_remote_cache: 1
       run_multiaccelerator_tests: "true"
 
@@ -277,7 +280,6 @@ jobs:
       python: ${{ matrix.python }}
       run-full-tpu-test-suite: "1"
       libtpu-version-type: ${{ matrix.libtpu-version-type }}
-      gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
       build_jaxlib: "wheel"
       build_jax: "wheel"
       clone_main_xla: 1
