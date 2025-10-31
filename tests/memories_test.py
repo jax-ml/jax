@@ -1747,6 +1747,138 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     lowered_text = f.lower(inp).as_text()
     self.assertIn("_xla_compute_type", lowered_text)
 
+  def test_sparsecore_unsupported_gather(self):
+    if not (
+        jax.devices()[0].device_kind == "TPU v5"
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest("Does not have a sparsecore present")
+
+    dnums = jax.lax.GatherDimensionNumbers(
+        offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)
+    )
+    slice_sizes = (1, 3)
+
+    @compute_on("tpu_sparsecore")
+    @jax.jit
+    def f_sc(operand, indices):
+      return jax.lax.gather(operand, indices, dnums, slice_sizes)
+
+    inputs = (
+        np.linspace(0, 1, 10 * 5).reshape(10, 5),
+        np.array([[4, 2], [3, 2]]),
+    )
+
+    unsupported_gather = False
+    error_msg = None
+    try:
+      jax.jit(f_sc).lower(*inputs).compile()
+    except jax.errors.JaxRuntimeError as e:
+      unsupported_gather = True
+      error_msg = str(e)
+    self.assertTrue(unsupported_gather)
+    self.assertIn("UNIMPLEMENTED", error_msg)
+
+  def test_sparsecore_supported_gather(self):
+    if not (
+        jax.devices()[0].device_kind == "TPU v5"
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest("Does not have a sparsecore present")
+
+    dnums = jax.lax.GatherDimensionNumbers(
+        offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)
+    )
+    slice_sizes = (1, 128)
+
+    @jax.jit
+    def f_tc(operand, indices):
+      return jax.lax.gather(operand, indices, dnums, slice_sizes)
+
+    @compute_on("tpu_sparsecore")
+    @jax.jit
+    def f_sc(operand, indices):
+      return jax.lax.gather(operand, indices, dnums, slice_sizes)
+
+    inputs = (
+        np.linspace(0, 1, 122479 * 128).reshape(122479, 128),
+        np.random.randint(2, size=32768).reshape(32768, 1),
+    )
+
+    self.assertAllClose(f_tc(*inputs), f_sc(*inputs))
+
+    compiled_f_sc = jax.jit(f_sc).lower(*inputs).compile()
+    compiled_text = compiled_f_sc.as_text()
+    self.assertIn('async_execution_thread="sparsecore"', compiled_text)
+
+  def test_sparsecore_unsupported_scatter(self):
+    if not (
+        jax.devices()[0].device_kind == "TPU v5"
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest("Does not have a sparsecore present")
+
+    dnums = jax.lax.ScatterDimensionNumbers(
+        update_window_dims=(),
+        inserted_window_dims=(0,),
+        scatter_dims_to_operand_dims=(0,),
+    )
+
+    @compute_on("tpu_sparsecore")
+    @jax.jit
+    def f_sc(operand, indices, updates):
+      return jax.lax.scatter(operand, indices, updates, dnums)
+
+    inputs = (
+        np.linspace(0, 1, 15677312).reshape(15677312),
+        np.random.randint(15677312, size=524288).reshape(524288, 1),
+        np.linspace(0, 1, 524288).reshape(524288),
+    )
+
+    unsupported_scatter = False
+    error_msg = None
+    try:
+      jax.jit(f_sc).lower(*inputs).compile()
+    except jax.errors.JaxRuntimeError as e:
+      unsupported_scatter = True
+      error_msg = str(e)
+    self.assertTrue(unsupported_scatter)
+    self.assertIn("UNIMPLEMENTED", error_msg)
+
+  def test_sparsecore_supported_scatter(self):
+    if not (
+        jax.devices()[0].device_kind == "TPU v5"
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest("Does not have a sparsecore present")
+
+    dnums = jax.lax.ScatterDimensionNumbers(
+        update_window_dims=(),
+        inserted_window_dims=(0,),
+        scatter_dims_to_operand_dims=(0,),
+    )
+
+    @jax.jit
+    def f_tc(operand, indices, updates):
+      return jax.lax.scatter_add(operand, indices, updates, dnums)
+
+    @compute_on("tpu_sparsecore")
+    @jax.jit
+    def f_sc(operand, indices, updates):
+      return jax.lax.scatter_add(operand, indices, updates, dnums)
+
+    inputs = (
+        np.linspace(0, 1, 15677312).reshape(15677312),
+        np.random.randint(15677312, size=524288).reshape(524288, 1),
+        np.linspace(0, 1, 524288).reshape(524288),
+    )
+
+    self.assertAllClose(f_tc(*inputs), f_sc(*inputs))
+
+    compiled_f_sc = jax.jit(f_sc).lower(*inputs).compile()
+    compiled_text = compiled_f_sc.as_text()
+    self.assertIn('async_execution_thread="sparsecore"', compiled_text)
+
 
 class StreamAnnotationTest(jtu.JaxTestCase):
 
