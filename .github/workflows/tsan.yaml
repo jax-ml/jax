@@ -171,7 +171,7 @@ jobs:
           key: ${{ runner.os }}-numpy-tsan-${{ matrix.python-version }}-${{ hashFiles('numpy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
 
       - name: Build Jax and run tests
-        timeout-minutes: 120
+        timeout-minutes: 180
         env:
           JAX_NUM_GENERATED_CASES: 1
           JAX_ENABLE_X64: true
@@ -230,7 +230,7 @@ jobs:
               --test_env=TSAN_OPTIONS=halt_on_error=1,suppressions=$PWD/.github/workflows/tsan-suppressions_${{ matrix.python-version }}.txt \
               --test_env=JAX_TEST_NUM_THREADS=8 \
               --test_output=errors \
-              --local_test_jobs=32 \
+              --local_test_jobs=10 \
               --test_timeout=1800 \
               --config=ci_rbe_cache \
               //tests:cpu_tests
