@@ -24,6 +24,7 @@ from absl.testing import absltest, parameterized
 import jax
 import jax.numpy as jnp
 from jax import typeof
+from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
 
 from jax._src import config
 from jax._src import core
@@ -41,6 +42,9 @@ from jax._src.hijax import (HiPrimitive, HiType, Box, new_box, box_set, box_get,
                             NewstyleHiPrimitive)
 
 config.parse_flags_with_absl()
+
+if not jax._src.xla_bridge.backends_are_initialized():
+  jax.config.update('jax_num_cpu_devices', 8)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -1140,7 +1144,6 @@ class BoxTest(jtu.JaxTestCase):
     compiled(box)
     self.assertAllClose(box.get(), 4.)
 
-
 class RefTest(jtu.JaxTestCase):
 
   def test_get_ref_hitype(self):
@@ -1169,6 +1172,41 @@ class RefTest(jtu.JaxTestCase):
     self.assertArraysEqual(o.arr, q2.arr)
     self.assertArraysEqual(o.scale, q2.scale)
 
+class HijaxTransformCoverageTest(jtu.JaxTestCase):
+
+  def dont_test_sharded_hijax_jit(self):
+    mesh = jax.make_mesh((4, 2), ('x', 'y'))
+    box_sharding = NamedSharding(mesh, P('x'))
+    y_sharding = NamedSharding(mesh, P('y'))
+
+    def f(box, y):
+      val = box.get()
+      result = val + y
+      box.set(result)
+      return box.get()
+
+    f_jit = jax.jit(f, in_shardings=(box_sharding, y_sharding))
+    x = jnp.arange(16.).reshape(8, 2)
+    box = Box(x)
+    y = jnp.ones((8, 2))
+    result = f_jit(box, y)
+    self.assertAllClose(result, x + y)
+    self.assertAllClose(box.get(), x + y)
+
+  def test_donate_hijax_jit(self):
+    def f(box, y):
+      val = box.get()
+      result = val + y
+      box.set(result)
+      return box.get()
+
+    f_jit = jax.jit(f, donate_argnums=('box'))
+    x = jnp.arange(16.).reshape(8, 2)
+    box = Box(x)
+    y = jnp.ones((8, 2))
+    expected_result = x + y
+    result = f_jit(box, y)
+    self.assertAllClose(result, expected_result)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
