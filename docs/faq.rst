@@ -274,7 +274,7 @@ Fortunately, there's another option for this case.
 Strategy 3: Making ``CustomClass`` a PyTree
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 The most flexible approach to correctly JIT-compiling a class method is to register the
-type as a custom PyTree object; see :ref:`extending-pytrees`. This lets you specify
+type as a custom PyTree object; see :ref:`pytrees-custom-pytree-nodes`. This lets you specify
 exactly which components of the class should be treated as static and which should be
 treated as dynamic. Here's how it might look::
 
