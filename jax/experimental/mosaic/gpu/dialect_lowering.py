@@ -30,7 +30,6 @@ from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
-from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
@@ -262,44 +261,32 @@ def _lowered_barrier_type() -> ir.Type:
 @_register_lowering(mgpu.InitializeBarrierOp)
 def _initialize_barrier_op_lowering_rule(
     ctx: LoweringContext,
-    initialize_barrier_op: mgpu.InitializeBarrierOp,
+    op: mgpu.InitializeBarrierOp,
 ) -> Sequence[ir.Value]:
-
-  shape = ir.ShapedType(initialize_barrier_op.barriers_ref.type).shape
+  shape = ir.ShapedType(op.barriers_ref.type).shape
   num_barriers = math.prod(shape)
 
   i32 = ir.IntegerType.get_signless(32)
-  workgroup_nvptx_address_space = utils.gpu_address_space_to_nvptx(
-      gpu.AddressSpace.Workgroup)
-  ptr_ty = ir.Type.parse(f"!llvm.ptr<{workgroup_nvptx_address_space}>")
-
   lowered_barrier_type = _lowered_barrier_type()
 
   for i in range(num_barriers):
     nvvm.mbarrier_init_shared(
-        llvm.getelementptr(
-            ptr_ty,
-            initialize_barrier_op.base_pointer,
-            [],
-            [i],
-            lowered_barrier_type,
-            llvm.GEPNoWrapFlags.none,
-        ),
+        utils.getelementptr(op.base_pointer, [i], lowered_barrier_type),
         utils.c(
-            initialize_barrier_op.arrival_count.value * utils.WARPGROUP_SIZE,
+            op.arrival_count.value * utils.WARPGROUP_SIZE,
             i32,
         ),
         predicate=ctx.single_thread_per_block_predicate,
     )
 
   gpu.barrier()
-
-  barrier_base_ptr = llvm.getelementptr(
-      ir.Type.parse("!llvm.ptr"),
-      initialize_barrier_op.base_pointer, [], [0], lowered_barrier_type, llvm.GEPNoWrapFlags.none)
-
-  return utils.ptr_as_memref(
-      barrier_base_ptr, initialize_barrier_op.barriers_ref.type),
+  return (
+      utils.ptr_as_memref(
+          op.base_pointer,
+          op.barriers_ref.type,
+          utils.WORKGROUP_NVPTX_ADDRESS_SPACE,
+      ),
+  )
 
 
 @_register_lowering(mgpu.OptimizationBarrierOp)
