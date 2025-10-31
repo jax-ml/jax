@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # We use an arbitrarily chosen port for the coordinator since we cannot
 # rely on communication to choose one in real time.
-coordinator_port = '8476'
+default_jax_coordinator_port = '8482'
 
 metadata_response_code_success = 200
 
@@ -108,6 +108,7 @@ class BaseTpuCluster(clusters.ClusterEnv):
     coordinator_address = coordinator_address.split(':')[0]
     logger.debug("TPU Cluster using coordinator address: %s", coordinator_address)
     cls.wait_for_coordinator(coordinator_address, timeout_secs)
+    coordinator_port = os.environ.get("JAX_COORDINATOR_PORT", default_jax_coordinator_port)
     return f'{coordinator_address}:{coordinator_port}'
 
   @classmethod
