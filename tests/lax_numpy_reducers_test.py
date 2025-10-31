@@ -803,28 +803,32 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       rng(q_shape, q_dtype),
       np.abs(rng(weights_shape, a_dtype)) + 1e-3
     ]
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=1e-6)
-    self._CompileAndCheck(jnp_fun, args_maker, rtol=1e-6)
+    if method == "inverted_cdf":
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=1e-6)
+      self._CompileAndCheck(jnp_fun, args_maker, rtol=1e-6)
+    else:
+      with self.assertRaisesRegex(ValueError, "Weighted quantiles are only supported for method='inverted_cdf'"):
+        jnp_fun(*args_maker())
 
   def test_weighted_quantile_negative_weights(self):
     a = jnp.array([1, 2, 3, 4, 5], dtype=float)
     weights = jnp.array([1, -1, 1, 1, 1], dtype=float)
     q = jnp.array([0.5])
     with self.assertRaisesRegex(ValueError, "Weights must be non-negative"):
-      jnp.quantile(a, q, axis=0, method="linear", keepdims=False, weights=weights)
+      jnp.quantile(a, q, axis=0, method="inverted_cdf", keepdims=False, weights=weights)
 
   def test_weighted_quantile_all_weights_zero(self):
     a = jnp.array([1, 2, 3, 4, 5], dtype=float)
     weights = jnp.zeros_like(a)
     q = jnp.array([0.5])
     with self.assertRaisesRegex(ValueError, "Sum of weights must not be zero"):
-      jnp.quantile(a, q, axis=0, method="linear", keepdims=False, weights=weights)
+      jnp.quantile(a, q, axis=0, method="inverted_cdf", keepdims=False, weights=weights)
 
   def test_weighted_quantile_weights_with_nan(self):
     a = jnp.array([1, 2, 3, 4, 5], dtype=float)
     weights = jnp.array([1, np.nan, 1, 1, 1], dtype=float)
     q = jnp.array([0.5])
-    result = jnp.quantile(a, q, axis=0, method="linear", keepdims=False, weights=weights)
+    result = jnp.quantile(a, q, axis=0, method="inverted_cdf", keepdims=False, weights=weights)
     assert np.isnan(np.array(result)).all()
 
   def test_weighted_quantile_scalar_q(self):

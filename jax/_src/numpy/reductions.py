@@ -23,7 +23,7 @@ from typing import overload, Any, Literal, Protocol, Union
 
 import numpy as np
 
-from jax._src.lax import lax
+from jax._src import config
 from jax._src import api
 from jax._src import core
 from jax._src import deprecations
@@ -2483,8 +2483,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     axis = _canonicalize_axis(axis, a.ndim)
 
   q, = promote_dtypes_inexact(q)
-  q = lax_internal.asarray(q)
-  q_was_scalar = getattr(q, "ndim", 0) == 0
+  q_was_scalar = q.ndim == 0
   if q_was_scalar:
     q = lax.expand_dims(q, (0,))
   q_shape = q.shape
@@ -2497,40 +2496,37 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   if weights is None:
     a, = promote_dtypes_inexact(a)
   else:
+    if method != "inverted_cdf":
+      raise ValueError("Weighted quantiles are only supported for method='inverted_cdf'")
+    if axis is None:
+      raise TypeError("Axis must be specified when shapes of a and weights differ.")
+    axis_tuple = canonicalize_axis_tuple(axis, a.ndim)
+
     a, q, weights = promote_dtypes_inexact(a, q, weights)
-    #weights = lax.convert_element_type(weights, a.dtype)
     a_shape = a.shape
     w_shape = np.shape(weights)
     if np.ndim(weights) == 0:
       weights = lax.broadcast_in_dim(weights, a_shape, ())
       w_shape = a_shape
-    else:
-      w_shape = np.shape(weights)
     if w_shape != a_shape:
-      if axis is None:
-        raise TypeError("Axis must be specified when shapes of a and weights differ.")
-      if isinstance(axis, tuple):
-        if w_shape != tuple(a_shape[i] for i in axis):
-            raise ValueError("Shape of weights must match the shape of the axes being reduced.")
-        weights = lax.broadcast_in_dim(
-            weights,
-            shape=a_shape,
-            broadcast_dimensions=axis
-        )
-        w_shape = a_shape
-      else:
-        if len(w_shape) != 1 or w_shape[0] != a_shape[axis]:
-            raise ValueError("Length of weights not compatible with specified axis.")
-        weights = lax.expand_dims(weights, (axis,))
-        weights = _broadcast_to(weights, a.shape)
-        w_shape = a_shape
+      expected_shape = tuple(a_shape[i] for i in axis_tuple)
+      if w_shape != expected_shape:
+       raise ValueError(f"Shape of weights must match the shape of the axes being reduced. "
+                        f"Expected {expected_shape}, got {w_shape}")
+      weights = lax.broadcast_in_dim(
+         weights,
+         shape=a_shape,
+         broadcast_dimensions=axis_tuple
+      )
 
     if squash_nans:
       nan_mask = ~lax_internal._isnan(a)
       weights = _where(nan_mask, weights, 0)
     else:
-      with jax.debug_nans(False):
-        a = _where(any(lax_internal._isnan(a), axis=axis, keepdims=True), np.nan, a)
+      with config.debug_nans(False):
+        has_nan_data = any(lax_internal._isnan(a), axis=axis, keepdims=True)
+        has_nan_weights = any(lax_internal._isnan(weights), axis=axis, keepdims=True)
+        a = _where(has_nan_data | has_nan_weights, np.nan, a)
 
     total_weight = sum(weights, axis=axis, keepdims=True)
     a_sorted, weights_sorted = lax_internal.sort_key_val(a, weights, dimension=axis)
@@ -2539,49 +2535,23 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
 
     def _weighted_quantile(qi):
       qi = lax.convert_element_type(qi, cum_weights_norm.dtype)
-      index_dtype = dtypes.canonicalize_dtype(dtypes.int_)
-      idx = sum(lax.lt(cum_weights_norm, qi), axis=axis, dtype=index_dtype, keepdims=keepdims)
+      index_dtype = dtypes.default_int_dtype()
+      idx = _reduce_sum(lax.lt(cum_weights_norm, qi), axis=axis, dtype=index_dtype, keepdims=keepdims)
       idx = lax.clamp(_lax_const(idx, 0), idx, _lax_const(idx, a_sorted.shape[axis] - 1))
-      idx_prev = lax.clamp(idx - 1, _lax_const(idx, 0), _lax_const(idx, a_sorted.shape[axis] - 1))
-      
-      slice_sizes = list(a_shape)
-      slice_sizes[axis] = 1
-      offset_start = q_ndim
-      total_offset_dims = len(a_shape) + q_ndim if keepdims else len(a_shape) + q_ndim - 1
-      dnums = lax.GatherDimensionNumbers(
-        offset_dims=tuple(range(offset_start, total_offset_dims)),
-        collapsed_slice_dims=(axis,),
-        start_index_map=(axis,)
-     )
-      val = lax.gather(a_sorted, idx[..., None], dimension_numbers=dnums, slice_sizes=slice_sizes)
-      val_prev = lax.gather(a_sorted, idx_prev[..., None], dimension_numbers=dnums, slice_sizes=slice_sizes)
-      cw_prev = lax.gather(cum_weights_norm, idx_prev[..., None], dimension_numbers=dnums, slice_sizes=slice_sizes)
-      cw_next = lax.gather(cum_weights_norm, idx[..., None], dimension_numbers=dnums, slice_sizes=slice_sizes)
-      if method == "linear":
-        denom = cw_next - cw_prev
-        denom = _where(denom == 0, 1, denom)
-        weight = (qi - cw_prev) / denom
-        out = val_prev * (1 - weight) + val * weight
-      elif method == "lower":
-        out = val_prev
-      elif method == "higher":
-        out = val
-      elif method == "nearest":
-        out = _where(lax.abs(qi - cw_prev) < lax.abs(qi - cw_next), val_prev, val)
-      elif method == "midpoint":
-        out = (val_prev + val) / 2
-      elif method == "inverted_cdf":
-        out = val
-      else:
-        raise ValueError(f"{method=!r} not recognized")
-      return out
+
+      idx_expanded = lax.expand_dims(idx, (axis,)) if not keepdims else idx
+      return jnp.take_along_axis(a_sorted, idx_expanded, axis=axis).squeeze(axis=axis)
     result = api.vmap(_weighted_quantile)(q)
-    keepdim_out = list(keepdim)
+    shape_after = list(a_shape)
+    if keepdims:
+      shape_after[axis] = 1
+    else:
+      del shape_after[axis]
     if not q_was_scalar:
-      keepdim_out = [q_shape[0], *keepdim_out]
-      result = result.reshape(tuple(keepdim_out))
-    elif q_was_scalar and result.ndim > 0 and result.shape[0] == 1:
-      result = result.squeeze(axis=0)
+      result = result.reshape((q_shape[0], *shape_after))
+    else:
+      if result.ndim > 0 and result.shape[0] == 1:
+        result = result.reshape(tuple(shape_after))
     return result
 
   if squash_nans:
