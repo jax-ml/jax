@@ -14,23 +14,17 @@
 """JAX AOT API utilities."""
 
 from collections.abc import Hashable
-import functools
 import pickle
 from typing import Any, Callable, NamedTuple, Self, Sequence
 
 from absl import logging
 from jax._src import api
-from jax._src import api_util
 from jax._src import config
 from jax._src import core
-from jax._src import mesh as mesh_lib
-from jax._src import pjit
 from jax._src import stages
-from jax._src import tree_util
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
-from jax._src.lib import jax_jit
-from jax._src.lib import xla_client as xc
+from jax._src.lib.mlir.dialects import func as func_dialect
 
 
 # For now, we don't worry about serialization.
@@ -77,10 +71,10 @@ _traced_cache: dict[Hashable, TracedCacheEntry] = {}
 
 def get_traced(key: Hashable, fun: Callable[..., Any], *args):
   entry = _traced_cache.get(key, None)
-  if entry:
-    entry.hits += 1
-  else:
+  if entry is None:
     entry = _traced_cache[key] = TracedCacheEntry(api.trace(fun, *args))
+  else:
+    entry.hits += 1
   return entry.traced
 
 
@@ -96,12 +90,19 @@ class CacheEntry:
     self.hits = hits
 
   def serialize(self) -> SerializedType:
-    module_bytecode = mlir.module_to_bytecode(self.module)
+    module_bytecode = None
+    if self.module is not None:
+      module_bytecode = mlir.module_to_bytecode(self.module)
     return pickle.dumps((self.avals_out, module_bytecode))
 
   @classmethod
-  def deserialize(cls, blob: SerializedType) -> Self:
-    avals_out, module = pickle.loads(blob)
+  def deserialize(cls, blob: SerializedType, ctx: ir.Context | None = None) -> Self:
+    avals_out, module_bytecode = pickle.loads(blob)
+    if module_bytecode is None or ctx is None:
+      module = None
+    else:
+      with ctx:
+        module = ir.Module.parse(module_bytecode)
     return cls(avals_out, module)
 
 
@@ -110,6 +111,7 @@ class Cache(NamedTuple):
   put: Callable[[ComponentKey, bytes], None]
   keys: Callable[[], list[ComponentKey]]
   clear: Callable[[], None]
+  hits: Callable[[ComponentKey], int]
 
 
 _in_memory_cache: dict[ComponentKey, SerializedType] = {}
@@ -118,7 +120,8 @@ _in_memory_cache_hits: dict[ComponentKey, int] = {}
 
 def make_in_memory_cache():
   def get(key: ComponentKey) -> SerializedType | None:
-    hits = _in_memory_cache_hits.setdefault(key, 0)
+    logging.info('getting key')
+    hits = _in_memory_cache_hits.setdefault(key, -1)
     _in_memory_cache_hits[key] += 1
     return _in_memory_cache.get(key, None)
 
@@ -130,19 +133,27 @@ def make_in_memory_cache():
 
   def clear():
     _in_memory_cache.clear()
+    _in_memory_cache_hits.clear()
 
-  return Cache(get, put, keys, clear)
+  def hits(key: ComponentKey):
+    if key not in _in_memory_cache_hits:
+      raise ValueError(f"key {key} not found in cache hits")
+    return _in_memory_cache_hits[key]
+
+  return Cache(get, put, keys, clear, hits)
 
 
-def get_entry(
-  key: ComponentKey, make: Callable[[], CacheEntry]
-) -> CacheEntry:
-  cache: Cache = component_cache.value
-  if cache is None:
-    return make()
-  if blob := cache.get(key):
-    return CacheEntry.deserialize(blob)
-  entry = make()
-  blob = entry.serialize()
-  cache.put(key, blob)
-  return entry
+def get_cache() -> Cache | None:
+  return component_cache.value
+
+
+def get_entry(key: ComponentKey, ctx: ir.Context | None = None) -> CacheEntry | None:
+  if (cache := get_cache()) is not None:
+    if (blob := cache.get(key)) is not None:
+      return CacheEntry.deserialize(blob, ctx)
+  return None  # sigh pytype
+
+
+def put_entry(key: ComponentKey, entry: CacheEntry) -> None:
+  if (cache := get_cache()) is not None:
+    cache.put(key, entry.serialize())

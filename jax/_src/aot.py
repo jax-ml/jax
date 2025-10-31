@@ -31,24 +31,25 @@ from jax._src.lib.mlir.dialects import func as func_dialect
 
 
 UserKey = Hashable | Callable[..., Hashable]
-
-
 ComponentKey = aot_util.ComponentKey
+get_cache = aot_util.get_cache
 
 
 def component(key: UserKey = None) -> Callable[..., Any]:
   def _component(fun: Callable[..., Any]):
+    # TODO(dsuo): Do we have all the information we need at this point to make
+    # the component key?
+    component_key = ComponentKey(key)
+
     @api.jit
     @util.wraps(fun)
     @traceback_util.api_boundary
     def wrapper(*args):
       # TODO(dsuo): Flatten function as in shard_map pmap.
       # TODO(dsuo): Need to consider static args.
-      # TODO(dsuo): Do we have all the information we need at this point to make
-      # the component key?
-      component_key = ComponentKey(key)
       return component_p.bind(*args, fun=fun, component_key=component_key)
 
+    wrapper.component_key = component_key
     return wrapper
 
   return _component
@@ -61,22 +62,27 @@ def component_impl(*args, fun: Callable[..., Any], **_):
 def component_abstract_eval(
   *args, fun: Callable[..., Any], component_key: ComponentKey
 ) -> Sequence[core.AbstractValue] | None:
-  def abstract_eval() -> aot_util.CacheEntry:
+  entry = aot_util.get_entry(component_key)
+  if entry is None:
     traced = aot_util.get_traced(component_key, fun, *args)
     avals_out = tree_util.tree_map(
       lambda x: core.ShapedArray(x.shape, x.dtype), traced.out_info
     )
-    return aot_util.CacheEntry(avals_out)
-
-  return aot_util.get_entry(component_key, abstract_eval).avals_out
+    aot_util.put_entry(component_key, entry := aot_util.CacheEntry(avals_out))
+  return entry.avals_out
 
 
 def component_lowering(
   ctx, *args, fun: Callable[..., Any], component_key: ComponentKey
 ) -> Sequence[ir.Value]:
-  module_name = f"{component_key}.module"
+  with ctx.module_context.context as ir_ctx:
+    entry = aot_util.get_entry(component_key, ir_ctx)
+  if entry is None:
+    raise ValueError("Should hit abstract_eval already, which would populate.")
 
-  def lower_jaxpr_to_module() -> aot_util.CacheEntry:
+  module_name = f"{component_key}.module"
+  if (module := entry.module) is None:
+    logging.info('missed lowering: %s', fun)
     traced = aot_util.get_traced(component_key, fun, *ctx.avals_in)
     lowering_result = mlir.lower_jaxpr_to_module(
       module_name=module_name,
@@ -101,27 +107,19 @@ def component_lowering(
     # - keepalive: probably not supported.
     # - host_callbacks: probably not supported.
     # - shape_poly_state: talk to necula@
-    submodule = lowering_result.module
+    module = lowering_result.module
     # TODO(dsuo): We have this to ensure the source and destination modules have
     # the same context, but is it necessary? Perhaps yes, since we need to get
     # rid of the submodule context before merging. Could we just create it with
     # the right context?
-    submodule = ir.Module.parse(mlir.module_to_bytecode(submodule))
-    entry = aot_util.get_entry(component_key)
-    return submodule
+    entry.module = module = ir.Module.parse(mlir.module_to_bytecode(module))
+    aot_util.put_entry(component_key, entry)
 
-  submodule = aot_util.get_cached_or_put(
-    lowering_key,
-    lower_jaxpr_to_module,
-    aot_util.serialize_lowering,
-    aot_util.deserialize_lowering,
-  )
-
-  symtab = ir.SymbolTable(submodule.operation)
+  symtab = ir.SymbolTable(module.operation)
   module = mlir.merge_mlir_modules(
     ctx.module_context.module,
     f"component_{module_name}",
-    submodule,
+    module,
     dst_symtab=ctx.module_context.symbol_table,
   )
   # TODO(dsuo): There's quite a bit of logic from jax.export, but we just strip
