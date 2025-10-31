@@ -720,6 +720,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def("__repr__", &ProgramShape::ToString);
 
   // Literals
+  // remove this
   nb::class_<Literal>(m, "Literal")
       .def(nb::init<const Shape&>())
       .def("__repr__", &Literal::ToString)
