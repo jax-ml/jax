@@ -97,7 +97,7 @@ class MonitoringTest(absltest.TestCase):
     self.assertNotEqual(original_duration_listeners,
                         jax_src_monitoring.get_event_duration_listeners())
 
-    jax_src_monitoring._unregister_event_duration_listener_by_callback(callback)
+    jax_src_monitoring.unregister_event_duration_listener_by_callback(callback)
 
     self.assertEqual(original_duration_listeners,
                      jax_src_monitoring.get_event_duration_listeners())
@@ -108,8 +108,9 @@ class MonitoringTest(absltest.TestCase):
                      jax_src_monitoring.get_event_duration_listeners())
 
     with self.assertRaises(AssertionError):
-      jax_src_monitoring._unregister_event_duration_listener_by_callback(
-          callback)
+      jax_src_monitoring.unregister_event_duration_listener_by_callback(
+          callback
+      )
 
   def test_unregister_callback_index_in_range_success(self):
     original_duration_listeners = jax_src_monitoring.get_event_duration_listeners()
@@ -121,7 +122,7 @@ class MonitoringTest(absltest.TestCase):
     self.assertNotEqual(original_duration_listeners,
                         jax_src_monitoring.get_event_duration_listeners())
 
-    jax_src_monitoring._unregister_event_duration_listener_by_index(-1)
+    jax_src_monitoring.unregister_event_duration_listener_by_index(-1)
 
     self.assertEqual(original_duration_listeners,
                      jax_src_monitoring.get_event_duration_listeners())
@@ -131,11 +132,11 @@ class MonitoringTest(absltest.TestCase):
 
     # Verify index >= size raises AssertionError.
     with self.assertRaises(AssertionError):
-      jax_src_monitoring._unregister_event_duration_listener_by_index(size)
+      jax_src_monitoring.unregister_event_duration_listener_by_index(size)
 
     # Verify index < -size raises AssertionError.
     with self.assertRaises(AssertionError):
-      jax_src_monitoring._unregister_event_duration_listener_by_index(-size - 1)
+      jax_src_monitoring.unregister_event_duration_listener_by_index(-size - 1)
 
   def test_get_event_duration_listeners_returns_a_copy(self):
     original_duration_listeners = jax_src_monitoring.get_event_duration_listeners()
@@ -157,7 +158,7 @@ class MonitoringTest(absltest.TestCase):
     self.assertNotEqual(original_event_listeners,
                         jax_src_monitoring.get_event_listeners())
 
-    jax_src_monitoring._unregister_event_listener_by_callback(callback)
+    jax_src_monitoring.unregister_event_listener_by_callback(callback)
 
     self.assertEqual(original_event_listeners,
                      jax_src_monitoring.get_event_listeners())
@@ -167,7 +168,7 @@ class MonitoringTest(absltest.TestCase):
     self.assertNotIn(callback, jax_src_monitoring.get_event_listeners())
 
     with self.assertRaises(AssertionError):
-      jax_src_monitoring._unregister_event_listener_by_callback(callback)
+      jax_src_monitoring.unregister_event_listener_by_callback(callback)
 
 if __name__ == "__main__":
   absltest.main()
