@@ -66,7 +66,7 @@ class WGMMAAccumulator:
   def zero(cls, m, n, dtype=None, *, is_signed: bool | None = None):
     if m % 64 or n % 8:
       raise ValueError
-    if is_signed is False:
+    if is_signed is False:  # pylint: disable=g-bool-id-comparison
       raise TypeError("PTX does not support unsigned WGMMA accumulators")
     f32 = ir.F32Type.get()
     if dtype is None:
