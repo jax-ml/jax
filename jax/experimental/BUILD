@@ -505,6 +505,17 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "hijax",
+    srcs = ["hijax.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//jax/_src:ad_util",
+        "//jax/_src:core",
+        "//jax/_src:hijax",
+    ],
+)
+
+pytype_strict_library(
     name = "profiler",
     srcs = ["profiler.py"],
     visibility = ["//visibility:public"],
