@@ -2742,6 +2742,7 @@ class PallasCallWGTest(
         pallas_primitives.semaphore_signal_p,
         pallas_primitives.semaphore_wait_p,
         pallas_primitives.semaphore_read_p,
+        pallas_primitives.delay_p,
         checkify.check_p,
     }
 

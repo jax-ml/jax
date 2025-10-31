@@ -1333,7 +1333,7 @@ def _interpret_jaxpr(
             ordered=True,
         )
 
-      elif prim is mosaic_primitives.delay_p:
+      elif prim is primitives.delay_p:
         # TODO(jburnim): Implement this properly?
         out = []
 

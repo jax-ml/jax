@@ -1990,3 +1990,14 @@ def query_cluster_cancel(
   cancelled_launch = llvm.extractvalue(i1, desc, [3])
 
   return (*cta_ids, cancelled_launch)
+
+
+def nanosleep(nanos: ir.Value):
+  """Sleeps the current thread for the given number of nanoseconds."""
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [nanos],
+      "nanosleep.u32 $0;",
+      "r",
+      has_side_effects=True,
+  )

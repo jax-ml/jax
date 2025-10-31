@@ -100,6 +100,7 @@ from .utils import (
     memref_transpose as memref_transpose,
     memref_unfold as memref_unfold,
     memref_unsqueeze as memref_unsqueeze,
+    nanosleep as nanosleep,
     query_cluster_cancel as query_cluster_cancel,
     single_thread as single_thread,
     single_thread_predicate as single_thread_predicate,

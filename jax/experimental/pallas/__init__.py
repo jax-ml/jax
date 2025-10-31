@@ -55,6 +55,7 @@ from jax._src.pallas.primitives import atomic_or as _deprecated_atomic_or
 from jax._src.pallas.primitives import atomic_xchg as _deprecated_atomic_xchg
 from jax._src.pallas.primitives import atomic_xor as _deprecated_atomic_xor
 from jax._src.pallas.primitives import debug_print as debug_print
+from jax._src.pallas.primitives import delay as delay
 from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
 from jax._src.pallas.primitives import dot as dot
 from jax._src.pallas.primitives import get_global as get_global

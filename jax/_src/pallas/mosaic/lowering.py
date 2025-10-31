@@ -3882,7 +3882,7 @@ def _get_barrier_semaphore_rule(ctx: LoweringRuleContext):
   return tpu.sem_barrier(memref_type)
 
 
-@register_lowering_rule(tpu_primitives.delay_p)
+@register_lowering_rule(primitives.delay_p)
 def _delay_rule(ctx: LoweringRuleContext, nanos: int):
   tpu.delay(nanos)
   return []
