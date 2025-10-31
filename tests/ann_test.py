@@ -125,7 +125,23 @@ class AnnTest(jtu.JaxTestCase):
     db_size = db.shape[0]
     gt_scores = lax.dot_general(qy, db, (([1], [1]), ([], [])))
     _, gt_args = lax.top_k(-gt_scores, k)  # negate the score to get min-k
-    db_per_device = db_size//num_devices
+    db_per_device = math.ceil(db_size/num_devices)
+
+    # The reshape call has a numerical bug where the target reshape size is
+    # always higher than array size if num_devices is not a nonnegative
+    # power of two. To fix this, we can do padding.
+    db_dim = db.shape[1]
+    target_size = db_per_device * num_devices
+    if db_size < target_size:
+        pad_len = target_size - db_size
+        pad_values = np.ones((pad_len, db_dim), dtype=db.dtype) * np.inf
+
+        # Pad with inf because we are running min-k and we do not want to
+        # affect the result. Use concatenate so we have more control over
+        # padding values and for readability. This also will avoid surprises
+        # with pad modes.
+        db = np.concatenate([db, pad_values], axis=0)
+
     sharded_db = db.reshape(num_devices, db_per_device, 128)
     db_offsets = np.arange(num_devices, dtype=np.int32) * db_per_device
     def parallel_topk(qy, db, db_offset):
