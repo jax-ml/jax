@@ -262,10 +262,9 @@ def _lowered_barrier_type() -> ir.Type:
 @_register_lowering(mgpu.InitializeBarrierOp)
 def _initialize_barrier_op_lowering_rule(
     ctx: LoweringContext,
-    initialize_barrier_op: mgpu.InitializeBarrierOp,
+    op: mgpu.InitializeBarrierOp,
 ) -> Sequence[ir.Value]:
-
-  shape = ir.ShapedType(initialize_barrier_op.barriers_ref.type).shape
+  shape = ir.ShapedType(op.barriers_ref.type).shape
   num_barriers = math.prod(shape)
 
   i32 = ir.IntegerType.get_signless(32)
@@ -279,27 +278,25 @@ def _initialize_barrier_op_lowering_rule(
     nvvm.mbarrier_init_shared(
         llvm.getelementptr(
             ptr_ty,
-            initialize_barrier_op.base_pointer,
+            op.base_pointer,
             [],
             [i],
             lowered_barrier_type,
             llvm.GEPNoWrapFlags.none,
         ),
         utils.c(
-            initialize_barrier_op.arrival_count.value * utils.WARPGROUP_SIZE,
+            op.arrival_count.value * utils.WARPGROUP_SIZE,
             i32,
         ),
         predicate=ctx.single_thread_per_block_predicate,
     )
 
   gpu.barrier()
-
-  barrier_base_ptr = llvm.getelementptr(
-      ir.Type.parse("!llvm.ptr"),
-      initialize_barrier_op.base_pointer, [], [0], lowered_barrier_type, llvm.GEPNoWrapFlags.none)
-
-  return utils.ptr_as_memref(
-      barrier_base_ptr, initialize_barrier_op.barriers_ref.type),
+  return (
+      builtin.unrealized_conversion_cast(
+          [op.barriers_ref.type], [op.base_pointer]
+      ),
+  )
 
 
 @_register_lowering(mgpu.OptimizationBarrierOp)
