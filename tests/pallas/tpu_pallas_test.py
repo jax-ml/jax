@@ -2065,7 +2065,7 @@ class PallasCallTest(PallasBaseTest):
       y[:] = x[:]
     batch_size = 3
     x = jnp.arange(batch_size * 1024.).reshape(batch_size, 8, 128)
-    f = pl.pallas_call(
+    f = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
         cost_estimate=pl.CostEstimate(
@@ -2077,6 +2077,57 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(analysis_result['flops'], batch_size * 1234)
     self.assertEqual(analysis_result['transcendentals'], batch_size * 21)
     self.assertEqual(analysis_result['bytes accessed'], batch_size * 12345)
+
+  def test_cost_analysis_vmap_symbolic_batch_size(self):
+    # When exporting a module with a symbolic batch size, the cost analysis
+    # should be stripped from the tpu_custom_call because we can't accurately
+    # scale it by the dynamic batch size.
+
+    def kernel(x, y):
+      y[:] = x[:]
+
+    flops = 1234
+    transcendentals = 21
+    bytes_accessed = 12345
+
+    f = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        cost_estimate=pl.CostEstimate(
+            flops=flops,
+            transcendentals=transcendentals,
+            bytes_accessed=bytes_accessed,
+        ),
+    )
+    f = jax.vmap(f)
+
+    batch_size = 3
+    x = jnp.arange(batch_size * 1024.0).reshape(batch_size, 8, 128)
+    exported_module = pl.lower_as_mlir(jax.jit(f), x, dynamic_shapes=True)
+
+    self.assertIn('tpu_custom_call', str(exported_module))
+    self.assertIn('cost_estimate', str(exported_module))
+    # The exported module string encodes " as \22.
+    self.assertIn(f'flops\\22: {batch_size * flops}', str(exported_module))
+    self.assertIn(
+        f'transcendentals\\22: {batch_size * transcendentals}',
+        str(exported_module),
+    )
+    self.assertIn(
+        f'bytes_accessed\\22: {batch_size * bytes_accessed}',
+        str(exported_module),
+    )
+
+    x_shape = jax.ShapeDtypeStruct(
+        jax.export.symbolic_shape('b, 8, 128'), jnp.float32
+    )
+    exported_module = pl.lower_as_mlir(jax.jit(f), x_shape, dynamic_shapes=True)
+    # Assert that the cost analysis is not present in the serialized module.
+    self.assertIn('tpu_custom_call', str(exported_module))
+    self.assertNotIn('cost_estimate', str(exported_module))
+    self.assertNotIn('flops', str(exported_module))
+    self.assertNotIn('transcendentals', str(exported_module))
+    self.assertNotIn('bytes_accessed', str(exported_module))
 
   def test_vmem_limit(self):
     shape = (128, 128)

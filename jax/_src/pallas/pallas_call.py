@@ -771,7 +771,7 @@ def _pallas_call_batching_rule(
       vmapped_dims=(0,) + tuple(a + 1 for a in grid_mapping.vmapped_dims),
   )
 
-  if cost_estimate is not None:
+  if cost_estimate is not None and isinstance(axis_size, int):
     batched_cost_estimate = CostEstimate(
         flops=cost_estimate.flops * axis_size,
         bytes_accessed=cost_estimate.bytes_accessed * axis_size,
