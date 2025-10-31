@@ -1,4 +1,3 @@
-#include "jaxlib/py_user_context.h"
 /* Copyright 2020 The JAX Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +34,7 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
+#include "jaxlib/py_user_context.h"
 #include "jaxlib/traceback.h"
 #include "xla/future.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -121,8 +121,6 @@ class PyExecuteResults {
   // Only set if the computation has tokens.
   xla::Future<> result_status_;
 };
-
-using ExecuteShardedArg = std::variant<PyArray, std::vector<PyArray>>;
 
 // Thin Python wrapper around xla::ifrt::ExecutableRef. We use a wrapper class:
 // a) Standardize around xla::ifrt::ExecutableRef, which is
@@ -213,8 +211,8 @@ class PyLoadedExecutable {
   // Takes args indexed by argid then deviceid, transposes them, and passes to
   // xla::ifrt::LoadedExecutable::Execute. The result is similarly transposed
   // back into the argid,deviceid format. args is [num_args x num_devices].
-  absl::StatusOr<PyExecuteResults> ExecuteSharded(
-      std::vector<ExecuteShardedArg> args, bool with_tokens);
+  absl::StatusOr<PyExecuteResults> ExecuteSharded(std::vector<PyArray> args,
+                                                  bool with_tokens);
 
   absl::StatusOr<std::vector<std::shared_ptr<xla::HloModule>>> HloModules()
       const;
