@@ -58,20 +58,20 @@ _MOSAIC_ALLOW_HLO = config.bool_state(
 # mode: for 1 month when exporting, or when using old cloud TPU.
 #
 # This can be achieved by adding:
-#    if ctx.is_forward_compat() or is_cloud_tpu_older_than(<today>):
+#    if ctx.is_forward_compat() or backend is None or is_cloud_tpu_older_than(<today>):
 #       return <previous_serialization_version>
 #    return None
 #
 # We should also add a TODO to remove the conditional one month later.
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
-  # TODO(naumsmogers): remove the forward compatibility check after 2025-09-14.
+  # TODO(apaszke): remove the forward compatibility check after 2025-12-5.
   if (
       ctx.is_forward_compat()
       or backend is None
-      or is_cloud_tpu_older_than(2025, 8, 14, backend)
+      or is_cloud_tpu_older_than(2025, 11, 5, backend)
   ):
-    return 7
+    return 8
   return None
 
 
