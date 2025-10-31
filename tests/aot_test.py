@@ -271,34 +271,37 @@ class ComponentTest(jtu.JaxTestCase):
     cache = aot_util.make_in_memory_cache()
     with aot_util.component_cache(cache):
       yield
-      aot_util.component_cache.value.clear()
+      aot.clear_caches()
       jax.clear_caches()
 
   def test_component_lowering_cache_hit(self):
     with self.make_in_memory_cache():
       cache = aot_util.component_cache.value
-      @jax.jit
+      @aot.component(key='f')
       def f(x):
         return x + 1.0
 
-      component_f = aot.component(component_key='f')(f)
-      self.assertEqual(component_f(1.0), 2.0)
+      self.assertEqual(f(1.0), 2.0)
+      # We get 1 hit on traced cache during the lowering rule.
+      traced_key = aot_util.make_abstract_eval_key(aot_util.ComponentKey('f'))
+      self.assertEqual(aot_util._traced_cache[traced_key].hits, 1)
       self.assertEqual(cache.keys(), ['f.abstract_eval', 'f.lowering'])
 
-      logging.info(pjit._infer_params_cached.cache_info())
+      @aot.component(key='f')
+      def g(x):
+        raise NotImplementedError
 
-      logging.info("GGGGGG")
-      component_g = aot.component(component_key='f')(f)
-
-      self.assertNotEqual(component_f, component_g)
-      self.assertEqual(component_g(1.0), 2.0)
-      logging.info(pjit._infer_params_cached.cache_info())
+      self.assertEqual(g(1.0), 2.0)
+      # We get 1 hit for component cache and so we don't even check traced
+      # cache.
       self.assertEqual(cache.get('f.lowering', update_hits=False).hits, 1)
+      traced_key = aot_util.make_abstract_eval_key(aot_util.ComponentKey('f'))
+      self.assertEqual(aot_util._traced_cache[traced_key].hits, 1)
 
   def test_component_call_in_function(self):
     with self.make_in_memory_cache():
       cache = aot_util.component_cache.value
-      @aot.component(component_key='f')
+      @aot.component(key='f')
       def f(x):
         return x + 1.0
 
@@ -306,9 +309,11 @@ class ComponentTest(jtu.JaxTestCase):
       def g(x):
         return f(x) + 1.0
 
-      self.assertEqual(g(1.0), 3.0)
       self.assertEqual(f(1.0), 2.0)
+      self.assertEqual(g(1.0), 3.0)
       self.assertEqual(cache.get('f.lowering', update_hits=False).hits, 1)
+      traced_key = aot_util.make_abstract_eval_key(aot_util.ComponentKey('f'))
+      self.assertEqual(aot_util._traced_cache[traced_key].hits, 1)
 
   def test_explicit_cached_lowering(self):
     with self.make_in_memory_cache():
@@ -316,18 +321,18 @@ class ComponentTest(jtu.JaxTestCase):
       def f(x):
         return x + 1.0
 
-      component_f = aot.component(component_key='f')(f)
+      component_f = aot.component(key='f')(f)
       lowered = component_f.lower(jax.ShapeDtypeStruct((), 'float32'))
       self.assertEqual(cache.keys(), ['f.abstract_eval', 'f.lowering'])
 
-      component_g = aot.component(component_key='f')(f)
+      component_g = aot.component(key='f')(f)
       lowered = component_g.lower(jax.ShapeDtypeStruct((), 'float32'))
       self.assertEqual(cache.get('f.lowering', update_hits=False).hits, 1)
 
   def test_vmap_of_component(self):
       with self.make_in_memory_cache():
         cache = aot_util.component_cache.value
-        @aot.component(component_key='f')
+        @aot.component(key='f')
         def f(x):
             return x + 1.0
 

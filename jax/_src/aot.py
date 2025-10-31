@@ -13,9 +13,8 @@
 # limitations under the License.
 """JAX AOT API"""
 
-import functools
 from collections.abc import Hashable
-from typing import Any, Callable, NamedTuple
+from typing import Any, Callable
 
 
 from absl import logging
@@ -30,21 +29,22 @@ from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 
-component_p = core.Primitive("component")
+
+UserKey = Hashable | Callable[..., Hashable]
 
 
-ComponentKey = Hashable | Callable[..., Hashable]
+ComponentKey = aot_util.ComponentKey
 
 
-def component(component_key: ComponentKey = None) -> Callable[..., Any]:
+def component(key: UserKey = None) -> Callable[..., Any]:
   def _component(fun: Callable[..., Any]):
     @api.jit
     @util.wraps(fun)
     @traceback_util.api_boundary
     def wrapper(*args):
-      logging.info("wrapper: %s", args)
       # TODO(dsuo): Flatten function as in shard_map pmap.
       # TODO(dsuo): Need to consider static args.
+      component_key = ComponentKey(key)
       return component_p.bind(*args, fun=fun, component_key=component_key)
 
     # NOTE(dsuo): Using a component means we'll jit you in this dummy
@@ -56,27 +56,30 @@ def component(component_key: ComponentKey = None) -> Callable[..., Any]:
 
 def component_impl(*args, fun: Callable[..., Any], **_):
   # TODO(dsuo): Call should not re-trace.
-  logging.info("component_impl")
+  logging.debug("component_impl")
   return fun(*args)
 
 
 def component_abstract_eval(
   *args, fun: Callable[..., Any], component_key: ComponentKey
 ):
-  logging.info("component_abstract_eval: %s", component_key)
+  logging.debug("component_abstract_eval: %s, %s", component_key, fun)
   key = aot_util.make_abstract_eval_key(component_key)
 
   def abstract_eval():
-    logging.info("component_abstract_eval args: %s", args)
+    logging.debug("component_abstract_eval args: %s", args)
     # NOTE(dsuo): The claim is tracing cache will handle caching jaxprs for us.
     # However, we'll need to convert ir.Values in the lowering rule to avals to
-    # trace in lowering with args. There are two further downsides:
+    # trace in lowering with args. There are three issues:
     # 1. `fun` must have the same id (in addition to same everything else) in
     # order for us to use this cache within the same process.
-    # 2. It's not easy to inspect the _infer_params_cached.cache_info() to
+    # 2. It's not easy to inspect the _infer_params_cached.cache_debug() to
     # understand if we've gotten a cache hit or not (more relevant for testing).
+    # 3. lu.cache on _create_pjit_jaxpr keys on fun transformations.
+    # So... just do the easy thing for now and worry about this later.
+    traced = aot_util.get_traced(key, fun, *args)
     return tree_util.tree_map(
-      lambda x: core.ShapedArray(x.shape, x.dtype), api.eval_shape(fun, *args)
+      lambda x: core.ShapedArray(x.shape, x.dtype), traced.out_info
     )
 
   return aot_util.get_cached_or_put(
@@ -90,19 +93,19 @@ def component_abstract_eval(
 def component_lowering(
   ctx, *args, fun: Callable[..., Any], component_key: ComponentKey
 ):
-  logging.info("component_lowering: %s", component_key)
-  key = aot_util.make_lowering_key(component_key)
+  logging.debug("component_lowering: %s, %s", component_key, fun)
 
   # TODO(dsuo): Is this something we can grab from LoweringRuleContext or
   # traced?
   module_name = f"{component_key}.module"
   traced_key = aot_util.make_abstract_eval_key(component_key)
+  lowering_key = aot_util.make_lowering_key(component_key)
   # TODO(dsuo): Expect entry exists. TBD for transformations.
-  logging.info("component_lowering avals_in: %s", ctx.avals_in)
+  logging.debug("component_lowering avals_in: %s", ctx.avals_in)
 
   def lower_jaxpr_to_module():
     # with ctx.module_context.module.context:
-    traced = api.trace(fun, *ctx.avals_in)
+    traced = aot_util.get_traced(traced_key, fun, *ctx.avals_in)
     lowering_result = mlir.lower_jaxpr_to_module(
       module_name=module_name,
       jaxpr=traced.jaxpr,
@@ -135,7 +138,7 @@ def component_lowering(
     return submodule
 
   submodule = aot_util.get_cached_or_put(
-    key,
+    lowering_key,
     lower_jaxpr_to_module,
     aot_util.serialize_lowering,
     aot_util.deserialize_lowering,
@@ -163,6 +166,12 @@ def component_batcher(
   return fun(vals_in[0]), dims_in[0]
 
 
+def clear_caches():
+  aot_util.component_cache.value.clear()
+  aot_util._traced_cache.clear()
+
+
+component_p = core.Primitive("component")
 component_p.def_impl(component_impl)
 component_p.def_abstract_eval(component_abstract_eval)
 # TODO(dsuo): Figure out multiple_results i.e., distinguishing between (1,) and
