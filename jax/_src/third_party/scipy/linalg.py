@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from jax import jit, lax
-import jax.numpy as jnp
+import numpy as np
+
+from jax._src import api
+from jax._src import dtypes
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.numpy.linalg import norm
 from jax._src.scipy.linalg import rsf2csf, schur
 from jax._src.typing import ArrayLike, Array
 
 
-@jit
+@api.jit
 def _algorithm_11_1_1(F: Array, T: Array) -> tuple[Array, Array]:
   # Algorithm 11.1.1 from Golub and Van Loan "Matrix Computations"
   N = T.shape[0]
@@ -99,14 +103,14 @@ def funm(A: ArrayLike, func: Callable[[Array], Array],
     return F
 
   if F.dtype.char.lower() == 'e':
-    tol = jnp.finfo(jnp.float16).eps
+    tol = dtypes.finfo(np.float16).eps
   if F.dtype.char.lower() == 'f':
-    tol = jnp.finfo(jnp.float32).eps
+    tol = dtypes.finfo(np.float32).eps
   else:
-    tol = jnp.finfo(jnp.float64).eps
+    tol = dtypes.finfo(np.float64).eps
 
   minden = jnp.where(minden == 0.0, tol, minden)
-  err = jnp.where(jnp.any(jnp.isinf(F)), jnp.inf, jnp.minimum(1, jnp.maximum(
+  err = jnp.where(jnp.any(jnp.isinf(F)), np.inf, jnp.minimum(1, jnp.maximum(
           tol, (tol / minden) * norm(jnp.triu(T, 1), 1))))
 
   return F, err

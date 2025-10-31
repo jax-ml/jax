@@ -127,7 +127,8 @@ def paged_flash_attention_kernel(
     k_scales_vmem_buffer,
     v_vmem_buffer,
     v_scales_vmem_buffer,
-    sem,
+    k_sems,
+    v_sems,
     *,
     batch_size: int,
     pages_per_compute_block: int,
@@ -176,7 +177,9 @@ def paged_flash_attention_kernel(
 
       return (
           lax.cond(
-              jnp.logical_and(next_b < batch_size, lengths_ref[next_b] == 0),
+              jnp.logical_and(
+                  next_b < batch_size,
+                  lengths_ref[lax.clamp(0, next_b, batch_size - 1)] == 0),
               advance_to_next_non_zero_length,
               lambda: next_b,
           ),
@@ -200,7 +203,7 @@ def paged_flash_attention_kernel(
         k_scales_vmem_buffer.at[buffer_index]
         if k_scales_vmem_buffer is not None
         else None,
-        sem,
+        k_sems.at[buffer_index],
         page_indices_ref,
         page_offset,
         pages_to_load,
@@ -213,7 +216,7 @@ def paged_flash_attention_kernel(
         v_scales_vmem_buffer.at[buffer_index]
         if v_scales_vmem_buffer is not None
         else None,
-        sem,
+        v_sems.at[buffer_index],
         page_indices_ref,
         page_offset,
         pages_to_load,
@@ -301,7 +304,8 @@ def paged_flash_attention_kernel_inline_seq_dim(
     k_scales_vmem_buffer,
     v_vmem_buffer,
     v_scales_vmem_buffer,
-    sem,
+    k_sems,
+    v_sems,
     *,
     batch_size: int,
     pages_per_compute_block: int,
@@ -336,7 +340,8 @@ def paged_flash_attention_kernel_inline_seq_dim(
         k_scales_vmem_buffer,
         v_vmem_buffer,
         v_scales_vmem_buffer,
-        sem,
+        k_sems,
+        v_sems,
         batch_size=batch_size,
         pages_per_compute_block=pages_per_compute_block,
         pages_per_sequence=pages_per_sequence,
@@ -458,7 +463,7 @@ def paged_attention(
     raise ValueError("`page_indices` and `q` must have the same batch size")
   if lengths.dtype != jnp.int32:
     raise ValueError(
-        "The dtype of `lengths` must be int32. Got {lengths.dtype}"
+        f"The dtype of `lengths` must be int32. Got {lengths.dtype}"
     )
 
   # TODO(dinghua): get the actual cores per chip once there's an official API.
@@ -542,10 +547,10 @@ def paged_attention(
   if k_scales_pages is not None and v_scales_pages is not None:
     in_specs = [
         q_block_spec,
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
     ]
     scratch_shapes = (
         pltpu.VMEM(
@@ -584,14 +589,15 @@ def paged_attention(
             ),
             v_scales_pages.dtype,  # pytype: disable=attribute-error
         ),  # v_scales_pages buffer
-        pltpu.SemaphoreType.DMA,
+        pltpu.SemaphoreType.DMA((2,)),
+        pltpu.SemaphoreType.DMA((2,)),
     )
   else:
     in_specs = [
         q_block_spec,
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
         None,  # type: ignore[list-item]
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
         None,  # type: ignore[list-item]
     ]
     scratch_shapes = (
@@ -615,7 +621,8 @@ def paged_attention(
             v_pages.dtype,
         ),  # v_pages buffer
         None,
-        pltpu.SemaphoreType.DMA,
+        pltpu.SemaphoreType.DMA((2,)),
+        pltpu.SemaphoreType.DMA((2,)),
     )
 
   out, _, _ = pl.pallas_call(
@@ -641,7 +648,7 @@ def paged_attention(
           grid=grid,
           scratch_shapes=scratch_shapes,
       ),
-      compiler_params=pltpu.TPUCompilerParams(
+      compiler_params=pltpu.CompilerParams(
           dimension_semantics=dimension_semantics
       ),
       out_shape=[

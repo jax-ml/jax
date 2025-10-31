@@ -16,16 +16,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from jax import numpy as jnp
 from jax._src import array
-from jax._src import deprecations
+from jax._src import dtypes
 from jax._src import xla_bridge
 from jax._src.api import device_put
 from jax._src.lax.lax import _array_copy
+from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
+from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy import scalar_types as jnp_types
 from jax._src.sharding import Sharding
-from jax._src.typing import Array
-from jax._src.typing import DLDeviceType
+from jax._src.typing import Array, DLDeviceType, DTypeLike
+
+import numpy as np
 
 
 DLPACK_VERSION = (0, 8)
@@ -37,16 +41,28 @@ MIN_DLPACK_VERSION = (0, 5)
 # For example,
 # hash(jnp.float32) != hash(jnp.dtype(jnp.float32))
 # hash(jnp.float32) == hash(jnp.dtype(jnp.float32).type)
-# TODO(phawkins): Migrate to using dtypes instead of the scalar type objects.
-SUPPORTED_DTYPES = frozenset({
-    jnp.int8, jnp.int16, jnp.int32, jnp.int64, jnp.uint8, jnp.uint16,
-    jnp.uint32, jnp.uint64, jnp.float16, jnp.bfloat16, jnp.float32,
-    jnp.float64, jnp.complex64, jnp.complex128, jnp.bool_})
+
+# TODO(vanderplas): remove this set
+SUPPORTED_DTYPES: frozenset[DTypeLike] = frozenset({
+    jnp_types.int8, jnp_types.int16, jnp_types.int32, jnp_types.int64,
+    jnp_types.uint8, jnp_types.uint16, jnp_types.uint32, jnp_types.uint64,
+    jnp_types.float16, jnp_types.bfloat16, jnp_types.float32, jnp_types.float64,
+    jnp_types.complex64, jnp_types.complex128, jnp_types.bool_})
+
+SUPPORTED_DTYPES_SET: frozenset[np.dtype] = frozenset({np.dtype(dt) for dt in SUPPORTED_DTYPES})
+
+
+def is_supported_dtype(dtype: DTypeLike) -> bool:
+  """Check if dtype is supported by jax.dlpack."""
+  if dtype is None:
+    # NumPy will silently cast this to float64, which may be surprising.
+    raise TypeError(f"Expected a string or dtype-like object; got {dtype=}")
+  return np.dtype(dtype) in SUPPORTED_DTYPES_SET
 
 
 def _to_dlpack(x: Array, stream: int | Any | None,
-               src_device: xla_client.Device | None = None,
-               device: xla_client.Device | None = None,
+               src_device: _jax.Device | None = None,
+               device: _jax.Device | None = None,
                copy: bool | None = None):
 
   if src_device is None:
@@ -62,7 +78,7 @@ def _to_dlpack(x: Array, stream: int | Any | None,
       arr = device_put(x, device)
   else:
     arr = _array_copy(x) if copy else x
-  return xla_client._xla.buffer_to_dlpack_managed_tensor(
+  return _jax.buffer_to_dlpack_managed_tensor(
     arr.addressable_data(0), stream=stream
   )
 
@@ -75,7 +91,7 @@ _DL_DEVICE_TO_PLATFORM = {
 
 
 def to_dlpack(x: Array, stream: int | Any | None = None,
-              src_device: xla_client.Device | None = None,
+              src_device: _jax.Device | None = None,
               dl_device: tuple[DLDeviceType, int] | None = None,
               max_version: tuple[int, int] | None = None,
               copy : bool | None = None):
@@ -130,7 +146,7 @@ def to_dlpack(x: Array, stream: int | Any | None = None,
       ) from None
 
   # As new versions are adopted over time, we can maintain some legacy paths
-  # for compatability mediated through the max_version parameter.
+  # for compatibility mediated through the max_version parameter.
   # TODO(micky774): Deprecate default usage of DLPackManagedTensor when XLA
   # supports DLManagedTensorVersioned (DLPack version 1.0) and repurpose the
   # current _to_dlpack as a legacy path for (0,5) <= max_version < (1,0).
@@ -156,7 +172,7 @@ def to_dlpack(x: Array, stream: int | Any | None = None,
       f"version ({max_version}) was requested."
     )
 
-def _place_array(_arr, device, dlpack_device, copy):
+def _check_device(device, dlpack_device, copy):
   if device and dlpack_device != device:
     if copy is not None and not copy:
       raise ValueError(
@@ -164,75 +180,23 @@ def _place_array(_arr, device, dlpack_device, copy):
         f"is {repr(dlpack_device)}, however copy=False. Set copy=True or "
         "copy=None to perform the requested operation."
       )
-    else:
-      return device_put(_arr, device)
+
+def _place_array(_arr, device, dlpack_device, copy):
+  if device and dlpack_device != device:
+    return device_put(_arr, device)
   if copy:
     return jnp.array(_arr, copy=True)
   return _arr
 
-def _legacy_from_dlpack(dlpack, device: xla_client.Device | None = None,
-                        copy: bool | None = None):
-  preferred_platform = getattr(device, "platform", None)
-  if device and preferred_platform == "gpu":
-    preferred_platform = "cuda" if "cuda" in device.client.platform_version else "rocm"
-
-  cpu_backend = xla_bridge.get_backend("cpu")
-  gpu_backend = None
-
-  if preferred_platform in {"cuda", "rocm"}:
-    try:
-      gpu_backend = xla_bridge.get_backend(preferred_platform)
-    except RuntimeError:
-      raise TypeError(
-        f"A {str.upper(preferred_platform)} device was specified, however no "
-        f"{str.upper(preferred_platform)} backend was found."
-      )
-
-  if preferred_platform is None:
-    try:
-      gpu_backend = xla_bridge.get_backend("cuda")
-    except RuntimeError:
-      pass
-    # Try ROCm if CUDA backend not found
-    if gpu_backend is None:
-      try:
-        gpu_backend = xla_bridge.get_backend("rocm")
-      except RuntimeError:
-        pass
-
-  _arr = jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
-      dlpack, cpu_backend, gpu_backend))
-  dlpack_device, = _arr.devices()
-  return _place_array(_arr, device, dlpack_device, copy)
-
-def _from_dlpack(external_array, device: xla_client.Device | None = None,
-                 copy: bool | None = None):
-  dl_device_type, device_id = external_array.__dlpack_device__()
-  try:
-    dl_device_platform = _DL_DEVICE_TO_PLATFORM[dl_device_type]
-  except KeyError:
-    raise TypeError(
-        "Array passed to from_dlpack is on unsupported device type "
-        f"(DLDeviceType: {dl_device_type}, array: {external_array}"
-    ) from None
-
-  backend = xla_bridge.get_backend(dl_device_platform)
-  dlpack_device = backend.device_from_local_hardware_id(device_id)
-  try:
-    stream = dlpack_device.get_stream_for_external_ready_events()
-  except xla_client.XlaRuntimeError as err:
-    if "UNIMPLEMENTED" in str(err):
-      stream = None
-    else:
-      raise
-  dlpack = external_array.__dlpack__(stream=stream)
-
-  _arr = jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
-      dlpack, dlpack_device, stream))
-  return _place_array(_arr, device, dlpack_device, copy)
+def _is_tensorflow_tensor(external_array):
+  t = type(external_array)
+  return (
+      t.__qualname__ == "EagerTensor"
+      and t.__module__.endswith("tensorflow.python.framework.ops")
+  )
 
 def from_dlpack(external_array,
-                device: xla_client.Device | Sharding | None = None,
+                device: _jax.Device | Sharding | None = None,
                 copy: bool | None = None):
   """Returns a :class:`~jax.Array` representation of a DLPack tensor.
 
@@ -240,7 +204,7 @@ def from_dlpack(external_array,
   device transfer or copy was requested.
 
   Args:
-    external_array: An array object that has ``__dlpack__` and
+    external_array: An array object that has ``__dlpack__`` and
       ``__dlpack_device__`` methods.
     device: The (optional) :py:class:`Device`, representing the device on which
       the returned array should be placed. If given, then the result is
@@ -272,18 +236,58 @@ def from_dlpack(external_array,
         f"a Sharding with {len(device_set)} devices was provided."
       )
     device, = device_set
-  if hasattr(external_array, "__dlpack__"):
-    return _from_dlpack(external_array, device, copy)
+  if not hasattr(external_array, "__dlpack__") or not hasattr(external_array, "__dlpack_device__"):
+    raise TypeError(
+        "The array passed to from_dlpack must have __dlpack__ and __dlpack_device__ methods."
+    )
 
-  # Deprecated legacy path.
-  # TODO(slebedev): Remove on or after December 3rd 2023.
-  deprecations.warn(
-      "jax-dlpack-import-legacy",
-      (
-          "Calling from_dlpack with a DLPack tensor is deprecated. The argument"
-          " to from_dlpack should be an array from another framework that"
-          " implements the __dlpack__ protocol."
-      ),
-      stacklevel=2,
-  )
-  return _legacy_from_dlpack(external_array, device, copy)
+  dl_device_type, device_id = external_array.__dlpack_device__()
+  try:
+    dl_device_platform = _DL_DEVICE_TO_PLATFORM[dl_device_type]
+  except KeyError:
+    raise TypeError(
+        "Array passed to from_dlpack is on unsupported device type "
+        f"(DLDeviceType: {dl_device_type}, array: {external_array}"
+    ) from None
+
+  backend = xla_bridge.get_backend(dl_device_platform)
+  dlpack_device = backend.device_from_local_hardware_id(device_id)
+  _check_device(device, dlpack_device, copy)
+  if _is_tensorflow_tensor(external_array):
+    # TensorFlow does not support stream=.
+    stream = None
+  else:
+    try:
+      stream = dlpack_device.get_stream_for_external_ready_events()
+    except _jax.JaxRuntimeError as err:
+      if "UNIMPLEMENTED" in str(err):
+        stream = None
+      else:
+        raise
+  dlpack = external_array.__dlpack__(stream=stream)
+
+  try:
+    if jaxlib_extension_version < 384:
+      arr = _jax.dlpack_managed_tensor_to_buffer(
+        dlpack, dlpack_device, stream)
+    else:
+      arr = _jax.dlpack_managed_tensor_to_buffer(
+        dlpack, dlpack_device, stream, copy)
+  except xla_client.XlaRuntimeError as e:
+    se = str(e)
+    if "is not aligned to" in se:
+      i = se.index("is not aligned to")
+      raise ValueError(
+        "Specified input which requires a copy since the source data "
+        f"buffer {se[i:]} However copy=False. Set copy=True or "
+        "copy=None to perform the requested operation."
+      )
+    else:
+      raise
+  # TODO(phawkins): when we are ready to support x64 arrays in
+  # non-x64 mode, change the semantics to not canonicalize here.
+  arr = jnp.asarray(arr, dtype=dtypes.canonicalize_dtype(arr.dtype))
+  if copy and jaxlib_extension_version >= 384:
+    # copy was already handled by dlpack_managed_tensor_to_buffer.
+    copy = None
+  return _place_array(arr, device, dlpack_device, copy)

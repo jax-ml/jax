@@ -19,14 +19,11 @@ from __future__ import annotations
 import collections
 from collections.abc import Callable, Generator, MutableMapping, Sequence
 import itertools
-import logging
 import math
 from typing import Any
 
 from jax._src import xla_bridge as xb
 import numpy as np
-
-logger = logging.getLogger(__name__)
 
 _TPU_V2 = 'TPU v2'
 _TPU_V3 = 'TPU v3'
@@ -34,6 +31,8 @@ _TPU_V4 = 'TPU v4'
 _TPU_V5_LITE = "TPU v5 lite"
 _TPU_V5E = "TPU v5e"
 _TPU_V5P = "TPU v5p"
+_TPU_V6_LITE = "TPU v6 lite"
+_TPU_7X = "TPU7x"
 
 # Maps physical topology -> mesh shape -> transpose to use for jekbradbury's
 # famous contiguous mesh trick.
@@ -72,6 +71,8 @@ _TRAY_4x4_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 9, 10, 11, 15, 14, 13, 12, 8, 4)
 _V5E_TRAY_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 4)
 _V5E_TRAY_IOTA_ORDER = (0, 4, 2, 6, 1, 5, 3, 7)
 _V5P_2x2x2_ORDER = (0, 1, 3, 2, 6, 7, 5, 4)
+_7X_TRAY_2x2x2_RING_ORDER = (0, 1, 2, 3, 6, 7, 4, 5)
+
 
 def _tpu_v2_v3_create_device_mesh(
     mesh_shape: Sequence[int],
@@ -79,18 +80,12 @@ def _tpu_v2_v3_create_device_mesh(
     **unused_kwargs,
 ) -> np.ndarray:
   if len(devices) == 8:
-    logger.info(
-        'Reordering mesh to physical ring order on single-tray TPU v2/v3.'
-    )
     device_mesh = np.asarray(devices)
     device_mesh = device_mesh[np.array(_TRAY_RING_ORDER)]
     device_mesh = device_mesh.reshape(mesh_shape)
     return device_mesh
   elif mesh_shape[-1] == 8:
     device_mesh = np.asarray(devices).reshape(mesh_shape)
-    logger.info(
-        'Reordering mesh to physical ring order on each TPU v2/v3 tray.'
-    )
     perm = np.array(_TRAY_RING_ORDER)
     device_mesh = device_mesh[..., perm]
     return device_mesh
@@ -172,12 +167,50 @@ def _v5p_create_device_mesh(
       devices,
       key=lambda d: tuple(reversed(getattr(d, "coords", (0, 0, 0)))))
 
-  if bound_x == bound_y == 2 and bound_z == 2:
+  if bound_x == bound_y == bound_z == 2 and len(devices) == 8:
     device_mesh = np.asarray(sequential_devices)
     device_mesh = device_mesh[np.array(_V5P_2x2x2_ORDER)]
     device_mesh = device_mesh.reshape(mesh_shape)
     return device_mesh
   return None
+
+def _7x_create_device_mesh(
+    mesh_shape: Sequence[int], devices: Sequence[Any], **unused_kwargs
+) -> np.ndarray | None:
+  """Creates device assignment for small 7x topologies.
+
+  The device assignment attempts to minimize the number of hops between
+  neighbors by allocating rings of devices, and assigns the core axis
+  preferentially due to its higher bandwidth.
+
+  Args:
+    mesh_shape: Logical mesh shape used by the model.
+    devices: TPU devices.
+    **unused_kwargs: ...
+
+  Returns:
+    None or reordered devices reshaped as `mesh_shape`.
+  """
+  if len(devices) % 8 != 0 or len(devices) > 32:
+    return None
+
+  physical_mesh_shape = _get_physical_tpu_mesh(devices).shape
+  # For the x and y axes, we only support at most 2x2 since we can make one ring
+  # along those axes and repeat with other separate rings along the z axis.
+  assert (
+      physical_mesh_shape[0] <= 2 and physical_mesh_shape[1] <= 2
+  ), f'Unexpected physical mesh shape: {physical_mesh_shape}.'
+
+  indices = []
+  for i in range(0, len(devices), 8):
+    new_indices = [x + i for x in _7X_TRAY_2x2x2_RING_ORDER]
+    indices.extend(new_indices)
+
+  device_mesh = np.asarray(devices)
+  device_mesh = device_mesh[np.array(indices)]
+  device_mesh = device_mesh.reshape(mesh_shape)
+  return device_mesh
+
 
 # Registers functions to create device mesh for specific device kinds. Takes
 # precedence over the more general logic in create_device_mesh(). Handler may
@@ -190,6 +223,8 @@ device_kind_handler_dict: dict[
     _TPU_V3: _tpu_v2_v3_create_device_mesh,
     _TPU_V5_LITE: _v5e_create_device_mesh,
     _TPU_V5P: _v5p_create_device_mesh,
+    _TPU_V6_LITE: _v5e_create_device_mesh,
+    _TPU_7X: _7x_create_device_mesh,
 }
 
 
@@ -253,7 +288,7 @@ def _create_device_mesh_for_nd_torus(
       list(enumerate(mesh_shape))
   ):
     # Preferentially map to more physical axes first for higher bandwidth.
-    for num_axes in range(3, 0, -1):
+    for num_axes in range(len(physical_mesh.shape), 0, -1):
       # Try assign to any subset of size num_axes. Generate all candidates.
       indices_and_axes = itertools.combinations(
           enumerate(assignable_physical_mesh), num_axes
@@ -650,6 +685,17 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
       out[
           coords[0] - min_coords[0],
           coords[1] - min_coords[1],
+          d.core_on_chip - min_cores_per_chip,
+      ] = d
+  elif (device_kind in (_TPU_7X,) or
+        (device_kind in (_TPU_V5P,) and cores_per_chip == 2)):
+    out = np.empty(dims + (cores_per_chip,), dtype=object)
+    for d in jax_devices:
+      coords = d.coords
+      out[
+          coords[0] - min_coords[0],
+          coords[1] - min_coords[1],
+          coords[2] - min_coords[2],
           d.core_on_chip - min_cores_per_chip,
       ] = d
   else:

@@ -15,16 +15,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from functools import partial
 import enum
 from typing import Any
 
 import numpy as np
 
-from jax import jit
-from jax import lax
-from jax import numpy as jnp
+from jax._src import api
 from jax._src import core
+from jax._src import dtypes
+from jax._src import numpy as jnp
+from jax._src.lax import lax
+from jax._src.numpy import einsum as jnp_einsum
 from jax._src.util import canonicalize_axis
 from jax._src.numpy.util import promote_dtypes_inexact
 
@@ -56,7 +57,7 @@ def compute_weight_mat(input_size: core.DimSize,
                        translation,
                        kernel: Callable,
                        antialias: bool):
-  dtype = jnp.result_type(scale, translation)
+  dtype = dtypes.result_type(scale, translation)
   inv_scale = 1. / scale
   # When downsampling the kernel should be scaled since we want to low pass
   # filter and interpolate, but when upsampling it should not be since we only
@@ -65,8 +66,8 @@ def compute_weight_mat(input_size: core.DimSize,
   sample_f = ((jnp.arange(output_size, dtype=dtype) + 0.5) * inv_scale -
               translation * inv_scale - 0.5)
   x = (
-      jnp.abs(sample_f[jnp.newaxis, :] -
-              jnp.arange(input_size, dtype=dtype)[:, jnp.newaxis]) /
+      jnp.abs(sample_f[np.newaxis, :] -
+              jnp.arange(input_size, dtype=dtype)[:, np.newaxis]) /
       kernel_scale)
   weights = kernel(x)
 
@@ -81,7 +82,7 @@ def compute_weight_mat(input_size: core.DimSize,
   input_size_minus_0_5 = core.dimension_as_value(input_size) - 0.5
   return jnp.where(
       jnp.logical_and(sample_f >= -0.5,
-                      sample_f <= input_size_minus_0_5)[jnp.newaxis, :], weights, 0)
+                      sample_f <= input_size_minus_0_5)[np.newaxis, :], weights, 0)
 
 
 def _scale_and_translate(x, output_shape: core.Shape,
@@ -106,7 +107,7 @@ def _scale_and_translate(x, output_shape: core.Shape,
     contractions.append([d, len(output_shape) + i])
     out_indices[d] = len(output_shape) + i
   contractions.append(out_indices)
-  return jnp.einsum(x, in_indices, *contractions, precision=precision)
+  return jnp_einsum.einsum(x, in_indices, *contractions, precision=precision)
 
 
 class ResizeMethod(enum.Enum):
@@ -270,7 +271,7 @@ def _resize_nearest(x, output_shape: core.Shape):
   return x
 
 
-@partial(jit, static_argnums=(1, 2, 3, 4))
+@api.jit(static_argnums=(1, 2, 3, 4))
 def _resize(image, shape: core.Shape, method: str | ResizeMethod,
             antialias: bool, precision):
   if len(shape) != image.ndim:

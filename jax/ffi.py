@@ -16,11 +16,13 @@
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.ffi import (
+    build_ffi_lowering_function as build_ffi_lowering_function,
     ffi_call as ffi_call,
     ffi_lowering as ffi_lowering,
     include_dir as include_dir,
     pycapsule as pycapsule,
     register_ffi_target as register_ffi_target,
     register_ffi_type_id as register_ffi_type_id,
+    register_ffi_type as register_ffi_type,
     register_ffi_target_as_batch_partitionable as register_ffi_target_as_batch_partitionable,
 )

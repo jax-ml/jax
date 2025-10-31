@@ -33,7 +33,8 @@ pytype_strict_library(
     deps = [
         ":block_spec",
         ":custom_evaluate",
-        ":fusable",
+        ":custom_fusion",
+        ":fusible",
         ":fusion",
         ":jaxpr_fusion",
     ],
@@ -47,30 +48,55 @@ pytype_strict_library(
     deps = [
         ":fuser_utils",
         "//jax",
-        "//jax:ad_util",
-        "//jax:api_util",
-        "//jax:core",
-        "//jax:partial_eval",
-        "//jax:tree_util",
-        "//jax:util",
+        "//jax/_src:ad_util",
+        "//jax/_src:api",
+        "//jax/_src:api_util",
+        "//jax/_src:core",
+        "//jax/_src:custom_derivatives",
+        "//jax/_src:lax",
+        "//jax/_src:partial_eval",
+        "//jax/_src:random",
+        "//jax/_src:tree_util",
+        "//jax/_src:util",
         "//jax/_src/pallas",
     ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
-    name = "fusable",
+    name = "custom_fusion",
     srcs = [
-        "fusable.py",
+        "custom_fusion_lib.py",
+    ],
+    deps = [
+        ":block_spec",
+        "//jax/_src:api_util",
+        "//jax/_src:core",
+        "//jax/_src:custom_api_util",
+        "//jax/_src:lax",
+        "//jax/_src:mlir",
+        "//jax/_src:partial_eval",
+        "//jax/_src:tree_util",
+        "//jax/_src:util",
+        "//jax/_src/pallas",
+        "//jax/_src/pallas/mosaic:lowering",
+    ],
+)
+
+pytype_strict_library(
+    name = "fusible",
+    srcs = [
+        "fusible.py",
     ],
     deps = [
         ":fusion",
         "//jax",
-        "//jax:api_util",
-        "//jax:core",
-        "//jax:mlir",
-        "//jax:partial_eval",
-        "//jax:tree_util",
-        "//jax:util",
+        "//jax/_src:api_util",
+        "//jax/_src:batching",
+        "//jax/_src:core",
+        "//jax/_src:mlir",
+        "//jax/_src:partial_eval",
+        "//jax/_src:tree_util",
+        "//jax/_src:util",
     ],
 )
 
@@ -81,7 +107,7 @@ pytype_strict_library(
     ],
     deps = [
         "//jax",
-        "//jax:util",
+        "//jax/_src:util",
     ],
 )
 
@@ -91,33 +117,36 @@ pytype_strict_library(
         "jaxpr_fusion.py",
     ],
     deps = [
-        ":fusable",
-        ":fusable_dtype",
+        ":fusible",
+        ":fusible_dtype",
         ":fusion",
         "//jax",
-        "//jax:api_util",
-        "//jax:core",
-        "//jax:partial_eval",
-        "//jax:tree_util",
+        "//jax/_src:api_util",
+        "//jax/_src:core",
+        "//jax/_src:partial_eval",
+        "//jax/_src:tree_util",
+        "//jax/_src:util",
     ],
 )
 
 pytype_strict_library(
-    name = "fusable_dtype",
+    name = "fusible_dtype",
     srcs = [
-        "fusable_dtype.py",
+        "fusible_dtype.py",
     ],
     deps = [
         ":block_spec",
-        ":fusable",
+        ":fusible",
         "//jax",
-        "//jax:api_util",
-        "//jax:core",
-        "//jax:dtypes",
-        "//jax:partial_eval",
-        "//jax:source_info_util",
-        "//jax:tree_util",
-        "//jax:util",
+        "//jax/_src:api_util",
+        "//jax/_src:core",
+        "//jax/_src:custom_derivatives",
+        "//jax/_src:dtypes",
+        "//jax/_src:lax",
+        "//jax/_src:partial_eval",
+        "//jax/_src:source_info_util",
+        "//jax/_src:tree_util",
+        "//jax/_src:util",
         "//jax/_src/pallas",
     ],
 )
@@ -128,10 +157,10 @@ pytype_strict_library(
     deps = [
         ":fuser_utils",
         "//jax",
-        "//jax:core",
-        "//jax:source_info_util",
-        "//jax:tree_util",
-        "//jax:util",
+        "//jax/_src:core",
+        "//jax/_src:source_info_util",
+        "//jax/_src:tree_util",
+        "//jax/_src:util",
     ],
 )
 
@@ -139,9 +168,9 @@ pytype_strict_library(
     name = "fuser_utils",
     srcs = ["fuser_utils.py"],
     deps = [
-        "//jax:api_util",
-        "//jax:core",
-        "//jax:partial_eval",
-        "//jax:tree_util",
+        "//jax/_src:api_util",
+        "//jax/_src:core",
+        "//jax/_src:partial_eval",
+        "//jax/_src:tree_util",
     ],
 )

@@ -12,6 +12,7 @@ List of Functions
    :toctree: _autosummary
 
    all
+   broadcast
    flatten
    flatten_with_path
    leaves
@@ -19,6 +20,7 @@ List of Functions
    map
    map_with_path
    reduce
+   reduce_associative
    structure
    transpose
    unflatten

@@ -129,7 +129,7 @@ current directory.
    --bazel_options=--repo_env=LOCAL_NCCL_PATH="/foo/bar/nvidia/nccl"
    ```
 
-   Please see the full list of instructions in [XLA documentation](https://github.com/openxla/xla/blob/main/docs/hermetic_cuda.md).
+   Please see the full list of instructions in [XLA documentation](https://github.com/google-ml-infra/rules_ml_toolchain/blob/main/gpu).
 
 *  JAX versions prior v.0.4.32: you must have CUDA and CUDNN installed and
    provide paths to them using configuration options.
@@ -263,10 +263,12 @@ Alternatively, if you need more control, you may run the bazel command
 directly (the two commands are equivalent):
 
 ```
+# Regular Python
 bazel run //build:requirements.update --repo_env=HERMETIC_PYTHON_VERSION=3.12
-```
 
-where `3.12` is the `Python` version you wish to update.
+# Free-threaded Python
+bazel run //build:requirements_ft.update --repo_env=HERMETIC_PYTHON_VERSION=3.13-ft
+```
 
 Note, since it is still `pip` and `pip-compile` tools used under the hood, so
 most of the command line arguments and features supported by those tools will be
@@ -299,7 +301,7 @@ and re-run the requirements updater command for a selected version of Python.
 For example:
 
 ```
-echo -e "\n$(realpath jaxlib-0.4.27.dev20240416-cp312-cp312-manylinux2014_x86_64.whl)" >> build/requirements.in
+echo -e "\n$(realpath jaxlib-0.4.27.dev20240416-cp312-cp312-manylinux_2_27_x86_64.whl)" >> build/requirements.in
 python build/build.py requirements_update --python_version=3.12
 ```
 
@@ -374,7 +376,7 @@ in terms of files, not installations):
    --repo_env=HERMETIC_PYTHON_URL="https://remote/url/to/my_python.tgz"
    --repo_env=HERMETIC_PYTHON_SHA256=<file's_sha256_sum>
 
-   # We assume that top-level folder in the tarbal is called "python", if it is
+   # We assume that top-level folder in the tarball is called "python", if it is
    # something different just pass additional HERMETIC_PYTHON_PREFIX parameter
    --repo_env=HERMETIC_PYTHON_URL="https://remote/url/to/my_python.tgz"
    --repo_env=HERMETIC_PYTHON_SHA256=<file's_sha256_sum>
@@ -455,7 +457,6 @@ which one is selected by specifying `HERMETIC_PYTHON_VERSION`. For example in
 `WORKSPACE` file:
 ```
 requirements = {
-  "3.10": "//build:requirements_lock_3_10.txt",
   "3.11": "//build:requirements_lock_3_11.txt",
   "3.12": "//build:requirements_lock_3_12.txt",
   "3.13": "//build:requirements_lock_3_13.txt",
@@ -466,16 +467,16 @@ requirements = {
 Then you can build and test different combinations of stuff without changing
 anything in your environment:
 ```
-# To build with scenario1 dependendencies:
+# To build with scenario1 dependencies:
 bazel test <target> --repo_env=HERMETIC_PYTHON_VERSION=3.13-scenario1
 
-# To build with scenario2 dependendencies:
+# To build with scenario2 dependencies:
 bazel test <target> --repo_env=HERMETIC_PYTHON_VERSION=3.13-scenario2
 
-# To build with default dependendencies:
+# To build with default dependencies:
 bazel test <target> --repo_env=HERMETIC_PYTHON_VERSION=3.13
 
-# To build with scenario1 dependendencies and custom Python 3.13 interpreter:
+# To build with scenario1 dependencies and custom Python 3.13 interpreter:
 bazel test <target>
   --repo_env=HERMETIC_PYTHON_VERSION=3.13-scenario1
   --repo_env=HERMETIC_PYTHON_URL="file:///path/to/cpython.tar.gz"
@@ -526,27 +527,28 @@ bazel test //tests:cpu_tests //tests:backend_independent_tests
 `//tests:gpu_tests` and `//tests:tpu_tests` are also available, if you have the
 necessary hardware.
 
-To use the preinstalled `jax` and `jaxlib` instead of building them you first
-need to make them available in the hermetic Python. To install the specific
-versions of `jax` and `jaxlib` within hermetic Python run (using `jax >= 0.4.26`
-and `jaxlib >= 0.4.26` as an example):
+You need to configure `cuda` to run `gpu` tests:
+```
+python build/build.py build --wheels=jaxlib,jax-cuda-plugin,jax-cuda-pjrt --configure_only
+```
+
+To use a preinstalled `jaxlib` instead of building it you first need to
+make it available in the hermetic Python. To install a specific version of
+`jaxlib` within hermetic Python run (using `jaxlib >= 0.4.26` as an example):
 
 ```
-echo -e "\njax >= 0.4.26" >> build/requirements.in
 echo -e "\njaxlib >= 0.4.26" >> build/requirements.in
 python build/build.py requirements_update
 ```
 
-Alternatively, to install `jax` and `jaxlib` from the local wheels
-(assuming Python 3.12):
+Alternatively, to install `jaxlib` from a local wheel (assuming Python 3.12):
 
 ```
-echo -e "\n$(realpath jax-0.4.26-py3-none-any.whl)" >> build/requirements.in
-echo -e "\n$(realpath jaxlib-0.4.26-cp312-cp312-manylinux2014_x86_64.whl)" >> build/requirements.in
+echo -e "\n$(realpath jaxlib-0.4.26-cp312-cp312-manylinux_2_27_x86_64.whl)" >> build/requirements.in
 python build/build.py requirements_update --python_version=3.12
 ```
 
-Once you have `jax` and `jaxlib` installed hermetically, run:
+Once you have `jaxlib` installed hermetically, run:
 
 ```
 bazel test --//jax:build_jaxlib=false //tests:cpu_tests //tests:backend_independent_tests
@@ -789,7 +791,7 @@ desired formats, and which the `jupytext --sync` command recognizes when invoked
 #### Notebooks within the Sphinx build
 
 Some of the notebooks are built automatically as part of the pre-submit checks and
-as part of the [Read the docs](https://jax.readthedocs.io/en/latest) build.
+as part of the [Read the docs](https://docs.jax.dev/en/latest) build.
 The build will fail if cells raise errors. If the errors are intentional, you can either catch them,
 or tag the cell with `raises-exceptions` metadata ([example PR](https://github.com/jax-ml/jax/pull/2402/files)).
 You have to add this metadata by hand in the `.ipynb` file. It will be preserved when somebody else
@@ -800,7 +802,7 @@ See `exclude_patterns` in [conf.py](https://github.com/jax-ml/jax/blob/main/docs
 
 ### Documentation building on `readthedocs.io`
 
-JAX's auto-generated documentation is at <https://jax.readthedocs.io/>.
+JAX's auto-generated documentation is at <https://docs.jax.dev/>.
 
 The documentation building is controlled for the entire project by the
 [readthedocs JAX settings](https://readthedocs.org/dashboard/jax). The current settings
@@ -811,10 +813,10 @@ For each code version, the building process is driven by the
 For each automated documentation build you can see the
 [documentation build logs](https://readthedocs.org/projects/jax/builds/).
 
-If you want to test the documentation generation on Readthedocs, you can push code to the `test-docs`
-branch. That branch is also built automatically, and you can
-see the generated documentation [here](https://jax.readthedocs.io/en/test-docs/). If the documentation build
-fails you may want to [wipe the build environment for test-docs](https://docs.readthedocs.io/en/stable/guides/wipe-environment.html).
+If you want to test the documentation generation on Readthedocs,
+you can add the "documentation" GitHub label to your PR. You will then
+be able to view the docs from the link for the "docs/readthedocs.org:jax"
+GitHub check.
 
 For a local test, I was able to do it in a fresh directory by replaying the commands
 I saw in the Readthedocs logs:

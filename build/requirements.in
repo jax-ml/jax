@@ -1,22 +1,32 @@
 #
-# test deps
-#
--r test-requirements.txt
--r gpu-test-requirements.txt
-
-#
-# build deps
-#
-numpy~=2.0.0; python_version<="3.12"
-numpy~=2.1.0; python_version>="3.13"
-
-#
 # runtime deps
 #
-scipy>=1.13.1
+scipy>=1.13.1; python_version<="3.12"
+scipy>=1.15.2; python_version>="3.13"
 
-ml_dtypes>=0.4.0
-opt_einsum
-zstandard
+ml_dtypes>=0.5.3
 etils[epath]
+opt-einsum
+
+# Needed to build wheels
+build
 setuptools
+wheel
+
+# JAX's own libraries. We include these in the requirements so you can
+# bazel test without building jaxlib and without manually updating the
+# the requirements files.
+jaxlib
+
+jax-cuda12-plugin; sys_platform == "linux" and python_version<"3.14"
+jax-cuda13-plugin
+jax-cuda12-pjrt; sys_platform == "linux"
+jax-cuda13-pjrt
+
+# TPU dependencies
+libtpu; sys_platform == "linux" and platform_machine == "x86_64"
+
+# Colorama is only needed on windows. Pip-compile ignores platform-specific
+# requirements therefore we include it unconditionally here so that the lockfile
+# regeneration always includes it.
+colorama>=0.4.4

@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef JAX_JAXLIB_GPU_PY_CLIENT_GPU_H_
 #define JAX_JAXLIB_GPU_PY_CLIENT_GPU_H_
 
-
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"
 
@@ -24,6 +23,8 @@ namespace jax {
 namespace JAX_GPU_NAMESPACE {
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kGpuTransposePlanCacheInstantiate);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kXlaFfiPythonGpuCallback);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kXlaBufferPythonGpuCallback);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kXlaBufferPythonGpuCallbackCmdBuffer);
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax
 

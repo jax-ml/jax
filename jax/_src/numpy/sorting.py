@@ -12,24 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 
-import jax
 from jax._src import api
-from jax._src import core
 from jax._src import dtypes
+from jax._src.lax import lax
+from jax._src.lax import utils as lax_utils
 from jax._src.numpy import util
 from jax._src.util import canonicalize_axis, set_module
 from jax._src.typing import Array, ArrayLike
-from jax import lax
 
 export = set_module('jax.numpy')
 
 @export
-@partial(api.jit, static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
+@api.jit(static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
 def sort(
     a: ArrayLike,
     axis: int | None = -1,
@@ -90,7 +88,7 @@ def sort(
   return lax.rev(result, dimensions=[dimension]) if descending else result
 
 @export
-@partial(api.jit, static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
+@api.jit(static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
 def argsort(
     a: ArrayLike,
     axis: int | None = -1,
@@ -155,8 +153,12 @@ def argsort(
     arr = arr.ravel()
     axis = 0
   dimension = canonicalize_axis(axis, arr.ndim)
-  use_64bit_index = not core.is_constant_dim(arr.shape[dimension]) or arr.shape[dimension] >= (1 << 31)
-  iota = lax.broadcasted_iota(np.dtype('int64') if use_64bit_index else dtypes.int_, arr.shape, dimension)
+  idx_dtype = lax_utils.int_dtype_for_dim(arr.shape[dimension], signed=True)
+  # We'd give the correct output values with int32, but use the default dtype to
+  # match NumPy type semantics if x64 mode is enabled for now.
+  if idx_dtype == np.dtype(np.int32):
+    idx_dtype = dtypes.default_int_dtype()
+  iota = lax.broadcasted_iota(idx_dtype, arr.shape, dimension)
   # For stable descending sort, we reverse the array and indices to ensure that
   # duplicates remain in their original order when the final indices are reversed.
   # For non-stable descending sort, we can avoid these extra operations.
@@ -168,7 +170,7 @@ def argsort(
 
 
 @export
-@partial(api.jit, static_argnames=['kth', 'axis'])
+@api.jit(static_argnames=['kth', 'axis'])
 def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   """Returns a partially-sorted copy of an array.
 
@@ -226,7 +228,7 @@ def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   axis = canonicalize_axis(axis, arr.ndim)
   kth = canonicalize_axis(kth, arr.shape[axis])
 
-  arr = jax.numpy.swapaxes(arr, axis, -1)
+  arr = arr.swapaxes(axis, -1)
   if dtypes.isdtype(arr.dtype, "unsigned integer"):
     # Here, we apply a trick to handle correctly 0 values for unsigned integers
     bottom = -lax.top_k(-(arr + 1), kth + 1)[0] - 1
@@ -234,11 +236,11 @@ def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
     bottom = -lax.top_k(-arr, kth + 1)[0]
   top = lax.top_k(arr, arr.shape[-1] - kth - 1)[0]
   out = lax.concatenate([bottom, top], dimension=arr.ndim - 1)
-  return jax.numpy.swapaxes(out, -1, axis)
+  return out.swapaxes(-1, axis)
 
 
 @export
-@partial(api.jit, static_argnames=['kth', 'axis'])
+@api.jit(static_argnames=['kth', 'axis'])
 def argpartition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   """Returns indices that partially sort an array.
 
@@ -297,7 +299,7 @@ def argpartition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   axis = canonicalize_axis(axis, arr.ndim)
   kth = canonicalize_axis(kth, arr.shape[axis])
 
-  arr = jax.numpy.swapaxes(arr, axis, -1)
+  arr = arr.swapaxes(axis, -1)
   if dtypes.isdtype(arr.dtype, "unsigned integer"):
     # Here, we apply a trick to handle correctly 0 values for unsigned integers
     bottom_ind = lax.top_k(-(arr + 1), kth + 1)[1]
@@ -307,11 +309,11 @@ def argpartition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   # To avoid issues with duplicate values, we compute the top indices via a proxy
   set_to_zero = lambda a, i: a.at[i].set(0)
   for _ in range(arr.ndim - 1):
-    set_to_zero = jax.vmap(set_to_zero)
-  proxy = set_to_zero(jax.numpy.ones(arr.shape), bottom_ind)
+    set_to_zero = api.vmap(set_to_zero)
+  proxy = set_to_zero(lax.full(arr.shape, 1.0), bottom_ind)
   top_ind = lax.top_k(proxy, arr.shape[-1] - kth - 1)[1]
   out = lax.concatenate([bottom_ind, top_ind], dimension=arr.ndim - 1)
-  return jax.numpy.swapaxes(out, -1, axis)
+  return out.swapaxes(-1, axis)
 
 
 @export
@@ -353,7 +355,7 @@ def sort_complex(a: ArrayLike) -> Array:
 
 
 @export
-@partial(api.jit, static_argnames=('axis',))
+@api.jit(static_argnames=('axis',))
 def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> Array:
   """Sort a sequence of keys in lexicographic order.
 
@@ -421,9 +423,13 @@ def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> A
   if len({np.shape(key) for key in key_arrays}) > 1:
     raise ValueError("all keys need to be the same shape")
   if np.ndim(key_arrays[0]) == 0:
-    return jax.numpy.array(0, dtype=dtypes.canonicalize_dtype(dtypes.int_))
+    return lax.full((), 0, dtypes.default_int_dtype())
   axis = canonicalize_axis(axis, np.ndim(key_arrays[0]))
-  use_64bit_index = key_arrays[0].shape[axis] >= (1 << 31)
-  iota = lax.broadcasted_iota(np.dtype('int64') if use_64bit_index else dtypes.int_,
-                              np.shape(key_arrays[0]), axis)
+  idx_dtype = lax_utils.int_dtype_for_dim(key_arrays[0].shape[axis],
+                                          signed=True)
+  # We'd give the correct output values with int32, but use the default dtype to
+  # match NumPy type semantics if x64 mode is enabled for now.
+  if idx_dtype == np.dtype(np.int32):
+    idx_dtype = dtypes.default_int_dtype()
+  iota = lax.broadcasted_iota(idx_dtype, np.shape(key_arrays[0]), axis)
   return lax.sort((*key_arrays[::-1], iota), dimension=axis, num_keys=len(key_arrays))[-1]

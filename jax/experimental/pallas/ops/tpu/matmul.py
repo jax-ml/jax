@@ -14,7 +14,7 @@
 
 """Example matmul TPU kernel.
 
-See discussion in https://jax.readthedocs.io/en/latest/pallas/tpu/matmul.html.
+See discussion in https://docs.jax.dev/en/latest/pallas/tpu/matmul.html.
 """
 
 import functools
@@ -78,7 +78,7 @@ def matmul(
           grid=(x.shape[0] // l, y.shape[1] // r, x.shape[1] // block_k),
           scratch_shapes=[pltpu.VMEM((l, r), acc_dtype)],
       ),
-      compiler_params=pltpu.TPUCompilerParams(
+      compiler_params=pltpu.CompilerParams(
           dimension_semantics=("parallel", "parallel", "arbitrary")),
       debug=debug,
   )(x, y)

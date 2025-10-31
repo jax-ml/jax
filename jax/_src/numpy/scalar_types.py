@@ -22,11 +22,12 @@
 
 from typing import Any
 
-import jax
+import numpy as np
+
 from jax._src.typing import Array
 from jax._src import core
 from jax._src import dtypes
-import numpy as np
+from jax._src.numpy.array_constructors import asarray
 
 
 # Some objects below rewrite their __module__ attribute to this name.
@@ -46,7 +47,7 @@ class _ScalarMeta(type):
     return not (self == other)
 
   def __call__(self, x: Any) -> Array:
-    return jax.numpy.asarray(x, dtype=self.dtype)
+    return asarray(x, dtype=self.dtype)
 
   def __instancecheck__(self, instance: Any) -> bool:
     return isinstance(instance, self.dtype.type)

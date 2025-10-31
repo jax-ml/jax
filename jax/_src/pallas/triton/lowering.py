@@ -17,11 +17,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from collections.abc import Hashable
 import dataclasses
 import functools
 import math
-import operator
-from typing import Any, Hashable, TypeVar
+from typing import Any, TypeVar
 
 import jax
 from jax import lax
@@ -29,9 +29,10 @@ from jax import tree_util
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api_util
-from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
+from jax._src import debugging
+from jax._src import literals
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import source_info_util
@@ -39,8 +40,6 @@ from jax._src import state
 from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.lax.control_flow import for_loop
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import math as math_dialect
@@ -50,12 +49,9 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
-from jax._src.state import discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
 from jax._src.util import foreach
-from jax._src.util import merge_lists
-from jax._src.util import partition_list
 from jax._src.util import split_list
 import jax.numpy as jnp
 import numpy as np
@@ -87,10 +83,10 @@ class ModuleContext:
 
 @dataclasses.dataclass
 class BlockInfo:
-  full_shape_dtype: jax.ShapeDtypeStruct
+  full_shape_dtype: jax_core.ShapedArray
   start_indices: Sequence[Any]
   start_indices_alignment: Sequence[int]
-  block_shape: tuple[int | pallas_core.Mapped, ...]
+  block_shape: tuple[int | pallas_core.Squeezed, ...]
 
 
 @dataclasses.dataclass
@@ -121,32 +117,45 @@ def _eval_index_map(
   block_indices = lower_jaxpr_to_triton_ir(
       ctx, block_mapping.index_map_jaxpr.jaxpr, None, *idx
   )
-  block_indices = (
+  block_indices = tuple(
       _ensure_ir_value(i, jax_core.ShapedArray((), jnp.int32))
       for i in block_indices
   )
-  if isinstance(block_mapping.indexing_mode, pallas_core.Unblocked):
-    if block_mapping.indexing_mode.padding is not None:
-      raise NotImplementedError(
-          "Unblocked indexing with padding is not supported in Triton lowering."
-      )
-    if block_mapping.pipeline_mode is not None:
-      raise NotImplementedError(
-          "Pipeline mode is not supported in Triton lowering."
-      )
-    return tuple(block_indices)
+  block_indices = tree_util.tree_unflatten(
+      block_mapping.index_map_out_tree, block_indices)
+  if block_mapping.pipeline_mode is not None:
+    raise NotImplementedError(
+        "Pipeline mode is not supported in Triton lowering."
+    )
+  if any(
+      isinstance(b, pallas_core.Element) and b.padding != (0, 0)
+      for b in block_mapping.block_shape
+  ):
+    raise NotImplementedError(
+        "Unblocked indexing with padding is not supported in Triton lowering."
+    )
+  def _get_start_index(i, b):
+    match b:
+      case pallas_core.Squeezed() | pallas_core.Element():
+        return i
+      case pallas_core.Blocked():
+        return _mul(i, _ir_constant(b.block_size, i.type))
+      case _:
+        raise ValueError(f"Unsupported block dim type: {type(b)}")
   return tuple(
-      i if b is pallas_core.mapped else _mul(i, _ir_constant(b, i.type))
-      for i, b in zip(block_indices, block_mapping.block_shape)
+      _get_start_index(i, b) for i, b in
+      zip(block_indices, block_mapping.block_shape)
   )
 
 
 def _get_index_alignment(block_mapping: BlockMapping) -> tuple[int, ...]:
-  if isinstance(block_mapping.indexing_mode, pallas_core.Unblocked):
-    return (1,) * len(block_mapping.block_shape)
-  return tuple(
-      1 if b is pallas_core.mapped else b for b in block_mapping.block_shape
-  )
+  def _get_bdim_alignment(b: pallas_core.BlockDim):
+    match b:
+      case pallas_core.Squeezed() | pallas_core.Element():
+        return 1
+      case pallas_core.Blocked():
+        return b.block_size
+  return tuple(_get_bdim_alignment(b) for b in block_mapping.block_shape)
 
 
 def _bcast_to(a: ir.Value, shape: tuple[int, ...]) -> ir.Value:
@@ -174,12 +183,16 @@ def _bcast(
     y_aval: jax_core.ShapedArray,
     out_aval: jax_core.ShapedArray,
 ) -> ir.Value:
-  if isinstance(x, (np.ndarray, np.number, int, float)):
+  if isinstance(
+      x, (np.ndarray, np.number, int, float, literals.TypedNdArray)
+  ):
     x_dtype = x_aval.dtype
     if x_aval.weak_type:
       x_dtype = y_aval.dtype
     x = _ir_constant(x, _dtype_to_ir_type(x_dtype))
-  if isinstance(y, (np.ndarray, np.number, int, float)):
+  if isinstance(
+      y, (np.ndarray, np.number, int, float, literals.TypedNdArray)
+  ):
     y_dtype = y_aval.dtype
     if y_aval.weak_type:
       y_dtype = x_aval.dtype
@@ -274,8 +287,9 @@ def _new_ir_context() -> ir.Context:
 # this). This check is only needed to obtain a nicer error message; the
 # Triton lowering will fail anyway but it will crash with a C++ exception.
 # We currently apply this check only to load/store operations.
-def _check_tensor_size(shape: tuple[int | pallas_core.Mapped, ...]):
-  size = math.prod(1 if d is pallas_core.mapped else d for d in shape)
+def _check_tensor_size(shape: tuple[int | pallas_core.Squeezed, ...]):
+  size = math.prod(1 if isinstance(d, pallas_core.Squeezed) else d
+                   for d in shape)
   power_of_2 = (size & (size - 1)) == 0
   if not power_of_2:
     raise ValueError(
@@ -344,10 +358,12 @@ def lower_jaxpr_to_triton_module(
         )
       block_infos = [
           BlockInfo(
-              block_mapping.array_shape_dtype,
+              block_mapping.array_aval,
               _eval_index_map(ctx, program_ids, block_mapping),
               _get_index_alignment(block_mapping),
-              block_mapping.block_shape,
+              tuple(pallas_core.squeezed if isinstance(b, pallas_core.Squeezed)
+                    else pallas_core._get_block_dim_size(b)
+                    for b in block_mapping.block_shape),
           )
           for block_mapping in grid_mapping.block_mappings
       ]
@@ -394,7 +410,9 @@ def lower_jaxpr_to_triton_ir(
     avals_in = [v.aval for v in eqn.invars]
     avals_out = [v.aval for v in eqn.outvars]
     eqn_block_infos = map(read_block_info_env, eqn.invars)
-    loc = mlir._source_info_to_location(ctx, eqn.primitive, eqn.source_info)
+    loc = mlir.source_info_to_location(
+        ctx, eqn.primitive, eqn.source_info.name_stack,
+        eqn.source_info.traceback)
     rule_ctx = LoweringRuleContext(ctx, avals_in, avals_out, eqn_block_infos)
     try:
       with source_info_util.user_context(eqn.source_info.traceback), loc:
@@ -428,7 +446,7 @@ def lower_fun(
         fn, params,
         debug_info=api_util.debug_info("pallas triton lower_fun", fun,
                                        args, params))
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
     jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)
     out = _closed_call_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
     return out if multiple_results else out[0]
@@ -491,6 +509,10 @@ def _atomic_lowering_rule(
   assert block_info is not None
   ptr, indexers, val, mask = args_tree.unflatten(args_flat)
   *_, value_aval, mask_aval = args_tree.unflatten(ctx.avals_in)
+  indexers = list(indexers)
+  if not indexers or not isinstance(indexers[-1], indexing.NDIndexer):
+    ref_shape = state.get_transforms_shape(indexers, ctx.avals_in[0].shape)
+    indexers.append(NDIndexer.make_trivial_indexer(ref_shape))
   if len(indexers) != 1:
     raise NotImplementedError("Only single indexer is supported.")
   idx = indexers[0]
@@ -557,7 +579,7 @@ def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
                                          body, (args, args), {})),
       in_tree
   )
-  combine_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
+  combine_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       flat_fun, in_avals
   )
   out_tree = out_tree_thunk()
@@ -1308,16 +1330,29 @@ for prim, fn in _JAX_TO_TRITON_SIGNED_BINARY.items():
   triton_lowering_rules[prim] = signed_rule
 
 
-@register_lowering(primitives.debug_print_p)
+@register_lowering(debugging.debug_print_p)
 def debug_print_lowering_rule(
     ctx: LoweringRuleContext,
     *args: ir.Value,
     fmt: str,
-    has_placeholders: bool,
+    ordered,
+    partitioned,
+    in_tree,
+    static_args,
+    np_printoptions,
+    has_placeholders,
 ):
+  del partitioned, np_printoptions
+  if ordered:
+    raise NotImplementedError("Ordered debug_print is not supported on Pallas.")
   if has_placeholders:
     raise ValueError(
         "pl.debug_print() does not support placeholders when lowering to Triton"
+    )
+  args, kwargs = debugging.merge_callback_args(in_tree, args, static_args)
+  if kwargs:
+    raise ValueError(
+        "Only positional arguments are supported by debug_print on Pallas."
     )
 
   tt_dialect.print_(
@@ -1556,11 +1591,10 @@ def _float_float_cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
   src_element_type = ir.FloatType(_element_type(src.type))
   dst_element_type = ir.FloatType(_element_type(dst_type))
   if src_element_type.width == 8 or dst_element_type.width == 8:
-    return tt_dialect.fp_to_fp(
-        dst_type,
-        src,
-        rounding=tt_dialect.RoundingMode.RTNE,
+    rounding = (
+        tt_dialect.RoundingMode.RTNE if src_element_type.width > 8 else None
     )
+    return tt_dialect.fp_to_fp(dst_type, src, rounding=rounding)
   if src_element_type.width > dst_element_type.width:
     return arith_dialect.truncf(dst_type, src)
   elif src_element_type.width < dst_element_type.width:
@@ -1833,7 +1867,8 @@ def _compute_offsets_from_indices(
     block_info: BlockInfo, nd_indexer: NDIndexer
 ) -> ir.Value:
   full_shape = block_info.full_shape_dtype.shape
-  num_mapped_dims = sum(b is pallas_core.mapped for b in block_info.block_shape)
+  num_squeezed_dims = sum(isinstance(b, pallas_core.Squeezed)
+                          for b in block_info.block_shape)
   strides = pallas_utils.strides_from_shape(full_shape)
   indexer_shape = nd_indexer.get_indexer_shape()
   int_indexer_shape = nd_indexer.int_indexer_shape
@@ -1841,7 +1876,7 @@ def _compute_offsets_from_indices(
   indices = nd_indexer.indices
   other_shape = indexer_shape[len(int_indexer_shape) :]
   other_shape_idx = 0
-  assert len(indices) + num_mapped_dims == len(full_shape)
+  assert len(indices) + num_squeezed_dims == len(full_shape)
   assert len(block_info.start_indices) == len(full_shape)
 
   array_dtype = jnp.dtype(block_info.full_shape_dtype.dtype)
@@ -1857,10 +1892,11 @@ def _compute_offsets_from_indices(
   for dim_stride, dim_block_size, start_offset in zip(
       strides, block_info.block_shape, block_info.start_indices
   ):
-    if dim_block_size is pallas_core.mapped:
-      index = _ir_constant(0, offset_eltype)
-    else:
-      index = next(indexer_iter)
+    match dim_block_size:
+      case pallas_core.Squeezed():
+        index = _ir_constant(0, offset_eltype)
+      case int():
+        index = next(indexer_iter)
 
     if isinstance(index, slice):
       index = primitives.Slice.from_slice(index, dim_block_size)
@@ -1925,10 +1961,7 @@ def _get_lowering_rule(ctx: LoweringRuleContext, ptr, *idx, tree):
   if not tt_dialect.PointerType.isinstance(ptr.type):
     assert len(indexers) == 0
     return ptr
-  if len(indexers) > 1:
-    raise NotImplementedError("No support for multiple indexers yet.")
-  indexer = indexers[0]
-  args_flat, args_tree = tree_util.tree_flatten((ptr, (indexer,), None, None))
+  args_flat, args_tree = tree_util.tree_flatten((ptr, indexers, None, None))
   return _masked_load_lowering_rule(
       ctx,
       *args_flat,
@@ -2067,7 +2100,12 @@ def _masked_load_lowering_rule(
   *_, mask_aval, other_aval = args_tree.unflatten(ctx.avals_in)
   if len(indexers) > 1:
     raise NotImplementedError("No support for multiple indexers yet.")
-  idx = indexers[0]
+  indexers = list(indexers)
+  if not indexers:
+    ref_shape = state.get_transforms_shape(indexers, ctx.avals_in[0].shape)
+    idx = NDIndexer.make_trivial_indexer(ref_shape)
+  else:
+    idx = indexers[0]
   if not tt_dialect.PointerType.isinstance(ptr.type):
     assert len(ctx.avals_in) == 1
     return ptr
@@ -2106,23 +2144,15 @@ def _masked_load_lowering_rule(
   if not is_int4:
     return values
 
-  # After jaxlib 0.5.2, XLA packs pairs of `[u]int4` values into a `uint8`
-  # value with the first in the least significant bits and the second in the
-  # most significant. Before jaxlib 0.5.2, the order was reversed.
   if is_contiguous_int4:
     msb_values = arith_dialect.shrui(values, _full(values.type, 4))
     join_type = get_join_type(ir.RankedTensorType(values.type))
-    if jaxlib_version < (0, 5, 2):
-      values = tt_dialect.join(join_type, msb_values, values)
-    else:
-      values = tt_dialect.join(join_type, values, msb_values)
+    values = tt_dialect.join(join_type, values, msb_values)
     shape = ir.RankedTensorType(values.type).shape
     values = _reshape(values, (*shape[:-2], shape[-2] * shape[-1]))
   else:
     offsets = _ir_cast(offsets, ir.IntegerType.get_signless(32), signed=False)
     in_msb = _mod(offsets, _full(offsets.type, 2), signed=False)
-    if jaxlib_version < (0, 5, 2):
-      in_msb = arith_dialect.xori(in_msb, _ones_like(in_msb))
     shift = _mul(in_msb, _full(in_msb.type, 4))
     shift = _ir_cast(shift, values.type, signed=False)
     values = arith_dialect.shrui(values, shift)
@@ -2137,8 +2167,7 @@ def _swap_lowering_rule(ctx: LoweringRuleContext, ptr, value, *idx, tree):
     return ptr
   if len(indexers) > 1:
     raise NotImplementedError("No support for multiple indexers yet.")
-  indexer = indexers[0]
-  args_flat, args_tree = tree_util.tree_flatten((ptr, (indexer,), value, None))
+  args_flat, args_tree = tree_util.tree_flatten((ptr, indexers, value, None))
   return _masked_swap_lowering_rule(
       ctx, *args_flat, args_tree=args_tree, eviction_policy=None
   )
@@ -2208,7 +2237,11 @@ def _masked_swap_lowering_rule(
   *_, value_aval, mask_aval = args_tree.unflatten(ctx.avals_in)
   if len(indexers) > 1:
     raise NotImplementedError("No support for multiple indexers yet.")
-  idx = indexers[0]
+  if not indexers:
+    ref_shape = state.get_transforms_shape(indexers, ctx.avals_in[0].shape)
+    idx = NDIndexer.make_trivial_indexer(ref_shape)
+  else:
+    idx = indexers[0]
   ptr = _compute_pointers_from_indices(ptr, block_info, idx)
   other = None
   if value is not None:
@@ -2388,7 +2421,7 @@ def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
                                          body, (a, a), {})),
       in_tree
   )
-  combine_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
+  combine_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       flat_fun, [*mapped_avals, *mapped_avals]
   )
   out_tree = out_tree_thunk()
@@ -2408,7 +2441,7 @@ def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
   return list(reduce_op.result)
 
 
-def _reduce_lowering(body, ctx: LoweringRuleContext, a, *, axes):
+def _reduce_lowering(body, ctx: LoweringRuleContext, a, *, axes, **kwargs):
   assert isinstance(axes, tuple)
   if not axes:
     return a
@@ -2492,7 +2525,7 @@ triton_lowering_rules[lax.argmin_p] = functools.partial(
 )
 
 
-@register_lowering(pjit.pjit_p)
+@register_lowering(pjit.jit_p)
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   if jaxpr.consts:
     raise NotImplementedError
@@ -2500,8 +2533,9 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
       ctx.context, jaxpr.jaxpr, ctx.block_infos, *args
   )
 
-@register_lowering(pjit.mesh_cast_p)
-def _mesh_cast_lowering_rule(ctx, x, dst_sharding):
+
+@register_lowering(pjit.reshard_p)
+def _reshard_lowering_rule(ctx, x, dst_sharding):
   return x
 
 
@@ -2540,61 +2574,6 @@ def _is_read_only(ref_effects) -> bool:
     return False
   (eff,) = ref_effects
   return isinstance(eff, state.ReadEffect)
-
-
-@register_lowering(for_loop.for_p)
-def _for_lowering_rule(
-    ctx: LoweringRuleContext,
-    *args,
-    jaxpr,
-    which_linear,
-    nsteps,
-    reverse,
-    unroll,
-):
-  del which_linear
-  if reverse or unroll != 1:
-    raise NotImplementedError
-  _i_constant = _i64_constant if config.enable_x64.value else _i32_constant
-  lower_bound = _i_constant(0)
-  upper_bound = _i_constant(nsteps)
-  step = _i_constant(1)
-  init_args = map(_ensure_ir_value, args, ctx.avals_in)
-  # Partially discharge state from jaxpr for non-pointers
-  should_discharge = [
-      not isinstance(a, state.AbstractRef) for a in ctx.avals_in
-  ]
-  discharged_jaxpr, () = discharge.discharge_state(
-      jaxpr, (), should_discharge=[True, *should_discharge]
-  )
-  in_avals = [v.aval for v in jaxpr.invars]
-  state_effects = state.get_ref_state_effects(in_avals, jaxpr.effects)[1:]
-  # Read-only `Ref`s don't need to be passed in explicitly as loop arguments so
-  # we can filter them out.
-  read_only = map(_is_read_only, state_effects)
-  is_loop_arg = map(
-      operator.and_, map(operator.not_, read_only), should_discharge
-  )
-  ptrs, _ = partition_list(should_discharge, init_args)
-  non_loop_args, loop_args = partition_list(is_loop_arg, init_args)
-  for_op = scf_dialect.ForOp(lower_bound, upper_bound, step, loop_args)
-  with ir.InsertionPoint(for_op.body):
-    loop_index = for_op.induction_variable
-    for_body_args = [
-        for_op.body.arguments[i + 1] for i, _ in enumerate(loop_args)
-    ]
-    loop_body_args = merge_lists(is_loop_arg, non_loop_args, for_body_args)
-    out_discharged = lower_jaxpr_to_triton_ir(
-        ctx.context,
-        discharged_jaxpr,
-        [None, *ctx.block_infos],
-        loop_index,
-        *loop_body_args,
-    )
-    all_out = merge_lists(should_discharge, ptrs, out_discharged)
-    _, loop_out = partition_list(is_loop_arg, all_out)
-    scf_dialect.yield_(loop_out)
-  return merge_lists(is_loop_arg, non_loop_args, list(for_op.results_))
 
 
 def _lower_jaxpr_to_for_loop(
@@ -2738,7 +2717,8 @@ def _maybe_pattern_match_fori_loop(
   jaxpr = jaxpr.replace(
       eqns=jaxpr.eqns[:eqn_index] + jaxpr.eqns[eqn_index + 1:],
       invars=new_invars,
-      outvars=new_outvars)
+      outvars=new_outvars,
+      debug_info=jaxpr.debug_info.with_unknown_names())
   _, body_consts, carry = split_list(args, [cond_nconsts, body_nconsts])
   (lb, ub), args = carry[:2], carry[2:]
   const_block_infos, args_block_infos = split_list(ctx.block_infos,
@@ -2880,13 +2860,17 @@ def _cond_lowering_rule(
 def _ensure_ir_value(x: object, aval: jax_core.ShapedArray) -> ir.Value:
   if isinstance(x, ir.Value):
     return x
-  elif isinstance(x, (np.number, np.ndarray, int, float)):
+  elif isinstance(
+      x, (np.number, np.ndarray, int, float, literals.TypedNdArray)
+  ):
     return _ir_constant(x, _dtype_to_ir_type(aval.dtype))
   raise NotImplementedError
 
 
 def _ir_constant(v: object, t: ir.Type) -> ir.Value:
-  if isinstance(v, (np.number, np.ndarray, int, float)):
+  if isinstance(
+      v, (np.number, np.ndarray, int, float, literals.TypedNdArray)
+  ):
     if isinstance(t, ir.IntegerType):
       v = int(v)
     else:

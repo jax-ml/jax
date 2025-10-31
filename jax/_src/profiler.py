@@ -32,15 +32,23 @@ from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 from jax._src import xla_bridge
-from jax._src.lib import xla_client
-from jax._src.lib import version as jaxlib_version
+from jax._src.lib import _profiler
+from jax._src.lib import _profile_data
 
-_profiler_server: xla_client.profiler.ProfilerServer | None = None
+ProfileData = _profile_data.ProfileData
+ProfileEvent = _profile_data.ProfileEvent
+ProfilePlane = _profile_data.ProfilePlane
+
+_profiler_server: _profiler.ProfilerServer | None = None
 
 logger = logging.getLogger(__name__)
 
 
-def start_server(port: int) -> xla_client.profiler.ProfilerServer:
+class ProfileOptions(_profiler.ProfileOptions):
+  """Profiler Options to configure the collectors for the profiler."""
+
+
+def start_server(port: int) -> _profiler.ProfilerServer:
   """Starts the profiler server on port `port`.
 
   Using the "TensorFlow profiler" feature in `TensorBoard
@@ -60,7 +68,7 @@ def start_server(port: int) -> xla_client.profiler.ProfilerServer:
   # is for start_trace), but I'm putting it here to be safe.
   xla_bridge.get_backend()
 
-  _profiler_server = xla_client.profiler.start_server(port)
+  _profiler_server = _profiler.start_server(port)
   return _profiler_server
 
 
@@ -90,12 +98,17 @@ class _ProfileState:
 _profile_state = _ProfileState()
 
 
-def start_trace(log_dir: os.PathLike | str, create_perfetto_link: bool = False,
-                create_perfetto_trace: bool = False) -> None:
+def start_trace(
+    log_dir: os.PathLike | str,
+    create_perfetto_link: bool = False,
+    create_perfetto_trace: bool = False,
+    profiler_options: ProfileOptions | None = None,
+) -> None:
   """Starts a profiler trace.
 
   The trace will capture CPU, GPU, and/or TPU activity, including Python
-  functions and JAX on-device operations. Use :func:`stop_trace` to end the trace
+  functions and JAX on-device operations. Use :func:`stop_trace` to end the
+  trace
   and save the results to ``log_dir``.
 
   The resulting trace can be viewed with TensorBoard. Note that TensorBoard
@@ -114,8 +127,8 @@ def start_trace(log_dir: os.PathLike | str, create_perfetto_link: bool = False,
       ``perfetto_trace.json.gz`` file that is compatible for upload with the
       Perfetto trace viewer UI (https://ui.perfetto.dev). The file will also be
       generated if ``create_perfetto_link`` is true. This could be useful if you
-      want to generate a Perfetto-compatible trace without blocking the
-      process.
+      want to generate a Perfetto-compatible trace without blocking the process.
+    profiler_options: Profiler options to configure the profiler for collection.
   """
   with _profile_state.lock:
     if _profile_state.profile_session is not None:
@@ -127,7 +140,12 @@ def start_trace(log_dir: os.PathLike | str, create_perfetto_link: bool = False,
     # fail and no TPU operations will be included in the profile.
     xla_bridge.get_backend()
 
-    _profile_state.profile_session = xla_client.profiler.ProfilerSession()
+    if profiler_options is None:
+      _profile_state.profile_session = _profiler.ProfilerSession()
+    else:
+      _profile_state.profile_session = _profiler.ProfilerSession(
+          profiler_options
+      )
     _profile_state.create_perfetto_link = create_perfetto_link
     _profile_state.create_perfetto_trace = (
         create_perfetto_trace or create_perfetto_link)
@@ -202,7 +220,7 @@ def stop_trace():
     if _profile_state.profile_session is None:
       raise RuntimeError("No profile started")
     sess = _profile_state.profile_session
-    sess.export(sess.stop(), str(_profile_state.log_dir))
+    sess.stop_and_export(str(_profile_state.log_dir))  # type: ignore
     if _profile_state.create_perfetto_trace:
       abs_filename = _write_perfetto_trace_file(_profile_state.log_dir)
       if _profile_state.create_perfetto_link:
@@ -220,13 +238,18 @@ def stop_and_get_fdo_profile() -> bytes | str:
     if _profile_state.profile_session is None:
       raise RuntimeError("No profile started")
     xspace = _profile_state.profile_session.stop()
-    fdo_profile = xla_client.profiler.get_fdo_profile(xspace)
+    fdo_profile = _profiler.get_fdo_profile(xspace)
     _profile_state.reset()
     return fdo_profile
 
 
 @contextmanager
-def trace(log_dir: os.PathLike | str, create_perfetto_link=False, create_perfetto_trace=False):
+def trace(
+    log_dir: os.PathLike | str,
+    create_perfetto_link=False,
+    create_perfetto_trace=False,
+    profiler_options: ProfileOptions | None = None,
+):
   """Context manager to take a profiler trace.
 
   The trace will capture CPU, GPU, and/or TPU activity, including Python
@@ -248,17 +271,19 @@ def trace(log_dir: os.PathLike | str, create_perfetto_link=False, create_perfett
       ``perfetto_trace.json.gz`` file that is compatible for upload with the
       Perfetto trace viewer UI (https://ui.perfetto.dev). The file will also be
       generated if ``create_perfetto_link`` is true. This could be useful if you
-      want to generate a Perfetto-compatible trace without blocking the
-      process.
+      want to generate a Perfetto-compatible trace without blocking the process.
+    profiler_options: Profiler options to configure the profiler for collection.
   """
-  start_trace(log_dir, create_perfetto_link, create_perfetto_trace)
+  start_trace(
+      log_dir, create_perfetto_link, create_perfetto_trace, profiler_options
+  )
   try:
     yield
   finally:
     stop_trace()
 
 
-class TraceAnnotation(xla_client.profiler.TraceMe):
+class TraceAnnotation(_profiler.TraceMe):
   """Context manager that generates a trace event in the profiler.
 
   The trace event spans the duration of the code enclosed by the context.
@@ -272,7 +297,6 @@ class TraceAnnotation(xla_client.profiler.TraceMe):
   This will cause a "my_label" event to show up on the trace timeline if the
   event occurs while the process is being traced.
   """
-  pass
 
 
 class StepTraceAnnotation(TraceAnnotation):
@@ -333,7 +357,6 @@ def annotate_function(func: Callable, name: str | None = None,
   def wrapper(*args, **kwargs):
     with TraceAnnotation(name, **decorator_kwargs):
       return func(*args, **kwargs)
-    return wrapper
   return wrapper
 
 
@@ -362,7 +385,8 @@ def device_memory_profile(backend: str | None = None) -> bytes:
   Returns:
     A byte string containing a binary `pprof`-format protocol buffer.
   """
-  return xla_client.heap_profile(xla_bridge.get_backend(backend))
+  client = xla_bridge.get_backend(backend)
+  return gzip.compress(client.heap_profile())
 
 
 def save_device_memory_profile(filename, backend: str | None = None) -> None:
@@ -383,7 +407,7 @@ def save_device_memory_profile(filename, backend: str | None = None) -> None:
 
 
 # Allows to run model with profiler given amount of times. After required amount
-# of retries achived client can collect FDO data.
+# of retries achieved client can collect FDO data.
 class PGLEProfiler:
 
   def __init__(self, retries: int, percentile: int):
@@ -392,7 +416,7 @@ class PGLEProfiler:
     self.collected_fdo: str | None = None
     self.called_times: int = 0
     self.fdo_profiles: list[Any] = []
-    self.current_session: xla_client.profiler.ProfilerSession | None = None
+    self.current_session: _profiler.ProfilerSession | None = None
 
   def consume_fdo_profile(self) -> str | None:
     if self.collected_fdo is not None:
@@ -401,7 +425,7 @@ class PGLEProfiler:
     if not self.is_enabled() or self.called_times != self.retries:
       return None
 
-    self.collected_fdo = xla_client.profiler.aggregate_profiled_instructions(
+    self.collected_fdo = _profiler.aggregate_profiled_instructions(
         self.fdo_profiles, self.percentile
     )
     return self.collected_fdo
@@ -425,20 +449,17 @@ class PGLEProfiler:
         or not runner.is_enabled() or runner.is_fdo_consumed()):
       yield
     else:
-      options = xla_client.profiler.ProfileOptions()
+      options = _profiler.ProfileOptions()
       options.enable_hlo_proto = True
-
-      # ToDo(patrios): Remove when jaxlib version is updated to 0.5.4.
-      if jaxlib_version > (0, 5, 3):
-        options.raise_error_on_start_failure = True
-      runner.current_session = xla_client.profiler.ProfilerSession(options)
+      options.raise_error_on_start_failure = True
+      runner.current_session = _profiler.ProfilerSession(options)
 
       try:
         yield
       finally:
         xspace = runner.current_session.stop()
         runner.fdo_profiles.append(
-            xla_client.profiler.get_fdo_profile(xspace)
+            _profiler.get_fdo_profile(xspace)
         )
         runner.current_session = None
 

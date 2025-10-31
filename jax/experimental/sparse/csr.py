@@ -33,7 +33,6 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src.interpreters import ad
 from jax._src.lax.lax import _const
-from jax._src.lib import gpu_sparse
 from jax._src.numpy.util import promote_dtypes
 from jax._src.typing import Array, DTypeLike
 import jax.numpy as jnp
@@ -281,16 +280,14 @@ ad.primitive_transposes[csr_todense_p] = _csr_todense_transpose
 mlir.register_lowering(csr_todense_p, _csr_todense_lowering)
 dispatch.simple_impl(csr_todense_p)
 
-if gpu_sparse.cuda_is_supported:
-  mlir.register_lowering(
-      csr_todense_p,
-      partial(_csr_todense_gpu_lowering, target_name_prefix='cu'),
-      platform='cuda')
-if gpu_sparse.rocm_is_supported:
-  mlir.register_lowering(
-      csr_todense_p,
-      partial(_csr_todense_gpu_lowering, target_name_prefix='hip'),
-      platform='rocm')
+mlir.register_lowering(
+    csr_todense_p,
+    partial(_csr_todense_gpu_lowering, target_name_prefix='cu'),
+    platform='cuda')
+mlir.register_lowering(
+    csr_todense_p,
+    partial(_csr_todense_gpu_lowering, target_name_prefix='hip'),
+    platform='rocm')
 
 
 #--------------------------------------------------------------------
@@ -401,16 +398,14 @@ ad.primitive_transposes[csr_fromdense_p] = _csr_fromdense_transpose
 mlir.register_lowering(csr_fromdense_p, _csr_fromdense_lowering)
 dispatch.simple_impl(csr_fromdense_p)
 
-if gpu_sparse.cuda_is_supported:
-  mlir.register_lowering(
-      csr_fromdense_p,
-      partial(_csr_fromdense_gpu_lowering, target_name_prefix='cu'),
-      platform='cuda')
-if gpu_sparse.rocm_is_supported:
-  mlir.register_lowering(
-      csr_fromdense_p,
-      partial(_csr_fromdense_gpu_lowering, target_name_prefix='hip'),
-      platform='rocm')
+mlir.register_lowering(
+    csr_fromdense_p,
+    partial(_csr_fromdense_gpu_lowering, target_name_prefix='cu'),
+    platform='cuda')
+mlir.register_lowering(
+    csr_fromdense_p,
+    partial(_csr_fromdense_gpu_lowering, target_name_prefix='hip'),
+    platform='rocm')
 
 #--------------------------------------------------------------------
 # csr_matvec
@@ -507,16 +502,14 @@ ad.primitive_transposes[csr_matvec_p] = _csr_matvec_transpose
 mlir.register_lowering(csr_matvec_p, _csr_matvec_lowering)
 dispatch.simple_impl(csr_matvec_p)
 
-if gpu_sparse.cuda_is_supported:
-  mlir.register_lowering(
-      csr_matvec_p,
-      partial(_csr_matvec_gpu_lowering, target_name_prefix='cu'),
-      platform='cuda')
-if gpu_sparse.rocm_is_supported:
-  mlir.register_lowering(
-      csr_matvec_p,
-      partial(_csr_matvec_gpu_lowering, target_name_prefix='hip'),
-      platform='rocm')
+mlir.register_lowering(
+    csr_matvec_p,
+    partial(_csr_matvec_gpu_lowering, target_name_prefix='cu'),
+    platform='cuda')
+mlir.register_lowering(
+    csr_matvec_p,
+    partial(_csr_matvec_gpu_lowering, target_name_prefix='hip'),
+    platform='rocm')
 
 
 #--------------------------------------------------------------------
@@ -614,14 +607,11 @@ ad.primitive_transposes[csr_matmat_p] = _csr_matmat_transpose
 mlir.register_lowering(csr_matmat_p, _csr_matmat_lowering)
 dispatch.simple_impl(csr_matmat_p)
 
-if gpu_sparse:
-  if gpu_sparse.cuda_is_supported:
-    mlir.register_lowering(
-        csr_matmat_p,
-        partial(_csr_matmat_gpu_lowering, target_name_prefix='cu'),
-        platform='cuda')
-  if gpu_sparse.rocm_is_supported:
-    mlir.register_lowering(
-        csr_matmat_p,
-        partial(_csr_matmat_gpu_lowering, target_name_prefix='hip'),
-        platform='rocm')
+mlir.register_lowering(
+    csr_matmat_p,
+    partial(_csr_matmat_gpu_lowering, target_name_prefix='cu'),
+    platform='cuda')
+mlir.register_lowering(
+    csr_matmat_p,
+    partial(_csr_matmat_gpu_lowering, target_name_prefix='hip'),
+    platform='rocm')

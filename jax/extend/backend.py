@@ -18,6 +18,9 @@
 from jax._src.api import (
   clear_backends as clear_backends,
 )
+from jax._src.compiler import (
+    get_compile_options as get_compile_options,
+)
 from jax._src.xla_bridge import (
   backends as backends,
   backend_xla_version as backend_xla_version,
@@ -27,3 +30,13 @@ from jax._src.xla_bridge import (
 from jax._src.interpreters.pxla import (
   get_default_device as get_default_device
 )
+from jax._src import (
+    util as _util
+)
+register_backend_cache = _util.register_cache  # type: ignore
+
+from jax._src.lib import (
+    ifrt_proxy as ifrt_proxy
+)
+
+del _util

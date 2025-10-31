@@ -14,10 +14,10 @@
 
 from collections.abc import Sequence
 from typing import Any, Protocol
-import jax
+
+from jax._src import numpy as jnp
 from jax._src import random
 from jax._src.typing import Array, ArrayLike
-from jax import numpy as jnp
 
 NdKeyList = Any
 Shape = random.Shape
@@ -111,7 +111,7 @@ def blocked_fold_in(
 
   def _keygen_loop(axis, prefix):
     if axis == len(block_size_in_tiles):
-      subtile_key = jax.random.fold_in(
+      subtile_key = random.fold_in(
           global_key, _compute_tile_index(
               block_index, block_size_in_tiles, total_size_in_tiles, prefix))
       return subtile_key
@@ -120,7 +120,7 @@ def blocked_fold_in(
       for i in range(block_size_in_tiles[axis]):
         keys.append(_keygen_loop(axis+1, prefix+(i,)))
       return keys
-  return _keygen_loop(0, tuple())
+  return _keygen_loop(0, ())
 
 
 def sample_block(
@@ -130,7 +130,7 @@ def sample_block(
     tile_size: Shape,
     *args,
     **kwargs
-  ) -> jax.Array:
+  ) -> Array:
   """Draws random samples for a single block.
 
   This function is intended to be used in conjunction with `blocked_fold_in`:
@@ -155,12 +155,12 @@ def sample_block(
   """
   size_in_tiles = tuple(
       _shape // _element for _shape, _element in zip(block_size, tile_size))
-  def _nested_index(arr: jax.Array, idx: Sequence[int]) -> jax.Array:
+  def _nested_index(arr: Array, idx: Sequence[int]) -> Array:
     if len(idx) == 1:
       return arr[idx[0]]
     return _nested_index(arr[idx[0]], idx[1:])
 
-  def _sample_loop(axis: int, prefix: tuple[int, ...]) -> jax.Array:
+  def _sample_loop(axis: int, prefix: tuple[int, ...]) -> Array:
     if axis == len(size_in_tiles):
       return sampler_fn(_nested_index(keys, prefix), *args,
                         shape=tile_size, **kwargs)
@@ -169,4 +169,4 @@ def sample_block(
       for i in range(size_in_tiles[axis]):
         samples.append(_sample_loop(axis+1, prefix+(i,)))
       return jnp.concatenate(samples, axis=axis)
-  return _sample_loop(0, tuple())
+  return _sample_loop(0, ())

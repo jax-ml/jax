@@ -21,7 +21,7 @@ import flatbuffers
 from flatbuffers.compat import import_numpy
 np = import_numpy()
 
-class PyTreeDefKind(object):
+class PyTreeDefKind:
     leaf = 0
     none = 1
     tuple = 2
@@ -30,12 +30,12 @@ class PyTreeDefKind(object):
     custom = 5
 
 
-class AbstractValueKind(object):
+class AbstractValueKind:
     shapedArray = 0
     abstractToken = 1
 
 
-class DType(object):
+class DType:
     bool = 0
     i8 = 1
     i16 = 2
@@ -53,30 +53,33 @@ class DType(object):
     bf16 = 14
     i4 = 15
     ui4 = 16
-    f8_e3m4 = 24
-    f8_e4m3 = 23
     f8_e4m3b11fnuz = 17
     f8_e4m3fn = 18
     f8_e4m3fnuz = 19
     f8_e5m2 = 20
     f8_e5m2fnuz = 21
     f0 = 22
+    f8_e4m3 = 23
+    f8_e3m4 = 24
     f8_e8m0fnu = 25
     f4_e2m1fn = 26
+    key_fry = 27
+    key_rbg = 28
+    key_unsafe_rbg = 29
 
 
-class ShardingKind(object):
+class ShardingKind:
     unspecified = 0
     hlo_sharding = 1
 
 
-class DisabledSafetyCheckKind(object):
+class DisabledSafetyCheckKind:
     platform = 0
     custom_call = 1
     shape_assertions = 2
 
 
-class PyTreeDef(object):
+class PyTreeDef:
     __slots__ = ['_tab']
 
     @classmethod
@@ -211,7 +214,7 @@ def PyTreeDefEnd(builder):
 
 
 
-class AbstractValue(object):
+class AbstractValue:
     __slots__ = ['_tab']
 
     @classmethod
@@ -283,7 +286,7 @@ def AbstractValueEnd(builder):
 
 
 
-class Sharding(object):
+class Sharding:
     __slots__ = ['_tab']
 
     @classmethod
@@ -352,7 +355,7 @@ def ShardingEnd(builder):
 
 
 
-class Effect(object):
+class Effect:
     __slots__ = ['_tab']
 
     @classmethod
@@ -388,7 +391,7 @@ def EffectEnd(builder):
 
 
 
-class DisabledSafetyCheck(object):
+class DisabledSafetyCheck:
     __slots__ = ['_tab']
 
     @classmethod
@@ -434,7 +437,7 @@ def DisabledSafetyCheckEnd(builder):
 
 
 
-class Exported(object):
+class Exported:
     __slots__ = ['_tab']
 
     @classmethod

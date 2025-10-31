@@ -90,8 +90,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(CholeskyUpdateFfi, CholeskyUpdateFfiImpl,
 
 namespace {
 ffi::Error LuPivotsToPermutationImpl(
-    gpuStream_t stream, ffi::Dictionary /* unused */,
-    ffi::Buffer<ffi::DataType::S32> pivots,
+    gpuStream_t stream, ffi::Buffer<ffi::DataType::S32> pivots,
     ffi::Result<ffi::Buffer<ffi::DataType::S32>> permutation) {
   FFI_ASSIGN_OR_RETURN((auto [batch_size, pivot_size]),
                        SplitBatch1D(pivots.dimensions()));
@@ -119,10 +118,6 @@ ffi::Error LuPivotsToPermutationImpl(
 XLA_FFI_DEFINE_HANDLER_SYMBOL(LuPivotsToPermutation, LuPivotsToPermutationImpl,
                               ffi::Ffi::Bind()
                                   .Ctx<ffi::PlatformStream<gpuStream_t>>()
-                                  // TODO(b/358275922): remove Attrs (and the
-                                  // unused Dictionary above) 12 weeks after
-                                  // release of jaxlib v0.4.32.
-                                  .Attrs()
                                   .Arg<ffi::Buffer<ffi::DataType::S32>>()
                                   .Ret<ffi::Buffer<ffi::DataType::S32>>());
 

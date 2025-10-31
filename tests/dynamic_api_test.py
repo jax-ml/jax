@@ -25,14 +25,13 @@ import jax.numpy as jnp
 from jax import lax
 from jax.interpreters import batching
 
-import jax._src.lib
-import jax._src.util
 from jax._src import core
 from jax._src import test_util as jtu
 
 jax.config.parse_flags_with_absl()
 
 
+@unittest.skip("currently unmaintained")
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")
 class DynamicShapeStagingTest(jtu.JaxTestCase):
   def test_basic_staging(self):
@@ -436,7 +435,7 @@ class DynamicShapeStagingTest(jtu.JaxTestCase):
   def test_jit_abstracted_axes_staging(self):
     # We just test make_jaxpr-of-jit because dynamic shape compilation/execution
     # may not be supported.
-    @partial(jax.jit, abstracted_axes=('n',))
+    @jax.jit(abstracted_axes=('n',))
     def f(x):
       return jnp.sum(x)
     jaxpr = jax.make_jaxpr(f)(jnp.ones(3, jnp.dtype('float32')))
@@ -463,7 +462,7 @@ class DynamicShapeStagingTest(jtu.JaxTestCase):
     self.assertIs(d.aval.shape[0], c)
 
   def test_jit_abstracted_axes_staging2(self):
-    @partial(jax.jit, abstracted_axes=('n',))
+    @jax.jit(abstracted_axes=('n',))
     def fun(x):
       return jnp.sum(x)
     jaxpr = jax.make_jaxpr(lambda n: fun(jnp.ones(n + n, jnp.dtype('float32')))
@@ -681,7 +680,7 @@ class DynamicShapeAutodiffTest(jtu.JaxTestCase):
     self.assertEqual(d.aval.shape, (3,))
 
   def test_jvp_basic(self):
-    @partial(jax.jit, abstracted_axes=('n',))
+    @jax.jit(abstracted_axes=('n',))
     def foo(x):
       return jnp.sin(x)
 
@@ -713,7 +712,7 @@ class DynamicShapeAutodiffTest(jtu.JaxTestCase):
     self.assertEqual(d.aval.shape, (3,))
 
   def test_linearize_basic(self):
-    @partial(jax.jit, abstracted_axes=('n',))
+    @jax.jit(abstracted_axes=('n',))
     def foo(x):
       return jax.lax.sin(x)
 
@@ -780,7 +779,7 @@ class DynamicShapeAutodiffTest(jtu.JaxTestCase):
     self.assertEqual(h.aval.shape, (3,))
 
   def test_linearize_basic2(self):
-    @partial(jax.jit, abstracted_axes=('n',))
+    @jax.jit(abstracted_axes=('n',))
     def foo(x):
       return jax.jit(jax.lax.sin)(x)
 
@@ -808,7 +807,7 @@ class DynamicShapeAutodiffTest(jtu.JaxTestCase):
     self.assertEqual(c.aval.shape, (3,))
 
   def test_grad_basic(self):
-    @partial(jax.jit, abstracted_axes=('n',))
+    @jax.jit(abstracted_axes=('n',))
     def foo(x):
       y = jax.lax.sin(x)
       return y.sum()
@@ -900,7 +899,7 @@ class DynamicShapeAutodiffTest(jtu.JaxTestCase):
     # This is like the above 'toplevel' test, but instead of introducing
     # abstracted axes on the make_jaxpr call, we do it on a jit.
 
-    @partial(jax.jit, abstracted_axes=({}, {0: 'n'}))
+    @jax.jit(abstracted_axes=({}, {0: 'n'}))
     def predict(params, inputs):
       for W, b in params:
         outputs = jnp.dot(inputs, W) + b
@@ -1079,7 +1078,7 @@ class DynamicShapeAutodiffTest(jtu.JaxTestCase):
     self.assertEqual(d.aval.shape, (a,))
 
   def test_shape_tuple_argument_to_zeros(self):
-    @partial(jax.jit, abstracted_axes=(('n',), ('n',)))
+    @jax.jit(abstracted_axes=(('n',), ('n',)))
     def f(x, y):
       zero =  jnp.zeros(jnp.shape(x))
       return zero * y
@@ -1100,7 +1099,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
   def test_jit_basic_2(self):
     count = 0
 
-    @partial(jax.jit, abstracted_axes=('n',))
+    @jax.jit(abstracted_axes=('n',))
     def f(x):
       nonlocal count
       count += 1
@@ -1128,7 +1127,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
 
   @unittest.skip('TODO: need typechecking rule for concatenate')
   def test_concatenate(self):
-    @partial(jax.jit, abstracted_axes=({0: 'n'},))
+    @jax.jit(abstracted_axes=({0: 'n'},))
     def f(x):  # x: f32[n, 4]
       return jnp.concatenate([x, x, x], axis=0)
 
@@ -1136,7 +1135,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     # TODO: add assertions
 
   def test_reshape(self):
-    @partial(jax.jit, abstracted_axes=({0: 'n'},))
+    @jax.jit(abstracted_axes=({0: 'n'},))
     def f(x):  # x: f32[n, 4]
       return jnp.reshape(x, (2, -1))
 
@@ -1149,7 +1148,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
       # A nested call that needs shape variables
       return jnp.sin(x)
 
-    @partial(jax.jit, abstracted_axes=({0: 'h', 1: 'v'},))
+    @jax.jit(abstracted_axes=({0: 'h', 1: 'v'},))
     def f(x):  # f32[h, w] -> f32[h, w]
       return jnp.sin(x) + jax.jit(nested_f)(x)
     f(np.ones((3, 5), dtype=np.float32))
@@ -1160,7 +1159,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
       # A nested call that needs to compute with shapes
       return jnp.arange(x.shape[0] * x.shape[1], dtype=x.dtype).reshape(x.shape)
 
-    @partial(jax.jit, abstracted_axes=({0: 'h', 1: 'w'},))
+    @jax.jit(abstracted_axes=({0: 'h', 1: 'w'},))
     def f(x):  # f32[h, w] -> f32[h, w]
       return x + jax.jit(nested_f)(x)
     f(np.ones((3, 5), dtype=np.float32))
@@ -1168,7 +1167,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
 
   def test_transpose(self):
     # see also https://github.com/iree-org/iree-jax/issues/57
-    @partial(jax.jit, abstracted_axes=({0: 'h', 1: 'w'},))
+    @jax.jit(abstracted_axes=({0: 'h', 1: 'w'},))
     def f(x):  # f32[h, w] -> f32[w, h]
       return x.T
 
@@ -1176,7 +1175,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     # TODO: add assertions
 
   def test_matmul(self):
-    @partial(jax.jit, abstracted_axes=({0: 'w', 1: 'w'},))
+    @jax.jit(abstracted_axes=({0: 'w', 1: 'w'},))
     def f(x):  # f32[w, w] -> f32[w, w]
       return jnp.matmul(x, x)
 
@@ -1184,7 +1183,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     # TODO: add assertions
 
   def test_matmul_shape_error(self):
-    @partial(jax.jit, abstracted_axes=({0: 'h', 1: 'w'},))
+    @jax.jit(abstracted_axes=({0: 'h', 1: 'w'},))
     def f(x):  # f32[h, w] -> error
       return jnp.matmul(x, x)
 
@@ -1195,7 +1194,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
 
   @unittest.skip("TODO: investigate failure")
   def test_cond(self):
-    @partial(jax.jit, abstracted_axes=({0: 'w', 1: 'w'},))
+    @jax.jit(abstracted_axes=({0: 'w', 1: 'w'},))
     def f(x):  # f32[w, w] -> f32[w, w]
       return lax.cond(True,
                       lambda x: jnp.sin(x),
@@ -1204,28 +1203,28 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     # TODO: add assertions
 
   def test_arange(self):
-    @partial(jax.jit, abstracted_axes=({0: 'w'},))
+    @jax.jit(abstracted_axes=({0: 'w'},))
     def f(x):  # f32[w] -> f32[w]
       return jnp.arange(x.shape[0], dtype=x.dtype) + x
     f(np.ones((5,), dtype=np.float32))
     # TODO: add assertions
 
   def test_broadcast(self):
-    @partial(jax.jit, abstracted_axes=({0: 'w'},))
+    @jax.jit(abstracted_axes=({0: 'w'},))
     def f(x):  # f32[w] -> f32[w, w]
       return jnp.broadcast_to(x, (x.shape[0], x.shape[0]))
     f(np.ones((5,), dtype=np.float32))
     # TODO: add assertions
 
   def test_zeros(self):
-    @partial(jax.jit, abstracted_axes=({0: 'w'},))
+    @jax.jit(abstracted_axes=({0: 'w'},))
     def f(x):  # f32[w] -> f32[w]
       return jnp.zeros(x.shape[0], dtype=x.dtype) + x
     f(np.ones((5,), dtype=np.float32))
     # TODO: add assertions
 
   def test_stack(self):
-    @partial(jax.jit, abstracted_axes=({0: 'w'},))
+    @jax.jit(abstracted_axes=({0: 'w'},))
     def f(x):
       return jnp.stack([jnp.sin(x), jnp.cos(x)])
 
@@ -1401,7 +1400,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
   def test_bint_compilation_cache2(self):
     count = 0
 
-    @partial(jax.jit, abstracted_axes=('n',))
+    @jax.jit(abstracted_axes=('n',))
     def f(x):
       nonlocal count
       count += 1
@@ -1437,7 +1436,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     f(x)  # doesn't crash
 
   def test_lower_abstracted_axes(self):
-    @partial(jax.jit, abstracted_axes=('n',))
+    @jax.jit(abstracted_axes=('n',))
     def f(x):
       return x.sum()
 
@@ -1446,7 +1445,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     self.assertIn('tensor<?xi32>', str(mlir_str))
 
   def test_lower_abstracted_axes_shapedtypestruct(self):
-    @partial(jax.jit, abstracted_axes=('n',))
+    @jax.jit(abstracted_axes=('n',))
     def f(x):
       return x.sum()
 
@@ -1455,13 +1454,13 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     self.assertIn('tensor<?xi32>', str(mlir_str))
 
   def test_slicing_basic_lower(self):
-    @partial(jax.jit, abstracted_axes=(None, 'n'))
+    @jax.jit(abstracted_axes=(None, 'n'))
     def f(x):
       return x[0]
     f.lower(jnp.zeros((3, 4))).compiler_ir()  # doesn't crash
 
   def test_slicing_basic_execute(self):
-    @partial(jax.jit, abstracted_axes=(None, 'n'))
+    @jax.jit(abstracted_axes=(None, 'n'))
     def f(x):
       return x[0]
 
@@ -1482,6 +1481,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     self.assertEqual(y.shape, (sz, 4))
     self.assertAllClose(y._data, x)
 
+@unittest.skip("currently unmaintained")
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow",
                  jax_traceback_filtering='off')
 class JumbleTest(jtu.JaxTestCase):

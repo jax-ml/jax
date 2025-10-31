@@ -25,7 +25,8 @@ import jax
 from jax import flatten_util
 from jax import tree_util
 from jax._src import test_util as jtu
-from jax._src.tree_util import flatten_one_level, prefix_errors
+from jax._src.tree_util import (
+    flatten_one_level, prefix_errors, broadcast_flattened_prefix_with_treedef)
 import jax.numpy as jnp
 
 # Easier to read.
@@ -394,14 +395,12 @@ class TreeTest(jtu.JaxTestCase):
       (
           {"a": 1},
           {"a": 7, "b": 8},
-          re.escape(
-              "Dict key mismatch; expected keys: ['a']; dict: {'a': 7, 'b': 8}."
-          ),
+          re.escape("Dict key mismatch; expected keys: ['a'];"),
       ),
       (
           {"a": 1},
           {"b": 7},
-          re.escape("Dict key mismatch; expected keys: ['a']; dict: {'b': 7}."),
+          re.escape("Dict key mismatch; expected keys: ['a'];"),
       ),
       ([1], {"a": 7}, re.escape("Expected list, got {'a': 7}.")),
       ([1], (7,), re.escape("Expected list, got (7,).")),
@@ -421,7 +420,7 @@ class TreeTest(jtu.JaxTestCase):
       (
           [{"a": 1}],
           [{"b": 7}],
-          re.escape("Dict key mismatch; expected keys: ['a']; dict: {'b': 7}."),
+          re.escape("Dict key mismatch; expected keys: ['a'];"),
       ),
       (([1],), (7,), re.escape("Expected list, got 7.")),
       (([1],), ((7,),), re.escape("Expected list, got (7,).")),
@@ -435,7 +434,7 @@ class TreeTest(jtu.JaxTestCase):
       (
           ({"a": 1},),
           ({"b": 7},),
-          re.escape("Dict key mismatch; expected keys: ['a']; dict: {'b': 7}."),
+          re.escape("Dict key mismatch; expected keys: ['a'];"),
       ),
       ({"a": [1]}, {"a": 7}, re.escape("Expected list, got 7.")),
       ({"a": [1]}, {"a": (7,)}, re.escape("Expected list, got (7,).")),
@@ -453,7 +452,7 @@ class TreeTest(jtu.JaxTestCase):
       (
           {"a": {"a": 1}},
           {"a": {"b": 7}},
-          re.escape("Dict key mismatch; expected keys: ['a']; dict: {'b': 7}."),
+          re.escape("Dict key mismatch; expected keys: ['a'];"),
       ),
       (
           [ATuple(foo=1, bar=2)],
@@ -470,9 +469,7 @@ class TreeTest(jtu.JaxTestCase):
           [([1], (2,), {"a": [1]})],
           re.escape("Custom node type mismatch"),
       ),
-      (
-          (None, [2], re.escape("Expected None, got [2]."))
-      ),
+      ((None, [2], re.escape("Expected None, got [2]."))),
   )
   def testFlattenUpToErrors(self, tree, xs, error):
     _, tree_def = tree_util.tree_flatten(tree)
@@ -497,6 +494,13 @@ class TreeTest(jtu.JaxTestCase):
   def testTreeReduceWithIsLeafArgument(self):
     out = tree_util.tree_reduce(lambda x, y: x + y, [(1, 2), [(3, 4), (5, 6)]],
                                 is_leaf=lambda l: isinstance(l, tuple))
+    self.assertEqual(out, (1, 2, 3, 4, 5, 6))
+
+  def testTreeReduceAssociativeWithIsLeafArgument(self):
+    out = tree_util.tree_reduce_associative(
+        lambda x, y: x + y, [(1, 2), [(3, 4), (5, 6)]],
+        is_leaf=lambda l: isinstance(l, tuple),
+    )
     self.assertEqual(out, (1, 2, 3, 4, 5, 6))
 
   @parameterized.parameters(
@@ -551,6 +555,18 @@ class TreeTest(jtu.JaxTestCase):
   @parameterized.parameters(*LEAVES)
   def testAllLeavesWithLeaves(self, leaf):
     self.assertTrue(tree_util.all_leaves([leaf]))
+
+  @parameterized.parameters(*TREES)
+  def testAllLeavesWithTreesAndCustomIsLeaf(self, tree):
+    def is_leaf(t):
+      return tree_util.all_leaves([t])
+    self.assertFalse(tree_util.all_leaves([tree], is_leaf=is_leaf))
+
+  @parameterized.parameters(*LEAVES)
+  def testAllLeavesWithLeavesAndCustomIsLeaf(self, leaf):
+    def is_leaf(t):
+      return tree_util.all_leaves([t])
+    self.assertTrue(tree_util.all_leaves([leaf], is_leaf=is_leaf))
 
   @parameterized.parameters(*TREES)
   def testCompose(self, tree):
@@ -615,11 +631,57 @@ class TreeTest(jtu.JaxTestCase):
                                       FlatCache({"a": [3, 4], "b": [5, 6]}))
     self.assertEqual(expected, actual)
 
+  @parameterized.parameters(*TREES)
+  def testBroadcast(self, tree):
+    if isinstance(tree, FlatCache):
+      # The tree_map construction below fails for FlatCache, because
+      # the cached metadata becomes out of sync.
+      self.skipTest("Test does not work properly for FlatCache.")
+    def make_inner(x):
+      return [x, x, x]
+    nested = tree_util.tree_map(make_inner, tree)
+    actual = tree_util.tree_broadcast(tree, nested)
+    self.assertEqual(actual, nested)
+
+    actual_flat = broadcast_flattened_prefix_with_treedef(
+        *tree_util.tree_flatten(tree), tree_util.tree_structure(nested))
+    actual = tree_util.tree_structure(nested).unflatten(actual_flat)
+    self.assertEqual(actual, nested)
+
+  def testBroadcastSimple(self):
+    prefix = (1, 2, 3)
+    full = (0, {'a': 0, 'b': 0}, (0, 0))
+    actual = tree_util.tree_broadcast(prefix, full)
+    expected = (1, {'a': 2, 'b': 2}, (3, 3))
+    self.assertEqual(actual, expected)
+
+  def testBroadcastError(self):
+    prefix = (1, 2, 3)
+    full = (0, {'a': 0, 'b': 0})
+    with self.assertRaisesRegex(ValueError, "pytree structure error"):
+      tree_util.tree_broadcast(prefix, full)
+    with self.assertRaises(Exception):
+      broadcast_flattened_prefix_with_treedef(
+          *tree_util.tree_flatten(prefix), tree_util.tree_structure(full))
+    prefix = (1, 2)
+    full = (0, {'a': 0, 'b': 0}, (0, 0))
+    with self.assertRaisesRegex(ValueError, "pytree structure error"):
+      tree_util.tree_broadcast(prefix, full)
+    with self.assertRaises(Exception):
+      broadcast_flattened_prefix_with_treedef(
+          *tree_util.tree_flatten(prefix), tree_util.tree_structure(full))
+    prefix = (1, {'a': 0})
+    full = (0, {'a': 0, 'b': 0})
+    with self.assertRaisesRegex(ValueError, "pytree structure error"):
+      tree_util.tree_broadcast(prefix, full)
+    with self.assertRaises(Exception):
+      broadcast_flattened_prefix_with_treedef(
+          *tree_util.tree_flatten(prefix), tree_util.tree_structure(full))
+
   @parameterized.parameters([(*t, s) for t, s in zip(TREES, TREE_STRINGS)])
   def testStringRepresentation(self, tree, correct_string):
     """Checks that the string representation of a tree works."""
     treedef = tree_util.tree_structure(tree)
-    print(TREES)
     self.assertRegex(str(treedef), correct_string)
 
   def testTreeDefWithEmptyDictStringRepresentation(self):
@@ -746,7 +808,7 @@ class TreeTest(jtu.JaxTestCase):
     y = (([3], jnp.array(0)), ([0], 7, [5, 6]))
     out = tree_util.tree_map_with_path(
         lambda kp, *xs: (kp[0].idx, *xs), x, y,
-        is_leaf=lambda n: isinstance(n, list))
+        is_leaf=lambda _, n: isinstance(n, list), is_leaf_takes_path=True)
     self.assertEqual(out, (((0, 1, [3]),
                             (0, 2, jnp.array(0))),
                            (1, [3, 4, 5], ([0], 7, [5, 6]))))
@@ -763,7 +825,11 @@ class TreeTest(jtu.JaxTestCase):
     tree1 = {'a': 1,
              'sub': [jnp.array((1, 2)), ATuple(foo=(), bar=[None])],
              'obj': AnObject2(x=EmptyTuple(), y=0, z='constantdef')}
-    flattened, _ = tree_util.tree_flatten_with_path(tree1, is_empty)
+
+    is_empty_new = lambda kp, x: is_empty(x)
+    flattened, _ = tree_util.tree_flatten_with_path(
+        tree1, is_empty_new, is_leaf_takes_path=True
+    )
     strs = [f"{tree_util.keystr(kp)}: {x}" for kp, x in flattened]
     self.assertEqual(
         strs,
@@ -776,6 +842,32 @@ class TreeTest(jtu.JaxTestCase):
             "['sub'][1].bar[0]: None",
         ],
     )
+
+  def testTreeFlattenWithPathWithIsLeafWithPathArgument(self):
+    x = ((1, 2), [3, {4: 4, 5: 5}])
+    check_max_depth = lambda kp, _: len(kp) >= 2
+    flattened, _ = tree_util.tree_flatten_with_path(
+        x, is_leaf=check_max_depth, is_leaf_takes_path=True
+    )
+    self.assertEqual(
+        flattened,
+        [
+            ((SequenceKey(0), SequenceKey(0),), 1),
+            ((SequenceKey(0), SequenceKey(1),), 2),
+            ((SequenceKey(1), SequenceKey(0),), 3),
+            ((SequenceKey(1), SequenceKey(1)), {4: 4, 5: 5}),
+        ],
+    )
+
+  def testTreeMapWithPathWithIsLeafWithPathArgument(self):
+    x = ((1, 2), [3, 4, 5])
+    y = (([3], jnp.array(0)), ([0], 7, [5, 6]))
+    out = tree_util.tree_map_with_path(
+        lambda kp, *xs: (kp[0].idx, *xs), x, y,
+        is_leaf=lambda kp, n: isinstance(n, list), is_leaf_takes_path=True)
+    self.assertEqual(out, (((0, 1, [3]),
+                            (0, 2, jnp.array(0))),
+                           (1, [3, 4, 5], ([0], 7, [5, 6]))))
 
   def testTreeFlattenWithPathBuiltin(self):
     x = (1, {"a": 2, "b": 3})
@@ -1004,6 +1096,24 @@ class TreeKeyTest(absltest.TestCase):
     for key in keys:
       unpickled = pickle.loads(pickle.dumps(key))
       self.assertEqual(key, unpickled)
+
+  def testEqualityErrorWithArrayAsStaticArg(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/28659
+    @tree_util.register_dataclass
+    @dataclasses.dataclass
+    class Tree:
+      x : jnp.ndarray = dataclasses.field(metadata={'static': True})
+
+    f = jax.jit(lambda x: x)
+
+    msg = "Exception raised while checking equality of metadata fields of pytree."
+
+    # First call succeeds, because there is no equality check.
+    f(Tree(jnp.arange(4)))
+
+    # Second fall fails, because arrays are marked static and compared for equality.
+    with self.assertRaisesRegex(ValueError, msg):
+      f(Tree(jnp.arange(4)))
 
 
 class StaticTest(parameterized.TestCase):
@@ -1408,6 +1518,23 @@ class TreeAliasTest(jtu.JaxTestCase):
       tree_util.tree_reduce(func, obj, is_leaf=is_leaf),
     )
 
+  def test_tree_reduce_associative(self):
+    func = lambda a, b: a + b
+    obj = [1, 2, (3, 4)]
+    self.assertEqual(
+      jax.tree.reduce_associative(func, obj),
+      tree_util.tree_reduce_associative(func, obj),
+    )
+
+  def test_tree_reduce_associative_is_leaf(self):
+    func = lambda a, b: a + b
+    obj = [(1, 2), (3, 4)]
+    is_leaf = lambda x: isinstance(x, tuple)
+    self.assertEqual(
+      jax.tree.reduce_associative(func, obj, is_leaf=is_leaf),
+      tree_util.tree_reduce_associative(func, obj, is_leaf=is_leaf),
+    )
+
   def test_tree_structure(self):
     obj = [1, 2, (3, 4)]
     self.assertEqual(
@@ -1432,6 +1559,13 @@ class TreeAliasTest(jtu.JaxTestCase):
       tree_util.tree_transpose(outer_treedef, inner_treedef, obj)
     )
 
+  def test_tree_broadcast(self):
+    prefix = (1, 2, 3)
+    full = (0, {'a': 0, 'b': 0}, (0, 0))
+    actual = jax.tree.broadcast(prefix, full)
+    expected = (1, {'a': 2, 'b': 2}, (3, 3))
+    self.assertEqual(actual, expected)
+
   def test_tree_unflatten(self):
     leaves, treedef = jax.tree.flatten([1, 2, (3, 4)])
     self.assertEqual(
@@ -1449,9 +1583,10 @@ class TreeAliasTest(jtu.JaxTestCase):
   def test_tree_flatten_with_path_is_leaf(self):
     obj = [1, 2, (3, 4)]
     is_leaf = lambda x: isinstance(x, tuple)
+    is_leaf = lambda kp, x: isinstance(x, tuple)
     self.assertEqual(
-        jax.tree.flatten_with_path(obj, is_leaf=is_leaf),
-        tree_util.tree_flatten_with_path(obj, is_leaf=is_leaf),
+        jax.tree.flatten_with_path(obj, is_leaf, is_leaf_takes_path=True),
+        tree_util.tree_flatten_with_path(obj, is_leaf, is_leaf_takes_path=True),
     )
 
   def test_tree_leaves_with_path(self):
@@ -1464,9 +1599,14 @@ class TreeAliasTest(jtu.JaxTestCase):
   def test_tree_leaves_with_path_is_leaf(self):
     obj = [1, 2, (3, 4)]
     is_leaf = lambda x: isinstance(x, tuple)
+    is_leaf = lambda kp, x: isinstance(x, tuple)
     self.assertEqual(
-        jax.tree.leaves_with_path(obj, is_leaf=is_leaf),
-        tree_util.tree_leaves_with_path(obj, is_leaf=is_leaf),
+        jax.tree.leaves_with_path(
+            obj, is_leaf=is_leaf, is_leaf_takes_path=True
+        ),
+        tree_util.tree_leaves_with_path(
+            obj, is_leaf=is_leaf, is_leaf_takes_path=True
+        ),
     )
 
   def test_tree_map_with_path(self):
@@ -1483,9 +1623,14 @@ class TreeAliasTest(jtu.JaxTestCase):
     obj = [1, 2, (3, 4)]
     obj2 = [5, 6, (7, 8)]
     is_leaf = lambda x: isinstance(x, tuple)
+    is_leaf = lambda kp, x: isinstance(x, tuple)
     self.assertEqual(
-        jax.tree.map_with_path(func, obj, obj2, is_leaf=is_leaf),
-        tree_util.tree_map_with_path(func, obj, obj2, is_leaf=is_leaf),
+        jax.tree.map_with_path(
+            func, obj, obj2, is_leaf=is_leaf, is_leaf_takes_path=True
+        ),
+        tree_util.tree_map_with_path(
+            func, obj, obj2, is_leaf=is_leaf, is_leaf_takes_path=True
+        ),
     )
 
 

@@ -24,7 +24,7 @@ body:
 
       [issue search]: https://github.com/jax-ml/jax/search?q=is%3Aissue&type=issues
 
-      [Raw report]: http://github.com/jax-ml/jax/issues/new
+      [Raw report]: https://github.com/jax-ml/jax/issues/new?template=none
 - type: textarea
   attributes:
     label: Description

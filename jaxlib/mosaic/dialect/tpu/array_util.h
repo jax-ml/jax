@@ -17,6 +17,7 @@ limitations under the License.
 #define THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_ARRAY_UTIL_H_
 
 #include <cstdint>
+#include <type_traits>
 
 #include "absl/log/check.h"
 #include "absl/types/span.h"
@@ -42,6 +43,9 @@ bool incrementSliceIndex(MutableArrayRef<int64_t> idx,
 
 }  // namespace internal
 
+bool incrementIndex(MutableArrayRef<int64_t> idx,
+                    absl::Span<const int64_t> limits);
+
 template <typename T>
 ArrayRef<T> XlaArrayToFlatArrayRef(const xla::Array<T> &arr) {
   return ArrayRef<T>(arr.data(), arr.num_elements());
@@ -54,6 +58,33 @@ xla::Array<T> XlaArrayFromShapeAndValues(ArrayRef<int64_t> sizes, Range vals) {
   xla::Array<T> arr(sizes);
   arr.SetValues(vals);
   return arr;
+}
+
+// An alternative to xla::Array::Each that returns a LogicalResult
+template <typename T, typename Func>
+std::enable_if_t<std::is_invocable_v<Func, ArrayRef<int64_t>, T*>,
+                 LogicalResult>
+Each(xla::Array<T>& arr, Func&& func) {
+  SmallVector<int64_t> idx(arr.num_dimensions());
+  auto it = arr.begin();
+  do {
+    RETURN_IF_FAILED(func(ArrayRef(idx), &*it));
+    ++it;
+  } while (incrementIndex(idx, arr.dimensions()));
+  DCHECK(it == arr.end());
+  return success();
+}
+template <typename T, typename Func>
+std::enable_if_t<std::is_invocable_v<Func, ArrayRef<int64_t>, T>, LogicalResult>
+Each(const xla::Array<T>& arr, Func&& func) {
+  SmallVector<int64_t> idx(arr.num_dimensions());
+  auto it = arr.begin();
+  do {
+    RETURN_IF_FAILED(func(ArrayRef(idx), *it));
+    ++it;
+  } while (incrementIndex(idx, arr.dimensions()));
+  DCHECK(it == arr.end());
+  return success();
 }
 
 // An alternative to `xla::Array::UpdateSlice` that takes a single value.

@@ -175,7 +175,7 @@ TEST_F(VregUtilTest, GetFullVector) {
 
 TEST_F(VregUtilTest, GetFullLikeVector) {
   VectorType vty = VectorType::get({2, 4}, Builder().getF32Type());
-  TypedValue<VectorType> in_vec = Builder().create<vector::SplatOp>(
+  TypedValue<VectorType> in_vec = Builder().create<vector::BroadcastOp>(
       vty, Builder().create<arith::ConstantOp>(
                vty.getElementType(), Builder().getF32FloatAttr(1.0f)));
   TypedValue<VectorType> vec =
@@ -193,7 +193,7 @@ TEST_F(VregUtilTest, GetZerosVector) {
 
 TEST_F(VregUtilTest, GetZerosLikeVector) {
   VectorType vty = VectorType::get({2, 4}, Builder().getF32Type());
-  TypedValue<VectorType> in_vec = Builder().create<vector::SplatOp>(
+  TypedValue<VectorType> in_vec = Builder().create<vector::BroadcastOp>(
       vty, Builder().create<arith::ConstantOp>(
                vty.getElementType(), Builder().getF32FloatAttr(1.0f)));
   TypedValue<VectorType> vec = getZerosLikeVector(Builder(), in_vec);

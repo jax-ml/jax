@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax import lax
-import jax.numpy as jnp
+import numpy as np
+
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_dtypes_inexact
-from jax.scipy.special import gammaln, xlogy
+from jax._src.scipy.special import gammaln, xlogy
 from jax._src.typing import Array, ArrayLike
 
 
@@ -68,7 +70,7 @@ def _logpdf(x: Array, alpha: Array) -> Array:
   if x.ndim > 1:
     alpha = lax.broadcast_in_dim(alpha, alpha.shape + (1,) * (x.ndim - 1), (0,))
   log_probs = lax.sub(jnp.sum(xlogy(lax.sub(alpha, one), x), axis=0), normalize_term)
-  return jnp.where(_is_simplex(x), log_probs, -jnp.inf)
+  return jnp.where(_is_simplex(x), log_probs, -np.inf)
 
 
 def pdf(x: ArrayLike, alpha: ArrayLike) -> Array:

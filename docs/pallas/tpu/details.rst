@@ -99,8 +99,8 @@ for exceptions). This unlocks some interesting capabilities:
   output, without any risk of race conditions. However, we do require that all
   invocations that write to a particular slice are consecutive.
 
-The "consecutive" restriction on the output usually means that the some prefix
-of the grid dimensions always vary the slice of the output an invocation needs
+The "consecutive" restriction on the output usually means that some prefix
+of the grid dimensions always varies the slice of the output an invocation needs
 to access, while the output window remains constant for the remaining suffix.
 
 For example, when implementing a Pallas TPU kernel for matrix multiplication,
@@ -128,7 +128,7 @@ has no impact on performance, as the compiler is free to rearrange them.
 However, as Pallas is meant to expose lower-level capabilities, the dimension
 order can have great impact on the quality of generated code.
 
-TPUs perform bulk of the computation on 2D vector registers, which are typically of
+TPUs perform the bulk of the computation on 2D vector registers, which are typically of
 size 8x128 for 32-bit values (as of TPU v6).
 When a vector value is loaded from VMEM into registers (e.g. ``x = x_ref[...]``),
 the last two dimensions of the array will be tiled into the registers.
@@ -167,10 +167,11 @@ sequential grid execution guarantees, and will need to parallelize one of the
 grid axes over cores. This is an opt-in procedure. To allow that,
 ``pallas_call`` requires an extra parameter named ``dimension_semantics``:
 
-..
+.. code:: python
+
   pallas_call(
       ...,
-      compiler_params=pltpu.TPUCompilerParams(
+      compiler_params=pltpu.CompilerParams(
           dimension_semantics=["parallel", "parallel", "arbitrary"]
       ),
     )

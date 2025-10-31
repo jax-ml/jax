@@ -14,8 +14,8 @@
 
 """Unit test for result accuracy for unary ops."""
 
-from typing import Any, Callable, NamedTuple, Union
-import unittest
+from typing import Any, NamedTuple
+from collections.abc import Callable
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -23,7 +23,6 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import lax
-from jax._src.lib import xla_extension
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 import jax.numpy as jnp
@@ -34,8 +33,8 @@ config.parse_flags_with_absl()
 
 
 class TolerancePair(NamedTuple):
-  high: Union[lax.Tolerance, lax.AccuracyMode] = lax.AccuracyMode.DEFAULT
-  low: Union[lax.Tolerance, lax.AccuracyMode] = lax.AccuracyMode.DEFAULT
+  high: lax.Tolerance | lax.AccuracyMode = lax.AccuracyMode.DEFAULT
+  low: lax.Tolerance | lax.AccuracyMode = lax.AccuracyMode.DEFAULT
 
 
 def make_unary_test_cases(
@@ -170,8 +169,18 @@ def generate_test_cases(op_names):
   return test_cases
 
 
-@unittest.skipIf(not jtu.is_device_tpu(), "Skipping test on non TPU devices.")
 class UnaryOpsAccuracyTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    if not jtu.stablehlo_version_at_least("1.10.0"):
+      self.skipTest("Test requires StableHLO v1.10.0 or higher.")
+    if not jtu.is_device_tpu():
+      self.skipTest("Skipping test on non TPU devices.")
+    # TODO(b/412112097): Enable this test on TPU version 7 and above once
+    # accuracy analysis is done.
+    if jtu.get_tpu_version() >= 7:
+      self.skipTest("Accuracy analysis is not yet done on TPU version 7 and above.")
+    super().setUp()
 
   def test_result_accuracy_mode_attr(self):
     with ir.Context() as context:
@@ -253,7 +262,7 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       *generate_test_cases(["exp", "expm1", "exp2"])
   )
-  def test_diff_grad(self, op, x, tp,  **kwargs):
+  def test_diff_grad(self, op, x, tp, **kwargs):
     @jax.jit
     def f_default(x):
       default_op = op(x, accuracy=tp.low)
@@ -364,9 +373,31 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
   )
   def test_low_tol(self, op, x, **kwargs):
     with self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError, "impl_type.ok()"
+        jax.errors.JaxRuntimeError, "impl_type.ok()"
     ):
       op(x, accuracy=lax.Tolerance(atol=1e-60, rtol=1e-60, ulps=0))
+
+  def test_accuracy_jaxpr(self):
+    # Since accuracy is not set, the jaxpr should not contain "accuracy".
+    self.assertNotIn(
+        "accuracy",
+        str(
+            jax.make_jaxpr(lambda x: lax.exp(x, accuracy=None))(
+                np.arange(4.0, dtype=np.float32)
+            )
+        ),
+    )
+    # Set accuracy.
+    self.assertIn(
+        "accuracy",
+        str(
+            jax.make_jaxpr(
+                lambda x: lax.exp(
+                    x, accuracy=lax.Tolerance(atol=1e-60, rtol=1e-60, ulps=0)
+                )
+            )(np.arange(4.0, dtype=np.float32))
+        ),
+    )
 
 
 if __name__ == "__main__":

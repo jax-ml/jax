@@ -21,7 +21,7 @@ import shutil
 import tempfile
 import warnings
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 import jax
 from jax._src import api
 from jax._src import compilation_cache as cc
@@ -85,7 +85,7 @@ class PgleTest(jtu.JaxTestCase):
     pgle_profiler = profiler.PGLEProfiler(1, 90)
     with config.enable_pgle(False):
       with profiler.PGLEProfiler.trace(pgle_profiler):
-        compiled(x, y)
+        jax.block_until_ready(compiled(x, y))
 
     fdo_profile = pgle_profiler.consume_fdo_profile()
     self.assertIsNotNone(fdo_profile)
@@ -157,29 +157,31 @@ class PgleTest(jtu.JaxTestCase):
 
       with config.pgle_profiling_runs(2), config.enable_pgle(True):
         # Run 1: Module should be compiled without FDO. Two modules are expected
-        # One is the funtion f, the other one is multi slice module
-        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+        # One is the function f, the other one is multi slice module
+        with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
 
         # Run 2: Second PGLE run. Profile should be empty.
-        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
         fdo_profiles_before_pgle = self.get_fdo_profiles(dump_dir)
-        # One for before and one for after optimization.
-        self.assertLen(fdo_profiles_before_pgle, 2)
+        # One for before optimizatiom, one after SPMD partitioning, and one
+        # after optimization.
+        self.assertLen(fdo_profiles_before_pgle, 3)
         # The FDO profile file should be empty.
         self.assertEqual(
             os.path.getsize(os.path.join(dump_dir, fdo_profiles_before_pgle[0])), 0)
 
         # Run 3: The module should be recompiled with FDO profiles
-        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
         fdo_profiles_after_pgle = self.get_fdo_profiles(dump_dir)
-        # One for before and one for after optimization.
-        self.assertLen(fdo_profiles_after_pgle, 4)
+        # One more before optimizatiom, one more after SPMD partitioning, and
+        # one more after optimization.
+        self.assertLen(fdo_profiles_after_pgle, 6)
 
         for fdo_profile in fdo_profiles_after_pgle:
           if fdo_profile not in fdo_profiles_before_pgle:
@@ -188,7 +190,7 @@ class PgleTest(jtu.JaxTestCase):
             )
 
         # Run 4: Fast-path should be used after PGLE is done
-        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertLess(cache_miss_count(), 2)
 
@@ -202,7 +204,8 @@ class PgleTest(jtu.JaxTestCase):
 
     f_lowered = f.lower(x)
     serialized, in_tree, out_tree = serialize(f_lowered.compile())
-    compiled = deserialize_and_load(serialized, in_tree, out_tree)
+    compiled = deserialize_and_load(
+        serialized, in_tree, out_tree, execution_devices=jax.devices()[:1])
 
     with config.pgle_profiling_runs(1), config.enable_pgle(True):
       # Run 1
@@ -477,6 +480,60 @@ class PgleTest(jtu.JaxTestCase):
             print("Warnings:", [str(w_) for w_ in w], flush=True)
           self.assertLen(w, 1)
           self.assertIn("PERSISTENT CACHE WRITE with key jit_h-", str(w[0].message))
+
+  @parameterized.parameters([True, False])
+  @jtu.thread_unsafe_test()
+  def testAutoPgleWithCommandBuffers(self, enable_compilation_cache):
+    with (config.pgle_profiling_runs(1),
+          config.enable_compilation_cache(enable_compilation_cache),
+          config.enable_pgle(True),
+          tempfile.TemporaryDirectory() as dump_dir,
+          tempfile.TemporaryDirectory() as cache_dir):
+      if enable_compilation_cache:
+        cc.reset_cache()
+        cc.set_cache_dir(cache_dir)
+      compiler_options = {
+        'xla_dump_to': dump_dir,
+        # FUSION, see https://github.com/openxla/xla/issues/22459
+        'xla_gpu_enable_command_buffer': 1,
+        'xla_gpu_graph_min_graph_size': 1,
+      }
+      @partial(
+          jax.jit,
+          compiler_options=compiler_options,
+      )
+      def f(x):
+        return x * 2
+
+      x = jnp.arange(1)
+      expected = x * 2
+
+      # This is ugly, but it does not seem possible to get the AutoPGLE-recompiled
+      # executable text (.lower(x).compile().as_text() or similar).
+      def get_new_files():
+        additions = set(os.listdir(dump_dir)) - get_new_files.seen_files
+        get_new_files.seen_files |= additions
+        new_files = list(filter(lambda f: f.endswith('debug_options'), additions))
+        assert len(new_files) == 1
+        with open(os.path.join(dump_dir, new_files[0])) as ifile:
+          return ifile.read()
+
+      get_new_files.seen_files = set()
+
+      # Run 1
+      self.assertArraysEqual(f(x), expected)
+      self.assertNotIn(
+          'xla_gpu_enable_command_buffer: 1', get_new_files()
+      )  # b/376647494 workaround
+      # Run 2
+      self.assertArraysEqual(f(x), expected)
+      self.assertIn(
+          'xla_gpu_enable_command_buffer', get_new_files()
+      )  # workaround disabled
+
+    api.clear_caches()
+    pjit._pgle_profiler_dict.clear()
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

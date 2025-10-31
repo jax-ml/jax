@@ -16,19 +16,22 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
+import logging
 from typing import Any
 
 import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import pretty_printer as pp
+from jax._src import prng as jax_prng
+from jax._src import random as jax_random
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pl_core
 from jax._src.pallas import primitives
-from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
@@ -42,33 +45,47 @@ Slice = indexing.Slice
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
+IntDeviceId = int | jax.Array
+MultiDimDeviceId = tuple[IntDeviceId, ...] | dict[str | tuple[str, ...], IntDeviceId]
+Ref = state.AbstractRef | state.TransformedRef
+
 repeat_p = jax_core.Primitive('repeat')
 
-def repeat(x, repeats, axis):
+def repeat(x: jax.Array, repeats: int, axis: int) -> jax.Array:
+  axis = util.canonicalize_axis(axis, x.ndim)
   return repeat_p.bind(x, repeats=repeats, axis=axis)
 
 @repeat_p.def_abstract_eval
 def _repeat_abstract_eval(x, *, repeats, axis):
+  if axis < 0 or axis >= len(x.shape):
+    raise ValueError(f"axis: {axis} is out of range [0, {len(x.shape)})")
   shape = list(x.shape)
   shape[axis] *= repeats
   return jax_core.ShapedArray(shape, x.dtype)
 
 
+@repeat_p.def_impl
+def repeat_impl(x: jax.Array, *, repeats: int, axis: int):
+  reps = [repeats if i == axis else 1 for i in range(x.ndim)]
+  return jnp.tile(x, reps)
+
+
 def _repeat_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, repeats, axis):
-  def _repeat(x):
-    return jnp.repeat(x, repeats, axis)
-  return mlir.lower_fun(_repeat, multiple_results=False)(ctx, x)
+  return mlir.lower_fun(
+      functools.partial(repeat_impl, repeats=repeats, axis=axis),
+      multiple_results=False,
+  )(ctx, x)
 mlir.register_lowering(repeat_p, _repeat_lowering_rule)
 
 bitcast_p = jax_core.Primitive("bitcast")
 
 
-def bitcast(x, ty: DTypeLike):
-  ty = dtypes.canonicalize_dtype(ty)
+def bitcast(x: jax.Array, ty: DTypeLike) -> jax.Array:
+  ty = dtypes.check_and_canonicalize_user_dtype(ty)
   if len(x.shape) < 2:
     raise ValueError("Not implemented: bitcast 1D")
-  src_bitwidth = pallas_utils.dtype_bitwidth(x.dtype)
-  dst_bitwidth = pallas_utils.dtype_bitwidth(ty)
+  src_bitwidth = dtypes.bit_width(x.dtype)
+  dst_bitwidth = dtypes.bit_width(ty)
   if x.shape[-2] * src_bitwidth % dst_bitwidth:
     raise ValueError(
         "Not implemented: the 2nd minor dim can not be perfectly packed or"
@@ -80,16 +97,16 @@ def bitcast(x, ty: DTypeLike):
 @bitcast_p.def_abstract_eval
 def _bitcast_abstract_eval(x, *, ty):
   shape = list(x.shape)
-  src_bitwidth = pallas_utils.dtype_bitwidth(x.dtype)
-  dst_bitwidth = pallas_utils.dtype_bitwidth(ty)
+  src_bitwidth = dtypes.bit_width(x.dtype)
+  dst_bitwidth = dtypes.bit_width(ty)
   shape[-2] = shape[-2] * src_bitwidth // dst_bitwidth
   return jax_core.ShapedArray(shape, ty)
 
 
 def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
   def _bitcast(x):
-    src_bitwidth = pallas_utils.dtype_bitwidth(x.dtype)
-    dst_bitwidth = pallas_utils.dtype_bitwidth(ty)
+    src_bitwidth = dtypes.bit_width(x.dtype)
+    dst_bitwidth = dtypes.bit_width(ty)
     if src_bitwidth < dst_bitwidth:
       *leading, m, n = x.shape
       packing = dst_bitwidth // src_bitwidth
@@ -111,13 +128,13 @@ roll_p = jax_core.Primitive("roll")
 
 
 def roll(
-    x,
-    shift,
+    x: jax.Array,
+    shift: jax.Array | int,
     axis: int,
     *,
     stride: int | None = None,
     stride_axis: int | None = None,
-):
+) -> jax.Array:
   if isinstance(shift, int) and shift < 0:
     raise ValueError("shift must be non-negative.")
   if axis < 0 or axis >= len(x.shape):
@@ -170,13 +187,24 @@ class AsyncCopyDescriptor:
   dst_sem_transforms: tuple[Transform, ...]
   src_sem: int | jax.Array | None
   src_sem_transforms: tuple[Transform, ...] | None
-  device_id: int | jax.Array | None
+  device_id: MultiDimDeviceId | IntDeviceId | None
   device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH
+  _used: bool = dataclasses.field(
+      default=False, init=False, compare=False, hash=False
+  )
 
   def __post_init__(self):
     if (self.src_sem is None) ^ (self.device_id is None):
       raise ValueError("Either both or neither `src_sem` and `device_id` "
                        "can be set.")
+
+  def __del__(self):
+    if not self._used:
+      # Exceptions in ``__del__`` are ignored, so logging is our only option.
+      logging.error(
+          "AsyncCopyDescriptor was not used."
+          " Did you mean to call `start` or `wait` on it?"
+      )
 
   @property
   def is_remote(self):
@@ -184,7 +212,7 @@ class AsyncCopyDescriptor:
 
   def _get_args_and_tree(self, swap_src_and_dst: bool = False):
     if swap_src_and_dst:
-      return tree_util.tree_flatten((
+      return _dma_flatten(
           self.dst_ref,
           self.dst_transforms,
           self.src_ref,
@@ -194,9 +222,9 @@ class AsyncCopyDescriptor:
           self.dst_sem,
           self.dst_sem_transforms,
           self.device_id,
-      ))
+      )
     else:
-      return tree_util.tree_flatten((
+      return _dma_flatten(
           self.src_ref,
           self.src_transforms,
           self.dst_ref,
@@ -206,11 +234,18 @@ class AsyncCopyDescriptor:
           self.src_sem,
           self.src_sem_transforms,
           self.device_id,
-      ))
+      )
 
-  def start(self):
+  def start(self, priority: int = 0, *, add: bool = False):
+    self._used = True
     flat_args, tree = self._get_args_and_tree()
-    dma_start_p.bind(*flat_args, tree=tree, device_id_type=self.device_id_type)
+    dma_start_p.bind(
+        *flat_args,
+        tree=tree,
+        device_id_type=self.device_id_type,
+        priority=priority,
+        add=add,
+    )
 
   def wait(self):
     if self.is_remote:
@@ -218,12 +253,14 @@ class AsyncCopyDescriptor:
     self.wait_recv()
 
   def wait_recv(self):
+    self._used = True
     flat_args, tree = self._get_args_and_tree()
     dma_wait_p.bind(
         *flat_args, tree=tree, device_id_type=self.device_id_type
     )
 
   def wait_send(self):
+    self._used = True
     if not self.is_remote:
       raise ValueError("Cannot `wait_send` on a local copy.")
     # We swap src and dst since by default dma_wait_p waits on the dst_sem
@@ -235,11 +272,121 @@ class AsyncCopyDescriptor:
     )
 
 
+def _dma_flatten(
+    src_ref,
+    src_transforms,
+    dst_ref,
+    dst_transforms,
+    dst_sem,
+    dst_sem_transforms,
+    src_sem,
+    src_sem_transforms,
+    device_id,
+):
+  return tree_util.tree_flatten((
+      src_ref,
+      _maybe_wrap_transformed_refs(src_transforms),
+      dst_ref,
+      _maybe_wrap_transformed_refs(dst_transforms),
+      dst_sem,
+      dst_sem_transforms,
+      src_sem,
+      src_sem_transforms,
+      device_id,
+  ))
+
+
+def _dma_unflatten(tree, flat_args):
+  (
+      src_ref,
+      src_transforms,
+      dst_ref,
+      dst_transforms,
+      dst_sem,
+      dst_sem_transforms,
+      src_sem,
+      src_sem_transforms,
+      device_id,
+  ) = tree_util.tree_unflatten(tree, flat_args)
+  return (
+      src_ref,
+      _maybe_unwrap_transformed_refs(src_transforms),
+      dst_ref,
+      _maybe_unwrap_transformed_refs(dst_transforms),
+      dst_sem,
+      dst_sem_transforms,
+      src_sem,
+      src_sem_transforms,
+      device_id,
+  )
+
+
+def _maybe_wrap_transformed_refs(transforms: Any) -> Any:
+  return jax.tree.map(
+      lambda obj: _maybe_wrap_transformed_refs(TransformedRefTree.wrap(obj))
+      if isinstance(obj, state.TransformedRef)
+      else obj,
+      transforms,
+  )
+
+
+def _maybe_unwrap_transformed_refs(transforms: Any) -> Any:
+  return jax.tree.map(
+      lambda obj: _maybe_unwrap_transformed_refs(obj.unwrap())
+      if isinstance(obj, TransformedRefTree)
+      else obj,
+      transforms,
+      is_leaf=lambda obj: isinstance(obj, TransformedRefTree),
+  )
+
+
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class TransformedRefTree(state.TransformedRef):
+  """A PyTree wrapper for a ``TransformedRef``.
+
+  The wrapper is necessary to support the case when a ``TransformedRef`` is
+  indexed with other ``TransformedRef``s.
+  """
+
+  @classmethod
+  def wrap(cls, ref: state.TransformedRef) -> TransformedRefTree:
+    return cls(ref.ref, ref.transforms)
+
+  def unwrap(self) -> state.TransformedRef:
+    return state.TransformedRef(self.ref, self.transforms)
+
+
+def _get_dma_effects(
+    src_transforms_avals,
+    dst_transforms_avals,
+    dst_sem_transforms_avals,
+    src_sem_aval,
+):
+  n_src_transforms = len(tree_util.tree_leaves(src_transforms_avals))
+  n_dst_transforms = len(tree_util.tree_leaves(dst_transforms_avals))
+  n_dst_sem_transforms = len(tree_util.tree_leaves(dst_sem_transforms_avals))
+  dst_sem_index = 1 + n_src_transforms + 1 + n_dst_transforms
+  effs = {
+      state.ReadEffect(0),  # Read from src ref
+      state.WriteEffect(n_src_transforms + 1),  # Write to dst ref
+      state.WriteEffect(dst_sem_index),  # Write to dst sem
+  }
+  if src_sem_aval is not None:
+    src_sem_index = (
+        1 + n_src_transforms + 1 + n_dst_transforms + 1 + n_dst_sem_transforms
+    )
+    effs.add(state.WriteEffect(src_sem_index))
+  return effs
+
+
 dma_start_p = jax_core.Primitive('dma_start')
 dma_start_p.multiple_results = True
 
 @dma_start_p.def_effectful_abstract_eval
-def _dma_start_abstract_eval(*args, tree, device_id_type):
+def _dma_start_abstract_eval(*args, tree, device_id_type, priority, add):
+  if priority < 0:
+    raise ValueError(f"DMA start priority must be non-negative: {priority}")
   (
       src_ref_aval,
       src_transforms_avals,
@@ -250,7 +397,11 @@ def _dma_start_abstract_eval(*args, tree, device_id_type):
       src_sem_aval,
       src_sem_transforms_avals,
       device_id_aval,
-  ) = tree_util.tree_unflatten(tree, args)
+  ) = _dma_unflatten(tree, args)
+  if not all(isinstance(x, state.AbstractRef) for x in [
+      src_ref_aval, dst_ref_aval, dst_sem_aval]):
+    raise ValueError(
+        "DMA source/destination/semaphore arguments must be Refs.")
   dst_sem_shape = dst_sem_aval.shape
   if dst_sem_transforms_avals:
     dst_sem_shape = dst_sem_transforms_avals[-1].get_indexer_shape()
@@ -259,6 +410,9 @@ def _dma_start_abstract_eval(*args, tree, device_id_type):
         f"Cannot signal on a non-()-shaped semaphore: {dst_sem_shape}"
     )
   if src_sem_aval is not None:
+    if not isinstance(src_sem_aval, state.AbstractRef):
+      raise ValueError(
+          "DMA source semaphore must be a Ref.")
     src_sem_shape = src_sem_aval.shape
     if src_sem_transforms_avals:
       src_sem_shape = src_sem_transforms_avals[-1].get_indexer_shape()
@@ -266,14 +420,20 @@ def _dma_start_abstract_eval(*args, tree, device_id_type):
       raise ValueError(
           f"Cannot signal on a non-()-shaped semaphore: {src_sem_shape}"
       )
-  n_src_transforms = len(tree_util.tree_leaves(src_transforms_avals))
-  return [], {state.ReadEffect(0), state.WriteEffect(n_src_transforms + 1)}
+  return [], _get_dma_effects(
+      src_transforms_avals,
+      dst_transforms_avals,
+      dst_sem_transforms_avals,
+      src_sem_aval,
+  )
 
 def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
                       context: jax_core.JaxprPpContext,
                       settings: jax_core.JaxprPpSettings):
   invars = eqn.invars
   tree = eqn.params["tree"]
+  priority = eqn.params["priority"]
+  add = eqn.params["add"]
   (
       src_ref,
       src_transforms,
@@ -284,13 +444,13 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
       src_sem,
       src_sem_transforms,
       device_id,
-  ) = tree_util.tree_unflatten(tree, invars)
+  ) = _dma_unflatten(tree, invars)
   del src_sem_transforms
   # TODO(sharadmv): pretty print source semaphores and device id
   if src_sem or device_id:
     return jax_core._pp_eqn(eqn, context, settings)
   return pp.concat([
-      pp.text("dma_start"),
+      pp.text(f"dma_start(p{priority}{', add' if add else ''})"),
       pp.text(" "),
       sp.pp_ref_transforms(context, src_ref, src_transforms),
       pp.text(" -> "),
@@ -301,8 +461,16 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
 
 jax_core.pp_eqn_rules[dma_start_p] = _dma_start_pp_eqn
 
-def dma_start_partial_discharge_rule(should_discharge, in_avals, out_avals,
-                                     *args, tree, device_id_type):
+
+def dma_start_partial_discharge_rule(
+    should_discharge, in_avals, out_avals, *args, tree, device_id_type,
+    priority, add
+):
+  # Note: we ignore the DMA priority in discharge rules.
+  del priority
+  if add:
+    raise NotImplementedError(
+        "DMA partial discharge add=True not yet implemented.")
   (
       src_ref,
       src_transforms,
@@ -313,7 +481,7 @@ def dma_start_partial_discharge_rule(should_discharge, in_avals, out_avals,
       src_sem,
       src_sem_transforms,
       device_id,
-  ) = tree_util.tree_unflatten(tree, args)
+  ) = _dma_unflatten(tree, args)
   (
       _,
       src_transforms_avals,
@@ -324,7 +492,7 @@ def dma_start_partial_discharge_rule(should_discharge, in_avals, out_avals,
       src_sem_aval,
       src_sem_transforms_avals,
       _,
-  ) = tree_util.tree_unflatten(tree, in_avals)
+  ) = _dma_unflatten(tree, in_avals)
   del out_avals
 
   (
@@ -335,7 +503,7 @@ def dma_start_partial_discharge_rule(should_discharge, in_avals, out_avals,
       dst_sem_discharge,
       _,
       *maybe_src_sem_discharge,
-  ) = tree_util.tree_unflatten(tree, should_discharge)
+  ) = _dma_unflatten(tree, should_discharge)
   is_remote = device_id is not None
   src_sem_discharge = None
 
@@ -361,6 +529,16 @@ def dma_start_partial_discharge_rule(should_discharge, in_avals, out_avals,
     # TODO(justinfu): Verify that code only works in SPMD mode.
     axis_env = jax_core.get_axis_env()
     nonempty_axes = [name for name in axis_env.axis_sizes if name is not None]
+    if isinstance(device_id, dict):
+      if device_id_type is not primitives.DeviceIdType.MESH:
+        raise ValueError(
+            "`device_id_type` must be MESH if `device_id` is a dict,"
+            f" got: {device_id_type = }."
+        )
+      device_id_list = []
+      for axis in nonempty_axes:
+        device_id_list.append(device_id.get(axis, jax.lax.axis_index(axis)))
+      device_id = tuple(device_id_list)
     if device_id_type == primitives.DeviceIdType.LOGICAL:
       if len(nonempty_axes) > 1:
         raise NotImplementedError("Sharding with more than one named axis not "
@@ -461,16 +639,33 @@ def dma_start_partial_discharge_rule(should_discharge, in_avals, out_avals,
 
   return new_vals, []
 
+
 state_discharge.register_partial_discharge_rule(dma_start_p)(dma_start_partial_discharge_rule)
 
 
 dma_wait_p = jax_core.Primitive('dma_wait')
 dma_wait_p.multiple_results = True
 
-@dma_wait_p.def_abstract_eval
+@dma_wait_p.def_effectful_abstract_eval
 def _dma_wait_abstract_eval(*args, tree, device_id_type):
-  del args, tree, device_id_type
-  return []
+  del device_id_type
+  (
+      src_ref_aval,
+      src_transforms_avals,
+      dst_ref_aval,
+      dst_transforms_avals,
+      dst_sem_aval,
+      dst_sem_transforms_avals,
+      src_sem_aval,
+      src_sem_transforms_avals,
+      device_id_aval,
+  ) = _dma_unflatten(tree, args)
+  return [], _get_dma_effects(
+      src_transforms_avals,
+      dst_transforms_avals,
+      dst_sem_transforms_avals,
+      src_sem_aval,
+  )
 
 def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
                      context: jax_core.JaxprPpContext,
@@ -488,7 +683,7 @@ def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
       _,
       _,
       _,
-  ) = tree_util.tree_unflatten(tree, invars)
+  ) = _dma_unflatten(tree, invars)
   return pp.concat([
       pp.text("dma_wait"),
       pp.text(" "),
@@ -505,8 +700,10 @@ def dma_wait_partial_discharge_rule(should_discharge,
   # TODO(b/370563115): perform ref update in dma_wait discharge rule instead of dma_start
   del out_avals, device_id_type
   _, _, dst_ref, dst_ref_transforms, dst_sem, dst_sem_transforms, _, _, _ = (
-      tree_util.tree_unflatten(tree, args))
-  (_,
+      _dma_unflatten(tree, args)
+  )
+  (
+      _,
       src_ref_transforms_avals,
       _,
       dst_ref_transforms_avals,
@@ -515,12 +712,12 @@ def dma_wait_partial_discharge_rule(should_discharge,
       src_sem_aval,
       src_sem_transforms_avals,
       device_id_aval,
-  ) = tree_util.tree_unflatten(tree, in_avals)
+  ) = _dma_unflatten(tree, in_avals)
 
   # The only one we can discharge is the dst semaphore. The provided
   # buffers are only specified for their types and not their value so
   # it's completely irrelevant for us here if they are discharged.
-  should_discharge_unflattened = tree_util.tree_unflatten(tree, should_discharge)
+  should_discharge_unflattened = _dma_unflatten(tree, should_discharge)
   if not should_discharge_unflattened[4]:
     return (None,) * len(in_avals), []
 
@@ -550,7 +747,8 @@ def _get_ref_and_transforms(ref):
     return ref.ref, ref.transforms
   return ref, ()
 
-def make_async_copy(src_ref, dst_ref, sem):
+
+def make_async_copy(src_ref, dst_ref, sem) -> AsyncCopyDescriptor:
   """Issues a DMA copying from src_ref to dst_ref."""
   src_ref, src_transforms = _get_ref_and_transforms(src_ref)
   dst_ref, dst_transforms = _get_ref_and_transforms(dst_ref)
@@ -568,14 +766,24 @@ def make_async_copy(src_ref, dst_ref, sem):
       primitives.DeviceIdType.MESH,
   )
 
-def async_copy(src_ref, dst_ref, sem):
+
+def async_copy(
+    src_ref, dst_ref, sem, *, priority: int = 0, add: bool = False,
+) -> AsyncCopyDescriptor:
   """Issues a DMA copying from src_ref to dst_ref."""
   copy_descriptor = make_async_copy(src_ref, dst_ref, sem)
-  copy_descriptor.start()
+  copy_descriptor.start(priority=priority, add=add)
   return copy_descriptor
 
-def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
-                           device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH):
+
+def make_async_remote_copy(
+    src_ref,
+    dst_ref,
+    send_sem,
+    recv_sem,
+    device_id: MultiDimDeviceId | IntDeviceId | None,
+    device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH,
+) -> AsyncCopyDescriptor:
   """Creates a description of a remote copy operation.
 
   Copies data from src_ref on the current device to dst_ref on the device
@@ -589,8 +797,10 @@ def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
     dst_ref: The destination Reference.
     send_sem: The semaphore on the source device.
     recv_sem: The semaphore on the destination device.
-    device_id: The device id of the destination device.
+    device_id: The device id of the destination device. It could be a tuple, or
+      a dictionary specifying the communication axis and destination index.
     device_id_type: The type of the device id.
+
   Returns:
     An AsyncCopyDescriptor.
   """
@@ -598,6 +808,11 @@ def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
   send_sem, send_sem_transforms = _get_ref_and_transforms(send_sem)
   dst_ref, dst_transforms = _get_ref_and_transforms(dst_ref)
   recv_sem, recv_sem_transforms = _get_ref_and_transforms(recv_sem)
+  if device_id_type == primitives.DeviceIdType.LOGICAL:
+    assert not isinstance(
+        device_id, tuple | dict
+    ), "LOGICAL device_id_type does not support device_id as a tuple or dict."
+
   return AsyncCopyDescriptor(
       src_ref,
       src_transforms,
@@ -611,20 +826,28 @@ def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
       device_id_type=device_id_type,
   )
 
-def async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
-                      device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH):
+
+def async_remote_copy(
+    src_ref,
+    dst_ref,
+    send_sem,
+    recv_sem,
+    device_id,
+    device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH,
+) -> AsyncCopyDescriptor:
   copy_descriptor = make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem,
                                            device_id, device_id_type)
   copy_descriptor.start()
   return copy_descriptor
 
+
 get_barrier_semaphore_p = jax_core.Primitive('get_barrier_semaphore')
 
 @get_barrier_semaphore_p.def_abstract_eval
 def _get_barrier_semaphore_abstract_eval():
-  return pl_core.AbstractMemoryRef(
+  return state.AbstractRef(
       jax_core.ShapedArray((), pl_core.BarrierSemaphore()),
-      tpu_core.TPUMemorySpace.SEMAPHORE,
+      tpu_core.MemorySpace.SEMAPHORE,
   )
 
 def get_barrier_semaphore():
@@ -645,32 +868,19 @@ def get_barrier_semaphore():
   to share a collective_id. However, if in doubt, prefer not sharing
   collective_ids, as doing so incorrectly can lead to silent data corruption or
   crashes.
-  Note that re-using the same collective_id doesn't guarantee that the same
+  Note that reusing the same collective_id doesn't guarantee that the same
   semaphore is provided by XLA.
   """
   return get_barrier_semaphore_p.bind()
-
-delay_p = jax_core.Primitive("delay")
-delay_p.multiple_results = True
-
-
-@delay_p.def_abstract_eval
-def _delay_abstract_eval(nanos):
-  del nanos
-  return []
-
-
-def delay(nanos):
-  """Delays vector execution for the given number of nanosconds."""
-  delay_p.bind(nanos)
 
 
 # RNG Ops
 prng_seed_p = jax_core.Primitive("prng_seed")
 prng_seed_p.multiple_results = True
 
+
 @prng_seed_p.def_abstract_eval
-def _(*_):
+def _prng_seed_abstract_eval(*_):
   return []
 
 
@@ -687,9 +897,156 @@ def prng_seed(*seeds: int | jax.Array) -> None:
 prng_random_bits_p = jax_core.Primitive(
     'prng_random_bits')
 
+
 @prng_random_bits_p.def_abstract_eval
-def _(*, shape):
+def _prng_random_bits_abstract_eval(*, shape):
   return jax_core.ShapedArray(shape, jnp.dtype("int32"))
+
 
 def prng_random_bits(shape):
   return prng_random_bits_p.bind(shape=shape)
+
+# PRNG wrap/unwrap ops.
+# We cannot use JAX's key_data and wrap_key_data because they return
+# vectors, and Pallas keys are represented as lists of scalars.
+
+split_key_p = jax_core.Primitive("prng_split")
+split_key_p.multiple_results = True
+
+
+@split_key_p.def_abstract_eval
+def _split_key_scalar_abstract_eval(seed):
+  key_shape = seed.dtype._impl.key_shape
+  if len(key_shape) != 2 or key_shape[0] != 1:
+    raise ValueError(f"Key shape must be (1, N), got {key_shape}")
+  return [jax_core.ShapedArray((), jnp.dtype("uint32"))] * key_shape[1]
+
+
+def unwrap_pallas_seed(seed):
+  """Splits a PRNG key into it's scalar components."""
+  return split_key_p.bind(seed)
+
+
+join_key_p = jax_core.Primitive("prng_join")
+
+
+@join_key_p.def_abstract_eval
+def _join_key_scalar_abstract_eval(*seeds, impl):
+  if len(impl.key_shape) != 2 or impl.key_shape[0] != 1:
+    raise ValueError(f"Key shape must be (1, N), got {impl.key_shape}")
+  if len(seeds) != impl.key_shape[1]:
+    raise ValueError(
+        f"Number of seeds must match key shape, got {len(seeds)}"
+        f" != {impl.key_shape[1]}."
+    )
+  return jax_core.ShapedArray((), dtype=jax_prng.KeyTy(impl))
+
+
+def wrap_pallas_seed(*seeds, impl):
+  """Joins scalar into a single PRNG key."""
+  impl = jax_random.resolve_prng_impl(impl)
+  return join_key_p.bind(*seeds, impl=impl)
+
+
+stochastic_round_p = jax_core.Primitive("stochastic_round")
+
+
+def stochastic_round(x, random_bits, *, target_dtype):
+  return stochastic_round_p.bind(x, random_bits, target_dtype=target_dtype)
+
+
+@stochastic_round_p.def_abstract_eval
+def _stochastic_round_abstract_eval(x, random_bits, *, target_dtype):
+  if random_bits.shape != x.shape:
+    raise ValueError(
+        "The shape of `random_bits` must match the shape of `x` for "
+        f"stochastic_round, but got {random_bits.shape} and {x.shape}"
+    )
+  if random_bits.dtype != jnp.dtype("uint32"):
+    raise ValueError(
+        "The dtype of `random_bits` must be uint32 for stochastic_round, "
+        f"but got {random_bits.dtype}"
+    )
+  return jax_core.ShapedArray(x.shape, target_dtype)
+
+
+def with_memory_space_constraint(
+    x: jax.Array, memory_space: Any
+) -> jax.Array:
+  """Constrains the memory space of an array.
+
+  This primitive does not change the value of `x`, but it constrains the
+  memory space where it should be allocated. This is useful to force
+  Pallas to allocate an array in a specific memory space.
+
+  As of now, this only operates on the inputs pallas_calls, as in you can
+  apply this to the arguments of a pallas_call and it will constrain them, but
+  other operations will not respect this constraint.
+
+  Args:
+    x: The array to constrain.
+    memory_space: The memory space to constrain to.
+
+  Returns:
+    The array `x` with the memory space constraint.
+  """
+  if memory_space in {tpu_core.MemorySpace.ANY, pl_core.MemorySpace.ANY}:
+    return x
+  if memory_space not in {
+      tpu_core.MemorySpace.HBM,
+      tpu_core.MemorySpace.VMEM,
+      tpu_core.MemorySpace.SMEM,
+  }:
+    raise NotImplementedError(
+        "with_memory_space_constraint only supports HBM, VMEM and SMEM."
+    )
+  return pl_core.with_memory_space_constraint_p.bind(
+      x, memory_space=memory_space)
+
+
+def load(ref: Ref, *, mask: jax.Array | None = None) -> jax.Array:
+  """Loads an array from the given ref.
+
+  If ``mask`` is not specified, this function has the same semantics as
+  ``ref[idx]`` in JAX.
+
+  Args:
+    ref: The ref to load from.
+    mask: An optional boolean mask specifying which indices to load.
+
+  Returns:
+    The loaded array.
+  """
+  return primitives.load(ref, None, mask=mask)
+
+
+def store(ref: Ref, val: jax.Array, *, mask: jax.Array | None = None) -> None:
+  """Stores a value to the given ref.
+
+  If ``mask`` is not specified, this function has the same semantics as
+  ``ref[idx] = val`` in JAX.
+
+  Args:
+    ref: The ref to store to.
+    val: The value to store.
+    mask: An optional boolean mask specifying which indices to store.
+  """
+  return primitives.store(ref, None, val, mask=mask)
+
+
+touch_p = jax_core.Primitive("add_dependency")
+touch_p.multiple_results = True
+
+
+def touch(ref: jax.Array | state.TransformedRef) -> None:
+  """Adds a fake read-write dependency to the given ref."""
+  ref_leaves = jax.tree.leaves(ref)
+  ref_leaves = [ref.ref if isinstance(ref, state.TransformedRef) else ref
+                for ref in ref_leaves]
+  for ref in ref_leaves:
+    touch_p.bind(ref)
+
+
+@touch_p.def_effectful_abstract_eval
+def _touch_abstract_eval(ref: jax.Array):
+  return [], {state.ReadEffect(0), state.WriteEffect(0)}

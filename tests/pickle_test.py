@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import pickle
 import unittest
 
@@ -26,8 +27,11 @@ except ImportError:
 import jax
 from jax import numpy as jnp
 from jax.interpreters import pxla
+from jax._src import config
+from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
+from jax._src.sharding_impls import GSPMDSharding
 
 import numpy as np
 
@@ -76,6 +80,13 @@ class CloudpickleTest(jtu.JaxTestCase):
 
   @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")
   def testPickleOfPmappedFunctions(self):
+    if config.pmap_shmap_merge.value:
+      self.skipTest(
+          'Nested pmaps are not relevant for `pmap_shmap_merge=True` and'
+          ' `pmap`s pickled prior to `pmap_shmap_merge=True` may not work, but'
+          " perhaps it's worth making sure that freshly pickled `pmap`s still"
+          ' work?'
+      )
 
     @jax.pmap
     def f(x, y):
@@ -138,11 +149,11 @@ class PickleTest(jtu.JaxTestCase):
     self.assertEqual(partition_spec, restored_partition_spec)
 
   def testPickleX64(self):
-    with jax.experimental.enable_x64():
+    with jax.enable_x64(True):
       x = jnp.array(4.0, dtype='float64')
       s = pickle.dumps(x)
 
-    with jax.experimental.disable_x64():
+    with jax.enable_x64(False):
       y = pickle.loads(s)
 
     self.assertEqual(x.dtype, jnp.float64)
@@ -174,6 +185,17 @@ class PickleTest(jtu.JaxTestCase):
     s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
+  def test_pickle_single_device_sharding_with_memory_kind(self):
+    for memory_kind in (
+        *[memory.kind for memory in jax.devices()[0].addressable_memories()],
+        None,
+    ):
+      with self.subTest(memory_kind=memory_kind):
+        s = jax.sharding.SingleDeviceSharding(
+            jax.devices()[0], memory_kind=memory_kind
+        )
+        self.assertEqual(s, pickle.loads(pickle.dumps(s)))
+
   def test_pickle_pmap_sharding(self):
     ss = pxla.ShardingSpec(
         sharding=(pxla.Unstacked(8),),
@@ -182,16 +204,55 @@ class PickleTest(jtu.JaxTestCase):
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
   def test_pickle_gspmd_sharding(self):
-    s = jax.sharding.GSPMDSharding.get_replicated(jax.devices())
+    s = GSPMDSharding.get_replicated(jax.devices())
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
+
+  def test_pickle_gspmd_sharding_with_memory_kind(self):
+    for memory_kind in (
+        *[memory.kind for memory in jax.devices()[0].addressable_memories()],
+        None,
+    ):
+      with self.subTest(memory_kind=memory_kind):
+        s = GSPMDSharding.get_replicated(jax.devices(), memory_kind=memory_kind)
+        self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
   @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")
   def test_pickle_named_sharding(self):
     s = jax.sharding.NamedSharding(
         mesh=jax.sharding.Mesh(np.array(jax.devices()), 'd'),
-        spec=jax.sharding.PartitionSpec('d'))
+        spec=jax.sharding.PartitionSpec('d'),
+    )
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
+  @unittest.skipIf(cloudpickle is None, 'Requires cloudpickle')
+  def test_pickle_named_sharding_with_memory_kind(self):
+    for memory_kind in (
+        *[memory.kind for memory in jax.devices()[0].addressable_memories()],
+        None,
+    ):
+      with self.subTest(memory_kind=memory_kind):
+        s = jax.sharding.NamedSharding(
+            mesh=jax.sharding.Mesh(np.array(jax.devices()), 'd'),
+            spec=jax.sharding.PartitionSpec('d'),
+            memory_kind=memory_kind,
+        )
+        self.assertEqual(s, pickle.loads(pickle.dumps(s)))
+
+  def test_pickle_typed_scalar(self):
+    for l in [
+        literals.TypedInt(3, np.dtype(np.int32)),
+        literals.TypedFloat(2.0, np.dtype(np.float32)),
+        literals.TypedComplex(1j, np.dtype(np.complex64)),
+    ]:
+      m = pickle.loads(pickle.dumps(l))
+      self.assertEqual(type(l), type(m))
+      self.assertEqual(l, m)
+      self.assertEqual(l.dtype, m.dtype)
+
+      n = copy.deepcopy(l)
+      self.assertEqual(type(l), type(n))
+      self.assertEqual(l, n)
+      self.assertEqual(l.dtype, n.dtype)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

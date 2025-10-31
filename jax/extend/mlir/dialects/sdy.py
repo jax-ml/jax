@@ -14,8 +14,4 @@
 
 # ruff: noqa: F403
 
-# TODO(bartchr): Once JAX is released with SDY, remove the try/except.
-try:
-  from jaxlib.mlir.dialects.sdy import *
-except ImportError:
-  pass
+from jaxlib.mlir.dialects.sdy import *

@@ -22,7 +22,8 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/Support/LLVM.h"
 
-namespace mlir::tpu::internal {
+namespace mlir::tpu {
+namespace internal {
 
 bool sliceIsEmpty(const absl::Span<const int64_t> starts,
                   const absl::Span<const int64_t> limits) {
@@ -51,4 +52,20 @@ bool incrementSliceIndex(const MutableArrayRef<int64_t> idx,
   return false;
 }
 
-}  // namespace mlir::tpu::internal
+}  // namespace internal
+
+bool incrementIndex(const MutableArrayRef<int64_t> idx,
+                    const absl::Span<const int64_t> limits) {
+  const int64_t nd = idx.size();
+  CHECK_EQ(nd, limits.size());
+  for (int64_t i = nd - 1; i >= 0; --i) {
+    ++idx[i];
+    if (idx[i] < limits[i]) {
+      return true;
+    }
+    idx[i] = 0;
+  }
+  return false;
+}
+
+}  // namespace mlir::tpu

@@ -18,11 +18,12 @@ limitations under the License.
 #include <cstdio>
 
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "jaxlib/mosaic/gpu/nvshmem.h"
 
 extern "C" {
 
 void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
-                              int64_t elem_bitwidth, int64_t rank,
+                              int64_t elem_type, int64_t rank,
                               int64_t *sizes, int64_t *strides,
                               int64_t swizzle_bytes, int64_t *window_shape) {
   if (((uintptr_t)tma_desc) % 64 != 0) {
@@ -32,7 +33,44 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
     abort();
   }
 
-  // Pack 4 bit types in 8 bit pairs.
+  CUtensorMapDataType data_type;
+  int64_t elem_bitwidth;
+  // types are defined in: LaunchContext._get_tma_desc()
+  if (elem_type == 8){
+    // this is for int2s
+    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
+    elem_bitwidth = 2;
+  } else if (elem_type == 0){
+    // this is for int4s
+    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
+    elem_bitwidth = 4;
+  } else if (elem_type == 1){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
+    elem_bitwidth = 8;
+  } else if (elem_type == 2){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT16;
+    elem_bitwidth = 16;
+  } else if (elem_type == 3){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT32;
+    elem_bitwidth = 32;
+  } else if (elem_type == 4){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT64;
+    elem_bitwidth = 64;
+  } else if (elem_type == 5){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_FLOAT16;
+    elem_bitwidth = 16;
+  } else if (elem_type == 6){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_FLOAT32;
+    elem_bitwidth = 32;
+  } else if (elem_type == 7){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16;
+    elem_bitwidth = 16;
+  } else{
+    fprintf(stderr, "Unsupported element type: %ld \n", elem_type);
+    abort();
+  }
+
+  // Pack sub byte types in 8 bit pairs.
   int64_t elem_bytewidth;
   if (elem_bitwidth < 8) {
     // Check that it's a power of 2.
@@ -54,19 +92,6 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
     elem_bytewidth = elem_bitwidth / 8;
   }
 
-  CUtensorMapDataType data_type;
-  if (elem_bytewidth == 1) {
-    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
-  } else if (elem_bytewidth == 2) {
-    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT16;
-  } else if (elem_bytewidth == 4) {
-    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT32;
-  } else if (elem_bytewidth == 8) {
-    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT64;
-  } else {
-    fprintf(stderr, "Unsupported element size: %ld\n", elem_bytewidth);
-    abort();
-  }
   if (rank < 1 || rank > 5) {
     fprintf(stderr, "Rank must be in [1, 5], but got %ld\n", rank);
     abort();
@@ -94,7 +119,7 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
     if (tma_stride_i % 16 != 0 || tma_stride_i >= static_cast<cuuint64_t>(1)
                                                       << 40) {
       fprintf(stderr,
-              "Byte strides must be divisble by 16 and less than 2**40, but "
+              "Byte strides must be divisible by 16 and less than 2**40, but "
               "got %ld (item stride = %ld, item size = %ld) at index %ld\n",
               tma_stride_i, strides[rank - 1], elem_bytewidth, rank - i - 2);
       abort();
@@ -154,6 +179,20 @@ void* mosaic_gpu_module_load(void *data) {
     fprintf(stderr, "cuModuleLoadData failed: %s\n", ptr);
     abort();
   }
+
+  {  // Set the NVSHMEM state if it's used by the module.
+    CUdeviceptr ptr = 0;
+    size_t size = 0;
+    if (cuModuleGetGlobal(&ptr, &size, module,
+                          "nvshmemi_device_lib_version_d") == CUDA_SUCCESS) {
+      if (mosaic::gpu::NvshmemApi::Default().cumodule_init(module) !=
+          NVSHMEM_SUCCESS) {
+        fprintf(stderr, "nvshmemx_cumodule_init failed.\n");
+        abort();
+      }
+    }
+  }
+
   return module;
 }
 
@@ -165,7 +204,10 @@ void *mosaic_gpu_get_function(CUmodule module, const char *name,
   if (result != CUDA_SUCCESS) {
     const char *ptr = nullptr;
     cuGetErrorString(result, &ptr);
-    fprintf(stderr, "cuModuleGetFunction failed: %s\n", ptr);
+    fprintf(stderr,
+            "Failed to retrieve function pointer to kernel \"%s\", "
+            "cuModuleGetFunction failed: %s\n",
+            name, ptr);
     abort();
   }
   if (smem_bytes) {
@@ -174,7 +216,10 @@ void *mosaic_gpu_get_function(CUmodule module, const char *name,
     if (result != CUDA_SUCCESS) {
       const char *ptr = nullptr;
       cuGetErrorString(result, &ptr);
-      fprintf(stderr, "cuFuncSetAttribute failed: %s\n", ptr);
+      fprintf(stderr,
+              "Failed to set maximum dynamic shared memory size for kernel "
+              "\"%s\" to %d bytes, cuFuncSetAttribute failed: %s\n",
+              name, smem_bytes, ptr);
       abort();
     }
   }
@@ -184,7 +229,10 @@ void *mosaic_gpu_get_function(CUmodule module, const char *name,
     if (result != CUDA_SUCCESS) {
       const char *ptr = nullptr;
       cuGetErrorString(result, &ptr);
-      fprintf(stderr, "cuFuncSetAttribute failed: %s\n", ptr);
+      fprintf(stderr,
+              "Failed to set allowed cluster size for kernel \"%s\" to %d, "
+              "cuFuncSetAttribute failed: %s\n",
+              name, cluster_size, ptr);
       abort();
     }
   }

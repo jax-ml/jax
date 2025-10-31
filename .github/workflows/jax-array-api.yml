@@ -11,38 +11,40 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
+permissions: {}
+
+env:
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
 
 jobs:
   build:
-
-    runs-on: ubuntu-latest
+    runs-on: linux-x86-n4-16
+    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
     strategy:
       matrix:
         python-version: [3.11]
-
+    env:
+      PYTHON: "python${{ matrix.python-version }}"
     steps:
     - name: Checkout jax
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+      with:
+        persist-credentials: false
     - name: Checkout array-api-tests
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
       with:
         repository: data-apis/array-api-tests
-        # TODO(jakevdp) update this to a stable release/tag when available.
-        ref: '0b89c5268e4e4a352223a487b8f63dbd1023872d'  # Latest commit as of 2025-03-04
+        ref: '2025.05.23'
         submodules: 'true'
         path: 'array-api-tests'
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38  # v5.4.0
-      with:
-        python-version: ${{ matrix.python-version }}
+        persist-credentials: false
     - name: Install dependencies
       run: |
-        pip install uv~=0.5.30
-        uv pip install --system .[ci] pytest-xdist -r array-api-tests/requirements.txt
+        $PYTHON -m uv pip install --system .[ci] pytest-xdist -r array-api-tests/requirements.txt
     - name: Run the test suite
       env:
         ARRAY_API_TESTS_MODULE: jax.numpy
         JAX_ENABLE_X64: 'true'
       run: |
         cd ${GITHUB_WORKSPACE}/array-api-tests
-        pytest -n auto array_api_tests --derandomize --disable-deadline --skips-file ${GITHUB_WORKSPACE}/tests/array_api_skips.txt
+        $PYTHON -m pytest -n auto array_api_tests --derandomize --disable-deadline --skips-file ${GITHUB_WORKSPACE}/tests/array_api_skips.txt

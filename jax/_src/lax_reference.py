@@ -285,7 +285,8 @@ def ragged_dot(
 
   out = np.zeros((m, n), dtype=lhs.dtype)
   result_iota = np.expand_dims(np.arange(out.shape[0]), list(range(1, out.ndim)))
-  start = 0
+  result_iota = result_iota.astype(group_sizes.dtype)
+  start = np.asarray(0, dtype=group_sizes.dtype)
   for i, size in enumerate(group_sizes):
     out += np.where(
         np.logical_and(start <= result_iota, result_iota < (start + size)),
@@ -319,7 +320,7 @@ def reshape(operand, new_sizes, dimensions=None):
   return np.reshape(np.transpose(operand, dimensions), new_sizes)
 
 def pad(operand, padding_value, padding_config):
-  # https://www.tensorflow.org/xla/operation_semantics#pad
+  # https://www.openxla.org/xla/operation_semantics#pad
   lo, hi, interior = util.unzip3(padding_config)
   # Handle first the positive edge padding and interior
   lo_pos, hi_pos = np.clip(lo, 0, None), np.clip(hi, 0, None)
@@ -528,3 +529,10 @@ def _reducer_from_pyfunc(py_binop, init_val):
       result[out_idx] = py_binop(result[out_idx], operand[idx])
     return result
   return reducer
+
+def top_k(operand, k):
+  indices = operand.shape[-1] - 1 - np.argsort(operand[..., ::-1], kind="stable").astype(np.int32)[..., ::-1]
+  values = np.take_along_axis(operand, indices, axis=-1)
+  indices = indices[..., :k]
+  values = values[..., :k]
+  return values, indices

@@ -17,9 +17,11 @@ from jax._src.lax.linalg import (
   cholesky_p as cholesky_p,
   cholesky_update as cholesky_update,
   cholesky_update_p as cholesky_update_p,
+  EigImplementation as EigImplementation,
   eig as eig,
   eig_p as eig_p,
   eigh as eigh,
+  EighImplementation as EighImplementation,
   eigh_p as eigh_p,
   hessenberg as hessenberg,
   hessenberg_p as hessenberg_p,
@@ -46,6 +48,6 @@ from jax._src.lax.linalg import (
   tridiagonal_solve_p as tridiagonal_solve_p,
 )
 
-from jax._src.lax.qdwh import (
+from jax._src.tpu.linalg.qdwh import (
   qdwh as qdwh
 )

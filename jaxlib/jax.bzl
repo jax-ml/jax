@@ -20,10 +20,13 @@ load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")
 load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "WHEEL_VERSION_SUFFIX")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
-load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
+load("@nvidia_wheel_versions//:versions.bzl", "NVIDIA_WHEEL_VERSIONS")
+load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION", "HERMETIC_PYTHON_VERSION_KIND")
 load("@rules_cc//cc:defs.bzl", _cc_proto_library = "cc_proto_library")
-load("@rules_python//python:defs.bzl", "py_test")
-load("@xla//xla/tsl:tsl.bzl", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("@test_shard_count//:test_shard_count.bzl", "USE_MINIMAL_SHARD_COUNT")
+load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
+load("@xla//xla/tsl:tsl.bzl", "transitive_hdrs", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
 load("@xla//xla/tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
 
 # Explicitly re-exports names to avoid "unused variable" warnings from .bzl
@@ -45,10 +48,11 @@ jax_extend_internal_users = []
 mosaic_gpu_internal_users = []
 mosaic_internal_users = []
 pallas_gpu_internal_users = []
-pallas_tpu_internal_users = []
+pallas_sc_internal_users = []
 pallas_fuser_users = []
 mosaic_extension_deps = []
 serialize_executable_internal_users = []
+buffer_callback_internal_users = []
 
 jax_internal_export_back_compat_test_util_visibility = []
 jax_internal_test_harnesses_visibility = []
@@ -56,54 +60,50 @@ jax_test_util_visibility = []
 loops_visibility = []
 
 PLATFORM_TAGS_DICT = {
-    ("Linux", "x86_64"): ("manylinux2014", "x86_64"),
-    ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
+    ("Linux", "x86_64"): ("manylinux_2_27", "x86_64"),
+    ("Linux", "aarch64"): ("manylinux_2_27", "aarch64"),
     ("Linux", "ppc64le"): ("manylinux2014", "ppc64le"),
     ("Darwin", "x86_64"): ("macosx_11_0", "x86_64"),
     ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
     ("Windows", "AMD64"): ("win", "amd64"),
 }
 
-_GPU_PYPI_WHEEL_DEPS = [
-    "//:jax_wheel_with_internal_test_util",
-    "@pypi_jaxlib//:pkg",
-    "@pypi_jax_cuda12_plugin//:pkg",
-    "@pypi_jax_cuda12_pjrt//:pkg",
-]
-
-_CPU_PYPI_WHEEL_DEPS = [
-    "//:jax_wheel_with_internal_test_util",
-    "@pypi_jaxlib//:pkg",
-]
-
-# TODO(vam): remove this once zstandard builds against Python 3.13
-def get_zstandard():
-    if HERMETIC_PYTHON_VERSION == "3.13" or HERMETIC_PYTHON_VERSION == "3.13-ft":
+def get_optional_dep(package, excluded_py_versions = ["3.14", "3.14-ft"]):
+    py_ver = HERMETIC_PYTHON_VERSION
+    if HERMETIC_PYTHON_VERSION_KIND == "ft":
+        py_ver += "-ft"
+    if py_ver in excluded_py_versions:
         return []
-    return ["@pypi_zstandard//:pkg"]
+    return [package]
 
 _py_deps = {
-    "absl/logging": ["@pypi_absl_py//:pkg"],
-    "absl/testing": ["@pypi_absl_py//:pkg"],
-    "absl/flags": ["@pypi_absl_py//:pkg"],
-    "cloudpickle": ["@pypi_cloudpickle//:pkg"],
-    "colorama": ["@pypi_colorama//:pkg"],
-    "epath": ["@pypi_etils//:pkg"],  # etils.epath
-    "filelock": ["@pypi_filelock//:pkg"],
-    "flatbuffers": ["@pypi_flatbuffers//:pkg"],
-    "hypothesis": ["@pypi_hypothesis//:pkg"],
+    "absl-all": ["@pypi//absl_py"],
+    "absl/logging": ["@pypi//absl_py"],
+    "absl/testing": ["@pypi//absl_py"],
+    "absl/testing:flagsaver": ["@pypi//absl_py"],
+    "absl/flags": ["@pypi//absl_py"],
+    "cloudpickle": get_optional_dep("@pypi//cloudpickle"),
+    "disable_pmap_shmap_merge": [],
+    "epath": get_optional_dep("@pypi//etils"),  # etils.epath
+    "filelock": get_optional_dep("@pypi//filelock"),
+    "flatbuffers": ["@pypi//flatbuffers"],
+    "hypothesis": ["@pypi//hypothesis"],
     "magma": [],
-    "matplotlib": ["@pypi_matplotlib//:pkg"],
+    "matplotlib": get_optional_dep("@pypi//matplotlib"),
     "mpmath": [],
-    "opt_einsum": ["@pypi_opt_einsum//:pkg"],
-    "pil": ["@pypi_pillow//:pkg"],
-    "portpicker": ["@pypi_portpicker//:pkg"],
-    "ml_dtypes": ["@pypi_ml_dtypes//:pkg"],
-    "numpy": ["@pypi_numpy//:pkg"],
-    "scipy": ["@pypi_scipy//:pkg"],
+    "opt_einsum": ["@pypi//opt_einsum"],
+    "pil": get_optional_dep("@pypi//pillow"),
+    "portpicker": get_optional_dep("@pypi//portpicker", ["3.13-ft", "3.14-ft"]),
+    "ml_dtypes": ["@pypi//ml_dtypes"],
+    "numpy": ["@pypi//numpy"],
+    "scipy": ["@pypi//scipy"],
     "tensorflow_core": [],
+    "tensorstore": get_optional_dep("@pypi//tensorstore"),
     "torch": [],
-    "zstandard": get_zstandard(),
+    "tensorflow": get_optional_dep("@pypi//tensorflow", ["3.13-ft", "3.14", "3.14-ft"]),
+    "tpu_ops": [],
+    # TODO(vam): remove this once zstandard builds against Python >3.13
+    "zstandard": get_optional_dep("@pypi//zstandard", ["3.13", "3.13-ft", "3.14", "3.14-ft"]),
 }
 
 def all_py_deps(excluded = []):
@@ -127,9 +127,10 @@ def py_deps(_package):
 
 def jax_visibility(_target):
     """Returns the additional Bazel visibilities for `target`."""
-
-    # This is only useful as part of a larger Bazel repository.
-    return []
+    return [
+        "//jax:__subpackages__",
+        "//jaxlib:__subpackages__",
+    ]
 
 jax_extra_deps = []
 jax_gpu_support_deps = []
@@ -137,17 +138,17 @@ jax2tf_deps = []
 
 def pytype_library(name, pytype_srcs = None, **kwargs):
     _ = pytype_srcs  # @unused
-    native.py_library(name = name, **kwargs)
+    py_library(name = name, **kwargs)
 
 def pytype_strict_library(name, pytype_srcs = [], **kwargs):
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
-    native.py_library(name = name, data = data, **new_kwargs)
+    py_library(name = name, data = data, **new_kwargs)
 
-py_strict_library = native.py_library
-py_strict_test = native.py_test
+py_strict_library = py_library
+py_strict_test = py_test
 
-def py_library_providing_imports_info(*, name, lib_rule = native.py_library, pytype_srcs = [], **kwargs):
+def py_library_providing_imports_info(*, name, lib_rule = py_library, pytype_srcs = [], **kwargs):
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
     lib_rule(name = name, data = data, **new_kwargs)
@@ -155,139 +156,83 @@ def py_library_providing_imports_info(*, name, lib_rule = native.py_library, pyt
 def py_extension(name, srcs, copts, deps, linkopts = []):
     nanobind_extension(name, srcs = srcs, copts = copts, linkopts = linkopts, deps = deps, module_name = name)
 
-def windows_cc_shared_mlir_library(name, out, deps = [], srcs = [], exported_symbol_prefixes = []):
-    """Workaround DLL building issue.
-
-    1. cc_binary with linkshared enabled cannot produce DLL with symbol
-       correctly exported.
-    2. Even if the DLL is correctly built, the resulting target cannot be
-       correctly consumed by other targets.
-
-    Args:
-      name: the name of the output target
-      out: the name of the output DLL filename
-      deps: deps
-      srcs: srcs
-    """
-
-    # create a dummy library to get the *.def file
-    dummy_library_name = name + ".dummy.dll"
-    native.cc_binary(
-        name = dummy_library_name,
-        linkshared = 1,
-        linkstatic = 1,
-        deps = deps,
-        target_compatible_with = ["@platforms//os:windows"],
-    )
-
-    # .def file with all symbols, not usable
-    full_def_name = name + ".full.def"
-    native.filegroup(
-        name = full_def_name,
-        srcs = [dummy_library_name],
-        output_group = "def_file",
-        target_compatible_with = ["@platforms//os:windows"],
-    )
-
-    # say filtered_symbol_prefixes == ["mlir", "chlo"], then construct the regex
-    # pattern as "^\\s*(mlir|clho)" to use grep
-    pattern = "^\\s*(" + "|".join(exported_symbol_prefixes) + ")"
-
-    # filtered def_file, only the needed symbols are included
-    filtered_def_name = name + ".filtered.def"
-    filtered_def_file = out + ".def"
-    native.genrule(
-        name = filtered_def_name,
-        srcs = [full_def_name],
-        outs = [filtered_def_file],
-        cmd = """echo 'LIBRARY {}\nEXPORTS ' > $@ && grep -E '{}' $(location :{}) >> $@""".format(out, pattern, full_def_name),
-        target_compatible_with = ["@platforms//os:windows"],
-    )
-
-    # create the desired library
-    native.cc_binary(
-        name = out,  # this name must be correct, it will be the filename
-        linkshared = 1,
-        deps = deps,
-        win_def_file = filtered_def_file,
-        target_compatible_with = ["@platforms//os:windows"],
-    )
-
-    # however, the created cc_library (a shared library) cannot be correctly
-    # consumed by other cc_*...
-    interface_library_file = out + ".if.lib"
-    native.filegroup(
-        name = interface_library_file,
-        srcs = [out],
-        output_group = "interface_library",
-        target_compatible_with = ["@platforms//os:windows"],
-    )
-
-    # but this one can be correctly consumed, this is our final product
-    native.cc_import(
-        name = name,
-        interface_library = interface_library_file,
-        shared_library = out,
-        target_compatible_with = ["@platforms//os:windows"],
-    )
-
 ALL_BACKENDS = ["cpu", "gpu", "tpu"]
 
 def if_building_jaxlib(
         if_building,
-        if_not_building = _GPU_PYPI_WHEEL_DEPS,
-        if_not_building_for_cpu = _CPU_PYPI_WHEEL_DEPS):
-    """Adds jaxlib and jaxlib cuda plugin wheels as dependencies instead of depending on sources.
+        if_not_building = [
+            "@pypi//jaxlib",
+        ]):
+    """Adds jaxlib wheels as dependencies instead of depending on sources.
 
     This allows us to test prebuilt versions of jaxlib wheels against the rest of the JAX codebase.
 
     Args:
       if_building: the source code targets to depend on in case we don't depend on the jaxlib wheels
-      if_not_building: the wheels to depend on including gpu-specific plugins in case of
-                       gpu-enabled builds
-      if_not_building_for_cpu: the wheels to depend on in case of cpu-only builds
+      if_not_building: the wheels to depend on if we are not depending directly on //jaxlib.
     """
-
     return select({
-        "//jax:enable_jaxlib_build": if_building,
-        "//jax_plugins/cuda:disable_jaxlib_for_cpu_build": if_not_building_for_cpu,
-        "//jax_plugins/cuda:disable_jaxlib_for_cuda12_build": if_not_building,
-        "//conditions:default": [],
+        "//jax:config_build_jaxlib_true": if_building,
+        "//jax:config_build_jaxlib_false": if_not_building,
+        "//jax:config_build_jaxlib_wheel": [],
     })
 
-def _get_test_deps(deps, backend_independent):
-    gpu_build_deps = [
-        "//jaxlib/cuda:gpu_only_test_deps",
-        "//jaxlib/rocm:gpu_only_test_deps",
-        "//jax_plugins:gpu_plugin_only_test_deps",
-    ]
-
-    gpu_py_imports = [
-        "//:jax_py_import",
-        "//jaxlib/tools:jaxlib_py_import",
-        "//jaxlib/tools:jax_cuda_plugin_py_import",
-        "//jaxlib/tools:jax_cuda_pjrt_py_import",
-    ]
-    cpu_py_imports = [
-        "//:jax_py_import",
-        "//jaxlib/tools:jaxlib_py_import",
-    ]
-
-    if backend_independent:
-        jaxlib_build_deps = deps
-        gpu_pypi_wheel_deps = _CPU_PYPI_WHEEL_DEPS
-        gpu_py_import_deps = cpu_py_imports
-    else:
-        jaxlib_build_deps = gpu_build_deps + deps
-        gpu_pypi_wheel_deps = _GPU_PYPI_WHEEL_DEPS
-        gpu_py_import_deps = gpu_py_imports
-
+def _cpu_test_deps():
+    """Returns the test dependencies needed for a CPU-only JAX test."""
     return select({
-        "//jax:enable_jaxlib_build": jaxlib_build_deps,
-        "//jax_plugins/cuda:disable_jaxlib_for_cpu_build": _CPU_PYPI_WHEEL_DEPS,
-        "//jax_plugins/cuda:disable_jaxlib_for_cuda12_build": gpu_pypi_wheel_deps,
-        "//jax_plugins/cuda:enable_py_import_for_cpu_build": cpu_py_imports,
-        "//jax_plugins/cuda:enable_py_import_for_cuda12_build": gpu_py_import_deps,
+        "//jax:config_build_jaxlib_true": [],
+        "//jax:config_build_jaxlib_false": ["@pypi//jaxlib"],
+        "//jax:config_build_jaxlib_wheel": ["//jaxlib/tools:jaxlib_py_import"],
+    })
+
+def _gpu_test_deps():
+    """Returns the additional dependencies needed for a GPU test."""
+    return select({
+        "//jax:config_build_jaxlib_true": [
+            "//jaxlib/cuda:gpu_only_test_deps",
+            "//jaxlib/rocm:gpu_only_test_deps",
+            "//jax_plugins:gpu_plugin_only_test_deps",
+        ],
+        "//jax:config_build_jaxlib_false": [
+            "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
+            "//jaxlib/tools:pypi_jax_cuda_pjrt_with_cuda_deps",
+        ],
+        "//jax:config_build_jaxlib_wheel": [
+            "//jaxlib/tools:jax_cuda_plugin_py_import",
+            "//jaxlib/tools:jax_cuda_pjrt_py_import",
+        ],
+    })
+
+def _get_jax_test_deps(deps):
+    """Returns the jax build deps, pypi jax wheel dep, or jax py_import dep for the given backend.
+
+    Args:
+      deps: the full list of test dependencies
+
+    Returns:
+      A list of jax test deps.
+
+      If --//jax:build_jax=true, returns jax build deps.
+      If --//jax:build_jax=false, returns jax pypi wheel dep and transitive pypi test deps.
+      If --//jax:build_jax=wheel, returns jax py_import dep and transitive pypi test deps.
+    """
+    non_pypi_deps = [d for d in deps if not d.startswith("@pypi//")]
+
+    # A lot of tests don't have explicit dependencies on scipy, ml_dtypes, etc. But the tests
+    # transitively depends on them via //jax. So we need to make sure that these dependencies are
+    # included in the test when JAX is built from source.
+    pypi_deps = depset([d for d in deps if d.startswith("@pypi//")])
+    pypi_deps = depset(py_deps([
+        "ml_dtypes",
+        "scipy",
+        "opt_einsum",
+        "flatbuffers",
+    ]), transitive = [pypi_deps]).to_list()
+
+    return pypi_deps + select({
+        "//jax:config_build_jax_false": ["//:jax_wheel_with_internal_test_util"],
+        "//jax:config_build_jax_wheel": ["//:jax_py_import"],
+        "//jax:config_build_jax_true": non_pypi_deps,
     })
 
 # buildifier: disable=function-docstring
@@ -297,16 +242,18 @@ def jax_multiplatform_test(
         args = [],
         env = {},
         shard_count = None,
+        minimal_shard_count = None,
         deps = [],
         data = [],
         enable_backends = None,
-        backend_variant_args = {},  # buildifier: disable=unused-variable
+        backend_variant_args = {},
         backend_tags = {},  # buildifier: disable=unused-variable
         disable_configs = None,  # buildifier: disable=unused-variable
         enable_configs = [],
         config_tags_overrides = None,  # buildifier: disable=unused-variable
         tags = [],
         main = None,
+        size = None,  # buildifier: disable=unused-variable
         pjrt_c_api_bypass = False):  # buildifier: disable=unused-variable
     # enable_configs and disable_configs do not do anything in OSS, only in Google's CI.
     # The order in which `enable_backends`, `enable_configs`, and `disable_configs` are applied is
@@ -321,29 +268,38 @@ def jax_multiplatform_test(
         else:
             fail("Must set a main file to test multiple source files.")
 
+    env = dict(env)
+    env.setdefault("PYTHONWARNINGS", "error")
+
     for backend in ALL_BACKENDS:
-        if shard_count == None or type(shard_count) == type(0):
-            test_shards = shard_count
+        test_shard_count = minimal_shard_count if USE_MINIMAL_SHARD_COUNT else shard_count
+        if test_shard_count == None or type(test_shard_count) == type(0):
+            test_shards = test_shard_count
         else:
-            test_shards = shard_count.get(backend, 1)
+            test_shards = test_shard_count.get(backend, 1)
         test_args = list(args) + [
             "--jax_test_dut=" + backend,
             "--jax_platform_name=" + backend,
         ]
+        test_args += backend_variant_args.get(backend, [])
         test_tags = list(tags) + ["jax_test_%s" % backend] + backend_tags.get(backend, [])
         if enable_backends != None and backend not in enable_backends and not any([config.startswith(backend) for config in enable_configs]):
             test_tags.append("manual")
+        test_deps = _cpu_test_deps() + _get_jax_test_deps([
+            "//jax",
+            "//jax/_src:test_util",
+        ] + deps)
         if backend == "gpu":
+            test_deps += _gpu_test_deps()
             test_tags += tf_cuda_tests_tags()
-        native.py_test(
+        elif backend == "tpu":
+            test_deps += ["@pypi//libtpu"]
+        py_test(
             name = name + "_" + backend,
             srcs = srcs,
             args = test_args,
             env = env,
-            deps = _get_test_deps([
-                "//jax",
-                "//jax:test_util",
-            ] + deps, backend_independent = False),
+            deps = test_deps,
             data = data,
             shard_count = test_shards,
             tags = test_tags,
@@ -475,6 +431,7 @@ def _jax_wheel_impl(ctx):
         if ctx.attr.platform_version == "":
             fail("platform_version must be set to a valid cuda version for cuda wheels")
         args.add("--platform_version", ctx.attr.platform_version)  # required for gpu wheels
+        args.add("--nvidia_wheel_versions_data", NVIDIA_WHEEL_VERSIONS)  # required for gpu wheels
     if ctx.attr.enable_rocm:
         args.add("--enable-rocm", "True")
         if ctx.attr.platform_version == "":
@@ -505,10 +462,9 @@ def _jax_wheel_impl(ctx):
 _jax_wheel = rule(
     attrs = {
         "wheel_binary": attr.label(
-            default = Label("//jaxlib/tools:build_wheel"),
+            default = Label("//jaxlib/tools:build_wheel_tool"),
             executable = True,
-            # b/365588895 Investigate cfg = "exec" for multi platform builds
-            cfg = "target",
+            cfg = "exec",
         ),
         "wheel_name": attr.string(mandatory = True),
         "no_abi": attr.bool(default = False),
@@ -635,18 +591,17 @@ def jax_py_test(
         env = {},
         **kwargs):
     env = dict(env)
-    if "PYTHONWARNINGS" not in env:
-        env["PYTHONWARNINGS"] = "error"
+    env.setdefault("PYTHONWARNINGS", "error")
     deps = kwargs.get("deps", [])
-    test_deps = _get_test_deps(deps, backend_independent = True)
+    test_deps = _cpu_test_deps() + _get_jax_test_deps(deps)
     kwargs["deps"] = test_deps
     py_test(name = name, env = env, **kwargs)
 
 def pytype_test(name, **kwargs):
     deps = kwargs.get("deps", [])
-    test_deps = _get_test_deps(deps, backend_independent = True)
+    test_deps = _cpu_test_deps() + _get_jax_test_deps(deps)
     kwargs["deps"] = test_deps
-    native.py_test(name = name, **kwargs)
+    py_test(name = name, **kwargs)
 
 def if_oss(oss_value, google_value = []):
     """Returns one of the arguments based on the non-configurable build env.
@@ -656,3 +611,98 @@ def if_oss(oss_value, google_value = []):
     """
     _ = (google_value, oss_value)  # buildifier: disable=unused-variable
     return oss_value
+
+def wheel_sources(
+        name,
+        py_srcs = [],
+        data_srcs = [],
+        symlink_data_srcs = [],
+        hdr_srcs = [],
+        static_srcs = []):
+    """Create a filegroup containing the list of source files for a wheel.
+
+    The sources are collected from the static files and from the transitive dependencies of the
+    given srcs.
+
+    Args:
+      name: the target name
+      py_srcs: targets which transitive python dependencies should be included in the wheel
+      data_srcs: targets which platform-dependent data dependencies should be included in the wheel
+      symlink_data_srcs: targets which symlinked data dependencies should be included in the wheel
+      hdr_srcs: targets which transitive header dependencies should be included in the wheel
+      static_srcs: the platform-independent file dependencies of the wheel
+    """
+    transitive_py_deps(name = "{}_py".format(name), deps = py_srcs)
+    collect_data_files(
+        name = "{}_data".format(name),
+        deps = data_srcs,
+        symlink_deps = symlink_data_srcs,
+    )
+    transitive_hdrs(name = "{}_hdrs".format(name), deps = hdr_srcs)
+    native.filegroup(name = name, srcs = [
+        ":{}_py".format(name),
+        ":{}_data".format(name),
+        ":{}_hdrs".format(name),
+    ] + static_srcs)
+
+def if_pypi_cuda_wheel_deps(if_true, if_false = []):
+    """ select() on whether we're adding pypi CUDA wheel deps. """
+    return select({
+        "//jaxlib/tools:pypi_cuda_wheel_deps": if_true,
+        "//conditions:default": if_false,
+    })
+
+def jax_multiprocess_test(
+        name,
+        srcs,
+        args = [],
+        env = {},
+        shard_count = None,
+        minimal_shard_count = None,
+        deps = [],
+        data = [],
+        enable_backends = None,
+        backend_variant_args = {},
+        backend_tags = {},
+        disable_configs = None,
+        enable_configs = [],
+        config_tags_overrides = None,
+        tags = [],
+        main = None):
+    # TODO(emilyaf): Avoid hard-coding the number of processes and chips/gpus per process.
+    multiprocess_backend_args = {
+        "cpu": backend_variant_args.get("cpu", []) + [
+            "--num_processes=4",
+        ],
+        "gpu": backend_variant_args.get("gpu", []) + [
+            "--num_processes=4",
+            "--gpus_per_process=2",
+        ],
+        "tpu": backend_variant_args.get("tpu", []) + [
+            "--num_processes=4",
+            "--tpu_chips_per_process=1",
+        ],
+    }
+    tags = tags + ["multiaccelerator"]
+    deps = deps + py_deps(["absl-all", "portpicker"])
+    return jax_multiplatform_test(
+        name = name,
+        srcs = srcs,
+        args = args,
+        env = env,
+        shard_count = shard_count,
+        minimal_shard_count = minimal_shard_count,
+        deps = deps,
+        data = data,
+        enable_backends = enable_backends,
+        backend_variant_args = multiprocess_backend_args,
+        backend_tags = backend_tags,
+        disable_configs = disable_configs,
+        enable_configs = enable_configs,
+        config_tags_overrides = config_tags_overrides,
+        tags = tags,
+        main = main,
+    )
+
+def jax_multiprocess_generate_backend_suites(name = None, backends = []):
+    return jax_generate_backend_suites(backends = backends)

@@ -18,7 +18,7 @@ from absl.testing import absltest
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lax import qdwh
+from jax._src.tpu.linalg import qdwh
 import jax.numpy as jnp
 import numpy as np
 

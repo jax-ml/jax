@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Implementation of the Threefry PRNG as a Pallas kernel."""
-from typing import Sequence
+from collections.abc import Sequence
 import jax
 from jax._src import prng
 from jax.experimental import pallas as pl
@@ -79,7 +79,7 @@ def threefry_2x32_count(key,
   block_shape = (1,) * (len(shape)-2) + block_size
   result = pl.pallas_call(
       kernel,
-      in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM)],
+      in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
       out_specs=pl.BlockSpec(block_shape, lambda *idxs: idxs),
       grid=grid_dims,
       out_shape=out,

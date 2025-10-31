@@ -19,7 +19,8 @@ import dataclasses
 import inspect
 import random
 import threading
-from typing import Any, Callable, Sequence
+from typing import Any
+from collections.abc import Callable, Sequence
 
 import jax
 from jax._src import api
@@ -65,7 +66,7 @@ class Specialization:
       out_specs_treedef: tree_util.PyTreeDef | None = None,
       out_specs_leaves: tuple[api.ShapeDtypeStruct, ...] | None = None,
       devices: Sequence[jax.Device] | xc.DeviceList | None = None,
-  ) -> Any:
+  ):
     """Creates a new specialization with overrides."""
     if in_specs_treedef is None:
       in_specs_treedef = self.in_specs_treedef
@@ -169,7 +170,7 @@ def _compile_to_executable(
         program, compile_options
     )
     out_handlers = pxla.global_avals_to_results_handler(
-        out_sdss, out_shardings, committed=True
+        out_sdss, out_shardings, committed=True  # type: ignore
     ).handlers
 
     def call(*args, **kwargs):
@@ -234,7 +235,7 @@ def _make_pop_result_fun(
 
   out_specs_treedef = specialization.out_specs_treedef
 
-  def lowered_fun() -> Any:
+  def lowered_fun():
     result_leaves = func_backend.SINGLETON_RESULT_STORE.pop(uid)
     return tree_util.tree_unflatten(out_specs_treedef, result_leaves)
 
@@ -279,7 +280,7 @@ def _make_async_execution_fun(
   )
 
 
-@jax.util.cache(max_size=None)
+@jax._src.util.cache(max_size=None)
 def _get_specialized_func(
     info: FunctionInfo, specialization: Specialization
 ) -> Callable[..., Any]:
@@ -294,7 +295,7 @@ def _get_specialized_func(
   # Asynchronous execution function that has known output_specs.
   async_execution_func = None
 
-  def specialized_func(*args, **kwargs) -> Any:
+  def specialized_func(*args, **kwargs):
     """Specialized function to be executed with given args and kwargs."""
     nonlocal specialization, async_execution_func
     with mutex:
@@ -356,24 +357,21 @@ def make_callable(
     fun: Callable[..., Any],
     fun_sourceinfo: str | None,
     fun_signature: inspect.Signature | None,
-) -> Callable[..., Any]:
+):
   """Makes a colocated Python callable."""
   return _make_callable(
       FunctionInfo(fun, fun_sourceinfo, fun_signature), Specialization()
   )
 
 
-def _make_callable(
-    info: FunctionInfo,
-    specialization: Specialization,
-) -> Callable[..., Any]:
+def _make_callable(info: FunctionInfo, specialization: Specialization):
   """Internal implementation of make_callable."""
 
   def specialize(
       in_specs: ShapeDtypeStructTree | None = None,
       out_specs_fn: Callable[..., ShapeDtypeStructTree] | None = None,
       devices: Sequence[jax.Device] | None = None,
-  ) -> Callable[..., Any]:
+  ):
     """Returns a colocated Python callable with extra specialization.
 
     Args:
@@ -381,12 +379,12 @@ def _make_callable(
         expressed as a `PyTree[ShapeDtypeStruct]` for `(args, kwargs)` of a
         function call.
       out_specs_fn: Optionally specifies a function that computes the output
-        specs from input specs. If unspecified, colocated_python will compute
+        specs from input specs. If unspecified, colocated Python will compute
         the output specs during the very first execution, and this execution
         will be synchronous.
       devices: Optionally specifies the devices to execute the function on. Must
-        be provided if in_specs has no leaves because devices cannot be inferred
-        from input specs or arguments.
+        be provided if `in_specs` has no leaves because devices cannot be
+        inferred from input specs or arguments.
 
     Returns:
       A colocated Python callable with extra specialization.
@@ -410,11 +408,14 @@ def _make_callable(
     )
 
   @api_boundary
-  def __call__(*args, **kwargs) -> Any:
-    """Executes the function.
+  def __call__(*args, **kwargs):
+    """Executes the given Python function on the same devices as the arguments or as specialized.
 
-    If the output specs are not known, the very first execution will be
-    synchronous.
+    If the callable has not been specialized with output shapes and shardings
+    (see `specialize` above), the very first call will run synchronously to
+    discover output shapes and shardings, and will run asynchronously after. If
+    specialized with output shapes and shardings, every execution of the
+    callable will be asynchronous.
     """
     args_leaves, in_specs_treedef = tree_util.tree_flatten((args, kwargs))
 

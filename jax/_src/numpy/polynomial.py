@@ -14,20 +14,19 @@
 
 from __future__ import annotations
 
-from functools import partial
 import operator
 
 import numpy as np
 
-from jax import jit
-from jax import lax
+from jax._src import api
 from jax._src import dtypes
 from jax._src import core
-from jax._src.lax import lax as lax_internal
+from jax._src.lax import control_flow
+from jax._src.lax import lax
+from jax._src.numpy.array_creation import full, ones, zeros
 from jax._src.numpy.lax_numpy import (
     arange, argmin, array, atleast_1d, concatenate, convolve,
-    diag, finfo, full, ones, roll, trim_zeros,
-    trim_zeros_tol, vander, zeros)
+    diag, finfo, roll, trim_zeros, trim_zeros_tol, vander)
 from jax._src.numpy.tensor_contractions import dot, outer
 from jax._src.numpy.ufuncs import maximum, true_divide, sqrt
 from jax._src.numpy.reductions import all
@@ -41,7 +40,7 @@ from jax._src.util import set_module
 export = set_module('jax.numpy')
 
 
-@jit
+@api.jit
 def _roots_no_zeros(p: Array) -> Array:
   # build companion matrix and find its eigenvalues (the roots)
   if p.size < 2:
@@ -51,7 +50,7 @@ def _roots_no_zeros(p: Array) -> Array:
   return linalg.eigvals(A)
 
 
-@jit
+@api.jit
 def _roots_with_zeros(p: Array, num_leading_zeros: Array | int) -> Array:
   # Avoid lapack errors when p is all zero
   p = _where(len(p) == num_leading_zeros, 1.0, p)
@@ -124,7 +123,7 @@ def roots(p: ArrayLike, *, strip_zeros: bool = True) -> Array:
 
 
 @export
-@partial(jit, static_argnames=('deg', 'rcond', 'full', 'cov'))
+@api.jit(static_argnames=('deg', 'rcond', 'full', 'cov'))
 def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
             full: bool = False, w: ArrayLike | None = None, cov: bool = False
             ) -> Array | tuple[Array, ...]:
@@ -146,7 +145,7 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
     rcond: Relative condition number of the fit. Default value is ``len(x) * eps``.
        It must be specified statically.
     full: Switch that controls the return value. Default is ``False`` which
-      restricts the return value to the array of polynomail coefficients ``p``.
+      restricts the return value to the array of polynomial coefficients ``p``.
       If ``True``, the function returns a tuple ``(p, resids, rank, s, rcond)``.
       It must be specified statically.
     w: Array of weights of shape ``(M,)``. If None, all data points are considered
@@ -154,8 +153,8 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
       unsquared residual of :math:`y_i - \widehat{y}_i` at :math:`x_i`, where
       :math:`\widehat{y}_i` is the fitted value of :math:`y_i`. Default is None.
     cov: Boolean or string. If ``True``, returns the covariance matrix scaled
-      by ``resids/(M-deg-1)`` along with ploynomial coefficients. If
-      ``cov='unscaled'``, returns the unscaaled version of covariance matrix.
+      by ``resids/(M-deg-1)`` along with polynomial coefficients. If
+      ``cov='unscaled'``, returns the unscaled version of covariance matrix.
       Default is ``False``. ``cov`` is ignored if ``full=True``. It must be
       specified statically.
 
@@ -224,7 +223,7 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
 
     >>> p, C = jnp.polyfit(x, y, 2, cov=True)
     >>> p.shape, C.shape
-    ((3, 3), (3, 3, 1))
+    ((3, 3), (3, 3, 3))
   """
   if w is None:
     x_arr, y_arr = ensure_arraylike("polyfit", x, y)
@@ -233,7 +232,6 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
   del x, y
   deg = core.concrete_or_error(int, deg, "deg must be int")
   order = deg + 1
-  # check arguments
   if deg < 0:
     raise ValueError("expected deg >= 0")
   if x_arr.ndim != 1:
@@ -245,7 +243,6 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
   if x_arr.shape[0] != y_arr.shape[0]:
     raise TypeError("expected x and y to have same length")
 
-  # set rcond
   if rcond is None:
     rcond = len(x_arr) * float(finfo(x_arr.dtype).eps)
   rcond = core.concrete_or_error(float, rcond, "rcond must be float")
@@ -268,34 +265,45 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
 
   # scale lhs to improve condition number and solve
   scale = sqrt((lhs*lhs).sum(axis=0))
-  lhs /= scale[np.newaxis,:]
+  lhs /= scale[np.newaxis, :]
   c, resids, rank, s = linalg.lstsq(lhs, rhs, rcond)
-  c = (c.T/scale).T  # broadcast scale coefficients
+
+  # Broadcasting scale coefficients
+  if c.ndim > 1:
+    # For multi-dimensional output, make scale (1, order) to divide
+    # across the c.T of shape (num_rhs, order)
+    c = (c.T / scale[np.newaxis, :]).T
+  else:
+    # Simple case for 1D output
+    c = c / scale
 
   if full:
     assert rcond is not None
-    return c, resids, rank, s, lax_internal.asarray(rcond)
+    return c, resids, rank, s, lax.asarray(rcond)
   elif cov:
     Vbase = linalg.inv(dot(lhs.T, lhs))
     Vbase /= outer(scale, scale)
+
     if cov == "unscaled":
-      fac = 1
+      fac = array(1.0)
     else:
       if len(x_arr) <= order:
-        raise ValueError("the number of data points must exceed order "
-                            "to scale the covariance matrix")
+        raise ValueError("the number of data points must exceed order"
+                         " to scale the covariance matrix")
       fac = resids / (len(x_arr) - order)
-      fac = fac[0] #making np.array() of shape (1,) to int
+
     if y_arr.ndim == 1:
+      fac = atleast_1d(fac)[np.newaxis]
+      # For 1D output, simple scalar multiplication
       return c, Vbase * fac
     else:
-      return c, Vbase[:, :, np.newaxis] * fac
+      # For multiple rhs, broadcast fac to match shape
+      return c, Vbase[:, :, np.newaxis] * atleast_1d(fac)[np.newaxis, np.newaxis, :]
   else:
     return c
 
-
 @export
-@jit
+@api.jit
 def poly(seq_of_zeros: ArrayLike) -> Array:
   r"""Returns the coefficients of a polynomial for the given sequence of roots.
 
@@ -378,7 +386,7 @@ def poly(seq_of_zeros: ArrayLike) -> Array:
 
 
 @export
-@partial(jit, static_argnames=['unroll'])
+@api.jit(static_argnames=['unroll'])
 def polyval(p: ArrayLike, x: ArrayLike, *, unroll: int = 16) -> Array:
   r"""Evaluates the polynomial at specific values.
 
@@ -437,12 +445,12 @@ def polyval(p: ArrayLike, x: ArrayLike, *, unroll: int = 16) -> Array:
   del p, x
   shape = lax.broadcast_shapes(p_arr.shape[1:], x_arr.shape)
   y = lax.full_like(x_arr, 0, shape=shape, dtype=x_arr.dtype)
-  y, _ = lax.scan(lambda y, p: (y * x_arr + p, None), y, p_arr, unroll=unroll)  # type: ignore[misc]
+  y, _ = control_flow.scan(lambda y, p: (y * x_arr + p, None), y, p_arr, unroll=unroll)  # type: ignore[misc]
   return y
 
 
 @export
-@jit
+@api.jit
 def polyadd(a1: ArrayLike, a2: ArrayLike) -> Array:
   r"""Returns the sum of the two polynomials.
 
@@ -500,7 +508,7 @@ def polyadd(a1: ArrayLike, a2: ArrayLike) -> Array:
 
 
 @export
-@partial(jit, static_argnames=('m',))
+@api.jit(static_argnames=('m',))
 def polyint(p: ArrayLike, m: int = 1, k: int | ArrayLike | None = None) -> Array:
   r"""Returns the coefficients of the integration of specified order of a polynomial.
 
@@ -569,7 +577,7 @@ def polyint(p: ArrayLike, m: int = 1, k: int | ArrayLike | None = None) -> Array
 
 
 @export
-@partial(jit, static_argnames=('m',))
+@api.jit(static_argnames=('m',))
 def polyder(p: ArrayLike, m: int = 1) -> Array:
   r"""Returns the coefficients of the derivative of specified order of a polynomial.
 
@@ -747,7 +755,7 @@ def polydiv(u: ArrayLike, v: ArrayLike, *, trim_leading_zeros: bool = False) -> 
 
 
 @export
-@jit
+@api.jit
 def polysub(a1: ArrayLike, a2: ArrayLike) -> Array:
   r"""Returns the difference of two polynomials.
 

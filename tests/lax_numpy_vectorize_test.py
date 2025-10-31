@@ -287,6 +287,15 @@ class VectorizeTest(jtu.JaxTestCase):
       with self.assertNoWarnings():
         f2(rank2, rank1)
 
+  def test_non_scalar_outputs_and_default_signature(self):
+    def f(x):
+      self.assertEqual(np.shape(x), ())
+      return x + jnp.linspace(-1, 1, out_dim)
+
+    out_dim = 5
+    self.assertEqual(jnp.vectorize(f)(0.5).shape, (out_dim,))
+    self.assertEqual(jnp.vectorize(f)(jnp.ones(3)).shape, (3, out_dim))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

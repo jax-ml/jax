@@ -51,7 +51,7 @@ print("Running on", jax.devices()[0].device_kind)
 
 ## Dynamic Block Indexing with Scalar Prefetch
 
-We will be exploiting the "scalar prefetch" feature of Pallas to enable us to write sparse kernels. Scalar prefetch allows you to pass in a small amount of data into SMEM ("scalar memory") that is loaded before the start of the pipeline ("prefetch"). Because this data is loaded before the pipeline, it is available for use in the `index_map` for each BlockSpec, allowing the you to perform data-dependent indexing calculations. The main goal of this tutorial is to go over common programming patterns that utilize this feature.
+We will be exploiting the "scalar prefetch" feature of Pallas to enable us to write sparse kernels. Scalar prefetch allows you to pass in a small amount of data into SMEM ("scalar memory") that is loaded before the start of the pipeline ("prefetch"). Because this data is loaded before the pipeline, it is available for use in the `index_map` for each BlockSpec, allowing you to perform data-dependent indexing calculations. The main goal of this tutorial is to go over common programming patterns that utilize this feature.
 
 To use scalar prefetch, use `pltpu.PrefetchScalarGridSpec` in place of the standard `pl.GridSpec`:
 
@@ -208,13 +208,13 @@ def generate_block_sparse_mat(key, M, N, blk_M, blk_N, p=0.2, dtype=jnp.float32)
 
 ## Example: Sparse @ Dense Matrix Multiplication
 
-In our first example, we will multiple a sparse LHS matrix with a dense RHS matrix to produce a dense output.
+In our first example, we will multiply a sparse LHS matrix with a dense RHS matrix to produce a dense output.
 
 We will structure our kernel grid with 2 loops - the outer loop over the columns of the RHS/output, and inner loop over the sparse blocks of the LHS. During each inner loop iteration, we load one block from the LHS and lookup the corresponding block on in the RHS using the block index of the contracting dimension (K). We multiply the two blocks together and accumulate into the correct output block. One outer loop iteration will compute a result for an entire column as depicted by the following diagram:
 
 ![sparse_matmul](../../_static/pallas/sparse/sparse_matmul.svg)
 
-It is important that we group the block indices by row (e.g. `[0, 0, 1, 2, 3, 3]`) before we pass them into the kernel for two reasons. First, in our kernel we need to know when to initially zero-out the accumulator in the output ref, and it is easy to do so if the row indices are grouped. Second, the pipelining logic for Pallas does not allow us to re-visit blocks in the output `Ref` on non-consecutive iterations, and therefore we need to do all accumulation into an output block in consecutive kernel iterations. This is because the pipeline emitter will realize that we loading the same output block on consecutive iterations and keep the block in VMEM. When we change output block Pallas will finally store the output into HBM and assume we never touch it again. Failure to access output blocks consecutively will result in incorrect values even though the kernel is otherwise logically correct.
+It is important that we group the block indices by row (e.g. `[0, 0, 1, 2, 3, 3]`) before we pass them into the kernel for two reasons. First, in our kernel we need to know when to initially zero-out the accumulator in the output ref, and it is easy to do so if the row indices are grouped. Second, the pipelining logic for Pallas does not allow us to re-visit blocks in the output `Ref` on non-consecutive iterations, and therefore we need to do all accumulation into an output block in consecutive kernel iterations. This is because the pipeline emitter will realize that we are loading the same output block on consecutive iterations and keep the block in VMEM. When we change output block Pallas will finally store the output into HBM and assume we never touch it again. Failure to access output blocks consecutively will result in incorrect values even though the kernel is otherwise logically correct.
 
 ```{code-cell}
 ---
@@ -353,7 +353,7 @@ print("Reference: %.3f ms (avg over %d trials)" % (time * 1000, n_trials))
 
 In our previous example we considered the case when the data itself is sparse. This manifested itself in the kernel structure as a dimension in the kernel grid that was dynamic and looped over the number of nonzero blocks (`num_blocks`).
 
-A second useful programming pattern emerges when the underlying is data is dense, but we wish to perform sparse computation over it. Our kernel grid in this case will be dense, but we wish to skip over some blocks in the grid as indicated by a block-sparse mask. This type of programming pattern is commonly arises when using masks in many machine learning applications, such as causal or local masks in self-attention. In these cases, we can entirely skip over computation in blocks where the mask is zeroed-out. Examples of this programming pattern can be found in the Splash Attention and Grouped Matrix Multiplication kernels located in `jax/experimental/pallas/ops/tpu`, or in PyTorch's [FlexAttention](https://pytorch.org/blog/flexattention/).
+A second useful programming pattern emerges when the underlying data is dense, but we wish to perform sparse computation over it. Our kernel grid in this case will be dense, but we wish to skip over some blocks in the grid as indicated by a block-sparse mask. This type of programming pattern commonly arises when using masks in many machine learning applications, such as causal or local masks in self-attention. In these cases, we can entirely skip over computation in blocks where the mask is zeroed-out. Examples of this programming pattern can be found in the Splash Attention and Grouped Matrix Multiplication kernels located in `jax/experimental/pallas/ops/tpu`, or in PyTorch's [FlexAttention](https://pytorch.org/blog/flexattention/).
 
 The main performance consideration with dealing with a sparse access pattern on dense data is the interaction with pipelining. On any given kernel iteration, the Pallas pipeline emitter will attempt to prefetch the next block of data by calling the `index_map` for each `BlockSpec` on the next iteration of the grid. However, if our computation is sparse we may be skipping the computation for the next block in the grid, so we need some method to tell the pipeline instead begin fetching the *next block that we are not skipping*. In order to do this, we need to construct *prefetch maps* which contains indices to the next non-skipped block of data for each kernel input. The following diagram illustrates how a prefetch map could be constructed for a block-sparse mask that is stored in a COO-like format.
 
@@ -391,7 +391,7 @@ As we will be working with a sparse mask, we will begin by implementing a functi
 
 def sparsify_mask(mask: jax.Array,
                   block_shape: tuple[int, int]):
-  """Preprocesses a mask into a sparse reprentation.
+  """Preprocesses a mask into a sparse representation.
 
   Args:
     mask: A boolean array of shape [M, N]
@@ -411,7 +411,6 @@ def sparsify_mask(mask: jax.Array,
   block_mask = jnp.zeros((M // bm, N // bn), dtype=mask.dtype)
   mask_types_finder = []
   mask_data = []
-  mask_type_idxs = []
 
   next_mask_type_idx = 0
   prefetch_mask = jnp.zeros_like(block_mask)
@@ -436,7 +435,6 @@ def sparsify_mask(mask: jax.Array,
         next_j = j
       else:
         type_index = -1
-      mask_type_idxs.append(type_index)
       block_mask = block_mask.at[i, j].set(is_nonzero)
       prefetch_mask = prefetch_mask.at[i, j].set(next_mask_type_idx)
       prefetch_i = prefetch_i.at[i, j].set(next_i)
@@ -542,7 +540,7 @@ Now let's compare performance versus a naive dense implementation. On TPU v5e, w
 
 We would generally expect performance to get closer to the theoretical peak as our inputs get larger, since a few of the main reasons why we don't exactly reach theoretical performance are:
 - We skip slightly less than half of computation since the blocks along the diagonal are mixed 0s and 1s, and for mixed blocks we need to compute the entire block. With larger inputs, our overhead for mixed blocks becomes smaller relative to the overall computation.
-- The pipeline bubble also becomes accounts for a less percentage of the overall runtime as inputs become larger.
+- The pipeline bubble also accounts for a less percentage of the overall runtime as inputs become larger.
 
 ```{code-cell}
 ---

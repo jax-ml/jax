@@ -44,9 +44,11 @@ def _generate_qkv(
   k_pages = jax.random.normal(
       k1, (num_kv_heads, total_pages, page_size, head_dim), dtype=dtype
   )
+  k_pages = k_pages / jnp.linalg.norm(k_pages, axis=-1)[..., None]
   v_pages = jax.random.normal(
       k2, (num_kv_heads, total_pages, page_size, head_dim), dtype=dtype
   )
+  v_pages = v_pages / jnp.linalg.norm(v_pages, axis=-1)[..., None]
 
   block_tables = jnp.arange(
       batch_size * max_num_blocks_per_seq, dtype=jnp.int32
@@ -54,6 +56,7 @@ def _generate_qkv(
   block_tables = jax.random.permutation(k3, block_tables, independent=True)
   block_tables = block_tables.reshape(batch_size, max_num_blocks_per_seq)
   q = jax.random.normal(k4, (batch_size, num_heads, head_dim), dtype=dtype)
+  q = q / jnp.linalg.norm(q, axis=-1)[..., None]
   return q, k_pages, v_pages, block_tables
 
 
@@ -71,6 +74,17 @@ def _reconstruct_kv(block_tables: jax.Array, pages: jax.Array) -> jax.Array:
   out = jnp.swapaxes(out, 1, 2)
 
   return out
+
+def _quantize(x: jax.Array, dtype=jnp.int8):
+  if isinstance(dtype, jnp.floating):
+    max_val = jnp.astype(jnp.finfo(dtype).max, x.dtype)
+  else:
+    max_val = 127
+  x_scale = jnp.max(jnp.abs(x), axis=-1) / (0.95 * max_val)
+  x_quant = (x / x_scale[..., None])
+  if isinstance(dtype, jnp.floating):
+    x_quant = jnp.rint(x_quant)
+  return x_quant.astype(dtype), x_scale.astype(x.dtype)
 
 
 @jtu.with_config(jax_traceback_filtering="off")
@@ -92,7 +106,6 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
-
 
 class PagedAttentionKernelTest(PallasBaseTest):
 
@@ -153,6 +166,83 @@ class PagedAttentionKernelTest(PallasBaseTest):
     o_ref = paged_attention.paged_attention_reference(q, k, v, lengths=seq_lens)
 
     self.assertArraysAllClose(o, o_ref, rtol=5e-2, atol=5e-2)
+
+  @jtu.sample_product(
+      dtype=(jnp.float16,),
+      page_size=(8, 16, 32),
+      num_kv_heads=(1, 2),
+      q_kv_head_ratio=(2, 16, 20),
+      head_dim=(32, 64),
+      block_h=(16, 32),
+      pages_per_compute_block=(4, 8),
+      k_splits=(4, 16),
+      attn_logits_soft_cap=(None,),
+      quantize_k=(True, False),
+      quantize_v=(True, False),
+      quant_dtype=(jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.int8),
+  )
+  def test_quantized_paged_attention(
+      self,
+      dtype,
+      page_size,
+      num_kv_heads,
+      q_kv_head_ratio,
+      head_dim,
+      block_h,
+      pages_per_compute_block,
+      k_splits,
+      attn_logits_soft_cap,
+      quantize_k,
+      quantize_v,
+      quant_dtype,
+  ):
+    if not quantize_k and not quantize_v:
+      self.skipTest("Skipping since neither (k, v) quantization requested.")
+    if (quant_dtype == jnp.float8_e4m3fn
+        and not jtu.is_cuda_compute_capability_at_least("8.9")):
+      self.skipTest("Skipping since float8_e4m3fn is not supported on < sm89")
+    max_kv_len = 2048
+    seq_lens = np.asarray([3, 256, 513, 1023, 2048], dtype=jnp.int32)
+    q, k_pages, v_pages, block_tables = _generate_qkv(
+        seq_lens.shape[0],
+        page_size,
+        max_kv_len,
+        num_kv_heads,
+        num_kv_heads * q_kv_head_ratio,
+        head_dim,
+        jax.random.key(0),
+        dtype,
+    )
+    k = _reconstruct_kv(block_tables, k_pages)
+    v = _reconstruct_kv(block_tables, v_pages)
+
+    k_, k_scales = (_quantize(k_pages, quant_dtype)
+                    if quantize_k else (k_pages, None))
+    v_, v_scales = (_quantize(k_pages, quant_dtype)
+                    if quantize_v else (v_pages, None))
+
+    o = paged_attention.paged_attention(
+        q,
+        k_,
+        v_,
+        block_tables,
+        seq_lens,
+        k_scales_pages=k_scales,
+        v_scales_pages=v_scales,
+        block_h=block_h,
+        pages_per_compute_block=pages_per_compute_block,
+        k_splits=k_splits,
+        attn_logits_soft_cap=attn_logits_soft_cap,
+        interpret=self.INTERPRET,
+    )
+
+    o_ref = paged_attention.paged_attention_reference(q, k, v, lengths=seq_lens)
+
+    error = (jnp.linalg.norm((o - o_ref).astype(jnp.float32), axis=-1)
+              / jnp.linalg.norm(o_ref.astype(jnp.float32)))
+
+    admissible_error = 3e-1
+    self.assertLessEqual(jnp.mean(error), admissible_error)
 
 
 class PagedAttentionInterpretTest(PagedAttentionKernelTest):

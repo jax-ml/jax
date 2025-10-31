@@ -1,12 +1,20 @@
 # CI - Wheel Tests (Nightly/Release)
 #
-# This workflow builds JAX artifacts and runs CPU/CUDA tests.
+# This workflow is used to test the JAX wheels that were built by internal CI jobs.
 #
-# It orchestrates the following:
-# 1. run-pytest-cpu:  Calls the `pytest_cpu.yml` workflow which downloads the jaxlib wheel that was
+# 1. run-pytest-cpu:  Calls the `pytest_cpu.yml` workflow which downloads the JAX wheels that were
 #                     built by internal CI jobs and runs CPU tests.
-# 2. run-pytest-cuda: Calls the `pytest_cuda.yml` workflow which downloads the jaxlib and CUDA
-#                     artifacts that were built by internal CI jobs and runs the CUDA tests.
+# 2. run-bazel-test-cpu:  Calls the `bazel_cpu.yml` workflow which downloads the
+#                     JAX wheels that were built by internal CI jobs and runs Bazel CPU tests.
+# 3. run-pytest-cuda: Calls the `pytest_cuda.yml` workflow which downloads the JAX wheels that were
+#                     built by internal CI jobs and runs CUDA tests.
+# 4. run-bazel-test-cuda: Calls the `bazel_cuda.yml` workflow which downloads the JAX wheels
+#                     that were built by internal CI jobs and runs Bazel CUDA tests.
+# 5. run-pytest-tpu: Calls the `pytest_tpu.yml` workflow which downloads the JAX wheels that were
+#                    built by internal CI jobs and runs TPU tests.
+# 6. run-bazel-test-tpu: Calls the `bazel_test_tpu.yml` workflow which downloads the JAX wheels that
+#                        were built by internal CI jobs and runs Bazel TPU tests.
+# 7. verify-release-wheels-install: Verifies that JAX's release wheels can be installed.
 name: CI - Wheel Tests (Nightly/Release)
 
 on:
@@ -15,17 +23,26 @@ on:
       gcs_download_uri:
         description: "GCS location URI from where the artifacts should be downloaded"
         required: true
-        default: 'gs://jax-nightly-release-transient/nightly/latest'
+        default: 'gs://jax-nightly-artifacts/latest'
         type: string
-      download-jax-only-from-gcs:
+      skip-download-jaxlib-and-cuda-plugins-from-gcs:
         description: "Whether to download only the jax wheel from GCS (e.g for testing a jax only release)"
         required: true
         default: '0'
+        type: string
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection? (yes/no)'
+        required: false
+        default: 'no'
         type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
+permissions: {}
+
+env:
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
 
 jobs:
   run-pytest-cpu:
@@ -35,19 +52,45 @@ jobs:
         matrix:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
-          runner: ["linux-x86-n2-64", "linux-arm64-t2a-48", "windows-x86-n2-64"]
-          python: ["3.10","3.11", "3.12", "3.13", "3.13-nogil"]
+          runner: ["linux-x86-n4-64", "linux-arm64-t2a-48", "windows-x86-n2-64"]
+          python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
           enable-x64: [0]
           exclude:
             - runner: "windows-x86-n2-64"
               python: "3.13-nogil"
+            - runner: "windows-x86-n2-64"
+              python: "3.14-nogil"
     name: "Pytest CPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
-      download-jax-only-from-gcs: ${{inputs.download-jax-only-from-gcs}}
+      skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
+      halt-for-connection: ${{inputs.halt-for-connection}}
+      # TODO(b/456203132): Increase to more than 16 processes if this works
+      #  (56 prior to this).
+      max-processes: ${{ contains(matrix.runner, 'windows-x86') && '16' || '' }}
+
+  run-bazel-test-cpu:
+    uses: ./.github/workflows/bazel_cpu.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
+          # that build the wheels.
+          runner: ["linux-x86-n4-64", "linux-arm64-t2a-48"]
+          python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
+          enable-x64: [0]
+    name: "Bazel CPU tests with ${{ format('{0}', 'build_jaxlib=false') }}"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      gcs_download_uri: ${{inputs.gcs_download_uri}}
+      halt-for-connection: ${{inputs.halt-for-connection}}
+      build_jaxlib: "false"
+      build_jax: "false"
 
   run-pytest-cuda:
     uses: ./.github/workflows/pytest_cuda.yml
@@ -56,47 +99,107 @@ jobs:
         matrix:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
-          runner: ["linux-x86-g2-48-l4-4gpu"]
-          python: ["3.10","3.11", "3.12", "3.13", "3.13-nogil"]
-          cuda: ["12.1", "12.8"]
+          runner: ["linux-x86-g2-48-l4-4gpu",  "linux-x86-a3-8g-h100-8gpu", "linux-x86-a4-224-b200-1gpu"]
+          python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
+          cuda: [
+            {cuda-version: "12.1", use-nvidia-pip-wheels: false},
+            {cuda-version: "12.9", use-nvidia-pip-wheels: true},
+            {cuda-version: "13", use-nvidia-pip-wheels: true}
+          ]
           enable-x64: [0]
-    name: "Pytest CUDA (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
+          exclude:
+            # H100 runs only CUDA 12.9 and min and max Python versions.
+            - runner: "linux-x86-a3-8g-h100-8gpu"
+              cuda:
+                cuda-version: "12.1"
+            - runner: "linux-x86-a3-8g-h100-8gpu"
+              python: "3.12"
+            - runner: "linux-x86-a3-8g-h100-8gpu"
+              python: "3.13"
+            - runner: "linux-x86-a3-8g-h100-8gpu"
+              python: "3.13-nogil"
+            - runner: "linux-x86-a3-8g-h100-8gpu"
+              python: "3.14-nogil"
+            # B200 runs only CUDA 12.9 and min and max Python versions.
+            - runner: "linux-x86-a4-224-b200-1gpu"
+              cuda:
+                cuda-version: "12.1"
+            - runner: "linux-x86-a4-224-b200-1gpu"
+              python: "3.12"
+            - runner: "linux-x86-a4-224-b200-1gpu"
+              python: "3.13"
+            - runner: "linux-x86-a4-224-b200-1gpu"
+              python: "3.13-nogil"
+            - runner: "linux-x86-a4-224-b200-1gpu"
+              python: "3.14-nogil"
+    name: "Pytest CUDA (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }}, CUDA Pip packages = ${{ matrix.cuda.use-nvidia-pip-wheels }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
-      cuda:  ${{ matrix.cuda }}
+      cuda-version:  ${{ matrix.cuda.cuda-version }}
+      use-nvidia-pip-wheels: ${{ matrix.cuda.use-nvidia-pip-wheels }}
       enable-x64:  ${{ matrix.enable-x64 }}
-      download-jax-only-from-gcs: ${{inputs.download-jax-only-from-gcs}}
+      skip-download-jaxlib-and-cuda-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
+      halt-for-connection: ${{inputs.halt-for-connection}}
+
+  run-bazel-test-cuda:
+    uses: ./.github/workflows/bazel_cuda.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
+          # that build the wheels.
+          runner: ["linux-x86-g2-48-l4-4gpu"]
+          python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
+          cuda-version: [12, 13]
+          enable-x64: [0]
+    name: "Bazel CUDA Non-RBE with ${{ format('{0}', 'build_jaxlib=false') }}"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      cuda-version: ${{ matrix.cuda-version }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      gcs_download_uri: ${{inputs.gcs_download_uri}}
+      halt-for-connection: ${{inputs.halt-for-connection}}
+      build_jaxlib: "false"
+      build_jax: "false"
+      jaxlib-version: "head"
+      write_to_bazel_remote_cache: 1
+      run_multiaccelerator_tests: "true"
 
   run-pytest-tpu:
     uses: ./.github/workflows/pytest_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          # Skip Python 3.13 as it fails due to missing TensorFlow wheels (used for
-          # profiler_test.py, build/collect-profile-requirements.txt) for that version (b/402590302)
-          python: ["3.10", "3.11", "3.12"]
+          python: ["3.11", "3.12", "3.13", "3.13-nogil"]
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
-            {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
-            {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"}
+            {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
+            {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"}
           ]
-          libtpu-version-type: ["pypi_latest", "nightly", "oldest_supported_libtpu"]
+          libtpu-version-type: ["pypi_latest", "nightly"]
           exclude:
+            # Exclude nightly for releases
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
+            # Exclude pypi_latest for nightly releases
             - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pypi_latest' }}
-            # Run a single Python version for v4-8.
+            # Run Python versions in between min and max for v6e-8
             - tpu-specs:
-                type: "v4-8"
-              python: "3.10"
+                type: "v6e-8"
+              python: "3.13"
             - tpu-specs:
-                type: "v4-8"
-              python: "3.11"
+                type: "v6e-8"
+              python: "3.13-nogil"
             # Run min and max Python versions for v5e-8
             - tpu-specs:
                 type: "v5e-8"
               python: "3.11"
+            - tpu-specs:
+                type: "v5e-8"
+              python: "3.12"
+
     name: "Pytest TPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
@@ -105,5 +208,142 @@ jobs:
       python: ${{ matrix.python }}
       run-full-tpu-test-suite: "1"
       libtpu-version-type: ${{ matrix.libtpu-version-type }}
-      download-jax-only-from-gcs: ${{inputs.download-jax-only-from-gcs}}
+      skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
+      halt-for-connection: ${{inputs.halt-for-connection}}
+
+  run-bazel-test-tpu:
+    uses: ./.github/workflows/bazel_test_tpu.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          python: ["3.11", "3.12", "3.13", "3.13-nogil"]
+          tpu-specs: [
+            # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
+            {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
+            {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
+          ]
+          libtpu-version-type: ["pypi_latest", "nightly"]
+          exclude:
+            # Exclude nightly for releases
+            - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
+            # Exclude pypi_latest for nightly releases
+            - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pypi_latest' }}
+            # Run a single Python version for v4-8
+            - tpu-specs:
+                type: "v4-8"
+              python: "3.11"
+            - tpu-specs:
+                type: "v4-8"
+              python: "3.12"
+            - tpu-specs:
+                type: "v4-8"
+              python: "3.13-nogil"
+            # Run min and max Python versions for v5e-8
+            - tpu-specs:
+                type: "v5e-8"
+              python: "3.11"
+            - tpu-specs:
+                type: "v5e-8"
+              python: "3.12"
+
+    name: "Bazel tests TPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
+    with:
+      runner: ${{ matrix.tpu-specs.runner }}
+      cores: ${{ matrix.tpu-specs.cores }}
+      tpu-type: ${{ matrix.tpu-specs.type }}
+      python: ${{ matrix.python }}
+      run-full-tpu-test-suite: "1"
+      libtpu-version-type: ${{ matrix.libtpu-version-type }}
+      skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs}}
+      gcs_download_uri: ${{inputs.gcs_download_uri}}
+      halt-for-connection: ${{inputs.halt-for-connection}}
+      build_jaxlib: "false"
+      build_jax: "false"
+      jaxlib-version: "head"
+      clone_main_xla: 0
+
+  verify-release-wheels-install:
+    if: ${{ startsWith(github.ref_name, 'release/')}}
+    defaults:
+      run:
+        # Set the shell to bash as GitHub actions runs with /bin/sh by default
+        shell: bash
+    runs-on: linux-x86-n4-16
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          python: ["3.11", "3.13", "3.13-nogil"]
+          cuda-version: [12, 13]
+    container:  "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+
+    # Verifies that JAX's release wheels can be installed
+    name: "Verify release wheels install (Python ${{ matrix.python }})"
+
+    env:
+      PYTHON: "python${{ matrix.python }}"
+
+    steps:
+      - name: Download release wheels from GCS
+        run: |
+          mkdir -p $(pwd)/dist
+          final_gcs_download_uri=${{ inputs.gcs_download_uri }}
+
+          # Get the major and minor version of Python.
+          # E.g if python=3.11, then python_major_minor=311
+          # E.g if python=3.13-nogil, then python_major_minor=313t
+          python_major_minor=${{ matrix.python }}
+          python_major_minor=$(echo "${python_major_minor//-nogil/t}" | tr -d '.')
+          python_major_minor="cp${python_major_minor%t}-cp${python_major_minor}-"
+
+          gcloud storage cp -r "${final_gcs_download_uri}"/jax*py3*none*any.whl $(pwd)/dist/
+
+          jax_wheel=$(ls dist/jax*py3*none*any.whl 2>/dev/null)
+          echo "JAX_WHEEL=$jax_wheel" >> $GITHUB_ENV
+
+          if [[ "${{ inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs }}" != "1" ]]; then
+            gcloud storage cp -r "${final_gcs_download_uri}/jaxlib*${python_major_minor}*linux*x86_64*.whl" $(pwd)/dist/
+            gcloud storage cp -r "${final_gcs_download_uri}/jax*cuda${{ matrix.cuda-version }}*plugin*${python_major_minor}*linux*x86_64*.whl" $(pwd)/dist/
+            gcloud storage cp -r "${final_gcs_download_uri}/jax*cuda${{ matrix.cuda-version }}*pjrt*linux*x86_64*.whl" $(pwd)/dist/
+
+            jaxlib_wheel=$(ls dist/jaxlib*${python_major_minor}*linux*x86_64*.whl 2>/dev/null)
+            jax_cuda_plugin_wheel=$(ls dist/jax*cuda${{ matrix.cuda-version }}*plugin*${python_major_minor}*linux*x86_64*.whl 2>/dev/null)
+            jax_cuda_pjrt_wheel=$(ls dist/jax*cuda${{ matrix.cuda-version }}*pjrt*linux*x86_64*.whl 2>/dev/null)
+
+            echo "JAXLIB_WHEEL=$jaxlib_wheel" >> $GITHUB_ENV
+            echo "JAX_CUDA_PLUGIN_WHEEL=$jax_cuda_plugin_wheel" >> $GITHUB_ENV
+            echo "JAX_CUDA_PJRT_WHEEL=$jax_cuda_pjrt_wheel" >> $GITHUB_ENV
+          fi
+      - name: Verify JAX CPU packages can be installed
+        run: |
+          $PYTHON -m uv venv ~/test_cpu && source ~/test_cpu/bin/activate
+          if [[ "${{ inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs }}" == "1" ]]; then
+            uv pip install $JAX_WHEEL
+          else
+            uv pip install $JAX_WHEEL $JAXLIB_WHEEL
+          fi
+      - name: Verify JAX TPU packages can be installed
+        run: |
+          $PYTHON -m uv venv ~/test_tpu && source ~/test_tpu/bin/activate
+
+          if [[ "${{ inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs }}" == "1" ]]; then
+            uv pip install $JAX_WHEEL[tpu]
+          else
+            uv pip install $JAX_WHEEL[tpu] $JAXLIB_WHEEL
+          fi
+      - name: Verify JAX CUDA packages can be installed (Nvidia Pip Packages)
+        run: |
+          $PYTHON -m uv venv ~/test_cuda_pip && source ~/test_cuda_pip/bin/activate
+          if [[ "${{ inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs }}" == "1" ]]; then
+            uv pip install $JAX_WHEEL[cuda${{ matrix.cuda-version }}]
+          else
+            uv pip install $JAX_WHEEL[cuda${{ matrix.cuda-version }}] $JAXLIB_WHEEL $JAX_CUDA_PJRT_WHEEL $JAX_CUDA_PLUGIN_WHEEL[with-cuda] $EXTRA_INDEX
+          fi
+      - name: Verify JAX CUDA packages can be installed (CUDA local)
+        run: |
+          $PYTHON -m uv venv ~/test_cuda_local && source ~/test_cuda_local/bin/activate
+          if [[ "${{ inputs.skip-download-jaxlib-and-cuda-plugins-from-gcs }}" == "1" ]]; then
+            uv pip install $JAX_WHEEL[cuda${{ matrix.cuda-version }}-local]
+          else
+            uv pip install $JAX_WHEEL $JAXLIB_WHEEL $JAX_CUDA_PJRT_WHEEL $JAX_CUDA_PLUGIN_WHEEL
+          fi

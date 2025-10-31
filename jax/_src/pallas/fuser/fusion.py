@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Callable, Generic, ParamSpec, TypeVar
+from typing import Any, Generic, ParamSpec, TypeVar
+from collections.abc import Callable
 
 import jax
 from jax._src import util

@@ -19,7 +19,7 @@ technology stack](#components). First, we design the `jax` module
 to be
 [composable](https://github.com/jax-ml/jax?tab=readme-ov-file#transformations)
 and
-[extensible](https://jax.readthedocs.io/en/latest/jax.extend.html), so
+[extensible](https://docs.jax.dev/en/latest/jax.extend.html), so
 that a wide variety of domain-specific libraries can thrive outside of
 it in a decentralized manner. Second, we lean heavily on a modular
 backend stack (compiler and runtime) to target different
@@ -42,10 +42,10 @@ scale.
 JAX's day-to-day development takes place in the open on GitHub, using
 pull requests, the issue tracker, discussions, and [JAX Enhancement
 Proposals
-(JEPs)](https://jax.readthedocs.io/en/latest/jep/index.html). Reading
+(JEPs)](https://docs.jax.dev/en/latest/jep/index.html). Reading
 and participating in these is a good way to get involved. We also
 maintain [developer
-notes](https://jax.readthedocs.io/en/latest/contributor_guide.html)
+notes](https://docs.jax.dev/en/latest/contributor_guide.html)
 that cover JAX's internal design.
 
 The JAX core team determines whether to accept changes and
@@ -56,7 +56,7 @@ intricate decision structure over time (e.g. with designated area
 owners) if/when it becomes useful to do so.
 
 For more see [contributing to
-JAX](https://jax.readthedocs.io/en/latest/contributing.html).
+JAX](https://docs.jax.dev/en/latest/contributing.html).
 
 (components)=
 ## A modular stack
@@ -71,7 +71,7 @@ and (b) an advancing hardware landscape, we lean heavily on
 While the JAX core library focuses on the fundamentals, we want to
 encourage domain-specific libraries and tools to be built on top of
 JAX. Indeed, [many
-libraries](https://jax.readthedocs.io/en/latest/#ecosystem) have
+libraries](https://docs.jax.dev/en/latest/#ecosystem) have
 emerged around JAX to offer higher-level features and extensions.
 
 How do we encourage such decentralized development? We guide it with
@@ -80,11 +80,11 @@ building blocks (e.g. numerical primitives, NumPy operations, arrays,
 and transformations), encouraging auxiliary libraries to develop
 utilities as needed for their domain. In addition, JAX exposes a
 handful of more advanced APIs for
-[customization](https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html)
+[customization](https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html)
 and
-[extensibility](https://jax.readthedocs.io/en/latest/jax.extend.html). Libraries
+[extensibility](https://docs.jax.dev/en/latest/jax.extend.html). Libraries
 can [lean on these
-APIs](https://jax.readthedocs.io/en/latest/building_on_jax.html) in
+APIs](https://docs.jax.dev/en/latest/building_on_jax.html) in
 order to use JAX as an internal means of implementation, to integrate
 more with its transformations like autodiff, and more.
 

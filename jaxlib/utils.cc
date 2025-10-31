@@ -19,12 +19,17 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/log_severity.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/debugging/failure_signal_handler.h"
+#include "absl/log/globals.h"
 #include "absl/synchronization/mutex.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "tsl/platform/platform.h"
 
 namespace nb = nanobind;
 
@@ -360,6 +365,22 @@ nb::list TopologicalSort(nb::str parents_attr,
   return sorted_nodes;
 }
 
+void InstallFailureSignalHandler(bool call_previous_handler) {
+#ifndef PLATFORM_GOOGLE
+  absl::FailureSignalHandlerOptions options;
+  options.call_previous_handler = call_previous_handler;
+  absl::InstallFailureSignalHandler(options);
+#endif  // PLATFORM_GOOGLE
+}
+
+void SetMinLogLevel(int severity) {
+  absl::SetMinLogLevel(static_cast<absl::LogSeverityAtLeast>(severity));
+}
+
+void SetStderrThreshold(int severity) {
+  absl::SetStderrThreshold(static_cast<absl::LogSeverityAtLeast>(severity));
+}
+
 }  // namespace
 
 NB_MODULE(utils, m) {
@@ -378,6 +399,12 @@ NB_MODULE(utils, m) {
         "parent objects. end_nodes is an iterable of objects from which we "
         "should start a backwards search.");
 
+  // Abseil C++ logging functions.
+  m.def("absl_set_min_log_level", &SetMinLogLevel);
+  m.def("absl_set_vlog_level", &absl::SetVLogLevel);
+  m.def("absl_set_global_vlog_level", &absl::SetGlobalVLogLevel);
+  m.def("absl_set_stderr_threshold", &SetStderrThreshold);
+
   // Python has no reader-writer lock in its standard library, so we expose
   // bindings around absl::Mutex.
   nb::class_<absl::Mutex>(m, "Mutex")
@@ -392,4 +419,7 @@ NB_MODULE(utils, m) {
       .def("writer_lock", &absl::Mutex::WriterLock,
            nb::call_guard<nb::gil_scoped_release>())
       .def("writer_unlock", &absl::Mutex::WriterUnlock);
+
+  m.def("install_failure_signal_handler", &InstallFailureSignalHandler,
+        nb::arg("call_previous_handler") = true);
 }

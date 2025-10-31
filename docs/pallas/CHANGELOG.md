@@ -2,14 +2,97 @@
 
 # Pallas Changelog
 
-<!--* freshness: { reviewed: '2024-07-11' } *-->
+<!--* freshness: { reviewed: '2025-04-24' } *-->
 
 This is the list of changes specific to {class}`jax.experimental.pallas`.
-For the overall JAX change log see [here](https://jax.readthedocs.io/en/latest/changelog.html).
+For the overall JAX change log see [here](https://docs.jax.dev/en/latest/changelog.html).
 
 <!--
 Remember to align the itemized text with the first line of an item within a list.
 -->
+
+## Unreleased
+
+* New features:
+
+  * Added {func}`jax.experimental.pallas.tpu.get_tpu_info` to get TPU hardware information.
+
+* Deprecations
+
+  * `pl.max_contiguous` has been moved to {mod}`jax.experimental.pallas.triton`.
+    Accessing it via {mod}`jax.experimental.pallas` is deprecated.
+  * `pl.swap` is deprecated and will be removed in a future release. Use
+    indexing or backend-specific loading/storing APIs instead.
+
+* Removals
+
+  * Removed the previously deprecated
+    {class}`jax.experimental.pallas.tpu.TPUCompilerParams`,
+    {class}`jax.experimental.pallas.tpu.TPUMemorySpace`,
+    {class}`jax.experimental.pallas.tpu.TritonCompilerParams`.
+
+## Released with jax 0.7.1
+
+* New features:
+
+  * `pltpu.make_async_remote_copy` and `pltpu.semaphore_signal`'s `device_id`
+    argument now allows user to pass in a dictionary that only specifies the
+    device index along the communication axis, instead of the full coordinates.
+    It also supports TPU core id index.
+  * `jax.debug.print` now works in Pallas kernels and is the recommended way to
+    print.
+
+* Deprecations
+
+  * `pl.atomic_*` APIs have been moved to {mod}`jax.experimental.pallas.triton`.
+    Accessing them via {mod}`jax.experimental.pallas` is deprecated.
+  * `pl.load` and `pl.store` are deprecated. Use indexing or backend-specific
+    loading/storing APIs instead.
+
+## Released with jax 0.7.0
+
+* New functionality
+
+  * Added a new decorator {func}`jax.experimental.pallas.loop` which allows
+    to write stateless loops as functions.
+  * Added new multiple buffering and lookahead functionality to
+    {func}`jax.experimental.pallas.tpu.emit_pipeline`. Input buffers can now
+    be multiple-buffered with more than 2 buffers and support a lookahead option
+    to fetch blocks that are an arbitrary number of grid iterations ahead
+    rather than the immediate next iterations. Additionally, pipeline state
+    can now be held in registers to reduce scalar memory usage.
+
+* Deprecations
+
+  * {class}`jax.experimental.pallas.triton.TritonCompilerParams` has been
+    renamed to {class}`jax.experimental.pallas.triton.CompilerParams`. The
+    old name is deprecated and will be removed in a future release.
+  * {class}`jax.experimental.pallas.tpu.TPUCompilerParams`
+    and {class}`jax.experimental.pallas.tpu.TPUMemorySpace` have been
+    renamed to {class}`jax.experimental.pallas.tpu.CompilerParams`
+    and {class}`jax.experimental.pallas.tpu.MemorySpace`. The
+    old names are deprecated and will be removed in a future release.
+
+## Released with jax 0.6.1
+
+* Removals
+
+  * Removed previously deprecated {mod}`jax.experimental.pallas.gpu`. To use
+    the Triton backend import {mod}`jax.experimental.pallas.triton`.
+
+* Changes
+
+  * {func}`jax.experimental.pallas.BlockSpec` now takes in special types in
+    addition to ints/None in the `block_shape`. `indexing_mode` has been
+    removed. To achieve "Unblocked", pass a `pl.Element(size)` into
+    `block_shape` for each entry that needs unblocked indexing.
+  * {func}`jax.experimental.pallas.pallas_call` now requires `compiler_params`
+    to be a backend-specific dataclass instead of a param to value mapping.
+  * {func}`jax.experimental.pallas.debug_check` is now supported both on
+    TPU and Mosaic GPU. Previously, this functionality was only supported
+    on TPU and required using the APIs from {mod}`jax.experimental.checkify`.
+    Note that debug checks are not executed unless
+    {data}`jax.experimental.pallas.enable_debug_checks` is set.
 
 ## Released with jax 0.5.0
 

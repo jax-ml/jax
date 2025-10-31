@@ -12,45 +12,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@rules_python//python:py_binary.bzl", "py_binary")
 load(
     "@xla//third_party/py:py_import.bzl",
     "py_import",
 )
-load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
 load(
     "//jaxlib:jax.bzl",
     "jax_source_package",
     "jax_wheel",
-    "py_deps",
+    "pytype_test",
+    "wheel_sources",
 )
 
-collect_data_files(
-    name = "transitive_py_data",
-    deps = ["//jax"],
-)
-
-transitive_py_deps(
-    name = "transitive_py_deps",
-    deps = [
+wheel_sources(
+    name = "jax_sources",
+    data_srcs = ["//jax"],
+    py_srcs = [
         "//jax",
         "//jax:compilation_cache",
         "//jax:experimental",
         "//jax:experimental_colocated_python",
         "//jax:experimental_sparse",
-        "//jax:lax_reference",
+        "//jax:experimental_buffer_callback",
+        "//jax:experimental_serialize_executable",
         "//jax:pallas_experimental_gpu_ops",
+        "//jax:pallas_fuser",
         "//jax:pallas_gpu_ops",
         "//jax:pallas_mosaic_gpu",
         "//jax:pallas_tpu_ops",
         "//jax:pallas_triton",
         "//jax:source_mapper",
         "//jax:sparse_test_util",
-        "//jax:test_util",
+        "//jax/_src:lax_reference",
+        "//jax/_src:internal_export_back_compat_test_util",
+        "//jax/_src:internal_export_back_compat_test_data",
+        "//jax/_src:internal_test_harnesses",
+        "//jax/_src:internal_test_util",
+        "//jax/_src:test_multiprocess",
+        "//jax/_src:test_util",
         "//jax/_src/lib",
         "//jax/_src/pallas/fuser",
         "//jax/_src/pallas/mosaic_gpu",
         "//jax/experimental/array_serialization:serialization",
+        "//jax/experimental/array_serialization:pytree_serialization",
         "//jax/experimental/jax2tf",
+        "//jax/experimental/mosaic/gpu/examples:flash_attention",
+        "//jax/experimental/mosaic/gpu/examples:matmul",
         "//jax/extend",
         "//jax/extend:ifrt_programs",
         "//jax/extend/mlir",
@@ -59,6 +67,14 @@ transitive_py_deps(
         "//jax/tools:jax_to_ir",
         "//jax/tools:pgo_nsys_converter",
     ],
+    static_srcs = [
+        "//jax:py.typed",
+        "AUTHORS",
+        "LICENSE",
+        "README.md",
+        "pyproject.toml",
+        "setup.py",
+    ],
 )
 
 py_binary(
@@ -66,27 +82,16 @@ py_binary(
     srcs = ["build_wheel.py"],
     deps = [
         "//jaxlib/tools:build_utils",
-        "@pypi_build//:pkg",
-        "@pypi_setuptools//:pkg",
-        "@pypi_wheel//:pkg",
+        "@pypi//build",
+        "@pypi//setuptools",
+        "@pypi//wheel",
     ],
 )
-
-WHEEL_SOURCE_FILES = [
-    ":transitive_py_data",
-    ":transitive_py_deps",
-    "//jax:py.typed",
-    "AUTHORS",
-    "LICENSE",
-    "README.md",
-    "pyproject.toml",
-    "setup.py",
-]
 
 jax_wheel(
     name = "jax_wheel",
     platform_independent = True,
-    source_files = WHEEL_SOURCE_FILES,
+    source_files = [":jax_sources"],
     wheel_binary = ":build_wheel",
     wheel_name = "jax",
 )
@@ -95,14 +100,14 @@ jax_wheel(
     name = "jax_wheel_editable",
     editable = True,
     platform_independent = True,
-    source_files = WHEEL_SOURCE_FILES,
+    source_files = [":jax_sources"],
     wheel_binary = ":build_wheel",
     wheel_name = "jax",
 )
 
 jax_source_package(
     name = "jax_source_package",
-    source_files = WHEEL_SOURCE_FILES,
+    source_files = [":jax_sources"],
     source_package_binary = ":build_wheel",
     source_package_name = "jax",
 )
@@ -110,37 +115,24 @@ jax_source_package(
 genrule(
     name = "wheel_additives",
     srcs = [
-        "//jax:internal_export_back_compat_test_util",
-        "//jax:internal_test_harnesses",
-        "//jax:internal_test_util",
-        "//jax:internal_export_back_compat_test_data",
-        "//jax:experimental/pallas/ops/tpu/random/philox.py",
-        "//jax:experimental/pallas/ops/tpu/random/prng_utils.py",
-        "//jax:experimental/pallas/ops/tpu/random/threefry.py",
+        "//jax/_src:internal_test_harnesses",
+        "//jax/_src:internal_test_util",
+        "//jax/_src:internal_export_back_compat_test_util",
+        "//jax/_src:internal_export_back_compat_test_data",
+        "//jax/experimental/jax2tf/tests:tf_test_util",
         "//jax/experimental/mosaic/gpu/examples:flash_attention.py",
         "//jax/experimental/mosaic/gpu/examples:matmul.py",
+        "//jax/_src:test_multiprocess",
     ],
     outs = ["wheel_additives.zip"],
     cmd = "$(location @bazel_tools//tools/zip:zipper) c $@ $(SRCS)",
     tools = ["@bazel_tools//tools/zip:zipper"],
 )
 
-COMMON_DEPS = py_deps([
-    "absl/testing",
-    "numpy",
-    "ml_dtypes",
-    "scipy",
-    "opt_einsum",
-    "hypothesis",
-    "cloudpickle",
-    "flatbuffers",
-])
-
 py_import(
     name = "jax_py_import",
     wheel = ":jax_wheel",
-    wheel_deps = [":wheel_additives"],
-    deps = COMMON_DEPS,
+    zip_deps = [":wheel_additives"],
 )
 
 # This target is used to add more sources to the jax wheel.
@@ -149,6 +141,20 @@ py_import(
 py_import(
     name = "jax_wheel_with_internal_test_util",
     wheel = "@pypi_jax//:whl",
-    wheel_deps = [":wheel_additives"],
-    deps = COMMON_DEPS,
+    zip_deps = [":wheel_additives"],
+)
+
+pytype_test(
+    name = "jax_wheel_size_test",
+    srcs = ["//jaxlib/tools:wheel_size_test.py"],
+    args = [
+        "--wheel-path=$(location :jax_wheel)",
+        "--max-size-mib=5",
+    ],
+    data = [":jax_wheel"],
+    main = "wheel_size_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
 )

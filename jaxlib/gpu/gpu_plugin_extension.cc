@@ -18,12 +18,12 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/string_view.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
@@ -41,7 +41,7 @@ limitations under the License.
 
 namespace nb = nanobind;
 
-namespace xla {
+namespace jax {
 
 namespace {
 
@@ -54,13 +54,13 @@ struct TritonCompilationResult {
 };
 
 absl::StatusOr<TritonCompilationResult> CompileTritonToASM(
-    const PJRT_Api* c_api, absl::string_view module,
-    absl::string_view arch_name, int num_warps, int num_ctas, int num_stages) {
+    const PJRT_Api* c_api, std::string_view module, std::string_view arch_name,
+    int num_warps, int num_ctas, int num_stages) {
   const PJRT_Triton_Extension* triton_ext =
       pjrt::FindExtension<PJRT_Triton_Extension>(
           c_api, PJRT_Extension_Type::PJRT_Extension_Type_Triton);
   if (triton_ext == nullptr) {
-    return Unimplemented("The plugin does not have a Triton extension.");
+    return xla::Unimplemented("The plugin does not have a Triton extension.");
   }
   PJRT_Triton_Compile_Args args;
   args.struct_size = PJRT_Triton_Compile_Args_STRUCT_SIZE;
@@ -92,13 +92,15 @@ absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
       pjrt::FindExtension<PJRT_Gpu_Custom_Call>(
           c_api, PJRT_Extension_Type::PJRT_Extension_Type_Gpu_Custom_Call);
   if (custom_call_ext == nullptr) {
-    return Unimplemented("The plugin does not have a custom call extension.");
+    return xla::Unimplemented(
+        "The plugin does not have a custom call extension.");
   }
   PJRT_Gpu_Register_Custom_Call* register_custom_call =
       custom_call_ext->custom_call;
 
   if (traits != 0) {
-    return Unimplemented("The plugin does not support custom call traits.");
+    return xla::Unimplemented(
+        "The plugin does not support custom call traits.");
   }
 
   PJRT_Gpu_Register_Custom_Call_Args args;
@@ -174,31 +176,60 @@ absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
 #endif
 }
 
-absl::Status RegisterCustomTypeId(const PJRT_Api* c_api,
-                                  const char* type_name_c_str,
-                                  size_t type_name_size, nb::object type_id) {
+absl::Status RegisterCustomType(const PJRT_Api* c_api,
+                                const char* type_name_c_str,
+                                size_t type_name_size, nb::object type) {
   const PJRT_FFI_Extension* ffi_ext = pjrt::FindExtension<PJRT_FFI_Extension>(
       c_api, PJRT_Extension_Type::PJRT_Extension_Type_FFI);
   if (ffi_ext == nullptr) {
-    return Unimplemented("The plugin does not have the FFI extension.");
+    return xla::Unimplemented("The plugin does not have the FFI extension.");
   }
 
-  PJRT_FFI_TypeID_Register_Args args;
-  args.struct_size = PJRT_FFI_TypeID_Register_Args_STRUCT_SIZE;
+  XLA_FFI_TypeId* type_id = nullptr;
+  XLA_FFI_TypeInfo* type_info = nullptr;
+
+  auto as_capsule = [](nb::object obj) -> absl::StatusOr<nb::capsule> {
+    nb::capsule capsule;
+    if (!nb::try_cast<nb::capsule>(obj, capsule)) {
+      return absl::InvalidArgumentError(
+          "Custom type registration requires handlers as PyCapsules");
+    }
+    return capsule;
+  };
+
+  // Extract XLA_FFI_TypeId and optional XLA_FFI_TypeInfo from the type dict.
+  nb::dict type_dict;
+  if (!nb::try_cast<nb::dict>(type, type_dict) ||
+      !type_dict.contains("type_id")) {
+    return absl::InvalidArgumentError(
+        "The type_id argument to register_custom_call_type must be a "
+        "dictionary holding a pointer to a XLA_FFI_TypeId in `type_id` and "
+        "optional pointer to a XLA_FFI_TypeInfo in `type_info` fields.");
+  }
+
+  TF_ASSIGN_OR_RETURN(auto type_id_capsule, as_capsule(type_dict["type_id"]));
+  type_id = static_cast<XLA_FFI_TypeId*>(type_id_capsule.data());
+
+  if (type_dict.contains("type_info")) {
+    TF_ASSIGN_OR_RETURN(auto type_info_capsule,
+                        as_capsule(type_dict["type_info"]));
+    type_info = static_cast<XLA_FFI_TypeInfo*>(type_info_capsule.data());
+  }
+
+  PJRT_FFI_Type_Info pjrt_type_info{
+      /*deleter=*/type_info ? type_info->deleter : nullptr,
+  };
+
+  PJRT_FFI_Type_Register_Args args;
+  args.struct_size = PJRT_FFI_Type_Register_Args_STRUCT_SIZE;
   args.type_name = type_name_c_str;
   args.type_name_size = type_name_size;
-  RETURN_STATUS_IF_PJRT_ERROR(ffi_ext->type_id_register(&args), c_api);
+  args.type_id = type_id->type_id;
+  args.type_info = &pjrt_type_info;
+  RETURN_STATUS_IF_PJRT_ERROR(ffi_ext->type_register(&args), c_api);
 
-  nb::capsule capsule;
-  if (!nb::try_cast<nb::capsule>(type_id, capsule)) {
-    return absl::InvalidArgumentError(
-        "The type_id argument to register_custom_call_type_id must be a "
-        "PyCapsule object holding a pointer to a XLA_FFI_TypeId.");
-  }
-  XLA_FFI_TypeId* type_id_ptr =
-      reinterpret_cast<XLA_FFI_TypeId*>(static_cast<void*>(capsule.data()));
-  type_id_ptr->type_id = args.type_id;
-
+  // Return registered type id to the caller.
+  type_id->type_id = args.type_id;
   return absl::OkStatus();
 }
 
@@ -215,12 +246,12 @@ void BuildGpuPluginExtension(nanobind::module_& m) {
       .def_ro("cluster_dim_z", &TritonCompilationResult::cluster_dim_z);
 
   m.def("compile_triton_to_asm",
-        [](nb::capsule c_api, nb::bytes module, absl::string_view arch_name,
+        [](nb::capsule c_api, nb::bytes module, std::string_view arch_name,
            int num_warps, int num_ctas, int num_stages) {
           return xla::ValueOrThrow(CompileTritonToASM(
               static_cast<const PJRT_Api*>(c_api.data()),
-              absl::string_view(static_cast<const char*>(module.data()),
-                                module.size()),
+              std::string_view(static_cast<const char*>(module.data()),
+                               module.size()),
               arch_name, num_warps, num_ctas, num_stages));
         });
 
@@ -248,15 +279,15 @@ void BuildGpuPluginExtension(nanobind::module_& m) {
       nb::arg("xla_platform_name"), nb::arg("api_version") = 0,
       nb::arg("traits") = 0);
   m.def(
-      "register_custom_type_id",
-      [](nb::capsule c_api, nb::str type_name_py, nb::object type_id) {
+      "register_custom_type",
+      [](nb::capsule c_api, nb::str type_name_py, nb::object type) {
         const char* type_name_c_str = type_name_py.c_str();
         size_t type_name_size = nb::len(type_name_py);
-        xla::ThrowIfError(RegisterCustomTypeId(
+        xla::ThrowIfError(RegisterCustomType(
             static_cast<const PJRT_Api*>(c_api.data()), type_name_c_str,
-            type_name_size, std::move(type_id)));
+            type_name_size, std::move(type)));
       },
       nb::arg("c_api"), nb::arg("type_name"), nb::arg("type_id"));
 }
 
-}  // namespace xla
+}  // namespace jax

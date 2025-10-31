@@ -12,87 +12,62 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.lib import xla_client as _xc
+from jax._src import deprecations as _deps
 
-get_topology_for_devices = _xc.get_topology_for_devices
-heap_profile = _xc.heap_profile
-mlir_api_version = _xc.mlir_api_version
-Client = _xc.Client
-CompileOptions = _xc.CompileOptions
-DeviceAssignment = _xc.DeviceAssignment
-Frame = _xc.Frame
-HloSharding = _xc.HloSharding
-OpSharding = _xc.OpSharding
-Traceback = _xc.Traceback
+_deps.warn(
+    'jax-lib-module',
+    (
+        'jax.lib.xla_client module will be removed in JAX v0.9.0;'
+        ' all its APIs were deprecated and removed by JAX v0.8.0.'
+    ),
+    stacklevel=4
+)
 
 _deprecations = {
-    # Finalized 2025-03-25; remove after 2025-06-25
-    "FftType": (
-        "jax.lib.xla_client.FftType was removed in JAX v0.6.0; use jax.lax.FftType.",
-        None,
-    ),
-    "PaddingType": (
+    # Finalized in JAX v0.8.0; remove these messages in v0.9.0.
+    "Client": (
         (
-            "jax.lib.xla_client.PaddingType was removed in JAX v0.6.0;"
-            " this type is unused by JAX so there is no replacement."
+            "jax.lib.xla_client.Client was deprecated in JAX v0.6.0 and will be"
+            " removed in JAX v0.8.0"
         ),
         None,
     ),
-    "dtype_to_etype": (
-        "dtype_to_etype was removed in JAX v0.6.0; use StableHLO instead.",
+    "CompileOptions": (
+        (
+            "jax.lib.xla_client.CompileOptions was deprecated in JAX v0.6.0 and"
+            " will be removed in JAX v0.8.0"
+        ),
         None,
     ),
-    "shape_from_pyval": (
-        "shape_from_pyval was removed in JAX v0.6.0; use StableHLO instead.",
+    "Frame": (
+        (
+            "jax.lib.xla_client.Frame was deprecated in JAX v0.6.0 and will be"
+            " removed in JAX v0.8.0"
+        ),
         None,
     ),
-    # Added Oct 11 2024
-    "ops": (
-        "ops is deprecated; use StableHLO instead.",
-        _xc.ops,
+    "HloSharding": (
+        (
+            "jax.lib.xla_client.HloSharding was deprecated in JAX v0.6.0 and"
+            " will be removed in JAX v0.8.0"
+        ),
+        None,
     ),
-    "register_custom_call_target": (
-        "register_custom_call_target is deprecated; use the JAX FFI instead "
-        "(https://jax.readthedocs.io/en/latest/ffi.html)",
-        _xc.register_custom_call_target,
+    "OpSharding": (
+        (
+            "jax.lib.xla_client.OpSharding was deprecated in JAX v0.6.0 and"
+            " will be removed in JAX v0.8.0"
+        ),
+        None,
     ),
-    "PrimitiveType": (
-        "PrimitiveType is deprecated; use StableHLO instead.",
-        _xc.PrimitiveType,
-    ),
-    "Shape": (
-        "Shape is deprecated; use StableHLO instead.",
-        _xc.Shape,
-    ),
-    "XlaBuilder": (
-        "XlaBuilder is deprecated; use StableHLO instead.",
-        _xc.XlaBuilder,
-    ),
-    "XlaComputation": (
-        "XlaComputation is deprecated; use StableHLO instead.",
-        _xc.XlaComputation,
-    ),
-    # Added Nov 20 2024
-    "ArrayImpl": (
-        "jax.lib.xla_client.ArrayImpl is deprecated; use jax.Array instead.",
-        _xc.ArrayImpl,
+    "Traceback": (
+        (
+            "jax.lib.xla_client.Traceback was deprecated in JAX v0.6.0 and will"
+            " be removed in JAX v0.8.0"
+        ),
+        None,
     ),
 }
 
-import typing as _typing
-
-if _typing.TYPE_CHECKING:
-  ops = _xc.ops
-  register_custom_call_target = _xc.register_custom_call_target
-  ArrayImpl = _xc.ArrayImpl
-  PrimitiveType = _xc.PrimitiveType
-  Shape = _xc.Shape
-  XlaBuilder = _xc.XlaBuilder
-  XlaComputation = _xc.XlaComputation
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing
-del _xc
+__getattr__ = _deps.deprecation_getattr(__name__, _deprecations)
+del _deps

@@ -16,8 +16,6 @@ limitations under the License.
 #include <cmath>
 #include <complex>
 #include <cstdint>
-#include <functional>
-#include <numeric>
 #include <type_traits>
 #include <utility>
 

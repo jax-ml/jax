@@ -26,18 +26,19 @@ import weakref
 
 import numpy as np
 
-import jax
-import jax.numpy as jnp
-from jax import lax
+from jax._src import api
 from jax._src import callback as cb
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import effects
+from jax._src import lax
 from jax._src import mesh as mesh_lib
 from jax._src import sharding_impls
+from jax._src import shard_map
 from jax._src import tree_util
 from jax._src import util
+from jax._src import xla_bridge
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -45,6 +46,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.numpy import lax_numpy as jnp
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, PartitionSpec as P, parse_flatten_op_sharding)
@@ -58,8 +60,8 @@ debug_effect = DebugEffect()
 
 class OrderedDebugEffect(effects.Effect):
   __str__ = lambda self: "OrderedDebug"
-ordered_debug_effect = OrderedDebugEffect()
 
+ordered_debug_effect = OrderedDebugEffect()
 effects.ordered_effects.add_type(OrderedDebugEffect)
 effects.lowerable_effects.add_type(DebugEffect)
 effects.lowerable_effects.add_type(OrderedDebugEffect)
@@ -69,6 +71,8 @@ effects.remat_allowed_effects.add_type(DebugEffect)
 effects.remat_allowed_effects.add_type(OrderedDebugEffect)
 effects.custom_derivatives_allowed_effects.add_type(DebugEffect)
 effects.custom_derivatives_allowed_effects.add_type(OrderedDebugEffect)
+effects.partial_eval_kept_effects.add_type(DebugEffect)
+effects.partial_eval_kept_effects.add_type(OrderedDebugEffect)
 
 # `debug_callback_p` is the main primitive for staging out Python callbacks.
 debug_callback_p = core.Primitive('debug_callback')
@@ -78,18 +82,20 @@ map, unsafe_map = util.safe_map, map
 
 @debug_callback_p.def_impl
 def debug_callback_impl(*args, callback: Callable[..., Any],
-                        effect: DebugEffect):
-  del effect
+                        effect: DebugEffect, partitioned: bool):
+  del effect, partitioned
   try:
-    cpu_device, *_ = jax.local_devices(backend="cpu")
+    cpu_device, *_ = xla_bridge.local_devices(backend="cpu")
   except RuntimeError as e:
     raise RuntimeError(
         "jax.debug.callback failed to find a local CPU device to place the"
         " inputs on. Make sure \"cpu\" is listed in --jax_platforms or the"
         " JAX_PLATFORMS environment variable."
     ) from e
-  args = jax.device_put(args, cpu_device)
-  with jax.default_device(cpu_device):
+  args = api.device_put(args, cpu_device)
+  with (config.default_device(cpu_device),
+        sharding_impls._internal_use_concrete_mesh(mesh_lib.empty_concrete_mesh),
+        mesh_lib.use_abstract_mesh(mesh_lib.empty_abstract_mesh)):
     try:
       callback(*args)
     except BaseException:
@@ -99,16 +105,16 @@ def debug_callback_impl(*args, callback: Callable[..., Any],
 
 @debug_callback_p.def_effectful_abstract_eval
 def debug_callback_abstract_eval(*flat_avals, callback: Callable[..., Any],
-                                 effect: DebugEffect):
-  del flat_avals, callback
+                                 effect: DebugEffect, partitioned: bool):
+  del flat_avals, callback, partitioned
   return [], {effect}
 
-def debug_callback_batching_rule(args, dims, **params):
+
+def debug_batching_rule(args, dims, *, primitive, **params):
   """Unrolls the debug callback across the mapped axis."""
   axis_size = next(x.shape[i] for x, i in zip(args, dims)
                    if i is not None)
-  # TODO(sharadmv): implement in terms of rolled loop unstead of
-  # unrolled.
+  # TODO(sharadmv): implement in terms of rolled loop unstead of unrolled.
   def get_arg_at_dim(i, dim, arg):
     if dim is batching.not_mapped:
       # Broadcast unmapped argument
@@ -117,34 +123,35 @@ def debug_callback_batching_rule(args, dims, **params):
   outs = []
   for i in range(axis_size):
     args_idx = map(partial(get_arg_at_dim, i), dims, args)
-    outs.append(debug_callback_p.bind(*args_idx, **params))
+    outs.append(primitive.bind(*args_idx, **params))
   outs = [jnp.stack(xs) for xs in zip(*outs)]
   return outs, (0,) * len(outs)
-batching.primitive_batchers[debug_callback_p] = debug_callback_batching_rule
+
+
+batching.primitive_batchers[debug_callback_p] = partial(
+    debug_batching_rule, primitive=debug_callback_p
+)
 
 def debug_callback_jvp_rule(primals, tangents, **params):
   return debug_callback_p.bind(*primals, **params), []
 ad.primitive_jvps[debug_callback_p] = debug_callback_jvp_rule
 
-def debug_callback_transpose_rule(*flat_args, callback: Callable[..., Any],
-    effect: DebugEffect):
-  del flat_args, callback, effect
-  raise ValueError("Transpose doesn't support debugging callbacks.")
+def debug_callback_transpose_rule(_, *flat_args, callback: Callable[..., Any],
+                                  effect: DebugEffect, partitioned):
+  del callback, effect, partitioned
+  return [None for _ in flat_args]
 ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
 
 def _debug_callback_partial_auto(axis_context, *args, **params):
-  from jax.experimental.shard_map import shard_map
   partial_auto = list(set(axis_context.mesh.axis_names) - axis_context.manual_axes)
   def f():
-    idx = jax.lax.with_sharding_constraint(
-        jax.lax.axis_index(*partial_auto),
-        NamedSharding(axis_context.mesh, P()))
-    return jax.lax.cond(idx == 0,
-                        lambda: debug_callback_p.bind(*args, **params),
-                        lambda: [])
-  return shard_map(f, axis_context.mesh, in_specs=(), out_specs=[])()
+    idx = lax.axis_index(*partial_auto)
+    return lax.cond(idx == 0,
+                    lambda: debug_callback_p.bind(*args, **params),
+                    lambda: [])
+  return shard_map.shard_map(f, in_specs=(), out_specs=[])()
 
-def debug_callback_lowering(ctx, *args, effect, callback, **params):
+def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params):
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
     # We're a shard_map, which might be partial-manual or full-manual.
@@ -152,21 +159,20 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
     if partial_auto:
       # If we have partial manual / partial auto sharding, we gather and
       # conditionally run the callback.
-      lower = partial(_debug_callback_partial_auto, axis_context,
-                      effect=effect, callback=callback, **params)
+      lower = partial(
+          _debug_callback_partial_auto,
+          axis_context,
+          effect=effect,
+          partitioned=partitioned,
+          callback=callback,
+          **params,
+      )
       return mlir.lower_fun(lower)(ctx, *args)
     elif set(axis_context.manual_axes) == set(axis_context.mesh.axis_names):
       # If we have fully manual sharding during lowering, that means the JAX
       # program has per-device semantics, so we run the callback on each device.
       if config.use_shardy_partitioner.value:
-        assert len(ctx.avals_out) == 1
-        sharding = sharding_impls.SdyArrayShardingList([
-            sharding_impls.SdyArraySharding(
-                mesh_shape=(),
-                dimension_shardings=[
-                    sharding_impls.SdyDimSharding(axes=[], is_closed=True)
-                ] * ctx.avals_out[0].ndim,
-                logical_device_ids=())])
+        sharding = cb._get_sdy_array_list_for_callbacks(ctx.avals_out)
       else:
         sharding = xc.OpSharding()
         sharding.type = xc.OpSharding.Type.MANUAL
@@ -177,9 +183,9 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
     # program has bulk array semantics, so we run the callback with a MAXIMAL
     # sharding and hence execute it only once on the full logical value).
     if config.use_shardy_partitioner.value:
-      sharding = sharding_impls.SdyArrayShardingList([
-          sharding_impls.SdyArraySharding(
-              mesh_shape=(), dimension_shardings=[], logical_device_ids=(0,))])
+      sharding = sharding_impls.SdyArrayList([
+          sharding_impls.SdyArray(
+              mesh_shape=(), dim_shardings=[], logical_device_ids=(0,))])
     else:
       sharding = xc.OpSharding()
       sharding.type = xc.OpSharding.Type.MAXIMAL
@@ -191,27 +197,35 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
 
   def _callback(*flat_args):
     debug_callback_p.impl(
-        *flat_args, effect=effect, callback=callback, **params)
+        *flat_args,
+        effect=effect,
+        partitioned=partitioned,
+        callback=callback,
+        **params,
+    )
     return ()
   if effects.ordered_effects.contains(effect):
     token = ctx.tokens_in.get(effect)
     result, token, _ = cb.emit_python_callback(
         ctx, _callback, token, list(args), ctx.avals_in, ctx.avals_out,
-        has_side_effect=True)
+        has_side_effect=True, partitioned=partitioned)
     ctx.set_tokens_out(mlir.TokenSet({effect: token}))
   else:
     result, _, _ = cb.emit_python_callback(
         ctx, _callback, None, list(args), ctx.avals_in, ctx.avals_out,
-        has_side_effect=True, sharding=sharding)
+        has_side_effect=True, partitioned=partitioned, sharding=sharding)
   return result
 mlir.register_lowering(debug_callback_p, debug_callback_lowering,
                        platform="cpu")
 mlir.register_lowering(
     debug_callback_p, debug_callback_lowering, platform="gpu")
+# Debug callbacks use channel IDs on TPU, which require non-caching.
 mlir.register_lowering(
-    debug_callback_p, debug_callback_lowering, platform="tpu")
+    debug_callback_p, debug_callback_lowering, platform="tpu",
+    cacheable=False)
 
-def _debug_callback_partial_eval_custom(saveable, unks_in, inst_in, eqn):
+
+def _debug_partial_eval_custom(saveable, unks_in, inst_in, eqn, primitive):
   # The default behavior for effectful primitives is to not stage them if
   # possible. For debug callback, we actually want it to be staged to
   # provide more information to the user. This rule bypasses partial_eval's
@@ -226,7 +240,7 @@ def _debug_callback_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     # The usual case (if we have any unknowns, we need to stage it out)
     res = [v for v, inst in zip(eqn.invars, inst_in) if not inst]
     return None, eqn, [], [], res
-  if saveable(debug_callback_p, *[v.aval for v in eqn.invars], **eqn.params):
+  if saveable(primitive, *[v.aval for v in eqn.invars], **eqn.params):
     # The policy is telling us we can save the debug callback.
     if all(inst_in):
       # If all of the inputs are instantiated, we also stage out the
@@ -239,19 +253,160 @@ def _debug_callback_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   # If we can't save the debug callback (thanks to the policy) we listen to
   # the policy and stage out the debug callback.
   return eqn, eqn, [], [], []
-pe.partial_eval_jaxpr_custom_rules[debug_callback_p] = (
-    _debug_callback_partial_eval_custom)
+
+
+pe.partial_eval_jaxpr_custom_rules[debug_callback_p] = partial(
+    _debug_partial_eval_custom, primitive=debug_callback_p
+)
 
 @state_discharge.register_discharge_rule(debug_callback_p)
 def _debug_callback_state_discharge_rule(
-    in_avals, out_avals, *args, effect, callback, **params
+    in_avals, out_avals, *args, effect, partitioned, callback, **params
 ):
   del in_avals, out_avals  # Unused.
-  out = debug_callback_p.bind(*args, effect=effect, callback=callback, **params)
+  out = debug_callback_p.bind(
+      *args, effect=effect, partitioned=partitioned, callback=callback, **params
+  )
   return args, out
 
-def debug_callback(callback: Callable[..., None], *args: Any,
-                   ordered: bool = False, **kwargs: Any) -> None:
+
+def _split_callback_args(args, kwargs):
+  flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
+  static_args, dyn_args = {}, []
+  for i, a in enumerate(flat_args):
+    try:
+      core.shaped_abstractify(a)
+      dyn_args.append(a)
+    except (AssertionError, TypeError):
+      static_args[i] = a
+  return in_tree, dyn_args, static_args
+
+
+def merge_callback_args(in_tree, dyn_args, static_args):
+  static_args_dict = dict(static_args)
+  all_args = [None] * (len(static_args) + len(dyn_args))
+  di = iter(dyn_args)
+  for i in range(len(all_args)):
+    if i in static_args_dict:
+      all_args[i] = static_args_dict[i]
+    else:
+      all_args[i] = next(di)
+  assert next(di, None) is None
+  return tree_util.tree_unflatten(in_tree, all_args)
+
+
+def _make_flat_callback(in_tree, callback, static_args):
+  def _flat_callback(*dyn_args):
+    args, kwargs = merge_callback_args(in_tree, dyn_args, static_args)
+    callback(*args, **kwargs)
+    return ()
+  return _flat_callback
+
+
+def _check_format(fmt, in_tree, dyn_args, static_args):
+  args, kwargs = merge_callback_args(in_tree, dyn_args, static_args)
+  formatter.format(fmt, *args, **kwargs)
+
+
+debug_print_p = core.Primitive("debug_print")
+debug_print_p.multiple_results = True
+
+
+@debug_print_p.def_impl
+def debug_print_impl(
+    *args: Any,
+    fmt: str,
+    ordered,
+    partitioned,
+    in_tree,
+    static_args,
+    np_printoptions,
+    has_placeholders,
+):
+  callback = partial(
+      _format_print_callback, fmt, dict(np_printoptions), has_placeholders
+  )
+  callback = _make_flat_callback(in_tree, callback, static_args)
+  effect = ordered_debug_effect if ordered else debug_effect
+  debug_callback_impl(
+      *args, callback=callback, effect=effect, partitioned=partitioned
+  )
+  return ()
+
+
+@debug_print_p.def_effectful_abstract_eval
+def debug_print_abstract_eval(*avals: Any, fmt: str, ordered, **kwargs):
+  del avals, fmt, kwargs  # Unused.
+  effect = ordered_debug_effect if ordered else debug_effect
+  return [], {effect}
+
+
+batching.primitive_batchers[debug_print_p] = partial(
+    debug_batching_rule, primitive=debug_print_p
+)
+
+
+def debug_print_jvp_rule(primals, tangents, **params):
+  return debug_print_p.bind(*primals, **params), []
+
+
+ad.primitive_jvps[debug_print_p] = debug_print_jvp_rule
+
+
+def debug_print_transpose_rule(_, *args, **kwargs):
+  del kwargs
+  return [None for _ in args]
+
+
+ad.primitive_transposes[debug_print_p] = debug_print_transpose_rule
+
+
+def debug_print_lowering_rule(
+    ctx,
+    *dyn_args,
+    fmt,
+    ordered,
+    partitioned,
+    in_tree,
+    static_args,
+    np_printoptions,
+    has_placeholders,
+):
+  callback = partial(
+      _format_print_callback, fmt, dict(np_printoptions), has_placeholders
+  )
+  callback = _make_flat_callback(in_tree, callback, static_args)
+  effect = ordered_debug_effect if ordered else debug_effect
+  return debug_callback_lowering(
+      ctx, *dyn_args, effect=effect, partitioned=partitioned, callback=callback
+  )
+
+
+mlir.register_lowering(debug_print_p, debug_print_lowering_rule, platform="cpu")
+mlir.register_lowering(debug_print_p, debug_print_lowering_rule, platform="gpu")
+mlir.register_lowering(
+    debug_print_p, debug_print_lowering_rule, platform="tpu", cacheable=False
+)
+
+pe.partial_eval_jaxpr_custom_rules[debug_print_p] = partial(
+    _debug_partial_eval_custom, primitive=debug_print_p
+)
+
+
+@state_discharge.register_discharge_rule(debug_print_p)
+def _debug_print_state_discharge_rule(in_avals, out_avals, *args, **kwargs):
+  del in_avals, out_avals  # Unused.
+  out = debug_print_p.bind(*args, **kwargs)
+  return args, out
+
+
+def debug_callback(
+    callback: Callable[..., None],
+    *args: Any,
+    ordered: bool = False,
+    partitioned: bool = False,
+    **kwargs: Any,
+) -> None:
   """Calls a stageable Python callback.
 
   For more explanation, see `External Callbacks`_.
@@ -274,6 +429,9 @@ def debug_callback(callback: Callable[..., None], *args: Any,
     ordered: A keyword only argument used to indicate whether or not the
       staged out computation will enforce ordering of this callback w.r.t.
       other ordered callbacks.
+    partitioned: If True, then print local shards only; this option avoids an
+      all-gather of the operands. If False, print with logical operands; this
+      option requires an all-gather of operands first.
     **kwargs: The keyword arguments to the callback.
 
   Returns:
@@ -284,19 +442,12 @@ def debug_callback(callback: Callable[..., None], *args: Any,
     - :func:`jax.pure_callback`: callback designed for pure functions.
     - :func:`jax.debug.print`: callback designed for printing.
 
-  .. _External Callbacks: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
+  .. _External Callbacks: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html
   """
   if not callable(callback):
     raise TypeError("first argument to jax.debug.callback must be callable, "
                     f"but got an object of type {type(callback)}")
-  flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
-  static_args, dyn_args = {}, []
-  for i, a in enumerate(flat_args):
-    try:
-      core.shaped_abstractify(a)
-      dyn_args.append(a)
-    except (AssertionError, TypeError):
-      static_args[i] = a
+  in_tree, dyn_args, static_args = _split_callback_args(args, kwargs)
 
   def _flat_callback(*dyn_args):
     all_args = [None] * (len(static_args) + len(dyn_args))
@@ -312,7 +463,10 @@ def debug_callback(callback: Callable[..., None], *args: Any,
     return ()
 
   effect = ordered_debug_effect if ordered else debug_effect
-  debug_callback_p.bind(*dyn_args, callback=_flat_callback, effect=effect)
+  debug_callback_p.bind(
+      *dyn_args, callback=_flat_callback, effect=effect, partitioned=partitioned
+  )
+
 
 class _DebugPrintFormatChecker(string.Formatter):
 
@@ -334,11 +488,26 @@ class _DebugPrintFormatChecker(string.Formatter):
 
 formatter = _DebugPrintFormatChecker()
 
-def _format_print_callback(fmt: str, np_printoptions, *args, **kwargs):
-  with np.printoptions(**np_printoptions):
-    sys.stdout.write(fmt.format(*args, **kwargs) + "\n")
 
-def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
+def _format_print_callback(
+    fmt: str, np_printoptions, has_placeholders, *args, **kwargs
+):
+  if has_placeholders:
+    with np.printoptions(**np_printoptions):
+      sys.stdout.write(fmt.format(*args, **kwargs) + "\n")
+  else:
+    assert not kwargs, "Format without placeholders should not have kwargs."
+    sys.stdout.write(" ".join((fmt, *(str(a) for a in args))) + "\n")
+
+
+def debug_print(
+    fmt: str,
+    *args,
+    ordered: bool = False,
+    partitioned: bool = False,
+    skip_format_check: bool = False,
+    **kwargs,
+) -> None:
   """Prints values and works in staged out JAX functions.
 
   This function does *not* work with f-strings because formatting is delayed.
@@ -359,22 +528,45 @@ def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
 
   Args:
     fmt: A format string, e.g. ``"hello {x}"``, that will be used to format
-      input arguments, like ``str.format``. See the Python docs on
-      `string formatting <https://docs.python.org/3/library/stdtypes.html#str.format>`_
-      and `format string syntax <https://docs.python.org/3/library/string.html#formatstrings>`_.
+      input arguments, like ``str.format``. See the Python docs on `string
+      formatting <https://docs.python.org/3/library/stdtypes.html#str.format>`_
+      and `format string syntax
+      <https://docs.python.org/3/library/string.html#formatstrings>`_.
     *args: A list of positional arguments to be formatted, as if passed to
       ``fmt.format``.
-    ordered: A keyword only argument used to indicate whether or not the
-      staged out computation will enforce ordering of this ``jax.debug.print``
-      w.r.t. other ordered ``jax.debug.print`` calls.
+    ordered: A keyword only argument used to indicate whether or not the staged
+      out computation will enforce ordering of this ``jax.debug.print`` w.r.t.
+      other ordered ``jax.debug.print`` calls.
+    partitioned: If True, then print local shards only; this option avoids an
+      all-gather of the operands. If False, print with logical operands; this
+      option requires an all-gather of operands first.
+    skip_format_check: If True, the format string is not checked. This is useful
+      when using the function from inside a Pallas TPU kernel, where scalars
+      args will be printed after the format string.
     **kwargs: Additional keyword arguments to be formatted, as if passed to
       ``fmt.format``.
   """
-  # Check that we provide the correct arguments to be formatted.
-  formatter.format(fmt, *args, **kwargs)
+  if not skip_format_check:
+    # Check that we provide the correct arguments to be formatted.
+    formatter.format(fmt, *args, **kwargs)
+  has_placeholders = False
+  if fmt:
+    _, field_name, *_ = next(iter(string.Formatter().parse(fmt)))
+    has_placeholders = field_name is not None
+  in_tree, dyn_args, static_args = _split_callback_args(args, kwargs)
+  static_args = tuple(static_args.items())
+  np_printoptions = tuple(np.get_printoptions().items())
 
-  debug_callback(partial(_format_print_callback, fmt, np.get_printoptions()),
-                 *args, **kwargs, ordered=ordered)
+  debug_print_p.bind(
+      *dyn_args,
+      fmt=fmt,
+      ordered=ordered,
+      partitioned=partitioned,
+      in_tree=in_tree,
+      static_args=static_args,
+      np_printoptions=np_printoptions,
+      has_placeholders=has_placeholders,
+  )
 
 
 # Sharding visualization
@@ -429,6 +621,7 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
       mesh = mesh_lib.Mesh(np.array(devices).reshape(am.axis_sizes),
                            am.axis_names)
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
+    mesh = axis_context.mesh
     devices = axis_context.mesh._flat_devices_tuple
   else:
     raise NotImplementedError(type(axis_context))
@@ -439,8 +632,9 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
   def _hlo_sharding_callback(hlo_sharding: xc.HloSharding):
     if mesh.empty:
       return callback(
-          sharding_impls._op_sharding_to_pos_sharding(hlo_sharding, devices))
-    pspec = parse_flatten_op_sharding(hlo_sharding, mesh)[0]
+          sharding_impls.GSPMDSharding(devices, hlo_sharding))
+    pspec = (P() if hlo_sharding.is_manual() else
+             parse_flatten_op_sharding(hlo_sharding, mesh)[0])
     return callback(NamedSharding(mesh, pspec))
 
   if len(devices) == 1:
@@ -634,7 +828,7 @@ def inspect_array_sharding(value, *, callback: Callable[[Sharding], None]):
   """Enables inspecting array sharding inside JIT-ted functions.
 
   This function, when provided with a Pytree of arrays, calls back with each of
-  their shardings and works in ``pjit``-ted computations, enabling inspecting
+  their shardings and works in ``jax.jit``-ted computations, enabling inspecting
   the chosen intermediate shardings.
 
   The policy for when ``callback`` is called is *as early as possible* when the
@@ -643,9 +837,9 @@ def inspect_array_sharding(value, *, callback: Callable[[Sharding], None]):
   since we have the array and its sharding readily available. Inside of a
   ``jax.jit``, the callback will happen at lowering time, meaning you can
   trigger the callback using the AOT API (``jit(f).lower(...)``). When inside of
-  a ``pjit``, the callback happens *at compile time* since the sharding is
+  a ``jax.jit``, the callback happens *at compile time* since the sharding is
   determined by XLA. You can trigger the callback by using JAX's AOT API
-  (``pjit(f).lower(...).compile()``). In all cases, the callback will be
+  (``jax.jit(f).lower(...).compile()``). In all cases, the callback will be
   triggered by running the function, since running a function entails lowering
   and compiling it first. However, once the function is compiled and cached,
   the callback will no longer occur.
@@ -657,11 +851,10 @@ def inspect_array_sharding(value, *, callback: Callable[[Sharding], None]):
     callback: A callable that takes in a ``Sharding`` and doesn't return a value.
 
   In the following example, we print out the sharding of an intermediate value
-  in a ``pjit``-ted computation:
+  in a ``jax.jit``-ted computation:
 
   >>> import jax
   >>> import jax.numpy as jnp
-  >>> from jax.experimental.pjit import pjit
   >>> from jax.sharding import Mesh, PartitionSpec
   >>>
   >>> x = jnp.arange(8, dtype=jnp.float32)
@@ -669,9 +862,9 @@ def inspect_array_sharding(value, *, callback: Callable[[Sharding], None]):
   ...   x = jnp.sin(x)
   ...   jax.debug.inspect_array_sharding(x, callback=print)
   ...   return jnp.square(x)
-  >>> f = pjit(f_, in_shardings=PartitionSpec('dev'),
-  ...          out_shardings=PartitionSpec('dev'))
-  >>> with Mesh(jax.devices(), ('dev',)):
+  >>> f = jax.jit(f_, in_shardings=PartitionSpec('dev'),
+  ...             out_shardings=PartitionSpec('dev'))
+  >>> with jax.set_mesh(Mesh(jax.devices(), ('dev',))):
   ...   f.lower(x).compile()  # doctest: +SKIP
   ...
   NamedSharding(mesh={'dev': 8}, partition_spec=PartitionSpec(('dev',),))
@@ -685,3 +878,46 @@ def visualize_array_sharding(arr, **kwargs):
   def _visualize(sharding):
     return visualize_sharding(arr.shape, sharding, **kwargs)
   inspect_array_sharding(arr, callback=_visualize)
+
+
+# TODO(mattjj): working around an apparent XLA or PjRt bug, remove eventually
+def _debug_callback_eager_rule(
+    mesh,
+    *args,
+    callback: Callable[..., Any],
+    effect: DebugEffect,
+    partitioned: bool,
+):
+  del effect
+  with core.eval_context():
+    all_blocks = zip(*map(list, args))
+  for (idx, device), blocks in zip(np.ndenumerate(mesh.devices), all_blocks):
+    callback(*blocks)
+  return []
+shard_map.eager_rules[debug_callback_p] = _debug_callback_eager_rule
+
+
+def _debug_print_eager_rule(
+    mesh,
+    *args,
+    fmt: str,
+    ordered,
+    partitioned,
+    in_tree,
+    static_args,
+    np_printoptions,
+    has_placeholders,
+):
+  del ordered, partitioned
+  callback = partial(
+      _format_print_callback, fmt, dict(np_printoptions), has_placeholders
+  )
+  callback = _make_flat_callback(in_tree, callback, static_args)
+  with core.eval_context():
+    all_blocks = zip(*map(list, args))
+  for (idx, device), blocks in zip(np.ndenumerate(mesh.devices), all_blocks):
+    callback(*blocks)
+  return []
+
+
+shard_map.eager_rules[debug_print_p] = _debug_print_eager_rule

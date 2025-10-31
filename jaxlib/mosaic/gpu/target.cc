@@ -16,29 +16,32 @@ limitations under the License.
 
 #include <memory>
 #include <string>
-#include <utility>
+#include <string_view>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/strip.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/TargetParser/Triple.h"
 
 namespace mosaic::gpu {
 
-absl::StatusOr<std::pair<std::string, std::string>> GetSmAndPtxIsaVersion(
-    int major, int minor) {
+absl::StatusOr<std::string> GetSmVersion(int major, int minor) {
   // "base" compute capability as reported by the driver.
   // For example for a Hopper H200 GPU this would return sm_90, and never
   // sm_90a.
   std::string sm_base = absl::StrCat("sm_", major, minor);
 
   const std::string triple = "nvptx64-nvidia-cuda";
+  const llvm::Triple target_triple(triple);
   std::string error;
   const llvm::Target* target =
-      llvm::TargetRegistry::lookupTarget(triple, error);
+      llvm::TargetRegistry::lookupTarget(target_triple, error);
   if (target == nullptr) {
     return absl::InternalError(absl::StrFormat(
         "Failed to lookup LLVM target based on triple %s: %s", triple, error));
@@ -50,7 +53,7 @@ absl::StatusOr<std::pair<std::string, std::string>> GetSmAndPtxIsaVersion(
   {
     // generic subtarget
     std::unique_ptr<const llvm::MCSubtargetInfo> subtarget_info{
-        target->createMCSubtargetInfo(triple, "", "")};
+        target->createMCSubtargetInfo(target_triple, "", "")};
     if (subtarget_info == nullptr) {
       return absl::InternalError(absl::StrFormat(
           "Failed to get generic LLVM subtarget info for triple %s", triple));
@@ -64,25 +67,42 @@ absl::StatusOr<std::pair<std::string, std::string>> GetSmAndPtxIsaVersion(
       }
     }
   }
+  return sm_arch_specific ? sm_arch_specific : sm_base;
+}
 
-  const std::string sm = sm_arch_specific ? sm_arch_specific : sm_base;
-
-  std::unique_ptr<const llvm::MCSubtargetInfo> subtarget_info{
-      target->createMCSubtargetInfo(triple, sm, "")};
-  if (subtarget_info == nullptr) {
-    return absl::InternalError(
-        absl::StrFormat("Failed to get LLVM subtarget info for sm %s", sm));
+absl::StatusOr<int> GetLatestLlvmPtxIsaVersion() {
+  const std::string triple = "nvptx64-nvidia-cuda";
+  const llvm::Triple target_triple(triple);
+  std::string error;
+  const llvm::Target* target =
+      llvm::TargetRegistry::lookupTarget(target_triple, error);
+  if (target == nullptr) {
+    return absl::InternalError(absl::StrFormat(
+        "Failed to lookup LLVM target based on triple %s: %s", triple, error));
   }
-
+  // generic subtarget
+  std::unique_ptr<const llvm::MCSubtargetInfo> subtarget_info{
+      target->createMCSubtargetInfo(target_triple, "", "")};
+  if (subtarget_info == nullptr) {
+    return absl::InternalError(absl::StrFormat(
+        "Failed to get generic LLVM subtarget info for triple %s", triple));
+  }
+  int llvm_latest_version = 0;
   for (const llvm::SubtargetFeatureKV& feature :
-       subtarget_info->getEnabledProcessorFeatures()) {
-    if (absl::StartsWith(feature.Key, "ptx")) {
-      std::string ptx_isa = feature.Key;
-      return std::make_pair(sm, ptx_isa);
+       subtarget_info->getAllProcessorFeatures()) {
+    std::string_view version_string = feature.Key;
+    if (absl::ConsumePrefix(&version_string, "ptx")) {
+      int version;
+      if (!absl::SimpleAtoi(version_string, &version)) {
+        return absl::InternalError(
+            absl::StrFormat("Failed to convert PTX ISA version to integer: %s",
+                            version_string));
+      }
+      llvm_latest_version =
+          version > llvm_latest_version ? version : llvm_latest_version;
     }
   }
-  return absl::InternalError(absl::StrFormat(
-      "Failed to find a PTX ISA LLVM subtarget feature for %s", sm));
+  return llvm_latest_version;
 }
 
 }  // namespace mosaic::gpu

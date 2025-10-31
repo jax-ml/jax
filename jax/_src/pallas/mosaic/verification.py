@@ -18,7 +18,8 @@ import io
 import itertools
 import math
 import textwrap
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 from jax import lax
 from jax._src import core as jax_core
 from jax._src import tree_util
@@ -306,7 +307,7 @@ def _print_op(ctx, op):
           f" {src.length}, {dst_location[0]}, {dst_location[1]},"
           f" {dst_sem.base}, {dst.base}, {dst.length})",
       )
-    case "tpu.wait_dma":
+    case "tpu.wait_dma2":
       sem_model = ctx.get(op.semaphore)
       sem = sem_model.at(location=None)
       ctx.emit(None, f"atomic {{ {sem} >= 1; {sem} = {sem} - 1 }}")
@@ -596,10 +597,9 @@ def _assume_abstract_eval(x, y):
   assert jax_core.typematch(x, y)
   return x
 
+@lowering.register_lowering_rule(assume_p)
 def _assume_lowering(ctx: lowering.LoweringRuleContext, x, y):
   return y if ctx.lowering_context.for_verification else x
-
-lowering.lowering_rules[assume_p] = _assume_lowering  # type: ignore
 
 def assume(normally, *, when_verifying):
   return assume_p.bind(normally, when_verifying)
@@ -613,6 +613,7 @@ def _pretend_abstract_eval(*_, **params):
   del params  # Unused.
   return ()
 
+@lowering.register_lowering_rule(pretend_p)
 def _pretend_lowering(ctx: lowering.LoweringRuleContext, *flat_args, tree):
   if ctx.lowering_context.for_verification:
     (base_read_refs, transforms) = tree_util.tree_unflatten(tree, flat_args)
@@ -630,8 +631,6 @@ def _pretend_lowering(ctx: lowering.LoweringRuleContext, *flat_args, tree):
     ]
     ir.Operation.create("verification.pretend", operands=read_refs)
   return ()
-
-lowering.lowering_rules[pretend_p] = _pretend_lowering  # type: ignore
 
 def pretend(read_refs):
   refs, transforms = unzip2(

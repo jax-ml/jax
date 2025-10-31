@@ -26,7 +26,7 @@ limitations under the License.
 
 namespace nb = nanobind;
 
-namespace xla {
+namespace jax {
 namespace {
 
 std::string ToString(hipError_t result) {
@@ -70,10 +70,15 @@ nb::dict FfiRegistrations() {
   nb::dict dict;
   nb::dict gpu_callback_dict;
   gpu_callback_dict["instantiate"] =
-      jax::EncapsulateFfiHandler(jax::hip::kGpuTransposePlanCacheInstantiate);
+      EncapsulateFfiHandler(hip::kGpuTransposePlanCacheInstantiate);
   gpu_callback_dict["execute"] =
-      jax::EncapsulateFfiHandler(jax::hip::kXlaFfiPythonGpuCallback);
+      EncapsulateFfiHandler(hip::kXlaFfiPythonGpuCallback);
   dict["xla_ffi_python_gpu_callback"] = gpu_callback_dict;
+  dict["xla_ffi_partitioned_python_gpu_callback"] = gpu_callback_dict;
+  dict["xla_buffer_python_gpu_callback"] =
+      EncapsulateFfiHandler(hip::kXlaBufferPythonGpuCallback);
+  dict["xla_buffer_python_gpu_callback_cmd_buffer"] =
+      EncapsulateFfiHandler(hip::kXlaBufferPythonGpuCallbackCmdBuffer);
   return dict;
 }
 
@@ -103,4 +108,4 @@ NB_MODULE(rocm_plugin_extension, m) {
       },
       nb::arg("data_value"));
 }
-}  // namespace xla
+}  // namespace jax

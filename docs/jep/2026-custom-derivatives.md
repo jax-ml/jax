@@ -2,7 +2,7 @@
 
 This is a design document, explaining some of the thinking behind the design and
 implementation of `jax.custom_jvp` and `jax.custom_vjp`. For user-oriented
-documentation, see [the tutorial notebook](https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html).
+documentation, see [the tutorial notebook](https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html).
 
 There are two ways to define differentiation rules in JAX:
 1. using `jax.custom_jvp` and `jax.custom_vjp` to define custom differentiation

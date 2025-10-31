@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "jaxlib/triton/triton_dialect_capi.h"
 
+#include <optional>
+
 #include "llvm/Support/Casting.h"
 #include "mlir-c/IR.h"
 #include "mlir/CAPI/IR.h"
@@ -56,7 +58,7 @@ MlirAttribute mlirTritonInferReduceOpEncoding(MlirAttribute operandEncoding,
       llvm::dyn_cast<mlir::triton::DialectInferLayoutInterface>(&dialect);
   mlir::Attribute retEncoding;
   (void)inferLayoutInterface->inferReduceOpEncoding(opEncoding, axis,
-                                                    retEncoding);
+                                                    retEncoding, std::nullopt);
   return wrap(retEncoding);
 }
 

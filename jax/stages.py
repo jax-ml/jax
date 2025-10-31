@@ -18,7 +18,7 @@ JAX transformations that compile just in time for execution, such as
 lowering and compilation *ahead of time*. This module defines types
 that represent the stages of this process.
 
-For more, see the `AOT walkthrough <https://jax.readthedocs.io/en/latest/aot.html>`_.
+For more, see the `AOT walkthrough <https://docs.jax.dev/en/latest/aot.html>`_.
 """
 
 # Note: import <name> as <name> is required for names to be exported.
@@ -30,6 +30,5 @@ from jax._src.stages import (
   Lowered as Lowered,
   Wrapped as Wrapped,
   ArgInfo as ArgInfo,
-  OutInfo as OutInfo,
   Traced as Traced,
 )

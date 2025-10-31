@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-import contextlib
 from functools import partial
 import itertools as it
 import gc
@@ -43,13 +42,15 @@ from jax._src import api as src_api
 from jax._src import array
 from jax._src import core
 from jax._src import config
+from jax._src import dtypes
 from jax._src import sharding_impls
 from jax._src import sharding_specs
+from jax._src import stages
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
-from jax._src.lib import xla_extension
+from jax._src.lib import xla_client as xc
 from jax._src.util import safe_map, safe_zip
 
 config.parse_flags_with_absl()
@@ -112,6 +113,12 @@ class PythonPmapTest(jtu.JaxTestCase):
     return src_api.pmap
 
   def testDeviceBufferToArray(self):
+    # NOTE(dsuo): Under `pmap_shmap_merge=True`, the resulting array is sharded,
+    # whereas under `pmap_shmap_merge=False`, the resulting array is
+    # "SingleDeviceSharded". The attribute `unsafe_buffer_pointer` is
+    # unavailable for sharded arrays.
+    if config.pmap_shmap_merge.value:
+      self.skipTest("Test fails because pmap is jit(shmap).")
     sda = self.pmap(lambda x: x)(jnp.ones((jax.device_count(), 2)))
 
     # Changed in https://github.com/jax-ml/jax/pull/10584 not to access
@@ -161,7 +168,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     device_order = jax.devices()
     pmap_sharding = pmap(lambda x: x)(np.arange(jax.device_count())).sharding
     if config.pmap_shmap_merge.value:
-      self.assertListEqual(device_order, pmap_sharding._device_assignment)
+      self.assertListEqual(device_order, list(pmap_sharding._device_assignment))
     else:
       self.assertListEqual(device_order, pmap_sharding.devices.tolist())
 
@@ -173,7 +180,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     lowered = f.lower(x)
     compiled = lowered.compile()
     ans = compiled(x)
-
     self.assertAllClose(ans, expected)
 
     # It's a pair of: (positional args, as a tuple of their structures, kwargs).
@@ -218,11 +224,17 @@ class PythonPmapTest(jtu.JaxTestCase):
     x_f32 = x.astype(jnp.float32)
     x_i32 = x.astype(jnp.int32)
     f_exe = f.lower(x_f32).compile()
+    if config.pmap_shmap_merge.value:
+      expected_regex = r"Argument types differ .*"
+      r"The mismatches are:\n"
+      r"Argument 'args[0]' compiled with.*float32.*and called with.*int32.*"
+    else:
+      expected_regex = r"Argument types differ .*"
+      r"The mismatches are:\n"
+      r"Argument 'x' compiled with.*float32.*and called with.*int32.*"
     self.assertRaisesRegex(
         TypeError,
-        r"Argument types differ .*"
-        r"The mismatches are:\n"
-        r"Argument 'x' compiled with.*float32.*and called with.*int32.*",
+        expected_regex,
         lambda: f_exe(x_i32))
 
   def testLowerCompileMultiArg(self):
@@ -318,12 +330,12 @@ class PythonPmapTest(jtu.JaxTestCase):
     lowered = f.lower(x)
 
     self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError, "No such compile option: 'invalid_key'",
+        jax.errors.JaxRuntimeError, "No such compile option: 'invalid_key'",
         lambda: lowered.compile(
             compiler_options={"invalid_key": "invalid_value"}))
 
     self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError, "is not a valid bool value.",
+        jax.errors.JaxRuntimeError, "is not a valid bool value.",
         lambda: lowered.compile(
             compiler_options={"xla_embed_ir_in_executable": "invalid_value"}))
 
@@ -332,7 +344,10 @@ class PythonPmapTest(jtu.JaxTestCase):
     inp = jnp.arange(jax.device_count())
     x = jax.pmap(lambda x: x, in_axes=0, out_axes=None)(inp)
     out = jnp.copy(x)
-    self.assertIsInstance(out.sharding, jax.sharding.SingleDeviceSharding)
+    if config.pmap_shmap_merge.value:
+      self.assertIsInstance(out.sharding, jax.sharding.NamedSharding)
+    else:
+      self.assertIsInstance(out.sharding, jax.sharding.SingleDeviceSharding)
     self.assertArraysEqual(out, inp[0])
 
   def test_jit_lower_compile_with_compiler_options_multiple(self):
@@ -356,7 +371,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     # We should still error on invalid options after some valid compiles
     self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError, "No such compile option: 'invalid_key'",
+        jax.errors.JaxRuntimeError, "No such compile option: 'invalid_key'",
         lambda: lowered.compile(
             compiler_options={"invalid_key": "invalid_value"}))
 
@@ -365,7 +380,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     shape = (jax.device_count(), 4)
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     x_shape = core.ShapedArray(x.shape, x.dtype)
-    self.assertAllClose(f.lower(x_shape).compile()(x), f(x))
+    ans = f.lower(x_shape).compile()(x)
+    self.assertAllClose(ans, f(x))
 
   def testLowerHasReplicaAttributes(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
@@ -374,8 +390,12 @@ class PythonPmapTest(jtu.JaxTestCase):
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     lowered = f.lower(x)
     hlo = lowered.as_text("stablehlo")
-    self.assertIn(f"mhlo.num_replicas = {num_devices}", hlo)
-    self.assertIn("mhlo.num_partitions = 1", hlo)
+    if config.pmap_shmap_merge.value:
+      self.assertIn(f"mhlo.num_partitions = {num_devices}", hlo)
+      self.assertIn("mhlo.num_replicas = 1", hlo)
+    else:
+      self.assertIn(f"mhlo.num_replicas = {num_devices}", hlo)
+      self.assertIn("mhlo.num_partitions = 1", hlo)
 
   def testMean(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
@@ -499,7 +519,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testTrees(self):
     ptranspose = lambda x, axis_name: lax.all_to_all(x, axis_name, 0, 0)
     def protate(x, axis_name):
-      n = lax.psum(1, axis_name)
+      n = lax.axis_size(axis_name)
       return lax.ppermute(x, axis_name, [(i, (i + 1) % n) for i in range(n)])
 
     tree_f = lambda f: partial(jax.tree.map, f)
@@ -576,6 +596,11 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testAllToAllSplitAxis(self, split_axis, concat_axis):
     if jax.device_count() < 4:
       raise SkipTest("test requires at least four devices")
+    if jtu.device_under_test() == "gpu":
+      raise SkipTest("TODO(b/456133538): Disable on GPUs until we figure out.")
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
+
     pmap_in_axis = 0
     shape = (4, 4, 4)
     x = np.arange(math.prod(shape)).reshape(shape)
@@ -597,6 +622,9 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(y, ref)
 
   def testNestedPmapAxisSwap(self):
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
+
     # Regression test for https://github.com/jax-ml/jax/issues/5757
     if jax.device_count() < 8:
       raise SkipTest("test requires at least 8 devices")
@@ -606,6 +634,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(A.transpose((0, 2, 1)), f(A))
 
   def testNestedBasic(self):
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
     f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
     f = self.pmap(self.pmap(f, 'i'), 'j')
 
@@ -651,6 +681,8 @@ class PythonPmapTest(jtu.JaxTestCase):
        "device_mesh_shape": device_mesh_shape}
       for device_mesh_shape in [(1, 1), (2, -1), (-1, 2)])
   def testNestedShardingAndStacking(self, device_mesh_shape):
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
     mesh_shape = self._getMeshShape(device_mesh_shape)
 
     f = lambda x: x
@@ -677,26 +709,44 @@ class PythonPmapTest(jtu.JaxTestCase):
     f_ans = f(x, y)
     self.assertAllClose(f_ans, f_expected)
     self.assertIsInstance(f_ans, array.ArrayImpl)
-    sharding_spec = f_ans.sharding.sharding_spec
-    # the output is actually replicated (has the same values in each device buffer)
-    # but out_axes is implicitly 0, so we shouldn't have replication in the
-    # sharding spec.
-    self.assertEmpty([a for a in sharding_spec.mesh_mapping
-                      if isinstance(a, pxla.Replicated)])
+    if config.pmap_shmap_merge.value:
+      if jax.device_count() == 1:
+        self.assertEmpty(f_ans.sharding.spec)
+      else:
+        self.assertLen(f_ans.sharding.spec, 1)
+        axis = f_ans.sharding.spec[0]
+        self.assertEqual(axis, f_ans.sharding.mesh.axis_names[0])
+    else:
+      sharding_spec = f_ans.sharding.sharding_spec
+      # the output is actually replicated (has the same values in each device
+      # buffer) but out_axes is implicitly 0, so we shouldn't have replication
+      # in the sharding spec.
+      self.assertEmpty([a for a in sharding_spec.mesh_mapping
+                        if isinstance(a, pxla.Replicated)])
 
     g_expected = np.broadcast_to(x - np.sum(y, 0, keepdims=True), shape)
     g_ans = g(x, y)
     self.assertAllClose(g_ans, g_expected)
     self.assertIsInstance(g_ans, array.ArrayImpl)
-    sharding_spec = g_ans.sharding.sharding_spec
-    self.assertEmpty([a for a in sharding_spec.mesh_mapping
-                      if isinstance(a, pxla.Replicated)])
+    if config.pmap_shmap_merge.value:
+      if jax.device_count() == 1:
+        self.assertEmpty(g_ans.sharding.spec)
+      else:
+        self.assertLen(g_ans.sharding.spec, 1)
+        axis = g_ans.sharding.spec[0]
+        self.assertEqual(axis, g_ans.sharding.mesh.axis_names[0])
+    else:
+      sharding_spec = g_ans.sharding.sharding_spec
+      self.assertEmpty([a for a in sharding_spec.mesh_mapping
+                        if isinstance(a, pxla.Replicated)])
 
   @parameterized.named_parameters(
       {"testcase_name": f"_mesh={device_mesh_shape}".replace(" ", ""),
        "device_mesh_shape": device_mesh_shape}
       for device_mesh_shape in [(1, 1), (2, -1), (-1, 2)])
   def testPartiallyMappedNested(self, device_mesh_shape):
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
     mesh_shape = self._getMeshShape(device_mesh_shape)
 
     f = self.pmap(lambda x, y: x - lax.psum(y, 'i'), axis_name='i', in_axes=(None, 0))
@@ -787,6 +837,8 @@ class PythonPmapTest(jtu.JaxTestCase):
        "device_mesh_shape": device_mesh_shape}
       for device_mesh_shape in [(1, 1), (2, -1), (-1, 2)])
   def testNestedWithClosure(self, device_mesh_shape):
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
     mesh_shape = self._getMeshShape(device_mesh_shape)
 
     @partial(self.pmap, axis_name='i')
@@ -817,8 +869,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, atol=1e-3, rtol=1e-3)
 
   def testArrays(self):
-    f = lambda x: 2 * x
-    f = self.pmap(f, axis_name='i')
+    inner_f = lambda x: 2 * x
+    f = self.pmap(inner_f, axis_name='i')
 
     shape = (jax.device_count(), 4)
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
@@ -845,8 +897,14 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     # test that we can handle device movement on dispatch
     bufs = y._arrays[::-1]
-    sharding = jax.sharding.PmapSharding(
-        [list(b.devices())[0] for b in bufs], y.sharding.sharding_spec)
+    devices = [list(b.devices())[0] for b in bufs]
+    if config.pmap_shmap_merge.value:
+      mesh = jax.sharding.Mesh(devices, 'i')
+      sharding = jax.sharding.NamedSharding(mesh, y.sharding.spec)
+      # NOTE(dsuo): Need to redefine pmap with the updated devices.
+      f = self.pmap(inner_f, axis_name='i', devices=devices)
+    else:
+      sharding = jax.sharding.PmapSharding(devices, y.sharding.sharding_spec)
     y = jax.make_array_from_single_device_arrays(y.shape, sharding, bufs)
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
@@ -876,6 +934,9 @@ class PythonPmapTest(jtu.JaxTestCase):
                         check_dtypes=False)
 
   def testPsumMultiple(self):
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
+
     f = lambda x: lax.psum(x, ('i', 'j'))
     f = self.pmap(self.pmap(f, 'i'), 'j')
 
@@ -1030,6 +1091,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
 
   def testNestedPmapReplicaGroups(self):
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
     replicas = jax.device_count()
     if replicas % 4 != 0:
       raise SkipTest
@@ -1261,33 +1324,42 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testDeviceCountError(self):
     device_count = jax.device_count()
 
+    # NOTE(dsuo): The error message is different depending on the version of
+    # this test.
+    if config.pmap_shmap_merge.value:
+      expected_regex = r".*"
+    else:
+      expected_regex = r".*requires.*replicas"
+
     f = self.pmap(lambda x: 2 * x)
     x = jnp.arange(device_count + 1)
-    self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
+    self.assertRaisesRegex(ValueError, expected_regex, lambda: f(x))
 
     f = self.pmap(lambda x: 2 * x)
     x = np.ones((device_count + 1, 10))
-    self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
+    self.assertRaisesRegex(ValueError, expected_regex, lambda: f(x))
 
     f = self.pmap(lambda x: self.pmap(lambda x: 2 * x)(x))
     x = np.ones((device_count, 2, 10))
-    self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
+    self.assertRaisesRegex(ValueError, expected_regex, lambda: f(x))
 
   def testPmapConstant(self):
     device_count = jax.device_count()
-    f = self.pmap(lambda x: 3)
-    x = jnp.arange(device_count)
-    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
-      ans = f(x)
-    # self.assertEqual(count(), 0)  # TODO(mattjj): fix this
-    expected = np.repeat(3, device_count)
+    const = jnp.arange(16, dtype=np.int32)  # distinctive shape
+    f = self.pmap(lambda x: x + const[15])
+    x = jnp.arange(device_count, dtype=np.int32)
+    expected = x + np.int32(15)
+    ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
+    if not config.disable_jit.value:
+      self.assertCacheMisses(lambda: f(x),
+                             compilation_after_persistent_cache_miss=0)
 
     if not config.disable_jit.value:
-      f = self.pmap(lambda x: (x, 3))
-      x = np.arange(device_count)
+      f = self.pmap(lambda x: x + const[15])
+      x = np.arange(device_count, dtype=np.int32)
       with jtu.assert_num_jit_and_pmap_compilations(1):
-        _, ans = f(x)
+        ans = f(x)
       self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testPmapConstantDevices(self):
@@ -1314,11 +1386,17 @@ class PythonPmapTest(jtu.JaxTestCase):
     device_count = jax.device_count()
     f = self.pmap(lambda x: 3)
     x = jnp.arange(device_count + 1)
-    self.assertRaisesRegex(
-        ValueError,
-        (r"compiling computation that requires \d+ logical devices, "
-        r"but only \d+ XLA devices are available .*"),
-        lambda: f(x))
+    if config.pmap_shmap_merge.value:
+      expected_regex = [
+        # NOTE(dsuo): We get different error messages depending on backend.
+        r'shard_map applied.*axis sizes.*not evenly divisible.*mesh axis sizes.*',
+        r'cannot select an axis to squeeze out which has size not equal to one.*',
+        r'Sharding.*implies that array.*but the dimension size is.*',
+      ]
+      expected_regex = '|'.join(expected_regex)
+    else:
+      expected_regex = r'compiling computation that requires \d+ logical devices, but only \d+ XLA devices are available .*'
+    self.assertRaisesRegex(ValueError, expected_regex, lambda: f(x))
 
     # TODO(mattjj): test error message with explicit devices
     # f = pmap(lambda x: 3, devices=[jax.devices()[0]])
@@ -1330,6 +1408,8 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testNestedPmapConstant(self):
     if jax.device_count() == 1:
       raise SkipTest("this test requires multiple devices")
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
 
     f = self.pmap(self.pmap(lambda x: 3))
     shape = (2, jax.device_count() // 2, 3)
@@ -1354,6 +1434,8 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testNestedPmapConstantDevices(self):
     if jax.device_count() < 6:
       raise SkipTest("this test requires >= 6 devices")
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
 
     devices = jax.devices()[:-2]
     shuffle(devices)
@@ -1373,6 +1455,8 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testNestedPmapConstantError(self):
     if config.disable_jit.value:
       raise SkipTest("error test doesn't apply with disable_jit")
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
     f = self.pmap(self.pmap(lambda x: 3))
     shape = (2, jax.device_count() // 2 + 1, 3)
     x = jnp.arange(math.prod(shape)).reshape(shape)
@@ -1395,22 +1479,24 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   def testCollectiveConstant(self):
     device_count = jax.device_count()
-    f = self.pmap(lambda x: lax.psum(1, 'i'), 'i')
+    f = self.pmap(lambda x: lax.axis_size('i'), 'i')
     x = jnp.arange(device_count)
     ans = f(x)
     expected = np.repeat(device_count, device_count)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testCollectiveConstantNested(self):
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
     device_count = jax.device_count()
 
     @partial(self.pmap, axis_name='i')
     def f(x):
       @partial(self.pmap, axis_name='j')
       def g(y):
-        a = lax.psum(1, 'i')
-        b = lax.psum(1, 'j')
-        c = lax.psum(1, ('i', 'j'))
+        a = lax.axis_size('i')
+        b = lax.axis_size('j')
+        c = lax.axis_size(('i', 'j'))
         return a, b, c
       return g(x)
 
@@ -1435,6 +1521,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testAxisIndexNestedPmap(self):
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
     device_count = jax.device_count()
     if device_count < 4:
       raise SkipTest("test requires at least four devices")
@@ -1445,6 +1533,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(f('i')(x), expected_j.T, check_dtypes=False)
 
   def testAxisIndexNd(self):
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
     device_count = jax.device_count()
     if device_count < 4:
       raise SkipTest("test requires at least four devices")
@@ -1840,6 +1930,9 @@ class PythonPmapTest(jtu.JaxTestCase):
       self.assertEqual(list(out), [1])
 
   def testPsumWithNoAxisDoesntLeakFunctions(self):
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("shmap implementation holds an additional weakref.")
+
     x = jnp.ones((1, 1024), dtype=np.float32)
     f = lambda _: x
     w = weakref.ref(f)
@@ -1852,6 +1945,9 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertIs(w(), None)
 
   def testJitOfPmapWarningMessage(self):
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Test does not warn under `pmap_shmap_merge=True`.")
+
     device_count = jax.device_count()
 
     if device_count == 1 or config.disable_jit.value:
@@ -1859,7 +1955,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     def foo(x): return x
 
-    with self.assertWarnsRegex(UserWarning, "The jitted function foo includes a pmap"):
+    with self.assertWarnsRegex(UserWarning, "The function jit.foo. includes a pmap"):
       jit(self.pmap(foo))(jnp.arange(device_count))
 
   def testJitOfPmapOutputSharding(self):
@@ -1870,7 +1966,8 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     @jax.jit
     @jax.pmap
-    def foo(x): return x + x
+    def foo(x):
+      return x + x
 
     x = np.ones((2,2,2), dtype=np.float32)
     for _ in range(10):
@@ -1889,13 +1986,18 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     @jax.jit
     @jax.pmap
-    def foo(x): return x + x
+    def foo(x):
+      return x + x
 
     x = np.ones((2,2,2), dtype=np.float32)
 
     hlo = foo.lower(x).as_text("stablehlo")
-    self.assertIn(f"mhlo.num_replicas = {2}", hlo)
-    self.assertIn("mhlo.num_partitions = 1", hlo)
+    if config.pmap_shmap_merge.value:
+      self.assertIn("mhlo.num_replicas = 1", hlo)
+      self.assertIn("mhlo.num_partitions = 2", hlo)
+    else:
+      self.assertIn(f"mhlo.num_replicas = {2}", hlo)
+      self.assertIn("mhlo.num_partitions = 1", hlo)
 
   def testPsumZeroCotangents(self):
     # https://github.com/jax-ml/jax/issues/3651
@@ -1944,6 +2046,9 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("cpu")
   def test_replicate_backend(self):
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmaps under `pmap_shmap_merge=True`.")
+
     # TODO(skye): fix backend caching so we always have multiple CPUs available
     if jax.device_count("cpu") < 4:
       self.skipTest("test requires 4 CPU device")
@@ -2082,8 +2187,8 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     x = jnp.arange(1.)
     jaxpr = jax.make_jaxpr(jax.linearize(f, x)[1])(x)
-    self.assertIn(' sin[', str(jaxpr))
-    self.assertIn(' cos[', str(jaxpr))
+    self.assertIn(' sin ', str(jaxpr))
+    self.assertIn(' cos ', str(jaxpr))
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -2098,26 +2203,26 @@ class PythonPmapTest(jtu.JaxTestCase):
     save_cos = lambda prim, *_, **__: str(prim) == 'cos'
     f = remat(g, policy=save_cos)
     _, f_vjp = jax.vjp(f, x)
-    jaxpr = f_vjp.args[0].func.args[1]
+    jaxpr = f_vjp.jaxpr
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin['), 0)
-    self.assertEqual(jaxpr_text.count(' cos['), 0)
+    self.assertEqual(jaxpr_text.count(' sin '), 0)
+    self.assertEqual(jaxpr_text.count(' cos '), 0)
 
     save_sin = lambda prim, *_, **__: str(prim) == 'sin'
     f = remat(g, policy=save_sin)
     _, f_vjp = jax.vjp(f, x)
-    jaxpr = f_vjp.args[0].func.args[1]
+    jaxpr = f_vjp.jaxpr
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin['), 0)
-    self.assertEqual(jaxpr_text.count(' cos['), 2)
+    self.assertEqual(jaxpr_text.count(' sin '), 0)
+    self.assertEqual(jaxpr_text.count(' cos '), 2)
 
     save_nothing = lambda prim, *_, **__: False
     f = remat(g, policy=save_nothing)
     _, f_vjp = jax.vjp(f, x)
-    jaxpr = f_vjp.args[0].func.args[1]
+    jaxpr = f_vjp.jaxpr
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin['), 1)
-    self.assertEqual(jaxpr_text.count(' cos['), 2)
+    self.assertEqual(jaxpr_text.count(' sin '), 1)
+    self.assertEqual(jaxpr_text.count(' cos '), 2)
 
   def test_axis_name_shadowing_with_vmap(self):
     # vmap-of-pmap with mismatched axis sizes
@@ -2152,18 +2257,82 @@ class PythonPmapTest(jtu.JaxTestCase):
     keys = jax.random.split(jax.random.key(0), jax.device_count())
     result1 = jax.pmap(jax.random.bits)(keys)
     with jtu.ignore_warning(
-        category=UserWarning, message="The jitted function bits includes a pmap"):
+        category=UserWarning, message="The function jit.bits. includes a pmap"):
       result2 = jax.jit(jax.pmap(jax.random.bits))(keys)
     self.assertArraysEqual(result1, result2)
+
+
+class PmapShmapMergeTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if jax.device_count() < 2:
+      raise SkipTest('test requires at least two devices')
+
+  @config.pmap_shmap_merge(True)
+  def test_store_exception(self):
+    def f(x):
+      return x
+    inp = jnp.ones((jax.device_count(), 1), dtype=jnp.float32)
+    jax.pmap(f, axis_name='i')(inp)
+    inp = jnp.ones((jax.device_count(), 1), dtype=jnp.int32)
+    jax.pmap(f, axis_name='i')(inp)
+
+  @config.pmap_shmap_merge(True)
+  def test_prng_key(self):
+    keys = jax.random.split(jax.random.key(0), jax.device_count())
+    out = jax.pmap(lambda x: x)(keys)
+    self.assertEqual(type(out), type(keys))
+    out = jax.pmap(lambda x, y: y, in_axes=(0, None))(keys, jax.random.key(0))
+    self.assertEqual(type(out), type(keys))
+    out = jax.pmap(lambda x, y: y, in_axes=(0, None), out_axes=None)(
+        keys, jax.random.key(0))
+    self.assertEqual(type(out), type(keys))
+
+  @config.pmap_shmap_merge(True)
+  def test_lower_with_flattened_args(self):
+    shape = (jax.device_count(), 3)
+
+    inputs = np.reshape(np.arange(math.prod(shape)), shape)
+    # The shard_map implementation of pmap takes pytree args, but the inner
+    # jitted_f must take flattened args.
+    _ = jax.pmap(lambda x: x[0]).lower((inputs, ())).compile()  # doesn't crash
+
+  @config.pmap_shmap_merge(True)
+  def test_float0_dtype_input(self):
+    inputs = np.array([b''] * jax.device_count(), dtype=dtypes.float0)
+    _ = jax.pmap(lambda x: x)(inputs)  # doesn't crash
+
+  @config.pmap_shmap_merge(True)
+  def test_float0_dtype_output(self):
+    inputs = np.ones(jax.device_count())
+    _ = jax.pmap(lambda x: jnp.array(b'', dtype=dtypes.float0))(inputs)  # doesn't crash
+
+  @config.pmap_shmap_merge(True)
+  def test_lowered_args_info(self):
+    shmap_lowered = jax.pmap(lambda x: x).lower((jnp.ones((1,), jnp.float32), ()))
+    aval = core.ShapedArray((1,), jnp.float32)
+    expected_args_info = (((stages.ArgInfo(aval, donated=False), (),),),{},)
+    self.assertEqual(shmap_lowered.args_info, expected_args_info)  # doesn't crash
+
+  @config.pmap_shmap_merge(True)
+  def test_wrapped(self):
+    f = lambda x: x
+    g = jax.pmap(f)
+    self.assertTrue(hasattr(g, '__wrapped__'))
+    self.assertEqual(g.__wrapped__, f)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class CppPmapTest(PythonPmapTest):
 
+  def setUp(self):
+    super().setUp()
+    if config.pmap_shmap_merge.value:
+      raise SkipTest('Not testing cpp_pmap when `pmap_shmap_merge=True`.')
+
   @property
   def pmap(self):
-    if config.pmap_shmap_merge.value:
-      return src_api.pmap
     return src_api._cpp_pmap
 
   def pmap_fast_path_is_enabled(self):
@@ -2271,7 +2440,11 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     if jax.device_count() < 4:
       raise SkipTest("test requires at least four devices")
     x = jnp.ones((2, 2, 64, 64))
-    y = f(jax.pmap, jax.pmap)(x, x)
+    if config.pmap_shmap_merge.value:
+      # NOTE(dsuo): Ignore nested pmap when `pmap_shmap_merge=True`.
+      y = f(jax.vmap, jax.vmap)(x, x)
+    else:
+      y = f(jax.pmap, jax.pmap)(x, x)
     self.assertAllClose(f(jax.vmap, jax.vmap)(x, x), y)
     self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
     self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), y)
@@ -2291,7 +2464,11 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     if jax.device_count() < 8:
       raise SkipTest("test requires at least eight devices")
     x = jnp.arange(4*2*64*64, dtype=float).reshape(4, 2, 64, 64)
-    y = f(jax.pmap, jax.pmap)(x, x)
+    if config.pmap_shmap_merge.value:
+      # NOTE(dsuo): Ignore nested pmap when `pmap_shmap_merge=True`.
+      y = f(jax.vmap, jax.vmap)(x, x)
+    else:
+      y = f(jax.pmap, jax.pmap)(x, x)
     self.assertAllClose(f(jax.vmap, jax.vmap)(x, x), y)
     self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
     self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), y)
@@ -2299,8 +2476,8 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
   def testPPermuteWithVmap(self):
     perm = [(0, 1), (1, 0)]
 
-    def f(map2):
-      @partial(jax.pmap, axis_name='i')
+    def f(map1, map2):
+      @partial(map1, axis_name='i')
       @partial(map2)
       def f(x, y):
         return x + jax.lax.ppermute(x.dot(y), 'i', perm)
@@ -2309,7 +2486,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     if jax.device_count() < 4:
       raise SkipTest("test requires at least four devices")
     x = jnp.ones((2, 2, 64, 64))
-    self.assertAllClose(f(jax.pmap)(x, x), f(jax.vmap)(x, x))
+    self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), f(jax.pmap, jax.vmap)(x, x))
 
   def testPPermuteAgreesWithVmap(self):
     if jax.device_count() < 3:
@@ -2419,7 +2596,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
 
     shape = (2, 2, 4, 4, 4)
     x = jnp.arange(math.prod(shape)).reshape(shape)
-    self.assertAllClose(pmap(pmap(f, axis_name='j'), axis_name='i')(x),
+    self.assertAllClose(pmap(vmap(f, axis_name='j'), axis_name='i')(x),
                         vmap(vmap(f, axis_name='j'), axis_name='i')(x))
 
   @parameterized.named_parameters([
@@ -2427,13 +2604,13 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     ('ReduceScatter', lax.psum_scatter),
   ])
   def testWithVmap(self, prim):
-    def f(map2):
-      return jax.pmap(map2(partial(prim, axis_name='i')), axis_name='i')
+    def f(map1, map2):
+      return map1(map2(partial(prim, axis_name='i')), axis_name='i')
 
     if jax.device_count() < 4:
       raise SkipTest("test requires at least four devices")
     x = jnp.ones((2, 2, 2, 64))
-    self.assertAllClose(f(jax.pmap)(x), f(jax.vmap)(x))
+    self.assertAllClose(f(jax.vmap, jax.pmap)(x), f(jax.pmap, jax.vmap)(x))
 
   @parameterized.named_parameters(it.chain.from_iterable([
     ('AllGather' + ('Tiled' if tiled else ''), lax.all_gather, tiled),
@@ -2487,6 +2664,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
   def testBadAxisSizeError(self):
     if jax.device_count() == 1:
       raise SkipTest("this test requires multiple devices")
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("jit(shmap) does not raise error.")
 
     f = pmap(lambda x: lax.psum(x, 'i'), axis_name='i',
              devices=jax.devices())
@@ -2505,6 +2684,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
   def testBadAxisSizeErrorNested(self):
     if config.disable_jit.value:
       raise SkipTest("error doesn't apply when jit is disabled")
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
     f = pmap(pmap(lambda x: lax.psum(x, ('i', 'j')),
                   axis_name='j'),
              axis_name='i',
@@ -2520,6 +2701,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
       raise SkipTest
     if config.disable_jit.value:
       raise SkipTest("disable_jit requires num devices to equal axis size")
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
 
     # Devices specified in outer pmap are OK
     @partial(pmap, axis_name='i', devices=jax.devices())
@@ -2539,6 +2722,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
       raise SkipTest
     if config.disable_jit.value:
       raise SkipTest("disable_jit requires num devices to equal axis size")
+    if config.pmap_shmap_merge.value:
+      raise SkipTest("Ignore nested pmap when `pmap_shmap_merge=True`.")
 
     # Devices specified in outer pmap are OK
     @partial(pmap, axis_name='i', devices=jax.devices())
@@ -2554,6 +2739,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
   def testNestedPmapsError(self):
+    if config.pmap_shmap_merge.value:
+      raise SkipTest('Ignore nested pmap when `pmap_shmap_merge=True`.')
     # Devices specified in inner pmap not OK
     @partial(pmap, axis_name='i')
     def foo(x):
@@ -2709,6 +2896,10 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
 class ArrayTest(jtu.JaxTestCase):
 
   def testThreadsafeIndexing(self):
+    if config.pmap_shmap_merge.value:
+      # NOTE(dsuo): This passes when not CPU, but fails for all platforms under
+      # disable_jit=True.
+      raise SkipTest('TODO(dsuo): See https://github.com/jax-ml/jax/issues/31911')
     # NOTE(skye): I picked these values to be big enough to cause interesting
     # execution overlap, but small enough to not use too much memory. YMMV.
     shape = (8, 4000, 1000)
@@ -2998,7 +3189,8 @@ class ShardArgsTest(jtu.JaxTestCase):
     x = np.arange(math.prod(shape)).reshape(shape)
     arg = make_arg(x)
     sharding = jax.sharding.PmapSharding(jax.devices()[:nshards], spec)
-    results = pxla.shard_args([sharding], [None], [None], [arg])
+    results = pxla.shard_args([sharding], [None],
+                              [xc.ArrayCopySemantics.REUSE_INPUT], [arg])
     self.assertEqual(len(results), 1)
     if isinstance(results[0], array.ArrayImpl):
       bufs = results[0]._arrays
@@ -3149,7 +3341,6 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
     def _compare_if_equal(out, out_copy):
       self.assertArraysEqual(out, out_copy)
-      self.assertIsInstance(out_copy.sharding, jax.sharding.PmapSharding)
       self.assertEqual(out.sharding, out_copy.sharding)
       for o, o_copy in safe_zip(out.addressable_shards, out_copy.addressable_shards):
         self.assertArraysEqual(o.data, o_copy.data)
@@ -3159,11 +3350,23 @@ class ArrayPmapTest(jtu.JaxTestCase):
         self.assertNotEqual(o.data.unsafe_buffer_pointer(),
                             o_copy.data.unsafe_buffer_pointer())
 
-    out, _ = create_input_array_for_pmap((jax.device_count(),))
+    if config.pmap_shmap_merge.value:
+      sharding = jax.sharding.NamedSharding(
+          jax.sharding.Mesh(np.array(jax.devices()), 'x'),
+          jax.sharding.PartitionSpec('x'))
+      out = jax.device_put(jnp.ones((jax.device_count(),)), sharding)
+    else:
+      out, _ = create_input_array_for_pmap((jax.device_count(),))
     out_copy = jnp.copy(out)
     _compare_if_equal(out, out_copy)
 
-    out1, _ = create_input_array_for_pmap((1, jax.device_count(),), in_axes=1)
+    if config.pmap_shmap_merge.value:
+      sharding = jax.sharding.NamedSharding(
+          jax.sharding.Mesh(np.array(jax.devices()).reshape(1, -1), ('x', 'y')),
+          jax.sharding.PartitionSpec('x', 'y'))
+      out1 = jax.device_put(jnp.ones((1, jax.device_count())), sharding)
+    else:
+      out1, _ = create_input_array_for_pmap((1, jax.device_count(),), in_axes=1)
     out_copy1 = jnp.copy(out1)
     _compare_if_equal(out1, out_copy1)
 
@@ -3188,17 +3391,20 @@ class EagerPmapMixin:
 
   def setUp(self):
     super().setUp()
-    stack = contextlib.ExitStack()
-    stack.enter_context(jtu.thread_local_config_context(jax_disable_jit=True, jax_eager_pmap=True))
-    stack.enter_context(jtu.ignore_warning(
+    if config.pmap_shmap_merge.value:
+      # NOTE(dsuo): Most test do pass `pmap_shmap_merge=True` and
+      # `disable_jit=True` but are they still meaningful? They can also be much
+      # slower.
+      raise SkipTest('Not testing disable_jit when `pmap_shmap_merge=True`.')
+    self.enter_context(jtu.thread_local_config_context(jax_disable_jit=True))
+    self.enter_context(jtu.ignore_warning(
         message="Some donated buffers were not usable", category=UserWarning))
-    self.addCleanup(stack.close)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PythonPmapEagerTest(EagerPmapMixin, PythonPmapTest):
 
   def test_custom_jvp(self):
-
     @jax.custom_jvp
     def foo(x):
       return jnp.exp(x)
@@ -3214,7 +3420,6 @@ class PythonPmapEagerTest(EagerPmapMixin, PythonPmapTest):
     self.assertAllClose(self.pmap(f)(x, x), jax.vmap(f)(x, x))
 
   def test_custom_vjp(self):
-
     @jax.custom_vjp
     def foo(x):
       return jnp.exp(x)

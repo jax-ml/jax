@@ -177,7 +177,7 @@ print(numpy_array)
 
 +++ {"id": "go3L4x3w4-9p"}
 
-If we try to update a JAX device array in-place, however, we get an __error__!  (☉_☉)
+If we try to do in-place indexed updating on a `jax.Array`, however, we get an __error__!  (☉_☉)
 
 ```{code-cell} ipython3
 :id: iOscaa_GecEK
@@ -197,11 +197,32 @@ jax_array = jnp.zeros((3,3), dtype=jnp.float32)
 jax_array[1, :] = 1.0
 ```
 
+And if we try to do `__iadd__`-style in-place updating, we get __different behavior than NumPy__!  (☉_☉)  (☉_☉)
+
+```{code-cell} ipython3
+jax_array = jnp.array([10, 20])
+jax_array_new = jax_array
+jax_array_new += 10
+print(jax_array_new)  # `jax_array_new` is rebound to a new value [20, 30], but...
+print(jax_array)      # the original value is unodified as [10, 20] !
+
+numpy_array = np.array([10, 20])
+numpy_array_new = numpy_array
+numpy_array_new += 10
+print(numpy_array_new)  # `numpy_array_new is numpy_array`, and it was updated
+print(numpy_array)      # in-place, so both are [20, 30] !
+```
+
+That's because NumPy defines `__iadd__` to perform in-place mutation. In
+contrast, `jax.Array` doesn't define an `__iadd__`, so Python treats
+`jax_array_new += 10` as syntactic sugar for `jax_array_new = jax_array_new +
+10`, rebinding the variable without mutating any arrays.
+
 +++ {"id": "7mo76sS25Wco"}
 
 Allowing mutation of variables in-place makes program analysis and transformation difficult. JAX requires that programs are pure functions.
 
-Instead, JAX offers a _functional_ array update using the [`.at` property on JAX arrays](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html#jax.numpy.ndarray.at).
+Instead, JAX offers a _functional_ array update using the [`.at` property on JAX arrays](https://docs.jax.dev/en/latest/_autosummary/jax.numpy.ndarray.at.html#jax.numpy.ndarray.at).
 
 +++ {"id": "hfloZ1QXCS_J"}
 
@@ -219,6 +240,7 @@ For example, the update above can be written as:
 :id: PBGI-HIeCP_s
 :outputId: de13f19a-2066-4df1-d503-764c34585529
 
+jax_array = jnp.zeros((3,3), dtype=jnp.float32)
 updated_array = jax_array.at[1, :].set(1.0)
 print("updated array:\n", updated_array)
 ```
@@ -261,7 +283,7 @@ print(new_jax_array)
 
 +++ {"id": "sTjJ3WuaDyqU"}
 
-For more details on indexed array updates, see the [documentation for the `.at` property](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html#jax.numpy.ndarray.at).
+For more details on indexed array updates, see the [documentation for the `.at` property](https://docs.jax.dev/en/latest/_autosummary/jax.numpy.ndarray.at.html#jax.numpy.ndarray.at).
 
 +++ {"id": "oZ_jE2WAypdL"}
 
@@ -292,7 +314,7 @@ jnp.arange(10)[11]
 
 +++ {"id": "NAcXJNAcDi_v"}
 
-If you would like finer-grained control over the behavior for out-of-bound indices, you can use the optional parameters of [`ndarray.at`](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html); for example:
+If you would like finer-grained control over the behavior for out-of-bound indices, you can use the optional parameters of [`ndarray.at`](https://docs.jax.dev/en/latest/_autosummary/jax.numpy.ndarray.at.html); for example:
 
 ```{code-cell} ipython3
 :id: -0-MaFddO-xy
@@ -459,138 +481,9 @@ Similar tricks can be played in other situations where dynamically-shaped arrays
 
 +++ {"id": "DKTMw6tRZyK2"}
 
-## 🔪 NaNs
+## 🔪 Debugging NaNs and Infs
 
-+++ {"id": "ncS0NI4jZrwy"}
-
-### Debugging NaNs
-
-If you want to trace where NaNs are occurring in your functions or gradients, you can turn on the NaN-checker by:
-
-* setting the `JAX_DEBUG_NANS=True` environment variable;
-
-* adding `jax.config.update("jax_debug_nans", True)` near the top of your main file;
-
-* adding `jax.config.parse_flags_with_absl()` to your main file, then set the option using a command-line flag like `--jax_debug_nans=True`;
-
-This will cause computations to error-out immediately on production of a NaN. Switching this option on adds a nan check to every floating point type value produced by XLA. That means values are pulled back to the host and checked as ndarrays for every primitive operation not under an `@jit`. For code under an `@jit`, the output of every `@jit` function is checked and if a nan is present it will re-run the function in de-optimized op-by-op mode, effectively removing one level of `@jit` at a time.
-
-There could be tricky situations that arise, like nans that only occur under a `@jit` but don't get produced in de-optimized mode. In that case you'll see a warning message print out but your code will continue to execute.
-
-If the nans are being produced in the backward pass of a gradient evaluation, when an exception is raised several frames up in the stack trace you will be in the backward_pass function, which is essentially a simple jaxpr interpreter that walks the sequence of primitive operations in reverse. In the example below, we started an ipython repl with the command line `env JAX_DEBUG_NANS=True ipython`, then ran this:
-
-+++ {"id": "p6ZtDHPbBa_W"}
-
-```
-In [1]: import jax.numpy as jnp
-
-In [2]: jnp.divide(0., 0.)
----------------------------------------------------------------------------
-FloatingPointError                        Traceback (most recent call last)
-<ipython-input-2-f2e2c413b437> in <module>()
-----> 1 jnp.divide(0., 0.)
-
-.../jax/jax/numpy/lax_numpy.pyc in divide(x1, x2)
-    343     return floor_divide(x1, x2)
-    344   else:
---> 345     return true_divide(x1, x2)
-    346
-    347
-
-.../jax/jax/numpy/lax_numpy.pyc in true_divide(x1, x2)
-    332   x1, x2 = _promote_shapes(x1, x2)
-    333   return lax.div(lax.convert_element_type(x1, result_dtype),
---> 334                  lax.convert_element_type(x2, result_dtype))
-    335
-    336
-
-.../jax/jax/lax.pyc in div(x, y)
-    244 def div(x, y):
-    245   r"""Elementwise division: :math:`x \over y`."""
---> 246   return div_p.bind(x, y)
-    247
-    248 def rem(x, y):
-
-... stack trace ...
-
-.../jax/jax/interpreters/xla.pyc in handle_result(device_buffer)
-    103         py_val = device_buffer.to_py()
-    104         if np.any(np.isnan(py_val)):
---> 105           raise FloatingPointError("invalid value")
-    106         else:
-    107           return Array(device_buffer, *result_shape)
-
-FloatingPointError: invalid value
-```
-
-+++ {"id": "_NCnVt_GBa_W"}
-
-The nan generated was caught. By running `%debug`, we can get a post-mortem debugger. This also works with functions under `@jit`, as the example below shows.
-
-+++ {"id": "pf8RF6eiBa_W"}
-
-```
-In [4]: from jax import jit
-
-In [5]: @jit
-   ...: def f(x, y):
-   ...:     a = x * y
-   ...:     b = (x + y) / (x - y)
-   ...:     c = a + 2
-   ...:     return a + b * c
-   ...:
-
-In [6]: x = jnp.array([2., 0.])
-
-In [7]: y = jnp.array([3., 0.])
-
-In [8]: f(x, y)
-Invalid value encountered in the output of a jit function. Calling the de-optimized version.
----------------------------------------------------------------------------
-FloatingPointError                        Traceback (most recent call last)
-<ipython-input-8-811b7ddb3300> in <module>()
-----> 1 f(x, y)
-
- ... stack trace ...
-
-<ipython-input-5-619b39acbaac> in f(x, y)
-      2 def f(x, y):
-      3     a = x * y
-----> 4     b = (x + y) / (x - y)
-      5     c = a + 2
-      6     return a + b * c
-
-.../jax/jax/numpy/lax_numpy.pyc in divide(x1, x2)
-    343     return floor_divide(x1, x2)
-    344   else:
---> 345     return true_divide(x1, x2)
-    346
-    347
-
-.../jax/jax/numpy/lax_numpy.pyc in true_divide(x1, x2)
-    332   x1, x2 = _promote_shapes(x1, x2)
-    333   return lax.div(lax.convert_element_type(x1, result_dtype),
---> 334                  lax.convert_element_type(x2, result_dtype))
-    335
-    336
-
-.../jax/jax/lax.pyc in div(x, y)
-    244 def div(x, y):
-    245   r"""Elementwise division: :math:`x \over y`."""
---> 246   return div_p.bind(x, y)
-    247
-    248 def rem(x, y):
-
- ... stack trace ...
-```
-
-+++ {"id": "6ur2yArDBa_W"}
-
-When this code sees a nan in the output of an `@jit` function, it calls into the de-optimized code, so we still get a clear stack trace. And we can run a post-mortem debugger with `%debug` to inspect all the values to figure out the error.
-
-⚠️ You shouldn't have the NaN-checker on if you're not debugging, as it can introduce lots of device-host round-trips and performance regressions!
-
-⚠️ The NaN-checker doesn't work with `pmap`. To debug nans in `pmap` code, one thing to try is replacing `pmap` with `vmap`.
+Use the `jax_debug_nans` and `jax_debug_infs` flags to find the source of NaN/Inf values in functions and gradients. See {ref}`debugging-flags`.
 
 +++ {"id": "YTktlwTTMgFl"}
 
@@ -664,8 +557,8 @@ x.dtype # --> dtype('float64')
 While `jax.numpy` makes every attempt to replicate the behavior of numpy's API, there do exist corner cases where the behaviors differ.
 Many such cases are discussed in detail in the sections above; here we list several other known places where the APIs diverge.
 
-- For binary operations, JAX's type promotion rules differ somewhat from those used by NumPy. See [Type Promotion Semantics](https://jax.readthedocs.io/en/latest/type_promotion.html) for more details.
-- When performing unsafe type casts (i.e. casts in which the target dtype cannot represent the input value), JAX's behavior may be backend dependent, and in general may diverge from NumPy's behavior. Numpy allows control over the result in these scenarios via the `casting` argument (see [`np.ndarray.astype`](https://numpy.org/devdocs/reference/generated/numpy.ndarray.astype.html)); JAX does not provide any such configuration, instead directly inheriting the behavior of [XLA:ConvertElementType](https://www.tensorflow.org/xla/operation_semantics#convertelementtype).
+- For binary operations, JAX's type promotion rules differ somewhat from those used by NumPy. See [Type Promotion Semantics](https://docs.jax.dev/en/latest/type_promotion.html) for more details.
+- When performing unsafe type casts (i.e. casts in which the target dtype cannot represent the input value), JAX's behavior may be backend dependent, and in general may diverge from NumPy's behavior. Numpy allows control over the result in these scenarios via the `casting` argument (see [`np.ndarray.astype`](https://numpy.org/devdocs/reference/generated/numpy.ndarray.astype.html)); JAX does not provide any such configuration, instead directly inheriting the behavior of [XLA:ConvertElementType](https://www.openxla.org/xla/operation_semantics#convertelementtype).
 
   Here is an example of an unsafe cast with differing results between NumPy and JAX:
   ```python

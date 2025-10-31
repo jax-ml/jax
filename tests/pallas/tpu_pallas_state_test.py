@@ -16,6 +16,7 @@ import functools
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
+from jax._src.state.primitives import pin, unpin
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
@@ -117,6 +118,8 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
 
       x = pl.pallas_call(
           functools.partial(copy_kernel, x_ref, y_ref),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
           scratch_shapes=[pltpu.SemaphoreType.DMA],
           out_shape=jax.ShapeDtypeStruct(x_ref.shape, x_ref.dtype),
           input_output_aliases={0: 0},
@@ -184,12 +187,54 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
     y = jax.random.normal(jax.random.key(1), (k, n), jnp.float32)
     o = matmul(x, y)
     atol = 0
-    if jtu.is_device_tpu(6):
+    if jtu.is_device_tpu_at_least(6):
       atol = 2e-5
     np.testing.assert_allclose(o, x @ y, atol=atol)
 
 
-class ShmallasTest(jtu.JaxTestCase):
+class PinnedBufferTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Only supported on TPU v4+")
+
+  def test_basic(self):
+
+    @jax.jit
+    def f(x):
+      x_pinned = pin(x)
+      x_pinned = pl.pallas_call(
+          lambda *_: None, out_shape=x_pinned,
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+          input_output_aliases={0: 0}
+          )(x_pinned)
+      return unpin(x_pinned)
+
+    x = jnp.arange(3.)
+    y = f(x)
+    self.assertAllClose(y, x, check_dtypes=False)
+
+  def test_error_if_not_aliased(self):
+
+    @jax.jit
+    def f(x):
+      x_pinned = pin(x)
+      x_pinned = pl.pallas_call(
+          lambda *_: None, out_shape=x_pinned,
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+          # input_output_aliases={0: 0}  # no aliasing!
+          )(x_pinned)
+      return unpin(x_pinned)
+
+    x = jnp.arange(3.)
+    with self.assertRaisesRegex(ValueError, r"pinned buffers without"):
+      f(x)
+
+
+class CoreMapTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
@@ -218,6 +263,22 @@ class ShmallasTest(jtu.JaxTestCase):
     y = f(x)
     np.testing.assert_array_equal(y, x)
 
+  def test_empty_core_map_raises_error(self):
+    @jax.jit
+    def f(x):
+      y = jnp.zeros_like(x)
+      def inner(refs):
+        del refs  # Unused.
+        @pl.core_map(pltpu.create_tensorcore_mesh("x"))
+        def _():
+          pass
+      _, y = pl.run_state(inner)((x, y))
+      return y
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    with self.assertRaisesRegex(Exception,
+      "Attempted to lower core_map without discharging."):
+      f(x)
+
   def test_can_query_core_index_pallas_kernel_with_core_map(self):
     mesh = pltpu.create_tensorcore_mesh("x")
 
@@ -228,7 +289,7 @@ class ShmallasTest(jtu.JaxTestCase):
         x_ref, y_ref = refs
         @pl.core_map(mesh)
         def _():
-          num_cores = jax.lax.psum(1, "x")
+          num_cores = jax.lax.axis_size("x")
           slc_size = 16 // num_cores
           def alloc(x_vmem_ref, y_vmem_ref, sem):
             core_index = jax.lax.axis_index("x")
@@ -256,6 +317,27 @@ class ShmallasTest(jtu.JaxTestCase):
     ).reshape(x.shape)
     y = f(x)
     np.testing.assert_array_equal(y, expected_out)
+
+  def test_raises_on_captured_arrays(self):
+    @jax.jit
+    def f(x):
+      y = jnp.zeros_like(x)
+
+      def inner(x_ref):
+        @pl.core_map(pltpu.create_tensorcore_mesh("x"))
+        def _():
+          @functools.partial(
+              pl.run_scoped, tmp_ref=pltpu.VMEM(x_ref.shape, x_ref.dtype)
+          )
+          def _(tmp_ref):
+            pltpu.sync_copy(x_ref, tmp_ref)
+            tmp_ref[...] += y
+
+      return pl.run_state(inner)(x)
+
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    with self.assertRaisesRegex(Exception, "core_map .* captures constants"):
+      f(x)
 
 
 if __name__ == "__main__":

@@ -19,7 +19,6 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <utility>
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -64,6 +63,7 @@ struct ApplyVectorLayoutContext {
   int64_t max_sublanes_in_scratch = 0;
   int64_t vmem_banks = -1;                  // -1 means "unspecified".
   int32_t max_shuffle_sublane_offset = -1;  // -1 means "unspecified".
+  bool shape_invariant_numerics = true;
 };
 
 std::pair<bool, bool> mightCommunicateBetweenChips(Operation *op);
@@ -74,12 +74,14 @@ std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
     const TpuTilingFlags &tpu_tiling_flags = {});
 
 std::unique_ptr<OperationPass<func::FuncOp>> createCanonicalizeMosaicPass(
-    int hardware_generation = -1, bool compatibility_mode = true);
+    int hardware_generation = -1, bool compatibility_mode = true,
+    std::array<int64_t, 2> target_shape = {8, 128});
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferVectorLayoutPass(
     int hardware_generation = -1,
     std::array<int64_t, 2> target_shape = {8, 128},
-    const TpuTilingFlags &tpu_tiling_flags = {});
+    const TpuTilingFlags& tpu_tiling_flags = {},
+    bool shape_invariant_numerics = true);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createRelayoutInsertionPass(
     int hardware_generation = -1,
@@ -87,6 +89,11 @@ std::unique_ptr<OperationPass<func::FuncOp>> createRelayoutInsertionPass(
 
 std::unique_ptr<OperationPass<func::FuncOp>> createApplyVectorLayoutPass(
     const ApplyVectorLayoutContext &ctx = ApplyVectorLayoutContext{});
+
+std::unique_ptr<OperationPass<func::FuncOp>>
+createPreCanonicalizationOptimizationPass(
+    int hardware_generation = -1,
+    std::array<int64_t, 2> target_shape = {8, 128});
 
 std::unique_ptr<OperationPass<func::FuncOp>>
 createLogicalToPhysicalDeviceIdPass(int64_t total_devices);
@@ -101,8 +108,9 @@ std::unique_ptr<OperationPass<func::FuncOp>> createDebugAssertInsertionPass();
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 
 // Determine the core type of the given op based on the `tpu.core_type`
-// annotation of its parent function.
-FailureOr<std::optional<CoreType>> GetCoreTypeOfParentFunc(Operation &op);
+// annotation of its parent function. If no such annotation is found, returns
+// kTc.
+FailureOr<CoreType> GetCoreTypeOfParentFunc(Operation &op);
 
 // Changes the memory space of the value and propagates it through the program.
 LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,

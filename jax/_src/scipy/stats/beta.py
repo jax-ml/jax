@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax import lax
-import jax.numpy as jnp
+import numpy as np
+
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
+from jax._src.scipy.special import betaln, betainc, xlogy, xlog1py
 from jax._src.typing import Array, ArrayLike
-from jax.scipy.special import betaln, betainc, xlogy, xlog1py
 
 
 def logpdf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
@@ -61,9 +63,9 @@ def logpdf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
                             xlog1py(lax.sub(b, one), lax.neg(y)))
   log_probs = lax.sub(lax.add(shape_term, log_linear_term), lax.log(scale))
   result = jnp.where(jnp.logical_or(lax.gt(x, lax.add(loc, scale)),
-                                    lax.lt(x, loc)), -jnp.inf, log_probs)
+                                    lax.lt(x, loc)), -np.inf, log_probs)
   result_positive_constants = jnp.where(jnp.logical_or(jnp.logical_or(lax.le(a, zero), lax.le(b, zero)),
-                                                       lax.le(scale, zero)), jnp.nan, result)
+                                                       lax.le(scale, zero)), np.nan, result)
   return result_positive_constants
 
 

@@ -14,7 +14,6 @@
 # ==============================================================================
 
 import dataclasses
-import functools
 import itertools
 import math
 
@@ -30,7 +29,6 @@ from . import fragmented_array as fa
 from . import mma_utils
 from . import utils
 
-# mypy: ignore-errors
 
 c = utils.c
 bytewidth = utils.bytewidth
@@ -45,14 +43,24 @@ class WGMMAAccumulator:
   as a WGMMA accumulator. In particular, when created from a
   FragmentedArray, the necessary synchronization is inserted at construction.
   """
-  value: fa.FragmentedArray
+  _original_layout: fa.FragmentedLayout
+  _value: fa.FragmentedArray
 
-  def __init__(self, *, _value: fa.FragmentedArray, _sync: bool = True):
-    if _value.layout != fa.WGMMA_LAYOUT:
-      raise ValueError("Only WGMMA layouts supported in WGMMAAccumulator")
-    self.value = _value
+  def __init__(
+      self,
+      *,
+      _value: fa.FragmentedArray,
+      _original_layout: fa.FragmentedLayout,
+      _sync: bool = True,
+  ):
+    self._original_layout = _original_layout
+    self._value = _value
     if _sync:
-      self.value = wgmma_fence(_value)
+      self._value = wgmma_fence(_value)
+
+  @property
+  def value(self) -> fa.FragmentedArray:
+    return self._value.to_layout(self._original_layout)
 
   @classmethod
   def zero(cls, m, n, dtype=None, *, is_signed: bool | None = None):
@@ -63,32 +71,42 @@ class WGMMAAccumulator:
     f32 = ir.F32Type.get()
     if dtype is None:
       dtype = f32
-    zero = arith.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
-    return cls(
-        _value=fa.FragmentedArray.splat(
+    if ir.IntegerType.isinstance(dtype):
+      zero = arith.constant(dtype, ir.IntegerAttr.get(dtype, 0))
+    else:
+      zero = arith.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
+    return cls.from_registers(
+        fa.FragmentedArray.splat(
             zero, (m, n), fa.WGMMA_LAYOUT, is_signed=is_signed
         )
     )
 
   @classmethod
   def from_registers(cls, registers):
-    return cls(_value=registers)
+    original_layout = registers.layout
+    if registers.layout != fa.WGMMA_LAYOUT and registers.layout != fa.WGMMA_LAYOUT_ACC_32BIT:
+      raise ValueError("Only WGMMA layouts supported in WGMMAAccumulator")
+    if utils.bitwidth(registers.mlir_dtype) == 32:
+      registers = registers.to_layout(fa.WGMMA_LAYOUT_ACC_32BIT)
+    return cls(_value=registers, _original_layout=original_layout)
 
   def tree_flatten(self):
-    return (self.value,), ()
+    return (self._value,), (self._original_layout,)
 
   @classmethod
   def tree_unflatten(cls, aux, value):
-    del aux
-    return cls(_value=value[0], _sync=False)
+    return cls(_value=value[0], _original_layout=aux[0], _sync=False)
 
 
 def _supported_wgmma_types(dtype, abtype) -> bool:
   input_types_are = lambda ty: ty.isinstance(abtype)
+  f16_acc_types = (ir.F16Type, ir.Float8E5M2Type, ir.Float8E4M3FNType)
   if ir.F32Type.isinstance(dtype):
-    return any(input_types_are(ty) for ty in (ir.FloatTF32Type, ir.BF16Type, ir.F16Type))
+    return any(input_types_are(ty) for ty in (ir.FloatTF32Type, ir.BF16Type, *f16_acc_types))
   elif ir.F16Type.isinstance(dtype):
-    return input_types_are(ir.F16Type)
+    return any(input_types_are(ty) for ty in f16_acc_types)
+  elif ir.IntegerType.get_signless(32).isinstance(dtype):
+    return input_types_are(ir.IntegerType.get_signless(8))
   else:
     return False
 
@@ -107,13 +125,12 @@ def wgmma_m64(
 ):
   out_ty = ir.VectorType(acc.flat[0].type).element_type
   if not _supported_wgmma_types(out_ty, element_type):
-    raise ValueError(f"Usupported wgmma types {(out_ty, element_type)=}")
+    raise ValueError(f"Unsupported wgmma types {(out_ty, element_type)=}")
   if n % 8:
     raise ValueError
 
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
-  index = ir.IndexType.get()
   if b_k_stride % 16:
     raise ValueError
   # Only 16-bit types support transposes
@@ -134,27 +151,30 @@ def wgmma_m64(
     if a_transpose is None:
       raise ValueError
 
-  if ir.F32Type.isinstance(out_ty):
+  if ir.F32Type.isinstance(out_ty) or out_ty == i32:
     num_acc_regs = n // 2
-    out_ty_field = out_ty
-    acc_regs = [  # pylint: disable=g-complex-comprehension
-        vector.extractelement(reg, position=c(pos, index))
-        for reg in acc.flat
-        for pos in range(2)
-    ]
-    to_acc_vec_regs = functools.partial(_as_fragmented_reg_ndarray, dtype=out_ty, shape=acc.shape)
-    acc_constraint = "f"
+    out_ty_field = ir.VectorType.get((1,), out_ty)
+    acc_regs = list(acc.flat)
+    assert acc_regs[0].type == ir.VectorType.get((1,), out_ty)
+    to_acc_vec_regs = lambda regs: np.array(regs).reshape(acc.shape)
+    acc_constraint = "r" if ir.IntegerType.isinstance(out_ty) else "f"
   elif ir.F16Type.isinstance(out_ty):
     num_acc_regs = n // 4
     out_ty_field = i32
     acc_regs = [_as_i32_reg(reg) for reg in acc.flat]
     vec_ty = ir.VectorType(acc.flat[0].type)
-    to_acc_vec_regs = lambda regs : np.array([_unpack_i32(vec_ty, reg) for reg in regs]).reshape(acc.shape)
+    to_acc_vec_regs = lambda regs: np.array([_unpack_i32(vec_ty, reg) for reg in regs]).reshape(acc.shape)
     acc_constraint = "r"
   else:
-    raise ValueError(f"WGMMA instruciton only supports f32 and f16 out (got {out_ty})")
+    raise ValueError(
+        f"WGMMA instruction only supports f32, f16 and s32 out (got {out_ty})")
 
-  num_imm_regs = 4 if supports_transpose else 2
+  if supports_transpose:
+    num_imm_regs = 4
+  elif out_ty == i32:
+    num_imm_regs = 0
+  else:
+    num_imm_regs = 2
 
   if a_in_regs:
     a_reg_constraints = ["r"] * 4  # 4x f16x2 registers
@@ -171,7 +191,6 @@ def wgmma_m64(
       + ["n"] * (1 + num_imm_regs)  # literal constants
   )
   reg_constraints = ",".join(reg_constraints_list)
-
   reg_count = itertools.count()
 
   def take_regs(n):
@@ -185,13 +204,28 @@ def wgmma_m64(
   else:
     a_regs, = take_regs(1)
   b_desc_reg, use_out_reg = take_regs(2)
-  imm_regs = ", ".join(take_regs(num_imm_regs))  # Immediate regs (scale, ...).
+  # Immediate regs (scale, ...).
+  imm_regs = "".join(f", {r}" for r in take_regs(num_imm_regs))
   assert next(reg_count) == len(reg_constraints_list)
-  el_ty = element_type
   k_instr = 32 // bytewidth(element_type)
+  el_ty = str(element_type)
+  if ir.Float8E5M2Type.isinstance(element_type):
+    el_ty = "e5m2"
+  elif ir.Float8E4M3FNType.isinstance(element_type):
+    el_ty = "e4m3"
+  elif ir.IntegerType.get_signless(8).isinstance(element_type):
+    # TODO(bchetioui): add u8 support in the future. Currently we always assume
+    # that 8-bit integers are s8, and we would need to change the signature of
+    # `wgmma` to indicate whether the input should be treated as signed or not.
+    el_ty = "s8"
+
+  out_ty_str = str(out_ty)
+  if out_ty == i32:
+    out_ty_str = "s32"
+
   wgmma_instr = (
-      f"wgmma.mma_async.sync.aligned.m64n{n}k{k_instr}.{out_ty}.{el_ty}.{el_ty} "
-      f"{acc_reg_vector}, {a_regs}, {b_desc_reg}, p, {imm_regs};"
+      f"wgmma.mma_async.sync.aligned.m64n{n}k{k_instr}.{out_ty_str}.{el_ty}.{el_ty} "
+      f"{acc_reg_vector}, {a_regs}, {b_desc_reg}, p{imm_regs};"
   )
   ptx = f"{{ .reg .pred p; setp.ne.b32 p, {use_out_reg}, 0; {wgmma_instr} }}\n"
 
@@ -199,12 +233,21 @@ def wgmma_m64(
     return llvm.ConstantOp(i32, ir.IntegerAttr.get(i32, x)).result
 
   use_out = scale_a = scale_b = lc(1)
-  imms = [use_out, scale_a, scale_b]
+  if out_ty == i32:
+    imms = [use_out]
+  else:
+    imms = [use_out, scale_a, scale_b]
+
   if supports_transpose and a_transpose is not None:
     imms += [lc(int(a_transpose)), lc(int(b_transpose))]
   elif supports_transpose:
     imms += [lc(int(b_transpose))]
-  if acc.ndim != 10 or acc.shape[0] != 1 or math.prod(acc.shape[2:]) != 2:
+
+  assert len(imms) == num_imm_regs + 1  # +1 for the use_out_reg in setp.ne.b32
+
+  expected_dim = 10 if utils.bitwidth(out_ty) == 32 else 9
+  expected_regs_per_tile = 4 if utils.bitwidth(out_ty) == 32 else 2
+  if acc.ndim != expected_dim or acc.shape[0] != 1 or math.prod(acc.shape[2:]) != expected_regs_per_tile:
     raise ValueError(acc.shape)
   acc_struct_type = ir.Type.parse(
       f"!llvm.struct<({','.join(str(out_ty_field) for _ in acc_regs)})>"
@@ -216,6 +259,7 @@ def wgmma_m64(
       a_args = [_as_i32_reg(v) for v in a_slice.registers.flat]
     else:
       if i > 0:
+        assert a_k_stride is not None
         a = _llvm_add(
             a,
             llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, a_k_stride >> 4)),
@@ -286,23 +330,39 @@ def wgmma(
         "WGMMA requires A and B to have the same element type, got:"
         f" {element_type2} and {element_type}"
     )
-  if acc.value.shape != (m, n):
+  if acc._value.shape != (m, n):
     raise ValueError(
-        f"Accumulator shape mismatch: expected {(m, n)}, got {acc.value.shape}"
+        f"Accumulator shape mismatch: expected {(m, n)}, got {acc._value.shape}"
     )
   f32 = ir.F32Type.get()
+  f16 = ir.F16Type.get()
+  i32 = ir.IntegerType.get_signless(32)
+  i8 = ir.IntegerType.get_signless(8)
   if element_type == f32 or element_type == ir.BF16Type.get():
-    if acc.value.mlir_dtype != f32:
+    if acc._value.mlir_dtype != f32:
       raise ValueError(
           f"WGMMA with element type {element_type} only supports accumulators"
-          f" of type f32, but got: {acc.value.mlir_dtype}"
+          f" of type f32, but got: {acc._value.mlir_dtype}"
       )
-  elif element_type == ir.F16Type.get():
-    if acc.value.mlir_dtype != element_type and acc.value.mlir_dtype != f32:
+  elif any(
+      t.isinstance(element_type)
+      for t in {ir.F16Type, ir.Float8E5M2Type, ir.Float8E4M3FNType}
+  ):
+    if acc._value.mlir_dtype != f16 and acc._value.mlir_dtype != f32:
       raise ValueError(
-          "WGMMA with element type f16 only supports accumulators of type f32"
-          f" or f16, but got: {acc.value.mlir_dtype}"
+          f"WGMMA with element type {element_type} only supports accumulators "
+          f"of type f32 or f16, but got: {acc._value.mlir_dtype}"
       )
+  elif element_type == i8:
+    if a_in_regs and not a.is_signed:
+      raise NotImplementedError("WGMMA with lhs of type u8")
+    if acc._value.mlir_dtype != i32 or not acc._value.is_signed:
+      raise ValueError(
+          f"WGMMA with element type {element_type} only supports accumulators "
+          f"of type s32, but got: {acc._value.mlir_dtype}"
+      )
+  else:
+    raise NotImplementedError(f"Unsupported element type: {element_type}")
 
   # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
   # instructions must be issued in groups of the same width as the swizzle.
@@ -338,6 +398,8 @@ def wgmma(
         group_size=(m_group_elems, k_group_elems),
         logical_k_major=False,
     )
+    assert not a_k_instr_stride[0]  # We'd need separate a/b swizzles.
+    a_k_instr_stride = a_k_instr_stride[1][0]
     a_instr_params = dict(a_transpose=a_fastest != mma_utils.Dim.K,
                           a_k_stride=a_k_instr_stride)
   (
@@ -351,6 +413,8 @@ def wgmma(
       group_size=(k_group_elems, n_group_elems),
       logical_k_major=True,
   )
+  assert not b_k_instr_stride[0]  # We'd need separate a/b swizzles.
+  b_k_instr_stride = b_k_instr_stride[1][0]
   del b_n_group_stride  # We only support one N group.
 
   # Step 4. Issue the instructions.
@@ -358,7 +422,7 @@ def wgmma(
     a = wgmma_fence(a)  # Make sure the registers are ready.
 
   i64 = ir.IntegerType.get_signless(64)
-  new_acc_regs = acc.value.registers.copy()
+  new_acc_regs = acc._value.registers.copy()
   for mi in range(m_groups):
     for ki in range(k_groups):
       if a_in_regs:
@@ -367,6 +431,7 @@ def wgmma(
             ki * k_group_elems : (ki + 1) * k_group_elems,
         ]
       else:
+        assert a_m_group_stride is not None and a_k_group_stride is not None
         a_group_offset = mi * a_m_group_stride + ki * a_k_group_stride
         a_mk = _llvm_add(
             a_desc_base, c(mma_utils.encode_addr(a_group_offset), i64),
@@ -388,14 +453,15 @@ def wgmma(
   return WGMMAAccumulator(
       _value=fa.FragmentedArray(
           _registers=new_acc_regs,
-          _layout=fa.WGMMA_LAYOUT,
-          _is_signed=acc.value.is_signed,
+          _layout=acc._value.layout,
+          _is_signed=acc._value.is_signed,
       ),
+      _original_layout=acc._original_layout,
       _sync=False,
   )
 
 
-def wgmma_fence(array: fa.FragmentedArray):
+def wgmma_fence(array: fa.FragmentedArray) -> fa.FragmentedArray:
   """Fences the array construction from WGMMA instructions.
 
   LLVM treats in-register computation as pure and can move it after the fence,
@@ -405,16 +471,6 @@ def wgmma_fence(array: fa.FragmentedArray):
   array = fa.optimization_barrier(array)
   nvvm.wgmma_fence_aligned()
   return array
-
-
-def _as_fragmented_reg_ndarray(flat_regs, dtype: ir.Type, shape: tuple[int, ...]):
-  vec_regs = []
-  for first, second in zip(flat_regs[::2], flat_regs[1::2]):
-    vec = llvm.mlir_undef(ir.VectorType.get((2,), dtype))
-    vec = llvm.insertelement(vec, first, position=_lc(0))
-    vec = llvm.insertelement(vec, second, position=_lc(1))
-    vec_regs.append(vec)
-  return np.asarray(vec_regs, dtype=object).reshape(shape)
 
 
 def _as_i32_reg(v):
@@ -436,5 +492,5 @@ def _llvm_add(x, y):
 def _unpack_i32(vec_ty, r):
   i32 = ir.IntegerType.get_signless(32)
   return vector.bitcast(
-      vec_ty, vector.splat(ir.VectorType.get((1,), i32), r)
+      vec_ty, vector.broadcast(ir.VectorType.get((1,), i32), r)
   )

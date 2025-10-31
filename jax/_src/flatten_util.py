@@ -12,20 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterable
 import numpy as np
+from typing import Any, Callable, TypeAlias
 
-from jax import lax
-import jax.numpy as jnp
-
-from jax._src.lax import lax as lax_internal
+from jax._src.lax import lax
 from jax._src import dtypes
-from jax._src.tree_util import tree_flatten, tree_unflatten
-from jax._src.util import safe_zip, unzip2, HashablePartial
+from jax._src.tree_util import tree_flatten, tree_unflatten, PyTreeDef, Leaf
+from jax._src.util import safe_zip as zip, unzip2, HashablePartial
+from jax._src.typing import Array
 
-zip = safe_zip
+Sizes: TypeAlias = tuple[int, ...]
+Shapes: TypeAlias = tuple[tuple[int, ...], ...]
 
 
-def ravel_pytree(pytree):
+def ravel_pytree(pytree: Any) -> tuple[Array, Callable[[Array], Any]]:
   """Ravel (flatten) a pytree of arrays down to a 1D array.
 
   Args:
@@ -41,49 +42,67 @@ def ravel_pytree(pytree):
     component of the output.
 
   For details on dtype promotion, see
-  https://jax.readthedocs.io/en/latest/type_promotion.html.
+  https://docs.jax.dev/en/latest/type_promotion.html.
 
   """
   leaves, treedef = tree_flatten(pytree)
   flat, unravel_list = _ravel_list(leaves)
   return flat, HashablePartial(unravel_pytree, treedef, unravel_list)
 
-def unravel_pytree(treedef, unravel_list, flat):
+
+def unravel_pytree(
+  treedef: PyTreeDef,
+  unravel_list: Callable[[Array], Iterable[Leaf]],
+  flat: Array,
+) -> Any:
   return tree_unflatten(treedef, unravel_list(flat))
 
-def _ravel_list(lst):
-  if not lst: return jnp.array([], jnp.float32), lambda _: []
+
+def _ravel_list(lst: list[Any], /) -> tuple[Array, Callable[[Array], list[Any]]]:
+  if not lst:
+    return lax.full([0], 0, "float32"), lambda _: []
   from_dtypes = tuple(dtypes.dtype(l) for l in lst)
   to_dtype = dtypes.result_type(*from_dtypes)
-  sizes, shapes = unzip2((jnp.size(x), jnp.shape(x)) for x in lst)
-  indices = tuple(np.cumsum(sizes))
+  sizes, shapes = unzip2((np.size(x), np.shape(x)) for x in lst)
 
   if all(dt == to_dtype for dt in from_dtypes):
     # Skip any dtype conversion, resulting in a dtype-polymorphic `unravel`.
     # See https://github.com/jax-ml/jax/issues/7809.
     del from_dtypes, to_dtype
-    raveled = jnp.concatenate([jnp.ravel(e) for e in lst])
-    return raveled, HashablePartial(_unravel_list_single_dtype, indices, shapes)
+    ravel = lambda e: lax.reshape(e, (np.size(e),))
+    raveled = lax.concatenate([ravel(e) for e in lst], dimension=0)
+    return raveled, HashablePartial(_unravel_list_single_dtype, sizes, shapes)
 
   # When there is more than one distinct input dtype, we perform type
   # conversions and produce a dtype-specific unravel function.
-  ravel = lambda e: jnp.ravel(lax.convert_element_type(e, to_dtype))
-  raveled = jnp.concatenate([ravel(e) for e in lst])
-  unrav = HashablePartial(_unravel_list, indices, shapes, from_dtypes, to_dtype)
+  ravel = lambda e: lax.convert_element_type(e, to_dtype).ravel()
+  raveled = lax.concatenate([ravel(e) for e in lst], dimension=0)
+  unrav = HashablePartial(_unravel_list, sizes, shapes, from_dtypes, to_dtype)
   return raveled, unrav
 
-def _unravel_list_single_dtype(indices, shapes, arr):
-  chunks = jnp.split(arr, indices[:-1])
+
+def _unravel_list_single_dtype(sizes: Sizes, shapes: Shapes, arr: Array) -> list[Array]:
+  chunks = lax.split(arr, sizes)
   return [chunk.reshape(shape) for chunk, shape in zip(chunks, shapes)]
 
-def _unravel_list(indices, shapes, from_dtypes, to_dtype, arr):
+
+def _unravel_list(
+  sizes: Sizes,
+  shapes: Shapes,
+  from_dtypes: tuple[np.dtype, ...],
+  to_dtype: np.dtype,
+  arr: Array,
+) -> list[Array]:
   arr_dtype = dtypes.dtype(arr)
   if arr_dtype != to_dtype:
-    raise TypeError(f"unravel function given array of dtype {arr_dtype}, "
-                    f"but expected dtype {to_dtype}")
-  chunks = jnp.split(arr, indices[:-1])
+    raise TypeError(
+      f"unravel function given array of dtype {arr_dtype}, "
+      f"but expected dtype {to_dtype}"
+    )
+  chunks = lax.split(arr, sizes)
   return [
-    lax_internal._convert_element_type(chunk.reshape(shape), dtype,
-                                       warn_on_complex_to_real_cast=False)
+    lax._convert_element_type(
+      chunk.reshape(shape), dtype, warn_on_complex_to_real_cast=False
+    )
     for chunk, shape, dtype in zip(chunks, shapes, from_dtypes)
   ]

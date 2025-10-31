@@ -25,6 +25,7 @@ from jax._src import dispatch
 from jax._src import ffi
 from jax._src.interpreters import mlir
 from jax._src.lib import gpu_sparse
+from jax._src.lib import has_cpu_sparse
 import numpy as np
 
 if hasattr(gpu_sparse, "registrations"):
@@ -33,6 +34,16 @@ if hasattr(gpu_sparse, "registrations"):
       ffi.register_ffi_target(
           name, value, platform=platform, api_version=api_version
       )
+
+if has_cpu_sparse:
+  from jax._src.lib import cpu_sparse
+
+  if hasattr(cpu_sparse, "registrations"):
+    for platform, targets in cpu_sparse.registrations().items():
+      for name, value, api_version in targets:
+        ffi.register_ffi_target(
+            name, value, platform=platform, api_version=api_version
+        )
 
 def _get_module(target_name_prefix: str) -> Any:
   if target_name_prefix == "cu":
@@ -85,16 +96,14 @@ def _coo_spmv_gpu_lowering(ctx, data, row, col, x, *, transpose, shape,
 
 coo_spmv_p.def_abstract_eval(_coo_spmv_abstract_eval)
 dispatch.simple_impl(coo_spmv_p)
-if gpu_sparse.cuda_is_supported:
-  mlir.register_lowering(
-    coo_spmv_p,
-    partial(_coo_spmv_gpu_lowering, target_name_prefix='cu'),
-    platform='cuda')
-if gpu_sparse.rocm_is_supported:
-  mlir.register_lowering(
-    coo_spmv_p,
-    partial(_coo_spmv_gpu_lowering, target_name_prefix='hip'),
-    platform='rocm')
+mlir.register_lowering(
+  coo_spmv_p,
+  partial(_coo_spmv_gpu_lowering, target_name_prefix='cu'),
+  platform='cuda')
+mlir.register_lowering(
+  coo_spmv_p,
+  partial(_coo_spmv_gpu_lowering, target_name_prefix='hip'),
+  platform='rocm')
 
 
 # coo_spmm_p
@@ -158,16 +167,14 @@ def _coo_spmm_gpu_lowering(ctx, data, row, col, x, *, transpose, shape,
 
 coo_spmm_p.def_abstract_eval(_coo_spmm_abstract_eval)
 dispatch.simple_impl(coo_spmm_p)
-if gpu_sparse.cuda_is_supported:
-  mlir.register_lowering(
-    coo_spmm_p,
-    partial(_coo_spmm_gpu_lowering, target_name_prefix='cu'),
-    platform='cuda')
-if gpu_sparse.rocm_is_supported:
-  mlir.register_lowering(
-    coo_spmm_p,
-    partial(_coo_spmm_gpu_lowering, target_name_prefix='hip'),
-    platform='rocm')
+mlir.register_lowering(
+  coo_spmm_p,
+  partial(_coo_spmm_gpu_lowering, target_name_prefix='cu'),
+  platform='cuda')
+mlir.register_lowering(
+  coo_spmm_p,
+  partial(_coo_spmm_gpu_lowering, target_name_prefix='hip'),
+  platform='rocm')
 
 # csr_spmv_p
 # This is an internal-only primitive that calls into cusparse csr SpMV.
@@ -209,16 +216,14 @@ def _csr_spmv_gpu_lowering(ctx, data, indices, indptr, x, *, transpose, shape,
 
 csr_spmv_p.def_abstract_eval(_csr_spmv_abstract_eval)
 dispatch.simple_impl(csr_spmv_p)
-if gpu_sparse.cuda_is_supported:
-  mlir.register_lowering(
-    csr_spmv_p,
-    partial(_csr_spmv_gpu_lowering, target_name_prefix='cu'),
-    platform='cuda')
-if gpu_sparse.rocm_is_supported:
-  mlir.register_lowering(
-    csr_spmv_p,
-    partial(_csr_spmv_gpu_lowering, target_name_prefix='hip'),
-    platform='rocm')
+mlir.register_lowering(
+  csr_spmv_p,
+  partial(_csr_spmv_gpu_lowering, target_name_prefix='cu'),
+  platform='cuda')
+mlir.register_lowering(
+  csr_spmv_p,
+  partial(_csr_spmv_gpu_lowering, target_name_prefix='hip'),
+  platform='rocm')
 
 # csr_spmm_p
 # This is an internal-only primitive that calls into cusparse CSR SpMM.
@@ -261,16 +266,34 @@ def _csr_spmm_gpu_lowering(ctx, data, indices, indptr, x, *, transpose, shape,
 
 csr_spmm_p.def_abstract_eval(_csr_spmm_abstract_eval)
 dispatch.simple_impl(csr_spmm_p)
-if gpu_sparse.cuda_is_supported:
+mlir.register_lowering(
+  csr_spmm_p,
+  partial(_csr_spmm_gpu_lowering, target_name_prefix='cu'),
+  platform='cuda')
+mlir.register_lowering(
+  csr_spmm_p,
+  partial(_csr_spmm_gpu_lowering, target_name_prefix='hip'),
+  platform='rocm')
+
+
+if has_cpu_sparse:
+  def _csr_spmm_cpu_lowering(ctx, data, outer_indices, inner_indices, rhs):
+    rule = ffi.ffi_lowering("cpu_csr_sparse_dense_ffi")
+    return rule(ctx, data, outer_indices, inner_indices, rhs)
+
+
+  # _csr_spmm_cpu_lowering can handle both matrix-matrix and matrix-vector
+  # multiplication.
   mlir.register_lowering(
-    csr_spmm_p,
-    partial(_csr_spmm_gpu_lowering, target_name_prefix='cu'),
-    platform='cuda')
-if gpu_sparse.rocm_is_supported:
+      csr_spmv_p,
+      _csr_spmm_cpu_lowering,
+      platform="cpu",
+  )
   mlir.register_lowering(
-    csr_spmm_p,
-    partial(_csr_spmm_gpu_lowering, target_name_prefix='hip'),
-    platform='rocm')
+      csr_spmm_p,
+      _csr_spmm_cpu_lowering,
+      platform="cpu",
+  )
 
 def coo_todense_gpu_lowering(ctx, data, row, col, *, shape, target_name_prefix):
   data_aval, row_aval, _ = ctx.avals_in

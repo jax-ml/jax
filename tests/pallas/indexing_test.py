@@ -14,12 +14,12 @@
 
 from __future__ import annotations
 import sys
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import random
+from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.state import indexing
@@ -32,11 +32,7 @@ if sys.platform != "win32":
 else:
   pltpu = None
 
-try:
-  import hypothesis as hp
-except (ModuleNotFoundError, ImportError):
-  raise unittest.SkipTest("tests depend on hypothesis library")
-
+import hypothesis as hp
 import hypothesis.extra.numpy as hnp
 import hypothesis.strategies as hps
 
@@ -95,7 +91,7 @@ def array_indexer_strategy(draw, shape) -> jax.Array:
 
 @hps.composite
 def indexer_strategy(draw, dim, int_indexer_shape
-                     ) -> int | Slice | jax.Array:
+                    ) -> int | Slice | jax.Array:
   return draw(hps.one_of(
       int_indexer_strategy(dim),
       slice_indexer_strategy(dim),
@@ -104,12 +100,12 @@ def indexer_strategy(draw, dim, int_indexer_shape
 
 
 @hps.composite
-def nd_indexer_strategy(draw, shape) -> NDIndexer:
+def nd_indices_strategy(draw, shape) -> tuple[int | Slice | jax.Array, ...]:
   num_indices = draw(hps.integers(min_value=0, max_value=len(shape)))
   int_indexer_shape = draw(hnp.array_shapes())
   indices = tuple(draw(indexer_strategy(dim, int_indexer_shape))
                   for dim in shape[:num_indices])
-  return NDIndexer.from_indices_shape(indices, shape)
+  return indices
 
 
 class PallasBaseTest(jtu.JaxTestCase):
@@ -127,6 +123,7 @@ class PallasBaseTest(jtu.JaxTestCase):
     return pl.pallas_call(*args, interpret=cls.INTERPRET, **kwargs)
 
 
+@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
 class IndexerTest(jtu.JaxTestCase):
   """These are unit tests for the indexer logic, not using pallas_call."""
 
@@ -199,7 +196,43 @@ class IndexerTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, "Cannot broadcast shapes for indexing"
     ):
+      NDIndexer.from_indices_shape(indices, shape)
+
+  def test_ndindexer_with_ref(self):
+    indices = (core.new_ref(jnp.tile(jnp.arange(4), (2,))),)
+    shape = (4, 2)
+    indexer = NDIndexer.from_indices_shape(indices, shape)
+    self.assertTupleEqual(indexer.get_indexer_shape(), (8, 2))
+
+  def test_ndindexer_with_transformed_ref(self):
+    @jax.jit
+    def f(ref, size):
+      # We need the jit to make sure the ref has a dynamic size.
+      indices = (ref.at[pl.ds(0, size)],)
+      shape = (4, 2)
       indexer = NDIndexer.from_indices_shape(indices, shape)
+      return indexer.get_indexer_shape()
+
+    size = 4
+    np.testing.assert_array_equal(
+        f(core.new_ref(jnp.tile(jnp.arange(4), (size,))), 4), (size, 2)
+    )
+
+  def test_ndindexer_with_multiple_refs(self):
+    indices = (core.new_ref(jnp.tile(jnp.arange(4), (2,))),) * 2
+    shape = (4, 2)
+    with self.assertRaisesRegex(
+        NotImplementedError, "Multiple Ref indexers are not supported"
+    ):
+      NDIndexer.from_indices_shape(indices, shape)
+
+  def test_ndindexer_with_ref_and_int(self):
+    indices = (core.new_ref(jnp.tile(jnp.arange(4), (2,))), 0)
+    shape = (4, 2)
+    with self.assertRaisesRegex(
+        NotImplementedError, "Ref cannot be mixed with other non-slice indexers"
+    ):
+      NDIndexer.from_indices_shape(indices, shape)
 
   def test_indexer_with_all_types(self):
     indices = (0, slice(10), np.arange(5))
@@ -217,12 +250,15 @@ class IndexerTest(jtu.JaxTestCase):
 
     indices = (ds(0, 2), np.arange(5)[:, None], np.arange(4)[None])
     indexer = NDIndexer.from_indices_shape(indices, shape)
-    self.assertTupleEqual(indexer.get_indexer_shape(), (5, 4, 2))
+    self.assertTupleEqual(indexer.get_indexer_shape(), (2, 5, 4))
 
   @hp.given(hps.data())
+  @hp.settings(suppress_health_check=[hp.HealthCheck.too_slow])  # ASAN is slow
   def test_ndindexer(self, data):
     shape = data.draw(hnp.array_shapes())
-    indexer = data.draw(nd_indexer_strategy(shape))
+    indices = data.draw(nd_indices_strategy(shape))
+    indexer = NDIndexer.from_indices_shape(indices, shape)
+
     is_int_indexer = [not isinstance(idx, Slice) for idx in indexer.indices]
     rest_indexers, int_indexers = util.partition_list(
         is_int_indexer, indexer.indices
@@ -234,18 +270,15 @@ class IndexerTest(jtu.JaxTestCase):
     self.assertTupleEqual(
         indexer.int_indexer_shape, expected_int_indexer_shape
     )
+
     for idx in rest_indexers:
       self.assertIsInstance(idx, (np.ndarray, Slice))
       if isinstance(idx, np.ndarray):
         self.assertTupleEqual(idx.shape, ())
         self.assertEqual(idx.dtype, np.dtype("int32"))
-    rest_shape = tuple(
-        r.size for r in rest_indexers if not isinstance(r, np.ndarray)
-    )
-    self.assertTupleEqual((*indexer.int_indexer_shape, *rest_shape),
-                          indexer.get_indexer_shape())
 
 
+@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
 class IndexerOpsTest(PallasBaseTest):
 
   def test_multi_indexing_interpreter_only(self):
@@ -373,24 +406,25 @@ class IndexerOpsTest(PallasBaseTest):
   def test_vmap_nd_indexing(self, data):
     self.skipTest("TODO(necula): enable this test; was in jax_triton.")
     vmap_shape = data.draw(hnp.array_shapes(min_dims=1, max_dims=3, min_side=2),
-                           label="vmap_shape")
+                          label="vmap_shape")
     el_shape = data.draw(hnp.array_shapes(min_dims=2), label="el_shape")
     # TODO(sharadmv,apaszke): enable rank 0 and rank 1 Refs
     # hp.assume(len(el_shape) >= 2)
-    nd_indexer = data.draw(nd_indexer_strategy(el_shape), label="nd_indexer")
+    nd_indexer = NDIndexer.from_indices_shape(
+        data.draw(nd_indices_strategy(el_shape), label="nd_indexer"),
+        el_shape)
     expected_shape = jax.eval_shape(lambda x: x[nd_indexer],
                                     jax.ShapeDtypeStruct(el_shape, jnp.float32))
 
     ref = lambda x: x[nd_indexer]
     def kernel(x_ref, y_ref):
-      x = pl.load(x_ref, nd_indexer)
-      pl.store(y_ref, (slice(None),) * len(y_ref.shape), x)
+      y_ref[...] = x_ref[nd_indexer]
     func = pl.pallas_call(kernel, out_shape=expected_shape)
 
     shape = el_shape
     for vmap_dim in vmap_shape[::-1]:
       index = data.draw(hps.integers(min_value=0,
-                                     max_value=max(0, len(shape) - 2)),
+                                    max_value=max(0, len(shape) - 2)),
                         label="index")
       # hp.assume(index <= max(0, len(shape) - 2))
       # TODO(sharadmv,apaszke): enable vmapping over batch axes in 2 minormost
@@ -404,14 +438,8 @@ class IndexerOpsTest(PallasBaseTest):
     y = func(x)
     np.testing.assert_array_equal(y, expected)
 
-  @parameterized.product(
-      indexer_type=["state", "pallas"],
-      case=_INDEXING_TEST_CASES,
-  )
-  def test_can_load_with_ref_at(self, indexer_type, case):
-    # TODO(apaszke): Remove after 12 weeks have passed.
-    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
-      self.skipTest("Requires libtpu built after 2024-12-19")
+  @parameterized.product(case=_INDEXING_TEST_CASES)
+  def test_can_load_with_ref_at(self, case):
     if self.INTERPRET:
       self.skipTest("TODO: fails in interpret mode.")
     in_shape, indexers, out_shape = case
@@ -419,12 +447,8 @@ class IndexerOpsTest(PallasBaseTest):
     def body(x_ref, y_ref):
       for indexer in indexers[:-1]:
         x_ref = x_ref.at[indexer]
-      if indexer_type == "state":
-        x = x_ref[indexers[-1]]
-        y_ref[...] = x
-      elif indexer_type == "pallas":
-        x = pl.load(x_ref, indexers[-1])
-        pl.store(y_ref, ..., x)
+      x = x_ref[indexers[-1]]
+      y_ref[...] = x
 
     x = random.normal(random.key(0), in_shape, dtype=dtype)
     y = x
@@ -437,11 +461,8 @@ class IndexerOpsTest(PallasBaseTest):
     out = self.pallas_call(body, out_shape=y)(x)
     self.assertAllClose(out, y)
 
-  @parameterized.product(
-      indexer_type=["state", "pallas"],
-      case=_INDEXING_TEST_CASES,
-  )
-  def test_can_store_with_ref_at(self, indexer_type, case):
+  @parameterized.product(case=_INDEXING_TEST_CASES)
+  def test_can_store_with_ref_at(self, case):
     if self.INTERPRET:
       self.skipTest("TODO: fails in interpret mode.")
     in_shape, indexers, val_shape = case
@@ -450,12 +471,8 @@ class IndexerOpsTest(PallasBaseTest):
       y_ref[...] = jnp.zeros_like(y_ref)
       for indexer in indexers[:-1]:
         y_ref = y_ref.at[indexer]
-      if indexer_type == "state":
-        x = x_ref[...]
-        y_ref[indexers[-1]] = x
-      elif indexer_type == "pallas":
-        x = pl.load(x_ref, ...)
-        pl.store(y_ref, indexers[-1], x)
+      x = x_ref[...]
+      y_ref[indexers[-1]] = x
 
     val = random.normal(random.key(0), val_shape, dtype=dtype)
     # Use NumPy arrays to do nested indexing and mutation. This is really
@@ -472,10 +489,7 @@ class IndexerOpsTest(PallasBaseTest):
     out = self.pallas_call(body, out_shape=x)(val)
     self.assertAllClose(out, x)
 
-  @parameterized.product(
-      indexer_type=["state", "pallas"],
-      slice_type=["slice", "ds"],
-  )
+  @parameterized.product(slice_type=["slice", "ds"])
   @hp.given(
       ref_shape=hps.sampled_from(((8, 8, 32), (7, 7, 33))),
       indices=hps.tuples(
@@ -486,7 +500,7 @@ class IndexerOpsTest(PallasBaseTest):
       ),
   )
   def test_strided_load_and_store(
-      self, indexer_type, slice_type, ref_shape, indices, strides
+      self, slice_type, ref_shape, indices, strides
   ):
     if self.INTERPRET:
       self.skipTest("TODO: fails in interpret mode.")
@@ -507,12 +521,8 @@ class IndexerOpsTest(PallasBaseTest):
         slices = tuple(
             pl.ds(i, vs, s) for i, vs, s in zip(indices, vec_shape, strides)
         )
-      if indexer_type == "state":
-        y_ref1[...] = x_ref[slices]
-        y_ref2[slices] = y_ref1[...]
-      elif indexer_type == "pallas":
-        pl.store(y_ref1, ..., pl.load(x_ref, slices))
-        pl.store(y_ref2, slices, pl.load(y_ref1, ...))
+      y_ref1[...] = x_ref[slices]
+      y_ref2[slices] = y_ref1[...]
 
     x = random.normal(random.key(0), ref_shape, dtype=dtype)
     y1, y2 = self.pallas_call(
@@ -541,7 +551,7 @@ class IndexerOpsTest(PallasBaseTest):
     start = 2
 
     def kernel(x_ref, indices, y_ref):
-      y_ref[...] = pl.load(x_ref, pl.ds(indices[0], k))
+      y_ref[...] = x_ref[pl.ds(indices[0], k)]
 
     x = jnp.arange(m * n, dtype=jnp.int32).reshape((m, n))
     indices = jnp.array([start])
@@ -569,7 +579,7 @@ class IndexerOpsTest(PallasBaseTest):
     start = 2
 
     def kernel(x_ref, indices, y_ref):
-      pl.store(y_ref, pl.ds(indices[0], m), x_ref[...])
+      y_ref[pl.ds(indices[0], m)] = x_ref[...]
 
     x = jnp.arange(m * n, dtype=jnp.int32).reshape((m, n))
     indices = jnp.array([start])
@@ -641,6 +651,34 @@ class IndexerOpsTest(PallasBaseTest):
     )(x, indices)
     self.assertAllClose(res[:, start : start + 1, :], x, atol=0., rtol=0.)
 
+  def test_scalar_load_from_vmem(self):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Requires TPU v4 or later")
+    def kernel(x_ref, o_ref, sem_ref):
+      o_ref[...] = jnp.zeros_like(o_ref)
+      scalar_val = x_ref[1, 2]
+      # Use scalar_val in both async_copy and store.
+      o_ref[scalar_val] = jnp.ones_like(o_ref[0]) * scalar_val
+      desc = pltpu.make_async_copy(
+        o_ref.at[scalar_val],
+        o_ref.at[scalar_val + 1],
+        sem_ref,
+      )
+      desc.start()
+      desc.wait()
+
+    x = jnp.array([[1, 2, 3], [4, 5, 6]], dtype=jnp.int32)
+    res = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 8, 128), jnp.int32),
+        grid=(1,),
+        scratch_shapes=[pltpu.SemaphoreType.DMA]
+    )(x)
+    expected = jnp.zeros_like(res)
+    expected = expected.at[6].set(jnp.ones((8, 128), jnp.int32) * 6)
+    expected = expected.at[7].set(jnp.ones((8, 128), jnp.int32) * 6)
+    self.assertArraysEqual(res, expected)
+
 
 class IndexerOpsInterpretTest(IndexerOpsTest):
   INTERPRET = True
@@ -662,18 +700,18 @@ _ADVANCED_INDEXER_TEST_CASES = [
     ((4, 3), lambda arr, a, b, c, d: arr[a, 2]),
     # slice + 1-D array
     ((4, 3), lambda arr, a, b, c, d: arr[a, :]),
-    # ((4, 3), lambda arr, a, b, c, d: arr[:, a]),
+    ((4, 3), lambda arr, a, b, c, d: arr[:, a]),
     ((6, 8, 3), lambda arr, a, b, c, d: arr[c, ::3]),
-    # ((8, 6, 3), lambda arr, a, b, c, d: arr[::3, c]),
-    # ((8, 8, 3), lambda arr, a, b, c, d: arr[::4, ::2, a]),
-    # ((8, 8, 3), lambda arr, a, b, c, d: arr[::4, a, ::2]),
+    ((8, 6, 3), lambda arr, a, b, c, d: arr[::3, c]),
+    ((8, 8, 3), lambda arr, a, b, c, d: arr[::4, ::2, a]),
+    ((8, 8, 3), lambda arr, a, b, c, d: arr[::4, a, ::2]),
     ((8, 8, 3, 7), lambda arr, a, b, c, d: arr[b, ::4, a, ::2]),
     ((3, 8, 8, 7), lambda arr, a, b, c, d: arr[b, a, ::4, ::2]),
     # ((8, 8, 3, 7), lambda arr, a, b, c, d: arr[::4, b, a, ::2]),
     ((16, 3, 6, 2), lambda arr, a, b, c, d: arr[::4, a, 1::2, b]),
     ((8, 8, 3, 6), lambda arr, a, b, c, d: arr[b, ::4, a, a]),
     # slice + array w/ broadcasting
-    ((8, 8, 3, 6), lambda arr, a, b, c, d: \
+    ((8, 8, 3, 6), lambda arr, a, b, c, d:
         arr[b[:, None], ::4, a[None], a[:, None]]),
     # integer + slice + 1-D array
     ((5, 8, 8, 3), lambda arr, a, b, c, d: arr[2, ::4, ::2, a]),

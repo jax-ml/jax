@@ -22,7 +22,7 @@ import math
 from typing import NamedTuple
 
 import jax
-from jax import util as jax_util
+from jax._src import util as jax_util
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
 import jax.numpy as jnp
 import numpy as np
@@ -418,7 +418,7 @@ def _process_dynamic_mask(
   # tensors of this shape:
   mask_info_slice_shape = (heads_per_shard, q_blocks_per_shard, kv_blocks_count)
 
-  # Collect mask_info shards along the head dimension, concatentate (or
+  # Collect mask_info shards along the head dimension, concatenate (or
   # broadcast) them after the loop.
   data_next_per_head_list, mask_next_per_head_list = [], []
   for head_shard in range(head_shards):
@@ -633,7 +633,7 @@ def _process_mask(
   ]
 
   # TODO(amagni): checking the validity of the masks is slow for large masks.
-  # Disable it for now, reevalute in the future.
+  # Disable it for now, reevaluate in the future.
 
   partial_mask_block_ids: dict[_HashableNDArray, int] = collections.defaultdict(
       lambda: len(partial_mask_block_ids)
@@ -747,7 +747,7 @@ def _process_mask(
   q_sequence_axis = 1
   head_axis = 0
 
-  # Collect mask_info shards along the head dimension, concatentate (or
+  # Collect mask_info shards along the head dimension, concatenate (or
   # broadcast) them after the loop.
   data_next_per_head_list, mask_next_per_head_list = [], []
   for head_shard in range(shards_to_process):

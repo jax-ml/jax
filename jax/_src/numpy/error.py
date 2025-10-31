@@ -14,9 +14,19 @@
 
 import contextlib
 from typing import Literal
+from collections.abc import Sequence
 
-import jax
+import numpy as np
+
 from jax._src import config
+from jax._src import dtypes
+from jax._src import error_check as error_check_lib
+from jax._src.numpy import array_constructors
+from jax._src.numpy import array_creation
+from jax._src.numpy import lax_numpy
+from jax._src.numpy import ufuncs
+from jax._src.numpy import reductions
+from jax._src.typing import Array, ArrayLike
 
 Category = Literal["nan", "divide", "oob"]
 
@@ -39,7 +49,7 @@ def _is_category_disabled(
 
 
 def _set_error_if_with_category(
-    pred: jax.Array,
+    pred: Array,
     /,
     msg: str,
     category: Category | None = None,
@@ -59,12 +69,10 @@ def _set_error_if_with_category(
   if _is_category_disabled(category):
     return
 
-  # TODO(mattjj): fix the circular import issue.
-  from jax._src import error_check as error_check_lib
   error_check_lib.set_error_if(pred, msg)
 
 
-def _set_error_if_nan(pred: jax.Array, /):
+def _set_error_if_nan(pred: Array, /):
   """Set the internal error state if any element of `pred` is `NaN`.
 
   This function is disabled if the `jax_error_checking_behavior_nan` flag is
@@ -73,17 +81,13 @@ def _set_error_if_nan(pred: jax.Array, /):
   if config.error_checking_behavior_nan.value == "ignore":
     return
 
-  # TODO(mattjj): fix the circular import issue.
-  import jax.numpy as jnp
-  if not jnp.issubdtype(pred.dtype, jnp.floating):  # only check floats
+  if not dtypes.issubdtype(pred.dtype, np.floating):  # only check floats
     return
 
-  # TODO(mattjj): fix the circular import issue.
-  from jax._src import error_check as error_check_lib
-  error_check_lib.set_error_if(jnp.isnan(pred), "NaN encountered")
+  error_check_lib.set_error_if(ufuncs.isnan(pred), "NaN encountered")
 
 
-def _set_error_if_divide_by_zero(pred: jax.Array, /):
+def _set_error_if_divide_by_zero(pred: Array, /):
   """Set the internal error state if any element of `pred` is zero.
 
   This function is intended for checking if the denominator of a division is
@@ -95,11 +99,53 @@ def _set_error_if_divide_by_zero(pred: jax.Array, /):
   if config.error_checking_behavior_divide.value == "ignore":
     return
 
-  # TODO(ayx): fix the circular import issue.
-  from jax._src import error_check as error_check_lib
-  import jax.numpy as jnp
-  zero = jnp.zeros_like(pred, shape=())
+  zero = array_creation.zeros_like(pred, shape=())
   error_check_lib.set_error_if(pred == zero, "Division by zero encountered")
+
+
+def _check_precondition_oob_gather(
+    shape: tuple[int, ...], gather_indices: ArrayLike
+) -> None:
+  """Check for out of bounds errors before calling `lax.gather`."""
+  if config.error_checking_behavior_oob.value == "ignore":
+    return
+  if not np.size(gather_indices):
+    return
+
+  gather_indices = array_constructors.array(gather_indices)
+  shape = array_constructors.array(shape, dtype=gather_indices.dtype)
+  error_check_lib.set_error_if(
+      ufuncs.logical_or(
+          reductions.min(gather_indices) < -shape,
+          reductions.max(gather_indices) >= shape,
+      ),
+      "Out of bounds encountered before calling `lax.gather`",
+  )
+
+
+def _check_precondition_oob_dynamic_slice(
+    shape: tuple[int, ...],
+    start_indices: Sequence[ArrayLike],
+    slice_sizes: list[int],
+    allow_negative_indices: list[bool],
+) -> None:
+  """Check for out of bounds errors before calling `lax.dynamic_slice`."""
+  if config.error_checking_behavior_oob.value == "ignore":
+    return
+
+  start_indices = array_constructors.array(start_indices)
+  shape = array_constructors.array(shape, dtype=start_indices.dtype)
+  slice_sizes = array_constructors.array(slice_sizes, dtype=start_indices.dtype)
+  allow_negative_indices = array_constructors.array(allow_negative_indices, dtype='bool')
+
+  lower_bound = lax_numpy.where(allow_negative_indices, -shape, 0)
+  error_check_lib.set_error_if(
+      ufuncs.logical_or(
+          ufuncs.minimum(start_indices, start_indices + slice_sizes) < lower_bound,
+          ufuncs.maximum(start_indices, start_indices + slice_sizes) >= shape,
+      ),
+      "Out of bounds encountered before calling `lax.dynamic_slice`",
+  )
 
 
 Behavior = Literal["ignore", "raise"]

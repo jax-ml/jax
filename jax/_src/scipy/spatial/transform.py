@@ -18,9 +18,13 @@ import functools
 import re
 import typing
 
+import numpy as np
 
-import jax
-import jax.numpy as jnp
+from jax._src import config
+from jax._src import numpy as jnp
+from jax._src.numpy import linalg as jnp_linalg
+from jax._src.numpy import vectorize as jnp_vectorize
+from jax._src.typing import Array
 
 
 class Rotation(typing.NamedTuple):
@@ -58,7 +62,7 @@ class Rotation(typing.NamedTuple):
     See the scipy :class:`~scipy.spatial.transform.Rotation` documentation for
     further examples of manipulating Rotation objects.
   """
-  quat: jax.Array
+  quat: Array
 
   @classmethod
   def concatenate(cls, rotations: typing.Sequence):
@@ -66,7 +70,7 @@ class Rotation(typing.NamedTuple):
     return cls(jnp.concatenate([rotation.quat for rotation in rotations]))
 
   @classmethod
-  def from_euler(cls, seq: str, angles: jax.Array, degrees: bool = False):
+  def from_euler(cls, seq: str, angles: Array, degrees: bool = False):
     """Initialize from Euler angles."""
     num_axes = len(seq)
     if num_axes < 1 or num_axes > 3:
@@ -85,22 +89,22 @@ class Rotation(typing.NamedTuple):
     return cls(_elementary_quat_compose(angles, axes, intrinsic, degrees))
 
   @classmethod
-  def from_matrix(cls, matrix: jax.Array):
+  def from_matrix(cls, matrix: Array):
     """Initialize from rotation matrix."""
     return cls(_from_matrix(matrix))
 
   @classmethod
-  def from_mrp(cls, mrp: jax.Array):
+  def from_mrp(cls, mrp: Array):
     """Initialize from Modified Rodrigues Parameters (MRPs)."""
     return cls(_from_mrp(mrp))
 
   @classmethod
-  def from_quat(cls, quat: jax.Array):
+  def from_quat(cls, quat: Array):
     """Initialize from quaternions."""
     return cls(_normalize_quaternion(quat))
 
   @classmethod
-  def from_rotvec(cls, rotvec: jax.Array, degrees: bool = False):
+  def from_rotvec(cls, rotvec: Array, degrees: bool = False):
     """Initialize from rotation vectors."""
     return cls(_from_rotvec(rotvec, degrees))
 
@@ -112,7 +116,7 @@ class Rotation(typing.NamedTuple):
     return cls(quat)
 
   @classmethod
-  def random(cls, random_key: jax.Array, num: int | None = None):
+  def random(cls, random_key: Array, num: int | None = None):
     """Generate uniformly distributed rotations."""
     # Need to implement scipy.stats.special_ortho_group for this to work...
     raise NotImplementedError()
@@ -134,7 +138,7 @@ class Rotation(typing.NamedTuple):
     """Compose this rotation with the other."""
     return Rotation.from_quat(_compose_quat(self.quat, other.quat))
 
-  def apply(self, vectors: jax.Array, inverse: bool = False) -> jax.Array:
+  def apply(self, vectors: Array, inverse: bool = False) -> Array:
     """Apply this rotation to one or more vectors."""
     return _apply(self.as_matrix(), vectors, inverse)
 
@@ -152,22 +156,22 @@ class Rotation(typing.NamedTuple):
       raise ValueError("Expected consecutive axes to be different, "
                        "got {}".format(seq))
     axes = jnp.array([_elementary_basis_index(x) for x in seq.lower()])
-    with jax.numpy_rank_promotion('allow'):
+    with config.numpy_rank_promotion('allow'):
       return _compute_euler_from_quat(self.quat, axes, extrinsic, degrees)
 
-  def as_matrix(self) -> jax.Array:
+  def as_matrix(self) -> Array:
     """Represent as rotation matrix."""
     return _as_matrix(self.quat)
 
-  def as_mrp(self) -> jax.Array:
+  def as_mrp(self) -> Array:
     """Represent as Modified Rodrigues Parameters (MRPs)."""
     return _as_mrp(self.quat)
 
-  def as_rotvec(self, degrees: bool = False) -> jax.Array:
+  def as_rotvec(self, degrees: bool = False) -> Array:
     """Represent as rotation vectors."""
     return _as_rotvec(self.quat, degrees)
 
-  def as_quat(self, canonical: bool=False, scalar_first: bool=False) -> jax.Array:
+  def as_quat(self, canonical: bool=False, scalar_first: bool=False) -> Array:
     """Represent as quaternions."""
     quat = _make_canonical(self.quat) if canonical else self.quat
     if scalar_first:
@@ -178,11 +182,11 @@ class Rotation(typing.NamedTuple):
     """Invert this rotation."""
     return Rotation(_inv(self.quat))
 
-  def magnitude(self) -> jax.Array:
+  def magnitude(self) -> Array:
     """Get the magnitude(s) of the rotation(s)."""
     return _magnitude(self.quat)
 
-  def mean(self, weights: jax.Array | None = None):
+  def mean(self, weights: Array | None = None):
     """Get the mean of the rotations."""
     w = jnp.ones(self.quat.shape[0], dtype=self.quat.dtype) if weights is None else jnp.asarray(weights, dtype=self.quat.dtype)
     if w.ndim != 1:
@@ -192,8 +196,8 @@ class Rotation(typing.NamedTuple):
       raise ValueError("Expected `weights` to have number of values "
                        "equal to number of rotations, got "
                        "{} values and {} rotations.".format(w.shape[0], len(self)))
-    K = jnp.dot(w[jnp.newaxis, :] * self.quat.T, self.quat)
-    _, v = jnp.linalg.eigh(K)
+    K = jnp.dot(w[np.newaxis, :] * self.quat.T, self.quat)
+    _, v = jnp_linalg.eigh(K)
     return Rotation(v[:, -1])
 
   @property
@@ -228,13 +232,13 @@ class Slerp(typing.NamedTuple):
            [ 0.0000000e+00,  0.0000000e+00, -5.2359891e-01]], dtype=float32)
   """
 
-  times: jnp.ndarray
-  timedelta: jnp.ndarray
+  times: Array
+  timedelta: Array
   rotations: Rotation
-  rotvecs: jnp.ndarray
+  rotvecs: Array
 
   @classmethod
-  def init(cls, times: jax.Array, rotations: Rotation):
+  def init(cls, times: Array, rotations: Rotation):
     if not isinstance(rotations, Rotation):
       raise TypeError("`rotations` must be a `Rotation` instance.")
     if rotations.single or len(rotations) == 1:
@@ -258,7 +262,7 @@ class Slerp(typing.NamedTuple):
       rotations=new_rotations,
       rotvecs=(new_rotations.inv() * Rotation(rotations.as_quat()[1:])).as_rotvec())
 
-  def __call__(self, times: jax.Array):
+  def __call__(self, times: Array):
     """Interpolate rotations."""
     compute_times = jnp.asarray(times, dtype=self.times.dtype)
     if compute_times.ndim > 1:
@@ -273,13 +277,13 @@ class Slerp(typing.NamedTuple):
     return result
 
 
-@functools.partial(jnp.vectorize, signature='(m,m),(m),()->(m)')
-def _apply(matrix: jax.Array, vector: jax.Array, inverse: bool) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature='(m,m),(m),()->(m)')
+def _apply(matrix: Array, vector: Array, inverse: bool) -> Array:
   return jnp.where(inverse, matrix.T, matrix) @ vector
 
 
-@functools.partial(jnp.vectorize, signature='(m)->(n,n)')
-def _as_matrix(quat: jax.Array) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature='(m)->(n,n)')
+def _as_matrix(quat: Array) -> Array:
   x = quat[0]
   y = quat[1]
   z = quat[2]
@@ -299,15 +303,15 @@ def _as_matrix(quat: jax.Array) -> jax.Array:
                     [2 * (xz - yw), 2 * (yz + xw), - x2 - y2 + z2 + w2]])
 
 
-@functools.partial(jnp.vectorize, signature='(m)->(n)')
-def _as_mrp(quat: jax.Array) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature='(m)->(n)')
+def _as_mrp(quat: Array) -> Array:
   sign = jnp.where(quat[3] < 0, -1., 1.)
   denominator = 1. + sign * quat[3]
   return sign * quat[:3] / denominator
 
 
-@functools.partial(jnp.vectorize, signature='(m),()->(n)')
-def _as_rotvec(quat: jax.Array, degrees: bool) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature='(m),()->(n)')
+def _as_rotvec(quat: Array, degrees: bool) -> Array:
   quat = jnp.where(quat[3] < 0, -quat, quat)  # w > 0 to ensure 0 <= angle <= pi
   angle = 2. * jnp.arctan2(_vector_norm(quat[:3]), quat[3])
   angle2 = angle * angle
@@ -318,16 +322,16 @@ def _as_rotvec(quat: jax.Array, degrees: bool) -> jax.Array:
   return scale * jnp.array(quat[:3])
 
 
-@functools.partial(jnp.vectorize, signature='(n),(n)->(n)')
-def _compose_quat(p: jax.Array, q: jax.Array) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature='(n),(n)->(n)')
+def _compose_quat(p: Array, q: Array) -> Array:
   cross = jnp.cross(p[:3], q[:3])
   return jnp.array([p[3]*q[0] + q[3]*p[0] + cross[0],
                     p[3]*q[1] + q[3]*p[1] + cross[1],
                     p[3]*q[2] + q[3]*p[2] + cross[2],
                     p[3]*q[3] - p[0]*q[0] - p[1]*q[1] - p[2]*q[2]])
 
-@functools.partial(jnp.vectorize, signature='(m),(l),(),()->(n)')
-def _compute_euler_from_quat(quat: jax.Array, axes: jax.Array, extrinsic: bool, degrees: bool) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature='(m),(l),(),()->(n)')
+def _compute_euler_from_quat(quat: Array, axes: Array, extrinsic: bool, degrees: bool) -> Array:
   angle_first = jnp.where(extrinsic, 0, 2)
   angle_third = jnp.where(extrinsic, 2, 0)
   axes = jnp.where(extrinsic, axes, axes[::-1])
@@ -344,7 +348,7 @@ def _compute_euler_from_quat(quat: jax.Array, axes: jax.Array, extrinsic: bool, 
   d = jnp.where(symmetric, quat[k] * sign, quat[k] * sign - quat[i])
   angles = jnp.empty(3, dtype=quat.dtype)
   angles = angles.at[1].set(2 * jnp.arctan2(jnp.hypot(c, d), jnp.hypot(a, b)))
-  case = jnp.where(jnp.abs(angles[1] - jnp.pi) <= eps, 2, 0)
+  case = jnp.where(jnp.abs(angles[1] - np.pi) <= eps, 2, 0)
   case = jnp.where(jnp.abs(angles[1]) <= eps, 1, case)
   half_sum = jnp.arctan2(b, a)
   half_diff = jnp.arctan2(d, c)
@@ -352,8 +356,8 @@ def _compute_euler_from_quat(quat: jax.Array, axes: jax.Array, extrinsic: bool, 
   angles = angles.at[angle_first].set(jnp.where(case == 0, half_sum - half_diff, angles[angle_first]))
   angles = angles.at[angle_third].set(jnp.where(case == 0, half_sum + half_diff, angles[angle_third]))
   angles = angles.at[angle_third].set(jnp.where(symmetric, angles[angle_third], angles[angle_third] * sign))
-  angles = angles.at[1].set(jnp.where(symmetric, angles[1], angles[1] - jnp.pi / 2))
-  angles = (angles + jnp.pi) % (2 * jnp.pi) - jnp.pi
+  angles = angles.at[1].set(jnp.where(symmetric, angles[1], angles[1] - np.pi / 2))
+  angles = (angles + np.pi) % (2 * np.pi) - np.pi
   return jnp.where(degrees, jnp.rad2deg(angles), angles)
 
 
@@ -367,8 +371,8 @@ def _elementary_basis_index(axis: str) -> int:
   raise ValueError(f"Expected axis to be from ['x', 'y', 'z'], got {axis}")
 
 
-@functools.partial(jnp.vectorize, signature=('(m),(m),(),()->(n)'))
-def _elementary_quat_compose(angles: jax.Array, axes: jax.Array, intrinsic: bool, degrees: bool) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature=('(m),(m),(),()->(n)'))
+def _elementary_quat_compose(angles: Array, axes: Array, intrinsic: bool, degrees: bool) -> Array:
   angles = jnp.where(degrees, jnp.deg2rad(angles), angles)
   result = _make_elementary_quat(axes[0], angles[0])
   for idx in range(1, len(axes)):
@@ -377,8 +381,8 @@ def _elementary_quat_compose(angles: jax.Array, axes: jax.Array, intrinsic: bool
   return result
 
 
-@functools.partial(jnp.vectorize, signature=('(m),()->(n)'))
-def _from_rotvec(rotvec: jax.Array, degrees: bool) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature=('(m),()->(n)'))
+def _from_rotvec(rotvec: Array, degrees: bool) -> Array:
   rotvec = jnp.where(degrees, jnp.deg2rad(rotvec), rotvec)
   angle = _vector_norm(rotvec)
   angle2 = angle * angle
@@ -388,8 +392,8 @@ def _from_rotvec(rotvec: jax.Array, degrees: bool) -> jax.Array:
   return jnp.hstack([scale * rotvec, jnp.cos(angle / 2)])
 
 
-@functools.partial(jnp.vectorize, signature=('(m,m)->(n)'))
-def _from_matrix(matrix: jax.Array) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature=('(m,m)->(n)'))
+def _from_matrix(matrix: Array) -> Array:
   matrix_trace = matrix[0, 0] + matrix[1, 1] + matrix[2, 2]
   decision = jnp.array([matrix[0, 0], matrix[1, 1], matrix[2, 2], matrix_trace], dtype=matrix.dtype)
   choice = jnp.argmax(decision)
@@ -410,42 +414,42 @@ def _from_matrix(matrix: jax.Array) -> jax.Array:
   return _normalize_quaternion(quat)
 
 
-@functools.partial(jnp.vectorize, signature='(m)->(n)')
-def _from_mrp(mrp: jax.Array) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature='(m)->(n)')
+def _from_mrp(mrp: Array) -> Array:
   mrp_squared_plus_1 = jnp.dot(mrp, mrp) + 1
   return jnp.hstack([2 * mrp[:3], (2 - mrp_squared_plus_1)]) / mrp_squared_plus_1
 
 
-@functools.partial(jnp.vectorize, signature='(n)->(n)')
-def _inv(quat: jax.Array) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature='(n)->(n)')
+def _inv(quat: Array) -> Array:
   return quat * jnp.array([-1, -1, -1, 1], dtype=quat.dtype)
 
 
-@functools.partial(jnp.vectorize, signature='(n)->()')
-def _magnitude(quat: jax.Array) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature='(n)->()')
+def _magnitude(quat: Array) -> Array:
   return 2. * jnp.arctan2(_vector_norm(quat[:3]), jnp.abs(quat[3]))
 
 
-@functools.partial(jnp.vectorize, signature='(),()->(n)')
-def _make_elementary_quat(axis: int, angle: jax.Array) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature='(),()->(n)')
+def _make_elementary_quat(axis: int, angle: Array) -> Array:
   quat = jnp.zeros(4, dtype=angle.dtype)
   quat = quat.at[3].set(jnp.cos(angle / 2.))
   quat = quat.at[axis].set(jnp.sin(angle / 2.))
   return quat
 
 
-@functools.partial(jnp.vectorize, signature='(n)->(n)')
-def _normalize_quaternion(quat: jax.Array) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature='(n)->(n)')
+def _normalize_quaternion(quat: Array) -> Array:
   return quat / _vector_norm(quat)
 
 
-@functools.partial(jnp.vectorize, signature='(n)->()')
-def _vector_norm(vector: jax.Array) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature='(n)->()')
+def _vector_norm(vector: Array) -> Array:
   return jnp.sqrt(jnp.dot(vector, vector))
 
 
-@functools.partial(jnp.vectorize, signature='(n)->(n)')
-def _make_canonical(quat: jax.Array) -> jax.Array:
+@functools.partial(jnp_vectorize.vectorize, signature='(n)->(n)')
+def _make_canonical(quat: Array) -> Array:
   is_neg = quat < 0
   is_zero = quat == 0
 

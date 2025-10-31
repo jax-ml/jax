@@ -353,7 +353,7 @@ Unlike with batching, {func}`~jax.ffi.ffi_call` doesn't provide any default supp
 As far as JAX is concerned, the foreign function is a black box that can't be inspected to determine the appropriate behavior when differentiated.
 Therefore, it is the {func}`~jax.ffi.ffi_call` user's responsibility to define a custom derivative rule.
 
-More details about custom derivative rules can be found in the [custom derivatives tutorial](https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html), but the most common pattern used for implementing differentiation for foreign functions is to define a {func}`~jax.custom_vjp` which itself calls a foreign function.
+More details about custom derivative rules can be found in the [custom derivatives tutorial](https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html), but the most common pattern used for implementing differentiation for foreign functions is to define a {func}`~jax.custom_vjp` which itself calls a foreign function.
 In this case, we actually define two new FFI calls:
 
 1. `rms_norm_fwd` returns two outputs: (a) the "primal" result, and (b) the "residuals" which are used in the backwards pass.
@@ -556,19 +556,18 @@ print(hlo.split("\n\n")[-1])
 
 This clearly (to us!) isn't the optimal partitioning of this function, but it's the best that JAX/XLA can do with the information given.
 
-To generate better partitioning logic, we can use {func}`~jax.experimental.shard_map.shard_map` or {func}`~jax.experimental.custom_partitioning.custom_partitioning`, and we discuss both options here.
+To generate better partitioning logic, we can use {func}`~jax.shard_map` or {func}`~jax.experimental.custom_partitioning.custom_partitioning`, and we discuss both options here.
 That being said, it's not straightforward to generate _optimal_ partitioning for all inputs, because sometimes this would require algorithmic changes.
 Specifically, let's add support for "batch partitioning", which handles the case where the data are sharded on batch dimensions, but sharding on the last dimension will always require in re-sharding.
 
 ### Using `shard_map`
 
-If you are using manual sharding control via {func}`~jax.experimental.shard_map.shard_map`, any FFI calls in your program should already partition appropriately:
+If you are using manual sharding control via {func}`~jax.shard_map`, any FFI calls in your program should already partition appropriately:
 
 ```{code-cell} ipython3
 from functools import partial
-from jax.experimental.shard_map import shard_map
 
-@partial(shard_map, mesh=mesh, in_specs=P("x", None), out_specs=P("x", None))
+@partial(jax.shard_map, mesh=mesh, in_specs=P("x", None), out_specs=P("x", None))
 def rms_norm_shmap(x):
   return rms_norm(x)
 
@@ -587,11 +586,11 @@ assert "all-to-all" in hlo_data_shmap
 
 ### Using `custom partitioning`
 
-If you can't use {func}`~jax.experimental.shard_map.shard_map`, an alternative approach is to use {func}`~jax.experimental.custom_partitioning.custom_partitioning`, which supports automatic parallelization via {func}`jax.jit`.
+If you can't use {func}`~jax.shard_map`, an alternative approach is to use {func}`~jax.experimental.custom_partitioning.custom_partitioning`, which supports automatic parallelization via {func}`jax.jit`.
 {func}`~jax.experimental.custom_partitioning.custom_partitioning` works by adding Python callbacks into the XLA compiler's partitioning pass, which allows very flexible logic, but also comes with some rough edges.
 We won't go into too much detail on the caveats here, but the main issues that you should be aware of are:
 
-1. `custom_partitioning` can cause unexpected cache misses when used with the JAX's [Persistent compilation cache](https://jax.readthedocs.io/en/latest/persistent_compilation_cache.html). This can be mitigated using the `jax_remove_custom_partitioning_ptr_from_cache_key` configuration flag, but that isn't always appropriate either.
+1. `custom_partitioning` can cause unexpected cache misses when used with the JAX's [Persistent compilation cache](https://docs.jax.dev/en/latest/persistent_compilation_cache.html). This can be mitigated using the `jax_remove_custom_partitioning_ptr_from_cache_key` configuration flag, but that isn't always appropriate either.
 2. Debugging `custom_partitioning` logic can be tedious because Python errors don't always get propagated, instead causing your Python process to exit. That being said, any exceptions will show up in the process logs, so you should be able to track them down there.
 
 All that being said, here's how we can wrap our FFI implementation of `rms_norm` using {func}`~jax.experimental.custom_partitioning.custom_partitioning`:
@@ -643,6 +642,7 @@ def rms_norm_partition(eps, mesh, args_info, result_info):
 rms_norm_partitioned.def_partition(
     infer_sharding_from_operands=rms_norm_infer_sharding_from_operands,
     partition=rms_norm_partition,
+    sharding_rule="... i -> ... j",
 )
 
 output = jax.jit(rms_norm_partitioned, out_shardings=batch_shd)(x_batch_shd)

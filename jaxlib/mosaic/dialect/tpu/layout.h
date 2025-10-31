@@ -28,6 +28,7 @@ limitations under the License.
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/bit.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
@@ -84,41 +85,6 @@ struct VRegDataBounds {
       MLIRContext *ctxt, std::array<int64_t, 2> target_shape) const = 0;
 };
 
-// Represents a rectangular region of data within a vector register.
-//
-// This class is very limited in its power and should only be used for 32-bit
-// values with native tiling.
-//
-// Attributes:
-//   bounds: A TargetTuple of slices encoding the bounds of the rectangular
-//     data region.
-// TODO(tlongeri): Can this be removed in favor of the more general
-//  TiledRectangularVregBounds?
-class RectangularVregBounds : public VRegDataBounds {
- public:
-  RectangularVregBounds(const std::array<int64_t, 2> starts,
-                        const std::array<int64_t, 2> ends)
-      : starts_(starts), ends_(ends) {}
-
-  // See base class.
-  bool maskVariesAlong(Direction direction,
-                       std::array<int64_t, 2> target_shape) const override;
-
-  // See base class.
-  FailureOr<TypedValue<VectorType>> getVectorMask(
-      OpBuilder &builder, Location loc, int generation,
-      std::array<int64_t, 2> target_shape) const override;
-
-  // See base class.
-  DenseBoolArrayAttr getSublaneMask(
-      MLIRContext *mlir_ctxt,
-      std::array<int64_t, 2> target_shape) const override;
-
- private:
-  std::array<int64_t, 2> starts_;
-  std::array<int64_t, 2> ends_;
-};
-
 // VectorLayout describes a mapping of an arbitrarily sized values into vregs.
 //
 // First, let us consider the simplest case, when implicit_dim is None, bitwidth
@@ -168,7 +134,7 @@ class RectangularVregBounds : public VRegDataBounds {
 // ---
 //
 // The tiling attribute makes it possible to subdivide a single vector register
-// into multiple subtiles that traverse the last dimension of a value. For
+// into multiple sub-tiles that traverse the last dimension of a value. For
 // example, consider vregs of shape (4, 5) on (2, 10) array:
 //
 //   a b c d e f g h i j
@@ -205,8 +171,8 @@ class RectangularVregBounds : public VRegDataBounds {
 //   tiling: The tiling used to lay out values (see the XLA docs). For values of
 //     bitwidth < 32, an implicit (32 / bitwidth, 1) tiling is appended to the
 //     one specified as an attribute.
-//   implicit_dim: If specified, the value has an implicit dim inserted in
-//     either minormost or second minormost position.
+//   implicit_dim: If specified, the value has implicit dims inserted in the
+//     minormost and/or second minormost position.
 //
 // Note: There is a special case when VectorLayout is used for an mlir::Value
 // of i1 type. In this case, we use it to represent a vmask, which has a smaller
@@ -218,11 +184,15 @@ class RectangularVregBounds : public VRegDataBounds {
 // but we might want to split out a separate class if it gets used more widely.
 class VectorLayout {
  public:
-  enum class ImplicitDim {
-    kNone = 0,  // To make if (implicit_dim) work.
-    // Also want to do dims[dims.size() - xla::to_underlying(implicit_dim)]
+  enum class ImplicitDim : unsigned {
+    // Each bit indicates whether the corresponding dimension is implicit.
+    // When bit 0 is set, the minor dimension is implicit.
+    // When bit 1 is set, the second minor dimension is implicit.
+    // WARNING: This should not be relied on outside of VectorLayout.
+    kNone = 0,
     kMinor = 1,
     kSecondMinor = 2,
+    kMinorAndSecondMinor = 3,
   };
   VectorLayout(const int8_t bitwidth, const LayoutOffsets offsets,
                const std::array<int64_t, 2> tiling,
@@ -233,16 +203,15 @@ class VectorLayout {
         implicit_dim_(implicit_dim) {
     // TODO(b/275751535): Allow more bitwidths.
     CHECK(llvm::has_single_bit<unsigned>(bitwidth_) && bitwidth_ <= 32);
+    CHECK_GT(tiling_[0], 0);
+    CHECK_GT(tiling_[1], 0);
+    CHECK_GE(offsets_[0].value_or(0), 0);
+    CHECK_GE(offsets_[1].value_or(0), 0);
+    CHECK_LT(offsets_[0].value_or(0), tiling_[0]);
   }
 
   static int num_implicit_dims(const ImplicitDim implicit_dim) {
-    switch (implicit_dim) {
-      case ImplicitDim::kNone:
-        return 0;
-      case ImplicitDim::kMinor:
-      case ImplicitDim::kSecondMinor:
-        return 1;
-    }
+    return llvm::popcount(static_cast<unsigned>(implicit_dim));
   }
 
   // The number of non-implicit dimensions that are tiled.
@@ -252,9 +221,7 @@ class VectorLayout {
 
   int8_t bitwidth() const { return bitwidth_; }
   const LayoutOffsets &offsets() const { return offsets_; }
-  const LayoutOffsets getCanonicalOffsets(
-      const ArrayRef<int64_t> shape,
-      const std::array<int64_t, 2> target_shape) const {
+  LayoutOffsets getCanonicalOffsets(const ArrayRef<int64_t> shape) const {
     // For (1, n) tiling with a single row, 2nd minor replication does not
     // change anything about the layout - it is equivalent to an offset of 0.
     // We choose a replicated offset as "canonical".
@@ -318,9 +285,13 @@ class VectorLayout {
       case ImplicitDim::kNone:
         break;
       case ImplicitDim::kMinor:
+        vec.push_back(value);
+        break;
       case ImplicitDim::kSecondMinor:
-        vec.insert(vec.end() - (static_cast<int64_t>(implicit_dim_) - 1),
-                   value);
+        vec.insert(vec.end() - 1, value);
+        break;
+      case ImplicitDim::kMinorAndSecondMinor:
+        vec.append(2, value);
         break;
     }
   }
@@ -332,8 +303,13 @@ class VectorLayout {
       case ImplicitDim::kNone:
         break;
       case ImplicitDim::kMinor:
+        vec.pop_back();
+        break;
       case ImplicitDim::kSecondMinor:
-        vec.erase(vec.end() - static_cast<int64_t>(implicit_dim_));
+        vec.erase(vec.end() - 2);
+        break;
+      case ImplicitDim::kMinorAndSecondMinor:
+        vec.pop_back_n(2);
         break;
     }
   }
@@ -349,6 +325,29 @@ class VectorLayout {
         return {*(arr.end() - 1), implicit_value};
       case ImplicitDim::kSecondMinor:
         return {implicit_value, *(arr.end() - 1)};
+      case ImplicitDim::kMinorAndSecondMinor:
+        return {implicit_value, implicit_value};
+    }
+  }
+  // Returns the dimension of the implicit shape that corresponds to the given
+  // dimension of a non-implicit shape with the given `rank`.
+  static int64_t toImplicitDimension(const ImplicitDim implicit_dim,
+                                     const int64_t rank, int64_t dimension) {
+    CHECK_GE(rank, layout_rank(implicit_dim));
+    if (rank - layout_rank(implicit_dim) > dimension) {
+      return dimension;
+    }
+    switch (implicit_dim) {
+      case ImplicitDim::kNone:
+        return dimension;
+      case ImplicitDim::kMinor:
+        CHECK_EQ(dimension, rank - 1);
+        return rank - 1;
+      case ImplicitDim::kSecondMinor:
+        CHECK_EQ(dimension, rank - 1);
+        return rank;
+      case ImplicitDim::kMinorAndSecondMinor:
+        llvm_unreachable("Invalid dimension");
     }
   }
 
@@ -488,8 +487,9 @@ class VectorLayout {
            other.generalizes(*this, shape, target_shape);
   }
 
-  template <typename Stream>
-  void print(Stream &os) const;
+  void print(llvm::raw_ostream& os) const;
+  void print(std::ostream& os) const;
+  void print(mlir::Diagnostic& diag) const;
 
   static std::optional<VectorLayout> join(const VectorLayout &l,
                                           const VectorLayout &r,
@@ -529,16 +529,79 @@ class VectorLayout {
   ImplicitDim implicit_dim_;
 };
 
+// Represents the data bounds within a vector register with tiled and
+// potentially packed data.
+//
+// Start and end offsets for data are specified within the vreg slice.
+//
+// Attributes:
+//   layout: The layout of the value, mainly used for its bitwidth and tiling.
+//     Note that the layout offsets SHOULD NOT be used.
+//   start_offsets: The lane and (packed) sublane offset within the vreg slice.
+//   end_offsets: The lane and (packed) sublane offset within the vreg slice.
+class TiledRectangularVregBounds : public VRegDataBounds {
+ public:
+  TiledRectangularVregBounds(const VectorLayout& layout,
+                             const std::array<int64_t, 2> start_offsets,
+                             const std::array<int64_t, 2> end_offsets,
+                             const std::array<int64_t, 2> target_shape)
+      : layout_(layout),
+        start_offsets_(start_offsets),
+        end_offsets_(end_offsets) {
+    CHECK(layout_.tiling()[1] == target_shape[1]);
+    const std::array<int64_t, 2> vreg_slice = layout_.vregSlice(target_shape);
+    for (auto [start, end, vs] :
+         llvm::zip_equal(start_offsets_, end_offsets_, vreg_slice)) {
+      CHECK(0 <= start && start < end && end <= vs);
+    }
+  }
+  TiledRectangularVregBounds(const int8_t bitwidth,
+                             const std::array<int64_t, 2> tiling,
+                             const std::array<int64_t, 2> start_offsets,
+                             const std::array<int64_t, 2> end_offsets,
+                             const std::array<int64_t, 2> target_shape)
+      // The offsets and implicit dim of the layout are ignored.
+      : TiledRectangularVregBounds(
+            VectorLayout(bitwidth, LayoutOffsets(), tiling,
+                         VectorLayout::ImplicitDim::kNone),
+            start_offsets, end_offsets, target_shape) {}
+
+  bool usesAllTiles(std::array<int64_t, 2> target_shape) const;
+  // See base class.
+  bool maskVariesAlong(Direction direction,
+                       std::array<int64_t, 2> target_shape) const override;
+
+  // See base class.
+  FailureOr<TypedValue<VectorType>> getVectorMask(
+      OpBuilder& builder, Location loc, int generation,
+      std::array<int64_t, 2> target_shape) const override;
+
+  // See base class
+  DenseBoolArrayAttr getSublaneMask(
+      MLIRContext* mlir_ctx,
+      std::array<int64_t, 2> target_shape) const override;
+
+ private:
+  // TODO(tlongeri): Replace layout_ with bitwidth_ and tiling_
+  VectorLayout layout_;
+  std::array<int64_t, 2> start_offsets_;
+  std::array<int64_t, 2> end_offsets_;
+};
+
 using Layout = std::optional<VectorLayout>;
 extern const Layout kNoLayout;
 
-std::ostream &operator<<(std::ostream &os, const Layout &v);
-llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const Layout &v);
-llvm::hash_code hash_value(const VectorLayout &layout);
-mlir::Diagnostic &operator<<(mlir::Diagnostic &diag, const Layout &v);
 std::ostream &operator<<(std::ostream &os, VectorLayout::ImplicitDim dim);
+llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                             VectorLayout::ImplicitDim dim);
 mlir::Diagnostic &operator<<(mlir::Diagnostic &diag,
                              VectorLayout::ImplicitDim dim);
+
+std::ostream &operator<<(std::ostream &os, const Layout &v);
+llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const Layout &v);
+mlir::Diagnostic &operator<<(mlir::Diagnostic &diag, const Layout &v);
+
+llvm::hash_code hash_value(const VectorLayout &layout);
 
 std::optional<Layout> parseLayout(mlir::AsmParser &parser);
 

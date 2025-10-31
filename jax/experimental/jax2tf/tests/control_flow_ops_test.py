@@ -25,6 +25,7 @@ from jax.experimental.jax2tf.tests import tf_test_util
 jax.config.parse_flags_with_absl()
 
 
+@jtu.thread_unsafe_test_class()
 class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.ignore_warning(category=UserWarning,

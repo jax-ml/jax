@@ -92,7 +92,7 @@ If you need a new random number, you can use :meth:`jax.random.split` to generat
 
    To learn more about this upgrade, and the design of key types, see
    `JEP 9263
-   <https://jax.readthedocs.io/en/latest/jep/9263-typed-keys.html>`_.
+   <https://docs.jax.dev/en/latest/jep/9263-typed-keys.html>`_.
 
 Advanced
 --------
@@ -166,10 +166,11 @@ Reasons to use an alternative to the default RNG include that:
 
 In order for ``jax.jit`` to efficiently auto-partition functions that
 generate sharded random number arrays (or key arrays), all PRNG
-implementations require extra flags:
+implementations depend on extra flags:
 
-- For ``"threefry2x32"``, and ``"rbg"`` key derivation, set
-  ``jax_threefry_partitionable=True``.
+- For ``"threefry2x32"``, and ``"rbg"`` key derivation, have
+  ``jax_threefry_partitionable=True``. As of JAX v.0.5.0, this is the
+  default.
 - For ``"unsafe_rbg"``, and ``"rbg"`` random generation", set the XLA
   flag ``--xla_tpu_spmd_rng_bit_generator_unsafe=1``.
 
@@ -178,7 +179,7 @@ variable, e.g. as
 ``XLA_FLAGS=--xla_tpu_spmd_rng_bit_generator_unsafe=1``.
 
 For more about ``jax_threefry_partitionable``, see
-https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html#generating-random-numbers
+https://github.com/jax-ml/jax/discussions/18480
 
 **Summary:**
 
@@ -195,7 +196,7 @@ https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_
    exact ``jax.vmap`` over keys         ✅        ✅
    =================================   ========  =========  ===  ==========  =====  ============
 
-(*): with ``jax_threefry_partitionable=1`` set
+(*): with ``jax_threefry_partitionable=1`` set (default as of JAX v0.5.0)
 
 (**): with ``XLA_FLAGS=--xla_tpu_spmd_rng_bit_generator_unsafe=1`` set
 """

@@ -22,15 +22,18 @@ import traceback as tb_lib
 from types import TracebackType
 import warnings
 
-import jax
+import numpy as np
+
 from jax._src import core
 from jax._src import source_info_util
 from jax._src import traceback_util
+from jax._src import tree_util
 import jax._src.mesh as mesh_lib
-from jax.experimental import shard_map
-import jax.export
-import jax.numpy as jnp
-from jax.sharding import NamedSharding, PartitionSpec as P
+from jax._src import shard_map
+from jax._src.export import _export
+from jax._src.lax import lax
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
+from jax._src.typing import Array, ArrayLike
 
 
 traceback_util.register_exclusion(__file__)
@@ -44,7 +47,7 @@ class JaxValueError(ValueError):
 #:
 #: This value is chosen because we can use `jnp.min()` to obtain the
 #: first error when performing reductions.
-_NO_ERROR = jnp.iinfo(jnp.uint32).max
+_NO_ERROR = np.iinfo(np.uint32).max
 
 
 _error_list_lock = threading.RLock()
@@ -55,7 +58,7 @@ _error_list: list[tuple[str, TracebackType | str]] = []
 class _ErrorStorage(threading.local):
 
   def __init__(self):
-    self.ref: core.MutableArray | None = None
+    self.ref: core.Ref | None = None
 
 
 _error_storage = _ErrorStorage()
@@ -71,18 +74,18 @@ def _initialize_error_code_ref() -> None:
   # Get mesh from the context.
   mesh = mesh_lib.get_concrete_mesh()
 
-  if mesh is None:  # single-device case.
-    error_code = jnp.uint32(_NO_ERROR)
+  if mesh.empty:  # single-device case.
+    error_code: ArrayLike = np.uint32(_NO_ERROR)
 
   else:  # multi-device case.
     sharding = NamedSharding(mesh, P(*mesh.axis_names))
-    error_code = jnp.full(
+    error_code = lax.full(
         mesh.axis_sizes,
-        jnp.uint32(_NO_ERROR),
-        device=sharding,
+        np.uint32(_NO_ERROR),
+        sharding=sharding,
     )
 
-  _error_storage.ref = core.mutable_array(error_code)
+  _error_storage.ref = core.new_ref(error_code)
 
 
 class error_checking_context:
@@ -115,7 +118,7 @@ class error_checking_context:
     _error_storage.ref = self.old_ref
 
 
-def set_error_if(pred: jax.Array, /, msg: str) -> None:
+def set_error_if(pred: Array, /, msg: str) -> None:
   """Set the internal error state if any element of `pred` is `True`.
 
   This function is used inside JAX computations to detect runtime errors without
@@ -143,6 +146,9 @@ def set_error_if(pred: jax.Array, /, msg: str) -> None:
       error state will be set.
     msg: The corresponding error message to be raised later.
   """
+  # TODO(jakevdp): remove this import and express the following using lax APIs.
+  import jax.numpy as jnp  # pytype: disable=import-error
+
   if _error_storage.ref is None:
     with core.eval_context():
       _initialize_error_code_ref()
@@ -157,7 +163,7 @@ def set_error_if(pred: jax.Array, /, msg: str) -> None:
   assert isinstance(traceback, TracebackType)
 
   with _error_list_lock:
-    new_error_code = jnp.uint32(len(_error_list))
+    new_error_code = np.uint32(len(_error_list))
     _error_list.append((msg, traceback))
 
   out_sharding = core.typeof(_error_storage.ref).sharding
@@ -222,12 +228,12 @@ def raise_if_error() -> None:
         "raise_if_error() should not be called within a traced context, such as"
         " within a jitted function."
     )
-  if error_code == jnp.uint32(_NO_ERROR):
+  if error_code == np.uint32(_NO_ERROR):
     return
-  _error_storage.ref[...] = jnp.full(
+  _error_storage.ref[...] = lax.full(
       _error_storage.ref.shape,
-      jnp.uint32(_NO_ERROR),
-      device=_error_storage.ref.sharding,
+      np.uint32(_NO_ERROR),
+      sharding=_error_storage.ref.sharding,
   )  # clear the error code
 
   with _error_list_lock:
@@ -259,14 +265,14 @@ class _ErrorClass:
       information from other functions.
   """
 
-  error_code: jax.Array
+  error_code: Array
   error_list: list[tuple[str, str]]
 
 
-jax.tree_util.register_dataclass(
+tree_util.register_dataclass(
     _ErrorClass, data_fields=("error_code",), meta_fields=("error_list",)
 )
-jax.export.register_pytree_node_serialization(
+_export.register_pytree_node_serialization(
     _ErrorClass,
     serialized_name=f"{_ErrorClass.__module__}.{_ErrorClass.__name__}",
     serialize_auxdata=lambda x: json.dumps(x, ensure_ascii=False).encode(
@@ -288,6 +294,11 @@ def wrap_for_export(f):
   processes. This wrapper ensures that the error state remains within the
   function scope, making it possible to export the function and later import in
   other processes.
+
+  When the function is later imported, it must be wrapped with
+  :func:`unwrap_from_import` to integrate the error checking mechanism of the
+  imported function into the global error checking mechanism of the current
+  process.
 
   This function should only be applied once to a function; wrapping the same
   function multiple times is unnecessary.
@@ -327,6 +338,9 @@ def unwrap_from_import(f):
   separate from the global error state of the current process. This wrapper
   ensures that errors detected during execution are correctly integrated into
   the global error checking mechanism of the current process.
+
+  This function should only be applied to functions that were previously wrapped
+  with :func:`wrap_for_export` before export.
   """
   if _error_storage.ref is None:
     with core.eval_context():
@@ -344,11 +358,11 @@ def unwrap_from_import(f):
 
     # Update the global error code array.
     error_code = _error_storage.ref[...]
-    should_update = jnp.logical_and(
-        error_code == jnp.uint32(_NO_ERROR),
-        new_error_code != jnp.uint32(_NO_ERROR),
+    should_update = lax.bitwise_and(
+        error_code == np.uint32(_NO_ERROR),
+        new_error_code != np.uint32(_NO_ERROR),
     )
-    error_code = jnp.where(should_update, new_error_code + offset, error_code)
+    error_code = lax.select(should_update, new_error_code + offset, error_code)
     # TODO(ayx): support vmap and shard_map.
     _error_storage.ref[...] = error_code
 

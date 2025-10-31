@@ -12,8 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+import jax._src.dlpack
+
 from jax._src.dlpack import (
-  to_dlpack as to_dlpack,
   from_dlpack as from_dlpack,
-  SUPPORTED_DTYPES as SUPPORTED_DTYPES,
+  is_supported_dtype as is_supported_dtype,
 )
+
+_deprecations = {
+    # Deprecated in JAX v0.7.0
+    "SUPPORTED_DTYPES": (
+        (
+            "jax.SUPPORTED_DTYPES is deprecated in JAX v0.7.0 and will be removed"
+            " in JAX v0.8.0. Use jax.dlpack.is_supported_dtype() instead."
+        ),
+        None,
+    ),
+}
+
+
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = jax._src.deprecations.deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

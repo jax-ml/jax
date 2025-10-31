@@ -26,7 +26,7 @@ are arrays, JAX does the following in order:
    carries out this specialization by a process that we call
    _tracing_. During tracing, JAX stages the specialization of `F` to
    a jaxpr, which is a function in the [Jaxpr intermediate
-   language](https://jax.readthedocs.io/en/latest/jaxpr.html).
+   language](https://docs.jax.dev/en/latest/jaxpr.html).
 
 2. **Lower** this specialized, staged-out computation to the XLA compiler's
    input language, StableHLO.
@@ -49,7 +49,10 @@ some other features along the way. An example:
 
 >>> # Print the specialized, staged-out representation (as Jaxpr IR)
 >>> print(traced.jaxpr)
-{ lambda ; a:i32[] b:i32[]. let c:i32[] = mul 2 a; d:i32[] = add c b in (d,) }
+{ lambda ; a:i32[] b:i32[]. let
+    c:i32[] = mul 2:i32[] a
+    d:i32[] = add c b
+  in (d,) }
 
 >>> lowered = traced.lower()
 

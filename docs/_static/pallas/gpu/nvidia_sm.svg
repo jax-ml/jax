@@ -1,0 +1,99 @@
+<svg width="600" height="600" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif" font-size="10">
+  <style>
+    .sm-border { stroke: #a0aec0; stroke-width: 2; fill: #f7fafc; }
+    .subdivision-border { stroke: #cbd5e0; stroke-width: 1; fill: #edf2f7; }
+    .component-box { stroke: #e2e8f0; stroke-width: 1; rx: 4; ry: 4; }
+    .tensor-core { fill: #bee3f8; }
+    .alu { fill: #c6f6d5; }
+    .ld-st { fill: #faf089; }
+    .sfu { fill: #fed7d7; }
+    .scheduler { fill: #e9d8fd; stroke: #d6bcfa; stroke-width:1; rx: 4; ry: 4; }
+    .shared-memory { fill: #b2f5ea; stroke: #81e6d9; stroke-width:1; rx: 6; ry: 6; }
+    .label { text-anchor: middle; fill: #2d3748; font-weight: bold; }
+    .component-label { text-anchor: middle; fill: #4a5568; font-size: 9px; }
+    .title-label { text-anchor: middle; fill: #1a202c; font-size: 16px; font-weight: bold; }
+    .small-label tspan { font-size: 8.5px; }
+  </style>
+
+  <rect x="10" y="10" width="580" height="580" class="sm-border" rx="10" ry="10"/>
+  <text x="300" y="35" class="title-label">Streaming Multiprocessor</text>
+
+  <g id="subdivision-grid">
+    <g transform="translate(30, 60)">
+      <rect x="0" y="0" width="255" height="225" class="subdivision-border" rx="6" ry="6"/>
+      <rect x="10" y="10" width="235" height="20" class="scheduler"/>
+      <text x="127.5" y="24" class="label">Warp Scheduler</text>
+      <rect x="10" y="40" width="145" height="125" class="component-box tensor-core"/>
+      <text x="82.5" y="107.5" class="component-label">TensorCore</text>
+      <rect x="165" y="40" width="80" height="125" class="component-box alu"/>
+      <text x="205" y="100" class="component-label">ALU</text>
+      <text x="205" y="110" class="component-label">(Float/Int)</text>
+      <rect x="10" y="175" width="115" height="40" class="component-box ld-st"/>
+      <text x="67.5" y="198" class="component-label">Load/Store</text>
+      <rect x="135" y="175" width="110" height="40" class="component-box sfu"/>
+      <text x="190" y="190" class="component-label small-label">
+          <tspan x="190" dy="3">Special</tspan>
+          <tspan x="190" dy="10">Functions</tspan>
+      </text>
+    </g>
+
+    <g transform="translate(310, 60)">
+      <rect x="0" y="0" width="255" height="225" class="subdivision-border" rx="6" ry="6"/>
+      <rect x="10" y="10" width="235" height="20" class="scheduler"/>
+      <text x="127.5" y="24" class="label">Warp Scheduler</text>
+      <rect x="10" y="40" width="145" height="125" class="component-box tensor-core"/>
+      <text x="82.5" y="107.5" class="component-label">TensorCore</text>
+      <rect x="165" y="40" width="80" height="125" class="component-box alu"/>
+      <text x="205" y="100" class="component-label">ALU</text>
+      <text x="205" y="110" class="component-label">(Float/Int)</text>
+      <rect x="10" y="175" width="115" height="40" class="component-box ld-st"/>
+      <text x="67.5" y="198" class="component-label">Load/Store</text>
+      <rect x="135" y="175" width="110" height="40" class="component-box sfu"/>
+      <text x="190" y="190" class="component-label small-label">
+          <tspan x="190" dy="3">Special</tspan>
+          <tspan x="190" dy="10">Functions</tspan>
+      </text>
+    </g>
+
+    <g transform="translate(30, 305)">
+      <rect x="0" y="0" width="255" height="225" class="subdivision-border" rx="6" ry="6"/>
+      <rect x="10" y="10" width="235" height="20" class="scheduler"/>
+      <text x="127.5" y="24" class="label">Warp Scheduler</text>
+      <rect x="10" y="40" width="145" height="125" class="component-box tensor-core"/>
+      <text x="82.5" y="107.5" class="component-label">TensorCore</text>
+      <rect x="165" y="40" width="80" height="125" class="component-box alu"/>
+      <text x="205" y="100" class="component-label">ALU</text>
+      <text x="205" y="110" class="component-label">(Float/Int)</text>
+      <rect x="10" y="175" width="115" height="40" class="component-box ld-st"/>
+      <text x="67.5" y="198" class="component-label">Load/Store</text>
+      <rect x="135" y="175" width="110" height="40" class="component-box sfu"/>
+       <text x="190" y="190" class="component-label small-label">
+          <tspan x="190" dy="3">Special</tspan>
+          <tspan x="190" dy="10">Functions</tspan>
+      </text>
+    </g>
+
+    <g transform="translate(310, 305)">
+      <rect x="0" y="0" width="255" height="225" class="subdivision-border" rx="6" ry="6"/>
+      <rect x="10" y="10" width="235" height="20" class="scheduler"/>
+      <text x="127.5" y="24" class="label">Warp Scheduler</text>
+      <rect x="10" y="40" width="145" height="125" class="component-box tensor-core"/>
+      <text x="82.5" y="107.5" class="component-label">TensorCore</text>
+      <rect x="165" y="40" width="80" height="125" class="component-box alu"/>
+      <text x="205" y="100" class="component-label">ALU</text>
+      <text x="205" y="110" class="component-label">(Float/Int)</text>
+      <rect x="10" y="175" width="115" height="40" class="component-box ld-st"/>
+      <text x="67.5" y="198" class="component-label">Load/Store</text>
+      <rect x="135" y="175" width="110" height="40" class="component-box sfu"/>
+       <text x="190" y="190" class="component-label small-label">
+          <tspan x="190" dy="3">Special</tspan>
+          <tspan x="190" dy="10">Functions</tspan>
+      </text>
+    </g>
+  </g>
+
+  <rect x="30" y="545" width="540" height="35" class="shared-memory"/>
+  <text x="300" y="567" class="label">Shared Memory / L1 Cache</text>
+
+</svg>
+

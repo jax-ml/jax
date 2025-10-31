@@ -29,6 +29,7 @@
 import inspect
 import operator
 import os
+from pathlib import Path
 import sys
 
 sys.path.insert(0, os.path.abspath('..'))
@@ -38,11 +39,11 @@ sys.path.insert(0, os.path.abspath('..'))
 from typing import ForwardRef
 
 def _do_not_evaluate_in_jax(
-    self, globalns, *args, _evaluate=ForwardRef._evaluate,
+    self, globalns, *args, _evaluate=ForwardRef._evaluate, **kwargs,
 ):
   if globalns.get('__name__', '').startswith('jax'):
     return self
-  return _evaluate(self, globalns, *args)
+  return _evaluate(self, globalns, *args, **kwargs)
 
 ForwardRef._evaluate = _do_not_evaluate_in_jax
 
@@ -80,15 +81,19 @@ extensions = [
     "sphinx_remove_toctrees",
     'sphinx_copybutton',
     'jax_extensions',
+    'jax_list_config_options',
     'sphinx_design',
     'sphinxext.rediraffe',
+    'source_include',
+    'sphinxcontrib.mermaid'
 ]
 
 intersphinx_mapping = {
     'array_api': ('https://data-apis.org/array-api/2023.12/', None),
     'python': ('https://docs.python.org/3/', None),
     'numpy': ('https://numpy.org/doc/stable/', None),
-    'scipy': ('https://docs.scipy.org/doc/scipy/reference/', None),
+    # TODO(phawkins,jakevdp): revert to stable scipy docs when it is up again.
+    'scipy': ('https://scipy.github.io/devdocs/', None),
 }
 
 suppress_warnings = [
@@ -132,6 +137,8 @@ exclude_patterns = [
     # These are kept in sync using the jupytext pre-commit hook.
     'notebooks/*.md',
     'pallas/quickstart.md',
+    'pallas/pipelining.md',
+    'pallas/gpu/pipelining.md',
     'pallas/tpu/pipelining.md',
     'pallas/tpu/distributed.md',
     'pallas/tpu/sparse.md',
@@ -139,6 +146,7 @@ exclude_patterns = [
     'jep/9407-type-promotion.md',
     'autodidax.md',
     'autodidax2_part1.md',
+    'array_refs.md',
     'sharded-computation.md',
     'ffi.ipynb',
 ]
@@ -203,6 +211,8 @@ html_css_files = [
 # -- Options for myst ----------------------------------------------
 myst_heading_anchors = 3  # auto-generate 3 levels of heading anchors
 myst_enable_extensions = ['dollarmath']
+myst_ref_domains = ["py"]
+myst_all_links_external = False
 nb_execution_mode = "force"
 nb_execution_allow_errors = False
 nb_merge_streams = True
@@ -222,18 +232,21 @@ nb_execution_excludepatterns = [
     'jep/9407-type-promotion.*',
     # TODO(jakevdp): enable execution on the following if possible:
     'notebooks/Distributed_arrays_and_automatic_parallelization.*',
-    'notebooks/explicit-sharding.*',
     'notebooks/autodiff_remat.*',
+    # Example only gives the specific output demonstrated on some platforms
+    'notebooks/layout.*',
     # Fails on readthedocs with Kernel Died
     'notebooks/convolutions.ipynb',
     # Requires accelerators
     'pallas/quickstart.*',
+    'pallas/pipelining.*',
+    'pallas/gpu/pipelining.*',
     'pallas/tpu/pipelining.*',
     'pallas/tpu/distributed.*',
     'pallas/tpu/sparse.*',
     'pallas/tpu/matmul.*',
-    'sharded-computation.*',
-    'distributed_data_loading.*'
+    'distributed_data_loading.*',
+    'notebooks/host-offloading.*',
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------
@@ -352,25 +365,34 @@ def linkcode_resolve(domain, info):
     source, linenum = inspect.getsourcelines(obj)
   except:
     return None
-  filename = os.path.relpath(filename, start=os.path.dirname(jax.__file__))
+  try:
+    filename = Path(filename).relative_to(Path(jax.__file__).parent)
+  except ValueError:
+    # Source file is not a relative to jax; this must be a re-exported function.
+    return None
   lines = f"#L{linenum}-L{linenum + len(source)}" if linenum else ""
   return f"https://github.com/jax-ml/jax/blob/main/jax/{filename}{lines}"
 
 # Generate redirects from deleted files to new sources
 rediraffe_redirects = {
-    'notebooks/quickstart.md': 'quickstart.md',
-    'jax-101/01-jax-basics.md': 'key-concepts.md',
-    'jax-101/02-jitting.md': 'jit-compilation.md',
-    'jax-101/03-vectorization.md': 'automatic-vectorization.md',
-    'jax-101/04-advanced-autodiff.md': 'automatic-differentiation.md',
-    'jax-101/05-random-numbers.md': 'random-numbers.md',
-    'jax-101/05.1-pytrees.md': 'working-with-pytrees.md',
-    'jax-101/06-parallelism.md': 'sharded-computation.md',
-    'jax-101/07-state.md': 'stateful-computations.md',
-    'jax-101/08-pjit.rst': 'sharded-computation.md',
-    'jax-101/index.rst': 'tutorials.rst',
-    'notebooks/external_callbacks.md': 'external-callbacks.md',
-    'notebooks/How_JAX_primitives_work.md': 'jax-primitives.md',
-    'jax.extend.ffi.rst': 'jax.ffi.rst',
-    'Custom_Operation_for_GPUs.md': 'ffi.md',
+  "jax-101/01-jax-basics.md": "key-concepts.md",
+  "jax-101/02-jitting.md": "jit-compilation.md",
+  "jax-101/03-vectorization.md": "automatic-vectorization.md",
+  "jax-101/04-advanced-autodiff.md": "automatic-differentiation.md",
+  "jax-101/05-random-numbers.md": "random-numbers.md",
+  "jax-101/05.1-pytrees.md": "pytrees.md",
+  "jax-101/06-parallelism.md": "sharded-computation.md",
+  "jax-101/07-state.md": "stateful-computations.md",
+  "jax-101/08-pjit.rst": "sharded-computation.md",
+  "jax-101/index.rst": "jax-101.rst",
+  "tutorials.rst": "jax-101.rst",
+  "notebooks/external_callbacks.md": "external-callbacks.md",
+  "notebooks/How_JAX_primitives_work.md": "jax-primitives.md",
+  "jax.extend.ffi.rst": "jax.ffi.rst",
+  "Custom_Operation_for_GPUs.md": "ffi.md",
+  "notebooks/quickstart.md": "quickstart.md",
+  "quickstart.md": "notebooks/thinking_in_jax.md",
+  "advanced_guide.rst": "advanced_guides.rst",
+  "user_guides.rst": "advanced_guides.rst",
+  "working_with_pytrees.md": "pytrees.md",
 }

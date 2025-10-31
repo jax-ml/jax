@@ -27,7 +27,7 @@ etc.) that enable writing concise, accelerated code.
 
 Here we show how to add your own function transformations to the system, by writing a custom Jaxpr interpreter. And we'll get composability with all the other transformations for free.
 
-**This example uses internal JAX APIs, which may break at any time. Anything not in [the API Documentation](https://jax.readthedocs.io/en/latest/jax.html) should be assumed internal.**
+**This example uses internal JAX APIs, which may break at any time. Anything not in [the API Documentation](https://docs.jax.dev/en/latest/jax.html) should be assumed internal.**
 
 ```{code-cell} ipython3
 :id: s27RDKvKXFL8
@@ -147,8 +147,8 @@ Let's use `make_jaxpr` to trace a function into a Jaxpr.
 # Importing Jax functions useful for tracing/interpreting.
 from functools import wraps
 
-from jax import core
 from jax import lax
+from jax.extend import core
 from jax._src.util import safe_map
 ```
 

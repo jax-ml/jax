@@ -18,11 +18,14 @@ from typing import Any
 
 import numpy as np
 
-import jax.numpy as jnp
-from jax import jit, lax, random, vmap
+from jax._src import api
+from jax._src import dtypes
+from jax._src import lax
+from jax._src import numpy as jnp
+from jax._src import random
 from jax._src.numpy.util import check_arraylike, promote_dtypes_inexact
+from jax._src.scipy import linalg, special
 from jax._src.tree_util import register_pytree_node_class
-from jax.scipy import linalg, special
 
 
 @register_pytree_node_class
@@ -48,7 +51,7 @@ class gaussian_kde:
   def __init__(self, dataset, bw_method=None, weights=None):
     check_arraylike("gaussian_kde", dataset)
     dataset = jnp.atleast_2d(dataset)
-    if jnp.issubdtype(lax.dtype(dataset), np.complexfloating):
+    if dtypes.issubdtype(lax.dtype(dataset), np.complexfloating):
       raise NotImplementedError("gaussian_kde does not support complex data")
     if not dataset.size > 1:
       raise ValueError("`dataset` input should have multiple elements.")
@@ -153,7 +156,7 @@ class gaussian_kde:
     """Integrate the distribution over the given limits."""
     if self.d != 1:
       raise ValueError("integrate_box_1d() only handles 1D pdfs")
-    if jnp.ndim(low) != 0 or jnp.ndim(high) != 0:
+    if np.ndim(low) != 0 or np.ndim(high) != 0:
       raise ValueError(
           "the limits of integration in integrate_box_1d must be scalars")
     sigma = jnp.squeeze(jnp.sqrt(self.covariance))
@@ -171,9 +174,9 @@ class gaussian_kde:
     norm = 1.0 / norm
 
     sm, lg = (self, other) if self.n < other.n else (other, self)
-    result = vmap(partial(_gaussian_kernel_convolve, chol, norm, lg.dataset,
-                          lg.weights),
-                  in_axes=1)(sm.dataset)
+    result = api.vmap(partial(_gaussian_kernel_convolve, chol, norm, lg.dataset,
+                              lg.weights),
+                      in_axes=1)(sm.dataset)
     return jnp.sum(result * sm.weights)
 
   def resample(self, key, shape=()):
@@ -222,7 +225,7 @@ class gaussian_kde:
         "dynamically changing the bandwidth method is not supported")
 
   def _reshape_points(self, points):
-    if jnp.issubdtype(lax.dtype(points), np.complexfloating):
+    if dtypes.issubdtype(lax.dtype(points), np.complexfloating):
       raise NotImplementedError(
           "gaussian_kde does not support complex coordinates")
     points = jnp.atleast_2d(points)
@@ -244,7 +247,7 @@ def _gaussian_kernel_convolve(chol, norm, target, weights, mean):
   return norm * jnp.sum(jnp.exp(-arg) * weights)
 
 
-@partial(jit, static_argnums=0)
+@api.jit(static_argnums=0)
 def _gaussian_kernel_eval(in_log, points, values, xi, precision):
   points, values, xi, precision = promote_dtypes_inexact(
       points, values, xi, precision)
@@ -269,9 +272,9 @@ def _gaussian_kernel_eval(in_log, points, values, xi, precision):
       return y_train * jnp.exp(arg)
 
   reduce = special.logsumexp if in_log else jnp.sum
-  reduced_kernel = lambda x: reduce(vmap(kernel, in_axes=(None, 0, 0))
+  reduced_kernel = lambda x: reduce(api.vmap(kernel, in_axes=(None, 0, 0))
                                     (x, points, values),
                                     axis=0)
-  mapped_kernel = vmap(reduced_kernel)
+  mapped_kernel = api.vmap(reduced_kernel)
 
   return mapped_kernel(xi)

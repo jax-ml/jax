@@ -54,16 +54,16 @@ setup(
     author="Ruturaj4",
     author_email="Ruturaj.Vaidya@amd.com",
     packages=[package_name],
-    python_requires=">=3.9",
+    python_requires=">=3.11",
     install_requires=[f"jax-rocm{rocm_version}-pjrt=={__version__}"],
     url="https://github.com/jax-ml/jax",
     license="Apache-2.0",
     classifiers=[
         "Development Status :: 3 - Alpha",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
     ],
     package_data={
         package_name: [

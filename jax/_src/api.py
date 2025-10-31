@@ -26,24 +26,24 @@ import atexit
 import collections
 from collections.abc import Callable, Hashable, Iterable, Sequence
 import dataclasses
-from functools import partial, lru_cache
+from functools import partial
 import inspect
-import math
 import typing
-from typing import (Any, Literal, NamedTuple, TypeVar, overload,
+from typing import (Any, Literal, NamedTuple, Optional, TypeVar, overload,
                     cast)
 import weakref
 
 import numpy as np
 from contextlib import contextmanager
 
+from jax._src import api_util
 from jax._src import linear_util as lu
 from jax._src import stages
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
     tree_leaves, Partial, PyTreeDef, all_leaves, keystr, broadcast_prefix,
     prefix_errors, generate_key_paths, tree_flatten_with_path,
-    equality_errors_pytreedef)
+    equality_errors_pytreedef, register_pytree_node, register_dataclass)
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -51,31 +51,30 @@ from jax._src import array
 from jax._src import basearray
 from jax._src import distributed
 from jax._src import dtypes
+from jax._src.dtypes import canonicalize_value
 from jax._src import sharding_impls
 from jax._src import sharding_specs
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import pjit
 from jax._src import xla_bridge as xb
-from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray
+from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray, typeof
 from jax._src.api_util import (
   flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
-  flatten_axes, donation_vector,
-  rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
-  apply_flat_fun_nokwargs, check_callable, debug_info,
-  flat_out_axes)
-from jax._src.lax import lax as lax_internal
+  flatten_axes, donation_vector, rebase_donate_argnums,
+  _ensure_index, _ensure_index_tuple, apply_flat_fun_nokwargs, check_callable,
+  debug_info, flat_out_axes)
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
 from jax._src.mesh import get_concrete_mesh
-from jax._src.sharding_impls import (
-    PmapSharding, TransferToMemoryKind, PartitionSpec as P, NamedSharding)
-from jax._src.layout import Layout, AutoLayout
+from jax._src.sharding_impls import (PmapSharding, PartitionSpec as P,
+                                     NamedSharding)
+from jax._src.layout import Format
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
-from jax._src.util import unzip2, safe_map, safe_zip, wraps, split_list
+from jax._src.util import unzip2, safe_map, safe_zip, wraps
 from jax._src import util
 
 from jax._src.interpreters import ad
@@ -83,10 +82,12 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 
+config_ext = xc._xla.config
+
 
 traceback_util.register_exclusion(__file__)
 
-_dtype = partial(dtypes.dtype, canonicalize=True)
+_dtype = dtypes.dtype
 
 AxisName = Hashable
 
@@ -101,6 +102,8 @@ U = TypeVar("U")
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
+ShapeDtypeStruct = core.ShapeDtypeStruct
+
 
 @api_boundary
 def _nan_check_posthook(fun, args, kwargs, output):
@@ -111,32 +114,37 @@ def _nan_check_posthook(fun, args, kwargs, output):
       buffers.extend([shard.data for shard in leaf.addressable_shards])
 
   try:
-    dispatch.check_special(pjit.pjit_p.name, buffers)
-  except dispatch.InternalFloatingPointError as e:
+    dispatch.check_special(pjit.jit_p.name, buffers)
+  except api_util.InternalFloatingPointError as e:
     assert config.debug_nans.value or config.debug_infs.value
     if hasattr(fun, '_fun'):
       f = fun._fun
       if getattr(f, '_apply_primitive', False):
         raise FloatingPointError(f"invalid value ({e.ty}) encountered in {f.__qualname__}") from None
       # compiled_fun can only raise in this case
-      dispatch.maybe_recursive_nan_check(e, f, args, kwargs)
+      api_util.maybe_recursive_nan_check(e, f, args, kwargs)
       raise AssertionError("Unreachable") from e
     else:
       # TODO(emilyaf): Shouldn't need this fallback.
       raise
 
+_post_hook_state = config_ext.Config[Optional[Callable]](
+    "post_hook", None, include_in_jit_key=False
+)
+jax_jit.set_post_hook_state(_post_hook_state)
+
 def _update_debug_special_global(_):
   if config._read("jax_debug_nans") or config._read("jax_debug_infs"):
-    jax_jit.global_state().post_hook = _nan_check_posthook
+    _post_hook_state.set_global(_nan_check_posthook)
   else:
-    jax_jit.global_state().post_hook = None
+    _post_hook_state.set_global(None)
 
 def _update_debug_special_thread_local(_):
   if (config.debug_nans.get_local() == True or
       config.debug_infs.get_local() == True):
-    jax_jit.thread_local_state().post_hook = _nan_check_posthook
+    _post_hook_state.set_local(_nan_check_posthook)
   else:
-    jax_jit.thread_local_state().post_hook = None
+    _post_hook_state.set_local(None)
 
 config.debug_nans._add_hooks(_update_debug_special_global,
                              _update_debug_special_thread_local)
@@ -146,9 +154,47 @@ config.debug_infs._add_hooks(_update_debug_special_global,
 
 float0 = dtypes.float0
 
+class NotSpecified:
+  """Sentinel for use in jax.jit"""
+  def __repr__(self):
+    return "<not-specified>"
+
+@overload
+def jit(
+  fun: Callable, /, *,
+  in_shardings: Any = ...,
+  out_shardings: Any = ...,
+  static_argnums: int | Sequence[int] | None = ...,
+  static_argnames: str | Iterable[str] | None = ...,
+  donate_argnums: int | Sequence[int] | None = ...,
+  donate_argnames: str | Iterable[str] | None = ...,
+  keep_unused: bool = ...,
+  device: xc.Device | None = ...,
+  backend: str | None = ...,
+  inline: bool = ...,
+  abstracted_axes: Any | None = ...,
+  compiler_options: dict[str, Any] | None = ...,
+) -> pjit.JitWrapped: ...
+
+@overload
+def jit(
+  *,
+  in_shardings: Any = ...,
+  out_shardings: Any = ...,
+  static_argnums: int | Sequence[int] | None = ...,
+  static_argnames: str | Iterable[str] | None = ...,
+  donate_argnums: int | Sequence[int] | None = ...,
+  donate_argnames: str | Iterable[str] | None = ...,
+  keep_unused: bool = ...,
+  device: xc.Device | None = ...,
+  backend: str | None = ...,
+  inline: bool = ...,
+  abstracted_axes: Any | None = ...,
+  compiler_options: dict[str, Any] | None = ...,
+) -> Callable[[Callable], pjit.JitWrapped]: ...
 
 def jit(
-  fun: Callable,
+  fun: Callable | NotSpecified = NotSpecified(), /, *,
   in_shardings: Any = sharding_impls.UNSPECIFIED,
   out_shardings: Any = sharding_impls.UNSPECIFIED,
   static_argnums: int | Sequence[int] | None = None,
@@ -161,19 +207,20 @@ def jit(
   inline: bool = False,
   abstracted_axes: Any | None = None,
   compiler_options: dict[str, Any] | None = None,
-) -> pjit.JitWrapped:
+) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
     fun: Function to be jitted. ``fun`` should be a pure function.
-
       The arguments and return value of ``fun`` should be arrays, scalar, or
       (nested) standard Python containers (tuple/list/dict) thereof. Positional
       arguments indicated by ``static_argnums`` can be any hashable type. Static
       arguments are included as part of a compilation cache key, which is why
       hash and equality operators must be defined. JAX keeps a weak reference to
       ``fun`` for use as a compilation cache key, so the object ``fun`` must be
-      weakly-referenceable.
+      weakly-referenceable. Starting in JAX v0.8.1, when ``fun`` is omitted,
+      the return value will be a partially-evaluated function to allow the
+      decorator factory pattern (see Examples below).
     in_shardings: optional, a :py:class:`Sharding` or pytree with
       :py:class:`Sharding` leaves and structure that is a tree prefix of the
       positional arguments tuple to ``fun``. If provided, the positional
@@ -185,14 +232,13 @@ def jit(
     out_shardings: optional, a :py:class:`Sharding` or pytree with
       :py:class:`Sharding` leaves and structure that is a tree prefix of the
       output of ``fun``. If provided, it has the same effect as applying
-      corresponding :py:func:`jax.lax.with_sharding_constraint`s to the output
-      of ``fun``.
+      :py:func:`jax.lax.with_sharding_constraint` to the output of ``fun``.
     static_argnums: optional, an int or collection of ints that specify which
       positional arguments to treat as static (trace- and compile-time
       constant).
 
       Static arguments should be hashable, meaning both ``__hash__`` and
-      ``__eq__`` are implemented, and immutable. Otherwise they can be arbitrary
+      ``__eq__`` are implemented, and immutable. Otherwise, they can be arbitrary
       Python objects. Calling the jitted function with different values for
       these constants will trigger recompilation. Arguments that are not
       array-like or containers thereof must be marked as static.
@@ -232,7 +278,7 @@ def jit(
       be donated.
 
       For more details on buffer donation see the
-      `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
+      `FAQ <https://docs.jax.dev/en/latest/faq.html#buffer-donation>`_.
     donate_argnames: optional, a string or collection of strings specifying
       which named arguments are donated to the computation. See the
       comment on ``donate_argnums`` for details. If not
@@ -273,8 +319,20 @@ def jit(
     [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
     -0.85743 -0.78232  0.76827  0.59566 ]
 
-    To pass arguments such as ``static_argnames`` when decorating a function, a
-    common pattern is to use :func:`functools.partial`:
+    Starting in JAX v0.8.1, :func:`jit` supports the decorator factory pattern
+    for specifying optional keywords:
+
+    >>> @jax.jit(static_argnames=['n'])
+    ... def g(x, n):
+    ...   for i in range(n):
+    ...     x = x ** 2
+    ...   return x
+    >>>
+    >>> g(jnp.arange(4), 3)
+    Array([   0,    1,  256, 6561], dtype=int32)
+
+    For compatiblity with older JAX versions, a common pattern is to use
+    :func:`functools.partial`:
 
     >>> from functools import partial
     >>>
@@ -287,17 +345,24 @@ def jit(
     >>> g(jnp.arange(4), 3)
     Array([   0,    1,  256, 6561], dtype=int32)
   """
-  return pjit.make_jit(
-        fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
-        static_argnums, static_argnames, device, backend, abstracted_axes,
-        keep_unused, inline, compiler_options, use_resource_env=False)
+  kwds = dict(
+      in_shardings=in_shardings, out_shardings=out_shardings,
+      static_argnums=static_argnums, static_argnames=static_argnames,
+      donate_argnums=donate_argnums, donate_argnames=donate_argnames,
+      keep_unused=keep_unused, device=device, backend=backend, inline=inline,
+      abstracted_axes=abstracted_axes, compiler_options=compiler_options,
+      use_resource_env=False)
+  if isinstance(fun, NotSpecified):
+    return lambda fun: pjit.make_jit(fun, **kwds)
+  else:
+    return pjit.make_jit(fun, **kwds)
 
 
 @contextmanager
 def disable_jit(disable: bool = True):
   """Context manager that disables :py:func:`jit` behavior under its dynamic context.
 
-  For debugging it is useful to have a mechanism that disables :py:func:`jit`
+  For debugging, it is useful to have a mechanism that disables :py:func:`jit`
   everywhere in a dynamic context. Note that this not only disables explicit
   uses of :func:`jit` by the user, but will also remove any implicit JIT compilation
   used by the JAX library: this includes implicit JIT computation of `body` and
@@ -322,8 +387,8 @@ def disable_jit(disable: bool = True):
   ...   print("Value of y is", y)
   ...   return y + 3
   ...
-  >>> print(f(jax.numpy.array([1, 2, 3])))  # doctest:+ELLIPSIS
-  Value of y is Traced<ShapedArray(int32[3])>with<DynamicJaxprTrace...>
+  >>> print(f(jax.numpy.array([1, 2, 3])))
+  Value of y is JitTracer<int32[3]>
   [5 7 9]
 
   Here ``y`` has been abstracted by :py:func:`jit` to a :py:class:`ShapedArray`,
@@ -441,6 +506,8 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     shapes and types as the corresponding arguments. If ``has_aux`` is True
     then a tuple of ((value, auxiliary_data), gradient) is returned.
   """
+  from jax._src.lax import lax as lax_internal  # pytype: disable=import-error
+
   if reduce_axes:
     raise NotImplementedError("reduce_axes argument to grad is deprecated")
   del reduce_axes
@@ -472,8 +539,7 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     if not has_aux:
       ans, vjp_py = _vjp(f_partial, *dyn_args)
     else:
-      ans, vjp_py, aux = _vjp(
-          f_partial, *dyn_args, has_aux=True)
+      ans, vjp_py, aux = _vjp(f_partial, *dyn_args, has_aux=True)
     _check_scalar(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
     g = vjp_py(lax_internal._one(ans))
@@ -505,17 +571,18 @@ def _check_input_dtype_revderiv(name, holomorphic, allow_int, x):
     if not dtypes.issubdtype(aval.dtype, np.complexfloating):
       raise TypeError(f"{name} with holomorphic=True requires inputs with complex dtype, "
                       f"but got {aval.dtype.name}.")
-  if (dtypes.issubdtype(aval.dtype, dtypes.extended) or
-      dtypes.issubdtype(aval.dtype, np.integer) or
-      dtypes.issubdtype(aval.dtype, np.bool_)):
-    if not allow_int:
-      raise TypeError(f"{name} requires real- or complex-valued inputs (input dtype "
-                      f"that is a sub-dtype of np.inexact), but got {aval.dtype.name}. "
-                      "If you want to use Boolean- or integer-valued inputs, use vjp "
-                      "or set allow_int to True.")
-  elif not dtypes.issubdtype(aval.dtype, np.inexact):
-    raise TypeError(f"{name} requires numerical-valued inputs (input dtype that is a "
-                    f"sub-dtype of np.bool_ or np.number), but got {aval.dtype.name}.")
+  if isinstance(aval, ShapedArray):
+    if (dtypes.issubdtype(aval.dtype, dtypes.extended) or
+        dtypes.issubdtype(aval.dtype, np.integer) or
+        dtypes.issubdtype(aval.dtype, np.bool_)):
+      if not allow_int:
+        raise TypeError(f"{name} requires real- or complex-valued inputs (input dtype "
+                        f"that is a sub-dtype of np.inexact), but got {aval.dtype.name}. "
+                        "If you want to use Boolean- or integer-valued inputs, use vjp "
+                        "or set allow_int to True.")
+    elif not dtypes.issubdtype(aval.dtype, np.inexact):
+      raise TypeError(f"{name} requires numerical-valued inputs (input dtype that is a "
+                      f"sub-dtype of np.bool_ or np.number), but got {aval.dtype.name}.")
 _check_input_dtype_grad = partial(_check_input_dtype_revderiv, "grad")
 
 def _check_output_dtype_revderiv(name, holomorphic, x):
@@ -539,6 +606,79 @@ def _check_output_dtype_revderiv(name, holomorphic, x):
                     "For differentiation of functions with integer outputs, use "
                     "jax.vjp directly.")
 _check_output_dtype_grad = partial(_check_output_dtype_revderiv, "grad")
+
+def fwd_and_bwd(
+    fun: Callable, argnums: int | Sequence[int], has_aux: bool = False,
+    jitted: bool = True,
+) -> tuple[Callable, Callable]:
+  """Creates functions ``fwd`` and ``bwd`` corresponding to the forward and
+  backward pass of a given function ``fun``. The forward function ``fwd(*args)``
+  functionally behaves much like ``y, fun_vjp = jax.vjp(fun, *args)``, but allows
+  reuse of the backward function ``bwd`` across multiple iterations, which is
+  useful to avoid recompilation when the forward and backward do not end up in a
+  single jitted function:
+
+  >>> import jax
+  >>>
+  >>> x = W = cot_out = jax.numpy.ones((4,4))
+  >>>
+  >>> def f(x, W):
+  ...     return x @ W
+  ...
+  >>> f_jitted = jax.jit(f)
+  >>> for i in range(3):
+  ...     y, f_vjp = jax.vjp(f_jitted, x, W)
+  ...     cot_x, cot_W = f_vjp(cot_out)           # not jitted
+  ...     cot_x, cot_W = jax.jit(f_vjp)(cot_out)  # recompiles on every iteration
+  ...
+  >>> fwd, bwd = jax.fwd_and_bwd(f, argnums=(0,1))
+  >>> for i in range(3):
+  ...     y, residuals = fwd(x, W)
+  ...     cot_x, cot_W = bwd(residuals, cot_out)  # jitted, compiles once
+  ...
+
+  Args:
+    fun: Function to produce a forward and backward of.
+    argnums: Integer or sequence of integers. Specifies which positional argument(s)
+      to differentiate with respect to.
+    has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the
+     first element is considered the output of the mathematical function to be
+     differentiated and the second element is auxiliary data. Default False.
+    jitted: Optional, bool. Indicates whether to return the ``jax.jit`` of
+      forward and backward. Note that jit-ing only the backward but not the
+      forward will result in the backward recompiling on every invocation, so we
+      default to jit-ing both.
+
+  Returns:
+    The two functions, ``fwd`` and ``bwd``.
+
+    If ``has_aux`` is ``False``, ``fwd(*primals)`` returns a tuple
+    ``(primals_out, residuals)``, where ``primals_out`` is ``fun(*primals)``.
+    If ``has_aux`` is ``True``, returns a ``(primals_out, residuals, aux)`` tuple
+    where ``aux`` is the auxiliary data returned by ``fun``.
+
+    ``bwd`` is a function from ``residuals`` and a cotangent vector with the same
+    shape as ``primals_out`` to a tuple of cotangent vectors with the same number
+    and shapes as the ``primals`` designated by ``argnums``, representing the
+    vector-Jacobian product of ``fun`` evaluated at ``primals``.
+  """
+  check_callable(fun)
+  argnums = _ensure_index(argnums)
+
+  def fwd(*args, **kwargs):
+    dbg = debug_info('fwd_and_bwd', fun, args, kwargs)
+    f = lu.wrap_init(fun, params=kwargs, debug_info=dbg)
+    f_partial, dyn_args = argnums_partial(
+        f, argnums, args, require_static_args_hashable=False)
+    return _vjp(f_partial, *dyn_args, has_aux=has_aux)  # type: ignore
+  def bwd(f_vjp, outgrad):
+    g = f_vjp(outgrad)
+    g = g[0] if isinstance(argnums, int) else g
+    return g
+  if jitted:
+    fwd = jit(fwd)
+    bwd = jit(bwd)
+  return fwd, bwd
 
 
 def jacfwd(fun: Callable, argnums: int | Sequence[int] = 0,
@@ -632,7 +772,8 @@ def _check_output_dtype_jacfwd(holomorphic, x):
                       f"but got {aval.dtype.name}.")
 
 def jacrev(fun: Callable, argnums: int | Sequence[int] = 0,
-           has_aux: bool = False, holomorphic: bool = False, allow_int: bool = False) -> Callable:
+           has_aux: bool = False, holomorphic: bool = False,
+           allow_int: bool = False) -> Callable:
   """Jacobian of ``fun`` evaluated row-by-row using reverse-mode AD.
 
   Args:
@@ -778,31 +919,53 @@ def hessian(fun: Callable, argnums: int | Sequence[int] = 0,
   return jacfwd(jacrev(fun, argnums, has_aux=has_aux, holomorphic=holomorphic),
                 argnums, has_aux=has_aux, holomorphic=holomorphic)
 
+def _insert_pvary(basis, leaf):
+  if not config._check_vma.value:
+    return basis
+  return core.pvary(basis, tuple(core.typeof(leaf).vma))
+
 def _std_basis(pytree):
-  import jax.numpy as jnp
+  import jax.numpy as jnp  # pytype: disable=import-error
   leaves, _ = tree_flatten(pytree)
   ndim = sum(map(np.size, leaves))
   dtype = dtypes.result_type(*leaves)
   flat_basis = jnp.eye(ndim, dtype=dtype)
-  return _unravel_array_into_pytree(pytree, 1, None, flat_basis)
+  axis = 1
+  arr_s = [None] * flat_basis.ndim
+  specs = tree_map(lambda l: P(arr_s[:axis], *core.typeof(l).sharding.spec,
+                               arr_s[axis+1:]), pytree)
+  out_pytree = _unravel_array_into_pytree(pytree, axis, None, flat_basis, specs)
+  out_pytree = tree_map(_insert_pvary, out_pytree, pytree)
+  return out_pytree
 
 def _jacfwd_unravel(input_pytree, output_pytree_leaf, arr):
+  axis = -1 % arr.ndim
+  arr_s = core.typeof(arr).sharding.spec
+  specs = tree_map(
+      lambda l: P(*arr_s[:axis], *[None] * len(np.shape(l)), *arr_s[axis+1:]),
+      input_pytree)
   return _unravel_array_into_pytree(
-    input_pytree, -1, output_pytree_leaf, arr)
+    input_pytree, axis, output_pytree_leaf, arr, specs)
 
 def _jacrev_unravel(output_pytree, input_pytree_leaf, arr):
+  specs = tree_map(
+      lambda l: P(*[None] * len(np.shape(l)), *core.typeof(arr).sharding.spec[1:]),
+      output_pytree)
   return _unravel_array_into_pytree(
-    output_pytree, 0, input_pytree_leaf, arr)
+    output_pytree, 0, input_pytree_leaf, arr, specs)
 
-def _possible_downcast(x, example):
+def _possible_downcast(x, example, spec):
+  from jax._src.lax import lax as lax_internal  # pytype: disable=import-error
   if (dtypes.issubdtype(x.dtype, np.complexfloating) and
       not dtypes.issubdtype(_dtype(example), np.complexfloating)):
     x = x.real
-  dtype = None if example is None else _dtype(example)
-  weak_type = None if example is None else dtypes.is_weakly_typed(example)
-  return lax_internal._convert_element_type(x, dtype, weak_type)
+  dtype = _dtype(example)
+  weak_type = dtypes.is_weakly_typed(example)
+  sharding = NamedSharding(core.typeof(example).sharding.mesh, spec)
+  return lax_internal._convert_element_type(
+      x, dtype, weak_type, sharding=sharding)
 
-def _unravel_array_into_pytree(pytree, axis, example, arr):
+def _unravel_array_into_pytree(pytree, axis, example, arr, specs):
   """Unravel an array into a PyTree with a given structure.
   Args:
       pytree: The pytree that provides the structure.
@@ -813,12 +976,14 @@ def _unravel_array_into_pytree(pytree, axis, example, arr):
       arr: The array to be unraveled.
   """
   leaves, treedef = tree_flatten(pytree)
-  axis = axis % arr.ndim
+  specs, _ = tree_flatten(specs)
   shapes = [arr.shape[:axis] + np.shape(l) + arr.shape[axis+1:] for l in leaves]
   parts = _split(arr, np.cumsum(map(np.size, leaves[:-1])), axis)
   reshaped_parts = [
-      _possible_downcast(np.reshape(x, shape), leaf if example is None else example)
-      for x, shape, leaf in zip(parts, shapes, leaves)]
+      _possible_downcast(np.reshape(x, shape),
+                         leaf if example is None else example,
+                         spec=spec)
+      for x, shape, leaf, spec in zip(parts, shapes, leaves, specs)]
   return tree_unflatten(treedef, reshaped_parts)
 
 def _split(x, indices, axis):
@@ -856,7 +1021,7 @@ def vmap(fun: F,
       be a container with a matching pytree structure specifying the mapping of its
       container elements. In other words, ``in_axes`` must be a container tree prefix
       of the positional argument tuple passed to ``fun``. See this link for more detail:
-      https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees
+      https://docs.jax.dev/en/latest/pytrees.html#applying-optional-parameters-to-pytrees
 
       Either ``axis_size`` must be provided explicitly, or at least one
       positional argument must have ``in_axes`` not None. The sizes of the
@@ -1000,10 +1165,19 @@ def vmap(fun: F,
       raise ValueError("vmap in_axes must be an int, None, or a tuple of entries corresponding "
                        "to the positional arguments passed to the function, "
                        f"but got {len(in_axes)=}, {len(args)=}")
+
     args_flat, in_tree  = tree_flatten((args, kwargs), is_leaf=batching.is_vmappable)
-    f = lu.wrap_init(fun, debug_info=debug_info("vmap", fun, args, kwargs))
+    dbg = debug_info("vmap", fun, args, kwargs)
+
+    f = lu.wrap_init(fun, debug_info=dbg)
     flat_fun, out_tree = batching.flatten_fun_for_vmap(f, in_tree)
     in_axes_flat = flatten_axes("vmap in_axes", in_tree, (in_axes, 0), kws=True)
+
+    if config.mutable_array_checks.value:
+      avals = [None if d is None or batching.is_vmappable(x) else core.typeof(x)
+               for x, d in zip(args_flat, in_axes_flat)]
+      api_util.check_no_aliased_ref_args(lambda: dbg, avals, args_flat)
+
     axis_size_ = (axis_size if axis_size is not None else
                   _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))
     explicit_mesh_axis = _mapped_axis_spec(args_flat, in_axes_flat)
@@ -1039,16 +1213,20 @@ def _mapped_axis_spec(args_flat, in_axes_flat):
     except (IndexError, TypeError):
       return None
 
-  temp_spec = None
+  out_spec = None
+  non_none_count = 0
   for arg, i in zip(args_flat, in_axes_flat):
     if i is not None:
       spec = _get_spec(arg, i)
-      if temp_spec is not None and temp_spec != spec:
+      if non_none_count != 0 and out_spec != spec:
         raise ValueError(
             "Mapped away dimension of inputs passed to vmap should be sharded"
-            f" the same. Got inconsistent axis specs: {temp_spec} vs {spec}")
-      temp_spec = spec
-  return temp_spec
+            f" the same. Got inconsistent axis specs: {out_spec} vs {spec}")
+      out_spec = spec
+      non_none_count += 1
+  if out_spec is not None and not isinstance(out_spec, tuple):
+    out_spec = (out_spec,)
+  return out_spec
 
 def _mapped_axis_size(fn, tree, vals, dims, name):
   if not vals:
@@ -1152,6 +1330,12 @@ def pmap(
   ) -> Any:
   """Parallel map with support for collective operations.
 
+  .. note::
+    :py:func:`pmap` is now implemented in terms of :py:func:`jit` and
+    :py:func:`shard_map`. Please see the `migration
+    guide <https://docs.jax.dev/en/latest/migrate_pmap.html>`_ for
+    more information.
+
   The purpose of :py:func:`pmap` is to express single-program multiple-data
   (SPMD) programs. Applying :py:func:`pmap` to a function will compile the
   function with XLA (similarly to :py:func:`jit`), then execute it in parallel
@@ -1242,7 +1426,7 @@ def pmap(
       arguments will not be donated.
 
       For more details on buffer donation see the
-      `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
+      `FAQ <https://docs.jax.dev/en/latest/faq.html#buffer-donation>`_.
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of
@@ -1372,10 +1556,8 @@ def pmap(
         " removed from JAX. Please migrate to pjit and remove global_arg_shapes"
         " from pmap.")
 
-  # TODO(yashkatariya): Move this out after shard_map is out of experimental and
-  # in _src
   if config.pmap_shmap_merge.value:
-    from jax.experimental.shard_map import pmap
+    from jax._src.pmap import pmap  # pytype: disable=import-error
     return pmap(fun, axis_name, in_axes=in_axes, out_axes=out_axes,
                 static_broadcasted_argnums=static_broadcasted_argnums,
                 devices=devices, backend=backend,
@@ -1428,7 +1610,7 @@ def _get_global_axis_size(local_axis_size: int, in_devices, backend_name: str,
   if global_axis_size is None:
     if xb.process_count(backend) == 1:
       global_axis_size = local_axis_size
-    elif in_devices:
+    elif in_devices is not None:
       global_axis_size = len(in_devices)
     else:
       global_axis_size = local_axis_size * xb.process_count(backend)
@@ -1489,7 +1671,7 @@ def _prepare_pmap(fun: Callable, in_axes, out_axes, static_broadcasted_tuple,
               "Instead, each argument passed by keyword is mapped over its "
               "leading axis. See the description of `in_axes` in the `pmap` "
               "docstring: "
-              "https://jax.readthedocs.io/en/latest/_autosummary/jax.pmap.html#jax.pmap")
+              "https://docs.jax.dev/en/latest/_autosummary/jax.pmap.html#jax.pmap")
     msg += ("\n\nCheck that the value of the `in_axes` argument to `pmap` "
             "is a tree prefix of the tuple of arguments passed positionally to "
             "the pmapped function.")
@@ -1569,11 +1751,13 @@ def _cpp_pmap(
       out_axes)
   del static_broadcasted_argnums, donate_argnums
 
+  prepare_pmap_fn = partial(_prepare_pmap,
+        fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
+        devices, backend, axis_size)
+
   @api_boundary
   def cache_miss(*args, **kwargs):
-    p = _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
-                      donate_tuple, devices, backend,
-                      axis_size, args, kwargs)
+    p = prepare_pmap_fn(args, kwargs)
     for arg in p.flat_args:
       dispatch.check_arg(arg)
 
@@ -1594,11 +1778,11 @@ def _cpp_pmap(
     with core.take_current_trace() as trace:
       try:
         if isinstance(trace, core.EvalTrace):
-          execute = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
-          out = execute(*p.flat_args)
+          execute, const_args = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
+          out = execute(*const_args, *p.flat_args)
         else:
           out = pxla.xla_pmap_p.bind_with_trace(trace, (p.flat_fun, *p.flat_args), params)
-      except dispatch.InternalFloatingPointError as e:
+      except api_util.InternalFloatingPointError as e:
         raise FloatingPointError(f'Invalid value ({e.ty}) encountered in parallel computation.')
 
     out_tree, out_flat = p.out_tree, out
@@ -1613,6 +1797,7 @@ def _cpp_pmap(
         # TODO(sharadmv): Enable effects in replicated computation
         not execute_replicated.has_unordered_effects
         and not execute_replicated.has_host_callbacks and
+        len(const_args) == 0 and
         # No tracers in the outputs.
         all(isinstance(x, xc.ArrayImpl) for x in out_flat))
 
@@ -1645,54 +1830,47 @@ def _cpp_pmap(
 
   cpp_mapped_f = pmap_lib.pmap(
       fun, cache_miss, static_broadcasted_tuple,
-      lambda x, s: pxla.shard_args([s], [None], [None], [x])[0],
+      lambda x, s: pxla.shard_args([s], [None],
+                                   [xc.ArrayCopySemantics.REUSE_INPUT], [x])[0],
       pytree_registry=tree_util.default_registry)
   _pmap_cache_clears.add(cpp_mapped_f)
 
   pmap_f = wraps(fun)(cpp_mapped_f)
+  # Store some data for the `lower` and `trace` methods
   pmap_f._fun = fun
+  pmap_f._prepare_pmap = prepare_pmap_fn
+  pmap_f._backend = backend
+  pmap_f._axis_name = axis_name
+  pmap_f._donate_tuple = donate_tuple
 
-  @api_boundary
-  def lower(*args, **kwargs):
-    return trace(*args, **kwargs).lower()
-
-  @api_boundary
-  def trace(*args, **kwargs):
-    p = _prepare_pmap(
-        fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
-        devices, backend, axis_size, args, kwargs)
-    abstract_args = list(map(shaped_abstractify, p.flat_args))
-    closed_jaxpr, xc_backend, replicas, shards, pci = pxla.get_pmap_jaxpr(
-        p.flat_fun, backend, axis_name,
-        axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
-        devices=p.devices,
-        name=p.flat_fun.__name__,
-        in_axes=p.in_axes_flat,
-        out_axes_thunk=p.out_axes_thunk,
-        avals=abstract_args)
-    lower_callable = partial(
-        pxla.lower_parallel_callable, p.flat_fun, axis_name,
-        axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
-        devices=p.devices,
-        name=p.flat_fun.__name__,
-        in_axes=p.in_axes_flat,
-        donated_invars=p.donated_invars,
-        is_explicit_global_axis_size=p.is_explicit_global_axis_size,
-        avals=abstract_args,
-        closed_jaxpr=closed_jaxpr,
-        backend=xc_backend,
-        replicas=replicas,
-        shards=shards,
-        pci=pci)
-    args_info = stages.make_args_info(p.in_tree, abstract_args, donate_tuple)
-    return stages.Traced(closed_jaxpr, args_info, p.flat_fun.__name__,
-                         p.out_tree(), lower_callable)
-
-  pmap_f.lower = lower
-  pmap_f.trace = trace
-
+  # TODO(necula): move these to top-level; we don't need to do this for
+  # every pmap
+  cpp_mapped_f_class = type(pmap_f)
+  cpp_mapped_f_class.lower = _cpp_mapped_lower
+  # We return directly the function produced by pmap_lib.pmap, because we do not
+  # want to have Python in the dispatch path.
   return pmap_f
 
+@api_boundary
+def _cpp_mapped_lower(pmap_f, *args, **kwargs):
+  p = pmap_f._prepare_pmap(args, kwargs)
+  abstract_args = list(map(shaped_abstractify, p.flat_args))
+  closed_jaxpr, xc_backend, replicas, shards, pci = pxla.get_pmap_jaxpr(
+      p.flat_fun, pmap_f._backend, pmap_f._axis_name,
+      axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
+      devices=p.devices, name=p.flat_fun.__name__, in_axes=p.in_axes_flat,
+      out_axes_thunk=p.out_axes_thunk, avals=abstract_args)
+  lowering = pxla.lower_parallel_callable(
+      p.flat_fun, pmap_f._axis_name, axis_size=p.local_axis_size,
+      global_axis_size=p.global_axis_size, devices=p.devices,
+      name=p.flat_fun.__name__, in_axes=p.in_axes_flat,
+      donated_invars=p.donated_invars,
+      is_explicit_global_axis_size=p.is_explicit_global_axis_size,
+      avals=abstract_args, closed_jaxpr=closed_jaxpr, backend=xc_backend,
+      replicas=replicas, shards=shards, pci=pci, lowering_platforms=None,
+      lowering_parameters=pxla.mlir.LoweringParameters())
+  args_info = stages.make_args_info(p.in_tree, abstract_args, pmap_f._donate_tuple)
+  return stages.Lowered(lowering, args_info, p.out_tree())
 _pmap_cache_clears = weakref.WeakSet()  # type: ignore
 
 
@@ -1754,6 +1932,7 @@ def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
                     f"structure; primals have tree structure {tree_def} whereas tangents have "
                     f"tree structure {tree_def_2}.")
   for p, t in zip(ps_flat, ts_flat):
+    if not isinstance(core.typeof(p), ShapedArray): continue
     if core.primal_dtype_to_tangent_dtype(_dtype(p)) != _dtype(t):
       raise TypeError("primal and tangent arguments to jax.jvp do not match; "
                       "dtypes must be equal, or in case of int/bool primal dtype "
@@ -1888,10 +2067,27 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
     for primal_aval, tangent_aval in zip(primal_avals, tangent_avals):
       expected_tangent_aval  = primal_aval.to_tangent_aval()
       if not core.typecompat(expected_tangent_aval, tangent_aval):
-        raise ValueError("linearized function called on tangent values inconsistent with "
-                         "the original primal values: "
-                         f"got tangent aval {tangent_aval} for primal aval {primal_aval} "
-                         f"but expected {expected_tangent_aval}")
+        extra_msg = ''
+        if (isinstance(primal_aval, core.ShapedArray) and
+            isinstance(tangent_aval, core.ShapedArray) and
+            primal_aval.vma != tangent_aval.vma):
+          pvary_applications = []
+          if left := tangent_aval.vma - primal_aval.vma:
+            pvary_applications.append(
+                f"applying `jax.lax.pvary(..., {tuple(left)})` to the primal"
+                " value passed to `jax.linearize`")
+          if left := primal_aval.vma - tangent_aval.vma:
+            pvary_applications.append(
+                f"applying `jax.lax.pvary(..., {tuple(left)})` to the tangent"
+                " value passed to the callable `f_jvp` returned by"
+                " `jax.linearize`")
+          extra_msg = " \nThis might be fixed by:\n" + "\n".join(
+              f"  * {d};" for d in pvary_applications)
+        raise ValueError(
+            "linearized function called on tangent values inconsistent with "
+            "the original primal values:\n"
+            f"Got tangent aval {tangent_aval} for primal aval {primal_aval} "
+            f"but expected {expected_tangent_aval}.{extra_msg}")
     tangents_out = eval_jaxpr(jaxpr, consts, *tangents)
     tangents_out_ = iter(tangents_out)
     full_out = [pval.get_known() if pval.is_known() else next(tangents_out_)
@@ -1961,6 +2157,7 @@ def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
         has_aux: Literal[True],
         reduce_axes: Sequence[AxisName] = ()) -> tuple[T, Callable, U]:
   ...
+
 @api_boundary
 def vjp(
     fun: Callable, *primals, has_aux: bool = False, reduce_axes=()
@@ -2014,7 +2211,11 @@ def vjp(
 
 def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
   """Variant of vjp() that takes an lu.WrappedFun."""
+  if config.vjp3.value:
+    return _vjp3(fun, *primals, has_aux=has_aux)
   primals_flat, in_tree = tree_flatten(primals)
+  primals_flat = [canonicalize_value(v) if not isinstance(v, core.Tracer) else v
+                  for v in primals_flat]
   for arg in primals_flat: dispatch.check_arg(arg)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
@@ -2045,7 +2246,8 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
   fun = lu.wrap_init(f, debug_info=dbg)
   primals_flat, in_tree = tree_flatten(primals)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-  out_primals_flat, _, jaxpr, residuals = ad.linearize(fun, *primals_flat)
+  out_primals_flat, out_pvals, jaxpr, residuals = ad.linearize(fun, *primals_flat)
+  out_known = [pval.is_known() for pval in out_pvals]
   primals_filt, filt_tree = tree_flatten(tuple(p for w, p in zip(which, primals) if w))
   id_map = {id(x): i for i, x in enumerate(primals_filt)}
   opaque_residuals = []
@@ -2053,7 +2255,7 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
               RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
               for r in residuals]
   f_vjp = Partial(partial(_saved_input_vjpfun, res_spec, filt_tree, in_tree,
-                          out_tree(), jaxpr), opaque_residuals)
+                          out_tree(), out_known, jaxpr), opaque_residuals)
 
   if not allow_unused and not set(id_map).issubset(res_ids := {id(r) for r in residuals}):
     unused = [(i, core.get_aval(x)) for i, (x, w) in enumerate(zip(primals, which))
@@ -2062,10 +2264,10 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
     if len(unused) == 1:
       (i, a), = unused
       start, was = "an input value", "was"
-      msg = f" {dbg.arg_names[i]} of type {a.str_short()}"
+      msg = f" {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'} of type {a.str_short()}"
     else:
       start, was = "multiple input values", "were"
-      msg = "\n" + "\n".join(f"  * {dbg.arg_names[i]} of type {a.str_short()}"
+      msg = "\n" + "\n".join(f"  * {dbg.arg_names[i] if dbg.arg_names is not None else 'unknown'} of type {a.str_short()}"
                              for i, a in unused)
     raise Exception(f"with {allow_unused=}, {start} marked to be saved {was} "
                     f"not used by the backward pass:{msg}")
@@ -2078,8 +2280,8 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
   out_primals = tree_unflatten(out_tree(), out_primals_flat)
   return out_primals, f_vjp
 
-def _saved_input_vjpfun(res_spec, filtered_tree, in_tree, out_tree, jaxpr,
-                        opaque_residuals, ct, *saved_primals):
+def _saved_input_vjpfun(res_spec, filtered_tree, in_tree, out_tree, out_known,
+                        jaxpr, opaque_residuals, ct, *saved_primals):
   primals_filtered, filtered_tree_ = tree_flatten(saved_primals)
   if filtered_tree != filtered_tree_:
     raise ValueError(
@@ -2099,8 +2301,9 @@ def _saved_input_vjpfun(res_spec, filtered_tree, in_tree, out_tree, jaxpr,
   dummy_args = [ad.UndefinedPrimal(v.aval) for v in jaxpr.invars]
   cts_flat, out_tree_ = tree_flatten(ct)
   assert out_tree_ == out_tree
+  cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
   arg_cts = ad.backward_pass(jaxpr, True, residuals, dummy_args, cts_flat)
-  return tree_unflatten(in_tree, arg_cts)
+  return tree_unflatten(in_tree, map(ad.instantiate_zeros, arg_cts))
 
 @dataclasses.dataclass(frozen=True)
 class RSpec:
@@ -2108,6 +2311,171 @@ class RSpec:
   primal: bool
 
 si_vjp = saved_input_vjp
+
+
+def vjp3(f, *primals, has_aux=False):
+  dbg = debug_info("vjp", f, primals, {})
+  fun = lu.wrap_init(f, debug_info=dbg)
+  return _vjp3(fun, *primals, has_aux=has_aux)
+
+def _vjp3(fun, *primals, has_aux=False):
+  canon = lambda x: x if isinstance(x, core.Tracer) else canonicalize_value(x)
+  primals = tree_map(canon, primals)
+  primals_flat, in_tree = tree_flatten(primals)
+  for arg in primals_flat: dispatch.check_arg(arg)
+  if not has_aux:
+    flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
+    out_primals_flat, out_pvals, jaxpr, residuals = ad.linearize(
+        flat_fun, *primals_flat)
+    out_tree = out_tree()
+  else:
+    flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, in_tree)
+    out_primals_flat, out_pvals, jaxpr, residuals, aux = ad.linearize(
+        flat_fun, *primals_flat, has_aux=True)
+    out_tree, aux_tree = out_aux_trees()
+    del out_aux_trees
+  out_known = [pval.is_known() for pval in out_pvals]
+  id_map = {id(x): i for i, x in enumerate(primals_flat)}
+  used, opaque_residuals = set(), []
+  spec = [used.add(id(r)) or RSpec(id_map[id(r)], True) if id(r) in id_map else  # type: ignore
+          RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
+          for r in residuals]
+  args_res = tuptree_map(lambda x: x if id(x) in used else NotNeeded(),
+                         in_tree, primals_flat)
+  out_primal_avals = [typeof(x) for x in out_primals_flat]
+  f_vjp = VJP(partial(_vjp3_callable, spec, out_known, jaxpr, out_primal_avals),
+              in_tree, out_tree, list(args_res), opaque_residuals)
+  out_primals = tree_unflatten(out_tree, out_primals_flat)
+  if not has_aux:
+    return out_primals, f_vjp
+  else:
+    return out_primals, f_vjp, tree_unflatten(aux_tree, aux)
+
+def tuptree_map(f, treedef, x):
+  return treedef.walk(lambda xs, _: tuple(xs), f, x)
+
+
+def _is_ref(x):
+  from jax._src.state.types import AbstractRef
+  try: return isinstance(typeof(x), AbstractRef)
+  except: return False
+
+def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
+                   args_res, opaque_res, *maybe_ct_refs):
+  if not maybe_ct_refs:
+    maybe_ct_refs_flat = [GradValue()] * in_tree.num_leaves
+  else:
+    maybe_ct_refs_flat, in_tree_ = tree_flatten(maybe_ct_refs)
+    if in_tree != in_tree_: raise Exception  # TODO accept isomorph tuple tree
+  args_res_ = tree_leaves(args_res, is_leaf=lambda x: isinstance(x, NotNeeded))
+  residuals = [args_res_[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
+  maybe_refs = [ad.RefAccum(v.aval, x) if _is_ref(x) else ad.ValAccum(v.aval)
+                for v, x in zip(jaxpr.invars, maybe_ct_refs_flat)]
+  return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr,
+                         out_primal_avals), residuals, maybe_refs)
+
+def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, out_primal_avals, residuals,
+              maybe_refs, out_ct):
+  cts_flat, out_tree_ = tree_flatten(out_ct)
+  if out_tree != out_tree_: _vjp_ct_tree_error(jaxpr, out_tree, out_tree_)
+  _vjp_check_ct_avals(cts_flat, out_primal_avals)
+  cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
+  ad.backward_pass3(jaxpr, True, residuals, maybe_refs, cts_flat)
+  arg_cts = [x.freeze() if isinstance(x, ad.ValAccum) else GradRef()
+             for x in maybe_refs]
+  arg_cts = map(ad.instantiate_zeros, arg_cts)
+  return tree_unflatten(in_tree, arg_cts)
+
+_vjp_too_many_args = """
+The function returned by `jax.vjp` applied to {} was called with {} arguments,
+but functions returned by `jax.vjp` must be called with a single argument
+corresponding to the single value returned by the function being differentiated
+(even if that returned value is a tuple or other container).
+
+For example, if we have:
+
+  def f(x):
+    return (x, x)
+  _, f_vjp = jax.vjp(f, 1.0)
+
+the function `f` returns a single tuple as output, and so we call `f_vjp` with a
+single tuple as its argument:
+
+  x_bar, = f_vjp((2.0, 2.0))
+
+If we instead call `f_vjp(2.0, 2.0)`, with the values 'splatted out' as
+arguments rather than in a tuple, this error can arise.
+""".format
+
+def _vjp_ct_tree_error(jaxpr, out_tree, ct_tree):
+  msg = f"""unexpected tree structure.
+
+The argument to a VJP function returned by `jax.vjp` must match the pytree
+structure of the differentiated function {jaxpr.debug_info.func_src_info}.
+
+But the tree structures differ:
+"""
+  msg += '\n'.join(f"  * out{keystr(path)} was a {thing1} in the original "
+                   f" output, but a {thing2} here, so {explanation}."
+                   for path, thing1, thing2, explanation
+                   in equality_errors_pytreedef(out_tree, ct_tree))
+  raise ValueError(msg)
+
+def _vjp_check_ct_avals(cts, primal_avals):
+  # TODO(mattjj): improve this error  by flattening with keys in the first place
+  for ct, aval in zip(cts, primal_avals):
+    ct_aval = typeof(ct)
+    ct_aval_expected = aval.to_tangent_aval()
+    if (not core.typecompat(ct_aval, ct_aval_expected) and
+        not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
+      raise ValueError(
+          "unexpected JAX type (e.g. shape/dtype) for argument to VJP function: "
+          f"got {ct_aval.str_short()}, but expected {ct_aval_expected.str_short()} "
+          "because the corresponding output of the differentiated function had JAX type "
+          f"{aval.str_short()}")
+
+@register_dataclass
+@dataclasses.dataclass(frozen=True)
+class NotNeeded:
+  pass
+
+@dataclasses.dataclass(frozen=True)
+class GradValue:
+  pass
+
+@dataclasses.dataclass(frozen=True)
+class GradRef:
+  pass
+
+@dataclasses.dataclass
+class VJP:
+  fun: Callable
+  in_tree: PyTreeDef
+  out_tree: PyTreeDef
+  args_res: list[Any]
+  opaque_residuals: list[Any]
+  jaxpr = property(lambda self: self.fun.args[2])  # type: ignore
+
+  def __call__(self, out_ct, *extra_args):
+    if extra_args:
+      name, *_ = self.jaxpr.debug_info.func_src_info.split(' ')
+      raise TypeError(_vjp_too_many_args(name, len(extra_args)))
+    return self.fun(self.in_tree, self.out_tree, self.args_res,
+                    self.opaque_residuals)(out_ct)
+
+  def with_refs(self, *maybe_ct_refs):
+    return self.fun(self.in_tree, self.out_tree, self.args_res,
+                    self.opaque_residuals, *maybe_ct_refs)
+
+  # Only safe to put these in cache keys if residuals aren't mutated. Beware!
+  __hash__ = object.__hash__
+  __eq__ = object.__eq__
+
+register_pytree_node(
+    VJP,
+    lambda vjp: ((vjp.args_res, vjp.opaque_residuals),
+                 (vjp.fun, vjp.in_tree, vjp.out_tree)),
+    lambda meta, args_res: VJP(*meta, *args_res))
 
 
 def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
@@ -2155,14 +2523,14 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
                    debug_info=debug_info("linear_transpose", fun, primals, {})),
       in_tree)
   in_avals = map(shaped_abstractify, primals_flat)
-  in_dtypes = map(dtypes.dtype, in_avals)
+  in_dtypes = map(lambda a: a.dtype, in_avals)
 
   in_pvals = map(pe.PartialVal.unknown, in_avals)
   jaxpr, out_pvals, const = pe.trace_to_jaxpr_nounits(flat_fun, in_pvals,
                                                       instantiate=True)
   jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars), True)
   out_avals, _ = unzip2(out_pvals)
-  out_dtypes = map(dtypes.dtype, out_avals)
+  out_dtypes = map(lambda a: a.dtype, out_avals)
   if not (all(dtypes.issubdtype(d, np.inexact) for d in in_dtypes + out_dtypes)
           or all(dtypes.issubdtype(d, np.integer)
                  for d in in_dtypes + out_dtypes)):
@@ -2224,7 +2592,7 @@ def make_jaxpr(
     return_shape: bool = False,
     abstracted_axes: Any | None = None,
 ) -> Callable[..., core.ClosedJaxpr | tuple[core.ClosedJaxpr, Any]]:
-  """Creates a function that produces its jaxpr given example args.
+  """Create a function that returns the jaxpr of ``fun`` given example args.
 
   Args:
     fun: The function whose ``jaxpr`` is to be computed. Its positional
@@ -2268,17 +2636,14 @@ def make_jaxpr(
   >>> print(f(3.0))
   -0.83602
   >>> jax.make_jaxpr(f)(3.0)
-  { lambda ; a:f32[]. let
-        b:f32[] = cos[accuracy=None] a
-        c:f32[] = sin[accuracy=None] b
-      in (c,) }
+  { lambda ; a:f32[]. let b:f32[] = cos a; c:f32[] = sin b in (c,) }
   >>> jax.make_jaxpr(jax.grad(f))(3.0)
   { lambda ; a:f32[]. let
-      b:f32[] = cos[accuracy=None] a
-      c:f32[] = sin[accuracy=None] a
-      _:f32[] = sin[accuracy=None] b
-      d:f32[] = cos[accuracy=None] b
-      e:f32[] = mul 1.0 d
+      b:f32[] = cos a
+      c:f32[] = sin a
+      _:f32[] = sin b
+      d:f32[] = cos b
+      e:f32[] = mul 1.0:f32[] d
       f:f32[] = neg e
       g:f32[] = mul f c
     in (g,) }
@@ -2295,13 +2660,12 @@ def make_jaxpr(
     with core.extend_axis_env_nd(axis_env or []):
       traced = jit(fun, static_argnums=static_argnums,
                    abstracted_axes=abstracted_axes).trace(*args, **kwargs)
-    # `jit` converts tracers in consts to args but that breaks the semantics of
-    # `make_jaxpr`. Hence convert the tracers in args back to consts in jaxpr.
-    if traced._num_consts:
-      consts, _ = split_list(traced._args_flat, [traced._num_consts])
-      jaxpr_ = pe.convert_invars_to_constvars(traced.jaxpr.jaxpr,
-                                              traced._num_consts)
-      jaxpr = core.ClosedJaxpr(jaxpr_, consts)
+    # `jit` converts tracers in consts to args but `make_jaxpr` callers expect
+    # consts not to be converted.
+    num_consts = traced._num_consts
+    if num_consts:
+      jaxpr_ = pe.convert_invars_to_constvars(traced.jaxpr.jaxpr, num_consts)
+      jaxpr = core.ClosedJaxpr(jaxpr_, traced._consts)
     else:
       jaxpr = traced.jaxpr
     if return_shape:
@@ -2328,7 +2692,7 @@ def _infer_src_sharding(src, x) -> Sharding | None:
   return None
 
 
-@lru_cache(maxsize=2048)
+@util.cache(max_size=2048, trace_context_in_key=False)
 def _check_string_compatible_sharding(s):
   """Checks if target devices are compatible with string arrays."""
   if isinstance(s, xc.Device) and s.device_kind == "cpu":
@@ -2340,17 +2704,15 @@ def _check_string_compatible_sharding(s):
       "String arrays can only be sharded to CPU devices. Received"
       f" unsupported device or sharding: {s}")
 
-# TODO(yashkatariya): Generalize check_compatible_aval (maybe renamed) and use
-# that to check if shardings are compatible with the input.
-@lru_cache(maxsize=2048)
+
+@util.cache(max_size=2048, trace_context_in_key=False)
 def _check_sharding(aval, s):
   if (s is not None and
-      not isinstance(s, (xc.Device, Sharding, Layout, TransferToMemoryKind))):
+      not isinstance(s, (xc.Device, Sharding, Format, core.MemorySpace))):
     raise ValueError(
         "`jax.device_put` only accepts `None`, `jax.sharding.Sharding`,"
-        " `jax.Device`, `Layout` or a pytree of these values. Received"
-        f" invalid value: {s}")
-
+        " `jax.Device`, `Format`, `jax.memory.Space` or a pytree of these"
+        f" values. Received invalid value: {s}")
   if isinstance(aval, core.ShapedArray) and dtypes.is_string_dtype(aval.dtype):
     _check_string_compatible_sharding(s)
 
@@ -2362,20 +2724,20 @@ def _check_sharding(aval, s):
           (s,), (aval,), ("",), "device_put args", allow_uneven_sharding=False)
     s.shard_shape(aval.shape)  # should raise an Error if incompatible
 
-def pspec_to_sharding(val):
+def pspec_to_sharding(name, val):
   if isinstance(val, P):
     mesh = get_concrete_mesh()
-    if mesh is None:
+    if mesh.empty:
       raise ValueError(
-          "Please set a mesh via `jax.sharding.use_mesh` if a PartitionSpec is"
-          " passed to device_put")
+          "Please set a mesh via `jax.set_mesh` if a PartitionSpec is"
+          f" passed to {name}")
     return NamedSharding(mesh, val)
   return val
 
 def device_put(
     x,
-    device: None | xc.Device | Sharding | P | Layout | Any | TransferToMemoryKind = None,
-    *, src: None | xc.Device | Sharding | P | Layout | Any | TransferToMemoryKind = None,
+    device: None | xc.Device | Sharding | P | Format | Any = None,
+    *, src: None | xc.Device | Sharding | P | Format | Any = None,
     donate: bool | Any = False, may_alias: bool | None | Any = None):
   """Transfers ``x`` to ``device``.
 
@@ -2412,20 +2774,20 @@ def device_put(
   with config.explicit_device_put_scope():
     x_flat, treedef = tree_flatten(x)
     if (device is None or
-        isinstance(device, (xc.Device, Sharding, TransferToMemoryKind))):
+        isinstance(device, (xc.Device, Sharding, core.MemorySpace))):
       device_flat = [device] * len(x_flat)
     else:
       device_flat = flatten_axes("device_put device", treedef, device)
 
     if (src is None or
-        isinstance(src, (xc.Device, Sharding, TransferToMemoryKind))):
+        isinstance(src, (xc.Device, Sharding, core.MemorySpace))):
       src_flat = [_infer_src_sharding(src, xf) for xf in x_flat]
     else:
       src_flat = flatten_axes("device_put source", treedef, src)
       src_flat = list(map(_infer_src_sharding, src_flat, x_flat))
 
-    device_flat = map(pspec_to_sharding, device_flat)
-    src_flat = map(pspec_to_sharding, src_flat)
+    device_flat = map(partial(pspec_to_sharding, 'device_put'), device_flat)
+    src_flat = map(partial(pspec_to_sharding, 'device_put'), src_flat)
 
     if isinstance(donate, bool):
       donate_flat = [donate] * len(x_flat)
@@ -2444,18 +2806,27 @@ def device_put(
       if m is None:
         m = not d
       if m and not d:
-        copy_semantics.append(dispatch.CopySemantics.ALIAS)
+        copy_semantics.append(dispatch.ArrayCopySemantics.REUSE_INPUT)
       elif not m and d:
-        copy_semantics.append(dispatch.CopySemantics.DONATE)
+        copy_semantics.append(dispatch.ArrayCopySemantics.DONATE_INPUT)
       else:
         assert not m and not d
-        copy_semantics.append(dispatch.CopySemantics.COPY)
+        copy_semantics.append(dispatch.ArrayCopySemantics.ALWAYS_COPY)
 
+    dst_avals = []
     for xf, d in zip(x_flat, device_flat):
-      _check_sharding(shaped_abstractify(xf), d)
-    out_flat = dispatch.device_put_p.bind(
-        *x_flat, devices=device_flat, srcs=src_flat,
-        copy_semantics=copy_semantics)
+      aval = shaped_abstractify(xf)
+      aval = dispatch.update_dp_aval(aval, d)
+      dst_avals.append(aval)
+      _check_sharding(aval, d)
+    if core.trace_state_clean():
+      out_flat = dispatch._batched_device_put_impl(
+          *x_flat, devices=device_flat, srcs=src_flat,  # type: ignore
+          copy_semantics=copy_semantics, dst_avals=dst_avals)
+    else:
+      out_flat = dispatch.device_put_p.bind(
+          *x_flat, devices=tuple(device_flat), srcs=tuple(src_flat),
+          copy_semantics=tuple(copy_semantics))
     return tree_unflatten(treedef, out_flat)
 
 
@@ -2654,79 +3025,6 @@ def device_get(x: Any):
     return tree_map(_device_get, x)
 
 
-class ShapeDtypeStruct:
-  """A container for the shape, dtype, and other static attributes of an array.
-
-  ``ShapeDtypeStruct`` is often used in conjunction with :func:`jax.eval_shape`.
-
-  Args:
-    shape: a sequence of integers representing an array shape
-    dtype: a dtype-like object
-    sharding: (optional) a :class:`jax.Sharding` object
-  """
-  __slots__ = ["shape", "dtype", "sharding", "_dll", "weak_type"]
-
-  def __init__(self, shape, dtype, *, sharding=None, weak_type=False):
-    self.shape = tuple(shape)
-    if dtype is None:
-      raise ValueError("ShapeDtypeStruct: dtype must be specified.")
-    self.dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-    if sharding is not None and not isinstance(sharding, (Sharding, Layout)):
-      raise ValueError(
-          "sharding should be an instance of `jax.sharding.Sharding` or"
-          f" `jax.experimental.layout.Layout`. Got {sharding} of type"
-          f" {type(sharding)}.")
-    if (isinstance(sharding, Layout) and
-        isinstance(sharding.device_local_layout, AutoLayout)):
-      raise TypeError(
-          "`DeviceLocalLayout.AUTO` cannot be used in place of a device-local"
-          f" layout in a `ShapeDtypeStruct`. Got {sharding}")
-    self.sharding = sharding.sharding if isinstance(sharding, Layout) else sharding
-    self._dll = sharding.device_local_layout if isinstance(sharding, Layout) else None
-    self.weak_type = weak_type
-
-  size = property(lambda self: math.prod(self.shape))
-  ndim = property(lambda self: len(self.shape))
-
-  @property
-  def layout(self):
-    return Layout(self._dll, self.sharding)
-
-  def __len__(self):
-    try:
-      return self.shape[0]
-    except IndexError as e:
-      raise TypeError("len() of unsized object") from e  # same as numpy error
-
-  def __repr__(self):
-    sh = f", sharding={self.sharding}" if self.sharding is not None else ""
-    l = f", layout={self.layout}" if self._dll is not None else ""
-    wt = f", weak_type={self.weak_type}" if self.weak_type else ""
-    return (f"{type(self).__name__}(shape={self.shape}, "
-            f"dtype={self.dtype.name}{sh}{l}{wt})")
-
-  __str__ = __repr__
-
-  def __eq__(self, other):
-    if not isinstance(other, ShapeDtypeStruct):
-      return False
-    else:
-      return ((self.shape, self.dtype, self.sharding, self.layout, self.weak_type) ==
-              (other.shape, other.dtype, other.sharding, other.layout, other.weak_type))
-
-  def __hash__(self):
-    # TODO(frostig): avoid the conversion from dict by addressing
-    # https://github.com/jax-ml/jax/issues/8182
-    return hash((self.shape, self.dtype, self.sharding, self.layout, self.weak_type))
-
-def _sds_aval_mapping(x):
-  aval = ShapedArray(
-      x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
-      weak_type=x.weak_type)
-  return core.update_aval_with_sharding(aval, x.sharding)
-core.pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
-
-
 @api_boundary
 def eval_shape(fun: Callable, *args, **kwargs):
   """Compute the shape/dtype of ``fun`` without any FLOPs.
@@ -2793,9 +3091,11 @@ def eval_shape(fun: Callable, *args, **kwargs):
   >>> print(out.dtype)
   float32
   """
+  if type(fun) is xc._xla.PjitFunction:
+    return fun.trace(*args, **kwargs).out_info  # type: ignore
   try: hash(fun)
   except TypeError: fun = partial(fun)
-  return jit(fun).eval_shape(*args, **kwargs)
+  return jit(fun).trace(*args, **kwargs).out_info
 
 
 def named_call(
@@ -2824,7 +3124,7 @@ def named_call(
       within the name scope. Use the fun.__name__ if not specified.
 
   Returns:
-    A version of `fun` that is wrapped in a name_scope.
+    A version of ``fun`` that is wrapped in a ``named_scope``.
   """
   if name is None:
     name = fun.__name__
@@ -2949,21 +3249,16 @@ def copy_to_host_async(x):
 
   return x
 
+
 def clear_backends():
   """
   Clear all backend clients so that new backend clients can be created later.
   """
   xb._clear_backends()
-  xb.local_devices.cache_clear()
-  xb.process_count.cache_clear()
-  dispatch.xla_primitive_callable.cache_clear()
   util.clear_all_caches()
-  pjit._infer_params_cached.cache_clear()
-  pjit._create_pjit_jaxpr.cache_clear()  # pytype: disable=attribute-error
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
   xc._xla.PjitFunctionCache.clear_all()
-  xc._xla.jax_jit.thread_local_state().extra_jit_context = None
 
 @atexit.register
 def clean_up():
@@ -2990,8 +3285,6 @@ def clear_caches():
   # Clear all lu.cache, util.cache and util.weakref_lru_cache instances
   # (used for staging and Python-dispatch compiled executable caches).
   util.clear_all_caches()
-  util.clear_all_weakref_lru_caches()
-
   # Clear all C++ compiled executable caches for pjit
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
@@ -3001,6 +3294,3 @@ def clear_caches():
   # Clear all C++ compiled executable caches for pmap
   for fun in _pmap_cache_clears:
     fun._cache_clear()
-
-  # Clear particular util.cache instances.
-  dispatch.xla_primitive_callable.cache_clear()

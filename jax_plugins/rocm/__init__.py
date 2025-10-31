@@ -51,7 +51,7 @@ def _get_library_path():
     runfiles_dir = os.getenv('RUNFILES_DIR', None)
     if runfiles_dir:
       local_path = pathlib.Path(
-          os.path.join(runfiles_dir, 'xla/xla/pjrt/c/pjrt_c_api_gpu_plugin.so')
+          os.path.join(runfiles_dir, '__main__/jax_plugins/rocm/pjrt_c_api_gpu_plugin.so')
       )
 
   if local_path.exists():
@@ -96,10 +96,10 @@ def initialize():
       xla_client.register_custom_call_target(
           _name, _value, platform='ROCM', api_version=1
       )
-    xla_client.register_custom_type_id_handler(
+    xla_client.register_custom_type_handler(
         "ROCM",
         functools.partial(
-            rocm_plugin_extension.register_custom_type_id, c_api
+            rocm_plugin_extension.register_custom_type, c_api
         ),
     )
   else:

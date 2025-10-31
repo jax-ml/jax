@@ -93,6 +93,8 @@ struct nb::detail::type_caster<MlirTpuImplicitDim> {
       value = MlirTpuImplicitDimMinor;
     } else if (src.is(implicit_dim_cls.attr("SECOND_MINOR"))) {
       value = MlirTpuImplicitDimSecondMinor;
+    } else if (src.is(implicit_dim_cls.attr("MINOR_AND_SECOND_MINOR"))) {
+      value = MlirTpuImplicitDimMinorAndSecondMinor;
     } else {
       return false;
     }
@@ -111,6 +113,10 @@ struct nb::detail::type_caster<MlirTpuImplicitDim> {
             .release();
       case MlirTpuImplicitDimSecondMinor:
         return static_cast<nb::object>(implicit_dim_cls.attr("SECOND_MINOR"))
+            .release();
+      case MlirTpuImplicitDimMinorAndSecondMinor:
+        return static_cast<nb::object>(
+                   implicit_dim_cls.attr("MINOR_AND_SECOND_MINOR"))
             .release();
     }
   }
@@ -338,7 +344,7 @@ NB_MODULE(_tpu_ext, m) {
           "__init__",
           [](MlirTpuApplyVectorLayoutContext* self, int hardware_generation,
              nb::tuple target_shape, nb::tuple mxu_shape,
-             int max_sublanes_in_scratch) {
+             int max_sublanes_in_scratch, bool shape_invariant_numerics) {
             if (target_shape.size() != 2) {
               throw nb::value_error("target_shape should be of length 2");
             }
@@ -351,12 +357,14 @@ NB_MODULE(_tpu_ext, m) {
                                  nb::cast<int64_t>(target_shape[1])},
                 .mxu_shape = {nb::cast<int64_t>(mxu_shape[0]),
                               nb::cast<int64_t>(mxu_shape[1])},
-                .max_sublanes_in_scratch = max_sublanes_in_scratch};
+                .max_sublanes_in_scratch = max_sublanes_in_scratch,
+                .shape_invariant_numerics = shape_invariant_numerics};
           },
           nb::arg("hardware_generation") = -1,
           nb::arg("target_shape") = toPyTuple(DEFAULT_TARGET_SHAPE),
           nb::arg("mxu_shape") = nb::make_tuple(128, 128),
-          nb::arg("max_sublanes_in_scratch") = 0);
+          nb::arg("max_sublanes_in_scratch") = 0,
+          nb::arg("shape_invariant_numerics") = false);
 
   nb::class_<MlirTpuVregDataBounds>(m, "VRegDataBounds")
       .def("mask_varies_along",

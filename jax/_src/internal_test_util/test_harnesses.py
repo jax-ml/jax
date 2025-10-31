@@ -44,21 +44,24 @@ import os
 from functools import partial
 from typing import Any, NamedTuple, Union
 
-from absl import testing
+from absl.testing import parameterized as absl_parameterized
 import numpy as np
 
-import jax
-from jax import dtypes
-from jax import lax
-from jax import numpy as jnp
-
 from jax._src import ad_util
+from jax._src import api
 from jax._src import config
 from jax._src import dispatch
+from jax._src import dtypes
+from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src import prng
+from jax._src import random
 from jax._src import test_util as jtu
+from jax._src import typing
+from jax._src import xla_bridge as xb
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
+from jax._src.numpy import linalg as jnp_linalg
 from jax._src import random as jax_random
 
 # mypy generates a lot of false positive due to re-assigned variables.
@@ -400,7 +403,7 @@ def parameterized(harnesses: Iterable[Harness],
   if not cases:
     # We filtered out all the harnesses.
     return jtu.skip_on_devices(jtu.device_under_test())
-  return testing.parameterized.named_parameters(*cases)
+  return absl_parameterized.named_parameters(*cases)
 
 
 ###############################################################################
@@ -649,13 +652,13 @@ def _make_device_put_harness(name,
                              shape=(3, 4),
                              dtype=np.float32,
                              device=None):
-  _device_fn = lambda: jax.devices(device)[0] if device is not None else None
+  _device_fn = lambda: xb.devices(device)[0] if device is not None else None
   define(
       "device_put",
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_{device=}",
       lambda x: dispatch.device_put_p.bind(
-          x, devices=[_device_fn()], srcs=[None],
-          copy_semantics=[dispatch.CopySemantics.ALIAS])[0],
+          x, devices=(_device_fn(),), srcs=(None,),
+          copy_semantics=(dispatch.ArrayCopySemantics.REUSE_INPUT,))[0],
       [RandArg(shape, dtype)],
       shape=shape,
       dtype=dtype,
@@ -802,7 +805,7 @@ def _make_argminmax_harness(prim,
                             name,
                             *,
                             shape=(15,),
-                            dtype=jnp.float32,
+                            dtype=np.float32,
                             axes=(0,),
                             index_dtype=np.int32,
                             arr=None,
@@ -2046,7 +2049,7 @@ def _make_linear_solve_harnesses():
     return lax.custom_linear_solve(matvec, b, solve, transpose_solve, symmetric)
 
   def explicit_jacobian_solve(matvec, b):
-    return lax.stop_gradient(jnp.linalg.solve(jax.jacobian(matvec)(b), b))
+    return lax.stop_gradient(jnp_linalg.solve(api.jacobian(matvec)(b), b))
 
   def _make_harness(name,
                     *,
@@ -2345,7 +2348,7 @@ def _make_select_and_scatter_add_harness(name,
                                          padding=((0, 0), (0, 0), (0, 0)),
                                          nb_inactive_dims=0):
   ones = (1,) * len(shape)
-  cotangent_shape = jax.eval_shape(
+  cotangent_shape = api.eval_shape(
       lambda x: lax_windowed_reductions._select_and_gather_add(
           x, x, lax.ge_p, window_dimensions, window_strides, padding,
           ones, ones),
@@ -2719,20 +2722,20 @@ for dtype in (np.float32, np.float64):
     define(
         "random_gamma",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        jax.jit(lambda x: jax_random.gamma(jax.random.key(42), x)),
+        api.jit(lambda x: jax_random.gamma(random.key(42), x)),
         [RandArg(shape, dtype)],
         dtype=dtype)
 
 
 def wrap_and_split():
-  key = jax.random.key(42)
-  result = jax.random.split(key, 2)
-  return jax.random.key_data(result)
+  key = random.key(42)
+  result = random.split(key, 2)
+  return random.key_data(result)
 
 define(
     "random_split",
     "",
-    jax.jit(wrap_and_split),
+    api.jit(wrap_and_split),
     [],
     dtype=np.uint32)
 
@@ -2743,8 +2746,9 @@ for dtype in jtu.dtypes.all_floating:
       define(
           "random_categorical",
           f"shape={jtu.format_shape_dtype_string(shape, dtype)}_{axis=}",
-          lambda x, axis: jax.random.categorical(
-            jax.random.key(42), x, axis),
+          lambda x, axis: random.categorical(
+            # TODO(b/416027995): Change this key back to 42.
+            random.key(1337), x, axis),
           [RandArg(shape, dtype),
            StaticArg(axis)],
           dtype=dtype,
@@ -2755,8 +2759,8 @@ for dtype in jtu.dtypes.all_floating:
     define(
         "random_uniform",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        lambda shape, dtype: jax.random.uniform(
-          jax.random.key(42), shape, dtype),
+        lambda shape, dtype: random.uniform(
+          random.key(42), shape, dtype),
         [StaticArg(shape), StaticArg(dtype)],
         dtype=dtype)
 
@@ -2768,8 +2772,8 @@ for dtype in jtu.dtypes.all_integer:
     define(
         "random_randint",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        lambda shape, minval, maxval, dtype: jax.random.randint(
-          jax.random.key(42), shape, minval, maxval, dtype),
+        lambda shape, minval, maxval, dtype: random.randint(
+          random.key(42), shape, minval, maxval, dtype),
         [StaticArg(shape),
          StaticArg(-5),  # minval
          StaticArg(maxval),
@@ -2841,6 +2845,12 @@ def _make_dot_general_harness(name,
     suffix += f"_{precision=}"
   if preferred_element_type is not None:
     suffix += f"_preferred={jtu.dtype_str(preferred_element_type)}"
+
+  if (
+      preferred_element_type in (np.float64, np.int64, np.complex128)
+      and not config.enable_x64.value
+  ):
+    return
 
   define(
       lax.dot_general_p,
@@ -3030,6 +3040,12 @@ def _make_conv_harness(name,
                        works_without_xla=False):
   enable_xla_cases = [True, False] if works_without_xla else [True]
 
+  if (
+      preferred_element_type in (np.float64, np.int64, np.complex128)
+      and not config.enable_x64.value
+  ):
+    return
+
   for enable_xla in enable_xla_cases:
     define(
         lax.conv_general_dilated_p,
@@ -3130,7 +3146,7 @@ _make_conv_harness(
 # feature_group_count is supported for enable_xla=False only if we are doing a
 # depthwise convolution, i.e.: in_channels == feature_group_count.
 # See explanation of depthwise convolution at
-# https://www.tensorflow.org/xla/operation_semantics#conv_convolution.
+# https://www.openxla.org/xla/operation_semantics#conv_convolution.
 _make_conv_harness(
     "depthwise2d",
     lhs_shape=(2, 3, 9, 9),  # "NCHW": in_channels == 3
@@ -3361,7 +3377,7 @@ for padding, lhs_dilation, rhs_dilation in [
         lhs_dilation=lhs_dilation,
         rhs_dilation=rhs_dilation)
 
-key_types: list[tuple[tuple[int, ...], jax.typing.DTypeLike]]
+key_types: list[tuple[tuple[int, ...], typing.DTypeLike]]
 key_types = [((4,), np.uint32)]
 if config.enable_x64.value:
   key_types.append(((2,), np.uint64))
@@ -3369,7 +3385,7 @@ if config.enable_x64.value:
 for algorithm in [lax.RandomAlgorithm.RNG_THREE_FRY,
                   lax.RandomAlgorithm.RNG_PHILOX,
                   lax.RandomAlgorithm.RNG_DEFAULT]:
-  for dtype in [np.uint32, np.uint64]:
+  for dtype in jtu.dtypes.unsigned:
     for shape in [(), (5, 7), (100, 100)]:
       for key_shape, key_dtype in key_types:
         define(
@@ -3391,7 +3407,7 @@ def _make_iota_2x32_shape_harness(shape):
       f"shape=({shapestr})",
       lambda shape: prng.iota_2x32_shape_p.bind(shape=shape),
       [StaticArg(shape)],
-      dtype=jnp.uint32,
+      dtype=np.uint32,
       shape=shape)
 
 for shape in [(3,), (5, 7, 4), (100, 100)]:

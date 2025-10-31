@@ -47,7 +47,7 @@ dispatching a computation and on which we can block until is ready. We store
 for each thread the `RuntimeToken` returned by the last dispatched computation.
 
 For more details, see the design note:
-https://jax.readthedocs.io/en/latest/jep/10657-sequencing-effects.html.
+https://docs.jax.dev/en/latest/jep/10657-sequencing-effects.html.
 """
 
 from __future__ import annotations
@@ -62,9 +62,13 @@ class Effect:
 Effects = Set[Effect]
 
 class JaxprInputEffect(Effect):
-  """A side-effect associated with the input of a jaxpr.
+  """A side-effect associated with the input of a `JaxprEqn` or a `Jaxpr`.
 
-  Note that the `input_index` includes constvars.
+  This is used as a base class for effects associated with inputs, e.g.,
+  reading/writing from mutable inputs.
+
+  When used in a `JaxprEqn`, `input_index` refers to `eqn.invars`.
+  When used in a `Jaxpr`, `input_index` refers to `jaxpr.constvars + jaxpr.invars`.
   """
 
   def __init__(self, input_index: Any):
@@ -90,6 +94,9 @@ class EffectTypeSet:
 
   def __init__(self):
     self._effect_types: set[type[Effect]] = set()
+
+  def __repr__(self):
+    return f"EffectTypeSet({self._effect_types})"
 
   def add_type(self, effect_type: type[Effect]):
     self._effect_types.add(effect_type)
@@ -118,3 +125,5 @@ lowerable_effects: EffectTypeSet = EffectTypeSet()
 control_flow_allowed_effects: EffectTypeSet = EffectTypeSet()
 custom_derivatives_allowed_effects: EffectTypeSet = EffectTypeSet()
 remat_allowed_effects: EffectTypeSet = EffectTypeSet()
+
+partial_eval_kept_effects: EffectTypeSet = EffectTypeSet()
