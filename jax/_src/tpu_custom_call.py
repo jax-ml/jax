@@ -701,6 +701,7 @@ def as_tpu_kernel(
     input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     shape_invariant_numerics: bool = False,
     metadata: Any | None = None,
+    _ir_version: int | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   config = _lower_to_custom_call_config(
@@ -716,6 +717,7 @@ def as_tpu_kernel(
       disable_bounds_checks=disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,
       shape_invariant_numerics=shape_invariant_numerics,
+      ir_version=_ir_version,
   )
   return _as_jax_callable(
       config,
