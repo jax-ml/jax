@@ -194,15 +194,15 @@ def copy(src: ir.Value, dst: ir.Value, swizzle: int | None = None):
   nvvm.fence_proxy(nvvm.ProxyKind.async_)
 
 
-def iota_tensor(m, n, dtype):
-  """A wgmma tensor where arr[i, j] = i * N + j."""
+def iota_tensor(m, n, dtype, layout=mgpu.WGMMA_LAYOUT):
+  """A tensor with given layout where arr[i, j] = i * N + j."""
   index = ir.IndexType.get()
   mlir_dtype = utils.dtype_to_ir_type(dtype)
   int_ty = ir.IntegerType.get_signless(bitwidth(mlir_dtype))
   ret = mgpu.FragmentedArray.splat(
       llvm.mlir_undef(int_ty), (m, n), is_signed=False
   )
-  ret = ret.to_layout(mgpu.WGMMA_LAYOUT)
+  ret = ret.to_layout(layout)
 
   def iota_value(_, idx):
     assert len(idx) == 2
@@ -1017,11 +1017,30 @@ class WGMMATest(TestCase):
       dtype=[jnp.float16, jnp.bfloat16],
   )
   def test_wgmma_reg_lhs(self, m, n, k_steps, rhs_transpose, swizzle, dtype):
-    index = ir.IndexType.get()
+    self._test_wgmma_reg_lhs(m, n, k_steps, rhs_transpose, swizzle, dtype)
 
-    bytewidth = 2
+  @parameterized.product(
+      m=(64, 128, 192),
+      n=(64, 128, 192),
+      k_steps=(1, 2),
+      swizzle=(32, 64, 128),
+  )
+  def test_wgmma_reg_lhs_int8(self, m, n, k_steps, swizzle):
+    # TODO(bchetioui): figure out what's going wrong here.
+    if swizzle == 32:
+      self.skipTest("32-bit swizzle not supported for int8")
+    self._test_wgmma_reg_lhs(
+        m, n, k_steps, rhs_transpose=True, swizzle=swizzle, dtype=jnp.int8
+    )
+
+  def _test_wgmma_reg_lhs(self, m, n, k_steps, rhs_transpose, swizzle, dtype):
+    index = ir.IndexType.get()
+    out_dtype = jnp.int32 if dtype == jnp.int8 else jnp.float32
+    bytewidth = jnp.dtype(dtype).itemsize
     nk_tile = swizzle // bytewidth
     k = nk_tile * k_steps
+    if n % nk_tile:
+      self.skipTest("swizzle must divide N")
 
     def kernel(ctx, rhs, out, rhs_smem):
       del ctx
@@ -1038,8 +1057,12 @@ class WGMMATest(TestCase):
               dst=memref_slice(rhs_smem, (ki, ni)),
               swizzle=swizzle,
           )
-      init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n)
-      lhs_regs = iota_tensor(m, k, dtype)
+      init_acc = mgpu.WGMMAAccumulator.zero(
+          m=m, n=n, dtype=utils.dtype_to_ir_type(out_dtype),
+          is_signed=True if dtype == jnp.int8 else None,
+      )
+      layout = fa.WGMMA_LAYOUT_8BIT if dtype == jnp.int8 else fa.WGMMA_LAYOUT
+      lhs_regs = iota_tensor(m, k, dtype, layout=layout)
       if rhs_transpose:
         rhs_smem = memref_transpose(rhs_smem, (0, 1, 3, 2))
       acc = mgpu.wgmma(init_acc, lhs_regs, rhs_smem, swizzle=swizzle)
@@ -1048,8 +1071,11 @@ class WGMMATest(TestCase):
       acc.value.store_untiled(out, optimized=False)
 
     y_shape = (n, k) if rhs_transpose else (k, n)
-    y = self.prng.uniform(-1, 1, y_shape).astype(dtype)
-    out_shape = jax.ShapeDtypeStruct((m, n), jnp.float32)
+    if dtype == jnp.int8:
+      y = self.prng.integers(-128, 127, y_shape, dtype=dtype)
+    else:
+      y = self.prng.uniform(-1, 1, y_shape).astype(dtype)
+    out_shape = jax.ShapeDtypeStruct((m, n), out_dtype)
     scratch_shape = jax.ShapeDtypeStruct(
         (k_steps, n // nk_tile, nk_tile, nk_tile), dtype
     )
@@ -1058,9 +1084,9 @@ class WGMMATest(TestCase):
     )(y)
     x = np.arange(m * k, dtype=dtype).reshape(m, k)
     ref = jax.lax.dot(
-        x, (y.T if rhs_transpose else y), preferred_element_type=jnp.float32
+        x, (y.T if rhs_transpose else y), preferred_element_type=out_dtype
     )
-    rtol = 5e-4
+    rtol = 0 if dtype == jnp.int8 else 5e-4
     np.testing.assert_allclose(z, ref, rtol=rtol, atol=0)
 
   @parameterized.product(

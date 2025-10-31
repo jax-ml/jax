@@ -763,6 +763,25 @@ WGMMA_LAYOUT_ACC_32BIT = TiledLayout(
     lane_dims=(-4, -3),
     vector_dim=-1,
 )
+# The tiled layout is equivalent to one described here in PTX documentation:
+# https://docs.nvidia.com/cuda/parallel-thread-execution/#wgmma-64n32-a
+# In this layout, we partition the 64x16 tiles over 4 warps into 16x16 tiles.
+# Then, we further split the 16x16 tiles into 8x16 submatrices which are the unit
+# of data that is split across a warp. Since 8*16 = 128, but a warp has only 32
+# threads, we vectorize quadruplets of elements along columns.
+# The assignment of elements to warp lanes is as follows:
+#
+#   0  0  0  0  1  1  1  1  2  2  2  2  3  3  3  3
+#   4  4  4  4  5  5  5  5  6  6  6  6  7  7  7  7
+#   8  8  8  8  9  9  9  9 10 10 10 10 11 11 11 11
+#  12 12 12 12 13 13 13 13 14 14 14 14 15 15 15 15
+#                     ...
+WGMMA_LAYOUT_8BIT = TiledLayout(
+    Tiling(((64, 16), (16, 16), (8, 16), (4,))),
+    warp_dims=(-7,),
+    lane_dims=(-3, -2),
+    vector_dim=-1,
+)
 # This tiled layout is similar to the WGMMA layout, only the unit at which we
 # assign submatrices to warps grows from 8x8 to 8x16. The elements within each
 # submatrix are assigned to threads in the following way:
@@ -3256,6 +3275,7 @@ def optimization_barrier(*arrays):
   Passing arrays through this function will make sure that they are computed
   before any side-effecting operations that follow this barrier.
   """
+  i8 = ir.IntegerType.get_signless(8)
   i32 = ir.IntegerType.get_signless(32)
 
   def _repack(regs_it, reg_ty):
@@ -3295,13 +3315,14 @@ def optimization_barrier(*arrays):
       else:
         array_regs = list(array.registers.flat)
       reg_constraint = "r" if dtype == i32 else "f"
-    elif ir.BF16Type.isinstance(dtype) or ir.F16Type.isinstance(dtype):
+    elif ir.BF16Type.isinstance(dtype) or ir.F16Type.isinstance(dtype) or dtype == i8:
+      reg_packing = 4 // utils.bytewidth(dtype)
       if not ir.VectorType.isinstance(reg_ty):
         raise NotImplementedError(array.mlir_dtype)
       [vec_len] = ir.VectorType(reg_ty).shape
-      if vec_len % 2:
+      if vec_len % reg_packing:
         raise NotImplementedError(vec_len)
-      num_i32_regs = vec_len // 2
+      num_i32_regs = vec_len // reg_packing
       i32_reg_ty = ir.VectorType.get((num_i32_regs,), i32)
       array_regs = [
           vector.extract(
