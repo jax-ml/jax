@@ -17,6 +17,7 @@
 
 from jax.numpy import fft as fft
 from jax.numpy import linalg as linalg
+from jax.numpy import random as random
 
 from jax._src.basearray import Array as ndarray  # noqa: F401
 
