@@ -16,12 +16,13 @@
 from collections.abc import Hashable
 import functools
 import pickle
-from typing import Any, Callable, NamedTuple
+from typing import Any, Callable, NamedTuple, Self, Sequence
 
 from absl import logging
 from jax._src import api
 from jax._src import api_util
 from jax._src import config
+from jax._src import core
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
 from jax._src import stages
@@ -84,33 +85,47 @@ def get_traced(key: Hashable, fun: Callable[..., Any], *args):
 
 
 class CacheEntry:
-  def __init__(self, blob: SerializedType, hits: int = 0):
-    self.blob = blob
+  def __init__(
+    self,
+    avals_out: Sequence[core.AbstractValue] | None,
+    module: ir.Module | None = None,
+    hits: int = 0,
+  ):
+    self.avals_out = avals_out
+    self.module = module
     self.hits = hits
+
+  def serialize(self) -> SerializedType:
+    module_bytecode = mlir.module_to_bytecode(self.module)
+    return pickle.dumps((self.avals_out, module_bytecode))
+
+  @classmethod
+  def deserialize(cls, blob: SerializedType) -> Self:
+    avals_out, module = pickle.loads(blob)
+    return cls(avals_out, module)
 
 
 class Cache(NamedTuple):
-  get: Callable[[Hashable, bool], bytes | None]
-  put: Callable[[Hashable, bytes], None]
-  keys: Callable[[], list[Hashable]]
+  get: Callable[[ComponentKey], bytes | None]
+  put: Callable[[ComponentKey, bytes], None]
+  keys: Callable[[], list[ComponentKey]]
   clear: Callable[[], None]
 
 
-_in_memory_cache: dict[Hashable, CacheEntry] = {}
+_in_memory_cache: dict[ComponentKey, SerializedType] = {}
+_in_memory_cache_hits: dict[ComponentKey, int] = {}
 
 
 def make_in_memory_cache():
-  def get(key: Hashable, update_hits: bool = True) -> SerializedType | None:
-    entry = _in_memory_cache.get(key, None)
-    if entry is not None and update_hits:
-      _in_memory_cache[key].hits += 1
-      return entry.blob
-    return entry
+  def get(key: ComponentKey) -> SerializedType | None:
+    hits = _in_memory_cache_hits.setdefault(key, 0)
+    _in_memory_cache_hits[key] += 1
+    return _in_memory_cache.get(key, None)
 
-  def put(key: Hashable, data: SerializedType):
-    _in_memory_cache[key] = CacheEntry(data)
+  def put(key: ComponentKey, data: SerializedType):
+    _in_memory_cache[key] = data
 
-  def keys() -> list[Hashable]:
+  def keys() -> list[ComponentKey]:
     return list(_in_memory_cache.keys())
 
   def clear():
@@ -119,33 +134,15 @@ def make_in_memory_cache():
   return Cache(get, put, keys, clear)
 
 
-KeyFn = Callable[[Hashable], Hashable]
-SerFn = Callable[[Any], SerializedType]
-DesFn = Callable[[SerializedType], Any]
-
-make_abstract_eval_key: KeyFn = lambda k: ComponentKey(
-  f"{k.user_key}.abstract_eval"
-)
-serialize_abstract_eval: SerFn = lambda obj: pickle.dumps(obj)
-deserialize_abstract_eval: DesFn = lambda blob: pickle.loads(blob)
-make_lowering_key: KeyFn = lambda k: ComponentKey(f"{k.user_key}.lowering")
-serialize_lowering: SerFn = lambda obj: mlir.module_to_bytecode(obj)
-deserialize_lowering: DesFn = lambda blob: ir.Module.parse(blob)
-
-
-def get_cached_or_put(key, make, serialize, deserialize):
-  if (cache := component_cache.value) is None:
-    logging.debug("Component cache is not set.")
+def get_entry(
+  key: ComponentKey, make: Callable[[], CacheEntry]
+) -> CacheEntry:
+  cache: Cache = component_cache.value
+  if cache is None:
     return make()
-
-  if blob := cache.get(key):  # pytype: disable=attribute-error
-    logging.debug("Key %s found.", key)
-    return deserialize(blob)
-
-  logging.info("Key %s missing.", key)
-  obj = make()
-  blob = serialize(obj)
-  logging.info("Putting key %s.", key)
-  cache.put(key, blob)  # pytype: disable=attribute-error
-  logging.debug("Cache keys: %s", cache.keys())
-  return obj
+  if blob := cache.get(key):
+    return CacheEntry.deserialize(blob)
+  entry = make()
+  blob = entry.serialize()
+  cache.put(key, blob)
+  return entry

@@ -14,7 +14,7 @@
 """JAX AOT API"""
 
 from collections.abc import Hashable
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 
 from absl import logging
@@ -44,68 +44,40 @@ def component(key: UserKey = None) -> Callable[..., Any]:
     def wrapper(*args):
       # TODO(dsuo): Flatten function as in shard_map pmap.
       # TODO(dsuo): Need to consider static args.
+      # TODO(dsuo): Do we have all the information we need at this point to make
+      # the component key?
       component_key = ComponentKey(key)
       return component_p.bind(*args, fun=fun, component_key=component_key)
 
-    # NOTE(dsuo): Using a component means we'll jit you in this dummy
-    # implementation.
     return wrapper
 
   return _component
 
 
 def component_impl(*args, fun: Callable[..., Any], **_):
-  # TODO(dsuo): Call should not re-trace.
-  logging.debug("component_impl")
   return fun(*args)
 
 
 def component_abstract_eval(
   *args, fun: Callable[..., Any], component_key: ComponentKey
-):
-  logging.debug("component_abstract_eval: %s, %s", component_key, fun)
-  key = aot_util.make_abstract_eval_key(component_key)
-
-  def abstract_eval():
-    logging.debug("component_abstract_eval args: %s", args)
-    # NOTE(dsuo): The claim is tracing cache will handle caching jaxprs for us.
-    # However, we'll need to convert ir.Values in the lowering rule to avals to
-    # trace in lowering with args. There are three issues:
-    # 1. `fun` must have the same id (in addition to same everything else) in
-    # order for us to use this cache within the same process.
-    # 2. It's not easy to inspect the _infer_params_cached.cache_debug() to
-    # understand if we've gotten a cache hit or not (more relevant for testing).
-    # 3. lu.cache on _create_pjit_jaxpr keys on fun transformations.
-    # So... just do the easy thing for now and worry about this later.
-    traced = aot_util.get_traced(key, fun, *args)
-    return tree_util.tree_map(
+) -> Sequence[core.AbstractValue] | None:
+  def abstract_eval() -> aot_util.CacheEntry:
+    traced = aot_util.get_traced(component_key, fun, *args)
+    avals_out = tree_util.tree_map(
       lambda x: core.ShapedArray(x.shape, x.dtype), traced.out_info
     )
+    return aot_util.CacheEntry(avals_out)
 
-  return aot_util.get_cached_or_put(
-    key,
-    abstract_eval,
-    aot_util.serialize_abstract_eval,
-    aot_util.deserialize_abstract_eval,
-  )
+  return aot_util.get_entry(component_key, abstract_eval).avals_out
 
 
 def component_lowering(
   ctx, *args, fun: Callable[..., Any], component_key: ComponentKey
-):
-  logging.debug("component_lowering: %s, %s", component_key, fun)
-
-  # TODO(dsuo): Is this something we can grab from LoweringRuleContext or
-  # traced?
+) -> Sequence[ir.Value]:
   module_name = f"{component_key}.module"
-  traced_key = aot_util.make_abstract_eval_key(component_key)
-  lowering_key = aot_util.make_lowering_key(component_key)
-  # TODO(dsuo): Expect entry exists. TBD for transformations.
-  logging.debug("component_lowering avals_in: %s", ctx.avals_in)
 
-  def lower_jaxpr_to_module():
-    # with ctx.module_context.module.context:
-    traced = aot_util.get_traced(traced_key, fun, *ctx.avals_in)
+  def lower_jaxpr_to_module() -> aot_util.CacheEntry:
+    traced = aot_util.get_traced(component_key, fun, *ctx.avals_in)
     lowering_result = mlir.lower_jaxpr_to_module(
       module_name=module_name,
       jaxpr=traced.jaxpr,
@@ -135,6 +107,7 @@ def component_lowering(
     # rid of the submodule context before merging. Could we just create it with
     # the right context?
     submodule = ir.Module.parse(mlir.module_to_bytecode(submodule))
+    entry = aot_util.get_entry(component_key)
     return submodule
 
   submodule = aot_util.get_cached_or_put(
