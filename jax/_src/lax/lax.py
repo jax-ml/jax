@@ -68,8 +68,7 @@ from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    PmapSharding, NamedSharding, ShardingContext, SPMDAxisContext,
-    PartitionSpec as P, canonicalize_sharding, flatten_spec)
+    PmapSharding, NamedSharding, PartitionSpec as P, canonicalize_sharding, flatten_spec)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DType, DTypeLike, Shape
 from jax._src.util import (cache, canonicalize_axis,
                            safe_map, safe_zip, split_list, weakref_lru_cache,
@@ -6410,18 +6409,7 @@ def _ragged_dot_general_lower(
   if group_offset is not None:
     raise NotImplementedError('Unimplemented group_offset support.')
 
-  # TODO(pravnar): Remove this once we have sharding support.
-  def use_default_lowering():
-    if config.jax_ragged_dot_use_ragged_dot_instruction.value:
-      # Default lowering is via the pattern match, hence we return False.
-      return False
-    axis_context = ctx.module_context.axis_context
-    return (
-        isinstance(axis_context, SPMDAxisContext)
-        or isinstance(axis_context, ShardingContext)
-        and axis_context.num_devices > 1
-    )
-  if use_default_lowering():
+  if not config.jax_ragged_dot_use_ragged_dot_instruction.value:
     result = mlir.lower_fun(_ragged_dot_general_impl, multiple_results=False)(
         ctx, lhs, rhs, group_sizes,
         ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
