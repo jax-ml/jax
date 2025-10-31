@@ -930,12 +930,12 @@ def merge_divides_constraints(constraints: Sequence[Constraint]) -> list[Constra
         # be truncated (removing initial multiples) to the length of the
         # smaller tuple. This preserves the semantics of the Divides constraints
         # where a tiling's rank cannot exceed the size of tiling_multiple.
-        min_len = min(len(tiling_multiple), len(previous_tiling_multiple))
         new_tiling_multiple = []
-        if min_len > 0:
-          for x, y in zip(tiling_multiple[-min_len:], previous_tiling_multiple[-min_len:], strict=True):
-            new_tiling_multiple.append(math.gcd(x, y))
-        var_to_tiling_multiples[v] = tuple(new_tiling_multiple)
+        for x, y in zip(
+            reversed(tiling_multiple), reversed(previous_tiling_multiple)
+        ):
+          new_tiling_multiple.append(math.gcd(x, y))
+        var_to_tiling_multiples[v] = tuple(reversed(new_tiling_multiple))
       case _:
         result.append(constraint)
   for expr, tiling_multiple in var_to_tiling_multiples.items():
