@@ -33,7 +33,6 @@ pytype_strict_library(
         ":func_dialect",
         ":math_dialect",
         ":memref_dialect",
-        ":mpmd_dialect",
         ":scf_dialect",
         ":sdy_dialect",
         ":sparse_tensor_dialect",
@@ -76,12 +75,6 @@ pytype_strict_library(
     name = "memref_dialect",
     srcs = ["memref.py"],
     deps = if_building_jaxlib(["//jaxlib/mlir:memref_dialect"]),
-)
-
-pytype_strict_library(
-    name = "mpmd_dialect",
-    srcs = ["mpmd.py"],
-    deps = if_building_jaxlib(["//jaxlib/mlir:mpmd_dialect"]),
 )
 
 pytype_strict_library(
