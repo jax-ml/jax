@@ -497,7 +497,49 @@ class HijaxTest(jtu.JaxTestCase):
         ans = self(x)
         return (ans, x)
 
-      def vjp_bwd(self, res, t):
+      def vjp_bwd(self, res, t, xbar_accum):
+        xbar = t * self.power * raise_to_static_power(res, self.power-1)
+        xbar_accum.accum(xbar)
+
+      def batch(self, _axis_data, args, in_dims):
+        in_dim, = in_dims
+        x, = args
+        return raise_to_static_power(x, self.power), in_dim
+
+    def raise_to_static_power(x, power):
+      x_aval = jax.typeof(x)
+      return RaiseToStaticPower(x_aval, power=power)(x)
+
+    def f(x):
+      return raise_to_static_power(x, power=3)
+
+    if jit:
+      f = jax.jit(f)
+
+    self.assertEqual(f(2.0), 8.0)
+    xs = jnp.arange(3.0)
+    self.assertAllClose(jax.vmap(f)(xs), xs**3)
+    self.assertEqual(jax.grad(f)(2.0), 12.0)
+
+
+  @parameterized.parameters([False, True])
+  def test_newstyle_hiprimitive_retval(self, jit):
+
+    class RaiseToStaticPower(VJPHiPrimitive):
+      def __init__(self, in_aval, *, power):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = dict(power=power)
+        super().__init__()
+
+      def expand(self, x):
+        return x ** self.power
+
+      def vjp_fwd(self, x):
+        ans = self(x)
+        return (ans, x)
+
+      def vjp_bwd_retval(self, res, t):
         return (t * self.power * raise_to_static_power(res, self.power-1),)
 
       def batch(self, _axis_data, args, in_dims):
@@ -519,6 +561,43 @@ class HijaxTest(jtu.JaxTestCase):
     xs = jnp.arange(3.0)
     self.assertAllClose(jax.vmap(f)(xs), xs**3)
     self.assertEqual(jax.grad(f)(2.0), 12.0)
+
+  def test_newstyle_hiprimitive_defines_both_types_of_vjp_error(self):
+    class RaiseToStaticPower(VJPHiPrimitive):
+      def __init__(self, in_aval, *, power):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = dict(power=power)
+        super().__init__()
+
+      def expand(self, x):
+        return x ** self.power
+
+      def vjp_fwd(self, x):
+        ans = self(x)
+        return (ans, x)
+
+      def vjp_bwd(self, res, t, xbar_accum):
+        xbar = t * self.power * raise_to_static_power(res, self.power-1)
+        xbar_accum.accum(xbar)
+
+      def vjp_bwd_retval(self, res, t):
+        return (t * self.power * raise_to_static_power(res, self.power-1),)
+
+      def batch(self, _axis_data, args, in_dims):
+        in_dim, = in_dims
+        x, = args
+        return raise_to_static_power(x, self.power), in_dim
+
+    def raise_to_static_power(x, power):
+      x_aval = jax.typeof(x)
+      return RaiseToStaticPower(x_aval, power=power)(x)
+
+    def f(x):
+      return raise_to_static_power(x, power=3)
+
+    with self.assertRaises(AttributeError):
+      f(2.0)
 
   @config.numpy_dtype_promotion('standard')
   def test_newstyle_hiprimitive_qarray(self):
@@ -560,7 +639,7 @@ class HijaxTest(jtu.JaxTestCase):
       def vjp_fwd(self, x):
         return self(x), None
 
-      def vjp_bwd(self, _, g):
+      def vjp_bwd_retval(self, _, g):
         return g,
 
     class DQ(VJPHiPrimitive):
@@ -577,7 +656,7 @@ class HijaxTest(jtu.JaxTestCase):
       def vjp_fwd(self, qx):
         return self(qx), None
 
-      def vjp_bwd(self, _, g):
+      def vjp_bwd_retval(self, _, g):
         return g,
 
     def f(x):
