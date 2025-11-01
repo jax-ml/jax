@@ -89,11 +89,6 @@ def _matrix_transpose(x: Array) -> Array:
   assert x.ndim >= 2
   return transpose(x, [*range(x.ndim - 2), x.ndim - 1, x.ndim - 2])
 
-def _clip_int_to_valid_range(val: DimSize, dtype, where: str) -> int:
-  info = np.iinfo(dtype)
-  val = core.concrete_dim_or_error(val, where)
-  return core.max_dim(info.min, core.min_dim(val, info.max))
-
 def _validate_shapes(shapes: Sequence[Shape]):
   def _check_static_shape(shape: Shape):
     checked = canonicalize_shape(shape)
@@ -3456,10 +3451,9 @@ def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int,
 
 def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize = 0) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
-  offset = _clip_int_to_valid_range(offset, np.int32,
-                                    "argument `offset` of jax.numpy.eye")
   dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "eye")
-  bool_eye = eq(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
+  bool_eye = eq(add(broadcasted_iota(np.int32, shape, 0),
+                    asarray(core.dimension_as_value(offset)).astype(np.int32)),
                 broadcasted_iota(np.int32, shape, 1))
   return convert_element_type_p.bind(bool_eye, new_dtype=dtype, weak_type=False,
                                      sharding=None)
