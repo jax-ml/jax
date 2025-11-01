@@ -31,6 +31,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import source_info_util
+from jax._src.traceback_util import api_boundary
 from jax._src import util
 from jax._src import mesh as mesh_lib
 from jax._src.interpreters import ad
@@ -474,6 +475,7 @@ class ScatterDimensionNumbers(NamedTuple):
   operand_batching_dims: Sequence[int] = ()
   scatter_indices_batching_dims: Sequence[int] = ()
 
+@partial(api_boundary, repro_api_name="lax.scatter_add")
 def scatter_add(
   operand: ArrayLike, scatter_indices: ArrayLike, updates: ArrayLike,
   dimension_numbers: ScatterDimensionNumbers, *,
@@ -559,7 +561,7 @@ def scatter_add(
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=GatherScatterMode.from_any(mode))
 
-
+@partial(api_boundary, repro_api_name="lax.scatter_sub")
 def scatter_sub(
     operand: ArrayLike,
     scatter_indices: ArrayLike,
@@ -623,6 +625,7 @@ def scatter_sub(
   )
 
 
+@partial(api_boundary, repro_api_name="lax.scatter_mul")
 def scatter_mul(
   operand: ArrayLike, scatter_indices: ArrayLike, updates: ArrayLike,
   dimension_numbers: ScatterDimensionNumbers, *,
@@ -672,6 +675,7 @@ def scatter_mul(
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=GatherScatterMode.from_any(mode))
 
+@partial(api_boundary, repro_api_name="lax.scatter_min")
 def scatter_min(
   operand: ArrayLike, scatter_indices: ArrayLike, updates: ArrayLike,
   dimension_numbers: ScatterDimensionNumbers, *,
@@ -721,6 +725,7 @@ def scatter_min(
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=GatherScatterMode.from_any(mode))
 
+@partial(api_boundary, repro_api_name="lax.scatter_max")
 def scatter_max(
   operand: ArrayLike, scatter_indices: ArrayLike, updates: ArrayLike,
   dimension_numbers: ScatterDimensionNumbers, *,
