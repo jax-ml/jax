@@ -120,8 +120,9 @@ class TpuInfo:
             or (lhs_dt in {U4, S4} and rhs_dt in {U4, S4})
         )
       case 7:
-        return (lhs_dt in {F32, BF16} and rhs_dt in {F32, BF16}) or (
-            lhs_dt in {F8E5M2, F8E4M3} and rhs_dt in {F8E5M2, F8E4M3}
+        return (
+            lhs_dt in {F32, BF16, F8E5M2, F8E4M3}
+            and rhs_dt in {F32, BF16, F8E5M2, F8E4M3}
         )
       case _:
         return False
