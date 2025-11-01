@@ -748,16 +748,69 @@ class MutableArrayTest(jtu.JaxTestCase):
     jtu.check_grads(f, (mut_const_vals, pure_consts, init_carry, xs),
                     2, ['fwd', 'rev'], rtol=1.5e-2)
 
-  def test_remat_basic_errors(self):
+  @parameterized.parameters([False, True])
+  def test_remat_basic_internal(self, jit):
     @jax.remat
-    def f(x_ref, y):
+    def f(y, x):
+      x_ref = jax.new_ref(x)
+      out = y * x_ref[...]
       x_ref[...] += 1
-      return y
+      return out
 
-    x_ref = core.new_ref(0)
+    if jit:
+      f = jax.jit(f)
 
-    with self.assertRaises(NotImplementedError):
-      jax.grad(f, 1)(x_ref, 3.14)
+    g = jax.grad(f)(2., 1.)
+    self.assertAllClose(g, 1.)
+
+  @parameterized.parameters([False, True])
+  def test_remat_basic_arg(self, jit):
+    @jax.remat
+    def f(y, x_ref):
+      out = y * x_ref[...]
+      x_ref[...] += 1
+      return out
+
+    if jit:
+      f = jax.jit(f)
+
+    x_ref = jax.new_ref(1.)
+    g = jax.grad(f)(2., x_ref)
+    self.assertAllClose(x_ref[...], 2.)
+    self.assertAllClose(g, 1.)
+
+  @parameterized.parameters([False, True])
+  def test_remat_basic_closed_over(self, jit):
+    @jax.remat
+    def f(y):
+      out = y * x_ref[...]
+      x_ref[...] += 1
+      return out
+
+    if jit:
+      f = jax.jit(f)
+
+    x_ref = jax.new_ref(1.)
+    g = jax.grad(f)(2.)
+    self.assertAllClose(x_ref[...], 2.)
+    self.assertAllClose(g, 1.)
+
+  def test_remat_basic_closed_over_nested(self):
+    @jax.remat
+    @partial(jax.remat, policy=lambda *_, **__: False)
+    @jax.remat
+    def f(y):
+      jax.debug.callback(lambda _: lst.append('hi'), y)
+      out = y * x_ref[...]
+      x_ref[...] += 1
+      return jnp.sin(out)
+
+    lst = []
+    x_ref = jax.new_ref(1.)
+    g = jax.grad(f)(2.)
+    self.assertAllClose(x_ref[...], 2.)
+    self.assertAllClose(g, jnp.cos(2.))
+    self.assertLen(lst, 4)
 
   def test_remat_grad_stats_plumbing_basic(self):
     @jax.remat

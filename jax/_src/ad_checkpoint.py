@@ -29,7 +29,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import linear_util as lu
-from jax._src import effects
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import api_util
@@ -585,11 +584,6 @@ ad.primitive_jvps[remat_p] = remat_jvp
 def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
                        jaxpr: core.Jaxpr, prevent_cse, **params):
   assert not jaxpr.constvars
-  disallowed_effects = effects.remat_allowed_effects.filter_not_in(jaxpr.effects)
-  if disallowed_effects:
-    raise NotImplementedError(
-        'Effects not supported in partial-eval of `checkpoint`/`remat`: '
-        f'{disallowed_effects}')
   policy = params['policy'] or nothing_saveable
   in_unknowns = [not t.is_known() for t in tracers]
   jaxpr_known, jaxpr_staged, out_unknowns, out_inst, num_res = \
@@ -611,15 +605,22 @@ def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
   # on producers of any residuals. See https://github.com/jax-ml/jax/pull/22244.
   jaxpr_known_ = _insert_reduce_precision(jaxpr_known, num_res)
 
+  # Make copies of any ref arguments' initial values.
+  tracers_ = [trace.new_instantiated_const(t.pval.get_known()[...])
+              if isinstance(t.aval, AbstractRef) else t for t in tracers]
+
   # Compute known outputs and residuals (hoisted out of remat primitive)
   _, in_consts_ = unzip2(t.pval for t in tracers if t.pval.is_known())
   _, in_consts = partition_list(in_used_known, in_consts_)
   out_consts = core.eval_jaxpr(jaxpr_known_, (), *in_consts)
   out_knowns, residuals = split_list(out_consts, [len(out_consts)-num_res])
 
-  # set up unknown outputs with a recipe to call remat
+  # Replace ref arguments with val arguments.
+  jaxpr_unknown = _replace_arg_refs_with_vals(jaxpr_unknown)
+
+  # Set up unknown outputs with a recipe to call remat
   res_tracers = map(trace.new_instantiated_const, residuals)
-  _, tracers_staged = partition_list(in_used_staged, tracers)
+  _, tracers_staged = partition_list(in_used_staged, tracers_)
   in_jaxpr_tracers = res_tracers + map(trace.instantiate_const, tracers_staged)  # type: ignore
   out_jaxpr_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(x.aval), None)
                        for x in jaxpr_unknown.outvars]
@@ -658,6 +659,24 @@ def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
   # zip together known and unknown outputs
   return merge_lists(out_unknowns, out_knowns, out_jaxpr_tracers)
 pe.custom_partial_eval_rules[remat_p] = remat_partial_eval
+
+def _replace_arg_refs_with_vals(jaxpr):
+  if any(isinstance(a, AbstractRef) for a in jaxpr.in_avals):
+    return _replace_arg_refs_with_vals_(jaxpr)
+  return jaxpr
+
+@weakref_lru_cache
+def _replace_arg_refs_with_vals_(jaxpr):
+  assert not jaxpr.constvars
+  in_avals = [a.inner_aval if isinstance(a, AbstractRef) else a
+              for a in jaxpr.in_avals]
+  def fun(*args):
+    args = [core.new_ref(x) if isinstance(a, AbstractRef) else x
+            for a, x in zip(jaxpr.in_avals, args)]
+    return core.eval_jaxpr(jaxpr, (), *args)
+  fun = lu.wrap_init(fun, debug_info=jaxpr.debug_info.with_unknown_names())
+  new_jaxpr, _, () = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+  return new_jaxpr
 
 @weakref_lru_cache
 def _insert_reduce_precision(jaxpr: core.Jaxpr, num_res: int) -> core.Jaxpr:
