@@ -226,29 +226,33 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
       object = xc._xla.cuda_array_interface_to_buffer(
           cai=cai, gpu_backend=backend, device_id=device_id)
 
-  leaves, treedef = tree_util.tree_flatten(object, is_leaf=lambda x: x is None)
+  # To handle nested lists & tuples, flatten the tree and process each leaf.
+  leaves, treedef = tree_util.tree_flatten(
+      object, is_leaf=lambda x: not isinstance(x, (list, tuple)))
   if any(leaf is None for leaf in leaves):
     raise ValueError("None is not a valid value for jnp.array")
-  leaves = [
-      leaf
-      if (leaf_jax_array := getattr(leaf, "__jax_array__", None)) is None
-      else leaf_jax_array()
-      for leaf in leaves
-  ]
+
+  # Leaves may be custom classes that implement __jax_array__ or __array__;
+  # at this point we convert them to arrays.
+  def convert_to_array(leaf):
+    if isinstance(leaf, (Array, np.ndarray, np.generic, bool, int, float, complex)):
+      return leaf
+    elif isinstance(leaf, range):
+      return np.asarray(leaf)
+    if leaf_jax_array := getattr(leaf, "__jax_array__", None):
+      return leaf_jax_array()
+    if leaf_array := getattr(leaf, "__array__", None):
+      return leaf_array()
+    raise ValueError(f"Unsupported type for jnp.array: {type(leaf)}")
+  leaves = [convert_to_array(leaf) for leaf in leaves]
+
+  # Determine the output dtype via JAX dtype promotion rules. Like NumPy, for
+  # an empty sequence we fall back to the default float dtype.
   if dtype is None:
-    # Use lattice_result_type rather than result_type to avoid canonicalization.
-    # Otherwise, weakly-typed inputs would have their dtypes canonicalized.
-    try:
-      dtype = (
-          dtypes.lattice_result_type(*leaves)[0]
-          if leaves
-          else dtypes.default_float_dtype()
-      )
-    except TypeError:
-      # This happens if, e.g. one of the entries is a memoryview object.
-      # This is rare, so we only handle it if the normal path fails.
-      leaves = [_convert_to_array_if_dtype_fails(leaf) for leaf in leaves]
+    if leaves:
       dtype = dtypes.lattice_result_type(*leaves)[0]
+    else:
+      dtype = dtypes.default_float_dtype()
 
   object = treedef.unflatten(leaves)
   out: ArrayLike
