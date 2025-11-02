@@ -1850,6 +1850,25 @@ def is_terminator(op: ir.OpView) -> bool:
   return isinstance(op, (scf.YieldOp, scf.ConditionOp))
 
 
+def traverse_op(
+    op: ir.OpView,
+    callback: Callable[[ir.OpView], None],
+):
+  """Traverses the operation and applies the callback in pre-order fashion.
+
+  Skips recursing into `mgpu.CustomPrimitiveOp`s, and assumes that the values
+  iterated on are not being modified.
+  """
+  callback(op)
+  # The block of a mosaic_gpu.custom_primitive op is already lowered so it
+  # should not be traversed.
+  if not isinstance(op, mgpu.CustomPrimitiveOp):
+    for region in op.operation.regions:
+      for block in region:
+        for block_op in block.operations:
+          traverse_op(block_op, callback)
+
+
 def infer_layout(module: ir.Module):
   """Infers layouts for the given module.
 
@@ -1891,7 +1910,7 @@ def infer_layout(module: ir.Module):
     hints.extend(op_hints)
 
   for op in module.body:
-    inference_utils.traverse_op(op, gather_equations)
+    traverse_op(op, gather_equations)
 
   if isinstance(global_equation_system, eqns.Unsatisfiable):
     raise ValueError(
@@ -1933,4 +1952,4 @@ def infer_layout(module: ir.Module):
 
   # Sanity check: ensure that all ops have the right number of in/out layouts.
   for op in module.body:
-    inference_utils.traverse_op(op, _ensure_all_layouts_are_set)
+    traverse_op(op, _ensure_all_layouts_are_set)

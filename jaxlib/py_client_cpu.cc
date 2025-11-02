@@ -50,15 +50,18 @@ namespace jax {
 
 struct CpuTransposePlanCache {
   static ffi::TypeId id;
+  static ffi::TypeInfo info;
+
   explicit CpuTransposePlanCache(int capacity) : cache(capacity) {}
   xla::TransposePlanCache cache;
 };
 
 ffi::TypeId CpuTransposePlanCache::id = {};
+ffi::TypeInfo CpuTransposePlanCache::info =
+    ffi::MakeTypeInfo<CpuTransposePlanCache>();
 
 XLA_FFI_REGISTER_TYPE(ffi::GetXlaFfiApi(), "CpuTransposePlanCache",
-                      &CpuTransposePlanCache::id,
-                      ffi::TypeInfo<CpuTransposePlanCache>());
+                      &CpuTransposePlanCache::id, &CpuTransposePlanCache::info);
 
 static ffi::ErrorOr<std::unique_ptr<CpuTransposePlanCache>>
 CpuTransposePlanCacheInstantiate(uint64_t index) {

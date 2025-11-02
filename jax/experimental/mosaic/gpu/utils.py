@@ -106,9 +106,7 @@ def pack_array(values):
   ptr_ty = ir.Type.parse("!llvm.ptr")
   arr_ptr = llvm.alloca(ptr_ty, c(len(values), i64), elem_ty)
   for i, v in enumerate(values):
-    elem_ptr = llvm.getelementptr(
-        ptr_ty, arr_ptr, [], [i], elem_ty, llvm.GEPNoWrapFlags.none
-    )
+    elem_ptr = getelementptr(arr_ptr, [i], elem_ty)
     llvm.store(v, elem_ptr)
   return arr_ptr
 
@@ -966,7 +964,6 @@ class BarrierRef:
       raise NotImplementedError("Only up to 32 barriers per group supported")
     i32 = ir.IntegerType.get_signless(32)
     i64 = ir.IntegerType.get_signless(64)
-    ptr = ir.Type.parse(f"!llvm.ptr<{WORKGROUP_NVPTX_ADDRESS_SPACE}>")
     address = memref_ptr(
         barrier_memref, memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE
     )
@@ -975,9 +972,7 @@ class BarrierRef:
     with single_thread(scope=ThreadSubset.BLOCK):
       for i in range(num_barriers):
         nvvm.mbarrier_init_shared(
-            llvm.getelementptr(
-                ptr, address, [], [i], i64, llvm.GEPNoWrapFlags.none
-            ),
+            getelementptr(address, [i], i64),
             c(arrival_count, i32),
         )
     return BarrierRef(address, c(0, i32), phases, num_barriers)
@@ -1084,17 +1079,8 @@ class BarrierRef:
     )
 
   def get_ptr(self):
-    ptr = ir.Type.parse(f"!llvm.ptr<{WORKGROUP_NVPTX_ADDRESS_SPACE}>")
     i64 = ir.IntegerType.get_signless(64)
-    DYNAMIC32 = -2147483648
-    return llvm.getelementptr(
-        ptr,
-        self.base_address,
-        [self.offset],
-        [DYNAMIC32],
-        i64,
-        llvm.GEPNoWrapFlags.none,
-    )
+    return getelementptr(self.base_address, [self.offset], i64)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1990,3 +1976,14 @@ def query_cluster_cancel(
   cancelled_launch = llvm.extractvalue(i1, desc, [3])
 
   return (*cta_ids, cancelled_launch)
+
+
+def nanosleep(nanos: ir.Value):
+  """Sleeps the current thread for the given number of nanoseconds."""
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [nanos],
+      "nanosleep.u32 $0;",
+      "r",
+      has_side_effects=True,
+  )

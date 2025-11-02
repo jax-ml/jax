@@ -995,7 +995,7 @@ def register_dataclass(
   registries use the optimized C++ dataclass builtin instead of the argument
   functions.
 
-  See :ref:`extending-pytrees` for more information about registering pytrees.
+  See :ref:`pytrees-custom-pytree-nodes` for more information about registering pytrees.
 
   Args:
     nodetype: a Python type to treat as an internal pytree node. This is assumed

@@ -1349,3 +1349,18 @@ def device_id_to_logical(
   elif device_id_type is DeviceIdType.LOGICAL:
     return device_id, non_mesh_axes
   raise NotImplementedError(f"Unsupported device id type: {device_id_type}")
+
+
+delay_p = jax_core.Primitive("delay")
+delay_p.multiple_results = True
+
+
+@delay_p.def_abstract_eval
+def _delay_abstract_eval(nanos):
+  del nanos
+  return []
+
+
+def delay(nanos: int | jax.Array) -> None:
+  """Sleeps for the given number of nanoseconds."""
+  delay_p.bind(nanos)

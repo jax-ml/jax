@@ -106,7 +106,7 @@ which have not been fully explored previously. We’ll discuss them in turn here
 
 ### Priority of `__jax_array__` vs. PyTree flattening
 JAX already has a supported mechanism for registering custom objects, namely pytree
-registration (see [Extending pytrees](https://docs.jax.dev/en/latest/pytrees.html#extending-pytrees)).
+registration (see [Custom pytree nodes](https://docs.jax.dev/en/latest/custom_pytrees.html#pytrees-custom-pytree-nodes)).
 If we also support __jax_array__, which one should take precedence?
 
 To put this more concretely, what should be the result of this code?

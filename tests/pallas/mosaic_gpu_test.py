@@ -2742,6 +2742,7 @@ class PallasCallWGTest(
         pallas_primitives.semaphore_signal_p,
         pallas_primitives.semaphore_wait_p,
         pallas_primitives.semaphore_read_p,
+        pallas_primitives.delay_p,
         checkify.check_p,
     }
 
@@ -2995,6 +2996,39 @@ class PallasCallSm90ATest(PallasSm90ATest):
         out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float32),
     )(a, b)
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)
+
+  def test_wgmma_registers_integer(self):
+    # TODO(bchetioui): plumb in is_signed into WGMMA lowering and allow an
+    # integer accumulator type to be created.
+    self.skip_if_wg_semantics()
+    input_dtype = jnp.int8
+    out_dtype = jnp.int32
+    def kernel(a_ref, b_ref, o_ref):
+      def scope(acc_ref):
+        a_regs = plgpu.load(a_ref, (), layout=plgpu.Layout.WGMMA_8BIT)
+        plgpu.wgmma(acc_ref, a_regs, plgpu.transpose_ref(b_ref, (1, 0)))
+        return acc_ref[...]
+      o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 192), out_dtype))
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    m = 64
+    k = 128
+    n = 192
+    a = jax.random.randint(key1, shape=(m, k), minval=-128, maxval=127, dtype=input_dtype)
+    b = jax.random.randint(key2, shape=(n, k), minval=-128, maxval=127, dtype=input_dtype)
+
+    transforms = self.default_transforms(swizzle=64, dtype=input_dtype)
+    res = self.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.BlockSpec(transforms=transforms),
+            plgpu.BlockSpec(transforms=transforms),
+        ],
+        out_shape=jax.ShapeDtypeStruct((64, 192), out_dtype),
+    )(a, b)
+    np.testing.assert_array_equal(
+        res, a.astype(out_dtype) @ b.T.astype(out_dtype)
+    )
 
   def test_wgmma_registers_init(self):
     def kernel(a_ref, b_ref, i_ref, o_ref):

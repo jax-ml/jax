@@ -668,7 +668,8 @@ class OpsTest(PallasBaseTest):
     self.assertEqual(output, 0)
 
   def test_retiling_with_replicated_lane(self):
-    self.skipTest("TODO(b/452689987)")
+    if not jtu.if_cloud_tpu_at_least(2025, 11, 5):
+      self.skipTest("Test requires libtpu from 2025/11/5 or later")
     shape = (32, 1)
     broadcast_shape = (32, 256)
 

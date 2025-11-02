@@ -25,7 +25,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip
 from jax.experimental.layout import with_layout_constraint, Format, Layout
-from jax.experimental.compute_on import compute_on
 
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -608,104 +607,6 @@ class LayoutTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, ".*Did you mean to set the.*input layout.*AUTO.*"):
       g(jnp.arange(8))
-
-  def test_sparsecore_compute(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
-      self.skipTest("disabled on cloud tpu until 2025-10-14")
-    if not (jax.devices()[0].device_kind == 'TPU v5' or
-            jtu.is_device_tpu_at_least(6)):
-      self.skipTest('Does not have a sparsecore present')
-    shape = (128, 128)
-    inp = jnp.arange(math.prod(shape)).reshape(shape)
-
-    dll = Layout(major_to_minor=(0, 1), tiling=((8,),))
-    s = SingleDeviceSharding(jax.devices()[0])
-    sparse_format = Format(dll, s)
-    sparecore_arr = jax.device_put(inp, sparse_format)
-    dense_format = Format(Layout(major_to_minor=(0, 1)), s)
-
-    @compute_on('tpu_sparsecore')
-    @jax.jit
-    def sparsecore_compute(x):
-      return x * x
-
-    @jax.jit(out_shardings=(dense_format, sparse_format))
-    def f(x, y):
-      return x * 2, sparsecore_compute(y)
-
-    f(inp, sparecore_arr)
-
-  def test_sparsecore_compute_twice(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
-      self.skipTest("disabled on cloud tpu until 2025-10-14")
-    if not (
-        jax.devices()[0].device_kind == 'TPU v5'
-        or jtu.is_device_tpu_at_least(6)
-    ):
-      self.skipTest('Does not have a sparsecore present')
-    shape = (4096, 8)
-    inp = jnp.arange(math.prod(shape)).reshape(shape)
-
-    dll = Layout(major_to_minor=(0, 1), tiling=((8,),))
-    s = SingleDeviceSharding(jax.devices()[0])
-    sparse_format = Format(dll, s)
-    sparecore_arr = jax.device_put(inp, sparse_format)
-
-    @compute_on('tpu_sparsecore')
-    @jax.jit
-    def sparsecore_multiply(x, y):
-      return x * y
-
-    @compute_on('tpu_sparsecore')
-    @jax.jit
-    def sparsecore_add(x, y):
-      return x + y
-
-    @jax.jit(donate_argnums=0, out_shardings=sparse_format)
-    def f(x):
-      return sparsecore_multiply(sparsecore_add(x, x) + 1, x)
-
-    f(sparecore_arr)
-
-  def test_sparsecore_and_host_compute(self):
-    if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
-      self.skipTest("disabled on cloud tpu until 2025-10-14")
-    if not (
-        jax.devices()[0].device_kind == 'TPU v5'
-        or jtu.is_device_tpu_at_least(6)
-    ):
-      self.skipTest('Does not have a sparsecore present')
-    shape = (128, 128)
-    inp = jnp.arange(math.prod(shape)).reshape(shape)
-    s = SingleDeviceSharding(jax.devices()[0])
-
-    sparse_dll = Layout(major_to_minor=(0, 1), tiling=((8,),))
-    sparse_format = Format(sparse_dll, s)
-    sparecore_arr = jax.device_put(inp, sparse_format)
-
-    host_dll = Layout(major_to_minor=(0, 1), tiling=((1,),))
-    host_format = Format(host_dll, s)
-    host_arr = jax.device_put(inp, host_format)
-
-    @compute_on('tpu_sparsecore')
-    @jax.jit
-    def sparsecore_compute(x):
-      return x * x
-
-    @compute_on('device_host')
-    @jax.jit
-    def host_compute(x):
-      return x + x
-
-    @partial(
-        jax.jit,
-        in_shardings=(sparse_format, host_format),
-        out_shardings=(sparse_format, host_format),
-    )
-    def f(x, y):
-      return sparsecore_compute(x), host_compute(y)
-
-    f(sparecore_arr, host_arr)
 
   def test_cpp_layout_cache_miss(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))

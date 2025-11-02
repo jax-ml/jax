@@ -68,8 +68,7 @@ from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    PmapSharding, NamedSharding, ShardingContext, SPMDAxisContext,
-    PartitionSpec as P, canonicalize_sharding, flatten_spec)
+    PmapSharding, NamedSharding, PartitionSpec as P, canonicalize_sharding, flatten_spec)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DType, DTypeLike, Shape
 from jax._src.util import (cache, canonicalize_axis,
                            safe_map, safe_zip, split_list, weakref_lru_cache,
@@ -3474,10 +3473,19 @@ def _delta(dtype: DTypeLike, shape: Shape, axes: Sequence[int]) -> Array:
 
 def _tri(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
+  offset = asarray(core.dimension_as_value(offset))
+  if not dtypes.issubdtype(offset, np.integer):
+    raise TypeError(f"offset must be an integer, got {offset!r}")
+  shape_dtype = lax_utils.int_dtype_for_shape(shape, signed=True)
+  if (
+      np.iinfo(offset.dtype).min < np.iinfo(shape_dtype).min
+      or np.iinfo(offset.dtype).max > np.iinfo(shape_dtype).max
+  ):
+    shape_dtype = np.dtype(np.int64)
   dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "tri")
-  bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0),
-                    asarray(core.dimension_as_value(offset)).astype(np.int32)),
-                broadcasted_iota(np.int32, shape, 1))
+  bool_tri = ge(add(broadcasted_iota(shape_dtype, shape, 0),
+                    offset.astype(shape_dtype)),
+                broadcasted_iota(shape_dtype, shape, 1))
   return convert_element_type_p.bind(bool_tri, new_dtype=dtype, weak_type=False,
                                      sharding=None)
 
@@ -6395,18 +6403,7 @@ def _ragged_dot_general_lower(
   if group_offset is not None:
     raise NotImplementedError('Unimplemented group_offset support.')
 
-  # TODO(pravnar): Remove this once we have sharding support.
-  def use_default_lowering():
-    if config.jax_ragged_dot_use_ragged_dot_instruction.value:
-      # Default lowering is via the pattern match, hence we return False.
-      return False
-    axis_context = ctx.module_context.axis_context
-    return (
-        isinstance(axis_context, SPMDAxisContext)
-        or isinstance(axis_context, ShardingContext)
-        and axis_context.num_devices > 1
-    )
-  if use_default_lowering():
+  if not config.jax_ragged_dot_use_ragged_dot_instruction.value:
     result = mlir.lower_fun(_ragged_dot_general_impl, multiple_results=False)(
         ctx, lhs, rhs, group_sizes,
         ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,

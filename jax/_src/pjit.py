@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Sequence, Iterable
-import dataclasses
+from dataclasses import dataclass, replace
 from functools import partial
 import inspect
 import logging
@@ -153,7 +153,7 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
   except stages.DeviceAssignmentMismatchError as e:
     fails, = e.args
     fun_name = getattr(fun, '__qualname__', getattr(fun, '__name__', str(fun)))
-    arg_types = map(partial(convert_to_lower_type, False), args_flat)
+    arg_types = map(convert_to_metaty, args_flat)
     msg = stages._device_assignment_mismatch_error(
         fun_name, fails, arg_types, 'jit', p.arg_names)
     raise ValueError(msg) from None
@@ -304,8 +304,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 @api_boundary
 def jit_trace(jit_func, *args, **kwargs) -> stages.Traced:
   p, args_flat = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs)
-  arg_types = map(partial(convert_to_lower_type, p.params['jaxpr'].is_high),
-                  args_flat)
+  arg_types = map(convert_to_metaty, args_flat)
   return stages.Traced(arg_types, p.params, p.in_tree, p.out_tree, p.consts)
 
 @api_boundary
@@ -1253,7 +1252,7 @@ def _qdd_cache_update(fun, in_type, i, consts, aval_qdds):
                   if aval_qdd.has_qdd])
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclass(frozen=True)
 class IgnoreKey:
   val: Any
   def __hash__(self):
@@ -1488,7 +1487,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
     if isinstance(pjit_in_s, UnspecifiedValue):
       resolved_in_shardings.append(finalize_arg_sharding(arg_s, committed))
     else:
-      if (arg.is_nd_array and not pjit_in_s.is_fully_replicated and  # type: ignore[union-attr]
+      if (arg.is_np_array and not pjit_in_s.is_fully_replicated and  # type: ignore[union-attr]
           xb.process_count() > 1):
         raise ValueError(
             'Passing non-trivial shardings for numpy '
@@ -1542,13 +1541,15 @@ def _resolve_and_lower(
 _pgle_profiler_dict = weakref.WeakKeyDictionary()  # type: ignore
 
 
-@dataclasses.dataclass(frozen=True)
-class LowerType:
+@dataclass(frozen=True)
+class MetaTy:
+  aval: Any
   sharding: Any
   format: Any
   committed: bool
-  aval: Any
-  is_nd_array: bool
+  is_np_array: bool
+
+  replace = replace  # type: ignore
 
   @property
   def shape(self):
@@ -1558,16 +1559,22 @@ class LowerType:
   def ndim(self):
     return self.aval.ndim
 
+@util.cache(max_size=4096, trace_context_in_key=False)
+def create_meta_ty(aval, arg_sharding, arg_format, arg_committed, is_np_array):
+  return MetaTy(aval, arg_sharding, arg_format, arg_committed, is_np_array)
 
-def convert_to_lower_type(is_high, arg):
-  if is_high:
-    return arg
+def convert_to_metaty(arg):
+  # TODO(yashkatariya): Remove this Tracer special case after
+  # getattr(Tracer, 'sharding') is fast.
+  if isinstance(arg, core.Tracer):
+    return create_meta_ty(arg.aval, None, None, True, False)
+  aval = core.shaped_abstractify(arg)
   arg_sharding = getattr(arg, 'sharding', None)
   arg_format = getattr(arg, 'format', None)
   arg_committed = getattr(arg, '_committed', True)
-  aval = core.shaped_abstractify(arg)
-  is_nd_array = isinstance(arg, np.ndarray)
-  return LowerType(arg_sharding, arg_format, arg_committed, aval, is_nd_array)
+  is_np_array = isinstance(arg, np.ndarray)
+  return create_meta_ty(aval, arg_sharding, arg_format, arg_committed,
+                        is_np_array)
 
 
 def _pjit_call_impl_python(
@@ -1597,7 +1604,7 @@ def _pjit_call_impl_python(
   compiler_options_kvs = compiler_options_kvs + tuple(pgle_compile_options.items())
   # Passing mutable PGLE profile here since it should be extracted by JAXPR to
   # initialize the fdo_profile compile option.
-  arg_types = map(partial(convert_to_lower_type, jaxpr.is_high), args)
+  arg_types = map(convert_to_metaty, args)
   computation = _resolve_and_lower(
       arg_types, jaxpr=jaxpr, in_shardings=in_shardings,
       out_shardings=out_shardings, in_layouts=in_layouts,

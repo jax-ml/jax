@@ -2691,6 +2691,23 @@ class OpsTest(PallasBaseTest):
     )
     np.testing.assert_array_equal(result, expected)
 
+  def test_delay(self):
+    if jtu.test_device_matches(["gpu"]):
+      if not use_mosaic_gpu:
+        self.skipTest("Delay is only implemented on the MGPU backend for GPUs.")
+    if self.INTERPRET:
+      self.skipTest("Not implemented in interpret mode.")
+    # This is mostly to test that the kernel compiles. It's difficult to
+    # test the exact timing of the delay.
+    def kernel(x_ref, o_ref):
+      pl.delay(100_000)
+      o_ref[...] = x_ref[...]
+    x = jax.random.normal(jax.random.key(0), (128,), dtype=jnp.float32)
+    result = pl.pallas_call(
+        kernel, out_shape=x,
+        interpret=self.INTERPRET)(x)
+    np.testing.assert_array_equal(result, x)
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True

@@ -31,6 +31,7 @@ limitations under the License.
 #include "mlir/IR/Visitors.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Support/WalkResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
@@ -138,9 +139,8 @@ FailureOr<TypedValue<VectorType>> relayout(
     auto safe_offsets = LayoutOffsets{
         src.offsets()[0].has_value() ? *src.offsets()[0] % safe_vreg_slice[0]
                                      : LayoutOffset(),
-        src.offsets()[1].has_value()
-            ? *src.offsets()[1] % safe_vreg_slice[1]
-            : 0,  // TODO(b/452689987): change to LayoutOffset() after resolved.
+        src.offsets()[1].has_value() ? *src.offsets()[1] % safe_vreg_slice[1]
+                                     : LayoutOffset(),
     };
     auto safe_src = VectorLayout(src.bitwidth(), safe_offsets, safe_tiling,
                                  dst.implicit_dim());
