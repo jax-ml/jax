@@ -273,6 +273,7 @@ def _tc_lowering_rule(
       internal_scratch_in_bytes=mosaic_params.internal_scratch_in_bytes,
       collective_id=mosaic_params.collective_id,
       has_side_effects=mosaic_params.has_side_effects,
+      allow_dce_side_effecting_op=mosaic_params.allow_dce_side_effecting_op,
       output_memory_spaces=output_memory_spaces,
       disable_bounds_checks=mosaic_params.disable_bounds_checks,
       input_memory_spaces=input_memory_spaces,

@@ -81,6 +81,8 @@ class CompilerParams(pallas_core.CompilerParams):
       that using the same collective_id does not guarantee that the same barrier
       semaphore will be allocated between kernels.
     has_side_effects: Set to True to prevent kernel being CSEd by XLA.
+    allow_dce_side_effecting_op: Set to True to allow XLA to DCE the kernel even
+      if it has side effects.
     flags: A dictionary of command line flags for the kernel.
     internal_scratch_in_bytes: The size of the internal scratch space used by
       Mosaic.
@@ -98,6 +100,7 @@ class CompilerParams(pallas_core.CompilerParams):
   vmem_limit_bytes: int | None = None
   collective_id: int | None = None
   has_side_effects: bool = False
+  allow_dce_side_effecting_op: bool = False
   flags: dict[str, Any] | None = None
   internal_scratch_in_bytes: int | None = None
   serialization_format: int = 1
@@ -114,6 +117,7 @@ class CompilerParams(pallas_core.CompilerParams):
       vmem_limit_bytes: int | None = None,
       collective_id: int | None = None,
       has_side_effects: bool = False,
+      allow_dce_side_effecting_op: bool = False,
       flags: Mapping[str, Any] | None = None,
       internal_scratch_in_bytes: int | None = None,
       serialization_format: int = 1,
@@ -136,6 +140,9 @@ class CompilerParams(pallas_core.CompilerParams):
     object.__setattr__(self, "vmem_limit_bytes", vmem_limit_bytes)
     object.__setattr__(self, "collective_id", collective_id)
     object.__setattr__(self, "has_side_effects", has_side_effects)
+    object.__setattr__(
+        self, "allow_dce_side_effecting_op", allow_dce_side_effecting_op
+    )
     object.__setattr__(
         self, "flags", None if flags is None else FrozenDict(flags)
     )
