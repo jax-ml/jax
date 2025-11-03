@@ -2205,7 +2205,7 @@ def _gather_transpose_rule(t, operand, indices, *, dimension_numbers,
   if type(t) is ad_util.Zero:
     out = ad_util.Zero(operand.aval)
   else:
-    zeros = lax.full(operand.aval.shape, 0, operand.aval.dtype,
+    zeros = lax.full(operand.aval.shape, 0, core.typeof(t).dtype,
                      sharding=operand.aval.sharding)
     zeros = core.pvary(zeros, tuple(operand.aval.vma))
     scatter_dnums = ScatterDimensionNumbers(
