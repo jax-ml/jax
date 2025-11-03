@@ -419,7 +419,7 @@ class MutableArrayTest(jtu.JaxTestCase):
 
    class DotOp:
      def __init__(self):
-       self.amax_history = core.new_ref(jnp.zeros(5,))
+       self.amax_history = core.new_ref(jnp.zeros(5,), kind='hogwild')
 
      def forward(self, x, y):
        out = jnp.dot(x, y)
@@ -462,7 +462,7 @@ class MutableArrayTest(jtu.JaxTestCase):
       return None, g
     stash_grads.defvjp(stash_grads_fwd, stash_grads_bwd)
 
-    grads_ref = core.new_ref(jnp.float32(0.))
+    grads_ref = core.new_ref(jnp.float32(0.), kind='hogwild')
     jax.grad(primal, 1)(grads_ref, jnp.float32(1.0))
     self.assertAllClose(grads_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
 
@@ -492,7 +492,7 @@ class MutableArrayTest(jtu.JaxTestCase):
       return None, g
     stash_grads.defvjp(stash_grads_fwd, stash_grads_bwd)
 
-    grads_ref = core.new_ref(jnp.float32(0.))
+    grads_ref = core.new_ref(jnp.float32(0.), kind='hogwild')
     jax.grad(primal, argnums=1)(grads_ref, jnp.float32(1.0))
     self.assertAllClose(grads_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
 
@@ -519,7 +519,7 @@ class MutableArrayTest(jtu.JaxTestCase):
       return None, g
     stash_grads.defvjp(stash_grads_fwd, stash_grads_bwd)
 
-    grads_ref = core.new_ref(jnp.float32(0.))
+    grads_ref = core.new_ref(jnp.float32(0.), kind='hogwild')
     x = jnp.float32(1.)
     _, f_vjp, *maybe_aux = vjp3(lambda x: primal(grads_ref, x), x,
                                has_aux=has_aux)
@@ -549,14 +549,14 @@ class MutableArrayTest(jtu.JaxTestCase):
       return None, g
     stash_grads.defvjp(stash_grads_fwd, stash_grads_bwd)
 
-    stash_ref = core.new_ref(jnp.float32(0.))
+    stash_ref = core.new_ref(jnp.float32(0.), kind='hogwild')
     _, f_vjp = vjp3(lambda x: primal(stash_ref, x), jnp.float32(1.))
     grads_val, = f_vjp(jnp.float32(1.))
     self.assertAllClose(stash_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
     self.assertAllClose(grads_val, jnp.cos(jnp.sin(1.)) * jnp.cos(1.),
                         check_dtypes=False)
 
-    stash_ref = core.new_ref(jnp.float32(0.))
+    stash_ref = core.new_ref(jnp.float32(0.), kind='hogwild')
     grads_ref = core.new_ref(jnp.float32(0.))
     _, f_vjp = vjp3(lambda x: primal(stash_ref, x), jnp.float32(1.))
     _ = f_vjp.with_refs(grads_ref)(jnp.float32(1.))

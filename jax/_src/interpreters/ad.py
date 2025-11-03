@@ -499,6 +499,8 @@ def backward_pass3(
 
   lin_eqns = []
   for eqn in jaxpr.eqns:
+    # TODO TODO this logic assumes all ref ops are linear, but some may be
+    # nonlinear
     if eqn.primitive.ref_primitive:
       v, = eqn.outvars
       lin_eqns.append(eqn)

@@ -646,6 +646,8 @@ def _get_transpose_fancy(g, ref_, *idx, **params):
 ad.fancy_transposes[get_p] = _get_transpose_fancy
 
 def _swap_transpose_fancy(g, ref_, x, *idx, **params):
+  try: ref_.ref
+  except: breakpoint()
   if ref_.ref is None and type(g) is ad_util.Zero:
     return
   elif ref_.ref is None:
@@ -675,16 +677,16 @@ def _array_ref_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     return eqn, eqn, [False], [True], res  # full remat
 pe.partial_eval_jaxpr_custom_rules[core.ref_p] = _array_ref_partial_eval_custom
 
-def _array_ref_batched(axis_data, vals_in, dims_in, memory_space):
+def _array_ref_batched(axis_data, vals_in, dims_in, memory_space, kind):
   val, = vals_in
   dim, = dims_in
   if dim is None:
     # We defensively batch the ref, b/c it could later be hit with a batched val
     val2 = batching.broadcast(val, axis_data.size, 0,
                               axis_data.explicit_mesh_axis)
-    return core.ref_p.bind(val2, memory_space=memory_space), 0
+    return core.ref_p.bind(val2, memory_space=memory_space, kind=kind), 0
   else:
-    return core.ref_p.bind(val, memory_space=memory_space), dim
+    return core.ref_p.bind(val, memory_space=memory_space, kind=kind), dim
 batching.fancy_primitive_batchers[core.ref_p] = _array_ref_batched
 
 def _freeze_batched(axis_data, vals_in, dims_in):
@@ -1069,27 +1071,26 @@ mlir.register_lowering(
 
 # === AD rules for mutable arrays ===
 
-def _mut_jvp(primals, tangents, *, memory_space):
-  (init_val,), (init_val_dot,) = primals, tangents
-  primal_out = core.ref_p.bind(init_val, memory_space=memory_space)
-  if type(init_val_dot) is ad_util.Zero:
-    tangent_out = core.ref_p.bind(
-        ad_util.zeros_like_aval(init_val_dot.aval), memory_space=memory_space)
+def _ref_jvp(primals, tangents, *, memory_space, kind):
+  (init_val,), (init_dot,) = primals, tangents
+  primal_out = core.ref_p.bind(init_val, memory_space=memory_space, kind=kind)
+  if type(init_dot) is ad_util.Zero:
+    zero = ad_util.zeros_like_aval(init_dot.aval)
+    tangent_out = core.ref_p.bind(zero, memory_space=memory_space, kind=kind)
   else:
-    tangent_out = core.ref_p.bind(init_val_dot,
-                                            memory_space=memory_space)
+    tangent_out = core.ref_p.bind(init_dot, memory_space=memory_space, kind=kind)
   return primal_out, tangent_out
 
-def _mut_lin(nzs, x, *, memory_space):
+def _ref_lin(nzs, x, *, memory_space, kind):
   nz, = nzs
-  x_ref = core.ref_p.bind(x, memory_space=memory_space)
+  x_ref = core.ref_p.bind(x, memory_space=memory_space, kind=kind)
   def mut_lin(_, x_dot):
-    return core.ref_p.bind(ad_util.instantiate(x_dot),
-                                     memory_space=memory_space)
+    zero = ad_util.instantiate(x_dot)
+    return core.ref_p.bind(zero, memory_space=memory_space, kind=kind)
   return x_ref, True, None, mut_lin
 
-ad.primitive_jvps[core.ref_p] = _mut_jvp
-ad.primitive_linearizations[core.ref_p] = _mut_lin
+ad.primitive_jvps[core.ref_p] = _ref_jvp
+ad.primitive_linearizations[core.ref_p] = _ref_lin
 # TODO(mattjj): lin rule for freeze and accum_grad_in_ref?
 ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))
 ad.defjvp(core.accum_grad_in_ref_p, lambda g, _: core.accum_grad_in_ref_p.bind(g))

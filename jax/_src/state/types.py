@@ -395,11 +395,13 @@ class AbstractRef(core.AbstractValue):
 
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
-  __slots__ = ["inner_aval", "memory_space"]
+  __slots__ = ["inner_aval", "memory_space", "kind"]
 
-  def __init__(self, inner_aval: core.AbstractValue, memory_space: Any = None):
+  def __init__(self, inner_aval: core.AbstractValue, memory_space: Any = None,
+               kind: Any = None):
     self.inner_aval = inner_aval
     self.memory_space = memory_space
+    self.kind = kind
 
   @property
   def is_high(self):

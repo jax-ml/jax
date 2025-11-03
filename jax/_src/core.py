@@ -2672,7 +2672,7 @@ class ArrayRefImpl:
 pytype_aval_mappings[Ref] = lambda x: x._aval
 dtypes.canonicalize_value_handlers[Ref] = lambda x: x
 
-def new_ref(init_val, *, memory_space: Any = None):
+def new_ref(init_val, *, memory_space: Any = None, kind: Any = None):
   """Create a mutable array reference with initial value ``init_val``.
 
   For more discussion, see the `Ref guide`_.
@@ -2687,12 +2687,12 @@ def new_ref(init_val, *, memory_space: Any = None):
 
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
-  return ref_p.bind(init_val, memory_space=memory_space)
+  return ref_p.bind(init_val, memory_space=memory_space, kind=kind)
 ref_p = Primitive('new_ref')
 ref_p.is_effectful = lambda params: True  # type: ignore
 ref_p.ref_primitive = True
 
-ref_p.is_high = lambda aval, *, memory_space: aval.is_high  # type: ignore
+ref_p.is_high = lambda aval, *, memory_space, kind: aval.is_high  # type: ignore
 def _ref_to_lojax(init_val, *, memory_space):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   val_ty = typeof(init_val)
@@ -2710,13 +2710,13 @@ effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
 effects.remat_allowed_effects.add_type(InternalMutableArrayEffect)
 
 @ref_p.def_effectful_abstract_eval
-def array_ref_abstract_eval(init_aval, *, memory_space: Any):
+def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   return (AbstractRef(init_aval, memory_space=memory_space),
           {internal_mutable_array_effect})
 
 @ref_p.def_impl
-def _array_ref_impl(init_val, *, memory_space: Any):
+def _ref_impl(init_val, *, memory_space: Any, kind: Any):
   if memory_space is not None:
     raise NotImplementedError(
         "array ref with memory space only works inside of a `jit`.")
