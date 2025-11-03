@@ -2101,7 +2101,7 @@ class PallasCallTest(PallasBaseTest):
       pl.Buffered(1),
       pl.Buffered(2),
   ])
-  def test_vmem_oom_error_message_basics(self, pmode):
+  def test_vmem_oom_error_message_basics(self, pmode: pl.Buffered):
     if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
       self.skipTest('Support added on Oct 14, 2025')
 
@@ -2152,11 +2152,13 @@ class PallasCallTest(PallasBaseTest):
         f' full shape is f32[{shape[0]},{shape[1]}].',
         error_message,
     )
-    # When VMEM is OOM, double buffering is disabled.
-    self.assertIn(
-        'This allocation is single buffered.',
-        error_message,
-    )
+    if jtu.if_cloud_tpu_at_least(2025, 11, 5):
+      self.assertIn(
+          'This allocation is single buffered.'
+          if pmode.buffer_count == 1
+          else 'This allocation has 2 buffering levels',
+          error_message,
+      )
 
   def test_vmem_oom_error_message_dynamic_grid_scalar_prefetch_and_vmem_scratch(
       self,
