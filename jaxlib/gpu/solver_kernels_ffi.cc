@@ -539,7 +539,7 @@ ffi::Error Syevd64Impl(int64_t batch, int64_t n, gpuStream_t stream,
                        IsSyevBatchedSupported());
   if (is_batched_syev_supported) {
     int64_t matrix_size = n * n * ffi::ByteWidth(dataType);
-    batch_step = std::numeric_limits<int>::max() / matrix_size;
+    batch_step = std::max(int64_t(1), std::numeric_limits<int>::max() / matrix_size);
     if (batch_step >= 32 * 1024) {
       batch_step = 32 * 1024;
     }
