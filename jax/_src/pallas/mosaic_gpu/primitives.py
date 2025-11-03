@@ -1906,6 +1906,9 @@ def _commit_tmem_abstract_eval():
 
 
 @lowering.register_lowering_rule(commit_tmem_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(
+    commit_tmem_p, mgpu.LoweringSemantics.Warpgroup
+)
 def _commit_tmem_lowering(_):
   tcgen05.commit_tmem()
   return ()
@@ -3001,6 +3004,30 @@ def _async_load_tmem_lowering_rule(
   return x_tmem.load(layout=layout_hint, is_signed=is_signed)
 
 
+@lowering.register_lowering_rule(
+    async_load_tmem_p, mgpu.LoweringSemantics.Warpgroup
+)
+def _async_load_tmem_lowering_rule_wg(
+    ctx: lowering.LoweringRuleContext, x_ref: ir.Value, *leaves, tree
+):
+  assert isinstance(x_ref, ir.Value)
+  assert ir.MemRefType.isinstance(x_ref.type)
+
+  transforms = jax.tree.unflatten(tree, leaves)
+  x_tmem, transforms = lowering._handle_transforms(
+      ctx,
+      x_ref,
+      transforms,
+      handle_transposes=False,
+      handle_reshapes=False,
+  )
+  if transforms:
+    raise NotImplementedError(
+        f"Unimplemented transforms for TMEM refs. {transforms=}"
+    )
+  return mgpu.dialect.async_load_tmem(x_tmem)
+
+
 wait_load_tmem_p = jax_core.Primitive("wait_load_tmem")
 wait_load_tmem_p.multiple_results = True
 
@@ -3072,6 +3099,37 @@ def _async_store_tmem_lowering_rule(
         f"Unimplemented transforms for TMEM refs. {transforms=}"
     )
   x_tmem.store(value)
+  return ()
+
+
+@lowering.register_lowering_rule(
+    async_store_tmem_p, mgpu.LoweringSemantics.Warpgroup
+)
+def _async_store_tmem_lowering_rule_wg(
+    ctx: lowering.LoweringRuleContext,
+    x_ref: ir.Value,
+    value: ir.Value,
+    *leaves,
+    tree,
+):
+  assert isinstance(x_ref, ir.Value)
+  assert ir.MemRefType.isinstance(x_ref.type)
+  assert isinstance(value, ir.Value)
+  assert ir.VectorType.isinstance(value.type)
+
+  transforms = jax.tree.unflatten(tree, leaves)
+  x_tmem, transforms = lowering._handle_transforms(
+      ctx,
+      x_ref,
+      transforms,
+      handle_transposes=False,
+      handle_reshapes=False,
+  )
+  if transforms:
+    raise NotImplementedError(
+        f"Unimplemented transforms for TMEM refs. {transforms=}"
+    )
+  mgpu.dialect.async_store_tmem(value, x_tmem)
   return ()
 
 

@@ -677,6 +677,22 @@ llvm::LogicalResult TmemLayoutCastOp::verify() {
   return VerifyTmemRefType(getOperation(), getRef().getType());
 }
 
+llvm::LogicalResult SliceTmemOp::verify() {
+  if (VerifyTmemRefType(getOperation(), getSource().getType()).failed() ||
+      VerifyTmemRefType(getOperation(), getResult().getType()).failed()) {
+    return llvm::failure();
+  }
+  if (getOffset() % 4 != 0) {
+    return emitError() << "The offset must be a multiple of 4 but got: "
+                       << getOffset();
+  }
+  // TODO(allanrenucci): We can't precisely compute the number of columns in
+  // source/result because we need to know packing. We can however assume
+  // packing is either 1 (unpacked) or 32 / element_bitwidth (fully packed) and
+  // reject some invalid slices.
+  return llvm::success();
+}
+
 void MosaicGPUDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST

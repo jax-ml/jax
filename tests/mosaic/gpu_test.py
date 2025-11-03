@@ -5266,6 +5266,53 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
           thread_semantics=mgpu.LoweringSemantics.Warpgroup,
       )
 
+  def test_slice_tmem(self):
+    def tmem_type(ref: ir.Value):
+      return ir.MemRefType.get(
+          ref.type.shape, ref.type.element_type, memory_space=utils.tmem()
+      )
+
+    def body(ctx, x, y, x_out, y_out, tmem):
+      del ctx
+      x_tmem = mgpu_dialect.slice_tmem(tmem_type(x), tmem, offset=0)
+      y_tmem = mgpu_dialect.slice_tmem(tmem_type(y), tmem, offset=128)
+      x_layout = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=2))
+      x_tmem = mgpu_dialect.tmem_layout_cast(x_tmem, x_layout)
+      y_layout = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=1))
+      y_tmem = mgpu_dialect.tmem_layout_cast(y_tmem, y_layout)
+
+      # GMEM -> Registers -> TMEM
+      x_reg = vector_load(x)
+      y_reg = vector_load(y)
+      mgpu_dialect.async_store_tmem(x_reg, x_tmem)
+      mgpu_dialect.async_store_tmem(y_reg, y_tmem)
+      tcgen05.commit_tmem()
+
+      # TMEM -> Registers -> GMEM
+      x_reg = mgpu_dialect.async_load_tmem(x_tmem)
+      y_reg = mgpu_dialect.async_load_tmem(y_tmem)
+      vector_store(x_reg, x_out)
+      vector_store(y_reg, y_out)
+
+    in_out_shapes = (
+        jax.ShapeDtypeStruct((128, 128), jnp.bfloat16),
+        jax.ShapeDtypeStruct((128, 64), jnp.int32),
+    )
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=in_out_shapes,
+        out_shape=in_out_shapes,
+        smem_scratch_shape=mgpu.TMEM((128, 512), jnp.int32),
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+    x = self.prng.uniform(-100, 100, (128, 128)).astype(jnp.bfloat16)
+    y = self.prng.uniform(-100, 100, (128, 64)).astype(jnp.int32)
+    x_out, y_out = kernel(x, y)
+    self.assertArraysEqual(x_out, x)
+    self.assertArraysEqual(y_out, y)
+
 
 class UtilsTest(TestCase):
   @parameterized.parameters(

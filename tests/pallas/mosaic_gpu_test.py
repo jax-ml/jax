@@ -2727,10 +2727,7 @@ class PallasCallWGTest(
         mgpu_primitives.tcgen05_commit_arrive_p,
         mgpu_primitives.async_copy_scales_to_tmem_p,
         mgpu_primitives.async_copy_sparse_metadata_to_tmem_p,
-        mgpu_primitives.async_load_tmem_p,
-        mgpu_primitives.async_store_tmem_p,
         mgpu_primitives.wait_load_tmem_p,
-        mgpu_primitives.commit_tmem_p,
         mgpu_primitives.semaphore_signal_parallel_p,
         mgpu_primitives.semaphore_signal_multicast_p,
         mgpu_primitives.try_cluster_cancel_p,
@@ -3198,7 +3195,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
 
   @parameterized.parameters((False,), (True,))
   def test_tmem(self, collective):
-    self.skip_if_wg_semantics()  # TMEM read not wired up in the WG get rule.
     transforms = self.default_transforms(dtype=jnp.float32)
     @functools.partial(
         self.kernel,
@@ -3241,7 +3237,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
 
     All of the refs below are packed and should fit into TMEM at once.
     """
-    self.skip_if_wg_semantics()  # TMEM read not wired up in the WG get rule.
     transforms = self.default_transforms(dtype=jnp.bfloat16)
     @functools.partial(
         self.kernel,
@@ -3330,7 +3325,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
       plgpu.Layout.TCGEN05, plgpu.Layout.TCGEN05_TMEM_NATIVE
   )
   def test_tmem_load_layout(self, layout):
-    self.skip_if_wg_semantics()  # TMEM read not wired up in the WG get rule.
+    self.skip_if_wg_semantics()  # TiledLayout replication not supported yet.
     transforms = self.default_transforms(dtype=jnp.float32)
     @functools.partial(
         self.kernel,

@@ -1938,6 +1938,27 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
+  def test_infer_tmem_layout_for_slice_tmem_op(self):
+    # in and out layouts can be different.
+    in_layout = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=1))
+    out_layout = layouts.to_layout_attr(tcgen05.tmem_default_layout(packing=2))
+    with ir.InsertionPoint(self.module.body):
+      i32 = ir.IntegerType.get_signless(32)
+      src_tmem_type = ir.MemRefType.get(
+          (128, 512), i32, memory_space=mgpu.utils.tmem()
+      )
+      [src] = undefs(src_tmem_type)
+      src = mgpu.dialect.tmem_layout_cast(src, in_layout)
+      dst_tmem_type = ir.MemRefType.get(
+          (128, 64), ir.BF16Type.get(), memory_space=mgpu.utils.tmem()
+      )
+      op = mgpu.dialect.SliceTmemOp(dst_tmem_type, src, 64)
+      mgpu.dialect.tmem_layout_cast(op.result, out_layout)
+
+    mgpu.infer_layout(self.module)
+    self.checkInTmemLayouts(op, [in_layout])
+    self.checkOutTmemLayouts(op, [out_layout])
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
