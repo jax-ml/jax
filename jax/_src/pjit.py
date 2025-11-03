@@ -633,7 +633,6 @@ def _infer_params(
 def _infer_params_internal(
     fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
   ) -> tuple[PjitParams, list[Any]]:
-  logging.info("infer_params fun: %s", fun)
   ctx_mesh = mesh_lib.get_concrete_mesh()
   dbg_fn = lambda: debug_info(
       'jit', fun, args, kwargs, static_argnums=ji.static_argnums,

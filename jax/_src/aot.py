@@ -63,6 +63,7 @@ def component_abstract_eval(
   *args, fun: Callable[..., Any], component_key: ComponentKey
 ) -> Sequence[core.AbstractValue] | None:
   entry = aot_util.get_entry(component_key)
+  logging.info('component_abstract_eval got entry %s', component_key)
   if entry is None:
     traced = aot_util.get_traced(component_key, fun, *args)
     avals_out = tree_util.tree_map(
@@ -77,6 +78,7 @@ def component_lowering(
 ) -> Sequence[ir.Value]:
   with ctx.module_context.context as ir_ctx:
     entry = aot_util.get_entry(component_key, ir_ctx)
+  logging.info('component_lowering got entry %s', component_key)
   if entry is None:
     raise ValueError("Should hit abstract_eval already, which would populate.")
 
@@ -113,7 +115,7 @@ def component_lowering(
     # rid of the submodule context before merging. Could we just create it with
     # the right context?
     entry.module = module = ir.Module.parse(mlir.module_to_bytecode(module))
-    aot_util.put_entry(component_key, entry)
+    aot_util.put_entry(component_key, entry, update=True)
 
   symtab = ir.SymbolTable(module.operation)
   module = mlir.merge_mlir_modules(

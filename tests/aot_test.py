@@ -274,6 +274,13 @@ class ComponentTest(jtu.JaxTestCase):
       aot.clear_caches()
       jax.clear_caches()
 
+  # NOTE(dsuo): Disable checks because otherwise we check jaxprs in (at least)
+  # four places and makes reasoning about cache hits and misses harder.
+  # 1. After the initial abstract eval.
+  # 2. Before converting const vars.
+  # 3. After lifting the jaxpr.
+  # 4. After DCE.
+  @config.enable_checks(False)
   def test_component_lowering_cache_hit(self):
     with self.make_in_memory_cache():
       cache = aot.get_cache()
@@ -282,9 +289,11 @@ class ComponentTest(jtu.JaxTestCase):
         return x + 1.0
 
       self.assertEqual(f(1.0), 2.0)
+      self.assertEqual(cache.keys(), [f.component_key])
       # We get 1 hit on traced cache during the lowering rule.
       self.assertEqual(aot_util._traced_cache[f.component_key].hits, 1)
-      # self.assertEqual(cache.keys(), ['f.abstract_eval', 'f.lowering'])
+      # We get 1 hit on the disk cache during the lowering rule.
+      self.assertEqual(cache.info(f.component_key)['hits'], 1)
 
       @aot.component(key='f')
       def g(x):
@@ -293,10 +302,12 @@ class ComponentTest(jtu.JaxTestCase):
       self.assertEqual(g(1.0), 2.0)
       # We get 1 hit for component cache and so we don't even check traced
       # cache.
-      self.assertEqual(cache.hits(f.component_key), 1)
-      traced_key = aot_util.make_abstract_eval_key(aot_util.ComponentKey('f'))
-      self.assertEqual(aot_util._traced_cache[traced_key].hits, 1)
+      self.assertEqual(aot_util._traced_cache[f.component_key].hits, 1)
+      # We get two additional hits on the disk cache during abstract eval and
+      # lowering for g.
+      self.assertEqual(cache.info(f.component_key)['hits'], 3)
 
+  @config.enable_checks(False)
   def test_component_call_in_function(self):
     with self.make_in_memory_cache():
       cache = aot.get_cache()
@@ -308,12 +319,14 @@ class ComponentTest(jtu.JaxTestCase):
       def g(x):
         return f(x) + 1.0
 
+      # 1 hit when lowering f.
       self.assertEqual(f(1.0), 2.0)
+      # 1 hit when lowering g. Why no abstract eval?
       self.assertEqual(g(1.0), 3.0)
-      self.assertEqual(cache.hits(f.component_key), 1)
-      traced_key = aot_util.make_abstract_eval_key(aot_util.ComponentKey('f'))
+      self.assertEqual(cache.info(f.component_key)['hits'], 2)
       self.assertEqual(aot_util._traced_cache[f.component_key].hits, 1)
 
+  @config.enable_checks(False)
   def test_explicit_cached_lowering(self):
     with self.make_in_memory_cache():
       cache = aot.get_cache()
@@ -323,14 +336,16 @@ class ComponentTest(jtu.JaxTestCase):
         return x + 1.0
 
       lowered = f.lower(jax.ShapeDtypeStruct((), 'float32'))
-      self.assertEqual(cache.keys(), ['f.abstract_eval', 'f.lowering'])
+      self.assertEqual(cache.keys(), [f.component_key])
 
       @aot.component(key='f')
       def g(x):
         raise NotImplementedError
       lowered = g.lower(jax.ShapeDtypeStruct((), 'float32'))
-      self.assertEqual(cache.get('f.lowering').hits, 1)
+      self.assertEqual(cache.info(f.component_key)['hits'], 3)
+      self.assertEqual(aot_util._traced_cache[f.component_key].hits, 1)
 
+  @config.enable_checks(False)
   def test_vmap_of_component(self):
       with self.make_in_memory_cache():
         cache = aot.get_cache()

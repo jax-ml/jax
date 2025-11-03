@@ -15,6 +15,7 @@
 
 from collections.abc import Hashable
 import pickle
+import traceback
 from typing import Any, Callable, NamedTuple, Self, Sequence
 
 from absl import logging
@@ -83,11 +84,9 @@ class CacheEntry:
     self,
     avals_out: Sequence[core.AbstractValue] | None,
     module: ir.Module | None = None,
-    hits: int = 0,
   ):
     self.avals_out = avals_out
     self.module = module
-    self.hits = hits
 
   def serialize(self) -> SerializedType:
     module_bytecode = None
@@ -96,7 +95,9 @@ class CacheEntry:
     return pickle.dumps((self.avals_out, module_bytecode))
 
   @classmethod
-  def deserialize(cls, blob: SerializedType, ctx: ir.Context | None = None) -> Self:
+  def deserialize(
+    cls, blob: SerializedType, ctx: ir.Context | None = None
+  ) -> Self:
     avals_out, module_bytecode = pickle.loads(blob)
     if module_bytecode is None or ctx is None:
       module = None
@@ -111,49 +112,59 @@ class Cache(NamedTuple):
   put: Callable[[ComponentKey, bytes], None]
   keys: Callable[[], list[ComponentKey]]
   clear: Callable[[], None]
-  hits: Callable[[ComponentKey], int]
+  info: Callable[[ComponentKey], dict[str, Any]]
 
 
 _in_memory_cache: dict[ComponentKey, SerializedType] = {}
-_in_memory_cache_hits: dict[ComponentKey, int] = {}
+_in_memory_cache_info: dict[ComponentKey, dict[str, Any]] = {}
 
 
 def make_in_memory_cache():
   def get(key: ComponentKey) -> SerializedType | None:
-    logging.info('getting key')
-    hits = _in_memory_cache_hits.setdefault(key, -1)
-    _in_memory_cache_hits[key] += 1
-    return _in_memory_cache.get(key, None)
+    entry = _in_memory_cache.get(key, None)
+    if entry is None:
+      _in_memory_cache_info[key] = dict(hits=0)
+    else:
+      _in_memory_cache_info[key] = dict(
+        hits=_in_memory_cache_info[key]["hits"] + 1
+      )
+    return entry
 
-  def put(key: ComponentKey, data: SerializedType):
+  def put(key: ComponentKey, data: SerializedType, update: bool):
     _in_memory_cache[key] = data
+    if not update:
+      _in_memory_cache_info[key] = dict(hits=0)
 
   def keys() -> list[ComponentKey]:
     return list(_in_memory_cache.keys())
 
-  def clear():
+  def clear() -> None:
     _in_memory_cache.clear()
-    _in_memory_cache_hits.clear()
+    _in_memory_cache_info.clear()
 
-  def hits(key: ComponentKey):
-    if key not in _in_memory_cache_hits:
-      raise ValueError(f"key {key} not found in cache hits")
-    return _in_memory_cache_hits[key]
+  def info(key: ComponentKey) -> dict[str, Any]:
+    if key not in _in_memory_cache_info:
+      raise ValueError(f"`{key}` not found in _in_memory_cache_info")
+    return _in_memory_cache_info[key]
 
-  return Cache(get, put, keys, clear, hits)
+  return Cache(get, put, keys, clear, info)
 
 
 def get_cache() -> Cache | None:
   return component_cache.value
 
 
-def get_entry(key: ComponentKey, ctx: ir.Context | None = None) -> CacheEntry | None:
+def get_entry(
+  key: ComponentKey, ctx: ir.Context | None = None
+) -> CacheEntry | None:
   if (cache := get_cache()) is not None:
     if (blob := cache.get(key)) is not None:
       return CacheEntry.deserialize(blob, ctx)
   return None  # sigh pytype
 
 
-def put_entry(key: ComponentKey, entry: CacheEntry) -> None:
+def put_entry(
+  key: ComponentKey, entry: CacheEntry, update: bool = False
+) -> None:
   if (cache := get_cache()) is not None:
-    cache.put(key, entry.serialize())
+    cache.put(key, entry.serialize(), update)
