@@ -2059,27 +2059,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     dtype=default_dtypes,
     n=[0, 4],
     m=[None, 0, 1, 3, 4],
-    k=[*range(-4, 4), -2**33, 2**33],
+    k=[*range(-4, 4), -2**33, 2**33, np.array(2, np.int32), np.array(2**60, np.int64)],
   )
   def testEye(self, n, m, k, dtype):
-    np_fun = lambda: np.eye(n, M=m, k=k, dtype=dtype)
-    jnp_fun = lambda: jnp.eye(n, M=m, k=k, dtype=dtype)
-    args_maker = lambda: []
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
-    self._CompileAndCheck(jnp_fun, args_maker)
-
-  @jtu.sample_product(
-    dtype=default_dtypes,
-    n=[0, 4],
-    m=[None, 0, 1, 3, 4],
-    k=[*range(-4, 4), np.array(2, np.int32), np.array(2**33, np.int64)],
-  )
-  def testEyeDynamicK(self, n, m, k, dtype):
     np_fun = lambda k: np.eye(n, M=m, k=k, dtype=dtype)
     jnp_fun = lambda k: jnp.eye(n, M=m, k=k, dtype=dtype)
     args_maker = lambda: [k]
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
-    self._CompileAndCheck(jnp_fun, args_maker)
+    if not config.enable_x64.value and (
+        k < np.iinfo(np.int32).min or k > np.iinfo(np.int32).max
+    ):
+      with self.assertRaises(OverflowError):
+        jnp_fun(k)
+    else:
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+      self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
     dtype=default_dtypes,
