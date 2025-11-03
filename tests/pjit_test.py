@@ -9514,6 +9514,21 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(grad.shape, tokens.shape)
     self.assertEqual(grad.sharding, tokens.sharding)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_auto_axes_inside_scan(self, mesh):
+    def f(params, x):
+      @jax.sharding.auto_axes(out_sharding=jax.P())
+      def model(x):
+        return params * x
+
+      def body(c, _):
+        return model(c), ()
+
+      y = jax.lax.scan(body, x, None, length=3)[0]
+      return y
+
+    jax.jit(jax.grad(f))(1., 2.)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

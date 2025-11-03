@@ -45,6 +45,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src import sharding_impls as sharding
+from jax._src.mesh import use_abstract_mesh
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import windowed_reductions
@@ -506,15 +507,22 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
 
   def body_fun(while_carry):
     i_, carry, yss = while_carry
-    i = num_trips - i_ - 1 if reverse else i_
-    xs = [slicing.dynamic_index_in_dim(xs, i, keepdims=False,
-                                       allow_negative_indices=False)
-          for xs in xss]
+    with use_abstract_mesh(core.typeof(i_).sharding.mesh):
+      i = num_trips - i_ - 1 if reverse else i_
+    xs = []
+    for x in xss:
+      with use_abstract_mesh(core.typeof(x).sharding.mesh):
+        o = slicing.dynamic_index_in_dim(
+            x, i, keepdims=False, allow_negative_indices=False)
+      xs.append(o)
     carry, ys = inner(unroll, carry, xs)
-    yss = [slicing.dynamic_update_index_in_dim(y, upd, i, 0,
-                                               allow_negative_indices=False)
-           for y, upd in zip(yss, ys)]
-    return i_ + 1, carry, yss
+    out_yss = []
+    for y, upd in zip(yss, ys):
+      with use_abstract_mesh(core.typeof(y).sharding.mesh):
+        o = slicing.dynamic_update_index_in_dim(
+            y, upd, i, 0, allow_negative_indices=False)
+      out_yss.append(o)
+    return i_ + 1, carry, out_yss
 
   def cond_fun(while_carry):
     i, _, _ = while_carry
@@ -560,7 +568,8 @@ def _empty_array(prefix, length_spec, aval):
   # return core.pvary(empty, tuple(aval.vma))
   empty = core.pvary(lax.empty2(aval.dtype, memory_space=aval.memory_space),
                      tuple(aval.vma))
-  out = lax.broadcast(empty, (*prefix, *aval.shape), out_sharding=sharding)
+  with use_abstract_mesh(sharding.mesh):
+    out = lax.broadcast(empty, (*prefix, *aval.shape), out_sharding=sharding)
   return out
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
