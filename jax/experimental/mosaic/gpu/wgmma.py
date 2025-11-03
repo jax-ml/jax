@@ -330,6 +330,9 @@ def wgmma(
           f"Only f16, bf16 and i8 are supported for A in registers, got {element_type2}"
       )
     if element_type2 == i8 and swizzle == 32:
+      # TODO(bchetioui): relax this when ptxas is fixed. As of ptxas 12.8,
+      # optimizations eliminate MMA instructions, leading to only the first tile
+      # of the result being computed correctly.
       raise NotImplementedError("swizzle=32 not supported for s8 lhs in registers")
   elif ir.MemRefType.isinstance(a.type):
     (m, k2), element_type2 = mma_utils.tiled_memref_shape(a)

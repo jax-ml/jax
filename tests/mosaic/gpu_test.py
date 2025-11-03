@@ -1026,7 +1026,9 @@ class WGMMATest(TestCase):
       swizzle=(32, 64, 128),
   )
   def test_wgmma_reg_lhs_int8(self, m, n, k_steps, swizzle):
-    # TODO(bchetioui): figure out what's going wrong here.
+    # TODO(bchetioui): relax this when ptxas is fixed. As of ptxas 12.8,
+    # optimizations eliminate MMA instructions, leading to only the first tile
+    # of the result being computed correctly.
     if swizzle == 32:
       self.skipTest("32-bit swizzle not supported for int8")
     self._test_wgmma_reg_lhs(
