@@ -153,52 +153,33 @@ def clear_event_listeners():
   _scalar_listeners = []
 
 
-def _unregister_event_duration_listener_by_callback(
-    callback: EventDurationListenerWithMetadata) -> None:
-  """Unregister an event duration listener by callback.
-
-  This function is supposed to be called for testing only.
-  """
+def unregister_event_duration_listener(
+    callback: EventDurationListenerWithMetadata,
+) -> None:
+  """Unregister an event duration listener by callback."""
   assert callback in _event_duration_secs_listeners
   _event_duration_secs_listeners.remove(callback)
 
-def _unregister_event_duration_listener_by_index(index: int) -> None:
-  """Unregister an event duration listener by index.
 
-  This function is supposed to be called for testing only.
-  """
-  size = len(_event_duration_secs_listeners)
-  assert -size <= index < size
-  del _event_duration_secs_listeners[index]
-
-
-def _unregister_event_time_span_listener_by_callback(
+def unregister_event_time_span_listener(
     callback: EventTimeSpanListenerWithMetadata,
 ) -> None:
-  """Unregister an event time span listener by callback.
-
-  This function is supposed to be called for testing only.
-  """
+  """Unregister an event time span listener by callback."""
   assert callback in _event_time_span_listeners
   _event_time_span_listeners.remove(callback)
 
 
-def _unregister_event_listener_by_callback(
-    callback: EventListenerWithMetadata) -> None:
-  """Unregister an event listener by callback.
-
-  This function is supposed to be called for testing only.
-  """
+def unregister_event_listener(
+    callback: EventListenerWithMetadata,
+) -> None:
+  """Unregister an event listener by callback."""
   assert callback in _event_listeners
   _event_listeners.remove(callback)
 
 
-def _unregister_scalar_listener_by_callback(
+def unregister_scalar_listener(
     callback: ScalarListenerWithMetadata,
 ) -> None:
-  """Unregister a scalar event listener by callback.
-
-  This function is supposed to be called for testing only.
-  """
+  """Unregister a scalar event listener by callback."""
   assert callback in _scalar_listeners
   _scalar_listeners.remove(callback)
