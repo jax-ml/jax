@@ -472,7 +472,8 @@ class MosaicGridMapping:
     )
     if len(user_grid) != len(dimension_semantics):
       raise ValueError(
-          "Must have dimension semantics for each dimension of the grid."
+          "Length of grid does not match length of dimension semantics."
+          f" len(grid)={len(user_grid)}, {len(dimension_semantics)=}"
       )
     assert len(self.vmapped_dims) + len(dimension_semantics) == len(
         self.grid
