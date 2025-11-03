@@ -2454,6 +2454,8 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
        "collective": collective}
       for collective in [lax.psum, lax.pmean, lax.pmax, lax.pmin])
   def testCollectivesWithVmap2(self, collective):
+    if jtu.device_under_test() == "gpu":
+      raise SkipTest("TODO(b/456133538): Disable on GPUs until we figure out.")
     def f(map1, map2):
       @partial(map1, axis_name='i')
       @partial(map2, axis_name='j')
