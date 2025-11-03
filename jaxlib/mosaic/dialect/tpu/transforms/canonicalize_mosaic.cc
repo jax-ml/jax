@@ -1370,6 +1370,32 @@ FailureOr<Value> canonicalize_sitofp(const CanonicalizeContext &ctx,
     return new_op;
   }
 
+  // We have low-level optimized code for s8->f8 casts on v7.
+  if (ctx.hardware_generation >= 7 && is_vector &&
+      src_vty.getElementType().isSignlessInteger(8) &&
+      isa<Float8E5M2Type, Float8E4M3FNType>(dst_vty.getElementType())) {
+    Value new_op = builder.create<tpu::SIToFPOp>(
+        VectorType::get(src_vty.getShape(), dst_vty.getElementType()),
+        op.getIn(), tpu::RoundingMode::kToNearestEven);
+    op.replaceAllUsesWith(new_op);
+    op.erase();
+    return new_op;
+  }
+
+  // Convert s4->f8 casts to s4->s8->f8 on v7 so that we can use the optimized
+  // s8->f8 code path above.
+  if (ctx.hardware_generation >= 7 && is_vector &&
+      src_vty.getElementType().isSignlessInteger(4) &&
+      isa<Float8E5M2Type, Float8E4M3FNType>(dst_vty.getElementType())) {
+    Value new_op = builder.create<arith::ExtSIOp>(
+        VectorType::get(src_vty.getShape(), builder.getI8Type()), op.getIn());
+    new_op = builder.create<arith::SIToFPOp>(
+        VectorType::get(src_vty.getShape(), dst_vty.getElementType()), new_op);
+    op.replaceAllUsesWith(new_op);
+    op.erase();
+    return new_op;
+  }
+
   if (src_bitwidth == 32 && dst_bitwidth == 32) {
     return raw_op.getResult(0);
   }
