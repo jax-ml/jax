@@ -889,6 +889,19 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
+  def test_layout_of_wgmma_layout_to_wgmma_row_layout_raises(self):
+    with ir.InsertionPoint(self.module.body):
+      [ref] = undefs(ir.VectorType.get((128, 128), ir.F32Type.get()))
+      wgmma_layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+      wgmma_row_layout = layouts.to_layout_attr(fa.WGMMA_ROW_LAYOUT)
+      ref = mgpu.dialect.layout_cast(ref, wgmma_layout)
+      mgpu.dialect.layout_cast(ref, wgmma_row_layout)
+
+    with self.assertRaisesRegex(
+        ValueError, "user-provided layout casts are unsatisfiable"
+    ):
+      mgpu.infer_layout(self.module)
+
   def test_infer_layout_for_tmem_alloc_by_default(self):
     f32 = ir.F32Type.get()
     i32 = ir.IntegerType.get_signless(32)

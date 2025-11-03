@@ -4000,28 +4000,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     param = self.prng.uniform(-1, 1, shape).astype(dtype)
     self.assertArraysEqual(kernel(param), param)
 
-  def test_optimized_gmem_transfers_are_not_supported(self):
-    def body(ctx, input, output, scratch):
-      del ctx, output, scratch
-      reg = vector_load(input, optimized=True)
-      layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
-      reg = mgpu_dialect.layout_cast(reg, layout)
-
-    shape = (128, 128)
-    dtype = jnp.bfloat16
-    with self.assertRaisesRegex(
-        NotImplementedError, "Only optimized transfers to SMEM supported"
-    ):
-      mgpu.as_gpu_kernel(
-          body,
-          grid=(1, 1, 1),
-          block=(128, 1, 1),
-          in_shape=jax.ShapeDtypeStruct(shape, dtype),
-          out_shape=jax.ShapeDtypeStruct(shape, dtype),
-          smem_scratch_shape=(),
-          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
-      )
-
   def test_pointwise_kernel(self):
     def add(ctx, a, b, result, smem):
       del ctx, smem
@@ -4320,33 +4298,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     self.assertArraysEqual(
         kernel(), jax.lax.broadcast_in_dim(x, output_shape, bcast_dims)
     )
-
-  def test_bad_layout_cast_raises_in_inference(self):
-    shape = (128, 128)
-    def body(ctx, out, _):
-      del ctx, out
-      f32 = ir.F32Type.get()
-      x = vector.broadcast(
-          ir.VectorType.get(shape, f32), arith.constant(f32, 0.0)
-      )
-      wgmma_layout = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
-      wgmma_row_layout = layouts.to_layout_attr(fa.WGMMA_ROW_LAYOUT)
-      lc1 = mgpu_dialect.layout_cast(x, wgmma_layout)
-      mgpu_dialect.layout_cast(lc1, wgmma_row_layout)
-
-    dtype = jnp.float32
-    with self.assertRaisesRegex(
-        ValueError, "user-provided layout casts are unsatisfiable"
-    ):
-      mgpu.as_gpu_kernel(
-          body,
-          grid=(1, 1, 1),
-          block=(128, 1, 1),
-          in_shape=(),
-          out_shape=jax.ShapeDtypeStruct(shape, dtype),
-          smem_scratch_shape=(),
-          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
-      )
 
   @parameterized.parameters(
       (jnp.float32, 5.0, 2.0, vector.CombiningKind.ADD),
@@ -5239,32 +5190,6 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase):
         atol=atol,
         rtol=rtol,
     )
-
-  def test_inconsistent_collective_attributes_in_kernel_raise(self):
-    def body(ctx, out, smem_ptr):
-      del ctx, out
-      ref_ty = ir.MemRefType.get(
-          (128, 128),
-          ir.BF16Type.get(),
-          memory_space=utils.tmem(),
-      )
-      mgpu_dialect.tmem_alloc(ref_ty, smem_ptr, collective=False)
-      mgpu_dialect.tmem_alloc(ref_ty, smem_ptr, collective=True)
-
-    with self.assertRaisesRegex(
-        ValueError,
-        "Collective attributes are inconsistent across operations in the"
-        " kernel",
-    ):
-      mgpu.as_gpu_kernel(
-          body,
-          grid=(1, 1, 1),
-          block=(128, 1, 1),
-          in_shape=(),
-          out_shape=(jax.ShapeDtypeStruct((), jnp.int32),),
-          smem_scratch_shape=jax.ShapeDtypeStruct((), jnp.int32),
-          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
-      )
 
   def test_slice_tmem(self):
     def tmem_type(ref: ir.Value):

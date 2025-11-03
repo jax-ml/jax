@@ -1435,6 +1435,59 @@ class DialectLoweringTest(MosaicGpuTest):
       strides, _ = ty_transformed.get_strides_and_offset()
       self.assertEqual(strides, [512, 4096, 1, 16])
 
+  def test_optimized_gmem_transfers_are_not_supported(self):
+    def body(ctx, input, output, scratch):
+      del ctx, output, scratch
+      ref_type = ir.MemRefType(input.type)
+      zero = arith.constant(ir.IndexType.get(), 0)
+      zero_indices = [zero] * len(ref_type.shape)
+      vector_type = ir.VectorType.get(ref_type.shape, ref_type.element_type)
+      load = vector.LoadOp(vector_type, input, zero_indices)
+      load.attributes["optimized"] = ir.BoolAttr.get(True)
+      layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
+      mgpu.dialect.layout_cast(load.result, layout)
+
+    shape = (128, 128)
+    dtype = jnp.bfloat16
+    with self.assertRaisesRegex(
+        NotImplementedError, "Only optimized transfers to SMEM supported"
+    ):
+      mgpu.as_gpu_kernel(
+          body,
+          grid=(1, 1, 1),
+          block=(128, 1, 1),
+          in_shape=jax.ShapeDtypeStruct(shape, dtype),
+          out_shape=jax.ShapeDtypeStruct(shape, dtype),
+          smem_scratch_shape=(),
+          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+      )
+
+  def test_inconsistent_collective_attributes_in_kernel_raise(self):
+    def body(ctx, out, smem_ptr):
+      del ctx, out
+      ref_ty = ir.MemRefType.get(
+          (128, 128),
+          ir.BF16Type.get(),
+          memory_space=mgpu_utils.tmem(),
+      )
+      mgpu.dialect.tmem_alloc(ref_ty, smem_ptr, collective=False)
+      mgpu.dialect.tmem_alloc(ref_ty, smem_ptr, collective=True)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Collective attributes are inconsistent across operations in the"
+        " kernel",
+    ):
+      mgpu.as_gpu_kernel(
+          body,
+          grid=(1, 1, 1),
+          block=(128, 1, 1),
+          in_shape=(),
+          out_shape=(jax.ShapeDtypeStruct((), jnp.int32),),
+          smem_scratch_shape=jax.ShapeDtypeStruct((), jnp.int32),
+          thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+      )
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
