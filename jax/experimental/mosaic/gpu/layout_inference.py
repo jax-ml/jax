@@ -307,7 +307,8 @@ def _extract_layout_candidates_from_memory_space_transfer(
   if isinstance(constant, eqns.RegisterLayout):
     layout = constant.value
     if variable.key.memory_space == MemorySpace.TMEM:
-      for packing in (1, 2, 4, 8):
+      dtype = ir.MemRefType(variable.key.value.type).element_type
+      for packing in (1, 32 // utils.bitwidth(dtype)):
         for tmem_layout, reg_layout in constraint.supported_tmem_transfers(
             packing
         ):
