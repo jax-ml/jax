@@ -29,8 +29,8 @@ from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
 from jax.experimental.serialize_executable import (
-    deserialize_and_load,
-    serialize,
+  deserialize_and_load,
+  serialize,
 )
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
@@ -42,19 +42,19 @@ prev_xla_flags = None
 
 with contextlib.suppress(ImportError):
   import pytest
+
   pytestmark = pytest.mark.multiaccelerator
 
 
 class JaxAotTest(jtu.JaxTestCase):
-
-  @jtu.run_on_devices('tpu', 'gpu')
+  @jtu.run_on_devices("tpu", "gpu")
   def test_pickle_jit_lower(self):
     def fun(x):
       return x * x
 
-    with jax.set_mesh(jax.sharding.Mesh(np.array(jax.devices()), ('data',))):
+    with jax.set_mesh(jax.sharding.Mesh(np.array(jax.devices()), ("data",))):
       lowered = jax.jit(
-          fun, in_shardings=P('data'), out_shardings=P(None, 'data')
+        fun, in_shardings=P("data"), out_shardings=P(None, "data")
       ).lower(core.ShapedArray(shape=(8, 8), dtype=np.float32))
 
     def verify_serialization(lowered):
@@ -65,33 +65,34 @@ class JaxAotTest(jtu.JaxTestCase):
     verify_serialization(lowered)
     verify_serialization(jax.jit(lambda x: x * x).lower(np.arange(100)))
     verify_serialization(
-        jax.pmap(lambda x: x * x).lower(
-            np.zeros((len(jax.devices()), 4), dtype=np.float32)))
+      jax.pmap(lambda x: x * x).lower(
+        np.zeros((len(jax.devices()), 4), dtype=np.float32)
+      )
+    )
 
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): This test is segfaulting on TPU
   def test_topology_jit_serialize(self):
     try:
       aot_topo = topologies.get_topology_desc(
-          platform=jax.devices()[0].platform
+        platform=jax.devices()[0].platform
       )
     except NotImplementedError:
-      raise unittest.SkipTest('PJRT Topology not supported')
+      raise unittest.SkipTest("PJRT Topology not supported")
 
     if jtu.TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
-      raise unittest.SkipTest('Compilation caching not yet supported.')
+      raise unittest.SkipTest("Compilation caching not yet supported.")
     if jtu.is_device_cuda():
-      raise unittest.SkipTest('Broken on GPU: b/442353988')
+      raise unittest.SkipTest("Broken on GPU: b/442353988")
 
     @jax.jit
     def fn(x):
       return x * x
 
     def lower_and_load(mesh):
-      s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
+      s = jax.sharding.NamedSharding(mesh, P("x", "y"))
       x_shape = jax.ShapeDtypeStruct(
-          shape=(16, 16),
-          dtype=jnp.dtype('float32'),
-          sharding=s)
+        shape=(16, 16), dtype=jnp.dtype("float32"), sharding=s
+      )
       lowered = fn.lower(x_shape)
       serialized, in_tree, out_tree = serialize(lowered.compile())
       compiled = deserialize_and_load(serialized, in_tree, out_tree)
@@ -101,30 +102,30 @@ class JaxAotTest(jtu.JaxTestCase):
     n = max(1, len(ref_topo.devices) // 2)
     mesh_shape = (len(ref_topo.devices) // n, n)
 
-    ref_mesh = topologies.make_mesh(ref_topo, mesh_shape, ('x', 'y'))
-    aot_mesh = topologies.make_mesh(aot_topo, mesh_shape, ('x', 'y'))
+    ref_mesh = topologies.make_mesh(ref_topo, mesh_shape, ("x", "y"))
+    aot_mesh = topologies.make_mesh(aot_topo, mesh_shape, ("x", "y"))
     self.assertEqual(
-        lower_and_load(ref_mesh).as_text(), lower_and_load(aot_mesh).as_text()
+      lower_and_load(ref_mesh).as_text(), lower_and_load(aot_mesh).as_text()
     )
 
   def test_get_topology_from_devices(self):
     try:
       aot_topo = topologies.get_topology_desc(
-          platform=jax.devices()[0].platform
+        platform=jax.devices()[0].platform
       )
     except NotImplementedError:
-      raise unittest.SkipTest('PJRT Topology not supported')
+      raise unittest.SkipTest("PJRT Topology not supported")
 
     topo = xc.get_topology_for_devices(aot_topo.devices)
     self.assertEqual(
-        topo.platform_version, aot_topo.devices[0].client.platform_version
+      topo.platform_version, aot_topo.devices[0].client.platform_version
     )
 
   def test_lower_as_text_with_and_without_debug_info(self):
     def my_function(x):
       return jnp.sin(x)
 
-    lowered = jax.jit(my_function).lower(42.)
+    lowered = jax.jit(my_function).lower(42.0)
     stablehlo = lowered.as_text("stablehlo", debug_info=True)
     self.assertRegex(stablehlo, r"sine.* loc")
     stablehlo = lowered.as_text("stablehlo")
@@ -137,30 +138,37 @@ class JaxAotTest(jtu.JaxTestCase):
 
   def test_constants_in_lowering_in_aot(self):
     const_size = 100
-    const = jax.random.uniform(jax.random.key(0), (const_size,),
-                               dtype=np.float32)
+    const = jax.random.uniform(
+      jax.random.key(0), (const_size,), dtype=np.float32
+    )
 
     def my_function(x):
       return jnp.sin(x) + const
 
-    lowered = jax.jit(my_function).lower(np.full_like(const, 42., dtype=const.dtype))
+    lowered = jax.jit(my_function).lower(
+      np.full_like(const, 42.0, dtype=const.dtype)
+    )
     stablehlo = lowered.as_text("stablehlo")
     if config.use_simplified_jaxpr_constants.value:
-      self.assertNotRegex(stablehlo, rf"stablehlo.constant dense.*tensor<{const_size}x")
+      self.assertNotRegex(
+        stablehlo, rf"stablehlo.constant dense.*tensor<{const_size}x"
+      )
       self.assertLen(lowered._lowering.const_args, 1)
       self.assertIs(lowered._lowering.const_args[0], const)
     else:
-      self.assertRegex(stablehlo, rf"stablehlo.constant dense.*tensor<{const_size}x")
+      self.assertRegex(
+        stablehlo, rf"stablehlo.constant dense.*tensor<{const_size}x"
+      )
       self.assertLen(lowered._lowering.const_args, 0)
 
   def test_with_constants(self):
-    const = jnp.arange(16.) + 42.  # A distinctive shape and value
+    const = jnp.arange(16.0) + 42.0  # A distinctive shape and value
 
     @jax.jit
     def f(x):
       return const[0:8] + x
 
-    inp = jnp.arange(8.)
+    inp = jnp.arange(8.0)
     compiled = f.lower(inp).compile()
     self.assertLen(compiled.args_info[0], 1)  # Not including const_args
     self.assertLen(compiled.in_avals[0], 1)
@@ -173,13 +181,14 @@ class JaxAotTest(jtu.JaxTestCase):
     self.assertCacheMisses(lambda: compiled(inp), cpp=0, aot_call=0)
 
   @jtu.parameterized_filterable(
-      kwargs=[
-          dict(use_np=use_np, lower=lower, compile=compile, exec=exec)
-            for use_np in (False, True)
-            for lower in (False, True)
-            for compile in (False, True)
-            for exec in (False, True)
-  ])
+    kwargs=[
+      dict(use_np=use_np, lower=lower, compile=compile, exec=exec)
+      for use_np in (False, True)
+      for lower in (False, True)
+      for compile in (False, True)
+      for exec in (False, True)
+    ]
+  )
   def test_with_constants_enable_x64(self, *, use_np, lower, compile, exec):
     # Closed-over constant is 64-bit. Each of lowering, compilation, and
     # execution can be run in 64-bit or 32-bit mode.
@@ -191,7 +200,7 @@ class JaxAotTest(jtu.JaxTestCase):
       def f(x):
         return lax.convert_element_type(const, np.float32) + x
 
-    inp = np.arange(8., dtype=np.float32)
+    inp = np.arange(8.0, dtype=np.float32)
     with config.enable_x64(True) if lower else contextlib.nullcontext():
       lowered = f.lower(inp)
     with config.enable_x64(True) if compile else contextlib.nullcontext():
@@ -222,17 +231,22 @@ class JaxAotTest(jtu.JaxTestCase):
 
     # In some cases we expect errors: in 32-bit mode, lowered with 64-bit mode
     # and execute in 32-bit mode.
-    if (config.use_simplified_jaxpr_constants.value and
-        not config.enable_x64.value and
-        use_np and lower and not exec):
+    if (
+      config.use_simplified_jaxpr_constants.value
+      and not config.enable_x64.value
+      and use_np
+      and lower
+      and not exec
+    ):
       with self.assertRaisesRegex(
-          xc.XlaRuntimeError,
-          "got buffer with incompatible size"):
+        xc.XlaRuntimeError, "got buffer with incompatible size"
+      ):
         run()
       return
 
-    self.assertArraysEqual(run(),
-                           lax.convert_element_type(const, inp.dtype) + inp)
+    self.assertArraysEqual(
+      run(), lax.convert_element_type(const, inp.dtype) + inp
+    )
     # Trigger cache hit
     self.assertCacheMisses(run, cpp=0, aot_call=0)
 
@@ -244,10 +258,10 @@ class JaxAotTest(jtu.JaxTestCase):
       x_ref[...] += x
 
     f_lowered = f.lower(1)
-    with self.assertRaisesRegex(ValueError, 'serialize with a closed-over'):
+    with self.assertRaisesRegex(ValueError, "serialize with a closed-over"):
       serialized, in_tree, out_tree = serialize(f_lowered.compile())
 
-  @jtu.run_on_devices('gpu', 'tpu')
+  @jtu.run_on_devices("gpu", "tpu")
   def test_mismatched_backends_raises(self):
     @jax.jit
     def f(x):
@@ -257,15 +271,19 @@ class JaxAotTest(jtu.JaxTestCase):
     f_lowered = f.lower(x)
     serialized, in_tree, out_tree = serialize(f_lowered.compile())
     with self.assertRaisesRegex(
-        ValueError,
-        'Execution devices belong to a client other than `backend`'):
-      deserialize_and_load(serialized, in_tree, out_tree, backend='cpu',
-                           execution_devices=jax.devices()[:1])
+      ValueError, "Execution devices belong to a client other than `backend`"
+    ):
+      deserialize_and_load(
+        serialized,
+        in_tree,
+        out_tree,
+        backend="cpu",
+        execution_devices=jax.devices()[:1],
+      )
 
 
 @jtu.thread_unsafe_test_class()
 class ComponentTest(jtu.JaxTestCase):
-
   @contextlib.contextmanager
   def make_in_memory_cache(self):
     cache = aot_util.make_in_memory_cache()
@@ -281,10 +299,11 @@ class ComponentTest(jtu.JaxTestCase):
   # 3. After lifting the jaxpr.
   # 4. After DCE.
   @config.enable_checks(False)
-  def test_component_lowering_cache_hit(self):
+  def test_component_basic(self):
     with self.make_in_memory_cache():
       cache = aot.get_cache()
-      @aot.component(key='f')
+
+      @aot.component(key="f")
       def f(x):
         return x + 1.0
 
@@ -293,9 +312,9 @@ class ComponentTest(jtu.JaxTestCase):
       # We get 1 hit on traced cache during the lowering rule.
       self.assertEqual(aot_util._traced_cache[f.component_key].hits, 1)
       # We get 1 hit on the disk cache during the lowering rule.
-      self.assertEqual(cache.info(f.component_key)['hits'], 1)
+      self.assertEqual(cache.info(f.component_key)["hits"], 1)
 
-      @aot.component(key='f')
+      @aot.component(key="f")
       def g(x):
         raise NotImplementedError
 
@@ -305,13 +324,14 @@ class ComponentTest(jtu.JaxTestCase):
       self.assertEqual(aot_util._traced_cache[f.component_key].hits, 1)
       # We get two additional hits on the disk cache during abstract eval and
       # lowering for g.
-      self.assertEqual(cache.info(f.component_key)['hits'], 3)
+      self.assertEqual(cache.info(f.component_key)["hits"], 3)
 
   @config.enable_checks(False)
   def test_component_call_in_function(self):
     with self.make_in_memory_cache():
       cache = aot.get_cache()
-      @aot.component(key='f')
+
+      @aot.component(key="f")
       def f(x):
         return x + 1.0
 
@@ -323,40 +343,49 @@ class ComponentTest(jtu.JaxTestCase):
       self.assertEqual(f(1.0), 2.0)
       # 1 hit when lowering g. Why no abstract eval?
       self.assertEqual(g(1.0), 3.0)
-      self.assertEqual(cache.info(f.component_key)['hits'], 2)
       self.assertEqual(aot_util._traced_cache[f.component_key].hits, 1)
+      self.assertEqual(cache.info(f.component_key)["hits"], 2)
 
   @config.enable_checks(False)
   def test_explicit_cached_lowering(self):
     with self.make_in_memory_cache():
       cache = aot.get_cache()
 
-      @aot.component(key='f')
+      @aot.component(key="f")
       def f(x):
         return x + 1.0
 
-      lowered = f.lower(jax.ShapeDtypeStruct((), 'float32'))
+      lowered = f.lower(jax.ShapeDtypeStruct((), "float32"))
       self.assertEqual(cache.keys(), [f.component_key])
 
-      @aot.component(key='f')
+      @aot.component(key="f")
       def g(x):
         raise NotImplementedError
-      lowered = g.lower(jax.ShapeDtypeStruct((), 'float32'))
-      self.assertEqual(cache.info(f.component_key)['hits'], 3)
+
+      lowered = g.lower(jax.ShapeDtypeStruct((), "float32"))
       self.assertEqual(aot_util._traced_cache[f.component_key].hits, 1)
+      self.assertEqual(cache.info(f.component_key)["hits"], 3)
 
   @config.enable_checks(False)
   def test_vmap_of_component(self):
-      with self.make_in_memory_cache():
-        cache = aot.get_cache()
-        @aot.component(key='f')
-        def f(x):
-            return x + 1.0
+    with self.make_in_memory_cache():
+      cache = aot.get_cache()
 
-        vmapped_f = jax.vmap(f)
+      @aot.component(key="f")
+      def f(x):
+        logging.info('running!')
+        return x + 1.0
 
-        with config.checking_leaks():
-          self.assertArraysEqual(vmapped_f(jax.numpy.ones(8,)), jax.numpy.ones(8,) + 1.0)
+      vmapped_f = jax.vmap(f)
 
-if __name__ == '__main__':
+      # TODO(dsuo): How to put component_key on vmapped_f? This is just a hack.
+      vmapped_key = aot_util.ComponentKey.vmap(aot_util.ComponentKey("f"))
+
+      self.assertArraysEqual(vmapped_f(jnp.ones((8,))), jnp.ones((8,)) + 1.0)
+      self.assertEqual(cache.keys(), [f.component_key, vmapped_key])
+      self.assertEqual(aot_util._traced_cache[f.component_key].hits, 0)
+      self.assertEqual(aot_util._traced_cache[vmapped_key].hits, 1)
+
+
+if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -46,11 +46,12 @@ class ComponentKey:
     return self.user_key
 
   def __repr__(self):
-    return self.__str__
+    return self.__str__()
 
   # TODO(dsuo): This is just a hack for now.
-  def vmap(self):
-    self.user_key = f'vmap({self.user_key})'
+  @classmethod
+  def vmap(cls, key):
+    return ComponentKey(f"vmap({key.user_key})")
 
 
 def _validate_component_cache(val):
@@ -70,6 +71,12 @@ class TracedCacheEntry:
     self.traced = traced
     self.hits = hits
 
+  def __str__(self):
+    return f"{self.traced.fun_name}: {self.hits}"
+
+  def __repr__(self):
+    return self.__str__()
+
 
 _traced_cache: dict[Hashable, TracedCacheEntry] = {}
 
@@ -77,8 +84,12 @@ _traced_cache: dict[Hashable, TracedCacheEntry] = {}
 def get_traced(key: Hashable, fun: Callable[..., Any], *args):
   entry = _traced_cache.get(key, None)
   if entry is None:
-    entry = _traced_cache[key] = TracedCacheEntry(api.trace(fun, *args))
+    logging.info("missed trace cache %s", key)
+    entry = _traced_cache[key] = TracedCacheEntry(
+      api.trace(fun.f_transformed, *args)
+    )
   else:
+    logging.info("hit trace cache %s", key)
     entry.hits += 1
   return entry.traced
 
