@@ -455,6 +455,7 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 #include "rocm/include/hipsolver/hipsolver.h"
 #include "rocm/include/hipsparse/hipsparse.h"
 #include "rocm/include/miopen/miopen.h"
+#include "rocm/rocm_config.h"
 // IWYU pragma: end_exports
 
 #define JAX_GPU_NAMESPACE hip
@@ -470,8 +471,14 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 typedef hipFloatComplex gpuComplex;
 typedef hipDoubleComplex gpuDoubleComplex;
 
+#if TF_ROCM_VERSION >= 70000
+typedef hipFloatComplex gpublasComplex;
+typedef hipDoubleComplex gpublasDoubleComplex;
+#else
 typedef hipblasComplex gpublasComplex;
 typedef hipblasDoubleComplex gpublasDoubleComplex;
+#endif  // TF_ROCM_VERSION >= 70000
+
 typedef struct hipsolverHandle_* gpusolverDnHandle_t;
 typedef hipblasFillMode_t gpublasFillMode_t;
 typedef hipsolverFillMode_t gpusolverFillMode_t;
