@@ -931,6 +931,14 @@ class Client:
   def deserialize_executable(
       self,
       serialized: bytes,
+      executable_devices: DeviceList,
+      compile_options: CompileOptions | None = ...,
+      host_callbacks: Sequence[Callable] = ...,
+  ) -> LoadedExecutable: ...
+  @overload
+  def deserialize_executable(
+      self,
+      serialized: bytes,
       executable_devices: Sequence,
       compile_options: CompileOptions | None = ...,
   ) -> LoadedExecutable: ...
