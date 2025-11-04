@@ -3741,6 +3741,30 @@ class LaxTest(jtu.JaxTestCase):
       expected = expected.astype(dtype)
     self.assertArraysEqual(actual, expected, check_dtypes=True)
 
+  def test_gather_with_asymmetric_dtype(self):
+    @jax.custom_vjp
+    def f(x):
+      return x
+
+    def f_fwd(x):
+      return f(x), ()
+
+    def f_bwd(res, g):
+      del res
+      return g.astype(jnp.bfloat16),
+
+    f.defvjp(f_fwd, f_bwd)
+
+    def g(x):
+      idx = jnp.argsort(x)
+      x = x.at[idx].get()
+      return f(x)
+
+    x = jnp.arange(8, dtype=jnp.float8_e4m3fn)
+    _, vjp_fn = jax.vjp(g, x)
+    cts = vjp_fn(jnp.ones((8,), dtype=jnp.float8_e4m3fn))  # Don't crash
+    self.assertEqual(cts[0].dtype, jnp.bfloat16)
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
