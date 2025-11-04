@@ -9286,7 +9286,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_reduce_sum_scalar_unreduced(self, mesh):
-    x = jax.device_put(np.arange(8), P('x'))
+    x = jax.device_put(np.arange(8, dtype=np.float32), P('x'))
 
     @jax.jit
     def f(x):
@@ -9296,17 +9296,21 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return out
 
     lowered_text = f.lower(x).as_text()
-    self.assertTrue(lowered_text.count('unreduced={"x"}') == 2)
+    self.assertEqual(lowered_text.count('unreduced={"x"}'), 2)
 
     out = f(x)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x'})))
 
-    expected_shards = [np.array(6), np.array(22)]
+    expected_shards = [np.array(6, dtype=np.float32),
+                       np.array(22, dtype=np.float32)]
     for s, expected_shard in zip(out.addressable_shards, expected_shards):
       self.assertArraysEqual(s.data, expected_shard)
 
     reshard_out = reshard(out, P())
     self.assertArraysEqual(reshard_out, jnp.sum(x))
+
+    out = jax.jit(jax.grad(f))(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
   @parameterized.named_parameters(
       ('custom_vjp', True),

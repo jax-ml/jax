@@ -542,7 +542,7 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
       ans, vjp_py, aux = _vjp(f_partial, *dyn_args, has_aux=True)
     _check_scalar(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
-    g = vjp_py(lax_internal._one(ans))
+    g = vjp_py(lax_internal._one_vjp(ans))
     g = g[0] if isinstance(argnums, int) else g
     if not has_aux:
       return ans, g
@@ -2128,7 +2128,7 @@ def _vjp_pullback_wrapper(name, out_primal_avals, io_tree, fun, *py_args_):
                      f"got {in_tree}, but expected to match {in_tree_expected}")
   for arg, aval in zip(args, out_primal_avals):
     ct_aval = shaped_abstractify(arg)
-    ct_aval_expected = aval.to_tangent_aval()
+    ct_aval_expected = aval.to_cotangent_aval()
     if (not core.typecompat(ct_aval, ct_aval_expected) and
         not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
       raise ValueError(
@@ -2425,7 +2425,9 @@ def _vjp_check_ct_avals(cts, primal_avals):
   # TODO(mattjj): improve this error  by flattening with keys in the first place
   for ct, aval in zip(cts, primal_avals):
     ct_aval = typeof(ct)
-    ct_aval_expected = aval.to_tangent_aval()
+    ct_aval_expected = (
+        aval.to_cotangent_aval() if hasattr(aval, 'to_cotangent_aval') else
+        aval.to_tangent_aval())
     if (not core.typecompat(ct_aval, ct_aval_expected) and
         not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
       raise ValueError(

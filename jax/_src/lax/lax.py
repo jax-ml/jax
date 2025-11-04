@@ -8909,6 +8909,12 @@ def _one(x):
                   sharding=x_aval.sharding.update(spec=P()))
   return out
 
+def _one_vjp(x):
+  x_aval = core.get_aval(x)
+  ct_s = core.primal_sharding_to_cotangent_sharding(x_aval.sharding)
+  ct_s = ct_s.update(spec=ct_s.spec.update(partitions=()))
+  return full_like(x, shape=(), fill_value=1, sharding=ct_s)
+
 _twos: Callable = partial(full_like, fill_value=2)
 _two: Callable = partial(full_like, shape=(), fill_value=2)
 
