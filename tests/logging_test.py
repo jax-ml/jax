@@ -43,24 +43,24 @@ def jax_debug_log_modules(value):
   # jax_debug_log_modules doesn't have a context manager, because it's
   # not thread-safe. But since tests are always single-threaded, we
   # can define one here.
-  original_value = jax.config.jax_debug_log_modules
-  jax.config.update("jax_debug_log_modules", value)
+  original_value = jax.config.debug_log_modules.value
+  jax.config.debug_log_modules.set(value)
   try:
     yield
   finally:
-    jax.config.update("jax_debug_log_modules", original_value)
+    jax.config.debug_log_modules.set(original_value)
 
 @contextlib.contextmanager
 def jax_logging_level(value):
   # jax_logging_level doesn't have a context manager, because it's
   # not thread-safe. But since tests are always single-threaded, we
   # can define one here.
-  original_value = jax.config.jax_logging_level
-  jax.config.update("jax_logging_level", value)
+  original_value = jax.config.logging_level.value
+  jax.config.logging_level.set(value)
   try:
     yield
   finally:
-    jax.config.update("jax_logging_level", original_value)
+    jax.config.logging_level.set(original_value)
 
 
 @contextlib.contextmanager

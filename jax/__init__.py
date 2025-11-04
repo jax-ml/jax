@@ -44,8 +44,9 @@ from jax._src.basearray import Array as Array
 from jax import tree as tree
 from jax import typing as typing
 
+from jax import config as config
+
 from jax._src.config import (
-  config as config,
   enable_checks as enable_checks,
   enable_x64 as enable_x64,
   debug_key_reuse as debug_key_reuse,

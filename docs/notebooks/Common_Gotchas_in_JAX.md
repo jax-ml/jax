@@ -697,7 +697,7 @@ There are a few ways to do this:
    ```python
    # again, this only works on startup!
    import jax
-   jax.config.update("jax_enable_x64", True)
+   jax.config.enable_x64.set(True)
    ```
 
 3. You can parse command-line flags with `absl.app.run(main)`
@@ -725,7 +725,7 @@ import jax
 import jax.numpy as jnp
 from jax import random
 
-jax.config.update("jax_enable_x64", True)
+jax.config.enable_x64.set(True)
 x = random.uniform(random.key(0), (1000,), dtype=jnp.float64)
 x.dtype # --> dtype('float64')
 ```

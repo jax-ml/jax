@@ -54,7 +54,7 @@ class X64ContextTests(jtu.JaxTestCase):
       func = jit(lambda: jnp.array(np.float64(0)))
       func()
 
-    expected_dtype = "float64" if jax.config._read("jax_enable_x64") else "float32"
+    expected_dtype = "float64" if jax.config.enable_x64.value else "float32"
     self.assertEqual(func().dtype, expected_dtype)
 
     with jax.enable_x64(True):
@@ -155,7 +155,7 @@ class X64ContextTests(jtu.JaxTestCase):
         return jnp.sin(x)
     self.assertEqual(
         jax.grad(fun)(0.5).dtype,
-        jnp.float64 if jax.config.x64_enabled else jnp.float32,
+        jnp.float64 if jax.config.enable_x64.value else jnp.float32,
     )
 
   def test_sin(self):
@@ -201,7 +201,7 @@ class X64ContextTests(jtu.JaxTestCase):
     def f_jvp(xs, ts):
       x, = xs
       t, = ts
-      self.assertTrue(jax.config.x64_enabled)
+      self.assertTrue(jax.config.enable_x64.value)
       return f(x), t * jnp.sin(x)
 
     def g(x):
