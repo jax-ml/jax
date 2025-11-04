@@ -355,7 +355,8 @@ class ComponentTest(jtu.JaxTestCase):
 
         vmapped_f = jax.vmap(f)
 
-        self.assertArraysEqual(vmapped_f(jax.numpy.ones(8,)), jax.numpy.ones(8,) + 1.0)
+        with config.checking_leaks():
+          self.assertArraysEqual(vmapped_f(jax.numpy.ones(8,)), jax.numpy.ones(8,) + 1.0)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

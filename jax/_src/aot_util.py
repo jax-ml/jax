@@ -48,6 +48,10 @@ class ComponentKey:
   def __repr__(self):
     return self.__str__
 
+  # TODO(dsuo): This is just a hack for now.
+  def vmap(self):
+    self.user_key = f'vmap({self.user_key})'
+
 
 def _validate_component_cache(val):
   assert val is None or isinstance(val, Cache)

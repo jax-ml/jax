@@ -20,12 +20,15 @@ from typing import Any, Callable, Sequence
 from absl import logging
 from jax._src import aot_util
 from jax._src import api
+from jax._src import api_util
 from jax._src import core
+from jax._src import linear_util as lu
 from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 
@@ -35,19 +38,40 @@ ComponentKey = aot_util.ComponentKey
 get_cache = aot_util.get_cache
 
 
-def component(key: UserKey = None) -> Callable[..., Any]:
+def component(
+  key: UserKey = None,
+  # TODO(dsuo): This is really only useful for if we have return of length 1.
+  # I.e., interpret (x,) as x. If this is True, then interpret (x,) as (x,).
+  # If we see more than one return value, then of course you have multiple
+  # results. Need to think about this a bit more since component_p is similar to
+  # a call primitive, which requires multiple_results=True, but want to
+  # distinguish between (x,) and x.
+  multiple_results: bool = False,
+) -> Callable[..., Any]:
   def _component(fun: Callable[..., Any]):
     # TODO(dsuo): Do we have all the information we need at this point to make
     # the component key?
     component_key = ComponentKey(key)
 
+    # TODO(dsuo): Jit your function if it isn't. This is so we can produce the
+    # debug_info object we need in order to wrap fun later on in batching, but
+    # might be the wrong way of doing things.
+    if not isinstance(fun, xc._xla.PjitFunction):
+      fun = api.jit(fun)
+
     @api.jit
     @util.wraps(fun)
     @traceback_util.api_boundary
-    def wrapper(*args):
+    def wrapper(*args, **kwargs):
       # TODO(dsuo): Flatten function as in shard_map pmap.
+      # TODO(dsuo): Do something about kwargs.
       # TODO(dsuo): Need to consider static args.
-      return component_p.bind(*args, fun=fun, component_key=component_key)
+      return component_p.bind(
+        *args,
+        fun=fun,
+        component_key=component_key,
+        multiple_results=multiple_results,
+      )
 
     wrapper.component_key = component_key
     return wrapper
@@ -56,14 +80,19 @@ def component(key: UserKey = None) -> Callable[..., Any]:
 
 
 def component_impl(*args, fun: Callable[..., Any], **_):
+  if isinstance(fun, lu.WrappedFun):
+    return fun.call_wrapped(*args)
   return fun(*args)
 
 
 def component_abstract_eval(
-  *args, fun: Callable[..., Any], component_key: ComponentKey
+  *args,
+  fun: Callable[..., Any],
+  component_key: ComponentKey,
+  multiple_results: bool,
 ) -> Sequence[core.AbstractValue] | None:
   entry = aot_util.get_entry(component_key)
-  logging.info('component_abstract_eval got entry %s', component_key)
+  logging.info("component_abstract_eval got entry %s", component_key)
   if entry is None:
     traced = aot_util.get_traced(component_key, fun, *args)
     avals_out = tree_util.tree_map(
@@ -74,17 +103,21 @@ def component_abstract_eval(
 
 
 def component_lowering(
-  ctx, *args, fun: Callable[..., Any], component_key: ComponentKey
+  ctx,
+  *args,
+  fun: Callable[..., Any],
+  component_key: ComponentKey,
+  multiple_results: bool,
 ) -> Sequence[ir.Value]:
   with ctx.module_context.context as ir_ctx:
     entry = aot_util.get_entry(component_key, ir_ctx)
-  logging.info('component_lowering got entry %s', component_key)
+  logging.info("component_lowering got entry %s", component_key)
   if entry is None:
     raise ValueError("Should hit abstract_eval already, which would populate.")
 
   module_name = f"{component_key}.module"
   if (module := entry.module) is None:
-    logging.info('missed lowering: %s', fun)
+    logging.info("missed lowering: %s", fun)
     traced = aot_util.get_traced(component_key, fun, *ctx.avals_in)
     lowering_result = mlir.lower_jaxpr_to_module(
       module_name=module_name,
@@ -134,9 +167,46 @@ def component_lowering(
 
 
 def component_batcher(
-  vals_in, dims_in, fun: Callable[..., Any], component_key: ComponentKey
+  axis_data,
+  vals_in,
+  dims_in,
+  fun: Callable[..., Any],
+  component_key: ComponentKey,
+  multiple_results: bool,
 ):
-  return fun(vals_in[0]), dims_in[0]
+  # Missing from batching process_call:
+  # TODO(dsuo): Ignore ragged.
+  # TODO(dsuo): Ignore updating annotations.
+
+  ji = fun._jit_info
+
+  # TODO(dsuo): Dummy debug info
+  debug_info = lu.DebugInfo(
+    "component_batcher", fun.__name__, arg_names=None, result_paths=None
+  )
+  # ????(dsuo): Should we be wrapping fun?
+  f_ = lu.wrap_init(fun, debug_info=debug_info)
+
+  # ????(dsuo): I don't understand trace tags.
+  f_, dims_out = batching.batch_subtrace(
+    f_, core.TraceTag(), axis_data, tuple(dims_in)
+  )
+
+  # TODO(dsuo): Derp how to actually do this.
+  # with core.set_current_trace(vals_in[0]._trace.parent_trace):
+  # assert False
+  component_key.vmap()
+  vals_out = component_p.bind(
+    *vals_in,
+    fun=f_,
+    component_key=component_key,
+    multiple_results=multiple_results,
+  )
+  # if not multiple_results and len(vals_out) == 1:
+  #   vals_out = vals_out[0]
+  #   dims_out = dims_out[0]
+  # logging.info("component_batcher vals_out %s, %s", vals_out, dims_out)
+  return vals_out, dims_out
 
 
 def clear_caches():
@@ -150,4 +220,4 @@ component_p.def_abstract_eval(component_abstract_eval)
 # TODO(dsuo): Figure out multiple_results i.e., distinguishing between (1,) and
 # 1.
 mlir.register_lowering(component_p, component_lowering)
-batching.primitive_batchers[component_p] = component_batcher
+batching.fancy_primitive_batchers[component_p] = component_batcher
