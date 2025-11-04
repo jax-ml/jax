@@ -1477,7 +1477,7 @@ template <ffi::DataType dtype>
 ffi::Error SchurReorder<dtype>::Kernel(
     ffi::Buffer<dtype> x,
     ffi::Buffer<dtype> schur_vectors,
-    ffi::Buffer<ffi::DataType::S64> order,
+    ffi::Buffer<ffi::DataType::U32> order,
     ffi::ResultBuffer<dtype> x_out,
     ffi::ResultBuffer<dtype> schur_vectors_out,
     ffi::ResultBuffer<LapackIntDtype> info) {
@@ -1489,7 +1489,7 @@ ffi::Error SchurReorder<dtype>::Kernel(
 
   ValueType* x_out_data = x_out->typed_data();
   ValueType* schur_vectors_data = schur_vectors_out->typed_data();
-  int64_t* order_data = order.typed_data();
+  uint32_t* order_data = order.typed_data();
   lapack_int* info_data = info->typed_data();
 
   FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<lapack_int>(x_cols));
@@ -1501,8 +1501,8 @@ ffi::Error SchurReorder<dtype>::Kernel(
                        MaybeCastNoOverflow<lapack_int>(work_size));
   auto work_data = AllocateScratchMemory<dtype>(work_size);
 
-  auto order_work = AllocateScratchMemory<ffi::DataType::S64>(x_cols);
-  int64_t* order_work_data = order_work.get();
+  auto order_work = AllocateScratchMemory<ffi::DataType::U32>(x_cols);
+  uint32_t* order_work_data = order_work.get();
   std::copy_n(order_data, batch_count * x_cols, order_work_data);
 
   lapack_int ifst;
@@ -1566,7 +1566,7 @@ template <ffi::DataType dtype>
 ffi::Error SchurReorderComplex<dtype>::Kernel(
     ffi::Buffer<dtype> x,
     ffi::Buffer<dtype> schur_vectors,
-    ffi::Buffer<ffi::DataType::S64> order,
+    ffi::Buffer<ffi::DataType::U32> order,
     ffi::ResultBuffer<dtype> x_out,
     ffi::ResultBuffer<dtype> schur_vectors_out,
     ffi::ResultBuffer<LapackIntDtype> info) {
@@ -1578,15 +1578,15 @@ ffi::Error SchurReorderComplex<dtype>::Kernel(
 
   ValueType* x_out_data = x_out->typed_data();
   ValueType* schur_vectors_data = schur_vectors_out->typed_data();
-  int64_t* order_data = order.typed_data();
+  uint32_t* order_data = order.typed_data();
   lapack_int* info_data = info->typed_data();
 
   FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<lapack_int>(x_cols));
   char compq = 'V';
 
   // Prepare LAPACK workspaces.
-  auto order_work = AllocateScratchMemory<ffi::DataType::S64>(x_cols);
-  int64_t* order_work_data = order_work.get();
+  auto order_work = AllocateScratchMemory<ffi::DataType::U32>(x_cols);
+  uint32_t* order_work_data = order_work.get();
   std::copy_n(order_data, batch_count * x_cols, order_work_data);
 
   lapack_int ifst;
@@ -1996,7 +1996,7 @@ template struct TridiagonalSolver<ffi::DataType::C128>;
       ::xla::ffi::Ffi::Bind()                                              \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)                       \
           .Arg<::xla::ffi::Buffer<data_type>>(/*schur_vectors*/)           \
-          .Arg<::xla::ffi::Buffer<::xla::ffi::DataType::S64>>(/*order*/)   \
+          .Arg<::xla::ffi::Buffer<::xla::ffi::DataType::U32>>(/*order*/)   \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)                   \
           .Ret<::xla::ffi::Buffer<data_type>>(/*schur_vectors_out*/)       \
           .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/))
@@ -2007,7 +2007,7 @@ template struct TridiagonalSolver<ffi::DataType::C128>;
       ::xla::ffi::Ffi::Bind()                                              \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)                       \
           .Arg<::xla::ffi::Buffer<data_type>>(/*schur_vectors*/)           \
-          .Arg<::xla::ffi::Buffer<::xla::ffi::DataType::S64>>(/*order*/)   \
+          .Arg<::xla::ffi::Buffer<::xla::ffi::DataType::U32>>(/*order*/)   \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)                   \
           .Ret<::xla::ffi::Buffer<data_type>>(/*schur_vectors_out*/)       \
           .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/))

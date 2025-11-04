@@ -674,7 +674,7 @@ struct SchurReorder {
   static ::xla::ffi::Error Kernel(
       ::xla::ffi::Buffer<dtype> x,
       ::xla::ffi::Buffer<dtype> schur_vectors,
-      ::xla::ffi::Buffer<::xla::ffi::DataType::S64> order,
+      ::xla::ffi::Buffer<::xla::ffi::DataType::U32> order,
       ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<dtype> schur_vectors_out,
       ::xla::ffi::ResultBuffer<LapackIntDtype> info);
@@ -695,7 +695,7 @@ struct SchurReorderComplex {
   static ::xla::ffi::Error Kernel(
       ::xla::ffi::Buffer<dtype> x,
       ::xla::ffi::Buffer<dtype> schur_vectors,
-      ::xla::ffi::Buffer<::xla::ffi::DataType::S64> order,
+      ::xla::ffi::Buffer<::xla::ffi::DataType::U32> order,
       ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<dtype> schur_vectors_out,
       ::xla::ffi::ResultBuffer<LapackIntDtype> info);

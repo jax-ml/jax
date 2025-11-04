@@ -538,7 +538,7 @@ def schur_reorder(schur_form, schur_vectors, order):
     A pair of array ``S, V`` with shape ``[..., m, m]`` containing the
     reordered Schur form and Schur vector.
   """
-  order = order.astype(np.int64)
+  order = order.astype(np.uint32)
   order = control_flow.cond(order.all(), lambda x: x, lambda x: x+1, order)
 
   return schur_reorder_p.bind(schur_form, schur_vectors, order)
