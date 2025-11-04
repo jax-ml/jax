@@ -2693,13 +2693,12 @@ ref_p.is_effectful = lambda params: True  # type: ignore
 ref_p.ref_primitive = True
 
 ref_p.is_high = lambda aval, *, memory_space, kind: aval.is_high  # type: ignore
-def _ref_to_lojax(init_val, *, memory_space):
+def _ref_to_lojax(init_val, *, memory_space, kind):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   val_ty = typeof(init_val)
   hival_of_refs = val_ty.raise_val(*map(new_ref, val_ty.lower_val(init_val)))  # type: ignore
   aval = AbstractRef(typeof(init_val))
   return Ref(AbstractRef(val_ty), hival_of_refs)
-  # return Ref(
 ref_p.to_lojax = _ref_to_lojax  # type: ignore
 
 
