@@ -530,9 +530,25 @@ def _reducer_from_pyfunc(py_binop, init_val):
     return result
   return reducer
 
-def top_k(operand, k):
-  indices = operand.shape[-1] - 1 - np.argsort(operand[..., ::-1], kind="stable").astype(np.int32)[..., ::-1]
-  values = np.take_along_axis(operand, indices, axis=-1)
-  indices = indices[..., :k]
-  values = values[..., :k]
-  return values, indices
+def top_k(operand, k, axis=-1):
+  # Normalize negative axis
+  if axis < 0:
+    axis = operand.ndim + axis
+
+  # Flip the array along the axis to enable descending sort
+  operand_flipped = np.flip(operand, axis=axis)
+
+  # Argsort in ascending order (which is descending in original)
+  indices_flipped = np.argsort(operand_flipped, axis=axis, kind="stable").astype(np.int32)
+
+  # Convert indices back to original array positions
+  indices = operand.shape[axis] - 1 - np.flip(indices_flipped, axis=axis)
+
+  # Get values using the indices
+  values = np.take_along_axis(operand, indices, axis=axis)
+
+  # Extract only the first k elements along the axis
+  indices_sliced = np.take(indices, np.arange(k), axis=axis)
+  values_sliced = np.take(values, np.arange(k), axis=axis)
+
+  return values_sliced, indices_sliced

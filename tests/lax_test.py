@@ -2676,6 +2676,31 @@ class LaxTest(jtu.JaxTestCase):
       jax.eval_shape(lambda x: jax.lax.top_k(x, 100), x)
 
   @jtu.sample_product(
+    dtype=[np.float32, np.int32],
+    shape=[(20,), (5, 20), (3, 5, 20), (2, 3, 5, 20)],
+    k=[1, 3, 12],
+    dimension=[-1, -2, 0, 1],
+  )
+  def testTopKDimension(self, shape, dtype, k, dimension):
+    # Test that top_k works correctly with different dimension arguments
+    # Skip if dimension is out of range for this shape
+    if dimension >= len(shape) or dimension < -len(shape):
+      self.skipTest(f"dimension {dimension} out of range for shape {shape}")
+    # Normalize dimension
+    dim = dimension if dimension >= 0 else len(shape) + dimension
+    # Skip if k is larger than the size of the dimension
+    if k > shape[dim]:
+      self.skipTest(f"k={k} is larger than dimension size {shape[dim]}")
+
+    rng = jtu.rand_some_equal(self.rng())
+    def args_maker():
+      return [rng(shape, dtype)]
+    op = lambda vs: lax.top_k(vs, k=k, axis=dimension)
+    ref_op = lambda vs: lax_reference.top_k(vs, k=k, axis=dimension)
+    self._CheckAgainstNumpy(op, ref_op, args_maker)
+    self._CompileAndCheck(op, args_maker)
+
+  @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
       for lhs_shape, rhs_shape in [((3, 2), (2, 4)),
                                    ((5, 3, 2), (5, 2, 4)),

@@ -711,6 +711,32 @@ class LaxVmapTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [dict(shape=shape, bdims=bdims)
+      for shape in [(3, 5, 3), (2, 4, 6)]
+      for bdims in lax_test_util.all_bdims(shape)],
+    k=[1, 3],
+    dimension=[-1, 0, 1],
+    dtype=lax_test_util.default_dtypes,
+  )
+  def testTopKDimension(self, shape, dtype, k, bdims, dimension):
+    # Test vmap works correctly with different dimension arguments
+    # Skip if dimension is out of range for this shape
+    if dimension >= len(shape) or dimension < -len(shape):
+      self.skipTest(f"dimension {dimension} out of range for shape {shape}")
+    # Normalize dimension
+    dim = dimension if dimension >= 0 else len(shape) + dimension
+    # Skip if k is larger than the size of the dimension
+    if k > shape[dim]:
+      self.skipTest(f"k={k} is larger than dimension size {shape[dim]}")
+
+    rng = jtu.rand_int(self.rng(), high=math.prod(shape))
+    # _CheckBatching doesn't work with tuple outputs, so test outputs separately.
+    op1 = lambda x: lax.top_k(x, k=k, axis=dimension)[0]
+    self._CheckBatching(op1, 5, bdims, (shape,), (dtype,), rng)
+    op2 = lambda x: lax.top_k(x, k=k, axis=dimension)[1]
+    self._CheckBatching(op2, 5, bdims, (shape,), (dtype,), rng)
+
+  @jtu.sample_product(
+    [dict(shape=shape, bdims=bdims)
       for shape in [(8,), (3, 4, 5)]
       for bdims in lax_test_util.all_bdims(shape)],
     dtype=lax_test_util.default_dtypes,

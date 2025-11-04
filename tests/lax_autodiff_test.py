@@ -902,6 +902,28 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(fun, (values,), 2, ["fwd", "rev"], eps=1e-2)
 
   @jtu.sample_product(
+    dtype=[np.float32,],
+    shape=[(5, 5), (3, 4, 5), (2, 3, 4, 5)],
+    k=[1, 3],
+    dimension=[-1, -2, 0, 1],
+  )
+  def testTopKGradDimension(self, shape, dtype, k, dimension):
+    # Test gradients work correctly with different dimension arguments
+    # Skip if dimension is out of range for this shape
+    if dimension >= len(shape) or dimension < -len(shape):
+      self.skipTest(f"dimension {dimension} out of range for shape {shape}")
+    # Normalize dimension
+    dim = dimension if dimension >= 0 else len(shape) + dimension
+    # Skip if k is larger than the size of the dimension
+    if k > shape[dim]:
+      self.skipTest(f"k={k} is larger than dimension size {shape[dim]}")
+
+    flat_values = np.arange(math.prod(shape), dtype=dtype)
+    values = self.rng().permutation(flat_values).reshape(shape)
+    fun = lambda vs: lax.top_k(vs, k=k, axis=dimension)[0]
+    check_grads(fun, (values,), 2, ["fwd", "rev"], eps=1e-2)
+
+  @jtu.sample_product(
     [dict(shape=shape, idxs=idxs, axes=axes)
       for shape, idxs, axes in [
           [(3, 4, 5), (np.array([0, 2, 1]),), (0,)],

@@ -228,15 +228,14 @@ def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   axis = canonicalize_axis(axis, arr.ndim)
   kth = canonicalize_axis(kth, arr.shape[axis])
 
-  arr = arr.swapaxes(axis, -1)
   if dtypes.isdtype(arr.dtype, "unsigned integer"):
     # Here, we apply a trick to handle correctly 0 values for unsigned integers
-    bottom = -lax.top_k(-(arr + 1), kth + 1)[0] - 1
+    bottom = -lax.top_k(-(arr + 1), kth + 1, axis=axis)[0] - 1
   else:
-    bottom = -lax.top_k(-arr, kth + 1)[0]
-  top = lax.top_k(arr, arr.shape[-1] - kth - 1)[0]
-  out = lax.concatenate([bottom, top], dimension=arr.ndim - 1)
-  return out.swapaxes(-1, axis)
+    bottom = -lax.top_k(-arr, kth + 1, axis=axis)[0]
+  top = lax.top_k(arr, arr.shape[axis] - kth - 1, axis=axis)[0]
+  out = lax.concatenate([bottom, top], dimension=axis)
+  return out
 
 
 @export

@@ -3332,21 +3332,22 @@ def sort_key_val(keys: Array, values: ArrayLike, dimension: int = -1,
   k, v = sort_p.bind(keys, values, dimension=dimension, is_stable=is_stable, num_keys=1)
   return k, v
 
-def top_k(operand: ArrayLike, k: int) -> tuple[Array, Array]:
-  """Returns top ``k`` values and their indices along the last axis of ``operand``.
+def top_k(operand: ArrayLike, k: int, axis: int = -1) -> tuple[Array, Array]:
+  """Returns top ``k`` values and their indices along the specified axis of ``operand``.
 
   Args:
     operand: N-dimensional array of non-complex type.
     k: integer specifying the number of top entries.
+    axis: integer axis along which to find top k. Default: -1 (last axis).
 
   Returns:
     A tuple ``(values, indices)`` where
 
-    - ``values`` is an array containing the top k values along the last axis.
+    - ``values`` is an array containing the top k values along the specified axis.
     - ``indices`` is an array containing the indices corresponding to values.
 
-  ``values[..., i]`` is the ``i``-th largest entry in ``operand`` along the last
-  axis, and its index is ``indices[..., i]``.
+  ``values[..., i, ...]`` is the ``i``-th largest entry in ``operand`` along the
+  specified axis, and its index is ``indices[..., i, ...]``.
 
   If two elements are equal, the lower-index element appears first.
 
@@ -3363,12 +3364,56 @@ def top_k(operand: ArrayLike, k: int) -> tuple[Array, Array]:
     Array([10.,  9.,  6.], dtype=float32)
     >>> indices
     Array([4, 0, 2], dtype=int32)
+
+    Find the top 2 values along a specific axis of a 2D array:
+
+    >>> x = jnp.array([[1., 4., 2.],
+    ...                [5., 3., 6.]])
+    >>> values, indices = jax.lax.top_k(x, 2, axis=1)
+    >>> values
+    Array([[4., 2.],
+           [6., 5.]], dtype=float32)
+    >>> indices
+    Array([[1, 2],
+           [2, 0]], dtype=int32)
+
+    Find the top 2 values along axis 0:
+
+    >>> values, indices = jax.lax.top_k(x, 2, axis=0)
+    >>> values
+    Array([[5., 4., 6.],
+           [1., 3., 2.]], dtype=float32)
+    >>> indices
+    Array([[1, 0, 1],
+           [0, 1, 0]], dtype=int32)
   """
+  operand = asarray(operand)
   if core.is_constant_dim(k):
     k = int(k)
   if k < 0:
     raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
-  return top_k_p.bind(operand, k=k)
+
+  axis = canonicalize_axis(axis, operand.ndim)
+
+  # If axis is already the last axis, call primitive directly
+  if axis == operand.ndim - 1:
+    return top_k_p.bind(operand, k=k)
+
+  # Otherwise, transpose to move the target axis to the last position
+  # Create permutation: move axis to the end
+  perm = list(range(operand.ndim))
+  perm[axis], perm[-1] = perm[-1], perm[axis]
+  perm = tuple(perm)
+
+  # Transpose, call primitive, transpose back
+  operand_transposed = transpose(operand, perm)
+  values, indices = top_k_p.bind(operand_transposed, k=k)
+
+  # Transpose results back to original axis order
+  values = transpose(values, perm)
+  indices = transpose(indices, perm)
+
+  return values, indices
 
 def tie_in(x: Any, y: T) -> T:
   """Deprecated. Ignores ``x`` and returns ``y``."""
