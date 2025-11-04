@@ -23,6 +23,7 @@ from jax._src import dtypes
 from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.lax import lax as lax_internal
+from jax._src.lax import utils as lax_utils
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.scipy import linalg as jsp_linalg
 from jax._src.tree_util import (tree_leaves, tree_map, tree_structure,
@@ -818,14 +819,29 @@ def _eigs_krylov_schur(A, H, eigvals, eigvecs, residual_norms, howmany,
     compute_eig_vals=True,
   )
 
+  idx_dtype = lax_utils.int_dtype_for_dim(sigma.shape[0], signed=False)
+  if idx_dtype == np.dtype(np.int32):
+    idx_dtype = dtypes.default_int_dtype()
+  iota = lax.broadcasted_iota(idx_dtype, sigma.shape, 0)
+
   if which == "LM":
-    eigval_sort = jnp.argsort(jnp.abs(sigma), descending=True, stable=True)
+    _, _, eigval_sort = lax.lax.sort(
+      (jnp.abs(sigma), jnp.imag(sigma), iota), 0, num_keys=2
+    )
+    eigval_sort = lax.rev(eigval_sort, [0])
   elif which == "SM":
-    eigval_sort = jnp.argsort(jnp.abs(sigma), descending=False, stable=True)
+    _, _, eigval_sort = lax.lax.sort(
+      (jnp.abs(sigma), -jnp.imag(sigma), iota), 0, num_keys=2
+    )
   elif which == "LR":
-    eigval_sort = jnp.argsort(jnp.real(sigma), descending=True, stable=True)
+    _, _, eigval_sort = lax.lax.sort(
+      (jnp.real(sigma), jnp.imag(sigma), iota), 0, num_keys=2
+    )
+    eigval_sort = lax.rev(eigval_sort, [0])
   elif which == "SR":
-    eigval_sort = jnp.argsort(jnp.real(sigma), descending=False, stable=True)
+    _, _, eigval_sort = lax.lax.sort(
+      (jnp.real(sigma), -jnp.imag(sigma), iota), 0, num_keys=2
+    )
   elif real and (which == "LI" or which == "SI"):
     eigval_sort = jnp.argsort(jnp.abs(jnp.imag(sigma)), descending=True, stable=True)
   elif which == "LI":
