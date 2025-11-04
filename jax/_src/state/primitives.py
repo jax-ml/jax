@@ -595,6 +595,8 @@ def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   out_primal = swap_p.bind(ref_primal, x_primal, *idx, **params)
   if isinstance(ref_tangent, ad_util.Zero) and isinstance(x_tangent, ad_util.Zero):
     out_tangent = ad_util.Zero(core.typeof(out_primal).to_tangent_aval())
+  elif ref_tangent.aval.kind == "anselm_ref":
+    out_tangent = ad_util.Zero(core.typeof(out_primal).to_tangent_aval())
   else:
     if isinstance(ref_tangent, ad_util.Zero):
       raise Exception("performing a set/swap operation with a differentiated "
@@ -610,8 +612,9 @@ def addupdate_jvp_rule(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, x_primal, *idx = primals
   ref_tangent, x_tangent, *_ = tangents
   x_tangent = ad_util.instantiate(x_tangent)
-  addupdate_p.bind(ref_primal, x_primal, *idx, **params)
-  addupdate_p.bind(ref_tangent, x_tangent, *idx, **params)
+  if ref_tangent.aval.kind != "anselm_ref":
+    addupdate_p.bind(ref_primal, x_primal, *idx, **params)
+    addupdate_p.bind(ref_tangent, x_tangent, *idx, **params)
   return [], []
 ad.primitive_jvps[addupdate_p] = addupdate_jvp_rule
 
@@ -646,8 +649,6 @@ def _get_transpose_fancy(g, ref_, *idx, **params):
 ad.fancy_transposes[get_p] = _get_transpose_fancy
 
 def _swap_transpose_fancy(g, ref_, x, *idx, **params):
-  try: ref_.ref
-  except: breakpoint()
   if ref_.ref is None and type(g) is ad_util.Zero:
     return
   elif ref_.ref is None:
@@ -697,6 +698,7 @@ batching.fancy_primitive_batchers[core.freeze_p] = _freeze_batched
 
 def _state_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   del saveable  # ignored, always full remat state ops on known inputs
+                # (except for anselm_ref)
   ref_unk, *_ = unks_in
   ref_inst, *inst_in = inst_in
   _, *val_vars = eqn.invars
@@ -704,6 +706,8 @@ def _state_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   res = [v for v, inst in zip(val_vars, inst_in) if not inst]
   if ref_unk:
     return None, eqn, [True], [True], res  # tangent operation
+  elif eqn.invars[0].aval.kind == "anselm_ref":
+    return eqn, None, [False], [False], res
   else:
     return eqn, eqn, [False], [True], res  # full remat
 pe.partial_eval_jaxpr_custom_rules[get_p] = _state_partial_eval_custom

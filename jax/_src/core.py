@@ -2712,7 +2712,7 @@ effects.remat_allowed_effects.add_type(InternalMutableArrayEffect)
 @ref_p.def_effectful_abstract_eval
 def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
-  return (AbstractRef(init_aval, memory_space=memory_space),
+  return (AbstractRef(init_aval, memory_space=memory_space, kind=kind),
           {internal_mutable_array_effect})
 
 @ref_p.def_impl
@@ -2722,7 +2722,7 @@ def _ref_impl(init_val, *, memory_space: Any, kind: Any):
         "array ref with memory space only works inside of a `jit`.")
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
-  aval = AbstractRef(typeof(init_val))
+  aval = AbstractRef(typeof(init_val), kind=kind)
   return Ref(aval, ArrayRefImpl(aval, _array_copy(init_val)))
 
 def freeze(ref: Ref) -> Array:
