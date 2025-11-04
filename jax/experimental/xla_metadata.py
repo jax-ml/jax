@@ -13,5 +13,6 @@
 # limitations under the License.
 
 from jax._src.xla_metadata import (
+    set_xla_debug_metadata as set_xla_debug_metadata,
     set_xla_metadata as set_xla_metadata,
 )
