@@ -84,6 +84,23 @@ class SchedulingGroupsTest(jtu.JaxTestCase):
     self.assertIn('inlineable="false"', compiled.as_text())
     compiled(inp)  # doesn't crash
 
+  @jtu.run_on_devices('cpu')
+  def test_xla_metadata_call_inlineable_remat_in_scan(self):
+    @xla_metadata_call(inlineable="false")
+    def f(x, y):
+      return x + y, (x + y).sum()
+
+    def g(x, use_remat=True):
+      maybe_rematted_f = jax.remat(f) if use_remat else f
+      _, b = maybe_rematted_f(x, x)
+      return b
+
+    grad_f = jax.jit(jax.grad(g), static_argnums=(1,))
+    grads = grad_f(jnp.array(5.0), use_remat=False)
+    self.assertIsNotNone(grads)
+    grads = grad_f(jnp.array(5.0), use_remat=True)
+    self.assertIsNotNone(grads)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

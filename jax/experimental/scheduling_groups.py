@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from typing import Any
+from functools import partial
 
 from jax._src import core
 from jax._src import linear_util as lu
@@ -65,6 +66,9 @@ def attr_get(x):
   else:
     raise NotImplementedError(f'mlir attr handler for {type(x)=}')
 
+pe.partial_eval_jaxpr_custom_rules[xla_metadata_call_p] = \
+    partial(pe.closed_call_partial_eval_custom_rule, 'call_jaxpr',
+            lambda _, __, ___, ____, _____, ______, x, y: (x, y))
 
 def _xla_metadata_call_transpose(params, jaxpr, args, ct, cts_in_avals):
   jaxpr_, consts = jaxpr.jaxpr, jaxpr.consts
@@ -73,3 +77,5 @@ def _xla_metadata_call_transpose(params, jaxpr, args, ct, cts_in_avals):
       xla_metadata_call_p, params, jaxpr_, (*consts, *args),
       ct, cts_in_avals)
 ad.primitive_transposes[xla_metadata_call_p] = _xla_metadata_call_transpose
+
+pe.dce_rules[xla_metadata_call_p] = pe.dce_jaxpr_closed_call_rule
