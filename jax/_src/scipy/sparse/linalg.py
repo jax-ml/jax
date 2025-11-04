@@ -960,12 +960,12 @@ def _eigs_krylov_schur_outer(A, howmany, v0, restart, maxiter, which, rtol):
       eigval_sort = jnp.argsort(jnp.imag(eigvals), descending=False, stable=True)
     eigvals = eigvals[eigval_sort[:howmany]]
     eigvecs = tree_map(
-      lambda X: X[..., :restart] @ V[:, eigval_sort[:howmany]], eigvecs
+      lambda X: X.astype(V.dtype)[..., :restart] @ V[:, eigval_sort[:howmany]], eigvecs
     )
   else:
     eigvals = eigvals[:howmany]
     eigvecs = tree_map(
-      lambda X: X[..., :restart] @ V[:, :howmany], eigvecs
+      lambda X: X.astype(V.dtype)[..., :restart] @ V[:, :howmany], eigvecs
     )
 
   return eigvals, eigvecs
