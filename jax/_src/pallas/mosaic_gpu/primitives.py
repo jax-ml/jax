@@ -1285,30 +1285,20 @@ def _wgmma_warpgroup_lowering(
     )
     a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
     a, a_transforms = lowering._handle_transforms(ctx, a, a_transforms)
-    match a_transforms:
-      case (gpu_core.TransposeRef((1, 0)),):
-        a = mgpu.memref_transpose(a, (1, 0))
-      case ():
-        pass
-      case _:
-        raise ValueError(
-            f"WGMMA lhs has unsupported transforms: {a_transforms}."
-        )
+    if a_transforms:
+      raise ValueError(
+          f"WGMMA lhs has unsupported transforms: {a_transforms}."
+      )
   else:
     b_transforms_leaves = transforms_leaves  # type: ignore
 
   if b_transforms_tree is not None:
     b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
     b, b_transforms = lowering._handle_transforms(ctx, b, b_transforms)
-    match b_transforms:
-      case (gpu_core.TransposeRef((1, 0)),):
-        b = mgpu.memref_transpose(b, (1, 0))
-      case ():
-        pass
-      case _:
-        raise ValueError(
-            f"WGMMA rhs has unsupported transforms: {b_transforms}."
-        )
+    if b_transforms:
+      raise ValueError(
+          f"WGMMA rhs has unsupported transforms: {b_transforms}."
+      )
 
   new_acc = mgpu.dialect.wgmma(acc, a, b)
   nvvm_dialect.wgmma_commit_group_sync_aligned()
