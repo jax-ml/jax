@@ -481,6 +481,93 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     b = rng.randn(5)
     jax.jacrev(f)(b)  # doesn't crash
 
+  @jtu.sample_product(
+    shape=[(30, 30), (50, 50)],
+    dtype=float_types + complex_types,
+    k=[1, 2, 5],
+    which=['LM', 'LR', 'SR', 'LI', 'SI'], # Skip 'SM' since it is unaccurate
+    ncv=[20, 25]
+  )
+  @jtu.skip_on_devices("gpu")
+  def test_eigs_on_random_system(self, shape, dtype, k, which, ncv):
+    rng = jtu.rand_default(self.rng())
+    A = rng(shape, dtype)
+    v0 = rng(shape[1:], dtype)
+
+    eigval, eigvec = jax.scipy.sparse.linalg.eigs(A, k, v0, which=which, ncv=ncv)
+
+    using_x64 = v0.dtype.kind in {np.float64, np.complex128}
+    solution_tol = 1e-8 if using_x64 else 5e-4
+
+    norm_diff = jnp.linalg.norm(A.astype(eigvec.dtype) @ eigvec - eigvec * eigval[None, :])
+    self.assertAllClose(norm_diff, jnp.array(0, dtype=norm_diff.dtype),
+                        atol=solution_tol, rtol=solution_tol)
+
+    full_eigval, _ = jnp.linalg.eig(A)
+
+    if which == "LM":
+      eigval_sort = jnp.argsort(jnp.abs(full_eigval), descending=True, stable=True)
+    elif which == "SM":
+      eigval_sort = jnp.argsort(jnp.abs(full_eigval), descending=False, stable=True)
+    elif which == "LR":
+      eigval_sort = jnp.argsort(jnp.real(full_eigval), descending=True, stable=True)
+    elif which == "SR":
+      eigval_sort = jnp.argsort(jnp.real(full_eigval), descending=False, stable=True)
+    elif which == "LI":
+      eigval_sort = jnp.argsort(jnp.imag(full_eigval), descending=True, stable=True)
+    elif which == "SI":
+      eigval_sort = jnp.argsort(jnp.imag(full_eigval), descending=False, stable=True)
+
+    full_eigval = full_eigval[eigval_sort]
+
+    self.assertAllClose(full_eigval[:k], eigval, atol=solution_tol, rtol=solution_tol)
+
+  @jtu.sample_product(
+    shape=[(30, 30), (50, 50)],
+    dtype=[np.float64, np.complex128],
+    k=[1, 2, 5],
+    which=['LM', 'LR', 'SR', 'LI', 'SI'], # Skip 'SM' since it is unaccurate
+  )
+  def test_eigs_against_scipy(self, shape, dtype, k, which):
+    if not config.enable_x64.value:
+      raise unittest.SkipTest("requires x64 mode")
+
+    if dtype == np.float64 and (which == 'LI' or which == 'SI'):
+      raise unittest.SkipTest("ARPACK has different behaviour for LI/SI for real linear maps.")
+
+    rng = jtu.rand_default(self.rng())
+    A = rng(shape, dtype)
+    v0 = rng(shape[1:], dtype)
+
+    scipy_result, _ = scipy.sparse.linalg.eigs(A, k, v0=v0, which=which)
+    lax_result, _ = jax.scipy.sparse.linalg.eigs(A, k, v0=v0, which=which)
+
+    # Scipy returns the `k` eigenvalues of type `which` but they are not
+    # sorted always the same. Thus sort them according to the same rules as
+    # implemented in jax
+    if which == "LM":
+      eigval_sort = jnp.argsort(jnp.abs(scipy_result), descending=True, stable=True)
+    elif which == "SM":
+      eigval_sort = jnp.argsort(jnp.abs(scipy_result), descending=False, stable=True)
+    elif which == "LR":
+      eigval_sort = jnp.argsort(jnp.real(scipy_result), descending=True, stable=True)
+    elif which == "SR":
+      eigval_sort = jnp.argsort(jnp.real(scipy_result), descending=False, stable=True)
+    elif which == "LI":
+      eigval_sort = jnp.argsort(jnp.imag(scipy_result), descending=True, stable=True)
+    elif which == "SI":
+      eigval_sort = jnp.argsort(jnp.imag(scipy_result), descending=False, stable=True)
+
+    scipy_result = scipy_result[eigval_sort]
+
+    # Sorting of complex conjugate pairs could be reversed, thus conjugate
+    # the lax result if the sign differs
+    lax_result = jnp.where(
+      jnp.sign(jnp.imag(scipy_result)) != jnp.sign(jnp.imag(lax_result)),
+      lax_result.conj(), lax_result
+    )
+
+    self.assertAllClose(lax_result, scipy_result, atol=1e-10, rtol=1e-10)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
