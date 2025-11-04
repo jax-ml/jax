@@ -658,14 +658,6 @@ class OpsTest(PallasBaseTest):
       self.skipTest("float16 is only supported with Mosaic GPU")
     if sut_is_mosaic_gpu and to_dtype == "bool":
       self.skipTest("Sub-byte types are not yet supported with Mosaic GPU")
-    if (
-        sut_is_mosaic_gpu
-        and jnp.issubdtype(from_dtype, jnp.integer)
-        and jnp.issubdtype(to_dtype, jnp.integer)
-        and jtu.is_cuda_compute_capability_at_least("10.0")
-    ):
-      # TODO(b/452558917): Remove once LLVM miscompiles are fixed.
-      self.skipTest("Integer casts are miscompiled by LLVM on Blackwell")
 
     # XLA does not specify the float->int conversion result for NaNs.
     elements = dict(allow_nan=not jnp.issubdtype(to_dtype, jnp.integer))
