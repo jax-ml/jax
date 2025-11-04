@@ -2722,7 +2722,6 @@ class PallasCallWGTest(
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
     expected_missing_primitives = {
-        mgpu_primitives.tcgen05_mma_p,
         mgpu_primitives.print_layout_p,
         mgpu_primitives.tcgen05_commit_arrive_p,
         mgpu_primitives.async_copy_scales_to_tmem_p,
@@ -3393,7 +3392,8 @@ class PallasCallSm100ATest(PallasSm100ATest):
       dtype=[jnp.int8, jnp.uint8]
   )
   def test_integer_matmul(self, m, n, swizzle, dtype):
-    self.skip_if_wg_semantics()
+    if m == 64:
+      self.skip_if_wg_semantics()  # Inferred swizzle too big for MMA with M=64.
     if n * jnp.dtype(dtype).itemsize <= swizzle:
       self.skipTest("swizzle too big")
     k = 128
@@ -3452,7 +3452,8 @@ class PallasCallSm100ATest(PallasSm100ATest):
   def test_simple_matmul(
       self, m, n, swizzle, dtype, lhs_tmem, transpose_lhs, transpose_rhs
   ):
-    self.skip_if_wg_semantics()
+    if m == 64 and n == 64:
+      self.skip_if_wg_semantics()  # Inferred swizzle too big for MMA with M=64 and N=64.
     if transpose_lhs and lhs_tmem:
       self.skipTest("TMEM transpose not supported")
     if n * jnp.dtype(dtype).itemsize <= swizzle:
@@ -3521,7 +3522,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
   def test_matmul_alignment(self):
-    self.skip_if_wg_semantics()
     m = k = n = 128
     dtype = jnp.float16
     transforms = self.default_transforms(dtype=dtype)
@@ -3728,7 +3728,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
     np.testing.assert_allclose(result, x @ y, rtol=1e-3)
 
   def test_matmul_with_sliced_accumulator(self):
-    self.skip_if_wg_semantics()
+    self.skip_if_wg_semantics()  # Slicing TMEM is not supported.
     dtype = jnp.bfloat16
     shape = (128, 128)
     tmem_shape = (128, 2 * 128)
@@ -3786,7 +3786,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
       lhs_tmem=[False, True],
   )
   def test_simple_collective_matmul(self, m_n_k, swizzle, dtype, lhs_tmem):
-    self.skip_if_wg_semantics()
     m, n, k = m_n_k
     if (n // 2) * jnp.dtype(dtype).itemsize < swizzle:
       self.skipTest("swizzle too big")
@@ -4032,7 +4031,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
   def test_mma_barrier_indexing(
       self, barrier_index, shape=(128, 128), swizzle=128, dtype=jnp.float16
   ):
-    self.skip_if_wg_semantics()
     transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
 
     def kernel(a_smem, b_smem, out_ref, acc_tmem, scratch_smem, barrier_ref):

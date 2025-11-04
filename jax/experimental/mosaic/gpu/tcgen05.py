@@ -253,7 +253,10 @@ def mma(
       # We can't split N into groups if we would partition it below the tile size.
       # TODO: We only need to check this if N is the minormost dim in B.
       if 8 * b_swizzle // utils.bitwidth(element_type) > n // n_lane_groups:
-        raise ValueError("Swizzle is too big for MMA with M=64. Try lowering it.")
+        raise ValueError(
+            f"Swizzle={b_swizzle} is too big for MMA with M=64. Try"
+            " lowering it."
+        )
   else:
     raise ValueError(f"Only M=128 and M=64 are supported for MMA, but got M={m}")
   f32 = ir.F32Type.get()
