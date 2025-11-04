@@ -29,7 +29,6 @@ import math
 import re
 from typing import Any, assert_never, cast
 
-from jax._src import lib as jaxlib
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -1365,22 +1364,20 @@ def _async_load_tmem_equation_system(
   )
 
 
-if jaxlib.version > (0, 8, 0):
-
-  @_add_equation_system_derivation_rule(mgpu.SliceTmemOp)
-  def _slice_tmem_equation_system(
-      ctx: DerivationContext,
-      op: mgpu.SliceTmemOp,
-  ) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
-    operand = ValueSite(op, VariableType.OPERAND, 0)
-    operand_variable = ctx.producer_ref(operand)
-    result = ValueSite(op, VariableType.RESULT, 0)
-    result_variable = eqns.Variable(result)
-    return (
-        eqns.EquationSystem(),
-        {operand_variable: [operand], result_variable: [result]},
-        [],
-    )
+@_add_equation_system_derivation_rule(mgpu.SliceTmemOp)
+def _slice_tmem_equation_system(
+    ctx: DerivationContext,
+    op: mgpu.SliceTmemOp,
+) -> tuple[eqns.EquationSystem, ValueSitesForVariable, list[Hint]]:
+  operand = ValueSite(op, VariableType.OPERAND, 0)
+  operand_variable = ctx.producer_ref(operand)
+  result = ValueSite(op, VariableType.RESULT, 0)
+  result_variable = eqns.Variable(result)
+  return (
+      eqns.EquationSystem(),
+      {operand_variable: [operand], result_variable: [result]},
+      [],
+  )
 
 
 @_add_equation_system_derivation_rule(mgpu.AsyncStoreTmemOp)
