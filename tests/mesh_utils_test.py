@@ -698,6 +698,17 @@ class MeshUtilsTest(test_util.JaxTestCase):
     device_id_mesh = np.vectorize(lambda d: d.id)(mesh)
     self.assertAllClose(device_id_mesh, np.array(expected_device_id_mesh))
 
+  def test_v7x_create_device_mesh_fallback(self):
+    devices = mock_tpu_devices(2, 4, 4, mesh_utils._TPU_7X,
+                               one_device_per_chip=False)
+    mesh = mesh_utils.create_device_mesh(
+        (1, 32), devices=devices[:32], contiguous_submeshes=False)
+    self.assertEqual(mesh.shape, (1, 32))
+
+    mesh = mesh_utils.create_device_mesh(
+        (1, 32), devices=devices[32:], contiguous_submeshes=False)
+    self.assertEqual(mesh.shape, (1, 32))
+
 
 def int64_array(x) -> np.ndarray:
   return np.array(x, dtype=np.int64)

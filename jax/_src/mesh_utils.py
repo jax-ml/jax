@@ -197,9 +197,8 @@ def _7x_create_device_mesh(
   physical_mesh_shape = _get_physical_tpu_mesh(devices).shape
   # For the x and y axes, we only support at most 2x2 since we can make one ring
   # along those axes and repeat with other separate rings along the z axis.
-  assert (
-      physical_mesh_shape[0] <= 2 and physical_mesh_shape[1] <= 2
-  ), f'Unexpected physical mesh shape: {physical_mesh_shape}.'
+  if physical_mesh_shape[0] > 2 or physical_mesh_shape[1] > 2:
+    return None
 
   indices = []
   for i in range(0, len(devices), 8):
