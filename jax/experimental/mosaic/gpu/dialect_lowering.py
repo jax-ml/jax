@@ -273,13 +273,10 @@ def _initialize_barrier_op_lowering_rule(
     ctx: LoweringContext,
     op: mgpu.InitializeBarrierOp,
 ) -> Sequence[ir.Value]:
-  shape = ir.ShapedType(op.barriers_ref.type).shape
-  num_barriers = math.prod(shape)
-
   i32 = ir.IntegerType.get_signless(32)
   lowered_barrier_type = _lowered_barrier_type()
 
-  for i in range(num_barriers):
+  for i in range(op.num_barriers.value):
     nvvm.mbarrier_init_shared(
         utils.getelementptr(op.base_pointer, [i], lowered_barrier_type),
         utils.c(
@@ -290,13 +287,7 @@ def _initialize_barrier_op_lowering_rule(
     )
 
   gpu.barrier()
-  return (
-      utils.ptr_as_memref(
-          op.base_pointer,
-          op.barriers_ref.type,
-          utils.WORKGROUP_NVPTX_ADDRESS_SPACE,
-      ),
-  )
+  return []
 
 
 @_register_lowering(mgpu.OptimizationBarrierOp)

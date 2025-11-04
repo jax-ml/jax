@@ -1100,10 +1100,7 @@ class DialectBarrierRef:
     address = memref_ptr(
         barrier_memref, memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE
     )
-    dialect.InitializeBarrierOp(
-        barrier_ty, base_pointer=address, arrival_count=arrival_count
-    )
-
+    dialect.initialize_barrier(address, arrival_count, num_barriers)
     i32 = ir.IntegerType.get_signless(32)
     phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
     memref.store(c(0, i32), phases, [])
