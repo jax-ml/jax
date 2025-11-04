@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -132,8 +133,25 @@ FailureOr<TypedValue<VectorType>> relayout(
     // dst. We will only change bitwidth when both src and dst are in the safe
     // layout. Necessary relayout will be inserted to relayout from src to the
     // safe layout or from the safe layout to dst.
-    auto safe_tiling =
-        src.tiling()[0] < dst.tiling()[0] ? src.tiling() : dst.tiling();
+    // Consider cases like src is 32-bit with (8, 128) tiling and dst is 8-bit
+    // with (32, 128) tiling, sublane tiling shouldn't be too large, so we
+    // choose the smaller one between src and dst. On the other hand, for cases
+    // like src is 32-bit with (1, 128) tiling and dst is 8-bit with (4, 128)
+    // tiling, a safe sublane tiling should be at least the larger packing
+    // between src and dst.
+    int64_t safe_packing = std::max(src.packing(), dst.packing());
+    // TODO(yueshengys): this is still not safe for cases with 2-bit, because we
+    // may end with (16, 128) tiling for 32-bit. In those cases, we should do
+    // multiple rounds of the process.
+    if (safe_packing * src.bitwidth() > 32 * target_shape[0] ||
+        safe_packing * dst.bitwidth() > 32 * target_shape[0]) {
+      return emitError(v.getLoc(),
+                       "Not implemented: changeBitwidth when src bitwidth and "
+                       "dst bitwidth differs too much.");
+    }
+    std::array<int64_t, 2> safe_tiling = {
+        std::max(std::min(src.tiling()[0], dst.tiling()[0]), safe_packing),
+        target_shape[1]};
     auto safe_vreg_slice =
         VectorLayout::vregSlice(target_shape, dst.bitwidth(), safe_tiling);
     auto safe_offsets = LayoutOffsets{

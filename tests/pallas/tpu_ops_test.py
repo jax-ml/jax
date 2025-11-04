@@ -346,11 +346,13 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_array_equal(result, expected)
 
   @parameterized.product(
+      shape=[(129, 129), (1, 129), (2, 129), (4, 129)],
       msk_dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
       dtype=[jnp.float32, jnp.bfloat16],
   )
-  def test_i1_relayout_bw(self, msk_dtype, dtype):
-    shape = (129, 129)
+  def test_i1_relayout_bw(self, shape, msk_dtype, dtype):
+    if shape[0] < 8 and not jtu.if_cloud_tpu_at_least(2025, 11, 9):
+      self.skipTest("Requires libtpu built after 2025-11-09")
     msk_bitwidth = dtypes.bit_width(msk_dtype)
     bitwidth = dtypes.bit_width(dtype)
     if jtu.get_tpu_version() < 5 and msk_bitwidth < 32:
