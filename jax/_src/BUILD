@@ -1309,6 +1309,7 @@ pytype_strict_library(
         ":api",
         ":config",
         ":core",
+        ":cpu_lib_ops",
         ":cudnn",
         ":custom_derivatives",
         ":deprecations",
@@ -1533,6 +1534,19 @@ pytype_strict_library(
         ":tree_util",
         ":typing",
         ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "cpu_lib_ops",
+    srcs = glob(["_src/cpu_lib_ops/**/*.py"]),
+    deps = [
+        ":api",
+        ":core",
+        ":mlir",
+        ":numpy",
+        ":typing",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
