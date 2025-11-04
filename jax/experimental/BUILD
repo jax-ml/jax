@@ -278,7 +278,7 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:scf_dialect",
         "//jaxlib/mlir:vector_dialect",
         "//jaxlib/mosaic/python:gpu_dialect",
-    ] + py_deps("absl/flags") + py_deps("numpy"),
+    ] + py_deps("absl-all") + py_deps("numpy"),
 )
 
 pytype_strict_library(

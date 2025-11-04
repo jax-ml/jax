@@ -720,13 +720,14 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   def test_unambiguous_hints_are_used_to_assign_variables_correctly(self):
     v0 = V(0)
-    assignments = layout_inference.find_assignments_for(
+    assignments, _ = layout_inference.find_assignments_for(
         {v0},
         eqns.EquationSystem(),
         # Voluntarily use conflicting hints to check that we use one of them
         # deterministically. This may require updating if we decide to change
         # the traversal order in the future.
         [H(v0, RL(mgpu.WGMMA_ROW_LAYOUT)), H(v0, RL(mgpu.WGMMA_COL_LAYOUT))],
+        fuel=1000
     )
     self.assertEqual(assignments, {v0: RL(mgpu.WGMMA_ROW_LAYOUT)})
 
@@ -736,7 +737,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     [key] = layout_inference.vector_value_sites(x)
     variable = eqns.Variable(key)
-    assignments = layout_inference.find_assignments_for(
+    assignments, _ = layout_inference.find_assignments_for(
         {variable},
         eqns.EquationSystem(
             equations=[
@@ -745,6 +746,7 @@ class LayoutInferenceTest(parameterized.TestCase):
             ]
         ),
         hints=[],
+        fuel=1000
     )
     self.assertIsInstance(assignments, eqns.Unsatisfiable)
 
@@ -756,7 +758,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     [kv1] = layout_inference.vector_value_sites(op1)
     v0, v1 = eqns.Variable(kv0), eqns.Variable(kv1)
     splat_layout = RL(mgpu.WGSplatFragLayout((3, 128)))
-    assignments = layout_inference.find_assignments_for(
+    assignments, _ = layout_inference.find_assignments_for(
         {v0},
         eqns.EquationSystem(
             equations=[
@@ -771,6 +773,7 @@ class LayoutInferenceTest(parameterized.TestCase):
         # The first hint would make the system unsatisfiable, but the second
         # hint should be used to find a solution.
         hints=[H(v1, RL(mgpu.WGMMA_LAYOUT)), H(v1, splat_layout)],
+        fuel=1000
     )
     self.assertEqual(assignments, {v0: splat_layout})
 
@@ -1971,6 +1974,22 @@ class LayoutInferenceTest(parameterized.TestCase):
     mgpu.infer_layout(self.module)
     self.checkInTmemLayouts(op, [in_layout])
     self.checkOutTmemLayouts(op, [out_layout])
+
+  def test_infer_layout_fails_if_not_enough_fuel(self):
+    layout = fa.WGStridedFragLayout((128, 128), vec_size=4)
+    with ir.InsertionPoint(self.module.body):
+      vec_ty = ir.VectorType.get((128, 128), ir.BF16Type.get())
+      a, b = undefs(vec_ty, vec_ty)
+      a = layout_cast(a, layout)
+      add = arith.AddFOp(a, b)
+
+    with self.assertRaisesRegex(ValueError, "Consider adding layout annotations"):
+      mgpu.infer_layout(self.module, fuel=1)
+
+    mgpu.infer_layout(self.module, fuel=100)
+
+    self.checkInLayouts(add, [layout, layout])
+    self.checkOutLayouts(add, [layout])
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+from absl import logging
 from collections.abc import Callable, Iterator, Sequence
 import dataclasses
 import enum
@@ -45,6 +46,22 @@ from . import launch_context as lc
 from . import layouts as layouts_lib
 from . import tcgen05
 from . import utils
+
+
+# This value was arrived at by looking at an existing kernel where layout
+# inference would never be able to complete successfully, and kernels where it
+# would, as well as existing tests as of 2025-11-03. We observed the following:
+#
+#   1. all tests would pass with a fuel that is at least ~15_000;
+#   2. the kernel for which layout inference fails would fail in less than 12
+#      seconds when using a fuel of 100_000.
+#
+# All in all, this seems like a reasonable compromise: the value is high
+# enough that we can comfortably find a solution to even the most complicated
+# layout inference problems that we have seen so far, but the runtime is fast
+# enough that users will not waste much time waiting for a never-ending pass to
+# complete when the system is unable to find a solution.
+_DEFAULT_LAYOUT_INFERENCE_FUEL = 100_000
 
 
 class VariableType(enum.IntEnum):
@@ -415,7 +432,9 @@ def find_assignments_for(
     unknowns: Sequence[eqns.Variable],
     equation_system: eqns.EquationSystem,
     hints: Sequence[Hint],
-) -> dict[eqns.Variable, eqns.Constant] | eqns.Unsatisfiable:
+    *,
+    fuel: int
+) -> tuple[dict[eqns.Variable, eqns.Constant] | eqns.Unsatisfiable, int]:
   """Attempts to find assignments that satisfy `equation_system` for `unknowns`.
 
   Args:
@@ -423,15 +442,20 @@ def find_assignments_for(
       of `Variable`s for determinism purposes.
     equation_system: the equation system to satisfy.
     hints: a list of hints that may be used to introduce new assignments.
+    fuel: the fuel to use for the search. Once the fuel is exhausted, we raise
+      an error.
 
   Returns:
-    - Unsatisfiable() if the equation system has unsatisfiable constraints.
-    - A dictionary assigning all the unknown variables to `ConstantExpression`s
-      such that the assignment satisfies the equation system otherwise.
+    A tuple where the first element is the solution, and the second element is
+    the fuel remaining after the search. The solution is either:
+      - Unsatisfiable() if the equation system has unsatisfiable constraints.
+      - A dictionary assigning all the unknown variables to
+        `ConstantExpression`s such that the assignment satisfies the equation
+        system otherwise.
   """
   equation_system = eqns.reduce(equation_system)
   if isinstance(equation_system, eqns.Unsatisfiable):
-    return eqns.Unsatisfiable()
+    return eqns.Unsatisfiable(), fuel
 
   remaining_unknowns = [
       u for u in unknowns if u not in equation_system.assignments.keys()
@@ -440,7 +464,7 @@ def find_assignments_for(
   # In this case, we have determined an assignment for all the unknown
   # variables. Return their respective assignment.
   if not remaining_unknowns:
-    return {v: k for v, k in equation_system.assignments.items() if v in unknowns}
+    return {v: k for v, k in equation_system.assignments.items() if v in unknowns}, fuel
 
   # Reduce the expressions in the remaining hints based on the current
   # assignments, and eliminate hints that pertain to variables that already
@@ -452,21 +476,26 @@ def find_assignments_for(
   # new assignment could make the system unsatisfiable, so we use a recursive
   # call to be able to backtrack if necessary.
   for assignment in conjure_assignment(remaining_unknowns, equation_system, hints):
+    if fuel <= 0:
+      raise ValueError(
+          "Layout inference failed to find a solution. Consider adding layout "
+          "annotations to your program to guide the search."
+      )
+    # Trying one assignment consumes fuel.
+    fuel -= 1
     variable, expr = assignment
     new_equation_system = (
         eqns.EquationSystem(assignments={variable: expr}) & equation_system)
     if isinstance(new_equation_system, eqns.Unsatisfiable):
       # This assignment is not compatible with the equation system.
       continue
-    solution = find_assignments_for(unknowns, new_equation_system, hints)
-    if isinstance(solution, eqns.Unsatisfiable):
-      # This assignment is not compatible with the equation system.
-      continue
-    return solution
+    solution, fuel = find_assignments_for(unknowns, new_equation_system, hints, fuel=fuel)
+    if not isinstance(solution, eqns.Unsatisfiable):
+      return solution, fuel
 
   # TODO(bchetioui): should we have a way to give a useful dump to the user
   # here, perhaps indicating what to layout cast.
-  return eqns.Unsatisfiable()
+  return eqns.Unsatisfiable(), fuel
 
 
 @dataclasses.dataclass()
@@ -1889,7 +1918,9 @@ def traverse_op(
           traverse_op(block_op, callback)
 
 
-def infer_layout(module: ir.Module):
+def infer_layout(
+    module: ir.Module, *, fuel: int = _DEFAULT_LAYOUT_INFERENCE_FUEL
+):
   """Infers layouts for the given module.
 
   * If there are vector (respectively SMEM refs, TMEM refs) operands,
@@ -1900,6 +1931,9 @@ def infer_layout(module: ir.Module):
   and contain one element per relevant argument in the memory space.
   * Any of these attributes is guaranteed to not be set if there is no relevant
   input/output in the corresponding memory space.
+
+  The fuel is provided in order to limit the number of attempts made by the
+  solver.
   """
   global_equation_system: eqns.EquationSystem | eqns.Unsatisfiable
   global_equation_system = eqns.EquationSystem()
@@ -1950,10 +1984,14 @@ def infer_layout(module: ir.Module):
   global_equation_system = eqns.saturate_divides_constraints_for_equal_vars(global_equation_system)
 
   # Attempt to find assignments that satisfy the equation system.
-  solution = find_assignments_for(
+  solution, remaining_fuel = find_assignments_for(
       list(ctx.value_sites_for_variable.keys()), global_equation_system,
-      hints
+      hints, fuel=fuel
   )
+
+  if logging.vlog_is_on(1):
+    print("Finding a solution (or exhausting the entire search space) "
+          f"consumed {fuel - remaining_fuel}/{fuel} fuel.")
 
   if isinstance(solution, eqns.Unsatisfiable):
     raise ValueError(
