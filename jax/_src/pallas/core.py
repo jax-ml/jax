@@ -456,6 +456,14 @@ class _IndexMapFunc:
     return out_indices
 
 
+@functools.lru_cache(maxsize=100)
+def _make_trivial_index_map(ndim: int) -> Callable[..., Any]:
+  def index_map(*args):
+    del args
+    return tuple(0 for _ in range(ndim))
+  return index_map
+
+
 @dataclasses.dataclass
 class BlockSpec:
   """Specifies how an array should be sliced for each invocation of a kernel.
@@ -478,7 +486,10 @@ class BlockSpec:
   pipeline_mode: Buffered | None = None
 
   def __post_init__(self):
-    if self.index_map is not None:
+    if self.index_map is None:
+      if self.block_shape is not None:
+        self.index_map = _make_trivial_index_map(len(self.block_shape))
+    else:
       self.index_map = _IndexMapFunc(self.index_map)
 
   def to_block_mapping(
