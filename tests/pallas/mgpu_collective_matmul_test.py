@@ -25,7 +25,7 @@ from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
 from jax.experimental.mosaic import gpu as mgpu
-from jax.experimental.pallas.ops.gpu import collective_matmul_mgpu
+from jax.experimental.pallas.ops.gpu import all_gather_lhs_matmul_mgpu
 import jax.numpy as jnp
 import numpy as np
 
@@ -38,7 +38,7 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if collective_matmul_mgpu is None:
+    if all_gather_lhs_matmul_mgpu is None:
       self.skipTest("Mosaic GPU not available.")
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_equal("9.0")):
@@ -66,9 +66,9 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
       tile_m=(64, 128, 192),
       tile_n=(64, 128, 192),
       tile_k=(64, 128),
-      grid_minor_dim=(collective_matmul_mgpu.MatmulDimension.N,),
+      grid_minor_dim=(all_gather_lhs_matmul_mgpu.MatmulDimension.N,),
       grid_tile_width=(1,),
-      wg_dimension=(collective_matmul_mgpu.MatmulDimension.N,),
+      wg_dimension=(all_gather_lhs_matmul_mgpu.MatmulDimension.N,),
       max_concurrent_steps=(2, 4),
       dtype=(jnp.bfloat16,),
   )
@@ -89,8 +89,8 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
     num_devices = jax.device_count()
     epi_tile_size = 64 * 64
     num_epi_tiles = tile_m * tile_n // epi_tile_size
-    cta_tile_m = tile_m * (1 + (wg_dimension == collective_matmul_mgpu.MatmulDimension.M))
-    cta_tile_n = tile_n * (1 + (wg_dimension == collective_matmul_mgpu.MatmulDimension.N))
+    cta_tile_m = tile_m * (1 + (wg_dimension == all_gather_lhs_matmul_mgpu.MatmulDimension.M))
+    cta_tile_n = tile_n * (1 + (wg_dimension == all_gather_lhs_matmul_mgpu.MatmulDimension.N))
     if (
         (cta_tile_m + cta_tile_n) * tile_k * max_concurrent_steps
         + 2 * min(2, num_epi_tiles) * epi_tile_size
@@ -119,7 +119,7 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
       return out
 
     ref_out = run(lambda x, y: lax.all_gather(x, "x", axis=0, tiled=True) @ y)
-    config = collective_matmul_mgpu.TuningConfig(
+    config = all_gather_lhs_matmul_mgpu.TuningConfig(
         tile_m=tile_m,
         tile_n=tile_n,
         tile_k=tile_k,
@@ -130,7 +130,7 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
     )
     out = run(
         functools.partial(
-            collective_matmul_mgpu.all_gather_lhs_matmul,
+            all_gather_lhs_matmul_mgpu.all_gather_lhs_matmul,
             axis_name="x",
             config=config,
             dtype=dtype,

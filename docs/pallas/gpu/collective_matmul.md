@@ -91,7 +91,7 @@ We use three Pallas functions for inter-device communication:
 ```{note}
 Here, we only present a simplified version of the kernel, which allows us to
 focus on the most interesting details. You can find [the full implementation in
-our examples directory](https://github.com/jax-ml/jax/blob/main/jax/experimental/pallas/ops/gpu/collective_matmul_mgpu.py).
+our examples directory](https://github.com/jax-ml/jax/blob/main/jax/experimental/pallas/ops/gpu/all_gather_lhs_matmul_mgpu.py).
 ```
 
 First, we focus on the set-up of our kernel. For the compute part, we will reuse
