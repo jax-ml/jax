@@ -1558,6 +1558,11 @@ FailureOr<Value> canonicalize_reshape(const CanonicalizeContext &ctx,
     while (suffix_size < tgt_shape.back()) {
       suffix_size *= *(sizes_it++);
     }
+    // Make sure that the minor dim is folded only from entire major dims, not
+    // from a part of some minor dim.
+    if (suffix_size != tgt_shape.back()) {
+      return raw_op.getResult(0);
+    }
     folded_dims = sizes_it - src_shape.rbegin();
   }
   DCHECK_GE(folded_dims, 2);  // Should fold at least 2nd minor into minor.
