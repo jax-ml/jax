@@ -22,6 +22,7 @@ from absl import logging
 from jax._src import api
 from jax._src import config
 from jax._src import core
+from jax._src import linear_util as lu
 from jax._src import stages
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
@@ -64,34 +65,6 @@ component_cache = config.string_or_object_state(
   help="Cache dir for components. Components won't be cached if None.",
   validator=_validate_component_cache,
 )
-
-
-class TracedCacheEntry:
-  def __init__(self, traced: stages.Traced, hits: int = 0):
-    self.traced = traced
-    self.hits = hits
-
-  def __str__(self):
-    return f"{self.traced.fun_name}: {self.hits}"
-
-  def __repr__(self):
-    return self.__str__()
-
-
-_traced_cache: dict[Hashable, TracedCacheEntry] = {}
-
-
-def get_traced(key: Hashable, fun: Callable[..., Any], *args):
-  entry = _traced_cache.get(key, None)
-  if entry is None:
-    logging.info("missed trace cache %s", key)
-    entry = _traced_cache[key] = TracedCacheEntry(
-      api.trace(fun.f_transformed, *args)
-    )
-  else:
-    logging.info("hit trace cache %s", key)
-    entry.hits += 1
-  return entry.traced
 
 
 class CacheEntry:
@@ -183,3 +156,23 @@ def put_entry(
 ) -> None:
   if (cache := get_cache()) is not None:
     cache.put(key, entry.serialize(), update)
+
+@lu.cache
+def cached_flat_fun(flat_fun):
+  return maybe_reset_stores(flat_fun)
+
+
+# TODO(dsuo): Share logic with pmap.
+def maybe_reset_stores(fun):
+  # TODO(dsuo): Hack to clear lu.Store borrowed from pmap.
+  f_transformed = fun.f_transformed
+
+  # TODO(dsuo): Add this as a transformation.
+  def reset_stores_f_transformed(*args, **kwargs):
+    for store in fun.stores:
+      if store is not None:
+        store.reset()
+    return f_transformed(*args, **kwargs)
+
+  fun.f_transformed = reset_stores_f_transformed
+  return fun

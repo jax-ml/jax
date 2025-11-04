@@ -39,6 +39,10 @@ ComponentKey = aot_util.ComponentKey
 get_cache = aot_util.get_cache
 
 
+_fun_cache: dict[ComponentKey, Callable[..., Any]] = {}
+
+
+
 def component(
   key: UserKey = None,
 ) -> Callable[..., Any]:
@@ -47,32 +51,30 @@ def component(
     # TODO(dsuo): Do we have all the information we need at this point to make
     # the component key?
     component_key = ComponentKey(key)
+    fun = _fun_cache.setdefault(component_key, fun)
 
     @api.jit
     @util.wraps(fun)
     @traceback_util.api_boundary
     def wrapper(*args, **kwargs):
       args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
-      dbg = api_util.debug_info("component", fun, args, kwargs)
-      wrapped_fun = lu.wrap_init(fun, debug_info=dbg)
+      wrapped_fun = lu.wrap_init(
+        fun, debug_info=api_util.debug_info("component", fun, args, kwargs)
+      )
       flat_fun, out_tree = api_util.flatten_fun(wrapped_fun, in_tree)
+      flat_fun = aot_util.cached_flat_fun(flat_fun)
+      logging.info("component flat_fun %s:", id(flat_fun))
+      jitted_fun = api.jit(flat_fun.call_wrapped)
 
-      # TODO(dsuo): Hack to clear lu.Store borrowed from pmap.
-      f_transformed = flat_fun.f_transformed
-      def reset_stores_f_transformed(*args, **kwargs):
-        for store in flat_fun.stores:
-          if store is not None:
-            store.reset()
-        return f_transformed(*args, **kwargs)
-      flat_fun.f_transformed = reset_stores_f_transformed
       out_flat = component_p.bind(
         *args,
-        fun=flat_fun,
+        fun=jitted_fun,
         component_key=component_key,
       )
       return tree_util.tree_unflatten(out_tree(), out_flat)
 
     wrapper.component_key = component_key
+    wrapper.fun = fun
     return wrapper
 
   return _component
@@ -94,10 +96,10 @@ def component_abstract_eval(
   logging.info("component_abstract_eval got entry %s", component_key)
   if entry is None:
     logging.info("missed abstract_eval %s", component_key)
-    traceback.print_stack()
-    traced = aot_util.get_traced(component_key, fun, *args)
+    if isinstance(fun, lu.WrappedFun):
+      fun = aot_util.maybe_reset_stores(fun).call_wrapped
     avals_out = tree_util.tree_map(
-      lambda x: core.ShapedArray(x.shape, x.dtype), traced.out_info
+      lambda x: core.ShapedArray(x.shape, x.dtype), api.eval_shape(fun, *args)
     )
     aot_util.put_entry(component_key, entry := aot_util.CacheEntry(avals_out))
   return entry.avals_out
@@ -118,7 +120,9 @@ def component_lowering(
   module_name = f"{component_key}.module"
   if (module := entry.module) is None:
     logging.info("missed lowering: %s", component_key)
-    traced = aot_util.get_traced(component_key, fun, *ctx.avals_in)
+    if isinstance(fun, lu.WrappedFun):
+      fun = aot_util.maybe_reset_stores(fun).call_wrapped
+    traced = api.trace(fun, *ctx.avals_in)
     lowering_result = mlir.lower_jaxpr_to_module(
       module_name=module_name,
       jaxpr=traced.jaxpr,
@@ -177,9 +181,14 @@ def component_batcher(
   # TODO(dsuo): Ignore ragged.
   # TODO(dsuo): Ignore updating annotations.
 
+  # TODO(dsuo): Dummy debug info.
+  wrapped_fun = lu.wrap_init(
+    fun, debug_info=lu.DebugInfo("vmap(component)", fun.__name__, None, None)
+  )
+
   # ????(dsuo): I don't understand trace tags.
   batched_fun, dims_out = batching.batch_subtrace(
-    fun, core.TraceTag(), axis_data, tuple(dims_in)
+    wrapped_fun, core.TraceTag(), axis_data, tuple(dims_in)
   )
 
   vals_out = component_p.bind(
@@ -191,8 +200,7 @@ def component_batcher(
 
 
 def clear_caches():
-  aot_util.component_cache.value.clear()
-  aot_util._traced_cache.clear()
+  get_cache().clear()
 
 
 component_p = core.Primitive("component")
