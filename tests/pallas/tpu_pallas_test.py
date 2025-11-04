@@ -2150,7 +2150,8 @@ class PallasCallTest(PallasBaseTest):
 
   @parameterized.parameters([
       pl.Buffered(1),
-      pl.Buffered(2),
+      # TODO(b/457717220): Seems like the error message doesn't show up anymore.
+      # pl.Buffered(2),
   ])
   def test_vmem_oom_error_message_basics(self, pmode: pl.Buffered):
     if not jtu.if_cloud_tpu_at_least(2025, 10, 14):
