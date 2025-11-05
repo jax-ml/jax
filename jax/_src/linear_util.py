@@ -482,14 +482,17 @@ def cache(call: Callable, *,
      A memoized version of ``call``.
   """
   fun_caches: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+  hit_caches: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, new_cache := {})  # type: ignore
+    hit = hit_caches.setdefault(fun.f, new_hit := {})
     key = (fun.transforms, fun.params, fun.in_type, args, config.trace_context())
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result
       fun.populate_stores(stores)
+      hit[key] += 1
     else:
       if do_explain := explain and config.explain_cache_misses.value:
         start = time.time()
@@ -497,6 +500,7 @@ def cache(call: Callable, *,
       if do_explain:
         explain(fun, cache is new_cache, cache, key, time.time() - start)  # type: ignore
       cache[key] = (ans, fun.stores)
+      hit[key] = 0
 
     return ans
 
@@ -508,6 +512,7 @@ def cache(call: Callable, *,
   memoized_fun.cache_items = fun_caches.items  # type: ignore
   memoized_fun.cache_get = fun_caches.get  # type: ignore
   memoized_fun.cache_keys = fun_caches.keys  # type: ignore
+  memoized_fun.hit_get = hit_caches.get  # type: ignore
   register_cache(memoized_fun, str(call))
   return memoized_fun
 

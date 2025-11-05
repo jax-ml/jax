@@ -24,6 +24,7 @@ from jax._src import api
 from jax._src import api_util
 from jax._src import core
 from jax._src import linear_util as lu
+from jax._src import mesh as mesh_lib
 from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
@@ -38,9 +39,7 @@ UserKey = Hashable | Callable[..., Hashable]
 ComponentKey = aot_util.ComponentKey
 get_cache = aot_util.get_cache
 
-
-_fun_cache: dict[ComponentKey, Callable[..., Any]] = {}
-
+_wrapper_cache: dict[ComponentKey, xc._xla.PjitFunction] = {}
 
 
 def component(
@@ -51,7 +50,9 @@ def component(
     # TODO(dsuo): Do we have all the information we need at this point to make
     # the component key?
     component_key = ComponentKey(key)
-    fun = _fun_cache.setdefault(component_key, fun)
+
+    if component_key in _wrapper_cache:
+      return _wrapper_cache[component_key]
 
     @api.jit
     @util.wraps(fun)
@@ -63,8 +64,9 @@ def component(
       )
       flat_fun, out_tree = api_util.flatten_fun(wrapped_fun, in_tree)
       flat_fun = aot_util.cached_flat_fun(flat_fun)
-      logging.info("component flat_fun %s:", id(flat_fun))
+      logging.info("miss component flat_fun %s:", id(flat_fun))
       jitted_fun = api.jit(flat_fun.call_wrapped)
+      logging.info("miss component jitted_fun %s:", id(jitted_fun))
 
       out_flat = component_p.bind(
         *args,
@@ -75,6 +77,8 @@ def component(
 
     wrapper.component_key = component_key
     wrapper.fun = fun
+    logging.info("wrapper id %s", id(wrapper._fun))
+    _wrapper_cache[component_key] = wrapper
     return wrapper
 
   return _component
@@ -96,11 +100,12 @@ def component_abstract_eval(
   logging.info("component_abstract_eval got entry %s", component_key)
   if entry is None:
     logging.info("missed abstract_eval %s", component_key)
-    if isinstance(fun, lu.WrappedFun):
-      fun = aot_util.maybe_reset_stores(fun).call_wrapped
-    avals_out = tree_util.tree_map(
-      lambda x: core.ShapedArray(x.shape, x.dtype), api.eval_shape(fun, *args)
-    )
+    # TODO(dsuo): By the time we get to lowering, our trace context has picked
+    # up an empty AbstractMesh. Don't know why.
+    with mesh_lib.use_abstract_mesh(mesh_lib.AbstractMesh((), (), ())):
+      avals_out = tree_util.tree_map(
+        lambda x: core.ShapedArray(x.shape, x.dtype), api.eval_shape(fun, *args)
+      )
     aot_util.put_entry(component_key, entry := aot_util.CacheEntry(avals_out))
   return entry.avals_out
 

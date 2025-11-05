@@ -14,7 +14,7 @@
 
 import contextlib
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 import unittest
 
 from absl.testing import absltest
@@ -295,18 +295,53 @@ class ComponentTest(jtu.JaxTestCase):
 
   # TODO(dsuo): It would be nice to have a way to grab the pjit jaxpr cache
   # key easily.
-  def get_pjit_jaxpr_key(
-    self, fun: Callable[..., Any]
-  ) -> Callable[..., Any] | None:
+  def get_jaxpr_key(self, fun: Callable[..., Any]) -> Callable[..., Any] | None:
     for key in pjit._create_pjit_jaxpr.cache_keys():
       f = key if not hasattr(key, "__wrapped__") else key.__wrapped__
       if f == fun:
         return key
 
-  def get_pjit_jaxpr_entry(
-    self, key: Callable[..., Any]
-  ) -> dict[Callable[..., Any], dict[Any, Any]]:
-    return pjit._create_pjit_jaxpr.cache_get(key).items()
+  def validate_cache_states(
+    self,
+    fun: Callable[..., Any],
+    num_jaxpr_entries: int,
+    num_jaxpr_hits: int | Sequence[int],
+    num_trace_hits: int,
+    num_trace_misses: int,
+    num_disk_hits: int,
+  ):
+    cache = aot.get_cache()
+    component_key = fun.component_key
+
+    # Verify component key exists in disk cache.
+    self.assertIn(component_key, cache.keys())
+
+    # Verify the number of disk hits.
+    self.assertEqual(cache.info(component_key)["hits"], num_disk_hits)
+
+    jaxpr_key = self.get_jaxpr_key(fun.fun)
+    jaxpr_cache = pjit._create_pjit_jaxpr.cache_get(jaxpr_key)
+    jaxpr_hit = pjit._create_pjit_jaxpr.hit_get(jaxpr_key)
+    if isinstance(num_jaxpr_hits, int):
+      num_jaxpr_hits = (num_jaxpr_hits,)
+
+    # Verify fun exists in the jaxpr cache.
+    self.assertIsNotNone(jaxpr_key)
+
+    # Verify number of entries in jaxpr cache for fun.
+    self.assertEqual(len(jaxpr_cache), num_jaxpr_entries)
+
+    # Verify number of hits for each entry.
+    self.assertEqual(tuple(jaxpr_hit.values()), num_jaxpr_hits)
+
+    # Verify the number of hits and misses we expect.
+    self.assertEqual(
+      pjit._infer_params_cached.cache_info().hits, num_trace_hits
+    )
+
+    self.assertEqual(
+      pjit._infer_params_cached.cache_info().misses, num_trace_misses
+    )
 
   # NOTE(dsuo): Disable checks because otherwise we check jaxprs in (at least)
   # four places and makes reasoning about cache hits and misses harder.
@@ -324,35 +359,33 @@ class ComponentTest(jtu.JaxTestCase):
         return x + 1.0
 
       self.assertEqual(f(1.0), 2.0)
-      self.assertEqual(cache.keys(), [f.component_key])
-
-      # Make sure the underlying function f.fun exists in the jaxpr cache.
-      pjit_key = self.get_pjit_jaxpr_key(f.fun)
-      self.assertIsNotNone(pjit_key)
-      # Make sure there is only one entry for f.fun. If there are more, then it
-      # means the lowering rule missed.
-      num_entries = len(list(self.get_pjit_jaxpr_entry(pjit_key)))
-      self.assertEqual(num_entries, 1)
-      # We get 1 hit on the disk cache during the lowering rule. However, this
-      # hit is for an incomplete CacheEntry i.e., only avals_out were populated
-      # and not the lowered module. The lowering rule updates the CacheEntry
-      # with the lowered module.
-      self.assertEqual(cache.info(f.component_key)["hits"], 1)
+      self.validate_cache_states(
+        f,
+        # Make sure there is only one entry for f.fun. If there are more, then
+        # it means the lowering rule missed.
+        num_jaxpr_entries=1,
+        # There should be no hits in the jaxpr cache for f.fun because we've
+        # only just created it.
+        num_jaxpr_hits=0,
+        # We should have 1 hit from the trace in lowering.
+        num_trace_hits=1,
+        # We should have 4 misses: add, equal, f, and call_wrapped.
+        num_trace_misses=4,
+        # We get 1 hit on the disk cache during the lowering rule. However, this
+        # hit is for an incomplete CacheEntry; only avals_out were populated
+        # and not the lowered module. The lowering rule updates the CacheEntry
+        # with the lowered module.
+        num_disk_hits=1,
+      )
 
       @aot.component(key="f")
       def g(x):
         raise NotImplementedError
 
-      # We ignore g's implementation because it was turned into a component with
-      # key "f".
       self.assertEqual(f.fun, g.fun)
       self.assertEqual(g(1.0), 2.0)
-      # Confirm we still have just one entry in the jaxpr cache.
-      num_entries = len(list(self.get_pjit_jaxpr_entry(pjit_key)))
-      self.assertEqual(num_entries, 1)
-      # We get two additional hits on the disk cache during abstract eval and
-      # lowering for g.
-      self.assertEqual(cache.info(f.component_key)["hits"], 3)
+      # Cache state should remain unchanged.
+      self.validate_cache_states(g, 1, 0, 1, 4, 1)
 
   @config.enable_checks(False)
   def test_component_in_function(self):
@@ -372,7 +405,7 @@ class ComponentTest(jtu.JaxTestCase):
       self.assertEqual(cache.keys(), [f.component_key])
       self.assertEqual(cache.info(f.component_key)["hits"], 1)
       # Make sure the underlying function f.fun exists in the jaxpr cache.
-      pjit_key = self.get_pjit_jaxpr_key(f.fun)
+      pjit_key = self.get_jaxpr_key(f.fun)
       self.assertIsNotNone(pjit_key)
       # Make sure there is only one entry for f.fun. If there are more, then it
       # means the lowering rule missed.
@@ -399,7 +432,7 @@ class ComponentTest(jtu.JaxTestCase):
       # Create cache entry when abstract_eval f. 1 hit when lowering f.
       self.assertEqual(f(1.0), 2.0)
       # Make sure the underlying function f.fun exists in the jaxpr cache.
-      pjit_key = self.get_pjit_jaxpr_key(f.fun)
+      pjit_key = self.get_jaxpr_key(f.fun)
       self.assertIsNotNone(pjit_key)
       # Make sure there is only one entry for f.fun. If there are more, then it
       # means the lowering rule missed.
@@ -421,7 +454,6 @@ class ComponentTest(jtu.JaxTestCase):
       # lowering for g.
       self.assertEqual(cache.info(f.component_key)["hits"], 3)
 
-
   @config.enable_checks(False)
   def test_component_of_jit(self):
     with self.make_in_memory_cache():
@@ -435,7 +467,7 @@ class ComponentTest(jtu.JaxTestCase):
       # Create cache entry when abstract_eval f. 1 hit when lowering f.
       self.assertEqual(f(1.0), 2.0)
       # Make sure the underlying function f.fun exists in the jaxpr cache.
-      pjit_key = self.get_pjit_jaxpr_key(f.fun)
+      pjit_key = self.get_jaxpr_key(f.fun)
       self.assertIsNotNone(pjit_key)
       # Make sure there is only one entry for f.fun. If there are more, then it
       # means the lowering rule missed.
@@ -469,7 +501,7 @@ class ComponentTest(jtu.JaxTestCase):
       lowered = f.lower(jax.ShapeDtypeStruct((), "float32"))
       self.assertEqual(cache.keys(), [f.component_key])
 
-      pjit_key = self.get_pjit_jaxpr_key(f.fun)
+      pjit_key = self.get_jaxpr_key(f.fun)
       self.assertIsNotNone(pjit_key)
       # Make sure there is only one entry for f.fun. If there are more, then it
       # means the lowering rule missed.
