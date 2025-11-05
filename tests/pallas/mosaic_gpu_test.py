@@ -3173,23 +3173,23 @@ class PallasCallSm90AWGTest(
 class PallasCallSm100ATest(PallasSm100ATest):
 
   def test_mixed_tmem_allocations_raise(self):
-    def kernel(out_ref, tmem_ref0, tmem_ref1):
-      del out_ref, tmem_ref0, tmem_ref1
-
-    f = self.pallas_call(
-        kernel,
+    @functools.partial(
+        self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((), jnp.float32),
         scratch_shapes=[
             plgpu.TMEM((128, 128), jnp.float32, collective=True),
             plgpu.TMEM((128, 128), jnp.float32, collective=False),
         ],
     )
+    def kernel(out_ref, tmem_ref0, tmem_ref1):
+      del out_ref, tmem_ref0, tmem_ref1
+
     with self.assertRaisesRegex(
         ValueError,
         "Can't mix collective and non-collective TMEM allocations within the"
         " same kernel.",
     ):
-      f()
+      kernel()
 
   @parameterized.parameters((False,), (True,))
   def test_tmem(self, collective):
