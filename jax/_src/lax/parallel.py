@@ -1503,8 +1503,12 @@ def _all_to_all_effectful_abstract_eval(
   effects = {*map(core.NamedAxisEffect, axis_name)}
   return out_aval, effects
 
+def _all_to_all_impl(*args, **kwargs):
+  raise RuntimeError("all_to_all must be used within a mapped context"
+                     " like vmap or shard_map.")
 
 all_to_all_p = core.Primitive('all_to_all')
+all_to_all_p.def_impl(_all_to_all_impl)
 all_to_all_p.def_effectful_abstract_eval(_all_to_all_effectful_abstract_eval)
 mlir.register_lowering(all_to_all_p, _all_to_all_lowering)
 ad.deflinear2(all_to_all_p, _all_to_all_transpose_rule)
@@ -1642,7 +1646,12 @@ def _ragged_all_to_all_batched_collective(axis_data, vals_in, dims_in,
   result = split(ragged_all_to_all(*map(merge, vals_in), axis_name=axis_name))
   return result, 0
 
+def _ragged_all_to_all_impl(*args, **kwargs):
+  raise RuntimeError("ragged_all_to_all must be used within a mapped context"
+                     " like vmap or shard_map.")
+
 ragged_all_to_all_p = core.Primitive('ragged_all_to_all')
+ragged_all_to_all_p.def_impl(_ragged_all_to_all_impl)
 ragged_all_to_all_p.def_effectful_abstract_eval(_ragged_all_to_all_effectful_abstract_eval)
 ad.primitive_jvps[ragged_all_to_all_p] = _ragged_all_to_all_jvp
 ad.primitive_transposes[ragged_all_to_all_p] = _ragged_all_to_all_transpose
