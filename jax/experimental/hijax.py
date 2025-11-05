@@ -19,8 +19,18 @@ from jax._src.ad_util import (
 )
 from jax._src.core import (
     AbstractValue as AbstractValue,
+    AvalQDD as AvalQDD,
     ShapedArray as ShapedArray,
+    aval_method as aval_method,
+    aval_property as aval_property,
+)
+from jax._src.effects import (
+    control_flow_allowed_effects as control_flow_allowed_effects,
 )
 from jax._src.hijax import (
+    HiPrimitive as HiPrimitive,
+    HiType as HiType,
+    MutableHiType as MutableHiType,
+    register_hitype as register_hitype,
     VJPHiPrimitive as VJPHiPrimitive,
 )

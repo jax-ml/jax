@@ -511,6 +511,7 @@ pytype_strict_library(
     deps = [
         "//jax/_src:ad_util",
         "//jax/_src:core",
+        "//jax/_src:effects",
         "//jax/_src:hijax",
     ],
 )
