@@ -29,6 +29,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/APInt.h"
@@ -692,17 +693,18 @@ FailureOr<xla::Array<Value>> insertImplicitMinorDimension(
   return new_vregs;
 }
 
-LogicalResult elementwise_op_rule(RewriteContext &ctx, Operation &op,
-                                  const ArrayRef<Layout> layouts_in,
-                                  const ArrayRef<Layout> layouts_out) {
-  TPU_ASSERT_OP(OpTrait::hasElementwiseMappableTraits(&op));
-  if (op.getNumResults() != 1) {
-    return op.emitError("Not implemented: Only ops with one result supported");
-  }
+// A generic rule for elementwise operations that applies a given function to
+// each vreg of the operands.
+LogicalResult elementwise_op_rule_impl(
+    RewriteContext &ctx,
+    Operation &op,
+    const ArrayRef<Layout> layouts_in,
+    const ArrayRef<Layout> layouts_out,
+    absl::AnyInvocable<Value(ImplicitLocOpBuilder &, ArrayRef<Value>)>
+        vreg_op_creator) {
   TPU_ASSERT_EQ_OP(layouts_in.size(), op.getNumOperands());
   TPU_ASSERT_GT_OP(layouts_in.size(), 0);
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
-  OpBuilder builder(&op);
   if (!(layouts_out.front().has_value() &&
         llvm::all_of(layouts_in,
                      [&](const Layout &l) { return l.has_value(); }))) {
@@ -710,32 +712,27 @@ LogicalResult elementwise_op_rule(RewriteContext &ctx, Operation &op,
         "Not implemented: Null layout / non-vector operand in elementwise "
         "operation");
   }
-  const auto vty = cast<VectorType>(op.getResult(0).getType());
   const VectorLayout &layout = *layouts_out.front();
   if (!llvm::all_of(layouts_in,
                     [&](const Layout &l) { return layout == *l; })) {
     return op.emitOpError(
         "Not implemented: Different layouts in elementwise operation");
   }
+
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
   const unsigned num_operands = op.getNumOperands();
   SmallVector<xla::Array<Value>> in_vreg_arrays;
   in_vreg_arrays.reserve(num_operands);
   for (unsigned i = 0; i < num_operands; ++i) {
     FAILUREOR_ASSIGN_OR_RETURN(
-        xla::Array<Value> tile_array,
+        const xla::Array<Value> tile_array,
         disassemble(builder, *layouts_in[i],
                     cast<TypedValue<VectorType>>(op.getOperand(i)),
                     ctx.target_shape));
     in_vreg_arrays.emplace_back(std::move(tile_array));
   }
 
-  const VectorType out_vreg_ty = getNativeVregOrVmaskType(
-      vty.getElementType(), layout.bitwidth(), ctx.target_shape);
-
-  NamedAttrList attributes(op.getAttrDictionary());
-  attributes.erase("in_layout");
-  attributes.erase("out_layout");
-
+  const auto vty = cast<VectorType>(op.getResult(0).getType());
   // TODO(tlongeri): Can we avoid initializing the array before filling values?
   xla::Array<Value> out_vreg_array(
       layout.tileArrayShape(vty.getShape(), ctx.target_shape));
@@ -745,17 +742,45 @@ LogicalResult elementwise_op_rule(RewriteContext &ctx, Operation &op,
     for (unsigned i = 0; i < num_operands; ++i) {
       operands[i] = in_vreg_arrays[i](idx);
     }
-    Operation *vreg_op =
-        builder.create(op.getLoc(), op.getName().getIdentifier(), operands,
-                       out_vreg_ty, attributes.getAttrs());
-    CHECK(vreg_op);
-    CHECK_EQ(vreg_op->getNumResults(), 1);
-    *out_vreg = vreg_op->getResult(0);
+    *out_vreg = vreg_op_creator(builder, operands);
+    CHECK(*out_vreg);
   });
   op.replaceAllUsesWith(assemble(builder, vty, layout,
                                  std::move(out_vreg_array), ctx.target_shape));
   op.erase();
   return success();
+}
+
+LogicalResult elementwise_op_rule(RewriteContext &ctx, Operation &op,
+                                  const ArrayRef<Layout> layouts_in,
+                                  const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_OP(OpTrait::hasElementwiseMappableTraits(&op));
+  if (op.getNumResults() != 1) {
+    return op.emitError("Not implemented: Only ops with one result supported");
+  }
+
+  NamedAttrList attributes(op.getAttrDictionary());
+  attributes.erase("in_layout");
+  attributes.erase("out_layout");
+
+  std::optional<VectorType> out_vreg_ty;
+  return elementwise_op_rule_impl(
+      ctx, op, layouts_in, layouts_out,
+      [&, attributes](ImplicitLocOpBuilder &builder,
+                      ArrayRef<Value> operands) -> Value {
+        if (!out_vreg_ty.has_value()) {
+          const auto vty = cast<VectorType>(op.getResult(0).getType());
+          const VectorLayout &layout = *layouts_out.front();
+          out_vreg_ty = getNativeVregOrVmaskType(
+              vty.getElementType(), layout.bitwidth(), ctx.target_shape);
+        }
+        Operation *vreg_op =
+            builder.create(op.getLoc(), op.getName().getIdentifier(), operands,
+                           *out_vreg_ty, attributes.getAttrs());
+        CHECK(vreg_op);
+        CHECK_EQ(vreg_op->getNumResults(), 1);
+        return vreg_op->getResult(0);
+      });
 }
 
 FailureOr<std::pair<VectorLayout, xla::Array<Value>>> retileWithCombineHalves(
@@ -3512,6 +3537,52 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
   op.replaceAllUsesWith(assembled);
   op.erase();
   return success();
+}
+
+LogicalResult tpu_pack_elementwise_rule(RewriteContext &ctx, Operation &op,
+                                        const ArrayRef<Layout> layouts_in,
+                                        const ArrayRef<Layout> layouts_out) {
+  auto pack_elementwise_op = cast<tpu::PackElementwiseOp>(op);
+  const mlir::Type packed_type = pack_elementwise_op.getTargetType();
+  const VectorType packed_vreg_ty =
+      getNativeVregType(packed_type, ctx.target_shape);
+  return elementwise_op_rule_impl(
+      ctx, op, layouts_in, layouts_out,
+      [&, packed_vreg_ty](ImplicitLocOpBuilder &builder,
+                          ArrayRef<Value> vreg_operands) -> Value {
+        Value packed_vreg = tpu::PackSubelementsOp::create(
+            builder, packed_vreg_ty, vreg_operands, PackFormat::kInterleaved);
+        return tpu::BitcastVregOp::create(
+            builder,
+            getNativeVregType(builder.getI32Type(), ctx.target_shape),
+            packed_vreg
+        );
+      });
+}
+
+LogicalResult tpu_unpack_elementwise_rule(RewriteContext &ctx, Operation &op,
+                                          const ArrayRef<Layout> layouts_in,
+                                          const ArrayRef<Layout> layouts_out) {
+  auto unpack_elementwise_op = cast<tpu::UnpackElementwiseOp>(op);
+  const int64_t index = unpack_elementwise_op.getIndex();
+  const mlir::Type packed_type = unpack_elementwise_op.getSourceType();
+  const auto result_vty = cast<VectorType>(op.getResult(0).getType());
+  const mlir::Type unpacked_type = result_vty.getElementType();
+  const VectorType packed_vreg_ty =
+      getNativeVregType(packed_type, ctx.target_shape);
+  const VectorType unpacked_vreg_ty =
+      getNativeVregType(unpacked_type, ctx.target_shape);
+  return elementwise_op_rule_impl(
+      ctx, op, layouts_in, layouts_out,
+      [&, packed_vreg_ty, unpacked_vreg_ty, index](
+          ImplicitLocOpBuilder &builder,
+          ArrayRef<Value> vreg_operands) -> Value {
+        Value in_vreg = tpu::BitcastVregOp::create(
+            builder, packed_vreg_ty, vreg_operands[0]);
+        return tpu::UnpackSubelementsOp::create(
+            builder, unpacked_vreg_ty, in_vreg, index,
+            PackFormat::kInterleaved);
+      });
 }
 
 LogicalResult tpu_iota_rule(RewriteContext &ctx, Operation &op,
@@ -9164,6 +9235,10 @@ const llvm::StringMap<rule_type> &rules() {
         {tpu::RotateOp::getOperationName(), tpu_rotate_rule},
         {tpu::DynamicRotateOp::getOperationName(), tpu_dynamic_rotate_rule},
         {tpu::ConcatenateOp::getOperationName(), tpu_concatenate_rule},
+        {tpu::PackElementwiseOp::getOperationName(),
+         tpu_pack_elementwise_rule},
+        {tpu::UnpackElementwiseOp::getOperationName(),
+         tpu_unpack_elementwise_rule},
         {tpu::IotaOp::getOperationName(), tpu_iota_rule},
         {tpu::GatherOp::getOperationName(), tpu_gather_rule},
         {tpu::DynamicGatherOp::getOperationName(), tpu_dynamic_gather_rule},
