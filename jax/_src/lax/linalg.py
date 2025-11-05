@@ -50,6 +50,7 @@ from jax._src.lib import lapack
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.numpy import indexing as jnp_indexing
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.typing import Array, ArrayLike
 
@@ -1174,17 +1175,52 @@ def _eig_gpu_lowering(ctx, operand, *,
 
 def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
                  compute_right_eigenvectors, implementation):
-  if compute_left_eigenvectors or compute_right_eigenvectors:
+  if compute_left_eigenvectors:
     raise NotImplementedError(
-        'The derivatives of non-symmetric eigenvectors are not supported. '
-        'Only first-order derivatives of eigenvalues are supported. See '
-        'https://github.com/jax-ml/jax/issues/2748 for discussion.')
-  # Formula for derivative of eigenvalues w.r.t. a is eqn 4.60 in
-  # https://arxiv.org/abs/1701.00392
+        'The derivatives of non-symmetric left eigenvectors are not supported. '
+        'This may causes problems if higher-order derivatives are required. '
+        'See https://github.com/jax-ml/jax/issues/2748 for discussion.')
   a, = primals
   da, = tangents
   l, v = eig(a, compute_left_eigenvectors=False, implementation=implementation)
-  return [l], [(_solve(v, da.astype(v.dtype)) * _T(v)).sum(-1)]
+
+  # Formula for derivative of eigenvalues w.r.t. a is eqn 4.60 in
+  # https://arxiv.org/abs/1701.00392
+  if not compute_right_eigenvectors:
+    return [l], [(_solve(v, da.astype(v.dtype)) * _T(v)).sum(-1)]
+
+  # Calculate eigenvector derivative for the case of non-degenerate eigenvalues
+  # as described in https://doi.org/10.13001/1081-3810.1203
+
+  # TODO: The gauge-fixing of https://doi.org/10.13001/1081-3810.1203 requires
+  #       the inverse explicitly. Maybe this can replaced by a better solution.
+  eye_n = lax.broadcast_in_dim(lax._eye(v.dtype, v.shape[-2:]), v.shape,
+                               (len(v.shape[:-2]), len(v.shape[:-2]) + 1))
+  vinv = _solve(v, eye_n)
+
+  gauge_fixing_idx = (lax.abs(v) * lax.abs(_T(vinv))).argmax(axis=-2)
+  gauge_fixing_elems = jnp_indexing.take_along_axis(v,
+                                                    gauge_fixing_idx[..., None, :],
+                                                    axis=-2)
+  gauge_fixing = lax.integer_pow(gauge_fixing_elems, -1)
+  v_gauge_fixed = v * gauge_fixing
+
+  vdav = vinv @ da @ v
+  dl = _extract_diagonal(vdav)
+
+  Fmat = lax.integer_pow(eye_n + l[..., None, :] - l[..., None], -1) - eye_n
+  vdv = Fmat * (vdav * gauge_fixing)
+
+  v_elems_for_diag = jnp_indexing.take_along_axis(v,
+                                                  gauge_fixing_idx[..., :, None],
+                                                  axis=-2)
+  vdv_diag = - (
+    (_T(v_elems_for_diag) * vdv).sum(axis=-2) / gauge_fixing_elems[..., 0, :]
+  )
+  vdv += _construct_diagonal(vdv_diag)
+  dv = v @ vdv
+
+  return [l, v_gauge_fixed], [dl, dv]
 
 eig_p = linalg_primitive(
     _eig_dtype_rule, (_float | _complex,), (2,), _eig_shape_rule, "eig",
