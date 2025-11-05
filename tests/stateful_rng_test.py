@@ -159,14 +159,32 @@ class StatefulRNGTest(jtu.JaxTestCase):
       self.assertNotEqual(rng.base_key, child_rng.base_key)
       self.assertEqual(0, child_rng.counter[...])
 
+  @jtu.sample_product(shape=[4, (5,), (2, 3)])
+  def testSplit(self, shape):
+    rng = jax.random.stateful_rng(758943)
+    rng_split = rng.split(shape)
+
+    expected_shape = (shape,) if isinstance(shape, int) else shape
+
+    self.assertEqual(rng_split.base_key.dtype, rng.base_key.dtype)
+    self.assertEqual(rng_split.base_key.shape, expected_shape)
+
+    self.assertIsInstance(rng_split.counter, jax.Ref)
+    self.assertEqual(rng_split.counter.shape, expected_shape)
+
   def testVmap(self):
     seed = 758943
-    rng = jax.random.stateful_rng(seed)
-    x = np.arange(4.0)
+    N = 4
+    x = np.arange(N, dtype=float)
     def f(rng, x):
       return x + rng.uniform()
-    expected = f(jax.random.stateful_rng(seed), x)
-    actual = jax.vmap(f)(jax.random.stateful_rng(seed), x)
+
+    rng = jax.random.stateful_rng(seed)
+    expected = x + jnp.array([rng.uniform() for rng in rng.spawn(N)])
+
+    rng = jax.random.stateful_rng(seed)
+    actual = jax.vmap(f)(rng.split(N), x)
+
     self.assertArraysEqual(actual, expected)
 
   def testScanClosure(self):

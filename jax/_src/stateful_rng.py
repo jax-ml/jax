@@ -178,7 +178,7 @@ class StatefulPRNG:
       >>> [crng.integers(0, 10, 2) for crng in child_rngs]
       [Array([1, 3], dtype=int32), Array([9, 9], dtype=int32)]
     """
-    return [self.__class__(self.key(), ref.new_ref(0)) for _ in range(n_children)]
+    return [self.__class__(key, ref.new_ref(0)) for key in self.key(n_children)]
 
 
 def stateful_rng(seed: typing.ArrayLike | None = None, *,
