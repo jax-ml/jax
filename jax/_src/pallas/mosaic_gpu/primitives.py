@@ -1989,6 +1989,39 @@ def _tcgen05_commit_arrive_lowering(
   return []
 
 
+@lowering.register_lowering_rule(
+    tcgen05_commit_arrive_p, mgpu.LoweringSemantics.Warpgroup
+)
+def _tcgen05_commit_arrive_lowering_wg(
+    ctx: lowering.LoweringRuleContext,
+    barrier_ref: mgpu.DialectBarrierRef,
+    *barrier_transforms_leaves,
+    barrier_transforms_tree,
+    collective_axis,
+):
+  if barrier_transforms_tree is not None:
+    barrier_transforms = barrier_transforms_tree.unflatten(
+        barrier_transforms_leaves
+    )
+    indexer = _extract_barrier_indexer(barrier_transforms)
+    if indexer is not None:
+      barrier_ref = barrier_ref.__getitem__(
+          *map(lowering._as_index, indexer.indices)
+      )
+
+  predicate_ctx: contextlib.AbstractContextManager[None]
+  if collective_axis is not None:
+    predicate_ctx = mgpu.when(_collective_mma_predicate(ctx, collective_axis))
+    collective = True
+  else:
+    predicate_ctx = contextlib.nullcontext()
+    collective = False
+
+  with predicate_ctx:
+    tcgen05.commit_arrive(barrier_ref.get_ptr(), collective, ctx.launch_ctx)
+  return []
+
+
 def _collective_mma_predicate(ctx: lowering.LoweringRuleContext,
                               collective_axis: str) -> ir.Value:
   """Computes a predicate to run only on the leader block."""

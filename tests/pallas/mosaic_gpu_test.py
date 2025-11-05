@@ -2723,7 +2723,6 @@ class PallasCallWGTest(
                                  wg_wg_lowered_primitives)
     expected_missing_primitives = {
         mgpu_primitives.print_layout_p,
-        mgpu_primitives.tcgen05_commit_arrive_p,
         mgpu_primitives.async_copy_scales_to_tmem_p,
         mgpu_primitives.async_copy_sparse_metadata_to_tmem_p,
         mgpu_primitives.wait_load_tmem_p,
@@ -3685,7 +3684,6 @@ class PallasCallSm100ATest(PallasSm100ATest):
       (128, jnp.float16)
   )
   def test_manual_tcgen05_commit_arrive(self, swizzle, dtype):
-    self.skip_if_wg_semantics()
     shape = (128, 128)
     transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
 
