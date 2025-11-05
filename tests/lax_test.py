@@ -2658,15 +2658,16 @@ class LaxTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=[np.float32, np.int32, np.uint32],
-    shape=[(20,), (5, 20), (2000,)],
-    k=[1, 3, 12],
+    shape=[(20,), (8, 20), (2000,)],
+    k=[1, 3, 8],
+    axis=[0, -1]
   )
-  def testTopK(self, shape, dtype, k):
+  def testTopK(self, shape, dtype, k, axis):
     rng = jtu.rand_some_equal(self.rng())
     def args_maker():
       return [rng(shape, dtype)]
-    op = lambda vs: lax.top_k(vs, k=k)
-    ref_op = lambda vs: lax_reference.top_k(vs, k=k)
+    op = lambda vs: lax.top_k(vs, k=k, axis=axis)
+    ref_op = lambda vs: lax_reference.top_k(vs, k=k, axis=axis)
     self._CheckAgainstNumpy(op, ref_op, args_maker)
     self._CompileAndCheck(op, args_maker)
 
