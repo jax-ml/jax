@@ -78,6 +78,7 @@ class RaggedDotTestCase(jtu.JaxTestCase):
       grid_block_n=(2, 4),
       max_concurrent_steps=(2, 4),
       num_groups=(1, 3, 16),
+      transpose_rhs=(False, True),
   )
   def test_ragged_dot(
       self,
@@ -87,6 +88,7 @@ class RaggedDotTestCase(jtu.JaxTestCase):
       grid_block_n,
       max_concurrent_steps,
       num_groups,
+      transpose_rhs,
   ):
     dtype = jnp.float16
     lhs_smem_size = block_m * block_k * max_concurrent_steps * 2
@@ -102,13 +104,14 @@ class RaggedDotTestCase(jtu.JaxTestCase):
 
     out = ragged_dot_mgpu.ragged_dot(
         lhs,
-        rhs,
+        jnp.transpose(rhs, (0, 2, 1)) if transpose_rhs else rhs,
         group_sizes=group_sizes,
         block_m=block_m,
         block_n=block_n,
         block_k=block_k,
         max_concurrent_steps=max_concurrent_steps,
         grid_block_n=grid_block_n,
+        transpose_rhs=transpose_rhs,
     )
     out_ref = jax.lax.ragged_dot(lhs, rhs, group_sizes=group_sizes)
     np.testing.assert_allclose(out, out_ref, atol=1e-3, rtol=1e-3)
