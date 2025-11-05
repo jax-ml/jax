@@ -585,11 +585,11 @@ ad.primitive_jvps[remat_p] = remat_jvp
 def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
                        jaxpr: core.Jaxpr, prevent_cse, **params):
   assert not jaxpr.constvars
-  # disallowed_effects = effects.remat_allowed_effects.filter_not_in(jaxpr.effects)
-  # if disallowed_effects:
-  #   raise NotImplementedError(
-  #       'Effects not supported in partial-eval of `checkpoint`/`remat`: '
-  #       f'{disallowed_effects}')
+  disallowed_effects = effects.remat_allowed_effects.filter_not_in(jaxpr.effects)
+  if disallowed_effects:
+    raise NotImplementedError(
+        'Effects not supported in partial-eval of `checkpoint`/`remat`: '
+        f'{disallowed_effects}')
   policy = params['policy'] or nothing_saveable
   in_unknowns = [not t.is_known() for t in tracers]
   jaxpr_known, jaxpr_staged, out_unknowns, out_inst, num_res = \
