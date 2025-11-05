@@ -2074,10 +2074,11 @@ def _pjit_linearize(trace, *tracers_in, jaxpr, in_shardings, out_shardings,
   primals_in, *remats_in = zip(*primals_in_)
   tangents_in_nz, tangent_in_tree = tree_flatten(tangents_in)
   in_nzs = [type(t) is not ad.Zero for t in tangents_in]
-  breakpoint()
-  jaxprs, in_trees, out_trees, dces = ad.linearize_jaxpr(jaxpr, tangent_in_tree)
-  *remat_dces, tangent_dce = dces
+  num_remats = len(remats_in)
+  jaxprs, trees, dces = ad.linearize_jaxpr3(jaxpr, tangent_in_tree, num_remats)
   primal_jaxpr, *remat_jaxprs, tangent_jaxpr = jaxprs
+  in_trees, out_trees = unzip2(trees)
+  *remat_dces, tangent_dce = dces
 
   # fwd0
   primal_out_shardings = tuple(out_shardings) + (UNSPECIFIED,) * num_res_out(out_trees[0])

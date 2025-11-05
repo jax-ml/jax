@@ -152,6 +152,14 @@ def jvp_subtrace_aux(f, store, tag, primals, tangents):
   store.store(aux_primals)
   return out_primals, out_tangents
 
+def linearize_jaxpr3(
+    jaxpr: core.ClosedJaxpr,
+    nonzeros: Sequence[bool],
+    num_remats: int,
+) -> tuple[list[core.ClosedJaxpr], list[tuple[PyTreeDef, PyTreeDef]],
+           list[list[bool]]]:
+  breakpoint()
+
 def linearize_jaxpr(
     jaxpr: core.ClosedJaxpr,
     nonzeros: Sequence[bool],
@@ -178,8 +186,7 @@ def _linearize_jaxpr(
   dbg = jaxpr.jaxpr.debug_info
   config.enable_checks.value and dbg.assert_arg_names(len(nonzeros))
   primal_trace = pe.DynamicJaxprTrace(dbg)
-  tangent_trace = pe.DynamicJaxprTrace(dbg, auto_dce=True)
-  breakpoint()
+  tangent_trace = pe.DynamicJaxprTrace(dbg.with_unknown_names(), auto_dce=True)
   lin_trace = LinearizeTrace(primal_trace, tangent_trace)
   tangent_trace.tag = lin_trace.tag
 
