@@ -49,14 +49,16 @@ def _canonicalize_size(size: int | Sequence[int] | None, *args: ArrayLike) -> tu
 class StatefulPRNG:
   """Implicit PRNG backed by Ref.
 
-  This should be instantiated using the :func:`default_rng` function.
+  This should be instantiated using the :func:`jax.random.stateful_rng` function.
 
   Attributes:
     base_key: a typed JAX PRNG key object (see :func:`jax.random.key`).
     counter: a scalar integer wrapped in a :class:`Ref`
 
+  Examples:
+
   >>> import jax.numpy as jnp
-  >>> rng = jnp.random.default_rng(42)
+  >>> rng = jnp.random.stateful_rng(42)
   >>> rng
   StatefulPRNG(base_key=Array((), dtype=key<fry>) overlaying:
   [ 0 42], counter=Ref(0, dtype=int32, weak_type=True))
@@ -154,15 +156,37 @@ class StatefulPRNG:
       low, high = 0, low
     return random.randint(self.key(), _canonicalize_size(size, low, high),
                           minval=low, maxval=high, dtype=dtype)
-  
-  def split(self, num: int) -> StatefulPRNG:
+
+  def split(self, num: int | Sequence[int]) -> StatefulPRNG:
+    """Create independent child generators suitable for use in :func:`jax.vmap`.
+
+    Args:
+      num: integer or sequence of integers specifying the split shape
+
+    Returns:
+      a single StatefulPRNG object with split contents, suitable for use
+      with :func:`jax.vmap`
+
+    Examples:
+      >>> import jax
+      >>> rng = jax.random.stateful_rng(123)
+      >>> x = jax.numpy.zeros(3)
+      >>> def f(rng, x):
+      ...   return x + rng.uniform()
+      >>> jax.vmap(f)(rng.split(3), x)
+      Array([0.35525954, 0.21937883, 0.5336956 ], dtype=float32)
+
+    See also:
+      - :func:`jax.random.StatefulPRNG.spawn`: This is similar to ``split``, but
+        returns a Python list of ``StatefulPRNG`` objects.
+    """
     return StatefulPRNG(
       base_key=self.key(num),
       counter=ref.new_ref(jnp.zeros(num, dtype=int))
     )
 
   def spawn(self, n_children: int) -> list['StatefulPRNG']:
-    """Create new independent child generators.
+    """Create a list of independent child generators.
 
     Args:
       n_children: non-negative integer.
@@ -176,7 +200,11 @@ class StatefulPRNG:
       >>> rng = jnp.random.default_rng(123)
       >>> child_rngs = rng.spawn(2)
       >>> [crng.integers(0, 10, 2) for crng in child_rngs]
-      [Array([1, 3], dtype=int32), Array([9, 9], dtype=int32)]
+      [Array([4, 5], dtype=int32), Array([2, 1], dtype=int32)]
+
+    See also:
+      - :func:`jax.random.StatefulPRNG.split`: this is similar to spawn, but returns
+        a single mapped ``StatefulPRNG`` which can be passed to :func:`jax.vmap`.
     """
     return [self.__class__(key, ref.new_ref(0)) for key in self.key(n_children)]
 
