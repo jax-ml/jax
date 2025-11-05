@@ -38,7 +38,7 @@ class StatefulRNGTest(jtu.JaxTestCase):
     self.assertEqual(rng.counter.shape, ())
     self.assertEqual(0, rng.counter[...])
 
-  def test_stateful_rng_counter_increment(self, with_jit, seed=7865943):
+  def test_stateful_rng_counter_increment(self, seed=7865943):
     rng = jax.random.stateful_rng(seed)
     original_key = rng.base_key
     self.assertEqual(0, rng.counter[...])
@@ -177,7 +177,7 @@ class StatefulRNGTest(jtu.JaxTestCase):
     self.assertIsInstance(rng_split.counter, jax.Ref)
     self.assertEqual(rng_split.counter.shape, expected_shape)
 
-  def testVmap(self):
+  def testVmapMapped(self):
     seed = 758943
     N = 4
     x = np.arange(N, dtype=float)
@@ -191,6 +191,15 @@ class StatefulRNGTest(jtu.JaxTestCase):
     actual = jax.vmap(f)(rng.split(N), x)
 
     self.assertArraysEqual(actual, expected)
+
+  def testVmapUnmapped(self):
+    seed = 758943
+    x = np.arange(4, dtype=float)
+    rng = jax.random.stateful_rng(seed)
+    def f(rng, x):
+      return x + rng.uniform()
+    with self.assertRaisesRegex(Exception, "performing an addupdate operation with vmapped value"):
+      jax.vmap(f, in_axes=(None, 0))(rng, x)
 
   def testScanClosure(self):
     seed = 432932
