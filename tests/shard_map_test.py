@@ -2583,9 +2583,8 @@ class ShardMapTest(jtu.JaxTestCase):
     jtu.check_grads(f, (list(jnp.arange(float(num_args))[:,None]),), order=1,
                     modes=['rev'], atol=1e-3, rtol=1e-3)
 
-  @config.use_shardy_partitioner(True)
   @jtu.with_explicit_mesh((2, 2), ('data', 'seq'))
-  def test_shmap_unreduced_custom_vjp_bwd(self, mesh):
+  def test_shmap_unreduced_fsdp_custom_vjp_bwd(self, mesh):
     np_inp1 = np.arange(64.).reshape(8, 4, 2)
     np_inp2 = np.arange(12.).reshape(2, 6)
     arr1 = jax.device_put(np_inp1, P('data', 'seq', None))
@@ -2659,6 +2658,62 @@ class ShardMapTest(jtu.JaxTestCase):
                                           argnums=(0, 1)))(np_inp1, np_inp2)
     self.assertArraysAllClose(ex_out1, out1, rtol=2e-4)
     self.assertArraysAllClose(ex_out2, out2, rtol=2e-4)
+
+  @jtu.with_explicit_mesh((2, 2), ('data', 'seq'))
+  def test_shmap_unreduced_fsdp_grad(self, mesh):
+    np_inp1 = np.arange(64.).reshape(8, 4, 2)
+    np_inp2 = np.arange(12.).reshape(2, 6)
+    arr1 = jax.device_put(np_inp1, P('data', 'seq', None))
+    arr2 = jax.device_put(np_inp2, P('seq', None))
+
+    @shard_map(in_specs=P('seq', None),
+               out_specs=P('seq', None, reduced={'data'}))
+    def preduced(a):
+      self.assertEqual(a.aval.vma, {'seq'})
+      self.assertEqual(a.aval.sharding.spec.unreduced, frozenset())
+      out = lax.preduced(a, axis_name='data')
+      self.assertEqual(out.aval.vma, {'seq'})
+      self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
+      self.assertEqual(out.aval.sharding.spec.reduced, {'data'})
+      return out
+
+    @shard_map(in_specs=P('seq', None, reduced={'data'}),
+               out_specs=P(None, None, reduced={'seq', 'data'}))
+    def ag(a):
+      self.assertEqual(a.aval.vma, {'seq'})
+      self.assertEqual(a.aval.sharding.spec.unreduced, frozenset())
+      self.assertEqual(a.aval.sharding.spec.reduced, {'data'})
+      out = lax.all_gather_reduced(a, axis_name='seq', tiled=True)
+      self.assertEqual(out.aval.vma, frozenset())
+      self.assertEqual(out.aval.sharding.spec.unreduced, frozenset())
+      self.assertEqual(out.aval.sharding.spec.reduced, {'seq', 'data'})
+      return out
+
+    @jax.jit
+    def f(x, y):
+      y2 = preduced(y)
+      y3 = ag(y2)
+      self.assertEqual(y3.aval.sharding.spec.reduced, {'seq', 'data'})
+      return jnp.einsum('btd,df->btf', x, y3)
+
+    out = f(arr1, arr2)  # doesn't crash
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('data', 'seq', None)))
+
+    out1, out2 = jax.jit(jax.grad(lambda x, y: jnp.sin(f(x, y).sum()),
+                                  argnums=(0, 1)))(arr1, arr2)
+
+    jaxpr = jax.jit(jax.grad(lambda x, y: jnp.sin(f(x, y).sum()),
+                             argnums=(0, 1))).trace(arr1, arr2).jaxpr
+    self.assertIn('unreduced_reduce_scatter', str(jaxpr))
+    self.assertIn('unreduced_psum', str(jaxpr))
+
+    with jax.set_mesh(jtu.create_mesh((1,), 'x')):
+      ex_out1, ex_out2 = jax.jit(jax.grad(lambda x, y: jnp.sin((x @ y).sum()),
+                                          argnums=(0, 1)))(np_inp1, np_inp2)
+    self.assertArraysAllClose(ex_out1, out1, rtol=2e-4)
+    self.assertEqual(out1.sharding, NamedSharding(mesh, P('data', 'seq', None)))
+    self.assertArraysAllClose(ex_out2, out2, rtol=2e-4)
+    self.assertEqual(out2.sharding, NamedSharding(mesh, P('seq', None)))
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_unreduced_psum_fwd_preduced_bwd(self, mesh):

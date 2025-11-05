@@ -2383,7 +2383,6 @@ def _all_gather_reduced_effectful_abstract_eval(
     x_aval, *, all_gather_dimension, axis_name, axis_size, tiled
 ):
   _check_axis_names(axis_name, 'all_gather_reduced')
-  check_unreduced_args([x_aval], 'all_gather_reduced')
   if not x_aval.vma:
     raise ValueError('all_gather_reduced only accepts inputs that are'
                      f' varying. Got {x_aval.str_short(True)}')
@@ -2624,7 +2623,6 @@ mlir.register_lowering(preduced_p, lambda ctx, *x, axes: x)
 def _preduced_abstract_eval(*avals, axes):
   assert isinstance(axes, tuple)
   _check_axis_names(axes, 'preduced')
-  check_unreduced_args(avals, 'preduced')
   for a in avals:
     # If there is intersection between arg_vma and axes, error
     if a.vma & set(axes):
