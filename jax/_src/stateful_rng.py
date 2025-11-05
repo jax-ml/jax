@@ -57,8 +57,8 @@ class StatefulPRNG:
 
   Examples:
 
-  >>> import jax.numpy as jnp
-  >>> rng = jnp.random.stateful_rng(42)
+  >>> import jax
+  >>> rng = jax.random.stateful_rng(42)
   >>> rng
   StatefulPRNG(base_key=Array((), dtype=key<fry>) overlaying:
   [ 0 42], counter=Ref(0, dtype=int32, weak_type=True))
