@@ -38,10 +38,15 @@ class StatefulRNGTest(jtu.JaxTestCase):
     self.assertEqual(rng.counter.shape, ())
     self.assertEqual(0, rng.counter[...])
 
-    _ = rng.key()
-    self.assertEqual(key, rng.base_key)
-    self.assertEqual(rng.counter.shape, ())
-    self.assertEqual(1, rng.counter[...])
+  def test_stateful_rng_counter_increment(self, with_jit, seed=7865943):
+    rng = jax.random.stateful_rng(seed)
+    original_key = rng.base_key
+    self.assertEqual(0, rng.counter[...])
+
+    _ = jax.jit(rng.key)()  # implicit update
+
+    self.assertEqual(original_key, rng.base_key)  # base key does not change
+    self.assertEqual(1, rng.counter[...])  # counter is incremented
 
   def test_stateful_rng_invalid_instantiation(self):
     valid_key = jax.random.key(0)
