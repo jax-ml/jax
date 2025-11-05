@@ -68,6 +68,12 @@ xla::ffi::TypeInfo GpuTransposePlanCache::info =
 XLA_FFI_REGISTER_TYPE(xla::ffi::GetXlaFfiApi(), "GpuTransposePlanCache",
                       &GpuTransposePlanCache::id, &GpuTransposePlanCache::info);
 
+std::pair<xla::ffi::TypeId*, const xla::ffi::TypeInfo*>
+GpuTransposePlanCacheTypeInfo() {
+  return std::make_pair(&GpuTransposePlanCache::id,
+                        &GpuTransposePlanCache::info);
+}
+
 static xla::ffi::ErrorOr<std::unique_ptr<GpuTransposePlanCache>>
 GpuTransposePlanCacheInstantiate(uint64_t index) {
   return std::make_unique<GpuTransposePlanCache>(16);
@@ -76,6 +82,7 @@ GpuTransposePlanCacheInstantiate(uint64_t index) {
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kGpuTransposePlanCacheInstantiate, GpuTransposePlanCacheInstantiate,
     xla::ffi::Ffi::BindInstantiate().Attr<uint64_t>("index"));
+
 xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
                                         xla::FfiLoadedHostCallbacks* callbacks,
                                         GpuTransposePlanCache* transpose_cache,

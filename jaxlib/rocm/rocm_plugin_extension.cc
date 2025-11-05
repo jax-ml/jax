@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 #include "absl/log/log.h"
@@ -66,7 +67,21 @@ std::string ToString(hipError_t result) {
   }
 }
 
-nb::dict FfiRegistrations() {
+static nb::dict GpuTransposePlanCacheType() {
+  auto [type_id, type_info] = hip::GpuTransposePlanCacheTypeInfo();
+  nb::dict d;
+  d["type_id"] = nb::capsule(type_id);
+  d["type_info"] = nb::capsule(type_info);
+  return d;
+}
+
+nb::dict FfiTypes() {
+  nb::dict dict;
+  dict["GpuTransposePlanCache"] = GpuTransposePlanCacheType();
+  return dict;
+}
+
+nb::dict FfiHandlers() {
   nb::dict dict;
   nb::dict gpu_callback_dict;
   gpu_callback_dict["instantiate"] =
@@ -86,7 +101,8 @@ nb::dict FfiRegistrations() {
 
 NB_MODULE(rocm_plugin_extension, m) {
   BuildGpuPluginExtension(m);
-  m.def("ffi_registrations", &FfiRegistrations);
+  m.def("ffi_types", &FfiTypes);
+  m.def("ffi_handlers", &FfiHandlers);
 
   m.def(
       "get_device_ordinal",
